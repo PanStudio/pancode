@@ -1,0 +1,426 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, strictEqual } from "node:assert/strict";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, it } from "node:test";
+import { mapAutonomy } from "../../src/domains/safety/autonomy.js";
+import { createSafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
+import { verifyTool } from "../../src/tools/verify/index.js";
+import { collectedNoTests } from "../../src/tools/verify/scripts.js";
+import { discoverToolchainChecks } from "../../src/tools/verify/toolchain-checks.js";
+
+const roots: string[] = [];
+const originalCwd = process.cwd();
+
+function workspace(files: Record<string, string>): string {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "pancode-verify-toolchain-")));
+	roots.push(root);
+	for (const [relative, text] of Object.entries(files)) {
+		mkdirSync(join(root, relative, ".."), { recursive: true });
+		writeFileSync(join(root, relative), text, "utf8");
+	}
+	return root;
+}
+
+afterEach(() => {
+	process.chdir(originalCwd);
+	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+function commandOf(root: string, id: string): string[] | undefined {
+	return discoverToolchainChecks(root).find((check) => check.id === id)?.command;
+}
+
+function textOf(result: Awaited<ReturnType<typeof verifyTool.run>>): string {
+	return result.kind === "ok" ? result.output : result.message;
+}
+
+/** What a headless run does with a verify call: the net decision, then the autonomy mapping. */
+function admission(root: string, args: Record<string, unknown>, level: "yolo" | "default"): string {
+	const decision = createSafetyPolicyEngine({ cwd: root }).evaluate({ tool: "verify", args });
+	if (decision.kind !== "allow") return decision.kind;
+	return mapAutonomy(level, decision.actionClass, { executeRecognized: decision.execRecognition !== "unrecognized" });
+}
+
+const PYPROJECT = '[project]\nname = "demo"\nversion = "0.1.0"\ndependencies = ["pydantic>=2"]\n';
+const TEST_CASE = "import unittest\n\nclass ATest(unittest.TestCase):\n\tdef test_a(self):\n\t\tpass\n";
+
+describe("verify in repositories without package.json", () => {
+	it("derives a uv-launched unittest check from pyproject.toml, uv.lock and a tests directory", () => {
+		const root = workspace({ "pyproject.toml": PYPROJECT, "uv.lock": "version = 1\n", "tests/test_a.py": TEST_CASE });
+		deepStrictEqual(commandOf(root, "python-unittest"), [
+			"uv",
+			"run",
+			"python",
+			"-m",
+			"unittest",
+			"discover",
+			"-s",
+			"tests",
+		]);
+		strictEqual(commandOf(root, "python-pytest"), undefined);
+	});
+
+	it("derives a unittest check for test modules beside the code in a flat project", () => {
+		const root = workspace({ "calc.py": "", "test_calc.py": TEST_CASE });
+		deepStrictEqual(commandOf(root, "python-unittest")?.slice(-5), ["-m", "unittest", "discover", "-s", "."]);
+	});
+
+	it("derives no unittest check from a script-style test file that defines no TestCase (CLI-P51)", () => {
+		const root = workspace({
+			"ops.py": "def add(a, b):\n\treturn a + b\n",
+			"test_ops.py": "from ops import add\nassert add(1, 2) == 3\nprint('ok')\n",
+		});
+		strictEqual(commandOf(root, "python-unittest"), undefined);
+		// A nested suite under tests/ and an aliased TestCase import still derive it.
+		const nested = workspace({
+			"tests/__init__.py": "",
+			"tests/unit/__init__.py": "",
+			"tests/unit/test_ops.py":
+				"from unittest import TestCase as TC\n\nclass OpsTest(TC):\n\tdef test_add(self):\n\t\tpass\n",
+		});
+		deepStrictEqual(commandOf(nested, "python-unittest")?.slice(-2), ["-s", "tests"]);
+	});
+
+	it("reads a pytest or unittest argv from its start, launcher included, before excusing exit 5 (CLI-P51)", () => {
+		const summary = "Ran 0 tests in 0.000s\n\nNO TESTS RAN\n";
+		for (const [argv, runner] of [
+			[["python3", "-m", "unittest", "discover", "-s", "."], true],
+			[["/v/.venv/bin/python3.12", "-B", "-m", "pytest"], true],
+			[["uv", "run", "--no-sync", "pytest"], true],
+			[["uv", "run", "--with", "x", "--", "python", "-m", "pytest"], true],
+			[["poetry", "run", "--", "pytest"], true],
+			[["pipenv", "run", "py.test"], true],
+			[["npm", "run", "pytest"], false],
+			[["./check.sh", "-m", "pytest"], false],
+			[["python3", "tool.py", "-m", "pytest"], false],
+		] as const) {
+			strictEqual(collectedNoTests(argv, 5, summary), runner, argv.join(" "));
+		}
+		strictEqual(
+			collectedNoTests(["python3", "-m", "pytest"], 5, "collected 0 items\n\n== no tests ran in 0.01s ==\n"),
+			true,
+		);
+		strictEqual(collectedNoTests(["python3", "-m", "unittest"], 5, ""), false, "a bare exit 5, as sys.exit(5) gives");
+	});
+
+	for (const [label, summary, noTests] of [
+		[
+			"that collected no test as unavailable, never a failed check",
+			"echo 'Ran 0 tests in 0.000s'\necho 'NO TESTS RAN'",
+			true,
+		],
+		[
+			"whose setUpClass raised (exit 5, FAILED) as a failed check",
+			"echo 'ERROR: setUpClass (test_a.T)'\necho 'Ran 0 tests in 0.000s'\necho 'FAILED (errors=1)'",
+			false,
+		],
+	] as const) {
+		it(`reports a unittest run ${label} (CLI-P51)`, async () => {
+			const root = workspace({
+				"tests/test_a.py": TEST_CASE,
+				"bin/python3": `#!/bin/sh\n${summary}\nexit 5\n`,
+			});
+			chmodSync(join(root, "bin/python3"), 0o755);
+			const previousPath = process.env.PATH;
+			const previousVenv = process.env.VIRTUAL_ENV;
+			process.chdir(root);
+			try {
+				process.env.PATH = join(root, "bin");
+				delete process.env.VIRTUAL_ENV;
+				const result = await verifyTool.run({ check: "python-unittest" });
+				strictEqual(result.kind, "error");
+				strictEqual(result.details?.exitCode, 5);
+				strictEqual(result.details?.noTestsCollected, noTests ? true : undefined);
+				deepStrictEqual(result.details?.judgement, {
+					execution: noTests ? "unavailable" : "failed",
+					validation: noTests ? "not-run" : "exit-code",
+					scientificValidity: "not established by this check",
+				});
+				strictEqual(result.details?.unresolved, noTests ? true : undefined, "only a run that judged nothing is not run");
+				if (noTests) match(textOf(result), /no tests collected/u);
+			} finally {
+				if (previousPath === undefined) delete process.env.PATH;
+				else process.env.PATH = previousPath;
+				if (previousVenv === undefined) delete process.env.VIRTUAL_ENV;
+				else process.env.VIRTUAL_ENV = previousVenv;
+			}
+		});
+	}
+
+	it("refuses args unittest's parser rejects up front, and seals an exit 2 as not run only when its parser confirms it (L10)", async () => {
+		// The fake runner exits 2 like argparse; as the parser probe (`-c`) it exits with whatever `probe-exit` holds.
+		const root = workspace({
+			"tests/test_a.py": TEST_CASE,
+			"bin/python3":
+				'#!/bin/sh\nif [ "$1" = -c ]; then read -r code < probe-exit; exit "$code"; fi\necho \'error: unrecognized arguments\' >&2\nexit 2\n',
+		});
+		chmodSync(join(root, "bin/python3"), 0o755);
+		const previousPath = process.env.PATH;
+		const previousVenv = process.env.VIRTUAL_ENV;
+		process.chdir(root);
+		try {
+			process.env.PATH = join(root, "bin");
+			delete process.env.VIRTUAL_ENV;
+			for (const [args, rejected] of [
+				[["-p", "test_a.py"], "-p"],
+				[["-k", "-p"], "-k"],
+				[["--durations", "x"], "--durations x"],
+			] as const) {
+				const refused = await verifyTool.run({ check: "python-unittest", args: [...args] });
+				strictEqual(refused.details?.unresolved, true);
+				strictEqual(refused.details?.exitCode, undefined, "refused before running");
+				match(textOf(refused), new RegExp(`does not accept '${rejected}'.*"discover", "-s", "tests", "-p"`, "u"));
+			}
+			// argparse clusters and unambiguous long prefixes reach the runner.
+			writeFileSync(join(root, "probe-exit"), "2");
+			const confirmed = await verifyTool.run({ check: "python-unittest", args: ["-vk", "sample", "--verb"] });
+			strictEqual(confirmed.details?.exitCode, 2);
+			strictEqual(confirmed.details?.usageError, true);
+			strictEqual(confirmed.details?.unresolved, true, "not run, never a failed validation");
+			deepStrictEqual(confirmed.details?.judgement, {
+				execution: "unavailable",
+				validation: "not-run",
+				scientificValidity: "not established by this check",
+			});
+			// A project hook raising SystemExit(2) also exits 2, but the parser accepts the args, so the run stays red.
+			writeFileSync(join(root, "probe-exit"), "0");
+			const red = await verifyTool.run({ check: "python-unittest", args: ["test_a"] });
+			strictEqual(red.details?.exitCode, 2);
+			strictEqual(red.details?.usageError, undefined);
+			strictEqual(red.details?.unresolved, undefined);
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+			if (previousVenv === undefined) delete process.env.VIRTUAL_ENV;
+			else process.env.VIRTUAL_ENV = previousVenv;
+		}
+	});
+
+	it("follows pytest when the project declares it as a dependency", () => {
+		const root = workspace({
+			"pyproject.toml": `${PYPROJECT}\n[dependency-groups]\ndev = ["pytest>=8"]\n`,
+			"uv.lock": "version = 1\n",
+			"tests/test_a.py": TEST_CASE,
+		});
+		deepStrictEqual(commandOf(root, "python-pytest"), ["uv", "run", "python", "-m", "pytest"]);
+		strictEqual(commandOf(root, "python-unittest"), undefined);
+	});
+
+	it("resolves python3 once on the worker PATH and refuses provisioning before execution", async () => {
+		const root = workspace({
+			"pyproject.toml": "[tool.pytest.ini_options]\n[tool.tox]\n",
+			"bin/python3": "#!/bin/sh\necho ran\n",
+		});
+		chmodSync(join(root, "bin/python3"), 0o755);
+		const previousPath = process.env.PATH;
+		const previousVenv = process.env.VIRTUAL_ENV;
+		process.chdir(root);
+		try {
+			process.env.PATH = join(root, "bin");
+			delete process.env.VIRTUAL_ENV;
+			const entry = discoverToolchainChecks(root).find((check) => check.id === "python-pytest");
+			deepStrictEqual(entry?.command, ["python3", "-m", "pytest"]);
+			strictEqual(entry?.provenance.interpreter, "python3");
+			deepStrictEqual(discoverToolchainChecks(root)[0], entry);
+			strictEqual((await verifyTool.run({ check: "python-pytest" })).kind, "ok");
+			// FL-2: the family word picks the direct runner over tox instead of refusing as ambiguous.
+			const family = await verifyTool.run({ check: "test" });
+			strictEqual(family.details?.check, "python-pytest", textOf(family));
+			writeFileSync(join(root, "uv.lock"), "version = 1\n");
+			const listed = await verifyTool.run({});
+			match(textOf(listed), /needs-provisioning.*uv sync/u);
+			const refused = await verifyTool.run({ check: "python-pytest", args: ["-q"] });
+			strictEqual(refused.kind, "error");
+			deepStrictEqual(refused.details?.judgement, {
+				execution: "unavailable",
+				validation: "not-run",
+				scientificValidity: "not established by this check",
+			});
+			match(textOf(refused), /other arguments or cwd cannot help/u);
+			// FL-2: the refusal names the locked command a bash fallback runs, never a bare interpreter.
+			match(
+				textOf(refused),
+				/With bash, run the project's locked command instead: uv run python -m pytest; never a bare python/u,
+			);
+			strictEqual(refused.details?.exitCode, undefined, "uv was never spawned");
+			strictEqual(refused.details?.unresolved, true, "an unavailable runner ran nothing, so no receipt seals it failed");
+			mkdirSync(join(root, ".venv"));
+			deepStrictEqual(commandOf(root, "python-pytest"), ["uv", "run", "--no-sync", "python", "-m", "pytest"]);
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+			if (previousVenv === undefined) delete process.env.VIRTUAL_ENV;
+			else process.env.VIRTUAL_ENV = previousVenv;
+		}
+	});
+
+	it("lists Makefile verification targets and the scripts CI runs, and skips setup steps", () => {
+		const root = workspace({
+			Makefile: "install:\n\tpip install .\ntest:\n\t@echo make-test-ran\nlint:\n\t@echo lint\n",
+			".github/workflows/gate.yml":
+				"on: push\njobs:\n  gate:\n    runs-on: ubuntu-latest\n    steps:\n      - run: uv sync\n      - name: Gate\n        run: sh scripts/gate.sh\n",
+			"scripts/gate.sh": "echo gate-ran\n",
+		});
+		deepStrictEqual(commandOf(root, "make-test"), ["make", "test"]);
+		deepStrictEqual(commandOf(root, "make-lint"), ["make", "lint"]);
+		strictEqual(commandOf(root, "make-install"), undefined);
+		deepStrictEqual(commandOf(root, "ci-gate"), ["sh", "scripts/gate.sh"]);
+		ok(!discoverToolchainChecks(root).some((check) => check.command[0] === "uv"));
+	});
+
+	it("runs a derived check through verify and resolves a family word when one check owns it", async () => {
+		const root = workspace({
+			".github/workflows/gate.yml": "jobs:\n  gate:\n    steps:\n      - run: sh scripts/gate.sh\n",
+			"scripts/gate.sh": "echo gate-ran\n",
+		});
+		process.chdir(root);
+		const listed = await verifyTool.run({});
+		strictEqual(listed.kind, "ok");
+		match(textOf(listed), /ci-gate/);
+		const ran = await verifyTool.run({ check: "ci-gate" });
+		strictEqual(ran.kind, "ok", textOf(ran));
+		match(textOf(ran), /gate-ran/);
+		strictEqual(ran.details?.check, "ci-gate");
+		const alias = await verifyTool.run({ check: "ci" });
+		strictEqual(alias.kind, "ok", textOf(alias));
+		match(textOf(alias), /gate-ran/);
+	});
+
+	it("never runs an undeclared check string", async () => {
+		const root = workspace({ "pyproject.toml": PYPROJECT, "tests/test_a.py": TEST_CASE });
+		process.chdir(root);
+		const marker = join(root, "ran");
+		const refused = await verifyTool.run({ check: `touch ${marker}` });
+		strictEqual(refused.kind, "error");
+		match(textOf(refused), /python-unittest/);
+		strictEqual(existsSync(marker), false);
+	});
+
+	it("names what it looked for when nothing is declared and points at bash", async () => {
+		const root = workspace({ "README.md": "# demo\n" });
+		process.chdir(root);
+		const result = await verifyTool.run({ check: "test" });
+		strictEqual(result.kind, "error");
+		doesNotMatch(textOf(result), /package\.json not found/);
+		match(textOf(result), /pyproject\.toml/);
+		match(textOf(result), /Makefile/);
+		match(textOf(result), /bash/);
+	});
+});
+
+describe("verify admission under headless autonomy", () => {
+	it("refuses an unprovisioned uv check without weakening bare uv admission", () => {
+		const root = workspace({ "pyproject.toml": PYPROJECT, "uv.lock": "version = 1\n", "tests/test_a.py": TEST_CASE });
+		strictEqual(admission(root, { check: "python-unittest" }, "yolo"), "allow");
+		strictEqual(admission(root, { check: "python-unittest" }, "default"), "allow");
+		const decision = createSafetyPolicyEngine({ cwd: root }).evaluate({
+			tool: "bash",
+			args: { command: "uv run python -m pytest" },
+		});
+		strictEqual(decision.execRecognition, "unrecognized", "#377 still requires --no-sync on executable uv pytest");
+	});
+
+	it("runs a package typecheck or lint at yolo and asks at default", () => {
+		const root = workspace({
+			"package.json": JSON.stringify({ scripts: { typecheck: "tsc --noEmit", lint: "biome check ." } }),
+		});
+		for (const check of ["typecheck", "lint"]) {
+			strictEqual(admission(root, { check }, "yolo"), "allow", check);
+			strictEqual(admission(root, { check }, "default"), "ask", check);
+		}
+	});
+
+	it("does not turn a listing or an undeclared id into a permission ask", () => {
+		const root = workspace({ "pyproject.toml": PYPROJECT, "tests/test_a.py": TEST_CASE });
+		strictEqual(admission(root, { check: "" }, "yolo"), "allow");
+		strictEqual(admission(root, {}, "default"), "allow");
+		strictEqual(admission(root, { check: "" }, "default"), "allow");
+		strictEqual(admission(root, { check: "pytest tests/test_a.py" }, "yolo"), "allow");
+		// A worker at default once had this denied and ended before seeing the id list.
+		strictEqual(admission(root, { check: "tests", args: ["-q"] }, "default"), "allow");
+	});
+
+	it("runs a synced uv project's pytest without an ask", () => {
+		const root = workspace({
+			"pyproject.toml": `${PYPROJECT}\n[dependency-groups]\ndev = ["pytest>=8"]\n`,
+			"uv.lock": "version = 1\n",
+			".venv/pyvenv.cfg": "",
+			"tests/test_a.py": TEST_CASE,
+		});
+		deepStrictEqual(commandOf(root, "python-pytest"), ["uv", "run", "--no-sync", "python", "-m", "pytest"]);
+		strictEqual(admission(root, { check: "python-pytest", args: ["tests/test_a.py", "-q"] }, "default"), "allow");
+	});
+
+	it("scans model-supplied arguments with the resolved command", () => {
+		const root = workspace({ "pyproject.toml": PYPROJECT, "tests/test_a.py": TEST_CASE });
+		const engine = createSafetyPolicyEngine({ cwd: root });
+		const hidden = engine.evaluate({ tool: "verify", args: { check: "python-unittest", args: ["$(touch x)"] } });
+		strictEqual(hidden.kind, "ask");
+		strictEqual(hidden.reasonCode, "verify-unrecognized-argv");
+		strictEqual(
+			engine.evaluate({ tool: "verify", args: { check: "python-unittest", args: '["$(touch x)"]' } }).kind,
+			"ask",
+			"the JSON-string argument shape accepted by verify has the same safety decision",
+		);
+		strictEqual(admission(root, { check: "python-unittest", args: ["tests.test_a"] }, "yolo"), "allow");
+		const destructive = engine.evaluate({
+			tool: "verify",
+			args: { check: "python-unittest", args: ["&&", "rm", "-rf", "/"] },
+		});
+		strictEqual(destructive.kind, "block");
+	});
+
+	it("scans package-script arguments after the declared script name", () => {
+		const root = workspace({ "package.json": JSON.stringify({ scripts: { test: "node --test" } }) });
+		strictEqual(admission(root, { check: "test", args: ["safe.test.js"] }, "yolo"), "allow");
+		const hidden = createSafetyPolicyEngine({ cwd: root }).evaluate({
+			tool: "verify",
+			args: { check: "test", args: ["$(touch x)"] },
+		});
+		strictEqual(hidden.kind, "ask");
+		strictEqual(hidden.reasonCode, "verify-unrecognized-argv");
+	});
+
+	it("uses a catalog check's execution cwd for relative secret reads", () => {
+		const root = workspace({
+			".env": "SECRET=value\n",
+			"nested/keep": "",
+			".pancode/verifiers.yaml": JSON.stringify({
+				version: 1,
+				checks: [
+					{
+						id: "read-env",
+						description: "Read env",
+						command: ["cat", "../.env"],
+						cwd: "nested",
+						timeoutMs: 30000,
+						tags: [],
+					},
+				],
+			}),
+		});
+		const decision = createSafetyPolicyEngine({ cwd: root }).evaluate({ tool: "verify", args: { check: "read-env" } });
+		strictEqual(decision.cwd, join(root, "nested"));
+		strictEqual(decision.kind, "block");
+		strictEqual(decision.reasonCode, "secret_path_bash");
+	});
+
+	it("ignores a model cwd that the derived runner does not execute in", () => {
+		const root = workspace({
+			"pyproject.toml": PYPROJECT,
+			"tests/test_a.py": TEST_CASE,
+			".env": "SECRET=value\n",
+			"other/keep": "",
+		});
+		const decision = createSafetyPolicyEngine({ cwd: root }).evaluate({
+			tool: "verify",
+			args: { check: "python-unittest", args: [".env"], cwd: "other" },
+		});
+		strictEqual(decision.cwd, root);
+		strictEqual(decision.kind, "block");
+		strictEqual(decision.reasonCode, "secret_path_bash");
+	});
+});

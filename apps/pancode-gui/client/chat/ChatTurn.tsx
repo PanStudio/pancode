@@ -1,0 +1,399 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * One exchange: the request, the response, and whatever the model did in between.
+ *
+ * The memo boundary is the point of the file. `groupTurns` guarantees that a turn whose items did
+ * not change keeps its object identity, and the comparator below turns that guarantee into render
+ * savings: a settled turn does not re-render while a later turn streams, does not re-render on the
+ * one-second clock, and does not re-render when a permission lands somewhere else in the
+ * conversation. Anything added to these props that changes identity on every delta throws that away,
+ * which is why `row` and `notices` are compared explicitly and permission changes are checked
+ * only for tool calls in this turn.
+ *
+ * Two truthfulness rules are enforced here rather than in CSS. A replayed turn has no `startedAt`
+ * because the host refuses to stamp history with the current wall clock, so the meta line says the
+ * time is not recorded instead of showing one. A replayed turn whose user item was never written
+ * still gets a request card that states the prompt is missing, because a response with no question
+ * above it reads as the model having spoken unprompted.
+ */
+
+import { memo } from "react";
+import type { Permission } from "../../contracts/permissions.js";
+import type { SessionSnapshot, TimelineItem, Turn } from "../../contracts/sessions.js";
+import type { Client } from "../api/client.js";
+import { formatClock, formatDuration, formatTime } from "../api/clock.js";
+import { StatusMark } from "../design/status.js";
+import { MarkdownContent } from "../render/Markdown.js";
+import { countRender } from "../render/render-probe.js";
+import { requestReport } from "../report/report-events.js";
+import { ActivityGroup } from "./ActivityGroup.js";
+import {
+	REPLAY_CHIP,
+	requestView,
+	responseAuthor,
+	responseText,
+	turnActivity,
+	turnAriaLabel,
+	turnStartedAt,
+} from "./chat-turn.js";
+import { turnOutcome } from "./composer-model.js";
+import { longRequestPreview } from "./conversation-outline-model.js";
+import type { HealthRow } from "./health.js";
+import {
+	isLive,
+	isWorking,
+	LIVE_GLYPHS,
+	LIVE_TONES,
+	type LiveStatus,
+	livePlaceholder,
+	liveStatus,
+} from "./live-status.js";
+import { MessageActions, TurnOutcome } from "./message-actions.js";
+import { isAwaitingAnswer } from "./permission-state.js";
+import { ReasoningDisclosure } from "./Reasoning.js";
+import { WorkerRunRecord } from "./RunRecordLine.js";
+import { TurnChanges } from "./TurnChanges.js";
+import { describeTool } from "./tool-presentation.js";
+import { type ChatSegment, type ChatTurn, sameTurnView } from "./turns.js";
+import "./chat-turn.css";
+import "./session-states.css";
+
+const NO_NOTICES: readonly HealthRow[] = [];
+
+export interface ChatTurnProps {
+	readonly turn: ChatTurn;
+	/** The `Turn` row for this turn, which carries the outcome. Absent until the turn starts. */
+	readonly row: Turn | undefined;
+	readonly client: Client;
+	readonly session: SessionSnapshot;
+	readonly pending: Permission | null;
+	/** `pending?.id ?? null`. The comparator reads the id, not the object, which is rebuilt per tick. */
+	readonly pendingPermissionId: string | null;
+	/** The shared second, or 0 for a settled turn so the tick cannot reach it. */
+	readonly nowMs: number;
+	/** The cancel mutation's in-flight flag; the contract has no session-level cancelling phase. */
+	readonly stopping: boolean;
+	/** Health facts that happened during this turn, rendered where they happened. */
+	readonly notices: readonly HealthRow[];
+	/** Compactions the session reported while this turn ran. */
+	readonly compactions: number;
+	readonly workspaceRoot: string | undefined;
+	/** Dispatched runs still in flight. Zero for a settled turn, so it never re-renders one. */
+	readonly liveWorkers: number;
+}
+
+function sameChatTurn(previous: ChatTurnProps, next: ChatTurnProps): boolean {
+	if (previous.row !== next.row) return false;
+	if (previous.liveWorkers !== next.liveWorkers) return false;
+	if (previous.notices !== next.notices) return false;
+	if (previous.compactions !== next.compactions) return false;
+	if (previous.stopping !== next.stopping) return false;
+	// A live turn only spins while its session is open.
+	if (!previous.turn.settled && previous.session.state !== next.session.state) return false;
+	// The live chip reads the current request, including its status and escalation facts.
+	if (!previous.turn.settled && previous.pending !== next.pending) return false;
+	// An anchored approval only reads the pending request for its own tool call. A request in
+	// another turn must not repaint every settled response in a long conversation.
+	if (previous.session.permissions !== next.session.permissions) {
+		for (const item of previous.turn.items) {
+			if (item.toolCallId === undefined) continue;
+			const before = previous.session.permissions.find(
+				(permission) => isAwaitingAnswer(permission) && permission.toolCallId === item.toolCallId,
+			);
+			const after = next.session.permissions.find(
+				(permission) => isAwaitingAnswer(permission) && permission.toolCallId === item.toolCallId,
+			);
+			if (before !== after) return false;
+		}
+	}
+	return sameTurnView(previous, next);
+}
+
+/** After this long a live turn names its running time beside what it is doing. */
+const LONG_TURN_MS = 45_000;
+/** After this long it also says that waiting is expected and how to end the turn. */
+const VERY_LONG_TURN_MS = 5 * 60_000;
+
+function LiveChip({ status, working }: { status: LiveStatus; working: boolean }) {
+	return (
+		<span className="live-chip" data-state={status.state}>
+			<StatusMark
+				live={working}
+				tone={LIVE_TONES[status.state]}
+				label={status.label}
+				{...(status.detail === null ? {} : { detail: status.detail })}
+			/>
+		</span>
+	);
+}
+
+export const ChatTurnView = memo(function ChatTurnView({
+	turn,
+	row,
+	client,
+	session,
+	pending,
+	nowMs,
+	stopping,
+	workspaceRoot,
+	liveWorkers,
+	compactions,
+}: ChatTurnProps) {
+	countRender(turn.settled ? "turn.settled" : "turn.live");
+	const reported = liveStatus(turn, row, pending, stopping, liveWorkers);
+	const last = turn.items.at(-1);
+	// The chip names the running call the way its row does ("Run python3 analyze.py"), not by tool id.
+	const described =
+		reported.state === "acting" && reported.detail !== null && last?.kind === "tool" && last.status === "in_progress"
+			? { ...reported, detail: describeTool(last, workspaceRoot) }
+			: reported;
+	const live = isLive(described) && !turn.settled;
+	const startedMs = row?.startedAt ? Date.parse(row.startedAt) : Number.NaN;
+	// A turn that has run a while shows how long, so a quiet stretch reads as work and not as a hang.
+	const runningMs = live && nowMs > 0 && Number.isFinite(startedMs) ? Math.max(0, nowMs - startedMs) : 0;
+	const status =
+		runningMs >= LONG_TURN_MS
+			? { ...described, detail: [described.detail, formatDuration(runningMs)].filter(Boolean).join(" · ") }
+			: described;
+	// A turn row stuck at "running" in a session that is no longer open is a record, not activity.
+	const working = live && isWorking(status.state) && (session.state === "open" || session.state === "starting");
+	const request = requestView(turn, row);
+	const author = responseAuthor(turn);
+	const startedAt = turnStartedAt(row);
+	const prompt = request.missing ? null : request.text;
+	const requestPreview = prompt === null ? null : longRequestPreview(prompt);
+	const response = responseText(turn);
+	return (
+		<article
+			className={`chat-turn${live ? " is-live" : " is-settled"}${turn.origin === "replay" ? " is-replay" : ""}`}
+			data-turn-id={turn.turnId}
+			aria-label={turnAriaLabel(turn, row)}
+			tabIndex={-1}
+		>
+			{/* The request is the operator's own words on a quiet ground. Who wrote it is announced, not
+			    printed; when and the copy action sit under it and surface on hover or focus. */}
+			<div className="chat-request">
+				<span className="sr-only">{request.heading}</span>
+				{/* The operator's own text is never reinterpreted as Markdown. */}
+				{requestPreview === null ? (
+					<p className={`chat-request__prompt${request.missing ? " is-missing" : ""}`}>{request.text}</p>
+				) : (
+					<details className="chat-request__long">
+						<summary>
+							<span className="chat-request__preview">{requestPreview}</span>
+							<span className="chat-request__expand">
+								<span className="chat-request__show">Read full request</span>
+								<span className="chat-request__hide">Collapse request</span>
+								<small>{request.text.length.toLocaleString()} characters</small>
+							</span>
+						</summary>
+						<p className="chat-request__full">{request.text}</p>
+					</details>
+				)}
+				<div className="chat-request__meta">
+					{request.replay ? <span className="chat-request__replay">{REPLAY_CHIP}</span> : null}
+					{row?.images ? (
+						<span className="chat-request__images">
+							{row.images} {row.images === 1 ? "image" : "images"} attached
+						</span>
+					) : null}
+					{row?.files ? (
+						<span className="chat-request__images">
+							{row.files} {row.files === 1 ? "file" : "files"} attached
+						</span>
+					) : null}
+					{startedAt === null ? (
+						<span className="chat-request__time">{formatTime(null)}</span>
+					) : (
+						<time className="chat-request__time" dateTime={startedAt} title={formatTime(startedAt)}>
+							{formatClock(startedAt)}
+						</time>
+					)}
+					<MessageActions
+						sessionId={session.id}
+						row="request"
+						requestText={prompt}
+						responseText={response}
+						status={row?.status ?? "running"}
+					/>
+				</div>
+			</div>
+			<div className="chat-response">
+				{/* PanCode is the default voice, so its name is announced rather than printed. A delegated
+				    worker is named on screen, and a live turn shows what it is doing. */}
+				{live || row === undefined || author.delegated ? (
+					<div className="chat-response__meta">
+						<span className={author.delegated ? "chat-response__who" : "sr-only"}>{author.name}</span>
+						{/* A settled turn states its outcome once, in the footer. */}
+						{live || row === undefined ? <LiveChip status={status} working={working} /> : null}
+					</div>
+				) : (
+					<span className="sr-only">{author.name}</span>
+				)}
+				<div className="chat-response__body">
+					{runningMs >= VERY_LONG_TURN_MS && working ? (
+						<p className="chat-response__long">
+							This is a long run. PanCode is still working. Use Stop to request that the current turn ends.
+						</p>
+					) : null}
+					{turn.segments.length === 0 && live ? (
+						<p className="chat-response__placeholder">
+							<span aria-hidden="true">{LIVE_GLYPHS[status.state]}</span> {livePlaceholder(status)}
+						</p>
+					) : null}
+					{segmentChunks(turn.segments).map((chunk, index) => {
+						const first = index * SEGMENT_CHUNK;
+						const liveIndex = live ? turn.segments.length - 1 : -1;
+						return (
+							<SegmentChunk
+								key={`chunk-${first}`}
+								segments={chunk}
+								first={first}
+								liveIndex={liveIndex >= first && liveIndex < first + chunk.length ? liveIndex : -1}
+								live={live}
+								client={client}
+								session={session}
+								workspaceRoot={workspaceRoot}
+								// Only a running call reads the clock; the rest skip the once-a-second tick.
+								nowMs={chunk.some((segment) => segment.kind === "activity" && segment.items.some(isRunningItem)) ? nowMs : 0}
+							/>
+						);
+					})}
+					{turn.settled ? <TurnChanges items={turn.items} workspaceRoot={workspaceRoot} /> : null}
+				</div>
+				{/* One quiet line closes the turn: its outcome, then what can be done with the response. */}
+				<div className="chat-response__footer">
+					{row !== undefined && row.status !== "running" ? (
+						<TurnOutcome
+							client={client}
+							outcome={turnOutcome(row, turnActivity(turn, compactions))}
+							formatClock={formatClock}
+							onReport={() => requestReport({ sessionId: session.id })}
+						/>
+					) : null}
+					<MessageActions
+						sessionId={session.id}
+						row="response"
+						requestText={prompt}
+						responseText={response}
+						status={row?.status ?? "running"}
+					/>
+				</div>
+			</div>
+		</article>
+	);
+}, sameChatTurn);
+
+function isRunningItem(item: TimelineItem): boolean {
+	return item.status === "in_progress";
+}
+
+/**
+ * Segments per chunk. A long answer is hundreds of segments in one live turn, and without chunks every
+ * streamed delta reconciled each of them, and the browser placed and visibility-checked each one as
+ * its own grid item. A chunk that holds only finished segments skips its render and, off screen, its
+ * layout and paint as one box. Segment `i` always lives in chunk `i / SEGMENT_CHUNK`, so a segment
+ * never moves to another parent, and nothing remounts, when it finishes.
+ */
+const SEGMENT_CHUNK = 16;
+
+function segmentChunks(segments: readonly ChatSegment[]): ChatSegment[][] {
+	const chunks: ChatSegment[][] = [];
+	for (let index = 0; index < segments.length; index += SEGMENT_CHUNK)
+		chunks.push(segments.slice(index, index + SEGMENT_CHUNK));
+	return chunks;
+}
+
+interface SegmentChunkProps {
+	readonly segments: readonly ChatSegment[];
+	/** The index of the chunk's first segment in the turn. */
+	readonly first: number;
+	/** The index of the turn's growing segment when this chunk holds it, otherwise -1. */
+	readonly liveIndex: number;
+	/** The turn is live: diagrams wait for it to settle. */
+	readonly live: boolean;
+	readonly client: Client;
+	readonly session: SessionSnapshot;
+	readonly workspaceRoot: string | undefined;
+	readonly nowMs: number;
+}
+
+/** Live turns regroup their segments on every delta, so a segment is the same when what it renders is. */
+function sameSegment(previous: ChatSegment | undefined, next: ChatSegment | undefined): boolean {
+	if (previous === next) return true;
+	if (previous === undefined || next === undefined || previous.kind !== next.kind) return false;
+	if (previous.kind === "activity" && next.kind === "activity")
+		return previous.items.length === next.items.length && previous.items.every((item, i) => item === next.items[i]);
+	return "item" in previous && "item" in next && previous.item === next.item;
+}
+
+/**
+ * The session reaches the rows only through its id and its approval requests (ActivityGroup's own
+ * comparator reads nothing else), so a chunk skips its render while those and its segments hold.
+ */
+function sameSegmentChunk(previous: SegmentChunkProps, next: SegmentChunkProps): boolean {
+	return (
+		previous.first === next.first &&
+		previous.liveIndex === next.liveIndex &&
+		previous.live === next.live &&
+		previous.client === next.client &&
+		previous.workspaceRoot === next.workspaceRoot &&
+		previous.nowMs === next.nowMs &&
+		previous.session.id === next.session.id &&
+		previous.session.permissions === next.session.permissions &&
+		previous.segments.length === next.segments.length &&
+		previous.segments.every((segment, index) => sameSegment(segment, next.segments[index]))
+	);
+}
+
+const SegmentChunk = memo(function SegmentChunk({
+	segments,
+	first,
+	liveIndex,
+	live,
+	client,
+	session,
+	workspaceRoot,
+	nowMs,
+}: SegmentChunkProps) {
+	return (
+		<div className="chat-response__chunk">
+			{segments.map((segment, offset) => {
+				const index = first + offset;
+				const settled = index !== liveIndex;
+				switch (segment.kind) {
+					case "response":
+						return (
+							<div key={segment.item.id}>
+								<MarkdownContent source={segment.item.text} complete={settled} deferDiagrams={live} />
+								<WorkerRunRecord client={client} sessionId={session.id} item={segment.item} />
+							</div>
+						);
+					case "notice":
+						return (
+							<p key={segment.item.id} className="chat-notice" role="note">
+								{segment.item.text}
+							</p>
+						);
+					case "reasoning":
+						return <ReasoningDisclosure key={segment.item.id} item={segment.item} />;
+					default:
+						return (
+							<ActivityGroup
+								key={segment.items[0]?.id ?? `activity-${index}`}
+								items={segment.items}
+								settled={settled}
+								client={client}
+								session={session}
+								workspaceRoot={workspaceRoot}
+								nowMs={segment.items.some(isRunningItem) ? nowMs : 0}
+							/>
+						);
+				}
+			})}
+		</div>
+	);
+}, sameSegmentChunk);
+
+export { NO_NOTICES };

@@ -1,0 +1,374 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Shutdown coordinator implementing the four-phase sequence from spec §17:
+ *   DRAIN     stop accepting new input / dispatch
+ *   TERMINATE kill active workers
+ *   PERSIST   atomic writes of domain state
+ *   EXIT      tear down TUI and process.exit
+ *
+ * Each registered hook runs under a per-hook timeout so a single slow or
+ * hanging hook cannot block the TUI from exiting. The cap is 500ms by
+ * default and can be overridden via PANCODE_SHUTDOWN_HOOK_MS for tests.
+ * Timed-out hooks are logged and shutdown continues to the next hook.
+ *
+ * Every diagnostic here is written after the TUI has stopped: the interactive
+ * controller stops the terminal before it calls shutdown(), and the signal path
+ * stops it from a drain hook, which precedes persist. The renderer is gone, so
+ * a diagnostic goes to stderr and is wrapped to the terminal width so it does
+ * not overrun the frame the TUI just handed back.
+ */
+
+import { wrapTextWithAnsi } from "../engine/text-wrap.js";
+import { telemetryHub } from "./telemetry/hub.js";
+import { setTerminationPhase, type TerminationPhase, terminationPhase } from "./termination-phase.js";
+import { clampTimerDelayMs } from "./timers.js";
+
+export type { TerminationPhase };
+
+export type Hook = (signal: AbortSignal) => void | Promise<void>;
+interface RegisteredHook {
+	run: Hook;
+	/** Internal allowance for an owned resource with a longer escalation window. */
+	timeoutMs?: number;
+}
+
+function registeredHook(hook: Hook, options?: { timeoutMs: number }): RegisteredHook {
+	if (
+		options &&
+		(!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0 || options.timeoutMs > 2 ** 31 - 1)
+	) {
+		throw new RangeError("shutdown hook timeout must be a positive 32-bit timer delay");
+	}
+	return { run: hook, ...options };
+}
+
+/** Wall-clock budget per hook and per domain.stop() call. */
+export const DEFAULT_SHUTDOWN_HOOK_MS = 500;
+
+const SIGNAL_EXIT_CODES: Partial<Record<NodeJS.Signals, number>> = {
+	SIGHUP: 129,
+	SIGINT: 130,
+	SIGTERM: 143,
+};
+
+/**
+ * Emit a shutdown notice on stderr, wrapped to the terminal width when stderr
+ * or stdout is a TTY. Off a TTY the text goes out unwrapped, since a log
+ * consumer wants one record per line.
+ */
+export function writeShutdownNotice(text: string): void {
+	const width = process.stderr.columns ?? process.stdout.columns;
+	// Stock wrapTextWithAnsi at width 0 or below returns one-character shards, so a
+	// non-positive or NaN columns value writes the text unwrapped.
+	const lines = width === undefined || !(width >= 1) ? [text] : wrapTextWithAnsi(text, width);
+	process.stderr.write(`${lines.join("\n")}\n`);
+}
+
+export function resolveShutdownHookBudgetMs(): number {
+	const raw = process.env.PANCODE_SHUTDOWN_HOOK_MS;
+	if (raw === undefined) return DEFAULT_SHUTDOWN_HOOK_MS;
+	const parsed = Number.parseInt(raw, 10);
+	if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SHUTDOWN_HOOK_MS;
+	return parsed;
+}
+
+/**
+ * Run `op` with a wall-clock cap. Resolves true when `op` completes within
+ * the budget, false when the cap fires first. Errors from `op` are swallowed
+ * and reported via `onError` so a rejecting hook cannot propagate past the
+ * shutdown coordinator.
+ */
+export class ShutdownBudgetExceeded extends Error {
+	constructor(public readonly budgetMs: number) {
+		super(`Shutdown budget exceeded after ${budgetMs}ms`);
+		this.name = "ShutdownBudgetExceeded";
+	}
+}
+
+export async function runWithBudget(
+	op: Hook,
+	budgetMs: number,
+	onError?: (err: unknown) => void,
+	parentSignal?: AbortSignal,
+): Promise<boolean> {
+	const controller = new AbortController();
+	const forwardAbort = (): void => controller.abort(parentSignal?.reason);
+	if (parentSignal?.aborted) forwardAbort();
+	else parentSignal?.addEventListener("abort", forwardAbort, { once: true });
+	let timer: NodeJS.Timeout | undefined;
+	const timeout = new Promise<"timeout">((resolve) => {
+		timer = setTimeout(() => {
+			controller.abort(new ShutdownBudgetExceeded(budgetMs));
+			resolve("timeout");
+		}, clampTimerDelayMs(budgetMs));
+	});
+	try {
+		const done = Promise.resolve()
+			.then(() => op(controller.signal))
+			.then(() => "done" as const)
+			.catch((err) => {
+				onError?.(err);
+				return "done" as const;
+			});
+		return (await Promise.race([done, timeout])) === "done";
+	} finally {
+		if (timer) clearTimeout(timer);
+		parentSignal?.removeEventListener("abort", forwardAbort);
+	}
+}
+
+class TerminationCoordinator {
+	private readonly drainHooks: RegisteredHook[] = [];
+	private readonly terminateHooks: RegisteredHook[] = [];
+	private readonly persistHooks: RegisteredHook[] = [];
+	private exitCode = 0;
+	private started = false;
+	private shutdownPromise: Promise<void> | undefined;
+	private drained = false;
+	private readonly pendingNotices: string[] = [];
+	private signalHandler: ((signal: NodeJS.Signals) => void) | null = null;
+	private exitHandoff: (() => Promise<number>) | undefined;
+	private readonly forceExitHooks = new Set<() => void>();
+	private readonly signalExplainers = new Set<() => string | null>();
+
+	getPhase(): TerminationPhase {
+		return terminationPhase();
+	}
+
+	/**
+	 * The process exit code this shutdown will use. Set before any hook runs,
+	 * so a hook sealing terminal accounting records the same status the process
+	 * reports (130 for SIGINT, 143 for SIGTERM).
+	 */
+	getExitCode(): number {
+		return this.exitCode;
+	}
+
+	onDrain(hook: Hook, options?: { timeoutMs: number }): void {
+		this.drainHooks.push(registeredHook(hook, options));
+	}
+	onTerminate(hook: Hook, options?: { timeoutMs: number }): () => void {
+		const registration = registeredHook(hook, options);
+		this.terminateHooks.push(registration);
+		return () => {
+			const index = this.terminateHooks.indexOf(registration);
+			if (index !== -1) this.terminateHooks.splice(index, 1);
+		};
+	}
+	onForceExit(hook: () => void): () => void {
+		this.forceExitHooks.add(hook);
+		return () => {
+			this.forceExitHooks.delete(hook);
+		};
+	}
+
+	onPersist(hook: Hook, options?: { timeoutMs: number }): void {
+		this.persistHooks.push(registeredHook(hook, options));
+	}
+
+	/** True once /restart armed a handoff: this process lives on as the child's guardian after persist. */
+	hasExitHandoff(): boolean {
+		return this.exitHandoff !== undefined;
+	}
+
+	/** A foreground guardian runs after bounded resource teardown, for the child's lifetime. */
+	setExitHandoff(handoff: () => Promise<number>): void {
+		if (this.started || this.exitHandoff) throw new Error("shutdown handoff is already armed or started");
+		this.exitHandoff = handoff;
+	}
+
+	shutdown(code = 0): Promise<void> {
+		if (this.shutdownPromise) return this.shutdownPromise;
+		let resolve!: () => void;
+		let reject!: (error: unknown) => void;
+		this.shutdownPromise = new Promise<void>((done, failed) => {
+			resolve = done;
+			reject = failed;
+		});
+		void this.performShutdown(code).then(resolve, reject);
+		return this.shutdownPromise;
+	}
+
+	private async performShutdown(code: number): Promise<void> {
+		this.started = true;
+		this.exitCode = code;
+		const bus = telemetryHub();
+		const debug = process.env.PANCODE_DEBUG_SHUTDOWN === "1";
+		const budgetMs = resolveShutdownHookBudgetMs();
+		const mark = debug ? process.hrtime.bigint() : 0n;
+		const log = (msg: string): void => {
+			if (!debug) return;
+			const ms = Number(process.hrtime.bigint() - mark) / 1e6;
+			process.stderr.write(`[pancode:shutdown] +${ms.toFixed(1)}ms ${msg}\n`);
+		};
+
+		setTerminationPhase("draining");
+		bus.emit("shutdown.requested", { phase: "draining" });
+		log("drain:start");
+		await this.runHooks(this.drainHooks, "drain", budgetMs, log);
+		log("drain:end");
+		this.drained = true;
+		this.flushNotices();
+		bus.emit("shutdown.drained", {});
+
+		setTerminationPhase("terminating");
+		log("terminate:start");
+		await this.runHooks(this.terminateHooks, "terminate", budgetMs, log);
+		log("terminate:end");
+		bus.emit("shutdown.terminated", {});
+
+		setTerminationPhase("persisting");
+		log("persist:start");
+		await this.runHooks(this.persistHooks, "persist", budgetMs, log);
+		log("persist:end");
+		bus.emit("shutdown.persisted", {});
+
+		setTerminationPhase("exiting");
+		bus.emit("session.ended", { exitCode: this.exitCode });
+		if (this.exitHandoff) {
+			// The restarted child owns interactive signals. The handoff supplies the
+			// guardian's forwarding handlers after these shutdown handlers retire.
+			if (this.signalHandler)
+				for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.off(signal, this.signalHandler);
+			try {
+				this.exitCode = await this.exitHandoff();
+			} catch (error) {
+				writeShutdownNotice(`Shutdown handoff failed: ${error instanceof Error ? error.message : String(error)}`);
+				this.exitCode = 1;
+			}
+		}
+		log("process.exit");
+		process.exit(this.exitCode);
+	}
+
+	private async runHooks(
+		hooks: RegisteredHook[],
+		phase: string,
+		defaultBudgetMs: number,
+		log: (msg: string) => void,
+	): Promise<void> {
+		// A cleanup can unregister itself without shifting the remaining phase work.
+		const snapshot = [...hooks];
+		for (let i = 0; i < snapshot.length; i++) {
+			const hook = snapshot[i];
+			if (!hook) continue;
+			const budgetMs = hook.timeoutMs ?? defaultBudgetMs;
+			const t0 = process.hrtime.bigint();
+			const completed = await runWithBudget(hook.run, budgetMs, (err) => {
+				const message = err instanceof Error ? err.message : String(err);
+				writeShutdownNotice(`[pancode:termination] ${phase}[${i}] failed: ${message}`);
+				if (err instanceof Error && err.stack) log(err.stack);
+			});
+			const dt = Number(process.hrtime.bigint() - t0) / 1e6;
+			if (!completed) {
+				writeShutdownNotice(`[pancode:termination] ${phase}[${i}] exceeded ${budgetMs}ms budget; shutdown continues`);
+			}
+			log(`  ${phase}[${i}] ${dt.toFixed(1)}ms${completed ? "" : " (timed out)"}`);
+		}
+	}
+
+	/**
+	 * A SIGTERM another process sent on purpose can say why: `session terminate` writes its request,
+	 * then signals, and the signal outruns the heartbeat that would have printed who asked. The first
+	 * explainer with an answer replaces the generic line.
+	 */
+	explainSignal(explain: () => string | null): () => void {
+		this.signalExplainers.add(explain);
+		return () => {
+			this.signalExplainers.delete(explain);
+		};
+	}
+
+	private signalNotice(signal: NodeJS.Signals): string {
+		if (signal === "SIGTERM")
+			for (const explain of this.signalExplainers) {
+				try {
+					const text = explain();
+					if (text) return text;
+				} catch {
+					/* An unreadable reason falls back to naming the signal. */
+				}
+			}
+		return `PanCode: received ${signal}, shutting down...`;
+	}
+
+	/**
+	 * SIGHUP is here for the same reason as SIGTERM. Without a listener Node
+	 * takes its default action and the process dies with no shutdown at all,
+	 * which on a TUI session means the terminal is never given back. Exit codes
+	 * follow the 128+signal convention.
+	 */
+	installSignalHandlers(): void {
+		if (this.signalHandler) return;
+		const handler = (signal: NodeJS.Signals): void => {
+			if (this.started) {
+				for (const hook of this.forceExitHooks) {
+					try {
+						hook();
+					} catch {
+						/* Forced exit must proceed even when emergency persistence fails. */
+					}
+				}
+				process.exit(SIGNAL_EXIT_CODES[signal] ?? 143);
+			}
+			this.notice(this.signalNotice(signal));
+			void this.shutdown(SIGNAL_EXIT_CODES[signal] ?? 143);
+		};
+		this.signalHandler = handler;
+		process.on("SIGINT", handler);
+		process.once("SIGTERM", handler);
+		process.once("SIGHUP", handler);
+	}
+
+	/**
+	 * Report something the operator should read after the process is gone,
+	 * such as which signal ended it. Nothing here knows whether a TUI is on
+	 * screen, but it does know that the terminal teardown is a drain hook: so
+	 * until drain has finished the notice is held, and the moment it has, the
+	 * notice goes to the terminal the TUI just handed back. Written straight
+	 * away once drain is over, which is the case for a re-armed SIGINT arriving
+	 * mid-shutdown. A second SIGTERM or SIGHUP inside the drain window takes
+	 * Node's default action and the held notice dies with the process; that
+	 * window is bounded by the per-hook budget and the shell reports the kill.
+	 */
+	notice(text: string): void {
+		if (this.drained) {
+			writeShutdownNotice(text);
+			return;
+		}
+		this.pendingNotices.push(text);
+	}
+
+	private flushNotices(): void {
+		for (const text of this.pendingNotices.splice(0)) writeShutdownNotice(text);
+	}
+
+	/**
+	 * Hand SIGINT to a foreground owner and return the call that takes it back.
+	 *
+	 * Boot arms this coordinator before any interactive surface exists, and Node
+	 * runs signal listeners in registration order, so a TUI that merely added its
+	 * own listener would lose every first press to a shutdown already underway.
+	 * One owner holds the interrupt at a time and the transfer is explicit.
+	 * SIGTERM is not part of the handover; it is never an interactive gesture.
+	 */
+	releaseInterruptOwnership(): () => void {
+		const handler = this.signalHandler;
+		if (!handler) return () => {};
+		process.off("SIGINT", handler);
+		let restored = false;
+		return () => {
+			if (restored) return;
+			restored = true;
+			process.on("SIGINT", handler);
+		};
+	}
+}
+
+let coordinator: TerminationCoordinator | null = null;
+
+export function getTerminationCoordinator(): TerminationCoordinator {
+	if (!coordinator) coordinator = new TerminationCoordinator();
+	return coordinator;
+}

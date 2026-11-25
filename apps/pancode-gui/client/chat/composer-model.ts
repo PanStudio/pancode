@@ -1,0 +1,1238 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Composer and message-action policy for the chat surface.
+ *
+ * Everything the composer decides lives here as a pure function or a plain
+ * observable store: the draft itself, the submit decision, the Enter policy,
+ * the mid-turn queue projection, the per-message action offers and the outcome
+ * footer projection. The app has no DOM test environment, so a decision made
+ * inside a component is a decision nothing checks. `Composer.tsx` and
+ * `message-actions.tsx` stay declarative and call into this module.
+ *
+ * Nothing here imports React, a stylesheet or the API client, which is what
+ * lets `tests/chat-composer.test.ts` run it under plain node:test.
+ */
+
+import { usageDisplay, usageKnownAmount } from "../../../../src/core/views/usage-words.js";
+import type { AgentCapabilities } from "../../contracts/capabilities.js";
+import { QUEUE_MAX_ENTRIES, STEER_TEXT_MAX_BYTES } from "../../contracts/runtime.js";
+import type { SessionSnapshot, Turn, Usage } from "../../contracts/sessions.js";
+import type {
+	CommandCatalog,
+	QueueEditRequest,
+	QueueEditResult,
+	QueueSnapshot,
+	SteerMode,
+} from "../../contracts/steering.js";
+import { formatDuration } from "../api/clock.js";
+import { DRAFT_INDEX, DRAFT_KEY, MAX_DRAFT_STORES, storedDraftIds, stores } from "./draft-registry.js";
+import { PROMPT_TEXT_MAX_CHARACTERS } from "./prompt-limit.js";
+import { isSlashAlias } from "./slash-model.js";
+import type { TurnEnding } from "./turns.js";
+import { endingSentence, isStoppedEarly, turnEnding } from "./turns.js";
+
+export { discardDraftStore, MAX_DRAFT_STORES, resetDraftStores } from "./draft-registry.js";
+export { PROMPT_TEXT_MAX_CHARACTERS };
+/** The mode the engine itself defaults to when a steer carries none. */
+export const DEFAULT_STEER_MODE: SteerMode = "next-slot";
+
+// ---------------------------------------------------------------------------
+// The draft store
+// ---------------------------------------------------------------------------
+
+export interface Draft {
+	readonly text: string;
+	/** Which queue a mid-turn send should ride. Ignored while no turn is running. */
+	readonly mode: SteerMode;
+	/**
+	 * The `Idempotency-Key` for whatever this draft becomes. It is minted once
+	 * per draft and survives an unchanged retry. Editing after a send has begun
+	 * mints a new key so changed text cannot claim the earlier request's result.
+	 */
+	readonly key: string;
+}
+
+interface SavedDraft {
+	readonly draft: Draft;
+	readonly submittedKey: string | null;
+}
+
+function randomKey(): string {
+	return crypto.randomUUID();
+}
+
+/**
+ * The draft, held outside the component tree. The timeline re-renders on every
+ * streamed delta; a draft that lived in the same component re-rendered the
+ * textarea with it, which is the single largest perceived-speed cost in the
+ * chat. Subscribers here are only the composer.
+ */
+export class DraftStore {
+	readonly #mint: () => string;
+	readonly #listeners = new Set<() => void>();
+	#state: Draft;
+	#submittedKey: string | null = null;
+	#restoredSubmission = false;
+
+	constructor(mint: () => string = randomKey, saved?: SavedDraft) {
+		this.#mint = mint;
+		this.#state = saved?.draft ?? { text: "", mode: DEFAULT_STEER_MODE, key: mint() };
+		this.#submittedKey = saved?.submittedKey ?? null;
+		this.#restoredSubmission = this.#submittedKey !== null;
+	}
+
+	readonly snapshot = (): Draft => this.#state;
+	readonly submittedKey = (): string | null => this.#submittedKey;
+	readonly uncertainSubmission = (): boolean => this.#restoredSubmission && this.#submittedKey === this.#state.key;
+
+	readonly subscribe = (listener: () => void): (() => void) => {
+		this.#listeners.add(listener);
+		return () => {
+			this.#listeners.delete(listener);
+		};
+	};
+
+	/** Typing, and the retry and starter-prompt fills. Edits after a send get a new key. */
+	write(text: string): void {
+		if (text === this.#state.text) return;
+		if (this.#submittedKey === this.#state.key) this.#restoredSubmission = false;
+		this.#commit({ ...this.#state, text, key: this.#submittedKey === this.#state.key ? this.#mint() : this.#state.key });
+	}
+
+	chooseMode(mode: SteerMode): void {
+		if (mode === this.#state.mode) return;
+		if (this.#submittedKey === this.#state.key) this.#restoredSubmission = false;
+		this.#commit({ ...this.#state, mode, key: this.#submittedKey === this.#state.key ? this.#mint() : this.#state.key });
+	}
+
+	/** Attachment edits after an attempted send change its body and therefore its request identity. */
+	attachmentsChanged(): void {
+		if (this.#submittedKey !== this.#state.key) return;
+		this.#restoredSubmission = false;
+		this.#commit({ ...this.#state, key: this.#mint() });
+	}
+
+	/** An unchanged retry keeps this key; editing after a send starts a new request. */
+	markSubmitted(sent: Draft): void {
+		if (this.#state.key === sent.key) {
+			this.#submittedKey = sent.key;
+			this.#notify();
+		}
+	}
+
+	/** A cleared draft is a new message. */
+	clear(): void {
+		this.#submittedKey = null;
+		this.#restoredSubmission = false;
+		this.#commit({ text: "", mode: this.#state.mode, key: this.#mint() });
+	}
+
+	/** Acknowledging a send must never erase text typed while the request was in flight. */
+	acknowledge(sent: Draft): void {
+		if (this.#submittedKey === sent.key) this.#submittedKey = null;
+		this.#restoredSubmission = false;
+		if (this.#state.key === sent.key && this.#state.text === sent.text && this.#state.mode === sent.mode) {
+			this.clear();
+			return;
+		}
+		// Typing after the submitted text is the common case. Keep only the new
+		// suffix; if the earlier text was edited, leave it intact for review.
+		const text =
+			this.#state.text !== sent.text && this.#state.text.startsWith(sent.text)
+				? this.#state.text.slice(sent.text.length).trimStart()
+				: this.#state.text;
+		// The remaining draft is a new request. Reusing the acknowledged key would
+		// make the server return the previous result instead of sending it.
+		this.#commit({ ...this.#state, text, key: this.#state.key === sent.key ? this.#mint() : this.#state.key });
+	}
+
+	/** A definite refusal kept no message, so the same text may be sent as a new request. */
+	refuse(sent: Draft): void {
+		if (this.#submittedKey !== sent.key) return;
+		this.#submittedKey = null;
+		this.#restoredSubmission = false;
+		if (this.#state.key === sent.key) this.#commit({ ...this.#state, key: this.#mint() });
+		else this.#notify();
+	}
+
+	#commit(next: Draft): void {
+		this.#state = next;
+		this.#notify();
+	}
+
+	#notify(): void {
+		for (const listener of this.#listeners) listener();
+	}
+}
+
+function savedDraft(id: string): SavedDraft | undefined {
+	try {
+		const raw = sessionStorage.getItem(`${DRAFT_KEY}${id}`);
+		if (!raw) return;
+		const value: unknown = JSON.parse(raw);
+		if (typeof value !== "object" || value === null) return;
+		const draft = (value as { draft?: unknown }).draft;
+		const submittedKey = (value as { submittedKey?: unknown }).submittedKey;
+		if (typeof draft !== "object" || draft === null) return;
+		const fields = draft as Partial<Draft>;
+		if (
+			typeof fields.text !== "string" ||
+			typeof fields.key !== "string" ||
+			!/^[!-~]{1,128}$/.test(fields.key) ||
+			(fields.mode !== "next-slot" && fields.mode !== "end-of-turn")
+		)
+			return;
+		return {
+			draft: { text: fields.text, mode: fields.mode, key: fields.key },
+			submittedKey: submittedKey === fields.key ? fields.key : null,
+		};
+	} catch {
+		return;
+	}
+}
+
+function persistDraft(id: string, store: DraftStore): void {
+	try {
+		const draft = store.snapshot();
+		const key = `${DRAFT_KEY}${id}`;
+		const index = storedDraftIds();
+		if (draft.text === "") {
+			sessionStorage.removeItem(key);
+			sessionStorage.setItem(DRAFT_INDEX, JSON.stringify(index.filter((entry) => entry !== id)));
+			return;
+		}
+		sessionStorage.setItem(
+			key,
+			JSON.stringify({ draft, submittedKey: store.submittedKey() === draft.key ? draft.key : null }),
+		);
+		if (index.includes(id)) return;
+		index.push(id);
+		while (index.length > MAX_DRAFT_STORES) {
+			const oldest = index.shift();
+			if (oldest) sessionStorage.removeItem(`${DRAFT_KEY}${oldest}`);
+		}
+		sessionStorage.setItem(DRAFT_INDEX, JSON.stringify(index));
+	} catch {
+		// The draft still lives in memory when browser storage is unavailable or full.
+	}
+}
+
+export function draftStore(id: string): DraftStore {
+	let store = stores.get(id);
+	if (!store) {
+		if (stores.size >= MAX_DRAFT_STORES) {
+			const oldest = stores.keys().next().value;
+			if (oldest !== undefined) stores.delete(oldest);
+		}
+		const created = new DraftStore(randomKey, savedDraft(id));
+		created.subscribe(() => persistDraft(id, created));
+		store = created;
+	}
+	stores.delete(id);
+	stores.set(id, store);
+	return store;
+}
+
+// ---------------------------------------------------------------------------
+// What the agent announced
+// ---------------------------------------------------------------------------
+
+export interface SteeringAffordances {
+	/** POST /steer will be served. `steering.main` is false when the build has no steer queue. */
+	readonly steer: boolean;
+	/** The modes the engine named, filtered to the two this app knows how to send. */
+	readonly modes: readonly SteerMode[];
+	/** POST /interrupt will be served. */
+	readonly interrupt: boolean;
+	/** GET /queue and POST /queue/clear will be served. */
+	readonly queue: boolean;
+	/** POST /dispatch/steer will be served. */
+	readonly dispatch: boolean;
+}
+
+export const NO_STEERING: SteeringAffordances = {
+	steer: false,
+	modes: [],
+	interrupt: false,
+	queue: false,
+	dispatch: false,
+};
+
+const KNOWN_MODES: readonly SteerMode[] = ["next-slot", "end-of-turn"];
+
+/**
+ * Projects `GET /capabilities` onto the four controls this track offers. Every
+ * steering route answers 409 when the agent announced no `steering` member at
+ * all, so an absent capability hides the control rather than letting the
+ * operator press something that refuses.
+ */
+export function steeringAffordances(capabilities: AgentCapabilities | null | undefined): SteeringAffordances {
+	const steering = capabilities?.steering;
+	if (steering === undefined) return NO_STEERING;
+	const modes = KNOWN_MODES.filter((mode) => steering.modes.includes(mode));
+	return {
+		steer: steering.main && modes.length > 0,
+		modes,
+		interrupt: steering.interrupt,
+		queue: true,
+		dispatch: steering.dispatch,
+	};
+}
+
+export interface SteerModeOffer {
+	readonly mode: SteerMode;
+	readonly label: string;
+	/** One word for the switch beside Send on a narrow composer; `label` stays the accessible name. */
+	readonly short: string;
+	readonly lands: string;
+}
+
+/**
+ * The two modes are not interchangeable and the difference is not obvious from
+ * their names, so the surface names the consequence rather than the queue.
+ */
+const MODE_COPY: Readonly<Record<SteerMode, Omit<SteerModeOffer, "mode">>> = {
+	"next-slot": { label: "Now", short: "Now", lands: "Lands between tool calls, while this turn is still running." },
+	"end-of-turn": {
+		label: "After this turn",
+		short: "After",
+		lands: "Waits in the follow-up queue until the whole turn has settled.",
+	},
+};
+
+export function steerModeOffers(affordances: SteeringAffordances): readonly SteerModeOffer[] {
+	return affordances.modes.map((mode) => ({ mode, ...MODE_COPY[mode] }));
+}
+
+// ---------------------------------------------------------------------------
+// The submit decision
+// ---------------------------------------------------------------------------
+
+export type SubmitIntent =
+	| { readonly kind: "prompt"; readonly text: string; readonly idempotencyKey: string }
+	| { readonly kind: "steer"; readonly text: string; readonly mode: SteerMode; readonly idempotencyKey: string }
+	| {
+			readonly kind: "shell";
+			readonly command: string;
+			readonly excludeFromContext: boolean;
+			readonly idempotencyKey: string;
+	  }
+	| { readonly kind: "blocked"; readonly reason: string };
+
+export interface ComposerSituation {
+	readonly sessionState: SessionSnapshot["state"];
+	readonly turnRunning: boolean;
+	/** A send this composer already put on the wire and has not settled. */
+	readonly sending: boolean;
+	/**
+	 * That send could not reach the server: `offline` while the browser has no network and the send waits for it,
+	 * `retrying` while it tries again after a request that never arrived. Either way it goes by itself, once.
+	 */
+	readonly unreached?: "offline" | "retrying";
+	/** A retained stop or close must settle before the session accepts another command. */
+	readonly sessionControl?: "sending" | "unresolved";
+	readonly steering: SteeringAffordances;
+	/** Absent when the agent's capability answer is available. */
+	readonly steeringUnavailable?: "checking" | "failed";
+	/** The agent announced the operator shell line, so a draft that opens with `!` runs instead of being sent. */
+	readonly shell?: boolean;
+	/** The label of the other window that controls this task; this one only views it until it takes control. */
+	readonly viewing?: string;
+	/**
+	 * `slashNotice`'s warning for a `/name` the session does not serve. The child refuses that line,
+	 * so the composer holds it rather than warning and sending it anyway.
+	 */
+	readonly unknownSlash?: string;
+}
+
+/** Why a viewing window's composer takes nothing: the server refuses every message from a window without control. */
+export const viewingReason = (controller: string) =>
+	`${controller} controls this task. Take control to send from this window.`;
+
+export interface ShellLine {
+	readonly command: string;
+	/** `!!`: the output is recorded and kept out of PanCode's context. */
+	readonly excludeFromContext: boolean;
+}
+
+/** The terminal's rule: a draft that opens with `!` is a shell line, and `!!` keeps its output from PanCode. */
+export function shellLine(text: string): ShellLine | null {
+	const trimmed = text.trim();
+	if (!trimmed.startsWith("!")) return null;
+	const excludeFromContext = trimmed.startsWith("!!");
+	return { command: trimmed.slice(excludeFromContext ? 2 : 1).trim(), excludeFromContext };
+}
+
+/** Says what Enter will do before it does it, because a shell line runs as the operator and not through PanCode. */
+export function shellNotice(text: string, shell: boolean): string | null {
+	const line = shell ? shellLine(text) : null;
+	if (line === null) return null;
+	return line.excludeFromContext
+		? "Runs in this task's shell as you. The output is recorded and kept out of PanCode's context."
+		: "Runs in this task's shell as you. PanCode sees the command and its output. Start with !! to keep the output out of its context.";
+}
+
+/** A shell line runs as the operator and carries no attachments. */
+export function shellBlock(kind: SubmitIntent["kind"], count: number): string | null {
+	return kind === "shell" && count > 0
+		? "A shell line takes no attachments. Remove them, or send a message instead."
+		: null;
+}
+
+/** Why steering is not offered yet: the agent's capability answer is still on its way, or the request for it failed. */
+export function steeringCheck(capabilities: {
+	readonly data: unknown;
+	readonly isFetching: boolean;
+	readonly isPending: boolean;
+	readonly error: unknown;
+}): ComposerSituation["steeringUnavailable"] {
+	return capabilities.data
+		? undefined
+		: capabilities.isFetching || capabilities.isPending
+			? "checking"
+			: capabilities.error
+				? "failed"
+				: "checking";
+}
+
+/** The empty field's prompt: what this window can do with the task right now. */
+export function composerPlaceholder(
+	sessionState: SessionSnapshot["state"],
+	viewing: string | null,
+	running: boolean,
+	steering: SteeringAffordances,
+	initialFocus: boolean,
+): string {
+	return sessionState !== "open" && sessionState !== "parked"
+		? "This conversation is not open"
+		: viewing !== null
+			? `Viewing. ${viewing} controls this task.`
+			: running
+				? steering.steer || steering.queue
+					? "Steer Panos while it works"
+					: "Draft your next message"
+				: initialFocus
+					? "Describe a task or ask a question"
+					: "Reply or ask for the next change";
+}
+
+const CLOSED_SESSION_REASON: Readonly<Record<string, string>> = {
+	starting: "This task is still starting. It takes a message once Panos answers.",
+	parked: "This task is paused. Resume it before sending.",
+	unknown: "This task is not reachable right now, so nothing can be sent to it.",
+	closed: "This task is closed. Start a new one to keep working.",
+	failed: "This task failed. Start a new one to keep working.",
+};
+
+function blocked(reason: string): SubmitIntent {
+	return { kind: "blocked", reason };
+}
+
+/** Characters for the route schema, bytes for the engine's own steer bound. */
+export function textSize(text: string): { readonly characters: number; readonly bytes: number } {
+	return { characters: text.length, bytes: new TextEncoder().encode(text).length };
+}
+
+function tooLong(text: string, characters: number, bytes: number): string | null {
+	const size = textSize(text);
+	if (size.characters > characters)
+		return `This message is ${size.characters.toLocaleString("en-US")} characters and the limit is ${characters.toLocaleString("en-US")}. Shorten it or send it in two.`;
+	if (size.bytes > bytes)
+		return `This message is ${size.bytes.toLocaleString("en-US")} bytes and the limit is ${bytes.toLocaleString("en-US")}. Shorten it or send it in two.`;
+	return null;
+}
+
+/** A send that has not reached the server yet: what the composer and its button say while it waits. */
+export const UNREACHED = {
+	offline: {
+		label: "Offline",
+		detail: "This message sends when the connection returns. Your draft is kept.",
+		button: "Waiting for connection",
+	},
+	retrying: {
+		label: "Retrying",
+		detail: "PanCode could not be reached. Trying again with the same request; it is sent once.",
+		button: "Retrying…",
+	},
+} as const;
+
+/** True for a request the browser could not deliver at all (no network, server down); never for a server answer. */
+export function unreachable(error: unknown): boolean {
+	const problem = (error as { problem?: { code?: unknown; instance?: unknown } } | null)?.problem;
+	return problem?.code === "unavailable" && problem.instance === "browser";
+}
+
+/**
+ * The whole submit policy, in one place. A running turn does not block the
+ * composer: it redirects the send into the steering queue when the agent
+ * announced one, and explains itself when it did not.
+ */
+export function submitIntent(draft: Draft, situation: ComposerSituation): SubmitIntent {
+	if (situation.unreached) return blocked(UNREACHED[situation.unreached].detail);
+	if (situation.sending) return blocked("The previous send is still on the wire.");
+	if (situation.sessionControl) return blocked(controlMessage(situation.sessionControl));
+	if (situation.viewing !== undefined) return blocked(viewingReason(situation.viewing));
+	if (situation.sessionState !== "open")
+		return blocked(CLOSED_SESSION_REASON[situation.sessionState] ?? "This task cannot take a message.");
+	const text = draft.text.trim();
+	if (text === "") return blocked("Write a message first.");
+	if (situation.unknownSlash !== undefined) return blocked(situation.unknownSlash);
+	const line = situation.shell ? shellLine(text) : null;
+	if (line !== null) {
+		if (line.command === "") return blocked("Write a command after the !.");
+		if (/[\n\r]/u.test(line.command)) return blocked("A shell line is one line. Join the commands with && or ;.");
+		if (situation.turnRunning) return blocked("A shell line runs between turns. Wait for this turn or stop it.");
+		const over = tooLong(line.command, STEER_TEXT_MAX_BYTES, STEER_TEXT_MAX_BYTES);
+		return over === null ? { kind: "shell", ...line, idempotencyKey: draft.key } : blocked(over);
+	}
+	if (situation.turnRunning) {
+		if (situation.steeringUnavailable === "checking")
+			return blocked("Checking whether this agent can accept a message during the current turn.");
+		if (situation.steeringUnavailable === "failed")
+			return blocked("Could not check this agent's mid-turn controls. Retry the check before sending.");
+		if (!situation.steering.steer)
+			return blocked(
+				"This PanCode build cannot take direction while a turn runs. Your draft is kept; send it when the turn settles, or stop the turn.",
+			);
+		const mode = situation.steering.modes.includes(draft.mode) ? draft.mode : situation.steering.modes[0];
+		if (mode === undefined) return blocked("This PanCode build announced no steering mode.");
+		const over = tooLong(text, STEER_TEXT_MAX_BYTES, STEER_TEXT_MAX_BYTES);
+		return over === null ? { kind: "steer", text, mode, idempotencyKey: draft.key } : blocked(over);
+	}
+	const over = tooLong(text, PROMPT_TEXT_MAX_CHARACTERS, PROMPT_TEXT_MAX_CHARACTERS * 4);
+	return over === null ? { kind: "prompt", text, idempotencyKey: draft.key } : blocked(over);
+}
+
+/** The label the submit control carries, which is also the promise it makes. */
+export function submitLabel(intent: SubmitIntent, situation: ComposerSituation, mode?: SteerMode): string {
+	if (intent.kind === "steer") return intent.mode === "next-slot" ? "Send now" : "Queue for after";
+	if (intent.kind === "prompt") return "Send";
+	if (intent.kind === "shell") return "Run";
+	// A blocked button (empty draft) still names what the chosen delivery mode would do.
+	if (!(situation.turnRunning && situation.steering.steer)) return "Send";
+	return mode === "end-of-turn" ? "Queue for after" : "Send now";
+}
+
+// ---------------------------------------------------------------------------
+// A /name the session cannot run
+// ---------------------------------------------------------------------------
+
+/** The terminal parser's command-shaped token; `/home/me` is a path, not a command. */
+const SLASH_TOKEN = /^\/([A-Za-z][A-Za-z0-9:-]*)(?:\s|$)/u;
+/** A token the operator has finished typing: whitespace follows the name. */
+const TYPED_SLASH_TOKEN = /^\/([A-Za-z][A-Za-z0-9:-]*)\s/u;
+
+/**
+ * When a `/name` is judged: `draft` while the operator is still typing it, so
+ * only a name already followed by its arguments counts, and `submit` once
+ * they asked to send the line as it stands.
+ */
+export type SlashStage = "draft" | "submit";
+
+/**
+ * Says before sending what the agent will say after: a `/name` that no command,
+ * no loaded prompt template, no extension command and no terminal name the app answers owns is
+ * refused and never reaches the model, so the composer holds the line. A
+ * catalog command never gets here: the composer parses it as a command line
+ * first. A name still being typed is a prefix the palette is matching, not a
+ * typo, so a draft is judged only once whitespace ends its name. A catalog
+ * without its template list cannot tell a template from a typo, so it says
+ * nothing rather than guess.
+ */
+export function slashNotice(
+	text: string,
+	catalog: CommandCatalog | undefined,
+	stage: SlashStage,
+): ComposerNotice | null {
+	const token = (stage === "draft" ? TYPED_SLASH_TOKEN.exec(text.trimStart()) : SLASH_TOKEN.exec(text.trim()))?.[1];
+	if (token === undefined || catalog?.prompts === undefined) return null;
+	if (
+		catalog.commands.some((entry) => entry.name === token) ||
+		catalog.prompts.some((prompt) => prompt.name === token) ||
+		catalog.extensionCommands?.some((command) => command.name === token) ||
+		isSlashAlias(token)
+	)
+		return null;
+	return {
+		tone: "warn",
+		message: `/${token} is not available here. Type / to see what is. Start the line with \\/ to send it as text.`,
+	};
+}
+
+// ---------------------------------------------------------------------------
+// The Enter policy
+// ---------------------------------------------------------------------------
+
+// The policy lives with the field's other shared behaviour, where the new-task screen can reach it
+// without loading this module into the shell's first chunk.
+export { type ComposerKeyAction, type ComposerKeyContext, composerKeyAction } from "./composer-field.js";
+
+// ---------------------------------------------------------------------------
+// The queue waiting on the engine
+// ---------------------------------------------------------------------------
+
+export type QueueName = "steer" | "follow-up";
+
+export function queueAccess(steering: SteeringAffordances, state: SessionSnapshot["state"], running: boolean) {
+	const read = steering.queue && state === "open";
+	return { read, sendNow: read && running };
+}
+
+export interface QueuedMessage {
+	readonly id: string;
+	readonly queue: QueueName;
+	readonly position: number;
+	readonly text: string;
+	readonly lands: string;
+	/** The engine's id for the entry; absent from an engine that reports texts only, which offers no per-message control. */
+	readonly entryId?: string;
+	/** The operator chose this slot, so steering triage leaves it there. */
+	readonly pinned?: boolean;
+}
+
+/**
+ * `GET /queue` returns two flat arrays of text. This gives each entry a stable
+ * key, a position and the sentence that says when it will be read, in the order
+ * the engine will read them: the steering queue drains mid-run, the follow-up
+ * queue after the turn.
+ */
+export function projectQueue(snapshot: QueueSnapshot | null | undefined): readonly QueuedMessage[] {
+	if (!snapshot) return [];
+	const rows: QueuedMessage[] = [];
+	if (snapshot.entries) {
+		const seen: Record<QueueName, number> = { steer: 0, "follow-up": 0 };
+		for (const entry of snapshot.entries.slice(0, QUEUE_MAX_ENTRIES))
+			rows.push({
+				id: entry.id,
+				queue: entry.kind,
+				position: ++seen[entry.kind],
+				text: entry.text,
+				lands: MODE_COPY[entry.kind === "steer" ? "next-slot" : "end-of-turn"].lands,
+				entryId: entry.id,
+				pinned: entry.pinned,
+			});
+		return rows;
+	}
+	const push = (queue: QueueName, texts: readonly string[], lands: string) => {
+		for (const [index, text] of texts.slice(0, QUEUE_MAX_ENTRIES).entries())
+			rows.push({ id: `${queue}:${index}`, queue, position: index + 1, text, lands });
+	};
+	push("steer", snapshot.steer, MODE_COPY["next-slot"].lands);
+	push("follow-up", snapshot.followUp, MODE_COPY["end-of-turn"].lands);
+	return rows;
+}
+
+const messagesWaiting = (count: number) => `${count} ${count === 1 ? "message" : "messages"}`;
+
+/**
+ * The queue's one-line summary. While a turn runs each message waits for its slot; with no turn running the engine
+ * holds the queue (an operator stop sends nothing) and a new prompt takes it at its first slot, so the line says that
+ * instead of naming a tool call that will never come.
+ */
+export function queueSummary(messages: readonly QueuedMessage[], running: boolean): string {
+	if (messages.length === 0) return "Nothing is waiting.";
+	if (!running)
+		return `${messagesWaiting(messages.length)} held, nothing sent. ${messages.length === 1 ? "It goes" : "They go"} ahead of your next message.`;
+	const steering = messages.filter((message) => message.queue === "steer").length;
+	const followUp = messages.length - steering;
+	const parts: string[] = [];
+	if (steering > 0) parts.push(`${messagesWaiting(steering)} waiting for the next tool call`);
+	if (followUp > 0) parts.push(`${messagesWaiting(followUp)} waiting for the turn to end`);
+	return `${parts.join(" · ")}.`;
+}
+
+/** A waiting message's mark: its slot while a turn runs, held once none does. */
+export function queueRowLabel(message: QueuedMessage, running: boolean): string {
+	if (!running) return "Held";
+	return message.queue === "steer" ? "Now" : "After this turn";
+}
+
+export interface QueueAction {
+	readonly key: string;
+	readonly request: QueueEditRequest;
+	readonly label: string;
+	readonly title: string;
+	readonly icon: "bolt" | "arrowUp" | "arrowDown" | "pencil" | "close" | null;
+}
+
+/**
+ * The controls one waiting message carries, limited to the operations the agent announced. A move
+ * past either end of the message's own queue is left out, since the engine would answer `at-edge`.
+ */
+export function queueActions(
+	message: QueuedMessage,
+	messages: readonly QueuedMessage[],
+	ops: readonly string[] | undefined,
+	sendNow = true,
+): readonly QueueAction[] {
+	const id = message.entryId;
+	if (id === undefined || ops === undefined) return [];
+	const actions: QueueAction[] = [];
+	const siblings = messages.filter((row) => row.queue === message.queue).length;
+	if (sendNow && ops.includes("send_now"))
+		actions.push({
+			key: "send_now",
+			request: { id, op: "send_now" },
+			label: "Send now",
+			title: "Interrupt the turn and send this message now. The rest of the queue waits for the new run.",
+			icon: "bolt",
+		});
+	if (ops.includes("move") && message.position > 1)
+		actions.push({
+			key: "up",
+			request: { id, op: "move", delta: -1 },
+			label: "Move earlier",
+			title: "Deliver this message one place earlier.",
+			icon: "arrowUp",
+		});
+	if (ops.includes("move") && message.position < siblings)
+		actions.push({
+			key: "down",
+			request: { id, op: "move", delta: 1 },
+			label: "Move later",
+			title: "Deliver this message one place later.",
+			icon: "arrowDown",
+		});
+	if (ops.includes("set_kind")) {
+		const after = message.queue === "steer";
+		actions.push({
+			key: "set_kind",
+			request: { id, op: "set_kind", kind: after ? "follow-up" : "steer" },
+			label: after ? "After" : "Now",
+			title: after
+				? "Hold this message until the whole turn has settled."
+				: "Deliver this message between tool calls, while the turn is still running.",
+			icon: null,
+		});
+	}
+	if (ops.includes("restore"))
+		actions.push({
+			key: "restore",
+			request: { id, op: "restore" },
+			label: "Edit",
+			title: "Take this message out of the queue and back into the field.",
+			icon: "pencil",
+		});
+	if (ops.includes("remove"))
+		actions.push({
+			key: "remove",
+			request: { id, op: "remove" },
+			label: "Remove",
+			title: "Remove this message from the queue.",
+			icon: "close",
+		});
+	return actions;
+}
+
+const QUEUE_REFUSAL: Readonly<Record<string, string>> = {
+	"stale-entry": "That message already left the queue.",
+	"at-edge": "That message is already at the end of its queue.",
+	"no-active-prompt": "No turn is running, so there is nothing to interrupt. Send the message as a new turn.",
+	"prompt-ending": "The turn is ending. The message goes out when it settles.",
+	"not-streaming": "The turn is not at a point where it can be interrupted. The message stays in the queue.",
+};
+
+/** What a queue edit reported that the operator has to know: a named refusal, or an interrupt the engine declined. */
+export function noticeForQueueEdit(result: QueueEditResult): ComposerNotice | null {
+	if (!result.applied)
+		return {
+			tone: "warn",
+			message: QUEUE_REFUSAL[result.reason ?? ""] ?? "The engine did not change the queue, and reported no reason.",
+		};
+	if (result.delivery === "next-slot")
+		return {
+			tone: "warn",
+			message: `${result.refusal ?? "The engine could not interrupt the turn."} The message is first in the queue.`,
+		};
+	return null;
+}
+
+/**
+ * `POST /queue/clear` hands back every text it drained, and they are the
+ * client's to re-send. Dropping them would lose typed work, so they come back
+ * into the draft, appended after whatever is already there and deduplicated
+ * against it.
+ */
+export function restoredDraft(current: string, restored: readonly string[]): string {
+	const blocks = current.trim() === "" ? [] : [current.trimEnd()];
+	for (const text of restored) {
+		const trimmed = text.trim();
+		if (trimmed !== "" && !blocks.includes(trimmed)) blocks.push(trimmed);
+	}
+	return blocks.join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// Refusals
+// ---------------------------------------------------------------------------
+
+export interface ComposerNotice {
+	readonly tone: "warn" | "fail";
+	readonly message: string;
+}
+
+function problemOf(error: unknown): { status?: unknown; detail?: unknown } | null {
+	if (typeof error !== "object" || error === null) return null;
+	const problem = (error as { problem?: unknown }).problem;
+	return typeof problem === "object" && problem !== null ? (problem as { status?: unknown; detail?: unknown }) : null;
+}
+
+/**
+ * A 409 from a steering route is not an error, it is the agent saying it does
+ * not serve that method. It reads as a plain sentence in the composer and never
+ * as a failure toast.
+ */
+export function capabilityRefusal(error: unknown): string | null {
+	const problem = problemOf(error);
+	if (problem?.status !== 409) return null;
+	return typeof problem.detail === "string" && problem.detail.trim() !== ""
+		? problem.detail
+		: "This PanCode build does not serve that control.";
+}
+
+export function noticeForError(error: unknown): ComposerNotice | null {
+	if (error === null || error === undefined) return null;
+	const refusal = capabilityRefusal(error);
+	if (refusal !== null) return { tone: "warn", message: refusal };
+	const message = error instanceof Error ? error.message : String(error);
+	return { tone: "fail", message };
+}
+
+/**
+ * `POST /steer` and `POST /interrupt` answer 200 with `accepted: false` or
+ * `cancelled: false` and a refusal sentence. That is a reported fact, not an
+ * error, and it must be shown rather than swallowed.
+ */
+export function noticeForRefusal(
+	result: { readonly accepted?: boolean; readonly cancelled?: boolean; readonly refusal?: string } | null | undefined,
+): ComposerNotice | null {
+	if (!result) return null;
+	const settled = result.accepted ?? result.cancelled ?? true;
+	if (settled) return null;
+	return { tone: "warn", message: result.refusal ?? "The engine refused, and reported no reason." };
+}
+
+// ---------------------------------------------------------------------------
+// Per-message actions
+// ---------------------------------------------------------------------------
+
+export type MessageActionId = "copy-request" | "copy-response" | "retry";
+
+export interface MessageActionOffer {
+	readonly id: MessageActionId;
+	readonly label: string;
+	readonly available: boolean;
+	/** Why the action is not offered, for the title attribute. Null when it is. */
+	readonly unavailable: string | null;
+}
+
+export interface MessageActionContext {
+	/** The operator's own prompt, verbatim. */
+	readonly requestText: string | null;
+	/** The response segments joined by a blank line, as raw Markdown. */
+	readonly responseText: string;
+	readonly status: Turn["status"];
+	/** How the turn ended, from `turnEnding`. A turn that stopped early can be tried again. */
+	readonly ending?: TurnEnding | null;
+}
+
+/**
+ * Retry fills the composer and focuses it. It never auto-sends: a failed turn
+ * usually needs the prompt edited, and re-sending an identical prompt into a
+ * failing route is the loop the safety system exists to break.
+ */
+export function messageActionOffers(context: MessageActionContext): readonly MessageActionOffer[] {
+	const hasRequest = (context.requestText ?? "").trim() !== "";
+	const hasResponse = context.responseText.trim() !== "";
+	const retryable = context.status === "failed" || context.status === "cancelled" || isStoppedEarly(context.ending);
+	return [
+		{
+			id: "copy-request",
+			label: "Copy prompt",
+			available: hasRequest,
+			unavailable: hasRequest ? null : "This turn recorded no prompt.",
+		},
+		{
+			id: "copy-response",
+			label: "Copy response",
+			available: hasResponse,
+			unavailable: hasResponse ? null : "This turn has not written anything yet.",
+		},
+		{
+			id: "retry",
+			label: "Try again",
+			available: retryable && hasRequest,
+			unavailable: retryable
+				? hasRequest
+					? null
+					: "This turn recorded no prompt to try again."
+				: "Only a failed or stopped turn can be tried again.",
+		},
+	];
+}
+
+// ---------------------------------------------------------------------------
+// The outcome footer
+// ---------------------------------------------------------------------------
+
+export type OutcomeTone = "neutral" | "running" | "success" | "warn" | "fail" | "unverified";
+
+export interface OutcomeFact {
+	readonly label: string;
+	readonly value: string;
+}
+
+export interface TurnOutcomeView {
+	readonly tone: OutcomeTone;
+	readonly glyph: string;
+	readonly label: string;
+	/** The problem detail, when the turn carried one. */
+	readonly detail: string | null;
+	readonly stopReason: string | null;
+	/** The one line under a settled answer: time taken, tokens, a known cost and the tool calls. */
+	readonly facts: readonly string[];
+	/** Input and output together, in the short form the line has room for. Null when nothing was reported. */
+	readonly usageLabel: string | null;
+	/** Reported accounting, retained for the keyboard-reachable breakdown beside the outcome. */
+	readonly usage: Usage | null;
+	readonly usageTitle: string | null;
+	readonly finishedAt: string | null;
+	/** The second line the Detailed view adds: model, speed and cache, each only when it was reported. */
+	readonly nerd: readonly OutcomeFact[];
+	readonly breakdown: readonly {
+		group: OutcomeGroup;
+		label: string;
+		value: string;
+		factRef?: string;
+	}[];
+}
+
+type OutcomeGroup = "Model" | "Usage" | "Speed" | "Cache" | "Cost" | "Tools" | "Context";
+
+/**
+ * What the turn did besides talk, counted from its own timeline. Tool durations are the host's clock
+ * from first sighting to settling, present only for calls the host watched live; a replayed call has
+ * none, so `timed` can be smaller than `tools` and the line says how many it measured.
+ */
+export interface TurnActivity {
+	readonly tools: number;
+	readonly timed: number;
+	readonly toolMs: number;
+	readonly slowest: { readonly name: string; readonly ms: number } | null;
+	readonly compactions: number;
+	/** Changes settled at their approval gate, rejected or refused, so nothing reached the file. */
+	readonly notApplied: number;
+}
+
+export const NO_ACTIVITY: TurnActivity = {
+	tools: 0,
+	timed: 0,
+	toolMs: 0,
+	slowest: null,
+	compactions: 0,
+	notApplied: 0,
+};
+
+export function usageSummary(usage: Usage): string {
+	return usage.quantities
+		? `${usageDisplay(usage.quantities.input)} in · ${usageDisplay(usage.quantities.output)} out`
+		: "not journaled";
+}
+export function usageTitle(usage: Usage): string {
+	return usage.quantities
+		? Object.entries(usage.quantities)
+				.map(([key, quantity]) => `${key} ${usageDisplay(quantity)}`)
+				.join(" · ")
+		: "not journaled";
+}
+
+/** Tokens per second as a reader says it: one decimal under ten, whole above. */
+export function tokenRate(perSecond: number): string {
+	return `${perSecond < 10 ? perSecond.toFixed(1) : Math.round(perSecond).toLocaleString()} tok/s`;
+}
+
+const OUTCOME: Readonly<Record<Turn["status"], { tone: OutcomeTone; glyph: string; label: string }>> = {
+	running: { tone: "running", glyph: "▸", label: "Running" },
+	succeeded: { tone: "success", glyph: "✓", label: "Done" },
+	failed: { tone: "fail", glyph: "✕", label: "Failed" },
+	// Stopping is not failing, and it is not waiting either: a stopped turn is a neutral report.
+	cancelled: { tone: "neutral", glyph: "–", label: "Stopped" },
+};
+
+// A succeeded row whose stop reason says the answer is not whole: never a success mark.
+const STOPPED_EARLY: { tone: OutcomeTone; glyph: string; label: string } = {
+	tone: "warn",
+	glyph: "!",
+	label: "Stopped early",
+};
+
+/**
+ * The footer carries per-turn facts: how long the turn took, what it read and wrote, what it spent
+ * and how many tool calls it made. The time is the difference of the two recorded instants, so a
+ * replayed turn with no recorded start has none; the counts are reported values. A quantity that was
+ * not measured stays out of the line and is stated, with its reason, in the breakdown.
+ */
+export function turnOutcome(turn: Turn, activity: TurnActivity | number): TurnOutcomeView {
+	const counted = typeof activity === "number" ? { ...NO_ACTIVITY, tools: activity } : activity;
+	const toolCount = counted.tools;
+	const ending = turnEnding(turn);
+	const early = ending !== null && isStoppedEarly(ending);
+	const shape = early ? STOPPED_EARLY : OUTCOME[turn.status];
+	const facts: string[] = [];
+	const nerd: OutcomeFact[] = [];
+	const elapsed =
+		turn.startedAt && turn.finishedAt ? Date.parse(turn.finishedAt) - Date.parse(turn.startedAt) : Number.NaN;
+	// Under a second is not a duration worth a place in the line.
+	if (Number.isFinite(elapsed) && elapsed >= 1000) facts.push(formatDuration(elapsed));
+	const breakdown: {
+		group: OutcomeGroup;
+		label: string;
+		value: string;
+		factRef?: string;
+	}[] = [];
+	const model = turn.details?.model;
+	const target = turn.details?.target;
+	// The route is the engine's report of what served the turn: the target, then the model on it.
+	if (target) breakdown.push({ group: "Model", label: "Target", value: target });
+	if (model) breakdown.push({ group: "Model", label: "Model", value: model });
+	if (target || model) nerd.push({ label: "Route", value: [target, model].filter(Boolean).join(" · ") });
+	const usage = turn.usage;
+	const quantities = usage?.quantities;
+	const ttft = turn.details?.ttftMs;
+	const rate = turn.details?.outputTokensPerSecond;
+	if (quantities) {
+		for (const [key, label] of [
+			["input", "Input"],
+			["output", "Output"],
+			["reasoning", "Reasoning"],
+		] as const)
+			breakdown.push({ group: "Usage", label, value: usageDisplay(quantities[key]), factRef: quantities[key].ref });
+	}
+	if (ttft !== undefined) {
+		breakdown.push({ group: "Speed", label: "First token", value: formatDuration(ttft) });
+		nerd.push({ label: "First token", value: formatDuration(ttft) });
+	} else if (quantities && usageKnownAmount(quantities.firstToken) !== null) {
+		breakdown.push({
+			group: "Speed",
+			label: "First token",
+			value: quantities.firstToken.display,
+			factRef: quantities.firstToken.ref,
+		});
+		nerd.push({ label: "First token", value: quantities.firstToken.display });
+	}
+	if (Number.isFinite(elapsed) && elapsed >= 0) {
+		breakdown.push({ group: "Speed", label: "Total", value: formatDuration(elapsed) });
+		nerd.push({ label: "Latency", value: formatDuration(elapsed) });
+	}
+	if (rate !== undefined && rate > 0) {
+		breakdown.push({ group: "Speed", label: "Output", value: tokenRate(rate) });
+		nerd.push({ label: "Speed", value: tokenRate(rate) });
+	}
+	if (quantities) {
+		const read = usageKnownAmount(quantities.cacheRead);
+		const prompt = usageKnownAmount(quantities.prompt);
+		if (prompt !== null) {
+			breakdown.push({
+				group: "Usage",
+				label: "Prompt",
+				value: quantities.prompt.display,
+				factRef: quantities.prompt.ref,
+			});
+			nerd.push({
+				label: "Prompt",
+				value:
+					read !== null && read > 0
+						? `${quantities.prompt.display} (${quantities.cacheRead.display} cached)`
+						: quantities.prompt.display,
+			});
+		}
+		if (usageKnownAmount(quantities.output) !== null) nerd.push({ label: "Output", value: quantities.output.display });
+		breakdown.push({
+			group: "Cache",
+			label: "Read",
+			value: usageDisplay(quantities.cacheRead),
+			factRef: quantities.cacheRead.ref,
+		});
+		// Provider token fields do not establish a cache hit rate, so no share is derived from them.
+		breakdown.push({
+			group: "Cache",
+			label: "Written",
+			value: usageDisplay(quantities.cacheWrite),
+			factRef: quantities.cacheWrite.ref,
+		});
+		const reasoning = usageKnownAmount(quantities.reasoning);
+		if (reasoning !== null && reasoning > 0) nerd.push({ label: "Reasoning", value: quantities.reasoning.display });
+		const calls = usageKnownAmount(quantities.calls);
+		if (calls !== null && calls > 1) nerd.push({ label: "Model calls", value: quantities.calls.display });
+		breakdown.push({ group: "Cost", label: "Cost", value: usageDisplay(quantities.usd), factRef: quantities.usd.ref });
+	}
+	if (toolCount > 0) breakdown.push({ group: "Tools", label: "Calls", value: String(toolCount) });
+	if (counted.timed > 0) {
+		const total = `${formatDuration(counted.toolMs)}${counted.timed < toolCount ? ` over ${counted.timed} of ${toolCount}` : ""}`;
+		breakdown.push({ group: "Tools", label: "Time", value: total });
+		nerd.push({ label: "Tool time", value: total });
+		if (counted.slowest !== null && toolCount > 1) {
+			const slowest = `${counted.slowest.name} ${formatDuration(counted.slowest.ms)}`;
+			breakdown.push({ group: "Tools", label: "Slowest", value: slowest });
+			nerd.push({ label: "Slowest tool", value: slowest });
+		}
+	}
+	if (counted.compactions > 0) {
+		breakdown.push({ group: "Context", label: "Compactions", value: String(counted.compactions) });
+		nerd.push({ label: "Compactions", value: String(counted.compactions) });
+	}
+	const usageLabel = quantities ? `${usageDisplay(quantities.prompt)} in · ${quantities.output.display} out` : null;
+	if (usageLabel !== null && quantities && usageKnownAmount(quantities.output) !== null) facts.push(usageLabel);
+	if (quantities && usageKnownAmount(quantities.usd) !== null) facts.push(quantities.usd.display);
+	if (toolCount > 0) facts.push(`${toolCount} tool ${toolCount === 1 ? "call" : "calls"}`);
+	const notApplied = counted.notApplied;
+	// A turn that finished with a change left unapplied did what it could, but it is not a clean success.
+	const unapplied = turn.status === "succeeded" && !early && notApplied > 0;
+	if (unapplied) facts.push(`${notApplied} ${notApplied === 1 ? "change" : "changes"} not applied`);
+	return {
+		tone: unapplied ? "neutral" : shape.tone,
+		glyph: shape.glyph,
+		label: shape.label,
+		detail:
+			early && ending !== null
+				? endingSentence(ending, turn.stopReason)
+				: turn.status === "succeeded"
+					? null
+					: (turn.problem?.detail ?? null),
+		stopReason: early || turn.status === "failed" ? turn.stopReason : null,
+		facts,
+		usageLabel,
+		usage: turn.usage,
+		usageTitle: turn.usage === null ? null : usageTitle(turn.usage),
+		finishedAt: turn.finishedAt,
+		nerd,
+		breakdown,
+	};
+}
+
+/** Named groups keep the disclosure readable without printing empty categories. */
+export function outcomeDetailGroups(outcome: TurnOutcomeView) {
+	const groups = new Map<string, { label: string; value: string; factRef?: string }[]>();
+	for (const field of outcome.breakdown) {
+		const bucket = groups.get(field.group) ?? [];
+		bucket.push({ label: field.label, value: field.value, ...(field.factRef ? { factRef: field.factRef } : {}) });
+		groups.set(field.group, bucket);
+	}
+	return [...groups].map(([label, fields]) => ({ label, fields }));
+}
+
+/** Visible delivery feedback follows the same intent and capability facts as submission. */
+export function composerDelivery(
+	situation: ComposerSituation,
+	mode: SteerMode,
+	contextRunning: boolean,
+	readingAttachments: boolean,
+): { label: string; detail: string; tone: "neutral" | "running" | "warn"; quiet?: true } {
+	if (situation.sessionControl)
+		return {
+			label: situation.sessionControl === "unresolved" ? "Review session request" : "Session request",
+			detail: controlMessage(situation.sessionControl),
+			tone: situation.sessionControl === "unresolved" ? "warn" : "running",
+		};
+	if (situation.viewing !== undefined)
+		return { label: "Viewing", detail: `${situation.viewing} controls this task.`, tone: "warn" };
+	if (situation.sessionState !== "open")
+		return {
+			label: situation.sessionState === "parked" ? "Paused" : "Unavailable",
+			detail: CLOSED_SESSION_REASON[situation.sessionState] ?? "This task cannot take a message.",
+			tone: "warn",
+		};
+	if (situation.unreached)
+		return { label: UNREACHED[situation.unreached].label, detail: UNREACHED[situation.unreached].detail, tone: "warn" };
+	if (situation.sending)
+		return { label: "Sending", detail: "You can keep drafting while this request is sent.", tone: "running" };
+	if (readingAttachments)
+		return {
+			label: "Reading attachments",
+			detail: "Review is available as soon as the files are ready.",
+			tone: "running",
+		};
+	if (contextRunning && !situation.turnRunning)
+		return { label: "Context work", detail: "Your draft is kept until the current operation finishes.", tone: "running" };
+	if (!situation.turnRunning)
+		return {
+			label: "Your next message",
+			detail: "Attach context or explore Actions before sending.",
+			tone: "neutral",
+			quiet: true,
+		};
+	if (situation.steeringUnavailable)
+		return {
+			label: "Working",
+			detail:
+				situation.steeringUnavailable === "checking"
+					? "Checking which message controls this agent supports."
+					: "Message controls could not be checked. Your draft is kept.",
+			tone: "warn",
+		};
+	if (!situation.steering.steer)
+		return {
+			label: "Draft for later",
+			detail: "This agent cannot take direction during a turn. Your draft stays here.",
+			tone: "neutral",
+		};
+	const selected = situation.steering.modes.includes(mode) ? mode : situation.steering.modes[0];
+	return selected === "end-of-turn"
+		? { label: "After this turn", detail: "Send adds this message to the follow-up queue.", tone: "running" }
+		: {
+				label: "During this turn",
+				detail: "Send adds direction between tool calls. Stop ends the current turn.",
+				tone: "running",
+			};
+}
+
+function controlMessage(stage: "sending" | "unresolved"): string {
+	return stage === "sending"
+		? "A session control is being sent. Your draft is kept until it settles."
+		: "Check the session request above before sending more work. Your draft is kept.";
+}
+
+/** The estimate's rule of thumb: English prose and code run near four characters a token. */
+export const ESTIMATE_CHARACTERS_PER_TOKEN = 4;
+
+export interface DraftEstimate {
+	/** `~312 tokens`, `~4.2k tokens`. */
+	readonly text: string;
+	readonly tokens: number;
+	/** What the figure covers and what it leaves out, for the pointer tooltip. */
+	readonly title: string;
+}
+
+function approximateCount(tokens: number): string {
+	if (tokens < 1000) return String(tokens);
+	if (tokens < 100_000) return `${(tokens / 1000).toFixed(1).replace(/\.0$/u, "")}k`;
+	return `${Math.round(tokens / 1000)}k`;
+}
+
+/**
+ * A rough size for what Send would carry, so a long paste is noticed before it costs a turn. It is an
+ * estimate by character count, never a measured figure: the model's tokenizer decides the real one.
+ * `@` mentions are read on the server when the message is sent, and images are sized by the provider,
+ * so both are named as left out rather than guessed.
+ */
+export function draftEstimate(
+	text: string,
+	attached: { readonly files: readonly { readonly text: string }[]; readonly images: number },
+): DraftEstimate | null {
+	const characters = text.trim().length + attached.files.reduce((total, file) => total + file.text.length, 0);
+	if (characters === 0) return null;
+	const tokens = Math.max(1, Math.ceil(characters / ESTIMATE_CHARACTERS_PER_TOKEN));
+	const left = [
+		...(/(?:^|\s)@\S/u.test(text) ? ["@ files, read when sent"] : []),
+		...(attached.images > 0 ? [attached.images === 1 ? "the image" : "the images"] : []),
+	];
+	return {
+		text: `~${approximateCount(tokens)} ${tokens === 1 ? "token" : "tokens"}`,
+		tokens,
+		title:
+			`Estimated at about ${ESTIMATE_CHARACTERS_PER_TOKEN} characters a token for the typed text` +
+			`${attached.files.length > 0 ? " and attached files" : ""}; the model counts the real figure.` +
+			(left.length > 0 ? ` Not counted: ${left.join(" and ")}.` : ""),
+	};
+}

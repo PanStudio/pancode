@@ -1,0 +1,169 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { ok, rejects, strictEqual } from "node:assert/strict";
+import { describe, it } from "node:test";
+import { type AcpCommandHost, acpCommandControl } from "../../src/engine/acp/commands.js";
+import { AcpRequestError } from "../../src/engine/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
+import type { AcpServerChat } from "../../src/engine/acp/server-options.js";
+import { fakeTransport } from "../harness/acp-fake-transport.js";
+
+/** A prompt that never settles, so the test can observe the active-prompt window. */
+function hangingChat(): AcpServerChat & { release: () => void } {
+	let release: () => void = () => {};
+	let streaming = false;
+	return {
+		submit: () =>
+			new Promise<void>((resolve) => {
+				streaming = true;
+				release = () => {
+					streaming = false;
+					resolve();
+				};
+			}),
+		cancel: () => release(),
+		onEvent: () => () => {},
+		isStreaming: () => streaming,
+		getSessionId: () => null,
+		release: () => release(),
+	};
+}
+
+const CATALOG = { version: 1 as const, commands: [] };
+
+function control(calls: string[]) {
+	return {
+		catalog: () => {
+			calls.push("catalog");
+			return CATALOG;
+		},
+		invoke: (request: { command: unknown }) => {
+			calls.push(`invoke:${String(request.command)}`);
+			return { level: "info" as const, lines: ["ran"] };
+		},
+		injectsUserTurn: (command: unknown) => command === "share",
+		capability: {
+			version: 1 as const,
+			list: "_pancode/commands/list",
+			invoke: "_pancode/commands/invoke",
+			count: 13,
+		},
+	};
+}
+
+describe("contracts/acp exposes the operator command catalog only when one is wired", () => {
+	it("announces nothing and refuses both methods when the host wired no commands", async () => {
+		const peer = fakeTransport();
+		const chat = hangingChat();
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat, cwd: process.cwd() });
+		const init = (await peer.call("initialize", { protocolVersion: 1, clientCapabilities: {} })) as {
+			agentCapabilities: { _meta: Record<string, unknown> };
+		};
+		strictEqual(init.agentCapabilities._meta["pancode/commands"], undefined);
+		await rejects(
+			() => peer.call("_pancode/commands/list", {}),
+			(error: unknown) => error instanceof AcpRequestError && error.detail?.code === "method_not_found",
+		);
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("announces the capability, memoizes the catalog across polls, and invokes through the control", async () => {
+		const peer = fakeTransport();
+		const calls: string[] = [];
+		const chat = hangingChat();
+		const served = servePancodeAcpAgent({
+			transport: peer.transport,
+			chat,
+			commands: control(calls),
+			cwd: process.cwd(),
+		});
+		const init = (await peer.call("initialize", { protocolVersion: 1, clientCapabilities: {} })) as {
+			protocolVersion: number;
+			agentCapabilities: { _meta: Record<string, { count?: number; list?: string; invoke?: string }> };
+		};
+		// Everything rides `_meta`; the version stays where every existing client expects it.
+		strictEqual(init.protocolVersion, 1);
+		// The announcement names the two methods; how many commands the host wired is the catalog's to say.
+		strictEqual(init.agentCapabilities._meta["pancode/commands"]?.list, "_pancode/commands/list");
+		strictEqual(init.agentCapabilities._meta["pancode/commands"]?.count, undefined);
+		const session = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+		strictEqual(await peer.call("_pancode/commands/list", {}), CATALOG);
+		await peer.call("_pancode/commands/list", {});
+		strictEqual(calls.filter((entry) => entry === "catalog").length, 1);
+		const result = (await peer.call("_pancode/commands/invoke", {
+			sessionId: session.sessionId,
+			command: "doctor",
+		})) as { lines: string[] };
+		strictEqual(result.lines[0], "ran");
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("refuses a turn-injecting command while a prompt is active and admits the others", async () => {
+		const peer = fakeTransport();
+		const calls: string[] = [];
+		const chat = hangingChat();
+		const served = servePancodeAcpAgent({
+			transport: peer.transport,
+			chat,
+			commands: control(calls),
+			cwd: process.cwd(),
+		});
+		await peer.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
+		const session = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+		const prompt = peer.call("session/prompt", {
+			sessionId: session.sessionId,
+			prompt: [{ type: "text", text: "go" }],
+		});
+		await new Promise((resolve) => setImmediate(resolve));
+		await rejects(
+			() => peer.call("_pancode/commands/invoke", { sessionId: session.sessionId, command: "share" }),
+			(error: unknown) => error instanceof AcpRequestError && error.detail?.code === "prompt_active",
+		);
+		ok(!calls.includes("invoke:share"));
+		// A command that submits nothing is unaffected by the running turn.
+		await peer.call("_pancode/commands/invoke", { sessionId: session.sessionId, command: "mcp" });
+		ok(calls.includes("invoke:mcp"));
+		chat.release();
+		await prompt;
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+});
+
+it("the real command control carries completed doctor findings through JSON-RPC", async () => {
+	const peer = fakeTransport();
+	const commandControl = acpCommandControl({
+		dispatch: {},
+		bus: {},
+		providers: {},
+		runDoctor: async () => {
+			await Promise.resolve();
+			return { level: "warn", text: "A target is unavailable" };
+		},
+	} as unknown as AcpCommandHost);
+	const served = servePancodeAcpAgent({
+		transport: peer.transport,
+		chat: hangingChat(),
+		cwd: process.cwd(),
+		commands: commandControl,
+	});
+	try {
+		await peer.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
+		const session = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+		const result = (await peer.call("_pancode/commands/invoke", {
+			sessionId: session.sessionId,
+			command: "doctor",
+			argv: [],
+		})) as {
+			level: string;
+			lines: string[];
+		};
+		strictEqual(result.level, "warn");
+		strictEqual(result.lines.join("\n"), "A target is unavailable");
+	} finally {
+		peer.transport.close();
+		strictEqual(await served, 0);
+	}
+});

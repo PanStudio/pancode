@@ -1,0 +1,23 @@
+{
+	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+	"name": "skill-authoring",
+	"version": "0.4.2",
+	"description": "Writes, reviews, or prunes a SKILL.md, judging whether its description, body, and length earn their cost. Not for packaging a workflow that just happened; use workflow-capture.",
+	"license": "LicenseRef-PanCode-1.0",
+	"extensions": {
+		"dev.pancode": {
+			"manifestVersion": 1,
+			"kind": "skill",
+			"resources": {
+				"skills": "."
+			},
+			"components": [
+				{
+					"kind": "skill",
+					"id": "skill-authoring",
+					"path": "SKILL.md"
+				}
+			]
+		}
+	}
+}

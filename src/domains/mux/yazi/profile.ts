@@ -1,0 +1,372 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+	cpSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, relative } from "node:path";
+import { sha256Hex } from "../../../core/hash.js";
+import { readPancodeVersion, resolvePackageRoot } from "../../../core/package-root.js";
+import { safeResourceWrite } from "../../../core/safe-resource-write.js";
+import { parseTomlDocument } from "../../../core/toml.js";
+import { pancodeCacheDir, resolvePancodeDirs } from "../../../core/xdg.js";
+import { findPinnedTool } from "../../toolchain/registry.js";
+import { resolveToolBinary } from "../../toolchain/resolve.js";
+import { renderYaziTheme } from "./theme.js";
+
+const PROFILE_FILES = ["yazi.toml", "keymap.toml", "theme.toml", "init.lua"] as const;
+const PROFILE_PLUGIN_FILES = ["main.lua", "types.lua", "LICENSE", "README.md"] as const;
+const STAMP_FILE = "stamp.json";
+const FAILURE_FILE = "generation-failed.txt";
+
+export interface YaziProfileStamp {
+	yaziVersion: string;
+	pancodeVersion: string;
+	yaPath: string;
+	assetSha256: string;
+	themeSha256: string;
+	keymapSha256: string;
+}
+
+export interface YaziProfile {
+	dir: string;
+	stamp: Readonly<YaziProfileStamp>;
+}
+
+export type YaziProfileState = "current" | "stale" | "missing" | "generation-failed";
+
+export interface YaziProfileInspection {
+	dir: string;
+	userConfigDir: string;
+	state: YaziProfileState;
+	stamp: Readonly<YaziProfileStamp>;
+}
+
+export interface YaziProfileOptions {
+	yaPath: string;
+	profileDir?: string;
+	assetDir?: string;
+	yaziVersion?: string;
+	pancodeVersion?: string;
+	themeToml?: string;
+	yaziToml?: string;
+	keymapToml?: string;
+}
+
+export interface EnsureYaziProfileOptions extends YaziProfileOptions {
+	yaziPath: string;
+}
+
+/** The managed profile location without creating the cache root. */
+export function yaziProfileDir(cacheDir: string = resolvePancodeDirs().cache): string {
+	return join(cacheDir, "yazi", "profile");
+}
+
+/** The config path Yazi itself would use when PanCode does not set its override. */
+export function userYaziConfigDir(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
+	const xdg = env.XDG_CONFIG_HOME;
+	return xdg && isAbsolute(xdg) ? join(xdg, "yazi") : join(home, ".config", "yazi");
+}
+
+/** Remove only PanCode's reproducible profile. The user's Yazi config is never addressed. */
+export function resetYaziProfile(profileDir: string = yaziProfileDir()): void {
+	rmSync(profileDir, { recursive: true, force: true });
+}
+
+function defaultAssetDir(): string {
+	return join(resolvePackageRoot(), "src", "domains", "mux", "yazi", "assets");
+}
+
+function yaziPin(): string {
+	return findPinnedTool("yazi")?.version ?? "unknown";
+}
+
+function filesBelow(root: string, current: string = root): string[] {
+	const files: string[] = [];
+	for (const entry of readdirSync(current, { withFileTypes: true }).sort((left, right) =>
+		left.name.localeCompare(right.name),
+	)) {
+		const path = join(current, entry.name);
+		if (entry.isDirectory()) files.push(...filesBelow(root, path));
+		else if (entry.isFile()) files.push(relative(root, path).replaceAll("\\", "/"));
+	}
+	return files;
+}
+
+/** Hash file names and bytes in a stable order, so any vendored-asset change invalidates the profile. */
+function hashYaziAssetTree(assetDir: string): string {
+	const hash = createHash("sha256");
+	for (const file of filesBelow(assetDir)) {
+		hash.update(file);
+		hash.update("\0");
+		hash.update(readFileSync(join(assetDir, file)));
+		hash.update("\0");
+	}
+	return hash.digest("hex");
+}
+
+function shellQuote(value: string): string {
+	return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * Render PanCode's key chords, with an absolute `ya` path for vendored installs:
+ * Ctrl+Y sends the selection, Enter enters a directory or sends the selection
+ * as Ctrl+Y does, and Alt+E is the files key pressed where PanCode's own key
+ * handler cannot hear it. Yazi's default Enter opens $EDITOR, which would write
+ * into the event stream on Yazi's stdout.
+ *
+ * Yazi runs `shell` through `sh -c` on POSIX and `cmd.exe /S /C` on Windows,
+ * so each gets its own quoting and variable syntax. On Windows `%%` is Yazi's
+ * escape for a literal `%` (a bare `%Y` would expand to the yanked files), and
+ * Yazi itself quotes the `%s` paths for cmd.
+ */
+export function renderYaziKeymap(yaPath: string, platform: NodeJS.Platform = process.platform): string {
+	const windows = platform === "win32";
+	const ya = windows ? `"${yaPath.replaceAll("%", "%%")}"` : shellQuote(yaPath);
+	const id = windows ? "%%YAZI_ID%%" : '"$YAZI_ID"';
+	const token = windows ? "%%PANCODE_YAZI_PICK_TOKEN%%" : '"$PANCODE_YAZI_PICK_TOKEN"';
+	const pick = `${ya} pub-to ${id} pancode-pick --list ${token} %s`;
+	const command = `shell -- ${pick}`;
+	// The same token authenticates the tap, so a line another process writes
+	// into the stream file cannot hide or close the pane.
+	const dockTap = `shell -- ${ya} pub-to ${id} pancode-dock --list ${token}`;
+	// Yazi's `;` and `:` prompts run what is typed through that same shell, whose stdout is the pane's event stream. The
+	// prompt starts with a redirect, so a background command's output goes nowhere and a blocking one's to the terminal.
+	// sh takes it as an `exec` prefix covering every command typed; cmd.exe takes it as a suffix the cursor sits before.
+	const prompt = (block: boolean): string => {
+		if (windows) return `shell${block ? " --block" : ""} --interactive --cursor=0 -- ${block ? ">CON" : ">NUL"} 2>&1`;
+		return `shell${block ? " --block" : ""} --interactive -- exec ${block ? ">/dev/tty" : ">/dev/null"} 2>&1;`;
+	};
+	return `# Generated by PanCode. Changes are replaced when the managed profile regenerates.
+
+[[mgr.prepend_keymap]]
+on   = "<C-y>"
+run  = ${JSON.stringify(command)}
+desc = "Send the selection to PanCode"
+
+[[mgr.prepend_keymap]]
+on   = "<Enter>"
+run  = ${JSON.stringify(`plugin pancode-enter -- ${shellQuote(pick)}`)}
+desc = "Enter the directory, or send the selection to PanCode"
+
+[[mgr.prepend_keymap]]
+on   = "<A-e>"
+run  = ${JSON.stringify(dockTap)}
+desc = "Hide the files pane and return to PanCode"
+
+[[mgr.prepend_keymap]]
+on   = ";"
+run  = ${JSON.stringify(prompt(false))}
+desc = "Run a shell command (its output is discarded)"
+
+[[mgr.prepend_keymap]]
+on   = ":"
+run  = ${JSON.stringify(prompt(true))}
+desc = "Run a shell command in the terminal (block until finishes)"
+`;
+}
+
+function expected(options: YaziProfileOptions): {
+	dir: string;
+	assetDir: string;
+	yaziToml: string;
+	keymapToml: string;
+	themeToml: string;
+	stamp: YaziProfileStamp;
+} {
+	const assetDir = options.assetDir ?? defaultAssetDir();
+	const themeToml = options.themeToml ?? renderYaziTheme();
+	const yaziToml = options.yaziToml ?? readFileSync(join(assetDir, "yazi.toml"), "utf8");
+	const keymapToml = options.keymapToml ?? renderYaziKeymap(options.yaPath);
+	return {
+		dir: options.profileDir ?? yaziProfileDir(),
+		assetDir,
+		yaziToml,
+		keymapToml,
+		themeToml,
+		stamp: {
+			yaziVersion: options.yaziVersion ?? yaziPin(),
+			pancodeVersion: options.pancodeVersion ?? readPancodeVersion(),
+			yaPath: options.yaPath,
+			assetSha256: hashYaziAssetTree(assetDir),
+			themeSha256: sha256Hex(themeToml),
+			keymapSha256: sha256Hex(keymapToml),
+		},
+	};
+}
+
+function readStamp(dir: string): YaziProfileStamp | null {
+	try {
+		const value = JSON.parse(readFileSync(join(dir, STAMP_FILE), "utf8")) as Partial<YaziProfileStamp>;
+		if (
+			typeof value.yaziVersion !== "string" ||
+			typeof value.pancodeVersion !== "string" ||
+			typeof value.yaPath !== "string" ||
+			typeof value.assetSha256 !== "string" ||
+			typeof value.themeSha256 !== "string" ||
+			typeof value.keymapSha256 !== "string"
+		) {
+			return null;
+		}
+		return value as YaziProfileStamp;
+	} catch {
+		return null;
+	}
+}
+
+function sameStamp(left: Readonly<YaziProfileStamp> | null, right: Readonly<YaziProfileStamp>): boolean {
+	return (
+		left !== null &&
+		left.yaziVersion === right.yaziVersion &&
+		left.pancodeVersion === right.pancodeVersion &&
+		left.yaPath === right.yaPath &&
+		left.assetSha256 === right.assetSha256 &&
+		left.themeSha256 === right.themeSha256 &&
+		left.keymapSha256 === right.keymapSha256
+	);
+}
+
+function profileFilesExist(dir: string): boolean {
+	return (
+		PROFILE_FILES.every((file) => statSync(join(dir, file), { throwIfNoEntry: false })?.isFile()) &&
+		PROFILE_PLUGIN_FILES.every(
+			(file) => statSync(join(dir, "plugins", "git.yazi", file), { throwIfNoEntry: false })?.isFile() === true,
+		)
+	);
+}
+
+/** Read whether the cached profile matches current inputs without creating or rewriting it. */
+export function inspectYaziProfile(options: YaziProfileOptions): YaziProfileInspection {
+	const inputs = expected(options);
+	const present = statSync(inputs.dir, { throwIfNoEntry: false })?.isDirectory() === true;
+	const current = present && profileFilesExist(inputs.dir) && sameStamp(readStamp(inputs.dir), inputs.stamp);
+	return {
+		dir: inputs.dir,
+		userConfigDir: userYaziConfigDir(),
+		state: statSync(join(inputs.dir, FAILURE_FILE), { throwIfNoEntry: false })?.isFile()
+			? "generation-failed"
+			: current
+				? "current"
+				: present
+					? "stale"
+					: "missing",
+		stamp: inputs.stamp,
+	};
+}
+
+/** Inspect the profile against the `ya` path the shared resolution ladder currently chooses. */
+export function inspectCurrentYaziProfile(): YaziProfileInspection {
+	return inspectYaziProfile({ yaPath: resolveToolBinary("ya").binaryPath ?? "(unresolved)" });
+}
+
+/** One shared sentence for `tools status yazi` and the doctor profile row. */
+export function describeYaziProfile(inspection: Readonly<YaziProfileInspection>): string {
+	return `${inspection.dir} (${inspection.state === "generation-failed" ? "generation failed" : inspection.state}); user config ${inspection.userConfigDir} is separate and untouched`;
+}
+
+function parseGenerated(dir: string): boolean {
+	return ["yazi.toml", "keymap.toml", "theme.toml"].every((file) => {
+		try {
+			return parseTomlDocument(readFileSync(join(dir, file), "utf8")) !== null;
+		} catch {
+			return false;
+		}
+	});
+}
+
+const YAZI_CONFIG_ERROR_MARKERS = ["Failed to parse config", "Press <Enter> to continue with preset settings"];
+
+/** Ask the resolved Yazi binary to load the staged profile before it can become current. */
+function validatesWithYazi(dir: string, yaziPath: string): boolean {
+	const scratchHome = mkdtempSync(join(dirname(dir), ".yazi-validation-"));
+	try {
+		const result = spawnSync(yaziPath, ["--debug"], {
+			cwd: scratchHome,
+			env: {
+				...process.env,
+				HOME: scratchHome,
+				XDG_CACHE_HOME: join(scratchHome, "cache"),
+				XDG_CONFIG_HOME: join(scratchHome, "config"),
+				YAZI_CONFIG_HOME: dir,
+			},
+			encoding: "utf8",
+			timeout: 5_000,
+		});
+		const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+		return (
+			result.error === undefined &&
+			result.status === 0 &&
+			YAZI_CONFIG_ERROR_MARKERS.every((marker) => !output.includes(marker))
+		);
+	} catch {
+		return false;
+	} finally {
+		rmSync(scratchHome, { recursive: true, force: true });
+	}
+}
+
+/** Doctor must distinguish a failed generation from a profile never used. */
+function recordGenerationFailure(dir: string): void {
+	try {
+		rmSync(dir, { recursive: true, force: true });
+		mkdirSync(dir, { recursive: true });
+		safeResourceWrite(join(dir, FAILURE_FILE), "Yazi profile generation failed validation. Run doctor --fix to retry.\n");
+	} catch {
+		// The marker is diagnostic; the null return already keeps either launcher off a failed profile.
+	}
+}
+
+/**
+ * Materialize PanCode's deterministic Yazi profile, replacing it only when its
+ * recorded inputs differ. No path outside `<cache>/yazi/` is read or written.
+ */
+export function ensureYaziProfile(options: EnsureYaziProfileOptions): YaziProfile | null {
+	let inputs: ReturnType<typeof expected>;
+	try {
+		inputs = expected({ ...options, profileDir: options.profileDir ?? yaziProfileDir(pancodeCacheDir()) });
+	} catch {
+		return null;
+	}
+	if (profileFilesExist(inputs.dir) && sameStamp(readStamp(inputs.dir), inputs.stamp)) {
+		return { dir: inputs.dir, stamp: inputs.stamp };
+	}
+
+	let staging: string | null = null;
+	try {
+		mkdirSync(dirname(inputs.dir), { recursive: true });
+		staging = mkdtempSync(join(dirname(inputs.dir), ".profile-"));
+		cpSync(join(inputs.assetDir, "init.lua"), join(staging, "init.lua"));
+		cpSync(join(inputs.assetDir, "plugins"), join(staging, "plugins"), { recursive: true });
+		writeFileSync(join(staging, "yazi.toml"), inputs.yaziToml);
+		writeFileSync(join(staging, "keymap.toml"), inputs.keymapToml);
+		writeFileSync(join(staging, "theme.toml"), inputs.themeToml);
+		writeFileSync(join(staging, STAMP_FILE), `${JSON.stringify(inputs.stamp, null, 2)}\n`);
+		if (!parseGenerated(staging) || !validatesWithYazi(staging, options.yaziPath)) {
+			recordGenerationFailure(inputs.dir);
+			return null;
+		}
+		rmSync(inputs.dir, { recursive: true, force: true });
+		renameSync(staging, inputs.dir);
+		return { dir: inputs.dir, stamp: inputs.stamp };
+	} catch {
+		recordGenerationFailure(inputs.dir);
+		return null;
+	} finally {
+		try {
+			if (staging !== null) rmSync(staging, { recursive: true, force: true });
+		} catch {
+			// Leftover cache staging is safe and must not hide the profile-error result.
+		}
+	}
+}

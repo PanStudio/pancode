@@ -1,0 +1,251 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { GLYPH } from "../core/glyphs.js";
+import { resolvePancodeDirs } from "../core/xdg.js";
+import { inspectInstallation } from "../domains/lifecycle/install-method.js";
+import { describeTracking } from "../domains/lifecycle/install-plan.js";
+import {
+	type DeferredUpgrade,
+	planSelfUpgrade,
+	prepareDeferredUpgrade,
+	runApprovedSelfUpgrade,
+	type SelfUpgradePlan,
+} from "../domains/lifecycle/self-upgrade.js";
+import type { AskUserHandler } from "../tools/ask-user.js";
+
+export type InteractiveUpgradeNoticeLevel = "info" | "success" | "warning" | "error";
+
+export interface InteractiveUpgradeFlowDeps {
+	runningVersion: string;
+	openAskUser: AskUserHandler;
+	notify(level: InteractiveUpgradeNoticeLevel, text: string, key?: string, ttlMs?: number): void;
+	/**
+	 * Scrollback copy of an outcome the operator has to act on. The footer shows
+	 * one line and cut the manager command off; the transcript keeps it whole.
+	 */
+	record?(level: "info" | "warn" | "error", text: string): void;
+	/** True only when no turn, worker, command, queue, draft, or overlay is active. */
+	isIdle(): boolean;
+	dismissUpdateHint(): void;
+	shutdown(): void;
+	signal: AbortSignal;
+	cwd?: string;
+	plan?: () => Promise<SelfUpgradePlan>;
+	run?: typeof runApprovedSelfUpgrade;
+	/**
+	 * Hands the deferred update's starter to the owner's persist hook; false
+	 * when the session already armed one (the update monitor or an earlier
+	 * /upgrade). Absent, a deferred plan cannot be armed (#436).
+	 */
+	armDeferredUpdate?(start: () => boolean): boolean;
+	prepareDeferred?: (plan: Extract<SelfUpgradePlan, { status: "deferred" }>) => DeferredUpgrade | null;
+}
+
+export interface InteractiveUpgradeFlow {
+	start(): void;
+	isRunning(): boolean;
+}
+
+const UPGRADE_NOW = "Upgrade now";
+const NOT_NOW = "Not now";
+const EXIT_NOW = "Exit now";
+const LATER = "Later";
+const AFTER_QUIT = "Install after quit";
+
+/**
+ * Consent and execution for `/upgrade`.
+ *
+ * Detection itself never opens this flow. The muted footer points here; only
+ * the operator command opens the first decision. The package manager runs only
+ * after an explicit Upgrade now answer, and successful replacement opens a
+ * second decision asking when to restart. User config, data, state, and cache
+ * are named on the approval because none is package-manager-owned.
+ */
+export function createInteractiveUpgradeFlow(deps: InteractiveUpgradeFlowDeps): InteractiveUpgradeFlow {
+	let active = false;
+
+	const start = (): void => {
+		if (active) {
+			deps.notify("info", "An upgrade check is already in progress.", "lifecycle:upgrade-running");
+			return;
+		}
+		if (!deps.isIdle()) {
+			deps.notify(
+				"warning",
+				"Finish the active turn, worker, command, or draft before upgrading. The footer reminder will stay available.",
+				"lifecycle:upgrade-busy",
+			);
+			return;
+		}
+		active = true;
+		void (async () => {
+			try {
+				const plan = deps.plan
+					? await deps.plan()
+					: await planSelfUpgrade({
+							installation: inspectInstallation(),
+							runningVersion: deps.runningVersion,
+							signal: deps.signal,
+						});
+				deps.signal.throwIfAborted();
+				if (plan.status === "manual") {
+					const lead =
+						plan.installation.kind === "source"
+							? "This source checkout updates through git, not the package registry. Run:"
+							: `This ${plan.installation.kind} installation must be updated by its owning package manager. Run:`;
+					deps.notify("warning", `${lead}\n${plan.command}`, "lifecycle:upgrade-manual");
+					deps.record?.("warn", lead);
+					// One transcript row per line: a row holds a single line, and the source
+					// install's command is three, so one row joins `cd` and `git` into one.
+					for (const line of plan.command.split("\n")) deps.record?.("info", line);
+					return;
+				}
+				if (plan.status === "pinned") {
+					const pinned = `This install is ${describeTracking(plan.installation)}, so /upgrade leaves it there. To follow its channel again, run:`;
+					deps.notify("info", `${pinned}\n${plan.command}`, "lifecycle:upgrade-pinned");
+					deps.record?.("info", pinned);
+					deps.record?.("info", plan.command);
+					return;
+				}
+				if (plan.status === "unavailable") {
+					deps.notify(
+						"warning",
+						"PanCode could not reach the release registry. Nothing changed; /upgrade can be retried later.",
+						"lifecycle:upgrade-unavailable",
+					);
+					return;
+				}
+				if (plan.status === "current") {
+					deps.dismissUpdateHint();
+					deps.notify("success", `PanCode ${plan.current} is current.`, "lifecycle:upgrade-current");
+					return;
+				}
+				if (!deps.isIdle()) {
+					deps.notify(
+						"warning",
+						"The session became busy while checking the release. Nothing changed; run /upgrade again when it is idle.",
+						"lifecycle:upgrade-busy",
+					);
+					return;
+				}
+
+				if (plan.status === "deferred") {
+					const prepare = deps.prepareDeferred ?? ((p) => prepareDeferredUpgrade(p, resolvePancodeDirs().cache));
+					const first = prepare(plan);
+					const manager = first?.manager ?? plan.installation.kind;
+					const pendingNotice = () => {
+						const text = `A PanCode update for this ${manager} install is already pending; it installs after every session of it quits. Nothing new was started.`;
+						deps.notify("info", text, "lifecycle:upgrade-pending");
+						deps.record?.("info", text);
+					};
+					if (first?.pending) return pendingNotice();
+					const approval = await deps.openAskUser([
+						{
+							header: "Upgrade",
+							question:
+								`Upgrade PanCode ${plan.current} ${GLYPH.next} ${plan.available}? ` +
+								`${manager} replaces this install in place, so it runs only after this session and every other session of this install quit. ` +
+								"Settings, credentials, memory, evidence, and session history stay in their current directories.",
+							options: [
+								{ label: AFTER_QUIT, description: `Run ${manager} once the last session of this install exits.` },
+								{ label: NOT_NOW, description: "Keep working; leave the quiet footer reminder in place." },
+							],
+						},
+					]);
+					const answer = approval.answers[0];
+					if (approval.cancelled || !(answer?.answer === AFTER_QUIT || answer?.options?.includes(AFTER_QUIT) === true))
+						return;
+					deps.signal.throwIfAborted();
+					// Judged again: the question may have stayed open while another session armed or ran.
+					const deferred = prepare(plan);
+					if (deferred === null || !deps.armDeferredUpdate)
+						throw new Error(`this ${manager} install can no longer be updated after quit`);
+					if (deferred.pending || !deps.armDeferredUpdate(deferred.start)) return pendingNotice();
+					deps.dismissUpdateHint();
+					const others = deferred.sessions.length;
+					const waits =
+						others === 0
+							? "No other session of this install is running."
+							: `${others} other session${others === 1 ? " is" : "s are"} still running (${deferred.sessions.join(", ")}); it waits for ${others === 1 ? "it" : "them"} too.`;
+					const text = `PanCode ${plan.available} installs with ${manager} after you quit. ${waits}`;
+					deps.notify("success", text, "lifecycle:upgrade-deferred");
+					deps.record?.("info", text);
+					return;
+				}
+
+				// An installer install gets a new version prefix beside the current one; npm replaces its package in place.
+				const replacement =
+					plan.installation.kind === "installer" && plan.installation.installer
+						? `This installs it beside the current version under ${plan.installation.installer.root} and switches the launcher; the current version stays for rollback. `
+						: `This replaces only the npm package in ${plan.installation.prefix}. `;
+				const approval = await deps.openAskUser([
+					{
+						header: "Upgrade",
+						question:
+							`Upgrade PanCode ${plan.current} ${GLYPH.next} ${plan.available}? ` +
+							replacement +
+							"Settings, credentials, memory, evidence, and session history stay in their current directories. " +
+							"After replacement PanCode runs pending lifecycle checks, then asks you to restart.",
+						options: [
+							{ label: UPGRADE_NOW, description: "Replace the package and run doctor checks." },
+							{ label: NOT_NOW, description: "Keep working; leave the quiet footer reminder in place." },
+						],
+					},
+				]);
+				const approved = approval.answers[0];
+				if (approval.cancelled || !(approved?.answer === UPGRADE_NOW || approved?.options?.includes(UPGRADE_NOW) === true))
+					return;
+				deps.signal.throwIfAborted();
+				if (!deps.isIdle()) {
+					deps.notify(
+						"warning",
+						"The session is no longer idle. The approved upgrade did not start; run /upgrade again after active work settles.",
+						"lifecycle:upgrade-busy",
+					);
+					return;
+				}
+				deps.notify(
+					"info",
+					`Upgrading PanCode to ${plan.available}; do not close this process while the package manager is running.`,
+					"lifecycle:upgrade-running",
+				);
+				const result = await (deps.run ?? runApprovedSelfUpgrade)({
+					plan,
+					signal: deps.signal,
+					cwd: deps.cwd ?? process.cwd(),
+				});
+				deps.signal.throwIfAborted();
+				deps.dismissUpdateHint();
+				const restartNotice = `PanCode ${result.to} is installed. Restart before the next turn; your current session is saved and available through /resume.`;
+				deps.notify("warning", restartNotice, "lifecycle:restart-required", 0);
+				deps.record?.("warn", restartNotice);
+				const restart = await deps.openAskUser([
+					{
+						header: "Restart",
+						question: `PanCode ${result.to} installed successfully. Exit now so you can restart on the new version?`,
+						options: [
+							{ label: EXIT_NOW, description: "Save and exit; run pancode --continue to pick it up." },
+							{ label: LATER, description: "Keep this process open; the footer keeps the restart notice." },
+						],
+					},
+				]);
+				const restartAnswer = restart.answers[0];
+				if (
+					!restart.cancelled &&
+					(restartAnswer?.answer === EXIT_NOW || restartAnswer?.options?.includes(EXIT_NOW) === true)
+				)
+					deps.shutdown();
+			} catch (error) {
+				if (deps.signal.aborted) return;
+				const failure = `Upgrade failed without removing user data: ${error instanceof Error ? error.message : String(error)}. Run pancode upgrade from a shell for full recovery steps.`;
+				deps.notify("error", failure, "lifecycle:upgrade-failed");
+				deps.record?.("error", failure);
+			} finally {
+				active = false;
+			}
+		})();
+	};
+
+	return { start, isRunning: () => active };
+}

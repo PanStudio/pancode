@@ -1,0 +1,217 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * `/btw` overlay: the question, then the answer as it streams.
+ *
+ * The overlay is the whole surface for a side question. Nothing it shows is
+ * appended to the transcript, so closing it is the end of the exchange: the
+ * answer was for the operator, in the moment, and the session never saw it.
+ */
+
+import { AssistantProseProjection } from "../../core/assistant-prose.js";
+import {
+	redactFinalUrlCredentials,
+	redactStreamingUrlCredentials,
+	redactUrlCredentials,
+} from "../../domains/safety/redaction.js";
+import { type Component, type OverlayHandle, type TUI, truncateToWidth, wrapTextWithAnsi } from "../../engine/tui.js";
+import { buildResponsiveHint, showPancodeOverlayFrame } from "../overlay-frame.js";
+import { activityCue, formatWaitClock, GLYPH, pancodeTheme, rule } from "../theme/index.js";
+
+export const SIDE_QUESTION_OVERLAY_TITLE = "Side question";
+
+/** What the overlay is showing right now. */
+export type SideQuestionOverlayPhase =
+	| { kind: "streaming"; text: string }
+	| { kind: "answered"; text: string }
+	| { kind: "aborted"; text: string }
+	| { kind: "error"; reason: string };
+
+export interface SideQuestionOverlaySession extends OverlayHandle {
+	/** Replace the streamed answer text. */
+	setAnswer(text: string): void;
+	/** Settle the overlay on a final phase. */
+	settle(phase: SideQuestionOverlayPhase): void;
+	/** Name the route the round was sent on, or the one that answered. */
+	setRoute(route: string): void;
+}
+
+export interface OpenSideQuestionOverlayOptions {
+	question: string;
+	/** Live terminal width, so the box tracks the window it opened in. */
+	columns: number;
+	/** Esc: abort a streaming round, then close. */
+	onClose: () => void;
+	/** A turn or a worker is live, so the overlay rule carries the one animated cue and this round's lead stays still. */
+	isRunLive?: () => boolean;
+}
+
+const SIDE_QUESTION_OVERLAY_MIN_WIDTH = 44;
+const SIDE_QUESTION_OVERLAY_MAX_WIDTH = 100;
+
+function sideQuestionOverlayWidth(columns: number): number {
+	return Math.max(SIDE_QUESTION_OVERLAY_MIN_WIDTH, Math.min(SIDE_QUESTION_OVERLAY_MAX_WIDTH, columns - 4));
+}
+
+/**
+ * Render the overlay body. Pure so the layout is unit-testable without a TUI:
+ * the question in dim above a rule, then the answer, then one status line that
+ * says whether the round is still running, cancelled, or failed.
+ */
+function formatSideQuestionBody(
+	question: string,
+	phase: SideQuestionOverlayPhase,
+	width: number,
+	spinner: string,
+	route: string | null = null,
+	elapsedMs = 0,
+): string[] {
+	const theme = pancodeTheme();
+	const contentWidth = Math.max(1, Math.floor(width));
+	const lines: string[] = [];
+	for (const line of wrapTextWithAnsi(theme.fg("userProse", `${GLYPH.user} ${question}`), contentWidth))
+		lines.push(line);
+	lines.push(rule(theme, contentWidth));
+	if (phase.kind === "error") {
+		for (const line of wrapTextWithAnsi(theme.fg("error", redactUrlCredentials(phase.reason)), contentWidth))
+			lines.push(line);
+		if (route !== null) lines.push(routeLine("asked", route, contentWidth));
+		return lines;
+	}
+	const body = phase.text.trim();
+	if (body.length > 0) {
+		for (const paragraph of body.split("\n")) {
+			if (paragraph.length === 0) {
+				lines.push("");
+				continue;
+			}
+			for (const line of wrapTextWithAnsi(theme.fg("assistantProse", paragraph), contentWidth)) lines.push(line);
+		}
+	}
+	if (phase.kind === "streaming") {
+		// The clock leads the route, so a narrow box cuts the route rather than the wait.
+		const clock = formatWaitClock(elapsedMs);
+		lines.push(
+			truncateToWidth(
+				theme.fg(
+					"activity",
+					`${spinner} ${body.length > 0 ? "answering" : "asking"} ${GLYPH.sep} ${clock}${route === null ? "" : ` ${GLYPH.sep} ${route}`}`,
+				),
+				contentWidth,
+				GLYPH.ellipsis,
+				false,
+			),
+		);
+	} else if (phase.kind === "aborted") {
+		lines.push(theme.fg("menuDescription", "cancelled"));
+		if (route !== null) lines.push(routeLine("asked", route, contentWidth));
+	} else {
+		if (body.length === 0) lines.push(theme.fg("annotation", "the model returned no text"));
+		if (route !== null) lines.push(routeLine("answered by", route, contentWidth));
+		lines.push(theme.fg("annotation", "Not added to the conversation."));
+	}
+	return lines;
+}
+
+/** State word first, so a narrow box cuts the route rather than what happened. */
+function routeLine(word: string, route: string, width: number): string {
+	return truncateToWidth(pancodeTheme().fg("annotation", `${word} ${route}`), width, GLYPH.ellipsis, false);
+}
+
+/**
+ * One cue animates per screen, and it belongs to the focused live work. While a
+ * turn or a worker is live that is the run's cue on the overlay rule, so this
+ * round leads with the static `●` and only its clock moves. With nothing else
+ * live the round is the focused work, and its lead steps on the activity clock.
+ * Reduced motion, a screen reader, ASCII mode and `NO_COLOR` keep it still.
+ */
+export class SideQuestionOverlayBody implements Component {
+	private phase: SideQuestionOverlayPhase = { kind: "streaming", text: "" };
+	route: string | null = null;
+	private readonly prose = new AssistantProseProjection();
+	private readonly startedAt: number;
+
+	constructor(
+		private readonly question: string,
+		private readonly now: () => number = Date.now,
+		private readonly runLive: () => boolean = () => false,
+	) {
+		this.startedAt = now();
+	}
+
+	set(phase: SideQuestionOverlayPhase): void {
+		if (phase.kind === "error") {
+			this.phase = phase;
+			return;
+		}
+		const prose = this.prose.project(phase.text, phase.kind !== "streaming");
+		// Only an answered round releases a hold. After an abort no later text can resolve it, or bring an opaque name's `@` (#446).
+		const text =
+			phase.kind === "streaming"
+				? redactStreamingUrlCredentials(prose)
+				: redactFinalUrlCredentials(prose, phase.kind === "answered");
+		this.phase = { ...phase, text };
+	}
+
+	render(width: number): string[] {
+		const now = this.now();
+		return formatSideQuestionBody(
+			this.question,
+			this.phase,
+			width,
+			this.runLive() ? GLYPH.running : activityCue(now),
+			this.route,
+			now - this.startedAt,
+		);
+	}
+
+	invalidate(): void {}
+}
+
+/**
+ * Mount the overlay. `setAnswer` is called from the stream; `settle` closes the
+ * round's live state without closing the overlay, so the operator reads the
+ * answer and leaves with Esc.
+ */
+export function openSideQuestionOverlay(tui: TUI, options: OpenSideQuestionOverlayOptions): SideQuestionOverlaySession {
+	const body = new SideQuestionOverlayBody(options.question, Date.now, options.isRunLive);
+	let settled = false;
+	const handle = showPancodeOverlayFrame(tui, body, {
+		anchor: "center",
+		width: sideQuestionOverlayWidth(options.columns),
+		markerId: "side-question",
+		title: SIDE_QUESTION_OVERLAY_TITLE,
+		// Esc means two things here and the footer names the live one: it aborts a
+		// round that is still streaming, and it closes one that has settled.
+		footerHint: (innerWidth) => buildResponsiveHint([], { key: "Esc", verb: settled ? "close" : "cancel" })(innerWidth),
+	});
+	// Nothing else redraws an idle screen, so the wait's clock keeps its own time.
+	const clock = setInterval(() => tui.requestRender(), 250);
+	clock.unref?.();
+	return {
+		...handle,
+		setAnswer(text: string): void {
+			if (settled) return;
+			body.set({ kind: "streaming", text });
+			body.invalidate();
+			tui.requestRender();
+		},
+		setRoute(route: string): void {
+			body.route = route;
+			body.invalidate();
+			tui.requestRender();
+		},
+		settle(phase: SideQuestionOverlayPhase): void {
+			settled = true;
+			clearInterval(clock);
+			body.set(phase);
+			body.invalidate();
+			tui.requestRender();
+		},
+		hide(): void {
+			clearInterval(clock);
+			options.onClose();
+			handle.hide();
+		},
+	};
+}

@@ -1,0 +1,185 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { writeDiagnostic } from "../diagnostics.js";
+import type { TelemetryContext } from "./context.js";
+import type { EventName, EventPayload, PreimageData, PreimageEventName } from "./events.js";
+
+/**
+ * Listener invoked by {@link TelemetryHub.emit}.
+ *
+ * Listener-duration invariant: fan-out runs synchronously on the emitter's stack. Keep listeners short and
+ * non-blocking. A long-running synchronous listener blocks every later listener of the event AND the emit() caller
+ * until it returns.
+ *
+ * For async work, return a Promise: the hub does not await it, but it installs a .catch() so rejections route
+ * through the same error-reporting path as synchronous throws. The emitter is not blocked on the Promise settling,
+ * so side effects that must happen before the next emit() must complete synchronously.
+ *
+ * Violate the invariant and shutdown.* ordering or banner timing will drift.
+ */
+export type TelemetryListener<N extends EventName = EventName> = (
+	payload: EventPayload<N>,
+	/** The context the emit named; absent when it named none, so a reader of whose event this is must allow for that. */
+	context?: TelemetryContext,
+) => void | Promise<void>;
+
+/**
+ * The one emit path (#434). `emit` delivers the payload to in-process subscribers and, for a journal event, also
+ * enqueues it to the sink of the scope its context names (the given ctx, else the async context); a live event
+ * ignores ctx. It returns true
+ * only when a journal record was enqueued. Payloads are typed at compile time only; subscribers consuming data that
+ * crossed a process boundary keep their runtime validation. A journal payload is owned by its sink once emitted, so
+ * subscribers read it and never mutate it.
+ */
+export interface TelemetryHub {
+	/** `timing` stamps a record its seam could not name a scope for when the fact happened. */
+	emit<N extends EventName>(
+		name: N,
+		payload: EventPayload<N>,
+		ctx?: TelemetryContext,
+		timing?: JournalEmissionTiming,
+	): boolean;
+	/**
+	 * Enqueue a content-bearing research record whose preimage the writer stores, reserves against the research cap
+	 * and cites before the record is written. The caller hands over ownership of `preimage` (#434).
+	 */
+	emitContent<N extends PreimageEventName>(
+		name: N,
+		payload: PreimageData<N>,
+		preimage: unknown,
+		ctx?: TelemetryContext,
+	): boolean;
+	subscribe<N extends EventName>(name: N, listener: TelemetryListener<N>): () => void;
+	listeners(name: EventName): TelemetryListener[];
+	clear(): void;
+}
+
+/**
+ * How a journal event reaches its sink. The producer attaches it when it loads, so the hub, which Stage 0 loads
+ * through termination, never pulls the registry's schemas into the first frame (#434). Early emissions wait in a
+ * bounded queue until the producer can classify their durability and scope; overflow is accounted by that route.
+ */
+export interface JournalRoute {
+	journal(
+		name: EventName,
+		payload: unknown,
+		preimage: unknown,
+		ctx: TelemetryContext | undefined,
+		timing?: JournalEmissionTiming,
+	): boolean;
+	dropped(name: EventName, count: number): void;
+}
+
+export interface JournalEmissionTiming {
+	wallMs: number;
+	mono: number;
+}
+
+export const EARLY_JOURNAL_LIMIT = 4096;
+type EarlyEmission = JournalEmissionTiming & {
+	name: EventName;
+	payload: unknown;
+	preimage: unknown;
+	ctx: TelemetryContext | undefined;
+};
+
+let journalRoute: JournalRoute | null = null;
+const earlyEmissions: EarlyEmission[] = [];
+const earlyDrops = new Map<EventName, number>();
+
+export function attachJournalRoute(route: JournalRoute): void {
+	journalRoute = route;
+	for (const [name, count] of earlyDrops) route.dropped(name, count);
+	earlyDrops.clear();
+	for (const emission of earlyEmissions.splice(0))
+		route.journal(emission.name, emission.payload, emission.preimage, emission.ctx, emission);
+}
+
+function journal(
+	name: EventName,
+	payload: unknown,
+	preimage: unknown,
+	ctx: TelemetryContext | undefined,
+	timing?: JournalEmissionTiming,
+): boolean {
+	if (journalRoute) return journalRoute.journal(name, payload, preimage, ctx, timing);
+	if (earlyEmissions.length < EARLY_JOURNAL_LIMIT)
+		earlyEmissions.push({
+			name,
+			payload,
+			preimage,
+			ctx,
+			wallMs: timing?.wallMs ?? Date.now(),
+			mono: timing?.mono ?? performance.now(),
+		});
+	else earlyDrops.set(name, (earlyDrops.get(name) ?? 0) + 1);
+	return false;
+}
+
+/** Internal erased listener shape; payloads are typed at the hub seam only. */
+type StoredListener = (payload: never, context?: TelemetryContext) => void | Promise<void>;
+
+function reportListenerError(name: string, error: unknown): void {
+	const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+	writeDiagnostic(`[pancode:telemetry-hub] Listener crashed on ${name}: ${message}`, "error");
+}
+
+export function createTelemetryHub(): TelemetryHub {
+	const registry = new Map<string, Set<StoredListener>>();
+
+	const deliver = (name: string, payload: unknown, context?: TelemetryContext): void => {
+		const ls = registry.get(name);
+		if (!ls) return;
+		// Synchronous fan-out. A listener's error never reaches the emitter, but delivery is not deferred: deferred
+		// delivery would drop shutdown.* events when process.exit runs before the microtask chain resolves.
+		// Iterating a snapshot keeps re-entrant emit()/subscribe() inside a listener safe; registration changes take
+		// effect on the next emit().
+		for (const listener of [...ls]) {
+			try {
+				const result = listener(payload as never, context);
+				if (result && typeof (result as Promise<void>).then === "function") {
+					(result as Promise<void>).catch((error) => reportListenerError(name, error));
+				}
+			} catch (error) {
+				reportListenerError(name, error);
+			}
+		}
+	};
+
+	return {
+		emit(name, payload, ctx, timing) {
+			const journaled = journal(name, payload, undefined, ctx, timing);
+			deliver(name, payload, ctx);
+			return journaled;
+		},
+		// Content reaches the writer alone, never a subscriber: consent and the research cap govern it there (#434).
+		emitContent(name, payload, preimage, ctx) {
+			return journal(name, payload, preimage, ctx);
+		},
+		subscribe(name, listener) {
+			const set = registry.get(name) ?? new Set<StoredListener>();
+			set.add(listener as StoredListener);
+			registry.set(name, set);
+			return () => {
+				const current = registry.get(name);
+				if (!current) return;
+				current.delete(listener as StoredListener);
+				if (current.size === 0) registry.delete(name);
+			};
+		},
+		listeners(name) {
+			return [...(registry.get(name) ?? [])] as TelemetryListener[];
+		},
+		clear() {
+			registry.clear();
+		},
+	};
+}
+
+let processHub: TelemetryHub | null = null;
+
+/** The process-wide hub. */
+export function telemetryHub(): TelemetryHub {
+	if (!processHub) processHub = createTelemetryHub();
+	return processHub;
+}

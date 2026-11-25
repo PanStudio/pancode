@@ -1,0 +1,807 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { initialEnterSends, touchFirst } from "../client/chat/composer-field.js";
+import { historyExcerpt, searchHistory, stepHistory } from "../client/chat/composer-history.js";
+import {
+	capabilityRefusal,
+	composerDelivery,
+	composerKeyAction,
+	DEFAULT_STEER_MODE,
+	type Draft,
+	DraftStore,
+	draftEstimate,
+	draftStore,
+	MAX_DRAFT_STORES,
+	messageActionOffers,
+	NO_ACTIVITY,
+	NO_STEERING,
+	noticeForError,
+	noticeForRefusal,
+	PROMPT_TEXT_MAX_CHARACTERS,
+	projectQueue,
+	queueAccess,
+	queueActions,
+	queueRowLabel,
+	queueSummary,
+	resetDraftStores,
+	restoredDraft,
+	type SteeringAffordances,
+	slashNotice,
+	steeringAffordances,
+	steerModeOffers,
+	submitIntent,
+	submitLabel,
+	tokenRate,
+	turnOutcome,
+	unreachable,
+	usageSummary,
+	usageTitle,
+} from "../client/chat/composer-model.js";
+import { OUTPUT_DETAILS, outputDetailLabel } from "../client/chat/output-detail-model.js";
+import type { KeyEventLike } from "../client/interaction/keybindings.js";
+import type { AgentCapabilities } from "../contracts/capabilities.js";
+import type { Turn, Usage } from "../contracts/sessions.js";
+import { STEER_TEXT_MAX_BYTES } from "../contracts/steering.js";
+
+function keys(): () => string {
+	let next = 0;
+	return () => {
+		next += 1;
+		return `key-${next}`;
+	};
+}
+
+const FULL_STEERING: SteeringAffordances = {
+	steer: true,
+	modes: ["next-slot", "end-of-turn"],
+	interrupt: true,
+	queue: true,
+	dispatch: true,
+};
+
+function situation(overrides: Partial<Parameters<typeof submitIntent>[1]> = {}) {
+	return {
+		sessionState: "open" as const,
+		turnRunning: false,
+		sending: false,
+		steering: FULL_STEERING,
+		...overrides,
+	};
+}
+
+function draft(overrides: Partial<Draft> = {}): Draft {
+	return { text: "explain this repository", mode: DEFAULT_STEER_MODE, key: "key-1", ...overrides };
+}
+
+function press(key: string, held: Partial<Omit<KeyEventLike, "key">> = {}): KeyEventLike {
+	return { key, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, ...held };
+}
+
+// --- the draft store -------------------------------------------------------
+
+test("the idempotency key survives typing and a retry, and moves only when the draft is cleared", () => {
+	const store = new DraftStore(keys());
+	const first = store.snapshot().key;
+	store.write("map the project");
+	store.write("map the project carefully");
+	assert.equal(store.snapshot().key, first, "typing minted a new key, so a double send would make two turns");
+	store.write("");
+	assert.equal(store.snapshot().key, first, "emptying the field is not the same as clearing the draft");
+	store.clear();
+	const second = store.snapshot().key;
+	assert.notEqual(second, first);
+	store.write("map the project carefully");
+	assert.equal(store.snapshot().key, second, "a retry fill re-uses the cleared draft's key");
+});
+
+test("the store notifies only on a real change, so a no-op keystroke does not re-render", () => {
+	const store = new DraftStore(keys());
+	let notifications = 0;
+	const unsubscribe = store.subscribe(() => {
+		notifications += 1;
+	});
+	store.write("a");
+	store.write("a");
+	store.chooseMode(DEFAULT_STEER_MODE);
+	store.chooseMode("end-of-turn");
+	assert.equal(notifications, 2);
+	unsubscribe();
+	store.write("b");
+	assert.equal(notifications, 2);
+});
+
+test("drafts are kept per session, returned identically, and capped", () => {
+	resetDraftStores();
+	const one = draftStore("session-a");
+	one.write("held across a navigation");
+	assert.equal(draftStore("session-a").snapshot().text, "held across a navigation");
+	assert.notEqual(draftStore("session-b"), one);
+	for (let index = 0; index < MAX_DRAFT_STORES; index += 1) draftStore(`filler-${index}`);
+	assert.equal(draftStore("session-a").snapshot().text, "", "the oldest store should have been evicted, not reused");
+	resetDraftStores();
+});
+
+// --- capabilities ----------------------------------------------------------
+
+test("an engine that announced nothing offers no steering control at all", () => {
+	const older: AgentCapabilities = { loadSession: false, mediatedTools: false };
+	assert.deepEqual(steeringAffordances(older), NO_STEERING);
+	assert.deepEqual(steeringAffordances(undefined), NO_STEERING);
+	assert.deepEqual(steerModeOffers(NO_STEERING), []);
+});
+
+test("an announced steering capability is projected mode by mode and never invented", () => {
+	const announced: AgentCapabilities = {
+		loadSession: true,
+		mediatedTools: true,
+		steering: {
+			version: 1,
+			main: true,
+			dispatch: false,
+			modes: ["next-slot", "sideways"],
+			interrupt: true,
+			methods: { steer: "s", queue: "q", clear: "c", interrupt: "i", dispatch: "d" },
+		},
+	};
+	const affordances = steeringAffordances(announced);
+	assert.deepEqual(affordances.modes, ["next-slot"], "an unknown mode must not reach the wire");
+	assert.equal(affordances.steer, true);
+	assert.equal(affordances.dispatch, false);
+	assert.equal(affordances.queue, true);
+	const offers = steerModeOffers(affordances);
+	assert.equal(offers.length, 1);
+	assert.match(offers[0]?.lands ?? "", /still running/);
+});
+
+test("a build with the steering member but no steer queue does not offer a steer", () => {
+	const announced: AgentCapabilities = {
+		loadSession: true,
+		mediatedTools: true,
+		steering: {
+			version: 1,
+			main: false,
+			dispatch: true,
+			modes: ["next-slot", "end-of-turn"],
+			interrupt: true,
+			methods: { steer: "s", queue: "q", clear: "c", interrupt: "i", dispatch: "d" },
+		},
+	};
+	const affordances = steeringAffordances(announced);
+	assert.equal(affordances.steer, false);
+	assert.equal(affordances.interrupt, true, "interrupt is a separate announcement from the steer queue");
+});
+
+// --- the submit decision ---------------------------------------------------
+
+test("an idle open session sends a prompt carrying the draft's key", () => {
+	assert.deepEqual(submitIntent(draft(), situation()), {
+		kind: "prompt",
+		text: "explain this repository",
+		idempotencyKey: "key-1",
+	});
+});
+
+test("a running turn steers instead of blocking, in the mode the operator chose", () => {
+	const intent = submitIntent(draft({ mode: "end-of-turn" }), situation({ turnRunning: true }));
+	assert.deepEqual(intent, {
+		kind: "steer",
+		text: "explain this repository",
+		mode: "end-of-turn",
+		idempotencyKey: "key-1",
+	});
+	assert.equal(submitLabel(intent, situation({ turnRunning: true })), "Queue for after");
+});
+
+test("a chosen mode the engine did not announce falls back to one it did", () => {
+	const only = { ...FULL_STEERING, modes: ["next-slot"] as const };
+	const intent = submitIntent(draft({ mode: "end-of-turn" }), situation({ turnRunning: true, steering: only }));
+	assert.equal(intent.kind === "steer" && intent.mode, "next-slot");
+});
+
+test("a running turn on a build without steering explains itself and keeps the draft", () => {
+	const intent = submitIntent(draft(), situation({ turnRunning: true, steering: NO_STEERING }));
+	assert.equal(intent.kind, "blocked");
+	assert.match(intent.kind === "blocked" ? intent.reason : "", /Your draft is kept/);
+});
+
+test("a send already on the wire blocks the next one", () => {
+	const intent = submitIntent(draft(), situation({ sending: true }));
+	assert.deepEqual(intent, { kind: "blocked", reason: "The previous send is still on the wire." });
+});
+
+test("a send that cannot reach the server says it waits or retries, never that it is still on the wire", () => {
+	const offline = situation({ sending: true, unreached: "offline" });
+	const intent = submitIntent(draft(), offline);
+	assert.equal(intent.kind, "blocked");
+	assert.match(intent.kind === "blocked" ? intent.reason : "", /sends when the connection returns/);
+	assert.doesNotMatch(intent.kind === "blocked" ? intent.reason : "", /on the wire/);
+	assert.deepEqual(composerDelivery(offline, DEFAULT_STEER_MODE, false, false), {
+		label: "Offline",
+		detail: "This message sends when the connection returns. Your draft is kept.",
+		tone: "warn",
+	});
+	const retrying = composerDelivery(
+		situation({ sending: true, unreached: "retrying" }),
+		DEFAULT_STEER_MODE,
+		false,
+		false,
+	);
+	assert.equal(retrying.label, "Retrying");
+	assert.match(retrying.detail, /sent once/);
+	assert.equal(unreachable({ problem: { code: "unavailable", instance: "browser" } }), true);
+	assert.equal(unreachable({ problem: { code: "unavailable", instance: "/api/turn" } }), false);
+	assert.equal(unreachable(new Error("boom")), false);
+	assert.equal(unreachable(null), false);
+});
+
+test("a /name the session does not serve is held with its warning, not warned about and sent", () => {
+	const warning = "/tpyo is not available here. Type / to see what is. Start the line with \\/ to send it as text.";
+	for (const turnRunning of [false, true]) {
+		assert.deepEqual(submitIntent(draft({ text: "/tpyo fix it" }), situation({ turnRunning, unknownSlash: warning })), {
+			kind: "blocked",
+			reason: warning,
+		});
+	}
+});
+
+test("a window that only views the task offers no send, steer or shell line, and says who controls it", () => {
+	const viewing = situation({ viewing: "Firefox on laptop" });
+	for (const text of ["fix the build", "!ls"]) {
+		assert.deepEqual(submitIntent(draft({ text }), { ...viewing, shell: true }), {
+			kind: "blocked",
+			reason: "Firefox on laptop controls this task. Take control to send from this window.",
+		});
+	}
+	assert.equal(submitIntent(draft(), { ...viewing, turnRunning: true }).kind, "blocked");
+	assert.deepEqual(composerDelivery(viewing, DEFAULT_STEER_MODE, false, false), {
+		label: "Viewing",
+		detail: "Firefox on laptop controls this task.",
+		tone: "warn",
+	});
+	assert.equal(submitIntent(draft(), situation()).kind, "prompt");
+});
+
+test("every non-open session state names itself rather than failing silently", () => {
+	for (const state of ["starting", "unknown", "closed", "failed"] as const) {
+		const intent = submitIntent(draft(), situation({ sessionState: state }));
+		assert.equal(intent.kind, "blocked");
+		assert.notEqual(intent.kind === "blocked" ? intent.reason : "", "");
+	}
+});
+
+test("whitespace is never a message", () => {
+	assert.deepEqual(submitIntent(draft({ text: "  \n\t " }), situation()), {
+		kind: "blocked",
+		reason: "Write a message first.",
+	});
+});
+
+test("the composer refuses past the engine's own bounds rather than spending a round trip", () => {
+	const overPrompt = draft({ text: "x".repeat(PROMPT_TEXT_MAX_CHARACTERS + 1) });
+	const prompt = submitIntent(overPrompt, situation());
+	assert.equal(prompt.kind, "blocked");
+	assert.match(prompt.kind === "blocked" ? prompt.reason : "", /32,000/);
+	const overSteer = draft({ text: "x".repeat(STEER_TEXT_MAX_BYTES + 1) });
+	const steer = submitIntent(overSteer, situation({ turnRunning: true }));
+	assert.equal(steer.kind, "blocked");
+	assert.match(steer.kind === "blocked" ? steer.reason : "", /16,384/);
+});
+
+test("a multibyte steer is measured in bytes, the unit the engine bounds", () => {
+	const text = "é".repeat(STEER_TEXT_MAX_BYTES - 1);
+	const intent = submitIntent(draft({ text }), situation({ turnRunning: true }));
+	assert.equal(intent.kind, "blocked", "two-byte characters must count twice");
+});
+
+test("the submit label promises what the send will actually do", () => {
+	assert.equal(submitLabel(submitIntent(draft(), situation()), situation()), "Send");
+	const running = situation({ turnRunning: true });
+	assert.equal(submitLabel(submitIntent(draft(), running), running), "Send now");
+	const blocked = situation({ turnRunning: true, steering: NO_STEERING });
+	assert.equal(submitLabel(submitIntent(draft(), blocked), blocked), "Send");
+});
+
+// --- the Enter policy ------------------------------------------------------
+
+test("Enter sends, Shift and Enter do not, and the declared chord still sends", () => {
+	const idle = { layerOwned: false, composing: false };
+	assert.equal(composerKeyAction(press("Enter"), idle), "send");
+	assert.equal(composerKeyAction(press("Enter", { shiftKey: true }), idle), "newline");
+	assert.equal(composerKeyAction(press("Enter", { ctrlKey: true }), idle), "send");
+	assert.equal(composerKeyAction(press("Enter", { metaKey: true }), idle), "send");
+	// A textarea adds nothing for Alt+Enter or Ctrl+J, the terminal's other newline chords, so the composer does.
+	assert.equal(composerKeyAction(press("Enter", { altKey: true }), idle), "insert-line");
+	assert.equal(composerKeyAction(press("j", { ctrlKey: true }), idle), "insert-line");
+	assert.equal(composerKeyAction(press("j", { ctrlKey: true }), { layerOwned: false, composing: true }), "ignore");
+	assert.equal(composerKeyAction(press("j"), idle), "ignore");
+	assert.equal(composerKeyAction(press("a"), idle), "ignore");
+});
+
+test("only a touch pointer turns Enter into a newline; a keyboard-only device with no pointer sends", () => {
+	const saved = Object.getOwnPropertyDescriptor(globalThis, "matchMedia");
+	const pointer = (kind: "fine" | "coarse" | "none") =>
+		Object.defineProperty(globalThis, "matchMedia", {
+			configurable: true,
+			value: (query: string) => ({ matches: query === `(pointer: ${kind})` }),
+		});
+	try {
+		pointer("none");
+		assert.equal(touchFirst(), false);
+		assert.equal(initialEnterSends(), true);
+		pointer("fine");
+		assert.equal(initialEnterSends(), true);
+		pointer("coarse");
+		assert.equal(touchFirst(), true);
+		assert.equal(initialEnterSends(), false);
+	} finally {
+		if (saved) Object.defineProperty(globalThis, "matchMedia", saved);
+		else Reflect.deleteProperty(globalThis, "matchMedia");
+	}
+});
+
+test("the send key never fires while a dialog or the palette owns the layer, or mid-composition", () => {
+	assert.equal(composerKeyAction(press("Enter"), { layerOwned: true, composing: false }), "newline");
+	assert.equal(composerKeyAction(press("Enter", { ctrlKey: true }), { layerOwned: true, composing: false }), "newline");
+	assert.equal(composerKeyAction(press("Enter"), { layerOwned: false, composing: true }), "newline");
+});
+
+// --- the queue -------------------------------------------------------------
+
+test("the queue projects in the order the engine will read it and says when each lands", () => {
+	const rows = projectQueue({ steer: ["check the tests first"], followUp: ["then write the note", "and stop"] });
+	assert.deepEqual(
+		rows.map((row) => [row.queue, row.position, row.text]),
+		[
+			["steer", 1, "check the tests first"],
+			["follow-up", 1, "then write the note"],
+			["follow-up", 2, "and stop"],
+		],
+	);
+	assert.equal(new Set(rows.map((row) => row.id)).size, 3);
+	assert.match(rows[0]?.lands ?? "", /between tool calls/);
+	assert.match(rows[1]?.lands ?? "", /settled/);
+});
+
+test("an empty or absent queue reports nothing waiting rather than an empty list", () => {
+	assert.deepEqual(projectQueue(undefined), []);
+	assert.deepEqual(projectQueue(null), []);
+	assert.equal(queueSummary([], true), "Nothing is waiting.");
+	assert.equal(
+		queueSummary(projectQueue({ steer: ["a"], followUp: ["b", "c"] }), true),
+		"1 message waiting for the next tool call · 2 messages waiting for the turn to end.",
+	);
+});
+
+test("with no turn running the queue reads as held for the next message, never as waiting for a tool call", () => {
+	const one = projectQueue({ steer: ["a"], followUp: [] });
+	assert.equal(queueSummary(one, false), "1 message held, nothing sent. It goes ahead of your next message.");
+	const [first] = one;
+	assert.ok(first);
+	assert.equal(queueRowLabel(first, false), "Held");
+	assert.equal(queueRowLabel(first, true), "Now");
+	const three = projectQueue({ steer: ["a"], followUp: ["b", "c"] });
+	assert.equal(queueSummary(three, false), "3 messages held, nothing sent. They go ahead of your next message.");
+	assert.doesNotMatch(queueSummary(three, false), /tool call/);
+});
+
+test("a stopped open session keeps held queue controls without offering an interrupt", () => {
+	const steering = { ...NO_STEERING, queue: true };
+	const policy = queueAccess(steering, "open", false);
+	assert.deepEqual(policy, { read: true, sendNow: false });
+	const messages = projectQueue({
+		steer: [],
+		followUp: ["held"],
+		entries: [{ id: "held-1", kind: "follow-up", text: "held", enqueuedAt: 1, pinned: false }],
+	});
+	assert.ok(messages[0]);
+	assert.deepEqual(
+		queueActions(messages[0], messages, ["send_now", "restore", "remove"], policy.sendNow).map((action) => action.key),
+		["restore", "remove"],
+	);
+	assert.deepEqual(queueAccess(steering, "open", true), { read: true, sendNow: true });
+	assert.deepEqual(queueAccess(steering, "parked", false), { read: false, sendNow: false });
+	assert.deepEqual(queueAccess(NO_STEERING, "open", false), { read: false, sendNow: false });
+});
+
+test("clearing the queue puts the drained texts back in the draft without duplicating them", () => {
+	assert.equal(restoredDraft("", ["first", "second"]), "first\n\nsecond");
+	assert.equal(restoredDraft("already typed", ["already typed", "new"]), "already typed\n\nnew");
+	assert.equal(restoredDraft("  ", ["  ", "only"]), "only");
+});
+
+test("restoring removed queue messages preserves overflow and leaves the limit to submission", () => {
+	const current = "x".repeat(PROMPT_TEXT_MAX_CHARACTERS);
+	const restored = restoredDraft(current, ["more"]);
+	assert.equal(restored.length, current.length + "\n\nmore".length);
+	assert.ok(restored.endsWith("\n\nmore"));
+	assert.equal(submitIntent(draft({ text: restored }), situation()).kind, "blocked");
+	const texts = ["a".repeat(16000), "b".repeat(16000), "c".repeat(16000)];
+	assert.equal(restoredDraft("", texts), texts.join("\n\n"));
+});
+
+// --- refusals --------------------------------------------------------------
+
+test("a 409 reads as a refusal sentence, never as a failure", () => {
+	const conflict = { problem: { status: 409, detail: "This PanCode build does not expose mid-turn steering." } };
+	assert.equal(capabilityRefusal(conflict), "This PanCode build does not expose mid-turn steering.");
+	assert.deepEqual(noticeForError(conflict), {
+		tone: "warn",
+		message: "This PanCode build does not expose mid-turn steering.",
+	});
+	assert.equal(capabilityRefusal({ problem: { status: 500, detail: "boom" } }), null);
+	assert.equal(capabilityRefusal(new Error("offline")), null);
+	assert.deepEqual(noticeForError(new Error("offline")), { tone: "fail", message: "offline" });
+	assert.equal(noticeForError(null), null);
+});
+
+test("a 200 that refused is reported, not swallowed", () => {
+	assert.deepEqual(noticeForRefusal({ accepted: false, refusal: "the run is no longer accepting input" }), {
+		tone: "warn",
+		message: "the run is no longer accepting input",
+	});
+	assert.deepEqual(noticeForRefusal({ cancelled: false }), {
+		tone: "warn",
+		message: "The engine refused, and reported no reason.",
+	});
+	assert.equal(noticeForRefusal({ accepted: true }), null);
+	assert.equal(noticeForRefusal(null), null);
+});
+
+// --- message actions -------------------------------------------------------
+
+test("try again is offered only on a failed or stopped turn that recorded a prompt", () => {
+	const retry = (status: Turn["status"], requestText: string | null) =>
+		messageActionOffers({ requestText, responseText: "done", status }).find((offer) => offer.id === "retry");
+	assert.equal(retry("failed", "do it")?.available, true);
+	assert.equal(retry("cancelled", "do it")?.available, true);
+	assert.equal(retry("succeeded", "do it")?.available, false);
+	assert.equal(retry("running", "do it")?.available, false);
+	assert.equal(retry("failed", null)?.available, false);
+	assert.match(retry("succeeded", "do it")?.unavailable ?? "", /failed or stopped/);
+});
+
+test("copy is offered only for text that exists", () => {
+	const offers = messageActionOffers({ requestText: "   ", responseText: "", status: "succeeded" });
+	assert.deepEqual(
+		offers.map((offer) => [offer.id, offer.available]),
+		[
+			["copy-request", false],
+			["copy-response", false],
+			["retry", false],
+		],
+	);
+	for (const offer of offers) assert.notEqual(offer.unavailable, null);
+});
+
+// --- the outcome footer ----------------------------------------------------
+
+const quantity = (display: string, value = Number(display.replaceAll(",", "")) || 0) => ({
+	fact: { kind: "measured" as const, value, source: "local-count" as const },
+	display,
+	ref: "session:s1#input",
+});
+const unmeasured = (display: string) => ({
+	fact: { kind: "unknown" as const, reason: "not-observed" as const },
+	display,
+	ref: "session:s1#usd",
+});
+const usage: Usage = {
+	quantities: {
+		input: quantity("12,345"),
+		output: quantity("678"),
+		cacheRead: quantity("90"),
+		cacheWrite: quantity("1"),
+		reasoning: quantity("234"),
+		prompt: quantity("12,436"),
+		total: quantity("13,114"),
+		calls: quantity("1"),
+		firstToken: quantity("0 ms"),
+		usd: unmeasured("not measured"),
+	},
+};
+
+function turn(overrides: Partial<Turn> = {}): Turn {
+	return {
+		id: "turn-1",
+		prompt: "explain this repository",
+		origin: "live",
+		status: "succeeded",
+		startedAt: "2026-09-20T10:00:00.000Z",
+		finishedAt: "2026-09-20T10:00:12.000Z",
+		stopReason: "end_turn",
+		usage,
+		problem: null,
+		...overrides,
+	};
+}
+
+test("usage shows two numbers and carries five in the tooltip", () => {
+	assert.equal(usageSummary(usage), "12,345 in · 678 out");
+	assert.equal(
+		usageTitle(usage),
+		"input 12,345 · output 678 · cacheRead 90 · cacheWrite 1 · reasoning 234 · prompt 12,436 · total 13,114 · calls 1 · firstToken 0 ms · usd not measured",
+	);
+});
+
+test("a completed turn footer carries its time, tokens and tool count, and an unmeasured cost stays out of the line", () => {
+	const view = turnOutcome(turn(), 3);
+	assert.equal(view.tone, "success");
+	assert.equal(view.label, "Done");
+	assert.deepEqual(view.facts, ["12s", "12,436 in · 678 out", "3 tool calls"]);
+	assert.deepEqual(
+		view.breakdown.find((row) => row.label === "Cost"),
+		{ group: "Cost", label: "Cost", value: "not measured", factRef: "session:s1#usd" },
+		"the breakdown still says the cost was not measured",
+	);
+	assert.deepEqual(view.breakdown.at(-1), { group: "Tools", label: "Calls", value: "3" });
+	assert.equal(view.usageLabel, "12,436 in · 678 out");
+	const priced = turnOutcome(
+		turn({
+			usage: {
+				quantities: { ...(usage.quantities as NonNullable<Usage["quantities"]>), usd: quantity("$0.0123", 0.0123) },
+			},
+		}),
+		0,
+	);
+	assert.deepEqual(priced.facts, ["12s", "12,436 in · 678 out", "$0.0123"], "a known cost is said once");
+	assert.equal(view.usage, usage, "the full reported accounting stays reachable from the compact outcome");
+	assert.equal(view.detail, null);
+	assert.equal(view.stopReason, null, "a stop reason on a successful turn is noise");
+	assert.deepEqual(turnOutcome(turn(), 1).breakdown.at(-1), { group: "Tools", label: "Calls", value: "1" });
+	const withoutUsage = turnOutcome(turn({ usage: null }), 0);
+	assert.deepEqual(withoutUsage.facts, ["12s"]);
+	assert.equal(withoutUsage.usageLabel, null);
+	assert.deepEqual(
+		turnOutcome(turn({ startedAt: null, usage: null }), 0).facts,
+		[],
+		"a replayed turn has no recorded start",
+	);
+	assert.equal(withoutUsage.usage, null);
+});
+
+test("the Detailed line reports route, speed, the prompt split and cache only when they were reported", () => {
+	const view = turnOutcome(
+		turn({ details: { model: "qwen3.8-27b", target: "lab-gpu", ttftMs: 420, outputTokensPerSecond: 38.4 } }),
+		0,
+	);
+	assert.deepEqual(view.nerd, [
+		{ label: "Route", value: "lab-gpu · qwen3.8-27b" },
+		{ label: "First token", value: "420ms" },
+		{ label: "Latency", value: "12s" },
+		{ label: "Speed", value: "38 tok/s" },
+		{ label: "Prompt", value: "12,436 (90 cached)" },
+		{ label: "Output", value: "678" },
+		{ label: "Reasoning", value: "234" },
+	]);
+	assert.deepEqual(
+		view.breakdown.filter((row) => row.group === "Cache").map((row) => [row.label, row.value]),
+		[
+			["Read", "90"],
+			["Written", "1"],
+		],
+		"provider token fields do not establish a hit share, so none is derived",
+	);
+	assert.deepEqual(
+		view.breakdown.filter((row) => row.group === "Model").map((row) => [row.label, row.value]),
+		[
+			["Target", "lab-gpu"],
+			["Model", "qwen3.8-27b"],
+		],
+	);
+	assert.deepEqual(turnOutcome(turn({ usage: null, details: { model: "m" } }), 0).nerd[0], {
+		label: "Route",
+		value: "m",
+	});
+	assert.deepEqual(
+		turnOutcome(turn({ usage: null }), 0).nerd,
+		[{ label: "Latency", value: "12s" }],
+		"only the recorded instants remain",
+	);
+	assert.deepEqual(turnOutcome(turn({ startedAt: null, usage: null }), 0).nerd, [], "nothing reported, nothing claimed");
+	assert.equal(tokenRate(7.25), "7.3 tok/s");
+});
+
+test("tool time names how many calls it measured, and compactions are counted per turn", () => {
+	const view = turnOutcome(turn({ usage: null }), {
+		tools: 3,
+		timed: 2,
+		toolMs: 4200,
+		slowest: { name: "Run tests", ms: 3900 },
+		compactions: 1,
+		notApplied: 0,
+	});
+	assert.deepEqual(view.nerd.slice(1), [
+		{ label: "Tool time", value: "4.2s over 2 of 3" },
+		{ label: "Slowest tool", value: "Run tests 3.9s" },
+		{ label: "Compactions", value: "1" },
+	]);
+	assert.deepEqual(
+		view.breakdown.filter((row) => row.group === "Tools" || row.group === "Context").map((row) => row.value),
+		["3", "4.2s over 2 of 3", "Run tests 3.9s", "1"],
+	);
+	const replayed = turnOutcome(turn({ usage: null }), { ...NO_ACTIVITY, tools: 2 });
+	assert.equal(
+		replayed.nerd.some((fact) => fact.label === "Tool time"),
+		false,
+		"replayed calls carry no host time, so none is claimed",
+	);
+});
+
+test("a failed turn shows its problem detail and its stop reason; a stopped one is not a failure", () => {
+	const failed = turnOutcome(
+		turn({
+			status: "failed",
+			stopReason: "refusal",
+			problem: {
+				type: "urn:pancode:problem:upstream_acp",
+				title: "Upstream refused",
+				status: 409,
+				code: "upstream_acp",
+				detail: "the target refused the request",
+				instance: "session",
+			},
+		}),
+		0,
+	);
+	assert.equal(failed.tone, "fail");
+	assert.equal(failed.detail, "the target refused the request");
+	assert.equal(failed.stopReason, "refusal");
+	const stopped = turnOutcome(turn({ status: "cancelled", problem: null }), 0);
+	assert.equal(stopped.tone, "neutral");
+	assert.equal(stopped.label, "Stopped");
+	assert.equal(stopped.stopReason, null);
+	assert.equal(turnOutcome(turn({ status: "running", usage: null, finishedAt: null }), 0).tone, "running");
+});
+
+test("a succeeded turn cut at the output limit says it stopped early, with the reason, and can be tried again", () => {
+	const cut = turnOutcome(turn({ stopReason: "max_tokens" }), 0);
+	assert.equal(cut.label, "Stopped early");
+	assert.equal(cut.tone, "warn");
+	assert.equal(cut.glyph, "!");
+	assert.equal(cut.detail, "The model reached its output limit before it finished. Send a message to continue.");
+	assert.equal(cut.stopReason, "max_tokens");
+	const retry = messageActionOffers({
+		requestText: "do it",
+		responseText: "half",
+		status: "succeeded",
+		ending: "output-limit",
+	}).find((offer) => offer.id === "retry");
+	assert.equal(retry?.available, true);
+});
+
+test("a /name the session cannot run is flagged before it is sent, and nothing else is", () => {
+	const command = (name: string, extra: Record<string, unknown> = {}) =>
+		({ name, summary: "", usage: `/${name}`, group: "Work", args: {}, ...extra }) as never;
+	const catalog = {
+		version: 1 as const,
+		commands: [command("share", { injectsUserTurn: true }), command("run", { streams: "dispatch" }), command("doctor")],
+		prompts: [
+			{ name: "review-pr", description: "Review a pull request" },
+			{ name: "wtfp:new-paper", description: "Start a paper" },
+		],
+	};
+	assert.equal(slashNotice("/share", catalog, "submit"), null);
+	assert.equal(slashNotice("/doctor --deep", catalog, "submit"), null);
+	assert.equal(slashNotice("/review-pr 42", catalog, "submit"), null);
+	assert.equal(slashNotice("/wtfp:new-paper", catalog, "submit"), null);
+	assert.equal(slashNotice("\\/tmp is full", catalog, "submit"), null);
+	assert.equal(slashNotice("/home/me/notes.md says why", catalog, "submit"), null);
+	assert.equal(slashNotice("plain text /tpyo", catalog, "submit"), null);
+	assert.equal(
+		slashNotice("/tpyo fix it", catalog, "submit")?.message,
+		"/tpyo is not available here. Type / to see what is. Start the line with \\/ to send it as text.",
+	);
+	// A terminal name the app answers itself runs here, so it is not warned about.
+	assert.equal(slashNotice("/model", catalog, "submit"), null);
+	assert.equal(slashNotice("/model gpt", catalog, "submit"), null);
+	assert.equal(slashNotice("/extensions dev", catalog, "submit"), null);
+	assert.equal(slashNotice("/run verifier", catalog, "submit"), null);
+	// Live (gui-fix4): a name still being typed is the palette's prefix, not a typo; a send judges it whole.
+	assert.equal(slashNotice("/wtf", catalog, "draft"), null);
+	assert.equal(slashNotice("/wtfp:new", catalog, "draft"), null);
+	assert.ok(slashNotice("/wtf", catalog, "submit"));
+	assert.ok(slashNotice("/tpyo fix it", catalog, "draft"), "a name its arguments follow is finished");
+	// Without the template list the composer cannot tell a template from a typo, so it says nothing.
+	assert.equal(slashNotice("/tpyo", { version: 1, commands: catalog.commands }, "submit"), null);
+	assert.equal(slashNotice("/tpyo", undefined, "submit"), null);
+});
+
+test("a turn with no usage quantities invents no tokens", () => {
+	const outcome = turnOutcome(
+		turn({
+			startedAt: null,
+			// A turn whose usage carries no quantities claims no tokens and no cost (#434).
+			usage: {},
+		}),
+		0,
+	);
+	assert.deepEqual(outcome.facts, []);
+	assert.equal(outcome.usageLabel, null);
+	assert.deepEqual(
+		outcome.breakdown.filter((row) => row.group === "Usage"),
+		[],
+	);
+});
+
+test("only the idle composer's note is quiet; anything the reader must know stays visible", () => {
+	assert.equal(composerDelivery(situation(), DEFAULT_STEER_MODE, false, false).quiet, true);
+	for (const [state, context, reading] of [
+		[situation({ turnRunning: true }), false, false],
+		[situation({ sending: true }), false, false],
+		[situation({ sessionState: "parked" }), false, false],
+		[situation(), true, false],
+		[situation(), false, true],
+	] as const)
+		assert.equal(composerDelivery(state, DEFAULT_STEER_MODE, context, reading).quiet, undefined);
+});
+
+test("a draft's size is a labelled estimate that names what it leaves out", () => {
+	const none = { files: [], images: 0 };
+	assert.equal(draftEstimate("   ", none), null);
+	assert.deepEqual(
+		{ ...draftEstimate("fix the tests", none), title: undefined },
+		{ text: "~4 tokens", tokens: 4, title: undefined },
+	);
+	assert.equal(draftEstimate("x".repeat(16_800), none)?.text, "~4.2k tokens");
+	assert.equal(draftEstimate("x".repeat(8_000), none)?.text, "~2k tokens");
+	assert.equal(draftEstimate("x".repeat(600_000), none)?.text, "~150k tokens");
+	const attached = draftEstimate("see @src/a.ts", { files: [{ text: "y".repeat(400) }], images: 2 });
+	assert.equal(attached?.tokens, 104);
+	assert.match(attached?.title ?? "", /typed text and attached files/u);
+	assert.match(attached?.title ?? "", /Not counted: @ files, read when sent and the images\./u);
+	assert.doesNotMatch(draftEstimate("mail me at a@b.c", none)?.title ?? "", /Not counted/u);
+});
+
+test("Ctrl+R finds sent messages by what they said, newest first, each once", () => {
+	const sent = ["fix the mesh test", "explain\nthe Mesh solver", "deploy", "fix the mesh test"];
+	assert.deepEqual(
+		searchHistory(sent, "MESH").map((match) => [match.text, match.index, match.at]),
+		[
+			["fix the mesh test", 3, 8],
+			["explain\nthe Mesh solver", 1, 12],
+		],
+	);
+	assert.deepEqual(
+		searchHistory(sent, "  ").map((match) => match.index),
+		[3, 2, 1],
+		"an empty query lists every message",
+	);
+	assert.deepEqual(searchHistory(sent, "nothing like it"), []);
+	assert.equal(searchHistory(sent, "", 2).length, 2);
+	// The excerpt is the line the query hit, with the rest of the message counted rather than shown.
+	const [, multiline] = searchHistory(sent, "mesh");
+	assert.ok(multiline);
+	assert.deepEqual(historyExcerpt(multiline), { before: "the ", hit: "Mesh", after: " solver", hiddenLines: 1 });
+	const long = searchHistory([`${"a".repeat(60)} needle tail`], "needle")[0];
+	assert.ok(long);
+	assert.equal(historyExcerpt(long, 4).before, "…aaa ");
+	// A taken match continues on ↓ to the newer messages and then the draft it replaced.
+	const taken = searchHistory(sent, "explain")[0];
+	assert.ok(taken);
+	assert.deepEqual(stepHistory(sent, { index: taken.index, stash: "my draft" }, "newer", taken.text)?.text, "deploy");
+	assert.deepEqual(stepHistory(sent, { index: 3, stash: "my draft" }, "newer", "x"), { browse: null, text: "my draft" });
+});
+
+test("a finished turn that left a change unapplied is not a green Done, and one token is singular", () => {
+	const clean = turnOutcome(turn({ usage: null }), { ...NO_ACTIVITY, tools: 1 });
+	assert.equal(clean.tone, "success");
+	const unapplied = turnOutcome(turn({ usage: null }), { ...NO_ACTIVITY, tools: 1, notApplied: 1 });
+	assert.equal(unapplied.tone, "neutral");
+	assert.ok(unapplied.facts.includes("1 change not applied"));
+	assert.ok(
+		turnOutcome(turn({ usage: null }), { ...NO_ACTIVITY, tools: 2, notApplied: 2 }).facts.includes(
+			"2 changes not applied",
+		),
+	);
+	assert.equal(draftEstimate("hi", { files: [], images: 0 })?.text, "~1 token");
+});
+
+test("transcript detail tiers use the terminal's value names, so the header never says a bare Default beside autonomy", () => {
+	assert.deepEqual(
+		OUTPUT_DETAILS.map((tier) => tier.label),
+		["Compact", "Standard", "Detailed"],
+	);
+	assert.equal(outputDetailLabel("standard"), "Standard");
+});

@@ -1,0 +1,461 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { execFile, execFileSync } from "node:child_process";
+import {
+	chmodSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
+import { buildBwrapInvocation } from "../../src/core/sandbox/bwrap.js";
+import {
+	mainSandboxAgentMasks,
+	mainSandboxGitLayout,
+	mainSandboxInvocationSpec,
+	mainSandboxNpmUserConfig,
+	mainSandboxWriteHint,
+	mainShellContained,
+	planMainSandboxSpawn,
+	resolveMainSandboxPolicy,
+	yoloScriptSandboxState,
+} from "../../src/core/sandbox/main-session.js";
+
+function run(file: string, args: string[]): Promise<{ code: number | null; output: string }> {
+	return new Promise((resolve) => {
+		execFile(file, args, { timeout: 20_000 }, (error, stdout, stderr) => {
+			const code = error === null ? 0 : typeof error.code === "number" ? error.code : null;
+			resolve({ code, output: `${stdout}${stderr}` });
+		});
+	});
+}
+
+// #419: the main-session sandbox (default containment, and yolo scripts under safety.sandbox required) keeps the real /tmp.
+test("the main-session sandbox writes the workspace and scratch roots only, keeps PanCode's trees read-only and the network on", () => {
+	const policy = resolveMainSandboxPolicy({
+		workspace: "/w",
+		scratchRoots: ["/tmp", "/bench"],
+		sandboxCache: "/home/u/.cache/pancode/sandbox-cache",
+		pancodeDirs: ["/home/u/.config/pancode", "/home/u/.local/share/pancode", "/home/u/.cache/pancode"],
+	});
+	assert.deepEqual(policy.writableRoots, ["/w", "/tmp", "/bench", "/home/u/.cache/pancode/sandbox-cache"]);
+	assert.equal(
+		policy.writableRoots.some((root) => root.startsWith("/home/u/.local")),
+		false,
+		"~/.local/bin is on PATH",
+	);
+	for (const path of ["/w/.git", "/w/.pancode", "/bench/.git", "/home/u/.config/pancode", "/home/u/.cache/pancode"]) {
+		assert.ok(policy.readOnlyPaths.includes(path), path);
+	}
+	assert.equal(policy.network, true);
+
+	const masks = [{ path: "/home/u/.ssh", kind: "directory" as const }];
+	const spec = mainSandboxInvocationSpec(policy, { argv: ["/bin/bash", "x.sh"] }, "/w", masks);
+	const { args } = buildBwrapInvocation(spec);
+	assert.equal(args.includes("--unshare-net"), false);
+	assert.equal(args.includes("--tmpfs") && args[args.indexOf("--tmpfs") + 1] === "/tmp", false, "no private /tmp");
+	const bind = args.indexOf("/tmp");
+	assert.equal(args[bind - 1], "--bind-try", "the real /tmp is bound writable");
+	assert.ok(args.indexOf("/w/.git") > args.indexOf("/w"), ".git is re-bound after the workspace");
+	assert.ok(args.lastIndexOf("/home/u/.ssh") > args.indexOf("/w/.git"), "masks come last");
+	assert.deepEqual(args.slice(args.indexOf("--unsetenv"), args.indexOf("--unsetenv") + 2), [
+		"--unsetenv",
+		"SSH_AUTH_SOCK",
+	]);
+
+	const available = { available: true, backend: "bwrap" as const, executable: "/usr/bin/bwrap", reason: null };
+	const missing = { available: false, backend: null, executable: null, reason: "bubblewrap (bwrap) is not installed" };
+	// #407: yolo is unsandboxed by default; only required keeps the script sandbox.
+	assert.equal(yoloScriptSandboxState("auto", available), "unsandboxed");
+	assert.equal(yoloScriptSandboxState("required", available), "sandboxed");
+	assert.equal(yoloScriptSandboxState("off", available), "unsandboxed");
+	assert.equal(yoloScriptSandboxState("auto", missing), "unsandboxed");
+	assert.equal(yoloScriptSandboxState("required", missing), "refused");
+	assert.equal(planMainSandboxSpawn(policy, { argv: ["/bin/true"] }, "/w", missing).kind, "refused");
+	// At autonomy default the main session's shell is contained whenever a backend exists and the mode is not off.
+	assert.equal(mainShellContained("auto", available), true);
+	assert.equal(mainShellContained("required", available), true);
+	assert.equal(mainShellContained("off", available), false);
+	assert.equal(mainShellContained("auto", missing), false);
+	assert.equal(mainShellContained("required", missing), false);
+
+	assert.match(
+		mainSandboxWriteHint("x: Read-only file system", policy) ?? "",
+		/write only to \/w, \/tmp, \/bench.*unsandboxed: true.*safety\.scratchRoots/u,
+	);
+	assert.equal(mainSandboxWriteHint("no such file", policy), null);
+});
+
+// C-6: pnpm's store lives under the read-only XDG_DATA_HOME, and a masked ~/.npmrc made npm and pnpm print EACCES.
+test("contained package managers get a pnpm store in the sandbox cache and a read-only empty npm user config for a masked ~/.npmrc", (t) => {
+	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "pancode-npmrc-")));
+	t.after(() => rmSync(scratch, { recursive: true, force: true }));
+	const home = join(scratch, "home");
+	const pancode = join(scratch, "cache", "pancode");
+	const sandboxCache = join(pancode, "sandbox-cache");
+	mkdirSync(home);
+	mkdirSync(sandboxCache, { recursive: true });
+	writeFileSync(join(home, ".npmrc"), "//registry.npmjs.org/:_authToken=x\n");
+	const masks = [{ path: join(home, ".npmrc"), kind: "file" as const }];
+	const real = resolveMainSandboxPolicy({
+		workspace: join(scratch, "ws"),
+		scratchRoots: [],
+		sandboxCache,
+		pancodeDirs: [pancode],
+	});
+	assert.equal(mainSandboxNpmUserConfig(sandboxCache, [], home, real), undefined, "an unmasked ~/.npmrc stays in use");
+	const file = mainSandboxNpmUserConfig(sandboxCache, masks, home, real);
+	assert.ok(file !== undefined);
+	// Contained commands write the sandbox cache, so the file lives where they cannot replace, link or chmod it.
+	assert.equal(file.startsWith(`${sandboxCache}/`), false, file);
+	assert.equal(file.startsWith(`${pancode}/`), true, file);
+	assert.equal(readFileSync(file, "utf8"), "");
+	assert.equal(statSync(file).mode & 0o777, 0o444);
+	// Each launch checks it again: a mode, a link or content that is not the empty file is replaced.
+	chmodSync(file, 0o000);
+	assert.equal(mainSandboxNpmUserConfig(sandboxCache, masks, home, real), file);
+	assert.equal(statSync(file).mode & 0o777, 0o444);
+	const victim = join(scratch, "victim");
+	writeFileSync(victim, "keep");
+	rmSync(file);
+	symlinkSync(victim, file);
+	assert.equal(mainSandboxNpmUserConfig(sandboxCache, masks, home, real), file);
+	assert.equal(lstatSync(file).isSymbolicLink(), false);
+	assert.equal(readFileSync(victim, "utf8"), "keep");
+	// Where contained commands could write that directory, no user config is offered at all.
+	const open = resolveMainSandboxPolicy({ workspace: scratch, scratchRoots: [], sandboxCache, pancodeDirs: [] });
+	assert.equal(mainSandboxNpmUserConfig(sandboxCache, masks, home, open), undefined);
+
+	const cache = "/home/u/.cache/pancode/sandbox-cache";
+	const policy = resolveMainSandboxPolicy({
+		workspace: "/w",
+		scratchRoots: [],
+		sandboxCache: cache,
+		pancodeDirs: ["/home/u/.cache/pancode"],
+	});
+	const setEnv = (env: NodeJS.ProcessEnv, userConfig?: string) =>
+		mainSandboxInvocationSpec(policy, { argv: ["/bin/true"] }, "/w", [], userConfig, env).setEnv ?? {};
+	const plain = setEnv({});
+	assert.equal(plain.PNPM_HOME, join(cache, "pnpm"), "pnpm 10 keeps its store under PNPM_HOME");
+	assert.equal(plain.pnpm_config_store_dir, join(cache, "pnpm", "store"));
+	// npm 11 warns "Unknown env config store-dir" on every call that sees this.
+	assert.equal("npm_config_store_dir" in plain, false);
+	assert.equal("NPM_CONFIG_USERCONFIG" in plain, false);
+	// The operator's own choices stand: a store, a PNPM_HOME the command can write, a user config.
+	assert.equal("pnpm_config_store_dir" in setEnv({ npm_config_store_dir: "/s" }), false);
+	assert.equal("PNPM_HOME" in setEnv({ PNPM_CONFIG_STORE_DIR: "/s" }), false);
+	assert.equal("PNPM_HOME" in setEnv({ PNPM_HOME: "/w/.pnpm" }), false);
+	assert.equal(setEnv({ PNPM_HOME: "/home/u/.local/share/pnpm" }).PNPM_HOME, join(cache, "pnpm"));
+	assert.equal(setEnv({}, "/c/sandbox-npmrc").NPM_CONFIG_USERCONFIG, "/c/sandbox-npmrc");
+	assert.equal("NPM_CONFIG_USERCONFIG" in setEnv({ npm_config_userconfig: "/w/.npmrc" }, "/c/sandbox-npmrc"), false);
+	assert.match(mainSandboxWriteHint("EROFS", policy) ?? "", /PNPM_HOME and pnpm_config_store_dir/u);
+});
+
+test("the sandbox write hint points a read-only tool cache at the run's writable temp directory", () => {
+	const temp = realpathSync(tmpdir());
+	const roots = (writableRoots: string[]) =>
+		resolveMainSandboxPolicy({
+			workspace: "/w",
+			scratchRoots: writableRoots,
+			pancodeDirs: [],
+		});
+	const withTemp = mainSandboxWriteHint("uv: Read-only file system (os error 30)", roots([temp])) ?? "";
+	assert.ok(withTemp.includes(`stays read-only because the tool later runs code from it outside the sandbox`), withTemp);
+	assert.ok(withTemp.includes(`UV_CACHE_DIR=${join(temp, "uv-cache")}`), withTemp);
+	const noTemp = mainSandboxWriteHint("uv: Read-only file system (os error 30)", roots([])) ?? "";
+	assert.equal(noTemp.includes("UV_CACHE_DIR"), false, noTemp);
+});
+
+test("under bwrap a yolo script writes its workspace and scratch roots, sees the host's /tmp and writes nothing else", async (t) => {
+	const availability = sandboxAvailability();
+	if (!availability.available || availability.backend !== "bwrap") {
+		t.skip(`bubblewrap sandbox unavailable: ${availability.reason ?? "unsupported platform"}`);
+		return;
+	}
+	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "pancode-yolo-script-")));
+	const workspace = join(scratch, "workspace");
+	const bench = join(scratch, "bench");
+	const outside = join(scratch, "outside");
+	mkdirSync(join(workspace, ".git"), { recursive: true });
+	mkdirSync(bench);
+	mkdirSync(outside);
+	const cache = join(scratch, "cache");
+	mkdirSync(join(cache, "pancode"), { recursive: true });
+	const policy = resolveMainSandboxPolicy({
+		workspace,
+		scratchRoots: [bench],
+		sandboxCache: join(cache, "pancode", "sandbox-cache"),
+		pancodeDirs: [join(cache, "pancode")],
+	});
+	// A private /tmp is a fresh tmpfs on its own device; the host's keeps its device and inode.
+	const script = [
+		"stat -c tmp-id=%d:%i /tmp",
+		`echo a > ${join(workspace, "a.txt")}`,
+		`echo b > ${join(bench, "b.txt")}`,
+		'echo e > "$XDG_CACHE_HOME/e.txt"',
+		`echo f > ${join(cache, "pancode", "f.txt")} 2>/dev/null || echo pancode-cache-refused`,
+		`echo c > ${join(outside, "c.txt")} 2>/dev/null || echo outside-refused`,
+		`echo d > ${join(workspace, ".git", "d")} 2>/dev/null || echo git-refused`,
+	].join("; ");
+	const plan = planMainSandboxSpawn(policy, { argv: ["/bin/bash", "-c", script] }, workspace, availability);
+	assert.equal(plan.kind, "sandboxed");
+	if (plan.kind !== "sandboxed") return;
+	const result = await run(plan.file, plan.args);
+	assert.equal(result.code, 0, result.output);
+	assert.match(result.output, /outside-refused/u);
+	assert.match(result.output, /git-refused/u);
+	assert.match(result.output, /pancode-cache-refused/u);
+	assert.equal(existsSync(join(cache, "pancode", "sandbox-cache", "e.txt")), true);
+	assert.match(
+		result.output,
+		new RegExp(`tmp-id=${statSync("/tmp").dev}:${statSync("/tmp").ino}\\b`, "u"),
+		"the host's /tmp, not a private one",
+	);
+	assert.equal(existsSync(join(workspace, "a.txt")), true);
+	assert.equal(existsSync(join(bench, "b.txt")), true);
+	assert.equal(existsSync(join(outside, "c.txt")), false);
+});
+
+function git(cwd: string, ...args: string[]): string {
+	return execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main", ...args], {
+		cwd,
+		encoding: "utf8",
+	});
+}
+
+// #419: git inside a yolo script writes objects, refs and the index but never hooks, config or commondir.
+test("the yolo script sandbox makes the repository's git dirs writable and keeps their hooks, config and commondir read-only", () => {
+	const policy = resolveMainSandboxPolicy({
+		workspace: "/w",
+		scratchRoots: ["/tmp"],
+		pancodeDirs: [],
+		git: {
+			mountDirs: ["/w/.git", "/w/.git/modules", "/w/.git/modules/sub"],
+			readOnlyPaths: ["/w/.git/config", "/w/.git/hooks", "/w/.git/modules/sub/config", "/w/sub/.git"],
+			absentHooks: ["/w/.git/modules/sub/hooks"],
+			absentFiles: ["/w/.git/commondir"],
+		},
+	});
+	assert.deepEqual(policy.writableRoots, ["/w", "/tmp", "/w/.git", "/w/.git/modules", "/w/.git/modules/sub"]);
+	assert.equal(policy.readOnlyPaths.includes("/w/.git"), false);
+	for (const path of ["/w/.pancode", "/tmp/.git", "/w/.git/hooks", "/w/.git/commondir", "/w/.git/modules/sub/hooks"]) {
+		assert.ok(policy.readOnlyPaths.includes(path), path);
+	}
+	const { args } = buildBwrapInvocation(mainSandboxInvocationSpec(policy, { argv: ["/bin/true"] }, "/w", []));
+	assert.ok(
+		args.indexOf("/w/.git/config") > args.lastIndexOf("/w/.git/modules/sub"),
+		"read-only rebinds follow the git mounts",
+	);
+});
+
+test("the git layout of a linked worktree covers its .git file, its git dir and the common dir", (t) => {
+	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "pancode-yolo-git-")));
+	t.after(() => rmSync(scratch, { recursive: true, force: true }));
+	const main = join(scratch, "main");
+	mkdirSync(main);
+	git(main, "init", "-q");
+	git(main, "commit", "-q", "--allow-empty", "-m", "init");
+	git(main, "worktree", "add", "-q", join(scratch, "wt"));
+	const layout = mainSandboxGitLayout(join(scratch, "wt"));
+	assert.ok(layout !== undefined);
+	const common = join(main, ".git");
+	for (const dir of [common, join(common, "worktrees"), join(common, "worktrees", "wt")]) {
+		assert.ok(layout.mountDirs.includes(dir), dir);
+	}
+	for (const path of [
+		join(scratch, "wt", ".git"),
+		join(common, "config"),
+		join(common, "hooks"),
+		join(common, "worktrees", "wt", "commondir"),
+	]) {
+		assert.ok(layout.readOnlyPaths.includes(path), path);
+	}
+	assert.ok(layout.absentFiles.includes(join(common, "commondir")));
+});
+
+test("under bwrap git commits from a yolo script while hooks, config, commondir and module git dirs stay put", async (t) => {
+	const availability = sandboxAvailability();
+	if (!availability.available || availability.backend !== "bwrap") {
+		t.skip(`bubblewrap sandbox unavailable: ${availability.reason ?? "unsupported platform"}`);
+		return;
+	}
+	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "pancode-yolo-git-")));
+	t.after(() => rmSync(scratch, { recursive: true, force: true }));
+	const workspace = join(scratch, "main");
+	mkdirSync(workspace);
+	git(workspace, "init", "-q");
+	git(workspace, "commit", "-q", "--allow-empty", "-m", "init");
+	const common = join(workspace, ".git");
+	const module = join(common, "modules", "sub");
+	mkdirSync(join(common, "modules"));
+	git(scratch, "init", "-q", `--separate-git-dir=${module}`, join(workspace, "sub"));
+	git(join(workspace, "sub"), "config", "core.worktree", "../../../sub");
+	rmSync(join(module, "hooks"), { recursive: true, force: true });
+	const layout = mainSandboxGitLayout(workspace);
+	const policy = resolveMainSandboxPolicy({
+		workspace,
+		scratchRoots: [],
+		pancodeDirs: [],
+		...(layout !== undefined ? { git: layout } : {}),
+	});
+	const script = [
+		"git -c user.name=t -c user.email=t@t commit -q --allow-empty -m sandboxed && echo committed",
+		"echo x > .git/hooks/post-commit 2>/dev/null || echo hooks-refused",
+		"git config core.fsmonitor evil 2>/dev/null || echo config-refused",
+		"mv .git/modules/sub .git/modules/sub2 2>/dev/null || echo module-rename-refused",
+		"mv .git/modules .git/modules2 2>/dev/null || echo modules-rename-refused",
+		"echo x > sub/.git 2>/dev/null || echo gitfile-refused",
+		"mkdir -p .git/modules/sub/hooks && echo x > .git/modules/sub/hooks/post-checkout",
+		"echo /evil > .git/commondir",
+	].join("; ");
+	const plan = planMainSandboxSpawn(policy, { argv: ["/bin/bash", "-c", script] }, workspace, availability);
+	assert.equal(plan.kind, "sandboxed");
+	if (plan.kind !== "sandboxed") return;
+	const result = await run(plan.file, plan.args);
+	plan.afterExit();
+	for (const marker of [
+		"committed",
+		"hooks-refused",
+		"config-refused",
+		"module-rename-refused",
+		"modules-rename-refused",
+		"gitfile-refused",
+	]) {
+		assert.match(result.output, new RegExp(marker, "u"), result.output);
+	}
+	assert.match(git(workspace, "log", "-1", "--format=%s"), /sandboxed/u);
+	assert.equal(existsSync(join(common, "hooks", "post-commit")), false);
+	assert.doesNotMatch(readFileSync(join(common, "config"), "utf8"), /fsmonitor/u);
+	assert.equal(existsSync(join(module, "hooks", "post-checkout")), false, "an absent hooks dir is a tmpfs");
+	assert.equal(existsSync(join(common, "commondir")), false, "a planted commondir is swept");
+});
+
+// #419: worker parity. The host's /tmp must not hand a yolo script the operator's ssh-agent.
+test("under bwrap a yolo script runs in its own PID namespace and cannot reach an ssh-agent socket", async (t) => {
+	const availability = sandboxAvailability();
+	if (!availability.available || availability.backend !== "bwrap") {
+		t.skip(`bubblewrap sandbox unavailable: ${availability.reason ?? "unsupported platform"}`);
+		return;
+	}
+	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "pancode-yolo-agent-")));
+	t.after(() => rmSync(scratch, { recursive: true, force: true }));
+	// Stands in for /tmp: OpenSSH's agent directory, and an agent socket elsewhere named by SSH_AUTH_SOCK.
+	mkdirSync(join(scratch, "ssh-abc"));
+	const listen = (socket: string) =>
+		new Promise<ReturnType<typeof createServer>>((resolve) => {
+			const server = createServer().listen(socket, () => resolve(server));
+		});
+	const servers = await Promise.all([listen(join(scratch, "ssh-abc", "agent.1")), listen(join(scratch, "agent.sock"))]);
+	t.after(() => {
+		for (const server of servers) server.close();
+	});
+	const masks = mainSandboxAgentMasks({ SSH_AUTH_SOCK: join(scratch, "agent.sock") }, scratch);
+	assert.deepEqual(masks, [
+		{ path: join(scratch, "ssh-abc"), kind: "directory" },
+		{ path: join(scratch, "agent.sock"), kind: "file" },
+	]);
+	const policy = resolveMainSandboxPolicy({
+		workspace: scratch,
+		scratchRoots: [],
+		pancodeDirs: [],
+	});
+	const script = [
+		"kill -0 1 && test $$ -lt 10 && echo own-pid-namespace",
+		`test -S ${join(scratch, "ssh-abc", "agent.1")} || echo tmp-agent-hidden`,
+		`test -S ${join(scratch, "agent.sock")} || echo auth-sock-hidden`,
+	].join("; ");
+	const spec = mainSandboxInvocationSpec(policy, { argv: ["/bin/bash", "-c", script] }, scratch, masks);
+	const invocation = buildBwrapInvocation(spec, availability.executable ?? undefined);
+	assert.ok(invocation.args.includes("--unshare-pid"));
+	// With masks the invocation is the retrying launcher shell, not bwrap itself: spawn what it names.
+	const result = await run(invocation.file, invocation.args);
+	assert.equal(result.code, 0, result.output);
+	for (const marker of ["own-pid-namespace", "tmp-agent-hidden", "auth-sock-hidden"]) {
+		assert.match(result.output, new RegExp(marker, "u"), result.output);
+	}
+});
+
+test("under bwrap a contained command reads no Kerberos ticket cache in a shared temp root or named by KRB5CCNAME", async (t) => {
+	const availability = sandboxAvailability();
+	if (!availability.available || availability.backend !== "bwrap") {
+		t.skip(`bubblewrap sandbox unavailable: ${availability.reason ?? "unsupported platform"}`);
+		return;
+	}
+	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "pancode-krb5-")));
+	const workspace = join(scratch, "workspace");
+	const shared = join(scratch, "tmp");
+	const outside = join(scratch, "outside");
+	for (const dir of [workspace, shared, outside]) mkdirSync(dir);
+	const saved = process.env.KRB5CCNAME;
+	t.after(() => {
+		if (saved === undefined) delete process.env.KRB5CCNAME;
+		else process.env.KRB5CCNAME = saved;
+		rmSync(scratch, { recursive: true, force: true });
+	});
+	const uid = process.getuid?.() ?? 0;
+	const ticket = Buffer.from([0x05, 0x04, ...Buffer.from("TICKET")]);
+	const policy = resolveMainSandboxPolicy({ workspace, scratchRoots: [shared], pancodeDirs: [] });
+	const runPlan = async (script: string) => {
+		const plan = planMainSandboxSpawn(policy, { argv: ["/bin/bash", "-c", script] }, workspace, availability);
+		assert.equal(plan.kind, "sandboxed");
+		if (plan.kind !== "sandboxed") return "";
+		const result = await run(plan.file, plan.args);
+		plan.afterExit();
+		return result.output;
+	};
+	// The temp root was scanned before any of these caches existed, as in a session that has run a command.
+	await runPlan("true");
+	const late = join(shared, `krb5cc_${uid}_sshdXYZ`);
+	const collection = join(shared, `krb5cc_${uid}_dir`);
+	const named = join(outside, "ticket-cache");
+	writeFileSync(late, ticket, { mode: 0o600 });
+	mkdirSync(collection, { mode: 0o700 });
+	writeFileSync(join(collection, "tkt"), ticket, { mode: 0o600 });
+	writeFileSync(named, ticket, { mode: 0o600 });
+	process.env.KRB5CCNAME = `FILE:${named}`;
+	const reads = [late, join(collection, "tkt"), named].map(
+		(file) => `grep -q TICKET ${file} 2>/dev/null && echo read:${file}`,
+	);
+	const output = await runPlan(`${reads.join("; ")}; true`);
+	assert.doesNotMatch(output, /read:/u, output);
+});
+
+test("under bwrap a contained command writes a private tsx, jiti or Node compile cache, never the host's in a shared temp root", async (t) => {
+	const availability = sandboxAvailability();
+	if (!availability.available || availability.backend !== "bwrap") {
+		t.skip(`bubblewrap sandbox unavailable: ${availability.reason ?? "unsupported platform"}`);
+		return;
+	}
+	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "pancode-modcache-")));
+	t.after(() => rmSync(scratch, { recursive: true, force: true }));
+	const workspace = join(scratch, "workspace");
+	const shared = join(scratch, "tmp");
+	for (const dir of [workspace, shared]) mkdirSync(dir);
+	const tsx = join(shared, `tsx-${process.geteuid?.() ?? ""}`);
+	mkdirSync(tsx);
+	writeFileSync(join(tsx, "entry"), '{"code":"console.log(1)"}');
+	const policy = resolveMainSandboxPolicy({ workspace, scratchRoots: [shared], pancodeDirs: [] });
+	const script = [tsx, join(shared, "jiti"), join(shared, "node-compile-cache")]
+		.map((dir) => `mkdir -p ${dir} && echo forged > ${dir}/entry && echo wrote:${dir}`)
+		.join("; ");
+	const plan = planMainSandboxSpawn(policy, { argv: ["/bin/bash", "-c", script] }, workspace, availability);
+	assert.equal(plan.kind, "sandboxed");
+	if (plan.kind !== "sandboxed") return;
+	const result = await run(plan.file, plan.args);
+	plan.afterExit();
+	assert.equal((result.output.match(/wrote:/gu) ?? []).length, 3, result.output);
+	assert.equal(readFileSync(join(tsx, "entry"), "utf8"), '{"code":"console.log(1)"}');
+	for (const dir of ["jiti", "node-compile-cache"]) assert.equal(existsSync(join(shared, dir, "entry")), false, dir);
+});

@@ -1,0 +1,42 @@
+name: Feature request
+description: Propose a capability or a better workflow.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What are you trying to do, and what is blocked or awkward today? Describe the problem before the solution. A real task from your own work is the best argument.
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: Proposed shape
+      description: If you have an idea of the fix, sketch it. Which surface changes (terminal, headless run, ACP, desktop app, a provider, docs)? Name the command, flag or setting if you have one.
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How would you know it works? Concrete checks a reviewer can apply.
+      placeholder: |
+        - Command exits 0 on the documented happy path.
+        - Existing settings.yaml continues to load without migration.
+        - A unit or integration test covers the changed path.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you ruled out, and why.
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Filled by /report. Leave empty when writing by hand.
+    validations:
+      required: false

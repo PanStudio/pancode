@@ -1,0 +1,119 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { createHookBudgetTracker, resolveHookBudgetsFromEnv, resolveHookBudgetTunablesFromEnv } from "./budget.js";
+import type { MiddlewareContract, MiddlewareHost, MiddlewareRegistrar } from "./contract.js";
+import { recordFiredRules } from "./fired-record.js";
+import { createMiddlewareRegistrationTable } from "./registrations.js";
+import { cloneMiddlewareRule, listMiddlewareRuleDefinitions, listMiddlewareRules } from "./rules.js";
+import {
+	cloneMiddlewareEffect,
+	type MiddlewareDiagnosticSink,
+	type MiddlewareRuleDefinition,
+	registrationFromRuleDefinition,
+	registrationMatchesTool,
+	runMiddlewareAsyncRegistrations,
+	runMiddlewareRegistrations,
+	writeMiddlewareDiagnosticToStderr,
+} from "./runtime.js";
+import type { MiddlewareRule, MiddlewareSnapshot } from "./types.js";
+
+/**
+ * The declarative rules a worker rebuilds its middleware from. A worker has no
+ * operator surface, and its spec validator admits no `notify_operator` effect
+ * kind, so a rule declaring one would fail every dispatch at parse time. Such
+ * rules stay with the orchestrator.
+ */
+export function createMiddlewareSnapshot(
+	rules: ReadonlyArray<MiddlewareRule> = listMiddlewareRules(),
+): MiddlewareSnapshot {
+	return {
+		version: 1,
+		rules: rules.filter((rule) => !rule.effectKinds.includes("notify_operator")).map(cloneMiddlewareRule),
+	};
+}
+
+/**
+ * Rebuild a middleware host from a declarative snapshot, typically inside
+ * a worker subprocess, whose own composition keeps the registrar. The snapshot carries no effect payloads, so each rule
+ * is resolved against the builtin definition table by id; the snapshot's
+ * declarative fields (enabled, hooks, effectKinds) stay authoritative. A rule
+ * id with no builtin definition in this binary evaluates to no effects.
+ */
+export function createMiddlewareHostFromSnapshot(snapshot: MiddlewareSnapshot): MiddlewareHost {
+	const builtinById = new Map(listMiddlewareRuleDefinitions().map((definition) => [definition.rule.id, definition]));
+	const definitions: MiddlewareRuleDefinition[] = snapshot.rules.map((rule) => {
+		const builtin = builtinById.get(rule.id);
+		const definition: MiddlewareRuleDefinition = {
+			rule: cloneMiddlewareRule(rule),
+			effects: builtin === undefined ? [] : builtin.effects.map(cloneMiddlewareEffect),
+		};
+		if (builtin?.toolNames !== undefined) definition.toolNames = [...builtin.toolNames];
+		if (builtin?.predicate !== undefined) definition.predicate = builtin.predicate;
+		return definition;
+	});
+	let diagnosticSink: MiddlewareDiagnosticSink | undefined;
+	// Workers never receive owned registrations; the table exists so the
+	// worker contract satisfies the same interface with the same semantics.
+	const table = createMiddlewareRegistrationTable({
+		fixed: definitions.map(registrationFromRuleDefinition),
+		diagnosticSink: () => diagnosticSink ?? writeMiddlewareDiagnosticToStderr,
+	});
+	const budgetTracker = createHookBudgetTracker({
+		budgets: resolveHookBudgetsFromEnv(),
+		...resolveHookBudgetTunablesFromEnv(),
+	});
+	const contract: MiddlewareContract = {
+		runHook(input) {
+			const registrations = table.list();
+			return recordFiredRules(
+				runMiddlewareRegistrations(input, registrations, {
+					budgetTracker,
+					...(diagnosticSink !== undefined ? { onDiagnostic: diagnosticSink } : {}),
+				}),
+				"sync",
+			);
+		},
+		// A worker's awaited registrations are its proxies for the dispatching
+		// session's extension hooks (src/engine/worker-extension-hooks.ts).
+		hasAwaitedHook(hook, toolName) {
+			return table
+				.list()
+				.some(
+					(registration) =>
+						registration.awaited === true &&
+						registration.hooks.includes(hook) &&
+						registrationMatchesTool(registration, toolName),
+				);
+		},
+		async runAwaitedHook(input, priorEffects = []) {
+			return recordFiredRules(
+				await runMiddlewareAsyncRegistrations(input, table.list(), priorEffects, {
+					include: (registration) => registration.awaited === true,
+					...(diagnosticSink !== undefined ? { onDiagnostic: diagnosticSink } : {}),
+				}),
+				"awaited",
+			);
+		},
+		snapshot() {
+			return createMiddlewareSnapshot(definitions.map((definition) => definition.rule));
+		},
+	};
+	const registrar: MiddlewareRegistrar = {
+		registerHook(registration) {
+			table.registerHook(registration);
+		},
+		setDiagnosticSink(sink) {
+			diagnosticSink = sink;
+		},
+		prepareRegistrationReplacement(owner, generation, registrations) {
+			return table.prepareReplacement(owner, generation, registrations);
+		},
+		replaceRegistrations(owner, generation, registrations) {
+			return table.replaceRegistrations(owner, generation, registrations);
+		},
+		ownedGeneration(owner) {
+			return table.ownedGeneration(owner);
+		},
+	};
+	return { contract: Object.freeze(contract), registrar };
+}

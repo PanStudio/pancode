@@ -1,0 +1,149 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* The task screen: the conversation column and, when open, the pane beside it. Everything the
+   conversation shows stays in one centred reading column; the pane never narrows it below a
+   comfortable measure, it overlays instead. */
+
+.conversation {
+	--chat-gutter: var(--space-8);
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+}
+.conversation__main {
+	min-width: 0;
+	min-height: 0;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	/* bar, approval, transcript, jump anchor, composer: one track per child, in source order. Notices
+	   render in their own row of the app layout grid, outside this column; a missing child shifts
+	   the transcript out of the 1fr track. */
+	grid-template-rows: auto max-content minmax(6rem, 1fr) 0 max-content;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+.conversation__health {
+	display: grid;
+	gap: var(--space-2);
+	padding: 0 var(--chat-gutter) var(--space-2);
+	max-width: calc(var(--conversation-max) + 2 * var(--chat-gutter));
+	width: 100%;
+	margin-inline: auto;
+	box-sizing: border-box;
+}
+.conversation__health .context-banner {
+	margin: 0;
+}
+
+/* The status the bar shows beside the title: only when there is something to say. Its frame, and
+   the approval tone's, are drawn with the other bar chips in client/shell/shell.css. */
+.wb-chip--status {
+	/* The word that carries the state never shrinks; the title gives way instead. */
+	flex: none;
+	max-width: none;
+	gap: var(--space-2);
+}
+.wb-chip--status[data-tone="failed"] {
+	color: var(--status-fail-fg);
+}
+
+@media (max-width: 1050px) {
+	.conversation {
+		--chat-gutter: var(--space-6);
+	}
+}
+@media (max-width: 650px) {
+	.conversation {
+		--chat-gutter: var(--space-4);
+	}
+	.conversation__dock {
+		padding-bottom: var(--space-3);
+	}
+}
+
+/* Transcript text slides under the bar through a short fade in the card's own colour, so nothing
+   is sliced by a hard edge and no divider line is needed. */
+.conversation__main > .chat-transcript::before {
+	content: "";
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	display: block;
+	height: 18px;
+	margin-bottom: -18px;
+	background: linear-gradient(to bottom, var(--paper), transparent);
+	pointer-events: none;
+}
+
+.conversation__duck {
+	color: var(--muted);
+	display: inline-flex;
+	align-items: center;
+	font-size: var(--text-body);
+}
+.conversation__find {
+	flex: none;
+}
+
+/* The transcript detail menu beside Find. */
+.output-detail {
+	flex: none;
+}
+.output-detail__panel {
+	margin: 0;
+	min-width: 18rem;
+	padding: var(--space-2);
+	gap: 2px;
+}
+.output-detail__legend {
+	float: left;
+	width: 100%;
+	padding: var(--space-1) var(--space-2) var(--space-2);
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.output-detail__option {
+	display: flex;
+	gap: var(--space-2);
+	align-items: baseline;
+	padding: var(--space-2);
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+}
+/* The global field rule makes every input full width; here the radio keeps its own size, so each row's text starts
+   at the same x beside it instead of sharing the row with the radio by content width. */
+.output-detail__option > input {
+	flex: none;
+	width: auto;
+	margin: 0;
+	padding: 0;
+}
+.output-detail__option:hover {
+	background: var(--wb-hover);
+}
+.output-detail__option:has(input:checked) {
+	background: var(--accent-soft);
+}
+.output-detail__option > span {
+	flex: 1;
+	min-width: 0;
+	display: grid;
+	gap: 2px;
+}
+.output-detail__option small {
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+	line-height: 1.4;
+}
+.output-detail__note {
+	margin: var(--space-1) var(--space-2) var(--space-1);
+	font-size: var(--text-exact);
+	color: var(--ink-subtle);
+}
+@container bar (max-width: 900px) {
+	.output-detail__value {
+		display: none;
+	}
+}

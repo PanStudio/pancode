@@ -1,0 +1,1066 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type {
+	ArtifactProvider,
+	ViewArtifact,
+	ViewArtifactCategory,
+	ViewArtifactFormat,
+} from "../../domains/session/view-artifacts.js";
+import {
+	listViewArtifacts,
+	VIEW_ARTIFACT_CATEGORIES,
+	viewArtifactDisplayText,
+} from "../../domains/session/view-artifacts.js";
+import type { Component, OverlayHandle, TUI } from "../../engine/tui.js";
+import { Input, Markdown, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../../engine/tui.js";
+import { dockBodyRows } from "../dock.js";
+import { clockLocal } from "../format-time.js";
+import { localKey } from "../keyboard-owner.js";
+import { buildHint, fitRows, selectionMark, showPancodeOverlayFrame } from "../overlay-frame.js";
+import { inlineImageRows } from "../renderers/tool-images.js";
+import {
+	emptyState,
+	GLYPH,
+	listGroupHeader,
+	markdownTheme,
+	padAnsi,
+	pancodeTheme,
+	positionRow,
+	rule,
+} from "../theme/index.js";
+import { skinEpoch } from "../theme/tokens.js";
+
+export const VIEW_OVERLAY_WIDTH = "100%";
+export const VIEW_OVERLAY_MAX_HEIGHT = "100%";
+export const VIEW_OVERLAY_MARGIN = { top: 0, right: 0, bottom: 0, left: 0 } as const;
+
+const LEFT_PANE_MIN_WIDTH = 36;
+const LEFT_PANE_MAX_WIDTH = 72;
+const SEPARATOR = ` ${GLYPH.rail} `;
+/**
+ * Below this the two panes cannot sit side by side.
+ *
+ * The list needs 36 columns and a useful detail pane needs 45. Below that the
+ * list stacks over the preview at full width; Tab still moves focus.
+ */
+const TWO_PANE_MIN_WIDTH = LEFT_PANE_MIN_WIDTH + 3 + 45;
+/**
+ * Below this a stacked list or preview would scroll inside fewer than three
+ * rows, so a body this short shows the focused pane alone.
+ */
+const STACKED_MIN_HEIGHT = 12;
+
+/** Whether a body this wide puts the panes in one column instead of side by side. */
+function viewUsesSinglePane(bodyWidth: number): boolean {
+	return bodyWidth < TWO_PANE_MIN_WIDTH;
+}
+
+export type ViewPaneFocus = "list" | "content";
+export type ViewNoticeLevel = "info" | "success" | "warning" | "error";
+export type ViewVerificationState =
+	| { status: "idle" }
+	| { status: "running" }
+	| { status: "ok" | "warning"; detail: string }
+	| { status: "fail"; detail: string };
+
+export type ViewScrollAction =
+	| "line-up"
+	| "line-down"
+	| "page-up"
+	| "page-down"
+	| "half-up"
+	| "half-down"
+	| "top"
+	| "bottom";
+
+export interface RenderedViewRow {
+	type: "group" | "empty" | "item";
+	category: ViewArtifactCategory;
+	item?: ViewArtifact;
+	itemIndex?: number;
+}
+
+export type ViewFilterQuery =
+	| { kind: "text"; text: string }
+	| { kind: "category"; category: ViewArtifactCategory; value: string };
+
+interface LoadedContent {
+	key: string;
+	status: "loading" | "loaded" | "error";
+	lines: string[];
+	format: ViewArtifactFormat;
+	details?: LoadedContent;
+	render?: (width: number) => string[];
+	error?: string;
+	renderWidth?: number;
+	renderEpoch?: number;
+	renderedLines?: string[];
+	renderingWidth?: number;
+	renderingEpoch?: number;
+}
+
+export interface ViewOverlayOptions {
+	providers: ReadonlyArray<ArtifactProvider>;
+	getBodyHeight: () => number;
+	initialFilter?: string;
+	notice?: (level: ViewNoticeLevel, text: string, key?: string) => void;
+	onClose: () => void;
+	requestRender?: () => void;
+}
+
+function artifactKey(artifact: ViewArtifact): string {
+	return `${artifact.category}:${artifact.id}:${artifact.path ?? ""}`;
+}
+
+function categoryLabel(category: ViewArtifactCategory): string {
+	switch (category) {
+		case "changes":
+			return "Diffs & checks";
+		case "transcript":
+			return "Transcript details";
+		case "message-path":
+			return "What happened to your messages";
+		case "accountability":
+			return "Accountability";
+		case "evidence":
+			return "Evidence bundles";
+		case "run":
+			return "Run records";
+		case "dispatch":
+			return "Dispatch outputs";
+		case "task-ledger":
+			return "Task ledgers";
+		case "workspace":
+			return "Workspace outputs";
+		case "tool-output":
+			return "Tool outputs";
+		case "screenshots":
+			return "Screenshots";
+		case "protected-artifact":
+			return "Protected artifacts";
+		case "compaction":
+			return "Compaction summaries";
+		case "prompt-manifest":
+			return "Prompt manifests";
+		case "audit":
+			return "Safety audit rows";
+	}
+}
+
+const VIEW_ARTIFACT_CATEGORY_SET = new Set<ViewArtifactCategory>(VIEW_ARTIFACT_CATEGORIES);
+const BARE_CATEGORY_FILTERS = new Set<ViewArtifactCategory>([
+	"changes",
+	"transcript",
+	"message-path",
+	"task-ledger",
+	"workspace",
+	"protected-artifact",
+	"compaction",
+	"prompt-manifest",
+	"audit",
+]);
+
+function isViewArtifactCategory(value: string): value is ViewArtifactCategory {
+	return VIEW_ARTIFACT_CATEGORY_SET.has(value as ViewArtifactCategory);
+}
+
+function parseViewFilterQuery(query: string): ViewFilterQuery {
+	const text = query.trim();
+	if (text.length === 0) return { kind: "text", text };
+	const colon = text.indexOf(":");
+	if (colon >= 0) {
+		const prefix = text.slice(0, colon).trim().toLowerCase();
+		if (isViewArtifactCategory(prefix)) {
+			return { kind: "category", category: prefix, value: text.slice(colon + 1).trim() };
+		}
+		return { kind: "text", text };
+	}
+	const bare = text.toLowerCase();
+	if (isViewArtifactCategory(bare) && BARE_CATEGORY_FILTERS.has(bare)) {
+		return { kind: "category", category: bare, value: "" };
+	}
+	return { kind: "text", text };
+}
+
+function isNonEmptySearchValue(value: string | undefined): value is string {
+	return typeof value === "string" && value.trim().length > 0;
+}
+
+function artifactSearchValues(artifact: ViewArtifact): string[] {
+	return [
+		artifact.id,
+		`${artifact.category}:${artifact.id}`,
+		artifact.category,
+		artifact.title,
+		artifact.description,
+		artifact.runId,
+		artifact.sessionId,
+		artifact.correlationId,
+		artifact.toolName,
+		artifact.path,
+		...(artifact.searchText ?? []),
+	].filter(isNonEmptySearchValue);
+}
+
+function matchesFilterText(artifact: ViewArtifact, query: string): boolean {
+	const values = artifactSearchValues(artifact).map((value) => value.toLocaleLowerCase());
+	return query
+		.toLocaleLowerCase()
+		.split(/\s+/u)
+		.every((token) => values.some((value) => value.includes(token)));
+}
+
+function matchesExactArtifactValue(artifact: ViewArtifact, value: string): boolean {
+	const exact = value.trim();
+	return exact.length > 0 && artifactSearchValues(artifact).some((candidate) => candidate === exact);
+}
+
+function formatArtifactSize(sizeBytes: number | undefined): string {
+	if (sizeBytes === undefined) return "";
+	if (sizeBytes < 1024) return `${sizeBytes} B`;
+	if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
+	return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function formatRelativeTime(timestamp: number, now = Date.now()): string {
+	if (!Number.isFinite(timestamp) || timestamp <= 0) return "";
+	const seconds = Math.max(0, Math.floor((now - timestamp) / 1000));
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${minutes}m`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours}h`;
+	const days = Math.floor(hours / 24);
+	return `${days}d`;
+}
+
+function formatLocalTime(timestamp: number): string {
+	return !Number.isFinite(timestamp) || timestamp <= 0 ? "unknown time" : clockLocal(timestamp);
+}
+
+function filterViewArtifacts(artifacts: ReadonlyArray<ViewArtifact>, query: string): ViewArtifact[] {
+	const parsed = parseViewFilterQuery(query);
+	if (parsed.kind === "category") {
+		const categoryArtifacts = artifacts.filter((artifact) => artifact.category === parsed.category);
+		if (parsed.value.length === 0) return categoryArtifacts;
+		return categoryArtifacts.filter((artifact) => matchesFilterText(artifact, parsed.value));
+	}
+	if (parsed.text.length === 0) return [...artifacts];
+	return artifacts.filter((artifact) => matchesFilterText(artifact, parsed.text));
+}
+
+function artifactsInCategoryOrder(artifacts: ReadonlyArray<ViewArtifact>): ViewArtifact[] {
+	return VIEW_ARTIFACT_CATEGORIES.flatMap((category) => artifacts.filter((artifact) => artifact.category === category));
+}
+
+function initialViewSelection(artifacts: ReadonlyArray<ViewArtifact>, initialFilter = ""): number {
+	const filtered = filterViewArtifacts(artifacts, initialFilter);
+	const ordered = artifactsInCategoryOrder(filtered);
+	const first = ordered[0];
+	if (!first) return 0;
+	let selected = first;
+	const parsed = parseViewFilterQuery(initialFilter);
+	if (parsed.kind === "category" && parsed.value.length > 0) {
+		const exactIndexes = filtered.flatMap((artifact, index) =>
+			matchesExactArtifactValue(artifact, parsed.value) ? [index] : [],
+		);
+		if (exactIndexes.length === 1) selected = filtered[exactIndexes[0] ?? 0] ?? selected;
+	}
+	const exact = initialFilter.trim();
+	if (exact.length > 0) {
+		const exactArtifact = filtered.find(
+			(artifact) => artifact.id === exact || `${artifact.category}:${artifact.id}` === exact,
+		);
+		if (exactArtifact) selected = exactArtifact;
+	}
+	return Math.max(0, ordered.indexOf(selected));
+}
+
+function nextCategorySelection(
+	artifacts: ReadonlyArray<ViewArtifact>,
+	currentIndex: number,
+	direction: -1 | 1,
+): number {
+	if (artifacts.length === 0) return 0;
+	const safeCurrent = Math.max(0, Math.min(currentIndex, artifacts.length - 1));
+	const currentCategory = artifacts[safeCurrent]?.category;
+	const categoryIndex = currentCategory === undefined ? -1 : VIEW_ARTIFACT_CATEGORIES.indexOf(currentCategory);
+	for (let offset = 1; offset < VIEW_ARTIFACT_CATEGORIES.length; offset += 1) {
+		const nextCategoryIndex =
+			(categoryIndex + direction * offset + VIEW_ARTIFACT_CATEGORIES.length) % VIEW_ARTIFACT_CATEGORIES.length;
+		const nextCategory = VIEW_ARTIFACT_CATEGORIES[nextCategoryIndex];
+		const artifactIndex = artifacts.findIndex((artifact) => artifact.category === nextCategory);
+		if (artifactIndex >= 0) return artifactIndex;
+	}
+	return safeCurrent;
+}
+
+function groupedViewRows(artifacts: ReadonlyArray<ViewArtifact>): RenderedViewRow[] {
+	const rows: RenderedViewRow[] = [];
+	for (const category of VIEW_ARTIFACT_CATEGORIES) {
+		const items = artifacts.filter((artifact) => artifact.category === category);
+		if (items.length === 0) continue;
+		rows.push({ type: "group", category });
+		for (const item of items) {
+			rows.push({ type: "item", category, item, itemIndex: artifacts.indexOf(item) });
+		}
+	}
+	return rows;
+}
+
+export function nextContentScrollOffset(
+	current: number,
+	totalLines: number,
+	height: number,
+	action: ViewScrollAction,
+): number {
+	const maxOffset = Math.max(0, totalLines - Math.max(1, height));
+	const page = Math.max(1, height - 1);
+	const half = Math.max(1, Math.floor(height / 2));
+	let next = current;
+	switch (action) {
+		case "line-up":
+			next -= 1;
+			break;
+		case "line-down":
+			next += 1;
+			break;
+		case "page-up":
+			next -= page;
+			break;
+		case "page-down":
+			next += page;
+			break;
+		case "half-up":
+			next -= half;
+			break;
+		case "half-down":
+			next += half;
+			break;
+		case "top":
+			next = 0;
+			break;
+		case "bottom":
+			next = maxOffset;
+			break;
+	}
+	return Math.max(0, Math.min(next, maxOffset));
+}
+
+function verificationText(state: ViewVerificationState | undefined): string {
+	if (!state || state.status === "idle") return "";
+	if (state.status === "running") return `${GLYPH.running} Verification: checking${GLYPH.ellipsis}`;
+	if (state.status === "warning") return `${GLYPH.warn} Verification: ${state.detail}`;
+	if (state.status === "ok") return `${GLYPH.ok} Verification: ${state.detail}`;
+	return `${GLYPH.error} Verification: failed. ${state.detail}`;
+}
+
+/** Put verification on wrapped rows so a canonical receipt verdict is never reduced to a prefix. */
+function buildArtifactHeaderLines(
+	artifact: ViewArtifact | undefined,
+	verification: ViewVerificationState | undefined,
+	width: number,
+): string[] {
+	if (!artifact) return [padAnsi(pancodeTheme().fg("emptyState", "No artifact selected"), width, GLYPH.ellipsis)];
+	const theme = pancodeTheme();
+	// The list may cut a title, especially in a split pane. Give the selected
+	// act its own readable heading before the full body, while bounding a very
+	// long command so it cannot consume the entire preview.
+	const title = viewArtifactDisplayText(artifact.title);
+	const wrappedTitle = wrapTextWithAnsi(
+		theme.fg("menuOption", truncateToWidth(title, Math.max(1, width * 3), GLYPH.ellipsis, true)),
+		Math.max(1, width),
+	);
+	const titleRows =
+		wrappedTitle.length <= 3
+			? wrappedTitle
+			: [
+					...wrappedTitle.slice(0, 2),
+					truncateToWidth(`${wrappedTitle[2] ?? ""}${GLYPH.ellipsis}`, width, GLYPH.ellipsis, true),
+				];
+	const size = formatArtifactSize(artifact.sizeBytes);
+	const metadata = [artifact.category, formatLocalTime(artifact.timestamp), size].filter(Boolean).join(` ${GLYPH.sep} `);
+	const verify = verificationText(verification);
+	const heading = [
+		...titleRows.map((row) => padAnsi(row, width, GLYPH.ellipsis)),
+		padAnsi(theme.fg("annotation", metadata), width, GLYPH.ellipsis),
+	];
+	if (verify.length === 0) return heading;
+	const token =
+		verification?.status === "ok"
+			? "success"
+			: verification?.status === "fail"
+				? "error"
+				: verification?.status === "warning"
+					? "warning"
+					: "info";
+	return [
+		...heading,
+		...wrapTextWithAnsi(theme.fg(token, verify), Math.max(1, width)).map((line) => padAnsi(line, width, GLYPH.ellipsis)),
+	];
+}
+
+/** The row's outcome as a glyph that reads without colour, for a category whose rows carry one. */
+function artifactToneMark(tone: ViewArtifact["tone"]): string {
+	const theme = pancodeTheme();
+	switch (tone) {
+		case "ok":
+			return `${theme.fg("success", GLYPH.ok)} `;
+		case "error":
+			return `${theme.fg("error", GLYPH.error)} `;
+		case "warning":
+			return `${theme.fg("warning", GLYPH.warn)} `;
+		case "muted":
+			return `${theme.fg("annotation", GLYPH.cancelled)} `;
+		case "active":
+			return `${theme.fg("info", GLYPH.queued)} `;
+		default:
+			return "";
+	}
+}
+
+function viewFooterHint(focus: ViewPaneFocus, canVerify: boolean, filtered: boolean, innerWidth?: number): string {
+	const listEsc = filtered ? "clear filter" : "close";
+	// One pane at a time needs an explicit Enter and Escape route in the hint;
+	// the generic elider can drop the action in the middle of a long hint.
+	if (innerWidth !== undefined && viewUsesSinglePane(innerWidth - 2)) {
+		const budget = innerWidth - 3;
+		const tiers =
+			focus === "list"
+				? [
+						`[${GLYPH.upDown}] select ${GLYPH.sep} [type] filter ${GLYPH.sep} [Enter] detail ${GLYPH.sep} [Esc] ${listEsc}`,
+						`[${GLYPH.upDown}] select ${GLYPH.sep} [Enter] detail ${GLYPH.sep} [Esc] ${listEsc}`,
+						`[Enter] detail ${GLYPH.sep} [Esc] ${listEsc}`,
+					]
+				: [
+						`[${GLYPH.upDown}] scroll ${GLYPH.sep} [i] detail ${GLYPH.sep} [Esc] back to list`,
+						`[i] detail ${GLYPH.sep} [Esc] back to list`,
+						"[Esc] back to list",
+					];
+		return tiers.find((tier) => visibleWidth(tier) <= budget) ?? (tiers.at(-1) as string);
+	}
+	if (focus === "list") {
+		return buildHint(
+			[
+				{ key: GLYPH.upDown, verb: "select" },
+				{ key: GLYPH.leftRight, verb: "category" },
+				{ key: "type", verb: "filter" },
+				{ key: "Enter", verb: "detail" },
+			],
+			listEsc,
+		);
+	}
+	return buildHint(
+		[
+			{ key: "n/p", verb: "item" },
+			{ key: GLYPH.upDown, verb: "scroll" },
+			{ key: GLYPH.leftRight, verb: "category" },
+			{ key: "PgUp/PgDn", verb: "page" },
+			{ key: "g/G", verb: "top/bottom" },
+			...(canVerify ? [{ key: "v", verb: "verify" }] : []),
+			{ key: "i", verb: "detail" },
+			{ key: "o", verb: "path" },
+		],
+		"back to list",
+	);
+}
+
+export class ViewOverlayView implements Component {
+	private artifacts: ViewArtifact[] = [];
+	private filterText = "";
+	private readonly filterInput = new Input();
+	get keyboardScope(): "edit" | "review" {
+		return this.focus === "list" ? "edit" : "review";
+	}
+	undoInput(): boolean {
+		if (this.focus !== "list") return false;
+		this.filterInput.applyEdit("undo");
+		this.filterText = this.filterInput.getValue();
+		this.selectInitialFilterMatch();
+		return true;
+	}
+	private selectedIndex = 0;
+	private listScrollOffset = 0;
+	private contentScrollOffset = 0;
+	private focus: ViewPaneFocus = "list";
+	private loadingArtifacts = true;
+	private artifactError: string | null = null;
+	private content: LoadedContent | null = null;
+	private loadToken = 0;
+	private refreshToken = 0;
+	private showProvenance = false;
+	private lastContentWidth = 80;
+	private lastContentBodyHeight = 1;
+	private readonly verifications = new Map<string, ViewVerificationState>();
+
+	constructor(private readonly options: ViewOverlayOptions) {
+		this.filterText = options.initialFilter ?? "";
+		this.filterInput.handleInput(`\x1b[200~${this.filterText}\x1b[201~`);
+	}
+
+	private escClearsFilter(): boolean {
+		// E-13: a filter given with /view <text> is a layer too; the first Esc clears it.
+		return this.filterText.length > 0;
+	}
+
+	refresh(): void {
+		const refreshToken = ++this.refreshToken;
+		const selected = this.selectedArtifact();
+		this.loadToken += 1;
+		this.loadingArtifacts = true;
+		this.artifactError = null;
+		this.options.requestRender?.();
+		void (async () => {
+			try {
+				const artifacts = await listViewArtifacts(this.options.providers);
+				if (refreshToken !== this.refreshToken) return;
+				this.artifacts = artifacts;
+				const retainedIndex = selected
+					? this.filteredArtifacts().findIndex((artifact) => artifactKey(artifact) === artifactKey(selected))
+					: -1;
+				this.selectedIndex = retainedIndex >= 0 ? retainedIndex : initialViewSelection(this.artifacts, this.filterText);
+				this.contentScrollOffset = 0;
+				this.content = null;
+			} catch (err) {
+				if (refreshToken !== this.refreshToken) return;
+				this.artifactError = err instanceof Error ? err.message : String(err);
+				this.artifacts = [];
+			} finally {
+				if (refreshToken === this.refreshToken) {
+					this.loadingArtifacts = false;
+					this.options.requestRender?.();
+				}
+			}
+		})();
+	}
+
+	getHint(innerWidth?: number): string {
+		return viewFooterHint(this.focus, !!this.selectedArtifact()?.verify, this.escClearsFilter(), innerWidth);
+	}
+
+	private filteredArtifacts(): ViewArtifact[] {
+		return artifactsInCategoryOrder(filterViewArtifacts(this.artifacts, this.filterText));
+	}
+
+	private selectedArtifact(): ViewArtifact | undefined {
+		const filtered = this.filteredArtifacts();
+		if (this.selectedIndex >= filtered.length) this.selectedIndex = Math.max(0, filtered.length - 1);
+		return filtered[this.selectedIndex];
+	}
+
+	private selectIndex(next: number): void {
+		this.loadToken += 1;
+		this.showProvenance = false;
+		const filtered = this.filteredArtifacts();
+		if (filtered.length === 0) {
+			this.selectedIndex = 0;
+			this.content = null;
+			return;
+		}
+		this.selectedIndex = (next + filtered.length) % filtered.length;
+		this.contentScrollOffset = 0;
+		this.content = null;
+		this.options.requestRender?.();
+	}
+
+	private selectCategory(direction: -1 | 1): void {
+		const filtered = this.filteredArtifacts();
+		if (filtered.length === 0) return;
+		this.selectIndex(nextCategorySelection(filtered, this.selectedIndex, direction));
+	}
+
+	private selectInitialFilterMatch(): void {
+		this.selectIndex(initialViewSelection(this.artifacts, this.filterText));
+	}
+
+	private ensureContentLoaded(artifact: ViewArtifact | undefined): void {
+		if (!artifact) {
+			this.content = null;
+			return;
+		}
+		const key = artifactKey(artifact);
+		if (this.content?.key === key) return;
+		const token = ++this.loadToken;
+		this.content = {
+			key,
+			status: "loading",
+			lines: [pancodeTheme().fg("annotation", `loading artifact${GLYPH.ellipsis}`)],
+			format: "text",
+		};
+		void (async () => {
+			try {
+				const loaded = await Promise.resolve().then(() => artifact.load());
+				if (token !== this.loadToken) return;
+				const image = loaded.image;
+				const render =
+					image === undefined
+						? loaded.render
+						: (width: number) => {
+								const rows = inlineImageRows({ ...image, key: `view:${key}` }, width);
+								const text = loaded.lines.flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width)));
+								return rows.length > 0 ? [...rows, "", ...text] : text;
+							};
+				this.content = {
+					key,
+					status: "loaded",
+					lines: loaded.lines,
+					format: loaded.format,
+					...(loaded.details ? { details: { key, status: "loaded" as const, ...loaded.details } } : {}),
+					...(render === undefined ? {} : { render }),
+				};
+				this.queueContentRender(this.content, this.lastContentWidth);
+			} catch (err) {
+				if (token !== this.loadToken) return;
+				const message = err instanceof Error ? err.message : String(err);
+				this.content = {
+					key,
+					status: "error",
+					lines: [pancodeTheme().fg("error", `load failed: ${message}`)],
+					format: "text",
+					error: message,
+				};
+			} finally {
+				if (token === this.loadToken) this.options.requestRender?.();
+			}
+		})();
+	}
+
+	/** Lay out selected content after the paint call, including on resize. */
+	private queueContentRender(content: LoadedContent, width: number): void {
+		const epoch = skinEpoch();
+		if (content.status !== "loaded" || (content.renderingWidth === width && content.renderingEpoch === epoch)) return;
+		content.renderingWidth = width;
+		content.renderingEpoch = epoch;
+		const token = this.loadToken;
+		void Promise.resolve()
+			.then(() => {
+				if (
+					token !== this.loadToken ||
+					(this.content !== content && this.content?.details !== content) ||
+					content.renderingWidth !== width ||
+					content.renderingEpoch !== epoch ||
+					skinEpoch() !== epoch
+				)
+					return;
+				const rows =
+					content.render !== undefined
+						? content.render(Math.max(1, width))
+						: content.format === "markdown"
+							? new Markdown(content.lines.join("\n"), 0, 0, markdownTheme(pancodeTheme())).render(width)
+							: content.lines.flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width)));
+				content.renderWidth = width;
+				content.renderEpoch = epoch;
+				content.renderedLines = rows;
+				this.options.requestRender?.();
+			})
+			.catch((err) => {
+				if (
+					token !== this.loadToken ||
+					(this.content !== content && this.content?.details !== content) ||
+					content.renderingWidth !== width ||
+					content.renderingEpoch !== epoch ||
+					skinEpoch() !== epoch
+				)
+					return;
+				const message = err instanceof Error ? err.message : String(err);
+				this.content = {
+					key: content.key,
+					status: "error",
+					lines: [pancodeTheme().fg("error", `layout failed: ${message}`)],
+					format: "text",
+					error: message,
+				};
+				this.options.requestRender?.();
+			});
+	}
+
+	private renderedContentLines(width: number): string[] {
+		if (this.showProvenance) {
+			const artifact = this.selectedArtifact();
+			if (!artifact) return [];
+			const metadata = [
+				`Title: ${artifact.title}`,
+				`Category: ${artifact.category}`,
+				`ID: ${artifact.id}`,
+				`Path: ${artifact.path ?? "No backing path"}`,
+				...(artifact.sessionId ? [`Session: ${artifact.sessionId}`] : []),
+				...(artifact.runId ? [`Run: ${artifact.runId}`] : []),
+				...(artifact.correlationId ? [`Correlation: ${artifact.correlationId}`] : []),
+				...(artifact.description ? [`Details: ${artifact.description}`] : []),
+			].flatMap((line) => wrapTextWithAnsi(viewArtifactDisplayText(line), Math.max(1, width)));
+			const content = this.content?.details;
+			if (content) {
+				if (content.renderWidth !== width || content.renderEpoch !== skinEpoch()) this.queueContentRender(content, width);
+				else content.renderingWidth = width;
+				return [
+					...metadata,
+					"",
+					...(content.renderWidth === width && content.renderEpoch === skinEpoch()
+						? (content.renderedLines ?? [])
+						: [`Laying out details${GLYPH.ellipsis}`]),
+				];
+			}
+			return metadata;
+		}
+		const content = this.content;
+		if (!content) return [];
+		if (content.status !== "loaded") return content.lines.flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width)));
+		if (content.renderedLines && content.renderWidth === width && content.renderEpoch === skinEpoch()) {
+			content.renderingWidth = width;
+			return content.renderedLines;
+		}
+		this.queueContentRender(content, width);
+		return [pancodeTheme().fg("annotation", `laying out preview${GLYPH.ellipsis}`)];
+	}
+
+	private renderList(width: number, height: number): string[] {
+		const theme = pancodeTheme();
+		const lines: string[] = [];
+		// The filter row appears with the first typed character and is the same
+		// `> text` input every other list overlay shows, rather than a permanent
+		// `filter: (empty)` caption.
+		if (this.filterText.length > 0) {
+			this.filterInput.focused = this.focus === "list";
+			lines.push(...this.filterInput.render(width).map((line) => pancodeTheme().base("searchQuery", line)));
+		}
+
+		if (this.loadingArtifacts) {
+			lines.push(padAnsi(theme.fg("annotation", `loading artifacts${GLYPH.ellipsis}`), width, GLYPH.ellipsis));
+			return fitRows(lines, width, height);
+		}
+		if (this.artifactError) {
+			lines.push(
+				...wrapTextWithAnsi(theme.fg("error", this.artifactError), Math.max(1, width)).map((line) => padAnsi(line, width)),
+			);
+			return fitRows(lines, width, height);
+		}
+
+		const filtered = this.filteredArtifacts();
+		lines.push(
+			padAnsi(
+				theme.fg(this.focus === "list" ? "selectedOption" : "annotation", `List ${GLYPH.sep} ${GLYPH.leftRight} category`),
+				width,
+				GLYPH.ellipsis,
+			),
+		);
+		if (filtered.length === 0) {
+			const empty =
+				this.artifacts.length > 0
+					? emptyState(theme, `No matching artifacts among ${this.artifacts.length}.`, width, {
+							remedy: "Esc clears the filter. Try workspace: or run:",
+						})
+					: emptyState(theme, "No artifacts yet.", width, {
+							remedy: "Tool calls, runs and outputs of this session appear here.",
+						});
+			return fitRows([...lines, ...empty], width, height);
+		}
+		const rows = groupedViewRows(filtered);
+		const selectedRow = rows.findIndex((row) => row.type === "item" && row.itemIndex === this.selectedIndex);
+		// One row under the window is the position row.
+		const rowHeight = Math.max(1, height - lines.length - 1);
+		if (selectedRow >= 0) {
+			if (selectedRow < this.listScrollOffset) this.listScrollOffset = selectedRow;
+			if (selectedRow >= this.listScrollOffset + rowHeight) this.listScrollOffset = selectedRow - rowHeight + 1;
+		}
+		this.listScrollOffset = Math.max(0, Math.min(this.listScrollOffset, Math.max(0, rows.length - rowHeight)));
+
+		const windowRows = rows.slice(this.listScrollOffset, this.listScrollOffset + rowHeight);
+		for (const row of windowRows) {
+			if (row.type === "group") {
+				const count = filtered.filter((artifact) => artifact.category === row.category).length;
+				lines.push(
+					padAnsi(listGroupHeader(theme, `${categoryLabel(row.category)} (${count})`, width), width, GLYPH.ellipsis),
+				);
+				continue;
+			}
+			if (row.type === "empty") {
+				lines.push(padAnsi(theme.fg("annotation", "  (empty)"), width, GLYPH.ellipsis));
+				continue;
+			}
+			if (!row.item) continue;
+			const selected = row.itemIndex === this.selectedIndex;
+			const cursor = `${selectionMark(selected)} ${artifactToneMark(row.item.tone)}`;
+			const safeTitle = viewArtifactDisplayText(row.item.title);
+			const title = theme.fg("menuOption", safeTitle, selected ? "selected" : "normal");
+			const metaParts = [formatRelativeTime(row.item.timestamp), formatArtifactSize(row.item.sizeBytes)].filter(Boolean);
+			const meta = metaParts.length > 0 ? theme.fg("annotation", metaParts.join(" ")) : "";
+			const available = Math.max(1, width - visibleWidth(cursor));
+			const metaWidth = visibleWidth(meta);
+			const titleWidth = Math.max(1, available - (metaWidth > 0 ? metaWidth + 1 : 0));
+			const clippedTitle = truncateToWidth(title, titleWidth, GLYPH.ellipsis, true);
+			const gap = " ".repeat(Math.max(1, available - visibleWidth(clippedTitle) - metaWidth));
+			lines.push(padAnsi(`${cursor}${clippedTitle}${metaWidth > 0 ? `${gap}${meta}` : ""}`, width, GLYPH.ellipsis));
+		}
+		// `1–14 of 231 artifacts`: the shown artifacts, counted without the group rows.
+		const shown = windowRows.flatMap((row) =>
+			row.type === "item" && row.itemIndex !== undefined ? [row.itemIndex] : [],
+		);
+		if (shown.length > 0) {
+			const filteredFrom = filtered.length < this.artifacts.length ? [`filtered from ${this.artifacts.length}`] : [];
+			lines.push(
+				padAnsi(
+					positionRow(
+						theme,
+						{
+							start: Math.min(...shown) + 1,
+							end: Math.max(...shown) + 1,
+							total: filtered.length,
+							unit: filtered.length === 1 ? "artifact" : "artifacts",
+							keys: filteredFrom,
+						},
+						width,
+					),
+					width,
+					GLYPH.ellipsis,
+				),
+			);
+		}
+
+		return fitRows(lines, width, height);
+	}
+
+	private renderContent(width: number, height: number): string[] {
+		const artifact = this.selectedArtifact();
+		this.ensureContentLoaded(artifact);
+		this.lastContentWidth = width;
+		const filtered = this.filteredArtifacts();
+		const position = artifact ? ` ${GLYPH.sep} ${this.selectedIndex + 1} of ${filtered.length}` : "";
+		const sep = ` ${GLYPH.sep} `;
+		const verification = artifact ? this.verifications.get(artifactKey(artifact)) : undefined;
+		const narrowHeader = width < 50;
+		const headerLabel = this.showProvenance
+			? narrowHeader
+				? `Details${position}${sep}i preview`
+				: `Details${position}${sep}i preview${sep}Esc list`
+			: this.focus === "content"
+				? narrowHeader
+					? `Preview${position}${sep}i detail`
+					: `Preview${position}${sep}n/p item${sep}i detail${sep}Esc list`
+				: `Preview${position}${sep}Enter/Tab focus`;
+		const header = [
+			padAnsi(
+				pancodeTheme().fg(this.focus === "content" ? "selectedOption" : "annotation", headerLabel),
+				width,
+				GLYPH.ellipsis,
+			),
+			...buildArtifactHeaderLines(artifact, verification, width),
+		];
+		const bodyHeight = Math.max(0, height - header.length);
+		this.lastContentBodyHeight = Math.max(1, bodyHeight);
+		const body = this.renderedContentLines(width);
+		const visibleContent = this.showProvenance ? this.content?.details : this.content;
+		const layoutPending =
+			visibleContent?.status === "loaded" &&
+			(visibleContent.renderWidth !== width || visibleContent.renderEpoch !== skinEpoch());
+		const maxOffset = Math.max(0, body.length - Math.max(1, bodyHeight));
+		if (!layoutPending && this.contentScrollOffset > maxOffset) this.contentScrollOffset = maxOffset;
+		const visible = body
+			.slice(layoutPending ? 0 : this.contentScrollOffset, (layoutPending ? 0 : this.contentScrollOffset) + bodyHeight)
+			.map((line) => padAnsi(line, width, GLYPH.ellipsis));
+		const lines = [...header, ...visible];
+		return fitRows(lines, width, height);
+	}
+
+	render(width: number): string[] {
+		const bodyHeight = Math.max(1, this.options.getBodyHeight());
+		if (viewUsesSinglePane(width)) {
+			if (bodyHeight < STACKED_MIN_HEIGHT) {
+				return this.focus === "content" ? this.renderContent(width, bodyHeight) : this.renderList(width, bodyHeight);
+			}
+			// List over preview, a light rule between them; the preview takes the odd row.
+			const listHeight = Math.floor((bodyHeight - 1) / 2);
+			return [
+				...this.renderList(width, listHeight),
+				rule(pancodeTheme(), width, { fillToken: "border" }),
+				...this.renderContent(width, bodyHeight - 1 - listHeight),
+			];
+		}
+		const separatorWidth = visibleWidth(SEPARATOR);
+		const leftWidth = Math.min(LEFT_PANE_MAX_WIDTH, Math.max(LEFT_PANE_MIN_WIDTH, Math.floor(width * 0.4)));
+		const rightWidth = Math.max(1, width - leftWidth - separatorWidth);
+		const list = this.renderList(leftWidth, bodyHeight);
+		const content = this.renderContent(rightWidth, bodyHeight);
+		const separator = pancodeTheme().fg("border", SEPARATOR);
+		return Array.from({ length: bodyHeight }, (_, index) => `${list[index] ?? ""}${separator}${content[index] ?? ""}`);
+	}
+
+	handleInput(data: string): void {
+		data = localKey(data);
+		if (
+			matchesKey(data, "tab") ||
+			matchesKey(data, "shift+tab") ||
+			(this.focus === "list" && matchesKey(data, "enter"))
+		) {
+			if (this.focus === "list" && !this.selectedArtifact()) return;
+			this.focus = this.focus === "list" ? "content" : "list";
+			this.options.requestRender?.();
+			return;
+		}
+		if (matchesKey(data, "left")) {
+			this.selectCategory(-1);
+			return;
+		}
+		if (matchesKey(data, "right")) {
+			this.selectCategory(1);
+			return;
+		}
+		if (this.focus === "content" && data === "i") {
+			this.showProvenance = !this.showProvenance;
+			this.contentScrollOffset = 0;
+			this.options.requestRender?.();
+			return;
+		}
+		if (this.focus === "content" && data === "v") {
+			this.verifySelected();
+			return;
+		}
+		if (this.focus === "content" && data === "o") {
+			this.openPathNotice();
+			return;
+		}
+		if (this.focus === "content" && (data === "n" || data === "p")) {
+			this.selectIndex(this.selectedIndex + (data === "n" ? 1 : -1));
+			return;
+		}
+		if (matchesKey(data, "esc")) {
+			if (this.focus === "content") {
+				this.focus = "list";
+				this.options.requestRender?.();
+			} else if (this.escClearsFilter()) this.clearFilter();
+			else this.options.onClose();
+			return;
+		}
+		if (this.focus === "content") {
+			if (this.handleContentInput(data)) return;
+		} else if (this.handleListInput(data)) {
+			return;
+		}
+	}
+
+	invalidate(): void {}
+
+	/** The row under the cursor stays selected when it is still listed. */
+	private clearFilter(): void {
+		const selected = this.selectedArtifact();
+		this.filterInput.applyEdit("clear");
+		this.filterText = this.filterInput.getValue();
+		const retainedIndex = selected
+			? this.filteredArtifacts().findIndex((artifact) => artifactKey(artifact) === artifactKey(selected))
+			: -1;
+		if (retainedIndex >= 0) this.selectIndex(retainedIndex);
+		else this.selectInitialFilterMatch();
+	}
+
+	private handleListInput(data: string): boolean {
+		const filtered = this.filteredArtifacts();
+		if (matchesKey(data, "up")) {
+			if (filtered.length > 0) this.selectIndex(this.selectedIndex - 1);
+			return true;
+		}
+		if (matchesKey(data, "down")) {
+			if (filtered.length > 0) this.selectIndex(this.selectedIndex + 1);
+			return true;
+		}
+		if (matchesKey(data, "ctrl+u")) {
+			if (this.filterText.length === 0) return false;
+			this.clearFilter();
+			return true;
+		}
+		const previous = this.filterText;
+		this.filterInput.handleInput(data);
+		this.filterText = this.filterInput.getValue();
+		if (previous === this.filterText) return false;
+		this.selectInitialFilterMatch();
+		return true;
+	}
+
+	private handleContentInput(data: string): boolean {
+		const bodyHeight = this.lastContentBodyHeight;
+		const visibleContent = this.showProvenance ? this.content?.details : this.content;
+		if (
+			visibleContent?.status === "loaded" &&
+			(visibleContent.renderWidth !== this.lastContentWidth || visibleContent.renderEpoch !== skinEpoch())
+		)
+			return true;
+		const total = this.renderedContentLines(this.lastContentWidth).length;
+		let action: ViewScrollAction | null = null;
+		if (matchesKey(data, "up") || data === "k") action = "line-up";
+		else if (matchesKey(data, "down") || data === "j") action = "line-down";
+		else if (data === "\x1b[5~") action = "page-up";
+		else if (data === "\x1b[6~") action = "page-down";
+		else if (data === "\x15") action = "half-up";
+		else if (data === "\x04") action = "half-down";
+		else if (data === "g") action = "top";
+		else if (data === "G") action = "bottom";
+		if (!action) return false;
+		this.contentScrollOffset = nextContentScrollOffset(this.contentScrollOffset, total, bodyHeight, action);
+		this.options.requestRender?.();
+		return true;
+	}
+
+	private verifySelected(): void {
+		const artifact = this.selectedArtifact();
+		if (!artifact?.verify) return;
+		const key = artifactKey(artifact);
+		this.verifications.set(key, { status: "running" });
+		this.options.requestRender?.();
+		void artifact
+			.verify()
+			.then((result) => {
+				this.verifications.set(
+					key,
+					result.ok
+						? { status: result.compromised ? "warning" : "ok", detail: result.detail }
+						: { status: "fail", detail: result.detail },
+				);
+			})
+			.catch((err) => {
+				const detail = err instanceof Error ? err.message : String(err);
+				this.verifications.set(key, { status: "fail", detail });
+			})
+			.finally(() => {
+				const selected = this.selectedArtifact();
+				if (selected && artifactKey(selected) === key) {
+					this.loadToken += 1;
+					this.content = null;
+					this.contentScrollOffset = 0;
+				}
+				this.options.requestRender?.();
+			});
+	}
+
+	private openPathNotice(): void {
+		const artifact = this.selectedArtifact();
+		if (!artifact?.path) {
+			this.options.notice?.("warning", "view: selected artifact has no backing path", "view:path");
+			return;
+		}
+		this.options.notice?.("info", `artifact path: ${artifact.path}`, `view:path:${artifact.category}:${artifact.id}`);
+	}
+}
+
+function viewBodyHeight(tui: TUI): number {
+	return dockBodyRows(tui);
+}
+
+export function openViewOverlay(
+	tui: TUI,
+	options: Omit<ViewOverlayOptions, "getBodyHeight" | "requestRender">,
+): OverlayHandle {
+	const view = new ViewOverlayView({
+		...options,
+		getBodyHeight: () => viewBodyHeight(tui),
+		requestRender: () => tui.requestRender(),
+	});
+	const handle = showPancodeOverlayFrame(tui, view, {
+		anchor: "top-left",
+		width: VIEW_OVERLAY_WIDTH,
+		maxHeight: VIEW_OVERLAY_MAX_HEIGHT,
+		margin: VIEW_OVERLAY_MARGIN,
+		markerId: "view",
+		title: "View",
+		footerHint: (innerWidth) => view.getHint(innerWidth),
+	});
+	view.refresh();
+	return handle;
+}

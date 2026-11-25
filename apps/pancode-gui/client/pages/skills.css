@@ -1,0 +1,156 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* The skills available in a workspace: a calm list, nothing to configure. */
+/* The same frame as the project task list (tasks.css), so both pages start on one left edge. */
+.skills {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: var(--space-4) var(--space-6) var(--space-12);
+}
+.skills__inner {
+	display: grid;
+	gap: var(--space-4);
+	width: min(100%, 820px);
+	margin: 0 auto;
+}
+.skills__lede {
+	margin: 0;
+	max-width: 62ch;
+	color: var(--ink-muted);
+	line-height: 1.5;
+}
+.skills__note {
+	margin: 0;
+	color: var(--ink-muted);
+}
+.skills__foot {
+	margin: var(--space-4) 0 0;
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+}
+.skills__list {
+	display: grid;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	border-top: 1px solid var(--line);
+}
+.skill {
+	display: grid;
+	gap: var(--space-1);
+	padding: var(--space-3) var(--space-1);
+	border-bottom: 1px solid var(--line);
+	min-width: 0;
+}
+.skill__head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2) var(--space-4);
+}
+.skill__name {
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+.skill__text {
+	margin: 0;
+	max-width: 70ch;
+	line-height: 1.45;
+	overflow-wrap: anywhere;
+}
+.skill__meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-1) var(--space-4);
+	margin: 0;
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+}
+/* The global code rule is a padded block; inside the meta line the invocation is part of the line. */
+.skill__meta code {
+	display: inline;
+	padding: 0;
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+}
+
+@media (max-width: 760px) {
+	.skills {
+		padding-inline: var(--space-4);
+	}
+}
+
+.skills__discovery {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 14rem;
+	gap: var(--space-4);
+	align-items: end;
+}
+.skills__source {
+	display: grid;
+	gap: var(--space-2);
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+}
+.skills__facets {
+	grid-column: 1 / -1;
+	border: 0;
+	padding: 0;
+	margin: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+}
+.skills__facets legend {
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+	margin-bottom: var(--space-2);
+}
+.skills__facets button[aria-pressed="true"] {
+	background: var(--accent-soft);
+	border-color: var(--accent);
+	color: var(--accent);
+}
+.skills__results {
+	grid-column: 1 / -1;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+}
+.skill__details {
+	margin-top: var(--space-3);
+	font-size: var(--text-meta);
+}
+.skill__details > summary {
+	color: var(--accent);
+	cursor: pointer;
+}
+.skill__details[open] {
+	padding: var(--space-4);
+	background: var(--well);
+	border-left: 2px solid var(--accent);
+}
+.skill__facts {
+	display: grid;
+	gap: var(--space-3);
+}
+.skill__facts > div {
+	display: grid;
+	grid-template-columns: 9rem minmax(0, 1fr);
+	gap: var(--space-3);
+}
+.skill__facts dt {
+	color: var(--ink-muted);
+}
+.skill__facts dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+.skill__facts code {
+	white-space: normal;
+	font-size: var(--text-instrument);
+}

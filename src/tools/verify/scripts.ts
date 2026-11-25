@@ -1,0 +1,1229 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { sha256Hex } from "../../core/hash.js";
+import { resolveSafeCwd, runCommandVector, type SafeCommandResult } from "../../core/safe-exec.js";
+import {
+	type MainSandboxPolicy,
+	mainSandboxWriteHint,
+	readOnlyMainSandboxPolicy,
+} from "../../core/sandbox/main-session.js";
+import { declaredVerificationScripts, VERIFICATION_SCRIPT_FAMILY_HINT } from "../../core/verification-scripts.js";
+import { runVectorTool } from "../safe-exec.js";
+import type { ToolResult } from "../tool-spec.js";
+import {
+	type DeclaredCheck,
+	type DeclaredCheckSource,
+	type DeclaredNumericCompare,
+	type DeclaredPerfBudget,
+	defaultVerifyTimeoutMs,
+	PROJECT_VERIFIER_CATALOG_RELATIVE_PATH,
+	resolveProjectVerifierExecutionCwd,
+} from "./catalog.js";
+import {
+	type DeclaredCheckDiscoveryResult,
+	discoverDeclaredChecks,
+	discoverDeclaredChecksAtRoot,
+} from "./discovery.js";
+import {
+	compareNumeric,
+	extractNumericPayloadText,
+	type NumericCompareReport,
+	type NumericPayload,
+	parseNumericPayload,
+	payloadSpread,
+	renderNumericReport,
+} from "./numeric.js";
+import {
+	capturePerfEnvironment,
+	evaluatePerfBudget,
+	type PerfBaseline,
+	type PerfBudgetReport,
+	type PerfEnvironment,
+	parsePerfBaseline,
+	renderPerfBaseline,
+} from "./perf.js";
+import { captureProofSnapshot } from "./proof.js";
+import { hashJudgedInputs, judgedInputDrift, runProvenanceProbes } from "./provenance.js";
+import { type ReproduceReport, renderReproduceReport } from "./reproduce.js";
+import { checkoutState, type ReproduceOutcome, runReproduce } from "./reproduce-run.js";
+import { availableToolchainChecks } from "./resolve.js";
+import { taskGateBounds, taskGateFallbackHint, taskGates } from "./task-gates.js";
+import {
+	type DeclaredProjectEntry,
+	discoverDeclaredProjectEntriesAtRoot,
+	parsePackageJson,
+	readRegularFileText,
+} from "./toolchain.js";
+import {
+	NO_CHECKS_DECLARED_NOTE,
+	TOOLCHAIN_DISCOVERY_SOURCES,
+	type ToolchainCheck,
+	unsupportedRunnerArgs,
+} from "./toolchain-checks.js";
+
+/** The structured verdict a numeric-compare, perf-budget or reproduce check records beside the command facts. */
+export type DeclaredCheckReport = NumericCompareReport | PerfBudgetReport | ReproduceReport;
+
+/**
+ * Output ceiling for a judged check's command. A numeric payload may carry up
+ * to NUMERIC_PAYLOAD_CAPS.elements numbers, which as printed JSON can exceed
+ * the safe-exec default of 600 KB by a wide margin, so the judged path has its
+ * own bound. The runner retains the whole capture in memory as a string until
+ * judgement, so this constant is also the memory bound one judged check may
+ * hold; output past it ends the command before judgement. Baseline recording
+ * runs the same command under the same ceiling, and a reference or baseline
+ * file is refused past it before being read, so no judged input exceeds it.
+ */
+export const JUDGED_CHECK_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
+
+export type CheckExecutionOutcome = "succeeded" | "failed" | "unavailable" | "timed-out" | "aborted" | "output-capped";
+
+/**
+ * A verifier result answers three separate questions, and a reader must not
+ * fold them into one. Execution says whether the command ran to completion.
+ * Validation says what the declared judgement concluded: a tolerance or budget
+ * verdict for a judged check, the exit code itself for a command check, or
+ * `not-run` when execution ended before any judgement. Scientific validity is
+ * never established by a check: a payload within tolerance of its reference
+ * says nothing about whether the reference is right.
+ */
+export interface CheckJudgement {
+	execution: CheckExecutionOutcome;
+	validation: "passed" | "failed" | "exit-code" | "not-run";
+	scientificValidity: typeof SCIENTIFIC_VALIDITY_NOT_ESTABLISHED;
+}
+
+export const SCIENTIFIC_VALIDITY_NOT_ESTABLISHED = "not established by this check";
+
+function executionOutcome(result: Pick<SafeCommandResult, "aborted" | "timedOut" | "outputCapped" | "exitCode">) {
+	if (result.aborted) return "aborted" as const;
+	if (result.timedOut) return "timed-out" as const;
+	if (result.outputCapped) return "output-capped" as const;
+	return result.exitCode === 0 ? ("succeeded" as const) : ("failed" as const);
+}
+
+function judgement(execution: CheckExecutionOutcome, validation: CheckJudgement["validation"]): CheckJudgement {
+	return { execution, validation, scientificValidity: SCIENTIFIC_VALIDITY_NOT_ESTABLISHED };
+}
+
+/**
+ * Package scripts and the project catalog meet here as one canonical check
+ * projection. Project checks retain their admitted argv/cwd/timeout exactly;
+ * package scripts keep the established npm argument-widening behavior.
+ */
+
+function clonedSources(sources: ReadonlyArray<DeclaredCheckSource>): DeclaredCheckSource[] {
+	return sources.map((source) => ({
+		kind: source.kind,
+		path: source.path,
+		checks: source.checks.map((check) => ({
+			...check,
+			command: [...check.command],
+			tags: [...check.tags],
+			source: { ...check.source },
+		})),
+	}));
+}
+
+export function listChecks(cwdArg: string | undefined): ToolResult {
+	const discovery = discoverDeclaredChecks(cwdArg);
+	if (!discovery.ok) return { kind: "error", message: `verify: ${discovery.reason}` };
+	const declared = discovery.sources.flatMap((source) => source.checks);
+	const diagnostics = [...(discovery.diagnostics ?? [])];
+	const derived = availableToolchainChecks(process.cwd(), declared, diagnostics);
+	const gates = taskGates();
+	const lines: string[] = [];
+	if (gates.gates.length > 0 || gates.rejected.length > 0) {
+		lines.push("Gates the dispatched task declares (each runs exactly as written, from the workspace root, no args):");
+		for (const gate of gates.gates) lines.push(`- ${gate.id}: ${gate.command.join(" ")}`);
+		for (const entry of gates.rejected)
+			lines.push(`- not runnable: ${entry.text} (${entry.reason}); report it unverified`);
+		lines.push("");
+	}
+	const noChecksDeclared = declared.length === 0 && derived.length === 0 && taskGateFallbackHint() === "";
+	if (declared.length === 0 && derived.length === 0) {
+		lines.push(
+			`No declared verification checks found (no package.json verification scripts or ${PROJECT_VERIFIER_CATALOG_RELATIVE_PATH} entries).`,
+			`Nothing derivable either: looked for ${TOOLCHAIN_DISCOVERY_SOURCES}.`,
+			taskGateFallbackHint().trim() ||
+				`${NO_CHECKS_DECLARED_NOTE} \`pancode verifiers author\` creates the catalog after confirmation.`,
+		);
+	} else {
+		if (declared.length > 0) lines.push("Declared verification checks:");
+		for (const source of discovery.sources) {
+			if (source.checks.length === 0) continue;
+			lines.push(source.kind === "package.json" ? "package.json:" : `${PROJECT_VERIFIER_CATALOG_RELATIVE_PATH}:`);
+			for (const check of source.checks) {
+				const tags = check.tags.length > 0 ? ` [${check.tags.join(", ")}]` : "";
+				const kind = check.kind === "command" ? "" : ` (${check.kind})`;
+				const runs =
+					check.runs === undefined ? "" : ` One run per call: ${check.id}/<run>, <run> a directory under ${check.runs}.`;
+				lines.push(`- ${check.id}${kind}${tags}: ${check.description}${runs}`);
+			}
+		}
+		if (derived.length > 0) {
+			lines.push("Derived from the repository's toolchain and CI files (argv shown is what runs):");
+			for (const check of derived) {
+				const args = check.argsBase === undefined ? " (takes no args)" : "";
+				const availability = check.availability
+					? ` [${check.availability.state}: ${check.availability.reason}${check.availability.provisionCommand ? `; operator: ${check.availability.provisionCommand.join(" ")}` : ""}]`
+					: "";
+				lines.push(
+					`- ${check.id} [${check.tags.join(", ")}]: ${check.command.join(" ")}${args}  (${check.source.path})${availability}`,
+				);
+			}
+		}
+	}
+	if (diagnostics.length > 0) {
+		lines.push("Skipped during discovery:", ...diagnostics.map((diagnostic) => `- ${diagnostic}`));
+	}
+	lines.push(
+		"",
+		'Run one with verify(check="<id>"). verify(check="frontend", path=<file>) validates an HTML/CSS/JS artifact.',
+	);
+	return {
+		kind: "ok",
+		output: lines.join("\n"),
+		details: {
+			...(noChecksDeclared ? { noChecksDeclared: true } : {}),
+			...(diagnostics.length > 0 ? { diagnostics } : {}),
+			sources: clonedSources(discovery.sources),
+			...(gates.gates.length > 0 || gates.rejected.length > 0
+				? {
+						taskGates: {
+							gates: gates.gates.map((gate) => ({ id: gate.id, text: gate.text, command: [...gate.command] })),
+							rejected: gates.rejected.map((entry) => ({ ...entry })),
+						},
+					}
+				: {}),
+			derived: derived.map((check) => ({
+				id: check.id,
+				command: [...check.command],
+				path: check.source.path,
+				provenance: { ...check.provenance },
+				...(check.availability ? { availability: check.availability } : {}),
+			})),
+		},
+	};
+}
+
+/**
+ * How the verify tool runs a check's command. `shellSandbox` is the
+ * main-session sandbox the registry hands a contained call (Phase 2c): the
+ * check's project code then runs with the writable roots, network and secret
+ * masking a contained bash command gets.
+ */
+export interface VerifyRunOptions {
+	signal?: AbortSignal;
+	shellSandbox?: MainSandboxPolicy;
+	/**
+	 * The checkout a declared check's cwd, reference and baseline resolve against; the process working directory when
+	 * absent. A caller running a check in another checkout passes it here rather than changing the process directory.
+	 */
+	workspaceRoot?: string;
+}
+
+/**
+ * What every verify check adds to the safe tool environment. A check observes the tree and does not author it: an
+ * interpreter's bytecode cache written beside the sources (`__pycache__/*.pyc`) is a change nobody made, which a
+ * no-edit checker's observed checkout delta then reported as the checker's mutation.
+ */
+function verifyCheckEnv(extra?: Record<string, string>): Record<string, string> {
+	return { PYTHONDONTWRITEBYTECODE: "1", ...extra };
+}
+
+/** The main-session sandbox's write hint for a contained check's failed output, on its own line, or "". */
+function sandboxHint(output: string, options: VerifyRunOptions | undefined): string {
+	const hint = options?.shellSandbox === undefined ? null : mainSandboxWriteHint(output, options.shellSandbox);
+	return hint === null ? "" : `\n${hint}`;
+}
+
+/**
+ * Run a check derived from the repository's toolchain or CI files. The argv
+ * was resolved by resolveVerifyCall, the same resolution the safety policy
+ * engine scanned, and runs from the workspace root.
+ */
+export async function runToolchainCheck(
+	check: ToolchainCheck,
+	argv: ReadonlyArray<string>,
+	args: Record<string, unknown>,
+	options?: VerifyRunOptions,
+): Promise<ToolResult> {
+	if (check.availability) return unavailableCheck(check);
+	const [file, ...vector] = argv;
+	if (file === undefined) return { kind: "error", message: `verify: derived check '${check.id}' has empty argv` };
+	// Refused before spawning, so like a name that resolved to no check it ran nothing and settles nothing (L10).
+	const refused = unsupportedRunnerArgs(check, argv);
+	if (refused !== null)
+		return { kind: "error", message: `verify: ${refused}`, details: { check: check.id, unresolved: true } };
+	const cwd = resolveProjectVerifierExecutionCwd(check.cwd, process.cwd());
+	if (cwd instanceof Error) return { kind: "error", message: `verify: ${cwd.message}` };
+	const result = await runVectorTool(
+		"verify",
+		file,
+		vector,
+		{ ...args, cwd, timeout_ms: typeof args.timeout_ms === "number" ? args.timeout_ms : check.timeoutMs },
+		{ ...options, env: verifyCheckEnv(), truncateOutputOnly: true },
+	);
+	return withDeclaredEvidence(await withRunnerUsageEvidence(result, argv, cwd, options), {
+		...check,
+		command: [...argv],
+	});
+}
+
+/**
+ * Run a gate the dispatched task declares. The argv is the one the safety
+ * scan judged; it runs from the workspace root under the task-gate bounds,
+ * whatever cwd the model sent.
+ */
+export async function runTaskGateCheck(
+	check: DeclaredCheck,
+	args: Record<string, unknown>,
+	options?: VerifyRunOptions,
+): Promise<ToolResult> {
+	const [file, ...vector] = check.command;
+	if (file === undefined) return { kind: "error", message: `verify: task gate '${check.id}' has empty argv` };
+	const bounds = taskGateBounds(args, check.timeoutMs);
+	const result = await runVectorTool(
+		"verify",
+		file,
+		vector,
+		{ cwd: process.cwd(), ...bounds },
+		{ ...options, env: verifyCheckEnv(), truncateOutputOnly: true },
+	);
+	return withDeclaredEvidence(await withRunnerUsageEvidence(result, check.command, process.cwd(), options), {
+		...check,
+		timeoutMs: bounds.timeout_ms,
+	});
+}
+
+/**
+ * Attach the judgement facts to a `command` check's result, whose whole
+ * verdict is its exit code: a package script or a catalog `command` check.
+ * Judged checks attach their own facts before reaching here and keep them; a
+ * result without exec facts (a refusal before anything ran) gets none.
+ */
+function withCommandJudgement(result: ToolResult): ToolResult {
+	const details = result.details ?? {};
+	if (details.judgement !== undefined) return result;
+	// The exec record always names exitCode (a number, or null for a signal
+	// death) once the command ran; a refusal before spawning carries none.
+	if (!Object.hasOwn(details, "exitCode")) return result;
+	const execution = executionOutcome({
+		aborted: details.aborted === true,
+		timedOut: details.timedOut === true,
+		outputCapped: details.outputCapped === true,
+		exitCode: typeof details.exitCode === "number" ? details.exitCode : null,
+	});
+	const validation = execution === "succeeded" || execution === "failed" ? "exit-code" : "not-run";
+	return { ...result, details: { ...details, judgement: judgement(execution, validation) } };
+}
+
+function withDeclaredEvidence(result: ToolResult, check: DeclaredCheck): ToolResult {
+	const classified = classifyUnavailable(result, check.id, check.command);
+	const judged = check.kind === "command" ? withCommandJudgement(classified) : classified;
+	return {
+		...judged,
+		details: {
+			...judged.details,
+			action: "verify",
+			check: check.id,
+			kind: check.kind,
+			source: { ...check.source },
+			description: check.description,
+			declaredCommand: [...check.command],
+			declaredCwd: check.cwd,
+			declaredTimeoutMs: check.timeoutMs,
+			tags: [...check.tags],
+		},
+	};
+}
+
+const UNAVAILABLE_RETRY_DIRECTIVE =
+	"Rerunning this entry with other arguments or cwd cannot help; report the limitation and stop.";
+
+/**
+ * A runner that needs provisioning still has the project's own locked command, which an agent with `bash` runs instead
+ * (FL-2); a bare interpreter beside a lock file tests another environment, so the directive names that too.
+ */
+function provisioningDirective(check: ToolchainCheck): string {
+	return `Rerunning this entry with other arguments or cwd cannot help. With bash, run the project's locked command instead: ${check.command.join(" ")}; never a bare python, python3 or pytest, which tests the system interpreter rather than the locked environment. Without bash, report the limitation and stop.`;
+}
+
+/** DF-10: no check may silently provision its runner before verification. */
+export function unavailableCheck(check: ToolchainCheck): ToolResult {
+	const availability = check.availability;
+	const operator = availability?.provisionCommand
+		? `; operator provisioning command: ${availability.provisionCommand.join(" ")}`
+		: "";
+	const directive =
+		availability?.state === "needs-provisioning" ? provisioningDirective(check) : UNAVAILABLE_RETRY_DIRECTIVE;
+	return withDeclaredEvidence(
+		{
+			kind: "error",
+			message: `verify: unavailable '${check.id}': ${availability?.reason ?? "runner is unavailable"}${operator}. ${directive}`,
+			details: {
+				availability,
+				judgement: judgement("unavailable", "not-run"),
+			},
+		},
+		check,
+	);
+}
+
+/** The exit status pytest (`NO_TESTS_COLLECTED`) and unittest (`NO TESTS RAN`, Python 3.12+) give a run that collected no test. */
+const NO_TESTS_COLLECTED_EXIT = 5;
+
+/** `uv run` options that take a value, so the token after one is not the command. */
+const UV_RUN_VALUE_OPTIONS = new Set([
+	"--with",
+	"--with-editable",
+	"--with-requirements",
+	"--python",
+	"-p",
+	"--project",
+	"--directory",
+	"--package",
+	"--extra",
+	"--group",
+	"--only-group",
+	"--no-group",
+	"--env-file",
+	"--index",
+	"--default-index",
+	"--index-url",
+	"--extra-index-url",
+	"--find-links",
+	"-f",
+	"--cache-dir",
+	"--config-file",
+]);
+
+/** Python options that take a value before `-m`. */
+const PYTHON_VALUE_OPTIONS = new Set(["-W", "-X", "--check-hash-based-pycs"]);
+
+function executableName(arg: string | undefined): string {
+	return (
+		(arg ?? "")
+			.split(/[\\/]/u)
+			.pop()
+			?.replace(/\.exe$/iu, "") ?? ""
+	);
+}
+
+/** Where the launched command starts: after `uv run [options] [--]`, `poetry run [--]` or `pipenv run [--]`, else 0. */
+function launchedCommandIndex(argv: ReadonlyArray<string>): number {
+	const launcher = executableName(argv[0]);
+	if (argv[1] !== "run" || !["uv", "poetry", "pipenv"].includes(launcher)) return 0;
+	let index = 2;
+	while (launcher === "uv" && argv[index]?.startsWith("-") === true && argv[index] !== "--") {
+		const option = argv[index] ?? "";
+		index += UV_RUN_VALUE_OPTIONS.has(option) ? 2 : 1;
+	}
+	return argv[index] === "--" ? index + 1 : index;
+}
+
+/**
+ * Which Python test runner an argv runs, pytest or unittest, read from its start: an optional `uv run`, `poetry run` or
+ * `pipenv run` launcher, then a Python interpreter with `-m pytest|unittest`, or a `pytest` / `py.test` executable. A
+ * `-m pytest` handed to anything else (`npm run pytest`, a script given `-m pytest`) is not a Python test runner.
+ * `module` is the index of `-m`, absent for a pytest executable.
+ */
+function pythonTestRunnerAt(argv: ReadonlyArray<string>): { runner: "pytest" | "unittest"; module?: number } | null {
+	let index = launchedCommandIndex(argv);
+	const executable = executableName(argv[index]);
+	if (/^py\.?test$/u.test(executable)) return { runner: "pytest" };
+	if (!/^python(?:\d+(?:\.\d+)?)?$/u.test(executable)) return null;
+	index += 1;
+	while (index < argv.length && argv[index] !== "-m") {
+		const option = argv[index] ?? "";
+		// A script path or `-c` code before `-m` means the interpreter runs that instead.
+		if (!option.startsWith("-") || option === "-c" || option === "-") return null;
+		index += PYTHON_VALUE_OPTIONS.has(option) ? 2 : 1;
+	}
+	const module = argv[index + 1];
+	return argv[index] === "-m" && (module === "pytest" || module === "unittest")
+		? { runner: module, module: index }
+		: null;
+}
+
+function pythonTestRunner(argv: ReadonlyArray<string>): "pytest" | "unittest" | null {
+	return pythonTestRunnerAt(argv)?.runner ?? null;
+}
+
+/**
+ * The exit status a runner reserves for rejecting its own invocation. `python -m unittest` exits 2 from argparse, but
+ * so does a project's `load_tests` hook raising `SystemExit(2)`, so the status alone is not evidence: the parser probe
+ * must confirm it. pytest's usage status 4 is left out: a conftest that fails to import also exits 4, and that may be
+ * the change under test.
+ */
+const USAGE_ERROR_EXIT: Partial<Record<"pytest" | "unittest", number>> = { unittest: 2 };
+
+/**
+ * Parses the arguments with `python -m unittest`'s own argparse parsers and imports no test or project code beyond
+ * the stdlib: it exits 2 only when the parser rejects them and 0 when it accepts them; a Python whose private parser
+ * API differs fails some other way, which is no evidence.
+ */
+const UNITTEST_PARSER_PROBE = [
+	"import sys",
+	"from unittest.main import TestProgram as T",
+	"p = T.__new__(T)",
+	"p.failfast = p.catchbreak = p.buffer = p.testNamePatterns = None",
+	'p.progName = "python -m unittest"',
+	"p._initArgParsers()",
+	"a = sys.argv[1:]",
+	'd = bool(a) and a[0].lower() == "discover"',
+	"(p._discovery_parser if d else p._main_parser).parse_args(a[1:] if d else a, p)",
+].join("\n");
+const PARSER_PROBE_TIMEOUT_MS = 30_000;
+
+/**
+ * Confirm a unittest run's usage-error status with the runner's own parser, run by the same interpreter, launcher
+ * and sandbox as the check: the probe's exit status, never the run's output, marks `parserRejected`. Without that
+ * evidence the exit stays a failed run (L10).
+ */
+async function withRunnerUsageEvidence(
+	result: ToolResult,
+	argv: ReadonlyArray<string>,
+	cwd: string,
+	options: VerifyRunOptions | undefined,
+): Promise<ToolResult> {
+	const at = pythonTestRunnerAt(argv);
+	if (
+		result.kind !== "error" ||
+		at?.runner !== "unittest" ||
+		at.module === undefined ||
+		result.details?.exitCode !== USAGE_ERROR_EXIT.unittest ||
+		result.details?.timedOut ||
+		result.details?.aborted ||
+		options?.signal?.aborted
+	)
+		return result;
+	const [file, ...vector] = [...argv.slice(0, at.module), "-c", UNITTEST_PARSER_PROBE, ...argv.slice(at.module + 2)];
+	if (file === undefined) return result;
+	const probe = await runVectorTool(
+		"verify",
+		file,
+		vector,
+		{ cwd, timeout_ms: PARSER_PROBE_TIMEOUT_MS },
+		{ ...options, env: verifyCheckEnv(), truncateOutputOnly: true },
+	);
+	return probe.details?.exitCode === USAGE_ERROR_EXIT.unittest
+		? { ...result, details: { ...result.details, parserRejected: true } }
+		: result;
+}
+
+/** Whether the run ended on its runner's usage-error status and the runner's parser confirmed the rejection (L10). */
+function rejectedInvocation(result: ToolResult, argv: ReadonlyArray<string>, exitCode: number | null): boolean {
+	const runner = pythonTestRunner(argv);
+	return (
+		runner !== null &&
+		exitCode !== null &&
+		USAGE_ERROR_EXIT[runner] === exitCode &&
+		result.details?.parserRejected === true
+	);
+}
+
+/**
+ * Whether the runner's own summary says it collected no test and nothing failed: unittest's `NO TESTS RAN` (a
+ * `setUpClass` or `setUpModule` error also exits 5 on Python 3.12+, but prints `FAILED`), or pytest's `no tests ran`
+ * / `collected 0 items` with no failure or error section.
+ */
+function reportsNoTests(output: string): boolean {
+	if (/^FAILED\b|^ERROR:|\b\d+ (?:failed|errors?)\b|=+ (?:ERRORS|FAILURES) =+/mu.test(output)) return false;
+	return /^NO TESTS RAN\s*$/mu.test(output) || /\bno tests ran\b|^collected 0 items\b/mu.test(output);
+}
+
+/**
+ * A pytest or unittest run that exited 5 and whose own summary says no test was collected judged nothing: a
+ * script-style test file with module-level asserts is not a test case either runner collects (CLI-P51). Exit 5
+ * alone is not enough, since a fixture error or `sys.exit(5)` can give it too. Host verification seals the same
+ * run as not run.
+ */
+export function collectedNoTests(argv: ReadonlyArray<string>, exitCode: number | null, output: string): boolean {
+	return exitCode === NO_TESTS_COLLECTED_EXIT && pythonTestRunner(argv) !== null && reportsNoTests(output);
+}
+
+/** Startup diagnostics only: a test assertion mentioning permissions is still a failed test. */
+function classifyUnavailable(result: ToolResult, check: string, command: ReadonlyArray<string>): ToolResult {
+	if (
+		result.kind !== "error" ||
+		(result.details?.judgement && (result.details.judgement as CheckJudgement).execution === "unavailable") ||
+		// A reproduce run that failed after an earlier one completed: the check ran, so its runner was available.
+		(Array.isArray(result.details?.completedRuns) && result.details.completedRuns.length > 0)
+	)
+		return result;
+	if (
+		collectedNoTests(
+			command,
+			typeof result.details?.exitCode === "number" ? result.details.exitCode : null,
+			result.message,
+		) &&
+		!result.details?.timedOut &&
+		!result.details?.aborted &&
+		!result.details?.outputCapped
+	) {
+		return {
+			...result,
+			message: `verify: unavailable '${check}': no tests collected (${command.join(" ")} exited with code ${NO_TESTS_COLLECTED_EXIT}), so it judged nothing. Rerunning this entry cannot help; run the project's own test command instead (a script-style test file runs as its own script), or report the limitation and stop.`,
+			details: { ...result.details, check, noTestsCollected: true, judgement: judgement("unavailable", "not-run") },
+		};
+	}
+	const exitCode = typeof result.details?.exitCode === "number" ? result.details.exitCode : null;
+	if (
+		rejectedInvocation(result, command, exitCode) &&
+		!result.details?.timedOut &&
+		!result.details?.aborted &&
+		!result.details?.outputCapped
+	) {
+		// Not a startup failure of the entry: other arguments can run it, so `usageError` keeps the loop guard open.
+		return {
+			...result,
+			message: `verify: could not run '${check}': ${command.join(" ")} exited with code ${exitCode}, its runner's usage error, so it rejected these arguments and ran no test. This is not a failed validation, so it does not belong in validations; retry with arguments the runner accepts (or none for the whole suite), and if it never runs, list '${check}' under declaredChecks. Runner output: ${result.message.replace(/^verify: (?:exited with code [^:]+:\s*)?/u, "")}`,
+			details: { ...result.details, check, usageError: true, judgement: judgement("unavailable", "not-run") },
+		};
+	}
+	const message = result.message;
+	const diagnostic = message
+		.replace(
+			/^verify: (?:(?:numeric-compare|perf-budget) command |reproduce run \d )?exited with code [^:]+(?: before judgement)?:\s*/u,
+			"",
+		)
+		.replace(/^verify:\s*/u, "");
+	const startup =
+		result.details?.launched === false ||
+		/^(?:spawn .+ (?:ENOENT|EACCES|EROFS)\b|bwrap:|sandbox:|sandbox-exec:|(?:sh|bash): .+(?:not found|Permission denied)|\S+: No module named (?:pytest|tox|nox)\b)/u.test(
+			diagnostic,
+		) ||
+		(command[0] === "uv" &&
+			/^error:[\s\S]*(?:Read-only file system|Permission denied|os error (?:13|30)|No virtual environment found|No interpreter found)/u.test(
+				diagnostic,
+			)) ||
+		/^error:.*(?:\.venv|uv\/|toolchain).*\b(?:EROFS|EACCES)\b/u.test(diagnostic);
+	if (!startup || result.details?.timedOut || result.details?.aborted || result.details?.outputCapped) return result;
+	return {
+		...result,
+		message: `verify: unavailable '${check}': ${message.replace(/^verify: /u, "")}. ${UNAVAILABLE_RETRY_DIRECTIVE}`,
+		details: { ...result.details, check, judgement: judgement("unavailable", "not-run") },
+	};
+}
+
+/**
+ * Read a repository-relative check file inside the workspace root, as text.
+ * The file is bounded by JUDGED_CHECK_MAX_OUTPUT_BYTES, the same ceiling as
+ * the command output it is judged beside, and the size is checked before any
+ * byte is read so an oversized file costs nothing but a stat. Only a regular
+ * file is read, so a FIFO reference cannot block the event loop.
+ */
+function readCheckFile(workspaceRoot: string, relative: string, label: string): string | Error {
+	let resolved: string;
+	try {
+		resolved = resolveSafeCwd(relative, workspaceRoot);
+	} catch (error) {
+		return new Error(`${label} ${error instanceof Error ? error.message : String(error)}`);
+	}
+	if (!existsSync(resolved)) return new Error(`${label} '${relative}' does not exist`);
+	try {
+		const read = readRegularFileText(resolved, JUDGED_CHECK_MAX_OUTPUT_BYTES);
+		if (read.ok) return read.text;
+		if (read.reason === "not-regular") return new Error(`${label} '${relative}' is not a regular file`);
+		return new Error(`${label} '${relative}' exceeds the ${JUDGED_CHECK_MAX_OUTPUT_BYTES}-byte cap (${read.size} bytes)`);
+	} catch (error) {
+		return new Error(`${label} '${relative}' cannot be read (${error instanceof Error ? error.message : String(error)})`);
+	}
+}
+
+/** The digest of a repository-relative check file as `readCheckFile` reads it; null when it cannot be read. */
+function checkFileSha256(workspaceRoot: string, relative: string): string | null {
+	const text = readCheckFile(workspaceRoot, relative, "check file");
+	return text instanceof Error ? null : sha256Hex(text);
+}
+
+/**
+ * Read a sealed judged-check file (a numeric reference or perf baseline) by
+ * absolute path under the same cap and regular-file rule as `readCheckFile`.
+ * Undefined when it is absent or cannot be read. Admission digests what this
+ * returns and host verification judges it, so both see the same bytes.
+ */
+export function readJudgedFile(absolutePath: string): string | undefined {
+	try {
+		const read = readRegularFileText(absolutePath, JUDGED_CHECK_MAX_OUTPUT_BYTES);
+		return read.ok ? read.text : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** The sha256 of a judged check file's text, null when it is absent: the digest a judged report records for it. */
+export function judgedFileSha256(text: string | undefined): string | null {
+	return text === undefined ? null : sha256Hex(text);
+}
+
+/**
+ * Judge a numeric-compare command's stdout against reference text already
+ * read from disk. Pure. The report records the identity of both texts it
+ * judged: the reference's digest and size beside the caller's label (and its
+ * path when the caller names one), and the digest and size of the payload
+ * text extracted from stdout.
+ */
+export function judgeNumericTexts(
+	stdout: string,
+	referenceText: string,
+	tolerance: DeclaredNumericCompare["tolerance"],
+	referenceLabel: string,
+	referencePath?: string,
+): NumericCompareReport | Error {
+	const reference = parseNumericPayload(referenceText, referenceLabel);
+	if (reference instanceof Error) return reference;
+	const payloadText = extractNumericPayloadText(stdout);
+	const actual = parseNumericPayload(payloadText, "command output");
+	if (actual instanceof Error) return actual;
+	return {
+		...compareNumeric(actual, reference, tolerance),
+		reference: {
+			source: referenceLabel,
+			...(referencePath !== undefined ? { path: referencePath } : {}),
+			sha256: sha256Hex(referenceText),
+			bytes: Buffer.byteLength(referenceText, "utf8"),
+		},
+		actual: { sha256: sha256Hex(payloadText), bytes: Buffer.byteLength(payloadText, "utf8") },
+	};
+}
+
+/** Judge a numeric-compare command's stdout against the declared reference under the workspace root. */
+function judgeNumericCompare(
+	stdout: string,
+	numeric: DeclaredNumericCompare,
+	workspaceRoot: string,
+): NumericCompareReport | Error {
+	const referenceText = readCheckFile(workspaceRoot, numeric.reference, "reference");
+	if (referenceText instanceof Error) return referenceText;
+	return judgeNumericTexts(
+		stdout,
+		referenceText,
+		numeric.tolerance,
+		`reference '${numeric.reference}'`,
+		numeric.reference,
+	);
+}
+
+export interface JudgePerfOptions {
+	/** The judging host; captured from this process when omitted. Tests inject one for determinism. */
+	environment?: PerfEnvironment;
+}
+
+/**
+ * Judge a measured wall time against a budget, or against baseline text
+ * already read from disk. Pure given `options.environment`. A baseline
+ * judgement records the baseline file's identity and compares its recorded
+ * host against the judging host; that comparison is reported, never enforced.
+ */
+export function judgePerfTexts(
+	measuredMs: number,
+	perf: DeclaredPerfBudget,
+	baselineText: string | undefined,
+	baselineLabel: string,
+	options: JudgePerfOptions = {},
+): PerfBudgetReport | Error {
+	let baseline: PerfBaseline | undefined;
+	let provenance: PerfBudgetReport["baseline"];
+	if (perf.baseline !== undefined) {
+		if (baselineText === undefined) {
+			return new Error(`${baselineLabel} is missing; record it with \`pancode verifiers baseline <id>\``);
+		}
+		const parsed = parsePerfBaseline(baselineText, baselineLabel);
+		if (parsed instanceof Error) return parsed;
+		baseline = parsed;
+		provenance = {
+			path: perf.baseline,
+			sha256: sha256Hex(baselineText),
+			bytes: Buffer.byteLength(baselineText, "utf8"),
+			...(parsed.recordedAt !== undefined ? { recordedAt: parsed.recordedAt } : {}),
+			...(parsed.check !== undefined ? { check: parsed.check } : {}),
+		};
+	}
+	const report = evaluatePerfBudget(measuredMs, {
+		...(perf.budget !== undefined ? { budget: perf.budget } : {}),
+		...(baseline !== undefined ? { baseline, environment: options.environment ?? capturePerfEnvironment() } : {}),
+		...(perf.tolerance?.relative !== undefined ? { relative: perf.tolerance.relative } : {}),
+	});
+	if (report instanceof Error || provenance === undefined) return report;
+	return { ...report, baseline: provenance };
+}
+
+/** Judge a measured wall time against the declared budget or the recorded baseline under the workspace root. */
+function judgePerfBudget(
+	measuredMs: number,
+	perf: DeclaredPerfBudget,
+	workspaceRoot: string,
+): PerfBudgetReport | Error {
+	let baselineText: string | undefined;
+	if (perf.baseline !== undefined) {
+		const text = readCheckFile(workspaceRoot, perf.baseline, "baseline");
+		if (text instanceof Error) {
+			return new Error(`${text.message}; record it with \`pancode verifiers baseline <id>\``);
+		}
+		baselineText = text;
+	}
+	return judgePerfTexts(measuredMs, perf, baselineText, `baseline '${perf.baseline ?? ""}'`);
+}
+
+function commandFacts(result: SafeCommandResult): Record<string, unknown> {
+	return {
+		command: [result.file, ...result.args].join(" "),
+		argv: [result.file, ...result.args],
+		cwd: result.cwd,
+		launched: result.launched === true,
+		exitCode: result.exitCode,
+		durationMs: result.durationMs,
+		aborted: result.aborted,
+		timedOut: result.timedOut,
+		outputCapped: result.outputCapped,
+	};
+}
+
+/**
+ * Run a numeric-compare or perf-budget check: the command through the same
+ * safe-exec spine as a command check, then the pure judgement. A command that
+ * exits non-zero, times out, is aborted, or overruns the output ceiling fails
+ * before any comparison, so a crashed or truncated validator never reads as a
+ * tolerance verdict. Every result carries the three-part judgement so a
+ * reader can tell execution failure, validation failure, and the unanswered
+ * question of scientific validity apart.
+ */
+async function runJudgedCheck(
+	check: DeclaredCheck,
+	file: string,
+	vector: ReadonlyArray<string>,
+	cwd: string,
+	options?: VerifyRunOptions,
+): Promise<ToolResult> {
+	// Read before the command runs, so it names the tree the command saw rather than one the command left behind.
+	const checkout = check.kind === "numeric-compare" ? await checkoutState(cwd) : null;
+	const workspaceRoot = options?.workspaceRoot ?? process.cwd();
+	// The reference or baseline as it stood before the command ran, so a command that rewrites it cannot pass.
+	const judgedPath =
+		check.kind === "numeric-compare"
+			? check.numeric?.reference
+			: check.kind === "perf-budget"
+				? check.perf?.baseline
+				: undefined;
+	const judgedBefore = judgedPath === undefined ? undefined : checkFileSha256(workspaceRoot, judgedPath);
+	const numeric = check.kind === "numeric-compare" ? check.numeric : undefined;
+	let inputs: Array<{ path: string; absolute: string }>;
+	try {
+		inputs = (numeric?.inputs ?? []).map((input) => ({ path: input, absolute: resolveSafeCwd(input, workspaceRoot) }));
+	} catch (error) {
+		return { kind: "error", message: `verify: ${error instanceof Error ? error.message : String(error)}` };
+	}
+	// Hashed before the command runs and again after it, so the verdict names the bytes the command read.
+	const inputsBefore = await hashJudgedInputs(inputs);
+	if (inputsBefore instanceof Error) {
+		return {
+			kind: "error",
+			message: `verify: numeric-compare ${inputsBefore.message}; nothing ran`,
+			details: { judgement: judgement("unavailable", "not-run") },
+		};
+	}
+	const probes =
+		numeric?.provenance === undefined
+			? []
+			: await runProvenanceProbes(numeric.provenance, {
+					cwd,
+					workspaceRoot,
+					...(options?.shellSandbox !== undefined ? { shellSandbox: options.shellSandbox } : {}),
+					...(options?.signal !== undefined ? { signal: options.signal } : {}),
+				});
+	const runCount = numeric?.repeat ?? 1;
+	const failedRuns: number[] = [];
+	const payloads: NumericPayload[] = [];
+	let chosen: { report: NumericCompareReport | PerfBudgetReport; facts: Record<string, unknown> } | undefined;
+	let execution: ReturnType<typeof executionOutcome> = "succeeded";
+	// Every run is judged. A run that fails to execute or to be judged ends the check with its own error; one outside
+	// the tolerance is recorded and the rest still run, so the spread covers every run.
+	for (let run = 1; run <= runCount; run += 1) {
+		const runLabel = runCount > 1 ? `run ${run} of ${runCount}: ` : "";
+		let result: SafeCommandResult;
+		try {
+			result = await runCommandVector(file, vector, {
+				cwd,
+				...(options?.workspaceRoot !== undefined ? { workspaceRoot: options.workspaceRoot } : {}),
+				timeoutMs: check.timeoutMs,
+				maxOutputBytes: JUDGED_CHECK_MAX_OUTPUT_BYTES,
+				env: verifyCheckEnv(numeric?.seed !== undefined ? { [numeric.seed.env]: numeric.seed.value } : undefined),
+				...(options?.signal !== undefined ? { signal: options.signal } : {}),
+				...(options?.shellSandbox !== undefined ? { shellSandbox: options.shellSandbox } : {}),
+			});
+		} catch (error) {
+			return { kind: "error", message: `verify: ${runLabel}${error instanceof Error ? error.message : String(error)}` };
+		}
+		execution = executionOutcome(result);
+		const facts = { ...commandFacts(result), judgement: judgement(execution, "not-run") };
+		if (result.aborted) return { kind: "error", message: `verify: ${runLabel}aborted`, details: facts };
+		if (result.timedOut) {
+			const seconds = Number((check.timeoutMs / 1000).toFixed(3));
+			return {
+				kind: "error",
+				message: `verify: ${runLabel}timed out after ${seconds} s`,
+				details: { ...facts, timeoutMs: check.timeoutMs },
+			};
+		}
+		if (result.outputCapped) {
+			return {
+				kind: "error",
+				message: `verify: ${runLabel}${check.kind} command output exceeded ${JUDGED_CHECK_MAX_OUTPUT_BYTES} bytes before judgement`,
+				details: facts,
+			};
+		}
+		if (result.exitCode !== 0) {
+			const tail = `${result.stdout}${result.stderr}`.trim().slice(-2_000);
+			const hint = sandboxHint(`${result.stdout}\n${result.stderr}`, options);
+			return {
+				kind: "error",
+				message: `verify: ${runLabel}${check.kind} command exited with code ${result.exitCode ?? "?"} before judgement: ${tail}${hint}`,
+				details: facts,
+			};
+		}
+		const report =
+			check.kind === "numeric-compare" && check.numeric !== undefined
+				? judgeNumericCompare(result.stdout, check.numeric, workspaceRoot)
+				: check.kind === "perf-budget" && check.perf !== undefined
+					? judgePerfBudget(result.durationMs, check.perf, workspaceRoot)
+					: new Error(`declared check '${check.id}' has kind ${check.kind} without its parameters`);
+		if (report instanceof Error)
+			return { kind: "error", message: `verify: ${runLabel}${report.message}`, details: facts };
+		const judgedAfter = report.kind === "numeric-compare" ? report.reference?.sha256 : report.baseline?.sha256;
+		if (judgedPath !== undefined && judgedAfter !== undefined && judgedAfter !== judgedBefore) {
+			const label = report.kind === "numeric-compare" ? "reference" : "baseline";
+			return {
+				kind: "error",
+				message: `verify: ${runLabel}${report.kind} ${label} '${judgedPath}' changed while the check ran (${judgedBefore ?? "absent"}→${judgedAfter})`,
+				details: facts,
+			};
+		}
+		const inputDrift = await judgedInputDrift(inputsBefore, inputs);
+		if (inputDrift !== undefined) {
+			return { kind: "error", message: `verify: ${runLabel}numeric-compare ${inputDrift}`, details: facts };
+		}
+		if (report.kind === "numeric-compare") {
+			const payload = parseNumericPayload(extractNumericPayloadText(result.stdout), `run ${run} output`);
+			if (!(payload instanceof Error)) payloads.push(payload);
+		}
+		if (!report.passed) failedRuns.push(run);
+		if (chosen === undefined || (chosen.report.passed && !report.passed)) chosen = { report, facts };
+	}
+	const { report, facts } = chosen as NonNullable<typeof chosen>;
+	if (report.kind === "numeric-compare") {
+		if (numeric?.inputs !== undefined || numeric?.provenance !== undefined) {
+			report.provenance = { inputs: inputsBefore, probes };
+		}
+		report.repeat = { runs: runCount, failedRuns, spread: payloadSpread(payloads) };
+	}
+	const rendered = report.kind === "numeric-compare" ? renderNumericReport(report) : report.summary;
+	const details = {
+		...facts,
+		report,
+		judgement: judgement(execution, report.passed ? "passed" : "failed"),
+		...(checkout !== null ? { checkout } : {}),
+	};
+	if (!report.passed) return { kind: "error", message: `verify: ${rendered}`, details };
+	return { kind: "ok", output: `${rendered}\n`, details };
+}
+
+/**
+ * The tool result for a reproduce outcome. A refusal or a run that could not
+ * complete reads as not run, so no reader can take it for a verdict; the
+ * refusal's typed reason and digest mismatches ride in the details.
+ */
+function reproduceToolResult(outcome: ReproduceOutcome): ToolResult {
+	switch (outcome.kind) {
+		case "refused":
+			return {
+				kind: "error",
+				message: `verify: reproduce refused: ${outcome.refusal.message}${outcome.refusal.provisionCommand ? `; operator provisioning command: ${outcome.refusal.provisionCommand.join(" ")}` : ""}. ${UNAVAILABLE_RETRY_DIRECTIVE}`,
+				details: { reproduceRefusal: outcome.refusal, judgement: judgement("unavailable", "not-run") },
+			};
+		case "run-failed":
+			return {
+				kind: "error",
+				message: `verify: reproduce ${outcome.message}`,
+				details: {
+					...outcome.facts,
+					...(outcome.completed.length > 0 ? { completedRuns: outcome.completed } : {}),
+					judgement: judgement(executionOutcome(outcome.facts), "not-run"),
+				},
+			};
+		case "unjudgeable":
+			return {
+				kind: "error",
+				message: `verify: reproduce ${outcome.message}`,
+				details: { runs: outcome.facts, judgement: judgement("succeeded", "not-run") },
+			};
+		case "judged": {
+			const rendered = renderReproduceReport(outcome.report);
+			const details = {
+				runs: outcome.facts,
+				report: outcome.report,
+				judgement: judgement("succeeded", outcome.report.passed ? "passed" : "failed"),
+			};
+			if (!outcome.report.passed) return { kind: "error", message: `verify: ${rendered}`, details };
+			return { kind: "ok", output: `${rendered}\n`, details };
+		}
+	}
+}
+
+async function runReproduceCheck(check: DeclaredCheck, options?: VerifyRunOptions): Promise<ToolResult> {
+	if (check.reproduce === undefined) {
+		return { kind: "error", message: `verify: declared check '${check.id}' has kind reproduce without its parameters` };
+	}
+	const outcome = await runReproduce({
+		command: check.command,
+		cwd: check.cwd,
+		timeoutMs: check.timeoutMs,
+		spec: check.reproduce,
+		workspaceRoot: options?.workspaceRoot ?? process.cwd(),
+		...(options?.signal !== undefined ? { signal: options.signal } : {}),
+		...(options?.shellSandbox !== undefined ? { shellSandbox: options.shellSandbox } : {}),
+	});
+	return reproduceToolResult(outcome);
+}
+
+export async function runProjectCheck(check: DeclaredCheck, options?: VerifyRunOptions): Promise<ToolResult> {
+	const [file, ...vector] = check.command;
+	if (file === undefined) return { kind: "error", message: `verify: declared check '${check.id}' has empty argv` };
+	const cwd = resolveProjectVerifierExecutionCwd(check.cwd, options?.workspaceRoot ?? process.cwd());
+	if (cwd instanceof Error) return { kind: "error", message: `verify: ${cwd.message}` };
+	if (check.kind === "reproduce") return withDeclaredEvidence(await runReproduceCheck(check, options), check);
+	if (check.kind === "browser") return withDeclaredEvidence(await runBrowserDeclaredCheck(check, cwd, options), check);
+	if (check.kind !== "command") {
+		return withDeclaredEvidence(await runJudgedCheck(check, file, vector, cwd, options), check);
+	}
+	if (check.proof !== undefined)
+		return withDeclaredEvidence(await runProofCheck(check, file, vector, cwd, options), check);
+	const result = await runVectorTool(
+		"verify",
+		file,
+		vector,
+		{ cwd, timeout_ms: check.timeoutMs },
+		{ ...options, env: verifyCheckEnv() },
+	);
+	return withDeclaredEvidence(await withRunnerUsageEvidence(result, check.command, cwd, options), check);
+}
+
+/**
+ * A browser check's verdict. A component, sandbox or axe package that is not there judged nothing, so it reads as
+ * unavailable; a server that never answered ran and failed before judgement; otherwise the assertions decide.
+ */
+async function runBrowserDeclaredCheck(
+	check: DeclaredCheck,
+	cwd: string,
+	options?: VerifyRunOptions,
+): Promise<ToolResult> {
+	const { runBrowserCheck } = await import("./browser.js");
+	const outcome = await runBrowserCheck(check, cwd, {
+		workspaceRoot: options?.workspaceRoot ?? process.cwd(),
+		...(options?.signal !== undefined ? { signal: options.signal } : {}),
+		...(options?.shellSandbox !== undefined ? { shellSandbox: options.shellSandbox } : {}),
+	});
+	switch (outcome.kind) {
+		case "unavailable":
+			return {
+				kind: "error",
+				message: `verify: unavailable '${check.id}': browser check not run: ${outcome.message}. ${UNAVAILABLE_RETRY_DIRECTIVE}`,
+				details: { judgement: judgement("unavailable", "not-run") },
+			};
+		case "not-started":
+			return {
+				kind: "error",
+				message: `verify: ${outcome.summary}`,
+				details: { judgement: judgement("failed", "not-run") },
+			};
+		case "judged": {
+			const details = {
+				browserReport: outcome.report,
+				judgement: judgement("succeeded", outcome.report.passed ? "passed" : "failed"),
+			};
+			if (!outcome.report.passed) return { kind: "error", message: `verify: ${outcome.summary}`, details };
+			return { kind: "ok", output: `${outcome.summary}\n`, details };
+		}
+	}
+}
+
+async function runProofCheck(
+	check: DeclaredCheck,
+	file: string,
+	vector: string[],
+	cwd: string,
+	options?: VerifyRunOptions,
+): Promise<ToolResult> {
+	const proof = check.proof;
+	if (proof === undefined || check.proofCatalogDigest === undefined)
+		return { kind: "error", message: "verify: proof declaration or catalog fingerprint is missing" };
+	let scratch: string | undefined;
+	try {
+		const snapshot = captureProofSnapshot(process.cwd(), proof.inputs, check.proofCatalogDigest);
+		scratch = mkdtempSync(path.join(tmpdir(), "pancode-proof-"));
+		const sandbox = readOnlyMainSandboxPolicy({
+			workspace: process.cwd(),
+			scratchRoots: [],
+			scratchDir: scratch,
+		});
+		const result = await runVectorTool(
+			"verify",
+			file,
+			vector,
+			{ cwd, timeout_ms: check.timeoutMs },
+			{ ...options, env: verifyCheckEnv(), shellSandbox: { ...sandbox, network: false } },
+		);
+		if (result.kind === "error") return result;
+		if (
+			result.details?.launched !== true ||
+			result.details.exitCode !== 0 ||
+			result.details.aborted === true ||
+			result.details.timedOut === true ||
+			result.details.outputCapped === true ||
+			captureProofSnapshot(process.cwd(), proof.inputs) !== snapshot
+		)
+			return {
+				kind: "error",
+				message: `verify: proof '${check.id}' has incomplete execution or changed inputs; no proof evidence recorded`,
+			};
+		return {
+			...result,
+			output: `${result.output}\nDeclared proof result: ${proof.status} (${proof.goals.map((goal) => goal.id).join(", ")})`,
+			details: { ...result.details, proof: { check: check.id, proof, snapshot } },
+		};
+	} catch (error) {
+		return {
+			kind: "error",
+			message: `verify: proof '${check.id}' unavailable: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	} finally {
+		if (scratch !== undefined) rmSync(scratch, { recursive: true, force: true });
+	}
+}
+
+/**
+ * Run a perf-budget check once and write its wall time as the baseline the
+ * check's `baseline` path names. The command runs under the judged check's
+ * output ceiling, so the recording run and the judged run are the same run.
+ * The command must exit cleanly; a failed, timed-out, aborted, or
+ * output-capped run records nothing, so a baseline never encodes a broken
+ * command's timing.
+ */
+export async function recordPerfBaseline(
+	check: DeclaredCheck,
+	options?: { signal?: AbortSignal; now?: () => Date; environment?: PerfEnvironment },
+): Promise<{ ok: true; path: string; wallTimeMs: number } | { ok: false; message: string }> {
+	if (check.kind !== "perf-budget" || check.perf?.baseline === undefined) {
+		return { ok: false, message: `check '${check.id}' is not a perf-budget check with a baseline path` };
+	}
+	const [file, ...vector] = check.command;
+	if (file === undefined) return { ok: false, message: `declared check '${check.id}' has empty argv` };
+	const cwd = resolveProjectVerifierExecutionCwd(check.cwd, process.cwd());
+	if (cwd instanceof Error) return { ok: false, message: cwd.message };
+	let result: SafeCommandResult;
+	try {
+		result = await runCommandVector(file, vector, {
+			cwd,
+			timeoutMs: check.timeoutMs,
+			maxOutputBytes: JUDGED_CHECK_MAX_OUTPUT_BYTES,
+			env: verifyCheckEnv(),
+			...(options?.signal !== undefined ? { signal: options.signal } : {}),
+		});
+	} catch (error) {
+		return { ok: false, message: error instanceof Error ? error.message : String(error) };
+	}
+	const execution = executionOutcome(result);
+	if (execution !== "succeeded") {
+		const ended =
+			execution === "aborted"
+				? "was aborted"
+				: execution === "timed-out"
+					? "timed out"
+					: execution === "output-capped"
+						? `output exceeded ${JUDGED_CHECK_MAX_OUTPUT_BYTES} bytes`
+						: `exited with code ${result.exitCode ?? "?"}`;
+		return { ok: false, message: `command ${ended}; no baseline recorded` };
+	}
+	let target: string;
+	try {
+		target = resolveSafeCwd(check.perf.baseline, process.cwd());
+	} catch (error) {
+		return { ok: false, message: `baseline ${error instanceof Error ? error.message : String(error)}` };
+	}
+	const recordedAt = (options?.now?.() ?? new Date()).toISOString();
+	const environment = options?.environment ?? capturePerfEnvironment();
+	try {
+		mkdirSync(path.dirname(target), { recursive: true });
+		writeFileSync(
+			target,
+			renderPerfBaseline({ wallTimeMs: result.durationMs, check: check.id, recordedAt, environment }),
+			"utf8",
+		);
+	} catch (error) {
+		return {
+			ok: false,
+			message: `cannot write baseline '${check.perf.baseline}' (${error instanceof Error ? error.message : String(error)})`,
+		};
+	}
+	return { ok: true, path: check.perf.baseline, wallTimeMs: result.durationMs };
+}
+
+export async function runScriptCheck(
+	check: string,
+	args: Record<string, unknown>,
+	options?: VerifyRunOptions,
+): Promise<ToolResult> {
+	let cwd: string;
+	try {
+		cwd = resolveSafeCwd(typeof args.cwd === "string" && args.cwd.length > 0 ? args.cwd : undefined, process.cwd());
+	} catch (error) {
+		return { kind: "error", message: `verify: ${error instanceof Error ? error.message : String(error)}` };
+	}
+	const packagePath = path.join(cwd, "package.json");
+	if (!existsSync(packagePath)) return { kind: "error", message: `verify: package.json not found in ${cwd}` };
+	const pkg = parsePackageJson(packagePath, process.cwd());
+	if (!pkg.ok) return { kind: "error", message: `verify: ${packagePath}: ${pkg.reason}` };
+	if (!Object.hasOwn(pkg.scripts, check)) {
+		const declared = declaredVerificationScripts(pkg.scripts);
+		const list = declared.length > 0 ? declared.join(", ") : "(none)";
+		return {
+			kind: "error",
+			message: `verify: package.json has no '${check}' script. Declared verification checks: ${list}.`,
+		};
+	}
+	const extraArgs = Array.isArray(args.args)
+		? args.args.filter((entry): entry is string => typeof entry === "string")
+		: [];
+	const vector = ["run", check];
+	if (extraArgs.length > 0) vector.push("--", ...extraArgs);
+	const timeoutMs =
+		typeof args.timeout_ms === "number" && args.timeout_ms > 0 ? args.timeout_ms : defaultVerifyTimeoutMs(check);
+	return withCommandJudgement(
+		classifyUnavailable(
+			await runVectorTool(
+				"verify",
+				"npm",
+				vector,
+				{ ...args, cwd, timeout_ms: timeoutMs },
+				{ ...options, env: verifyCheckEnv(), truncateOutputOnly: true },
+			),
+			check,
+			["npm", ...vector],
+		),
+	);
+}
+
+export {
+	type DeclaredCheckDiscoveryResult,
+	type DeclaredProjectEntry,
+	discoverDeclaredChecks,
+	discoverDeclaredChecksAtRoot,
+	discoverDeclaredProjectEntriesAtRoot,
+	extractNumericPayloadText,
+	VERIFICATION_SCRIPT_FAMILY_HINT,
+};

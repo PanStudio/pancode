@@ -1,0 +1,717 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { type ChildProcess, spawn } from "node:child_process";
+import { constants, existsSync } from "node:fs";
+import { access, mkdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { delimiter, dirname, isAbsolute, join, resolve, win32 } from "node:path";
+import { Worker } from "node:worker_threads";
+import { backgroundCapabilityReason } from "../contracts/launch-capability.js";
+import { APP_TITLE } from "../contracts/meta.js";
+import { type CliCommand, commandPlan } from "./cli-commands.js";
+import {
+	agentCopy,
+	isServiceName,
+	launchdCalls,
+	launchdJob,
+	launchdStatus,
+	parseTaskSpec,
+	type ServiceAction,
+	serviceHost,
+	taskScript,
+	taskStatus,
+} from "./launcher/service-model.js";
+import {
+	type FocusTool,
+	focusTools,
+	isAppWindowTitle,
+	SWAY_APP_CRITERIA,
+	wmctrlAppWindow,
+} from "./launcher/window-focus.js";
+import {
+	createStdioTransport,
+	processAlive,
+	processBirthToken,
+	resolvePackageRoot,
+	resolvePancodeDirs,
+} from "./pancode/http-shims.js";
+import { AppProblem } from "./services/problem.js";
+import { type SshEndpoint, sshCommandArgs, sshForwardArgs } from "./ssh-model.js";
+import type { WorkerKind, WorkerSettings } from "./worker/protocol.js";
+
+/** All application-owned process/thread creation enters here. Root seams own their internal probes. */
+export function startDomainWorker(
+	kind: WorkerKind,
+	settings: WorkerSettings = {},
+	env: NodeJS.ProcessEnv = process.env,
+	compiledDirectory?: URL,
+): Worker {
+	const entry = compiledDirectory
+		? new URL(kind === "reads" ? "reads-worker.js" : "ops-worker.js", compiledDirectory)
+		: new URL("./worker/source-entry.mjs", import.meta.url);
+	return new Worker(entry, { workerData: { ...settings, kind }, env });
+}
+
+/** Fixed ACP command: the workspace path is already canonicalized by WorkspaceService. */
+export async function startAcpChild(cwd: string, env: NodeJS.ProcessEnv = process.env) {
+	const command = await resolvePancodeCommand(env);
+	return createStdioTransport(command.file, [...command.prefix, "acp", "--cwd", cwd, "--permission-timeout", "605000"], {
+		cwd,
+		env: Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+	});
+}
+export async function resolvePancodeCommand(
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<{ file: string; prefix: string[] }> {
+	const override = env.PANCODE_WEB_CLI;
+	if (override) {
+		if (!isAbsolute(override)) throw new AppProblem("validation", "PANCODE_WEB_CLI must be an absolute path.");
+		const file = await realpath(override).catch(() => {
+			throw new AppProblem("unavailable", "The configured pancode command cannot be found.");
+		});
+		if (!(await stat(file)).isFile())
+			throw new AppProblem("validation", "The configured pancode command must be a file.");
+		return /\.[cm]?js$/.test(file) ? { file: process.execPath, prefix: [file] } : { file, prefix: [] };
+	}
+	const checkout = join(resolvePackageRoot(), "dist/cli/index.js");
+	if (existsSync(checkout)) return { file: process.execPath, prefix: [await realpath(checkout)] };
+	for (const directory of (env.PATH ?? "").split(delimiter).filter(Boolean)) {
+		const file = join(directory, process.platform === "win32" ? "pancode.cmd" : "pancode");
+		try {
+			await access(file, constants.X_OK);
+			if ((await stat(file)).isFile()) return { file: await realpath(file), prefix: [] };
+		} catch {
+			/* next PATH entry */
+		}
+	}
+	throw new AppProblem(
+		"unavailable",
+		"Build PanCode in this checkout with pnpm run build, or set PANCODE_WEB_CLI to the absolute path of a pancode command.",
+	);
+}
+export function signalRecordedChild(pid: number, birthToken: string, signal: "SIGTERM" | "SIGKILL") {
+	if (
+		!Number.isSafeInteger(pid) ||
+		pid <= 0 ||
+		birthToken.startsWith("pid-") ||
+		processBirthToken(pid) !== birthToken ||
+		!processAlive(pid)
+	)
+		return false;
+	try {
+		process.kill(process.platform === "win32" ? pid : -pid, signal);
+		return true;
+	} catch {
+		return false;
+	}
+}
+export async function childRunning(pid: number) {
+	if (!processAlive(pid)) return false;
+	if (process.platform !== "linux") return true;
+	try {
+		const value = await readFile(`/proc/${pid}/stat`, "utf8");
+		return !["Z", "X"].includes(value.slice(value.lastIndexOf(")") + 2).split(" ")[0] ?? "");
+	} catch {
+		return processAlive(pid);
+	}
+}
+
+/** Fixed-argv CLI children are owned process groups, independently of ACP sessions. */
+export async function runPancodeCommand(command: CliCommand, cwd: string, env: NodeJS.ProcessEnv = process.env) {
+	const plan = commandPlan(command, cwd);
+	if (!isAbsolute(cwd) || (await realpath(cwd)) !== cwd || !(await stat(cwd)).isDirectory())
+		throw new AppProblem("validation", "CLI workspace must be an existing canonical absolute directory.");
+	const executable = await resolvePancodeCommand(env);
+	const child = spawn(executable.file, [...executable.prefix, ...plan.argv], {
+		cwd,
+		env,
+		shell: false,
+		detached: process.platform !== "win32",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	const birthToken = child.pid ? processBirthToken(child.pid) : "";
+	return { child, birthToken };
+}
+
+/** One fixed interactive configure child; prompt replies travel on stdin, never argv. */
+export async function startConfigureChild(env: NodeJS.ProcessEnv = process.env) {
+	const executable = await resolvePancodeCommand(env);
+	const child = spawn(executable.file, [...executable.prefix, "configure", "--gui-host"], {
+		env,
+		shell: false,
+		detached: process.platform !== "win32",
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	return { child, birthToken: child.pid ? processBirthToken(child.pid) : "" };
+}
+
+/**
+ * The command channel to a fleet node's own GUI: a fixed ssh argv in its own process group, the
+ * launch token written to its stdin and the ready line read from its stdout. The ssh client is the
+ * operator's own, found on PATH like every other tool this app runs.
+ */
+export function startSshCommand(endpoint: SshEndpoint, remoteCommand: string, env: NodeJS.ProcessEnv = process.env) {
+	const child = spawn("ssh", sshCommandArgs(endpoint, remoteCommand), {
+		env,
+		shell: false,
+		detached: process.platform !== "win32",
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	return { child, birthToken: child.pid ? processBirthToken(child.pid) : "" };
+}
+
+/** The forward that carries proxied traffic to the node's GUI; it runs no remote command. */
+export function startSshForward(
+	endpoint: SshEndpoint,
+	localPort: number,
+	remotePort: number,
+	env: NodeJS.ProcessEnv = process.env,
+) {
+	const child = spawn("ssh", sshForwardArgs(endpoint, localPort, remotePort), {
+		env,
+		shell: false,
+		detached: process.platform !== "win32",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	return { child, birthToken: child.pid ? processBirthToken(child.pid) : "" };
+}
+
+export function stopPancodeCommand(child: ChildProcess, birthToken: string | null, signal: "SIGTERM" | "SIGKILL") {
+	if (!child.pid || child.exitCode !== null || child.signalCode !== null) return false;
+	if (birthToken && !birthToken.startsWith("pid-") && process.platform !== "win32")
+		return signalRecordedChild(child.pid, birthToken, signal);
+	// A live Node ChildProcess handle still owns the unreaped child; this is not a persisted PID lookup.
+	return child.kill(signal);
+}
+
+export function browserCommand(
+	url: string,
+	platform: NodeJS.Platform = process.platform,
+	env: NodeJS.ProcessEnv = process.env,
+) {
+	const parsed = new URL(url);
+	if (
+		parsed.protocol !== "http:" ||
+		parsed.hostname !== "127.0.0.1" ||
+		!parsed.port ||
+		parsed.username ||
+		parsed.password
+	)
+		throw new Error("The browser can only open PanCode's loopback HTTP URL.");
+	if (platform === "linux") return { file: "xdg-open", argv: [url] };
+	if (platform === "darwin") return { file: "open", argv: [url] };
+	if (platform === "win32") {
+		// Never cmd.exe or `start`, which interpret shell metacharacters even with shell:false. The
+		// system rundll32 is named by absolute path so a PATH entry cannot stand in for it, and
+		// FileProtocolHandler hands the one URL argument to the registered browser. Not yet accepted
+		// on a Windows desktop, which is why a bare launch still prints the link instead.
+		const root = env.SystemRoot ?? env.SYSTEMROOT ?? "C:\\Windows";
+		if (!win32.isAbsolute(root)) throw new Error("SystemRoot is not an absolute Windows path.");
+		return { file: win32.join(root, "System32", "rundll32.exe"), argv: ["url.dll,FileProtocolHandler", url] };
+	}
+	throw new Error(
+		"Automatic browser opening is supported on Linux, macOS and Windows. Open the printed URL in your browser.",
+	);
+}
+
+/**
+ * Whether a bare launch should open a browser without being asked. Only a person at an interactive
+ * terminal with a desktop to open it on gets one: a pipe, a script, a test or an SSH session without
+ * a forwarded display prints the link instead, and Windows prints it until its opener is accepted on a Windows desktop; --open still uses it.
+ */
+export function autoOpenBrowser(
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+	interactive = process.stdout.isTTY === true,
+) {
+	if (!interactive) return false;
+	if (platform === "darwin") return true;
+	if (platform !== "linux") return false;
+	// WSL opens the Windows browser through xdg-open or wslview even without a Linux display.
+	return !!(env.DISPLAY || env.WAYLAND_DISPLAY || env.WSL_DISTRO_NAME);
+}
+
+/** Windows PowerShell as WSL interop reaches it; the shortcut and folder scripts below are the only users. */
+export const WINDOWS_POWERSHELL = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe";
+/** Browsers that can show the app in its own window, in the order a person would expect them. */
+const WINDOWS_APP_BROWSERS = [
+	"/mnt/c/Program Files/Google/Chrome/Application/chrome.exe",
+	"/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+	"/mnt/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+	"/mnt/c/Program Files/Microsoft/Edge/Application/msedge.exe",
+];
+
+/** WSL with Windows interop. Linux's own opener would reach a Windows tab, never an app window. */
+export function isWsl(
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+	exists: (path: string) => boolean = existsSync,
+) {
+	return platform === "linux" && !!env.WSL_DISTRO_NAME && exists(WINDOWS_POWERSHELL);
+}
+
+/**
+ * From WSL the app opens as a standalone Chrome or Edge window on the Windows desktop, which is how an
+ * installed web app presents itself. The URL stays one literal argument; nothing is interpreted by a shell.
+ */
+export function windowsAppCommand(
+	url: string,
+	env: NodeJS.ProcessEnv = process.env,
+	exists: (path: string) => boolean = existsSync,
+) {
+	browserCommand(url, "linux", env);
+	if (!isWsl(env, "linux", exists)) return null;
+	const file = WINDOWS_APP_BROWSERS.find((candidate) => exists(candidate));
+	return file ? { file, argv: [`--app=${url}`] } : null;
+}
+
+/** One short window-tool call: its exit code and stdout, bounded in time and size. Rejects when the tool is missing. */
+function runWindowTool(file: string, argv: string[], env: NodeJS.ProcessEnv) {
+	const child = spawn(file, argv, { env, shell: false, stdio: ["ignore", "pipe", "ignore"] });
+	return new Promise<{ code: number | null; stdout: string }>((resolve, reject) => {
+		let stdout = "";
+		const timer = setTimeout(() => child.kill("SIGKILL"), 3_000);
+		child.stdout.on("data", (chunk: Buffer) => {
+			stdout += chunk.toString("utf8");
+			if (stdout.length > 262_144) child.kill("SIGKILL");
+		});
+		child.once("error", (error) => {
+			clearTimeout(timer);
+			reject(error);
+		});
+		child.once("close", (code) => {
+			clearTimeout(timer);
+			resolve({ code, stdout });
+		});
+	});
+}
+async function focusWith(tool: FocusTool, env: NodeJS.ProcessEnv) {
+	if (tool === "swaymsg") return (await runWindowTool("swaymsg", [SWAY_APP_CRITERIA, "focus"], env)).code === 0;
+	if (tool === "wmctrl") {
+		const listing = await runWindowTool("wmctrl", ["-l"], env);
+		const id = listing.code === 0 ? wmctrlAppWindow(listing.stdout) : null;
+		return id !== null && (await runWindowTool("wmctrl", ["-i", "-a", id], env)).code === 0;
+	}
+	const found = await runWindowTool("xdotool", ["search", "--onlyvisible", "--name", APP_TITLE], env);
+	for (const id of found.stdout.split("\n").filter((line) => /^\d+$/.test(line))) {
+		const name = await runWindowTool("xdotool", ["getwindowname", id], env);
+		if (name.code === 0 && isAppWindowTitle(name.stdout.trim()))
+			return (await runWindowTool("xdotool", ["windowactivate", id], env)).code === 0;
+	}
+	return false;
+}
+
+/**
+ * Brings an open app window forward on a native Linux desktop and says whether one was found. A missing
+ * tool, no matching window or a tool that fails counts as none, so the launch opens a tab instead. WSL is
+ * excluded because its managed Windows launcher already focuses the app window it owns.
+ */
+export async function focusAppWindow(
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+) {
+	if (platform !== "linux" || isWsl(env, platform)) return false;
+	for (const tool of focusTools(env)) {
+		try {
+			if (await focusWith(tool, env)) return true;
+		} catch {
+			// The tool is not installed or could not start; the next one, or a new tab, still serves the launch.
+		}
+	}
+	return false;
+}
+
+/**
+ * Opens the installed app. Under WSL that is a standalone Chrome or Edge window; everywhere else, and when
+ * no such browser is installed, it is the ordinary opener. Only launcher entry points use it, so a foreground
+ * server or a test that asks for a browser still goes through the system opener it was given.
+ *
+ * Each launch delivers a fresh local link, so a window left on a retired port or token can reconnect.
+ */
+export async function openApp(
+	url: string,
+	env: NodeJS.ProcessEnv = process.env,
+	directory = join(resolvePancodeDirs().state, "gui/background"),
+	reuse = false,
+): Promise<"focused" | "opened"> {
+	if (isWsl(env)) {
+		const { openManagedWindowsApp } = await import("./launcher/windows.js");
+		const managed = await openManagedWindowsApp(url, directory, reuse);
+		if (managed) return managed;
+	}
+	const app = windowsAppCommand(url, env);
+	if (!app) {
+		await openBrowser(url, env);
+		return "opened";
+	}
+	// A title cannot prove that a window has the current origin or token. Always deliver the launch link.
+	// A first launch keeps this process alive for the browser's whole life, so it is released, not awaited.
+	const child = spawn(app.file, app.argv, { cwd: "/mnt/c/Windows", env, shell: false, detached: true, stdio: "ignore" });
+	await new Promise<void>((resolve, reject) => {
+		child.once("error", reject);
+		child.once("spawn", resolve);
+	});
+	child.unref();
+	return "opened";
+}
+
+/** The OS opener owns the browser. Reap only our short-lived opener, never the user's browser. */
+export async function openBrowser(url: string, env: NodeJS.ProcessEnv = process.env) {
+	const command = browserCommand(url, process.platform, env);
+	const child = spawn(command.file, command.argv, { env, shell: false, stdio: "ignore" });
+	await new Promise<void>((resolve, reject) => {
+		const timer = setTimeout(() => {
+			child.kill("SIGKILL");
+		}, 10_000);
+		child.once("error", (error) => {
+			clearTimeout(timer);
+			reject(error);
+		});
+		child.once("close", (code) => {
+			clearTimeout(timer);
+			if (code === 0) resolve();
+			else reject(new Error("The desktop could not open a browser. Open the printed URL manually."));
+		});
+	});
+}
+
+export function serviceCommand(
+	action: "show" | "enable" | "start" | "restart" | "stop" | "disable" | "reload",
+	unit: string,
+	unitFile: string,
+) {
+	if (!isServiceName("systemd", unit) || !isAbsolute(unitFile) || !unitFile.endsWith(`/${unit}`))
+		throw new Error("Invalid PanCode background service identity.");
+	if (action === "reload") return ["--user", "daemon-reload"];
+	if (action === "show")
+		return ["--user", "show", unit, "--property=FragmentPath,ActiveState,UnitFileState,MainPID,Result"];
+	if (action === "enable") return ["--user", "enable", "--now", "--", unitFile];
+	if (action === "disable") return ["--user", "disable", "--now", "--", unit];
+	return ["--user", action, "--", unit];
+}
+function isTemporaryUnitFile(unitFile: string): boolean {
+	const roots = [tmpdir(), "/tmp", "/var/tmp"].map((root) => resolve(root));
+	const target = resolve(unitFile);
+	return roots.some((root) => target.startsWith(`${root}/`) || target.startsWith(`${root}\\`));
+}
+
+/** One service-manager call, bounded in time and output. Resolves with its exit code and standard output. */
+function runServiceTool(file: string, argv: readonly string[], env: NodeJS.ProcessEnv, missing: string) {
+	const child = spawn(file, argv, { env, shell: false, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+	return new Promise<{ code: number | null; stdout: string }>((resolve, reject) => {
+		const output: Buffer[] = [];
+		let bytes = 0,
+			exceeded = false;
+		const timer = setTimeout(() => {
+			exceeded = true;
+			child.kill("SIGKILL");
+		}, 20_000);
+		const collect = (chunk: Buffer, stdout: boolean) => {
+			bytes += chunk.length;
+			if (bytes > 65_536) {
+				exceeded = true;
+				child.kill("SIGKILL");
+			} else if (stdout) output.push(chunk);
+		};
+		child.stdout.on("data", (chunk: Buffer) => collect(chunk, true));
+		child.stderr.on("data", (chunk: Buffer) => collect(chunk, false));
+		child.once("error", () => {
+			clearTimeout(timer);
+			reject(new Error(missing));
+		});
+		child.once("close", (code) => {
+			clearTimeout(timer);
+			resolve({ code: exceeded ? null : code, stdout: Buffer.concat(output).toString("utf8") });
+		});
+	});
+}
+
+/**
+ * Drives the background app's user service: a systemd user unit on Linux, a launchd LaunchAgent on macOS and a
+ * Task Scheduler logon task on Windows. `show` answers in systemd's property vocabulary on every host.
+ */
+export async function controlService(
+	action: ServiceAction,
+	unit: string,
+	unitFile: string,
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+) {
+	const host = serviceHost(platform);
+	if (host === null) throw new Error(backgroundCapabilityReason(platform));
+	if (!isServiceName(host, unit) || !isAbsolute(unitFile))
+		throw new Error("Invalid PanCode background service identity.");
+	// Enabling links or registers the service with the user's real login session, which no environment override
+	// redirects. A unit file in a temp directory is a test fixture, and enabling one once left real login units
+	// pointing at deleted scratch paths.
+	if (action === "enable" && isTemporaryUnitFile(unitFile) && env.PANCODE_REAL_SYSTEMD !== "1")
+		throw new Error("Refusing to enable a background service whose unit file lives in a temporary directory.");
+	if (host === "launchd") return controlLaunchd(action, unit, unitFile, env);
+	if (host === "task-scheduler") return controlTask(action, unit, unitFile, env);
+	const result = await runServiceTool(
+		"systemctl",
+		serviceCommand(action, unit, unitFile),
+		env,
+		"systemctl is unavailable. Background setup requires a running Linux systemd user session.",
+	);
+	if (result.code === 0) return result.stdout;
+	throw new Error(`Background service ${action} failed. Check the user service manager and journal for ${unit}.`);
+}
+
+async function controlLaunchd(action: ServiceAction, label: string, unitFile: string, env: NodeJS.ProcessEnv) {
+	const uid = process.getuid?.();
+	if (uid === undefined) throw new Error("launchd needs a user id.");
+	const agentFile = join(env.HOME || homedir(), "Library", "LaunchAgents", `${label}.plist`);
+	const owned = await readFile(unitFile, "utf8").catch(() => null);
+	const agent = agentCopy(await readFile(agentFile, "utf8").catch(() => null), owned, label);
+	const launchctl = (argv: readonly string[]) =>
+		runServiceTool("launchctl", argv, env, "launchctl is unavailable. Background setup on macOS needs launchd.");
+	if (action === "show") {
+		const printed = await launchctl(["print", launchdJob(uid, label)]);
+		return launchdStatus(printed.code === 0 ? printed.stdout : null, agent, unitFile, agentFile);
+	}
+	if ((action === "enable" || action === "reload") && agent === "different")
+		throw new Error(`${agentFile} belongs to another program; it will not be replaced.`);
+	// launchd reads only the copy in LaunchAgents, so enable puts it there and reload refreshes one already there.
+	if (action === "enable" || (action === "reload" && agent === "stale" && owned !== null)) {
+		if (owned === null) throw new Error("The background service definition is missing.");
+		await mkdir(dirname(agentFile), { recursive: true });
+		await writeFile(agentFile, owned, { mode: 0o644 });
+	}
+	for (const call of launchdCalls(action, label, agentFile, uid)) {
+		const result = await launchctl(call.argv);
+		if (result.code !== 0 && !call.tolerate)
+			throw new Error(`Background service ${action} failed. Check: launchctl print ${launchdJob(uid, label)}`);
+	}
+	if (action === "disable" && (agent === "same" || agent === "stale")) await unlink(agentFile).catch(() => undefined);
+	return "";
+}
+
+async function controlTask(action: ServiceAction, name: string, unitFile: string, env: NodeJS.ProcessEnv) {
+	const text = await readFile(unitFile, "utf8").catch(() => null);
+	// Uninstall reloads after it removed the definition; the task itself is already gone by then.
+	if (text === null && (action === "reload" || action === "disable")) return "";
+	if (text === null) throw new Error("The background service definition is missing.");
+	const spec = parseTaskSpec(text);
+	if (spec.name !== name) throw new Error("Invalid PanCode background service identity.");
+	const result = await runServiceTool(
+		"powershell.exe",
+		["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", taskScript(action)],
+		{ ...env, PANCODE_TASK_NAME: spec.name, PANCODE_TASK_EXECUTE: spec.execute, PANCODE_TASK_ARGUMENTS: spec.arguments },
+		"PowerShell is unavailable. Background setup on Windows needs Task Scheduler and PowerShell.",
+	);
+	if (result.code !== 0)
+		throw new Error(`Background service ${action} failed. Check the task \\PanCode\\${name} in Task Scheduler.`);
+	return action === "show" ? taskStatus(result.stdout.trim(), spec, unitFile) : result.stdout;
+}
+
+/**
+ * Runs one fixed PowerShell script on the Windows side. Values travel as environment variables forwarded
+ * through WSLENV, never inside the script text, so no path or argument is ever parsed as PowerShell.
+ */
+export async function runWindowsPowerShell(script: string, values: Record<string, string> = {}, timeoutMs = 30_000) {
+	for (const name of Object.keys(values))
+		if (!/^PANCODE_WIN_[A-Z0-9_]+$/.test(name)) throw new Error("Invalid Windows script variable name.");
+	if (!isWsl()) throw new Error("Windows integration requires WSL with Windows interop.");
+	const env: NodeJS.ProcessEnv = {
+		...process.env,
+		...values,
+		WSLENV: [...(process.env.WSLENV ? [process.env.WSLENV] : []), ...Object.keys(values)].join(":"),
+	};
+	const child = spawn(
+		WINDOWS_POWERSHELL,
+		["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+		{ cwd: "/mnt/c/Windows", env, shell: false, stdio: ["ignore", "pipe", "pipe"] },
+	);
+	return new Promise<string>((resolve, reject) => {
+		const output: Buffer[] = [];
+		let bytes = 0,
+			stderr = "",
+			exceeded = false;
+		const timer = setTimeout(() => {
+			exceeded = true;
+			child.kill("SIGKILL");
+		}, timeoutMs);
+		child.stdout.on("data", (chunk: Buffer) => {
+			bytes += chunk.length;
+			if (bytes > 65_536) {
+				exceeded = true;
+				child.kill("SIGKILL");
+			} else output.push(chunk);
+		});
+		child.stderr.on("data", (chunk: Buffer) => {
+			if (stderr.length < 400) stderr += chunk.toString("utf8");
+		});
+		child.once("error", (error) => {
+			clearTimeout(timer);
+			reject(error);
+		});
+		child.once("close", (code) => {
+			clearTimeout(timer);
+			if (code === 0 && !exceeded) resolve(Buffer.concat(output).toString("utf8").replace(/\r/g, ""));
+			else
+				reject(new Error(`Windows PowerShell failed${stderr ? `: ${stderr.trim().split("\n")[0]?.slice(0, 200)}` : "."}`));
+		});
+	});
+}
+
+/** What a folder dialog run produced. `raw` is the dialog's own spelling, Windows paths included. */
+export type FolderPickerResult =
+	| { status: "picked"; raw: string; windows: boolean }
+	| { status: "cancelled" }
+	| { status: "unavailable"; reason: string };
+export type FolderPickerPlan =
+	| { file: string; argv: string[]; cwd?: string; windows: boolean; cancelCodes: number[] }
+	| { unavailable: string };
+
+// The dialog is owned by a hidden topmost form so it opens in front of the browser rather than behind it.
+// Exit 3 is this script's cancel; output is UTF-8 so non-ASCII folder names survive the pipe.
+const FOLDER_DIALOG_SCRIPT = [
+	"$ErrorActionPreference = 'Stop'",
+	"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+	"Add-Type -AssemblyName System.Windows.Forms",
+	"$owner = New-Object System.Windows.Forms.Form",
+	"$owner.TopMost = $true",
+	"$owner.ShowInTaskbar = $false",
+	"$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
+	"$dialog.Description = 'Open workspace'",
+	"$dialog.ShowNewFolderButton = $true",
+	"$result = $dialog.ShowDialog($owner)",
+	"$owner.Dispose()",
+	"if ($result -eq [System.Windows.Forms.DialogResult]::OK -and $dialog.SelectedPath) { [Console]::Out.Write($dialog.SelectedPath); exit 0 }",
+	"exit 3",
+].join("; ");
+const powershellArgs = ["-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-Command"];
+
+function onPath(name: string, env: NodeJS.ProcessEnv, exists: (path: string) => boolean) {
+	for (const directory of (env.PATH ?? "").split(delimiter).filter((entry) => isAbsolute(entry))) {
+		const file = join(directory, name);
+		if (exists(file)) return file;
+	}
+	return null;
+}
+
+/**
+ * The fixed native folder dialog for this host. Only the home directory reaches argv, as one literal
+ * argument; the PowerShell script is a constant. WSL prefers the Windows dialog over a WSLg one, because
+ * that is the desktop the person is looking at.
+ */
+export function folderPickerCommand(
+	platform: NodeJS.Platform = process.platform,
+	env: NodeJS.ProcessEnv = process.env,
+	home = homedir(),
+	exists: (path: string) => boolean = existsSync,
+): FolderPickerPlan {
+	if (platform === "win32") {
+		const root = env.SystemRoot ?? env.SYSTEMROOT ?? "C:\\Windows";
+		if (!win32.isAbsolute(root)) return { unavailable: "SystemRoot is not an absolute Windows path." };
+		return {
+			file: win32.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+			argv: [...powershellArgs, FOLDER_DIALOG_SCRIPT],
+			windows: true,
+			cancelCodes: [3],
+		};
+	}
+	if (platform === "darwin")
+		return {
+			file: "/usr/bin/osascript",
+			argv: ["-e", 'POSIX path of (choose folder with prompt "Open workspace")'],
+			windows: false,
+			// osascript exits 1 with "User canceled. (-128)"; it is told apart from failure by stderr.
+			cancelCodes: [],
+		};
+	if (platform !== "linux") return { unavailable: "No native folder dialog is supported on this platform." };
+	if (isWsl(env, platform, exists))
+		return {
+			file: WINDOWS_POWERSHELL,
+			argv: [...powershellArgs, FOLDER_DIALOG_SCRIPT],
+			cwd: "/mnt/c/Windows",
+			windows: true,
+			cancelCodes: [3],
+		};
+	if (!env.DISPLAY && !env.WAYLAND_DISPLAY)
+		return { unavailable: "No desktop display is available to show a folder dialog. Type the path instead." };
+	const zenity = onPath("zenity", env, exists);
+	if (zenity)
+		return {
+			file: zenity,
+			argv: ["--file-selection", "--directory", "--title=Open workspace", `--filename=${home.replace(/\/?$/, "/")}`],
+			windows: false,
+			cancelCodes: [1, 5],
+		};
+	const kdialog = onPath("kdialog", env, exists);
+	if (kdialog)
+		return {
+			file: kdialog,
+			argv: ["--title", "Open workspace", "--getexistingdirectory", home],
+			windows: false,
+			cancelCodes: [1],
+		};
+	return { unavailable: "Install zenity or kdialog to browse folders, or type the path instead." };
+}
+
+/** Runs the native folder dialog once. The dialog is killed on abort or after `timeoutMs`. */
+export async function runFolderPicker(
+	signal?: AbortSignal,
+	timeoutMs = 300_000,
+	plan: FolderPickerPlan = folderPickerCommand(),
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<FolderPickerResult> {
+	if ("unavailable" in plan) return { status: "unavailable", reason: plan.unavailable };
+	if (signal?.aborted) return { status: "cancelled" };
+	const child = spawn(plan.file, plan.argv, {
+		...(plan.cwd !== undefined ? { cwd: plan.cwd } : {}),
+		env,
+		shell: false,
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	return new Promise<FolderPickerResult>((resolve) => {
+		const output: Buffer[] = [];
+		let bytes = 0,
+			stderr = "",
+			ended: "timeout" | "abort" | "overflow" | null = null;
+		const stop = (reason: NonNullable<typeof ended>) => {
+			ended ??= reason;
+			child.kill("SIGKILL");
+		};
+		const timer = setTimeout(() => stop("timeout"), timeoutMs);
+		const onAbort = () => stop("abort");
+		signal?.addEventListener("abort", onAbort, { once: true });
+		const finish = (result: FolderPickerResult) => {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", onAbort);
+			resolve(result);
+		};
+		child.stdout.on("data", (chunk: Buffer) => {
+			bytes += chunk.length;
+			if (bytes > 65_536) stop("overflow");
+			else output.push(chunk);
+		});
+		child.stderr.on("data", (chunk: Buffer) => {
+			if (stderr.length < 400) stderr += chunk.toString("utf8");
+		});
+		child.once("error", (error) =>
+			finish({
+				status: "unavailable",
+				reason: `The folder dialog could not start: ${error instanceof Error ? error.message : String(error)}`,
+			}),
+		);
+		child.once("close", (code) => {
+			if (ended === "abort") return finish({ status: "cancelled" });
+			if (ended === "timeout") return finish({ status: "unavailable", reason: "The folder dialog timed out." });
+			if (ended === "overflow")
+				return finish({ status: "unavailable", reason: "The folder dialog returned an oversized answer." });
+			const raw = Buffer.concat(output)
+				.toString("utf8")
+				.replace(/\r?\n$/, "")
+				.replace(/\r/g, "");
+			if (code === 0 && raw) return finish({ status: "picked", raw, windows: plan.windows });
+			if ((code !== null && plan.cancelCodes.includes(code)) || /User canceled|\(-128\)/.test(stderr))
+				return finish({ status: "cancelled" });
+			finish({
+				status: "unavailable",
+				reason: `The folder dialog failed${stderr ? `: ${stderr.trim().split("\n")[0]?.slice(0, 200)}` : "."}`,
+			});
+		});
+	});
+}

@@ -1,0 +1,41 @@
+# The desktop app
+
+Open the desktop alpha, keep tasks in one window, and read the Session column.
+
+## Open the desktop app
+
+The desktop app is in alpha. It is a local web application: PanCode serves it from your own machine on `127.0.0.1`, and it opens in your browser. It shares the terminal's saved connections and settings and covers a subset of terminal workflows.
+
+```sh
+pancode gui --open
+```
+
+Started this way, the app runs while that terminal stays open. On Linux with a systemd user session, including WSL, you can keep it running in the background instead. It then starts at login and appears in your app menu, or in the Windows Start Menu under WSL:
+
+```sh
+pancode gui background install --open
+```
+
+The installer offers the same step. The background app listens on port 4343, or 7373 when another program holds 4343. It uses saved credentials, so store a key that lives only in your shell with `pancode auth login <target>`.
+
+`pancode gui` prints one link ending in `#ticket=`. The ticket opens one browser window once, within 60 seconds, and the browser then keeps its own short-lived sign-in. If a window shows the reconnect prompt, for example after the background app restarted, run `pancode gui` again or paste the new link into the prompt's **Launch link** field.
+
+## One window, many tasks
+
+Launching again brings the open PanCode window forward under WSL, when the app is installed through Chrome or Edge, and on a Linux desktop with `wmctrl`, `xdotool` or sway when the background app is running. Otherwise it opens a new browser tab. Open a second window on purpose with **Open in new window** in a task's menu.
+
+Any number of tasks can be open. Up to four turns run at once by default, and the `interface.guiTurnCapacity` setting allows 1 to 16. A further turn shows **Waiting for a slot** and starts when one frees. A task with no running turn that no window has shown for five minutes is paused. Its conversation stays readable, and **Resume task** continues it.
+
+## Read the Session column
+
+Beside each conversation, the Session column shows the workspace's path, branch and Git state, the model and its health, context, tokens and cost, the plan, artifacts, changed files, branches, agents, and evidence from run records. It updates as the task runs. **App activity** counts working, queued, and approval-waiting tasks across workspaces.
+
+Type `/` in the composer for session commands such as `/context`, `/usage`, `/tree`, `/fork`, and `/handoff`.
+
+## Approvals
+
+With **Ask first**, reads, edits, and recognized commands run, and unrecognized shell commands, large dispatch plans, and anything that publishes outside the project wait on a card. The card states what the call is, what allowing it authorizes, and what it can affect. Choose **Allow once** or **Reject**.
+
+**Run without approvals** stops the cards for one task after a second confirmation. By default the sandbox, snapshots, and safety judge stay on, and a call that would have waited for you is refused back to PanCode. It lasts until the task closes or is paused.
+
+If a project carries settings, hooks, safety rules, extensions, or plugins you have not approved, the app lists the ignored files above the conversation with the command that reviews them.

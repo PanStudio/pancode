@@ -1,0 +1,534 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, equal, match, ok } from "node:assert/strict";
+import { it } from "node:test";
+import { stripVTControlCharacters as plain } from "node:util";
+import { setPresentationTier } from "../../src/core/presentation-tier.js";
+import type { HubComponent, HubCopy, HubEntryKind, HubInventory } from "../../src/domains/resources/index.js";
+import { readHubInventory } from "../../src/domains/resources/index.js";
+import type { TUI } from "../../src/engine/tui.js";
+import { visibleWidth } from "../../src/engine/tui.js";
+import { PancodeOverlayFrame } from "../../src/interactive/overlay-frame.js";
+import { openHubOverlay } from "../../src/interactive/overlays/hub.js";
+import { buildHubRows, selectForCategory } from "../../src/interactive/overlays/hub-model.js";
+import { type ListOverlayHandle, ListOverlayView } from "../../src/interactive/overlays/list-overlay.js";
+import { createPancodeTheme, pancodeTheme, statusChip } from "../../src/interactive/theme/index.js";
+import { hubApplyFixture, hubPlanFixture } from "../harness/hub-plan-fixture.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+function component(kind: "agent" | "playbook", name: string): HubComponent {
+	return {
+		key: `${kind}:${name}`,
+		kind,
+		name,
+		description: "A loaded core component.",
+		path: `/core/${name}`,
+		source: { class: "core", id: "core", scope: "user" },
+		origin: { kind: "core" },
+		availability: "available",
+		trusted: true,
+		diagnostics: [],
+	};
+}
+
+function inventory(): HubInventory {
+	return {
+		version: 1,
+		generatedAt: "2026-09-16T00:00:00Z",
+		cwd: "/fixture",
+		audience: "operator",
+		packages: [
+			{
+				ref: "plugin:demo-pack",
+				name: "demo-pack",
+				kind: "plugin",
+				description: "Science bundle",
+				origin: { kind: "bundled", catalog: "/hub/index.yaml" },
+				format: "portable",
+				copies: [],
+				sourceUrl: "./demo-pack",
+				catalogOrigin: "catalog",
+				provides: [
+					{ kind: "agent", name: "lab-agent" },
+					{ kind: "playbook", name: "lab-playbook" },
+					{ kind: "skill", name: "lab-skill" },
+				],
+			},
+		],
+		copies: [],
+		resources: [component("agent", "debugger"), component("playbook", "review")],
+		diagnostics: Array.from({ length: 8 }, (_, index) => `skill diagnostic ${index}`),
+		truncated: { packages: false, copies: false, resources: false },
+	};
+}
+
+function browser(category: HubEntryKind, data = inventory()) {
+	let view!: ListOverlayView;
+	let reads = 0;
+	let plans = 0;
+	let writes = 0;
+	let closes = 0;
+	const editor: string[] = [];
+	const fleets: string[] = [];
+	openHubOverlay({} as TUI, {
+		initialTab: category,
+		readInventory: () => {
+			reads++;
+			return data;
+		},
+		lifecycle: {
+			plan: (request) => {
+				plans++;
+				return hubPlanFixture({ operation: request.operation });
+			},
+			apply: () => {
+				writes++;
+				return hubApplyFixture();
+			},
+			release() {},
+			retryRefresh: () => ({ status: "not-applicable", reason: "fixture" }),
+		},
+		setEditorText: (text) => editor.push(text),
+		openFleetRun: (name) => fleets.push(name),
+		notice() {},
+		onClose: () => {
+			closes++;
+		},
+		scheduleInitial() {},
+		openList: (_tui, options) => {
+			const listView = new ListOverlayView(options, () => {});
+			view = listView;
+			listView.setViewportRows(30);
+			return {
+				hide() {},
+				setHidden(hidden: boolean) {
+					if (!hidden) view = listView;
+				},
+				focus() {},
+				refreshTabs: () => listView.refreshTabs(),
+				setItems: (items: Parameters<ListOverlayHandle["setItems"]>[0]) => listView.setItems(items),
+				setActiveTab: (id: string) => listView.setActiveTab(id),
+				activeTabId: () => listView.activeTab()?.id ?? "",
+				selectById: (id: string) => listView.selectById(id),
+				toggleDetail: () => listView.toggleDetail(),
+				openDetail: () => listView.openDetail(),
+			} as unknown as ListOverlayHandle;
+		},
+	});
+	view.setViewportRows(30);
+	return {
+		get view() {
+			return view;
+		},
+		editor,
+		fleets,
+		get reads() {
+			return reads;
+		},
+		get plans() {
+			return plans;
+		},
+		get writes() {
+			return writes;
+		},
+		get closes() {
+			return closes;
+		},
+	};
+}
+
+it("separates eight diagnostic notices from package counts across Plugins, Agents and Playbooks", () => {
+	for (const category of ["plugin", "agent", "playbook"] as const) {
+		const state = browser(category);
+		const text = plain(state.view.render(88).join("\n"));
+		match(text, /1 pack/);
+		match(text, /\[n\] 8 notices/);
+		match(text, /\bUser\b/);
+		ok(!text.includes("skill diagnostic"));
+		state.view.handleInput("n");
+		match(plain(state.view.render(88).join("\n")), /8 notices/);
+		state.view.handleInput("i");
+		state.view.handleInput("r");
+		equal(state.plans, 0);
+		equal(state.writes, 0);
+		state.view.handleInput("\u001b");
+		match(plain(state.view.render(88).join("\n")), /1 pack/);
+		equal(state.closes, 0);
+		equal(state.reads, 1, "notice navigation and rendering use the cached inventory");
+	}
+});
+
+it("identifies provider packages and limits their catalog hints to the selected component kind", (t) => {
+	// The kind and the hint names are detailed facts; standard counts the hints.
+	setPresentationTier("detailed");
+	t.after(() => setPresentationTier("standard"));
+	for (const category of ["agent", "playbook"] as const) {
+		const view = { category, mode: "browse" as const, scope: "user" as const };
+		const rows = buildHubRows({ view, inventory: selectForCategory(inventory(), view) });
+		const item = rows.items[0];
+		ok(item);
+		equal(item.label, "demo-pack [plugin]");
+		equal(item.group, "Provider packs");
+		for (const width of [40, 80]) {
+			// At 40 columns the facts wrap under their labels, so phrases are matched on whitespace-collapsed text.
+			const detail = plain(item.detail?.(width).join("\n") ?? "").replace(/\s+/g, " ");
+			match(detail, new RegExp(`plugin provider pack for ${category}`));
+			match(detail, new RegExp(`lab-${category}`));
+			ok(!detail.includes("lab-skill"));
+			match(detail, /not loaded components/);
+			match(detail, /\[i\] review install/);
+			ok(!detail.includes("[Enter] detail"), "an uninstalled package has no members to open");
+		}
+	}
+});
+
+it("opens a useful inspector at 40, 60, 92 and 140 columns without render-time reads", () => {
+	for (const category of ["plugin", "agent", "playbook"] as const) {
+		const state = browser(category);
+		const frame = new PancodeOverlayFrame(
+			state.view,
+			() => state.view.title(),
+			() => state.view.getHint(),
+		);
+		frame.setRowBudget(30);
+		for (const width of [40, 60, 92, 140]) {
+			const lines = frame.render(width);
+			ok(lines.length <= 30 && lines.length >= 3);
+			for (const line of lines) equal(visibleWidth(line), width);
+			match(plain(lines.join("\n")), /review install/);
+			match(plain(lines.join("\n")), /demo-pack/);
+			match(plain(lines.join("\n")), /\[n\] 8 notices/);
+			ok(!plain(lines.join("\n")).includes("Plugins packages"));
+		}
+		equal(state.reads, 1);
+	}
+});
+
+it("preserves search typing and routes loaded agent and fleet use through existing entry points", () => {
+	const state = browser("agent");
+	state.view.handleInput("/");
+	for (const key of "bnir") state.view.handleInput(key);
+	equal(state.plans, 0);
+	equal(state.reads, 1);
+	state.view.handleInput("\u001b");
+	state.view.handleInput("\u001b");
+	state.view.handleInput("b");
+	match(plain(state.view.render(88).join("\n")), /debugger/);
+	state.view.handleInput("v");
+	deepStrictEqual(state.editor, ["/run debugger "]);
+	state.view.handleInput("\u001b[C");
+	state.view.handleInput("\u001b[C");
+	match(plain(state.view.render(88).join("\n")), /review/);
+	state.view.handleInput("v");
+	deepStrictEqual(state.fleets, ["review"]);
+	equal(state.writes, 0);
+});
+
+it("neutralizes terminal controls while preserving Unicode identity and full inspectable detail", () => {
+	const data = inventory();
+	const name = "量子👩‍🔬é";
+	const record = data.packages[0];
+	ok(record);
+	record.name = `${name}\u001b]0;spoof\u0007\u001b[2J\r`;
+	record.description = `Long description ${name} `.repeat(50);
+	const state = browser("agent", data);
+	for (const width of [40, 92, 140]) {
+		const lines = state.view.render(width);
+		for (const line of lines) ok(visibleWidth(line) <= width);
+		const text = plain(lines.join("\n"));
+		ok(!text.includes("spoof"));
+		ok(!lines.join("").includes("\u001b[2J"));
+		match(text, /量子/);
+	}
+	const view = { category: "agent" as const, mode: "browse" as const, scope: "user" as const };
+	const rows = buildHubRows({ view, inventory: selectForCategory(data, view) });
+	// The description renders as Markdown at the pane's width, which breaks CJK text between characters, so it is compared without whitespace.
+	const collapse = (text: string): string => plain(text).replace(/\s+/g, "");
+	ok(collapse(rows.items[0]?.detail?.(40).join("\n") ?? "").includes(collapse(record.description)));
+});
+
+it("neutralizes terminal controls in every catalog field a row or its detail prints", (t) => {
+	// Detailed prints every field, the requirements section included.
+	setPresentationTier("detailed");
+	t.after(() => setPresentationTier("standard"));
+	const data = inventory();
+	const record = data.packages[0];
+	ok(record);
+	const hostile = "\u001b]0;spoofed title\u0007\u001b[2J\u001b[35m";
+	record.requires = [`plugin:dep${hostile}`];
+	record.sourceUrl = `./demo-pack${hostile}`;
+	record.origin = { kind: "bundled", catalog: `/hub/index.yaml${hostile}` };
+	const view = { category: "plugin" as const, mode: "browse" as const, scope: "user" as const };
+	const item = buildHubRows({ view, inventory: selectForCategory(data, view) }).items[0];
+	ok(item);
+	const painted = [item.label, item.cells?.text ?? "", item.meta ?? "", ...(item.detail?.(80) ?? [])].join("\n");
+	ok(!painted.includes("\u001b]0;"), "no OSC title reaches the terminal");
+	ok(!painted.includes("\u001b[2J"), "no erase-display reaches the terminal");
+	ok(!painted.includes("\u001b[35m"), "no foreign SGR reaches the terminal");
+	ok(!painted.includes("spoofed title"));
+	match(plain(painted), /plugin:dep/);
+});
+
+it("keeps the pane on screen when Enter asks for an uninstalled package's catalog hints", (t) => {
+	// The detailed pane is the one long enough to scroll in a stacked pane at 56 columns.
+	setPresentationTier("detailed");
+	t.after(() => setPresentationTier("standard"));
+	const state = browser("plugin");
+	state.view.setRailRoom(41);
+	match(plain(state.view.render(56).join("\n")), /PgUp\/PgDn scroll/, "the browser opens with its pane stacked");
+	state.view.handleInput("\r");
+	match(plain(state.view.render(56).join("\n")), /PgUp\/PgDn scroll/, "Enter never hides the facts it asked for");
+});
+
+it("sanitizes a record once for the six rebuilds a tab switch makes", () => {
+	const data = inventory();
+	const view = { category: "plugin" as const, mode: "browse" as const, scope: "user" as const };
+	const build = () =>
+		buildHubRows({ view, inventory: selectForCategory(data, view) }).subjects.get("pkg:plugin:demo-pack");
+	const first = build();
+	const second = build();
+	ok(first?.kind === "package" && second?.kind === "package");
+	ok(first.record !== data.packages[0], "a row holds a display-safe copy, never the read's own record");
+	equal(first.record, second.record, "a rebuild from the same read serves the copy already made");
+});
+
+it("finds core agents through the real inventory in Installed without broadening audience", async () => {
+	const env = await isolatePancodeEnv("tui-hub-ergonomics-");
+	try {
+		const data = readHubInventory({ cwd: env.dir });
+		const state = browser("agent", data);
+		state.view.handleInput("b");
+		ok(
+			state.view.selectById(
+				data.resources.filter((r) => r.kind === "agent" && r.name === "debugger").map((r) => `res:${r.key}`)[0] ??
+					"missing",
+			),
+		);
+		state.view.handleInput("v");
+		deepStrictEqual(state.editor, ["/run debugger "]);
+		ok(!data.resources.some((r) => r.kind === "agent" && r.audience === "shadow"));
+	} finally {
+		env.restore();
+	}
+});
+
+it("returns from notices to the exact resource selection, filter and browse focus at 40 columns", () => {
+	const data = inventory();
+	data.resources.push(component("agent", "debugger-two"));
+	const state = browser("agent", data);
+	state.view.handleInput("b");
+	state.view.handleInput("/");
+	for (const key of "debugger") state.view.handleInput(key);
+	state.view.handleInput("\r");
+	state.view.handleInput("\u001b[B");
+	const parent = state.view;
+	const before = plain(parent.render(36).join("\n"));
+	match(before, /\[n\] 8 notices/);
+	for (const exit of ["n", "\u001b"]) {
+		state.view.handleInput("n");
+		ok(state.view !== parent);
+		state.view.handleInput("/");
+		state.view.handleInput("0");
+		state.view.handleInput("\r");
+		if (exit === "\u001b") state.view.handleInput("\u001b");
+		state.view.handleInput(exit);
+		equal(state.view, parent);
+		equal(state.view.keyboardScope, "browse");
+		equal(plain(state.view.render(36).join("\n")), before);
+	}
+	state.view.handleInput("v");
+	deepStrictEqual(state.editor, ["/run debugger-two "]);
+});
+
+it("preserves semantic colors while stripping external controls before metadata styling", (t) => {
+	const theme = createPancodeTheme({ color: true });
+	t.mock.method(pancodeTheme(), "fg", theme.fg);
+	const hostile = "lab\u001b[2J\u001b[35m text\u001b]0;spoof\u0007";
+	const data = inventory();
+	const view = { category: "agent" as const, mode: "installed" as const, scope: "user" as const };
+	for (const [availability, status] of [
+		["available", "ok"],
+		["untrusted", "warning"],
+		["unavailable", "error"],
+		["shadowed", "cancelled"],
+	] as const) {
+		data.resources = [
+			{
+				...component("agent", "debugger"),
+				availability,
+				origin: { kind: "imported", agent: hostile, path: "/fixture" },
+				owner: { ref: `plugin:${hostile}`, scope: "user" },
+			},
+		];
+		const row = buildHubRows({ view, inventory: selectForCategory(data, view) }).items[0];
+		// The state is the row's status cell; the owner the hostile text rides on is a pane fact.
+		ok(row?.cells?.text.includes(statusChip(theme, status, availability)));
+		const painted = [row?.cells?.text ?? "", row?.meta ?? "", ...(row?.detail?.(80) ?? [])].join("\n");
+		ok(!painted.includes("\u001b[2J") && !painted.includes("\u001b[35m") && !painted.includes("spoof"));
+		match(plain(painted), /lab text/);
+	}
+	for (const [state, status, words] of [
+		["loadable", "ok", "active"],
+		["disabled", "warning", "disabled"],
+		["damaged", "error", "damaged"],
+		["shadowed", "cancelled", "overridden"],
+	] as const) {
+		const copy: HubCopy = {
+			ref: "plugin:fixture",
+			kind: "plugin",
+			name: "fixture",
+			scope: "user",
+			root: "/fixture",
+			version: "1.0.0",
+			state,
+			enabled: state !== "disabled",
+			valid: true,
+			compatible: true,
+			effective: true,
+			loadable: state === "loadable",
+			trust: "foreign",
+			origin: { kind: "imported", agent: hostile, path: "/fixture" },
+			diagnostics: [],
+		};
+		data.copies = [copy];
+		const copyView = { ...view, category: "plugin" as const };
+		const row = buildHubRows({ view: copyView, inventory: selectForCategory(data, copyView) }).items[0];
+		// At standard the scope has its own column, so the state cell carries the state words alone.
+		const cell = row?.cells?.text ?? "";
+		ok(cell.includes(statusChip(theme, status, words)));
+		ok(cell.includes(statusChip(theme, "warning", "foreign")));
+		match(plain(row?.meta ?? ""), /^user/);
+		const painted = [cell, row?.meta ?? "", ...(row?.detail?.(80) ?? [])].join("\n");
+		ok(!painted.includes("\u001b[2J") && !painted.includes("\u001b[35m") && !painted.includes("spoof"));
+		match(plain(painted), /lab text/);
+	}
+});
+
+it("qualifies notice return guidance while retaining search-first keyboard precedence", () => {
+	const state = browser("agent");
+	const parent = state.view;
+	state.view.handleInput("n");
+	const notices = state.view;
+	match(plain(notices.render(140).join("\n")), /From browse focus, n returns/);
+	state.view.handleInput("/");
+	state.view.handleInput("x");
+	state.view.handleInput("\u001b");
+	equal(state.view, notices);
+	equal(state.view.keyboardScope, "edit");
+	state.view.handleInput("n");
+	equal(state.view, notices);
+	match(plain(notices.render(140).join("\n")), /> n/);
+	state.view.handleInput("\u001b");
+	equal(state.view.keyboardScope, "edit");
+	state.view.handleInput("\u001b");
+	equal(state.view.keyboardScope, "browse");
+	state.view.handleInput("n");
+	equal(state.view, parent);
+});
+
+it("uses package and entry footer units with singular/plural forms across component categories", () => {
+	for (const category of ["agent", "playbook"] as const) {
+		for (const count of [0, 1, 2]) {
+			const data = inventory();
+			const provider = data.packages[0];
+			ok(provider);
+			data.packages = Array.from({ length: count }, (_, index) => ({
+				...provider,
+				ref: `plugin:provider-${index}` as const,
+				name: `provider-${index}`,
+			}));
+			data.resources = Array.from({ length: count }, (_, index) => component(category, `component-${index}`));
+			const state = browser(category, data);
+			match(plain(state.view.getHint()), new RegExp(`tab · ${count} ${count === 1 ? "pack" : "packs"}`));
+			ok(!plain(state.view.getHint()).includes(`1 ${category}s`));
+			state.view.handleInput("b");
+			match(plain(state.view.getHint()), new RegExp(`tab · ${count} ${count === 1 ? "entry" : "entries"}`));
+		}
+	}
+	const legacy = new ListOverlayView(
+		{
+			title: "Other",
+			items: [],
+			tabs: [{ id: "agents", label: "Agents", items: () => [{ id: "one", label: "One" }] }],
+			onClose() {},
+		},
+		() => {},
+	);
+	match(plain(legacy.getHint()), /tab · 1 agents/);
+	// `o` opens the adoption view, not a path import, which only `/hub import <path>` does (FX-14). Its short
+	// spelling keeps every global key on a narrowing footer beside an installed package row's own actions.
+	const data = inventory();
+	data.copies = [
+		{
+			ref: "plugin:demo-pack",
+			kind: "plugin",
+			name: "demo-pack",
+			scope: "user",
+			root: "/fixture/demo-pack",
+			version: "1.0.0",
+			state: "loadable",
+			enabled: true,
+			valid: true,
+			compatible: true,
+			effective: true,
+			loadable: true,
+			trust: "trusted",
+			origin: { kind: "bundled", catalog: "/hub/index.yaml" },
+			diagnostics: [],
+		},
+	];
+	const hub = browser("plugin", data);
+	hub.view.handleInput("b");
+	const footer = (columns: number) => plain(hub.view.getHint(columns - 2));
+	const rowKeys = "[e] disable · [u] update · [x] remove · [Esc] close";
+	deepStrictEqual(
+		[80, 100, 120].map(footer),
+		[
+			"[/] filter · [Enter] detail · [u] update · [x] remove · [Esc] close",
+			`[/] filter · [Enter] detail · [Tab] list · ${rowKeys}`,
+			`[/] filter · [Enter] detail · [r] refresh · [Tab] list · ${rowKeys}`,
+		],
+		"the global keys drop right to left, as they did beside `[o] import`",
+	);
+	match(footer(220), /\[b\] view · \[s\] scope · \[n\] notices · \[o\] adopt · \[r\] refresh/);
+	match(footer(320), /\[o\] adopt · \/hub import <path> · \[r\] refresh/);
+	ok(![80, 100, 120, 220, 320].some((columns) => /\[o\] import/.test(footer(columns))));
+});
+
+it("a confirmGlobal key asks once: the rail says so, another key keeps it, the same key twice runs it", () => {
+	let restarts = 0;
+	const list = new ListOverlayView(
+		{
+			title: "Extensions",
+			items: [{ id: "one", label: "One" }],
+			globalHints: [{ key: "R", verb: "restart all" }],
+			globalActions: {
+				R: () => {
+					restarts++;
+				},
+			},
+			confirmGlobal: { R: { verb: "restart", label: "every extension" } },
+			onClose() {},
+		},
+		() => {},
+	);
+	list.handleInput("R");
+	equal(restarts, 0, "the first R only asks");
+	match(plain(list.getHint(200)), /R again/);
+	list.handleInput("j");
+	list.handleInput("R");
+	equal(restarts, 0, "another key kept it, so this R asks again");
+	list.handleInput("R");
+	equal(restarts, 1);
+});
+
+it("moved-key texts name the live letter: PanHub refresh is r, Extensions restart is R, Interop scope is s", async () => {
+	const { readFileSync } = await import("node:fs");
+	const { hubRefreshSummary } = await import("../../src/interactive/overlays/hub-review.js");
+	match(hubRefreshSummary({ status: "failed", error: "boom" } as never), /press r\.$/);
+	const extensions = readFileSync(new URL("../../src/interactive/overlays/extensions.ts", import.meta.url), "utf8");
+	ok(!/[Pp]ress r to start/.test(extensions), "extensions detail still names r for restart");
+	match(extensions, /Press R to start installed extensions now/);
+	const interop = readFileSync(new URL("../../src/interactive/overlays/interop.ts", import.meta.url), "utf8");
+	ok(!/keyCap\(theme, settings\.scope === "user" \? "p" : "u"\)/.test(interop), "interop scope chip still shows p/u");
+});

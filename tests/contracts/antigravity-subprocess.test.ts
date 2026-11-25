@@ -1,0 +1,898 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, equal, match, ok, rejects, throws } from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import {
+	chmodSync,
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { Readable } from "node:stream";
+import { after, afterEach, before, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+
+import {
+	inventoryNote,
+	modelChoiceRefusal,
+	preferredModelFor,
+	resolveSupportedWireModels,
+} from "../../src/cli/configure-target.js";
+import { boundedExternalDiagnostic } from "../../src/core/external-diagnostic.js";
+import type { SafeCommandResult } from "../../src/core/safe-exec.js";
+import {
+	listKnownModelsForRuntime,
+	recordTargetModelSnapshot,
+	runtimeListsModelsLive,
+} from "../../src/domains/providers/index.js";
+import antigravityCodeRuntime, {
+	ANTIGRAVITY_MAX_DISCOVERED_MODELS,
+	parseAntigravityModelCatalogDetails,
+	probeAntigravityModelCatalog,
+} from "../../src/domains/providers/runtimes/antigravity/antigravity-code.js";
+import deepseekRuntime from "../../src/domains/providers/runtimes/cloud/deepseek.js";
+import openaiCodexRuntime from "../../src/domains/providers/runtimes/cloud/openai-codex.js";
+import type { ProbeResult } from "../../src/domains/providers/types/runtime-descriptor.js";
+import { createAntigravityShims } from "../../src/engine/acp/antigravity-shims.js";
+import { ANTIGRAVITY_SIDEBAND_MAX_ROWS, readAntigravitySideband } from "../../src/engine/acp/antigravity-sideband.js";
+import {
+	ANTIGRAVITY_MAX_STREAM_BYTES,
+	ANTIGRAVITY_MAX_STREAM_LINE_BYTES,
+	antigravitySubprocessConfig,
+	buildAgyArgs,
+	buildAgyStdinLine,
+	startAntigravityWorkerRun,
+} from "../../src/engine/antigravity/subprocess-runtime.js";
+import { readBoundedLines } from "../../src/engine/external-subprocess.js";
+import type { AgentMessage } from "../../src/engine/types.js";
+import type { WorkerRunInput } from "../../src/engine/worker-run-types.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
+
+const scratchDirectories: string[] = [];
+let isolated: IsolatedPancodeEnv | null = null;
+let windowsLauncher: string | null = null;
+
+before(() => {
+	if (process.platform !== "win32") return;
+	const windowsRoot = process.env.SystemRoot;
+	ok(windowsRoot, "SystemRoot must locate the Windows .NET Framework compiler");
+	windowsLauncher = join(mkdtempSync(join(tmpdir(), "pancode-agy-launcher-")), "agy.exe");
+	// windows-latest includes this compiler. A real executable keeps the
+	// production shell-free spawn path intact; Node refuses .cmd launchers.
+	execFileSync(
+		join(windowsRoot, "Microsoft.NET", "Framework64", "v4.0.30319", "csc.exe"),
+		[
+			"/nologo",
+			"/target:exe",
+			`/out:${windowsLauncher}`,
+			fileURLToPath(new URL("../fixtures/antigravity-launcher.cs", import.meta.url)),
+		],
+		{ timeout: 30_000, windowsHide: true },
+	);
+});
+
+after(() => {
+	if (windowsLauncher !== null) rmSync(dirname(windowsLauncher), { recursive: true, force: true });
+});
+
+afterEach(() => {
+	isolated?.restore();
+	isolated = null;
+	for (const directory of scratchDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
+const FAKE_AGY_SOURCE = `#!/usr/bin/env node
+import { readFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { join } from "node:path";
+let stdin = "";
+for await (const chunk of process.stdin) stdin += String(chunk);
+const scenario = JSON.parse(readFileSync(join(process.cwd(), "scenario.json"), "utf8"));
+writeFileSync(join(process.cwd(), "observed.json"), JSON.stringify({
+  pid: process.pid, args: process.argv.slice(2), stdin,
+  env: { HOME: process.env.HOME, PATH: process.env.PATH, AI_AGENT: process.env.AI_AGENT,
+    FAKE_API_SECRET: process.env.FAKE_API_SECRET,
+    }
+}));
+if (scenario.stderr) process.stderr.write(scenario.stderr);
+if (scenario.hang) {
+  const grandchild = spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], { stdio: "ignore" });
+  writeFileSync(join(process.cwd(), "grandchild.pid"), String(grandchild.pid));
+  process.on("SIGTERM", () => {});
+  setInterval(() => {}, 1000);
+} else {
+  for (const line of scenario.lines ?? []) process.stdout.write(typeof line === "string" ? line + "\\n" : JSON.stringify(line) + "\\n");
+  process.exitCode = scenario.exitCode ?? 0;
+}
+`;
+
+function scratch(): { root: string; binary: string; home: string } {
+	const root = mkdtempSync(join(tmpdir(), "pancode fake agy-"));
+	scratchDirectories.push(root);
+	const binary = join(root, process.platform === "win32" ? "agy.exe" : "agy");
+	const home = join(root, "home");
+	if (process.platform === "win32") {
+		ok(windowsLauncher, "the Windows executable fixture must be compiled before tests run");
+		copyFileSync(windowsLauncher, binary);
+		writeFileSync(join(root, "node-executable.txt"), process.execPath);
+		writeFileSync(join(root, "fake.mjs"), FAKE_AGY_SOURCE);
+	} else {
+		writeFileSync(binary, FAKE_AGY_SOURCE);
+		chmodSync(binary, 0o755);
+	}
+	return { root, binary, home };
+}
+
+function workerInput(root: string, patch: Partial<WorkerRunInput> = {}): WorkerRunInput {
+	return {
+		systemPrompt: "Treat /commands literally.",
+		dynamicPromptMessages: [{ id: "brief", body: "Question: $HOME and `code`", contentHash: "hash" }],
+		agentId: "world-knowledge",
+		task: "Compare /alpha with $" + "{literal} and preserve newlines.\nSecond line.",
+		target: { id: "agy-research", runtime: "antigravity-code" },
+		runtime: antigravityCodeRuntime,
+		wireModelId: "gemini-live-high",
+		allowedTools: [],
+		budget: { mode: "advisory", toolCalls: 20, synthesis: true, hardCap: 50 },
+		readOnly: true,
+		cwd: root,
+		...patch,
+	};
+}
+
+function writeScenario(root: string, scenario: unknown): void {
+	writeFileSync(join(root, "scenario.json"), JSON.stringify(scenario));
+}
+
+// Shared only by the native regression and its simulated startup-failure check.
+async function withWindowsFixturePids(
+	root: string,
+	worker: { abort: () => void; promise: Promise<unknown> },
+	cleanup: (pid: number) => void,
+	check: (pids: number[]) => Promise<void>,
+	{ readinessAttempts = 200, settlementMs = 1_000 } = {},
+): Promise<void> {
+	const owned = new Map<string, number>();
+	// Observe rejection immediately, including while waiting for PID publication.
+	const settled = worker.promise.catch(() => undefined);
+	try {
+		for (let index = 0; index < readinessAttempts; index += 1) {
+			for (const name of ["observed.json", "grandchild.pid"]) {
+				if (owned.has(name)) continue;
+				try {
+					const contents = readFileSync(join(root, name), "utf8");
+					const pid = name === "observed.json" ? JSON.parse(contents).pid : Number(contents);
+					if (Number.isSafeInteger(pid) && pid > 0) owned.set(name, pid);
+				} catch {
+					// Each fixture file can be missing or partially written independently.
+				}
+			}
+			if (owned.size === 2) break;
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		equal(owned.size, 2, "fixture must publish both process identities before cancellation");
+		await check([...owned.values()]);
+	} finally {
+		worker.abort();
+		for (const pid of new Set(owned.values())) {
+			try {
+				cleanup(pid);
+			} catch {
+				// Try every known descendant even if an earlier cleanup fails.
+			}
+		}
+		// Cleanup rejection or timeout must never replace the original test failure.
+		await windowsSettlement(settled, settlementMs).catch(() => undefined);
+	}
+}
+
+async function windowsSettlement<T>(promise: Promise<T>, timeoutMs = 5_000): Promise<T> {
+	let deadline: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			promise,
+			new Promise<never>((_, reject) => {
+				deadline = setTimeout(() => reject(new Error("Windows cancellation did not settle")), timeoutMs);
+			}),
+		]);
+	} finally {
+		clearTimeout(deadline);
+	}
+}
+
+function assistant(result: { messages: AgentMessage[] }): AgentMessage & { role: "assistant" } {
+	const message = result.messages[0];
+	if (message?.role !== "assistant") throw new Error("expected assistant result");
+	return message;
+}
+
+function safeResult(patch: Partial<SafeCommandResult>): SafeCommandResult {
+	return {
+		file: "agy",
+		args: ["--output-format", "json", "models"],
+		cwd: process.cwd(),
+		stdout: "",
+		stderr: "",
+		exitCode: 0,
+		signal: null,
+		aborted: false,
+		timedOut: false,
+		outputCapped: false,
+		durationMs: 4,
+		...patch,
+	};
+}
+
+const INIT = { event: "init", conversation_id: "opaque-conversation", model: "gemini-selected" };
+const DELTA = {
+	event: "step_update",
+	step_update: { conversation_id: "opaque-conversation", step_type: "agent_response", text_delta: "hello " },
+};
+const SUCCESS = {
+	event: "result",
+	result: {
+		conversation_id: "opaque-conversation",
+		status: "SUCCESS",
+		response: "hello world",
+		usage: { input_tokens: 7, output_tokens: 2, thinking_tokens: 3, cache_read_tokens: 1, total_tokens: 12 },
+	},
+};
+
+describe("Antigravity external subprocess contract", () => {
+	it("keeps model slugs and labels while defining malformed, duplicate, empty, and over-limit catalogs", () => {
+		deepStrictEqual(
+			parseAntigravityModelCatalogDetails(
+				JSON.stringify({
+					status: "SUCCESS",
+					command: {
+						name: "models",
+						data: {
+							models: [
+								{ id: "model-a", label: "Model A" },
+								{ id: "model-a", label: "Model A" },
+								{ id: "model-b", label: "Model B" },
+							],
+						},
+					},
+				}),
+			),
+			{ models: ["model-a", "model-b"], labels: { "model-a": "Model A", "model-b": "Model B" } },
+		);
+		throws(() => parseAntigravityModelCatalogDetails("not json"), /unreadable model catalog/);
+		throws(
+			() =>
+				parseAntigravityModelCatalogDetails(
+					JSON.stringify({ status: "SUCCESS", command: { name: "models", data: { models: [] } } }),
+				),
+			/no available models/,
+		);
+		throws(
+			() =>
+				parseAntigravityModelCatalogDetails(
+					JSON.stringify({
+						status: "SUCCESS",
+						command: { name: "models", data: { models: [{ id: "model-a" }] } },
+					}),
+				),
+			/invalid label/,
+		);
+		throws(
+			() =>
+				parseAntigravityModelCatalogDetails(
+					JSON.stringify({
+						status: "SUCCESS",
+						command: {
+							name: "models",
+							data: {
+								models: [
+									{ id: "model-a", label: "A" },
+									{ id: "model-a", label: "B" },
+								],
+							},
+						},
+					}),
+				),
+			/conflicting labels/,
+		);
+		const tooMany = Array.from({ length: ANTIGRAVITY_MAX_DISCOVERED_MODELS + 1 }, (_, index) => ({
+			id: `model-${index}`,
+			label: `Model ${index}`,
+		}));
+		throws(
+			() =>
+				parseAntigravityModelCatalogDetails(
+					JSON.stringify({ status: "SUCCESS", command: { name: "models", data: { models: tooMany } } }),
+				),
+			/refused rather than truncated/,
+		);
+	});
+
+	it("classifies missing, sign-in, update, unavailable, generic, cancelled, and oversized probes", async () => {
+		const ctx = { credentialsPresent: new Set<string>(), httpTimeoutMs: 100 };
+		const probe = (result: SafeCommandResult) => probeAntigravityModelCatalog(ctx, async () => Promise.resolve(result));
+		equal((await probe(safeResult({ exitCode: null, stderr: "spawn agy ENOENT" }))).failureKind, "missing");
+		const auth = await probe(
+			safeResult({ exitCode: 1, stderr: "Sign in at https://auth.example/login?token=secret-value" }),
+		);
+		equal(auth.failureKind, "authentication");
+		doesNotMatch(auth.error ?? "", /secret-value|token=/u);
+		equal(
+			(await probe(safeResult({ exitCode: 2, stderr: "unknown option --output-format" }))).failureKind,
+			"unsupported-feature",
+		);
+		equal((await probe(safeResult({ exitCode: 1, stderr: "service temporarily unavailable" }))).failureKind, "generic");
+		equal((await probe(safeResult({ aborted: true }))).failureKind, "cancelled");
+		equal((await probe(safeResult({ outputCapped: true }))).failureKind, "catalog-unavailable");
+		const empty = await probe(
+			safeResult({
+				stdout: JSON.stringify({ status: "SUCCESS", command: { name: "models", data: { models: [] } } }),
+			}),
+		);
+		equal(empty.failureKind, "catalog-unavailable");
+	});
+
+	it("lets a successful live account catalog outrank descriptor hints and rejects a disappeared model", async () => {
+		isolated = await isolatePancodeEnv("pancode-agy-catalog-");
+		const runtime = {
+			...antigravityCodeRuntime,
+			probe: async () => ({
+				ok: true,
+				models: ["account-model"],
+				modelLabels: { "account-model": "Account Model" },
+			}),
+		};
+		const target = { id: "agy", runtime: runtime.id };
+		const inventory = await resolveSupportedWireModels(runtime, target);
+		deepStrictEqual(inventory.models, ["account-model"]);
+		equal(inventory.source, "probe");
+		equal(inventory.labels?.["account-model"], "Account Model");
+		match(modelChoiceRefusal(runtime, target, "gemini-3.8-flash-high", inventory) ?? "", /does not advertise/);
+	});
+
+	// #390: this pinned the opposite order on purpose. A runtime with a static
+	// catalog was never probed, so a Gemini key saw every catalog model.
+	it("lets a live list replace a static catalog, and labels the catalog it falls back to", async () => {
+		isolated = await isolatePancodeEnv("pancode-live-first-");
+		let answer: ProbeResult = { ok: true, models: ["live-only"] };
+		let probed = 0;
+		const { externalAgentLoop: _external, ...base } = antigravityCodeRuntime;
+		const runtime = {
+			...base,
+			id: "openai",
+			kind: "http" as const,
+			probe: async () => {
+				probed += 1;
+				return answer;
+			},
+		};
+		const live = await resolveSupportedWireModels(runtime, { id: "oa", runtime: "openai" });
+		equal(probed, 1);
+		equal(live.source, "probe");
+		deepStrictEqual(live.models, ["live-only"]);
+		equal(inventoryNote(runtime, live), null);
+
+		answer = { ok: false, error: "HTTP 503: Service Unavailable" };
+		const fallback = await resolveSupportedWireModels(runtime, { id: "oa-offline", runtime: "openai" });
+		equal(fallback.source, "catalog");
+		ok(fallback.models.length > 1 && !fallback.models.includes("live-only"));
+		equal(inventoryNote(runtime, fallback), "provider catalog, not verified live: HTTP 503: Service Unavailable");
+
+		// The last live answer for this target outranks the catalog, and says it is stale.
+		const cached = await resolveSupportedWireModels(runtime, { id: "oa", runtime: "openai" });
+		equal(cached.source, "cache");
+		deepStrictEqual(cached.models, ["live-only"]);
+		equal(inventoryNote(runtime, cached), "cached list, not verified live: HTTP 503: Service Unavailable");
+	});
+
+	it("never calls a catalog-backed runtime's list live", async () => {
+		isolated = await isolatePancodeEnv("pancode-catalog-backed-");
+		for (const runtime of [openaiCodexRuntime, deepseekRuntime]) {
+			equal(runtimeListsModelsLive(runtime), false, `${runtime.id} has no live model listing`);
+			const target = { id: runtime.id, runtime: runtime.id };
+			// No live answer was ever cached for these, so a snapshot cannot outrank the catalog.
+			recordTargetModelSnapshot(target, ["stale-id"]);
+			const inventory = await resolveSupportedWireModels(runtime, target);
+			equal(inventory.source, "catalog", runtime.id);
+			equal(inventoryNote(runtime, inventory), `provider catalog; ${runtime.id} does not list its models live`);
+		}
+		// #386: pi-ai 0.87.1's Anthropic catalog carries Opus 5.5; 0.86.1's stopped at claude-opus-5.
+		ok(listKnownModelsForRuntime("anthropic-max").includes("claude-opus-5-5"));
+	});
+
+	it("preselects a curated default the provider lists, and never a provider-ordered head", () => {
+		const live = { source: "probe" as const, models: ["mercury-edit-2", "mercury-2.5"] };
+		equal(preferredModelFor(live, { defaultModel: "mercury-2.5", modelSource: "runtime" }), "mercury-2.5");
+		equal(preferredModelFor(live, { defaultModel: "retired", modelSource: "runtime" }), "mercury-edit-2");
+		equal(preferredModelFor(live, { modelSource: "none" }), "mercury-edit-2");
+		equal(preferredModelFor(live, { modelSource: "catalog" }), undefined);
+		const catalog = { source: "catalog" as const, models: ["gpt-4", "gpt-5"] };
+		equal(preferredModelFor(catalog, { modelSource: "catalog" }), undefined);
+		equal(preferredModelFor(catalog, { defaultModel: "gpt-5", modelSource: "runtime" }), "gpt-5");
+	});
+
+	it("sends a literal one-turn stdin record and only allowlisted environment values", async () => {
+		const { root, binary, home } = scratch();
+		writeScenario(root, {
+			lines: [INIT, DELTA, { ...DELTA, step_update: { ...DELTA.step_update, text_delta: "world" } }, SUCCESS],
+		});
+		const events: Array<{ type: string }> = [];
+		const input = workerInput(root, { wireModelId: 'model "quoted" trailing\\' });
+		const handle = startAntigravityWorkerRun(input, (event) => events.push(event), {
+			binary,
+			workspaceRoot: root,
+			environment: {
+				PATH: process.env.PATH,
+				HOME: home,
+				FAKE_API_SECRET: "must-not-leak",
+			},
+		});
+		const result = await handle.promise;
+		equal(result.exitCode, 0);
+		const message = assistant(result);
+		equal(message.api, "external-agent-subprocess");
+		equal(message.provider, "antigravity");
+		equal(message.responseId, "opaque-conversation");
+		equal(message.model, "gemini-selected");
+		// agy reports Gemini-style counts: the cached token sits inside the 7
+		// prompt tokens and the 3 thinking tokens bill as output.
+		equal(message.usage.input, 6);
+		equal(message.usage.output, 5);
+		equal((message.usage as typeof message.usage & { reasoningTokens?: number }).reasoningTokens, 3);
+		equal(message.usage.cacheRead, 1);
+		equal(message.usage.cost.total, 0);
+		deepStrictEqual((message.usage as typeof message.usage & { pancodeExternal?: unknown }).pancodeExternal, {
+			tokenUsage: "provider-reported",
+			cost: "missing",
+			sessionId: "opaque-conversation",
+		});
+		const observed = JSON.parse(readFileSync(join(root, "observed.json"), "utf8")) as Record<string, unknown>;
+		deepStrictEqual(observed.args, buildAgyArgs(input));
+		deepStrictEqual(JSON.parse(String(observed.stdin).trim()), JSON.parse(buildAgyStdinLine(input)));
+		const env = observed.env as Record<string, unknown>;
+		equal(env.HOME, home);
+		equal(env.FAKE_API_SECRET, undefined);
+		equal(typeof env.PATH, "string");
+		equal(typeof env.AI_AGENT, "string");
+		ok(events.some((event) => event.type === "message_update"));
+	});
+
+	it("maps read-only and writable modes before spawn", () => {
+		const input = workerInput(process.cwd(), { readOnly: true });
+		const freshArgs = [
+			"--mode",
+			"plan",
+			"--sandbox",
+			"--input-format",
+			"stream-json",
+			"--output-format",
+			"stream-json",
+			"--disable-slash-commands",
+			"--model",
+			input.wireModelId,
+		];
+		deepStrictEqual(buildAgyArgs(input), freshArgs);
+		deepStrictEqual(buildAgyArgs({ ...input, sessionId: "" }), freshArgs);
+		deepStrictEqual(buildAgyArgs({ ...input, sessionId: "abc" }), [...freshArgs, "--conversation", "abc"]);
+		deepStrictEqual(buildAgyArgs({ ...input, readOnly: false, autonomy: "default" }).slice(0, 2), [
+			"--mode",
+			"accept-edits",
+		]);
+		deepStrictEqual(buildAgyArgs({ ...input, readOnly: false, autonomy: "yolo" }).slice(0, 2), [
+			"--mode",
+			"accept-edits",
+		]);
+
+		deepStrictEqual(buildAgyArgs({ ...input, readOnly: false, autonomy: "default" }).slice(0, 2), [
+			"--mode",
+			"accept-edits",
+		]);
+		deepStrictEqual(antigravitySubprocessConfig(false), {
+			extraArgs: ["--mode", "accept-edits"],
+			externalMode: "accept-edits",
+		});
+	});
+
+	it("resumes only when the actual init echoes the caller's id", async () => {
+		const sessionId = "opaque-conversation";
+		const cases: Array<{ name: string; lines: unknown[]; diagnostic?: RegExp }> = [
+			{ name: "matching", lines: [INIT, DELTA, SUCCESS] },
+			{
+				name: "mismatching",
+				lines: [{ ...INIT, conversation_id: "new-conversation" }, SUCCESS],
+				diagnostic: /not resumed/,
+			},
+			{ name: "missing-id", lines: [{ event: "init" }, SUCCESS], diagnostic: /not resumed/ },
+			{ name: "missing-init", lines: [SUCCESS], diagnostic: /result before init/ },
+			{ name: "empty-stream", lines: [], diagnostic: /without a terminal/ },
+			{ name: "duplicate-init", lines: [INIT, INIT, SUCCESS], diagnostic: /duplicate init/ },
+			{
+				name: "later-match",
+				lines: [{ ...INIT, conversation_id: "new-conversation" }, INIT, SUCCESS],
+				diagnostic: /not resumed/,
+			},
+		];
+		for (const testCase of cases) {
+			const { root, binary, home } = scratch();
+			writeScenario(root, { lines: testCase.lines });
+			const result = await startAntigravityWorkerRun(workerInput(root, { sessionId }), () => undefined, {
+				binary,
+				workspaceRoot: root,
+				environment: { PATH: process.env.PATH, HOME: home },
+			}).promise;
+			const message = assistant(result);
+			const observed = JSON.parse(readFileSync(join(root, "observed.json"), "utf8"));
+			deepStrictEqual(observed.args.slice(-2), ["--conversation", sessionId]);
+			equal(result.exitCode, testCase.diagnostic ? 1 : 0, testCase.name);
+			equal(message.stopReason, testCase.diagnostic ? "error" : "stop", testCase.name);
+			if (testCase.diagnostic) match(message.errorMessage ?? "", testCase.diagnostic, testCase.name);
+			else equal(message.responseId, sessionId);
+		}
+	});
+
+	it("rejects oversized and control-character session ids synchronously before spawn", () => {
+		const { root, binary, home } = scratch();
+		writeScenario(root, { lines: [INIT, SUCCESS] });
+		for (const sessionId of [
+			"a".repeat(4097),
+			"é".repeat(2049),
+			"a\0b",
+			"a\nb",
+			"a\rb",
+			"a\tb",
+			"a\u007fb",
+			"a\u0085b",
+		]) {
+			throws(
+				() =>
+					startAntigravityWorkerRun(workerInput(root, { sessionId }), () => undefined, {
+						binary,
+						workspaceRoot: root,
+						environment: { PATH: process.env.PATH, HOME: home },
+					}),
+				/sessionId (exceeded 4096 bytes|must not contain control characters)/,
+			);
+		}
+		equal(existsSync(join(root, "observed.json")), false);
+		for (const sessionId of ["a".repeat(4096), "é".repeat(2048), 'literal "quoted" trailing\\']) {
+			deepStrictEqual(buildAgyArgs(workerInput(root, { sessionId })).slice(-2), ["--conversation", sessionId]);
+		}
+	});
+
+	it("fails provider errors, contradictory exits, missing/duplicate/out-of-order terminals, and malformed output", async () => {
+		const cases: Array<{ name: string; lines: unknown[]; exitCode?: number; diagnostic: RegExp }> = [
+			{
+				name: "provider-error",
+				lines: [INIT, { event: "result", result: { status: "ERROR", error: "provider refused" } }],
+				diagnostic: /provider refused/,
+			},
+			{ name: "nonzero-success", lines: [INIT, SUCCESS], exitCode: 7, diagnostic: /SUCCESS but exited/ },
+			{ name: "missing-terminal", lines: [INIT, DELTA], diagnostic: /without a terminal/ },
+			{ name: "result-before-init", lines: [SUCCESS], diagnostic: /result before init/ },
+			{ name: "duplicate-result", lines: [INIT, SUCCESS, SUCCESS], diagnostic: /event after terminal/ },
+			{ name: "malformed", lines: [INIT, "not-json", SUCCESS], diagnostic: /unreadable structured output/ },
+		];
+		for (const testCase of cases) {
+			const { root, binary, home } = scratch();
+			writeScenario(root, { lines: testCase.lines, exitCode: testCase.exitCode });
+			const result = await startAntigravityWorkerRun(workerInput(root), () => undefined, {
+				binary,
+				workspaceRoot: root,
+				environment: { PATH: process.env.PATH, HOME: home },
+			}).promise;
+			equal(result.exitCode, 1, testCase.name);
+			match(assistant(result).errorMessage ?? "", testCase.diagnostic, testCase.name);
+		}
+	});
+
+	it("bounds individual and cumulative stream lines before retaining them", async () => {
+		const oversized = Readable.from([
+			Buffer.alloc(ANTIGRAVITY_MAX_STREAM_LINE_BYTES + 1, 0x61),
+			Buffer.from('\n{"ok":true}\n'),
+		]);
+		const lines = [];
+		for await (const line of readBoundedLines(oversized, {
+			maxLineBytes: ANTIGRAVITY_MAX_STREAM_LINE_BYTES,
+			maxTotalBytes: ANTIGRAVITY_MAX_STREAM_BYTES,
+		})) {
+			lines.push(line);
+		}
+		deepStrictEqual(lines, [{ kind: "oversized" }, { kind: "line", line: '{"ok":true}' }]);
+		await rejects(async () => {
+			for await (const _line of readBoundedLines(Readable.from([Buffer.alloc(33)]), {
+				maxLineBytes: 64,
+				maxTotalBytes: 32,
+			})) {
+				// consume
+			}
+		}, /cumulative output limit/);
+	});
+
+	it("fails a missing executable and refuses a cwd outside the admitted workspace", async () => {
+		const { root, home } = scratch();
+		const result = await startAntigravityWorkerRun(workerInput(root), () => undefined, {
+			binary: join(root, "missing-agy"),
+			workspaceRoot: root,
+			environment: { PATH: process.env.PATH, HOME: home },
+		}).promise;
+		equal(result.exitCode, 1);
+		match(assistant(result).errorMessage ?? "", /not installed|not on PATH/);
+		throws(
+			() =>
+				startAntigravityWorkerRun(workerInput(join(root, "..", "escape")), () => undefined, {
+					binary: join(root, "missing-agy"),
+					workspaceRoot: root,
+				}),
+			/escapes workspace root/,
+		);
+	});
+
+	it("redacts and bounds provider diagnostics before persistence", () => {
+		const diagnostic = boundedExternalDiagnostic(
+			`Authorization: Bearer super-secret\nCookie: session=cookie-secret\n` +
+				`visit https://example.test/path?access_token=query-secret and /home/alice/.gemini/antigravity-cli/auth.json ` +
+				"x".repeat(20_000),
+			512,
+		);
+		doesNotMatch(diagnostic, /super-secret|cookie-secret|query-secret|auth\.json/u);
+		match(diagnostic, /redacted/u);
+		ok(Buffer.byteLength(diagnostic) < 600);
+	});
+
+	it("cancels the POSIX process group, escalates, and removes its abort listener", {
+		skip: process.platform === "win32",
+	}, async () => {
+		const { root, binary, home } = scratch();
+		writeScenario(root, { hang: true });
+		let listener: (() => void) | null = null;
+		let removed = false;
+		const signal = {
+			aborted: false,
+			addEventListener: (_name: string, next: unknown) => {
+				listener = next as () => void;
+			},
+			removeEventListener: (_name: string, next: unknown) => {
+				if (next === listener) removed = true;
+			},
+		} as unknown as AbortSignal;
+		const handle = startAntigravityWorkerRun(workerInput(root, { signal }), () => undefined, {
+			binary,
+			workspaceRoot: root,
+			environment: { PATH: process.env.PATH, HOME: home },
+			killGraceMs: 25,
+		});
+		for (let index = 0; index < 100; index += 1) {
+			try {
+				readFileSync(join(root, "grandchild.pid"));
+				break;
+			} catch {
+				await new Promise((resolve) => setTimeout(resolve, 5));
+			}
+		}
+		const pid = Number(readFileSync(join(root, "grandchild.pid"), "utf8"));
+		(listener as (() => void) | null)?.();
+		const result = await handle.promise;
+		equal(result.exitCode, 1);
+		equal(assistant(result).stopReason, "aborted");
+		equal(removed, true);
+		for (let index = 0; index < 100; index += 1) {
+			try {
+				process.kill(pid, 0);
+				await new Promise((resolve) => setTimeout(resolve, 5));
+			} catch {
+				return;
+			}
+		}
+		throw new Error(`grandchild ${pid} survived process-group cancellation`);
+	});
+
+	it("cleans independently published Windows fixture PIDs when startup fails", { timeout: 2_000 }, async () => {
+		for (const publication of ["child", "grandchild", "rejected worker"] as const) {
+			const { root } = scratch();
+			if (publication === "grandchild") {
+				writeFileSync(join(root, "observed.json"), JSON.stringify({ pid: -1 }));
+				writeFileSync(join(root, "grandchild.pid"), "23456");
+			} else {
+				writeFileSync(join(root, "observed.json"), JSON.stringify({ pid: 12345 }));
+			}
+			const cleaned: number[] = [];
+			let aborts = 0;
+			let checks = 0;
+			await rejects(
+				withWindowsFixturePids(
+					root,
+					{
+						abort: () => {
+							aborts += 1;
+						},
+						promise:
+							publication === "rejected worker"
+								? Promise.reject(new Error("secondary worker failure"))
+								: new Promise(() => {}),
+					},
+					(pid) => {
+						cleaned.push(pid);
+						throw new Error("secondary cleanup failure");
+					},
+					async () => {
+						checks += 1;
+					},
+					{ readinessAttempts: 2, settlementMs: 10 },
+				),
+				{
+					code: "ERR_ASSERTION",
+					message: /fixture must publish both process identities before cancellation/,
+				},
+			);
+			deepStrictEqual(cleaned, [publication === "grandchild" ? 23456 : 12345]);
+			equal(aborts, 1);
+			equal(checks, 0);
+		}
+	});
+
+	it("cancels the real Windows child and grandchild tree", {
+		skip: process.platform !== "win32",
+		timeout: 20_000,
+	}, async (t) => {
+		const { root, binary, home } = scratch();
+		writeScenario(root, { hang: true });
+		const controller = new AbortController();
+		const handle = startAntigravityWorkerRun(workerInput(root, { signal: controller.signal }), () => undefined, {
+			binary,
+			workspaceRoot: root,
+			environment: { PATH: process.env.PATH, HOME: home },
+			killGraceMs: 25,
+		});
+		await withWindowsFixturePids(
+			root,
+			{ abort: () => controller.abort(), promise: handle.promise },
+			(pid) => {
+				process.kill(pid, 0);
+				execFileSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+					stdio: "ignore",
+					windowsHide: true,
+					timeout: 2_000,
+				});
+			},
+			async (ownedPids) => {
+				for (const pid of ownedPids) process.kill(pid, 0);
+				t.diagnostic(`Windows cancellation fixture owns PIDs ${ownedPids.join(", ")}`);
+				controller.abort();
+				const result = await windowsSettlement(handle.promise);
+				equal(result.exitCode, 1);
+				equal(assistant(result).stopReason, "aborted");
+				for (const pid of ownedPids) {
+					let running = true;
+					for (let index = 0; index < 200; index += 1) {
+						try {
+							process.kill(pid, 0);
+							await new Promise((resolve) => setTimeout(resolve, 10));
+						} catch {
+							running = false;
+							break;
+						}
+					}
+					equal(running, false, `owned descendant ${pid} survived cancellation`);
+				}
+				t.diagnostic(`Windows tree cancellation reaped owned fixture PIDs ${ownedPids.join(", ")}`);
+			},
+		);
+	});
+});
+
+describe("Antigravity ACP sideband reader", () => {
+	it("pages error steps without loss, trusts only parsed rpc details, and never creates WAL sidecars", async () => {
+		const { DatabaseSync } = await import("node:sqlite");
+		const root = mkdtempSync(join(tmpdir(), "pancode-agy-sideband-"));
+		scratchDirectories.push(root);
+		const profileDir = join(root, "profile");
+		const conversations = join(profileDir, "conversations");
+		mkdirSync(conversations, { recursive: true });
+		const sessionId = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+		const dbPath = join(conversations, `${sessionId}.db`);
+		const writer = new DatabaseSync(dbPath);
+		writer.exec("PRAGMA journal_mode = WAL");
+		// The steps DDL agy 1.5.13 writes.
+		writer.exec(
+			"CREATE TABLE `steps` (`idx` integer,`step_type` integer NOT NULL DEFAULT 0,`status` integer NOT NULL DEFAULT 0,`has_subtrajectory` numeric NOT NULL DEFAULT false,`metadata` blob,`error_details` blob,`permissions` blob,`task_details` blob,`render_info` blob,`step_payload` blob,`step_format` integer NOT NULL DEFAULT 0,PRIMARY KEY (`idx`))",
+		);
+		const insert = writer.prepare("INSERT INTO steps (idx, step_type, status, step_payload) VALUES (?, ?, 3, ?)");
+		const limit = ANTIGRAVITY_SIDEBAND_MAX_ROWS;
+		const quota =
+			'{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"QUOTA_EXHAUSTED","domain":"cloudcode-pa.googleapis.com","metadata":{"model":"gemini-x-high","quotaResetDelay":"1h2m3.5s","quotaResetTimeStamp":"2026-10-27T23:39:10Z"}}R{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":".5s"}';
+		// A quota failure echoing the thinking-signature token, then more unclassified error rows than one read takes.
+		insert.run(1, 17, Buffer.from(`\u0008\u0011 400 INVALID_THINKING_SIGNATURE echoed ${quota}`));
+		for (let idx = 2; idx <= limit + 1; idx++) insert.run(idx, 17, Buffer.from("The stream was interrupted."));
+		const quoted = limit + 2;
+		insert.run(quoted, 17, Buffer.from('tool output: {"reason":"QUOTA_EXHAUSTED","model":"evil"}'));
+		insert.run(quoted + 1, 9, Buffer.from(quota));
+		const last = quoted + 2;
+		// Stored as TEXT: the byte cap and decoding still apply.
+		insert.run(last, 17, "API error (attempt 1): INVALID_ARGUMENT (code 400): INVALID_THINKING_SIGNATURE");
+
+		const read = (afterIdx: number | "latest") => readAntigravitySideband({ profileDir, sessionId, afterIdx });
+		const sidecars = () => existsSync(`${dbPath}-wal`) || existsSync(`${dbPath}-shm`);
+		const quotaSignal = {
+			kind: "usage-limit",
+			idx: 1,
+			cause: "usage_limit_reached",
+			reason: "QUOTA_EXHAUSTED",
+			message: "Antigravity quota exhausted for gemini-x-high; resets at 2026-10-27T23:39:10.000Z",
+			model: "gemini-x-high",
+			resetAt: "2026-10-27T23:39:10.000Z",
+			resetDelayMs: 3_723_500,
+			retryAfterMs: 500,
+		};
+		const thinkingSignal = { kind: "non-resumable", idx: last, reason: "INVALID_THINKING_SIGNATURE" };
+		deepStrictEqual(read("latest"), { cursor: last, signals: [] });
+		const first = read(0);
+		deepStrictEqual(first, { cursor: limit, signals: [quotaSignal] });
+		const second = read(first.cursor);
+		deepStrictEqual(second, { cursor: last, signals: [thinkingSignal] });
+		deepStrictEqual(read(second.cursor), { cursor: last, signals: [] });
+
+		// A cleanly closed WAL store has no sidecars; reading it creates none, writable directory or not.
+		ok(sidecars());
+		writer.close();
+		equal(sidecars(), false);
+		deepStrictEqual(read(first.cursor), second);
+		equal(sidecars(), false);
+		if (process.platform !== "win32") {
+			chmodSync(dbPath, 0o444);
+			chmodSync(conversations, 0o555);
+			try {
+				deepStrictEqual(read(0), first);
+			} finally {
+				chmodSync(conversations, 0o755);
+			}
+			equal(sidecars(), false);
+		}
+
+		const none = (id: string, afterIdx: number | "latest" = -1) =>
+			readAntigravitySideband({ profileDir, sessionId: id, afterIdx }).noSignal;
+		equal(none("../conversations/x"), "invalid-session-id");
+		equal(none(sessionId, 1.5), "invalid-cursor");
+		equal(none("absent-session"), "no-database");
+		new DatabaseSync(join(conversations, "empty.db")).close();
+		equal(none("empty"), "no-steps-table");
+		if (process.platform !== "win32") {
+			copyFileSync(dbPath, join(root, "outside.db"));
+			symlinkSync(join(root, "outside.db"), join(conversations, "escape.db"));
+			equal(none("escape"), "outside-profile");
+		}
+
+		// The adapter's shims report only steps after the session's baseline, and skip past a history longer than the
+		// pages one turn reads instead of surfacing it on a later turn.
+		const shimmed = "shims-session";
+		const store = new DatabaseSync(join(conversations, `${shimmed}.db`));
+		store.exec("CREATE TABLE steps (idx integer PRIMARY KEY, step_type integer, status integer, step_payload blob)");
+		const step = store.prepare("INSERT INTO steps (step_type, status, step_payload) VALUES (17, 3, ?)");
+		const shims = createAntigravityShims({
+			command: "agy",
+			launchArgs: [],
+			toolGovernance: "pancode-policy",
+			profileDir,
+		});
+		step.run(Buffer.from(quota));
+		deepStrictEqual(shims.sideband(shimmed), {}, "no baseline, no report");
+		shims.sidebandBaseline(shimmed);
+		deepStrictEqual(shims.sideband(shimmed), {}, "an error before the baseline");
+		for (let n = 0; n <= 4 * limit; n++) step.run(Buffer.from("The stream was interrupted."));
+		step.run(Buffer.from(quota));
+		deepStrictEqual(shims.sideband(shimmed), {}, "past the page bound");
+		deepStrictEqual(shims.sideband(shimmed), {}, "skipped, not deferred");
+		step.run(Buffer.from(quota));
+		step.run(Buffer.from("API error (attempt 1): INVALID_ARGUMENT (code 400): INVALID_THINKING_SIGNATURE"));
+		const { kind: _kind, idx: _idx, ...usageLimit } = quotaSignal;
+		const marker = { nonResumable: { reason: "INVALID_THINKING_SIGNATURE" } };
+		deepStrictEqual(shims.sideband(shimmed), { usageLimit, ...marker });
+		deepStrictEqual(shims.sideband(shimmed), marker, "the marker stays for the session");
+		store.close();
+	});
+});

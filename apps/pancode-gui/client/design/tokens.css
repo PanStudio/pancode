@@ -1,0 +1,85 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+@import "./brand.css";
+
+/* The generated layer owns both palettes. These are workbench dimensions and surface recipes. */
+:root {
+	--scrim: color-mix(in srgb, var(--pancode-black) var(--color-scrim), transparent);
+	--scrim-pane: color-mix(in srgb, var(--paper) 28%, transparent);
+	--pane-surface: var(--surface);
+	--glint: var(--ink);
+	--line-float: var(--line-strong);
+	--accent-line: color-mix(in srgb, var(--accent) 38%, var(--line));
+	--accent-glow: var(--accent-soft);
+	--stage-edge: var(--line);
+	--shadow-stage: none;
+	--shadow-none: none;
+	--shadow-composer: var(--shadow-raised);
+	--muted: var(--ink-muted);
+	--inset: var(--well);
+	/* A disabled control keeps its shape but drops its fill and accent, and its label takes the faint ink
+	   site/DESIGN.md reserves for disabled labels: legible in both themes, never mistaken for an action. */
+	--disabled-fg: var(--ink-faint);
+	--disabled-line: var(--line-strong);
+	--disabled-fill: transparent;
+
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-5: 20px;
+	--space-6: 24px;
+	--space-8: 32px;
+	--space-10: 40px;
+	--space-12: 48px;
+	--space-16: 64px;
+	--text-caption: 12px;
+	--text-instrument: 13px;
+	--text-exact: 14px;
+	--text-meta: 14px;
+	--text-body: 16px;
+	--text-reading: 18px;
+	--text-h3: 20px;
+	--text-h2: 24px;
+	--text-h1: 32px;
+	--text-display: clamp(32px, 3.1vw, 44px);
+	--text-hero: clamp(32px, 3.8vw, 60px);
+	--text-welcome: clamp(32px, 3.6vw, 44px);
+	--leading-tight: 1.25;
+	--leading-body: 1.55;
+	--leading-reading: 1.65;
+	--tracking-instrument: 0.1em;
+	--motion-instant: var(--motion-fast);
+	--motion-slow: var(--motion-base);
+	--ease-turn: cubic-bezier(0.65, 0, 0.35, 1);
+	--icon-stroke: 1.4px;
+	--icon-sm: 16px;
+	--icon-md: 20px;
+	--icon-lg: 24px;
+	--masthead-height: 58px;
+	--rail-width: 204px;
+	--rail-collapsed-width: 68px;
+	--reading-measure: 72ch;
+	--conversation-max: 1000px;
+
+	color-scheme: light;
+	font-family: var(--font-ui);
+	font-synthesis: none;
+	color: var(--ink);
+	background: var(--paper);
+}
+:root[data-theme="dark"] {
+	color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		color-scheme: dark;
+	}
+}
+@media (prefers-contrast: more) {
+	:root {
+		--line: var(--line-strong);
+		--ink-muted: var(--ink);
+		--ink-subtle: var(--ink);
+	}
+}

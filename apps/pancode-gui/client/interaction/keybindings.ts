@@ -1,0 +1,366 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// The single declared table of keyboard chords. Handlers match against entries here, never against
+// key literals, so a shortcut and the help reference that prints it can never drift apart.
+
+export type KeyModifier = "primary" | "alt" | "shift";
+
+/**
+ * Where a binding is live. The dispatcher refuses to fire a binding whose scope is not the active
+ * scope, which is how Escape-in-a-dialog and Alt+A-anywhere coexist without either one guessing.
+ */
+export type ShortcutScope = "global" | "composer" | "dialog" | "palette" | "list" | "interview";
+
+export interface Keybinding {
+	readonly id: string;
+	/** `KeyboardEvent.key`, compared case-insensitively for single characters. */
+	readonly key: string;
+	/** `primary` is Ctrl on Linux and Windows and Cmd on macOS. */
+	readonly modifiers: readonly KeyModifier[];
+	readonly scope: ShortcutScope;
+	readonly action: string;
+	readonly where: string;
+	/** What the reference prints instead of the chord, when the row documents a key policy rather than one chord. */
+	readonly label?: string;
+}
+
+export const KEYBINDINGS = {
+	interviewSubmit: {
+		id: "interviewSubmit",
+		key: "Enter",
+		modifiers: ["primary"],
+		scope: "interview",
+		action: "Submit interview answers",
+		where: "Interview · after reviewing every answer",
+	},
+	send: {
+		id: "send",
+		key: "Enter",
+		modifiers: ["primary"],
+		scope: "composer",
+		action: "Send message",
+		where: "Shift + Enter adds a line. Ctrl/Cmd + Enter always sends",
+		label: "Enter",
+	},
+	sendNow: {
+		id: "sendNow",
+		key: "s",
+		modifiers: ["alt"],
+		scope: "composer",
+		action: "Send now, during a running turn",
+		where: "Composer focused · a turn is running",
+	},
+	newLine: {
+		id: "newLine",
+		key: "j",
+		modifiers: ["primary"],
+		scope: "composer",
+		action: "Add a line",
+		where: "Message box · Shift + Enter and Alt + Enter also add one",
+	},
+	mentionFile: {
+		id: "mentionFile",
+		key: "e",
+		modifiers: ["alt"],
+		scope: "composer",
+		action: "Pick a file to mention",
+		where: "Message box · the terminal's Files pane",
+	},
+	queue: {
+		id: "queue",
+		key: "q",
+		modifiers: ["alt"],
+		scope: "composer",
+		action: "Go to the queued messages",
+		where: "Message box · messages are waiting on the engine",
+	},
+	historySearch: {
+		id: "historySearch",
+		key: "r",
+		modifiers: ["primary"],
+		scope: "composer",
+		action: "Search sent messages",
+		where: "Composer focused",
+	},
+	allowOnce: {
+		id: "allowOnce",
+		key: "a",
+		modifiers: ["alt"],
+		scope: "global",
+		action: "Allow pending approval once",
+		where: "Approval waiting · no dialog open",
+	},
+	reject: {
+		id: "reject",
+		key: "r",
+		modifiers: ["alt"],
+		scope: "global",
+		action: "Reject pending approval",
+		where: "Approval waiting · no dialog open",
+	},
+	rejectAndStop: {
+		id: "rejectAndStop",
+		key: "x",
+		modifiers: ["alt"],
+		scope: "global",
+		action: "Reject pending approval and stop the turn",
+		where: "Approval waiting · when the agent offers it",
+	},
+	modelPicker: {
+		id: "modelPicker",
+		key: "m",
+		modifiers: ["alt"],
+		scope: "global",
+		action: "Choose the model",
+		where: "Conversation · no dialog open",
+	},
+	outputDetail: {
+		id: "outputDetail",
+		key: "o",
+		modifiers: ["alt"],
+		scope: "global",
+		action: "Choose transcript detail",
+		where: "Conversation · no dialog open",
+	},
+	autonomyMenu: {
+		id: "autonomyMenu",
+		key: "y",
+		modifiers: ["alt"],
+		scope: "global",
+		action: "Choose the autonomy level",
+		where: "Conversation · no dialog open",
+	},
+	hub: {
+		id: "hub",
+		key: "l",
+		modifiers: ["alt"],
+		scope: "global",
+		action: "Open PanHub",
+		where: "No dialog open",
+	},
+	overview: {
+		id: "overview",
+		key: "u",
+		modifiers: ["alt"],
+		scope: "global",
+		action: "Show or hide the task overview",
+		where: "Conversation · no dialog open",
+	},
+	workers: {
+		id: "workers",
+		key: "w",
+		modifiers: ["alt"],
+		scope: "global",
+		action: "Show or hide the live agents",
+		where: "Conversation · no dialog open",
+	},
+	escape: {
+		id: "escape",
+		key: "Escape",
+		modifiers: [],
+		scope: "dialog",
+		action: "Close dialog or drawer",
+		where: "Dialog or drawer open",
+	},
+	tabPrevious: {
+		id: "tabPrevious",
+		key: "ArrowLeft",
+		modifiers: [],
+		scope: "list",
+		action: "Previous tab",
+		where: "A tab focused: Help topics, PanHub, run details",
+	},
+	tabNext: {
+		id: "tabNext",
+		key: "ArrowRight",
+		modifiers: [],
+		scope: "list",
+		action: "Next tab",
+		where: "A tab focused: Help topics, PanHub, run details",
+	},
+	tabFirst: {
+		id: "tabFirst",
+		key: "Home",
+		modifiers: [],
+		scope: "list",
+		action: "First tab",
+		where: "A tab focused: Help topics, PanHub, run details",
+	},
+	tabLast: {
+		id: "tabLast",
+		key: "End",
+		modifiers: [],
+		scope: "list",
+		action: "Last tab",
+		where: "A tab focused: Help topics, PanHub, run details",
+	},
+	listNext: {
+		id: "listNext",
+		key: "ArrowDown",
+		modifiers: [],
+		scope: "list",
+		action: "Next list row",
+		where: "Sidebar task list · j also moves",
+	},
+	listPrevious: {
+		id: "listPrevious",
+		key: "ArrowUp",
+		modifiers: [],
+		scope: "list",
+		action: "Previous list row",
+		where: "Sidebar task list · k also moves",
+	},
+	palette: {
+		id: "palette",
+		key: "k",
+		modifiers: ["primary"],
+		scope: "global",
+		action: "Command palette",
+		where: "No dialog open",
+	},
+	help: {
+		id: "help",
+		key: "/",
+		modifiers: ["primary"],
+		scope: "global",
+		action: "Keyboard shortcuts and help",
+		where: "No dialog open",
+	},
+	sidebar: {
+		id: "sidebar",
+		key: "\\",
+		modifiers: ["primary"],
+		scope: "global",
+		action: "Toggle sidebar",
+		where: "No dialog open · also available in the sidebar",
+	},
+	newTask: {
+		id: "newTask",
+		key: "o",
+		modifiers: ["primary", "shift"],
+		scope: "global",
+		action: "New task",
+		where: "Current project · no dialog open",
+	},
+	newWindow: {
+		id: "newWindow",
+		key: "n",
+		modifiers: ["primary", "shift"],
+		scope: "global",
+		action: "Open task in another window",
+		where: "Installed app only · no dialog open; reserved by browser tabs",
+	},
+	openWorkspace: {
+		id: "openWorkspace",
+		key: "o",
+		modifiers: ["primary"],
+		scope: "global",
+		action: "Open workspace folder",
+		where: "No dialog open",
+	},
+	sessionPanel: {
+		id: "sessionPanel",
+		key: "|",
+		modifiers: ["primary", "shift"],
+		scope: "global",
+		action: "Toggle task sidebar",
+		where: "Conversation · no dialog open",
+	},
+	focusComposer: {
+		id: "focusComposer",
+		key: "l",
+		modifiers: ["primary", "shift"],
+		scope: "global",
+		action: "Focus composer",
+		where: "Conversation · no dialog open",
+	},
+	agents: {
+		id: "agents",
+		key: "a",
+		modifiers: ["primary", "alt"],
+		scope: "global",
+		action: "Show live agents",
+		where: "Conversation · no dialog open",
+	},
+	cancelTurn: {
+		id: "cancelTurn",
+		key: ".",
+		modifiers: ["primary"],
+		scope: "global",
+		action: "Stop the running turn",
+		where: "While a turn is running",
+	},
+} as const satisfies Readonly<Record<string, Keybinding>>;
+
+export type KeybindingId = keyof typeof KEYBINDINGS;
+export const KEYBINDING_ORDER: readonly Keybinding[] = Object.values(KEYBINDINGS);
+
+/** Interviews own a separate shortcut scope so approval shortcuts cannot submit answers. */
+export const INTERVIEW_KEYBINDING_NAMESPACE = "interview" as const;
+
+/** The subset of a keyboard event the matcher reads; React and DOM events both satisfy it. */
+export interface KeyEventLike {
+	readonly key: string;
+	readonly altKey: boolean;
+	readonly ctrlKey: boolean;
+	readonly metaKey: boolean;
+	readonly shiftKey: boolean;
+	/** The physical key. Read only for Alt+letter chords, where macOS Option turns the letter into a symbol. */
+	readonly code?: string;
+}
+
+const ASCII_LETTER = /^[a-z]$/i;
+
+function sameKey(binding: Keybinding, event: KeyEventLike): boolean {
+	const { key } = event;
+	if (binding.key.length === 1 && key.length === 1 && binding.key.toLowerCase() === key.toLowerCase()) return true;
+	if (binding.key === key) return true;
+	return (
+		binding.modifiers.includes("alt") &&
+		ASCII_LETTER.test(binding.key) &&
+		!ASCII_LETTER.test(key) &&
+		event.code === `Key${binding.key.toUpperCase()}`
+	);
+}
+
+/**
+ * True when the event is exactly this binding: the key, every listed modifier held, and no unlisted
+ * modifier held. Exactness rather than "at least these" is what stops Alt+A firing during Ctrl+Alt+A.
+ */
+export function matchesKeybinding(binding: Keybinding, event: KeyEventLike): boolean {
+	if (!sameKey(binding, event)) return false;
+	const wantsPrimary = binding.modifiers.includes("primary");
+	const wantsAlt = binding.modifiers.includes("alt");
+	const wantsShift = binding.modifiers.includes("shift");
+	const hasPrimary = event.ctrlKey || event.metaKey;
+	if (wantsPrimary !== hasPrimary) return false;
+	if (wantsAlt !== event.altKey) return false;
+	if (wantsShift !== event.shiftKey) return false;
+	return true;
+}
+
+const MODIFIER_LABELS: Readonly<Record<KeyModifier, string>> = {
+	primary: "Ctrl/Cmd",
+	alt: "Alt",
+	shift: "Shift",
+};
+
+const KEY_LABELS: Readonly<Record<string, string>> = {
+	Enter: "Enter",
+	"|": "\\",
+	Escape: "Esc",
+	ArrowLeft: "Left",
+	ArrowRight: "Right",
+	ArrowUp: "Up",
+	ArrowDown: "Down",
+	Home: "Home",
+	End: "End",
+};
+
+/** The chord as every list prints it (help, palette, settings), for example "Ctrl/Cmd + K", or the row's own label. */
+export function formatKeybinding(binding: Keybinding): string {
+	if (binding.label !== undefined) return binding.label;
+	const parts = binding.modifiers.map((modifier) => MODIFIER_LABELS[modifier]);
+	parts.push(KEY_LABELS[binding.key] ?? binding.key.toUpperCase());
+	return parts.join(" + ");
+}

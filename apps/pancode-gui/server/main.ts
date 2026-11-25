@@ -1,0 +1,429 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createAdaptorServer } from "@hono/node-server";
+import { backgroundCapability } from "../contracts/launch-capability.js";
+import { Supervisor } from "./acp/supervisor.js";
+import { createApp } from "./app.js";
+import { backgroundEnvironment } from "./launcher/background-config.js";
+import { listenPorts } from "./launcher/ports.js";
+import { restrictNetwork } from "./network-policy.js";
+import { serverOptions } from "./options.js";
+import {
+	getVersionInfo,
+	registerRunningBuild,
+	resolvePackageRoot,
+	resolvePancodeDirs,
+	runningBuildId,
+} from "./pancode/http-shims.js";
+import { autoOpenBrowser, focusAppWindow, openApp, openBrowser } from "./process-policy.js";
+import { relaunchWindow } from "./relaunch-model.js";
+import { ArenaService } from "./services/arena.js";
+import { CliRunner } from "./services/cli-runner.js";
+import { ClientRegistry } from "./services/clients.js";
+import { EventHub } from "./services/event-hub.js";
+import { EvidenceService } from "./services/evidence.js";
+import { FleetService } from "./services/fleet.js";
+import { HubService } from "./services/hub.js";
+import { IdleExit } from "./services/idle-exit.js";
+import { lifecycleLog } from "./services/log.js";
+import { MachineAttachments } from "./services/machine-attach.js";
+import { MachinesService } from "./services/machines.js";
+import { OperationRegistry } from "./services/operations.js";
+import { ProblemReportsService } from "./services/problem-reports.js";
+import { ProjectReviewService } from "./services/project-review.js";
+import { ReportsService } from "./services/reports.js";
+import { ResearchService } from "./services/research.js";
+import { SessionService } from "./services/sessions.js";
+import { SettingsService, turnCapacitySetting } from "./services/settings.js";
+import { SetupService } from "./services/setup.js";
+import { SystemService } from "./services/system.js";
+import { TargetsService } from "./services/targets-cli.js";
+import { TelemetryService } from "./services/telemetry.js";
+import { ToolchainService } from "./services/toolchain.js";
+import { TraceService } from "./services/traces.js";
+import { WorkspaceService } from "./services/workspaces.js";
+import { AppFiles } from "./state/files.js";
+import { readStdinToken } from "./token-stdin.js";
+import { WorkerHost } from "./worker/host.js";
+
+export { prepareGuiUninstall } from "./launcher/uninstall.js";
+export { openBrowser } from "./process-policy.js";
+
+declare const __PANCODE_GUI_BUNDLED__: boolean;
+const bundled = typeof __PANCODE_GUI_BUNDLED__ !== "undefined" && __PANCODE_GUI_BUNDLED__;
+export async function inspectGuiBackground(fix: boolean) {
+	const { inspectBackground } = await import("./launcher/background.js");
+	return inspectBackground(
+		join(resolvePancodeDirs().state, "gui/background"),
+		{
+			node: process.execPath,
+			entry: fileURLToPath(import.meta.url),
+			icon: join(resolvePackageRoot(), "dist/gui/client/icon-192.png"),
+		},
+		fix,
+	);
+}
+export async function main(args = process.argv.slice(2)) {
+	const appClient = fileURLToPath(new URL(bundled ? "./client/" : "../dist/client/", import.meta.url));
+	const clientDir =
+		bundled || existsSync(join(appClient, "index.html")) ? appClient : join(resolvePackageRoot(), "dist/gui/client");
+	const launch = () =>
+		process.env.PANCODE_DESKTOP_NODE
+			? {
+					node: process.env.PANCODE_DESKTOP_NODE,
+					entry: join(resolvePackageRoot(), "dist/gui/server.js"),
+					icon: join(resolvePackageRoot(), "dist/gui/client/icon-192.png"),
+				}
+			: {
+					node: process.execPath,
+					...(!bundled ? { loader: fileURLToPath(import.meta.resolve("tsx")) } : {}),
+					entry: fileURLToPath(import.meta.url),
+					icon: join(clientDir, "icon-192.png"),
+				};
+	if (args[0] === "managed-background") {
+		const { background } = await import("./launcher/background.js");
+		const root = resolvePackageRoot();
+		await background(args.slice(1), {
+			node: process.env.PANCODE_DESKTOP_NODE || process.execPath,
+			entry: join(root, "dist/gui/server.js"),
+			icon: join(root, "dist/gui/client/icon-192.png"),
+		});
+		return;
+	}
+	if (args[0] === "background") {
+		const { background } = await import("./launcher/background.js");
+		await background(args.slice(1), launch());
+		return;
+	}
+	if (args[0] === "launcher") {
+		const { launcher } = await import("./launcher/install.js");
+		await launcher(args.slice(1), launch());
+		return;
+	}
+	const values = serverOptions(args);
+	const open = values.open === "always" || (values.open === "auto" && autoOpenBrowser());
+	// True when the launcher focused the window it owns instead of opening the link.
+	const openLink = (href: string, reuse = false) =>
+		openApp(href, process.env, undefined, reuse).then(
+			(result) => result === "focused",
+			() => {
+				console.error("[pancode:gui] Could not open the browser. Open the printed URL manually.");
+				return false;
+			},
+		);
+	// A person at a terminal gets guidance; a pipe, a script or a test gets only the link on stdout.
+	const hint = (line: string) => {
+		if (process.stderr.isTTY) console.error(`[pancode:gui] ${line}`);
+	};
+	let backgroundAbsent = false;
+	if (values.reuse !== "never") {
+		const directory = join(resolvePancodeDirs().state, "gui/background");
+		const background = await import("./launcher/background.js");
+		const version = getVersionInfo().pancode;
+		const reused =
+			values.reuse === "required"
+				? await background
+						.tryStartBackground(directory, resolvePackageRoot())
+						.then((url) => (url ? { kind: "open" as const, url, running: null } : { kind: "absent" as const }))
+				: await background.preferBackground(
+						directory,
+						resolvePackageRoot(),
+						undefined,
+						undefined,
+						process.platform,
+						version,
+						launch(),
+					);
+		if (reused.kind === "open") {
+			// A fresh single-use ticket rather than the launch token, so neither the opener's argv nor the page keeps it.
+			const url = new URL(await background.ticketUrl(directory, reused.url));
+			url.pathname = values.path;
+			console.log(`[pancode:gui] ${url.href}`);
+			if ("restartedFrom" in reused)
+				console.error(
+					`[pancode:gui] Restarted the idle background app from PanCode ${reused.restartedFrom} to ${reused.running ?? version}.`,
+				);
+			if (reused.running && reused.running !== version)
+				console.error(
+					`[pancode:gui] The background app is still running PanCode ${reused.running}; this installation is ${version}. Restart it to use this version: pancode gui background restart`,
+				);
+			// A window the app says is live is brought forward, still on its own page; a launch that named a
+			// page asks the app to show it there. A window left by a restarted server is dead, so the fresh link
+			// opens, as it does without a window a tool can raise.
+			if (!open) return;
+			const outcome = await relaunchWindow(values.path, {
+				ask: (path) => background.showBackgroundPage(directory, Number(url.port), path),
+				focus: () => focusAppWindow(),
+				open: (reuse) => openLink(url.href, reuse),
+			});
+			if (outcome !== "opened") hint("Brought the open PanCode window forward.");
+			if (outcome === "page-not-shown")
+				console.error(
+					"[pancode:gui] The open window was brought forward but could not be shown that page. Open the printed URL in it.",
+				);
+			return;
+		}
+		// The flag's promise is that no second server starts. With no background app there is nothing to reuse.
+		if (values.reuse === "required")
+			throw new Error(
+				"--reuse-background found no background app for this installation. Install one with pancode gui background install, or run pancode gui without the flag.",
+			);
+		if (reused.kind === "unavailable")
+			console.error(`[pancode:gui] ${reused.reason} Starting a private server for this terminal instead.`);
+		backgroundAbsent = reused.kind === "absent";
+	}
+	if (bundled && values.fixture) throw new Error("Fabricated tool fixtures are available in source mode only.");
+	// A fresh launch token on every start: a copy of an earlier one, and its credentials, open nothing.
+	const persistent = values.persistent
+		? await (await import("./launcher/background.js")).rotateBackgroundToken(values.persistent)
+		: undefined;
+	if (persistent) Object.assign(process.env, backgroundEnvironment(persistent));
+	const port = persistent?.port ?? values.port;
+	// Read before anything starts, so a parent that sends nothing costs no workers or children.
+	const stdinToken = values.tokenStdin ? await readStdinToken(process.stdin) : undefined;
+	restrictNetwork();
+	if (!existsSync(join(clientDir, "index.html")))
+		throw new Error("Client build is missing. Run pnpm --filter pancode-gui build before starting.");
+	const scratch = values.fixture ? await mkdtemp(join(tmpdir(), "pancode-gui-fixture-")) : undefined;
+	const env = scratch
+		? {
+				...process.env,
+				PATH: "",
+				PANCODE_HOME: scratch,
+				...Object.fromEntries(
+					["CONFIG", "DATA", "STATE", "CACHE"].map((role) => [`PANCODE_${role}_DIR`, join(scratch, role.toLowerCase())]),
+				),
+			}
+		: process.env;
+	const settings = { fixture: values.fixture, installDelayMs: 900 };
+	if (!scratch) registerRunningBuild("gui");
+	const compiledDirectory = bundled ? new URL("./", import.meta.url) : undefined;
+	const reads = new WorkerHost("reads", settings, env, compiledDirectory),
+		ops = new WorkerHost("ops", settings, env, compiledDirectory);
+	const hub = new EventHub(),
+		operations = new OperationRegistry(hub);
+	const stateRoot = scratch ? join(scratch, "state") : resolvePancodeDirs().state;
+	const files = new AppFiles(stateRoot);
+	const workspaces = new WorkspaceService(files, reads),
+		supervisor = new Supervisor(workspaces, files, hub, env, undefined, undefined, (cwd, sessionId, owner) =>
+			ops.call("sessions.recover", { cwd, sessionId, ...owner }),
+		);
+	try {
+		await supervisor.reconcile();
+	} catch (error) {
+		await supervisor.shutdown();
+		await Promise.all([reads.close(), ops.close()]);
+		throw error;
+	}
+	const cli = new CliRunner(env);
+	const sessions = new SessionService(supervisor, workspaces, reads, cli);
+	const arena = new ArenaService(cli, workspaces, operations, env);
+	const research = new ResearchService(cli, workspaces, operations, env);
+	const settingsService = new SettingsService(reads, workspaces, ops, () => applyTurnCapacity());
+	// The user's limit, resolved where no project layer applies, since one server runs turns for every
+	// workspace. Read at startup and after the app writes it; until the first read the default holds.
+	const applyTurnCapacity = () =>
+		realpath(stateRoot)
+			.then((cwd) => settingsService.controlsAt(cwd))
+			.then((controls) => {
+				const capacity = turnCapacitySetting(controls);
+				if (capacity !== undefined) supervisor.setTurnCapacity(capacity);
+			})
+			.catch((error: unknown) =>
+				console.error(
+					`[pancode:gui] Could not read interface.guiTurnCapacity; keeping ${supervisor.turnCapacity}: ${error instanceof Error ? error.message : String(error)}`,
+				),
+			);
+	void applyTurnCapacity();
+	const setup = new SetupService(reads, env, workspaces);
+	const token = persistent?.token ?? stdinToken ?? randomBytes(32).toString("base64url");
+	let log: Awaited<ReturnType<typeof lifecycleLog>>;
+	try {
+		log = await lifecycleLog(values.logFile);
+	} catch (error) {
+		await Promise.all([supervisor.shutdown(), cli.close(), reads.close(), ops.close()]);
+		if (scratch) await rm(scratch, { recursive: true, force: true });
+		throw error;
+	}
+	let origin = `http://127.0.0.1:${port}`;
+	const attachments = new MachineAttachments({
+		// The registry is user-level; the state directory is a canonical cwd the CLI runner accepts.
+		endpoints: async () => reads.call("machines.endpoints", { cwd: await realpath(stateRoot) }, { deadlineMs: 65_000 }),
+		local: () => ({ pancode: getVersionInfo().pancode, build: runningBuildId }),
+		hub,
+		env,
+	});
+	// Held here so the opener's URL carries a single-use launch ticket rather than the launch token.
+	const clients = new ClientRegistry();
+	const app = createApp({
+		token,
+		clients,
+		origin: () => origin,
+		hub,
+		operations,
+		toolchain: new ToolchainService(reads, ops, operations, hub),
+		traces: new TraceService(reads),
+		telemetry: new TelemetryService(reads, (id) => supervisor.knows(id)),
+		settings: settingsService,
+		setup,
+		fleet: new FleetService(reads),
+		machines: new MachinesService(reads, ops, workspaces, operations, attachments),
+		attachments,
+		system: new SystemService(reads, workspaces, ops),
+		hubService: new HubService(reads, cli, workspaces, ops),
+		review: new ProjectReviewService(cli, workspaces),
+		reports: new ReportsService(cli, workspaces),
+		problemReports: new ProblemReportsService(ops, workspaces),
+		arena,
+		research,
+		evidence: new EvidenceService(reads, cli, workspaces, operations),
+		targets: new TargetsService(cli, workspaces, settingsService, operations, supervisor),
+		sessions,
+		idle: () => !(operations.activeCount || cli.activeCount || setup.busy) && supervisor.restartSafe,
+		clientDir,
+		pwa: !!persistent,
+		desktopManaged: () => !!values.persistent && existsSync(join(dirname(values.persistent), "windows.json")),
+		...(process.env.NODE_ENV === "test"
+			? {
+					runtime: async () => ({
+						server: { entry: import.meta.url, packageRoot: resolvePackageRoot(), execArgv: process.execArgv },
+						reads: await reads.call("runtime.info", {}),
+						ops: await ops.call("runtime.info", {}),
+					}),
+				}
+			: {}),
+	});
+	// The background app prefers its configured port and falls back to the next documented one when another
+	// program owns it; launchers probe the same ports in the same order. A private server never falls back,
+	// because its caller named the port or asked for any free one.
+	const candidates = persistent ? listenPorts(port) : [port];
+	const server = createAdaptorServer({ fetch: app.fetch, hostname: "127.0.0.1" });
+	// One listener for the whole sequence: a failed attempt leaves its own callback registered.
+	server.once("listening", () => {
+		const info = server.address() as AddressInfo;
+		origin = `http://127.0.0.1:${info.port}`;
+		// A single-use ticket, never the launch token: the printed link and the opener's argv each spend their own.
+		const launchUrl = () => `${origin}${values.path}#ticket=${clients.launchTicket().ticket}`;
+		if (scratch) console.log(`[pancode:gui] Fabricated tool fixture; isolated state: ${scratch}`);
+		// A parent that wrote the token over stdin already holds it; its ready line carries only the address.
+		console.log(
+			persistent
+				? `[pancode:gui] Background app ready at ${origin}.`
+				: values.tokenStdin
+					? `[pancode:gui] ${origin}${values.path}`
+					: `[pancode:gui] ${launchUrl()}`,
+		);
+		void log.write(`Listening at ${origin}; idle exit ${values.idleMs ?? "disabled"}.`).catch(fail);
+		if (!persistent) {
+			hint(
+				values.idleMs === undefined
+					? "PanCode runs while this terminal stays open. Press Ctrl+C to stop it."
+					: "PanCode stops after it has been idle. Press Ctrl+C to stop it now.",
+			);
+			if (backgroundAbsent && backgroundCapability(process.platform).available)
+				hint(
+					"For a stable address that survives this terminal and installs as an app: pancode gui background install --open",
+				);
+		}
+		if (open)
+			void openBrowser(launchUrl()).catch(() => {
+				console.error("[pancode:gui] Could not open the browser. Open the printed URL manually.");
+				void log.write("Could not open the browser; server remains available.").catch(fail);
+			});
+	});
+	const listen = () => {
+		server.listen(candidates[0], "127.0.0.1");
+	};
+	const idle =
+		values.idleMs === undefined
+			? undefined
+			: new IdleExit(
+					values.idleMs,
+					() =>
+						!!(
+							operations.activeCount ||
+							cli.activeCount ||
+							setup.busy ||
+							reads.pendingCount ||
+							ops.pendingCount ||
+							supervisor.busy
+						),
+					() => {
+						void close().catch(fail);
+					},
+				);
+	server.prependListener("request", (_request, response) => {
+		const release = idle?.hold();
+		if (release) response.once("close", release);
+	});
+	let closing = false;
+	const close = async () => {
+		if (closing) return;
+		closing = true;
+		idle?.stop();
+		process.removeListener("SIGINT", stop);
+		process.removeListener("SIGTERM", stop);
+		process.removeListener("SIGHUP", stop);
+		server.close();
+		if ("closeAllConnections" in server) server.closeAllConnections();
+		await Promise.all([
+			supervisor.shutdown(),
+			arena.close(),
+			research.close(),
+			cli.close(),
+			setup.close(),
+			attachments.stopAll(),
+		]);
+		await Promise.all([reads.close(), ops.close()]);
+		if (scratch) await rm(scratch, { recursive: true, force: true });
+		try {
+			await log.write("Stopped; owned work and children settled.");
+		} finally {
+			await log.close();
+		}
+	};
+	const fail = () => {
+		console.error("[pancode:gui] Server or lifecycle log failed; shutting down.");
+		process.exitCode = 1;
+		void close().catch(() => {
+			process.exitCode = 1;
+		});
+	};
+	server.on("error", (error: NodeJS.ErrnoException) => {
+		if (error.code === "EADDRINUSE" && !server.listening && candidates.length > 1) {
+			const busy = candidates.shift();
+			console.error(`[pancode:gui] Port ${busy} is in use; trying ${candidates[0]}.`);
+			listen();
+			return;
+		}
+		console.error("[pancode:gui]", error.message);
+		fail();
+	});
+	listen();
+	const stop = () => {
+		void close().catch(fail);
+	};
+	process.once("SIGINT", stop);
+	process.once("SIGTERM", stop);
+	// A closed terminal must not orphan detached children such as research campaigns.
+	process.once("SIGHUP", stop);
+	if (values.tokenStdin) {
+		// The parent holds stdin open for the server's lifetime; its end means the parent is gone.
+		process.stdin.once("end", stop);
+		process.stdin.once("error", stop);
+		process.stdin.resume();
+	}
+}
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+	void main().catch((error: unknown) => {
+		console.error(`[pancode:gui] ${error instanceof Error ? error.message : "Startup failed."}`);
+		process.exitCode = 1;
+	});
+}

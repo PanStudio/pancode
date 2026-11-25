@@ -1,0 +1,411 @@
+# PanCode Agent Fleet
+
+PanCode can hand a bounded task to a fleet agent: a focused worker with its own instructions, tools, budget, and result shape. This guide lists the sixteen agents that ship with PanCode, explains how you dispatch them and how PanCode keeps their runs bounded, and shows how to add an agent of your own.
+
+Every agent is a Markdown recipe. Recipes are data files, not hidden code plugins: YAML frontmatter declares identity, tool requirements, skill bindings, audience, capability and latency classes, budget, result contract, and optional permissions, and the Markdown body is the agent instruction text.
+
+The source of truth is `src/domains/agents/**`. PanCode's agent dispatch engine and execution boundaries are built upon the [@earendil-works/pi-agent-core](https://www.npmjs.com/package/@earendil-works/pi-agent-core) library.
+
+---
+
+## Agent Architecture Semantics
+
+PanCode's agent architecture distinguishes between authoring configurations and runtime policies:
+
+*   **Recipe**: An authored Markdown file containing frontmatter configuration and an instruction body.
+*   **AgentSpec**: The normalized runtime and catalog policy object derived from a recipe.
+*   **audience**: Determines visibility and routing (`base` | `shadow` | `custom` | `internal`).
+*   **source**: Origin of the recipe (`builtin` | `plugin` | `user` | `project`).
+
+### Discovery, Overrides, and Precedence
+At startup, PanCode loads recipes in four precedence tiers:
+
+| Source | Root | Notes |
+| --- | --- | --- |
+| **Built-in** | `src/domains/agents/builtins/*.md` in the installed package | Shipped defaults. A defect in a shipped recipe aborts discovery. |
+| **Plugin** | Each enabled plugin's `agents` resource root | Loaded in stable plugin-source order. A plugin recipe may bind only skills from the same plugin's skill root. |
+| **User** | `<configDir>/agents/*.md` | Per-user recipes. `<configDir>` follows PanCode's XDG/platform config directory. |
+| **Project** | `.pancode/agents/*.md` under the working directory | Repository-local additions (custom/domain agents). |
+
+Recipe IDs are derived from filenames (e.g., `architect.md` -> `architect`). Only `.md` files directly under a root are read; subdirectories are not scanned.
+
+*   **Precedence**: Tiers merge in the order above. When two non-builtin recipes share an id, the later tier wins and the earlier one is recorded as `overridden`. A project recipe loads without project trust, so an interactive session that starts in the project says which agents it replaces, and `pancode doctor` names both files.
+*   **Customization**: A user recipe may replace a shipped base agent such as `coder`. Like every non-shipped recipe it must declare `audience: custom`, so the replacement is a custom agent.
+*   **Plugin Protection**: Plugin recipes cannot override any shipped builtin. They are ignored with reason `reserved-builtin`.
+*   **Built-in Protection**: Project agents cannot override any shipped built-in. They are ignored with reason `reserved-builtin` and are otherwise custom/domain agents.
+*   **Shadow Protection**: User or project agents can **never** override shadow or internal agents (`reserved-shadow` for a user recipe).
+*   **Reserved IDs**: The IDs `worker`, `delegate`, and `auto` cannot be registered outside the builtin tier (`reserved-agent-id`).
+*   **Namespace**: Native recipes and ACP delegation agents share one id namespace. A delegation entry in `integrations.externalAgents.entries` whose id equals a native recipe id fails agent startup.
+*   **Quarantine and diagnostics**: A plugin, user, or project recipe that fails parsing or policy validation is quarantined, not loaded. Discovery records at most 256 diagnostics of kind `quarantine`, `ignored`, or `overridden`, each with the file path and reason.
+*   **Timing**: Recipes are discovered when the agents domain starts and again when a plugin resource reload commits a changed plugin generation.
+*   **Playbooks**: The fleet runs playbooks. Shipped builtin playbooks (`build-test`, `build-review`, `sdlc`, `seat-stretch`) ship inside the package. Enabled-plugin playbooks load next, user playbooks at `<configDir>/playbooks/<name>.md` load after them, and project playbooks at `.pancode/playbooks/<name>.md` take highest precedence. The parser accepts playbook versions 1 through 5. Version 4 adds enforced per-step `writes` boundaries; version 5 adds plan and gate steps, per-step target or profile routes, and the `writers: 1` single-writer declaration. Deterministic code steps reference commands declared in `.pancode/playbooks/commands.yaml`.
+
+---
+
+## Built-in catalog
+
+The catalog equals the files under `src/domains/agents/builtins/`: sixteen recipes. Every recipe declares `synthesis: true`. The Budget column is the recipe's `toolCalls` estimate, followed by its `maximum.toolCalls` ceiling when it declares one (`pancode agents` prints the same policy as `budget=32..150/synthesize`). Tools are shown as the recipe declares them: `anyOf` groups mean at least one must be admitted, and every other required tool must be present on the target.
+
+### Shipped Base Agents
+User-facing agents visible in `pancode agents`. All declare `projectContextTier: bounded`.
+
+| Agent ID | Required tools | Optional tools | Purpose | Capability | Latency | Budget | Result contract |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `architect` | artifact, context | read, grep, find, ls, code_nav, git, ledger, limitation | Designs changes across domain boundaries, including contracts, migrations, and validation gates, and cuts an existing plan into a dependency-ordered sprint through the bound `sprint-plan` skill. | `artifact-write` | `deep` | 32, maximum 150 | `architect-plan` at `.pancode/artifacts/PLAN.md` |
+| `coder` | read, any of write or edit, context | grep, find, ls, web_fetch, git, verify, code_nav, bash, ledger, limitation, store, data | Implements bounded code changes, repairs, and refactors, behavior-preserving by default. | `workspace-edit` | `balanced` | 150 | `mutation-report` |
+| `debugger` | verify | read, grep, find, ls, git, code_nav, ledger | Diagnoses failing code, tests, or runs without editing, reading run records, logs, and runtime behavior. | `verification` | `balanced` | 24 | `debugger-report` |
+| `documenter` | read, any of write or edit | grep, find, ls, git, verify, code_nav, context, ledger, limitation | Writes docs and examples from source. It has no shell, and verification uses declared checks. | `workspace-edit` | `balanced` | 120 | `mutation-report` |
+| `git-master` | read, any of write or edit, context, git | bash, grep, find, ls, code_nav, ledger, limitation | Runs bounded git operations end to end: history, commits, worktrees, integration merges with per-merge validation, and pull-request preparation. | `workspace-edit` | `balanced` | 40 | `mutation-report` |
+| `reviewer` | verify | read, grep, find, ls, git, code_nav | Reviews one diff, run result or change against its acceptance criteria and returns a pass or fail verdict with cited checks. It never edits and has no shell. It is the default `review.reviewer` and the job table's recipe for reviewing a diff. | `verification` | `balanced` | 20 | `review-verdict` |
+| `tester` | read, any of write or edit | grep, find, ls, git, verify, bash, code_nav, ledger, limitation | Adds focused deterministic regression and coverage tests. | `workspace-edit` | `balanced` | 100 | `mutation-report` |
+| `verifier` | verify | evidence, read, grep, find, ls, git, code_nav, ledger | Runs test, lint, build, review, and release gates and reports each independently. It is the job table's recipe for running checks and the default compete `judge.agent`, and it reviews a review gate only when `reviewer` is not installed; never the builder's own agent. | `verification` | `fast` | 20 | `verifier-report` |
+| `wiki-writer` | read, any of write or edit | grep, find, ls, code_nav, context, ledger, limitation | Plans a repository wiki or writes one wiki page against a supplied plan. | `workspace-edit` | `balanced` | 40 | `artifact-report` |
+| `wiki-repair` | read, edit | grep | Repairs the publication diagnostics of one existing wiki draft with targeted edits and at most three source reads. | `workspace-edit` | `balanced` | 10, maximum 10 | `artifact-report` |
+
+Bound skills: `architect` binds `sprint-plan`; `coder` binds `fix-issue` and `ship`; `git-master` binds `fix-issue`, `ship`, `worktree-create`, and `worktree-merge`. The skill bodies live under `hub/packs/skills/`. The `coder`, `documenter`, `git-master`, and `tester` recipes declare `permissions: {git: worktree}`, which lets a worker commit inside the host-owned task worktree. `wiki-writer` declares `product: orientation`.
+
+### Shipped Shadow and Internal Agents
+Internal orchestration helpers and internal process agents. They are hidden from default displays but visible via `pancode agents --all`. The full on-demand catalog has a separate shadow section and omits internal recipes; the compact session prompt lists base, custom, and shadow recipes and omits internal ones. All declare `projectContextTier: none`, so they receive no PANCODE.md context, and all have `capabilityClass: read-only`.
+
+| Agent ID | Audience | Required tools | Optional tools | Purpose | Latency | Budget | Result contract |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `scout` | shadow | read | grep, find, ls, context, code_nav, git, ledger, store, data | Broad repository reconnaissance with cited findings: orientation, structure and entry-point mapping, multi-file symbol hunting. | `fast` | 18 | `scout-report` |
+| `researcher` | shadow | read | web_fetch, context, ledger, git, store, data | Extracts and compares concrete supplied URLs, standards, release notes, and papers through PanCode-observed reads and URL retrieval. | `deep` | 24 | `research-report` |
+| `world-knowledge` | shadow | none | web_fetch, read, context, ledger | Current open-world discovery, ecosystem comparison, broad external context, and an advisory second opinion; reports when discovery is unavailable. | `deep` | 20 | `world-knowledge-report` |
+| `provenance` | shadow | evidence | read, grep, find, ls, git, ledger | Reads run records, diffs, and telemetry for evidence-backed handoffs. | `balanced` | 16 | `provenance-report` |
+| `oracle` | shadow | read | grep, find, ls, code_nav, context, ledger | Shadow advisor behind `/oracle` that protects consistency with prior decisions and returns the strongest challenge to a question. | `deep` | 14 | `oracle-report` |
+| `context-bootstrap` | internal | read | grep, find, ls, context, code_nav | Internal agent behind `pancode context init` that parses a repository and returns the PANCODE.md handbook payload as JSON. | `balanced` | 40 | `context-handbook` |
+
+`scout` declares `product: orientation`, which makes `code_nav` a delivery tool for its reserve window.
+
+The builtin `architect` also serves as the default author for a version 5 playbook `plan` step. In that role it returns the coordinator-owned `delegation-plan` result shape instead of writing its ordinary plan artifact. It may name only agents from the playbook's roster. The coordinator supplies the plan step's target or profile to every admitted task.
+
+`scout` is bound by a live-grounding contract: its whole final response is one `scout-report` object whose findings each carry the `claim` it observed and the `path:line` that grounds it, and wiki or index content is orientation only, never citable as evidence. A finding that omits `path` and `line` is accepted as an ungrounded lead and never as evidence. The recipe budget of 18 calls is an advisory plan stated in the persona; like every recipe, the run stops at the advisory ceiling or at its handback (see [Budget semantics](#budget-semantics)). Tool calls issued together in one model round count as one round against the synthesis backstop, so a wide parallel batch cannot consume it as separate violations. Dispatch labels its answer `reconnaissance output (advisory leads, not validation evidence):`.
+
+Grounding is checked against the run's own reads, not just against the file. The worker records the exact line span every successful read returned, and a cited line must fall inside one. A line that exists in the file but was never read fails, which is what stops an approximated or inferred line number from passing as observation. A citation of a directory needs only that the directory exists, because a survey lists a directory rather than reading it. `grep` and `code_nav` hits are leads: read the file before citing what they point at. When a run ends on a bound with a degraded result, a citation that does not ground is dropped and its claim kept as an ungrounded lead instead of failing the run.
+
+The three discovery roles are deliberately non-overlapping. `scout` is
+repository-only reconnaissance with live `path:line` grounding and never browses
+external sources. `researcher` starts from concrete URLs or documents and uses
+PanCode-observed `read`/`web_fetch` calls to extract and compare them; `web_fetch` is
+URL retrieval, not search. `world-knowledge` is for current open-world discovery,
+ecosystem comparison, broad context, and an independent advisory opinion. Its
+tools are all optional so it can run on a native PanCode target or an opaque external
+worker. A native target without discovery must use caller-supplied sources or say
+discovery was unavailable. Its `world-knowledge-report` separates supported
+facts and supplied source identifiers from synthesis, uncertainty, and follow-up
+verification; it never fabricates citations. The capability class remains
+`read-only`, and every run of a `read-only` recipe receives the read-only dispatch
+restriction regardless of the main agent's level.
+
+`oracle` is the only shadow agent an operator reaches directly, and only through
+`/oracle <question>`. It never receives a forked transcript. `/oracle` packs a
+bounded digest instead and sends it as dispatch briefing data: the settled
+decisions from the session decision board, the open tasks from the task board,
+the last compaction summary when one exists, and the question. The digest is
+capped at 12 KiB total, with per-section caps of 5120 bytes and 24 rows for
+decisions, 3072 bytes and 24 rows for open tasks, 2048 bytes for the compaction
+summary, and 1536 bytes for the question. Every cap that cuts content appends a
+`[truncated]` marker, so the advisor receives an explicit indication that the
+record is truncated. Entries are filtered to the active branch before the fold, so a `/tree`
+switch never briefs the advisor on decisions the operator walked away from.
+
+The run is an ordinary singular dispatch with `requestOrigin: "internal"` and
+`readOnly: true`, so admission, the run record, and the Fleet Runs island apply
+to it exactly as they apply to `/run`. Its `oracle-report` contract carries the
+answer shape: a verdict line, the strongest challenge the advisor can mount, the
+evidence that would change its verdict, and the decisions it cited. The rendered
+answer reaches the main agent the way `/fleet share` puts a worker result there, as an
+operator-authored note on the ordinary user-turn path. `/oracle` during an
+in-flight turn is refused rather than queued.
+
+A second opinion from the main model's own family mostly repeats it, so
+`/oracle` asks a model of another family when one is configured. It reads the
+live chat model (a session-scoped `/model` switch counts) and the family of
+every reachable configured target's default and listed wire models, looking
+through gateway prefixes such as `openrouter/` or a LiteLLM alias group
+([model-lineage.ts](../../src/domains/providers/model-lineage.ts)). It then pins
+a healthy model of another family, preferring another target over another
+model on the chat target. A model id that names no known family (a gateway
+alias such as `smart`) is never treated as independent. Binding `oracle` in
+`fleet.agentProfiles` keeps that route instead, and a pinned route that
+admission refuses falls back to the default route with a warning. The note
+closes with the advisor's `target/model` and whether it shares the main
+model's family, so the main agent can tell independent agreement from an echo.
+
+The note also says whether a machine check can settle the question
+([verifiability.ts](../../src/domains/evidence/verifiability.ts)). A question
+that names tests, a build, a typecheck, lint, a schema, a measured number or a
+rerun is checkable, and the note tells the main agent to run that check and
+treat the advice as a hypothesis until it does. Anything else, including a
+question that asks what should be done even when tests inform it, is a
+judgment call. At `default` autonomy the note tells the main agent to confirm
+the decision with the operator. At `yolo` the advice stands in for the
+operator, weighed by how independent the advisor was.
+
+Every contract-bearing agent gets bounded in-worker repair. When the terminal result misses its contract, the worker replays the validator's own reason, the exact accepted shape, and the `path:line` locations this run actually read, then asks for the result again. Two repair rounds is the whole allowance; after that the run fails with `result_contract_exhausted`. A worker that exits successfully with a result the host's own validator still rejects seals `result_contract_invalid` instead, which is retried on another agent or model. This is what keeps a small local model that gathered the right evidence from being failed for a shape mistake nobody told it about.
+
+Two rounds only help when the reason is actionable, so a validator reason names the mistake and shows the value that would have passed. A `mutation-report` with `"validations":[]` is told the array was empty and is given one entry shaped like `{"name":"npm test","passed":true,"evidence":"exit 0"}`, and a report whose entries are malformed is told which keys each entry carries. Naming the requirement alone left a small model re-emitting the same empty array through both rounds.
+
+A contract the worker parses from its final prose, rather than one returned through the helper tool, is also restated while the worker works. After the tool results of every work round the request ends with a host `<system-reminder>` holding one line, `[result contract: <kind>]`, naming the exact JSON form of the final message and saying no Markdown, code fences or commentary may surround it. The line is never placed inside a tool result, and the reminder each earlier round carried stays at its batch boundary in later requests, so each round's request extends the last one and the provider's prefix cache still holds. A small model otherwise loses a contract stated only at the end of a long recipe.
+
+When such a worker finishes with a prose answer instead of the JSON object, and its runtime is one whose `response_format` dialect PanCode has measured (`llamacpp`, `lmstudio`, `litellm`, all on the OpenAI completions family) and the resolved model reports `structuredOutputs: json-schema`, the repair round is final-only: it ships no tools and binds the reply to the contract's schema. A synthesis-locked round carries the same binding. Work rounds keep their tools and stay unconstrained, because llama-server cannot combine a schema grammar with a tool grammar. A `400` that refuses the schema retries that round once without it, and the run stops sending it. Every call that carried the binding records `responseFormat: json-schema` on its `call.started` telemetry record.
+
+A reply that writes a Markdown review and then closes with its JSON result still satisfies the contract. The reader tries the whole text, the first fenced block and the outermost brace span first, then later fenced blocks and each balanced object, preferring the one that closes the reply, so any reply that parsed before parses to the same object.
+
+### Unattended finishing rule
+
+The `coder` persona ([coder.md](../../src/domains/agents/builtins/coder.md)) carries the unattended finishing rule. It restates the task as separate clauses, including performance and robustness clauses, and checks first whether existing tests cover each clause. It writes a new reproduction test only for a clause no existing test covers, only when the task and the project instructions allow tests, following the neighboring tests and making the test fail on untouched code before the fix. Before finishing, it maps each clause to evidence in its diff or a check it ran, and it names any clause without evidence as not done in `summary`.
+
+When a check it needs cannot run, `coder` traces every assertion of each test it added or changed through the changed source by hand and fixes any disagreement before finishing. The trace is not a validation. The check still counts as not run: `validations` lists only checks the worker executed, and the optional `declaredChecks` array of the `mutation-report` names checks not run and why the host must run them. A deliberate red run before the change, such as the test-first reproduction on untouched code, is reported as a validation entry with `"baseline":true`, and the run after the change is its own entry. Result quality judges only checks run on the changed tree, so a baseline entry never counts as a pass or a failure.
+
+Only the `coder` recipe carries this rule among the shipped personas. `tester`, `debugger`, `documenter`, and the other recipes do not. The same rule is in the `operating.contract-headless` prompt fragment, which only a headless main agent (`pancode run`) renders. Attended sessions do not carry it. The install rule in `operating/contract.md` is separate and applies to every prompt tier: a check blocked only by dependencies that were never installed is setup, so the worker installs and reruns, while a failure confined to files the change does not touch is reported and neither repaired nor installed for. See [Worker prompt compilation](../architecture/worker-dispatch-mechanics.md#worker-prompt-compilation).
+
+---
+
+## Frontmatter schema
+
+[registry.ts](../../src/domains/agents/registry.ts) parses frontmatter fields from recipe markdown:
+
+```yaml
+---
+version: 1                            # recipe schema version
+name: Coder                           # required non-empty string
+description: Bounded code changes     # required non-empty string
+tools:                                # required/optional tool mapping, not a flat list
+  required: [read, {anyOf: [write, edit]}, context]   # anyOf: at least one must admit
+  optional: [grep, git, verify, bash, ledger]         # attached when the target carries them
+skills: [fix-issue, ship]             # knowledge attachments; require the context tool, never expand tool authority
+audience: base                        # base | shadow | custom | internal
+category: implement                   # explore | plan | research | implement | quality | science | evolution | operations | internal
+capabilityClass: workspace-edit       # read-only | artifact-write | workspace-edit | verification | orchestration | internal
+latencyClass: balanced                # fast | balanced | deep
+projectContextTier: bounded           # none | bounded: whether the worker is briefed with project context
+tags: [implementation, repair]        # short lowercase routing hints for catalog display
+budget:                               # required worker-loop phase policy
+  toolCalls: 150                      # advisory estimate
+  synthesis: true                     # true: text-only final round; false: stop immediately
+  # maximum: {toolCalls: 150}         # optional ceiling (architect ships one)
+  # timeoutMs: 600000                 # optional wall clock; only lowers fleet.limits.runTimeoutMs
+resultContract: {kind: mutation-report}  # typed result shape the worker must return
+permissions: {git: worktree}          # optional standing allowance: git inspect|worktree, asks deny|fail|main
+product: orientation                  # optional: orientation makes code_nav a delivery tool
+traits: [peer-tool-loop]              # optional: context-generator | peer-tool-loop | inline-deliverable
+handbook: [verify, write]             # optional: handbook sections beyond the capability class default
+---
+```
+
+The closed key set is defined in [recipe-schema.ts](../../src/domains/agents/recipe-schema.ts): thirteen required keys (`version`, `name`, `description`, `tools`, `skills`, `audience`, `category`, `capabilityClass`, `latencyClass`, `projectContextTier`, `budget`, `resultContract`, `tags`) and four optional keys, `product`, `permissions`, `traits` and `handbook`. An unknown key rejects the recipe. There are no
+`model`, `target`, `thinkingLevel`, or `output` frontmatter keys. Target and
+model selection belong to dispatch, not the recipe.
+
+Every recipe must declare `name`, `description`, `budget`, and every other key in the required set; no display defaults are synthesized. `budget` must be a non-null YAML object containing `toolCalls` and `synthesis`, plus an optional `maximum` ceiling object such as architect's `maximum: {toolCalls: 150}` and an optional `timeoutMs`. `toolCalls` must be a safe integer greater than 0; `synthesis` must be a boolean; `maximum` must not be smaller than the default phase; `timeoutMs` must be a safe integer of at least 1, and it can only lower the run's wall clock below `fleet.limits.runTimeoutMs`, never raise it. Unknown, missing, quoted-numeric, floating-point, null, and relationally invalid values reject the recipe with its source path and property. Scout declares `18/true`; the `coder` recipe declares `150/true`. The model-visible catalog shows the declared policy, never a mutable effective cap.
+
+Only shipped recipes may declare the `base`, `shadow`, or `internal` audience, and a shipped recipe may not declare `custom`. Plugin, user, and project recipes must declare `audience: custom`; the discovery root determines that provenance and the parser refuses a conflicting claim.
+
+`permissions` is a strict map with optional `git` (`inspect` or `worktree`) and `asks` (`deny`, `fail`, or `main`) keys; an unknown key or value rejects the recipe. `git: worktree` requires `capabilityClass: workspace-edit`. Absent `permissions` keeps git inspection and the fleet-wide ask route from `fleet.permissions.mode`.
+
+A recipe must also pass the capability policy before it enters any catalog. A `workspace-edit` recipe must require `read` and `write` or `edit`. A `verification` recipe must require `verify`, may not request write, dispatch, or system-modifying tools, and may not use `bash`. An `artifact-write` recipe must require `artifact` and may not request execute or dispatch tools. A `read-only` recipe may request only read-class tools. No recipe may expose `ask_user`, and `dispatch` is reserved for `orchestration` recipes.
+
+### Budget semantics
+
+`budget` is the recipe's default worker-loop phase policy. A native worker applies it as an advisory estimate.
+
+*   **Advisory estimate (default).** `toolCalls` plans the run and is not a cutoff. When the call count reaches `toolCalls`, the next tool result carries a one-time notice to reassess and finish, and tools stay available. The hard ceiling is `fleet.limits.toolCallsPerRun` (default `300`), tightened to the recipe's `maximum.toolCalls` when the recipe declares one, and it never falls below the estimate the request was admitted with. Admission holds such an estimate at `fleet.limits.toolCallsPerRun`, so a request never raises the ceiling above that cap. A dispatch can supply its own `budget` estimate (`toolCalls`, optional `retryRevision`) for one run. What happens at the ceiling depends on the worker; see [Reporting workers and the finishing rule](../architecture/worker-dispatch-mechanics.md#reporting-workers-and-the-finishing-rule).
+The operator cap cannot be widened by a recipe. The admitted envelope (recipe policy, request, effective budget, and each clamp reason) is kept on the run ledger row and in the `budget` field of the run's `run.settled`, under the run seal. At the advisory ceiling the Claude SDK runtime denies every further tool call.
+
+### Skills
+Skills are knowledge attachments declared under `skills: [...]` in the YAML frontmatter.
+*   They are injected compactly into the prompt/catalog. A shipped recipe resolves each bound skill from the package's `hub/packs/skills/` tree. A user or project recipe resolves bound skills only from the operator's discovered skill roots, and a plugin recipe only from its own plugin's skill root. A skill name that does not resolve to a trusted skill rejects the recipe.
+*   They require the `context` tool to be accessible; a recipe that declares skills without requiring `context` fails spec validation. `context(scope=skills)` admits exactly the skills the recipe binds.
+*   They **never** expand the agent's tool authority; they act purely as static knowledge context. A dispatch with `noSkills` omits the skill block.
+
+---
+
+## Dispatching agents
+
+*   **Visibility**: Normal `pancode agents` lists user-visible (base/custom) agents, including configured ACP delegation agents. The command `pancode agents --all` includes shadow/internal specs reserved for PanCode orchestration, and `--json` prints the specs without their persona bodies. The `/hub agents` slash command opens PanHub on its Agents tab.
+*   **Invocation limits**: User-origin `/run` and `pancode run --agent` **cannot** invoke shadow/internal agents. The refusal names the stand-in, `coder` with `--read-only`, only when that request would itself be admitted on the same route (target, model, tool profile and denied tools); otherwise it names none. A dispatch that PanCode itself starts (request origin `harness`) accepts only recipes whose capability class is `read-only`.
+*   **Orchestrator dispatch**: Internal main-agent dispatch can invoke shadow agents through the `dispatch` tool. The operating contract and Scout's catalog description steer the model to dispatch Scout for broad repository reconnaissance, while narrow file or symbol inspection remains local to the main agent. If a turn reaches 9 or more manual read-only exploration calls without completing Scout dispatch, a threshold nudge advises delegation once, as a model-only reminder the operator does not see. It never carries the turn onward into another model round.
+*   **TUI rendering and control**: Shadow and internal runs show the `↳` sub-process glyph in a subordinate tone instead of a name prefix, and a hollow `◇` or filled `◆` marks whether the operator or the model started a run. The Fleet Runs island and board show the bounded task, run ID, live tools, tokens, priced cost, retry state, and terminal outcome. Select an HTTP/SDK run to steer it or cancel any active worker/retry timer.
+*   **ACP Delegation**: `/run <agent-id>` with an external ACP agent id (or `acp:<id>`) is ACP delegation, which is separate from PanCode fleet subagents.
+
+### Measured agent automation
+
+An assignment may request `agent: auto`, but agent choice is advisory by default and is independent of target/model/runtime/node route activation. The coordinator first removes recipes that fail audience, capability-class, execution-role, tool-surface, result-contract, target, or policy constraints. Those are hard constraints and never become score weights. The remaining recipes are ranked deterministically with measured evidence and bounded cold-start priors. Until a pair is activated, the agent that runs is the baseline: the recipe of the task's row in the [job table](fleet-dispatch.md#job-table-and-the-reviewer-recipe), which an omitted `agent` resolves through as well.
+
+Active agent selection requires an exact `{agentId, executionRole}` entry in `fleet.adaptiveRouting.agentRoles` and a passing readiness report for that same agent and role. Empty activation settings are the default. If no eligible agent is ready, active automation fails closed instead of falling back to the fixed requested recipe.
+
+Scout is the bounded escalation path for broad reconnaissance, not an authority shortcut. Its strict `scout-report` may return grounded findings or a split recommendation with typed subtasks. The coordinator validates the transition, assigns fresh authority and an absolute deadline to each child, and records the decision. A recovery attempt uses the dedicated recovery role and may not silently inherit broader builder authority. A read-only Scout can also inspect one checkout outside the workspace when the operator approves that root for the run; the approval grants no writes or commands, and headless runs cannot give it. That Scout follows the checkout's own handbook, limited to the rules its tree verifies until the operator trusts it with `pancode config trust handbook` there ([Sister repositories](../architecture/worker-context.md#sister-repositories)). See [External Scout read](../architecture/dispatch-typed-intent.md#67-external-scout-read).
+
+### ACP Delegation Agents as First-Class Workers
+
+ACP delegation agents (registered under `integrations.externalAgents.entries` in `settings.yaml`) are integrated as first-class workers:
+- **Automatic Routing:** When a task is dispatched to an agent ID matching a configured ACP delegation agent, the dispatch engine automatically routes the execution to that delegation agent.
+- **Dynamic Spec Discovery:** The agent registry synthesizes an AgentSpec for each configured ACP delegation agent. The spec has audience `custom`, capability class `orchestration`, category `explore`, latency class `deep`, no declared tools, project context tier `none`, result contract `external-delegation`, and a 1/0 budget without synthesis. Specs are visible via `pancode agents`. A delegation agent receives project context only when its entry sets `projectContext: "bounded"`.
+- **Antigravity CLI:** The built-in `antigravity` delegation target runs `agy acp` under the operator's own `agy` login, with model and thinking selection, operator-answered questions and live steering ([Antigravity CLI over ACP](interop.md#antigravity-cli-over-acp)). It is separate from the `antigravity-code` headless runtime below.
+
+### Restricted Shadow Agent Delegation
+
+To ensure security and proper boundary isolation, shadow and internal agents are restricted from being delegated:
+- **shadow/internal Restriction:** The dispatch engine rejects any attempt to run a shadow or internal agent on an external ACP delegation worker, throwing a validation error.
+
+### Subscription Worker Runtimes
+
+In addition to standard HTTP targets and [Agent Client Protocol (ACP)](https://agentclientprotocol.com) delegation agents, PanCode dispatches subagents to supported subscription worker runtimes:
+- **`claude-sdk` (Claude Agent SDK):** Serves as a main worker runtime for driving fleet agents. It integrates with [@anthropic-ai/claude-agent-sdk](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) alongside PanCode's native subagent workers (like a local [llama.cpp](https://github.com/ggerganov/llama.cpp), [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai), [vLLM](https://github.com/vllm-project/vllm), or [SGLang](https://github.com/sgl-project/sglang) fleet) to execute tasks under a Claude subscription. Every tool call is mediated by PanCode (`canUseTool` plus a `PreToolUse` hook): the safety net and autonomy matrix apply, and the run's admitted tool surface, which is narrowed by any `tool_profile`, is enforced authoritatively. Consequently, an out-of-profile tool (for example `bash` under `minimal-local`) is denied even though the underlying preset offers it. The narrowed surface is also translated into the SDK's `disallowedTools` option as defense in depth. Because it routes tool calls through PanCode safety, it behaves as a native worker. The SDK package is not part of the default install. The first attended dispatch to `claude-sdk` asks the operator once to install it as a separate component under the data directory, and without an operator the error names `pancode tools install claude-sdk` ([Lean install](installation-and-lifecycle.md#lean-install-the-claude-agent-sdk)). On an SSH fleet node, install it from the client with `pancode fleet nodes tools install <node> claude-sdk --yes`.
+- **`claude-code` (Claude Subprocess):** Runs `claude -p` as a subprocess worker with `--permission-mode acceptEdits`. Admission refuses read-only work on it before launch, because a plan mode or a tool list cannot keep it from changing user files (see [Read-only runs](../architecture/safety-model.md#read-only-runs)). It is a black box: tool calls run inside the `claude` process and are not routed through PanCode's per-tool mediation, so no per-tool profile can be enforced on it. Dispatching a narrowing `tool_profile` (`minimal-local` or `science-local`) to this runtime is refused; use `full-agent` (or a native / `claude-sdk` worker) instead.
+- **`antigravity-code` (Antigravity CLI, experimental local delegation):** Runs the operator-installed and authenticated official `agy` command as a local external delegation worker. It is useful for a second opinion or another bounded one-shot subtask; it is never an orchestrator or Gemini chat backend. PanCode consumes agy's structured stream and live model catalog but cannot mediate individual tools, so a narrowing `tool_profile` is refused rather than silently ignored. The `world-knowledge` agent declares `capabilityClass: read-only`, and admission refuses read-only work on this runtime, so a `world-knowledge` dispatch routed to `antigravity-code` is refused before launch.
+
+Agent budgets follow the same mediation boundary. Native workers and `claude-sdk` mediate every tool call, so the budget policy in [Budget semantics](#budget-semantics) applies to them. An opaque external loop instead receives an `external-one-shot` enforcement classification: PanCode enforces one subprocess launch, its deadline, output cap, cancellation, and result-contract validation, while recording recipe per-tool numbers as `unobserved-not-enforced`. The run record and status never label those internal per-tool limits enforced, and PanCode never automatically retries a generating external-agent run. Claude vendor aliases never appear in recipes or prompt authority and cannot reintroduce a canonical tool removed by admission.
+
+Interactive TUI:
+
+```text
+/run coder implement the new command
+/run --target local-lmstudio --model your-model-id coder fix the failing unit test
+/run --agent-profile cheap --tool-profile minimal-local verifier run the regression tests
+```
+
+Headless CLI:
+
+```bash
+pancode run --agent coder "Refactor the parser."
+```
+
+`run --agent` exits 1 when the sealed result-contract quality is `fail`, meaning a check the worker ran after its last edit was red, just as it does for a verifier `fail` verdict. The run outcome stays `succeeded`. A deliberate red run before the change (a `baseline` entry) does not change the exit code. `pancode evidence inspect <runId> --json` reports the same assessment as `quality.verdict` and `quality.failedValidationCount`.
+
+Dispatch admission checks, among others:
+
+1. The recipe passes the capability policy, and a `tool_profile` only narrows the declared tools.
+2. After the target and runtime narrow the tool surface, every required tool is still present. Otherwise admission fails with the missing tools named.
+3. Every action class the admitted tools request is allowed by the worker scope.
+4. The worker scope is a subset of the orchestrator's active scope.
+5. A user-origin request does not name a shadow or internal agent, and a read-only recipe is not pointed at a task that must change the workspace.
+6. An `artifact-write` recipe such as `architect` is not pointed at a task that forbids writing any file ("do not write any files", "this is a read-only task", "change nothing"). The dispatch tool refuses it with `task_forbids_writes` before a worker starts and names a read-only agent (`scout`, `oracle`, `researcher`) to dispatch instead. A prohibition limited to some paths, or one with an exception, does not trigger the refusal.
+
+### Ad-hoc specialists
+
+The dispatch tool can compose an ephemeral specialist for one task object with
+`persona` and `tool_profile`. `persona` replaces the recipe body inside the
+same stable worker shell used for recipe runs; it does not replace PanCode's task
+contract or safety scaffolding. `tool_profile` narrows tools through the same
+validated profiles as recipe dispatch (`minimal-local`, `science-local`, or
+`full-agent`).
+
+Personas are capped at 8000 characters and are rejected for shadow agents and
+ACP delegation agents. A composed run legitimately gets its own
+`staticCompositionHash`, and its run ledger row and the `hashes` of its
+`run.settled` carry `personaOverride.promptHash` so the override is explicit
+and queryable.
+Recipe-based runs omit `personaOverride`.
+
+### Worker context injection
+
+Every dispatched worker receives per-run context through dynamic prompt
+messages (user-role messages sent before the task), never through the stable
+system prompt. The stable system prompt is fixed per recipe and tool surface, plus
+the operator-editable rule fragments selected by the request's path scope. The
+messages, in the order a worker reads them, each present only when it applies:
+
+- **Inherited context** (`context.mode` of `fork` or `splice`): a fixed preamble for a fork, whose history is seeded separately, or the splice packet text. See [worker context](../architecture/worker-context.md).
+- **Workspace**: the worker's working root and its top-level entries, capped at 600 characters.
+- **Project orientation** (recipes with `projectContextTier: bounded`): the codemap, orientation, and wiki discovery fragments, up to 2,400 characters, even when no handbook exists.
+- **Project context** (recipes with `projectContextTier: bounded`): the
+  `PANCODE.md` rules routed to this worker's role and dispatch paths, within
+  6,000 characters, with every unselected section named. Handbook prose without
+  routable sections keeps a verbatim prefix of at most 1,500 characters, and a project with no
+  handbook file contributes its structured name, conventions, and invariants within the same
+  limit, plus verification expectations for a verification-class recipe. Recipes with
+  tier `none` get none. See
+  [worker routing](../architecture/context-engine.md).
+- **Safety posture** (every run, including ACP delegation). A native worker reads that the permit in its instructions applies, the worker permission routing (`deny`, `fail`, `escalate` or `main`), and a sandbox line. An ACP delegation reads one line naming the run's effective autonomy level with the same directive text the session prompt's safety section uses. The worker's authority line states what runs: a read-only run reads "workspace edits are not permitted in this run; read-only inspection runs; other commands require approval.", and every other worker reads "workspace edits and recognized commands run; other commands require approval."
+- **Read-only notice** for a read-only dispatch.
+- **Declared result requirements**: the `expected_outputs` and `verification` entries of a typed dispatch intent, labeled as requirements and never as evidence.
+- **Compete stance** for a compete candidate.
+- **Memory** (when the request carries an approved memory section).
+- **Briefing**: the dispatching agent's briefing, inside `<<<DISPATCH-BRIEFING ... DISPATCH-BRIEFING>>>` and labeled as untrusted context data.
+- **Agent ledger** (when the dispatch unit has more than one concurrent peer): the shared board of path claims, findings, and reviews, capped at 4,000 characters and labeled as untrusted peer data. It follows everything a batch's members share, so they share a prompt prefix.
+- **Predecessor handoffs** (playbook steps with declared dependencies): each predecessor's output inside `<<<PREDECESSOR ... >>>` markers, labeled as data.
+- **Pipeline input** (`pipeline`-mode steps after the first): the previous
+  step's final assistant output, threaded as data inside a fixed
+  `<<<PIPELINE-INPUT ... PIPELINE-INPUT>>>` delimiter and labeled as input,
+  not instructions. It is ordered last, adjacent to the task,
+  and capped at 12,000 UTF-8 bytes, keeping its head and tail; the receiving run's ledger row records
+  `pipeline` provenance (source run, step position, input bytes, whether the
+  cap truncated it). Step 1 and every non-pipeline run get none.
+
+---
+
+## Fleet Management and Fault Tolerance
+
+PanCode manages running subagent tasks, tracks token costs, and handles task failures. It operates under specific safety, concurrency, and retry limits. The classification, exclusion, and delay rules are specified in [Failure classification and retries](../architecture/worker-dispatch-mechanics.md#51-failure-classification-and-retries).
+
+### 1. In-Memory Retry Queue
+Subagent runs that terminate with retryable outcomes are placed in an in-memory retry queue. The queue does not survive process restarts. The retryable outcomes are:
+- `failed`: The subagent process exited non-zero or settled with an error result.
+- `timed_out`: The run or delegation turn exceeded its timeout limit.
+- `stalled`: The run exceeded the event-inactivity window without progress or stopped responding to heartbeats.
+- `spawn_failed`: The runtime failed to spawn the subprocess or establish connection. The spawn error's own text, such as `spawn <path> ENOENT`, is settled in the run's `outcomeDetail` and `failureMessage`.
+
+### 2. Retry limits
+`fleet.retry.maxRetries` (default `2`) bounds the retries per assignment. Deterministic failures are never retried, for example `information_flow_blocked`, `result_contract_exhausted`, `worker_tool_call_cap_exhausted`, `worker_context_exhausted`, `host_verification_rejected`, `worker_not_done`, `assurance_compromised`, `merge_withheld`, and `worker_removed_tests`. The exception is a run that left its evidence obligation unmet (`obligation_unmet`), such as a builder that executed no tool over an unchanged tree: it is retried once, only on another model ([Evidence obligations and the one retry](fleet-dispatch.md#evidence-obligations-and-the-one-retry)). A run that ends `worker_context_exhausted`, like a provider context overflow, is retried once onto an eligible route with a strictly larger window. A provider 4xx answer other than 401, 403, 408, and 429 is deterministic as well. A retry is also suppressed when the failed attempt may have changed the workspace: a successful mutating tool call, or incomplete tool telemetry that cannot prove the workspace is unchanged. An `information_flow_blocked` refusal ends the worker run without retry or failover. One-shot external agent loops are never retried automatically.
+
+### 3. Backoff and Cooldown
+Scheduled retries use exponential backoff that starts at 500 ms, doubles, and caps at 60 seconds; a rate-limit failure waits at least 1 second. A failed target also enters a route cooldown (`fleet.retry.routeCooldownMs`, default 15000 ms), but the cooldown gates new dispatches only. It does not delay retries of an in-flight assignment, which `fleet.retry.maxRetries` and the backoff bound. Retries are brand-new runs that must re-pass all admission checks. If target policies or budgets deny a retry, the task chain terminates as denied.
+
+### 4. Concurrency Limits
+The setting `fleet.concurrency` restricts the number of concurrent subagent tasks. `auto` sizes the local node from usable CPUs, available memory, and any cgroup memory limit, up to eight workers; see [Fleet dispatch](fleet-dispatch.md) and [Capacity and scheduling](../architecture/capacity-and-scheduling.md).
+
+### 5. Heartbeats and Reconciler
+For native subprocess workers, PanCode uses a heartbeat mechanism. The reconciler monitors the time since the last frame from the worker. A worker silent for more than 15 seconds is terminated automatically and its run finalizes as `stalled`; the thresholds are in [Heartbeats and the Watchdog](../architecture/worker-dispatch-mechanics.md#3-heartbeats-and-the-watchdog).
+
+### 6. Worker Permission Postures
+A dispatched worker has no operator by default, so a tool call that requires interactive permission must resolve within bounded time. Workers inherit the main session's autonomy: at `yolo` a mediated, non-read-only worker runs every action class the yolo way and meets no ask (see [Workers at each level](../architecture/safety-model.md#workers-at-each-level)). At `default` the `fleet.permissions.mode` setting picks the posture:
+
+- `judge` (default): an ordinary (main-authority) ask from a native local worker goes to the main session's safety judge in the orchestrator, which reads the operator's messages and the worker's redacted call, never the task or the worker's transcript. An allow runs the call once inside the worker's permit and OS sandbox; a block, no verdict, an escalated judge or a judge that is off denies it, and a denied execute call counts toward the same refusal limit as `deny`. Operator-authority asks reach an attended operator's card and are denied headless. `judge` runs as `deny` at `yolo`, with `safety.judge.enabled` off, and on claude-sdk, ACP and subprocess runtimes, remote placements, the fleet CLI and `pancode run --agent`.
+- `deny`: the parked call becomes a structured tool denial and the run continues. The denial of an execute call names the command and the rule ([format](../architecture/worker-dispatch-mechanics.md#worker-denial-format)), and the third refused execute call ends the run with exit `3` and outcome `permission_required` ([refusal limit](../architecture/worker-dispatch-mechanics.md#worker-refusal-limit)). The Claude SDK runtime counts its execute refusals against the same limit.
+- `fail`: the run finalizes at the first refusal with outcome `failed`/`permission_required`.
+- `escalate`: the parked call is handed up to the interactive operator. The worker emits a `pancode_permission_escalated` event over its stdout; the dispatch domain republishes it on the bus as a permission request tagged with the run id; the operator resolves it in the TUI permission overlay; and the decision travels back down the worker's stdin as a `permission_decision` line (the same pipe steers use). Under `escalate` only the operator can approve.
+- `main`: the parked call goes to the main agent, which decides it with `steer`. The main agent can grant an ordinary autonomy ask only when it runs at `yolo`, the call is inside the worker's permit and the operator's delegation ceiling for the turn, and the same call would be admitted as the main agent's own at `yolo`; the worker still re-admits the call under its unchanged permit before it runs. Below `yolo` with an operator attached, the main agent's approval becomes an ask to the operator; headless below `yolo`, the ask is denied at once. Operator-authority asks, hard blocks, gateway-wrapped calls and calls too large to evaluate are never main-grantable. Only native local workers can take main-agent grants. A main-agent denial of an execute ask counts toward the worker's refusal limit.
+
+Escalate is only meaningful with an interactive operator attached. Headless sessions have no subscriber, so the escalation resolves by the timeout fallback. The bounds are `fleet.permissions.escalation` (`{ timeoutMs, fallback }`, defaults 120000 ms and `deny`): a parked ask that no operator answers within `timeoutMs` applies the fallback deny/fail, so an escalate-posture run can never hang forever. The heartbeat timer runs independently of the parked call, so an escalated worker keeps reporting alive while it waits. Each escalation and its resolution (operator or timeout) is tallied in the `escalations` counters (`requested`, `approved`, `denied`, `timedOut`) of the run's `run.settled`; a timed-out or denied escalation also raises an `escalation` finding in the run's `evidence.assessed` record. ACP delegations are out of scope: they resolve permissions through their own mediator and have no worker stdin channel.
+
+---
+
+
+## Adding a project agent
+
+Create `.pancode/agents/my-agent.md`:
+
+```md
+---
+version: 1
+name: My Agent
+description: Focused local review helper.
+tools:
+  required: [read, artifact]
+  optional: [grep, find, ls, git]
+skills: []
+audience: custom
+category: quality
+capabilityClass: artifact-write
+latencyClass: balanced
+projectContextTier: bounded
+budget: {toolCalls: 20, synthesis: true}
+resultContract: {kind: artifact-report}
+tags: [review]
+---
+
+You are My Agent. Inspect only the requested area. Never edit files. End by writing a concise review artifact (`artifact` kind="review") with risks, evidence, and follow-up tests.
+```
+
+Then run:
+
+```bash
+pancode agents validate
+pancode agents
+pancode run --agent my-agent "Review the parser change."
+```
+
+`pancode agents validate` checks the project and user agent recipes, the project and user skills, and the fleet bindings in `.pancode/settings.local.yaml`. It prints each problem as one `file: field: message` line and exits 1 when it finds any.

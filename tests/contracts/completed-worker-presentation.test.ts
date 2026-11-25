@@ -1,0 +1,607 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { readRunResultFacts, runEvidenceOf } from "../../src/domains/dispatch/run-result-facts.js";
+import { finishRunResult } from "../../src/domains/dispatch/run-settlement.js";
+import { summarizeTrustStatus } from "../../src/domains/evidence/trust-projection.js";
+import { adaptRunTrustStatus } from "../../src/domains/evidence/trust-status.js";
+import { readRunRecord, telemetryRunDirectory } from "../../src/domains/telemetry/index.js";
+import { stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
+import { createChatPanel } from "../../src/interactive/chat-panel.js";
+import { rehydrateChatPanelFromTurns } from "../../src/interactive/chat-renderer.js";
+import { createDispatchBoardView } from "../../src/interactive/dispatch-board.js";
+import type { DispatchBoardRow } from "../../src/interactive/dispatch-row-model.js";
+import { renderWorkerEntryLines } from "../../src/interactive/renderers/worker-entry.js";
+import { transcriptDetail } from "../../src/interactive/transcript-detail.js";
+import { readWorkerRunResultFactsForReplay } from "../../src/session-control/worker-run-results.js";
+import type { WorkerEntryState } from "../../src/session-control/worker-stream.js";
+import { judgeNumericTexts } from "../../src/tools/verify/scripts.js";
+import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
+import { settledRunTrust, writeSettledRun } from "../harness/settled-run.js";
+
+function worker(
+	text: string,
+	kind: NonNullable<WorkerEntryState["result"]>["contractKind"] = "debugger-report",
+): WorkerEntryState {
+	const envelope = fixtureEnvelope("aa-run");
+	const draft = fixtureReceiptDraft(envelope);
+	draft.output = { text, truncated: false, state: "final", bytes: Buffer.byteLength(text) };
+	draft.quality.resultContract = {
+		sourceId: `agent-result-contract:${kind}:1`,
+		validatorDigest: "a".repeat(64),
+		conformance: "pass",
+		quality: "unmeasured",
+	};
+	const trust = settledRunTrust(
+		finishRunResult(draft, envelope, {
+			terminal: { terminalReason: draft.terminalReason ?? "completed" },
+			processExitCode: envelope.exitCode,
+			frameType: null,
+			usage: undefined,
+		}).result,
+	);
+	return {
+		assignmentId: "a",
+		runId: "aa-run",
+		origin: "agent",
+		agentId: "debugger",
+		runtime: { kind: "pancode", targetId: "test", wireModelId: "test" },
+		text,
+		droppedLines: 0,
+		tools: [],
+		attempts: [],
+		pending: false,
+		result: { trust, outcome: "succeeded", contract: "pass", contractKind: kind },
+	};
+}
+function board(entry: WorkerEntryState, width: number, extra: Partial<DispatchBoardRow> = {}): string[] {
+	const contract = entry.result?.contract;
+	const kind = entry.result?.contractKind;
+	const row: DispatchBoardRow = {
+		runId: entry.runId,
+		agentId: entry.agentId,
+		runtimeKind: "http",
+		runtimeId: "test",
+		targetId: "test",
+		wireModelId: "test",
+		status: entry.pending ? "running" : entry.result?.outcome === "failed" ? "failed" : "completed",
+		elapsedMs: 0,
+		usage: { kind: "pending" },
+		lastContextTokens: null,
+		ttft: null,
+		...(kind && contract ? { resultContract: { kind, conformance: contract } } : {}),
+		progress: {
+			phase: entry.pending ? "writing" : "settled",
+			settled: !entry.pending,
+			tailText: entry.text,
+			droppedLines: entry.droppedLines,
+			droppedBytes: entry.progress?.droppedBytes ?? 0,
+			currentAction: null,
+			recentActions: [],
+			toolNames: [],
+		},
+		...extra,
+	};
+	const view = createDispatchBoardView(
+		() => [row],
+		() => undefined,
+	);
+	view.toggleDetail();
+	return view.render(width);
+}
+const plain = (rows: string[]) => rows.map(stripTerminalSequences).join("\n");
+
+test("recognized settled debugger reports share diagnosis and reproduction truth at narrow widths", () => {
+	const entry = worker(
+		JSON.stringify({
+			diagnosis: "Parser rejects valid input.",
+			reproduction: "not-reproduced",
+			evidence: Array.from({ length: 20 }, (_, i) => `Evidence ${i}: ${"detail ".repeat(12)}`),
+		}),
+	);
+	for (const width of [43, 80, 120]) {
+		const transcript = renderWorkerEntryLines(entry, width, { detail: transcriptDetail("standard") });
+		const fleet = board(entry, width);
+		for (const rows of [transcript, fleet]) {
+			assert.match(plain(rows), /Parser rejects valid input/);
+			assert.match(plain(rows), /reproduction not-reproduced/);
+			assert.doesNotMatch(plain(rows), /"diagnosis"|"reproduction"/);
+			for (const row of rows) assert.ok(visibleWidth(row) <= width);
+		}
+		assert.match(plain(fleet), /\/view/);
+	}
+});
+
+test("a settled coder's mutation report reads as words on the fleet board as on its card", () => {
+	const entry = worker(
+		JSON.stringify({
+			mutatedPaths: ["textutil/slug.py"],
+			validations: [{ name: "python-unittest", passed: true, evidence: "4 tests passed" }],
+			commitMessage: "fix slug",
+		}),
+	);
+	const trust = entry.result?.trust;
+	assert.ok(entry.result && trust);
+	// A mutation report is no presented contract kind, so only the sealed record admits it.
+	delete entry.result.contractKind;
+	const transcript = plain(renderWorkerEntryLines(entry, 120, { detail: transcriptDetail("standard") }));
+	const fleet = plain(board(entry, 120, { trust: summarizeTrustStatus(trust), commitPlacement: {} }));
+	assert.match(plain(board(entry, 120)), /"mutatedPaths"/);
+	for (const text of [transcript, fleet]) {
+		assert.match(text, /changed textutil\/slug\.py/);
+		assert.match(text, /python-unittest: 4 tests passed/);
+		assert.doesNotMatch(text, /"mutatedPaths"/);
+	}
+	// With the run's placement on its row, the board says where the commit lands as the card does.
+	for (const text of [transcript, fleet]) assert.match(text, /proposed commit message, not committed: fix slug/);
+	const onBranch = { trust: summarizeTrustStatus(trust), commitPlacement: { branch: "pancode/task-7" } };
+	assert.match(plain(board(entry, 120, onBranch)), /commit on pancode\/task-7: fix slug/);
+	// A row whose result was never read claims neither.
+	const unread = plain(board(entry, 120, { trust: summarizeTrustStatus(trust) }));
+	assert.match(unread, /commit message: fix slug/);
+	assert.doesNotMatch(unread, /not committed|commit on/);
+});
+
+test("live, failed-contract, partial, malformed and unknown answers never acquire a contract summary", () => {
+	const raw = '{"diagnosis":"RAW_DIAGNOSIS","reproduction":"unknown","evidence":[]}';
+	const cases = [
+		worker(raw),
+		worker(raw),
+		worker(raw),
+		worker(raw.slice(0, -1)),
+		worker('{"unknown":9007199254740993}'),
+	];
+	const live = cases[0];
+	const failed = cases[1];
+	const truncated = cases[2];
+	assert.ok(live && failed && truncated && failed.result);
+	live.pending = true;
+	failed.result.contract = "fail";
+	truncated.droppedLines = 1;
+	for (const entry of cases) {
+		for (const rows of [
+			renderWorkerEntryLines(entry, 120, { detail: transcriptDetail("detailed") }),
+			board(entry, 120),
+		]) {
+			assert.doesNotMatch(plain(rows), /reproduction unknown/);
+		}
+	}
+	assert.match(plain(renderWorkerEntryLines(worker('{"unknown":9007199254740993}'), 120, {})), /9007199254740993/);
+});
+
+test("export retains raw structured fields, source precision and secret redaction", () => {
+	const raw =
+		'{"diagnosis":"Investigate","reproduction":"unknown","evidence":[],"number":9007199254740993,"token":"x","context":"API_KEY=fixture-secret"}';
+	const entry = worker(raw);
+	const output = plain(renderWorkerEntryLines(entry, 120, { unbounded: true }));
+	assert.match(output, /"diagnosis"/);
+	assert.match(output, /9007199254740993/);
+	assert.doesNotMatch(output, /fixture-secret/);
+	assert.equal(entry.text, raw);
+});
+
+test("decoded Unicode and terminal controls stay safe on both production surfaces", () => {
+	const entry = worker(
+		JSON.stringify({
+			diagnosis: "研究 \u001b]0;HIDDEN_TITLE\u0007invalid\u001b[31m input\u202e",
+			reproduction: "unknown",
+			evidence: [],
+		}),
+	);
+	for (const rows of [renderWorkerEntryLines(entry, 43, {}), board(entry, 43)]) {
+		const text = plain(rows);
+		assert.match(text, /研究/);
+		assert.doesNotMatch(text, /HIDDEN_TITLE|\u202e/);
+		for (const row of rows) assert.ok(visibleWidth(row) <= 43);
+	}
+});
+
+test("checkpoint questions and execution failures stay visible", () => {
+	const checkpoint = worker(
+		'needs_input: checkpoint:decision\nShould I reproduce on the production fixture?\n{"diagnosis":"Do not replace my question","reproduction":"unknown","evidence":[]}',
+	);
+	assert.match(
+		plain(renderWorkerEntryLines(checkpoint, 80, { detail: transcriptDetail("compact") })),
+		/Should I reproduce/,
+	);
+	assert.match(plain(board(checkpoint, 80)), /Should I reproduce/);
+	const failed = worker('{"diagnosis":"The tool failed","reproduction":"unknown","evidence":[]}');
+	assert.ok(failed.result);
+	failed.result.outcome = "failed";
+	failed.result.failureMessage = "Fixture could not start";
+	assert.match(plain(renderWorkerEntryLines(failed, 80, {})), /Fixture could not start/);
+	assert.match(plain(board(failed, 80)), /failed/);
+});
+
+test("settled sibling and helper failures survive Detailed's live-card shortcut", () => {
+	const entry = worker("Decoded parser input safely.");
+	for (const width of [40, 80, 120, 200]) {
+		const detailed = renderWorkerEntryLines(entry, width, { detail: transcriptDetail("detailed"), siblings: [entry] });
+		assert.match(plain(detailed), /Decoded parser input safely/);
+		assert.ok(detailed.every((line) => visibleWidth(line) <= width));
+	}
+	assert.ok(entry.result);
+	entry.result.outcome = "failed";
+	entry.result.failureMessage = "Parser check could not start";
+	for (const helper of [false, true]) {
+		if (helper) entry.helper = true;
+		else delete entry.helper;
+		for (const style of ["compact", "standard", "detailed"] as const) {
+			const rows = renderWorkerEntryLines(entry, 80, { detail: transcriptDetail(style), siblings: [entry] });
+			assert.match(plain(rows), /Parser check could not start/);
+		}
+	}
+});
+
+test("scout numeric line tokens that cannot survive parsing remain source text", () => {
+	const entry = worker(
+		'{"findings":[{"claim":"Check here","path":"file.ts","line":1.00000000000000001}],"needsSplit":false}',
+		"scout-report",
+	);
+	assert.ok(entry.result);
+	assert.match(
+		plain(renderWorkerEntryLines(entry, 120, { detail: transcriptDetail("detailed") })),
+		/1\.00000000000000001/,
+	);
+	assert.match(plain(board(entry, 120)), /1\.00000000000000001/);
+});
+
+test("recognized verifier, research, world knowledge and scout reports retain limitations and provenance", () => {
+	const cases = [
+		{
+			kind: "verifier-report",
+			value: { verdict: "fail", checks: [{ name: "test", passed: false, evidence: "Could not reproduce" }] },
+			expected: /verdict fail/,
+		},
+		{
+			kind: "research-report",
+			value: { source: "external", findings: [{ claim: "A reported claim", evidence: "Paper citation" }] },
+			expected: /source external/,
+		},
+		{
+			kind: "world-knowledge-report",
+			value: {
+				discovery: "unavailable",
+				facts: [],
+				synthesis: [],
+				uncertainties: ["Not independently checked"],
+				followUpVerification: ["Run a local test"],
+			},
+			expected: /discovery unavailable/,
+		},
+		{
+			kind: "scout-report",
+			value: { needsSplit: false, findings: [{ claim: "Inspect parser", path: "parser.ts", line: 12 }] },
+			expected: /no split needed/,
+		},
+	] as const;
+	for (const item of cases) {
+		const entry = worker(JSON.stringify(item.value), item.kind);
+		assert.ok(entry.result);
+		for (const rows of [
+			renderWorkerEntryLines(entry, 120, { detail: transcriptDetail("detailed") }),
+			board(entry, 120),
+		]) {
+			assert.match(plain(rows), item.expected);
+			assert.doesNotMatch(plain(rows), /"findings"|"checks"/);
+		}
+	}
+});
+
+for (const mode of ["verified", "tampered", "missing-ledger", "unsealed"] as const) {
+	test(`receipt reader to production replay admits only verified summaries: ${mode}`, async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "aa2-receipt-"));
+		try {
+			const envelope = fixtureEnvelope("aa2");
+			const draft = fixtureReceiptDraft(envelope);
+			draft.output = {
+				text: '{"diagnosis":"Recorded diagnosis","reproduction":"reproduced","evidence":[]}',
+				truncated: false,
+				state: "final",
+				bytes: Buffer.byteLength('{"diagnosis":"Recorded diagnosis","reproduction":"reproduced","evidence":[]}'),
+			};
+			draft.quality.resultContract = {
+				sourceId: "agent-result-contract:debugger-report:1",
+				validatorDigest: "a".repeat(64),
+				conformance: "pass",
+				quality: "unmeasured",
+			};
+			await writeSettledRun(stateDir, draft);
+			const bundlePath = join(telemetryRunDirectory(stateDir, "aa2"), "bundle.json");
+			if (mode === "tampered")
+				writeFileSync(bundlePath, JSON.stringify({ ...JSON.parse(readFileSync(bundlePath, "utf8")), version: 2 }));
+			if (mode === "unsealed") rmSync(bundlePath);
+			const bytes = mode === "unsealed" ? null : readFileSync(bundlePath, "utf8");
+
+			if (mode !== "missing-ledger") writeFileSync(join(stateDir, "runs.json"), JSON.stringify([envelope]));
+			const facts = readWorkerRunResultFactsForReplay("aa2", stateDir);
+			assert.ok(facts);
+			assert.equal(
+				facts.trust?.artifactIntegrity.state,
+				mode === "tampered" ? "failed" : mode === "unsealed" ? "unknown" : "verified",
+			);
+			for (const style of ["compact", "standard", "detailed"] as const) {
+				const panel = createChatPanel({ getOutputStyle: () => style });
+				rehydrateChatPanelFromTurns(
+					panel,
+					[
+						{
+							kind: "workerRun",
+							turnId: "worker",
+							parentTurnId: null,
+							timestamp: "2026-09-17T00:00:00Z",
+							assignmentId: "a",
+							runId: "aa2",
+							origin: "user",
+							agentId: "debugger",
+							runtime: { kind: "pancode" },
+						},
+					],
+					{ readWorkerRunResult: (id) => readWorkerRunResultFactsForReplay(id, stateDir) },
+				);
+				const output = plain(panel.render(120));
+				if (mode === "verified" || mode === "missing-ledger") assert.match(output, /reproduction reproduced/);
+				else {
+					assert.doesNotMatch(output, /reproduction reproduced/);
+					// The run row leads with the record's verdict at every tier; detailed names the record on its own row.
+					assert.match(output, mode === "tampered" ? /✗ ◇ debugger .*seal broken/ : /! ◇ debugger .*unverified/);
+					if (style === "detailed")
+						assert.match(
+							output,
+							mode === "tampered" ? /record: not trusted/ : /record: unverified; raw output, not admitted as evidence/,
+						);
+				}
+			}
+			const exported = createChatPanel({ unboundedToolBodies: true });
+			rehydrateChatPanelFromTurns(
+				exported,
+				[
+					{
+						kind: "workerRun",
+						turnId: "worker",
+						parentTurnId: null,
+						timestamp: "2026-09-17T00:00:00Z",
+						assignmentId: "a",
+						runId: "aa2",
+						origin: "user",
+						agentId: "debugger",
+						runtime: { kind: "pancode" },
+					},
+				],
+				{ readWorkerRunResult: (id) => readWorkerRunResultFactsForReplay(id, stateDir), unboundedToolBodies: true },
+			);
+			assert.match(plain(exported.render(120)), /"diagnosis"/);
+			if (bytes !== null) assert.equal(readFileSync(bundlePath, "utf8"), bytes);
+		} finally {
+			rmSync(stateDir, { recursive: true, force: true });
+		}
+	});
+}
+
+test("whole-object admission preserves fenced checkpoints across styles and rejects surrounding limitations", () => {
+	const json = '{"diagnosis":"Diagnosis","reproduction":"unknown","evidence":[]}';
+	for (const raw of [json, `\`\`\`json\n${json}\n\`\`\``]) {
+		assert.match(plain(renderWorkerEntryLines(worker(raw), 120, {})), /reproduction unknown/);
+	}
+	const checkpoint = worker(
+		`\`\`\`json\nneeds_input: checkpoint:decision\nShould I run expensive validation?\n${json}\n\`\`\``,
+	);
+	for (const width of [43, 80, 120]) {
+		for (const style of ["compact", "standard", "detailed"] as const) {
+			const rows = renderWorkerEntryLines(checkpoint, width, { detail: transcriptDetail(style) });
+			assert.match(plain(rows), /Should I run expensive validation/);
+			assert.match(plain(rows), /needs input/);
+			assert.doesNotMatch(plain(rows), /reproduction unknown/);
+			assert.ok(rows.length <= 20);
+			for (const row of rows) assert.ok(visibleWidth(row) <= width);
+		}
+		const rows = board(checkpoint, width);
+		assert.match(plain(rows).replace(/[│\s]+/gu, " "), /Should I run expensive validation/);
+		assert.ok(
+			rows.filter(
+				(row) => stripTerminalSequences(row).includes("│           │") || stripTerminalSequences(row).includes("│ answer"),
+			).length <= 7,
+		);
+		for (const row of rows) assert.ok(visibleWidth(row) <= width);
+	}
+	for (const raw of [
+		`\`\`\`json\nLimitation: validation unavailable\n${json}\n\`\`\``,
+		`${json}\nLimitation: validation unavailable`,
+		`{unparsed limitation}\n${json}`,
+	]) {
+		for (const rows of [
+			renderWorkerEntryLines(worker(raw), 120, { detail: transcriptDetail("detailed") }),
+			board(worker(raw), 120),
+		]) {
+			assert.match(plain(rows), /[Ll]imitation/);
+			assert.doesNotMatch(plain(rows), /reproduction unknown/);
+		}
+	}
+});
+
+test("Scout escaped and literal keys preserve unsafe numeric tokens and admit exact positive controls", () => {
+	for (const key of ['"line"', String.raw`"\u006cine"`, String.raw`"li\u006ee"`]) {
+		for (const token of [
+			"1.00000000000000001",
+			"9007199254740993",
+			"1e400",
+			"-0",
+			"123456789012345678901234567890",
+			"12",
+		]) {
+			const raw = `{"findings":[{"claim":"Inspect","path":"file.ts",${key}:${token}}],"needsSplit":false}`;
+			const entry = worker(raw, "scout-report");
+			for (const rows of [
+				renderWorkerEntryLines(entry, 120, { detail: transcriptDetail("detailed") }),
+				board(entry, 120),
+			]) {
+				const output = plain(rows);
+				if (token === "12") assert.match(output, /file.ts:12/);
+				else {
+					assert.ok(output.includes(token), output);
+					assert.doesNotMatch(output, /file.ts:1\b|no split needed/);
+				}
+			}
+			assert.ok(plain(renderWorkerEntryLines(entry, 120, { unbounded: true })).includes(token));
+			assert.equal(entry.text, raw);
+		}
+	}
+});
+
+test("a host check that never started keeps its not-run reason in sealed evidence and the failure line", async () => {
+	const stateDir = mkdtempSync(join(tmpdir(), "r3-not-run-"));
+	try {
+		const draft = fixtureReceiptDraft(fixtureEnvelope("nr1"));
+		const check = { check: "repro", argv: ["missing-bin"], cwd: "/r", durationMs: 0, memo: false, outputTail: "" };
+		draft.hostVerification = {
+			status: "rejected",
+			checks: [
+				{ ...check, exitCode: 1, notRun: "spawn-failed" },
+				{ ...check, check: "unit", exitCode: 0 },
+			],
+		};
+		await writeSettledRun(stateDir, draft);
+		const sealed = runEvidenceOf("nr1", readRunRecord(stateDir, "nr1")).sealed;
+		assert.deepEqual(
+			sealed?.hostVerification?.checks.map((entry) => [entry.check, entry.exitCode, entry.notRun]),
+			[
+				["repro", 1, "spawn-failed"],
+				["unit", 0, undefined],
+			],
+		);
+		assert.equal(
+			readRunResultFacts("nr1", stateDir)?.validationFailure,
+			"PanCode's own check failed: repro did not run: its process could not start",
+		);
+	} finally {
+		rmSync(stateDir, { recursive: true, force: true });
+	}
+});
+
+test("a judged host check seals its bounded report and the tree it judged in the run result", async () => {
+	const stateDir = mkdtempSync(join(tmpdir(), "d3-sealed-report-"));
+	try {
+		const draft = fixtureReceiptDraft(fixtureEnvelope("sr1"));
+		const referenceText = JSON.stringify({ energy: -76.0267, grid: [1, 2] });
+		const report = judgeNumericTexts(
+			JSON.stringify({ energy: -75.9, grid: [1, 2] }),
+			referenceText,
+			{ relative: 1e-6 },
+			"reference '/r/ref.json'",
+			"/r/ref.json",
+		);
+		assert.ok(!(report instanceof Error));
+		const tree = { root: "/r", head: "a".repeat(40), fingerprint: "b".repeat(64) };
+		draft.hostVerification = {
+			status: "rejected",
+			checks: [
+				{
+					check: "energy",
+					argv: ["solve"],
+					cwd: "/r",
+					exitCode: 1,
+					durationMs: 5,
+					memo: false,
+					outputTail: "",
+					report,
+					tree,
+				},
+			],
+		};
+		await writeSettledRun(stateDir, draft);
+		const record = readRunRecord(stateDir, "sr1");
+		const sealed = record?.result?.state === "resolved" ? record.result.value.hostVerification?.checks[0] : undefined;
+		assert.deepEqual(sealed?.tree, { head: tree.head, fingerprint: tree.fingerprint });
+		assert.deepEqual(sealed?.report, {
+			kind: "numeric-compare",
+			passed: false,
+			rule: report.rule,
+			tolerance: { relative: 1e-6 },
+			reference: { path: "/r/ref.json", sha256: createHash("sha256").update(referenceText).digest("hex") },
+			payloadSha256: report.actual?.sha256 ?? null,
+			keyCount: 2,
+			failedKeyCount: 1,
+			failedKeys: ["energy"],
+			keys: [
+				{
+					key: "energy",
+					passed: false,
+					absolute: report.keys[0]?.worst?.absolute ?? null,
+					relative: report.keys[0]?.worst?.relative ?? null,
+					ulp: report.keys[0]?.worst?.ulp ?? null,
+				},
+				{ key: "grid", passed: true, absolute: 0, relative: 0, ulp: 0 },
+			],
+		});
+	} finally {
+		rmSync(stateDir, { recursive: true, force: true });
+	}
+});
+
+const PRODUCER = { state: "verified", by: "producer" } as const;
+
+test("only host checks executed for the run validate it; reused, all-skipped and unrecorded passes leave it unknown", async () => {
+	const stateDir = mkdtempSync(join(tmpdir(), "d3-host-answered-"));
+	try {
+		const check = {
+			check: "unit",
+			argv: ["npm", "test"],
+			cwd: "/r",
+			exitCode: 0,
+			durationMs: 1,
+			memo: false,
+			outputTail: "",
+		};
+		const cases = [
+			["executed", [check], "validated:host-verification", [1, 0, 0]],
+			[
+				"reused",
+				[check, { ...check, memo: true, evidenceRunId: "earlier" }],
+				"unknown:host-verification-reused",
+				[1, 1, 0],
+			],
+			[
+				"partly-skipped",
+				[check, { ...check, check: "lint", notRun: "nothing-changed" as const }],
+				"validated:host-verification",
+				[1, 0, 1],
+			],
+			[
+				"skipped",
+				[{ ...check, check: "lint", notRun: "nothing-changed" as const }],
+				"unknown:host-verification-skipped",
+				[0, 0, 1],
+			],
+		] as const;
+		for (const [runId, checks, validation, counts] of cases) {
+			const draft = fixtureReceiptDraft(fixtureEnvelope(runId));
+			draft.hostVerification = { status: "verified", checks: [...checks] };
+			await writeSettledRun(stateDir, draft);
+			const sealed = readRunRecord(stateDir, runId)?.settled;
+			const host = sealed?.hostVerification;
+			assert.deepEqual([host?.executed, host?.reused, host?.skipped], counts, runId);
+			assert.ok(sealed);
+			const entry = adaptRunTrustStatus({ ...sealed, runId, digest: null }, PRODUCER).validationGrounding;
+			assert.equal(`${entry.state}:${"authority" in entry ? entry.authority.id : ""}`, validation, runId);
+			if (runId !== "executed") continue;
+			// A run settled before the counts existed cannot say whether its pass was executed.
+			assert.ok(host);
+			const legacy = { ...host };
+			delete legacy.executed;
+			delete legacy.reused;
+			delete legacy.skipped;
+			const old = adaptRunTrustStatus(
+				{ ...sealed, hostVerification: legacy, runId, digest: null },
+				PRODUCER,
+			).validationGrounding;
+			assert.equal(`${old.state}:${"authority" in old ? old.authority.id : ""}`, "unknown:host-verification-unrecorded");
+		}
+	} finally {
+		rmSync(stateDir, { recursive: true, force: true });
+	}
+});

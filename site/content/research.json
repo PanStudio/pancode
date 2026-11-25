@@ -1,0 +1,209 @@
+[
+  {
+    "slug": "drivers",
+    "title": "Drivers: the model you have, on its own wire",
+    "description": "How PanCode shapes each request for its provider wire, names the cause of a cache break, and an experiment to measure the saving.",
+    "category": "Subsystem",
+    "time": "6 min",
+    "author": "Anthony Kougkas",
+    "source": "drivers.md",
+    "basis": "Read from source; first experiment not yet run",
+    "versionScope": "0.9.0-dev",
+    "status": "Design on the development tree. Not yet measured.",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/configuration-and-targets.md"
+    ]
+  },
+  {
+    "slug": "memory",
+    "title": "Memory: context as a priced storage tier",
+    "description": "How PanCode tiers the context window, prices an eviction against the prompt cache, and recalls evicted output exactly, with a first experiment.",
+    "category": "Subsystem",
+    "time": "6 min",
+    "author": "Anthony Kougkas",
+    "source": "memory.md",
+    "basis": "Read from source; first experiment not yet run",
+    "versionScope": "0.9.0-dev",
+    "status": "Design on the development tree. Not yet measured.",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/context-continuity.md"
+    ]
+  },
+  {
+    "slug": "scheduling",
+    "title": "Scheduling: a mixed fleet under one policy",
+    "description": "How PanCode admits, bounds, and grades its workers and other coding agents, with a first experiment against a single agent.",
+    "category": "Subsystem",
+    "time": "6 min",
+    "author": "Anthony Kougkas",
+    "source": "scheduling.md",
+    "basis": "Read from source; first experiment not yet run",
+    "versionScope": "0.9.0-dev",
+    "status": "Design on the development tree. Not yet measured.",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/fleet-dispatch.md",
+      "guide/built-in-agents.md"
+    ]
+  },
+  {
+    "slug": "protection",
+    "title": "Protection: a floor at every autonomy level",
+    "description": "How PanCode decides each call: a fixed floor, containment, a judge that never reads model text, and flow rules, with a first experiment.",
+    "category": "Subsystem",
+    "time": "6 min",
+    "author": "Anthony Kougkas",
+    "source": "protection.md",
+    "basis": "Read from source; first experiment not yet run",
+    "versionScope": "0.9.0-dev",
+    "status": "Design on the development tree. Not yet measured.",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/sandbox-and-safety.md",
+      "guide/information-flow.md"
+    ]
+  },
+  {
+    "slug": "accounting",
+    "title": "Accounting: done, checked against what ran",
+    "description": "How PanCode checks a finished task against what it observed and seals the record, with the first experiment the project plans to run.",
+    "category": "Subsystem",
+    "time": "6 min",
+    "author": "Anthony Kougkas",
+    "source": "accounting.md",
+    "basis": "Read from source; first experiment not yet run",
+    "versionScope": "0.9.0-dev",
+    "status": "Design on the development tree. Not yet measured.",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/quality-policy.md",
+      "guide/exit-codes-and-output.md"
+    ]
+  },
+  {
+    "slug": "system-one-decisions",
+    "title": "Can a small decision model improve an agent's work?",
+    "description": "Open questions on System One: evaluating on trajectories, asking better questions, and bringing a decision model, with a first experiment.",
+    "category": "Drivers · Open question",
+    "time": "12 min",
+    "author": "Anthony Kougkas",
+    "source": "system-one-decisions.md",
+    "basis": "Small samples; first experiment not yet run",
+    "versionScope": "0.9.0",
+    "status": "Open question. System One is off by default.",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/system-one.md"
+    ]
+  },
+  {
+    "slug": "sealed-run-records",
+    "title": "Can an agent run be a scientific record?",
+    "description": "What a sealed run record proves and what it cannot, how far repeated runs differ, and a first experiment to measure that spread with PanCode.",
+    "category": "Accounting · Open question",
+    "time": "10 min",
+    "basis": "Read from source; first experiment not yet run",
+    "status": "Open question. The records have shipped; no study exists yet.",
+    "author": "Anthony Kougkas",
+    "versionScope": "0.9.0",
+    "interfaces": [
+      "Terminal"
+    ],
+    "source": "sealed-run-records.md",
+    "guides": [
+      "guide/built-in-agents.md",
+      "guide/fleet-dispatch.md"
+    ]
+  },
+  {
+    "slug": "proactive-memory",
+    "title": "Does agent memory change outcomes?",
+    "description": "Whether lessons change what an agent does, whether self-approval is safe, and a first experiment on one repeated mistake.",
+    "category": "Memory · Open question",
+    "time": "8 min",
+    "basis": "Read from source; first experiment not yet run",
+    "status": "Open question. Memory has shipped; its effect is unmeasured.",
+    "author": "Anthony Kougkas",
+    "versionScope": "0.9.0",
+    "interfaces": [
+      "Terminal"
+    ],
+    "source": "proactive-memory.md",
+    "guides": [
+      "guide/proactive-memory.md"
+    ]
+  },
+  {
+    "slug": "context-and-retrieval",
+    "title": "What does an agent lose when its context is reduced?",
+    "description": "Fidelity of summaries, the cost of reduction, and search by meaning, with a first experiment that counts how many planted facts survive.",
+    "category": "Memory · Open question",
+    "time": "8 min",
+    "basis": "Read from source; first experiment not yet run",
+    "status": "Open question. Cost is measured; fidelity is not.",
+    "author": "Anthony Kougkas",
+    "versionScope": "0.9.0",
+    "interfaces": [
+      "Terminal"
+    ],
+    "source": "context-and-retrieval.md",
+    "guides": [
+      "guide/context-continuity.md",
+      "guide/semantic-context.md"
+    ]
+  },
+  {
+    "slug": "fleets-and-local-models",
+    "title": "When do several agents or small models pay off?",
+    "description": "Compete, council, heterogeneous fleets and local models, with no comparative numbers yet and a first experiment on one seeded bug.",
+    "category": "Scheduling · Open question",
+    "time": "7 min",
+    "basis": "Read from source; first experiment not yet run",
+    "status": "Open question. The controls have shipped; no comparison exists.",
+    "author": "Anthony Kougkas",
+    "versionScope": "0.9.0",
+    "interfaces": [
+      "Terminal"
+    ],
+    "source": "fleets-and-local-models.md",
+    "guides": [
+      "guide/fleet-dispatch.md",
+      "guide/configuration-and-targets.md",
+      "guide/research-and-arena.md"
+    ]
+  },
+  {
+    "slug": "scientific-and-hpc-workflows",
+    "title": "What would make a scientist trust an agent's change?",
+    "description": "Pre-registered checks, validated modernization, a project store and scheduler use on scientific code, with a first experiment on catching a numerical error.",
+    "category": "Accounting · Open question",
+    "time": "8 min",
+    "basis": "Read from source; first experiment not yet run",
+    "status": "Open question. The skills have shipped; no study exists.",
+    "author": "Anthony Kougkas",
+    "versionScope": "0.9.0",
+    "interfaces": [
+      "Terminal"
+    ],
+    "source": "scientific-and-hpc-workflows.md",
+    "guides": [
+      "guide/hpc-clusters.md",
+      "guide/quality-policy.md",
+      "guide/tool-usage.md"
+    ]
+  }
+]

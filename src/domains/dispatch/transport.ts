@@ -1,0 +1,253 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Worker transport ladder.
+ *
+ * One interface, one wire protocol: a WorkerSpec JSON line into the worker's
+ * stdin, NDJSON events out of its stdout, stderr tail for diagnostics. The
+ * `local` tier is today's subprocess fork; the `ssh` tier launches the same
+ * worker entry on a remote node over an SSH-tunneled channel. Container and
+ * cloud tiers are future implementors of this same interface, not variations
+ * of the protocol.
+ *
+ * SSH tier invariants:
+ *   - The remote environment is a whitelist, never the orchestrator's
+ *     process.env. Remote workers default to a user-managed target lifecycle
+ *     so a worker on a node that serves models for the operator can never
+ *     evict a resident model.
+ *   - The orchestrator cwd is entered on the remote node (shared-filesystem
+ *     assumption; path parity is a doctor preflight, and placement refuses
+ *     nodes that have not passed it).
+ *   - Abort closes the channel (the worker's parent monitor aborts on stdin
+ *     EOF) and escalates to a remote `kill` fallback using the pid the worker
+ *     announced, so no remote process is stranded.
+ */
+
+import { AI_AGENT_NAME } from "../../core/agent-environment.js";
+import { runCommandVector } from "../../core/safe-exec.js";
+import { shellQuote } from "../../core/shell-quote.js";
+import type { WorkerSpec } from "../../worker/spec-contract.js";
+import type { RunNodeIdentity } from "./types.js";
+import { type SpawnedWorker, spawnWorkerProcess, type WorkerProcessOptions } from "./worker-spawn.js";
+
+export type WorkerTransportKind = "local" | "ssh";
+
+/**
+ * What a placement hands a transport: every process option except the env,
+ * which each transport owns. This is derived from WorkerProcessOptions rather
+ * than restated, because a restated subset is how a placed worker's
+ * `onLedgerPost` went missing: this type once listed only cwd, both transports
+ * forwarded exactly that, and every callback dispatch passed for a worker on a
+ * fleet node was dropped at the seam. Assigning the wider option literal to the
+ * narrower parameter is legal, so nothing complained.
+ */
+export type WorkerTransportSpawnOptions = Omit<WorkerProcessOptions, "env">;
+
+export interface WorkerTransport {
+	readonly kind: WorkerTransportKind;
+	readonly node: RunNodeIdentity;
+	spawn(spec: WorkerSpec, opts?: WorkerTransportSpawnOptions): SpawnedWorker;
+}
+
+/** Connection facts for one SSH-reachable fleet node. */
+export interface SshNodeEndpoint {
+	id: string;
+	host: string;
+	user?: string;
+	port?: number;
+	identityFile?: string;
+	/**
+	 * Remote worker-entry invocation. Defaults to `pancode worker`, which requires
+	 * a version-matched pancode on the remote PATH (the doctor fleet preflight
+	 * verifies both). Operators with non-PATH installs point this at their
+	 * entry, e.g. `/opt/pancode/bin/pancode worker`.
+	 */
+	pancodeEntry?: string;
+	pancodeVersionCommand?: string;
+	/**
+	 * Residency posture projected into the remote worker's target lifecycle.
+	 * Defaults to "observe": remote workers must never evict models resident on
+	 * their node. "manage" is an explicit per-node opt-in.
+	 */
+	residency?: "observe" | "manage";
+	connectTimeoutSec?: number;
+	/**
+	 * Operator-declared capability labels for this node, exported to the remote
+	 * worker so its announcement attests the configured labels alongside the
+	 * resource values it observes.
+	 */
+	labels?: ReadonlyArray<string>;
+}
+
+export interface SshTransportOptions {
+	/** ssh client binary; contract tests substitute a fake shim. */
+	sshBinary?: string;
+	shutdownGraceMs?: number;
+}
+
+export const LOCAL_NODE_ID = "local";
+
+export function localNodeIdentity(): RunNodeIdentity {
+	return { id: LOCAL_NODE_ID, kind: "local" };
+}
+
+const DEFAULT_SSH_CONNECT_TIMEOUT_SEC = 10;
+const DEFAULT_REMOTE_PANCODE_ENTRY = "pancode worker";
+
+/**
+ * The env whitelist exported to the remote worker. Nothing from the
+ * orchestrator's process.env crosses the wire; the WorkerSpec already carries
+ * the resolved target (whose URL resolves on the remote node, so a
+ * localhost-served model plane is per-node by construction) and any
+ * orchestrator-supplied credential.
+ */
+function remoteEnvAssignments(node: SshNodeEndpoint): string {
+	// `$$` is the login shell's pid, and it leads the process group the remote
+	// command runs in. `exec` replaces that shell in place, so the worker
+	// inherits both the pid and the group leadership, and the value it announces
+	// is the group an abort must signal.
+	const labels = (node.labels ?? []).map((label) => label.trim()).filter((label) => label.length > 0);
+	const labelAssignment = labels.length > 0 ? ` PANCODE_WORKER_LABELS=${shellQuote(labels.join(","))}` : "";
+	return `AI_AGENT=${AI_AGENT_NAME} PANCODE_WORKER_PGID=$$${labelAssignment}`;
+}
+
+type TargetLifecycle = NonNullable<WorkerSpec["target"]["lifecycle"]>;
+
+export function resolveSshTargetLifecycle(
+	residency: SshNodeEndpoint["residency"],
+	targetLifecycle: WorkerSpec["target"]["lifecycle"],
+): TargetLifecycle {
+	if (targetLifecycle === "user-managed" || residency !== "manage") return "user-managed";
+	return "pancode-managed";
+}
+
+function workerSpecForSshNode(node: SshNodeEndpoint, spec: WorkerSpec): WorkerSpec {
+	// A dev-root owner token means nothing on another host's registry and must not leave this machine.
+	const { devRootOwner: _local, ...portable } = spec;
+	return {
+		...portable,
+		target: {
+			...spec.target,
+			lifecycle: resolveSshTargetLifecycle(node.residency, spec.target.lifecycle),
+		},
+	};
+}
+
+function buildRemoteWorkerCommand(node: SshNodeEndpoint, cwd: string): string {
+	const entry =
+		node.pancodeEntry !== undefined && node.pancodeEntry.trim().length > 0
+			? node.pancodeEntry.trim()
+			: DEFAULT_REMOTE_PANCODE_ENTRY;
+	return `cd ${shellQuote(cwd)} && exec env ${remoteEnvAssignments(node)} ${entry}`;
+}
+
+export function buildSshArgs(node: SshNodeEndpoint, remoteCommand: string): string[] {
+	const connectTimeout = node.connectTimeoutSec ?? DEFAULT_SSH_CONNECT_TIMEOUT_SEC;
+	const args: string[] = [
+		"-o",
+		"BatchMode=yes",
+		"-o",
+		`ConnectTimeout=${connectTimeout}`,
+		// The channel is a byte pipe, never a terminal: a pty would translate
+		// newlines and inject control sequences into the NDJSON stream.
+		"-T",
+	];
+	if (node.port !== undefined) args.push("-p", String(node.port));
+	if (node.identityFile !== undefined && node.identityFile.length > 0) args.push("-i", node.identityFile);
+	if (node.user !== undefined && node.user.length > 0) args.push("-l", node.user);
+	args.push(node.host, "--", remoteCommand);
+	return args;
+}
+
+export function createSshWorkerTransport(node: SshNodeEndpoint, opts?: SshTransportOptions): WorkerTransport {
+	const sshBinary = opts?.sshBinary ?? "ssh";
+	const identity: RunNodeIdentity = { id: node.id, kind: "ssh", host: node.host };
+	return {
+		kind: "ssh",
+		node: identity,
+		spawn(spec, spawnOpts) {
+			const cwd = spawnOpts?.cwd ?? process.cwd();
+			const remote: { pid: number | null; processGroupId: number | null } = { pid: null, processGroupId: null };
+			let remoteCleanup: Promise<string | null> | null = null;
+			let cancellationRequested = false;
+			let settled = false;
+			const killRemote = (): void => {
+				if (settled || remoteCleanup !== null) return;
+				cancellationRequested = true;
+				// The negative pid targets the whole remote process group, so a
+				// runtime's own children go with it. Without an announced group the
+				// single pid is the most the orchestrator can prove it may signal.
+				const group = remote.processGroupId;
+				const target = group !== null ? -group : remote.pid !== null ? remote.pid : null;
+				if (target === null) return;
+				// A closed SSH client says nothing about the remote group. Give the
+				// remote owner one bounded TERM/KILL window, then release its identity.
+				const command = [
+					`kill -0 ${target} 2>/dev/null || exit 0`,
+					`kill -TERM ${target} 2>/dev/null || exit 1`,
+					`for attempt in 1 2 3; do kill -0 ${target} 2>/dev/null || exit 0; sleep 1; done`,
+					`kill -KILL ${target} 2>/dev/null || { kill -0 ${target} 2>/dev/null && exit 1; exit 0; }`,
+					`sleep 1; kill -0 ${target} 2>/dev/null && exit 1; exit 0`,
+				].join("; ");
+				remoteCleanup = runCommandVector(sshBinary, buildSshArgs(node, command), {
+					timeoutMs: 15_000,
+					maxOutputBytes: 4096,
+					killGraceMs: 200,
+				}).then(
+					(result) =>
+						result.exitCode === 0 && !result.timedOut && !result.cleanupIncomplete
+							? null
+							: "remote worker cleanup could not be completed",
+					() => "remote worker cleanup channel could not be started",
+				);
+			};
+			// The remote command cds itself, so cwd is consumed here and never
+			// applied to the local ssh client. The announce and forced-kill hooks
+			// are the transport's own and compose with the caller's rather than
+			// replacing them; every other option is forwarded as handed.
+			const { cwd: _consumedCwd, onAnnounce, onForcedKill, onChannelFailure, ...forwarded } = spawnOpts ?? {};
+			const worker = spawnWorkerProcess(
+				sshBinary,
+				buildSshArgs(node, buildRemoteWorkerCommand(node, cwd)),
+				workerSpecForSshNode(node, spec),
+				{
+					...(opts?.shutdownGraceMs !== undefined ? { shutdownGraceMs: opts.shutdownGraceMs } : {}),
+					...forwarded,
+					env: process.env,
+					onAnnounce: (attestation) => {
+						remote.pid = attestation.pid;
+						remote.processGroupId = attestation.processGroupId;
+						if (cancellationRequested) killRemote();
+						onAnnounce?.(attestation);
+					},
+					onForcedKill: () => {
+						killRemote();
+						onForcedKill?.();
+					},
+					onChannelFailure: (fact) => {
+						if (!fact.afterExit) killRemote();
+						onChannelFailure?.(fact);
+					},
+				},
+			);
+			return {
+				...worker,
+				abort() {
+					if (settled) return;
+					killRemote();
+					worker.abort();
+				},
+				promise: worker.promise.then(async (result) => {
+					settled = true;
+					const failure = await remoteCleanup;
+					if (!failure) return result;
+					return {
+						...result,
+						exitCode: result.exitCode === 0 ? 1 : result.exitCode,
+						stderrTail: `${result.stderrTail ?? ""}\n[worker] ${failure}`,
+					};
+				}),
+			};
+		},
+	};
+}

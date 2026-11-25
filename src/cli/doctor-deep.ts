@@ -1,0 +1,190 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { accessSync, constants, statSync } from "node:fs";
+import path from "node:path";
+import type { YoloScriptSandboxState } from "../core/sandbox/main-session.js";
+import { ToolNames } from "../core/tool-names.js";
+import { resolveOnPath } from "../domains/interop/detect.js";
+import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
+import type { ProvidersContract, TargetStatus } from "../domains/providers/contract.js";
+import { type AutonomyLevel, mapAutonomy } from "../domains/safety/autonomy.js";
+import { SCRATCH_DISPOSABLE_REASON_CODE, SNAPSHOT_RECOVERABLE_REASON_CODE } from "../domains/safety/containment.js";
+import { createSafetyPolicyEngine } from "../domains/safety/policy-engine.js";
+import { loadValidationContract } from "../domains/safety/validation-contract.js";
+
+export interface DeepToolProbeOptions {
+	/** Tool-probe generation timeout in ms; the provider default applies when absent. */
+	toolsTimeoutMs?: number;
+}
+
+function toolProbeFinding(status: TargetStatus): DoctorFinding {
+	const name = `tools ${status.target.id}`;
+	if (status.runtime?.defaultCapabilities.decisions && !status.runtime.defaultCapabilities.chat) {
+		return { ok: true, name, level: "info", detail: "not applicable: decision-engine targets do not call tools" };
+	}
+	const probe = status.toolProbe;
+	if (!probe) {
+		if (status.available && !status.health.lastError && status.runtime && !status.runtime.probe) {
+			return {
+				ok: true,
+				name,
+				level: "info",
+				detail: `runtime has no live probe; credential source: ${status.reason || "unknown"}`,
+			};
+		}
+		const reason = status.health.lastError || status.reason || "the target did not answer";
+		return { ok: true, name, level: "warn", detail: `not probed: ${reason}` };
+	}
+	const model = probe.modelId ?? "no model";
+	if (probe.status === "verified") {
+		return { ok: true, name, level: "ok", detail: `${model} streamed a valid tool call in ${probe.latencyMs}ms` };
+	}
+	if (probe.status === "skipped") {
+		return { ok: true, name, level: "info", detail: `skipped (${model}): ${probe.error ?? "no reason given"}` };
+	}
+	return { ok: true, name, level: "warn", detail: `failed (${model}): ${probe.error ?? "unknown error"}` };
+}
+
+/**
+ * The live tool-call probe on every configured target, one row each. The
+ * probe loads a cold local model when it has to and releases only the model it
+ * loaded, so it is safe in a process that is also running chat turns.
+ */
+export async function deepToolProbeFindings(
+	providers: ProvidersContract,
+	options: DeepToolProbeOptions = {},
+): Promise<DoctorFinding[]> {
+	await providers.probeAllLive({
+		tools: true,
+		...(options.toolsTimeoutMs !== undefined ? { toolsTimeoutMs: options.toolsTimeoutMs } : {}),
+	});
+	return providers.list().map(toolProbeFinding);
+}
+
+/** The program a validator command runs: its first word after any `NAME=value` assignments. */
+function commandProgram(command: string): string | null {
+	for (const word of command.trim().split(/\s+/)) {
+		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
+		return word.length > 0 ? word : null;
+	}
+	return null;
+}
+
+function resolveProgram(program: string, workspaceRoot: string): string | null {
+	if (!program.includes("/")) {
+		const found = resolveOnPath([program]);
+		return found.presence === "present" ? (found.binary ?? null) : null;
+	}
+	const candidate = path.resolve(workspaceRoot, program);
+	try {
+		accessSync(candidate, constants.X_OK);
+		return statSync(candidate).isFile() ? candidate : null;
+	} catch {
+		return null;
+	}
+}
+
+export interface ContractDryRunOptions {
+	workspaceRoot?: string;
+	autonomy: AutonomyLevel;
+	/** The operator's `safety.scratchRoots`, for the yolo verdict of the operator's own session. */
+	scratchRoots?: ReadonlyArray<string>;
+	/** How this host runs a yolo script, so a validator that runs one gets the verdict the session would (#419). */
+	scriptSandbox?: YoloScriptSandboxState;
+	/**
+	 * The operator's containment at autonomy default on this host. With it a
+	 * default verdict is the operator's own session's: a contained command runs
+	 * in the main-session sandbox without approval. Absent keeps the rails a
+	 * worker or a host without a sandbox meets.
+	 */
+	containment?: { sandbox: boolean; snapshots: boolean };
+}
+
+/**
+ * Dry run of the workspace validation contract. Each declared validator
+ * command is resolved on PATH and handed to the same two stages tool
+ * admission applies to a bash call (src/tools/registry.ts): the policy
+ * engine's verdict under the session posture, then the autonomy mapping at the
+ * configured level. The posture matters because yolo clears the ordinary
+ * rails inside the engine, so evaluating without it reported a `$(...)`
+ * validator as asking at yolo when admission runs it. A yolo verdict is the
+ * operator's own session's, with its scope and configured scratch roots
+ * (#419), and says so: a worker or a command job at yolo keeps the rails that
+ * scope relaxes. Nothing is executed. A
+ * row warns when the program is missing or when the command would stop for
+ * approval or be refused, because either one stalls an unattended validation.
+ */
+/** Where a yolo verdict holds: the operator's own session, not its workers or command jobs (#419). */
+const OPERATOR_VIEW = "the operator's session";
+
+export function contractDryRunFindings(options: ContractDryRunOptions): DoctorFinding[] {
+	const workspaceRoot = options.workspaceRoot ?? process.cwd();
+	const loaded = loadValidationContract(workspaceRoot);
+	if (!loaded.ok || loaded.contract === null) return [];
+	const validators = loaded.contract.validators ?? [];
+	if (validators.length === 0) return [];
+	const engine = createSafetyPolicyEngine({ cwd: workspaceRoot });
+	const level = options.autonomy;
+	const posture = level === "yolo" ? "yolo" : undefined;
+	const operatorYolo = {
+		scratchRoots: options.scratchRoots ?? [],
+		...(options.scriptSandbox !== undefined ? { scriptSandbox: options.scriptSandbox } : {}),
+	};
+	return validators.map((command, index): DoctorFinding => {
+		const name = `validator ${index + 1}`;
+		const program = commandProgram(command);
+		const resolved = program === null ? null : resolveProgram(program, workspaceRoot);
+		const where =
+			program === null ? "no program" : resolved === null ? `${program} not found` : `${program} is ${resolved}`;
+		const call = { tool: ToolNames.Bash, args: { command } };
+		const decision =
+			posture === "yolo"
+				? engine.evaluate(call, posture, operatorYolo)
+				: options.containment !== undefined
+					? engine.evaluate(call, undefined, {
+							level: "default",
+							scratchRoots: options.scratchRoots ?? [],
+							...options.containment,
+						})
+					: engine.evaluate(call);
+		let verdict: string;
+		let runs = false;
+		if (decision.kind === "block") {
+			verdict = `blocked by the safety policy (${decision.reasonCode})`;
+		} else if (decision.kind === "ask") {
+			// The operator's yolo never asks (#407); the check stays so a verdict
+			// cannot claim a run the engine would not admit.
+			const asksAtYolo = level === "yolo" || engine.evaluate(call, "yolo", operatorYolo).kind === "ask";
+			verdict = asksAtYolo
+				? `asks for confirmation at default and at yolo in ${OPERATOR_VIEW} (${decision.reasonCode})`
+				: `asks for approval at default and runs at yolo in ${OPERATOR_VIEW} (${decision.reasonCode})`;
+		} else {
+			// Admission at the operator's yolo runs whatever the net allowed (#407),
+			// and the operator's default runs a contained or recoverable call.
+			const disposition =
+				level === "yolo" ||
+				decision.shellSandbox !== undefined ||
+				decision.reasonCode === SNAPSHOT_RECOVERABLE_REASON_CODE ||
+				decision.reasonCode === SCRATCH_DISPOSABLE_REASON_CODE
+					? "allow"
+					: mapAutonomy(level, decision.actionClass, {
+							executeRecognized: decision.execRecognition !== "unrecognized",
+						});
+			runs = disposition === "allow";
+			// The mapping asks only at default, and it denies only the action
+			// classes admission hard-blocks at both levels (git_destructive).
+			verdict =
+				disposition === "allow"
+					? `runs without approval at ${level === "yolo" ? `yolo in ${OPERATOR_VIEW}` : level}`
+					: disposition === "ask"
+						? `asks for approval at default and runs at yolo in ${OPERATOR_VIEW}; declare it in .pancode/safety.yaml to run it unattended`
+						: `blocked by the safety policy (classification:${decision.actionClass})`;
+		}
+		return {
+			ok: true,
+			name,
+			level: runs && resolved !== null ? "ok" : "warn",
+			detail: `\`${command}\`: ${where}; ${verdict}`,
+		};
+	});
+}

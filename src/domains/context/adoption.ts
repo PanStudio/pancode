@@ -1,0 +1,930 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+import { sha256Hex } from "../../core/hash.js";
+import { isSameOrDescendant } from "../../core/path-containment.js";
+import { isRecord } from "../../core/type-guards.js";
+import { enumerateWorkspaceFiles } from "../../core/workspace-files.js";
+import { interopUserHome } from "../../core/xdg.js";
+import { INTEROP_AGENT_KINDS } from "../interop/registry.js";
+import { instructionUnits } from "./instruction-units.js";
+import type { TreeFact } from "./tree-facts.js";
+import { contradictingFact, factClaims, treeFacts } from "./tree-facts.js";
+
+export type AdoptionProvider =
+	| "claude-code"
+	| "agents"
+	| "codex"
+	| "gemini"
+	| "cursor"
+	| "copilot"
+	| "opencode"
+	| "windsurf"
+	| "cline"
+	| "aider";
+export type AdoptionScope = "project" | "global";
+export type AdoptionSourceKind = "instructions" | "settings" | "command" | "agent" | "skill" | "rule";
+
+export interface AdoptionSourceSnapshot {
+	path: string;
+	scope: AdoptionScope;
+	provider: AdoptionProvider;
+	kind: AdoptionSourceKind;
+	directoryScope?: string;
+	sha256: string;
+	status?: "accepted" | "rejected";
+	reason?: string;
+}
+
+export interface AdoptionSource {
+	path: string;
+	displayPath: string;
+	scope: AdoptionScope;
+	provider: AdoptionProvider;
+	providerLabel: string;
+	kind: AdoptionSourceKind;
+	kindLabel: string;
+	directoryScope?: string;
+	content: string;
+	contentSha256: string;
+	byteLength: number;
+	itemCount: number;
+	order: number;
+}
+
+export interface AdoptionRejectedSource {
+	path: string;
+	displayPath: string;
+	scope: AdoptionScope;
+	provider: AdoptionProvider;
+	kind: AdoptionSourceKind;
+	directoryScope?: string;
+	reason: string;
+	fingerprintSha256: string;
+}
+
+export interface AdoptedAgentRule {
+	text: string;
+	sources: string[];
+	providers: string[];
+	directoryScopes?: string[];
+	/** The tree-fact key the rule states and the tree agrees with. */
+	conflictKey?: string;
+	/** Where each source states the rule, 1-based. */
+	origins?: Array<{ file: string; line: number }>;
+}
+
+export interface AdoptionConflict {
+	key: string;
+	kept: string;
+	keptSources: string[];
+	skipped: Array<{ text: string; source: string; provider: string }>;
+}
+
+export interface AdoptionScanResult {
+	cwd: string;
+	homeDir: string;
+	includeGlobal: boolean;
+	sources: AdoptionSource[];
+	rejected: AdoptionRejectedSource[];
+	importedRules: AdoptedAgentRule[];
+	conflicts: AdoptionConflict[];
+	sourceHash: string;
+	sourceSnapshots: AdoptionSourceSnapshot[];
+}
+
+export interface AdoptionScanOptions {
+	cwd: string;
+	homeDir?: string;
+	includeGlobal?: boolean;
+	/** Pre-enumerated workspace files; skips the synchronous enumeration. */
+	workspaceFiles?: ReadonlyArray<string>;
+}
+
+export interface AdoptionSourcesChangedOptions {
+	cwd?: string;
+	homeDir?: string;
+	includeGlobal?: boolean;
+	workspaceFiles?: ReadonlyArray<string>;
+}
+
+interface CandidateSpec {
+	path: string;
+	scope: AdoptionScope;
+	provider: AdoptionProvider;
+	kind: AdoptionSourceKind;
+	directoryScope?: string;
+	order: number;
+}
+
+interface ExtractedRuleCandidate {
+	text: string;
+	source: AdoptionSource;
+	index: number;
+	line: number;
+}
+
+const MAX_SOURCE_BYTES = 128 * 1024;
+const MAX_TOTAL_SOURCE_BYTES = 1024 * 1024;
+const MAX_RECURSIVE_FILES = 80;
+// Generous pre-merge caps: `context init` verifies every adopted unit and truncates only what survives.
+const MAX_RULES_PER_SOURCE = 40;
+const MAX_IMPORTED_RULES = 80;
+
+const PROVIDER_LABELS: Record<AdoptionProvider, string> = {
+	"claude-code": "Claude Code",
+	agents: "Agent Skills",
+	codex: "Codex",
+	gemini: "Gemini",
+	cursor: "Cursor",
+	copilot: "GitHub Copilot",
+	opencode: "OpenCode",
+	windsurf: "Windsurf",
+	cline: "Cline",
+	aider: "Aider",
+};
+
+const KIND_LABELS: Record<AdoptionSourceKind, string> = {
+	instructions: "instructions",
+	settings: "settings",
+	command: "command",
+	agent: "agent",
+	skill: "skill",
+	rule: "rule",
+};
+
+const GENERATED_OR_SECRET_DIRS = new Set([
+	".git",
+	".pancode",
+	".antigravitycli",
+	"node_modules",
+	"dist",
+	"build",
+	"target",
+	".venv",
+	"venv",
+	"cache",
+	"caches",
+	"history",
+	"histories",
+	"sessions",
+	"logs",
+	"tmp",
+	"temp",
+	"state",
+	"projects",
+]);
+
+/**
+ * The constitution filenames a nested directory may carry, mapped to the agent
+ * that owns them. Only the registry's repo-root instruction files qualify: a
+ * file an agent reads only from its own directory is not a convention a
+ * subdirectory anywhere in the tree inherits.
+ */
+const NESTED_INSTRUCTION_PROVIDERS = new Map<string, AdoptionProvider>(
+	INTEROP_AGENT_KINDS.flatMap((kind) => {
+		const provider = kind.adoptionProvider;
+		if (provider === undefined) return [];
+		return kind.instructionFiles.filter((file) => !file.includes("/")).map((file) => [file, provider] as const);
+	}),
+);
+
+const UNSAFE_FILE_NAME_RE =
+	/(^\.env(?:\.|$)|secret|credential|token|password|history|cache|session|\.log$|state\.json$)/i;
+export const RULE_KEYWORDS =
+	/\b(always|never|must|should|prefer|avoid|do not|don't|use|run|keep|write|allow|allows|deny|denies|enable|enables|define|defines)\b/i;
+const SECRET_LINE_PATTERNS = [
+	/-----BEGIN [A-Z ]*PRIVATE KEY-----/i,
+	/\bauthorization\s*[:=]\s*bearer\s+\S+/i,
+	/\b(?:api[_-]?key|auth[_-]?token|access[_-]?token|refresh[_-]?token|password|secret|credential)\b\s*[:=]\s*["']?[^\s"'`,;]{8,}/i,
+	/\b(?:ghp|gho|ghu|ghs|github_pat)_[A-Za-z0-9_]{20,}\b/,
+	/\bsk-[A-Za-z0-9_-]{20,}\b/,
+	/\bxox[baprs]-[A-Za-z0-9-]{20,}\b/,
+	/\bAIza[0-9A-Za-z_-]{20,}\b/,
+];
+
+function normalizeText(text: string): string {
+	return text
+		.replace(/^\uFEFF/, "")
+		.replace(/\r\n/g, "\n")
+		.replace(/\r/g, "\n");
+}
+
+function displayPath(filePath: string, cwd: string, home: string): string {
+	const abs = resolve(filePath);
+	const cwdAbs = resolve(cwd);
+	const homeAbs = resolve(home);
+	if (isSameOrDescendant(abs, cwdAbs)) {
+		const rel = relative(cwdAbs, abs).split(sep).join("/");
+		return rel.length > 0 ? rel : basename(abs);
+	}
+	if (isSameOrDescendant(abs, homeAbs)) {
+		const rel = relative(homeAbs, abs).split(sep).join("/");
+		return rel.length > 0 ? `~/${rel}` : "~";
+	}
+	return abs;
+}
+
+function unsafePathName(filePath: string): boolean {
+	const name = basename(filePath);
+	return UNSAFE_FILE_NAME_RE.test(name);
+}
+
+function safeDirEntryName(name: string): boolean {
+	const lower = name.toLowerCase();
+	if (GENERATED_OR_SECRET_DIRS.has(lower)) return false;
+	if (lower.includes("secret") || lower.includes("credential") || lower.includes("token")) return false;
+	return true;
+}
+
+function hasSecretLikeLine(text: string): boolean {
+	for (const line of text.split("\n")) {
+		if (SECRET_LINE_PATTERNS.some((pattern) => pattern.test(line))) return true;
+	}
+	return false;
+}
+
+function collectFiles(
+	dir: string,
+	maxDepth: number,
+	accept: (filePath: string) => boolean,
+	out: string[] = [],
+	depth = 0,
+): string[] {
+	if (out.length >= MAX_RECURSIVE_FILES) return out;
+	let entries: import("node:fs").Dirent[];
+	try {
+		entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+	} catch {
+		return out;
+	}
+	for (const entry of entries) {
+		if (out.length >= MAX_RECURSIVE_FILES) break;
+		if (entry.isSymbolicLink()) continue;
+		const filePath = join(dir, entry.name);
+		if (entry.isDirectory()) {
+			if (depth >= maxDepth || !safeDirEntryName(entry.name)) continue;
+			collectFiles(filePath, maxDepth, accept, out, depth + 1);
+			continue;
+		}
+		if (!entry.isFile()) continue;
+		if (unsafePathName(filePath)) continue;
+		if (accept(filePath)) out.push(filePath);
+	}
+	return out;
+}
+
+function markdownLike(filePath: string): boolean {
+	const ext = extname(filePath).toLowerCase();
+	return ext === ".md" || ext === ".mdc";
+}
+
+function jsonLike(filePath: string): boolean {
+	return extname(filePath).toLowerCase() === ".json";
+}
+
+function discoverCandidateSpecs(
+	cwd: string,
+	home: string,
+	includeGlobal: boolean,
+	workspaceFiles?: ReadonlyArray<string>,
+): CandidateSpec[] {
+	const specs: CandidateSpec[] = [];
+	const seen = new Set<string>();
+	let order = 0;
+	const add = (path: string, scope: AdoptionScope, provider: AdoptionProvider, kind: AdoptionSourceKind): void => {
+		const abs = resolve(path);
+		if (seen.has(abs)) return;
+		seen.add(abs);
+		const scopedDir = scope === "project" && kind === "instructions" ? relative(cwd, dirname(abs)) : "";
+		specs.push({
+			path: abs,
+			scope,
+			provider,
+			kind,
+			...(scope === "project" && kind === "instructions"
+				? { directoryScope: scopedDir.length === 0 ? "." : scopedDir.split(sep).join("/") }
+				: {}),
+			order,
+		});
+		order += 1;
+	};
+	const addProject = (relPath: string, provider: AdoptionProvider, kind: AdoptionSourceKind): void => {
+		add(join(cwd, relPath), "project", provider, kind);
+	};
+	const addProjectDir = (
+		relPath: string,
+		provider: AdoptionProvider,
+		kind: AdoptionSourceKind,
+		maxDepth: number,
+		accept: (filePath: string) => boolean,
+	): void => {
+		for (const filePath of collectFiles(join(cwd, relPath), maxDepth, accept)) add(filePath, "project", provider, kind);
+	};
+
+	// Constitutions are intentionally discovered before agents, commands, and
+	// skills so the bounded imported-rule budget cannot be consumed by generic
+	// helper material before project rules. Nested constitutions retain their
+	// directory scope instead of silently becoming repository-global prose.
+	for (const kind of INTEROP_AGENT_KINDS) {
+		if (kind.adoptionProvider === undefined) continue;
+		for (const file of [...kind.instructionFiles, ...(kind.rootInstructionFiles ?? [])]) {
+			addProject(file, kind.adoptionProvider, "instructions");
+		}
+	}
+	// Nested constitutions are part of the claimed provenance set. Let the
+	// walker's typed limit/incomplete failures propagate instead of silently
+	// publishing an authoritative-looking partial adoption snapshot.
+	const visibleWorkspaceFiles = workspaceFiles ?? enumerateWorkspaceFiles(cwd);
+	for (const relPath of visibleWorkspaceFiles) {
+		const parts = relPath.split("/");
+		if (parts.length - 1 > 6) continue;
+		const name = parts.at(-1);
+		const provider = name === undefined ? undefined : NESTED_INSTRUCTION_PROVIDERS.get(name);
+		if (provider === undefined) continue;
+		add(join(cwd, relPath), "project", provider, "instructions");
+	}
+
+	addProject(join(".claude", "settings.json"), "claude-code", "settings");
+	addProjectDir(join(".claude", "commands"), "claude-code", "command", 3, markdownLike);
+	addProjectDir(join(".claude", "agents"), "claude-code", "agent", 2, markdownLike);
+
+	for (const kind of INTEROP_AGENT_KINDS) {
+		if (kind.adoptionProvider === undefined || kind.projectSkillRoot === undefined) continue;
+		addProjectDir(kind.projectSkillRoot, kind.adoptionProvider, "skill", 4, markdownLike);
+	}
+
+	addProject(join(".gemini", "settings.json"), "gemini", "settings");
+	addProject(join(".gemini", "config.json"), "gemini", "settings");
+	addProjectDir(
+		join(".gemini", "rules"),
+		"gemini",
+		"rule",
+		2,
+		(filePath) => markdownLike(filePath) || jsonLike(filePath),
+	);
+	addProjectDir(
+		join(".gemini", "config"),
+		"gemini",
+		"rule",
+		2,
+		(filePath) => markdownLike(filePath) || jsonLike(filePath),
+	);
+
+	for (const kind of INTEROP_AGENT_KINDS) {
+		if (kind.adoptionProvider === undefined) continue;
+		for (const dir of kind.ruleDirs ?? []) {
+			addProjectDir(dir.path, kind.adoptionProvider, "rule", dir.depth, (filePath) =>
+				dir.suffixes.some((suffix) => filePath.toLowerCase().endsWith(suffix)),
+			);
+		}
+	}
+
+	if (includeGlobal) add(join(home, ".codex", "AGENTS.md"), "global", "codex", "instructions");
+
+	return specs.filter((spec) => existsSync(spec.path));
+}
+
+function stripFrontmatter(text: string): { body: string; firstLine: number } {
+	if (!text.startsWith("---\n")) return { body: text, firstLine: 1 };
+	const end = text.indexOf("\n---", 4);
+	if (end === -1) return { body: text, firstLine: 1 };
+	const rest = text.slice(end + "\n---".length);
+	const body = rest.replace(/^\n+/, "");
+	const skipped = text.slice(0, text.length - body.length);
+	return { body, firstLine: skipped.split("\n").length };
+}
+
+function isBarePathOrFileName(text: string): boolean {
+	const token = /^`([^`]+)`$/.exec(text)?.[1] ?? text;
+	if (/\s/.test(token)) return false;
+	if (!/^[A-Za-z0-9_@.+~/-]+$/.test(token)) return false;
+	return token.includes("/") || extname(token).length > 1;
+}
+
+function cleanRuleText(raw: string, wholeUnit = false): string | null {
+	let text = raw;
+	let previous: string;
+	do {
+		previous = text;
+		text = text.replace(/<!--[\s\S]*?-->/g, "");
+	} while (text !== previous);
+	text = text
+		.replace(/^\[[ xX]\]\s+/, "")
+		.replace(/\s+/g, " ")
+		.trim();
+	text = text.replace(/^[#>\s]+/, "").trim();
+	if (text.length < 8 || text.length > 260) return null;
+	if (/^(todo|note|example|marker)\b/i.test(text)) return null;
+	if (/\$[A-Z][A-Z0-9_]*|\{\{[^}]+\}\}|<\/?[A-Z][A-Z0-9_-]*>/i.test(text)) return null;
+	if (isBarePathOrFileName(text)) return null;
+	if (!RULE_KEYWORDS.test(text)) return null;
+	if (hasSecretLikeLine(text)) return null;
+	// Imported Markdown must not turn a whole routing rule back into the observed mid-sentence fragment.
+	if (!wholeUnit && text.length > 200) text = `${text.slice(0, 197).trimEnd()}…`;
+	return text;
+}
+
+function extractMarkdownRules(content: string, file: string): Array<{ text: string; line: number }> {
+	const { body, firstLine } = stripFrontmatter(content);
+	const rules: Array<{ text: string; line: number }> = [];
+	const seen = new Set<string>();
+	// Hard-wrapped instructions imported as physical-line fragments; evaluate bullets and paragraphs as whole units.
+	for (const unit of instructionUnits(body, 260, file, firstLine)) {
+		// The observed "**DO NOT add** without approval:" intro remains a rule after absorbing its list.
+		const candidate = unit.listItem || /^(?:\*\*|__)?[A-Z]/.test(unit.text) ? unit.text : null;
+		if (!candidate) continue;
+		const cleaned = cleanRuleText(candidate, true);
+		if (!cleaned) continue;
+		const key = normalizeRuleKey(cleaned);
+		if (seen.has(key)) continue;
+		seen.add(key);
+		rules.push({ text: cleaned, line: unit.line });
+		if (rules.length >= MAX_RULES_PER_SOURCE) break;
+	}
+	return rules;
+}
+
+function stringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+		.map((item) => item.trim());
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | null {
+	const value = record[key];
+	return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function formatShortList(items: ReadonlyArray<string>, limit = 4): string {
+	const cleaned = items.map((item) => item.replace(/\s+/g, " ").trim()).filter(Boolean);
+	const shown = cleaned.slice(0, limit).map((item) => `\`${item.length > 48 ? `${item.slice(0, 45)}…` : item}\``);
+	if (cleaned.length > limit) shown.push(`+${cleaned.length - limit} more`);
+	return shown.join(", ");
+}
+
+function extractSettingsRules(provider: AdoptionProvider, content: string): string[] {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(content);
+	} catch {
+		return [];
+	}
+	if (!isRecord(parsed)) return [];
+	const rules: string[] = [];
+	if (provider === "claude-code") {
+		const permissions = parsed.permissions;
+		if (isRecord(permissions)) {
+			const allow = stringArray(permissions.allow);
+			const deny = stringArray(permissions.deny);
+			const claudePermissionSetting = stringField(permissions, "defaultMode");
+			if (allow.length > 0) rules.push(`Claude Code allows tools: ${formatShortList(allow)}.`);
+			if (deny.length > 0) rules.push(`Claude Code denies tools: ${formatShortList(deny)}.`);
+			if (claudePermissionSetting)
+				rules.push(`Claude Code declares permission setting \`${claudePermissionSetting}\` for this project.`);
+		}
+		if (parsed.enableAllProjectMcpServers === true) rules.push("Claude Code enables all project MCP servers.");
+	}
+	if (provider === "gemini") {
+		const contextFileName = stringField(parsed, "contextFileName");
+		if (contextFileName) rules.push(`Gemini uses \`${contextFileName}\` as an additional context file.`);
+		const mcpServers = parsed.mcpServers;
+		if (isRecord(mcpServers) && Object.keys(mcpServers).length > 0) {
+			rules.push(`Gemini project settings define MCP servers: ${formatShortList(Object.keys(mcpServers))}.`);
+		}
+	}
+	return rules.map((rule) => cleanRuleText(rule)).filter((rule): rule is string => Boolean(rule));
+}
+
+function extractRules(spec: CandidateSpec, content: string, file: string): Array<{ text: string; line: number }> {
+	if (spec.kind === "settings" || jsonLike(spec.path))
+		return extractSettingsRules(spec.provider, content).map((text) => ({ text, line: 1 }));
+	return extractMarkdownRules(content, file);
+}
+
+function normalizeRuleKey(text: string): string {
+	return text
+		.toLowerCase()
+		.replace(/`([^`]+)`/g, "$1")
+		.replace(/[^a-z0-9.+:#/-]+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim()
+		.replace(/[.!?]+$/, "");
+}
+
+function sourcePriority(source: AdoptionSource): number {
+	const kindPriority: Record<AdoptionSourceKind, number> = {
+		instructions: 0,
+		rule: 1_000,
+		settings: 2_000,
+		command: 3_000,
+		agent: 4_000,
+		skill: 5_000,
+	};
+	const scopeDepth = source.directoryScope ? source.directoryScope.split("/").filter((part) => part !== ".").length : 0;
+	return (source.scope === "project" ? 0 : 10_000) + kindPriority[source.kind] + scopeDepth * 10 + source.order;
+}
+
+function buildImportPlan(
+	sources: ReadonlyArray<AdoptionSource>,
+	facts: ReadonlyArray<TreeFact>,
+): {
+	importedRules: AdoptedAgentRule[];
+	conflicts: AdoptionConflict[];
+} {
+	const candidates: ExtractedRuleCandidate[] = [];
+	for (const source of sources) {
+		const rules = extractRules(
+			{ path: source.path, scope: source.scope, provider: source.provider, kind: source.kind, order: 0 },
+			source.content,
+			source.displayPath,
+		);
+		rules.forEach((rule, index) => {
+			candidates.push({ text: rule.text, source, index, line: rule.line });
+		});
+	}
+	candidates.sort((a, b) => {
+		const sourceDelta = sourcePriority(a.source) - sourcePriority(b.source);
+		return sourceDelta !== 0 ? sourceDelta : a.index - b.index;
+	});
+
+	const accepted: AdoptedAgentRule[] = [];
+	const byNormalizedText = new Map<string, AdoptedAgentRule>();
+	const conflicts = new Map<string, AdoptionConflict>();
+
+	for (const candidate of candidates) {
+		const normalized = normalizeRuleKey(candidate.text);
+		const origin = { file: candidate.source.displayPath, line: candidate.line };
+		const existing = byNormalizedText.get(normalized);
+		if (existing) {
+			if (!existing.sources.includes(candidate.source.displayPath)) existing.sources.push(candidate.source.displayPath);
+			if (!existing.providers.includes(candidate.source.providerLabel))
+				existing.providers.push(candidate.source.providerLabel);
+			if (candidate.source.directoryScope) {
+				existing.directoryScopes ??= [];
+				if (!existing.directoryScopes.includes(candidate.source.directoryScope)) {
+					existing.directoryScopes.push(candidate.source.directoryScope);
+				}
+			}
+			existing.origins?.push(origin);
+			continue;
+		}
+
+		// The tree, not the first source read, decides a package manager or test runner a rule names.
+		const contradicted = contradictingFact(candidate.text, facts);
+		if (contradicted) {
+			let conflict = conflicts.get(contradicted.key);
+			if (!conflict) {
+				conflict = {
+					key: contradicted.key,
+					kept: `${contradicted.value} (${contradicted.source})`,
+					keptSources: [contradicted.source],
+					skipped: [],
+				};
+				conflicts.set(contradicted.key, conflict);
+			}
+			conflict.skipped.push({
+				text: candidate.text,
+				source: candidate.source.displayPath,
+				provider: candidate.source.providerLabel,
+			});
+			continue;
+		}
+		const agreed = factClaims(candidate.text).find((claim) => facts.some((fact) => fact.key === claim.key));
+
+		const rule: AdoptedAgentRule = {
+			text: candidate.text,
+			sources: [candidate.source.displayPath],
+			providers: [candidate.source.providerLabel],
+			...(candidate.source.directoryScope ? { directoryScopes: [candidate.source.directoryScope] } : {}),
+			...(agreed ? { conflictKey: agreed.key } : {}),
+			origins: [origin],
+		};
+		accepted.push(rule);
+		byNormalizedText.set(normalized, rule);
+		if (accepted.length >= MAX_IMPORTED_RULES) break;
+	}
+
+	return { importedRules: accepted, conflicts: [...conflicts.values()] };
+}
+
+function rejectedCandidate(
+	spec: CandidateSpec,
+	displayPath: string,
+	reason: string,
+	evidence: string,
+): AdoptionRejectedSource {
+	return {
+		path: spec.path,
+		displayPath,
+		scope: spec.scope,
+		provider: spec.provider,
+		kind: spec.kind,
+		...(spec.directoryScope ? { directoryScope: spec.directoryScope } : {}),
+		reason,
+		fingerprintSha256: sha256Hex(`rejected\0${reason}\0${evidence}`),
+	};
+}
+
+function statEvidence(stat: import("node:fs").Stats): string {
+	return `${stat.size}:${Math.floor(stat.mtimeMs)}:${stat.mode}`;
+}
+
+function readCandidate(spec: CandidateSpec, cwd: string, home: string): AdoptionSource | AdoptionRejectedSource | null {
+	const shown = displayPath(spec.path, cwd, home);
+	if (unsafePathName(spec.path)) {
+		return rejectedCandidate(spec, shown, "unsafe path name", "");
+	}
+	let stat: import("node:fs").Stats;
+	try {
+		const lst = lstatSync(spec.path);
+		if (lst.isSymbolicLink()) {
+			return rejectedCandidate(spec, shown, "symlink skipped", statEvidence(lst));
+		}
+		stat = statSync(spec.path);
+	} catch {
+		return null;
+	}
+	if (!stat.isFile()) return null;
+	if (stat.size > MAX_SOURCE_BYTES) {
+		return rejectedCandidate(spec, shown, "file too large", statEvidence(stat));
+	}
+	let raw: string;
+	try {
+		raw = readFileSync(spec.path, "utf8");
+	} catch {
+		return rejectedCandidate(spec, shown, "unreadable", statEvidence(stat));
+	}
+	if (raw.includes("\0")) {
+		return rejectedCandidate(spec, shown, "binary content", raw);
+	}
+	const content = normalizeText(raw);
+	if (hasSecretLikeLine(content)) {
+		return rejectedCandidate(spec, shown, "secret-like content", content);
+	}
+	const rules = extractRules(spec, content, shown);
+	return {
+		path: spec.path,
+		displayPath: shown,
+		scope: spec.scope,
+		provider: spec.provider,
+		providerLabel: PROVIDER_LABELS[spec.provider],
+		kind: spec.kind,
+		kindLabel: KIND_LABELS[spec.kind],
+		...(spec.directoryScope ? { directoryScope: spec.directoryScope } : {}),
+		content,
+		contentSha256: sha256Hex(content),
+		byteLength: Buffer.byteLength(content, "utf8"),
+		itemCount: rules.length,
+		order: spec.order,
+	};
+}
+
+function sourceSnapshot(source: AdoptionSource | AdoptionRejectedSource): AdoptionSourceSnapshot {
+	if ("content" in source) {
+		return {
+			path: source.path,
+			scope: source.scope,
+			provider: source.provider,
+			kind: source.kind,
+			...(source.directoryScope ? { directoryScope: source.directoryScope } : {}),
+			sha256: source.contentSha256,
+		};
+	}
+	return {
+		path: source.path,
+		scope: source.scope,
+		provider: source.provider,
+		kind: source.kind,
+		...(source.directoryScope ? { directoryScope: source.directoryScope } : {}),
+		sha256: source.fingerprintSha256,
+		status: "rejected",
+		reason: source.reason,
+	};
+}
+
+function sourceSetHash(snapshots: ReadonlyArray<AdoptionSourceSnapshot>): string {
+	const hash = createHash("sha256");
+	for (const snapshot of snapshots) {
+		hash.update(
+			`${snapshot.scope}\0${snapshot.provider}\0${snapshot.kind}\0${snapshot.path}\0${snapshot.directoryScope ?? ""}\0${snapshot.status ?? "accepted"}\0${snapshot.reason ?? ""}\0${snapshot.sha256}\n`,
+		);
+	}
+	return hash.digest("hex");
+}
+
+export function adoptionSnapshotsHash(snapshots: ReadonlyArray<AdoptionSourceSnapshot>): string {
+	return sourceSetHash([...snapshots].sort((a, b) => a.path.localeCompare(b.path)));
+}
+
+export function scanAgentConfigs(options: AdoptionScanOptions): AdoptionScanResult {
+	const cwd = resolve(options.cwd);
+	// Global sources live under the interop home; PANCODE_INTEROP_HOME=none leaves none to read.
+	const userHome = options.homeDir !== undefined ? resolve(options.homeDir) : interopUserHome();
+	const home = userHome === null ? resolve(homedir()) : resolve(userHome);
+	const includeGlobal = options.includeGlobal === true && userHome !== null;
+	const sources: AdoptionSource[] = [];
+	const rejected: AdoptionRejectedSource[] = [];
+	let acceptedSourceBytes = 0;
+	for (const spec of discoverCandidateSpecs(cwd, home, includeGlobal, options.workspaceFiles)) {
+		const result = readCandidate(spec, cwd, home);
+		if (!result) continue;
+		if (!("content" in result)) {
+			rejected.push(result);
+			continue;
+		}
+		if (acceptedSourceBytes + result.byteLength > MAX_TOTAL_SOURCE_BYTES) {
+			rejected.push({
+				path: result.path,
+				displayPath: result.displayPath,
+				scope: result.scope,
+				provider: result.provider,
+				kind: result.kind,
+				...(result.directoryScope ? { directoryScope: result.directoryScope } : {}),
+				reason: "aggregate source byte budget exceeded",
+				fingerprintSha256: sha256Hex(`rejected\0aggregate source byte budget exceeded\0${result.contentSha256}`),
+			});
+			continue;
+		}
+		acceptedSourceBytes += result.byteLength;
+		sources.push(result);
+	}
+	sources.sort((a, b) => {
+		const scopeDelta = (a.scope === "project" ? 0 : 1) - (b.scope === "project" ? 0 : 1);
+		return scopeDelta !== 0 ? scopeDelta : a.order - b.order;
+	});
+	const plan = buildImportPlan(sources, treeFacts(cwd));
+	const sourceSnapshots = [...sources.map(sourceSnapshot), ...rejected.map(sourceSnapshot)];
+	return {
+		cwd,
+		homeDir: home,
+		includeGlobal,
+		sources,
+		rejected,
+		importedRules: plan.importedRules,
+		conflicts: plan.conflicts,
+		sourceHash: sourceSetHash(sourceSnapshots),
+		sourceSnapshots,
+	};
+}
+
+/**
+ * The scan restricted to the sources `keep` admits, with its import plan
+ * rebuilt from them. Snapshots and hash stay the full scan's, so recorded
+ * adoption state still compares equal to a later full rescan.
+ */
+export function restrictAdoptionScan(scan: AdoptionScanResult, keep: (path: string) => boolean): AdoptionScanResult {
+	const sources = scan.sources.filter((source) => keep(source.path));
+	const plan = buildImportPlan(sources, treeFacts(scan.cwd));
+	return {
+		...scan,
+		sources,
+		rejected: scan.rejected.filter((rejected) => keep(rejected.path)),
+		importedRules: plan.importedRules,
+		conflicts: plan.conflicts,
+	};
+}
+
+function renderSourceList(paths: ReadonlyArray<string>): string {
+	if (paths.length <= 3) return paths.map((path) => `\`${path}\``).join(", ");
+	return `${paths
+		.slice(0, 3)
+		.map((path) => `\`${path}\``)
+		.join(", ")} +${paths.length - 3} more`;
+}
+
+function quoteShort(text: string): string {
+	const cleaned = text.replace(/\s+/g, " ").trim();
+	return `“${cleaned.length > 120 ? `${cleaned.slice(0, 117).trimEnd()}…` : cleaned}”`;
+}
+
+export function renderImportedAgentContext(scan: AdoptionScanResult): string {
+	if (scan.sources.length === 0 && scan.rejected.length === 0) return "";
+	const lines: string[] = [
+		"Conflict policy: PANCODE.md conventions and hard invariants are canonical; project-local imports win over explicit global imports; duplicate rules are merged by normalized text.",
+		"",
+		"### Adopted rules",
+		"",
+	];
+	if (scan.importedRules.length === 0) {
+		lines.push("- No project-specific rules were adopted from external agent configs.");
+	} else {
+		for (const rule of scan.importedRules) {
+			const scoped = rule.directoryScopes?.filter((scope) => scope !== ".") ?? [];
+			lines.push(
+				`- ${rule.text} Sources: ${renderSourceList(rule.sources)}.${scoped.length > 0 ? ` Scopes: ${renderSourceList(scoped.map((scope) => `${scope}/**`))}.` : ""}`,
+			);
+		}
+	}
+
+	lines.push("", "### Source provenance", "");
+	for (const source of scan.sources) {
+		const adopted = source.itemCount === 1 ? "1 candidate" : `${source.itemCount} candidates`;
+		const scoped = source.directoryScope && source.directoryScope !== "." ? `, scope ${source.directoryScope}/**` : "";
+		lines.push(
+			`- ${source.providerLabel} ${source.kindLabel} (${source.scope}${scoped}): \`${source.displayPath}\`; ${adopted}.`,
+		);
+	}
+	if (scan.sources.length === 0) lines.push("- No supported project-local agent config files were found.");
+
+	if (scan.conflicts.length > 0) {
+		lines.push("", "### Skipped conflicts", "");
+		for (const conflict of scan.conflicts) {
+			for (const skipped of conflict.skipped) {
+				lines.push(
+					`- ${quoteShort(skipped.text)} from \`${skipped.source}\` conflicted with ${renderSourceList(conflict.keptSources)} on ${conflict.key}; kept ${quoteShort(conflict.kept)}.`,
+				);
+			}
+		}
+	}
+
+	if (scan.rejected.length > 0) {
+		lines.push("", "### Rejected sources", "");
+		for (const rejected of scan.rejected.slice(0, 8)) {
+			const provider = rejected.provider ? `${PROVIDER_LABELS[rejected.provider]} ` : "";
+			lines.push(`- ${provider}\`${rejected.displayPath}\`: skipped ${rejected.reason}.`);
+		}
+		if (scan.rejected.length > 8) lines.push(`- ${scan.rejected.length - 8} more rejected sources omitted.`);
+	}
+	return lines.join("\n");
+}
+
+function inferAdoptionCwd(snapshots: ReadonlyArray<AdoptionSourceSnapshot>, home: string): string | null {
+	for (const snapshot of snapshots) {
+		if (snapshot.scope !== "project") continue;
+		let candidate = resolve(snapshot.path, "..");
+		for (;;) {
+			const match = discoverCandidateSpecs(candidate, home, false).some(
+				(spec) =>
+					spec.path === resolve(snapshot.path) &&
+					spec.scope === snapshot.scope &&
+					spec.provider === snapshot.provider &&
+					spec.kind === snapshot.kind,
+			);
+			if (match) return candidate;
+			const parent = resolve(candidate, "..");
+			if (parent === candidate) break;
+			candidate = parent;
+		}
+	}
+	return null;
+}
+
+function inferAdoptionHome(snapshots: ReadonlyArray<AdoptionSourceSnapshot>): string | null {
+	const global = snapshots.find((snapshot) => snapshot.scope === "global");
+	return global ? resolve(global.path, "..", "..") : null;
+}
+
+export function adoptionSourcesChanged(
+	snapshots: ReadonlyArray<AdoptionSourceSnapshot>,
+	options: AdoptionSourcesChangedOptions = {},
+): boolean {
+	const userHome =
+		options.homeDir ?? (interopUserHome() === null ? null : (inferAdoptionHome(snapshots) ?? interopUserHome()));
+	const homeDir = resolve(userHome ?? homedir());
+	const cwd = options.cwd ? resolve(options.cwd) : inferAdoptionCwd(snapshots, homeDir);
+	if (!cwd) return recordedAdoptionSourcesChanged(snapshots, homeDir, userHome !== null);
+
+	const current = scanAgentConfigs({
+		cwd,
+		homeDir,
+		includeGlobal:
+			userHome !== null && (options.includeGlobal ?? snapshots.some((snapshot) => snapshot.scope === "global")),
+		...(options.workspaceFiles ? { workspaceFiles: options.workspaceFiles } : {}),
+	}).sourceSnapshots;
+	return adoptionSnapshotsHash(current) !== adoptionSnapshotsHash(snapshots);
+}
+
+/**
+ * Re-read only the recorded source paths: no discovery, no workspace
+ * enumeration. Catches edits and removals of what was adopted; a newly added
+ * instruction file needs the full `adoptionSourcesChanged` scan.
+ */
+function recordedAdoptionSourcesChanged(
+	snapshots: ReadonlyArray<AdoptionSourceSnapshot>,
+	homeDir: string,
+	globalReadable: boolean,
+): boolean {
+	for (const snapshot of snapshots) {
+		if (snapshot.scope === "global" && !globalReadable) return true;
+		const current = readCandidate(
+			{
+				path: snapshot.path,
+				scope: snapshot.scope,
+				provider: snapshot.provider,
+				kind: snapshot.kind,
+				order: 0,
+			},
+			resolve(snapshot.path, ".."),
+			homeDir,
+		);
+		if (!current || adoptionSnapshotsHash([sourceSnapshot(current)]) !== adoptionSnapshotsHash([snapshot])) {
+			return true;
+		}
+	}
+	return false;
+}

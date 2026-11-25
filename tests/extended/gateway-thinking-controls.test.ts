@@ -1,0 +1,284 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { test } from "node:test";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import { applyModelCapabilityPatch } from "../../src/domains/providers/model-capabilities.js";
+import {
+	resolveModelRuntimeCapabilities,
+	resolveModelRuntimeCapabilitiesForModel,
+	thinkingEffectNote,
+} from "../../src/domains/providers/model-runtime-capabilities.js";
+import litellm, {
+	aggregateLiteLLMCapabilities,
+	capabilitiesFromLiteLLMModelInfo,
+} from "../../src/domains/providers/runtimes/protocol/litellm.js";
+import { EMPTY_CAPABILITIES } from "../../src/domains/providers/types/capability-flags.js";
+import { openAICompletionsApiProvider } from "../../src/engine/apis/openai-completions.js";
+import type { Model } from "../../src/engine/types.js";
+import {
+	createInteractiveSlashRuntime,
+	type InteractiveSlashRuntimeDeps,
+} from "../../src/interactive/interactive-slash-runtime.js";
+import { thinkingNoteWords } from "../../src/interactive/thinking-note.js";
+import { parseSlashCommand } from "../../src/session-control/slash-commands.js";
+import { dispatchSlashCommand } from "../../src/session-control/slash-dispatch.js";
+import { startGatewayThinkingFixture } from "../harness/gateway-thinking-fixture.js";
+import { packagedModelCatalog } from "../harness/packaged-model-catalog.js";
+
+const kb = packagedModelCatalog();
+
+test("gateway control runtime requires unanimous explicit deployment metadata", () => {
+	const lm = capabilitiesFromLiteLLMModelInfo({ runtime: "lm-studio" });
+	const llama = capabilitiesFromLiteLLMModelInfo({ runtime: "lemonade", thinking_control_runtime: "llamacpp" });
+	const flm = capabilitiesFromLiteLLMModelInfo({ runtime: "lemonade", thinking_control_runtime: "flm" });
+	strictEqual(flm.thinkingControlRuntime, "flm");
+	strictEqual(lm.thinkingControlRuntime, "lmstudio");
+	strictEqual(llama.thinkingControlRuntime, "llamacpp");
+	strictEqual(aggregateLiteLLMCapabilities([lm, lm]).thinkingControlRuntime, "lmstudio");
+	for (const rows of [[lm, llama], [lm, {}], [{}], []])
+		strictEqual(aggregateLiteLLMCapabilities(rows).thinkingControlRuntime, undefined);
+	strictEqual(
+		capabilitiesFromLiteLLMModelInfo({ runtime: "unknown", api_base: "http://lmstudio:1234" }).thinkingControlRuntime,
+		undefined,
+	);
+});
+
+test("Qwen3.8 offers vendor levels and preserves the released high alias without changing off", () => {
+	const hit = kb.lookup("dynamo/qwen3.8-27b");
+	ok(hit);
+	for (const [level, expected] of [
+		["off", "off"],
+		["low", "low"],
+		["medium", "medium"],
+		["high", "xhigh"],
+		["xhigh", "xhigh"],
+		["max", "xhigh"],
+	] as const) {
+		const resolved = resolveModelRuntimeCapabilities({
+			runtimeId: "litellm",
+			modelId: "dynamo/qwen3.8-27b",
+			capabilities: { ...EMPTY_CAPABILITIES, ...hit.entry.capabilities },
+			kbHit: hit,
+			configuredThinkingLevel: level,
+		});
+		deepStrictEqual(resolved.thinking.supportedLevels, ["off", "low", "medium", "xhigh"]);
+		strictEqual(resolved.thinking.effectiveLevel, expected);
+		strictEqual(resolved.request.reasoningEffort, expected === "off" ? undefined : expected);
+	}
+});
+
+test("round-up thinking notice explains high isn't offered and xhigh is used", () => {
+	const hit = kb.lookup("dynamo/qwen3.8-27b");
+	ok(hit);
+	const resolved = resolveModelRuntimeCapabilities({
+		runtimeId: "litellm",
+		modelId: "dynamo/qwen3.8-27b",
+		capabilities: { ...EMPTY_CAPABILITIES, ...hit.entry.capabilities },
+		kbHit: hit,
+		configuredThinkingLevel: "high",
+	});
+	const expected = "high isn't offered by dynamo/qwen3.8-27b; using xhigh";
+	strictEqual(thinkingEffectNote({ ...resolved.thinking, model: resolved.modelId }), expected);
+	strictEqual(thinkingNoteWords({ ...resolved.thinking, model: resolved.modelId }), expected);
+});
+
+test("unaffected thinking clamp notices keep their existing wording", () => {
+	const hit = kb.lookup("dynamo/qwen3.8-27b");
+	ok(hit);
+	const clampedDownMax = resolveModelRuntimeCapabilities({
+		runtimeId: "litellm",
+		modelId: "dynamo/qwen3.8-27b",
+		capabilities: { ...EMPTY_CAPABILITIES, ...hit.entry.capabilities },
+		kbHit: hit,
+		configuredThinkingLevel: "max",
+	});
+	strictEqual(thinkingEffectNote({ ...clampedDownMax.thinking, model: clampedDownMax.modelId }), "max runs as xhigh");
+	strictEqual(thinkingNoteWords({ ...clampedDownMax.thinking, model: clampedDownMax.modelId }), "max not offered");
+
+	const clampedDownHigh = {
+		mechanism: "effort-levels",
+		configuredLevel: "high" as const,
+		effectiveLevel: "medium" as const,
+		display: "medium",
+		supportedLevels: ["off", "low", "medium"] as const,
+		model: "sample/model",
+	};
+	strictEqual(thinkingEffectNote(clampedDownHigh), "high runs as medium");
+	strictEqual(thinkingNoteWords(clampedDownHigh), "high not offered");
+});
+
+test("/thinking resolves a typed level through the settings clamp and refuses words the model does not take", () => {
+	const hit = kb.lookup("dynamo/qwen3.8-27b");
+	ok(hit);
+	// No catalog profile is always-on, so one model id carries the same profile with that mechanism.
+	const alwaysOnHit = { ...hit, entry: { ...hit.entry, quirks: { thinking: { mechanism: "always-on" } } } };
+	const knowledgeBase = Object.assign(Object.create(kb), {
+		lookup: (id: string) => (id === "dynamo/always-on" ? alwaysOnHit : kb.lookup(id)),
+	});
+	const run = (model: string, typed: ReadonlyArray<string>) => {
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.chat = { ...settings.chat, target: "mini", model, thinkingLevel: "medium" };
+		const status = {
+			target: { id: "mini", runtime: "litellm", defaultModel: model },
+			runtime: null,
+			capabilities: { ...EMPTY_CAPABILITIES, ...hit.entry.capabilities },
+		};
+		const commits: string[] = [];
+		const runtime = createInteractiveSlashRuntime({
+			bus: createTelemetryHub(),
+			providers: { list: () => [status], knowledgeBase },
+			chat: {},
+			getSettings: () => settings,
+			onSetThinkingLevel: () => commits.push("onSetThinkingLevel writes settings.yaml"),
+			// The orchestrator wires commitSetting, so this is the branch a TUI session takes.
+			commitSetting: (id: string, next: typeof settings, scope: string, source: string) => {
+				commits.push(`${id}=${next.chat.thinkingLevel} ${scope} ${source}`);
+				settings.chat.thinkingLevel = next.chat.thinkingLevel;
+			},
+			refreshFooter() {},
+			requestRender() {},
+		} as unknown as InteractiveSlashRuntimeDeps);
+		const notices: string[] = [];
+		const ctx = { ...runtime.context, notice: (level: string, text: string) => notices.push(`${level}: ${text}`) };
+		for (const word of typed) dispatchSlashCommand(parseSlashCommand(`/thinking ${word}`), ctx);
+		return { notices, commits };
+	};
+	const effort = run("dynamo/qwen3.8-27b", ["high", "max", "bogus", "forced", "on"]);
+	const refused = (word: string, offered: string) =>
+		`error: thinking level "${word}" is not available here; try ${offered}`;
+	deepStrictEqual(effort.notices, [
+		"success: thinking: xhigh (high isn't offered by dynamo/qwen3.8-27b; using xhigh)",
+		"success: thinking: xhigh (max not offered)",
+		refused("bogus", "off, low, medium, xhigh"),
+		// Another mechanism's label is not a level on an effort-levels model.
+		refused("forced", "off, low, medium, xhigh"),
+		refused("on", "off, low, medium, xhigh"),
+	]);
+	// Stored as typed at session scope, like chat.thinkingLevel in settings.yaml; the clamp decides what runs.
+	deepStrictEqual(effort.commits, [
+		"chat.thinkingLevel=high session slash-command",
+		"chat.thinkingLevel=max session slash-command",
+	]);
+	const alwaysOn = run("dynamo/always-on", ["off", "forced"]);
+	deepStrictEqual(alwaysOn.notices, [refused("off", "forced"), "success: thinking: forced"]);
+	deepStrictEqual(alwaysOn.commits, ["chat.thinkingLevel=high session slash-command"]);
+});
+
+test("actual gateway probe to engine stream disables reasoning while retaining gateway ownership", async () => {
+	for (const runtime of ["lm-studio", "flm"] as const) {
+		const modelId = runtime === "flm" ? "Qwen/Qwen3.5-4B" : "Qwen/Qwen3.8-27B";
+		const fixture = await startGatewayThinkingFixture(runtime, modelId);
+		try {
+			const target = { id: "gateway", runtime: "litellm", url: fixture.url, defaultModel: fixture.modelId };
+			const probe = await litellm.probe?.(target, { credentialsPresent: new Set(), httpTimeoutMs: 1000 });
+			ok(probe?.ok);
+			// JSON round-trip reproduces the capability projection carried to workers.
+			const caps = JSON.parse(JSON.stringify(probe.modelCapabilities?.[fixture.modelId]));
+			const model = applyModelCapabilityPatch(
+				litellm.synthesizeModel(target, fixture.modelId, kb.lookup(fixture.modelId)),
+				caps,
+			) as Model<"openai-completions">;
+			for (const level of ["off", "low", "off"] as const) {
+				const stream = openAICompletionsApiProvider.streamSimple(
+					model,
+					{ messages: [{ role: "user", content: "17 times 19", timestamp: 0 }] },
+					{ apiKey: "fixture", ...(level === "off" ? {} : { reasoning: level }) },
+				);
+				const result = await stream.result();
+				strictEqual(result.stopReason, "stop");
+				strictEqual(
+					result.content.some((part) => part.type === "thinking"),
+					level !== "off",
+				);
+				const request = fixture.requests.at(-1);
+				strictEqual(request?.reasoning_effort, level === "off" ? "none" : "low");
+				deepStrictEqual(request?.allowed_openai_params, ["reasoning_effort"]);
+				strictEqual(model.provider, "litellm");
+				strictEqual(
+					(model as unknown as { pancode: { runtimeId: string; gateway: boolean } }).pancode.runtimeId,
+					"litellm",
+				);
+				strictEqual((model as unknown as { pancode: { gateway: boolean } }).pancode.gateway, true);
+			}
+			ok(
+				fixture.paths.every((path) =>
+					["/health/liveliness", "/v1/models", "/v1/model/info", "/v1/chat/completions"].includes(path),
+				),
+				fixture.paths.join(","),
+			);
+			// A later unresolved declaration must remove a prior route-specific hint.
+			applyModelCapabilityPatch(model, { reasoning: true });
+			strictEqual(resolveModelRuntimeCapabilitiesForModel(model, "off").request.reasoningEffort, undefined);
+		} finally {
+			await fixture.close();
+		}
+	}
+});
+
+test("unknown gateway routes do not invent an effort-only protocol or suppress observed thinking", async () => {
+	const fixture = await startGatewayThinkingFixture("unknown");
+	try {
+		const model = litellm.synthesizeModel(
+			{ id: "unknown", runtime: "litellm", url: fixture.url },
+			fixture.modelId,
+			kb.lookup(fixture.modelId),
+		) as Model<"openai-completions">;
+		const result = await openAICompletionsApiProvider
+			.streamSimple(model, { messages: [{ role: "user", content: "17 times 19", timestamp: 0 }] }, { apiKey: "fixture" })
+			.result();
+		ok(result.content.some((part) => part.type === "thinking"));
+		strictEqual(fixture.requests[0]?.reasoning_effort, undefined);
+		strictEqual(fixture.requests[0]?.allowed_openai_params, undefined);
+	} finally {
+		await fixture.close();
+	}
+});
+
+test("reported Qwen3.8 route sends only its upstream effort vocabulary through LiteLLM", async () => {
+	strictEqual(kb.lookup("local/qwen3.8-9b"), null);
+	for (const modelId of ["local/qwen3.8-27b-q4_k_m", "local/qwen3.8-27b-q6_k"]) {
+		const fixture = await startGatewayThinkingFixture("llama.cpp", modelId);
+		try {
+			const target = { id: "blade-gateway", runtime: "litellm", url: fixture.url, defaultModel: modelId };
+			const probe = await litellm.probe?.(target, { credentialsPresent: new Set(), httpTimeoutMs: 1000 });
+			ok(probe?.ok);
+			const hit = kb.lookup(modelId);
+			ok(hit);
+			strictEqual(hit.entry.family, "qwen3.8-27b");
+			const model = applyModelCapabilityPatch(
+				litellm.synthesizeModel(target, modelId, hit),
+				probe.modelCapabilities?.[modelId],
+			) as Model<"openai-completions">;
+			for (const [level, effort] of [
+				["low", "low"],
+				["medium", "medium"],
+				["high", "xhigh"],
+				["xhigh", "xhigh"],
+				["max", "xhigh"],
+			] as const) {
+				const result = await openAICompletionsApiProvider
+					.streamSimple(
+						model,
+						{ messages: [{ role: "user", content: "17 times 19", timestamp: 0 }] },
+						{ apiKey: "fixture", reasoning: level },
+					)
+					.result();
+				strictEqual(result.stopReason, "stop");
+				const request = fixture.requests.at(-1);
+				strictEqual(request?.model, modelId);
+				strictEqual(request?.reasoning_effort, effort);
+				deepStrictEqual(request?.allowed_openai_params, ["reasoning_effort"]);
+				deepStrictEqual(resolveModelRuntimeCapabilitiesForModel(model, level).thinking.supportedLevels, [
+					"off",
+					"low",
+					"medium",
+					"xhigh",
+				]);
+			}
+		} finally {
+			await fixture.close();
+		}
+	}
+});

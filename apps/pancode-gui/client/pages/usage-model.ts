@@ -1,0 +1,420 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// The usage report's own order, in the operator's words. `facts[].values` is `Record<string,
+// unknown>` on the wire because the CLI's schema is experimental, so every key is read defensively
+// here and anything this module does not know about is handed back for <Facts> rather than dropped.
+// Pure, so the wording and the ordering are testable without a browser.
+
+import { USAGE_NOT_MEASURED } from "../../../../src/core/views/usage-words.js";
+import type { UsageReport } from "../../contracts/reports.js";
+import type { CacheReportV1, CostReportV1, SessionTelemetryV1 } from "../../contracts/wire.js";
+import { formatDay } from "../api/clock.js";
+import { humanizeKey, scalarText } from "../design/facts-model.js";
+import {
+	countText,
+	type Explainable,
+	explainable,
+	NOT_JOURNALED,
+	quantityParts,
+	quantityText,
+} from "../telemetry/quantity-model.js";
+
+interface UsageFigure extends Explainable {
+	label: string;
+	note?: string;
+}
+
+interface UsageBar extends Explainable {
+	label: string;
+	/** Width relative to the largest bar, 0 to 1. Never a share of the total: these fields overlap. */
+	share: number;
+}
+
+interface UsageGroup {
+	name: string;
+	label: string;
+	values: Record<string, unknown>;
+	/** A fact whose whole content is one count reads as the figure, not as a "Value" row. */
+	single: string | null;
+}
+
+/**
+ * Facts that repeat, such as one `top-tool` row per tool, read as one table rather than as
+ * one card each. A month of real use records dozens of them, and a card apiece made the page thirty
+ * screens tall.
+ */
+interface UsageTable {
+	name: string;
+	label: string;
+	total: number;
+	columns: string[];
+	rows: string[][];
+	/** Rows beyond the display bound. */
+	omitted: number;
+	/** Columns beyond the display bound. */
+	omittedColumns: number;
+}
+const USAGE_TABLE_LIMITS = { rows: 24, columns: 6 } as const;
+
+interface UsageView {
+	window: string;
+	headline: UsageFigure[];
+	bars: UsageBar[];
+	barsCaveat: string;
+	knownSubtotals: string | null;
+	origins: UsageFigure[];
+	originsNote: string;
+	skillsActivated: UsageGroup[];
+	skillsDormant: string[];
+	/** Facts recorded once, shown as a card each. */
+	rest: UsageGroup[];
+	/** Facts recorded more than once, shown as one table per name. */
+	tables: UsageTable[];
+}
+
+/** Bars compare token fields with one another. Provider accounting can report the same tokens twice. */
+export const BARS_CAVEAT =
+	"Bars compare token fields with one another; they are not additive percentages. Provider accounting can overlap cache and reasoning fields.";
+
+type TokenQuantities = SessionTelemetryV1["own"]["tokens"];
+const TOKEN_BARS: ReadonlyArray<readonly [keyof TokenQuantities, string]> = [
+	["input", "Input"],
+	["output", "Output"],
+	["cacheRead", "Cache read"],
+	["cacheWrite", "Cache write"],
+	["reasoning", "Reasoning"],
+];
+
+/** The read model's agent roles in the operator's words; a role added later reads through the humanizer. */
+const ORIGINS: Readonly<Record<string, string>> = {
+	main: "Conversation calls",
+	coordinator: "Coordinator calls",
+	compaction: "Compaction calls",
+	btw: "Side questions",
+	handoff: "Handoffs",
+	prewarm: "Pre-warms",
+	memory: "Background memory steps",
+	"system-one": "System One calls",
+	"safety-judge": "Safety judge calls",
+	helper: "Helper calls",
+	worker: "Worker run calls",
+};
+
+/** These are read out of the report by name; everything else keeps its wire shape. */
+const CLAIMED = new Set([
+	"telemetry-cost",
+	"telemetry-cache",
+	"telemetry-tokens",
+	"sessions",
+	"dispatch-runs",
+	"skill-activated",
+	"skill-never-activated",
+]);
+
+/**
+ * The report's spend for one group-by: the read model's cost report over the window, every figure carrying the
+ * canonical renderer's display. The server checked its shape (#434 §11.3).
+ */
+export function costReportOf(report: UsageReport, groupBy: "role" | "model" | "target"): CostReportV1 | null {
+	const fact = report.facts.find((item) => item.name === "telemetry-cost" && item.values.groupBy === groupBy);
+	const value = fact?.values.report as CostReportV1 | undefined;
+	return value?.kind === "cost" ? value : null;
+}
+
+/** The window's token fields as the read model measured them over the same scope as the cost reports. */
+function tokenQuantitiesOf(report: UsageReport): TokenQuantities | null {
+	const value = report.facts.find((item) => item.name === "telemetry-tokens")?.values.tokens as
+		| TokenQuantities
+		| undefined;
+	return value?.total ? value : null;
+}
+
+/** One read-model cache report per session that recorded a cache verdict, in session order. */
+export function cacheReportsOf(report: UsageReport): CacheReportV1[] {
+	return report.facts.flatMap((item) => {
+		const value = item.name === "telemetry-cache" ? (item.values.report as CacheReportV1 | undefined) : undefined;
+		return value?.kind === "cache" ? [value] : [];
+	});
+}
+
+function costNote(total: CostReportV1["total"]): string {
+	const usd = quantityParts(total.usd);
+	const { free, ...priced } = total.pricedBy;
+	if (!usd.known)
+		return usd.unknown > 0 ? "No call in this window was priced" : "No priced calls recorded in this window";
+	if (usd.unknown > 0) return "Known subtotal; some calls are unpriced";
+	if (usd.estimated > 0) return "Includes estimated prices";
+	// Which free rule applied (local, declared, zero-rates or mixed) is in the amount's own display, shown beside this.
+	return free > 0 && Object.values(priced).every((count) => count === 0) ? "Recorded as free" : "Recorded prices";
+}
+
+const number = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
+const single = (values: Record<string, unknown>): string | null => {
+	const keys = Object.keys(values);
+	const only = keys.length === 1 && keys[0] === "value" ? number(values.value) : null;
+	return only === null ? null : countText(only);
+};
+const text = (value: unknown): string | null => (typeof value === "string" && value ? value : null);
+
+/**
+ * Words for a wire key, used only for the facts this module does not name itself. It is the same
+ * humanizer the fact renderer uses, so one vocabulary covers every inspector.
+ */
+export const usageLabel = humanizeKey;
+
+/** One cell. A nested record reads as `hot 0 · cold 13`, never as JSON. */
+function cell(key: string, value: unknown, costDisplay?: string): string {
+	if (Array.isArray(value)) return value.length ? value.map((item) => cell(key, item)).join(", ") : "None";
+	if (value && typeof value === "object")
+		return (
+			Object.entries(value)
+				.filter(([key]) => key !== "costDisplay")
+				.map(
+					([inner, item]) =>
+						`${humanizeKey(inner).toLowerCase()} ${cell(inner, item, text((value as Record<string, unknown>).costDisplay) ?? undefined)}`,
+				)
+				.join(" · ") || "None"
+		);
+	return scalarText(key, value as string | number | boolean | null | undefined, costDisplay).text;
+}
+
+function tablesOf(rows: UsageGroup[]): { singles: UsageGroup[]; tables: UsageTable[] } {
+	const byName = new Map<string, UsageGroup[]>();
+	for (const row of rows) byName.set(row.name, [...(byName.get(row.name) ?? []), row]);
+	const singles: UsageGroup[] = [];
+	const tables: UsageTable[] = [];
+	for (const [name, members] of byName) {
+		const first = members[0];
+		if (!first) continue;
+		if (members.length === 1) {
+			singles.push(first);
+			continue;
+		}
+		const keys = [
+			...new Set(members.flatMap((member) => Object.keys(member.values).filter((key) => key !== "costDisplay"))),
+		];
+		const shown = keys.slice(0, USAGE_TABLE_LIMITS.columns);
+		tables.push({
+			name,
+			label: first.label,
+			total: members.length,
+			columns: shown.map(humanizeKey),
+			rows: members
+				.slice(0, USAGE_TABLE_LIMITS.rows)
+				.map((member) => shown.map((key) => cell(key, member.values[key], text(member.values.costDisplay) ?? undefined))),
+			omitted: Math.max(0, members.length - USAGE_TABLE_LIMITS.rows),
+			omittedColumns: keys.length - shown.length,
+		});
+	}
+	return { singles, tables };
+}
+
+export function usageView(report: UsageReport): UsageView {
+	const rows = report.facts.map((fact) => ({
+		name: fact.name,
+		label: usageLabel(fact.name),
+		values: fact.values,
+		single: single(fact.values),
+	}));
+	const first = (name: string) => rows.find((row) => row.name === name)?.values;
+	const all = (name: string) => rows.filter((row) => row.name === name);
+	const byOrigin = costReportOf(report, "role");
+
+	const store = (name: string, label: string): UsageFigure => {
+		return { label, value: text(first(name)?.display) ?? NOT_JOURNALED, factRef: null };
+	};
+
+	const total = byOrigin?.total;
+	const headline: UsageFigure[] = [
+		total
+			? { label: "Tokens", ...explainable(total.tokens), note: `API calls: ${quantityText(total.calls)}` }
+			: { label: "Tokens", value: countText(null), factRef: null },
+		total
+			? { label: "Route price", ...explainable(total.usd), note: costNote(total) }
+			: {
+					label: "Route price",
+					value: USAGE_NOT_MEASURED,
+					note: "No route price was measured in this window",
+					factRef: null,
+				},
+		store("sessions", "Sessions"),
+		store("dispatch-runs", "Dispatch runs"),
+	];
+
+	const tokens = tokenQuantitiesOf(report);
+	// Each bar is one server fact against the widest; a field that is a lower bound draws its known part (#434).
+	const fields = TOKEN_BARS.map(([key, label]) => ({ label, quantity: tokens?.[key] ?? null }));
+	const amounts = fields.map((field) => (field.quantity ? quantityParts(field.quantity).amount : null));
+	const widest = Math.max(0, ...amounts.map((amount) => amount ?? 0));
+	const bars: UsageBar[] = fields.map((field, index) => {
+		const amount = amounts[index] ?? null;
+		return {
+			label: field.label,
+			...explainable(field.quantity, countText(null)),
+			share: amount !== null && widest > 0 ? amount / widest : 0,
+		};
+	});
+	const partialFields = fields.some((field) => field.quantity && quantityParts(field.quantity).unknown > 0);
+
+	const origins = (byOrigin?.groups ?? []).map((group) => ({
+		label: Object.hasOwn(ORIGINS, group.key) ? (ORIGINS[group.key] as string) : humanizeKey(group.key),
+		...explainable(group.calls),
+	}));
+	const leftover = tablesOf(rows.filter((row) => !CLAIMED.has(row.name)));
+	return {
+		window: `from ${formatDay(report.from)} through ${formatDay(report.to)}`,
+		headline,
+		bars,
+		barsCaveat: `${BARS_CAVEAT}${partialFields ? " Some calls lack token fields; displayed fields are known subtotals, and absent amounts do not mean zero." : ""}`,
+		// The displays already carry the marker; this names what a lower bound means here, never how many (#434).
+		knownSubtotals:
+			total && (quantityParts(total.tokens).unknown > 0 || quantityParts(total.calls).unknown > 0)
+				? "Token amounts are known subtotals: some recorded calls lack token usage or a call count, and missing usage is not zero. Reports cover retained local records, not provider invoices."
+				: null,
+		origins,
+		originsNote: origins.length
+			? "Calls by what asked for them, in one fold over the window's sessions and runs. Worker calls come from each run's journal. A tool loop can make several conversation calls."
+			: byOrigin
+				? "No call was recorded in this window."
+				: "Call origins were not recorded in this window.",
+		skillsActivated: all("skill-activated"),
+		skillsDormant: all("skill-never-activated").flatMap((row) => {
+			const name = text(row.values.skill);
+			return name ? [name] : [];
+		}),
+		rest: leftover.singles,
+		tables: leftover.tables,
+	};
+}
+
+type Economy = CostReportV1["economy"];
+type EconomyTotal = Economy["total"]["apiEquivalent"];
+/** How a figure reads: `unknown` (no known part, or not summed) renders neutral, never as an amount or as zero. */
+type EconomyTone = "known" | "estimate" | "unknown";
+
+interface EconomyFigure {
+	label: string;
+	value: string;
+	tone: EconomyTone;
+	note: string;
+}
+
+interface EconomyPoolRow {
+	pool: string;
+	/** Folded contributions: a run aggregate or a coverage gap is one, so this is never a call count. */
+	contributions: string;
+	extra: string;
+	providerCharge: string;
+	apiEquivalent: string;
+	seatCredits: string;
+	tone: EconomyTone;
+}
+
+interface EconomyView {
+	headline: EconomyFigure[];
+	pools: EconomyPoolRow[];
+	/** Each declared fee once per pool and period, as the report lists them. */
+	fees: { key: string; pool: string; payer: string; period: string; value: string }[];
+	/** The public list-price rows the API equivalent was priced from, each with its as-of. */
+	references: { key: string; id: string; asOf: string; basis: string; contributions: string }[];
+	sources: string;
+}
+
+/** Classifies a total from its own coverage; the amount shown is always the report's display. */
+function totalTone(total: EconomyTotal): EconomyTone {
+	if ("refused" in total) return "unknown";
+	if (!("unit" in total)) return total.sum.unknownCount > 0 ? "unknown" : "known";
+	return total.sum.coverage.estimated > 0 ? "estimate" : "known";
+}
+/** The API equivalent is an estimate by definition, unless nothing about it is known. */
+const estimateTone = (total: EconomyTotal): EconomyTone => (totalTone(total) === "unknown" ? "unknown" : "estimate");
+
+function energyTone(quantities: Economy["total"]): EconomyTone {
+	const kwh = quantities.energyKwh;
+	if (kwh.coverage.measured + kwh.coverage.estimated === 0) return kwh.unknownCount > 0 ? "unknown" : "known";
+	return kwh.coverage.estimated > 0 ? "estimate" : "known";
+}
+
+/** The window's economy as the report folded it: every value is the CLI's display, nothing here prices or adds. */
+export function economyView(report: UsageReport): EconomyView | null {
+	const economy = report.economy;
+	if (!economy) return null;
+	const { total } = economy;
+	const counted = (count: number, word: string) => `${countText(count)} ${word}${count === 1 ? "" : "s"}`;
+	return {
+		headline: [
+			{
+				label: "Extra charge",
+				value: total.display.extra,
+				tone: totalTone(total.marginalCharge),
+				note:
+					"Beyond plans and seats. An actual amount only where the provider or a statement says so; ~ marks an estimate and +? an unknown part.",
+			},
+			{
+				label: "API equivalent",
+				value: total.display.apiEquivalent,
+				tone: estimateTone(total.apiEquivalent),
+				note: "Estimate at public list prices, never cash.",
+			},
+			{
+				label: "Seat credits",
+				value: total.display.seatCredits,
+				tone: totalTone(total.seatCredits),
+				note: "The seat's debit in AI credits; ~ marks an estimate at the listing tariff.",
+			},
+			{
+				label: "Local energy",
+				value: total.display.energy,
+				tone: energyTone(total),
+				note: "Measured or estimated kWh and its tariff cost.",
+			},
+			{
+				label: "Cash",
+				value: economy.cash.display,
+				tone: economy.cash.currencies.length
+					? economy.cash.currencies.some((cash) => totalTone(cash) === "estimate")
+						? "estimate"
+						: "known"
+					: economy.cash.unknownCount > 0
+						? "unknown"
+						: "known",
+				note:
+					"Your share per currency, never summed across currencies: fees for pools you pay personally (each a whole pool's fee, not this workspace's spend), extra charges and local electricity. Charges a sponsor or employer pays are not cash to you.",
+			},
+		],
+		pools: economy.groups.pool.map((pool) => ({
+			pool: pool.key,
+			contributions: countText(pool.contributions),
+			extra: pool.display.extra,
+			providerCharge: pool.display.providerCharge,
+			apiEquivalent: pool.display.apiEquivalent,
+			seatCredits: pool.display.seatCredits,
+			tone: totalTone(pool.marginalCharge),
+		})),
+		fees: economy.fees.map((fee) => ({
+			key: `${fee.poolId}:${fee.period.kind}:${fee.period.start}`,
+			pool: fee.poolId,
+			payer: fee.payer,
+			// The report's period bounds are UTC instants; the day is the report's own, never shifted to local time.
+			period: `${fee.period.kind} from ${fee.period.start.slice(0, 10)}`,
+			value: fee.display,
+		})),
+		references: economy.references.map((row) => ({
+			// The fold keys a reference by tariff row, date and basis; served and requested can share the first two.
+			key: `${row.referenceRowId}:${row.asOf}:${row.basis}`,
+			id: row.referenceRowId,
+			asOf: row.asOf,
+			basis: row.basis === "served-model" ? "served model" : "requested model",
+			contributions: counted(row.contributions, "contribution"),
+		})),
+		sources: `${counted(economy.sources.attempts, "attempt")} · ${counted(economy.sources.runs, "run")} · ${counted(economy.sources.gaps, "gap")}`,
+	};
+}
+
+export function filterUsageFacts(facts: UsageReport["facts"], query: string): UsageReport["facts"] {
+	const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+	return facts.filter((fact) => {
+		const text = `${usageLabel(fact.name)} ${JSON.stringify(fact.values)}`.toLocaleLowerCase();
+		return terms.every((term) => text.includes(term));
+	});
+}

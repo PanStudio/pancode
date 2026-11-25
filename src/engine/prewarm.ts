@@ -1,0 +1,309 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { trackCallFetch } from "../core/call-failure.js";
+import { requestedThinking } from "../core/telemetry/call-effort.js";
+import type { CallJournalOptions, CallScope } from "../domains/telemetry/call-scope.js";
+import { openCallScope } from "../domains/telemetry/call-scope.js";
+import { normalizeContext } from "./context.js";
+import { withLiveToolDeclarations } from "./live-declarations.js";
+/**
+ * One bounded-output warm through the eventual caller's engine request path.
+ * Copies portable context, applies public Pi transforms and payload hooks,
+ * and consumes the response without running tools or appending conversation.
+ * Admission and lifecycle remain with the caller. A matching serialized
+ * prefix is only a reuse candidate; the backend decides actual cache reuse.
+ */
+
+import type { Agent } from "@earendil-works/pi-agent-core";
+import type { BackendCompletionTimings } from "../core/cache-telemetry.js";
+import { streamSimple } from "./ai.js";
+import { estimateInputTokensFromContext } from "./apis/output-budget.js";
+import type { AgentMessage, AgentTool, EngineModel, Usage } from "./types.js";
+
+/**
+ * The one user message appended so the chat template renders the prefix up to
+ * the user turn. One character: it has to exist for the template to close the
+ * prefix, and everything after the last shared byte is re-evaluated by the real
+ * turn anyway.
+ */
+export const PREWARM_USER_TEXT = ".";
+
+/** Output budget for the round. The tokens the model produces are not the point. */
+export const PREWARM_MAX_TOKENS = 1;
+
+/** Which trigger asked for the pre-warm. Recorded on the ledger entry. */
+export type PrewarmTrigger = "session-start" | "resume" | "compaction";
+
+export interface PrewarmContext {
+	systemPrompt: string;
+	messages: ReadonlyArray<AgentMessage>;
+	tools: ReadonlyArray<AgentTool>;
+}
+
+/**
+ * The roles pi-agent-core's default `convertToLlm` keeps when it turns the
+ * agent's message list into provider messages. The pre-warm applies the same
+ * filter so its message array is the one a turn would send, not the agent's
+ * internal list.
+ */
+const LLM_MESSAGE_ROLES: ReadonlySet<string> = new Set(["system", "user", "assistant", "toolResult"]);
+
+export interface PrewarmRoundInput {
+	telemetry?: CallJournalOptions;
+	model: EngineModel;
+	/** Live agent state the next turn would send. Read-only; the round copies it. */
+	state: {
+		systemPrompt: string;
+		messages: ReadonlyArray<AgentMessage>;
+		tools: ReadonlyArray<AgentTool>;
+		thinkingLevel: string;
+	};
+	apiKey?: string;
+	signal?: AbortSignal;
+	/** Admission bound on the engine's input estimate, after context selection. */
+	maxInputTokens?: number;
+	/** Recheck foreground ownership after asynchronous context transforms. */
+	canSend?: () => boolean;
+	/** Public Pi preparation hooks of the eventual caller. No tools or agent loop are executed. */
+	agent?: Pick<
+		Agent,
+		| "transformContext"
+		| "convertToLlm"
+		| "streamFunction"
+		| "onPayload"
+		| "onResponse"
+		| "sessionId"
+		| "thinkingBudgets"
+		| "transport"
+		| "maxRetryDelayMs"
+	>;
+	/** Test seam. Production uses the engine dispatcher a turn runs on. */
+	streamFn?: typeof streamSimple;
+}
+
+export interface PrewarmRoundResult {
+	callId?: string;
+	attemptId?: string;
+	invoked?: boolean;
+	/** True when the operator submitted (or the session moved) before the round settled. */
+	aborted: boolean;
+	/** Provider usage for the round; null when the backend reported none. */
+	usage: Usage | null;
+	/** Backend prefill and prediction timings when the server reported them. */
+	backend: BackendCompletionTimings | null;
+	/** Wall clock the round spent, in the shape a turn's assistant entry uses. */
+	timing: { ttftMs: number | null; apiMs: number };
+	/** Provider error text when the round failed outright. */
+	errorMessage: string | null;
+}
+
+function usageOf(message: unknown): Usage | null {
+	if (message === null || typeof message !== "object") return null;
+	const usage = (message as { usage?: unknown }).usage;
+	if (usage === null || typeof usage !== "object") return null;
+	const record = usage as Usage;
+	// Pi initializes missing usage to zero, including on aborted/error calls.
+	// A warm with no observed tokens cannot be called a measured free request.
+	return [record.input, record.output, record.cacheRead, record.cacheWrite, record.cost?.total].some(
+		(value) => typeof value === "number" && Number.isFinite(value) && value > 0,
+	)
+		? record
+		: null;
+}
+
+function backendOf(message: unknown): BackendCompletionTimings | null {
+	if (message === null || typeof message !== "object") return null;
+	const backend = (message as { backendTimings?: unknown }).backendTimings;
+	return backend !== null && typeof backend === "object" ? (backend as BackendCompletionTimings) : null;
+}
+
+/**
+ * Prompt tokens the backend actually processed for one pre-warm. The server's
+ * own prompt count is authoritative when it reported one; otherwise the
+ * provider usage prompt side, cached tokens folded in, is the honest figure.
+ * Null when neither exists, which is different from a measured zero.
+ */
+export function prewarmPromptTokens(result: Pick<PrewarmRoundResult, "usage" | "backend">): number | null {
+	if (result.backend) return result.backend.promptTokens;
+	const usage = result.usage;
+	if (!usage) return null;
+	const total = (usage.input || 0) + (usage.cacheRead || 0) + (usage.cacheWrite || 0);
+	return total > 0 ? total : null;
+}
+
+/**
+ * Send the prefix and wait for the backend to acknowledge it. Resolves rather
+ * than rejects on a provider failure: a pre-warm is an optimization, and a
+ * backend that refuses it must not be able to break the session it was warming.
+ */
+export async function runPrewarmRound(input: PrewarmRoundInput): Promise<PrewarmRoundResult> {
+	const scope = await openCallScope(input.telemetry && { ...input.telemetry, purpose: "prewarm" }, input.model);
+	try {
+		const result = await runPrewarmAttempt(input, scope);
+		return { ...result, ...scope.identity() };
+	} finally {
+		await scope.close();
+	}
+}
+
+async function runPrewarmAttempt(input: PrewarmRoundInput, scope: CallScope): Promise<PrewarmRoundResult> {
+	scope.startAttempt({ roundKind: "normal", toolChoice: "auto", ...requestedThinking(input.state.thinkingLevel) });
+	// pi-agent-core maps `thinkingLevel: "off"` onto an absent `reasoning`; the
+	// pre-warm has to make the same mapping or the thinking composition resolves
+	// against a different level and the rendered template moves.
+	// The warm carries the session id but is not a turn of the conversation, so it leaves the provider's server-side
+	// continuation state (Anthropic message threads since Pi 1.5.1) to the real requests.
+	const options: Record<string, unknown> = { maxTokens: PREWARM_MAX_TOKENS, disableContinuation: true };
+	// Narrow residency authority without changing prompt rendering. A warm may
+	// not inherit the foreground turn's implicit load/unload authorization.
+	const metadata = (input.model as EngineModel & { pancode?: Record<string, unknown> }).pancode;
+	const model = metadata ? { ...input.model, pancode: { ...metadata, lifecycle: "user-managed" } } : input.model;
+	if (metadata?.runtimeId === "llamacpp") {
+		// A worker that disappeared after admission must not be JIT-loaded by
+		// the pinned llama router. This query is independent of prompt bytes.
+		options.fetch = (request: string | URL | Request, init?: RequestInit) => {
+			const url = new URL(request instanceof Request ? request.url : request);
+			url.searchParams.set("autoload", "false");
+			return fetch(request instanceof Request ? new Request(url, request) : url, init);
+		};
+	}
+	if (input.state.thinkingLevel !== "off") options.reasoning = input.state.thinkingLevel;
+	if (input.apiKey !== undefined) options.apiKey = input.apiKey;
+	if (input.signal !== undefined) options.signal = input.signal;
+	if (input.agent) {
+		for (const key of [
+			"onPayload",
+			"onResponse",
+			"sessionId",
+			"thinkingBudgets",
+			"transport",
+			"maxRetryDelayMs",
+		] as const) {
+			if (input.agent[key] !== undefined) options[key] = input.agent[key];
+		}
+	}
+
+	// OI-7: the Codex backend warms a request without generating. The prefix is the history as it stands, with no
+	// placeholder user message, and the response carries usage but no output.
+	const generationFree = input.model.api === "openai-codex-responses";
+	if (generationFree) {
+		const onPayload = options.onPayload as ((payload: unknown, model: EngineModel) => unknown) | undefined;
+		options.onPayload = async (payload: unknown, currentModel: EngineModel) => {
+			const patched = (await onPayload?.(payload, currentModel)) ?? payload;
+			return typeof patched === "object" && patched !== null && !Array.isArray(patched)
+				? { ...(patched as Record<string, unknown>), generate: false }
+				: patched;
+		};
+	}
+
+	if (metadata?.runtimeId === "litellm") {
+		const onPayload = input.agent?.onPayload;
+		options.onPayload = async (payload: unknown, currentModel: EngineModel) => {
+			const patched = (await onPayload?.(payload, currentModel)) ?? payload;
+			// Warming is authorized for the verified local route only. A gateway
+			// must not turn an unavailable local model into a billed fallback.
+			return { ...(patched as Record<string, unknown>), num_retries: 0, disable_fallbacks: true };
+		};
+	}
+
+	const tracking = trackCallFetch(options.fetch as typeof globalThis.fetch | undefined);
+	options.fetch = tracking.fetch;
+	const send = input.streamFn ?? input.agent?.streamFunction ?? streamSimple;
+	const startedAt = performance.now();
+	let firstDeltaAt: number | null = null;
+	let invoked = false;
+	const elapsed = (): number => Math.round(Math.max(0, performance.now() - startedAt));
+	const ttft = (): number | null => (firstDeltaAt === null ? null : Math.round(Math.max(0, firstDeltaAt - startedAt)));
+
+	try {
+		input.signal?.throwIfAborted();
+		// Match Agent's initial baseline and pre-request tool reconciliation, using
+		// Pi's public declaration diff. Never clone executable AgentTool objects.
+		let messages: AgentMessage[] = withLiveToolDeclarations(
+			structuredClone([...input.state.messages]),
+			input.state.systemPrompt,
+			input.state.tools,
+		);
+		if (!generationFree)
+			messages.push({ role: "user", content: [{ type: "text", text: PREWARM_USER_TEXT }], timestamp: Date.now() });
+		if (input.agent?.transformContext) messages = await input.agent.transformContext(messages, input.signal);
+		const converted = input.agent
+			? await input.agent.convertToLlm(messages)
+			: messages.filter((message) => LLM_MESSAGE_ROLES.has(message.role));
+		input.signal?.throwIfAborted();
+		// Transforms own the final prompt and declarations, just as on a real turn.
+		const context = normalizeContext({ messages: converted as Parameters<typeof streamSimple>[1]["messages"] });
+		if (input.maxInputTokens !== undefined && estimateInputTokensFromContext(context) > input.maxInputTokens) {
+			throw new Error("pre-warm input estimate exceeds its token budget");
+		}
+		if (input.canSend?.() === false) {
+			scope.settle({ stopReason: "aborted", callInvoked: false });
+			return {
+				invoked,
+				aborted: true,
+				usage: null,
+				backend: null,
+				timing: { ttftMs: null, apiMs: elapsed() },
+				errorMessage: null,
+			};
+		}
+		invoked = true;
+		tracking.start(model.api, typeof options.transport === "string" ? options.transport : undefined);
+		const events = await scope.withContext(() =>
+			send(model, context, options as unknown as Parameters<typeof streamSimple>[2]),
+		);
+		for await (const event of events) {
+			const hasDelta =
+				event.type === "toolcall_start" ||
+				((event.type === "text_delta" || event.type === "thinking_delta" || event.type === "toolcall_delta") &&
+					event.delta.length > 0);
+			if (firstDeltaAt === null && hasDelta) firstDeltaAt = performance.now();
+			if (event.type === "done") {
+				scope.settle(event.message);
+				return {
+					invoked,
+					aborted: false,
+					usage: usageOf(event.message),
+					backend: backendOf(event.message),
+					timing: { ttftMs: ttft(), apiMs: elapsed() },
+					errorMessage: null,
+				};
+			}
+			if (event.type === "error") {
+				const failed = event.error as { stopReason?: unknown; errorMessage?: unknown };
+				const aborted = event.reason === "aborted" || failed.stopReason === "aborted" || input.signal?.aborted === true;
+				scope.settle({ ...event.error, failure: tracking.failure(event.error, aborted) });
+				return {
+					invoked,
+					aborted,
+					usage: usageOf(event.error),
+					backend: backendOf(event.error),
+					timing: { ttftMs: ttft(), apiMs: elapsed() },
+					errorMessage: aborted ? null : typeof failed.errorMessage === "string" ? failed.errorMessage : "pre-warm failed",
+				};
+			}
+		}
+	} catch (error) {
+		scope.settle({
+			stopReason: input.signal?.aborted ? "aborted" : "error",
+			failure: tracking.failure(error, input.signal?.aborted),
+		});
+		return {
+			invoked,
+			aborted: input.signal?.aborted === true,
+			usage: null,
+			backend: null,
+			timing: { ttftMs: ttft(), apiMs: elapsed() },
+			errorMessage: input.signal?.aborted === true ? null : error instanceof Error ? error.message : String(error),
+		};
+	}
+	scope.settle({ stopReason: "error", failure: tracking.failure("stream ended without terminal response") });
+	return {
+		invoked,
+		aborted: input.signal?.aborted === true,
+		usage: null,
+		backend: null,
+		timing: { ttftMs: ttft(), apiMs: elapsed() },
+		errorMessage: null,
+	};
+}

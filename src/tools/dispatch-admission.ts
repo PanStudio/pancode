@@ -1,0 +1,1263 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { relative, resolve } from "node:path";
+import { relativePathEscapes } from "../core/path-containment.js";
+import { ToolNames } from "../core/tool-names.js";
+import { isRecord } from "../core/type-guards.js";
+import { isReadOnlyExplorer } from "../domains/agents/spec.js";
+import { selectWorkerContext } from "../domains/context/worker/select.js";
+import type {
+	DispatchDerivedGrants,
+	DispatchPlanTaskResolution,
+	DispatchRequest,
+} from "../domains/dispatch/contract.js";
+import type { ExecutionPlan } from "../domains/dispatch/execution-plan.js";
+import {
+	agentRoleFactsResolver,
+	councilJudgeAgentId,
+	gateDeciderAgentId,
+	reviewDeciderAgentId,
+	withRunRole,
+} from "../domains/dispatch/execution-role.js";
+import {
+	COUNCIL_JUDGE_PROMPT,
+	COUNCIL_MAX_MEMBERS,
+	COUNCIL_MIN_MEMBERS,
+	councilBallotContract,
+	councilSeatDownReason,
+	councilTooFewLiveSeats,
+	JUDGE_GATE_PROMPT,
+	REVIEWER_GATE_PROMPT,
+	renderCouncilVoteMemberTask,
+} from "../domains/dispatch/gate-role-prompts.js";
+import { narrowDispatchIntentToReadOnly, normalizeDispatchIntent } from "../domains/dispatch/intent.js";
+import { renderDispatchReviewerTask } from "../domains/dispatch/intent-requirements.js";
+import { operatorNamedChecks } from "../domains/dispatch/operator-checks.js";
+import { approvedRouteCandidates } from "../domains/dispatch/route-approval.js";
+import { candidateForecastLines } from "../domains/dispatch/route-policy.js";
+import { defaultRoutingIntent } from "../domains/dispatch/routing-intent.js";
+import { planCardLimitsUnderTimeout } from "../domains/dispatch/run-limits.js";
+import type { DispatchFailoverMode } from "../domains/dispatch/validation.js";
+import {
+	confineGrantOnlyWriters,
+	overlappingWriteRootsWarning,
+	writerSetConflict,
+} from "../domains/dispatch/writer-set.js";
+import {
+	councilVoterPersona,
+	dispatchRequestsFromArgs,
+	maxOutputBytesArg,
+	prepareDispatchArguments,
+	stringArg,
+	timeoutMsArg,
+} from "./dispatch-arguments.js";
+import { derivedGrantsNarrow, dispatchInputChangesOnlyIntent, dispatchRewriteNarrows } from "./dispatch-narrowing.js";
+import { normalizeDispatchAdmission } from "./dispatch-normalize.js";
+import {
+	DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT,
+	type DispatchPlanView,
+	describeDispatchPlan,
+	dispatchPlanTopology,
+	RESOLVED_DISPATCH_PLAN_ARGUMENT,
+	type ResolvedDispatchPlanArtifact,
+	resolvedDispatchPlanFromArgs,
+	withCompeteCandidateRoute,
+	withResolvedDispatchPlan,
+} from "./dispatch-plan.js";
+import {
+	loadVerifiedScoutSource,
+	prepareScoutContinuation,
+	scoutContinuationRefFromArgs,
+} from "./dispatch-scout-admission.js";
+import type {
+	DispatchCompeteSettings,
+	DispatchCouncilSettings,
+	DispatchExecutionSnapshot,
+	DispatchMode,
+	DispatchReviewSettings,
+	DispatchToolDeps,
+} from "./dispatch-types.js";
+import type { HostEffectCall } from "./registry-contract.js";
+import { gitCheckoutRoot, gitHeadIsUnborn, WORKTREE_UNBORN_HEAD_MESSAGE } from "./task-worktree.js";
+import type { ToolSpec } from "./tool-spec.js";
+import { runnableChecksAtRoot } from "./verify/resolve.js";
+import { judgedFileSha256, readJudgedFile } from "./verify/scripts.js";
+
+/**
+ * The six identity-sensitive stores which bind synchronous admission to the
+ * later, dynamically loaded dispatch runner. They intentionally live for one
+ * tool surface and are never serialized or reconstructed.
+ */
+export interface DispatchAdmissionState {
+	readonly preparedAdmissionArgs: WeakSet<Record<string, unknown>>;
+	readonly trustedResolvedPlans: WeakMap<Record<string, unknown>, ResolvedDispatchPlanArtifact>;
+	readonly trustedReservationOwners: WeakMap<Record<string, unknown>, string>;
+	readonly trustedExecutionSnapshots: WeakMap<Record<string, unknown>, DispatchExecutionSnapshot>;
+	readonly trustedExecutionPlans: WeakMap<Record<string, unknown>, ExecutionPlan>;
+	readonly taskResolutions: WeakMap<object, DispatchPlanTaskResolution>;
+}
+
+export interface DispatchAdmissionController {
+	readonly state: DispatchAdmissionState;
+	prepareAdmissionArguments(args: Record<string, unknown>): Record<string, unknown>;
+	disposeAdmissionArguments(args: Record<string, unknown>): void;
+	prepareArguments(args: Record<string, unknown>): Record<string, unknown>;
+	describeDispatchPlan(args: Record<string, unknown>): DispatchPlanView;
+	hostEffectCalls(args: Record<string, unknown>): ReadonlyArray<HostEffectCall>;
+	rewriteNarrows(original: Record<string, unknown>, rewritten: Record<string, unknown>): boolean;
+}
+
+type ResolvedPlanTask = ResolvedDispatchPlanArtifact["tasks"][number];
+
+const REVIEW_MAX_CYCLES_DEFAULT = 2;
+const REVIEW_MAX_CYCLES_LIMIT = 4;
+const REVIEW_SINGLE_TASK_MESSAGE =
+	"dispatch: review supports exactly one task; run the fan-out without review, then dispatch one integration task with review to gate the combined result";
+const COMPETE_SINGLE_TASK_MESSAGE = "dispatch: compete requires exactly one task";
+const COMPETE_NO_REVIEW_MESSAGE = "dispatch: compete has its own judge and cannot combine with review";
+const COMPETE_MIN_CANDIDATES = 2;
+const COMPETE_MAX_CANDIDATES = 4;
+const COUNCIL_LABEL = /^[a-z][a-z0-9_-]{0,31}$/u;
+
+function councilSettingsFromArgs(
+	args: Record<string, unknown>,
+	deps: DispatchToolDeps,
+): { ok: true; council: DispatchCouncilSettings } | { ok: false; message: string } {
+	const rosterName = stringArg(args, "roster");
+	const hasMembers = Object.hasOwn(args, "members");
+	if ((rosterName === undefined) === !hasMembers) {
+		return { ok: false, message: "dispatch: council requires exactly one of roster or members" };
+	}
+	let members: DispatchCouncilSettings["members"];
+	if (rosterName !== undefined) {
+		const roster = deps.getWorkerRosters?.()[rosterName];
+		if (roster === undefined) return { ok: false, message: `council_roster_unknown: ${rosterName}` };
+		// A roster member names its thinking level as `thinkingLevel`, the
+		// settings key; the council member carries it as `thinking`.
+		members = roster.members.map((member) => {
+			const { thinkingLevel, ...rest } = member as typeof member & { thinkingLevel?: string };
+			return { ...rest, ...(rest.thinking === undefined && thinkingLevel ? { thinking: thinkingLevel } : {}) };
+		});
+	} else {
+		if (!Array.isArray(args.members)) return { ok: false, message: "council_members_out_of_range" };
+		members = [];
+		for (const raw of args.members) {
+			if (!isRecord(raw)) return { ok: false, message: "council_members_out_of_range" };
+			const label = stringArg(raw, "label");
+			const target = stringArg(raw, "target");
+			if (label === undefined || target === undefined || !COUNCIL_LABEL.test(label)) {
+				return { ok: false, message: "council_members_out_of_range" };
+			}
+			const model = stringArg(raw, "model");
+			const thinking = stringArg(raw, "thinking");
+			const agent = stringArg(raw, "agent");
+			members.push({
+				label,
+				target,
+				...(model ? { model } : {}),
+				...(thinking ? { thinking } : {}),
+				...(agent ? { agent } : {}),
+			});
+		}
+	}
+	if (members.length < COUNCIL_MIN_MEMBERS || members.length > COUNCIL_MAX_MEMBERS) {
+		return { ok: false, message: "council_members_out_of_range" };
+	}
+	const labels = new Set<string>();
+	const known = new Set(deps.getAgentSpecs().map((spec) => spec.id));
+	for (const member of members) {
+		if (labels.has(member.label)) return { ok: false, message: `council_member_label_duplicate: ${member.label}` };
+		labels.add(member.label);
+		if (member.agent !== undefined && (member.agent === "auto" || (known.size > 0 && !known.has(member.agent)))) {
+			return {
+				ok: false,
+				message: `council_member_agent_unknown: ${member.label}: '${member.agent}' (installed agents: ${[...known].sort().join(", ")})`,
+			};
+		}
+	}
+	const synthesis = args.synthesis === undefined ? "none" : args.synthesis;
+	if (synthesis !== "none" && synthesis !== "judge" && synthesis !== "vote") {
+		return { ok: false, message: "dispatch: synthesis must be none, judge, or vote" };
+	}
+	if (args.judge !== undefined && synthesis !== "judge") {
+		return { ok: false, message: "council_synthesis_requires_judge_settings" };
+	}
+	const rounds = args.rounds === undefined ? 1 : args.rounds;
+	if (!Number.isInteger(rounds) || Number(rounds) < 1 || Number(rounds) > 3) {
+		return { ok: false, message: "dispatch: rounds must be an integer 1..3" };
+	}
+	const deadline = args.member_deadline_ms;
+	if (deadline !== undefined && (typeof deadline !== "number" || !Number.isInteger(deadline) || deadline < 1)) {
+		return { ok: false, message: "dispatch: member_deadline_ms must be a positive integer" };
+	}
+	const judge = isRecord(args.judge)
+		? Object.fromEntries(
+				["agent", "model", "target", "node"].flatMap((key) => {
+					const value = stringArg(args.judge as Record<string, unknown>, key);
+					return value === undefined ? [] : [[key, value]];
+				}),
+			)
+		: undefined;
+	return {
+		ok: true,
+		council: {
+			members,
+			synthesis,
+			rounds: Number(rounds),
+			...(deadline !== undefined ? { memberDeadlineMs: deadline } : {}),
+			...(judge ? { judge } : {}),
+		},
+	};
+}
+
+function reviewSettingsFromArgs(
+	args: Record<string, unknown>,
+): { ok: true; review: DispatchReviewSettings | undefined } | { ok: false; message: string } {
+	const raw = args.review;
+	if (raw === undefined || raw === false) return { ok: true, review: undefined };
+	const record = raw === true ? {} : isRecord(raw) ? raw : null;
+	if (record === null) return { ok: false, message: "dispatch: review must be true or an options object" };
+	const review: DispatchReviewSettings = { maxCycles: REVIEW_MAX_CYCLES_DEFAULT };
+	const reviewer = stringArg(record, "reviewer", "agent");
+	if (reviewer) review.reviewer = reviewer;
+	if (record.max_cycles !== undefined) {
+		const cycles = record.max_cycles;
+		if (typeof cycles !== "number" || !Number.isInteger(cycles) || cycles < 1 || cycles > REVIEW_MAX_CYCLES_LIMIT) {
+			return { ok: false, message: `dispatch: review.max_cycles must be an integer 1..${REVIEW_MAX_CYCLES_LIMIT}` };
+		}
+		review.maxCycles = cycles;
+	}
+	const node = stringArg(record, "node");
+	if (node) review.node = node;
+	const model = stringArg(record, "model");
+	if (model) review.model = model;
+	const target = stringArg(record, "target");
+	if (target) review.target = target;
+	return { ok: true, review };
+}
+
+function competeSettingsFromArgs(args: Record<string, unknown>):
+	| { ok: true; compete: DispatchCompeteSettings }
+	| {
+			ok: false;
+			message: string;
+	  } {
+	let candidates = COMPETE_MIN_CANDIDATES;
+	let candidateRoutes: Array<{ target?: string; model?: string }> | undefined;
+	const candidatesMessage = `dispatch: candidates must be an integer ${COMPETE_MIN_CANDIDATES}..${COMPETE_MAX_CANDIDATES} or a list of ${COMPETE_MIN_CANDIDATES}..${COMPETE_MAX_CANDIDATES} {target, model} entries`;
+	if (Array.isArray(args.candidates)) {
+		if (args.candidates.length < COMPETE_MIN_CANDIDATES || args.candidates.length > COMPETE_MAX_CANDIDATES) {
+			return { ok: false, message: candidatesMessage };
+		}
+		candidateRoutes = [];
+		for (const entry of args.candidates) {
+			if (
+				!isRecord(entry) ||
+				Object.keys(entry).some((key) => key !== "target" && key !== "model") ||
+				Object.values(entry).some((value) => typeof value !== "string")
+			) {
+				return { ok: false, message: candidatesMessage };
+			}
+			const target = stringArg(entry, "target");
+			const model = stringArg(entry, "model");
+			candidateRoutes.push({
+				...(target !== undefined ? { target } : {}),
+				...(model !== undefined ? { model } : {}),
+			});
+		}
+		candidates = candidateRoutes.length;
+	} else if (args.candidates !== undefined) {
+		if (
+			typeof args.candidates !== "number" ||
+			!Number.isInteger(args.candidates) ||
+			args.candidates < COMPETE_MIN_CANDIDATES ||
+			args.candidates > COMPETE_MAX_CANDIDATES
+		) {
+			return { ok: false, message: candidatesMessage };
+		}
+		candidates = args.candidates;
+	}
+	if (args.judge !== undefined && !isRecord(args.judge)) {
+		return { ok: false, message: "dispatch: judge must be an options object" };
+	}
+	const routes = candidateRoutes !== undefined ? { candidateRoutes } : {};
+	if (!isRecord(args.judge)) return { ok: true, compete: { candidates, ...routes } };
+	const judge: { agent?: string; model?: string; target?: string; node?: string } = {};
+	for (const key of ["agent", "model", "target", "node"] as const) {
+		const value = stringArg(args.judge, key);
+		if (value !== undefined) judge[key] = value;
+	}
+	return { ok: true, compete: { candidates, ...routes, judge } };
+}
+
+function deepFreeze<T>(value: T): T {
+	if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
+	for (const child of Object.values(value)) deepFreeze(child);
+	return Object.freeze(value);
+}
+
+/** Raw intent objects already announced, so the plan preview and the run parse one call but warn once. */
+const dotWriteRootNoticed = new WeakSet<object>();
+
+/**
+ * A write root of "." or "./" is read as the whole workspace, which is what an
+ * empty list means: no boundary, and the worker keeps bash, verify and git.
+ * Normalization drops it silently, and a receipt then shows `writeRoots: []`
+ * beside a call that named a root. This says what the entry did.
+ */
+function announceDotWriteRoot(deps: DispatchToolDeps, rawIntent: unknown): void {
+	if (deps.bus === undefined || !isRecord(rawIntent) || dotWriteRootNoticed.has(rawIntent)) return;
+	const roots = rawIntent.write_roots;
+	if (!Array.isArray(roots) || !roots.some((entry) => typeof entry === "string" && /^\.\/?$/u.test(entry.trim())))
+		return;
+	dotWriteRootNoticed.add(rawIntent);
+	deps.bus.emit("run.scope_notice_raised", {
+		code: "write_root_dot_unconfined",
+		level: "warning",
+		message:
+			'[dispatch scope] intent.write_roots "." names the whole workspace, so it sets no write boundary: the worker may change any file and keeps bash, verify and git. To confine it, list the files or directories it may change; a confined run loses bash and verify.',
+	});
+}
+
+/** Dispatch calls already warned about overlapping write roots, so preview and run warn once. */
+const overlapNoticed = new WeakSet<object>();
+
+/**
+ * Parallel tasks may declare overlapping write roots when each runs in its own
+ * worktree; admission starts them, but their merges can collide. Say which.
+ */
+function announceOverlappingWriteRoots(
+	deps: DispatchToolDeps,
+	key: object,
+	requests: ReadonlyArray<DispatchRequest>,
+	positions?: ReadonlyArray<number>,
+): void {
+	if (deps.bus === undefined || overlapNoticed.has(key)) return;
+	const isolated = requests.flatMap((request, index) => (request.worktree === true ? [index] : []));
+	if (isolated.length < 2) return;
+	const message = overlappingWriteRootsWarning(
+		isolated.map((index) => requests[index] as DispatchRequest),
+		isolated.map((index) => positions?.[index] ?? index + 1),
+	);
+	if (message === null) return;
+	overlapNoticed.add(key);
+	deps.bus.emit("run.scope_notice_raised", { code: "write_roots_overlap", level: "warning", message });
+}
+
+/**
+ * Text of the operator's latest message in the model-visible history, the
+ * turn issuing this dispatch. Empty when no parent conversation is available.
+ */
+function operatorTurnText(deps: DispatchToolDeps): string {
+	let snapshot: ReturnType<NonNullable<DispatchToolDeps["captureWorkerContext"]>> | undefined;
+	try {
+		snapshot = deps.captureWorkerContext?.();
+	} catch {
+		return "";
+	}
+	const messages = snapshot?.messages ?? [];
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index] as { role?: unknown; content?: unknown } | undefined;
+		if (message?.role !== "user") continue;
+		if (typeof message.content === "string") return message.content;
+		if (!Array.isArray(message.content)) return "";
+		return message.content
+			.flatMap((part: unknown) => {
+				const block = part as { type?: unknown; text?: unknown } | null;
+				return block?.type === "text" && typeof block.text === "string" ? [block.text] : [];
+			})
+			.join("\n");
+	}
+	return "";
+}
+
+export function createDispatchAdmissionController(deps: DispatchToolDeps): DispatchAdmissionController {
+	const state: DispatchAdmissionState = {
+		preparedAdmissionArgs: new WeakSet<Record<string, unknown>>(),
+		trustedResolvedPlans: new WeakMap<Record<string, unknown>, ResolvedDispatchPlanArtifact>(),
+		trustedReservationOwners: new WeakMap<Record<string, unknown>, string>(),
+		trustedExecutionSnapshots: new WeakMap<Record<string, unknown>, DispatchExecutionSnapshot>(),
+		trustedExecutionPlans: new WeakMap<Record<string, unknown>, ExecutionPlan>(),
+		taskResolutions: new WeakMap<object, DispatchPlanTaskResolution>(),
+	};
+	/**
+	 * A frozen deep copy of the arguments each preparation started from. A
+	 * before_tool hook sees the live arguments through a shallow clone and can
+	 * edit a nested task in place, so the rewrite check reads this copy (WX3).
+	 */
+	const preparedInputs = new WeakMap<Record<string, unknown>, Readonly<Record<string, unknown>>>();
+
+	/** Null when the domain cannot derive them or refuses the request, which refuses a carry. */
+	const derivedGrants = (request: DispatchRequest): DispatchDerivedGrants | null => {
+		try {
+			// Snapshot requests are frozen; preview gets its own copy to read.
+			return deps.dispatch.derivedGrants?.(structuredClone(request)) ?? null;
+		} catch {
+			// A request preview refuses has no grants to compare; the rewrite still re-admits without the approval.
+			return null;
+		}
+	};
+
+	const roleFacts =
+		deps.getAgentRoleFacts ?? agentRoleFactsResolver((id) => deps.getAgentSpecs().find((spec) => spec.id === id) ?? null);
+	const parseRequests = (args: Record<string, unknown>) => {
+		// A task cwd cannot supply its own approval boundary; only the host chooses the workspace (#433).
+		const sessionWorkspace = deps.getWorkspaceRoot?.() ?? deps.dispatch.owner?.().cwd ?? process.cwd();
+		const turnText = operatorTurnText(deps);
+		return dispatchRequestsFromArgs(args, {
+			workspaceRoot: sessionWorkspace,
+			operatorNamedChecks(cwd) {
+				if (turnText.length === 0) return [];
+				const discovery = runnableChecksAtRoot(sessionWorkspace, cwd);
+				if (!discovery.ok) return [];
+				const declared = discovery.checks;
+				// Sweep checks judge one named run and cannot ride host verification.
+				const ids = new Set(declared.filter((check) => check.runs === undefined).map((check) => check.id));
+				return operatorNamedChecks(turnText, ids);
+			},
+			isReadOnlyScout: (id) => isReadOnlyExplorer(deps.getAgentSpecs().find((spec) => spec.id === id)),
+			resolveFacts: roleFacts,
+			hasAgent: (id) => deps.getAgentSpecs().some((spec) => spec.id === id),
+			writesArtifact: (id) =>
+				deps.getAgentSpecs().some((spec) => spec.id === id && spec.capabilityClass === "artifact-write"),
+			auto: {
+				approvedAuthorities: ["read-only", "verification", "artifact-write", "workspace-edit"],
+				authorityBasis: deps.getAutonomy?.() === "yolo" ? "yolo-policy" : "operator-plan-approval",
+			},
+			resolveIntent(rawIntent, cwd, externalReadRoot) {
+				// One root for discovery and for every sealed path, read once, so the
+				// check the host later runs is the check the catalog declared there (F6).
+				const workspaceRoot = externalReadRoot ?? sessionWorkspace;
+				// External Scouts cannot verify; do not inspect their project catalog before consent (#433).
+				const discovery =
+					externalReadRoot === undefined ? runnableChecksAtRoot(workspaceRoot, cwd) : { ok: true as const, checks: [] };
+				if (!discovery.ok) return { ok: false, message: `verification_catalog_invalid: ${discovery.reason}` };
+				// The ids verify runs, derived toolchain checks included, so a worker verifies as the main agent does (bt-7).
+				const declared = discovery.checks;
+				const byId = new Map(declared.map((check) => [check.id, check]));
+				// A family word verify runs through its one derived owner seals that owner (FL-12).
+				const aliases = "familyAliases" in discovery ? discovery.familyAliases : undefined;
+				for (const [word, check] of aliases ?? []) byId.set(word, check);
+				const normalized = normalizeDispatchIntent(rawIntent, byId);
+				if (!normalized.ok)
+					return { ok: false, reason: normalized.reason, message: `${normalized.reason}: ${normalized.message}` };
+				// A sweep check judges one named run; host verification seals a fixed argv and has no run to append.
+				const perRun = normalized.intent.verification.find((entry) => byId.get(entry.check)?.runs !== undefined);
+				if (perRun !== undefined) {
+					return {
+						ok: false,
+						message: `verification_check_per_run: '${perRun.check}' judges one sweep run per call; run it on the main thread as verify(check="${perRun.check}/<run>").`,
+					};
+				}
+				// For a browser check, host verification would run its sealed argv, which is the dev server, not the check.
+				// Workers get browser checks at S7; until then the main thread's verify and a fleet loop's code check run it.
+				const browserCheck = normalized.intent.verification.find((entry) => byId.get(entry.check)?.kind === "browser");
+				if (browserCheck !== undefined) {
+					return {
+						ok: false,
+						message: `verification_check_browser: '${browserCheck.check}' is a browser check: host verification would run its sealed argv, which is the dev server, not the check, so a worker cannot verify with it (workers get browser checks at S7). Run it on the main thread as verify(check="${browserCheck.check}"), or in a fleet loop as a commands.yaml code check running 'pancode verifiers dry-run ${browserCheck.check}'.`,
+					};
+				}
+				announceDotWriteRoot(deps, rawIntent);
+				return {
+					ok: true,
+					intent: normalized.intent,
+					resolvedVerification: normalized.intent.verification.map((entry) => {
+						const check = byId.get(entry.check);
+						if (check === undefined) throw new Error(`resolved verification check '${entry.check}' disappeared`);
+						return {
+							check: entry.check,
+							argv: [...check.command],
+							cwd: resolve(workspaceRoot, check.cwd),
+							timeoutMs: entry.timeoutMs,
+							// A judged check seals its kind, absolute file paths and the digest of
+							// each reference or baseline here. Host verification reads the file
+							// again at run time and fails the check when it no longer matches
+							// the digest, so a run that rewrites its own reference cannot pass.
+							...(check.kind !== "command" ? { kind: check.kind } : {}),
+							...(check.numeric !== undefined
+								? {
+										numeric: {
+											reference: resolve(workspaceRoot, check.numeric.reference),
+											tolerance: { ...check.numeric.tolerance },
+											referenceSha256: judgedFileSha256(readJudgedFile(resolve(workspaceRoot, check.numeric.reference))),
+											...(check.numeric.inputs !== undefined
+												? { inputs: check.numeric.inputs.map((input) => resolve(workspaceRoot, input)) }
+												: {}),
+											...(check.numeric.provenance !== undefined
+												? { provenance: check.numeric.provenance.map((probe) => [...probe]) }
+												: {}),
+											...(check.numeric.seed !== undefined ? { seed: { ...check.numeric.seed } } : {}),
+											...(check.numeric.repeat !== undefined ? { repeat: check.numeric.repeat } : {}),
+										},
+									}
+								: {}),
+							...(check.perf !== undefined
+								? {
+										perf: {
+											...(check.perf.budget !== undefined ? { budget: structuredClone(check.perf.budget) } : {}),
+											...(check.perf.baseline !== undefined
+												? {
+														baseline: resolve(workspaceRoot, check.perf.baseline),
+														baselineSha256: judgedFileSha256(readJudgedFile(resolve(workspaceRoot, check.perf.baseline))),
+													}
+												: {}),
+											...(check.perf.tolerance !== undefined ? { tolerance: { ...check.perf.tolerance } } : {}),
+										},
+									}
+								: {}),
+							...(check.reproduce !== undefined
+								? {
+										reproduce:
+											check.reproduce.compare.mode === "reference"
+												? {
+														spec: { ...structuredClone(check.reproduce), compare: { ...check.reproduce.compare } },
+														declaredCwd: check.cwd,
+														referenceSha256: judgedFileSha256(
+															readJudgedFile(resolve(workspaceRoot, check.reproduce.compare.reference)),
+														),
+													}
+												: {
+														spec: { ...structuredClone(check.reproduce), compare: { ...check.reproduce.compare } },
+														declaredCwd: check.cwd,
+													},
+									}
+								: {}),
+						};
+					}),
+				};
+			},
+		});
+	};
+	const trustExecution = (args: Record<string, unknown>, snapshot: DispatchExecutionSnapshot) => {
+		state.trustedExecutionSnapshots.set(args, deepFreeze(structuredClone(snapshot)));
+		return args;
+	};
+	const dispatchExecutionSnapshot = (
+		args: Record<string, unknown>,
+		fields: Pick<
+			DispatchExecutionSnapshot & { kind: "dispatch" },
+			"requests" | "positions" | "rejectedTasks" | "notices" | "mode" | "review" | "compete" | "council"
+		>,
+	): DispatchExecutionSnapshot => ({
+		kind: "dispatch",
+		planView: {
+			// The snapshot is the view admission reads on the prepared path, so the read-only judgement is made
+			// here, on arguments whose resolved artifact this controller sealed (`markPrepared`).
+			...describeDispatchPlan(args, state.trustedResolvedPlans.has(args)),
+			...(fields.requests.some((request) => request.externalReadRoot !== undefined) &&
+			fields.requests.every((request) =>
+				isReadOnlyExplorer(deps.getAgentSpecs().find((spec) => spec.id === request.agentId)),
+			)
+				? { planScale: false }
+				: {}),
+		},
+		...fields,
+		writers: args.writers === 1 ? 1 : undefined,
+		detach: args.detach === true,
+		timeoutMs: timeoutMsArg(args),
+		maxOutputBytes: maxOutputBytesArg(args),
+		// An explicit output budget asks for the answers themselves; without one each run returns its compact form.
+		...(typeof args.max_output_bytes === "number" ? { resultForm: "full" as const } : {}),
+	});
+	const markPrepared = (args: Record<string, unknown>): Record<string, unknown> => {
+		const exposed = resolvedDispatchPlanFromArgs(args);
+		if (exposed !== null) {
+			const trusted = deepFreeze(structuredClone(exposed));
+			const policyView = deepFreeze(structuredClone(exposed));
+			state.trustedResolvedPlans.set(args, trusted);
+			Object.defineProperty(args, RESOLVED_DISPATCH_PLAN_ARGUMENT, {
+				value: policyView,
+				enumerable: true,
+				configurable: false,
+				writable: false,
+			});
+		}
+		state.preparedAdmissionArgs.add(args);
+		return args;
+	};
+	const stripUntrustedPlanFields = (rawArgs: Record<string, unknown>): Record<string, unknown> => {
+		const clean = { ...prepareDispatchArguments(rawArgs) };
+		Reflect.deleteProperty(clean, RESOLVED_DISPATCH_PLAN_ARGUMENT);
+		Reflect.deleteProperty(clean, DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT);
+		return clean;
+	};
+	const preparationFailure = (args: Record<string, unknown>, err: unknown): Record<string, unknown> =>
+		markPrepared({
+			...args,
+			[DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT]: err instanceof Error ? err.message : String(err),
+		});
+	const shapeRejection = (args: Record<string, unknown>, message: string): Record<string, unknown> =>
+		preparationFailure(args, message);
+	const resolveTask = (
+		request: DispatchRequest,
+		role: NonNullable<ResolvedPlanTask["role"]>,
+		position: number,
+	): ResolvedPlanTask => {
+		const resolution = deps.dispatch.preview?.(request);
+		if (resolution === undefined) throw new Error("dispatch preview is unavailable");
+		if (request.resolvedVerification?.length && resolution.runtimeId === "claude-code") {
+			throw new Error("verification_unsupported_runtime: claude-code subprocess dispatch cannot run host verification");
+		}
+		const pinned = request.node !== undefined || request.target !== undefined || request.model !== undefined;
+		const approvedCandidates =
+			pinned || request.failover !== "approved"
+				? []
+				: resolution.routeApproval === null
+					? (deps.dispatch.routeCandidates?.(request) ?? [])
+					: approvedRouteCandidates(resolution.routeApproval);
+		const failover: DispatchFailoverMode = pinned || approvedCandidates.length === 0 ? "none" : "approved";
+		const task: ResolvedPlanTask = {
+			agent: resolution.agentId,
+			task: request.task,
+			...(request.briefing !== undefined ? { briefing: request.briefing } : {}),
+			...(request.record !== undefined ? { record: request.record } : {}),
+			...(request.context ? { context: structuredClone(request.context) } : {}),
+			...(request.contextSeed ? { workerContext: structuredClone(request.contextSeed.provenance) } : {}),
+			...(request.worktree === true
+				? {
+						worktree: true as const,
+						apply: request.apply ?? "merge",
+						...(gitCheckoutRoot(resolve(request.cwd ?? process.cwd())) === null
+							? {}
+							: { worktreeDestination: gitCheckoutRoot(resolve(request.cwd ?? process.cwd())) as string }),
+					}
+				: {}),
+			target: resolution.targetId,
+			model: resolution.wireModelId,
+			node: resolution.node.id,
+			nodeKind: resolution.node.kind,
+			...(resolution.node.host !== undefined ? { nodeHost: resolution.node.host } : {}),
+			routingIntent: request.routingIntent ?? defaultRoutingIntent(request),
+			failover,
+			routeApproval: resolution.routeApproval,
+			...(resolution.checkedAtRun !== undefined ? { checkedAtRun: [...resolution.checkedAtRun] } : {}),
+			...(resolution.limits !== undefined ? { limits: resolution.limits } : {}),
+			...(resolution.writes !== undefined ? { writes: resolution.writes } : {}),
+			...(resolution.route !== undefined ? { route: resolution.route } : {}),
+			...(resolution.withheld !== undefined ? { withheld: [...resolution.withheld] } : {}),
+			...(resolution.forecasts !== undefined ? { forecasts: candidateForecastLines(resolution.forecasts) } : {}),
+			agentSelection: request.agentSelection === undefined ? null : structuredClone(request.agentSelection),
+			stepId: null,
+			dependencies: [],
+			executionRole: request.executionRole,
+			expectedResultContract: null,
+			authorityGrant: null,
+			agentDecision: null,
+			wave: null,
+			...(failover === "approved" ? { allowedCandidates: approvedCandidates.map((candidate) => ({ ...candidate })) } : {}),
+			role,
+			position,
+			...(request.intent !== undefined ? { intent: structuredClone(request.intent) } : {}),
+			...(request.resolvedVerification !== undefined
+				? { resolvedVerification: request.resolvedVerification.map((check) => ({ ...check, argv: [...check.argv] })) }
+				: {}),
+		};
+		state.taskResolutions.set(task, resolution);
+		return task;
+	};
+	const resolvedCostCeiling = (): number => {
+		const injected = deps.getCostCeilingUsd?.();
+		if (injected !== undefined && Number.isFinite(injected) && injected > 0) return injected;
+		const ceiling = deps.dispatch.costCeilingUsd?.();
+		// Zero is `safety.limits.sessionCostUsd: 0`, no session ceiling.
+		if (ceiling === undefined || !Number.isFinite(ceiling) || ceiling < 0) {
+			throw new Error("dispatch scheduling cost ceiling is unavailable");
+		}
+		return ceiling;
+	};
+	const reservationWave = (
+		topology: ResolvedDispatchPlanArtifact["topology"],
+		task: ResolvedPlanTask,
+		index: number,
+	) => {
+		if (topology === "fleet") return task.wave ?? index;
+		if (topology === "parallel" || topology === "detached") return 0;
+		if (topology === "compete") return task.role === "judge" ? 1 : 0;
+		if (topology === "council")
+			return task.role === "synthesis" ? (task.council?.rounds ?? 1) : (task.council?.round ?? 1) - 1;
+		return index;
+	};
+	/** Set by the last markReservedPlan call when its plan ran wider than a limit and was split into waves (M8). */
+	let reservedWaveNotice: string | null = null;
+	const markReservedPlan = (args: Record<string, unknown>, artifact: ResolvedDispatchPlanArtifact) => {
+		reservedWaveNotice = null;
+		const prepared = withResolvedDispatchPlan(args, artifact);
+		if (deps.dispatch.reservations === undefined) return markPrepared(prepared);
+		const tasks = artifact.tasks.map((task, index) => {
+			const resolution = state.taskResolutions.get(task);
+			if (resolution === undefined || (task.stepId === null && (task.role === undefined || task.position === undefined))) {
+				throw new Error("dispatch reservation resolution is incomplete");
+			}
+			return {
+				memberId: task.stepId ?? `${task.role}-${task.position}`,
+				wave: reservationWave(artifact.topology, task, index),
+				resolution,
+			};
+		});
+		const reservation = deps.dispatch.reservations.prepare({
+			// A council keeps its own name so a capacity denial can say that its
+			// width has a floor. A fleet's waves are already parallel by shape.
+			topology: artifact.topology === "fleet" ? "parallel" : artifact.topology,
+			tasks,
+		});
+		// DESIGN 4.5: a plan wider than a concurrency limit runs as waves instead of being refused (M8).
+		const waveCount = (waves: ReadonlyArray<number>): number => new Set(waves).size;
+		const asked = waveCount(tasks.map((task) => task.wave));
+		const reserved = waveCount(reservation.members.map((member) => member.wave));
+		if (reserved > asked) {
+			const widest = Math.max(
+				...[...new Set(reservation.members.map((member) => member.wave))].map(
+					(wave) => reservation.members.filter((member) => member.wave === wave).length,
+				),
+			);
+			reservedWaveNotice = `dispatch waves: the ${tasks.length} tasks run as ${reserved} waves of at most ${widest}, because they are more than the worker or endpoint slots allow at once; later waves start as earlier ones settle, each within its run's wall clock.`;
+		}
+		try {
+			const marked = markPrepared(prepared);
+			state.trustedReservationOwners.set(marked, reservation.ownerId);
+			return marked;
+		} catch (error) {
+			deps.dispatch.reservations.rollback(reservation.ownerId);
+			throw error;
+		}
+	};
+
+	const prepareAdmissionArguments = (rawArgs: Record<string, unknown>): Record<string, unknown> => {
+		const args = stripUntrustedPlanFields(rawArgs);
+		const input = deepFreeze(structuredClone(args));
+		const prepared = prepareStrippedArguments(args);
+		preparedInputs.set(prepared, input);
+		return prepared;
+	};
+
+	const prepareStrippedArguments = (args: Record<string, unknown>): Record<string, unknown> => {
+		if (args.list === true) {
+			const marked = markPrepared(args);
+			return trustExecution(marked, { kind: "list" });
+		}
+		if (args.land !== undefined) {
+			if (typeof args.land !== "string" || args.land.trim().length === 0) {
+				return shapeRejection(args, "dispatch: land must name a kept task branch: a run id or pancode/task/<run id>");
+			}
+			// The session's own workspace, never a path the model names: Land lands on the checkout the operator handed over.
+			const cwd = deps.getWorkspaceRoot?.() ?? deps.dispatch.owner?.().cwd ?? process.cwd();
+			return trustExecution(markPrepared(args), { kind: "land", ref: args.land.trim(), cwd });
+		}
+		const continuation = scoutContinuationRefFromArgs(args);
+		if (!continuation.ok) return preparationFailure(args, continuation.message);
+		if (continuation.ref !== null) {
+			try {
+				const source = loadVerifiedScoutSource({
+					ref: continuation.ref,
+					dispatch: deps.dispatch,
+					agentSpecs: deps.getAgentSpecs(),
+				});
+				const prepared = prepareScoutContinuation({
+					source,
+					authorization: deps.getAutonomy?.() === "yolo" ? "yolo-policy" : "operator-plan-approval",
+					planAgentSelection: deps.dispatch.planAgentSelection,
+					costCeilingUsd: resolvedCostCeiling(),
+				});
+				for (const [index, task] of prepared.artifact.tasks.entries()) {
+					const resolution = prepared.resolutions[index];
+					if (resolution === undefined) throw new Error("dispatch: Scout route resolution is incomplete");
+					state.taskResolutions.set(task, resolution);
+				}
+				const marked = markReservedPlan(args, prepared.artifact);
+				trustExecution(
+					marked,
+					dispatchExecutionSnapshot(marked, {
+						requests: prepared.requests,
+						mode: "parallel",
+						review: undefined,
+						compete: undefined,
+						council: undefined,
+					}),
+				);
+				state.trustedExecutionPlans.set(marked, deepFreeze(structuredClone(prepared.executionPlan)));
+				return marked;
+			} catch (error) {
+				return preparationFailure(args, error);
+			}
+		}
+		if (args.apply_winner !== undefined) {
+			if (!isRecord(args.apply_winner)) {
+				return shapeRejection(args, "dispatch: apply_winner must be an options object");
+			}
+			const branch = stringArg(args.apply_winner, "branch");
+			const match = branch
+				? /^(?:pancode|pancode)\/compete\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\/([1-9]\d*)$/.exec(branch)
+				: null;
+			if (branch === undefined) return shapeRejection(args, "dispatch: apply_winner.branch is required");
+			if (match === null) {
+				return shapeRejection(args, "dispatch: apply_winner.branch must be a pancode/compete/<group>/<n> branch");
+			}
+			try {
+				const cwd = resolve(stringArg(args.apply_winner, "cwd") ?? process.cwd());
+				return trustExecution(
+					markPrepared(
+						withResolvedDispatchPlan(args, {
+							version: 3,
+							topology: "compete",
+							source: null,
+							maxWorkers: null,
+							onFailure: null,
+							tasks: [],
+							costCeilingUsd: resolvedCostCeiling(),
+							deadlineMs: null,
+							confirmation: { branch, group: match[1] ?? "", index: Number.parseInt(match[2] ?? "", 10), cwd },
+						}),
+					),
+					{ kind: "apply-winner", branch, cwd },
+				);
+			} catch (error) {
+				return preparationFailure(args, error);
+			}
+		}
+		const parsed = parseRequests(args);
+		if (!parsed.ok) return shapeRejection(args, parsed.message);
+		try {
+			const inheriting = parsed.requests.filter((request) => request.context && request.context.mode !== "isolated");
+			if (inheriting.length > 0) {
+				const source = deps.captureWorkerContext?.();
+				if (!source) throw new Error("worker context: no active parent conversation is available");
+				for (const request of inheriting) {
+					const policy = request.context;
+					if (!policy || policy.mode === "isolated") continue;
+					request.contextSeed = selectWorkerContext(
+						source,
+						policy,
+						request.intent
+							? [...request.intent.readRoots, ...request.intent.relevantPaths, ...request.intent.writeRoots]
+							: [],
+					);
+				}
+			}
+		} catch (error) {
+			return preparationFailure(args, error);
+		}
+		if (
+			args.mode !== undefined &&
+			!["parallel", "sequential", "pipeline", "compete", "council"].includes(String(args.mode))
+		) {
+			return shapeRejection(
+				args,
+				`dispatch: mode must be parallel, sequential, pipeline, compete, or council; got '${String(args.mode)}'`,
+			);
+		}
+		const mode: DispatchMode =
+			args.mode === "sequential"
+				? "sequential"
+				: args.mode === "pipeline"
+					? "pipeline"
+					: args.mode === "compete"
+						? "compete"
+						: args.mode === "council"
+							? "council"
+							: "parallel";
+		if (args.writers !== undefined && args.writers !== 1) {
+			return shapeRejection(args, "dispatch: writers must be 1 when present");
+		}
+		if (args.writers === 1 && mode !== "parallel") {
+			return shapeRejection(args, "dispatch: writers is supported only for parallel dispatch");
+		}
+		// A detached batch launches every task at once and never reads writers,
+		// so accepting both would silently drop the serialization asked for.
+		if (args.writers === 1 && args.detach === true) {
+			return shapeRejection(
+				args,
+				"dispatch: writers: 1 cannot combine with detach: true; a detached batch starts every task at once. Dispatch serialized writers attached, or detach writers that use worktree: true or disjoint intent.write_roots.",
+			);
+		}
+		const notices = normalizeDispatchAdmission({
+			args,
+			requests: parsed.requests,
+			positions: parsed.positions,
+			mode,
+			specs: deps.getAgentSpecs(),
+		});
+		if (mode === "parallel" && args.writers !== 1) {
+			const specs = deps.getAgentSpecs();
+			const conflict = writerSetConflict(parsed.requests, specs);
+			if (conflict !== null && !confineGrantOnlyWriters(parsed.requests, specs)) return shapeRejection(args, conflict);
+			announceOverlappingWriteRoots(deps, args, parsed.requests, parsed.positions);
+		}
+		const parentCheckout = gitCheckoutRoot(process.cwd());
+		for (const request of parsed.requests) {
+			if (request.worktree !== true) continue;
+			if (mode === "compete") return shapeRejection(args, "worktree_compete_incompatible");
+			if (parentCheckout === null) return shapeRejection(args, "worktree_non_git_checkout");
+			if (gitHeadIsUnborn(parentCheckout)) return shapeRejection(args, WORKTREE_UNBORN_HEAD_MESSAGE);
+			const spec = deps.getAgentSpecs().find((candidate) => candidate.id === request.agentId);
+			if (spec?.capabilityClass === "read-only") return shapeRejection(args, "worktree_read_only_agent");
+			if (request.cwd !== undefined) {
+				const requested = resolve(request.cwd);
+				const rel = relative(parentCheckout, requested);
+				if (relativePathEscapes(rel)) {
+					return shapeRejection(args, "worktree_cwd_outside_checkout");
+				}
+			}
+		}
+		const reviewResult = reviewSettingsFromArgs(args);
+		if (!reviewResult.ok) return shapeRejection(args, reviewResult.message);
+		if (reviewResult.review !== undefined) {
+			if (mode === "compete") return shapeRejection(args, COMPETE_NO_REVIEW_MESSAGE);
+			if (mode !== "parallel") return shapeRejection(args, `dispatch: review does not combine with mode=${mode}`);
+			if (parsed.requests.length !== 1 || parsed.requests[0] === undefined) {
+				return shapeRejection(args, REVIEW_SINGLE_TASK_MESSAGE);
+			}
+		}
+		if (mode === "compete" && (parsed.requests.length !== 1 || parsed.requests[0] === undefined)) {
+			return shapeRejection(args, COMPETE_SINGLE_TASK_MESSAGE);
+		}
+		const competeResult = mode === "compete" ? competeSettingsFromArgs(args) : undefined;
+		if (competeResult !== undefined && !competeResult.ok) return shapeRejection(args, competeResult.message);
+		const councilResult = mode === "council" ? councilSettingsFromArgs(args, deps) : undefined;
+		if (councilResult !== undefined && !councilResult.ok) return shapeRejection(args, councilResult.message);
+		if (mode === "council") {
+			if (parsed.requests.length !== 1 || parsed.requests[0] === undefined) {
+				return shapeRejection(args, "dispatch: council requires exactly one task");
+			}
+			if (reviewResult.review !== undefined) return shapeRejection(args, "dispatch: council cannot combine with review");
+			if ((parsed.requests[0].resolvedVerification?.length ?? 0) > 0) {
+				return shapeRejection(args, "council_verification_unsupported");
+			}
+		}
+		// A detach the runner cannot honour is refused here, with the runner's own words, so normalize notices
+		// describing rewrites of a request that never runs are dropped with it (CLI-P34).
+		if (args.detach === true) {
+			if (mode !== "parallel") return shapeRejection(args, `dispatch: detach only supports parallel mode; got '${mode}'`);
+			if (reviewResult.review !== undefined) {
+				return shapeRejection(args, "dispatch: detach cannot combine with a review gate; run gated dispatch attached");
+			}
+		}
+		const snapshotFields = {
+			requests: parsed.requests,
+			positions: parsed.positions,
+			...(parsed.rejectedTasks.length > 0 ? { rejectedTasks: parsed.rejectedTasks } : {}),
+			...(notices.length > 0 ? { notices } : {}),
+			mode,
+			review: reviewResult.review,
+			compete: competeResult?.ok === true ? competeResult.compete : undefined,
+			council: councilResult?.ok === true ? councilResult.council : undefined,
+		};
+		if (
+			parsed.requests.some((request) => request.externalReadRoot !== undefined) &&
+			(mode !== "parallel" || args.review !== undefined)
+		)
+			return shapeRejection(
+				args,
+				"external_read_mode_unsupported: Outside Scouts require independent parallel tasks without review.",
+			);
+		if (deps.dispatch.preview === undefined) {
+			const marked = markPrepared(args);
+			return trustExecution(marked, dispatchExecutionSnapshot(marked, snapshotFields));
+		}
+		try {
+			const tasks: ResolvedDispatchPlanArtifact["tasks"] = [];
+			if (reviewResult.review !== undefined) {
+				const base = parsed.requests[0];
+				if (base === undefined) return shapeRejection(args, REVIEW_SINGLE_TASK_MESSAGE);
+				for (let cycle = 1; cycle <= reviewResult.review.maxCycles; cycle += 1) {
+					const subject = { runId: `plan-builder-${cycle}`, digest: null };
+					tasks.push(
+						resolveTask(
+							withRunRole({ ...base, gate: { role: "builder", group: "plan-preview", cycle } }, roleFacts),
+							"builder",
+							cycle,
+						),
+					);
+					tasks.push(
+						resolveTask(
+							{
+								agentId: reviewDeciderAgentId(reviewResult.review.reviewer, (id) =>
+									deps.getAgentSpecs().some((spec) => spec.id === id),
+								),
+								...(base.budget === undefined ? {} : { budget: base.budget }),
+								...(base.record === undefined ? {} : { record: base.record }),
+								executionRole: "reviewer",
+								task: renderDispatchReviewerTask(base.task, subject.runId, cycle, base.intent),
+								systemPrompt: REVIEWER_GATE_PROMPT,
+								readOnly: true,
+								gate: { role: "reviewer", group: "plan-preview", cycle, subjects: [subject] },
+								...(base.cwd !== undefined ? { cwd: base.cwd } : {}),
+								...(reviewResult.review.node !== undefined ? { node: reviewResult.review.node } : {}),
+								...(reviewResult.review.model !== undefined ? { model: reviewResult.review.model } : {}),
+								...(reviewResult.review.target !== undefined ? { target: reviewResult.review.target } : {}),
+							},
+							"reviewer",
+							cycle,
+						),
+					);
+				}
+			} else if (mode === "compete") {
+				const compete = competeResult?.ok === true ? competeResult.compete : undefined;
+				if (compete === undefined) throw new Error("dispatch: compete admission settings are unavailable");
+				const base = parsed.requests[0];
+				if (base === undefined) return shapeRejection(args, COMPETE_SINGLE_TASK_MESSAGE);
+				const subjects: Array<{ runId: string; digest: null }> = [];
+				for (let candidate = 1; candidate <= compete.candidates; candidate += 1) {
+					subjects.push({ runId: `plan-candidate-${candidate}`, digest: null });
+					tasks.push(
+						resolveTask(
+							withRunRole(
+								{
+									...withCompeteCandidateRoute(base, compete.candidateRoutes, candidate),
+									gate: { role: "candidate", group: "plan-preview", cycle: candidate },
+								},
+								roleFacts,
+							),
+							"candidate",
+							candidate,
+						),
+					);
+				}
+				tasks.push(
+					resolveTask(
+						{
+							agentId: gateDeciderAgentId(compete.judge?.agent),
+							...(base.budget === undefined ? {} : { budget: base.budget }),
+							...(base.record === undefined ? {} : { record: base.record }),
+							executionRole: "judge",
+							task: `Plan-time capability check for the ${compete.candidates}-candidate judge.`,
+							systemPrompt: JUDGE_GATE_PROMPT,
+							readOnly: true,
+							gate: { role: "judge", group: "plan-preview", cycle: 1, subjects },
+							...(base.cwd !== undefined ? { cwd: base.cwd } : {}),
+							...(compete.judge?.node !== undefined ? { node: compete.judge.node } : {}),
+							...(compete.judge?.model !== undefined ? { model: compete.judge.model } : {}),
+							...(compete.judge?.target !== undefined ? { target: compete.judge.target } : {}),
+						},
+						"judge",
+						1,
+					),
+				);
+			} else if (mode === "council") {
+				const council = councilResult?.ok === true ? councilResult.council : undefined;
+				const base = parsed.requests[0];
+				if (council === undefined || base === undefined)
+					throw new Error("dispatch: council admission settings are unavailable");
+				const subjects: Array<{ runId: string; digest: null }> = [];
+				// A seat whose target is down in round 1 sits out every round as a failed seat (FL-4).
+				const downSeats: Array<{ label: string; reason: string }> = [];
+				for (let round = 1; round <= council.rounds; round += 1) {
+					for (const [index, member] of council.members.entries()) {
+						if (downSeats.some((seat) => seat.label === member.label)) continue;
+						const memberRequest: DispatchRequest = {
+							...base,
+							...(member.agent !== undefined ? { agentId: member.agent } : {}),
+							executionRole: "seat",
+							readOnly: true,
+							toolProfile: "council-read-only",
+							// A member inherits the caller's declared scope but never its
+							// write authority: the same trees arrive as read roots, so the
+							// declaration stays enforceable against a read-only run instead of
+							// claiming a write scope nothing can grant.
+							...(base.intent === undefined ? {} : { intent: narrowDispatchIntentToReadOnly(base.intent) }),
+							// The runner reuses this composed task from the resolved plan, so
+							// the approval artifact the plan hash binds shows the operator the
+							// exact ballot the member is asked to cast.
+							...(council.synthesis === "vote"
+								? {
+										task: renderCouncilVoteMemberTask(base.task),
+										resultContractOverride: councilBallotContract(base.task),
+										...councilVoterPersona(deps.getAgentSpecs().find((spec) => spec.id === (member.agent ?? base.agentId))),
+									}
+								: {}),
+							target: member.target,
+							...(member.model ? { model: member.model } : {}),
+							...(member.thinking ? { thinkingLevel: member.thinking as NonNullable<DispatchRequest["thinkingLevel"]> } : {}),
+							gate: { role: "member", group: "plan-preview", cycle: round },
+						};
+						let task: ResolvedPlanTask;
+						try {
+							task = resolveTask(memberRequest, "member", (round - 1) * council.members.length + index + 1);
+						} catch (error) {
+							const reason = round === 1 ? councilSeatDownReason(error) : null;
+							if (reason === null) throw error;
+							downSeats.push({ label: member.label, reason });
+							continue;
+						}
+						if (task.node !== "local" || task.nodeKind !== "local") {
+							return shapeRejection(args, `council_member_remote_node: ${member.label}`);
+						}
+						task.council = {
+							label: member.label,
+							...(member.color ? { color: member.color } : {}),
+							round,
+							rounds: council.rounds,
+							synthesis: council.synthesis,
+						};
+						if (round === council.rounds) subjects.push({ runId: `plan-member-${member.label}`, digest: null });
+						tasks.push(task);
+					}
+					if (round === 1 && council.members.length - downSeats.length < COUNCIL_MIN_MEMBERS) {
+						return shapeRejection(args, councilTooFewLiveSeats(council.members.length, downSeats));
+					}
+				}
+				if (downSeats.length > 0) snapshotFields.council = { ...council, downSeats };
+				if (council.synthesis === "judge") {
+					const judgeRequest: DispatchRequest = {
+						agentId: councilJudgeAgentId(council.judge?.agent, base.agentId),
+						...(base.budget === undefined ? {} : { budget: base.budget }),
+						...(base.record === undefined ? {} : { record: base.record }),
+						executionRole: "judge",
+						task: "Plan-time capability check for council synthesis.",
+						systemPrompt: COUNCIL_JUDGE_PROMPT,
+						readOnly: true,
+						toolProfile: "council-read-only",
+						gate: { role: "synthesis", group: "plan-preview", cycle: council.rounds, subjects },
+						...(council.judge?.node ? { node: council.judge.node } : {}),
+						...(council.judge?.model ? { model: council.judge.model } : {}),
+						...(council.judge?.target ? { target: council.judge.target } : {}),
+					};
+					const judgeTask = resolveTask(judgeRequest, "synthesis", 1);
+					if (judgeTask.node !== "local" || judgeTask.nodeKind !== "local") {
+						return shapeRejection(args, "council_member_remote_node: judge");
+					}
+					judgeTask.council = {
+						label: "synthesis",
+						round: council.rounds,
+						rounds: council.rounds,
+						synthesis: council.synthesis,
+					};
+					tasks.push(judgeTask);
+				}
+			} else {
+				for (const [index, request] of parsed.requests.entries())
+					tasks.push(resolveTask(request, "task", parsed.positions[index] ?? index + 1));
+			}
+			// The preview cannot see the call's timeout_ms, the only timer that stops a whole run (M6).
+			const callTimeoutMs = timeoutMsArg(args);
+			if (callTimeoutMs !== undefined)
+				for (const task of tasks)
+					if (task.limits !== undefined) task.limits = planCardLimitsUnderTimeout(task.limits, callTimeoutMs);
+
+			// Scope has already been resolved on tasks. Rendering the raw call here
+			// would discard its typed intent and run legacy prose inference again.
+			const topology = dispatchPlanTopology(args);
+			const planScale =
+				tasks.length > 1 ||
+				topology === "compete" ||
+				tasks.some((task) => task.node !== "local" || task.failover === "approved");
+			if (!planScale) {
+				const marked = parsed.requests.some((request) => request.intent !== undefined || request.contextSeed !== undefined)
+					? markPrepared(
+							withResolvedDispatchPlan(args, {
+								version: 3,
+								topology,
+								source: null,
+								maxWorkers: null,
+								onFailure: null,
+								tasks,
+								costCeilingUsd: resolvedCostCeiling(),
+								deadlineMs: null,
+							}),
+						)
+					: markPrepared(args);
+				return trustExecution(marked, dispatchExecutionSnapshot(marked, snapshotFields));
+			}
+			const marked = markReservedPlan(args, {
+				version: 3,
+				topology,
+				source: null,
+				maxWorkers: null,
+				onFailure: null,
+				tasks,
+				costCeilingUsd: resolvedCostCeiling(),
+				deadlineMs: null,
+			});
+			const waveNotice = reservedWaveNotice;
+			return trustExecution(
+				marked,
+				dispatchExecutionSnapshot(
+					marked,
+					waveNotice === null
+						? snapshotFields
+						: { ...snapshotFields, notices: [...(snapshotFields.notices ?? []), waveNotice] },
+				),
+			);
+		} catch (error) {
+			return preparationFailure(args, error);
+		}
+	};
+
+	const prepareArguments = (args: Record<string, unknown>): Record<string, unknown> =>
+		state.preparedAdmissionArgs.has(args) ? args : prepareAdmissionArguments(args);
+
+	return {
+		state,
+		prepareAdmissionArguments,
+		disposeAdmissionArguments(args) {
+			const ownerId = state.trustedReservationOwners.get(args);
+			if (ownerId !== undefined) deps.dispatch.reservations?.rollbackUnconsumed(ownerId);
+		},
+		prepareArguments,
+		describeDispatchPlan(args) {
+			const snapshot = state.trustedExecutionSnapshots.get(args);
+			if (snapshot?.kind === "dispatch") return snapshot.planView;
+			const trusted = state.trustedResolvedPlans.get(args);
+			return trusted === undefined
+				? describeDispatchPlan(args)
+				: describeDispatchPlan({ ...args, [RESOLVED_DISPATCH_PLAN_ARGUMENT]: trusted }, true);
+		},
+		hostEffectCalls(args) {
+			// Host verification runs each sealed check as the dispatching agent, so
+			// each is admitted as the direct verify call that agent would make (F6).
+			// Read from the trusted snapshot only: model-supplied plan fields were
+			// stripped during preparation and can neither add nor hide a check.
+			const snapshot = state.trustedExecutionSnapshots.get(args);
+			if (snapshot?.kind !== "dispatch") return [];
+			const calls: HostEffectCall[] = [];
+			const seen = new Set<string>();
+			for (const request of snapshot.requests) {
+				for (const check of request.resolvedVerification ?? []) {
+					const verifyArgs: Record<string, unknown> = {
+						check: check.check,
+						...(request.cwd !== undefined ? { cwd: request.cwd } : {}),
+					};
+					const key = JSON.stringify(verifyArgs);
+					if (seen.has(key)) continue;
+					seen.add(key);
+					calls.push({
+						label: `host verification check '${check.check}'`,
+						call: { tool: ToolNames.Verify, args: verifyArgs },
+					});
+				}
+			}
+			return calls;
+		},
+		rewriteNarrows(original, rewritten) {
+			const originalInput = preparedInputs.get(original);
+			const rewrittenInput = preparedInputs.get(rewritten);
+			const originalSnapshot = state.trustedExecutionSnapshots.get(original);
+			const rewrittenSnapshot = state.trustedExecutionSnapshots.get(rewritten);
+			if (
+				originalInput === undefined ||
+				rewrittenInput === undefined ||
+				!dispatchInputChangesOnlyIntent(originalInput, rewrittenInput) ||
+				!dispatchRewriteNarrows(originalSnapshot, rewrittenSnapshot) ||
+				originalSnapshot?.kind !== "dispatch" ||
+				rewrittenSnapshot?.kind !== "dispatch"
+			)
+				return false;
+			// Narrower write roots can switch an MCP server's network grant on, so
+			// the grants admission derives are compared, not just the inputs (WX4).
+			return originalSnapshot.requests.every((request, index) => {
+				const next = rewrittenSnapshot.requests[index];
+				return next !== undefined && derivedGrantsNarrow(derivedGrants(request), derivedGrants(next));
+			});
+		},
+	};
+}
+
+export type DispatchAdmissionToolHooks = Pick<
+	ToolSpec,
+	| "prepareAdmissionArguments"
+	| "disposeAdmissionArguments"
+	| "prepareArguments"
+	| "describeDispatchPlan"
+	| "hostEffectCalls"
+	| "rewriteNarrows"
+>;

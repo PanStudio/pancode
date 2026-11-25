@@ -1,0 +1,762 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { hostname } from "node:os";
+import { join } from "node:path";
+import { describe, it } from "node:test";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import type { ForeignApprovalChangedPayload } from "../../src/core/telemetry/live-events.js";
+import { pancodeStateDir } from "../../src/core/xdg.js";
+import { createCrossProcessFleet } from "../../src/domains/dispatch/cross-process-fleet.js";
+import { evaluateJudgedGrant, evaluateMainGrant } from "../../src/domains/dispatch/grant-authority.js";
+import {
+	createGrantBroker,
+	type GrantDecision,
+	type GrantRecord,
+	type GrantRequestInput,
+} from "../../src/domains/dispatch/grant-broker.js";
+import { writeGrantAnswerRecord } from "../../src/domains/dispatch/run-directory-records.js";
+import { evaluateWriteRootGrant } from "../../src/domains/dispatch/write-root-requests.js";
+import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
+import type { SafetyJudgementInput } from "../../src/domains/safety/decision-events.js";
+import { grantEffectDescriptor, grantEffectDigest } from "../../src/domains/safety/grant-effect.js";
+import { createSafetyJudge, type SafetyJudgeConfig } from "../../src/domains/safety/safety-judge.js";
+import type { AgentEvent } from "../../src/engine/types.js";
+import type { PancodeWorkerEvent } from "../../src/engine/worker-events.js";
+import type { WorkerRunHandle, WorkerRunInput } from "../../src/engine/worker-run-types.js";
+import { startWorkerRun } from "../../src/engine/worker-runtime.js";
+import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { CONTROL_FRAME_PREFIX, parseControlFrame, type WorkerGrantRequestFrame } from "../../src/worker/protocol.js";
+import { WORKER_EXIT_PERMISSION_REQUIRED } from "../../src/worker/spec-contract.js";
+import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";
+import { fixtureEnvelope } from "../harness/receipt.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+/**
+ * Phase D live grants (operator-approved test item 6): a decision is bound to
+ * the request, attempt and argument digest; one grant executes at most once;
+ * an identical new call needs a new grant; expiry, cancellation and worker
+ * exit revoke; headless default denies; an operator rail is never main's to
+ * grant. Commands here are policy data run only in a scratch directory.
+ */
+
+const TOKEN = "0123456789abcdef0123456789abcdef";
+
+function requestInput(overrides: Partial<GrantRequestInput> = {}): GrantRequestInput {
+	const effect = grantEffectDescriptor("bash", { command: "./mark.sh" });
+	return {
+		workerRequestId: "perm-1",
+		runId: "run-a1",
+		rootRunId: "assign-a",
+		attempt: 0,
+		attemptToken: TOKEN,
+		ownerSessionId: "session-1",
+		agentId: "coder",
+		tool: "bash",
+		actionClass: "execute",
+		approvalAuthority: "main",
+		argDigest: grantEffectDigest(effect),
+		effect,
+		cwd: process.cwd(),
+		permitTools: ["bash", "read"],
+		summary: "bash requires execute confirmation",
+		reasons: [],
+		deadlineAt: Date.now() + 60_000,
+		...overrides,
+	};
+}
+
+function brokerWithLog() {
+	const delivered: Array<{ requestId: string; decision: GrantDecision }> = [];
+	const broker = createGrantBroker({
+		deliver: (record: GrantRecord, decision: GrantDecision) => {
+			delivered.push({ requestId: record.requestId, decision });
+			return true;
+		},
+	});
+	return { broker, delivered };
+}
+
+function opened(broker: ReturnType<typeof createGrantBroker>, overrides: Partial<GrantRequestInput> = {}): GrantRecord {
+	const result = broker.open(requestInput(overrides));
+	ok(result.ok, result.ok ? "" : result.reason);
+	return result.record;
+}
+
+describe("grant broker", () => {
+	it("binds a decision to its request, run, attempt, session and argument digest", () => {
+		const { broker, delivered } = brokerWithLog();
+		const refused = broker.open(requestInput({ argDigest: "f".repeat(64) }));
+		strictEqual(refused.ok, false, "a digest that does not match the descriptor is refused");
+		const record = opened(broker);
+		strictEqual(
+			broker.decide("grant-unknown", { decision: "approve", issuer: "main", sessionId: "session-1" }).ok,
+			false,
+		);
+		for (const mismatch of [
+			{ sessionId: "session-2" },
+			{ sessionId: "session-1", runId: "run-other" },
+			{ sessionId: "session-1", runId: "run-a1", attempt: 1 },
+		]) {
+			const result = broker.decide(record.requestId, { decision: "approve", issuer: "main", ...mismatch });
+			strictEqual(result.ok, false, JSON.stringify(mismatch));
+		}
+		deepStrictEqual(delivered, [], "no mismatched decision reaches the worker");
+		strictEqual(broker.get(record.requestId)?.state, "pending");
+		const approved = broker.decide(record.requestId, {
+			decision: "approve",
+			issuer: "main",
+			sessionId: "session-1",
+			runId: "assign-a",
+			attempt: 0,
+		});
+		ok(approved.ok);
+		strictEqual(approved.record.state, "authorized");
+		broker.dispose();
+	});
+
+	it("delivers a duplicate approval once and never runs a completed grant again", () => {
+		const { broker, delivered } = brokerWithLog();
+		const record = opened(broker);
+		const first = broker.decide(record.requestId, { decision: "approve", issuer: "main", sessionId: "session-1" });
+		const second = broker.decide(record.requestId, { decision: "approve", issuer: "main", sessionId: "session-1" });
+		ok(first.ok && !first.duplicate);
+		ok(second.ok && second.duplicate);
+		strictEqual(delivered.length, 1);
+		broker.markExecution("run-a1", "perm-1", "start");
+		broker.markExecution("run-a1", "perm-1", "end");
+		const settled = broker.get(record.requestId);
+		strictEqual(settled?.state, "completed");
+		strictEqual(settled?.execution, "executed");
+		const third = broker.decide(record.requestId, { decision: "approve", issuer: "main", sessionId: "session-1" });
+		strictEqual(third.ok, false, "a completed request cannot be approved again");
+		strictEqual(delivered.length, 1);
+		broker.dispose();
+	});
+
+	it("revokes on expiry, turn cancellation and worker exit", (t) => {
+		t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10_000 });
+		const { broker, delivered } = brokerWithLog();
+		const expiring = opened(broker, { workerRequestId: "perm-exp", runId: "run-exp", deadlineAt: Date.now() + 20 });
+		t.mock.timers.tick(19);
+		strictEqual(broker.get(expiring.requestId)?.state, "pending");
+		t.mock.timers.tick(1);
+		strictEqual(broker.get(expiring.requestId)?.state, "expired");
+		strictEqual(
+			broker.decide(expiring.requestId, { decision: "approve", issuer: "main", sessionId: "session-1" }).ok,
+			false,
+		);
+
+		const canceled = opened(broker, { workerRequestId: "perm-cancel", runId: "run-cancel" });
+		broker.revokeSession("session-1", "the owning main turn was canceled");
+		strictEqual(broker.get(canceled.requestId)?.state, "canceled");
+
+		const pending = opened(broker, { workerRequestId: "perm-p", runId: "run-exit" });
+		broker.revokeRun("run-exit", "the worker exited", { final: true });
+		strictEqual(broker.get(pending.requestId)?.state, "canceled");
+
+		const started = opened(broker, { workerRequestId: "perm-s", runId: "run-crash" });
+		ok(broker.decide(started.requestId, { decision: "approve", issuer: "main", sessionId: "session-1" }).ok);
+		broker.markExecution("run-crash", "perm-s", "start");
+		broker.revokeRun("run-crash", "the worker exited", { final: true });
+		const crashed = broker.get(started.requestId);
+		strictEqual(crashed?.state, "completed");
+		strictEqual(crashed?.execution, "unknown", "a crash between side effect and report is unknown, never retried");
+
+		const denials = delivered.filter((entry) => entry.decision === "deny").map((entry) => entry.requestId);
+		deepStrictEqual(denials.sort(), [expiring.requestId, canceled.requestId, pending.requestId].sort());
+		broker.dispose();
+	});
+
+	it("never lets the main agent grant an operator-authority rail", () => {
+		const { broker, delivered } = brokerWithLog();
+		const rail = opened(broker, { approvalAuthority: "operator" });
+		const refused = broker.decide(rail.requestId, { decision: "approve", issuer: "main", sessionId: "session-1" });
+		strictEqual(refused.ok, false);
+		deepStrictEqual(delivered, []);
+		const safety = createWorkerSafety();
+		for (const attended of [true, false]) {
+			const verdict = evaluateMainGrant({ record: rail, autonomy: "yolo", attended, safety });
+			strictEqual(verdict.kind, attended ? "ask-operator" : "deny");
+		}
+		// A hard block stays blocked even for main at yolo.
+		const effect = grantEffectDescriptor("bash", { command: "rm -rf /" });
+		const blocked = opened(broker, {
+			workerRequestId: "perm-rm",
+			runId: "run-rm",
+			effect,
+			argDigest: grantEffectDigest(effect),
+		});
+		strictEqual(evaluateMainGrant({ record: blocked, autonomy: "yolo", attended: true, safety }).kind, "deny");
+		broker.dispose();
+	});
+
+	it("denies at once when the main agent runs headless at default", () => {
+		const { broker } = brokerWithLog();
+		const record = opened(broker);
+		const safety = createWorkerSafety();
+		const headless = evaluateMainGrant({ record, autonomy: "default", attended: false, safety });
+		strictEqual(headless.kind, "deny");
+		ok(headless.kind === "deny" && /--autonomy yolo/u.test(headless.reason), JSON.stringify(headless));
+		strictEqual(evaluateMainGrant({ record, autonomy: "default", attended: true, safety }).kind, "ask-operator");
+		strictEqual(evaluateMainGrant({ record, autonomy: "yolo", attended: false, safety }).kind, "grant");
+		// Contained yolo decides as default does, and its refusal says so instead of pointing at --autonomy yolo.
+		for (const verdict of [
+			evaluateMainGrant({ record, autonomy: "default", operatorAutonomy: "yolo", attended: false, safety }),
+			evaluateWriteRootGrant({ autonomy: "default", operatorAutonomy: "yolo", attended: false }),
+		]) {
+			strictEqual(verdict.kind, "deny");
+			ok(
+				verdict.kind === "deny" &&
+					/runs contained yolo, which grants a worker's ask as default does; with no operator to ask it is refused \(an attended operator, or unconfined yolo, can grant it\)$/u.test(
+						verdict.reason,
+					),
+				JSON.stringify(verdict),
+			);
+		}
+		broker.dispose();
+	});
+});
+
+const JUDGE_CONFIG: SafetyJudgeConfig = {
+	enabled: true,
+	target: "local",
+	model: "m",
+	environment: [],
+	allow: [],
+	deny: [],
+};
+
+/** The main session's judge seat with a faked completion; the operator asked only to run the marker script. */
+function fakeJudge(reply: () => string, config: SafetyJudgeConfig = JUDGE_CONFIG) {
+	const prompts: string[] = [];
+	const audits: SafetyJudgementInput[] = [];
+	const judge = createSafetyJudge({
+		config: () => config,
+		complete: async (request) => {
+			prompts.push(request.user);
+			return { text: reply() };
+		},
+		operatorMessages: () => ["run the marker script"],
+		session: () => "session-1",
+		consequences: () => [],
+		record: (input) => audits.push(input),
+	});
+	return { judge, prompts, audits };
+}
+
+const judgeAnswer = (verdict: "allow" | "block", rule: string, reason: string): string =>
+	JSON.stringify({ verdict, rule, reason });
+
+describe("safety judge worker grants (fleet.permissions.mode=judge)", () => {
+	it("grants on allow, denies with the judge's reason on block, and denies on no verdict", async () => {
+		const { broker } = brokerWithLog();
+		const safety = createWorkerSafety();
+		const record = opened(broker);
+		const allow = fakeJudge(() => judgeAnswer("allow", "operator-named", "The operator asked to run the marker script."));
+		deepStrictEqual(await evaluateJudgedGrant({ record, autonomy: "default", safety, judge: allow.judge }), {
+			kind: "grant",
+			reason: "the safety judge allowed it (rule operator-named): The operator asked to run the marker script",
+		});
+		const prompt = allow.prompts[0] ?? "";
+		ok(prompt.includes("origin: a worker the agent dispatched (agent coder)"), prompt);
+		ok(prompt.includes("command: ./mark.sh") && prompt.includes("run the marker script"), prompt);
+		strictEqual(allow.audits[0]?.verdict, "allow");
+		strictEqual(allow.audits[0]?.workerRunId, "run-a1", "the audit row names the worker attempt");
+
+		const block = fakeJudge(() => judgeAnswer("block", "publish", "It publishes the build."));
+		deepStrictEqual(await evaluateJudgedGrant({ record, autonomy: "default", safety, judge: block.judge }), {
+			kind: "deny",
+			reason: "the safety judge blocked it (rule publish): It publishes the build",
+		});
+
+		const silent = fakeJudge(() => "I am not sure.");
+		const none = await evaluateJudgedGrant({ record, autonomy: "default", safety, judge: silent.judge });
+		strictEqual(none.kind, "deny");
+		ok(/gave no verdict \(unparsable\)/u.test(none.reason), none.reason);
+
+		const off = fakeJudge(() => judgeAnswer("allow", "task-local", "Fine."), { ...JUDGE_CONFIG, enabled: false });
+		strictEqual((await evaluateJudgedGrant({ record, autonomy: "default", safety, judge: off.judge })).kind, "deny");
+		strictEqual(off.prompts.length, 0);
+		// At yolo the worker inherits the main session's mode; the judge is not asked.
+		strictEqual((await evaluateJudgedGrant({ record, autonomy: "yolo", safety, judge: block.judge })).kind, "grant");
+		strictEqual(block.prompts.length, 1);
+		broker.dispose();
+	});
+
+	it("gives the judge a worker MCP call's trust class and description, as on the main path", async () => {
+		const tool = "mcp_slurm__submit_slurm_job";
+		const mcpTool = { actionClass: "execute", description: "Submit a batch job to the Slurm queue." };
+		const effect = grantEffectDescriptor(tool, { script: "job.sh" });
+		const frame: WorkerGrantRequestFrame = {
+			requestId: "perm-1",
+			attemptToken: TOKEN,
+			attempt: 0,
+			tool,
+			actionClass: "execute",
+			authority: "main",
+			argDigest: grantEffectDigest(effect),
+			effect,
+			summary: `${tool} requires execute confirmation`,
+			reasons: [],
+			timeoutMs: 60_000,
+			mcpTool,
+		};
+		const parsed = parseControlFrame(
+			`${CONTROL_FRAME_PREFIX}${JSON.stringify({ kind: "grant_request", request: frame })}`,
+		);
+		ok(parsed.ok && parsed.value.kind === "grant_request", JSON.stringify(parsed));
+		deepStrictEqual(parsed.value.request.mcpTool, mcpTool);
+		const { broker } = brokerWithLog();
+		const record = opened(broker, {
+			tool,
+			argDigest: frame.argDigest,
+			effect,
+			permitTools: [tool],
+			summary: frame.summary,
+			mcpTool,
+		});
+		const seen = fakeJudge(() => judgeAnswer("block", "unclear", "No operator message names a Slurm job."));
+		await evaluateJudgedGrant({ record, autonomy: "default", safety: createWorkerSafety(), judge: seen.judge });
+		const prompt = seen.prompts[0] ?? "";
+		ok(prompt.includes("MCP tool, trusted with action class execute"), prompt);
+		ok(prompt.includes("Submit a batch job to the Slurm queue."), prompt);
+		broker.dispose();
+	});
+	it("never judges an operator-authority ask and shares the session's escalation count", async () => {
+		const { broker } = brokerWithLog();
+		const safety = createWorkerSafety();
+		// The streak counts blocks under distinct rules only (FX-36).
+		const rules = ["publish", "remote-code", "unclear"];
+		const block = fakeJudge(() => judgeAnswer("block", rules.shift() ?? "publish", "It publishes the build."));
+		const rail = opened(broker, { approvalAuthority: "operator" });
+		strictEqual(
+			(await evaluateJudgedGrant({ record: rail, autonomy: "default", safety, judge: block.judge })).kind,
+			"deny",
+		);
+		strictEqual(block.prompts.length, 0, "an operator rail never reaches the judge");
+		const record = opened(broker, { workerRequestId: "perm-2", runId: "run-b1" });
+		for (let index = 0; index < 3; index += 1) {
+			strictEqual((await evaluateJudgedGrant({ record, autonomy: "default", safety, judge: block.judge })).kind, "deny");
+		}
+		const escalated = await evaluateJudgedGrant({ record, autonomy: "default", safety, judge: block.judge });
+		ok(escalated.kind === "deny" && /blocked repeatedly/u.test(escalated.reason), escalated.reason);
+		strictEqual(block.prompts.length, 3, "after three blocks a worker ask is denied unjudged");
+		broker.dispose();
+	});
+});
+
+type WorkerEvent = AgentEvent | PancodeWorkerEvent;
+type Round = Array<{ name: string; arguments: string }> | { text: string };
+
+async function runGrantWorker(
+	rounds: Round[],
+	onRequest: (frame: WorkerGrantRequestFrame, handle: WorkerRunHandle) => void,
+	overrides: Partial<WorkerRunInput> = {},
+) {
+	const env = await isolatePancodeEnv("pancode-worker-grant-");
+	const previousCwd = process.cwd();
+	process.chdir(env.dir);
+	writeFileSync(join(env.dir, "mark.sh"), '#!/bin/sh\nprintf "x\\n" >> count.txt\n');
+	chmodSync(join(env.dir, "mark.sh"), 0o755);
+	const events: WorkerEvent[] = [];
+	const frames: WorkerGrantRequestFrame[] = [];
+	let requests = 0;
+	let worker: WorkerRunHandle | undefined;
+	const server = createServer(async (req, res) => {
+		await readRequestBody(req);
+		const round = rounds[requests] ?? rounds.at(-1) ?? { text: "done" };
+		requests += 1;
+		res.setHeader("content-type", "text/event-stream");
+		const delta = Array.isArray(round)
+			? {
+					role: "assistant",
+					tool_calls: round.map((call, index) => ({
+						index,
+						id: `call_${requests}_${index}`,
+						type: "function",
+						function: call,
+					})),
+				}
+			: { role: "assistant", content: round.text };
+		res.end(
+			`data: ${JSON.stringify({ model: "fixture", choices: [{ index: 0, delta, finish_reason: Array.isArray(round) ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`,
+		);
+	});
+	try {
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		worker = startWorkerRun(
+			{
+				agentId: "coder",
+				systemPrompt: "Run the marker script when asked.",
+				task: "Run ./mark.sh.",
+				target: { id: "fixture", runtime: "litellm", url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` },
+				runtime: litellm,
+				wireModelId: "fixture",
+				apiKey: "fixture",
+				thinkingLevel: "off",
+				modelCapabilities: { contextWindow: 131072, maxTokens: 8192, tools: true },
+				allowedTools: ["bash"],
+				budget: { mode: "advisory", toolCalls: 18, synthesis: true, hardCap: 150 },
+				noSkills: true,
+				cwd: env.dir,
+				onPermission: "escalate",
+				permitAllowance: { git: "inspect", asks: "main", approvalAuthority: "main" },
+				escalation: { timeoutMs: 15_000, fallback: "deny", grant: { attemptToken: TOKEN, attempt: 0 } },
+				emitGrantRequest: (frame) => {
+					frames.push(frame);
+					const handle = worker;
+					if (handle !== undefined) setImmediate(() => onRequest(frame, handle));
+				},
+				...overrides,
+			},
+			(event) => events.push(event),
+		);
+		const result = await worker.promise;
+		const countFile = join(env.dir, "count.txt");
+		const count = existsSync(countFile) ? readFileSync(countFile, "utf8") : "";
+		return { result, events, frames, count };
+	} finally {
+		worker?.abort();
+		await worker?.promise;
+		await closeServer(server);
+		process.chdir(previousCwd);
+		env.restore();
+	}
+}
+
+function resolutions(events: WorkerEvent[]) {
+	return events.flatMap((event) => (event.type === "pancode_permission_resolved" ? [event.payload] : []));
+}
+
+describe("worker grant binding", () => {
+	it("denies a mismatched decision, runs one approval once, and asks again for an identical call", {
+		timeout: 30_000,
+	}, async () => {
+		const mark = { name: "bash", arguments: JSON.stringify({ command: "./mark.sh" }) };
+		const answered: boolean[] = [];
+		const run = await runGrantWorker([[mark], [mark], [mark], { text: "done" }], (frame, handle) => {
+			const binding = { attemptToken: TOKEN, attempt: 0, argDigest: frame.argDigest, issuer: "main" as const };
+			const index = answered.length;
+			if (index === 0) {
+				// Another call's digest: the worker denies instead of consuming it.
+				answered.push(
+					handle.resolvePermission?.(frame.requestId, "approve", { ...binding, argDigest: "0".repeat(64) }) ?? false,
+				);
+				answered.push(handle.resolvePermission?.(frame.requestId, "approve", binding) ?? false);
+			} else if (index === 2) {
+				// A duplicate delivery of the same approval is dropped, not run twice.
+				answered.push(handle.resolvePermission?.(frame.requestId, "approve", binding) ?? false);
+				answered.push(handle.resolvePermission?.(frame.requestId, "approve", binding) ?? false);
+			} else {
+				answered.push(handle.resolvePermission?.(frame.requestId, "deny", binding) ?? false);
+			}
+		});
+		strictEqual(run.frames.length, 3, "each identical call opened its own request");
+		strictEqual(new Set(run.frames.map((frame) => frame.requestId)).size, 3);
+		strictEqual(new Set(run.frames.map((frame) => frame.argDigest)).size, 1, "identical calls share a digest");
+		ok(run.frames.every((frame) => frame.authority === "main" && frame.effect?.tool === "bash"));
+		deepStrictEqual(answered, [true, false, true, false, true]);
+		strictEqual(run.count, "x\n", "the approved call ran exactly once");
+		const sources = resolutions(run.events).map((payload) => `${payload.source}:${payload.decision}`);
+		deepStrictEqual(sources, ["binding:denied", "main:approved", "main:denied"]);
+		const executions = run.events.flatMap((event) =>
+			event.type === "pancode_permission_grant_execution" ? [event.payload.phase] : [],
+		);
+		deepStrictEqual(executions, ["start", "end"]);
+	});
+
+	it("returns a host denial's reason to the model and counts it toward the refusal limit", {
+		timeout: 30_000,
+	}, async () => {
+		const mark = (arg: string) => ({ name: "bash", arguments: JSON.stringify({ command: `./mark.sh ${arg}` }) });
+		const reason = "the safety judge blocked it (rule publish): It publishes the build";
+		const run = await runGrantWorker([[mark("one")], [mark("two")], [mark("three")], [mark("four")]], (frame, handle) => {
+			handle.resolvePermission?.(frame.requestId, "deny", {
+				attemptToken: TOKEN,
+				attempt: 0,
+				argDigest: frame.argDigest,
+				issuer: "main",
+				reason,
+			});
+		});
+		strictEqual(run.result.exitCode, WORKER_EXIT_PERMISSION_REQUIRED);
+		strictEqual(run.frames.length, 3, "the third denied ask ends the run");
+		strictEqual(run.count, "");
+		const resolved = resolutions(run.events).map((payload) => payload.reason ?? "");
+		ok(resolved[0]?.startsWith(`permission denied: ${reason}; bash requires execute confirmation`), resolved[0]);
+		ok(resolved.at(-1)?.startsWith("permission refusal limit reached"), resolved.at(-1));
+	});
+
+	it("names the lost owner when a parked ask is refused on control-channel close", { timeout: 30_000 }, async () => {
+		const mark = { name: "bash", arguments: JSON.stringify({ command: "./mark.sh" }) };
+		const run = await runGrantWorker([[mark], { text: "done" }], (_frame, handle) => {
+			handle.abort("owner_channel_closed");
+		});
+		strictEqual(run.count, "");
+		const resolved = resolutions(run.events);
+		strictEqual(resolved.length, 1);
+		strictEqual(resolved[0]?.decision, "denied");
+		strictEqual(resolved[0]?.mode, "escalate");
+		strictEqual(resolved[0]?.source, "operator");
+		strictEqual(
+			resolved[0]?.reason,
+			"permission request expired: the session that owns this worker exited or disconnected; re-run the work from a live session",
+		);
+	});
+
+	it("keeps the existing timeout refusal when the live owner expires the ask", { timeout: 30_000 }, async () => {
+		const mark = { name: "bash", arguments: JSON.stringify({ command: "./mark.sh" }) };
+		const run = await runGrantWorker([[mark], { text: "done" }], (frame, handle) => {
+			handle.resolvePermission?.(frame.requestId, "deny", undefined, "timeout");
+		});
+		strictEqual(run.count, "");
+		const resolved = resolutions(run.events);
+		strictEqual(resolved.length, 1);
+		strictEqual(resolved[0]?.decision, "denied");
+		strictEqual(resolved[0]?.source, "timeout");
+		strictEqual(
+			resolved[0]?.reason,
+			"permission denied by escalation timeout fallback: bash requires execute confirmation",
+		);
+	});
+
+	it("denies at once when a headless default run has no one to grant", { timeout: 30_000 }, async () => {
+		const mark = { name: "bash", arguments: JSON.stringify({ command: "./mark.sh" }) };
+		const run = await runGrantWorker([[mark], { text: "done" }], () => {}, {
+			escalation: {
+				timeoutMs: 600_000,
+				fallback: "deny",
+				responder: "none",
+				grant: { attemptToken: TOKEN, attempt: 0 },
+			},
+		});
+		strictEqual(run.frames.length, 0);
+		strictEqual(run.count, "");
+		const resolved = resolutions(run.events);
+		strictEqual(resolved.length, 1);
+		ok(/no operator or granting main agent/u.test(resolved[0]?.reason ?? ""), resolved[0]?.reason);
+	});
+});
+
+describe("cross-process grant records (M11)", () => {
+	const digest = "a".repeat(64);
+	const host = hostname();
+	const ownerSelf = { host, pid: 2_000_001, birthToken: "owner-birth", pidNs: null, bootId: null };
+	const viewerSelf = { host, pid: 2_000_002, birthToken: "viewer-birth", pidNs: null, bootId: null };
+
+	/** An owner and a viewer process on one state directory; `refuse` makes the owner's answer path throw. */
+	function crossProcessPair(stateDir: string, cwd: string) {
+		const state = { ownerAlive: true, refuse: null as string | null };
+		const ownerBus = createTelemetryHub();
+		const viewerBus = createTelemetryHub();
+		const applied: Array<{ runId: string; requestId: string; decision: string; answeredBy: { pid: number } }> = [];
+		const owner = createCrossProcessFleet({
+			bus: ownerBus,
+			stateDir: () => stateDir,
+			cwd,
+			projectRoot: cwd,
+			isLocalRun: (runId) => runId === "run-x",
+			grantBinding: (requestId) => (requestId === "grant-1" ? { attempt: 0, argDigest: digest } : null),
+			resolve: (runId, requestId, decision, answeredBy) => {
+				if (state.refuse !== null) throw new Error(state.refuse);
+				applied.push({ runId, requestId, decision, answeredBy });
+				ownerBus.emit("approval.resolved", {
+					status: "granted",
+					requestId,
+					origin: `worker:${runId}`,
+					decidedBy: "operator:another-process",
+				});
+			},
+			follow: false,
+			timers: false,
+			self: ownerSelf,
+		});
+		const viewer = createCrossProcessFleet({
+			bus: viewerBus,
+			stateDir: () => stateDir,
+			cwd,
+			projectRoot: cwd,
+			isLocalRun: () => false,
+			grantBinding: () => null,
+			resolve: () => {
+				throw new Error("the viewer holds no ask");
+			},
+			follow: true,
+			timers: false,
+			self: viewerSelf,
+			owner: (recorded) => (recorded.pid !== ownerSelf.pid || state.ownerAlive ? "alive" : "gone"),
+		});
+		const changes: ForeignApprovalChangedPayload[] = [];
+		viewerBus.subscribe("approval.foreign_changed", (change) => {
+			changes.push(change);
+		});
+		writeFileSync(join(stateDir, "runs.json"), JSON.stringify([{ ...fixtureEnvelope("run-x"), status: "running" }]));
+		ownerBus.emit("run.started", {
+			runId: "run-x",
+			agentId: "coder",
+			targetId: "t",
+			wireModelId: "m",
+			runtimeId: "r",
+			runtimeKind: "subprocess",
+			requestOrigin: "agent",
+			pid: null,
+			assignmentId: "run-x",
+			attempt: 0,
+		});
+		const ask = (requestId: string): void => {
+			ownerBus.emit("approval.requested", {
+				tool: "bash",
+				actionClass: "execute",
+				requestId,
+				origin: "worker:run-x",
+				requestedBy: "run-x",
+				agentId: "coder",
+				summary: "bash ./mark.sh",
+				escalation: true,
+				timeoutMs: 60_000,
+			});
+		};
+		const answerPath = (requestId: string): string =>
+			join(stateDir, "runs", "run-x", "grants", `${requestId}.answer.json`);
+		const dispose = (): void => {
+			owner.dispose();
+			viewer.dispose();
+		};
+		return { state, ownerBus, owner, viewer, applied, changes, ask, answerPath, dispose };
+	}
+
+	it("carries a held ask to a second process through its run directory, applies only a bound answer, and withdraws a dead owner's ask", async () => {
+		const env = await isolatePancodeEnv("pancode-cross-grant-");
+		try {
+			const stateDir = pancodeStateDir();
+			const pair = crossProcessPair(stateDir, env.dir);
+			pair.ask("grant-1");
+			const record = JSON.parse(readFileSync(join(stateDir, "runs", "run-x", "grants", "grant-1.json"), "utf8"));
+			deepStrictEqual(
+				[record.state, record.attempt, record.argDigest, record.owner.pid],
+				["pending", 0, digest, ownerSelf.pid],
+			);
+			pair.viewer.poll();
+			deepStrictEqual(
+				pair.changes.map((change) => [change.kind, change.kind === "requested" ? change.request.requestId : null]),
+				[["requested", "grant-1"]],
+			);
+			// An answer that does not echo the record's nonce is taken and dropped, never applied.
+			const forged = { requestId: "grant-1", runId: "run-x", attempt: 0, argDigest: digest, nonce: "forged" };
+			ok(writeGrantAnswerRecord(stateDir, forged, "approve"));
+			pair.owner.poll();
+			strictEqual(pair.applied.length, 0);
+			ok(pair.viewer.answerForeign("run-x", "grant-1", "approve"));
+			pair.owner.poll();
+			deepStrictEqual(
+				pair.applied.map((entry) => [entry.runId, entry.requestId, entry.decision]),
+				[["run-x", "grant-1", "approve"]],
+			);
+			pair.viewer.poll();
+			strictEqual(pair.changes[1]?.kind === "resolved" ? pair.changes[1].resolved.status : null, "granted");
+			// The owner dies holding a second ask: the viewer withdraws it and will not answer it.
+			pair.ask("grant-2");
+			pair.viewer.poll();
+			strictEqual(pair.changes[2]?.kind, "requested");
+			pair.state.ownerAlive = false;
+			pair.viewer.poll();
+			strictEqual(pair.changes[3]?.kind === "resolved" ? pair.changes[3].resolved.decidedBy : null, "revoked");
+			strictEqual(pair.viewer.answerForeign("run-x", "grant-2", "approve"), false);
+			pair.dispose();
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("names the process that answered when the owner applies a cross-process answer", async () => {
+		const env = await isolatePancodeEnv("pancode-cross-origin-");
+		try {
+			const pair = crossProcessPair(pancodeStateDir(), env.dir);
+			pair.ask("grant-1");
+			pair.viewer.poll();
+			ok(pair.viewer.answerForeign("run-x", "grant-1", "deny"));
+			pair.owner.poll();
+			deepStrictEqual(
+				pair.applied.map((entry) => [entry.decision, entry.answeredBy]),
+				[["deny", { pid: viewerSelf.pid, host }]],
+			);
+			pair.dispose();
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("takes an answer through a private name, applies one written after a take, and drops one left when the owner answered first", async () => {
+		const env = await isolatePancodeEnv("pancode-cross-take-");
+		try {
+			const stateDir = pancodeStateDir();
+			const pair = crossProcessPair(stateDir, env.dir);
+			pair.ask("grant-2");
+			pair.viewer.poll();
+			// The owner's own card answers first; the viewer's answer lands after and must never apply.
+			ok(pair.viewer.answerForeign("run-x", "grant-2", "approve"));
+			pair.ownerBus.emit("approval.resolved", {
+				status: "denied",
+				requestId: "grant-2",
+				origin: "worker:run-x",
+				decidedBy: "operator",
+			});
+			strictEqual(existsSync(pair.answerPath("grant-2")), false);
+			pair.owner.poll();
+			strictEqual(pair.applied.length, 0);
+			// A take with nothing waiting leaves no private file behind, and the next answer still applies.
+			pair.ask("grant-3");
+			pair.owner.poll();
+			pair.viewer.poll();
+			ok(pair.viewer.answerForeign("run-x", "grant-3", "approve"));
+			pair.owner.poll();
+			deepStrictEqual(
+				pair.applied.map((entry) => entry.requestId),
+				["grant-3"],
+			);
+			const grants = readdirSync(join(stateDir, "runs", "run-x", "grants"));
+			deepStrictEqual(
+				grants.filter((name) => !/^grant-\d\.json$/u.test(name)),
+				[],
+			);
+			pair.dispose();
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("keeps a refused answer's ask pending under a fresh nonce and shows it again with the refusal", async () => {
+		const env = await isolatePancodeEnv("pancode-cross-refuse-");
+		try {
+			const stateDir = pancodeStateDir();
+			const pair = crossProcessPair(stateDir, env.dir);
+			pair.ask("grant-1");
+			pair.viewer.poll();
+			ok(pair.viewer.answerForeign("run-x", "grant-1", "approve"));
+			pair.state.refuse = "the ask is held by session s-2";
+			pair.owner.poll();
+			strictEqual(pair.applied.length, 0);
+			const record = JSON.parse(readFileSync(join(stateDir, "runs", "run-x", "grants", "grant-1.json"), "utf8"));
+			deepStrictEqual([record.state, record.lastRefusal?.reason], ["pending", "the ask is held by session s-2"]);
+			pair.viewer.poll();
+			const again = pair.changes[1];
+			strictEqual(again?.kind === "requested" ? again.refusal : null, "the ask is held by session s-2");
+			ok(again?.kind === "requested" && again.request.summary?.startsWith("Your answer was refused"));
+			// The refused answer's nonce is retired: answering again binds to the new record and applies.
+			pair.state.refuse = null;
+			ok(pair.viewer.answerForeign("run-x", "grant-1", "approve"));
+			pair.owner.poll();
+			deepStrictEqual(
+				pair.applied.map((entry) => entry.requestId),
+				["grant-1"],
+			);
+			pair.dispose();
+		} finally {
+			env.restore();
+		}
+	});
+});

@@ -1,0 +1,466 @@
+[
+  {
+    "slug": "first-session",
+    "title": "Your first session with PanCode",
+    "description": "Connect a model, open a repository, and ask PanCode to explain how it builds and runs its tests.",
+    "category": "Getting started",
+    "time": "5 min",
+    "author": "Anthony Kougkas",
+    "source": "first-session.md",
+    "cover": "cast-first-launch",
+    "basis": "Recorded session",
+    "versionScope": "0.9.0",
+    "guides": [
+      "README.md",
+      "guide/commands-and-modes.md"
+    ]
+  },
+  {
+    "slug": "desktop-and-terminal",
+    "title": "Desktop or terminal: find your workspace",
+    "description": "See both interfaces, learn how to launch them, and choose where to start your next coding session.",
+    "category": "Product tour",
+    "time": "4 min",
+    "author": "Anthony Kougkas",
+    "source": "desktop-and-terminal.md",
+    "cover": "gui-task",
+    "basis": "Product tour",
+    "versionScope": "0.9.0",
+    "guides": [
+      "guide/gui.md",
+      "README.md"
+    ]
+  },
+  {
+    "slug": "let-it-work-with-containment-and-rewind",
+    "title": "Let PanCode work without watching every call",
+    "description": "Check the sandbox, undo a change with /rewind, tell the safety judge about your machine, and know when yolo is the right call.",
+    "category": "Safety and autonomy",
+    "time": "7 min",
+    "author": "Anthony Kougkas",
+    "source": "let-it-work-with-containment-and-rewind.md",
+    "cover": "cast-let-it-work",
+    "basis": "Recorded session",
+    "versionScope": "0.9.0",
+    "guides": [
+      "guide/tool-usage.md"
+    ]
+  },
+  {
+    "slug": "run-a-playbook-and-land-it",
+    "title": "Run a playbook from plan to commit",
+    "description": "Run the built-in sdlc playbook on one task, watch it work, and read the three commits it makes on your branch.",
+    "category": "Workers and fleets",
+    "time": "5 min",
+    "author": "Anthony Kougkas",
+    "source": "run-a-playbook-and-land-it.md",
+    "cover": "cli-playbook-graph",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "guides": [
+      "guide/fleet-dispatch.md",
+      "guide/built-in-agents.md"
+    ]
+  },
+  {
+    "slug": "run-it-unattended-within-limits",
+    "title": "Run it unattended within limits",
+    "description": "Start a headless run with a cost ceiling and a timeout, ask read-only questions, schedule turns, and know what stops each one.",
+    "category": "Safety and autonomy",
+    "time": "6 min",
+    "author": "Anthony Kougkas",
+    "source": "run-it-unattended-within-limits.md",
+    "cover": "cast-headless-run",
+    "basis": "Recorded session",
+    "versionScope": "0.9.0",
+    "guides": [
+      "guide/commands-and-modes.md",
+      "guide/tool-usage.md"
+    ]
+  },
+  {
+    "slug": "script-pancode-in-ci",
+    "title": "Script PanCode in CI",
+    "description": "Build a CI job on one JSON result, typed exit codes, run limits, a dry run, and an answer validated against your schema.",
+    "category": "Safety and autonomy",
+    "time": "8 min",
+    "author": "Anthony Kougkas",
+    "source": "script-pancode-in-ci.md",
+    "cover": "cast-headless-run",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "guides": [
+      "guide/exit-codes-and-output.md",
+      "guide/commands-and-modes.md"
+    ]
+  },
+  {
+    "slug": "see-what-a-session-cost-and-what-a-run-did",
+    "title": "See what a session cost and what a run did",
+    "description": "Read session cost and stop reasons from local journals, verify a sealed record, and prepare an archive that uploads nothing.",
+    "category": "Accountability",
+    "time": "4 min",
+    "author": "Anthony Kougkas",
+    "source": "see-what-a-session-cost-and-what-a-run-did.md",
+    "cover": "tui-usage",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "guides": [
+      "guide/doctor.md"
+    ]
+  },
+  {
+    "slug": "temperature-calibration",
+    "title": "A numerical change, checked with PanCode",
+    "description": "Follow a temperature-conversion example through a floating-point test failure, a correction, and recorded verification.",
+    "category": "Scientific software",
+    "time": "5 min",
+    "author": "Anthony Kougkas",
+    "source": "temperature-calibration.md",
+    "cover": "tui-view-result",
+    "basis": "Recorded session",
+    "versionScope": "0.9.0",
+    "guides": [
+      "guide/quality-policy.md"
+    ]
+  },
+  {
+    "slug": "choose-model-for-your-project",
+    "title": "Choose a model for your project",
+    "description": "Connect a local server, a cloud API, or a supported subscription route, then choose models separately for conversation and delegated work.",
+    "category": "Model choice",
+    "time": "6 min",
+    "author": "Anthony Kougkas",
+    "source": "choose-model-for-your-project.md",
+    "cover": "tui-configure-saved",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "guides": [
+      "guide/configuration-and-targets.md"
+    ]
+  },
+  {
+    "slug": "coordinate-your-coding-agents",
+    "title": "Coordinate the coding agents you already use",
+    "description": "Use supported coding peers for bounded assignments, distinguish managed runs from interactive handoffs, and review the results before combining them.",
+    "category": "Agent coordination",
+    "time": "6 min",
+    "author": "Anthony Kougkas",
+    "source": "coordinate-your-coding-agents.md",
+    "cover": "tui-interop",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "guides": [
+      "guide/interop.md",
+      "guide/fleet-dispatch.md"
+    ]
+  },
+  {
+    "slug": "keep-long-coding-tasks-on-track",
+    "title": "Keep a long coding task on track",
+    "description": "Inspect context, preserve decisions through a handoff, and resume the correct branch without turning every past message into a current instruction.",
+    "category": "Context and memory",
+    "time": "4 min",
+    "author": "Anthony Kougkas",
+    "source": "keep-long-coding-tasks-on-track.md",
+    "cover": "tui-context",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "guides": [
+      "guide/context-continuity.md"
+    ]
+  },
+  {
+    "slug": "check-a-change-against-your-repository",
+    "title": "Check a change against your repository",
+    "description": "Declare which checks matter, run them through verification, and inspect whether passing results still match the files you are reviewing.",
+    "category": "Verification",
+    "time": "5 min",
+    "author": "Anthony Kougkas",
+    "source": "check-a-change-against-your-repository.md",
+    "cover": "tui-verify-result",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "guides": [
+      "guide/quality-policy.md",
+      "guide/tool-usage.md"
+    ]
+  },
+  {
+    "slug": "add-skills-and-plugins-deliberately",
+    "title": "Add skills and plugins deliberately",
+    "description": "Preview a project skill or plugin, inspect its package pin, and load only what your task needs; installing is not a permission grant.",
+    "category": "Skills and plugins",
+    "time": "5 min",
+    "author": "Anthony Kougkas",
+    "source": "add-skills-and-plugins-deliberately.md",
+    "cover": "tui-hub-installed",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "guides": [
+      "guide/panhub.md",
+      "guide/plugins.md"
+    ]
+  },
+  {
+    "slug": "work-from-a-laptop-with-remote-workers",
+    "title": "Work from a laptop with remote workers",
+    "description": "Use a local PanCode session to coordinate SSH workers when your machines share the required project path, runtime version, and approved access.",
+    "category": "Remote workers",
+    "time": "11 min",
+    "author": "Anthony Kougkas",
+    "source": "work-from-a-laptop-with-remote-workers.md",
+    "cover": "tui-settings-fleet",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "guides": [
+      "guide/fleet-dispatch.md",
+      "guide/hpc-clusters.md"
+    ]
+  },
+  {
+    "slug": "write-an-extension-with-declared-capabilities",
+    "title": "Write an extension with declared capabilities",
+    "description": "Scaffold, test, and install a small extension, and see exactly what approving its capabilities covers.",
+    "category": "Extend PanCode",
+    "time": "5 min",
+    "author": "Anthony Kougkas",
+    "source": "write-an-extension-with-declared-capabilities.md",
+    "cover": "cli-extension-validate",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "guides": [
+      "guide/harness-extensions.md",
+      "guide/plugins.md"
+    ]
+  },
+  {
+    "slug": "diffusion-models",
+    "title": "Diffusion models in the terminal",
+    "description": "Connect Inception's Mercury models for chat and workers, and watch an answer refine as a whole instead of arriving token by token.",
+    "category": "Models",
+    "time": "3 min",
+    "author": "Anthony Kougkas",
+    "source": "diffusion-models.md",
+    "cover": "cli-diffusion-mercury",
+    "basis": "Documented workflow, checked against 0.8.0 source without a live Mercury run",
+    "versionScope": "0.9.0",
+    "status": "Terminal display only",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/configuration-and-targets.md"
+    ]
+  },
+  {
+    "slug": "panes-and-docks",
+    "title": "Panes and docks: files, workers, and music",
+    "description": "Show and hide a file browser, a live worker dashboard, and a focus radio beside the terminal conversation with one key each.",
+    "category": "Terminal workspace",
+    "time": "5 min",
+    "author": "Anthony Kougkas",
+    "source": "panes-and-docks.md",
+    "cover": "tui-worker-list",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "status": "Experimental, off by default, needs Herdr",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/panes-and-files.md"
+    ]
+  },
+  {
+    "slug": "information-flow-rules",
+    "title": "Keep named files with the models you chose",
+    "description": "Declare which paths and tool results may reach which model targets, approve the policy, and see a request to any other destination refused.",
+    "category": "Safety",
+    "time": "3 min",
+    "author": "Anthony Kougkas",
+    "source": "information-flow-rules.md",
+    "cover": "cli-flow-trust",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "status": "Advanced, opt-in",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/information-flow.md"
+    ]
+  },
+  {
+    "slug": "semantic-context-and-recordings",
+    "title": "Search by meaning and record worker runs",
+    "description": "Index code, memory, and experiment folders with a local embedding model, and attach a redacted terminal recording to a worker's evidence.",
+    "category": "Context",
+    "time": "6 min",
+    "author": "Anthony Kougkas",
+    "source": "semantic-context-and-recordings.md",
+    "cover": "cli-recorded-run",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "status": "Beta, off by default",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/semantic-context.md"
+    ]
+  },
+  {
+    "slug": "run-on-a-local-model",
+    "title": "Run PanCode on a local model",
+    "description": "Connect a local server with no account or key, check what PanCode learned about it, and see what else to check if code must stay on your machine.",
+    "category": "Model choice",
+    "time": "4 min",
+    "source": "run-on-a-local-model.md",
+    "author": "Anthony Kougkas",
+    "cover": "cli-local-runtimes",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/configuration-and-targets.md"
+    ]
+  },
+  {
+    "slug": "pre-register-a-benchmark",
+    "title": "Pre-register a benchmark before you measure",
+    "description": "Use the experiment-protocol skill to lock thresholds, tolerances, and verdict conditions into a contract you commit before any result exists.",
+    "category": "Scientific software",
+    "time": "5 min",
+    "source": "pre-register-a-benchmark.md",
+    "author": "Anthony Kougkas",
+    "cover": "tui-experiment-contract",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/quality-policy.md",
+      "guide/panhub.md",
+      "guide/research-and-arena.md"
+    ]
+  },
+  {
+    "slug": "keep-results-in-the-project-store",
+    "title": "Keep results outside the tree with the project store",
+    "description": "Store a result with a note, check it for drift, read it from a script, and let a worker write into one granted tag.",
+    "category": "Scientific software",
+    "time": "5 min",
+    "author": "Anthony Kougkas",
+    "source": "keep-results-in-the-project-store.md",
+    "cover": "cli-store-stat",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/panstore.md",
+      "guide/tool-usage.md",
+      "guide/fleet-dispatch.md"
+    ]
+  },
+  {
+    "slug": "set-up-a-lab-from-one-setup-file",
+    "title": "Set up a lab from one setup file",
+    "description": "Write one YAML file that connects every lab member to your model gateway, check what it may carry, and test the route.",
+    "category": "Models",
+    "time": "5 min",
+    "author": "Anthony Kougkas",
+    "source": "set-up-a-lab-from-one-setup-file.md",
+    "cover": "cli-lab-import",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/configuration-and-targets.md",
+      "guide/hpc-clusters.md"
+    ]
+  },
+  {
+    "slug": "share-a-folder-with-a-teammate-or-a-second-terminal",
+    "title": "Share a folder with a teammate or a second terminal",
+    "description": "Run two sessions in one project, keep each person's state private, and commit project settings that can only make PanCode stricter.",
+    "category": "Terminal workspace",
+    "time": "4 min",
+    "author": "Anthony Kougkas",
+    "source": "share-a-folder-with-a-teammate-or-a-second-terminal.md",
+    "cover": "cli-project-tighten",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/configuration-and-targets.md",
+      "guide/panes-and-files.md"
+    ]
+  },
+  {
+    "slug": "run-a-research-campaign-and-a-blind-arena",
+    "title": "Run a research campaign and a blind arena",
+    "description": "Keep a speed-up only when a measurement proves it and the answers still match, then compare model answers without knowing which model wrote them.",
+    "category": "Scientific software",
+    "time": "7 min",
+    "author": "Anthony Kougkas",
+    "source": "run-a-research-campaign-and-a-blind-arena.md",
+    "cover": "cli-arena",
+    "basis": "Recorded session",
+    "versionScope": "0.9.0",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/research-and-arena.md",
+      "guide/quality-policy.md"
+    ]
+  },
+  {
+    "slug": "report-a-problem-without-leaking-your-machine",
+    "title": "Report a problem without leaking your machine",
+    "description": "Draft a bug report, read the exact text with your paths, names and keys masked, choose how it leaves, and share a diagnostic bundle only if you want to.",
+    "category": "Accountability",
+    "time": "5 min",
+    "author": "Anthony Kougkas",
+    "source": "report-a-problem-without-leaking-your-machine.md",
+    "cover": "cli-report-preview",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/troubleshooting.md",
+      "guide/exit-codes-and-output.md"
+    ]
+  },
+  {
+    "slug": "ask-several-agents-at-once",
+    "title": "Ask several agents at once",
+    "description": "Poll two to five agents on one question and read the vote, or give a council roster one task and let a judge write a single answer.",
+    "category": "Agent coordination",
+    "time": "5 min",
+    "author": "Anthony Kougkas",
+    "source": "ask-several-agents-at-once.md",
+    "cover": "tui-poll",
+    "basis": "Documented workflow",
+    "versionScope": "0.9.0",
+    "interfaces": [
+      "Terminal"
+    ],
+    "guides": [
+      "guide/fleet-dispatch.md",
+      "guide/commands-and-modes.md"
+    ]
+  }
+]

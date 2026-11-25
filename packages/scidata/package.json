@@ -1,0 +1,34 @@
+{
+	"name": "@pancode/scidata",
+	"version": "0.9.0",
+	"private": true,
+	"description": "The scientific data library behind PanCode's data tools.",
+	"type": "module",
+	"license": "SEE LICENSE IN LICENSE",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/akougkas/pancode.git",
+		"directory": "packages/scidata"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./worker": {
+			"types": "./dist/worker/index.d.ts",
+			"import": "./dist/worker/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsup"
+	}
+}

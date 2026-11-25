@@ -1,0 +1,50 @@
+{
+	"name": "@pancode/sdk",
+	"version": "0.9.0",
+	"private": true,
+	"description": "PanSDK, the contract for authoring PanCode extensions, packs, tools and MCP servers.",
+	"type": "module",
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/akougkas/pancode.git",
+		"directory": "packages/sdk"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./extension": {
+			"types": "./dist/extension/index.d.ts",
+			"import": "./dist/extension/index.js"
+		},
+		"./pack": {
+			"types": "./dist/pack/index.d.ts",
+			"import": "./dist/pack/index.js"
+		},
+		"./testing": {
+			"types": "./dist/testing/index.d.ts",
+			"import": "./dist/testing/index.js"
+		},
+		"./tool": {
+			"types": "./dist/tool/index.d.ts",
+			"import": "./dist/tool/index.js"
+		},
+		"./mcp-server": {
+			"types": "./dist/mcp-server/index.d.ts",
+			"import": "./dist/mcp-server/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsup"
+	}
+}

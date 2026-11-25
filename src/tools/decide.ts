@@ -1,0 +1,175 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { Type } from "typebox";
+import { ToolNames } from "../core/tool-names.js";
+import type { DecisionBoardStore } from "../domains/session/decision-board.js";
+import { decisionRef } from "../domains/session/entries.js";
+import type { ToolResult, ToolSpec } from "./tool-spec.js";
+import { byteLength } from "./truncate-utf8.js";
+
+/**
+ * The model's own design decisions, recorded on the session decision board
+ * beside the operator's `ask_user` answers, and the operator's rulings it
+ * relays from their own messages (`operator_words`, `source: "operator-message"`). A `decide` call appends one
+ * `decisionLedger` entry with `origin: "agent"` and one `DecisionRecord` with
+ * `source: "agent"`, the alternatives the model rejected, and why. Dispatch
+ * seals every active decision's ref onto the run envelope and receipt, and
+ * the commit seams turn the same refs into `PanCode-Decision:` trailers, so a
+ * receipt or a commit names the choices it was made under.
+ */
+
+export const DECIDE_CAPS = Object.freeze({
+	keyBytes: 64,
+	valueBytes: 512,
+	alternatives: 6,
+	alternativeBytes: 256,
+	rationaleBytes: 1024,
+	labelBytes: 128,
+	operatorWordsBytes: 1024,
+});
+
+const KEBAB_KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+
+/** `Cache_Key` names the same decision as `cache-key`; refusing it cost a round per spelling (C-24). */
+function kebabKey(key: string): string {
+	return key.toLowerCase().replaceAll("_", "-");
+}
+
+export interface DecideToolDeps {
+	decisionBoard?: DecisionBoardStore;
+}
+
+function boundedText(value: unknown, field: string, cap: number): string | Error {
+	if (typeof value !== "string") return new Error(`decide: ${field} must be a string`);
+	const trimmed = value.trim();
+	if (trimmed.length === 0) return new Error(`decide: ${field} is required`);
+	if (byteLength(trimmed) > cap) return new Error(`decide: ${field} exceeds the ${cap}-byte cap`);
+	return trimmed;
+}
+
+function boundedAlternatives(value: unknown): string[] | Error {
+	if (!Array.isArray(value) || value.length === 0) {
+		return new Error("decide: alternatives must list at least one option you rejected");
+	}
+	if (value.length > DECIDE_CAPS.alternatives) {
+		return new Error(`decide: alternatives exceeds the ${DECIDE_CAPS.alternatives}-entry cap`);
+	}
+	const alternatives: string[] = [];
+	for (const [index, entry] of value.entries()) {
+		const text = boundedText(entry, `alternatives[${index}]`, DECIDE_CAPS.alternativeBytes);
+		if (text instanceof Error) return text;
+		alternatives.push(text);
+	}
+	return alternatives;
+}
+
+export function createDecideTool(deps: DecideToolDeps = {}): ToolSpec {
+	return {
+		name: ToolNames.Decide,
+		description:
+			"Record a design choice; when arguments are known, include decide and next authorized read/work in one gateway op=chain, " +
+			"with work's after naming the decide step id, without a separate decide-only response. " +
+			"Include rejected alternatives and rationale between viable options. Bookkeeping is not a reason to end a model response. " +
+			"Set the implementation step's after to the decide step id so it runs only after successful recording. " +
+			"The successful returned decision is authoritative; no extra confirmation call is needed. " +
+			"A decision grants no operator authorization and does not prove implementation or checks succeeded; observe their results before claiming completion. " +
+			"If recording fails, resolve the failure before implementing that choice. " +
+			"Verify implementation against the active choice before commit; decision trailers do not prove adherence. " +
+			"If policy changes, a call with the same key revises your earlier agent choice. " +
+			"An operator message or steer that states a new choice already decides it: pass operator_words quoting it and the same key to revise an operator choice, with no ask_user round; ask only when no operator message states it. " +
+			"Record the revision before commit.",
+		parameters: Type.Object({
+			key: Type.String({
+				description: `Stable kebab-case name for the decision, e.g. "cache-key-shape" (at most ${DECIDE_CAPS.keyBytes} bytes).`,
+			}),
+			value: Type.String({ description: `The option you chose (at most ${DECIDE_CAPS.valueBytes} bytes).` }),
+			alternatives: Type.Array(Type.String(), {
+				description: `Options you considered and rejected, 1 to ${DECIDE_CAPS.alternatives} entries of at most ${DECIDE_CAPS.alternativeBytes} bytes each.`,
+			}),
+			rationale: Type.String({
+				description: `Why the chosen option won over the alternatives (at most ${DECIDE_CAPS.rationaleBytes} bytes).`,
+			}),
+			label: Type.Optional(
+				Type.String({
+					description: `Short human-readable title for the decision (at most ${DECIDE_CAPS.labelBytes} bytes).`,
+				}),
+			),
+			operator_words: Type.Optional(
+				Type.String({
+					description: `The operator's sentence stating this choice, copied verbatim from their message or steer in this session; records the decision as theirs (at most ${DECIDE_CAPS.operatorWordsBytes} bytes).`,
+				}),
+			),
+		}),
+		// Read class on purpose: the only effect is one session-ledger append,
+		// so it must stay available at every autonomy level without a prompt.
+		baseActionClass: "read",
+		executionMode: "sequential",
+		async run(args): Promise<ToolResult> {
+			const given = boundedText(args.key, "key", DECIDE_CAPS.keyBytes);
+			if (given instanceof Error) return { kind: "error", message: given.message };
+			const key = kebabKey(given);
+			if (!KEBAB_KEY.test(key)) {
+				return { kind: "error", message: "decide: key must be kebab-case (lowercase letters, digits, single hyphens)" };
+			}
+			const value = boundedText(args.value, "value", DECIDE_CAPS.valueBytes);
+			if (value instanceof Error) return { kind: "error", message: value.message };
+			const alternatives = boundedAlternatives(args.alternatives);
+			if (alternatives instanceof Error) return { kind: "error", message: alternatives.message };
+			const rationale = boundedText(args.rationale, "rationale", DECIDE_CAPS.rationaleBytes);
+			if (rationale instanceof Error) return { kind: "error", message: rationale.message };
+			let label: string | undefined;
+			if (args.label !== undefined && args.label !== null) {
+				const bounded = boundedText(args.label, "label", DECIDE_CAPS.labelBytes);
+				if (bounded instanceof Error) return { kind: "error", message: bounded.message };
+				label = bounded;
+			}
+			let operatorWords: string | undefined;
+			if (args.operator_words !== undefined && args.operator_words !== null) {
+				const bounded = boundedText(args.operator_words, "operator_words", DECIDE_CAPS.operatorWordsBytes);
+				if (bounded instanceof Error) return { kind: "error", message: bounded.message };
+				operatorWords = bounded;
+			}
+			if (deps.decisionBoard === undefined) {
+				return { kind: "error", message: "decide: no session decision board is available in this context" };
+			}
+			let outcome: ReturnType<DecisionBoardStore["recordAgentDecision"]>;
+			try {
+				outcome = deps.decisionBoard.recordAgentDecision({
+					key,
+					value,
+					alternatives,
+					rationale,
+					...(label !== undefined ? { label } : {}),
+					...(operatorWords !== undefined ? { operatorWords } : {}),
+				});
+			} catch (error) {
+				return { kind: "error", message: error instanceof Error ? error.message : String(error) };
+			}
+			const ref = decisionRef(outcome.entry.interviewId, key);
+			const supersededNote =
+				outcome.superseded === null
+					? ""
+					: ` (supersedes ${decisionRef(outcome.superseded.interviewId, outcome.superseded.key)})`;
+			const keyNote = key === given ? "" : ` (key read as "${key}" from "${given}")`;
+			const sourceNote = operatorWords !== undefined ? " as the operator's, from their message" : "";
+			return {
+				kind: "ok",
+				output: `decision recorded${sourceNote}: ${key} = ${value} [${ref}]${supersededNote}${keyNote}\n`,
+				details: {
+					decision: {
+						ref,
+						key,
+						value,
+						alternatives,
+						rationale,
+						...(label !== undefined ? { label } : {}),
+						...(operatorWords !== undefined ? { source: "operator-message", quote: operatorWords } : {}),
+						...(outcome.superseded !== null
+							? { superseded: decisionRef(outcome.superseded.interviewId, outcome.superseded.key) }
+							: {}),
+					},
+				},
+			};
+		},
+	};
+}

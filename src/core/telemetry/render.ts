@@ -1,0 +1,495 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { formatFooterTokens } from "../display-units.js";
+import type { UnitTotal, UnitTotalRefusal } from "./economy.js";
+import type { Fact, FactSum } from "./fact.js";
+import type { FreeRule, Pricing, PricingSum } from "./pricing.js";
+
+/**
+ * The canonical renderer (#434, R5). Every display string a telemetry DTO carries comes from here, and this module
+ * is the only place outside the GUI's server-rendered strings allowed to format money (boundary rule10). Inputs are
+ * facts and fold results; nothing here sums, prices or infers a value.
+ */
+
+const grouped = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
+export function renderCount(value: number): string {
+	return grouped.format(Math.round(value));
+}
+
+/** The USD amount alone, with enough digits that a sub-cent call never reads as zero. */
+function renderUsd(value: number): string {
+	if (!Number.isFinite(value) || value <= 0) return "$0.00";
+	if (value < 0.00000001) return `$${value.toExponential(2)}`;
+	const digits = value < 0.01 ? Math.min(8, Math.max(4, Math.ceil(-Math.log10(value)))) : 2;
+	return `$${value.toFixed(digits)}`;
+}
+
+/** A provider credit balance, a measured amount; it can be denominated outside USD. */
+export function renderCredit(value: number, currency: string): string {
+	return currency.toUpperCase() === "USD" ? renderUsd(value) : `${value.toFixed(2)} ${currency}`;
+}
+
+/** A configured limit or computed bound, never spend; a zero limit reads as `$0.00` (#434). */
+export function renderUsdLimit(value: number | null | undefined): string {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? renderUsd(value) : "not set";
+}
+
+/**
+ * A USD figure the operator types into a setting, such as the raise a ceiling stop names: the bare number, rounded up
+ * at four decimals so the typed value is never below the one that clears the stop (#424, #434).
+ */
+export function renderUsdSetting(value: number): string {
+	if (!Number.isFinite(value) || value <= 0) return "0";
+	// The epsilon absorbs binary error in `value * 10_000`, so an exact four-decimal raise stays as written.
+	return String(Math.ceil(value * 10_000 - 1e-6) / 10_000);
+}
+
+function renderDurationMs(value: number): string {
+	const ms = Math.max(0, value);
+	if (ms < 1000) return `${Math.round(ms)}ms`;
+	const fraction = (ms / 1000).toFixed(ms < 10_000 ? 2 : 1);
+	if (Number(fraction) < 60) return `${fraction}s`;
+	// Round to whole seconds before splitting, or 119.6s reads `1m60s` and the minute never carries.
+	const seconds = Math.round(ms / 1000);
+	const minutes = Math.floor(seconds / 60);
+	return minutes < 60
+		? `${minutes}m${String(seconds % 60).padStart(2, "0")}s`
+		: `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+/** What a fixed-width surface says when there is no cost claim at all; never `$0.00`. */
+export const COST_NOT_MEASURED = "not measured";
+
+/** R10: a field the mode did not capture is neither unknown nor zero. */
+function renderAbsent(reason: Extract<Fact<unknown>, { kind: "absent" }>["reason"]): string {
+	return reason === "not-captured-in-mode" ? "not captured (standard mode)" : "n/a";
+}
+
+function renderUnknown(reason: Extract<Fact<unknown>, { kind: "unknown" }>["reason"]): string {
+	switch (reason) {
+		case "provider-omitted":
+			return "unknown (provider omitted)";
+		case "stream-dropped":
+			return "unknown (stream dropped)";
+		case "unsupported":
+			return "unknown (unsupported)";
+		case "writer-gap":
+			return "unknown (journal gap)";
+		default:
+			return "unknown";
+	}
+}
+
+/**
+ * The one cost wording family over a sum's parts. Partly priced says what it knows with `+?` marking the rest (L3);
+ * estimates say so (L5); a sum nobody priced has no claim and reads as not measured, never `$0.00`.
+ */
+/**
+ * A free amount names the rule that made it free. Only `local-native` renders `$0.00 local`; a target that declared
+ * itself free or declared all-zero rates may be a cloud endpoint. `$0.00 free (mixed)` renders only when the parts
+ * carry two or more different recorded rules; a free amount without a recorded rule renders `$0.00 free`, never
+ * `$0.00 local`.
+ */
+function renderFreeUsd(freeRule: FreeRule | undefined, mixed = false): string {
+	if (freeRule === "local-native") return "$0.00 local";
+	if (freeRule === "declared") return "$0.00 free (declared)";
+	if (freeRule === "zero-rates") return "$0.00 free (zero-rates)";
+	return mixed ? "$0.00 free (mixed)" : "$0.00 free";
+}
+
+function renderUsdParts(
+	known: number,
+	parts: {
+		estimated: boolean;
+		unpriced: boolean;
+		free: boolean;
+		freeRule?: FreeRule | undefined;
+		freeRuleMixed?: boolean | undefined;
+	},
+): string {
+	if (parts.free && !parts.unpriced && !parts.estimated) return renderFreeUsd(parts.freeRule, parts.freeRuleMixed);
+	if (parts.unpriced) return known > 0 ? `${parts.estimated ? "~" : ""}${renderUsd(known)} +?` : COST_NOT_MEASURED;
+	if (parts.estimated) return `~${renderUsd(known)} est`;
+	return renderUsd(known);
+}
+
+/** A projected amount, such as a route's admission estimate: a figure PanCode derived, never spend. */
+export function renderUsdEstimate(usd: number): string {
+	return `~${renderUsd(usd)} est`;
+}
+
+/** A spend a budget stop states, marked as it was priced: estimated parts and unpriced calls stay visible (#434 §6.3). */
+export function renderUsdSpend(usd: number, priced: { estimated: boolean; unpriced: boolean } | undefined): string {
+	return renderUsdParts(usd, {
+		estimated: priced?.estimated ?? false,
+		unpriced: priced?.unpriced ?? false,
+		free: false,
+	});
+}
+
+/**
+ * What a ceiling leaves after a spend (#434 §6.3). It carries the spend's estimate, and an unpriced part of the spend,
+ * which can only have spent more, makes it an upper bound: `at most`, the mirror of a partial sum's `+?`.
+ */
+export function renderCostRemaining(usd: number, spend: { estimated: boolean; unpriced: boolean }): string {
+	const amount = spend.estimated ? `~${renderUsd(usd)} est` : renderUsd(usd);
+	return spend.unpriced ? `at most ${amount}` : amount;
+}
+
+const plural = (count: number, noun: string) => `${renderCount(count)} ${noun}${count === 1 ? "" : "s"}`;
+
+/** Contributions that carry a value or a gap; an absent contribution (a never-sent call) is neither. */
+function contributions(sum: FactSum): number {
+	return sum.coverage.measured + sum.coverage.estimated + sum.unknownCount;
+}
+
+/** Only absent contributions, such as a lone never-sent call: not applicable, never zero (L9). */
+const allAbsent = (sum: FactSum) => contributions(sum) === 0 && sum.absentCount > 0;
+
+/**
+ * A folded token or count sum. A partial sum is never shown as a total (L3): it reads `≥` with the number of
+ * contributions whose value is unknown. Estimated parts mark the whole with `~` (L5).
+ */
+export function renderCountSum(sum: FactSum, unit = "call"): string {
+	if (allAbsent(sum)) return renderAbsent("not-applicable");
+	const known = sum.measured + sum.estimated;
+	const approx = sum.coverage.estimated > 0 ? "~" : "";
+	if (sum.unknownCount === 0) return `${approx}${renderCount(known)}`;
+	const gap = `${plural(sum.unknownCount, unit)} unknown`;
+	if (sum.coverage.measured + sum.coverage.estimated === 0) return `unknown (${gap})`;
+	return `≥${approx}${renderCount(known)} (${gap})`;
+}
+
+/** A count sum's known part alone, `≥` and `~` kept, for a line that names the unknown calls once for all its sums. */
+export function renderCountSumKnown(sum: FactSum): string {
+	if (allAbsent(sum)) return renderAbsent("not-applicable");
+	if (sum.unknownCount > 0 && sum.coverage.measured + sum.coverage.estimated === 0) return "unknown";
+	return `${sum.unknownCount > 0 ? "≥" : ""}${sum.coverage.estimated > 0 ? "~" : ""}${renderCount(sum.measured + sum.estimated)}`;
+}
+
+/**
+ * A cached share folded over calls (C-05): `~` when a read was derived, and `≥` with the calls whose read went
+ * unreported, since a read they left out can only raise it (L3, L5).
+ */
+export function renderShareSum(sum: FactSum): string {
+	if (allAbsent(sum)) return renderAbsent("not-applicable");
+	const known = `${sum.coverage.estimated > 0 ? "~" : ""}${renderScalar(sum.measured + sum.estimated, "percent")}`;
+	if (sum.unknownCount === 0) return known;
+	const gap = `${plural(sum.unknownCount, "call")} unknown`;
+	if (sum.coverage.measured + sum.coverage.estimated === 0) return `unknown (${gap})`;
+	return `≥${known} (${gap})`;
+}
+
+/**
+ * What the calls behind a cache-read figure did not report, or null when every call reported one. A local server
+ * behind LiteLLM reused its prefix (300-700 ms to first token on 18-23K-token prompts) while every call omitted its
+ * cache read, and an unknown share read as a cache that served nothing (WTF-P campaign, 2026-11-15). PanCode does not
+ * infer reuse from timing; it says the reads went unreported, so no call is taken for a miss.
+ */
+export function unreportedCacheReadWords(fact: Fact<number> | FactSum): string | null {
+	if ("kind" in fact)
+		return fact.kind === "unknown" ? "the provider did not report a cache read; reuse is unmeasured, not a miss" : null;
+	if (fact.unknownCount === 0) return null;
+	const reported = fact.coverage.measured + fact.coverage.estimated;
+	return reported === 0
+		? `no call reported a cache read (${plural(fact.unknownCount, "call")}); reuse is unmeasured, not a miss`
+		: `${renderCount(fact.unknownCount)} of ${plural(reported + fact.unknownCount, "call")} reported no cache read; the cached share marks them ≥, or ~ where the server timed its uncached prefill`;
+}
+
+/**
+ * A token total as its fresh and cached parts (F9). A cache read resends a prompt prefix the provider already holds, so
+ * a verifier whose 205k tokens were 95% cache reads read as 205k tokens spent. Null unless every call measured both
+ * figures and some tokens were cached: a gap or an estimate in either leaves the fresh part unknown.
+ */
+export function freshCachedTokens(
+	total: Fact<number> | FactSum,
+	cacheRead: Fact<number> | FactSum,
+): { fresh: number; cached: number } | null {
+	const measured = (fact: Fact<number> | FactSum): number | null => {
+		if ("kind" in fact) return fact.kind === "measured" ? fact.value : null;
+		return fact.unknownCount === 0 && fact.coverage.estimated === 0 && fact.coverage.measured > 0 ? fact.measured : null;
+	};
+	const whole = measured(total);
+	const cached = measured(cacheRead);
+	if (whole === null || cached === null || cached <= 0 || cached > whole) return null;
+	return { fresh: whole - cached, cached };
+}
+
+/**
+ * A count or count sum in the footer's narrow form (`12.3k`). The width changes, the honesty does not: an estimate
+ * keeps `~`, a partial sum keeps `≥` and `+?`, an unknown is `?` and never `0`, and an absent count is `n/a` (R1, R10).
+ */
+export function renderCompactCount(fact: Fact<number> | FactSum): string {
+	if ("kind" in fact) {
+		switch (fact.kind) {
+			case "measured":
+				return formatFooterTokens(fact.value);
+			case "estimated":
+				return `~${formatFooterTokens(fact.value)}`;
+			case "unknown":
+				return "?";
+			case "absent":
+				return "n/a";
+		}
+	}
+	if (allAbsent(fact)) return "n/a";
+	const known = `${fact.coverage.estimated > 0 ? "~" : ""}${formatFooterTokens(fact.measured + fact.estimated)}`;
+	if (fact.unknownCount === 0) return known;
+	return fact.coverage.measured + fact.coverage.estimated === 0 ? "?" : `≥${known} +?`;
+}
+
+/**
+ * A folded USD sum; `free` is true when every priced call was a free target's measured zero, `freeRule` is the rule
+ * they all agree on, and `freeRuleMixed` is true only when two or more different recorded rules appeared.
+ */
+export function renderUsdSum(sum: FactSum, free: boolean, freeRule?: FreeRule, freeRuleMixed?: boolean): string {
+	if (allAbsent(sum)) return renderAbsent("not-applicable");
+	if (contributions(sum) === 0) return COST_NOT_MEASURED;
+	return renderUsdParts(sum.measured + sum.estimated, {
+		estimated: sum.coverage.estimated > 0,
+		unpriced: sum.unknownCount > 0,
+		free,
+		freeRule,
+		freeRuleMixed,
+	});
+}
+
+/** A folded duration sum (total admission wait, total model time); partial sums are lower bounds. */
+export function renderDurationSum(sum: FactSum, unit = "call"): string {
+	const known = sum.measured + sum.estimated;
+	if (allAbsent(sum)) return renderAbsent("not-applicable");
+	if (contributions(sum) === 0) return "none";
+	if (sum.unknownCount === 0) return `${sum.coverage.estimated > 0 ? "~" : ""}${renderDurationMs(known)}`;
+	if (sum.coverage.measured + sum.coverage.estimated === 0) return `unknown (${plural(sum.unknownCount, unit)} unknown)`;
+	return `≥${renderDurationMs(known)} (${plural(sum.unknownCount, unit)} unknown)`;
+}
+
+/** `units` keeps a fractional amount, such as a premium-request multiplier, that `count` would round away. */
+type Scalar = "count" | "usd" | "duration" | "percent" | "units";
+
+const fractional = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+
+function renderScalar(value: number, as: Scalar): string {
+	switch (as) {
+		case "usd":
+			return renderUsd(value);
+		case "duration":
+			return renderDurationMs(value);
+		case "percent":
+			return `${value.toFixed(1)}%`;
+		case "units":
+			return fractional.format(value);
+		default:
+			return renderCount(value);
+	}
+}
+
+/** One fact. Estimates name their method (R3); unknown and absent keep their reason (R1, R10). */
+/** A rendered count with its noun, which agrees with a display of 1 and a bound of `≥1` alike. */
+export function renderCalls(display: string, noun = "tool call"): string {
+	return `${display} ${display.replace(/^\D+/u, "") === "1" ? noun : `${noun}s`}`;
+}
+
+/**
+ * A re-prefill or its cache-break bill as the upper bound it is: the journal records the lesser of a call's uncached
+ * prefill and the prefix the previous request sent, so the true figure is at most this (CTX-16). A zero, an unknown,
+ * an absent figure and a sum with unknown parts read as before.
+ */
+export function renderUpperBound(value: Fact<number> | FactSum | number, display: string): string {
+	const bounded =
+		typeof value === "number"
+			? value > 0
+			: "kind" in value
+				? (value.kind === "measured" || value.kind === "estimated") && value.value > 0
+				: value.unknownCount === 0 && value.measured + value.estimated > 0;
+	return bounded ? `up to ${display}` : display;
+}
+
+export function renderFact(fact: Fact<number>, as: Scalar = "count"): string {
+	switch (fact.kind) {
+		case "measured":
+			return renderScalar(fact.value, as);
+		// The method stays on the fact for provenance; the display says only that it is an estimate.
+		case "estimated":
+			return `~${renderScalar(fact.value, as)} est`;
+		case "unknown":
+			return renderUnknown(fact.reason);
+		case "absent":
+			return renderAbsent(fact.reason);
+	}
+}
+
+/** A priced fact. `pricedBy: free` is a measured zero under a named free rule, not a provider's `$0.00`. */
+export function renderUsdFact(fact: Fact<number>, pricedBy: string, freeRule?: FreeRule): string {
+	if (fact.kind === "measured" && pricedBy === "free") return renderFreeUsd(freeRule);
+	if (fact.kind === "estimated") return `~${renderUsd(fact.value)} est`;
+	if (fact.kind === "unknown") return COST_NOT_MEASURED;
+	return renderFact(fact, "usd");
+}
+
+/**
+ * One count as a `key=value` field: no spaces and no grouping, so a line stays machine-splittable. An estimate keeps
+ * `~`, and an unknown or absent count says so rather than reading as `0` (R1, R10).
+ */
+export function renderFactField(fact: Fact<number>): string {
+	switch (fact.kind) {
+		case "measured":
+			return String(fact.value);
+		case "estimated":
+			return `~${fact.value}`;
+		case "unknown":
+			return "unknown";
+		case "absent":
+			return "n/a";
+	}
+}
+
+/** One priced amount, as a cost field renders it. */
+export function renderPricing(pricing: Pricing): string {
+	return renderUsdFact(pricing.usd, pricing.pricedBy, pricing.freeRule);
+}
+
+/** Who priced an amount, as a receipt names it: `free (declared)` keeps the free rule beside the source. */
+export function renderPricedBy(pricing: Pick<Pricing, "pricedBy" | "freeRule">): string {
+	return pricing.pricedBy === "free" && pricing.freeRule !== undefined ? `free (${pricing.freeRule})` : pricing.pricedBy;
+}
+
+/** Several priced amounts folded; `+?` and `~` mark the unpriced and estimated parts as on any sum. */
+export function renderPricingSum(sum: PricingSum): string {
+	return renderUsdSum(sum.usd, sum.free, sum.freeRule, sum.freeRuleMixed);
+}
+
+export function renderTextFact(fact: Fact<string | boolean | null>): string {
+	switch (fact.kind) {
+		case "measured":
+			return fact.value === null ? "none" : String(fact.value);
+		case "estimated":
+			return `~${fact.value === null ? "none" : String(fact.value)} est`;
+		case "unknown":
+			return renderUnknown(fact.reason);
+		case "absent":
+			return renderAbsent(fact.reason);
+	}
+}
+
+/**
+ * Where a value came from, by fact kind, for an explanation (#434 §11.4). A single fact names its source, method or
+ * reason; a fold result counts its contributions per kind, so `≥` on a sum always has its unknown part named here.
+ */
+export function renderCoverage(fact: Fact<number> | FactSum): string {
+	if ("kind" in fact) {
+		switch (fact.kind) {
+			case "measured":
+				return `measured (${fact.source})`;
+			case "estimated":
+				return `estimated (${fact.method})`;
+			case "unknown":
+				return renderUnknown(fact.reason);
+			case "absent":
+				return renderAbsent(fact.reason);
+		}
+	}
+	const parts = [
+		[fact.coverage.measured, "measured"],
+		[fact.coverage.estimated, "estimated"],
+		[fact.unknownCount, "unknown"],
+		[fact.absentCount, "not applicable"],
+	] as const;
+	const total = fact.coverage.measured + fact.coverage.estimated + fact.unknownCount + fact.absentCount;
+	if (total === 0) return "no contributions";
+	return `${plural(total, "contribution")}: ${parts
+		.filter(([value]) => value > 0)
+		.map(([value, label]) => `${renderCount(value)} ${label}`)
+		.join(", ")}`;
+}
+
+// ---- economics (token economy S10) ----
+
+type EconomyTotal = UnitTotal | UnitTotalRefusal;
+const credits = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
+
+/** An amount in its unit: a currency keeps sub-cent digits as USD does, nano-AIU reads as AI credits (1e9 each). */
+function renderUnitAmount(value: number, unit: string): string {
+	if (unit === "USD") return renderUsd(value);
+	if (unit === "nano-aiu") {
+		const shown = value / 1e9;
+		return `${shown > 0 && shown < 0.0001 ? shown.toExponential(2) : credits.format(shown)} credits`;
+	}
+	if (/^[A-Z]{3}$/u.test(unit)) return `${renderUsd(value).slice(1)} ${unit}`;
+	return `${fractional.format(value)} ${unit}`;
+}
+
+/** The calls a partial sum covers (`for 2 of 107 calls`); empty when no contribution is unknown. */
+function coveredCalls(sum: FactSum): string {
+	if (sum.unknownCount === 0) return "";
+	const known = sum.coverage.measured + sum.coverage.estimated;
+	return ` for ${renderCount(known)} of ${renderCount(known + sum.unknownCount)} calls`;
+}
+
+/**
+ * A total in its one unit: `~` marks an estimated part and a partial sum names the calls it covers; a total with no
+ * known part is unknown, never zero, and a refused total says why it was not summed (R2).
+ */
+export function renderUnitTotal(total: EconomyTotal): string {
+	if ("refused" in total)
+		return `not summed (${total.refused === "mixed-unit" ? total.units.join(", ") : `${total.refused} ${total.unit}`})`;
+	const sum = total.sum;
+	if (allAbsent(sum)) return renderAbsent("not-applicable");
+	if (!("unit" in total)) return sum.unknownCount > 0 ? "unknown" : "none";
+	const amount = `${sum.coverage.estimated > 0 ? "~" : ""}${renderUnitAmount(sum.measured + sum.estimated, total.unit)}`;
+	return `${amount}${coveredCalls(sum)}`;
+}
+
+/**
+ * The extra charge to the user (15:12Z ruling 1): an actual amount only when every known part is a provider or
+ * statement assertion; a zero that only a plan's coverage implies is `included (estimate)`; no evidence is
+ * `extra unknown`. A partial sum keeps its known part and names the calls it covers.
+ */
+export function renderExtraCharge(total: EconomyTotal): string {
+	if ("refused" in total) return `extra ${renderUnitTotal(total)}`;
+	const sum = total.sum;
+	if (allAbsent(sum)) return renderAbsent("not-applicable");
+	if (!("unit" in total)) return sum.unknownCount > 0 ? "extra unknown" : "none";
+	const known = sum.measured + sum.estimated;
+	const partial = coveredCalls(sum);
+	if (sum.coverage.estimated === 0) return `${renderUnitAmount(sum.measured, total.unit)} extra${partial}`;
+	if (known === 0) return `included (estimate)${partial}`;
+	return `~${renderUnitAmount(known, total.unit)} extra${partial}`;
+}
+
+/** The API equivalent: always an estimate at a public list price, never cash (Q5). */
+export function renderApiEquivalent(total: EconomyTotal): string {
+	return `API equiv ${renderUnitTotal(total)}`;
+}
+
+/** Local energy and its cost; known energy without a tariff says the cost is unknown rather than free. */
+export function renderEnergy(kwh: FactSum, cost: EconomyTotal): string {
+	if (allAbsent(kwh)) return renderAbsent("not-applicable");
+	if (contributions(kwh) === 0) return "none";
+	const known = kwh.measured + kwh.estimated;
+	if (kwh.coverage.measured + kwh.coverage.estimated === 0) return "unknown";
+	const energy = `${kwh.coverage.estimated > 0 ? "~" : ""}${credits.format(known)} kWh${coveredCalls(kwh)}`;
+	// A cost in two currencies is known but not summed, which differs from no tariff at all.
+	const priced = "refused" in cost || "unit" in cost;
+	return priced ? `${energy}, ${renderUnitTotal(cost)}` : `${energy}, electricity cost unknown`;
+}
+
+/** A pool's fixed fee for one period, with its evidence; a window that covers part of the period says so. */
+export function renderPeriodFee(fee: {
+	amount: number;
+	currency: string;
+	period: string;
+	evidence: string;
+	partial: boolean;
+}): string {
+	return `${renderUnitAmount(fee.amount, fee.currency)}/${fee.period} ${fee.evidence}${fee.partial ? " (partial period)" : ""}`;
+}
+
+/** Period cash per currency, never one sum across currencies; unknown amounts are counted beside the known ones. */
+export function renderCash(totals: readonly UnitTotal[], unknown: number): string {
+	const known = totals.flatMap((total) => ("unit" in total ? [renderUnitTotal(total)] : []));
+	if (known.length === 0) return unknown > 0 ? "unknown" : "none";
+	if (unknown === 0) return known.join(" and ");
+	return `${known.join(" and ")} plus ${renderCount(unknown)} unknown ${unknown === 1 ? "amount" : "amounts"}`;
+}

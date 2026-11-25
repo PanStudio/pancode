@@ -1,0 +1,335 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { BARS_CAVEAT, economyView, usageLabel, usageView } from "../client/pages/usage-model.js";
+import type { UsageReport } from "../contracts/reports.js";
+
+const report = (facts: UsageReport["facts"], opportunities: UsageReport["opportunities"] = []): UsageReport => ({
+	schema: "experimental",
+	workspaceId: "0".repeat(32),
+	windowDays: 30,
+	from: "2026-08-21",
+	to: "2026-09-20",
+	facts,
+	opportunities,
+});
+
+/** A read-model quantity as the CLI emits it; `known: false` is a fact with no measured part. */
+const quantity = (display: string, measured: number, unknownCount = 0, known = true) => ({
+	fact: {
+		measured,
+		estimated: 0,
+		unknownCount,
+		absentCount: 0,
+		coverage: { measured: known ? 1 : 0, estimated: 0, unknown: unknownCount },
+	},
+	display,
+	ref: "repo:all-30d#total",
+});
+const pricedBy = { provider: 0, "target-rates": 2, catalog: 0, free: 0, none: 0 };
+const tokens = {
+	name: "telemetry-tokens",
+	values: {
+		tokens: {
+			input: quantity("700", 700),
+			output: quantity("500", 500),
+			cacheRead: quantity("1,000", 1000),
+			cacheWrite: quantity("0", 0),
+			cacheWrite1h: quantity("0", 0),
+			reasoning: quantity("250", 250),
+			prompt: quantity("1,700", 1700),
+			total: quantity("2,200", 2200),
+		},
+	},
+};
+const cost = (groupBy: "role" | "model", total: Record<string, unknown>, groups: Record<string, unknown>[] = []) => ({
+	name: "telemetry-cost",
+	values: { groupBy, report: { kind: "cost", scope: { repo: "all", days: 30 }, groupBy, total, groups } },
+});
+const exactTotal = {
+	calls: quantity("12", 12),
+	tokens: quantity("2,200", 2200),
+	usd: quantity("$0.02", 0.02),
+	pricedBy,
+};
+
+test("the window is stated as the report's own two dates", () => {
+	assert.equal(usageView(report([])).window, "from 2026-08-21 through 2026-09-20");
+	// The CLI sends instants; a window boundary reads as the day, without the clock digits.
+	const instants = usageView({
+		...report([]),
+		from: "2026-08-21T19:08:49.333Z",
+		to: "2026-09-20T19:08:49.333Z",
+	});
+	assert.match(instants.window, /^from \d{4}-\d{2}-\d{2} through \d{4}-\d{2}-\d{2}$/u);
+});
+
+test("five token bars compare the read model's fields with one another and carry the caveat", () => {
+	const view = usageView(report([tokens]));
+	assert.deepEqual(
+		view.bars.map((bar) => bar.label),
+		["Input", "Output", "Cache read", "Cache write", "Reasoning"],
+	);
+	assert.deepEqual(
+		view.bars.map((bar) => bar.value),
+		["700", "500", "1,000", "0", "250"],
+	);
+	// Widths are shares of the largest field, never of the total: these fields overlap.
+	assert.deepEqual(
+		view.bars.map((bar) => bar.share),
+		[0.7, 0.5, 1, 0, 0.25],
+	);
+	assert.equal(view.barsCaveat, BARS_CAVEAT);
+	assert.match(view.barsCaveat, /not additive percentages/u);
+});
+
+test("a field with nothing observed shows the server's word, and a lower bound draws its known part", () => {
+	const view = usageView(
+		report([
+			{
+				name: "telemetry-tokens",
+				values: {
+					tokens: {
+						...tokens.values.tokens,
+						cacheRead: quantity("≥1,000 (1 call unknown)", 1000, 1),
+						reasoning: quantity("unknown (2 calls unknown)", 0, 2, false),
+					},
+				},
+			},
+		]),
+	);
+	const by = new Map(view.bars.map((bar) => [bar.label, bar]));
+	assert.equal(by.get("Cache write")?.value, "0");
+	assert.equal(by.get("Reasoning")?.value, "not measured");
+	assert.equal(by.get("Reasoning")?.share, 0);
+	assert.equal(by.get("Cache read")?.share, 1);
+	assert.match(view.barsCaveat, /known subtotals/u);
+});
+
+test("the headline reads the read model's window totals and names an unpriced remainder", () => {
+	const view = usageView(
+		report([
+			cost("role", {
+				calls: quantity("≥14 (1 call unknown)", 14, 1),
+				tokens: quantity("≥2,850 (1 call unknown)", 2850, 1),
+				usd: quantity("$0.03 +?", 0.03, 1),
+				pricedBy: { ...pricedBy, none: 1 },
+			}),
+		]),
+	);
+	const by = new Map(view.headline.map((figure) => [figure.label, figure]));
+	assert.equal(by.get("Tokens")?.value, "≥2,850 (1 call unknown)");
+	assert.equal(by.get("Tokens")?.note, "API calls: ≥14 (1 call unknown)");
+	assert.equal(by.get("Route price")?.value, "$0.03 +?");
+	assert.equal(by.get("Route price")?.note, "Known subtotal; some calls are unpriced");
+	assert.match(view.knownSubtotals ?? "", /known subtotals/u);
+	assert.equal(usageView(report([cost("role", exactTotal)])).knownSubtotals, null);
+});
+
+test("an all-free window says it was recorded as free and leaves which rule to the engine's amount", () => {
+	const free = { provider: 0, "target-rates": 0, catalog: 0, free: 3, none: 0 };
+	const view = usageView(
+		report([cost("role", { ...exactTotal, usd: quantity("$0.00 free (declared)", 0), pricedBy: free })]),
+	);
+	const figure = view.headline.find((item) => item.label === "Route price");
+	assert.deepEqual([figure?.value, figure?.note], ["$0.00 free (declared)", "Recorded as free"]);
+});
+
+test("session and run counts retain the read model's canonical display", () => {
+	const view = usageView(
+		report([
+			{ name: "sessions", values: { fact: { kind: "measured", value: 1000, source: "local-count" }, display: "1,000" } },
+			{ name: "dispatch-runs", values: { fact: { kind: "measured", value: 0, source: "local-count" }, display: "0" } },
+		]),
+	);
+	const by = new Map(view.headline.map((figure) => [figure.label, figure]));
+	assert.equal(by.get("Sessions")?.value, "1,000");
+	assert.equal(by.get("Dispatch runs")?.value, "0");
+});
+
+test("call origins are the label report's groups, in the server's words", () => {
+	assert.match(usageView(report([])).originsNote, /were not recorded/u);
+	const view = usageView(
+		report([
+			cost("role", exactTotal, [
+				{ key: "btw", calls: quantity("1", 1), tokens: quantity("40", 40), usd: quantity("$0.00", 0), pricedBy },
+				{ key: "main", calls: quantity("9", 9), tokens: quantity("2,000", 2000), usd: quantity("$0.02", 0.02), pricedBy },
+				{
+					key: "worker",
+					calls: quantity("≥2 (1 call unknown)", 2, 1),
+					tokens: quantity("160", 160),
+					usd: quantity("$0.00", 0),
+					pricedBy,
+				},
+			]),
+		]),
+	);
+	assert.deepEqual(
+		view.origins.map((origin) => `${origin.label}:${origin.value}`),
+		["Side questions:1", "Conversation calls:9", "Worker run calls:≥2 (1 call unknown)"],
+	);
+	assert.match(view.originsNote, /each run's journal/u);
+});
+
+test("skills keep the report's order, the read model's rows are claimed, and nothing else is dropped", () => {
+	const view = usageView(
+		report([
+			tokens,
+			cost("role", exactTotal),
+			cost("model", exactTotal),
+			{ name: "skill-activated", values: { skill: "map-codebase", activations: 2 } },
+			{ name: "skill-never-activated", values: { skill: "slurm-jobs" } },
+			{ name: "memory", values: { approved: 1, pending: 0 } },
+		]),
+	);
+	assert.equal(view.skillsActivated.length, 1);
+	assert.deepEqual(view.skillsDormant, ["slurm-jobs"]);
+	assert.deepEqual(
+		view.rest.map((fact) => fact.label),
+		["Memory"],
+	);
+	assert.deepEqual(view.tables, []);
+});
+
+test("an unknown fact still reads as words", () => {
+	assert.equal(usageLabel("bash-shape"), "Bash shape");
+	assert.equal(usageLabel("permission-approval"), "Permission approval");
+	assert.equal(usageLabel("unverifiedSuccesses"), "Unverified successes");
+});
+
+test("a fact recorded many times is one bounded table, and one recorded once stays a card", () => {
+	const fact = (name: string, values: Record<string, unknown>) => ({ name, values });
+	const view = usageView({
+		workspaceId: "w",
+		schema: "experimental",
+		windowDays: 30,
+		from: "2026-01-01T00:00:00.000Z",
+		to: "2026-01-31T00:00:00.000Z",
+		facts: [
+			fact("memory", { approved: 0, pending: 2 }),
+			...Array.from({ length: 30 }, (_, index) =>
+				fact("session-recall", {
+					sessionId: `s${index}`,
+					readmittedTokens: null,
+					recalls: { tool: 0, operator: index },
+				}),
+			),
+			fact("top-tool", { tool: "read", count: 173, a: 1, b: 2, c: 3, d: 4, e: 5 }),
+			fact("top-tool", { tool: "bash", count: 9, a: 1, b: 2, c: 3, d: 4, e: 5 }),
+		],
+		opportunities: [],
+	});
+	assert.deepEqual(
+		view.rest.map((row) => row.name),
+		["memory"],
+	);
+	const recall = view.tables.find((table) => table.name === "session-recall");
+	assert.deepEqual(recall?.columns, ["Session ID", "Readmitted tokens", "Recalls"]);
+	assert.deepEqual([recall?.total, recall?.rows.length, recall?.omitted], [30, 24, 6]);
+	// Absent is not zero, and a nested record reads as words rather than JSON.
+	assert.deepEqual(recall?.rows[3], ["s3", "Not recorded", "tool 0 · operator 3"]);
+	const tools = view.tables.find((table) => table.name === "top-tool");
+	assert.deepEqual([tools?.columns.length, tools?.omittedColumns, tools?.omitted], [6, 1, 0]);
+});
+
+test("the economy reads the report's own displays: estimates labelled, unknown neutral, fees once, references as of", () => {
+	const sum = (measured: number, estimated: number, unknownCount: number) => ({
+		measured,
+		estimated,
+		unknownCount,
+		absentCount: 0,
+		coverage: { measured: measured > 0 ? 1 : 0, estimated: estimated > 0 ? 1 : 0, unknown: unknownCount },
+	});
+	const unknown = { sum: sum(0, 0, 2) };
+	const quantities = {
+		contributions: 2,
+		providerCharge: unknown,
+		marginalCharge: { unit: "USD", sum: sum(0, 0.5, 0) },
+		seatCredits: { unit: "nano-aiu", sum: sum(3e9, 0, 0) },
+		energyKwh: sum(0, 0, 2),
+		energyCost: unknown,
+		apiEquivalent: { refused: "mixed-unit", units: ["USD", "EUR"] },
+		display: {
+			extra: "~$0.50 extra",
+			providerCharge: "unknown",
+			seatCredits: "3 credits",
+			energy: "energy unknown",
+			apiEquivalent: "API equiv not summed (USD, EUR)",
+		},
+	};
+	const fee = {
+		poolId: "team",
+		payer: "employer",
+		period: { kind: "month", start: "2026-09-01T00:00:00.000Z", end: "2026-10-01T00:00:00.000Z" },
+		amount: { kind: "measured", value: 20 },
+		currency: "USD",
+		evidence: "declared",
+		partial: true,
+		display: "$20/month declared (partial period)",
+	};
+	const economy = {
+		version: 1,
+		total: quantities,
+		fees: [fee],
+		cash: { currencies: [], unknownCount: 2, display: "unknown" },
+		groups: { role: [], model: [], target: [], pool: [{ ...quantities, key: "team", periods: [] }] },
+		references: [
+			{ referenceRowId: "openai/gpt-6-luna", asOf: "2026-09-01", basis: "served-model", contributions: 2 },
+			{ referenceRowId: "openai/gpt-6-luna", asOf: "2026-09-01", basis: "requested-model", contributions: 1 },
+		],
+		sources: { attempts: 2, runs: 1, gaps: 0 },
+	} as unknown as NonNullable<UsageReport["economy"]>;
+	assert.equal(economyView(report([])), null);
+	const view = economyView({ ...report([]), economy });
+	assert.ok(view);
+	assert.deepEqual(
+		view.headline.map((figure) => [figure.label, figure.value, figure.tone]),
+		[
+			["Extra charge", "~$0.50 extra", "estimate"],
+			["API equivalent", "API equiv not summed (USD, EUR)", "unknown"],
+			["Seat credits", "3 credits", "known"],
+			["Local energy", "energy unknown", "unknown"],
+			["Cash", "unknown", "unknown"],
+		],
+	);
+	assert.deepEqual(view.pools, [
+		{
+			pool: "team",
+			contributions: "2",
+			extra: "~$0.50 extra",
+			providerCharge: "unknown",
+			apiEquivalent: "API equiv not summed (USD, EUR)",
+			seatCredits: "3 credits",
+			tone: "estimate",
+		},
+	]);
+	assert.deepEqual(
+		view.fees.map((row) => [row.pool, row.payer, row.period, row.value]),
+		[["team", "employer", "month from 2026-09-01", "$20/month declared (partial period)"]],
+	);
+	// One tariff row and date can be both a served-model and a requested-model reference: two rows, two keys.
+	assert.deepEqual(view.references, [
+		{
+			key: "openai/gpt-6-luna:2026-09-01:served-model",
+			id: "openai/gpt-6-luna",
+			asOf: "2026-09-01",
+			basis: "served model",
+			contributions: "2 contributions",
+		},
+		{
+			key: "openai/gpt-6-luna:2026-09-01:requested-model",
+			id: "openai/gpt-6-luna",
+			asOf: "2026-09-01",
+			basis: "requested model",
+			contributions: "1 contribution",
+		},
+	]);
+	// Cash names what the fold sums; fees are whole-pool, and a provider's gross charge is not cash.
+	const cash = view.headline.find((figure) => figure.label === "Cash")?.note ?? "";
+	assert.match(cash, /personally/u);
+	assert.match(cash, /whole pool's fee, not this workspace's spend/u);
+	assert.match(cash, /extra charges and local electricity/u);
+	assert.doesNotMatch(cash, /provider charges/u);
+	assert.equal(view.sources, "2 attempts · 1 run · 0 gaps");
+});

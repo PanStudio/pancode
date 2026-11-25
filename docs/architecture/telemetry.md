@@ -1,0 +1,354 @@
+# Telemetry
+
+PanCode records what a process, a session and a run did as typed events in local journals, and every token, cost, decision and outcome a surface shows is a fold of those journals. This page defines the namespace, the five nouns the system is built from, the on-disk layout, sealing, sharing and the read model. [The /view viewer](observability.md) browses the artifacts, and [Artifact Versions](artifact-versions.md) lists the format identities.
+
+## Namespace
+
+Telemetry has one name everywhere: the domain [src/domains/telemetry](../../src/domains/telemetry/index.ts), the kernel under `src/core/telemetry/`, the `pancode telemetry` command, the ACP methods `_pancode/telemetry/*`, the `telemetry.*` settings and the `<stateDir>/telemetry/` root. No environment variable configures it.
+
+Five nouns make up the system.
+
+| Noun | What it is |
+| --- | --- |
+| Event | A named, typed fact declared once in the registry. A journal event is written to a scope's journal and delivered live; a live event reaches in-process subscribers only. |
+| Context | Who and where an event happened: the scope that owns it (process, session or run), the turn, tool call and model call it belongs to, and the agent that acted. |
+| Journal | The append-only, hash-chained record of one scope: a process, a session or a run. |
+| Object | A content-addressed JSON document a record cites instead of inlining structure or content. |
+| Seal | The record that closes a scope over its hash chain, with the `bundle.json` manifest that makes the scope directory a self-contained bundle. |
+
+## Constitution
+
+Code that writes, folds or renders telemetry follows these rules.
+
+| Rule | Statement |
+| --- | --- |
+| R1 Unknown is never zero | A missing value is `unknown` and never `0` or `false`. Zero means measured zero. |
+| R2 Never-sent is not spent | A call whose disposition is `never_sent` carries no usage and no estimate. |
+| R3 Estimates name their method | An estimated value names how it was estimated (see [Honest values](#honest-values)). |
+| R4 One owner per fact | Each fact is written once, as an event in the journal of the scope that owns it. A finished run is its `run.settled` record under its seal, and every total is a fold of journal records. The telemetry domain is the only writer under `<stateDir>/telemetry/` ([paths.ts](../../src/domains/telemetry/paths.ts)): the `rule11` boundary check fails a write in any other module under `src/` or the GUI's server whose path, as that module builds it, names the telemetry root. The `rule12` check fails code outside `src/engine/` that changes a message's provider `usage` other than by copying it whole or storing null, and a usage-shaped key on a session-ledger message payload, where the provider's own `usage` is the only one. |
+| R5 One fold, one renderer | Totals come from the folds in [folds.ts](../../src/domains/telemetry/folds.ts). Token and cost wording comes only from the canonical renderer in [render.ts](../../src/core/telemetry/render.ts); the `rule10` boundary check fails money formatting anywhere else in `src/` and in the GUI, which shows the display strings its server rendered. |
+| R6 Closed vocabularies | Agent roles, dispositions, failure causes, stop reasons, round kinds, transport kinds, tiers, content classes and run terminal reasons are closed enums ([enums.ts](../../src/core/telemetry/enums.ts)), and a classifier that belongs to one event, such as a cache verdict or a gap reason, is a closed vocabulary in that event's schema: call, usage, pricing and quota records in [schemas.ts](../../src/core/telemetry/schemas.ts), every other family in its own module beside it (`run-schemas.ts`, `session-schemas.ts`, `context-schemas.ts`, `host-schemas.ts`, `tool-schemas.ts`, `surface-schemas.ts`, `memory-schemas.ts`, `evidence-schemas.ts`). Free text never classifies. |
+| R7 Hashes declare what they are | Every hash names its function, canonicalization and subject, and is labelled `commitment` (the preimage is deliberately not kept) or `resolvable` (the preimage is in the scope's `objects/`). |
+| R8 One clock convention | Every record carries wall-clock UTC `t` and monotonic `mono` under its segment's clock origin, or under its own `origin` when a worker's record was forwarded. Monotonic values from different origins are never subtracted ([Time Conventions](time-conventions.md)). |
+| R9 Gaps are recorded | Telemetry never changes an outcome. A dropped, torn, refused or filtered record leaves a `journal.gap` record, never silence ([Design decisions](#design-decisions)). |
+| R10 Mode honesty | A field the mode did not capture is `absent: not-captured-in-mode`, never unknown or zero. |
+| R11 Same number everywhere | One fact shows one value and provenance on every surface, through the [read model](#read-model). The boundary check `rule14` fails any other token or cost sum under `src/interactive/`, `src/engine/acp/` and `src/cli/`, except the functions its exemption list names, each with its reason. An exemption whose function no longer sums fails the check, so the list only shrinks. |
+| R12 Readers skip and count | A reader skips and counts a record whose envelope, kind or kind version it does not know, and never rewrites or deletes it. There are no upcasts and no readers for older formats: every format is at version 1. |
+| R13 The emit path is cheap | Emitting an event is one allocation and a ring-buffer push, with no filesystem access, serialization or locks. The writer batches, redacts and writes later. The `rule13` boundary check holds [producer.ts](../../src/core/telemetry/producer.ts) and every local module it reaches by value import to that: no filesystem or lock import, no `JSON.stringify` and no synchronous write. |
+
+The read-model contract tests run the lie detectors of #434 over every DTO: L1 (unknown shown as zero), L3 (a partial sum shown as a total), L5 (a number without provenance) and L9 (absent shown as unknown or zero) over each quantity, and L4 (a cache verdict without its tokens), L6 (unmeasured read as false), L7 (an amount off the shared pricing policy), L8 (a hash without its R7 label) and L10 (a cause outside its closed vocabulary) over its structure. L2, a never-sent call that carries usage or an estimate, is checked on the never-sent calls of the read model and the golden fixtures. The detectors live in `tests/harness/telemetry-lies.ts`. The parity test (`tests/contracts/telemetry-parity.test.ts`) seeds one fixture on disk and holds every surface that shows a token or cost figure to one value and provenance per fact, and the GUI's route tests run the same detectors over the DTOs they serve.
+
+## Glossary
+
+| Term | Definition |
+| --- | --- |
+| Scope | The owner of a journal: a process, a session or a run. |
+| Uncached prefill | The prompt tokens a call prefilled rather than read from cache, `cache.uncachedPrefillTokens` on `call.settled`. It is normalized `input` plus reported `cacheWrite` beside a measured cache read, or, for a llama.cpp server whose usage omits the read but whose timings report `cache_n`, the prompt the server evaluated (`prompt_n`) ([cache-physics.ts](../../src/domains/telemetry/cache-physics.ts)). Otherwise it is unknown, because `input` without a read is the whole prompt. |
+| Prompt tokens | `input + cacheRead + cacheWrite`. |
+| Context tokens | Prompt tokens at settle. |
+| Output | The provider's `output` count, which includes reasoning when the provider bundles it. `reasoning` is a sub-field and is never added twice. |
+| TTFT | `stages.firstToken` minus the end of `stages.send`, on the monotonic clock of the process that sent the request. |
+| Re-prefilled tokens | `max(0, min(uncachedPrefill, previousPromptTokensOnSameKey - cacheRead))`: the already-seen prefix that was charged again. |
+| Cached share | Cache read as a percentage of prompt tokens, over the calls that reported their read. `pancode telemetry cache`, the exit report's `Cache` row and ACP `usage_update` show it for the session and for its last turn. |
+| Cache break | A call that prefilled again more than 1,024 tokens and more than a tenth of the prefix the previous request sent. One band in [cache-break.ts](../../src/core/telemetry/cache-break.ts) decides it for the read model and `pancode doctor`; [Context Engine](context-engine.md#breaks-and-the-cache-report) gives the rules. |
+| Cache-break bill | Re-prefilled tokens priced at the input rate minus the cache-read rate, recorded as `cache.bill` and shown as `breakUsd`. |
+| Disposition | How a call ended, from the closed set in [Honest values](#honest-values). |
+| Gap | A `journal.gap` record that says how many records a writer lost, refused or filtered, and why. |
+| Commitment | A hash whose preimage is deliberately not stored. |
+| Resolvable reference | A hash whose redacted, canonical preimage is stored in the scope's `objects/`. |
+
+## Events and the registry
+
+Every event PanCode emits is declared once in `EVENTS` ([events.ts](../../src/core/telemetry/events.ts)). Names are `subject.past_participle`, such as `call.settled`, `run.enqueued` or `approval.resolved`. An entry is one of two kinds:
+
+- `journal(schema, { tier, cc, capture?, scope?, project? })` declares a durable event: its TypeBox payload schema, its tier, its content class, the research flag that admits it when it is research tier, and, for an event whose seam may not name its owner, whether it always belongs to the `process` scope or must name a `session`. A journal event may also declare `project(payload)`: live subscribers receive the payload as emitted, and the journal keeps only the projection, so card text, task text and envelope ids never reach disk while one event name serves both.
+- `live<P>()` declares an in-process signal with a compile-time payload type and no runtime schema, such as `run.progressed`, `config.hot_reloaded` or `session.turn_switched`.
+
+Where a live signal and a journal record mark the same moment with different facts, they are two events: the live `session.created`, `session.reattached` and `compaction.ended` repaint and open writers, and the journal `session.opened`, `session.resumed` and `compaction.settled` are what the scope keeps.
+
+The registry is also the in-process bus. The hub ([hub.ts](../../src/core/telemetry/hub.ts), `telemetryHub()`) is the one emit path: `emit(name, payload, ctx?)` delivers the payload to subscribers synchronously and, for a journal event, enqueues a record to the sink of the scope its context names, the given `ctx` or else the async context. It returns true only when a journal record was enqueued. `emitContent` enqueues a content-bearing research record whose preimage the writer stores, reserves against the research cap and cites before it writes the record. `subscribe` registers a listener; a listener runs on the emitter's stack, and one that returns a promise is not awaited. The `PREIMAGE_SUBJECTS` table names the events whose content goes to `objects/` this way: `memory.traced`, `memory.observed` and `request.captured`.
+
+## Tiers and capture modes
+
+Every journal event has one tier and one content class. The tier says why the record exists; the content class says what it may hold.
+
+| Tier | Holds | Written |
+| --- | --- | --- |
+| `accountability` | Safety, spend, outcomes and approvals: calls, turns, runs, seals, gaps, budget, tool and approval decisions, gate verdicts, PanHub lifecycle. | Always. There is no off. |
+| `operational` | How PanCode ran: routing, prompt compiles, config, health, auth refreshes, middleware, System One decisions, worker channel failures, boot and shutdown. | Always. |
+| `research` | Content and high-volume detail: prompt text, request bodies, memory traces, delta histograms, prefix blocks, provider headers, the bus trace. | Only in research mode, each behind its flag. |
+
+Content classes are `content-free` (ids, counts, closed vocabularies), `structural` (shapes and object references without operator text) and `content-bearing` (text a person or model wrote, always through an object).
+
+`telemetry.mode` is `standard` (the default) or `research` ([settings inventory](../guide/configuration-and-targets.md#telemetry)).
+
+- **Standard** admits accountability and operational records.
+- **Research** also admits `health.samples_captured` and `prompt.prefix_captured`, and the research events the `telemetry.research` flags turn on: `content` admits `prompt.text_captured`, `request.captured`, `memory.traced` and `memory.observed`; `busTrace` admits `bus.traced`, one record naming each live event the hub delivers; `deltas` admits `call.timing_captured`; `providerHeaders` admits `provider.headers_captured`. `content` also needs the operator's consent for the workspace, recorded by `pancode telemetry consent` in `<stateDir>/telemetry/consent.json`, keyed by the workspace's real path and never stored in the workspace. The process scope has no workspace, so it never captures content.
+- A project or local settings layer can lower capture but never raise it.
+- Research capture is capped at 256 MiB per session, counting its research records and the objects they store. A refusal is a `journal.gap` with reason `research-cap`, and accountability records continue.
+
+## Context
+
+A record's `ctx` ([context.ts](../../src/core/telemetry/context.ts)) has one of three shapes, and the shape decides the scope that owns it:
+
+| Shape | Owner |
+| --- | --- |
+| `sessionId` with an optional `runId` | The run when `runId` is present, else the session. Run facts belong to the run's journal even when a parent session exists. |
+| `sessionId: null` with `runId` | A standalone run, such as a headless `pancode run` with no session. |
+| `sessionId: null` with `processId` | The process (`prc_<uuidv7>`), for records about no session or run. |
+
+Each shape also carries `agent: { role, id }` and optionally `turnId`, `toolCallId`, `batchId`, `parentRunId`, `callId` and `attemptId`. Roles are `main` (a session's own agent, named by its session), `coordinator` (a fleet root driving its steps), `worker` (a dispatched run, named by its run), and the side agents `compaction`, `memory`, `system-one`, `safety-judge`, `prewarm`, `btw`, `handoff` and `helper`, named by the scope they serve. Producers do not copy these ids into payloads: the hub takes them from the async context at the seam that emits.
+
+Session, run and other PanCode ids keep their own formats. Telemetry adds `cal_<uuidv7>` call ids, `att_<uuidv7>` attempt ids (one per attempt, the first included), `rec_<uuidv7>` record ids and `prc_<uuidv7>` process ids ([ids.ts](../../src/core/telemetry/ids.ts)), and `obj_<sha256>` object ids ([objects.ts](../../src/domains/telemetry/objects.ts)). An id that could leave its scope directory is refused, not resolved.
+
+## Journals
+
+A journal is a sequence of segment files in its scope directory: the live `journal.jsonl` and, past 32 MiB, rotated segments named `journal.<sequence>.jsonl` with a ten-digit sequence, so names sort in chain order whatever the clock does ([call-journal.ts](../../src/domains/telemetry/call-journal.ts)). Readers read the rotated segments in order, then the live one.
+
+Every line is a JSON object followed by a tab, `#`, and the IEEE CRC32 of the JSON bytes in eight hex digits ([segment.ts](../../src/core/telemetry/segment.ts)). The first line of a segment is its header, and every writer that opens the journal appends a fresh header to the live segment, so a record's clock origin is that of the nearest header above it:
+
+| Header field | Meaning |
+| --- | --- |
+| `v`, `k` | `1` and `segment.open`. |
+| `schemaSet` | `pancode-telemetry/1`. |
+| `mode`, `capture` | The telemetry mode and the effective research flags the segment was written under. |
+| `clockOrigin` | Host, pid, process birth token and the wall time of the monotonic epoch. |
+| `writer` | `pancodeVersion` and `piVersion`. |
+| `chainHead` | On a segment a rotation opened, the scope's hash chain head when it opened. |
+
+Every other line is a record envelope ([envelope.ts](../../src/core/telemetry/envelope.ts)): `v` (1), `k` (the event name), `kv` (the event's schema version, 1), `id`, `t`, `mono`, `ctx`, `tier`, `cc` and `data`. A record forwarded from a worker also carries `origin`, the worker process's clock origin, which replaces the segment's.
+
+The writer keeps a hash chain over the exact bytes of every line: `head_n = sha256(head_{n-1} || line_n)`, starting from the first segment's header. Rotation carries the head into the next segment's header, so rotated segments form one chain, and reopening a scope recovers the head from its bytes.
+
+One process owns a journal at a time, through a lock adjudicated by host, pid and birth token. The next owner truncates a torn tail and records `journal.gap{torn-tail}` before the chain continues. A damaged line before the tail of a call journal retires the live file whole under the next rotated segment name, its bytes untouched, and a fresh segment opens with `journal.gap{interior-corruption}` naming the retired segment and counting its damaged lines. Readers resync after each damaged line, so later records still read and metering continues. A scope holding a damaged segment cannot be sealed, and cost shows `+?` for it. A change to the mode or to any capture flag closes the segment in place with `journal.segment_closed{mode-change}` and writes a new header at the next write; rotation writes `journal.segment_closed{rotation}`.
+
+Gap reasons are `torn-tail`, `writer-drop`, `writer-error`, `unknown-kind`, `unknown-version`, `invalid-record`, `rotation`, `mode-filtered`, `research-cap` and `interior-corruption`. The read model treats `mode-filtered` and `research-cap` as policy: they do not make accountability totals partial.
+
+The three scopes open differently.
+
+- **Session.** A session's writer opens on its first leased work and stays open for a while after its last lease, so a turn's calls do not each pay a reopen ([session-journals.ts](../../src/domains/telemetry/session-journals.ts)). Each writer open records `config.snapshotted`; a new session records `session.opened`, a reopened session `session.resumed`, and a fork records `session.forked` in the child, which starts on an empty journal.
+- **Run.** A dispatched worker's run, or the main agent of a headless `pancode run`, owns `<stateDir>/telemetry/runs/<runId>/`. Dispatch journals `run.enqueued`, `run.started`, `route.decided` and `gate.decided` there; the worker's records are forwarded over its NDJSON lane with their own clock origin; and the run ends with one `run.settled`, written once its result object is stored ([run-telemetry.ts](../../src/domains/dispatch/run-telemetry.ts)). A headless `pancode run` settles its main agent's run the same way ([run.ts](../../src/cli/run.ts)): the scope is owned by the main agent, named by its session, its model calls are journaled in that session, and the run scope holds the result object, `run.settled` and the seal. Its ledger row reads terminal only after the seal lands, so `fleet verify` and `fleet view` read it as they read a worker's run.
+- **Process.** The process journal ([process-journal.ts](../../src/domains/telemetry/process-journal.ts)) owns every record whose context names neither a session nor a run: boot (`process.booted`), pre-warm decisions, quota readings, health windows, domain loads, PanHub lifecycle, configuration reload failures, shutdown phases and the calls a process makes outside any session, such as a System One request before a session exists. It opens only on its first such record, so a read-only command creates nothing. Its first record is `process.started`, and a clean stop writes `process.exited` with the exit code. Records emitted before the writer opens wait in a bounded queue; overflow is recorded as the journal's opening gap.
+
+## Layout
+
+[paths.ts](../../src/domains/telemetry/paths.ts) is the one module that knows where telemetry lives.
+
+```text
+<stateDir>/telemetry/
+  process/<processId>/journal.jsonl     one journal per process, opened on its first process-scoped record
+  sessions/<sessionId>/journal.jsonl    plus objects/
+  runs/<runId>/journal.jsonl            plus objects/ when the run stores one
+  <scope>/journal.<sequence>.jsonl      rotated segments
+  <scope>/bundle.json                   only while the scope is sealed
+  consent.json                          research content consent, per workspace
+  install.json                          this installation's random id, minted by its first share
+  prune.stamp                           the day's claim on the daily retention sweep
+  imported/<installId>/telemetry/       scopes `telemetry import` placed, laid out as this root is
+```
+
+The session ledger (`<stateDir>/sessions/<cwdHash>/<sessionId>/current.jsonl`) is the conversation record and holds no accounting; the run ledger (`<stateDir>/runs.json`) is live fleet state. Neither is a telemetry journal.
+
+## Objects
+
+`objects/` in a scope directory holds `obj_<sha256>.json` files: canonical sorted JSON, redacted of secrets before hashing, written atomically and never overwritten with different bytes ([objects.ts](../../src/domains/telemetry/objects.ts)). The structural subjects are `prompt-structure`, `tool-schemas`, `config`, `briefing`, `steering` and `run-result`; a `config` object keeps the names of every `headers` and `env` map but withholds their values, and a target's `auth.apiKeyEnvVar` stays readable when it holds a variable name. The content subjects are `prompt-text`, `request`, `memory-trace` and `observation-trace`. Objects are stored through the scope's writer, behind any seal in progress. A reader that finds a missing object reports it as missing, and an object whose bytes do not match its id is an error.
+
+## Seals and bundles
+
+Closing a scope seals it ([seal.ts](../../src/domains/telemetry/seal.ts)). The writer drains what is queued, appends `session.sealed`, `run.sealed` or `process.sealed` carrying the chain head, the line count, and the name, sha256 and size of every segment and object, then writes `bundle.json` beside the journal. The manifest (format `pancode.telemetry.bundle`, version 1) names the scope, the seal time, the PanCode version and host, the segment and object lists, and the seal record's id with the chain head after the seal line, so it commits to the seal itself.
+
+Sealing follows the scope's lifecycle; closing a writer never seals by itself.
+
+- A run seals when it settles: its result object is stored, `run.settled` is written beside its call facts, and `run.sealed` covers both. The sealed run scope is the run's record and its evidence bundle: `evidence.assessed`, the trust status, findings and gate verdicts assessed over the run's journal, is written after `run.settled` and before `run.sealed`, so the seal covers it ([Evidence](#evidence)).
+- A session seals when it closes and its last lease releases. A resume withdraws a seal that has not landed yet, and a write to a sealed session removes `bundle.json` first, so the scope reads live until its next seal.
+- A process seals at a clean stop, and only when its `process.exited` record is durable.
+
+A sealed scope directory is self-contained: it verifies on any machine from its own files, with no index or database beside it.
+
+Every reader that trusts durable state opens it through one read boundary, [state-boundary.ts](../../src/core/state-boundary.ts): telemetry scopes, their segments, bundles and objects, and gate decision artifacts. A path is readable only when it is not itself a symlink and resolves strictly beneath the resolved state root, and files are opened without following a final symlink. A refused path reads as absent, so a symlinked `telemetry`, `runs` or scope directory cannot serve a foreign tree as this host's record.
+
+## Verify
+
+`pancode telemetry verify <session | scope-dir | archive> [--json]`, or `--run <run-id>` ([telemetry-verify.ts](../../src/cli/telemetry-verify.ts)), checks a sealed scope with nothing but its own files: every segment and object `bundle.json` lists against its size and sha256, the hash chain from the first segment header, and the seal record's head, line count and file lists. It prints `verified`, `unsealed` (no `bundle.json`: the scope is live or was never sealed, or it has no journal) or `failed` with the first mismatch. It exits 0 only when the scope verifies, 1 when it is unsealed or fails, and 2 on a usage error. Given a share archive, it verifies the archive's manifest, that the archive holds exactly the scopes the manifest names, every bundle the same way with its `share.sealed` record, source install id and head against the manifest, and every record and object against the profile the bundle was filtered under ([profile conformance](#share-and-import)).
+
+The read model folds the same verdict into a run's DTO (`seal`), which `/view verify`, `pancode fleet verify`, ACP and the GUI show. `pancode telemetry inspect` prints it on its `seal` line for a session or a run: `verified at <seal time>`, `unsealed (<reason>)`, `failed: <first mismatch>`, or `not read` when the scope cannot be read. `inspect` still exits 0; `telemetry verify` is the check that fails. `pancode fleet verify <runId> --json` ([fleet-verify.ts](../../src/cli/fleet-verify.ts)) reads the seal before the settlement: a scope whose seal fails is `failed` with the mismatch kind (`manifest`, `segment`, `object`, `chain` or `seal`) even when the damage hides its `run.settled`, an unsettled run is `pending`, and a settled run is `verified` or `unavailable` (`unsealed` or `run-unreadable`). `pancode telemetry doctor` reports the effective capture mode for the current directory, the consent that covers it, the newest session journal's health and the seal state of every scope; it exits 1 when a seal fails, the consent store is unreadable or the newest journal has damaged lines.
+
+## Share and import
+
+`pancode telemetry share` ([share.ts](../../src/domains/telemetry/share.ts)) packs sealed scopes into one `tar.gz` for a maintainer. Nothing is uploaded.
+
+```text
+pancode telemetry share [--session <id>]... [--run <id>]... [--process <id>]... [--repo <path>]
+                           [--since <iso>] [--until <iso>] [--live]
+                           [--profile content-free|report|structural|research] [--out <file>] [--dry-run]
+pancode telemetry import <archive>
+```
+
+Report sharing is turned off in this build: `--send` ([telemetry-share.ts](../../src/cli/telemetry-share.ts)) prints `Report sharing is turned off in this build.` and exits 2, and nothing is sealed or uploaded. See [Share with the maintainers](../guide/troubleshooting.md#share-with-the-maintainers).
+
+A selection names sessions, runs, a repository's sessions or a seal-time range; a session brings the runs it references and a fleet root the step runs it settled, and a scope that is live or fails verification is skipped and named. `--live` shares a named scope that is still live as a snapshot of what is on disk, without sealing or touching it. A process scope (boot, health, domain loads, exit) is reachable by `--process`, and the running process's own only with `--live`. In a terminal with no scope flags, `share` asks which scopes and which profile. The profiles are declared once in `SHARE_PROFILES`:
+
+| Profile | Keeps |
+| --- | --- |
+| `content-free` (default) | Accountability and operational records with content-free or structural payloads; no objects. |
+| `report` | Structural, with target ids anonymized too, for an archive linked from a public issue. The archive gets an install id and anonymization key of its own, so no anonymous id links it to another share, and the preview lists every name left readable. |
+| `structural` | Adds the objects that hold structure, such as prompt and tool-schema manifests. |
+| `research` | Adds research records, content records and content objects, for scopes captured under consent. |
+
+Below `research`, a share projects every record and structural object through a per-event allowlist, `SHARE_EVENT_PROJECTIONS` and `SHARE_OBJECT_PROJECTIONS` in [share-projection.ts](../../src/domains/telemetry/share-projection.ts), rather than removing known-bad fields. The table's type requires an entry for every field of every shareable event's payload: a field or nested key the table does not name is dropped, free text of any kind becomes `[withheld]`, and hosts, users, paths, endpoints, operator-chosen names and other identities become anonymous ids (`anon_<16 hex>`) keyed by this installation's private `anonymizationKey`, which never leaves `install.json`. A model or target id stays readable unless it carries a path, a built-in tool or runtime name stays while an operator's own MCP tool or plugin runtime is anonymized, and a settings document keeps its field names from `SETTINGS_FIELD_NAMES` ([settings-fields.ts](../../src/core/settings-fields.ts)) and anonymizes every value and dictionary key. Under `report` each record's envelope context is projected too: session, run and process ids and the agent stay, the turn, batch, parent run, call, attempt and tool call ids become anonymous ids, and a System One agent's id, a target name, is anonymized; `verify` checks each record's context against the projection. Research-tier events never leave below `research`. The `share-projection` boundary check walks every shareable event schema and every structural object schema against the table ([share-soundness.ts](../../src/domains/telemetry/share-soundness.ts)) and fails on any string the table keeps verbatim that its schema does not bound to a vocabulary, a literal or a pattern-constrained id, so a schema that loosens fails lint before the next share can leak it. A shared settings document also drops the `funding` block and every `targets[].funding` binding, under every profile, so pool names, fees, grants and tariffs never leave the machine.
+
+Every profile redacts secrets again in every record and object it keeps, and a property whose name says it is a credential (`apiKey`, `password`, `passphrase`, `secret`, `token`, `credentials`, `authorization`, `privateKey` and their variants) has its whole value redacted, whatever its shape ([objects.ts](../../src/domains/telemetry/objects.ts)). Each filtered scope is resealed with `share.sealed` over exactly the bytes the archive carries, and its segment headers name the install id in place of the host. A shared header carries no process identity: its pid is `1`, its birth token `null` and its `monoEpochWallMs` `0`, and the journal on disk keeps the real values. Every `settingsFingerprint` a shared record carries is re-keyed with an HMAC under a random key minted for that share, in the same shape, so equal settings match within one archive but two shares from one installation cannot be linked by it. The archive's manifest (format `pancode.telemetry.share`) names the profile, this installation's random install id (`inst_<32 hex>`, from `install.json`) and the PanCode version, never a hostname or path. `share` previews scope, record and object counts and what the profile drops before it writes; `--dry-run` stops there, and `--out` is never overwritten.
+
+A shared record or object must be a fixed point of its profile's projection: projected again without the key, every anonymous id conforms by its shape, and anything still carrying a field the table drops, prose it withholds or an identity it anonymizes fails. `verify` and `import` both check that, and that every segment header and forwarded record names the source by its install id.
+
+`import` verifies the whole archive as `verify` does, then places each scope under `<stateDir>/telemetry/imported/<installId>/telemetry/`, keeping any scope already there, and verifies each placed scope again from disk. Each directory level it creates is refused when it is a symlink or not a directory, so a planted link cannot carry a foreign scope into the operator's own telemetry. The read commands take `--imported <install-id>` to read those scopes; they never enter the operator's own totals. The incident golden, `tests/fixtures/telemetry/golden/vccap2ywu7n8/`, is a session scope with its runs, shaped like the session #423 analyses, over which the folds must hold the epic's invariants; the P0 golden is `tests/fixtures/telemetry/golden/p0/journal.jsonl`, over which the read model's lie detectors run.
+
+## Retention
+
+`pancode telemetry prune` is a dry run unless `--apply` ([retention.ts](../../src/domains/telemetry/retention.ts)). It removes, oldest first, session journals, bundles and their objects older than `--days` (90 by default) or while all standard telemetry together exceeds `--max-gib` (1 GiB), and unreferenced run journals and process journals by the same rule. Whole-session retirement also removes bundle-only remnants. No setting changes these limits. It never touches a live or locked session, run or process journal, a fork parent a kept child reads, a run a kept journal references, a session whose `meta.json` it cannot read, or a symlinked directory. A journal lock whose owner process is gone does not count as live. `--apply` checks each owner again before it deletes, prints every file it removed and removes the scope directories it emptied. `pancode telemetry prune --apply` prunes at once.
+
+Each process also sweeps under the default policy (90 days or 1 GiB) once a day per state directory, five seconds after the telemetry domain starts. The `telemetry/prune.stamp` file under the state directory claims the day's sweep, and each sweep spends at most two seconds removing files, so the first sweep of a large home can take several days.
+
+In sessions that have never been sealed, prune also removes objects no record cites and research content older than `--research-days` (30) or while it exceeds `--research-max-gib` (4 GiB); expired content references then read as missing. Any historical session seal conservatively protects all individual objects until whole-scope retirement, even after reopening removes `bundle.json`. Protected research bytes remain counted, so held content can leave the research cap exceeded. Session plans, including whole-scope retirement, are refused if their journal or bundle changed after planning; apply accounts only for its own successful deletions while checking that snapshot. This preserves seal verification, sharing and telemetry-writer reopening without rewriting historical seals; authenticated content expiry within a sealed scope is not supported.
+
+The dispatch ledger's `fleet.history.maxRuns` ring removes only ledger rows and display feeds, not telemetry journals. Linked run accounting remains available to retained sessions until the reference-aware telemetry policy permits retirement.
+
+## Read model
+
+The read model ([read-model.ts](../../src/domains/telemetry/read-model.ts)) is the one reader of the journals for surfaces. It folds a scope's records into DTOs in which every quantity is a `Fact` or `FactSum` with its display string from the renderer and an `explain` reference, and it carries the seal verdict of every scope it read. It reads a session's journal, the run journals the session links (`call.linked`, `run.linked`), a fork's ancestors for lineage totals, and, for a repository window, every session and run of that repository.
+
+Live seeding merges published batches by individual record identity: a cold read can end inside a batch, especially during rotation.
+
+A verified run DTO is cached only for its journal snapshot; a cold reread or a later append, including a gate decision that reopens and reseals a finished run, requires fresh verification.
+
+Shutdown drains admitted research traces even while their session writer is still preparing consent, and refuses new traces once stopping begins.
+
+| Surface | Reads |
+| --- | --- |
+| `pancode telemetry inspect\|calls\|cost\|cache\|timeline\|why-stopped\|explain` | Session and run DTOs; `--json` prints the DTO the TUI, ACP and GUI serve. |
+| `pancode usage report` | One repository window, 30 days by default ([usage-window.ts](../../src/domains/telemetry/usage-window.ts)). |
+| TUI | The footer, each turn's receipt line, `/usage` (including its Health tab), `/context`, the exit card, the dispatch board, and `/view`. |
+| `pancode fleet view\|verify\|code-steps` | Run DTOs with their seal verdicts, run timelines and `code_step.settled` records. |
+| ACP | `usage_update` frames and the `_pancode/telemetry/*` methods: `session`, `calls`, `cost`, `cache`, `timeline`, `why_stopped`, `explain`, `run`, `runs`, `health`, `quota` and `update` ([ACP](acp.md)). |
+| GUI | Its telemetry, usage, session and fleet routes, whose server renders every display string. |
+
+A worker card, the `/usage` Activity view's session row and the exit card's totals row show a token total as its fresh and cached parts, such as `12.4k fresh + 180k cached tokens`, when every call measured both figures and some tokens were cached (`freshCachedTokens` in [render.ts](../../src/core/telemetry/render.ts)). A gap or an estimate in either figure leaves the plain total, so a cache read never hides an unknown.
+
+The session-scoped read commands (`inspect`, `calls`, `cost`, `cache`, `timeline` and `why-stopped`) take the session as an argument or as `--session <session>`, the form `telemetry tokens` takes; naming it both ways is an error, and `explain`, which takes a reference, refuses `--session` ([telemetry-read.ts](../../src/cli/telemetry-read.ts)).
+
+`pancode telemetry why-stopped` folds the session's last settled turn into a state (`turn-completed`, `turn-failed`, `turn-cancelled`, `no-turns` or `closed`) and findings ([read-model-why-stopped.ts](../../src/domains/telemetry/read-model-why-stopped.ts)). A turn that stopped normally but answered nothing (`terminal.noAnswer`) reads `turn-failed`, and its finding names what the reply held instead. A worker run the last turn dispatched that stopped on a failure is named in a finding, `stopped` for a harness stop and `failed` otherwise, and listed in the DTO's `workerStops` with its run id and cause.
+
+`pancode usage report [--repo <path>] [--days <n>] [--json]` is read-only ([usage.ts](../../src/cli/usage.ts)). It loads one window, the sessions of one repository (or of every repository without `--repo`) and the runs no session references that the run ledger attributes to it, and prints the read model's report. A fleet or arena task worktree under `<project>/.pancode/worktrees/` is that project's work, so its sessions and runs count in the project's window and per-project totals add up to the all-project one; a worktree placed outside the project (`fleet.worktrees.root`) counts as its own directory. `telemetry cost`, `telemetry explain` and the desktop app's Usage page read the same window. The report lists sessions in the window and the runs that settled in it, tool decisions and how many were blocked or denied, permission decisions with the approval rate, tokens, spend by agent role and by model, and decisions per tool. Every figure is a quantity with the renderer's display, so a lower bound or an estimate says so. `--json` prints the report DTO, which also carries each session's cache report, and anything the window read could not use is named on stderr. `telemetry explain` takes a report's `repo:<window>` reference and folds that window again, ending now.
+
+`pancode telemetry tokens --session <id> [--by-source] [--json]` ([telemetry-tokens.ts](../../src/cli/telemetry-tokens.ts)) lists each turn of a session with its input tokens, cached and fresh, and its output tokens, read from the session ledger and journal. Providers report one input total per call, so the totals are measured, while `--by-source` estimates how each turn's input splits across system prompt, skills, tool schemas, template body, extension effects, tool results per tool and history, and says so. A call the provider sent no token counts for is named as unmeasured and is in no sum: the calls column counts every call a turn made and names the unmeasured ones, and a turn with no measured call shows its tokens as unknown. Fresh is uncached input plus cache write; a measured call that reported no cache read has no cached and fresh split, and on copilot-sdk fresh is the cache write alone, which the output says. Side-agent calls (compaction, memory and the like) are charged to the turn they ran in and named by role, and `--by-source` gives each role a row of its own.
+
+Route history is a fold too ([route-history.ts](../../src/domains/telemetry/route-history.ts)): every run that settled under a route decision carries the executed route's identity, outcome, priced spend, cache reads, attempt and phase timing on its `run.settled`, and route policy and readiness read that fold. The fold covers only the newest 2,000 runs from the last 30 days, by run directory modification time, and a sealed run already folded is not read again while it stays unchanged. Each entry carries a `settled` label from `routeSettledLabel`: `success`, else the run's `outcomeCode`, else `permission_required` when the outcome detail names it, else `failure` or the outcome itself. Adaptive routing does not read `settled`; routing on it needs a recorded decision first.
+
+Decisions are a fold as well: `accountabilityRecords` reads `tool.decided`, `approval.requested`, `approval.resolved`, `completion.evaluated`, `safety.judged`, `gate.decided` and the memory decisions from a session's journal and the run journals it references, which is what `/view`'s decision list, `pancode usage report` and the GUI show. There is no separate audit log.
+
+### Side surfaces
+
+Every model call made beside the main agent names the surface that made it. The id rides `call.started` as `purpose` and comes from one table ([side-surfaces.ts](../../src/core/side-surfaces.ts)): `memory.observe`, `memory.reflect`, `memory.bank`, `memory.correct`, `memory.lesson`, `memory.retain`, `memory.history`, `memory.consolidate`, `memory.classify`, `compaction.history`, `compaction.split`, `compaction.live`, `compaction.native`, `judge`, `judge.screen`, `triage`, `prewarm`, `keepalive`, `vision`, `btw`, `draft` and `handoff`. Each reminder that costs a round records one `middleware.fired` when it fires and settles once with a `surface.settled` record naming its outcome.
+
+`pancode telemetry surfaces [--session <id>] [--json]` ([telemetry-surfaces.ts](../../src/cli/telemetry-surfaces.ts)) folds both. Its first table lists every side surface with its status, calls, calls never sent, unsettled calls, output tokens and summed service time; a surface whose calls never reached a model prints `unexercised`, never a pass. Its second table lists every middleware rule and host surface that fired: firings, those that settle, how many a request carried, and the outcomes they settled with. With `--session` it reads that session's journal and the run journals it links; without, every session and run journal in the state directory. It reads structure only. `pancode telemetry quota`, `telemetry health` and `telemetry runs` print the snapshots the ACP methods of the same names serve ([telemetry-snapshot.ts](../../src/cli/telemetry-snapshot.ts)).
+
+### Insights and cost per verified outcome
+
+`pancode telemetry insights` ([telemetry-insights.ts](../../src/cli/telemetry-insights.ts)) folds each recorded session of a project into one research task category and an autonomy level from 1 to 5, then prints the category mix, the autonomy distribution and the share of sessions with a verified outcome. The classifier ([insights.ts](../../src/domains/telemetry/insights.ts)) is fixed rules, a heuristic that says so in its output. It reads only `tool.settled`, `approval.requested`, `approval.resolved`, `message.stepped`, `run.settled`, `config.snapshotted` and `config.changed`, a list typed against the registry so that adding a content-bearing or research kind fails typecheck, plus the settings object a config record cites. Worker runs are counted from the run journals the session references, one per run, readable or not. An MCP capability counts toward a category by its server name, such as an HDF5 or Parquet server for data analysis or a Slurm server for design and development. The verified-outcome share reads the session ledger through `outcomeLedgerProjection`, which keeps check verdicts, payload digests, run ids and task statuses and copies no text. Nothing leaves the machine. The categories, scoring and known confusions are in [research insights](../guide/commands-and-modes.md#research-insights).
+
+The exit summary's `Session verified` row and the `/usage` Session view divide the session's processed tokens (input, output, cache read and cache write) and its cost by its verified outcomes ([verified-outcomes.ts](../../src/domains/evidence/verified-outcomes.ts)). An outcome is a passing `reproduce` or `numeric-compare` check, a worker run whose sealed record says host verification passed, or a board task done with every required check observed passing; a worker run whose host checks only repeat a pass already counted folds into that pass. The divided totals are the read model's own folds, so a lower bound, an estimate or an unpriced spend keeps its mark per outcome. The wording is in [exit summary](../guide/commands-and-modes.md#exit-summary).
+
+## Honest values
+
+A fact is one of four shapes ([fact.ts](../../src/core/telemetry/fact.ts)):
+
+| Kind | Carries |
+| --- | --- |
+| `measured` | The value and its source: `provider`, `local-clock` or `local-count`. |
+| `estimated` | The value and its method: `chars/4`, `target-rates`, `catalog`, `prompt-side-only`, `shared-account-window-delta`, `peer-report` or `payload-json`. |
+| `unknown` | A reason: `provider-omitted`, `stream-dropped`, `not-observed`, `unsupported` or `writer-gap`. |
+| `absent` | `not-captured-in-mode` or `not-applicable`. |
+
+Every usage and cost field everywhere is a `Fact<number>`: on `call.settled`, on `run.settled`, in the run ledger's rows and in every DTO. Facts carry no arithmetic. A fold returns a `FactSum` (`measured`, `estimated`, `unknownCount`, `absentCount`, and a `coverage` count of measured, estimated and unknown contributions), and the renderer shows a partial sum as a lower bound: `≥1,900,000 (2 calls unknown)`, `≥1.9M +?` in the footer's compact form, and `$1.20 +?` for a partly priced cost. An estimated part marks the whole figure with `~`, and a sum with no known part reads as unknown. A fold keeps the measured subtotal of a partly measured run; it never collapses it to unknown.
+
+Cost is a `Pricing`: `usd` is a `Fact<number>`, `pricedBy` says where the rates came from, and an optional `freeRule` (`declared`, `zero-rates` or `local-native`) says which rule made a `free` amount free. A sum keeps `freeRule` only when every part states the same one. `resolveEffectivePricing` ([catalog.ts](../../src/domains/providers/catalog.ts)) resolves the rates and `pricedBy` together, in this order:
+
+1. A target's declared `pricing` rate map gives `target-rates`, or `free` (`zero-rates`) when every declared rate is 0. An omitted `cacheRead` takes the `input` rate, so a target priced with only input and output bills cached prompt tokens at its input price, and an omitted `cacheWrite` counts as 0.
+2. `pricing: free` gives `free` (`declared`).
+3. A runtime whose tier is `local-native` (`llamacpp` and its variants, `lmstudio`, `ollama`, `vllm`, `sglang`, `lemonade`) gives `free` (`local-native`).
+4. A PanCode catalog row for the runtime and wire model, or else a Pi catalog entry for the runtime's catalog provider and wire model, gives `catalog`, with an estimated amount.
+5. Otherwise `pricedBy` is `none` and the amount is unknown.
+
+The renderer names the rule behind a free amount: `local-native` reads `$0.00 local`, while the other two read `$0.00 free (declared)` and `$0.00 free (zero-rates)`, so a target declared free does not read as local. A free amount with no recorded rule reads `$0.00 free`, and a sum whose parts were free under two or more different rules reads `$0.00 free (mixed)` and carries `freeRuleMixed` ([render.ts](../../src/core/telemetry/render.ts)). A runtime that reports its own cost is priced `provider`. Protocol-tier runtimes (`litellm`, `openai-compat`, `anthropic-compat`, `systemone`) can front paid models, so they stay unpriced until a target declares pricing. The session cost ceiling `safety.limits.sessionCostUsd` (default 5) checks the session's priced spend from the read model, and a value of 0 means no ceiling ([configuration-and-targets.md](../guide/configuration-and-targets.md)).
+
+| Disposition | Meaning | Usage |
+| --- | --- | --- |
+| `never_sent` | Ended before any byte left: budget hold, admission refusal, auth failure before connect, or a cancel before send. | none, and nothing was spent |
+| `sent_unsettled` | Sent with no terminal response: a dropped stream, a kill or a timeout. | unknown; counts the provider reported before the end are a lower bound |
+| `settled_no_usage` | A terminal response without usage, such as a provider error. | unknown |
+| `settled` | A terminal response with usage. | measured |
+
+A `sent_unsettled` call the provider reported nothing on can carry `interruptedEstimate`, PanCode's estimate of its input (`prompt-side-only`) and output (`chars/4`), beside its unknown usage and never inside it ([call-facts.ts](../../src/domains/telemetry/call-facts.ts)). The read model folds with `READ_MODEL_FOLD`, which reads that estimate in place of the unknown counts, so a surface shows `~` where it would show unknown and every sum the call enters stays a lower bound. Accounting folds, such as caps and run settlement, leave it out ([folds.ts](../../src/domains/telemetry/folds.ts)).
+
+A failed call records a content-free `failure` ([call-failure.ts](../../src/core/call-failure.ts)): `stage` is `auth`, `admission`, `transport` or `provider`, and `errorClass` is a fixed word such as `http_429`, `timeout`, `stream_dropped`, `credential_expired` or `admission_refused`, never provider text.
+
+The model that answered a call is a fact the provider reports, not the route PanCode dispatched on. `call.settled` carries `target.reportedModel` from the response's `responseModelIdObservation` ([response-model-id.ts](../../src/core/response-model-id.ts)): `reported` with the id, `not-reported` when the response carried none, or `not-observed` when PanCode captured no response object. The Responses family reads `response.model` from the `response.created` and `response.completed` events ([responses-model-id.ts](../../src/engine/apis/responses-model-id.ts)), the Anthropic Messages API reads `message.model` from `message_start` ([anthropic-response.ts](../../src/engine/apis/anthropic-response.ts)), and the OpenAI-compatible completions path reads it from the streamed chunks. The read model groups a call under its target and the reported model, or the requested model when none was reported.
+
+Subscription quota is a separate source with separate meaning: what each connected provider account reports about its own rate-limit windows and credits, account-wide and shared across sessions ([registry.ts](../../src/domains/quota/registry.ts)). Adapters read PanCode's own logins or the sibling CLIs' credential files without writing them, and ask the provider's usage endpoint; this is the only telemetry read that leaves the machine. Inference responses also carry quota ([observed.ts](../../src/domains/quota/observed.ts)): Anthropic's `anthropic-ratelimit-unified-*` response headers and Codex's `codex.rate_limits` stream event. Each reading is journaled as `quota.read` in the process journal at a turn's first reading and whenever it changes. A reading taken from a call carries `account`, 16 hex characters of a sha256 over the runtime's hashed account scope, so the fold compares readings only within one account and two accounts on one target never subtract from each other; a share below the `research` profile leaves it out ([reading.ts](../../src/domains/quota/reading.ts)). A reading also carries comparable pool evidence ([pool-reading.ts](../../src/domains/quota/pool-reading.ts)): `accountPseudonym`, an HMAC of the provider's stable billing identity (the ChatGPT account, the Anthropic organization, the Cloud Code project) under the per-install `quota-pool.key`, stamped on polls and stream readings alike so readings pool only within one verified identity; each window's `unit` and `durationSeconds`; `validUntil`; and an explicit `access` of `denied`, `allowed` or `unknown` per window and per pool, with `overage` of `permitted`, `refused` or `unknown`. `denied` comes only from the provider's own signal (Codex `limit_reached` or `allowed: false` with no usable credits, an Anthropic `rejected` status); a window measured at 100% is not a denial. A reading with no windows but a provider limit signal is kept as `limitOnly`, so a denial survives a missing window. `quotaDenial` returns a reading's binding denied window and its reset for dispatch admission. Readings and the holds that follow a failed read are shared across processes through `<stateDir>/quota-cache.json`, each scoped by a fingerprint of the credential that made it, so a fresh process does not poll again and a rate-limited read is held for its `Retry-After` by every process using that credential ([shared-state.ts](../../src/domains/quota/shared-state.ts)). The read model's quota fold, `timeline`, `why-stopped`, `/usage` and the GUI read it. Recorded tokens never convert into a share of a provider's plan.
+
+### Economics facts
+
+Call and run records also carry an `economics` block ([economy.ts](../../src/core/telemetry/economy.ts)) that keeps amounts of different kinds apart: the provider's charge, the marginal charge to the user, a seat credit estimate, a local energy estimate with its cost, and the public API price of the same usage as a comparison. There is no savings field, because a comparison is not an amount anyone was charged. Each is a fact like any other: one that nothing measured is `unknown` with reason `not-captured`, never 0. Every settled call and run is stamped with them ([economy-settlement.ts](../../src/domains/telemetry/economy-settlement.ts)). The provider's charge is what the provider reported, flagged `free-route` when it arrives on a route priced free. The marginal charge is measured only for a personal pay-per-token pool with a provider-reported charge; a pool that someone else pays for, or a personal seat, subscription or prepaid pool with a declared fee, estimates it at 0 as covered by the plan, and a target with no funding binding leaves it unknown. Seat credits are estimated for `copilot-sdk` from the seat's own model listing. Energy needs a pool's declared `activeWatts` and `idleWatts`, and its cost needs the pool's tariff. The API equivalent is quoted from the reference catalogue for the models it lists and is unknown for any other. A record that carries no `economics` block reads `not-captured`. None of them feeds a cost cap or admission, which stay on the route price. Shared telemetry omits the block and the account pseudonym on quota records.
+
+`pancode telemetry cost` and `pancode usage report` print the folded economy under their tables, the JSON reports carry it as `economy`, and each `usage` scope of a `run_end` envelope carries it as `economics`. The `economy:` line prints only the fields some call measured or estimated (extra charge, API equivalent, seat credits, energy, cash) and reads `economy: not measured` when none is known; a pool row does the same. A partial unit total names the calls it covers (`$0.12 for 2 of 107 calls`), and period cash counts its unknown amounts beside the known ones (`$4.00 plus 2 unknown amounts`). The terminal renders the same projection as a receipt line on `/usage`, the dashboard and the exit summary ([usage-words.ts](../../src/interactive/usage-words.ts)), led on a subscription route by the quota window that binds first ([quota-view.ts](../../src/interactive/quota-view.ts)), and the desktop app's Usage page renders the window's projection in its Economics section. Route readiness evidence carries a forecast folded from the same settled route history as the route estimate ([route-policy.ts](../../src/domains/dispatch/route-policy.ts)): the extra charge and seat quota per accepted job, shown beside each candidate on dispatch cards and in `context(scope="budget")`, and never used to rank a route. A session's or a run's projection carries no declared fee. Only a window report lists fees, once per pool and period. `models/economy-rates.json` is a dated catalogue of public API list prices read by [reference-tariff.ts](../../src/domains/providers/reference-tariff.ts); it is a comparison and never prices a route, and `pnpm economy:check` validates it in a checkout. [energy-accounting.ts](../../src/domains/providers/energy-accounting.ts) estimates energy from a pool's declared watts over the time a local machine was busy.
+
+## Evidence
+
+A run's evidence is the assessment of its journal, not a separate store. The evidence domain ([src/domains/evidence](../../src/domains/evidence/index.ts)) keeps the assessment logic (trust status, findings, failure attribution and ordering) as pure functions over the run's records. When a run settles, its assessment is journaled as `evidence.assessed` in the run's journal, after `run.settled` and before `run.sealed`, carrying the trust status, the findings by id, severity and tag, the failure cause and the gate verdicts as content-free payload; each finding's sentence and the decision records the run cited go to an `evidence-findings` object in the run's `objects/`. The sealed run scope is the evidence bundle. Tool facts are `tool.settled` and `tool.decided` records, and the session ledger is the transcript. `/view`'s accountability views, `pancode evidence list|inspect <runId>`, ACP's evidence-ready notice and the GUI read the run DTO. There is no evidence directory, evidence id or evidence index, and nothing builds evidence after the fact. [Evidence and Memory](evidence-and-memory.md) describes the assessment.
+
+## Catalog
+
+The journal events, grouped by subject. The registry in [events.ts](../../src/core/telemetry/events.ts) is authoritative for schemas, tiers, content classes, capture flags and scopes.
+
+| Events | Tier | Content class | Recorded |
+| --- | --- | --- | --- |
+| `call.started`, `call.settled` | accountability | content-free | Each call attempt: identity, agent, round kind, tool choice, `responseFormat: json-schema` when the request bound its reply to a schema, target, object refs, then disposition, stop, usage, pricing, stage offsets, transport, cache and quota facts, the response id, a failure, and an interrupted call's `interruptedEstimate`. Only main-loop calls observe the cache block's verdict, re-prefill, bill and expected cold reasons ([Context Engine](context-engine.md#what-each-call-records)). |
+| `call.linked`, `run.linked` | accountability | content-free | A session's pointer to a call or run recorded in a run journal. |
+| `turn.settled`, `turn.aborted` | accountability | content-free | A turn's settlement with its stop reason and terminal cause (`repetition` when the repetition guard stopped its last reply a second time), `terminal.noAnswer` when a normal stop answered nothing (a tool call written as text or into reasoning, an announced call, reasoning only, or an empty reply), which `why-stopped` reports as a failed turn, and an abort with its source: `stream_cancel` for an operator's cancel, `loop_guard` for a loop-guard stop, `job_clock` for a job's timeout or deadline. |
+| `job.clock_resumed` | accountability | content-free | A job's default timeout stopped its final run or follow-up and the job continues it at yolo, with the job id and the bound that fired. |
+| `turn.continued` | accountability | content-free | A turn stopped with nobody behind it and gets another one at yolo, with the cause, the continuations spent against the cap, the cap and the job id when a job owns it. A `tool_budget`, `job_exhausted`, `job_deadline` or `polls_failing` cause spends none; a loop guard stop, the hard tool-call ceiling included, is `loop_guard` and spends one, and a `step` cause (a step template's next step turn) spends one. |
+| `step_pipeline.settled` | accountability | content-free | How a step template's pipeline ended, after its last turn's `turn.settled`: the step tool, the template, whether the tool reported `pipelineDone`, and otherwise what stopped it (`cap`, `turn` or `unreported`). A headless run's `run.settled` carries the same block as `stepPipeline`. |
+| `compaction.settled` | accountability | content-free | A compaction's calls and its outcome (`committed`, `discarded`, `failed` or `unresolved`), and `headroomTokens`: how far the committed context sits below the automatic trigger, negative when the cut left it above. |
+| `autonomy.entered`, `autonomy.open_decision`, `autonomy.cap_reached`, `autonomy.resumed`, `autonomy.ended` | accountability | content-free | Yolo's autonomous window: its confinement and caps on entry, each call refused because it needed the operator (`judge-block`, `no-verdict`, `operator-only` or `outward-unnamed`), the cap or judge streak that halted it with the usage so far, the halt the operator cleared, and why the window ended. |
+| `message.stepped` | accountability | content-free | Each step of a submitted message's path, from `submitted` through `queued`, `held`, `released`, `lane-changed`, `handed-over`, `returned` or `removed` to the call that `carried` it, with who sent it (`operator` or `machine`), its lane and its length, never its text. |
+| `session.opened`, `session.resumed`, `session.forked`, `session.parked`, `session.closed` | accountability | content-free | Session lifecycle. A fork records its parent in the child's `session.forked`; a lineage fold reads each ancestor's journal and counts each record and attempt once. |
+| `session.sealed`, `run.sealed`, `process.sealed`, `share.sealed` | accountability | content-free | A scope's seal, and the reseal a shared scope carries. |
+| `journal.gap`, `journal.segment_closed` | accountability | content-free | Lost, refused or filtered records by reason, and why a segment closed. |
+| `run.enqueued`, `run.started`, `run.settled`, `run.aborted`, `run.usage_reported` | accountability | content-free (`run.usage_reported` structural) | A run's admission, start, terminal settlement with outcome, terminal reason, exit code, usage, cost, call ids, attestations and labelled hashes, the tool calls safety refused (`blockedAttempts`), a tool guard held back (`guardBlockedAttempts`) and the run refused as unanswered asks (`permissionRequestedAttempts`) by tool, class and rule, an operator abort, and a delegated peer's reported usage. |
+| `run.feed_appended` | operational | structural | The bounded display history of a run. |
+| `route.decided`, `gate.decided`, `code_step.settled` | operational, accountability, accountability | content-free | The route a dispatch decided, a fleet gate's verdict, and a settled deterministic code step. |
+| `evidence.assessed` | accountability | content-free | A settled run's trust status, findings, failure cause, first-pass verdict and gate verdicts, with its finding sentences in an `evidence-findings` object. |
+| `tool.settled` | operational | content-free | Each tool call the model's tool wrapper settles: the tool, outcome, the refusal that blocked it, its duration without an approval wait, the wait, and the bytes of the result text. |
+| `tool.decided`, `approval.requested`, `approval.resolved`, `completion.evaluated`, `safety.judged`, `agent.status_changed` | accountability | content-free | Safety and permission decisions, approvals and grants, the finish contract's verdict, a safety judge's verdict, and the agent's phase changes. |
+| `budget.crossed`, `budget.held` | accountability | content-free | The session's priced spend reaching a ceiling, once per ceiling, and each paid request held at one with how the hold ended. |
+| `memory.step_decided`, `memory.observation_recorded` | accountability | structural | A task-memory step's decision, and a memory or compaction observation's counts and ids. |
+| `memory.step_completed`, `memory.guardian_changed` | operational | structural, content-free | A memory step's completion, and the memory guardian's state. |
+| `hub.installed`, `hub.updated`, `hub.enabled`, `hub.disabled`, `hub.removed`, `hub.registered`, `hub.imported`, `hub.share_imported` | accountability | structural | PanHub lifecycle, in the process journal. |
+| `process.started`, `process.exited`, `process.booted` | accountability, accountability, operational | content-free, content-free, structural | A process's start, its exit code at a clean stop, and its boot phases. |
+| `prewarm.decided`, `prewarm.settled`, `domain.loaded`, `domain.failed`, `plugin.reloaded`, `extension.load_failed`, `config.reload_failed`, `shutdown.requested`, `shutdown.drained`, `shutdown.terminated`, `shutdown.persisted` | operational | structural or content-free | Process lifecycle diagnostics, in the process journal. |
+| `config.snapshotted`, `config.changed` | operational | structural | The effective settings when a session's writer opens, and each change with the paths it touched. Both documents are `config` objects. |
+| `prompt.compiled` | operational | structural | The first call of a writer to cite a compiled prompt structure: the `prompt-structure` object, layout version, token estimate, section count and thinking level. |
+| `context.snapshotted`, `context.pruned`, `context.recalled`, `context.warning_raised` | operational | content-free or structural | Context snapshots with their token split and window, working-set pruning and recall, and context warnings. |
+| `context.fold`, `context.briefing_clipped` | operational | structural | Each context fold decision at a checkpoint (`submit`, `tool_batch`, `overflow`, `operator` or `step`): its route, tokens before and after, and each stage (`superseded`, `working_set`, `step_checkpoint`, `llm_summary`, `stop`) with its outcome and reason; a checkpoint under the trigger writes none. And a fleet briefing the byte cap shortened. |
+| `quota.read`, `health.sampled` | operational | content-free | Quota readings and one 10 s health window (event-loop lag, RSS, writer queue depth and drops), in the process journal. |
+| `auth.refreshed`, `middleware.fired`, `surface.settled`, `middleware.hook_failed`, `hook.ran`, `system_one.decided`, `worker.channel_failed` | operational | content-free or structural | OAuth refreshes, middleware rule firings, the one settlement of each firing that settles, hook failures, operator hook runs, System One decisions, and worker channel failures. |
+| `prompt.text_captured`, `request.captured`, `memory.traced`, `memory.observed` | research | content-bearing | Prompt text, request bodies, memory traces and observations, each as an object. Need `content` and consent. |
+| `prompt.prefix_captured`, `call.timing_captured`, `provider.headers_captured`, `health.samples_captured`, `bus.traced` | research | structural or content-free | Prefix block hashes, inter-delta gap histograms, allowlisted provider headers, full health curves, and the live-event trace. |
+
+## Design decisions
+
+**Transport facts live on each call record.** There is no `transport.state` event. Each `call.settled` carries its own `transport` block: the kind (`websocket`, `sse`, `http`, `local`, `subprocess` or `unknown`), whether the request continued a previous response or sent the full input, the request bytes, whether the session was pinned to SSE after the call and why, connection reuse, WebSocket failures and SSE fallbacks within the call when the connection counters were attributable to it, and a recovery action with its outcome. A session's transport state is that of its latest settled main-loop call. A separate state stream would have duplicated those facts without the call they belong to, and could disagree with them.
+
+**Gaps are written by the writer.** Only the journal writer records `journal.gap`, at the moment it loses, refuses or filters a record: a torn tail or a damaged interior line found on reopen, a full queue, a failed write, a record that fails its schema, a record the mode no longer admits, the research cap, or the process journal's records dropped before its writer opened. A worker's forwarder records its own drops in the run's journal the same way. Readers never synthesize gaps; a reader that skips a line it cannot read counts it in the journal's health instead. A gap is therefore part of the chain and the seal, and a sealed scope's gaps are exactly the losses its writer knew of.
+
+**Provider headers.** The research allowlist `PROVIDER_HEADER_PATTERN` ([schemas.ts](../../src/core/telemetry/schemas.ts)) keeps `x-codex-primary-*`, `x-codex-secondary-*` and `x-codex-credits-*`, `x-ratelimit-*`, `anthropic-ratelimit-*`, `retry-after`, `retry-after-ms`, `openai-processing-ms`, `openai-version`, `x-request-id`, `request-id` and `cf-ray`, from a call's last 2xx response, each value cut at 256 characters ([research-capture.ts](../../src/engine/research-capture.ts)). Codex quota does not depend on those headers: Pi delivers the `codex.rate_limits` stream event on both WebSocket and SSE ([codex-quota.ts](../../src/engine/apis/codex-quota.ts)), and that event is what `quota.read` records. The exact Codex header set on a live response has not been captured; until it is, the `x-codex-*` families are kept by prefix rather than by name.

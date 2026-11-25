@@ -1,0 +1,117 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * One operator shell line, run the way the terminal's `!cmd` and `!!cmd` run
+ * it. The terminal editor and ACP's `_pancode/session/shell` both call this,
+ * so the timeout, the sandboxed runner, the information-flow labeling and the
+ * recorded entry cannot drift between the two surfaces. Admission (refused
+ * while a turn runs, one line at a time) and where the entry is appended stay
+ * with each surface, because each owns its own turn and session state.
+ */
+
+import {
+	type BashCommandProgress,
+	type BashCommandResult,
+	bashSecretValues,
+	combineBashOutput,
+	runBashCommand,
+} from "../../core/bash-exec.js";
+import { CumulativeOutputMask, maskCommandOutput } from "../evidence/output-mask.js";
+import type { SessionEntryInput } from "./contract.js";
+
+export const OPERATOR_SHELL_TIMEOUT_MS = 300_000;
+
+export type OperatorShellEntryInput = Extract<SessionEntryInput, { kind: "bashExecution" }>;
+
+export interface OperatorShellLineInput {
+	command: string;
+	cwd: string;
+	/** `!!cmd`: the output is recorded but never joins the model's context. */
+	excludeFromContext: boolean;
+	/** The leaf when the line started; the recorded entry stays anchored there. */
+	parentTurnId: string | null;
+	signal: AbortSignal;
+	onUpdate?: (progress: BashCommandProgress) => void;
+	/**
+	 * Labels the information-flow sources the command names before its output
+	 * joins the context, the way a bash tool call is labeled. Returns why the
+	 * label could not be recorded, and the output then stays out of context.
+	 */
+	label?: (command: string, cwd: string) => string | null;
+	runBash?: typeof runBashCommand;
+}
+
+export interface OperatorShellLineRun {
+	result: BashCommandResult;
+	entry: OperatorShellEntryInput;
+	/** Why output the operator meant to share was kept out of context, or null. */
+	unlabeled: string | null;
+}
+
+export async function runOperatorShellLine(input: OperatorShellLineInput): Promise<OperatorShellLineRun> {
+	// Live output and the record are masked as a bash call's are: the record can join the model's context and is written to
+	// the session ledger, and the live frames reach the terminal and an ACP client. The command starts in this tick, so a
+	// shutdown that follows can abort it, and a frame that arrives before the credential values are known is not shown.
+	let masks: { stdout: CumulativeOutputMask; stderr: CumulativeOutputMask } | null = null;
+	const secretsReady = bashSecretValues().then((secrets) => {
+		masks = { stdout: new CumulativeOutputMask(secrets), stderr: new CumulativeOutputMask(secrets) };
+		return secrets;
+	});
+	const onUpdate = input.onUpdate;
+	const running = (input.runBash ?? runBashCommand)(input.command, {
+		cwd: input.cwd,
+		timeoutMs: OPERATOR_SHELL_TIMEOUT_MS,
+		signal: input.signal,
+		...(onUpdate
+			? {
+					onUpdate: (progress: BashCommandProgress) => {
+						if (masks === null) return;
+						onUpdate({
+							...progress,
+							stdout: masks.stdout.frame(progress.stdout),
+							stderr: masks.stderr.frame(progress.stderr),
+						});
+					},
+				}
+			: {}),
+	});
+	const [result, secrets] = await Promise.all([running, secretsReady]);
+	const ready = masks ?? { stdout: new CumulativeOutputMask(secrets), stderr: new CumulativeOutputMask(secrets) };
+	const unlabeled = input.excludeFromContext ? null : (input.label?.(input.command, input.cwd) ?? null);
+	const ending = result.aborted || result.timedOut || result.outputCapped ? "cut-off" : "complete";
+	const masked = {
+		stdout: ready.stdout.final(result.stdout, ending),
+		stderr: ready.stderr.final(result.stderr, ending),
+	};
+	const output = appendStatusNotes(combineBashOutput(masked), result, OPERATOR_SHELL_TIMEOUT_MS, secrets);
+	return {
+		result,
+		unlabeled,
+		entry: {
+			kind: "bashExecution",
+			parentTurnId: input.parentTurnId,
+			command: input.command,
+			output,
+			exitCode: result.exitCode,
+			cancelled: result.aborted,
+			truncated: result.outputCapped,
+			excludeFromContext: input.excludeFromContext || unlabeled !== null,
+		},
+	};
+}
+
+function appendStatusNotes(
+	output: string,
+	result: BashCommandResult,
+	timeoutMs: number,
+	secrets: readonly string[],
+): string {
+	const notes: string[] = [];
+	if (result.aborted) notes.push("command aborted");
+	if (result.timedOut) notes.push(`command timed out after ${timeoutMs}ms`);
+	if (result.outputCapped) notes.push("command output exceeded the inline output limit");
+	if (result.error && output.trim().length === 0) notes.push(maskCommandOutput(result.error.message, secrets));
+	if (notes.length === 0) return output;
+	const suffix = notes.map((note) => `[${note}]`).join("\n");
+	return output.length > 0 ? `${output.replace(/\s+$/g, "")}\n${suffix}` : suffix;
+}

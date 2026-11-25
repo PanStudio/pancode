@@ -1,0 +1,431 @@
+{
+	"schema": 2,
+	"identity": "PanCode",
+	"defaultTheme": "dark",
+	"palette": {
+		"black": "#000000",
+		"void1": "#0b0b0a",
+		"void2": "#131312",
+		"void3": "#1c1c1a",
+		"void4": "#292926",
+		"void5": "#403f3b",
+		"void6": "#6a6862",
+		"ink1": "#f1eee6",
+		"ink2": "#d6d2c7",
+		"ink3": "#a6a297",
+		"ink4": "#837f76",
+		"green50": "#e1f9e7",
+		"green100": "#b4f3c8",
+		"green200": "#83eeaa",
+		"green300": "#57eb95",
+		"green400": "#00e884",
+		"green500": "#18d77c",
+		"green600": "#25b469",
+		"green700": "#137643",
+		"green800": "#0c562f",
+		"green900": "#032f17",
+		"green950": "#021a0b",
+		"azure50": "#eff6fd",
+		"azure100": "#d3e8fe",
+		"azure200": "#aed5fd",
+		"azure300": "#7dbdfd",
+		"azure400": "#4aa8ff",
+		"azure500": "#1994f4",
+		"azure600": "#1472bd",
+		"azure700": "#0d5d9d",
+		"azure800": "#093f6c",
+		"azure900": "#0a263f",
+		"azure950": "#061320",
+		"jade50": "#dff8f1",
+		"jade300": "#34dbb9",
+		"jade700": "#026b58",
+		"jade950": "#001c15",
+		"amber50": "#fdf0d9",
+		"amber300": "#f2b106",
+		"amber700": "#765400",
+		"amber950": "#201300",
+		"red50": "#feeeeb",
+		"red300": "#ff6b60",
+		"red700": "#ac0512",
+		"red950": "#2d0706",
+		"violet50": "#f2effe",
+		"violet300": "#c3affe",
+		"violet700": "#6343a6",
+		"violet950": "#18102a",
+		"white": "#ffffff",
+		"mist1": "#f5f3ee",
+		"mist2": "#ebe8e1",
+		"mist3": "#dcd8cf",
+		"mist4": "#bdb9ae",
+		"mist5": "#77746b",
+		"pine1": "#0f0e0c",
+		"pine2": "#2d2c28",
+		"pine3": "#53514b"
+	},
+	"ramps": {
+		"void": {
+			"hue": "OKLCH hue 95, chroma at most 0.006",
+			"use": "Dark surfaces above the true-black ground. void1 raised, void2 sunk and hover, void3 overlay, void4 hairline, void5 strong line, void6 control border (3:1 on black through void3)."
+		},
+		"ink": {
+			"hue": "OKLCH hue 90, chroma at most 0.015",
+			"use": "Text on dark. ink1 primary, ink2 soft, ink3 muted (the smallest text colour allowed on void3), ink4 faint: decoration and disabled labels on black and void1 only."
+		},
+		"green": {
+			"hue": "OKLCH hue 154",
+			"use": "Brand, and the colour of Pan in the wordmark. green400 is the focal green on black. green300 hover, green500 pressed, green700 text and links on light, green950 and green50 washes. Never a state colour."
+		},
+		"azure": {
+			"hue": "OKLCH hue 249",
+			"use": "Secondary, and the colour of Code in the wordmark. azure400 on dark, azure600 on light, azure950 and azure50 washes. Section numbers, version tags, one highlight per view. azure300 and azure700 also carry info. Never a fill behind body text, never an error or warning."
+		},
+		"state": {
+			"use": "jade is success, amber is warning, red is error, info takes azure, violet is data only. 300 is the foreground on dark, 700 on light, 950 and 50 are the washes. Success is jade so it never reads as the brand; every state also carries a glyph or a word."
+		},
+		"mist": {
+			"hue": "OKLCH hue 90, chroma at most 0.012",
+			"use": "Light surfaces. mist1 page, white raised, mist2 sunk, mist3 hairline, mist4 strong line, mist5 control border."
+		},
+		"pine": {
+			"use": "Text on light. pine1 primary, pine2 soft, pine3 muted."
+		}
+	},
+	"themes": {
+		"dark": {
+			"paper": "black",
+			"paper-raised": "void1",
+			"paper-sunk": "void2",
+			"paper-overlay": "void3",
+			"ink": "ink1",
+			"ink-soft": "ink2",
+			"muted": "ink3",
+			"faint": "ink4",
+			"line": "void4",
+			"line-strong": "void5",
+			"line-control": "void6",
+			"accent": "green400",
+			"accent-hover": "green300",
+			"accent-pressed": "green500",
+			"accent-soft": "green950",
+			"on-accent": "black",
+			"fill": "green400",
+			"fill-hover": "green300",
+			"on-fill": "black",
+			"secondary": "azure400",
+			"secondary-soft": "azure950",
+			"success": "jade300",
+			"success-soft": "jade950",
+			"warning": "amber300",
+			"warning-soft": "amber950",
+			"error": "red300",
+			"error-soft": "red950",
+			"info": "azure300",
+			"info-soft": "azure950",
+			"focus": "green400",
+			"selection": "green400",
+			"on-selection": "black",
+			"viz-1": "green400",
+			"viz-2": "azure400",
+			"viz-3": "amber300",
+			"viz-4": "violet300",
+			"viz-5": "red300",
+			"viz-6": "jade300",
+			"viz-7": "ink1",
+			"viz-8": "ink3"
+		},
+		"light": {
+			"paper": "mist1",
+			"paper-raised": "white",
+			"paper-sunk": "mist2",
+			"paper-overlay": "white",
+			"ink": "pine1",
+			"ink-soft": "pine2",
+			"muted": "pine3",
+			"faint": "mist5",
+			"line": "mist3",
+			"line-strong": "mist4",
+			"line-control": "mist5",
+			"accent": "green700",
+			"accent-hover": "green800",
+			"accent-pressed": "green900",
+			"accent-soft": "green50",
+			"on-accent": "white",
+			"fill": "black",
+			"fill-hover": "pine2",
+			"on-fill": "green400",
+			"secondary": "azure600",
+			"secondary-soft": "azure50",
+			"success": "jade700",
+			"success-soft": "jade50",
+			"warning": "amber700",
+			"warning-soft": "amber50",
+			"error": "red700",
+			"error-soft": "red50",
+			"info": "azure700",
+			"info-soft": "azure50",
+			"focus": "green700",
+			"selection": "black",
+			"on-selection": "green400",
+			"viz-1": "green700",
+			"viz-2": "azure600",
+			"viz-3": "amber700",
+			"viz-4": "violet700",
+			"viz-5": "red700",
+			"viz-6": "jade700",
+			"viz-7": "pine1",
+			"viz-8": "pine3"
+		}
+	},
+	"code": {
+		"note": "Code, terminal and capture surfaces stay dark in both themes: black slabs on light paper keep the identity.",
+		"surface": "void1",
+		"sunk": "void2",
+		"border": "void4",
+		"control": "void6",
+		"accent": "green400",
+		"accent-soft": "green950",
+		"text": "ink1",
+		"muted": "ink3",
+		"syntax": {
+			"comment": "ink4",
+			"keyword": "azure300",
+			"string": "amber300",
+			"number": "violet300",
+			"function": "green300",
+			"type": "jade300",
+			"property": "ink2",
+			"operator": "ink3",
+			"prompt": "green400",
+			"added": "jade300",
+			"removed": "red300"
+		}
+	},
+	"terminal": {
+		"note": "Nearest fixed-palette projections of the roles, for surfaces without truecolor. At 16 colours success is cyan so it stays apart from the brand green.",
+		"ansi256": {
+			"dark": {
+				"accent": 42,
+				"secondary": 75,
+				"success": 79,
+				"warning": 214,
+				"error": 203,
+				"info": 111,
+				"muted": 247,
+				"line": 237
+			},
+			"light": {
+				"accent": 28,
+				"secondary": 25,
+				"success": 29,
+				"warning": 94,
+				"error": 124,
+				"info": 25,
+				"muted": 240,
+				"line": 252
+			}
+		},
+		"ansi16": {
+			"dark": {
+				"accent": "brightGreen",
+				"secondary": "brightBlue",
+				"success": "brightCyan",
+				"warning": "brightYellow",
+				"error": "brightRed",
+				"info": "brightBlue",
+				"muted": "brightBlack"
+			},
+			"light": {
+				"accent": "green",
+				"secondary": "blue",
+				"success": "cyan",
+				"warning": "yellow",
+				"error": "red",
+				"info": "blue",
+				"muted": "brightBlack"
+			}
+		}
+	},
+	"type": {
+		"families": {
+			"display": {
+				"family": "Schibsted Grotesk",
+				"fallback": "\"Arial Narrow\", Arial, sans-serif",
+				"use": "Headings and the wordmark. Weight 700, tight tracking."
+			},
+			"text": {
+				"family": "Instrument Sans",
+				"fallback": "system-ui, sans-serif",
+				"use": "Body, navigation and controls. Weights 400, 500 and 600."
+			},
+			"mono": {
+				"family": "IBM Plex Mono",
+				"fallback": "ui-monospace, monospace",
+				"use": "Commands, code, labels, section numbers and data. Weights 400 and 500."
+			}
+		},
+		"faces": [
+			{ "family": "Schibsted Grotesk", "style": "normal", "weight": "400 900", "file": "schibsted-grotesk.woff2" },
+			{ "family": "Instrument Sans", "style": "normal", "weight": "400 700", "file": "instrument-sans.woff2" },
+			{ "family": "Instrument Sans", "style": "italic", "weight": "400 700", "file": "instrument-sans-italic.woff2" },
+			{ "family": "IBM Plex Mono", "style": "normal", "weight": "400", "file": "plex-400.woff2" },
+			{ "family": "IBM Plex Mono", "style": "normal", "weight": "500", "file": "plex-500.woff2" }
+		],
+		"preload": ["instrument-sans.woff2", "schibsted-grotesk.woff2"],
+		"licenses": ["Schibsted-Grotesk-OFL.txt", "Instrument-Sans-OFL.txt", "IBM-Plex-Mono-OFL.txt"],
+		"scale": {
+			"display": {
+				"size": "clamp(2.75rem, 6.2vw, 5.5rem)",
+				"line": 1,
+				"weight": 700,
+				"tracking": "-0.04em",
+				"face": "display"
+			},
+			"headline": {
+				"size": "clamp(2rem, 3.6vw, 3.25rem)",
+				"line": 1.06,
+				"weight": 700,
+				"tracking": "-0.035em",
+				"face": "display"
+			},
+			"title": { "size": "1.25rem", "line": 1.3, "weight": 600, "tracking": "-0.015em", "face": "text" },
+			"lede": { "size": "1.2rem", "line": 1.55, "weight": 400, "tracking": "0", "face": "text" },
+			"body": { "size": "1rem", "line": 1.65, "weight": 400, "tracking": "0", "face": "text" },
+			"small": { "size": "0.875rem", "line": 1.55, "weight": 400, "tracking": "0", "face": "text" },
+			"caption": { "size": "0.8rem", "line": 1.5, "weight": 400, "tracking": "0", "face": "text" },
+			"label": { "size": "0.72rem", "line": 1.5, "weight": 500, "tracking": "0.1em", "face": "mono", "case": "upper" },
+			"code": { "size": "0.84em", "line": 1.8, "weight": 400, "tracking": "0", "face": "mono" }
+		},
+		"steps": [12, 13, 14, 16, 18, 20, 24, 32, 44, 60, 88]
+	},
+	"space": {
+		"1": "0.25rem",
+		"2": "0.5rem",
+		"3": "0.75rem",
+		"4": "1rem",
+		"5": "1.5rem",
+		"6": "2rem",
+		"7": "3rem",
+		"8": "4rem",
+		"9": "6rem"
+	},
+	"layout": {
+		"page": "1248px",
+		"measure": "65ch",
+		"header": "4.5rem",
+		"family-row": "2.25rem"
+	},
+	"radius": {
+		"xs": "4px",
+		"sm": "6px",
+		"md": "10px",
+		"lg": "16px",
+		"pill": "999px",
+		"use": "xs inline code and tags, sm buttons and inputs, md panels, code blocks, cards and menus, lg hero media and dialogs, pill status chips and switches only. A nested element takes the outer radius minus the gap."
+	},
+	"border": {
+		"hairline": "1px solid var(--line)",
+		"strong": "1px solid var(--line-strong)",
+		"control": "1px solid var(--line-control)",
+		"emphasis": "1px solid var(--accent)",
+		"focus": { "width": "2px", "offset": "2px", "colour": "focus" },
+		"use": "Hairlines separate, control borders mark things that take input, emphasis marks the one selected or primary thing. The focus ring is always offset so the ground shows between the control and the ring."
+	},
+	"elevation": {
+		"note": "Shadows do not read on true black. On dark, height is a lighter surface step plus a hairline; a shadow appears only on overlays, where it darkens content underneath. On light, height is white on mist plus a soft shadow.",
+		"dark": {
+			"0": "none",
+			"1": "none",
+			"2": "0 16px 48px color-mix(in srgb, var(--pancode-black) 70%, transparent)",
+			"3": "0 32px 96px color-mix(in srgb, var(--pancode-black) 80%, transparent)"
+		},
+		"light": {
+			"0": "none",
+			"1": "0 1px 2px color-mix(in srgb, var(--pancode-pine1) 6%, transparent)",
+			"2": "0 12px 32px color-mix(in srgb, var(--pancode-pine1) 12%, transparent)",
+			"3": "0 28px 72px color-mix(in srgb, var(--pancode-pine1) 18%, transparent)"
+		},
+		"surfaces": {
+			"0": "paper",
+			"1": "paper-raised with a line border",
+			"2": "paper-sunk with a line-strong border: menus, popovers, sticky bars",
+			"3": "paper-overlay with a line-strong border: dialogs"
+		}
+	},
+	"glow": {
+		"dark": {
+			"brand": "0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent), 0 0 28px color-mix(in srgb, var(--accent) 32%, transparent)",
+			"brand-soft": "0 0 64px color-mix(in srgb, var(--accent) 16%, transparent)",
+			"accent": "0 0 0 1px color-mix(in srgb, var(--secondary) 60%, transparent), 0 0 28px color-mix(in srgb, var(--secondary) 30%, transparent)",
+			"text": "0 0 28px color-mix(in srgb, var(--accent) 45%, transparent)",
+			"halo": "radial-gradient(closest-side, color-mix(in srgb, var(--accent) 22%, transparent), transparent)"
+		},
+		"light": {
+			"brand": "none",
+			"brand-soft": "none",
+			"accent": "none",
+			"text": "none",
+			"halo": "none"
+		},
+		"allowed": [
+			"the mark and wordmark where they are the subject of the view (hero, welcome, app splash)",
+			"the one primary action on hover and keyboard focus",
+			"one hero media frame per page",
+			"a live indicator: a running cursor, an active worker dot"
+		],
+		"never": [
+			"body text, headings in running content, or links",
+			"panels, cards, tables, inputs or code blocks at rest",
+			"state colours (success, warning, error, info)",
+			"the light theme, where every glow token resolves to none",
+			"more than one glowing element in view at a time"
+		]
+	},
+	"copyright": "Copyright 2026 Anthony Kougkas",
+	"voice": {
+		"naming": [
+			"PanCode is the product in prose, headings and metadata; pancode is the command, package, binary and paths, always in the mono face.",
+			"The interfaces are PanCode in the terminal and PanCode on the desktop. No separate product names, marks or mascots.",
+			"The wordmark is set PanCode in one word with a capital P and C: Pan in the brand green, Code in the secondary azure. In block letters it stacks PAN over CODE."
+		],
+		"rules": [
+			"Say what the reader can do, with the command that does it.",
+			"Short declarative sentences, present tense, second person. No exclamation marks.",
+			"Name real things: the file, the flag, the model, the limit.",
+			"State limits and alpha status where the reader chooses the feature.",
+			"Interface labels are verbs or nouns in sentence case; errors say what happened and what to do next.",
+			"Never use a dash to interrupt a sentence with a clause; write a second sentence."
+		]
+	},
+	"prose": {
+		"maxMarketingParagraphWords": 65,
+		"forbidden": [
+			"world-class",
+			"revolutionary",
+			"game-changing",
+			"unlock the power",
+			"seamlessly",
+			"cutting-edge",
+			"single pane of glass",
+			"audit closeout",
+			"development audit",
+			"agent dev log",
+			"lane closeout",
+			"TODO",
+			"placeholder video",
+			"coming soon",
+			"with research roots",
+			"institutional pedigree",
+			"PanOS",
+			"pancode library"
+		]
+	},
+	"motion": {
+		"fast": "140ms",
+		"base": "220ms",
+		"entry": "560ms",
+		"feedback": "1800ms",
+		"ease": "cubic-bezier(0.2, 0.7, 0.2, 1)",
+		"distance": "12px",
+		"stagger": "70ms"
+	}
+}

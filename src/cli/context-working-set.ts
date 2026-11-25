@@ -1,0 +1,624 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { execFileSync } from "node:child_process";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
+import { WORKING_SET_PROFILE_IDS, type WorkingSetProfileId } from "../core/defaults.js";
+import { internalGitArgv } from "../core/internal-git.js";
+import { assertSafeId } from "../core/safe-id.js";
+import { pancodeStatePath } from "../core/xdg.js";
+import { DEFAULT_WORKING_SET_SETTINGS } from "../domains/context/working-set/defaults.js";
+import { foldWorkingSet } from "../domains/context/working-set/fold.js";
+import { buildPathIndex } from "../domains/context/working-set/path-index.js";
+import { resolveReplayPolicy } from "../domains/context/working-set/policies/index.js";
+import { makeOraclePolicy, makeRandomPolicy, nonePolicy } from "../domains/context/working-set/replay/controls.js";
+import { loadPancodeTraces, type ReplayLoadCascade } from "../domains/context/working-set/replay/load-pancode.js";
+import { aggregateReplayMetrics, type ReplayMeasurement } from "../domains/context/working-set/replay/metrics.js";
+import { buildReferenceGraph, type ReferenceGraph } from "../domains/context/working-set/replay/reference-graph.js";
+import {
+	type ReplayPolicyResult,
+	type ReplayReportInput,
+	renderReplayJson,
+	renderReplayMarkdown,
+} from "../domains/context/working-set/replay/report.js";
+import { replayTrace } from "../domains/context/working-set/replay/runner.js";
+import { generateSyntheticCorpora, SYNTHETIC_CORPORA } from "../domains/context/working-set/replay/synthetic.js";
+import type { Trace } from "../domains/context/working-set/replay/trace.js";
+import { parseSessionEntries } from "../domains/session/archive-readers.js";
+import { DEFAULT_KEEP_RECENT_TOKENS } from "../domains/session/compaction/defaults.js";
+import type { SessionEntry } from "../domains/session/entries.js";
+import { filterEntriesToActivePath } from "../domains/session/tree/active-path.js";
+import type { SessionSource } from "../domains/telemetry/read-model-sources.js";
+import type { ReceiptJournalRecord } from "../session-control/attempt-receipt.js";
+import { resolveSessionSelector } from "./telemetry-target.js";
+
+const REPLAY_HELP = `Usage:
+  pancode context replay (--sessions <path>... | --synthetic <corpus>...) [options]
+
+Options:
+  --sessions <path>... PanCode session directories, sessions roots, or ledger JSONL files
+  --synthetic <ids>   comma-separated procedural corpora: ${SYNTHETIC_CORPORA.map((spec) => spec.id).join(",")}
+  --policies <ids>    comma-separated none,random,age-horizon,structural-v1,structural-v2,oracle, or a
+                      composition: <id>+<rung>, <id>-<rung>, rungs:<a>/<b>/<c>
+  --profile <id>      protection profile: ${WORKING_SET_PROFILE_IDS.join(", ")} (default: ${DEFAULT_WORKING_SET_SETTINGS.profile})
+  --budgets <tokens>  comma-separated budgets (default: 16000,32000,64000)
+  --threshold <ratio> pressure threshold (default: 0.8)
+  --target <ratio>    post-eviction pressure target (default: 0.6)
+  --protect-last-turns <n>
+                      protected recent turns (default: ${DEFAULT_WORKING_SET_SETTINGS.protectLastTurns})
+  --protect-last-steps <n>
+                      protected recent assistant steps (default: ${DEFAULT_WORKING_SET_SETTINGS.protectLastSteps})
+  --min-evictable-tokens <n>
+                      minimum tool-result body tokens (default: ${DEFAULT_WORKING_SET_SETTINGS.minEvictableTokens})
+  --rearm-fraction <ratio>
+                      projection growth, as a share of the window, before a second event may fire (default: ${DEFAULT_WORKING_SET_SETTINGS.rearmFraction})
+  --overflow-fraction <ratio>
+                      modeled request-fit limit as a share of the budget; past it reduction ignores the band (default: 0.95)
+  --seed <integer>    deterministic random-policy seed (default: 0)
+  --no-filter         include every readable transcript
+  --json <path>       write the stable JSON report
+  --md <path>         write Markdown instead of printing it
+`;
+
+const WORKING_SET_HELP = `Usage:
+  pancode context working-set --session <id|path>
+  pancode context working-set --verify <id|path>
+
+--session prints the durable working-set fold and path-index summary for one PanCode session.
+--verify renders the session at each dispatched attempt's cursor and owner and compares it with the receipt the
+attempt journaled at send: verified, not-verifiable (with the reason), external, or mismatch. It also reconciles
+fold decisions against the fold records on the ledger, a fork's inherited records against its ancestors'
+decisions. Exits 1 when any attempt mismatches or any fold record lacks exactly one decision.
+`;
+
+/**
+ * Conservative stand-in for replay's summary paraphrase. Five recorded local
+ * compactions price at 405, 405, 968, 981, and 1,124 tokens; 1,500 sits above
+ * that observed range. The replay README records the sample and sensitivity.
+ */
+const REPLAY_SUMMARY_TOKENS = 1_500;
+
+/** Replay-only controls; every other id resolves through the policy registry, compositions included. */
+const CONTROL_POLICY_IDS = ["none", "random", "oracle"] as const;
+const DEFAULT_POLICY_IDS = ["none", "random", "age-horizon", "structural-v1", "structural-v2", "oracle"] as const;
+type ReplayPolicyId = string;
+
+class CliUsageError extends Error {}
+
+interface ReplayArgs {
+	sessions: string[];
+	policies: ReplayPolicyId[];
+	profile: WorkingSetProfileId;
+	budgets: number[];
+	threshold: number;
+	target: number;
+	protectLastTurns: number;
+	protectLastSteps: number;
+	minEvictableTokens: number;
+	rearmFraction: number;
+	overflowFraction: number;
+	seed: number;
+	synthetic: string[];
+	noFilter: boolean;
+	jsonPath?: string;
+	markdownPath?: string;
+}
+
+function commaValues(value: string, flag: string): string[] {
+	const values = value
+		.split(",")
+		.map((entry) => entry.trim())
+		.filter((entry) => entry.length > 0);
+	if (values.length === 0) throw new CliUsageError(`${flag} requires at least one value`);
+	return [...new Set(values)];
+}
+
+function numberValue(value: string, flag: string): number {
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed)) throw new CliUsageError(`${flag} requires a finite number`);
+	return parsed;
+}
+
+function requiredValue(args: ReadonlyArray<string>, index: number, flag: string): string {
+	const value = args[index + 1];
+	if (value === undefined || value.startsWith("--")) throw new CliUsageError(`${flag} requires a value`);
+	return value;
+}
+
+function isControlPolicy(id: string): boolean {
+	return (CONTROL_POLICY_IDS as ReadonlyArray<string>).includes(id);
+}
+
+function policyResolves(id: ReplayPolicyId): boolean {
+	return isControlPolicy(id) || resolveReplayPolicy(id) !== null;
+}
+
+function defaultPolicies(): ReplayPolicyId[] {
+	return DEFAULT_POLICY_IDS.filter(policyResolves);
+}
+
+function parseReplayArgs(args: ReadonlyArray<string>): ReplayArgs {
+	const parsed: ReplayArgs = {
+		sessions: [],
+		policies: defaultPolicies(),
+		profile: DEFAULT_WORKING_SET_SETTINGS.profile,
+		budgets: [16_000, 32_000, 64_000],
+		threshold: 0.8,
+		target: 0.6,
+		protectLastTurns: DEFAULT_WORKING_SET_SETTINGS.protectLastTurns,
+		protectLastSteps: DEFAULT_WORKING_SET_SETTINGS.protectLastSteps,
+		minEvictableTokens: DEFAULT_WORKING_SET_SETTINGS.minEvictableTokens,
+		rearmFraction: DEFAULT_WORKING_SET_SETTINGS.rearmFraction,
+		overflowFraction: 0.95,
+		seed: 0,
+		synthetic: [],
+		noFilter: false,
+	};
+	let policiesExplicit = false;
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index];
+		if (arg === "--no-filter") {
+			parsed.noFilter = true;
+			continue;
+		}
+		if (arg === "--sessions") {
+			let consumed = 0;
+			while (index + 1 < args.length && !args[index + 1]?.startsWith("--")) {
+				parsed.sessions.push(args[index + 1] as string);
+				index += 1;
+				consumed += 1;
+			}
+			if (consumed === 0) throw new CliUsageError("--sessions requires at least one path");
+			continue;
+		}
+		if (
+			arg === "--policies" ||
+			arg === "--profile" ||
+			arg === "--budgets" ||
+			arg === "--synthetic" ||
+			arg === "--threshold" ||
+			arg === "--target" ||
+			arg === "--protect-last-turns" ||
+			arg === "--protect-last-steps" ||
+			arg === "--min-evictable-tokens" ||
+			arg === "--rearm-fraction" ||
+			arg === "--overflow-fraction" ||
+			arg === "--seed"
+		) {
+			const value = requiredValue(args, index, arg);
+			index += 1;
+			if (arg === "--policies") {
+				const values = commaValues(value, arg);
+				const unknown = values.filter((entry) => !policyResolves(entry));
+				if (unknown.length > 0) throw new CliUsageError(`unknown replay policy: ${unknown.join(", ")}`);
+				parsed.policies = values;
+				policiesExplicit = true;
+			} else if (arg === "--profile") {
+				if (!(WORKING_SET_PROFILE_IDS as ReadonlyArray<string>).includes(value)) {
+					throw new CliUsageError(`unknown working-set profile: ${value}`);
+				}
+				parsed.profile = value as WorkingSetProfileId;
+			} else if (arg === "--budgets") {
+				parsed.budgets = commaValues(value, arg).map((entry) => {
+					const budget = numberValue(entry, arg);
+					if (!Number.isInteger(budget) || budget <= 0) {
+						throw new CliUsageError("--budgets values must be positive integers");
+					}
+					return budget;
+				});
+			} else if (arg === "--synthetic") {
+				const values = commaValues(value, arg);
+				const known = SYNTHETIC_CORPORA.map((spec) => spec.id);
+				const unknown = values.filter((entry) => !known.includes(entry));
+				if (unknown.length > 0) throw new CliUsageError(`unknown synthetic corpus: ${unknown.join(", ")}`);
+				parsed.synthetic = values;
+			} else if (arg === "--threshold") {
+				parsed.threshold = numberValue(value, arg);
+				if (parsed.threshold <= 0 || parsed.threshold > 1) {
+					throw new CliUsageError("--threshold must be greater than 0 and at most 1");
+				}
+			} else if (arg === "--target") {
+				parsed.target = numberValue(value, arg);
+				if (parsed.target <= 0 || parsed.target >= 1) {
+					throw new CliUsageError("--target must be greater than 0 and less than 1");
+				}
+			} else if (arg === "--protect-last-turns") {
+				parsed.protectLastTurns = numberValue(value, arg);
+				if (!Number.isInteger(parsed.protectLastTurns) || parsed.protectLastTurns < 1) {
+					throw new CliUsageError("--protect-last-turns must be an integer at least 1");
+				}
+			} else if (arg === "--protect-last-steps") {
+				parsed.protectLastSteps = numberValue(value, arg);
+				if (!Number.isInteger(parsed.protectLastSteps) || parsed.protectLastSteps < 1) {
+					throw new CliUsageError("--protect-last-steps must be an integer at least 1");
+				}
+			} else if (arg === "--min-evictable-tokens") {
+				parsed.minEvictableTokens = numberValue(value, arg);
+				if (!Number.isInteger(parsed.minEvictableTokens) || parsed.minEvictableTokens < 0) {
+					throw new CliUsageError("--min-evictable-tokens must be a non-negative integer");
+				}
+			} else if (arg === "--rearm-fraction") {
+				parsed.rearmFraction = numberValue(value, arg);
+				if (parsed.rearmFraction < 0 || parsed.rearmFraction >= 1) {
+					throw new CliUsageError("--rearm-fraction must be at least 0 and less than 1");
+				}
+			} else if (arg === "--overflow-fraction") {
+				parsed.overflowFraction = numberValue(value, arg);
+				if (parsed.overflowFraction <= 0 || parsed.overflowFraction > 1) {
+					throw new CliUsageError("--overflow-fraction must be greater than 0 and at most 1");
+				}
+			} else {
+				parsed.seed = numberValue(value, arg);
+				if (!Number.isInteger(parsed.seed)) throw new CliUsageError("--seed must be an integer");
+			}
+			continue;
+		}
+		if (arg === "--json" || arg === "--md") {
+			const value = requiredValue(args, index, arg);
+			index += 1;
+			if (arg === "--json") parsed.jsonPath = value;
+			else parsed.markdownPath = value;
+			continue;
+		}
+		throw new CliUsageError(`unknown flag: ${arg}`);
+	}
+	if (parsed.sessions.length === 0 && parsed.synthetic.length === 0) {
+		throw new CliUsageError("--sessions or --synthetic is required");
+	}
+	if (parsed.target >= parsed.threshold) throw new CliUsageError("--target must be less than --threshold");
+	if (policiesExplicit) {
+		const unavailable = parsed.policies.filter((id) => !policyResolves(id));
+		if (unavailable.length > 0) {
+			throw new CliUsageError(`replay policy is not available in this build: ${unavailable.join(", ")}`);
+		}
+	}
+	return parsed;
+}
+
+function policyForTrace(id: ReplayPolicyId, graph: ReferenceGraph, seed: number) {
+	if (id === "none") return nonePolicy;
+	if (id === "random") return makeRandomPolicy(seed);
+	if (id === "oracle") return makeOraclePolicy(graph);
+	const policy = resolveReplayPolicy(id);
+	if (policy === null) throw new CliUsageError(`unknown replay policy: ${id}`);
+	return policy;
+}
+
+function gitSha(): string | null {
+	try {
+		return execFileSync("git", internalGitArgv(["rev-parse", "HEAD"]), {
+			cwd: process.cwd(),
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		}).trim();
+	} catch {
+		return null;
+	}
+}
+
+function exactCommandLine(): string[] {
+	return [process.execPath, ...process.execArgv, ...process.argv.slice(1)];
+}
+
+async function writeOutput(path: string, contents: string): Promise<string> {
+	const output = resolve(path);
+	await mkdir(dirname(output), { recursive: true });
+	await writeFile(output, contents, "utf8");
+	return output;
+}
+
+function cascadeLine(cascade: ReplayLoadCascade): string {
+	const filtered = Object.entries(cascade.filtered)
+		.map(([stage, count]) => `${stage}=${count}`)
+		.join(" ");
+	return `cascade found=${cascade.found} unreadable=${cascade.unreadable} ${filtered} kept=${cascade.kept}`;
+}
+
+export async function runContextReplayCommand(args: string[]): Promise<number> {
+	if (args.includes("--help") || args.includes("-h")) {
+		process.stdout.write(REPLAY_HELP);
+		return 0;
+	}
+	let parsed: ReplayArgs;
+	try {
+		parsed = parseReplayArgs(args);
+	} catch (error) {
+		process.stderr.write(
+			`pancode context replay: ${error instanceof Error ? error.message : String(error)}\n${REPLAY_HELP}`,
+		);
+		return 2;
+	}
+	try {
+		const ledgers = await loadPancodeTraces(parsed.sessions, { filter: parsed.noFilter ? false : {} });
+		const synthetic = generateSyntheticCorpora(parsed.synthetic);
+		const loaded = {
+			traces: [...ledgers.traces, ...synthetic.traces],
+			cascade: {
+				found: ledgers.cascade.found + synthetic.cascade.found,
+				unreadable: ledgers.cascade.unreadable,
+				filtered: ledgers.cascade.filtered,
+				kept: ledgers.cascade.kept + synthetic.cascade.kept,
+			},
+		};
+		if (loaded.traces.length === 0) {
+			process.stderr.write(`pancode context replay: no traces to replay (${cascadeLine(loaded.cascade)})\n`);
+			return 1;
+		}
+		const indexed = loaded.traces.map((trace) => {
+			const index = buildPathIndex(trace.entries, { cwd: trace.cwd });
+			return { trace, index, graph: buildReferenceGraph(trace, index) };
+		});
+		const settings = {
+			...DEFAULT_WORKING_SET_SETTINGS,
+			profile: parsed.profile,
+			target: parsed.target,
+			protectLastTurns: parsed.protectLastTurns,
+			protectLastSteps: parsed.protectLastSteps,
+			minEvictableTokens: parsed.minEvictableTokens,
+			rearmFraction: parsed.rearmFraction,
+		};
+		const results: ReplayPolicyResult[] = [];
+		const defaultResults: ReplayPolicyResult[] = [];
+		const profiles = parsed.profile === "default" ? [parsed.profile] : (["default", parsed.profile] as const);
+		for (const profile of profiles) {
+			for (const budgetTokens of parsed.budgets) {
+				for (const policyId of parsed.policies) {
+					const measurements: ReplayMeasurement[] = indexed.map(({ trace, index, graph }) => ({
+						trace,
+						index,
+						graph,
+						replay: replayTrace(trace, policyForTrace(policyId, graph, parsed.seed), {
+							policyId,
+							budgetTokens,
+							threshold: parsed.threshold,
+							target: parsed.target,
+							settings: { ...settings, profile },
+							summaries: { keepRecentTokens: DEFAULT_KEEP_RECENT_TOKENS, summaryTokens: REPLAY_SUMMARY_TOKENS },
+							overflowFraction: parsed.overflowFraction,
+						}),
+					}));
+					const destination = profile === parsed.profile ? results : defaultResults;
+					destination.push({ budgetTokens, policyId, metrics: aggregateReplayMetrics(measurements) });
+				}
+			}
+		}
+		const report: ReplayReportInput = {
+			config: {
+				policies: parsed.policies,
+				budgets: parsed.budgets,
+				threshold: parsed.threshold,
+				target: parsed.target,
+				seed: parsed.seed,
+				corpus: [...(parsed.sessions.length > 0 ? ["ledgers"] : []), ...parsed.synthetic],
+				filter: parsed.noFilter ? "none" : "default",
+				settings,
+			},
+			cascade: loaded.cascade,
+			results,
+			...(parsed.profile === "default" ? {} : { defaultResults }),
+			gitSha: gitSha(),
+			commandLine: exactCommandLine(),
+		};
+		const markdown = renderReplayMarkdown(report);
+		if (parsed.markdownPath === undefined) process.stdout.write(markdown);
+		else {
+			const path = await writeOutput(parsed.markdownPath, markdown);
+			process.stdout.write(`${cascadeLine(loaded.cascade)}\nmarkdown ${path}\n`);
+		}
+		if (parsed.jsonPath !== undefined) {
+			const path = await writeOutput(parsed.jsonPath, renderReplayJson(report));
+			process.stdout.write(`json ${path}\n`);
+		}
+		return 0;
+	} catch (error) {
+		process.stderr.write(`pancode context replay failed: ${error instanceof Error ? error.message : String(error)}\n`);
+		return 1;
+	}
+}
+
+async function sessionPath(selector: string): Promise<string> {
+	const candidate = resolve(selector);
+	try {
+		const facts = await stat(candidate);
+		if (facts.isDirectory()) return join(candidate, "current.jsonl");
+		if (facts.isFile()) return candidate;
+	} catch {
+		// A non-path value is resolved as a session selector below: an id, a unique prefix or a name (C13).
+	}
+	const selected = resolveSessionSelector(pancodeStatePath(), selector);
+	if ("miss" in selected) throw new Error(selected.miss);
+	const value = selected.id;
+	try {
+		assertSafeId(value, "session");
+	} catch (error) {
+		throw new CliUsageError(error instanceof Error ? error.message : String(error));
+	}
+	const sessionsRoot = join(pancodeStatePath(), "sessions");
+	let cwdHashes: string[];
+	try {
+		cwdHashes = await readdir(sessionsRoot);
+	} catch {
+		throw new Error(`session not found: ${value}`);
+	}
+	for (const cwdHash of cwdHashes.sort()) {
+		const current = join(sessionsRoot, cwdHash, value, "current.jsonl");
+		try {
+			if ((await stat(current)).isFile()) return current;
+		} catch {
+			// Continue across repositories until the id is found.
+		}
+	}
+	throw new Error(`session not found: ${value}`);
+}
+
+async function pinnedLeafForSession(source: string): Promise<string | undefined> {
+	try {
+		const raw = await readFile(join(dirname(source), "meta.json"), "utf8");
+		const value = JSON.parse(raw) as unknown;
+		if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+		const pinned = (value as Record<string, unknown>).pinnedLeafTurnId;
+		return typeof pinned === "string" && pinned.length > 0 ? pinned : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+async function sessionCwdForSession(source: string): Promise<string | null> {
+	try {
+		const raw = await readFile(join(dirname(source), "meta.json"), "utf8");
+		const value = JSON.parse(raw) as unknown;
+		if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+		const cwd = (value as Record<string, unknown>).cwd;
+		return typeof cwd === "string" && cwd.length > 0 ? cwd : null;
+	} catch {
+		return null;
+	}
+}
+
+function formatWorkingSet(trace: Trace): string {
+	const view = foldWorkingSet(trace.entries);
+	const index = buildPathIndex(trace.entries, { cwd: trace.cwd });
+	const graph = buildReferenceGraph(trace, index);
+	const evictedTokens = [...view.evicted.values()].reduce((sum, state) => sum + state.tokensFreed, 0);
+	const churn = view.itemsEvicted === 0 ? "n/a" : (view.recalls / view.itemsEvicted).toFixed(3);
+	const opCounts = new Map<string, number>();
+	for (const observation of index.observations) {
+		opCounts.set(observation.op, (opCounts.get(observation.op) ?? 0) + 1);
+	}
+	const rewrittenPaths = new Set<string>();
+	for (const edge of graph.edges) {
+		if (edge.kind !== "file_rewrite") continue;
+		const path = index.byRef.get(edge.from)?.path;
+		if (path) rewrittenPaths.add(path);
+	}
+	const lines = [
+		`session: ${trace.id}`,
+		`source: ${trace.source}`,
+		"working set:",
+		`  policy: ${view.lastPolicyId ?? "none"}`,
+		`  eviction events: ${view.evictionEvents}`,
+		`  evicted refs: ${view.evicted.size}`,
+		`  items evicted: ${view.itemsEvicted}`,
+		`  evicted tokens: ${evictedTokens}`,
+		`  recalls: ${view.recalls}`,
+		`  churn: ${churn}`,
+		"  refs:",
+		...([...view.evicted.entries()].length === 0
+			? ["    none"]
+			: [...view.evicted.entries()]
+					.sort(([a], [b]) => a.localeCompare(b))
+					.map(([ref, state]) => `    ${ref} reason=${state.reason} by=${state.by ?? "-"} tokens=${state.tokensFreed}`)),
+		"path index:",
+		`  observations: ${index.observations.length}`,
+		`  ops: ${
+			[...opCounts.entries()]
+				.sort(([a], [b]) => a.localeCompare(b))
+				.map(([op, count]) => `${op}=${count}`)
+				.join(", ") || "none"
+		}`,
+		`  paths with rewrites: ${rewrittenPaths.size}`,
+		...[...rewrittenPaths].sort().map((path) => `    ${path}`),
+		"",
+	];
+	return lines.join("\n");
+}
+
+/** `--verify`: every dispatched attempt of the session against its receipt (ContextFold CF-9, F14). */
+async function verifySession(source: string, entries: SessionEntry[]): Promise<number> {
+	const { verifyAttemptReceipts } = await import("../session-control/attempt-receipt.js");
+	const { loadSessionTelemetrySource } = await import("../domains/session/telemetry-source.js");
+	const sessionId = basename(dirname(source));
+	const telemetry = loadSessionTelemetrySource(pancodeStatePath(), sessionId, dirname(source));
+	const result = verifyAttemptReceipts({
+		entries,
+		records: telemetry?.journal.records ?? [],
+		runRecords: [...(telemetry?.runs.values() ?? [])].flatMap((run) => run.records),
+		inheritedRecords: ancestorRecords(telemetry),
+	});
+	const counts = { verified: 0, "not-verifiable": 0, external: 0, mismatch: 0 };
+	const lines = [`Receipts for session ${sessionId}`, `  source: ${source}`];
+	if (!telemetry?.journal.present) lines.push("  telemetry journal: absent");
+	for (const attempt of result.attempts) {
+		counts[attempt.status] += 1;
+		lines.push(
+			`  ${attempt.attemptId} ${attempt.role} attempt ${attempt.attempt}: ${attempt.status}${attempt.reason ? ` (${attempt.reason})` : ""}`,
+		);
+	}
+	const { missing, duplicate, orphan } = result.decisions;
+	lines.push(
+		`  attempts: ${counts.verified} verified, ${counts["not-verifiable"]} not-verifiable, ${counts.external} external, ${counts.mismatch} mismatch`,
+		`  fold decisions: ${missing.length} missing, ${duplicate.length} duplicate, ${orphan.length} orphan`,
+		...missing.map((id) => `    missing decision for record ${id}`),
+		...duplicate.map((id) => `    duplicate decisions for record ${id}`),
+		...orphan.map((id) => `    decision names record ${id}, which the ledger does not hold`),
+		"",
+	);
+	process.stdout.write(lines.join("\n"));
+	return counts.mismatch > 0 || missing.length + duplicate.length + orphan.length > 0 ? 1 : 0;
+}
+
+function ancestorRecords(telemetry: SessionSource | null): ReceiptJournalRecord[] {
+	const records: ReceiptJournalRecord[] = [];
+	for (let parent = telemetry?.parent?.source ?? null; parent !== null; parent = parent.parent?.source ?? null)
+		records.push(...parent.journal.records);
+	return records;
+}
+
+export async function runContextWorkingSetCommand(args: string[]): Promise<number> {
+	if (args.includes("--help") || args.includes("-h")) {
+		process.stdout.write(WORKING_SET_HELP);
+		return 0;
+	}
+	let session: string | undefined;
+	let verify = false;
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index];
+		if (arg === "--session" || arg === "--verify") {
+			verify = arg === "--verify";
+			try {
+				session = requiredValue(args, index, arg);
+			} catch (error) {
+				process.stderr.write(
+					`pancode context working-set: ${error instanceof Error ? error.message : String(error)}\n${WORKING_SET_HELP}`,
+				);
+				return 2;
+			}
+			index += 1;
+			continue;
+		}
+		process.stderr.write(`pancode context working-set: unknown flag: ${arg}\n${WORKING_SET_HELP}`);
+		return 2;
+	}
+	if (session === undefined) {
+		process.stderr.write(`pancode context working-set: --session or --verify is required\n${WORKING_SET_HELP}`);
+		return 2;
+	}
+	try {
+		const source = await sessionPath(session);
+		const raw = await readFile(source, "utf8");
+		const parsed = parseSessionEntries(raw, source);
+		if (parsed.errors.length > 0) throw new Error(parsed.errors.join("; "));
+		if (verify) return await verifySession(source, parsed.entries);
+		const entries = filterEntriesToActivePath(parsed.entries, await pinnedLeafForSession(source));
+		const cwd = await sessionCwdForSession(source);
+		process.stdout.write(
+			formatWorkingSet({
+				id: basename(dirname(source)),
+				source,
+				cwd,
+				entries,
+				turnCount: buildPathIndex(entries, { cwd }).turnCount,
+			}),
+		);
+		return 0;
+	} catch (error) {
+		if (error instanceof CliUsageError) {
+			process.stderr.write(`pancode context working-set: ${error.message}\n${WORKING_SET_HELP}`);
+			return 2;
+		}
+		process.stderr.write(
+			`pancode context working-set failed: ${error instanceof Error ? error.message : String(error)}\n`,
+		);
+		return 1;
+	}
+}

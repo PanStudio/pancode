@@ -1,0 +1,82 @@
+[
+	{
+		"id": "pancode",
+		"name": "PanCode",
+		"page": "/",
+		"package": "pancode",
+		"install": "npm install -g pancode",
+		"command": "pancode",
+		"guide": "README.md",
+		"summary": "The harness: plans a task, runs it on the models you connect, contains every command and checks the result.",
+		"licence": {
+			"name": "PanCode License 1.0",
+			"path": "LICENSE"
+		}
+	},
+	{
+		"id": "panstore",
+		"name": "PanStore",
+		"page": "/panstore.html",
+		"package": "pancode",
+		"install": "npm install -g pancode",
+		"command": "panstore",
+		"guide": "guide/panstore.md",
+		"preview": "cli-store-stat",
+		"title": "PanStore: keep results outside the working tree",
+		"description": "PanStore keeps a project's datasets and results outside the working tree, each file recorded with who put it, from where, and its hash.",
+		"summary": "A project store for results and datasets, outside the working tree, with a record of where each file came from.",
+		"licence": {
+			"name": "PanCode License 1.0",
+			"path": "LICENSE"
+		}
+	},
+	{
+		"id": "pankit",
+		"name": "PanKit",
+		"page": "/pankit.html",
+		"package": "pancode",
+		"install": "npm install -g pancode",
+		"command": "pankit",
+		"guide": "guide/pankit.md",
+		"title": "PanKit: MCP tool servers for HPC and science",
+		"description": "PanKit serves seven MCP tool servers for node facts, modules, Spack, Darshan, scientific data, dataset catalogs and the project store.",
+		"summary": "Seven MCP tool servers for node facts, modules, Spack, Darshan, scientific data, catalogs and the store.",
+		"licence": {
+			"name": "PanCode License 1.0",
+			"path": "LICENSE"
+		}
+	},
+	{
+		"id": "panhub",
+		"name": "PanHub",
+		"page": "/hub.html",
+		"package": "pancode",
+		"install": "npm install -g pancode",
+		"command": "pancode hub",
+		"guide": "guide/panhub.md",
+		"title": "PanHub: the packs bundled with PanCode",
+		"description": "Every PanHub pack bundled with this PanCode release: skills, plugins and extensions, each with its tier, licence, source and install command.",
+		"summary": "Installable packs of skills, plugins and extensions, each pinned by the SHA-256 of its whole tree.",
+		"licence": {
+			"name": "PanCode License 1.0",
+			"path": "LICENSE"
+		}
+	},
+	{
+		"id": "pansdk",
+		"name": "PanSDK",
+		"page": "/sdk.html",
+		"package": "pancode",
+		"install": "npm install pancode",
+		"command": "pancode/sdk",
+		"guide": "guide/sdk.md",
+		"preview": "cli-extension-validate",
+		"title": "PanSDK: write extensions, packs and tools",
+		"description": "PanSDK is the typed surface for writing PanCode extensions, packs, tools and MCP servers, imported from pancode/sdk and licensed Apache-2.0.",
+		"summary": "Types and helpers for writing extensions, packs, tools and MCP servers, imported from pancode/sdk.",
+		"licence": {
+			"name": "Apache-2.0",
+			"path": "packages/sdk/LICENSE"
+		}
+	}
+]

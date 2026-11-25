@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Browser-safe ACP declarations share the wire contract without evaluating the process transport.
+
+export type {
+	ContextOperation,
+	ContextOperationFact,
+	ContextOperationStatus,
+} from "../../../../src/core/context-operation.js";
+// The read-model DTO schemas reach the browser contract and openapi.json through this seam. dto.ts has a
+// typebox-only value-import closure (id-schemas, enums, fact, schemas), so the client bundle carries no Node module.
+export type {
+	CacheReportV1,
+	CallFilter,
+	CallRowV1,
+	CallsReportV1,
+	CostReportV1,
+	ExplanationV1,
+	FactRef,
+	Quantity,
+	RunEvidenceV1,
+	RunRowV1,
+	RunTelemetryV1,
+	RunTimelineEntry,
+	RunTimelineV1,
+	SessionTelemetryV1,
+	TelemetryTopic,
+	TelemetryUpdateV1,
+	TimelineEntry,
+	TimelineV1,
+	WhyStoppedV1,
+} from "../../../../src/core/telemetry/dto.js";
+export {
+	CallFilterSchema,
+	FactRefSchema,
+	parseFactRef,
+	TELEMETRY_DTO_SCHEMAS,
+	TELEMETRY_TOPICS,
+} from "../../../../src/core/telemetry/dto.js";
+export type { ContextActivityPayload } from "../../../../src/core/telemetry/live-events.js";
+export * from "../../../../src/engine/acp/types.js";
+export * from "../../../../src/engine/acp/types-capabilities.js";
+export * from "../../../../src/engine/acp/types-fleet.js";
+export * from "../../../../src/engine/acp/types-readouts.js";
+export * from "../../../../src/engine/acp/types-session.js";
+export * from "../../../../src/engine/acp/types-settings.js";
+export * from "../../../../src/engine/acp/types-tools.js";
+export * from "../../../../src/engine/acp/types-views.js";

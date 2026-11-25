@@ -1,0 +1,534 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Headless run output, schema v3 (`run --output-format text|json|stream-json`).
+ *
+ * v1, the internal frames v2 reframes, stays in `run-json-schema.ts` (its `--json` and `--json-events` spellings were
+ * removed in 0.8.5). v2 adds a
+ * typed result envelope as the last frame, a `causes[]` list in place of one
+ * failure string, per-check verify states, and an exit code chosen by one
+ * precedence function. An absent value is an absent key: v2 never sends `null`
+ * for an optional field.
+ *
+ * Schema version 3 (token economy S11) gives each usage scope its `economics` and a budget-ceiling cause its
+ * `refusal` (reason, basis, unknowns, remedy); version 2 is gone. The file and its `*V2` names keep the frame family's
+ * name, not the version number.
+ */
+
+import type { EconomyProjection } from "../../core/telemetry/economy.js";
+import type { FactSum } from "../../core/telemetry/fact.js";
+import type { RunSettled } from "../../core/telemetry/run-schemas.js";
+import { isRecord } from "../../core/type-guards.js";
+import { failsTheSameOnBase } from "../../domains/dispatch/host-verification-note.js";
+import type { RunCallUsage, RunUsageFacts } from "../../domains/dispatch/run-call-usage.js";
+import type { RunResult } from "../../domains/dispatch/types.js";
+import { EXIT_CODES, EXPLORATION_STALLED_EXIT_CODE } from "../kit/exit-codes.js";
+import type { RunJsonDispatchedRunOutcome, RunJsonVerifyResult } from "./run-json-schema.js";
+
+export const RUN_RESULT_SCHEMA_VERSION = 3;
+
+/**
+ * Every cause code, in precedence order. The first fact present sets the exit code; `causes[]` lists every fact,
+ * winner first. `not_started` covers a request refused before any work (usage, configuration, admission), and
+ * `run_failed` a failure no narrower code names. `flag_conflict`, `not_configured`, `session_live` (the resumed
+ * session is open in another process) and `io` (a path the run needs cannot be opened) are the pre-work refusals with a
+ * narrower name of their own. `context_overflow` is a run the context window ended: the post-tool guard or overflow
+ * recovery could not make the request fit. `exploration_stalled` is an unattended run the read-streak decision gate
+ * ended: it kept reading after every note and two refused rounds. `no_reply_text` is a main run that `finish` ended
+ * with no reply text after its one refusal of a bare finish (CLI-P49): its completion is `partly_done` and there is no
+ * answer.
+ * `model_unavailable` is a turn refused before any request because the target's live model list lacks the requested
+ * model; `served_model_mismatch` is a response refused because the provider reported serving another model (row 384).
+ * `missing_output` is a run whose session named an output (`output: <path>`, `--output`) that does not exist at the seal
+ * (M-4).
+ */
+const CAUSE_ORDER = [
+	"interrupted",
+	"deadline",
+	"reader_closed",
+	"unknown_flag",
+	"flag_conflict",
+	"empty_task",
+	"task_file_conflict",
+	"task_flag_conflict",
+	"task_authority",
+	"not_configured",
+	"schema_unsupported",
+	"session_live",
+	"io",
+	"not_started",
+	"unscripted",
+	"permission_required",
+	"judge_streak",
+	"session_cost_ceiling",
+	"max_cost_usd",
+	"autonomous_cap",
+	"max_requests",
+	"max_tool_calls",
+	"model_unavailable",
+	"served_model_mismatch",
+	"provider_error",
+	"context_overflow",
+	"no_answer",
+	"no_reply_text",
+	"missing_output",
+	"exploration_stalled",
+	"output_limit",
+	"schema_mismatch",
+	"verify_failed",
+	"quality_failed",
+	"verdict_failed",
+	"noop",
+	"limitation",
+	"dispatched_worker_failed",
+	"canceled",
+	"worker_failed",
+	"output_write_failed",
+	"run_failed",
+] as const;
+
+export type RunCauseCode = (typeof CAUSE_ORDER)[number];
+
+/** One fact about how the run ended: its code, an optional message, and the payload its code names. */
+export type RunCause = { readonly code: RunCauseCode; readonly message?: string } & Readonly<Record<string, unknown>>;
+
+/** A second signal forced the exit: its code wins and no payload is written. */
+export interface RunForcedExitFact {
+	readonly code: "forced_exit";
+	readonly exitCode: number;
+}
+
+export type RunExitFact = RunCause | RunForcedExitFact;
+
+export type RunOutcomeV2 = "succeeded" | "failed" | "canceled" | "timed_out" | "previewed" | "displayed";
+
+export interface RunExitResolution {
+	exitCode: number;
+	outcome: RunOutcomeV2;
+	causes: RunCause[];
+}
+
+const SIGNAL_EXIT: Readonly<Record<string, number>> = {
+	SIGHUP: EXIT_CODES.sighup,
+	SIGINT: EXIT_CODES.sigint,
+	SIGTERM: EXIT_CODES.sigterm,
+};
+
+/** The signal name a coordinated shutdown's exit code stands for; null for any other code. */
+export function signalForExitCode(code: number): "SIGHUP" | "SIGINT" | "SIGTERM" | null {
+	if (code === EXIT_CODES.sighup) return "SIGHUP";
+	if (code === EXIT_CODES.sigint) return "SIGINT";
+	if (code === EXIT_CODES.sigterm) return "SIGTERM";
+	return null;
+}
+
+function exitCodeFor(cause: RunCause): number {
+	switch (cause.code) {
+		case "interrupted":
+			return SIGNAL_EXIT[String(cause.signal)] ?? EXIT_CODES.sigterm;
+		case "deadline":
+			return EXIT_CODES.deadline;
+		case "reader_closed":
+			return EXIT_CODES.readerClosed;
+		case "unknown_flag":
+		case "flag_conflict":
+		case "empty_task":
+		case "task_file_conflict":
+		case "task_flag_conflict":
+		case "task_authority":
+		case "not_configured":
+		case "schema_unsupported":
+		case "session_live":
+		case "io":
+		case "not_started":
+			return EXIT_CODES.notStarted;
+		case "unscripted":
+			return EXIT_CODES.inputRequired;
+		case "permission_required":
+		case "judge_streak":
+			return EXIT_CODES.approvalRequired;
+		case "session_cost_ceiling":
+		case "max_cost_usd":
+		case "autonomous_cap":
+		case "max_requests":
+		case "max_tool_calls":
+			return EXIT_CODES.limitReached;
+		case "exploration_stalled":
+			return EXPLORATION_STALLED_EXIT_CODE;
+		default:
+			return EXIT_CODES.failed;
+	}
+}
+
+/**
+ * The 6.5 precedence table as one function: every fact that holds goes in, the exit code of the highest row and the
+ * causes ordered winner first come out. A display-only run with no fact ends `displayed`.
+ */
+export function resolveRunExit(
+	facts: ReadonlyArray<RunExitFact>,
+	options: { displayed?: boolean } = {},
+): RunExitResolution {
+	const rank = (code: RunCauseCode): number => CAUSE_ORDER.indexOf(code);
+	const causes = facts
+		.filter((fact): fact is RunCause => fact.code !== "forced_exit")
+		.map((cause, index) => ({ cause, index }))
+		.sort((a, b) => rank(a.cause.code) - rank(b.cause.code) || a.index - b.index)
+		.map(({ cause }) => cause);
+	const forced = facts.find((fact): fact is RunForcedExitFact => fact.code === "forced_exit");
+	const winner = causes[0];
+	const exitCode = forced?.exitCode ?? (winner === undefined ? EXIT_CODES.success : exitCodeFor(winner));
+	const outcome: RunOutcomeV2 =
+		winner === undefined
+			? forced !== undefined
+				? "canceled"
+				: options.displayed === true
+					? "displayed"
+					: "succeeded"
+			: winner.code === "interrupted" || winner.code === "canceled"
+				? "canceled"
+				: winner.code === "deadline"
+					? "timed_out"
+					: "failed";
+	return { exitCode, outcome, causes };
+}
+
+export type RunVerifyStatus = "passed" | "failed" | "not_implicated" | "timed_out" | "skipped";
+export type RunVerifySkipReason = "interrupted" | "deadline" | "turn_failed";
+
+export interface RunVerifyCheckV2 {
+	id?: string;
+	command: string;
+	status: RunVerifyStatus;
+	reason?: RunVerifySkipReason;
+	exitCode?: number;
+	durationMs?: number;
+	ranAfterLastEdit?: boolean;
+	/**
+	 * CLI-4: a failing check replayed on the commit the run started from, through dispatch's base comparison. `failed`
+	 * with no reason is a base that fails the same way, so the check's own status reads `not_implicated`.
+	 */
+	base?: { status: "passed" | "failed" | "not_compared"; reason?: string };
+}
+
+/** A failing check the run's base fails the same way (CLI-4): the run did not cause it, though --fail-on-verify still counts it. */
+export function verifyNotImplicated(result: RunJsonVerifyResult): boolean {
+	return !result.passed && result.base !== undefined && failsTheSameOnBase({ baseComparison: result.base });
+}
+
+/**
+ * One entry per requested check, in flag order. Checks run in that order and stop at a shutdown, so the results are a
+ * prefix of the requested list; a check past it never ran and is `skipped` with the reason it did not.
+ */
+export function verifyChecksV2(
+	requested: ReadonlyArray<string>,
+	ran: ReadonlyArray<RunJsonVerifyResult> | undefined,
+	skipReason: RunVerifySkipReason,
+): RunVerifyCheckV2[] {
+	return requested.map((command, index) => {
+		const result = ran?.[index];
+		if (result === undefined) return { command, status: "skipped", reason: skipReason };
+		return {
+			id: result.id,
+			command: result.command,
+			status: result.passed
+				? "passed"
+				: result.timedOut
+					? "timed_out"
+					: verifyNotImplicated(result)
+						? "not_implicated"
+						: "failed",
+			...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
+			durationMs: result.durationMs,
+			ranAfterLastEdit: result.ranAfterLastEdit,
+			...(result.base !== undefined
+				? {
+						base: {
+							status: result.base.status,
+							...(result.base.reason !== undefined ? { reason: result.base.reason } : {}),
+						},
+					}
+				: {}),
+		};
+	});
+}
+
+/**
+ * CLI-8: PanCode's own id for each tool call on a v2 stream, `tc_<turn>_<n>`: the n-th call (1-based) in the run's
+ * turn-th agent turn (1-based, counted from `turn_start`), numbered in the order the model's message lists its calls,
+ * so parallel execution order never renumbers them. A provider's id can repeat across turns or change shape between
+ * providers; this one does neither within a run. Every frame field that names a call (`toolCallId`, a chain step's
+ * `parentToolCallId`, a tool result message's `toolCallId`) carries it, with the provider's id beside it as
+ * `providerToolCallId`. A chain step's own id is `<parent's PanCode id>:<step id>`, and its `providerToolCallId` is the
+ * provider's id of the call that ran the chain. The model's `toolCall` blocks keep the provider's `id` as sent.
+ */
+export function createToolCallIdMinter(): (frame: object) => object {
+	let turn = 0;
+	let calls = 0;
+	// Per turn, so a provider that numbers each turn's calls from zero again still gets a fresh id per call.
+	let ids = new Map<string, string>();
+	const mint = (providerId: string): string => {
+		const known = ids.get(providerId);
+		if (known !== undefined) return known;
+		calls += 1;
+		const id = `tc_${turn}_${calls}`;
+		ids.set(providerId, id);
+		return id;
+	};
+	const named = (record: Record<string, unknown>): Record<string, unknown> => {
+		const providerId = record.toolCallId;
+		if (typeof providerId !== "string") return record;
+		const parent = record.parentToolCallId;
+		if (typeof parent !== "string") return { ...record, toolCallId: mint(providerId), providerToolCallId: providerId };
+		const pancodeParent = mint(parent);
+		const step = providerId.startsWith(`${parent}:`) ? providerId.slice(parent.length + 1) : providerId;
+		return {
+			...record,
+			toolCallId: `${pancodeParent}:${step}`,
+			parentToolCallId: pancodeParent,
+			providerToolCallId: parent,
+		};
+	};
+	return (frame) => {
+		if (!isRecord(frame)) return frame;
+		if (frame.type === "turn_start") {
+			turn += 1;
+			calls = 0;
+			ids = new Map();
+			return frame;
+		}
+		const message = frame.message;
+		if (isRecord(message) && message.role === "assistant" && Array.isArray(message.content)) {
+			for (const block of message.content)
+				if (isRecord(block) && block.type === "toolCall" && typeof block.id === "string") mint(block.id);
+		}
+		const result = isRecord(message) && message.role === "toolResult" ? { ...frame, message: named(message) } : frame;
+		return named(result);
+	};
+}
+
+/**
+ * `stream-json` only: one frame per steer-channel line the reader took. `accepted` and `refused` are final; a line
+ * read before the first turn streamed is `queued`, and gets one more frame, `accepted` once that turn takes it or
+ * `refused` when the run settles first.
+ */
+export interface RunSteerFrameV2 {
+	type: "steer";
+	line: number;
+	status: "accepted" | "queued" | "refused";
+	reason?: string;
+}
+
+/** What a main run hands the v2 writer once its turn settled, or once a shutdown sealed it. */
+export interface MainRunSettlementV2 {
+	runId: string;
+	startedAt: string;
+	endedAt: string;
+	sessionId?: string;
+	route?: { target?: string; model?: string };
+	/** The answer exactly as text mode prints it, without the trailing newline; empty when there is none. */
+	text: string;
+	facts: RunExitFact[];
+	verify: { requested: number; checks: RunVerifyCheckV2[] };
+	tools?: { calls: number; refused: number; writes: number };
+	safety: {
+		decisions: { allowed: number; blocked: number; guardBlocked: number; permissionRequested: number };
+		blockedAttempts: unknown[];
+		judgeAllowedAttempts?: unknown[];
+	};
+	usage?: RunCallUsage;
+	dispatch: { live: RunJsonDispatchedRunOutcome[]; undelivered: RunJsonDispatchedRunOutcome[] };
+}
+
+/** What a `run --agent` hands the v2 writer: the sealed receipt, or the failure that left none. */
+export interface AgentRunSettlementV2 {
+	receipt?: RunResult;
+	answer?: string;
+	facts: RunExitFact[];
+}
+
+/**
+ * A run's spend, each part folded from the session telemetry the way the run ledger folds it: `main` is the run's own
+ * turn and compaction calls, `side` the side agents' calls such as the safety judge's, `children` the dispatched
+ * workers' calls (each absent when none were recorded), `total` all of them.
+ */
+export interface RunUsageV2<Scope = RunScopeUsageV2> {
+	main: Scope;
+	side?: Scope;
+	children?: Scope;
+	/** Only beside `side` or `children`, since `main` alone is the whole run; absent when that fold could not be read. */
+	total?: Scope;
+}
+
+/**
+ * One usage scope as the envelope carries it without `--full-usage` (R2-F21): each quantity's fact and the economy
+ * projection's displays, as the ACP usage meta is compact unless a client asks for the full form.
+ */
+export interface RunScopeUsageCompactV2 {
+	facts: RunUsageFacts;
+	economy?: EconomyProjection["total"]["display"];
+	coverageUnknown?: true;
+	freeRuleMixed?: true;
+}
+
+export function compactScopeUsage(usage: RunCallUsage & { economics?: EconomyProjection }): RunScopeUsageCompactV2 {
+	return {
+		facts: usage.facts,
+		...(usage.economics !== undefined ? { economy: usage.economics.total.display } : {}),
+		...(usage.coverageUnknown ? { coverageUnknown: true as const } : {}),
+		...(usage.freeRuleMixed === true ? { freeRuleMixed: true as const } : {}),
+	};
+}
+
+export function compactRunUsage(usage: RunUsageV2): RunUsageV2<RunScopeUsageCompactV2> {
+	return {
+		main: compactScopeUsage(usage.main),
+		...(usage.side !== undefined ? { side: compactScopeUsage(usage.side) } : {}),
+		...(usage.children !== undefined ? { children: compactScopeUsage(usage.children) } : {}),
+		...(usage.total !== undefined ? { total: compactScopeUsage(usage.total) } : {}),
+	};
+}
+
+/**
+ * One usage scope with its economics: the same calls folded once by the economy projection (S10), the extra user
+ * cost beside the API equivalent, seat credits and energy. Declared period fees stay out, since a period's fee belongs
+ * to its pool and period, not to any one run; absent when no read model folded the calls.
+ */
+export type RunScopeUsageV2 = RunCallUsage & { economics?: EconomyProjection };
+
+/**
+ * Why a budget ceiling refused further work, in fields rather than prose: the limit and the spend it was measured
+ * against (route-price USD, the only currency a ceiling is set in), the calls the spend could not price, and the knob
+ * that moves the limit. `limitUsd` is null when the run could not read it.
+ */
+export interface RunBudgetRefusalV2 {
+	reason: "run_cost_ceiling" | "session_cost_ceiling";
+	/** `runSpent` is this run's spend; a session ceiling also counts the session's earlier runs. */
+	basis: { metric: "route-price-usd"; scope: "run" | "session"; limitUsd: number | null; runSpent: FactSum | null };
+	unknowns: { unpricedCalls: number; unpricedRoutes: number };
+	remedy: { flag: "--max-cost-usd" } | { setting: "safety.limits.sessionCostUsd" };
+}
+
+/**
+ * SPEC 6.9: the limits the run was asked for and the ones it enforces. A limit this build or route cannot enforce
+ * is refused at preflight, so `enforced` names every requested key; `cost` is present with `maxCostUsd`.
+ */
+export interface RunLimitsV2 {
+	requested: {
+		maxCostUsd?: number;
+		maxRequests?: number;
+		maxToolCalls?: number;
+		timeoutSeconds?: number;
+		requirePriced?: true;
+	};
+	enforced: string[];
+	/** `--max-cost-usd` is admission-based: spend can pass the cap by the calls in flight. */
+	cost?: { overshootPossible: true; unpricedCalls: number; unpricedRoutes: string[] };
+}
+
+/** The sealed envelope of one dispatched run, as its run.settled records it (M-18). */
+export type SettledRunEnvelope = NonNullable<RunSettled["envelope"]>;
+
+/** One dispatched run as v2 lists it: its own outcome, with an absent key for each value it lacks. */
+export interface RunDispatchedRunV2 {
+	runId: string;
+	agentId: string;
+	outcome?: string;
+	outcomeCode?: string;
+	outcomeDetail?: string;
+	/** The sealed envelope (staticHead included) the run's journal settled with (M-18); absent when it has none. */
+	safety?: { envelope: SettledRunEnvelope };
+	/** A main run's dispatched run: its own calls, folded as `usage.children` folds them; absent when none was recorded. */
+	usage?: RunCallUsage | RunScopeUsageCompactV2;
+}
+
+/**
+ * A main run's completion as the host sealed it (fleet design 4.3): the claim the agent declared through `finish`, the
+ * host's assessment of it (min(claimed, facts): a `done` over an unvalidated mutation, a standing failed check, an
+ * uncollected child run or an open task-board item is `partly_done`, and so is one whose last observation calls the
+ * pool refused), and `state`, which is the assessment. A `run --agent` completion is read from the worker's sealed
+ * receipt instead (CLI-P58): its sealed final answer is the declaration, and a `done` over a refused execute call that
+ * left the run unverified is `partly_done` with fact `refused_check`.
+ * Undeclared: `declared: false`, `claimed: null`, state `unknown`.
+ */
+export interface RunCompletionV2 {
+	declared: boolean;
+	claimed: "done" | "partly_done" | "not_done" | null;
+	assessed: "done" | "partly_done" | "not_done" | "unknown";
+	state: "done" | "partly_done" | "not_done" | "unknown";
+	/** The open obligations that lowered a `done` claim. */
+	facts?: Array<
+		| "unvalidated_mutation"
+		| "failed_check"
+		| "uncollected_run"
+		| "open_task"
+		| "observation_budget"
+		| "missing_output"
+		| "refused_check"
+	>;
+	limitations: Array<{ what: string; why: string }>;
+	unverified: string[];
+	remaining?: string[];
+}
+
+export interface RunResultEnvelopeV2 {
+	type: "run_end";
+	schemaVersion: typeof RUN_RESULT_SCHEMA_VERSION;
+	mode: "main" | "agent";
+	runId?: string;
+	sessionId?: string;
+	/** The session this run's `run --fork` branched `sessionId` from; absent when the run did not fork. */
+	parentSessionId?: string;
+	agentId?: string;
+	pid: number;
+	cwd: string;
+	pancodeVersion: string;
+	startedAt: string;
+	endedAt: string;
+	durationMs: number;
+	exitCode: number;
+	outcome: RunOutcomeV2;
+	outcomeDetail?: RunCauseCode;
+	causes: RunCause[];
+	/**
+	 * `--agent` only: why the failed run's assignment ran no further attempt, such as a retry suppressed or a route
+	 * explicitly pinned (row 371). The sealed receipt cannot say it, since that decision follows its seal; absent when the
+	 * run succeeded.
+	 */
+	notRetried?: string;
+	/**
+	 * Fleet design 4.3: how the main agent declared the run ended through its `finish` tool, never read from the
+	 * answer text. `declared: false` with state `unknown` when it declared nothing. `run --exit-code` maps a declared
+	 * `partly_done` or `not_done` on an exit-0 run to 1. Present once a main run settles. A `run --agent` run carries
+	 * the same object read from its sealed receipt (CLI-P58); `--exit-code` does not read that one.
+	 */
+	completion?: RunCompletionV2;
+	/** `structured` and `enforcedBy` appear only with `--output-schema` (SPEC 6.6); `structured` only on exit 0. */
+	result: {
+		text: string;
+		artifacts: string[];
+		structured?: Record<string, unknown>;
+		enforcedBy?: "host" | "host+provider";
+	};
+	route?: { target?: string; model?: string };
+	/** The compact scopes unless the run was given `--full-usage`. */
+	usage?: RunUsageV2 | RunUsageV2<RunScopeUsageCompactV2>;
+	tools?: { calls: number; refused: number; writes: number };
+	safety?: MainRunSettlementV2["safety"];
+	verify: MainRunSettlementV2["verify"];
+	dispatch: {
+		/**
+		 * Main run (row 164): every child run the main agent dispatched, retried attempts included, oldest first, each with
+		 * its own outcome; a run the agent canceled through steer reads `canceled`. `--agent`: the one sealed receipt.
+		 */
+		runs: Array<RunResult | RunDispatchedRunV2>;
+		live: RunJsonDispatchedRunOutcome[];
+		undelivered: RunJsonDispatchedRunOutcome[];
+		/** CLI-5: failed runs a later dispatch of the same task delivered; they do not fail the run. Absent when none. */
+		superseded?: RunDispatchedRunV2[];
+	};
+	timings: { sessionReadyMs?: number; firstRequestMs?: number; firstTokenMs?: number };
+	/** Present when the run was given any limit (SPEC 6.9). */
+	limits?: RunLimitsV2;
+	/** `--dry-run`: what the run would do; present only with outcome `previewed`. */
+	plan?: Readonly<Record<string, unknown>>;
+}

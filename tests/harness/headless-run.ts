@@ -1,0 +1,153 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Shared plumbing for tests that drive the built `pancode run` binary as an
+ * external orchestrator would: a scratch home whose state directory collects
+ * the run's receipt, a spawn helper that reports the exit code and the wall
+ * time, and a reader that returns the one sealed receipt with its ledger row.
+ */
+import { ok, strictEqual } from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { copyFileSync, cpSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { initializePancodeHome } from "../../src/core/init.js";
+import { resetXdgCache } from "../../src/core/xdg.js";
+import type { RunEnvelope } from "../../src/domains/dispatch/types.js";
+import type { SettledRunRecord } from "../../src/domains/telemetry/index.js";
+import { readRunJournal } from "./run-journal.js";
+import { dropGeneratedToolEnv, scratchPancodeEnvVars } from "./scratch-env.js";
+
+const ROOT = new URL("../..", import.meta.url).pathname;
+const CLI = join(ROOT, "dist", "cli", "index.js");
+
+let privateCli: string | null = null;
+
+/**
+ * A private copy of the built CLI, for a test that must survive another session
+ * rebuilding `dist/` mid-run. Only the bundle is copied; the package files it
+ * reads at runtime are linked, so the copy resolves as its own package root.
+ * It lives under the run's temp root, which the harness removes at exit.
+ */
+export function privateCliCopy(): string {
+	if (privateCli !== null) return privateCli;
+	const root = mkdtempSync(join(tmpdir(), "pancode-private-cli-"));
+	const dist = join(ROOT, "dist");
+	cpSync(dist, join(root, "dist"), {
+		recursive: true,
+		// The GUI bundle stays in: doctor checks every file dist/build.json names.
+		filter: (source) => !source.endsWith(".map") && !/metafile[^/]*\.json$/u.test(source),
+	});
+	copyFileSync(join(ROOT, "package.json"), join(root, "package.json"));
+	for (const entry of ["node_modules", "src", "hub", "models", "docs", "damage-control-rules.yaml"]) {
+		symlinkSync(join(ROOT, entry), join(root, entry));
+	}
+	privateCli = join(root, "dist", "cli", "index.js");
+	return privateCli;
+}
+
+export interface HeadlessScratch {
+	root: string;
+	configDir: string;
+	stateDir: string;
+	env: NodeJS.ProcessEnv;
+	cleanup(): void;
+}
+
+/** A throwaway home initialized directly, ready for a seeded target. */
+export function headlessScratch(prefix: string): HeadlessScratch {
+	const root = mkdtempSync(join(tmpdir(), prefix));
+	const homeEnv = scratchPancodeEnvVars(root, { requireHomePrefix: true });
+	const env: NodeJS.ProcessEnv = dropGeneratedToolEnv({
+		...process.env,
+		NODE_ENV: "test",
+		NO_COLOR: "1",
+		...homeEnv,
+		PANCODE_TEST_OPENAI_KEY: "fixture-key",
+	});
+	initializeScratchHome(root);
+	return {
+		root,
+		configDir: join(root, "config"),
+		stateDir: join(root, "state"),
+		env,
+		cleanup() {
+			rmSync(root, { recursive: true, force: true });
+		},
+	};
+}
+
+export function initializeScratchHome(root: string): void {
+	const homeEnv = scratchPancodeEnvVars(root, { requireHomePrefix: true });
+	const previous = new Map(Object.keys(homeEnv).map((key) => [key, process.env[key]]));
+	try {
+		// No await: the temporary environment cannot overlap another test's turn.
+		Object.assign(process.env, homeEnv);
+		resetXdgCache();
+		initializePancodeHome();
+	} finally {
+		for (const [key, value] of previous) {
+			if (value === undefined) Reflect.deleteProperty(process.env, key);
+			else process.env[key] = value;
+		}
+		resetXdgCache();
+	}
+}
+
+export interface CliResult {
+	code: number | null;
+	signal: NodeJS.Signals | null;
+	stdout: string;
+	stderr: string;
+	elapsedMs: number;
+}
+
+/** Spawn the built CLI with stdin closed; SIGKILL and reject after `timeoutMs`. `node` precedes the entry. */
+export function runCli(
+	args: ReadonlyArray<string>,
+	options: { env: NodeJS.ProcessEnv; cwd: string; timeoutMs?: number; cli?: string; node?: ReadonlyArray<string> },
+): Promise<CliResult> {
+	const startedAt = Date.now();
+	const child = spawn(process.execPath, [...(options.node ?? []), options.cli ?? CLI, ...args], {
+		cwd: options.cwd,
+		env: options.env,
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	let stdout = "";
+	let stderr = "";
+	child.stdout.setEncoding("utf8");
+	child.stderr.setEncoding("utf8");
+	child.stdout.on("data", (text: string) => {
+		stdout += text;
+	});
+	child.stderr.on("data", (text: string) => {
+		stderr += text;
+	});
+	child.stdin.end();
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			child.kill("SIGKILL");
+			reject(new Error(`CLI timeout: ${args.join(" ")}\nstdout=${stdout}\nstderr=${stderr}`));
+		}, options.timeoutMs ?? 30_000);
+		child.once("error", (error) => {
+			clearTimeout(timer);
+			reject(error);
+		});
+		child.once("close", (code, signal) => {
+			clearTimeout(timer);
+			resolve({ code, signal, stdout, stderr, elapsedMs: Date.now() - startedAt });
+		});
+	});
+}
+
+/** The worker's settled run and ledger row, after verifying the run scope's seal (#434). */
+export function sealedReceipt(stateDir: string): { receipt: SettledRunRecord; envelope: RunEnvelope } {
+	const journal = readRunJournal(stateDir);
+	ok(journal, `no run journal under ${stateDir}`);
+	strictEqual(journal.runs.length, 1, `expected one sealed worker run, found ${journal.runs.length}`);
+	const receipt = journal.runs[0];
+	ok(receipt);
+	const envelope = journal.envelopes.get(receipt.row.runId);
+	ok(envelope, `no ledger row for ${receipt.row.runId}`);
+	return { receipt, envelope };
+}

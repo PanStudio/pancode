@@ -1,0 +1,204 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, notStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import type { DomainContext } from "../../src/core/domain-loader.js";
+import type { SessionContract } from "../../src/domains/session/contract.js";
+import { createSessionBundle } from "../../src/domains/session/extension.js";
+import { sessionPaths } from "../../src/engine/session.js";
+import type { TUI } from "../../src/engine/tui.js";
+import { createChatPanel } from "../../src/interactive/chat-panel.js";
+import type { OverlaySessionLifecycleDeps } from "../../src/interactive/overlay-session-lifecycle.js";
+import { createOverlaySessionLifecycle } from "../../src/interactive/overlay-session-lifecycle.js";
+import { buildMessagePickerRows } from "../../src/interactive/overlays/message-picker.js";
+import type { SlashCommandContext } from "../../src/session-control/slash-command-types.js";
+import { parseSlashCommand } from "../../src/session-control/slash-commands.js";
+import { dispatchSlashCommand } from "../../src/session-control/slash-dispatch.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
+
+describe("/fork session isolation", () => {
+	let scratch: IsolatedPancodeEnv;
+	let session: SessionContract;
+
+	beforeEach(async () => {
+		scratch = await isolatePancodeEnv("pancode-branch-");
+		session = createSessionBundle({ bus: { emit() {} } } as unknown as DomainContext).contract;
+	});
+
+	afterEach(async () => {
+		await session.close();
+		scratch.restore();
+	});
+
+	function append(id: string, parentId: string | null, kind: "user" | "assistant", payload = { text: id }) {
+		session.append({ id, parentId, kind, payload });
+	}
+
+	function harness(overrides: Partial<OverlaySessionLifecycleDeps> = {}) {
+		const notices: string[] = [];
+		const forks: string[] = [];
+		const picker: { onFork: ((parentTurnId: string) => Promise<void> | void) | null } = { onFork: null };
+		let replayLeaf: string | null = null;
+		const lifecycle = createOverlaySessionLifecycle({
+			tui: {} as TUI,
+			transitions: { state: "closed", handle: null, showPermission: () => false, close() {} },
+			session,
+			chat: {
+				cancel() {},
+				isStreaming: () => false,
+				whenSettled: async () => {},
+				resetForSession: (leaf) => {
+					replayLeaf = leaf;
+				},
+				extractHandoff: async () => ({ status: "aborted", text: "" }),
+			},
+			chatPanel: createChatPanel(),
+			resetTranscript() {},
+			readStructuredEntries: () => [...session.readEntries()],
+			getSlashNotice: () => (_level, text) => {
+				notices.push(text);
+			},
+			onForkSession: (parent) => {
+				forks.push(parent);
+				session.fork(parent);
+			},
+			announceTaskMemorySeedOffer() {},
+			refreshFooter() {},
+			requestRender() {},
+			stderr: (text) => {
+				throw new Error(text);
+			},
+			notify() {},
+			openMessagePickerOverlay: (_tui, deps) => {
+				picker.onFork = deps.onFork;
+				return { hide() {}, setHidden() {}, isHidden: () => false } as unknown as ReturnType<
+					NonNullable<OverlaySessionLifecycleDeps["openMessagePickerOverlay"]>
+				>;
+			},
+			...overrides,
+		});
+		/** `/fork [name]`, then Enter on `turnId` in the picker. */
+		const fork = async (turnId: string, name?: string) => {
+			lifecycle.openMessagePicker(name);
+			await picker.onFork?.(turnId);
+		};
+		return { lifecycle, notices, forks, fork, pick: () => picker.onFork, replayLeaf: () => replayLeaf };
+	}
+
+	for (const name of [undefined, "alternate approach"]) {
+		it(`forks ${name ? "with a saved name" : "without a name"} and keeps the parent transcript resumable and unchanged`, async () => {
+			const parent = session.create({ cwd: scratch.dir, model: "model", target: "target" });
+			append("u1", null, "user");
+			append("a1", "u1", "assistant");
+			const transcript = sessionPaths(parent).current;
+			const before = readFileSync(transcript, "utf8");
+			const workspaceFile = join(scratch.dir, "work.txt");
+			writeFileSync(workspaceFile, "existing edits");
+			const h = harness();
+			const parsed = parseSlashCommand(name ? `/fork "${name}"` : "/fork");
+			deepStrictEqual(parsed, name ? { kind: "fork", name } : { kind: "fork" });
+			if (name) deepStrictEqual(parseSlashCommand(`/fork ${name}`), parsed);
+			dispatchSlashCommand(parsed, {
+				openMessagePicker: h.lifecycle.openMessagePicker,
+			} as unknown as SlashCommandContext);
+			await h.pick()?.("a1");
+			const child = session.current();
+			ok(child);
+			notStrictEqual(child.id, parent.id);
+			deepStrictEqual(h.forks, ["a1"]);
+			strictEqual(h.replayLeaf(), "a1");
+			strictEqual(child.parentSessionId, parent.id);
+			strictEqual(child.parentTurnId, "a1");
+			deepStrictEqual([child.cwd, child.model, child.target], [parent.cwd, parent.model, parent.target]);
+			append("child-u", "a1", "user");
+			append("child-a", "child-u", "assistant");
+			await session.checkpoint();
+			strictEqual(readFileSync(transcript, "utf8"), before);
+			strictEqual(readFileSync(workspaceFile, "utf8"), "existing edits");
+			const history = session.history();
+			ok(history.some((entry) => entry.id === parent.id));
+			strictEqual(history.find((entry) => entry.id === child.id)?.name, name);
+			session.resume(parent.id);
+			deepStrictEqual(
+				session
+					.readEntries()
+					.filter((entry) => entry.kind === "message")
+					.map((entry) => entry.turnId),
+				["u1", "a1"],
+			);
+			session.resume(child.id);
+			ok(session.readEntries().some((entry) => entry.turnId === "child-a"));
+		});
+	}
+
+	it("lists one fork row per prompt, forking after that turn's last reply (bt-11 #3)", () => {
+		session.create({ cwd: scratch.dir });
+		append("u1", null, "user", { text: "Fix the bug" });
+		append("a1", "u1", "assistant");
+		session.append({ id: "r1", parentId: "a1", kind: "tool_result", payload: { text: "ok" } });
+		append("a1-final", "r1", "assistant");
+		append("u2", "a1-final", "user", { text: "Explain" });
+		append("a2", "u2", "assistant");
+		append("a2-final", "a2", "assistant");
+		deepStrictEqual(
+			buildMessagePickerRows(session.readEntries()).map((row) => [row.turnId, row.asked]),
+			[
+				["a2-final", "Explain"],
+				["a1-final", "Fix the bug"],
+			],
+		);
+	});
+
+	it("settles the running turn into its parent before forking", async () => {
+		const parent = session.create({ cwd: scratch.dir });
+		append("u1", null, "user");
+		append("a1", "u1", "assistant");
+		append("u2", "a1", "user");
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let cancelled = false;
+		let parentTranscript = "";
+		const h = harness({
+			chat: {
+				cancel: () => {
+					cancelled = true;
+				},
+				isStreaming: () => true,
+				whenSettled: async () => {
+					await gate;
+					strictEqual(session.current()?.id, parent.id);
+					append("partial-a", "u2", "assistant", { text: "interrupted response" });
+					parentTranscript = readFileSync(sessionPaths(parent).current, "utf8");
+				},
+				resetForSession() {},
+				extractHandoff: async () => ({ status: "aborted", text: "" }),
+			},
+		});
+		const pending = h.fork("a1");
+		ok(cancelled);
+		deepStrictEqual(h.forks, []);
+		strictEqual(session.current()?.id, parent.id);
+		release();
+		await pending;
+		deepStrictEqual(h.forks, ["a1"]);
+		append("child-u", "a1", "user");
+		strictEqual(readFileSync(sessionPaths(parent).current, "utf8"), parentTranscript);
+	});
+
+	it("reports missing sessions and host fork failures without replacing the transcript", async () => {
+		const h = harness({ onForkSession() {} });
+		await h.fork("a1");
+		match(h.notices.pop() ?? "", /no current session/);
+		const parent = session.create({ cwd: scratch.dir });
+		append("u1", null, "user");
+		append("a1", "u1", "assistant");
+		await h.fork("a1", "child");
+		match(h.notices.pop() ?? "", /fork failed/);
+		strictEqual(session.current()?.id, parent.id);
+		strictEqual(h.replayLeaf(), null);
+	});
+});

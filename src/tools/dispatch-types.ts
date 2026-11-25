@@ -1,0 +1,157 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { TelemetryHub } from "../core/telemetry/hub.js";
+import type { AgentSpec } from "../domains/agents/spec.js";
+import type { WorkerContextSnapshot } from "../domains/context/worker/contract.js";
+import type { DispatchContract, DispatchRequest } from "../domains/dispatch/contract.js";
+import type { AgentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
+import type { AutonomyLevel } from "../domains/safety/autonomy.js";
+import type { DecisionLedgerEntry } from "../domains/session/entries.js";
+import type {
+	CandidateWorktree,
+	CompeteGroupOwnership,
+	CompeteMuxWorktrees,
+	cleanupCompeteGroup,
+	mergeWinnerBranch,
+} from "./compete-worktrees.js";
+import type { DispatchRejectedTask } from "./dispatch-arguments.js";
+import type { DispatchBackgroundRegistry } from "./dispatch-background.js";
+import type { DispatchPlanView, ResolvedDispatchPlanArtifact } from "./dispatch-plan.js";
+import type { DispatchRunEventRegistry } from "./dispatch-run-events.js";
+import type { DispatchSchemaComposition } from "./dispatch-schema.js";
+import type { DispatchReadRootTask, ToolInvokeOptions } from "./registry-contract.js";
+
+export type DispatchMode = "parallel" | "sequential" | "pipeline" | "compete" | "council";
+
+export interface DispatchCouncilMember {
+	label: string;
+	target: string;
+	model?: string;
+	thinking?: string;
+	color?: string;
+	/** Agent recipe id this member runs as; absent seats the council's agent. */
+	agent?: string;
+}
+
+export interface DispatchCouncilSettings {
+	members: DispatchCouncilMember[];
+	synthesis: "none" | "judge" | "vote";
+	rounds: number;
+	/** Per-member deadline; a member past it is ended and the council returns partial. */
+	memberDeadlineMs?: number;
+	judge?: DispatchCompeteSettings["judge"];
+	resolvedTasks?: ReadonlyArray<ResolvedDispatchPlanArtifact["tasks"][number]>;
+	/** Seats admission found down; they sit as failed seats and are never dispatched. */
+	downSeats?: ReadonlyArray<{ label: string; reason: string }>;
+}
+
+export interface DispatchReviewSettings {
+	reviewer?: string;
+	maxCycles: number;
+	node?: string;
+	model?: string;
+	target?: string;
+	/** Immutable per-cycle builder/reviewer pins expanded by plan admission. */
+	resolvedTasks?: ReadonlyArray<ResolvedDispatchPlanArtifact["tasks"][number]>;
+}
+
+export interface DispatchCompeteSettings {
+	candidates: number;
+	/** Per-candidate route pins in candidate order, when the call named one per candidate. */
+	candidateRoutes?: ReadonlyArray<{ target?: string; model?: string }>;
+	judge?: { agent?: string; model?: string; target?: string; node?: string };
+	/** Immutable per-candidate and judge pins expanded by plan admission. */
+	resolvedTasks?: ReadonlyArray<ResolvedDispatchPlanArtifact["tasks"][number]>;
+}
+
+/** Immutable execution authority captured before an ordinary call can be parked. */
+export interface DispatchRunExecutionSnapshot {
+	readonly kind: "dispatch";
+	readonly planView: DispatchPlanView;
+	readonly requests: ReadonlyArray<DispatchRequest>;
+	readonly positions?: ReadonlyArray<number>;
+	readonly rejectedTasks?: ReadonlyArray<DispatchRejectedTask>;
+	/** One line per shape the normalize stage rewrote; dispatch puts them in front of the result text. */
+	readonly notices?: ReadonlyArray<string>;
+	readonly mode: DispatchMode;
+	readonly writers: 1 | undefined;
+	readonly review: DispatchReviewSettings | undefined;
+	readonly compete: DispatchCompeteSettings | undefined;
+	readonly council: DispatchCouncilSettings | undefined;
+	readonly detach: boolean;
+	readonly timeoutMs: number | undefined;
+	readonly maxOutputBytes: number;
+	/** Present as `full` when the caller set max_output_bytes; otherwise each run returns its compact form. */
+	readonly resultForm?: DispatchResultForm;
+}
+
+/** How a dispatch result renders each run's answer for the model (WTF-P 0.8.3 C3). */
+export type DispatchResultForm = "compact" | "full";
+
+/** Immutable, operator-visible destination of a compete-winner application. */
+export interface DispatchApplyWinnerExecutionSnapshot {
+	readonly kind: "apply-winner";
+	readonly branch: string;
+	readonly cwd: string;
+}
+
+export interface DispatchListExecutionSnapshot {
+	readonly kind: "list";
+}
+
+/** A kept task branch the operator lands from a Land card (`dispatch land`). */
+export interface DispatchLandExecutionSnapshot {
+	readonly kind: "land";
+	readonly ref: string;
+	readonly cwd: string;
+}
+
+export type DispatchExecutionSnapshot =
+	| DispatchRunExecutionSnapshot
+	| DispatchApplyWinnerExecutionSnapshot
+	| DispatchListExecutionSnapshot
+	| DispatchLandExecutionSnapshot;
+
+export interface DispatchToolDeps {
+	/** Active session workspace for external Scout admission (#433). */
+	getWorkspaceRoot?: () => string | undefined;
+	approveExternalRead?: (
+		root: string,
+		options?: ToolInvokeOptions,
+		/** The dispatched task the approval serves, for the card; the dispatch tool supplies it. */
+		task?: DispatchReadRootTask,
+	) => Promise<{ requestId: string; requestedBy: string } | null>;
+	/** Synchronous read of the active model-visible history, before admission can park. */
+	captureWorkerContext?: () => WorkerContextSnapshot | null;
+	dispatch: DispatchContract;
+	bus?: TelemetryHub;
+	/** Instance-scoped owner for ordinary tool-owned run streams and monitor tails. */
+	runEvents?: DispatchRunEventRegistry;
+	/** Operator-initiated backgrounding of an attached call. */
+	background?: DispatchBackgroundRegistry;
+	/** Optional compete storage overrides for alternate backends and deterministic fault tests. */
+	competeWorktrees?: {
+		createCandidate?: (
+			ownership: CompeteGroupOwnership,
+			index: number,
+			baseline: string,
+		) => CandidateWorktree | Promise<CandidateWorktree>;
+		cleanupGroup?: (...args: Parameters<typeof cleanupCompeteGroup>) => void | Promise<void>;
+		mergeWinner?: typeof mergeWinnerBranch;
+		/** Optional herdr route; every operation retains native Git fallback. */
+		mux?: CompeteMuxWorktrees;
+	};
+	getAgentCatalog?: () => string;
+	getAgentSpecs: () => ReadonlyArray<AgentSpec>;
+	getAgentRoleFacts?: AgentRoleFactsResolver;
+	getAutonomy?: () => AutonomyLevel;
+	getCostCeilingUsd?: () => number;
+	getWorkerRosters?: () => Readonly<Record<string, { members: ReadonlyArray<DispatchCouncilMember> }>>;
+	/** Which optional schema blocks this session advertises; absent means every block. */
+	getSchemaComposition?: () => DispatchSchemaComposition;
+	/**
+	 * Live decision board snapshot. Every request the tool builds carries the
+	 * active decisions' refs, sealed here and never from model arguments.
+	 */
+	getDecisionBoard?: () => ReadonlyArray<DecisionLedgerEntry>;
+}

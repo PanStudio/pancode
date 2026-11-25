@@ -1,0 +1,489 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { requestedThinking } from "../core/telemetry/call-effort.js";
+import type { CallMessageObserver } from "../core/telemetry/producer.js";
+/**
+ * Thin wrapper over @earendil-works/pi-ai. Domains consume this module, not
+ * pi-ai directly. The model-lookup side-registry that used to live here is
+ * gone; runtime descriptors under `src/domains/providers/runtimes/` own
+ * model synthesis via `RuntimeDescriptor.synthesizeModel()`.
+ *
+ * Built-in API providers are registered once by `registerEngineBuiltins()`,
+ * which is idempotent, so `ensurePiAiRegistered` is that function.
+ */
+
+import {
+	type Api,
+	type AssistantMessage,
+	fauxAssistantMessage,
+	type KnownProvider,
+	type Model,
+	type ModelThinkingLevel,
+	calculateCost as piCalculateCost,
+	cleanupSessionResources as piCleanupSessionResources,
+	getSupportedThinkingLevels as piGetSupportedThinkingLevels,
+	isContextOverflow as piIsContextOverflow,
+	isRetryableAssistantError as piIsRetryableAssistantError,
+	retryDelayMs as piRetryDelayMs,
+	validateToolArguments as piValidateToolArguments,
+	StringEnum,
+	type Tool,
+	type ToolCall,
+	type Usage,
+	type UserMessage,
+} from "@earendil-works/pi-ai";
+import type { BackendCompletionTimings } from "../core/cache-telemetry.js";
+import type { CallFailureRecord } from "../core/call-failure.js";
+import { trackCallFetch } from "../core/call-failure.js";
+import type { SideCallAuth } from "../core/oauth-retry.js";
+import { rememberOAuthCallFailure, withOAuthRefresh } from "../core/oauth-retry.js";
+import { normalizeTokenUsage } from "../core/token-split.js";
+import type { ProbeContext } from "../domains/providers/types/runtime-descriptor.js";
+import type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
+import {
+	completeEngineSimple,
+	engineMainStreamSimple,
+	engineStream,
+	engineStreamSimple,
+	registerEngineBuiltins,
+	registerEngineFauxProvider,
+} from "./api-registry.js";
+import { sideCallCacheFamilyId } from "./apis/cache-family.js";
+import type { CopilotQuotaReadOptions } from "./copilot/quota.js";
+import { engineModels } from "./models.js";
+import { deterministicSampling } from "./provider-payload.js";
+import type { EngineModel } from "./types.js";
+
+// Dispatch registers the admission store's cross-process cache lanes for main sessions here (M-11).
+export { useMainCacheLaneStore } from "./apis/cache-family.js";
+export { providerCheckpointCompatibility } from "./apis/openai-compaction.js";
+// The compaction summary's stall watchdog ends its first-token window where the main turn does (CLI-P9).
+export { hasAssistantGenerationDelta } from "./generation-delta.js";
+export { StringEnum };
+
+/** #416: keep optional Claude discovery behind the existing provider engine seam. */
+export async function listClaudeSdkModels(target: TargetDescriptor, ctx: ProbeContext) {
+	const listing = await import("./claude/sdk-models.js");
+	return listing.listClaudeSdkModels(target, ctx);
+}
+
+/** Copilot model discovery loads the optional SDK only when a copilot-sdk target is probed. */
+export async function listCopilotSdkModels() {
+	const client = await import("./copilot/client.js");
+	return client.listCopilotModels();
+}
+
+/** The held Copilot runtime's model listing, or `null` when no runtime is connected; never starts one. */
+export async function listHeldCopilotSdkModels() {
+	const client = await import("./copilot/client.js");
+	return client.listHeldCopilotModels();
+}
+
+/** Calls `listener` once a Copilot runtime is connected, now or when the next one starts; never starts one. */
+export async function onceCopilotSdkClientHeld(listener: () => void): Promise<void> {
+	const client = await import("./copilot/client.js");
+	client.onceCopilotClientHeld(listener);
+}
+
+/** Whether a short-lived Copilot runtime with the keychain open or closed is signed in; for doctor. */
+export async function copilotSdkSignInProbe(keychain: boolean) {
+	const client = await import("./copilot/client.js");
+	return client.probeCopilotSignIn(keychain);
+}
+
+export type {
+	CopilotAccount,
+	CopilotListingBilling,
+	CopilotListingPromo,
+	CopilotListingTierPrices,
+	CopilotListingTokenPrices,
+	CopilotModelRow,
+} from "./copilot/client.js";
+
+/** The account the official Copilot runtime is signed in as; loads the optional SDK on first use. */
+export async function copilotSdkAccount() {
+	const client = await import("./copilot/client.js");
+	return client.copilotAccount();
+}
+
+/** Restart an idle Copilot runtime so it reads a login made after it started; a no-op before first use. */
+export async function copilotSdkRestartIdle(): Promise<void> {
+	const client = await import("./copilot/client.js");
+	client.restartIdleCopilotClient();
+}
+
+export type {
+	CopilotQuotaAccount,
+	CopilotQuotaEntry,
+	CopilotQuotaObservation,
+	CopilotQuotaObservationKind,
+	CopilotQuotaQuantityKind,
+	CopilotQuotaReadOptions,
+	CopilotQuotaReadResult,
+	CopilotQuotaRpcClient,
+	CopilotQuotaUnit,
+} from "./copilot/quota.js";
+
+/** Copilot account quota observations the live stream delivers, as they arrive; loads no SDK. */
+export { onCopilotQuotaObservations as onCopilotSdkQuotaObservations } from "./copilot/quota-feed.js";
+
+/** Read-only Copilot account quota poll; loads the optional SDK only when called. */
+export async function readCopilotSdkQuota(options?: CopilotQuotaReadOptions) {
+	const quota = await import("./copilot/quota.js");
+	return quota.readCopilotQuota(options);
+}
+
+/** Signed-in Copilot account identity for quota scope/detection; loads the optional SDK only when called. */
+export async function copilotSdkSignedInAccount(options?: CopilotQuotaReadOptions) {
+	const quota = await import("./copilot/quota.js");
+	return quota.readCopilotSignedInAccount(options);
+}
+
+export const stream = engineStream;
+
+/**
+ * The dispatcher a turn runs on. `createEngineAgent` hands this to pi-agent-core
+ * as its `streamFn`, so a caller that needs a request byte-identical to the one
+ * the next turn would send (the session pre-warm) sends it through here rather
+ * than through `stream`, whose bare-call path has to guess a thinking level.
+ */
+export const streamSimple = engineStreamSimple;
+
+/** The session's own turn path, whose cache retention and system split a round reading the turn's prefix must match. */
+export const mainStreamSimple = engineMainStreamSimple;
+
+export interface EngineTextCompletionInput extends SideCallAuth {
+	callTelemetry?: CallMessageObserver;
+	model: EngineModel;
+	systemPrompt: string;
+	userPrompt: string;
+	/** A conversation to send in place of `userPrompt`; text only, oldest first. */
+	messages?: ReadonlyArray<{ role: "user" | "assistant"; text: string }>;
+	/** Sampling temperature where the API accepts one; absent leaves the provider default. */
+	temperature?: number;
+	maxTokens: number;
+	thinkingLevel: ModelThinkingLevel;
+	signal: AbortSignal;
+	timeoutMs: number;
+	apiKey?: string;
+	headers?: Record<string, string>;
+	fetch?: typeof globalThis.fetch;
+	transport?: "auto" | "sse" | "websocket" | "websocket-cached";
+	/**
+	 * Runtime id to request reproducible sampling for (temperature 0, fixed
+	 * seed) where that runtime accepts it. A judgment call that flips on the
+	 * same input is a coin, not a decision.
+	 */
+	deterministicRuntimeId?: string;
+	/** Accounting only: observed before terminal errors throw, never carries response content. */
+	onUsage?: (observation: Pick<EngineTextCompletionResult, "usage" | "backend" | "failure">) => void;
+}
+
+export interface EngineTextCompletionResult {
+	failure?: CallFailureRecord;
+	text: string;
+	inputTokens: number;
+	outputTokens: number;
+	/**
+	 * The provider's full usage record for the call, so a caller that has to
+	 * account for the spend does not have to re-derive it from two token counts.
+	 */
+	usage: {
+		input: number;
+		output: number;
+		cacheRead: number;
+		cacheWrite: number;
+		cacheWrite1h?: number;
+		reasoning: number;
+		totalTokens: number;
+		costUsd: number;
+		unmeteredCalls?: number;
+	};
+	/** Backend prefill and prediction facts when the serving runtime reported them. */
+	backend: BackendCompletionTimings | null;
+}
+
+/** A prior assistant turn carries no usage of its own: the provider billed it when it was produced. */
+function conversationMessage(
+	model: EngineModel,
+	message: { role: "user" | "assistant"; text: string },
+): UserMessage | AssistantMessage {
+	const timestamp = Date.now();
+	if (message.role === "user") return { role: "user", content: message.text, timestamp };
+	return {
+		role: "assistant",
+		content: [{ type: "text", text: message.text }],
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: emptyUsage(),
+		stopReason: "stop",
+		timestamp,
+	};
+}
+
+/** Run one tool-free completion while keeping pi message types at the engine boundary. */
+export async function completeEngineText(input: EngineTextCompletionInput): Promise<EngineTextCompletionResult> {
+	return withOAuthRefresh(input, (auth) => completeEngineTextAttempt({ ...input, ...auth }));
+}
+
+async function completeEngineTextAttempt(input: EngineTextCompletionInput): Promise<EngineTextCompletionResult> {
+	input.callTelemetry?.startAttempt(requestedThinking(input.thinkingLevel));
+	const tracking = trackCallFetch(input.fetch);
+	const observe = (observation: Pick<EngineTextCompletionResult, "usage" | "backend" | "failure">): void => {
+		try {
+			input.onUsage?.(observation);
+		} catch {
+			// Accounting must not replace the completion outcome (#430).
+		}
+	};
+	const sessionId = sideCallCacheFamilyId({
+		api: input.model.api,
+		provider: input.model.provider,
+		modelId: input.model.id,
+		thinkingLevel: input.thinkingLevel,
+		systemPrompt: input.systemPrompt,
+	});
+	const response = await (async () => {
+		input.signal.throwIfAborted();
+		tracking.start(input.model.api, input.transport);
+		return completeEngineSimple(
+			input.model,
+			{
+				systemPrompt: input.systemPrompt,
+				messages: input.messages
+					? input.messages.map((message) => conversationMessage(input.model, message))
+					: [{ role: "user", content: input.userPrompt, timestamp: Date.now() }],
+			},
+			{
+				fetch: tracking.fetch,
+				...(sessionId === undefined ? {} : { sessionId }),
+				...(input.transport === undefined ? {} : { transport: input.transport }),
+				...(input.headers === undefined ? {} : { headers: input.headers }),
+				maxTokens: input.maxTokens,
+				signal: input.signal,
+				timeoutMs: input.timeoutMs,
+				...(input.thinkingLevel === "off" ? {} : { reasoning: input.thinkingLevel }),
+				...(input.apiKey === undefined ? {} : { apiKey: input.apiKey }),
+				...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+				...(input.deterministicRuntimeId === undefined
+					? {}
+					: deterministicSampling(input.model, input.deterministicRuntimeId)),
+			},
+		);
+	})().catch((error: unknown) => {
+		const failure = tracking.failure(error, input.signal.aborted);
+		input.callTelemetry?.settle({ stopReason: input.signal.aborted ? "aborted" : "error", failure });
+		observe({
+			failure,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				reasoning: 0,
+				totalTokens: 0,
+				costUsd: 0,
+				...(failure.invoked ? { unmeteredCalls: 1 } : {}),
+			},
+			backend: null,
+		});
+		rememberOAuthCallFailure(error, failure);
+		throw error;
+	});
+	const failed = response.stopReason === "error" || response.stopReason === "aborted";
+	const usage = response.usage ?? emptyUsage();
+	const failure = failed
+		? tracking.failure(
+				response,
+				response.stopReason === "aborted",
+				normalizeTokenUsage(usage as unknown as Record<string, unknown>).observed,
+			)
+		: undefined;
+	input.callTelemetry?.settle({ ...response, ...(failure ? { failure } : {}) });
+	const observation: Pick<EngineTextCompletionResult, "usage" | "backend" | "failure"> = {
+		...(failure === undefined ? {} : { failure }),
+		usage: {
+			input: usage.input,
+			output: usage.output,
+			cacheRead: usage.cacheRead,
+			cacheWrite: usage.cacheWrite,
+			...(usage.cacheWrite1h === undefined ? {} : { cacheWrite1h: usage.cacheWrite1h }),
+			reasoning: usage.reasoning ?? 0,
+			totalTokens: usage.totalTokens,
+			costUsd: usage.cost.total,
+			...(!normalizeTokenUsage(usage as unknown as Record<string, unknown>).observed && failure?.invoked !== false
+				? { unmeteredCalls: 1 }
+				: {}),
+		},
+		backend: response.backendTimings ?? null,
+	};
+	observe(observation);
+	if (failed) {
+		const error = new Error(response.errorMessage ?? `model completion ${response.stopReason}`);
+		rememberOAuthCallFailure(error, failure);
+		throw error;
+	}
+	return {
+		text: response.content
+			.filter((block): block is Extract<(typeof response.content)[number], { type: "text" }> => block.type === "text")
+			.map((block) => block.text)
+			.join(""),
+		inputTokens: usage.input,
+		outputTokens: usage.output,
+		...observation,
+	};
+}
+
+export interface EngineAi {
+	listModels<TProvider extends KnownProvider>(provider: TProvider): EngineModel[];
+	getModel<TProvider extends KnownProvider>(provider: TProvider, modelId: string): EngineModel | undefined;
+}
+
+export const ensurePiAiRegistered = registerEngineBuiltins;
+
+export function createEngineAi(): EngineAi {
+	ensurePiAiRegistered();
+	return {
+		listModels: (provider) => [...engineModels.getModels(provider)] as EngineModel[],
+		getModel: (provider, modelId) => {
+			try {
+				return engineModels.getModel(provider, modelId) as EngineModel | undefined;
+			} catch {
+				return undefined;
+			}
+		},
+	};
+}
+
+function emptyUsage(): Usage {
+	return {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+}
+
+export function getEngineSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[] {
+	return piGetSupportedThinkingLevels(model);
+}
+
+const sessionCleanupHooks = new Set<(sessionId?: string) => void>();
+
+/** Engine APIs that hold per-session state (the copilot-sdk conversations) release it with Pi's. */
+export function registerEngineSessionCleanup(hook: (sessionId?: string) => void): void {
+	sessionCleanupHooks.add(hook);
+}
+
+export function cleanupEngineSessionResources(sessionId?: string): void {
+	piCleanupSessionResources(sessionId);
+	for (const hook of sessionCleanupHooks) hook(sessionId);
+}
+
+export function isEngineContextOverflow(errorMessage: string): boolean {
+	return piIsContextOverflow(errorOnlyMessage(errorMessage));
+}
+
+/**
+ * The provider's own content filter stopped the response. pi-ai reports a
+ * `content_filter` finish reason as "Provider finish_reason: content_filter",
+ * and the completions adapter rewrites an in-stream `content_filter` error
+ * frame to `providerContentFilterMessage`, so both carry the code.
+ */
+const PROVIDER_CONTENT_FILTER_PATTERN = /\bcontent[_ ]filter\b/i;
+
+export function isProviderContentFilter(errorMessage: string): boolean {
+	return PROVIDER_CONTENT_FILTER_PATTERN.test(errorMessage);
+}
+
+/** How a provider's content filter refusal reads wherever an error message does. */
+export function providerContentFilterMessage(providerText: string): string {
+	const text = providerText.trim();
+	return `provider content filter refused the response (content_filter)${text.length > 0 ? `: ${text}` : ""}`;
+}
+
+// Mirrors pi-ai post-1.5.2 `utils/retry.ts` transport patterns; delete at the pi upgrade.
+const TRANSPORT_DROP_PATTERN =
+	/connection.?closed|(?<![a-z0-9_])(?:ECONNRESET|ECONNABORTED|ECONNREFUSED|ETIMEDOUT|EPIPE)(?![a-z0-9_])|connection reset by peer|websocket.?connection.?limit.?reached/i;
+
+/** Classify one provider error through pi-ai without leaking its message shape across the engine boundary. */
+export function isEngineRetryableAssistantError(errorMessage: string): boolean {
+	const message = errorOnlyMessage(errorMessage);
+	if (piIsRetryableAssistantError(message)) return true;
+	return (
+		TRANSPORT_DROP_PATTERN.test(errorMessage) && !piIsContextOverflow(message) && !isProviderContentFilter(errorMessage)
+	);
+}
+
+export {
+	type HarmonyServerParsing,
+	harmonyServerParsing,
+	isHarmonyTerminalFailure,
+} from "./harmony-failure.js";
+
+/** A thrown error or a worker stderr tail is only text, so classify it as a bare error turn. */
+function errorOnlyMessage(errorMessage: string): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [],
+		api: "pancode",
+		provider: "pancode",
+		model: "unknown",
+		usage: emptyUsage(),
+		stopReason: "error",
+		errorMessage,
+		timestamp: Date.now(),
+	};
+}
+
+export function validateEngineToolArguments(
+	tool: Tool,
+	toolCall: Omit<ToolCall, "arguments"> & { arguments: Record<string, unknown> },
+): unknown {
+	return piValidateToolArguments(tool, toolCall as ToolCall);
+}
+
+export function calculateEngineCost<TApi extends Api>(model: Model<TApi>, usage: Usage): Usage["cost"] {
+	return piCalculateCost(model, usage);
+}
+
+/**
+ * When `PANCODE_WORKER_FAUX=1`, register the pi-ai faux provider and queue a
+ * single deterministic assistant response. Used by the worker-entry diag so
+ * the worker subprocess can run end-to-end without provider credentials.
+ *
+ * Env vars (all optional except the gate):
+ *   PANCODE_WORKER_FAUX               must equal "1" to arm registration
+ *   PANCODE_WORKER_FAUX_MODEL         model id registered under the faux provider (default "faux-model")
+ *   PANCODE_WORKER_FAUX_TEXT          assistant response text (default "ok")
+ *   PANCODE_WORKER_FAUX_STOP_REASON   assistant stopReason (default "stop")
+ *   PANCODE_WORKER_FAUX_ERROR_MESSAGE optional assistant errorMessage
+ */
+export function registerFauxFromEnv(): EngineModel | null {
+	if (process.env.PANCODE_WORKER_FAUX !== "1") return null;
+	const modelId = process.env.PANCODE_WORKER_FAUX_MODEL ?? "faux-model";
+	const text = process.env.PANCODE_WORKER_FAUX_TEXT ?? "ok";
+	const stopReason = (process.env.PANCODE_WORKER_FAUX_STOP_REASON ?? "stop") as AssistantMessage["stopReason"];
+	const errorMessage = process.env.PANCODE_WORKER_FAUX_ERROR_MESSAGE;
+	const reg = registerEngineFauxProvider({
+		provider: "faux",
+		models: [{ id: modelId }],
+	});
+	const response = { stopReason } as {
+		stopReason: AssistantMessage["stopReason"];
+		errorMessage?: string;
+	};
+	if (errorMessage && errorMessage.length > 0) {
+		response.errorMessage = errorMessage;
+	}
+	reg.setResponses([fauxAssistantMessage(text, response)]);
+	return reg.getModel(modelId) as EngineModel;
+}
+
+/** Public Pi backoff primitive; PanCode owns the visible countdown and local-load floor. */
+export function engineRetryDelayMs(baseDelayMs: number, maxDelayMs: number, attempt: number): number {
+	return piRetryDelayMs({ baseDelayMs, maxAgentDelayMs: maxDelayMs }, attempt);
+}

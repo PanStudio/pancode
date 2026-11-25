@@ -1,0 +1,522 @@
+{
+	"schema": 1,
+	"canonicalRoot": "assets",
+	"assets": [
+		{
+			"id": "brand-banner-png",
+			"source": "assets/banner.png",
+			"sha256": "ef8429d4d3fbde241f93da3292fbb3d68c7580edd1b25f55342e069accab259b",
+			"provenance": "Rendered from assets/brand/banner.svg by site/render-brand.mjs",
+			"dimensions": {
+				"width": 2400,
+				"height": 750
+			},
+			"role": "Lossless brand banner master",
+			"channels": ["repository", "press"],
+			"altTextSeed": "PanCode: systems software for coding agents.",
+			"representation": "brand-artwork",
+			"copies": []
+		},
+		{
+			"id": "brand-banner-webp",
+			"source": "assets/banner.webp",
+			"sha256": "474f2a06e553e7f0896b93c1e3e55f5fdab511c715c432c6a4e04270f30752b2",
+			"provenance": "Optimized WebP companion to the tracked banner PNG.",
+			"dimensions": {
+				"width": 2400,
+				"height": 750
+			},
+			"role": "Web brand banner",
+			"channels": ["repository", "website"],
+			"altTextSeed": "PanCode: systems software for coding agents.",
+			"representation": "brand-artwork",
+			"copies": ["site/assets/banner.webp"]
+		},
+		{
+			"id": "gui-icon-192",
+			"source": "assets/pancode-app-icon-192.png",
+			"sha256": "0c58ad0ebeee7f3f916678627d2cb795c8b64d7b6d7177c22c286d0f6f0cc16b",
+			"provenance": "Canonical PanCode mark; square safe-area projection from site/export-brand.mjs, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
+			"dimensions": {
+				"width": 192,
+				"height": 192
+			},
+			"role": "GUI PWA application icon",
+			"channels": ["gui"],
+			"altTextSeed": "PanCode application icon.",
+			"representation": "brand-artwork",
+			"copies": ["apps/pancode-gui/client/public/icon-192.png"]
+		},
+		{
+			"id": "gui-icon-512",
+			"source": "assets/pancode-app-icon-512.png",
+			"sha256": "19cf57dc070e34882506195104ffb517222014c081cfb320e87df13d6134b1bd",
+			"provenance": "Canonical PanCode mark; square safe-area projection from site/export-brand.mjs, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
+			"dimensions": {
+				"width": 512,
+				"height": 512
+			},
+			"role": "GUI PWA application icon",
+			"channels": ["gui"],
+			"altTextSeed": "PanCode application icon.",
+			"representation": "brand-artwork",
+			"copies": ["apps/pancode-gui/client/public/icon-512.png"]
+		},
+		{
+			"id": "terminal-session-png",
+			"source": "assets/readme/pancode-session.png",
+			"sha256": "cdcf75cacaabad836220bc447a2d99dff31727a2cf49ee43655d011e43e14f1c",
+			"provenance": "Terminal session capture retained from the project README.",
+			"dimensions": {
+				"width": 2012,
+				"height": 2104
+			},
+			"role": "Full-resolution terminal product capture",
+			"channels": ["repository", "website"],
+			"altTextSeed": "A PanCode terminal session showing a failing numerical test, diagnosis, a two-line solver edit, and the passing test run.",
+			"representation": "real-product-capture",
+			"copies": ["site/assets/session.png"]
+		},
+		{
+			"id": "terminal-session-webp",
+			"source": "assets/readme/pancode-session.webp",
+			"sha256": "60b5985f63dcc4e6394a0927a50672e4b7f3153b134c5d1b0f95bdef73410fc7",
+			"provenance": "Optimized derivative of terminal-session-png.",
+			"dimensions": {
+				"width": 1006,
+				"height": 1052
+			},
+			"role": "Inline website terminal capture",
+			"channels": ["website"],
+			"altTextSeed": "A PanCode terminal session showing a failing numerical test, diagnosis, a two-line solver edit, and the passing test run.",
+			"representation": "real-product-capture",
+			"copies": ["site/assets/session.webp"]
+		},
+		{
+			"id": "tui-boot-png",
+			"source": "assets/screenshots/tui-boot.png",
+			"sha256": "c336984cc3fe16543db1f9f25045ec39893334a3c6716a4b2c8e27b9b1bf35fe",
+			"provenance": "Actual capture of PanCode 0.9.0-dev, packed from branch site/v080-sprint at 0d1f36358 ahead of the release and installed with npm install -g, on 2026-11-12. Recorded by site/capture/run.mjs (scenario still-tui-boot) in a fresh bubblewrap profile (home /home/researcher, host lab) with its own network namespace, interface.demo on and interface.outputDetail set to detailed. Fixed 120x44 terminal recorded as asciinema v2 and rendered by the site's player in IBM Plex Mono at 2x. Qwen 3.8 27B through a LiteLLM gateway, reached through the capture harness's alias proxy, so the model id shows no host name. Fresh launch in ~/projects/calibration-lab, no prompt sent. Welcome panel, composer and footer (rows 3-24).",
+			"dimensions": {
+				"width": 2268,
+				"height": 1308
+			},
+			"role": "Terminal at start with the workspace, its Git state, the selected model, and the composer",
+			"channels": ["repository", "website"],
+			"altTextSeed": "PanCode terminal at start with the workspace, its Git state, the selected model, and the composer",
+			"representation": "real-product-capture",
+			"copies": ["site/assets/tui-boot.png"],
+			"capturedVersion": "0.9.0-dev"
+		},
+		{
+			"id": "tui-boot-webp",
+			"source": "assets/screenshots/tui-boot.webp",
+			"sha256": "554167e5765e7b8ef258dee9096bc8069868e644348d9a92fcd6bcd66850c4b7",
+			"provenance": "Actual capture of PanCode 0.9.0-dev, packed from branch site/v080-sprint at 0d1f36358 ahead of the release and installed with npm install -g, on 2026-11-12. Recorded by site/capture/run.mjs (scenario still-tui-boot) in a fresh bubblewrap profile (home /home/researcher, host lab) with its own network namespace, interface.demo on and interface.outputDetail set to detailed. Fixed 120x44 terminal recorded as asciinema v2 and rendered by the site's player in IBM Plex Mono at 2x. Qwen 3.8 27B through a LiteLLM gateway, reached through the capture harness's alias proxy, so the model id shows no host name. Fresh launch in ~/projects/calibration-lab, no prompt sent. Welcome panel, composer and footer (rows 3-24).",
+			"dimensions": {
+				"width": 2268,
+				"height": 1308
+			},
+			"role": "Terminal at start with the workspace, its Git state, the selected model, and the composer",
+			"channels": ["repository", "website"],
+			"altTextSeed": "PanCode terminal at start with the workspace, its Git state, the selected model, and the composer",
+			"representation": "real-product-capture",
+			"copies": ["site/assets/tui-boot.webp"],
+			"capturedVersion": "0.9.0-dev"
+		},
+		{
+			"id": "gui-conversation-png",
+			"source": "assets/screenshots/gui-conversation.png",
+			"sha256": "299f7c8dfc91e2f95a9c7fcc23361beb6b0c6539f18e60219ea4bb5a226a6452",
+			"provenance": "Actual capture of the rebuilt PanCode v0.5.7 on 2026-09-26 (America/Chicago). Playwright/Chrome, real model-created temperature-calibration session in the repository. No fixture mode or invented conversation content.",
+			"dimensions": {
+				"width": 1600,
+				"height": 1000
+			},
+			"role": "Desktop conversation reporting seven passing calibration tests and a reference-temperature table",
+			"channels": ["repository"],
+			"altTextSeed": "PanCode desktop conversation reporting seven passing calibration tests and a reference-temperature table",
+			"representation": "real-product-capture",
+			"copies": [],
+			"capturedVersion": "0.5.7",
+			"capturedRevision": "6d8fbaea2"
+		},
+		{
+			"id": "gui-conversation-webp",
+			"source": "assets/screenshots/gui-conversation.webp",
+			"sha256": "be3fc73f31714366b95e3ebfd1b670526b4c6659f2961f209632f13f3c67380e",
+			"provenance": "Actual capture of the rebuilt PanCode v0.5.7 on 2026-09-26 (America/Chicago). Playwright/Chrome, real model-created temperature-calibration session in the repository. No fixture mode or invented conversation content.",
+			"dimensions": {
+				"width": 1600,
+				"height": 1000
+			},
+			"role": "Desktop conversation reporting seven passing calibration tests and a reference-temperature table",
+			"channels": ["repository"],
+			"altTextSeed": "PanCode desktop conversation reporting seven passing calibration tests and a reference-temperature table",
+			"representation": "real-product-capture",
+			"copies": [],
+			"capturedVersion": "0.5.7",
+			"capturedRevision": "6d8fbaea2"
+		},
+		{
+			"id": "gui-overview-png",
+			"source": "assets/screenshots/gui-overview.png",
+			"sha256": "ab8f07952441b64c5dfec6eaf781a4893fc68150e7b2eb57a752123b409045c8",
+			"provenance": "Actual capture of the rebuilt PanCode v0.5.7 on 2026-09-26 (America/Chicago). Playwright/Chrome, real model-created temperature-calibration session in the repository. Recent-project absolute path redacted in the capture. No fixture mode or invented conversation content.",
+			"dimensions": {
+				"width": 1600,
+				"height": 1000
+			},
+			"role": "Desktop overview with a temperature-calibration conversation ready to resume",
+			"channels": ["repository"],
+			"altTextSeed": "PanCode desktop overview with a temperature-calibration conversation ready to resume",
+			"representation": "real-product-capture",
+			"copies": [],
+			"capturedVersion": "0.5.7",
+			"capturedRevision": "6d8fbaea2"
+		},
+		{
+			"id": "gui-overview-webp",
+			"source": "assets/screenshots/gui-overview.webp",
+			"sha256": "68e1e421972f6fee1625e939f40b0aa7340fc4aaf0af9a9f9d00eb91884f85b3",
+			"provenance": "Actual capture of the rebuilt PanCode v0.5.7 on 2026-09-26 (America/Chicago). Playwright/Chrome, real model-created temperature-calibration session in the repository. Recent-project absolute path redacted in the capture. No fixture mode or invented conversation content.",
+			"dimensions": {
+				"width": 1600,
+				"height": 1000
+			},
+			"role": "Desktop overview with a temperature-calibration conversation ready to resume",
+			"channels": ["repository"],
+			"altTextSeed": "PanCode desktop overview with a temperature-calibration conversation ready to resume",
+			"representation": "real-product-capture",
+			"copies": [],
+			"capturedVersion": "0.5.7",
+			"capturedRevision": "6d8fbaea2"
+		},
+		{
+			"id": "gui-pancode-mark",
+			"source": "assets/pancode-mark-gui.webp",
+			"sha256": "a5036c8164c0d10ecedbfb83602519d9f0ea99cf0e12faf0016246c2730e6401",
+			"provenance": "Canonical PanCode mark exported from site/export-brand.mjs; original provenance and derived hashes in the GUI brand/provenance.json.",
+			"dimensions": {
+				"width": 128,
+				"height": 128
+			},
+			"role": "GUI canonical PanCode mark",
+			"channels": ["gui"],
+			"altTextSeed": "PanCode mark: the P of the wordmark in the brand green on a black tile.",
+			"representation": "brand-artwork",
+			"copies": ["apps/pancode-gui/client/public/pancode-logo.webp"]
+		},
+		{
+			"id": "gui-favicon",
+			"source": "assets/pancode-app-favicon.png",
+			"sha256": "22f154abe875fd4284ba2b9de0efd794360f0c2e7fa2620fe3961dd3bf2abfa4",
+			"provenance": "Canonical PanCode mark exported from site/export-brand.mjs; palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing; original provenance and derived hashes in the GUI brand/provenance.json.",
+			"dimensions": {
+				"width": 32,
+				"height": 32
+			},
+			"role": "GUI favicon",
+			"channels": ["gui"],
+			"altTextSeed": "PanCode mark: the P of the wordmark in the brand green on a black tile.",
+			"representation": "brand-artwork",
+			"copies": ["apps/pancode-gui/client/public/favicon.png"]
+		},
+		{
+			"id": "gui-trace-png",
+			"source": "assets/screenshots/gui-trace.png",
+			"provenance": "Actual Playwright/Chrome capture, 2026-09-26; isolated PanCode profile, authentic model-created calibration project and fresh verify/check test turn with eight passing tests. Contextual navigation preserves the conversation. No fixture mode.",
+			"dimensions": {
+				"width": 1600,
+				"height": 1000
+			},
+			"role": "Recorded session trace with actual token usage, unknown cost, and phase selection.",
+			"channels": ["repository"],
+			"altTextSeed": "Recorded session trace with actual token usage, unknown cost, and phase selection.",
+			"representation": "real-product-capture",
+			"capturedVersion": "0.5.7",
+			"capturedRevision": "6d8fbaea2",
+			"copies": [],
+			"sha256": "06ea91a4be0a2d079efbd9c36ca919b4e57fb852318aaaab702018d15b3ae4b6"
+		},
+		{
+			"id": "gui-trace-webp",
+			"source": "assets/screenshots/gui-trace.webp",
+			"provenance": "Actual Playwright/Chrome capture, 2026-09-26; isolated PanCode profile, authentic model-created calibration project and fresh verify/check test turn with eight passing tests. Contextual navigation preserves the conversation. No fixture mode.",
+			"dimensions": {
+				"width": 1600,
+				"height": 1000
+			},
+			"role": "Recorded session trace with actual token usage, unknown cost, and phase selection.",
+			"channels": ["repository"],
+			"altTextSeed": "Recorded session trace with actual token usage, unknown cost, and phase selection.",
+			"representation": "real-product-capture",
+			"capturedVersion": "0.5.7",
+			"capturedRevision": "6d8fbaea2",
+			"copies": [],
+			"sha256": "5d71e8012cfffbb33d28a7826b22342283187f76a192fa76e0dd662c35fa0bda"
+		},
+		{
+			"id": "gui-artifacts-png",
+			"source": "assets/screenshots/gui-artifacts.png",
+			"provenance": "Actual capture of the rebuilt PanCode v0.5.7 on 2026-09-26 (America/Chicago). Playwright/Chrome, real model-created temperature-calibration session in the repository. No fixture mode or invented conversation content.",
+			"dimensions": {
+				"width": 1600,
+				"height": 1000
+			},
+			"role": "Desktop conversation with a successful verify result in the Artifacts inspector",
+			"channels": ["repository"],
+			"altTextSeed": "PanCode desktop conversation with a successful verify result in the Artifacts inspector",
+			"representation": "real-product-capture",
+			"capturedVersion": "0.5.7",
+			"capturedRevision": "6d8fbaea2",
+			"copies": [],
+			"sha256": "617f51d0b2bb102c7b9f10d78243512e39a0b2651326f51f2704cd3f983b2705"
+		},
+		{
+			"id": "gui-artifacts-webp",
+			"source": "assets/screenshots/gui-artifacts.webp",
+			"provenance": "Actual capture of the rebuilt PanCode v0.5.7 on 2026-09-26 (America/Chicago). Playwright/Chrome, real model-created temperature-calibration session in the repository. No fixture mode or invented conversation content.",
+			"dimensions": {
+				"width": 1600,
+				"height": 1000
+			},
+			"role": "Desktop conversation with a successful verify result in the Artifacts inspector",
+			"channels": ["repository"],
+			"altTextSeed": "PanCode desktop conversation with a successful verify result in the Artifacts inspector",
+			"representation": "real-product-capture",
+			"capturedVersion": "0.5.7",
+			"capturedRevision": "6d8fbaea2",
+			"copies": [],
+			"sha256": "c2bbb9801aa933e142b83f74781faea1d27c7c6026a2ec8010f6e08de1492fee"
+		},
+		{
+			"id": "gui-overview-light-png",
+			"source": "assets/screenshots/gui-overview-light.png",
+			"sha256": "f915877becdecb4f1fb072fcc0d6c47e565678c92c12527f0b64ae4240af1e6d",
+			"dimensions": {
+				"width": 1600,
+				"height": 1000
+			},
+			"role": "Desktop overview with a temperature-calibration conversation ready to resume in the light theme",
+			"channels": ["repository"],
+			"altTextSeed": "PanCode desktop overview with a temperature-calibration conversation ready to resume in the light theme",
+			"representation": "real-product-capture",
+			"copies": [],
+			"capturedVersion": "0.5.7",
+			"provenance": "Actual capture of the rebuilt PanCode v0.5.7 on 2026-09-26 (America/Chicago). Playwright/Chrome, real model-created temperature-calibration session in the repository. Recent-project absolute path redacted in the capture. No fixture mode or invented conversation content."
+		},
+		{
+			"id": "gui-overview-light-webp",
+			"source": "assets/screenshots/gui-overview-light.webp",
+			"sha256": "58f6fc4dbfad23cc761f769c3f0a540f9fe604579c5b5f354322d8b1e2be356d",
+			"dimensions": {
+				"width": 1600,
+				"height": 1000
+			},
+			"role": "Desktop overview with a temperature-calibration conversation ready to resume in the light theme",
+			"channels": ["repository"],
+			"altTextSeed": "PanCode desktop overview with a temperature-calibration conversation ready to resume in the light theme",
+			"representation": "real-product-capture",
+			"copies": [],
+			"capturedVersion": "0.5.7",
+			"provenance": "Actual capture of the rebuilt PanCode v0.5.7 on 2026-09-26 (America/Chicago). Playwright/Chrome, real model-created temperature-calibration session in the repository. Recent-project absolute path redacted in the capture. No fixture mode or invented conversation content."
+		},
+		{
+			"id": "gui-conversation-light-png",
+			"source": "assets/screenshots/gui-conversation-light.png",
+			"channels": ["repository"],
+			"representation": "real-product-capture",
+			"copies": [],
+			"role": "Desktop conversation reporting seven passing calibration tests and a reference-temperature table in the light theme",
+			"altTextSeed": "PanCode desktop conversation reporting seven passing calibration tests and a reference-temperature table in the light theme",
+			"capturedVersion": "0.5.7",
+			"dimensions": {
+				"width": 1600,
+				"height": 1000
+			},
+			"sha256": "2d298350813ebfbd0b8973855aac976c29a60ee21f2e711a102e2009b38a79d9",
+			"provenance": "Actual capture of the rebuilt PanCode v0.5.7 on 2026-09-26 (America/Chicago). Playwright/Chrome, real model-created temperature-calibration session in the repository. No fixture mode or invented conversation content."
+		},
+		{
+			"id": "gui-conversation-light-webp",
+			"source": "assets/screenshots/gui-conversation-light.webp",
+			"channels": ["repository"],
+			"representation": "real-product-capture",
+			"copies": [],
+			"role": "Desktop conversation reporting seven passing calibration tests and a reference-temperature table in the light theme",
+			"altTextSeed": "PanCode desktop conversation reporting seven passing calibration tests and a reference-temperature table in the light theme",
+			"capturedVersion": "0.5.7",
+			"dimensions": {
+				"width": 1600,
+				"height": 1000
+			},
+			"sha256": "7f825ea4d6c4dae7b1d4a8be594fc86dd39161a7793ab9ad0d7c603860964499",
+			"provenance": "Actual capture of the rebuilt PanCode v0.5.7 on 2026-09-26 (America/Chicago). Playwright/Chrome, real model-created temperature-calibration session in the repository. No fixture mode or invented conversation content."
+		},
+		{
+			"id": "gui-artifacts-light-png",
+			"source": "assets/screenshots/gui-artifacts-light.png",
+			"channels": ["repository", "website"],
+			"representation": "real-product-capture",
+			"copies": [],
+			"role": "Desktop conversation with a successful verify result in the Artifacts inspector in the light theme",
+			"altTextSeed": "PanCode desktop conversation with a successful verify result in the Artifacts inspector in the light theme",
+			"capturedVersion": "0.5.7",
+			"dimensions": {
+				"width": 1600,
+				"height": 1000
+			},
+			"sha256": "35cb7cbaf56140e892a83a68470fcb083119b20e256179ba90a4be20fbb0954d",
+			"provenance": "Actual capture of the rebuilt PanCode v0.5.7 on 2026-09-26 (America/Chicago). Playwright/Chrome, real model-created temperature-calibration session in the repository. No fixture mode or invented conversation content."
+		},
+		{
+			"id": "gui-artifacts-light-webp",
+			"source": "assets/screenshots/gui-artifacts-light.webp",
+			"channels": ["repository", "website"],
+			"representation": "real-product-capture",
+			"copies": [],
+			"role": "Desktop conversation with a successful verify result in the Artifacts inspector in the light theme",
+			"altTextSeed": "PanCode desktop conversation with a successful verify result in the Artifacts inspector in the light theme",
+			"capturedVersion": "0.5.7",
+			"dimensions": {
+				"width": 1600,
+				"height": 1000
+			},
+			"sha256": "e73376f0911d3ecf49fba45bf380f1e9116567821ef1891ce9ac74919d537611",
+			"provenance": "Actual capture of the rebuilt PanCode v0.5.7 on 2026-09-26 (America/Chicago). Playwright/Chrome, real model-created temperature-calibration session in the repository. No fixture mode or invented conversation content."
+		},
+		{
+			"id": "animation-fix-a-test",
+			"source": "assets/animations/anim-fix-a-test.gif",
+			"sha256": "c1559a98f8989d7942bdad595103b428ea39da72cd9e1d283fb2f507e58443db",
+			"provenance": "Rendered by agg from site/assets/casts/anim-fix-a-test.cast, recorded from PanCode 0.9.0-dev by site/capture/animation.mjs.",
+			"dimensions": {
+				"width": 897,
+				"height": 694
+			},
+			"role": "Fix a test",
+			"channels": ["repository", "readme"],
+			"altTextSeed": "Fullscreen terminal recording of PanCode on gpt-6-luna: the question why the absolute-zero test fails is typed into the composer and sent with a request to fix it and run the test check; Panos searches the project, finds kelvinToCelsius, edits one line of temperature.mjs, runs the test check with exit 0, and explains that kelvin <= 0 rejected exactly 0 K and that all 7 tests passed, in 9.1s.",
+			"representation": "captured-recording",
+			"copies": []
+		},
+		{
+			"id": "animation-model-switch",
+			"source": "assets/animations/anim-model-switch.gif",
+			"sha256": "afc297e451332bed99fe1998ea3546bdf19a85b2b681acd4dc203c686f84db54",
+			"provenance": "Rendered by agg from site/assets/casts/anim-model-switch.cast, recorded from PanCode 0.9.0-dev by site/capture/animation.mjs.",
+			"dimensions": {
+				"width": 897,
+				"height": 694
+			},
+			"role": "Switch models",
+			"channels": ["repository", "readme"],
+			"altTextSeed": "Fullscreen terminal recording of the /model picker in PanCode on GitHub Copilot: the session starts on gpt-6-luna, the picker lists 26 models on the copilot target, and claude-sonnet-5.5 and gemini-4-argon are chosen in turn by typing part of the name, each changing the status bar's model and context size, before the session returns to gpt-6-luna.",
+			"representation": "captured-recording",
+			"copies": []
+		}
+	],
+	"socialExports": [
+		{
+			"id": "social-link-dark",
+			"template": "site/cards/link.html",
+			"output": "site/assets/social-card.png",
+			"sourceSha256": "cfcbffc72a38acba66569fae0825ec4658891fec2d16826ee1735e943f3ea872",
+			"sha256": "0ddcfa9960b2e372015d67bef645f6a713558dd96a779dc7c91fe835eb675b2b",
+			"sources": [
+				"site/cards/link.html",
+				"site/css/cards.css",
+				"site/css/brand.css",
+				"site/assets/fonts/instrument-sans.woff2",
+				"site/assets/fonts/plex-400.woff2",
+				"site/assets/fonts/plex-500.woff2",
+				"site/assets/brand/pancode-mark.webp",
+				"site/assets/fonts/schibsted-grotesk.woff2"
+			],
+			"dimensions": {
+				"width": 1200,
+				"height": 630
+			},
+			"role": "Dark landscape social preview",
+			"channels": ["open-graph", "x", "linkedin", "release"],
+			"altTextSeed": "PanCode: Good science. Better software. Systems software for coding agents, for desktop and terminal, with the model you choose.",
+			"representation": "illustrative"
+		},
+		{
+			"id": "social-link-light",
+			"template": "site/cards/link-light.html",
+			"output": "site/assets/social-card-light.png",
+			"sourceSha256": "9179beda8b8bab5de19aeebb1247a7317479c66c71fd6815d37704c0ca376d3f",
+			"sha256": "ab31b181add759836ef8dc0b685fa4d719511a297cdd4862267cb0386d93ad94",
+			"sources": [
+				"site/cards/link-light.html",
+				"site/css/cards.css",
+				"site/css/brand.css",
+				"site/assets/fonts/instrument-sans.woff2",
+				"site/assets/fonts/plex-400.woff2",
+				"site/assets/fonts/plex-500.woff2",
+				"site/assets/brand/pancode-mark.webp",
+				"site/assets/fonts/schibsted-grotesk.woff2"
+			],
+			"dimensions": {
+				"width": 1200,
+				"height": 630
+			},
+			"role": "Light landscape social preview",
+			"channels": ["open-graph", "x", "linkedin", "release"],
+			"altTextSeed": "PanCode: Good science. Better software. Systems software for coding agents, for desktop and terminal, with the model you choose.",
+			"representation": "illustrative"
+		},
+		{
+			"id": "social-square-dark",
+			"template": "site/cards/square.html",
+			"output": "site/assets/social-square.png",
+			"sourceSha256": "ee3cf6e0970211ef68032beb35d14c08c48227e9959f79eab64a0c9704f1cc41",
+			"sha256": "da27393f82d13c9439965402cc99513f52d61bb7de825fda54ade6dd594f14da",
+			"sources": [
+				"site/cards/square.html",
+				"site/css/cards.css",
+				"site/css/brand.css",
+				"site/assets/fonts/instrument-sans.woff2",
+				"site/assets/fonts/plex-400.woff2",
+				"site/assets/fonts/plex-500.woff2",
+				"site/assets/brand/pancode-mark.webp",
+				"site/assets/fonts/schibsted-grotesk.woff2"
+			],
+			"dimensions": {
+				"width": 1080,
+				"height": 1080
+			},
+			"role": "Dark square social preview",
+			"channels": ["mastodon", "bluesky", "instagram", "release"],
+			"altTextSeed": "PanCode: Good science. Better software. Systems software for coding agents, for desktop and terminal, with the model you choose.",
+			"representation": "illustrative"
+		},
+		{
+			"id": "social-square-light",
+			"template": "site/cards/square-light.html",
+			"output": "site/assets/social-square-light.png",
+			"sourceSha256": "00fd4b5068b0f9bff73238db3e76e8a2e981f30c310622f25bc07618c35ed648",
+			"sha256": "6678427d66e9d0deafe9346d1ceb6fa9ba3c135c182f18c2ba1e11a994cfba1b",
+			"sources": [
+				"site/cards/square-light.html",
+				"site/css/cards.css",
+				"site/css/brand.css",
+				"site/assets/fonts/instrument-sans.woff2",
+				"site/assets/fonts/plex-400.woff2",
+				"site/assets/fonts/plex-500.woff2",
+				"site/assets/brand/pancode-mark.webp",
+				"site/assets/fonts/schibsted-grotesk.woff2"
+			],
+			"dimensions": {
+				"width": 1080,
+				"height": 1080
+			},
+			"role": "Light square social preview",
+			"channels": ["mastodon", "bluesky", "instagram", "release"],
+			"altTextSeed": "PanCode: Good science. Better software. Systems software for coding agents, for desktop and terminal, with the model you choose.",
+			"representation": "illustrative"
+		}
+	]
+}

@@ -1,0 +1,224 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { ModelRunInfo, ModelTier } from "../../core/model-tier.js";
+import type { OAuthLoginCallbacks } from "../../engine/oauth.js";
+import type { AuthOperationOptions } from "../../engine/types.js";
+import type { AuthCredential, AuthResolution, AuthStatus } from "./auth/index.js";
+import type { CapabilityFlags } from "./types/capability-flags.js";
+import type { KnowledgeBase } from "./types/knowledge-base.js";
+import type { ProbeModelStatus, ProbeSurfaceMap, RuntimeDescriptor } from "./types/runtime-descriptor.js";
+import type { TargetDescriptor } from "./types/target-descriptor.js";
+
+/**
+ * The layer that answered a target's context window, most authoritative first.
+ * `runtime-default` is the absence case: nothing declared a window and the
+ * runtime descriptor's placeholder stands in for one.
+ */
+export type ContextWindowProvenance = "configured" | "discovered" | "catalog" | "runtime-default";
+
+export interface TargetHealth {
+	status: "healthy" | "degraded" | "unknown" | "down";
+	lastCheckAt: string | null;
+	lastError: string | null;
+	latencyMs: number | null;
+	/**
+	 * The last probe reached the server and it turned the stored credential
+	 * down (HTTP 401 or 403). A reachability failure never sets it, so a
+	 * caller can tell "replace the key" apart from "fix the address".
+	 */
+	credentialRefused?: boolean;
+}
+
+export interface TargetStatus {
+	target: TargetDescriptor;
+	/**
+	 * Null when `target.runtime` does not resolve to a registered descriptor.
+	 * Callers treat null as "unknown runtime"; the target is still listed so
+	 * misconfigurations are visible in the TUI.
+	 */
+	runtime: RuntimeDescriptor | null;
+	available: boolean;
+	reason: string;
+	health: TargetHealth;
+	/** Merged: defaults + knowledge base + probe + user override. */
+	capabilities: CapabilityFlags;
+	/**
+	 * Where `capabilities.contextWindow` came from. `runtime-default` means no
+	 * probe, catalog, knowledge base, or user setting answered, so the number is
+	 * the runtime descriptor's placeholder and must be presented as a guess
+	 * rather than a discovered capability. Absent only on statuses built before
+	 * a runtime resolved.
+	 */
+	contextWindowProvenance?: ContextWindowProvenance;
+	/** Probe-only capabilities preserved separately for per-model synthesis in the UI. */
+	probeCapabilities?: Partial<CapabilityFlags> | null;
+	/** Probe-only capabilities keyed by wire model id for selected-model resolution. */
+	probeModelCapabilities?: Readonly<Record<string, Partial<CapabilityFlags>>> | null;
+	/** Wire model id the probe-only capabilities were read from, when known. */
+	probeModelId?: string | null;
+	/** Diagnostic notes from the last probe (e.g. wire-model mismatch warnings). */
+	probeNotes?: ReadonlyArray<string>;
+	/** Inference and management surfaces selected by the last successful probe. */
+	probeSurfaces?: Readonly<ProbeSurfaceMap>;
+	/** Ids returned by the last successful probeModels() call. */
+	discoveredModels: ReadonlyArray<string>;
+	/** Human-readable live/cache labels keyed by exact model slug. */
+	discoveredModelLabels?: Readonly<Record<string, string>>;
+	discoveredModelCreatedAt?: Readonly<Record<string, string>>;
+	/**
+	 * Source for `discoveredModels`. `probe` means the target just returned a
+	 * live catalog, `cache` is a previously probed catalog preserved across a
+	 * config-only refresh, and `runtime` is static descriptor knowledge.
+	 */
+	discoveredModelsSource?: "probe" | "cache" | "runtime" | "none";
+	/** Probe-only per-model load state keyed by wire model id. */
+	discoveredModelStates?: Readonly<Record<string, ProbeModelStatus>> | null;
+	/**
+	 * Result of the last opt-in live tool-call probe (`targets --probe --tools`).
+	 * Held in memory with the rest of the status; never persisted.
+	 */
+	toolProbe?: ToolCallVerification;
+}
+
+/**
+ * A live streamed tool-call check for one (target, model). `verified` means
+ * the model streamed a schema-valid call through the engine path a turn uses;
+ * `failed` carries the reason; `skipped` means the probe could not run.
+ */
+export interface ToolCallVerification {
+	status: "verified" | "failed" | "skipped";
+	modelId: string | null;
+	streamed: boolean;
+	/** Response frames the server sent; null when the transport was not observable. */
+	frames: number | null;
+	toolCall: boolean;
+	argumentsValid: boolean;
+	latencyMs: number | null;
+	/** Epoch ms when the probe finished. */
+	checkedAt: number;
+	error?: string;
+	/** Server-side Harmony parsing seen on a gpt-oss model: none, reasoning-only or full (#435). */
+	harmony?: "none" | "reasoning-only" | "full" | "unknown";
+}
+
+export interface LiveProbeOptions {
+	/** Explicit generating reasoning qualification. Omitted/false keeps discovery passive. */
+	reasoning?: boolean;
+	/** Opt-in streamed tool-call probe. Generates tokens and can load a cold model. */
+	tools?: boolean;
+	/**
+	 * Generation timeout for the tool probe in ms. Defaults to 120 s so a cold
+	 * load of a large local model fits; the HTTP probe keeps its own timeout.
+	 */
+	toolsTimeoutMs?: number;
+	signal?: AbortSignal;
+	/** List models from the provider itself, never from a runtime's cached listing (row 384). */
+	fresh?: boolean;
+}
+
+/** How long one target's metadata probe may take; a caller that must not wait longer bounds its wait by this. */
+export const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
+
+export interface ProvidersContract {
+	list(): ReadonlyArray<TargetStatus>;
+
+	/** Null when the id is not in settings.targets. */
+	getTarget(id: string): TargetDescriptor | null;
+
+	/**
+	 * Runtime descriptor by id. Null when the runtime is not registered (neither
+	 * built-in nor loaded from ~/.config/pancode/runtimes/ nor an npm plugin).
+	 */
+	getRuntime(id: string): RuntimeDescriptor | null;
+
+	/** Passive live metadata sweep. `reasoning: true` / `tools: true` explicitly enable generation. */
+	probeAllLive(options?: LiveProbeOptions): Promise<void>;
+
+	/**
+	 * Probe a single target live. Null when the id is not in settings.targets.
+	 * `reasoning: true` opts into generating reasoning qualification; otherwise
+	 * only passive liveness and model-catalog checks run. `tools: true`
+	 * adds the streamed tool-call probe against the chat or default model.
+	 * Cancellation covers auth and metadata; a cancelled probe does not publish health.
+	 */
+	probeTarget(id: string, options?: LiveProbeOptions): Promise<TargetStatus | null>;
+
+	/**
+	 * Cached reasoning detection result for a given (target, wire model id).
+	 * Returns true for positive observed reasoning, null when unqualified.
+	 * Surfaces local-server reasoning capability that is per loaded model and
+	 * cannot be inferred from runtime defaults alone.
+	 */
+	getDetectedReasoning(targetId: string, modelId: string): boolean | null;
+
+	/**
+	 * Return cached positive reasoning evidence unless `active: true` explicitly
+	 * authorizes generating qualification. Only positive observations are cached;
+	 * errors and responses without reasoning are inconclusive, never false.
+	 */
+	probeReasoningForModel(
+		targetId: string,
+		modelId: string,
+		options?: { active?: boolean; signal?: AbortSignal },
+	): Promise<boolean | null>;
+
+	/**
+	 * Shared auth access for both API keys and OAuth credentials. Provider ids
+	 * default to runtime ids, with target-level overrides through
+	 * `auth.apiKeyRef` / `auth.oauthProfile`.
+	 */
+	auth: {
+		statusForTarget(target: TargetDescriptor, runtime: RuntimeDescriptor): AuthStatus;
+		resolveForTarget(
+			target: TargetDescriptor,
+			runtime: RuntimeDescriptor,
+			options?: AuthOperationOptions & { rejectedApiKey?: string },
+		): Promise<AuthResolution>;
+		getStored(providerId: string): AuthCredential | null;
+		listStored(): ReadonlyArray<{ providerId: string; type: AuthCredential["type"]; updatedAt: string }>;
+		setApiKey(providerId: string, key: string): void;
+		remove(providerId: string): void;
+		login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void>;
+		logout(providerId: string): void;
+		/**
+		 * Why the credentials store could not be fully read, or why the last write
+		 * to it did not land, or null when it is clean.
+		 *
+		 * `setApiKey` and `login` throw only for the damaged-store refusal. Every
+		 * other write failure is recorded here instead, and the in-memory store
+		 * still hands the credential back, so a caller that reports success
+		 * without asking claims a credential the file does not hold. Anything
+		 * that writes must consult this immediately afterwards.
+		 */
+		damageReason(): string | null;
+		getOAuthProviders(): ReadonlyArray<{ id: string; name: string }>;
+		/**
+		 * Install a process-lifetime API key override for the provider behind
+		 * `target`. Used by the top-level `--api-key <key>` startup flag so a
+		 * one-shot run can authenticate without persisting credentials.
+		 */
+		setRuntimeOverrideForTarget(target: TargetDescriptor, runtime: RuntimeDescriptor, key: string): void;
+		clearRuntimeOverrideForTarget(target: TargetDescriptor, runtime: RuntimeDescriptor): void;
+	};
+
+	/**
+	 * Model knowledge base used by chat-loop and overlays to synthesize pi-ai
+	 * `Model<Api>` instances via `RuntimeDescriptor.synthesizeModel(target,
+	 * wireModelId, kb)`. Null when the bundled YAMLs are unreadable at boot.
+	 */
+	knowledgeBase: KnowledgeBase | null;
+
+	/**
+	 * The operator's `models.<id>.tier` for a wire model id, or null when the
+	 * settings leave it to the heuristic. Absent on a contract built without
+	 * settings, which reads the same as null (WTF-P 0.8.3 C1).
+	 */
+	modelTierOverride?(wireModelId: string): ModelTier | null;
+
+	/**
+	 * The session's chat model as its effective settings name it, or null when
+	 * no chat route resolves. Prompt templates pick their variant by its tier,
+	 * and prompt_submit hooks, which run before a turn exists, receive it.
+	 */
+	chatModel?(): ModelRunInfo | null;
+}

@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { DomainContract } from "../../core/domain-loader.js";
+import type { PendingSkillRequest } from "../../core/skill-activation.js";
+import type { ResourceDiagnostic } from "./collision.js";
+import type { PromptTemplate, PromptTemplateExpansion, PromptTemplateExpansionOptions } from "./prompts/loader.js";
+import type { Skill, SkillExpansionOptions } from "./skills/loader.js";
+
+export interface ResourceList<T> {
+	items: T[];
+	diagnostics: ResourceDiagnostic[];
+}
+
+export interface ResourcesContract extends DomainContract {
+	skills(cwd?: string): ResourceList<Skill>;
+	parsePendingSkillRequests(
+		text: string,
+		cwd?: string,
+		options?: SkillExpansionOptions,
+	): { text: string; pendingSkillRequests: PendingSkillRequest[] };
+	prompts(cwd?: string): ResourceList<PromptTemplate>;
+	/**
+	 * Prompt templates listed from the committed plugin snapshot without
+	 * re-verifying plugin trees, so a keystroke does not pay a plugin walk. For
+	 * display only: a template revoked or drifted since the last reload may be
+	 * listed, and expandPromptTemplate still verifies before anything runs.
+	 */
+	promptsForDisplay(cwd?: string): ResourceList<PromptTemplate>;
+	/**
+	 * Skills read from the committed plugin snapshot without re-verifying each
+	 * tree. For an operator's listing or a name comparison only: a skill revoked
+	 * or drifted since the last reload may be listed with text re-read from its
+	 * current files, so nothing bound for a model may read from here.
+	 */
+	skillsForDisplay(cwd?: string): ResourceList<Skill>;
+	/**
+	 * The given skills whose owning plugin tree still matches its recorded digest
+	 * and the digest the skill was read under, verifying only those trees. Skills
+	 * no plugin owns pass through. For advice about to reach a model from a list
+	 * that {@link skills} produced earlier.
+	 */
+	skillsStillVerified(skills: ReadonlyArray<Skill>, cwd?: string): Skill[];
+	/**
+	 * Without `options.tier` a template's variant follows the session's chat
+	 * model, as the providers contract resolves it.
+	 */
+	expandPromptTemplate(text: string, cwd?: string, options?: PromptTemplateExpansionOptions): PromptTemplateExpansion;
+	reload(): Promise<void>;
+}

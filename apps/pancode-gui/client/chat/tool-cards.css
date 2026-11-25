@@ -1,0 +1,567 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* Tool cards and the diff grid. Every value comes from client/design/tokens.css;
+   a raw hex here is a bug, because a raw hex cannot follow the theme. No new
+   tone is introduced, so scripts/check-contrast.mjs has nothing further to
+   measure. */
+
+/* One call is one line. The row is a native disclosure, so the summary is keyboard reachable and the
+   browser owns the open state's semantics; the body holds the evidence. */
+.tool-card {
+	min-width: 0;
+}
+.tool-card__head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--space-2);
+	min-width: 0;
+	min-height: 34px;
+	padding: 7px var(--space-2);
+	margin-inline: calc(-1 * var(--space-2));
+	border-radius: var(--radius-sm);
+	font-size: var(--text-meta);
+	line-height: var(--leading-tight);
+	cursor: pointer;
+	list-style: none;
+}
+.tool-card__head::-webkit-details-marker {
+	display: none;
+}
+.tool-card__head:hover {
+	background: var(--well);
+}
+.tool-card__head::after {
+	content: "›";
+	flex: none;
+	width: 1ch;
+	color: var(--ink-muted);
+	font-family: var(--font-mono);
+	text-align: center;
+	transition: transform var(--motion-fast) var(--ease-standard);
+}
+.tool-card[open] > .tool-card__head::after {
+	transform: rotate(90deg);
+}
+.tool-card__glyph {
+	flex: none;
+	width: 1.25em;
+	text-align: center;
+	font-family: var(--font-mono);
+	color: var(--ink-muted);
+}
+.tool-card[data-tone="success"] .tool-card__glyph {
+	color: var(--status-success-fg);
+}
+.tool-card[data-tone="running"] .tool-card__glyph {
+	color: var(--status-running-fg);
+}
+.tool-card[data-tone="warn"] .tool-card__glyph {
+	color: var(--status-warn-fg);
+}
+.tool-card[data-tone="fail"] .tool-card__glyph {
+	color: var(--status-fail-fg);
+}
+.tool-card__verb {
+	flex: none;
+	font-weight: 600;
+	color: var(--ink);
+}
+.tool-card__headline {
+	flex: 1 1 0;
+	min-width: 0;
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.tool-card__trail {
+	display: contents;
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+	font-variant-numeric: tabular-nums;
+	color: var(--ink-muted);
+	white-space: nowrap;
+}
+.tool-card__trail > * {
+	flex: none;
+}
+.tool-card__trail > .tool-card__digest {
+	flex: 1 1 0;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+/* The engine's span for a settled call. A Detailed transcript shows it; see chat-turn.css. */
+.tool-card__took {
+	display: none;
+}
+.tool-card__digest[data-tone="fail"] {
+	color: var(--status-fail-fg);
+}
+.tool-card__state {
+	font-family: var(--font-ui);
+	font-weight: 600;
+}
+.tool-card[data-tone="running"] .tool-card__state {
+	color: var(--status-running-fg);
+}
+.tool-card[data-tone="warn"] .tool-card__state {
+	color: var(--status-warn-fg);
+}
+.tool-card[data-tone="fail"] .tool-card__state {
+	color: var(--status-fail-fg);
+}
+.tool-card__agent {
+	border: 1px dashed var(--line-strong);
+	border-radius: var(--radius-sm);
+	padding: 0 var(--space-2);
+	font-family: var(--font-ui);
+}
+.tool-card__body {
+	display: grid;
+	gap: var(--space-2);
+	min-width: 0;
+	padding: var(--space-1) 0 var(--space-3) calc(1.25em + var(--space-2));
+}
+.tool-card__body > * {
+	min-width: 0;
+}
+
+.tool-card__facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-1) var(--space-3);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: var(--text-exact);
+}
+.tool-card__fact {
+	display: inline-flex;
+	gap: var(--space-1);
+	align-items: baseline;
+}
+.tool-card__fact-label {
+	color: var(--ink-muted);
+	text-transform: lowercase;
+}
+.tool-card__fact-value {
+	font-family: var(--font-mono);
+	color: var(--ink);
+}
+
+.tool-card__note {
+	margin: 0;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	border-left: 2px solid var(--status-warn-line);
+	padding-left: var(--space-2);
+}
+.tool-card__empty {
+	margin: 0;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+
+.tool-card__locations {
+	margin: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	font-size: var(--text-exact);
+}
+.tool-card__images {
+	display: grid;
+	gap: var(--space-2);
+	min-width: 0;
+}
+.tool-card__image {
+	display: block;
+	max-width: 100%;
+	height: auto;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+}
+.tool-card__location {
+	display: inline;
+	padding: 0;
+	font-family: var(--font-mono);
+	color: var(--ink-muted);
+}
+.tool-card__more {
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+}
+
+/* ---- output pane. One node across the running/settled boundary: only the
+   attributes change when the terminal frame lands, so nothing reflows. ---- */
+.tool-card__output {
+	display: grid;
+	gap: var(--space-1);
+}
+.tool-card__output-head {
+	display: flex;
+	gap: var(--space-2);
+	align-items: baseline;
+	font-size: var(--text-exact);
+}
+.tool-card__output-label {
+	color: var(--ink-muted);
+}
+.tool-card__output[data-running="yes"] .tool-card__output-label {
+	color: var(--status-running-fg);
+}
+.tool-card__output-cap {
+	color: var(--status-warn-fg);
+}
+.tool-card__output-head .code-block__copy {
+	margin-left: auto;
+	border-color: var(--line-strong);
+	background: var(--surface);
+	color: var(--ink);
+}
+.tool-card__output-head .code-block__copy.is-copied {
+	color: var(--status-success-fg);
+}
+.tool-card__output-head .code-block__copy.is-failed {
+	color: var(--status-fail-fg);
+}
+.tool-card__pre {
+	margin: 0;
+	padding: var(--space-2);
+	background: var(--code-surface);
+	color: var(--code-ink);
+	border: 1px solid var(--code-line);
+	border-radius: var(--radius-sm);
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+	line-height: var(--leading-body);
+	/* A fixed floor keeps the box from collapsing between the last progress
+	   frame and the final result, which is what a flash looks like. */
+	min-height: 3.2em;
+	max-height: 26em;
+	overflow: auto;
+	white-space: pre;
+	tab-size: 2;
+}
+.tool-card__output[data-expanded] .tool-card__pre {
+	max-height: none;
+}
+.tool-card__fold {
+	justify-self: start;
+	min-height: 28px;
+	padding: 2px var(--space-2);
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink-muted);
+	font: var(--text-meta) / 1.4 var(--font-ui);
+}
+.tool-card__fold:hover {
+	color: var(--ink);
+	background: var(--surface-sunken);
+}
+.tool-card__output-head .tool-card__tree-toggle {
+	margin: 0 0 0 auto;
+}
+.tool-card__output-head .tool-card__tree-toggle[aria-pressed="true"] {
+	color: var(--ink);
+	background: var(--surface-sunken);
+}
+.tool-card__output-head .tool-card__tree-toggle + .code-block__copy {
+	margin-left: 0;
+}
+.tool-card__tree {
+	border: 1px solid var(--code-line);
+	border-radius: var(--radius-sm);
+	background: var(--code-surface);
+}
+.tool-card__output[data-source="none"] .tool-card__pre {
+	font-style: italic;
+}
+
+.tool-card__result > summary {
+	width: fit-content;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	cursor: pointer;
+}
+.tool-card__result > summary:hover {
+	color: var(--ink);
+}
+.tool-card__result .tool-card__output {
+	margin-top: var(--space-2);
+}
+
+.tool-card__matches {
+	display: grid;
+	gap: var(--space-1);
+}
+.tool-card__match-file > summary code {
+	display: inline;
+	padding: 0;
+}
+.tool-card__match-file > summary {
+	display: flex;
+	gap: var(--space-2);
+	align-items: baseline;
+	font-size: var(--text-exact);
+	cursor: pointer;
+}
+.tool-card__match {
+	display: grid;
+	grid-template-columns: 4ch 1fr;
+	gap: var(--space-2);
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+	overflow-x: auto;
+}
+.tool-card__match-line {
+	/* --ink-subtle clears 3:1 but not 4.5:1 in light, so a 12px dense row uses
+	   --ink-muted. tokens.css records why. */
+	color: var(--ink-muted);
+	text-align: right;
+	user-select: none;
+}
+.tool-card__match-text {
+	white-space: pre;
+	padding: 0;
+}
+
+.tool-card__raw > summary {
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	cursor: pointer;
+}
+
+/* ---- diff ------------------------------------------------------------- */
+
+.diff {
+	display: grid;
+	gap: var(--space-2);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	padding: var(--space-2);
+	background: var(--well);
+}
+/* Dashed means "not confirmed on disk". Dimming was dropped: it pushed every row under 4.5:1. */
+.diff.is-proposed,
+.diff.is-rejected,
+.diff.is-unverified {
+	border-style: dashed;
+}
+.diff__head {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	align-items: baseline;
+}
+.diff__counts {
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.diff__note,
+.diff__truncation {
+	margin: 0;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.diff__truncation {
+	border-left: 2px solid var(--status-warn-line);
+	padding-left: var(--space-2);
+	color: var(--status-warn-fg);
+}
+.diff__more {
+	justify-self: start;
+	background: none;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	color: var(--ink);
+	font-size: var(--text-exact);
+	padding: var(--space-1) var(--space-2);
+}
+
+/* Grid, not a table: copying the block yields code, not gutters.
+   The ground is a theme-following surface rather than --code-paper, because the
+   add and del rows are status TINTS and a tint only clears contrast against the
+   theme it was measured in. A fixed dark ground under a light tint is the one
+   combination check-contrast.mjs does not cover. */
+.diff__grid {
+	background: var(--surface);
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	overflow-x: auto;
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+	line-height: var(--leading-body);
+	max-height: 32em;
+	overflow-y: auto;
+}
+.diff__row {
+	display: grid;
+	grid-template-columns: 3.5rem 3.5rem 1fr;
+	min-width: max-content;
+}
+.diff__num {
+	color: var(--ink-muted);
+	text-align: right;
+	padding-right: var(--space-2);
+	user-select: none;
+}
+.diff__text {
+	display: block;
+	color: var(--ink);
+	white-space: pre;
+	/* The page-wide block code rule pads every <code>; a diff row is one line. */
+	padding: 0 var(--space-3) 0 0;
+}
+.diff__text::before {
+	content: "  ";
+	user-select: none;
+}
+.diff__row.is-add {
+	background: var(--status-success-tint);
+}
+.diff__row.is-add .diff__num,
+.diff__row.is-add .diff__text {
+	color: var(--status-success-fg);
+}
+.diff__row.is-add .diff__text::before {
+	content: "+ ";
+}
+.diff__row.is-del {
+	background: var(--status-fail-tint);
+}
+.diff__row.is-del .diff__num,
+.diff__row.is-del .diff__text {
+	color: var(--status-fail-fg);
+}
+.diff__row.is-del .diff__text::before {
+	content: "− ";
+}
+/* A change that never landed reads as struck-through history, not as green and red edits. */
+.diff.is-rejected .diff__row.is-add,
+.diff.is-rejected .diff__row.is-del {
+	background: transparent;
+}
+.diff.is-rejected .diff__row.is-add .diff__num,
+.diff.is-rejected .diff__row.is-add .diff__text,
+.diff.is-rejected .diff__row.is-del .diff__num,
+.diff.is-rejected .diff__row.is-del .diff__text {
+	color: var(--ink-muted);
+}
+.diff.is-rejected .diff__row.is-add .diff__text,
+.diff.is-rejected .diff__row.is-del .diff__text {
+	text-decoration: line-through;
+}
+/* The changed part of a rewritten line takes a deeper wash of the row's own colour. */
+.diff__change {
+	border-radius: var(--radius-sm);
+	background: color-mix(in srgb, currentColor 16%, transparent);
+}
+.diff__row.is-elision .diff__text,
+.diff__row.is-hunk .diff__text {
+	color: var(--ink-muted);
+}
+
+/* Inside the conversation a long output or diff scrolls within a bounded well, so one command's
+   output cannot push the answer below several screens of text. */
+.conversation .tool-card__pre {
+	max-height: min(24rem, 45dvh);
+}
+.conversation .diff__grid {
+	max-height: min(28rem, 50dvh);
+}
+.conversation .diff {
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	padding: 0;
+}
+
+/* On a phone a failed row's trail (its last output line and state) takes its own line under the
+   headline, so the excerpt cannot squeeze the call's target down to a few characters. */
+@media (max-width: 650px) {
+	.tool-card__head:has(.tool-card__digest[data-tone="fail"]) {
+		flex-wrap: wrap;
+		row-gap: 2px;
+	}
+	.tool-card__head:has(.tool-card__digest[data-tone="fail"]) .tool-card__trail {
+		display: inline-flex;
+		flex: 0 1 100%;
+		min-width: 0;
+		align-items: baseline;
+		gap: var(--space-2);
+		padding-left: 1.5em;
+	}
+}
+
+/* A capability reached through gateway reads as itself; this marker is the only difference. */
+.tool-card__via {
+	color: var(--ink-muted);
+	font-family: var(--font-ui);
+}
+
+/* A gateway chain lists each step on its own line, with the same glyph, verb and headline grammar as a row. */
+.tool-card__steps {
+	display: grid;
+	gap: var(--space-1);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: var(--text-meta);
+}
+.tool-card__step {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	min-width: 0;
+}
+/* A step's glyph follows the step, never the chain card's tone around it. */
+.tool-card .tool-card__step[data-status] .tool-card__glyph {
+	color: var(--ink-muted);
+}
+.tool-card .tool-card__step[data-status="done"] .tool-card__glyph {
+	color: var(--status-success-fg);
+}
+.tool-card .tool-card__step[data-status="failed"] .tool-card__glyph {
+	color: var(--status-fail-fg);
+}
+
+/* Colour a command printed, drawn in the code well's own inks so it follows the theme. The sixteen
+   terminal colours fold to these eight; white stays the well's ink and black its muted ink. */
+.tool-card__pre .ansi-red {
+	color: var(--syntax-deleted);
+}
+.tool-card__pre .ansi-green {
+	color: var(--syntax-function);
+}
+.tool-card__pre .ansi-yellow {
+	color: var(--syntax-string);
+}
+.tool-card__pre .ansi-blue {
+	color: var(--syntax-keyword);
+}
+.tool-card__pre .ansi-purple {
+	color: var(--syntax-number);
+}
+.tool-card__pre .ansi-cyan {
+	color: var(--syntax-inserted);
+}
+.tool-card__pre .ansi-black,
+.tool-card__pre .ansi-dim {
+	color: var(--code-ink-muted);
+}
+.tool-card__pre .ansi-bold {
+	font-weight: 650;
+}
+.tool-card__pre .ansi-italic {
+	font-style: italic;
+}
+.tool-card__pre .ansi-underline {
+	text-decoration: underline;
+}

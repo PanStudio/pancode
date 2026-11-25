@@ -1,0 +1,1391 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, notDeepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
+import {
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { createServer as createTcpServer } from "node:net";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { describe, it } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { parse as parseYaml } from "yaml";
+import { launcherProof } from "../../apps/pancode-gui/server/launch-proof.js";
+import { backgroundPaths, backgroundUnit } from "../../apps/pancode-gui/server/launcher/background-config.js";
+import { checkInstalledBrowser } from "../../apps/pancode-gui/tests/harness/installed-browser.js";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { sha256Hex } from "../../src/core/hash.js";
+import { resetXdgCache } from "../../src/core/xdg.js";
+import { listPlaybooks } from "../../src/domains/agents/playbook.js";
+import { type AgentRecipeDiagnostic, loadRecipesFromDir } from "../../src/domains/agents/registry.js";
+import { pluginContentDigest } from "../../src/domains/plugins/index.js";
+import { clearPluginSnapshots } from "../../src/domains/plugins/resources.js";
+import { loadPromptTemplates } from "../../src/domains/resources/prompts/loader.js";
+import { loadSkills } from "../../src/domains/resources/skills/loader.js";
+import { PINNED_TOOLS } from "../../src/domains/toolchain/registry.js";
+import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";
+
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const TREE_SITTER_MARKER = "node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter.js";
+// Bundle markers tolerate minified output, where declarations merge (`a=1,Hono=class`) and spacing drops.
+const CODE_NAV_EXPORT_MARKER = /(?<![\w$])codeNavTool\s*=\s*\{/;
+
+interface Result {
+	code: number | null;
+	stdout: string;
+	stderr: string;
+}
+
+function isolatedEnv(root: string): NodeJS.ProcessEnv {
+	return {
+		...process.env,
+		NODE_ENV: "test",
+		NO_COLOR: "1",
+		HOME: root,
+		USERPROFILE: root,
+		PANCODE_HOME: root,
+		PANCODE_CONFIG_DIR: join(root, "config"),
+		PANCODE_DATA_DIR: join(root, "data"),
+		PANCODE_STATE_DIR: join(root, "state"),
+		PANCODE_CACHE_DIR: join(root, "cache"),
+		PANCODE_REQUIRE_HOME_PREFIX: "1",
+		PANCODE_PACKAGE_ROOT: "",
+	};
+}
+
+function withIsolatedState<T>(root: string, fn: () => T): T {
+	const savedEnv = {
+		HOME: process.env.HOME,
+		USERPROFILE: process.env.USERPROFILE,
+		PANCODE_HOME: process.env.PANCODE_HOME,
+		PANCODE_CONFIG_DIR: process.env.PANCODE_CONFIG_DIR,
+		PANCODE_DATA_DIR: process.env.PANCODE_DATA_DIR,
+		PANCODE_STATE_DIR: process.env.PANCODE_STATE_DIR,
+		PANCODE_CACHE_DIR: process.env.PANCODE_CACHE_DIR,
+		PANCODE_REQUIRE_HOME_PREFIX: process.env.PANCODE_REQUIRE_HOME_PREFIX,
+		PANCODE_PACKAGE_ROOT: process.env.PANCODE_PACKAGE_ROOT,
+	};
+	process.env.HOME = root;
+	process.env.USERPROFILE = root;
+	process.env.PANCODE_HOME = root;
+	process.env.PANCODE_CONFIG_DIR = join(root, "config");
+	process.env.PANCODE_DATA_DIR = join(root, "data");
+	process.env.PANCODE_STATE_DIR = join(root, "state");
+	process.env.PANCODE_CACHE_DIR = join(root, "cache");
+	process.env.PANCODE_REQUIRE_HOME_PREFIX = "1";
+	process.env.PANCODE_PACKAGE_ROOT = "";
+	resetXdgCache();
+	clearPluginSnapshots();
+	try {
+		return fn();
+	} finally {
+		for (const [key, val] of Object.entries(savedEnv)) {
+			if (val === undefined) delete process.env[key];
+			else process.env[key] = val;
+		}
+		resetXdgCache();
+		clearPluginSnapshots();
+	}
+}
+
+async function run(bin: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<Result> {
+	const child = spawn(process.execPath, [bin, ...args], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+	let stdout = "";
+	let stderr = "";
+	child.stdout.setEncoding("utf8");
+	child.stderr.setEncoding("utf8");
+	child.stdout.on("data", (text: string) => {
+		stdout += text;
+	});
+	child.stderr.on("data", (text: string) => {
+		stderr += text;
+	});
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			child.kill("SIGKILL");
+			reject(new Error(`installed CLI timeout: ${args.join(" ")}\n${stdout}\n${stderr}`));
+		}, 20_000);
+		child.once("error", (error) => {
+			clearTimeout(timer);
+			reject(error);
+		});
+		child.once("close", (code) => {
+			clearTimeout(timer);
+			resolve({ code, stdout, stderr });
+		});
+	});
+}
+
+/**
+ * Runs npm without blocking the event loop, so the test's own timeout stays
+ * the one hang guard: when it fires, `signal` aborts and kills npm. A
+ * synchronous call with a shorter private limit capped the registry-bound
+ * install at half the budget (packument revalidation once npm's cache is over
+ * five minutes old) and hid where the time went. On failure the error carries
+ * the elapsed time and npm's http log, which names a stalled registry request.
+ */
+async function npm(args: string[], cwd: string, signal: AbortSignal): Promise<string> {
+	// A direct npm process on Windows avoids a shell and releases its handles when killed.
+	const [command, prefix] =
+		process.platform === "win32"
+			? [process.execPath, [join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js")]]
+			: ["npm", []];
+	const started = Date.now();
+	const child = spawn(command, [...prefix, ...args, "--loglevel=http"], {
+		cwd,
+		signal,
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	let stdout = "";
+	let stderr = "";
+	child.stdout.setEncoding("utf8");
+	child.stderr.setEncoding("utf8");
+	child.stdout.on("data", (text: string) => {
+		stdout += text;
+	});
+	child.stderr.on("data", (text: string) => {
+		stderr += text;
+	});
+	const outcome = await new Promise<{ code: number | null; error?: Error }>((resolve) => {
+		child.once("error", (error) => resolve({ code: null, error }));
+		child.once("close", (code) => resolve({ code }));
+	});
+	if (outcome.code === 0) return stdout;
+	const reason = outcome.error ? outcome.error.message : `exit ${outcome.code}`;
+	const message = `npm ${args[0]} failed (${reason}) after ${Date.now() - started}ms\n${stderr.slice(-8000)}`;
+	// Once the test has timed out its rejection is no longer reported, so the log is printed.
+	if (signal.aborted) console.error(message);
+	throw new Error(message);
+}
+
+function emittedFilesContaining(packageRoot: string, marker: string | RegExp): Set<string> {
+	const matches = new Set<string>();
+	for (const entry of readdirSync(join(packageRoot, "dist"), { recursive: true, withFileTypes: true })) {
+		if (!entry.isFile() || !entry.name.endsWith(".js")) continue;
+		const path = join(entry.parentPath, entry.name);
+		const text = readFileSync(path, "utf8");
+		if (typeof marker === "string" ? text.includes(marker) : marker.test(text)) matches.add(realpathSync(path));
+	}
+	return matches;
+}
+
+async function assertInstalledReasoningReplay(bin: string, cwd: string, home: string): Promise<void> {
+	const modelId = "dynamo/qwen3.8-27b";
+	const thought = "Private packaged fixture calculation: coefficient = 0.002.";
+	const requests: Array<{
+		messages: Array<{ role: string; content?: unknown; reasoning_content?: string }>;
+		max_tokens: number;
+	}> = [];
+	const server = createServer(async (req, res) => {
+		res.setHeader("content-type", "application/json");
+		if (req.method === "GET" && req.url === "/health/liveliness") {
+			res.end(JSON.stringify({ status: "healthy" }));
+			return;
+		}
+		if (req.method === "GET" && req.url === "/v1/models") {
+			res.end(JSON.stringify({ data: [{ id: modelId }] }));
+			return;
+		}
+		if (req.method !== "POST" || req.url !== "/v1/chat/completions") {
+			res.writeHead(404);
+			res.end();
+			return;
+		}
+		const request = JSON.parse(await readRequestBody(req));
+		requests.push(request);
+		const retained = request.messages.some(
+			(message: { reasoning_content?: string }) => message.reasoning_content === thought,
+		);
+		// The artifact report is typed JSON with its completion (fleet design 4.3).
+		const report = JSON.stringify({
+			summary: "The coefficient is 0.002.",
+			completion: { state: "done", limitations: [], unverified: [] },
+		});
+		const delta = requests.length === 1 ? { reasoning_content: thought } : { content: retained ? report : "" };
+		res.setHeader("content-type", "text/event-stream");
+		res.end(
+			`data: ${JSON.stringify({ model: modelId, choices: [{ index: 0, delta, finish_reason: requests.length === 1 ? "length" : "stop" }] })}\n\ndata: [DONE]\n\n`,
+		);
+	});
+	try {
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.targets = [
+			{
+				id: "replay",
+				runtime: "litellm",
+				url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+				defaultModel: modelId,
+				auth: { apiKeyEnvVar: "PANCODE_REPLAY_FIXTURE_KEY" },
+			},
+		];
+		settings.chat.target = "replay";
+		settings.chat.model = modelId;
+		settings.chat.maxOutputTokens = 16384;
+		settings.fleet.profiles = { replay: { target: "replay", model: modelId, thinkingLevel: "xhigh" } };
+		settings.context.memory.enabled = false;
+		mkdirSync(join(home, "config/agents"), { recursive: true });
+		writeFileSync(join(home, "config/settings.yaml"), JSON.stringify(settings));
+		writeFileSync(
+			join(home, "config/agents/replay-fixture.md"),
+			`---
+version: 1
+name: Packaged replay fixture
+description: Exercise a scripted local reasoning continuation.
+tools: {required: [read], optional: []}
+skills: []
+audience: custom
+category: research
+capabilityClass: read-only
+latencyClass: balanced
+projectContextTier: bounded
+budget: {toolCalls: 10, synthesis: true}
+resultContract: {kind: artifact-report}
+tags: [fixture]
+---
+Compute the requested coefficient and report the value in one line.
+`,
+		);
+		const result = await run(
+			bin,
+			[
+				"run",
+				"--agent",
+				"replay-fixture",
+				"--agent-profile",
+				"replay",
+				"--output-format",
+				"stream-json",
+				"Compute the coefficient.",
+			],
+			cwd,
+			{ ...isolatedEnv(home), PANCODE_REPLAY_FIXTURE_KEY: "fixture" },
+		);
+		strictEqual(result.code, 0, `${result.stdout}\n${result.stderr}`);
+		strictEqual(requests.length, 2, "installed native worker retains thought through one bounded repair");
+		for (const request of requests) strictEqual(request.max_tokens, 16384);
+		const replay = requests[1]?.messages.find((message) => message.reasoning_content === thought);
+		ok(replay);
+		strictEqual(JSON.stringify(replay.content).includes(thought), false);
+		match(result.stdout, /The coefficient is 0.002/u);
+	} finally {
+		await closeServer(server);
+	}
+}
+
+/** 43 URL-safe characters, the exact shape the background configuration schema pins. */
+const GUI_TEST_TOKEN = "installed-gui-smoke-token-0123456789abcdefg";
+const HONO_MARKER = /(?<![\w$])Hono\s*=\s*class\b/;
+
+/** A `pancode gui` child: started from a foreign cwd, torn down with SIGTERM and a bounded SIGKILL fallback. */
+interface WebServer {
+	origin: string;
+	child: ChildProcess;
+	stdout: () => string;
+	stderr: () => string;
+	/** Returns the exit code and signal so the caller can assert a clean stop. */
+	close: () => Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+}
+
+/** The launch line arrives as soon as the server listens; the cap only bounds a hung start on a loaded host. */
+const WEB_READY_TIMEOUT_MS = 60_000;
+
+async function startInstalledWeb(
+	bin: string,
+	args: string[],
+	cwd: string,
+	env: NodeJS.ProcessEnv,
+	readyPattern: RegExp,
+	command = "gui",
+): Promise<WebServer> {
+	const child = spawn(process.execPath, [bin, command, ...args], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+	let stdout = "";
+	let stderr = "";
+	child.stdout?.setEncoding("utf8");
+	child.stderr?.setEncoding("utf8");
+	child.stdout?.on("data", (text: string) => {
+		stdout += text;
+	});
+	child.stderr?.on("data", (text: string) => {
+		stderr += text;
+	});
+	let spawnError: Error | undefined;
+	const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+		child.once("exit", (code, signal) => resolve({ code, signal }));
+		child.once("error", (error) => {
+			spawnError = error;
+			resolve({ code: null, signal: null });
+		});
+	});
+	const close = async () => {
+		if (!spawnError && child.exitCode === null && child.signalCode === null) {
+			child.kill("SIGTERM");
+			const fallback = setTimeout(() => child.kill("SIGKILL"), 10_000);
+			await exited;
+			clearTimeout(fallback);
+		}
+		return exited;
+	};
+	try {
+		const found = await new Promise<RegExpMatchArray>((resolve, reject) => {
+			const settle = (finish: () => void) => {
+				clearTimeout(timer);
+				child.stdout?.off("data", check);
+				finish();
+			};
+			const check = () => {
+				const match = stdout.match(readyPattern);
+				if (match) settle(() => resolve(match));
+			};
+			const timer = setTimeout(
+				() =>
+					settle(() =>
+						reject(
+							new Error(
+								`installed graphical server did not print its launch line within ${WEB_READY_TIMEOUT_MS / 1000}s:\n${stdout}\n${stderr}`,
+							),
+						),
+					),
+				WEB_READY_TIMEOUT_MS,
+			);
+			child.stdout?.on("data", check);
+			void exited.then(() => {
+				check();
+				settle(() =>
+					reject(spawnError ?? new Error(`installed graphical server exited before it was ready:\n${stdout}\n${stderr}`)),
+				);
+			});
+			check();
+		});
+		const url = found[0].match(/http:\/\/127\.0\.0\.1:\d+/u)?.[0];
+		ok(url, `ready line carries a loopback URL: ${found[0]}`);
+		return { origin: new URL(url).origin, child, stdout: () => stdout, stderr: () => stderr, close };
+	} catch (error) {
+		await close();
+		throw error;
+	}
+}
+
+function webRequest(origin: string, token: string | undefined, path: string, body?: unknown): Promise<Response> {
+	return fetch(`${origin}${path}`, {
+		method: body === undefined ? "GET" : "POST",
+		headers: {
+			...(token === undefined ? {} : { Authorization: `Bearer ${token}` }),
+			"Content-Type": "application/json",
+			"Idempotency-Key": crypto.randomUUID(),
+		},
+		...(body === undefined ? {} : { body: JSON.stringify(body) }),
+		signal: AbortSignal.timeout(15_000),
+	});
+}
+
+/** A window's first request: the single-use ticket in a launch link buys a per-client credential. */
+async function exchangeLaunchTicket(origin: string, ticket: string): Promise<string> {
+	const response = await webRequest(origin, undefined, "/api/auth/clients", {
+		label: "Installed package smoke",
+		ticket,
+	});
+	strictEqual(response.status, 200, "the launch ticket exchanges for a client credential");
+	return ((await response.json()) as { credential: string }).credential;
+}
+
+/** A launcher's way in: it proves the launch token over a fresh challenge and never sends the token. */
+async function proveLaunchToken(origin: string, token: string): Promise<string> {
+	const issued = await webRequest(origin, undefined, "/api/auth/challenge", {});
+	strictEqual(issued.status, 200, "the app issues a launch challenge");
+	const { challenge } = (await issued.json()) as { challenge: string };
+	const proof = launcherProof(token, challenge, Number(new URL(origin).port));
+	const response = await webRequest(origin, undefined, "/api/auth/clients", {
+		label: "Installed package smoke",
+		challenge,
+		proof,
+	});
+	strictEqual(response.status, 200, "a proof of the launch token opens a client credential");
+	return ((await response.json()) as { credential: string }).credential;
+}
+
+/** A fresh single-use launch ticket, as a launcher puts in the link it opens. */
+async function mintLaunchTicket(origin: string, credential: string): Promise<string> {
+	const response = await webRequest(origin, credential, "/api/auth/launch-ticket", {});
+	strictEqual(response.status, 200, "a client can mint a launch ticket");
+	return ((await response.json()) as { ticket: string }).ticket;
+}
+
+/** Files the CLI evaluated for one invocation, from a fresh V8 coverage directory. */
+function filesLoadedBy(
+	bin: string,
+	args: string[],
+	cwd: string,
+	env: NodeJS.ProcessEnv,
+	coverageDir: string,
+): Set<string> {
+	rmSync(coverageDir, { recursive: true, force: true });
+	mkdirSync(coverageDir, { recursive: true });
+	const result = execFileSync(process.execPath, [bin, ...args], {
+		cwd,
+		env: { ...env, NODE_V8_COVERAGE: coverageDir, NODE_DISABLE_COMPILE_CACHE: "1" },
+		encoding: "utf8",
+		timeout: 20_000,
+	});
+	ok(result.length > 0, `${args.join(" ")} printed nothing`);
+	return coveredFiles(coverageDir);
+}
+
+/**
+ * R1: the packaged `pancode gui` runs from the installed prefix alone.
+ *
+ * Everything here goes through the installed CLI and plain HTTP; nothing imports
+ * the app's source modules, so the assertions hold for what npm shipped rather
+ * than for the checkout. A foreground server and one service-configuration
+ * server are started in turn; neither opens a browser or touches systemd.
+ */
+async function assertInstalledWebApp(packageRoot: string, bin: string, prefix: string, work: string): Promise<void> {
+	strictEqual(GUI_TEST_TOKEN.length, 43, "the background configuration schema pins a 43-character token");
+	match(GUI_TEST_TOKEN, /^[\w-]+$/u);
+	const guiDist = join(packageRoot, "dist", "gui");
+	const foreign = join(work, "gui foreign project");
+	const home = join(work, "gui-home");
+	mkdirSync(foreign, { recursive: true });
+	const env: NodeJS.ProcessEnv = { ...isolatedEnv(home), NODE_ENV: "test", NODE_OPTIONS: "", NODE_PATH: "" };
+
+	for (const name of [
+		"schibsted-grotesk.woff2",
+		"instrument-sans.woff2",
+		"instrument-sans-italic.woff2",
+		"plex-400.woff2",
+		"plex-500.woff2",
+		"Schibsted-Grotesk-OFL.txt",
+		"Instrument-Sans-OFL.txt",
+		"IBM-Plex-Mono-OFL.txt",
+	])
+		ok(existsSync(join(guiDist, "client", "fonts", name)), `installed brand font/resource ${name}`);
+	for (const name of ["favicon.png", "icon-192.png", "icon-512.png", "brand/provenance.json"])
+		ok(existsSync(join(guiDist, "client", name)), `installed brand resource ${name}`);
+
+	// The checkout's tsx loader must be unreachable from inside the install: a
+	// probe file under the prefix walks up through prefix/node_modules only.
+	ok(!existsSync(join(packageRoot, "apps")), "the source app tree does not ship");
+	const probe = join(prefix, "resolve-probe.mjs");
+	writeFileSync(
+		probe,
+		'try { import.meta.resolve("tsx"); process.exit(1); } catch (error) { if (error.code !== "ERR_MODULE_NOT_FOUND") throw error; }\n',
+	);
+	const resolved = execFileSync(process.execPath, [probe], { cwd: prefix, env, encoding: "utf8", timeout: 20_000 });
+	strictEqual(resolved, "", "tsx must not resolve from the installed prefix");
+
+	// Importing the server entry is inert: no listener, no output.
+	const entry = join(guiDist, "server.js");
+	const imported = execFileSync(
+		process.execPath,
+		[
+			"--input-type=module",
+			"-e",
+			`const entry = await import(${JSON.stringify(pathToFileURL(entry).href)}); if (typeof entry.main !== "function") throw new Error("missing main");`,
+		],
+		{ cwd: foreign, env, encoding: "utf8", timeout: 20_000 },
+	);
+	strictEqual(imported, "", "importing dist/gui/server.js must not start a server");
+
+	const server = await startInstalledWeb(
+		bin,
+		["--no-open", "--port", "0"],
+		foreign,
+		env,
+		/http:\/\/127\.0\.0\.1:\d+\/#ticket=[\w-]{43}$/mu,
+	);
+	try {
+		const { origin } = server;
+		const ticket = server.stdout().match(/#ticket=([\w-]{43})$/mu)?.[1];
+		ok(ticket, "the printed link carries a single-use launch ticket");
+		strictEqual((await webRequest(origin, undefined, "/api/meta")).status, 401, "API requires a credential");
+		const credential = await exchangeLaunchTicket(origin, ticket);
+		const request = (path: string, body?: unknown) => webRequest(origin, credential, path, body);
+		const meta = (await (await request("/api/meta")).json()) as {
+			pancode: string;
+			apiVersion: number;
+			pwa: boolean;
+			bundledDocsPath: string;
+		};
+		strictEqual(meta.pancode, JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")).version);
+		strictEqual(meta.bundledDocsPath, join(packageRoot, "docs"));
+		for (const path of ["/api/docs/tree", "/api/docs/page?path=guide/tool-usage.md", "/api/docs/search?q=safety"])
+			strictEqual((await request(path)).status, 404, "native documentation API is removed");
+		strictEqual(meta.apiVersion, 1);
+		strictEqual(meta.pwa, false, "a foreground server is not installable");
+
+		const runtimeResponse = await request("/api/_diagnostics/runtime");
+		strictEqual(runtimeResponse.status, 200);
+		const runtime = (await runtimeResponse.json()) as Record<
+			"server" | "reads" | "ops",
+			{ entry: string; packageRoot: string; execArgv: string[]; threadId?: number }
+		>;
+		for (const [kind, file] of [
+			["server", "server.js"],
+			["reads", "reads-worker.js"],
+			["ops", "ops-worker.js"],
+		] as const) {
+			strictEqual(runtime[kind].entry, pathToFileURL(join(guiDist, file)).href, `${kind} runs the emitted entry`);
+			strictEqual(runtime[kind].packageRoot, packageRoot, `${kind} resolves the installed package root`);
+			deepStrictEqual(
+				runtime[kind].execArgv.filter((arg) => arg === "--import" || arg.includes("tsx")),
+				[],
+				`${kind} runs without a loader`,
+			);
+		}
+		const threads = [runtime.reads.threadId, runtime.ops.threadId];
+		ok(
+			threads.every((id) => typeof id === "number" && id > 0),
+			`worker thread ids: ${threads.join(",")}`,
+		);
+		ok(threads[0] !== threads[1], "reads and ops are distinct worker threads");
+
+		await checkInstalledBrowser(origin, await mintLaunchTicket(origin, credential));
+
+		const tools = await request("/api/toolchain/tools");
+		strictEqual(tools.status, 200);
+		strictEqual(
+			((await tools.json()) as unknown[]).length,
+			PINNED_TOOLS.length,
+			"the reads worker lists every pinned tool",
+		);
+
+		const removal = await request("/api/toolchain/tools/herdr/remove", {});
+		strictEqual(removal.status, 202);
+		const { operationId } = (await removal.json()) as { operationId: string };
+		let operation: { status: string } | undefined;
+		for (let attempt = 0; attempt < 100; attempt++) {
+			operation = (await (await request(`/api/operations/${operationId}`)).json()) as { status: string };
+			if (!["queued", "running"].includes(operation.status)) break;
+			await delay(50);
+		}
+		strictEqual(operation?.status, "succeeded", `ops worker removal on empty state: ${JSON.stringify(operation)}`);
+
+		const abort = new AbortController();
+		const events = await fetch(`${origin}/api/events`, {
+			headers: { Authorization: `Bearer ${credential}` },
+			signal: abort.signal,
+		});
+		strictEqual(events.status, 200);
+		match(events.headers.get("content-type") ?? "", /text\/event-stream/u);
+		ok(events.body, "event stream has a body");
+		const reader = events.body.getReader();
+		const first = await Promise.race([
+			reader.read(),
+			delay(10_000, undefined, { ref: false }).then(() => "timeout" as const),
+		]);
+		ok(first !== "timeout", "the stream sends a hello event promptly");
+		match(new TextDecoder().decode(first.value), /^event: hello$/mu);
+		abort.abort();
+		await reader.cancel().catch(() => undefined);
+
+		const opened = await request("/api/workspaces", { path: foreign });
+		const openedText = await opened.text();
+		strictEqual(opened.status, 200, openedText);
+		const workspace = JSON.parse(openedText) as { id: string; path: string };
+		match(workspace.id, /^[a-f0-9]{32}$/u);
+		strictEqual(workspace.path, realpathSync.native(foreign));
+		const targets = await request(`/api/workspaces/${workspace.id}/targets`);
+		strictEqual(targets.status, 200, `targets through the installed CLI: ${await targets.text()}`);
+
+		const index = await request("/");
+		strictEqual(index.status, 200);
+		match(index.headers.get("content-type") ?? "", /^text\/html/u);
+		ok(!(await index.text()).includes('rel="manifest"'), "foreground index links no manifest");
+		const logo = await request("/pancode-logo.webp");
+		strictEqual(logo.status, 200);
+		strictEqual(logo.headers.get("content-type"), "image/webp");
+		strictEqual((await request("/manifest.webmanifest")).status, 404, "installable assets require background mode");
+	} finally {
+		const exit = await server.close();
+		// Windows terminates the child directly instead of delivering SIGTERM.
+		deepStrictEqual(
+			exit,
+			process.platform === "win32" ? { code: null, signal: "SIGTERM" } : { code: 0, signal: null },
+			`foreground server stops on SIGTERM:\n${server.stderr()}`,
+		);
+	}
+
+	// Removed command stays absent in the installed entry point; bundled reference survives.
+	const removedDocs = spawnSync(process.execPath, [bin, "docs", "--help"], { cwd: foreign, env, encoding: "utf8" });
+	strictEqual(removedDocs.status, 2, removedDocs.stdout + removedDocs.stderr);
+	match(removedDocs.stderr, /unknown subcommand.*docs/iu);
+	ok(existsSync(join(packageRoot, "docs/corpus.json")), "the offline corpus ships");
+	ok(readFileSync(join(packageRoot, "docs/architecture/safety-model.md"), "utf8").includes("#"));
+
+	// Service-configuration mode: the files a background install writes (launch file, unit and the
+	// manifest that blesses both), consumed by the installed CLI directly. No systemd, no browser.
+	const serviceDir = join(work, "gui-service");
+	const serviceHome = join(work, "gui-service-home");
+	mkdirSync(serviceDir, { recursive: true, mode: 0o700 });
+	const roots = Object.fromEntries(
+		(["config", "data", "state", "cache"] as const).map((role) => {
+			const path = join(serviceHome, role);
+			mkdirSync(path, { recursive: true });
+			return [role, path];
+		}),
+	) as Record<"config" | "data" | "state" | "cache", string>;
+	const reserve = createTcpServer();
+	await new Promise<void>((resolve) => reserve.listen(0, "127.0.0.1", resolve));
+	const port = (reserve.address() as AddressInfo).port;
+	await new Promise<void>((resolve) => reserve.close(() => resolve()));
+	const serviceFiles = backgroundPaths(serviceDir);
+	const configFile = serviceFiles.config;
+	const serviceConfig = {
+		v: 1 as const,
+		port,
+		token: GUI_TEST_TOKEN,
+		roots,
+		packageRoot,
+		path: process.env.PATH ?? "",
+		launch: { node: process.execPath, entry },
+		desktopPrefix: serviceDir,
+	};
+	const serviceConfigText = `${JSON.stringify(serviceConfig, null, 2)}\n`;
+	const serviceUnit = backgroundUnit(serviceConfig, serviceDir);
+	writeFileSync(configFile, serviceConfigText, { mode: 0o600 });
+	writeFileSync(serviceFiles.unitFile, serviceUnit, { mode: 0o600 });
+	writeFileSync(
+		serviceFiles.manifest,
+		`${JSON.stringify({ v: 2, owner: "pancode-gui-background", config: sha256Hex(serviceConfigText), unit: sha256Hex(serviceUnit) })}\n`,
+		{ mode: 0o600 },
+	);
+	const service = await startInstalledWeb(
+		bin,
+		["--persistent", configFile, "--no-open"],
+		foreign,
+		{ ...isolatedEnv(home), NODE_ENV: "test", NODE_OPTIONS: "", NODE_PATH: "" },
+		/Background app ready at http:\/\/127\.0\.0\.1:\d+/u,
+	);
+	try {
+		const { origin } = service;
+		strictEqual(origin, `http://127.0.0.1:${port}`, "the service listens on the configured port");
+		// Every start draws a new launch token, so the one written before it opens nothing.
+		const liveToken = (JSON.parse(readFileSync(configFile, "utf8")) as { token: string }).token;
+		notDeepStrictEqual(liveToken, GUI_TEST_TOKEN, "the service rotates its launch token on start");
+		strictEqual(readFileSync(serviceFiles.unitFile, "utf8"), serviceUnit, "rotation leaves the unit untouched");
+		const stale = await webRequest(origin, undefined, "/api/auth/challenge", {});
+		const { challenge: staleChallenge } = (await stale.json()) as { challenge: string };
+		const staleProof = launcherProof(GUI_TEST_TOKEN, staleChallenge, port);
+		const refused = await webRequest(origin, undefined, "/api/auth/clients", {
+			label: "Installed package smoke",
+			challenge: staleChallenge,
+			proof: staleProof,
+		});
+		notDeepStrictEqual(refused.status, 200, "the launch token written before the start opens nothing");
+		const credential = await proveLaunchToken(origin, liveToken);
+		const request = (path: string) => webRequest(origin, credential, path);
+		const meta = (await (await request("/api/meta")).json()) as { pwa: boolean };
+		strictEqual(meta.pwa, true, "service configuration enables the installable app");
+		const index = await request("/");
+		strictEqual(index.status, 200);
+		ok((await index.text()).includes('<link rel="manifest" href="/manifest.webmanifest">'));
+		const assets: Array<[string, RegExp]> = [
+			["/manifest.webmanifest", /^application\/manifest\+json/u],
+			["/sw.js", /^text\/javascript/u],
+			["/offline.html", /^text\/html/u],
+			["/offline.js", /^text\/javascript/u],
+			["/offline.css", /^text\/css/u],
+			["/favicon.png", /^image\/png$/u],
+			["/icon-192.png", /^image\/png$/u],
+			["/icon-512.png", /^image\/png$/u],
+		];
+		for (const [path, type] of assets) {
+			const response = await request(path);
+			strictEqual(response.status, 200, `${path} is served in service mode`);
+			match(response.headers.get("content-type") ?? "", type, `${path} content type`);
+			if (!path.endsWith(".png")) ok(!(await response.text()).includes(liveToken), `${path} carries no token`);
+		}
+		const manifest = (await (await request("/manifest.webmanifest")).json()) as {
+			start_url: string;
+			icons: Array<{ src: string }>;
+		};
+		strictEqual(manifest.start_url, "/");
+		deepStrictEqual(
+			// Each icon carries a content-hash query so an updated icon replaces the cached one.
+			manifest.icons.map((icon) => icon.src.replace(/\?v=[0-9a-f]+$/u, "")),
+			["/icon-192.png", "/icon-512.png"],
+		);
+	} finally {
+		const exit = await service.close();
+		deepStrictEqual(
+			exit,
+			process.platform === "win32" ? { code: null, signal: "SIGTERM" } : { code: 0, signal: null },
+			`service server stops on SIGTERM:\n${service.stderr()}`,
+		);
+	}
+
+	// Ordinary CLI invocations never evaluate the graphical server or its bundled Hono.
+	const honoChunks = emittedFilesContaining(packageRoot, HONO_MARKER);
+	ok(honoChunks.size > 0, "the packed dist bundles Hono somewhere");
+	const coverage = join(work, "gui-coverage");
+	for (const args of [["--version"], ["--help"], ["gui", "--help"]]) {
+		const loaded = filesLoadedBy(bin, args, foreign, isolatedEnv(home), coverage);
+		const guiLoaded = [...loaded].filter((file) => file.startsWith(`${guiDist}${sep}`) || honoChunks.has(file));
+		deepStrictEqual(guiLoaded, [], `${args.join(" ")} must not load the graphical server: ${guiLoaded.join(", ")}`);
+	}
+}
+
+function coveredFiles(directory: string): Set<string> {
+	const files = new Set<string>();
+	for (const name of readdirSync(directory)) {
+		if (!name.endsWith(".json")) continue;
+		const payload = JSON.parse(readFileSync(join(directory, name), "utf8")) as {
+			result?: Array<{ url?: string }>;
+		};
+		for (const script of payload.result ?? []) {
+			if (!script.url?.startsWith("file:")) continue;
+			try {
+				files.add(realpathSync(fileURLToPath(script.url)));
+			} catch {
+				// Ignore builtins and transient files outside the installed package.
+			}
+		}
+	}
+	return files;
+}
+
+describe("smoke/installed package", { concurrency: false }, () => {
+	// pnpm's store does not warm npm's cache. Allow a cold consumer install
+	// with normal registry freshness checks after dependency upgrades: npm pack
+	// and install share this whole budget through the test's abort signal, and
+	// the CLI subprocesses below retain their separate 20-second timeout.
+	// The graphical checks below start two installed servers and run four
+	// coverage-traced CLI invocations, which is why the budget grew from 120s.
+	// Cold Windows installs need more time to extract the package and dependencies.
+	it("loads bundled packs, agent recipes, and lazy codewiki from an installed package", {
+		timeout: process.platform === "win32" ? 480_000 : 180_000,
+	}, async (t) => {
+		const work = mkdtempSync(join(tmpdir(), "pancode-installed-package-"));
+		const prefix = join(work, "prefix");
+		const foreign = join(work, "foreign-project");
+		const home = join(work, "home");
+		const coverage = join(work, "coverage");
+		try {
+			mkdirSync(prefix, { recursive: true });
+			mkdirSync(foreign, { recursive: true });
+			mkdirSync(coverage, { recursive: true });
+			const packed = process.env.PANCODE_RELEASE_TARBALL
+				? [{ filename: process.env.PANCODE_RELEASE_TARBALL }]
+				: (JSON.parse(await npm(["pack", "--json", "--pack-destination", work], ROOT, t.signal)) as Array<{
+						filename?: string;
+					}>);
+			strictEqual(packed.length, 1, "npm pack must produce one tarball");
+			const filename = packed[0]?.filename;
+			ok(filename);
+			await npm(
+				[
+					"install",
+					"--prefix",
+					prefix,
+					"--package-lock=false",
+					"--no-audit",
+					"--no-fund",
+					process.env.PANCODE_RELEASE_TARBALL ?? join(work, filename),
+				],
+				prefix,
+				t.signal,
+			);
+
+			const packageRoot = join(prefix, "node_modules", "pancode");
+			const bin = join(packageRoot, "dist", "cli", "index.js");
+			const sdkChunks = emittedFilesContaining(packageRoot, "async function ensureClaudeAgentSdk(");
+			strictEqual(sdkChunks.size, 1);
+			const sdkChunk = [...sdkChunks][0];
+			ok(sdkChunk);
+			const sdkHome = join(work, "sdk-home");
+			mkdirSync(sdkHome);
+			const sdkProbe = `
+			 import assert from "node:assert/strict";
+			 import { createRequire } from "node:module";
+			 import { pathToFileURL } from "node:url";
+			 const api = await import(pathToFileURL(process.argv[1]));
+			 const require = createRequire(pathToFileURL(process.argv[1]));
+			 assert.throws(() => require.resolve("@anthropic-ai/claude-agent-sdk"), { code: "MODULE_NOT_FOUND" });
+			 assert.equal(api.resolveClaudeAgentSdkEntry(), null);
+			 await assert.rejects(api.ensureClaudeAgentSdk(), { code: "CLAUDE_AGENT_SDK_UNAVAILABLE" });
+			`;
+			execFileSync(process.execPath, ["--input-type=module", "-e", sdkProbe, sdkChunk], {
+				cwd: sdkHome,
+				env: isolatedEnv(sdkHome),
+				stdio: "pipe",
+			});
+
+			// One package, three commands: npm links each bin from the pancode tarball alone.
+			for (const command of ["pancode", "panstore", "pankit"])
+				ok(existsSync(join(prefix, "node_modules", ".bin", command)), `npm must link the ${command} bin`);
+			ok(!existsSync(join(prefix, "node_modules", "@pancode")), "pancode installs with no @pancode/* package");
+			const storeHelp = await run(
+				join(prefix, "node_modules", ".bin", "panstore"),
+				["--help"],
+				foreign,
+				isolatedEnv(home),
+			);
+			strictEqual(storeHelp.code, 0, storeHelp.stderr);
+			const kitList = await run(join(prefix, "node_modules", ".bin", "pankit"), ["list"], foreign, isolatedEnv(home));
+			strictEqual(kitList.code, 0, kitList.stderr);
+			const version = await run(bin, ["--version"], foreign, isolatedEnv(home));
+			strictEqual(version.code, 0, version.stderr);
+			// A development tree packs as `0.6.0-dev (unreleased · <commit>)`; a release packs as the bare version.
+			match(version.stdout, /^PanCode \d+\.\d+\.\d+(?:-[\w.]+)?(?: \(unreleased · [0-9a-f]+(?:-dirty)?\))?$/mu);
+
+			// Ordinary npm consumers receive a pi-tui that lacks the editor and search
+			// seams. The built application must carry that implementation itself, and
+			// its engine subclass supplies application-first input over stock Pi.
+			const tuiChunks = emittedFilesContaining(packageRoot, /(?<![\w$])TuiAltScreen\s*=\s*class\b/);
+			strictEqual(tuiChunks.size, 1, "one bundled patched TUI implementation");
+			const tuiChunk = [...tuiChunks][0];
+			ok(tuiChunk);
+			const instrumentedChunks = emittedFilesContaining(packageRoot, /(?<![\w$])InstrumentedTuiAltScreen\s*=\s*class\b/);
+			strictEqual(instrumentedChunks.size, 1, "one bundled application-input TUI implementation");
+			const instrumentedChunk = [...instrumentedChunks][0];
+			ok(instrumentedChunk);
+			const keyboardChild = `
+			 import assert from "node:assert/strict";
+			 import { createRequire } from "node:module";
+			 import { pathToFileURL } from "node:url";
+			 import { existsSync } from "node:fs";
+			 import { dirname, join } from "node:path";
+			 const bundled = await import(pathToFileURL(process.argv[1]).href);
+			 const require = createRequire(pathToFileURL(process.argv[1]));
+			 const ordinary = require.resolve("@earendil-works/pi-tui");
+			 const instrumented = await import(pathToFileURL(process.argv[2]).href);
+			 const stock = await import(pathToFileURL(ordinary).href);
+			 assert.equal(stock.TuiAltScreen.prototype.setApplicationInputPolicy, undefined);
+			 assert.equal(typeof instrumented.InstrumentedTuiAltScreen.prototype.setApplicationInputPolicy, "function");
+			 for (const platform of ["darwin", "linux", "win32"]) {
+			  for (const arch of ["arm64", "x64"]) {
+			   const filename = platform + "-platform" + (platform === "linux" ? "-x11" : "") + ".node";
+			   assert.ok(existsSync(join(dirname(ordinary), "..", "native", platform, "prebuilds", platform + "-" + arch, filename)), filename + " " + arch);
+			  }
+			 }
+			 const noop = () => {};
+			 let ingress = noop;
+			 const terminal = { columns: 80, rows: 24, kittyProtocolActive: false, start: fn => ingress = fn, stop: noop, write: noop, moveBy: noop, hideCursor: noop, showCursor: noop, clearLine: noop, clearFromCursor: noop, clearScreen: noop, setTitle: noop, setProgress: noop };
+			 const observer = { beginFrame: () => 1, endFrame: noop, beginPhase: () => 1, endPhase: noop };
+			 const tui = new instrumented.InstrumentedTuiAltScreen(terminal, observer);
+			 const input = new bundled.Input();
+			 const root = new bundled.VStack();
+			 root.addChild(new bundled.ScrollView(new bundled.Text("alpha\\nalpha", 0, 0), { primary: true }), { grow: 1 }); root.addChild(input);
+			 tui.addChild(root); tui.setFocus(input);
+			 bundled.setKeybindings(new bundled.KeybindingsManager(bundled.TUI_KEYBINDINGS, { "tui.altScreen.search": "ctrl+r", "tui.input.submit": "ctrl+u" }));
+			 let submitted = 0; let actions = 0; let permission = true;
+			 input.onSubmit = () => submitted++;
+			 tui.setApplicationInputPolicy(data => { actions++; if (permission && bundled.matchesKey(data, "ctrl+r")) return { consume: true }; if (bundled.matchesKey(data, "ctrl+u")) { input.applyEdit("deleteToLineStart"); return { consume: true }; } });
+			 tui.start(); tui.renderNow();
+			 try {
+			  ingress(String.fromCharCode(18)); assert.equal(tui.isSearchFocused, false);
+			  permission = false; ingress(String.fromCharCode(18)); assert.equal(tui.isSearchFocused, true);
+			  tui.undoSearchQuery(); tui.closeSearch();
+			  for (const char of "draft") ingress(char); ingress(String.fromCharCode(21)); assert.equal(input.getValue(), ""); assert.equal(submitted, 0);
+			  const before = actions; ingress(String.fromCharCode(27) + "[108;3:3u"); assert.equal(actions, before);
+			  assert.equal(typeof bundled.Editor.prototype.applyEdit, "function");
+			  process.stdout.write("packed-keyboard-ok\\n");
+			 } finally { tui.stop(); }
+			`;
+			const keyboardReceipt = execFileSync(
+				process.execPath,
+				["--input-type=module", "-e", keyboardChild, tuiChunk, instrumentedChunk],
+				{
+					cwd: foreign,
+					env: isolatedEnv(home),
+					encoding: "utf8",
+					timeout: 20_000,
+				},
+			);
+			match(keyboardReceipt, /packed-keyboard-ok/u);
+			for (const notice of [
+				"pi-tui-LICENSE",
+				"marked-LICENSE",
+				"marked-cjk-friendly-LICENSE",
+				"get-east-asian-width-LICENSE",
+			]) {
+				ok(existsSync(join(packageRoot, "dist", "assets", "tui-notices", notice)));
+			}
+
+			const codeNavChunks = emittedFilesContaining(packageRoot, CODE_NAV_EXPORT_MARKER);
+			strictEqual(codeNavChunks.size, 1, "packed dist must contain one exported code_nav implementation chunk");
+			const codeNavChunk = [...codeNavChunks][0];
+			ok(codeNavChunk);
+			const codeNavChild = `
+				import { sep } from "node:path";
+				import { pathToFileURL } from "node:url";
+				const loaded = await import(pathToFileURL(process.argv[1]).href);
+				const symbol = await loaded.codeNavTool.run({ source: "pancode", mode: "symbol", query: "codeNavTool" });
+				const continuation = await loaded.codeNavTool.run({ source: "pancode", mode: "path", query: "src" + sep, limit: 1 });
+				process.stdout.write(JSON.stringify({ symbol, continuation }));
+			`;
+			const rawCodeNavResult = execFileSync(
+				process.execPath,
+				["--input-type=module", "--eval", codeNavChild, codeNavChunk],
+				{ cwd: foreign, env: isolatedEnv(home), encoding: "utf8" },
+			);
+			const codeNavResults = JSON.parse(rawCodeNavResult) as {
+				symbol: { kind: string; output?: string; message?: string };
+				continuation: { kind: string; output?: string; message?: string };
+			};
+			const codeNavResult = codeNavResults.symbol;
+			strictEqual(codeNavResult.kind, "ok", codeNavResult.message);
+			const codeNavPayload = JSON.parse(codeNavResult.output ?? "null") as {
+				symbols?: Array<{ name?: string; path?: string }>;
+			};
+			const stableSymbol = codeNavPayload.symbols?.find((symbol) => symbol.name === "codeNavTool");
+			strictEqual(
+				stableSymbol?.path,
+				join(packageRoot, "src", "tools", "codewiki", "code-nav.ts"),
+				"source=pancode paths must resolve against the installed package root",
+			);
+			strictEqual(codeNavResults.continuation.kind, "ok", codeNavResults.continuation.message);
+			const continuationPayload = JSON.parse(codeNavResults.continuation.output ?? "null") as { next?: string };
+			strictEqual(
+				continuationPayload.next,
+				"source=pancode limit=2",
+				"a bundled-map continuation must retain the closed source selector",
+			);
+			strictEqual(
+				existsSync(join(foreign, ".pancode")),
+				false,
+				"source=pancode must not resolve, build, or write a workspace code map",
+			);
+
+			const overriddenPackageRoot = join(work, "overridden-package-root");
+			mkdirSync(join(overriddenPackageRoot, "dist", "assets"), { recursive: true });
+			copyFileSync(
+				join(packageRoot, "dist", "assets", "codemap.json.gz"),
+				join(overriddenPackageRoot, "dist", "assets", "codemap.json.gz"),
+			);
+			const rawOverriddenResult = execFileSync(
+				process.execPath,
+				["--input-type=module", "--eval", codeNavChild, codeNavChunk],
+				{
+					cwd: foreign,
+					env: { ...isolatedEnv(home), PANCODE_PACKAGE_ROOT: overriddenPackageRoot },
+					encoding: "utf8",
+				},
+			);
+			const overriddenResults = JSON.parse(rawOverriddenResult) as {
+				symbol: { kind: string; output?: string; message?: string };
+			};
+			strictEqual(overriddenResults.symbol.kind, "ok", overriddenResults.symbol.message);
+			const overriddenPayload = JSON.parse(overriddenResults.symbol.output ?? "null") as {
+				symbols?: Array<{ name?: string; path?: string }>;
+			};
+			const overriddenSymbol = overriddenPayload.symbols?.find((symbol) => symbol.name === "codeNavTool");
+			strictEqual(
+				overriddenSymbol?.path,
+				join(overriddenPackageRoot, "src", "tools", "codewiki", "code-nav.ts"),
+				"source=pancode must load and resolve paths from the explicit package-root override",
+			);
+
+			// Most src/**/*.ts ships inside dist/assets/source.pack; read must still open it by its package path.
+			const packedSource = join(packageRoot, "src", "interactive", "chat-panel.ts");
+			strictEqual(existsSync(packedSource), false, "chat-panel.ts must ship packed, not as a loose file");
+			const readChunks = emittedFilesContaining(packageRoot, /(?<![\w$])readTool\s*=\s*\{/);
+			strictEqual(readChunks.size, 1, "packed dist must contain one read implementation chunk");
+			const readChunk = [...readChunks][0];
+			ok(readChunk);
+			const readChild = `
+				import { pathToFileURL } from "node:url";
+				const loaded = await import(pathToFileURL(process.argv[1]).href);
+				const result = await loaded.createReadTool().run({ path: process.argv[2], offset: 3, limit: 2 });
+				process.stdout.write(JSON.stringify(result));
+			`;
+			const packedRead = JSON.parse(
+				execFileSync(process.execPath, ["--input-type=module", "--eval", readChild, readChunk, packedSource], {
+					cwd: foreign,
+					env: isolatedEnv(home),
+					encoding: "utf8",
+				}),
+			) as { kind: string; output?: string; message?: string };
+			strictEqual(packedRead.kind, "ok", packedRead.message);
+			match(packedRead.output ?? "", /from "\.\.\/core\/assistant-model\.js"/);
+			// A directory that exists only in the pack answers like a loose one, not "File not found".
+			const packedDirectory = dirname(packedSource);
+			strictEqual(existsSync(packedDirectory), false, "src/interactive must ship packed, not as a loose directory");
+			const looseDirectory = join(packageRoot, "src");
+			const readDirectory = (path: string) => {
+				const result = JSON.parse(
+					execFileSync(process.execPath, ["--input-type=module", "--eval", readChild, readChunk, path], {
+						cwd: foreign,
+						env: isolatedEnv(home),
+						encoding: "utf8",
+					}),
+				) as { kind: string; message?: string };
+				return { kind: result.kind, message: result.message?.replaceAll(path, "<dir>") };
+			};
+			const looseDirectoryRead = readDirectory(looseDirectory);
+			strictEqual(looseDirectoryRead.kind, "error");
+			deepStrictEqual(readDirectory(packedDirectory), looseDirectoryRead);
+			notDeepStrictEqual(readDirectory(join(packageRoot, "src", "absent")), looseDirectoryRead);
+
+			// Workspace package source (packages/<name>/src/) ships inside the same pack and reads the same way.
+			const movedSource = join(packageRoot, "packages", "store", "src", "local.ts");
+			strictEqual(existsSync(movedSource), false, "local.ts must ship packed, not as a loose file");
+			strictEqual(
+				existsSync(dirname(movedSource)),
+				false,
+				"packages/store/src must ship packed, not as a loose directory",
+			);
+			const movedRead = JSON.parse(
+				execFileSync(process.execPath, ["--input-type=module", "--eval", readChild, readChunk, movedSource], {
+					cwd: foreign,
+					env: isolatedEnv(home),
+					encoding: "utf8",
+				}),
+			) as { kind: string; output?: string; message?: string };
+			strictEqual(movedRead.kind, "ok", movedRead.message);
+			deepStrictEqual(readDirectory(join(packageRoot, "packages", "store", "src")), looseDirectoryRead);
+			const lsChunks = emittedFilesContaining(packageRoot, /(?<![\w$])lsTool\s*=\s*\{/);
+			strictEqual(lsChunks.size, 1, "packed dist must contain one ls implementation chunk");
+			const lsChild = `
+				import { pathToFileURL } from "node:url";
+				const loaded = await import(pathToFileURL(process.argv[1]).href);
+				const tools = new Map();
+				loaded.registerCoreTools({ register: (spec) => tools.set(spec.name, spec) });
+				process.stdout.write(JSON.stringify(await tools.get("ls").run({ path: process.argv[2] })));
+			`;
+			const movedList = JSON.parse(
+				execFileSync(
+					process.execPath,
+					["--input-type=module", "--eval", lsChild, [...lsChunks][0] ?? "", dirname(movedSource)],
+					{ cwd: foreign, env: isolatedEnv(home), encoding: "utf8" },
+				),
+			) as { kind: string; output?: string; message?: string };
+			strictEqual(movedList.kind, "ok", movedList.message);
+			ok((movedList.output ?? "").split("\n").includes("local.ts (packed)"), movedList.output);
+			const movedNavChild = `
+				import { pathToFileURL } from "node:url";
+				const loaded = await import(pathToFileURL(process.argv[1]).href);
+				const result = await loaded.codeNavTool.run({ source: "pancode", mode: "symbol", query: "createLocalStoreBackend" });
+				process.stdout.write(JSON.stringify(result));
+			`;
+			const movedNav = JSON.parse(
+				execFileSync(process.execPath, ["--input-type=module", "--eval", movedNavChild, codeNavChunk], {
+					cwd: foreign,
+					env: isolatedEnv(home),
+					encoding: "utf8",
+				}),
+			) as { kind: string; output?: string; message?: string };
+			strictEqual(movedNav.kind, "ok", movedNav.message);
+			const movedSymbols = (JSON.parse(movedNav.output ?? "null") as { symbols?: Array<{ path?: string }> }).symbols;
+			ok(
+				movedSymbols?.some((symbol) => symbol.path === movedSource),
+				"the bundled code map must index workspace package source at its package-relative path",
+			);
+
+			const hubHome = join(work, "isolated hub home with spaces");
+			const hubProject = join(work, "isolated hub project with spaces");
+			mkdirSync(hubHome, { recursive: true });
+			mkdirSync(hubProject, { recursive: true });
+			const hubEnv = isolatedEnv(hubHome);
+			const hubJson = async (args: string[], cwd = hubProject, env = hubEnv): Promise<unknown> => {
+				const result = await run(bin, [...args, "--json"], cwd, env);
+				strictEqual(result.code, 0, `${args.join(" ")}\n${result.stdout}\n${result.stderr}`);
+				return JSON.parse(result.stdout);
+			};
+
+			// 1. Pristine isolated home/project check BEFORE installing any PanHub pack:
+			// The pristine agents CLI before install is the decisive packaged-runtime assertion.
+			// It verifies the packaged binary in an isolated child environment, ensuring that
+			// the packaged runtime discovers all 16 built-in agent recipes and resolves their
+			// bound skills against the installed package hub/packs/skills root before any
+			// packs are installed.
+			const pristineBuiltinSpecs = (await hubJson(["agents", "--all"])) as Array<{ id: string; skills: string[] }>;
+			const builtinSourceDir = join(packageRoot, "src", "domains", "agents", "builtins");
+			const builtinSourceIds = readdirSync(builtinSourceDir)
+				.filter((name) => name.endsWith(".md"))
+				.map((name) => name.slice(0, -3))
+				.sort();
+			strictEqual(builtinSourceIds.length, 16, "expected 16 built-in agent recipes");
+			deepStrictEqual(
+				pristineBuiltinSpecs.map((spec) => spec.id).sort(),
+				builtinSourceIds,
+				"pristine environment must list all 16 built-in agent recipes",
+			);
+			const builtinSpecsWithSkills = pristineBuiltinSpecs.filter((spec) => spec.skills.length > 0);
+			ok(builtinSpecsWithSkills.length > 0, "built-in recipes must declare bound skills");
+
+			// Direct loader check in isolated environment:
+			withIsolatedState(hubHome, () => {
+				const pristineDiagnostics: AgentRecipeDiagnostic[] = [];
+				const pristineRecipes = loadRecipesFromDir(
+					{
+						source: "builtin",
+						dir: builtinSourceDir,
+						cwd: hubProject,
+					},
+					pristineDiagnostics,
+				);
+				deepStrictEqual(pristineDiagnostics, [], "loading built-in recipes must emit no diagnostics");
+				strictEqual(pristineRecipes.length, 16, "must load all 16 built-in agent recipes through actual loader");
+
+				for (const recipe of pristineRecipes) {
+					if (recipe.skills.length > 0) {
+						strictEqual(
+							recipe.boundSkillPaths.length,
+							recipe.skills.length,
+							`recipe ${recipe.id} must resolve all declared bound skills`,
+						);
+						for (const boundPath of recipe.boundSkillPaths) {
+							ok(existsSync(boundPath), `bound skill path must exist: ${boundPath}`);
+							ok(
+								boundPath.startsWith(join(packageRoot, "hub", "packs", "skills")),
+								`bound skill path must resolve strictly within package hub/packs/skills: ${boundPath}`,
+							);
+						}
+					} else {
+						strictEqual(recipe.boundSkillPaths.length, 0);
+					}
+				}
+			});
+
+			// 2. Verify every packed pin; install a bundled skill from the catalog and a
+			// recipe bundle from a local path.
+			interface CatalogEntry {
+				kind: string;
+				name: string;
+				sourceUrl: string;
+				source?: { repo: string; commit: string; subdir?: string };
+				sha256: string;
+			}
+			const authored = parseYaml(readFileSync(join(ROOT, "hub", "index.yaml"), "utf8")) as {
+				entries: CatalogEntry[];
+			};
+			const discovered = (await hubJson(["hub", "search"])) as {
+				entries: CatalogEntry[];
+				diagnostics: string[];
+			};
+			deepStrictEqual(discovered.diagnostics, []);
+			deepStrictEqual(
+				discovered.entries.map((entry) => `${entry.kind}:${entry.name}`).sort(),
+				authored.entries.map((entry) => `${entry.kind}:${entry.name}`).sort(),
+				"the installed marketplace must expose every bundled package",
+			);
+			strictEqual(authored.entries.length, 44, "catalog contains 39 bundled packages and five remote packages");
+
+			const standaloneSkill = authored.entries.find((entry) => entry.kind === "skill");
+			ok(standaloneSkill);
+			for (const entry of authored.entries) {
+				if (entry.source) {
+					// A community row names its source by exact commit; search shows it as that commit's tree URL.
+					const remote = discovered.entries.find((item) => item.kind === entry.kind && item.name === entry.name);
+					strictEqual(
+						remote?.sourceUrl,
+						`${entry.source.repo}/tree/${entry.source.commit}${entry.source.subdir ? `/${entry.source.subdir}` : ""}`,
+						"remote catalog source stays remote after packaging",
+					);
+					strictEqual(remote?.sha256, entry.sha256, "remote pin survives packaging unchanged");
+					continue;
+				}
+				const packedSource = resolve(packageRoot, "hub", entry.sourceUrl);
+				strictEqual(
+					discovered.entries.find((item) => item.kind === entry.kind && item.name === entry.name)?.sourceUrl,
+					packedSource,
+				);
+				strictEqual(
+					relative(packageRoot, packedSource).split(sep)[0],
+					"hub",
+					`package source ${packedSource} must resolve strictly beneath installed package hub/`,
+				);
+				strictEqual(pluginContentDigest(packedSource), entry.sha256, `packed integrity: ${entry.name}`);
+				if (entry !== standaloneSkill) continue;
+				const installed = (await hubJson(["hub", "install", `${entry.kind}:${entry.name}`, "--project"])) as {
+					path: string;
+					sha256: string;
+				};
+				strictEqual(installed.path, join(hubProject, ".pancode", "plugins", entry.name));
+				strictEqual(installed.sha256, entry.sha256, `packed bytes must match the full-tree pin for ${entry.name}`);
+			}
+			const kitSource = join(ROOT, "tests", "fixtures", "plugins", "sample-kit");
+			const kitInstalled = (await hubJson(["hub", "install", kitSource, "--project"])) as {
+				path: string;
+				sha256: string;
+			};
+			strictEqual(kitInstalled.path, join(hubProject, ".pancode", "plugins", "sample-kit"));
+			strictEqual(kitInstalled.sha256, pluginContentDigest(kitSource));
+
+			// The second project install changed the plugin state the first one
+			// approved, so the operator reviews and approves it before the bundle loads.
+			const review = (await hubJson(["config", "trust", "plugins"])) as { contentHash: string };
+			const approved = await run(bin, ["config", "trust", "plugins", "--hash", review.contentHash], hubProject, hubEnv);
+			strictEqual(approved.code, 0, approved.stderr);
+
+			// 3. Load the installed skill and bundle alongside built-in recipes.
+			const allAgents = (await hubJson(["agents", "--all"])) as Array<{ id: string; skills: string[] }>;
+			strictEqual(allAgents.length, 19, "must expose exactly 19 agent recipes total");
+
+			withIsolatedState(hubHome, () => {
+				const loadedSkills = loadSkills({ cwd: hubProject, home: hubHome, configDir: join(hubHome, "config") });
+				deepStrictEqual(loadedSkills.diagnostics, []);
+				strictEqual(loadedSkills.items.length, 2, "one standalone skill and one bundle skill load");
+
+				const availableSkills = new Set(loadedSkills.items.map((skill) => skill.name));
+				for (const agent of allAgents.filter((agent) => !builtinSourceIds.includes(agent.id))) {
+					for (const skill of agent.skills) {
+						ok(availableSkills.has(skill), `${agent.id} references unavailable skill ${skill}`);
+					}
+				}
+
+				const loadedPrompts = loadPromptTemplates({ cwd: hubProject, home: hubHome });
+				deepStrictEqual(loadedPrompts.diagnostics, []);
+				const kitPrompts = loadedPrompts.items.filter((prompt) => prompt.name.startsWith("sample-kit:"));
+				strictEqual(kitPrompts.length, 1, "must load the sample-kit prompt through prompt loader");
+				for (const prompt of kitPrompts) {
+					ok(!prompt.unavailable, `prompt ${prompt.name} must not be unavailable`);
+					ok(prompt.content.length > 0, `prompt ${prompt.name} content must not be empty`);
+					ok(!prompt.content.includes("${component:"), `unresolved component ref in ${prompt.name}`);
+				}
+
+				const fleetListings = listPlaybooks(hubProject);
+				const kitFleet = fleetListings.find(
+					(fleet) => fleet.source === "plugin" && fleet.name === "sample-kit-build-review",
+				);
+				ok(kitFleet, "sample-kit playbook must be discovered through listPlaybooks");
+				strictEqual(kitFleet.error, null, kitFleet.error ?? undefined);
+				ok(kitFleet.playbook, "playbook must be parsed");
+				strictEqual(kitFleet.playbook.steps.length, 2, "sample-kit playbook must define 2 steps");
+			});
+
+			const lazyChunks = emittedFilesContaining(packageRoot, TREE_SITTER_MARKER);
+			ok(lazyChunks.size > 0, "packed dist must contain the tree-sitter implementation chunk");
+			writeFileSync(join(foreign, "generator.ts"), "export function* installedLazySymbol() { yield 1; }\n");
+			const indexed = await run(bin, ["context", "index", "--json"], foreign, {
+				...isolatedEnv(home),
+				NODE_V8_COVERAGE: coverage,
+				NODE_DISABLE_COMPILE_CACHE: "1",
+			});
+			strictEqual(indexed.code, 0, indexed.stdout + indexed.stderr);
+			const result = JSON.parse(indexed.stdout) as { indexedSourceFiles: number; codemapPath: string };
+			strictEqual(result.indexedSourceFiles, 1);
+			ok(
+				[...lazyChunks].some((path) => coveredFiles(coverage).has(path)),
+				"real indexing must evaluate the lazy chunk",
+			);
+			const codewiki = JSON.parse(readFileSync(result.codemapPath, "utf8")) as {
+				symbols: Array<{ name: string }>;
+			};
+			ok(codewiki.symbols.some((symbol) => symbol.name === "installedLazySymbol"));
+			// Operator examples and the plain-JS bootstrap coexist with the installed
+			// recipe packs in the same foreign project, outside the source checkout.
+			const recipesBeforeExtension = (await hubJson(["hub", "components", "sample-kit"])) as {
+				resources: unknown[];
+			};
+			strictEqual(recipesBeforeExtension.resources.length, 6);
+			const extensionInstall = await run(
+				bin,
+				["extensions", "install", join(packageRoot, "examples/extensions/lab-status"), "--project", "--json"],
+				hubProject,
+				hubEnv,
+			);
+			strictEqual(extensionInstall.code, 0, extensionInstall.stderr);
+			const extensionRun = await run(bin, ["extensions", "run", "lab-status", "dashboard", "--json"], hubProject, hubEnv);
+			strictEqual(extensionRun.code, 0, extensionRun.stderr);
+			const extensionOutput = JSON.parse(extensionRun.stdout) as {
+				output: { text: string; panel?: unknown };
+				provenance: { contentDigest: string };
+			};
+			match(extensionOutput.output.text, /SYNTHETIC FIXTURE/);
+			ok(extensionOutput.output.panel);
+			match(extensionOutput.provenance.contentDigest, /^[a-f0-9]{64}$/);
+			const disabledExtension = await run(bin, ["extensions", "disable", "lab-status", "--project"], hubProject, hubEnv);
+			strictEqual(disabledExtension.code, 0, disabledExtension.stderr);
+			const disabledRun = await run(bin, ["extensions", "run", "lab-status", "dashboard"], hubProject, hubEnv);
+			strictEqual(disabledRun.code, 1, disabledRun.stderr);
+			strictEqual(disabledRun.stdout, "");
+			const measurementsInstall = await run(
+				bin,
+				["extensions", "install", join(packageRoot, "examples/extensions/measurements"), "--project", "--json"],
+				hubProject,
+				hubEnv,
+			);
+			strictEqual(measurementsInstall.code, 0, measurementsInstall.stderr);
+			// Disabling lab-status and installing a second extension changed the
+			// state the first install approved; the operator approves the new one.
+			const extensionReview = (await hubJson(["config", "trust", "extensions"])) as { contentHash: string };
+			const extensionApproved = await run(
+				bin,
+				["config", "trust", "extensions", "--hash", extensionReview.contentHash],
+				hubProject,
+				hubEnv,
+			);
+			strictEqual(extensionApproved.code, 0, extensionApproved.stderr);
+			const workerChunks = emittedFilesContaining(packageRoot, "function createWorkerToolRegistry(");
+			strictEqual(workerChunks.size, 1);
+			const workerChunk = [...workerChunks][0];
+			ok(workerChunk);
+			const measurementProbe = join(work, "installed-measurements.mjs");
+			writeFileSync(
+				measurementProbe,
+				`
+				import assert from "node:assert/strict";
+				import { pathToFileURL } from "node:url";
+				const { createWorkerToolRegistry } = await import(pathToFileURL(process.argv[2]).href);
+				const registry = createWorkerToolRegistry();
+                // Offline product retrieval runs entirely from this installed prefix.
+                globalThis.fetch = async () => { throw new Error("offline package probe forbids network"); };
+                const reference = await registry.invoke({ tool: "gateway", args: { op: "call", capability: "pancode_docs", args: { query: "configuration targets", limit: 3 } } });
+                assert.equal(reference.kind, "ok", JSON.stringify(reference));
+                assert.equal(reference.result.kind, "ok", JSON.stringify(reference));
+                const retrieved = JSON.parse(reference.result.output);
+                assert.ok(retrieved.results.length > 0, reference.result.output);
+                assert.ok(retrieved.results.some((row) => row.file.startsWith("docs/")), reference.result.output);
+				// Workers always admit at default, where an extension subprocess asks.
+				// Grant the one parked call the way a forwarded escalation would.
+				const asked = [];
+				registry.onPermissionRequired((_call, decision, meta) => {
+					asked.push(meta.requestId);
+					void registry.resumeParkedCalls({
+						actionClass: decision.classification.actionClass,
+						requestId: meta.requestId,
+						requestedBy: "escalation:operator",
+					});
+				});
+				const result = await registry.invoke({ tool: "extension_measurements__summarize", args: { values: [1,2,3], units: "seconds" } });
+				assert.equal(asked.length, 1, JSON.stringify(result));
+				assert.equal(result.kind, "ok", JSON.stringify(result));
+				assert.equal(result.result.kind, "ok", JSON.stringify(result));
+				const [note, ...body] = result.result.output.split("\\n");
+				assert.match(note, /^\\[operator approval\\] The operator approved this execute call once/);
+				const summary = JSON.parse(body.join("\\n"));
+				assert.equal(summary.mean, 2);
+				assert.equal(summary.sampleStandardDeviation, 1);
+				assert.equal(summary.units, "seconds");
+			`,
+			);
+			const measurementRun = await run(measurementProbe, [workerChunk], hubProject, hubEnv);
+			strictEqual(measurementRun.code, 0, measurementRun.stderr);
+			const recipesAfterExtension = (await hubJson(["hub", "components", "sample-kit"])) as {
+				resources: unknown[];
+			};
+			// Observation timestamps vary; recipe identity, ownership and availability do not.
+			deepStrictEqual(recipesAfterExtension.resources, recipesBeforeExtension.resources);
+			const sdkSubpaths = ["extension", "pack", "testing", "tool", "mcp-server"];
+			for (const subpath of sdkSubpaths)
+				for (const file of [`dist/sdk/${subpath}.d.ts`, `dist/sdk/${subpath}.js`]) {
+					ok(existsSync(join(packageRoot, file)), `installed extension author file ${file} exists`);
+					match(readFileSync(join(packageRoot, file), "utf8"), /^\/\/ SPDX-License-Identifier: Apache-2\.0\n/u, file);
+				}
+			const sdkImport = `await Promise.all(${JSON.stringify(sdkSubpaths.map((subpath) => `pancode/sdk/${subpath}`))}.map((s) => import(s)));`;
+			execFileSync(process.execPath, ["--input-type=module", "-e", sdkImport], {
+				cwd: prefix,
+				env: isolatedEnv(home),
+				stdio: "pipe",
+			});
+			await assertInstalledReasoningReplay(bin, hubProject, join(work, "replay-home"));
+			await assertInstalledWebApp(packageRoot, bin, prefix, work);
+		} finally {
+			rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+		}
+	});
+});

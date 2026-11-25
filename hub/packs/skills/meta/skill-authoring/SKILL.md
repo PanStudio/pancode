@@ -1,0 +1,143 @@
+---
+name: skill-authoring
+description: Writes, reviews, or prunes a SKILL.md, judging whether its description, body, and length earn their cost. Not for packaging a workflow that just happened; use workflow-capture.
+triggers:
+  - write a SKILL.md
+  - create a new skill
+  - improve this skill
+  - why isn't this skill firing
+  - prune a skill body
+version: 0.4.2
+license: LicenseRef-PanCode-1.0
+allowed-tools:
+  - read
+  - grep
+  - write
+  - edit
+  - bash
+pancode:
+  registry-id: akougkas/pancode
+  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/meta/skill-authoring
+  audit: pass
+  model-size: large
+---
+
+# Skill Authoring
+
+A skill exists to wrangle predictability out of a stochastic system: the same
+process every run, not the same output. Every rule below is a lever on that
+one virtue. A disputed line is settled by running the skill on a real task,
+not by debate.
+
+## Format and Location
+
+A skill is a folder holding a `SKILL.md`. Author with ordinary write/edit tools
+in a draft directory such as `draft-skills/<name>/`, outside active skill and
+installed package roots. In this repository, curated sources live under
+`hub/packs/skills/<category>/<name>/`. Validate a draft with
+`pancode hub validate draft-skills/<name>/SKILL.md`.
+
+For distribution, use the portable envelope in
+`hub/_authoring/templates/skill/` and validate the complete package root.
+The operator installs it through PanHub into the user or project package
+store (`<configDir>/plugins/` or `.pancode/plugins/`). Loose skills under
+`.pancode/skills/` and `<configDir>/skills/` are also operator-managed; PanCode's
+model tools cannot author directly in those protected roots. Other hosts may
+consume the same `SKILL.md` through their own installation routes.
+
+Frontmatter contract (Agent Skills compatible):
+
+- `name`: lowercase-hyphen, ≤64 chars. Catalog convention requires it to match
+  the folder; the runtime loader warns on a mismatch and uses the frontmatter
+  name.
+- `description`: required, ≤1024 chars; its craft is the section below. Quote
+  it when it contains ` #`; an unquoted YAML scalar is truncated there.
+- `version` and `license`: required for catalog publication. Any change to a
+  package's files bumps `version` in both `SKILL.md` and `plugin.json`: patch for
+  wording or moved text, minor for changed steps, triggers or tool surface, major
+  for a rename or removal. `pnpm hub:pin` refuses changed bytes under the last
+  release's version, because this number is how `hub update` sees that an
+  installed copy is behind.
+- `disable-model-invocation: true`: hides the skill from the agent; only the
+  user can activate it.
+- `allowed-tools` / `disallowed-tools`: a *narrowing* declaration, not a
+  grant. While every loaded skill declares `allowed-tools`, the turn's tool
+  surface shrinks to their union; `disallowed-tools` always denies. Neither
+  ever admits a tool the safety level would refuse. A YAML list or a space- or
+  comma-separated string. Canonical lowercase PanCode names only (see
+  hub/packs/skills/README.md, "Claude Code interop").
+- `requires`: `skill:<name>` dependencies; the loader warns when one is
+  missing. Reference an installed skill by name instead of restating its job.
+- `pancode:`: the reserved publication block (`registry-id`, `source-url`,
+  `audit`, optional `model-size`, `agents` and `verified-at`). Required for
+  catalog skills. These are publication and review fields, not authorship
+  claims. Preserve required notices for retained third-party material; do not
+  invent ancestry or replacement originality declarations.
+- `verified-at`: an ISO date under `pancode:` for a skill whose facts expire,
+  such as queue limits, module versions or endpoints. `hub validate` warns
+  once it is 180 days old, and a load tells the model its age.
+
+Sibling files (`references/*.md`, scripts) ride along in the folder and load
+only when the body points at them.
+
+## Invocation: Choose Which Load You Pay
+
+A model-invoked skill's description sits in the agent's context every turn:
+that is context load, paid forever. A hidden skill costs nothing in context
+but the user must remember it exists: cognitive load. Keep a description only
+when the agent must reach the skill on its own or another skill requires it;
+if it only ever fires by hand, set `disable-model-invocation: true`.
+
+## Description and Triggers
+
+Two frontmatter fields share the trigger surface, and every word in both
+competes with every other skill's:
+
+- `triggers`: the phrases a user actually types, one per distinct branch.
+  Synonyms restating one branch ("API key", "credential", "token") are
+  duplication; keep the strongest.
+- `description`: one lead sentence saying what the skill does, then one
+  "Not for X; use <other-skill>" clause per real boundary. It is what the
+  agent reads in the `context(scope="skills")` listing on every skill-shaped
+  turn, so it carries no trigger list and no identity the body already
+  states.
+
+## Body: Steps and Reference
+
+Two content types, mixing freely. Steps are ordered actions; reference is
+material consulted on demand. Rank by how immediately the agent needs each
+piece: steps first, in-file reference second, sibling-file reference behind a
+pointer last.
+
+- End every step on a checkable, exhaustive completion criterion: "every
+  modified file accounted for", never "understanding reached". A vague bound
+  invites the agent to declare done early.
+- Keep one concept's definition, rules, and caveats under one heading, not
+  scattered.
+- Push material only some runs need into `references/<topic>.md`. The
+  pointer's wording decides whether the agent follows it: state the condition
+  ("when the tests use the mock provider, read references/<topic>.md"), not
+  just the link.
+- Prefer one pretrained word over a restated sentence: "fast, deterministic,
+  low-overhead" collapses to "tight". A strong word anchors the same behavior
+  every time it appears; a weak one ("be thorough") changes nothing and
+  should be deleted or strengthened ("relentless").
+
+## Pruning
+
+Before finishing any skill, pass the body line by line:
+
+- Relevance: does the line still bear on what the skill does? Stale layers
+  accumulate because adding feels safe and removing feels risky; remove.
+- Duplication: each meaning lives in exactly one place. A repeated meaning
+  also inflates its apparent importance.
+- No-op: would the agent do this by default? Then the line buys nothing;
+  delete the whole sentence, not words within it.
+- Sprawl: past 120 body lines, either disclose reference into sibling files
+  or split the skill; a split description must earn its permanent context
+  load. `hub validate` warns and `pnpm hub:pin` refuses a catalog skill
+  over it.
+
+Done when: the description is one sentence plus routing clauses and the
+triggers carry the phrases, every step has a checkable completion criterion,
+and no line fails the relevance/duplication/no-op pass.

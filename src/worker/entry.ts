@@ -1,0 +1,516 @@
+#!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Worker subprocess entry point.
+ *
+ * Reads a WorkerSpec JSON document from stdin, re-hydrates the runtime
+ * descriptor from the runtime registry (TargetDescriptor is pure data;
+ * RuntimeDescriptor carries functions and cannot cross the stdin boundary),
+ * builds a WorkerRunInput, and dispatches to `startWorkerRun` from the engine
+ * boundary. Emits NDJSON events on stdout.
+ */
+
+// First statement, so no stderr write in this process (a fatal message carrying
+// spec or model text included) reaches the orchestrator as a control frame.
+guardControlLane();
+
+// A fleet run puts N of these in the process table at once. Name the process
+// before the spec arrives so an early failure is still identifiable; the agent
+// id is appended once the spec is parsed.
+process.title = "pancode-worker";
+
+import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
+import { AI_AGENT_NAME } from "../core/agent-environment.js";
+import { killLiveCommandGroups, setToolEnvAutonomy, startLoginEnvCapture } from "../core/bash-exec.js";
+import { deleteInjectedCompileCacheFrom } from "../core/compile-cache.js";
+import { adoptDevRootOwner } from "../core/dev-roots.js";
+import {
+	configureGitCommitAttribution,
+	setAutonomousCommitProcess,
+	withManagedGitCommitAttributionEnvironment,
+} from "../core/git-commit-attribution.js";
+import { installProxyFromEnv } from "../core/proxy-env.js";
+import { configureWorkerProcessSandbox } from "../core/sandbox/worker-process.js";
+
+process.env.AI_AGENT = AI_AGENT_NAME;
+
+// Consume the compile-cache pair the dispatcher injected for THIS entry's
+// module graph. Node read NODE_COMPILE_CACHE at bootstrap, before any of this
+// ran, so the worker's own cache stays enabled; deleting the pair here is what
+// keeps it out of every child this process spawns: bash tool commands, hooks,
+// and external runtime subprocesses (claude, antigravity) that would otherwise
+// inherit the unfiltered environment and write into PanCode's cache.
+deleteInjectedCompileCacheFrom(process.env);
+
+import { verifySharedStoreGrant } from "../core/store-shared-grant.js";
+import {
+	setModelLoadReportSink,
+	setProtectedModelsProvider,
+	setResidencyNoticeSink,
+} from "../engine/apis/residency.js";
+import type { WorkerHookTransport } from "../engine/worker-extension-hooks.js";
+import type { WorkerRunHandle, WorkerRunInput } from "../engine/worker-run-types.js";
+import { startWorkerRun, workerProviderSupportsTools } from "../engine/worker-runtime.js";
+import { attestedToolNames, attestedToolSchemaSignature } from "../engine/worker-tools.js";
+import { emitControlFrame, guardControlLane } from "./control-lane.js";
+import { projectWorkerEventForStdout } from "./event-projection.js";
+import { startWorkerHeartbeat } from "./heartbeat.js";
+import { createWorkerAgentLedgerPort } from "./ledger-mirror.js";
+import { emitEvent, exitAfterDrain, onStdoutFailure } from "./ndjson.js";
+import {
+	endpointIdentityHash,
+	toolSignatureOf,
+	WORKER_ADMISSION_WAIT_MS,
+	WORKER_HOOK_REQUEST_EVENT,
+	WORKER_PERMISSION_HOLD_VERSION,
+	WORKER_PROTOCOL_VERSION,
+	type WorkerHookEffect,
+	workerSpecDigest,
+	workerStaticHead,
+} from "./protocol.js";
+import { observeHostIdentity, observeWorkerResourceFacts } from "./resource-facts.js";
+import { resolveWorkerRuntime } from "./runtime-registry.js";
+import {
+	envelopeAllowance,
+	envelopePermissionMode,
+	validateRehydratedWorkerRuntime,
+	type WorkerSpec,
+	workerSpecToolNames,
+} from "./spec-contract.js";
+import { createOrderedSteerHandler, createWorkerStdinDemux } from "./stdin-demux.js";
+
+/** Bound between channel-close abort and forced exit for a hung run. */
+const CHANNEL_CLOSE_EXIT_GRACE_MS = 5000;
+
+/**
+ * The process group an abort must escalate against. A remote launch exports
+ * the group leader the login shell established, because `exec` preserves it
+ * across the shell replacement. A local launch is spawned detached, which
+ * makes this process its own group leader. Windows has no process groups and
+ * reports null rather than an id the orchestrator cannot signal.
+ */
+/**
+ * Operator-configured labels for this node. They ride the transport
+ * environment rather than the WorkerSpec because the node, not the request,
+ * is what they describe: the same spec dispatched to two nodes must attest two
+ * different label sets.
+ */
+function configuredNodeLabels(): string[] {
+	return (process.env.PANCODE_WORKER_LABELS ?? "")
+		.split(",")
+		.map((label) => label.trim())
+		.filter((label) => label.length > 0);
+}
+
+function announcedProcessGroupId(): number | null {
+	const declared = Number.parseInt(process.env.PANCODE_WORKER_PGID ?? "", 10);
+	if (Number.isSafeInteger(declared) && declared > 0) return declared;
+	return process.platform === "win32" ? null : process.pid;
+}
+
+/**
+ * The envelope's static head names the request head this worker sends: its runtime, target, model, thinking, system
+ * prompt and tool declarations from this build. A spec whose head was sealed over anything else is refused before any
+ * model call, so a cache key or a plan built on the head describes this run (DESIGN 4.4).
+ */
+function assertStaticHead(spec: WorkerSpec): void {
+	const names = workerSpecToolNames(spec);
+	const head = workerStaticHead({
+		api: spec.runtimeId,
+		provider: spec.target.id,
+		model: spec.wireModelId,
+		thinking: spec.thinkingLevel ?? null,
+		systemPrompt: spec.systemPrompt,
+		tools: { names, schemas: attestedToolSchemaSignature(names) },
+	});
+	if (head !== spec.envelope.staticHead) {
+		throw new Error("worker: the envelope's static head does not match this spec's request head on this build");
+	}
+}
+
+/** The admitted MCP attestation with network only for the servers the envelope grants it. */
+function envelopeMcp(
+	mcp: NonNullable<WorkerSpec["permit"]["ceiling"]["mcp"]>,
+	envelope: WorkerSpec["envelope"],
+): NonNullable<WorkerSpec["permit"]["ceiling"]["mcp"]> {
+	const granted = new Set(envelope.network.mcp);
+	return {
+		projectRoot: mcp.projectRoot,
+		tools: mcp.tools.map(({ network: _network, ...entry }) =>
+			granted.has(entry.serverId) ? { ...entry, network: true as const } : entry,
+		),
+	};
+}
+
+/**
+ * Attest this process, this node, and the route identity it resolved, on the
+ * control lane, before any model call. The orchestrator compares every field
+ * against the plan it approved and either kills a drifting peer or answers
+ * with `admit`; the caller holds the run until that answer names the returned
+ * spec digest.
+ */
+function announceWorker(spec: WorkerSpec, input: WorkerRunInput): string {
+	assertStaticHead(spec);
+	const specDigest = workerSpecDigest(spec);
+	const toolNames = attestedToolNames({
+		allowedTools: workerSpecToolNames(spec),
+		toolsSupported: workerProviderSupportsTools(input),
+		...(spec.helperResult === true ? { helperResult: true } : {}),
+		agentId: spec.agentId,
+		task: spec.task,
+		runtime: spec.runtime,
+	});
+	emitControlFrame({
+		kind: "announce",
+		attestation: {
+			protocolVersion: WORKER_PROTOCOL_VERSION,
+			specVersion: spec.specVersion,
+			pid: process.pid,
+			processGroupId: announcedProcessGroupId(),
+			host: observeHostIdentity(),
+			settingsFingerprint: spec.settingsFingerprint,
+			specDigest,
+			runtimeId: spec.runtimeId,
+			targetId: spec.target.id,
+			endpointIdentityHash: endpointIdentityHash(spec.target.url),
+			wireModelId: spec.wireModelId,
+			toolSignature: toolSignatureOf(toolNames),
+			toolSchemaSignature: attestedToolSchemaSignature(toolNames),
+			permissionHold: WORKER_PERMISSION_HOLD_VERSION,
+			resources: observeWorkerResourceFacts(configuredNodeLabels()),
+		},
+	});
+	return specDigest;
+}
+
+async function main(): Promise<number> {
+	await installProxyFromEnv();
+	// A worker has no TUI, so residency notices go to stderr (the parent
+	// captures it for diagnostics) instead of the shared bus, keeping headless
+	// reconciliation parity with the interactive path.
+	setResidencyNoticeSink((notice) => {
+		process.stderr.write(`[worker] residency ${notice.kind}: ${notice.message}\n`);
+		if (notice.kind === "will-not-fit") {
+			emitEvent({ type: "pancode_run_outcome", payload: { outcomeCode: "vram_capacity_fit_failure" } });
+		}
+	});
+	// The orchestrator owns the release of every model this worker loads
+	// (#379): a worker that released on its own exit would reload the model for
+	// each sequential dispatch and pull it from under a parallel sibling. Only
+	// ids cross the lane; the orchestrator resolves the endpoint itself.
+	setModelLoadReportSink((load) => {
+		emitControlFrame({
+			kind: "model_loaded",
+			load: { targetId: load.targetId, modelId: load.modelId, aliasIds: load.aliasIds },
+		});
+	});
+	const demux = createWorkerStdinDemux();
+	process.stdin.setEncoding("utf8");
+	process.stdin.on("data", (chunk: string) => demux.feed(chunk));
+	process.stdin.on("end", () => demux.eof());
+	process.stdin.on("error", () => demux.eof());
+	process.stdin.resume();
+
+	const spec = await demux.readSpec();
+	process.title = `pancode-worker:${spec.agentId}`;
+	const attributionEnabled = spec.gitCommitAttribution ?? true;
+	configureGitCommitAttribution({ commitAttribution: attributionEnabled, commitAuthor: spec.gitCommitAuthor ?? "auto" });
+	// A dispatched worker is autonomous: under `auto` its commits name PanCode as author.
+	setAutonomousCommitProcess(true);
+	// Every child this worker spawns through bash-exec or safe-exec runs under
+	// the dispatch-chosen OS sandbox from here on (decision Q8).
+	configureWorkerProcessSandbox(spec.sandbox, spec.envelope.sandbox.confinesWrites);
+	// The dispatching session's own workers may write its dev extension folders; another session's may not.
+	if (spec.devRootOwner !== undefined) adoptDevRootOwner(spec.devRootOwner);
+	const attribution = withManagedGitCommitAttributionEnvironment(process.env, {
+		cwd: process.cwd(),
+		enabled: attributionEnabled,
+	});
+	for (const key of Object.keys(process.env)) {
+		if (!(key in attribution.env)) Reflect.deleteProperty(process.env, key);
+	}
+	Object.assign(process.env, attribution.env);
+	if (attribution.diagnostic !== null) {
+		process.stderr.write(`[worker] commit attribution: ${attribution.diagnostic}\n`);
+	}
+	// The worker has no settings view of its own; the dispatcher copied the
+	// operator's configured model ids onto the spec so this process protects
+	// the same residents as the orchestrator.
+	setProtectedModelsProvider(() => spec.protectedModels ?? []);
+	const stopHeartbeat = startWorkerHeartbeat();
+
+	// A grant from another host names the store by ids; nothing starts unless this node's store is that store.
+	let sharedStoreDirs: string[] = [];
+	if (spec.storeGrant?.shared !== undefined) {
+		try {
+			sharedStoreDirs = await verifySharedStoreGrant(process.cwd(), spec.storeGrant.shared);
+		} catch (err) {
+			process.stderr.write(`[worker] ${err instanceof Error ? err.message : String(err)}\n`);
+			stopHeartbeat();
+			return 2;
+		}
+	}
+
+	const runtime = await resolveWorkerRuntime(spec.runtimeId);
+	if (!runtime) {
+		process.stderr.write(`[worker] runtime '${spec.runtimeId}' not registered\n`);
+		stopHeartbeat();
+		return 2;
+	}
+	try {
+		validateRehydratedWorkerRuntime(spec, runtime);
+	} catch (err) {
+		process.stderr.write(`[worker] ${err instanceof Error ? err.message : String(err)}\n`);
+		stopHeartbeat();
+		return 2;
+	}
+
+	// The agent ledger is push-fed: the orchestrator replays the board on
+	// subscription and pushes each admitted entry after it, so the port answers
+	// a read from this local mirror instead of stalling a tool call on a round
+	// trip. A run with no ledger still gets a port, and it reads null.
+	const ledgerPort = createWorkerAgentLedgerPort({
+		...(spec.ledger !== undefined ? { ledger: spec.ledger } : {}),
+		emitControlFrame,
+	});
+	demux.onLedgerDelta((entries) => ledgerPort.acceptDelta(entries));
+
+	// Each extension hook call waits for the orchestrator's answer on stdin.
+	// The channel closing answers none of them, so each fails by its own policy.
+	const pendingHooks = new Map<
+		string,
+		{ resolve: (effects: ReadonlyArray<WorkerHookEffect>) => void; reject: (error: Error) => void }
+	>();
+	demux.onHookResult((result) => {
+		const pending = pendingHooks.get(result.requestId);
+		if (pending === undefined) return;
+		pendingHooks.delete(result.requestId);
+		pending.resolve(result.effects);
+	});
+	// Landings are physical paths, so the root the orchestrator maps them from is too.
+	let hookWorkspaceRoot = spec.taskWorktree?.path ?? process.cwd();
+	try {
+		hookWorkspaceRoot = realpathSync(hookWorkspaceRoot);
+	} catch {
+		// An unresolvable root is sent as given; only the mapping of a landing under it is lost.
+	}
+	const requestHook: WorkerHookTransport = (request, timeoutMs) =>
+		new Promise((resolve, reject) => {
+			const requestId = randomUUID();
+			const timer = setTimeout(() => {
+				pendingHooks.delete(requestId);
+				reject(new Error(`no answer within ${timeoutMs} ms`));
+			}, timeoutMs);
+			timer.unref?.();
+			pendingHooks.set(requestId, {
+				resolve: (effects) => {
+					clearTimeout(timer);
+					resolve(effects);
+				},
+				reject: (error) => {
+					clearTimeout(timer);
+					reject(error);
+				},
+			});
+			emitEvent({
+				type: WORKER_HOOK_REQUEST_EVENT,
+				payload: { ...request, workspaceRoot: hookWorkspaceRoot, requestId },
+			});
+		});
+
+	const input: WorkerRunInput = {
+		systemPrompt: spec.systemPrompt,
+		...(spec.contextSeed ? { contextSeed: spec.contextSeed } : {}),
+		dynamicPromptMessages: spec.dynamicPromptMessages ?? [],
+		agentId: spec.agentId,
+		task: spec.task,
+		target: spec.target,
+		runtime,
+		wireModelId: spec.wireModelId,
+		allowedTools: workerSpecToolNames(spec),
+		budget: spec.budget,
+		// Skills, approval route, command reach and network grants come from the sealed envelope (fleet M7).
+		...(spec.envelope.skills.discovery === "off" ? { noSkills: true } : {}),
+		...(spec.turnConstraints !== undefined ? { turnConstraints: spec.turnConstraints } : {}),
+		...(spec.envelope.skills.paths.length > 0 ? { skillPaths: [...spec.envelope.skills.paths] } : {}),
+		...(spec.envelope.skills.discovery === "bound-only" ? { agentSkills: [...spec.envelope.skills.bound] } : {}),
+		...(spec.trustProjectCompatRoots !== undefined ? { trustProjectCompatRoots: spec.trustProjectCompatRoots } : {}),
+		onPermission: envelopePermissionMode(spec.envelope.approval),
+		permitAllowance: { git: spec.permit.allowance.git, ...envelopeAllowance(spec.envelope.approval) },
+		...(spec.permit.ceiling.mcp !== undefined ? { mcp: envelopeMcp(spec.permit.ceiling.mcp, spec.envelope) } : {}),
+		taskGit: {
+			allowance: spec.permit.allowance.git,
+			// A run that already runs arbitrary code gains nothing from a repository hook (Q5).
+			executePermitted: spec.envelope.exec.shell !== "none",
+			...(spec.taskWorktree !== undefined ? { taskWorktree: { ...spec.taskWorktree } } : {}),
+		},
+		...(spec.escalation !== undefined ? { escalation: spec.escalation } : {}),
+		// A main-routed ask's effect descriptor crosses on the control lane only,
+		// which is never journaled or displayed (Phase D).
+		...(spec.escalation?.grant !== undefined
+			? { emitGrantRequest: (request) => emitControlFrame({ kind: "grant_request", request }) }
+			: {}),
+		...(spec.toolProfile !== undefined ? { toolProfile: spec.toolProfile } : {}),
+		// The envelope is the one source of the run's write scope (fleet M7).
+		...(spec.envelope.write.mode === "none" ? { readOnly: true } : {}),
+		...(spec.skipRepositoryInstructions === true ? { skipRepositoryInstructions: true } : {}),
+		...(spec.envelope.write.roots.length > 0
+			? {
+					writeRoots: [...new Set([...spec.envelope.write.roots, ...sharedStoreDirs])],
+					writeRootsCommandsBounded: spec.envelope.write.commandsBounded,
+				}
+			: {}),
+		...(spec.storeGrant !== undefined ? { storeGrant: structuredClone(spec.storeGrant) } : {}),
+		...(spec.flowPolicy !== undefined ? { flowPolicy: structuredClone(spec.flowPolicy) } : {}),
+		...(spec.flowRestrictions !== undefined ? { flowRestrictions: structuredClone(spec.flowRestrictions) } : {}),
+		...(spec.protectedArtifactState !== undefined
+			? {
+					protectedArtifactState: {
+						version: spec.protectedArtifactState.version,
+						artifacts: structuredClone(spec.protectedArtifactState.artifacts),
+					},
+				}
+			: {}),
+		...(spec.responseSchema !== undefined ? { responseSchema: spec.responseSchema } : {}),
+		// Preserve the host's stable context-generation policy across the worker process boundary.
+		...(spec.sampling !== undefined ? { sampling: spec.sampling } : {}),
+		...(spec.synthesisAt !== undefined ? { synthesisAt: spec.synthesisAt } : {}),
+		limits: structuredClone(spec.limits),
+		...(spec.cacheLane !== undefined ? { cacheLane: spec.cacheLane } : {}),
+		...(spec.resultContract !== undefined ? { resultContract: spec.resultContract } : {}),
+		...(spec.helperResult === true ? { helperResult: true } : {}),
+		...(spec.product !== undefined ? { product: spec.product } : {}),
+		...(spec.role !== undefined ? { role: spec.role } : {}),
+		agentLedger: ledgerPort,
+		...(spec.extensionHooks !== undefined && spec.extensionHooks.length > 0
+			? { extensionHookHost: { hooks: spec.extensionHooks, request: requestHook } }
+			: {}),
+		cwd: process.cwd(),
+	};
+	if (spec.modelCapabilities) input.modelCapabilities = spec.modelCapabilities;
+	if (spec.sessionId) input.sessionId = spec.sessionId;
+	if (spec.telemetryContext) input.telemetryContext = { ...spec.telemetryContext };
+	if (spec.apiKey) input.apiKey = spec.apiKey;
+	if (spec.authProfile) input.authProfile = spec.authProfile;
+	if (spec.credentialExpiresAt !== undefined) input.credentialExpiresAt = spec.credentialExpiresAt;
+	if (spec.thinkingLevel) input.thinkingLevel = spec.thinkingLevel;
+	if (spec.runtimeResolution) input.runtimeResolution = spec.runtimeResolution;
+	if (spec.middlewareSnapshot) input.middlewareSnapshot = spec.middlewareSnapshot;
+	// Attest after the runtime is rehydrated and the run input is fully
+	// resolved, so the announced identity describes the run that is about to
+	// start, and strictly before startWorkerRun reaches a model.
+	const attestedDigest = announceWorker(spec, input);
+	// Announcing is not admission: the orchestrator may still refuse this
+	// identity, so no model call may happen before its admit arrives. Steers
+	// and permission decisions that land meanwhile stay queued in the demux,
+	// and the heartbeat keeps the stall watchdog fed through the wait.
+	try {
+		await demux.awaitAdmission(attestedDigest, WORKER_ADMISSION_WAIT_MS);
+	} catch (err) {
+		process.stderr.write(`[worker] not admitted: ${err instanceof Error ? err.message : String(err)}\n`);
+		stopHeartbeat();
+		return 2;
+	}
+	// The worker's bash commands carry its own level as the ceiling for any pancode they start.
+	setToolEnvAutonomy(() => spec.envelope.approval.autonomy);
+	void startLoginEnvCapture();
+	// Slim streaming events before NDJSON serialization: pi's message_update
+	// carries the full cumulative message twice (top-level + assistantMessageEvent
+	// .partial), which reserializes quadratically on stdout. No worker-stdout
+	// consumer reads those cumulative snapshots (see event-projection.ts).
+	const handle = startWorkerRun(input, (event) => emitEvent(projectWorkerEventForStdout(event)));
+	// The demux buffers lines that landed before the runtime handle existed.
+	// Single-shot subprocesses expose no steer method, and an SDK query can race
+	// completion. The runtime emits the receipt-bearing pancode_steer_received event
+	// only after it accepts the message; rejected input is diagnostic-only.
+	demux.onSteer(
+		createOrderedSteerHandler(
+			(text) => handle.steer?.(text) ?? false,
+			({ text, sequence }) =>
+				emitEvent({ type: "pancode_steer_received", payload: { chars: text.trim().length, sequence } }),
+			(reason) => process.stderr.write(`[worker] dropped steer: ${reason}\n`),
+		),
+	);
+	// Permission-decision lines resolve a parked escalation. Unknown or
+	// duplicate requestIds return false and are dropped without crashing the
+	// worker; runtimes without an escalation loop simply have no handler.
+	demux.onPermissionDecision(({ requestId, decision, binding, cause }) => {
+		const resolved = handle.resolvePermission?.(requestId, decision, binding, cause) ?? false;
+		if (!resolved) {
+			process.stderr.write(`[worker] dropped permission_decision for unknown request '${requestId}'\n`);
+		}
+	});
+	// A hold renewal moves the parked ask's backstop; one for an ask already answered changes nothing.
+	demux.onPermissionHold(({ requestId, holdMs }) => {
+		if (!(handle.holdPermission?.(requestId, holdMs) ?? false)) {
+			process.stderr.write(`[worker] dropped permission_hold for request '${requestId}'\n`);
+		}
+	});
+	// Parent monitor: the control channel closing after the spec means the
+	// dispatcher is gone (orchestrator exit, SSH channel drop). Abort the run
+	// and bound the exit so no worker is ever stranded on a remote node. The
+	// timer is unref'd: it cannot keep an otherwise-finished process alive,
+	// but it fires if a hung run is still holding the event loop.
+	let abortStarted = false;
+	let runSettled = false;
+	let forceExit: ReturnType<typeof setTimeout> | null = null;
+	const abortOnce: WorkerRunHandle["abort"] = (cause) => {
+		if (abortStarted || runSettled) return;
+		abortStarted = true;
+		emitControlFrame({ kind: "cancel_ack", at: Date.now() });
+		handle.abort(cause);
+	};
+	demux.onChannelClose(() => {
+		for (const pending of pendingHooks.values()) pending.reject(new Error("the control channel closed"));
+		pendingHooks.clear();
+		if (runSettled) return;
+		process.stderr.write("[worker] control channel closed; aborting run\n");
+		abortOnce("owner_channel_closed");
+		if (forceExit !== null) return;
+		forceExit = setTimeout(() => process.exit(1), CHANNEL_CLOSE_EXIT_GRACE_MS);
+		forceExit.unref?.();
+	});
+	// A gap in the bulk trail cannot seal as a complete run, so the run stops
+	// through the same owner as a cancel and exitAfterDrain refuses a clean code.
+	// The failure surfaces inside an event sink; abort after it unwinds.
+	// The worker's own lane failed, not its parent: the stop is internal, never parent_cancel (FL-9).
+	onStdoutFailure(() => queueMicrotask(() => abortOnce("internal")));
+	const onSignal = (signal: NodeJS.Signals): void => {
+		// #425: a signal abort must leave its route in the worker's own diagnostics.
+		process.stderr.write(`[worker] ${signal} received; aborting run\n`);
+		abortOnce();
+		// The parent kills this worker's group shortly after this signal; a command runs in its own group, so stop it
+		// here or it outlives the cancel.
+		killLiveCommandGroups();
+	};
+	process.on("SIGINT", onSignal);
+	process.on("SIGTERM", onSignal);
+	try {
+		const result = await handle.promise;
+		return result.exitCode;
+	} finally {
+		runSettled = true;
+		if (forceExit !== null) clearTimeout(forceExit);
+		stopHeartbeat();
+		process.off("SIGINT", onSignal);
+		process.off("SIGTERM", onSignal);
+		const dropped = demux.droppedLineCount();
+		if (dropped > 0) {
+			process.stderr.write(`[worker] dropped ${dropped} unrecognized stdin line(s) after the spec\n`);
+		}
+		// Best-effort dispose of any LMStudioClient instances cached by the
+		// engine so we close their WebSocket sessions cleanly before the worker
+		// process exits.
+	}
+}
+
+main().then(
+	(code) => exitAfterDrain(code),
+	(err) => {
+		const msg = err instanceof Error ? err.message : String(err);
+		process.stderr.write(`[worker] fatal: ${msg}\n`);
+		return exitAfterDrain(2);
+	},
+);

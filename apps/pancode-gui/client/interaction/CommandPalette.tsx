@@ -1,0 +1,161 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// The command palette's body. It is data-free: the shell composes the command list from navigation,
+// the open session and the app actions, and hands it in. Focus never leaves the input; the arrow keys
+// move `aria-activedescendant` only. The dialog around it is eager (`LazyDialogs.tsx`), so the keys
+// typed while this chunk loads land in the palette rather than the message box behind it.
+
+import type { RefObject } from "react";
+import { Fragment, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Keycaps } from "./Keycaps.js";
+import { formatKeybinding, KEYBINDINGS, type KeybindingId } from "./keybindings.js";
+import { prefixScore } from "./prefix-score.js";
+import { useListNavigation } from "./use-list-navigation.js";
+import "./interaction.css";
+
+export interface Command {
+	readonly id: string;
+	readonly title: string;
+	/** Short noun for the group heading: "Go to", "Session", "Run". */
+	readonly group: string;
+	/** Extra words the matcher searches but does not print. */
+	readonly keywords?: readonly string[];
+	/** A declared keybinding id, printed as a trailing chord. */
+	readonly binding?: KeybindingId;
+	/** False hides the row entirely; a command that cannot run is never shown greyed. */
+	readonly available: boolean;
+	run(): void;
+}
+
+/**
+ * Prefix-by-word rather than the reference's substring rule, because a palette must feel like a
+ * launcher. Ties break on the order the caller composed, then alphabetically, so the ranking is
+ * stable between keystrokes.
+ */
+export function rankCommands(commands: readonly Command[], query: string): Command[] {
+	const needle = query.trim();
+	return commands
+		.filter((command) => command.available)
+		.map((command, index) => ({
+			command,
+			index,
+			score: prefixScore([command.title, command.group, ...(command.keywords ?? [])], needle),
+		}))
+		.filter((scored) => scored.score > 0)
+		.sort(
+			(left, right) =>
+				right.score - left.score ||
+				left.index - right.index ||
+				left.command.title.localeCompare(right.command.title, "en-US"),
+		)
+		.map((scored) => scored.command);
+}
+
+export function CommandPaletteBody({
+	commands,
+	onClose,
+	inputRef,
+	initialQuery = "",
+	claimFocus = false,
+}: {
+	commands: readonly Command[];
+	onClose: () => void;
+	inputRef: RefObject<HTMLInputElement | null>;
+	/** What was typed into the loading shell before this body arrived. */
+	initialQuery?: string;
+	/** Take focus on mount, caret at the end: the shell that held it has just been replaced. */
+	claimFocus?: boolean;
+}) {
+	// The query starts empty on every open because the palette mounts fresh, which is deliberate: a
+	// stale filter is the most common way a launcher runs the wrong thing.
+	const [query, setQuery] = useState(initialQuery);
+	const input = inputRef;
+	const claim = useRef(claimFocus);
+	useLayoutEffect(() => {
+		if (!claim.current) return;
+		claim.current = false;
+		const field = input.current;
+		field?.focus();
+		field?.setSelectionRange(field.value.length, field.value.length);
+	}, [input]);
+	const listId = useId();
+	const results = useMemo(() => rankCommands(commands, query), [commands, query]);
+	const run = (command: Command) => {
+		onClose();
+		command.run();
+	};
+	const { activeIndex, setActiveIndex, activeId, onKeyDown, itemProps } = useListNavigation({
+		items: results,
+		getId: (command) => `${listId}-${command.id}`,
+		label: "Commands",
+		mode: "activedescendant",
+		vimKeys: false,
+		wrap: true,
+		onChoose: run,
+	});
+	const total = commands.filter((command) => command.available).length;
+	const rows = results.map((command, index) => ({
+		command,
+		index,
+		heading: index === 0 || results[index - 1]?.group !== command.group ? command.group : null,
+	}));
+	return (
+		<div className="palette">
+			<div className="filter__field">
+				<span aria-hidden="true">⌕</span>
+				<input
+					ref={input}
+					type="text"
+					role="combobox"
+					aria-expanded="true"
+					aria-controls={listId}
+					aria-autocomplete="list"
+					aria-activedescendant={activeId}
+					aria-label="Run a command"
+					placeholder="A view, a session, or an action"
+					autoComplete="off"
+					value={query}
+					onChange={(event) => {
+						setQuery(event.target.value);
+						setActiveIndex(0);
+					}}
+					onKeyDown={onKeyDown}
+				/>
+			</div>
+			<small role="status">{query.trim().length === 0 ? "" : `${results.length} of ${total} commands`}</small>
+			{results.length === 0 ? (
+				<p className="palette__empty">
+					No command matches. Type a view name such as traces, or an action such as new task.
+				</p>
+			) : (
+				<div className="palette__list" id={listId} role="listbox" aria-label="Commands">
+					{rows.map(({ command, index, heading }) => (
+						<Fragment key={command.id}>
+							{heading === null ? null : (
+								<div className="palette__group" role="presentation">
+									{heading}
+								</div>
+							)}
+							{/* The row is the option: focus stays in the input, so a nested button would add a
+								    tab stop the combobox pattern forbids. Enter on the input runs it. */}
+							{/* biome-ignore lint/a11y/useKeyWithClickEvents: the combobox input owns every key. */}
+							{/* biome-ignore lint/a11y/useFocusableInteractive: an activedescendant option must not be a tab stop. */}
+							<div
+								className="palette__option"
+								role="option"
+								aria-label={`${command.group}: ${command.title}`}
+								onMouseMove={() => setActiveIndex(index)}
+								onClick={() => run(command)}
+								{...itemProps(index)}
+								data-active={index === activeIndex}
+							>
+								<span>{command.title}</span>
+								{command.binding ? <Keycaps chord={formatKeybinding(KEYBINDINGS[command.binding])} /> : null}
+							</div>
+						</Fragment>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}

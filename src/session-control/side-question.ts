@@ -1,0 +1,571 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { CallObservation } from "../core/call-failure.js";
+import { trackCallFetch } from "../core/call-failure.js";
+import type { SideCallAuth } from "../core/oauth-retry.js";
+import { rememberOAuthCallFailure, withOAuthRefresh } from "../core/oauth-retry.js";
+import type { SurfaceId } from "../core/side-surfaces.js";
+import { requestedThinking } from "../core/telemetry/call-effort.js";
+import type { AgentRole } from "../core/telemetry/enums.js";
+import { settlementStamps } from "../domains/telemetry/call-facts.js";
+import type { AdmissionHold, CallJournalOptions, CallScope } from "../domains/telemetry/call-scope.js";
+import { openCallScope } from "../domains/telemetry/call-scope.js";
+/**
+ * `/btw`: one model round beside the session, never inside it.
+ *
+ * A fleet run briefs its workers from the transcript, so every question the
+ * operator asks mid-run to orient themselves ("which file did that land in
+ * again?") becomes context the workers inherit. This round reads the compiled
+ * history the next turn would send and answers into an overlay; nothing it
+ * produces reaches the session JSONL, the transcript panel, the context ledger,
+ * or the task board, and it never becomes a turn.
+ *
+ * The call goes through `src/engine/ai.ts`'s simple-stream seams, which keeps it
+ * outside the turn state machine. Given the live turn's prefix, `/btw` sends the
+ * turn's own system prompt and tool declarations and asks in the message tail, so
+ * it reads the turn's cached prefix (S12); its tools are declared but never run.
+ */
+
+import type { ThinkingLevel } from "../core/defaults.js";
+import { responseModelIdObservationFromRecord } from "../core/response-model-id.js";
+import {
+	isResponseSchemaRejection,
+	outputConfigFormatFor,
+	type ResponseSchemaDialect,
+	responseFormatFor,
+	responseSchemaDialectFor,
+	speaksOutputConfigFormat,
+} from "../core/response-schema.js";
+import { normalizeTokenUsage } from "../core/token-split.js";
+import { mainStreamSimple, streamSimple } from "../engine/ai.js";
+import { readDiffusionFrame } from "../engine/apis/diffusion-frames.js";
+import { stripDeadToolCallMarkup } from "../engine/loop-guard.js";
+import type { AgentMessage, EngineModel, Usage } from "../engine/types.js";
+
+/**
+ * The whole system prompt for a round sent without the live turn's prefix, which
+ * then has no working agreement or tools of its own to reuse.
+ */
+export const SIDE_QUESTION_SYSTEM_PROMPT = [
+	"You are answering a side question from the operator of a coding session.",
+	"The conversation above is read-only context. Answer the question directly and briefly.",
+	"Do not continue the conversation, do not propose edits, and do not call tools.",
+].join(" ");
+
+/**
+ * The instruction a round on the live turn's prefix carries in its message tail instead. The session prompt and
+ * tools stay byte-identical to the turn's, so the round reads the turn's cached prefix (S12).
+ */
+export const SIDE_QUESTION_INSTRUCTION = [
+	"Side question from the operator, answered beside the session rather than as a turn.",
+	"The conversation above is read-only context. Answer the question directly and briefly.",
+	"Do not continue the task, do not propose edits, and do not call tools: none of them can run here.",
+].join(" ");
+
+/** What the live turn would send for `messages` with `tail` after them, built by the turn's own agent (S12). */
+export type LiveTurnPrefix = (
+	messages: AgentMessage[],
+	tail: AgentMessage[],
+	signal?: AbortSignal,
+) => Promise<{ context: Parameters<typeof streamSimple>[1]; options: Record<string, unknown> }>;
+
+/** Default output budget for the round. A side question wants an answer, not an essay. */
+export const SIDE_QUESTION_MAX_TOKENS = 2048;
+
+export interface SideQuestionUsage {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cacheWrite1h?: number;
+	reasoning: number;
+	totalTokens: number;
+	costUsd: number;
+	/** The provider billed costUsd itself (Pi's totalFromProvider). */
+	costFromProvider?: true;
+	/** The runtime computed no cost, so costUsd is a placeholder (copilot-sdk's totalUncomputed). */
+	costUncomputed?: true;
+	/** The counts the provider sent, when the runtime lists them (copilot-sdk); an unlisted count is unknown. */
+	reportedFields?: string[];
+}
+
+export interface SideQuestionInput extends SideCallAuth {
+	telemetry?: CallJournalOptions;
+	/** Live model the next turn would use, taken from the session's active runtime. */
+	model: EngineModel;
+	/**
+	 * The compiled message history the next turn would send. Treated as
+	 * read-only: the round copies it and appends its own user message to the
+	 * copy, so the live agent's message list is never mutated.
+	 */
+	messages: ReadonlyArray<AgentMessage>;
+	question: string;
+	apiKey?: string;
+	signal?: AbortSignal;
+	maxTokens?: number;
+	/**
+	 * The reasoning level this round asks for. The engine's bare `stream` infers
+	 * "medium" for any reasoning model, so a round that named no level reasoned
+	 * at full length on reasoning-by-default models and could spend its whole
+	 * output budget before it answered.
+	 */
+	thinkingLevel: ThinkingLevel;
+	/** Streamed answer text, delivered as the provider produces it. */
+	onDelta?: (partialText: string) => void;
+	onUsage?: (usage: SideQuestionUsage | null, observation?: CallObservation) => void;
+	/**
+	 * Information-flow admission of this send: the block reason, or null. The
+	 * round sends the session's history, so it is judged like a turn would be.
+	 * Asked before `beforeRequest`, and again for a schema-free retry.
+	 */
+	admitFlow?: () => string | null;
+	/** Host admission per attempt; see {@link OutOfTurnRoundInput.beforeRequest} (#424). */
+	beforeRequest?: NonNullable<OutOfTurnRoundInput["beforeRequest"]>;
+	/**
+	 * A turn was in flight when the round was prepared, so a trailing tool call
+	 * may still be running. Only then does the round close it with a synthetic
+	 * result (#415).
+	 */
+	midTurn?: boolean;
+	/**
+	 * The live turn's request builder. With it the round sends that turn's system prompt, tool declarations, cache
+	 * key and retention, and appends its instruction in the message tail, so it reads the turn's cached prefix
+	 * instead of paying for a prefix of its own (S12). A tool call it answers with is never run.
+	 */
+	livePrefix?: LiveTurnPrefix;
+}
+
+/**
+ * One out-of-turn round against the session's live runtime. `/btw` and
+ * `/handoff` are both this: read the compiled history the next turn would see,
+ * append one instruction, send no tools, and never touch the turn state
+ * machine. Only the system prompt and the appended message differ.
+ */
+export interface OutOfTurnRoundInput extends Omit<SideQuestionInput, "question"> {
+	/** The surface this round is for, when its role alone does not say (`helper` serves triage and `/draft`). */
+	purpose?: SurfaceId;
+	/** Ignored with `livePrefix`, which sends the live turn's own prompt. */
+	systemPrompt: string;
+	/** The one message appended to the read-only copy of the history. */
+	userText: string;
+	/**
+	 * Bind the answer to a JSON schema on the wire, where the runtime takes one.
+	 *
+	 * A round that asked for a schema in prose and bound nothing is what made
+	 * `/handoff` refuse on local targets: the model answered with prose around
+	 * the object, or with no object at all, and the parser had nothing to work
+	 * with (issue #223). Absent, or on a runtime with no dialect, the request
+	 * goes out exactly as before and the prompt-level instruction carries it.
+	 */
+	responseSchema?: { name: string; schema: Record<string, unknown> };
+	/** Resolved runtime id, which is what decides the wire dialect. */
+	runtimeId?: string;
+	/** A System One ask, whose schema also binds on a runtime that takes `output_config.format`. */
+	holdReply?: boolean;
+	/** `none` for a request that will not be repeated, so it pays for no cache write nothing reads. */
+	cacheRetention?: "none";
+	/** Sampling temperature; absent leaves the provider's default. `/draft` spreads it across candidates. */
+	temperature?: number;
+	/**
+	 * Optional host admission and accounting apply to each attempt, including a schema retry. Its time is the
+	 * attempt's admission stage; it sets `hold.waitedOn` when a ceiling or capacity held the request (#434).
+	 */
+	// biome-ignore lint/suspicious/noConfusingVoidType: an admission that mints no call of its own returns nothing.
+	beforeRequest?: (hold: AdmissionHold) => Promise<void | RequestCallContext>;
+}
+
+/** A caller that minted its own journal call for the request runs the stream inside it (#429, #434). */
+export interface RequestCallContext {
+	withContext?: <T>(work: () => T) => T;
+}
+
+export interface SideQuestionResult {
+	text: string;
+	usage: SideQuestionUsage | null;
+	/** True when the operator cancelled the round with Esc or Ctrl+C. */
+	aborted: boolean;
+	/** The model the provider said answered, absent where the wire reports none. */
+	reportedModel?: string;
+	/** The answer carried a real tool call, which an out-of-turn round never runs. */
+	calledTool?: boolean;
+}
+
+/** Where an out-of-turn round was sent, and who the provider says answered it. */
+export interface OutOfTurnRoute {
+	targetId: string;
+	wireModelId: string;
+	reportedModel?: string;
+}
+
+/** `target/model`, plus the provider's own claim when it names a different model than was asked for. */
+export function outOfTurnRouteLabel(route: OutOfTurnRoute): string {
+	// A gateway's model id often already starts with the target, and naming it twice says nothing more.
+	const asked = route.wireModelId.startsWith(`${route.targetId}/`)
+		? route.wireModelId
+		: `${route.targetId}/${route.wireModelId}`;
+	return route.reportedModel !== undefined && route.reportedModel !== route.wireModelId
+		? `${asked} (provider reports ${route.reportedModel})`
+		: asked;
+}
+
+function positive(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
+ * Normalize one provider usage object into the side round's reported usage.
+ * Shared with the session pre-warm, which is another call billed beside the
+ * session rather than inside it.
+ */
+export function sideQuestionUsage(raw: unknown): SideQuestionUsage | null {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+	const usage = raw as Partial<Usage> & { reasoning?: number };
+	const { input, output, cacheRead, cacheWrite, reasoning, totalTokens, observed } = normalizeTokenUsage(
+		raw as Record<string, unknown>,
+	);
+	if (!observed) return null;
+	const cost = usage.cost as (Usage["cost"] & { totalUncomputed?: unknown }) | undefined;
+	const reportedFields = (raw as { reportedFields?: unknown }).reportedFields;
+	return {
+		input,
+		output,
+		cacheRead,
+		cacheWrite,
+		...(usage.cacheWrite1h === undefined ? {} : { cacheWrite1h: positive(usage.cacheWrite1h) }),
+		reasoning,
+		totalTokens,
+		costUsd: positive(cost?.total),
+		// Carried so the settlement never promotes a placeholder to measured and a billed cost outranks rates (#434).
+		...(cost?.totalFromProvider === true ? { costFromProvider: true as const } : {}),
+		...(cost?.totalUncomputed === true ? { costUncomputed: true as const } : {}),
+		...(Array.isArray(reportedFields)
+			? { reportedFields: reportedFields.filter((field): field is string => typeof field === "string") }
+			: {}),
+	};
+}
+
+function textFromMessage(message: unknown): string {
+	if (!message || typeof message !== "object" || !("content" in message)) return "";
+	const content = (message as { content: unknown }).content;
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter(
+			(block): block is { type: "text"; text: string } =>
+				!!block &&
+				typeof block === "object" &&
+				(block as { type?: unknown }).type === "text" &&
+				typeof (block as { text?: unknown }).text === "string",
+		)
+		.map((block) => block.text)
+		.join("");
+}
+
+/**
+ * Run the side-question round. Resolves with the answer, the provider usage
+ * (which is still real money and is reported to `/usage`), and whether the
+ * operator aborted it. Provider failures reject; the caller renders the reason
+ * in the overlay.
+ */
+export async function runSideQuestion(input: SideQuestionInput): Promise<SideQuestionResult> {
+	const { question, ...rest } = input;
+	const ask = (userText: string) =>
+		runOutOfTurnRound(
+			rest.livePrefix
+				? { ...rest, systemPrompt: "", userText: `${SIDE_QUESTION_INSTRUCTION}\n\n${userText}` }
+				: { ...rest, systemPrompt: SIDE_QUESTION_SYSTEM_PROMPT, userText },
+		);
+	// History that used tools, sent with none declared, can make a model imitate
+	// a call as text; the operator gets the reason, not the markup (#415). An
+	// aborted partial was never a finished call, so it keeps only its prose.
+	const first = await ask(question);
+	if (first.aborted) return { ...first, text: stripDeadToolCallMarkup(first.text) };
+	if (!reachedForTool(first)) return first;
+	// A question the conversation cannot answer makes the model reach for a tool.
+	// One retry that says no tool exists turns that into an answer or a named gap.
+	const retry = await ask(`${question}\n\n${SIDE_QUESTION_NO_TOOLS_RETRY}`);
+	const usage = sumSideQuestionUsage(first.usage, retry.usage);
+	const text = stripDeadToolCallMarkup(retry.text);
+	if (retry.aborted) return { ...retry, usage, text };
+	return { ...retry, usage, text: reachedForTool(retry) ? SIDE_QUESTION_TOOL_CALL_NOTE : retry.text };
+}
+
+/** An answer that is only a tool call: imitated markup in the text, or a real call with no prose beside it. */
+function reachedForTool(result: SideQuestionResult): boolean {
+	const prose = stripDeadToolCallMarkup(result.text);
+	return prose.length === 0 && (result.text.length > 0 || result.calledTool === true);
+}
+
+function sumSideQuestionUsage(a: SideQuestionUsage | null, b: SideQuestionUsage | null): SideQuestionUsage | null {
+	if (a === null || b === null) return a ?? b;
+	return {
+		input: a.input + b.input,
+		output: a.output + b.output,
+		cacheRead: a.cacheRead + b.cacheRead,
+		cacheWrite: a.cacheWrite + b.cacheWrite,
+		...(a.cacheWrite1h !== undefined || b.cacheWrite1h !== undefined
+			? { cacheWrite1h: (a.cacheWrite1h ?? 0) + (b.cacheWrite1h ?? 0) }
+			: {}),
+		reasoning: a.reasoning + b.reasoning,
+		totalTokens: a.totalTokens + b.totalTokens,
+		costUsd: a.costUsd + b.costUsd,
+		...(a.costFromProvider && b.costFromProvider ? { costFromProvider: true as const } : {}),
+		...(a.costUncomputed || b.costUncomputed ? { costUncomputed: true as const } : {}),
+		...(a.reportedFields !== undefined || b.reportedFields !== undefined
+			? {
+					reportedFields: (a.reportedFields ?? b.reportedFields ?? []).filter((field) =>
+						(b.reportedFields ?? a.reportedFields ?? []).includes(field),
+					),
+				}
+			: {}),
+	};
+}
+
+export const SIDE_QUESTION_NO_TOOLS_RETRY =
+	"No tool can run in this side question, so a tool call does nothing. Answer from the conversation above. If it does not contain the answer, say so in one sentence and name the file or command that would answer it.";
+
+export const SIDE_QUESTION_TOOL_CALL_NOTE =
+	"The model answered with a tool call, which a side question cannot run. Ask this in the main conversation, where tools are available.";
+
+const PENDING_TOOL_RESULT_TEXT = "No result yet: this tool call was still running when the operator asked this.";
+
+/**
+ * A round taken while a turn is in flight can snapshot history that ends in an
+ * assistant message whose calls have not returned. Pi would fill those with
+ * "No result provided"; the side model is told the truth instead (#415).
+ *
+ * Idle history is left alone: nothing there is still running. An errored or
+ * aborted assistant is never closed either, because Pi's transform drops that
+ * message but keeps the results after it, and an orphan result is a 400.
+ */
+export function closePendingToolCalls(messages: ReadonlyArray<AgentMessage>, midTurn: boolean): AgentMessage[] {
+	const out = [...messages];
+	if (!midTurn) return out;
+	const answered = new Set<unknown>();
+	let index = out.length - 1;
+	for (; index >= 0 && out[index]?.role === "toolResult"; index--)
+		answered.add((out[index] as { toolCallId?: unknown }).toolCallId);
+	const assistant = out[index] as { role?: unknown; content?: unknown; stopReason?: unknown } | undefined;
+	if (assistant?.role !== "assistant" || !Array.isArray(assistant.content)) return out;
+	if (assistant.stopReason === "error" || assistant.stopReason === "aborted") return out;
+	const timestamp = Date.now();
+	for (const block of assistant.content as Array<{ type?: unknown; id?: unknown; name?: unknown }>) {
+		if (block?.type !== "toolCall" || answered.has(block.id)) continue;
+		out.push({
+			role: "toolResult",
+			toolCallId: block.id,
+			toolName: block.name,
+			content: [{ type: "text", text: PENDING_TOOL_RESULT_TEXT }],
+			isError: false,
+			timestamp,
+		} as unknown as AgentMessage);
+	}
+	return out;
+}
+
+interface SchemaBinding {
+	dialect: ResponseSchemaDialect | "output-config";
+	name: string;
+	schema: Record<string, unknown>;
+}
+
+/** The schema binding for this round, or null when nothing can be bound on the wire. */
+function schemaBindingFor(input: OutOfTurnRoundInput): SchemaBinding | null {
+	if (input.responseSchema === undefined || input.runtimeId === undefined) return null;
+	const dialect =
+		input.holdReply === true && speaksOutputConfigFormat(input.runtimeId)
+			? "output-config"
+			: responseSchemaDialectFor(input.runtimeId);
+	return dialect === null ? null : { dialect, ...input.responseSchema };
+}
+
+/**
+ * The surface a side round's role names on its own. `helper` carries more than one surface (triage and `/draft`), so
+ * its callers name theirs through `purpose`.
+ */
+const ROLE_PURPOSE: Partial<Record<AgentRole, SurfaceId>> = { btw: "btw", handoff: "handoff" };
+
+/** The shared round. See {@link OutOfTurnRoundInput}. */
+export async function runOutOfTurnRound(input: OutOfTurnRoundInput): Promise<SideQuestionResult> {
+	// Setup's test request and `systemone check --live` run this round with no providers domain started, so the wires
+	// only PanCode registers (copilot-sdk, ollama-native, its openai-completions) would be missing. Idempotent (CLI-12).
+	(await import("../engine/apis/index.js")).registerPancodeApiProviders();
+	const purpose =
+		input.purpose ?? input.telemetry?.purpose ?? (input.telemetry ? ROLE_PURPOSE[input.telemetry.role] : undefined);
+	const scope = await openCallScope(
+		input.telemetry && purpose !== undefined ? { ...input.telemetry, purpose } : input.telemetry,
+		input.model,
+	);
+	try {
+		return await withOAuthRefresh(input, (auth) => runOutOfTurnAttempt({ ...input, ...auth }, scope));
+	} finally {
+		await scope.close();
+	}
+}
+
+async function runOutOfTurnAttempt(input: OutOfTurnRoundInput, scope: CallScope): Promise<SideQuestionResult> {
+	const binding = schemaBindingFor(input);
+	if (binding === null) return runRound(input, null, scope);
+	try {
+		return await runRound(input, binding, scope);
+	} catch (error) {
+		// Native enforcement is an optimization here, never a precondition. A
+		// server that refuses the constrained request answers with the same 400
+		// the worker seam already recognizes, and the round is worth more
+		// unconstrained than not at all. Anything else is a real failure and
+		// rejects, so a broken target still costs exactly one round.
+		if (input.signal?.aborted === true) throw error;
+		if (!isResponseSchemaRejection(error instanceof Error ? error.message : String(error))) throw error;
+		return runRound(input, null, scope);
+	}
+}
+
+async function runRound(
+	input: OutOfTurnRoundInput,
+	binding: SchemaBinding | null,
+	scope: CallScope,
+): Promise<SideQuestionResult> {
+	scope.startAttempt(requestedThinking(input.thinkingLevel));
+	const tracking = trackCallFetch();
+	let observed = false;
+	let terminalError: unknown;
+	let text = "";
+	try {
+		let requestCall: RequestCallContext | undefined;
+		await scope.admit(async (hold) => {
+			const flowRefusal = input.admitFlow?.() ?? null;
+			if (flowRefusal !== null) throw new Error(flowRefusal);
+			requestCall = (await input.beforeRequest?.(hold)) ?? undefined;
+		});
+		input.signal?.throwIfAborted();
+		const options: Record<string, unknown> = {
+			maxTokens: input.maxTokens ?? SIDE_QUESTION_MAX_TOKENS,
+			fetch: tracking.fetch,
+		};
+		if (input.apiKey !== undefined) options.apiKey = input.apiKey;
+		if (input.signal !== undefined) options.signal = input.signal;
+		if (input.temperature !== undefined) options.temperature = input.temperature;
+		if (input.cacheRetention !== undefined) options.cacheRetention = input.cacheRetention;
+		// The agent loop's convention: "off" sends no reasoning option, which the
+		// simple-stream seam resolves to thinking off for every provider.
+		if (input.thinkingLevel !== "off") options.reasoning = input.thinkingLevel;
+		if (binding?.dialect === "output-config") {
+			const format = outputConfigFormatFor(binding.schema);
+			// Pi has no option for this field and its Anthropic adapter does not read samplingParams.
+			options.onPayload = (payload: Record<string, unknown>) => ({
+				...payload,
+				output_config: { ...(payload.output_config as Record<string, unknown> | undefined), format },
+			});
+		} else if (binding !== null) {
+			options.samplingParams = { response_format: responseFormatFor(binding.dialect, binding.schema, binding.name) };
+		}
+
+		const asked = { role: "user", content: [{ type: "text", text: input.userText }], timestamp: Date.now() };
+		const live = input.livePrefix
+			? await input.livePrefix(
+					closePendingToolCalls(input.messages, input.midTurn === true),
+					[asked as AgentMessage],
+					input.signal,
+				)
+			: undefined;
+		input.signal?.throwIfAborted();
+		const context = live
+			? live.context
+			: {
+					systemPrompt: input.systemPrompt,
+					messages: [
+						// Pi 0.86 stores prompt/tool declarations in history. This tool-free
+						// round has its own prompt and must not inherit those declarations.
+						...closePendingToolCalls(
+							input.messages.filter((message) => message.role !== "system"),
+							input.midTurn === true,
+						),
+						asked,
+					],
+				};
+		// The turn's own key, pinned split and transport, under the round's own cap, auth and signal.
+		const sent = live ? { ...live.options, ...options } : options;
+
+		tracking.start(input.model.api);
+		const send = live ? mainStreamSimple : streamSimple;
+		const stream = () =>
+			scope.withContext(() =>
+				send(
+					input.model,
+					context as unknown as Parameters<typeof streamSimple>[1],
+					sent as unknown as Parameters<typeof streamSimple>[2],
+				),
+			);
+		// The round's own scope stays innermost, so a journaled round keeps its call either way.
+		const events = requestCall?.withContext ? requestCall.withContext(stream) : stream();
+
+		for await (const event of events) {
+			if (event.type === "text_delta") {
+				// A diffusion frame carries the whole answer so far; the shared partial
+				// can already hold the next frame appended to it.
+				text = readDiffusionFrame(event)?.text ?? textFromMessage(event.partial);
+				// Imitated call markup never flashes in the overlay before the
+				// final answer replaces or rejects it (#415).
+				const shown = stripDeadToolCallMarkup(text);
+				if (shown.length > 0) input.onDelta?.(shown);
+				continue;
+			}
+			if (event.type === "done") {
+				const facts = scope.settle(event.message);
+				const answer = textFromMessage(event.message).trim();
+				const usage = sideQuestionUsage((event.message as { usage?: unknown }).usage);
+				observed = true;
+				input.onUsage?.(usage, {
+					callOutcome: "success",
+					...(facts ? { callId: facts.callId, attemptId: facts.attemptId } : {}),
+					stamps: settlementStamps(event.message),
+				});
+				const reported = responseModelIdObservationFromRecord(event.message as never);
+				const content = (event.message as { content?: unknown }).content;
+				const calledTool =
+					Array.isArray(content) && content.some((block) => (block as { type?: unknown })?.type === "toolCall");
+				return {
+					text: answer,
+					usage,
+					aborted: false,
+					...(reported.state === "reported" ? { reportedModel: reported.reportedModelId } : {}),
+					...(calledTool ? { calledTool } : {}),
+				};
+			}
+			if (event.type === "error") {
+				const failed = event.error as { stopReason?: unknown; usage?: unknown; errorMessage?: unknown };
+				const usage = sideQuestionUsage(failed.usage);
+				observed = true;
+				const aborted = event.reason === "aborted" || failed.stopReason === "aborted" || input.signal?.aborted === true;
+				const facts = scope.settle({ ...failed, failure: tracking.failure(failed, aborted, usage !== null) });
+				input.onUsage?.(usage, {
+					...(facts ? { callId: facts.callId, attemptId: facts.attemptId } : {}),
+					callOutcome: aborted ? "aborted" : "error",
+					failure: tracking.failure(failed, aborted, usage !== null),
+					stamps: settlementStamps(failed),
+				});
+				if (event.reason === "aborted" || failed.stopReason === "aborted" || input.signal?.aborted === true) {
+					return { text: text.trim(), usage, aborted: true };
+				}
+				throw new Error(typeof failed.errorMessage === "string" ? failed.errorMessage : "side question failed");
+			}
+		}
+		throw new Error("side question stream ended without a terminal response");
+	} catch (error) {
+		terminalError = error;
+		rememberOAuthCallFailure(error, tracking.failure(error, input.signal?.aborted));
+		throw error;
+	} finally {
+		if (!observed) {
+			const facts = scope.settle({
+				stopReason: input.signal?.aborted ? "aborted" : "error",
+				failure: tracking.failure(terminalError, input.signal?.aborted),
+			});
+			input.onUsage?.(null, {
+				...(facts ? { callId: facts.callId, attemptId: facts.attemptId } : {}),
+				callOutcome: input.signal?.aborted ? "aborted" : "error",
+				failure: tracking.failure(terminalError, input.signal?.aborted),
+			});
+		}
+	}
+}

@@ -1,0 +1,619 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { sha256Hex } from "../../core/hash.js";
+import { isHostPolicyMessage } from "../../core/host-policy-message.js";
+import { ceilChars } from "../../core/token-split.js";
+import { isRecord } from "../../core/type-guards.js";
+import type { AgentMessage, Usage } from "../../engine/types.js";
+import { DEFAULT_COMPACTION_THRESHOLD } from "./compaction/auto.js";
+import { categoryForSegment } from "./context-ledger.js";
+import type { ContextEvictionEntry, EvictionAnchor, SessionEntry } from "./entries.js";
+
+const IMAGE_CHAR_ESTIMATE = 4800;
+const MESSAGE_OVERHEAD_TOKENS = 16;
+
+export interface AgentContextEstimateInput {
+	messages: ReadonlyArray<AgentMessage>;
+	systemPrompt?: string;
+	pendingUserText?: string;
+	pendingUserImages?: ReadonlyArray<unknown>;
+	tools?: ReadonlyArray<unknown>;
+	/** `estimateAgentMessageTokens` of each message, aligned with `messages`, when the caller already holds them. */
+	messageTokens?: ReadonlyArray<number>;
+}
+
+export interface ContextUsageSnapshot {
+	tokens: number | null;
+	contextWindow: number;
+	percent: number | null;
+	breakdown?: ContextUsageBreakdown;
+}
+
+export interface ContextUsageBreakdown {
+	systemPromptTokens: number;
+	messageTokens: number;
+	pendingUserTokens: number;
+	toolSchemaTokens: number;
+}
+
+export interface ContextSnapshot {
+	snapshotId: string;
+	sessionId: string | null;
+	turnId: string;
+	providerId: string | null;
+	runtimeId: string | null;
+	modelId: string | null;
+
+	// Inputs captured
+	systemPrompt?: string | undefined;
+	promptSegments?: { id: string; tokenEstimate: number }[] | undefined;
+	conversationMessages?: unknown[] | undefined;
+	activeToolSchemas?: unknown[] | undefined;
+	pendingUserInput?: string | undefined;
+	images?: unknown[] | undefined;
+
+	// Window resolution details
+	desiredContextWindow: number;
+	effectiveContextWindow: number;
+	contextWindowSource: string;
+
+	// Token counts
+	categories: {
+		system: number;
+		tools: number;
+		toolResults?: number;
+		agents: number;
+		skills: number;
+		memory: number;
+		project: number;
+		messages: number;
+		reserve: number;
+		free: number;
+		streaming: number;
+	};
+
+	// Source labels
+	sources: {
+		total: "estimated" | "exact" | "reconciled" | "streaming";
+		splits: Record<string, "estimated" | "exact" | "reconciled">;
+	};
+
+	/**
+	 * Divergence record. `estimatedTokens` is the chars/4 prompt-side total this
+	 * snapshot was captured with and is never rewritten by a reconcile, so the
+	 * two figures stay comparable. `reconciledTokens` is the provider's own
+	 * prompt token count for the call this snapshot was reconciled against
+	 * (cached prompt tokens folded back in), and `divergenceRatio` is
+	 * `reconciledTokens / estimatedTokens`. A ratio above 1 is the estimator
+	 * under-counting, which is what issue #227 recorded as a provider overflow.
+	 */
+	estimatedTokens?: number | undefined;
+	reconciledTokens?: number | undefined;
+	divergenceRatio?: number | undefined;
+
+	promptHash?: string | undefined;
+	toolSignature?: string | undefined;
+	messageRange?: { start: number; end: number } | undefined;
+	/** The journal call this snapshot was last reconciled against (#434). */
+	callId?: string | undefined;
+	attemptId?: string | undefined;
+}
+
+export { ceilChars };
+
+function jsonLength(value: unknown): number {
+	if (value === undefined || value === null) return 0;
+	if (typeof value === "string") return value.length;
+	if (typeof value === "number" || typeof value === "boolean") return String(value).length;
+	try {
+		return JSON.stringify(value).length;
+	} catch {
+		return String(value).length;
+	}
+}
+
+function argsLength(value: unknown): number {
+	if (value === undefined || value === null) return 0;
+	return typeof value === "string" ? value.length : jsonLength(value);
+}
+
+function blockChars(block: unknown): number {
+	if (typeof block === "string") return block.length;
+	if (!isRecord(block)) return jsonLength(block);
+	if (block.type === "text" && typeof block.text === "string") return block.text.length;
+	if (block.type === "thinking" && typeof block.thinking === "string") return block.thinking.length;
+	if (block.type === "image") return IMAGE_CHAR_ESTIMATE;
+	if (block.type === "toolCall") {
+		const name = typeof block.name === "string" ? block.name : "";
+		const id = typeof block.id === "string" ? block.id : "";
+		return id.length + name.length + argsLength(block.arguments ?? block.args ?? block.input);
+	}
+	if (Array.isArray(block.content)) return contentChars(block.content);
+	if (typeof block.text === "string") return block.text.length;
+	if (typeof block.thinking === "string") return block.thinking.length;
+	return jsonLength(block);
+}
+
+function contentChars(content: unknown): number {
+	if (typeof content === "string") return content.length;
+	if (!Array.isArray(content)) return jsonLength(content);
+	return content.reduce((sum, block) => sum + blockChars(block), 0);
+}
+
+function messageChars(message: unknown): number {
+	if (!isRecord(message)) return jsonLength(message);
+	let chars = 0;
+	chars += typeof message.role === "string" ? message.role.length : 0;
+	const payload = message.payload !== undefined ? message.payload : message.content;
+	chars += contentChars(payload);
+	chars += typeof message.toolCallId === "string" ? message.toolCallId.length : 0;
+	chars += typeof message.toolName === "string" ? message.toolName.length : 0;
+	chars += typeof message.errorMessage === "string" ? message.errorMessage.length : 0;
+	return chars;
+}
+
+export function toolSchemaChars(tool: unknown): number {
+	if (!isRecord(tool)) return jsonLength(tool);
+	const name = typeof tool.name === "string" ? tool.name.length : 0;
+	const description = typeof tool.description === "string" ? tool.description.length : 0;
+	const parameters = jsonLength(tool.parameters);
+	return name + description + parameters;
+}
+
+function usageTotalTokens(usage: unknown): number | null {
+	if (!isRecord(usage)) return null;
+	const total = usage.totalTokens;
+	if (typeof total === "number" && Number.isFinite(total) && total > 0) return total;
+	const input = typeof usage.input === "number" && Number.isFinite(usage.input) ? usage.input : 0;
+	const output = typeof usage.output === "number" && Number.isFinite(usage.output) ? usage.output : 0;
+	const cacheRead = typeof usage.cacheRead === "number" && Number.isFinite(usage.cacheRead) ? usage.cacheRead : 0;
+	const cacheWrite = typeof usage.cacheWrite === "number" && Number.isFinite(usage.cacheWrite) ? usage.cacheWrite : 0;
+	const sum = input + output + cacheRead + cacheWrite;
+	return sum > 0 ? sum : null;
+}
+
+function usageInvalidated(message: AgentMessage): boolean {
+	return (message as { contextUsageInvalidated?: unknown }).contextUsageInvalidated === true;
+}
+
+/**
+ * A short digest of the endpoint a reply came from. Persisted beside the reply's api, provider and model, it lets a
+ * resumed session tell another endpoint under the same model id apart without the session file holding the URL.
+ */
+export function endpointDigest(baseUrl: unknown): string | undefined {
+	if (typeof baseUrl !== "string" || baseUrl.length === 0) return undefined;
+	return sha256Hex(baseUrl).slice(0, 12);
+}
+
+export function latestUsableAssistantUsage(
+	messages: ReadonlyArray<AgentMessage>,
+): { index: number; tokens: number } | null {
+	for (let i = messages.length - 1; i >= 0; i -= 1) {
+		const message = messages[i] as AgentMessage | undefined;
+		if (message?.role !== "assistant") continue;
+		if (usageInvalidated(message)) continue;
+		const stopReason = (message as { stopReason?: unknown }).stopReason;
+		if (stopReason === "error" || stopReason === "aborted") continue;
+		const tokens = usageTotalTokens((message as { usage?: Usage }).usage);
+		if (tokens !== null) return { index: i, tokens };
+	}
+	return null;
+}
+
+function finiteNonNegative(value: unknown): number | null {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function nestedNumber(root: unknown, path: ReadonlyArray<string>): number | null {
+	let current = root;
+	for (const key of path) {
+		if (!isRecord(current)) return null;
+		current = current[key];
+	}
+	return finiteNonNegative(current);
+}
+
+export function extractReasoningTokens(usage: unknown): number | null {
+	if (!isRecord(usage)) return null;
+	const direct =
+		finiteNonNegative(usage.reasoningTokens) ??
+		finiteNonNegative(usage.reasoning_tokens) ??
+		finiteNonNegative(usage.reasoning);
+	if (direct !== null) return direct;
+	const paths = [
+		["outputDetails", "reasoningTokens"],
+		["output_details", "reasoning_tokens"],
+		["output_tokens_details", "reasoning_tokens"],
+		["completion_tokens_details", "reasoning_tokens"],
+		["completionTokensDetails", "reasoningTokens"],
+		["details", "reasoningTokens"],
+	] as const;
+	for (const path of paths) {
+		const value = nestedNumber(usage, path);
+		if (value !== null) return value;
+	}
+	return null;
+}
+
+/**
+ * Structural view of anything message-shaped enough to estimate. Engine
+ * `AgentMessage`s, session `MessageEntry`s, and pi-ai `Context` messages all
+ * satisfy it without casting; `messageChars` duck-types every field anyway.
+ */
+export interface MessageTokenEstimateInput {
+	pancodeProviderCheckpoint?: { outputTokens: number; replayInputTokens?: number };
+	role?: unknown;
+	payload?: unknown;
+	content?: unknown;
+	toolCallId?: unknown;
+	toolName?: unknown;
+	errorMessage?: unknown;
+}
+
+export function estimateAgentMessageTokens(message: MessageTokenEstimateInput): number {
+	// The provider's measured compaction output is the only available token figure for opaque state (#423).
+	if (message.pancodeProviderCheckpoint)
+		return (
+			(message.pancodeProviderCheckpoint.replayInputTokens ?? message.pancodeProviderCheckpoint.outputTokens) +
+			MESSAGE_OVERHEAD_TOKENS
+		);
+	return ceilChars(messageChars(message)) + MESSAGE_OVERHEAD_TOKENS;
+}
+
+function estimatedMessageTokens(input: AgentContextEstimateInput, message: AgentMessage, index: number): number {
+	if (message.role === "system" && !isHostPolicyMessage(message)) return 0;
+	return input.messageTokens?.[index] ?? estimateAgentMessageTokens(message);
+}
+
+export function estimateAgentContextBreakdown(input: AgentContextEstimateInput): ContextUsageBreakdown {
+	return {
+		systemPromptTokens: input.systemPrompt ? ceilChars(input.systemPrompt.length) : 0,
+		messageTokens: input.messages.reduce((sum, message, index) => sum + estimatedMessageTokens(input, message, index), 0),
+		pendingUserTokens:
+			input.pendingUserText !== undefined
+				? estimateAgentMessageTokens({
+						role: "user",
+						content: [{ type: "text", text: input.pendingUserText }, ...(input.pendingUserImages ?? [])],
+					})
+				: 0,
+		toolSchemaTokens: (input.tools ?? []).reduce<number>((sum, tool) => sum + ceilChars(toolSchemaChars(tool)), 0),
+	};
+}
+
+/**
+ * The newest usable provider usage plus only what was appended since that call and the pending ask, or null when
+ * no usable usage exists. The usage is already a measurement, so it is never priced at a route ratio again (FX-31).
+ */
+export function usageAnchoredTokens(
+	input: AgentContextEstimateInput,
+	breakdown: ContextUsageBreakdown = estimateAgentContextBreakdown(input),
+): number | null {
+	const usage = latestUsableAssistantUsage(input.messages);
+	if (!usage) return null;
+	let trailingTokens = 0;
+	for (let index = usage.index + 1; index < input.messages.length; index += 1) {
+		const message = input.messages[index];
+		if (message !== undefined) trailingTokens += estimatedMessageTokens(input, message, index);
+	}
+	// The provider's count already carries the system prompt and tool schemas; adding them again inflated
+	// every meter read after /fork or /resume dropped the live anchor.
+	return usage.tokens + trailingTokens + breakdown.pendingUserTokens;
+}
+
+export function estimateAgentContextTokens(input: AgentContextEstimateInput): number {
+	const breakdown = estimateAgentContextBreakdown(input);
+	const projection =
+		breakdown.systemPromptTokens + breakdown.messageTokens + breakdown.pendingUserTokens + breakdown.toolSchemaTokens;
+	const anchored = usageAnchoredTokens(input, breakdown);
+	return anchored === null ? projection : Math.max(projection, anchored);
+}
+
+/**
+ * The eviction record a context with no live anchor rehydrates from (ContextFold §4 step 1): the newest row after the
+ * last checkpoint on `path` that is either a usable assistant usage or an eviction record, when that row is a record
+ * carrying `anchor`. A usage keeps `estimateAgentContextTokens` (step 2); a record without `anchor`, a recall that
+ * readmitted a body after it, or a checkpoint leaves the structural estimate (step 4).
+ */
+export function rehydrationRecord(
+	path: ReadonlyArray<SessionEntry>,
+): (ContextEvictionEntry & { anchor: EvictionAnchor }) | null {
+	for (let index = path.length - 1; index >= 0; index -= 1) {
+		const entry = path[index];
+		if (entry === undefined) continue;
+		if (entry.kind === "contextEviction")
+			return entry.anchor ? (entry as ContextEvictionEntry & { anchor: EvictionAnchor }) : null;
+		if (entry.kind === "contextRecall" || entry.kind === "compactionSummary") return null;
+		if (entry.kind !== "message" || entry.role !== "assistant" || !isRecord(entry.payload)) continue;
+		const { payload } = entry;
+		if (payload.contextUsageInvalidated === true || payload.stopReason === "error" || payload.stopReason === "aborted")
+			continue;
+		if (usageTotalTokens(payload.usage) !== null) return null;
+	}
+	return null;
+}
+
+export function contextUsageSnapshot(
+	tokens: number | null,
+	contextWindow: number | null | undefined,
+	breakdown?: ContextUsageBreakdown,
+): ContextUsageSnapshot {
+	const window = typeof contextWindow === "number" && Number.isFinite(contextWindow) ? Math.max(0, contextWindow) : 0;
+	const base =
+		tokens === null || tokens <= 0 || window <= 0
+			? { tokens, contextWindow: window, percent: null }
+			: { tokens, contextWindow: window, percent: Math.min(100, (tokens / window) * 100) };
+	return breakdown ? { ...base, breakdown } : base;
+}
+
+function buildSnapshotCategories(inputs: {
+	systemPrompt?: string | undefined;
+	promptSegments?: ReadonlyArray<{ id: string; tokenEstimate: number }> | undefined;
+	tools?: ReadonlyArray<unknown> | undefined;
+	messages?: ReadonlyArray<unknown> | undefined;
+	effectiveContextWindow: number;
+	compactionThreshold: number | null;
+}) {
+	const raw: {
+		system: number;
+		tools: number;
+		toolResults: number;
+		agents: number;
+		skills: number;
+		memory: number;
+		project: number;
+		messages: number;
+		[key: string]: number;
+	} = {
+		system: 0,
+		tools: 0,
+		toolResults: 0,
+		agents: 0,
+		skills: 0,
+		memory: 0,
+		project: 0,
+		messages: 0,
+	};
+
+	if (inputs.promptSegments && inputs.promptSegments.length > 0) {
+		for (const segment of inputs.promptSegments) {
+			const cat = categoryForSegment(segment.id);
+			raw[cat] = (raw[cat] ?? 0) + segment.tokenEstimate;
+		}
+	} else if (inputs.systemPrompt) {
+		raw.system += ceilChars(inputs.systemPrompt.length);
+	}
+
+	if (inputs.tools) {
+		for (const tool of inputs.tools) {
+			raw.tools += ceilChars(toolSchemaChars(tool));
+		}
+	}
+
+	if (inputs.messages) {
+		for (const msg of inputs.messages) {
+			const message = msg as MessageTokenEstimateInput;
+			const bucket = message.role === "toolResult" ? "toolResults" : "messages";
+			raw[bucket] += estimateAgentMessageTokens(message);
+		}
+	}
+
+	const decomposed = Object.keys(raw).reduce((sum, k) => sum + (raw[k] ?? 0), 0);
+	const window = inputs.effectiveContextWindow;
+	const threshold = inputs.compactionThreshold ?? DEFAULT_COMPACTION_THRESHOLD;
+	let reserve = 0;
+	let free = 0;
+	if (window > 0) {
+		const remaining = Math.max(0, window - decomposed);
+		reserve = Math.min(Math.round(window * (1 - threshold)), remaining);
+		free = Math.max(0, window - decomposed - reserve);
+	}
+
+	return {
+		system: raw.system,
+		tools: raw.tools,
+		toolResults: raw.toolResults,
+		agents: raw.agents,
+		skills: raw.skills,
+		memory: raw.memory,
+		project: raw.project,
+		messages: raw.messages,
+		reserve,
+		free,
+		streaming: 0,
+	};
+}
+
+export interface CaptureContextSnapshotInput {
+	sessionId: string | null;
+	turnId: string;
+	providerId: string | null;
+	runtimeId: string | null;
+	modelId: string | null;
+	systemPrompt?: string | undefined;
+	promptSegments?: ReadonlyArray<{ id: string; tokenEstimate: number }> | undefined;
+	conversationMessages: ReadonlyArray<unknown>;
+	activeToolSchemas: ReadonlyArray<unknown>;
+	pendingUserInput?: string | undefined;
+	images?: ReadonlyArray<unknown> | undefined;
+	desiredContextWindow: number;
+	effectiveContextWindow: number;
+	contextWindowSource: string;
+	compactionThreshold: number | null;
+	promptHash?: string | undefined;
+	toolSignature?: string | undefined;
+}
+
+const SNAPSHOT_SPLIT_KEYS = [
+	"system",
+	"tools",
+	"agents",
+	"skills",
+	"memory",
+	"project",
+	"messages",
+	"toolResults",
+] as const;
+
+function estimatedSplitSources(): Record<string, "estimated" | "exact" | "reconciled"> {
+	const splits: Record<string, "estimated" | "exact" | "reconciled"> = {};
+	for (const key of SNAPSHOT_SPLIT_KEYS) splits[key] = "estimated";
+	return splits;
+}
+
+let snapshotCounter = 0;
+
+function nextSnapshotId(): string {
+	snapshotCounter += 1;
+	return `snap-${Date.now()}-${snapshotCounter.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+/**
+ * Single assembly point for a turn's context snapshot. Every capture site
+ * (turn submit, observation masking, LLM-summary compaction) feeds the same
+ * inputs through the same category decomposition, so totals shown in the
+ * footer, the overlay, and the persisted ledger cannot drift apart.
+ */
+export function captureContextSnapshot(input: CaptureContextSnapshotInput): ContextSnapshot {
+	const categories = buildSnapshotCategories({
+		systemPrompt: input.systemPrompt,
+		promptSegments: input.promptSegments,
+		tools: input.activeToolSchemas,
+		messages: input.conversationMessages,
+		effectiveContextWindow: input.effectiveContextWindow,
+		compactionThreshold: input.compactionThreshold,
+	});
+	return {
+		estimatedTokens: sumSplitTokens(categories),
+		snapshotId: nextSnapshotId(),
+		sessionId: input.sessionId,
+		turnId: input.turnId,
+		providerId: input.providerId,
+		runtimeId: input.runtimeId,
+		modelId: input.modelId,
+		systemPrompt: input.systemPrompt,
+		promptSegments: input.promptSegments ? [...input.promptSegments] : undefined,
+		conversationMessages: [...input.conversationMessages],
+		activeToolSchemas: [...input.activeToolSchemas],
+		pendingUserInput: input.pendingUserInput,
+		images: input.images ? [...input.images] : undefined,
+		desiredContextWindow: input.desiredContextWindow,
+		effectiveContextWindow: input.effectiveContextWindow,
+		contextWindowSource: input.contextWindowSource,
+		categories,
+		sources: { total: "estimated", splits: estimatedSplitSources() },
+		promptHash: input.promptHash,
+		toolSignature: input.toolSignature,
+		messageRange:
+			input.conversationMessages.length > 0 ? { start: 0, end: input.conversationMessages.length - 1 } : undefined,
+	};
+}
+
+function sumSplitTokens(categories: ContextSnapshot["categories"]): number {
+	return SNAPSHOT_SPLIT_KEYS.reduce((sum, key) => sum + (categories[key] ?? 0), 0);
+}
+
+/** Sum of the prompt-side categories (everything except reserve/free/streaming). */
+export function snapshotInputTokens(snapshot: ContextSnapshot): number {
+	return sumSplitTokens(snapshot.categories);
+}
+
+export function reconcileSnapshot(snapshot: ContextSnapshot, usage: Usage): ContextSnapshot {
+	// Cached prompt tokens still occupy the context window; providers report
+	// them outside `input`, so fold them back in to get the true prompt size.
+	const exactInput = (usage.input || 0) + (usage.cacheRead || 0) + (usage.cacheWrite || 0);
+	const exactOutput = usage.output || 0;
+
+	if (exactInput <= 0) {
+		const updatedCategories = {
+			...snapshot.categories,
+			streaming: exactOutput,
+		};
+		const window = snapshot.effectiveContextWindow;
+		const used = snapshotInputTokens(snapshot) + exactOutput;
+		let reserve = snapshot.categories.reserve;
+		let free = 0;
+		if (window > 0) {
+			const remaining = Math.max(0, window - used);
+			reserve = Math.min(reserve, remaining);
+			free = Math.max(0, window - used - reserve);
+		}
+		updatedCategories.reserve = reserve;
+		updatedCategories.free = free;
+		return {
+			...snapshot,
+			categories: updatedCategories,
+			sources: {
+				total: "estimated",
+				splits: snapshot.sources.splits,
+			},
+		};
+	}
+
+	const keys = SNAPSHOT_SPLIT_KEYS;
+
+	// Provider totals do not measure individual categories. Keep the compiled
+	// prefix estimates stable as conversation grows; never assign result growth
+	// to tool definitions. If the measured prompt is smaller than the prefix
+	// estimate, proportionally cap that estimate to the available total.
+	const normalized: Record<string, number> = {};
+	const staticKeys = keys.filter((key) => key !== "messages" && key !== "toolResults");
+	const staticSum = staticKeys.reduce((sum, key) => sum + (snapshot.categories[key] ?? 0), 0);
+	const scale = staticSum > exactInput ? exactInput / staticSum : 1;
+	let prefix = 0;
+	for (const key of staticKeys) {
+		normalized[key] = Math.floor((snapshot.categories[key] ?? 0) * scale);
+		prefix += normalized[key] ?? 0;
+	}
+	const remaining = exactInput - prefix;
+	const resultEstimate = snapshot.categories.toolResults ?? 0;
+	const conversationEstimate = resultEstimate + snapshot.categories.messages;
+	const conversationScale = conversationEstimate > remaining ? remaining / conversationEstimate : 1;
+	normalized.toolResults = Math.floor(resultEstimate * conversationScale);
+	// Includes unclassified provider framing / tokenizer differences; this is
+	// a residual, not a claim that the provider measured message categories.
+	normalized.messages = remaining - normalized.toolResults;
+
+	const updatedCategories = {
+		...snapshot.categories,
+		...normalized,
+		streaming: exactOutput,
+	};
+
+	const window = snapshot.effectiveContextWindow;
+	const used = exactInput + exactOutput;
+	let reserve = snapshot.categories.reserve;
+	let free = 0;
+	if (window > 0) {
+		const remaining = Math.max(0, window - used);
+		reserve = Math.min(reserve, remaining);
+		free = Math.max(0, window - used - reserve);
+	}
+	updatedCategories.reserve = reserve;
+	updatedCategories.free = free;
+
+	const splitsSources = keys.reduce(
+		(acc, k) => {
+			acc[k] = k === "messages" ? "reconciled" : "estimated";
+			return acc;
+		},
+		{} as Record<string, "estimated" | "exact" | "reconciled">,
+	);
+
+	// The estimate this snapshot was captured with, kept whole across repeated
+	// reconciles so the recorded divergence always compares the provider count
+	// against chars/4 rather than against a previously normalized total.
+	const estimatedTokens = snapshot.estimatedTokens ?? sumSplitTokens(snapshot.categories);
+
+	return {
+		...snapshot,
+		categories: updatedCategories,
+		estimatedTokens,
+		reconciledTokens: exactInput,
+		divergenceRatio: estimatedTokens > 0 ? Math.round((exactInput / estimatedTokens) * 1000) / 1000 : undefined,
+		sources: {
+			total: "reconciled",
+			splits: splitsSources,
+		},
+	};
+}

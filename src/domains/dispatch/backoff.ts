@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { RunOutcomeCode } from "./types.js";
+
+/** True only for typed terminal conditions that retrying unchanged cannot heal. */
+export function isDeterministicOutcomeCode(code: RunOutcomeCode | null | undefined): boolean {
+	return (
+		code === "vram_capacity_fit_failure" ||
+		code === "worker_tool_call_cap_exhausted" ||
+		code === "worker_context_exhausted" ||
+		code === "worker_turn_timeout" ||
+		code === "worker_run_timeout" ||
+		code === "worker_output_cap_exhausted" ||
+		code === "loop_guard_tools_disabled_exhausted" ||
+		code === "exploration_stalled" ||
+		code === "result_contract_exhausted" ||
+		code === "host_verification_rejected" ||
+		code === "obligation_unmet" ||
+		code === "worker_not_done" ||
+		code === "worker_partial_work" ||
+		code === "worker_mutation_blocked" ||
+		code === "merge_withheld" ||
+		code === "worker_removed_tests" ||
+		code === "assurance_compromised" ||
+		code === "information_flow_blocked" ||
+		code === "acp_model_unavailable" ||
+		code === "acp_thinking_unavailable"
+	);
+}

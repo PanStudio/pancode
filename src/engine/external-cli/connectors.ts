@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/** PanCode's supported managed CLI connectors. Each peer owns its wire parser and permissions. */
+
+import { startAntigravityWorkerRun } from "../antigravity/subprocess-runtime.js";
+import { startClaudeCodeWorkerRun } from "../claude/subprocess-runtime.js";
+import { startCodexCliWorkerRun } from "../codex/subprocess-runtime.js";
+import { observeExternalWorkerRun } from "../external-call-telemetry.js";
+import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput } from "../worker-run-types.js";
+import { startJsonlCliRun } from "./jsonl-runner.js";
+import { OPENCODE_CLI_CONNECTOR } from "./opencode.js";
+import { startPiCliWorkerRun } from "./pi.js";
+
+export interface ExternalCliConnector {
+	runtimeId: string;
+	start(input: WorkerRunInput, emit: WorkerEventEmit): WorkerRunHandle;
+}
+
+const CONNECTORS: ReadonlyArray<ExternalCliConnector> = [
+	{ runtimeId: "claude-code", start: startClaudeCodeWorkerRun },
+	{ runtimeId: "codex-cli", start: startCodexCliWorkerRun },
+	{ runtimeId: "opencode-cli", start: (input, emit) => startJsonlCliRun(OPENCODE_CLI_CONNECTOR, input, emit) },
+	{ runtimeId: "pi-cli", start: startPiCliWorkerRun },
+	{ runtimeId: "antigravity-code", start: startAntigravityWorkerRun },
+];
+
+const BY_RUNTIME = new Map(CONNECTORS.map((connector) => [connector.runtimeId, connector]));
+
+export function externalCliConnector(runtimeId: string): ExternalCliConnector | null {
+	return BY_RUNTIME.get(runtimeId) ?? null;
+}
+
+export function startExternalCliWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): WorkerRunHandle {
+	const connector = externalCliConnector(input.runtime.id);
+	if (!connector) throw new Error(`no managed CLI connector for runtime '${input.runtime.id}'`);
+	return observeExternalWorkerRun(
+		input,
+		emit,
+		(observedEmit) => connector.start(input, observedEmit),
+		!["pi-cli", "opencode-cli"].includes(input.runtime.id),
+	);
+}

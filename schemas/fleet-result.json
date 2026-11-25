@@ -1,0 +1,118 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "urn:pancode:schema:fleet-result:1",
+	"title": "pancode fleet result",
+	"description": "The document `fleet run --output-format json` and `fleet wait` print (`fleet_end`, also the last line of `fleet run --output-format stream-json`), or `fleet_accepted` from `fleet run --detach`. Source of truth: src/cli/fleet.ts.",
+	"oneOf": [{ "$ref": "#/$defs/fleetEnd" }, { "$ref": "#/$defs/fleetAccepted" }],
+	"$defs": {
+		"fleetEnd": {
+			"type": "object",
+			"required": ["type", "schemaVersion", "rootId", "exitCode", "completion", "verdict", "causes"],
+			"properties": {
+				"type": { "const": "fleet_end" },
+				"schemaVersion": { "const": 1 },
+				"rootId": { "type": ["string", "null"] },
+				"playbook": { "type": ["string", "null"] },
+				"planHash": { "type": ["string", "null"] },
+				"exitCode": { "type": "integer", "minimum": 0, "maximum": 255 },
+				"completion": {
+					"type": "object",
+					"required": ["state", "stopReason"],
+					"properties": {
+						"state": { "enum": ["completed", "stopped", "refused"] },
+						"stopReason": {
+							"description": "signal, deadline, max_cost_usd, canceled, or step_failed when a failed step left later steps unrun.",
+							"type": ["string", "null"]
+						}
+					}
+				},
+				"verdict": {
+					"type": "object",
+					"required": ["aggregate", "steps"],
+					"properties": {
+						"aggregate": { "enum": ["pass", "partial", "fail"] },
+						"steps": { "type": "array", "items": { "$ref": "#/$defs/step" } }
+					}
+				},
+				"usage": {
+					"type": "object",
+					"properties": {
+						"steps": { "type": "integer", "minimum": 0 },
+						"succeededSteps": { "type": "integer", "minimum": 0 },
+						"apiCalls": {
+							"description": "The settled runs' model calls, a FactSum with one contribution per run.",
+							"type": "object"
+						},
+						"tokens": {
+							"description": "The settled runs' tokens, each a FactSum with one contribution per run; total includes cacheWrite.",
+							"type": "object",
+							"properties": {
+								"input": { "type": "object" },
+								"cacheRead": { "type": "object" },
+								"cacheWrite": { "type": "object" },
+								"output": { "type": "object" },
+								"total": { "type": "object" }
+							}
+						},
+						"display": { "type": "string" }
+					}
+				},
+				"cost": {
+					"type": ["object", "null"],
+					"properties": {
+						"usd": { "type": ["number", "null"] },
+						"measuredUsd": { "type": "number" },
+						"estimatedUsd": { "type": "number" },
+						"unknownCount": { "type": "integer" },
+						"display": { "type": "string" }
+					}
+				},
+				"causes": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"required": ["code"],
+						"properties": { "code": { "type": "string" }, "message": { "type": "string" } }
+					}
+				},
+				"limits": { "type": ["object", "null"] },
+				"worktree": {
+					"description": "Present when a playbook with scope `worktree` kept its task worktree: the run's work is committed on `branch`, and `fleet land` previews (`preview`) or lands (`land`) it.",
+					"type": "object",
+					"required": ["path", "branch", "commit", "preview", "land"],
+					"properties": {
+						"path": { "type": "string" },
+						"branch": { "type": "string" },
+						"commit": { "type": ["string", "null"] },
+						"preview": { "type": "string" },
+						"land": { "type": "string" }
+					}
+				}
+			}
+		},
+		"fleetAccepted": {
+			"type": "object",
+			"required": ["type", "schemaVersion", "rootId", "completion"],
+			"properties": {
+				"type": { "const": "fleet_accepted" },
+				"schemaVersion": { "const": 1 },
+				"rootId": { "type": "string" },
+				"pid": { "type": "integer" },
+				"completion": {
+					"type": "object",
+					"required": ["state"],
+					"properties": { "state": { "const": "accepted" } }
+				}
+			}
+		},
+		"step": {
+			"type": "object",
+			"required": ["stepId", "runId", "outcome"],
+			"properties": {
+				"stepId": { "type": "string" },
+				"runId": { "type": ["string", "null"] },
+				"outcome": { "enum": ["succeeded", "failed", "replayed"] }
+			}
+		}
+	}
+}

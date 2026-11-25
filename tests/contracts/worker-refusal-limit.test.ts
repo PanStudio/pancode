@@ -1,0 +1,251 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { join } from "node:path";
+import { describe, it } from "node:test";
+import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
+import { startClaudeSdkWorkerRun } from "../../src/engine/claude/sdk-runtime.js";
+import type { AgentEvent } from "../../src/engine/types.js";
+import type { PancodeWorkerEvent } from "../../src/engine/worker-events.js";
+import { workerRefusalReportDirective } from "../../src/engine/worker-refusals.js";
+import type { WorkerRunInput } from "../../src/engine/worker-run-types.js";
+import { startWorkerRun } from "../../src/engine/worker-runtime.js";
+import { WORKER_EXIT_PERMISSION_REQUIRED } from "../../src/worker/spec-contract.js";
+import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+type Round = Array<{ name: string; arguments: string }> | { text: string };
+
+/** Drive a deny-posture worker against scripted model rounds; commands only ever park, never run. */
+async function runDenyWorker(rounds: Round[], helper = false) {
+	const env = await isolatePancodeEnv("pancode-worker-refusal-");
+	const previousCwd = process.cwd();
+	process.chdir(env.dir);
+	writeFileSync(join(env.dir, "mark.sh"), '#!/bin/sh\nprintf "x\\n" >> count.txt\n');
+	chmodSync(join(env.dir, "mark.sh"), 0o755);
+	const events: Array<AgentEvent | PancodeWorkerEvent> = [];
+	const toolResults: string[] = [];
+	let requests = 0;
+	let lastTools: unknown;
+	const server = createServer(async (req, res) => {
+		const body = JSON.parse(await readRequestBody(req)) as {
+			messages?: Array<{ role: string; content?: unknown }>;
+			tools?: Array<{ function?: { name?: string } }>;
+			tool_choice?: unknown;
+		};
+		lastTools = { tools: body.tools?.map((tool) => tool.function?.name), choice: body.tool_choice };
+		const last = body.messages?.at(-1);
+		if (last?.role === "tool") toolResults.push(JSON.stringify(last.content));
+		const round = rounds[requests] ?? rounds.at(-1) ?? { text: "done" };
+		requests += 1;
+		res.setHeader("content-type", "text/event-stream");
+		const delta = Array.isArray(round)
+			? {
+					role: "assistant",
+					tool_calls: round.map((call, index) => ({
+						index,
+						id: `call_${requests}_${index}`,
+						type: "function",
+						function: call,
+					})),
+				}
+			: { role: "assistant", content: round.text };
+		res.end(
+			`data: ${JSON.stringify({ model: "fixture", choices: [{ index: 0, delta, finish_reason: Array.isArray(round) ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`,
+		);
+	});
+	try {
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const worker = startWorkerRun(
+			{
+				agentId: "coder",
+				systemPrompt: "Run the marker script when asked.",
+				task: "Run ./mark.sh.",
+				target: { id: "fixture", runtime: "litellm", url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` },
+				runtime: litellm,
+				wireModelId: "fixture",
+				apiKey: "fixture",
+				thinkingLevel: "off",
+				modelCapabilities: { contextWindow: 131072, maxTokens: 8192, tools: true },
+				allowedTools: ["bash"],
+				budget: { mode: "advisory", toolCalls: 18, synthesis: true, hardCap: 150 },
+				noSkills: true,
+				cwd: env.dir,
+				onPermission: "deny",
+				...(helper ? { helperResult: true, resultContract: { kind: "mutation-report" as const } } : {}),
+			},
+			(event) => events.push(event),
+		);
+		const result = await worker.promise;
+		const resolved = events.flatMap((event) =>
+			event.type === "pancode_permission_resolved" ? [event.payload.reason ?? ""] : [],
+		);
+		const helperResults = events.flatMap((event) => (event.type === "pancode_helper_result" ? [event.payload] : []));
+		return { result, resolved, requests, toolResults, lastTools, helperResults };
+	} finally {
+		await closeServer(server);
+		process.chdir(previousCwd);
+		env.restore();
+	}
+}
+
+const mark = (arg: string) => ({ name: "bash", arguments: JSON.stringify({ command: `./mark.sh ${arg}` }) });
+
+describe("worker execute refusals", () => {
+	it("returns a refusal to the model and ends only at the third refused command", { timeout: 30_000 }, async () => {
+		const recovered = await runDenyWorker([[mark("one")], { text: "done without the script" }]);
+		strictEqual(recovered.result.exitCode, 0, "one refusal no longer ends the run");
+		strictEqual(recovered.requests, 2, "the model got a turn after the refusal");
+		strictEqual(recovered.toolResults.length, 1);
+		ok(/permission denied by policy/u.test(recovered.toolResults[0] ?? ""), recovered.toolResults[0]);
+
+		const stuck = await runDenyWorker([[mark("one")], [mark("two")], [mark("three")], [mark("four")], { text: "x" }]);
+		strictEqual(stuck.result.exitCode, WORKER_EXIT_PERMISSION_REQUIRED);
+		strictEqual(stuck.requests, 4, "the third refusal leaves one reply to report, and a tool call there ends the run");
+		ok(stuck.toolResults[2]?.includes("Reply now with your final report"), stuck.toolResults[2]);
+		strictEqual(stuck.resolved.length, 3, "the call in the report reply never reaches the permission gate");
+		const reported = await runDenyWorker([
+			[mark("one")],
+			[mark("two")],
+			[mark("three")],
+			{ text: "Changed a.py; tests pass." },
+		]);
+		strictEqual(reported.result.exitCode, WORKER_EXIT_PERMISSION_REQUIRED, "a report does not lift the cap");
+		strictEqual(reported.requests, 4);
+		ok(JSON.stringify(reported.result.messages.at(-1)).includes("Changed a.py; tests pass."));
+		// A helper-result worker reports through its result tool, which that round names over the full list (x2-3, row 158).
+		const report = {
+			completion: { state: "done", limitations: [], unverified: [] },
+			mutatedPaths: [],
+			validations: [],
+			observations: ["./mark.sh was refused three times."],
+		};
+		const helper = await runDenyWorker(
+			[
+				[mark("one")],
+				[mark("two")],
+				[mark("three")],
+				[{ name: "pancode_submit_result", arguments: JSON.stringify(report) }],
+			],
+			true,
+		);
+		strictEqual(helper.result.exitCode, WORKER_EXIT_PERMISSION_REQUIRED);
+		strictEqual(helper.requests, 4);
+		ok(
+			helper.toolResults[2]?.includes("Submit your final result now by calling pancode_submit_result"),
+			helper.toolResults[2],
+		);
+		deepStrictEqual(helper.lastTools, {
+			tools: ["bash", "pancode_submit_result"],
+			choice: { type: "function", function: { name: "pancode_submit_result" } },
+		});
+		strictEqual(helper.helperResults.length, 1);
+		const final = stuck.resolved.at(-1) ?? "";
+		ok(final.startsWith("permission refusal limit reached"), final);
+		deepStrictEqual(
+			["./mark.sh one", "./mark.sh two", "./mark.sh three"].map((command) => final.includes(`\`${command}\``)),
+			[true, true, true],
+			final,
+		);
+	});
+
+	it("asks for the result tool at the cap only when the round can force it (FL-11)", () => {
+		// openai-completions forces the handoff (above); an API with no named tool choice, such as pi-messages or
+		// azure-openai-responses, may hide the tool that round, so the worker reports in prose instead.
+		ok(workerRefusalReportDirective("pancode_submit_result").includes("calling pancode_submit_result"));
+		const prose = workerRefusalReportDirective(null);
+		ok(prose.includes("Reply now with your final report"), prose);
+		ok(!prose.includes("pancode_submit_result"), prose);
+	});
+
+	it("names the refused command and its rule to the model and the receipt", { timeout: 30_000 }, async () => {
+		const longArg = "x".repeat(400);
+		const run = await runDenyWorker([[mark(longArg)], { text: "done" }]);
+		const named = `bash \`./mark.sh ${"x".repeat(190)}…\` refused by rule bash-unrecognized`;
+		ok(run.resolved[0]?.startsWith(`permission denied by policy: ${named}; `), run.resolved[0]);
+		ok(run.toolResults[0]?.includes(named), "the line cap keeps the command and rule");
+	});
+});
+
+/** A stand-in SDK whose `query` asks canUseTool about each scripted Bash command, as the CLI does before running one. */
+const FAKE_SDK = `export function query({ options }) {
+	const script = globalThis.__pancodeFakeClaudeSdk;
+	const run = (async function* () {
+		for (const [index, command] of script.commands.entries()) {
+			const verdict = await options.canUseTool("Bash", { command }, { signal: options.abortController.signal, toolUseID: "toolu_" + index });
+			script.verdicts.push(verdict);
+			if (verdict.interrupt === true) return;
+		}
+		yield { type: "result", subtype: "success", is_error: false, result: "done", usage: {} };
+	})();
+	run.close = () => {};
+	run.interrupt = async () => {};
+	return run;
+}
+`;
+
+describe("Claude SDK worker execute refusals", () => {
+	it("counts refusals toward the same limit, and fail still ends at the first", { timeout: 30_000 }, async () => {
+		const env = await isolatePancodeEnv("pancode-sdk-refusal-");
+		const sdkDir = join(env.dir, "sdk", "node_modules", "@anthropic-ai", "claude-agent-sdk");
+		mkdirSync(sdkDir, { recursive: true });
+		writeFileSync(join(env.dir, "sdk", "package.json"), "{}");
+		writeFileSync(join(sdkDir, "package.json"), JSON.stringify({ type: "module", exports: "./index.js" }));
+		writeFileSync(join(sdkDir, "index.js"), FAKE_SDK);
+		process.env.PANCODE_CLAUDE_SDK_DIR = join(env.dir, "sdk");
+		const run = async (commands: string[], onPermission: "deny" | "fail") => {
+			const script = { commands, verdicts: [] as Array<{ interrupt?: boolean; message?: string }> };
+			(globalThis as { __pancodeFakeClaudeSdk?: unknown }).__pancodeFakeClaudeSdk = script;
+			const resolved: string[] = [];
+			const input = {
+				agentId: "coder",
+				systemPrompt: "Run the marker script when asked.",
+				task: "Run ./mark.sh.",
+				target: { id: "claude", runtime: "claude-sdk" },
+				wireModelId: "claude-sonnet-5-5",
+				apiKey: "fixture",
+				thinkingLevel: "off",
+				allowedTools: ["bash"],
+				noSkills: true,
+				cwd: env.dir,
+				onPermission,
+			} as unknown as WorkerRunInput;
+			const { promise } = startClaudeSdkWorkerRun(input, (event) => {
+				if (event.type === "pancode_permission_resolved") resolved.push(event.payload.reason ?? "");
+			});
+			return { result: await promise, resolved, verdicts: script.verdicts };
+		};
+		try {
+			const recovered = await run(["./mark.sh one"], "deny");
+			strictEqual(recovered.result.exitCode, 0, "one refusal returns to the model");
+			strictEqual(recovered.verdicts[0]?.interrupt, false);
+
+			const stuck = await run(["./mark.sh one", "./mark.sh two", "./mark.sh three", "./mark.sh four"], "deny");
+			strictEqual(stuck.result.exitCode, WORKER_EXIT_PERMISSION_REQUIRED);
+			strictEqual(stuck.resolved.length, 3, "the call in the report reply never reaches the permission gate");
+			// FL-10: the third refusal leaves the model one reply to report, as on the native worker; a tool call there ends it.
+			strictEqual(stuck.verdicts[2]?.interrupt, false);
+			ok(stuck.verdicts[2]?.message?.includes("Reply now with your final report"), stuck.verdicts[2]?.message);
+			strictEqual(stuck.verdicts[3]?.interrupt, true);
+			const reported = await run(["./mark.sh one", "./mark.sh two", "./mark.sh three"], "deny");
+			strictEqual(reported.result.exitCode, WORKER_EXIT_PERMISSION_REQUIRED, "a report does not lift the cap");
+			ok(JSON.stringify(reported.result.messages.at(-1)).includes('"done"'), "the report reply reaches the result");
+			const final = stuck.resolved.at(-1) ?? "";
+			ok(final.startsWith("permission refusal limit reached"), final);
+			deepStrictEqual(
+				["./mark.sh one", "./mark.sh two", "./mark.sh three"].map((command) => final.includes(`\`${command}\``)),
+				[true, true, true],
+				final,
+			);
+
+			const failed = await run(["./mark.sh one", "./mark.sh two"], "fail");
+			strictEqual(failed.result.exitCode, WORKER_EXIT_PERMISSION_REQUIRED);
+			strictEqual(failed.resolved.length, 1);
+		} finally {
+			env.restore();
+		}
+	});
+});

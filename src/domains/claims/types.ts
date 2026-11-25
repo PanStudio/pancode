@@ -1,0 +1,376 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type {
+	NumericFailureReason,
+	NumericNonFinitePolicy,
+	NumericTolerance,
+	NumericToleranceCombine,
+} from "../../tools/verify/numeric.js";
+import type { ReproduceConditions, ReproduceMetricFailure, ReproduceReport } from "../../tools/verify/reproduce.js";
+
+/**
+ * A claim is what one judged check concluded, bound to the conditions it ran under (#406). It states agreement or
+ * disagreement within the tolerance the check declared, and nothing more: a payload within tolerance of its reference
+ * says nothing about whether the reference is right.
+ */
+export const CLAIM_RECORD_VERSION = 1;
+
+/** The declared check kinds whose judgement becomes a claim. Command and perf-budget checks carry no tolerance. */
+export type ClaimKind = "reproduce" | "numeric-compare";
+
+export const CLAIM_KINDS: ReadonlyArray<ClaimKind> = ["reproduce", "numeric-compare"];
+
+/** Whether the judged payloads agreed within the declared tolerance. Never a verdict on truth. */
+export type ClaimVerdict = "agrees" | "disagrees";
+
+/** Structural anchors a later reader matches on: the check id, its canonical argv, and the files it judged. */
+export interface ClaimKeys {
+	check: string;
+	command: string[];
+	/** Project-relative where the path lies inside the project, else absolute. */
+	paths: string[];
+	/**
+	 * The repository-relative run directory a sweep check judged (`verify(check="<id>/<run>")`, the verify result's
+	 * `details.run`). Sibling runs are separate subjects, so edges key on the check and this run together.
+	 */
+	run?: string;
+}
+
+/** A judged file's identity: path when the check named one, and the digest of the exact bytes judged. */
+export interface ClaimDigestRef {
+	path?: string;
+	sha256: string;
+	bytes: number;
+}
+
+export interface ReproduceClaimConditions extends ReproduceConditions {
+	kind: "reproduce";
+	compare: ReproduceReport["compare"];
+	/** The tolerance exactly as declared. */
+	tolerance: NumericTolerance;
+	rule: string;
+	reference?: ClaimDigestRef;
+	/** SHA-256 of each run's metrics payload, in run order. */
+	payloads: string[];
+	metrics: Array<{ metric: string; passed: boolean; failed: ReproduceMetricFailure[] }>;
+}
+
+/** Per-key verdicts kept on a numeric-compare claim; the rest are counted in `keysOmitted`. */
+export const NUMERIC_CLAIM_KEY_LIMIT = 256;
+
+export interface NumericClaimConditions {
+	kind: "numeric-compare";
+	/** The tolerance exactly as declared. */
+	tolerance: NumericTolerance;
+	combine: NumericToleranceCombine;
+	nonFinite: NumericNonFinitePolicy;
+	rule: string;
+	reference?: ClaimDigestRef;
+	actual?: { sha256: string; bytes: number };
+	argv: string[];
+	/**
+	 * HEAD of the checkout the check judged: the verify result's checkout state on the main thread, host verification's
+	 * sealed tree for a worker run. Null outside a repository or when the channel recorded neither; never invented.
+	 */
+	commit: string | null;
+	/** Whether tracked files matched `commit` when the check ran; absent where the channel recorded a fingerprint instead. */
+	trackedTreeClean?: boolean;
+	/** Host verification's digest of HEAD plus the working-tree content the check saw. */
+	treeFingerprint?: string;
+	/**
+	 * The host the check ran on. Recorded, never pinned: claims recorded before it existed keep their pins, so an
+	 * upgrade supersedes nothing. Absent on those older claims, whose text then says the platform was not recorded.
+	 */
+	platform?: ClaimPlatform;
+	keys: Array<{ key: string; passed: boolean; failed: NumericFailureReason[] }>;
+	keysOmitted: number;
+}
+
+export interface ClaimPlatform {
+	os: string;
+	arch: string;
+	nodeVersion: string;
+}
+
+export type ClaimConditions = ReproduceClaimConditions | NumericClaimConditions;
+
+/**
+ * Where the judgement came from. Both channels are PanCode's own execution of a declared check, never text a model
+ * wrote, which is why every claim here is `grounded`.
+ */
+export type ClaimSource =
+	| {
+			channel: "verify";
+			sessionId: string | null;
+			toolCallId: string | null;
+			/** `harness` when PanCode itself issued the call, `model` when the agent did. */
+			requestedBy: "model" | "harness";
+	  }
+	| { channel: "host-verification"; runId: string; receiptDigest: string };
+
+export interface ClaimRecordV1 {
+	v: typeof CLAIM_RECORD_VERSION;
+	type: "claim";
+	/** SHA-256 of the record's canonical JSON without `id`. */
+	id: string;
+	/** ISO time the claim was captured. */
+	at: string;
+	/**
+	 * The canonical project root the claim is scoped to (`canonicalCheckout`): a linked worktree folds into its main
+	 * checkout, so the lane and the checkout it merges into share one log. The log file is keyed by its digest.
+	 */
+	project: string;
+	/**
+	 * The linked worktree the check ran in, absent for the main checkout. Supersession stays within one line of work, so
+	 * a lane at its own commit never retires the main checkout's claims; a contradiction is not scoped, because equal
+	 * pins mean the same command judged the same commit wherever it ran.
+	 */
+	worktree?: string;
+	kind: ClaimKind;
+	verdict: ClaimVerdict;
+	/** One sentence that never states more than the conditions below. */
+	text: string;
+	/**
+	 * Identity of what was judged: kind, check id and the digests of every judged payload and input. The same check
+	 * judging the same bytes again has the same subject, so a later phase can find agreement or contradiction by it.
+	 */
+	subject: string;
+	keys: ClaimKeys;
+	conditions: ClaimConditions;
+	source: ClaimSource;
+	evidence: "grounded";
+	/** Set when the text, which carries catalog-authored ids and paths, trips the instruction-marker screen. */
+	flagged?: "instruction-markers";
+}
+
+export type ClaimRecord = ClaimRecordV1;
+
+/**
+ * A typed relation between two claims of one check, derived when the later claim is appended (#406). Edges are their
+ * own lines in the log, so a claim is never rewritten.
+ *
+ * - `contradicts`: the later claim reached the opposite verdict under equal pinned conditions (`claimConditionsKey`);
+ *   a numeric-compare check's working-tree state is not pinned, so an uncommitted edit at the same commit still counts.
+ * - `supersedes`: the later claim judged the same check under changed conditions, such as a new commit or new input
+ *   digests, and replaces the earlier verdict.
+ *
+ * Both sides are PanCode's own grounded executions and the rule is deterministic, so an edge carries no suggested state.
+ */
+export type ClaimEdgeKind = "contradicts" | "supersedes";
+
+export interface ClaimEdgeRecordV1 {
+	v: typeof CLAIM_RECORD_VERSION;
+	type: "edge";
+	/** SHA-256 of the record's canonical JSON without `id`. */
+	id: string;
+	at: string;
+	project: string;
+	kind: ClaimEdgeKind;
+	/** The later claim. */
+	from: string;
+	/** The earlier claim. */
+	to: string;
+	check: string;
+}
+
+/**
+ * What a contradiction did to memory: the memory records, backed by an agreeing claim the contradiction overturned,
+ * that received a regression. An empty `memory` says no record cited those claims, so none changed.
+ */
+export interface ClaimRegressionRecordV1 {
+	v: typeof CLAIM_RECORD_VERSION;
+	type: "regression";
+	id: string;
+	at: string;
+	project: string;
+	/** The `contradicts` edge this regression follows from. */
+	edge: string;
+	/** The disagreeing claim. */
+	from: string;
+	/** The agreeing claims with equal pinned conditions that it overturned. */
+	backing: string[];
+	memory: string[];
+}
+
+export type ClaimEdgeRecord = ClaimEdgeRecordV1;
+export type ClaimRegressionRecord = ClaimRegressionRecordV1;
+
+/**
+ * Where a claim stands after its edges: `superseded` once a later claim replaced it under changed conditions;
+ * `retired` once a later grounded failure under equal pinned conditions overturned it (an agreeing claim only: a
+ * contradiction may withdraw a pass, never restore one); `contested` while a claim with equal pinned conditions
+ * disagrees with it; else `standing`.
+ */
+export type ClaimStatus = "standing" | "contested" | "retired" | "superseded";
+
+/**
+ * A worker disagreement that outlives its dispatch (#406): an agent-ledger `review` that did not pass, against the
+ * entry it targeted. Both posts are model-authored, so the record is `inferred`: it never forms an edge with a
+ * grounded claim, never backs memory and carries no merged verdict. Texts are clipped and screened at capture; a post
+ * the information-flow policy restricted keeps its ids and agents but not its text.
+ */
+export interface ClaimDisputePost {
+	/** The ledger entry id, `e<sequence>`. */
+	entry: string;
+	runId: string;
+	agentId: string;
+	kind: "finding" | "claim" | "review" | "message";
+	text: string;
+	path?: string;
+	line?: number;
+}
+
+export interface ClaimDisputeRecordV1 {
+	v: typeof CLAIM_RECORD_VERSION;
+	type: "dispute";
+	id: string;
+	at: string;
+	project: string;
+	/** The agent ledger the two posts were on. */
+	ledger: string;
+	target: ClaimDisputePost;
+	review: ClaimDisputePost;
+	evidence: "inferred";
+	flagged?: "instruction-markers";
+	withheld?: "flow-restricted";
+}
+
+export type ClaimDisputeRecord = ClaimDisputeRecordV1;
+
+/**
+ * Where an exported claim came from, without the operator's local paths: the digest of the origin's project key, its
+ * root commit and `origin` remote when it had them.
+ */
+export interface ClaimOrigin {
+	projectDigest: string;
+	rootCommit: string | null;
+	remote?: string;
+}
+
+/**
+ * A claim another project exported and the operator imported here (#406). It arrives `inferred`, carries its origin
+ * and the original record verbatim, and stays a lead: it never enters edge derivation, so it can neither contest nor
+ * ground a claim of this project, and memory never accepts it as backing.
+ */
+export interface ClaimImportRecordV1 {
+	v: typeof CLAIM_RECORD_VERSION;
+	type: "import";
+	id: string;
+	at: string;
+	project: string;
+	origin: ClaimOrigin;
+	claim: ClaimRecord;
+	evidence: "inferred";
+	/** Screened again here; the origin's own flag is not trusted. */
+	flagged?: "instruction-markers";
+}
+
+export type ClaimImportRecord = ClaimImportRecordV1;
+
+export const CLAIMS_EXPORT_SCHEMA = "pancode.claims-export.v1";
+
+export interface ClaimsExportBundle {
+	schema: typeof CLAIMS_EXPORT_SCHEMA;
+	origin: ClaimOrigin;
+	exportedAt: string;
+	claims: ClaimRecord[];
+}
+
+/**
+ * The schema a hypothesis-workflow slate declares (`hub/packs/plugins/literature/skills/hypothesis-workflow`). The slate
+ * holds every hypothesis at `proposed`; this ledger is where a hypothesis moves to tested, supported or refuted.
+ */
+export const HYPOTHESIS_SLATE_SCHEMA = "pancode.hypothesis-slate.v1";
+
+/**
+ * Where a hypothesis stands: `proposed` until the check its success criterion names runs, `tested` once it ran without
+ * a judged claim (a command check, a crash, a timeout, a payload that could not be judged), then `supported` or
+ * `refuted` by the latest claim that check recorded for it. A judged claim is the only thing that supports or refutes.
+ */
+export type HypothesisStatus = "proposed" | "tested" | "supported" | "refuted";
+
+/**
+ * One hypothesis of a slate the main session wrote, or a worker wrote and the host accepted into the project (#406).
+ * Unlike a claim this is model-authored text, so it is
+ * never `grounded`: it records what was proposed and the check that would judge it, nothing more. A later version of
+ * the same slate entry with changed content is a new record that `revises` the earlier one; neither is rewritten.
+ */
+/**
+ * How a slate reached the log: written by a main-session tool call, or landed in the project by a worker run the host
+ * accepted (a merged task worktree, or a run in the checkout that settled succeeded). Either way the host read the
+ * file from the project; nothing a worker reported about it is recorded.
+ */
+export type HypothesisSource =
+	| { channel: "slate"; sessionId: string | null; toolCallId: string | null; slateSha256: string }
+	| { channel: "worker-slate"; runId: string; receiptDigest: string; slateSha256: string };
+
+export interface HypothesisRecordV1 {
+	v: typeof CLAIM_RECORD_VERSION;
+	type: "hypothesis";
+	/** SHA-256 of the record's canonical JSON without `id`. */
+	id: string;
+	at: string;
+	project: string;
+	/** Project-relative path of the slate, else absolute. */
+	slate: string;
+	/** The slate's hypothesis id, such as `H1`. */
+	hypothesis: string;
+	statement: string;
+	prediction: string;
+	/** The success criterion as the slate drafted it; `check` is its `verifyId`, the declared check that judges it. */
+	criterion: { kind: string; check?: string; statement?: string };
+	/** Digest of slate path, hypothesis id, statement, prediction and criterion: the same entry rewritten is one subject. */
+	subject: string;
+	/** The record of the same slate entry this one replaces, which was current when this one was appended. */
+	revises?: string;
+	source: HypothesisSource;
+	evidence: "proposed";
+	flagged?: "instruction-markers";
+}
+
+/**
+ * A run of the check a hypothesis names (#406). `claim` is set exactly when the run was judged into a claim, and then
+ * `outcome` follows its verdict: `agrees` supports, `disagrees` refutes. A run with no claim is `tested`.
+ */
+export interface HypothesisTestRecordV1 {
+	v: typeof CLAIM_RECORD_VERSION;
+	type: "hypothesis-test";
+	id: string;
+	at: string;
+	project: string;
+	/** The hypothesis record tested: a revision that was current when the check started, bound then. */
+	hypothesis: string;
+	check: string;
+	outcome: Exclude<HypothesisStatus, "proposed">;
+	claim?: string;
+	/** How the run ended, as the channel recorded it (`succeeded`, `failed`, `timed-out`, ...). */
+	execution: string;
+	source: ClaimSource;
+}
+
+export type HypothesisRecord = HypothesisRecordV1;
+export type HypothesisTestRecord = HypothesisTestRecordV1;
+
+/** The run a check-start record binds: a main-thread verify call, or a worker run's host verification. */
+export type CheckRunIdentity =
+	| { channel: "verify"; sessionId: string | null; toolCallId: string }
+	| { channel: "host-verification"; runId: string };
+
+/**
+ * The hypothesis revisions one run of a check was bound to as it started (#406), appended under the log's lock before
+ * the check executes. Replay admits a test only for a revision its run's first start record lists, and a judged test
+ * only on a claim that follows that record, so a revision appended while the check ran is never credited with it.
+ */
+export interface CheckStartRecordV1 {
+	v: typeof CLAIM_RECORD_VERSION;
+	type: "check-start";
+	id: string;
+	at: string;
+	project: string;
+	check: string;
+	run: CheckRunIdentity;
+	/** The current revisions whose criterion named the check when it started; empty when none did. */
+	hypotheses: string[];
+}
+
+export type CheckStartRecord = CheckStartRecordV1;

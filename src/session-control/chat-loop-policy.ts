@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { RetrySettings } from "../core/defaults.js";
+import { DEFAULT_RETRY_SETTINGS } from "../domains/session/retry.js";
+
+// The compaction summary's watchdog applies the same rule, so the session domain owns it (CLI-P9).
+export { firstTokenStallLimitMs } from "../domains/session/retry.js";
+
+type RawRetrySettings = Partial<RetrySettings> | null | undefined;
+
+function normalizeNonNegativeInteger(value: unknown, fallback: number): number {
+	return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : fallback;
+}
+
+export function normalizeRetrySettings(raw: RawRetrySettings): RetrySettings {
+	return {
+		enabled: raw?.enabled ?? DEFAULT_RETRY_SETTINGS.enabled,
+		maxRetries: normalizeNonNegativeInteger(raw?.maxRetries, DEFAULT_RETRY_SETTINGS.maxRetries),
+		baseDelayMs: normalizeNonNegativeInteger(raw?.baseDelayMs, DEFAULT_RETRY_SETTINGS.baseDelayMs),
+		maxDelayMs: normalizeNonNegativeInteger(raw?.maxDelayMs, DEFAULT_RETRY_SETTINGS.maxDelayMs),
+		streamStallMs: normalizeNonNegativeInteger(raw?.streamStallMs, DEFAULT_RETRY_SETTINGS.streamStallMs),
+		firstTokenStallMs: normalizeNonNegativeInteger(raw?.firstTokenStallMs, DEFAULT_RETRY_SETTINGS.firstTokenStallMs),
+	};
+}

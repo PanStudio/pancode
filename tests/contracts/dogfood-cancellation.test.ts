@@ -1,0 +1,1356 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, strictEqual } from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, it } from "node:test";
+import { Type } from "typebox";
+import { runHeadlessMainAgent } from "../../src/cli/modes/print.js";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { ToolNames } from "../../src/core/tool-names.js";
+import { readArenaStream } from "../../src/domains/arena/facts.js";
+import {
+	EMPTY_CAPABILITIES,
+	type ProvidersContract,
+	type RuntimeDescriptor,
+} from "../../src/domains/providers/index.js";
+import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
+import type { VisionSidecar } from "../../src/domains/providers/vision-sidecar.js";
+import { createSessionBundle } from "../../src/domains/session/extension.js";
+import { isSessionEntry, isSessionHeader, type SessionEntry } from "../../src/domains/session/index.js";
+import { callSettlementFromMessage } from "../../src/domains/telemetry/call-facts.js";
+import type { TelemetryView } from "../../src/domains/telemetry/contract.js";
+import { createEngineAgent } from "../../src/engine/agent.js";
+import { openAICompletionsApiProvider } from "../../src/engine/apis/openai-completions.js";
+import { readSessionFileEntries, sessionPaths } from "../../src/engine/session.js";
+import { stripTerminalSequences } from "../../src/engine/tui.js";
+import type { Model } from "../../src/engine/types.js";
+import { createChatPanel } from "../../src/interactive/chat-panel.js";
+import { rehydrateChatPanelFromTurns } from "../../src/interactive/chat-renderer.js";
+import { renderSessionHtml } from "../../src/interactive/export-html/index.js";
+import { expandInteractiveSubmitAsync } from "../../src/interactive/interactive-deps.js";
+import { createSessionFileRecorder } from "../../src/interactive/session-file.js";
+import { lastTurnSummaryFromLedger } from "../../src/interactive/session-last-turn.js";
+import { buildSummary, emptyRunTally, foldMessageIntoRunTally } from "../../src/interactive/status/summary.js";
+import { resolveFooterVerb } from "../../src/interactive/status/verbs.js";
+import { GLYPH, pancodeTheme } from "../../src/interactive/theme/index.js";
+import { type ChatLoopEvent, createChatLoop } from "../../src/session-control/chat-loop.js";
+import { estimatedUsageForInterruptedTurn, recordValue } from "../../src/session-control/chat-loop-messages.js";
+import { buildModelReplayAgentMessagesFromTurns } from "../../src/session-control/model-session-replay.js";
+import { INITIAL_STATUS } from "../../src/session-control/status-types.js";
+import { createRegistry } from "../../src/tools/registry.js";
+import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
+import { readRunJournal } from "../harness/run-journal.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
+import { telemetryCall, telemetryViewOf } from "../harness/telemetry-view.js";
+
+const PARTIAL = "[PanCode] CANCEL_PARTIAL_ONCE";
+const THOUGHT = "CANCEL_THINKING_ONCE";
+const SKILL_REQUEST = { name: "context-handoff", args: "", source: "slash-command", installed: true } as const;
+const target = { id: "cancellation-fixture", runtime: "litellm", url: "http://fixture.invalid:4000" };
+const model = litellm.synthesizeModel(target, "unknown-cancellation-model", null) as Model<"openai-completions">;
+model.reasoning = true;
+const capabilities = {
+	...EMPTY_CAPABILITIES,
+	chat: true,
+	tools: false,
+	reasoning: true,
+	contextWindow: 131072,
+	maxTokens: 4096,
+};
+type WireMode =
+	| "partial"
+	| "thinking"
+	| "empty"
+	| "success"
+	| "failure"
+	| "tool"
+	| "guard"
+	| "repeat"
+	| "flood"
+	| "truncated"
+	| "loop"
+	| "overthink"
+	| "overthink-always";
+const LOOP =
+	"I should check the outline record first. The outline has seven sections. Let me read it again to be sure. ";
+
+// Only the HTTP transport is deterministic. pi's SSE decoder, provider adapter,
+// engine Agent, chat event pipeline, renderer and session writer are real.
+function transport(mode: WireMode) {
+	let calls = 0;
+	let aborted = 0;
+	const requestBodies: string[] = [];
+	let requestedResolve!: () => void;
+	const requested = new Promise<void>((resolve) => {
+		requestedResolve = resolve;
+	});
+	const fetch: typeof globalThis.fetch = async (_input, init) => {
+		calls += 1;
+		requestBodies.push(String(init?.body ?? ""));
+		requestedResolve();
+		if (mode === "failure")
+			return new Response(
+				JSON.stringify({ error: { message: "Request aborted by upstream deployment: HTTP 503", type: "server_error" } }),
+				{ status: 503, headers: { "content-type": "application/json" } },
+			);
+		const signal = init?.signal;
+		const encoder = new TextEncoder();
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				const send = (delta: Record<string, unknown>, finish_reason: string | null = null) =>
+					controller.enqueue(
+						encoder.encode(
+							`data: ${JSON.stringify({ id: "fixture-completion", object: "chat.completion.chunk", model: model.id, choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
+						),
+					);
+				if (mode === "truncated" && calls === 1) {
+					// The output cap cuts off a response of three distinct calls; none may run.
+					for (let index = 0; index < 3; index++)
+						send({
+							...(index === 0 ? { role: "assistant" } : {}),
+							tool_calls: [
+								{ index, id: `cut-${index}`, type: "function", function: { name: "read", arguments: `{"path":"f${index}"}` } },
+							],
+						});
+					send({}, "length");
+					controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+					controller.close();
+					return;
+				}
+				if (mode === "overthink-always" || (mode === "overthink" && calls === 1)) {
+					// The output cap runs out mid-deliberation: reasoning, then a length stop with no answer or call.
+					send({ role: "assistant", reasoning_content: THOUGHT });
+					send({}, "length");
+					controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+					controller.close();
+					return;
+				}
+				if (
+					mode === "success" ||
+					mode === "overthink" ||
+					(mode === "tool" && calls === 1) ||
+					((mode === "repeat" || mode === "flood" || mode === "truncated") && calls > 1)
+				) {
+					send(
+						mode === "tool"
+							? {
+									role: "assistant",
+									tool_calls: [{ index: 0, id: "cancel-tool", type: "function", function: { name: "read", arguments: "{}" } }],
+								}
+							: { role: "assistant", content: "PONG" },
+					);
+					send({}, mode === "tool" ? "tool_calls" : "stop");
+					controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+					controller.close();
+					return;
+				}
+				const abort = () => {
+					aborted += 1;
+					controller.error(new DOMException("The operation was aborted", "AbortError"));
+				};
+				if (signal?.aborted) {
+					abort();
+					return;
+				}
+				signal?.addEventListener("abort", abort, { once: true });
+				if (mode === "flood") {
+					// One response that keeps issuing the same write and never ends; only an abort stops it.
+					const args = JSON.stringify({ path: "src/format.ts", content: "export const format = (value) => value;\n" });
+					for (let index = 0; index < 40; index++)
+						send({
+							...(index === 0 ? { role: "assistant" } : {}),
+							tool_calls: [{ index, id: `flood-${index}`, type: "function", function: { name: "write", arguments: args } }],
+						});
+					return;
+				}
+				if (mode === "repeat" || mode === "loop") {
+					// Reasoning that cycles three sentences and never ends; only an abort stops it.
+					for (let chunk = 0; chunk < 60; chunk++)
+						send({ ...(chunk === 0 ? { role: "assistant" } : {}), reasoning_content: LOOP });
+					return;
+				}
+				if (mode === "guard") {
+					send({
+						role: "assistant",
+						tool_calls: [
+							{
+								index: 0,
+								id: "guard-tool",
+								type: "function",
+								function: {
+									name: "read",
+									arguments: JSON.stringify({ content: "x".repeat(2 * 1024 * 1024) }),
+								},
+							},
+						],
+					});
+					return;
+				}
+				send({
+					role: "assistant",
+					...(mode === "partial" ? { content: PARTIAL } : mode === "thinking" ? { reasoning_content: THOUGHT } : {}),
+				});
+			},
+		});
+		return new Response(body, { headers: { "content-type": "text/event-stream" } });
+	};
+	return { fetch, requested, calls: () => calls, aborted: () => aborted, requestBodies: () => requestBodies };
+}
+
+for (const api of ["stream", "streamSimple"] as const) {
+	it(`${api} preserves partial content and structured cancellation without route-failure advice`, {
+		timeout: 10_000,
+	}, async () => {
+		const wire = transport("partial");
+		const abort = new AbortController();
+		const stream = openAICompletionsApiProvider[api](
+			model,
+			{ messages: [{ role: "user", content: "start", timestamp: 0 }] },
+			{ apiKey: "fixture", signal: abort.signal, fetch: wire.fetch },
+		);
+		for await (const event of stream) if (event.type === "text_delta") abort.abort();
+		const result = await stream.result();
+		strictEqual(result.stopReason, "aborted");
+		strictEqual(
+			result.content
+				.filter((block) => block.type === "text")
+				.map((block) => block.text)
+				.join(""),
+			PARTIAL,
+		);
+		doesNotMatch(result.errorMessage ?? "", /LiteLLM route|\/model|failed/iu);
+		strictEqual(wire.calls(), 1);
+		strictEqual(wire.aborted(), 1);
+	});
+}
+
+it("a genuine LiteLLM failure keeps route advice even when upstream prose says aborted", {
+	timeout: 10_000,
+}, async () => {
+	const wire = transport("failure");
+	const result = await openAICompletionsApiProvider
+		.streamSimple(
+			model,
+			{ messages: [{ role: "user", content: "start", timestamp: 0 }] },
+			{ apiKey: "fixture", fetch: wire.fetch },
+		)
+		.result();
+	strictEqual(result.stopReason, "error");
+	match(result.errorMessage ?? "", /LiteLLM route.*failed/su);
+	match(result.errorMessage ?? "", /Request aborted by upstream deployment/u);
+	strictEqual(wire.calls(), 1, "no hidden provider retry");
+});
+
+it("an already-aborted provider request remains cancellation", { timeout: 10_000 }, async () => {
+	const abort = new AbortController();
+	abort.abort();
+	const wire = transport("empty");
+	const result = await openAICompletionsApiProvider
+		.streamSimple(
+			model,
+			{ messages: [{ role: "user", content: "start", timestamp: 0 }] },
+			{ apiKey: "fixture", signal: abort.signal, fetch: wire.fetch },
+		)
+		.result();
+	strictEqual(result.stopReason, "aborted");
+	doesNotMatch(result.errorMessage ?? "", /LiteLLM route|\/model/u);
+});
+
+let env: IsolatedPancodeEnv;
+let previousCwd: string;
+beforeEach(async () => {
+	env = await isolatePancodeEnv("dog-cancel-");
+	previousCwd = process.cwd();
+	const project = join(env.dir, "project");
+	mkdirSync(project);
+	process.chdir(project);
+});
+afterEach(() => {
+	process.chdir(previousCwd);
+	env.restore();
+});
+
+function readFixtureEntries(path: string): SessionEntry[] {
+	const entries: SessionEntry[] = [];
+	for (const entry of readSessionFileEntries(path)) {
+		if (isSessionHeader(entry)) continue;
+		ok(isSessionEntry(entry), "fixture ledger must contain valid SessionEntry records");
+		entries.push(entry);
+	}
+	return entries;
+}
+
+function fixture(
+	initialMode: WireMode,
+	visionSidecar?: VisionSidecar,
+	visionCapable = false,
+	refuseHandoffSkill?: (inlinedPaths: ReadonlyArray<string>) => string | null,
+	labelReferencedPaths?: (paths: ReadonlyArray<string>) => void,
+) {
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.chat.prewarm = false;
+	settings.chat.target = target.id;
+	settings.chat.model = model.id;
+	// "high" on this on/off route runs as "low"; the recovery notice names the level the operator chose (RV-2).
+	settings.chat.thinkingLevel =
+		initialMode === "overthink" || initialMode === "loop" ? "high" : initialMode === "overthink-always" ? "low" : "off";
+	settings.targets = [{ ...target, defaultModel: model.id }];
+	if (visionCapable && settings.targets[0]) settings.targets[0].capabilities = { vision: true };
+	const runtime: RuntimeDescriptor = {
+		...litellm,
+		auth: "none",
+		defaultCapabilities: {
+			...capabilities,
+			tools: initialMode === "tool" || initialMode === "guard" || initialMode === "truncated",
+			vision: visionCapable,
+		},
+		synthesizeModel: () => ({
+			...model,
+			input: visionCapable ? ["text", "image"] : ["text"],
+			contextWindow: 131072,
+			maxTokens: 4096,
+		}),
+	};
+	const context = dispatchStubContext({ settings, runtime });
+	const session = createSessionBundle(context).contract;
+	const safety = context.getContract("safety");
+	ok(safety);
+	const registry = createRegistry({ safety, autonomy: () => "yolo" });
+	let toolStarted!: () => void;
+	const toolRunning = new Promise<void>((resolve) => {
+		toolStarted = resolve;
+	});
+	registry.register({
+		name: ToolNames.Read,
+		description: "Wait for fixture cancellation",
+		parameters: Type.Object({}),
+		baseActionClass: "read",
+		async run(_args, options) {
+			toolStarted();
+			await new Promise<void>((resolve) => {
+				if (options?.signal?.aborted) resolve();
+				else options?.signal?.addEventListener("abort", () => resolve(), { once: true });
+			});
+			return { kind: "error", message: "Fixture tool cancelled" };
+		},
+	});
+	let wire = transport(initialMode);
+	const events: ChatLoopEvent[] = [];
+	const audit: unknown[] = [];
+	context.bus.subscribe("turn.aborted", (event) => {
+		audit.push(event);
+	});
+	// The fixture runs without telemetry; a test that reads the receipt's spend supplies the read model's view.
+	let telemetry: TelemetryView | null = null;
+	const panel = createChatPanel({ getOutputStyle: () => "detailed", getTelemetry: () => telemetry });
+	const loop = createChatLoop({
+		getSettings: () => settings,
+		...(visionSidecar ? { visionSidecar } : {}),
+		...(refuseHandoffSkill ? { refuseHandoffSkill } : {}),
+		...(labelReferencedPaths ? { labelReferencedPaths } : {}),
+		providers: context.getContract("providers") as ProvidersContract,
+		knownTargets: () => new Set([target.id]),
+		session,
+		...(initialMode === "tool" || initialMode === "guard" ? { toolRegistry: registry } : {}),
+		bus: context.bus,
+		readSessionEntries: () => {
+			const meta = session.current();
+			return meta ? readFixtureEntries(sessionPaths(meta).current) : [];
+		},
+		createAgent: (options) =>
+			createEngineAgent({
+				...options,
+				streamFn: (requestModel, requestContext, requestOptions) =>
+					openAICompletionsApiProvider.streamSimple(requestModel as Model<"openai-completions">, requestContext, {
+						...requestOptions,
+						apiKey: "fixture",
+						fetch: (...args) => wire.fetch(...args),
+					}),
+			}),
+	});
+	loop.onEvent((event) => {
+		events.push(event);
+		panel.applyEvent(event);
+	});
+	return {
+		loop,
+		panel,
+		session,
+		events,
+		audit,
+		toolRunning,
+		wire: () => wire,
+		setTelemetry(view: TelemetryView) {
+			telemetry = view;
+		},
+		next() {
+			wire = transport("success");
+		},
+		entries() {
+			const meta = session.current();
+			ok(meta);
+			return readFixtureEntries(sessionPaths(meta).current);
+		},
+		async close() {
+			loop.dispose();
+			await loop.whenSettled();
+			await session.close();
+		},
+	};
+}
+
+it("the screen window's clock starts when the operator speaks, over the live messages", {
+	timeout: 10_000,
+}, async () => {
+	const h = fixture("success");
+	try {
+		const before = Date.now();
+		await h.loop.submit("Read the page.");
+		const window = h.loop.screenWindow();
+		ok(window);
+		ok(window.since >= before);
+		ok(window.messages.some((message) => message.role === "user"));
+	} finally {
+		await h.close();
+	}
+});
+
+for (const mode of ["partial", "thinking", "empty"] as const) {
+	it(`${mode} cancellation closes once and remains usable live, after resume, and in export`, {
+		timeout: 15_000,
+	}, async () => {
+		const f = fixture(mode);
+		try {
+			const started = new Promise<void>((resolve) =>
+				f.loop.onEvent((event) => {
+					if (
+						(mode === "partial" && event.type === "text_delta") ||
+						(mode === "thinking" && event.type === "thinking_delta") ||
+						(mode === "empty" && event.type === "message_start" && event.message.role === "assistant")
+					)
+						resolve();
+				}),
+			);
+			const pending = f.loop.submit("Start streaming");
+			await started;
+			f.loop.cancel();
+			await pending;
+			const assistants = f.entries().filter((entry) => entry.kind === "message" && entry.role === "assistant");
+			strictEqual(assistants.length, 1, JSON.stringify(assistants));
+			const assistant = assistants[0];
+			ok(assistant?.kind === "message");
+			const payload = recordValue(assistant.payload);
+			ok(payload);
+			strictEqual(payload.stopReason, "aborted");
+			const usage = recordValue(payload.usage);
+			ok(usage);
+			for (const key of ["input", "output", "cacheRead", "cacheWrite", "totalTokens"]) strictEqual(usage[key], 0);
+			// The ledger is the conversation record; the journal owns the call's accounting and estimate (#434 §5.3).
+			strictEqual(payload.callAccounting, undefined);
+			strictEqual(payload.estimatedUsage, undefined);
+			// The estimate goes to call.settled as interruptedEstimate and never rides on the live message (#434).
+			const ended = f.events.filter((event) => event.type === "agent_end").at(-1);
+			ok(ended?.type === "agent_end");
+			const sent = ended.messages.filter((message) => message.role === "assistant");
+			strictEqual(sent.length, 1);
+			strictEqual((sent[0] as unknown as Record<string, unknown>).estimatedUsage, undefined);
+			const serialized = JSON.stringify(assistant);
+			doesNotMatch(serialized, /LiteLLM route|\/model/u);
+			if (mode === "partial") ok(serialized.includes(PARTIAL));
+			if (mode === "thinking") match(serialized, new RegExp(THOUGHT));
+			strictEqual(f.wire().calls(), 1);
+			strictEqual(f.audit.length, 1);
+			const live = f.panel.render(120).map(stripTerminalSequences).join("\n");
+			if (mode === "partial") strictEqual(live.split(PARTIAL).length - 1, 1, live);
+			match(live, /⊘ Stopped/u);
+			doesNotMatch(live, /LiteLLM route|\/model/u);
+
+			const replay = createChatPanel({ getOutputStyle: () => "detailed" });
+			rehydrateChatPanelFromTurns(replay, f.entries());
+			const resumedLines = replay.render(120);
+			const resumed = resumedLines.map(stripTerminalSequences).join("\n");
+			if (mode === "partial") strictEqual(resumed.split(PARTIAL).length - 1, 1, resumed);
+			if (mode === "thinking") strictEqual(resumed.split(THOUGHT).length - 1, 1, resumed);
+			match(resumed, /⊘ Stopped/u);
+			doesNotMatch(resumed, /LiteLLM route|\/model/u);
+			const meta = f.session.current();
+			ok(meta);
+			const html = renderSessionHtml({ sessionId: meta.id, exportedAt: "2026-09-07T00:00:00Z", ansiLines: resumedLines });
+			if (mode === "partial") strictEqual(html.split(PARTIAL).length - 1, 1);
+			doesNotMatch(html, /LiteLLM route|\/model/u);
+			f.next();
+			await f.loop.submit("Next prompt");
+			match(f.panel.render(120).map(stripTerminalSequences).join("\n"), /PONG/u);
+			await f.session.close();
+			f.session.resume(meta.id);
+			f.loop.resetForSession(f.session.tree().leafId, buildModelReplayAgentMessagesFromTurns(f.entries()));
+			await f.loop.submit("After resume");
+			const after = f.entries().filter((entry) => entry.kind === "message" && entry.role === "assistant");
+			strictEqual(after.length, 3);
+		} finally {
+			await f.close();
+		}
+	});
+}
+
+it("loop-guard interruption keeps its own reason on the single partial assistant", { timeout: 15_000 }, async () => {
+	const f = fixture("partial");
+	try {
+		f.loop.onEvent((event) => {
+			if (event.type === "text_delta")
+				f.loop.cancel({ source: "loop_guard", reason: "[PanCode] loop guard stopped repeated calls." });
+		});
+		await f.loop.submit("Start");
+		const assistants = f.entries().filter((entry) => entry.kind === "message" && entry.role === "assistant");
+		strictEqual(assistants.length, 1);
+		match(JSON.stringify(assistants[0]), /loop guard stopped repeated calls/u);
+		ok(JSON.stringify(assistants[0]).includes(PARTIAL));
+		doesNotMatch(JSON.stringify(assistants[0]), /active response cancelled|LiteLLM route/u);
+	} finally {
+		await f.close();
+	}
+});
+
+it("the argument guard remains visible live and after persistence without an operator cancel or retry", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("guard");
+	try {
+		await f.loop.submit("Start");
+		strictEqual(f.wire().calls(), 1);
+		strictEqual(f.wire().aborted(), 1);
+		strictEqual(f.events.filter((event) => event.type === "retry_status").length, 0);
+		strictEqual(f.events.filter((event) => event.type === "tool_execution_start").length, 0);
+		const assistants = f.entries().filter((entry) => entry.kind === "message" && entry.role === "assistant");
+		strictEqual(assistants.length, 1);
+		const persisted = assistants[0];
+		ok(persisted?.kind === "message");
+		const payload = recordValue(persisted.payload);
+		ok(payload);
+		strictEqual(payload.stopReason, "aborted");
+		strictEqual(payload.pancodeAbortReason, "tool_argument_generation");
+		match(String(payload.errorMessage), /byte safety ceiling/);
+		const replay = createChatPanel({ getOutputStyle: () => "detailed" });
+		rehydrateChatPanelFromTurns(replay, f.entries());
+		for (const panel of [f.panel, replay]) {
+			const rendered = panel.render(120).map(stripTerminalSequences).join("\n");
+			match(rendered, /Tool argument generation stopped/);
+			match(rendered, /byte safety ceiling/);
+			doesNotMatch(rendered, /Cancelled at your request|\bCancelled\b|⊘ Stopped|provider retry/);
+		}
+		const end = f.events.filter((event) => event.type === "agent_end").at(-1);
+		ok(end?.type === "agent_end");
+		const summary = buildSummary({
+			startedAt: 1,
+			endedAt: 2,
+			modelId: model.id,
+			targetId: target.id,
+			messages: end.messages,
+			watchdogPeak: 0,
+			cancelled: false,
+		});
+		strictEqual(summary.stopReason, "generation_guard");
+		match(resolveFooterVerb({ ...INITIAL_STATUS, phase: "ended", summary }, 2, 120)?.text ?? "", /Generation stopped/);
+		f.next();
+		await f.loop.submit("Next prompt");
+		match(f.panel.render(120).map(stripTerminalSequences).join("\n"), /PONG/);
+	} finally {
+		await f.close();
+	}
+});
+
+// BT-013: the footer settles an operator cancel as `⊘ cancelled`, so the
+// transcript row closing the same hollow turn carries that mark in `dim`. A
+// loop-guard stop is PanCode stopping a runaway turn, a warning, and keeps `⚠`.
+for (const source of ["stream_cancel", "loop_guard"] as const) {
+	const title =
+		source === "stream_cancel"
+			? "an operator cancel closes its hollow turn with the cancelled mark the footer uses"
+			: "a loop-guard stop closes its hollow turn with the warning mark";
+	it(title, { timeout: 15_000 }, async () => {
+		const f = fixture("empty");
+		try {
+			const started = new Promise<void>((resolve) =>
+				f.loop.onEvent((event) => {
+					if (event.type === "message_start" && event.message.role === "assistant") resolve();
+				}),
+			);
+			const pending = f.loop.submit("Start streaming");
+			await started;
+			if (source === "stream_cancel") f.loop.cancel();
+			else f.loop.cancel({ source, reason: "[PanCode] loop guard stopped repeated calls." });
+			await pending;
+			const assistants = f.entries().filter((entry) => entry.kind === "message" && entry.role === "assistant");
+			strictEqual(assistants.length, 1);
+			const assistant = assistants[0];
+			ok(assistant?.kind === "message");
+			const payload = recordValue(assistant.payload);
+			// The read model's fold of the cancelled call as the producer settles the run's live message: sent, with no
+			// usage reported, and the estimate journaled beside its usage (#430, #434 §11.3).
+			const ended = f.events.filter((event) => event.type === "agent_end").at(-1);
+			ok(ended?.type === "agent_end");
+			const message = ended.messages.filter((entry) => entry.role === "assistant").at(-1);
+			ok(message);
+			const settlement = callSettlementFromMessage(
+				message,
+				"none",
+				undefined,
+				estimatedUsageForInterruptedTurn(message, 1_000),
+			);
+			strictEqual(settlement.disposition, "sent_unsettled");
+			ok(settlement.interruptedEstimate);
+			const meta = f.session.current();
+			const userTurn = f.entries().find((entry) => entry.kind === "message" && entry.role === "user");
+			ok(meta && userTurn);
+			const view = telemetryViewOf(
+				meta.id,
+				telemetryCall(meta.id, {
+					turnId: userTurn.turnId,
+					disposition: settlement.disposition,
+					usage: { input: null, output: null, cacheRead: null, cacheWrite: null, reasoning: null },
+					usd: null,
+					interruptedEstimate: settlement.interruptedEstimate,
+				}),
+			);
+			f.setTelemetry(view);
+			const rows = f.panel.render(120);
+			const live = rows.map(stripTerminalSequences).join("\n");
+			const theme = pancodeTheme();
+			if (source === "stream_cancel") {
+				// The Stopped outcome is the one report of an Esc.
+				match(live, /⊘ Stopped\b/u);
+				strictEqual(live.split("Stopped").length - 1, 1, live);
+				doesNotMatch(live, /\[aborted\]|active response cancelled/u);
+				doesNotMatch(live, new RegExp(GLYPH.warn, "u"));
+				const row = rows.find((line) => stripTerminalSequences(line).includes("Stopped"));
+				ok(row?.includes(GLYPH.cancelled), row);
+			} else {
+				match(live, /! loop guard stopped repeated calls\./u);
+				const row = rows.find((line) => stripTerminalSequences(line).includes("loop guard stopped"));
+				ok(row?.includes(`${theme.fg("warning", GLYPH.warn)} `), row);
+			}
+			strictEqual(payload?.callAccounting, undefined);
+			strictEqual(recordValue(payload?.usage)?.input, 0);
+			strictEqual(recordValue(payload?.failure)?.invoked, true);
+			strictEqual(recordValue(payload?.interruptClosure)?.operatorCancel, source === "stream_cancel");
+			strictEqual(payload?.estimatedUsage, undefined);
+			ok(typeof payload?.apiMs === "number");
+			const replay = createChatPanel({ getOutputStyle: () => "detailed", getTelemetry: () => view });
+			rehydrateChatPanelFromTurns(replay, f.entries());
+			const resumedLines = replay.render(120);
+			const resumed = resumedLines.map(stripTerminalSequences).join("\n");
+			// Live and resumed receipts read the turn's spend from the same view: the sent call reported no usage, so its
+			// counts are the journaled estimate as a lower bound, never a zero (#430, #434 §11.3).
+			for (const rendered of [live, resumed]) {
+				match(rendered, /⊘ Stopped · /u);
+				match(rendered, /in ≥≈\S+ · out ≥≈0 · [^\n]*1 call had no usage data/u);
+				strictEqual(rendered.split("Stopped").length - 1, 1, rendered);
+				doesNotMatch(rendered, /■|\[aborted\]/u);
+			}
+			strictEqual(resumed.match(/in .+? · out \S+/u)?.[0], live.match(/in .+? · out \S+/u)?.[0]);
+			const html = renderSessionHtml({
+				sessionId: source,
+				exportedAt: "2026-09-07T00:00:00Z",
+				ansiLines: resumedLines,
+			}).replace(/<[^>]*>/gu, "");
+			match(html, /⊘ Stopped · /u);
+			match(html, /in ≥≈\S+ · out ≥≈0 · [^\n]*1 call had no usage data/u);
+			strictEqual(html.split("Stopped").length - 1, 1, html);
+			if (source === "loop_guard") {
+				for (const rendered of [resumed, html]) {
+					match(rendered, /! loop guard stopped repeated calls\./u);
+					ok(rendered.indexOf("⊘ Stopped") < rendered.indexOf("! loop guard"));
+				}
+			} else doesNotMatch(resumed, /!|Cancelled at your request\./u);
+			const historicalEntries = f.entries().map((entry) => {
+				if (entry.kind !== "message" || entry.role !== "assistant") return entry;
+				const historicalPayload = { ...recordValue(entry.payload) };
+				delete historicalPayload.interruptClosure;
+				return { ...entry, payload: historicalPayload };
+			});
+			const historical = createChatPanel({ getOutputStyle: () => "detailed" });
+			rehydrateChatPanelFromTurns(historical, historicalEntries);
+			const oldReplay = historical.render(120).map(stripTerminalSequences).join("\n");
+			match(oldReplay, source === "loop_guard" ? /■ \[PanCode\] loop guard stopped/u : /■ Cancelled at your request\./u);
+		} finally {
+			await f.close();
+		}
+	});
+}
+
+it("a tool cancellation persists its result before exactly one closing assistant and permits the next turn", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("tool");
+	try {
+		const pending = f.loop.submit("Use read");
+		await f.toolRunning;
+		f.loop.cancel();
+		await pending;
+		const entries = f.entries();
+		const call = entries.findIndex((entry) => entry.kind === "message" && entry.role === "tool_call");
+		const result = entries.findIndex((entry) => entry.kind === "message" && entry.role === "tool_result");
+		const closings = entries.filter(
+			(entry) =>
+				entry.kind === "message" && entry.role === "assistant" && recordValue(entry.payload)?.stopReason === "aborted",
+		);
+		strictEqual(closings.length, 1);
+		const closing = closings[0];
+		ok(closing);
+		ok(call >= 0 && result > call && entries.indexOf(closing) > result, JSON.stringify(entries));
+		doesNotMatch(JSON.stringify(entries), /LiteLLM route|\/model/u);
+		f.next();
+		await f.loop.submit("Next");
+		match(f.panel.render(120).map(stripTerminalSequences).join("\n"), /PONG/u);
+	} finally {
+		await f.close();
+	}
+});
+
+it("a reply the repetition guard stops after a plain and a changed recovery fails the headless run on its reason (SC-5)", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("loop");
+	const stderr: string[] = [];
+	const write = process.stderr.write;
+	process.stderr.write = ((chunk: string | Uint8Array) => {
+		stderr.push(String(chunk));
+		return true;
+	}) as typeof process.stderr.write;
+	try {
+		const code = await runHeadlessMainAgent(f.loop, {
+			prompt: "Advance the paper.",
+			mode: "text",
+			shutdown: { onDrain() {}, getExitCode: () => 0, isShuttingDown: () => false },
+		});
+		process.stderr.write = write;
+		strictEqual(code, 1);
+		strictEqual(f.wire().calls(), 3);
+		// The plain nudge keeps the request; the second recovery changes it: a firmer instruction, thinking one step lower.
+		const [, plain, changed] = f
+			.wire()
+			.requestBodies()
+			.map((body) => JSON.parse(body) as Record<string, unknown>);
+		deepStrictEqual(plain?.chat_template_kwargs, { enable_thinking: true });
+		deepStrictEqual(changed?.chat_template_kwargs, { enable_thinking: false });
+		doesNotMatch(JSON.stringify(plain?.messages), /stopped again/u);
+		match(JSON.stringify(changed?.messages), /stopped again/u);
+		// One turn, one outcome footer, however many recoveries it took (bt-48-1). The guard stopped it, not the operator.
+		const rendered = f.panel.render(120).map(stripTerminalSequences).join("\n");
+		strictEqual(rendered.split("Generation stopped").length - 1, 1, rendered);
+		doesNotMatch(rendered, /Cancelled|⊘ Stopped/u);
+		const envelope = [...(readRunJournal(join(env.dir, "state"))?.envelopes.values() ?? [])][0];
+		match(envelope?.outcomeDetail ?? "", /^\[PanCode\] stopped a model response that kept repeating itself/u);
+		doesNotMatch(stderr.join(""), /target 'cancellation-fixture'|Request was aborted/u);
+	} finally {
+		process.stderr.write = write;
+		await f.close();
+	}
+});
+
+it("the real chat loop persists and displays one genuine gateway failure without retrying it", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("failure");
+	try {
+		await f.loop.submit("Start");
+		const assistants = f.entries().filter((entry) => entry.kind === "message" && entry.role === "assistant");
+		strictEqual(assistants.length, 1);
+		match(JSON.stringify(assistants), /LiteLLM route.*failed/su);
+		strictEqual(f.wire().calls(), 1);
+		strictEqual(f.audit.length, 0);
+		f.next();
+		await f.loop.submit("Next");
+		match(f.panel.render(120).map(stripTerminalSequences).join("\n"), /PONG/u);
+	} finally {
+		await f.close();
+	}
+});
+
+it("a refused context-handoff request sends nothing and starts no turn", { timeout: 15_000 }, async () => {
+	const f = fixture("success", undefined, false, () => "use /handoff");
+	const notices: string[] = [];
+	f.loop.onEvent((event) => {
+		if (event.type === "notice" && event.admission?.reason === "handoff-skill-refused") notices.push(event.text);
+	});
+	try {
+		await f.loop.submit("write the brief", { pendingSkillRequests: [SKILL_REQUEST] });
+		deepStrictEqual(notices, ["use /handoff"]);
+		strictEqual(f.wire().calls(), 0);
+		f.next();
+		await f.loop.submit("Next");
+		strictEqual(f.wire().calls(), 1, "only the skill request is refused");
+	} finally {
+		await f.close();
+	}
+});
+
+it("a refused context-handoff request is judged on the file it inlines and labels nothing", {
+	timeout: 15_000,
+}, async () => {
+	let labeled = false;
+	const f = fixture(
+		"success",
+		undefined,
+		false,
+		(paths) => (paths.includes("secrets/notes.txt") ? "remove the file" : null),
+		() => {
+			labeled = true;
+		},
+	);
+	try {
+		await f.loop.submit("write the brief", {
+			pendingSkillRequests: [SKILL_REQUEST],
+			workingContextPaths: ["secrets/notes.txt"],
+		});
+		strictEqual(labeled, false);
+		strictEqual(f.wire().calls(), 0);
+	} finally {
+		await f.close();
+	}
+});
+
+it("a text-only route refuses an image before the provider receives bytes", { timeout: 15_000 }, async () => {
+	const f = fixture("success");
+	const notices: string[] = [];
+	f.loop.onEvent((event) => {
+		if (event.type === "notice" && event.admission?.reason === "image-input-unsupported") notices.push(event.text);
+	});
+	try {
+		writeFileSync(
+			join(process.cwd(), "pixel.png"),
+			Buffer.from(
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==",
+				"base64",
+			),
+		);
+		const expanded = await expandInteractiveSubmitAsync("Inspect @pixel.png", undefined, process.cwd());
+		strictEqual(expanded.images.length, 1);
+		await f.loop.submit(expanded.text, { images: expanded.images });
+		strictEqual(f.wire().calls(), 0);
+		strictEqual(notices.length, 1);
+		match(notices[0] ?? "", /IMAGE_INPUT_UNSUPPORTED.*cancellation-fixture\/unknown-cancellation-model/u);
+		strictEqual(f.session.current(), null);
+	} finally {
+		await f.close();
+	}
+});
+
+it("a text-only route uses the vision sidecar while keeping the original image in session history", {
+	timeout: 15_000,
+}, async () => {
+	const asked: string[] = [];
+	const sidecar: VisionSidecar = {
+		configured: () => true,
+		label: () => "MiniCPM-V-4.6",
+		analyze: async (_images, question) => {
+			asked.push(question);
+			return {
+				target: "mini-vision",
+				model: "MiniCPM-V-4.6",
+				images: [{ index: 1, description: "A white pixel" }],
+				answer: "white",
+			};
+		},
+	};
+	const f = fixture("success", sidecar);
+	try {
+		const image = { type: "image" as const, mimeType: "image/png", data: "SIDECAR_IMAGE_SENTINEL" };
+		await f.loop.submit("What color is this?", { images: [image] });
+		strictEqual(f.wire().calls(), 1);
+		strictEqual(asked.length, 1);
+		strictEqual(asked[0], "What color is this?");
+		const body = f.wire().requestBodies()[0] ?? "";
+		doesNotMatch(body, /SIDECAR_IMAGE_SENTINEL|image_url/u);
+		match(body, /A white pixel/u);
+		match(body, /untrusted image observation/u);
+		ok(f.events.some((event) => event.type === "notice" && /Processing image with MiniCPM-V-4\.6/u.test(event.text)));
+		const user = f.entries().find((entry) => entry.kind === "message" && entry.role === "user");
+		ok(user && user.kind === "message");
+		match(JSON.stringify(user.payload), /SIDECAR_IMAGE_SENTINEL/u);
+		match(JSON.stringify(user.payload), /A white pixel/u);
+	} finally {
+		await f.close();
+	}
+});
+
+it("an image-only submission asks the sidecar for a description", { timeout: 15_000 }, async () => {
+	let question = "";
+	const f = fixture("success", {
+		configured: () => true,
+		label: () => "MiniCPM-V-4.6",
+		analyze: async (_images, prompt) => {
+			question = prompt;
+			return {
+				target: "mini-vision",
+				model: "MiniCPM-V-4.6",
+				images: [{ index: 1, description: "a pixel" }],
+				answer: "a pixel",
+			};
+		},
+	});
+	try {
+		await f.loop.submit("", { images: [{ type: "image", mimeType: "image/png", data: "IMAGE_ONLY" }] });
+		match(question, /Describe the attached image/u);
+		strictEqual(f.wire().calls(), 1);
+	} finally {
+		await f.close();
+	}
+});
+
+it("sidecar failure refuses admission without sending the image to the main model", { timeout: 15_000 }, async () => {
+	const f = fixture("success", {
+		configured: () => true,
+		label: () => "MiniCPM-V-4.6",
+		analyze: async () => {
+			throw new Error("HTTP 503");
+		},
+	});
+	try {
+		await f.loop.submit("Inspect this", { images: [{ type: "image", mimeType: "image/png", data: "SENTINEL" }] });
+		strictEqual(f.wire().calls(), 0);
+		strictEqual(f.session.current(), null);
+		ok(f.events.some((event) => event.type === "notice" && event.admission?.reason === "vision-sidecar-failed"));
+	} finally {
+		await f.close();
+	}
+});
+
+it("a vision-capable Qwopus-style route receives images directly without invoking the sidecar", {
+	timeout: 15_000,
+}, async () => {
+	let calls = 0;
+	const f = fixture(
+		"success",
+		{
+			configured: () => true,
+			label: () => "MiniCPM-V-4.6",
+			analyze: async () => {
+				calls += 1;
+				throw new Error("sidecar should not run");
+			},
+		},
+		true,
+	);
+	try {
+		await f.loop.submit("Describe", {
+			images: [{ type: "image", mimeType: "image/png", data: "DIRECT_IMAGE_SENTINEL" }],
+		});
+		strictEqual(calls, 0);
+		strictEqual(f.wire().calls(), 1);
+		match(f.wire().requestBodies()[0] ?? "", /DIRECT_IMAGE_SENTINEL/u);
+	} finally {
+		await f.close();
+	}
+});
+
+it("cancelling image processing stops admission and leaves the next turn usable", { timeout: 15_000 }, async () => {
+	let started!: () => void;
+	const entered = new Promise<void>((resolve) => {
+		started = resolve;
+	});
+	const f = fixture("success", {
+		configured: () => true,
+		label: () => "MiniCPM-V-4.6",
+		analyze: async (_images, _question, signal) => {
+			started();
+			await new Promise<void>((_resolve, reject) =>
+				signal?.addEventListener("abort", () => reject(new Error("cancelled")), { once: true }),
+			);
+			throw new Error("unreachable");
+		},
+	});
+	try {
+		const pending = f.loop.submit("Inspect", {
+			images: [{ type: "image", mimeType: "image/png", data: "CANCEL_IMAGE_SENTINEL" }],
+		});
+		await entered;
+		f.loop.cancel();
+		await pending;
+		strictEqual(f.wire().calls(), 0);
+		strictEqual(f.session.current(), null);
+		await f.loop.submit("Continue with text");
+		strictEqual(f.wire().calls(), 1);
+	} finally {
+		await f.close();
+	}
+});
+
+it("a text-only route omits historical images with a visible note before the next request", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("success");
+	const image = { type: "image" as const, mimeType: "image/png", data: "HISTORICAL_IMAGE_SENTINEL" };
+	const priorTurn = {
+		role: "user" as const,
+		content: [{ type: "text" as const, text: "Earlier image" }, image],
+		timestamp: Date.now(),
+	};
+	try {
+		f.loop.resetForSession(null, [priorTurn]);
+		await f.loop.submit("Continue");
+		strictEqual(f.wire().calls(), 1);
+		const body = f.wire().requestBodies()[0] ?? "";
+		doesNotMatch(body, /HISTORICAL_IMAGE_SENTINEL/u);
+		match(body, /Image omitted/u);
+		ok(f.events.some((event) => event.type === "notice" && /1 earlier image.*omitted.*text-only/u.test(event.text)));
+		await f.loop.submit("Continue again");
+		strictEqual(
+			f.events.filter((event) => event.type === "notice" && /earlier image.*omitted.*text-only/u.test(event.text)).length,
+			1,
+		);
+		match(JSON.stringify(priorTurn), /HISTORICAL_IMAGE_SENTINEL/u);
+	} finally {
+		await f.close();
+	}
+});
+
+it("headless reports a stable image error before opening a turn", { timeout: 15_000 }, async () => {
+	const f = fixture("success");
+	const notices: string[] = [];
+	f.loop.onEvent((event) => {
+		if (event.type === "notice" && event.admission?.reason === "image-input-unsupported") notices.push(event.text);
+	});
+	try {
+		const code = await runHeadlessMainAgent(f.loop, {
+			prompt: "Inspect this",
+			images: [{ type: "image", mimeType: "image/png", data: "aGVsbG8=" }],
+			mode: "json",
+		});
+		strictEqual(code, 1);
+		strictEqual(f.wire().calls(), 0);
+		match(notices[0] ?? "", /IMAGE_INPUT_UNSUPPORTED/u);
+		const journal = readRunJournal(join(env.dir, "state"));
+		strictEqual(journal?.runs.length ?? 0, 0);
+	} finally {
+		await f.close();
+	}
+});
+
+it("headless text mode reports a dispatch scope notice on stderr and ignores a payload that is not one", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("success");
+	const message = '[dispatch scope] intent.write_roots "." names the whole workspace, so it sets no write boundary.';
+	const lines: string[] = [];
+	try {
+		// The listener fires while the run starts, before its first await, so stderr is
+		// only swapped across synchronous code and restored before anything is awaited.
+		const write = process.stderr.write;
+		process.stderr.write = ((chunk: string | Uint8Array) => {
+			lines.push(String(chunk));
+			return true;
+		}) as typeof process.stderr.write;
+		let running: Promise<number>;
+		try {
+			running = runHeadlessMainAgent(f.loop, {
+				prompt: "Hello",
+				mode: "text",
+				scopeNotices: (listener) => {
+					listener({ code: "write_root_dot_unconfined", level: "warning", message });
+					listener({ code: "made_up", level: "warning", message: "not a scope notice" });
+					return () => {};
+				},
+			});
+		} finally {
+			process.stderr.write = write;
+		}
+		strictEqual(await running, 0);
+		strictEqual(lines.filter((line) => line.includes("[dispatch scope]")).length, 1);
+		ok(lines.includes(`pancode run: ${message}\n`));
+		strictEqual(
+			lines.some((line) => line.includes("not a scope notice")),
+			false,
+		);
+	} finally {
+		await f.close();
+	}
+});
+
+it("headless shutdown retains its cancelled receipt and exit 143 without route advice", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("partial");
+	let shuttingDown = false;
+	let drain: (() => void | Promise<void>) | undefined;
+	f.loop.onEvent((event) => {
+		if (event.type === "text_delta") {
+			shuttingDown = true;
+			f.loop.cancel();
+		}
+	});
+	try {
+		const code = await runHeadlessMainAgent(f.loop, {
+			prompt: "Start",
+			mode: "json",
+			shutdown: {
+				onDrain: (hook) => {
+					drain = hook;
+				},
+				getExitCode: () => (shuttingDown ? 143 : 0),
+				isShuttingDown: () => shuttingDown,
+			},
+		});
+		await drain?.();
+		strictEqual(code, 143);
+		const journal = readRunJournal(join(env.dir, "state"));
+		ok(journal);
+		strictEqual(journal.envelopes.size, 1);
+		const envelope = [...journal.envelopes.values()][0];
+		deepStrictEqual([envelope?.outcome, envelope?.exitCode], ["canceled", 143]);
+	} finally {
+		await f.close();
+	}
+});
+
+it("a reply cut off by the operator's Esc or by shutdown is the harness's stop and names no route", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("partial");
+	// The first turn is the operator's Esc. A `run --timeout` deadline or a signal then reaches the second turn as the
+	// composition root disposing the loop, and the earlier Esc must not name that stop (x7-3).
+	let turn = 0;
+	f.loop.onEvent((event) => {
+		if (event.type !== "text_delta") return;
+		if (turn === 1) f.loop.cancel();
+		else if (turn === 2) f.loop.dispose();
+		turn = -turn;
+	});
+	try {
+		turn = 1;
+		await f.loop.submit("Stop");
+		await f.loop.whenSettled();
+		turn = 2;
+		await f.loop.submit("Start");
+		await f.loop.whenSettled();
+		const [cancelled, closing] = f
+			.entries()
+			.map((entry) => (entry.kind === "message" && entry.role === "assistant" ? recordValue(entry.payload) : undefined))
+			.filter((payload) => payload?.stopReason === "aborted");
+		ok(cancelled && closing, JSON.stringify(f.entries()));
+		strictEqual(recordValue(cancelled.failure)?.errorClass, "operator_cancel");
+		strictEqual(cancelled.failureRoute, undefined, "an operator's cancel names no route");
+		strictEqual(closing.failureRoute, undefined);
+		match(String(closing.errorMessage), /PanCode shut down/u);
+		// The persisted failure names the harness's cause, not a transport abort (bt-26 N2a).
+		deepStrictEqual(
+			[recordValue(closing.failure)?.stage, recordValue(closing.failure)?.errorClass],
+			["harness", "shutdown"],
+		);
+	} finally {
+		await f.close();
+	}
+});
+
+it("a reply steering triage cuts off to deliver a stop persists triage's cause, not the operator's (bt-41)", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("partial");
+	f.loop.onEvent((event) => {
+		if (event.type === "text_delta") f.loop.cancel({ source: "triage", reason: "[PanCode] triage stop." });
+	});
+	try {
+		await f.loop.submit("Start");
+		const closing = f
+			.entries()
+			.map((entry) => (entry.kind === "message" && entry.role === "assistant" ? recordValue(entry.payload) : undefined))
+			.find((payload) => payload?.stopReason === "aborted");
+		ok(closing, JSON.stringify(f.entries()));
+		deepStrictEqual(
+			[recordValue(closing.failure)?.stage, recordValue(closing.failure)?.errorClass],
+			["harness", "triage_stop"],
+		);
+	} finally {
+		await f.close();
+	}
+});
+
+it("a looping stream is stopped and re-prompted once with a nudge, without resending the loop", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("repeat");
+	try {
+		await f.loop.submit("Advance the paper.");
+		strictEqual(f.wire().calls(), 2);
+		const retry = f.wire().requestBodies()[1] ?? "";
+		ok(retry.includes("pancode_repetition_reprompt"), retry);
+		strictEqual(retry.includes("seven sections"), false, "the stopped loop is not sent back");
+		ok(f.events.some((event) => event.type === "notice" && event.key === "turn.repetition-reprompt"));
+		const rendered = f.panel.render(120).map(stripTerminalSequences).join("\n");
+		match(rendered, /PONG/u);
+		// The recovered turn ends once, as Done: the stopped attempt is not a Cancelled outcome (bt-48-1).
+		doesNotMatch(rendered, /Cancelled|⊘ Stopped|✗ \[aborted\]/u);
+		strictEqual(rendered.split("✓ Done").length - 1, 1, rendered);
+	} finally {
+		await f.close();
+	}
+});
+
+it("a response repeating one tool call is stopped while streaming and re-prompted once to make one call", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("flood");
+	try {
+		await f.loop.submit("Fix the formatter.");
+		strictEqual(f.wire().aborted(), 1, "the flood is stopped mid-stream, not at the output cap");
+		strictEqual(f.wire().calls(), 2);
+		const retry = f.wire().requestBodies()[1] ?? "";
+		ok(retry.includes("pancode_repetition_reprompt") && retry.includes("Make ONE tool call"), retry);
+		strictEqual(retry.includes("src/format.ts"), false, "the stopped flood is not sent back");
+		strictEqual(
+			f.events.filter((event) => event.type === "tool_execution_end").length,
+			0,
+			"no flooded call ran or failed",
+		);
+		ok(
+			f.events.some((event) => event.type === "notice" && /repeating one tool call \("write" 5 times/u.test(event.text)),
+		);
+		match(f.panel.render(120).map(stripTerminalSequences).join("\n"), /PONG/u);
+	} finally {
+		await f.close();
+	}
+});
+
+it("calls the output limit cut off are flagged as not run under one notice that states the limit (bt-39 a)", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("truncated");
+	try {
+		await f.loop.submit("Read the three files.");
+		await f.loop.whenSettled();
+		const ends = f.events.filter((event) => event.type === "tool_execution_end");
+		deepStrictEqual(
+			ends.map((event) => (event as { notRun?: unknown }).notRun),
+			["output_limit", "output_limit", "output_limit"],
+		);
+		const notices = f.events.filter((event) => event.type === "notice" && /output token limit/u.test(event.text));
+		strictEqual(notices.length, 1);
+		match(String((notices[0] as { text?: unknown }).text), /3 tool calls in it; none ran/u);
+		match(f.panel.render(120).map(stripTerminalSequences).join("\n"), /PONG/u);
+	} finally {
+		await f.close();
+	}
+});
+
+it("calls the output limit cut off count as no call and no tool error and read as not run, live and resumed (bt-39 a)", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("truncated");
+	const dir = mkdtempSync(join(tmpdir(), "pancode-cut-off-"));
+	try {
+		const path = join(dir, "session.json");
+		const recorder = createSessionFileRecorder({
+			path,
+			cwd: dir,
+			snapshot: () => ({ sessionId: "s", sessionName: null, turns: 1, models: [] }) as never,
+		});
+		await f.loop.submit("Read the three files.");
+		await f.loop.whenSettled();
+		for (const event of f.events) recorder.observeChat(event);
+		let tally = emptyRunTally();
+		for (const event of f.events) if (event.type === "message_end") tally = foldMessageIntoRunTally(tally, event.message);
+		const end = [...f.events].reverse().find((event) => event.type === "agent_end");
+		ok(end?.type === "agent_end");
+		const summary = buildSummary({
+			startedAt: 1,
+			endedAt: 2,
+			modelId: model.id,
+			targetId: target.id,
+			messages: end.messages,
+			watchdogPeak: 0,
+			cancelled: false,
+		});
+		const resumed = lastTurnSummaryFromLedger(f.entries());
+		ok(resumed);
+		const arena = readArenaStream(f.events.map((event) => JSON.stringify(event)).join("\n"));
+		const lastTurn = JSON.parse(readFileSync(path, "utf8")).lastTurn;
+		deepStrictEqual(
+			{
+				live: [tally.toolCount, tally.toolErrorCount],
+				summary: [summary.toolCount, summary.toolErrorCount],
+				ledger: [resumed.toolCount, resumed.toolErrorCount],
+				arena: [arena.toolCalls, arena.toolErrors],
+				sessionFile: [lastTurn.toolCalls, lastTurn.failedToolCalls],
+			},
+			{ live: [0, 0], summary: [0, 0], ledger: [0, 0], arena: [0, 0], sessionFile: [0, 0] },
+		);
+		const replay = createChatPanel({ getOutputStyle: () => "detailed" });
+		rehydrateChatPanelFromTurns(replay, f.entries());
+		for (const [surface, panel] of [
+			["live", f.panel],
+			["resumed", replay],
+		] as const) {
+			const rendered = panel.render(120).map(stripTerminalSequences).join("\n");
+			const rows = rendered.split("\n").filter((line) => /not run/u.test(line));
+			strictEqual(rows.length, 3, `${surface}:\n${rendered}`);
+			// The notice and these rows state the limit; no red stopped row repeats it (bt-session-res J4).
+			doesNotMatch(rendered, /\[stopped: length\]/u, `${surface}:\n${rendered}`);
+			for (const row of rows) {
+				match(row, new RegExp(`${GLYPH.warn} output limit`, "u"), surface);
+				ok(!row.includes(GLYPH.error), `${surface}: ${row}`);
+			}
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+		await f.close();
+	}
+});
+
+it("a reply cut off while thinking is dropped and re-run once, one thinking step lower, with a reminder", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("overthink");
+	try {
+		await f.loop.submit("Advance the paper.");
+		await f.loop.whenSettled();
+		const bodies = f.wire().requestBodies();
+		strictEqual(bodies.length, 2);
+		const [first, second] = bodies.map((body) => JSON.parse(body) as Record<string, unknown>);
+		deepStrictEqual(first?.chat_template_kwargs, { enable_thinking: true });
+		deepStrictEqual(second?.chat_template_kwargs, { enable_thinking: false });
+		const resent = JSON.stringify(second?.messages);
+		doesNotMatch(resent, new RegExp(THOUGHT, "u"));
+		match(resent, /hit the output limit while still thinking/u);
+		const notice = f.events.find((event) => event.type === "notice" && event.key === "turn.thinking-length-recovery");
+		match(notice?.type === "notice" ? notice.text : "", /with thinking off instead of high\.$/u);
+		// The cut-off attempt closes an attempt, not the turn, so no interim "Output limit" outcome shows (f-repeat).
+		const cut = f.events.find(
+			(event) => event.type === "message_end" && (event.message as { stopReason?: unknown }).stopReason === "length",
+		) as { retryPending?: { recovery?: boolean } } | undefined;
+		strictEqual(cut?.retryPending?.recovery, true);
+		doesNotMatch(f.panel.render(120).map(stripTerminalSequences).join("\n"), /Output limit/u);
+		match(f.panel.render(120).map(stripTerminalSequences).join("\n"), /PONG/u);
+	} finally {
+		await f.close();
+	}
+});
+
+it("a second reply cut off while thinking fails the headless run naming the cause and the fix", {
+	timeout: 15_000,
+}, async () => {
+	const f = fixture("overthink-always");
+	const stderr: string[] = [];
+	const write = process.stderr.write;
+	process.stderr.write = ((chunk: string | Uint8Array) => {
+		stderr.push(String(chunk));
+		return true;
+	}) as typeof process.stderr.write;
+	try {
+		const code = await runHeadlessMainAgent(f.loop, {
+			prompt: "Advance the paper.",
+			mode: "text",
+			shutdown: { onDrain() {}, getExitCode: () => 0, isShuttingDown: () => false },
+		});
+		process.stderr.write = write;
+		strictEqual(code, 1);
+		strictEqual(f.wire().calls(), 2);
+		const envelope = [...(readRunJournal(join(env.dir, "state"))?.envelopes.values() ?? [])][0];
+		match(envelope?.outcomeDetail ?? "", /whole output budget thinking.*Lower --thinking or raise the output cap/u);
+		strictEqual(stderr.join("").match(/whole output budget thinking/gu)?.length, 1);
+	} finally {
+		process.stderr.write = write;
+		await f.close();
+	}
+});

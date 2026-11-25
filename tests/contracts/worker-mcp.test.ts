@@ -1,0 +1,1267 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, rejects, strictEqual, throws } from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { dirname, join, resolve } from "node:path";
+import { afterEach, before, beforeEach, describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
+import { mcpCommandOutput } from "../../src/cli/mcp.js";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import type { DomainContractMap, DomainName } from "../../src/core/domain-loader.js";
+import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
+import { WORKER_SANDBOX_SPEC_VERSION } from "../../src/core/sandbox/types.js";
+import { workerMcpNoNetworkNotice } from "../../src/core/sandbox/worker-policy.js";
+import { configureWorkerProcessSandbox, planSandboxedSpawn } from "../../src/core/sandbox/worker-process.js";
+import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
+import { pancodeConfigDir } from "../../src/core/xdg.js";
+import type { AgentsContract } from "../../src/domains/agents/contract.js";
+import type { AgentRecipe } from "../../src/domains/agents/recipe.js";
+import { normalizeAgentSpec } from "../../src/domains/agents/spec.js";
+import { declaredScopeIntent } from "../../src/domains/dispatch/intent.js";
+import { finishRunResult } from "../../src/domains/dispatch/run-settlement.js";
+import type { RunResultSafetySummary } from "../../src/domains/dispatch/types.js";
+import {
+	resolveWorkerMcpAdmission,
+	withholdWritableMcpNetwork,
+	workerMcpRuntimeRefusal,
+} from "../../src/domains/dispatch/worker-mcp.js";
+import {
+	approveMcpSurface,
+	canonicalProjectRoot,
+	createMcpStdioClient,
+	grantMcpBuiltinNetwork,
+	type McpBuiltinSource,
+	type McpClient,
+	type McpSurface,
+	mcpSurface,
+	resolveMcpServers,
+	trustMcpServer,
+	writeMcpServerCatalog,
+} from "../../src/domains/gateway/mcp/index.js";
+import { mcpCatalogPath } from "../../src/domains/gateway/mcp/metadata-cache.js";
+import { EMPTY_CAPABILITIES } from "../../src/domains/providers/index.js";
+import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
+import type { SafetyContract } from "../../src/domains/safety/contract.js";
+import { resolveWorkerPermit, type WorkerMcpAttestation } from "../../src/domains/safety/worker-permit.js";
+import { startWorkerRun } from "../../src/engine/worker-runtime.js";
+import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
+import { formatDispatchOutput } from "../../src/tools/dispatch-output.js";
+import { createMcpCapabilitySource, type McpCapabilitySource } from "../../src/tools/gateway/index.js";
+import type { RegistryVerdict, ToolRegistry } from "../../src/tools/registry-contract.js";
+import { parseWorkerSpec, type WorkerSpec } from "../../src/worker/spec-contract.js";
+import { builtinFixtureSource } from "../fixtures/mcp-builtin-server.js";
+import { makeDispatchBundle, observedReadEvents } from "../harness/dispatch.js";
+import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
+import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";
+import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
+
+/**
+ * Native workers reach exact MCP capabilities their recipe names. Admission
+ * resolves trust and class once from the project root through the shared
+ * classifier, applies the ordinary ceiling, and attests the result into the
+ * permit; the worker launches only the attested declaration and closes it.
+ */
+
+const FIXTURE = resolve("tests/fixtures/mcp-fake-server.mjs");
+const ECHO = "mcp_fake__echo" as ToolName;
+const TOOLS: ToolName[] = [ToolNames.Read, ToolNames.Gateway, ECHO];
+
+function payloadOf(verdict: RegistryVerdict): Record<string, unknown> {
+	if (verdict.kind !== "ok" || verdict.result.kind !== "ok") throw new Error(JSON.stringify(verdict));
+	return JSON.parse(verdict.result.output) as Record<string, unknown>;
+}
+
+const enforcement = {
+	toolNarrowing: "exact",
+	perCallMediation: true,
+	scopeEnforcement: true,
+	grantPauseResume: true,
+	cancellation: true,
+} as const;
+
+describe("native worker MCP capabilities", () => {
+	let env: IsolatedPancodeEnv;
+	let project: string;
+	const sources: McpCapabilitySource[] = [];
+	const clients: McpClient[] = [];
+	/** The tool surface the fixture serves, listed once from a probe of it. */
+	let fixtureSurface: McpSurface;
+
+	before(async () => {
+		const probe = createMcpStdioClient(
+			{ id: "probe", command: process.execPath, args: [FIXTURE] },
+			{ workspaceRoot: process.cwd(), initializeTimeoutMs: 5_000, killGraceMs: 200 },
+		);
+		try {
+			await probe.initialize();
+			fixtureSurface = mcpSurface((await probe.listTools()).tools);
+		} finally {
+			await probe.close();
+		}
+	});
+
+	/** The operator's surface approval of every launch-trusted fixture server; an untrusted one records nothing. */
+	function approveSurfaces(): void {
+		for (const id of ["fake", "other"]) approveMcpSurface({ cwd: project, id, surface: fixtureSurface });
+	}
+
+	/** The operator's launch trust of a fixture server followed by its surface approval, as a dispatchable server needs. */
+	function trust(options: Parameters<typeof trustMcpServer>[0]): ReturnType<typeof trustMcpServer> {
+		const trusted = trustMcpServer(options);
+		if (trusted.ok) approveMcpSurface({ cwd: project, id: options.id, surface: fixtureSurface });
+		return trusted;
+	}
+
+	beforeEach(async () => {
+		env = await isolatePancodeEnv("pancode-worker-mcp-");
+		project = join(env.dir, "project");
+		mkdirSync(join(project, ".pancode"), { recursive: true });
+		writeFileSync(
+			join(project, ".pancode", "mcp.yaml"),
+			[
+				"version: 1",
+				"servers:",
+				"  - id: fake",
+				`    command: ${JSON.stringify(process.execPath)}`,
+				`    args: [${JSON.stringify(FIXTURE)}]`,
+				"  - id: other",
+				`    command: ${JSON.stringify(process.execPath)}`,
+				`    args: [${JSON.stringify(FIXTURE)}]`,
+				"",
+			].join("\n"),
+		);
+	});
+
+	afterEach(async () => {
+		await Promise.all(sources.splice(0).map((source) => source.close()));
+		clients.splice(0);
+		env.restore();
+	});
+
+	function admitted(): WorkerMcpAttestation {
+		approveSurfaces();
+		const attestation = resolveWorkerMcpAdmission({ agentId: "coder", projectCwd: project, tools: TOOLS });
+		ok(attestation);
+		return attestation;
+	}
+
+	function wire(
+		attestation: WorkerMcpAttestation,
+		launches?: Array<{ sandboxNetwork?: boolean }>,
+		/** A writable worker confined to these write roots; the default is a read-only one. */
+		writeRoots?: string[],
+		builtin?: McpBuiltinSource,
+	) {
+		let source!: McpCapabilitySource;
+		const registry = createWorkerToolRegistry(
+			undefined,
+			createWorkerSafety({
+				cwd: project,
+				...(writeRoots !== undefined ? { writeRoots, writeRootsOsConfined: true, sandboxConfinesWrites: true } : {}),
+			}),
+			undefined,
+			undefined,
+			writeRoots === undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			writeRoots !== undefined ? "yolo" : undefined,
+			undefined,
+			(registry) => {
+				source = createMcpCapabilitySource({
+					cwd: attestation.projectRoot,
+					registry,
+					persistCatalog: false,
+					admitted: attestation,
+					...(builtin !== undefined ? { builtin } : {}),
+					clientFactory: (spec, options) => {
+						launches?.push(options);
+						const client = createMcpStdioClient(spec, { ...options, initializeTimeoutMs: 5_000, killGraceMs: 200 });
+						clients.push(client);
+						return client;
+					},
+				});
+				sources.push(source);
+				return source;
+			},
+		);
+		registry.onPermissionRequired((_call, _decision, meta) => registry.cancelParkedCall(meta.requestId, "denied"));
+		return { registry, source };
+	}
+
+	const call = (capability: string = ECHO) => ({
+		tool: ToolNames.Gateway,
+		args: { op: "call", capability, args: { text: "evidence-67" } },
+	});
+
+	it("refuses untrusted and unclassed servers by name and admits a trusted read class into the permit", async () => {
+		// The stub's coder keeps its git worktree allowance, which needs edit authority.
+		const context = dispatchStubContext({ agentTools: [...TOOLS, ToolNames.Edit, ToolNames.Write] });
+		const safety = createWorkerSafety({ cwd: project });
+		const bundle = makeDispatchBundle({
+			...context,
+			getContract<N extends DomainName>(name: N): DomainContractMap[N] | undefined {
+				return name === "safety" ? (safety as DomainContractMap[N]) : context.getContract(name);
+			},
+		});
+		await bundle.extension.start();
+		try {
+			const request = { agentId: "coder", task: "Inspect evidence.", cwd: project, executionRole: "builder" as const };
+			throws(() => bundle.contract.preview?.(request), /MCP server 'fake' is untrusted.*`pancode mcp trust fake`/);
+			ok(trust({ cwd: project, id: "fake" }).ok);
+			throws(
+				() => bundle.contract.preview?.(request),
+				/MCP server 'fake' gives action class unknown.*`pancode mcp trust fake --action-class <class>`/,
+			);
+			ok(trust({ cwd: project, id: "fake", actionClass: "read" }).ok);
+			const preview = bundle.contract.preview?.(request);
+			ok(preview);
+			strictEqual(
+				preview.toolSignature,
+				createHash("sha256")
+					.update(JSON.stringify([...TOOLS, ToolNames.CodeNav, ToolNames.Edit, ToolNames.Write].sort()))
+					.digest("hex"),
+			);
+		} finally {
+			await bundle.extension.stop?.();
+		}
+		const attestation = admitted();
+		strictEqual(attestation.projectRoot, canonicalProjectRoot(project));
+		deepStrictEqual(
+			attestation.tools.map(({ serverId, tool, actionClass }) => ({ serverId, tool, actionClass })),
+			[{ serverId: "fake", tool: "echo", actionClass: "read" }],
+		);
+		const permitFor = (capabilityClass: "read-only" | "workspace-edit", mcp: WorkerMcpAttestation) =>
+			resolveWorkerPermit({
+				agentId: "coder",
+				capabilityClass,
+				tools: TOOLS,
+				readOnly: capabilityClass === "read-only",
+				writeRoots: [],
+				mode: "deny",
+				runtime: { id: "openai", targetId: "t", enforcement, trustedUnmediated: false },
+				mcp,
+			});
+		const permit = permitFor("read-only", attestation);
+		deepStrictEqual(permit.ceiling.mcp, attestation);
+		const execute = {
+			...attestation,
+			tools: attestation.tools.map((entry) => ({ ...entry, actionClass: "execute" as const })),
+		};
+		throws(
+			() => permitFor("read-only", execute),
+			/read-only ceiling excludes execute tool mcp_fake__echo \(MCP server 'fake'/,
+		);
+		ok(permitFor("workspace-edit", execute).digest !== permit.digest, "the attested class is part of the permit digest");
+		match(
+			workerMcpRuntimeRefusal("coder", TOOLS, { id: "claude-sdk", kind: "http" }) ?? "",
+			/the Claude SDK runtime runs its own tool loop/,
+		);
+		strictEqual(clients.length, 0, "admission launched nothing");
+	});
+
+	it("refuses a read-only worker a tool classed read only by its server's readOnlyHint", async () => {
+		writeFileSync(
+			join(pancodeConfigDir(), "mcp.yaml"),
+			["version: 1", "servers:", "  - id: hinted", `    command: ${JSON.stringify(process.execPath)}`, ""].join("\n"),
+		);
+		const declaration = resolveMcpServers({ cwd: project }).servers.find((server) => server.id === "hinted");
+		ok(declaration);
+		approveMcpSurface({ cwd: project, id: "hinted", surface: fixtureSurface });
+		const projectRoot = canonicalProjectRoot(project);
+		ok(
+			writeMcpServerCatalog(
+				{
+					projectRoot,
+					scope: declaration.scope,
+					declarationPath: declaration.path,
+					serverId: declaration.id,
+					digest: declaration.digest,
+					cwd: declaration.cwd,
+				},
+				{
+					tools: [
+						{
+							name: "sleep",
+							title: null,
+							description: "",
+							inputSchema: { type: "object" },
+							annotations: { readOnlyHint: true },
+						},
+					],
+					truncated: false,
+				},
+			),
+		);
+		const sleep = "mcp_hinted__sleep" as ToolName;
+		const context = dispatchStubContext({ agentTools: [ToolNames.Read, sleep] });
+		// The stub coder keeps its git worktree allowance, which a read-only class refuses.
+		const readOnly = (recipe: AgentRecipe | null): AgentRecipe | null => {
+			if (recipe === null) return null;
+			const { permissions: _git, ...rest } = recipe;
+			return rest;
+		};
+		const bundle = makeDispatchBundle({
+			...context,
+			getContract<N extends DomainName>(name: N): DomainContractMap[N] | undefined {
+				const contract = context.getContract(name);
+				if (name !== "agents" || contract === undefined) return contract;
+				const agents = contract as unknown as AgentsContract;
+				return {
+					...agents,
+					get: (id: string) => readOnly(agents.get(id)),
+					getSpec: (id: string) => {
+						const recipe = readOnly(agents.get(id));
+						return recipe ? normalizeAgentSpec(recipe) : null;
+					},
+				} as unknown as DomainContractMap[N];
+			},
+		});
+		await bundle.extension.start();
+		try {
+			throws(
+				() =>
+					bundle.contract.preview?.({
+						agentId: "coder",
+						task: "Inspect evidence.",
+						cwd: project,
+						executionRole: "builder",
+					}),
+				/mcp_hinted__sleep.*gives action class unknown.*readOnlyHint never counts as read.*`pancode mcp trust hinted --action-class read`.*toolActionClasses/,
+			);
+		} finally {
+			await bundle.extension.stop?.();
+		}
+	});
+
+	it("names the server and safety.sandboxNetwork when a sandbox without network will start an admitted MCP server", async () => {
+		ok(trust({ cwd: project, id: "fake", actionClass: "read" }).ok);
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.safety.sandbox = "required";
+		const context = dispatchStubContext({ settings, agentTools: [...TOOLS, ToolNames.Edit, ToolNames.Write] });
+		const notices: Array<{ code: string; message: string }> = [];
+		const unsubscribe = context.bus.subscribe("run.scope_notice_raised", (notice) => {
+			if (notice.code !== "worker_judge_withheld") notices.push(notice);
+		});
+		const bundle = makeDispatchBundle(context, {
+			spawnWorker: () => {
+				throw new Error("fixture: admitted");
+			},
+		});
+		await bundle.extension.start();
+		try {
+			await rejects(
+				bundle.contract.dispatch({ agentId: "coder", task: "Inspect evidence.", cwd: project, executionRole: "builder" }),
+				/fixture: admitted/,
+			);
+		} finally {
+			unsubscribe();
+			await bundle.extension.stop?.();
+		}
+		// A host without a sandbox backend refuses the launch instead, so there is nothing to warn about.
+		const confined = sandboxAvailability().available;
+		strictEqual(notices.length, confined ? 1 : 0, JSON.stringify(notices));
+		if (confined) {
+			strictEqual(notices[0]?.code, "mcp_sandbox_no_network");
+			match(notices[0]?.message ?? "", /MCP server 'fake' starts .*no network.*safety\.sandboxNetwork/);
+		}
+
+		const envelope = fixtureEnvelope("run-mcp");
+		const draft = fixtureReceiptDraft(envelope);
+		const mcp = {
+			projectRoot: project,
+			tools: [{ serverId: "fake", digest: "d", tool: "echo", actionClass: "read" }],
+		};
+		const ceiling = { tools: TOOLS, readOnly: true, writeRoots: [], enforcement, mcp };
+		const permit: NonNullable<RunResultSafetySummary["permit"]> = {
+			version: 1,
+			digest: "fixture",
+			capabilityClass: "read-only",
+			git: "inspect",
+			asks: "deny",
+			approvalAuthority: "main",
+			ceiling,
+		};
+		const sandbox = {
+			mode: "auto",
+			backend: "bwrap",
+			available: true,
+			writableRoots: [],
+			gitWritablePaths: [],
+			network: false,
+		} as const;
+		const safety: RunResultSafetySummary = {
+			decisions: { allowed: 0, blocked: 0, guardBlocked: 0, permissionRequested: 0 },
+			blockedAttempts: [],
+			permit,
+			sandbox,
+		};
+		draft.safety = safety;
+		const receipt = finishRunResult(draft, envelope, {
+			terminal: { terminalReason: draft.terminalReason ?? "completed" },
+			processExitCode: envelope.exitCode,
+			frameType: null,
+			usage: undefined,
+		}).result;
+		const summary = { count: 0, types: [], lastAssistantText: "", terminalAttemptRunId: receipt.runId };
+		match(
+			formatDispatchOutput("single", [{ receipt, summary }], 16_384),
+			/MCP server 'fake' starts .*no network.*safety\.sandboxNetwork/,
+		);
+		const networked = finishRunResult(
+			{ ...draft, safety: { ...safety, sandbox: { ...sandbox, network: true } } },
+			envelope,
+			{ terminal: { terminalReason: "completed" }, processExitCode: envelope.exitCode, frameType: null, usage: undefined },
+		).result;
+		ok(!formatDispatchOutput("single", [{ receipt: networked, summary }], 16_384).includes("safety.sandboxNetwork"));
+
+		// A grant the run's write roots voided reads back as withheld, not as never granted.
+		const reason = `this run's write root ${project} overlaps its launch cwd ${project}`;
+		const withheld = finishRunResult(
+			{
+				...draft,
+				safety: {
+					...safety,
+					permit: {
+						...permit,
+						ceiling: { ...ceiling, mcp: { ...mcp, networkWithheld: [{ serverId: "fake", reason }] } },
+					},
+				},
+			},
+			envelope,
+			{ terminal: { terminalReason: "completed" }, processExitCode: envelope.exitCode, frameType: null, usage: undefined },
+		).result;
+		const withheldOutput = formatDispatchOutput("single", [{ receipt: withheld, summary }], 16_384);
+		match(withheldOutput, /MCP server 'fake' starts without its network grant because this run's write root/);
+		doesNotMatch(withheldOutput, /--network/);
+	});
+
+	it("attests the network grant of a server trusted with --network and leaves it out of the no-network notice", () => {
+		const confined = { mode: "auto", available: true, network: false } as const;
+		ok(trust({ cwd: project, id: "fake", actionClass: "read", network: true }).ok);
+		const granted = admitted();
+		deepStrictEqual(
+			granted.tools.map((entry) => [entry.serverId, entry.network]),
+			[["fake", true]],
+		);
+		strictEqual(workerMcpNoNetworkNotice(confined, granted.tools), null);
+
+		// A re-trust without the flag replaces the record and drops the grant.
+		ok(trust({ cwd: project, id: "fake", actionClass: "read" }).ok);
+		const dropped = admitted();
+		strictEqual(dropped.tools[0]?.network, undefined);
+		match(workerMcpNoNetworkNotice(confined, dropped.tools) ?? "", /MCP server 'fake' starts .*no network/);
+	});
+
+	/** The stub coder with the given tools and without its git worktree allowance, which a read-only class refuses. */
+	function readOnlyCoderContext(settings: typeof DEFAULT_SETTINGS, agentTools: ToolName[]) {
+		const context = dispatchStubContext({ settings, agentTools });
+		const withoutGit = (recipe: AgentRecipe | null): AgentRecipe | null => {
+			if (recipe === null) return null;
+			const { permissions: _git, ...rest } = recipe;
+			return rest;
+		};
+		const getContract = <N extends DomainName>(name: N): DomainContractMap[N] | undefined => {
+			const contract = context.getContract(name);
+			if (name !== "agents" || contract === undefined) return contract;
+			const agents = contract as unknown as AgentsContract;
+			return {
+				...agents,
+				get: (id: string) => withoutGit(agents.get(id)),
+				getSpec: (id: string) => {
+					const recipe = withoutGit(agents.get(id));
+					return recipe ? normalizeAgentSpec(recipe) : null;
+				},
+			} as unknown as DomainContractMap[N];
+		};
+		return { ...context, getContract };
+	}
+
+	async function dispatchGranted(agentTools: ToolName[]) {
+		ok(trust({ cwd: project, id: "fake", actionClass: "read", network: true }).ok);
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.safety.sandbox = "required";
+		const context = readOnlyCoderContext(settings, agentTools);
+		const notices: Array<{ code: string; message: string }> = [];
+		const unsubscribe = context.bus.subscribe("run.scope_notice_raised", (notice) => {
+			if (notice.code !== "worker_judge_withheld") notices.push(notice);
+		});
+		let spawned: WorkerSpec | undefined;
+		const bundle = makeDispatchBundle(context, {
+			spawnWorker: (spec) => {
+				spawned = spec;
+				throw new Error("fixture: admitted");
+			},
+		});
+		await bundle.extension.start();
+		try {
+			await rejects(
+				bundle.contract.dispatch({ agentId: "coder", task: "Inspect evidence.", cwd: project, executionRole: "builder" }),
+				/fixture: admitted/,
+			);
+		} finally {
+			unsubscribe();
+			await bundle.extension.stop?.();
+		}
+		ok(spawned);
+		return { spec: spawned, notices };
+	}
+
+	it("carries a read-only worker's network grant through the worker spec", async () => {
+		// Every tool reads, so the agent's class is read-only and the run has no write root.
+		const { spec } = await dispatchGranted(TOOLS);
+		const parsed = parseWorkerSpec(JSON.parse(JSON.stringify(spec)));
+		deepStrictEqual(
+			parsed.permit?.ceiling.mcp?.tools.map((entry) => [entry.serverId, entry.network]),
+			[["fake", true]],
+		);
+	});
+
+	const report = JSON.stringify({
+		source: "external",
+		findings: [{ claim: "The evidence service reports evidence-67.", evidence: "mcp_fake__echo result" }],
+	});
+	async function dispatchReport() {
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.fleet.retry.maxRetries = 0;
+		const bundle = makeDispatchBundle(readOnlyCoderContext(settings, TOOLS), {
+			heartbeatIntervalMs: 3_600_000,
+			spawnWorker: () => ({
+				pid: null,
+				promise: Promise.resolve({ exitCode: 0, signal: null }),
+				heartbeatAt: { current: Date.now(), monotonic: performance.now() },
+				abort: () => {},
+				send: () => true,
+				events: (async function* () {
+					// A research report owes observed evidence, so the worker reads once first.
+					for (const event of observedReadEvents()) yield event;
+					yield { type: "message_end", message: { role: "assistant", stopReason: "stop", content: report } };
+				})(),
+			}),
+		});
+		await bundle.extension.start();
+		try {
+			const run = await bundle.contract.dispatch({
+				agentId: "coder",
+				executionRole: "explorer",
+				task: "Report the evidence service's answer.",
+				cwd: project,
+				requestOrigin: "internal",
+				resultContractOverride: { kind: "research-report" },
+			});
+			return await run.finalPromise;
+		} finally {
+			await bundle.extension.stop?.();
+		}
+	}
+
+	it("accepts external research sources from a read-only worker whose MCP server is trusted --network", async () => {
+		ok(trust({ cwd: project, id: "fake", actionClass: "read" }).ok);
+		const local = await dispatchReport();
+		strictEqual(local.outcomeCode, "result_contract_invalid");
+		match(local.outcomeDetail ?? "", /mcp trust <id> --network/);
+		ok(trust({ cwd: project, id: "fake", actionClass: "read", network: true }).ok);
+		const networked = await dispatchReport();
+		strictEqual(networked.outcome, "succeeded", networked.outcomeDetail ?? networked.outcome);
+	});
+
+	it("refuses external research sources when only the project declaration claims network, and admits no untrusted server", async () => {
+		const file = join(project, ".pancode", "mcp.yaml");
+		writeFileSync(file, readFileSync(file, "utf8").replace("  - id: other", "    network: true\n  - id: other"));
+		await rejects(dispatchReport(), /MCP server 'fake' is untrusted/);
+		ok(trust({ cwd: project, id: "fake", actionClass: "read" }).ok);
+		const claimed = await dispatchReport();
+		strictEqual(claimed.outcomeCode, "result_contract_invalid");
+		match(claimed.outcomeDetail ?? "", /no allowed network posture/);
+	});
+
+	it("withholds the grant from a writing worker whose write root covers the server's cwd and says why", async () => {
+		const { spec, notices } = await dispatchGranted([...TOOLS, ToolNames.Edit, ToolNames.Write]);
+		deepStrictEqual(
+			spec.permit?.ceiling.mcp?.tools.map((entry) => [entry.serverId, entry.network]),
+			[["fake", undefined]],
+		);
+
+		// A narrow write root beside an in-project entry is code the server can load, so it withholds the grant too.
+		mkdirSync(join(project, "tools"));
+		writeFileSync(join(project, "tools", "server.mjs"), readFileSync(FIXTURE, "utf8"));
+		const file = join(project, ".pancode", "mcp.yaml");
+		writeFileSync(
+			file,
+			readFileSync(file, "utf8").replace(`args: [${JSON.stringify(FIXTURE)}]`, "args: [tools/server.mjs]"),
+		);
+		ok(trust({ cwd: project, id: "fake", actionClass: "read", network: true }).ok);
+		const sibling = join(project, "tools", "json.mjs");
+		const scoped = withholdWritableMcpNetwork(admitted(), { writeRoots: [sibling], launchRoot: project });
+		deepStrictEqual(
+			scoped.withheld.map((entry) => entry.serverId),
+			["fake"],
+		);
+		match(scoped.withheld[0]?.reason ?? "", /write root .*json\.mjs overlaps/);
+
+		// A host without a sandbox backend refuses the launch instead, so there is nothing to warn about.
+		if (!sandboxAvailability().available) return;
+		strictEqual(notices.length, 1, JSON.stringify(notices));
+		strictEqual(notices[0]?.code, "mcp_sandbox_no_network");
+		match(
+			notices[0]?.message ?? "",
+			/MCP server 'fake' starts without its network grant because this run's write root .* overlaps its launch cwd/,
+		);
+		doesNotMatch(notices[0]?.message ?? "", /safety\.sandboxNetwork/);
+	});
+
+	it("withholds the grant when the dispatch cwd is a symlink and the write root names the link target", () => {
+		ok(trust({ cwd: project, id: "fake", actionClass: "read", network: true }).ok);
+		const link = join(env.dir, "linked");
+		symlinkSync(project, link);
+		const tools = join(realpathSync(project), "tools");
+		mkdirSync(tools);
+		const scoped = withholdWritableMcpNetwork(admitted(), { writeRoots: [`${tools}/`], launchRoot: link });
+		deepStrictEqual(
+			scoped.withheld.map((entry) => entry.serverId),
+			["fake"],
+		);
+		strictEqual(scoped.attestation.tools[0]?.network, undefined);
+	});
+
+	it("starts a server without sandboxNetwork when its trust record grants network but the sealed attestation withholds it", async () => {
+		ok(trust({ cwd: project, id: "fake", actionClass: "read", network: true }).ok);
+		const granted = admitted();
+		const { attestation, withheld } = withholdWritableMcpNetwork(granted, { writeRoots: [project], launchRoot: project });
+		deepStrictEqual(
+			withheld.map((entry) => entry.serverId),
+			["fake"],
+		);
+		const launches: Array<{ sandboxNetwork?: boolean }> = [];
+		ok((await wire(attestation, launches).source.ensure(ECHO)).spec);
+		strictEqual(launches.length, 1);
+		strictEqual(launches[0]?.sandboxNetwork, undefined);
+		// The same server under the unwithheld attestation does get the grant, so the source reads the attestation.
+		ok((await wire(granted, launches).source.ensure(ECHO)).spec);
+		strictEqual(launches[1]?.sandboxNetwork, true);
+	});
+
+	it("opens the network namespace only for a granted server's sandboxed process", () => {
+		const tree = join(env.dir, "tree");
+		mkdirSync(tree);
+		configureWorkerProcessSandbox({
+			version: WORKER_SANDBOX_SPEC_VERSION,
+			mode: "required",
+			writableRoots: [`${tree}/`],
+			readOnlyPaths: [],
+			gitWritablePaths: [],
+			readableRoots: [tree],
+			network: false,
+		});
+		try {
+			const command = { argv: [process.execPath, FIXTURE] };
+			const granted = planSandboxedSpawn(command, tree, [], { network: true });
+			const confined = planSandboxedSpawn(command, tree);
+			if (!sandboxAvailability().available) {
+				strictEqual(granted.kind, "refused");
+				return;
+			}
+			ok(granted.kind === "sandboxed" && confined.kind === "sandboxed");
+			strictEqual(granted.args.includes("--unshare-net"), false);
+			strictEqual(confined.args.includes("--unshare-net"), true);
+		} finally {
+			configureWorkerProcessSandbox(undefined);
+		}
+	});
+
+	it("grants nothing for a project declaration's own network field and keeps its trust digest", () => {
+		ok(trustMcpServer({ cwd: project, id: "fake", actionClass: "read" }).ok);
+		const file = join(project, ".pancode", "mcp.yaml");
+		writeFileSync(file, readFileSync(file, "utf8").replace("  - id: other", "    network: true\n  - id: other"));
+		const resolved = resolveMcpServers({ cwd: project });
+		const fake = resolved.servers.find((server) => server.id === "fake");
+		deepStrictEqual(fake?.trust, { status: "trusted", actionClass: "read" });
+		ok(
+			resolved.diagnostics.some((entry) =>
+				/servers\[0\]\.network is ignored.*mcp trust fake --network/.test(entry.message),
+			),
+			JSON.stringify(resolved.diagnostics),
+		);
+		strictEqual(admitted().tools[0]?.network, undefined);
+		// The ignored field is advisory, so mcp list must not exit 1 over it.
+		const listed = mcpCommandOutput(["list"], { cwd: project });
+		strictEqual(listed.code, 0, listed.text);
+		match(listed.text, /^fake .* network=false$/m);
+	});
+
+	it("names the write roots and the missing sandbox when they withhold a required execute-class MCP tool", async () => {
+		ok(trust({ cwd: project, id: "fake", actionClass: "execute" }).ok);
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.safety.sandbox = "off";
+		const context = dispatchStubContext({ settings, agentTools: [...TOOLS, ToolNames.Edit, ToolNames.Write] });
+		const stub = context.getContract("safety");
+		ok(stub);
+		// The stub's workspace write root is the test process cwd; this run's is the project.
+		const safety: SafetyContract = {
+			...stub,
+			scopes: { ...stub.scopes, workspace: { ...stub.scopes.workspace, allowedWriteRoots: [`${project}/`] } },
+		};
+		const bundle = makeDispatchBundle({
+			...context,
+			getContract<N extends DomainName>(name: N): DomainContractMap[N] | undefined {
+				return name === "safety" ? (safety as DomainContractMap[N]) : context.getContract(name);
+			},
+		});
+		await bundle.extension.start();
+		try {
+			const scope = declaredScopeIntent({ writeRoots: ["src/a.ts"] });
+			ok(scope.ok);
+			await rejects(
+				bundle.contract.dispatch({
+					agentId: "coder",
+					task: "Edit src/a.ts.",
+					cwd: project,
+					executionRole: "builder",
+					intent: scope.intent,
+				}),
+				/missing required tools: mcp_fake__echo; declared write roots \S*src\/a\.ts have no OS sandbox or worktree binding commands to them here, so mcp_fake__echo is withheld\. Enable safety\.sandbox/,
+			);
+		} finally {
+			await bundle.extension.stop?.();
+		}
+	});
+
+	it("refuses MCP capabilities on a Claude SDK target before it asks to install the SDK", async () => {
+		ok(trust({ cwd: project, id: "fake", actionClass: "read" }).ok);
+		// A missing prepared component makes the SDK unavailable; the refusal must
+		// come first, or the operator is asked to install a runtime that is refused.
+		process.env.PANCODE_CLAUDE_SDK_DIR = join(env.dir, "no-sdk");
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.targets = [{ id: "sdk", runtime: "claude-sdk", defaultModel: "claude-sonnet-5-5" }];
+		settings.fleet.default.target = "sdk";
+		settings.fleet.default.model = "claude-sonnet-5-5";
+		const context = dispatchStubContext({
+			settings,
+			agentTools: [...TOOLS, ToolNames.Edit, ToolNames.Write],
+			runtime: {
+				id: "claude-sdk",
+				displayName: "Claude SDK",
+				kind: "sdk",
+				auth: "claude-cli",
+				defaultCapabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true },
+				synthesizeModel: () => ({ id: "claude-sonnet-5-5", provider: "claude-sdk" }) as never,
+			} as never,
+		});
+		const bundle = makeDispatchBundle(context);
+		await bundle.extension.start();
+		try {
+			await rejects(
+				bundle.contract.dispatch({ agentId: "coder", task: "Inspect evidence.", cwd: project, executionRole: "builder" }),
+				/the Claude SDK runtime runs its own tool loop/,
+			);
+		} finally {
+			await bundle.extension.stop?.();
+			delete process.env.PANCODE_CLAUDE_SDK_DIR;
+		}
+	});
+
+	it("launches only the attested declaration, persists no catalog, and closes it at run end", async () => {
+		ok(trust({ cwd: project, id: "fake", actionClass: "read" }).ok);
+		ok(trust({ cwd: project, id: "other", actionClass: "read" }).ok);
+		const attestation = admitted();
+		const { registry, source } = wire(attestation);
+		deepStrictEqual(payloadOf(await registry.invoke(call(), { allowedTools: TOOLS })), { text: "evidence-67" });
+		deepStrictEqual(source.connectedIds(), ["fake"]);
+		const other = await source.ensure("mcp_other__echo");
+		match(other.reason ?? "", /not admitted for this run/);
+		strictEqual(
+			existsSync(
+				mcpCatalogPath({
+					projectRoot: attestation.projectRoot,
+					scope: "project",
+					declarationPath: join(attestation.projectRoot, ".pancode", "mcp.yaml"),
+					serverId: "fake",
+					digest: attestation.tools[0]?.digest ?? "",
+					cwd: attestation.projectRoot,
+				}),
+			),
+			false,
+		);
+		await source.close();
+		ok(clients.every((client) => client.state().status === "closed"));
+		// A declaration edited and re-trusted after admission is stale for that
+		// run and never starts; the operator's new review is not this run's.
+		const path = join(project, ".pancode", "mcp.yaml");
+		writeFileSync(path, readFileSync(path, "utf8").replace("  - id: other", "    timeoutMs: 5000\n  - id: other"));
+		ok(trust({ cwd: project, id: "fake", actionClass: "read" }).ok);
+		const stale = wire(attestation);
+		const refused = await stale.registry.invoke(call(), { allowedTools: TOOLS });
+		ok(refused.kind === "ok" && refused.result.kind === "error", JSON.stringify(refused));
+		match(refused.result.message, /changed since this run was admitted.*pancode mcp trust fake/);
+		strictEqual(clients.length, 1);
+	});
+
+	it("admits only an approved tool surface and refuses calls when the served surface differs from the attested one", async () => {
+		ok(trustMcpServer({ cwd: project, id: "fake", actionClass: "read" }).ok);
+		throws(
+			() => resolveWorkerMcpAdmission({ agentId: "coder", projectCwd: project, tools: TOOLS }),
+			/tool surface of MCP server 'fake' is not approved.*`pancode mcp trust fake --surface`/,
+		);
+		const attestation = admitted();
+		strictEqual(attestation.tools[0]?.surfaceDigest, fixtureSurface.digest);
+		deepStrictEqual(payloadOf(await wire(attestation).registry.invoke(call(), { allowedTools: TOOLS })), {
+			text: "evidence-67",
+		});
+		// The server now serves another surface than the one this run was admitted with.
+		const drifted = {
+			...attestation,
+			tools: attestation.tools.map((entry) => ({ ...entry, surfaceDigest: "0".repeat(64) })),
+		};
+		const refused = await wire(drifted).registry.invoke(call(), { allowedTools: TOOLS });
+		ok(refused.kind === "ok" && refused.result.kind === "error", JSON.stringify(refused));
+		match(
+			refused.result.message,
+			/not the one this run was admitted with.*pancode mcp trust fake --surface.*dispatch again/,
+		);
+	});
+
+	it("admits a builtin server under the surface it ships and refuses a worker served another", async () => {
+		const tools: ToolName[] = [ToolNames.Gateway, "mcp_kitfix__echo" as ToolName];
+		const kitCall = {
+			tool: ToolNames.Gateway,
+			args: { op: "call", capability: "mcp_kitfix__echo", args: { text: "x" } },
+		};
+		const shipped = builtinFixtureSource(env.dir, ["kitfix"]);
+		const attestation = resolveWorkerMcpAdmission({ agentId: "coder", projectCwd: project, tools, builtin: shipped });
+		ok(attestation);
+		const declared = resolveMcpServers({ cwd: project, builtin: shipped }).servers.find((s) => s.id === "kitfix");
+		ok(declared?.builtin);
+		deepStrictEqual(
+			attestation.tools.map((entry) => [entry.serverId, entry.tool, entry.actionClass, entry.surfaceDigest]),
+			[["kitfix", "echo", "read", declared.builtin.surface.digest]],
+		);
+		const ran = await wire(attestation, undefined, undefined, shipped).registry.invoke(kitCall, { allowedTools: tools });
+		ok(ran.kind === "ok" && ran.result.kind === "ok", JSON.stringify(ran));
+		strictEqual(ran.result.output, "echo: x");
+
+		// The manifest ships a surface the server does not serve; admission
+		// attests the shipped policy and the worker refuses what it is served.
+		const driftedDir = join(env.dir, "drifted");
+		mkdirSync(driftedDir);
+		const drifted = builtinFixtureSource(driftedDir, ["kitfix"], (manifest) => {
+			const echo = manifest.servers[0]?.tools.find((tool) => tool.name === "echo");
+			if (echo === undefined) throw new Error("fixture manifest changed");
+			echo.annotations = { ...echo.annotations, openWorldHint: true };
+		});
+		const driftedAdmission = resolveWorkerMcpAdmission({
+			agentId: "coder",
+			projectCwd: project,
+			tools,
+			builtin: drifted,
+		});
+		ok(driftedAdmission);
+		const refused = await wire(driftedAdmission, undefined, undefined, drifted).registry.invoke(kitCall, {
+			allowedTools: tools,
+		});
+		ok(refused.kind === "ok" && refused.result.kind === "error", JSON.stringify(refused));
+		match(refused.result.message, /builtin server 'kitfix' serves .* is not the policy this PanCode ships/u);
+		match(refused.result.message, /reinstall or rebuild PanCode, and dispatch again/u);
+		doesNotMatch(refused.result.message, /--surface/u);
+	});
+
+	it("starts an admitted builtin server with its declared variables, which the worker's shell does not gain", async (t) => {
+		const envTool = "mcp_kitfix__env" as ToolName;
+		const tools: ToolName[] = [ToolNames.Gateway, ToolNames.Bash, envTool];
+		t.after(() => {
+			delete process.env.KITFIX_SITE;
+		});
+		const shipped = builtinFixtureSource(env.dir, ["kitfix"], (manifest) => {
+			const [kitfix] = manifest.servers;
+			if (kitfix === undefined) throw new Error("fixture manifest changed");
+			kitfix.environment = ["KITFIX_SITE"];
+		});
+		process.env.KITFIX_SITE = "first-session";
+		const attestation = resolveWorkerMcpAdmission({ agentId: "coder", projectCwd: project, tools, builtin: shipped });
+		ok(attestation);
+		// Another value in the next session attests the same digest, so the admission above still launches.
+		process.env.KITFIX_SITE = "second-session";
+		const again = resolveWorkerMcpAdmission({ agentId: "coder", projectCwd: project, tools, builtin: shipped });
+		deepStrictEqual(
+			again?.tools.map((entry) => entry.digest),
+			attestation.tools.map((entry) => entry.digest),
+		);
+		// A writing worker, so its shell may run `env`.
+		const { registry } = wire(attestation, undefined, [project], shipped);
+		const shellNames = async (): Promise<string[]> => {
+			const shell = await registry.invoke({ tool: ToolNames.Bash, args: { command: "env" } }, { allowedTools: tools });
+			ok(shell.kind === "ok" && shell.result.kind === "ok", JSON.stringify(shell));
+			return shell.result.output
+				.split("\n")
+				.map((line) => line.slice(0, line.indexOf("=")))
+				.filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name))
+				.sort();
+		};
+		const before = await shellNames();
+		const parent = Object.keys(process.env).sort();
+		const read = await registry.invoke(
+			{ tool: ToolNames.Gateway, args: { op: "call", capability: envTool, args: { name: "KITFIX_SITE" } } },
+			{ allowedTools: tools },
+		);
+		ok(read.kind === "ok" && read.result.kind === "ok", JSON.stringify(read));
+		deepStrictEqual(JSON.parse(read.result.output), { name: "KITFIX_SITE", value: "second-session" });
+		// The launch hands the values to the server's process alone: the worker's environment and its shell's are as they were.
+		deepStrictEqual(Object.keys(process.env).sort(), parent);
+		deepStrictEqual(await shellNames(), before);
+	});
+
+	it("attests a builtin server's network grant and withholds it from a writer that can change what it runs", () => {
+		const tools: ToolName[] = [ToolNames.Gateway, "mcp_node__node_cpu" as ToolName];
+		const admit = () => resolveWorkerMcpAdmission({ agentId: "scout", projectCwd: project, tools });
+		strictEqual(admit()?.tools[0]?.network, undefined, "no grant is attested before the operator records one");
+		ok(grantMcpBuiltinNetwork({ cwd: project, id: "node" }).ok);
+		const attestation = admit();
+		ok(attestation);
+		deepStrictEqual(
+			attestation.tools.map((entry) => [entry.serverId, entry.network]),
+			[["node", true]],
+		);
+		const scoped = (writeRoots: string[]) => withholdWritableMcpNetwork(attestation, { writeRoots, launchRoot: project });
+		deepStrictEqual(scoped([]).withheld, [], "a read-only run keeps the grant");
+		const elsewhere = join(env.dir, "elsewhere");
+		mkdirSync(elsewhere);
+		deepStrictEqual(scoped([elsewhere]).withheld, [], "a writer outside the project and the server's files keeps it");
+		// The server starts in the project, so a writer there loses the grant.
+		match(scoped([project]).withheld[0]?.reason ?? "", /overlaps its launch cwd /u);
+		// Its entry file is the kit CLI this PanCode runs, inside the checkout here and the install elsewhere.
+		const node = resolveMcpServers({ cwd: project }).servers.find((server) => server.id === "node");
+		const entry = node?.args.find((arg) => existsSync(arg) && statSync(arg).isFile());
+		ok(entry !== undefined, JSON.stringify(node?.args));
+		const inEntry = scoped([dirname(entry)]);
+		strictEqual(inEntry.attestation.tools[0]?.network, undefined);
+		match(inEntry.withheld[0]?.reason ?? "", /overlaps the directory of its entry script /u);
+	});
+
+	it("admits the shipped node server and gives its result to the native model loop", { timeout: 30_000 }, async () => {
+		const cpu = "mcp_node__node_cpu" as ToolName;
+		const tools: ToolName[] = [ToolNames.Read, ToolNames.Gateway, cpu];
+		const attestation = resolveWorkerMcpAdmission({ agentId: "scout", projectCwd: project, tools });
+		ok(attestation);
+		const shipped = resolveMcpServers({ cwd: project }).servers.find((server) => server.id === "node");
+		ok(shipped?.builtin, "the default builtin source ships the node server");
+		deepStrictEqual(
+			attestation.tools.map((entry) => [entry.serverId, entry.tool, entry.actionClass, entry.surfaceDigest]),
+			[["node", "node_cpu", "read", shipped.builtin.surface.digest]],
+		);
+		const cpuCall = { op: "call", capability: cpu, args: {} };
+		const bodies: Array<Record<string, unknown>> = [];
+		const server = createServer(async (req, res) => {
+			bodies.push(JSON.parse(await readRequestBody(req)));
+			const first = bodies.length === 1;
+			const delta = first
+				? {
+						role: "assistant",
+						tool_calls: [
+							{
+								index: 0,
+								id: "node-cpu",
+								type: "function",
+								function: { name: "gateway", arguments: JSON.stringify(cpuCall) },
+							},
+						],
+					}
+				: { role: "assistant", content: "Reported the CPU." };
+			res.setHeader("content-type", "text/event-stream");
+			res.end(
+				`data: ${JSON.stringify({ model: "fixture", choices: [{ index: 0, delta, finish_reason: first ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`,
+			);
+		});
+		await new Promise<void>((settle) => server.listen(0, "127.0.0.1", settle));
+		const events: unknown[] = [];
+		try {
+			const run = startWorkerRun(
+				{
+					agentId: "scout",
+					systemPrompt: "Report this machine's CPU.",
+					task: "How many threads does this machine have?",
+					target: { id: "fixture", runtime: "litellm", url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` },
+					runtime: litellm,
+					wireModelId: "fixture",
+					apiKey: "fixture",
+					thinkingLevel: "off",
+					modelCapabilities: { contextWindow: 131072, maxTokens: 2048, tools: true },
+					allowedTools: tools,
+					budget: { mode: "advisory", toolCalls: 6, synthesis: true, hardCap: 20 },
+					noSkills: true,
+					cwd: project,
+					readOnly: true,
+					mcp: attestation,
+				},
+				(event) => events.push(event),
+			);
+			const result = await run.promise;
+			strictEqual(result.exitCode, 0, JSON.stringify(events).slice(0, 2000));
+			strictEqual(bodies.length, 2);
+			const messages = bodies[1]?.messages as Array<{ role: string; content: unknown }>;
+			const toolResult = messages.find((message) => message.role === "tool");
+			ok(toolResult, JSON.stringify(messages));
+			const text = Array.isArray(toolResult.content)
+				? toolResult.content.map((part: { text?: string }) => part.text ?? "").join("")
+				: String(toolResult.content);
+			const facts = JSON.parse(text) as { threads: number; sources: string[] };
+			ok(facts.threads > 0, text);
+			ok(facts.sources.includes("node:os"), text);
+		} finally {
+			await closeServer(server);
+		}
+	});
+
+	it("judges the paths a call names in declared path arguments and passes undeclared ones untouched", async () => {
+		const file = join(project, ".pancode", "mcp.yaml");
+		const original = readFileSync(file, "utf8");
+		const declare = (fields: string) => writeFileSync(file, original.replace("  - id: other", `${fields}  - id: other`));
+		const outside = join(env.dir, "elsewhere.txt");
+		const echo = (registry: ToolRegistry, args: Record<string, unknown>) =>
+			registry.invoke({ tool: ToolNames.Gateway, args: { op: "call", capability: ECHO, args } }, { allowedTools: TOOLS });
+
+		declare("    toolPathArguments: { echo: { text: read } }\n");
+		ok(trust({ cwd: project, id: "fake", actionClass: "read" }).ok);
+		const reader = wire(admitted()).registry;
+		deepStrictEqual(payloadOf(await echo(reader, { text: "notes.md" })), { text: "notes.md" });
+		// Judged as a direct read of the path would be, before the server is asked.
+		const unread = await echo(reader, { text: outside });
+		ok(unread.kind === "blocked", JSON.stringify(unread));
+		match(unread.reason, /read path argument 'text' \(\S*elsewhere\.txt\) would not be admitted.*outside the workspace/);
+		deepStrictEqual(payloadOf(await echo(reader, { text: "notes.md", extra: outside })), {
+			text: "notes.md",
+			extra: outside,
+		});
+
+		declare("    toolActionClasses: { echo: execute }\n    toolPathArguments: { echo: { target: write } }\n");
+		ok(trust({ cwd: project, id: "fake", actionClass: "execute" }).ok);
+		const writer = wire(admitted(), undefined, [`${join(project, "out")}/`]).registry;
+		deepStrictEqual(payloadOf(await echo(writer, { target: "out/a.txt" })), { target: "out/a.txt" });
+		const unwritten = await echo(writer, { target: join(project, "src", "a.txt") });
+		ok(unwritten.kind === "blocked", JSON.stringify(unwritten));
+		match(unwritten.reason, /write path argument 'target' \(\S*src\/a\.txt\) would not be admitted/);
+		const malformed = await echo(writer, { target: ["out/a.txt"] });
+		ok(malformed.kind === "ok" && malformed.result.kind === "error", JSON.stringify(malformed));
+		match(malformed.result.message, /argument 'target' is a declared write path and must be a string/);
+	});
+
+	it("starts a worker's MCP server under the worker sandbox, so it never writes outside the write roots", async () => {
+		const tree = join(env.dir, "tree");
+		mkdirSync(tree);
+		const outside = join(env.dir, "outside-marker");
+		// `required` makes the outcome host-independent: bwrap runs the server
+		// confined, and a host without it refuses the launch.
+		configureWorkerProcessSandbox({
+			version: WORKER_SANDBOX_SPEC_VERSION,
+			mode: "required",
+			writableRoots: [`${tree}/`],
+			readOnlyPaths: [],
+			gitWritablePaths: [],
+			readableRoots: [tree],
+			network: false,
+		});
+		const client = createMcpStdioClient(
+			{
+				id: "shell",
+				command: "/bin/sh",
+				args: [
+					"-c",
+					`echo x > ${JSON.stringify(outside)}; echo y > inside-marker; exec ${JSON.stringify(process.execPath)} ${JSON.stringify(FIXTURE)}`,
+				],
+			},
+			{ workspaceRoot: tree, initializeTimeoutMs: 5_000, killGraceMs: 200 },
+		);
+		let started = true;
+		try {
+			await client.initialize();
+		} catch (error) {
+			started = false;
+			match(error instanceof Error ? error.message : String(error), /sandbox/);
+		} finally {
+			await client.close();
+			configureWorkerProcessSandbox(undefined);
+		}
+		strictEqual(existsSync(outside), false);
+		if (started) ok(existsSync(join(tree, "inside-marker")));
+	});
+
+	it("lets a sandboxed MCP server handle SIGTERM on close", async () => {
+		const tree = join(env.dir, "tree");
+		mkdirSync(tree);
+		const server = join(tree, "server.mjs");
+		writeFileSync(
+			server,
+			[
+				'import { writeFileSync } from "node:fs";',
+				'process.on("SIGTERM", () => { writeFileSync("term-marker", "1"); process.exit(0); });',
+				'process.argv[2] = "ignore-sigterm";',
+				`await import(${JSON.stringify(pathToFileURL(FIXTURE).href)});`,
+			].join("\n"),
+		);
+		configureWorkerProcessSandbox({
+			version: WORKER_SANDBOX_SPEC_VERSION,
+			mode: "required",
+			writableRoots: [`${tree}/`],
+			readOnlyPaths: [],
+			gitWritablePaths: [],
+			readableRoots: [tree],
+			network: false,
+		});
+		const client = createMcpStdioClient(
+			{ id: "graceful", command: process.execPath, args: [server] },
+			{ workspaceRoot: tree, initializeTimeoutMs: 5_000, killGraceMs: 2_000 },
+		);
+		try {
+			await client.initialize();
+		} catch (error) {
+			match(error instanceof Error ? error.message : String(error), /sandbox/);
+			return;
+		} finally {
+			deepStrictEqual(await client.close(), { complete: true });
+			configureWorkerProcessSandbox(undefined);
+		}
+		ok(existsSync(join(tree, "term-marker")), "the sandboxed server never saw SIGTERM");
+	});
+
+	it("gives the native model loop an MCP result through the worker-local source", { timeout: 20_000 }, async () => {
+		ok(trust({ cwd: project, id: "fake", actionClass: "read" }).ok);
+		const bodies: Array<Record<string, unknown>> = [];
+		const server = createServer(async (req, res) => {
+			bodies.push(JSON.parse(await readRequestBody(req)));
+			const first = bodies.length === 1;
+			const delta = first
+				? {
+						role: "assistant",
+						tool_calls: [
+							{
+								index: 0,
+								id: "mcp-query",
+								type: "function",
+								function: { name: "gateway", arguments: JSON.stringify(call().args) },
+							},
+						],
+					}
+				: { role: "assistant", content: "Retrieved evidence-67." };
+			res.setHeader("content-type", "text/event-stream");
+			res.end(
+				`data: ${JSON.stringify({ model: "fixture", choices: [{ index: 0, delta, finish_reason: first ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`,
+			);
+		});
+		await new Promise<void>((settle) => server.listen(0, "127.0.0.1", settle));
+		const events: unknown[] = [];
+		try {
+			const run = startWorkerRun(
+				{
+					agentId: "scout",
+					systemPrompt: "Query the admitted evidence tool and report its text.",
+					task: "Retrieve evidence.",
+					target: { id: "fixture", runtime: "litellm", url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` },
+					runtime: litellm,
+					wireModelId: "fixture",
+					apiKey: "fixture",
+					thinkingLevel: "off",
+					modelCapabilities: { contextWindow: 131072, maxTokens: 2048, tools: true },
+					allowedTools: TOOLS,
+					budget: { mode: "advisory", toolCalls: 6, synthesis: true, hardCap: 20 },
+					noSkills: true,
+					cwd: project,
+					readOnly: true,
+					mcp: admitted(),
+				},
+				(event) => events.push(event),
+			);
+			const result = await run.promise;
+			strictEqual(result.exitCode, 0, JSON.stringify(events).slice(0, 2000));
+			strictEqual(bodies.length, 2);
+			// The call's own arguments carry the same text, so read the tool result itself.
+			const messages = bodies[1]?.messages as Array<{ role: string; content: unknown }>;
+			const toolResult = messages.find((message) => message.role === "tool");
+			ok(toolResult, JSON.stringify(messages));
+			const text = Array.isArray(toolResult.content)
+				? toolResult.content.map((part: { text?: string }) => part.text ?? "").join("")
+				: String(toolResult.content);
+			deepStrictEqual(JSON.parse(text), { text: "evidence-67" });
+			const tools = bodies[0]?.tools as Array<{ function: { name: string } }>;
+			deepStrictEqual(tools.map((tool) => tool.function.name).sort(), ["gateway", "read"]);
+		} finally {
+			await closeServer(server);
+		}
+	});
+
+	it("starts a task worktree run's project server at the worktree root when dispatched from a subdirectory", {
+		timeout: 20_000,
+	}, async () => {
+		ok(trust({ cwd: project, id: "fake", actionClass: "read" }).ok);
+		const ENV = "mcp_fake__env" as ToolName;
+		const tools: ToolName[] = [ToolNames.Read, ToolNames.Gateway, ENV];
+		approveSurfaces();
+		const mcp = resolveWorkerMcpAdmission({ agentId: "scout", projectCwd: project, tools });
+		ok(mcp);
+		const worktree = join(env.dir, "worktree");
+		mkdirSync(join(worktree, "sub"), { recursive: true });
+		const bodies: Array<Record<string, unknown>> = [];
+		const server = createServer(async (req, res) => {
+			bodies.push(JSON.parse(await readRequestBody(req)));
+			const first = bodies.length === 1;
+			const args = JSON.stringify({ op: "call", capability: ENV, args: {} });
+			const delta = first
+				? {
+						role: "assistant",
+						tool_calls: [{ index: 0, id: "mcp-env", type: "function", function: { name: "gateway", arguments: args } }],
+					}
+				: { role: "assistant", content: "Done." };
+			res.setHeader("content-type", "text/event-stream");
+			res.end(
+				`data: ${JSON.stringify({ model: "fixture", choices: [{ index: 0, delta, finish_reason: first ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`,
+			);
+		});
+		await new Promise<void>((settle) => server.listen(0, "127.0.0.1", settle));
+		try {
+			const run = startWorkerRun(
+				{
+					agentId: "scout",
+					systemPrompt: "Query the admitted env tool.",
+					task: "Report the server cwd.",
+					target: { id: "fixture", runtime: "litellm", url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` },
+					runtime: litellm,
+					wireModelId: "fixture",
+					apiKey: "fixture",
+					thinkingLevel: "off",
+					modelCapabilities: { contextWindow: 131072, maxTokens: 2048, tools: true },
+					allowedTools: tools,
+					budget: { mode: "advisory", toolCalls: 6, synthesis: true, hardCap: 20 },
+					noSkills: true,
+					cwd: join(worktree, "sub"),
+					readOnly: true,
+					taskGit: {
+						allowance: "inspect",
+						executePermitted: false,
+						taskWorktree: {
+							root: project,
+							runId: "run-1",
+							path: worktree,
+							branch: "pancode/run-1",
+							base: "0000000",
+							ownerToken: "owner",
+						},
+					},
+					mcp,
+				},
+				() => {},
+			);
+			strictEqual((await run.promise).exitCode, 0);
+			const messages = bodies[1]?.messages as Array<{ role: string; content: unknown }>;
+			const toolResult = messages.find((message) => message.role === "tool");
+			ok(toolResult, JSON.stringify(messages));
+			const text = Array.isArray(toolResult.content)
+				? toolResult.content.map((part: { text?: string }) => part.text ?? "").join("")
+				: String(toolResult.content);
+			strictEqual((JSON.parse(text) as { cwd: string }).cwd, worktree);
+		} finally {
+			await closeServer(server);
+		}
+	});
+});

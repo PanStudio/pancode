@@ -1,0 +1,767 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Shared state for one chat loop, and which turn module may write which part.
+ * The modules `createChatLoop` composes coordinate through this one object, so
+ * the loop keeps exactly one copy of every turn fact.
+ *
+ * - Only `chat-loop.ts` holds the whole `ChatTurnState`; it opens and settles
+ *   turns and resets per-turn fields.
+ * - Every other module gets a view below (`TurnRuntimeState`, ...) naming only
+ *   the fields it touches, with read-only ones `readonly`, so a new write is a
+ *   type error until the view grants it.
+ * - Continuation state (middleware continuation request and its in-run carry,
+ *   per-prompt nudge caps, yolo continuation count, recorded turn stop) lives
+ *   in `ContinuationState`, changed only through its methods; `continuation`
+ *   itself is readonly, so the owner is never replaced.
+ * - `rule16` in `tests/boundaries/check-boundaries.ts` enforces both: no module
+ *   but these two names `ChatTurnState`, and nothing outside this file assigns
+ *   a continuation field.
+ */
+
+import type { CompletionDeclaration } from "../core/completion.js";
+import type { PancodeSettings } from "../core/config.js";
+import type { PendingSkillToolPolicy } from "../core/skill-activation.js";
+import type { TurnConstraints } from "../core/turn-constraints.js";
+import type { TurnOrigin } from "../core/turn-origin.js";
+import type {
+	AuthResolution,
+	ResolvedRuntimeTarget,
+	RuntimeDescriptor,
+	RuntimeTargetSnapshot,
+	TargetDescriptor,
+	ThinkingLevel,
+} from "../domains/providers/index.js";
+import type { createEngineAgent } from "../engine/agent.js";
+import type { MainRequestRecord } from "../engine/in-prefix-summary.js";
+import type { AgentMessage } from "../engine/types.js";
+import type { SealedCompletion } from "../tools/finish.js";
+import type { AskUserToolPolicy } from "../tools/registry-contract.js";
+import type { ToolMarkupRepromptBudget } from "./chat-loop-messages.js";
+import { RunEvidenceLog } from "./run-evidence.js";
+import type { ModelRequestFacts } from "./status-types.js";
+
+export interface ChatLoopTarget {
+	target: TargetDescriptor;
+	runtime: RuntimeDescriptor;
+	wireModelId: string;
+	runtimeResolution: ResolvedRuntimeTarget;
+}
+
+export interface AgentRuntime {
+	lastAuthResolution?: AuthResolution;
+	lastProviderStatus?: number;
+	agent: ReturnType<typeof createEngineAgent>["agent"];
+	targetId: string;
+	runtimeId: string;
+	wireModelId: string;
+	runtimeResolution: ResolvedRuntimeTarget;
+}
+
+export interface ChatLoopRunSnapshot {
+	/** Deterministic request refusal, retained for the main-agent receipt. */
+	outcomeCode?: "information_flow_blocked";
+	targetId: string;
+	targetUrl: string | null;
+	runtimeId: string;
+	runtimeKind: RuntimeDescriptor["kind"];
+	wireModelId: string;
+	autonomy: PancodeSettings["safety"]["autonomy"];
+	pricedBy?: ResolvedRuntimeTarget["pricedBy"];
+	compiledPromptHash: string | null;
+	staticCompositionHash: string | null;
+	promptSignature: string | null;
+	toolSignature: string | null;
+	runtimeResolution?: RuntimeTargetSnapshot;
+	sessionId: string | null;
+	cwd: string;
+}
+
+/**
+ * What a consumed prompt is doing before it owns the stream. `compacting` is
+ * the sub-state that made the defect visible, because it is the one that lasts
+ * long enough for an operator to conclude the keystroke was lost.
+ */
+export type TurnPreparationPhase = "idle" | "preparing" | "compacting";
+/** The awaited steps of a turn's preparation that can take real time. */
+export type TurnPreparationStep = "capabilities" | "prompt-hook" | "images" | "turn-control" | "turn-start" | "compile";
+
+/** A local request stage must stay distinct from an invoked stream stall (#424). */
+export type PreInvocationStage = "transform" | "auth" | "budget admission" | "admission";
+
+export type TurnStop =
+	| {
+			cause: "retries_exhausted" | "compaction";
+			reason: string;
+			retryAfterMs?: number;
+	  }
+	| {
+			/** The provider asked for longer than PanCode waits on one request, so nothing may go back to it before then. */
+			cause: "wait_past_budget";
+			reason: string;
+			retryAfterMs: number;
+	  };
+
+/**
+ * The single owner of whether, and how, a turn goes on past its own end.
+ *
+ * Two producers feed it: a middleware `request_continuation` (the stalled-turn
+ * nudge, one per operator prompt) and a stop recorded by recovery that a yolo
+ * continuation may get past (#445). Middleware, runtime, recovery, queues and
+ * the loop each call the one method for their step; every field is private,
+ * so no module can set a flag another module consumes behind the owner's back.
+ */
+export class ContinuationState {
+	/** A middleware request_continuation is waiting to resubmit after settle. */
+	#requested = false;
+	/** That request moved into the run still out, delivered by the runtime's prepareNextTurn. */
+	#inRun = false;
+	/** One stalled-turn nudge per user prompt; reset when a real prompt arrives. */
+	#nudgeSpent = false;
+	/** The finish gate's reserved verification nudge, one per user prompt like the shared one. */
+	#verificationNudgeSpent = false;
+	/** Continuations spent since the operator's last prompt (#445). */
+	#yoloContinuations = 0;
+	/** A way this turn ended that nobody asked for and another turn could get past (#445). */
+	#stop: TurnStop | null = null;
+
+	get requested(): boolean {
+		return this.#requested;
+	}
+
+	get nudgeSpent(): boolean {
+		return this.#nudgeSpent;
+	}
+
+	get verificationNudgeSpent(): boolean {
+		return this.#verificationNudgeSpent;
+	}
+
+	get yoloContinuations(): number {
+		return this.#yoloContinuations;
+	}
+
+	get stop(): TurnStop | null {
+		return this.#stop;
+	}
+
+	/** Prompt acceptance: a fresh operator prompt resets the caps its own continuations, middleware or yolo, do not (FX-41). */
+	beginPrompt(kind: { requestContinuation: boolean; yoloContinuation: boolean }): void {
+		this.#inRun = false;
+		this.#stop = null;
+		if (kind.yoloContinuation) return;
+		this.#yoloContinuations = 0;
+		if (!kind.requestContinuation) {
+			this.#nudgeSpent = false;
+			this.#verificationNudgeSpent = false;
+		}
+	}
+
+	/**
+	 * Middleware asks for one more request. False when the nudge it draws on is
+	 * already spent this prompt: the finish gate's reserved verification nudge,
+	 * or else the shared one.
+	 */
+	request(reserved?: "verification"): boolean {
+		if (reserved === "verification") {
+			if (this.#verificationNudgeSpent) return false;
+			this.#verificationNudgeSpent = true;
+		} else if (this.#nudgeSpent) return false;
+		else this.#nudgeSpent = true;
+		this.#requested = true;
+		return true;
+	}
+
+	/** The run is still out, so it carries the waiting request itself instead of a post-settle resubmit. */
+	carryIntoRun(): void {
+		if (!this.#requested) return;
+		this.#requested = false;
+		this.#inRun = true;
+	}
+
+	/** The runtime delivers the carried request; true exactly once per carry. */
+	takeInRun(): boolean {
+		if (!this.#inRun) return false;
+		this.#inRun = false;
+		return true;
+	}
+
+	/** A new run starts; nothing carried from an earlier one survives into it. */
+	clearInRun(): void {
+		this.#inRun = false;
+	}
+
+	/** The post-settle resubmit takes the waiting request; true exactly once per request. */
+	takeRequest(): boolean {
+		if (!this.#requested) return false;
+		this.#requested = false;
+		return true;
+	}
+
+	/** A stranded operator message goes out as the next prompt and supersedes the waiting request. */
+	dropRequest(): void {
+		this.#requested = false;
+	}
+
+	/** Recovery records why the turn stopped; the settle reads it to decide a yolo continuation. */
+	recordStop(stop: TurnStop): void {
+		this.#stop = stop;
+	}
+
+	/** Count one capped yolo continuation and return its attempt number. */
+	countYoloContinuation(): number {
+		this.#yoloContinuations += 1;
+		return this.#yoloContinuations;
+	}
+}
+
+export interface ChatTurnState {
+	/** Live agent runtime; built or hot-swapped by turn-runtime. */
+	runtime: AgentRuntime | null;
+	/** The newest main-turn request and the runtime that sent it; compaction summarizes inside its cached prefix (T4). */
+	lastMainRequest?: { runtime: AgentRuntime; record: MainRequestRecord };
+	/** Ledger cursor: the id the next appended turn parents under. */
+	lastTurnId: string | null;
+	/** True while a submit is in flight. */
+	streaming: boolean;
+	/**
+	 * Where a consumed prompt is between the editor and the live stream.
+	 *
+	 * The editor is cleared and the prompt painted into the transcript before
+	 * admission, and everything from the capability probe through pre-submit
+	 * compaction to the prompt compile happens after that and before
+	 * `streaming`. With nothing naming that window the composer went straight
+	 * back to `MESSAGE` and the footer still read the previous turn as done, so
+	 * a 77-second compaction was indistinguishable from a dropped Enter
+	 * (issue #251).
+	 */
+	turnPreparation: TurnPreparationPhase;
+	/** When the current preparation window opened, for its elapsed counter. */
+	turnPreparationSince: number;
+	/** The step inside the window worth naming if it takes time, with when it began. Null outside the window. */
+	turnPreparationStage: { step: TurnPreparationStep; since: number } | null;
+	/** Provider context rebuilt on session switch, consumed by the next runtime build. */
+	replayedContextMessages: AgentMessage[];
+	/** The clock the installed history's continuity was rendered at, when a ledger render installed it (F14). */
+	continuityAtMs: number | null;
+	/** The user turn id of the in-flight submit; null between turns. */
+	activeUserTurnId: string | null;
+	/**
+	 * Set by an operator or explained interrupt. A nonempty aborted assistant
+	 * carries this reason; hollow abort messages are suppressed and replaced
+	 * by one durable closing turn after in-flight tool results have landed.
+	 * Cleared at settlement and defensively at the start of each submit.
+	 */
+	activeInterruptReason: string | null;
+	/**
+	 * Whether the operator asked for the interrupt, as opposed to the loop
+	 * guard. Read only while `activeInterruptReason` is set; cancel writes both
+	 * and `clearActiveInterrupt` clears both.
+	 */
+	activeInterruptByOperator: boolean;
+	/** Whether steering triage read a queued message as a stop and interrupted to deliver it (bt-41). Written with the reason. */
+	activeInterruptByTriage: boolean;
+	/** Whether the autonomy window halted the run at a cap or a judge streak (bt-26 N2d). Written with the reason. */
+	activeInterruptByAutonomy: boolean;
+	/** Whether a scheduled job's own clock ended the run (SC-2), as opposed to a person or the host. Written with the reason. */
+	activeInterruptByJobClock: boolean;
+	/** Whether the loop guard stopped the run mid-tool (C-10), so the refused next call names it. Written with the reason. */
+	activeInterruptByLoopGuard: boolean;
+	/** The provider's nonempty aborted message closes this interrupt without a synthetic second assistant. */
+	interruptedAssistantMessage: AgentMessage | null;
+	/** Accounting for the hollow call carried by the interrupt's closing turn (#430). */
+	interruptedCall: { message: AgentMessage; timing: { ttftMs: number | null; apiMs: number } | null } | null;
+	/**
+	 * Loop-guard synthesis lockout: once the guard locks a turn, the remaining
+	 * model rounds are forced text-only at the request level (tool_choice none
+	 * from the text-only round in transcriptStreamFn). Cleared when the next user turn starts.
+	 */
+	synthesisToolLock: boolean;
+	/**
+	 * The loop guard's soft per-turn tool budget was crossed: every further
+	 * call this turn is blocked, so turn_end reminders must not ask for one.
+	 * Cleared with `synthesisToolLock`.
+	 */
+	toolBudgetLock: boolean;
+	/** Consecutive re-prompts this operator turn for tool calls the model only wrote out (`claimToolMarkupReprompt`). */
+	toolMarkupReprompt: ToolMarkupRepromptBudget | null;
+	/** Continuation requests, carries and stops; written only through its methods. */
+	readonly continuation: ContinuationState;
+	/** The in-flight submit's own message events by attempt; consumers judge a run from it, never from the projected array. */
+	readonly runEvidence: RunEvidenceLog;
+	/** Reason a streaming tool-prose cutoff (or hard-block reminder) aborted the run. */
+	toolProseAbortReason: string | null;
+	/** Set when the repetition check stopped a looping stream; consumed by the one nudge after it (`repetition-detector.ts`). */
+	repetitionAbortReason: string | null;
+	/** The operator turn that spent repetition recoveries, and how many (`repetitionRecoveryStage`). */
+	repetitionRepromptTurnId: string | null;
+	repetitionRepromptStages: number;
+	/** The operator turn that already spent its one recovery from a thinking-only length stop (`thinking-length-recovery.ts`). */
+	thinkingLengthRecoveryTurnId: string | null;
+	/** Reason the stall watchdog aborted a silent stream. Set just before `agent.abort()` and consumed by `reclassifyStallAbort` once the run settles, which is what separates a watchdog abort from an operator Esc. */
+	streamStallReason: string | null;
+	/** A route pick the waiting request is moving to. Pinned at the pick, so a later pick changes the next turn only. */
+	routeMove: ChatLoopTarget | null;
+	/** True only while a run the recovery ladder settles is out, because nothing else would send the moved request. */
+	routeMoveSeat: boolean;
+	/** The newest model request of this session, read by the status surfaces as evidence during a silent wait. */
+	modelRequest: ModelRequestFacts | null;
+	/** Refreshes the live parts of `modelRequest` for a surface about to read it; throttled by its owner. */
+	refreshModelRequest: (() => void) | null;
+	/** Local stage held at a watchdog abort; null once invoked or after recovery (#424). */
+	streamStallStage: PreInvocationStage | null;
+	/** Answer length at the last tool-prose scan, so the scan samples instead of running per delta. */
+	toolProseAssessedChars: number;
+	/** Tool calls observed in the current turn; feeds turn_end metadata. */
+	turnToolCalls: number;
+	/** Names of those calls, in order, so turn_end can tell a listing-only turn from a working one. */
+	turnToolNames: string[];
+	/** Labels of the calls that ran without error this turn, such as `edit src/x.py`; a written-out-call nudge names them. */
+	turnCallsDone: string[];
+	/** A `[worker result]` note the operator shared entered this turn, as the prompt or as a steer; feeds turn_end metadata. */
+	turnSharedWorkerNote: boolean;
+	/** Results from a detached batch were collected into this turn; feeds turn_end metadata. */
+	turnCollectedDetachedBatch: boolean;
+	/** The completion this submitted turn declared through `finish`, or null; feeds turn_end metadata (fleet design 4.3). */
+	turnCompletion: CompletionDeclaration | null;
+	/** The host's seal of how the last turn ended: the claim beside its assessment from the turn's facts (fleet design 4.3). */
+	turnSealedCompletion: SealedCompletion | null;
+	/** A tool other than `finish` ran since the operator's prompt; a continuation of that prompt keeps it. */
+	turnCalledWork: boolean;
+	/** The one pinned `finish` round an unattended turn gets is spent; a continuation of that prompt keeps it. */
+	finishRoundSpent: boolean;
+	/**
+	 * This user turn's one refusal of an attended `finish` with no reply text is spent (FX-40); a yolo continuation of
+	 * the prompt keeps it, and an operator message handed into the run resets it.
+	 */
+	finishReplyRefused: boolean;
+	/**
+	 * This operator prompt's one refusal of a `finish(done)` while an output its session named is absent is spent (M-4);
+	 * reset with `finishReplyRefused`, and a yolo continuation of the prompt keeps it.
+	 */
+	finishOutputRefused: boolean;
+	/**
+	 * An assistant text block settled since the operator's prompt (CLI-P49): a headless run whose turn wrote none has its
+	 * first bare `finish` refused. Reset with `finishReplyRefused`; a yolo continuation of the prompt keeps it.
+	 */
+	turnReplied: boolean;
+	currentPendingSkillPolicy: PendingSkillToolPolicy | undefined;
+	currentTurnConstraints: TurnConstraints | undefined;
+	/** Who started the current submitted turn; hooks read it on prompt_submit, turn_start and turn_end. */
+	currentTurnOrigin: TurnOrigin | null;
+	/** Who started the prompt a yolo continuation's chain belongs to, which decides whether it is watched (CLI-P46). */
+	promptOrigin: TurnOrigin["origin"] | null;
+	/**
+	 * Tool surface an activated skill narrowed, held across the operator's
+	 * later turns. Replaced when the operator activates a different skill,
+	 * cleared by `/skill off`, gone with the session.
+	 */
+	activeSkillSurface: PendingSkillToolPolicy | undefined;
+	currentAskUserPolicy: AskUserToolPolicy | undefined;
+	lastRunSnapshot: ChatLoopRunSnapshot | null;
+}
+
+/**
+ * A module's slice of the turn state: what it only reads comes through
+ * `Readonly`, what it writes stays mutable, and nothing else is visible.
+ */
+type TurnStateView<Reads extends keyof ChatTurnState, Writes extends keyof ChatTurnState = never> = Readonly<
+	Pick<ChatTurnState, Exclude<Reads, Writes>>
+> &
+	Pick<ChatTurnState, Writes>;
+
+/** turn-runtime: builds or swaps the runtime, runs the stream, and owns its watchdog and tool-prose scan. */
+export type TurnRuntimeState = TurnStateView<
+	| "activeInterruptByOperator"
+	| "activeInterruptByTriage"
+	| "activeInterruptByAutonomy"
+	| "activeInterruptByJobClock"
+	| "activeInterruptByLoopGuard"
+	| "activeInterruptReason"
+	| "activeUserTurnId"
+	| "continuation"
+	| "currentAskUserPolicy"
+	| "currentTurnOrigin"
+	| "promptOrigin"
+	| "lastRunSnapshot"
+	| "replayedContextMessages"
+	| "routeMove"
+	| "runEvidence"
+	| "streaming"
+	| "synthesisToolLock"
+	| "toolBudgetLock",
+	| "modelRequest"
+	| "refreshModelRequest"
+	| "runtime"
+	| "streamStallReason"
+	| "streamStallStage"
+	| "repetitionAbortReason"
+	| "toolMarkupReprompt"
+	| "toolProseAbortReason"
+	| "toolProseAssessedChars"
+	| "turnToolCalls"
+	| "turnToolNames"
+	| "turnCallsDone"
+	| "turnCollectedDetachedBatch"
+	| "turnCompletion"
+	| "turnCalledWork"
+	| "finishRoundSpent"
+	| "finishReplyRefused"
+	| "finishOutputRefused"
+	| "turnReplied"
+>;
+
+/** turn-middleware: reads the turn's facts for its hooks; a hard block sets the tool-prose abort reason. */
+export type TurnMiddlewareState = TurnStateView<
+	| "activeInterruptReason"
+	| "activeUserTurnId"
+	| "continuation"
+	| "currentTurnConstraints"
+	| "currentTurnOrigin"
+	| "finishRoundSpent"
+	| "lastTurnId"
+	| "synthesisToolLock"
+	| "toolBudgetLock"
+	| "turnSharedWorkerNote"
+	| "turnCollectedDetachedBatch"
+	| "turnCompletion"
+	| "turnToolCalls"
+	| "turnToolNames",
+	"toolProseAbortReason" | "turnSealedCompletion"
+>;
+
+/** turn-context: reads the turn for compaction and memory; owns the replayed provider context. */
+export type TurnContextState = TurnStateView<
+	| "activeSkillSurface"
+	| "activeUserTurnId"
+	| "currentPendingSkillPolicy"
+	| "lastMainRequest"
+	| "lastTurnId"
+	| "runtime"
+	| "streaming",
+	"continuityAtMs" | "replayedContextMessages"
+>;
+
+/** turn-persistence: owns the ledger cursor, the filed user turn and the interrupt's closing records. */
+export type TurnPersistenceState = TurnStateView<
+	"activeInterruptReason" | "runtime",
+	| "activeUserTurnId"
+	| "currentTurnOrigin"
+	| "finishReplyRefused"
+	| "finishOutputRefused"
+	| "turnReplied"
+	| "interruptedAssistantMessage"
+	| "interruptedCall"
+	| "lastTurnId"
+	| "synthesisToolLock"
+	| "toolBudgetLock"
+	| "turnCompletion"
+>;
+
+/** turn-recovery: owns the route move and consumes the stall watchdog's reason. */
+export type TurnRecoveryState = TurnStateView<
+	"activeInterruptReason" | "continuation" | "runEvidence",
+	"routeMove" | "routeMoveSeat" | "streamStallReason" | "streamStallStage"
+>;
+
+/** The stall reclassification seam: consumes the watchdog's reason. */
+export type StallAbortState = TurnStateView<"activeInterruptReason", "streamStallReason" | "streamStallStage">;
+
+/** The stall rewrite seam: reads the watchdog's reason without consuming it. */
+export type StallAbortReadState = TurnStateView<"activeInterruptReason" | "streamStallReason" | "streamStallStage">;
+
+/** turn-queues: reads whether a run is out and steers its runtime; continuation only through the owner. */
+export type TurnQueuesState = TurnStateView<"continuation" | "runtime" | "streaming">;
+
+/** turn-prewarm: stays out of a live turn and parents its ledger row under the cursor. */
+export type TurnPrewarmState = TurnStateView<"lastTurnId" | "streaming">;
+
+/** chat-loop-composition: builds the turn modules and hands each its own view; reads and writes what they do. */
+export type ChatLoopCompositionState = TurnStateView<
+	| "activeInterruptByAutonomy"
+	| "activeInterruptByJobClock"
+	| "activeInterruptByLoopGuard"
+	| "activeInterruptByOperator"
+	| "activeInterruptByTriage"
+	| "activeInterruptReason"
+	| "activeSkillSurface"
+	| "continuation"
+	| "currentAskUserPolicy"
+	| "currentPendingSkillPolicy"
+	| "currentTurnConstraints"
+	| "lastRunSnapshot"
+	| "promptOrigin"
+	| "repetitionRepromptStages"
+	| "repetitionRepromptTurnId"
+	| "runEvidence"
+	| "streaming"
+	| "thinkingLengthRecoveryTurnId"
+	| "turnSharedWorkerNote"
+	| "activeUserTurnId"
+	| "continuityAtMs"
+	| "currentTurnOrigin"
+	| "finishOutputRefused"
+	| "finishReplyRefused"
+	| "finishRoundSpent"
+	| "interruptedAssistantMessage"
+	| "interruptedCall"
+	| "lastMainRequest"
+	| "lastTurnId"
+	| "modelRequest"
+	| "refreshModelRequest"
+	| "repetitionAbortReason"
+	| "replayedContextMessages"
+	| "routeMove"
+	| "routeMoveSeat"
+	| "runtime"
+	| "streamStallReason"
+	| "streamStallStage"
+	| "synthesisToolLock"
+	| "toolBudgetLock"
+	| "toolMarkupReprompt"
+	| "toolProseAbortReason"
+	| "toolProseAssessedChars"
+	| "turnCalledWork"
+	| "turnCallsDone"
+	| "turnCollectedDetachedBatch"
+	| "turnCompletion"
+	| "turnReplied"
+	| "turnSealedCompletion"
+	| "turnToolCalls"
+	| "turnToolNames",
+	| "activeUserTurnId"
+	| "continuityAtMs"
+	| "currentTurnOrigin"
+	| "finishOutputRefused"
+	| "finishReplyRefused"
+	| "finishRoundSpent"
+	| "interruptedAssistantMessage"
+	| "interruptedCall"
+	| "lastMainRequest"
+	| "lastTurnId"
+	| "modelRequest"
+	| "refreshModelRequest"
+	| "repetitionAbortReason"
+	| "replayedContextMessages"
+	| "routeMove"
+	| "routeMoveSeat"
+	| "runtime"
+	| "streamStallReason"
+	| "streamStallStage"
+	| "synthesisToolLock"
+	| "toolBudgetLock"
+	| "toolMarkupReprompt"
+	| "toolProseAbortReason"
+	| "toolProseAssessedChars"
+	| "turnCalledWork"
+	| "turnCallsDone"
+	| "turnCollectedDetachedBatch"
+	| "turnCompletion"
+	| "turnReplied"
+	| "turnSealedCompletion"
+	| "turnToolCalls"
+	| "turnToolNames"
+>;
+
+/** chat-loop-bus: the safety bus locks the synthesis and tool budget turns. */
+export type ChatLoopBusState = TurnStateView<
+	"synthesisToolLock" | "toolBudgetLock",
+	"synthesisToolLock" | "toolBudgetLock"
+>;
+
+/** chat-loop-state-machine: reads the turn to admit, settle and record it. */
+export type ChatLoopStateMachineState = TurnStateView<
+	| "activeUserTurnId"
+	| "continuation"
+	| "currentAskUserPolicy"
+	| "currentTurnConstraints"
+	| "lastTurnId"
+	| "runtime"
+	| "streaming"
+	| "synthesisToolLock"
+	| "toolBudgetLock"
+	| "turnCompletion",
+	never
+>;
+
+/** chat-loop-steering: reads whether a run is out before a triage round touches it. */
+export type ChatLoopSteeringState = TurnStateView<"runtime" | "streaming", never>;
+
+/** chat-loop-submit: runs one submitted turn end to end, so it owns the per-turn fields. */
+export type ChatLoopSubmitState = TurnStateView<
+	| "activeSkillSurface"
+	| "continuation"
+	| "lastTurnId"
+	| "runEvidence"
+	| "runtime"
+	| "synthesisToolLock"
+	| "toolBudgetLock"
+	| "activeInterruptByAutonomy"
+	| "activeInterruptByJobClock"
+	| "activeInterruptByLoopGuard"
+	| "activeInterruptByOperator"
+	| "activeInterruptByTriage"
+	| "activeInterruptReason"
+	| "activeUserTurnId"
+	| "currentAskUserPolicy"
+	| "currentPendingSkillPolicy"
+	| "currentTurnConstraints"
+	| "currentTurnOrigin"
+	| "finishOutputRefused"
+	| "finishReplyRefused"
+	| "finishRoundSpent"
+	| "interruptedAssistantMessage"
+	| "interruptedCall"
+	| "lastRunSnapshot"
+	| "promptOrigin"
+	| "repetitionAbortReason"
+	| "repetitionRepromptStages"
+	| "repetitionRepromptTurnId"
+	| "routeMove"
+	| "routeMoveSeat"
+	| "streamStallReason"
+	| "streamStallStage"
+	| "streaming"
+	| "thinkingLengthRecoveryTurnId"
+	| "toolMarkupReprompt"
+	| "toolProseAbortReason"
+	| "toolProseAssessedChars"
+	| "turnCalledWork"
+	| "turnCallsDone"
+	| "turnCollectedDetachedBatch"
+	| "turnCompletion"
+	| "turnReplied"
+	| "turnSealedCompletion"
+	| "turnSharedWorkerNote"
+	| "turnToolCalls"
+	| "turnToolNames",
+	| "activeInterruptByAutonomy"
+	| "activeInterruptByJobClock"
+	| "activeInterruptByLoopGuard"
+	| "activeInterruptByOperator"
+	| "activeInterruptByTriage"
+	| "activeInterruptReason"
+	| "activeUserTurnId"
+	| "currentAskUserPolicy"
+	| "currentPendingSkillPolicy"
+	| "currentTurnConstraints"
+	| "currentTurnOrigin"
+	| "finishOutputRefused"
+	| "finishReplyRefused"
+	| "finishRoundSpent"
+	| "interruptedAssistantMessage"
+	| "interruptedCall"
+	| "lastRunSnapshot"
+	| "promptOrigin"
+	| "repetitionAbortReason"
+	| "repetitionRepromptStages"
+	| "repetitionRepromptTurnId"
+	| "routeMove"
+	| "routeMoveSeat"
+	| "streamStallReason"
+	| "streamStallStage"
+	| "streaming"
+	| "thinkingLengthRecoveryTurnId"
+	| "toolMarkupReprompt"
+	| "toolProseAbortReason"
+	| "toolProseAssessedChars"
+	| "turnCalledWork"
+	| "turnCallsDone"
+	| "turnCollectedDetachedBatch"
+	| "turnCompletion"
+	| "turnReplied"
+	| "turnSealedCompletion"
+	| "turnSharedWorkerNote"
+	| "turnToolCalls"
+	| "turnToolNames"
+>;
+
+/**
+ * The thinking level argument is ignored: the agent state owns the level and
+ * turn state keeps no copy. The parameter stays optional because existing test
+ * call sites still pass one, and removing it from them is test work.
+ */
+export function createTurnState(_initialThinkingLevel?: ThinkingLevel): ChatTurnState {
+	return {
+		runtime: null,
+		lastTurnId: null,
+		streaming: false,
+		turnPreparation: "idle",
+		turnPreparationSince: 0,
+		turnPreparationStage: null,
+		replayedContextMessages: [],
+		continuityAtMs: null,
+		activeUserTurnId: null,
+		activeInterruptReason: null,
+		activeInterruptByOperator: false,
+		activeInterruptByTriage: false,
+		activeInterruptByAutonomy: false,
+		activeInterruptByJobClock: false,
+		activeInterruptByLoopGuard: false,
+		interruptedAssistantMessage: null,
+		interruptedCall: null,
+		synthesisToolLock: false,
+		toolBudgetLock: false,
+		toolMarkupReprompt: null,
+		continuation: new ContinuationState(),
+		runEvidence: new RunEvidenceLog(),
+		toolProseAbortReason: null,
+		repetitionAbortReason: null,
+		repetitionRepromptTurnId: null,
+		repetitionRepromptStages: 0,
+		thinkingLengthRecoveryTurnId: null,
+		streamStallReason: null,
+		routeMove: null,
+		routeMoveSeat: false,
+		modelRequest: null,
+		refreshModelRequest: null,
+		streamStallStage: null,
+		toolProseAssessedChars: 0,
+		turnToolCalls: 0,
+		turnToolNames: [],
+		turnCallsDone: [],
+		turnSharedWorkerNote: false,
+		turnCollectedDetachedBatch: false,
+		turnCompletion: null,
+		turnSealedCompletion: null,
+		turnCalledWork: false,
+		finishRoundSpent: false,
+		finishReplyRefused: false,
+		finishOutputRefused: false,
+		turnReplied: false,
+		currentPendingSkillPolicy: undefined,
+		currentTurnConstraints: undefined,
+		currentTurnOrigin: null,
+		promptOrigin: null,
+		activeSkillSurface: undefined,
+		currentAskUserPolicy: undefined,
+		lastRunSnapshot: null,
+	};
+}
+
+/** Consume callback-written accounting after the provider settles, outside submit's narrowing (#430). */
+export function takeInterruptedCall(state: TurnStateView<never, "interruptedCall">): ChatTurnState["interruptedCall"] {
+	const interrupted = state.interruptedCall;
+	state.interruptedCall = null;
+	return interrupted;
+}
+
+/** Clear an interrupt with the actor flags written alongside it, so a later stop never inherits an earlier actor (x7-3). */
+export function clearActiveInterrupt(
+	state: TurnStateView<
+		never,
+		| "activeInterruptReason"
+		| "activeInterruptByOperator"
+		| "activeInterruptByTriage"
+		| "activeInterruptByAutonomy"
+		| "activeInterruptByJobClock"
+		| "activeInterruptByLoopGuard"
+	>,
+): void {
+	state.activeInterruptReason = null;
+	state.activeInterruptByOperator = false;
+	state.activeInterruptByTriage = false;
+	state.activeInterruptByAutonomy = false;
+	state.activeInterruptByJobClock = false;
+	state.activeInterruptByLoopGuard = false;
+}

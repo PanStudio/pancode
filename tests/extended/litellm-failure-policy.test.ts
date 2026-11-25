@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { ok, strictEqual } from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { isLiteLLMConnectionFailure, liteLLMRouteFailureMessage } from "../../src/core/gateway-routing.js";
+import type { AgentMessage } from "../../src/engine/types.js";
+import type { TurnContext } from "../../src/session-control/turn-context.js";
+import type { TurnPersistence } from "../../src/session-control/turn-persistence.js";
+import { createTurnRecovery } from "../../src/session-control/turn-recovery.js";
+import type { AgentRuntime, ChatTurnState } from "../../src/session-control/turn-state.js";
+
+describe("LiteLLM interactive failure policy", () => {
+	it("only leaves a pre-output client connection failure eligible for visible same-route recovery", () => {
+		ok(isLiteLLMConnectionFailure(liteLLMRouteFailureMessage("Connection error.", "blade", "mini/model")));
+		strictEqual(
+			isLiteLLMConnectionFailure(liteLLMRouteFailureMessage("Connection error.", "blade", "mini/model", true)),
+			false,
+		);
+		strictEqual(isLiteLLMConnectionFailure("503 upstream Connection error."), false);
+	});
+	it("persists one failure and never enters PanCode's transient retry ladder", async () => {
+		const failureMessage = {
+			role: "assistant",
+			content: [],
+			stopReason: "error",
+			errorMessage: "gateway unavailable",
+			timestamp: Date.now(),
+		} as unknown as AgentMessage;
+		let continueCalls = 0;
+		let persisted = 0;
+		let emitted = 0;
+		const persistence = {
+			wasPersisted: () => false,
+			appendAssistantTurn: (message: AgentMessage) => {
+				strictEqual(message, failureMessage);
+				persisted += 1;
+			},
+			appendRetryStatus: () => {
+				throw new Error("LiteLLM must not record a retry status");
+			},
+		} as unknown as TurnPersistence;
+		const recovery = createTurnRecovery({
+			state: { activeInterruptReason: null } as ChatTurnState,
+			persistence,
+			context: {} as TurnContext,
+			retrySettings: () => ({
+				enabled: true,
+				maxRetries: 3,
+				baseDelayMs: 1,
+				maxDelayMs: 1,
+				streamStallMs: 1,
+				firstTokenStallMs: 1,
+			}),
+			markPersistedUserEcho: async () => undefined,
+			emitRetryStatus: () => {
+				throw new Error("LiteLLM must not emit a retry status");
+			},
+			emitFailureMessage: (message) => {
+				strictEqual(message, failureMessage);
+				emitted += 1;
+			},
+			emitNotice: () => undefined,
+		});
+		const runtime = {
+			runtimeId: "litellm",
+			targetId: "blade",
+			wireModelId: "dynamo/qwen3.8-27b",
+			agent: {
+				continue: async () => {
+					continueCalls += 1;
+				},
+			},
+		} as unknown as AgentRuntime;
+
+		const handled = await recovery.runTransientRetryChain(runtime, "hello", {
+			stopReason: "error",
+			errorMessage: "gateway unavailable",
+			message: failureMessage,
+		});
+
+		ok(handled);
+		strictEqual(continueCalls, 0);
+		strictEqual(persisted, 1);
+		strictEqual(emitted, 1);
+	});
+});

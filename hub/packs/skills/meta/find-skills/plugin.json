@@ -1,0 +1,23 @@
+{
+	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+	"name": "find-skills",
+	"version": "0.3.3",
+	"description": "Finds published skills and prepares their PanHub installation for the operator when the user asks whether a capability exists as a skill. Not for authoring a new skill; use skill-authoring.",
+	"license": "LicenseRef-PanCode-1.0",
+	"extensions": {
+		"dev.pancode": {
+			"manifestVersion": 1,
+			"kind": "skill",
+			"resources": {
+				"skills": "."
+			},
+			"components": [
+				{
+					"kind": "skill",
+					"id": "find-skills",
+					"path": "SKILL.md"
+				}
+			]
+		}
+	}
+}

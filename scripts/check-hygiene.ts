@@ -1,0 +1,1647 @@
+#!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Source and doc drift checks, run from `pnpm run lint`.
+ *
+ * Runs source and package checks with local validators. No model requests
+ * or real user installations belong in this gate.
+ */
+
+import { execFileSync, spawn } from "node:child_process";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { Worker } from "node:worker_threads";
+import ts from "typescript";
+import { parse as parseYaml } from "yaml";
+import { DEFAULT_SETTINGS } from "../src/core/defaults.js";
+import { resolvePackageRoot } from "../src/core/package-root.js";
+import { ALL_TOOL_NAMES } from "../src/core/tool-names.js";
+import { loadFragments } from "../src/domains/prompts/fragment-loader.js";
+import { renderRowConditions, type SessionFacts } from "../src/domains/prompts/preconditions.js";
+import { listDocsCorpus, slugify } from "../src/tools/context/docs-engine.js";
+import { isPackagedPath } from "./package-files.js";
+import { readmeInstallVersion } from "./release-version-policy.mjs";
+
+const root = resolvePackageRoot(import.meta.url);
+const errors: string[] = [];
+
+function fail(rule: string, message: string): void {
+	errors.push(`${rule}: ${message}`);
+}
+
+function readRoot(relPath: string): string {
+	return readFileSync(join(root, relPath), "utf8");
+}
+
+function checkDocumentationLinks(): void {
+	const files = [...collectFiles([join(root, "docs")], [".md"]), join(root, "README.md"), join(root, "CONTRIBUTING.md")];
+	const packageFiles = (JSON.parse(readRoot("package.json")) as { files: string[] }).files;
+	const anchors = new Map<string, Set<string>>();
+	const linesWithoutFences = (file: string): string[] => {
+		let fence = "";
+		return readFileSync(file, "utf8")
+			.split(/\r?\n/u)
+			.map((line) => {
+				const marker = /^\s*(`{3,}|~{3,})/u.exec(line)?.[1];
+				if (marker && (!fence || marker[0] === fence[0])) {
+					fence = fence ? "" : marker;
+					return "";
+				}
+				return fence ? "" : line;
+			});
+	};
+	const getAnchors = (file: string): Set<string> => {
+		const cached = anchors.get(file);
+		if (cached) return cached;
+		const found = new Set<string>();
+		const counts = new Map<string, number>();
+		for (const line of linesWithoutFences(file)) {
+			const heading = /^(#{1,6})\s+(.+?)\s*#*\s*$/u.exec(line)?.[2];
+			if (heading) found.add(slugify(heading.trim(), counts));
+		}
+		anchors.set(file, found);
+		return found;
+	};
+	for (const file of files) {
+		const display = relative(root, file);
+		// A packaged doc's relative link must resolve inside the installed package too.
+		const packagedDoc = display.startsWith("docs/") && isPackagedPath(display, packageFiles);
+		for (const [index, line] of linesWithoutFences(file).entries()) {
+			const markdownTargets = [...line.matchAll(/\[[^\]]*\]\((?:<([^>]+)>|([^\s)]+))(?:\s+"[^"]*")?\)/gu)].map(
+				(match) => match[1] ?? match[2] ?? "",
+			);
+			const htmlTargets = [...line.matchAll(/\b(?:href|src)="([^"]+)"/gu)].map((match) => match[1] ?? "");
+			for (const rawTarget of [...markdownTargets, ...htmlTargets]) {
+				const target = rawTarget.replace(/&amp;/gu, "&");
+				if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/iu.test(target)) continue;
+				const [pathname, fragment] = target.split("#", 2);
+				const resolved = pathname ? resolve(dirname(file), decodeURIComponent(pathname)) : file;
+				if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+					fail("documentation-links", `${display}:${index + 1}: missing link target ${target}`);
+				} else if (packagedDoc && !isPackagedPath(relative(root, resolved), packageFiles)) {
+					fail(
+						"documentation-links",
+						`${display}:${index + 1}: ${target} is not in package.json files; link https://github.com/akougkas/pancode/blob/main/<path> instead`,
+					);
+				} else if (fragment && resolved.endsWith(".md") && !getAnchors(resolved).has(decodeURIComponent(fragment))) {
+					fail("documentation-links", `${display}:${index + 1}: missing heading anchor ${target}`);
+				}
+			}
+			for (const match of line.matchAll(/`((?:src|tests|scripts|apps)\/[A-Za-z0-9_./*?{}-]+)(?::[^`]*)?`/gu)) {
+				const cited = match[1] ?? "";
+				if (cited.includes("*")) {
+					const prefix = cited.slice(0, cited.indexOf("*")).replace(/\/[^/]*$/u, "");
+					if (existsSync(join(root, prefix))) continue;
+				} else if (existsSync(join(root, cited))) continue;
+				fail("documentation-links", `${display}:${index + 1}: missing cited path ${cited}`);
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// export-hygiene: no export keyword on a function used by exactly the file
+// that declares it. Was tests/contracts/export-hygiene.test.ts, 57.9s on its
+// own, the single most expensive file in the suite.
+// ---------------------------------------------------------------------------
+/**
+ * Every file under `dirs` whose extension is in `extensions`, read once. The
+ * original check spent its 57.9s asking `grep -rlw` once per exported
+ * symbol; reading each file's identifier tokens once and looking them up in
+ * memory does the same word-boundary match without the process-per-symbol
+ * cost.
+ */
+function collectFiles(dirs: string[], extensions: string[]): string[] {
+	const found: string[] = [];
+	const walk = (dir: string): void => {
+		let entries: import("node:fs").Dirent[];
+		try {
+			entries = readdirSync(dir, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			const full = join(dir, entry.name);
+			if (entry.isDirectory()) {
+				walk(full);
+				continue;
+			}
+			if (entry.isFile() && extensions.some((ext) => entry.name.endsWith(ext))) found.push(full);
+		}
+	};
+	for (const dir of dirs) walk(dir);
+	return found;
+}
+
+// macOS and Windows default to case-insensitive filesystems. Two tracked paths
+// that differ only by case clobber each other on checkout, and two modules whose
+// stems differ only by case make an extensionless import such as `./Approval.js`
+// resolve `approval.ts` before `Approval.tsx` (#397). Linux CI never sees either.
+const MODULE_EXTENSION = /\.(?:[cm]?[jt]sx?)$/u;
+
+function checkCasePortablePaths(): void {
+	const files = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+		cwd: root,
+		encoding: "utf8",
+		maxBuffer: 10 * 1024 * 1024,
+	})
+		.split("\0")
+		.filter((file) => file.length > 0 && existsSync(join(root, file)));
+	const variants = new Map<string, Set<string>>();
+	const record = (kind: string, path: string): void => {
+		const key = `${kind}\0${path.toLowerCase()}`;
+		const seen = variants.get(key) ?? new Set<string>();
+		seen.add(path);
+		variants.set(key, seen);
+	};
+	for (const file of new Set(files)) {
+		const segments = file.split("/");
+		for (let depth = 1; depth <= segments.length; depth++) record("path", segments.slice(0, depth).join("/"));
+		if (MODULE_EXTENSION.test(file)) record("module", file.replace(MODULE_EXTENSION, ""));
+	}
+	for (const [key, paths] of variants) {
+		if (paths.size < 2) continue;
+		const listed = [...paths].sort().join(", ");
+		if (key.startsWith("path\0")) {
+			fail("case-portable-paths", `${listed}: paths differ only by case and collide on case-insensitive filesystems`);
+		} else {
+			fail(
+				"case-portable-paths",
+				`${listed}: module stems differ only by case, so imports resolve to the wrong file on case-insensitive filesystems`,
+			);
+		}
+	}
+}
+
+const IDENTIFIER = /[A-Za-z0-9_]+/g;
+const EXPORTED_FUNCTION = /^export (?:async )?function ([A-Za-z0-9_]+)/gm;
+
+function checkExportHygiene(): void {
+	const usageFiles = collectFiles([join(root, "src"), join(root, "tests"), join(root, "apps")], [".ts", ".mjs"]);
+	const tokensByFile = usageFiles.map((file) => new Set(readFileSync(file, "utf8").match(IDENTIFIER) ?? []));
+
+	const sweptAreas = ["src/entry", "src/cli", "src/core", "src/engine", "src/tools", "src/interactive", "src/domains"];
+	for (const area of sweptAreas) {
+		const areaFiles = collectFiles([join(root, area)], [".ts"]);
+		const symbols = new Set<string>();
+		for (const file of areaFiles) {
+			for (const match of readFileSync(file, "utf8").matchAll(EXPORTED_FUNCTION)) symbols.add(match[1] as string);
+		}
+		const dead: string[] = [];
+		for (const symbol of symbols) {
+			let hits = 0;
+			for (const tokens of tokensByFile) {
+				if (tokens.has(symbol)) {
+					hits++;
+					if (hits > 1) break;
+				}
+			}
+			if (hits === 1) dead.push(symbol);
+		}
+		if (dead.length > 0) {
+			fail("export-hygiene", `unnecessary export keyword in ${area}: ${dead.sort().join(", ")}`);
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Check the architecture rules against the actual source tree.
+// ---------------------------------------------------------------------------
+function checkBoundaries(): Promise<void> {
+	return new Promise((resolvePromise, reject) => {
+		const worker = new Worker(new URL("../tests/boundaries/check-boundaries-worker.ts", import.meta.url), {
+			workerData: root,
+		});
+		let violations: string[] | undefined;
+		worker.once("message", (message: string[]) => {
+			violations = message;
+		});
+		worker.once("error", reject);
+		worker.once("exit", (code) => {
+			if (violations === undefined) return reject(new Error(`boundary check worker exited ${code} without a result`));
+			if (violations.length > 0) fail("boundaries", `violations across src/:\n  ${violations.join("\n  ")}`);
+			resolvePromise();
+		});
+	});
+}
+
+// ---------------------------------------------------------------------------
+// ci-scripts: package.json scripts and the CI/release workflows held against
+// what they must do. Was tests/contracts/ci-scripts.test.ts.
+// ---------------------------------------------------------------------------
+function checkCiScripts(): void {
+	const ci = parseYaml(readRoot(".github/workflows/ci.yml"));
+	const release = parseYaml(readRoot(".github/workflows/release.yml"));
+	const smoke = parseYaml(readRoot(".github/workflows/browser-smoke.yml"));
+	for (const [file, workflow] of [
+		["ci.yml", ci],
+		["release.yml", release],
+		["browser-smoke.yml", smoke],
+	] as const) {
+		// The browser smoke alone runs unasked, in its own workflow, so no push or pull request ever reports the
+		// required ci checks as skipped.
+		const triggers = file === "browser-smoke.yml" ? ["push", "pull_request", "workflow_call"] : ["workflow_dispatch"];
+		if (!isDeepStrictEqual(Object.keys(workflow.on ?? {}), triggers))
+			fail("ci-scripts", `${file} must run only on ${triggers.join(", ")}`);
+		if (workflow.permissions?.contents !== "read") fail("ci-scripts", `${file} defaults to read-only contents`);
+		for (const [name, job] of Object.entries(workflow.jobs ?? {}) as Array<
+			[
+				string,
+				{
+					permissions?: Record<string, string>;
+					"continue-on-error"?: boolean;
+					steps?: Array<{ "continue-on-error"?: boolean; run?: string; uses?: string }>;
+				},
+			]
+		>) {
+			if (
+				(job.permissions?.contents === "write" || job.permissions?.["id-token"] === "write") &&
+				!(file === "release.yml" && name === "release")
+			)
+				fail("ci-scripts", "only the approved release job may write contents or mint publishing identity");
+			if (job["continue-on-error"]) fail("ci-scripts", "gate jobs must propagate failures");
+			for (const step of job.steps ?? []) {
+				if (step["continue-on-error"] || step.run?.includes("--ignore-scripts"))
+					fail("ci-scripts", "steps must propagate failures and lifecycle hooks");
+				if (step.uses && !step.uses.startsWith("./") && !/@[0-9a-f]{40}$/u.test(step.uses))
+					fail("ci-scripts", `${file} must pin ${step.uses}`);
+			}
+		}
+	}
+	// The labeler is the one workflow fed by untrusted issue text: pinned, read-only contents, issues write only, and
+	// no expression reaching a run step or the script.
+	const labels = parseYaml(readRoot(".github/workflows/report-labels.yml"));
+	if (!isDeepStrictEqual(labels.permissions, { contents: "read", issues: "write" }))
+		fail("ci-scripts", "report-labels.yml may only read contents and write issues");
+	for (const job of Object.values(labels.jobs ?? {}) as Array<{
+		permissions?: unknown;
+		"continue-on-error"?: boolean;
+		steps?: Array<{ "continue-on-error"?: boolean; run?: string; uses?: string; with?: { script?: string } }>;
+	}>) {
+		if (job.permissions !== undefined) fail("ci-scripts", "report-labels.yml jobs inherit the workflow permissions");
+		if (job["continue-on-error"]) fail("ci-scripts", "gate jobs must propagate failures");
+		for (const step of job.steps ?? []) {
+			if (step["continue-on-error"]) fail("ci-scripts", "steps must propagate failures and lifecycle hooks");
+			if (step.uses && !/@[0-9a-f]{40}$/u.test(step.uses)) fail("ci-scripts", `report-labels.yml must pin ${step.uses}`);
+			if (`${step.run ?? ""}${step.with?.script ?? ""}`.includes("${{"))
+				fail("ci-scripts", "report-labels.yml must not interpolate expressions into a step");
+		}
+	}
+	if (ci.jobs?.["browser-smoke"]?.uses !== "./.github/workflows/browser-smoke.yml")
+		fail("ci-scripts", "a dispatch runs the same browser smoke that pushes and pull requests run");
+	if (ci.jobs?.ci?.name !== "ci (22)" || ci.jobs?.["runtime-compatibility"]?.name !== "ci (24)")
+		fail("ci-scripts", "preserve branch-protection check names");
+	if (ci.jobs?.ci?.needs !== "prepare" || ci.jobs?.["runtime-compatibility"]?.needs !== "prepare")
+		fail("ci-scripts", "both required checks consume one prepared package; platform queues must not block them");
+	if (!ci.jobs?.ci?.steps?.some((step: { run?: string }) => step.run?.includes("release-candidate.mjs test")))
+		fail("ci-scripts", "ci (22) tests the qualified artifact");
+	if (ci.jobs?.platform?.if !== `\${{ inputs.platforms }}`)
+		fail("ci-scripts", "platform boot checks are explicitly requested");
+	if (ci.jobs?.["browser-smoke"]?.if !== `\${{ github.event_name == 'workflow_dispatch' && inputs.browser }}`)
+		fail("ci-scripts", "the browser smoke is explicitly requested");
+	if (
+		release.jobs?.release?.needs !== "preflight" ||
+		release.jobs?.release?.environment !== "release" ||
+		release.jobs?.release?.permissions?.contents !== "write"
+	)
+		fail("ci-scripts", "GitHub publication requires read-only preflight and protected owner approval");
+	const releaseText = readRoot(".github/workflows/release.yml");
+	if (/pnpm|npm (?:install|pack)|test:|workflow_call|uses: \.\/\.github\/workflows/gu.test(releaseText))
+		fail("ci-scripts", "release reuses qualification without installing, building, testing, or calling CI");
+	for (const job of Object.values(release.jobs ?? {}) as Array<{
+		steps?: Array<{ uses?: string; with?: Record<string, unknown> }>;
+	}>) {
+		if (
+			!job.steps?.some(
+				(step) =>
+					step.uses?.startsWith("actions/download-artifact@") &&
+					step.with?.["run-id"] === `\${{ inputs.qualification_run }}`,
+			)
+		)
+			fail("ci-scripts", "every release job must consume the specified qualification run");
+	}
+	if (existsSync(join(root, ".github/workflows/pages.yml")))
+		fail("ci-scripts", "keep the existing gh-pages deployment without a duplicate main-triggered workflow");
+}
+
+// ---------------------------------------------------------------------------
+// hub-pin: package payloads, templates, normalized skill evidence, and
+// full-tree pins in hub/index.yaml must match the repository content.
+// ---------------------------------------------------------------------------
+async function checkHubPin(): Promise<void> {
+	const result = await runProcess("node", ["--import", "tsx", "scripts/pin-hub.ts", "--check"], {});
+	if (result.status !== 0) fail("hub-pin", result.output.trim());
+}
+
+// ---------------------------------------------------------------------------
+// kit-manifest: packages/kit/servers.json, the PanKit policy PanCode ships,
+// must match what the kit's server registry generates.
+// ---------------------------------------------------------------------------
+async function checkKitManifest(): Promise<void> {
+	const result = await runProcess("node", ["--import", "tsx", "scripts/kit-manifest.ts", "--check"], {});
+	if (result.status !== 0) fail("kit-manifest", result.output.trim());
+}
+
+// ---------------------------------------------------------------------------
+// third-party-notices: THIRD-PARTY-NOTICES.md must match what
+// scripts/third-party-notices.mjs generates from the packages dist/ bundles.
+// ---------------------------------------------------------------------------
+async function checkThirdPartyNotices(): Promise<void> {
+	const result = await runProcess("node", ["scripts/third-party-notices.mjs", "--check"], {});
+	if (result.status !== 0) fail("third-party-notices", result.output.trim());
+}
+
+// ---------------------------------------------------------------------------
+// license-headers: every tracked source file in scope opens with the SPDX
+// license and copyright lines scripts/license-headers.mjs writes.
+// ---------------------------------------------------------------------------
+async function checkLicenseHeaders(): Promise<void> {
+	const result = await runProcess("node", ["scripts/license-headers.mjs", "--check"], {});
+	if (result.status !== 0) fail("license-headers", result.output.trim());
+}
+
+// ---------------------------------------------------------------------------
+// site-docs-snapshot: site/content/docs, its search index and
+// docs-manifest.json must match what site/sync-docs.py generates from docs/,
+// site/public-docs.json and site/content/doc-summaries. A change to any of
+// those inputs lands with `python3 site/sync-docs.py --worktree`.
+// ---------------------------------------------------------------------------
+async function checkSiteDocsSnapshot(): Promise<void> {
+	const result = await runProcess("python3", ["site/sync-docs.py", "--check"], {});
+	if (result.status !== 0) {
+		fail("site-docs-snapshot", `${result.output.trim()}\nrun python3 site/sync-docs.py --worktree and commit the result`);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// settings-inventory: docs/guide/configuration-and-targets.md's settings table held
+// against the schema it claims to describe. Was
+// tests/contracts/settings-inventory.test.ts.
+// ---------------------------------------------------------------------------
+const OPAQUE_SETTINGS_PATHS = new Set([
+	"targets",
+	"integrations.runtimePlugins",
+	"integrations.externalAgents.entries",
+	"fleet.nodes",
+	"chat.modelPicker.cycleSet",
+	"interface.keybindings",
+]);
+
+function leafPaths(value: unknown, prefix = ""): string[] {
+	if (prefix.length > 0 && OPAQUE_SETTINGS_PATHS.has(prefix)) return [prefix];
+	if (value === null || typeof value !== "object" || Array.isArray(value)) {
+		return prefix.length > 0 ? [prefix] : [];
+	}
+	const entries = Object.entries(value as Record<string, unknown>);
+	if (entries.length === 0) return prefix.length > 0 ? [prefix] : [];
+	return entries.flatMap(([key, child]) => leafPaths(child, prefix ? `${prefix}.${key}` : key));
+}
+
+function settingsInventorySection(): string {
+	const doc = readRoot("docs/guide/configuration-and-targets.md");
+	const start = doc.indexOf("## Settings inventory");
+	if (start < 0) {
+		throw new Error("docs/guide/configuration-and-targets.md has no ## Settings inventory section");
+	}
+	const end = doc.indexOf("\n## ", start + 1);
+	return doc.slice(start, end === -1 ? undefined : end);
+}
+
+function checkSettingsInventory(): void {
+	const section = settingsInventorySection();
+
+	const missing = leafPaths(DEFAULT_SETTINGS).filter((path) => !section.includes(`| \`${path}\` |`));
+	if (missing.length > 0) {
+		fail(
+			"settings-inventory",
+			`docs/guide/configuration-and-targets.md has no inventory row for:\n  ${missing.join("\n  ")}`,
+		);
+	}
+
+	// Spot-checked across the value shapes a row can carry, including the one
+	// that had diverged from its policy fallback and the two that read as a
+	// bare word rather than a literal.
+	const expectations: ReadonlyArray<readonly [string, string]> = [
+		["context.memory.timeoutMs", "`60000`"],
+		["context.memory.cadenceToolCalls", "`10`"],
+		["safety.limits.chatToolCallsPerTurn", "`60`"],
+		["context.compaction.threshold", "`0.8`"],
+		["context.compaction.auto", "`true`"],
+		["safety.limits.sessionCostUsd", "`5`"],
+		["fleet.concurrency", "`auto`"],
+		["safety.autonomy", "`default`"],
+		["chat.target", "`null`"],
+		["interface.outputDetail", "`standard`"],
+	];
+	const rowFor = (path: string): string => section.split("\n").find((line) => line.startsWith(`| \`${path}\` |`)) ?? "";
+	for (const [path, expected] of expectations) {
+		const row = rowFor(path);
+		if (row.length === 0) {
+			fail("settings-inventory", `no inventory row for ${path}`);
+			continue;
+		}
+		if (!row.includes(expected)) {
+			fail("settings-inventory", `${path} should document its default as ${expected}, row reads: ${row}`);
+		}
+	}
+
+	// Scoped to the inventory section; the page carries other tables whose
+	// first column is also a backticked lowercase word.
+	const rows = section.split("\n").filter((line) => /^\| `[a-z]/.test(line));
+	if (rows.length < 40) {
+		fail("settings-inventory", `expected the inventory to have at least 40 rows, found ${rows.length}`);
+	}
+	const vague = rows.filter((row) => !/(immediately|next turn|next session|next dispatch|restart)/.test(row));
+	if (vague.length > 0) {
+		fail("settings-inventory", `inventory rows with no effect timing:\n  ${vague.join("\n  ")}`);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// environment-variable-inventory: docs/guide/environment-variables.md claims to
+// list every PANCODE_* variable src reads, and every variable it names must still
+// be read by runtime source or the build output helper. Was tests/contracts/environment-variable-inventory.test.ts.
+// ---------------------------------------------------------------------------
+const DOCUMENTED_ENV_FAMILIES: ReadonlyArray<RegExp> = [
+	/^PANCODE_WORKER_FAUX(_[A-Z_]+)?$/, // documented as `PANCODE_WORKER_FAUX` (+ suffixes)
+	/^PANCODE_HOOK_BUDGET_[A-Z_]+_MS$/, // documented as `PANCODE_HOOK_BUDGET_<PHASE>_MS`
+];
+
+function sourceFiles(dir: string): string[] {
+	const found: string[] = [];
+	for (const entry of readdirSync(dir)) {
+		const full = join(dir, entry);
+		if (statSync(full).isDirectory()) {
+			found.push(...sourceFiles(full));
+			continue;
+		}
+		if (full.endsWith(".ts") || full.endsWith(".mts")) found.push(full);
+	}
+	return found;
+}
+
+interface EnvSourceScan {
+	/** PanCode-family names in a forward-checked read form, with the files that read them. */
+	pancodeReads: Map<string, string[]>;
+	/** Every name, PanCode or ambient, that a code line reads or holds as an env key. */
+	readNames: Set<string>;
+	/** Env keys built from a template literal, as literal prefix and suffix around the hole. */
+	templateKeys: Array<{ prefix: string; suffix: string }>;
+}
+
+/**
+ * One pass over src for both directions. The reverse direction accepts
+ * `env.NAME`, `someEnv.NAME`, a quoted `"NAME"` (constants, key lists and
+ * helper arguments), and `$NAME` or `${NAME}` (shell text PanCode generates).
+ * Matches on a line that starts as a comment do not count, so a comment naming
+ * a removed variable cannot keep its row alive.
+ */
+function scanEnvSources(): EnvSourceScan {
+	const pancodeReads = new Map<string, string[]>();
+	const readNames = new Set<string>();
+	const templateKeys: Array<{ prefix: string; suffix: string }> = [];
+	const forward =
+		/(?:env(?:\.(PANCODE_[A-Z0-9_]+|NO_COLOR)|\[["'](PANCODE_[A-Z0-9_]+|NO_COLOR)["']\])|(?:const\s+[A-Z0-9_]+_ENV(?:_VAR)?\s*=\s*["'](PANCODE_[A-Z0-9_]+)["']))/g;
+	const reverse = /[eE]nv\??\.([A-Z][A-Z0-9_]*)\b|["']([A-Z][A-Z0-9_]*)["']|\$\{?([A-Z][A-Z0-9_]*)\b/g;
+	const template = /[eE]nv\[`([A-Z][A-Z0-9_]*)\$\{[^}`]*\}([A-Z0-9_]*)`\]/g;
+	const onCommentLine = (source: string, index: number): boolean => {
+		const line = source.slice(source.lastIndexOf("\n", index) + 1, index).trimStart();
+		return line.startsWith("//") || line.startsWith("*") || line.startsWith("/*");
+	};
+	for (const file of [...sourceFiles(join(root, "src")), join(root, "scripts/build-output.ts")]) {
+		const source = readFileSync(file, "utf8");
+		const relPath = file.slice(root.length);
+		for (const match of source.matchAll(forward)) {
+			const name = match[1] ?? match[2] ?? match[3];
+			if (name === undefined) continue;
+			const sites = pancodeReads.get(name) ?? [];
+			if (!sites.includes(relPath)) sites.push(relPath);
+			pancodeReads.set(name, sites);
+		}
+		for (const match of source.matchAll(reverse)) {
+			const name = match[1] ?? match[2] ?? match[3];
+			if (name !== undefined && !onCommentLine(source, match.index)) readNames.add(name);
+		}
+		for (const match of source.matchAll(template)) {
+			if (!onCommentLine(source, match.index)) templateKeys.push({ prefix: match[1] ?? "", suffix: match[2] ?? "" });
+		}
+	}
+	return { pancodeReads, readNames, templateKeys };
+}
+
+function checkEnvironmentVariableInventory(): void {
+	const doc = readRoot("docs/guide/environment-variables.md");
+	const scan = scanEnvSources();
+	const missing: string[] = [];
+	for (const [name, sites] of scan.pancodeReads) {
+		if (doc.includes(`\`${name}\``)) continue;
+		if (DOCUMENTED_ENV_FAMILIES.some((family) => family.test(name))) continue;
+		missing.push(`${name} (read at ${sites.join(", ")})`);
+	}
+	if (missing.length > 0) {
+		fail(
+			"environment-variable-inventory",
+			`docs/guide/environment-variables.md claims to list every variable src reads, and omits:\n  ${missing.join("\n  ")}`,
+		);
+	}
+
+	// Reverse direction: every backticked variable name on the page, with any
+	// `=value` dropped, must still be read. Wildcards (`AWS_*`) and templates
+	// (`<PHASE>`) name families, not variables, and are skipped by the pattern.
+	const documented = new Set([...doc.matchAll(/`([A-Z][A-Z0-9_]*)(?:=[^`]*)?`/g)].map((match) => match[1] ?? ""));
+	const unread = [...documented].filter(
+		(name) =>
+			name.length > 0 &&
+			!scan.readNames.has(name) &&
+			!scan.templateKeys.some(
+				({ prefix, suffix }) =>
+					name.length > prefix.length + suffix.length && name.startsWith(prefix) && name.endsWith(suffix),
+			),
+	);
+	if (unread.length > 0) {
+		fail(
+			"environment-variable-inventory",
+			`docs/guide/environment-variables.md documents variables no scanned source file reads (as env.NAME, "NAME", or $NAME in generated shell); remove the row or restore the read:\n  ${unread.sort().join("\n  ")}`,
+		);
+	}
+
+	if (!doc.includes("The render trace takes a path, not `1`")) {
+		fail("environment-variable-inventory", "the render trace path-not-toggle exception must be stated");
+	}
+}
+
+// ---------------------------------------------------------------------------
+// theme-discipline: src/interactive outside theme/ carries no raw color
+// escapes. Was tests/contracts/theme-discipline.test.ts.
+// ---------------------------------------------------------------------------
+function collectInteractiveSources(dir: string): string[] {
+	const files: string[] = [];
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		if (entry.name === "theme") continue;
+		const full = join(dir, entry.name);
+		if (entry.isDirectory()) {
+			files.push(...collectInteractiveSources(full));
+			continue;
+		}
+		if (entry.isFile() && entry.name.endsWith(".ts")) files.push(full);
+	}
+	return files;
+}
+
+const ESC = String.fromCharCode(27);
+const SGR_ESCAPE = new RegExp(`(?:${ESC}|\\\\x1b|\\\\u001b)\\[[0-9;]*m`);
+const SGR_COLOR_FRAGMENT = /38;2;|48;2;|38;5;|48;5;/;
+const HEX_COLOR = /#[0-9a-fA-F]{6}\b/;
+
+// ---------------------------------------------------------------------------
+// state-root-inventory: docs/architecture/artifact-placement.md is the contract for
+// where PanCode writes. An entry added under the state root without a line there is how
+// that root reached 42 entries with nine undocumented.
+// ---------------------------------------------------------------------------
+function checkStateRootInventory(): void {
+	const doc = readRoot("docs/architecture/artifact-placement.md");
+	const entry =
+		/join\((?:pancodeStateDir\(\)|pancodeStatePath\(\)|stateDir|stateRoot|dirs\.state|resolvePancodeDirs\(\)\.state), *"([\w.-]+)"/g;
+	const missing = new Map<string, string>();
+	for (const file of sourceFiles(join(root, "src"))) {
+		for (const match of readFileSync(file, "utf8").matchAll(entry)) {
+			const name = match[1] ?? "";
+			if (!doc.includes(name)) missing.set(name, relative(root, file));
+		}
+	}
+	if (missing.size > 0) {
+		fail(
+			"state-root-inventory",
+			`docs/architecture/artifact-placement.md names every state root entry, and omits:\n  ${[...missing]
+				.map(([name, file]) => `${name} (written in ${file})`)
+				.join("\n  ")}`,
+		);
+	}
+}
+
+function checkThemeDiscipline(): void {
+	const interactiveRoot = join(root, "src/interactive");
+	const sources = collectInteractiveSources(interactiveRoot)
+		.sort()
+		.map((path) => ({
+			path: relative(interactiveRoot, path),
+			text: readFileSync(path, "utf8"),
+		}));
+
+	if (sources.length === 0) {
+		fail("theme-discipline", "expected to find interactive source files to scan");
+		return;
+	}
+	const sgrOffenders = sources.filter((file) => SGR_ESCAPE.test(file.text)).map((file) => file.path);
+	if (sgrOffenders.length > 0) {
+		fail("theme-discipline", `raw SGR escape sequences found outside theme/ in: ${sgrOffenders.join(", ")}`);
+	}
+	const fragmentOffenders = sources.filter((file) => SGR_COLOR_FRAGMENT.test(file.text)).map((file) => file.path);
+	if (fragmentOffenders.length > 0) {
+		fail(
+			"theme-discipline",
+			`SGR color fragments (38;2;/48;2;/38;5;/48;5;) found outside theme/ in: ${fragmentOffenders.join(", ")}`,
+		);
+	}
+	const hexOffenders = sources.filter((file) => HEX_COLOR.test(file.text)).map((file) => file.path);
+	if (hexOffenders.length > 0) {
+		fail("theme-discipline", `hex colors found outside theme/ in: ${hexOffenders.join(", ")}`);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// tier-discipline: one definition of the presentation tier (spec 3, invariant 5). Outside the policy module, the
+// transcript slice and the settings value list, no file under src/interactive/ or src/cli/fleet-*.ts compares the tier
+// to a literal. The check keys on the operand's type (presentationTier(), transcriptDetail(...).style, outputDetail, an
+// OutputStyle-typed binding), never on the bare literal, so an unrelated "compact" mode stays legal.
+// ---------------------------------------------------------------------------
+const TIER_NAMES = new Set(["compact", "standard", "detailed"]);
+const TIER_EXEMPT = new Set([
+	"src/core/presentation-tier.ts",
+	"src/interactive/transcript-detail.ts",
+	"src/interactive/overlays/settings-presentation.ts",
+]);
+const EQUALITY = new Set([
+	ts.SyntaxKind.EqualsEqualsEqualsToken,
+	ts.SyntaxKind.ExclamationEqualsEqualsToken,
+	ts.SyntaxKind.EqualsEqualsToken,
+	ts.SyntaxKind.ExclamationEqualsToken,
+]);
+
+function tierScanFiles(): string[] {
+	const walk = (dir: string): string[] =>
+		readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+			const full = join(dir, entry.name);
+			if (entry.isDirectory()) return walk(full);
+			return entry.isFile() && entry.name.endsWith(".ts") ? [full] : [];
+		});
+	const cli = join(root, "src/cli");
+	return [
+		...walk(join(root, "src/interactive")),
+		...readdirSync(cli)
+			.filter((name) => /^fleet-.*\.ts$/u.test(name))
+			.map((name) => join(cli, name)),
+	].filter((file) => !TIER_EXEMPT.has(relative(root, file)));
+}
+
+function checkTierDiscipline(): void {
+	const files = tierScanFiles();
+	const config = ts.getParsedCommandLineOfConfigFile(
+		join(root, "tsconfig.json"),
+		{},
+		{
+			...ts.sys,
+			onUnRecoverableConfigFileDiagnostic: () => {},
+		},
+	);
+	if (config === undefined) {
+		fail("tier-discipline", "could not read tsconfig.json");
+		return;
+	}
+	const program = ts.createProgram(files, { ...config.options, noEmit: true });
+	const checker = program.getTypeChecker();
+	const coversTiers = (type: ts.Type): boolean => {
+		if (type.aliasSymbol?.name === "OutputStyle") return true;
+		const names = new Set<string>();
+		for (const part of type.isUnion() ? type.types : [type]) {
+			if (part.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)) continue;
+			if (!part.isStringLiteral() || !TIER_NAMES.has(part.value)) return false;
+			names.add(part.value);
+		}
+		return names.size === TIER_NAMES.size;
+	};
+	const isTierOperand = (node: ts.Expression): boolean => {
+		let expression = node;
+		while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+		if (ts.isIdentifier(expression) || ts.isPropertyAccessExpression(expression)) {
+			const named = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(expression) ? expression.name : expression);
+			if (named !== undefined) {
+				const symbol = named.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(named) : named;
+				if (symbol.name === "outputDetail" || coversTiers(checker.getTypeOfSymbol(symbol))) return true;
+			}
+		}
+		return coversTiers(checker.getTypeAtLocation(expression));
+	};
+	const tierLiteral = (node: ts.Node): boolean => ts.isStringLiteralLike(node) && TIER_NAMES.has(node.text);
+	const offenders: string[] = [];
+	for (const file of files) {
+		const source = program.getSourceFile(file);
+		if (source === undefined) continue;
+		const at = (node: ts.Node) =>
+			`${relative(root, file)}:${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}`;
+		const visit = (node: ts.Node): void => {
+			if (ts.isBinaryExpression(node) && EQUALITY.has(node.operatorToken.kind)) {
+				if ((tierLiteral(node.right) && isTierOperand(node.left)) || (tierLiteral(node.left) && isTierOperand(node.right)))
+					offenders.push(at(node));
+			} else if (ts.isCaseClause(node) && tierLiteral(node.expression) && isTierOperand(node.parent.parent.expression)) {
+				offenders.push(at(node));
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(source);
+	}
+	if (offenders.length > 0)
+		fail(
+			"tier-discipline",
+			`the presentation tier is compared to a literal; read a budget from tierPolicy() instead:\n  ${offenders.join("\n  ")}`,
+		);
+}
+
+// ---------------------------------------------------------------------------
+// glyph-discipline: ASCII mode is a promise about chrome (spec 2.6). Every ASCII_GLYPHS value is ASCII bytes, and the
+// non-ASCII string literals left outside theme/ and src/core/glyphs.ts are counted so the sweep can see them shrink.
+// ---------------------------------------------------------------------------
+function checkGlyphDiscipline(): void {
+	const glyphPath = join(root, "src/core/glyphs.ts");
+	const source = ts.createSourceFile(glyphPath, readFileSync(glyphPath, "utf8"), ts.ScriptTarget.Latest, true);
+	let table: ts.ObjectLiteralExpression | undefined;
+	const find = (node: ts.Node): void => {
+		if (
+			ts.isVariableDeclaration(node) &&
+			ts.isIdentifier(node.name) &&
+			node.name.text === "ASCII_GLYPHS" &&
+			node.initializer !== undefined &&
+			ts.isObjectLiteralExpression(node.initializer)
+		)
+			table = node.initializer;
+		ts.forEachChild(node, find);
+	};
+	find(source);
+	if (table === undefined) {
+		fail("glyph-discipline", "ASCII_GLYPHS object literal not found in src/core/glyphs.ts");
+		return;
+	}
+	const nonAscii = /[\u0080-\u{10ffff}]/u;
+	for (const property of table.properties) {
+		if (!ts.isPropertyAssignment(property)) {
+			fail("glyph-discipline", `ASCII_GLYPHS entry ${property.getText(source)} is not written out as a literal`);
+			continue;
+		}
+		const value = property.initializer;
+		if (!ts.isStringLiteralLike(value)) {
+			fail("glyph-discipline", `ASCII_GLYPHS.${property.name.getText(source)} is not a string literal`);
+		} else if (nonAscii.test(value.text)) {
+			fail("glyph-discipline", `ASCII_GLYPHS.${property.name.getText(source)} is not ASCII: ${value.text}`);
+		}
+	}
+	let literals = 0;
+	for (const file of tierScanFiles()) {
+		if (relative(root, file).startsWith("src/interactive/theme/")) continue;
+		const scanned = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, false);
+		const count = (node: ts.Node): void => {
+			if ((ts.isStringLiteralLike(node) || ts.isTemplateLiteralToken(node)) && nonAscii.test(node.text)) literals += 1;
+			ts.forEachChild(node, count);
+		};
+		count(scanned);
+	}
+	process.stdout.write(`check-hygiene: glyph-discipline: ${literals} non-ASCII chrome literals outside theme/\n`);
+}
+
+// ---------------------------------------------------------------------------
+// readme-install-block: the README's documented install steps stay in step
+// with what scripts/install-local.sh actually prints and does. Was
+// tests/contracts/readme-install-block.test.ts.
+// ---------------------------------------------------------------------------
+function installerBinDir(): string {
+	const script = readRoot("scripts/install-local.sh");
+	const binDir = script.match(/^bin_dir=.*\$\{PANCODE_BIN_DIR:-(?<fallback>[^}]+)\}/mu)?.groups?.fallback;
+	if (!binDir) {
+		throw new Error("scripts/install-local.sh no longer has a default bin dir");
+	}
+	return binDir;
+}
+
+function installerExportLine(): string {
+	const script = readRoot("scripts/install-local.sh");
+	if (!/export PATH="%s:\$PATH"/.test(script)) {
+		throw new Error("scripts/install-local.sh no longer prints an export PATH line");
+	}
+	return `export PATH="${installerBinDir()}:$PATH"`;
+}
+
+function readmeBashBlockAfter(marker: string): string[] {
+	const readme = readRoot("README.md").split(/\r?\n/);
+	const heading = readme.indexOf("## Get started");
+	if (heading < 0) throw new Error("README.md has no ## Get started section");
+	const anchor = readme.findIndex((line, index) => index > heading && line.startsWith(marker));
+	if (anchor <= heading) {
+		throw new Error(`the Get started section no longer introduces its steps with ${JSON.stringify(marker)}`);
+	}
+	const open = readme.indexOf("```bash", anchor);
+	if (open <= anchor) {
+		throw new Error(`${JSON.stringify(marker)} does not open a shell block`);
+	}
+	const close = readme.indexOf("```", open + 1);
+	if (close <= open) {
+		throw new Error(`the shell block after ${JSON.stringify(marker)} is never closed`);
+	}
+	return readme.slice(open + 1, close);
+}
+
+function readmeInstallBlock(): string[] {
+	return readmeBashBlockAfter("From source");
+}
+
+function readmeNpmBlock(): string[] {
+	const readme = readRoot("README.md").split(/\r?\n/);
+	for (let open = readme.indexOf("```bash"); open >= 0; open = readme.indexOf("```bash", open + 1)) {
+		const close = readme.indexOf("```", open + 1);
+		if (close <= open) {
+			throw new Error("README.md has a shell block that is never closed");
+		}
+		const block = readme.slice(open + 1, close);
+		if (block.some((line) => line.startsWith("npm install -g"))) return block;
+	}
+	throw new Error("README.md has no shell block that runs npm install -g");
+}
+
+function runProcess(
+	command: string,
+	args: string[],
+	env: Record<string, string>,
+): Promise<{ status: number | null; output: string }> {
+	return new Promise((resolvePromise) => {
+		const child = spawn(command, args, {
+			cwd: root,
+			env: { ...process.env, ...env },
+		});
+		let output = "";
+		child.stdout.on("data", (chunk) => (output += chunk));
+		child.stderr.on("data", (chunk) => (output += chunk));
+		child.on("close", (status) => resolvePromise({ status, output }));
+	});
+}
+
+async function checkReadmeInstallBlock(): Promise<void> {
+	const pkg = JSON.parse(readRoot("package.json")) as {
+		name: string;
+		version: string;
+	};
+
+	const npmInstall = readmeNpmBlock().find((line) => line.includes("npm install"));
+	if (!npmInstall) {
+		fail("readme-install-block", "the npm block no longer installs the package");
+	} else if (!npmInstall.includes(pkg.name)) {
+		fail("readme-install-block", `the npm block must install ${pkg.name}: ${npmInstall}`);
+	}
+
+	const block = readmeInstallBlock();
+	const expectedExport = installerExportLine();
+	if (!block.includes(expectedExport)) {
+		fail(
+			"readme-install-block",
+			`README install block is missing ${JSON.stringify(expectedExport)}: ${JSON.stringify(block)}`,
+		);
+	}
+
+	const exportedAt = block.findIndex((line) => line.startsWith("export PATH="));
+	const versionAt = block.findIndex((line) => line.includes("--version"));
+	if (versionAt < 0) {
+		fail("readme-install-block", "the block no longer verifies the install");
+	} else if (!(exportedAt < versionAt)) {
+		fail("readme-install-block", "the export has to come before the command that resolves through PATH");
+	}
+
+	// The block cloned the default branch and never left it, so a stranger
+	// following the README installed whatever was on main that day rather than
+	// the release the rest of the page documents.
+	const clone = block.find((line) => line.includes("git clone"));
+	const installVersion = readmeInstallVersion({ version: pkg.version, changelog: readRoot("CHANGELOG.md") });
+	if (!clone) {
+		fail("readme-install-block", "the block no longer clones the repository");
+	} else {
+		// Before the first dated release the source install follows main.
+		const branch = installVersion === null ? "main" : `v${installVersion}`;
+		if (!clone.split(/\s+/).some((part, index, parts) => part === "--branch" && parts[index + 1] === branch))
+			fail("readme-install-block", `the clone must pin ${branch}: ${clone}`);
+	}
+
+	// A bare `pancode` resolves through PATH and can answer for an older
+	// install earlier on it. The installer warns about exactly that shadowing;
+	// the README's own verification step must not walk into it.
+	const verify = block.find((line) => line.includes("--version"));
+	if (!verify) {
+		fail("readme-install-block", "the block no longer verifies the install");
+	} else {
+		if (!(verify.includes("/pancode") && !/^pancode --version/u.test(verify.trim()))) {
+			fail("readme-install-block", `verification must name the installed launcher by path: ${verify}`);
+		}
+		const binDir = installerBinDir();
+		if (!verify.includes(binDir)) {
+			fail("readme-install-block", `verification must be the path the installer links (${binDir}): ${verify}`);
+		}
+	}
+
+	// The README must ask which file the bare name reaches rather than compare
+	// version output, which passes even when a stale pancode shadows the one
+	// just installed.
+	const readme = readRoot("README.md");
+	const section = readme.split(/^## /m).find((part) => part.startsWith("Get started\n")) ?? "";
+	if (!section.includes("command -v pancode")) {
+		fail("readme-install-block", "the README no longer asks which file the bare name reaches");
+	}
+	if (/`pancode --version` and\s+`[^`]*\/pancode" --version` agree/u.test(section)) {
+		fail(
+			"readme-install-block",
+			"the README must not treat agreeing versions as proof the bare name resolves to this install",
+		);
+	}
+
+	// The shadowing claim is a claim about a program: run it. A stub
+	// `pancode` earlier on PATH, an install into a bin dir that is not, and
+	// a dry run that changes nothing. The two dry runs are independent once
+	// their fixtures exist, so they run concurrently rather than back to back;
+	// each spawn of install-local.sh pays its own ~1s of real dependency and
+	// version checks.
+	const scratch = mkdtempSync(join(tmpdir(), "pancode-install-shadow-"));
+	try {
+		const shadowDir = join(scratch, "shadow");
+		const binDir = join(scratch, "bin");
+		mkdirSync(shadowDir);
+		mkdirSync(binDir);
+		const shadow = join(shadowDir, "pancode");
+		writeFileSync(shadow, '#!/bin/sh\necho "pancode 0.0.0-other"\n');
+		chmodSync(shadow, 0o755);
+
+		// The same stub, reached through a link into the launcher this run is
+		// about, is one installation and must not be reported as two.
+		const linked = join(scratch, "linked");
+		mkdirSync(linked);
+		symlinkSync(resolve(join(root, "scripts/install-local.sh")), join(binDir, "pancode"));
+		symlinkSync(join(binDir, "pancode"), join(linked, "pancode"));
+
+		const dryRunArgs = ["scripts/install-local.sh", "--dry-run", "--skip-deps", "--no-build"];
+		const [run, sameInstall] = await Promise.all([
+			runProcess("bash", dryRunArgs, {
+				PATH: `${shadowDir}:${process.env.PATH ?? ""}`,
+				PANCODE_BIN_DIR: binDir,
+			}),
+			runProcess("bash", dryRunArgs, {
+				PATH: `${linked}:${process.env.PATH ?? ""}`,
+				PANCODE_BIN_DIR: binDir,
+			}),
+		]);
+
+		if (run.status !== 0) {
+			fail("readme-install-block", `install-local.sh --dry-run should succeed: ${run.output}`);
+		}
+		if (!run.output.includes(`another pancode is on your PATH at ${shadow}`)) {
+			fail("readme-install-block", `installer must name the shadowing pancode: ${run.output}`);
+		}
+		if (!run.output.includes(`check it with: ${shadow} --version`)) {
+			fail("readme-install-block", `installer must say how to identify the shadowing pancode: ${run.output}`);
+		}
+
+		if (sameInstall.output.includes("another pancode is on your PATH")) {
+			fail(
+				"readme-install-block",
+				"a name that resolves through to this launcher must not be reported as a second installation",
+			);
+		}
+	} finally {
+		rmSync(scratch, { recursive: true, force: true });
+	}
+}
+
+// ---------------------------------------------------------------------------
+// packaging: the package.json `files` allowlist ships everything the release
+// gate requires and everything src/ resolves from the installed package
+// root. Was tests/contracts/packaging.test.ts.
+// ---------------------------------------------------------------------------
+interface ReleaseManifest {
+	requiredFiles: string[];
+	requiredPrefixes: string[];
+}
+
+function shippedBy(packageFiles: string[], path: string): boolean {
+	const matches = (pattern: string): boolean => {
+		if (!pattern.includes("*")) return path === pattern || path.startsWith(`${pattern}/`);
+		let source = "^";
+		for (let index = 0; index < pattern.length; index += 1) {
+			const char = pattern[index] ?? "";
+			if (char !== "*") {
+				source += /[\\^$.*+?()[\]{}|]/.test(char) ? `\\${char}` : char;
+				continue;
+			}
+			if (pattern[index + 1] !== "*") {
+				source += "[^/]*";
+				continue;
+			}
+			index += 1;
+			if (pattern[index + 1] === "/") {
+				source += "(?:[^/]+/)*";
+				index += 1;
+			} else {
+				source += ".*";
+			}
+		}
+		return new RegExp(`${source}$`, "u").test(path);
+	};
+	let shipped = false;
+	for (const pattern of packageFiles) {
+		const excluded = pattern.startsWith("!");
+		const candidate = excluded ? pattern.slice(1) : pattern;
+		if (matches(candidate)) shipped = !excluded;
+	}
+	return shipped;
+}
+
+function shipsUnder(packageFiles: string[], dir: string): boolean {
+	if (shippedBy(packageFiles, `${dir}/probe`)) return true;
+	return packageFiles.some((pattern) => !pattern.startsWith("!") && pattern.startsWith(`${dir}/`));
+}
+
+const NPM_IMPLICIT_FILES = new Set(["package.json"]);
+const ROOT_ONLY_RESOLVERS = new Set([
+	// Lifecycle receipts bind a running process to the entire installation across rebuilds.
+	"src/core/running-build.ts",
+	// Hands the root to the component scanner, which walks whatever is present.
+	"src/cli/components.ts",
+	// Installation identity uses the root's layout to preserve its package-manager prefix.
+	"src/domains/lifecycle/install-method.ts",
+	// Serves files under the root's src/ from dist/assets/source.pack, so it maps paths against the root itself.
+	"src/core/source-pack.ts",
+]);
+const PATH_JOINERS = new Set(["join", "resolve"]);
+
+interface PackageRootUse {
+	file: string;
+	line: number;
+	path: string | null;
+}
+
+function typescriptSources(dir: string): string[] {
+	const out: string[] = [];
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		const abs = join(dir, entry.name);
+		if (entry.isDirectory()) out.push(...typescriptSources(abs));
+		else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")) {
+			out.push(abs);
+		}
+	}
+	return out;
+}
+
+function isPathJoiner(expression: ts.Expression): boolean {
+	if (ts.isIdentifier(expression)) return PATH_JOINERS.has(expression.text);
+	if (ts.isPropertyAccessExpression(expression) && ts.isIdentifier(expression.name)) {
+		return PATH_JOINERS.has(expression.name.text);
+	}
+	return false;
+}
+
+function isPackageRootCall(node: ts.Node): node is ts.CallExpression {
+	return ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "resolvePackageRoot";
+}
+
+function packageRootUses(absolute: string): { joined: PackageRootUse[]; rootOnly: boolean } {
+	const text = readFileSync(absolute, "utf8");
+	const source = ts.createSourceFile(absolute, text, ts.ScriptTarget.ESNext, true);
+	const file = relative(root, absolute).replaceAll("\\", "/");
+
+	const stringConstants = new Map<string, string>();
+	for (const statement of source.statements) {
+		if (!ts.isVariableStatement(statement)) continue;
+		for (const declaration of statement.declarationList.declarations) {
+			if (ts.isIdentifier(declaration.name) && declaration.initializer && ts.isStringLiteral(declaration.initializer)) {
+				stringConstants.set(declaration.name.text, declaration.initializer.text);
+			}
+		}
+	}
+
+	const aliases = new Set<string>();
+	const collectAliases = (node: ts.Node): void => {
+		if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+			if (isPackageRootCall(node.initializer)) aliases.add(node.name.text);
+		}
+		if (
+			ts.isBinaryExpression(node) &&
+			node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+			ts.isIdentifier(node.left) &&
+			isPackageRootCall(node.right)
+		) {
+			aliases.add(node.left.text);
+		}
+		ts.forEachChild(node, collectAliases);
+	};
+	collectAliases(source);
+
+	const isRootExpression = (expression: ts.Expression): boolean =>
+		isPackageRootCall(expression) || (ts.isIdentifier(expression) && aliases.has(expression.text));
+
+	const joined: PackageRootUse[] = [];
+	let rootOnly = false;
+	const collectUses = (node: ts.Node): void => {
+		if (isPackageRootCall(node)) {
+			const parent = node.parent;
+			const joinedHere =
+				(ts.isCallExpression(parent) && isPathJoiner(parent.expression) && parent.arguments[0] === node) ||
+				ts.isVariableDeclaration(parent) ||
+				ts.isBinaryExpression(parent);
+			if (!joinedHere) rootOnly = true;
+		}
+		if (
+			ts.isCallExpression(node) &&
+			isPathJoiner(node.expression) &&
+			node.arguments.length > 0 &&
+			isRootExpression(node.arguments[0] as ts.Expression)
+		) {
+			const segments: string[] = [];
+			for (const argument of node.arguments.slice(1)) {
+				if (ts.isStringLiteral(argument)) segments.push(argument.text);
+				else if (ts.isIdentifier(argument) && stringConstants.has(argument.text)) {
+					segments.push(stringConstants.get(argument.text) as string);
+				} else break;
+			}
+			joined.push({
+				file,
+				line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1,
+				path: segments.length > 0 ? segments.join("/").replaceAll(/\/+/g, "/") : null,
+			});
+		}
+		ts.forEachChild(node, collectUses);
+	};
+	collectUses(source);
+	return { joined, rootOnly };
+}
+
+function gitIgnored(paths: ReadonlyArray<string>): Set<string> {
+	if (paths.length === 0) return new Set();
+	try {
+		const out = execFileSync("git", ["check-ignore", "--", ...paths], {
+			cwd: root,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+		return new Set(out.split("\n").filter((line) => line.length > 0));
+	} catch {
+		// `git check-ignore` exits 1 when nothing matched, which is the clean case.
+		return new Set();
+	}
+}
+
+function checkPackaging(): void {
+	const manifest = JSON.parse(readRoot("scripts/release-manifest.json")) as ReleaseManifest;
+	const packageFiles = (JSON.parse(readRoot("package.json")) as { files: string[] }).files;
+	for (const prefix of ["patches", "scripts", "tests"]) {
+		if (shippedBy(packageFiles, `${prefix}/probe.ts`)) fail("packaging", `${prefix}/ is checkout-only`);
+	}
+
+	// PanCode publishes one npm package, `pancode`; the workspace packages are bundled into it at build time.
+	for (const entry of readdirSync(join(root, "packages"), { withFileTypes: true })) {
+		const manifestPath = join(root, "packages", entry.name, "package.json");
+		if (!entry.isDirectory() || !existsSync(manifestPath)) continue;
+		const workspace = JSON.parse(readFileSync(manifestPath, "utf8")) as { private?: boolean; publishConfig?: unknown };
+		if (workspace.private !== true || workspace.publishConfig !== undefined)
+			fail("packaging", `packages/${entry.name} must be private with no publishConfig: only pancode is published`);
+	}
+
+	const missingFiles = manifest.requiredFiles.filter((file) => !shippedBy(packageFiles, file));
+	if (missingFiles.length > 0) {
+		fail("packaging", `release gate requires files the package.json allowlist does not ship: ${missingFiles.join(", ")}`);
+	}
+
+	const missingPrefixes = manifest.requiredPrefixes.filter((prefix) => !shippedBy(packageFiles, `${prefix}probe`));
+	if (missingPrefixes.length > 0) {
+		fail(
+			"packaging",
+			`release gate requires trees the package.json allowlist does not ship: ${missingPrefixes.join(", ")}`,
+		);
+	}
+
+	// A gitignored path is generated runtime state: npm packs from the working
+	// tree, so shipping one publishes whatever the release machine happened to
+	// generate, and requiring one fails the gate on a clean checkout.
+	const candidates = [...new Set([...manifest.requiredFiles, ...packageFiles.filter((f) => !f.startsWith("!"))])];
+	const ignored = gitIgnored(candidates.filter((path) => !path.includes("*")));
+	const offenders = [...ignored].filter((path) => path !== "dist" && !path.startsWith("dist/"));
+	if (offenders.length > 0) {
+		fail("packaging", `gitignored generated state on the publish path: ${offenders.join(", ")}`);
+	}
+
+	const absent = manifest.requiredFiles
+		.filter((file) => !file.startsWith("dist/"))
+		.filter((file) => !existsSync(join(root, file)));
+	if (absent.length > 0) {
+		fail("packaging", `release gate requires files absent from the checkout: ${absent.join(", ")}`);
+	}
+
+	// `resolvePackageRoot()` returns the installed package root, so every path
+	// built on it is a claim that the tarball carries that path. Read the
+	// claims out of src/ so the allowlist is checked against what the code
+	// actually reaches for, rather than a hand-kept list.
+	const unshipped: string[] = [];
+	const unclassified: string[] = [];
+	for (const absolute of typescriptSources(join(root, "src"))) {
+		const text = readFileSync(absolute, "utf8");
+		if (!text.includes("resolvePackageRoot")) continue;
+		const { joined, rootOnly } = packageRootUses(absolute);
+		const file = relative(root, absolute).replaceAll("\\", "/");
+		if (rootOnly && !ROOT_ONLY_RESOLVERS.has(file)) unclassified.push(file);
+		for (const use of joined) {
+			if (use.path === null) continue;
+			if (NPM_IMPLICIT_FILES.has(use.path)) continue;
+			const looksLikeFile = /\.[A-Za-z0-9]+$/.test(use.path);
+			const shipped = looksLikeFile ? shippedBy(packageFiles, use.path) : shipsUnder(packageFiles, use.path);
+			if (!shipped) {
+				unshipped.push(`${use.file}:${use.line} resolves ${use.path}`);
+			}
+		}
+	}
+	if (unshipped.length > 0) {
+		fail(
+			"packaging",
+			`src/ resolves paths from the package root that the package.json allowlist does not ship: ${unshipped.join("; ")}`,
+		);
+	}
+	if (unclassified.length > 0) {
+		fail(
+			"packaging",
+			`resolvePackageRoot() used as a bare directory outside ROOT_ONLY_RESOLVERS; resolve a literal path or record why the root itself is the resource: ${unclassified.join(
+				", ",
+			)}`,
+		);
+	}
+
+	// The scanner above is only as good as its reach.
+	const scannedFiles = typescriptSources(join(root, "src")).filter((absolute) =>
+		readFileSync(absolute, "utf8").includes("resolvePackageRoot("),
+	);
+	if (scannedFiles.length < 10) {
+		fail("packaging", `expected the package-root scanner to reach the known call sites, saw ${scannedFiles.length}`);
+	}
+	const resolved = scannedFiles.flatMap((absolute) =>
+		packageRootUses(absolute).joined.filter((use) => use.path !== null),
+	);
+	if (resolved.length < 10) {
+		fail("packaging", `expected literal package-root paths to resolve, saw ${resolved.length}`);
+	}
+
+	if (!readRoot("scripts/check-release.mjs").includes("release-manifest.json")) {
+		fail("packaging", "scripts/check-release.mjs must read the shared release-manifest.json rather than its own copy");
+	}
+}
+
+// ---------------------------------------------------------------------------
+// gitignored-reference: nothing under scripts/ or src/ builds a path onto
+// this checkout's own root (the `fileURLToPath(new URL(..., import.meta.url))`
+// family every scripts/*.mjs tool uses to find the repo) and then joins a
+// literal that lands inside a gitignored directory. #84 shipped exactly this:
+// scripts/shard-tests.mjs read .superpowers/uniq.json off REPO_ROOT, worked
+// in every working copy that happened to have the file, and threw ENOENT on
+// a fresh clone because .gitignore excludes .superpowers/ and nothing ships
+// the file. resolvePackageRoot() call sites are a different idiom (the
+// installed package root, not this dev checkout) and are already checked
+// above; this check exists for the other one. `dist/` is exempted the same
+// way checkPackaging exempts it: generated at build time, shipped in the
+// tarball, correctly absent from git.
+//
+// A bare directory name with no `/` (workspace-files.ts listing `.superpowers`
+// among directories the file walker skips) is not a path reference and is
+// deliberately out of scope: that usage is the read this check exists to
+// prevent, working correctly, not an instance of it.
+// ---------------------------------------------------------------------------
+const GITIGNORED_REFERENCE_ROOTS = ["scripts", "src"];
+const GITIGNORED_REFERENCE_EXEMPT = (path: string): boolean => path === "dist" || path.startsWith("dist/");
+
+function filesWithExtensions(dir: string, extensions: string[]): string[] {
+	const found: string[] = [];
+	const walk = (current: string): void => {
+		let entries: import("node:fs").Dirent[];
+		try {
+			entries = readdirSync(current, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			const full = join(current, entry.name);
+			if (entry.isDirectory()) {
+				walk(full);
+				continue;
+			}
+			if (entry.isFile() && extensions.some((ext) => entry.name.endsWith(ext))) found.push(full);
+		}
+	};
+	walk(dir);
+	return found;
+}
+
+interface GitignoredReferenceHit {
+	file: string;
+	line: number;
+	joinedPath: string;
+}
+
+/**
+ * A variable is "this checkout's root" if its initializer mentions
+ * `import.meta.url`, whatever combination of `fileURLToPath`, `.pathname`,
+ * `dirname`, and `resolve` wraps it. The four scripts/*.mjs tools that
+ * declare one each spell it differently; matching the marker rather than one
+ * exact call shape is what makes this check reach all of them.
+ */
+function repoRootAnchors(source: ts.SourceFile): Set<string> {
+	const anchors = new Set<string>();
+	const visit = (node: ts.Node): void => {
+		if (
+			ts.isVariableDeclaration(node) &&
+			ts.isIdentifier(node.name) &&
+			node.initializer?.getText(source).includes("import.meta.url")
+		) {
+			anchors.add(node.name.text);
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(source);
+	return anchors;
+}
+
+function gitignoredReferenceHits(absolute: string, anchors: Set<string>): GitignoredReferenceHit[] {
+	const text = readFileSync(absolute, "utf8");
+	const source = ts.createSourceFile(absolute, text, ts.ScriptTarget.ESNext, true);
+	const hits: GitignoredReferenceHit[] = [];
+	const visit = (node: ts.Node): void => {
+		if (
+			ts.isCallExpression(node) &&
+			ts.isIdentifier(node.expression) &&
+			["join", "resolve"].includes(node.expression.text)
+		) {
+			const [first, ...rest] = node.arguments;
+			if (first && ts.isIdentifier(first) && anchors.has(first.text) && rest.length > 0) {
+				const segments: string[] = [];
+				for (const argument of rest) {
+					if (ts.isStringLiteral(argument)) segments.push(argument.text);
+					else break;
+				}
+				if (segments.length === rest.length && segments.length > 0) {
+					const joinedPath = segments.join("/").replaceAll(/\/+/g, "/");
+					hits.push({
+						file: relative(root, absolute).replaceAll("\\", "/"),
+						line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1,
+						joinedPath,
+					});
+				}
+			}
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(source);
+	return hits;
+}
+
+function checkGitignoredReference(): void {
+	const candidates: GitignoredReferenceHit[] = [];
+	for (const area of GITIGNORED_REFERENCE_ROOTS) {
+		const extensions = area === "scripts" ? [".ts", ".mjs", ".js"] : [".ts"];
+		for (const absolute of filesWithExtensions(join(root, area), extensions)) {
+			const text = readFileSync(absolute, "utf8");
+			if (!text.includes("import.meta.url")) continue;
+			const source = ts.createSourceFile(absolute, text, ts.ScriptTarget.ESNext, true);
+			const anchors = repoRootAnchors(source);
+			if (anchors.size === 0) continue;
+			candidates.push(...gitignoredReferenceHits(absolute, anchors));
+		}
+	}
+	if (candidates.length === 0) return;
+	const ignored = gitIgnored(candidates.map((hit) => hit.joinedPath));
+	const offenders = candidates.filter(
+		(hit) => ignored.has(hit.joinedPath) && !GITIGNORED_REFERENCE_EXEMPT(hit.joinedPath),
+	);
+	if (offenders.length > 0) {
+		fail(
+			"gitignored-reference",
+			`a gitignored path is joined onto this checkout's own root, so it is absent on a fresh clone:\n  ${offenders
+				.map((hit) => `${hit.file}:${hit.line} resolves ${hit.joinedPath}`)
+				.join("\n  ")}`,
+		);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// tracked-ignored: .gitignore lists the paths that never belong in the
+// repository, but Git keeps tracking a path committed before its rule or forced
+// past it with `git add -f`. Agent plans under an ignored .superpowers/ reached
+// the public history that way until the 0.5.9 purge. Only the repository's own
+// .gitignore files count, so a contributor's global excludes cannot fail CI.
+// ---------------------------------------------------------------------------
+function checkTrackedIgnored(): void {
+	let listed: string;
+	try {
+		listed = execFileSync("git", ["ls-files", "-z", "--cached", "--ignored", "--exclude-per-directory=.gitignore"], {
+			cwd: root,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+			maxBuffer: 64 * 1024 * 1024,
+		});
+	} catch {
+		// Outside a Git work tree, such as an unpacked package, there is no index to check.
+		return;
+	}
+	const tracked = listed.split("\0").filter((path) => path.length > 0);
+	if (tracked.length === 0) return;
+	const shown = tracked.slice(0, 20);
+	const more = tracked.length > shown.length ? `\n  ...and ${tracked.length - shown.length} more` : "";
+	fail(
+		"tracked-ignored",
+		`${tracked.length} tracked path(s) match .gitignore; run \`git rm --cached\` on them or narrow the rule:\n  ${shown.join("\n  ")}${more}`,
+	);
+}
+
+// ---------------------------------------------------------------------------
+// prompts: the prompt carries no doc routing table; it names two
+// docs and directs the model to context(scope="docs") for the rest. Prove
+// the two named docs exist, the directive is phrased as a call rather than
+// an availability note, the docs ship, and the docs engine's own corpus
+// covers every bundled doc in the checkout, so nothing the directive promises is
+// missing from what context(scope="docs") can actually return.
+// ---------------------------------------------------------------------------
+function checkPromptsDocLinks(): void {
+	const table = loadFragments();
+	const selfAwareness = table.byId.get("identity.self-awareness");
+	if (!selfAwareness) {
+		fail("prompts", "identity.self-awareness must be registered");
+		return;
+	}
+	if (!table.byId.get("identity.docs-routing")) fail("prompts", "identity.docs-routing must be registered");
+	const lookup = table.byId.get("identity.docs-lookup");
+	if (!lookup) {
+		fail("prompts", "identity.docs-lookup must be registered");
+	} else if (
+		!/call gateway\(op="call", capability="pancode_docs", args=\{query: <the question>\}\) before answering and before any workspace search/.test(
+			lookup.body,
+		)
+	) {
+		fail(
+			"prompts",
+			'identity.docs-lookup must direct the model to call gateway(op="call", capability="pancode_docs", args={query: <the question>}) before answering and before any workspace search, not merely note that docs exist',
+		);
+	}
+	const named = [...selfAwareness.body.matchAll(/docs\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\.md/g)].map((m) => m[0]);
+	for (const docRel of named) {
+		if (!existsSync(join(root, docRel))) {
+			fail("prompts", `${docRel}, named in identity.self-awareness, must exist in the checkout`);
+		}
+	}
+	const pkg = JSON.parse(readRoot("package.json")) as { files: string[] };
+	if (!pkg.files.includes("docs/**/*.md")) {
+		fail("prompts", "package.json files must include docs/**/*.md");
+	}
+
+	// Corpus coverage: the directive promises every bundled doc is one call away.
+	const onDisk = collectFiles([join(root, "docs")], [".md"])
+		.map((absolute) => relative(root, absolute).replaceAll("\\", "/"))
+		.sort();
+	const corpus = listDocsCorpus();
+	if (!corpus.ok) {
+		fail("prompts", `docs corpus failed to load: ${corpus.message}`);
+		return;
+	}
+	const listed = new Set((corpus.payload as { corpus: { files: string[] } }).corpus.files);
+	for (const docRel of onDisk) {
+		if (!listed.has(docRel)) {
+			fail("prompts", `${docRel} is in the checkout but not in the context(scope="docs") corpus`);
+		}
+	}
+	const onDiskSet = new Set(onDisk);
+	for (const docRel of listed) {
+		if (docRel.startsWith("docs/") && !onDiskSet.has(docRel)) {
+			fail("prompts", `${docRel} is in the context(scope="docs") corpus but not in the Markdown reference tree`);
+		}
+	}
+}
+
+/**
+ * Text a precondition does not cover, kept with the reason it may stay. Each
+ * entry is `<fragment id> <name>`; a new fragment gets a precondition instead.
+ */
+const PROMPT_PRECONDITION_EXEMPTIONS: ReadonlyMap<string, string> = new Map([
+	["identity.pancode `read`", "the citation rule names where a line number comes from; a tool-less target cites none"],
+	["operating.worker `write`", "names where a worker's writes reach; a worker without write reads it as a limit"],
+	["operating.worker `edit`", "names where a worker's writes reach; a worker without edit reads it as a limit"],
+	["wiki.page `code_nav`", "rendered by the codewiki pipeline, whose page writers always admit code_nav"],
+	["wiki.plan `code_nav`", "rendered by the codewiki pipeline, whose planners always admit code_nav"],
+]);
+
+/**
+ * A fragment that names a tool in backticks, or a slash command, must carry
+ * the precondition that makes the name true: `requires` or a `{tool}` row for
+ * a tool, `surfaces: [attended]` or an `{attended}` row for a slash command.
+ * Each name is checked by rendering the body with only that name false.
+ */
+async function checkPromptPreconditions(): Promise<void> {
+	const { BUILTIN_SLASH_COMMANDS } = await import("../src/session-control/slash-commands.js");
+	const slashCommands = new Set(BUILTIN_SLASH_COMMANDS.map((entry) => entry.name));
+	const tools = new Set<string>(ALL_TOOL_NAMES);
+	const facts = (surface: SessionFacts["surface"], without?: string): SessionFacts => ({
+		surface,
+		capabilities: new Set([...tools].filter((tool) => tool !== without)),
+		sandbox: true,
+		autonomy: "default",
+		demo: true,
+		terminal: true,
+		peers: true,
+	});
+	const used = new Set<string>();
+	for (const fragment of loadFragments().byId.values()) {
+		const raw = readFileSync(fragment.path, "utf8");
+		const bodyLine = raw.slice(0, raw.length - fragment.body.length).split("\n").length - 1;
+		const names = new Map<string, number>();
+		fragment.body.split("\n").forEach((line, index) => {
+			for (const match of line.matchAll(/`([a-z_]+)`/g)) {
+				if (tools.has(match[1] ?? "") && !names.has(`\`${match[1]}\``)) names.set(`\`${match[1]}\``, index + 1);
+			}
+			for (const match of line.matchAll(/(?:^|[\s("'])\/([a-z][a-z-]*)\b/g)) {
+				if (slashCommands.has(match[1] ?? "") && !names.has(`/${match[1]}`)) names.set(`/${match[1]}`, index + 1);
+			}
+		});
+		for (const [name, line] of names) {
+			const slash = name.startsWith("/");
+			const tool = name.slice(1, slash ? undefined : -1);
+			if (slash ? fragment.surfaces?.every((surface) => surface === "attended") : fragment.requires?.includes(tool)) {
+				continue;
+			}
+			const rendered = renderRowConditions(fragment.body, slash ? facts("headless") : facts("attended", tool));
+			const stillNamed = slash ? new RegExp(`(?:^|[\\s("'])\\/${tool}\\b`, "m").test(rendered) : rendered.includes(name);
+			if (!stillNamed) continue;
+			const key = `${fragment.id} ${name}`;
+			if (PROMPT_PRECONDITION_EXEMPTIONS.has(key)) {
+				used.add(key);
+				continue;
+			}
+			fail(
+				"prompt-preconditions",
+				`${relative(root, fragment.path)}:${bodyLine + line}: ${name} needs ${slash ? "surfaces: [attended] or an {attended} row" : `requires: [${tool}] or a {${tool}} row`}`,
+			);
+		}
+	}
+	for (const key of PROMPT_PRECONDITION_EXEMPTIONS.keys()) {
+		if (!used.has(key)) fail("prompt-preconditions", `exemption "${key}" no longer matches; delete it`);
+	}
+}
+
+// Checks that wait on a worker or a child process come first: they start, then
+// overlap the synchronous checks after them.
+const checks: ReadonlyArray<[string, () => void | Promise<void>]> = [
+	["boundaries", checkBoundaries],
+	["hub-pin", checkHubPin],
+	["kit-manifest", checkKitManifest],
+	["third-party-notices", checkThirdPartyNotices],
+	["license-headers", checkLicenseHeaders],
+	["site-docs-snapshot", checkSiteDocsSnapshot],
+	["readme-install-block", checkReadmeInstallBlock],
+	["documentation-links", checkDocumentationLinks],
+	["case-portable-paths", checkCasePortablePaths],
+	["export-hygiene", checkExportHygiene],
+	["ci-scripts", checkCiScripts],
+	["settings-inventory", checkSettingsInventory],
+	["environment-variable-inventory", checkEnvironmentVariableInventory],
+	["state-root-inventory", checkStateRootInventory],
+	["theme-discipline", checkThemeDiscipline],
+	["tier-discipline", checkTierDiscipline],
+	["glyph-discipline", checkGlyphDiscipline],
+	["packaging", checkPackaging],
+	["gitignored-reference", checkGitignoredReference],
+	["tracked-ignored", checkTrackedIgnored],
+	["prompts", checkPromptsDocLinks],
+	["prompt-preconditions", checkPromptPreconditions],
+];
+
+const startedAt = performance.now();
+const settled: Promise<void>[] = [];
+for (const [name, check] of checks) {
+	const t0 = performance.now();
+	const report = () => {
+		if (process.env.CHECK_HYGIENE_PROFILE) console.error(`${name}: ${(performance.now() - t0).toFixed(0)}ms`);
+	};
+	const failed = (error: unknown) => fail(name, error instanceof Error ? error.message : String(error));
+	try {
+		const pending = check();
+		if (pending instanceof Promise) settled.push(pending.catch(failed).finally(report));
+		else report();
+	} catch (error) {
+		failed(error);
+		report();
+	}
+}
+await Promise.all(settled);
+const elapsedMs = performance.now() - startedAt;
+
+if (errors.length > 0) {
+	for (const error of errors) process.stderr.write(`check-hygiene: ${error}\n`);
+	process.stderr.write(`check-hygiene: ${errors.length} drift condition(s) found\n`);
+	process.exit(1);
+}
+process.stdout.write(`check-hygiene: ok (${checks.length} checks, ${elapsedMs.toFixed(0)}ms)\n`);

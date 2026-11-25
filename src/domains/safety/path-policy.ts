@@ -1,0 +1,164 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { homedir } from "node:os";
+import path from "node:path";
+import { canonicalizeExistingPath, canonicalizeRawPath, type PathWalkMemo } from "../../core/path-canonical.js";
+import { isSameOrDescendantResolved } from "../../core/path-containment.js";
+
+export type PathPolicyKind = "zeroAccessPaths" | "readOnlyPaths" | "noWritePaths" | "noDeletePaths";
+export type PathPolicyOperation = "read" | "write" | "delete";
+
+export interface PathPolicyInput {
+	zeroAccessPaths?: ReadonlyArray<string>;
+	readOnlyPaths?: ReadonlyArray<string>;
+	noWritePaths?: ReadonlyArray<string>;
+	noDeletePaths?: ReadonlyArray<string>;
+}
+
+export interface PathPolicyEntry {
+	kind: PathPolicyKind;
+	path: string;
+	source: string;
+	pattern?: RegExp;
+}
+
+export interface CompiledPathPolicy {
+	root: string;
+	entries: ReadonlyArray<PathPolicyEntry>;
+	diagnostics: ReadonlyArray<string>;
+}
+
+export type PathPolicyDecision =
+	| { kind: "allow" }
+	| {
+			kind: "block";
+			reasonCode: `path-policy:${PathPolicyKind}`;
+			reason: string;
+			matchedPath: string;
+			policyKind: PathPolicyKind;
+	  };
+
+const ORDERED_KINDS: readonly PathPolicyKind[] = ["zeroAccessPaths", "readOnlyPaths", "noWritePaths", "noDeletePaths"];
+
+function expandTilde(rawPath: string): string {
+	if (rawPath === "~") return homedir();
+	if (rawPath.startsWith("~/")) return path.join(homedir(), rawPath.slice(2));
+	return rawPath;
+}
+
+function normalizePolicyEntry(rawPath: string, root: string): string {
+	const expanded = expandTilde(rawPath.trim());
+	const resolved = path.isAbsolute(expanded) ? path.resolve(expanded) : path.resolve(root, expanded);
+	return canonicalizeExistingPath(resolved);
+}
+
+function blocksOperation(kind: PathPolicyKind, operation: PathPolicyOperation): boolean {
+	if (kind === "zeroAccessPaths") return true;
+	if (kind === "readOnlyPaths" || kind === "noWritePaths") return operation === "write" || operation === "delete";
+	return operation === "delete";
+}
+
+export function compilePathPolicy(input: PathPolicyInput, root = process.cwd()): CompiledPathPolicy {
+	const resolvedRoot = canonicalizeExistingPath(path.resolve(root));
+	const entries: PathPolicyEntry[] = [];
+	const diagnostics: string[] = [];
+	for (const kind of ORDERED_KINDS) {
+		for (const rawPath of input[kind] ?? []) {
+			const trimmed = rawPath.trim();
+			if (trimmed.length === 0) {
+				diagnostics.push(`${kind}: path must not be empty`);
+				continue;
+			}
+			const entry: PathPolicyEntry = { kind, path: normalizePolicyEntry(trimmed, resolvedRoot), source: trimmed };
+			const pattern = compilePathPattern(trimmed, resolvedRoot);
+			if (pattern !== null) entry.pattern = pattern;
+			entries.push(entry);
+		}
+	}
+	return {
+		root: resolvedRoot,
+		entries: entries.sort((a, b) => a.kind.localeCompare(b.kind) || a.path.localeCompare(b.path)),
+		diagnostics,
+	};
+}
+
+export function evaluatePathPolicy(
+	policy: CompiledPathPolicy,
+	operation: PathPolicyOperation,
+	targetPath: string,
+	cwd = policy.root,
+	memo?: PathWalkMemo,
+): PathPolicyDecision {
+	const expanded = expandTilde(targetPath);
+	// Physical, the way the kernel resolves the path: `data/link/../x` lands
+	// beside the link's target. An unresolvable path matches its lexical form;
+	// path policy only adds blocks, and the syscall fails on it anyway.
+	const lexicalTarget = path.isAbsolute(expanded) ? path.resolve(expanded) : path.resolve(cwd, expanded);
+	const resolvedTarget = canonicalizeRawPath(expanded, cwd, memo) ?? canonicalizeExistingPath(lexicalTarget, memo);
+	const normalizedResolvedTarget = normalizeSeparators(resolvedTarget);
+	const normalizedRelativeTarget = normalizeSeparators(path.relative(policy.root, resolvedTarget));
+	const normalizedRawTarget = normalizeSeparators(targetPath);
+	for (const entry of policy.entries) {
+		if (!blocksOperation(entry.kind, operation)) continue;
+		if (!matchesEntry(entry, resolvedTarget, normalizedResolvedTarget, normalizedRelativeTarget, normalizedRawTarget))
+			continue;
+		return {
+			kind: "block",
+			reasonCode: `path-policy:${entry.kind}`,
+			reason: `${operation} denied by ${entry.kind} entry ${entry.source}`,
+			matchedPath: entry.path,
+			policyKind: entry.kind,
+		};
+	}
+	return { kind: "allow" };
+}
+
+function matchesEntry(
+	entry: PathPolicyEntry,
+	resolvedTarget: string,
+	normalizedResolvedTarget: string,
+	normalizedRelativeTarget: string,
+	normalizedRawTarget: string,
+): boolean {
+	if (isSameOrDescendantResolved(resolvedTarget, entry.path)) return true;
+	if (entry.pattern === undefined) return false;
+	return (
+		entry.pattern.test(normalizedResolvedTarget) ||
+		entry.pattern.test(normalizedRelativeTarget) ||
+		entry.pattern.test(normalizedRawTarget)
+	);
+}
+
+function compilePathPattern(rawPath: string, root: string): RegExp | null {
+	if (!rawPath.includes("*")) return null;
+	const expanded = expandTilde(rawPath.trim());
+	const source = path.isAbsolute(expanded) ? expanded : path.join(root, expanded);
+	const normalized = normalizeSeparators(canonicalizePatternSource(source));
+	const relative = normalizeSeparators(path.isAbsolute(expanded) ? expanded : expanded);
+	const absolutePattern = segmentPattern(normalized);
+	const relativePattern = segmentPattern(relative);
+	return new RegExp(`(?:${absolutePattern})|(?:${relativePattern})`);
+}
+
+function canonicalizePatternSource(patternPath: string): string {
+	const wildcardIndex = patternPath.indexOf("*");
+	if (wildcardIndex === -1) return canonicalizeExistingPath(patternPath);
+	const fixedPrefix = patternPath.slice(0, wildcardIndex);
+	const separatorIndex = fixedPrefix.lastIndexOf(path.sep);
+	if (separatorIndex === -1) return patternPath;
+	const prefix = patternPath.slice(0, separatorIndex + 1);
+	const suffix = patternPath.slice(separatorIndex + 1);
+	return path.join(canonicalizeExistingPath(prefix), suffix);
+}
+
+function segmentPattern(rawPath: string): string {
+	const escaped = rawPath
+		.split("*")
+		.map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+		.join("[^/]*");
+	return `(?:^|/)${escaped}(?:$|/)`;
+}
+
+function normalizeSeparators(value: string): string {
+	return value.split(path.sep).join("/");
+}

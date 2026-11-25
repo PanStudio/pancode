@@ -1,0 +1,367 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: fixtures exercise literal package reference syntax.
+import { deepStrictEqual, ok, strictEqual, throws } from "node:assert/strict";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { it } from "node:test";
+import type { PackageActivity } from "../../src/core/package-activity.js";
+import { bindPackageActivitySink, PLUGIN_RESOURCE_USE } from "../../src/core/package-activity.js";
+import { skillActivationFromToolDetails } from "../../src/core/skill-activation.js";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import type { PluginsReloadedPayload } from "../../src/core/telemetry/live-events.js";
+import { createAgentsBundle } from "../../src/domains/agents/extension.js";
+import { listPlaybooks, loadPlaybook } from "../../src/domains/agents/playbook.js";
+import { discoverAgentRecipes } from "../../src/domains/agents/registry.js";
+import {
+	disablePlugin,
+	installPlugin,
+	listInstalledPlugins,
+	reloadPluginResources,
+} from "../../src/domains/plugins/index.js";
+import type { ResourcesContract } from "../../src/domains/resources/contract.js";
+import { resolvePackageReferences } from "../../src/domains/resources/package-references.js";
+import { expandPromptTemplateInput, loadPromptTemplates } from "../../src/domains/resources/prompts/loader.js";
+import { loadSkills } from "../../src/domains/resources/skills/loader.js";
+import { expandSubmitText } from "../../src/domains/resources/submit-expansion.js";
+import { reloadPluginResourcesAndNotify } from "../../src/entry/plugin-reload.js";
+import { trustProjectPackages } from "../harness/project-trust.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+function write(root: string, name: string, text: string): void {
+	const file = join(root, name);
+	mkdirSync(dirname(file), { recursive: true });
+	writeFileSync(file, text);
+}
+
+function fixture(root: string): void {
+	write(root, "assets/reference.txt", "reference evidence");
+	write(
+		root,
+		"skills/research/SKILL.md",
+		"---\nname: fixture-research\ndescription: Read fixture evidence.\n---\nRead ${component:resource:reference} and ${pluginRoot}/assets/reference.txt\n",
+	);
+	write(
+		root,
+		"dev.pancode/prompts/demo-pack/help.md",
+		"---\ndescription: Fixture help\n---\nRead ${component:resource:reference}\n",
+	);
+	const recipe = readFileSync(resolve("src/domains/agents/builtins/researcher.md"), "utf8")
+		.replace("audience: shadow", "audience: custom")
+		.replace("required: [read]", "required: [read, context]")
+		.replace(
+			"optional: [web_fetch, context, ledger, git, store, data]",
+			"optional: [web_fetch, ledger, git, store, data]",
+		)
+		.replace("skills: []", "skills: [fixture-research]");
+	write(root, "dev.pancode/agents/demo-pack-researcher.md", `${recipe}\nRead ${"${pluginRoot}"}/assets/reference.txt\n`);
+	write(
+		root,
+		"dev.pancode/playbooks/demo-pack-review.md",
+		"---\nversion: 1\nname: demo-pack-review\ndescription: Fixture review\nsteps:\n  - id: research\n    agent: demo-pack-researcher\n    scope: readonly\n    dependencies: []\nmaxWorkers: 1\nonFailure: stop\n---\nRead ${component:resource:reference}\n",
+	);
+	write(
+		root,
+		"dev.pancode/playbooks/demo-pack-code.md",
+		`---
+version: 2
+name: demo-pack-code
+description: Package script arguments
+steps:
+  - kind: code
+    id: verify
+    command: verify
+    args: ['${"$"}{pluginRoot}/assets/reference.txt']
+    scope: readonly
+    dependencies: []
+maxWorkers: 1
+onFailure: stop
+---
+Verify supplied evidence.
+`,
+	);
+	write(
+		root,
+		"plugin.json",
+		JSON.stringify({
+			$schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+			name: "resource-fixture",
+			version: "1.0.0",
+			description: "Resource integration fixture",
+			extensions: {
+				"dev.pancode": {
+					manifestVersion: 1,
+					resources: {
+						skills: "skills",
+						prompts: "dev.pancode/prompts",
+						agents: "dev.pancode/agents",
+						playbooks: "dev.pancode/playbooks",
+					},
+					components: [{ kind: "resource", id: "reference", path: "assets/reference.txt" }],
+				},
+			},
+		}),
+	);
+}
+
+/** A second, deliberately minimal plugin so namespace precedence has a real peer. */
+function promptPlugin(root: string, namespace: string, body: string): void {
+	write(root, `prompts/${namespace}/help.md`, `---\ndescription: ${body}\n---\n${body}\n`);
+	write(
+		root,
+		"plugin.json",
+		JSON.stringify({
+			$schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+			name: `${namespace}-peer`,
+			version: "1.0.0",
+			description: "Peer namespace fixture",
+			extensions: {
+				"dev.pancode": {
+					manifestVersion: 1,
+					resources: { prompts: "prompts" },
+					components: [{ kind: "prompt", id: "help", path: `prompts/${namespace}/help.md` }],
+				},
+			},
+		}),
+	);
+}
+
+it("plugin resources retain their owner", async () => {
+	const env = await isolatePancodeEnv("pancode-plugin-owner-");
+	const activity: PackageActivity[] = [];
+	const unbind = bindPackageActivitySink((row) => {
+		activity.push(row);
+		return true;
+	});
+	try {
+		const cwd = join(env.dir, "workspace");
+		mkdirSync(cwd);
+		const source = join(env.dir, "source");
+		fixture(source);
+		const installed = installPlugin(source, { cwd, scope: "user" }).plugin;
+		ok(installed?.loadable);
+		const skill = loadSkills({ cwd, home: env.dir }).items.find((item) => item.name === "fixture-research");
+		ok(skill);
+		const owner = skill.sourceInfo.owner;
+		ok(owner);
+		strictEqual(owner.id, installed.id);
+		strictEqual(owner.version, installed.version);
+		strictEqual(owner.digest, installed.provenance?.contentDigest);
+		const activation = skillActivationFromToolDetails({ ...skill, sourceInfo: skill.sourceInfo }, "owner-turn");
+		ok(activation);
+		deepStrictEqual(activation.owner, owner);
+		const prompts = loadPromptTemplates({ cwd });
+		const resources = {
+			parsePendingSkillRequests: (text: string) => ({ text, pendingSkillRequests: [] }),
+			expandPromptTemplate: (text: string) => expandPromptTemplateInput(text, prompts),
+		} as unknown as ResourcesContract;
+		const expanded = await expandSubmitText("/demo-pack:help", resources, cwd);
+		// The turn names the plugin's declared resources by path, so the model need not search for them.
+		const resourceLine = expanded.text.split("\n").find((line) => line.startsWith("- reference: "));
+		ok(resourceLine?.endsWith("assets/reference.txt"), expanded.text);
+		const used = activity.find((row) => row.type === PLUGIN_RESOURCE_USE && row.kind === "prompt");
+		ok(used);
+		deepStrictEqual(used.owner, owner);
+		disablePlugin(installed.id, { cwd, scope: "user" });
+		deepStrictEqual(activation.owner, owner, "history retains the admitted owner after disable");
+		strictEqual(
+			loadSkills({ cwd, home: env.dir }).items.some((item) => item.name === skill.name),
+			false,
+		);
+	} finally {
+		unbind();
+		env.restore();
+	}
+});
+
+it("loads installed plugin prompts, bound skills, agents and playbooks with contained references and stable names", async () => {
+	const env = await isolatePancodeEnv("pancode-plugin-quote'-load-");
+	try {
+		const cwd = join(env.dir, "workspace");
+		mkdirSync(cwd);
+		const source = join(env.dir, "source");
+		fixture(source);
+		const installed = installPlugin(source, { cwd, scope: "user" });
+		ok(installed.plugin?.loadable, JSON.stringify(installed.diagnostics));
+		const root = installed.plugin.rootPath;
+		const prompts = loadPromptTemplates({ cwd });
+		const prompt = prompts.items.find((item) => item.name === "demo-pack:help");
+		ok(prompt);
+		strictEqual(prompt.content.trim(), `Read ${join(root, "assets/reference.txt")}`);
+		strictEqual(prompt.sourceInfo.source, "plugin:user:resource-fixture");
+		const skills = loadSkills({ cwd, home: env.dir });
+		const skill = skills.items.find((item) => item.name === "fixture-research");
+		ok(skill);
+		strictEqual(skill.source, "plugin");
+		ok(!skill.content.includes("${"));
+		const recipe = discoverAgentRecipes(cwd).find((item) => item.id === "demo-pack-researcher");
+		ok(recipe);
+		strictEqual(recipe.source, "plugin");
+		ok(recipe.body.includes(join(root, "assets/reference.txt")));
+		deepStrictEqual(recipe.boundSkillPaths, [join(root, "skills/research/SKILL.md")]);
+		const bound = loadSkills({ cwd, disableDiscovery: true, explicitSkillPaths: recipe.boundSkillPaths });
+		ok(bound.items[0]);
+		ok(!bound.items[0].content.includes("${"));
+		const fleet = loadPlaybook(cwd, "demo-pack-review");
+		ok(fleet.body.includes(join(root, "assets/reference.txt")));
+		strictEqual(listPlaybooks(cwd).find((item) => item.name === fleet.name)?.source, "plugin");
+		write(
+			cwd,
+			".pancode/playbooks/commands.yaml",
+			"version: 1\ncommands: {verify: {argv: [echo], argumentSlots: [{name: evidencePath, maxLength: 4096}]}}\n",
+		);
+		const code = loadPlaybook(cwd, "demo-pack-code").steps[0];
+		deepStrictEqual(code?.kind === "code" ? code.args : undefined, [join(root, "assets/reference.txt")]);
+	} finally {
+		env.restore();
+	}
+});
+
+it("keeps peer plugin namespaces and user overrides; disabled project plugin suppresses its user copy", async () => {
+	const env = await isolatePancodeEnv("pancode-plugin-precedence-");
+	try {
+		const cwd = join(env.dir, "workspace");
+		mkdirSync(cwd);
+		const source = join(env.dir, "source");
+		fixture(source);
+		ok(installPlugin(source, { cwd, scope: "user" }).plugin?.loadable);
+		const peer = join(env.dir, "peer");
+		promptPlugin(peer, "wtfp", "Peer help");
+		ok(installPlugin(peer, { cwd, scope: "user" }).plugin?.loadable);
+		write(join(env.dir, "config"), "prompts/demo-pack/help.md", "---\ndescription: User help\n---\nUser override\n");
+		strictEqual(
+			loadPromptTemplates({ cwd })
+				.items.find((item) => item.name === "demo-pack:help")
+				?.content.trim(),
+			"User override",
+		);
+		ok(loadPromptTemplates({ cwd }).items.some((item) => item.name === "wtfp:help"));
+		installPlugin(source, { cwd, scope: "project" });
+		trustProjectPackages(cwd, "plugins");
+		ok(listInstalledPlugins(cwd, { all: true, scope: "project" })[0]?.loadable);
+		disablePlugin("resource-fixture", { cwd, scope: "project" });
+		trustProjectPackages(cwd, "plugins");
+		reloadPluginResources(cwd);
+		ok(!discoverAgentRecipes(cwd).some((item) => item.id === "demo-pack-researcher"));
+		ok(
+			loadPromptTemplates({ cwd }).items.some((item) => item.name === "wtfp:help"),
+			"a peer plugin keeps its namespace when another plugin is suppressed",
+		);
+	} finally {
+		env.restore();
+	}
+});
+
+it("rejects missing and escaping package references without changing non-package content", async () => {
+	const env = await isolatePancodeEnv("pancode-plugin-reference-");
+	try {
+		const root = join(env.dir, "source");
+		fixture(root);
+		const context = { rootPath: root, plugin: true };
+		throws(() => resolvePackageReferences("${pluginRoot}/../outside", context), /escaping/);
+		throws(() => resolvePackageReferences("${pluginRoot}/assets/missing", context), /unresolved/);
+		throws(() => resolvePackageReferences("${component:resource:absent}", context), /unresolved component/);
+		write(env.dir, "outside", "private");
+		symlinkSync(join(env.dir, "outside"), join(root, "assets/escape"));
+		throws(() => resolvePackageReferences("${pluginRoot}/assets/escape", context), /escaping/);
+		strictEqual(resolvePackageReferences("${pluginRoot}/assets/reference.txt", {}), "${pluginRoot}/assets/reference.txt");
+		strictEqual(
+			resolvePackageReferences("${pluginRoot}/assets/reference.txt", { rootPath: root }),
+			"${pluginRoot}/assets/reference.txt",
+			"a root without the plugin flag interprets no package reference",
+		);
+	} finally {
+		env.restore();
+	}
+});
+
+it("refreshes admitted plugin resources after drift and does not bind another owner's skill", async () => {
+	const env = await isolatePancodeEnv("pancode-plugin-admission-");
+	try {
+		const cwd = join(env.dir, "workspace");
+		mkdirSync(cwd);
+		const source = join(env.dir, "source");
+		fixture(source);
+		const recipePath = "dev.pancode/agents/demo-pack-researcher.md";
+		write(
+			source,
+			recipePath,
+			readFileSync(join(source, recipePath), "utf8").replace("skills: [fixture-research]", "skills: [other-owner]"),
+		);
+		write(
+			join(env.dir, "config"),
+			"skills/other-owner/SKILL.md",
+			"---\nname: other-owner\ndescription: Foreign skill\n---\nForeign context\n",
+		);
+		const installed = installPlugin(source, { cwd, scope: "user" });
+		ok(installed.plugin?.loadable);
+		const diagnostics: import("../../src/domains/agents/registry.js").AgentRecipeDiagnostic[] = [];
+		ok(!discoverAgentRecipes(cwd, diagnostics).some((item) => item.id === "demo-pack-researcher"));
+		ok(diagnostics.some((item) => item.message.includes("bound skill(s) unavailable")));
+		reloadPluginResources(cwd);
+		ok(loadPromptTemplates({ cwd }).items.some((item) => item.name === "demo-pack:help"));
+		write(installed.plugin.rootPath, "assets/reference.txt", "changed bytes");
+		const explicit = loadSkills({
+			cwd,
+			disableDiscovery: true,
+			explicitSkillPaths: [join(installed.plugin.rootPath, "skills/research/SKILL.md")],
+		});
+		strictEqual(explicit.items.length, 0);
+		ok(explicit.diagnostics.some((item) => item.message.includes("inactive")));
+		reloadPluginResources(cwd);
+		ok(!loadPromptTemplates({ cwd }).items.some((item) => item.name === "demo-pack:help"));
+	} finally {
+		env.restore();
+	}
+});
+
+it("publishes plugin generations before refreshing cached recipes and unsubscribes on stop", async () => {
+	const env = await isolatePancodeEnv("pancode-plugin-reload-");
+	const oldCwd = process.cwd();
+	const bus = createTelemetryHub();
+	const agents = createAgentsBundle({ bus, getContract: () => undefined });
+	try {
+		const cwd = join(env.dir, "workspace");
+		mkdirSync(cwd);
+		process.chdir(cwd);
+		reloadPluginResources(cwd);
+		await agents.extension.start();
+		const source = join(env.dir, "source");
+		// The fixture reads one builtin recipe by repository-relative path.
+		process.chdir(oldCwd);
+		fixture(source);
+		process.chdir(cwd);
+		ok(installPlugin(source, { cwd, scope: "user" }).plugin?.loadable);
+		strictEqual(agents.contract.get("demo-pack-researcher"), null);
+		const events: PluginsReloadedPayload[] = [];
+		const reload = () =>
+			reloadPluginResourcesAndNotify(cwd, (event) => {
+				events.push(event);
+				bus.emit("plugin.reloaded", event);
+			});
+		const first = reload();
+		ok(agents.contract.get("demo-pack-researcher"));
+		strictEqual(events[0]?.generation, first.generation);
+		strictEqual(events[0]?.changed, true);
+		const revision = agents.contract.revision();
+		reload();
+		strictEqual(events[1]?.changed, false);
+		strictEqual(agents.contract.revision(), revision);
+		disablePlugin("resource-fixture", { cwd, scope: "user" });
+		reload();
+		strictEqual(agents.contract.get("demo-pack-researcher"), null);
+		await agents.extension.stop?.();
+		const stoppedRevision = agents.contract.revision();
+		bus.emit("plugin.reloaded", {
+			generation: 999,
+			previousGeneration: first.generation,
+			changed: true,
+			digest: "test",
+		});
+		strictEqual(agents.contract.revision(), stoppedRevision);
+	} finally {
+		await agents.extension.stop?.();
+		process.chdir(oldCwd);
+		env.restore();
+	}
+});

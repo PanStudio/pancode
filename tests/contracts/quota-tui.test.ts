@@ -1,0 +1,467 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, strictEqual } from "node:assert/strict";
+import { basename } from "node:path";
+import { test } from "node:test";
+import { setImmediate } from "node:timers/promises";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { setPresentationTier } from "../../src/core/presentation-tier.js";
+import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
+import { EMPTY_CAPABILITIES } from "../../src/domains/providers/types/capability-flags.js";
+import { localQuotaSnapshot } from "../../src/domains/quota/presentation.js";
+import { quotaReadingFromSnapshot } from "../../src/domains/quota/reading.js";
+import { createQuotaSummaryFeed } from "../../src/domains/quota/summary-feed.js";
+import type { UsageSnapshot } from "../../src/domains/quota/types.js";
+import type { TelemetryContract, TelemetrySnapshot } from "../../src/domains/telemetry/index.js";
+import { quotaAccountDetails } from "../../src/domains/telemetry/read-model-quota.js";
+import type { Component, OverlayOptions, TUI } from "../../src/engine/tui.js";
+import { stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
+import { dockTop } from "../../src/interactive/dock.js";
+import { buildFooterDashboard } from "../../src/interactive/footer/dashboard.js";
+import type { OverlayKeyDeps } from "../../src/interactive/overlay-key-routing.js";
+import { routeOverlayKey } from "../../src/interactive/overlay-key-routing.js";
+import { createSlashCommandAutocompleteProvider } from "../../src/interactive/slash-autocomplete.js";
+import { openUsageOverlay } from "../../src/interactive/usage-overlay.js";
+import { createWelcomeDashboard } from "../../src/interactive/welcome-dashboard.js";
+import type { SlashCommandContext } from "../../src/session-control/slash-command-types.js";
+import { parseSlashCommand } from "../../src/session-control/slash-commands.js";
+import { dispatchSlashCommand } from "../../src/session-control/slash-dispatch.js";
+import { telemetryCall, telemetryViewOf } from "../harness/telemetry-view.js";
+
+function accounts(): UsageSnapshot[] {
+	return [
+		{
+			providerId: "claude-code",
+			displayName: "Claude Code",
+			plan: "Max",
+			status: "ok",
+			windows: [
+				{ key: "session", label: "5h", usedPct: 6, resetsAt: null },
+				{ key: "weekly", label: "Weekly", usedPct: 9, resetsAt: "2026-09-27T15:00:00Z" },
+			],
+			credits: { display: "$30.41/$50.00", usedPct: 60.82 },
+			fetchedAt: "2026-09-21T12:00:00Z",
+		},
+		{
+			providerId: "codex",
+			displayName: "Codex",
+			plan: "Pro",
+			status: "ok",
+			windows: [{ key: "weekly", label: "Weekly", usedPct: 76, resetsAt: "2026-09-27T15:00:00Z" }],
+			fetchedAt: "2026-09-21T12:00:00Z",
+		},
+		{
+			providerId: "antigravity",
+			displayName: "Antigravity",
+			status: "ok",
+			windows: [{ key: "weekly", label: "Weekly", usedPct: 73, resetsAt: null }],
+			fetchedAt: "2026-09-21T12:00:00Z",
+		},
+		localQuotaSnapshot(),
+	];
+}
+const plain = (lines: string[]) => lines.map(stripTerminalSequences).join("\n");
+
+test("quota feed shares one lazy read, refreshes detail-only changes, and stops on disposal", async () => {
+	let reads = 0;
+	let updates = 0;
+	let now = 0;
+	let next = accounts();
+	const feed = createQuotaSummaryFeed({
+		service: {
+			peek: () => [],
+			detected: async () => [],
+			read: async () => {
+				reads++;
+				return next;
+			},
+		},
+		onUpdate: () => updates++,
+		now: () => now,
+		ttlMs: 100,
+	});
+	strictEqual(feed.peek(), null);
+	deepStrictEqual(feed.peekSnapshots(), []);
+	strictEqual(reads, 0, "render stack must not invoke a provider");
+	await setImmediate();
+	strictEqual(reads, 1);
+	strictEqual(updates, 1);
+	const summary = feed.peek();
+	match(summary ?? "", /Antigravity.*Local \$0.00/);
+	feed.peekSnapshots();
+	await setImmediate();
+	strictEqual(reads, 1, "clock zero is a valid successful read time");
+	next = accounts().map((snapshot) => ({ ...snapshot, stale: true }));
+	now = 101;
+	feed.peek();
+	feed.peekSnapshots();
+	await setImmediate();
+	strictEqual(reads, 2);
+	strictEqual(feed.peek(), summary);
+	strictEqual(updates, 2, "staleness must repaint even when the percentage summary is unchanged");
+	ok(feed.peekSnapshots()[0]?.stale);
+	now = 202;
+	feed.peekSnapshots();
+	feed.dispose();
+	await setImmediate();
+	strictEqual(reads, 2);
+	strictEqual(updates, 2);
+});
+
+test("the welcome usage row meters connected accounts and folds in compact and narrow layouts", () => {
+	let quota: string | null = "Claude 5h 6%/wk 9% · Codex wk 76% · Antigravity wk 73% · Local $0.00";
+	let quotaReads = 0;
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.interface.demo = true;
+	const banner = createWelcomeDashboard({
+		providers: { list: () => [] },
+		getSettings: () => settings,
+		getQuotaSummary: () => {
+			quotaReads++;
+			return quota;
+		},
+	});
+	try {
+		settings.interface.outputDetail = "compact";
+		for (const width of [48, 120]) doesNotMatch(plain(banner.render(width)), /usage {2,}|Claude/);
+		strictEqual(quotaReads, 0, "compact does not read hidden subscription data");
+		for (const style of ["standard", "detailed"] as const) {
+			settings.interface.outputDetail = style;
+			for (const width of [48, 60, 80, 120, 160, 220]) {
+				const rendered = banner.render(width);
+				const text = plain(rendered);
+				// The usage row leads with a meter and names accounts until the row is full, dropping whole accounts.
+				match(text, /usage {6}\S+ Claude 5h 6%\/wk 9%/u, `${style} at ${width} columns`);
+				const usageRow = text.split("\n").find((line) => /usage {6}/u.test(line)) ?? "";
+				ok(!usageRow.includes("…"), `${width}: no account is cut mid-word: ${usageRow}`);
+				if (width >= 220)
+					for (const name of ["Claude", "Codex", "Antigravity", "Local $0.00"]) ok(text.includes(name), `${width}: ${text}`);
+				ok(text.search(/awareness {2}/u) < text.search(/usage {6}/u), "usage follows awareness");
+				ok(rendered.every((line) => visibleWidth(line) <= width));
+			}
+		}
+		settings.interface.outputDetail = "detailed";
+		for (const width of [36, 40]) {
+			const rendered = banner.render(width);
+			ok(rendered.every((line) => visibleWidth(line) <= width));
+		}
+		quota = "Codex wk 81% · Local $0.00";
+		match(plain(banner.render(120)), /81%/);
+		const readsBeforeFold = quotaReads;
+		settings.interface.outputDetail = "compact";
+		doesNotMatch(plain(banner.render(120)), /usage {2,}|81%/);
+		strictEqual(quotaReads, readsBeforeFold);
+	} finally {
+		banner.dispose();
+	}
+});
+
+test("footer keeps unassociated accounts out of compact rows and the dashboard", () => {
+	let columns = 160;
+	let notices: { key: string | null; id: string; level: "error"; text: string; addedAt: number; expiresAt: null }[] = [];
+	const footer = buildFooterDashboard({
+		providers: { list: () => [] } as never,
+		getQuotaSnapshots: () => quotaRows(accounts()),
+		getNotifications: () => notices,
+		getTerminalColumns: () => columns,
+		getTerminalRows: () => 48,
+		resolveCurrentBranch: async () => null,
+	});
+	try {
+		const compact = footer.view.render(160);
+		strictEqual(compact.length, 2);
+		doesNotMatch(plain(compact), /Claude|Codex|Antigravity|weekly/);
+		ok(plain(compact).includes(basename(process.cwd())));
+		columns = 50;
+		footer.refresh();
+		const narrow = footer.view.render(50);
+		// Standard keeps its hint row from 44 columns up, so the composer does not move.
+		strictEqual(narrow.length, 2);
+		doesNotMatch(plain(narrow), /Codex|weekly/);
+		ok(narrow.every((line) => visibleWidth(line) <= 50));
+		columns = 160;
+		notices = [{ key: null, id: "error", level: "error", text: "Connection lost", addedAt: Date.now(), expiresAt: null }];
+		footer.refresh();
+		match(plain(footer.view.render(160)), /Connection lost/);
+		footer.toggleExpanded();
+		const glance = plain(footer.view.render(160));
+		// Account limits live in /usage; the open deck never leaks unassociated accounts and keeps Alt+U fold.
+		doesNotMatch(glance, /Codex · Weekly|not reported by provider|\/cost/);
+		match(glance, /Alt\+U fold/);
+	} finally {
+		footer.dispose();
+	}
+});
+
+test("usage replaces cost in parsing, dispatch, autocomplete, and Escape routing", async () => {
+	deepStrictEqual(parseSlashCommand("/usage"), { kind: "usage" });
+	strictEqual(parseSlashCommand("/usage extra").kind, "usage-error");
+	deepStrictEqual(parseSlashCommand("/cost"), { kind: "usage" });
+	let opened = 0;
+	await dispatchSlashCommand(parseSlashCommand("/usage"), {
+		openUsage: () => {
+			opened++;
+		},
+	} as SlashCommandContext);
+	strictEqual(opened, 1);
+	const completions = createSlashCommandAutocompleteProvider({ fdPath: null });
+	const result = await completions.getSuggestions(["/us"], 0, 3, { signal: new AbortController().signal });
+	ok(result?.items.some((item) => item.value.includes("usage")));
+	let closed = 0;
+	const deps = {
+		closeOverlay: () => {
+			closed++;
+		},
+	} as OverlayKeyDeps;
+	strictEqual(
+		routeOverlayKey("\x1b[B", "usage", deps, () => false),
+		false,
+		"scroll keys reach the overlay",
+	);
+	strictEqual(
+		routeOverlayKey("\x1b", "usage", deps, () => false),
+		true,
+	);
+	strictEqual(closed, 1);
+});
+
+test("usage overlay shows account details and live session totals, scrolls, resizes, and releases ownership", () => {
+	let options: OverlayOptions | undefined;
+	let rows = 100;
+	let listener: ((snapshot: TelemetrySnapshot) => void) | undefined;
+	let unsubscribed = 0;
+	let hidden = 0;
+	let renders = 0;
+	const titles: string[] = [];
+	let quota = accounts();
+	const snapshot = {} as TelemetrySnapshot;
+	let calls: TelemetryRecord[] = [];
+	let view = telemetryViewOf("usage-session", calls);
+	const updates = new Set<() => void>();
+	const addCalls = (...more: TelemetryRecord[][]) => {
+		calls = [...calls, ...more.flat()];
+		view = telemetryViewOf("usage-session", calls);
+		for (const update of updates) update();
+	};
+	const telemetry = {
+		subscribe: (callback: typeof listener) => {
+			listener = callback;
+			callback?.(snapshot);
+			return () => {
+				unsubscribed++;
+			};
+		},
+		read: {
+			live: () => view,
+			health: () => null,
+			quota: () => ({ providers: quotaRows(quota) }),
+			subscribe: (_topic: string, update: () => void) => {
+				updates.add(update);
+				return () => updates.delete(update);
+			},
+		},
+	} as unknown as TelemetryContract;
+	const tui = {
+		terminal: {
+			setTitle: (title: string) => titles.push(title),
+			get rows() {
+				return rows;
+			},
+		},
+		requestRender: () => renders++,
+		showOverlay: (_proxy: Component, supplied: OverlayOptions) => {
+			options = supplied;
+			return { hide: () => hidden++ };
+		},
+	} as unknown as TUI;
+	// /usage reads the tier from the policy table.
+	setPresentationTier("detailed");
+	const handle = openUsageOverlay(tui, telemetry);
+	// The engine overlay is a zero-row focus proxy; the composer draws the
+	// docked frame, so the test renders the dock's top entry at the terminal height.
+	const frame = dockTop(tui)?.frame as unknown as Component | undefined;
+	const render = (width = 100, height = 100) => {
+		rows = height;
+		options?.visible?.(width, height);
+		const lines = frame?.render(width) ?? [];
+		ok(lines.length <= height);
+		ok(lines.every((line) => visibleWidth(line) <= width));
+		return plain(lines);
+	};
+	// The dock holds 16 body rows, so the accounts list is read page by page.
+	const scrolled = (): string => {
+		const pages = [render()];
+		for (let page = 0; page < 20; page++) {
+			frame?.handleInput?.("\x1b[6~");
+			const next = render();
+			if (next === pages.at(-1)) break;
+			pages.push(next);
+		}
+		frame?.handleInput?.("\x1b[H");
+		return pages.join("\n");
+	};
+	try {
+		match(titles.at(-1) ?? "", /modal:usage/);
+		match(render(), /Less .* More · last 182 days/);
+		frame?.handleInput?.("2");
+		const text = scrolled();
+		match(text, /Claude Code · Max/);
+		match(text, /Weekly .* 9% used/);
+		match(text, /76% used/);
+		doesNotMatch(text, /remaining/);
+
+		const codex = text.slice(text.indexOf("Codex"), text.indexOf("Antigravity"));
+		// The row label, not any "5h": a weekly reset rendered as "4d 15h" also contains it.
+		doesNotMatch(codex, /│ 5h · /);
+		quota = accounts().map((entry) =>
+			entry.providerId === "codex" ? { ...entry, stale: true, message: "refresh failed", retryAfterSeconds: 30 } : entry,
+		);
+		match(scrolled(), /STALE · Codex/);
+		match(scrolled(), /retry after 30.0s/);
+		const before = renders;
+		listener?.(snapshot);
+		ok(renders > before);
+		frame?.handleInput?.("3");
+		match(render(), /Session ─.* this session, every branch/);
+		render(40, 12);
+		// Twelve rows leave the dock five body rows, one of them content, so the
+		// End and Home checks read a 16-row terminal.
+		frame?.handleInput?.("\x1b[F");
+		match(render(40, 16), /no calls recorded/);
+		frame?.handleInput?.("\x1b[H");
+		match(render(40, 16), /Session ─/);
+		frame?.handleInput?.("2");
+		match(render(), /Account-wide limits/);
+		frame?.handleInput?.("4");
+		const rendersBefore = renders;
+		addCalls(telemetryCall("usage-session", { model: "model-a", usage: { input: 1000, output: 234 }, usd: 0.25 }));
+		ok(renders > rendersBefore);
+		const live = render();
+		match(live, /fixture\/model-a/);
+		match(live, /1,234\s+tokens/);
+		match(live, /\$0.25/);
+		doesNotMatch(live, /no calls recorded/);
+		addCalls(
+			telemetryCall("usage-session", {
+				role: "worker",
+				model: "model-a",
+				usage: { input: 50 },
+				usd: 0.005,
+				pricedBy: "catalog",
+			}),
+			telemetryCall("usage-session", {
+				role: "worker",
+				model: "model-a",
+				usage: { input: 50 },
+				usd: 0.005,
+				pricedBy: "catalog",
+			}),
+			telemetryCall("usage-session", {
+				role: "system-one",
+				model: "model-a",
+				// A gateway that settles with usage but omits the cache read, as litellm did in the battle test.
+				usage: { input: null, output: null, cacheRead: null },
+				usd: null,
+			}),
+		);
+		frame?.handleInput?.("3");
+		const combined = scrolled();
+		match(combined, /workers 2/);
+		match(combined, /conversation 1/);
+		match(combined, /System One.*1/);
+		match(combined, /usage data\s+1 call had no usage data/);
+		// An unreported cache read is unknown on this tab, never 0 (#434).
+		match(combined, /cache read\s+≥0\s/);
+
+		quota = [
+			{
+				providerId: "antigravity",
+				displayName: "Antigravity",
+				status: "expired",
+				windows: [],
+				fetchedAt: null,
+				message: "run agy",
+			},
+		];
+		frame?.handleInput?.("2");
+		match(render(), /Credentials expired.*run agy/);
+		frame?.handleInput?.("5");
+		match(render(), /No worker invocations/);
+		frame?.handleInput?.("\t");
+		match(render(), /Health/);
+		frame?.handleInput?.("\t");
+		match(render(), /Less .* More/);
+	} finally {
+		handle.hide();
+		setPresentationTier("standard");
+	}
+	strictEqual(unsubscribed, 1);
+	strictEqual(hidden, 1);
+	strictEqual(titles.at(-1), "pancode");
+});
+
+test("footer producer follows selected runtime changes instead of picking the busiest account", () => {
+	let target = "claude";
+	const criticalAccounts = (): UsageSnapshot[] =>
+		accounts().map((account) =>
+			account.providerId === "claude-code"
+				? {
+						...account,
+						windows: account.windows.map((window) => (window.key === "weekly" ? { ...window, usedPct: 96 } : window)),
+					}
+				: account,
+		);
+	const footer = buildFooterDashboard({
+		providers: {
+			list: () => [
+				{
+					target: { id: "claude", runtime: "claude-code", defaultModel: "claude-opus" },
+					runtime: { id: "claude-code" },
+					capabilities: EMPTY_CAPABILITIES,
+				},
+				{
+					target: { id: "local", runtime: "ollama", defaultModel: "qwen" },
+					runtime: { id: "ollama" },
+					capabilities: EMPTY_CAPABILITIES,
+				},
+			],
+			knowledgeBase: null,
+		} as never,
+		getSettings: () => ({ ...DEFAULT_SETTINGS, chat: { ...DEFAULT_SETTINGS.chat, target, model: null } }),
+		getQuotaSnapshots: () => quotaRows(criticalAccounts()),
+		getTerminalColumns: () => 160,
+		getTerminalRows: () => 48,
+		resolveCurrentBranch: async () => null,
+	});
+	try {
+		match(plain(footer.view.render(160)), /weekly 96% used/);
+		doesNotMatch(plain(footer.view.render(160)), /Codex|Antigravity/);
+		target = "local";
+		footer.refresh();
+		doesNotMatch(plain(footer.view.render(160)), /weekly|Claude|Codex|Antigravity/);
+	} finally {
+		footer.dispose();
+	}
+});
+
+function quotaRows(
+	snapshots: readonly UsageSnapshot[],
+): import("../../src/core/telemetry/dto.js").QuotaStateV1["providers"] {
+	return snapshots.map((snapshot) => ({
+		provider: snapshot.providerId,
+		...quotaAccountDetails(quotaReadingFromSnapshot(snapshot, snapshot.fetchedAt ?? new Date(0).toISOString())),
+		source: "poll",
+		observedAt: snapshot.fetchedAt,
+		stale: snapshot.stale ?? false,
+		windows: snapshot.windows.map((window) => ({
+			key: window.key,
+			scope: window.scope ?? null,
+			label: `${window.scope ? `${window.scope} ` : ""}${window.label}`,
+			usedPct: { fact: { kind: "measured", value: window.usedPct, source: "provider" }, display: `${window.usedPct}%` },
+			resetsAt: window.resetsAt,
+			unit: window.unit ?? null,
+			durationSeconds: window.durationSeconds ?? null,
+			access: window.access ?? "unknown",
+		})),
+	}));
+}

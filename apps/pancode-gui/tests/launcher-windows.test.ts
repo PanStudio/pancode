@@ -1,0 +1,213 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir, userInfo } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import {
+	installWindowsLauncher,
+	refreshWindowsAppScripts,
+	uninstallWindowsLauncher,
+	visibleWslArguments,
+	visibleWslScript,
+	windowsArgument,
+	windowsLauncherStatus,
+	windowsToWsl,
+	wslLaunchArguments,
+} from "../server/launcher/windows.js";
+import { windowsAppScript, windowsIdentitySource } from "../server/launcher/windows-app.js";
+import { isWsl, runWindowsPowerShell } from "../server/process-policy.js";
+
+test("Windows launch wrapper retains literal WSL arguments and reports exit failures with a timeout", () => {
+	const raw = wslLaunchArguments(
+		"Ubuntu-24.04",
+		"user",
+		{ node: "/node", entry: "/old/server.js" },
+		"/home/user/a 'quoted' directory",
+		"open",
+		"/home/user/bin/pancode",
+	);
+	const script = visibleWslScript(raw);
+	assert.match(script, /WaitForExit\(60000\)/);
+	assert.match(script, /MessageBox\]::Show/);
+	assert.match(script, /ExitCode -ne 0/);
+	assert.ok(script.includes(raw.replaceAll("'", "''")));
+	assert.ok(!script.includes("/old/server.js"));
+});
+
+test("real Windows temporary shortcuts update an owned pin the user renamed, preserve other distros and uninstall", {
+	skip: !isWsl() || process.env.PANCODE_TEST_WINDOWS_TEMP !== "1",
+}, async (t) => {
+	const directory = await mkdtemp(join(tmpdir(), "pancode-win-shortcuts-"));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	const win = (
+		await runWindowsPowerShell(
+			"$ErrorActionPreference='Stop'; $p=Join-Path ([IO.Path]::GetTempPath()) ('pancode-install-hardening-' + [guid]::NewGuid()); [void](New-Item -ItemType Directory -Path $p); [Console]::Write($p)",
+		)
+	).trim();
+	t.after(() =>
+		runWindowsPowerShell("Remove-Item -LiteralPath $env:PANCODE_WIN_TEST_ROOT -Recurse -Force", {
+			PANCODE_WIN_TEST_ROOT: win,
+		}).then(() => {}),
+	);
+	const folders = [`${win}\\Programs`, `${win}\\Startup`, `${win}\\Local`, `${win}\\TaskBar`] as const;
+	await runWindowsPowerShell(
+		"$ErrorActionPreference='Stop'; [void](New-Item -ItemType Directory -Path $env:PANCODE_WIN_TEST_PIN)",
+		{ PANCODE_WIN_TEST_PIN: folders[3] },
+	);
+	const launch = {
+		node: process.execPath,
+		entry: join(directory, "server.js"),
+		icon: fileURLToPath(new URL("../client/public/icon-192.png", import.meta.url)),
+	};
+	await writeFile(launch.entry, "");
+	const raw = wslLaunchArguments(process.env.WSL_DISTRO_NAME ?? "", userInfo().username, launch, directory, "open");
+	await runWindowsPowerShell(
+		"$ErrorActionPreference='Stop'; $s=New-Object -ComObject WScript.Shell; $a=$s.CreateShortcut($env:PANCODE_WIN_TEST_PIN + '\\Renamed PanCode.lnk'); $a.TargetPath='C:\\Windows\\System32\\wsl.exe'; $a.Arguments=$env:PANCODE_WIN_TEST_ARGS; $a.Save(); $b=$s.CreateShortcut($env:PANCODE_WIN_TEST_PIN + '\\Foreign.lnk'); $b.TargetPath=$a.TargetPath; $b.Arguments=$env:PANCODE_WIN_TEST_ARGS.Replace('-d ', '-d Other'); $b.Save()",
+		{ PANCODE_WIN_TEST_PIN: folders[3], PANCODE_WIN_TEST_ARGS: raw },
+	);
+	const foreign = await readFile(join(windowsToWsl(folders[3]), "Foreign.lnk"));
+	await installWindowsLauncher(directory, launch, folders);
+	assert.equal(await windowsLauncherStatus(directory), "installed");
+	const pin = (
+		await runWindowsPowerShell(
+			"$s=New-Object -ComObject WScript.Shell; $a=$s.CreateShortcut($env:PANCODE_WIN_TEST_PATH); [Console]::Write($a.Arguments)",
+			{ PANCODE_WIN_TEST_PATH: `${folders[3]}\\Renamed PanCode.lnk` },
+		)
+	).trim();
+	const manifest = JSON.parse(await readFile(join(directory, "windows.json"), "utf8"));
+	assert.equal(pin, manifest.menuArgs);
+	assert.ok(pin.length < 1024);
+	assert.match(pin, /-File /);
+	assert.deepEqual(await readFile(join(windowsToWsl(folders[3]), "Foreign.lnk")), foreign);
+	// Reconciliation (including upgrade) must retain the recorded folders.
+	await installWindowsLauncher(directory, launch);
+	await uninstallWindowsLauncher(directory);
+	assert.equal(await windowsLauncherStatus(directory), "absent");
+	await assert.rejects(readFile(join(windowsToWsl(folders[3]), "Renamed PanCode.lnk")), { code: "ENOENT" });
+	assert.deepEqual(await readFile(join(windowsToWsl(folders[3]), "Foreign.lnk")), foreign);
+	// Exercise the same generated host script without displaying any dialog or opening a browser.
+	const goodArgs = wslLaunchArguments(
+		process.env.WSL_DISTRO_NAME ?? "",
+		userInfo().username,
+		{ node: "/bin/true", entry: "unused" },
+		directory,
+		"start",
+	);
+	const script = visibleWslScript(goodArgs);
+	assert.equal(await runWindowsPowerShell(script), "");
+	assert.ok(windowsArgument("space path").startsWith('"'));
+	assert.throws(() => visibleWslArguments("x".repeat(1024)), /limit/);
+});
+
+test("a launch rewrites the app scripts an older version installed, never one someone changed", async (t) => {
+	const directory = await mkdtemp(join(tmpdir(), "pancode-win-refresh-"));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	const app = join(directory, "app");
+	await mkdir(app);
+	const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+	const files: Record<string, string> = {
+		"open.ps1": "open, as installed",
+		"identity.cs": "an older identity source",
+		"app.ps1": "\uFEFFan older app script",
+	};
+	for (const [name, text] of Object.entries(files)) await writeFile(join(app, name), text);
+	const record = (current: Record<string, string>) => ({
+		v: 1,
+		owner: "pancode-gui-windows",
+		distro: "Test",
+		launch: "key",
+		files: Object.entries(current).map(([name, text]) => ({ path: join(app, name), sha256: sha(text) })),
+		appDirectory: "C:\\pancode",
+		appId: "dev.pancode.PanCode.test",
+	});
+	await writeFile(join(directory, "windows.json"), JSON.stringify(record(files)));
+	// An upgrade rewrites the launcher only when its launch paths change, so the launch brings the scripts current.
+	assert.equal(await refreshWindowsAppScripts(directory), true);
+	const current = { ...files, "identity.cs": windowsIdentitySource, "app.ps1": `\uFEFF${windowsAppScript}` };
+	for (const [name, text] of Object.entries(current)) assert.equal(await readFile(join(app, name), "utf8"), text, name);
+	assert.deepEqual(JSON.parse(await readFile(join(directory, "windows.json"), "utf8")), record(current));
+	assert.equal(await windowsLauncherStatus(directory), "installed");
+	assert.equal(await refreshWindowsAppScripts(directory), false);
+	// A launch stopped after it wrote the scripts and before it recorded them: this version's own bytes are intact.
+	await writeFile(join(directory, "windows.json"), JSON.stringify(record(files)));
+	assert.equal(await windowsLauncherStatus(directory), "installed");
+	assert.equal(await refreshWindowsAppScripts(directory), true);
+	assert.deepEqual(JSON.parse(await readFile(join(directory, "windows.json"), "utf8")), record(current));
+	// A script someone changed is left alone; the launch then refuses it as before.
+	await writeFile(join(app, "app.ps1"), "edited by hand");
+	assert.equal(await refreshWindowsAppScripts(directory), false);
+	assert.equal(await readFile(join(app, "app.ps1"), "utf8"), "edited by hand");
+});
+
+test("managed Windows app uses its owned profile and shell identity and uninstall removes that profile", {
+	skip: !isWsl() || process.env.PANCODE_TEST_WINDOWS_DESKTOP !== "1",
+}, async (t) => {
+	const { openManagedWindowsApp } = await import("../server/launcher/windows.js");
+	const directory = await mkdtemp(join(tmpdir(), "pancode-win-desktop-"));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	const win = (
+		await runWindowsPowerShell(
+			"$p=Join-Path ([IO.Path]::GetTempPath()) ('pancode-install-hardening-desktop-' + [guid]::NewGuid()); [void](New-Item -ItemType Directory -Path $p); [Console]::Write($p)",
+		)
+	).trim();
+	t.after(() =>
+		runWindowsPowerShell(
+			"Remove-Item -LiteralPath $env:PANCODE_WIN_TEST_ROOT -Recurse -Force -ErrorAction SilentlyContinue",
+			{ PANCODE_WIN_TEST_ROOT: win },
+		).then(() => {}),
+	);
+	const launch = {
+		node: process.execPath,
+		entry: join(directory, "server.js"),
+		icon: fileURLToPath(new URL("../client/public/icon-192.png", import.meta.url)),
+	};
+	await writeFile(launch.entry, "");
+	const folders = [`${win}\\Programs`, `${win}\\Startup`, `${win}\\Local`, `${win}\\TaskBar`] as const;
+	await installWindowsLauncher(directory, launch, folders);
+	t.after(() => uninstallWindowsLauncher(directory).then(() => {}));
+	const manifest = JSON.parse(await readFile(join(directory, "windows.json"), "utf8"));
+	// Every launch carries its own single-use ticket, as the real launcher's links do.
+	let tickets = 0;
+	const link = () =>
+		`http://127.0.0.1:43981/#ticket=pancode_install_hardening_isolated_ticket_${String(++tickets).padStart(6, "0")}`;
+	const handles = async () =>
+		JSON.parse(
+			await runWindowsPowerShell(
+				"$ErrorActionPreference='Stop'; Add-Type -Path $env:PANCODE_WIN_IDENTITY_SOURCE; $h=@(); Get-CimInstance Win32_Process -Filter \"name='chrome.exe' OR name='msedge.exe'\" | Where-Object { [PancodeIdentity]::UsesProfile($_.CommandLine,$env:PANCODE_WIN_PROFILE) -and -not $_.CommandLine.Contains('--type=') } | ForEach-Object { foreach($w in [PancodeIdentity]::Windows($_.ProcessId)) { $h += $w } }; ConvertTo-Json -Compress -InputObject $h",
+				{
+					PANCODE_WIN_IDENTITY_SOURCE: `${manifest.appDirectory}\\identity.cs`,
+					PANCODE_WIN_PROFILE: `${manifest.appDirectory}\\browser`,
+				},
+			),
+		) as number[];
+	assert.equal(await openManagedWindowsApp(link(), directory, false), "opened");
+	const first = await handles();
+	assert.equal(first.length, 1);
+	// Two simultaneous relaunches while the app reports the window live must serialize and focus that window.
+	assert.deepEqual(await Promise.all([0, 1].map(() => openManagedWindowsApp(link(), directory, true))), [
+		"focused",
+		"focused",
+	]);
+	assert.deepEqual(await handles(), first, "a live window must be focused, not replaced");
+	// A window the app does not know (its server restarted) cannot reconnect, so it is replaced.
+	await openManagedWindowsApp(link(), directory, false);
+	const replaced = await handles();
+	assert.equal(replaced.length, 1);
+	assert.notDeepEqual(replaced, first, "a window the app does not know must be replaced");
+	const result = await runWindowsPowerShell(
+		"$ErrorActionPreference='Stop'; Add-Type -Path $env:PANCODE_WIN_IDENTITY_SOURCE; $ids=@(); Get-CimInstance Win32_Process -Filter \"name='chrome.exe' OR name='msedge.exe'\" | Where-Object { [PancodeIdentity]::UsesProfile($_.CommandLine,$env:PANCODE_WIN_PROFILE) } | ForEach-Object { foreach($w in [PancodeIdentity]::Windows($_.ProcessId)) { $ids += [PancodeIdentity]::WindowId($w) } }; ConvertTo-Json -Compress -InputObject $ids",
+		{
+			PANCODE_WIN_IDENTITY_SOURCE: `${manifest.appDirectory}\\identity.cs`,
+			PANCODE_WIN_PROFILE: `${manifest.appDirectory}\\browser`,
+		},
+	);
+	assert.deepEqual(JSON.parse(result), [manifest.appId], "repeated launches must keep exactly one app window");
+	await uninstallWindowsLauncher(directory);
+	await assert.rejects(readFile(join(windowsToWsl(manifest.appDirectory), "app-id")), { code: "ENOENT" });
+	const { stat } = await import("node:fs/promises");
+	await assert.rejects(stat(join(windowsToWsl(manifest.appDirectory), "browser")), { code: "ENOENT" });
+});

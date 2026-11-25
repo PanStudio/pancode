@@ -1,0 +1,174 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { ToolInvokeOptions } from "../registry-contract.js";
+import type { ToolResult, ToolSpec } from "../tool-spec.js";
+import { runFrontendCheck } from "./frontend.js";
+import { captureQualitySnapshot, loadQualityPolicy, type QualitySnapshot } from "./quality-policy.js";
+import { resolveVerifyCall } from "./resolve.js";
+import {
+	listChecks,
+	runProjectCheck,
+	runScriptCheck,
+	runTaskGateCheck,
+	runToolchainCheck,
+	unavailableCheck,
+	type VerifyRunOptions,
+} from "./scripts.js";
+import { prepareVerifyArguments, verifyToolSurface } from "./surface.js";
+
+/**
+ * The verify tool: one EXECUTE entry point for declared verification.
+ * verify() lists canonical checks, verify(check=<id>) runs a package script,
+ * an exact project-catalog vector, or a check derived from the repository's
+ * toolchain and CI files via safe-exec, and verify(check="frontend",
+ * path=<file>) validates an HTML/CSS/JS artifact without shell access.
+ * resolveVerifyCall is shared with the safety policy engine, so the command
+ * admitted is the command run. A check's command runs project code, so a
+ * contained call runs it in the main-session sandbox the registry hands over,
+ * exactly as a contained bash command runs.
+ */
+
+export const verifyTool: ToolSpec = {
+	...verifyToolSurface,
+	async run(rawArgs, options): Promise<ToolResult> {
+		const args = prepareVerifyArguments(rawArgs);
+		const root = process.cwd();
+		const loaded = loadQualityPolicy(root);
+		if (!loaded.ok) return { kind: "error", message: `verify: ${loaded.reason}` };
+		const policy = loaded.policy;
+		const check = typeof args.check === "string" ? args.check.trim() : "";
+		if (!check && policy) {
+			const listed = listChecks(typeof args.cwd === "string" && args.cwd.length > 0 ? args.cwd : undefined);
+			if (listed.kind === "error") return listed;
+			return {
+				...listed,
+				output: `${listed.output ?? ""}\n\nProject quality policy:\n${policy.rules.map((rule) => `- ${rule.id}: ${rule.paths.join(", ")} requires ${rule.checks.join(", ")}`).join("\n")}`,
+				details: { ...listed.details, qualityPolicy: policy },
+			};
+		}
+		const applies = policy?.rules.some((rule) => rule.checks.includes(check)) === true;
+		let before: QualitySnapshot | undefined;
+		let snapshotError: string | undefined;
+		if (
+			applies &&
+			policy &&
+			args.cwd === undefined &&
+			(args.args === undefined || (Array.isArray(args.args) && args.args.length === 0))
+		) {
+			try {
+				before = captureQualitySnapshot(root, policy, check);
+			} catch (error) {
+				snapshotError = error instanceof Error ? error.message : String(error);
+			}
+		}
+		const result = notRunWhenUnavailable(
+			await runResolvedVerify(
+				args,
+				{
+					...(options?.signal !== undefined ? { signal: options.signal } : {}),
+					...(options?.shellSandbox !== undefined ? { shellSandbox: options.shellSandbox } : {}),
+				},
+				options,
+			),
+		);
+		if (!applies || !policy) return result;
+		let stable = false;
+		if (before) {
+			try {
+				const afterPolicy = loadQualityPolicy(root);
+				stable =
+					afterPolicy.ok &&
+					afterPolicy.policy !== null &&
+					JSON.stringify(before) === JSON.stringify(captureQualitySnapshot(root, afterPolicy.policy, check));
+			} catch (error) {
+				snapshotError = error instanceof Error ? error.message : String(error);
+			}
+		}
+		return {
+			...result,
+			details: {
+				...result.details,
+				quality: { stable, ...(before ? { snapshot: before } : {}), ...(snapshotError ? { error: snapshotError } : {}) },
+			},
+		};
+	},
+};
+
+/**
+ * A check whose runner was unavailable judged nothing, so it carries the same not-run marker as a name that resolved
+ * to no check; receipts otherwise sealed it as a failed check and said "validation failed" for a suite that passes
+ * once its runner exists (FL-2).
+ */
+function notRunWhenUnavailable(result: ToolResult): ToolResult {
+	if (result.kind !== "error" || result.details?.unresolved === true) return result;
+	const judged = result.details?.judgement as { execution?: unknown } | undefined;
+	if (judged?.execution !== "unavailable") return result;
+	return { ...result, details: { ...result.details, unresolved: true } };
+}
+
+async function runResolvedVerify(
+	args: Record<string, unknown>,
+	options: VerifyRunOptions,
+	invoke: ToolInvokeOptions | undefined,
+): Promise<ToolResult> {
+	const resolution = resolveVerifyCall(process.cwd(), args);
+	switch (resolution.kind) {
+		case "list":
+			return listChecks(typeof args.cwd === "string" && args.cwd.length > 0 ? args.cwd : undefined);
+		case "frontend": {
+			// The route's image capability and result cap size the screenshot the check attaches on a vision route.
+			const result = await runFrontendCheck(args, {
+				...(options.signal !== undefined ? { signal: options.signal } : {}),
+				...(invoke?.supportsImages !== undefined ? { supportsImages: invoke.supportsImages } : {}),
+				...(invoke?.toolResultMaxBytes !== undefined ? { toolResultMaxBytes: invoke.toolResultMaxBytes } : {}),
+			});
+			// A refusal before any check (no path, a missing or non-web file) carries no details. Without the not-run
+			// marker, receipts sealed it as a failed check: one README edit read "assurance compromised".
+			return result.kind === "error" && result.details === undefined
+				? { ...result, details: { unresolved: true } }
+				: result;
+		}
+		case "catalog": {
+			// The declared kind rides on the result as a typed field, so telemetry records it without reading the report.
+			const result = await runProjectCheck(resolution.check, options);
+			return {
+				...result,
+				details: {
+					...result.details,
+					checkKind: resolution.check.kind,
+					...(resolution.run !== undefined ? { run: resolution.run } : {}),
+				},
+			};
+		}
+		case "package": {
+			const result = await runScriptCheck(resolution.check.id, args, options);
+			return {
+				...result,
+				details: {
+					...result.details,
+					check: resolution.check.id,
+					source: { ...resolution.check.source },
+					checkKind: "command",
+				},
+			};
+		}
+		case "toolchain": {
+			const result = await runToolchainCheck(resolution.check, resolution.argv, args, options);
+			return { ...result, details: { ...result.details, checkKind: "command" } };
+		}
+		case "task": {
+			const result = await runTaskGateCheck(resolution.check, args, options);
+			return { ...result, details: { ...result.details, checkKind: "command" } };
+		}
+		case "unavailable":
+			return unavailableCheck(resolution.check);
+		case "unresolved":
+			// The name resolved to no check, so nothing ran; the marker keeps this apart from a check that ran and failed.
+			// A workspace with no check at all also carries that fact, which the finish contract settles on.
+			return {
+				kind: "error",
+				message: `verify: ${resolution.message}`,
+				details: { unresolved: true, ...(resolution.noChecksDeclared ? { noChecksDeclared: true } : {}) },
+			};
+	}
+}

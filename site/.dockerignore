@@ -1,0 +1,8 @@
+public/
+.preview*/
+__pycache__/
+tests/
+*.log
+README.md
+.git
+*.tar.gz

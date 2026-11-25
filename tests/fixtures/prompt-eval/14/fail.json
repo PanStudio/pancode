@@ -1,0 +1,41 @@
+{
+	"task": "14",
+	"name": "greeting",
+	"profile": "v1",
+	"target": "copilot",
+	"model": "claude-haiku-5.5",
+	"run": 0,
+	"surface": "headless",
+	"commit": "a3f59fe62",
+	"parts": [
+		{
+			"exit": 0,
+			"final": "Hi. I'm PanCode, a coding agent for scientific software. This workspace is on branch main with a clean tree. What do you want to work on?",
+			"tools": [],
+			"rounds": 0,
+			"usage": [
+				{
+					"input": 4,
+					"cacheRead": 4091,
+					"cacheReadField": null
+				}
+			],
+			"blocked": [],
+			"acp_methods": [],
+			"prompt": "hi",
+			"seconds": 5.0,
+			"stderr_tail": "pancode run: autonomy default (settings.yaml sets yolo, which a headless run takes only from --autonomy yolo)\n",
+			"files_changed": []
+		}
+	],
+	"verdict": false,
+	"note": "tools=0 words=28 offer=True",
+	"counters": {
+		"rounds": 0,
+		"tool_calls": 0,
+		"malformed_gateway": 0,
+		"prompt_tokens_first": 4095,
+		"cached_first": 4091
+	},
+	"source": "real: claude-haiku-5.5 v1 run 0 commit a3f59fe62"
+}

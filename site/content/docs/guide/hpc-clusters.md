@@ -1,0 +1,52 @@
+# Install on a cluster
+
+Install PanCode on a login node with an old glibc, a proxy, or no internet.
+
+## Install without root
+
+The installer brings its own Node.js, so you do not need `module load nodejs` or a system Node. It never uses `sudo` and refuses to run under it.
+
+```sh
+curl -fsSL https://pancode.dev/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+pancode doctor
+```
+
+It needs `curl` or `wget`, `tar` with `xz` or `gzip`, and a SHA-256 tool. The runtime and package go under `~/.local/share/pancode-install` and the launcher under `~/.local/bin`. Compute nodes that mount the same home directory run the same launcher.
+
+## Work on the cluster
+
+Ask for scheduler work in words, such as "submit job.sh and tell me when it starts". `sbatch`, `squeue` and the other Slurm, PBS, LSF and Flux clients run outside the sandbox with the same review as `ssh`: the safety judge decides first and asks you when it has no verdict, so name the action you want. Run them directly, not from a wrapper script, which stays inside the sandbox and fails.
+
+Shell commands write to the project and temp folders without asking. Add scratch space with an absolute path:
+
+```yaml
+safety:
+  scratchRoots: [/scratch/alice]
+```
+
+Keep results out of Git with `pancode store put results run-042.h5`; every checkout of the project on this host sees them.
+
+## Old glibc, proxies, and quotas
+
+The installer picks a Node build for the host. Official builds cover Linux with glibc 2.28 or newer, macOS, and Alpine on x64. Unofficial builds cover x64 hosts with glibc 2.17 to 2.27, the RHEL and CentOS 7 class, and Alpine on arm64. Linux arm64 with an older glibc has no build; use conda-forge Node and npm instead.
+
+Export `https_proxy` before running the installer behind a proxy. Node adds about 210 MB to a version, and the Claude Agent SDK, installed only with `--include-claude-sdk`, adds about 224 MB. The installer refuses to start with under about 732 MB free at the install root. On a small home quota, move the install root:
+
+```sh
+curl -fsSL https://pancode.dev/install.sh | sh -s -- --install-dir /project/$USER/pancode
+```
+
+## Verified downloads
+
+Every Node download is checked against its release `SHASUMS256.txt`, and a mismatch stops the install. When `gpgv` or `gpg` is present, the installer also verifies the OpenPGP signature on official builds, and it stops when nodejs.org serves no signature or a key outside the Node.js release keyring signed it.
+
+A mirror without a signature file still installs on the checksum. Set `PANCODE_REQUIRE_SIGNATURE=1` to fail when no signature verifies.
+
+## Airgapped sites and your own Node
+
+Point `PANCODE_NODE_MIRROR` at a mirror laid out like nodejs.org/dist, `PANCODE_NODE_UNOFFICIAL_MIRROR` at one for the unofficial builds, and `npm_config_registry` at a registry mirror for the package's dependencies. A Node mirror can be a `file://` URL on a shared filesystem.
+
+If the site already provides Node 22.19 or newer, you can install with its npm instead: `npm install -g pancode`. When an older `node` comes first on `PATH`, set `PANCODE_NODE` to the newer binary.
+
+Pick versions with `--version` or `--channel`, and undo an upgrade with `--rollback`. The full guide covers the mirror variables; `sh install.sh --help` lists every option.

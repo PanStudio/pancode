@@ -1,0 +1,276 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Field validation and the fixed inspection argv for the typed git tool. Pure,
+ * so the loop guard can key a git call on the argv it will run. A field an op
+ * does not take is refused before anything runs: log once ignored a nested
+ * `args` array and ran the default 20-commit log twice, green both times
+ * (DF-9), and a reviewer with no way to name a revision repeated that one
+ * call until the loop guard blocked it (DF-4).
+ */
+
+export const GIT_OPS = ["status", "diff", "log", "show", "add", "commit"] as const;
+export type GitOp = (typeof GIT_OPS)[number];
+type GitInspectOp = "status" | "diff" | "log" | "show";
+
+const OP_ALIASES = ["op", "mode", "action"] as const;
+const COMMON_FIELDS = new Set<string>([...OP_ALIASES, "cwd", "timeout_ms", "max_output_bytes"]);
+const OP_FIELDS: Record<GitOp, ReadonlyArray<string>> = {
+	status: ["path"],
+	diff: ["rev", "cached", "stat", "name_only", "path"],
+	log: ["rev", "limit", "stat", "path"],
+	show: ["rev", "stat", "name_only", "path"],
+	add: ["paths"],
+	commit: ["message"],
+};
+const OP_EXAMPLES: Record<GitOp, Record<string, unknown>> = {
+	status: { op: "status" },
+	diff: { op: "diff", rev: "HEAD~1..HEAD", stat: true },
+	log: { op: "log", rev: "main", limit: 5, stat: true },
+	show: { op: "show", rev: "HEAD~1" },
+	add: { op: "add", paths: ["src/index.ts"] },
+	commit: { op: "commit", message: "fix: correct retry handling" },
+};
+
+const REV_MAX_CHARS = 200;
+// Ref names, abbreviated or full hashes, and the ~ ^ @{n} suffixes. No
+// whitespace, ":" (rev:path), globs, or pathspec magic. Git refuses only ASCII
+// bytes in a ref name, so a non-ASCII spelling such as the tag "rélease" is
+// valid; any non-ASCII letter, mark, number, symbol or punctuation passes,
+// while Unicode whitespace, controls and lone surrogates stay refused.
+const REV_PART = /^(?:[A-Za-z0-9._/@^~{}+-]|(?![\p{White_Space}\p{Cc}\p{Cs}])[\u0080-\u{10FFFF}])+$/u;
+
+function example(op: GitOp): string {
+	return `gateway({op:"call",capability:"git",args:${JSON.stringify(OP_EXAMPLES[op])}})`;
+}
+
+function opList(): string {
+	return `${GIT_OPS.slice(0, -1).join(", ")}, or ${GIT_OPS[GIT_OPS.length - 1]}`;
+}
+
+function revPartError(part: string): string | null {
+	if (part.startsWith("-")) return "starts with -";
+	if (!REV_PART.test(part)) return "has a character outside a ref name, hash, ~, ^ or @{n}";
+	return null;
+}
+
+/** Why `rev` is refused, or null. A range is `a..b` or `a...b`; show takes one revision. */
+function gitRevError(rev: unknown, op: GitOp): string | null {
+	if (typeof rev !== "string" || rev.length === 0) return "must be a non-empty string";
+	if (rev.length > REV_MAX_CHARS) return `exceeds ${REV_MAX_CHARS} characters`;
+	if (rev.startsWith("-")) return "starts with -";
+	const range = /^(.*?)\.\.\.?(.*)$/.exec(rev);
+	if (range === null) return revPartError(rev);
+	if (op === "show") return "is a range; show takes one revision (use op log or diff for a range)";
+	const sides = [range[1] ?? "", range[2] ?? ""];
+	if (sides.every((side) => side.length === 0)) return "names no revision";
+	for (const side of sides) {
+		if (side.length === 0) continue;
+		if (side.includes("..")) return "has more than one range operator";
+		const error = revPartError(side);
+		if (error !== null) return error;
+	}
+	return null;
+}
+
+/**
+ * Each call's `args` are the ones every later step reads: argv building,
+ * admission's safety projection and the loop guard's repeat key all take them
+ * from here, so an alias folded in below is judged as the argv it runs.
+ */
+export type GitFieldCheck =
+	| { ok: true; op: GitOp; args: Record<string, unknown> }
+	| { ok: false; op: string; error: string };
+
+/**
+ * Models often send `file` where an op takes `path` (or `paths` for add)
+ * (FW-9), and `range` or `ref` where it takes `rev`, `max_count` where log takes
+ * `limit` (C-23). Each is folded into that field before validation; naming both
+ * with different values is refused, since either reading would drop one.
+ */
+const FIELD_ALIASES: ReadonlyArray<readonly [alias: string, fields: ReadonlyArray<string>]> = [
+	["file", ["path", "paths"]],
+	["range", ["rev"]],
+	["ref", ["rev"]],
+	["max_count", ["limit"]],
+];
+
+type Folded = { ok: true; args: Record<string, unknown> } | { ok: false; error: string };
+
+function foldAlias(op: GitOp, args: Record<string, unknown>, alias: string, fields: ReadonlyArray<string>): Folded {
+	if (!Object.hasOwn(args, alias)) return { ok: true, args };
+	const field = fields.find((candidate) => OP_FIELDS[op].includes(candidate));
+	if (field === undefined) return { ok: true, args };
+	const { [alias]: given, ...rest } = args;
+	const value = field === "paths" && typeof given === "string" ? [given] : given;
+	if (Object.hasOwn(rest, field) && JSON.stringify(rest[field]) !== JSON.stringify(value)) {
+		return {
+			ok: false,
+			error: `git: op ${op} got both ${field} and ${alias} with different values; nothing ran. Send only ${field}. Example: ${example(op)}`,
+		};
+	}
+	return { ok: true, args: { ...rest, [field]: value } };
+}
+
+function stringArray(value: unknown): string[] | null {
+	return Array.isArray(value) && value.every((entry) => typeof entry === "string") ? value : null;
+}
+
+/**
+ * The typed fields a command-line `args` array spells for log, diff or show
+ * (C-23): -N, -n N and --max-count=N as limit, --stat, --name-only, --cached,
+ * one revision or range as rev, and one path after --. log's --oneline is what
+ * it always prints. Any other token is refused by name, so nothing the array
+ * asks for is silently dropped (DF-9).
+ */
+function foldArgv(op: GitOp, args: Record<string, unknown>): Folded {
+	const argv = stringArray(args.args);
+	if (argv === null || (op !== "log" && op !== "diff" && op !== "show")) return { ok: true, args };
+	const { args: _argv, ...rest } = args;
+	const tokens = argv[0] === op ? argv.slice(1) : argv;
+	const fields: Record<string, unknown> = {};
+	const refuse = (token: string): Folded => ({
+		ok: false,
+		error: `git: op ${op} has no field for ${JSON.stringify(token)} in args; nothing ran. ${op} takes ${OP_FIELDS[op].join(", ")}, plus cwd, timeout_ms, max_output_bytes.${op === "show" ? "" : " For one commit's header and patch use op show with rev."} Example: ${example(op)}`,
+	});
+	for (let index = 0; index < tokens.length; index++) {
+		const token = tokens[index] ?? "";
+		const count = /^-(\d+)$|^-n(\d+)$|^--max-count=(\d+)$/u.exec(token);
+		const next = tokens[index + 1] ?? "";
+		if (token === "--") {
+			const paths = tokens.slice(index + 1);
+			if (paths.length !== 1) return refuse(paths.join(" "));
+			fields.path = paths[0];
+			break;
+		}
+		if (op === "log" && count !== null) fields.limit = Number(count[1] ?? count[2] ?? count[3]);
+		else if (op === "log" && (token === "-n" || token === "--max-count") && /^\d+$/u.test(next)) {
+			fields.limit = Number(next);
+			index++;
+		} else if (op === "log" && token === "--oneline") continue;
+		else if (token === "--stat") fields.stat = true;
+		else if (op !== "log" && token === "--name-only") fields.name_only = true;
+		else if (op === "diff" && (token === "--cached" || token === "--staged")) fields.cached = true;
+		else if (!token.startsWith("-") && token.length > 0 && fields.rev === undefined) fields.rev = token;
+		else return refuse(token);
+	}
+	for (const [field, value] of Object.entries(fields)) {
+		if (Object.hasOwn(rest, field) && JSON.stringify(rest[field]) !== JSON.stringify(value)) {
+			return {
+				ok: false,
+				error: `git: op ${op} got ${field} both as a field and in args with different values; nothing ran. Send only the field. Example: ${example(op)}`,
+			};
+		}
+	}
+	return { ok: true, args: { ...rest, ...fields } };
+}
+
+function foldSpellings(op: GitOp, input: Record<string, unknown>): Folded {
+	let folded: Folded = foldArgv(op, input);
+	for (const [alias, fields] of FIELD_ALIASES) {
+		if (!folded.ok) return folded;
+		folded = foldAlias(op, folded.args, alias, fields);
+	}
+	return folded;
+}
+
+/** An inspection op an argv array names first, when no op field does (`args:["log","-5"]`). */
+function argvOp(input: Record<string, unknown>): string[] {
+	const first = stringArray(input.args)?.[0];
+	return first === "status" || first === "diff" || first === "log" || first === "show" ? [first] : [];
+}
+
+/** The op the call names, and every field checked against what that op takes. */
+export function checkGitFields(input: Record<string, unknown>): GitFieldCheck {
+	const named = OP_ALIASES.flatMap((key) => (typeof input[key] === "string" ? [input[key] as string] : []));
+	const op = named[0] ?? argvOp(input)[0] ?? "";
+	const unexpected = Object.keys(input).find(
+		(key) => !COMMON_FIELDS.has(key) && !Object.values(OP_FIELDS).some((fields) => fields.includes(key)),
+	);
+	if (!(GIT_OPS as ReadonlyArray<string>).includes(op)) {
+		return {
+			ok: false,
+			op,
+			error: `git: expected args.op to be ${opList()}; got ${JSON.stringify(op)}${unexpected ? `; unrecognized field ${JSON.stringify(unexpected)}` : ""}. Example: ${example("log")}`,
+		};
+	}
+	const gitOp = op as GitOp;
+	if (new Set(named).size > 1) {
+		return { ok: false, op, error: `git: op, mode and action name different ops (${named.join(", ")}); nothing ran` };
+	}
+	const folded = foldSpellings(gitOp, input);
+	if (!folded.ok) return { ok: false, op, error: folded.error };
+	const args = folded.args;
+	const accepted = OP_FIELDS[gitOp];
+	const refused = Object.keys(args).find((key) => !COMMON_FIELDS.has(key) && !accepted.includes(key));
+	if (refused !== undefined) {
+		const hint = gitOp === "log" || gitOp === "diff" ? ` For one commit's header and patch use op show with rev.` : "";
+		return {
+			ok: false,
+			op,
+			error: `git: op ${gitOp} does not take field ${JSON.stringify(refused)}; nothing ran. ${gitOp} takes ${accepted.join(", ")}, plus cwd, timeout_ms, max_output_bytes.${hint} Example: ${example(gitOp)}`,
+		};
+	}
+	if (args.rev !== undefined) {
+		const error = gitRevError(args.rev, gitOp);
+		if (error !== null) {
+			return {
+				ok: false,
+				op,
+				error: `git: rev ${JSON.stringify(args.rev)} ${error}; nothing ran. Example: ${example(gitOp)}`,
+			};
+		}
+	}
+	return { ok: true, op: gitOp, args };
+}
+
+export function isGitInspectOp(op: GitOp): op is GitInspectOp {
+	return op === "status" || op === "diff" || op === "log" || op === "show";
+}
+
+/**
+ * The argv an inspection op runs, for fields checkGitFields admitted. A
+ * revision always follows --end-of-options, so it can never be read as an
+ * option even if validation were bypassed, and diff, log and show always end
+ * their revisions with --, so a rev that names a tracked file and no commit is
+ * a bad-revision error (exit 128) instead of a silent pathspec filter.
+ */
+export function gitInspectArgv(op: GitInspectOp, args: Record<string, unknown>): string[] {
+	const path = typeof args.path === "string" && args.path.length > 0 ? args.path : null;
+	const rev = typeof args.rev === "string" ? args.rev : null;
+	const tail = [...(rev !== null ? ["--end-of-options", rev] : []), "--", ...(path !== null ? [path] : [])];
+	if (op === "status") return ["status", "--short", "--branch", ...(path !== null ? ["--", path] : [])];
+	if (op === "diff") {
+		const vector = ["diff", "--no-ext-diff", "--no-textconv"];
+		if (args.cached === true) vector.push("--cached");
+		if (args.stat === true) vector.push("--stat");
+		if (args.name_only === true) vector.push("--name-only");
+		return [...vector, ...tail];
+	}
+	if (op === "log") {
+		const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(200, Math.floor(args.limit)) : 20;
+		const vector = ["log", "--no-ext-diff", "--no-textconv", "--oneline", "-n", String(limit)];
+		// A merge has no stat by default, and the newest commits of a branch are
+		// often merges; the first-parent diff is what the merge brought in.
+		if (args.stat === true) vector.push("--stat", "--diff-merges=first-parent");
+		return [...vector, ...tail];
+	}
+	const vector = ["show", "--no-ext-diff", "--no-textconv"];
+	if (args.stat === true) vector.push("--stat");
+	if (args.name_only === true) vector.push("--name-only");
+	if (args.stat !== true && args.name_only !== true) vector.push("--stat", "--patch");
+	vector.push("--diff-merges=first-parent");
+	return [...vector, ...(rev === null ? ["--end-of-options", "HEAD"] : []), ...tail];
+}
+
+/**
+ * What a git call will actually run, for repeat detection: the inspection
+ * argv and cwd. Null for a mutation or a refused call, whose raw arguments
+ * already are its identity.
+ */
+export function gitCallIdentity(args: Record<string, unknown>): Record<string, unknown> | null {
+	const check = checkGitFields(args);
+	if (!check.ok || !isGitInspectOp(check.op)) return null;
+	const cwd = typeof args.cwd === "string" && args.cwd.length > 0 ? args.cwd : undefined;
+	return { argv: gitInspectArgv(check.op, check.args), ...(cwd !== undefined ? { cwd } : {}) };
+}

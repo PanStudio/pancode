@@ -1,0 +1,339 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { formatBootTrace } from "../core/boot-trace.js";
+import { validateSettingsFile } from "../core/config.js";
+import { allowCopilotKeychain } from "../core/copilot-keychain.js";
+import { writeDiagnostic } from "../core/diagnostics.js";
+import { detectNewerHome, initializePancodeHome, type NewerHome, recordHomeDowngrade } from "../core/init.js";
+import { readPancodeVersion } from "../core/package-root.js";
+import { isRestartHandoff } from "../core/restart-status.js";
+import { withRunOverrides } from "../core/run-overrides.js";
+import { formatSettingsLayerWarning } from "../core/settings-layer-diagnostics.js";
+import { readLayeredSettings, readStrictLayeredSettings } from "../core/settings-layers.js";
+import type { BootOptions } from "../entry/boot-options.js";
+import { applyRouteOverlay } from "../entry/route-overlay.js";
+import { classifyDefaultTarget, describeKeptChatRoute, describeVerdict, homeIsReturning } from "./default-target.js";
+import { terminalColumns, wrapPlain } from "./text-layout.js";
+
+/** A startup notice wrapped to the terminal, so a 60-column first run does not break it mid-word at the edge. */
+function wrapToTerminal(text: string): string {
+	return `${wrapPlain(text, terminalColumns(process.stdout) - 1).join("\n")}\n`;
+}
+
+/** Headless and ACP keep their established non-TUI transports even when an
+ * embedding process leaves the interactive marker in the environment. */
+function terminalLeaseEligible(
+	options: Pick<BootOptions, "headless" | "acp">,
+	env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+	return !options.headless && !options.acp && env.PANCODE_INTERACTIVE === "1";
+}
+
+/** What happened when an older PanCode meets a home a newer one last used, and what to do. */
+function describeNewerHome(newer: NewerHome): string {
+	return `This home was last used by PanCode ${newer.version}; you are running ${readPancodeVersion()} (${process.argv[1] ?? process.execPath}). Run the newer one, or continue at your own risk.`;
+}
+
+/** Whether the user settings name a chat target, read without creating or migrating the home. */
+function chatRouteChosen(): boolean {
+	const { settings, issues } = validateSettingsFile();
+	return issues.length > 0 || Boolean(settings.chat.target);
+}
+
+/**
+ * Whether a non-terminal stdin carries bytes: a regular file with content, or a pipe whose first chunk arrives
+ * before it ends or a short wait passes. A closed or silent pipe, /dev/null and a terminal carry none.
+ */
+async function stdinHasData(waitMs = 150): Promise<boolean> {
+	if (process.stdin.isTTY) return false;
+	let stat: import("node:fs").Stats;
+	try {
+		stat = (await import("node:fs")).fstatSync(0);
+	} catch {
+		return false;
+	}
+	if (stat.isFile()) return stat.size > 0;
+	if (!stat.isFIFO()) return false;
+	return new Promise<boolean>((resolve) => {
+		const done = (value: boolean): void => {
+			clearTimeout(timer);
+			process.stdin.off("readable", onReadable);
+			process.stdin.off("end", onEnd);
+			process.stdin.pause();
+			resolve(value);
+		};
+		const onReadable = (): void => done(process.stdin.readableLength > 0);
+		const onEnd = (): void => done(false);
+		const timer = setTimeout(() => done(false), waitMs);
+		process.stdin.on("readable", onReadable);
+		process.stdin.on("end", onEnd);
+	});
+}
+
+export interface PancodeCommandDependencies {
+	bootOrchestrator: typeof import("../entry/orchestrator.js").bootOrchestrator;
+}
+
+const DEFAULT_DEPENDENCIES: PancodeCommandDependencies = {
+	bootOrchestrator: async (options) => {
+		const { bootOrchestrator } = await import("../entry/orchestrator.js");
+		return bootOrchestrator(options);
+	},
+};
+
+export async function runPancodeCommand(
+	requested: BootOptions = {},
+	dependencies: Partial<PancodeCommandDependencies> = {},
+): Promise<number> {
+	const deps = { ...DEFAULT_DEPENDENCIES, ...dependencies };
+	let options = requested;
+	// `--resume <id|prefix>` resolves with `/resume`'s own resolver before any prompt or the shell takes the terminal,
+	// so a miss or an ambiguous prefix ends the launch with exit 2; the orchestrator then receives the full id.
+	if (options.resume?.kind === "id" && !options.headless && !options.acp) {
+		const [{ resolveSessionTarget }, { listSessionsForCwd }] = await Promise.all([
+			import("../domains/session/names.js"),
+			import("../domains/session/history.js"),
+		]);
+		const match = resolveSessionTarget(listSessionsForCwd(process.cwd()), options.resume.id);
+		if ("miss" in match) {
+			process.stderr.write(`pancode: ${match.miss}\n`);
+			return 2;
+		}
+		options = { ...options, resume: { ...options.resume, id: match.id } };
+	}
+	// Bare `pancode` (no subcommand) boots interactive mode implicitly, but only
+	// when stdin is a real TTY. Piped or /dev/null stdin (used by verify.ts,
+	// CI runners, and non-interactive scripts) should fall through to the
+	// bannered non-interactive boot so those scripts do not hang on the TUI.
+	// Explicit PANCODE_INTERACTIVE=1 still forces interactive mode. A piped
+	// stdout (`pancode | tee log`) has no terminal to draw on either.
+	if (
+		!options.headless &&
+		!options.acp &&
+		process.env.PANCODE_INTERACTIVE === undefined &&
+		process.stdin.isTTY &&
+		process.stdout.isTTY
+	) {
+		process.env.PANCODE_INTERACTIVE = "1";
+	}
+	// A task piped to bare `pancode` would be discarded by the bannered boot; point at `run -`, the only spelling that
+	// reads stdin (SPEC 6.2).
+	if (!options.headless && !options.acp && process.env.PANCODE_INTERACTIVE === undefined && (await stdinHasData())) {
+		process.stderr.write("pancode: a task on stdin needs a subcommand; use: pancode run -\n");
+		return 2;
+	}
+	if (terminalLeaseEligible(options) && process.env.HERDR_ENV === "1") {
+		// Every completed hosted process releases its workspace, including a
+		// crash or signal exit, so its utility processes and sockets cannot linger. Interactive
+		// shutdown ends the process itself, so the exit event is the one place
+		// every clean path passes through. Registered before the first early return (a refused
+		// home, a declined folder, an unusable route), or the launcher stays attached to the pane's shell.
+		const { captureFailureForLauncher, clearWorkspaceExit, hostedInWorkspace, markWorkspaceExit } = await import(
+			"../domains/mux/workspace/exit-marker.js"
+		);
+		if (hostedInWorkspace()) {
+			clearWorkspaceExit();
+			captureFailureForLauncher();
+			process.once("exit", (code) => {
+				if (!isRestartHandoff()) markWorkspaceExit(process.env, code);
+			});
+		}
+	}
+	// ACP (and the GUI's sessions over it) and the interactive TUI have an operator to answer a keychain
+	// prompt; headless runs and the non-interactive boot keep the Copilot runtime's keychain closed.
+	if (options.acp || terminalLeaseEligible(options)) allowCopilotKeychain();
+	const newerHome = process.env.PANCODE_ALLOW_OLDER === "1" ? null : detectNewerHome();
+	if (newerHome) {
+		const sentence = describeNewerHome(newerHome);
+		if (!terminalLeaseEligible(options)) {
+			process.stderr.write(`${sentence} Set PANCODE_ALLOW_OLDER=1 to continue anyway.\n`);
+			return 2;
+		}
+		const { createInterface } = await import("node:readline/promises");
+		const { askYesNo } = await import("./ask.js");
+		const rl = createInterface({ input: process.stdin, output: process.stdout });
+		let accepted: boolean;
+		try {
+			process.stdout.write(wrapToTerminal(sentence));
+			accepted = await askYesNo(rl, "Continue with this version", false);
+		} finally {
+			rl.close();
+		}
+		if (!accepted) return 2;
+		recordHomeDowngrade();
+	}
+	// A home with no chat route chosen sets up a model first: a new user's first `pancode` is usually typed in
+	// their home folder, and the folder question would otherwise end the launch before setup.
+	const deferWorkspaceCheck =
+		terminalLeaseEligible(options) && options.route?.target === undefined && !chatRouteChosen();
+	if (!options.headless && !options.acp && !deferWorkspaceCheck) {
+		const { confirmStartupWorkspace } = await import("./workspace-check.js");
+		if (!(await confirmStartupWorkspace())) return 1;
+	}
+	let startupSettings: import("../core/config.js").PancodeSettings | undefined;
+	let setupRan = false;
+	if (terminalLeaseEligible(options)) {
+		const existingHome = homeIsReturning();
+		initializePancodeHome();
+		// The user file remains a strict gate. Project layers retain their
+		// established best-effort diagnostics, but every subsequent boot phase
+		// consumes this same effective snapshot.
+		const layered = readStrictLayeredSettings(process.cwd());
+		const projectWarning = formatSettingsLayerWarning(layered);
+		if (projectWarning !== null) writeDiagnostic(projectWarning);
+		startupSettings = layered.settings;
+		const verdict = classifyDefaultTarget(
+			options.route === undefined ? startupSettings : applyRouteOverlay(startupSettings, options.route),
+		);
+		let detected = false;
+		// A saved chat route stays the user's choice when it cannot be used: no
+		// other target is borrowed for the session. One that only lacks its
+		// credential still opens, unavailable; one that cannot drive a session at
+		// all stops here with the reason. An unset route keeps discovery below.
+		const keptRoute = existingHome && verdict.kind !== "usable" && verdict.kind !== "no-target";
+		if (keptRoute) {
+			if (verdict.kind !== "missing-credential") {
+				process.stderr.write(
+					`${describeVerdict(verdict)} Your saved chat route is kept and no other target is used. Run \`pancode configure\` to fix it.\n`,
+				);
+				return 2;
+			}
+			process.stdout.write(wrapToTerminal(describeKeptChatRoute(startupSettings, verdict)));
+		} else if (existingHome && verdict.kind !== "usable") {
+			const { adoptDetectedChatRoute, describeAdoptedRoute } = await import("./detect-chat-routes.js");
+			const adopted = await adoptDetectedChatRoute(startupSettings, async (question, defaultYes) => {
+				const { createInterface } = await import("node:readline/promises");
+				const { askYesNo } = await import("./ask.js");
+				const rl = createInterface({ input: process.stdin, output: process.stdout });
+				try {
+					return await askYesNo(rl, wrapToTerminal(question).trimEnd(), defaultYes);
+				} finally {
+					rl.close();
+				}
+			});
+			if (adopted) {
+				startupSettings = adopted.settings;
+				detected = true;
+				process.stdout.write(wrapToTerminal(`${describeAdoptedRoute(adopted)} Change it with /config.`));
+			}
+		}
+		if (!detected && !keptRoute && verdict.kind !== "usable") {
+			// The one next action, and that nothing else can run until it is done (HI02).
+			process.stdout.write(
+				wrapToTerminal(
+					`${describeVerdict(verdict)} PanCode needs a model before it can do anything else, so setup starts now.`,
+				),
+			);
+			const { runConfigureCommand } = await import("./configure.js");
+			const configured = await runConfigureCommand([], process.stdin, process.stdout, true);
+			if (configured !== 0) return configured;
+			setupRan = true;
+			const configuredLayers = readStrictLayeredSettings(process.cwd());
+			const configuredWarning = formatSettingsLayerWarning(configuredLayers);
+			if (configuredWarning !== null && configuredWarning !== projectWarning) writeDiagnostic(configuredWarning);
+			startupSettings = configuredLayers.settings;
+			const configuredVerdict = classifyDefaultTarget(startupSettings);
+			if (configuredVerdict.kind !== "usable" && configuredVerdict.kind !== "missing-credential") {
+				process.stderr.write(`${describeVerdict(configuredVerdict)} Configuration did not complete; startup cancelled.\n`);
+				return 2;
+			}
+		}
+	}
+	if (deferWorkspaceCheck) {
+		const { confirmStartupWorkspace } = await import("./workspace-check.js");
+		if (!(await confirmStartupWorkspace(process.cwd(), { afterSetup: setupRan }))) {
+			if (!setupRan) return 1;
+			process.stdout.write(wrapToTerminal("Your model is set up. cd into a project folder and run pancode there."));
+			return 0;
+		}
+	}
+	if (startupSettings) {
+		// The workspace launcher runs after the configuration gate, so a first
+		// run answers its questions in the plain terminal, and before the lease,
+		// so nothing has claimed the terminal the pane host is about to take.
+		const { maybeLaunchWorkspace } = await import("./workspace-launch.js");
+		const launched = await maybeLaunchWorkspace(options, startupSettings);
+		if (launched !== null) return launched;
+	}
+	let trustCardNotices: string[] | undefined;
+	if (terminalLeaseEligible(options)) {
+		// One card for the repository's own configuration, before anything reads it into the session (S-76).
+		// It runs after the workspace relaunch so only the process that hosts the session asks.
+		const { launchTrustNotices, runProjectTrustCard } = await import("./project-trust-card.js");
+		const outcome = await runProjectTrustCard(process.cwd());
+		// Quitting the card opens no session, like declining the workspace check.
+		if (outcome === "quit") return 1;
+		if (outcome === "trusted") startupSettings = readStrictLayeredSettings(process.cwd()).settings;
+		// The per-file notices are held after the card: a skipped card is answered by the header's `/trust`
+		// reminder, and a trusted project names what its connections still need, also after `/trust`'s restart.
+		trustCardNotices = launchTrustNotices(outcome, process.cwd(), startupSettings);
+	}
+	let terminalLease: import("../interactive/terminal-lease.js").TerminalLease | undefined;
+	try {
+		if (terminalLeaseEligible(options)) {
+			// Ask for the background before the lease owns stdin and before the
+			// theme is created, so the palette matches a dark or light terminal.
+			const { awaitHandedTerminalSize, probeTerminalBackground } = await import("../core/terminal-background.js");
+			await probeTerminalBackground();
+			// Last before the lease, so everything above already ran while the pane host's client attached.
+			await awaitHandedTerminalSize();
+			const { createProcessTerminalLease, instantShellEnabled } = await import("../interactive/terminal-lease.js");
+			if (instantShellEnabled()) {
+				let stage0FrameId: number | null = null;
+				const effectiveSettings = startupSettings ?? readLayeredSettings(process.cwd()).settings;
+				const shellSettings =
+					options.demo === undefined
+						? effectiveSettings
+						: {
+								...effectiveSettings,
+								interface: { ...effectiveSettings.interface, demo: options.demo },
+							};
+				terminalLease = createProcessTerminalLease({
+					settings:
+						options.autonomy === undefined
+							? shellSettings
+							: { ...shellSettings, safety: { ...shellSettings.safety, autonomy: options.autonomy } },
+					onStage0Commit: (frameId) => {
+						stage0FrameId = frameId;
+					},
+				});
+				if (stage0FrameId !== null) {
+					const line = formatBootTrace("Stage 0 shell commit", `frameId=${stage0FrameId}`);
+					if (line) terminalLease.deferDiagnostic("stderr", line);
+				}
+			}
+		}
+		// The shell is on screen and taking keys, so Stage 1 loads in slices instead of one long block.
+		if (terminalLease) {
+			const { preloadStage1 } = await import("../entry/stage1-preload.js");
+			await preloadStage1(terminalLease.abortSignal);
+		}
+		// The same run-overrides transport `run` uses (c16-E), so workers inherit the ceiling too.
+		const result = await withRunOverrides(
+			options.maxContextTokens === undefined ? {} : { maxContextTokens: options.maxContextTokens },
+			() =>
+				deps.bootOrchestrator({
+					...options,
+					...(startupSettings ? { startupSettings } : {}),
+					...(trustCardNotices !== undefined ? { trustCardNotices } : {}),
+					...(terminalLease ? { terminalLease } : {}),
+				}),
+		);
+		return result.exitCode;
+	} catch (error) {
+		// Ctrl+C or a signal closed the lease while Stage 1 was hydrating, and boot
+		// stopped at its next phase boundary. The shutdown that closed the lease
+		// restores the terminal and sets the process exit code.
+		if (terminalLease?.abortSignal.aborted && error === terminalLease.abortSignal.reason) return 0;
+		try {
+			await terminalLease?.fail();
+		} catch (cleanupError) {
+			// Preserve the established boot failure as the primary error. The lease
+			// has already attempted every restoration step and reached `closed`.
+			process.stderr.write(
+				`PanCode: terminal cleanup also failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}\n`,
+			);
+		}
+		throw error;
+	}
+}

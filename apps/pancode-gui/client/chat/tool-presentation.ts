@@ -1,0 +1,1014 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * The tool-call taxonomy: which card a timeline item gets, what its one-line
+ * headline says, and which facts the card states. Pure by design. The app has
+ * no DOM test environment, so every decision that could be wrong lives here
+ * where `node:test` can reach it, and `tool-cards.tsx` is a switch over the
+ * result.
+ *
+ * Keyed on the canonical PanCode tool name the ACP frame carries (`toolNameOf`);
+ * the title is the call's display words (src/engine/acp/server-tool-updates.ts). `item.toolKind` is a five-value UI hint whose
+ * mapping is lossy (git, dispatch and steer all become `other`; read, ls,
+ * context and monitor all become `read`), so it is only the fallback for MCP and
+ * dynamic tools.
+ */
+
+import { countNoun } from "../../../../src/core/views/count-words.js";
+import { formatSize, TOOL_TITLE_MAX_BYTES, toolSubject } from "../../../../src/core/views/tool-words.js";
+import type { TimelineItem } from "../../contracts/sessions.js";
+import { formatDuration } from "../api/clock.js";
+import type { StatusTone } from "../design/status.js";
+import { hasStyle, stripAnsi } from "../render/ansi.js";
+import { type DiffPanel, diffCounts, diffPanel, NOT_APPROVED_NOTE, type ProposalBaseline } from "./diff-model.js";
+import { type ChainStepStatus, readGateway, toolNameOf } from "./gateway-model.js";
+
+/** Generic tool-label aliases from PanCode. */
+const SAFE_TOOL_TITLES: Readonly<Record<string, string>> = {
+	read: "Read project content",
+	edit: "Edit project content",
+	delete: "Delete project content",
+	move: "Move project content",
+	search: "Search project content",
+	execute: "Run a project command",
+	think: "Reason about the task",
+	fetch: "Fetch external content",
+	switch_mode: "Change work mode",
+	other: "Use a PanCode tool",
+};
+
+/** App.tsx:1156. A tool running longer than this is called out without expanding. */
+const LONG_RUNNING_TOOL_SECONDS = 30;
+/** Headline budget. A headline is one line in a dense row, never a paragraph. */
+const HEADLINE_MAX_CHARS = 72;
+/** DOM bound on the match list. The wire is already bounded; this bounds paint. */
+const MAX_RENDERED_MATCHES = 200;
+/** tool-content.ts caps `partialOutput` at this many UTF-16 units. */
+const PARTIAL_OUTPUT_LIMIT = 16_384;
+
+type ToolBody = "diff" | "terminal" | "matches" | "file" | "fetch" | "dispatch" | "ask" | "json" | "chain";
+
+/** One step of a gateway chain, as its own line under the chain's row. */
+export interface ToolStep {
+	readonly id: string;
+	/** The capability the step ran, named as a direct call of it is. */
+	readonly name: string;
+	readonly headline: string;
+	readonly status: ChainStepStatus;
+}
+
+export interface ToolFact {
+	readonly label: string;
+	readonly value: string;
+	readonly tone?: StatusTone;
+}
+
+export interface ToolLocation {
+	readonly path: string;
+	readonly line: number | null;
+}
+
+export interface MatchGroup {
+	readonly path: string;
+	readonly rows: ReadonlyArray<{ readonly id: string; readonly line: number | null; readonly text: string }>;
+	readonly total: number;
+}
+
+/**
+ * The live output pane. `source` says where the text came from and never
+ * doubles as a completion signal: a running call can carry a full 16 KiB
+ * snapshot and still be running.
+ */
+export interface OutputPane {
+	readonly source: "partial" | "final" | "none";
+	/** The output with terminal sequences removed: what is read, searched and copied. */
+	readonly text: string;
+	/** The output as printed, kept only when it carries colour worth drawing. */
+	readonly styled: string | null;
+	readonly running: boolean;
+	/** The producer cut the text short, so it is a tail or a head, not the whole. */
+	readonly truncated: boolean;
+	/** Shown when `source` is "none" so the pane's DOM node exists from frame one. */
+	readonly placeholder: string | null;
+}
+
+export interface ToolPresentation {
+	/** Short lowercase kind chip. */
+	readonly chip: string;
+	/** Plain-language verb for the collapsed row. The exact tool name stays in `name`. */
+	readonly verb: string;
+	/** The one fact worth reading on the collapsed row: an exit code, a line count, a change count. */
+	readonly digest: string | null;
+	/** Tone of the digest when it carries a judgement, such as a nonzero exit code. */
+	readonly digestTone: StatusTone | null;
+	/** Canonical tool name, or the kind hint when the name is missing. A gateway op=call names its capability. */
+	readonly name: string;
+	/** The call went through `gateway`; the row still reads as the capability it ran. */
+	readonly viaGateway: boolean;
+	/** Present only for a `chain` body: each step on its own line. */
+	readonly steps: readonly ToolStep[];
+	/** One line, always visible, never JSON. */
+	readonly headline: string;
+	readonly body: ToolBody;
+	readonly tone: StatusTone;
+	readonly statusLabel: string;
+	readonly settled: boolean;
+	/** The time the engine measured for a settled call, or null before it settles or when unreported. */
+	readonly took: string | null;
+	readonly failed: boolean;
+	/**
+	 * The call ended without breaking: it was not approved, or it delegated a run that was stopped.
+	 * Its row reads that outcome in the neutral tone with a dash, never as a failure.
+	 */
+	readonly ended: boolean;
+	readonly facts: readonly ToolFact[];
+	/** A truthful sentence about a cap, a block or a skipped diff. Never model prose. */
+	readonly note: string | null;
+	readonly locations: readonly ToolLocation[];
+	readonly output: OutputPane;
+	/** Present only for a `diff` body. */
+	readonly diff: DiffPanel | null;
+	/** Present only for a `matches` body. */
+	readonly matches: readonly MatchGroup[];
+	readonly matchesDropped: number;
+	/** True when the wire replaced an oversized rawInput/rawOutput with a snippet. */
+	readonly rawTruncated: boolean;
+}
+
+/* ---------------------------------------------------------------- helpers */
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control code points is this function's whole job.
+const CONTROL = /[\u0000-\u001f\u007f]/g;
+
+function encoder(): TextEncoder {
+	return new TextEncoder();
+}
+
+/**
+ * A title as the card prints it: strip control code points, fold the workspace
+ * root down to `[project]`, trim, and cap at the ACP title bound in UTF-8 bytes with a trailing
+ * ellipsis. A path that survives nothing falls back to the caller's label.
+ */
+export function presentable(value: string, workspaceRoot?: string): string {
+	let text = value.replace(CONTROL, "");
+	if (workspaceRoot !== undefined && workspaceRoot.length > 0) text = text.split(workspaceRoot).join("[project]");
+	text = text.trim();
+	const bytes = encoder().encode(text);
+	if (bytes.byteLength <= TOOL_TITLE_MAX_BYTES) return text;
+	// Cut on a code-point boundary, not a byte boundary.
+	let cut = text.length;
+	while (cut > 0 && encoder().encode(text.slice(0, cut)).byteLength > TOOL_TITLE_MAX_BYTES - 3) cut -= 1;
+	return `${text.slice(0, cut)}…`;
+}
+
+function truncateHeadline(value: string, limit = HEADLINE_MAX_CHARS): string {
+	const single = value.replace(CONTROL, " ").replace(/\s+/g, " ").trim();
+	return single.length <= limit ? single : `${single.slice(0, limit - 1)}…`;
+}
+
+export function basename(path: string): string {
+	const trimmed = path.replace(/[/\\]+$/, "");
+	const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+	return cut < 0 ? trimmed : trimmed.slice(cut + 1);
+}
+
+export function record(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: undefined;
+}
+
+export function str(value: unknown): string | null {
+	return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function num(value: unknown): number | null {
+	return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/* ------------------------------------------------------- wire unwrapping */
+
+interface ToolWire {
+	readonly input: Record<string, unknown>;
+	readonly result: Record<string, unknown> | undefined;
+	readonly details: Record<string, unknown> | undefined;
+	readonly resultText: string | null;
+	/** The result as printed, kept only when it carries colour worth drawing. */
+	readonly styledText: string | null;
+	readonly isError: boolean;
+	readonly rawTruncated: boolean;
+	/** Notes the host added to the result for the model, split from the output it printed. */
+	readonly modelNotes?: readonly string[];
+}
+
+/** Text carried by an ACP content array, used when a terminal frame had no rawOutput. */
+function contentText(value: unknown): string | null {
+	if (!Array.isArray(value)) return null;
+	const parts: string[] = [];
+	for (const entry of value) {
+		const outer = record(entry);
+		if (outer === undefined) continue;
+		const inner = record(outer.content) ?? outer;
+		const text = str(inner.text);
+		if (text !== null) parts.push(text);
+	}
+	return parts.length === 0 ? null : parts.join("");
+}
+
+/**
+ * The operator copy of a result. PanCode shapes what the model reads into a bounded context text with
+ * a `[tool-result …]` header, and keeps the plain output for people in
+ * `details.resultDisposition.presentation.content` (src/tools/result-disposition.ts,
+ * `toolResultPresentationText`). The terminal reads that copy, so the GUI does too.
+ */
+function operatorText(details: Record<string, unknown> | undefined): string | null {
+	const presentation = record(record(details?.resultDisposition)?.presentation);
+	return typeof presentation?.content === "string" ? presentation.content : null;
+}
+
+const ENVELOPE_FIELD = /^(kind|retrieve|followUp|summary|fallback|facts)=/;
+
+/**
+ * Removes the model-facing `[tool-result <mode>]` header and `[tool-result metadata]` trailer when a result
+ * carries no operator copy. Only a block made entirely of the known `key=` lines is removed, so ordinary
+ * output that happens to start with a bracket stays intact.
+ */
+export function stripResultEnvelope(text: string): string {
+	let body = text;
+	if (/^\[tool-result [a-z-]+\]\n/.test(body)) {
+		const lines = body.split("\n");
+		let index = 1;
+		while (index < lines.length && ENVELOPE_FIELD.test(lines[index] ?? "")) index += 1;
+		if (index > 1) body = lines.slice(index).join("\n");
+	}
+	const trailer = body.lastIndexOf("[tool-result metadata]\n");
+	if (trailer >= 0 && (trailer === 0 || body[trailer - 1] === "\n")) {
+		const rest = body.slice(trailer + "[tool-result metadata]\n".length).split("\n");
+		if (rest.every((line) => line === "" || ENVELOPE_FIELD.test(line)))
+			body = body.slice(0, trailer).replace(/\n+$/, "\n");
+	}
+	return body;
+}
+
+const MODEL_NOTE_LINE = /^\[middleware:[a-z-]+\] (.+)$/u;
+
+/**
+ * Split the notes the host adds to a result for the model (`[middleware:info] prefer the structured observe
+ * tools…`) from the output they lead or trail, as the terminal's tool rows do. Only whole lines at the start or the
+ * end count, and a tool's own output cannot open a line with the tag (bash neutralizes it), so output that quotes
+ * one stays put.
+ */
+function splitModelNotes(text: string): { body: string; notes: string[] } {
+	const lines = text.split("\n");
+	const leading: string[] = [];
+	for (let note = MODEL_NOTE_LINE.exec(lines[0] ?? "")?.[1]; note !== undefined; ) {
+		leading.push(note);
+		lines.shift();
+		while (lines.length > 0 && (lines[0] ?? "").trim() === "") lines.shift();
+		note = MODEL_NOTE_LINE.exec(lines[0] ?? "")?.[1];
+	}
+	const trailing: string[] = [];
+	for (let note = MODEL_NOTE_LINE.exec(lines.at(-1) ?? "")?.[1]; note !== undefined; ) {
+		trailing.unshift(note);
+		lines.pop();
+		note = MODEL_NOTE_LINE.exec(lines.at(-1) ?? "")?.[1];
+	}
+	if (trailing.length > 0) while (lines.length > 0 && (lines.at(-1) ?? "").trim() === "") lines.pop();
+	return { body: lines.join("\n"), notes: [...leading, ...trailing] };
+}
+
+/**
+ * Unwrap `rawInput`/`rawOutput` into the shapes the taxonomy reads.
+ *
+ * Three real shapes have to survive here:
+ *   - `{result, isError}`, what the ACP server sends (server.ts:1152);
+ *   - `{content: [...]}`, what the GUI supervisor substitutes when a terminal
+ *     frame carried content but no rawOutput (tool-content.ts `projectToolCall`);
+ *   - `{truncated: true, snippet}`, what the supervisor substitutes for a
+ *     record over 32 KiB (tool-content.ts `raw`);
+ *   - `{exitCode, content, …}`, what `_pancode/session/shell` reports for an operator shell line.
+ *
+ * A failed tool returns `{kind:"error", message}` with no `output` field, so the
+ * result text is read from `message` as well as `output`.
+ */
+export function readWire(item: Pick<TimelineItem, "rawInput" | "rawOutput">): ToolWire {
+	const input = record(item.rawInput) ?? {};
+	const output = record(item.rawOutput);
+	const inputTruncated = item.rawInput !== undefined && record(item.rawInput)?.truncated === true;
+	if (output === undefined)
+		return {
+			input,
+			result: undefined,
+			details: undefined,
+			resultText: null,
+			styledText: null,
+			isError: false,
+			rawTruncated: inputTruncated,
+		};
+	if (output.truncated === true && typeof output.snippet === "string")
+		return {
+			input,
+			result: undefined,
+			details: undefined,
+			resultText: stripAnsi(output.snippet),
+			styledText: hasStyle(output.snippet) ? output.snippet : null,
+			isError: false,
+			rawTruncated: true,
+		};
+	// The operator's shell line answers flat: its exit code sits beside the content, with no `result`.
+	const shell = output.result === undefined && typeof output.exitCode === "number" ? output : undefined;
+	const result = record(output.result) ?? shell;
+	const details = record(result?.details) ?? shell;
+	const operator = operatorText(details);
+	const modelText =
+		str(result?.output) ?? str(result?.message) ?? contentText(output.content) ?? contentText(result?.content) ?? null;
+	const shown = operator ?? (modelText === null ? null : stripResultEnvelope(modelText));
+	const split = shown === null ? null : splitModelNotes(shown);
+	const printed = split?.body ?? null;
+	return {
+		input,
+		result,
+		details,
+		// Every reader of the result (digests, matches, file bodies) takes it without escape sequences.
+		resultText: printed === null ? null : stripAnsi(printed),
+		styledText: printed !== null && hasStyle(printed) ? printed : null,
+		isError: output.isError === true || result?.kind === "error",
+		rawTruncated: inputTruncated,
+		...(split && split.notes.length > 0 ? { modelNotes: split.notes } : {}),
+	};
+}
+
+/* ------------------------------------------------------------ live output */
+
+/**
+ * A progress frame carries the tool's WHOLE output so far, so a new frame
+ * REPLACES the previous snapshot. Appending would duplicate every byte each
+ * time two frames land close together. This function exists so that rule is
+ * testable rather than buried in a reducer.
+ */
+export function applyPartialFrame(_previous: string | undefined, frame: string | undefined): string | undefined {
+	return frame;
+}
+
+/**
+ * Whether the runtime settled this call at its approval gate. The sentence is the producer's own
+ * (see NOT_APPROVED_NOTE), so it holds for every tool, and it proves only that no approval arrived.
+ */
+export function notApproved(
+	item: Pick<TimelineItem, "status">,
+	wire: Pick<ToolWire, "resultText" | "isError">,
+): boolean {
+	return (item.status === "failed" || wire.isError) && (wire.resultText?.includes(NOT_APPROVED_NOTE) ?? false);
+}
+
+/**
+ * Whether a `dispatch` call settled because its run was stopped, by the operator or with its turn.
+ * The runtime reports the run's outcome in the result details (`src/tools/dispatch-output.ts`), spelt
+ * `canceled`; the fleet event spells it `cancelled`, so both are accepted.
+ */
+export function stoppedRun(
+	item: Pick<TimelineItem, "status" | "toolName" | "title">,
+	wire: Pick<ToolWire, "details" | "isError">,
+): boolean {
+	if (toolNameOf(item) !== "dispatch") return false;
+	if (item.status === "cancelled") return true;
+	const outcome = str(wire.details?.outcome);
+	return (item.status === "failed" || wire.isError) && (outcome === "canceled" || outcome === "cancelled");
+}
+
+/**
+ * Spec 04's words for a call settled at its gate: "Rejected" when the operator pressed Reject, "Refused"
+ * when the engine declined it without asking. Only the session's permissions can tell the two apart.
+ */
+const declinedLabel = (decision: string | undefined): string => (decision === "rejected" ? "Rejected" : "Refused");
+
+interface DispatchTask {
+	readonly agent: string;
+	/** The task text, or "" when the call carried none. */
+	readonly task: string;
+}
+
+/** Every run a dispatch asks for: the `tasks` batch first, else the single `agent`/`task` pair. */
+export function dispatchTasks(input: Record<string, unknown>): readonly DispatchTask[] {
+	const shared = str(input.agent) ?? str(input.recipe) ?? "worker";
+	if (Array.isArray(input.tasks) && input.tasks.length > 0)
+		return input.tasks.map((entry) => {
+			if (typeof entry === "string") return { agent: shared, task: entry };
+			const record = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {};
+			return { agent: str(record.agent) ?? str(record.recipe) ?? shared, task: str(record.task) ?? "" };
+		});
+	return [{ agent: shared, task: str(input.task) ?? "" }];
+}
+
+function isSettledStatus(status: string): boolean {
+	return status === "completed" || status === "failed" || status === "cancelled" || status === "unknown";
+}
+
+const awaitingPane: OutputPane = {
+	source: "none",
+	text: "",
+	styled: null,
+	running: false,
+	truncated: false,
+	placeholder: "Nothing has run yet. It waits for your answer.",
+};
+
+/**
+ * The output pane for one item. The presence of `partialOutput` says the call is
+ * RUNNING, never that it finished; `running` is derived from `status` alone.
+ */
+export function outputPane(item: Pick<TimelineItem, "status" | "partialOutput">, wire: ToolWire): OutputPane {
+	const running = !isSettledStatus(item.status);
+	if (running || item.status === "unknown") {
+		const partial = item.partialOutput;
+		if (partial !== undefined && partial.length > 0)
+			return {
+				source: "partial",
+				text: stripAnsi(partial),
+				styled: hasStyle(partial) ? partial : null,
+				running,
+				truncated: partial.length >= PARTIAL_OUTPUT_LIMIT,
+				placeholder: null,
+			};
+		return {
+			source: "none",
+			text: "",
+			styled: null,
+			running,
+			truncated: false,
+			placeholder: running ? "Running. No output yet." : "No terminal result was reported.",
+		};
+	}
+	const text = wire.resultText;
+	if (text === null || text.length === 0)
+		return { source: "none", text: "", styled: null, running: false, truncated: false, placeholder: "No output." };
+	return {
+		source: "final",
+		text,
+		styled: wire.styledText,
+		running: false,
+		truncated:
+			record(wire.details?.observation)?.truncated === true ||
+			record(wire.details?.resultDisposition)?.presentationTruncated === true,
+		placeholder: null,
+	};
+}
+
+/* ----------------------------------------------------------------- matches */
+
+const MATCH_ROW = /^(.+?):(\d+):(.*)$/;
+
+/** Parse `path:line:text` rows into per-file groups, bounded for paint. */
+export function parseMatches(output: string | null): { groups: MatchGroup[]; dropped: number } {
+	if (output === null || output.length === 0) return { groups: [], dropped: 0 };
+	const grouped = new Map<string, Array<{ id: string; line: number | null; text: string }>>();
+	let seen = 0;
+	let kept = 0;
+	for (const line of output.split("\n")) {
+		if (line.length === 0) continue;
+		// The observation envelope appends bracketed notices; they are not matches.
+		if (line.startsWith("[")) continue;
+		const match = MATCH_ROW.exec(line);
+		const path = match === null ? line : (match[1] ?? line);
+		const number = match === null ? null : Number(match[2]);
+		const text = match === null ? "" : (match[3] ?? "");
+		seen += 1;
+		if (kept >= MAX_RENDERED_MATCHES) continue;
+		const rows = grouped.get(path) ?? [];
+		// A match row has no identity on the wire, so ordinal position is its
+		// identity and it is assigned here rather than in the renderer.
+		rows.push({ id: `m${kept}`, line: number, text });
+		kept += 1;
+		grouped.set(path, rows);
+	}
+	const groups = [...grouped].map(([path, rows]) => ({ path, rows, total: rows.length }));
+	return { groups, dropped: Math.max(0, seen - kept) };
+}
+
+/* ------------------------------------------------------------ fact strips */
+
+function searchFacts(details: Record<string, unknown> | undefined): ToolFact[] {
+	const facts: ToolFact[] = [];
+	const observation = record(details?.observation);
+	const shown = num(observation?.shownCount);
+	const total = num(observation?.totalCount);
+	const unit = str(observation?.unit) ?? "results";
+	if (shown !== null)
+		facts.push({
+			label: unit,
+			value: total !== null && total !== shown ? `${shown} of ${total}` : String(shown),
+		});
+	if (observation?.truncated === true) facts.push({ label: "bounded", value: "PanCode cut this result", tone: "warn" });
+	const search = record(details?.search);
+	if (search !== undefined && search.complete === false) {
+		const reason = str(search.reason) ?? "unknown";
+		facts.push({ label: "coverage", value: `incomplete (${reason})`, tone: "warn" });
+	}
+	const skipped = record(search?.skipped);
+	const skippedCount = num(skipped?.count);
+	if (skippedCount !== null && skippedCount > 0)
+		facts.push({ label: "skipped", value: countNoun(skippedCount, "path"), tone: "warn" });
+	return facts;
+}
+
+function terminalFacts(details: Record<string, unknown> | undefined): ToolFact[] {
+	if (details === undefined) return [];
+	const facts: ToolFact[] = [];
+	const exitCode = num(details.exitCode);
+	if (exitCode !== null)
+		facts.push({ label: "exit", value: String(exitCode), tone: exitCode === 0 ? "success" : "fail" });
+	const signal = str(details.signal);
+	if (signal !== null) facts.push({ label: "signal", value: signal, tone: "fail" });
+	const stdout = num(details.stdoutBytes);
+	const stderr = num(details.stderrBytes);
+	if (stdout !== null) facts.push({ label: "stdout", value: formatSize(stdout) });
+	if (stderr !== null && stderr > 0) facts.push({ label: "stderr", value: formatSize(stderr) });
+	// An operator shell line run with `!!`: recorded, and not given to the model.
+	if (details.excludedFromContext === true) facts.push({ label: "context", value: "kept from PanCode" });
+	if (details.timedOut === true) facts.push({ label: "outcome", value: "timed out", tone: "warn" });
+	const outcome = str(details.outcome);
+	if (outcome !== null && outcome !== "success")
+		facts.push({ label: "outcome", value: outcome, tone: outcome === "nonzero" ? "fail" : "warn" });
+	return facts;
+}
+
+function terminalNote(details: Record<string, unknown> | undefined): string | null {
+	if (details === undefined) return null;
+	if (details.timedOut === true) return "The command timed out and was stopped.";
+	if (details.aborted === true) return "The command was cancelled before it finished.";
+	if (details.outputCapped === true) return "Output hit the byte cap and the command was stopped.";
+	return null;
+}
+
+function fileFacts(details: Record<string, unknown> | undefined): ToolFact[] {
+	const facts: ToolFact[] = [];
+	const file = record(details?.file);
+	const bytes = num(file?.bytes);
+	if (bytes !== null) facts.push({ label: "size", value: formatSize(bytes) });
+	facts.push(...searchFacts(details));
+	return facts;
+}
+
+function fileNote(details: Record<string, unknown> | undefined): string | null {
+	if (details?.code !== "read_past_eof") return null;
+	const total = num(details.totalLines);
+	return total === null
+		? "The requested range starts past the end of the file."
+		: `The requested range starts past the end of the file (${total} lines).`;
+}
+
+function fetchFacts(details: Record<string, unknown> | undefined): ToolFact[] {
+	if (details === undefined) return [];
+	const facts: ToolFact[] = [];
+	const status = num(details.status);
+	if (status !== null) facts.push({ label: "status", value: String(status), tone: status < 400 ? "success" : "fail" });
+	const contentType = str(details.contentType);
+	if (contentType !== null) facts.push({ label: "type", value: contentType });
+	const bytes = num(details.bytesRead) ?? num(details.bytes);
+	if (bytes !== null) facts.push({ label: "read", value: formatSize(bytes) });
+	const format = str(details.format);
+	if (format !== null) facts.push({ label: "shape", value: format });
+	return facts;
+}
+
+/* ----------------------------------------------------------- the taxonomy */
+
+interface Kind {
+	readonly chip: string;
+	readonly body: ToolBody;
+}
+
+const KINDS: Readonly<Record<string, Kind>> = {
+	read: { chip: "read", body: "file" },
+	ls: { chip: "list", body: "file" },
+	edit: { chip: "edit", body: "diff" },
+	write: { chip: "write", body: "diff" },
+	artifact: { chip: "edit", body: "diff" },
+	bash: { chip: "bash", body: "terminal" },
+	run_script: { chip: "run", body: "terminal" },
+	verify: { chip: "run", body: "terminal" },
+	safe_exec: { chip: "run", body: "terminal" },
+	git: { chip: "git", body: "terminal" },
+	grep: { chip: "grep", body: "matches" },
+	find: { chip: "find", body: "matches" },
+	code_nav: { chip: "nav", body: "matches" },
+	web_fetch: { chip: "fetch", body: "fetch" },
+	dispatch: { chip: "dispatch", body: "dispatch" },
+	monitor: { chip: "control", body: "json" },
+	steer: { chip: "control", body: "json" },
+	panes: { chip: "control", body: "json" },
+	context: { chip: "context", body: "json" },
+	configure_pancode: { chip: "settings", body: "json" },
+	ask_user: { chip: "ask", body: "ask" },
+	decide: { chip: "ask", body: "ask" },
+	evidence: { chip: "evidence", body: "json" },
+	ledger: { chip: "ledger", body: "json" },
+	task: { chip: "task", body: "json" },
+	finish: { chip: "finish", body: "json" },
+};
+
+/** A gateway chain: one row whose steps each read as their own call. */
+const CHAIN_KIND: Kind = { chip: "chain", body: "chain" };
+
+/** What a collapsed row says the call did. Someone who has never used a shell reads these first. */
+const VERBS: Readonly<Record<string, string>> = {
+	read: "Read",
+	list: "List",
+	edit: "Edit",
+	write: "Write",
+	bash: "Run",
+	run: "Run",
+	git: "Git",
+	grep: "Search",
+	find: "Find",
+	nav: "Look up",
+	fetch: "Fetch",
+	dispatch: "Delegate",
+	control: "Control",
+	context: "Context",
+	settings: "Configure",
+	ask: "Ask",
+	evidence: "Evidence",
+	ledger: "Ledger",
+	task: "Task",
+	finish: "Declared",
+	chain: "Chain",
+	search: "Search",
+	think: "Think",
+	delete: "Delete",
+	move: "Move",
+	tool: "Tool",
+};
+
+/** Longest failure excerpt a folded row carries; the full text is one click away. */
+export const FAILURE_EXCERPT_MAX = 96;
+
+/** The last non-empty line a failed call printed, as PanCode's terminal shows it on the folded row. */
+export function failureExcerpt(text: string): string | null {
+	const line = text
+		.split("\n")
+		.map((entry) => entry.trim())
+		.filter((entry) => entry.length > 0)
+		.at(-1);
+	if (line === undefined) return null;
+	return line.length > FAILURE_EXCERPT_MAX ? `${line.slice(0, FAILURE_EXCERPT_MAX - 1)}…` : line;
+}
+
+/** "1 entries" reads as a bug. Observation units are plain English plurals, so this covers them. */
+function singular(unit: string): string {
+	if (unit.endsWith("ies")) return `${unit.slice(0, -3)}y`;
+	if (unit.endsWith("ches") || unit.endsWith("shes")) return unit.slice(0, -2);
+	return unit.endsWith("s") ? unit.slice(0, -1) : unit;
+}
+
+function digestFor(
+	body: ToolBody,
+	facts: readonly ToolFact[],
+	diff: DiffPanel | null,
+	matches: readonly MatchGroup[],
+	settled: boolean,
+): { text: string | null; tone: StatusTone | null } {
+	const fact = (label: string) => facts.find((entry) => entry.label === label);
+	switch (body) {
+		case "terminal": {
+			const exit = fact("exit");
+			if (exit !== undefined) return { text: `exit ${exit.value}`, tone: exit.tone ?? null };
+			const signal = fact("signal");
+			return signal === undefined ? { text: null, tone: null } : { text: signal.value, tone: "fail" };
+		}
+		case "file": {
+			const counted = facts.find((entry) => entry.label !== "size" && entry.tone === undefined);
+			if (counted !== undefined)
+				return { text: `${counted.value} ${counted.value === "1" ? singular(counted.label) : counted.label}`, tone: null };
+			const size = fact("size");
+			return { text: size?.value ?? null, tone: null };
+		}
+		case "diff":
+			return diff?.diff ? { text: diffCounts(diff.diff), tone: null } : { text: null, tone: null };
+		case "matches": {
+			if (!settled) return { text: null, tone: null };
+			const rows = matches.reduce((total, group) => total + group.total, 0);
+			return {
+				text:
+					rows === 0
+						? "no matches"
+						: `${countNoun(rows, "match", "matches")}${matches.length > 1 ? ` in ${countNoun(matches.length, "file")}` : ""}`,
+				tone: null,
+			};
+		}
+		case "fetch": {
+			const status = fact("status");
+			return status === undefined ? { text: null, tone: null } : { text: status.value, tone: status.tone ?? null };
+		}
+		case "chain": {
+			const failed = fact("failed");
+			return failed === undefined ? { text: null, tone: null } : { text: `${failed.value} failed`, tone: "fail" };
+		}
+		// A delegation's headline already names its agent, so the row adds nothing after it.
+		default:
+			return { text: null, tone: null };
+	}
+}
+
+/** The five-value ACP hint, used only when the canonical name is unknown. */
+const KIND_HINT: Readonly<Record<string, Kind>> = {
+	read: { chip: "read", body: "file" },
+	edit: { chip: "edit", body: "diff" },
+	search: { chip: "search", body: "matches" },
+	execute: { chip: "run", body: "terminal" },
+	fetch: { chip: "fetch", body: "fetch" },
+	think: { chip: "think", body: "json" },
+	delete: { chip: "delete", body: "json" },
+	move: { chip: "move", body: "json" },
+	other: { chip: "tool", body: "json" },
+};
+
+function range(input: Record<string, unknown>): string {
+	const offset = num(input.offset);
+	const limit = num(input.limit);
+	const tail = num(input.tail);
+	if (tail !== null) return ` · last ${tail} lines`;
+	if (offset === null && limit === null) return "";
+	const start = offset ?? 1;
+	return limit === null ? ` · from line ${start}` : ` · lines ${start}–${start + limit - 1}`;
+}
+
+/** The card folds the workspace root itself (`presentable`), so a path stays as the call gave it. */
+const SUBJECT_PLACE = { place: (path: string) => path };
+
+function headlineFor(name: string, input: Record<string, unknown>, fallback: string): string {
+	const path = str(input.path);
+	switch (name) {
+		case "read":
+			return path === null ? fallback : `${basename(path)}${range(input)}`;
+		case "ls":
+			return path ?? ".";
+		case "edit": {
+			const edits = Array.isArray(input.edits) ? input.edits.length : 1;
+			return path === null ? fallback : `${basename(path)} · ${edits} replacement${edits === 1 ? "" : "s"}`;
+		}
+		case "write":
+			return path === null ? fallback : basename(path);
+		case "bash":
+			return str(input.command)?.split("\n", 1)[0] ?? fallback;
+		case "grep": {
+			const pattern = str(input.pattern) ?? "";
+			const glob = str(input.glob);
+			return `/${pattern}/ in ${path ?? "."}${glob === null ? "" : ` (${glob})`}`;
+		}
+		case "find":
+			return str(input.pattern) ?? str(input.glob) ?? fallback;
+		case "web_fetch": {
+			const url = str(input.url);
+			if (url === null) return fallback;
+			try {
+				const parsed = new URL(url);
+				return `${parsed.hostname}${parsed.pathname === "/" ? "" : parsed.pathname}`;
+			} catch {
+				return url;
+			}
+		}
+		// Every other tool reads as the terminal row states it.
+		default:
+			return toolSubject(name, input, SUBJECT_PLACE) ?? fallback;
+	}
+}
+
+const STATUS_LABEL: Readonly<Record<string, string>> = {
+	pending: "Queued",
+	in_progress: "Running",
+	completed: "Done",
+	failed: "Failed",
+	cancelled: "Cancelled",
+	unknown: "Outcome not reported",
+};
+
+function toneFor(status: string, isError: boolean): StatusTone {
+	if (isError || status === "failed") return "fail";
+	if (status === "cancelled") return "neutral";
+	if (status === "completed") return "success";
+	if (status === "in_progress") return "running";
+	return "warn";
+}
+
+export interface PresentOptions {
+	/** Workspace root, folded to `[project]` in every path this card prints. */
+	readonly workspaceRoot?: string;
+	/** Shared clock, in ms. Only used to mark a long-running call. */
+	readonly nowMs?: number;
+	/** When the call started, in ms. Only used to mark a long-running call. */
+	readonly startedAtMs?: number;
+	/** The operator's answer to this call's approval (`callDecisions`), which tells a Reject from a refusal. */
+	readonly decision?: string | undefined;
+	/** The file a whole-file write replaces, read before it lands, so the proposal counts real removals. */
+	readonly baseline?: ProposalBaseline;
+}
+
+/** A chain's steps with the headline each would carry as a direct call. */
+function chainStepsFor(item: TimelineItem, options: PresentOptions): ToolStep[] {
+	return (readGateway(item).steps ?? []).map((step) => ({
+		id: step.id,
+		name: step.capability,
+		headline: truncateHeadline(
+			presentable(headlineFor(step.capability, step.args, step.capability), options.workspaceRoot),
+		),
+		status: step.status,
+	}));
+}
+
+/** `3 steps · grep, read, bash`. */
+function chainHeadline(steps: readonly ToolStep[]): string {
+	if (steps.length === 0) return "gateway chain";
+	return `${steps.length} step${steps.length === 1 ? "" : "s"} · ${steps.map((step) => step.name).join(", ")}`;
+}
+
+/** The whole card, derived from one timeline item. Never throws. */
+export function presentTool(item: TimelineItem, options: PresentOptions = {}): ToolPresentation {
+	// A gateway op=call reads as the capability it ran, from that capability's
+	// own arguments; a chain reads as its steps.
+	const gateway = readGateway(item);
+	const wire = { ...readWire(item), input: gateway.input };
+	const name = gateway.name ?? toolNameOf(item) ?? item.toolKind ?? "tool";
+	const steps = gateway.steps === null ? [] : chainStepsFor(item, options);
+	const kind =
+		gateway.steps !== null
+			? CHAIN_KIND
+			: (KINDS[name] ?? KIND_HINT[item.toolKind ?? "other"] ?? { chip: item.toolKind ?? "tool", body: "json" });
+	const fallback = SAFE_TOOL_TITLES[name] ?? SAFE_TOOL_TITLES[item.toolKind ?? "other"] ?? SAFE_TOOL_TITLES.other;
+	const rawHeadline =
+		gateway.steps !== null
+			? chainHeadline(steps)
+			: headlineFor(
+					name,
+					name === "configure_pancode" && str(wire.input.path) === null && str(wire.details?.path) !== null
+						? { ...wire.input, path: wire.details?.path }
+						: wire.input,
+					item.text.length > 0 ? item.text : (fallback as string),
+				);
+	const headline = truncateHeadline(presentable(rawHeadline, options.workspaceRoot)) || (fallback as string);
+	const settled = isSettledStatus(item.status);
+	const failed = item.status === "failed" || wire.isError;
+
+	const facts: ToolFact[] = [];
+	let note: string | null = null;
+	let matches: MatchGroup[] = [];
+	let matchesDropped = 0;
+	let diff: DiffPanel | null = null;
+
+	switch (kind.body) {
+		case "diff":
+			diff = diffPanel({
+				rawInput: wire.input,
+				result: wire.result,
+				resultText: wire.resultText,
+				status: item.status,
+				isError: wire.isError,
+				decision: options.decision,
+				baseline: options.baseline,
+			});
+			// The diff panel prints its own note and +/- counts. Repeating them as card facts said
+			// everything twice and painted "removed 0" as a failure.
+			if (diff.diff?.truncated === true) facts.push({ label: "diff", value: "cut short by a cap", tone: "warn" });
+			break;
+		case "terminal":
+			facts.push(...terminalFacts(wire.details));
+			note = terminalNote(wire.details);
+			break;
+		case "matches": {
+			const parsed = parseMatches(wire.resultText);
+			matches = parsed.groups;
+			matchesDropped = parsed.dropped;
+			facts.push(...searchFacts(wire.details));
+			if (matchesDropped > 0)
+				note = `${matchesDropped} more rows arrived than this view draws; open the raw result to see them all.`;
+			break;
+		}
+		case "file":
+			facts.push(...fileFacts(wire.details));
+			note = fileNote(wire.details);
+			break;
+		case "fetch":
+			facts.push(...fetchFacts(wire.details));
+			if (wire.details?.truncated === true) note = "The fetched body was cut at the byte cap.";
+			break;
+		case "chain": {
+			const failedSteps = steps.filter((step) => step.status === "failed").length;
+			const notRun = steps.filter((step) => step.status === "not run").length;
+			if (failedSteps > 0) facts.push({ label: "failed", value: String(failedSteps), tone: "fail" });
+			if (notRun > 0) facts.push({ label: "not run", value: String(notRun), tone: "warn" });
+			break;
+		}
+		case "dispatch": {
+			const runId = str(wire.details?.runId) ?? str(wire.input.runId);
+			if (runId !== null) facts.push({ label: "run", value: runId });
+			const tasks = dispatchTasks(wire.input);
+			if (tasks.length > 1)
+				for (const [index, task] of tasks.entries())
+					facts.push({
+						label: `${index + 1} · ${task.agent}`,
+						value: task.task ? truncateHeadline(task.task, 120) : "no task preview",
+					});
+			else {
+				const agent = str(wire.input.agent) ?? str(wire.input.recipe);
+				if (agent !== null) facts.push({ label: "agent", value: agent });
+			}
+			break;
+		}
+		default:
+			break;
+	}
+
+	if (wire.modelNotes !== undefined) note = note ?? `Note to the model: ${wire.modelNotes.join(" ")}`;
+	if (wire.rawTruncated)
+		note = note ?? "This call's raw record was larger than the 32 KiB wire limit, so only a snippet reached the browser.";
+
+	const elapsedSeconds =
+		options.nowMs !== undefined && options.startedAtMs !== undefined
+			? Math.max(0, Math.floor((options.nowMs - options.startedAtMs) / 1000))
+			: null;
+	// The engine opens a call as in progress before its approval gate, so a call held for the operator's answer
+	// has not started: it neither runs long nor waits for output.
+	const awaiting = !settled && (options.decision === "pending" || options.decision === "escalated");
+	if (!settled && !awaiting && elapsedSeconds !== null && elapsedSeconds >= LONG_RUNNING_TOOL_SECONDS)
+		facts.push({ label: "still running", value: formatDuration(elapsedSeconds * 1000), tone: "warn" });
+
+	const output = awaiting ? awaitingPane : outputPane(item, wire);
+	// A call that never got its approval did not break, so its row says that instead of echoing the
+	// last line of the refusal, which is an instruction to the model ("Do not retry the same call.").
+	const refused = notApproved(item, wire);
+	const stopped = stoppedRun(item, wire);
+	// A chain's output is the model's JSON digest of its steps; the step that
+	// failed says more than that digest's last line.
+	const excerpt =
+		failed && !refused && !stopped && (kind.body !== "chain" || steps.length === 0) ? failureExcerpt(output.text) : null;
+	const digest =
+		refused || stopped || item.status === "unknown"
+			? { text: null, tone: null }
+			: excerpt === null
+				? digestFor(kind.body, facts, diff, matches, settled)
+				: { text: excerpt, tone: "fail" as const };
+	return {
+		chip: kind.chip,
+		verb: name === "configure_pancode" && wire.input.action === "preview" ? "Preview" : (VERBS[kind.chip] ?? "Tool"),
+		digest: digest.text,
+		digestTone: digest.tone,
+		name,
+		viaGateway: gateway.viaGateway,
+		steps,
+		headline,
+		body: kind.body,
+		tone: refused || stopped ? "neutral" : awaiting ? "warn" : toneFor(item.status, wire.isError),
+		// A result that reports an error is a failure even when its frame said completed.
+		statusLabel: refused
+			? declinedLabel(options.decision)
+			: stopped
+				? "Stopped"
+				: wire.isError && item.status === "completed"
+					? "Failed"
+					: // A call held for the operator's answer is not queued or running: it waits on them.
+						awaiting
+						? "Waiting for approval"
+						: (STATUS_LABEL[item.status] ?? item.status),
+		settled,
+		took: settled && item.durationMs !== undefined ? formatDuration(item.durationMs) : null,
+		failed,
+		ended: refused || stopped,
+		facts,
+		note,
+		locations: (item.locations ?? []).map((location) => ({
+			path: presentable(location.path, options.workspaceRoot),
+			line: typeof location.line === "number" ? location.line : null,
+		})),
+		output,
+		diff,
+		matches,
+		matchesDropped,
+		rawTruncated: wire.rawTruncated,
+	};
+}
+
+/**
+ * Which rows start open, mirroring PanCode's own presentation policy (src/tools/presentation.ts):
+ * every call folds to its one line, a change keeps its diff visible under that line, and a failure
+ * carries its last output line on the folded row instead of opening. Two additions follow a live run:
+ * a command observed while it runs shows its output as it arrives, and a question shows itself.
+ */
+export function toolOpensAtMount(card: Pick<ToolPresentation, "body" | "settled">): boolean {
+	if (card.body === "diff") return true;
+	if (card.settled) return false;
+	return card.body === "terminal" || card.body === "ask";
+}
+
+/**
+ * One line naming what a call is doing, for a live status or a collapsed group: "Run python3 analyze.py"
+ * instead of the bare tool name. Never throws, like `presentTool`.
+ */
+export function describeTool(item: TimelineItem, workspaceRoot?: string): string {
+	const card = presentTool(item, workspaceRoot === undefined ? {} : { workspaceRoot });
+	return `${card.verb} ${card.headline}`;
+}
+
+/** `path:12`, with the ACP zero-based line turned into an editor line. */
+export function formatLocation(location: ToolLocation): string {
+	return location.line === null ? location.path : `${location.path}:${location.line + 1}`;
+}

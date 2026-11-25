@@ -1,0 +1,405 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { factKnownValue } from "../../core/telemetry/known.js";
+import {
+	messageStopCompleted,
+	redactFinalUrlCredentials,
+	redactStreamingUrlCredentials,
+	redactUrlCredentials,
+	UrlCredentialStreamFilter,
+} from "../../domains/safety/redaction.js";
+/**
+ * Projection from chat-loop events to the headless `--json` wire stream.
+ *
+ * The stream is append-oriented: it carries content as increments while it
+ * streams and includes the answer once more on the final `turn_end` for
+ * scripts. It never repeats the growing snapshot of an in-progress message,
+ * because that is quadratic in a long turn. One tool-heavy headless turn wrote
+ * 802 MB of stdout, 99.3% of it `message_update` snapshots of a message
+ * whose final form is 44 KB.
+ *
+ * The rules, in one place:
+ *   - `message_update` is dropped. Its increments are already published as
+ *     `text_delta` / `thinking_delta`, and its `message` is the partial form of
+ *     the `message_end` that follows.
+ *   - `text_delta` / `thinking_delta` carry the increment, not the growing
+ *     partial text.
+ *   - `message_end` keeps the message's accounting (role, model, usage, stop
+ *     reason, tool calls) and replaces the assistant `text` and `thinking`
+ *     blocks the deltas already carried with a marker naming their length.
+ *     Without this the stream carried every assistant token twice: measured on
+ *     one run, 41,094 bytes of deltas alongside 24,600 bytes of `message_end`
+ *     re-stating the same thinking and text. `user` and `toolResult` messages
+ *     pass through whole, because nothing else on the stream carries them.
+ *   - `agent_end` carries its segment's usage and message count, not a second
+ *     copy of every message already streamed.
+ *   - `turn_end` keeps its assistant text, stop reason, and usage, so scripts
+ *     can read the answer from one event. Thinking remains length-only. This
+ *     adds one linear copy of the final answer, without growing snapshots.
+ *     It drops `toolResults`, each of which already crossed the wire
+ *     as a `tool_execution_end`.
+ *   - `tool_execution_*` frames name the capability that ran. A gateway
+ *     op=call carries the capability as `toolName`, its own arguments as
+ *     `args`, and `via: "gateway"`, so a consumer written against v056 direct
+ *     calls keeps reading `bash` and `command`. A chain keeps its `gateway`
+ *     frames and is followed by a start/end pair per settled step, each with
+ *     `toolCallId` `<parent>:<step id>` and `parentToolCallId`.
+ *   - Every other event passes through unchanged.
+ *
+ * The frame types these rules produce are declared in `run-json-schema.ts`.
+ */
+
+import type { FactMetric } from "../../core/telemetry/dto.js";
+import { isRecord } from "../../core/type-guards.js";
+import type { TelemetryView } from "../../domains/telemetry/contract.js";
+import type { AgentMessage } from "../../engine/types.js";
+import type { ChatLoopEvent } from "../../session-control/chat-loop.js";
+import { sumRunUsage } from "../../session-control/chat-loop-messages.js";
+import {
+	chainStepToolCallId,
+	displayToolCall,
+	type GatewayChainStep,
+	gatewayChainSteps,
+	VIA_GATEWAY,
+} from "../../tools/gateway-display.js";
+import type {
+	RunJsonAgentEndFrame,
+	RunJsonChatLoopFrame,
+	RunJsonMessage,
+	RunJsonOpaqueWorkerEventFrame,
+	RunJsonSegmentUsage,
+	RunJsonToolExecutionEndFrame,
+	RunJsonToolExecutionStartFrame,
+	RunJsonWorkerAgentEndFrame,
+	RunJsonWorkerEventFrame,
+} from "./run-json-schema.js";
+
+export function projectHeadlessJsonEvent(event: ChatLoopEvent): RunJsonChatLoopFrame | null {
+	if (event.type === "message_update") return null;
+	if (event.type === "tool_execution_start" || event.type === "tool_execution_update") {
+		const call = displayToolCall(event.toolName, event.args);
+		return call.viaGateway ? { ...event, toolName: call.toolName, args: call.args ?? {}, via: VIA_GATEWAY } : event;
+	}
+	if (event.type === "tool_execution_end") {
+		const details = isRecord(event.result) ? event.result.details : undefined;
+		const call = displayToolCall(event.toolName, undefined, details);
+		return call.viaGateway ? { ...event, toolName: call.toolName, via: VIA_GATEWAY } : event;
+	}
+	if (event.type === "text_delta") {
+		return { type: event.type, contentIndex: event.contentIndex, delta: event.delta };
+	}
+	if (event.type === "thinking_delta") {
+		return { type: event.type, contentIndex: event.contentIndex, delta: event.delta };
+	}
+	if (event.type === "message_end") {
+		return { ...event, message: withoutStreamedContent(event.message) };
+	}
+	if (event.type === "agent_end") return segmentSummary(event.messages);
+	if (event.type === "turn_end") {
+		return { type: event.type, message: withoutStreamedContent(event.message, true) };
+	}
+	return event;
+}
+
+export interface HeadlessJsonProjector {
+	/** The wire frames one chat-loop event becomes, in order; empty when the event is dropped. */
+	project(event: ChatLoopEvent): RunJsonChatLoopFrame[];
+}
+
+/** Rewrite every string in a value. A value with nothing to rewrite comes back as itself. */
+function mapStrings(value: unknown, map: (text: string) => string, depth = 0): unknown {
+	if (typeof value === "string") return map(value);
+	if (depth > 32) return value;
+	if (Array.isArray(value)) {
+		const items = value.map((item) => mapStrings(item, map, depth + 1));
+		return items.every((item, index) => item === value[index]) ? value : items;
+	}
+	if (!isRecord(value)) return value;
+	const entries = Object.entries(value).map(([key, item]) => [key, mapStrings(item, map, depth + 1)] as const);
+	return entries.every(([key, item]) => item === value[key]) ? value : Object.fromEntries(entries);
+}
+
+const isDeltaType = (type: unknown): boolean => type === "text_delta" || type === "thinking_delta";
+const isUpdateDeltaType = (type: unknown): boolean => isDeltaType(type) || type === "toolcall_delta";
+const BLOCK_END_TYPES: ReadonlySet<string> = new Set(["text_end", "thinking_end", "toolcall_end"]);
+
+const heldText = (text: string): string => redactStreamingUrlCredentials(text);
+const cutOffText = (text: string): string => redactFinalUrlCredentials(text, false);
+
+/** Whether a value reads differently for a stream that completed and one that stopped short, so its message's stop reason decides. */
+function holdsOpenUrl(value: unknown): boolean {
+	let open = false;
+	mapStrings(value, (text) => {
+		open ||= cutOffText(text) !== redactUrlCredentials(text);
+		return text;
+	});
+	return open;
+}
+
+/**
+ * URL credentials off a JSON stream, whose reader appends deltas and cannot take one back, so a delta waits in a filter
+ * and every other string is redacted whole. A frame whose delta is held stays unwritten until it has text (#446).
+ */
+export function createJsonCredentialScrub(): {
+	scrub<T>(frame: T): T[];
+	finish<T>(completed: boolean): T[];
+} {
+	const open = new Map<string, { filter: UrlCredentialStreamFilter; frame: (delta: string) => unknown }>();
+	const waitingBlockEnds: ((completed: boolean) => unknown)[] = [];
+	const finish = (completed: boolean): unknown[] => {
+		const frames: unknown[] = [];
+		for (const { filter, frame } of open.values()) {
+			const rest = filter.end(completed);
+			if (rest.length > 0) frames.push(frame(rest));
+		}
+		open.clear();
+		for (const frame of waitingBlockEnds.splice(0)) frames.push(frame(completed));
+		return frames;
+	};
+	const through = (key: string, delta: string, frame: (delta: string) => unknown): unknown[] => {
+		const entry = open.get(key) ?? { filter: new UrlCredentialStreamFilter(), frame };
+		open.set(key, { ...entry, frame });
+		const safe = entry.filter.push(delta);
+		return safe.length > 0 ? [frame(safe)] : [];
+	};
+	const scrub = (frame: unknown): unknown[] => {
+		if (!isRecord(frame)) return [mapStrings(frame, redactUrlCredentials)];
+		if (isDeltaType(frame.type)) {
+			const field = typeof frame.delta === "string" ? "delta" : "text";
+			const delta = frame[field];
+			if (typeof delta === "string") {
+				return through(`${String(frame.type)}:${String(frame.contentIndex ?? "")}`, delta, (safe) => ({
+					...frame,
+					[field]: safe,
+				}));
+			}
+		}
+		const inner = frame.assistantMessageEvent;
+		if (frame.type === "message_update" && isRecord(inner)) {
+			const { partial, ...rest } = inner;
+			const { assistantMessageEvent: _inner, ...outer } = frame;
+			const heldOuter = mapStrings(outer, heldText) as object;
+			const heldPartial = partial !== undefined ? { partial: mapStrings(partial, heldText) } : {};
+			const cutOffPartial = partial !== undefined ? { partial: mapStrings(partial, cutOffText) } : {};
+			const shape = (delta: string): unknown => ({
+				...heldOuter,
+				assistantMessageEvent: { ...rest, delta, ...heldPartial },
+			});
+			const index = String(inner.contentIndex ?? "");
+			if (isUpdateDeltaType(inner.type) && typeof inner.delta === "string") {
+				return through(`update:${String(inner.type)}:${index}`, inner.delta, shape);
+			}
+			if (BLOCK_END_TYPES.has(String(inner.type))) {
+				// Providers end the open block ahead of a message the token limit stopped, so a block's end cannot release what
+				// it holds. A block with no open URL has nothing to decide, and any other waits for its message's stop reason.
+				const settled = (completed: boolean): unknown => ({
+					...heldOuter,
+					assistantMessageEvent: {
+						...(mapStrings(rest, (text) => redactFinalUrlCredentials(text, completed)) as object),
+						...(completed ? heldPartial : cutOffPartial),
+					},
+				});
+				if (!holdsOpenUrl(rest)) return [settled(true)];
+				waitingBlockEnds.push(settled);
+				return [];
+			}
+			return [mapStrings(frame, heldText)];
+		}
+		if (isRecord(frame.message)) {
+			// Only the model's message can stop short. A user or tool result message is whole, with no stop reason to read, and a
+			// message naming no role stays under the rule that fails closed.
+			const assistant = frame.message.role === "assistant" || frame.message.role === undefined;
+			const stopped = messageStopCompleted(frame.message.stopReason);
+			const whole = !assistant || (stopped && frame.type !== "message_update");
+			// A message that starts, or one that is not the model's, finds any open URL cut off whatever it says of itself.
+			const released = assistant && stopped && frame.type !== "message_start" && frame.type !== "message_update";
+			// A frame still open reads as any frame does, and any other that did not stop on purpose is the last this text gets.
+			const open = frame.type === "message_start" || frame.type === "message_update";
+			const held = open ? heldText : cutOffText;
+			return [...finish(released), mapStrings(frame, (text) => (whole ? redactUrlCredentials(text) : held(text)))];
+		}
+		// A failover can start mid-URL, and nothing of the next attempt continues what waits (#446).
+		const ended = frame.type === "agent_end" || frame.type === "attempt_start" ? finish(false) : [];
+		if (frame.type === "tool_execution_update") {
+			// Progress can stop inside a URL, unlike the arguments it repeats, and its end frame carries the settled text (#446).
+			const { partialResult, ...rest } = frame;
+			return [
+				...ended,
+				{ ...(mapStrings(rest, redactUrlCredentials) as object), partialResult: mapStrings(partialResult, heldText) },
+			];
+		}
+		if (isRecord(frame.result) && isRecord(frame.result.output) && frame.result.output.state === "partial") {
+			// Mid-stream text from a message that never completed, as the receipt says, so it can stop inside a URL (#446).
+			const output = mapStrings(frame.result.output, cutOffText);
+			return [...ended, mapStrings({ ...frame, result: { ...frame.result, output } }, redactUrlCredentials)];
+		}
+		return [...ended, mapStrings(frame, redactUrlCredentials)];
+	};
+	return { scrub: scrub as <T>(frame: T) => T[], finish: finish as <T>(completed: boolean) => T[] };
+}
+
+/**
+ * The stateful half of the headless projection. A gateway call's end frame
+ * carries no arguments, and a refused capability's result carries no
+ * `details.capability`, so the end frame takes the capability its start frame
+ * named. A chain's end frame is followed by each settled step as its own
+ * start/end pair; the provider and the session keep the single aggregate.
+ */
+export function createHeadlessJsonProjector(): HeadlessJsonProjector {
+	const capabilities = new Map<string, string>();
+	const credentials = createJsonCredentialScrub();
+	const project = (event: ChatLoopEvent): ReturnType<HeadlessJsonProjector["project"]> => {
+		let projected = projectHeadlessJsonEvent(event);
+		if (projected === null) return [];
+		if (projected.type === "tool_execution_start" && projected.via === VIA_GATEWAY) {
+			capabilities.set(projected.toolCallId, projected.toolName);
+		}
+		if (event.type !== "tool_execution_end" || projected.type !== "tool_execution_end") return [projected];
+		const started = capabilities.get(event.toolCallId);
+		capabilities.delete(event.toolCallId);
+		if (started !== undefined && projected.via !== VIA_GATEWAY) {
+			projected = { ...projected, toolName: started, via: VIA_GATEWAY };
+		}
+		const steps = gatewayChainSteps(event.toolName, event.result);
+		return [projected, ...steps.flatMap((step) => chainStepFrames(event.toolCallId, step))];
+	};
+	return { project: (event) => project(event).flatMap((frame) => credentials.scrub(frame)) };
+}
+
+/** One settled chain step as the start/end pair a direct call of its capability would have produced. */
+function chainStepFrames(
+	parentToolCallId: string,
+	step: GatewayChainStep,
+): [RunJsonToolExecutionStartFrame, RunJsonToolExecutionEndFrame] {
+	const identity = {
+		toolCallId: chainStepToolCallId(parentToolCallId, step.id),
+		parentToolCallId,
+		toolName: step.capability,
+	};
+	return [
+		{ type: "tool_execution_start", ...identity, args: step.args, via: VIA_GATEWAY },
+		{
+			type: "tool_execution_end",
+			...identity,
+			result: step.result,
+			isError: step.isError,
+			via: VIA_GATEWAY,
+			...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
+			...(step.outcome !== undefined ? { outcome: step.outcome } : {}),
+			...(step.actionClass !== undefined ? { actionClass: step.actionClass } : {}),
+			...(step.decision !== undefined ? { decision: step.decision } : {}),
+			...(step.blockReason !== undefined ? { blockReason: step.blockReason } : {}),
+			...(step.bindingError !== undefined ? { bindingError: step.bindingError } : {}),
+		},
+	];
+}
+
+/**
+ * Replace the content blocks a reader has already received as deltas.
+ *
+ * Only an assistant message streams: its `text` and `thinking` blocks arrive
+ * incrementally as `text_delta` and `thinking_delta` keyed by the same
+ * `contentIndex` this array is indexed by. The final `turn_end` keeps text
+ * as well so a reader can consume the answer without reassembling deltas.
+ * Provider replay signatures stay in the durable session, not this observation
+ * stream; encrypted signatures can dwarf the actual answer on every turn.
+ * `toolCall` blocks never stream and are kept whole. A `user` or `toolResult`
+ * message is returned untouched, because no delta ever carried it.
+ */
+function withoutStreamedContent(message: AgentMessage, keepText = false): RunJsonMessage {
+	// The slimmed blocks are built from untyped records, so the result is asserted
+	// to the declared wire shape here, the one place that produces it.
+	const record: unknown = message;
+	if (!isRecord(record) || record.role !== "assistant" || !Array.isArray(record.content)) {
+		return message as RunJsonMessage;
+	}
+	const content = record.content.map((block: unknown) => {
+		if (!isRecord(block)) return block;
+		if (block.type === "text" && typeof block.text === "string") {
+			const { text: _text, textSignature: _signature, ...rest } = block;
+			return { ...rest, streamed: true, textLength: block.text.length, ...(keepText ? { text: block.text } : {}) };
+		}
+		if (block.type === "thinking" && typeof block.thinking === "string") {
+			const { thinking: _thinking, thinkingSignature: _signature, ...rest } = block;
+			return { ...rest, streamed: true, thinkingLength: block.thinking.length };
+		}
+		return block;
+	});
+	return { ...record, content } as unknown as RunJsonMessage;
+}
+
+/**
+ * Projection for the dispatch `--json` stream, whose events come off a worker
+ * rather than out of the chat loop.
+ *
+ * The two streams name streaming increments differently by design: a worker
+ * publishes them as `message_update` deltas already slimmed of their
+ * cumulative snapshots at the worker stdout seam, and the chat loop publishes
+ * them as `text_delta`. They make the same promise about content crossing
+ * once, and `agent_end` was breaking it here: it carried the segment's entire
+ * transcript, every message of which had already crossed as its own
+ * `message_end`. It now carries the same segment summary the main-agent stream
+ * carries, which is also what lets a reader check the per-segment and
+ * per-message accounts of one run against each other.
+ */
+export function projectDispatchJsonEvent(
+	event: unknown,
+): RunJsonWorkerEventFrame | RunJsonWorkerAgentEndFrame | RunJsonOpaqueWorkerEventFrame {
+	// The receipt consumer reads one object per line keyed on `type`, so a value
+	// that cannot be a frame is wrapped instead of dropped or written bare.
+	if (!isRecord(event) || typeof event.type !== "string") return { type: "worker_event", event };
+	if (event.type !== "agent_end" || !Array.isArray(event.messages)) return { ...event, type: event.type };
+	const { messages: _messages, ...rest } = event;
+	return { ...rest, ...segmentSummary(event.messages as AgentMessage[]) };
+}
+
+/** The attempts one agent segment's assistant messages settled, as the turn runtime stamped them. */
+function segmentAttemptIds(messages: ReadonlyArray<AgentMessage>): string[] {
+	return messages.flatMap((message) => {
+		const attemptId = message.role === "assistant" ? (message as { attemptId?: unknown }).attemptId : undefined;
+		return typeof attemptId === "string" ? [attemptId] : [];
+	});
+}
+
+/**
+ * One agent segment's usage as the read model folds its calls, an interrupted call's estimate included: each number is
+ * the known part of its quantity, `measured` only when nothing in it is estimated or unknown (#430, #434). Null for a
+ * segment that settled no call, which the message fold already reports as empty.
+ */
+export function segmentUsageFromView(
+	view: TelemetryView,
+	messages: ReadonlyArray<AgentMessage>,
+): RunJsonSegmentUsage | null {
+	const attemptIds = segmentAttemptIds(messages);
+	if (attemptIds.length === 0) return null;
+	const read = (metric: FactMetric) => view.attempts(attemptIds, metric).fact;
+	return {
+		input: read("input"),
+		output: read("output"),
+		cacheRead: read("cacheRead"),
+		cacheWrite: read("cacheWrite"),
+		reasoning: read("reasoning"),
+		totalTokens: read("total"),
+		// The view's sum carries no pricer, so a free segment reads as a measured `$0.00`, never as free spend.
+		cost: { usd: read("usd"), free: false },
+		apiCalls: factKnownValue(read("apiCalls")),
+	};
+}
+
+function segmentSummary(messages: ReadonlyArray<AgentMessage>): RunJsonAgentEndFrame {
+	const { totals, cost, apiCalls } = sumRunUsage(messages);
+	return {
+		type: "agent_end",
+		messageCount: messages.length,
+		usage: {
+			input: totals.usage.input,
+			output: totals.usage.output,
+			cacheRead: totals.usage.cacheRead,
+			cacheWrite: totals.usage.cacheWrite,
+			reasoning: totals.usage.reasoning,
+			totalTokens: totals.totalTokens,
+			cost,
+			apiCalls,
+		},
+	};
+}

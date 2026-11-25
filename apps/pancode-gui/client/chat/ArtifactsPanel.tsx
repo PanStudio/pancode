@@ -1,0 +1,248 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import type { AgentCapabilities } from "../../contracts/capabilities.js";
+import { routes } from "../../contracts/runtime-routes.js";
+import type { Client } from "../api/client.js";
+import { Icon } from "../design/icons.js";
+import "./artifacts.css";
+import "./pane-inspection.css";
+import { paneArtifactRows } from "./pane-inspection-model.js";
+
+export function ArtifactsPanel({
+	client,
+	sessionId,
+	open,
+	capabilities,
+	settled,
+}: {
+	client: Client;
+	sessionId: string;
+	open: boolean;
+	capabilities: AgentCapabilities | undefined;
+	settled: number;
+}) {
+	const [selected, select] = useState<string | null>(null);
+	const [offsets, setOffsets] = useState([0]);
+	const [details, setDetails] = useState(false);
+	const [filter, setFilter] = useState("");
+	const [query, setQuery] = useState("");
+	const title = useRef<HTMLHeadingElement>(null);
+	const supported = !!capabilities?.artifacts;
+	const list = useQuery({
+		meta: { errorSurface: "inline" },
+		queryKey: ["session-artifacts", sessionId, settled],
+		queryFn: () => client.call(routes.sessionArtifacts, { params: { id: sessionId }, query: {}, body: {} }),
+		enabled: open && supported,
+		retry: false,
+	});
+	const offset = offsets.at(-1) ?? 0;
+	const page = useQuery({
+		meta: { errorSurface: "inline" },
+		queryKey: ["session-artifact", sessionId, selected, offset, details, settled],
+		queryFn: () =>
+			client.call(routes.sessionArtifact, {
+				params: { id: sessionId },
+				query: {},
+				body: { id: selected ?? "", offset, limit: 500, details },
+			}),
+		enabled: open && supported && selected !== null,
+		retry: false,
+	});
+	const pageId = page.data?.id;
+	useEffect(() => {
+		if (pageId && selected && offset >= 0) title.current?.focus();
+	}, [pageId, selected, offset]);
+	const rows = paneArtifactRows(list.data?.artifacts ?? [], query, filter);
+	const error = selected ? page.error : list.error;
+	return (
+		<div className="pane-drill artifacts">
+			{!open ? (
+				<p className="pane-empty">Open this task to read its artifacts.</p>
+			) : !supported ? (
+				<p className="pane-empty">PanCode does not report artifacts for this task.</p>
+			) : selected ? (
+				<>
+					<button
+						type="button"
+						className="artifacts__back"
+						onClick={() => {
+							const id = `${sessionId}-artifact-${encodeURIComponent(selected)}`;
+							select(null);
+							requestAnimationFrame(() => document.getElementById(id)?.focus());
+						}}
+					>
+						<Icon name="arrowLeft" /> All artifacts
+					</button>
+					{page.isPending ? <p className="pane-empty">Reading artifact…</p> : null}
+					{page.data ? (
+						<>
+							<h3 className="artifacts__title" tabIndex={-1} ref={title}>
+								{page.data.title}
+							</h3>
+							<p className="pane-inspection-count">
+								{page.data.format} · {page.data.totalLines} recorded {page.data.totalLines === 1 ? "line" : "lines"}
+							</p>
+							<details className="pane-inspection-disclosure">
+								<summary>Artifact identity</summary>
+								<code>{page.data.id}</code>
+							</details>
+							{page.data.refused ? (
+								<p className="artifacts__refusal" role="status">
+									{page.data.refused.reason}
+								</p>
+							) : null}
+							{page.data.details || details ? (
+								<button
+									type="button"
+									className="artifacts__back"
+									disabled={page.isFetching}
+									onClick={() => {
+										setDetails(!details);
+										setOffsets([0]);
+									}}
+								>
+									{details ? "Show content" : "Show details"}
+								</button>
+							) : null}
+							{/* biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users scroll the artifact independently. */}
+							<section className="artifacts__content" tabIndex={0} aria-label={`${page.data.title}, ${page.data.format}`}>
+								<pre>
+									<code>{page.data.lines.join("\n")}</code>
+								</pre>
+							</section>
+							{page.data.clippedLines ? (
+								<p className="pane-hint">{page.data.clippedLines} oversized lines were shortened by PanCode.</p>
+							) : null}
+							<div className="artifacts__paging">
+								<button
+									type="button"
+									disabled={page.isFetching || offsets.length === 1}
+									onClick={() => setOffsets(offsets.slice(0, -1))}
+								>
+									Previous
+								</button>
+								<span>
+									{page.data.totalLines === 0
+										? "Empty artifact"
+										: `Lines ${page.data.offset + 1}–${page.data.offset + page.data.lines.length} of ${page.data.totalLines}`}
+								</span>
+								<button
+									type="button"
+									disabled={page.isFetching || page.data.nextOffset === null}
+									onClick={() => {
+										if (page.data.nextOffset !== null) setOffsets([...offsets, page.data.nextOffset]);
+									}}
+								>
+									Next
+								</button>
+							</div>
+						</>
+					) : null}
+				</>
+			) : (
+				<>
+					<div className="pane-inspection-filters">
+						<label>
+							Find an artifact
+							<input
+								type="search"
+								value={query}
+								onChange={(event) => setQuery(event.target.value)}
+								maxLength={256}
+								placeholder="Title, path or artifact ID"
+							/>
+						</label>
+					</div>
+					<div className="artifacts__controls">
+						<label>
+							Kind
+							<select value={filter} onChange={(event) => setFilter(event.target.value)}>
+								<option value="">All artifacts</option>
+								{(capabilities?.artifacts?.categories ?? []).map((category) => (
+									<option key={category} value={category}>
+										{category.replaceAll("-", " ")}
+									</option>
+								))}
+							</select>
+						</label>
+						<button
+							type="button"
+							className="artifacts__refresh"
+							aria-label="Refresh artifacts"
+							disabled={list.isFetching}
+							onClick={() => void list.refetch()}
+						>
+							Refresh
+						</button>
+					</div>
+					{list.isPending ? <p className="pane-empty">Reading artifacts…</p> : null}
+					{list.data && (
+						<p className="pane-inspection-count" role="status">
+							{rows.length} of {list.data.artifacts.length} loaded artifacts
+						</p>
+					)}
+					{(query || filter) && (
+						<button
+							type="button"
+							onClick={() => {
+								setQuery("");
+								setFilter("");
+							}}
+						>
+							Reset artifact filters
+						</button>
+					)}
+					{list.data && rows.length === 0 ? (
+						<p className="pane-empty">
+							{query || filter
+								? "No saved artifact matches these filters."
+								: "No saved artifacts have been reported for this task."}
+						</p>
+					) : null}
+					<ul className="artifacts__list">
+						{rows.map((row) => (
+							<li key={row.id}>
+								<button
+									type="button"
+									id={`${sessionId}-artifact-${encodeURIComponent(row.id)}`}
+									onClick={() => {
+										select(row.id);
+										setDetails(false);
+										setOffsets([0]);
+									}}
+								>
+									<span>
+										<strong>{row.title}</strong>
+										{row.subtitle ? <small>{row.subtitle}</small> : null}
+										<small>
+											{row.category.replaceAll("-", " ")}
+											{row.protected ? " · Protected" : ""}
+										</small>
+									</span>
+									<Icon name="chevronRight" />
+								</button>
+							</li>
+						))}
+					</ul>
+					{list.data?.truncated ? (
+						<p className="pane-hint">Showing the newest {capabilities?.artifacts?.perCategory} artifacts in each category.</p>
+					) : null}
+				</>
+			)}
+			{error ? (
+				<p role="alert" className="pane-empty">
+					{error.message}{" "}
+					<button
+						type="button"
+						disabled={selected ? page.isFetching : list.isFetching}
+						onClick={() => void (selected ? page.refetch() : list.refetch())}
+					>
+						Retry
+					</button>
+				</p>
+			) : null}
+		</div>
+	);
+}

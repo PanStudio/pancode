@@ -1,0 +1,752 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { createHash, randomBytes } from "node:crypto";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { setTimeout } from "node:timers/promises";
+import { parseArgs } from "node:util";
+import { backgroundCapability } from "../../contracts/launch-capability.js";
+import { findLocalServer, type LocalServerMeta, launchTicket, showPage, waitForLocalServer } from "../local-server.js";
+import { getVersionInfo, resolvePancodeDirs } from "../pancode/http-shims.js";
+import { controlService, openApp } from "../process-policy.js";
+import type { WindowAnswer } from "../relaunch-model.js";
+import {
+	type BackgroundConfig,
+	backgroundPaths,
+	backgroundUnit,
+	newBackgroundConfig,
+	readBackgroundConfig,
+} from "./background-config.js";
+import { desktopEntry, type LaunchPaths } from "./desktop-entry.js";
+import { contents, installLauncher, launcherStatus, uninstallLauncher } from "./install.js";
+import { DEFAULT_GUI_PORT } from "./ports.js";
+import {
+	assertWindowsLauncherRemovable,
+	installWindowsLauncher,
+	uninstallWindowsLauncher,
+	windowsLauncherStatus,
+} from "./windows.js";
+
+const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+type Control = typeof controlService;
+type Files = ReturnType<typeof backgroundPaths>;
+/** Resolves once the app answers; a fake in tests may resolve without its report. */
+type Ready = (port: number, token: string, current?: () => Promise<string>) => Promise<LocalServerMeta | unknown>;
+const serverReport = (meta: unknown) => ({
+	running:
+		meta && typeof meta === "object" && typeof (meta as LocalServerMeta).pancode === "string"
+			? (meta as LocalServerMeta).pancode
+			: null,
+	idle:
+		meta && typeof meta === "object" && typeof (meta as LocalServerMeta).idle === "boolean"
+			? (meta as LocalServerMeta).idle
+			: undefined,
+	port:
+		meta && typeof meta === "object" && Number.isInteger((meta as LocalServerMeta).port)
+			? (meta as LocalServerMeta).port
+			: undefined,
+});
+const sameLaunch = (left: BackgroundConfig["launch"], right: BackgroundConfig["launch"]) =>
+	left.node === right.node && left.loader === right.loader && left.entry === right.entry && left.icon === right.icon;
+/** The XDG desktop entry is a Linux launcher; macOS and Windows open the app with pancode gui. */
+const desktopLaunchers = () => process.platform === "linux";
+const NATIVE_PACKAGE_SUFFIX = join("lib", "node_modules", "pancode");
+/**
+ * The install root of a package that scripts/install.sh or install.ps1 put at
+ * `<root>/versions/<version>/lib/node_modules/pancode`, or null. The root's
+ * install.json is the installer's ownership record and names its current prefix.
+ */
+async function nativeInstallRoot(packageRoot: string): Promise<string | null> {
+	if (!packageRoot.endsWith(sep + NATIVE_PACKAGE_SUFFIX)) return null;
+	const versions = dirname(packageRoot.slice(0, -(NATIVE_PACKAGE_SUFFIX.length + 1)));
+	if (basename(versions) !== "versions") return null;
+	const root = dirname(versions);
+	try {
+		const record = JSON.parse(await readFile(join(root, "install.json"), "utf8"));
+		const owned =
+			record?.kind === "pancode-installer" &&
+			(record.schema === 1 || record.schema === 2) &&
+			typeof record.current === "string" &&
+			record.current.startsWith(versions + sep);
+		return owned ? root : null;
+	} catch {
+		// No readable installer record: not a native install, so only an identical root matches.
+		return null;
+	}
+}
+/**
+ * One installation is the same package root, or two versions of one native install: every
+ * native upgrade lands in a new versions/<version> prefix, and comparing those roots made
+ * restart, reuse, reset and uninstall refuse the app the previous version had installed.
+ */
+export async function sameInstallation(left: string, right: string) {
+	const [installed, current] = await Promise.all([realpath(left).catch(() => null), realpath(right).catch(() => null)]);
+	if (installed === null || current === null) return false;
+	if (installed === current) return true;
+	const root = await nativeInstallRoot(installed);
+	return root !== null && root === (await nativeInstallRoot(current));
+}
+/**
+ * Holds an exclusive lock beside the background directory while `publish` runs. Two app starts
+ * that rotate the token at once otherwise interleave their renames, and the manifest one of them
+ * moves last blesses the other's launch file, so every later start refuses the setup. A lock whose
+ * holder has exited is taken over.
+ */
+async function withPublishLock<T>(directory: string, publish: () => Promise<T>): Promise<T> {
+	const lock = join(dirname(directory), `.${basename(directory)}.publish.lock`);
+	for (let attempt = 0; ; attempt += 1) {
+		try {
+			await writeFile(lock, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
+			break;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		}
+		const holder = Number.parseInt((await contents(lock)) ?? "", 10);
+		let alive = true;
+		if (Number.isInteger(holder) && holder > 0 && holder !== process.pid) {
+			try {
+				process.kill(holder, 0);
+			} catch (error) {
+				alive = (error as NodeJS.ErrnoException).code === "EPERM";
+			}
+		}
+		if (!alive) {
+			await unlink(lock).catch(() => undefined);
+			continue;
+		}
+		if (attempt >= 400)
+			throw new Error(`Another process is changing the background setup (${lock}). No files were changed.`);
+		await setTimeout(25);
+	}
+	try {
+		return await publish();
+	} finally {
+		await unlink(lock).catch(() => undefined);
+	}
+}
+/** `keptUnit` is the verified unit text left in place; without it the unit is rendered and written anew. */
+async function publishOwned(
+	directory: string,
+	config: BackgroundConfig,
+	files: Files,
+	replace: boolean,
+	keptUnit?: string,
+) {
+	return withPublishLock(directory, () => publishOwnedUnlocked(directory, config, files, replace, keptUnit));
+}
+async function publishOwnedUnlocked(
+	directory: string,
+	config: BackgroundConfig,
+	files: Files,
+	replace: boolean,
+	keptUnit?: string,
+) {
+	const unitChanged = keptUnit === undefined;
+	const configText = `${JSON.stringify(config, null, 2)}\n`,
+		unit = keptUnit ?? backgroundUnit(config, directory);
+	const staging = await mkdtemp(join(dirname(directory), ".pancode-background-"));
+	try {
+		await writeFile(join(staging, "server.json"), configText, { flag: "wx", mode: 0o600 });
+		await readBackgroundConfig(join(staging, "server.json"));
+		if (unitChanged) await writeFile(join(staging, files.unit), unit, { flag: "wx", mode: 0o600 });
+		await writeFile(
+			join(staging, "owner.json"),
+			`${JSON.stringify({ v: OWNER_VERSION, owner: "pancode-gui-background", config: hash(configText), unit: hash(unit) })}\n`,
+			{ flag: "wx", mode: 0o600 },
+		);
+		if (replace) {
+			// The manifest moves last: ownership never blesses a mixture of the old and new launch files.
+			await rename(join(staging, "server.json"), files.config);
+			if (unitChanged) await rename(join(staging, files.unit), files.unitFile);
+			await rename(join(staging, "owner.json"), files.manifest);
+		} else {
+			// Rename publishes all three files together and refuses a nonempty competing directory.
+			await rename(staging, directory);
+		}
+	} finally {
+		await rm(staging, { recursive: true, force: true });
+	}
+}
+
+const OWNER_VERSION = 2;
+async function owned(directory: string, retry = true): Promise<Owned> {
+	try {
+		return await ownedOnce(directory);
+	} catch (error) {
+		// A starting app renames its new launch token in just before the manifest that blesses it.
+		if (!retry) throw error;
+		await setTimeout(50);
+		return owned(directory, false);
+	}
+}
+type Owned = Awaited<ReturnType<typeof ownedOnce>>;
+async function ownedOnce(directory: string) {
+	const files = backgroundPaths(directory);
+	const manifest = await contents(files.manifest),
+		configText = await contents(files.config),
+		unit = await contents(files.unitFile);
+	if (manifest === null && configText === null && unit === null) return { status: "absent" as const, files };
+	try {
+		const owner = JSON.parse(manifest ?? "null");
+		if (
+			owner?.v !== OWNER_VERSION ||
+			owner?.owner !== "pancode-gui-background" ||
+			!configText ||
+			!unit ||
+			owner.config !== hash(configText) ||
+			owner.unit !== hash(unit)
+		)
+			throw new Error("Ownership mismatch");
+		const config = await readBackgroundConfig(files.config);
+		// A unit another PanCode version rendered differs from this one's rendering. The manifest still proves it
+		// ours, so it is outdated rather than foreign, and every path that publishes rewrites it.
+		const outdated = unit !== backgroundUnit(config, directory);
+		return { status: "installed" as const, files, config, unit, outdated };
+	} catch {
+		throw new Error(
+			"Background files are incomplete, modified or not private; ownership could not be verified. No files were changed.",
+		);
+	}
+}
+/**
+ * Every start of the background app draws a new launch token and publishes it, with the manifest that
+ * blesses it, before it listens, so a copy of an earlier token (and so every credential bought with
+ * one) opens nothing after a restart. Launchers read the token from the file after they start the app.
+ */
+export async function rotateBackgroundToken(configFile: string): Promise<BackgroundConfig> {
+	const directory = dirname(resolve(configFile));
+	const state = await owned(directory);
+	if (state.status !== "installed" || state.files.config !== resolve(configFile))
+		throw new Error("Persistent mode starts only from a verified background setup. No files were changed.");
+	const config = { ...state.config, token: randomBytes(32).toString("base64url") };
+	// The token is not in the unit; leaving its file alone keeps the service manager from seeing a change, and the
+	// manifest blesses the verified text on disk, which an outdated unit keeps until a repair rewrites it.
+	await publishOwned(directory, config, state.files, true, state.unit);
+	return config;
+}
+/** The launch token the app published last: one it starts rotates it, so a launcher waits on the file's. */
+const currentToken = (files: Files) => async () => (await readBackgroundConfig(files.config)).token;
+async function serviceState(files: Files, control: Control) {
+	const text = await control("show", files.unit, files.unitFile);
+	const values = Object.fromEntries(
+		text
+			.trim()
+			.split("\n")
+			.map((line) => {
+				const index = line.indexOf("=");
+				return [line.slice(0, index), line.slice(index + 1)];
+			}),
+	);
+	if (values.FragmentPath && (await realpath(values.FragmentPath).catch(() => "")) !== files.unitFile)
+		throw new Error("A different service uses this name; it will not be changed.");
+	return values;
+}
+async function desktopOwned(config: BackgroundConfig, directory: string) {
+	if (!desktopLaunchers()) return false;
+	const state = await launcherStatus(config.desktopPrefix);
+	if (state.status === "absent") return false;
+	if (
+		state.status === "conflict" ||
+		(await contents(state.entry)) !== desktopEntry({ ...config.launch, background: directory })
+	)
+		throw new Error(
+			"The desktop entry belongs to another launch mode or was changed; it will not be replaced or removed.",
+		);
+	return true;
+}
+export async function installBackground(
+	directory: string,
+	proposed: BackgroundConfig,
+	control: Control = controlService,
+	ready: Ready = waitForLocalServer,
+	options: { handover?: boolean; probe?: typeof findLocalServer } = {},
+) {
+	const capability = backgroundCapability(process.platform);
+	if (!capability.available) throw new Error(capability.reason);
+	await mkdir(directory, { recursive: true, mode: 0o700 });
+	const info = await lstat(directory);
+	if (
+		!info.isDirectory() ||
+		(await realpath(directory)) !== directory ||
+		// Windows keeps a user's files private through the profile's ACLs, not mode bits.
+		(process.platform !== "win32" && (info.mode & 0o077) !== 0) ||
+		(process.getuid && info.uid !== process.getuid())
+	)
+		throw new Error("Background directory must be a private, canonical directory owned by this user.");
+	const state = await owned(directory),
+		files = state.files;
+	const service = await serviceState(files, control);
+	let config = proposed;
+	let launchMoved = false;
+	if (state.status === "installed") {
+		if (state.config.port !== proposed.port || state.config.desktopPrefix !== proposed.desktopPrefix)
+			throw new Error(
+				"Background setup already has a stable port and desktop location. Uninstall it before changing them.",
+			);
+		const foreign = !(await sameInstallation(state.config.packageRoot, proposed.packageRoot));
+		if (foreign && !options.handover)
+			throw new Error("Background setup belongs to another installation. Run: pancode gui background install --handover");
+		if (foreign) {
+			if (
+				Object.entries(state.config.roots).some(
+					([key, value]) => proposed.roots[key as keyof typeof proposed.roots] !== value,
+				)
+			)
+				throw new Error("Background handover requires the same PanCode data roots. Run: pancode gui background status");
+			await assertWindowsLauncherRemovable(directory);
+		}
+		launchMoved = foreign || !sameLaunch(state.config.launch, proposed.launch);
+		if (launchMoved) {
+			const running = await (options.probe ?? findLocalServer)(state.config.port, state.config.token);
+			if ((running && running.idle !== true) || (!running && service.ActiveState === "active"))
+				throw new Error(
+					"Background app has active work or cannot report idleness. Finish the work, then run: pancode gui background install --handover",
+				);
+		}
+		config = launchMoved ? { ...state.config, packageRoot: proposed.packageRoot, launch: proposed.launch } : state.config;
+	}
+	const desktopConfig = state.status === "installed" ? state.config : config;
+	const desktop = desktopLaunchers() ? await launcherStatus(config.desktopPrefix) : { status: "absent" as const };
+	const hasDesktop = desktop.status === "absent" ? false : await desktopOwned(desktopConfig, directory);
+	if (launchMoved && hasDesktop) await uninstallLauncher(config.desktopPrefix);
+	if (state.status === "absent") await publishOwned(directory, config, files, false);
+	else if (launchMoved || state.outdated) {
+		await publishOwned(directory, config, files, true);
+		await control("reload", files.unit, files.unitFile);
+	}
+	await control("enable", files.unit, files.unitFile);
+	if (launchMoved) await control("restart", files.unit, files.unitFile);
+	// The app falls back to its second port while another program holds the first; report where it listens.
+	const port = serverReport(await ready(config.port, config.token, currentToken(files))).port ?? config.port;
+	if (desktopLaunchers()) await installLauncher(config.desktopPrefix, { ...config.launch, background: directory });
+	return { status: "installed", unit: files.unit, origin: `http://127.0.0.1:${port}`, directory };
+}
+export async function backgroundStatus(
+	directory: string,
+	control: Control = controlService,
+	ready: (port: number, token: string) => Promise<LocalServerMeta | boolean | null> = findLocalServer,
+) {
+	const state = await owned(directory);
+	if (state.status === "absent") return { status: "absent", directory };
+	const service = await serviceState(state.files, control);
+	const found = await ready(state.config.port, state.config.token);
+	// The app may be listening on its documented fallback port; the address a person should use is the live one.
+	const port = serverReport(found).port ?? state.config.port;
+	return {
+		status: "installed",
+		directory,
+		unit: state.files.unit,
+		port,
+		configuredPort: state.config.port,
+		definition: state.outdated ? ("outdated" as const) : ("current" as const),
+		origin: `http://127.0.0.1:${port}`,
+		active: service.ActiveState ?? "unknown",
+		enabled: service.UnitFileState ?? "unknown",
+		pid: Number(service.MainPID) || null,
+		ready: !!found,
+		running: serverReport(found).running,
+		idle: serverReport(found).idle,
+		desktop: (await desktopOwned(state.config, directory)) ? "installed" : "absent",
+		windows: await windowsLauncherStatus(directory),
+	};
+}
+
+/** Doctor may transfer only hash-verified files and an idle service belonging to these data roots. */
+export async function inspectBackground(directory: string, launch: LaunchPaths, fix: boolean) {
+	const state = await owned(directory);
+	if (state.status === "absent") return [];
+	const config = await newBackgroundConfig(state.config.port, launch, state.config.desktopPrefix);
+	const foreign = !(await sameInstallation(state.config.packageRoot, config.packageRoot));
+	const moved = !sameLaunch(state.config.launch, config.launch);
+	let status = await backgroundStatus(directory);
+	const needsRepair =
+		foreign ||
+		moved ||
+		state.outdated ||
+		(desktopLaunchers() && status.desktop === "absent") ||
+		status.windows === "absent" ||
+		!status.ready;
+	if (fix && needsRepair) {
+		await installBackground(directory, config, undefined, undefined, { handover: true });
+		await installWindowsLauncher(directory, { ...config.launch, background: directory });
+		status = await backgroundStatus(directory);
+	}
+	const latest = getVersionInfo().pancode;
+	const pending = status.running && status.running !== latest;
+	return [
+		...(pending
+			? [
+					{
+						ok: true,
+						level: "warn" as const,
+						name: "GUI running version",
+						detail: `running ${status.running}; installed ${latest}${status.idle === false ? "; active work is keeping it on the old version" : ""}; finish active work, run \`pancode gui background restart --if-idle\`, then reload the PanCode window`,
+					},
+				]
+			: []),
+		{
+			ok: true,
+			...(!fix && needsRepair ? { level: "warn" as const } : {}),
+			name: "GUI background",
+			detail:
+				!fix && needsRepair
+					? `${foreign ? `owned by ${state.config.packageRoot}; handover available` : state.outdated ? "service definition is from an earlier version" : "service or launchers need repair"}; run \`pancode doctor --fix\``
+					: `${fix && needsRepair ? "repaired; " : ""}${status.origin}; launchers resolve the current address; run \`pancode gui\` to renew the browser connection`,
+		},
+	];
+}
+type Installed = Extract<Awaited<ReturnType<typeof owned>>, { status: "installed" }>;
+async function pinCurrentLaunch(
+	state: Installed,
+	directory: string,
+	launch: LaunchPaths,
+	control: Control,
+): Promise<Installed> {
+	const proposed = await newBackgroundConfig(state.config.port, launch, state.config.desktopPrefix);
+	if (!(await sameInstallation(state.config.packageRoot, proposed.packageRoot)))
+		throw new Error(
+			"Background setup belongs to another installation and its launch paths were left unchanged. Finish active work, then run: pancode gui background install --handover",
+		);
+	if (sameLaunch(state.config.launch, proposed.launch) && !state.outdated) return state;
+	await serviceState(state.files, control);
+	const hasDesktop = await desktopOwned(state.config, directory);
+	if (hasDesktop) await uninstallLauncher(state.config.desktopPrefix);
+	const config = { ...state.config, packageRoot: proposed.packageRoot, launch: proposed.launch };
+	await publishOwned(directory, config, state.files, true);
+	await control("reload", state.files.unit, state.files.unitFile);
+	if (desktopLaunchers()) await installLauncher(config.desktopPrefix, { ...config.launch, background: directory });
+	if ((await windowsLauncherStatus(directory)) === "installed")
+		await installWindowsLauncher(directory, { ...config.launch, background: directory });
+	return { ...state, config, unit: backgroundUnit(config, directory), outdated: false };
+}
+async function startOwned(state: Installed, control: Control, ready: Ready, action: "start" | "restart" = "start") {
+	await serviceState(state.files, control);
+	await control(action, state.files.unit, state.files.unitFile);
+	const report = serverReport(await ready(state.config.port, state.config.token, currentToken(state.files)));
+	return {
+		url: `http://127.0.0.1:${report.port ?? state.config.port}/`,
+		...report,
+	};
+}
+/**
+ * The app's address with a fresh single-use launch ticket for the browser to open. The launch token
+ * never goes into a URL: an opener's argv is readable by every local user, and the page would keep it.
+ */
+export async function ticketUrl(directory: string, url: string, mint = launchTicket) {
+	const state = await owned(directory);
+	const next = new URL(url);
+	const ticket = state.status === "installed" ? await mint(Number(next.port), state.config.token) : null;
+	if (ticket) next.hash = `ticket=${ticket}`;
+	return next.href;
+}
+/** Ask the background app whether a window is live and, with `path`, to show that page in it. */
+export async function showBackgroundPage(directory: string, port: number, path?: string): Promise<WindowAnswer> {
+	const state = await owned(directory);
+	return state.status === "installed" ? showPage(port, state.config.token, path) : "unknown";
+}
+const publicStart = ({ url, running }: Awaited<ReturnType<typeof startOwned>>) => ({ url, running });
+export async function startBackground(
+	directory: string,
+	control: Control = controlService,
+	ready: Ready = waitForLocalServer,
+) {
+	const state = await owned(directory);
+	if (state.status !== "installed")
+		throw new Error("Background service is not installed. Run pancode gui background install first.");
+	return (await startOwned(state, control, ready)).url;
+}
+export async function restartBackground(
+	directory: string,
+	control: Control = controlService,
+	ready: Ready = waitForLocalServer,
+	launch?: LaunchPaths,
+) {
+	let state = await owned(directory);
+	if (state.status !== "installed")
+		throw new Error("Background service is not installed. Run pancode gui background install first.");
+	if (launch) state = await pinCurrentLaunch(state, directory, launch, control);
+	return publicStart(await startOwned(state, control, ready, "restart"));
+}
+
+export type BackgroundPreference =
+	| { kind: "open"; url: string; running: string | null; restartedFrom?: string }
+	| { kind: "absent" }
+	| { kind: "unavailable"; reason: string };
+
+/**
+ * A bare launch reuses this installation's own background app. It never fails over it: files it
+ * cannot verify, another installation's service, or a service manager that will not start it each
+ * become a reason the caller prints before starting a private server, and nothing is changed.
+ */
+export async function preferBackground(
+	directory: string,
+	packageRoot: string,
+	control: Control = controlService,
+	ready: Ready = waitForLocalServer,
+	platform: NodeJS.Platform = process.platform,
+	version?: string,
+	launch?: LaunchPaths,
+): Promise<BackgroundPreference> {
+	if (!backgroundCapability(platform).available) return { kind: "absent" };
+	let state: Awaited<ReturnType<typeof owned>>;
+	try {
+		state = await owned(directory);
+	} catch {
+		return {
+			kind: "unavailable",
+			reason:
+				"Background app files could not be verified, so they were left untouched. See pancode gui background status.",
+		};
+	}
+	if (state.status === "absent") return { kind: "absent" };
+	if (!(await sameInstallation(state.config.packageRoot, packageRoot)))
+		return {
+			kind: "unavailable",
+			reason: "The background app belongs to another PanCode installation, so this one will not take it over.",
+		};
+	try {
+		if (launch) return { kind: "open", ...publicStart(await startCurrentBackground(directory, launch, control, ready)) };
+		const started = await startOwned(state, control, ready);
+		if (version && started.running && started.running !== version && started.idle === true) {
+			const restarted = await startOwned(state, control, ready, "restart");
+			return { kind: "open", ...publicStart(restarted), restartedFrom: started.running };
+		}
+		return { kind: "open", ...publicStart(started) };
+	} catch (error) {
+		return { kind: "unavailable", reason: error instanceof Error ? error.message : String(error) };
+	}
+}
+export async function restartBackgroundIfIdle(
+	directory: string,
+	control: Control = controlService,
+	ready: Ready = waitForLocalServer,
+	probe: (port: number, token: string) => Promise<LocalServerMeta | null> = findLocalServer,
+	launch?: LaunchPaths,
+) {
+	let state = await owned(directory);
+	if (state.status === "absent") return { status: "absent" as const };
+	const report = serverReport(await probe(state.config.port, state.config.token));
+	if (report.running === null) {
+		// A service whose app cannot answer this launcher's proof is never stopped unproven.
+		const active = (await serviceState(state.files, control)).ActiveState === "active";
+		return { status: "left" as const, reason: active ? ("unproven" as const) : ("stopped" as const), running: null };
+	}
+	if (report.idle !== true)
+		return {
+			status: "left" as const,
+			reason: report.idle === false ? ("busy" as const) : ("unknown" as const),
+			running: report.running,
+		};
+	if (launch) state = await pinCurrentLaunch(state, directory, launch, control);
+	const restarted = await startOwned(state, control, ready, "restart");
+	return { status: "restarted" as const, running: restarted.running };
+}
+
+/** Navigation may reuse a verified installation, but never silently takes over another package. */
+export async function tryStartBackground(
+	directory: string,
+	packageRoot: string,
+	control: Control = controlService,
+	ready: Ready = waitForLocalServer,
+) {
+	const state = await owned(directory);
+	if (state.status === "absent") return undefined;
+	if (!(await sameInstallation(state.config.packageRoot, packageRoot)))
+		throw new Error(
+			"Background setup belongs to another installation. Use that installation or run pancode gui without --reuse-background.",
+		);
+	return startBackground(directory, control, ready);
+}
+export async function stopBackground(directory: string, control: Control = controlService) {
+	const state = await owned(directory);
+	if (state.status === "absent") return;
+	await serviceState(state.files, control);
+	await control("stop", state.files.unit, state.files.unitFile);
+}
+export async function uninstallBackground(directory: string, control: Control = controlService) {
+	const state = await owned(directory);
+	if (state.status === "absent") return { status: "absent", directory };
+	await serviceState(state.files, control);
+	const desktop = await desktopOwned(state.config, directory);
+	await assertWindowsLauncherRemovable(directory);
+	await control("disable", state.files.unit, state.files.unitFile);
+	if (desktop) await uninstallLauncher(state.config.desktopPrefix);
+	await uninstallWindowsLauncher(directory);
+	for (const file of [state.files.manifest, state.files.unitFile, state.files.config]) await unlink(file);
+	await control("reload", state.files.unit, state.files.unitFile);
+	await rmdir(directory).catch((error: NodeJS.ErrnoException) => {
+		if (error.code !== "ENOTEMPTY") throw error;
+	});
+	return { status: "absent", directory };
+}
+
+/** Verify before root uninstall removes the state needed to stop this service. */
+export async function backgroundRemoval(directory: string, packageRoot: string, control: Control = controlService) {
+	const state = await owned(directory);
+	if (state.status === "absent") return null;
+	// Reset and uninstall both call this before they delete anything, so the refusal names neither.
+	if (!(await sameInstallation(state.config.packageRoot, packageRoot)))
+		throw new Error("Background service belongs to another installation; PanCode state was left unchanged.");
+	await serviceState(state.files, control);
+	await desktopOwned(state.config, directory);
+	await assertWindowsLauncherRemovable(directory);
+	return { path: directory, remove: () => uninstallBackground(directory, control) };
+}
+
+/** Opening after activation updates the service target, preserving work until it is idle. */
+export async function startCurrentBackground(
+	directory: string,
+	launch: LaunchPaths,
+	control: Control = controlService,
+	ready: Ready = waitForLocalServer,
+) {
+	let state = await owned(directory);
+	if (state.status !== "installed")
+		throw new Error("Background service is not installed. Run pancode gui background install first.");
+	const moved = !sameLaunch(state.config.launch, launch);
+	let started = await startOwned(state, control, ready);
+	// Keep the old target while busy, so a later open still notices same-version rebuilds.
+	if (started.idle !== true) return started;
+	state = await pinCurrentLaunch(state, directory, launch, control);
+	if (moved || (started.running && started.running !== getVersionInfo().pancode))
+		started = await startOwned(state, control, ready, "restart");
+	return started;
+}
+
+export async function background(args: string[], launch: LaunchPaths, platform: string = process.platform) {
+	const { values, positionals } = parseArgs({
+		args,
+		allowPositionals: true,
+		options: {
+			directory: { type: "string" },
+			prefix: { type: "string" },
+			port: { type: "string" },
+			open: { type: "boolean" },
+			"if-idle": { type: "boolean" },
+			handover: { type: "boolean" },
+			json: { type: "boolean" },
+			help: { type: "boolean", short: "h" },
+		},
+	});
+	const usage =
+		"Usage: pancode gui background install|status|start|open|restart [--if-idle]|stop|uninstall [--directory <absolute private directory>] [install: --port <port> --prefix <XDG data directory> --open --handover]";
+	// The installer's launcher hands `gui background` straight to the desktop manager, past the CLI's own --help.
+	if (values.help) {
+		process.stdout.write(`${usage}\n`);
+		return;
+	}
+	const command = positionals[0];
+	if (
+		positionals.length !== 1 ||
+		!["install", "status", "start", "open", "restart", "stop", "uninstall"].includes(command ?? "")
+	)
+		throw new Error(usage);
+	if (command !== "install" && (values.prefix !== undefined || values.port !== undefined || values.open !== undefined))
+		throw new Error("--port, --prefix and --open apply to background install only.");
+	if (command !== "restart" && values["if-idle"] !== undefined)
+		throw new Error("--if-idle applies to background restart only.");
+	if (command !== "install" && values.handover !== undefined)
+		throw new Error("--handover applies to background install only.");
+	const capability = backgroundCapability(platform);
+	if (!capability.available) {
+		// An unsupported host is a capability report, not a failure: status, stop and uninstall have nothing
+		// to act on and succeed; an action that would set up or open the app exits 2 so a script can tell.
+		console.log(JSON.stringify({ status: "unavailable", reason: capability.reason }, null, 2));
+		if (!["status", "stop", "uninstall"].includes(command ?? "")) process.exitCode = 2;
+		return;
+	}
+	const directory = values.directory ?? join(resolvePancodeDirs().state, "gui/background");
+	if (!isAbsolute(directory) || resolve(directory) !== directory)
+		throw new Error("--directory must be an absolute normalized path.");
+	if (command === "status") {
+		console.log(JSON.stringify(await backgroundStatus(directory), null, 2));
+		return;
+	}
+	if (command === "uninstall") {
+		console.log(JSON.stringify(await uninstallBackground(directory), null, 2));
+		return;
+	}
+	if (command === "stop") {
+		await stopBackground(directory);
+		console.log("PanCode background app stopped. It starts again at your next login, or with pancode gui.");
+		return;
+	}
+	if (command === "install") {
+		const installed = await owned(directory);
+		const requested = values.port;
+		if (requested !== undefined && (!/^\d+$/.test(requested) || Number(requested) < 1 || Number(requested) > 65535))
+			throw new Error("--port must be an integer from 1 to 65535.");
+		// Reinstalling keeps the stable address the app already has; only a first install picks the default.
+		const port =
+			requested !== undefined
+				? Number(requested)
+				: installed.status === "installed"
+					? installed.config.port
+					: DEFAULT_GUI_PORT;
+		const prefix =
+			values.prefix ??
+			(installed.status === "installed"
+				? installed.config.desktopPrefix
+				: process.env.XDG_DATA_HOME && isAbsolute(process.env.XDG_DATA_HOME)
+					? process.env.XDG_DATA_HOME
+					: join(homedir(), ".local/share"));
+		const config = await newBackgroundConfig(port, launch, prefix);
+		const result = await installBackground(directory, config, undefined, undefined, {
+			handover: values.handover === true,
+		});
+		// Windows entries are a convenience around a service that already works, so their failure is reported, not fatal.
+		const windows = await installWindowsLauncher(directory, { ...config.launch, background: directory }).catch(
+			(error: unknown) => ({ status: "failed" as const, reason: error instanceof Error ? error.message : String(error) }),
+		);
+		console.log(JSON.stringify({ ...result, windows }, null, 2));
+		if (values.json && !values.open) return;
+		console.log(
+			"Background sessions use PanCode's saved credentials. If a target key exists only in your terminal environment, save it with pancode auth login <target> before starting a conversation.",
+		);
+		if (!values.open) {
+			console.log(
+				windows.status === "installed"
+					? "Open it any time from the Windows Start Menu (PanCode) or with: pancode gui"
+					: "Open it any time with: pancode gui",
+			);
+			return;
+		}
+	}
+	if (command === "restart") {
+		if (values["if-idle"]) {
+			const result = await restartBackgroundIfIdle(directory, undefined, undefined, undefined, launch);
+			const line =
+				result.status === "absent"
+					? "PanCode background app is not installed."
+					: result.status === "restarted"
+						? "PanCode background app restarted."
+						: result.reason === "busy"
+							? "PanCode background app was left running because it is busy."
+							: result.reason === "unknown"
+								? "PanCode background app was left running because it does not report whether it is idle."
+								: result.reason === "unproven"
+									? "PanCode background app is running but did not prove it is this installation's app, so it was left running. See pancode gui background status."
+									: "PanCode background app was left stopped.";
+			console.log(line);
+			return;
+		}
+		const restarted = await restartBackground(directory, undefined, undefined, launch);
+		console.log(`PanCode background app restarted and ready at ${new URL(restarted.url).origin}.`);
+		return;
+	}
+	const { url: origin } = await startCurrentBackground(directory, launch);
+	const url = command === "open" ? await ticketUrl(directory, origin) : origin;
+	if (command === "start") {
+		console.log(`PanCode background app is ready at ${new URL(url).origin}.`);
+		return;
+	}
+	// Print a manual fallback, and fail so the Windows host can display the captured error.
+	// The launcher that owns its window focuses it only while the app says a window can hear it.
+	const live = await showBackgroundPage(directory, Number(new URL(url).port)).catch(() => "unknown");
+	await openApp(url, process.env, directory, live === "shown").catch((error: unknown) => {
+		console.log(`[pancode:gui] ${url}`);
+		console.error("[pancode:gui] Could not open the browser. Open the printed URL manually.");
+		throw new Error(`Desktop launch failed: ${error instanceof Error ? error.message : String(error)}`);
+	});
+}

@@ -1,0 +1,1324 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* The conversation composer's controls, the per-message action row and the outcome footer. The box
+   itself, its field, its row and Send are in composer-box.css, which the new-task screen shares.
+   Every colour is a token from client/design/tokens.css; nothing here names a raw value, and no
+   state is carried by colour alone. */
+
+/* The delivery choice is one control with two positions, so its buttons are joined into a single
+   segmented switch; the chosen side takes the accent wash and the accent edge. */
+.composer__delivery {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 0;
+	min-width: 0;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	border: 0;
+	margin: 0;
+	padding: 0;
+}
+.composer__delivery-short {
+	display: none;
+}
+.composer__delivery button {
+	position: relative;
+	min-height: 28px;
+	padding: 0 var(--space-3);
+	border: 1px solid var(--line-float);
+	border-radius: 0;
+	white-space: nowrap;
+	background: transparent;
+	color: var(--ink-muted);
+	font-size: inherit;
+	font-weight: 500;
+}
+.composer__delivery button + button {
+	margin-inline-start: -1px;
+}
+.composer__delivery button:first-of-type {
+	border-start-start-radius: var(--radius-sm);
+	border-end-start-radius: var(--radius-sm);
+}
+.composer__delivery button:last-of-type {
+	border-start-end-radius: var(--radius-sm);
+	border-end-end-radius: var(--radius-sm);
+}
+.composer__delivery button:hover:not(:disabled) {
+	color: var(--ink);
+}
+.composer__delivery button[aria-pressed="true"] {
+	z-index: 1;
+	border-color: var(--accent);
+	color: var(--ink);
+	background: var(--accent-soft);
+}
+
+/* The global `details` rule gives every disclosure a block margin; in this row it made the row 24px
+   taller than its tallest control. */
+.composer__options,
+.route-picker {
+	margin: 0;
+}
+.composer__icon-button,
+.composer__options > summary {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	min-width: 32px;
+	min-height: 32px;
+	padding: 6px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink-muted);
+	cursor: pointer;
+}
+.composer__icon-button:hover:not(:disabled),
+.composer__options > summary:hover,
+.composer__options[open] > summary {
+	background: var(--wb-active);
+	color: var(--ink);
+}
+.composer__icon-button .icon,
+.composer__options > summary .icon {
+	width: var(--icon-md);
+	height: var(--icon-md);
+}
+.composer__icon-button:active:not(:disabled),
+.composer__options > summary:active {
+	background: var(--wb-active);
+}
+.composer__options > summary {
+	gap: var(--space-2);
+	list-style: none;
+}
+.composer__options > summary::-webkit-details-marker {
+	display: none;
+}
+/* Every panel that opens from the composer row is the same sheet: the overlay ground, the float line,
+   one radius, one shadow, and one short rise from the row it belongs to. */
+.composer__options-panel,
+.route-picker__panel,
+.autonomy__panel {
+	border: 1px solid var(--line-float);
+	border-radius: var(--radius-md);
+	background: var(--overlay);
+	box-shadow: var(--shadow-panel);
+	animation: composer-panel-open var(--motion-fast) var(--ease-standard);
+}
+@keyframes composer-panel-open {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+}
+/* The + menu: the rows of the shell's own menus (`.wb-menu__item`), then the one typing preference
+   under a rule, because it is a setting and the rows above it are actions. */
+.composer__options-panel {
+	position: absolute;
+	left: 0;
+	bottom: calc(100% + var(--space-2));
+	z-index: 6;
+	display: grid;
+	gap: 1px;
+	width: min(17rem, 100%);
+	max-height: min(70dvh, var(--options-room, 70dvh));
+	overflow: auto;
+	padding: 5px;
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+}
+.composer__menu-item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	min-height: 32px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink);
+	text-align: left;
+	font-size: var(--text-meta);
+	white-space: nowrap;
+}
+.composer__menu-item:hover:not(:disabled) {
+	background: var(--wb-hover);
+}
+.composer__menu-item:active:not(:disabled) {
+	background: var(--wb-active);
+}
+.composer__menu-item:disabled {
+	color: var(--disabled-fg);
+	cursor: not-allowed;
+}
+.composer__menu-item .icon {
+	flex: none;
+	width: var(--icon-md);
+	height: var(--icon-md);
+	color: var(--ink-muted);
+}
+.composer__menu-item:hover:not(:disabled) .icon {
+	color: var(--ink);
+}
+.composer__menu-item kbd {
+	margin-inline-start: auto;
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+}
+.composer__enter-mode {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 32px;
+	margin-top: 5px;
+	padding: 5px 10px 0;
+	border-top: 1px solid var(--line);
+	color: var(--ink);
+	cursor: pointer;
+}
+/* The transcript tier, also beside Find; here it sits with the other message knobs, one press each. */
+.composer__detail {
+	display: grid;
+	gap: 4px;
+	margin: 5px 0 0;
+	padding: 5px 10px;
+	border: 0;
+	border-top: 1px solid var(--line);
+}
+.composer__detail legend {
+	float: inline-start;
+	padding: 0;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.composer__detail-options {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 2px;
+	clear: both;
+	padding: 2px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+}
+.composer__detail-options button {
+	min-height: 28px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: calc(var(--radius-sm) - 2px);
+	background: transparent;
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+}
+.composer__detail-options button[aria-pressed="true"] {
+	background: var(--accent-soft);
+	color: var(--ink);
+}
+.composer__options-note {
+	margin: 0;
+	padding: 0 10px 5px;
+	font-size: var(--text-exact);
+	line-height: var(--leading-body);
+	color: var(--ink-muted);
+}
+/* The global field rule stretches inputs; the preference checkbox keeps its own size. */
+.composer__enter-mode input {
+	flex: none;
+	inline-size: auto;
+	margin: 0;
+	accent-color: var(--accent);
+}
+/* The route beside Send: which target and model the next request goes to, with the target's
+   reported health as the glyph; the words carry it in greyscale. When the agent lets the GUI edit
+   its safe settings the chip is the summary of the route picker, a frameless control in this quiet
+   row until it is pointed at, focused or open. */
+.route-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	flex: 0 1 auto;
+	max-width: 24rem;
+	min-width: 0;
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+	white-space: nowrap;
+}
+.route-chip__glyph {
+	flex: none;
+	font-family: var(--font-mono);
+	font-size: var(--text-body);
+	line-height: 1;
+}
+.route-chip[data-tone="success"] .route-chip__glyph {
+	color: var(--status-success-fg);
+}
+.route-chip[data-tone="warn"] .route-chip__glyph {
+	color: var(--status-warn-fg);
+}
+.route-chip[data-tone="fail"] .route-chip__glyph {
+	color: var(--status-fail-fg);
+}
+.route-chip__text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--ink);
+}
+/* The level sits behind a hairline with its noun, so "off" is never read as the model's state. */
+.route-chip__thinking {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	flex: none;
+	padding-inline-start: var(--space-2);
+	border-inline-start: 1px solid var(--line-float);
+	color: var(--ink-muted);
+}
+.route-picker {
+	display: flex;
+	flex: 0 1 auto;
+	min-width: 0;
+}
+.route-picker > summary {
+	align-items: center;
+	min-height: 32px;
+	max-width: 26rem;
+	padding: 4px 6px 4px 10px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+	list-style: none;
+	transition:
+		background-color var(--motion-fast),
+		border-color var(--motion-fast);
+}
+.route-picker > summary::-webkit-details-marker {
+	display: none;
+}
+.route-picker > summary:hover {
+	color: var(--ink);
+	background: var(--wb-hover);
+}
+.route-picker[open] > summary {
+	color: var(--ink);
+	background: var(--accent-soft);
+}
+.route-chip__caret {
+	display: inline-flex;
+	flex: none;
+	margin-inline-start: -2px;
+}
+.route-chip__caret .icon {
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+}
+.route-picker[open] > summary .route-chip__caret,
+.route-picker > summary:hover .route-chip__caret {
+	color: var(--accent);
+}
+/* The panel hangs above the whole composer, right-aligned, so it never runs off a narrow screen. */
+.route-picker__panel {
+	position: absolute;
+	z-index: 6;
+	right: 0;
+	bottom: calc(100% + var(--space-2));
+	display: grid;
+	gap: var(--space-3);
+	width: min(30rem, 100%);
+	max-height: min(70dvh, 36rem);
+	overflow: auto;
+	padding: var(--space-4) var(--space-5);
+	font-size: var(--text-meta);
+	color: var(--ink);
+}
+.route-picker__panel p {
+	margin: 0;
+	line-height: var(--leading-body);
+}
+.route-picker__title {
+	font-size: var(--text-body);
+	font-weight: 600;
+	color: var(--ink-strong);
+}
+.route-picker__fields {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: var(--space-3) var(--space-4);
+	align-items: baseline;
+}
+.route-picker__fields > label {
+	color: var(--ink-muted);
+}
+.route-picker__fields select,
+.route-picker__fields input {
+	width: 100%;
+	min-width: 0;
+	min-height: 36px;
+	padding: var(--space-1) var(--space-2);
+}
+.route-picker__scope {
+	padding-top: var(--space-3);
+	border-top: 1px solid var(--line);
+}
+.route-picker__wait {
+	color: var(--ink-muted);
+}
+.route-picker__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+}
+.route-picker__actions button {
+	min-height: 36px;
+	padding: var(--space-1) var(--space-4);
+}
+.composer__secondary {
+	min-height: 44px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	padding: var(--space-1) var(--space-3);
+	background: transparent;
+	font: inherit;
+	font-size: var(--text-meta);
+	color: var(--ink);
+	cursor: pointer;
+}
+.composer__secondary:hover:not(:disabled) {
+	background: var(--wb-hover);
+}
+/* Stop is the send button's twin: the same round seat in the same place. */
+.composer__stop {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 44px;
+	min-height: 44px;
+	height: 44px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: var(--ink);
+	color: var(--paper);
+	cursor: pointer;
+}
+.composer__stop:hover:not(:disabled) {
+	background: var(--ink-muted);
+	color: var(--paper);
+}
+/* A turn is running: Stop is the square and the word. The working mark turns once, on the turn's own
+   status line, so the control that ends the turn does not also look like the thing that is busy. */
+.composer__stop.composer__stop--live {
+	display: inline-flex;
+	gap: var(--space-2);
+	align-items: center;
+	width: auto;
+	padding: 0 var(--space-3) 0 var(--space-2);
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	background: var(--paper);
+	color: var(--ink);
+	font-size: var(--text-meta);
+	font-weight: 600;
+}
+.composer__stop.composer__stop--live:hover:not(:disabled) {
+	background: var(--wb-hover);
+	color: var(--ink);
+}
+.composer__stop .icon {
+	width: var(--icon-lg);
+	height: var(--icon-lg);
+}
+.composer__secondary:disabled,
+.composer__icon-button:disabled {
+	color: var(--disabled-fg);
+	cursor: not-allowed;
+}
+
+.composer__blocked,
+.composer__notice {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--space-2);
+	margin: 0;
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+}
+
+/* What is waiting on the engine. A queued message is not lost work and must
+   never read as one, so the row states when it will be read. It is the first
+   line of the composer, set off by a rule instead of a box of its own. */
+.composer__queue {
+	display: grid;
+	gap: var(--space-2);
+	padding: 0 0 var(--space-2);
+	margin-bottom: var(--space-1);
+	border-bottom: 1px solid var(--line);
+}
+.composer__queue-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	min-width: 0;
+}
+.composer__queue-summary {
+	margin: 0;
+	min-width: 0;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.composer__queue-list {
+	display: grid;
+	gap: var(--space-2);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	width: 100%;
+	/* Many queued messages must not push the transcript or Send below the viewport. */
+	max-height: min(25dvh, 12rem);
+	overflow-y: auto;
+}
+.composer__queue-row {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	min-width: 0;
+	font-size: var(--text-meta);
+}
+.composer__queue-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	color: var(--ink);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.composer__queue-actions {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	align-self: center;
+	gap: 2px;
+}
+/* A narrow composer gives the message the whole line and puts its controls under it. */
+@container composer (max-width: 520px) {
+	.composer__queue-row {
+		flex-wrap: wrap;
+	}
+	.composer__queue-text {
+		flex-basis: 60%;
+	}
+	.composer__queue-actions {
+		margin-left: auto;
+	}
+}
+/* A queue row's mark is a glyph and a word, not a pill. The toned selector is needed because a tone's
+   tint is declared later and would otherwise win on load order. */
+.composer__queue .status-mark,
+.composer__queue .status-mark[data-tone] {
+	flex: none;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+/* Message actions stay quiet until the turn is pointed at, and are always
+   present for the keyboard. A pointerless device gets them unconditionally. */
+.message-actions {
+	display: inline-flex;
+	gap: var(--space-2);
+	opacity: 0;
+	transition: opacity var(--motion-fast) var(--ease-standard);
+}
+.message-actions:focus-within,
+.message-actions:hover,
+:where([data-turn-id]:hover) .message-actions {
+	opacity: 1;
+}
+@media (hover: none) {
+	.message-actions {
+		opacity: 1;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.message-actions {
+		transition: none;
+	}
+}
+/* The same quiet shape as the copy action it sits beside: no frame until it is pointed at. */
+.message-actions__button {
+	min-height: 0;
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	padding: var(--space-1) var(--space-2);
+	font: inherit;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	cursor: pointer;
+}
+.message-actions__button:hover:not(:disabled) {
+	color: var(--ink);
+	background: var(--well);
+}
+
+/* The outcome footer. The tone is supplementary; StatusMark carries the glyph
+   and the word, so the meaning survives greyscale. */
+.turn-outcome {
+	min-width: 0;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	font-variant-numeric: tabular-nums;
+}
+.turn-outcome__line {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	min-height: 0;
+	list-style: none;
+	white-space: nowrap;
+	overflow: hidden;
+	cursor: pointer;
+}
+/* The clock gives way first when the column is narrow; the outcome and the figures keep their place. */
+.turn-outcome__line > time {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.turn-outcome__line > .turn-outcome__fact {
+	flex-shrink: 0;
+}
+.turn-outcome__line::-webkit-details-marker {
+	display: none;
+}
+.turn-outcome__line:hover {
+	color: var(--ink);
+}
+.turn-outcome .status-mark {
+	flex-shrink: 0;
+	flex-wrap: nowrap;
+	font-size: inherit;
+	white-space: nowrap;
+}
+.turn-outcome .status-mark[data-tone="neutral"] .status-mark__glyph {
+	display: none;
+}
+.turn-outcome__line > :is(.turn-outcome__fact, time)::before {
+	content: "·";
+	margin-right: var(--space-2);
+	color: var(--ink-subtle);
+}
+.turn-outcome__detail {
+	margin: var(--space-2) 0 0;
+	color: var(--ink);
+}
+.turn-outcome__code {
+	font: inherit;
+	color: var(--status-fail-fg);
+}
+.turn-details__empty {
+	margin: var(--space-2) 0 0;
+}
+/* The Detailed view's second line: model, speed and cache, in the same quiet voice as the first. */
+.turn-outcome__nerd {
+	display: none;
+	flex-wrap: wrap;
+	gap: var(--space-1) var(--space-4);
+	margin: var(--space-1) 0 0;
+	color: var(--ink-subtle);
+}
+.turn-outcome__nerd > div {
+	display: flex;
+	gap: var(--space-1);
+	max-width: 100%;
+	white-space: nowrap;
+}
+.turn-outcome__nerd dd {
+	min-width: 0;
+	margin: 0;
+	overflow: hidden;
+	color: var(--ink-muted);
+	text-overflow: ellipsis;
+}
+.turn-details {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-4) var(--space-6);
+	margin-top: var(--space-3);
+	padding: var(--space-4);
+	background: var(--raised);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+}
+.turn-details__group {
+	flex: 0 1 auto;
+	min-width: 0;
+}
+.turn-details__group h3 {
+	margin: 0 0 var(--space-2);
+	font: inherit;
+	font-weight: 500;
+	color: var(--ink);
+}
+.turn-details__group dl {
+	display: grid;
+	gap: var(--space-1);
+	margin: 0;
+}
+.turn-details__group dl > div {
+	display: flex;
+	gap: var(--space-3);
+	align-items: baseline;
+}
+.turn-details__group dt {
+	flex: none;
+	color: var(--ink-muted);
+}
+.turn-details__group dd {
+	margin: 0 0 0 auto;
+	color: var(--ink);
+	overflow-wrap: anywhere;
+}
+
+/* The row, by the composer's own width. Each step gives up the least important words first and
+   never a control: the route's thinking level, then the long delivery names and the word on Stop
+   while a message is being steered, then the working-freedom name, whose chip keeps its colour. */
+@container composer (max-width: 640px) {
+	/* A turn is running and a message is being written into it: the route is locked until the turn
+	   settles, so its place goes to the delivery switch. */
+	.composer[data-steering] .route-picker,
+	.composer[data-steering] .composer__route-actions > .route-chip {
+		display: none;
+	}
+}
+@container composer (max-width: 560px) {
+	.composer__actions,
+	.route-chip {
+		gap: var(--space-1);
+	}
+	.route-chip__thinking {
+		display: none;
+	}
+	.route-picker__panel {
+		padding-inline: var(--space-4);
+	}
+	.route-picker__fields {
+		grid-template-columns: minmax(0, 1fr);
+		gap: var(--space-1);
+	}
+	.route-picker__fields > label:not(:first-child) {
+		margin-top: var(--space-2);
+	}
+}
+@container composer (max-width: 440px) {
+	.composer__delivery-full {
+		display: none;
+	}
+	.composer__delivery-short {
+		display: inline;
+	}
+	.composer__delivery button {
+		padding-inline: var(--space-2);
+	}
+	.composer[data-steering] .composer__stop.composer__stop--live {
+		width: 44px;
+		padding: 0;
+		justify-content: center;
+	}
+	.composer[data-steering] .composer__stop--live > span {
+		display: none;
+	}
+}
+@container composer (max-width: 300px) {
+	.autonomy > summary {
+		padding-inline: var(--space-2);
+	}
+	.autonomy > summary > span {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+	.route-chip__glyph {
+		display: none;
+	}
+}
+
+/* Images and text files waiting to go with the next request: one chip each in a row above the field,
+   a preview, the name with its size beside it, then Save and Remove as quiet controls. */
+.composer__attachments {
+	list-style: none;
+	margin: 0 0 4px;
+	padding: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+.composer__attachments > li {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	max-width: 100%;
+	height: 36px;
+	padding: 0 4px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--wb-faint);
+}
+.composer__attachments img,
+.composer__attachment-file {
+	flex: none;
+	width: 28px;
+	height: 28px;
+	border-radius: var(--radius-sm);
+}
+.composer__attachments img {
+	object-fit: cover;
+	background: var(--well);
+}
+.composer__attachment-file {
+	display: grid;
+	place-items: center;
+	background: var(--well);
+	font-family: var(--font-mono);
+	font-size: var(--text-instrument);
+	color: var(--ink-muted);
+}
+.composer__attachment-name {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	min-width: 0;
+	font-size: var(--text-meta);
+}
+.composer__attachment-title {
+	max-width: 18ch;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.composer__attachment-name small {
+	flex: none;
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+	font-variant-numeric: tabular-nums;
+	color: var(--ink-muted);
+	white-space: nowrap;
+}
+/* Frameless: the global button rule draws a 34px bordered control, which is far more than a chip needs. */
+.composer__attachment-action {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	min-height: 24px;
+	height: 24px;
+	padding: 0 6px;
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+	line-height: 1;
+}
+.composer__attachment-action:hover:not(:disabled) {
+	background: var(--wb-hover);
+	color: var(--ink);
+}
+.composer__attachment-remove {
+	width: 24px;
+	padding: 0;
+}
+.composer__attachment-remove .icon {
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+}
+/* The queue's one action reuses the chip control at the summary's size; it follows that control so it wins. */
+.composer__queue-head .composer__attachment-action,
+.composer__queue-actions .composer__attachment-action {
+	font-size: var(--text-exact);
+}
+/* What a large paste did, in the stack above the field with the queue and the attachment chips. */
+.composer__paste-note {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	margin: 0 0 4px;
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+}
+.composer__paste-note .icon {
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+	flex: none;
+	color: var(--ink-muted);
+}
+/* A paste that could not be attached waits here. It is a status line with its actions, not a warning
+   box: the mark names it, the reason follows, and the preview sits in the code well. */
+.composer__paste-review {
+	display: grid;
+	gap: var(--space-1);
+	padding-bottom: var(--space-2);
+	margin-bottom: var(--space-1);
+	border-bottom: 1px solid var(--line);
+	color: var(--ink);
+	font-size: var(--text-meta);
+}
+.composer__paste-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--space-2);
+}
+.composer__paste-size {
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.composer__paste-actions {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	margin-inline-start: auto;
+}
+.composer__paste-review p {
+	margin: 0;
+	color: var(--ink);
+}
+.composer__paste-review .status-mark,
+.composer__paste-review .status-mark[data-tone] {
+	padding: 0;
+	border: 0;
+	background: transparent;
+	font-weight: 500;
+}
+.composer__paste-review details {
+	margin: 0;
+}
+/* A touch pointer gives every summary a 44px row, which opened a band above the preview. The tap
+   area stays through padding that a negative margin hands back. */
+.composer__paste-review summary {
+	min-height: 0;
+	padding-block: var(--space-3);
+	margin-block: calc(var(--space-3) * -1);
+}
+.composer__paste-review pre {
+	max-height: 160px;
+	margin: var(--space-2) 0 0;
+	padding: var(--space-2) var(--space-3);
+	overflow: auto;
+	border: 1px solid var(--code-line);
+	border-radius: var(--radius-md);
+	background: var(--code-paper);
+	color: var(--code-ink);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	font-size: var(--text-exact);
+}
+
+/* ---- working freedom: the pill beside the attach button ---------------------------- */
+/* Not a positioned box: its panel hangs from the composer, like the + menu and the route picker
+   beside it. Anchored to the chip, a panel sized to the screen ran 27px off a 390px phone. */
+.autonomy {
+	margin: 0;
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+}
+.autonomy > summary {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 32px;
+	padding: 4px 10px;
+	border-radius: var(--radius-sm);
+	list-style: none;
+	cursor: pointer;
+	white-space: nowrap;
+	transition:
+		background var(--motion-fast) var(--ease-standard),
+		color var(--motion-fast) var(--ease-standard);
+}
+.autonomy > summary::-webkit-details-marker {
+	display: none;
+}
+.autonomy > summary:hover,
+.autonomy[open] > summary {
+	background: var(--wb-active);
+	color: var(--ink);
+}
+.autonomy > summary .icon {
+	width: var(--icon-md);
+	height: var(--icon-md);
+}
+/* The caret is punctuation, not a second icon. */
+.autonomy > summary .icon:last-child {
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+	margin-inline-start: -2px;
+}
+/* Asking first is PanCode's own green on the shield; running without asking wears the approval family's
+   action amber as a filled chip, so the risk reads before the words do and survives the icon-only row. */
+.autonomy[data-level="default"] > summary .icon:first-child {
+	color: var(--accent);
+}
+.autonomy[data-level="yolo"] > summary,
+.autonomy[data-level="yolo"] > summary:hover,
+.autonomy[data-level="yolo"][open] > summary {
+	color: var(--action-fg);
+	background: var(--action-tint);
+	box-shadow: inset 0 0 0 1px var(--action-line);
+}
+.autonomy__panel {
+	position: absolute;
+	left: 0;
+	bottom: calc(100% + var(--space-2));
+	z-index: 6;
+	display: grid;
+	gap: var(--space-1);
+	width: min(22rem, 100%);
+	min-width: 0;
+	margin: 0;
+	padding: var(--space-2);
+	color: var(--ink);
+}
+.autonomy__title {
+	float: left;
+	width: 100%;
+	margin: 0;
+	padding: var(--space-1) var(--space-2);
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.autonomy__option {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-3);
+	width: 100%;
+	min-height: 0;
+	padding: 8px var(--space-2);
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	text-align: left;
+}
+.autonomy__option:hover:not(:disabled) {
+	background: var(--wb-hover);
+}
+.autonomy__option[aria-pressed="true"] {
+	background: var(--accent-soft);
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+.autonomy__option .icon {
+	flex: none;
+	width: var(--icon-md);
+	height: var(--icon-md);
+	margin-top: 2px;
+	color: var(--ink-muted);
+}
+.autonomy__option strong {
+	font-weight: 600;
+}
+.autonomy__option[aria-pressed="true"] .icon {
+	color: var(--accent);
+}
+.autonomy__option span {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+.autonomy__option small {
+	font-size: var(--text-exact);
+	line-height: 1.45;
+	color: var(--ink-muted);
+}
+.autonomy__confirm {
+	display: grid;
+	gap: var(--space-2);
+	margin-top: var(--space-1);
+	padding: var(--space-3);
+	border: 1px solid var(--status-warn-line);
+	border-radius: var(--radius-md);
+	background: var(--status-warn-tint);
+	color: var(--status-warn-fg);
+}
+.autonomy__confirm p {
+	margin: 0;
+	font-size: var(--text-exact);
+	line-height: 1.5;
+}
+.autonomy__confirm > div {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+}
+.autonomy__note {
+	margin: 0;
+	padding: var(--space-1) var(--space-2);
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+
+.pane-attention {
+	color: var(--status-warn-fg);
+	font-size: var(--text-exact);
+}
+
+.composer__labeled-button {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-2);
+	min-height: 34px;
+	padding: 4px var(--space-2);
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+	white-space: nowrap;
+}
+.composer__labeled-button:hover:not(:disabled) {
+	background: var(--wb-active);
+	color: var(--ink);
+}
+.composer__labeled-button .icon {
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+}
+.composer__actions-button {
+	border-color: var(--line);
+	color: var(--accent);
+}
+@container composer (max-width: 650px) {
+	.composer__actions {
+		flex-wrap: wrap;
+	}
+	.composer__tools {
+		flex-wrap: wrap;
+	}
+}
+
+/* Conversation-only controls keep the home composer independent. */
+.composer--conversation {
+	gap: var(--space-2);
+	padding: var(--space-4);
+}
+/* One line, whatever it says: a turn starting or ending changes the note's words, never the dock's
+   height, so the transcript's live edge stays where it is. A longer detail ends in an ellipsis. */
+.composer__delivery-note {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-3);
+	min-width: 0;
+	color: var(--ink-muted);
+	font-size: var(--text-instrument);
+	line-height: var(--leading-body);
+	white-space: nowrap;
+}
+.composer__delivery-note > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.composer__delivery-note strong {
+	color: var(--ink);
+	font-weight: 600;
+	flex: none;
+}
+.composer__delivery-note[data-tone="running"] strong {
+	color: var(--status-running-fg);
+}
+.composer__delivery-note[data-tone="warn"] strong {
+	color: var(--status-warn-fg);
+}
+.composer__delivery-note .composer__take-control {
+	margin-inline-start: auto;
+	flex: none;
+	align-self: center;
+}
+/* Only groups the controls so a viewing window can disable them at once; the form lays them out. */
+.composer__body {
+	display: contents;
+	margin: 0;
+	border: 0;
+	padding: 0;
+	min-width: 0;
+}
+/* One line too, so the shortcuts a running turn adds (Alt + S) never wrap the hint onto a second one.
+   The hint describes the field, so a screen reader still hears the whole of it. */
+.composer--conversation .composer__keyboard-hint {
+	display: flex;
+	align-items: baseline;
+	margin: 0;
+	overflow: hidden;
+	color: var(--ink-muted);
+	font-size: var(--text-instrument);
+	white-space: nowrap;
+}
+/* A shortcut that does not fit wraps onto the clipped second line whole, so a narrow composer drops the last
+   shortcuts instead of cutting one mid-word (dogfood finding 12). */
+.composer__keys {
+	display: flex;
+	flex: 1;
+	flex-wrap: wrap;
+	column-gap: 0.3em;
+	min-width: 0;
+	height: 1lh;
+	overflow: hidden;
+}
+.composer__attached {
+	flex: none;
+	margin-inline-start: 0.3em;
+}
+/* The shared keycaps, sized to the hint's line so a key never makes the line taller. */
+.composer__keyboard-hint .keycaps {
+	display: inline;
+}
+.composer__keyboard-hint .keycaps kbd {
+	min-width: 0;
+	padding: 0 4px;
+	border-bottom-width: 1px;
+	font-size: inherit;
+	line-height: inherit;
+}
+.composer__keyboard-hint .keycaps kbd + kbd {
+	margin-inline-start: var(--space-1);
+}
+/* The draft's size leads the hint's far end, where a glance from Send finds it. */
+.composer__estimate {
+	flex: none;
+	margin-inline-start: var(--space-3);
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	color: var(--ink);
+}
+/*
+ * At rest the composer is a field and a send button. The idle note restates the placeholder, so it is drawn for screen
+ * readers only; the keyboard hint comes in while the composer holds focus, and stays while files are attached because
+ * it names them. Anything that needs saying (a refusal, a paused session, a running turn) is not quiet and shows.
+ * The quiet note keeps its line, unseen, so the dock does not grow by a line each time a turn starts and shrink
+ * again when it ends, moving the transcript's live edge with it. Both lines hold to one line, which is what keeps
+ * the resting composer as short as it was when the quiet note took no line.
+ */
+.composer__delivery-note[data-quiet] {
+	overflow: hidden;
+	clip-path: inset(50%);
+}
+/*
+ * Hidden, not removed: pressing any composer control moves focus into the composer, and a hint that took its line only
+ * then would grow the bottom-anchored composer mid-press, so the release would land off the control and the click drop.
+ */
+.composer--conversation:not(:focus-within) .composer__keyboard-hint:not([data-pinned]) {
+	visibility: hidden;
+}
+.composer--conversation .composer__submit.primary {
+	width: auto;
+	min-width: 88px;
+	padding: 0 var(--space-4);
+	gap: var(--space-2);
+	border-radius: var(--radius-sm);
+	font-size: var(--text-meta);
+	font-weight: 600;
+}
+.composer--conversation .composer__submit .icon {
+	width: var(--icon-md);
+	height: var(--icon-md);
+}
+.composer--conversation .composer__attachments {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+	max-height: 11rem;
+	overflow-y: auto;
+	gap: var(--space-2);
+}
+.composer--conversation .composer__attachments > li {
+	height: auto;
+	min-height: 58px;
+	padding: var(--space-2);
+	gap: var(--space-2);
+	background: var(--surface);
+}
+.composer--conversation .composer__attachments img,
+.composer--conversation .composer__attachment-file {
+	width: 38px;
+	height: 38px;
+}
+.composer--conversation .composer__attachment-name {
+	display: grid;
+	flex: 1;
+	gap: 2px;
+}
+.composer--conversation .composer__attachment-title {
+	display: block;
+	max-width: 100%;
+	min-width: 0;
+	min-height: 0;
+	padding: 0;
+	border: 0;
+	background: none;
+	text-align: left;
+	color: var(--accent);
+	font-size: var(--text-exact);
+	line-height: var(--leading-body);
+	text-decoration: underline;
+	text-decoration-color: var(--accent-line);
+	text-underline-offset: 3px;
+}
+.composer--conversation .composer__attachment-name small {
+	font-size: var(--text-instrument);
+}
+.composer--conversation .composer__attachments .composer__attachment-action {
+	min-height: 32px;
+	height: 32px;
+	font-size: var(--text-instrument);
+}
+.composer--conversation .composer__attachments .composer__attachment-remove {
+	width: 32px;
+}
+.attachment-review__meta,
+.attachment-review__note {
+	margin-top: 0;
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+}
+.attachment-review__image {
+	display: block;
+	max-width: 100%;
+	max-height: 55dvh;
+	object-fit: contain;
+	margin-inline: auto;
+	background: var(--well);
+	border: 1px solid var(--line);
+}
+.attachment-review__text {
+	width: 100%;
+	min-height: 20rem;
+	resize: vertical;
+	max-height: 50dvh;
+	overflow: auto;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	padding: var(--space-4);
+	border: 1px solid var(--line);
+	background: var(--code-paper);
+	color: var(--code-ink);
+	font: var(--text-exact) / var(--leading-body) var(--font-mono);
+}
+.attachment-review__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	justify-content: flex-end;
+	padding-top: var(--space-4);
+}

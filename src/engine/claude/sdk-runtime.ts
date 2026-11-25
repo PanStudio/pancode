@@ -1,0 +1,1053 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Types only. `@anthropic-ai/claude-agent-sdk` is an optional dependency, so
+// nothing here may reach it at module scope; the one value this runtime calls
+// (`query`) comes from the lazy loader in ./sdk-module.js at run time.
+import type {
+	CanUseTool,
+	EffortLevel,
+	HookCallback,
+	Options,
+	PermissionResult,
+	query,
+	SDKMessage,
+	SDKResultMessage,
+	SDKUserMessage,
+	ThinkingConfig,
+} from "@anthropic-ai/claude-agent-sdk";
+import { withClaudeCredential } from "../../core/claude-environment.js";
+import { watchCredentialExpiry } from "../../core/credential-expiry.js";
+import { readPancodeVersion } from "../../core/package-root.js";
+import { agentSkillToolPolicy, type PendingSkillToolPolicy } from "../../core/skill-activation.js";
+import type { WorkerTelemetryContext } from "../../core/telemetry/context.js";
+import { withTelemetryContext } from "../../core/telemetry/context.js";
+import { normalizeTokenUsage } from "../../core/token-split.js";
+import { ToolNames } from "../../core/tool-names.js";
+import { workerEconomicsView } from "../../domains/dispatch/economics-view.js";
+import { resolveClaudeLaunchCredential } from "../../domains/providers/auth/index.js";
+import { getCatalogModelForRuntime } from "../../domains/providers/catalog.js";
+import { resolveModelRuntimeCapabilitiesForModel } from "../../domains/providers/model-runtime-capabilities.js";
+import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
+import { redactSecretString } from "../../domains/safety/redaction.js";
+import { mainGrantsUnavailable } from "../../domains/safety/worker-permit.js";
+import { findExecutableOnPath } from "../../domains/toolchain/resolve.js";
+import { toolCallFacts } from "../../tools/agent-tools.js";
+import { WORKER_EXIT_PERMISSION_REQUIRED, type WorkerBudget } from "../../worker/spec-contract.js";
+import { bindExternalUsage } from "../external-call-telemetry.js";
+import type { AgentEvent, AgentMessage, Usage } from "../types.js";
+import {
+	WORKER_REFUSAL_REPORT_BLOCK,
+	WORKER_REFUSAL_REPORT_DIRECTIVE,
+	type WorkerRefusal,
+	workerRefusalLimitReason,
+} from "../worker-refusals.js";
+import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput, WorkerRunResult } from "../worker-run-types.js";
+import { createWorkerSafety } from "../worker-tools.js";
+import { claudeSdkBridgedTools, createPancodeToolBridge } from "./pancode-tool-bridge.js";
+import { loadClaudeAgentSdk } from "./sdk-module.js";
+import { isClaudeCodeSessionId } from "./session-id.js";
+import {
+	CLAUDE_SDK_PANCODE_SERVER,
+	type ClaudeToolPermissionDecision,
+	claudeToolsOutsideProfile,
+	coerceToolInput,
+	emitClaudeToolPermissionDecision,
+	mapClaudeToolCall,
+} from "./tool-safety.js";
+
+const DEFAULT_CLAUDE_TOOLS = { type: "preset", preset: "claude_code" } as const;
+
+function sdkUserTextMessage(text: string, shouldQuery: boolean): SDKUserMessage {
+	return {
+		type: "user",
+		message: { role: "user", content: [{ type: "text", text }] } as never,
+		parent_tool_use_id: null,
+		shouldQuery,
+		timestamp: new Date().toISOString(),
+	};
+}
+
+function buildClaudeSdkPrompt(input: WorkerRunInput): string {
+	const parts = (input.dynamicPromptMessages ?? []).map((message) => message.body.trim()).filter(Boolean);
+	parts.push(input.task);
+	return parts.join("\n\n");
+}
+
+class ClaudeSdkInput implements AsyncIterableIterator<SDKUserMessage> {
+	private readonly messages: SDKUserMessage[] = [];
+	private waiter: ((result: IteratorResult<SDKUserMessage>) => void) | undefined;
+	private closed = false;
+
+	[Symbol.asyncIterator](): AsyncIterableIterator<SDKUserMessage> {
+		return this;
+	}
+
+	next(): Promise<IteratorResult<SDKUserMessage>> {
+		const message = this.messages.shift();
+		if (message) return Promise.resolve({ value: message, done: false });
+		if (this.closed) return Promise.resolve({ value: undefined, done: true });
+		return new Promise((resolve) => {
+			this.waiter = resolve;
+		});
+	}
+
+	push(message: SDKUserMessage): boolean {
+		if (this.closed) return false;
+		const waiter = this.waiter;
+		this.waiter = undefined;
+		if (waiter) waiter({ value: message, done: false });
+		else this.messages.push(message);
+		return true;
+	}
+
+	close(): void {
+		this.closed = true;
+		this.messages.length = 0;
+		this.waiter?.({ value: undefined, done: true });
+		this.waiter = undefined;
+	}
+}
+
+function effortForThinking(level: WorkerRunInput["thinkingLevel"] | undefined): EffortLevel | undefined {
+	switch (level) {
+		case "minimal":
+		case "low":
+			return "low";
+		case "medium":
+			return "medium";
+		case "high":
+			return "high";
+		case "xhigh":
+			return "xhigh";
+		default:
+			return undefined;
+	}
+}
+
+interface ClaudeThinkingResolution {
+	level: WorkerRunInput["thinkingLevel"];
+	mechanism: string | undefined;
+	request: { reasoningEffort?: string; budgetTokens?: number } | undefined;
+}
+
+/**
+ * The model's thinking capability from the same source the native anthropic
+ * path reads: the dispatch's runtime resolution, else the catalog row resolved
+ * at the requested level. The catalog is what says a Claude 5 model cannot turn
+ * thinking off (its level map nulls `off`) and that it takes an effort level,
+ * not a token budget (`forceAdaptiveThinking`).
+ */
+function thinkingResolutionForInput(input: WorkerRunInput): ClaudeThinkingResolution {
+	const resolution = input.runtimeResolution;
+	if (resolution !== undefined) {
+		return {
+			level: resolution.effectiveThinkingLevel,
+			mechanism: resolution.thinking.mechanism,
+			request: resolution.request,
+		};
+	}
+	const requested = input.thinkingLevel ?? "off";
+	const model = getCatalogModelForRuntime(input.target.runtime, input.wireModelId);
+	if (model === undefined) return { level: requested, mechanism: undefined, request: undefined };
+	const resolved = resolveModelRuntimeCapabilitiesForModel(model, requested);
+	return { level: resolved.thinking.effectiveLevel, mechanism: resolved.thinking.mechanism, request: resolved.request };
+}
+
+/**
+ * The SDK's `thinking` and `effort` options for this run, in the form the model
+ * takes, as the native anthropic path sends them: an adaptive-thinking model
+ * gets `adaptive` with an effort level and never a budget, a budget model gets
+ * `enabled` with its token budget and no effort, and only a level that resolved
+ * to `off` sends `disabled`. A model the catalog does not know keeps the
+ * adaptive default the SDK applies to current models.
+ */
+export function thinkingOptionsForInput(input: WorkerRunInput): { thinking: ThinkingConfig; effort?: EffortLevel } {
+	const resolved = thinkingResolutionForInput(input);
+	if (resolved.level === "off") return { thinking: { type: "disabled" } };
+	const budgetTokens = resolved.request?.budgetTokens;
+	if (
+		resolved.mechanism === "budget-tokens" ||
+		(resolved.mechanism === undefined && typeof budgetTokens === "number" && budgetTokens > 0)
+	) {
+		return {
+			thinking: {
+				type: "enabled",
+				...(typeof budgetTokens === "number" && Number.isFinite(budgetTokens) && budgetTokens > 0 ? { budgetTokens } : {}),
+				display: "summarized",
+			},
+		};
+	}
+	const effort = (resolved.request?.reasoningEffort ?? effortForThinking(resolved.level)) as EffortLevel | undefined;
+	return { thinking: { type: "adaptive", display: "summarized" }, ...(effort !== undefined ? { effort } : {}) };
+}
+
+function systemPromptForInput(input: WorkerRunInput): NonNullable<Options["systemPrompt"]> {
+	const append = input.systemPrompt.trim();
+	if (append.length === 0) return { type: "preset", preset: "claude_code" };
+	return { type: "preset", preset: "claude_code", append };
+}
+
+function finite(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function nestedRecord(record: Record<string, unknown>, key: string): Record<string, unknown> | null {
+	const value = record[key];
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+}
+
+/** The SDK prices its own calls from a client-side table, so its total is a peer estimate, never a bill (#434). */
+function telemetryUsage(raw: unknown, totalCostUsd?: number): Record<string, unknown> {
+	const usage = coerceToolInput(raw);
+	return {
+		input: usage.input_tokens,
+		output: usage.output_tokens,
+		cacheRead: usage.cache_read_input_tokens,
+		cacheWrite: usage.cache_creation_input_tokens,
+		costUsd: totalCostUsd,
+		...(totalCostUsd === undefined ? {} : { pricedBy: "catalog" }),
+	};
+}
+
+function normalizeUsage(raw: unknown, totalCostUsd = 0): Usage {
+	const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+	const cacheCreation =
+		finite(record.cache_creation_input_tokens) +
+		finite(record.cacheCreationInputTokens) +
+		finite(record.cacheWrite) +
+		finite(record.cacheWriteTokens);
+	const cacheRead =
+		finite(record.cache_read_input_tokens) +
+		finite(record.cacheReadInputTokens) +
+		finite(record.cacheRead) +
+		finite(record.cacheReadTokens);
+	const input =
+		finite(record.input_tokens) +
+		finite(record.inputTokens) +
+		finite(record.input) +
+		finite(record.prompt_tokens) +
+		finite(record.promptTokens);
+	const output =
+		finite(record.output_tokens) +
+		finite(record.outputTokens) +
+		finite(record.output) +
+		finite(record.completion_tokens) +
+		finite(record.completionTokens);
+	const totalTokens = input + output + cacheRead + cacheCreation;
+	const cost = finite(totalCostUsd) + finite(record.costUSD) + finite(record.cost_usd);
+	return {
+		input,
+		output,
+		cacheRead,
+		cacheWrite: cacheCreation,
+		totalTokens,
+		cost: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			total: cost,
+		},
+	};
+}
+
+function textFromUnknownBlock(block: unknown): string {
+	if (typeof block !== "object" || block === null) return "";
+	const record = block as Record<string, unknown>;
+	if (record.type === "text" && typeof record.text === "string") return record.text;
+	if (record.type === "thinking" && typeof record.thinking === "string") return "";
+	return "";
+}
+
+function thinkingFromUnknownBlock(block: unknown): string {
+	if (typeof block !== "object" || block === null) return "";
+	const record = block as Record<string, unknown>;
+	if (record.type === "thinking" && typeof record.thinking === "string") return record.thinking;
+	return "";
+}
+
+function contentFromSdkMessage(message: unknown): AgentMessage & { role: "assistant" } {
+	const content: Array<Record<string, unknown>> = [];
+	const record = typeof message === "object" && message !== null ? (message as Record<string, unknown>) : {};
+	const blocks = Array.isArray(record.content) ? record.content : [];
+	for (const block of blocks) {
+		const text = textFromUnknownBlock(block);
+		if (text.length > 0) {
+			content.push({ type: "text", text });
+			continue;
+		}
+		const thinking = thinkingFromUnknownBlock(block);
+		if (thinking.length > 0) {
+			content.push({ type: "thinking", thinking });
+			continue;
+		}
+		if (typeof block === "object" && block !== null) {
+			const tool = block as Record<string, unknown>;
+			if (tool.type === "tool_use" && typeof tool.name === "string" && typeof tool.id === "string") {
+				content.push({
+					type: "toolCall",
+					id: tool.id,
+					name: tool.name,
+					arguments: nestedRecord(tool, "input") ?? {},
+				});
+			}
+		}
+	}
+	if (content.length === 0) content.push({ type: "text", text: "" });
+	return {
+		role: "assistant",
+		content,
+		api: "claude-agent-sdk",
+		provider: "anthropic",
+		model: "",
+		usage: normalizeUsage(null),
+		stopReason: "stop",
+		timestamp: Date.now(),
+	} as unknown as AgentMessage & { role: "assistant" };
+}
+
+function extractAssistantText(message: SDKMessage): string {
+	if (message.type !== "assistant") return "";
+	const record = message as unknown as { message?: unknown };
+	const assistant = contentFromSdkMessage(record.message);
+	return assistant.content
+		.map((block) => (block.type === "text" ? block.text : ""))
+		.filter(Boolean)
+		.join("");
+}
+
+function extractStreamDelta(message: SDKMessage): string {
+	if (message.type !== "stream_event") return "";
+	const event = (message as unknown as { event?: unknown }).event;
+	if (typeof event !== "object" || event === null) return "";
+	const record = event as Record<string, unknown>;
+	const delta = nestedRecord(record, "delta");
+	if (delta && typeof delta.text === "string") return delta.text;
+	if (delta && typeof delta.thinking === "string") return "";
+	const contentBlock = nestedRecord(record, "content_block");
+	if (contentBlock && contentBlock.type === "text" && typeof contentBlock.text === "string") return contentBlock.text;
+	return "";
+}
+
+function resultText(message: SDKResultMessage | null): string {
+	if (message?.subtype !== "success") return "";
+	return typeof message.result === "string" ? message.result : "";
+}
+
+function resultError(message: SDKResultMessage | null): string {
+	if (!message || message.subtype === "success") return "";
+	return Array.isArray(message.errors) ? message.errors.join("; ") : "Claude Agent SDK run failed";
+}
+
+function stopReasonFor(result: SDKResultMessage | null, aborted: boolean): "stop" | "error" | "aborted" | "length" {
+	if (aborted) return "aborted";
+	if (!result) return "stop";
+	if (result.subtype !== "success") return "error";
+	if (result.stop_reason === "max_tokens") return "length";
+	return "stop";
+}
+
+function buildAssistantMessage(input: {
+	model: string;
+	responseModel?: string | undefined;
+	responseId?: string | undefined;
+	text: string;
+	result: SDKResultMessage | null;
+	aborted: boolean;
+	errorMessage?: string | undefined;
+}): AgentMessage & { role: "assistant" } {
+	const usage = { ...normalizeUsage(input.result?.usage, input.result?.total_cost_usd ?? 0), pancodeSdkAggregate: true };
+	const message: AgentMessage & { role: "assistant" } = {
+		role: "assistant",
+		content: [{ type: "text", text: input.text }],
+		api: "claude-agent-sdk",
+		provider: "anthropic",
+		model: input.model,
+		usage,
+		stopReason: input.errorMessage && !input.aborted ? "error" : stopReasonFor(input.result, input.aborted),
+		timestamp: Date.now(),
+	} as AgentMessage & { role: "assistant" };
+	if (input.responseModel !== undefined) message.responseModel = input.responseModel;
+	if (input.responseId !== undefined) message.responseId = input.responseId;
+	if (input.errorMessage !== undefined && input.errorMessage.length > 0) message.errorMessage = input.errorMessage;
+	return bindExternalUsage(message, {
+		usage: telemetryUsage(input.result?.usage, input.result?.total_cost_usd),
+		coverage: input.result ? "complete" : "partial",
+		costEstimateMethod: "peer-report",
+	});
+}
+
+function emitTextDelta(
+	emit: WorkerEventEmit,
+	state: { started: boolean; text: string; model: string },
+	delta: string,
+): void {
+	if (delta.length === 0) return;
+	state.text += delta;
+	const message = buildAssistantMessage({ model: state.model, text: state.text, result: null, aborted: false });
+	if (!state.started) {
+		state.started = true;
+		emit({ type: "message_start", message } as AgentEvent);
+	}
+	emit({
+		type: "message_update",
+		message,
+		assistantMessageEvent: {
+			type: "text_delta",
+			contentIndex: 0,
+			delta,
+			partial: message,
+		},
+	} as AgentEvent);
+}
+
+interface PermissionGateInput {
+	telemetryContext?: WorkerTelemetryContext;
+	workerExecuteAutonomy?: "yolo";
+	readOnly?: boolean;
+	safety: ReturnType<typeof createWorkerSafety>;
+	cwd: string;
+	onPermission: "deny" | "fail";
+	/** The permit routes asks to a main agent that cannot grant yet; the denial says so. */
+	mainGrantsUnavailable?: boolean;
+	emit: WorkerEventEmit;
+	onPermissionFailure(): void;
+	/** The refusal limit was reached: the run will exit permission_required after the model's report reply (FL-10). */
+	onRefusalLimit(): void;
+	/** Set once the limit is reached; a later tool use ends the run instead of reaching the permission gate. */
+	refusalReport: { active: boolean };
+	handledToolDecisions: Map<string, ClaudeToolPermissionDecision>;
+	/** Execute refusals so far in this run; the shared decision appends to it once per tool use. */
+	executeRefusals: WorkerRefusal[];
+	/** Admitted tool surface (PanCode builtin names) narrowed by any tool_profile. */
+	allowedTools: ReadonlySet<string>;
+	budgetGate?: ClaudeWorkerBudgetGate;
+	pendingSkillPolicy?: PendingSkillToolPolicy;
+}
+
+export interface ClaudeWorkerBudgetGate {
+	/** Check one logical SDK tool attempt against the advisory ceiling. */
+	attempt(canonicalToolName: string): { kind: "allow" } | { kind: "deny"; reason: string };
+	/** Admit a call that passed profile, autonomy, and safety evaluation. */
+	admit(canonicalToolName: string): { kind: "allow" } | { kind: "deny"; reason: string };
+	phaseReached(): boolean;
+}
+
+/**
+ * Canonical call counter shared by the SDK's PreToolUse/canUseTool mediation seam. Estimates never stop a call; the
+ * budget's ceiling, when present, ends all admitted work, delivery included.
+ */
+export function createClaudeWorkerBudgetGate(budget: WorkerBudget, onBoundary: () => void): ClaudeWorkerBudgetGate {
+	let admitted = 0;
+	let locked = false;
+	const ceilingDecision = (): { kind: "allow" } | { kind: "deny"; reason: string } =>
+		budget.ceiling !== undefined && admitted >= budget.ceiling
+			? { kind: "deny", reason: `worker tool-call ceiling reached (${budget.ceiling}); tools are disabled` }
+			: { kind: "allow" };
+	return {
+		attempt: () => ceilingDecision(),
+		admit() {
+			// Recheck the ceiling at the execution boundary. Permission evaluation
+			// is currently synchronous, but this keeps parallel SDK mediation honest
+			// if that implementation detail changes.
+			const decision = ceilingDecision();
+			if (decision.kind === "deny") return decision;
+			admitted += 1;
+			if (budget.ceiling !== undefined && admitted >= budget.ceiling) {
+				locked = true;
+				onBoundary();
+			}
+			return { kind: "allow" };
+		},
+		phaseReached: () => locked,
+	};
+}
+
+/**
+ * CLB-5: an ask with no responder ends the run under `fail`. Under `deny` an
+ * execute refusal returns to the model, which may take another route, and the
+ * WORKER_REFUSAL_LIMIT-th leaves it one more reply, with tools refused, to write
+ * its report, as the native worker does (FL-10).
+ */
+function endsPermissionRun(decision: ClaudeToolPermissionDecision, input: PermissionGateInput): boolean {
+	return decision.kind === "deny" && decision.permissionRequired && input.onPermission === "fail";
+}
+
+/** The refusal that reached the limit: the model reads the full list and the report directive, and the run goes on. */
+function reachesRefusalLimit(decision: ClaudeToolPermissionDecision, input: PermissionGateInput): boolean {
+	return (
+		decision.kind === "deny" &&
+		decision.permissionRequired &&
+		decision.refusalLimitReached === true &&
+		!endsPermissionRun(decision, input)
+	);
+}
+
+function refusalLimitMessage(input: PermissionGateInput): string {
+	return `${workerRefusalLimitReason(input.executeRefusals)}\n${WORKER_REFUSAL_REPORT_DIRECTIVE}`;
+}
+
+/** A tool use in the report reply ends the run; the hook/callback pair of the capped use itself still resolves. */
+function blockedByRefusalReport(input: PermissionGateInput, toolUseID: string | undefined): boolean {
+	if (!input.refusalReport.active) return false;
+	if (toolUseID !== undefined && input.handledToolDecisions.has(toolUseID)) return false;
+	input.onPermissionFailure();
+	return true;
+}
+
+function permissionResultForDecision(
+	decision: ClaudeToolPermissionDecision,
+	toolUseID: string | undefined,
+	input: PermissionGateInput,
+): PermissionResult {
+	if (decision.kind === "allow") {
+		const result: PermissionResult = {
+			behavior: "allow",
+			decisionClassification: "user_temporary",
+		};
+		if (toolUseID !== undefined) result.toolUseID = toolUseID;
+		return result;
+	}
+	if (endsPermissionRun(decision, input)) {
+		input.onPermissionFailure();
+	}
+	const limit = reachesRefusalLimit(decision, input);
+	if (limit) input.onRefusalLimit();
+	const result: PermissionResult = {
+		behavior: "deny",
+		message: limit ? refusalLimitMessage(input) : decision.reason,
+		interrupt: endsPermissionRun(decision, input),
+		decisionClassification: "user_reject",
+	};
+	if (toolUseID !== undefined) result.toolUseID = toolUseID;
+	return result;
+}
+
+function decideToolUse(
+	input: PermissionGateInput,
+	toolCallId: string | undefined,
+	toolName: string,
+	toolInput: unknown,
+): ClaudeToolPermissionDecision {
+	const decide = () =>
+		emitClaudeToolPermissionDecision({
+			toolName,
+			...(toolCallId !== undefined ? { toolCallId } : {}),
+			input: coerceToolInput(toolInput),
+			safety: input.safety,
+			cwd: input.cwd,
+			...(input.workerExecuteAutonomy !== undefined ? { workerExecuteAutonomy: input.workerExecuteAutonomy } : {}),
+			...(input.readOnly === true ? { readOnly: true } : {}),
+			onPermission: input.onPermission,
+			...(input.mainGrantsUnavailable === true ? { mainGrantsUnavailable: true } : {}),
+			emit: input.emit,
+			executeRefusals: input.executeRefusals,
+			allowedTools: input.allowedTools,
+			...(input.budgetGate ? { budgetGate: input.budgetGate } : {}),
+			...(input.pendingSkillPolicy ? { pendingSkillPolicy: input.pendingSkillPolicy } : {}),
+		});
+	// SDK callbacks run outside the native worker's async scope; bind the actual tool use before recording it (#434).
+	return input.telemetryContext
+		? withTelemetryContext({ ...input.telemetryContext, ...(toolCallId !== undefined ? { toolCallId } : {}) }, decide)
+		: decide();
+}
+
+function buildPostToolUseHook(emit: WorkerEventEmit, cwd: string): HookCallback {
+	return async (hookInput) => {
+		if (hookInput.hook_event_name !== "PostToolUse" && hookInput.hook_event_name !== "PostToolUseFailure")
+			return { continue: true };
+		const mapped = mapClaudeToolCall(hookInput.tool_name, coerceToolInput(hookInput.tool_input), cwd);
+		// The bridge already reported this call's outcome from PanCode's own result.
+		if (mapped.bridged === true) return { continue: true };
+		const callFacts = toolCallFacts(mapped.pancodeToolName, mapped.args);
+		const failed = hookInput.hook_event_name === "PostToolUseFailure";
+		if (!failed && callFacts) {
+			const response = coerceToolInput(hookInput.tool_response);
+			const file = coerceToolInput(response.file);
+			if (typeof file.content === "string") callFacts.returnedBytes = Buffer.byteLength(file.content);
+			if (typeof file.startLine === "number" && typeof file.numLines === "number" && file.numLines > 0) {
+				callFacts.startLine = file.startLine;
+				callFacts.endLine = file.startLine + file.numLines - 1;
+				callFacts.rangeUnit = "physical-lines";
+				// Native reads flag truncation only when content remains after the returned range, so a read that
+				// starts mid-file and reaches the end is not truncated.
+				if (typeof file.totalLines === "number") callFacts.truncated = callFacts.endLine < file.totalLines;
+			}
+		}
+		emit({
+			type: "pancode_tool_observation",
+			payload: {
+				tool: mapped.pancodeToolName,
+				toolCallId: hookInput.tool_use_id,
+				posture: "operating",
+				durationMs: hookInput.duration_ms ?? 0,
+				outcome: failed ? "error" : "ok",
+				...(callFacts ? { callFacts } : {}),
+				...(failed ? { reason: sanitizeCallTargetText(redactSecretString(hookInput.error)).slice(0, 350) } : {}),
+			},
+		});
+		return { continue: true };
+	};
+}
+
+/** Share one logical permission decision across the SDK hook/callback pair. */
+function decideClaudeSdkToolUseOnce(
+	handled: Map<string, ClaudeToolPermissionDecision>,
+	toolUseID: string | undefined,
+	decide: () => ClaudeToolPermissionDecision,
+): ClaudeToolPermissionDecision {
+	const cached = toolUseID ? handled.get(toolUseID) : undefined;
+	if (cached) return cached;
+	const decision = decide();
+	if (toolUseID) handled.set(toolUseID, decision);
+	return decision;
+}
+
+function decideToolUseOnce(
+	input: PermissionGateInput,
+	toolUseID: string | undefined,
+	toolName: string,
+	toolInput: unknown,
+): ClaudeToolPermissionDecision {
+	return decideClaudeSdkToolUseOnce(input.handledToolDecisions, toolUseID, () =>
+		decideToolUse(input, toolUseID, toolName, toolInput),
+	);
+}
+
+function buildCanUseTool(input: PermissionGateInput): CanUseTool {
+	return async (toolName, toolInput, options): Promise<PermissionResult> => {
+		if (blockedByRefusalReport(input, options.toolUseID)) {
+			const blocked: PermissionResult = {
+				behavior: "deny",
+				message: WORKER_REFUSAL_REPORT_BLOCK,
+				interrupt: true,
+				decisionClassification: "user_reject",
+			};
+			if (options.toolUseID !== undefined) blocked.toolUseID = options.toolUseID;
+			return blocked;
+		}
+		const decision = decideToolUseOnce(input, options.toolUseID, toolName, toolInput);
+		return permissionResultForDecision(decision, options.toolUseID, input);
+	};
+}
+
+function buildPreToolUseHook(input: PermissionGateInput): HookCallback {
+	return async (hookInput, toolUseID) => {
+		if (hookInput.hook_event_name !== "PreToolUse") return { continue: true };
+		const id = hookInput.tool_use_id || toolUseID;
+		if (blockedByRefusalReport(input, id)) {
+			return {
+				continue: false,
+				stopReason: WORKER_REFUSAL_REPORT_BLOCK,
+				hookSpecificOutput: {
+					hookEventName: "PreToolUse",
+					permissionDecision: "deny",
+					permissionDecisionReason: WORKER_REFUSAL_REPORT_BLOCK,
+				},
+			};
+		}
+		const decision = decideToolUseOnce(input, id, hookInput.tool_name, hookInput.tool_input);
+		if (decision.kind === "allow") {
+			return {
+				continue: true,
+				hookSpecificOutput: {
+					hookEventName: "PreToolUse",
+					permissionDecision: "allow",
+					permissionDecisionReason: decision.reason,
+				},
+			};
+		}
+		if (endsPermissionRun(decision, input)) input.onPermissionFailure();
+		const limit = reachesRefusalLimit(decision, input);
+		if (limit) input.onRefusalLimit();
+		return {
+			continue: true,
+			hookSpecificOutput: {
+				hookEventName: "PreToolUse",
+				permissionDecision: "deny",
+				permissionDecisionReason: limit ? refusalLimitMessage(input) : decision.reason,
+			},
+		};
+	};
+}
+
+export function startClaudeSdkWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): WorkerRunHandle {
+	// Escalation parks a call until a decision arrives, and the SDK permission
+	// callback cannot park. Dispatch admission already refuses escalate for this
+	// runtime; a run built outside it is refused here instead of running under a
+	// deny posture nobody chose.
+	if (input.onPermission === "escalate") {
+		throw new Error(
+			"claude-sdk worker: onPermission escalate is unsupported on the Claude SDK runtime because its permission callback cannot park a call for a decision; use deny or fail",
+		);
+	}
+	const abortController = new AbortController();
+	const prompt = new ClaudeSdkInput();
+	prompt.push(sdkUserTextMessage(buildClaudeSdkPrompt(input), true));
+	let pendingTurns = 1;
+	let finished = false;
+	let authFailure: string | undefined;
+	let stopExpiryWatch = (): void => {};
+	let queryHandle: ReturnType<typeof query> | null = null;
+	let aborted = false;
+	let permissionFailure = false;
+	let budgetFailure = false;
+
+	const abort = (): void => {
+		if (finished || aborted) return;
+		aborted = true;
+		prompt.close();
+		abortController.abort();
+		void queryHandle?.interrupt().catch(() => {});
+		queryHandle?.close();
+	};
+
+	if (input.signal) {
+		if (input.signal.aborted) abort();
+		else input.signal.addEventListener("abort", abort, { once: true });
+	}
+
+	const safety = createWorkerSafety({
+		// The bridged artifact tool writes the admitted architect plan, as on a native worker.
+		...(input.readOnly !== true &&
+		input.resultContract?.kind === "architect-plan" &&
+		input.allowedTools.includes(ToolNames.Artifact)
+			? { requiredArtifactPath: input.resultContract.path }
+			: {}),
+		...(input.flowPolicy !== undefined ? { flowPolicy: input.flowPolicy } : {}),
+		...(input.taskGit?.taskWorktree !== undefined ? { taskWorktreeRoot: input.taskGit.taskWorktree.path } : {}),
+		cwd: process.cwd(),
+		...(input.writeRoots !== undefined ? { writeRoots: input.writeRoots } : {}),
+		// The run's own worktree binds its commands to the roots at merge-back (fleet M7), as the native worker reads it.
+		...(input.writeRoots !== undefined && input.writeRootsCommandsBounded === true ? { writeRootsOsConfined: true } : {}),
+		...(input.protectedArtifactState !== undefined
+			? { protectedArtifactState: { artifacts: [...input.protectedArtifactState.artifacts] } }
+			: {}),
+	});
+	// Escalate was refused above, so only deny and fail reach the gate.
+	const onPermission: "deny" | "fail" = input.onPermission === "fail" ? "fail" : "deny";
+	// The admitted surface (already narrowed by any tool_profile) is the
+	// authoritative allowlist. The mediation gate denies out-of-profile calls;
+	// the SDK disallowedTools option below is defense-in-depth so the model is
+	// not even offered them.
+	const allowedToolSet = new Set<string>(input.allowedTools);
+	const budgetGate = input.budget ? createClaudeWorkerBudgetGate(input.budget, () => {}) : undefined;
+	// The recipe-bound skills context(scope=skills) may load, as on a native
+	// worker. One policy object: a skill the bridged context loads narrows the
+	// gate's admission of every later call, preset tool or bridged.
+	const skillPolicy =
+		input.allowedTools.includes(ToolNames.Context) && input.noSkills !== true
+			? agentSkillToolPolicy(
+					input.agentSkills ?? [],
+					input.resultContract?.kind === "architect-plan" && input.allowedTools.includes(ToolNames.Artifact)
+						? [ToolNames.Artifact]
+						: [],
+				)
+			: undefined;
+	const permissionGate: PermissionGateInput = {
+		...(input.telemetryContext !== undefined ? { telemetryContext: input.telemetryContext } : {}),
+		...(input.permitAllowance?.executeAutonomy !== undefined
+			? { workerExecuteAutonomy: input.permitAllowance.executeAutonomy }
+			: {}),
+		safety,
+		cwd: process.cwd(),
+		...(input.readOnly === true ? { readOnly: true } : {}),
+		onPermission,
+		...(input.permitAllowance !== undefined && mainGrantsUnavailable(input.permitAllowance)
+			? { mainGrantsUnavailable: true }
+			: {}),
+		emit,
+		handledToolDecisions: new Map<string, ClaudeToolPermissionDecision>(),
+		executeRefusals: [],
+		onPermissionFailure() {
+			permissionFailure = true;
+			abort();
+		},
+		onRefusalLimit() {
+			// The run still exits permission_required; the model's next reply is its report.
+			permissionFailure = true;
+			permissionGate.refusalReport.active = true;
+			process.stderr.write(`[worker:claude-sdk] ${workerRefusalLimitReason(permissionGate.executeRefusals)}\n`);
+		},
+		refusalReport: { active: false },
+		allowedTools: allowedToolSet,
+		...(budgetGate ? { budgetGate } : {}),
+		...(skillPolicy !== undefined ? { pendingSkillPolicy: skillPolicy } : {}),
+	};
+	const canUseTool = buildCanUseTool(permissionGate);
+	const preToolUseHook = buildPreToolUseHook(permissionGate);
+	const postToolUseHook = buildPostToolUseHook(emit, process.cwd());
+
+	const postToolBatchHook: HookCallback = async (hookInput) => {
+		if (hookInput.hook_event_name !== "PostToolBatch" || !budgetGate?.phaseReached()) return { continue: true };
+		if (input.budget?.synthesis === false) {
+			budgetFailure = true;
+			emit({ type: "pancode_run_outcome", payload: { outcomeCode: "worker_tool_call_cap_exhausted" } });
+			return {
+				continue: false,
+				stopReason: `worker agent budget reached (${input.budget.ceiling ?? input.budget.toolCalls})`,
+			};
+		}
+		return {
+			continue: true,
+			hookSpecificOutput: {
+				hookEventName: "PostToolBatch",
+				additionalContext:
+					"The admitted tool-call phase is complete. Tools are now disabled. Return the final answer in plain text from evidence already gathered.",
+			},
+		};
+	};
+
+	const options: Options = {
+		abortController,
+		cwd: process.cwd(),
+		model: input.wireModelId,
+		systemPrompt: systemPromptForInput(input),
+		tools: DEFAULT_CLAUDE_TOOLS,
+		permissionMode: "default",
+		canUseTool,
+		hooks: {
+			PreToolUse: [{ hooks: [preToolUseHook] }],
+			PostToolUse: [{ hooks: [postToolUseHook] }],
+			PostToolUseFailure: [{ hooks: [postToolUseHook] }],
+			...(budgetGate ? { PostToolBatch: [{ hooks: [postToolBatchHook] }] } : {}),
+		},
+		includePartialMessages: true,
+		persistSession: false,
+		settingSources: [],
+		env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: `pancode/${readPancodeVersion()}` },
+	};
+	const disallowedTools = claudeToolsOutsideProfile(allowedToolSet);
+	if (disallowedTools.length > 0) options.disallowedTools = disallowedTools;
+	const { thinking, effort } = thinkingOptionsForInput(input);
+	options.thinking = thinking;
+	if (effort !== undefined) options.effort = effort;
+	if (isClaudeCodeSessionId(input.sessionId)) options.sessionId = input.sessionId.trim();
+
+	const promise = (async (): Promise<WorkerRunResult> => {
+		const messages: AgentMessage[] = [];
+		const streamState = { started: false, text: "", model: input.wireModelId };
+		let result: SDKResultMessage | null = null;
+		let responseModel: string | undefined;
+		let responseId: string | undefined;
+		const modelCalls = new Map<
+			string,
+			{
+				model?: string;
+				responseId?: string;
+				stopReason?: "stop" | "toolUse" | "length";
+				complete?: boolean;
+				usage: Record<string, unknown>;
+			}
+		>();
+		let currentCall: string | undefined;
+		const captureCall = (message: Record<string, unknown>): void => {
+			if (typeof message.id !== "string") return;
+			currentCall = message.id;
+			const call = modelCalls.get(message.id) ?? { usage: {} };
+			if (typeof message.model === "string") call.model = message.model;
+			call.responseId = message.id;
+			if (message.stop_reason === "end_turn" || message.stop_reason === "stop_sequence") call.stopReason = "stop";
+			else if (message.stop_reason === "tool_use") call.stopReason = "toolUse";
+			else if (message.stop_reason === "max_tokens") call.stopReason = "length";
+			if (typeof message.stop_reason === "string" || message.complete === true) call.complete = true;
+			const usage = coerceToolInput(message.usage);
+			for (const key of [
+				"input_tokens",
+				"output_tokens",
+				"cache_read_input_tokens",
+				"cache_creation_input_tokens",
+			] as const) {
+				const count = usage[key];
+				if (typeof count === "number" && Number.isFinite(count) && count >= 0) call.usage[key] = count;
+			}
+			modelCalls.set(message.id, call);
+		};
+		const flushCalls = (): void => {
+			let callIndex = 0;
+			for (const call of modelCalls.values())
+				emit({
+					type: "pancode_model_call",
+					payload: bindExternalUsage(
+						{
+							callIndex: ++callIndex,
+							usage: normalizeTokenUsage({ ...normalizeUsage(call.usage) }),
+							model: input.wireModelId,
+							...(call.model ? { responseModel: call.model } : {}),
+							...(call.responseId ? { responseId: call.responseId } : {}),
+						},
+						{
+							usage: telemetryUsage(call.usage),
+							coverage: call.complete ? "complete" : "partial",
+							...(call.stopReason ? { stopReason: call.stopReason } : {}),
+						},
+					),
+				});
+			modelCalls.clear();
+		};
+
+		emit({ type: "agent_start" } as AgentEvent);
+		try {
+			// First touch of the optional SDK. An install that omitted it fails
+			// here with a typed diagnostic naming the package and the install
+			// command, and lands in the catch below as an ordinary run failure.
+			const { query, createSdkMcpServer } = await loadClaudeAgentSdk();
+			const bridgedTools = claudeSdkBridgedTools(allowedToolSet);
+			if (bridgedTools.length > 0) {
+				if (typeof createSdkMcpServer !== "function") {
+					throw new Error(
+						`Claude SDK does not export createSdkMcpServer, so this worker cannot carry ${bridgedTools.join(", ")}.`,
+					);
+				}
+				const bridge = createPancodeToolBridge(createSdkMcpServer, {
+					allowedTools: allowedToolSet,
+					safety,
+					emit,
+					budgetEconomics: async () => workerEconomicsView(input.limits),
+					agentId: input.agentId,
+					task: input.task,
+					...(skillPolicy !== undefined ? { pendingSkillPolicy: skillPolicy } : {}),
+					...(input.telemetryContext !== undefined
+						? {
+								invokeOptions: {
+									runId: input.telemetryContext.runId,
+									...(input.telemetryContext.sessionId === null ? {} : { sessionId: input.telemetryContext.sessionId }),
+									...(input.telemetryContext.turnId === undefined ? {} : { turnId: input.telemetryContext.turnId }),
+								},
+							}
+						: {}),
+					...(input.readOnly === true ? { readOnly: true } : {}),
+					...(input.permitAllowance?.executeAutonomy !== undefined
+						? { executeAutonomy: input.permitAllowance.executeAutonomy }
+						: {}),
+					skillLoaderOptions: {
+						...(input.noSkills !== undefined ? { noSkills: input.noSkills } : {}),
+						...(input.skillPaths !== undefined ? { skillPaths: [...input.skillPaths] } : {}),
+						...(input.trustProjectCompatRoots !== undefined
+							? { trustProjectCompatRoots: input.trustProjectCompatRoots }
+							: {}),
+					},
+					signal: abortController.signal,
+				});
+				if (bridge !== null) {
+					options.mcpServers = { [CLAUDE_SDK_PANCODE_SERVER]: bridge };
+					// Only the bridge: no user, project or plugin MCP server can claim its tool names.
+					options.strictMcpConfig = true;
+				}
+			}
+			const credential = input.authProfile
+				? await resolveClaudeLaunchCredential(
+						input.target.auth ?? { oauthProfile: input.authProfile },
+						{},
+						{ signal: abortController.signal },
+					)
+				: null;
+			abortController.signal.throwIfAborted();
+			options.env = withClaudeCredential(options.env ?? {}, credential?.apiKey ?? input.apiKey);
+			const executable = process.env.CLAUDE_CODE_EXECUTABLE ?? findExecutableOnPath("claude");
+			if (executable) options.pathToClaudeCodeExecutable = executable;
+			stopExpiryWatch = watchCredentialExpiry(credential?.expiresAt ?? input.credentialExpiresAt, () => {
+				authFailure =
+					"PanCode's Claude subscription access token expired. Start a new assignment to refresh it; this run was stopped without replaying its work.";
+				abort();
+			});
+			abortController.signal.throwIfAborted();
+			queryHandle = query({ prompt, options });
+			for await (const sdkMessage of queryHandle) {
+				if (sdkMessage.type === "system" && (sdkMessage as { subtype?: string }).subtype === "init") {
+					const init = sdkMessage as { model?: string; session_id?: string; uuid?: string };
+					if (typeof init.model === "string" && init.model.length > 0) streamState.model = init.model;
+					if (typeof init.uuid === "string") responseId = init.uuid;
+					continue;
+				}
+				if (sdkMessage.type === "stream_event") {
+					const event = coerceToolInput((sdkMessage as { event?: unknown }).event);
+					if (event.type === "message_start") captureCall(coerceToolInput(event.message));
+					if (event.type === "message_delta" && currentCall)
+						captureCall({ id: currentCall, usage: event.usage, stop_reason: coerceToolInput(event.delta).stop_reason });
+					if (event.type === "message_stop" && currentCall) captureCall({ id: currentCall, complete: true });
+					emitTextDelta(emit, streamState, extractStreamDelta(sdkMessage));
+					continue;
+				}
+				if (sdkMessage.type === "assistant") {
+					captureCall(coerceToolInput((sdkMessage as { message?: unknown }).message));
+					const text = extractAssistantText(sdkMessage);
+					if (text.length > 0 && text.length >= streamState.text.length) {
+						streamState.text = text;
+					}
+					const assistant = sdkMessage as { message?: { model?: string; id?: string }; uuid?: string; request_id?: string };
+					if (typeof assistant.message?.model === "string") responseModel = assistant.message.model;
+					if (typeof assistant.request_id === "string") responseId = assistant.request_id;
+					else if (typeof assistant.uuid === "string") responseId = assistant.uuid;
+					continue;
+				}
+				if (sdkMessage.type === "result") {
+					result = sdkMessage;
+					pendingTurns--;
+					if (pendingTurns <= 0 || resultError(result)) {
+						prompt.close();
+						break;
+					}
+				}
+			}
+			const error =
+				authFailure ??
+				(resultError(result) || (!result && !aborted ? "Claude Agent SDK ended without a terminal result." : ""));
+			flushCalls();
+			const finalText = streamState.text || resultText(result) || error;
+			const finalMessage = buildAssistantMessage({
+				model: streamState.model,
+				responseModel,
+				responseId,
+				text: finalText,
+				result,
+				aborted,
+				errorMessage: error,
+			});
+			if (!streamState.started) emit({ type: "message_start", message: finalMessage } as AgentEvent);
+			emit({ type: "message_end", message: finalMessage } as AgentEvent);
+			messages.push(finalMessage);
+			emit({ type: "agent_end", messages } as AgentEvent);
+			if (permissionFailure) return { messages, exitCode: WORKER_EXIT_PERMISSION_REQUIRED };
+			if (budgetFailure) return { messages, exitCode: 1 };
+			return { messages, exitCode: aborted || finalMessage.stopReason === "error" ? 1 : 0 };
+		} catch (error) {
+			flushCalls();
+			const messageText = authFailure ?? (error instanceof Error ? error.message : String(error));
+			const finalMessage = buildAssistantMessage({
+				model: streamState.model,
+				text: messageText,
+				result,
+				aborted,
+				errorMessage: messageText,
+			});
+			emit({ type: "message_end", message: finalMessage } as AgentEvent);
+			messages.push(finalMessage);
+			emit({ type: "agent_end", messages } as AgentEvent);
+			if (permissionFailure) return { messages, exitCode: WORKER_EXIT_PERMISSION_REQUIRED };
+			if (budgetFailure) return { messages, exitCode: 1 };
+			if (!aborted) process.stderr.write(`[worker:claude-sdk] ${messageText}\n`);
+			return { messages, exitCode: 1 };
+		} finally {
+			finished = true;
+			prompt.close();
+			stopExpiryWatch();
+			input.signal?.removeEventListener("abort", abort);
+			queryHandle?.close();
+		}
+	})();
+
+	return {
+		promise,
+		abort,
+		async steer(text: string): Promise<boolean> {
+			const trimmed = text.trim();
+			if (trimmed.length === 0 || finished || aborted) return false;
+			if (!prompt.push(sdkUserTextMessage(trimmed, true))) return false;
+			pendingTurns++;
+			return true;
+		},
+	};
+}

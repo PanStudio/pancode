@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, strictEqual } from "node:assert/strict";
+import { describe, it } from "node:test";
+import type { SlashCommandContext, SlashReportRequest } from "../../src/session-control/slash-command-types.js";
+import { parseSlashCommand } from "../../src/session-control/slash-commands.js";
+import { dispatchSlashCommand } from "../../src/session-control/slash-dispatch.js";
+
+describe("/report", () => {
+	it("parses the bare command, a kind with a summary, and sending a saved draft", () => {
+		deepStrictEqual(parseSlashCommand("/report"), { kind: "report", report: "bug" });
+		deepStrictEqual(parseSlashCommand("/report bug x"), { kind: "report", report: "bug", summary: "x" });
+		deepStrictEqual(parseSlashCommand("/report send rpt_01JABCDEF"), {
+			kind: "report-send",
+			draftId: "rpt_01JABCDEF",
+		});
+		strictEqual(parseSlashCommand("/report the footer flickers").kind, "usage-error");
+
+		const opened: SlashReportRequest[] = [];
+		const ctx = {
+			notice: () => {},
+			render: () => {},
+			openReport: (request: SlashReportRequest) => {
+				opened.push(request);
+			},
+		} as unknown as SlashCommandContext;
+		dispatchSlashCommand(parseSlashCommand("/report send rpt_01JABCDEF"), ctx);
+		deepStrictEqual(opened, [{ kind: "draft", draftId: "rpt_01JABCDEF" }]);
+	});
+
+	it("tells the terminal operator that --comment and --new are chosen in the review", () => {
+		const notices: string[] = [];
+		const opened: SlashReportRequest[] = [];
+		const ctx = {
+			notice: (_level: string, text: string) => notices.push(text),
+			render: () => {},
+			openReport: (request: SlashReportRequest) => {
+				opened.push(request);
+			},
+		} as unknown as SlashCommandContext;
+		dispatchSlashCommand(parseSlashCommand("/report send rpt_01JABCDEF --new"), ctx);
+		deepStrictEqual(opened, [{ kind: "draft", draftId: "rpt_01JABCDEF" }]);
+		strictEqual(notices.length, 1);
+		strictEqual(notices[0]?.includes("--new"), true);
+	});
+});

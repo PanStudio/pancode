@@ -1,0 +1,209 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Durable routing facts reported by an AI gateway for one upstream response.
+ *
+ * The gateway is authoritative for the physical deployment that served an
+ * alias. PanCode deliberately records only the host portion of an upstream API
+ * base: LiteLLM deployments may embed paths, query credentials, or user-info
+ * in the configured URL, none of which belongs in a session or sealed receipt.
+ */
+export interface LiteLLMGatewayRoutingObservation {
+	gateway: "litellm";
+	callId?: string;
+	modelGroup?: string;
+	modelName?: string;
+	apiBaseHost?: string;
+	deploymentId?: string;
+	attemptedFallbacks?: number;
+	attemptedRetries?: number;
+	overheadMs?: number;
+	responseDurationMs?: number;
+	version?: string;
+}
+
+export type GatewayRoutingObservation = LiteLLMGatewayRoutingObservation;
+
+/**
+ * Preserve the provider's diagnostic while making PanCode's failure policy
+ * explicit and actionable. A dropped client connection before any output can
+ * use the visible retry ladder on the same route, and so can a failure that
+ * states its wait. Whether either ran is the ladder's to say, so this text only
+ * rules out substitution: a named route never authorizes another model.
+ */
+export function liteLLMRouteFailureMessage(
+	errorMessage: string | null | undefined,
+	targetId: string,
+	modelId: string,
+	hasPartialResponse = false,
+): string {
+	const providerMessage = errorMessage?.trim() || "LiteLLM request failed.";
+	if (!hasPartialResponse && isLiteLLMConnectionFailure(providerMessage)) return providerMessage;
+	const advice =
+		`LiteLLM route '${modelId}' on target '${targetId}' failed. ` +
+		"PanCode did not substitute another model; select a different route with /model, then resend.";
+	return providerMessage.includes(advice) ? providerMessage : `${providerMessage}\n\n${advice}`;
+}
+
+// Sessions saved before the retry ladder could run on this path still carry the longer sentence.
+const ROUTE_FAILURE_TAIL =
+	/\n\n(?:LiteLLM route '([^'\n]*)' on target '([^'\n]*)' failed\. )(?:PanCode|PanCode) did not (?:retry or )?substitute another model; select a different route with \/model, then resend\.$/;
+
+function jsonMessage(value: unknown): string | undefined {
+	if (typeof value === "string") return value.trim() || undefined;
+	if (typeof value !== "object" || value === null) return undefined;
+	const record = value as Record<string, unknown>;
+	return jsonMessage(record.message) ?? jsonMessage(record.detail) ?? jsonMessage(record.error);
+}
+
+/**
+ * Headless rendering of a failure built by liteLLMRouteFailureMessage. The
+ * stored text keeps the `/model` remedy because the TUI shows it, but a
+ * headless run has no such command, and LiteLLM's JSON body repeats its
+ * message under `provider_specific_fields`. Returns null for any other text so
+ * the caller prints it unchanged.
+ */
+export function headlessRouteFailureText(message: string): string | null {
+	const tail = ROUTE_FAILURE_TAIL.exec(message);
+	if (tail === null) return null;
+	const body = message.slice(0, tail.index).trim();
+	const jsonStart = body.indexOf("{");
+	let provider = body;
+	if (jsonStart >= 0) {
+		try {
+			const parsed: unknown = JSON.parse(body.slice(jsonStart));
+			const text = jsonMessage(parsed);
+			if (text !== undefined) provider = `${body.slice(0, jsonStart)}${text}`.trim();
+		} catch {
+			// Not a JSON body; the provider text is printed as the gateway sent it.
+		}
+	}
+	return (
+		`${provider} (model '${tail[1]}' on target '${tail[2]}'; PanCode did not substitute another model; ` +
+		"run `pancode models` to list routes or pass a different --model)"
+	);
+}
+
+/**
+ * OpenAI SDK transport failure, distinct from an HTTP gateway/backend error, with the proxy note S-39 may add and
+ * the transport cause Pi appends since 1.5.1 (`Connection error.: connect ECONNREFUSED 127.0.0.1:4000`).
+ */
+export function isLiteLLMConnectionFailure(message: string | null | undefined): boolean {
+	return /^Connection error\.(?: \(through proxy [^)\n]*\))?(?:: [^\n]+)?$/.test(message?.trim() ?? "");
+}
+
+interface HeaderReader {
+	get(name: string): string | null;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function nonnegativeNumber(value: unknown): number | undefined {
+	if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+	if (typeof value !== "string" || value.trim().length === 0) return undefined;
+	const parsed = Number(value);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function nonnegativeInteger(value: unknown): number | undefined {
+	const parsed = nonnegativeNumber(value);
+	return parsed === undefined ? undefined : Math.floor(parsed);
+}
+
+function apiBaseHost(value: unknown): string | undefined {
+	const raw = nonEmptyString(value);
+	if (raw === undefined) return undefined;
+	try {
+		return new URL(raw).host || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function storedApiBaseHost(value: unknown): string | undefined {
+	const raw = nonEmptyString(value);
+	if (raw === undefined) return undefined;
+	try {
+		return new URL(raw.includes("://") ? raw : `http://${raw}`).host || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Read LiteLLM's response headers without retaining sensitive API-base data. */
+export function liteLLMGatewayRoutingFromHeaders(headers: HeaderReader): GatewayRoutingObservation | null {
+	const callId = nonEmptyString(headers.get("x-litellm-call-id"));
+	const modelGroup = nonEmptyString(headers.get("x-litellm-model-group"));
+	const modelName = nonEmptyString(headers.get("x-litellm-model-name"));
+	const host = apiBaseHost(headers.get("x-litellm-model-api-base"));
+	const deploymentId = nonEmptyString(headers.get("x-litellm-model-id"));
+	const attemptedFallbacks = nonnegativeInteger(headers.get("x-litellm-attempted-fallbacks"));
+	const attemptedRetries = nonnegativeInteger(headers.get("x-litellm-attempted-retries"));
+	const overheadMs = nonnegativeNumber(headers.get("x-litellm-overhead-duration-ms"));
+	const responseDurationMs = nonnegativeNumber(headers.get("x-litellm-response-duration-ms"));
+	const version = nonEmptyString(headers.get("x-litellm-version"));
+	const observation: GatewayRoutingObservation = {
+		gateway: "litellm",
+		...(callId !== undefined ? { callId } : {}),
+		...(modelGroup !== undefined ? { modelGroup } : {}),
+		...(modelName !== undefined ? { modelName } : {}),
+		...(host !== undefined ? { apiBaseHost: host } : {}),
+		...(deploymentId !== undefined ? { deploymentId } : {}),
+		...(attemptedFallbacks !== undefined ? { attemptedFallbacks } : {}),
+		...(attemptedRetries !== undefined ? { attemptedRetries } : {}),
+		...(overheadMs !== undefined ? { overheadMs } : {}),
+		...(responseDurationMs !== undefined ? { responseDurationMs } : {}),
+		...(version !== undefined ? { version } : {}),
+	};
+	return Object.keys(observation).length > 1 ? observation : null;
+}
+
+/** Parse a live message, persisted session row, or receipt response defensively. */
+export function gatewayRoutingObservationFromRecord(
+	record: Readonly<Record<string, unknown>>,
+): GatewayRoutingObservation | null {
+	const value = record.gatewayRouting;
+	if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+	const raw = value as Record<string, unknown>;
+	if (raw.gateway !== "litellm") return null;
+	const callId = nonEmptyString(raw.callId);
+	const modelGroup = nonEmptyString(raw.modelGroup);
+	const modelName = nonEmptyString(raw.modelName);
+	const host = storedApiBaseHost(raw.apiBaseHost);
+	const deploymentId = nonEmptyString(raw.deploymentId);
+	const attemptedFallbacks = nonnegativeInteger(raw.attemptedFallbacks);
+	const attemptedRetries = nonnegativeInteger(raw.attemptedRetries);
+	const overheadMs = nonnegativeNumber(raw.overheadMs);
+	const responseDurationMs = nonnegativeNumber(raw.responseDurationMs);
+	const version = nonEmptyString(raw.version);
+	const observation: GatewayRoutingObservation = {
+		gateway: "litellm",
+		...(callId !== undefined ? { callId } : {}),
+		...(modelGroup !== undefined ? { modelGroup } : {}),
+		...(modelName !== undefined ? { modelName } : {}),
+		...(host !== undefined ? { apiBaseHost: host } : {}),
+		...(deploymentId !== undefined ? { deploymentId } : {}),
+		...(attemptedFallbacks !== undefined ? { attemptedFallbacks } : {}),
+		...(attemptedRetries !== undefined ? { attemptedRetries } : {}),
+		...(overheadMs !== undefined ? { overheadMs } : {}),
+		...(responseDurationMs !== undefined ? { responseDurationMs } : {}),
+		...(version !== undefined ? { version } : {}),
+	};
+	return Object.keys(observation).length > 1 ? observation : null;
+}
+
+/** Compact human projection for receipts and operator notices. */
+export function gatewayRoutingObservationLabel(observation: GatewayRoutingObservation): string {
+	const route = [observation.modelGroup, observation.modelName].filter(Boolean).join("->");
+	const destination = [route, observation.apiBaseHost ? `@${observation.apiBaseHost}` : ""].filter(Boolean).join("");
+	const parts = [
+		"gateway=litellm",
+		...(destination ? [`route=${destination}`] : []),
+		...(observation.attemptedFallbacks !== undefined ? [`fallbacks=${observation.attemptedFallbacks}`] : []),
+		...(observation.attemptedRetries !== undefined ? [`retries=${observation.attemptedRetries}`] : []),
+		...(observation.overheadMs !== undefined ? [`overhead_ms=${observation.overheadMs}`] : []),
+	];
+	return parts.join(" ");
+}

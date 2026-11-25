@@ -1,0 +1,651 @@
+diff --git a/dist/alt-screen-search.d.ts b/dist/alt-screen-search.d.ts
+index 7bdab98c02b263c26ae44bf70b41772d2c4a26b7..3e9bf40e6048a126918842d1552ea8022fd8f2cf 100644
+--- a/dist/alt-screen-search.d.ts
++++ b/dist/alt-screen-search.d.ts
+@@ -39,6 +39,7 @@ export declare class AltScreenSearchComponent implements Component, Focusable {
+     setResult(index: number, count: number): void;
+     getNavigationDirectionAt(row: number, column: number): -1 | 1 | undefined;
+     setHoveredNavigationDirection(direction: -1 | 1 | undefined): boolean;
++    applyEdit(operation: "undo"): void;
+     handleInput(data: string): void;
+     invalidate(): void;
+     render(width: number): string[];
+diff --git a/dist/alt-screen-search.js b/dist/alt-screen-search.js
+index 29318b3224bb8346991569caa0fc6277fda4117b..b11f8b3bb5cd369907c625170c89df71d2cff42e 100644
+--- a/dist/alt-screen-search.js
++++ b/dist/alt-screen-search.js
+@@ -205,6 +205,10 @@ export class AltScreenSearchComponent {
+         this.hoveredNavigationDirection = direction;
+         return true;
+     }
++    applyEdit(operation) {
++        this.input.applyEdit(operation);
++        this.onQueryChange(this.input.getValue());
++    }
+     handleInput(data) {
+         const previous = this.input.getValue();
+         this.input.handleInput(data);
+diff --git a/dist/components/alt-screen-flash.js b/dist/components/alt-screen-flash.js
+index 129d94a2223d6957b2eb79962f65b3adbdd4e9fc..05357b515c3b23a1e3f75953eeeee09fa5a95714 100644
+--- a/dist/components/alt-screen-flash.js
++++ b/dist/components/alt-screen-flash.js
+@@ -9,7 +9,12 @@ export class AltScreenFlashContainer {
+         this.requestRender = requestRender;
+     }
+     flash(message, durationMs = DEFAULT_DURATION_MS) {
+-        const id = this.nextId++;
++        // A message identical to one still showing restarts that row's timer instead of stacking another row,
++        // so a repeated copy keeps one row that shows for the repeat's whole duration.
++        const showing = this.entries.find((entry) => entry.message === message);
++        if (showing)
++            clearTimeout(showing.timer);
++        const id = showing ? showing.id : this.nextId++;
+         const timer = setTimeout(() => {
+             const index = this.entries.findIndex((entry) => entry.id === id);
+             if (index === -1)
+@@ -18,7 +23,10 @@ export class AltScreenFlashContainer {
+             this.requestRender();
+         }, Math.max(0, durationMs));
+         timer.unref();
+-        this.entries.push({ id, message, timer });
++        if (showing)
++            showing.timer = timer;
++        else
++            this.entries.push({ id, message, timer });
+         this.requestRender();
+     }
+     dispose() {
+diff --git a/dist/components/editor.d.ts b/dist/components/editor.d.ts
+index 7e6a8bc120ec687d4a647afff50d81fde6d5f23a..b98b2c14ac97c8e43ca0820bd78af2c288ec4e32 100644
+--- a/dist/components/editor.d.ts
++++ b/dist/components/editor.d.ts
+@@ -100,6 +100,7 @@ export declare class Editor implements Component, Focusable {
+     protected renderBottomBorder(width: number, hiddenLineCount: number): string;
+     render(width: number): string[];
+     handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined;
++    applyEdit(operation: "undo" | "deleteCharBackward" | "deleteCharForward" | "deleteWordBackward" | "deleteWordForward" | "deleteToLineStart" | "deleteToLineEnd"): void;
+     handleInput(data: string): void;
+     private layoutText;
+     getText(): string;
+diff --git a/dist/components/editor.js b/dist/components/editor.js
+index c7c90ef1dcb541fede73c0061424a2c4f5e86099..6a3d35e15a3563bce2de0b186ba0c7ef288dc739 100644
+--- a/dist/components/editor.js
++++ b/dist/components/editor.js
+@@ -549,6 +549,18 @@ export class Editor {
+             this.updateAutocomplete();
+         return { handled: true, focus: true };
+     }
++    /** Semantic edits bypass submit and all keybinding resolution. */
++    applyEdit(operation) {
++        switch (operation) {
++            case "undo": this.undo(); break;
++            case "deleteCharBackward": this.handleBackspace(); break;
++            case "deleteCharForward": this.handleForwardDelete(); break;
++            case "deleteWordBackward": this.deleteWordBackwards(); break;
++            case "deleteWordForward": this.deleteWordForward(); break;
++            case "deleteToLineStart": this.deleteToStartOfLine(); break;
++            case "deleteToLineEnd": this.deleteToEndOfLine(); break;
++        }
++    }
+     handleInput(data) {
+         const kb = getKeybindings();
+         // Handle character jump mode (awaiting next character to jump to)
+diff --git a/dist/components/input.d.ts b/dist/components/input.d.ts
+index 982a3d9888fa79ed008f643beaf9461b068aed9e..4df94e925f63c8d9cfd2a4e40189b0a938d8557f 100644
+--- a/dist/components/input.d.ts
++++ b/dist/components/input.d.ts
+@@ -26,6 +26,7 @@ export declare class Input implements Component, Focusable {
+     constructor(options?: InputOptions);
+     getValue(): string;
+     setValue(value: string): void;
++    applyEdit(operation: "undo" | "clear" | "deleteCharBackward" | "deleteCharForward" | "deleteWordBackward" | "deleteWordForward" | "deleteToLineStart" | "deleteToLineEnd"): void;
+     handleInput(data: string): void;
+     handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined;
+     private insertCharacter;
+diff --git a/dist/components/input.js b/dist/components/input.js
+index a27023e070788d2f143b77743eef1c8a5ad0de58..1c8341115ccc621b5a916bf2bb96da1a929fd514 100644
+--- a/dist/components/input.js
++++ b/dist/components/input.js
+@@ -40,6 +40,26 @@ export class Input {
+         this.value = value;
+         this.cursor = Math.min(this.cursor, value.length);
+     }
++    /** Semantic edits bypass submit and all keybinding resolution. */
++    applyEdit(operation) {
++        switch (operation) {
++            case "undo": this.undo(); break;
++            case "clear":
++                if (this.value.length === 0) break;
++                this.pushUndo();
++                this.killRing.push(this.value, { prepend: false, accumulate: false });
++                this.lastAction = "kill";
++                this.value = "";
++                this.cursor = 0;
++                break;
++            case "deleteCharBackward": this.handleBackspace(); break;
++            case "deleteCharForward": this.handleForwardDelete(); break;
++            case "deleteWordBackward": this.deleteWordBackwards(); break;
++            case "deleteWordForward": this.deleteWordForward(); break;
++            case "deleteToLineStart": this.deleteToLineStart(); break;
++            case "deleteToLineEnd": this.deleteToLineEnd(); break;
++        }
++    }
+     handleInput(data) {
+         // Handle bracketed paste mode
+         // Start of paste: \x1b[200~
+diff --git a/dist/layout.js b/dist/layout.js
+index 0a50deb61a365783f324434ac51e069043a3e933..d9023143d3946b2f1a0be7c13a54f6c78d3a262c 100644
+--- a/dist/layout.js
++++ b/dist/layout.js
+@@ -4,6 +4,9 @@ import { cropKittyImageLine, getKittyImageMetadata, getMaxKittyImageRows, isImag
+ import { CURSOR_MARKER, compositeTuiLine } from "./tui.js";
+ import { extractAnsiCode, getActiveBackgroundAnsi, getGraphemeCellRange, sliceByColumn, visibleWidth, } from "./utils.js";
+ const OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
++const SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
++/** Each scroll view's painted scrollbar rows from the last frame, by track offset. */
++const scrollbarRows = new WeakMap();
+ function intersect(a, b) {
+     const x = Math.max(a.x, b.x);
+     const y = Math.max(a.y, b.y);
+@@ -209,6 +212,15 @@ function paintScrollbar(box, screen, totalWidth) {
+     const geometry = getScrollbarGeometry(box);
+     if (!geometry || !box.scrollView)
+         return;
++    const preserveTargetBackground = box.scrollView.scrollbar !== "always";
++    // A row whose string, glyph and placement match the last frame's reuses that frame's result instead of
++    // slicing the row three times again.
++    let cache = scrollbarRows.get(box.scrollView);
++    if (!cache) {
++        cache = [];
++        scrollbarRows.set(box.scrollView, cache);
++    }
++    cache.length = Math.min(cache.length, geometry.trackHeight);
+     for (let offset = 0; offset < geometry.trackHeight; offset++) {
+         const row = geometry.trackTop + offset;
+         if (row < box.clip.y || row >= box.clip.y + box.clip.height || row < 0 || row >= screen.length)
+@@ -217,7 +229,20 @@ function paintScrollbar(box, screen, totalWidth) {
+         const replacement = isThumb
+             ? box.scrollView.scrollbarThumbStyle(box.scrollView.isScrollbarActive ? "█" : "┃")
+             : box.scrollView.scrollbarTrackStyle("│");
+-        screen[row] = replaceScrollbarCell(screen[row] ?? "", geometry.column, totalWidth, replacement, box.scrollView.scrollbar !== "always");
++        const line = screen[row] ?? "";
++        const cached = cache[offset];
++        if (cached &&
++            cached.line === line &&
++            cached.replacement === replacement &&
++            cached.column === geometry.column &&
++            cached.totalWidth === totalWidth &&
++            cached.preserveTargetBackground === preserveTargetBackground) {
++            screen[row] = cached.output;
++            continue;
++        }
++        const output = replaceScrollbarCell(line, geometry.column, totalWidth, replacement, preserveTargetBackground);
++        cache[offset] = { line, replacement, column: geometry.column, totalWidth, preserveTargetBackground, output };
++        screen[row] = output;
+     }
+ }
+ function paintBox(box, screen, totalWidth) {
+@@ -245,6 +270,12 @@ function paintBox(box, screen, totalWidth) {
+             if (box.rect.x === 0 && box.rect.width >= totalWidth && (isImageLine(line) || !screen[row])) {
+                 screen[row] = line;
+             }
++            // A box at column 0 narrower than the screen, such as a transcript beside its scrollbar column, takes
++            // the same path on an untouched row when the line already fits it. The reset keeps the line's style
++            // from reaching cells painted after it, as compositing's own reset does.
++            else if (box.rect.x === 0 && !screen[row] && !isImageLine(line) && visibleWidth(line) <= box.rect.width) {
++                screen[row] = `${line}${SEGMENT_RESET}`;
++            }
+             else {
+                 screen[row] = compositeTuiLine(screen[row] ?? "", line, box.rect.x, box.rect.width, totalWidth);
+             }
+diff --git a/dist/tui-alt-screen.d.ts b/dist/tui-alt-screen.d.ts
+index 0c95f39781c7962df89b9c7f97db6fc00fa3e123..afb8bdc52e3ca93cbd00033837c910cd0e38e9ef 100644
+--- a/dist/tui-alt-screen.d.ts
++++ b/dist/tui-alt-screen.d.ts
+@@ -109,11 +109,13 @@ export declare class TuiAltScreen extends TuiBase implements ViewportTUI {
+     scrollBy(lines: number): void;
+     scrollToTop(): void;
+     scrollToBottom(): void;
+-    private scrollToPrompt;
+-    private toggleSearch;
+-    private closeSearch;
++    scrollToPrompt(direction: -1 | 1): void;
++    readonly isSearchFocused: boolean;
++    undoSearchQuery(): void;
++    toggleSearch(): void;
++    closeSearch(): void;
+     private updateSearchQuery;
+-    private navigateSearch;
++    navigateSearch(direction: -1 | 1): void;
+     private getSearchNavigationDirectionAt;
+     private handleSearchMouseEvent;
+     private refreshSearch;
+@@ -133,7 +135,13 @@ export declare class TuiAltScreen extends TuiBase implements ViewportTUI {
+     private handleMouseEvent;
+     private parseWheelEvent;
+     private routeWheel;
+-    private parseSgrMouseEvent;
++    /** Parses one SGR mouse report into a zero-based cell and its button bits. */
++    protected parseSgrMouseEvent(data: string): {
++        button: number;
++        x: number;
++        y: number;
++        release: boolean;
++    } | undefined;
+     private handleRightClickPaste;
+     private handleScrollToEndIndicatorMouseEvent;
+     private getScrollbarTargetAt;
+@@ -153,10 +161,22 @@ export declare class TuiAltScreen extends TuiBase implements ViewportTUI {
+     private updateSelectionAutoScroll;
+     private autoScrollSelection;
+     private stopSelectionAutoScroll;
+-    private handleSelectionMouseEvent;
++    /** Runs only the text-selection path for one parsed report, skipping overlay and layout dispatch. */
++    protected handleSelectionMouseEvent(event: {
++        button: number;
++        x: number;
++        y: number;
++        release: boolean;
++    }): void;
+     private getSelectionBounds;
+     private getSelectionColumns;
+     private getActiveSelectionText;
++    /** Joins the selected cells of each source row into clipboard text; subclasses may override it to rejoin wrapped rows. */
++    protected selectionText(rows: readonly {
++        line: string;
++        start: number;
++        end: number;
++    }[]): string;
+     private copySelectionToClipboard;
+     private copyTextToClipboard;
+     private applySearchTextHighlight;
+diff --git a/dist/tui-alt-screen.js b/dist/tui-alt-screen.js
+index 3567a4350ab0da56276289d422b58d46e4882949..f33e256e9e0528bd74951cfe94717c851dee1038 100644
+--- a/dist/tui-alt-screen.js
++++ b/dist/tui-alt-screen.js
+@@ -32,7 +32,8 @@ const COPY_ERROR_FLASH_DURATION_MS = 5000;
+ // Regular mode delegates double-click selection to the terminal emulator. Fullscreen owns mouse selection,
+ // so it uses iTerm2's default "characters considered part of a word" set:
+ // https://github.com/gnachman/iTerm2/blob/7f4ff739721f95d0b93003d8701c4523a7edf261/sources/Settings/iTermPreferences.m#L743
+-const TERMINAL_WORD_SELECTION_JOINERS = new Set(["/", "-", "+", "\\", "~", "_", "."]);
++// PanCode adds the colon, so a double-clicked URL keeps its scheme and `path/file.ts:120` selects whole.
++const TERMINAL_WORD_SELECTION_JOINERS = new Set(["/", "-", "+", "\\", "~", "_", ".", ":"]);
+ const wordSegmenter = getWordSegmenter();
+ /** Alternate-screen TUI with a scrollable, application-owned viewport. */
+ export class TuiAltScreen extends TuiBase {
+@@ -42,6 +43,8 @@ export class TuiAltScreen extends TuiBase {
+     lastDocument = [];
+     previousScreenWidth = 0;
+     previousScreenHeight = 0;
++    /** The primary scroll view, its scroll offset and its visible rows at the last frame, for `scrollRegionShift`. */
++    previousPrimaryScroll;
+     layoutRoot;
+     currentLayout;
+     implicitDocument;
+@@ -325,6 +328,13 @@ export class TuiAltScreen extends TuiBase {
+             return;
+         }
+     }
++    get isSearchFocused() {
++        return this.activeSearch?.overlay?.isFocused() === true;
++    }
++    undoSearchQuery() {
++        this.activeSearch?.component.applyEdit("undo");
++        this.requestRender();
++    }
+     toggleSearch() {
+         if (this.activeSearch) {
+             this.closeSearch();
+@@ -1063,7 +1073,11 @@ export class TuiAltScreen extends TuiBase {
+         const visibleTop = Math.max(0, box.rect.y, box.clip.y);
+         const visibleBottom = Math.min(this.terminal.rows - 1, box.rect.y + box.rect.height - 1, box.clip.y + box.clip.height - 1);
+         this.selectionDragPointer = { x: event.x, y: event.y };
+-        this.selectionAutoScrollDirection = event.y <= visibleTop ? -1 : event.y >= visibleBottom ? 1 : 0;
++        // Scroll only once the pointer leaves the view, so a selection can end on its edge rows. On the terminal's
++        // first or last row the pointer cannot go further, so that edge row itself still scrolls.
++        const scrollUp = event.y < visibleTop || (event.y === visibleTop && visibleTop === 0);
++        const scrollDown = event.y > visibleBottom || (event.y === visibleBottom && visibleBottom === this.terminal.rows - 1);
++        this.selectionAutoScrollDirection = scrollUp ? -1 : scrollDown ? 1 : 0;
+         if (this.selectionAutoScrollDirection === 0) {
+             this.stopSelectionAutoScroll();
+             return;
+@@ -1163,7 +1177,13 @@ export class TuiAltScreen extends TuiBase {
+         }
+         this.stopSelectionAutoScroll();
+         this.selectionPressActive = true;
+-        const scrollView = !this.hasOverlay() && this.currentLayout
++        // A press beside an overlay still selects the scroll view's content; only a press on an overlay's cells
++        // selects screen rows.
++        const onOverlay = this.renderedOverlayLayouts.some((layout) => event.x >= layout.col &&
++            event.x < layout.col + layout.width &&
++            event.y >= layout.row &&
++            event.y < layout.row + layout.height);
++        const scrollView = !onOverlay && this.currentLayout
+             ? getScrollViewsAt(this.currentLayout, event.x, event.y)[0]
+             : undefined;
+         const anchor = this.getSelectionPoint(event, scrollView);
+@@ -1222,15 +1242,18 @@ export class TuiAltScreen extends TuiBase {
+                 return undefined;
+             sourceLines = box.scrollContentLines;
+         }
+-        const lines = [];
++        const rows = [];
+         for (let row = selection.start.row; row <= selection.end.row; row++) {
+             const line = sourceLines[row] ?? "";
+             const columns = this.getSelectionColumns(line, row, selection);
+-            lines.push(stripTerminalSequences(sliceByColumn(line, columns.start, Math.max(0, columns.end - columns.start), true)).trimEnd());
++            rows.push({ line, start: columns.start, end: columns.end });
+         }
+-        const text = lines.join("\n");
++        const text = this.selectionText(rows);
+         return text.length === 0 ? undefined : text;
+     }
++    selectionText(rows) {
++        return rows.map(({ line, start, end }) => stripTerminalSequences(sliceByColumn(line, start, Math.max(0, end - start), true)).trimEnd()).join("\n");
++    }
+     async copySelectionToClipboard() {
+         const text = this.getActiveSelectionText();
+         if (!text)
+@@ -1373,6 +1396,10 @@ export class TuiAltScreen extends TuiBase {
+             maxRow = Math.min(screen.length - 1, box.rect.y + box.rect.height - 1, box.clip.y + box.clip.height - 1);
+             minColumn = Math.max(0, box.rect.x, box.clip.x);
+             maxColumn = Math.min(this.terminal.columns, box.rect.x + box.rect.width, box.clip.x + box.clip.width);
++            // The scrollbar column is not content: stop the highlight before it, as applySearchHighlights does.
++            const scrollbarColumn = getScrollbarGeometry(box)?.column;
++            if (scrollbarColumn !== undefined)
++                maxColumn = Math.min(maxColumn, scrollbarColumn);
+             screenSelection = {
+                 start: {
+                     ...selection.start,
+@@ -1450,6 +1477,49 @@ export class TuiAltScreen extends TuiBase {
+         }
+         return result;
+     }
++    /**
++     * When the primary scroll view moved by k rows since the last frame, scroll its visible rows on the terminal
++     * (a scroll region, then SU or SD) and return what every row shows after that, so the diff repaints only the
++     * exposed rows and rows that still differ: an overlay, a selection or a scrollbar cell over the view. Frames
++     * with an image row on either screen, full redraws and shifts that would reuse fewer than two rows keep the
++     * row-by-row diff.
++     */
++    scrollRegionShift(screen, layout, redrawAll) {
++        const previous = this.previousPrimaryScroll;
++        const scrollView = layout.primaryScrollView;
++        const box = scrollView ? getScrollViewBox(layout, scrollView) : undefined;
++        this.previousPrimaryScroll = box
++            ? { scrollView, scrollTop: scrollView.scrollTop, top: box.clip.y, height: box.clip.height }
++            : undefined;
++        if (redrawAll || !previous || !box || previous.scrollView !== scrollView)
++            return undefined;
++        const top = box.clip.y;
++        const height = box.clip.height;
++        const shift = scrollView.scrollTop - previous.scrollTop;
++        if (previous.top !== top ||
++            previous.height !== height ||
++            height < 2 ||
++            top < 0 ||
++            top + height > screen.length ||
++            shift === 0 ||
++            Math.abs(shift) >= height)
++            return undefined;
++        if (screen.some(isImageLine) || this.previousScreen.some(isImageLine))
++            return undefined;
++        const baseline = this.previousScreen.slice();
++        let reused = 0;
++        for (let row = top; row < top + height; row++) {
++            const source = row + shift;
++            baseline[row] = source >= top && source < top + height ? (this.previousScreen[source] ?? "") : "";
++            if (screen[row] === baseline[row] && screen[row] !== this.previousScreen[row])
++                reused++;
++        }
++        if (reused < 2)
++            return undefined;
++        const scroll = shift > 0 ? `\x1b[${shift}S` : `\x1b[${-shift}T`;
++        // The reset keeps the current style off the blank rows the scroll exposes.
++        return { sequence: `\x1b[0m\x1b[${top + 1};${top + height}r${scroll}\x1b[r`, baseline };
++    }
+     doRender() {
+         if (this.stopped || !this.altScreenActive)
+             return;
+@@ -1517,6 +1587,10 @@ export class TuiAltScreen extends TuiBase {
+         // and text write so nothing later intersects them. Terminals that keep images on a separate layer
+         // (Kitty, Ghostty) render the same result; text-only frames keep the interleaved output.
+         const drawKittyImagesLast = redrawImages && this.imageProtocol === "kitty" && screen.some(isImageLine);
++        const scrolled = this.scrollRegionShift(screen, nextLayout, fullRedraw || imagesNeedRedraw);
++        if (scrolled)
++            buffer += scrolled.sequence;
++        const baseline = scrolled?.baseline ?? this.previousScreen;
+         if (drawKittyImagesLast) {
+             for (let row = 0; row < height; row++) {
+                 if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row])
+@@ -1540,7 +1614,7 @@ export class TuiAltScreen extends TuiBase {
+         }
+         else {
+             for (let row = 0; row < height; row++) {
+-                if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row])
++                if (!fullRedraw && !imagesNeedRedraw && screen[row] === baseline[row])
+                     continue;
+                 buffer += `\x1b[${row + 1};1H\x1b[2K${preparedKittyScreen.lines[row] ?? ""}`;
+             }
+diff --git a/dist/tui-main-screen.d.ts b/dist/tui-main-screen.d.ts
+index 6ab7f63586dfa034ec6c30a40d475909d2d950e2..17f8278d77842cd7926fe9514c47319bdc28c5fd 100644
+--- a/dist/tui-main-screen.d.ts
++++ b/dist/tui-main-screen.d.ts
+@@ -21,6 +21,10 @@ export declare class TuiMainScreen extends TuiBase implements TUI {
+     private previousViewportTop;
+     captureRenderState(): TuiMainScreenRenderState;
+     restoreRenderState(state: TuiMainScreenRenderState): void;
++    /** PanCode patch: rows taken from the previous frame without comparing them, during a frame. */
++    protected keptLeadingRows: number;
++    /** PanCode patch: leading rows of this frame's root rows that are the very strings of the previous frame's. */
++    protected keptRenderedRows(lines: string[]): number;
+     protected resetRenderState(): void;
+     protected beforeTerminalStop(options: TuiStopOptions): void;
+     private collectKittyImageIds;
+diff --git a/dist/tui-main-screen.js b/dist/tui-main-screen.js
+index e00273ab6b20f916256aea3ddae374a88641e2ed..85c583b483e79556be9a6b11da04c6877d717688 100644
+--- a/dist/tui-main-screen.js
++++ b/dist/tui-main-screen.js
+@@ -2,8 +2,9 @@ import * as fs from "node:fs";
+ import * as os from "node:os";
+ import * as path from "node:path";
+ import { deleteKittyImage, isImageLine } from "./terminal-image.js";
+-import { TuiBase } from "./tui.js";
+-import { visibleWidth } from "./utils.js";
++import { CURSOR_MARKER, TuiBase } from "./tui.js";
++import { normalizeTerminalOutput, visibleWidth } from "./utils.js";
++const SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
+ /** OSC 133 prompt markers at the start of a rendered line. Fullscreen uses them for prompt navigation. */
+ const OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
+ const KITTY_SEQUENCE_PREFIX = "\x1b_G";
+@@ -109,6 +110,88 @@ export class TuiMainScreen extends TuiBase {
+     hardwareCursorRow = 0;
+     maxLinesRendered = 0;
+     previousViewportTop = 0;
++    /**
++     * PanCode patch: the previous frame's raw rows, their reset output and which of
++     * them are image rows. A row whose raw string is unchanged reuses its reset
++     * output by reference, so an unchanged scrollback prefix costs one comparison
++     * per row instead of a normalization, a string build and three image scans.
++     */
++    lineResetMemo = { raw: [], out: [], image: new Uint8Array(0) };
++    /** PanCode patch: image row indices of every reset output array this renderer produced. */
++    lineImageRows = new WeakMap();
++    /**
++     * PanCode patch: the previous frame's rendered rows after the OSC 133 strip, rewritten in place from the first row
++     * not kept, because a new array per frame over a tall transcript cost more than the rest of a keystroke frame.
++     */
++    zoneStrippedRows = [];
++    /**
++     * PanCode patch: how many leading rows this frame takes from the previous frame without comparing them. `doRender`
++     * sets it before the rows are resolved and reset, and clears it after.
++     */
++    keptLeadingRows = 0;
++    /**
++     * PanCode patch: how many leading rows of `lines`, the root's rows for this frame, are the very strings of the root's
++     * rows for the previous frame. Only a subclass that knows says more than 0; a wrong answer paints stale rows.
++     */
++    keptRenderedRows(lines) {
++        return 0;
++    }
++    applyLineResets(lines) {
++        const memo = this.lineResetMemo;
++        // The raw snapshot and the image flags are rewritten in place: a frame
++        // over a tall transcript allocates nothing proportional to its height.
++        const raw = memo.raw;
++        const previousOut = memo.out;
++        let image = memo.image;
++        if (image.length < lines.length) {
++            const grown = new Uint8Array(Math.max(lines.length, image.length * 2, 64));
++            grown.set(image);
++            image = grown;
++        }
++        const previousLength = raw.length;
++        const imageRows = [];
++        // PanCode patch: kept rows are the very strings the memo holds, so their output and image flags carry over.
++        const kept = Math.min(this.keptLeadingRows, previousLength);
++        for (let i = 0; i < kept; i++)
++            lines[i] = previousOut[i];
++        for (const row of this.lineImageRows.get(previousOut) ?? []) {
++            if (row >= kept)
++                break;
++            imageRows.push(row);
++        }
++        for (let i = kept; i < lines.length; i++) {
++            const line = lines[i];
++            if (i < previousLength && line === raw[i]) {
++                lines[i] = previousOut[i];
++                if (image[i] === 1)
++                    imageRows.push(i);
++                continue;
++            }
++            raw[i] = line;
++            if (isImageLine(line)) {
++                image[i] = 1;
++                imageRows.push(i);
++                continue;
++            }
++            image[i] = 0;
++            // PanCode patch: stock 1.5.2 `applyLineResets` drops stray cursor markers here, and this override replaces it.
++            lines[i] = normalizeTerminalOutput(line.replaceAll(CURSOR_MARKER, "")) + SEGMENT_RESET;
++        }
++        raw.length = lines.length;
++        this.lineResetMemo = { raw, out: lines, image };
++        this.lineImageRows.set(lines, imageRows);
++        return lines;
++    }
++    /** PanCode patch: the rows worth scanning for image headers; every row when the array is unknown. */
++    imageRowsOf(lines) {
++        const known = this.lineImageRows.get(lines);
++        if (known !== undefined)
++            return known;
++        const rows = [];
++        for (let i = 0; i < lines.length; i++)
++            rows.push(i);
++        return rows;
++    }
+     captureRenderState() {
+         return {
+             previousLines: [...this.previousLines],
+@@ -131,6 +214,8 @@ export class TuiMainScreen extends TuiBase {
+         this.previousViewportTop = state.previousViewportTop;
+     }
+     resetRenderState() {
++        this.lineResetMemo = { raw: [], out: [], image: new Uint8Array(0) };
++        this.zoneStrippedRows = [];
+         this.previousLines = [];
+         this.previousWidth = -1;
+         this.previousHeight = -1;
+@@ -153,8 +238,8 @@ export class TuiMainScreen extends TuiBase {
+     }
+     collectKittyImageIds(lines) {
+         const ids = new Set();
+-        for (const line of lines) {
+-            for (const id of extractKittyImageIds(line)) {
++        for (const row of this.imageRowsOf(lines)) {
++            for (const id of extractKittyImageIds(lines[row])) {
+                 ids.add(id);
+             }
+         }
+@@ -185,7 +270,7 @@ export class TuiMainScreen extends TuiBase {
+         let expandedFirstChanged = firstChanged;
+         let expandedLastChanged = lastChanged;
+         const expandForLines = (lines) => {
+-            for (let i = 0; i < lines.length; i++) {
++            for (const i of this.imageRowsOf(lines)) {
+                 if (extractKittyImageIds(lines[i]).length === 0)
+                     continue;
+                 const blockEnd = i + this.getKittyImageReservedRows(lines, i) - 1;
+@@ -230,7 +315,27 @@ export class TuiMainScreen extends TuiBase {
+         // Render all components to get new lines
+         // Resolve fake cursors before compositing so overlays and line slicing see plain SGR codes
+         // Drop OSC 133 markers: the terminal reads 133;A as a new shell prompt, which ends program status (OSC 7501)
+-        let newLines = this.resolveFakeCursors(this.render(width).map((line) => line.replace(OSC133_ZONE_PREFIX, "")));
++        // PanCode patch: only a row that starts with an OSC 133 marker can match the anchored pattern, and a regex call per row cost more than the rest of a frame over a tall transcript.
++        // PanCode patch: rows the root vouches for are taken from the previous frame as they were stripped, resolved and
++        // reset, and are not compared again. Only rows outside both frames' viewports qualify, at an unchanged size
++        // and with no overlay, since the cursor marker, overlays and the viewport are a row's only other inputs.
++        const rendered = this.render(width);
++        const zoneStripped = this.zoneStrippedRows;
++        const kept = widthChanged || heightChanged || this.previousWidth !== width || this.hasOverlayEntries
++            ? 0
++            : Math.max(0, Math.min(this.keptRenderedRows(rendered), zoneStripped.length - height, rendered.length - height));
++        const stripped = zoneStripped;
++        for (let i = kept; i < rendered.length; i++) {
++            const line = rendered[i];
++            stripped[i] = line.startsWith("\x1b]133;") ? line.replace(OSC133_ZONE_PREFIX, "") : line;
++        }
++        stripped.length = rendered.length;
++        const resetMemoOut = this.lineResetMemo.out;
++        this.keptLeadingRows = kept;
++        let newLines = this.resolveFakeCursors(stripped);
++        // The rest of the frame rewrites what `resolveFakeCursors` returns, so a memo it returned is the frame's now.
++        if (newLines === stripped)
++            this.zoneStrippedRows = [];
+         // Composite overlays into the rendered lines (before differential compare)
+         if (this.hasOverlayEntries) {
+             newLines = this.compositeOverlays(newLines, width, height);
+@@ -238,6 +343,9 @@ export class TuiMainScreen extends TuiBase {
+         // Extract cursor position before applying line resets (marker must be found first)
+         const cursorPos = this.extractCursorPosition(newLines, height);
+         newLines = this.applyLineResets(newLines);
++        this.keptLeadingRows = 0;
++        // PanCode patch: the kept rows equal the baseline's when the previous frame's reset output is the baseline.
++        const diffFrom = kept > 0 && this.previousLines === resetMemoOut ? kept : 0;
+         // Helper to clear scrollback and viewport and render all new lines
+         const fullRender = (clear) => {
+             this.fullRedrawCount += 1;
+@@ -325,7 +433,7 @@ export class TuiMainScreen extends TuiBase {
+         let firstChanged = -1;
+         let lastChanged = -1;
+         const maxLines = Math.max(newLines.length, this.previousLines.length);
+-        for (let i = 0; i < maxLines; i++) {
++        for (let i = diffFrom; i < maxLines; i++) {
+             const oldLine = i < this.previousLines.length ? this.previousLines[i] : "";
+             const newLine = i < newLines.length ? newLines[i] : "";
+             if (oldLine !== newLine) {
+diff --git a/dist/utils.js b/dist/utils.js
+index fe721821148379f4c5d30d918b725136e3facc35..bdd0c90fb8f766bdc094881dc1c0d72d3a0a1a9f 100644
+--- a/dist/utils.js
++++ b/dist/utils.js
+@@ -39,6 +39,8 @@ const markCharRegex = /^\p{Mark}$/v;
+ // This includes Unicode spacing marks and non-spacing exceptions in legacy wcwidth tables.
+ const terminalSpacingMarkRegex = /^(?:[\p{Spacing_Mark}--[\u1734\u302E\u302F]]|[\u065F\u0F7F\u102B\u102C\u1031\u1033-\u1035\u1038\u103A-\u103E])+$/v;
+ const rgiEmojiRegex = /^\p{RGI_Emoji}$/v;
++const emojiPresentationRegex = /^\p{Emoji_Presentation}$/u;
++const isSingleCodePoint = (segment) => segment.length === 1 || (segment.length === 2 && segment.codePointAt(0) > 0xffff);
+ // Cache for non-ASCII strings
+ const WIDTH_CACHE_SIZE = 512;
+ const widthCache = new Map();
+@@ -161,8 +163,9 @@ function graphemeWidth(segment) {
+     if (zeroWidthRegex.test(segment)) {
+         return 0;
+     }
+-    // Emoji check with pre-filter
+-    if (couldBeEmoji(segment) && rgiEmojiRegex.test(segment)) {
++    // Emoji check with pre-filter. A lone code point is RGI emoji exactly when it has Emoji_Presentation, regional
++    // indicators aside (sized 2 below either way), and that class compiles in a fraction of RGI_Emoji's time.
++    if (couldBeEmoji(segment) && (isSingleCodePoint(segment) ? emojiPresentationRegex : rgiEmojiRegex).test(segment)) {
+         return 2;
+     }
+     // Get base visible codepoint

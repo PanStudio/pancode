@@ -1,0 +1,526 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import type { MemoryDeliveryMode } from "../../src/core/defaults.js";
+import { commandEvidenceRef, commandSegment, sourceEvidenceRef } from "../../src/domains/memory/command-evidence.js";
+import { readUnsettledLedger, recordUnsettled } from "../../src/domains/memory/delivery-ledger.js";
+import { recordMemoryObservations } from "../../src/domains/memory/guardian-gate.js";
+import { createMemoryInterventionRegistration } from "../../src/domains/memory/intervention.js";
+import { MemoryDeliveryGate, projectKeptLesson } from "../../src/domains/memory/lesson-projection.js";
+import { canonicalMemoryRepositoryIdentity } from "../../src/domains/memory/operations.js";
+import { claimCommand, claimFromEvidence, memoryRevision } from "../../src/domains/memory/promotion.js";
+import { createMemoryPromptReader } from "../../src/domains/memory/prompt-cache.js";
+import {
+	memoryCarried,
+	memorySectionDelta,
+	renderMemoryPromptSection,
+} from "../../src/domains/memory/prompt-section.js";
+import { readDemotedMemoryIds } from "../../src/domains/memory/recall-use.js";
+import { MemoryRuntime } from "../../src/domains/memory/runtime.js";
+import { insertMemoryRecordIfAbsent, loadMemoryRecordsSync } from "../../src/domains/memory/store.js";
+import { TaskMemoryBank } from "../../src/domains/memory/task-bank.js";
+import { runTaskMemoryPolicy, type TaskMemoryPolicyInput } from "../../src/domains/memory/task-memory-policy.js";
+import type { MemoryClaimCommand, MemoryRecord } from "../../src/domains/memory/types.js";
+
+/** These cases test later gates, so every fact predates the last context loss. */
+const contextLostAt = "9999-01-01T00:00:00.000Z";
+
+const observedProvenance = {
+	producer: "code",
+	source: "canonical-result-disposition",
+	algorithm: "redacted-context-digest-v1",
+} as const;
+
+test("memory delivery validates workspace file references after applying bank operations", async () => {
+	const workspaceRoot = mkdtempSync(join(tmpdir(), "memory-freshness-"));
+	try {
+		mkdirSync(join(workspaceRoot, ".pancode", "handoffs"), { recursive: true });
+		writeFileSync(join(workspaceRoot, ".pancode", "handoffs", "current.md"), "");
+		const bank = new TaskMemoryBank();
+		const input: TaskMemoryPolicyInput = {
+			purpose: "memory.bank",
+			task: "Check handoff",
+			trajectory: [],
+			deterministicTrigger: false,
+			maxTokens: 2000,
+			workspaceRoot,
+			contextLostAt,
+		};
+		const complete = (path: string) => ({
+			complete: async () => ({
+				text: `<operations>[{"op":"save_knowledge","content":"A handoff was discussed."}]</operations><context_for_action>[tm-k-1] Read \`${path}\` before continuing.</context_for_action>`,
+			}),
+		});
+		const missing = await runTaskMemoryPolicy(bank, complete(".pancode/handoffs/missing.md"), input);
+		strictEqual(missing.reason, "invalid_path");
+		strictEqual(missing.reminder, null);
+		strictEqual(bank.snapshot().knowledge.length, 1);
+		strictEqual(bank.snapshot().knowledge[0]?.injectionCount, 0);
+		const present = await runTaskMemoryPolicy(bank, complete(".pancode/handoffs/current.md"), input);
+		strictEqual(present.reason, "intervened");
+		strictEqual(bank.snapshot().knowledge[0]?.injectionCount, 0, "counted when the host submits it, not here");
+		const source = await runTaskMemoryPolicy(bank, complete("src/features.py"), input);
+		strictEqual(source.reason, "invalid_path");
+	} finally {
+		rmSync(workspaceRoot, { recursive: true, force: true });
+	}
+});
+
+test("a cited failed attempt stays silent after the same operation succeeds", async () => {
+	const bank = new TaskMemoryBank();
+	bank.saveProcedural("npm run build failed twice with TS2345.");
+	const entry = bank.snapshot().procedural[0];
+	const result = await runTaskMemoryPolicy(
+		bank,
+		{
+			complete: async () => ({
+				text: `<operations>[]</operations><context_for_action>[${entry?.id}] The build failed twice.</context_for_action>`,
+			}),
+		},
+		{
+			purpose: "memory.bank",
+			task: "Build",
+			trajectory: [
+				{
+					step: 1,
+					toolName: "bash",
+					operationFingerprint: "build",
+					callDescription: "npm run build",
+					outcome: "ok",
+					resultDigest: "passed",
+					resultDigestProvenance: observedProvenance,
+				},
+			],
+			deterministicTrigger: false,
+			maxTokens: 2000,
+			contextLostAt,
+		},
+	);
+	strictEqual(result.reason, "resolved_failure");
+	strictEqual(result.reminder, null);
+	strictEqual(bank.snapshot().procedural[0]?.injectionCount, 0);
+	const repeated = await runTaskMemoryPolicy(
+		bank,
+		{
+			complete: async () => ({
+				text: `<operations>[]</operations><context_for_action>[${entry?.id}] This build failure is recurring.</context_for_action>`,
+			}),
+		},
+		{
+			purpose: "memory.bank",
+			task: "Build",
+			trajectory: [
+				{
+					step: 1,
+					toolName: "bash",
+					operationFingerprint: "build",
+					callDescription: "npm run build",
+					outcome: "ok",
+					resultDigest: "passed",
+					resultDigestProvenance: observedProvenance,
+				},
+				{
+					step: 2,
+					toolName: "bash",
+					operationFingerprint: "build",
+					callDescription: "npm run build",
+					outcome: "error",
+					resultDigest: "failed",
+					resultDigestProvenance: observedProvenance,
+				},
+			],
+			deterministicTrigger: false,
+			maxTokens: 2000,
+			contextLostAt,
+		},
+	);
+	strictEqual(repeated.reason, "intervened");
+	strictEqual(bank.snapshot().procedural[0]?.injectionCount, 0, "counted when the host submits it, not here");
+});
+
+for (const probe of [false, true]) {
+	test(
+		probe
+			? "guessed missing-file reads do not earn a memory card even when repeated"
+			: "one failing check does not earn a memory card",
+		async () => {
+			const bank = new TaskMemoryBank();
+			const trajectory = Array.from({ length: probe ? 2 : 1 }, (_, index) => ({
+				step: index + 1,
+				toolName: probe ? "read" : "bash",
+				operationFingerprint: probe ? "guess" : "test",
+				callDescription: probe ? "read test/index.ts" : "npm test",
+				outcome: "error" as const,
+				resultDigest: probe ? "ENOENT: no such file" : "pre-existing test failure",
+				resultDigestProvenance: observedProvenance,
+			}));
+			const result = await runTaskMemoryPolicy(
+				bank,
+				{
+					complete: async () => ({
+						text:
+							'<operations>[{"op":"save_knowledge","content":"The latest attempt failed."}]</operations><context_for_action>[tm-k-1] Avoid repeating this failure.</context_for_action>',
+					}),
+				},
+				{ purpose: "memory.correct", task: "Inspect the project", trajectory, deterministicTrigger: true, maxTokens: 2000 },
+			);
+			strictEqual(result.reason, "no_repeated_failure");
+			strictEqual(result.reminder, null);
+			strictEqual(bank.snapshot().knowledge[0]?.injectionCount, 0);
+		},
+	);
+}
+
+test("card D delivery: a changed quote withholds its lessons, an operator approval survives, and each mode opens only its channels", async () => {
+	const base = realpathSync(mkdtempSync(join(tmpdir(), "memory-delivery-")));
+	const root = join(base, "repo");
+	const dataDir = join(base, "data");
+	const stateDir = join(base, "state");
+	const at = "2026-11-20T00:00:00.000Z";
+	const quote = "The release marker is COBALT.";
+	const check = "node scripts/check.mjs --mode native";
+	try {
+		mkdirSync(join(root, "scripts"), { recursive: true });
+		mkdirSync(join(root, ".git"));
+		mkdirSync(join(root, "sub"));
+		writeFileSync(join(root, "guide.txt"), `${quote}\n`);
+		writeFileSync(join(root, "notes.txt"), "marker: COBALT; owner: ops\n");
+		writeFileSync(join(root, "scripts", "check.mjs"), "process.exit(0);\n");
+		const repository = canonicalMemoryRepositoryIdentity(root);
+		ok(repository);
+		/** A repository lesson an operator approved, or one the gate kept on two non-author demonstrations. */
+		const lesson = (n: number, text: string, refs: string[], by: "operator" | "guardian"): MemoryRecord => {
+			const record: MemoryRecord = {
+				id: `mem-00000000000000${(0xa0 + n).toString(16)}`,
+				scope: "repo",
+				key: `lesson-${n}`,
+				lesson: text,
+				evidenceRefs: ["session:author", ...refs],
+				appliesWhen: [],
+				avoidWhen: [],
+				confidence: 0.9,
+				createdAt: at,
+				approved: true,
+				approval: { by, at },
+				repository,
+				provenance: {
+					sourceKind: "task-bank-entry",
+					sourceEntryKind: "knowledge",
+					sourceSessionId: "author",
+					sourceEntryId: `tm-k-${n}`,
+					evidenceId: "session:author",
+					redaction: { appliedBeforePersistence: true, replacementCount: 0, sourceFields: ["content"] },
+				},
+			};
+			// The claim its refs make, stored as every promotion stores it.
+			const claim = claimFromEvidence(text, record.evidenceRefs, root);
+			if (claim !== null) record.claim = claim;
+			const revision = memoryRevision(record);
+			if (by === "guardian")
+				record.observations = ["h1", "h2"].map((sessionId) => ({ at, sessionId, kind: "held" as const, revision }));
+			return record;
+		};
+		const operatorQuote = lesson(
+			1,
+			`The release marker lives in guide.txt: ${quote}`,
+			[sourceEvidenceRef("guide.txt", quote)],
+			"operator",
+		);
+		const marker = lesson(
+			2,
+			`Find the release marker with \`cat guide.txt\`: ${quote}`,
+			[commandEvidenceRef("cat guide.txt"), sourceEvidenceRef("guide.txt", quote)],
+			"guardian",
+		);
+		const unrelated = lesson(3, `Validate with \`${check}\`.`, [commandEvidenceRef(check)], "guardian");
+		const unsettled = lesson(
+			4,
+			"Build with `node scripts/check.mjs --mode build`.",
+			[commandEvidenceRef("node scripts/check.mjs --mode build")],
+			"guardian",
+		);
+		// A single-word quote the lesson wraps in backticks, and a mid-line quote its words do not repeat: the first is
+		// found, the second cannot be located either way and is undecided, so neither is withheld.
+		const singleWord = lesson(
+			7,
+			"notes.txt names the marker `COBALT`.",
+			[sourceEvidenceRef("notes.txt", "COBALT")],
+			"operator",
+		);
+		const undecidable = lesson(
+			8,
+			"notes.txt says who owns the marker.",
+			[sourceEvidenceRef("notes.txt", "owner: ops")],
+			"operator",
+		);
+		// A quote that itself ends in punctuation, wrapped in quote marks and a full stop by the lesson's prose.
+		const wrapped = lesson(10, `guide.txt says "${quote}".`, [sourceEvidenceRef("guide.txt", quote)], "operator");
+		for (const record of [operatorQuote, marker, unrelated, unsettled, singleWord, undecidable, wrapped])
+			await insertMemoryRecordIfAbsent(dataDir, record);
+		// Three earlier sessions were reminded of it and none gave a verdict. The count lives in the state-root ledger,
+		// never on the record, and an operator-decided record is never counted.
+		const observed = await recordMemoryObservations(dataDir, [
+			...["d1", "d2", "d3"].map((sessionId) => ({ memoryId: unsettled.id, sessionId, kind: "delivered" as const })),
+			{ memoryId: singleWord.id, sessionId: "d1", kind: "delivered" as const },
+		]);
+		await recordUnsettled(stateDir, observed.observed);
+		deepStrictEqual(readUnsettledLedger(stateDir).records[unsettled.id]?.sessions, ["d1", "d2", "d3"]);
+		strictEqual(readUnsettledLedger(stateDir).records[singleWord.id], undefined, "no count for an operator decision");
+		const unsettledStored = loadMemoryRecordsSync(dataDir).find((record) => record.id === unsettled.id);
+		ok(unsettledStored);
+		strictEqual(Object.hasOwn(unsettledStored, "unsettledSessions"), false, "the record schema is unchanged");
+		let session: string | undefined = "s1";
+		let mode: MemoryDeliveryMode = "decision";
+		const notices: string[] = [];
+		const withheld: Array<Record<string, unknown>> = [];
+		const gate = new MemoryDeliveryGate({
+			dataDir: () => dataDir,
+			stateDir: () => stateDir,
+			sessionId: () => session,
+			demoted: () => readDemotedMemoryIds(stateDir),
+			mode: () => mode,
+			notice: (line) => notices.push(line),
+			diagnostic: (line) => notices.push(line),
+			event: (name, facts) => {
+				if (name === "lesson-withheld") withheld.push(facts);
+			},
+		});
+		const reader = createMemoryPromptReader({ getDataDir: () => dataDir, delivery: gate });
+		const section = (cwd = root) =>
+			reader({
+				turnId: `turn-${session ?? "unbound"}`,
+				sessionAuthority: session ?? "unbound",
+				cwd,
+				targetId: "t",
+				runtimeId: "r",
+				modelId: "m",
+				taskText: "",
+				activePaths: [],
+			});
+		// A session started in a subdirectory resolves source paths against its checkout, not its cwd.
+		const first = section(join(root, "sub"));
+		for (const record of [operatorQuote, marker, unrelated]) ok(first.includes(`[${record.id}]`), record.id);
+		// Past the section's budget, the gate itself: a found single-word quote and an undecidable span are delivered.
+		for (const record of [singleWord, undecidable, wrapped]) ok(gate.admit(record, join(root, "sub")), record.id);
+		strictEqual(first.includes(unsettled.id), false, "three sessions in a row without a verdict stop delivery");
+
+		// The quote changes to AMBER: the next session withholds every lesson pinned to it.
+		writeFileSync(join(root, "guide.txt"), "The release marker is AMBER.\n");
+		session = "s2";
+		const second = section();
+		ok(second.includes(`[${unrelated.id}]`), "an unrelated valid lesson is still delivered");
+		strictEqual(second.includes(marker.id), false);
+		strictEqual(second.includes(operatorQuote.id), false);
+		strictEqual(gate.admit(operatorQuote, root), false, "refused on every path for the rest of the session");
+		strictEqual(
+			gate.admit(wrapped, root),
+			false,
+			"a wrapped quote ending in a full stop is recovered, so its change is seen",
+		);
+		await gate.whenSettled();
+		const stored = new Map(loadMemoryRecordsSync(dataDir).map((record) => [record.id, record]));
+		strictEqual(stored.get(marker.id)?.approved, false, "demoted");
+		strictEqual(stored.get(marker.id)?.regressions?.length, 1);
+		strictEqual(stored.get(unsettled.id)?.approved, false);
+		deepStrictEqual(stored.get(operatorQuote.id), operatorQuote, "withholding never rewrites an operator approval");
+		strictEqual(stored.get(unrelated.id)?.approved, true);
+		deepStrictEqual(
+			withheld.filter((facts) => facts.id === operatorQuote.id),
+			[{ id: operatorQuote.id, reason: "delivery-check", by: "operator" }],
+		);
+		const named = notices.filter((line) => line.includes(operatorQuote.id));
+		strictEqual(named.length, 1, "named once");
+		match(named[0] ?? "", /approval stands.*pancode memory list/u);
+		// The session-start check runs before the fresh session binds; the bound session's checks do not repeat it.
+		session = undefined;
+		strictEqual(gate.admit(operatorQuote, root), false);
+		session = "s2b";
+		strictEqual(gate.admit(operatorQuote, root), false);
+		strictEqual(notices.filter((line) => line.includes(operatorQuote.id)).length, 2, "named once for the bound session");
+		strictEqual(withheld.filter((facts) => facts.id === operatorQuote.id).length, 2, "journaled once too");
+
+		// `off` delivers no section; a peer's automatic approval waits for the next session.
+		mode = "off";
+		session = "s3";
+		strictEqual(section(), "");
+		const live = renderMemoryPromptSection([unrelated]);
+		strictEqual(memorySectionDelta("", live, [], new Map([[unrelated.id, "automatic"]])), "");
+		const update = memorySectionDelta("", live, [], new Map([[unrelated.id, "eligible"]]));
+		match(update, /^# Memory update/u);
+		ok(memoryCarried("", [], update)(unrelated.id), "a lesson riding this turn's update is not repeated by a reminder");
+
+		// Reminders: a fix claim reaches only its own failed pattern, a quote nobody reviewed reaches no channel,
+		// and the first-change broadcast exists only under the documented opt-in.
+		const pattern = (command: string): MemoryClaimCommand => {
+			const segment = commandSegment(command, root);
+			const claimed = segment === null ? null : claimCommand(segment);
+			if (claimed === null) throw new Error(command);
+			return claimed;
+		};
+		const fix = projectKeptLesson({
+			...lesson(
+				5,
+				`\`node scripts/check.mjs\` fails without a mode; run \`${check}\`.`,
+				[commandEvidenceRef(check)],
+				"guardian",
+			),
+			claim: { kind: "fix", failed: pattern("node scripts/check.mjs"), fixed: pattern(check) },
+		});
+		const quoteOnly = projectKeptLesson(
+			lesson(6, `guide.txt says: ${quote}`, [sourceEvidenceRef("guide.txt", quote)], "guardian"),
+		);
+		const outcomes = { delivered: [] as string[], held: [] as string[] };
+		const intervention = (delivery: MemoryDeliveryMode, lessons = [fix, quoteOnly]) =>
+			createMemoryInterventionRegistration({
+				bank: new TaskMemoryBank(),
+				workspaceRoot: () => root,
+				getDelivery: () => delivery,
+				getKeptLessons: () => lessons,
+				onDurableLessonOutcomes: (outcome) => {
+					outcomes.delivered.push(...outcome.delivered);
+					outcomes.held.push(...outcome.held);
+				},
+			});
+		const memory = intervention("decision");
+		let call = 0;
+		const after = (
+			target: ReturnType<typeof intervention>,
+			toolName: string,
+			toolArgs: Record<string, unknown>,
+			succeeded = true,
+			details: Readonly<Record<string, unknown>> | undefined = undefined,
+		) =>
+			target.evaluate({
+				hook: "after_tool",
+				sessionId: "s4",
+				toolName,
+				toolCallId: String(++call),
+				toolArgs,
+				metadata: {
+					resultKind: succeeded ? "ok" : "error",
+					actionClass: toolName === "bash" ? "execute" : toolName === "edit" ? "write" : "read",
+				},
+				...(details === undefined ? {} : { toolResultDetails: details }),
+			});
+		const reminded = (effects: ReturnType<typeof after>) =>
+			effects[0]?.kind === "annotate_tool_result" ? effects[0].message : "";
+		try {
+			memory.evaluate({ hook: "turn_start", sessionId: "s4", text: "Find the release marker." });
+			strictEqual(
+				reminded(after(memory, "read", { path: join(root, "guide.txt") })),
+				"",
+				"no _subject for an unreviewed quote",
+			);
+			const gap = reminded(
+				after(memory, "verify", {}, true, { sources: [{ kind: "package.json", checks: [] }], derived: [] }),
+			);
+			match(gap, new RegExp(`\\[${fix.id}\\]`, "u"), "a verification gap brings the command lesson");
+			strictEqual(gap.includes(quoteOnly.id), false, "no _verify for an unreviewed quote");
+			strictEqual(
+				reminded(after(memory, "edit", { path: join(root, "scripts", "new.mjs") })),
+				"",
+				"no broadcast by default",
+			);
+		} finally {
+			memory.dispose();
+		}
+		const failing = intervention("decision");
+		try {
+			failing.evaluate({ hook: "turn_start", sessionId: "s5", text: "Run the check." });
+			strictEqual(reminded(after(failing, "bash", { command: "node scripts/check.mjs --mode other" }, false)), "");
+			const variant = reminded(after(failing, "bash", { command: "node scripts/check.mjs" }, false));
+			match(variant, new RegExp(`\\[${fix.id}\\]`, "u"));
+			strictEqual(variant.includes(quoteOnly.id), false, "no _variant for an unreviewed quote");
+			failing.acknowledgeSubmission([`[middleware:info] ${variant}`]);
+			after(failing, "bash", { command: check }, true, { outcome: "success", exitCode: 0 });
+			deepStrictEqual(outcomes, { delivered: [fix.id], held: [fix.id] });
+		} finally {
+			failing.dispose();
+		}
+		const carried = intervention("decision");
+		try {
+			carried.evaluate({ hook: "turn_start", sessionId: "s4", text: "Run the check." });
+			strictEqual(
+				carried.offerLessonsForTask("Run the check.", (id) => id === fix.id),
+				"",
+			);
+			strictEqual(
+				reminded(after(carried, "bash", { command: "node scripts/check.mjs" }, false)),
+				"",
+				"a lesson the section carries is not repeated on a failed call",
+			);
+			strictEqual(
+				reminded(after(carried, "verify", {}, true, { sources: [{ kind: "package.json", checks: [] }], derived: [] })),
+				"",
+				"nor on a verification gap",
+			);
+		} finally {
+			carried.dispose();
+		}
+		const broadcast = intervention("broadcast", [projectKeptLesson(unrelated)]);
+		try {
+			broadcast.evaluate({ hook: "turn_start", sessionId: "s4", text: "Add a helper." });
+			match(reminded(after(broadcast, "edit", { path: join(root, "scripts", "new.mjs") })), new RegExp(unrelated.id, "u"));
+		} finally {
+			broadcast.dispose();
+		}
+
+		// A session that starts under `off` still fixes its baseline: turning delivery on admits no lesson a peer got
+		// approved since. A lesson recall-use demoted is refused by every reminder, not only the section.
+		let runtimeMode: MemoryDeliveryMode = "off";
+		const runtime = new MemoryRuntime();
+		runtime.configure({
+			stateDir: () => stateDir,
+			dataDir: () => dataDir,
+			cwd: () => root,
+			currentSession: () => ({ id: "r1", cwd: root }),
+			settings: () => ({
+				enabled: true,
+				surfaces: { observe: "off", delivery: runtimeMode },
+				maxOutputTokens: 512,
+				timeoutMs: 5000,
+			}),
+			source: () => null,
+			usableHistoryTokens: () => 0,
+			client: { getModelClient: () => null, getModelMaxTokens: (max) => max, backgroundEndpointBusy: () => false },
+		});
+		try {
+			const runtimeReader = createMemoryPromptReader({
+				getDataDir: () => dataDir,
+				delivery: runtime.delivery,
+				onSelection: (selection) => runtime.recordPromptSelection(selection),
+			});
+			const request = { sessionAuthority: "r1", cwd: root, targetId: "t", runtimeId: "r", modelId: "m", taskText: "" };
+			strictEqual(runtimeReader({ ...request, turnId: "r1-1", activePaths: [] }), "");
+			const peer = lesson(
+				9,
+				"Lint with `node scripts/check.mjs --mode lint`.",
+				[commandEvidenceRef("node scripts/check.mjs --mode lint")],
+				"guardian",
+			);
+			await insertMemoryRecordIfAbsent(dataDir, peer);
+			mkdirSync(join(stateDir, "memory"), { recursive: true });
+			writeFileSync(
+				join(stateDir, "memory", "recall-use-v1.json"),
+				JSON.stringify({
+					version: 1,
+					records: { [unrelated.id]: { recalled: 5, used: 0, consecutiveUnused: 5, lastRecalledAt: at } },
+				}),
+			);
+			runtimeMode = "decision";
+			const deliverable = runtime.deliverableLessons().map((item) => item.id);
+			ok(deliverable.includes(singleWord.id), "delivery still runs");
+			strictEqual(deliverable.includes(peer.id), false, "a peer approval waits for the next session");
+			strictEqual(deliverable.includes(unrelated.id), false, "a recall-use demotion holds on every path");
+			await runtime.whenLessonsSettled();
+		} finally {
+			runtime.dispose();
+		}
+	} finally {
+		rmSync(base, { recursive: true, force: true });
+	}
+});

@@ -1,0 +1,239 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { it } from "node:test";
+import { stringify } from "yaml";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import type { DomainContractMap, DomainName } from "../../src/core/domain-loader.js";
+import { ToolNames } from "../../src/core/tool-names.js";
+import type { SafetyContract } from "../../src/domains/safety/contract.js";
+import type { CompletionEvaluationInput } from "../../src/domains/safety/decision-events.js";
+import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
+import { invokeRegisteredTool } from "../../src/tools/agent-tools.js";
+import { workerSpecToolNames } from "../../src/worker/spec-contract.js";
+import { makeDispatchBundle } from "../harness/dispatch.js";
+import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+async function project(body: (root: string) => Promise<void>): Promise<void> {
+	const scratch = await isolatePancodeEnv("dispatch-quality-policy-");
+	const previousCwd = process.cwd();
+	try {
+		delete process.env.PANCODE_RIGOR;
+		const root = join(scratch.dir, "worker-project");
+		mkdirSync(join(root, ".pancode"), { recursive: true });
+		mkdirSync(join(root, "src"));
+		execFileSync("git", ["init", "--quiet", root]);
+		writeFileSync(join(root, "src/solver.ts"), "export const solver = 1;\n");
+		writeFileSync(join(root, "check.cjs"), "process.exitCode = 0;\n");
+		writeFileSync(
+			join(root, "package.json"),
+			JSON.stringify({ scripts: { "test:solver": "node check.cjs", lint: "node check.cjs" } }),
+		);
+		writeFileSync(
+			join(root, ".pancode/quality.yaml"),
+			stringify({
+				version: 1,
+				rules: [{ id: "solver", paths: ["src/**"], inputs: ["src/**", "check.cjs"], checks: ["test:solver"] }],
+			}),
+		);
+		await body(root);
+	} finally {
+		process.chdir(previousCwd);
+		scratch.restore();
+	}
+}
+
+function auditedContext(settings: typeof DEFAULT_SETTINGS, audits: CompletionEvaluationInput[]) {
+	const base = dispatchStubContext({ settings });
+	const baseSafety = base.getContract("safety");
+	ok(baseSafety);
+	const safety: SafetyContract = {
+		...baseSafety,
+		decisions: {
+			...baseSafety.decisions,
+			recordCompletionContract: (input) => audits.push(input),
+		},
+	};
+	return {
+		bus: base.bus,
+		getContract<N extends DomainName>(name: N): DomainContractMap[N] | undefined {
+			return name === "safety" ? (safety as DomainContractMap[N]) : base.getContract(name);
+		},
+	};
+}
+
+/** Use the production worker admission and AgentToolResult projection, retaining details. */
+async function nativeEvents(root: string, requiredCheck: boolean, editAfterCheck = false): Promise<unknown[]> {
+	const previousCwd = process.cwd();
+	try {
+		process.chdir(root);
+		const registry = createWorkerToolRegistry(undefined, createWorkerSafety({ cwd: root }), { noSkills: true }, []);
+		// Fixture authorization precedes dispatch; the completion gate never grants this approval.
+		registry.onPermissionRequired((_call, decision, meta) => {
+			void registry.resumeParkedCalls({
+				actionClass: decision.classification.actionClass,
+				requestId: meta.requestId,
+				requestedBy: "test",
+			});
+		});
+		const calls = [
+			{ name: ToolNames.Write, args: { path: "src/solver.ts", content: "export const solver = 2;\n" } },
+			requiredCheck
+				? { name: ToolNames.Verify, args: { check: "test:solver" } }
+				: { name: ToolNames.Bash, args: { command: "npm run lint" } },
+			...(editAfterCheck
+				? [{ name: ToolNames.Write, args: { path: "src/solver.ts", content: "export const solver = 3;\n" } }]
+				: []),
+		];
+		const events: unknown[] = [];
+		for (const [index, call] of calls.entries()) {
+			const toolCallId = `native-${index}`;
+			events.push({ type: "tool_execution_start", toolCallId, toolName: call.name, args: call.args });
+			const result = await invokeRegisteredTool(registry, call.name, call.args, {
+				telemetry: {
+					onStart: (payload) => events.push({ type: "pancode_tool_start", payload: { ...payload, toolCallId } }),
+					onFinish: (payload) => events.push({ type: "pancode_tool_finish", payload: { ...payload, toolCallId } }),
+				},
+			});
+			if (requiredCheck && call.name === ToolNames.Verify)
+				ok(result.details && "quality" in result.details, "native projection must preserve the quality snapshot");
+			events.push({ type: "tool_execution_end", toolCallId, toolName: call.name, isError: false, result });
+		}
+		events.push({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				stopReason: "stop",
+				content: JSON.stringify({
+					completion: { state: "done", limitations: [], unverified: [] },
+					mutatedPaths: ["src/solver.ts"],
+					validations: [{ name: requiredCheck ? "npm run test:solver" : "npm run lint", passed: true, evidence: "exit 0" }],
+					summary: "Updated src/solver.ts and ran validation.",
+				}),
+			},
+		});
+		return events;
+	} finally {
+		process.chdir(previousCwd);
+	}
+}
+
+// "stale": no quality policy, and the worker edits after its passing lint, which retires that pass (x8-1).
+for (const mode of ["missing", "passed", "normal", "stale"] as const) {
+	it(`native dispatch assesses the worker workspace and audits ${mode} project requirements`, async () =>
+		project(async (root) => {
+			if (mode === "normal") process.env.PANCODE_RIGOR = "normal";
+			if (mode === "stale") {
+				rmSync(join(root, ".pancode/quality.yaml"));
+				process.env.PANCODE_RIGOR = "high";
+			}
+			const events = await nativeEvents(root, mode === "passed", mode === "stale");
+			ok(process.cwd() !== root, "the parent must not accidentally supply the worker's cwd");
+			const settings = structuredClone(DEFAULT_SETTINGS);
+			settings.fleet.retry.maxRetries = 0;
+			const audits: CompletionEvaluationInput[] = [];
+			let launches = 0;
+			const controls: unknown[] = [];
+			const bundle = makeDispatchBundle(auditedContext(settings, audits), {
+				spawnWorker: (spec, options) => {
+					launches++;
+					strictEqual(options?.cwd, root);
+					if (mode !== "passed")
+						ok(!workerSpecToolNames(spec).includes(ToolNames.Verify), "completion must not restore a denied tool");
+					return {
+						pid: null,
+						promise: Promise.resolve({ exitCode: 0, signal: null }),
+						heartbeatAt: { current: Date.now(), monotonic: performance.now() },
+						abort: () => {},
+						send: (value) => {
+							controls.push(value);
+							return true;
+						},
+						events: (async function* () {
+							yield* events;
+						})(),
+					};
+				},
+			});
+			await bundle.extension.start();
+			try {
+				const run = await bundle.contract.dispatch({
+					agentId: "coder",
+					task: "Update solver and verify it.",
+					cwd: root,
+					executionRole: "builder",
+					requestOrigin: "internal",
+					...(mode !== "passed" ? { denyTools: [ToolNames.Verify] } : {}),
+				});
+				const receipt = await run.finalPromise;
+				const gated = mode === "missing" || mode === "stale";
+				strictEqual(receipt.outcome, gated ? "failed" : "succeeded", receipt.failureMessage ?? "");
+				if (gated) match(receipt.outcomeDetail ?? "", /high-rigor finish gate/u);
+				const audit = audits.find((row) => row.runId === run.runId);
+				ok(audit);
+				strictEqual(audit.rigor, mode === "normal" ? "normal" : "high");
+				strictEqual(audit.decision, mode === "passed" ? "ok" : "engage");
+				strictEqual(audit.quality?.[0]?.state, mode === "stale" ? undefined : mode === "passed" ? "passed" : "missing");
+				strictEqual(launches, 1);
+				deepStrictEqual(controls, [], "the completion gate must not issue tool execution or recovery authority");
+				const stored = bundle.contract.getRun(run.runId);
+				ok(stored);
+			} finally {
+				await bundle.extension.stop?.();
+			}
+		}));
+}
+
+const ACP_PEER = `
+const send = (message) => process.stdout.write(JSON.stringify({jsonrpc: "2.0", ...message}) + "\\n");
+require("node:readline").createInterface({input: process.stdin}).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") send({id: request.id, result: {protocolVersion: 1}});
+  if (request.method === "session/new") send({id: request.id, result: {sessionId: "quality-fixture"}});
+  if (request.method === "session/prompt") {
+    for (const [id, title, kind, rawInput] of [["write", "write", "edit", {path: "src/solver.ts", content: "updated"}], ["validation", "bash", "execute", {command: "npm run lint"}]]) {
+      send({method: "session/update", params: {sessionId: "quality-fixture", update: {sessionUpdate: "tool_call", toolCallId: id, title, kind, rawInput, status: "in_progress"}}});
+      send({method: "session/update", params: {sessionId: "quality-fixture", update: {sessionUpdate: "tool_call_update", toolCallId: id, title, status: "completed", rawOutput: {content: [], details: {kind: "ok", exitCode: 0}}}}});
+    }
+    send({method: "session/update", params: {sessionId: "quality-fixture", update: {sessionUpdate: "agent_message_chunk", content: {type: "text", text: "Updated solver and ran generic validation."}}}});
+    send({id: request.id, result: {stopReason: "end_turn"}});
+  }
+});
+`;
+
+for (const rigor of ["high", "normal"] as const) {
+	it(`ACP dispatch audits outstanding policy checks under ${rigor} rigor`, async () =>
+		project(async (root) => {
+			if (rigor === "normal") process.env.PANCODE_RIGOR = "normal";
+			const settings = structuredClone(DEFAULT_SETTINGS);
+			settings.fleet.retry.maxRetries = 0;
+			settings.integrations.externalAgents.entries = [
+				{ id: "quality-fixture", command: process.execPath, args: ["-e", ACP_PEER], toolGovernance: "pancode-policy" },
+			];
+			const audits: CompletionEvaluationInput[] = [];
+			const bundle = makeDispatchBundle(auditedContext(settings, audits));
+			await bundle.extension.start();
+			try {
+				const run = await bundle.contract.dispatch({
+					agentId: "quality-fixture",
+					task: "Update solver and verify it.",
+					cwd: root,
+					executionRole: "builder",
+					requestOrigin: "internal",
+				});
+				const receipt = await run.finalPromise;
+				strictEqual(receipt.outcome, rigor === "high" ? "failed" : "succeeded", receipt.failureMessage ?? "");
+				const audit = audits.find((row) => row.runId === run.runId);
+				ok(audit);
+				strictEqual(audit.rigor, rigor);
+				strictEqual(audit.decision, "engage");
+				strictEqual(audit.quality?.[0]?.state, "missing");
+			} finally {
+				await bundle.extension.stop?.();
+			}
+		}));
+}

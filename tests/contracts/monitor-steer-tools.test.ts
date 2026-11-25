@@ -1,0 +1,358 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, strictEqual } from "node:assert/strict";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { setImmediate } from "node:timers/promises";
+import { settleDispatchedRuns } from "../../src/cli/modes/headless-dispatched-runs.js";
+import { ToolNames } from "../../src/core/tool-names.js";
+import type { DispatchRequest } from "../../src/domains/dispatch/contract.js";
+import type { SpawnedWorker, SpawnedWorkerResult } from "../../src/domains/dispatch/worker-spawn.js";
+import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { registerAllTools } from "../../src/tools/bootstrap.js";
+import { createRegistry } from "../../src/tools/registry.js";
+import type { ToolResult } from "../../src/tools/tool-spec.js";
+import { makeDispatchBundle, observedReadEvents } from "../harness/dispatch.js";
+import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
+
+/**
+ * monitor and steer through the session registry against the real dispatch
+ * bundle. The only stand-in is the worker process: a controlled worker that
+ * records what the steer channel delivered and finishes when the test says so.
+ */
+
+function controlledWorker() {
+	let resolve!: (value: SpawnedWorkerResult) => void;
+	const done = new Promise<SpawnedWorkerResult>((yes) => {
+		resolve = yes;
+	});
+	let aborts = 0;
+	const messages: Array<{ type: string; text?: string }> = [];
+	const worker: SpawnedWorker = {
+		pid: null,
+		promise: done,
+		heartbeatAt: { current: Date.now(), monotonic: performance.now() },
+		abort() {
+			aborts += 1;
+			resolve({ exitCode: null, signal: "SIGTERM" });
+		},
+		send(message) {
+			messages.push(message as { type: string; text?: string });
+			return true;
+		},
+		events: (async function* () {
+			const outcome = await done;
+			// A provenance report carries the observed-evidence obligation (fleet design 4.8): the stub reads before it answers.
+			if (outcome.exitCode === 0) for (const event of observedReadEvents()) yield event;
+			if (outcome.exitCode === 0)
+				yield {
+					type: "message_end",
+					message: {
+						role: "assistant",
+						stopReason: "stop",
+						content: JSON.stringify({ confirmedFacts: [], missingEvidence: [], nextInspections: [] }),
+					},
+				};
+		})(),
+	};
+	return {
+		worker,
+		messages,
+		aborts: () => aborts,
+		finish: () => resolve({ exitCode: 0, signal: null }),
+		failRetryably: () => resolve({ exitCode: 1, signal: null, stderrTail: "HTTP 503 Service Unavailable" }),
+	};
+}
+
+/** Runs belong to the session that dispatched them, and monitor and steer act as that session. */
+const SESSION_ID = "session-monitor";
+
+async function fixture(scratch: IsolatedPancodeEnv) {
+	const workers: ReturnType<typeof controlledWorker>[] = [];
+	const bundle = makeDispatchBundle(dispatchStubContext(), {
+		getSessionId: () => SESSION_ID,
+		spawnWorker: () => {
+			const worker = controlledWorker();
+			workers.push(worker);
+			return worker.worker;
+		},
+	});
+	await bundle.extension.start();
+	const registry = createRegistry({ safety: createWorkerSafety({ cwd: scratch.dir }) });
+	registerAllTools(registry, { mcpCapabilities: false, dispatch: bundle.contract });
+	const request: DispatchRequest = {
+		agentId: "scout",
+		executionRole: "explorer",
+		task: "Inspect isolated fixture evidence.",
+		cwd: scratch.dir,
+		requestOrigin: "internal",
+		resultContractOverride: { kind: "provenance-report" },
+	};
+	return {
+		contract: bundle.contract,
+		workers,
+		request,
+		async call(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
+			const verdict = await registry.invoke({ tool, args }, { sessionId: SESSION_ID });
+			if (verdict.kind !== "ok") throw new Error(`${tool} was not admitted: ${JSON.stringify(verdict)}`);
+			return verdict.result;
+		},
+		async stop() {
+			for (const worker of workers) worker.finish();
+			await bundle.extension.stop?.();
+		},
+	};
+}
+
+function okResult(result: ToolResult): Extract<ToolResult, { kind: "ok" }> {
+	if (result.kind !== "ok") throw new Error(`expected ok, got ${JSON.stringify(result)}`);
+	return result;
+}
+
+function errorMessage(result: ToolResult): string {
+	if (result.kind !== "error") throw new Error(`expected error, got ${JSON.stringify(result)}`);
+	return result.message;
+}
+
+describe("steer tool", () => {
+	let scratch: IsolatedPancodeEnv;
+	beforeEach(async () => {
+		scratch = await isolatePancodeEnv("pancode-steer-tool-");
+	});
+	afterEach(() => scratch.restore());
+
+	it("delivers guidance to the live worker and refuses malformed calls before they reach dispatch", async () => {
+		const f = await fixture(scratch);
+		try {
+			const handle = await f.contract.dispatch(f.request);
+			const guided = okResult(
+				await f.call(ToolNames.Steer, { run_id: ` ${handle.runId} `, action: "guide", message: " narrow to the parser " }),
+			);
+			deepStrictEqual(guided.details, { action: "guide", runId: handle.runId, chars: "narrow to the parser".length });
+			match(guided.output, /next turn boundary/);
+			deepStrictEqual(
+				f.workers[0]?.messages.filter((message) => message.type === "steer").map((message) => message.text),
+				["narrow to the parser"],
+			);
+
+			match(errorMessage(await f.call(ToolNames.Steer, { action: "guide", message: "x" })), /missing run_id/);
+			match(
+				errorMessage(await f.call(ToolNames.Steer, { run_id: handle.runId, action: "pause" })),
+				/action must be guide or cancel; got 'pause'/,
+			);
+			match(
+				errorMessage(await f.call(ToolNames.Steer, { run_id: handle.runId, action: "guide", message: "   " })),
+				/requires a non-empty message/,
+			);
+			match(
+				errorMessage(await f.call(ToolNames.Steer, { run_id: "no-such-run", action: "guide", message: "hello" })),
+				/not active/,
+			);
+			strictEqual(f.workers[0]?.messages.filter((message) => message.type === "steer").length, 1);
+			strictEqual(f.workers[0]?.aborts(), 0);
+		} finally {
+			await f.stop();
+		}
+	});
+
+	it("cancels a live run once and reports a finished or unknown run as nothing to cancel", async () => {
+		const f = await fixture(scratch);
+		try {
+			const handle = await f.contract.dispatch(f.request);
+			const cancelled = okResult(await f.call(ToolNames.Steer, { run_id: handle.runId, action: "cancel" }));
+			strictEqual(cancelled.details?.action, "cancel");
+			match(cancelled.output, /cancellation signalled/);
+			strictEqual((await handle.finalPromise).outcome, "canceled");
+			strictEqual(f.workers[0]?.aborts(), 1);
+			strictEqual(f.contract.canceledBySteer?.(handle.runId), true, "the steer cancel carries its typed cause (ns:61)");
+
+			match(
+				errorMessage(await f.call(ToolNames.Steer, { run_id: handle.runId, action: "cancel" })),
+				/already finished \(state=canceled\); nothing to cancel/,
+			);
+			match(
+				errorMessage(await f.call(ToolNames.Steer, { run_id: "no-such-run", action: "cancel" })),
+				/unknown run or assignment 'no-such-run'/,
+			);
+			strictEqual(f.workers[0]?.aborts(), 1);
+		} finally {
+			await f.stop();
+		}
+	});
+
+	const hostRun = {
+		runId: "authoritative-parent",
+		lineage: { parentRunId: "ancestor", rootRunId: "authoritative-root", depth: 3, attempt: 2 },
+	};
+	for (const hosted of [false, true]) {
+		it(`cancels a ${hosted ? "hosted" : "direct"} assignment waiting on its retry by the finished attempt id`, async () => {
+			const f = await fixture(scratch);
+			try {
+				const handle = await f.contract.dispatch(f.request, undefined, hosted ? { hostRun } : undefined);
+				f.workers[0]?.failRetryably();
+				const deadline = Date.now() + 5_000;
+				while (f.contract.getRun(handle.runId)?.status === "running" || f.contract.getRun(handle.runId) === null) {
+					if (Date.now() > deadline) throw new Error("first attempt never finalized");
+					await setImmediate();
+				}
+				strictEqual(f.contract.getRun(handle.runId)?.lineage?.rootRunId, hosted ? "authoritative-root" : handle.runId);
+				strictEqual(f.contract.assignments?.getStored(handle.runId)?.status, "running");
+				strictEqual(f.contract.canceledBySteer?.(handle.runId), false);
+
+				const cancelled = okResult(await f.call(ToolNames.Steer, { run_id: handle.runId, action: "cancel" }));
+				match(cancelled.output, new RegExp(`cancellation signalled for assignment ${handle.runId}`));
+				deepStrictEqual(cancelled.details, { action: "cancel", runId: handle.runId, assignmentId: handle.runId });
+				const settleBy = Date.now() + 5_000;
+				while (f.contract.assignments?.getStored(handle.runId)?.status === "running") {
+					if (Date.now() > settleBy) throw new Error("assignment never settled");
+					await setImmediate();
+				}
+				strictEqual(f.contract.assignments?.getStored(handle.runId)?.status, "canceled");
+				// ns:61: the last attempt stays sealed failed, yet the headless settlement reads the steer cancel as canceled.
+				if (hosted) {
+					const settlement = await settleDispatchedRuns(f.contract, "authoritative-root", () => false);
+					strictEqual(f.contract.getRun(handle.runId)?.outcome, "failed");
+					deepStrictEqual(settlement.undelivered, []);
+					deepStrictEqual(
+						settlement.canceled.map((run) => [run.id, run.outcome]),
+						[[handle.runId, "canceled"]],
+					);
+				}
+				await new Promise((resolve) => setTimeout(resolve, 700));
+				strictEqual(f.workers.length, 1);
+			} finally {
+				await f.stop();
+			}
+		});
+	}
+});
+
+describe("monitor tool", () => {
+	let scratch: IsolatedPancodeEnv;
+	beforeEach(async () => {
+		scratch = await isolatePancodeEnv("pancode-monitor-tool-");
+	});
+	afterEach(() => scratch.restore());
+
+	it("lists, reports, waits on, and collects one run from dispatch to its sealed run record", async () => {
+		const f = await fixture(scratch);
+		try {
+			const empty = okResult(await f.call(ToolNames.Monitor, {}));
+			strictEqual(empty.output, "No dispatched runs recorded for this session.");
+
+			const handle = await f.contract.dispatch(f.request);
+			const listed = okResult(await f.call(ToolNames.Monitor, { mode: "list" }));
+			deepStrictEqual(listed.details?.runs, [{ runId: handle.runId, agentId: "scout", state: "running" }]);
+
+			const status = okResult(await f.call(ToolNames.Monitor, { run_id: handle.runId }));
+			match(status.output, new RegExp(handle.runId));
+			strictEqual(status.details?.mode, "status");
+
+			const waited = okResult(await f.call(ToolNames.Monitor, { mode: "wait", run_id: handle.runId, timeout_ms: 20 }));
+			strictEqual(waited.details?.timedOut, true);
+			match(waited.output, /keeps running normally/);
+
+			const pending = okResult(
+				await f.call(ToolNames.Monitor, { mode: "collect", run_ids: [handle.runId], timeout_ms: 20 }),
+			);
+			strictEqual(pending.details?.timedOut, true);
+			strictEqual(pending.details?.complete, false);
+			deepStrictEqual(pending.details?.pendingRunIds, [handle.runId]);
+
+			match(errorMessage(await f.call(ToolNames.Monitor, { mode: "record", run_id: handle.runId })), /has not settled/);
+
+			f.workers[0]?.finish();
+			strictEqual((await handle.finalPromise).outcome, "succeeded");
+
+			const settled = okResult(await f.call(ToolNames.Monitor, { mode: "wait", run_id: handle.runId, timeout_ms: 20 }));
+			strictEqual(settled.details?.timedOut, false);
+
+			const collected = okResult(
+				await f.call(ToolNames.Monitor, { mode: "collect", run_ids: [handle.runId], timeout_ms: 5 }),
+			);
+			strictEqual(collected.details?.complete, true);
+			strictEqual(collected.details?.failedCount, 0);
+			const [row] = collected.details?.runs as Array<{ runId: string; state: string; runIntegrity: { state: string } }>;
+			strictEqual(row?.runId, handle.runId);
+			strictEqual(row?.state, "succeeded");
+			strictEqual(row?.runIntegrity.state, "verified", "collect reads the run record back through its seal");
+
+			const receipt = okResult(await f.call(ToolNames.Monitor, { mode: "record", run_id: handle.runId }));
+			match(receipt.output, new RegExp(handle.runId));
+			okResult(await f.call(ToolNames.Monitor, { mode: "tools", run_id: handle.runId }));
+			okResult(await f.call(ToolNames.Monitor, { mode: "peek", run_id: handle.runId }));
+		} finally {
+			await f.stop();
+		}
+	});
+
+	it("blocks collect until its runs finish or its timeout elapses (D3)", async (t) => {
+		const f = await fixture(scratch);
+		let now = 0;
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		t.mock.method(performance, "now", () => now);
+		try {
+			const finishing = await f.contract.dispatch(f.request);
+			let completed = false;
+			const collecting = f
+				.call(ToolNames.Monitor, { mode: "collect", run_ids: [finishing.runId], timeout_ms: 10_000 })
+				.then((result) => {
+					completed = true;
+					return result;
+				});
+			await setImmediate();
+			strictEqual(completed, false, "collect must remain pending before the controlled worker finishes");
+			f.workers[0]?.finish();
+			const complete = okResult(await collecting);
+			strictEqual(complete.details?.complete, true);
+			strictEqual(complete.details?.timedOut, false);
+
+			const running = await f.contract.dispatch(f.request);
+			let returned = false;
+			const waiting = f
+				.call(ToolNames.Monitor, { mode: "collect", run_ids: [running.runId], timeout_ms: 1200 })
+				.then((result) => {
+					returned = true;
+					return result;
+				});
+			await setImmediate();
+			strictEqual(returned, false);
+			now = 1199;
+			t.mock.timers.tick(1199);
+			await setImmediate();
+			strictEqual(returned, false, "collect must not return before its virtual deadline");
+			now = 1200;
+			t.mock.timers.tick(1);
+			const timedOut = okResult(await waiting);
+			strictEqual(timedOut.details?.timedOut, true);
+			strictEqual(timedOut.details?.complete, false);
+			strictEqual(timedOut.details?.waitedMs, 1200);
+			strictEqual(f.workers[1]?.aborts(), 0, "a monitor timeout must not cancel the worker");
+		} finally {
+			t.mock.timers.reset();
+			t.mock.restoreAll();
+			await f.stop();
+		}
+	});
+
+	it("names the missing or malformed argument instead of guessing a run", async () => {
+		const f = await fixture(scratch);
+		try {
+			const cases: Array<[Record<string, unknown>, RegExp]> = [
+				[{ mode: "follow" }, /mode must be status, peek, record, answer, list, wait, collect, or tools; got 'follow'/],
+				[{ mode: "status" }, /needs run_id; call monitor\(mode="list"\) first/],
+				[{ mode: "peek", run_ids: ["a", "b"] }, /observes one run; got run_ids with 2 entries/],
+				[{ mode: "collect" }, /requires batch_id or a non-empty run_ids array/],
+				[{ mode: "collect", batch_id: "no-such-batch" }, /unknown batch 'no-such-batch'/],
+				[{ run_id: "no-such-run" }, /unknown run or assignment 'no-such-run'/],
+				[{ mode: "wait", run_id: "no-such-run" }, /unknown run 'no-such-run'/],
+				[{ mode: "record", run_id: "no-such-run" }, /unknown run 'no-such-run'/],
+			];
+			for (const [args, expected] of cases) {
+				match(errorMessage(await f.call(ToolNames.Monitor, args)), expected, JSON.stringify(args));
+			}
+		} finally {
+			await f.stop();
+		}
+	});
+});

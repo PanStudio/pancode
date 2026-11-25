@@ -1,0 +1,233 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { test } from "node:test";
+import { parse } from "yaml";
+import { saveControl } from "../../src/cli/configure-controls.js";
+import { readSettings, updateSettings } from "../../src/core/config.js";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { getAtPath } from "../../src/core/session-routing.js";
+import { applyControlValue, orderAreaEntries, SETTING_CONTROLS } from "../../src/core/settings-controls.js";
+import { renderYamlPreservingLayout } from "../../src/core/yaml-preserve.js";
+import { stripTerminalSequences } from "../../src/engine/tui.js";
+import { SettingsCenter } from "../../src/interactive/overlays/settings.js";
+import { buildSettingItems } from "../../src/interactive/overlays/settings-items.js";
+import { buildSettingsSections } from "../../src/interactive/overlays/settings-sections.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+function fixture() {
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.targets = [
+		{ id: "first", runtime: "openai-compat", defaultModel: "first-model" },
+		{ id: "second", runtime: "openai-compat", defaultModel: "second-model" },
+	];
+	settings.chat.target = "first";
+	settings.chat.model = "custom-model";
+	return settings;
+}
+
+test("a control has a TUI row exactly when it is on the menu, and accepts its shipped value", () => {
+	const rows = buildSettingItems(DEFAULT_SETTINGS);
+	for (const control of SETTING_CONTROLS) {
+		assert.equal(
+			rows.some((row) => row.configPath === control.path),
+			control.menu === true,
+			control.path,
+		);
+		assert.notEqual(control.label, control.path, control.path);
+		if (control.readOnly) continue;
+		const value = getAtPath(DEFAULT_SETTINGS, control.path);
+		const text =
+			value == null
+				? ""
+				: control.kind === "list"
+					? (value as string[]).join(", ")
+					: typeof value === "object"
+						? JSON.stringify(value)
+						: String(value);
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		assert.doesNotThrow(() => applyControlValue(settings, control.path, text), control.path);
+	}
+});
+
+test("invalid typed values, references, and cross-field edits leave the original intact", () => {
+	for (const [path, input] of [
+		["safety.autonomy", "unknown"],
+		["fleet.concurrency", "1.5"],
+		["chat.retry.maxRetries", "NaN"],
+		["chat.retry.maxRetries", "-1"],
+		["chat.prewarm", "yes"],
+		["context.workingSet.target", "1"],
+		["fleet.nodes", "{}"],
+		["interface.keybindings", "{"],
+		["chat.target", "typo"],
+		["fleet.default.node", "typo"],
+		["chat.modelPicker.favorites", "typo/model"],
+		["fleet.profiles", '{"reviewer":{"target":"typo"}}'],
+		["fleet.agentProfiles", '{"scout":"typo"}'],
+		["integrations.hub.confirmedRemote", "https://example.com"],
+	] as const) {
+		const settings = fixture();
+		const before = structuredClone(settings);
+		assert.throws(() => applyControlValue(settings, path, input), Error, path);
+		assert.deepEqual(settings, before, path);
+	}
+});
+
+test("changing a role connection clears only that role's previous model override", () => {
+	const settings = fixture();
+	const before = structuredClone(settings);
+	applyControlValue(settings, "chat.target", "second");
+	assert.equal(settings.chat.target, "second");
+	assert.equal(settings.chat.model, null);
+	assert.deepEqual(settings.fleet, before.fleet);
+	assert.deepEqual(settings.targets, before.targets);
+});
+
+test("saved edits preserve unrelated fields, explicit inheritance, and survive a fresh read", async (t) => {
+	const env = await isolatePancodeEnv("pancode-settings-controls-");
+	t.after(() => env.restore());
+	updateSettings(() => fixture());
+	saveControl("chat.target", "second");
+	saveControl("safety.limits.sessionCostUsd", "7");
+	saveControl("chat.modelPicker.favorites", "second/second-model");
+	saveControl("context.compaction.model", "summary-model");
+	saveControl("context.compaction.model", "");
+	const saved = parse(readFileSync(join(env.dir, "config", "settings.yaml"), "utf8"));
+	assert.equal(saved.chat.model, null);
+	assert.equal(saved.context?.compaction?.model, undefined);
+	const effective = readSettings();
+	assert.equal(effective.chat.model, "second-model");
+	assert.equal(effective.safety.limits.sessionCostUsd, 7);
+	assert.deepEqual(effective.chat.modelPicker.favorites, ["second/second-model"]);
+	assert.equal(effective.targets.length, 2);
+	const content = readFileSync(join(env.dir, "config", "settings.yaml"), "utf8");
+	assert.throws(() => saveControl("chat.target", "missing"));
+	assert.equal(readFileSync(join(env.dir, "config", "settings.yaml"), "utf8"), content);
+});
+
+test("numeric editors accept custom values, retain invalid drafts, and recover without closing settings", () => {
+	const settings = fixture();
+	const items = buildSettingItems(settings);
+	let reviewed: string | undefined;
+	const center = new SettingsCenter(items, {
+		getBodyHeight: () => 24,
+		prepareChange: (_item, value) => {
+			reviewed = value;
+			return null;
+		},
+		onApply: () => {},
+		onCancel: () => {},
+	});
+	const rows = buildSettingsSections(items).find((section) => section.id === "models")?.items ?? [];
+	const rowIndex = rows.findIndex((row) => row.configPath === "chat.maxOutputTokens");
+	assert.notEqual(rowIndex, -1, "max output tokens lives in Models & Inference");
+	center.setSelection("models", rowIndex);
+	center.handleInput("\r");
+	center.handleInput("\x05");
+	center.handleInput("\x15");
+	center.handleInput("invalid");
+	center.handleInput("\r");
+	assert.equal(reviewed, undefined);
+	assert.equal(center.getSelection().submenuOpen, true);
+	assert.match(center.render(120).join("\n"), /finite number/);
+	center.handleInput("\x05");
+	center.handleInput("\x15");
+	center.handleInput("12345");
+	center.handleInput("\r");
+	assert.equal(reviewed, "12345");
+});
+
+test("saved edits keep the operator's comments, quoting and untouched lines", async (t) => {
+	const env = await isolatePancodeEnv("pancode-settings-layout-");
+	t.after(() => env.restore());
+	updateSettings(() => fixture());
+	const file = join(env.dir, "config", "settings.yaml");
+	const original = `# operator comment\n${readFileSync(file, "utf8").replace("target: first", "target: 'first'")}`;
+	writeFileSync(file, original);
+	saveControl("safety.limits.sessionCostUsd", "7");
+	const next = readFileSync(file, "utf8");
+	assert.ok(next.startsWith("# operator comment\n"));
+	assert.ok(next.includes("target: 'first'"));
+	assert.ok(/sessionCostUsd: 7\b/u.test(next));
+	const before = new Set(original.split("\n"));
+	const changed = next.split("\n").filter((line) => !before.has(line));
+	assert.ok(changed.length <= 3, `only the saved leaf moves, got ${JSON.stringify(changed)}`);
+});
+
+test("layout-preserving YAML edits round-trip tagged values and structural changes", () => {
+	const cases: Array<[string, unknown]> = [
+		["a: !!str 1\n", { a: 2 }],
+		["a: !!int 1\n", { a: "two" }],
+		["a: !!timestamp 2001-01-01\n", { a: "two" }],
+		["a: [{name: old, enabled: true}]\n", { a: [{ name: "012", enabled: null }, {}] }],
+		["a: null\n", { a: {} }],
+		["a: {b: 1}\n", { a: {} }],
+		["a: 1\r\n# removed key\r\nb: 2\r\n", { a: "first\nsecond" }],
+		["%YAML 1.1\n---\na: one\n", { a: "012", b: "on" }],
+		["toString: old\na: 1\n", { a: 1 }],
+	];
+	for (const [existing, next] of cases) {
+		assert.deepEqual(parse(renderYamlPreservingLayout(existing, next)), next, existing);
+	}
+});
+
+for (const [seconds, shown] of [
+	[600, "10 min"],
+	[61, "61 sec"],
+] as const) {
+	test(`worker response time renders ${seconds} seconds with a duration unit`, () => {
+		const settings = fixture();
+		settings.safety.limits.workerResponseSeconds = seconds;
+		const items = buildSettingItems(settings);
+		const section = buildSettingsSections(items).find((section) =>
+			section.items.some((row) => row.configPath === "safety.limits.workerResponseSeconds"),
+		);
+		assert.ok(section);
+		const index = section.items.findIndex((row) => row.configPath === "safety.limits.workerResponseSeconds");
+		const center = new SettingsCenter(items, {
+			getBodyHeight: () => 30,
+			prepareChange: () => null,
+			onApply: () => {},
+			onCancel: () => {},
+		});
+		center.setSelection(section.id, index);
+		const rows = center.render(180).map(stripTerminalSequences);
+		assert.ok(
+			rows.some((line) => line.includes("Worker response time") && line.includes(shown)),
+			rows.join("\n"),
+		);
+	});
+}
+
+test("/settings ranks each row once to order an area and follows rows refreshed in place", () => {
+	const rows = SETTING_CONTROLS.map((control) => ({ id: control.path, path: control.path }));
+	let ranked = 0;
+	const ordered = orderAreaEntries("advanced", rows, (row) => {
+		ranked += 1;
+		return row;
+	});
+	// Ranking inside the comparator cost every /settings frame about 110 ms.
+	assert.equal(ranked, rows.length, "one rank per row, not two per comparison");
+	assert.deepEqual(
+		orderAreaEntries("advanced", [...rows].reverse(), (row) => row),
+		ordered,
+	);
+
+	const items = buildSettingItems(fixture());
+	const center = new SettingsCenter(items, {
+		getBodyHeight: () => 30,
+		prepareChange: () => null,
+		onApply: () => {},
+		onCancel: () => {},
+	});
+	center.render(180);
+	const moved = items.find((item) => item.presentationKind === "setting" && item.section !== "advanced");
+	assert.ok(moved);
+	moved.section = "advanced";
+	const advanced = buildSettingsSections(items).find((section) => section.id === "advanced");
+	center.setSelection("advanced", advanced?.items.indexOf(moved) ?? -1);
+	assert.equal(center.getSelection().rowId, moved.id, "a row moved in place reaches its new area");
+});

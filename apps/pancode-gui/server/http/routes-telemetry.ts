@@ -1,0 +1,78 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { Hono } from "hono";
+import { routes } from "../../contracts/routes.js";
+import { TELEMETRY_RUNS_PAGE, type TelemetryCallsQuery } from "../../contracts/telemetry.js";
+import { CallFilterSchema } from "../../contracts/wire.js";
+import type { EventHub } from "../services/event-hub.js";
+import { AppProblem } from "../services/problem.js";
+import type { TelemetryService } from "../services/telemetry.js";
+import type { WorkspaceService } from "../services/workspaces.js";
+import { parse, register } from "./validate.js";
+
+/** Query strings are flat; the list filters arrive comma-separated and are checked as the read model's CallFilter. */
+function callFilter(query: TelemetryCallsQuery) {
+	const list = (value: string | undefined) => value?.split(",");
+	return parse(CallFilterSchema, {
+		...(query.roles !== undefined ? { roles: list(query.roles) } : {}),
+		...(query.dispositions !== undefined ? { dispositions: list(query.dispositions) } : {}),
+		...(query.turnIds !== undefined ? { turnIds: list(query.turnIds) } : {}),
+		...(query.runId !== undefined ? { runId: query.runId } : {}),
+		...(query.from !== undefined ? { from: query.from } : {}),
+		...(query.to !== undefined ? { to: query.to } : {}),
+		...(query.limit !== undefined ? { limit: query.limit } : {}),
+	});
+}
+
+export function telemetryRoutes(app: Hono, hub: EventHub, telemetry: TelemetryService, workspaces: WorkspaceService) {
+	register(app, hub, routes.telemetryMetrics, async ({ query }) => {
+		const cwd = query.workspace === undefined ? null : (await workspaces.get(query.workspace)).path;
+		return telemetry.read({ kind: "metrics", cwd }, routes.telemetryMetrics.response);
+	});
+	register(app, hub, routes.telemetrySessionMetrics, ({ params }) =>
+		telemetry.read({ kind: "session-metrics", sessionId: params.id }, routes.telemetrySessionMetrics.response),
+	);
+	register(app, hub, routes.telemetrySession, ({ params }) =>
+		telemetry.read({ kind: "session", sessionId: params.id }, routes.telemetrySession.response),
+	);
+	register(app, hub, routes.telemetryCalls, ({ params, query }) =>
+		telemetry.read({ kind: "calls", sessionId: params.id, filter: callFilter(query) }, routes.telemetryCalls.response),
+	);
+	register(app, hub, routes.telemetryCost, ({ params, query }) =>
+		telemetry.read({ kind: "cost", sessionId: params.id, by: query.by ?? "role" }, routes.telemetryCost.response),
+	);
+	register(app, hub, routes.telemetryCache, ({ params }) =>
+		telemetry.read({ kind: "cache", sessionId: params.id }, routes.telemetryCache.response),
+	);
+	register(app, hub, routes.telemetryTimeline, ({ params, query }) => {
+		if ((query.from === undefined) !== (query.to === undefined))
+			throw new AppProblem("validation", "A timeline range needs both from and to.");
+		const range = query.from !== undefined && query.to !== undefined ? { from: query.from, to: query.to } : null;
+		return telemetry.read({ kind: "timeline", sessionId: params.id, range }, routes.telemetryTimeline.response);
+	});
+	register(app, hub, routes.telemetryWhyStopped, ({ params }) =>
+		telemetry.read({ kind: "why-stopped", sessionId: params.id }, routes.telemetryWhyStopped.response),
+	);
+	register(app, hub, routes.telemetryRuns, ({ query }) =>
+		telemetry.read(
+			{
+				kind: "runs",
+				limit: query.limit ?? TELEMETRY_RUNS_PAGE,
+				...(query.cursor !== undefined ? { cursor: query.cursor } : {}),
+			},
+			routes.telemetryRuns.response,
+		),
+	);
+	register(app, hub, routes.telemetryRun, ({ params }) =>
+		telemetry.read({ kind: "run", runId: params.runId }, routes.telemetryRun.response),
+	);
+	register(app, hub, routes.telemetryRunTimeline, ({ params }) =>
+		telemetry.read({ kind: "run-timeline", runId: params.runId }, routes.telemetryRunTimeline.response),
+	);
+	register(app, hub, routes.telemetryRunCost, ({ params }) =>
+		telemetry.read({ kind: "run-cost", runId: params.runId }, routes.telemetryRunCost.response),
+	);
+	register(app, hub, routes.telemetryExplain, ({ query }) =>
+		telemetry.read({ kind: "explain", ref: query.ref }, routes.telemetryExplain.response),
+	);
+}

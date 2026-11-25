@@ -1,0 +1,548 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { readDispatchScopeNotice } from "../../core/dispatch-scope-notice.js";
+import type { DomainBundle, DomainContext, DomainExtension } from "../../core/domain-loader.js";
+import { flushPackageActivities, PLUGIN_RESOURCE_USE, recordPackageActivity } from "../../core/package-activity.js";
+import { sessionTelemetryContext } from "../../core/telemetry/context.js";
+import type {
+	SessionParkReason as ParkReason,
+	SessionResumeVia as ResumeVia,
+} from "../../core/telemetry/live-events.js";
+import { cwdHash, noteSessionDeleted } from "../../engine/session.js";
+import { performCheckpoint } from "./checkpoint.js";
+import type { DeleteSessionOptions, SessionContract, SessionEntryInput, SessionMeta, TurnInput } from "./contract.js";
+import type { LabelEntry, SessionEntry, SessionInfoEntry } from "./entries.js";
+import { listSessionsForCwd, resolveSessionIdForCwd } from "./history.js";
+import {
+	appendEntry,
+	appendTurn,
+	newTurnId,
+	persistSessionMeta,
+	readCurrentEntries,
+	replaceEntries,
+	resumeSessionState,
+	type SessionManagerState,
+	startSession,
+} from "./manager.js";
+import { forkFromState, forkSessionAtRest } from "./tree/fork.js";
+import { appendEntryToSessionFile, readTreeBundle, removeSessionDirectory, tombstoneSession } from "./tree/manager.js";
+import { buildTreeSnapshot, computeLeafId, type TreeInputNode, type TreeSnapshot } from "./tree/navigator.js";
+import { buildEntryPreviews } from "./tree/preview.js";
+import { probeWorkspace, WORKSPACE_PROBE_REUSE_MS } from "./workspace/index.js";
+
+/**
+ * Session domain wire-up. Owns a single current SessionManagerState and
+ * funnels create/append/checkpoint/resume/fork/close through the engine
+ * session writer. The CLI drives lifecycle; the extension only enforces the
+ * shutdown contract (final checkpoint + close) on domain stop.
+ *
+ * Lifecycle transitions fan onto the shared bus so telemetry can journal
+ * session park and resume without pulling in the session contract directly. Park fires whenever the current
+ * session is replaced or closed; resume fires when an existing session is
+ * reopened via resume() or switchBranch().
+ */
+export function createSessionBundle(context: DomainContext): DomainBundle<SessionContract> {
+	let state: SessionManagerState | null = null;
+	let currentTurnId: string | null = null;
+	/** `run --name` before the run's session exists: `create()` writes it with the session (SPEC L3). */
+	let pendingName: string | null = null;
+
+	// The workspace hash rides on lifecycle events so the call journal can record them (#434). The meta's own hash
+	// names the directory the session is filed under; a session written by another build may not rehash to it.
+	const hashOf = (meta: { cwd?: string; cwdHash?: string } | undefined): { cwdHash?: string } => {
+		if (meta?.cwdHash) return { cwdHash: meta.cwdHash };
+		if (meta?.cwd === undefined) return {};
+		try {
+			return { cwdHash: cwdHash(meta.cwd) };
+		} catch {
+			// A meta without a usable cwd still parks; only its journal record is skipped.
+			return {};
+		}
+	};
+
+	function emitPark(sessionId: string, reason: ParkReason, meta?: { cwd?: string; cwdHash?: string }): void {
+		context.bus.emit(
+			"session.parked",
+			{ sessionId, reason, at: Date.now(), ...hashOf(meta) },
+			sessionTelemetryContext(sessionId),
+		);
+	}
+
+	function emitResume(sessionId: string, via: ResumeVia, meta?: { cwd?: string; cwdHash?: string }): void {
+		context.bus.emit("session.reattached", { sessionId, via, at: Date.now(), ...hashOf(meta) });
+	}
+
+	function emitTurnSwitched(sessionId: string, turnId: string): void {
+		context.bus.emit("session.turn_switched", { sessionId, turnId, at: Date.now() });
+	}
+
+	/**
+	 * The leaf to resume onto: the persisted `/tree` pin when it still names a
+	 * real turn in this session's tree, otherwise the inferred newest-node leaf.
+	 * A pin surviving here is what makes a `/tree` switch made without a
+	 * follow-up message survive quit + resume instead of silently reverting to
+	 * the abandoned tip (issue #94).
+	 */
+	function resolveLeafOnOpen(resumed: {
+		state: SessionManagerState;
+		nodes: ReadonlyArray<TreeInputNode>;
+	}): string | null {
+		const pinned = resumed.state.meta.pinnedLeafTurnId;
+		if (pinned && resumed.nodes.some((node) => node.id === pinned)) return pinned;
+		return computeLeafId(resumed.nodes);
+	}
+
+	async function closeCurrent(reason: ParkReason = "close"): Promise<void> {
+		if (!state) return;
+		const s = state;
+		emitPark(s.meta.id, reason, s.meta);
+		state = null;
+		currentTurnId = null;
+		await s.writer.close();
+	}
+
+	async function flushIfCurrent(sessionId: string): Promise<void> {
+		if (state?.meta.id === sessionId) {
+			// tree.json lives on disk; the writer holds the canonical in-memory
+			// copy. Flush before a tree() read so the domain-level navigator
+			// observes every append since the last checkpoint.
+			await state.writer.persistTree();
+		}
+	}
+
+	/**
+	 * Structural nodes the turn tree cannot hold. `tree.json` records message
+	 * turns; a compaction and a returned-from branch are ledger entries with
+	 * their own turn ids and parent pointers, and /tree showed neither, so a
+	 * session that had been compacted looked exactly like one that had not.
+	 * Their previews carry the facts already on the entry. A compaction sits on
+	 * the path it compacted: turns appended under its parent after it hang from
+	 * it, so the step checkpoint written before a step's user turn reads as a
+	 * row of that path, not as a sibling branch. `reparented` maps such a turn
+	 * to the compaction it now follows.
+	 */
+	function structuralTreeNodes(
+		entries: ReadonlyArray<SessionEntry>,
+		previews: Map<string, string>,
+		reparented: Map<string, string>,
+	): TreeInputNode[] {
+		const nodes: TreeInputNode[] = [];
+		// The newest compaction under each parent turn so far, in ledger order.
+		const tails = new Map<string, string>();
+		for (const entry of entries) {
+			if (entry.kind === "message") {
+				const tail = entry.parentTurnId === null ? undefined : tails.get(entry.parentTurnId);
+				if (tail !== undefined) reparented.set(entry.turnId, tail);
+				continue;
+			}
+			if (entry.kind === "compactionSummary") {
+				const parentId = entry.parentTurnId === null ? null : (tails.get(entry.parentTurnId) ?? entry.parentTurnId);
+				if (entry.parentTurnId !== null) tails.set(entry.parentTurnId, entry.turnId);
+				nodes.push({ id: entry.turnId, parentId, at: entry.timestamp, kind: "compaction" });
+				const summarized = entry.messagesSummarized === undefined ? "history" : `${entry.messagesSummarized} entries`;
+				const after = entry.tokensAfter === undefined ? "" : ` -> ~${entry.tokensAfter}`;
+				previews.set(entry.turnId, `${summarized} summarized, ~${entry.tokensBefore}${after} tokens`);
+				continue;
+			}
+			if (entry.kind === "branchSummary") {
+				nodes.push({ id: entry.turnId, parentId: entry.parentTurnId, at: entry.timestamp, kind: "branch" });
+				const text = entry.summary.split("\n", 1)[0] ?? "";
+				previews.set(
+					entry.turnId,
+					text.length > 0 ? `returned from ${entry.fromTurnId}: ${text}` : `returned from ${entry.fromTurnId}`,
+				);
+			}
+		}
+		return nodes;
+	}
+
+	function snapshotFor(sessionId: string): TreeSnapshot {
+		const bundle = readTreeBundle(sessionId);
+		// Prefer the live in-memory meta when we are looking at the current
+		// session so checkpoint/fork pointers are fresh; otherwise fall back
+		// to the on-disk read.
+		const meta: SessionMeta = state?.meta.id === sessionId ? state.meta : bundle.meta;
+		// Build a turnId → preview map so /tree rows show distinguishing
+		// payload slices. Reading turns is cheap (single jsonl scan) and
+		// happens only when the overlay opens.
+		let previews = new Map<string, string>();
+		let structural: TreeInputNode[] = [];
+		const reparented = new Map<string, string>();
+		try {
+			previews = buildEntryPreviews(bundle.entries);
+			structural = structuralTreeNodes(bundle.entries, previews, reparented);
+		} catch {
+			// Best-effort: if the on-disk transcript cannot be read, fall back
+			// to a previewless snapshot. The overlay labels a node without a
+			// preview by its kind.
+			reparented.clear();
+		}
+		const persistedLeaf =
+			bundle.meta.pinnedLeafTurnId && bundle.nodes.some((node) => node.id === bundle.meta.pinnedLeafTurnId)
+				? bundle.meta.pinnedLeafTurnId
+				: computeLeafId(bundle.nodes);
+		return buildTreeSnapshot({
+			meta,
+			nodes: [
+				...bundle.nodes.map((node) => {
+					const parentId = reparented.get(node.id);
+					return parentId === undefined ? node : { ...node, parentId };
+				}),
+				...structural,
+			],
+			labels: bundle.labels,
+			previews,
+			// The leaf is the next append point, so it is computed over turn nodes
+			// only: a structural node marks a moment in the timeline, never a place
+			// the session continues from.
+			leafId: state?.meta.id === sessionId ? currentTurnId : persistedLeaf,
+		});
+	}
+
+	const contract: SessionContract = {
+		current: () => state?.meta ?? null,
+		readEntries: () => (state ? readCurrentEntries(state) : []),
+		create(input) {
+			const cwd = input?.cwd ?? process.cwd();
+			const startInput: { cwd: string; model?: string | null; target?: string | null } = { cwd };
+			if (input?.model !== undefined) startInput.model = input.model;
+			if (input?.target !== undefined) startInput.target = input.target;
+			// Close any prior writer first so tree.json + meta.json get the
+			// endedAt + final-tree flush. Without this, the old session leaks
+			// its in-memory tree to disk and /tree on a resume would miss
+			// every append since the last checkpoint.
+			if (state) {
+				const prior = state;
+				emitPark(prior.meta.id, "create_new", prior.meta);
+				state = null;
+				void prior.writer.close();
+			}
+			const next = startSession(startInput);
+			next.meta.workspace = probeWorkspace(cwd, { reuseWithinMs: WORKSPACE_PROBE_REUSE_MS });
+			persistSessionMeta(next);
+			state = next;
+			currentTurnId = null;
+			flushPackageActivities();
+			if (pendingName !== null) {
+				const name = pendingName;
+				pendingName = null;
+				contract.setName(name);
+			}
+			const opened = hashOf(next.meta).cwdHash;
+			if (opened !== undefined)
+				context.bus.emit("session.created", { sessionId: next.meta.id, cwdHash: opened, at: Date.now() });
+			return next.meta;
+		},
+		append(turn: TurnInput) {
+			if (!state) throw new Error("session.append: no current session");
+			// Invariant: a turn can only extend this session's own current leaf.
+			// The interactive layer tracks its own copy of "the last turn id"
+			// (turn-persistence.ts) and normally keeps it in lockstep with
+			// currentTurnId via chat.resetForSession after every switch; when a
+			// failed resume/fork/switchBranch left that copy pointing at a turn
+			// from a session that was never actually opened here, this is the
+			// one place that catches it before a foreign parent id reaches disk.
+			if (turn.parentId !== currentTurnId) {
+				throw new Error(
+					`session.append: turn parentId ${turn.parentId ?? "null"} is not this session's current leaf (expected ${currentTurnId ?? "null"}); refusing to parent a turn onto another session's turn`,
+				);
+			}
+			const record = appendTurn(state, turn);
+			currentTurnId = record.id;
+			// A fresh append moves the leaf past whatever /tree pinned earlier
+			// (or this append could not have been made: see the invariant above),
+			// so the persisted pin is stale and must not outlive it. Once cleared,
+			// resolveLeafOnOpen's timestamp inference is trustworthy again.
+			if (state.meta.pinnedLeafTurnId !== undefined && state.meta.pinnedLeafTurnId !== null) {
+				state.meta.pinnedLeafTurnId = null;
+				persistSessionMeta(state);
+			}
+			return record;
+		},
+		appendEntry(entry: SessionEntryInput) {
+			if (!state) throw new Error("session.appendEntry: no current session");
+			return appendEntry(state, entry);
+		},
+		replaceEntries(entries) {
+			if (!state) throw new Error("session.replaceEntries: no current session");
+			replaceEntries(state, entries);
+		},
+		recordSkillActivation(activation) {
+			if (!state) throw new Error("session.recordSkillActivation: no current session");
+			appendEntry(state, {
+				kind: "skillActivation",
+				parentTurnId: activation.turnId ?? null,
+				activation,
+			});
+			const existing = state.meta.skillActivations ?? [];
+			state.meta.skillActivations = [...existing, activation];
+			persistSessionMeta(state);
+			if (activation.owner)
+				recordPackageActivity({
+					type: PLUGIN_RESOURCE_USE,
+					kind: "skill",
+					owner: activation.owner,
+					...(activation.turnId ? { turnId: activation.turnId } : {}),
+					...(activation.runId ? { runId: activation.runId } : {}),
+					details: { name: activation.name, hash: activation.hash },
+					outcome: "loaded",
+				});
+			return activation;
+		},
+		async checkpoint(reason) {
+			if (!state) throw new Error("session.checkpoint: no current session");
+			await performCheckpoint(state, reason);
+		},
+		flushAppends() {
+			if (!state) throw new Error("session.flushAppends: no current session");
+			state.writer.flushAppends();
+		},
+		resume(sessionId) {
+			if (state && state.meta.id === sessionId) return state.meta;
+			// Open the target before touching the current session: resumeSessionState
+			// reads the target's meta.json and can throw (unsupported format version,
+			// unreadable entries, missing files). Closing the prior session first would
+			// leave the operator with no current session; on success, the prior is
+			// parked and closed only now that the successor is known good.
+			const resumed = resumeSessionState(sessionId);
+			const leafTurnId = resolveLeafOnOpen(resumed);
+			if (state) {
+				const prior = state;
+				emitPark(prior.meta.id, "resume_other", prior.meta);
+				void prior.writer.close();
+			}
+			context.bus.emit("session.resume_started", { sessionId, at: Date.now() });
+			state = resumed.state;
+			currentTurnId = leafTurnId;
+			if (pendingName !== null) {
+				const name = pendingName;
+				pendingName = null;
+				contract.setName(name);
+			}
+			emitResume(resumed.state.meta.id, "resume", resumed.state.meta);
+			return resumed.state.meta;
+		},
+		fork(parentTurnId, input) {
+			if (!state) throw new Error("session.fork: no current session to fork from");
+			const prior = state;
+			// forkFromState reads and validates the parent's own ancestry chain
+			// and can throw (unknown or broken parent turn) before it ever creates
+			// the child session; it closes `prior.writer` itself, and only once the
+			// child is known good (see tree/fork.ts). Do not null `state` until
+			// forkFromState returns, for the same reason as resume() above.
+			// The park goes out from inside forkFromState, after the child is known
+			// good and before it closes the parent: park listeners append to the
+			// parent's ledger (System One's pending rows) and a closed writer refuses
+			// them, which is what dropped those rows on a fork.
+			const { next, nodes } = forkFromState({
+				from: prior,
+				parentTurnId,
+				...(input?.cwd !== undefined ? { cwd: input.cwd } : {}),
+				beforeClose: () => emitPark(prior.meta.id, "fork", prior.meta),
+			});
+			state = next;
+			currentTurnId = computeLeafId(nodes);
+			// The child opens its own telemetry scope after the seeded session.forked record, so its settings changes
+			// and its close at exit are journaled like any created session's (#434, A9).
+			const opened = hashOf(next.meta).cwdHash;
+			if (opened !== undefined)
+				context.bus.emit("session.created", { sessionId: next.meta.id, cwdHash: opened, at: Date.now() });
+			return next.meta;
+		},
+		forkFrom(sessionId, input) {
+			// The parent is read from its file and never written; it may be open elsewhere (SPEC L3, 6.7).
+			// A pending `run --name` is part of the fork's creation, so a named fork never exists unnamed.
+			const name = input?.name ?? pendingName ?? undefined;
+			const { next, nodes } = forkSessionAtRest(sessionId, {
+				...(input?.atTurnId !== undefined ? { atTurnId: input.atTurnId } : {}),
+				...(name !== undefined ? { name } : {}),
+			});
+			pendingName = null;
+			if (state) {
+				const prior = state;
+				emitPark(prior.meta.id, "fork", prior.meta);
+				void prior.writer.close();
+			}
+			state = next;
+			currentTurnId = computeLeafId(nodes);
+			const opened = hashOf(next.meta).cwdHash;
+			if (opened !== undefined)
+				context.bus.emit("session.created", { sessionId: next.meta.id, cwdHash: opened, at: Date.now() });
+			return next.meta;
+		},
+		nameSession(name) {
+			if (state) contract.setName(name);
+			else pendingName = name;
+		},
+		tree(sessionId) {
+			const id = sessionId ?? state?.meta.id;
+			if (!id) throw new Error("session.tree: no sessionId provided and no current session");
+			// Current-session reads must see every append the in-memory writer
+			// has absorbed since the last checkpoint. persistTree runs
+			// atomicWrite synchronously in-body before yielding its Promise,
+			// so the file on disk is up to date by the time snapshotFor opens
+			// it below. The void-discarded Promise is settled on the next
+			// microtask and carries no return value we care about.
+			if (state?.meta.id === id) void flushIfCurrent(id);
+			return snapshotFor(id);
+		},
+		leafId(sessionId) {
+			const id = sessionId ?? state?.meta.id;
+			if (!id) throw new Error("session.leafId: no sessionId provided and no current session");
+			if (state?.meta.id === id) return currentTurnId;
+			return snapshotFor(id).leafId;
+		},
+		switchBranch(sessionId) {
+			// /tree-driven branch switch delegates to resume. Kept as a distinct
+			// contract method so telemetry or chat-loop rewiring can be layered on
+			// without changing resume's semantics. Same open-before-close ordering
+			// as resume() above and for the same reason.
+			if (state?.meta.id === sessionId) return state.meta;
+			const resumed = resumeSessionState(sessionId);
+			const leafTurnId = resolveLeafOnOpen(resumed);
+			if (state) {
+				const prior = state;
+				emitPark(prior.meta.id, "switch_branch", prior.meta);
+				void prior.writer.close();
+			}
+			context.bus.emit("session.resume_started", { sessionId, at: Date.now() });
+			state = resumed.state;
+			currentTurnId = leafTurnId;
+			emitResume(resumed.state.meta.id, "switch_branch", resumed.state.meta);
+			return resumed.state.meta;
+		},
+		switchTurn(turnId) {
+			if (!state) throw new Error("session.switchTurn: no current session");
+			void flushIfCurrent(state.meta.id);
+			const nodes = readTreeBundle(state.meta.id).nodes;
+			if (!nodes.some((node) => node.id === turnId)) {
+				throw new Error(`session.switchTurn: turn not found: ${turnId}`);
+			}
+			currentTurnId = turnId;
+			// Persist the pin immediately, not just in memory: without this, a
+			// switch made without a follow-up message was silently lost on quit
+			// because resume() had nothing but timestamp inference to fall back
+			// on and always landed back on the abandoned tip (issue #94).
+			state.meta.pinnedLeafTurnId = turnId;
+			persistSessionMeta(state);
+			emitTurnSwitched(state.meta.id, turnId);
+			return state.meta;
+		},
+		editLabel(turnId, label, sessionId) {
+			const targetId = sessionId ?? state?.meta.id;
+			if (!targetId) throw new Error("session.editLabel: no sessionId provided and no current session");
+			// Label entries are side-car metadata; they do not project into
+			// tree.json (engine `appendEntry` path leaves non-message entries
+			// off the tree), so parentTurnId is left null.
+			if (state && state.meta.id === targetId) {
+				appendEntry(state, {
+					kind: "label",
+					parentTurnId: null,
+					targetTurnId: turnId,
+					label,
+				} as SessionEntryInput);
+				return;
+			}
+			const entry: LabelEntry = {
+				kind: "label",
+				turnId: newTurnId(),
+				parentTurnId: null,
+				timestamp: new Date().toISOString(),
+				targetTurnId: turnId,
+				label,
+			};
+			appendEntryToSessionFile(targetId, entry);
+		},
+		setName(name, sessionId) {
+			const targetId = sessionId ?? state?.meta.id;
+			if (!targetId) throw new Error("session.setName: no sessionId provided and no current session");
+			// A name is session-wide metadata rather than a turn label. Keep it
+			// unanchored and let history's last-wins SessionInfoEntry fold resolve it.
+			if (state && state.meta.id === targetId) {
+				appendEntry(state, {
+					kind: "sessionInfo",
+					parentTurnId: null,
+					name,
+				} as SessionEntryInput);
+				// Live presentation and reopen must agree with the name ledger (#443).
+				if (name.trim()) state.meta.name = name.trim();
+				else delete state.meta.name;
+				persistSessionMeta(state);
+				return;
+			}
+			const entry: SessionInfoEntry = {
+				kind: "sessionInfo",
+				turnId: newTurnId(),
+				parentTurnId: null,
+				timestamp: new Date().toISOString(),
+				name,
+			};
+			appendEntryToSessionFile(targetId, entry);
+		},
+		deleteSession(id, opts) {
+			if (state?.meta.id === id) {
+				throw new Error("session.deleteSession: refusing to delete the currently open session; close() first");
+			}
+			const options: DeleteSessionOptions = opts ?? {};
+			// Its resumable Copilot conversation (bt-10) goes with it, records and all.
+			noteSessionDeleted(id);
+			if (options.keepFiles) {
+				tombstoneSession(id);
+			} else {
+				removeSessionDirectory(id);
+			}
+		},
+		history(): ReadonlyArray<SessionMeta> {
+			const cwd = state?.meta.cwd ?? process.cwd();
+			return listSessionsForCwd(cwd);
+		},
+		resolveId(idOrPrefix) {
+			return resolveSessionIdForCwd(state?.meta.cwd ?? process.cwd(), idOrPrefix);
+		},
+		async close() {
+			await closeCurrent();
+		},
+	};
+
+	/** Custom entry type that records a dispatch scope notice in the session. */
+	const SCOPE_NOTICE_CUSTOM_TYPE = "pancode.scope-notice";
+	let unsubscribeScopeNotices: (() => void) | null = null;
+
+	const extension: DomainExtension = {
+		async start() {
+			// Sessions are created lazily by the CLI. Dispatch scope notices reach
+			// every surface only on the live bus; record each in the open session so
+			// a warning such as an overlapping write root stays checkable afterwards.
+			unsubscribeScopeNotices = context.bus.subscribe("run.scope_notice_raised", (payload) => {
+				const notice = readDispatchScopeNotice(payload);
+				if (notice === null || !state) return;
+				try {
+					appendEntry(state, {
+						kind: "custom",
+						customType: SCOPE_NOTICE_CUSTOM_TYPE,
+						// The notice hangs off the turn it followed, so /fork and /tree keep it on that branch.
+						parentTurnId: currentTurnId,
+						data: { code: notice.code, level: notice.level, message: notice.message },
+					});
+				} catch {
+					// Advisory only; the live notice already reached the operator.
+				}
+			});
+		},
+		async stop() {
+			unsubscribeScopeNotices?.();
+			unsubscribeScopeNotices = null;
+			if (!state) return;
+			try {
+				await performCheckpoint(state, "shutdown");
+			} catch (err) {
+				process.stderr.write(
+					`[pancode:session] shutdown checkpoint failed: ${err instanceof Error ? err.message : String(err)}\n`,
+				);
+			}
+			await closeCurrent("shutdown");
+		},
+	};
+
+	return { extension, contract };
+}

@@ -1,0 +1,440 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { AssistantProseProjection, sanitizeAssistantProse } from "../../core/assistant-prose.js";
+import { isRecord } from "../../core/type-guards.js";
+import { COUNCIL_SEAT_NOT_RUN_WORDS, type CouncilReport, isCouncilSeatNotRun } from "../../domains/agents/index.js";
+import { sanitizeMultilineDisplayText } from "../../domains/safety/call-target.js";
+import { RedactedStringProjection, redactStreamingSecretString } from "../../domains/safety/redaction.js";
+import { GLYPH } from "../theme/index.js";
+
+/** Sanitize complete source text before splitting, so OSC payloads cannot cross rows. */
+function projectWorkerAnswerText(text: string, completed: boolean, projection?: WorkerAnswerProjection): string {
+	const normalized = (projection ? projection.prose.project(text, false, true) : sanitizeAssistantProse(text))
+		.replaceAll(String.fromCharCode(0x9d), "\u001b]")
+		.replaceAll(String.fromCharCode(0x9b), "\u001b[")
+		.replaceAll(String.fromCharCode(0x9c), "\u001b\\");
+	const safe = sanitizeMultilineDisplayText(normalized).text;
+	return (
+		projection ? projection.secrets.project(safe, completed) : redactStreamingSecretString(safe, completed)
+	).replace(/[\p{Cf}\u0080-\u009f]/gu, "");
+}
+
+export function safeWorkerAnswerText(text: string): string {
+	return projectWorkerAnswerText(text, true);
+}
+
+/** A worker's text keeps unresolved URL userinfo back unless its stream `completed`, so a dead worker never releases it. */
+export function liveWorkerAnswerText(text: string, completed: boolean): string {
+	return projectWorkerAnswerText(text, completed);
+}
+
+/** Each worker keeps parser state across appended deltas, including complete preview tails (#428). */
+export class WorkerAnswerProjection {
+	readonly prose = new AssistantProseProjection();
+	readonly secrets = new RedactedStringProjection();
+	private source: string | undefined;
+	private completed = false;
+	private text = "";
+
+	project(source: string, completed: boolean): string {
+		if (source !== this.source || completed !== this.completed) {
+			this.text = projectWorkerAnswerText(source, completed, this);
+			this.source = source;
+			this.completed = completed;
+		}
+		return this.text;
+	}
+}
+
+const isStringArray = (value: unknown): value is string[] =>
+	Array.isArray(value) && value.every((entry) => typeof entry === "string");
+
+function reportString(value: unknown): string | null {
+	return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+export interface PresentedContractAnswer {
+	lines: string[];
+	footer?: string;
+}
+
+function debuggerReport(value: Record<string, unknown>): PresentedContractAnswer | null {
+	const diagnosis = reportString(value.diagnosis);
+	const reproduction = value.reproduction;
+	if (
+		diagnosis === null ||
+		(reproduction !== "reproduced" && reproduction !== "not-reproduced" && reproduction !== "unknown") ||
+		!isStringArray(value.evidence)
+	) {
+		return null;
+	}
+	return {
+		lines: [
+			diagnosis,
+			...(value.evidence.length === 0 ? ["Evidence: none"] : ["Evidence:", ...value.evidence.map((item) => `- ${item}`)]),
+		],
+		footer: `reproduction ${reproduction}`,
+	};
+}
+
+/** A verifier report or a reviewer verdict: both are a pass/fail verdict over named checks. */
+function verdictReport(value: Record<string, unknown>): PresentedContractAnswer | null {
+	if ((value.verdict !== "pass" && value.verdict !== "fail") || !Array.isArray(value.checks)) return null;
+	const lines: string[] = [];
+	for (const raw of value.checks) {
+		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+		const check = raw as Record<string, unknown>;
+		const name = reportString(check.name);
+		const evidence = reportString(check.evidence);
+		if (name === null || evidence === null || typeof check.passed !== "boolean") return null;
+		const obligation = check.obligation;
+		const status =
+			obligation !== null && typeof obligation === "object" && "status" in obligation
+				? reportString(obligation.status)
+				: null;
+		lines.push(`${check.passed ? GLYPH.ok : GLYPH.error} ${name}${status === null ? "" : ` [${status}]`}: ${evidence}`);
+	}
+	const assurance = reportString(value.assurance);
+	return {
+		lines: lines.length === 0 ? ["No checks reported."] : lines,
+		footer: `verdict ${value.verdict}${assurance === null ? "" : `; assurance ${assurance}`}`,
+	};
+}
+
+function researchReport(value: Record<string, unknown>): PresentedContractAnswer | null {
+	if ((value.source !== "local" && value.source !== "external") || !Array.isArray(value.findings)) return null;
+	const lines: string[] = [];
+	for (const raw of value.findings) {
+		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+		const finding = raw as Record<string, unknown>;
+		const claim = reportString(finding.claim);
+		const evidence = reportString(finding.evidence);
+		if (claim === null || evidence === null) return null;
+		lines.push(`- ${claim}`, `  citation: ${evidence}`);
+	}
+	return { lines: lines.length === 0 ? ["No findings reported."] : lines, footer: `source ${value.source}` };
+}
+
+function worldKnowledgeReport(value: Record<string, unknown>): PresentedContractAnswer | null {
+	if (
+		(value.discovery !== "performed" &&
+			value.discovery !== "caller-supplied-only" &&
+			value.discovery !== "unavailable") ||
+		!Array.isArray(value.facts) ||
+		!isStringArray(value.synthesis) ||
+		!isStringArray(value.uncertainties) ||
+		!isStringArray(value.followUpVerification)
+	) {
+		return null;
+	}
+	const lines: string[] = [];
+	for (const raw of value.facts) {
+		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+		const fact = raw as Record<string, unknown>;
+		const claim = reportString(fact.claim);
+		const evidence = reportString(fact.evidence);
+		if (claim === null || evidence === null || !isStringArray(fact.sources)) return null;
+		lines.push(`- ${claim}`, `  support: ${evidence}`);
+		if (fact.sources.length > 0) lines.push(`  sources: ${fact.sources.join(", ")}`);
+	}
+	if (value.synthesis.length > 0) lines.push("Synthesis:", ...value.synthesis.map((item) => `- ${item}`));
+	if (value.uncertainties.length > 0) lines.push("Uncertainties:", ...value.uncertainties.map((item) => `- ${item}`));
+	if (value.followUpVerification.length > 0) {
+		lines.push("Verify next:", ...value.followUpVerification.map((item) => `- ${item}`));
+	}
+	return {
+		lines: lines.length === 0 ? ["No findings reported."] : lines,
+		footer: `discovery ${value.discovery}; uncertainties ${value.uncertainties.length}; follow-up ${value.followUpVerification.length}`,
+	};
+}
+
+function scoutReport(value: Record<string, unknown>): PresentedContractAnswer | null {
+	if (!Array.isArray(value.findings) || typeof value.needsSplit !== "boolean") return null;
+	const lines: string[] = [];
+	for (const raw of value.findings) {
+		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+		const finding = raw as Record<string, unknown>;
+		const claim = reportString(finding.claim);
+		if (claim === null) return null;
+		const path = reportString(finding.path);
+		const line = typeof finding.line === "number" && Number.isSafeInteger(finding.line) ? finding.line : null;
+		lines.push(path !== null && line !== null ? `- ${claim} (${path}:${line})` : `- ${claim} (ungrounded lead)`);
+	}
+	if (value.needsSplit) {
+		if (!Array.isArray(value.proposedSubtasks)) return null;
+		lines.push("Split recommended:");
+		for (const raw of value.proposedSubtasks) {
+			if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+			const subtask = raw as Record<string, unknown>;
+			const task = reportString(subtask.task);
+			const id = reportString(subtask.id);
+			if (task === null || id === null) return null;
+			lines.push(`- ${id}: ${task}`);
+		}
+	}
+	return {
+		lines: lines.length === 0 ? ["No findings reported."] : lines,
+		footer: value.needsSplit ? "split needed" : "no split needed",
+	};
+}
+
+/**
+ * A mutation report as prose: the paths it changed, each validation with its
+ * verdict and evidence, then the summary and commit line. `commitOn` names the
+ * branch the proposed commit lands on, undefined when nothing commits it, and
+ * null when the reader cannot tell. `withNothingChanged` false leaves out the
+ * `changed nothing` line for a card whose facts row already says so; a list of
+ * changed paths always stays. Null when the object is not that shape.
+ */
+export function mutationReportLines(
+	value: Record<string, unknown>,
+	commitOn: string | null | undefined,
+	withNothingChanged = true,
+): string[] | null {
+	if (!isStringArray(value.mutatedPaths) || !Array.isArray(value.validations)) return null;
+	const lines: string[] = [];
+	if (value.mutatedPaths.length > 0) lines.push(`changed ${value.mutatedPaths.join(", ")}`);
+	else if (withNothingChanged) lines.push("changed nothing");
+	for (const validation of value.validations) {
+		if (typeof validation !== "object" || validation === null) continue;
+		const check = validation as Record<string, unknown>;
+		const name = `${typeof check.name === "string" ? check.name : "validation"}${check.baseline === true ? " (baseline before the change)" : ""}`;
+		const glyph = check.passed === true ? GLYPH.ok : check.passed === false ? GLYPH.error : GLYPH.queued;
+		const evidence =
+			typeof check.evidence === "string" && check.evidence.trim().length > 0 ? `: ${check.evidence.trim()}` : "";
+		lines.push(`${glyph} ${name}${evidence}`);
+	}
+	if (typeof value.summary === "string" && value.summary.trim().length > 0) lines.push(value.summary.trim());
+	if (typeof value.commitMessage === "string" && value.commitMessage.trim().length > 0) {
+		// The message is the worker's proposal. A worktree run commits it on the
+		// task branch; a run in the current tree commits nothing (race-Q4-t2-b).
+		const message = value.commitMessage.trim();
+		lines.push(
+			commitOn === null
+				? `commit message: ${message}`
+				: commitOn !== undefined
+					? `commit on ${commitOn}: ${message}`
+					: `proposed commit message, not committed: ${message}`,
+		);
+	}
+	return lines.map(safeWorkerAnswerText);
+}
+
+/** Where a settled run's proposed commit lands, as its sealed facts state it; see {@link CommitPlacement}. */
+export function commitPlacementOf(facts: {
+	placement?: { mode: string; branch?: string };
+	taskWorktree?: { branch: string };
+}): CommitPlacement {
+	const branch = facts.placement?.mode === "worktree" ? facts.placement.branch : facts.taskWorktree?.branch;
+	return branch !== undefined ? { branch } : {};
+}
+
+/**
+ * Where a settled run's proposed commit lands, read from its sealed facts: the branch of the worktree it worked in,
+ * and no branch when it worked in the checkout and nothing commits it. A surface without the facts has none of these.
+ */
+export interface CommitPlacement {
+	branch?: string;
+}
+
+/** Only a whole object, optionally enclosed by one whole code fence, is a preview payload. */
+export function exactWorkerAnswerObject(text: string): Record<string, unknown> | null {
+	const trimmed = text.trim();
+	const fenced = /^```[A-Za-z0-9_-]*[^\S\r\n]*\r?\n([\s\S]*?)\r?\n```$/u.exec(trimmed);
+	const source = fenced?.[1] ?? trimmed;
+	try {
+		const value: unknown = JSON.parse(source);
+		return isRecord(value) ? value : null;
+	} catch {
+		return null;
+	}
+}
+
+/** Receipt identity and conformance are facts supplied by the caller, never inferred here. */
+export function presentWorkerContractAnswer(
+	text: string,
+	contract: { kind: string; conformance: string } | undefined,
+	complete: boolean,
+	settled: boolean,
+): PresentedContractAnswer | null {
+	if (!settled || !complete || contract?.conformance !== "pass") return null;
+	const value = exactWorkerAnswerObject(text);
+	if (value === null) return null;
+	// Match complete JSON strings before numbers, so escaped property names
+	// and digits inside strings cannot bypass or confuse the token check.
+	// Conservatively keep raw Scout source if any number cannot round-trip.
+	if (contract.kind === "scout-report") {
+		for (const match of text.matchAll(/"(?:[^"\\]|\\[\s\S])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/gu)) {
+			const token = match[0];
+			if (token.startsWith('"')) continue;
+			if (!Number.isSafeInteger(Number(token)) || String(Number(token)) !== token) return null;
+		}
+	}
+	let answer: PresentedContractAnswer | null;
+	switch (contract.kind) {
+		case "debugger-report":
+			answer = debuggerReport(value);
+			break;
+		case "verifier-report":
+		case "review-verdict":
+			answer = verdictReport(value);
+			break;
+		case "research-report":
+			answer = researchReport(value);
+			break;
+		case "world-knowledge-report":
+			answer = worldKnowledgeReport(value);
+			break;
+		case "scout-report":
+			answer = scoutReport(value);
+			break;
+		default:
+			return null;
+	}
+	if (answer === null) return null;
+	return {
+		lines: answer.lines.map(safeWorkerAnswerText),
+		...(answer.footer ? { footer: safeWorkerAnswerText(answer.footer) } : {}),
+	};
+}
+
+/**
+ * A settled run's answer in words, admitted as the Fleet Runs card admits it: a presented contract kind, else a
+ * coder's mutation report once the sealed record verifies. Without `commit`, the report cannot say where a proposed
+ * commit landed.
+ */
+export function presentSettledWorkerAnswer(
+	text: string,
+	contract: { kind: string; conformance: string } | undefined,
+	sealVerified: boolean,
+	complete: boolean,
+	commit?: CommitPlacement,
+): PresentedContractAnswer | null {
+	const presented = presentWorkerContractAnswer(text, contract, complete, true);
+	if (presented !== null || !complete || !sealVerified) return presented;
+	const value = exactWorkerAnswerObject(text);
+	const lines = value === null ? null : mutationReportLines(value, commit === undefined ? null : commit.branch);
+	return lines === null ? null : { lines };
+}
+
+/**
+ * A Markdown code-fence line (three or more backticks or tildes, any info string): it says how an answer is formatted,
+ * not what it says, so a one-line preview skips it (FX-19).
+ */
+function isCodeFenceLine(line: string): boolean {
+	return /^(?:`{3,}|~{3,})/u.test(line.trim());
+}
+
+/**
+ * One member's answer as a line a person reads: a typed report's first claim or fact, else its first line of prose.
+ * A council collects typed reports, so its raw text is JSON the operator was never meant to read.
+ */
+export function councilAnswerGist(answer: string): string {
+	const typed = councilMemberAnswerLines(answer);
+	const first = typed?.find((line) => line.trim().length > 0 && !line.startsWith("  "));
+	// An object of no known report shape still reads as what it says, on one line, not as its opening brace.
+	const object = first === undefined ? exactWorkerAnswerObject(answer) : null;
+	const prose =
+		object !== null
+			? JSON.stringify(object)
+			: answer.split("\n").find((row) => row.trim().length > 0 && !isCodeFenceLine(row));
+	const line = (first ?? prose ?? "").replace(/^-\s*/u, "").trim();
+	return safeWorkerAnswerText(line);
+}
+
+/**
+ * A council member's typed answer as readable lines, or null when it is not one. A member card shows these in place of
+ * the JSON the member returned, even when the run's record could not be verified for the full presenter.
+ */
+export function councilMemberAnswerLines(answer: string): string[] | null {
+	const value = exactWorkerAnswerObject(answer);
+	if (value === null) return null;
+	const typed =
+		researchReport(value) ??
+		worldKnowledgeReport(value) ??
+		debuggerReport(value) ??
+		verdictReport(value) ??
+		scoutReport(value) ??
+		firstFindingClaim(value) ??
+		ballotAnswer(value);
+	return typed === null ? null : typed.lines.map(safeWorkerAnswerText);
+}
+
+/** A poll member's ballot (`{"verdict","text"}`) as its verdict and reason. */
+function ballotAnswer(value: Record<string, unknown>): PresentedContractAnswer | null {
+	const verdict = reportString(value.verdict);
+	if (verdict === null) return null;
+	const text = reportString(value.text);
+	return { lines: [text === null ? verdict : `${verdict}: ${text}`] };
+}
+
+/**
+ * A scout-shaped answer that misses a field the full report needs still has a claim a person can read. An empty
+ * `findings` alone says nothing about the shape, so it is not read as a report that found nothing (FX-21).
+ */
+function firstFindingClaim(value: Record<string, unknown>): PresentedContractAnswer | null {
+	if (!Array.isArray(value.findings)) return null;
+	const first: unknown = value.findings[0];
+	if (!isRecord(first)) return null;
+	const claim = reportString(first.claim);
+	return claim === null ? null : { lines: [claim] };
+}
+
+/**
+ * A vote's verdict with its tally: `integer-cents 2–0` when the verdict won, every count otherwise
+ * (`no_majority · decimal 1, integer-cents 1`), so the board and the card read the same result.
+ */
+function councilVoteWords(synthesis: CouncilReport["synthesis"]): string {
+	const verdict = synthesis.verdict ?? "";
+	const ranked = Object.entries(synthesis.tally ?? {}).sort(
+		(left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+	);
+	if (ranked.length === 0) return verdict;
+	const ballots = ranked.reduce((sum, [, count]) => sum + count, 0);
+	const won = synthesis.tally?.[verdict];
+	if (won !== undefined) return `${verdict} ${won}${GLYPH.range}${ballots - won}`;
+	return `${verdict} ${GLYPH.sep} ${ranked.map(([choice, count]) => `${choice} ${count}`).join(", ")}`;
+}
+
+/** The council's own result in words, the vote with its tally or the judge's text, for every surface that shows it. */
+export function councilSynthesisHeadline(report: CouncilReport): string {
+	const synthesis = report.synthesis;
+	if (synthesis.kind === "none") return councilCollectedWords(report);
+	return synthesis.kind === "vote" && synthesis.verdict !== undefined
+		? `vote: ${councilVoteWords(synthesis)}`
+		: `synthesis by ${synthesis.kind}`;
+}
+
+/** The council's own answer in words, without the member gists a board column already shows. */
+export function councilSynthesisLines(report: CouncilReport): string[] {
+	const synthesis = report.synthesis;
+	const lines: string[] = [];
+	if (synthesis.kind === "vote" && synthesis.verdict !== undefined) lines.push(`vote: ${councilVoteWords(synthesis)}`);
+	if (synthesis.text !== undefined && synthesis.text.trim().length > 0) lines.push(synthesis.text.trim());
+	return lines.map(safeWorkerAnswerText);
+}
+
+/** What a council that only collected says in place of an answer of its own. */
+export function councilCollectedWords(report: CouncilReport): string {
+	const answered = report.members.filter((member) => member.failed === undefined).length;
+	const timedOut = report.partial?.timedOut ?? [];
+	const partial = timedOut.length > 0 ? `partial, ${timedOut.join(", ")} past the deadline; ` : "";
+	return `${partial}${answered} ${answered === 1 ? "answer" : "answers"}, no synthesis asked for`;
+}
+
+/** A council's sealed report in words: the synthesis, then each member's gist under its label. */
+export function presentCouncilReport(report: CouncilReport): PresentedContractAnswer {
+	const synthesis = report.synthesis;
+	const lines: string[] = councilSynthesisLines(report);
+	for (const member of report.members) {
+		lines.push(
+			isCouncilSeatNotRun(member)
+				? `${member.label}: ${COUNCIL_SEAT_NOT_RUN_WORDS}`
+				: member.failed !== undefined
+					? `${member.label}: no answer (${member.failed.reason})`
+					: `${member.label}: ${councilAnswerGist(member.answer)}`,
+		);
+	}
+	const footer = synthesis.kind === "none" ? councilCollectedWords(report) : `synthesis by ${synthesis.kind}`;
+	return { lines: lines.map(safeWorkerAnswerText), footer };
+}

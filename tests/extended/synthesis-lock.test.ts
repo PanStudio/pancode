@@ -1,0 +1,172 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { describe, it } from "node:test";
+import { Type } from "typebox";
+
+import { engineStreamSimple } from "../../src/engine/api-registry.js";
+import {
+	isLockedSynthesisFallbackOnly,
+	LOCKED_SYNTHESIS_REPROMPT_TOOL,
+	lockedSynthesisFallbackText,
+	lockedSynthesisRepromptMessages,
+	sanitizeLockedSynthesisMessage,
+	withLockedSynthesisDirective,
+} from "../../src/engine/loop-guard-synthesis.js";
+import { applyToolRounds, type ToolRound } from "../../src/engine/provider-payload.js";
+import type { AgentMessage, EngineModel } from "../../src/engine/types.js";
+
+const model = {
+	id: "m",
+	provider: "llamacpp",
+	api: "openai-completions",
+	baseUrl: "http://127.0.0.1:1",
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 32768,
+	maxTokens: 4096,
+} as unknown as EngineModel;
+const anthropicModel = {
+	...model,
+	provider: "anthropic",
+	api: "anthropic-messages",
+	baseUrl: "https://provider.invalid",
+} as unknown as EngineModel;
+const usage = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+const userTurn = { role: "user" as const, content: "hi", timestamp: 1 };
+const readHistory: Parameters<typeof applyToolRounds>[1]["messages"] = [
+	userTurn,
+	{
+		role: "assistant",
+		content: [{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "a.ts" } }],
+		api: "openai-completions",
+		provider: "llamacpp",
+		model: "m",
+		usage,
+		stopReason: "toolUse",
+		timestamp: 2,
+	},
+	{
+		role: "toolResult",
+		toolCallId: "call_1",
+		toolName: "read",
+		content: [{ type: "text", text: "export {};" }],
+		isError: false,
+		timestamp: 3,
+	},
+];
+
+/** The wire body Pi's serializer builds for a controlled round; the hook stops before any network I/O. */
+async function roundWire(
+	target: EngineModel,
+	rounds: readonly ToolRound[],
+	messages: Parameters<typeof applyToolRounds>[1]["messages"] = [userTurn],
+): Promise<Record<string, unknown>> {
+	const controlled = applyToolRounds(
+		target,
+		{
+			systemPrompt: "lock",
+			tools: [{ name: "read", description: "read", parameters: Type.Object({ path: Type.String() }) }],
+			messages,
+		},
+		{ apiKey: "fixture" },
+		rounds,
+	);
+	let body: Record<string, unknown> = {};
+	await engineStreamSimple(target, controlled.context, {
+		...controlled.options,
+		onPayload: async (payload, current) => {
+			// Run the round's own payload edit, as the provider adapter does before sending.
+			const edited = (await controlled.options?.onPayload?.(payload, current)) ?? payload;
+			body = structuredClone(edited) as Record<string, unknown>;
+			throw new Error("captured before network I/O");
+		},
+	}).result();
+	return body;
+}
+
+describe("worker synthesis lock", () => {
+	it("retires earlier tool-use guidance without replacing task or safety instructions", () => {
+		const original = "Honor read-only authority. Use read for citations.";
+		const shape = '{"findings":[],"needsSplit":false,"proposedSubtasks":[]}';
+		const sent = withLockedSynthesisDirective({ systemPrompt: original, messages: readHistory }, shape);
+		strictEqual(sent.systemPrompt, original, "the system prompt keeps the work phase's bytes");
+		deepStrictEqual(sent.messages.slice(0, -1), readHistory.slice(0, -1));
+		const tail = JSON.stringify(sent.messages.at(-1));
+		ok(tail.includes("Earlier instructions to use tools apply only to the completed tool phase"));
+		ok(tail.includes("Do not invent missing evidence"));
+		ok(tail.includes(`Required terminal result: ${JSON.stringify(shape).slice(1, -1)}`));
+	});
+
+	it("strips the tool surface on a locked round and keeps it under Anthropic's tool_choice", async () => {
+		const stripped = await roundWire(model, [{ kind: "tools-removed" }]);
+		strictEqual("tools" in stripped, false);
+		strictEqual("tool_choice" in stripped, false);
+		// Beside tool history on completions the lock still sends no tools key.
+		const withHistory = await roundWire(model, [{ kind: "tools-removed" }], readHistory);
+		strictEqual("tools" in withHistory, false);
+		strictEqual("tool_choice" in withHistory, false);
+		// Anthropic rejects a history carrying tool_use blocks unless tools are
+		// defined, so the lock stays on the tool_choice knob there.
+		const anthropic = await roundWire(anthropicModel, [{ kind: "tools-removed" }]);
+		deepStrictEqual(
+			(anthropic.tools as Array<{ name: string }>).map((entry) => entry.name),
+			["read"],
+		);
+		deepStrictEqual(anthropic.tool_choice, { type: "none" });
+	});
+
+	it("keeps the schemas and sends the string tool_choice none for a middleware lock", async () => {
+		// The `lock_tools` middleware effect and the interactive synthesis lockout
+		// route here instead of the strip, and on a generic OpenAI-compatible
+		// server the spelling has to be the string: LM Studio and llama.cpp answer
+		// HTTP 400 on the object form ("Invalid tool_choice type: 'object'"), and
+		// "auto" would leave the turn calling tools past the lockout with nothing
+		// failing loudly.
+		const locked = await roundWire(model, [{ kind: "text-only" }]);
+		strictEqual((locked.tools as unknown[]).length, 1);
+		strictEqual(locked.tool_choice, "none");
+	});
+
+	it("recognizes a markup-only locked reply and shapes one paired re-prompt", () => {
+		const message = {
+			role: "assistant",
+			stopReason: "stop",
+			content: [{ type: "text", text: '<tool_call>\n{"name":"read","arguments":{"path":"a.ts"}}\n</tool_call>' }],
+		} as unknown as AgentMessage;
+		strictEqual(sanitizeLockedSynthesisMessage(message), true);
+		strictEqual(isLockedSynthesisFallbackOnly(message), true);
+		const prose = {
+			role: "assistant",
+			stopReason: "stop",
+			content: [{ type: "text", text: "The parser trims values." }],
+		} as unknown as AgentMessage;
+		strictEqual(isLockedSynthesisFallbackOnly(prose), false);
+		ok(lockedSynthesisFallbackText().length > 0);
+		const pair = lockedSynthesisRepromptMessages(1, { provider: "llamacpp", api: "openai-completions", model: "m" });
+		strictEqual(pair.length, 2);
+		const [call, result] = pair as unknown as [Record<string, unknown>, Record<string, unknown>];
+		strictEqual(call.role, "assistant");
+		strictEqual((call.content as Array<{ name: string }>)[0]?.name, LOCKED_SYNTHESIS_REPROMPT_TOOL);
+		strictEqual(result.role, "toolResult");
+		strictEqual(result.toolCallId, (call.content as Array<{ id: string }>)[0]?.id);
+		const shape = '{"findings":[],"needsSplit":false,"proposedSubtasks":[]}';
+		const constrained = lockedSynthesisRepromptMessages(
+			1,
+			{ provider: "llamacpp", api: "openai-completions", model: "m" },
+			shape,
+		);
+		const repair = JSON.stringify(constrained[1]);
+		ok(repair.includes("required result format"));
+		ok(repair.includes(JSON.stringify(shape).slice(1, -1)));
+		ok(repair.includes("tool calls are disabled"));
+	});
+});

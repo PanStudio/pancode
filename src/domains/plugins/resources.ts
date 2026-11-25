@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { realpathSync } from "node:fs";
+import path from "node:path";
+import { sha256Hex } from "../../core/hash.js";
+import { pancodeConfigDir } from "../../core/xdg.js";
+import { PLUGIN_RESOURCE_KINDS, pluginResourcePath } from "./discovery.js";
+import { outsidePluginDiscoveryPass, passPluginSnapshot } from "./discovery-pass.js";
+import { listInstalledPlugins } from "./state.js";
+import type { InstalledPlugin, PluginResourceKind, PluginResourceRoot, PluginSnapshot } from "./types.js";
+
+const snapshots = new Map<string, PluginSnapshot>();
+let generation = 0;
+
+/**
+ * The real path of `cwd`, or its resolved spelling when it has none: a workspace
+ * removed under a running session must degrade a display read, not throw.
+ */
+function canonicalCwd(cwd: string): string {
+	const resolved = path.resolve(cwd);
+	try {
+		return realpathSync(resolved);
+	} catch {
+		return resolved;
+	}
+}
+
+function keyFor(cwd: string): string {
+	return `${path.resolve(pancodeConfigDir())}\0${canonicalCwd(cwd)}`;
+}
+
+function freeze<T>(value: T): T {
+	if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+		for (const child of Object.values(value)) freeze(child);
+		Object.freeze(value);
+	}
+	return value;
+}
+
+export function buildPluginSnapshot(cwd = process.cwd(), snapshotGeneration = 0): PluginSnapshot {
+	const workspace = canonicalCwd(cwd);
+	const packages = listInstalledPlugins(workspace, { all: true });
+	const resourceRoots: Record<PluginResourceKind, PluginResourceRoot[]> = {
+		skills: [],
+		prompts: [],
+		agents: [],
+		playbooks: [],
+	};
+	for (const item of packages) {
+		if (!item.loadable || !item.provenance) continue;
+		for (const kind of PLUGIN_RESOURCE_KINDS) {
+			const relative = item.resources[kind];
+			if (!relative) continue;
+			resourceRoots[kind].push({
+				owner: {
+					kind: item.kind ?? "plugin",
+					id: item.id,
+					version: item.version,
+					digest: item.provenance.contentDigest,
+					scope: item.scope,
+				},
+				id: item.id,
+				scope: item.scope,
+				path: pluginResourcePath(item.rootPath, relative, item.kind === "skill" && relative === "."),
+				rootPath: item.rootPath,
+				source: `plugin:${item.scope}:${item.id}`,
+				provenance: item.provenance,
+				generation: snapshotGeneration,
+				trust: item.trust ?? "trusted",
+			});
+		}
+	}
+	const identity = packages.map((item) => ({
+		id: item.id,
+		scope: item.scope,
+		rootPath: item.rootPath,
+		enabled: item.enabled,
+		loadable: item.loadable,
+		contentDigest: item.observedContentDigest,
+	}));
+	return freeze({
+		version: 1,
+		generation: snapshotGeneration,
+		cwd: workspace,
+		digest: sha256Hex(JSON.stringify(identity)),
+		packages,
+		resourceRoots,
+	});
+}
+
+export function pluginSnapshotFor(cwd = process.cwd()): PluginSnapshot {
+	const key = keyFor(cwd);
+	return snapshots.get(key) ?? passPluginSnapshot(key, () => buildPluginSnapshot(cwd));
+}
+
+/** The committed projection, without building one when none exists yet. */
+export function committedPluginSnapshot(cwd = process.cwd()): PluginSnapshot | undefined {
+	return snapshots.get(keyFor(cwd));
+}
+
+/** Build completely before replacing the committed projection. */
+export function reloadPluginResources(cwd = process.cwd()): PluginSnapshot {
+	const key = keyFor(cwd);
+	const next = outsidePluginDiscoveryPass(() => buildPluginSnapshot(cwd, ++generation));
+	snapshots.set(key, next);
+	return next;
+}
+
+export function clearPluginSnapshots(): void {
+	snapshots.clear();
+}
+
+/**
+ * The committed snapshot's roots for `kind`, without re-verifying any tree.
+ * For display only, such as naming prompt templates in a completion menu. A
+ * tree revoked or drifted since the last reload may still be listed, so
+ * nothing that runs a resource may read from here; execution goes through
+ * {@link enabledPluginResourceRoots}.
+ */
+export function committedPluginResourceRoots(kind: PluginResourceKind, cwd = process.cwd()): PluginResourceRoot[] {
+	return [...pluginSnapshotFor(cwd).resourceRoots[kind]];
+}
+
+export function enabledPluginResourceRoots(kind: PluginResourceKind, cwd = process.cwd()): PluginResourceRoot[] {
+	const snapshot = pluginSnapshotFor(cwd);
+	if (snapshot.generation === 0) return [...snapshot.resourceRoots[kind]];
+	// A reload controls additions and replacements. Revocation and content drift
+	// take effect on the next read, including before a planned session reload.
+	return stillVerified(snapshot.resourceRoots[kind], listInstalledPlugins(cwd, { all: true }));
+}
+
+/**
+ * {@link enabledPluginResourceRoots} walking only the named packages, so a caller
+ * about to show a few resources pays for those trees rather than every install.
+ */
+export function enabledPluginResourceRootsFor(
+	kind: PluginResourceKind,
+	ids: ReadonlySet<string>,
+	cwd = process.cwd(),
+): PluginResourceRoot[] {
+	const snapshot = pluginSnapshotFor(cwd);
+	const roots = snapshot.resourceRoots[kind].filter((root) => ids.has(root.id));
+	if (snapshot.generation === 0) return roots;
+	return stillVerified(
+		roots,
+		[...ids].flatMap((id) => listInstalledPlugins(cwd, { all: true, id })),
+	);
+}
+
+function stillVerified(
+	roots: ReadonlyArray<PluginResourceRoot>,
+	current: ReadonlyArray<InstalledPlugin>,
+): PluginResourceRoot[] {
+	return roots.filter((root) =>
+		current.some(
+			(item) =>
+				item.loadable &&
+				item.id === root.id &&
+				item.scope === root.scope &&
+				item.provenance?.canonicalRoot === root.provenance.canonicalRoot &&
+				item.provenance?.manifestDigest === root.provenance.manifestDigest &&
+				item.provenance?.contentDigest === root.provenance.contentDigest,
+		),
+	);
+}

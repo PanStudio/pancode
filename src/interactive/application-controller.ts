@@ -1,0 +1,570 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { PancodeKeybinding } from "../domains/config/keybindings.js";
+import { isKeyRelease, isKeyRepeat, matchesKey } from "../engine/tui.js";
+import { APPLICATION_DOUBLE_TAP_MS } from "./interrupt-window.js";
+import type { LeaderKeyController } from "./leader-key.js";
+import { isEscapeKey, type OverlayState, overlayOwnsInput } from "./overlay-lifecycle.js";
+import { terminalReportKind } from "./terminal-reports.js";
+
+export { APPLICATION_DOUBLE_TAP_MS } from "./interrupt-window.js";
+
+const ARMED_TICK_MS = 1_000;
+/**
+ * How long after Esc closes something an Esc is not read as cancelling the run.
+ * Layered surfaces invite a run of presses, and the extra one used to fall
+ * through to the composer and cancel work the operator only meant to look away
+ * from.
+ */
+const ESC_GUARD_MS = 1_200;
+
+export const CLOSED_ACTION_ORDER = [
+	"pancode.output.cycle",
+	"pancode.autonomy.toggle",
+	"pancode.notifications.dismiss",
+	"pancode.editor.external",
+	"pancode.editor.clear",
+	"pancode.message.interrupt",
+	"pancode.message.dequeue",
+	"pancode.queue.open",
+] as const satisfies ReadonlyArray<PancodeKeybinding>;
+
+/**
+ * Actions no focused surface may swallow: they route ahead of every card, overlay and the search box, so a card's
+ * own key handler never sees them (FX-13). The tier cycle changes only presentation, and each surface keys its memo
+ * on the tier, so the open card redraws at the new tier.
+ */
+export const SURFACE_ACTION_ORDER = [
+	"pancode.suspend",
+	"pancode.output.cycle",
+] as const satisfies ReadonlyArray<PancodeKeybinding>;
+
+export const GLOBAL_ACTION_ORDER = [
+	"pancode.suspend",
+	"pancode.status.toggle",
+	"pancode.thinking.cycle",
+	"pancode.session.tree",
+	"pancode.dispatchBoard.toggle",
+	"pancode.files.toggle",
+	"pancode.music.toggle",
+	"pancode.tasks.open",
+	"pancode.decisions.open",
+	"pancode.dispatch.background",
+	"pancode.model.select",
+	"pancode.hub.toggle",
+	// Backward stays ahead of forward so prefix-overlapping user bindings keep
+	// the same more-specific-first behavior as the original input listener.
+	"pancode.model.cycleBackward",
+	"pancode.model.cycleForward",
+	"pancode.exit",
+] as const satisfies ReadonlyArray<PancodeKeybinding>;
+
+export type CtrlCAction = "cancel-stream" | "close-overlay" | "arm-shutdown" | "shutdown" | "protect-queue";
+
+export interface CtrlCActionState {
+	overlayState: OverlayState;
+	streaming: boolean;
+	lastCtrlCAt: number;
+	now: number;
+	hasQueuedMessages?: boolean;
+}
+
+function resolveApplicationCtrlCAction(state: CtrlCActionState): CtrlCAction {
+	if (state.overlayState !== "closed") return "close-overlay";
+	if (state.streaming) return "cancel-stream";
+	if (state.hasQueuedMessages) return "protect-queue";
+	if (state.lastCtrlCAt > 0 && state.now - state.lastCtrlCAt <= APPLICATION_DOUBLE_TAP_MS) return "shutdown";
+	return "arm-shutdown";
+}
+
+export interface ApplicationClock {
+	now(): number;
+}
+
+export interface ApplicationSignalCoordinator {
+	/**
+	 * Take SIGINT from whatever armed it before this controller existed and
+	 * return the call that gives it back.
+	 */
+	takeInterruptOwnership(): () => void;
+	on(signal: "SIGINT", listener: () => void): void;
+	off(signal: "SIGINT", listener: () => void): void;
+}
+
+export interface ApplicationIntervalHandle {
+	unref?(): void;
+}
+
+export interface ApplicationIntervalCoordinator {
+	setInterval(callback: () => void, delayMs: number): ApplicationIntervalHandle;
+	clearInterval(handle: ApplicationIntervalHandle): void;
+}
+
+export interface ApplicationControllerDeps {
+	clock: ApplicationClock;
+	signals: ApplicationSignalCoordinator;
+	intervals: ApplicationIntervalCoordinator;
+	intervalsToClear: ReadonlyArray<ApplicationIntervalHandle>;
+	leaderKeys: LeaderKeyController;
+	isSearchFocused?: () => boolean;
+	closeSearch?: () => void;
+	/** Run a pointer report through the fullscreen text selection only, past a modal overlay. */
+	selectPastOverlay?: (data: string) => void;
+	forwardFocusedInput?: (data: string) => void;
+	cancelFocusedOwner?: () => void;
+	isAutocompleteVisible?: () => boolean;
+	matchesRepeatableInput?: (data: string) => boolean;
+	routeComposerKey?: (data: string) => boolean;
+	hasQueuedMessages?: () => boolean;
+	explainProtectedExit?: () => void;
+	/** An Esc was absorbed because it followed one that closed a surface; the run is still going. */
+	explainEscapeGuard?: () => void;
+	/** Esc while the draft addresses a worker backs out of the steer and keeps the text. */
+	cancelSteerDraft?: () => boolean;
+	/**
+	 * Close a glance card (the `?` quick help) if one is up. Its rail says any key
+	 * closes it, so the key does only that: an Esc used to reach the run under it
+	 * first and cancel the run, leaving the card on screen.
+	 */
+	closeGlance?: () => boolean;
+	getOverlayState: () => OverlayState;
+	routeOverlayKey: (data: string) => boolean;
+	/** Let pi-tui's focused Editor own dedicated prompt-history actions before app bindings. */
+	matchesEditorHistory: (data: string) => boolean;
+	matchesAction: (data: string, id: PancodeKeybinding) => boolean;
+	dispatchAction: (id: PancodeKeybinding) => boolean;
+	cancelActiveEditorBash: () => boolean;
+	hasActiveEditorBash?: () => boolean;
+	isStreaming: () => boolean;
+	cancelActiveRun: () => void;
+	getEditorText: () => string;
+	requestRender: () => void;
+	/**
+	 * Ctrl+C armed the double-tap and is waiting for the second press, or the
+	 * window lapsed and it no longer is. Every other Ctrl+C outcome changes
+	 * something the operator can see; arming changed nothing at all, so the
+	 * APPLICATION_DOUBLE_TAP_MS (3 s) window that quits was undiscoverable and a first press was
+	 * indistinguishable from a key the application never received (issue #108).
+	 * The footer's leader indicator exists for exactly this reason and this
+	 * rides beside it. While armed it fires again each second with the time left,
+	 * and says whether an unsent draft is staying in the composer.
+	 */
+	onShutdownArmedChange?: (armed: boolean, detail?: ShutdownArmDetail) => void;
+	closeOverlay: () => void;
+	listNotifications: () => ReadonlyArray<{ id: string }>;
+	dismissNotification: (id: string) => void;
+	dismissAllNotifications: () => void;
+	shutdownDisposers: ReadonlyArray<() => void>;
+	/** Settle the last presentation mutation into an accepted/drained frame. */
+	beforeStopUi?: () => Promise<void>;
+	stopUi: () => void;
+	cancelParkedCalls: (reason: string) => void;
+	onShutdown: () => Promise<void>;
+	/**
+	 * Print the final account only after a successful terminal teardown. `interrupt` when the
+	 * double ctrl+c ended the session, `quit` for every other shutdown request.
+	 */
+	onCleanExit?: (trigger: "quit" | "interrupt") => void;
+	/**
+	 * Report a teardown step that failed. Deliberately not the UI notice channel:
+	 * interactive teardown disposes that before the application's own shutdown
+	 * runs, so a notice raised here would have nowhere to land.
+	 */
+	reportShutdownFailure: (step: string, error: unknown) => void;
+	/**
+	 * Register a terminal teardown to run on shutdown paths that never reach
+	 * this controller.
+	 *
+	 * `/quit` and Ctrl+C both come through here and stop the terminal on the
+	 * way out. A signal does not: SIGTERM goes straight to the termination
+	 * coordinator, which runs its hooks and calls process.exit with the TUI
+	 * still owning the screen. Measured on a pty, `kill -TERM` left the cursor
+	 * hidden, the last private-mode sequence on the wire being `?25l`, where
+	 * `/quit` on the same build ended with `?25h`.
+	 */
+	registerTerminalTeardown?: (teardown: () => void | Promise<void>) => void;
+}
+
+export interface ShutdownArmDetail {
+	secondsLeft: number;
+	draftKept: boolean;
+}
+
+export type ApplicationInputResult = { consume: true } | undefined;
+
+export interface ApplicationController {
+	run: Promise<number>;
+	handleInput(data: string): ApplicationInputResult;
+	handleCtrlC(): void;
+	dismissNotifications(all?: boolean): void;
+	shutdown(): Promise<void>;
+}
+
+/**
+ * Own the final application boundary: input precedence, double-tap clocks,
+ * SIGINT, and the one ordered path that releases process-level resources.
+ */
+export function createApplicationController(deps: ApplicationControllerDeps): ApplicationController {
+	let resolveRun: (code: number) => void = () => {};
+	const run = new Promise<number>((resolve) => {
+		resolveRun = resolve;
+	});
+	const keepAlive = deps.intervals.setInterval(() => {}, 1 << 30);
+	let shuttingDown = false;
+	let lastCtrlCAt = 0;
+
+	let shutdownArmed = false;
+	let armedIndicator: ApplicationIntervalHandle | null = null;
+
+	const clearArmedIndicatorTimer = (): void => {
+		if (!armedIndicator) return;
+		deps.intervals.clearInterval(armedIndicator);
+		armedIndicator = null;
+	};
+
+	/**
+	 * Raise or drop the armed indicator. Arming schedules its own expiry because
+	 * nothing repaints an idle prompt on its own: the footer ticker returns early
+	 * when no turn is running, so a hint left standing would outlive the window
+	 * and promise a quit the next press no longer performs. The interval
+	 * coordinator is the only scheduler this boundary owns, so the callback
+	 * cancels its own handle and fires once.
+	 */
+	const setShutdownArmed = (armed: boolean): void => {
+		if (!armed && !shutdownArmed) return;
+		// Re-arming while an earlier expiry is still pending restarts the window
+		// rather than returning early: the clock and the timer are independent, so
+		// a press that lands after the window by the clock but before the late
+		// timer fires must not leave that timer to clear the hint mid-window.
+		clearArmedIndicatorTimer();
+		shutdownArmed = armed;
+		if (armed) {
+			let ticksLeft = Math.ceil(APPLICATION_DOUBLE_TAP_MS / ARMED_TICK_MS);
+			const announce = (): void =>
+				deps.onShutdownArmedChange?.(true, {
+					secondsLeft: Math.ceil((ticksLeft * ARMED_TICK_MS) / 1000),
+					draftKept: deps.getEditorText().length > 0,
+				});
+			armedIndicator = deps.intervals.setInterval(() => {
+				ticksLeft -= 1;
+				if (ticksLeft <= 0) {
+					setShutdownArmed(false);
+					return;
+				}
+				announce();
+				deps.requestRender();
+			}, ARMED_TICK_MS);
+			armedIndicator.unref?.();
+			announce();
+		} else {
+			deps.onShutdownArmedChange?.(false);
+		}
+		deps.requestRender();
+	};
+
+	/** Teardown steps that threw, held until the terminal is safe to write past. */
+	const failures: Array<{ step: string; error: unknown }> = [];
+
+	/**
+	 * Release one process-level resource. A step that throws has left a resource
+	 * either already released or beyond this boundary's reach; either way the
+	 * remaining steps still have to run. The terminal is the common case, since
+	 * it can close before shutdown begins and stopping it twice is harmless.
+	 * Continuing is not the same as calling it a success, so the failure is kept.
+	 */
+	const release = (step: string, action: () => void): void => {
+		try {
+			action();
+		} catch (error) {
+			failures.push({ step, error });
+		}
+	};
+
+	/**
+	 * Hand the collected failures to the diagnostic. Draining means a second call
+	 * cannot repeat what the first already reported.
+	 */
+	const reportFailures = (): void => {
+		for (const failure of failures.splice(0)) {
+			try {
+				deps.reportShutdownFailure(failure.step, failure.error);
+			} catch {
+				// A diagnostic that cannot report has nowhere left to report to.
+			}
+		}
+	};
+
+	let exitTrigger: "quit" | "interrupt" = "quit";
+
+	const shutdown = async (): Promise<void> => {
+		if (shuttingDown) return;
+		shuttingDown = true;
+		let failed = false;
+		// The signal path calls this without awaiting it, so a failing step must
+		// not escape as an unhandled rejection, and `run` has to settle either
+		// way or the process hangs with nothing left to resolve it.
+		try {
+			release("signal handoff", () => deps.signals.off("SIGINT", handleCtrlC));
+			// Ownership goes back before teardown runs, so an interrupt during a
+			// slow release still reaches a handler that exits the process.
+			release("signal handoff", () => restoreInterruptOwner());
+			release("keep-alive interval", () => deps.intervals.clearInterval(keepAlive));
+			// Quitting while the double-tap hint is up leaves a timer scheduled
+			// against a terminal that is about to stop. Released silently: there is
+			// no frame left to repaint it out of.
+			release("armed indicator", () => {
+				shutdownArmed = false;
+				clearArmedIndicatorTimer();
+			});
+			for (const interval of deps.intervalsToClear) {
+				release("owned interval", () => deps.intervals.clearInterval(interval));
+			}
+			for (const dispose of deps.shutdownDisposers) release("shutdown disposer", dispose);
+			if (deps.beforeStopUi) {
+				try {
+					await deps.beforeStopUi();
+				} catch (error) {
+					failures.push({ step: "final frame", error });
+				}
+			}
+			release("terminal stop", () => deps.stopUi());
+			release("parked calls", () => deps.cancelParkedCalls("PanCode shutting down"));
+			// Reported here rather than as each step fails: the terminal is down by
+			// now, so a diagnostic cannot land on top of a TUI still painting. It
+			// also has to precede onShutdown, which exits the process.
+			failed = failures.length > 0;
+			reportFailures();
+			if (!failed) deps.onCleanExit?.(exitTrigger);
+			await deps.onShutdown();
+		} catch (error) {
+			failed = true;
+			failures.push({ step: "application shutdown", error });
+			reportFailures();
+		} finally {
+			// Nothing reads this code today, which is exactly why it should not
+			// claim a clean teardown that did not happen.
+			resolveRun(failed ? 1 : 0);
+		}
+	};
+
+	const handleCtrlC = (): void => {
+		// An open action menu is what this press closes; a running turn keeps running.
+		if (deps.leaderKeys.isPending()) {
+			deps.leaderKeys.reset();
+			lastCtrlCAt = 0;
+			setShutdownArmed(false);
+			return;
+		}
+		if (deps.isSearchFocused?.()) {
+			deps.closeSearch?.();
+			lastCtrlCAt = 0;
+			setShutdownArmed(false);
+			return;
+		}
+		if (deps.getOverlayState() !== "closed" && deps.cancelFocusedOwner) {
+			// Ctrl+C is Esc in every overlay: whatever Esc does there, one layer at a time. The permission card keeps
+			// its own layered handling, where the router's Esc would deny outright.
+			if (deps.getOverlayState() !== "permission-confirm" && deps.routeOverlayKey("\x1b")) deps.requestRender();
+			else deps.cancelFocusedOwner();
+			lastCtrlCAt = 0;
+			setShutdownArmed(false);
+			return;
+		}
+		if (deps.getOverlayState() === "closed" && deps.cancelActiveEditorBash()) {
+			lastCtrlCAt = 0;
+			setShutdownArmed(false);
+			return;
+		}
+		const action = resolveApplicationCtrlCAction({
+			overlayState: deps.getOverlayState(),
+			streaming: deps.isStreaming(),
+			lastCtrlCAt,
+			now: deps.clock.now(),
+			hasQueuedMessages: deps.hasQueuedMessages?.() ?? false,
+		});
+		if (action === "shutdown") {
+			lastCtrlCAt = 0;
+			if (!shuttingDown) exitTrigger = "interrupt";
+			void shutdown();
+			return;
+		}
+		// Preserve the original second clock read. Production uses Date.now for
+		// both, while tests can expose ordering at millisecond boundaries.
+		lastCtrlCAt = deps.clock.now();
+		if (action === "cancel-stream") {
+			// A press that cancelled a run is not intent to quit, so it must not
+			// arm the shutdown clock. Leaving it armed meant the natural gesture
+			// of pressing again when the first press looked like it did nothing
+			// killed the application mid-turn, with the last frame still reading
+			// `writing` and no word about the session being saved. Quitting still
+			// works: once the run is cancelled, two presses inside the window do
+			// what they have always done.
+			lastCtrlCAt = 0;
+			setShutdownArmed(false);
+			deps.cancelActiveRun();
+			return;
+		}
+		if (action === "close-overlay") {
+			lastCtrlCAt = 0;
+			setShutdownArmed(false);
+			deps.closeOverlay();
+			return;
+		}
+		if (action === "protect-queue") {
+			lastCtrlCAt = 0;
+			setShutdownArmed(false);
+			deps.explainProtectedExit?.();
+			return;
+		}
+		// arm-shutdown, with or without a draft. A first press used to clear the
+		// draft in silence, so an unsent prompt was lost to the gesture that also
+		// quits; the draft now stays and the second press is what leaves.
+		setShutdownArmed(true);
+	};
+
+	const dismissNotifications = (all = false): void => {
+		if (all) {
+			deps.dismissAllNotifications();
+			return;
+		}
+		const first = deps.listNotifications()[0];
+		if (first) deps.dismissNotification(first.id);
+	};
+
+	/** When an Esc last closed an overlay or a suggestion list. */
+	let lastOwnerEscapeAt = 0;
+	const handleInput = (data: string): ApplicationInputResult => {
+		if (!isEscapeKey(data) || isKeyRelease(data)) return routeInput(data);
+		const before = deps.getOverlayState();
+		const closesSuggestions = before === "closed" && (deps.isAutocompleteVisible?.() ?? false);
+		// The leader menu is a surface too: a second Esc right after the one that closed it must not reach the run.
+		const closesLeader = deps.leaderKeys.isPending();
+		const result = routeInput(data);
+		if (closesSuggestions || closesLeader || (before !== "closed" && deps.getOverlayState() === "closed")) {
+			lastOwnerEscapeAt = deps.clock.now();
+		}
+		return result;
+	};
+	const routeInput = (data: string): ApplicationInputResult => {
+		if (isKeyRelease(data)) return { consume: true };
+		// Pointer and focus reports are not keys: they must not disarm the exit,
+		// close a glance or reach a key owner. Both go on to pi-tui's viewport
+		// handler, which also drives the search box's buttons and a selection
+		// while search is focused. Over a modal overlay only pi-tui's selection
+		// sees the pointer, so choices still move only on keys.
+		const report = terminalReportKind(data);
+		if (report === "focus") return undefined;
+		if (report === "pointer") {
+			if (!overlayOwnsInput(deps.getOverlayState())) return undefined;
+			deps.selectPastOverlay?.(data);
+			return { consume: true };
+		}
+		if (isKeyRepeat(data) && !(deps.matchesRepeatableInput?.(data) ?? false)) return { consume: true };
+		if (matchesKey(data, "ctrl+c")) {
+			handleCtrlC();
+			return { consume: true };
+		}
+		// Any other key means the operator went on working, so a later Ctrl+C
+		// must not quit on the strength of the earlier one.
+		if (shutdownArmed) {
+			lastCtrlCAt = 0;
+			setShutdownArmed(false);
+		}
+		if (deps.leaderKeys.isPending() && deps.leaderKeys.route(data)) return { consume: true };
+		if (deps.leaderKeys.route(data)) return { consume: true };
+		// Suspend (#413) and the tier cycle (FX-13) escape every modal owner before it routes the key. The
+		// side-question, context view, cards and dispatch board consume every key they see, and transcript search
+		// forwards everything to its box, so checking after them swallowed the key.
+		if (deps.isSearchFocused?.() || overlayOwnsInput(deps.getOverlayState())) {
+			for (const id of SURFACE_ACTION_ORDER) {
+				if (deps.matchesAction(data, id) && deps.dispatchAction(id)) return { consume: true };
+			}
+		}
+		if (deps.isSearchFocused?.()) {
+			deps.forwardFocusedInput?.(data);
+			return { consume: true };
+		}
+		if (deps.routeOverlayKey(data)) return { consume: true };
+		if (overlayOwnsInput(deps.getOverlayState())) {
+			if (deps.forwardFocusedInput) {
+				deps.forwardFocusedInput(data);
+				return { consume: true };
+			}
+			return undefined;
+		}
+		if (isEscapeKey(data) && deps.isAutocompleteVisible?.()) return undefined;
+		if (deps.getOverlayState() === "closed" && deps.closeGlance?.()) {
+			if (isEscapeKey(data)) lastOwnerEscapeAt = deps.clock.now();
+			deps.requestRender();
+			return { consume: true };
+		}
+		if (isEscapeKey(data) && deps.cancelSteerDraft?.()) {
+			lastOwnerEscapeAt = deps.clock.now();
+			return { consume: true };
+		}
+		if (
+			isEscapeKey(data) &&
+			lastOwnerEscapeAt > 0 &&
+			deps.clock.now() - lastOwnerEscapeAt < ESC_GUARD_MS &&
+			(deps.isStreaming() || deps.hasActiveEditorBash?.() === true)
+		) {
+			// Each absorbed press restarts the window, so a run of presses cannot walk through it.
+			lastOwnerEscapeAt = deps.clock.now();
+			deps.explainEscapeGuard?.();
+			return { consume: true };
+		}
+		if (isEscapeKey(data) && deps.cancelActiveEditorBash()) return { consume: true };
+		if (isEscapeKey(data) && deps.isStreaming()) {
+			deps.cancelActiveRun();
+			return { consume: true };
+		}
+		// pi-tui's dedicated history actions are editor actions even when an
+		// operator has rebound a PanCode application action onto the same chord. Leave
+		// the input unconsumed so TuiBase delivers it to the focused Editor.
+		if (deps.getOverlayState() === "closed" && deps.matchesEditorHistory(data)) return undefined;
+
+		if (deps.getOverlayState() === "closed" && !isKeyRelease(data)) {
+			for (const id of CLOSED_ACTION_ORDER) {
+				if (!deps.matchesAction(data, id)) continue;
+				deps.dispatchAction(id);
+				return { consume: true };
+			}
+		}
+		for (const id of GLOBAL_ACTION_ORDER) {
+			if (!deps.matchesAction(data, id)) continue;
+			return deps.dispatchAction(id) ? { consume: true } : undefined;
+		}
+		if (deps.routeComposerKey?.(data)) return { consume: true };
+		return undefined;
+	};
+
+	// One owner holds SIGINT at a time. Boot arms process termination first and
+	// Node runs listeners in registration order, so this controller only sees the
+	// first press if the previous owner hands it over. Everything else on the
+	// signal stays put: clearing it wholesale would disarm handlers this process
+	// never installed, including an embedder's.
+	const restoreInterruptOwner = deps.signals.takeInterruptOwnership();
+	deps.signals.on("SIGINT", handleCtrlC);
+	// Every exit gives the terminal back, including the ones that never reach
+	// this controller. Stopping an already-stopped terminal is a no-op, so the
+	// ordinary path running both is harmless.
+	deps.registerTerminalTeardown?.(async () => {
+		if (deps.beforeStopUi) {
+			try {
+				await deps.beforeStopUi();
+			} catch (error) {
+				failures.push({ step: "final frame", error });
+			}
+		}
+		release("terminal stop", () => deps.stopUi());
+		reportFailures();
+	});
+
+	return {
+		run,
+		handleInput,
+		handleCtrlC,
+		dismissNotifications,
+		shutdown,
+	};
+}

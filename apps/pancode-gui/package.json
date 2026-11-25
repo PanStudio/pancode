@@ -1,0 +1,53 @@
+{
+	"name": "pancode-gui",
+	"version": "0.9.0",
+	"private": true,
+	"license": "SEE LICENSE IN LICENSE",
+	"description": "PanCode on the desktop (alpha): a local workspace in your browser for sessions, usage, artifacts and evidence.",
+	"type": "module",
+	"scripts": {
+		"start": "node --import tsx server/main.ts",
+		"dev:server": "node --watch --import tsx server/main.ts --port 4317",
+		"dev:client": "vite --host 127.0.0.1",
+		"build": "vite build",
+		"typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && node ../../scripts/pnpm.mjs run check:brand",
+		"lint": "biome check .",
+		"test": "node ../../scripts/ci-tests.mjs gui",
+		"openapi": "node --import tsx scripts/openapi.ts && biome format --write contracts/openapi.json",
+		"verify": "node ../../scripts/pnpm.mjs run typecheck && node ../../scripts/pnpm.mjs run lint && node ../../scripts/pnpm.mjs run test:full && node ../../scripts/pnpm.mjs run build && node ../../scripts/pnpm.mjs run smoke:browser",
+		"test:acp-real": "node --import tsx --test tests/real/acp.test.ts",
+		"smoke:browser": "node --import tsx scripts/browser-smoke.ts",
+		"visual": "node --import tsx scripts/visual-review.ts",
+		"perf": "node --import tsx scripts/perf-workload.ts",
+		"test:pwa": "node --import tsx --test tests/real/background-pwa.test.ts",
+		"test:full": "node ../../scripts/ci-tests.mjs gui",
+		"check:brand": "node scripts/sync-brand.mjs --check && node scripts/check-contrast.mjs"
+	},
+	"dependencies": {
+		"@hono/node-server": "2.1.8",
+		"@tanstack/react-query": "5.102.8",
+		"dompurify": "3.4.17",
+		"hono": "4.13.18",
+		"katex": "0.18.2",
+		"marked": "18.0.11",
+		"mermaid": "11.17.2",
+		"prismjs": "1.30.0",
+		"react": "19.3.0",
+		"react-dom": "19.3.0",
+		"react-router": "8.3.1",
+		"typebox": "1.3.0"
+	},
+	"devDependencies": {
+		"@apidevtools/swagger-parser": "13.0.0",
+		"@axe-core/playwright": "4.13.0",
+		"@types/node": "24.12.2",
+		"@types/react": "19.3.0",
+		"@types/react-dom": "19.3.0",
+		"@typescript/native": "npm:typescript@7.0.2",
+		"@vitejs/plugin-react": "6.1.1",
+		"playwright-core": "1.62.1",
+		"tsx": "4.23.15",
+		"typescript": "npm:@typescript/typescript6@6.0.2",
+		"vite": "8.3.3"
+	}
+}

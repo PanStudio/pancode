@@ -1,0 +1,123 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { Api, Model } from "../../../../engine/types.js";
+
+import { probeHttp, probeJson } from "../../probe/http.js";
+import type { CapabilityFlags } from "../../types/capability-flags.js";
+import type { RerankResult } from "../../types/inference.js";
+import type { KnowledgeBaseHit } from "../../types/knowledge-base.js";
+import type { ProbeContext, ProbeResult, RuntimeDescriptor } from "../../types/runtime-descriptor.js";
+import type { TargetDescriptor } from "../../types/target-descriptor.js";
+import { synthLocalModel, targetRootUrl, withV1 } from "../common/local-synth.js";
+import { probeLlamaCppProps, probeOpenAIModels } from "../common/probe-helpers.js";
+
+const defaultCapabilities: CapabilityFlags = {
+	chat: false,
+	tools: false,
+	reasoning: false,
+	vision: false,
+	audio: false,
+	embeddings: false,
+	rerank: true,
+	fim: false,
+	contextWindow: 8192,
+	maxTokens: 0,
+};
+
+function targetUrl(target: TargetDescriptor): string | null {
+	return targetRootUrl(target);
+}
+
+interface JinaRerankResponse {
+	model?: string;
+	results?: Array<{
+		index?: number;
+		relevance_score?: number;
+		document?: { text?: string } | string;
+	}>;
+}
+
+const llamacppRerankRuntime: RuntimeDescriptor = {
+	id: "llamacpp-rerank",
+	displayName: "llama.cpp (rerank)",
+	kind: "http",
+	tier: "local-native",
+	apiFamily: "openai-completions",
+	auth: "api-key",
+	defaultCapabilities,
+	hidden: true,
+	async probe(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult> {
+		const base = targetUrl(target);
+		if (!base) return { ok: false, error: "target has no url" };
+		const healthOpts = { url: `${base}/health`, timeoutMs: ctx.httpTimeoutMs } as const;
+		const health = await (ctx.signal ? probeHttp({ ...healthOpts, signal: ctx.signal }) : probeHttp(healthOpts));
+		if (!health.ok) return health;
+		// Inference POSTs can load a model. Even /props?model=<id> can load a
+		// router worker, so ordinary discovery reads only the root metadata.
+		const props = await probeLlamaCppProps(base, ctx);
+		const result: ProbeResult = {
+			ok: true,
+			notes: ["Reranking inference not qualified: discovery read health and metadata only."],
+		};
+		if (health.latencyMs !== undefined) result.latencyMs = health.latencyMs;
+		if (props.discoveredCapabilities) result.discoveredCapabilities = props.discoveredCapabilities;
+		if (props.serverVersion) result.serverVersion = props.serverVersion;
+		return result;
+	},
+	async probeModels(target: TargetDescriptor, ctx: ProbeContext): Promise<string[]> {
+		const base = targetUrl(target);
+		if (!base) return [];
+		return probeOpenAIModels(base, ctx);
+	},
+	synthesizeModel(target: TargetDescriptor, wireModelId: string, kb: KnowledgeBaseHit | null): Model<Api> {
+		return synthLocalModel({
+			target,
+			wireModelId,
+			kb,
+			defaultCapabilities,
+			apiFamily: "openai-completions",
+			provider: "llamacpp",
+			baseUrlForTarget: withV1,
+		});
+	},
+	async rerank(target: TargetDescriptor, query: string, documents: string[], ctx: ProbeContext): Promise<RerankResult> {
+		const base = targetUrl(target);
+		if (!base) throw new Error("target has no url");
+		const modelId = target.defaultModel ?? "default";
+		const req = {
+			url: `${base}/reranking`,
+			method: "POST" as const,
+			timeoutMs: ctx.httpTimeoutMs,
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				query,
+				documents,
+				top_n: documents.length,
+				model: modelId,
+			}),
+		};
+		const result = await (ctx.signal
+			? probeJson<JinaRerankResponse>({ ...req, signal: ctx.signal })
+			: probeJson<JinaRerankResponse>(req));
+		if (!result.ok || !result.data) {
+			throw new Error(`llama.cpp rerank failed: ${result.error ?? "unknown"}`);
+		}
+		const rows = result.data.results ?? [];
+		const items = rows.map((row) => {
+			const idx = typeof row.index === "number" ? row.index : 0;
+			const score = typeof row.relevance_score === "number" ? row.relevance_score : 0;
+			const doc =
+				typeof row.document === "string"
+					? row.document
+					: typeof row.document?.text === "string"
+						? row.document.text
+						: undefined;
+			const item: RerankResult["items"][number] = { index: idx, score };
+			if (doc !== undefined) item.document = doc;
+			return item;
+		});
+		return { items, model: result.data.model ?? modelId };
+	},
+};
+
+export default llamacppRerankRuntime;

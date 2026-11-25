@@ -1,0 +1,245 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Shared test harness for dispatch-bundle contract tests.
+ *
+ * Two concerns every dispatch test shares:
+ *   - State isolation. extension.start() opens the run ledger and scans the
+ *     receipts directory under PANCODE_STATE_DIR, and run completion records a
+ *     receipt and persists runs.json. Without isolation a test reads, locks,
+ *     and rewrites the developer's real multi-megabyte ledger (a state leak,
+ *     and the dominant cost of the contracts lane).
+ *   - Reproducibility plumbing. The fast collector here stays
+ *     argument-preserving: cwd and safety metadata flow through exactly as the
+ *     production collector passes them, so a regression that hands the
+ *     collector the wrong cwd or safety metadata still surfaces in receipt
+ *     content and orphan recovery.
+ */
+
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import type { DomainContractMap, DomainName } from "../../src/core/domain-loader.js";
+import type { DispatchContract } from "../../src/domains/dispatch/contract.js";
+import { createDispatchBundle } from "../../src/domains/dispatch/extension.js";
+import type { RunEnvelope, RunResult, RunResultReproducibility } from "../../src/domains/dispatch/types.js";
+import type { SpawnedWorker, SpawnedWorkerResult } from "../../src/domains/dispatch/worker-spawn.js";
+import type { PromptsContract } from "../../src/domains/prompts/contract.js";
+import { createPromptsBundle } from "../../src/domains/prompts/extension.js";
+import type { SafetyPolicyMetadata } from "../../src/domains/safety/policy-engine.js";
+import { dispatchStubContext } from "./dispatch-stub-context.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "./scratch-env.js";
+
+/**
+ * Drop-in for collectReproducibilityMetadata. It mirrors the real collector's
+ * signature and preserves both arguments, so a regression that passes the
+ * wrong cwd or safety metadata to the collector still surfaces.
+ */
+export function fastReproducibility(cwd: string, safety: SafetyPolicyMetadata | null): RunResultReproducibility {
+	return {
+		cwd,
+		safetyPolicy: {
+			version: safety?.version ?? 1,
+			rulePackHash: safety?.rulePackHash ?? null,
+			rulePackVersion: safety?.rulePackVersion ?? null,
+			projectPolicyPath: safety?.projectPolicyPath ?? null,
+			projectPolicyHash: safety?.projectPolicyHash ?? null,
+			projectPolicyValid: safety?.projectPolicyValid ?? null,
+		},
+	};
+}
+
+export function makeDispatchBundle(
+	ctx: Parameters<typeof createDispatchBundle>[0],
+	options: Parameters<typeof createDispatchBundle>[1] = {},
+): ReturnType<typeof createDispatchBundle> {
+	const bundle = createPromptsBundle(ctx);
+	// start() loads the fragment table before it returns; it has no await.
+	void bundle.extension.start();
+	const production = bundle.contract;
+	const prompts: PromptsContract = {
+		...production,
+		// Preserve test isolation while using production compilation and provenance.
+		compileWorkerPrompt: (input) => production.compileWorkerPrompt({ ...input, cwd: customizationCwd(input.cwd) }),
+	};
+	const context = {
+		bus: ctx.bus,
+		getContract<N extends DomainName>(name: N): DomainContractMap[N] | undefined {
+			if (name === "prompts") return prompts as DomainContractMap[N];
+			return ctx.getContract(name);
+		},
+	};
+	return createDispatchBundle(context, { collectReproducibility: fastReproducibility, ...options });
+}
+
+let isolated: IsolatedPancodeEnv | null = null;
+
+/** Empty project root for tests that never isolated; created once, never populated. */
+let fallbackProjectCwd: string | null = null;
+
+/**
+ * The project root the harness compiles worker customization against.
+ * Production dispatch passes `req.cwd ?? process.cwd()`, and most dispatch
+ * tests name no cwd, so honoring that literally would read the developer's
+ * repo-root `.pancode/rules/**` and `.pancode/profile.yaml` (gitignored,
+ * machine-local) into every worker prompt and receipt. A cwd the test chose
+ * itself is used as is; the process default is redirected to an empty
+ * project root under the isolated scratch home so no dispatch test depends on
+ * what happens to sit in the repo checkout.
+ */
+function customizationCwd(inputCwd: string | undefined): string {
+	if (inputCwd !== undefined && inputCwd !== process.cwd()) return inputCwd;
+	if (isolated) return join(isolated.dir, "project");
+	fallbackProjectCwd ??= mkdtempSync(join(tmpdir(), "pancode-dispatch-project-"));
+	return fallbackProjectCwd;
+}
+
+/**
+ * Several call sites re-isolate per test in `beforeEach` but only call
+ * `restoreDispatchState()` once, in `after`, at the end of the whole describe
+ * (an intentional "leave the leftover scratch dirs for one bulk cleanup"
+ * shortcut, harmless before isolatePancodeEnv() gained a process-wide lock).
+ * Now that the lock exists, a second acquire before the first releases would
+ * deadlock every test after it. Releasing whatever this module is still
+ * holding before acquiring the next one preserves the "beforeEach re-isolates"
+ * behavior those call sites rely on without needing an intervening
+ * `restoreDispatchState()`, and cleans up the previous scratch dir eagerly
+ * instead of leaking it to the end of the run as a side effect.
+ */
+export async function isolateDispatchState(): Promise<void> {
+	isolated?.restore();
+	isolated = await isolatePancodeEnv("pancode-dispatch-state-");
+}
+
+export function restoreDispatchState(): void {
+	isolated?.restore();
+	isolated = null;
+}
+
+/**
+ * Hold the event loop open for the duration of a test.
+ *
+ * The heartbeat watchdog is deliberately unref'd in production: a stall
+ * detector must never be the reason a finished CLI process stays alive. In a
+ * real dispatch the worker's own child-process handles keep the loop running
+ * long enough for the watchdog to fire, but a test whose worker is a plain
+ * object has no such handle. Node 22 then settles the loop while the test is
+ * still awaiting a promise only the watchdog can resolve, and the test is
+ * cancelled with "Promise resolution is still pending". Node 24 happens to
+ * keep a handle of its own, which is why this only ever showed up on 22.
+ *
+ * Any test that waits on stall detection, heartbeat classification, or another
+ * unref'd timer holds this and releases it in a `finally`.
+ */
+export function holdEventLoop(): { release(): void } {
+	const timer = setInterval(() => {}, 1_000);
+	timer.ref?.();
+	return {
+		release(): void {
+			clearInterval(timer);
+		},
+	};
+}
+
+/**
+ * One read the worker ran and that succeeded, as a dispatch stub yields it: an explorer's report owes observed
+ * evidence (fleet design 4.8), so a stub that must succeed reads once before it reports.
+ */
+export function observedReadEvents(path = "fixture.txt", toolCallId = "observed-read"): Array<Record<string, unknown>> {
+	return [
+		{ type: "tool_execution_start", toolCallId, toolName: "read", args: { path } },
+		{
+			type: "tool_execution_end",
+			toolCallId,
+			toolName: "read",
+			isError: false,
+			result: { content: [{ type: "text", text: path }] },
+		},
+		{ type: "pancode_tool_finish", payload: { tool: "read", toolCallId, outcome: "ok", durationMs: 1 } },
+	];
+}
+
+/**
+ * One check the worker ran through bash and that passed, as a dispatch stub yields it: a checker's or reviewer's
+ * claimed check must be one the run executed (fleet design 4.8), so a stub that claims `command` runs it first.
+ */
+export function observedCheckEvents(
+	command = "npm test",
+	toolCallId = "observed-check",
+): Array<Record<string, unknown>> {
+	return [
+		{ type: "tool_execution_start", toolCallId, toolName: "bash", args: { command } },
+		{
+			type: "tool_execution_end",
+			toolCallId,
+			toolName: "bash",
+			isError: false,
+			result: { content: [{ type: "text", text: "ok" }] },
+		},
+		{ type: "pancode_tool_finish", payload: { tool: "bash", toolCallId, outcome: "ok", durationMs: 1 } },
+	];
+}
+
+/**
+ * Settle one builder dispatch whose stub worker read once and returns `report` as its mutation report, through the
+ * real settle path: host checks, grade and seal. `beforeExit` changes the tree while the worker is still running;
+ * `events` replaces the one read with the tool finishes the worker yields before its report.
+ */
+export async function settleStubBuilder(input: {
+	cwd: string;
+	report: object;
+	/** The builder recipe; coder by default. */
+	agentId?: string;
+	resolvedVerification?: Parameters<DispatchContract["dispatch"]>[0]["resolvedVerification"];
+	beforeExit?: () => void;
+	events?: ReadonlyArray<Record<string, unknown>>;
+}): Promise<{ receipt: RunResult; run: RunEnvelope }> {
+	const calls = input.events ?? [
+		{ type: "pancode_tool_finish", payload: { tool: "read", outcome: "ok", durationMs: 1 } },
+	];
+	let finish!: (result: SpawnedWorkerResult) => void;
+	const done = new Promise<SpawnedWorkerResult>((resolve) => {
+		finish = resolve;
+	});
+	const worker: SpawnedWorker = {
+		pid: null,
+		promise: done,
+		heartbeatAt: { current: Date.now(), monotonic: 0 },
+		events: (async function* () {
+			await done;
+			yield* calls;
+			yield {
+				type: "message_end",
+				message: { role: "assistant", stopReason: "stop", content: JSON.stringify(input.report) },
+			};
+		})(),
+		abort() {
+			finish({ exitCode: null, signal: "SIGTERM" });
+		},
+	};
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.fleet.retry.maxRetries = 0;
+	const bundle = makeDispatchBundle(dispatchStubContext({ settings }), { spawnWorker: () => worker });
+	await bundle.extension.start();
+	try {
+		const handle = await bundle.contract.dispatch({
+			agentId: input.agentId ?? "coder",
+			task: "Edit input.txt.",
+			executionRole: "builder",
+			requestOrigin: "internal",
+			resultContractOverride: { kind: "mutation-report" },
+			cwd: input.cwd,
+			...(input.resolvedVerification !== undefined ? { resolvedVerification: input.resolvedVerification } : {}),
+		});
+		input.beforeExit?.();
+		finish({ exitCode: 0, signal: null });
+		const receipt = await handle.finalPromise;
+		const run = bundle.contract.getRun(receipt.runId);
+		if (run === null) throw new Error(`run ${receipt.runId} left the ledger`);
+		return { receipt, run };
+	} finally {
+		finish({ exitCode: 0, signal: null });
+		await bundle.extension.stop?.();
+	}
+}

@@ -1,0 +1,765 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { getTerminationCoordinator } from "../core/termination.js";
+import type { PancodeKeybinding } from "../domains/config/keybindings.js";
+import { PANCODE_APP_KEYBINDING_IDS } from "../domains/config/keybindings.js";
+import type { Keybinding, TUI } from "../engine/tui.js";
+import {
+	ApplicationInputTuiAltScreen,
+	decodePrintableKey,
+	isKeyRelease,
+	matchesKey,
+	TuiAltScreen,
+} from "../engine/tui.js";
+import type {
+	ApplicationClock,
+	ApplicationController,
+	ApplicationInputResult,
+	ApplicationIntervalCoordinator,
+	ApplicationIntervalHandle,
+	ApplicationSignalCoordinator,
+} from "./application-controller.js";
+import { createApplicationController, SURFACE_ACTION_ORDER } from "./application-controller.js";
+import { backOutOneLayer } from "./escape-layers.js";
+import { formatKeyLabel } from "./keybinding-manager.js";
+import { focusedComponent, keyboardOwner } from "./keyboard-owner.js";
+import { scrollTranscriptPage } from "./layout.js";
+import type { LeaderTarget } from "./leader-key.js";
+import { createLeaderKeyController } from "./leader-key.js";
+import { createLeaderMenu, leaderMenuRows } from "./leader-menu.js";
+import type { OverlayState } from "./overlay-lifecycle.js";
+import { routeOverlayKey } from "./overlay-lifecycle.js";
+import { permissionEscapeLayers } from "./permission-hint.js";
+import { createQuickHelp } from "./quick-help.js";
+import type { RenderInputAction } from "./render-trace.js";
+import { terminalReportKind } from "./terminal-reports.js";
+
+export interface InteractiveInputKeyActionDeps {
+	matches: (data: string, id: PancodeKeybinding) => boolean;
+	canExit: () => boolean;
+	cycleThinking: () => void;
+	requestShutdown: () => void;
+	suspendProcess?: () => void;
+	toggleStatus: () => void;
+	toggleDispatchBoard: () => void;
+	toggleFilesPane: () => void;
+	toggleMusic?: () => void;
+	openTasks: () => void;
+	openDecisions: () => void;
+	backgroundDispatch: () => void;
+	openModelSelector: () => void;
+	openHub: () => void;
+	openTree: () => void;
+	cycleScopedModelForward: () => void;
+	cycleScopedModelBackward: () => void;
+	dismissNotifications: () => void;
+	cycleOutputStyle: () => void;
+	toggleAutonomy?: () => void;
+	recordFeature?: (feature: string) => void;
+	openExternalEditor: () => void;
+	clearDraft?: () => boolean;
+	interruptWithMessage: () => void;
+	restoreQueuedFollowUps: () => void;
+	openQueueNavigator: () => void;
+}
+
+export interface InteractiveInputRuntimeDeps {
+	tui?: TUI;
+	hasQueuedMessages?: () => boolean;
+	explainProtectedExit?: () => void;
+	explainEscapeGuard?: () => void;
+	/** Enter under the approval card met this draft and allowed nothing. */
+	explainDraftUnderApproval?: (draft: string) => void;
+	cancelSteerDraft?: () => boolean;
+	hasActiveEditorBash?: () => boolean;
+	explainSearchUnavailable?: () => void;
+	explainThinkingUnavailable?: () => void;
+	/** The clear-draft key emptied the composer; `undoKey` is the key that brings the draft back. */
+	noteDraftCleared?: (undoKey: string) => void;
+	keybindings: {
+		matches(data: string, id: Keybinding): boolean;
+		leaderTargets(): ReadonlyArray<LeaderTarget>;
+		getKeys?(id: Keybinding): ReadonlyArray<string>;
+		getDescription?(id: Keybinding): string;
+		getLabel?(id: Keybinding): string;
+		actionLabel?(id: Keybinding): string;
+		onReload?(listener: () => void): () => void;
+	};
+	dispatchAction: (id: PancodeKeybinding, deps: InteractiveInputKeyActionDeps) => boolean;
+	/** Leader entries the host adds that are not keybindings, such as an active workspace's keys. */
+	extraLeaderTargets?: () => ReadonlyArray<{ key: string; label: string; run: () => void }>;
+	actions: {
+		suspendProcess?(): void;
+		canExit(): boolean;
+		cycleOutputStyle(): void;
+		toggleAutonomy?(): void;
+		recordFeature?(feature: string): void;
+		availableThinkingLevels(): ReadonlyArray<string>;
+		onCycleThinking(): void;
+		cycleScopedModelForward(): void;
+		cycleScopedModelBackward(): void;
+		/** Convert the newest attached dispatch into a detached batch and notice the outcome. */
+		backgroundActiveDispatch(): void;
+		/** Toggle the files pane; the application decides what "inactive" says. */
+		toggleFilesPane(): void;
+		/** Toggle the music pane; the application decides what "inactive" says. */
+		toggleMusic?(): void;
+		/** False while music is off or this session has no pane host: its menu and card rows stay out. */
+		musicAvailable?(): boolean;
+		/** The workers key: the workers dock with a pane host, the Fleet Runs board without one. */
+		toggleWorkersDock?(): void;
+		/** Open the steering queue navigator overlay. */
+		openQueueNavigator(): void;
+	};
+	overlay: {
+		getState(): OverlayState;
+		closeOverlay(): void;
+		confirmPermission(): void;
+		/** The live card offers its sandbox escape's session option, and choosing it (M-7). */
+		canConfirmPermissionForSession?(): boolean;
+		confirmPermissionForSession?(): void;
+		/** The live card opened within the settle window, so Enter does not allow yet. */
+		isPermissionSettling?(): boolean;
+		cancelPermission?(): void;
+		retryPendingPermission?(): boolean;
+		stopTurnFromPermission(): void;
+		/** Any key while a card is up says the operator is present and holds its countdown (#421). */
+		noteOperatorPresence?(): void;
+		canInspectMutation(): boolean;
+		isInspectingMutation(): boolean;
+		toggleMutationInspection(): void;
+		scrollMutationInspection(delta: number): void;
+		togglePermissionTerms(): void;
+		isShowingPermissionTerms?(): boolean;
+		scrollPermissionCard(delta: number): boolean;
+		cancelAskUser(): void;
+		toggleFooterDashboardState(): void;
+		toggleDispatchBoardOverlay(): void;
+		openModelOverlayState(): void;
+		openSkillsHubState(): void;
+		openTreeOverlayState(): void;
+		openTasksOverlayState(): void;
+		openDecisionsOverlayState(): void;
+	};
+	refreshFooter: () => void;
+	/** Armed/disarmed transitions of the Ctrl+G leader, for the footer indicator. */
+	onLeaderStateChange?: (pending: boolean) => void;
+	/** Armed/disarmed transitions of the Ctrl+C double tap, for the same indicator row. */
+	onShutdownArmedChange?: (armed: boolean, detail?: import("./application-controller.js").ShutdownArmDetail) => void;
+	dispatchBoard: {
+		selectPrevious(): void;
+		selectNext(): void;
+		toggleDetail(): void;
+		detailExpanded?(): boolean;
+		scrollDetail?(direction: -1 | 1): void;
+		cancelArmed?(): boolean;
+		armCancel?(on: boolean): void;
+	};
+	/** Enter in the workers view; false falls through to the detail toggle. */
+	watchSelectedDispatch: () => boolean;
+	steerSelectedDispatch: () => void;
+	cancelSelectedDispatch: () => void;
+	cancelActiveEditorBash: () => boolean;
+	isStreaming: () => boolean;
+	cancelActiveRun: () => void;
+	editor: {
+		getText(): string;
+		setText(text: string): void;
+		handleInput?(data: string): void;
+		applyEdit?(operation: import("./overlay-key-routing.js").DraftEditOperation | "undo"): void;
+		isShowingAutocomplete?(): boolean;
+	};
+	editorSubmit: {
+		openExternalEditorForInput(): void;
+		interruptFromEditor(): void;
+		restoreQueuedFollowUpsToEditor(): void;
+	};
+	requestRender: () => void;
+	notifications: {
+		list(): ReadonlyArray<{ id: string }>;
+		dismiss(id: string): void;
+		dismissAll(): void;
+	};
+	shutdown: {
+		stopTickers(): void;
+		disposeInteractiveTickers(): void;
+		disposeBeforeStatus(): void;
+		disposeProjectionPrimary(): void;
+		disposeStatus(): void;
+		disposeProjectionRemaining(): void;
+		disposeOverlay(): void;
+		stopAgentProgress(): void;
+		disposeChat(): void;
+		disposeSubscriptions(): void;
+	};
+	stopUi: () => void;
+	beforeStopUi?: () => Promise<void>;
+	cancelParkedCalls: (reason: string) => void;
+	onShutdown: () => Promise<void>;
+	onCleanExit?: (trigger: "quit" | "interrupt") => void;
+	reportShutdownFailure?: (step: string, error: unknown) => void;
+	/** Defaults to the process termination coordinator's drain phase. */
+	registerTerminalTeardown?: (teardown: () => void | Promise<void>) => void;
+	registerInputListener: (listener: (data: string) => ApplicationInputResult) => void;
+	onInputIngress?: (action: RenderInputAction, data: string) => void;
+	intervalsToClear?: ReadonlyArray<ApplicationIntervalHandle>;
+	clock?: ApplicationClock;
+	signals?: ApplicationSignalCoordinator;
+	intervals?: ApplicationIntervalCoordinator;
+}
+
+/** Compose the main-editor input boundary without booting a terminal or provider. */
+export function createInteractiveInputRuntime(deps: InteractiveInputRuntimeDeps): ApplicationController {
+	let controller: ApplicationController;
+	const keyActionDeps = (): InteractiveInputKeyActionDeps => ({
+		matches: (input, id) => deps.keybindings.matches(input, id),
+		canExit: deps.actions.canExit,
+		cycleThinking: () => {
+			const available = deps.actions.availableThinkingLevels();
+			if (!(available.length === 1 && available[0] === "off")) deps.actions.onCycleThinking();
+			else deps.explainThinkingUnavailable?.();
+			deps.refreshFooter();
+			deps.requestRender();
+		},
+		requestShutdown: () => void controller.shutdown(),
+		...(deps.actions.suspendProcess ? { suspendProcess: deps.actions.suspendProcess } : {}),
+		toggleStatus: deps.overlay.toggleFooterDashboardState,
+		toggleDispatchBoard: deps.actions.toggleWorkersDock ?? deps.overlay.toggleDispatchBoardOverlay,
+		openTasks: deps.overlay.openTasksOverlayState,
+		openDecisions: deps.overlay.openDecisionsOverlayState,
+		backgroundDispatch: deps.actions.backgroundActiveDispatch,
+		toggleFilesPane: deps.actions.toggleFilesPane,
+		...(deps.actions.toggleMusic ? { toggleMusic: deps.actions.toggleMusic } : {}),
+		openModelSelector: deps.overlay.openModelOverlayState,
+		openHub: deps.overlay.openSkillsHubState,
+		openTree: deps.overlay.openTreeOverlayState,
+		cycleScopedModelForward: () => {
+			deps.actions.cycleScopedModelForward();
+			deps.refreshFooter();
+			deps.requestRender();
+		},
+		cycleScopedModelBackward: () => {
+			deps.actions.cycleScopedModelBackward();
+			deps.refreshFooter();
+			deps.requestRender();
+		},
+		dismissNotifications: () => controller.dismissNotifications(),
+		cycleOutputStyle: deps.actions.cycleOutputStyle,
+		...(deps.actions.toggleAutonomy ? { toggleAutonomy: deps.actions.toggleAutonomy } : {}),
+		...(deps.actions.recordFeature ? { recordFeature: deps.actions.recordFeature } : {}),
+		openExternalEditor: deps.editorSubmit.openExternalEditorForInput,
+		clearDraft: () => {
+			if (deps.editor.getText().length === 0) return false;
+			// The editor's setText keeps an undo snapshot, pasted blocks included, so undo restores the draft whole.
+			deps.editor.setText("");
+			deps.noteDraftCleared?.(deps.keybindings.actionLabel?.("tui.editor.undo") ?? "Ctrl+_");
+			deps.refreshFooter();
+			deps.requestRender();
+			return true;
+		},
+		interruptWithMessage: deps.editorSubmit.interruptFromEditor,
+		restoreQueuedFollowUps: deps.editorSubmit.restoreQueuedFollowUpsToEditor,
+		openQueueNavigator: deps.actions.openQueueNavigator,
+	});
+	const focused = () => (deps.tui ? focusedComponent(deps.tui) : null);
+	const search = () => (deps.tui instanceof TuiAltScreen && deps.tui.isSearchFocused ? deps.tui : null);
+	const owner = () => keyboardOwner(focused());
+	const ownerAction = (): PancodeKeybinding | undefined =>
+		(
+			({
+				"skills-hub": "pancode.hub.toggle",
+				model: "pancode.model.select",
+				tree: "pancode.session.tree",
+				"dispatch-board": "pancode.dispatchBoard.toggle",
+				tasks: "pancode.tasks.open",
+				"queue-navigator": "pancode.queue.open",
+			}) as Partial<Record<OverlayState, PancodeKeybinding>>
+		)[deps.overlay.getState()];
+	const canToggleOwner = () => deps.overlay.getState() === "dispatch-board" || owner().keyboardScope === "browse";
+	/** Runs from every scope, as its direct key does (FX-13). */
+	const surfaceAction = (id: Keybinding | undefined): boolean =>
+		(SURFACE_ACTION_ORDER as ReadonlyArray<string>).includes(id ?? "");
+	const omitAction = (id: Keybinding | undefined): boolean =>
+		id === "pancode.music.toggle" && deps.actions.musicAvailable?.() === false;
+	const targets = (): ReadonlyArray<LeaderTarget> => {
+		// Viewport actions work only in the fullscreen layout, so the default layout does not list them.
+		const all = deps.keybindings
+			.leaderTargets()
+			.filter(({ id }) => deps.tui instanceof TuiAltScreen || !id?.startsWith("tui.altScreen."))
+			.filter(({ id }) => !omitAction(id));
+		const filtered = search()
+			? all.filter(({ id }) => id === "tui.editor.undo" || id === "tui.altScreen.search" || surfaceAction(id))
+			: deps.overlay.getState() === "closed"
+				? all
+				: all.filter(
+						({ id }) =>
+							surfaceAction(id) ||
+							(id === ownerAction() && canToggleOwner()) ||
+							(id === "tui.editor.undo" &&
+								(owner().keyboardScope === "edit" || deps.overlay.getState() === "permission-confirm")),
+					);
+		const builtins = filtered.map((entry): LeaderTarget => {
+			if (entry.id === undefined) return entry;
+			return {
+				...entry,
+				label: deps.keybindings.getLabel?.(entry.id) ?? deps.keybindings.getDescription?.(entry.id) ?? entry.id,
+				...(entry.id === "pancode.thinking.cycle" &&
+				deps.actions.availableThinkingLevels().every((level) => level === "off")
+					? { disabledReason: "Not adjustable on this model" }
+					: {}),
+			};
+		});
+		if (deps.overlay.getState() === "permission-confirm") {
+			return [
+				...builtins,
+				{ key: "x", label: "Stop turn", run: deps.overlay.stopTurnFromPermission },
+				...(deps.overlay.canConfirmPermissionForSession?.() === true
+					? [{ key: "p", label: "Approve for this session", run: () => deps.overlay.confirmPermissionForSession?.() }]
+					: []),
+				{
+					key: "t",
+					label: deps.overlay.isShowingPermissionTerms?.() ? "Hide terms" : "Show terms",
+					...(deps.overlay.isInspectingMutation() ? { disabledReason: "Close details first" } : {}),
+					run: deps.overlay.togglePermissionTerms,
+				},
+				...(deps.overlay.canInspectMutation()
+					? [{ key: "v", label: "Inspect details", run: deps.overlay.toggleMutationInspection }]
+					: []),
+			];
+		}
+		if (search() || deps.overlay.getState() !== "closed") return builtins;
+		// Host entries join only while the composer has the keyboard; a built-in suffix always wins.
+		const taken = new Set(builtins.map((entry) => entry.key).filter(Boolean));
+		const extra = (deps.extraLeaderTargets?.() ?? []).map(
+			(entry): LeaderTarget => (taken.has(entry.key) ? { ...entry, disabledReason: "key taken by PanCode" } : entry),
+		);
+		return [...builtins, ...extra];
+	};
+	const quickHelp = deps.tui ? createQuickHelp(deps.tui, deps.keybindings, omitAction) : undefined;
+	const menu = deps.tui
+		? createLeaderMenu(
+				deps.tui,
+				() => (search() ? "Transcript search" : overlayScopeLabel(deps.overlay.getState())),
+				(id) =>
+					deps.keybindings
+						.getKeys?.(id)
+						.map((key) => formatKeyLabel(key))
+						.join(" / ") ?? "",
+			)
+		: undefined;
+	const dispatchLeader = (id: Keybinding): boolean => {
+		if (id === "tui.editor.undo") {
+			if (search()) search()?.undoSearchQuery();
+			else if (deps.overlay.getState() === "closed" || deps.overlay.getState() === "permission-confirm")
+				deps.editor.applyEdit?.("undo");
+			else owner().undoInput?.();
+			deps.requestRender();
+			return true;
+		}
+		if (id.startsWith("tui.altScreen.")) {
+			const tui = deps.tui;
+			if (!(tui instanceof TuiAltScreen)) {
+				deps.explainSearchUnavailable?.();
+				return true;
+			}
+			switch (id) {
+				case "tui.altScreen.search":
+					tui.toggleSearch();
+					break;
+				case "tui.altScreen.pageUp":
+					tui.scrollBy(-Math.max(1, tui.terminal.rows - 3));
+					break;
+				case "tui.altScreen.pageDown":
+					tui.scrollBy(Math.max(1, tui.terminal.rows - 3));
+					break;
+				case "tui.altScreen.top":
+					tui.scrollToTop();
+					break;
+				case "tui.altScreen.bottom":
+					tui.scrollToBottom();
+					break;
+				case "tui.altScreen.previousPrompt":
+					tui.scrollToPrompt(-1);
+					break;
+				case "tui.altScreen.nextPrompt":
+					tui.scrollToPrompt(1);
+					break;
+			}
+			return true;
+		}
+		if (surfaceAction(id)) return deps.dispatchAction(id as PancodeKeybinding, keyActionDeps());
+		if (deps.overlay.getState() !== "closed") {
+			if (id === ownerAction() && canToggleOwner()) deps.overlay.closeOverlay();
+			return true;
+		}
+		return deps.dispatchAction(id as PancodeKeybinding, keyActionDeps());
+	};
+	const leaderKeys = createLeaderKeyController({
+		matchesLeader: (input) => deps.keybindings.matches(input, "pancode.leader"),
+		leaderTargets: targets,
+		dispatchAction: dispatchLeader,
+		...(menu ? { onMenuChange: menu } : {}),
+		isRelease: isKeyRelease,
+		...(deps.tui ? { pageSize: () => (deps.tui ? leaderMenuRows(deps.tui, targets().length) : 10) } : {}),
+		onStateChange: (pending) => {
+			deps.onLeaderStateChange?.(pending);
+			deps.refreshFooter();
+			deps.requestRender();
+		},
+	});
+
+	const removeReload = deps.keybindings.onReload?.(() => leaderKeys.reset());
+	controller = createApplicationController({
+		routeComposerKey: (data) => {
+			if (deps.keybindings.matches(data, "tui.altScreen.search") && !(deps.tui instanceof TuiAltScreen)) {
+				deps.explainSearchUnavailable?.();
+				return true;
+			}
+			// The quick help card is a glance: whatever key comes next closes it
+			// and does nothing else, so a `/` typed to dismiss it does not open
+			// the command list underneath.
+			if (quickHelp?.isOpen()) {
+				quickHelp.close();
+				return true;
+			}
+			// Keys that mean something only on an empty composer. With a draft in
+			// the buffer they are text or cursor movement, as pi delivers them.
+			if (deps.editor.getText().length > 0 || (deps.editor.isShowingAutocomplete?.() ?? false)) return false;
+			if (quickHelp && data === "?") {
+				deps.actions.recordFeature?.("?");
+				quickHelp.open();
+				return true;
+			}
+			if (matchesKey(data, "left")) {
+				deps.actions.recordFeature?.("/fleet");
+				(deps.actions.toggleWorkersDock ?? deps.overlay.toggleDispatchBoardOverlay)();
+				return true;
+			}
+			if (matchesKey(data, "down")) {
+				deps.actions.recordFeature?.("/tasks");
+				deps.overlay.openTasksOverlayState();
+				return true;
+			}
+			return false;
+		},
+		isSearchFocused: () => search() !== null,
+		closeSearch: () => search()?.closeSearch(),
+		selectPastOverlay: (data) => {
+			if (deps.tui instanceof ApplicationInputTuiAltScreen) deps.tui.selectPastOverlay(data);
+		},
+		isAutocompleteVisible: () => deps.editor.isShowingAutocomplete?.() ?? false,
+		hasQueuedMessages: () => deps.hasQueuedMessages?.() ?? false,
+		explainProtectedExit: () => deps.explainProtectedExit?.(),
+		explainEscapeGuard: () => deps.explainEscapeGuard?.(),
+		...(deps.cancelSteerDraft ? { cancelSteerDraft: deps.cancelSteerDraft } : {}),
+		closeGlance: () => {
+			if (!quickHelp?.isOpen()) return false;
+			quickHelp.close();
+			return true;
+		},
+		...(deps.hasActiveEditorBash ? { hasActiveEditorBash: deps.hasActiveEditorBash } : {}),
+		forwardFocusedInput: (data) => {
+			const active = search();
+			if (active) {
+				if (
+					deps.keybindings.matches(data, "tui.altScreen.search") ||
+					deps.keybindings.matches(data, "tui.altScreen.searchClose") ||
+					matchesKey(data, "escape")
+				)
+					active.closeSearch();
+				else if (deps.keybindings.matches(data, "tui.altScreen.searchNext")) active.navigateSearch(1);
+				else if (deps.keybindings.matches(data, "tui.altScreen.searchPrevious")) active.navigateSearch(-1);
+				else focused()?.handleInput?.(data);
+			} else focused()?.handleInput?.(data);
+			deps.requestRender();
+		},
+		cancelFocusedOwner: () => {
+			const state = deps.overlay.getState();
+			// Ctrl+C on the card is the Esc it stands for elsewhere: it backs out of an
+			// open details or terms view first, so it never denies from a view opened to read.
+			if (state === "permission-confirm") {
+				backOutOneLayer(
+					permissionEscapeLayers(
+						deps.overlay.isInspectingMutation() ? "open" : "closed",
+						deps.overlay.isShowingPermissionTerms?.() === true ? "open" : "closed",
+						{
+							hideDetails: () => deps.overlay.toggleMutationInspection(),
+							hideTerms: () => deps.overlay.togglePermissionTerms(),
+							deny: () => deps.overlay.cancelPermission?.(),
+						},
+					),
+				);
+				deps.requestRender();
+			} else if (focused()?.handleInput) {
+				focused()?.handleInput?.(owner().ownsCtrlC === true ? "\x03" : "\x1b");
+				deps.requestRender();
+			} else deps.overlay.closeOverlay();
+		},
+		matchesRepeatableInput: (data) => {
+			// Safety takes precedence over hostile user collisions.
+			if (PANCODE_APP_KEYBINDING_IDS.some((id) => id !== "pancode.exit" && deps.keybindings.matches(data, id)))
+				return false;
+			if (deps.keybindings.matches(data, "pancode.exit"))
+				return matchesKey(data, "ctrl+d") && deps.editor.getText().length > 0 && deps.overlay.getState() === "closed";
+			if (
+				["pancode.exit", "pancode.leader", "tui.input.submit", "tui.select.confirm", "tui.select.cancel"].some((id) =>
+					deps.keybindings.matches(data, id as Keybinding),
+				) ||
+				matchesKey(data, "ctrl+c") ||
+				matchesKey(data, "escape")
+			)
+				return false;
+			const editable =
+				deps.overlay.getState() === "closed" ||
+				deps.overlay.getState() === "permission-confirm" ||
+				search() !== null ||
+				owner().keyboardScope === "edit";
+			if (editable && (decodePrintableKey(data) !== undefined || deps.keybindings.matches(data, "tui.input.newLine")))
+				return true;
+			const navigation = ["up", "down", "left", "right", "home", "end", "pageUp", "pageDown"] as const;
+			if (navigation.some((key) => matchesKey(data, key))) return true;
+			if (
+				deps.overlay.getState() !== "closed" &&
+				["tui.select.up", "tui.select.down"].some((id) => deps.keybindings.matches(data, id as Keybinding))
+			)
+				return true;
+			if (
+				deps.overlay.getState() === "closed" &&
+				["pageUp", "pageDown", "top", "bottom", "previousPrompt", "nextPrompt"].some((name) =>
+					deps.keybindings.matches(data, `tui.altScreen.${name}` as Keybinding),
+				)
+			)
+				return true;
+			return (
+				(deps.overlay.getState() === "closed" ||
+					search() !== null ||
+					owner().keyboardScope === "edit" ||
+					deps.overlay.getState() === "permission-confirm") &&
+				[
+					"undo",
+					"yank",
+					"yankPop",
+					"cursorLeft",
+					"cursorRight",
+					"cursorWordLeft",
+					"cursorWordRight",
+					"cursorLineStart",
+					"cursorLineEnd",
+					"deleteCharBackward",
+					"deleteCharForward",
+					"deleteWordBackward",
+					"deleteWordForward",
+					"deleteToLineStart",
+					"deleteToLineEnd",
+					"historyPrevious",
+					"historyNext",
+				].some((name) => deps.keybindings.matches(data, `tui.editor.${name}` as Keybinding))
+			);
+		},
+		clock: deps.clock ?? { now: () => performance.now() },
+		signals: deps.signals ?? {
+			takeInterruptOwnership: () => getTerminationCoordinator().releaseInterruptOwnership(),
+			on: (signal, listener) => void process.on(signal, listener),
+			off: (signal, listener) => void process.off(signal, listener),
+		},
+		intervals: deps.intervals ?? {
+			setInterval: (callback, delayMs) => setInterval(callback, delayMs),
+			clearInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
+		},
+		intervalsToClear: deps.intervalsToClear ?? [],
+		leaderKeys,
+		getOverlayState: () => deps.overlay.getState(),
+		routeOverlayKey: (data) =>
+			routeOverlayKey(
+				data,
+				deps.overlay.getState(),
+				{
+					cancelPermission: () => deps.overlay.cancelPermission?.(),
+					confirmPermission: () => deps.overlay.confirmPermission(),
+					canConfirmPermissionForSession: () => deps.overlay.canConfirmPermissionForSession?.() ?? false,
+					confirmPermissionForSession: () => deps.overlay.confirmPermissionForSession?.(),
+					stopTurnFromPermission: () => deps.overlay.stopTurnFromPermission(),
+					composerHasDraft: () => deps.editor.getText().length > 0,
+					explainHeldDraft: () => deps.explainDraftUnderApproval?.(deps.editor.getText()),
+					isPermissionSettling: () => deps.overlay.isPermissionSettling?.() ?? false,
+					editComposer: (data) => {
+						deps.editor.handleInput?.(data);
+						deps.requestRender();
+					},
+					canInspectMutation: () => deps.overlay.canInspectMutation(),
+					isInspectingMutation: () => deps.overlay.isInspectingMutation(),
+					toggleMutationInspection: () => deps.overlay.toggleMutationInspection(),
+					scrollMutationInspection: (delta) => deps.overlay.scrollMutationInspection(delta),
+					togglePermissionTerms: () => deps.overlay.togglePermissionTerms(),
+					isShowingPermissionTerms: () => deps.overlay.isShowingPermissionTerms?.() ?? false,
+					scrollPermissionCard: (delta) => deps.overlay.scrollPermissionCard(delta),
+					scrollTranscript: (direction) => (deps.tui ? scrollTranscriptPage(deps.tui, direction) : false),
+					canToggleOwner,
+					editDraft: (operation) => {
+						deps.editor.applyEdit?.(operation);
+						deps.requestRender();
+					},
+					closeOverlay: () => deps.overlay.closeOverlay(),
+					selectPreviousDispatch: () => {
+						deps.dispatchBoard.selectPrevious();
+						deps.requestRender();
+					},
+					selectNextDispatch: () => {
+						deps.dispatchBoard.selectNext();
+						deps.requestRender();
+					},
+					toggleSelectedDispatchDetail: () => {
+						deps.dispatchBoard.toggleDetail();
+						deps.requestRender();
+					},
+					isSelectedDispatchDetailOpen: () => deps.dispatchBoard.detailExpanded?.() === true,
+					scrollSelectedDispatchDetail: (direction) => {
+						deps.dispatchBoard.scrollDetail?.(direction);
+						deps.requestRender();
+					},
+					watchSelectedDispatch: () => {
+						const handled = deps.watchSelectedDispatch();
+						if (handled) deps.requestRender();
+						return handled;
+					},
+					startSlashCommand: (data) => {
+						deps.editor.handleInput?.(data);
+						deps.requestRender();
+					},
+					steerSelectedDispatch: deps.steerSelectedDispatch,
+					cancelSelectedDispatch: deps.cancelSelectedDispatch,
+					confirmCancelSelectedDispatch: () => {
+						const board = deps.dispatchBoard;
+						if (board.armCancel === undefined || board.cancelArmed === undefined) return true;
+						const armed = board.cancelArmed();
+						board.armCancel(!armed);
+						if (!armed) deps.requestRender();
+						return armed;
+					},
+					disarmCancelSelectedDispatch: () => deps.dispatchBoard.armCancel?.(false),
+					cancelAskUser: () => deps.overlay.cancelAskUser(),
+				},
+				(input, id) => deps.keybindings.matches(input, id),
+			),
+		matchesEditorHistory: (data) =>
+			deps.keybindings.matches(data, "tui.editor.historyPrevious") ||
+			deps.keybindings.matches(data, "tui.editor.historyNext"),
+		matchesAction: (data, id) => deps.keybindings.matches(data, id),
+		dispatchAction: (id) => deps.dispatchAction(id, keyActionDeps()),
+		cancelActiveEditorBash: deps.cancelActiveEditorBash,
+		isStreaming: deps.isStreaming,
+		cancelActiveRun: deps.cancelActiveRun,
+		getEditorText: () => deps.editor.getText(),
+		requestRender: deps.requestRender,
+		// The footer pulls the flag when it refreshes, so the refresh has to land
+		// before the controller asks for the frame. The controller owns the render
+		// request on this path, which is why this hook does not make one.
+		onShutdownArmedChange: (armed, detail) => {
+			deps.onShutdownArmedChange?.(armed, detail);
+			deps.refreshFooter();
+		},
+		closeOverlay: () => deps.overlay.closeOverlay(),
+		listNotifications: () => deps.notifications.list(),
+		dismissNotification: (id) => deps.notifications.dismiss(id),
+		dismissAllNotifications: () => deps.notifications.dismissAll(),
+		shutdownDisposers: [
+			() => deps.shutdown.stopTickers(),
+			() => leaderKeys.dispose(),
+			() => removeReload?.(),
+			() => deps.shutdown.disposeInteractiveTickers(),
+			() => deps.shutdown.disposeBeforeStatus(),
+			() => deps.shutdown.disposeProjectionPrimary(),
+			() => deps.shutdown.disposeStatus(),
+			() => deps.shutdown.disposeProjectionRemaining(),
+			() => deps.shutdown.disposeOverlay(),
+			() => deps.shutdown.stopAgentProgress(),
+			() => deps.shutdown.disposeChat(),
+			() => deps.shutdown.disposeSubscriptions(),
+		],
+		stopUi: deps.stopUi,
+		...(deps.beforeStopUi ? { beforeStopUi: deps.beforeStopUi } : {}),
+		cancelParkedCalls: deps.cancelParkedCalls,
+		onShutdown: deps.onShutdown,
+		...(deps.onCleanExit ? { onCleanExit: deps.onCleanExit } : {}),
+		registerTerminalTeardown:
+			deps.registerTerminalTeardown ?? ((teardown) => getTerminationCoordinator().onDrain(teardown)),
+		// stderr for the same reason src/core/termination.ts uses it for a failed
+		// hook: by the time teardown fails there is no UI left to carry a notice.
+		reportShutdownFailure:
+			deps.reportShutdownFailure ??
+			((step, error) => {
+				process.stderr.write(
+					`[pancode:interactive] ${step} failed: ${error instanceof Error ? error.message : String(error)}\n`,
+				);
+			}),
+	});
+	deps.registerInputListener((data) => {
+		deps.onInputIngress?.(classifyInputAction(data, deps), data);
+		if (data.length > 0 && !isKeyRelease(data)) deps.overlay.noteOperatorPresence?.();
+		// Enter arriving before the parked card mounts must neither submit a
+		// steer nor approve a card the operator has not yet seen.
+		if (deps.overlay.retryPendingPermission?.() && matchesKey(data, "enter")) return { consume: true };
+		return controller.handleInput(data);
+	});
+	return controller;
+}
+
+function classifyInputAction(data: string, deps: InteractiveInputRuntimeDeps): RenderInputAction {
+	if (data.length === 0 || isKeyRelease(data)) return "no-visual-change";
+	if (deps.keybindings.matches(data, "tui.input.submit")) return "submit";
+	const sgrMousePrefix = `${String.fromCharCode(27)}[<`;
+	if (
+		data.startsWith(`${sgrMousePrefix}64;`) ||
+		data.startsWith(`${sgrMousePrefix}65;`) ||
+		deps.keybindings.matches(data, "tui.altScreen.pageUp") ||
+		deps.keybindings.matches(data, "tui.altScreen.pageDown") ||
+		deps.keybindings.matches(data, "tui.editor.pageUp") ||
+		deps.keybindings.matches(data, "tui.editor.pageDown")
+	) {
+		return "scroll";
+	}
+	if (terminalReportKind(data) !== undefined) return "no-visual-change";
+	if (deps.overlay.getState() !== "closed") return "overlay";
+	return "editor";
+}
+
+/** Operator-facing scope names; overlay state IDs stay inside routing. */
+function overlayScopeLabel(state: OverlayState): string {
+	const names: Record<OverlayState, string> = {
+		closed: "Composer",
+		"permission-confirm": "Permission",
+		"dispatch-board": "Workers",
+		auth: "Authentication",
+		usage: "Usage",
+		"context-view": "Context",
+		"context-reset": "Context reset",
+		"thinking-level": "Thinking level",
+		tasks: "Tasks",
+		decisions: "Decisions",
+		research: "Research",
+		memory: "Memory",
+		view: "View",
+		model: "Model",
+		"model-scope": "Model cycle set",
+		settings: "Settings",
+		resume: "Resume",
+		tree: "Session tree",
+		rewind: "Rewind",
+		"message-picker": "Messages",
+		"cwd-fallback": "Working directory",
+		"ask-user": "Interview",
+		help: "Help",
+		extensions: "Extensions",
+		interop: "Interop",
+		"project-trust": "Project configuration",
+		"skills-hub": "PanHub",
+		"side-question": "Side question",
+		draft: "Drafts",
+		"handoff-review": "Handoff review",
+		"report-review": "Report",
+		"report-status": "Reports",
+		"fleet-run-approval": "Run approval",
+		"queue-navigator": "Steering queue",
+	};
+	return names[state];
+}

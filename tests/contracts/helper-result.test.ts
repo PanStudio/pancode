@@ -1,0 +1,511 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, notStrictEqual, ok, rejects, strictEqual, throws } from "node:assert/strict";
+import { test } from "node:test";
+import { formatDispatchHumanOutput } from "../../src/cli/run-output.js";
+import {
+	INTERNAL_HELPER_RESULT_KINDS,
+	validateStructuredHelperResult,
+} from "../../src/domains/agents/result-contract.js";
+import { resultContractOutputBytes } from "../../src/domains/agents/result-contract-allowance.js";
+import { mutationReportFailures } from "../../src/domains/agents/result-contract-builder-report.js";
+import { internalHelperResultSchema } from "../../src/domains/agents/result-contract-schema.js";
+import {
+	resultContractEvidenceShortfall,
+	unobservedExplorerReportReason,
+} from "../../src/domains/agents/result-contract-scout.js";
+import type { InternalHelperResultKind } from "../../src/domains/agents/result-contract-types.js";
+import { createWorkerOutputCapture } from "../../src/domains/dispatch/event-pump.js";
+
+import { executedCalls, summarizeToolActivity } from "../../src/domains/dispatch/tool-stats.js";
+import { approvedIdentityForSpec } from "../../src/domains/dispatch/worker-protocol.js";
+import { attestedToolSignature } from "../../src/engine/worker-tools.js";
+import { parseWorkerSpec, workerSpecToolNames } from "../../src/worker/spec-contract.js";
+import { makeDispatchBundle, observedReadEvents } from "../harness/dispatch.js";
+import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
+import { gradeWork } from "../harness/grade-facts.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+const evidence = {
+	cwd: "/repo",
+	networkAllowed: false,
+	filesystem: { readFile: (path: string) => (path === "/repo/source.ts" ? "export const answer = 42;\n" : null) },
+	observedReadRanges: new Map([["/repo/source.ts", [[1, 1] as const]]]),
+};
+const samples: Record<InternalHelperResultKind, Record<string, unknown>> = {
+	"mutation-report": {
+		completion: { state: "done", limitations: [], unverified: [] },
+		mutatedPaths: [],
+		validations: [],
+	},
+	"scout-report": {
+		findings: [{ claim: "Exports answer", path: "source.ts", line: 1 }],
+		needsSplit: false,
+		proposedSubtasks: [],
+	},
+	"research-report": { source: "local", findings: [{ claim: "A local observation", evidence: "source.ts" }] },
+	"world-knowledge-report": {
+		discovery: "unavailable",
+		facts: [],
+		synthesis: [],
+		uncertainties: ["No discovery access"],
+		followUpVerification: [],
+	},
+	"provenance-report": { confirmedFacts: [], missingEvidence: ["No receipt supplied"], nextInspections: [] },
+	"oracle-report": {
+		verdict: "No prior decision",
+		challenge: "Evidence is missing",
+		changesMyMind: "A receipt",
+		citedDecisions: [],
+	},
+	"context-handbook": {
+		projectName: "fixture",
+		identity: "A fixture project",
+		conventions: [],
+		invariants: [],
+		sections: [],
+	},
+};
+
+test("internal helper schemas and typed validation retain contract-specific evidence quality", () => {
+	for (const kind of INTERNAL_HELPER_RESULT_KINDS) {
+		const schema = internalHelperResultSchema({ kind });
+		ok(schema);
+		strictEqual(schema.type, "object");
+		strictEqual(schema.additionalProperties, false);
+		const result = validateStructuredHelperResult({ ...evidence, contract: { kind }, data: samples[kind] });
+		strictEqual(result.validation.conformance, "pass", kind);
+		strictEqual(result.validation.quality, kind === "scout-report" ? "pass" : "unmeasured", kind);
+		deepStrictEqual(result.structured, { version: 1, kind, data: samples[kind] });
+	}
+	strictEqual(internalHelperResultSchema({ kind: "artifact-report" }), null);
+	strictEqual(
+		validateStructuredHelperResult({ ...evidence, contract: { kind: "mutation-report" }, data: {} }).structured,
+		null,
+	);
+});
+
+test("typed mutation reports retain semantic grounding and their authorship and capture bounds", () => {
+	const contract = { kind: "mutation-report" as const, maxSummaryBytes: 32_768 };
+	const input = {
+		...evidence,
+		contract,
+		filesystem: { ...evidence.filesystem, pathExists: () => false },
+		observedRunEffects: {
+			mutatedPaths: new Set<string>(),
+			failedMutationPaths: new Set<string>(),
+			validationCommands: new Set<string>(),
+		},
+	};
+	const unsupported = validateStructuredHelperResult({
+		...input,
+		data: {
+			completion: { state: "done", limitations: [], unverified: [] },
+			mutatedPaths: ["missing.ts"],
+			validations: [],
+		},
+	});
+	strictEqual(unsupported.structured, null);
+	ok(unsupported.validation.reason?.includes("this run never wrote"));
+	const data = { ...samples[contract.kind], summary: "x".repeat(32_768), commitMessage: "x".repeat(1000) };
+	const accepted = validateStructuredHelperResult({ ...input, data });
+	deepStrictEqual(accepted.structured?.data, data);
+	strictEqual(resultContractOutputBytes(contract), 71_632);
+	strictEqual(resultContractOutputBytes({ kind: "mutation-report" }), 38_864);
+	for (const invalid of [
+		{ ...data, summary: "x".repeat(32_769) },
+		{ ...data, commitMessage: "x".repeat(1001) },
+		{ ...data, summary: "bad\u0000text" },
+		{ ...data, observations: "an observation" },
+	]) {
+		strictEqual(validateStructuredHelperResult({ ...input, data: invalid }).structured, null);
+	}
+	const capture = createWorkerOutputCapture({
+		helperResult: { contract, validate: (value) => validateStructuredHelperResult({ ...input, data: value }).structured },
+	});
+	capture.observe({ type: "pancode_helper_result", payload: accepted.structured });
+	deepStrictEqual(capture.snapshot()?.structured?.data, data);
+	const activity = summarizeToolActivity(
+		new Map([
+			[
+				"pancode_submit_result",
+				{ tool: "pancode_submit_result", count: 1, ok: 1, errors: 0, blocked: 0, totalDurationMs: 0 },
+			],
+		]),
+		() => "write",
+	);
+	strictEqual(activity.calls, 0);
+	strictEqual(activity.mutatingSucceeded, false);
+	const idle = { executed: executedCalls(activity), observations: 0, mutatingSucceeded: false, storeWritten: false };
+	strictEqual(gradeWork({ activity: idle }).outcomeCode, "obligation_unmet");
+});
+
+// bt-17: a deliberate red baseline before the change is not a failure of the work. A failing entry must say which red
+// it reports: a test-first worker that left baseline out on its red-green check was sealed assurance_compromised.
+test("a mutation report's failing entry states its baseline: a red-green baseline settles, a red final tree still fails", () => {
+	const contract = { kind: "mutation-report" as const };
+	const passed = { name: "python3 -m unittest", passed: true, evidence: "OK" };
+	const red = { name: "python3 -m unittest", passed: false, evidence: "FAILED (failures=1)" };
+	const report = (first: Record<string, unknown>) => ({
+		completion: { state: "done", limitations: [], unverified: [] },
+		mutatedPaths: [],
+		validations: [first, passed],
+	});
+	// The host's own receipts: the check ran red after the test edit, then green on the final tree.
+	const receipts = (latest: boolean) => ({
+		mutatedPaths: new Set<string>(),
+		failedMutationPaths: new Set<string>(),
+		validationCommands: new Set(["python3 -m unittest"]),
+		checkOutcomes: new Map([["python3 -m unittest", latest]]),
+		mutationObserved: true,
+	});
+	const unmarked = validateStructuredHelperResult({ ...evidence, contract, data: report(red) });
+	strictEqual(unmarked.structured, null);
+	strictEqual(unmarked.validation.conformance, "fail");
+	ok(unmarked.validation.reason?.includes('"python3 -m unittest" has passed:false without baseline'));
+	ok(
+		unmarked.validation.reason?.includes('"baseline":true}') && unmarked.validation.reason.includes('"baseline":false}'),
+	);
+	const baseline = report({ ...red, baseline: true });
+	const settled = validateStructuredHelperResult({
+		...evidence,
+		contract,
+		data: baseline,
+		observedRunEffects: receipts(true),
+	});
+	strictEqual(settled.validation.quality, "pass");
+	deepStrictEqual(settled.structured?.data, baseline);
+	deepStrictEqual(mutationReportFailures(contract, JSON.stringify(baseline)), []);
+	const stillRed = validateStructuredHelperResult({
+		...evidence,
+		contract,
+		data: baseline,
+		observedRunEffects: receipts(false),
+	});
+	strictEqual(stillRed.validation.quality, "fail");
+	const real = report({ ...red, baseline: false });
+	strictEqual(validateStructuredHelperResult({ ...evidence, contract, data: real }).validation.quality, "fail");
+	deepStrictEqual(mutationReportFailures(contract, JSON.stringify(real)), ["python3 -m unittest"]);
+});
+
+test("typed Scout submission cannot ground unread lines or smuggle continuation through degraded claims", () => {
+	const input = { ...evidence, contract: { kind: "scout-report" as const } };
+	const unread = validateStructuredHelperResult({
+		...input,
+		observedReadRanges: new Map(),
+		data: samples["scout-report"],
+	});
+	strictEqual(unread.validation.conformance, "fail");
+	strictEqual(unread.structured, null);
+	const degraded = validateStructuredHelperResult({
+		...input,
+		data: {
+			findings: [{ claim: "Unconfirmed lead" }],
+			needsSplit: true,
+			proposedSubtasks: [{ id: "write", task: "Change config", requestedAuthority: "workspace-edit" }],
+			tool: "bash",
+		},
+	});
+	strictEqual(degraded.validation.quality, "unmeasured");
+	deepStrictEqual(degraded.structured?.data, {
+		findings: [{ claim: "Unconfirmed lead" }],
+		needsSplit: false,
+		proposedSubtasks: [],
+	});
+	for (const data of ["arbitrary prose", [], { findings: undefined }, { findings: [NaN] }]) {
+		strictEqual(validateStructuredHelperResult({ ...input, data }).structured, null);
+	}
+	strictEqual(
+		validateStructuredHelperResult({
+			...evidence,
+			contract: { kind: "research-report" },
+			data: { ...samples["research-report"], source: "external" },
+		}).structured,
+		null,
+	);
+	// M-31: an unread citation, and any explorer report submitted before a tool ran, is a shortfall the repair reads for;
+	// a form refusal and a non-explorer report are not.
+	ok(resultContractEvidenceShortfall(unread.validation.reason ?? ""));
+	for (const kind of ["scout-report", "provenance-report", "research-report", "context-handbook"]) {
+		const reason = unobservedExplorerReportReason(kind, 0);
+		ok(reason !== null && resultContractEvidenceShortfall(reason), kind);
+		strictEqual(unobservedExplorerReportReason(kind, 1), null, kind);
+	}
+	strictEqual(unobservedExplorerReportReason("verifier-report", 0), null);
+	strictEqual(resultContractEvidenceShortfall("Scout result needsSplit must be a boolean"), false);
+});
+
+test("only admitted validated terminal events seal a helper result, retaining canonical text", () => {
+	const contract = { kind: "provenance-report" as const };
+	const payload = { version: 1, kind: contract.kind, data: samples[contract.kind] };
+	const event = { type: "pancode_helper_result", payload };
+	const ordinary = createWorkerOutputCapture();
+	ordinary.observe(event);
+	strictEqual(ordinary.snapshot(), undefined);
+	const capture = createWorkerOutputCapture({
+		helperResult: {
+			contract,
+			validate: (data) => validateStructuredHelperResult({ ...evidence, contract, data }).structured,
+		},
+	});
+	capture.observe({ type: "tool_execution_end", result: { details: payload } });
+	capture.observe({ ...event, payload: { ...payload, kind: "oracle-report" } });
+	capture.observe({ ...event, payload: { ...payload, data: { confirmedFacts: "invalid" } } });
+	strictEqual(capture.snapshot(), undefined);
+	capture.observe(event);
+	capture.observe({
+		type: "message_end",
+		message: { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop" },
+	});
+	capture.observe({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "later narration" } });
+	const output = capture.snapshot();
+	ok(output?.structured);
+	strictEqual(output.state, "final");
+	strictEqual(output.truncated, false);
+	deepStrictEqual(JSON.parse(output.text), output.structured.data);
+	deepStrictEqual(output.structured, payload);
+	output.structured.data.confirmedFacts = ["tamper with snapshot"];
+	deepStrictEqual(capture.snapshot()?.structured, payload);
+	const oversized = createWorkerOutputCapture({
+		helperResult: {
+			contract,
+			validate: (data) => validateStructuredHelperResult({ ...evidence, contract, data }).structured,
+		},
+	});
+	oversized.observe({
+		...event,
+		payload: { ...payload, data: { ...payload.data, confirmedFacts: ["x".repeat(9000)] } },
+	});
+	strictEqual(oversized.snapshot()?.truncated, false, "a conforming report above 8 KiB must survive capture");
+	strictEqual((oversized.snapshot()?.structured?.data.confirmedFacts as string[])[0]?.length, 9000);
+	const tooLarge = { ...payload.data, confirmedFacts: ["x".repeat(32_768)] };
+	const rejected = validateStructuredHelperResult({ ...evidence, contract, data: tooLarge });
+	strictEqual(rejected.structured, null, "reject before the worker acknowledges a report the parent cannot retain");
+	ok(rejected.validation.reason?.includes("32768 UTF-8 bytes"));
+	const finding = { claim: "" };
+	const minimal = { findings: [finding] };
+	finding.claim = "x".repeat(32_768 - Buffer.byteLength(JSON.stringify(minimal)));
+	strictEqual(
+		validateStructuredHelperResult({ ...evidence, contract: { kind: "scout-report" }, data: minimal }).structured,
+		null,
+		"canonical salvage must also fit the capture ceiling",
+	);
+});
+
+test("dispatch selects helper mode from trusted audience and seals its validated terminal handoff", async () => {
+	const env = await isolatePancodeEnv("pancode-helper-result-");
+	const bundle = makeDispatchBundle(dispatchStubContext(), {
+		spawnWorker(spec) {
+			const parsed = parseWorkerSpec(JSON.parse(JSON.stringify(spec)));
+			strictEqual(parsed.helperResult, true);
+			strictEqual(spec.envelope.write.mode, "none");
+			const tools = workerSpecToolNames(spec);
+			ok(!tools.includes("write") && !tools.includes("edit") && !tools.includes("bash"));
+			throws(() => parseWorkerSpec({ ...spec, helperResult: false }), /helperResult/);
+			throws(() => parseWorkerSpec({ ...spec, resultContract: { kind: "artifact-report" } }), /helperResult/);
+			strictEqual(
+				approvedIdentityForSpec(spec).toolSignature,
+				attestedToolSignature({
+					allowedTools: workerSpecToolNames(spec),
+					toolsSupported: true,
+					helperResult: true,
+					...(spec.toolProfile !== undefined ? { toolProfile: spec.toolProfile } : {}),
+					agentId: spec.agentId,
+					task: spec.task,
+				}),
+			);
+			const ordinarySpec = { ...spec };
+			delete ordinarySpec.helperResult;
+			notStrictEqual(approvedIdentityForSpec(spec).toolSignature, approvedIdentityForSpec(ordinarySpec).toolSignature);
+			return {
+				pid: null,
+				heartbeatAt: { current: Date.now(), monotonic: performance.now() },
+				promise: Promise.resolve({ exitCode: 0, signal: null }),
+				abort() {},
+				events: (async function* () {
+					// A provenance report meets the observed-evidence obligation only after it read something.
+					for (const event of observedReadEvents("receipt.json")) yield event;
+					yield {
+						type: "pancode_helper_result",
+						payload: {
+							version: 1,
+							kind: "provenance-report",
+							data: samples["provenance-report"],
+						},
+					};
+				})(),
+			};
+		},
+	});
+	try {
+		await bundle.extension.start();
+		const run = await bundle.contract.dispatch({
+			agentId: "provenance",
+			task: "Inspect receipt evidence",
+			executionRole: "explorer",
+			requestOrigin: "internal",
+			cwd: env.dir,
+		});
+		const receipt = await run.finalPromise;
+		strictEqual(receipt.outcome, "succeeded", receipt.failureMessage);
+		deepStrictEqual(receipt.output?.structured?.data, samples["provenance-report"]);
+		strictEqual(receipt.quality.resultContract?.conformance, "pass");
+		strictEqual(receipt.quality.resultContract?.quality, "unmeasured");
+		const envelope = bundle.contract.getRun(run.runId);
+		ok(envelope);
+	} finally {
+		await bundle.extension.stop?.();
+		env.restore();
+	}
+});
+
+test("mutation workers gain typed handoff eligibility while artifact helpers retain ordinary specs", async () => {
+	const env = await isolatePancodeEnv("pancode-helper-eligibility-");
+	let starts = 0;
+	const bundle = makeDispatchBundle(dispatchStubContext(), {
+		spawnWorker(spec) {
+			starts++;
+			const helperResult = spec.agentId === "coder" ? true : undefined;
+			strictEqual(spec.helperResult, helperResult);
+			strictEqual(parseWorkerSpec(JSON.parse(JSON.stringify(spec))).helperResult, helperResult);
+			throw new Error("ordinary worker reached");
+		},
+	});
+	try {
+		await bundle.extension.start();
+		for (const agentId of ["coder", "wiki-writer"]) {
+			const request = {
+				agentId,
+				task: "Write the assigned artifact",
+				executionRole: "builder" as const,
+				requestOrigin: "internal" as const,
+				cwd: env.dir,
+			};
+			await rejects(
+				bundle.contract.dispatch({ ...request, helperResult: true } as typeof request),
+				/unknown key: helperResult/,
+			);
+			await rejects(bundle.contract.dispatch(request), /ordinary worker reached/);
+		}
+		strictEqual(starts, 2);
+	} finally {
+		await bundle.extension.stop?.();
+		env.restore();
+	}
+});
+
+test("headless human output lists a code check that ran and failed as failed, not unverified", () => {
+	const unknown = { kind: "unknown", reason: "not-observed" };
+	const data = {
+		passed: false,
+		exitCode: 1,
+		checks: [
+			{ name: "test", passed: false, evidence: "`npm test` exit 1 in 40ms", ran: true },
+			{ name: "changed tests", passed: false, evidence: "Changed test a.test.js was not run", ran: false },
+			{ name: "legacy", passed: false, evidence: "sealed before ran" },
+		],
+		artifactPaths: [],
+		outputExcerpt: "",
+	};
+	const human = formatDispatchHumanOutput("", {
+		runId: "r",
+		agentId: "a",
+		exitCode: 1,
+		targetId: "t",
+		wireModelId: "m",
+		startedAt: "2026-01-01T00:00:00Z",
+		endedAt: "2026-01-01T00:00:01Z",
+		spend: { totalTokens: unknown, usage: { reasoning: unknown } },
+		quality: {},
+		output: { state: "final", truncated: false, text: JSON.stringify(data), structured: { kind: "code-report", data } },
+	} as never);
+	ok(human.includes("Failed checks:\n- test: `npm test` exit 1 in 40ms\n"), human);
+	ok(
+		human.includes("Not verified:\n- changed tests: Changed test a.test.js was not run\n- legacy: sealed before ran\n"),
+		human,
+	);
+	ok(human.includes(" failed_checks=1 verification=unverified not_verified=2 "), human);
+	// CLI-6: a mutation report lists only executed checks in validations, so a failed one is a failure, not a gap.
+	const report = {
+		completion: { state: "done", limitations: [], unverified: [] },
+		mutatedPaths: ["a.js"],
+		validations: [
+			{ name: "npm test", passed: false, evidence: "exit 1" },
+			{ name: "red first", passed: false, evidence: "exit 1", baseline: true },
+		],
+		declaredChecks: ["lint: no execution authority"],
+	};
+	const mutation = formatDispatchHumanOutput("", {
+		runId: "r",
+		agentId: "coder",
+		exitCode: 0,
+		targetId: "t",
+		wireModelId: "m",
+		startedAt: "2026-01-01T00:00:00Z",
+		endedAt: "2026-01-01T00:00:01Z",
+		spend: { totalTokens: unknown, usage: { reasoning: unknown } },
+		quality: {},
+		output: {
+			state: "final",
+			truncated: false,
+			text: JSON.stringify(report),
+			structured: { kind: "mutation-report", data: report },
+		},
+	} as never);
+	ok(
+		mutation.includes("Failed checks:\n- npm test: exit 1\n\nNot verified:\n- lint: no execution authority\n"),
+		mutation,
+	);
+	ok(mutation.includes(" failed_checks=1 verification=unverified not_verified=1 "), mutation);
+});
+
+test("headless human output exposes a sealed coder limitation between narration and receipt", async (t) => {
+	const env = await isolatePancodeEnv("pancode-sealed-limits-");
+	const limitation = "Full diff inspection was not possible; only the current state was verified.";
+	const answer = "No concrete regressions found.";
+	const bundle = makeDispatchBundle(dispatchStubContext(), {
+		spawnWorker: () => ({
+			pid: null,
+			heartbeatAt: { current: Date.now(), monotonic: performance.now() },
+			promise: Promise.resolve({ exitCode: 0, signal: null }),
+			abort() {},
+			events: (async function* () {
+				yield { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: answer }] } };
+				yield {
+					type: "pancode_helper_result",
+					payload: {
+						version: 1,
+						kind: "mutation-report",
+						data: {
+							completion: { state: "done", limitations: [], unverified: [] },
+							mutatedPaths: [],
+							validations: [],
+							declaredChecks: [limitation],
+						},
+					},
+				};
+			})(),
+		}),
+	});
+	try {
+		await bundle.extension.start();
+		const run = await bundle.contract.dispatch({
+			agentId: "coder",
+			task: "Review the actual diff",
+			executionRole: "builder",
+			requestOrigin: "user",
+			readOnly: true,
+			cwd: env.dir,
+		});
+		const receipt = await run.finalPromise;
+		strictEqual(receipt.exitCode, 0);
+		deepStrictEqual(receipt.output?.structured?.data.declaredChecks, [limitation]);
+		const human = formatDispatchHumanOutput(answer, receipt);
+		ok(human.startsWith(`${answer}\n\nNot verified:\n- ${limitation}\nresult:`), human);
+		ok(human.includes("exit=0 verification=unverified not_verified=1"), human);
+		t.diagnostic(human.trim());
+	} finally {
+		await bundle.extension.stop?.();
+		env.restore();
+	}
+});

@@ -1,0 +1,99 @@
+First launch of PanCode: setup finds a stored login and chat opens
+Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+
+== setup
+
+~/projects/calibration-lab $ pancode
+No model target is configured. PanCode needs a model before it can do anything else, so setup starts now.
+
+┌  Welcome to PanCode
+│
+│  Choose what you already use. PanCode checks the endpoint and model list when the provider allows it.
+│  Before saving, PanCode sends the model one short test message (a few tokens; paid providers bill it).
+│  Esc goes back a step, and from the first step leaves without saving. Your choices are written to your PanCode
+│  settings only after the test message, except a browser sign-in you complete.
+│
+│  PanCode found a way to reach a model:
+│
+│  ❯ GitHub Copilot SDK, signed in  model gpt-6-luna (recommended)
+│    Set up something else          an API key, a subscription, or a server
+│
+│  ↑↓ move · Enter select · Esc cancel · q quit
+
+== chat
+
+
+
+
+
+
+
+
+
+
+   ██████   ██████  ███   ██
+   ██   ██ ██    ██ ████  ██
+   ██████  ████████ ██ ██ ██
+   ██      ██    ██ ██  ████       ▐P▌ PanCode 0.9.0-dev · 765279a · Systems software for coding agents
+   ██      ██    ██ ██   ███         awareness  not indexed yet · /context init
+                                     last here  no earlier session here
+ ██████  ██████  ██████  ███████
+██      ██    ██ ██   ██ ██          /rewind undoes file changes.
+██      ██    ██ ██   ██ █████
+██      ██    ██ ██   ██ ██
+ ██████  ██████  ██████  ███████
+
+
+
+
+
+
+
+
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Ask Panos…
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ i No PANCODE.md detected. Run /context init to explore the repo and bootstrap context.                Ctrl+G X dismiss
+ ▐P▌ default · ~/…/calibration-lab · main │ ✓ ready                   ctx 272k │ low ● ○ ○ ○ │ copilot-sdk · gpt-6-luna
+ ? keys · / commands                                              Try /run to dispatch parallel workers │ Alt+U details
+
+== sent
+
+
+
+
+
+
+
+
+▐P▌ PanCode 0.9.0-dev · 765279a
+
+▌ Explain how this repository builds and runs its tests. Identify the main entry points and suggest one verification
+▌ task. Do not change files yet.
+
+▸ navigated project · 1 result ✓
+▸ navigated entries · 0 results ✓
+▸ listed workspace · 5 entries ✓
+▸ found `**/package.json` · 1 path ✓
+▸ read package.json · lines 1-9 of 9 · 196B ✓
+▸ read README.md · lines 1-24 of 24 · 938B ✓
+▸ read temperature.mjs · lines 1-41 of 41 · 1.5KB ✓
+▸ read calibration.test.mjs · lines 1-67 of 67 · 3.3KB ✓
+
+■ There is no build step or dependency installation: package.json defines only npm test, which runs node --test
+  calibration.test.mjs. The library entry point is temperature.mjs, exporting the four conversion functions;
+  calibration.test.mjs is the test entry point.
+
+  Suggested verification: run npm test. The source appears inconsistent with an existing test: kelvinToCelsius rejects
+  0 K (temperature.mjs:21), while the absolute-zero test expects it to return -273.15°C (calibration.test.mjs:19–20). I
+  haven’t run the test suite, so that failure is inferred from the code, not verified.
+
+✓ Done · 8.2s · 3 calls · in 9 · out 504 · cached 32.2k · cache write 3.0k · 13:40
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Ask Panos…
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ▐P▌ default · ~/…/calibration-lab · main │ ✓ ready              ctx ▰▱▱▱▱▱ 5% │ low ● ○ ○ ○ │ copilot-sdk · gpt-6-luna
+ /view inspects recorded tool calls and full outputs                                                      Alt+U details

@@ -1,0 +1,66 @@
+{
+	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+	"name": "sample-kit",
+	"version": "0.1.0",
+	"description": "Test fixture plugin: one skill, three reviewer agents bound to it, one prompt and one build-review playbook.",
+	"license": "LicenseRef-PanCode-1.0",
+	"author": {
+		"name": "PanCode"
+	},
+	"keywords": ["fixture", "review"],
+	"extensions": {
+		"dev.pancode": {
+			"manifestVersion": 1,
+			"compatibility": {
+				"pancode": ">=0.8.0-0"
+			},
+			"resources": {
+				"skills": "skills",
+				"agents": "dev.pancode/agents",
+				"prompts": "dev.pancode/prompts",
+				"playbooks": "dev.pancode/playbooks"
+			},
+			"components": [
+				{
+					"kind": "skill",
+					"id": "sample-kit-method",
+					"path": "skills/sample-kit-method/SKILL.md"
+				},
+				{
+					"kind": "agent",
+					"id": "sample-kit-reviewer",
+					"path": "dev.pancode/agents/sample-kit-reviewer.md",
+					"requires": ["skill:sample-kit-method"]
+				},
+				{
+					"kind": "agent",
+					"id": "sample-kit-modeled-reviewer",
+					"path": "dev.pancode/agents/sample-kit-modeled-reviewer.md",
+					"requires": ["skill:sample-kit-method"]
+				},
+				{
+					"kind": "agent",
+					"id": "sample-kit-mechanized-reviewer",
+					"path": "dev.pancode/agents/sample-kit-mechanized-reviewer.md",
+					"requires": ["skill:sample-kit-method"]
+				},
+				{
+					"kind": "prompt",
+					"id": "review",
+					"path": "dev.pancode/prompts/sample-kit/review.md",
+					"requires": [
+						"agent:sample-kit-reviewer",
+						"agent:sample-kit-modeled-reviewer",
+						"agent:sample-kit-mechanized-reviewer"
+					]
+				},
+				{
+					"kind": "playbook",
+					"id": "sample-kit-build-review",
+					"path": "dev.pancode/playbooks/sample-kit-build-review.md",
+					"requires": ["agent:sample-kit-reviewer"]
+				}
+			]
+		}
+	}
+}

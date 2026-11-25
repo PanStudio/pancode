@@ -1,0 +1,955 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { spawn } from "node:child_process";
+import { accessSync, appendFileSync, constants, existsSync, readFileSync } from "node:fs";
+import { homedir, hostname } from "node:os";
+import { basename, dirname, join } from "node:path";
+import { initializePancodeHome, recordHomeDowngrade } from "../core/init.js";
+import { runCommandVector } from "../core/safe-exec.js";
+import { pancodeDirLayoutProblems, resolvePancodeDirs } from "../core/xdg.js";
+import { createUpdateLog, deferredUpdateTarget, installHold } from "../domains/lifecycle/deferred-update.js";
+import { runDoctor } from "../domains/lifecycle/doctor.js";
+import type { Installation, UpgradeInvocation } from "../domains/lifecycle/install-method.js";
+import {
+	formatUpgradeInvocation,
+	inspectInstallation,
+	installationCommand,
+	installerPackageRoot,
+	installerUnpinCommand,
+	installerUpgradeInvocation,
+	npmUpgradeInvocation,
+	readInstallerRecord,
+} from "../domains/lifecycle/install-method.js";
+import {
+	backgroundPackageRoot,
+	describeTracking,
+	inactiveInstallerLauncher,
+	inactiveInstallerRoots,
+	installIdentity,
+	launcherWinsOnPath,
+} from "../domains/lifecycle/install-plan.js";
+import {
+	compareReleaseVersions,
+	fetchReleaseVersion,
+	parseReleaseVersion,
+} from "../domains/lifecycle/release-version.js";
+import { readStateInfo } from "../domains/lifecycle/state.js";
+import { updateFingerprint } from "../domains/lifecycle/update-check.js";
+import { getVersionInfo } from "../domains/lifecycle/version.js";
+import { writeCliFailure } from "./kit/json-out.js";
+import type { LifecyclePresenter } from "./lifecycle-presenter.js";
+import { createLifecyclePresenter, formatBytes, measurePath, shortenPath } from "./lifecycle-presenter.js";
+import { printError } from "./shared.js";
+
+const CHANNELS = ["latest", "beta"] as const;
+type Channel = (typeof CHANNELS)[number];
+
+const HELP = `pancode upgrade [--dry-run] [--channel=<latest|beta>] [--refresh-runtime]
+                   [--post-install] [--rollback] [--restart] [--json]
+
+Upgrade PanCode. An npm-installed
+binary is updated in its existing prefix. An install.sh install gets the new
+version in a new prefix beside the old one, then its launcher is switched.
+Other package managers and source checkouts receive update instructions for
+their installation method.
+
+Flags:
+  --dry-run             print planned actions without changing anything
+  --channel=<chan>      npm dist-tag to install (latest|beta). npm and install.sh installs.
+  --refresh-runtime     install.sh installs: also move to the newest Node LTS the installer picks
+  --post-install        apply local checks after a package-manager update; skip reinstall
+  --rollback            native installs: restore the previous working version, disable background updates
+  --restart             after success, launch the installed PanCode in this project as a fresh session;
+                        pancode --continue picks up the last session instead
+  --json                emit machine-readable JSON output
+  --help, -h            show this message
+`;
+
+/** One wording for the source-update advice. Three paths print it; they used to disagree. */
+const SOURCE_UPGRADE_LEAD = "To update the checkout itself (choose a release tag after fetching):";
+
+/**
+ * A session is resumed at startup with `pancode --continue` (the last one) or `pancode --resume [id]`
+ * (#191), so every hint names the flag. The `--restart` relaunch itself stays bare, a fresh session.
+ */
+const RESUME_HINT = "run pancode --continue in this project";
+const RELAUNCH_PREVIEW =
+	"Would relaunch the installed PanCode in this project after success as a fresh session; pancode --continue picks up the last session instead.";
+
+interface UpgradeOptions {
+	dryRun: boolean;
+	channel: Channel;
+	channelExplicit: boolean;
+	help: boolean;
+	postInstall: boolean;
+	json: boolean;
+	restart: boolean;
+	refreshRuntime: boolean;
+	rollback: boolean;
+}
+
+/**
+ * Positional scan, not `argv.indexOf`. The previous parser looked each token up
+ * by value to find its neighbour, so the second `--channel` in a repeated pair
+ * read the first one's value, and a value that happened to equal an earlier
+ * token was consumed at the wrong index.
+ */
+function parseUpgradeArgs(argv: ReadonlyArray<string>): UpgradeOptions {
+	let dryRun = false;
+	let channel: Channel = "latest";
+	let channelExplicit = false;
+	let help = false;
+	let postInstall = false;
+	let json = false;
+	let restart = false;
+	let refreshRuntime = false;
+	let rollback = false;
+
+	const toChannel = (value: string | undefined): Channel => {
+		if (value === undefined || !(CHANNELS as ReadonlyArray<string>).includes(value)) {
+			throw new Error(`--channel must be one of ${CHANNELS.join("|")}, got '${value ?? ""}'`);
+		}
+		return value as Channel;
+	};
+
+	for (let i = 0; i < argv.length; i += 1) {
+		const arg = argv[i];
+		if (arg === undefined || arg === "upgrade") continue;
+		if (arg === "--help" || arg === "-h") help = true;
+		else if (arg === "--dry-run") dryRun = true;
+		else if (arg === "--post-install") postInstall = true;
+		else if (arg === "--json") json = true;
+		else if (arg === "--restart") restart = true;
+		else if (arg === "--refresh-runtime") refreshRuntime = true;
+		else if (arg === "--rollback") rollback = true;
+		else if (arg.startsWith("--channel=")) {
+			channel = toChannel(arg.slice("--channel=".length));
+			channelExplicit = true;
+		} else if (arg === "--channel") {
+			channel = toChannel(argv[i + 1]);
+			channelExplicit = true;
+			i += 1;
+		} else throw new Error(`unknown upgrade argument: ${arg}`);
+	}
+	if (!help && restart && (json || postInstall))
+		throw new Error("--restart cannot be combined with --json or --post-install");
+	if (rollback && (postInstall || refreshRuntime || restart))
+		throw new Error("--rollback cannot combine with --post-install, --refresh-runtime or --restart");
+	return {
+		dryRun,
+		channel,
+		channelExplicit,
+		help,
+		postInstall,
+		json,
+		restart,
+		refreshRuntime,
+		rollback,
+	};
+}
+
+/**
+ * What the registry said, and whether it was asked at all.
+ *
+ * "Not asked" and "asked and could not answer" are different facts, and
+ * collapsing both into `null` is what let an offline npm install report itself
+ * already current: an unanswered lookup compared nothing, so it cannot conclude
+ * the installed version is the newest one.
+ */
+type RegistryLookup =
+	| { asked: false; reason: "source checkout" | "post-install checks" }
+	| { asked: true; version: string | null };
+
+async function lookUpAvailableVersion(channel: Channel, method: Installation["kind"]): Promise<RegistryLookup> {
+	if (method === "source") return { asked: false, reason: "source checkout" };
+	return { asked: true, version: await fetchReleaseVersion(channel) };
+}
+
+/**
+ * Run one child to completion, keeping its last output for the failure message.
+ *
+ * The pipes have to be drained. `npm install -g` writes well past a 64 KB pipe
+ * buffer, and a child whose stdout nobody reads blocks on the write and never
+ * exits, so the upgrade hung with no output and no way to tell it apart from a
+ * slow registry. Draining also gives the failure something to say beyond an
+ * exit code.
+ */
+async function runChild(
+	command: string,
+	args: ReadonlyArray<string>,
+	label: string,
+	env: NodeJS.ProcessEnv = process.env,
+	run: { log?: string; signal?: AbortSignal; cwd?: string } = {},
+): Promise<string> {
+	const { log } = run;
+	return new Promise<string>((resolve, reject) => {
+		const child = spawn(command, [...args], {
+			stdio: ["ignore", "pipe", "pipe"],
+			env,
+			...(run.cwd !== undefined ? { cwd: run.cwd } : {}),
+			...(run.signal ? { signal: run.signal } : {}),
+		});
+		let stdout = "";
+		let tail = "";
+		const keepTail = (chunk: Buffer): void => {
+			tail = `${tail}${chunk.toString("utf8")}`.slice(-16384);
+			if (log === undefined) return;
+			try {
+				appendFileSync(log, chunk);
+			} catch {
+				// The log is for a launch waiting on the lease; the run keeps its own tail.
+			}
+		};
+		child.stdout?.on("data", (chunk: Buffer) => {
+			stdout = `${stdout}${chunk.toString("utf8")}`.slice(0, 1024 * 1024);
+			keepTail(chunk);
+		});
+		child.stderr?.on("data", keepTail);
+		child.on("error", reject);
+		child.on("close", (code) => {
+			if (code === 0) {
+				resolve(stdout);
+				return;
+			}
+			let detail = tail.trim();
+			try {
+				const report = JSON.parse(stdout) as { errors?: unknown } | null;
+				if (Array.isArray(report?.errors)) {
+					const errors = report.errors.filter((error: unknown) => typeof error === "string" && error.trim());
+					if (errors.length > 0) detail = errors.join("\n");
+				}
+			} catch {
+				// Non-JSON children still provide their captured output on failure.
+			}
+			reject(new Error(`${label} exited with code ${code ?? -1}${detail ? `:\n${detail}` : ""}`));
+		});
+	});
+}
+
+/** The package version installed in an installer prefix, or null when its metadata cannot be read. */
+function installedVersionAt(prefix: string): string | null {
+	try {
+		const pkg = JSON.parse(readFileSync(join(installerPackageRoot(prefix), "package.json"), "utf8")) as {
+			version?: unknown;
+		};
+		return typeof pkg.version === "string" ? pkg.version : null;
+	} catch {
+		return null;
+	}
+}
+
+/** `versions/0.9.0-dev-20261125-4242`, the part of an installer prefix that tells two builds of one version apart. */
+function prefixLabel(prefix: string): string {
+	return `versions/${basename(prefix)}`;
+}
+
+/** `dir` when this user cannot write it, else null. */
+function unwritableDir(dir: string): string | null {
+	try {
+		accessSync(dir, constants.W_OK);
+		return null;
+	} catch {
+		return dir;
+	}
+}
+
+/** The Node that runs `installation`: its managed runtime for install.sh, else this process's. */
+/**
+ * The package manager runs from the directory it installs into, never the
+ * operator's, so a project .npmrc there cannot choose the registry or version.
+ */
+function packageManagerCwd(dir: string | null): string {
+	return dir !== null && existsSync(dir) ? dir : homedir();
+}
+
+function nodeFor(installation: Installation): string {
+	const node = installation.installer?.node;
+	return node !== undefined && existsSync(node) ? node : process.execPath;
+}
+
+async function runNpmInstall(
+	installation: Installation,
+	invocation: UpgradeInvocation,
+	run: { log?: string; signal?: AbortSignal } = {},
+): Promise<void> {
+	await runChild(
+		invocation.command,
+		invocation.args,
+		`npm install --prefix ${installation.prefix}`,
+		{
+			...process.env,
+			...invocation.env,
+		},
+		{ ...run, cwd: packageManagerCwd(installation.prefix) },
+	);
+}
+
+type InstallStake = { holders: string[] } | { log: string; signal: AbortSignal; release(): void };
+
+/**
+ * An npm prefix the deferred wrapper could update is replaced in place, so a
+ * shell upgrade follows the wrapper's sequence (#436): refuse while any other
+ * process or lease holds the install, stake the same lease launches wait on,
+ * look once more for a launch that raced it, and keep the lease for the whole
+ * manager run. SIGINT and SIGTERM release it; a SIGKILLed holder is reclaimed
+ * by pid and birth token like a dead wrapper.
+ */
+function stakeInstall(
+	target: NonNullable<ReturnType<typeof deferredUpdateTarget>>,
+	installation: Installation,
+	cacheDir: string,
+): InstallStake {
+	const hold = installHold(target);
+	const held = hold.holders();
+	if (held.length > 0) return { holders: held };
+	const log = createUpdateLog(cacheDir, updateFingerprint(installation));
+	appendFileSync(
+		log,
+		`[${new Date().toISOString()}] pancode upgrade pid ${process.pid} on ${hostname()} is replacing ${target.root} with npm\n`,
+		{ mode: 0o600 },
+	);
+	if (!hold.stake({ manager: "npm", log })) return { holders: [hold.lease()?.holder ?? "another update lease"] };
+	const late = hold.holders();
+	if (late.length > 0) {
+		hold.unstake();
+		return { holders: late };
+	}
+	// A signal stops npm before the lease goes, so no launch loads a half-written package.
+	const abort = new AbortController();
+	const signals = { SIGINT: 130, SIGTERM: 143 } as const;
+	const handlers = Object.entries(signals).map(([signal, code]) => {
+		const handler = () => {
+			abort.abort();
+			hold.unstake();
+			process.exit(code);
+		};
+		process.once(signal, handler);
+		return [signal, handler] as const;
+	});
+	const onExit = () => hold.unstake();
+	process.once("exit", onExit);
+	return {
+		log,
+		signal: abort.signal,
+		release() {
+			hold.unstake();
+			for (const [signal, handler] of handlers) process.off(signal, handler);
+			process.off("exit", onExit);
+		},
+	};
+}
+
+/**
+ * Marks the post-install runs an upgrade starts, its own and the installer's,
+ * so they leave the background restart to the upgrade, which does it once.
+ */
+const UPGRADE_CHILD_ENV = { PANCODE_UPGRADE_PARENT: "1" } as const;
+
+async function runInstallerUpgrade(installation: Installation, invocation: UpgradeInvocation): Promise<Installation> {
+	const record = installation.installer;
+	if (installation.kind !== "installer" || record === undefined)
+		throw new Error("installer upgrade needs an install.sh installation");
+	await runChild(
+		invocation.command,
+		invocation.args,
+		process.platform === "win32" ? "install.ps1" : "install.sh",
+		{
+			...process.env,
+			...invocation.env,
+			...UPGRADE_CHILD_ENV,
+		},
+		{ cwd: packageManagerCwd(record.root) },
+	);
+	const updated = readInstallerRecord(record.root);
+	if (updated === null) throw new Error(`install.sh finished but ${join(record.root, "install.json")} is unreadable`);
+	return inspectInstallation(join(installerPackageRoot(updated.current), "dist", "cli", "index.js"));
+}
+
+async function runDoctorFixAfterInstall(_installation: Installation): Promise<void> {
+	initializePancodeHome();
+	const integrity = new Set([
+		"engine runtime",
+		"directory layout",
+		"config dir",
+		"data dir",
+		"state dir",
+		"cache dir",
+		"settings.yaml",
+		"state metadata",
+	]);
+	const failures = runDoctor().filter((finding) => !finding.ok && integrity.has(finding.name));
+	if (failures.length) throw new Error(failures.map((finding) => `${finding.name}: ${finding.detail}`).join("\n"));
+}
+
+async function runPostInstallUpgrade(
+	opts: UpgradeOptions,
+	installation: Installation,
+	presenter: LifecyclePresenter,
+): Promise<void> {
+	const args = [installation.entry, "upgrade", "--post-install", `--channel=${opts.channel}`, "--json"];
+	const output = await runChild(nodeFor(installation), args, "pancode upgrade --post-install", {
+		...process.env,
+		...UPGRADE_CHILD_ENV,
+	});
+	let report: { steps: Array<{ type: string; message: string }>; warnings: string[] };
+	try {
+		report = JSON.parse(output);
+		if (
+			!Array.isArray(report?.steps) ||
+			!report.steps.every((step) => step && typeof step.type === "string" && typeof step.message === "string") ||
+			!Array.isArray(report.warnings) ||
+			!report.warnings.every((warning) => typeof warning === "string")
+		)
+			throw new Error("Invalid post-install report");
+	} catch {
+		for (const line of output.split(/\r?\n/).filter((line) => line.trim())) presenter.note(line);
+		return;
+	}
+	for (const step of report.steps) {
+		if (step.type === "completed") presenter.completedStep(step.message);
+		else if (step.type === "substep") presenter.substep(step.message);
+		else if (step.type === "note") presenter.note(step.message);
+	}
+	for (const warning of report.warnings) presenter.warn(warning);
+}
+
+async function runBackgroundRestart(installation: Installation): Promise<string> {
+	const output = await runChild(
+		nodeFor(installation),
+		[installation.entry, "gui", "background", "restart", "--if-idle"],
+		"pancode gui background restart --if-idle",
+	);
+	const lines = output.trim().split(/\r?\n/).filter(Boolean);
+	if (lines.length !== 1) throw new Error("background restart did not return its one-line result");
+	return lines[0] ?? "";
+}
+
+/** Move the background app to this installation; the GUI refuses while it has active work. */
+async function runBackgroundHandover(installation: Installation): Promise<string> {
+	const output = await runChild(
+		nodeFor(installation),
+		[installation.entry, "gui", "background", "install", "--handover"],
+		"pancode gui background install --handover",
+	);
+	return output.trim().split(/\r?\n/).filter(Boolean).at(-1) ?? "The background app now runs from this installation.";
+}
+
+async function runRestart(installation: Installation): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const child = spawn(nodeFor(installation), [installation.entry], { stdio: "inherit" });
+		// Both share the foreground process group. Let the new CLI own Ctrl+C.
+		const interrupt = () => {};
+		const terminate = () => {
+			child.kill("SIGTERM");
+		};
+		const cleanup = () => {
+			process.off("SIGINT", interrupt);
+			process.off("SIGTERM", terminate);
+		};
+		process.on("SIGINT", interrupt);
+		process.on("SIGTERM", terminate);
+		child.on("error", (error) => {
+			cleanup();
+			reject(error);
+		});
+		child.on("close", (code, signal) => {
+			cleanup();
+			resolve(code ?? (signal === "SIGINT" ? 130 : 1));
+		});
+	});
+}
+
+export interface UpgradeDependencies {
+	inspectInstallation: typeof inspectInstallation;
+	lookUpAvailableVersion: typeof lookUpAvailableVersion;
+	runNpmInstall: typeof runNpmInstall;
+	runInstallerUpgrade: typeof runInstallerUpgrade;
+	runDoctorFixAfterInstall: typeof runDoctorFixAfterInstall;
+	runPostInstallUpgrade: typeof runPostInstallUpgrade;
+	runBackgroundRestart: typeof runBackgroundRestart;
+	runBackgroundHandover: typeof runBackgroundHandover;
+	runRestart: typeof runRestart;
+	isInteractive: () => boolean;
+}
+
+const DEFAULT_DEPENDENCIES: UpgradeDependencies = {
+	inspectInstallation,
+	lookUpAvailableVersion,
+	runNpmInstall,
+	runInstallerUpgrade,
+	runDoctorFixAfterInstall,
+	runPostInstallUpgrade,
+	runBackgroundRestart,
+	runBackgroundHandover,
+	runRestart,
+	isInteractive: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
+};
+
+export async function runUpgradeCommand(
+	argv: ReadonlyArray<string>,
+	dependencies: Partial<UpgradeDependencies> = {},
+): Promise<number> {
+	const deps = { ...DEFAULT_DEPENDENCIES, ...dependencies };
+	let opts: UpgradeOptions;
+	try {
+		opts = parseUpgradeArgs(argv);
+	} catch (err) {
+		// One diagnostic and a pointer at the help (C3); under --json the failure
+		// document is the one thing on stdout (C6).
+		const message = err instanceof Error ? err.message : String(err);
+		writeCliFailure({
+			path: ["upgrade"],
+			slug: message.startsWith("unknown upgrade argument")
+				? "unknown_flag"
+				: message.includes("cannot")
+					? "flag_conflict"
+					: "usage",
+			message,
+			json: argv.includes("--json"),
+		});
+		return 2;
+	}
+	if (opts.help) {
+		process.stdout.write(HELP);
+		return 0;
+	}
+	if (opts.restart && !opts.dryRun && !deps.isInteractive()) {
+		writeCliFailure({
+			path: ["upgrade"],
+			slug: "confirmation_required",
+			message: `--restart requires an interactive terminal; after upgrading, ${RESUME_HINT}`,
+			json: opts.json,
+		});
+		return 2;
+	}
+
+	const presenter = createLifecyclePresenter({ json: opts.json, dryRun: opts.dryRun });
+	presenter.header("Upgrade", "upgrade");
+
+	const before = getVersionInfo().pancode;
+	const dirs = resolvePancodeDirs();
+	const layoutProblems = pancodeDirLayoutProblems(dirs);
+	if (layoutProblems.length > 0) {
+		presenter.fail("unsafe directory layout", layoutProblems.join("; "));
+		presenter.commandAdvice(
+			"Set four absolute, distinct, non-nesting roots, then inspect them with:",
+			"pancode paths\npancode doctor",
+		);
+		presenter.finish();
+		return 2;
+	}
+	const stateDir = dirs.state;
+	// A first install has no home yet; post-install checks create it.
+	if (opts.postInstall && !opts.dryRun && ![dirs.config, dirs.data, stateDir].some((dir) => existsSync(dir)))
+		initializePancodeHome();
+	const installation = deps.inspectInstallation();
+	// An installer upgrade moves the entry to a new prefix; the relaunch and the
+	// background restart must use the new one.
+	let activeInstallation = installation;
+	if (installation.installer && !argv.some((arg) => arg === "--channel" || arg.startsWith("--channel="))) {
+		const recordedChannel = installation.installer.channel;
+		if (CHANNELS.includes(recordedChannel as Channel)) opts.channel = recordedChannel as Channel;
+	}
+	const method = installation.kind;
+	if (opts.rollback) {
+		const record = installation.installer;
+		if (method !== "installer" || !record) {
+			presenter.fail("Rollback works only for native installer installs, made by install.sh or install.ps1");
+			if (method === "npm" || method === "pnpm" || method === "bun") {
+				// The state record keeps the version this home ran before its last version change.
+				const previous = readStateInfo()?.upgradedFrom;
+				const known = previous !== undefined && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(previous) && previous !== before;
+				presenter.commandAdvice(
+					known
+						? `Install the previous version, ${previous}, with the original package manager:`
+						: "Install the version you want with the original package manager:",
+					installationCommand(installation, "upgrade", known ? previous : "<version>"),
+				);
+			}
+			presenter.finish();
+			return 2;
+		}
+		if (!record.previous) {
+			presenter.fail("No previous version is installed, so there is nothing to roll back to");
+			presenter.finish();
+			return 1;
+		}
+		const previousVersion = installedVersionAt(record.previous) ?? record.previous;
+		// Two builds of one -dev version differ only by their prefix, so the labels name it (finding 3).
+		const sameVersion = installedVersionAt(record.current) === installedVersionAt(record.previous);
+		const fromLabel = sameVersion ? `${before} (${prefixLabel(record.current)})` : before;
+		const toLabel = sameVersion ? `${previousVersion} (${prefixLabel(record.previous)})` : previousVersion;
+		const unwritable = unwritableDir(record.root);
+		if (unwritable !== null) {
+			presenter.fail(
+				`Rollback stopped; nothing changed. ${unwritable} is not writable by this user, and the rollback rewrites the installer manifest there`,
+			);
+			presenter.finish();
+			return 1;
+		}
+		const stop = (message: string, detail?: string): number => {
+			presenter.fail(message, detail);
+			presenter.finish();
+			return 1;
+		};
+		if (opts.dryRun) {
+			presenter.note(`Would switch the launcher from ${fromLabel} to ${toLabel} and turn background updates off.`);
+			presenter.warn("Dry run: no changes made");
+			presenter.done("Done");
+			return 0;
+		}
+		const windows = process.platform === "win32";
+		const args = windows
+			? [
+					"-NoProfile",
+					"-ExecutionPolicy",
+					"Bypass",
+					"-File",
+					join(installation.root, "scripts", "install.ps1"),
+					"-InstallDir",
+					record.root,
+					"-BinDir",
+					dirname(record.launcher),
+					"-Rollback",
+				]
+			: [
+					join(installation.root, "scripts", "install.sh"),
+					"--install-dir",
+					record.root,
+					"--bin-dir",
+					dirname(record.launcher),
+					"--rollback",
+				];
+		let result: Awaited<ReturnType<typeof runCommandVector>>;
+		try {
+			result = await runCommandVector(windows ? "powershell.exe" : "sh", args, {
+				env: Object.fromEntries(
+					Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+				),
+				timeoutMs: 60_000,
+			});
+		} catch (err) {
+			return stop("Rollback failed; the active version is unchanged", err instanceof Error ? err.message : String(err));
+		}
+		if (result.exitCode !== 0)
+			return stop("Rollback failed; the active version is unchanged", (result.stderr || result.stdout).trim());
+		// The older binary refuses a home a newer version stamped, so a rollback to one records an accepted downgrade.
+		let downgradeError: string | null = null;
+		if (installedVersionAt(record.previous) !== null) {
+			try {
+				recordHomeDowngrade(previousVersion, { onlyFromNewer: true });
+			} catch (err) {
+				downgradeError = err instanceof Error ? err.message : String(err);
+			}
+		}
+		// The installer's own lines, without its tag, are the record of what changed.
+		for (const line of result.stdout.split(/\r?\n/)) {
+			const text = line.replace(/^\[install\]\s*/, "").trim();
+			if (text) presenter.completedStep(`${text.charAt(0).toUpperCase()}${text.slice(1)}`);
+		}
+		if (downgradeError !== null)
+			presenter.warn(
+				`Could not record ${previousVersion} as this home's version (${downgradeError}); it asks before opening the home, and headless runs need PANCODE_ALLOW_OLDER=1`,
+			);
+		presenter.note(
+			`Sessions already running keep ${fromLabel}; run pancode --resume in this project to pick one up on ${toLabel}.`,
+		);
+		presenter.done("Done");
+		return 0;
+	}
+	const methodLabel =
+		method === "source"
+			? "source checkout"
+			: method === "npm"
+				? "npm global"
+				: method === "installer"
+					? "installer"
+					: method;
+	if (!opts.channelExplicit && installation.installer && CHANNELS.includes(installation.installer.channel as Channel))
+		opts.channel = installation.installer.channel as Channel;
+
+	const updateCommand = installationCommand(installation, "upgrade", opts.channel);
+	const sourceAdvice = () => presenter.commandAdvice(SOURCE_UPGRADE_LEAD, updateCommand);
+	const backgroundOwner = join(stateDir, "gui/background/owner.json");
+	const finish = async (): Promise<number> => {
+		if (!opts.dryRun && opts.postInstall) {
+			// The installer root a move to a checkout or a package manager left behind.
+			for (const record of inactiveInstallerRoots(activeInstallation)) {
+				const size = measurePath(record.root);
+				presenter.warn(
+					`The installer root at ${shortenPath(record.root)} (${formatBytes(size.bytes ?? 0)}) is no longer used by this installation`,
+				);
+				const launcher = inactiveInstallerLauncher(record);
+				if (launcher !== null && launcherWinsOnPath(launcher))
+					presenter.warn(`${shortenPath(launcher)} comes first on PATH and still starts the old installation, not this one`);
+				presenter.commandAdvice("To remove only it, run:", "pancode uninstall --inactive");
+			}
+		}
+		// An installer run with --no-gui touches no desktop step, the existing app's handover, restart and Windows
+		// shortcut included (F-C17); the app keeps running from where it was.
+		const desktopDeclined = opts.postInstall && process.env.PANCODE_INSTALL_GUI === "0";
+		if (!opts.dryRun && desktopDeclined && existsSync(backgroundOwner)) {
+			presenter.note("Left the desktop app as it was, as the installer's --no-gui asked.");
+			presenter.commandAdvice(
+				"Move it to this installation when you want it to follow:",
+				"pancode gui background install --handover",
+			);
+		} else if (!opts.dryRun && existsSync(backgroundOwner)) {
+			const owner = opts.postInstall ? backgroundPackageRoot(stateDir) : null;
+			if (owner !== null && installIdentity(owner) !== installIdentity(activeInstallation.root)) {
+				// The service still runs another installation's Node and server; it follows the active one.
+				try {
+					presenter.note(await deps.runBackgroundHandover(activeInstallation));
+				} catch (error) {
+					presenter.warn(
+						`The background app still runs from ${shortenPath(owner)}: ${error instanceof Error ? error.message : String(error)}`,
+					);
+					presenter.commandAdvice(
+						"Move it to this installation once its work is finished:",
+						"pancode gui background install --handover",
+					);
+				}
+			} else if (!(opts.postInstall && process.env.PANCODE_UPGRADE_PARENT === "1")) {
+				// The new installation restarts an idle app itself, and an app 0.7.0 started at once; a busy one
+				// moves on the next pancode gui after its work is done. Under an upgrade, the upgrade does it.
+				try {
+					presenter.note(await deps.runBackgroundRestart(activeInstallation));
+				} catch (error) {
+					presenter.warn(
+						`Upgrade succeeded, but the background app was not checked: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+			}
+		}
+		presenter.done("Done");
+		if (!opts.restart || opts.dryRun) return 0;
+		try {
+			return await deps.runRestart(activeInstallation);
+		} catch (error) {
+			printError(
+				`Upgrade complete, but relaunch failed: ${error instanceof Error ? error.message : String(error)}. To continue, ${RESUME_HINT}.`,
+			);
+			return 1;
+		}
+	};
+	presenter.setMethod(methodLabel);
+	if (!opts.postInstall && method !== "npm" && method !== "installer" && method !== "source") {
+		presenter.note(`Installation method: ${methodLabel}`);
+		presenter.note(`Package: ${installation.root}`);
+		presenter.commandAdvice("Update with the original package manager and its original global directory:", updateCommand);
+		presenter.commandAdvice("Then start pancode on the last session:", "pancode --continue");
+		if (opts.dryRun) presenter.warn("Dry run: no changes made");
+		else presenter.fail("This installation needs a package-manager update; no package was replaced.");
+		presenter.finish();
+		return opts.dryRun ? 0 : 1;
+	}
+
+	// An exact --version or --package install is pinned: upgrade holds it at the pin
+	// and says how to release it, instead of reporting the pin as a registry answer.
+	const pin = opts.postInstall || opts.channelExplicit ? null : installation.installer?.versionPin || null;
+	const lookup: RegistryLookup = opts.postInstall
+		? { asked: false, reason: "post-install checks" }
+		: pin
+			? { asked: true, version: pin }
+			: await deps.lookUpAvailableVersion(opts.channel, method);
+	const availableVersion = lookup.asked ? lookup.version : null;
+
+	presenter.step(`Installation method: ${methodLabel}`);
+	presenter.step(`Current version: ${before}`);
+	if (installation.prefix) presenter.step(`Install prefix: ${installation.prefix}`);
+	// A source checkout is not upgraded from the registry, so the registry is
+	// never asked. Reporting that as "registry check failed" told the operator a
+	// lookup had gone wrong when none was owed.
+	if (pin !== null) presenter.step(`Pinned version: ${pin}`);
+	else if (availableVersion !== null) presenter.step(`Available version: ${availableVersion}`);
+	else if (!lookup.asked) presenter.step(`Available version: not checked (${lookup.reason})`);
+	else presenter.step("Available version: unknown (the registry could not be reached)");
+	if ((method === "npm" || method === "installer") && !opts.postInstall && pin === null)
+		presenter.step(`Channel: ${opts.channel}`);
+	if (installation.installer) {
+		const record = installation.installer;
+		presenter.step(
+			`Runtime: Node v${record.nodeVersion} ${record.nodeBuild}${opts.refreshRuntime ? " (refresh requested)" : ""}`,
+		);
+	}
+	presenter.step(`State dir: ${shortenPath(stateDir)}`);
+	const unpin = pin === null ? null : installerUnpinCommand(installation, opts.channel);
+	if (unpin !== null) {
+		presenter.note(`This install is ${describeTracking(installation)}. Upgrade and background updates leave it there.`);
+		presenter.commandAdvice(`To follow the ${opts.channel} channel again, with background updates, run:`, unpin);
+	}
+
+	const recorded = readStateInfo()?.version ?? null;
+	const describeRefresh = (): string =>
+		recorded === null
+			? "state metadata (none recorded)"
+			: recorded === before
+				? `state metadata (already ${before})`
+				: `state metadata ${recorded} -> ${before}`;
+
+	// "Already current" is a claim about a version that was compared. A lookup
+	// that was made and came back empty has compared nothing, so it does not get
+	// to make it: the run falls through and attempts the install, which is what
+	// the operator asked for. A lookup that was never owed for a checkout or
+	// post-install checks leaves the recorded state version to decide.
+	const comparison = availableVersion === null ? null : compareReleaseVersions(availableVersion, before);
+	const leavingPrerelease =
+		opts.channelExplicit &&
+		opts.channel === "latest" &&
+		pin === null &&
+		!opts.postInstall &&
+		(parseReleaseVersion(before)?.pre.length ?? 0) > 0 &&
+		availableVersion !== null &&
+		parseReleaseVersion(availableVersion)?.pre.length === 0 &&
+		comparison !== 0;
+	const channelSelectionNeeded =
+		opts.channelExplicit &&
+		method === "installer" &&
+		comparison === 0 &&
+		(installation.installer?.channel !== opts.channel || Boolean(installation.installer?.versionPin));
+	const versionIsCurrent =
+		!leavingPrerelease &&
+		!channelSelectionNeeded &&
+		(lookup.asked ? comparison !== null && comparison <= 0 : true) &&
+		recorded === before;
+	if (leavingPrerelease) {
+		presenter.note(`Leaving the pre-release channel: installing stable ${availableVersion} from ${before}.`);
+	} else if (comparison !== null && comparison < 0)
+		presenter.note(`Installed ${before} is newer than ${opts.channel} (${availableVersion}); keeping it.`);
+
+	if (!opts.postInstall && versionIsCurrent) {
+		presenter.warn(`Already on ${before}. Nothing to do.`);
+		if (method === "source") sourceAdvice();
+		if (opts.dryRun && opts.restart) presenter.note(RELAUNCH_PREVIEW);
+		if (opts.dryRun) presenter.warn("Dry run: no changes made");
+		return finish();
+	}
+
+	const prepareInstall = async (): Promise<{ invocation: UpgradeInvocation; version: string | null }> => {
+		let invocation: UpgradeInvocation;
+		let version: string | null = null;
+		if (method === "installer")
+			invocation = installerUpgradeInvocation(
+				installation,
+				{ ...opts, leavePrerelease: leavingPrerelease },
+				process.platform === "win32",
+			);
+		else {
+			version = availableVersion ?? (await fetchReleaseVersion(opts.channel));
+			if (version === null)
+				throw new Error(`Cannot resolve the ${opts.channel} channel; retry when the registry is reachable`);
+			const npmCli = join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js");
+			invocation = npmUpgradeInvocation(installation, version, {
+				windows: process.platform === "win32",
+				node: process.execPath,
+				npmCli: existsSync(npmCli) ? npmCli : null,
+			});
+		}
+		return { invocation, version };
+	};
+
+	if (opts.dryRun) {
+		if (method === "source" && !opts.postInstall) sourceAdvice();
+		else if (
+			!opts.postInstall &&
+			(comparison === null || comparison > 0 || leavingPrerelease || channelSelectionNeeded)
+		) {
+			try {
+				const { invocation } = await prepareInstall();
+				presenter.note(`Would run: ${formatUpgradeInvocation(invocation)}`);
+			} catch (err) {
+				presenter.note(`Would run: ${updateCommand}`);
+				presenter.warn(
+					`The ${opts.channel} channel version is unresolved; showing the hand-run plan. ${err instanceof Error ? err.message : String(err)}`,
+				);
+			}
+		}
+		presenter.note(`Would refresh ${describeRefresh()}.`);
+		if (opts.restart) presenter.note(RELAUNCH_PREVIEW);
+		presenter.warn("Dry run: no changes made");
+		presenter.done("Done");
+		return 0;
+	}
+
+	if (opts.postInstall) {
+		presenter.note("Running post-install checks with the active pancode binary.");
+	} else if (method === "source") {
+		presenter.note("Source checkout: no npm install to run.");
+	} else if (comparison === null || comparison > 0 || leavingPrerelease || channelSelectionNeeded) {
+		try {
+			const plan = await prepareInstall();
+			const target = method === "npm" ? deferredUpdateTarget(installation, plan.version ?? before) : null;
+			const stake = target === null ? null : stakeInstall(target, installation, dirs.cache);
+			if (stake !== null && "holders" in stake) {
+				presenter.fail(
+					"Other PanCode processes of this install are running; nothing was replaced",
+					stake.holders.join("\n"),
+				);
+				presenter.commandAdvice(
+					"npm replaces the install in place under them. Quit them and run this again, or run /upgrade in a session to install after every session quits:",
+					"pancode upgrade",
+				);
+				presenter.finish();
+				// EX_TEMPFAIL, as the launcher and install.sh exit for a held install.
+				return 75;
+			}
+			presenter.note(`Installing with: ${formatUpgradeInvocation(plan.invocation)}`);
+			let installedVersion = plan.version ?? opts.channel;
+			if (method === "installer") {
+				activeInstallation = await deps.runInstallerUpgrade(installation, plan.invocation);
+				const current = activeInstallation.installer?.current;
+				const version = current ? installedVersionAt(current) : null;
+				installedVersion = version && parseReleaseVersion(version) ? version : opts.channel;
+			} else {
+				try {
+					await deps.runNpmInstall(installation, plan.invocation, stake ? { log: stake.log, signal: stake.signal } : {});
+				} finally {
+					stake?.release();
+				}
+			}
+			presenter.completedStep(`Installed pancode@${installedVersion}`);
+		} catch (err) {
+			presenter.fail(
+				method === "installer" ? "install.sh failed" : "npm install failed",
+				err instanceof Error ? err.message : String(err),
+			);
+			presenter.commandAdvice("To upgrade by hand, run:", `${updateCommand}\npancode upgrade --post-install`);
+			presenter.finish();
+			return 1;
+		}
+		try {
+			await deps.runPostInstallUpgrade(opts, activeInstallation, presenter);
+			return finish();
+		} catch (err) {
+			presenter.fail("post-install checks failed", err instanceof Error ? err.message : String(err));
+			presenter.commandAdvice("To finish the upgrade by hand, run:", "pancode upgrade --post-install");
+			presenter.finish();
+			return 1;
+		}
+	}
+
+	if (method === "source") {
+		const refresh = describeRefresh();
+		initializePancodeHome();
+		presenter.completedStep(`Refreshed ${refresh}`);
+	} else {
+		try {
+			await deps.runDoctorFixAfterInstall(installation);
+			presenter.completedStep("Checked installation integrity and initialized local state");
+		} catch (err) {
+			presenter.fail("installation integrity check failed", err instanceof Error ? err.message : String(err));
+			presenter.commandAdvice("To resolve the findings by hand, run:", "pancode doctor --fix");
+			presenter.finish();
+			return 1;
+		}
+	}
+
+	if (method === "source" && !opts.postInstall) sourceAdvice();
+
+	const after = getVersionInfo().pancode;
+	// One closing word on every path, with the outcome above it as steps. The
+	// summary used to carry the version arrow, so three exits printed three
+	// different shapes of last line.
+	if ((recorded ?? before) !== after) presenter.note(`Now on ${after}.`);
+	return finish();
+}

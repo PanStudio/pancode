@@ -1,0 +1,662 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, strictEqual, throws } from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { afterEach, beforeEach, it } from "node:test";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { pancodeStateDir } from "../../src/core/xdg.js";
+import {
+	parseResultContract,
+	parseWorkerResultContract,
+	validateResultContract,
+} from "../../src/domains/agents/result-contract.js";
+import {
+	RESULT_COMMIT_MESSAGE_MAX_BYTES,
+	RESULT_SUMMARY_DEFAULT_MAX_BYTES,
+	RESULT_SUMMARY_MAX_BYTES_CEILING,
+	resultContractOutputBytes,
+	STRUCTURED_HELPER_RESULT_MAX_BYTES,
+} from "../../src/domains/agents/result-contract-allowance.js";
+import { resultContractAuthorship } from "../../src/domains/agents/result-contract-builder-report.js";
+import { resultContractSourceId } from "../../src/domains/agents/result-contract-payload.js";
+import { resultContractRepairMessages, resultContractShape } from "../../src/domains/agents/result-contract-repair.js";
+import {
+	createWorkerOutputCapture,
+	WORKER_OUTPUT_MAX_BYTES,
+	workerOutputCaptureBytes,
+} from "../../src/domains/dispatch/event-pump.js";
+import { dispatchResultContract } from "../../src/domains/dispatch/execution-role.js";
+import type { SettledRunRecord } from "../../src/domains/telemetry/index.js";
+import { readVerifiedRun } from "../../src/domains/telemetry/index.js";
+import { createDispatchTool } from "../../src/tools/dispatch.js";
+import { createMonitorTool } from "../../src/tools/monitor.js";
+import { PRODUCER_INTEGRITY, runEvidenceLabels } from "../../src/tools/worker-evidence.js";
+import type { WorkerSpec } from "../../src/worker/spec-contract.js";
+import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
+import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
+import { resolvedRunResult } from "../harness/settled-run.js";
+
+beforeEach(() => isolateDispatchState());
+afterEach(() => restoreDispatchState());
+
+const fixture = JSON.parse(readFileSync(new URL("../fixtures/source-explanation.json", import.meta.url), "utf8")) as {
+	task: string;
+	findings: Array<{ claim: string; path: string; line: number }>;
+};
+
+/**
+ * The #361 deliverable as an explicit Coder would author it: the fixture's
+ * 1200 cited words, one paragraph per source claim, each closed by the
+ * file:line it rests on. Larger than the old 8 KB receipt bound on purpose.
+ */
+const EXPLANATION = [
+	"Uniform versus nonuniform boundary stencils in findiff, with the accuracy tests that exercise each. Citations are file:line in the four authorized sources.",
+	...fixture.findings.map(
+		(finding, index) => `Stencil note ${index + 1}. ${finding.claim} (${finding.path}:${finding.line})`,
+	),
+	"Taken together, the uniform path scales fixed offset weights by spacing while the nonuniform path solves coordinate-dependent weights, and only the uniform refinement tests measure boundary convergence directly.",
+].join("\n\n");
+
+const report = (summary: string, extra: Record<string, unknown> = {}) =>
+	JSON.stringify({
+		completion: { state: "done", limitations: [], unverified: [] },
+		mutatedPaths: [],
+		validations: [{ name: "source read", passed: true, evidence: "Read only the four requested files; no tests ran." }],
+		summary,
+		...extra,
+	});
+
+const validate = (
+	output: string,
+	contract: Parameters<typeof validateResultContract>[0]["contract"],
+	truncated = false,
+) =>
+	validateResultContract({
+		contract,
+		output,
+		cwd: process.cwd(),
+		networkAllowed: false,
+		filesystem: { readFile: () => null },
+		outputTruncated: truncated,
+	});
+
+const MUTATION = { kind: "mutation-report" } as const;
+const coderRecipe = { resultContract: MUTATION };
+const scoutRecipe = { resultContract: { kind: "scout-report" } as const };
+
+it("bounds summary by its own allowance and commitMessage by the commit bound", () => {
+	ok(Buffer.byteLength(EXPLANATION, "utf8") > RESULT_COMMIT_MESSAGE_MAX_BYTES);
+	strictEqual(validate(report(EXPLANATION), MUTATION).conformance, "pass");
+	const authored = resultContractAuthorship(MUTATION, report(EXPLANATION));
+	strictEqual(authored.summary, EXPLANATION);
+	for (const path of ["findiff/coefs.py:67", "tests/test_coefs.py"]) ok(authored.summary?.includes(path));
+	const overDefault = validate(report("x".repeat(RESULT_SUMMARY_DEFAULT_MAX_BYTES + 1)), MUTATION);
+	strictEqual(overDefault.conformance, "fail");
+	match(
+		overDefault.reason ?? "",
+		new RegExp(`summary must be at most ${RESULT_SUMMARY_DEFAULT_MAX_BYTES} UTF-8 bytes`, "u"),
+	);
+	const longCommit = validate(
+		report("fine", { commitMessage: "x".repeat(RESULT_COMMIT_MESSAGE_MAX_BYTES + 1) }),
+		MUTATION,
+	);
+	strictEqual(longCommit.conformance, "fail");
+	match(longCommit.reason ?? "", /commitMessage must be at most 1000 UTF-8 bytes/u);
+	// A declared allowance narrows or widens summary only.
+	const narrow = { kind: "mutation-report", maxSummaryBytes: 2_048 } as const;
+	strictEqual(validate(report(EXPLANATION), narrow).conformance, "fail");
+	match(validate(report(EXPLANATION), narrow).reason ?? "", /summary must be at most 2048 UTF-8 bytes/u);
+	strictEqual(validate(report("x".repeat(2_048)), narrow).conformance, "pass");
+	match(resultContractShape(narrow), /summary allows at most 2048 UTF-8 bytes and commitMessage at most 1000/u);
+	match(resultContractShape(MUTATION), /summary allows at most 16384 UTF-8 bytes/u);
+	// Identity: the default digests exactly as before; an explicit allowance is a distinct contract.
+	strictEqual(resultContractSourceId(MUTATION), resultContractSourceId({ kind: "mutation-report" }));
+	ok(resultContractSourceId(narrow) !== resultContractSourceId(MUTATION));
+	ok(resultContractSourceId(narrow).startsWith("agent-result-contract:mutation-report:"));
+});
+
+it("keeps architect-plan authorship at the commit bound; the allowance is mutation-report only", () => {
+	const architect = { kind: "architect-plan", path: "docs/plan.md" } as const;
+	const fits = JSON.stringify({ commitMessage: "plan", summary: "y".repeat(RESULT_COMMIT_MESSAGE_MAX_BYTES) });
+	strictEqual(resultContractAuthorship(architect, fits).summary, "y".repeat(RESULT_COMMIT_MESSAGE_MAX_BYTES));
+	const over = JSON.stringify({ commitMessage: "plan", summary: "y".repeat(RESULT_COMMIT_MESSAGE_MAX_BYTES + 1) });
+	deepStrictEqual(resultContractAuthorship(architect, over), { commitMessage: null, summary: null });
+	strictEqual(resultContractOutputBytes(architect), null);
+	strictEqual(workerOutputCaptureBytes(architect), WORKER_OUTPUT_MAX_BYTES);
+	strictEqual(resultContractAuthorship(MUTATION, over).summary, "y".repeat(RESULT_COMMIT_MESSAGE_MAX_BYTES + 1));
+});
+
+it("parses the allowance from recipe frontmatter and the wire, rejecting out-of-range values", () => {
+	deepStrictEqual(parseResultContract({ kind: "mutation-report" }, "r.md"), { kind: "mutation-report" });
+	deepStrictEqual(parseResultContract({ kind: "mutation-report", maxSummaryBytes: 4_096 }, "r.md"), {
+		kind: "mutation-report",
+		maxSummaryBytes: 4_096,
+	});
+	deepStrictEqual(parseWorkerResultContract({ kind: "mutation-report", maxSummaryBytes: 4_096 }, "spec"), {
+		kind: "mutation-report",
+		maxSummaryBytes: 4_096,
+	});
+	for (const bad of [0, -1, 1.5, RESULT_SUMMARY_MAX_BYTES_CEILING + 1, "4096", null]) {
+		throws(
+			() => parseResultContract({ kind: "mutation-report", maxSummaryBytes: bad }, "r.md"),
+			new RegExp(`r\\.md: maxSummaryBytes must be an integer between 1 and ${RESULT_SUMMARY_MAX_BYTES_CEILING}`, "u"),
+		);
+	}
+	throws(
+		() => parseResultContract({ kind: "mutation-report", summaryBytes: 1 }, "r.md"),
+		/admits only kind and maxSummaryBytes/u,
+	);
+	throws(() => parseResultContract({ kind: "scout-report", maxSummaryBytes: 1 }, "r.md"), /unknown keys/u);
+});
+
+it("resolves one applied contract from recipe default, task override, and topology ownership", () => {
+	const base = { agentId: "coder" };
+	deepStrictEqual(dispatchResultContract(base, coderRecipe), MUTATION);
+	deepStrictEqual(dispatchResultContract({ ...base, resultSummary: { maxBytes: 20_000, scope: "task" } }, coderRecipe), {
+		kind: "mutation-report",
+		maxSummaryBytes: 20_000,
+	});
+	deepStrictEqual(
+		dispatchResultContract({ ...base, resultSummary: { maxBytes: 20_000, scope: "batch" } }, coderRecipe),
+		{
+			kind: "mutation-report",
+			maxSummaryBytes: 20_000,
+		},
+	);
+	// A batch default inherited by a non-mutation step is not that step's setting.
+	deepStrictEqual(
+		dispatchResultContract({ agentId: "scout", resultSummary: { maxBytes: 20_000, scope: "batch" } }, scoutRecipe),
+		scoutRecipe.resultContract,
+	);
+	// An explicit per-task setting on a recipe with no summary is a caller error.
+	throws(
+		() => dispatchResultContract({ agentId: "scout", resultSummary: { maxBytes: 20_000, scope: "task" } }, scoutRecipe),
+		/result_summary_max_bytes applies only to a mutation-report result contract; agent 'scout' declares scout-report/u,
+	);
+	// Topology-owned contracts ignore it: a judge gate takes the coordinator's judge-verdict, an override keeps its kind.
+	deepStrictEqual(
+		dispatchResultContract(
+			{ agentId: "coder", gate: { role: "judge" }, resultSummary: { maxBytes: 1, scope: "task" } },
+			coderRecipe,
+		),
+		{ kind: "judge-verdict", candidates: 1 },
+	);
+	deepStrictEqual(
+		dispatchResultContract(
+			{
+				agentId: "coder",
+				resultContractOverride: { kind: "council-ballot" },
+				resultSummary: { maxBytes: 1, scope: "task" },
+			},
+			coderRecipe,
+		),
+		{ kind: "council-ballot" },
+	);
+	deepStrictEqual(
+		dispatchResultContract(
+			{
+				agentId: "documenter",
+				resultContractOverride: { kind: "artifact-report" },
+				resultSummary: { maxBytes: 1, scope: "task" },
+			},
+			coderRecipe,
+		),
+		{ kind: "artifact-report" },
+	);
+	// The override applies to a coordinator-authored mutation report as well.
+	deepStrictEqual(
+		dispatchResultContract(
+			{ agentId: "coder", resultContractOverride: MUTATION, resultSummary: { maxBytes: 9_000, scope: "task" } },
+			null,
+		),
+		{ kind: "mutation-report", maxSummaryBytes: 9_000 },
+	);
+	throws(() =>
+		dispatchResultContract(
+			{ ...base, resultSummary: { maxBytes: RESULT_SUMMARY_MAX_BYTES_CEILING + 1, scope: "task" } },
+			coderRecipe,
+		),
+	);
+});
+
+it("seals a conforming report larger than the receipt floor without truncation, and names the bound when it overflows", () => {
+	const output = report(EXPLANATION);
+	ok(Buffer.byteLength(output, "utf8") > WORKER_OUTPUT_MAX_BYTES, "the fixture must exceed the old receipt bound");
+	strictEqual(workerOutputCaptureBytes({ kind: "scout-report" }), STRUCTURED_HELPER_RESULT_MAX_BYTES);
+	strictEqual(workerOutputCaptureBytes(null), WORKER_OUTPUT_MAX_BYTES);
+	strictEqual(workerOutputCaptureBytes(MUTATION), resultContractOutputBytes(MUTATION));
+	strictEqual(
+		resultContractOutputBytes(MUTATION),
+		2 * RESULT_SUMMARY_DEFAULT_MAX_BYTES + 2 * RESULT_COMMIT_MESSAGE_MAX_BYTES + 4_096,
+	);
+	const message = { type: "message_end", message: { role: "assistant", content: output, stopReason: "stop" } };
+	const floor = createWorkerOutputCapture();
+	floor.observe(message);
+	strictEqual(floor.snapshot()?.truncated, true);
+	const sized = createWorkerOutputCapture({ maxBytes: workerOutputCaptureBytes(MUTATION) });
+	sized.observe(message);
+	deepStrictEqual(sized.snapshot(), {
+		state: "final",
+		text: output,
+		bytes: Buffer.byteLength(output, "utf8"),
+		truncated: false,
+	});
+	// Streamed deltas accumulate under the same bound.
+	const streamed = createWorkerOutputCapture({ maxBytes: workerOutputCaptureBytes(MUTATION) });
+	for (let offset = 0; offset < output.length; offset += 1_000) {
+		streamed.observe({
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", delta: output.slice(offset, offset + 1_000) },
+		});
+	}
+	strictEqual(streamed.snapshot()?.state, "partial");
+	strictEqual(streamed.snapshot()?.truncated, false);
+	streamed.observe(message);
+	strictEqual(streamed.snapshot()?.text, output);
+	// The bound never drops below the floor, and a clipped result fails with the bound named.
+	strictEqual(createWorkerOutputCapture({ maxBytes: 10 }).snapshot(), undefined);
+	const clipped = floor.snapshot();
+	ok(clipped);
+	const overflow = validate(clipped.text, MUTATION, true);
+	strictEqual(overflow.conformance, "fail");
+	match(
+		overflow.reason ?? "",
+		/result exceeded the sealed output bound of \d+ bytes and was truncated; keep summary within 16384 UTF-8 bytes/u,
+	);
+	// The same clipped text without the truncation fact still fails, without the bound named.
+	const untold = validate(clipped.text, MUTATION);
+	strictEqual(untold.conformance, "fail");
+	doesNotMatch(untold.reason ?? "", /exceeded the sealed output bound/u);
+	// A truncated result fails even when its head parses as a complete report.
+	const parsable = validate(report("short"), MUTATION, true);
+	strictEqual(parsable.conformance, "fail");
+	match(parsable.reason ?? "", /exceeded the sealed output bound/u);
+	// Repair rounds quote the effective allowance.
+	const repair = resultContractRepairMessages(
+		{
+			contract: { kind: "mutation-report", maxSummaryBytes: 2_048 },
+			reason: "missing final result",
+			attempt: 1,
+			anchors: [],
+		},
+		{ provider: "fixture", api: "openai-completions", model: "fixture" },
+	)[1].content[0].text;
+	match(repair, /summary allows at most 2048 UTF-8 bytes/u);
+});
+
+function setup(outputs: readonly string[]) {
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.fleet.retry.maxRetries = 0;
+	// A run that answers nothing must not cool the target down for the rest of its batch.
+	settings.fleet.retry.breakerThreshold = 100;
+	settings.safety.autonomy = "yolo";
+	// Room for the twelve-run batch (M3).
+	const context = dispatchStubContext({ settings, scheduling: { maxWorkers: () => 12 } });
+	const agents = context.getContract("agents");
+	ok(agents);
+	const specs: WorkerSpec[] = [];
+	const bundle = makeDispatchBundle(context, {
+		spawnWorker: (spec) => {
+			const output = outputs[specs.length];
+			ok(output !== undefined, "unexpected extra worker attempt");
+			specs.push(spec);
+			return {
+				pid: null,
+				promise: Promise.resolve({ exitCode: 0, signal: null }),
+				events: (async function* () {
+					yield { type: "pancode_tool_finish", payload: { tool: "read", outcome: "ok", durationMs: 1 } };
+					yield { type: "message_end", message: { role: "assistant", content: output, stopReason: "stop" } };
+				})(),
+				abort: () => {},
+				heartbeatAt: { current: Date.now() },
+			};
+		},
+	});
+	const dispatch = createDispatchTool({
+		dispatch: bundle.contract,
+		bus: context.bus,
+		getAgentSpecs: () => agents.listSpecs(),
+		getAutonomy: () => "yolo",
+	});
+	const monitor = createMonitorTool({ dispatch: bundle.contract });
+	return { bundle, dispatch, monitor, specs };
+}
+
+const intent = { read_roots: ["."], write_roots: [] };
+
+/** The integrity-verified receipt whose sealed output is exactly `text`. */
+function sealedReceipt(bundle: ReturnType<typeof setup>["bundle"], text: string): SettledRunRecord {
+	for (const run of bundle.contract.listRuns()) {
+		const receipt = readVerifiedRun(pancodeStateDir(), run.id);
+		if (!receipt) continue;
+		if (resolvedRunResult(receipt).output?.text !== text) continue;
+
+		return receipt;
+	}
+	throw new Error("no sealed receipt carries the expected output");
+}
+
+it("round-trips a 1200-word cited Coder explanation through dispatch, the receipt, and collect", {
+	timeout: 15_000,
+}, async () => {
+	const output = report(EXPLANATION);
+	const { bundle, dispatch, monitor, specs } = setup([output]);
+	await bundle.extension.start();
+	try {
+		const result = await dispatch.run({ agent: "coder", task: fixture.task, intent }, {});
+		strictEqual(result.kind, "ok");
+		deepStrictEqual(specs[0]?.resultContract, MUTATION);
+		const receipt = sealedReceipt(bundle, output);
+		strictEqual(receipt.settled.outcome, "succeeded");
+		strictEqual(receipt.settled.exitCode, 0);
+		strictEqual(receipt.settled.quality?.resultContract?.conformance, "pass");
+		strictEqual(receipt.settled.quality?.resultContract?.sourceId, resultContractSourceId(MUTATION));
+		deepStrictEqual(resolvedRunResult(receipt).output, {
+			state: "final",
+			text: output,
+			bytes: Buffer.byteLength(output, "utf8"),
+			truncated: false,
+		});
+		strictEqual(JSON.parse(resolvedRunResult(receipt).output?.text ?? "{}").summary, EXPLANATION);
+		strictEqual(receipt.settled.toolActivity?.mutatingSucceeded, false);
+		if (result.kind !== "ok") return;
+		const run = bundle.contract.listRuns()[0];
+		ok(run);
+		// A lone run's compact return shows its whole 12,000-byte answer budget, the one its collect and record use (M3).
+		ok(result.output.includes("Stencil note 10."), result.output);
+		ok(!/answer excerpt/u.test(result.output), result.output);
+		const record = await monitor.run({ mode: "record", run_id: run.id }, {});
+		ok(record.kind === "ok" && record.output.includes("Stencil note 10."));
+		const collected = await monitor.run({ mode: "collect", run_ids: [run.id] }, {});
+		strictEqual(collected.kind, "ok");
+		if (collected.kind !== "ok") return;
+		// A lone run's 12 KB answer budget delivers the answer whole at collect too (XR-62, M3).
+		ok(Buffer.byteLength(output, "utf8") > 2000 && Buffer.byteLength(output, "utf8") < 12_000);
+		ok(collected.output.includes("Stencil note 10."), collected.output);
+		ok(!/answer excerpt|helper result excerpt/u.test(collected.output), collected.output);
+		ok(!collected.output.includes("stored output truncated"));
+	} finally {
+		await bundle.extension.stop?.();
+	}
+});
+
+it("fixes one answer budget per run at dispatch: told to the worker, sealed, and the same at sync, collect and record (M3)", {
+	timeout: 30_000,
+}, async () => {
+	const body = (name: string, bytes: number) =>
+		report(`${`${name} note. `.repeat(Math.ceil(bytes / (name.length + 7))).slice(0, bytes)} ${name} closing.`);
+	const outputs = [body("Alpha", 2_800), body("Bravo", 3_200), body("Charlie", 10_000)];
+	const { bundle, dispatch, monitor, specs } = setup(outputs);
+	await bundle.extension.start();
+	try {
+		const result = await dispatch.run(
+			{
+				tasks: ["Explain alpha.", "Explain bravo.", "Explain charlie."].map((task) => ({ agent: "coder", task })),
+				intent,
+			},
+			{},
+		);
+		strictEqual(result.kind, "ok");
+		if (result.kind !== "ok") return;
+		// Three runs share 12,000 bytes: each worker is told 4,000 and each seal carries it.
+		strictEqual(specs.length, 3);
+		for (const spec of specs) {
+			const told = spec.dynamicPromptMessages?.find((message) => message.id === "dispatch-answer-budget");
+			match(told?.body ?? "", /first 4000 bytes of your final answer/u);
+		}
+		const sealedRun = (output: string) => {
+			for (const run of bundle.contract.listRuns()) {
+				const receipt = readVerifiedRun(pancodeStateDir(), run.id);
+				if (receipt && resolvedRunResult(receipt).output?.text === output) return { runId: run.id, receipt };
+			}
+			throw new Error("no sealed run carries the expected output");
+		};
+		const [alpha, bravo, charlie] = outputs.map(sealedRun);
+		ok(alpha && bravo && charlie);
+		for (const { receipt } of [alpha, bravo, charlie]) strictEqual(receipt.settled.answerBudgetBytes, 4_000);
+		const pointer = `the whole answer is in monitor(mode="answer", run_id=${JSON.stringify(charlie.runId)})`;
+		const collected = await monitor.run(
+			{ mode: "collect", run_ids: [alpha.runId, bravo.runId, charlie.runId], timeout_ms: 5_000 },
+			{},
+		);
+		strictEqual(collected.kind, "ok");
+		if (collected.kind !== "ok") return;
+		for (const [label, view] of [
+			["sync", result.output],
+			["collect", collected.output],
+		] as const) {
+			ok(view.includes("Alpha closing.") && view.includes("Bravo closing."), `${label} shows the short answers whole`);
+			ok(!view.includes("Charlie closing."), `${label} cuts the long answer at its budget`);
+			match(view, /answer excerpt: (\d+) of \d+ bytes/u, label);
+			ok(Number(/answer excerpt: (\d+) of/u.exec(view)?.[1]) <= 4_000, label);
+			ok(view.includes(pointer), `${label} names the call that returns the rest`);
+		}
+		const record = await monitor.run({ mode: "record", run_id: charlie.runId }, {});
+		ok(record.kind === "ok" && !record.output.includes("Charlie closing."), "the record shows the same budget");
+		ok(record.kind === "ok" && record.output.includes("answer cut at 4000 bytes"));
+		const answer = await monitor.run({ mode: "answer", run_id: charlie.runId }, {});
+		ok(answer.kind === "ok" && answer.output === outputs[2], "mode=answer returns the sealed answer alone");
+	} finally {
+		await bundle.extension.stop?.();
+	}
+	// Twelve runs at the 2,000-byte floor, each answering within it, overrun the 20,000-byte sync cap together: every
+	// run still shows its heading, and each the cap cuts names the call that returns its whole answer.
+	const names = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India", "Juliett", "Kilo"];
+	const twelve = [...names, "Lima"].map((name) => body(name, 1_750));
+	for (const output of twelve) ok(Buffer.byteLength(output, "utf8") <= 2_000);
+	const batch = setup(twelve);
+	await batch.bundle.extension.start();
+	try {
+		const result = await batch.dispatch.run(
+			{ tasks: twelve.map((_, index) => ({ agent: "coder", task: `Explain part ${index + 1}.` })), intent },
+			{},
+		);
+		strictEqual(result.kind, "ok");
+		if (result.kind !== "ok") return;
+		strictEqual(batch.specs.length, 12);
+		// The read-only normalization notices precede the formatted result outside its cap.
+		const formatted = result.output
+			.split("\n")
+			.filter((line) => !line.startsWith("[dispatch normalize]"))
+			.join("\n")
+			.trimStart();
+		const sealed = batch.bundle.contract.listRuns().flatMap((run) => {
+			const receipt = readVerifiedRun(pancodeStateDir(), run.id);
+			const text = receipt ? resolvedRunResult(receipt).output?.text : undefined;
+			return receipt && text !== undefined && twelve.includes(text) ? [{ runId: run.id, receipt, text }] : [];
+		});
+		strictEqual(sealed.length, 12);
+		let cut = 0;
+		for (const { runId, receipt, text } of sealed) {
+			strictEqual(receipt.settled.answerBudgetBytes, 2_000);
+			const closing = /"summary":"(\w+) note/u.exec(text)?.[1];
+			match(formatted, new RegExp(`^- ${runId} agent=coder`, "mu"), `${runId} keeps its heading`);
+			if (formatted.includes(`${closing} closing.`)) continue;
+			cut += 1;
+			ok(
+				formatted.includes(`monitor(mode="answer", run_id=${JSON.stringify(runId)})`),
+				`${runId} names where its whole answer is`,
+			);
+		}
+		ok(cut > 0, "the batch overran the cap");
+		ok(Buffer.byteLength(formatted, "utf8") <= 20_000, String(Buffer.byteLength(formatted, "utf8")));
+	} finally {
+		await batch.bundle.extension.stop?.();
+	}
+	// At max_output_bytes 1024 not even the twelve headings fit: no run vanishes, each shown run keeps its id, outcome and
+	// retrieval call, and one closing line names the rest. A run that sealed no answer points at its record instead.
+	const tight = setup(["", ...twelve.slice(1)]);
+	await tight.bundle.extension.start();
+	try {
+		const result = await tight.dispatch.run(
+			{
+				tasks: twelve.map((_, index) => ({ agent: "coder", task: `Explain part ${index + 1}.` })),
+				intent,
+				max_output_bytes: 1_024,
+			},
+			{},
+		);
+		// The silent run fails the batch, so the result is an error carrying the same formatted body.
+		const body = result.kind === "ok" ? result.output : result.message;
+		// The agent ledger board follows the runs outside their budget, as on every board dispatch.
+		const formatted = (body.split("\n\nagent ledger (")[0] ?? "")
+			.split("\n")
+			.filter((line) => !line.startsWith("[dispatch normalize]"))
+			.join("\n")
+			.trimStart();
+		ok(Buffer.byteLength(formatted, "utf8") <= 1_024, formatted);
+		const runIds = ((result.details as { terminalRunIds?: string[] } | undefined)?.terminalRunIds ?? []).slice();
+		strictEqual(runIds.length, 12);
+		const silent = runIds.find((runId) => {
+			const receipt = readVerifiedRun(pancodeStateDir(), runId);
+			return !twelve.includes((receipt ? resolvedRunResult(receipt).output?.text : undefined) ?? "");
+		});
+		ok(silent);
+		const answer = await tight.monitor.run({ mode: "answer", run_id: silent }, {});
+		ok(answer.kind === "error" || answer.output === "", "the silent run has no answer for mode=answer to return");
+		ok(formatted.includes(`monitor(mode="record", run_id=${JSON.stringify(silent)})`), formatted);
+		ok(!formatted.includes(`monitor(mode="answer", run_id=${JSON.stringify(silent)})`), formatted);
+		const omitted = /runs omitted by this result's 1024-byte cap; monitor\(mode="collect", run_ids=(\[[^\]]*\])\)/u.exec(
+			formatted,
+		);
+		const named = omitted?.[1] !== undefined ? (JSON.parse(omitted[1]) as string[]) : [];
+		ok(named.length > 0 && named.length < 12, formatted);
+		for (const runId of runIds) {
+			const shown = new RegExp(`^- ${runId} .*monitor\\(mode="(answer|record)", run_id="${runId}"\\)`, "mu").test(
+				formatted,
+			);
+			ok(shown !== named.includes(runId), `${runId} is shown with its retrieval call or named once as omitted`);
+		}
+	} finally {
+		await tight.bundle.extension.stop?.();
+	}
+});
+
+it("applies a per-dispatch allowance to the worker spec, the seal, and its identity, and fails an over-bound summary honestly", {
+	timeout: 15_000,
+}, async () => {
+	const narrow = { kind: "mutation-report", maxSummaryBytes: 512 } as const;
+	const over = report("x".repeat(600));
+	const within = report("x".repeat(500));
+	const { bundle, dispatch, specs } = setup([over, within]);
+	await bundle.extension.start();
+	try {
+		const failed = await dispatch.run({ agent: "coder", task: fixture.task, intent, result_summary_max_bytes: 512 }, {});
+		strictEqual(failed.kind, "error");
+		deepStrictEqual(specs[0]?.resultContract, narrow);
+		const failedReceipt = sealedReceipt(bundle, over);
+		strictEqual(failedReceipt.settled.outcome, "failed");
+		strictEqual(failedReceipt.settled.outcomeCode, "result_contract_invalid");
+		match(failedReceipt.settled.outcomeDetail ?? "", /summary must be at most 512 UTF-8 bytes \(600 given\)/u);
+		strictEqual(failedReceipt.settled.quality?.resultContract?.conformance, "fail");
+		strictEqual(failedReceipt.settled.quality?.resultContract?.sourceId, resultContractSourceId(narrow));
+		const passed = await dispatch.run({ agent: "coder", task: fixture.task, intent, result_summary_max_bytes: 512 }, {});
+		strictEqual(passed.kind, "ok");
+		const passedReceipt = sealedReceipt(bundle, within);
+		strictEqual(passedReceipt.settled.outcome, "succeeded");
+		strictEqual(passedReceipt.settled.quality?.resultContract?.conformance, "pass");
+		strictEqual(passedReceipt.settled.quality?.resultContract?.sourceId, resultContractSourceId(narrow));
+	} finally {
+		await bundle.extension.stop?.();
+	}
+});
+
+it("rejects an invalid allowance at the tool boundary and an explicit allowance on a recipe without a summary before any worker starts", {
+	timeout: 15_000,
+}, async () => {
+	const { bundle, dispatch, specs } = setup([]);
+	await bundle.extension.start();
+	try {
+		for (const bad of [0, RESULT_SUMMARY_MAX_BYTES_CEILING + 1, 1.5, "2048"]) {
+			const result = await dispatch.run({ agent: "coder", task: fixture.task, intent, result_summary_max_bytes: bad }, {});
+			strictEqual(result.kind, "error");
+			if (result.kind === "error")
+				match(result.message, /result_summary_max_bytes must be an integer between 1 and 32768/u);
+		}
+		const scout = await dispatch.run(
+			{ agent: "scout", task: "Map the spacing code.", intent, result_summary_max_bytes: 2_048 },
+			{},
+		);
+		strictEqual(scout.kind, "error");
+		if (scout.kind === "error")
+			match(scout.message, /applies only to a mutation-report result contract; agent 'scout' declares scout-report/u);
+		strictEqual(specs.length, 0);
+		deepStrictEqual(
+			bundle.contract.listRuns().filter((run) => readVerifiedRun(pancodeStateDir(), run.id) !== null),
+			[],
+		);
+	} finally {
+		await bundle.extension.stop?.();
+	}
+});
+
+it("lets a batch-level allowance reach the mutation-report member while a scout member ignores it", {
+	timeout: 15_000,
+}, async () => {
+	const scoutReport = JSON.stringify({
+		findings: [{ claim: "coords holds three coordinates" }],
+		needsSplit: false,
+		proposedSubtasks: [],
+	});
+	const { bundle, dispatch, specs } = setup([scoutReport, report("x".repeat(700))]);
+	await bundle.extension.start();
+	try {
+		const result = await dispatch.run(
+			{
+				tasks: [
+					{ agent: "scout", task: "Map the spacing code.", intent },
+					{ agent: "coder", task: fixture.task, intent },
+				],
+				result_summary_max_bytes: 4_096,
+			},
+			{},
+		);
+		strictEqual(result.kind, "ok");
+		const byAgent = new Map(specs.map((spec) => [spec.agentId, spec.resultContract]));
+		deepStrictEqual(byAgent.get("scout"), { kind: "scout-report" });
+		deepStrictEqual(byAgent.get("coder"), { kind: "mutation-report", maxSummaryBytes: 4_096 });
+	} finally {
+		await bundle.extension.stop?.();
+	}
+});
+
+it("labels a Documenter summary above the default allowance as the inline deliverable", {
+	timeout: 15_000,
+}, async () => {
+	const summary = `${"Grounded explanation. ".repeat(800)}(grid.py:1)`;
+	ok(Buffer.byteLength(summary, "utf8") > RESULT_SUMMARY_DEFAULT_MAX_BYTES);
+	const output = report(summary);
+	const { bundle, dispatch } = setup([output]);
+	await bundle.extension.start();
+	try {
+		const result = await dispatch.run(
+			{
+				agent: "documenter",
+				task: "Explain grid.py in depth. Do not edit files.",
+				intent,
+				result_summary_max_bytes: 20_000,
+			},
+			{},
+		);
+		strictEqual(result.kind, "ok");
+		const receipt = sealedReceipt(bundle, output);
+		strictEqual(receipt.settled.quality?.resultContract?.conformance, "pass");
+		const labels = runEvidenceLabels(
+			{
+				runId: receipt.row.runId,
+				digest: receipt.settled.digest,
+				facts: receipt.settled,
+				delivered: resolvedRunResult(receipt),
+				assessment: receipt.assessment,
+			},
+			PRODUCER_INTEGRITY,
+			(agentId) => bundle.contract.agentTraits?.(agentId) ?? [],
+		);
+		ok(
+			labels.some((label) => label.includes("the inline deliverable or limitation is in output.text JSON field summary")),
+		);
+		ok(!labels.some((label) => label.includes("no inline summary is available")));
+	} finally {
+		await bundle.extension.stop?.();
+	}
+});

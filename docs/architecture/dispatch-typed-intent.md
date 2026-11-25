@@ -1,0 +1,415 @@
+# Typed Dispatch Intent: Migration and Refusal Policy
+
+Typed dispatch intent declares a worker's context paths, write boundary, expected outputs and host verification requirements. Repository-relative read roots select context and project rules; they do not grant extra filesystem read access. An absolute read root outside the workspace is a read-only grant ([6.8](#68-granted-read-roots)). When supplied, it provides structured scope instead of inferring scope from
+optional `writeRoots` and path-like tokens in task and briefing prose.
+
+This page is the migration contract. It names every dispatch producer and every
+persisted structure typed intent touches, states what happens when intent is
+omitted, partial, versioned differently, or contradictory, lists the stable
+reason codes an operator or integrator can branch on, and describes the prose
+inference fallback.
+
+Related pages: [tool-usage.md](../guide/tool-usage.md) for the `dispatch` tool arguments,
+[fleet-dispatch.md](../guide/fleet-dispatch.md) for playbooks,
+[artifact-versions.md](artifact-versions.md) for the serialization registry, and
+[safety-model.md](safety-model.md) for how a resolved write boundary is enforced.
+
+---
+
+## 1. The Shape
+
+```jsonc
+{
+  "intent": {
+    "read_roots":     ["src/domains/dispatch/"],
+    "write_roots":    ["src/domains/dispatch/", "tests/contracts/"],
+    "relevant_paths": ["docs/architecture/dispatch-typed-intent.md"],
+    "expected_outputs": ["src/domains/dispatch/intent-compatibility.ts"],
+    "verification":   [{ "check": "typecheck" }, { "check": "lint", "timeout_ms": 60000 }]
+  }
+}
+```
+
+An intent object may carry only `version`, `read_roots`, `write_roots`, `relevant_paths`, `expected_outputs`, and `verification`; any other field is refused as `intent_malformed`. The three scope fields, `read_roots`, `write_roots`, and `relevant_paths`, use
+the repository-relative POSIX boundary grammar in [path-boundary.ts](../../src/core/path-boundary.ts).
+A trailing `/` means the subtree; no trailing `/` means that exact file.
+Absolute paths, `..` segments, interior `.` segments, backslashes, and globs
+are refused in those fields, except an absolute `read_roots` directory outside the
+workspace ([6.7](#67-external-scout-read), [6.8](#68-granted-read-roots)). An entry that is exactly `.` or `./` is accepted
+as the repository root and normalizes out of the list. Expected outputs use a
+separate normalizer: it rejects absolute paths, backslashes, root escapes, and
+an empty normalized path, but it normalizes interior `.` and repeated `/`
+segments and does not interpret or reject glob characters. Each list is
+normalized, deduplicated, and sorted by
+code point, holds at most 32 entries, and each entry is at most 512 UTF-8 bytes.
+`verification` holds at most 8 entries, each carrying only `check` and an optional `timeout_ms`, and every
+`check` is an id `verify` lists, resolved from package scripts,
+`.pancode/verifiers.yaml`, or an available check derived from the toolchain
+files (such as `python-unittest`), never a shell command. A `timeout_ms` is raised to at least 1000 ms and clamped to the declared check's own timeout; when omitted the check's own timeout applies. The one exception is
+`{ "check": "none" }`, which models write to mean "no verification"; it
+normalizes to an empty list instead of costing a refused round unless the
+workspace actually declares a verifier whose id is `none`.
+
+Normalization is in [intent.ts](../../src/domains/dispatch/intent.ts). The normalized object
+carries `version: 2` and a `pathProvenance` array binding every policy-bearing
+path to the field that declared it, its provenance kind, and its confidence.
+[path-scope.ts](../../src/domains/dispatch/path-scope.ts) resolves the request's path scope from it.
+[intent-compatibility.ts](../../src/domains/dispatch/intent-compatibility.ts) owns every rule on this page.
+
+---
+
+## 2. Compatibility Rules
+
+Each rule resolves to exactly one of three decisions.
+
+| Decision | Meaning | Where it surfaces |
+| :--- | :--- | :--- |
+| **accept** | The request is unambiguous. | Nothing is reported. |
+| **warn** | The request is compatible, but scope resolution or admission identified a scope-replacement tradeoff, a prose-inferred path, or write roots that bound less than they appear to. The dispatch runs with the authority it would have had anyway. | The compatibility classifier (`classifyDispatchIntentCompatibility` in [intent-compatibility.ts](../../src/domains/dispatch/intent-compatibility.ts)) reports refusals only. Warnings come from scope resolution and admission: the typed-scope replacement warning is a dispatch diagnostic for internal and harness origin requests, except the context generators, and the inferred-scope and write-root notices are listed in [Reason Codes](#5-reason-codes). Inferred provenance appears in the approval artifact. |
+| **refuse** | The request states two incompatible things about authority, or states one this build cannot interpret. | Terminal admission error carrying the reason code. The dispatch never runs. |
+
+The invariant that separates `warn` from `refuse`: **a warning is never the
+difference between a narrow grant and a wide one.** No compatibility path widens
+read, write, or verification authority to resolve an ambiguity. When the
+compatible reading and the declared reading disagree about what a worker may
+touch, the answer is a refusal, never the union of the two.
+
+### 2.1 Omitted intent
+
+Accepted without a standalone runtime warning. Policy-bearing scope is resolved by
+`inferredPathScope()`: the request's `writeRoots` become the write boundary with
+provenance `derived`, and path-like tokens in the task (confidence `medium`) and
+briefing (confidence `low`) become working-context paths with provenance
+`inferred`. A method call such as `m.add(1, 1)` is masked before path tokens are
+matched, so it never becomes a read root, while a file name such as `m.py` still
+infers ([code-members.ts](../../src/domains/dispatch/code-members.ts)).
+
+Inferred paths select project rules and compile worker context. They never
+become write boundaries and never add a verification requirement. The only path
+into a write boundary without a declaration is the explicit `writeRoots`
+request field, which the caller had to set on purpose. This is what makes omission a
+compatible rather than a refusal: nothing about it can widen authority. The
+compatibility classifier reports nothing for omitted intent, so the dispatch
+path treats it as ordinary. The approval artifact remains the operator-visible
+record.
+
+Before inference runs, the normalize stage of dispatch admission
+([dispatch-normalize.ts](../../src/tools/dispatch-normalize.ts)) rewrites an absolute
+token equal to or under the run's `cwd`, and a leading-slash workspace path, to its
+workspace-relative form and reports the rewrite in a `[dispatch normalize]` line
+([the normalize stage](../guide/fleet-dispatch.md#the-normalize-stage)). An absolute
+token outside the workspace or a malformed path token in prose is not silently
+dropped. It throws
+`DispatchPathScopeInferenceError` with code `scope_path_absolute` or
+`scope_path_malformed`, because a token the inference cannot normalize is
+exactly where a silent omission would hide an applicable rule. A `<scheme>://` URI
+other than `file://`, such as `https://example.org/x` or `project://paper/background`,
+names a resource and is skipped; `file://` stays visible because its path names the
+filesystem.
+
+### 2.2 Partial intent
+
+Accepted. Every field is independently optional and an omitted list normalizes
+to empty. A declaration is not required to be complete to be authoritative:
+declaring only `write_roots` is a complete statement about write scope.
+
+Intent that declares `write_roots` or `expected_outputs` but no `verification`
+describes work that changes the tree with nothing the orchestrator itself runs
+to prove the change is sound. It is admitted, and the classifier reports nothing
+for it.
+
+One partial shape is refused when both lists are non-empty. An `expected_outputs`
+entry outside every declared `write_root` (`intent_outputs_outside_write_roots`) means the write boundary
+would block exactly the artifact the task is required to produce. Refusing that
+at admission costs a rejected call; accepting it costs a full worker run that
+cannot succeed.
+
+### 2.3 Stale or unsupported version
+
+Refused, never migrated. `DISPATCH_INTENT_SUPPORTED_VERSIONS` is `[2]` and
+membership in that list is the whole test. It is deliberately not a range: a
+reader that accepts "2 or newer" accepts fields it cannot interpret, and a
+reader that accepts "2 or older" reads a v1 statement about authority under v2
+rules. Both are the ambiguity typed intent exists to remove.
+
+Raw model-facing intent may echo `version: 2` so a caller can replay a
+declaration it was shown. Any other value fails normalization with
+`intent_version_unsupported`. A normalized intent arriving on a job spec at
+another version fails admission with the same code. The remedy in both messages
+is the same: restate the fields on a fresh dispatch call.
+
+### 2.4 Contradictory intent
+
+Refused. Three contradictions are enumerated.
+
+- **Request field against declared write scope.** When both lists are non-empty,
+  `writeRoots` and `intent.write_roots` resolving to different trees is
+  `intent_write_roots_contradiction`. Neither the
+  union nor the request field wins; the caller drops `writeRoots` and declares
+  once.
+- **Narrowed against enclosing scope.** A per-task intent in a batch, or any
+  other narrowed declaration, reaching outside the intent it narrows is
+  `intent_scope_widening`. Narrowing is monotonic: downstream may shrink and may
+  never reach outside. Read scope is checked against reads plus writes, because a
+  declared write root is necessarily readable.
+- **Write scope against run authority.** `write_roots` declared on a request
+  with `readOnly: true` is `intent_write_without_authority`. Silently
+  dropping the declaration would leave the request claiming a write scope nothing
+  enforces.
+
+The declared-versus-inferred case is not a contradiction and is not refused.
+When a request declares intent, prose inference stops resolving scope entirely;
+paths mentioned only in prose take no part in rule selection or authority.
+`typed_scope_replaced_inferred_paths` reports the useful subset that looks like
+a source or documentation path, or ends in a directory separator, capped at 12
+entries for the transcript. Declared always outranks inferred.
+
+---
+
+## 3. Producer Compatibility Table
+
+Every producer that can reach a worker passes through `validateJobSpec()` in
+[validation.ts](../../src/domains/dispatch/validation.ts). When an `intent` property is present, that
+validator runs the classifier, every finding of which is a terminal refusal. Requests with
+no intent skip compatibility classification and resolve scope through prose
+inference, whose malformed-path errors remain terminal.
+
+| Dispatch producer | Source | Typed intent | Behavior without declaration | Refuses on |
+| :--- | :--- | :--- | :--- | :--- |
+| **`dispatch` tool, singular `task`** | [dispatch-arguments.ts](../../src/tools/dispatch-arguments.ts) | Declared, top-level `intent` | Prose inference from `writeRoots` + task/briefing tokens | All codes |
+| **`dispatch` tool, batch `tasks[]`** | `src/tools/dispatch-arguments.ts` | Declared per task, shallow-merged over the top-level default | Same as singular, per task | All codes, plus `intent_scope_widening` against the top-level ceiling |
+| **`dispatch` modes parallel / sequential / pipeline, with or without `detach`** | [dispatch-admission.ts](../../src/tools/dispatch-admission.ts) | Inherited unchanged from the task that declared it | Prose inference | All codes |
+| **`dispatch` mode compete, candidates** | `src/tools/dispatch-admission.ts` | Inherited unchanged from the single base task | Prose inference | All codes. `verification` runs in each candidate's worktree |
+| **`dispatch` mode compete, judge** | `src/tools/dispatch-admission.ts` | None. The judge is a fresh read-only request | Prose inference over the judge's own task | Prose inference errors only |
+| **`dispatch` mode council, members** | `src/tools/dispatch-admission.ts` | Inherited, narrowed to read-only: declared write roots arrive as read roots | Prose inference | All codes. `verification` is refused for the mode (`council_verification_unsupported`) |
+| **`dispatch` mode council, synthesis judge** | `src/tools/dispatch-admission.ts` | None. Fresh read-only request | Prose inference over the judge's own task | Prose inference errors only |
+| **`dispatch` review gate, builder** | `src/tools/dispatch-admission.ts` | Inherited unchanged | Prose inference | All codes |
+| **`dispatch` review gate, reviewer** | `src/tools/dispatch-admission.ts` | None on the request. `expected_outputs` and `verification` reach the reviewer as rendered *requirements*, never as evidence | Prose inference over the reviewer's own task | Prose inference errors only |
+| **`dispatch` `apply_winner`** | `src/tools/dispatch-admission.ts` | Not applicable. Branch application runs no worker | Not applicable | Branch-shape refusals only |
+| **`from_scout` continuation** | [dispatch-scout-admission.ts](../../src/tools/dispatch-scout-admission.ts) | None for operator-approved and yolo continuations. A harness read-only orientation continuation declares an empty intent, so it has no scope paths | Prose inference per step | Prose inference errors only |
+| **Playbook agent step (v4+ `writes:`)** | [fleet-run.ts](../../src/domains/dispatch/fleet-run.ts), `fleetStepIntent` in [fleet-step-run.ts](../../src/domains/dispatch/fleet-step-run.ts) | Declared. The playbook's `writes:` compiles to `relevant_paths` | Prose inference for pre-v4 playbooks and readonly steps | All codes |
+| **Playbook gate / plan step** | `src/domains/dispatch/fleet-run.ts`, `src/domains/dispatch/fleet-step-run.ts` | Declared, same path (`writes` is the gate path or the plan step's boundary) | Prose inference when undeclared | All codes |
+| **Fleet delegation-plan spliced step** | `src/domains/dispatch/fleet-run.ts`, `src/domains/dispatch/fleet-step-run.ts` | Declared from the validated plan task's `writes` | Prose inference when the task declares none | All codes |
+| **Fleet code step** | [code-step.ts](../../src/domains/dispatch/code-step.ts) | Not applicable. Runs a declared command, not a worker | Not applicable | Not applicable |
+| **ACP delegation target** | [extension.ts](../../src/domains/dispatch/extension.ts) | Accepted and carried into the plan, but the external agent runs its own tool surface | Prose inference | All codes, plus a hard refusal of any resolved `writeRoots` on this transport |
+| **Custom agent recipe** | `src/domains/agents/` | Not a producer. A recipe narrows the tool surface and capability class; it never declares dispatch scope | Not applicable | Not applicable |
+| **`pancode run --agent`** | [run.ts](../../src/cli/run.ts) | **None** | Prose inference | Prose inference errors only |
+| **`pancode context wiki`** | [wiki-generate.ts](../../src/cli/wiki-generate.ts) | Declared through `declaredScopeIntent()`: read the repository root (a repair pass reads the page being repaired and its cited sources; when they exceed the intent's path cap, the deepest files widen to their directories, up to the whole repository), write only the wiki staging directory. It also sets the matching `writeRoots` request field | Not applicable | All codes |
+| **`pancode context init`** | [bootstrap-generate.ts](../../src/cli/bootstrap-generate.ts) | Declared through `declaredScopeIntent()`: read the repository root, no write roots | Not applicable | All codes |
+| **Session slash commands, overlays, watchdog** | `src/session-control/`, `src/interactive/` | **None** | Prose inference | Prose inference errors only |
+
+"All codes" means every terminal code in section 5 that can apply to the row's
+shape. "Prose inference errors only" means the row cannot declare intent, so
+only malformed or absolute prose-path inference can refuse it.
+
+---
+
+## 4. Persisted and Serialized Contract Table
+
+| Contract | Version | Carries intent | Migration policy |
+| :--- | :--- | :--- | :--- |
+| **`DispatchIntent`** | `2` | It *is* the intent | **Refused, never migrated.** Any other version fails admission with `intent_version_unsupported`. A stored declaration is restated on a fresh call. |
+| **`RunResult`** | In memory only | `intent`, the normalized declaration admitted before worker execution | Not persisted. The run's `run.settled` (version `1`) carries the `routingIntent`, not the dispatch intent. |
+| **`ResolvedDispatchPlanArtifact`** | `3` | `intent` and `resolvedVerification` per task | **Refused, never migrated.** `resolvedDispatchPlanFromArgs` returns `null` for any version but 3, and a task whose `intent` fails `isDispatchIntent` invalidates the whole artifact. The call falls back to unresolved admission rather than executing a half-understood plan. |
+| **Dispatch plan approval text and hash** | Rendered, hashed | `intent_sha256` for a declared task; the full inferred scope table for a task without declared intent | Not persisted across versions. The hash binds the exact rendering an operator approved. |
+| **Worker Spec** | `11` without extension hooks; `12` with hooks | **No.** Carries the *resolved* `writeRoots`, not the declaration | Worker reads v11 and v12; v11 cannot carry hooks. Unsupported versions are refused. A worker receives an enforced boundary, never a statement of intent it could reinterpret. |
+| **Execution Plan** | `4` | **No.** Carries per-step `writes` | The compiler stamps v4; there is no execution-plan deserializer. Intent is built from `writes` at request construction, so this derivation does not change the plan hash. |
+| **Playbook** | `1..5` | **No.** v4+ carries per-step `writes:` | Reader refuses playbooks whose version features it does not support. A pre-v4 playbook declares nothing and stays on inference. |
+| **Fleet Run Record** | `1` | **No** | Resume refuses a changed plan hash. Intent built from step `writes` is outside the plan hash, so a record stays resumable. |
+| **Durable Assignment Store** | `1` | **No** | Unsupported or unreadable store reads as empty. |
+| **Detached Batch Store** | `1` | **No** | Unsupported version reads as empty. |
+| **Code Step Record** | `1` | **No.** Deterministic command, not a worker | Records at other versions are skipped. |
+
+Nothing is archived. Every affected structure either refuses an unsupported
+version or ignores the record; no reader rewrites a stored artifact in place, so
+a downgrade never encounters a file a newer build silently rewrote.
+
+### 4.1 Determinism across source and installed-package paths
+
+`intent-compatibility.ts` and the version rules in `intent.ts` read no
+filesystem, no clock, no environment, and no package layout. The supported
+version set is a compiled-in constant, not a lookup. A source checkout, a global
+npm install, and a bundled `dist/` therefore classify identical input
+identically, which is what makes the version policy verifiable rather than
+environmental. [dispatch-admission.test.ts](https://github.com/akougkas/pancode/blob/main/tests/contracts/dispatch-admission.test.ts) covers the current
+normalization and compatibility boundary.
+
+The one input that is legitimately environmental is the *verification catalog*:
+`check` ids resolve from the project's `package.json` scripts,
+`.pancode/verifiers.yaml`, and the checks `verify` derives from the
+workspace's toolchain files, which are properties of the workspace, not of the
+PanCode installation. An undeclared id fails closed with
+`verification_check_undeclared` naming all three sources.
+
+---
+
+## 5. Reason Codes
+
+Active refusal codes are stable and appear as the prefix of their diagnostic, in
+the form `<code>: <what is wrong and what to do about it>`.
+
+| Code | Decision | Meaning |
+| :--- | :--- | :--- |
+| `typed_scope_replaced_inferred_paths` | warn | Typed intent was declared, so prose-only paths took no part in scope. |
+| `inferred_scope_parent_tokens` | warn | Emitted by `path-scope.ts` when prose inference resolves a leading `../` run against the dispatch root. The message names dropped tokens as paths outside the workspace that were not granted, and anchored ones as `<raw token> as <path>`. |
+| `write_root_dot_unconfined` | warn | A write root of `.` names the whole workspace, so it sets no write boundary and the worker keeps bash, verify and git. |
+| `write_roots_checks_withheld` | warn | Narrow write roots run without an OS sandbox enforcing them, so the worker loses bash and verify and cannot run checks. |
+| `intent_version_unsupported` | refuse | `intent.version` names a version this build does not speak. |
+| `intent_malformed` | refuse | Not a normalized intent for a reason other than its version. |
+| `intent_write_roots_contradiction` | refuse | The `writeRoots` request field and `intent.write_roots` name different trees. |
+| `intent_outputs_outside_write_roots` | refuse | A declared output lies outside every declared write root. The diagnostic tells the caller to list file paths within the roots, never an action such as commit. |
+| `intent_write_without_authority` | refuse | Write roots declared on a read-only request. |
+| `intent_scope_widening` | refuse | A narrowed intent reaches outside the intent it narrows. |
+| `intent_path_absolute` | refuse | A declared path other than a granted read root is absolute rather than repository-relative, an absolute `read_roots` entry lies inside the workspace, or a `cwd` outside the workspace was requested for an agent other than a read-only `scout`. See [6.7](#67-external-scout-read) and [6.8](#68-granted-read-roots). |
+| `external_read_write_scope` | refuse | An external Scout declared write roots, expected outputs, verification, a gate or a task worktree. |
+| `external_read_root_invalid` | refuse | The external read root is not an existing directory, or it cannot be resolved. A granted read root also gets this code when it names the filesystem root, a system tree, the home directory, an ancestor of the workspace, or a credential store or a directory holding one. |
+| `external_read_mode_unsupported` | refuse | An external Scout was detached, or its dispatch is not independent parallel tasks without review. |
+| `external_read_approval_required` | refuse | The operator did not approve the external root for this run, or no approval was available. |
+| `intent_path_escapes_root` | refuse | A declared path escapes the repository root. |
+| `intent_path_malformed` | refuse | A declared path fails the boundary grammar, including an `expected_outputs` entry that normalizes to `.`. Outputs are file paths, and the host commits worktree tasks. |
+| `intent_path_over_cap` | refuse | A list exceeds 32 entries or an entry exceeds 512 bytes. |
+| `verification_malformed` | refuse | A verification entry is not `{check, timeout_ms?}`. |
+| `verification_over_cap` | refuse | More than 8 verification entries. |
+| `verification_check_undeclared` | refuse | A `check` id is not declared by any catalog source. |
+| `gate_and_intent_verification_conflict` | refuse | `gate` combined with `intent.verification`. |
+| `scope_path_absolute` | refuse | Prose inference met an absolute path token outside the workspace. |
+| `scope_path_malformed` | refuse | Prose inference met a malformed path token. |
+| `task_forbids_writes` | refuse | The task prose forbids writing any file (`forbidsFileWrites` in `src/core/write-prohibition.ts`), but the agent's capability class is `artifact-write`, so its deliverable is a written artifact. Among the builtins only `architect` has that class. The message names the read-only agents `scout`, `oracle` and `researcher` as the alternative. A scoped prohibition, such as one limited to a directory or with an exception, does not trigger it. |
+
+---
+
+## 6. Examples
+
+Typed intent is the default for every example below. A call that omits it still
+works without a dedicated warning; it resolves its scope from weaker evidence
+recorded in the approval artifact.
+
+### 6.1 Main-agent call, single writer
+
+```jsonc
+{
+  "agent": "coder",
+  "task": "Add the compatibility classifier and wire it into job-spec validation.",
+  "intent": {
+    "read_roots":     ["src/domains/dispatch/"],
+    "write_roots":    ["src/domains/dispatch/", "tests/contracts/"],
+    "expected_outputs": ["src/domains/dispatch/intent-compatibility.ts"],
+    "verification":   [{ "check": "typecheck" }, { "check": "lint" }]
+  }
+}
+```
+
+The `expected_outputs` entry sits under a declared write root, so it is
+producible. `verification` ids resolve before approval, and the orchestrator, not
+the worker, runs them.
+
+### 6.2 Batch with a shared ceiling and per-task narrowing
+
+```jsonc
+{
+  "agent": "coder",
+  "intent": { "read_roots": ["src/"], "write_roots": ["src/domains/"] },
+  "tasks": [
+    { "task": "Refactor the ledger hub.",  "intent": { "write_roots": ["src/domains/dispatch/"] } },
+    { "task": "Refactor rule selection.",  "intent": { "write_roots": ["src/domains/context/"] } }
+  ]
+}
+```
+
+Per-task intent shallow-merges over the top-level default and is then checked
+against it as a ceiling. `"write_roots": ["docs/"]` on a task would be refused
+with `intent_scope_widening`; the top-level declaration is the maximum.
+
+### 6.3 Read-only fan-out
+
+```jsonc
+{
+  "agent": "scout",
+  "tasks": [
+    { "task": "Map every reader of the fleet config and cite file paths.",
+      "intent": { "read_roots": ["src/domains/agents/", "src/cli/"] } }
+  ]
+}
+```
+
+Declaring `read_roots` on a read-only dispatch does not grant anything. It
+selects the project rules that apply to those trees and pins the worker's
+context, which is what stops an applicable rule from being missed because the
+task text happened not to spell a path.
+
+### 6.4 Playbook
+
+A playbook declares scope in its own artifact; no `intent` key is written
+by hand.
+
+```yaml
+version: 5
+name: refactor-dispatch
+steps:
+  - id: implement
+    kind: agent
+    agent: coder
+    scope: workspace
+    writes: ["src/domains/dispatch/", "tests/contracts/"]
+```
+
+`writes:` is compiled into the step's typed intent as `relevant_paths`, so the
+playbook's declaration selects project rules and compiles worker context. The
+declaration keeps being *enforced* by the fleet write-boundary enforcer after
+the step, which is why it is not restated as `write_roots`: that would mint a
+second grant, enforced at the per-tool worker seam, which refuses outright on
+the subprocess and ACP runtimes a fleet may legitimately route a step to.
+
+### 6.5 In-process callers
+
+Extensions have no dispatch API, so they cannot build a request. Code
+inside the runtime that holds repository-relative paths builds intent through
+the domain rather than assembling the normalized object by hand. The fleet
+runner, `context wiki` and `context init` do:
+
+```ts
+import { declaredScopeIntent } from "../domains/dispatch/index.js";
+
+const built = declaredScopeIntent({ readRoots: ["src/"], writeRoots: ["src/generated/"] });
+if (!built.ok) throw new Error(`${built.reason}: ${built.message}`);
+await dispatch.dispatch({ agentId: "coder", executionRole: "builder", task, intent: built.intent });
+```
+
+`declaredScopeIntent` runs the same normalization, caps, and provenance
+construction the dispatch tool uses, so a caller cannot mint an intent shape
+the tool could not. It deliberately does not accept `verification`: a declared
+check id means nothing until it is resolved against the workspace catalog, and
+that resolution belongs to the admission controller that owns the catalog.
+
+### 6.6 ACP delegation
+
+Typed intent is accepted on a delegation request and is rendered into the
+approval artifact, so an operator sees the declared scope before an external
+agent starts. It grants nothing on that transport: the external agent runs its
+own tool surface, PanCode mediates no per-tool call, and any resolved `writeRoots`
+is refused outright rather than accepted and left unenforced.
+
+### 6.7 External Scout read
+
+A read-only `scout` task can inspect one checkout outside the workspace. The task names one absolute POSIX directory in `intent.read_roots` (at most 512 bytes, no backslashes) or sets a `cwd` outside the workspace. The host resolves the real path, requires an existing directory, rebases every declared `read_roots` and `relevant_paths` entry to a path relative to that root, and runs the Scout read-only with the root as its working directory. A declared path that leaves the root is refused with `Use one external checkout per Scout task`. Any other agent, or a Scout that is not read-only, gets `intent_path_absolute` for a `cwd` outside the workspace; its absolute `read_roots` are handled as [granted read roots](#68-granted-read-roots).
+
+An external Scout cannot declare `write_roots`, `expected_outputs` or `verification`, cannot ask for a task worktree, and cannot carry a `gate` (`external_read_write_scope`). It must be an attached `mode: parallel` task without `review`, so a detached or reviewed dispatch is refused with `external_read_mode_unsupported`.
+
+The host then asks the operator once per run and root, whatever the session's autonomy level: `Allow one read-only Scout run to inspect external root "<root>"? This grants no writes, commands, or access to other external roots.` The TUI or an ACP permission request answers it, and the approval expires with that run. A headless run, a worker and any host without a permission listener cannot approve, so the task is rejected with `external_read_approval_required: Scout root <root> was not approved for this run; approve it in the TUI or ACP permission request. Headless runs cannot approve external roots.` In a batch the approved tasks still run and each rejected one is listed by position, and when every task is rejected the call returns the error with `rejectedTasks`. Admission re-checks that the approval names this run and the canonical root, and refuses a request without it with the same code.
+
+The external Scout gets that checkout's own handbook as bounded project context, filtered by that repository's `handbook` trust, and nothing of the session's. A task whose declared paths fall in two repositories is refused with `task_spans_repositories`. See [Sister repositories](worker-context.md#sister-repositories).
+
+### 6.8 Granted read roots
+
+A task that works in its own workspace, with any agent other than the external Scout above, may list absolute directories in `intent.read_roots`. Each must be an existing directory outside the workspace, at most 512 bytes, with no backslashes. The host resolves each real path, removes the entry from the typed intent, whose paths stay repository-relative, and adds the directory to the native worker's read-only roots: the worker may read it and never write it. No operator question is asked for the grant itself.
+
+A missing path or a file is refused with `external_read_root_invalid`. So is the filesystem root, a path under `/proc`, `/sys`, `/dev`, `/run` or `/etc`, the home directory, a directory that contains the workspace, a credential store, and a directory that holds one within four levels (a tree too large to scan counts as holding one). An absolute entry inside the workspace is refused with `intent_path_absolute` and the advice to name it repository-relative. Granted roots take no part in the one-repository-per-task rule ([scout-workspace.ts](../../src/domains/dispatch/scout-workspace.ts)).
+
+---
+
+## 7. Omitted-intent fallback
+
+Omitted intent resolves scope through the prose inference described in
+[2.1](#21-omitted-intent). The run record does not persist the resolved
+`pathScope`. The fallback stays available for every producer that cannot declare
+intent.

@@ -1,0 +1,557 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { parseWorkerContextPolicy } from "../domains/context/worker/contract.js";
+
+/** Pure model-argument parsing; every returned DispatchRequest has a concrete agent id. */
+
+import { validateTagName } from "../core/store-paths.js";
+import { isRecord } from "../core/type-guards.js";
+import { forbidsFileWrites } from "../core/write-prohibition.js";
+import { dispatchJobRecipe, dispatchJobWrites } from "../domains/agents/dispatch-jobs.js";
+import { parseResultSummaryMaxBytes } from "../domains/agents/result-contract-allowance.js";
+import type { AgentAutomationAuthority, AgentSpec } from "../domains/agents/spec.js";
+import { classifyAgentTask } from "../domains/dispatch/agent-candidates.js";
+import { cloneDispatchBudgetRequest } from "../domains/dispatch/budget-envelope.js";
+import type { DispatchRequest } from "../domains/dispatch/contract.js";
+import { type AgentRoleFactsResolver, withRunRole } from "../domains/dispatch/execution-role.js";
+import { COUNCIL_VOTER_PROMPT } from "../domains/dispatch/gate-role-prompts.js";
+import { answerBudgetForBatch } from "../domains/dispatch/handback.js";
+import type { DispatchIntent } from "../domains/dispatch/intent.js";
+import {
+	classifyDispatchIntentCompatibility,
+	dispatchIntentScopeWidening,
+} from "../domains/dispatch/intent-compatibility.js";
+import { mergeOperatorNamedChecks } from "../domains/dispatch/operator-checks.js";
+import { parseRoutingIntent } from "../domains/dispatch/routing-intent.js";
+import { repositorySpanRefusal, scoutReadWorkspace } from "../domains/dispatch/scout-workspace.js";
+import { DISPATCH_BRIEFING_MAX_BYTES, type JobThinkingLevel } from "../domains/dispatch/validation.js";
+import { isToolProfileName, TOOL_PROFILE_NAMES } from "./profiles.js";
+
+/**
+ * The agent a council seats when the caller names none. Council admission pins
+ * every member to the `council-read-only` tool profile, and `coder` requires a
+ * write tool, so the ordinary default would fail admission for every member.
+ * `scout` is the builtin read-only recipe that keeps grep, find, ls and
+ * code_nav under that profile, so a member can search the code it is asked
+ * about; `researcher` keeps only read under it.
+ */
+export const COUNCIL_DEFAULT_AGENT_ID = "scout";
+
+/**
+ * The persona a vote member runs under. A seat on a recipe whose result is a
+ * scout report (the council default recipe) votes under the coordinator's
+ * bounded voter prompt rather than its findings persona, whose terminal shape
+ * contradicts the ballot (FL-23); a seat on any other recipe keeps that
+ * recipe's body.
+ */
+export function councilVoterPersona(spec: Pick<AgentSpec, "resultContract"> | null | undefined): {
+	systemPrompt?: string;
+} {
+	return spec?.resultContract?.kind === "scout-report" ? { systemPrompt: COUNCIL_VOTER_PROMPT } : {};
+}
+
+/** Last-resort baseline when the job's recipe is not installed. */
+const JOB_BASELINE_FALLBACK_AGENT_ID = "scout";
+
+/** The typed arguments that say a run writes: declared write scope, or the builder seat of a review or compete. */
+function declaresWrites(args: Record<string, unknown>): boolean {
+	if (args.review !== undefined || args.mode === "compete") return true;
+	const intent = args.intent;
+	if (!isRecord(intent)) return false;
+	const nonEmpty = (value: unknown) => Array.isArray(value) && value.length > 0;
+	return nonEmpty(intent.write_roots) || nonEmpty(intent.expected_outputs);
+}
+
+/**
+ * Typed intent that declares an empty write scope: `write_roots: []` and no
+ * expected outputs. The caller said in the schema that the run changes nothing,
+ * which outranks any verb the prose classifier reads as a change.
+ */
+function declaresNoWrites(args: Record<string, unknown>): boolean {
+	const intent = args.intent;
+	if (!isRecord(intent) || !Array.isArray(intent.write_roots) || intent.write_roots.length > 0) return false;
+	return (
+		intent.expected_outputs === undefined ||
+		(Array.isArray(intent.expected_outputs) && intent.expected_outputs.length === 0)
+	);
+}
+
+/**
+ * The recipe an omitted or `agent:"auto"` agent resolves to: the job table's
+ * recipe for the task's job. There is no default recipe. Arguments that say
+ * the run writes (see `declaresWrites`) turn a job that writes nothing into
+ * `implement`; an empty typed write scope (see `declaresNoWrites`) turns a
+ * writing job into `inspect` and keeps any other read job. Falls
+ * back whenever the job's recipe is not present in this install, so a trimmed
+ * recipe set can never produce a dispatch against an agent id that does not
+ * resolve.
+ */
+function jobBaselineAgentId(task: string, args: Record<string, unknown>, hasAgent?: (id: string) => boolean): string {
+	const classified = classifyAgentTask(task).job;
+	const job = declaresWrites(args)
+		? dispatchJobWrites(classified)
+			? classified
+			: "implement"
+		: declaresNoWrites(args) && dispatchJobWrites(classified)
+			? "inspect"
+			: classified;
+	const mapped = dispatchJobRecipe(job);
+	if (hasAgent === undefined) return mapped;
+	if (hasAgent(mapped)) return mapped;
+	if (hasAgent(JOB_BASELINE_FALLBACK_AGENT_ID)) return JOB_BASELINE_FALLBACK_AGENT_ID;
+	return mapped;
+}
+const DEFAULT_MAX_OUTPUT_BYTES = 20_000;
+const PERSONA_MAX_CHARS = 8_000;
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+const VALID_THINKING = new Set<JobThinkingLevel>(THINKING_LEVELS);
+
+export interface DispatchArgumentParserOptions {
+	/** Host workspace used for repository-relative intent and Scout admission (#433). */
+	workspaceRoot?: string;
+	isReadOnlyScout?: (id: string) => boolean;
+	/** True for an agent whose deliverable is a written artifact (capability class artifact-write). */
+	writesArtifact?: (id: string) => boolean;
+	resolveFacts?: AgentRoleFactsResolver;
+	/** Installed recipe ids, so an `auto` baseline never names an agent this install lacks. */
+	hasAgent?: (id: string) => boolean;
+	auto: {
+		approvedAuthorities: ReadonlyArray<AgentAutomationAuthority>;
+		authorityBasis: "operator-plan-approval" | "yolo-policy";
+	};
+	resolveIntent?: (
+		rawIntent: unknown,
+		cwd: string | undefined,
+		externalReadRoot?: string,
+	) =>
+		| { ok: true; intent: DispatchIntent; resolvedVerification: NonNullable<DispatchRequest["resolvedVerification"]> }
+		| { ok: false; message: string; reason?: string };
+	/**
+	 * Declared check ids the operator named in the turn issuing this dispatch,
+	 * for a task at `cwd`. Each one joins the request's intent verification so
+	 * the merge gate enforces it even when the coordinator left it out.
+	 */
+	operatorNamedChecks?: (cwd: string | undefined) => ReadonlyArray<string>;
+}
+
+export interface DispatchRejectedTask {
+	position: number;
+	reason: string;
+	message: string;
+}
+
+/**
+ * The arguments one batch member parses from: the shared fields, then the
+ * member's own, with a member intent layered over the shared intent. Null when
+ * there is no member at `index`. The normalize stage reads the same view.
+ */
+export function dispatchTaskArgs(args: Record<string, unknown>, index: number): Record<string, unknown> | null {
+	const tasks = args.tasks;
+	if (!Array.isArray(tasks) || index < 0 || index >= tasks.length) return null;
+	const item: unknown = tasks[index];
+	// A batch wins over a top-level task: each item is its own assignment, so a task sent beside tasks is ignored
+	// (Claude fills the compact schema's required task with a label such as "Dispatch two coder tasks").
+	const shared = { ...args };
+	Reflect.deleteProperty(shared, "tasks");
+	Reflect.deleteProperty(shared, "task");
+	const itemArgs: Record<string, unknown> = isRecord(item) ? { ...shared, ...item } : { ...shared, task: item };
+	const sharedIntent = isRecord(shared.intent) ? shared.intent : null;
+	const itemIntent = isRecord(item) && Object.hasOwn(item, "intent") && isRecord(item.intent) ? item.intent : null;
+	if (sharedIntent !== null && itemIntent !== null) itemArgs.intent = { ...sharedIntent, ...itemIntent };
+	return itemArgs;
+}
+
+export function stringArg(args: Record<string, unknown>, ...names: string[]): string | undefined {
+	for (const name of names) {
+		const value = args[name];
+		if (typeof value === "string" && value.trim().length > 0) return value.trim();
+	}
+	return undefined;
+}
+
+export function maxOutputBytesArg(args: Record<string, unknown>): number {
+	const value = args.max_output_bytes;
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : DEFAULT_MAX_OUTPUT_BYTES;
+}
+
+/**
+ * The caller's inline-summary allowance, range-checked here so a bad value is
+ * a tool error rather than a sealed run failure. The scope records whether
+ * this assignment set it or inherited a batch default (see
+ * `dispatchResultContract`).
+ */
+function resultSummaryArg(
+	args: Record<string, unknown>,
+	scope: "task" | "batch",
+): { ok: true; value: DispatchRequest["resultSummary"] } | { ok: false; message: string } {
+	if (!("result_summary_max_bytes" in args) || args.result_summary_max_bytes === undefined) {
+		return { ok: true, value: undefined };
+	}
+	try {
+		return {
+			ok: true,
+			value: { maxBytes: parseResultSummaryMaxBytes(args.result_summary_max_bytes, "result_summary_max_bytes"), scope },
+		};
+	} catch (error) {
+		return { ok: false, message: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+export function timeoutMsArg(args: Record<string, unknown>): number | undefined {
+	const value = args.timeout_ms;
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+}
+
+function dispatchRequestFromArgs(
+	args: Record<string, unknown>,
+	options: DispatchArgumentParserOptions,
+	resultSummaryScope: "task" | "batch" = "task",
+): { ok: true; request: DispatchRequest } | { ok: false; message: string; reason?: string } {
+	const task = stringArg(args, "task");
+	if (!task) return { ok: false, message: "missing task (pass list:true to see available agents)" };
+	if (Object.hasOwn(args, "agent_id")) return { ok: false, message: "agent_id is unsupported; use agent" };
+	const requestedAgent = stringArg(args, "agent") ?? (args.mode === "council" ? COUNCIL_DEFAULT_AGENT_ID : undefined);
+	const auto = requestedAgent === "auto";
+	const agentId =
+		auto || requestedAgent === undefined ? jobBaselineAgentId(task, args, options.hasAgent) : requestedAgent;
+	// The role is resolved once the request is whole, its write scope included (DESIGN 4.2).
+	const request: Omit<DispatchRequest, "executionRole"> = {
+		agentId,
+		task,
+		...(auto
+			? {
+					agentSelection: {
+						version: 1 as const,
+						mode: "auto" as const,
+						baselineAgentId: agentId,
+						approvedAuthorities: [...options.auto.approvedAuthorities],
+						authorityBasis: options.auto.authorityBasis,
+					},
+				}
+			: {}),
+	};
+	if (args.record !== undefined) {
+		if (typeof args.record !== "boolean") return { ok: false, message: "record must be a boolean" };
+		request.record = args.record;
+	}
+	if (args.context !== undefined) {
+		try {
+			request.context = parseWorkerContextPolicy(args.context);
+		} catch (error) {
+			return { ok: false, message: error instanceof Error ? error.message : String(error) };
+		}
+	}
+	if ("briefing" in args && args.briefing !== undefined) {
+		if (typeof args.briefing !== "string") return { ok: false, message: "briefing must be a string" };
+		const briefing = args.briefing.trim();
+		if (Buffer.byteLength(briefing, "utf8") > DISPATCH_BRIEFING_MAX_BYTES) {
+			return { ok: false, message: `briefing must be ${DISPATCH_BRIEFING_MAX_BYTES} UTF-8 bytes or fewer` };
+		}
+		if (briefing.length > 0) request.briefing = briefing;
+	}
+	const target = stringArg(args, "target");
+	if (target) request.target = target;
+	const model = stringArg(args, "model");
+	if (model) request.model = model;
+	const continueRun = stringArg(args, "continue_run");
+	if (continueRun) request.continueRunId = continueRun;
+	const node = stringArg(args, "node");
+	if (node) request.node = node;
+	// Admission stamps the resolved tuple later, so this is the one place an unpinned request is visible.
+	if (!target && !model && !node) request.routeFree = true;
+	if (args.failover !== undefined || args.allowed_candidates !== undefined || args.allowedCandidates !== undefined) {
+		return { ok: false, message: "use routing.failover; model-authored candidate envelopes are not accepted" };
+	}
+	const routing = parseRoutingIntent(args.routing, {
+		...(target ? { target } : {}),
+		...(model ? { model } : {}),
+		...(node ? { node } : {}),
+	});
+	if (!routing.ok) return { ok: false, message: routing.errors.join("; ") };
+	request.routingIntent = routing.intent;
+	request.failover = routing.intent.failover;
+	request.requiredCapabilities = routing.intent.requiredCapabilities;
+	let cwd = stringArg(args, "cwd");
+	if (cwd) request.cwd = cwd;
+	// false is the same as omitted (bt-23).
+	if (args.worktree !== undefined && args.worktree !== false) {
+		if (args.worktree !== true) return { ok: false, message: "worktree must be true or false; omit it to work in place" };
+		request.worktree = true;
+	}
+	if (args.tags !== undefined) {
+		// Weak models send `tags` as a JSON array string or as one bare tag name.
+		let tags: unknown = args.tags;
+		// The schema validator coerces that string into a one-element array before it reaches here.
+		if (Array.isArray(tags) && tags.length === 1 && typeof tags[0] === "string" && tags[0].trim().startsWith("[")) {
+			tags = tags[0];
+		}
+		if (typeof tags === "string") {
+			const raw = tags.trim();
+			let parsed: unknown = [raw];
+			if (raw.startsWith("[")) {
+				try {
+					parsed = JSON.parse(raw) as unknown;
+				} catch {
+					// Left as the one-element list; validation names the bad tag.
+				}
+			}
+			tags = parsed;
+		}
+		if (!Array.isArray(tags)) return { ok: false, message: "tags must be an array of store tag names" };
+		for (const tag of tags) {
+			const problem = typeof tag === "string" ? validateTagName(tag) : "A tag name must be a string.";
+			if (problem !== null) return { ok: false, message: `tags: '${String(tag)}': ${problem}` };
+		}
+		if (tags.length > 0) request.storeTags = [...new Set(tags as string[])];
+	}
+	if (args.apply !== undefined) {
+		if (args.apply !== "merge" && args.apply !== "preserve")
+			return { ok: false, message: "apply must be merge or preserve" };
+		if (request.worktree !== true) return { ok: false, message: "apply requires worktree: true" };
+		request.apply = args.apply;
+	}
+	if (Object.hasOwn(args, "gate") && isRecord(args.intent) && Object.hasOwn(args.intent, "verification")) {
+		return { ok: false, message: "gate_and_intent_verification_conflict: gate cannot combine with intent.verification" };
+	}
+	const workspace = scoutReadWorkspace({
+		agentId,
+		workspaceRoot: options.workspaceRoot ?? process.cwd(),
+		readOnlyScout: options.isReadOnlyScout?.(agentId) === true,
+		...(cwd ? { cwd } : {}),
+		intent: args.intent,
+		worktree: request.worktree === true,
+		writeRoots: args.writeRoots,
+	});
+	if (!workspace.ok) return workspace;
+	cwd = workspace.cwd;
+	request.cwd = cwd;
+	const span = repositorySpanRefusal({ cwd, intent: workspace.intent, writeRoots: args.writeRoots });
+	if (span !== null) return span;
+	let rawIntent = workspace.intent;
+	if (workspace.extraReadRoots !== undefined && workspace.extraReadRoots.length > 0) {
+		request.extraReadRoots = workspace.extraReadRoots;
+	}
+	if (workspace.externalReadRoot !== undefined) {
+		request.externalReadRoot = workspace.externalReadRoot;
+		request.readOnly = true;
+		if (Object.hasOwn(args, "gate"))
+			return {
+				ok: false,
+				reason: "external_read_write_scope",
+				message: "external_read_write_scope: External Scouts cannot run verification gates.",
+			};
+	}
+	if (Object.hasOwn(args, "gate")) {
+		if (typeof args.gate !== "string" || args.gate.trim().length === 0) {
+			return {
+				ok: false,
+				message:
+					"gate must be a non-empty declared check id: a check verify() lists, never a shell command; omit gate and run the check yourself after the run settles",
+			};
+		}
+		rawIntent = { ...(isRecord(rawIntent) ? rawIntent : {}), verification: [{ check: args.gate.trim() }] };
+	}
+	// External and read-only Scouts run no verification; every other task from
+	// this turn carries the checks the operator named (deduplicated).
+	if (workspace.externalReadRoot === undefined && options.isReadOnlyScout?.(agentId) !== true) {
+		const named = options.operatorNamedChecks?.(cwd) ?? [];
+		if (named.length > 0) rawIntent = mergeOperatorNamedChecks(rawIntent, named);
+	}
+	if (rawIntent !== undefined) {
+		if (options.resolveIntent === undefined) return { ok: false, message: "intent resolver is unavailable" };
+		const resolved = options.resolveIntent(rawIntent, cwd, workspace.externalReadRoot);
+		if (!resolved.ok) return resolved;
+		request.intent = resolved.intent;
+		if (resolved.resolvedVerification.length > 0) request.resolvedVerification = resolved.resolvedVerification;
+		if (resolved.intent.writeRoots.length > 0) {
+			const topLevel = Array.isArray(args.writeRoots)
+				? args.writeRoots.filter((entry): entry is string => typeof entry === "string")
+				: undefined;
+			if (topLevel !== undefined) {
+				// Asked through the same rule the job-spec validator asks, so the two
+				// cannot disagree about the same pair. A raw string comparison here
+				// would refuse './src/tools' against 'src/tools', which name one tree.
+				const refusal = classifyDispatchIntentCompatibility({
+					intent: resolved.intent,
+					writeRoots: topLevel,
+					...(cwd !== undefined ? { cwd } : {}),
+				}).find((entry) => entry.code === "intent_write_roots_contradiction");
+				if (refusal !== undefined) return { ok: false, message: refusal.message };
+				request.writeRoots = topLevel;
+			} else {
+				request.writeRoots = resolved.intent.writeRoots;
+			}
+		}
+	}
+	const resultSummary = resultSummaryArg(args, resultSummaryScope);
+	if (!resultSummary.ok) return resultSummary;
+	if (resultSummary.value !== undefined) request.resultSummary = resultSummary.value;
+	if ("persona" in args && args.persona !== undefined) {
+		if (typeof args.persona !== "string") return { ok: false, message: "persona must be a string" };
+		const persona = args.persona.trim();
+		if (persona.length > PERSONA_MAX_CHARS) {
+			return { ok: false, message: `persona must be ${PERSONA_MAX_CHARS} characters or fewer` };
+		}
+		if (persona.length > 0) request.systemPrompt = persona;
+	}
+	const toolProfile = stringArg(args, "tool_profile");
+	if (toolProfile) {
+		if (!isToolProfileName(toolProfile)) {
+			return { ok: false, message: `tool_profile must be one of ${TOOL_PROFILE_NAMES.join("|")}` };
+		}
+		request.toolProfile = toolProfile;
+	}
+	const thinkingLevel = stringArg(args, "thinking_level");
+	if (thinkingLevel) {
+		if (!VALID_THINKING.has(thinkingLevel as JobThinkingLevel)) {
+			return { ok: false, message: "thinking_level must be one of off|minimal|low|medium|high|xhigh|max" };
+		}
+		request.thinkingLevel = thinkingLevel as JobThinkingLevel;
+	}
+	if (args.budget !== undefined) {
+		try {
+			request.budget = cloneDispatchBudgetRequest(args.budget);
+		} catch (error) {
+			return { ok: false, message: error instanceof Error ? error.message : String(error) };
+		}
+	}
+	// An agent whose deliverable is a written artifact cannot honor a task that forbids writing any file (D-C).
+	if (forbidsFileWrites(task) && options.writesArtifact?.(agentId) === true)
+		return {
+			ok: false,
+			reason: "task_forbids_writes",
+			message: `task_forbids_writes: the task forbids writing any file, but ${agentId} delivers a written artifact. Dispatch a read-only agent (scout, oracle, researcher) or drop the no-write wording.`,
+		};
+	return { ok: true, request: withRunRole(request, options.resolveFacts) };
+}
+
+export function dispatchRequestsFromArgs(
+	args: Record<string, unknown>,
+	options: DispatchArgumentParserOptions,
+):
+	| { ok: true; requests: DispatchRequest[]; positions: number[]; rejectedTasks: DispatchRejectedTask[] }
+	| { ok: false; message: string } {
+	if (args.record !== undefined && typeof args.record !== "boolean")
+		return { ok: false, message: "dispatch: record must be a boolean" };
+	const tasks = args.tasks;
+	if (!Array.isArray(tasks) || tasks.length === 0) {
+		return {
+			ok: false,
+			message:
+				args.tasks === undefined
+					? 'dispatch: missing task; pass task="..." for one run or tasks=[...] for a batch. briefing is optional context and cannot replace task. Example: {"agent":"auto","task":"map the modules that read fleet config and cite file paths"}'
+					: "dispatch: tasks must be a non-empty array of task strings or {agent, task} objects",
+		};
+	}
+	const shared = { ...args };
+	Reflect.deleteProperty(shared, "tasks");
+	const requests: DispatchRequest[] = [];
+	const positions: number[] = [];
+	const rejectedTasks: DispatchRejectedTask[] = [];
+	// Independent intent failures cannot strand valid siblings (#433). Coupled
+	// modes retain atomic admission because removing a step changes their work.
+	const isolateIntentFailures = (args.mode === undefined || args.mode === "parallel") && args.review === undefined;
+	for (let index = 0; index < tasks.length; index += 1) {
+		const item = tasks[index];
+		const itemArgs = dispatchTaskArgs(args, index) ?? { ...shared, task: item };
+		// A shared allowance over several members is inherited, not chosen for
+		// each of them; a one-task batch is the single-task form the tool
+		// normalizes every call into, so its shared value is that task's own.
+		const resultSummaryScope =
+			tasks.length > 1 &&
+			Object.hasOwn(shared, "result_summary_max_bytes") &&
+			!(isRecord(item) && Object.hasOwn(item, "result_summary_max_bytes"))
+				? "batch"
+				: "task";
+		const sharedIntent = isRecord(shared.intent) ? shared.intent : null;
+		const itemIntent = isRecord(item) && Object.hasOwn(item, "intent") && isRecord(item.intent) ? item.intent : null;
+		const parsed = dispatchRequestFromArgs(itemArgs, options, resultSummaryScope);
+		if (!parsed.ok) {
+			if (isolateIntentFailures && parsed.reason !== undefined) {
+				rejectedTasks.push({ position: index + 1, reason: parsed.reason, message: parsed.message });
+				continue;
+			}
+			return { ok: false, message: `dispatch: whole batch rejected; task ${index + 1}: ${parsed.message}` };
+		}
+		// An explicit batch-level write_roots: [] is a no-write ceiling, not the unbounded
+		// ceiling an omitted write_roots leaves, so a member may not declare writes under it.
+		const memberWriteRoots = [
+			...(Array.isArray(itemIntent?.write_roots) ? itemIntent.write_roots : []),
+			...(isRecord(item) && Array.isArray(item.writeRoots) ? item.writeRoots : []),
+		];
+		if (
+			Array.isArray(sharedIntent?.write_roots) &&
+			sharedIntent.write_roots.length === 0 &&
+			memberWriteRoots.length > 0
+		) {
+			return {
+				ok: false,
+				message: `dispatch: task ${index + 1}: intent_scope_widening: writeRoots entry '${String(memberWriteRoots[0])}' is outside the enclosing intent ceiling: the batch intent declares write_roots: [] (no writes). Drop the batch-level write_roots: [] or this task's write roots.`,
+			};
+		}
+		if (sharedIntent !== null && itemIntent !== null) {
+			if (options.resolveIntent === undefined) {
+				return { ok: false, message: `dispatch: task ${index + 1}: intent resolver is unavailable` };
+			}
+			const sharedWorkspace = scoutReadWorkspace({
+				agentId: parsed.request.agentId,
+				workspaceRoot: options.workspaceRoot ?? process.cwd(),
+				readOnlyScout: options.isReadOnlyScout?.(parsed.request.agentId) === true,
+				...(parsed.request.cwd ? { cwd: parsed.request.cwd } : {}),
+				intent: sharedIntent,
+				worktree: parsed.request.worktree === true,
+				writeRoots: shared.writeRoots,
+			});
+			const ceiling = sharedWorkspace.ok
+				? options.resolveIntent(sharedWorkspace.intent, parsed.request.cwd, parsed.request.externalReadRoot)
+				: sharedWorkspace;
+			if (!ceiling.ok) {
+				if (isolateIntentFailures && ceiling.reason !== undefined) {
+					rejectedTasks.push({ position: index + 1, reason: ceiling.reason, message: ceiling.message });
+					continue;
+				}
+				return { ok: false, message: `dispatch: whole batch rejected; task ${index + 1}: ${ceiling.message}` };
+			}
+			const widening =
+				parsed.request.intent === undefined ? null : dispatchIntentScopeWidening(ceiling.intent, parsed.request.intent);
+			if (widening !== null) {
+				return { ok: false, message: `dispatch: task ${index + 1}: ${widening.message}` };
+			}
+		}
+		requests.push(parsed.request);
+		positions.push(index + 1);
+	}
+	if (requests.length === 0) {
+		return {
+			ok: false,
+			message: `dispatch: no tasks admitted; ${rejectedTasks.map((task) => `task ${task.position}: ${task.message}`).join("; ")}`,
+		};
+	}
+	// M3: the admitted runs share one answer budget, fixed here before any of them starts and told to each worker.
+	const answerBudgetBytes = answerBudgetForBatch(requests.length);
+	for (const request of requests) request.answerBudgetBytes = answerBudgetBytes;
+	return { ok: true, requests, positions, rejectedTasks };
+}
+
+/** Normalize weak-model task containers. Pure and idempotent. */
+export function prepareDispatchArguments(args: Record<string, unknown>): Record<string, unknown> {
+	if (!args || typeof args !== "object" || Array.isArray(args)) return args;
+	const next: Record<string, unknown> = { ...args };
+	if (typeof next.tasks === "string") {
+		const raw = next.tasks.trim();
+		if (raw.startsWith("[") || raw.startsWith("{")) {
+			try {
+				next.tasks = JSON.parse(raw) as unknown;
+			} catch {
+				// Leave the string; run() reports the shape error.
+			}
+		}
+	}
+	if (isRecord(next.tasks)) next.tasks = [next.tasks];
+	if (typeof next.tasks === "string") next.tasks = [next.tasks];
+	if (next.tasks === undefined && typeof next.task === "string") {
+		const { task: _task, ...rest } = next;
+		return { ...rest, tasks: [{ task: next.task }] };
+	}
+	return next;
+}

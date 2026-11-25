@@ -1,0 +1,144 @@
+---
+name: tech-spec
+description: "Writes a typed call-stack architecture handoff: code-shaped contracts plus execution flows, implementation-ready for another engineer. User-invoked only. Not for weighing approaches or deciding the design; use architecture first."
+triggers:
+  - write a tech spec
+  - typed call-stack handoff
+  - code-shaped contracts
+  - implementation-ready technical specification
+  - specify execution flows
+version: 0.3.5
+license: LicenseRef-PanCode-1.0
+disable-model-invocation: true
+allowed-tools:
+  - read
+  - grep
+  - find
+  - ls
+  - git
+  - context
+  - code_nav
+  - write
+  - ask_user
+requires:
+  - skill:tdd
+pancode:
+  registry-id: akougkas/pancode
+  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/planning/tech-spec
+  audit: pass
+  model-size: large
+  provisional: true
+  agents:
+    - main
+---
+
+# Tech Spec
+
+A tech spec is a typed call-stack architecture handoff: contracts as
+TypeScript pseudocode plus end-to-end execution flows. Prose explains why;
+types and call stacks define what changes. Design only: never implement,
+and save a file only when the user asks; otherwise return the spec inline.
+
+## Arguments
+
+```text
+/skill tech-spec <the change, in a few sentences, or a path to read first>
+```
+
+- The text is the design problem: what's changing and why. A doc or file
+  path named in the request (a PRD, an architecture decision, a module) is
+  context to read, not more arguments; see "Load local context" below.
+- Nothing is required beyond some text; a blank invocation falls straight
+  to Path B's first question rather than inventing a change to spec.
+- **Output defaults to inline.** Write a file only when the request says
+  so explicitly: "save it", "write it to `<path>`", "put it in `docs/`".
+  Absent that, the finished spec is the reply itself: no file, in this run
+  or a prior one in the same session, gets created for it. This holds
+  regardless of which path below runs or how long the spec is; length is
+  never itself a reason to write a file.
+- Disabled for model self-invocation and requires the `tdd` skill be
+  installed to reference in the TDD Test Plan section; both are frontmatter
+  facts, not something to explain to the user unless asked.
+
+There is no operator in a headless run without an `--answers` file: `ask_user` is not registered, so
+any call is refused as an unregistered tool rather than answered, and a
+second try will not resolve differently. In Path B (below), that means: state the
+question, your recommendation grounded in the codebase and any docs read
+(or the most defensible engineering default when nothing grounds it), and
+the reasoning; adopt the recommendation; mark it `assumed — confirm`; move
+to the next question. Run every question this way, end to end, not just
+the first. The interview is the plan to execute, not an outline to
+abbreviate because no one answered the opening question. Never invent a
+fact or a codebase detail to back an assumption; anything genuinely
+unknown becomes an Open Question in the spec, not a plausible guess. This
+degrades the interview only; it never licenses writing a file that
+wasn't asked for.
+
+The steps below are the plan; do not open a task list for them. `tasks`
+sits outside this skill's tool surface and any call to it is refused.
+`bash` is also outside this skill's tool surface. Verify what you wrote
+with `grep`, `read`, and `find`, never `bash`.
+
+## Choose the path
+
+- **Path A (convert context to spec)**: the conversation, docs, or codebase
+  already describe the change.
+- **Path B (interview first)**: not enough problem, constraints, or
+  acceptance criteria exist. Say so, then interview one question at a time
+  with a recommended answer per question (the plan-interview posture); anything
+  answerable by exploring the codebase is explored, not asked. When context
+  suffices, run Path A. Never invent requirements to skip the interview.
+  See Arguments above for how a headless run carries every question
+  through instead of stalling on the first one.
+
+## Path A
+
+1. **Load local context.** Inspect existing code and docs for vocabulary,
+   module layout, error style, adapters, test conventions. Done when the
+   spec introduces no pattern, library, or schema style without checking
+   local precedent.
+2. **Extract the design problem.** Current state, problem, callers, goals,
+   non-goals, constraints, invariants, affected systems, entrypoints,
+   risks. Unknowns become open questions, never plausible filler. Done when
+   every claimed constraint traces to conversation, code, docs, or an open
+   question.
+3. **Explore alternatives.** 2-3 designs differing materially in interface
+   shape, seam placement, ownership, call stack or module boundaries, not
+   just names. Sketch each: domain types, interfaces, failure types, seams,
+   entrypoint-to-effect call stack, test strategy, trade-offs. Compare on
+   caller burden, module depth, locality of change, seam placement,
+   testability through real seams, complexity. Done when the
+   recommendation is chosen after the comparison, not before.
+4. **Specify the contracts.** For the recommended design, every new,
+   changed, or deleted type, signature, interface, error union, adapter,
+   DTO, and API gets a concrete sketch, or an explicit reason no new
+   contract is needed. Name what each layer may know and what must not
+   leak across each seam.
+5. **Specify call stacks.** Every affected behavior gets an entrypoint →
+   side-effect → response trace with the type/data flow (`raw input →
+   parser → domain input → service → adapter → typed result → projection →
+   output`), current-vs-proposed when changing behavior, and failure /
+   retry / idempotency flow where reachable.
+6. **Map files.** Files to add, change, delete; test files; config or
+   migration files. Each maps to the contract or call-stack step it owns.
+7. **Write the TDD plan.** Vertical red-green slices per the `tdd` skill:
+   one failing behavior test, minimal implementation, repeat. Cover happy
+   paths, failure paths, parser rejection, invariants, changed seams, or
+   state why a path is deliberately untested.
+
+## Spec outline
+
+When drafting the spec, read references/spec-outline.md and use that shape
+(omit sections that truly do not apply, but never omit contracts, seams, call
+stacks, or the test plan for being hard).
+
+## Done when
+
+The spec follows the outline, every boundary has a typed contract or a
+stated reason it needs none, every behavior has a call stack, unknowns are
+open questions rather than invented design, nothing was implemented, and
+no file was written unless the request asked for one.
+
+## Red flags
+
+Before returning the spec, read references/red-flags.md.

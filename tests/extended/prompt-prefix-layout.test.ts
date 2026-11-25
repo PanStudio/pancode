@@ -1,0 +1,302 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { describe, it } from "node:test";
+import { sha256Hex } from "../../src/core/hash.js";
+
+import {
+	type CompileInputs,
+	compile,
+	SESSION_PROMPT_SECTION_ORDER,
+	type SessionPromptInputs,
+} from "../../src/domains/prompts/compiler.js";
+import { loadFragments } from "../../src/domains/prompts/fragment-loader.js";
+
+/**
+ * The compiled main prompt is a cache prefix: every backend PanCode targets
+ * re-prefills from the earliest changed byte, so the section order is a
+ * deliberate cache decision (issue #249) and identical inputs must produce
+ * identical bytes. These contracts pin the layout, not the prose: a fragment
+ * may be reworded freely, but a section may not move without this test
+ * moving with it.
+ */
+
+/**
+ * The session's direct surface: attached schemas only. artifact, git, and
+ * web_fetch left it for the gateway in v0.4.9; gateway and run_script joined.
+ */
+const FULL_TOOL_SURFACE = [
+	"ask_user",
+	"bash",
+	"code_nav",
+	"context",
+	"dispatch",
+	"edit",
+	"find",
+	"gateway",
+	"grep",
+	"ls",
+	"monitor",
+	"read",
+	"run_script",
+	"steer",
+	"tasks",
+	"verify",
+	"write",
+];
+
+function sessionInputs(overrides: Partial<SessionPromptInputs> = {}): SessionPromptInputs {
+	return {
+		provider: "local",
+		model: "stable-model",
+		contextWindow: 32_768,
+		providerSupportsTools: true,
+		toolNames: FULL_TOOL_SURFACE,
+		coordinatorCapabilities: [...FULL_TOOL_SURFACE, "pancode_docs", "pancode_hub", "git"],
+		contextFiles: "<project-type>typescript</project-type>",
+		memorySection: "# Memory\n\n- stable fact",
+		...overrides,
+	};
+}
+
+function compileInputs(overrides: Partial<SessionPromptInputs> = {}): CompileInputs {
+	return {
+		identity: "identity.pancode",
+		operatingContract: "operating.contract",
+		safety: "safety.default",
+		sessionInputs: sessionInputs(overrides),
+		additionalFragments: [
+			{
+				id: "context.workspace-root",
+				relPath: "inline/workspace-root",
+				body: "# Workspace\nAbsolute workspace root: /workspace",
+				contentHash: "a".repeat(64),
+				dynamic: true,
+			},
+			{
+				id: "context.project-rules",
+				relPath: "inline/project-rules",
+				body: "# Project rules\n\nKeep imports sorted.",
+				contentHash: "b".repeat(64),
+				dynamic: true,
+			},
+		],
+	};
+}
+
+const table = loadFragments();
+
+describe("compiled main prompt: section layout", () => {
+	it("lays every compiled section down in SESSION_PROMPT_SECTION_ORDER, then the operator-editable tail", () => {
+		const inputs = compileInputs();
+		const compiled = compile(table, inputs);
+		const ids = compiled.sections.map((section) => section.id);
+		const tailIds = (inputs.additionalFragments ?? []).map((fragment) => fragment.id);
+
+		// With every input present, every compiled section renders, in exactly
+		// the declared order, with the tail fragments ahead of memory, which
+		// rewrites mid-session and so closes the prompt.
+		const beforeMemory = SESSION_PROMPT_SECTION_ORDER.filter((id) => id !== "memory");
+		deepStrictEqual(ids, [...beforeMemory, ...tailIds, "memory"]);
+	});
+
+	it("keeps the volatility rule: identity through tool contract ahead of project context, runtime, and memory", () => {
+		const order = [...SESSION_PROMPT_SECTION_ORDER];
+		const at = (id: string): number => {
+			const index = order.indexOf(id);
+			ok(index >= 0, `section ${id} must be in SESSION_PROMPT_SECTION_ORDER`);
+			return index;
+		};
+		// Constitutional text first, then role text, then the enforced posture,
+		// then the tool surface those capabilities require.
+		ok(at("identity") < at("operating-contract"));
+		ok(at("operating-contract") < at("delegation"));
+		ok(at("delegation") < at("skills"));
+		ok(at("skills") < at("safety"));
+		ok(at("safety") < at("tool-contract"));
+		// Everything that reads a mutable store or a probe comes after everything
+		// that does not: project context is session-stable, the runtime block's
+		// context window can move, and memory rewrites mid-session.
+		ok(at("tool-contract") < at("project-context"));
+		ok(at("project-context") < at("runtime"));
+		ok(at("runtime") < at("memory"));
+		strictEqual(order[order.length - 1], "memory", "memory is the last compiled section");
+	});
+
+	it("renders section text in the same order as the section list", () => {
+		const compiled = compile(table, compileInputs());
+		// One marker per section, taken from the fragment table or from the
+		// inputs this test supplies rather than from pinned prose, so a reworded
+		// fragment cannot fail this while a moved section must.
+		const markers: Array<[string, string]> = [
+			["identity", firstLine(table.byId.get("identity.pancode")?.body)],
+			["operating-contract", firstLine(table.byId.get("operating.contract")?.body)],
+			["delegation", firstLine(table.byId.get("operating.coordinator")?.body)],
+			["skills", firstLine(table.byId.get("operating.discovered-skills")?.body)],
+			["safety", "Autonomy: default."],
+			["tool-contract", "Direct tools:"],
+			["project-context", "<project-type>typescript</project-type>"],
+			["runtime", "Provider: local"],
+			["context.workspace-root", "Absolute workspace root: /workspace"],
+			["context.project-rules", "Keep imports sorted."],
+			["memory", "- stable fact"],
+		];
+		let cursor = -1;
+		for (const [id, marker] of markers) {
+			const at = compiled.systemPrompt.indexOf(marker, cursor + 1);
+			ok(at > cursor, `section ${id} (marker ${JSON.stringify(marker)}) renders after the section before it`);
+			cursor = at;
+		}
+	});
+});
+
+function firstLine(body: string | undefined): string {
+	const line = (body ?? "")
+		.split("\n")
+		.map((entry) => entry.trim())
+		.find((entry) => entry.length > 0);
+	ok(line !== undefined, "fragment body has a first line");
+	return line;
+}
+
+describe("compiled main prompt: determinism", () => {
+	it("produces byte-identical text and hash for identical inputs", () => {
+		const first = compile(table, compileInputs());
+		const second = compile(table, compileInputs());
+		strictEqual(second.systemPrompt, first.systemPrompt);
+		strictEqual(second.systemPromptHash, first.systemPromptHash);
+		deepStrictEqual(
+			second.sections.map((section) => section.id),
+			first.sections.map((section) => section.id),
+		);
+	});
+
+	it("lists the direct surface verbatim and projects a capability list onto it", () => {
+		const compiled = compile(table, compileInputs());
+		const line = compiled.systemPrompt.split("\n").find((entry) => entry.startsWith("Direct tools:"));
+		ok(line !== undefined, "the tool contract names the direct surface");
+		for (const name of ["`gateway`", "`run_script`"]) ok(line.includes(name), `${name} is on the direct surface`);
+		for (const name of ["`artifact`", "`git`", "`web_fetch`"])
+			ok(!line.includes(name), `${name} is a gateway capability`);
+		// A worker's admitted list names capabilities; the prompt still shows
+		// only the attached schemas, with gateway standing in for the rest.
+		const projected = compile(table, compileInputs({ toolNames: ["read", "git", "web_fetch", "artifact"] }));
+		const projectedLine = projected.systemPrompt.split("\n").find((entry) => entry.startsWith("Direct tools:"));
+		strictEqual(projectedLine, "Direct tools: `gateway`, `read`.");
+	});
+
+	it("does not depend on tool-name registration order", () => {
+		const shuffledNames = [...FULL_TOOL_SURFACE].reverse();
+		const ordered = compile(table, compileInputs());
+		const shuffled = compile(table, compileInputs({ toolNames: shuffledNames }));
+		strictEqual(shuffled.systemPrompt, ordered.systemPrompt);
+	});
+});
+
+describe("compiled main prompt: surface-gated sections", () => {
+	it("drops delegation when dispatch leaves the surface, keeping the rest in order", () => {
+		const withoutDispatch = compile(
+			table,
+			compileInputs({ toolNames: FULL_TOOL_SURFACE.filter((name) => name !== "dispatch") }),
+		);
+		const ids = withoutDispatch.sections.map((section) => section.id);
+		ok(!ids.includes("delegation"), "delegation renders only with dispatch");
+		const expected = SESSION_PROMPT_SECTION_ORDER.filter((id) => id !== "delegation" && id !== "memory");
+		deepStrictEqual(ids.slice(0, expected.length), [...expected]);
+	});
+
+	it("drops skills when context leaves the surface, and the tool-free contract drops both role sections", () => {
+		const withoutContext = compile(
+			table,
+			compileInputs({
+				toolNames: FULL_TOOL_SURFACE.filter((name) => name !== "context"),
+				coordinatorCapabilities: sessionInputs().coordinatorCapabilities.filter((name) => name !== "context"),
+			}),
+		);
+		ok(!withoutContext.sections.some((section) => section.id === "skills"), "skills renders only with context");
+
+		const toolFree = compile(table, compileInputs({ providerSupportsTools: false }));
+		const ids = toolFree.sections.map((section) => section.id);
+		ok(!ids.includes("delegation"));
+		ok(!ids.includes("skills"));
+		ok(ids.includes("tool-contract"), "a tool-free target still gets a tool contract saying so");
+		const expected = SESSION_PROMPT_SECTION_ORDER.filter((id) => !["delegation", "skills", "memory"].includes(id));
+		deepStrictEqual(ids.slice(0, expected.length), [...expected]);
+	});
+
+	it("omits memory and project context when absent without disturbing the neighbours", () => {
+		const { memorySection: _memory, contextFiles: _context, ...withoutStores } = sessionInputs();
+		const bare = compile(table, { ...compileInputs(), sessionInputs: withoutStores });
+		const ids = bare.sections.map((section) => section.id);
+		ok(!ids.includes("memory"));
+		ok(!ids.includes("project-context"));
+		const expected = SESSION_PROMPT_SECTION_ORDER.filter((id) => id !== "memory" && id !== "project-context");
+		deepStrictEqual(ids.slice(0, expected.length), [...expected]);
+	});
+});
+
+describe("typed prompt layers", () => {
+	it("keeps the exact constitutional UTF-8 prefix when its guidance is unchanged", () => {
+		// Keep inline guidance selected and both capability-gated rows absent across tool-support changes (#249).
+		const toolNames = FULL_TOOL_SURFACE.filter((name) => name !== "code_nav" && name !== "tasks");
+		const coordinatorCapabilities = [...toolNames, "pancode_hub", "git"];
+		const baseline = compile(table, compileInputs({ toolNames, coordinatorCapabilities }));
+		const prefix = baseline.stablePrefix;
+		ok(prefix);
+		const bytes = Buffer.from(baseline.systemPrompt).subarray(0, prefix.bytes);
+		strictEqual(sha256Hex(bytes.toString("utf8")), prefix.hash);
+		for (const variant of [
+			{ turnConstraints: { mode: "answer", allowedTools: [] } },
+			{ turnConstraints: { mode: "proposal", delegation: "forbidden" } },
+			{ turnConstraints: { mode: "change" }, readySkillCount: 0 },
+			{ providerSupportsTools: false, toolNames: [] },
+			{ memorySection: "# Memory\n\n- newly approved fact", contextWindow: 65_536 },
+		] satisfies Partial<SessionPromptInputs>[]) {
+			const compiled = compile(table, compileInputs({ toolNames, ...variant, coordinatorCapabilities }));
+			deepStrictEqual(compiled.stablePrefix, prefix);
+			deepStrictEqual(Buffer.from(compiled.systemPrompt).subarray(0, prefix.bytes), bytes);
+			ok(compiled.systemPromptHash !== baseline.systemPromptHash);
+		}
+	});
+
+	it("renders narrow answers and proposals without implementation or discovery pressure", () => {
+		const answer = compile(table, compileInputs({ turnConstraints: { mode: "answer", allowedTools: [] } }));
+		const proposal = compile(
+			table,
+			compileInputs({ turnConstraints: { mode: "proposal", delegation: "forbidden", skills: "disabled" } }),
+		);
+		const change = compile(table, compileInputs({ turnConstraints: { mode: "change" } }));
+		for (const prompt of [answer, proposal]) {
+			for (const id of ["delegation", "skills"]) ok(!prompt.sections.some((s) => s.id === id));
+			ok(!prompt.systemPrompt.includes("verify consequential worker claims"));
+			// #423: the scope lines ride in the turn's reminder, never the compiled prompt.
+			ok(!prompt.systemPrompt.includes("# Current task scope"));
+			ok(Buffer.byteLength(prompt.systemPrompt) < Buffer.byteLength(change.systemPrompt));
+		}
+		ok(change.systemPrompt.includes("Within the operator's scope, verify consequential worker claims"));
+	});
+
+	it("does not advertise denied gateway capabilities or ready skills that do not exist", () => {
+		const prompt = compile(
+			table,
+			compileInputs({
+				turnConstraints: { allowedTools: ["read", "git", "context"], delegation: "forbidden" },
+				readySkillCount: 0,
+			}),
+		);
+		ok(!prompt.sections.some((s) => s.id === "skills"));
+		ok(!prompt.systemPrompt.includes('capability="pancode_docs"'));
+		ok(!prompt.systemPrompt.includes('capability="pancode_hub"'));
+		// Attached inventory is factual even if a caller supplies an older broad schema surface.
+		ok(prompt.systemPrompt.includes("Direct tools: `ask_user`"));
+	});
+
+	it("changes only the runtime tail when the effective context window changes", () => {
+		const before = compile(table, compileInputs());
+		const after = compile(table, compileInputs({ contextWindow: 65_536 }));
+		const runtimeAt = before.systemPrompt.indexOf("# Runtime");
+		ok(runtimeAt > (before.stablePrefix?.bytes ?? 0));
+		strictEqual(before.systemPrompt.slice(0, runtimeAt), after.systemPrompt.slice(0, runtimeAt));
+	});
+});

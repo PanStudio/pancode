@@ -1,0 +1,396 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Claimed validations, measured against the commands the run actually ran.
+ *
+ * E7 grounded `mutatedPaths` against the run's own tool events. The same defect
+ * lives one field over. Observed live (receipt 1yd79n91i9b0): a `verifier-report`
+ * sealed `{"verdict":"pass","checks":[{"name":"npm run typecheck","passed":true,
+ * "evidence":"exit 0"}]}` on a project with no `typecheck` script, from a run
+ * whose complete tool list was six reads and a grep. No shell call ran at all,
+ * and the receipt still carried `quality: pass`.
+ *
+ * `validateVerifier` derives quality from the verdict alone, and the mutation
+ * validator only asks whether *some* validation command ran, not whether the
+ * named one did. This module answers the narrower question, using the same
+ * canonical command identity the finish-contract gate and `run-effects` use, so
+ * a claim and an execution are compared under one notion of "the same check".
+ *
+ * Grounding is deliberately generous, twice over. A claim counts as executed
+ * when the canonical form of either string appears in the other, because a
+ * worker writes `"npm test (12 passing)"` for a command it genuinely ran. And
+ * an unmatched claim only becomes a correctness downgrade when the run executed
+ * no checking call at all; a run that ran commands the canonical detector does
+ * not recognize gets `unmatched-command`, which is reported and never used to
+ * take a quality label away. That distinction was bought live: a coder verified
+ * its own fix with `node -e "import('./src/sum.js')..."`, real work that
+ * `detectValidationCommand` does not enumerate, and calling that a fabricated
+ * check would be the same false-confidence defect pointed the other way.
+ *
+ * Because a miss here costs a line of receipt noise rather than an open gate,
+ * this module reads claims under the wider `grounding` vocabulary: read
+ * verification (`git diff`), ad-hoc checks (`node -e`), and the runners the
+ * strict set omits (`npx vitest`, `tsc --noEmit`). The finish contract and the
+ * mutation-report validator keep the strict vocabulary, where a match is spent
+ * on a gate and `git diff` must not satisfy one.
+ *
+ * Only passing claims are checked: a check the worker reports as failed is a
+ * report against its own interest and needs no corroboration.
+ */
+
+import { parseVerifierPayload } from "../../core/json-payload.js";
+import { parseVerifierResult } from "../agents/result-contract-gate.js";
+import type { ResultContract } from "../agents/result-contract-types.js";
+import { typedValidationSummary } from "../safety/finish-validation-evidence.js";
+import { detectValidationCommand } from "../safety/protected-artifacts.js";
+
+/** Contract kinds whose terminal payload carries a correctness claim to ground. */
+const GROUNDED_CONTRACT_KINDS: ReadonlySet<ResultContract["kind"]> = new Set([
+	"verifier-report",
+	"review-verdict",
+	"mutation-report",
+]);
+
+/** Claimed check names quoted back in one outcome detail before it is truncated. */
+const UNGROUNDED_NAME_LIMIT = 4;
+
+export interface ValidationGrounding {
+	/** Passing validation claims the terminal result carried. */
+	claimed: number;
+	/** Claims matched to a command this run ran to a clean exit. */
+	grounded: number;
+	/** Claim names with no matching execution, stably ordered, bounded. */
+	ungrounded: ReadonlyArray<string>;
+	/**
+	 * Why the unmatched claims are unmatched. `no-command-executed` means the run
+	 * ran nothing that could have checked anything, which is the only basis that
+	 * takes a quality label away. `unmatched-command` means it ran something the
+	 * canonical detector does not enumerate, which is reported and nothing more.
+	 * `unattributable-status` means an unmatched claim names a command the run
+	 * ran, but the call's exit status was a later command's (`make test; echo
+	 * EXIT=$?`), so nothing observed says it passed; reported, never a downgrade.
+	 * `unobserved-lane` means the run's tool lane was not observed (a CLI subprocess), so nothing can match or rule out
+	 * an execution (DESIGN 4.8 V1: unobserved, never zero); the claims read unknown, never ungrounded.
+	 * `grounded` means every claim matched an executed command.
+	 */
+	basis: "grounded" | "no-command-executed" | "unmatched-command" | "unattributable-status" | "unobserved-lane";
+}
+
+export interface ValidationGroundingInput {
+	contractKind: ResultContract["kind"] | null;
+	/** The run's terminal assistant text, or null when none was captured. */
+	output: string | null;
+	/** Canonical validation commands the run ran to a clean exit. */
+	executedCommands: ReadonlySet<string>;
+	/** Commands that ran in a bash call whose exit status was not theirs; they ground no claim (bt-9). */
+	unattributableCommands?: ReadonlySet<string>;
+	/** Successful shell and typed-verification calls this run made, matched or not. */
+	executedCheckingCalls: number;
+	/** False when PanCode did not see the run's tool calls (a CLI subprocess): zero executions then says nothing. */
+	toolLaneObserved?: boolean;
+	/** The gates a verifier's task declared; `verify <id>` ran the gate's command text. */
+	taskGates?: ReadonlyArray<{ id: string; text: string }>;
+	/** Passing `verify` runs on the run's final tree (`CheckFreshness.verifyRuns`): check id and resolved command. */
+	verifyRuns?: ReadonlyArray<{ check: string; command: string }>;
+	/** True when the run was asked to change nothing; its verifier report's inspection prose then reports reads. */
+	readOnly?: boolean;
+}
+
+interface ClaimedValidation {
+	name: string;
+	evidence?: string;
+}
+
+/**
+ * A typed check ran as `verify <id>`, and a report names it by that id or, for
+ * a task gate, by the command the task wrote. Both name the same execution.
+ */
+function withTypedCheckNames(
+	executed: ReadonlySet<string>,
+	gates: ReadonlyArray<{ id: string; text: string }>,
+): ReadonlySet<string> {
+	const names = new Set(executed);
+	for (const command of executed) {
+		const id = /^verify (\S+)$/u.exec(command)?.[1];
+		if (id === undefined || id === "frontend") continue;
+		names.add(id);
+		const gate = gates.find((candidate) => candidate.id === id);
+		if (gate === undefined) continue;
+		names.add(gate.text);
+		// A claim naming the gate's command is read as its canonical spelling.
+		names.add(claimIdentity(gate.text));
+	}
+	return names;
+}
+
+function normalize(value: string): string {
+	return value
+		.trim()
+		.replace(/\s+/gu, " ")
+		.toLowerCase()
+		.replace(/\b(?:npm|pnpm|yarn) (?:run )?test(?=\s|$|[^\w:-]|:(?:\s|$))/gu, "npm run test");
+}
+
+/**
+ * The canonical command a claim names, or its normalized text when the claim
+ * is not spelled as a shell command ("typecheck", "unit tests").
+ */
+function claimIdentity(name: string): string {
+	const detected = detectValidationCommand(name, "grounding");
+	return detected.kind === "validation" ? normalize(detected.matched) : normalize(name);
+}
+
+function claimedValidations(output: string | null): ClaimedValidation[] {
+	if (output === null) return [];
+	// Read as the verifier contract reads it, so a report it accepted cannot yield
+	// no claims here and seal a fabricated pass as measured.
+	const parsed = parseVerifierPayload(output);
+	if (!parsed.ok) return [];
+	const record = parsed.value;
+	const entries = record.checks ?? record.validations;
+	if (!Array.isArray(entries)) return [];
+	const names: ClaimedValidation[] = [];
+	for (const entry of entries) {
+		if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+		const check = entry as Record<string, unknown>;
+		if (check.passed !== true || typeof check.name !== "string") continue;
+		// A baseline ran before the change, so it claims nothing about the changed tree (bt-17).
+		if (check.baseline === true) continue;
+		const name = check.name.trim();
+		if (name.length === 0) continue;
+		names.push(typeof check.evidence === "string" ? { name, evidence: check.evidence } : { name });
+	}
+	return names;
+}
+
+function contains(text: string, command: string): boolean {
+	let start = text.indexOf(command);
+	while (start >= 0) {
+		const before = text[start - 1];
+		const end = start + command.length;
+		const after = text[end];
+		const beforeBoundary = before === undefined || !/[\w:-]/u.test(before);
+		const afterBoundary =
+			after === undefined ||
+			!/[\w:-]/u.test(after) ||
+			(after === ":" && (text[end + 1] === undefined || /\s/u.test(text[end + 1] ?? "")));
+		if (beforeBoundary && afterBoundary) return true;
+		start = text.indexOf(command, start + 1);
+	}
+	return false;
+}
+
+/**
+ * The identities of the typed checks a claim names as `verify <id>`, spelled as the run records a verify call.
+ * Read from the claim's own text, because a claim such as `verify python-unittest (python3 -m unittest ...)`
+ * also spells a command, and its canonical identity keeps only that command.
+ */
+function namedVerifyChecks(name: string): string[] {
+	const identities: string[] = [];
+	for (const match of normalize(name).matchAll(/(?:^|[^\w:-])verify ([a-z0-9][a-z0-9._:-]*)/gu)) {
+		const id = match[1]?.replace(/[.:]+$/u, "") ?? "";
+		const identity = typedValidationSummary("verify", { args: { check: id } });
+		if (identity !== null) identities.push(normalize(identity));
+	}
+	return identities;
+}
+
+function isExecuted(name: string, executed: ReadonlySet<string>): boolean {
+	const claim = claimIdentity(name);
+	if (claim.length === 0) return true;
+	// A report may name the typed verifier itself. Its successful tool result
+	// is recorded separately from the resolved shell command it ran.
+	if (claim === "verify" || claim === "tool:verify") return executed.has("tool:verify");
+	const verifyChecks = namedVerifyChecks(name);
+	for (const command of executed) {
+		if (command === "tool:verify") continue;
+		const ran = normalize(command);
+		if (ran.length === 0) continue;
+		if (contains(claim, ran) || contains(ran, claim) || verifyChecks.includes(ran)) return true;
+	}
+	return false;
+}
+
+/**
+ * A verify run on the final tree grounds a claim that names its check id, in the claim or its evidence ("test check",
+ * "verify check 'test'"), or names the command the check resolved to, even inside a parenthetical such as
+ * `test check (python3 -m unittest, after change)`, which the whole-claim reading does not detect (bt-9).
+ */
+function groundedByVerifyRun(
+	claim: ClaimedValidation,
+	runs: ReadonlyArray<{ check: string; command: string }>,
+): boolean {
+	const name = normalize(claim.name);
+	const evidence = claim.evidence === undefined ? "" : normalize(claim.evidence);
+	const named = claim.name
+		.split(/[(),;]/u)
+		.map((part) => detectValidationCommand(part, "grounding"))
+		.flatMap((detected) => (detected.kind === "validation" ? [normalize(detected.matched)] : []));
+	for (const run of runs) {
+		const id = normalize(run.check);
+		if (id.length > 0 && (contains(name, id) || contains(evidence, id))) return true;
+		const ran = detectValidationCommand(run.command, "grounding");
+		if (ran.kind === "validation" && named.includes(normalize(ran.matched))) return true;
+	}
+	return false;
+}
+
+/**
+ * A check a run performs, named as a noun: "unit tests", "typecheck", "lint". The bare noun "check" is not one: it
+ * names a criterion ("Style check", "Evidence check"), which a read-only report judges by reading.
+ */
+const CHECK_NOUN =
+	/\b(?:tests?|testing|specs?|type[- ]?check(?:s|ing)?|lint(?:s|ing)?|builds?|compil(?:e|es|ing)|smoke)\b/iu;
+const ENDS_IN_CHECK_NOUN = new RegExp(`${CHECK_NOUN.source}(?:\\s+checks?)?\\W*$`, "iu");
+/** Words that say a check ran or how it ended: "tests pass", "build succeeds", "no lint errors". */
+const RUN_OUTCOME =
+	/\b(?:pass(?:es|ed|ing)?|green|succeed(?:s|ed)?|successful(?:ly)?|clean|ok|ran|runs?|exit(?:s|ed)?|errors?|failures?|warnings?)\b/iu;
+/** A check named by its run: "tested", "built", "linted". */
+const CHECK_RAN = /\b(?:tested|built|compiled|linted|type[- ]?checked)\b/iu;
+/** A criterion said to have executed: "style check ran", "checks exited 0". A verdict ("passed") is not execution. */
+const CHECK_EXECUTED = /\bchecks?\b.*\b(?:ran|runs?|executed|exit(?:s|ed)?)\b/iu;
+
+/**
+ * Whether a name without a command claims a check ran: a check noun heads it ("unit tests", "typecheck", "lint
+ * check"), a run outcome goes with it ("tests pass", "lint clean"), or it says the check ran ("tested", "style check
+ * ran"). A check noun that only qualifies what was read ("test coverage", "spec compliance") and a criterion name
+ * ("Style check") claim no run.
+ */
+function claimsCheckRun(name: string): boolean {
+	if (CHECK_RAN.test(name) || CHECK_EXECUTED.test(name)) return true;
+	return CHECK_NOUN.test(name) && (ENDS_IN_CHECK_NOUN.test(name.trim()) || RUN_OUTCOME.test(name));
+}
+
+/**
+ * A passing claim that is inspection prose, not a validation: it names no command the grounding vocabulary detects (in
+ * the whole claim or one of its parenthesised or listed parts) and no `verify`, and it reads as an inspection ("Inspect
+ * supplied Scout findings", "read src/math.ts", a reviewer's "clamp implementation and scope" or "test coverage") or
+ * names neither a script path nor a check run ("fixture"). It neither grounds nor lowers assurance (DESIGN 4.8): a
+ * builder's rests on its change, a reviewer's on the reads the cited-evidence obligation counts. "tests pass", "npm
+ * test: 12 passing" and "./gradlew" stay claims, so a check claimed and never run is still ungrounded.
+ */
+function isInspectionProse(name: string): boolean {
+	if (/^(?:tool:)?verify$/iu.test(name.trim()) || namedVerifyChecks(name).length > 0) return false;
+	const parts = [name, ...name.split(/[(),;:`"']/u)];
+	if (parts.some((part) => detectValidationCommand(part, "grounding").kind === "validation")) return false;
+	if (
+		/^(?:read|inspect(?:ed)?|review(?:ed)?|source|file)\b|^checked\s+\S+\.(?:[cm]?[jt]sx?|md|txt|json|yaml|yml)\b/iu.test(
+			name.trim(),
+		)
+	)
+		return true;
+	if (/(?:^|\s)\.{0,2}\/?[\w.-]+\/[\w./-]*|(?:^|\s)\.\/[\w.-]+/u.test(name)) return false;
+	return !claimsCheckRun(name);
+}
+
+/**
+ * Contract kinds whose inspection prose is not a validation claim. A verifier's checks are claims of runs, except in a
+ * read-only run, where a check that names no command ("README.md line count", "claim coverage") is what it read.
+ */
+const INSPECTION_CONTRACT_KINDS: ReadonlySet<ResultContract["kind"]> = new Set(["mutation-report", "review-verdict"]);
+
+function readsInspectionProse(input: ValidationGroundingInput): boolean {
+	if (input.contractKind === null) return false;
+	return (
+		INSPECTION_CONTRACT_KINDS.has(input.contractKind) ||
+		(input.contractKind === "verifier-report" && input.readOnly === true)
+	);
+}
+
+/**
+ * Fold a terminal result's passing validation claims against the run's executed
+ * commands. Returns null when there is nothing to ground, which is every
+ * contract kind that carries no correctness claim and every result that named
+ * no passing check.
+ */
+export function groundClaimedValidations(input: ValidationGroundingInput): ValidationGrounding | null {
+	if (input.contractKind === null || !GROUNDED_CONTRACT_KINDS.has(input.contractKind)) return null;
+	// Hoare machine claims use exact native proof records, while argued obligations claim no command execution.
+	if (input.contractKind === "verifier-report" && parseVerifierResult(input.output)?.assurance !== undefined)
+		return null;
+	const executed = withTypedCheckNames(input.executedCommands, input.taskGates ?? []);
+	const matched = (claim: ClaimedValidation): boolean =>
+		isExecuted(claim.name, executed) || groundedByVerifyRun(claim, input.verifyRuns ?? []);
+	// A claim an execution matches named that execution, whatever its wording.
+	const readsInspection = readsInspectionProse(input);
+	const claims = claimedValidations(input.output).filter(
+		(claim) => !readsInspection || matched(claim) || !isInspectionProse(claim.name),
+	);
+	if (claims.length === 0) return null;
+	const ungrounded: string[] = [];
+	let grounded = 0;
+	let unattributable = false;
+	for (const claim of claims) {
+		if (matched(claim)) grounded += 1;
+		else {
+			if (!ungrounded.includes(claim.name)) ungrounded.push(claim.name);
+			if (input.unattributableCommands !== undefined && isExecuted(claim.name, input.unattributableCommands))
+				unattributable = true;
+		}
+	}
+	return {
+		claimed: claims.length,
+		grounded,
+		ungrounded: ungrounded.slice(0, UNGROUNDED_NAME_LIMIT),
+		basis:
+			ungrounded.length === 0
+				? "grounded"
+				: input.toolLaneObserved === false
+					? "unobserved-lane"
+					: input.executedCheckingCalls === 0
+						? "no-command-executed"
+						: unattributable
+							? "unattributable-status"
+							: "unmatched-command",
+	};
+}
+
+/**
+ * One gate verdict check (M10): whether its claim names a validation command, and whether a run this gate observed
+ * grounds it, under the same matching as the claims above. Unattributable runs ground nothing.
+ */
+export function groundGateCheck(
+	input: Pick<ValidationGroundingInput, "executedCommands" | "verifyRuns" | "taskGates">,
+	claim: ClaimedValidation,
+): { command: boolean; ran: boolean } {
+	const command =
+		detectValidationCommand(claim.name, "grounding").kind === "validation" || namedVerifyChecks(claim.name).length > 0;
+	if (!command) return { command, ran: false };
+	const executed = withTypedCheckNames(input.executedCommands, input.taskGates ?? []);
+	return { command, ran: isExecuted(claim.name, executed) || groundedByVerifyRun(claim, input.verifyRuns ?? []) };
+}
+
+/**
+ * The note a read-only verifier report seals when its run executed no checking call and none of its claims names a
+ * run: the report did its read-only job, so the run succeeds, but its pass rests on what it read and not on a check,
+ * so its quality seals unmeasured instead of reading as checks passed. Null for any other run or report.
+ */
+export function readOnlyObservationNote(
+	input: ValidationGroundingInput,
+	grounding: ValidationGrounding | null,
+): string | null {
+	if (input.contractKind !== "verifier-report" || input.readOnly !== true) return null;
+	if (grounding !== null || input.executedCheckingCalls > 0 || input.toolLaneObserved === false) return null;
+	if (parseVerifierResult(input.output)?.assurance !== undefined) return null;
+	const observed = claimedValidations(input.output).length;
+	return observed === 0
+		? "no command ran: a read-only check reports what it read"
+		: `no command ran: a read-only check reports what it read (${observed} ${observed === 1 ? "observation" : "observations"})`;
+}
+
+/** True when the sealed quality label may not rest on these claims. */
+export function invalidatesQuality(grounding: ValidationGrounding): boolean {
+	return grounding.ungrounded.length > 0 && grounding.basis === "no-command-executed";
+}
+
+/** One line naming what the run claimed and never ran, for the sealed outcome. */
+export function describeUngroundedValidations(grounding: ValidationGrounding): string {
+	const named = grounding.ungrounded.map((name) => JSON.stringify(name)).join(", ");
+	if (grounding.basis === "unobserved-lane")
+		return `unobserved validation: this run claimed ${named} passed in a tool lane PanCode does not observe, so no execution backs or refutes it (${grounding.grounded}/${grounding.claimed} claims grounded)`;
+	if (grounding.basis === "unattributable-status")
+		return `unattributable validation: this run claimed ${named} passed; it ran the check, but the command's exit status was not the check's (${grounding.grounded}/${grounding.claimed} claims grounded)`;
+	return grounding.basis === "no-command-executed"
+		? `unverifiable validation: this run claimed ${named} passed and executed no command at all (${grounding.grounded}/${grounding.claimed} claims grounded)`
+		: `unmatched validation: this run claimed ${named} passed; it did run commands, but none PanCode recognizes as that check (${grounding.grounded}/${grounding.claimed} claims grounded)`;
+}

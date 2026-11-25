@@ -1,0 +1,156 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { Static } from "typebox";
+import type { SystemReport } from "../../contracts/system.js";
+import type { ConnectionState } from "../api/events.js";
+import type { StatusTone } from "../design/status.js";
+
+type Finding = Static<typeof SystemReport>["findings"][number];
+type Severity = Pick<Finding, "level">;
+const LEVELS = ["error", "warn", "info", "ok"] as const;
+const LABELS = { error: "Needs attention", warn: "Review", info: "Information", ok: "Ready" } as const;
+const TONES: Record<Finding["level"], StatusTone> = { error: "fail", warn: "warn", info: "neutral", ok: "success" };
+
+export function platformLabel(platform: string | undefined): string {
+	const os = platform?.split("-")[0];
+	return os === "linux" ? "Linux" : os === "darwin" ? "macOS" : os === "win32" ? "Windows" : platform || "Local";
+}
+
+/**
+ * What a tab keeps of its last installation check, so a reload states that result at once instead of
+ * "Connecting" and "Checking" until the idle recheck lands. Severities, the time and the runtime's platform only: no
+ * path or detail. The platform is kept so the recalled status does not read "System Local" until the runtime reports.
+ */
+export function rememberedSystem(
+	report: { checkedAt: string; findings: readonly Severity[] },
+	platform: string | undefined,
+): string {
+	return JSON.stringify({
+		checkedAt: report.checkedAt,
+		levels: report.findings.map((finding) => finding.level),
+		...(platform !== undefined ? { platform } : {}),
+	});
+}
+
+export function recalledSystem(
+	raw: string | null,
+): { checkedAt: string; findings: Severity[]; platform?: string } | undefined {
+	if (!raw) return undefined;
+	try {
+		const value: unknown = JSON.parse(raw);
+		if (!value || typeof value !== "object") return undefined;
+		const { checkedAt, levels, platform } = value as { checkedAt?: unknown; levels?: unknown; platform?: unknown };
+		if (typeof checkedAt !== "string" || !Array.isArray(levels)) return undefined;
+		if (!levels.every((level) => (LEVELS as readonly unknown[]).includes(level))) return undefined;
+		return {
+			checkedAt,
+			findings: (levels as Finding["level"][]).map((level) => ({ level })),
+			...(typeof platform === "string" ? { platform } : {}),
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+/** A connected event stream alone cannot establish installation health. */
+export function systemStatus(
+	connection: ConnectionState,
+	findings: readonly Severity[] | undefined,
+	failed: boolean,
+	/** The check is scheduled or running, so "Not checked" would undersell it. */
+	checking = false,
+): { tone: StatusTone; label: string; detail: string } {
+	// The first connection of a page that already holds a result is not news; a lost connection is.
+	if (connection !== "Connected" && !(connection === "Connecting…" && findings)) {
+		return connection === "Connecting…"
+			? { tone: "unverified", label: "Connecting", detail: "Connecting to the PanCode runtime." }
+			: connection === "Reconnecting…"
+				? { tone: "warn", label: "Reconnecting", detail: "The PanCode event connection is interrupted." }
+				: { tone: "fail", label: "Offline", detail: "The PanCode runtime is not connected." };
+	}
+	if (failed) return { tone: "unverified", label: "Unverified", detail: "Installation diagnostics are unavailable." };
+	if (!findings && checking)
+		return { tone: "unverified", label: "Checking", detail: "Checking PanCode installation diagnostics." };
+	if (!findings)
+		return {
+			tone: "unverified",
+			label: "Not checked",
+			detail: "Open System to check PanCode installation diagnostics.",
+		};
+	if (!findings.length) return { tone: "unverified", label: "Unverified", detail: "No installation findings reported." };
+	const errors = findings.filter((finding) => finding.level === "error").length;
+	const warnings = findings.filter((finding) => finding.level === "warn").length;
+	if (errors)
+		return {
+			tone: "fail",
+			label: `${errors} issue${errors === 1 ? "" : "s"}`,
+			detail: `${errors} installation error${errors === 1 ? "" : "s"} and ${warnings} warning${warnings === 1 ? "" : "s"} reported.`,
+		};
+	if (warnings)
+		return {
+			tone: "warn",
+			label: `${warnings} warning${warnings === 1 ? "" : "s"}`,
+			detail: `${warnings} installation check${warnings === 1 ? " needs" : "s need"} review.`,
+		};
+	return { tone: "success", label: "Ready", detail: "No installation checks need attention." };
+}
+
+/** Preserve the doctor's severity; a warning may still carry ok=true. */
+export function healthGroups(findings: readonly Finding[], query = "", attentionOnly = false) {
+	const needle = query.trim().toLocaleLowerCase("en-US");
+	return LEVELS.map((level) => ({
+		level,
+		label: LABELS[level],
+		tone: TONES[level],
+		findings: findings.filter(
+			(finding) =>
+				finding.level === level &&
+				(!attentionOnly || level === "error" || level === "warn") &&
+				(!needle || `${finding.name} ${finding.detail}`.toLocaleLowerCase("en-US").includes(needle)),
+		),
+	})).filter((group) => group.findings.length > 0);
+}
+
+/** Offer only inspection paths the application actually supports. Repairs remain local CLI decisions. */
+export function findingAction(finding: Pick<Finding, "name" | "level">): { label: string; path: string } | null {
+	if (finding.level === "ok" || finding.level === "info") return null;
+	if (finding.name === "settings.yaml") return { label: "Inspect settings sources", path: "/settings/effective" };
+	if (finding.name === "session store" || finding.name === "cache telemetry")
+		return { label: "Inspect recorded sessions", path: "/sessions" };
+	return null;
+}
+
+export function healthOverview(findings: readonly Finding[]) {
+	const errors = findings.filter((row) => row.level === "error").length;
+	const warnings = findings.filter((row) => row.level === "warn").length;
+	return {
+		errors,
+		warnings,
+		ready: findings.filter((row) => row.level === "ok").length,
+		information: findings.filter((row) => row.level === "info").length,
+		tone: errors
+			? ("fail" as const)
+			: warnings
+				? ("warn" as const)
+				: findings.length
+					? ("success" as const)
+					: ("unverified" as const),
+		label: errors
+			? `${errors} ${errors === 1 ? "issue" : "issues"} need attention`
+			: warnings
+				? `${warnings} ${warnings === 1 ? "warning" : "warnings"} to review`
+				: findings.length
+					? "No findings need attention"
+					: "No findings reported",
+	};
+}
+export const SYSTEM_FOLDERS: Readonly<Record<string, string>> = {
+	config: "Saved settings and configuration",
+	data: "Persistent application data",
+	state: "Runtime state and recorded activity",
+	cache: "Reusable caches and temporary runtime data",
+};
+
+export function findingCollapsed(finding: Pick<Finding, "level">, compact: boolean): boolean {
+	return compact || finding.level === "ok" || finding.level === "info";
+}

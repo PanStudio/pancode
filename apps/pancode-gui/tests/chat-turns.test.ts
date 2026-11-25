@@ -1,0 +1,1121 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import {
+	activityDigest,
+	activityGlyph,
+	activityKindLabel,
+	activityOpen,
+	runningItem,
+	showElapsed,
+	summarizeActivity,
+	toolStatusLabel,
+	workerLabel,
+} from "../client/chat/activity.js";
+import { type HealthItemLike, summarizeHealth } from "../client/chat/health.js";
+import { isLive, LIVE_GLYPHS, LIVE_TONES, type LiveState, liveStatus } from "../client/chat/live-status.js";
+import { routeFacts } from "../client/chat/route.js";
+import {
+	catalogFallbackNote,
+	conversationChanges,
+	routeDraft,
+	savedRoutePatch,
+} from "../client/chat/route-picker-model.js";
+import { sessionFacts } from "../client/chat/session-facts-model.js";
+import { settledKey, settledTurns } from "../client/chat/session-telemetry.js";
+import { presentTool } from "../client/chat/tool-presentation.js";
+import {
+	activeTurn,
+	type ChatTurn,
+	endingSentence,
+	groupTurns,
+	sameTurnView,
+	turnEnding,
+	turnStatuses,
+} from "../client/chat/turns.js";
+import type { HealthItem } from "../contracts/fleet-events.js";
+import type { Permission } from "../contracts/permissions.js";
+import { applySessionDelta, emptySession } from "../contracts/session-projection.js";
+import type { TimelineItem, Turn } from "../contracts/sessions.js";
+import { TRANSCRIPT_NOTICE_KIND } from "../contracts/transcript-notice.js";
+import { fleetEvent } from "../server/acp/fleet-events.js";
+import { projectConfigOptions } from "../server/acp/session-config.js";
+
+function item(
+	overrides: Partial<TimelineItem> & { id: string; turnId: string; kind: TimelineItem["kind"] },
+): TimelineItem {
+	return { sequence: 0, text: "", status: "completed", origin: "live", ...overrides };
+}
+function statuses(entries: Readonly<Record<string, Turn["status"]>>) {
+	return new Map(Object.entries(entries));
+}
+function turnRow(overrides: Partial<Turn> & { id: string; status: Turn["status"] }): Turn {
+	return {
+		prompt: "",
+		origin: "live",
+		startedAt: null,
+		finishedAt: null,
+		stopReason: null,
+		usage: null,
+		problem: null,
+		...overrides,
+	};
+}
+function permission(overrides: Partial<Permission> & { id: string; turnId: string }): Permission {
+	return {
+		toolCallId: "call",
+		title: "Write src/index.ts",
+		kind: "edit",
+		requestedAt: "2026-09-20T00:00:00.000Z",
+		escalateAt: "2026-09-20T00:00:30.000Z",
+		expiresAt: "2026-09-20T00:05:00.000Z",
+		status: "pending",
+		canStopTurn: true,
+		...overrides,
+	};
+}
+function only(turns: readonly ChatTurn[]): ChatTurn {
+	assert.equal(turns.length, 1);
+	const turn = turns[0];
+	assert.ok(turn !== undefined);
+	return turn;
+}
+
+test("groupTurns interleaves prose, reasoning and runs of activity", () => {
+	const timeline = [
+		item({ id: "a", turnId: "t1", kind: "user", text: "fix the parser" }),
+		item({ id: "b", turnId: "t1", kind: "text", text: "Looking at it." }),
+		item({ id: "c", turnId: "t1", kind: "tool", title: "Read parser.ts" }),
+		item({ id: "d", turnId: "t1", kind: "tool", title: "Grep token" }),
+		item({ id: "e", turnId: "t1", kind: "text", text: "Found it." }),
+		item({ id: "f", turnId: "t1", kind: "thought", text: "The lexer drops the last token." }),
+		item({ id: "g", turnId: "t1", kind: "tool", title: "Edit parser.ts" }),
+		item({ id: "h", turnId: "t1", kind: "notice", title: "Approval needed" }),
+	];
+	const turn = only(groupTurns(timeline, statuses({ t1: "succeeded" })));
+	assert.equal(turn.request?.id, "a");
+	assert.equal(turn.settled, true);
+	assert.deepEqual(
+		turn.segments.map((segment) => (segment.kind === "activity" ? ["activity", segment.items.length] : segment.kind)),
+		["response", ["activity", 2], "response", ["activity", 2]],
+	);
+	const work = turn.segments[3];
+	assert.ok(work?.kind === "activity");
+	assert.deepEqual(
+		work.items.map((entry) => entry.id),
+		["f", "g"],
+		"reasoning between calls stays with the calls, in wire order",
+	);
+	const activity = turn.segments[1];
+	assert.ok(activity?.kind === "activity");
+	assert.deepEqual(
+		activity.items.map((entry) => entry.id),
+		["c", "d"],
+	);
+});
+
+test("reasoning with no call beside it keeps its own disclosure", () => {
+	const timeline = [
+		item({ id: "a", turnId: "t1", kind: "user", text: "explain" }),
+		item({ id: "b", turnId: "t1", kind: "thought", text: "Consider the question." }),
+		item({ id: "c", turnId: "t1", kind: "text", text: "Here is why." }),
+		item({ id: "d", turnId: "t1", kind: "thought", text: "Anything else?" }),
+	];
+	const turn = only(groupTurns(timeline, statuses({ t1: "running" })));
+	assert.deepEqual(
+		turn.segments.map((segment) => segment.kind),
+		["reasoning", "response", "reasoning"],
+	);
+});
+
+test("groupTurns orders turns by first appearance and settles a replayed turn without a status row", () => {
+	const timeline = [
+		item({ id: "r1", turnId: "old", kind: "user", origin: "replay" }),
+		item({ id: "n1", turnId: "new", kind: "user" }),
+		item({ id: "r2", turnId: "old", kind: "text", origin: "replay" }),
+	];
+	const turns = groupTurns(timeline, statuses({}));
+	assert.deepEqual(
+		turns.map((turn) => turn.turnId),
+		["old", "new"],
+	);
+	assert.equal(turns[0]?.settled, true);
+	assert.equal(turns[0]?.origin, "replay");
+	// A live turn whose row has not arrived is still open, and must not flip settled between calls.
+	assert.equal(turns[1]?.settled, false);
+	assert.equal(groupTurns(timeline, statuses({}), turns), turns);
+});
+
+test("groupTurns keeps the identity of every settled turn across 200 streamed deltas", () => {
+	const timeline: TimelineItem[] = [];
+	const rows = new Map<string, Turn["status"]>();
+	const settledOnce = new Map<string, ChatTurn>();
+	let previous: readonly ChatTurn[] = [];
+	let rebuilds = 0;
+	for (let delta = 0; delta < 200; delta += 1) {
+		const turnIndex = Math.floor(delta / 20);
+		const turnId = `turn-${turnIndex}`;
+		const slot = delta % 20;
+		if (slot === 0) {
+			rows.set(turnId, "running");
+			timeline.push(item({ id: `${turnId}:user`, turnId, kind: "user", text: "go" }));
+		} else if (slot === 19) {
+			rows.set(turnId, turnIndex % 5 === 4 ? "failed" : "succeeded");
+		} else {
+			const kind = slot % 3 === 1 ? "text" : slot % 3 === 2 ? "tool" : "thought";
+			timeline.push(
+				item({
+					id: `${turnId}:${slot}`,
+					turnId,
+					kind,
+					status: kind === "tool" ? "completed" : "in_progress",
+					title: `Step ${slot}`,
+				}),
+			);
+		}
+		const next = groupTurns(timeline, rows, previous);
+		if (next !== previous) rebuilds += 1;
+		for (const turn of next) {
+			if (!turn.settled) continue;
+			const held = settledOnce.get(turn.turnId);
+			if (held === undefined) settledOnce.set(turn.turnId, turn);
+			else assert.equal(turn, held, `turn ${turn.turnId} lost its identity at delta ${delta}`);
+		}
+		// Re-grouping an unchanged timeline is a no-op, array identity included.
+		assert.equal(groupTurns(timeline, rows, next), next);
+		previous = next;
+	}
+	assert.equal(previous.length, 10);
+	assert.equal(settledOnce.size, 10);
+	assert.equal(
+		previous.every((turn) => turn.settled),
+		true,
+	);
+	assert.equal(rebuilds, 200);
+});
+
+test("replacing the streaming item rebuilds only its own turn", () => {
+	const settled = [
+		item({ id: "s1", turnId: "t1", kind: "user" }),
+		item({ id: "s2", turnId: "t1", kind: "text", text: "done" }),
+	];
+	const live = item({ id: "l2", turnId: "t2", kind: "text", text: "wor", status: "in_progress" });
+	const timeline = [...settled, item({ id: "l1", turnId: "t2", kind: "user" }), live];
+	const rows = statuses({ t1: "succeeded", t2: "running" });
+	const first = groupTurns(timeline, rows);
+	const grown = [...timeline.slice(0, 3), { ...live, text: "working" }];
+	const second = groupTurns(grown, rows, first);
+	assert.notEqual(second, first);
+	assert.equal(second[0], first[0], "the settled turn must keep its identity");
+	assert.notEqual(second[1], first[1]);
+	assert.equal(activeTurn(second)?.turnId, "t2");
+	assert.equal(activeTurn([...second].slice(0, 1)), null);
+});
+
+test("sameTurnView shields a settled turn from the clock and from a permission elsewhere", () => {
+	const turn = only(groupTurns([item({ id: "x", turnId: "t", kind: "text" })], statuses({ t: "succeeded" })));
+	const liveTurn = only(groupTurns([item({ id: "y", turnId: "u", kind: "text" })], statuses({ u: "running" })));
+	assert.equal(
+		sameTurnView({ turn, pendingPermissionId: null, nowMs: 0 }, { turn, pendingPermissionId: "p", nowMs: 9 }),
+		true,
+	);
+	assert.equal(
+		sameTurnView(
+			{ turn: liveTurn, pendingPermissionId: null, nowMs: 0 },
+			{ turn: liveTurn, pendingPermissionId: null, nowMs: 1 },
+		),
+		false,
+	);
+	assert.equal(
+		sameTurnView({ turn, pendingPermissionId: null, nowMs: 0 }, { turn: liveTurn, pendingPermissionId: null, nowMs: 0 }),
+		false,
+	);
+});
+
+test("turnStatuses projects the Turn rows the grouping reads", () => {
+	const map = turnStatuses([turnRow({ id: "t1", status: "running" }), turnRow({ id: "t2", status: "cancelled" })]);
+	assert.deepEqual(
+		[...map],
+		[
+			["t1", "running"],
+			["t2", "cancelled"],
+		],
+	);
+});
+
+const tool = (id: string, status: string) => item({ id, turnId: "t", kind: "tool", status, title: `Tool ${id}` });
+
+test("summarizeActivity derives a label and a tone from statuses alone", () => {
+	const cases: ReadonlyArray<readonly [readonly TimelineItem[], string, string]> = [
+		[[tool("a", "completed"), tool("b", "completed"), tool("c", "completed")], "3 tools completed", "success"],
+		[[tool("a", "completed")], "1 tool completed", "success"],
+		[
+			[tool("a", "in_progress"), tool("b", "pending"), tool("c", "completed")],
+			"1 tool running · 1 done · 1 queued",
+			"action",
+		],
+		[[tool("a", "failed"), tool("b", "completed"), tool("c", "completed")], "1 tool failed · 2 completed", "error"],
+		[[tool("a", "cancelled"), tool("b", "rejected")], "2 tools stopped", "neutral"],
+		[[tool("a", "completed"), tool("b", "expired")], "1 tool completed · 1 stopped", "success"],
+		[[tool("a", "escalated"), tool("b", "in_progress")], "Approval needed", "warning"],
+	];
+	for (const [items, label, tone] of cases) {
+		const summary = summarizeActivity(items);
+		assert.equal(summary.label, label);
+		assert.equal(summary.tone, tone);
+		assert.equal(summary.total, items.length);
+	}
+	// A notice in the run makes it steps rather than tools.
+	assert.equal(
+		summarizeActivity([tool("a", "completed"), item({ id: "n", turnId: "t", kind: "notice" })]).label,
+		"2 steps completed",
+	);
+	const unknown = summarizeActivity([tool("a", "something_new")]);
+	assert.equal(unknown.label, "1 tool with no reported outcome");
+	assert.equal(unknown.completed, 0);
+	assert.equal(unknown.tone, "warning");
+	assert.equal(unknown.attention, true);
+	assert.equal(activityGlyph(unknown), "?");
+	assert.equal(activityOpen(null, true, unknown), true);
+	assert.equal(summarizeActivity([]).label, "0 tools completed");
+});
+
+test("settling a turn never supplies a missing tool outcome or discards its partial output", () => {
+	for (const stopReason of ["end_turn", "cancelled"]) {
+		const snapshot = {
+			...emptySession("session", "workspace"),
+			turns: [turnRow({ id: "t", status: "running" })],
+			timeline: [
+				{ ...tool("open", "in_progress"), title: "grep", partialOutput: "src/main.ts:2:match" },
+				tool("queued", "pending"),
+				tool("done", "completed"),
+				tool("failed", "failed"),
+				tool("stopped", "cancelled"),
+				item({ id: "text", turnId: "t", kind: "text", status: "in_progress" }),
+				{ ...tool("other", "in_progress"), turnId: "other-turn" },
+			],
+		};
+		const settled = applySessionDelta(snapshot, {
+			type: "turn.finished",
+			payload: { resource: "session", revision: 1, turnId: "t", stopReason, usage: null, problem: null, finishedAt: null },
+		});
+		assert.deepEqual(
+			settled.timeline.map((entry) => entry.status),
+			[
+				"unknown",
+				"unknown",
+				"completed",
+				"failed",
+				"cancelled",
+				stopReason === "end_turn" ? "completed" : "cancelled",
+				"in_progress",
+			],
+		);
+		const open = settled.timeline[0];
+		assert.ok(open);
+		assert.equal(open.rawOutput, undefined);
+		const card = presentTool(open, { nowMs: 10000, startedAtMs: 0 });
+		assert.equal(card.statusLabel, "Outcome not reported");
+		assert.equal(card.settled, true);
+		assert.equal(card.digest, null);
+		assert.equal(card.output.source, "partial");
+		assert.equal(card.output.text, "src/main.ts:2:match");
+		assert.equal(card.output.running, false);
+		assert.equal(
+			card.facts.some((fact) => fact.label === "still running"),
+			false,
+		);
+		assert.equal(activityDigest([open]), "1 tool with no reported outcome");
+		const write = presentTool({
+			...open,
+			title: "write",
+			rawInput: { path: "/repo/a.ts", content: "new file\n" },
+		});
+		assert.equal(write.diff?.provenance, "unverified");
+		assert.equal(write.diff?.diff?.adds, 1);
+		assert.match(write.diff?.note ?? "", /No terminal result was reported.*cannot confirm/);
+		assert.doesNotMatch(write.diff?.note ?? "", /Nothing has been written|Nothing was written/);
+	}
+});
+
+test("summarizeActivity attention and the group glyph", () => {
+	assert.equal(summarizeActivity([tool("a", "completed")]).attention, false);
+	assert.equal(summarizeActivity([tool("a", "cancelled")]).attention, false);
+	assert.equal(summarizeActivity([tool("a", "in_progress")]).attention, true);
+	assert.equal(summarizeActivity([tool("a", "failed")]).attention, true);
+	assert.equal(summarizeActivity([tool("a", "escalated")]).attention, true);
+	assert.equal(activityGlyph(summarizeActivity([tool("a", "escalated"), tool("b", "failed")])), "!");
+	assert.equal(activityGlyph(summarizeActivity([tool("a", "in_progress"), tool("b", "failed")])), "◐");
+	assert.equal(activityGlyph(summarizeActivity([tool("a", "failed")])), "✕");
+	assert.equal(activityGlyph(summarizeActivity([tool("a", "completed")])), "✓");
+});
+
+test("the disclosure policy opens the right groups and then defers to the operator forever", () => {
+	const running = summarizeActivity([tool("a", "in_progress")]);
+	const failed = summarizeActivity([tool("a", "failed")]);
+	const waiting = summarizeActivity([tool("a", "escalated")]);
+	const clean = summarizeActivity([tool("a", "completed")]);
+	assert.equal(activityOpen(null, false, running), true, "a live run opens");
+	assert.equal(activityOpen(null, true, running), false, "a settled run is never opened by liveness alone");
+	assert.equal(activityOpen(null, true, failed), true, "a failure opens even after the turn settles");
+	assert.equal(activityOpen(null, true, waiting), true);
+	assert.equal(activityOpen(null, true, clean), false);
+	assert.equal(activityOpen(null, false, clean), true, "the group the turn is working in stays open between calls");
+	assert.equal(activityOpen(false, false, failed), false, "the operator's collapse wins over every default");
+	assert.equal(activityOpen(true, true, clean), true, "the operator's expansion wins over every default");
+});
+
+test("row-level helpers: running item, status labels, kind labels, elapsed and worker attribution", () => {
+	const items = [tool("a", "completed"), tool("b", "in_progress"), tool("c", "pending")];
+	assert.equal(runningItem(items)?.id, "b");
+	assert.equal(runningItem([tool("a", "completed")]), null);
+	assert.equal(toolStatusLabel("in_progress"), "running");
+	assert.equal(toolStatusLabel("escalated"), "waiting");
+	assert.equal(toolStatusLabel("something_new"), "something_new");
+	assert.equal(activityKindLabel(item({ id: "n", turnId: "t", kind: "notice" })), "approval");
+	assert.equal(activityKindLabel(item({ id: "n", turnId: "t", kind: "notice", toolKind: "safety" })), "safety");
+	assert.equal(activityKindLabel(item({ id: "t", turnId: "t", kind: "tool", toolKind: "edit" })), "edit");
+	assert.equal(activityKindLabel(item({ id: "t", turnId: "t", kind: "tool" })), "tool");
+	assert.equal(showElapsed(tool("a", "in_progress"), 1999), false);
+	assert.equal(showElapsed(tool("a", "in_progress"), 2000), true);
+	assert.equal(showElapsed(tool("a", "completed"), 60000), false);
+	assert.equal(workerLabel(undefined), null);
+	assert.equal(workerLabel([]), null);
+	assert.equal(workerLabel([{ version: 1, role: "orchestrator", agentId: "pancode" }]), null);
+	assert.equal(
+		workerLabel([
+			{ version: 1, role: "orchestrator", agentId: "pancode" },
+			{ version: 1, role: "worker", agentId: "reviewer", node: "dragon" },
+		]),
+		"reviewer · dragon",
+	);
+	assert.equal(
+		workerLabel([{ version: 1, role: "worker", agentId: "reviewer", node: null }]),
+		"reviewer",
+		"an unplaced worker is named without a node",
+	);
+	assert.equal(
+		workerLabel([
+			{ version: 1, role: "worker", agentId: "reviewer" },
+			{ version: 1, role: "orchestrator", agentId: "pancode" },
+		]),
+		null,
+		"the last entry wins, so an orchestrator hand-back drops the tag",
+	);
+});
+
+function chatTurn(items: readonly TimelineItem[], status?: Turn["status"]): ChatTurn {
+	return only(groupTurns(items, status === undefined ? statuses({}) : statuses({ t: status })));
+}
+
+test("the live status machine reaches all nine states from one realistic sequence", () => {
+	const seen = new Set<LiveState>();
+	const record = (status: { state: LiveState }) => {
+		seen.add(status.state);
+		return status.state;
+	};
+	const user = item({ id: "1", turnId: "t", kind: "user", text: "fix it" });
+	const thought = item({ id: "2", turnId: "t", kind: "thought", text: "read the lexer first" });
+	const prose = item({ id: "3", turnId: "t", kind: "text", text: "Reading the lexer." });
+	const running = item({ id: "4", turnId: "t", kind: "tool", status: "in_progress", title: "Read src/lexer.ts" });
+	const finished = item({ id: "4", turnId: "t", kind: "tool", status: "completed", title: "Read src/lexer.ts" });
+	const notice = item({ id: "5", turnId: "t", kind: "notice", status: "escalated", title: "Write src/lexer.ts" });
+
+	assert.equal(
+		record(liveStatus(chatTurn([user], "running"), turnRow({ id: "t", status: "running" }), null)),
+		"starting",
+	);
+	// Once the server admits the turn the agent holds it: the line says Working, as the header does (inspection F14).
+	const admitted = liveStatus(
+		chatTurn([user], "running"),
+		turnRow({ id: "t", status: "running", startedAt: "2026-09-20T00:00:00.000Z" }),
+		null,
+	);
+	assert.deepEqual([admitted.state, admitted.label], ["acting", "Working"]);
+	// A live worker outranks the orchestrator's silent timeline: "Starting" through a five-minute
+	// dispatch is a lie.
+	const waitingOnWorker = liveStatus(chatTurn([user], "running"), undefined, null, false, 2);
+	assert.equal(waitingOnWorker.state, "acting");
+	assert.equal(waitingOnWorker.label, "Waiting on 2 workers");
+	assert.equal(liveStatus(chatTurn([user], "running"), undefined, null, false, 1).label, "Waiting on 1 worker");
+	assert.equal(record(liveStatus(chatTurn([user, thought], "running"), undefined, null)), "thinking");
+	assert.equal(record(liveStatus(chatTurn([user, thought, prose], "running"), undefined, null)), "writing");
+	const acting = liveStatus(chatTurn([user, thought, prose, running], "running"), undefined, null);
+	assert.equal(record(acting), "acting");
+	assert.equal(acting.detail, "Read src/lexer.ts", "the chip carries the running tool's own title");
+	assert.equal(record(liveStatus(chatTurn([user, finished], "running"), undefined, null)).valueOf(), "acting");
+	assert.equal(liveStatus(chatTurn([user, finished], "running"), undefined, null).label, "Working");
+	const parked = liveStatus(
+		chatTurn([user, finished], "running"),
+		undefined,
+		permission({ id: "p1", turnId: "t", title: "Write src/lexer.ts" }),
+	);
+	assert.equal(record(parked), "waiting");
+	assert.equal(parked.detail, "Write src/lexer.ts");
+	// A trailing notice is not a pending approval; only a real `Permission` parks the chip.
+	assert.equal(record(liveStatus(chatTurn([user, notice], "running"), undefined, null)), "acting");
+	assert.equal(
+		record(liveStatus(chatTurn([user, running], "running"), turnRow({ id: "t", status: "running" }), null, true)),
+		"stopping",
+	);
+	assert.equal(
+		record(liveStatus(chatTurn([user, finished], "succeeded"), turnRow({ id: "t", status: "succeeded" }), null)),
+		"done",
+	);
+	const failed = liveStatus(
+		chatTurn([user, finished], "failed"),
+		turnRow({
+			id: "t",
+			status: "failed",
+			problem: {
+				type: "about:blank",
+				title: "Upstream failed",
+				status: 502,
+				detail: "the model refused the tool call",
+				code: "upstream_acp",
+				instance: "/api/sessions/s",
+			},
+		}),
+		null,
+	);
+	assert.equal(record(failed), "failed");
+	assert.equal(failed.detail, "the model refused the tool call");
+	assert.equal(
+		record(liveStatus(chatTurn([user], "cancelled"), turnRow({ id: "t", status: "cancelled" }), null)),
+		"stopped",
+	);
+	assert.deepEqual([...seen].sort(), [
+		"acting",
+		"done",
+		"failed",
+		"starting",
+		"stopped",
+		"stopping",
+		"thinking",
+		"waiting",
+		"writing",
+	]);
+	for (const state of seen) {
+		assert.equal(LIVE_GLYPHS[state].length, 1, `${state} must have a single-codepoint glyph`);
+		assert.ok(LIVE_TONES[state]);
+	}
+});
+
+test("a terminal row outranks everything, and a replayed turn is an earlier record", () => {
+	const replayed = only(groupTurns([item({ id: "1", turnId: "t", kind: "user", origin: "replay" })], statuses({})));
+	const status = liveStatus(replayed, undefined, permission({ id: "p", turnId: "t" }));
+	assert.equal(status.state, "done");
+	assert.equal(status.label, "Earlier record");
+	const settled = liveStatus(
+		chatTurn([item({ id: "1", turnId: "t", kind: "user" })], "succeeded"),
+		turnRow({ id: "t", status: "succeeded" }),
+		permission({ id: "p", turnId: "t" }),
+		true,
+	);
+	assert.equal(settled.state, "done", "a pending permission cannot un-settle a finished turn");
+	// A permission parked on another turn leaves this one alone.
+	assert.equal(
+		liveStatus(
+			chatTurn([item({ id: "1", turnId: "t", kind: "user" })], "running"),
+			undefined,
+			permission({ id: "p", turnId: "other" }),
+		).state,
+		"starting",
+	);
+	assert.equal(isLive({ state: "acting", label: "", detail: null }), true);
+	assert.equal(isLive({ state: "waiting", label: "", detail: null }), true);
+	assert.equal(isLive({ state: "done", label: "", detail: null }), false);
+	assert.equal(isLive({ state: "failed", label: "", detail: null }), false);
+	assert.equal(isLive({ state: "stopped", label: "", detail: null }), false);
+});
+
+test("turnEnding reads a settled turn's stop reason, and the chip never calls an early stop complete", () => {
+	const ending = (status: Turn["status"], stopReason: string | null) => turnEnding({ status, stopReason });
+	assert.equal(ending("succeeded", "max_tokens"), "output-limit");
+	assert.equal(ending("succeeded", "max_turn_requests"), "step-limit");
+	assert.equal(ending("succeeded", "refusal"), "refusal");
+	assert.equal(ending("succeeded", "end_turn"), "complete");
+	assert.equal(ending("succeeded", null), "complete");
+	assert.equal(ending("succeeded", "provider_quirk"), "other");
+	assert.equal(ending("failed", "max_tokens"), "failed");
+	assert.equal(ending("cancelled", "cancelled"), "stopped");
+	assert.equal(ending("running", null), null);
+	assert.equal(endingSentence("complete", "end_turn"), null);
+	assert.equal(endingSentence("other", "provider_quirk"), "The turn ended with stop reason provider_quirk.");
+
+	const user = item({ id: "1", turnId: "t", kind: "user" });
+	const chip = liveStatus(
+		chatTurn([user], "succeeded"),
+		turnRow({ id: "t", status: "succeeded", stopReason: "max_turn_requests" }),
+		null,
+	);
+	assert.deepEqual(chip, {
+		state: "stopped",
+		label: "Stopped early",
+		detail: "PanCode ended this turn at a step limit or loop guard. Check the last steps before you continue.",
+	});
+});
+
+test("a trailing notice with no pending permission reads as working, not as waiting for approval", () => {
+	const user = item({ id: "1", turnId: "t", kind: "user" });
+	const resolved = item({ id: "2", turnId: "t", kind: "notice", status: "completed", title: "Allowed: run tests" });
+	const status = liveStatus(chatTurn([user, resolved], "running"), turnRow({ id: "t", status: "running" }), null);
+	assert.deepEqual(status, { state: "acting", label: "Working", detail: null });
+});
+
+test("a pending permission on the running turn still parks the chip on the approval", () => {
+	const user = item({ id: "1", turnId: "t", kind: "user" });
+	const asked = item({ id: "2", turnId: "t", kind: "notice", status: "pending", title: "Run tests" });
+	const status = liveStatus(
+		chatTurn([user, asked], "running"),
+		turnRow({ id: "t", status: "running" }),
+		permission({ id: "p", turnId: "t", title: "Run tests" }),
+	);
+	assert.equal(status.state, "waiting");
+	assert.equal(status.label, "Waiting for your approval");
+	assert.equal(status.detail, "Run tests");
+});
+
+let healthSequence = 0;
+function health(type: string, payload: unknown): HealthItemLike {
+	healthSequence += 1;
+	return {
+		id: `h${healthSequence}`,
+		at: new Date(Date.UTC(2026, 8, 20, 0, 0, healthSequence)).toISOString(),
+		sourceSequence: healthSequence,
+		fact: { type, payload },
+	};
+}
+
+test("summarizeHealth reduces an empty strip to nothing to show", () => {
+	const summary = summarizeHealth([]);
+	assert.deepEqual(summary.rows, []);
+	assert.equal(summary.contextWarning, null);
+	assert.equal(summary.attention, false);
+	assert.equal(summary.worst, "neutral");
+});
+
+test("a null context warning is the clearing edge and retires the banner", () => {
+	const raised = summarizeHealth([health("health.contextWarning", { warning: "92% of the context window is in use" })]);
+	assert.equal(raised.contextWarning?.detail, "92% of the context window is in use");
+	assert.equal(raised.contextWarning?.tone, "warn");
+	assert.equal(raised.attention, true);
+	const cleared = summarizeHealth([
+		health("health.contextWarning", { warning: "92% of the context window is in use" }),
+		health("health.contextWarning", { warning: null }),
+	]);
+	assert.equal(cleared.contextWarning, null);
+	assert.deepEqual(cleared.rows, [], "the cleared edge must not render as a row");
+	assert.equal(cleared.attention, false);
+	// Nothing anywhere may print the word "null".
+	assert.equal(JSON.stringify(cleared).includes('"null"'), false);
+	// Out-of-order arrival still resolves by sourceSequence, so an older clear cannot beat a newer warning.
+	const late = summarizeHealth([
+		health("health.contextWarning", { warning: null }),
+		health("health.contextWarning", { warning: "97% of the context window is in use" }),
+	]);
+	assert.equal(late.contextWarning?.detail, "97% of the context window is in use");
+});
+
+test("a dispatch scope notice is a standing statement per code, shown as written and never as an alarm", () => {
+	const summary = summarizeHealth([
+		health("health.scopeNotice", {
+			code: "write_root_dot_unconfined",
+			message: "[dispatch scope] a root of '.' set no boundary.",
+		}),
+		health("health.scopeNotice", {
+			code: "inferred_scope_parent_tokens",
+			message: "[dispatch scope] a path token was resolved.",
+		}),
+		health("health.scopeNotice", { code: "write_root_dot_unconfined", message: "[dispatch scope] the newer statement." }),
+	]);
+	assert.deepEqual(
+		summary.scopeNotices.map((row) => [row.key, row.detail]),
+		[
+			["inferred_scope_parent_tokens", "[dispatch scope] a path token was resolved."],
+			["write_root_dot_unconfined", "[dispatch scope] the newer statement."],
+		],
+	);
+	assert.equal(summary.scopeNotices[0]?.label, "Dispatch scope");
+	assert.equal(summary.attention, false);
+	assert.equal(summary.worst, "warn");
+});
+
+test("compaction, tool budget and provider health reduce to readable rows", () => {
+	const items: HealthItem[] = [
+		{
+			id: "c1",
+			at: "2026-09-20T00:00:01.000Z",
+			sourceSequence: 1,
+			fact: { type: "health.compacted", payload: { trigger: "token-pressure", outcome: "completed" } },
+		},
+		{
+			id: "b1",
+			at: "2026-09-20T00:00:02.000Z",
+			sourceSequence: 2,
+			fact: {
+				type: "health.toolBudget",
+				payload: { tool: "Grep", callsThisTurn: 41, softBudget: 30, hardCeiling: 40, interrupted: true },
+			},
+		},
+		{
+			id: "p1",
+			at: "2026-09-20T00:00:03.000Z",
+			sourceSequence: 3,
+			fact: {
+				type: "health.provider",
+				payload: { targetId: "zeta", status: "degraded", available: true, latencyMs: 2100 },
+			},
+		},
+		{
+			id: "p2",
+			at: "2026-09-20T00:00:04.000Z",
+			sourceSequence: 4,
+			fact: { type: "health.provider", payload: { targetId: "alpha", status: "down", available: false, latencyMs: null } },
+		},
+		{
+			id: "p3",
+			at: "2026-09-20T00:00:05.000Z",
+			sourceSequence: 5,
+			fact: {
+				type: "health.provider",
+				payload: { targetId: "alpha", status: "healthy", available: true, latencyMs: 120 },
+			},
+		},
+	];
+	const summary = summarizeHealth(items);
+	assert.equal(summary.compaction?.label, "Context compacted");
+	assert.match(summary.compaction?.detail ?? "", /Triggered by token-pressure\./);
+	assert.equal(summary.toolBudget?.label, "Tool budget stopped the turn");
+	assert.equal(summary.toolBudget?.tone, "fail");
+	assert.equal(
+		summary.toolBudget?.detail,
+		"Grep was called 41 times this turn against a soft budget of 30 and a hard ceiling of 40. PanCode interrupted the turn.",
+	);
+	assert.deepEqual(
+		summary.providers.map((row) => [row.key, row.tone]),
+		[
+			["alpha", "success"],
+			["zeta", "warn"],
+		],
+		"one row per target, newest state, ordered by target id",
+	);
+	assert.equal(summary.providers[0]?.detail, "Reachable, reported healthy, 120 ms last check.");
+	assert.equal(summary.providers[1]?.attention, true);
+	assert.equal(summary.worst, "fail");
+	assert.equal(summary.attention, true);
+	assert.deepEqual(
+		summary.rows.map((row) => row.kind),
+		["toolBudget", "provider", "provider", "compaction"],
+	);
+});
+
+test("an uninterrupted budget breach and a partially reported provider still read as sentences", () => {
+	const projected = fleetEvent(
+		{
+			version: 1,
+			sessionId: "session",
+			sequence: 1,
+			kind: "provider.health_changed",
+			payload: { targetId: "beta", status: "unknown", available: false, latencyMs: null },
+		},
+		"session",
+		0,
+	);
+	assert.equal(projected.type, "health.provider");
+	assert.ok("item" in projected && projected.item);
+	const summary = summarizeHealth([
+		health("health.toolBudget", {
+			tool: "Bash",
+			callsThisTurn: 31,
+			softBudget: 30,
+			hardCeiling: null,
+			interrupted: false,
+		}),
+		projected.item,
+	]);
+	assert.equal(summary.toolBudget?.label, "Tool budget exceeded");
+	assert.equal(summary.toolBudget?.tone, "warn");
+	assert.equal(
+		summary.toolBudget?.detail,
+		"Bash was called 31 times this turn against a soft budget of 30 and a hard ceiling of not reported.",
+	);
+	assert.equal(summary.providers[0]?.tone, "unverified");
+	assert.equal(summary.providers[0]?.detail, "Not reachable, reported unknown, latency not reported.");
+});
+
+test("a terminal fleet frame forwards the engine's token facts and their wording, and words no count itself", () => {
+	const payload = (kind: string, extra: Record<string, unknown>) => {
+		const projected = fleetEvent(
+			{
+				version: 1,
+				sessionId: "session",
+				sequence: 1,
+				kind,
+				payload: { runId: "run-1", agentId: "a", outcome: "error", outcomeDetail: null, durationMs: 1, ...extra },
+			},
+			"session",
+			0,
+		);
+		assert.ok("item" in projected && projected.item);
+		return projected.item.fact.payload as Record<string, unknown>;
+	};
+	const coverage = {
+		totalTokens: { kind: "unknown", reason: "provider-omitted" },
+		apiCalls: { kind: "measured", value: 3, source: "local-count" },
+		tokenDisplay: "unknown (provider omitted)",
+	};
+	const completed = payload("run.completed", { outcomeCode: null, ...coverage });
+	assert.equal(completed.tokenDisplay, "unknown (provider omitted)");
+	assert.deepEqual(completed.totalTokens, coverage.totalTokens);
+	assert.equal(payload("run.failed", { reason: "tool_failed", ...coverage }).tokenDisplay, coverage.tokenDisplay);
+});
+
+test("compaction attempts report their outcome without inferring success for frames that omit it", () => {
+	for (const [outcome, label, tone] of [
+		["completed", "Context compacted", "neutral"],
+		["unchanged", "Context unchanged", "neutral"],
+		["failed", "Compaction failed", "fail"],
+		["cancelled", "Compaction stopped", "neutral"],
+		[undefined, "Compaction attempt ended", "unverified"],
+	] as const) {
+		const projected = fleetEvent(
+			{
+				version: 1,
+				sessionId: "session",
+				sequence: 1,
+				kind: "compaction.ended",
+				payload: { trigger: "threshold", ...(outcome !== undefined ? { outcome } : {}) },
+			},
+			"session",
+			0,
+		);
+		assert.ok("item" in projected && projected.item);
+		const row = summarizeHealth([projected.item]).compaction;
+		assert.equal(row?.label, label);
+		assert.equal(row?.tone, tone);
+		assert.equal(row?.attention, outcome === "failed");
+		assert.doesNotMatch(row?.detail ?? "", /summari[sz]ed/);
+		if (outcome === undefined) assert.match(row?.detail ?? "", /outcome was not reported/);
+	}
+});
+
+test("an unknown health fact reduces to a readable row rather than being dropped or throwing", () => {
+	const summary = summarizeHealth([
+		health("health.quotaExhausted", { remaining: 0 }),
+		health("health.quotaExhausted", { remaining: 0 }),
+		health("health.contextWarning", { warning: "91% of the context window is in use" }),
+	]);
+	assert.equal(summary.unknown.length, 1, "one row per unrecognised type, not one per event");
+	assert.equal(summary.unknown[0]?.label, "Unrecognised health report");
+	assert.match(summary.unknown[0]?.detail ?? "", /health\.quotaExhausted/);
+	assert.equal(summary.unknown[0]?.tone, "unverified");
+	assert.equal(summary.unknown[0]?.attention, false);
+	assert.equal(summary.contextWarning?.detail, "91% of the context window is in use", "the known facts still reduce");
+	assert.equal(summary.rows.length, 2);
+});
+
+test("a malformed payload never throws and never invents a value", () => {
+	const summary = summarizeHealth([
+		health("health.compacted", null),
+		health("health.toolBudget", "not an object"),
+		health("health.provider", { targetId: 17, status: 4, available: "yes", latencyMs: "fast" }),
+		health("health.contextWarning", { warning: 5 }),
+	]);
+	assert.match(summary.compaction?.detail ?? "", /an unreported condition/);
+	assert.match(summary.toolBudget?.detail ?? "", /^a tool was called not reported times/);
+	assert.equal(summary.providers[0]?.key, "unnamed target");
+	assert.equal(summary.providers[0]?.tone, "unverified");
+	assert.equal(summary.contextWarning, null, "a non-string warning is not a warning");
+});
+
+test("a group only says it changed a file when the change landed", () => {
+	const change = (id: string, title: string, path: string, status: string, rawOutput?: Record<string, unknown>) =>
+		item({ id, turnId: "t", kind: "tool", title, status, rawInput: { path }, ...(rawOutput ? { rawOutput } : {}) });
+	const refusal = {
+		result: { kind: "error", message: "write blocked: write was not approved" },
+		isError: true,
+	};
+	const broke = { result: { kind: "error", message: "EACCES: permission denied" }, isError: true };
+	assert.equal(
+		activityDigest([change("a", "edit", "a.py", "completed"), change("b", "write", "b.py", "completed")]),
+		"changed 2 files",
+		"edits and writes share one phrase",
+	);
+	assert.equal(activityDigest([change("a", "write", "a.py", "failed", refusal)]), "1 change refused");
+	assert.equal(activityDigest([change("a", "write", "a.py", "failed", broke)]), "1 change failed");
+	assert.equal(activityDigest([change("a", "edit", "a.py", "cancelled")]), "1 change stopped");
+	assert.equal(
+		activityDigest([change("a", "edit", "a.py", "completed"), change("b", "write", "b.py", "failed", refusal)]),
+		"changed 1 file, 1 change refused",
+	);
+});
+
+test("a group says what it did in words, counting files once and leaving reasoning out", () => {
+	const call = (id: string, title: string, path?: string) =>
+		item({ id, turnId: "t", kind: "tool", title, status: "completed", ...(path ? { rawInput: { path } } : {}) });
+	const items = [
+		item({ id: "r", turnId: "t", kind: "thought", status: "in_progress", text: "Look first." }),
+		call("a", "read", "a.py"),
+		call("b", "read", "a.py"),
+		call("c", "read", "data.csv"),
+		call("d", "bash"),
+		call("e", "edit", "a.py"),
+		call("f", "mcp_custom"),
+	];
+	assert.equal(activityDigest(items), "read 2 files in 3 calls, ran 1 command, changed 1 file, used 1 other tool");
+	const summary = summarizeActivity(items);
+	assert.equal(summary.label, "6 tools completed", "reasoning is not a step and never reads as running");
+	assert.equal(summary.running, 0);
+	assert.equal(runningItem(items), null);
+});
+
+test("routeFacts names the reported route and never guesses one it was not told", () => {
+	const healthy = summarizeHealth([
+		health("health.provider", { targetId: "alpha", status: "healthy", available: true, latencyMs: 120 }),
+	]);
+	const reported = routeFacts({ target: "alpha", model: "m-1", thinking: "low" }, healthy);
+	assert.equal(reported.text, "alpha · m-1");
+	assert.equal(reported.tone, "success");
+	assert.match(reported.title, /Thinking: low\./);
+	assert.match(reported.spoken, /Target alpha:/);
+	assert.doesNotMatch(reported.spoken, /\.\./, "a detail that ends its own sentence gets no second stop");
+
+	const automatic = routeFacts({ target: null, model: null, thinking: "off" }, summarizeHealth([]));
+	assert.equal(automatic.text, "automatic routing · default model");
+	assert.equal(automatic.tone, "unverified", "no probe has run, so the glyph is not a healthy one");
+	assert.match(automatic.spoken, /No target health reported/);
+
+	const unreported = routeFacts(undefined, summarizeHealth([]));
+	assert.equal(unreported.text, "Model not reported");
+	assert.equal(unreported.tone, "unverified");
+	const onlyHealth = routeFacts(undefined, healthy);
+	assert.equal(onlyHealth.text, "Model not reported", "provider health does not identify the session route");
+	assert.equal(onlyHealth.tone, "unverified");
+	assert.match(onlyHealth.title, /No target health reported/);
+	assert.match(onlyHealth.spoken, /^Model not reported\./);
+	const multipleProviders = routeFacts(
+		undefined,
+		summarizeHealth([
+			health("health.provider", { targetId: "alpha", status: "healthy", available: true }),
+			health("health.provider", { targetId: "beta", status: "unhealthy", available: false }),
+		]),
+	);
+	assert.equal(multipleProviders.text, "Model not reported");
+	assert.equal(multipleProviders.tone, "unverified");
+	assert.match(multipleProviders.title, /No target health reported/);
+	assert.doesNotMatch(multipleProviders.spoken, /alpha|beta/);
+	const otherTarget = routeFacts({ target: "beta", model: "m-2", thinking: "off" }, healthy);
+	assert.equal(otherTarget.tone, "unverified", "health for alpha does not verify beta");
+	assert.match(otherTarget.title, /No target health reported/);
+	assert.equal(routeFacts(undefined, summarizeHealth([]), { options: [] }).text, "Model not reported");
+});
+
+test("conversation routing takes reported current values and keeps target changes out of its writes", () => {
+	const config = {
+		target: "alpha",
+		options: [
+			{
+				id: "model" as const,
+				currentValue: "session-model",
+				options: [{ value: "session-model", name: "Session model" }],
+			},
+			{ id: "thinkingLevel" as const, currentValue: "high", options: [{ value: "high", name: "High" }] },
+		],
+	};
+	const settings = {
+		settings: {
+			chat: { target: "saved-target", model: "saved-model", thinkingLevel: "off" as const },
+			safety: { autonomy: "default" as const },
+		},
+		editable: [],
+	};
+	const draft = routeDraft(settings, config, "conversation");
+	assert.deepEqual(draft, { target: "alpha", model: "session-model", thinking: "high" });
+	assert.ok(draft);
+	const next = { target: "other-target", model: "next-model", thinking: "low" };
+	assert.deepEqual(conversationChanges(next, draft), [
+		{ configId: "target", value: "other-target" },
+		{ configId: "model", value: "next-model" },
+		{ configId: "thinkingLevel", value: "low" },
+	]);
+	assert.deepEqual(savedRoutePatch(next, draft), {
+		"chat.target": "other-target",
+		"chat.model": "next-model",
+		"chat.thinkingLevel": "low",
+	});
+	const route = routeFacts(
+		{ target: "saved-target", model: "saved-model", thinking: "off" },
+		summarizeHealth([]),
+		config,
+	);
+	assert.equal(route.text, "alpha · session-model");
+	assert.match(route.title, /Thinking: high/);
+	assert.equal(route.config, config);
+	assert.equal(routeDraft(undefined, undefined, "conversation"), null);
+});
+
+test("a session config without a model option says the model is not reported, never the saved one", () => {
+	const route = routeFacts({ target: "saved-target", model: "saved-model", thinking: "off" }, summarizeHealth([]), {
+		target: "alpha",
+		options: [{ id: "thinkingLevel" as const, currentValue: "high", options: [{ value: "high", name: "High" }] }],
+	});
+	assert.equal(route.text, "alpha · model not reported");
+	assert.equal(route.model, "Model not reported");
+	assert.match(route.title, /Model: not reported\./);
+	assert.doesNotMatch(`${route.text} ${route.model} ${route.title}`, /saved-model/);
+	const bare = routeFacts({ target: "saved-target", model: "saved-model", thinking: "off" }, summarizeHealth([]), {
+		target: "alpha",
+		options: [],
+	});
+	assert.equal(bare.thinking, undefined, "a thinking level the session did not report is not the saved one");
+	assert.doesNotMatch(bare.title, /Thinking: off/);
+});
+
+test("config projection drops unknown controls and private metadata, and refuses malformed known options", () => {
+	const raw = [
+		{ id: "autonomy", internal: "private" },
+		{
+			id: "model",
+			currentValue: "model-a",
+			private: "secret",
+			options: [{ value: "model-a", name: "Model A", url: "private" }],
+		},
+	];
+	assert.deepEqual(projectConfigOptions(raw), [
+		{ id: "model", currentValue: "model-a", options: [{ value: "model-a", name: "Model A" }] },
+	]);
+	assert.equal(projectConfigOptions(undefined), undefined);
+	assert.throws(() => projectConfigOptions([{ id: "model", currentValue: "bad\n", options: [] }]));
+	assert.throws(() => projectConfigOptions([raw[1], raw[1]]));
+	assert.throws(() =>
+		projectConfigOptions([
+			{
+				id: "model",
+				currentValue: "model-a",
+				options: Array.from({ length: 65 }, () => ({ value: "model-a", name: "Model A" })),
+			},
+		]),
+	);
+});
+
+test("a refused call and a stopped run end without breaking, so groups count them apart from failures", () => {
+	const refused = item({
+		id: "r",
+		turnId: "t",
+		kind: "tool",
+		status: "failed",
+		title: "write",
+		rawOutput: {
+			result: {
+				content: [
+					{ type: "text", text: "write blocked: write was not approved\nThis call was denied; no approval is pending." },
+				],
+			},
+			isError: true,
+		},
+	});
+	const stopped = item({
+		id: "s",
+		turnId: "t",
+		kind: "tool",
+		status: "failed",
+		title: "dispatch",
+		rawOutput: {
+			result: {
+				content: [{ type: "text", text: "dispatch failed: run r1 was cancelled (operator_cancel)" }],
+				details: { runId: "r1", outcome: "canceled", outcomeDetail: "operator_cancel" },
+			},
+			isError: true,
+		},
+	});
+	const alone = summarizeActivity([refused]);
+	assert.deepEqual([alone.label, alone.tone, alone.failed, alone.declined], ["1 tool refused", "neutral", 0, 1]);
+	assert.equal(activityGlyph(alone), "–");
+	const both = summarizeActivity([refused, stopped]);
+	assert.deepEqual([both.label, both.tone, both.attention], ["1 tool refused · 1 stopped", "neutral", false]);
+	const mixed = summarizeActivity([tool("a", "completed"), tool("b", "completed"), stopped]);
+	assert.deepEqual([mixed.label, mixed.tone], ["2 tools completed · 1 stopped", "success"]);
+	// A real failure still outranks them.
+	assert.equal(summarizeActivity([refused, tool("c", "failed")]).label, "1 tool failed");
+});
+
+test("engine notices stay out of the conversation segments", () => {
+	const turns = groupTurns(
+		[
+			item({ id: "u", turnId: "t", kind: "user", text: "Continue" }),
+			item({ id: "tool", turnId: "t", kind: "tool" }),
+			item({
+				id: "notice",
+				turnId: "t",
+				kind: "notice",
+				toolKind: "transcript",
+				text: "[context engine] compacted 8K → 4K tokens",
+			}),
+			item({ id: "answer", turnId: "t", kind: "text", text: "Done." }),
+		],
+		statuses({ t: "succeeded" }),
+	);
+	assert.deepEqual(
+		only(turns).segments.map((segment) => segment.kind),
+		["activity", "response"],
+	);
+	// A yolo continuation reports the turn's own flow, so it stands in the transcript where it happened (GUI-6).
+	const continued = groupTurns(
+		[
+			item({ id: "u", turnId: "t", kind: "user", text: "Continue" }),
+			item({ id: "tool", turnId: "t", kind: "tool" }),
+			item({
+				id: "notice",
+				turnId: "t",
+				kind: "notice",
+				toolKind: TRANSCRIPT_NOTICE_KIND,
+				text: "Continuing this turn because autonomy is yolo (1 of 3): the loop guard locked its tools.",
+			}),
+			item({ id: "answer", turnId: "t", kind: "text", text: "Done." }),
+		],
+		statuses({ t: "succeeded" }),
+	);
+	assert.deepEqual(
+		only(continued).segments.map((segment) => segment.kind),
+		["activity", "notice", "response"],
+	);
+	assert.deepEqual(sessionFacts(only(continued).items).other, [], "and it leaves Session notes");
+});
+
+test("the usage and context reads re-key on every settle, past the projection's 128-turn window", () => {
+	const window = (first: number) =>
+		Array.from({ length: 128 }, (_, index) => turnRow({ id: `t${first + index}`, status: "succeeded" }));
+	// One more turn settled: the projection dropped the oldest and appended the newest.
+	const before = window(1);
+	const after = window(2);
+	assert.equal(settledTurns(before), settledTurns(after), "a count stops moving at the window");
+	assert.notEqual(settledKey(before), settledKey(after));
+	assert.equal(settledKey([...after, turnRow({ id: "t130", status: "running" })]), settledKey(after));
+	assert.equal(settledKey([turnRow({ id: "t1", status: "running" })]), "none");
+});
+
+test("a call the safety judge is holding says so in the engine's words, and a held call without it is Running", () => {
+	const user = item({ id: "1", turnId: "t", kind: "user", text: "write the notes" });
+	const tool = { id: "2", turnId: "t", kind: "tool", status: "in_progress", title: "Write notes.md" } as const;
+	const judged = item({ ...tool, admission: "waiting for the safety judge" });
+	assert.deepEqual(liveStatus(chatTurn([user, judged], "running"), undefined, null), {
+		state: "waiting",
+		label: "Waiting for the safety judge",
+		detail: "Write notes.md",
+	});
+	assert.deepEqual(liveStatus(chatTurn([user, item(tool)], "running"), undefined, null), {
+		state: "acting",
+		label: "Running",
+		detail: "Write notes.md",
+	});
+});
+
+test("a connection that cannot list its models is not said to have failed to answer", () => {
+	// Live: openai-codex answered every chat turn while the picker said it "did not answer (unsupported)".
+	const note = catalogFallbackNote("openai-codex", "unsupported");
+	assert.doesNotMatch(note, /did not answer/);
+	assert.match(note, /cannot list its models/);
+	assert.match(catalogFallbackNote("local", "timeout"), /^local did not answer \(timeout\)/);
+});

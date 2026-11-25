@@ -1,0 +1,73 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.1/schema.json",
+	"assist": { "actions": { "source": { "organizeImports": "on" } } },
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"indentWidth": 1,
+		"lineWidth": 120,
+		"lineEnding": "lf"
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"style": {
+				"noNonNullAssertion": "warn",
+				"useConst": "error"
+			},
+			"suspicious": {
+				"noExplicitAny": "warn"
+			},
+			"correctness": {
+				"noUnusedVariables": "warn",
+				"noUnusedImports": "warn"
+			}
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double",
+			"trailingCommas": "all",
+			"semicolons": "always"
+		}
+	},
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"includes": [
+			"**",
+			"!**/.antigravitycli",
+			"!apps/pancode-gui",
+			"!.claude",
+			"!.pancode",
+			"!**/dist",
+			"!**/node_modules",
+			"!**/*.log",
+			"!.superpowers",
+			"!.mine",
+			"!benchmarks",
+			"!social-campaigns",
+			"!**/*.html",
+			"!tests/fixtures/telemetry/golden",
+			"!tests/fixtures/typecheck-corpus",
+			"!tmp"
+		]
+	},
+	"overrides": [
+		{
+			"includes": ["bin/pancode.cjs"],
+			"linter": {
+				"rules": {
+					"complexity": { "useArrowFunction": "off", "useOptionalChain": "off" },
+					"correctness": { "noInnerDeclarations": "off" },
+					"style": { "useTemplate": "off", "useNodejsImportProtocol": "off" },
+					"suspicious": { "noGlobalIsNan": "off" }
+				}
+			}
+		}
+	]
+}

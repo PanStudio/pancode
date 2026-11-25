@@ -1,0 +1,249 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { Hono } from "hono";
+import { routes } from "../../contracts/routes.js";
+import type { Commands } from "../services/commands.js";
+import type { EventHub } from "../services/event-hub.js";
+import type { SessionControls } from "../services/session-control.js";
+import type { SessionService } from "../services/sessions.js";
+import { TranscriptDownload } from "../services/transcript-download.js";
+import { requestClient } from "./auth.js";
+import { idempotencyKey, register } from "./validate.js";
+export function sessionRoutes(
+	app: Hono,
+	hub: EventHub,
+	sessions: SessionService,
+	commands: Commands,
+	controls: SessionControls,
+	snapshotHold?: () => Promise<void>,
+) {
+	const { supervisor, workspaces } = sessions;
+	register(app, hub, routes.sessionInterview, ({ params }) => supervisor.interview(params.id));
+	register(app, hub, routes.answerInterview, ({ params, body }, context) =>
+		commands.run(`interview:${params.id}:${params.roundId}`, idempotencyKey(context), body, async () =>
+			supervisor.answerInterview(params.id, params.roundId, body),
+		),
+	);
+	register(app, hub, routes.permission, ({ params, body }, context) =>
+		commands.run(`permission:${params.id}:${params.permissionId}`, idempotencyKey(context), body, async () =>
+			supervisor.decide(params.id, params.permissionId, body.decision),
+		),
+	);
+	register(app, hub, routes.cancelTurn, ({ params }, context) =>
+		commands.run(`cancel:${params.id}:${params.turnId}`, idempotencyKey(context), {}, () =>
+			supervisor.cancel(params.id, params.turnId),
+		),
+	);
+	register(app, hub, routes.sessionCapabilities, ({ params }) => supervisor.capabilities(params.id));
+	// Steering, interrupt and command invocation all mutate one live turn, so
+	// each is keyed per session in the command ledger: a double-submitted steer
+	// must queue once, not twice. The queue read is a plain GET.
+	register(app, hub, routes.steerSession, ({ params, body }, context) =>
+		commands.run(`steer:${params.id}`, idempotencyKey(context), body, () => supervisor.steer(params.id, body)),
+	);
+	register(app, hub, routes.sessionQueue, ({ params }) => supervisor.queue(params.id));
+	register(app, hub, routes.clearSessionQueue, ({ params }, context) =>
+		commands.run(`queue.clear:${params.id}`, idempotencyKey(context), {}, () => supervisor.clearQueue(params.id)),
+	);
+	register(app, hub, routes.editSessionQueue, ({ params, body }, context) =>
+		commands.run(`queue.edit:${params.id}`, idempotencyKey(context), body, () => supervisor.editQueue(params.id, body)),
+	);
+	register(app, hub, routes.shellSession, ({ params, body }, context) =>
+		commands.run(`shell:${params.id}`, idempotencyKey(context), body, async () => supervisor.shell(params.id, body)),
+	);
+	register(app, hub, routes.interruptSession, ({ params, body }, context) =>
+		commands.run(`interrupt:${params.id}`, idempotencyKey(context), body, () =>
+			supervisor.interrupt(params.id, body.reason),
+		),
+	);
+	register(app, hub, routes.steerDispatchRun, ({ params, body }, context) =>
+		commands.run(`dispatch.steer:${params.id}:${body.runId}`, idempotencyKey(context), body, () =>
+			supervisor.steerDispatchRun(params.id, body),
+		),
+	);
+	register(app, hub, routes.sessionBoard, ({ params }) => supervisor.board(params.id));
+	// A retried supersede or proposal answers from the ledger; the agent also finds an already
+	// superseded decision or an existing candidate rather than writing a second.
+	register(app, hub, routes.supersedeDecision, ({ params, body }, context) =>
+		commands.run(`decision.supersede:${params.id}`, idempotencyKey(context), body, () =>
+			supervisor.supersedeDecision(params.id, body),
+		),
+	);
+	register(app, hub, routes.proposeMemory, ({ params, body }, context) =>
+		commands.run(`memory.propose:${params.id}`, idempotencyKey(context), body, () =>
+			supervisor.proposeMemory(params.id, body),
+		),
+	);
+	register(app, hub, routes.sessionTree, ({ params }) => supervisor.tree(params.id));
+	// Workspace snapshots: a restore rewrites files, so a retried request answers from the command ledger.
+	register(app, hub, routes.sessionSnapshots, ({ params }) => supervisor.snapshotList(params.id));
+	register(app, hub, routes.sessionSnapshotPreview, ({ params }) =>
+		supervisor.snapshotPreview(params.id, Number(params.n)),
+	);
+	register(app, hub, routes.sessionSnapshotRestore, ({ params, body }, context) =>
+		commands.run(`snapshot.restore:${params.id}:${params.n}`, idempotencyKey(context), body, () =>
+			supervisor.snapshotRestore(params.id, Number(params.n)),
+		),
+	);
+	const transcripts = new TranscriptDownload(supervisor, workspaces);
+	register(app, hub, routes.sessionTranscript, ({ params, query }) => transcripts.read(params.id, query.format));
+	// A branch change resets the conversation, so a retried request answers from
+	// the command ledger instead of switching or forking a second time.
+	register(app, hub, routes.switchSessionBranch, ({ params, body }, context) =>
+		commands.run(`branch:${params.id}`, idempotencyKey(context), body, () =>
+			supervisor.switchTurn(params.id, body.turnId),
+		),
+	);
+	register(app, hub, routes.forkSession, ({ params, body }, context) =>
+		commands.run(`fork:${params.id}`, idempotencyKey(context), body, async () => {
+			const forked = await supervisor.fork(params.id, body.turnId);
+			// The live session moved to the fork, so control follows it.
+			controls.move(params.id, forked.sessionId, requestClient(context).clientId);
+			return forked;
+		}),
+	);
+	register(app, hub, routes.sessionExtensions, ({ params }) => supervisor.extensions(params.id));
+	register(app, hub, routes.reloadSessionExtensions, ({ params }, context) =>
+		commands.run(`extensions.reload:${params.id}`, idempotencyKey(context), {}, () =>
+			supervisor.reloadExtensions(params.id),
+		),
+	);
+	register(app, hub, routes.sessionArtifacts, ({ params }) => supervisor.artifacts(params.id));
+	register(app, hub, routes.sessionArtifact, ({ params, body }) => supervisor.artifact(params.id, body));
+	register(app, hub, routes.sessionUsage, ({ params }) => supervisor.usage(params.id));
+	// A retried side question or draft answers from the ledger instead of billing a second round.
+	register(app, hub, routes.askAside, ({ params, body }, context) =>
+		commands.run(`aside.ask:${params.id}`, idempotencyKey(context), body, () =>
+			supervisor.askAside(params.id, body.question),
+		),
+	);
+	register(app, hub, routes.draftAside, ({ params, body }, context) =>
+		commands.run(`aside.draft:${params.id}`, idempotencyKey(context), body, () => supervisor.draftAside(params.id, body)),
+	);
+	register(app, hub, routes.cancelAside, ({ params }) => supervisor.cancelAside(params.id));
+	register(app, hub, routes.sessionContext, ({ params }) => supervisor.contextLedger(params.id));
+	register(app, hub, routes.sessionContextStatus, ({ params }) => supervisor.contextStatus(params.id));
+	register(app, hub, routes.cancelSessionContext, ({ params, body }, context) =>
+		commands.run(`context.cancel:${params.id}`, idempotencyKey(context), body, () =>
+			supervisor.cancelContext(params.id, body.operationId),
+		),
+	);
+	register(app, hub, routes.previewFleetRun, ({ params, body }) => supervisor.fleetPreview(params.id, body));
+	// A retried start answers from the ledger rather than starting the plan twice.
+	register(app, hub, routes.startFleetRun, ({ params, body }, context) =>
+		commands.run(`fleet.run:${params.id}`, idempotencyKey(context), body, () => supervisor.fleetRun(params.id, body)),
+	);
+	// A retried draft answers from the ledger rather than spending a second model round.
+	register(app, hub, routes.prepareHandoff, ({ params, body }, context) =>
+		commands.run(`handoff:${params.id}`, idempotencyKey(context), body, () =>
+			supervisor.prepareHandoff(params.id, body.goal),
+		),
+	);
+	register(app, hub, routes.commitHandoff, ({ params, body }, context) =>
+		commands.run(`handoff.commit:${params.id}`, idempotencyKey(context), body, async () => {
+			const committed = await supervisor.commitHandoff(params.id, body.handoffId, body.document);
+			// As with a fork, the live session moved to a new id, and control follows it.
+			if (committed.status === "committed") controls.move(params.id, committed.sessionId, requestClient(context).clientId);
+			return committed;
+		}),
+	);
+	register(app, hub, routes.cancelHandoff, ({ params, body }, context) =>
+		commands.run(`handoff.cancel:${params.id}`, idempotencyKey(context), body, () =>
+			supervisor.cancelHandoff(params.id, body.handoffId),
+		),
+	);
+	register(app, hub, routes.sessionCommands, ({ params }) => supervisor.commands(params.id));
+	register(app, hub, routes.invokeSessionCommand, ({ params, body }, context) =>
+		commands.run(`command:${params.id}:${body.command}`, idempotencyKey(context), body, () =>
+			supervisor.invokeCommand(params.id, body),
+		),
+	);
+	register(app, hub, routes.sessionSettings, ({ params }) => supervisor.settings(params.id));
+	register(app, hub, routes.setSessionConfig, ({ params, body }, context) =>
+		commands.run(`config:${params.id}`, idempotencyKey(context), body, () => supervisor.setConfig(params.id, body)),
+	);
+	register(app, hub, routes.patchSessionSettings, ({ params, body }, context) =>
+		commands.run(`settings:${params.id}`, idempotencyKey(context), body, () => supervisor.settings(params.id, body)),
+	);
+	register(app, hub, routes.sessionTargets, ({ params }) => supervisor.targets(params.id));
+	register(app, hub, routes.probeSessionTarget, ({ params }, context) =>
+		commands.run(`probe:${params.id}:${params.targetId}`, idempotencyKey(context), {}, () =>
+			supervisor.probe(params.id, params.targetId),
+		),
+	);
+	register(app, hub, routes.sessionAutonomy, ({ params }) => supervisor.autonomy(params.id));
+	register(app, hub, routes.setSessionAutonomy, ({ params, body }, context) =>
+		commands.run(`autonomy:${params.id}`, idempotencyKey(context), body, () =>
+			supervisor.autonomy(params.id, body.level),
+		),
+	);
+	register(app, hub, routes.labelSession, ({ params, body }, context) =>
+		commands.run(`label:${params.id}`, idempotencyKey(context), body, () =>
+			sessions.ledgerCommand(params.id, "label", body.workspaceId, body.label),
+		),
+	);
+	register(app, hub, routes.deleteSession, ({ params, body }, context) =>
+		commands.run(`delete:${params.id}`, idempotencyKey(context), body, async () => {
+			const deleted = await sessions.ledgerCommand(params.id, "delete", body.workspaceId);
+			controls.release(params.id);
+			return deleted;
+		}),
+	);
+	register(app, hub, routes.workspaces, () => workspaces.list());
+	// Both register before routes.workspace: "complete" and "pick" would otherwise match its :id segment.
+	register(app, hub, routes.workspacePathComplete, ({ query }) => workspaces.complete(query.input, query.hidden));
+	register(app, hub, routes.workspacePick, (_input, context) => workspaces.pick(context.req.raw.signal));
+	register(app, hub, routes.workspace, ({ params }) => workspaces.get(params.id));
+	register(app, hub, routes.workspaceFiles, ({ params, query }) => workspaces.completeFile(params.id, query.input));
+	register(app, hub, routes.workspaceFile, ({ params, query }) => workspaces.readFile(params.id, query.path));
+	register(app, hub, routes.openWorkspace, ({ body }, context) =>
+		commands.run("workspace.open", idempotencyKey(context), body, () => workspaces.open(body.path)),
+	);
+	register(app, hub, routes.sessionHistory, ({ params }, context) =>
+		sessions.history(params.id, context.req.raw.signal),
+	);
+	register(app, hub, routes.newSession, ({ params }, context) =>
+		commands.run(`session.new:${params.id}`, idempotencyKey(context), {}, async () => {
+			const opened = await supervisor.open(params.id);
+			controls.claimIfFree(opened.id, requestClient(context).clientId);
+			return opened;
+		}),
+	);
+	register(app, hub, routes.storedTranscript, ({ params }) => sessions.transcript(params.id, params.sessionId));
+	register(app, hub, routes.takeOverSession, ({ params }, context) =>
+		commands.run(`session.take-over:${params.sessionId}`, idempotencyKey(context), params, () =>
+			sessions.takeOver(params.id, params.sessionId),
+		),
+	);
+	register(app, hub, routes.loadSession, ({ params, body }, context) =>
+		commands.run(`session.load:${params.id}`, idempotencyKey(context), body, async () => {
+			const loaded = await sessions.load(body.workspaceId, params.id);
+			// Opening a session another window drives views it; that window keeps control.
+			controls.claimIfFree(loaded.id, requestClient(context).clientId);
+			return loaded;
+		}),
+	);
+	register(app, hub, routes.sessions, () => supervisor.list());
+	register(app, hub, routes.sessionOverview, () => supervisor.overview());
+	register(app, hub, routes.session, async ({ params }, context) => {
+		const snapshot = supervisor.get(params.id);
+		context.header("X-Pancode-Revision", String(snapshot.revision));
+		await snapshotHold?.();
+		return snapshot;
+	});
+	register(app, hub, routes.sessionPresence, ({ params }) => ({ open: supervisor.knows(params.id) }));
+	register(app, hub, routes.turn, ({ params, body }, context) =>
+		commands.run(`turn:${params.id}`, idempotencyKey(context), body, async () =>
+			supervisor.startTurn(params.id, body.text, body.images, body.files),
+		),
+	);
+	register(app, hub, routes.closeSession, ({ params }, context) =>
+		commands.run(`session.close:${params.id}`, idempotencyKey(context), {}, async () => {
+			const closed = await supervisor.close(params.id);
+			controls.release(params.id);
+			return closed;
+		}),
+	);
+	// A sighting is repeated on purpose and changes nothing durable, so it keeps no command record.
+	register(app, hub, routes.viewSession, ({ params }) => supervisor.view(params.id));
+}

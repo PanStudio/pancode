@@ -1,0 +1,133 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import {
+	FACT_LIMITS,
+	factsOf,
+	humanizeKey,
+	humanizeToken,
+	omittedSentence,
+	scalarText,
+} from "../client/design/facts-model.js";
+
+test("keys read as words and keep their acronyms", () => {
+	assert.equal(humanizeKey("toolCallsPerRun"), "Tool calls per run");
+	assert.equal(humanizeKey("costUsd"), "Cost");
+	assert.equal(humanizeKey("sha256"), "SHA256");
+	assert.equal(humanizeKey("run_id"), "Run ID");
+	assert.equal(humanizeKey("wallTimeMs"), "Wall time");
+	assert.equal(humanizeKey("ms"), "MS", "a key that is only a unit keeps its word");
+	assert.equal(humanizeKey("id"), "id".toUpperCase());
+	assert.equal(humanizeKey(""), "");
+});
+
+test("absent and zero are different facts, and the key chooses the unit", () => {
+	assert.deepEqual(scalarText("costUsd", null), { text: "not measured" });
+	// A local runtime that prices at zero is not a run whose cost was never recorded.
+	assert.deepEqual(scalarText("costUsd", 0), { text: "not measured" });
+	assert.deepEqual(scalarText("costUsd", 0.004, "$0.0040"), { text: "$0.0040" });
+	assert.deepEqual(scalarText("wallTimeMs", 61_000), { text: "1m 1s" });
+	assert.deepEqual(scalarText("tokens", 1234567), { text: "1,234,567" });
+	// A server-worded sibling wins for any key, lower-bound marker and all (#434).
+	assert.deepEqual(scalarText("tokens", 1234, "≥1,234 (1 call unmeasured)"), { text: "≥1,234 (1 call unmeasured)" });
+	assert.deepEqual(scalarText("readBytes", 2048), { text: "2,048 bytes" });
+	assert.deepEqual(scalarText("tokens", Number.NaN), { text: "Not recorded", tone: "absent" });
+	assert.deepEqual(scalarText("verified", true), { text: "Yes", tone: "yes" });
+	assert.deepEqual(scalarText("verified", false), { text: "No", tone: "no" });
+	assert.deepEqual(scalarText("note", ""), { text: "Empty", tone: "absent" });
+	assert.equal(scalarText("runId", "abc").mono, true);
+	assert.equal(scalarText("note", "a".repeat(64)).mono, true, "a long hex string reads as a digest");
+	assert.equal(scalarText("note", "plain words").mono, undefined);
+	// Rendered in the viewer's zone: the day is the 19th west of UTC-10 and the 21st east of UTC+13.
+	assert.match(scalarText("startedAt", "2026-09-20T10:11:12.000Z").text, /^2026-09-(?:19|20|21) \d{2}:\d{2}:12$/);
+	assert.equal(scalarText("note", "x".repeat(2000)).text.length, FACT_LIMITS.text);
+});
+
+test("named keys lead in the requested order, hidden keys vanish, and the rest keep wire order", () => {
+	const { facts } = factsOf(
+		{ z: 1, verdict: "grounded", a: 2, secret: "x", claimant: "pancode" },
+		{ order: ["claimant", "verdict", "missing"], hide: ["secret"] },
+	);
+	assert.deepEqual(
+		facts.map((fact) => fact.label),
+		["Claimant", "Verdict", "Z", "A"],
+	);
+});
+
+test("collections keep their shape, and every bound that drops something says how much", () => {
+	const { facts } = factsOf({
+		tags: ["a", "b"],
+		none: [],
+		empty: {},
+		nested: { inner: { deep: 1 } },
+		runs: [
+			{ runId: "r1", ok: true },
+			{ runId: "r2", ok: false },
+		],
+		many: Array.from({ length: FACT_LIMITS.items + 5 }, (_, index) => index),
+	});
+	const by = new Map(facts.map((fact) => [fact.label, fact]));
+	assert.deepEqual(by.get("Tags"), { kind: "list", label: "Tags", items: ["a", "b"], omitted: 0 });
+	assert.deepEqual(by.get("None"), { kind: "value", label: "None", text: "None", tone: "absent" });
+	assert.deepEqual(by.get("Empty"), { kind: "value", label: "Empty", text: "None", tone: "absent" });
+	assert.equal(by.get("Nested")?.kind, "group");
+	const runs = by.get("Runs");
+	assert.equal(runs?.kind === "rows" && runs.rows.length, 2);
+	const many = by.get("Many");
+	assert.equal(many?.kind === "list" && many.omitted, 5);
+
+	const wide = factsOf(
+		Object.fromEntries(Array.from({ length: FACT_LIMITS.keys + 3 }, (_, index) => [`k${index}`, index])),
+	);
+	assert.equal(wide.facts.length, FACT_LIMITS.keys);
+	assert.equal(wide.omitted, 3);
+	assert.equal(omittedSentence(3, "field"), "3 more fields are outside this bounded view.");
+	assert.equal(omittedSentence(1, "record"), "1 more record is outside this bounded view.");
+	assert.equal(omittedSentence(0, "field"), "");
+});
+
+test("depth is bounded, so a hostile or cyclic-looking record cannot hang a page", () => {
+	let value: Record<string, unknown> = { leaf: 1 };
+	for (let index = 0; index < 12; index++) value = { next: value };
+	let cursor = factsOf(value).facts[0];
+	let depth = 0;
+	while (cursor?.kind === "group") {
+		cursor = cursor.facts[0];
+		depth++;
+	}
+	assert.ok(depth <= FACT_LIMITS.depth);
+	assert.equal(cursor?.kind === "value" && cursor.text, "1 nested fields");
+});
+
+test("a vocabulary key reads its wire word as words, and an identifier is never rewritten", () => {
+	assert.equal(scalarText("reason", "not_observed").text, "Not observed");
+	assert.equal(scalarText("kind", "run_seal").text, "Run seal");
+	assert.equal(scalarText("state", "absent").text, "Absent");
+	assert.equal(scalarText("reloadClass", "next-turn").text, "Next turn");
+	assert.equal(scalarText("source_kind", "external_system").text, "External system");
+	assert.equal(scalarText("kind", "acp_adapter").text, "ACP adapter");
+	// The key decides. The same shapes under an identifier key stay exactly as written, and stay mono.
+	assert.deepEqual(scalarText("id", "historical-persisted-format"), { text: "historical-persisted-format", mono: true });
+	assert.equal(scalarText("name", "sprint-plan").text, "sprint-plan");
+	assert.equal(scalarText("model", "qwen3-coder").text, "qwen3-coder");
+	assert.equal(scalarText("skill", "not_observed").text, "not_observed");
+	// Free text and mixed case under a vocabulary key are prose or names, not wire words.
+	assert.equal(scalarText("reason", "the validator timed out").text, "the validator timed out");
+	assert.equal(scalarText("kind", "n/a").text, "n/a");
+	assert.equal(scalarText("status", "HTTP_502").text, "HTTP_502");
+	// A key that merely ends in the letters of a vocabulary word is not one.
+	assert.equal(scalarText("commode", "not_observed").text, "not_observed");
+	assert.equal(humanizeToken("not_applicable"), "Not applicable");
+});
+
+test("a limit reads through its server display beside the number and is never unmeasured (#434)", () => {
+	const { facts } = factsOf({ budgetUsd: 5, budgetUsdDisplay: "$5.00", costUsd: 0.5, costDisplay: "$0.50" });
+	assert.deepEqual(
+		facts.map((fact) => (fact.kind === "value" ? [fact.label, fact.text] : [fact.label])),
+		[
+			["Budget", "$5.00"],
+			["Cost", "$0.50"],
+		],
+	);
+});

@@ -1,0 +1,984 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { randomBytes } from "node:crypto";
+import type { PancodeSettings } from "../core/config.js";
+import { GLYPH } from "../core/glyphs.js";
+import type { TelemetryHub } from "../core/telemetry/hub.js";
+import { renderPricingSum } from "../core/telemetry/render.js";
+import type { TurnConstraints } from "../core/turn-constraints.js";
+import type { AgentsContract } from "../domains/agents/contract.js";
+import { foldWorkingSet } from "../domains/context/working-set/fold.js";
+import type { DispatchContract, FleetRunPreview, FleetRunPreviewInput } from "../domains/dispatch/index.js";
+import {
+	agentRoleFactsResolver,
+	compileFleetRunPreview,
+	executeFleetRun,
+	fleetRouteResolver,
+	WriterSetBusyError,
+} from "../domains/dispatch/index.js";
+import type { MemoryRecord } from "../domains/memory/index.js";
+import {
+	approveMemoryRecord,
+	canonicalMemoryRepositoryIdentity,
+	checkoutWithholding,
+	loadMemoryRecordsSync,
+	proposeTaskBankPromotion,
+	readRecallUseLedger,
+	rejectMemoryRecord,
+} from "../domains/memory/index.js";
+import { holdCutOffText } from "../domains/safety/redaction.js";
+import type { BudgetPreflight } from "../domains/scheduling/contract.js";
+import type { ContextLedger } from "../domains/session/context-ledger.js";
+import type { SessionMeta } from "../domains/session/index.js";
+import { foldRecallTelemetry } from "../domains/session/recall-telemetry.js";
+import { foldSessionArtifacts } from "../domains/session/session-artifacts.js";
+import { foldSessionTaskHistory } from "../domains/session/task-board.js";
+import { filterEntriesToActivePath } from "../domains/session/tree/active-path.js";
+import type { ArtifactProviderDeps } from "../domains/session/view-artifacts.js";
+import { createDefaultArtifactProviders } from "../domains/session/view-artifacts.js";
+import type { GitChanges } from "../domains/session/workspace/git-probe.js";
+import { probeGitChangesAsync } from "../domains/session/workspace/git-probe.js";
+import type { SystemOne } from "../domains/system-one/index.js";
+import type { TelemetryContract } from "../domains/telemetry/index.js";
+import { formatUserTaskHandoff } from "../domains/user-tasks/handoff.js";
+import type { UserTasksStore } from "../domains/user-tasks/store.js";
+import { createWorkspaceSnapshots, type WorkspaceSnapshots } from "../domains/workspace-snapshots/index.js";
+import type { TUI } from "../engine/tui.js";
+import type { DraftOutcome } from "../session-control/chat-loop.js";
+import { type OutOfTurnRoute, outOfTurnRouteLabel } from "../session-control/side-question.js";
+import type {
+	ContextClearCommandOptions,
+	FleetRunStartOptions,
+	UsageTab,
+} from "../session-control/slash-command-types.js";
+import type { OpenContextOverlayOptions } from "./context-overlay.js";
+import { openContextOverlay } from "./context-overlay.js";
+import { type createDispatchBoardView, dispatchBoardEscapeEntry, dispatchBoardHintEntries } from "./dispatch-board.js";
+import { planWithWorkerRows } from "./dispatch-board-store.js";
+import { planWarnedStepCount, renderFleetPlanCard } from "./dispatch-plan-card.js";
+import type { FleetPlanRuns, FleetPlanRunView } from "./fleet-plan-runs.js";
+import { recordedRunAnswerLines } from "./fleet-run-history.js";
+import { progressNoticeKeys } from "./footer/notifications.js";
+import { openMemoryOverlay } from "./memory-overlay.js";
+import { buildResponsiveHint, showPancodeOverlayFrame } from "./overlay-frame.js";
+import type { OverlayTransitions } from "./overlay-transitions.js";
+import type { ContextResetMutationChoice } from "./overlays/context-reset.js";
+import { contextResetOptions, openContextResetOverlay } from "./overlays/context-reset.js";
+import { formatDecisionCorrectionTurn, openDecisionsOverlay } from "./overlays/decisions.js";
+import { openDraftOverlay, type TakenDraft } from "./overlays/draft.js";
+import { openFleetRunApprovalOverlay } from "./overlays/fleet-run-approval.js";
+import { openQueueNavigatorOverlay } from "./overlays/queue-navigator.js";
+import { openResearchOverlay, readResearchCampaigns } from "./overlays/research.js";
+import {
+	formatRewindOutcome,
+	openRewindConfirmOverlay,
+	openRewindListOverlay,
+	REWIND_TURN_RUNNING,
+	type RewindListHandle,
+} from "./overlays/rewind.js";
+import { openSideQuestionOverlay } from "./overlays/side-question.js";
+import { openThinkingLevelOverlay, type ThinkingLevelChoice } from "./overlays/thinking-level.js";
+import { openTasksOverlay } from "./tasks-overlay.js";
+import { abbreviateModelId } from "./theme/labels.js";
+import { openUsageOverlay } from "./usage-overlay.js";
+import { openViewOverlay } from "./view/view-overlay.js";
+
+export interface OverlayGeneralOpenersDeps {
+	readTranscript?: ArtifactProviderDeps["readTranscript"];
+	tui: TUI;
+	transitions: OverlayTransitions;
+	telemetry: TelemetryContract;
+	getDispatchRows?: () => ReadonlyArray<import("./dispatch-row-model.js").DispatchBoardRow>;
+	getSessionId?: () => string | null;
+	getContextLedger: () => ContextLedger;
+	contextChat: NonNullable<OpenContextOverlayOptions["chat"]>;
+	bus: TelemetryHub;
+	onContextClear?: (options: ContextClearCommandOptions) => Promise<void> | void;
+	stderr: (text: string) => void;
+	/** Informational transcript lines, such as a fleet loop's checkpoint, which `stderr` would draw as errors. */
+	stdout?: (text: string) => void;
+	/** A transcript block drawn at the width of each paint, so a card never keeps the width it was made at. */
+	appendBlock?: (render: (width: number) => string[]) => void;
+	refreshFooter: () => void;
+	toggleFooter: () => void;
+	renderTaskIsland: () => void;
+	requestRender: () => void;
+	getTaskBoard?: Parameters<typeof openTasksOverlay>[1];
+	userTasks?: UserTasksStore;
+	getDecisionBoard?: Parameters<typeof openDecisionsOverlay>[1];
+	sessionFlowRestricted?: (sessionId: string) => boolean;
+	supersedeDecision?: (interviewId: string, key: string, correction?: string) => unknown;
+	submitChat: (text: string) => void;
+	getTaskMemoryStatus?: Parameters<typeof openMemoryOverlay>[1];
+	dataDir: string;
+	notify: (level: "info" | "success" | "warning" | "error", text: string, key?: string) => void;
+	dismissNotification?: (key: string) => void;
+	/** Writes a command's record to the transcript. */
+	getSlashNotice?: () => import("./command-fallbacks.js").CommandNotice;
+	dispatch: DispatchContract;
+	/** The process's System One, whose engine breakers the Health tab shows; read when the overlay opens. */
+	systemOne?: () => SystemOne | undefined;
+	/** System One's status lines, shown above its breakers on the Health tab. */
+	systemOneControl?: () => { run(): string[] } | undefined;
+	stateDir: string;
+	getSessionMeta: () => SessionMeta | null;
+	/** Every session of this workspace, for the usage activity graph. */
+	listSessions?: () => ReadonlyArray<SessionMeta>;
+	readSessionEntries?: ArtifactProviderDeps["readSessionEntries"];
+	/** Live settings, so `/context` can state the configured working-set policy. */
+	getSettings?: () => Readonly<PancodeSettings>;
+	terminal: { columns: number };
+	dispatchBoard: ReturnType<typeof createDispatchBoardView>;
+	startDispatchBoardTicker: () => void;
+	closeOverlay: () => void;
+	showOverlayFrame?: typeof showPancodeOverlayFrame;
+	openUsageOverlay?: typeof openUsageOverlay;
+	openContextOverlay?: typeof openContextOverlay;
+	openContextResetOverlay?: typeof openContextResetOverlay;
+	openTasksOverlay?: typeof openTasksOverlay;
+	openDecisionsOverlay?: typeof openDecisionsOverlay;
+	openMemoryOverlay?: typeof openMemoryOverlay;
+	openViewOverlay?: typeof openViewOverlay;
+	openSideQuestionOverlay?: typeof openSideQuestionOverlay;
+	openFleetRunApprovalOverlay?: typeof openFleetRunApprovalOverlay;
+	openQueueNavigatorOverlay?: typeof openQueueNavigatorOverlay;
+	/**
+	 * The steering queue the navigator works on, and the editor-side actions
+	 * only the application can perform. Absent, the navigator is unavailable.
+	 */
+	queueNavigator?: {
+		chat: Pick<
+			import("../session-control/chat-loop.js").ChatLoop,
+			| "queueEntries"
+			| "removeQueuedEntry"
+			| "moveQueuedEntry"
+			| "setQueuedEntryKind"
+			| "isStreaming"
+			| "turnPreparation"
+			| "interruptRefusal"
+		>;
+		toEditor(entry: import("../session-control/chat-loop.js").QueuedChatMessage): void;
+		sendNow(entry: import("../session-control/chat-loop.js").QueuedChatMessage): void;
+		restoreAll(): void;
+		matchesRestoreAll(data: string): boolean;
+	};
+	/** Recipe registry `/fleet run` resolves every step's agent against. */
+	agents?: AgentsContract;
+	/** Session budget state the run would be admitted under; absent leaves it unknown. */
+	getBudgetPreflight?: () => BudgetPreflight;
+	/**
+	 * True while a turn is streaming. `/fleet run` is refused then, never
+	 * queued: an approved plan describes the workspace as it stands, and a turn
+	 * still in flight is about to change it.
+	 */
+	isTurnInFlight?: () => boolean;
+	/**
+	 * The session's `--allow-tools`/`--delegate-tools` limits. Every worker a
+	 * fleet run starts carries them, as a `/run` worker does.
+	 */
+	standingTurnConstraints?: () => TurnConstraints | undefined;
+	/** Record which wave and step a dispatched run belongs to, for the board's phase column. */
+	setFleetRunPhase?: (runId: string, phase: { wave: number; stepId: string }) => void;
+	fleetPlans?: FleetPlanRuns;
+	/** The shared fleet-run path; overridable so a test can observe one call. */
+	runFleet?: typeof executeFleetRun;
+	/** Contract and command-registry loader; overridable so a test projects a fixture. */
+	loadFleetSources?: FleetRunPreviewInput["load"];
+	/**
+	 * Run one `/btw` round. Absent on a host with no chat loop, in which case
+	 * `/btw` reports that instead of opening an empty overlay.
+	 */
+	askSideQuestion?: (
+		question: string,
+		options: { signal: AbortSignal; onDelta: (partialText: string) => void; onRoute?: (route: OutOfTurnRoute) => void },
+	) => Promise<
+		| { status: "answered"; text: string; route?: OutOfTurnRoute }
+		| { status: "aborted"; text: string }
+		| { status: "refused"; reason: string }
+		| { status: "failed"; reason: string }
+	>;
+	/** Run the `/draft` candidate rounds. Absent on a host with no chat loop. */
+	draftCandidates?: (
+		request: string,
+		count: number,
+		options: {
+			signal: AbortSignal;
+			onCandidate: (index: number, partialText: string) => void;
+			onRoute?: (route: OutOfTurnRoute) => void;
+		},
+	) => Promise<DraftOutcome>;
+	openDraftOverlay?: typeof openDraftOverlay;
+	/** The composer `/draft` puts a taken draft into. Absent, the overlay offers no use key. */
+	composer?: { getText(): string; setText(text: string): void };
+}
+
+export interface OverlayGeneralOpeners {
+	openUsage(tab?: UsageTab): void;
+	openContextView(): void;
+	openContextReset(): void;
+	/** `/thinking` with no level: pick one from the levels the current model takes. */
+	openThinkingLevel(
+		choices: ReadonlyArray<ThinkingLevelChoice>,
+		current: string | undefined,
+		onPick: (level: string) => void,
+	): void;
+	toggleFooter(): void;
+	openTasks(): void;
+	openDecisions(): void;
+	/** `/research`: the project's research campaigns, read-only. */
+	openResearch(): void;
+	openMemory(): void;
+	/** `/rewind`: this session's workspace snapshots, a preview, then a confirmed restore. */
+	openRewind(): void;
+	openView(initialFilter?: string): void;
+	toggleDispatchBoard(): void;
+	/** The steering queue as a list the operator can reorder, relabel, edit, remove or send now. */
+	openQueueNavigator(): void;
+	openSideQuestion(question: string): void;
+	/** `/draft [N] <request>`: N candidates in parallel, judged by a decision model. */
+	openDraft(request: string, count: number): void;
+	/** `/fleet run <playbook> [--var k=v ...]`: preview the plan, then dispatch on approval. */
+	startFleetRun(name: string, vars: Readonly<Record<string, string>>, options?: FleetRunStartOptions): void;
+}
+
+export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): OverlayGeneralOpeners {
+	const openUsageOverlayFactory = deps.openUsageOverlay ?? openUsageOverlay;
+	const openContextOverlayFactory = deps.openContextOverlay ?? openContextOverlay;
+	const openContextResetOverlayFactory = deps.openContextResetOverlay ?? openContextResetOverlay;
+	const openTasksOverlayFactory = deps.openTasksOverlay ?? openTasksOverlay;
+	const openDecisionsOverlayFactory = deps.openDecisionsOverlay ?? openDecisionsOverlay;
+	const openMemoryOverlayFactory = deps.openMemoryOverlay ?? openMemoryOverlay;
+	const openViewOverlayFactory = deps.openViewOverlay ?? openViewOverlay;
+	const showOverlayFrameFactory = deps.showOverlayFrame ?? showPancodeOverlayFrame;
+	const openSideQuestionOverlayFactory = deps.openSideQuestionOverlay ?? openSideQuestionOverlay;
+
+	const openUsage = (tab?: UsageTab): void => {
+		if (deps.transitions.state !== "closed") return;
+		deps.transitions.state = "usage";
+		// The changes probe is a subprocess; the card opens at once and the row
+		// fills in when it lands.
+		let changes: GitChanges | null = null;
+		const workspace = deps.getSessionMeta()?.cwd ?? process.cwd();
+		void probeGitChangesAsync(workspace).then((result) => {
+			changes = result;
+			deps.requestRender();
+		});
+		const systemOne = deps.systemOne?.();
+		const systemOneControl = deps.systemOneControl?.();
+		deps.transitions.handle = openUsageOverlayFactory(deps.tui, deps.telemetry, {
+			...(deps.listSessions ? { listSessions: deps.listSessions } : {}),
+			getChanges: () => changes,
+			sessionStartedAt: deps.getSessionMeta()?.createdAt ?? null,
+			...(deps.getDispatchRows ? { getDispatchRows: deps.getDispatchRows } : {}),
+			...(deps.readSessionEntries
+				? {
+						getSessionEntries: () => deps.readSessionEntries?.() ?? [],
+					}
+				: {}),
+			...(tab ? { tab } : {}),
+			health: {
+				getBreakers: () => deps.dispatch.routeBreakers?.() ?? [],
+				...(systemOne?.breakers ? { getSystemOneBreakers: () => systemOne.breakers?.() ?? [] } : {}),
+				...(systemOne && systemOneControl ? { getSystemOneStatus: () => systemOneControl.run() } : {}),
+			},
+		});
+		deps.requestRender();
+	};
+
+	const openContextView = (): void => {
+		if (deps.transitions.state !== "closed") return;
+		deps.transitions.state = "context-view";
+		deps.transitions.handle = openContextOverlayFactory(deps.tui, deps.getContextLedger, {
+			bus: deps.bus,
+			chat: deps.contextChat,
+			...(deps.telemetry.read ? { telemetry: deps.telemetry.read } : {}),
+			getWorkingSet: () => {
+				const readSessionEntries = deps.readSessionEntries;
+				if (!readSessionEntries) return null;
+				return foldWorkingSet(readSessionEntries(), deps.getSessionMeta()?.pinnedLeafTurnId ?? undefined);
+			},
+			getWorkingSetConfig: () => {
+				const workingSet = deps.getSettings?.().context.workingSet;
+				return workingSet ?? null;
+			},
+			getRecallTelemetry: () => {
+				const readSessionEntries = deps.readSessionEntries;
+				if (!readSessionEntries) return null;
+				return foldRecallTelemetry(
+					filterEntriesToActivePath(readSessionEntries(), deps.getSessionMeta()?.pinnedLeafTurnId ?? undefined),
+				);
+			},
+		});
+		deps.requestRender();
+	};
+
+	const openContextReset = (): void => {
+		if (deps.transitions.state !== "closed" || !deps.onContextClear) return;
+		deps.transitions.state = "context-reset";
+		deps.transitions.handle = openContextResetOverlayFactory(deps.tui, {
+			onReset: resetContext,
+			// The same receipt /rewind gives, so a cancelled reset is told apart from one that did nothing.
+			onCancel: () => {
+				deps.closeOverlay();
+				deps.notify("info", "context reset cancelled; no files changed", "context-reset:outcome");
+			},
+		});
+		deps.requestRender();
+	};
+
+	const openThinkingLevel: OverlayGeneralOpeners["openThinkingLevel"] = (choices, current, onPick) => {
+		if (deps.transitions.state !== "closed") return;
+		deps.transitions.state = "thinking-level";
+		deps.transitions.handle = openThinkingLevelOverlay(deps.tui, {
+			choices,
+			...(current !== undefined ? { current } : {}),
+			onPick: (level) => {
+				deps.closeOverlay();
+				onPick(level);
+			},
+			onCancel: deps.closeOverlay,
+		});
+		deps.requestRender();
+	};
+
+	const resetContext = (choice: ContextResetMutationChoice): void => {
+		deps.closeOverlay();
+		const onContextClear = deps.onContextClear;
+		if (!onContextClear) return;
+		void Promise.resolve()
+			.then(() => onContextClear(contextResetOptions(choice)))
+			.catch((err) => {
+				const msg = err instanceof Error ? err.message : String(err);
+				deps.stderr(`[/context reset] ${msg}\n`);
+			})
+			.finally(() => {
+				deps.refreshFooter();
+				deps.requestRender();
+			});
+	};
+
+	const toggleFooter = (): void => {
+		if (deps.transitions.state !== "closed") return;
+		deps.toggleFooter();
+		deps.renderTaskIsland();
+		deps.requestRender();
+	};
+
+	const openTasks = (): void => {
+		if (deps.transitions.state !== "closed") return;
+		deps.transitions.state = "tasks";
+		deps.transitions.handle = openTasksOverlayFactory(deps.tui, () => deps.getTaskBoard?.() ?? null, {
+			onClose: deps.closeOverlay,
+			getSessionSnapshot: () => {
+				const meta = deps.getSessionMeta();
+				const entries = filterEntriesToActivePath(deps.readSessionEntries?.() ?? [], meta?.pinnedLeafTurnId ?? undefined);
+				const workspace = meta?.cwd ?? process.cwd();
+				return {
+					history: foldSessionTaskHistory(entries),
+					artifacts: foldSessionArtifacts(entries, { workspace }),
+				};
+			},
+			...(deps.userTasks
+				? {
+						getUserTasks: () => deps.userTasks?.snapshot() ?? [],
+						onAddUserTask: (title: string) => void deps.userTasks?.add(title),
+						onHandUserTask: (id: string) => {
+							const task = deps.userTasks?.hand(id, deps.getSessionId?.() ?? undefined);
+							if (!task) throw new Error("operator task inbox is unavailable");
+							deps.submitChat(formatUserTaskHandoff(task));
+						},
+						onDoneUserTask: (id: string) => void deps.userTasks?.done(id),
+						onDropUserTask: (id: string) => void deps.userTasks?.drop(id),
+					}
+				: {}),
+			onOpenArtifact: (path: string) => openView(`workspace:${path}`),
+			requestRender: deps.requestRender,
+			workspace: deps.getSessionMeta()?.cwd ?? process.cwd(),
+		});
+		deps.requestRender();
+	};
+
+	const openDecisions = (): void => {
+		if (deps.transitions.state !== "closed") return;
+		deps.transitions.state = "decisions";
+		deps.transitions.handle = openDecisionsOverlayFactory(deps.tui, () => deps.getDecisionBoard?.() ?? [], {
+			onSupersede: (selection) => {
+				if (!deps.supersedeDecision) throw new Error("decision board is unavailable in this session");
+				deps.supersedeDecision(selection.interviewId, selection.key);
+			},
+			onCorrection: (selection, correction) => {
+				if (!deps.supersedeDecision) throw new Error("decision board is unavailable in this session");
+				deps.supersedeDecision(selection.interviewId, selection.key, correction);
+				deps.closeOverlay();
+				deps.submitChat(formatDecisionCorrectionTurn(selection, correction));
+			},
+			onClose: deps.closeOverlay,
+		});
+		deps.requestRender();
+	};
+
+	const openResearch = (): void => {
+		if (deps.transitions.state !== "closed") return;
+		const cwd = deps.getSessionMeta()?.cwd ?? process.cwd();
+		deps.transitions.state = "research";
+		deps.transitions.handle = openResearchOverlay(deps.tui, () => readResearchCampaigns(cwd), {
+			onClose: deps.closeOverlay,
+		});
+		deps.requestRender();
+	};
+
+	const openRewind = (): void => {
+		if (deps.transitions.state !== "closed") return;
+		const sessionId = deps.getSessionId?.() ?? null;
+		if (sessionId === null) {
+			deps.notify("warning", "/rewind needs an open session.", "rewind:no-session");
+			return;
+		}
+		// A refusal from an earlier attempt would sit on the footer of the very list it said could not open.
+		deps.dismissNotification?.("rewind:no-session");
+		deps.dismissNotification?.("rewind:turn");
+		const snapshots = createWorkspaceSnapshots({
+			stateDir: deps.stateDir,
+			sessionId,
+			cwd: deps.getSessionMeta()?.cwd ?? process.cwd(),
+		});
+		const records = snapshots.list();
+		deps.transitions.state = "rewind";
+		const list = openRewindListOverlay(deps.tui, {
+			records,
+			turnRunning: () => deps.isTurnInFlight?.() === true,
+			onSelect: (n) => previewRewind(snapshots, n, list),
+			onClose: deps.closeOverlay,
+		});
+		deps.transitions.handle = list;
+		if (records.length > 0) {
+			void snapshots.differences().then((counts) => {
+				if (deps.transitions.handle === list) list.setCounts(counts);
+			});
+		}
+		deps.requestRender();
+	};
+
+	/** Files are only written while no turn runs: a turn in flight is about to change them again. */
+	const turnBlocksRewind = (): boolean => {
+		if (deps.isTurnInFlight?.() !== true) return false;
+		deps.notify("warning", REWIND_TURN_RUNNING, "rewind:turn");
+		return true;
+	};
+
+	let rewindPreviewing = false;
+	const previewRewind = (snapshots: WorkspaceSnapshots, n: number, list: RewindListHandle): void => {
+		// The list's status row says why while a turn runs and its rail offers no Enter; a footer notice would outlive the turn.
+		if (rewindPreviewing || deps.isTurnInFlight?.() === true) return;
+		const record = snapshots.list().find((candidate) => candidate.n === n);
+		if (record === undefined) return;
+		rewindPreviewing = true;
+		void snapshots.preview(n).then((preview) => {
+			rewindPreviewing = false;
+			if (deps.transitions.handle !== list) return;
+			if (preview.kind === "unavailable") {
+				deps.notify("error", `/rewind: ${preview.reason}`, "rewind:preview");
+				return;
+			}
+			list.hide();
+			deps.transitions.handle = openRewindConfirmOverlay(deps.tui, {
+				record,
+				plan: preview.plan,
+				columns: deps.terminal.columns,
+				// The preview is a layer over the snapshot list, so Esc goes back to the list with nothing changed.
+				onCancel: () => {
+					deps.closeOverlay();
+					openRewind();
+				},
+				onConfirm: () => {
+					deps.closeOverlay();
+					if (turnBlocksRewind()) return;
+					deps.notify("info", `restoring files from snapshot #${n}${GLYPH.ellipsis}`, "rewind:outcome");
+					void snapshots.restore(n).then((outcome) => {
+						// A restore changes the work tree, so the record goes in the transcript;
+						// a footer notice can sit behind another one and then scroll away for good.
+						deps.dismissNotification?.("rewind:outcome");
+						const notice = formatRewindOutcome(outcome);
+						const transcript = deps.getSlashNotice?.();
+						if (transcript)
+							transcript(notice.level === "warning" ? "warn" : notice.level === "error" ? "error" : "info", notice.text);
+						else deps.notify(notice.level, notice.text, "rewind:outcome");
+						deps.refreshFooter();
+						deps.requestRender();
+					});
+				},
+			});
+			deps.requestRender();
+		});
+	};
+
+	const openMemory = (): void => {
+		if (deps.transitions.state !== "closed" || !deps.getTaskMemoryStatus) return;
+		let records: MemoryRecord[] = [];
+		let recordsReadAt = performance.now();
+		try {
+			records = loadMemoryRecordsSync(deps.dataDir);
+		} catch (error) {
+			deps.notify(
+				"warning",
+				`memory: durable lessons unavailable: ${error instanceof Error ? error.message : String(error)}`,
+				"memory:durable-read",
+			);
+		}
+		let recallUse = readRecallUseLedger(deps.stateDir).records;
+		let recallReadAt = performance.now();
+		// The check the session load applies, so a lesson the relevance gate dropped before its check still reads as withheld.
+		let deliveryRefusal: (record: MemoryRecord) => string | null = () => null;
+		try {
+			deliveryRefusal = checkoutWithholding(deps.getSessionMeta()?.cwd ?? process.cwd());
+		} catch {
+			/* Without the checkout's check, the prompt selection's own refusals still show. */
+		}
+		deps.transitions.state = "memory";
+		deps.transitions.handle = openMemoryOverlayFactory(
+			deps.tui,
+			deps.getTaskMemoryStatus,
+			() => {
+				// Background retention updates the store while inspection stays open; do one bounded read per refresh.
+				if (performance.now() - recordsReadAt >= 1000) {
+					recordsReadAt = performance.now();
+					try {
+						records = loadMemoryRecordsSync(deps.dataDir);
+					} catch {
+						records = []; /* A failed read must not present stale records as available. */
+					}
+				}
+				return records;
+			},
+			{
+				activeRepository: () => {
+					// Before the first turn there is no session record yet, but the folder the
+					// session will open in is already known, and lessons for it already apply.
+					return canonicalMemoryRepositoryIdentity(deps.getSessionMeta()?.cwd ?? process.cwd());
+				},
+				activeRuntime: () => {
+					const settings = deps.getSettings?.();
+					const targetId = deps.getSessionMeta()?.target ?? settings?.chat.target;
+					const runtime = settings?.targets.find((target) => target.id === targetId)?.runtime;
+					return runtime ? { kind: "runtime", key: runtime } : null;
+				},
+				activeAgent: () => null,
+				recallUse: () => {
+					// The observer rewrites the ledger as each turn settles; one bounded read per refresh, as for records.
+					if (performance.now() - recallReadAt >= 1000) {
+						recallReadAt = performance.now();
+						recallUse = readRecallUseLedger(deps.stateDir).records;
+					}
+					return recallUse;
+				},
+				deliveryRefusal,
+				onClose: deps.closeOverlay,
+				onPromote: async (entry, scope) => {
+					const meta = deps.getSessionMeta();
+					if (!meta) throw new Error("memory promotion requires an active session");
+					if (deps.sessionFlowRestricted?.(meta.id) === true)
+						throw new Error("this session carries an information-flow restriction, and a record reaches every later route");
+					const result = await proposeTaskBankPromotion(deps.dataDir, { id: meta.id, cwd: meta.cwd }, entry, scope);
+					records = loadMemoryRecordsSync(deps.dataDir);
+					return result;
+				},
+				onReview: async (record, action) => {
+					const updated =
+						action === "approve"
+							? await approveMemoryRecord(deps.dataDir, record.id)
+							: await rejectMemoryRecord(deps.dataDir, record.id);
+					records = loadMemoryRecordsSync(deps.dataDir);
+					return updated;
+				},
+			},
+		);
+		deps.requestRender();
+	};
+
+	const openView = (initialFilter?: string): void => {
+		if (deps.transitions.state !== "closed") return;
+		deps.transitions.state = "view";
+		deps.transitions.handle = openViewOverlayFactory(deps.tui, {
+			providers: createDefaultArtifactProviders({
+				stateDir: deps.stateDir,
+				dataDir: deps.dataDir,
+				dispatch: deps.dispatch,
+				sessionMeta: deps.getSessionMeta(),
+				readSessionEntries: deps.readSessionEntries,
+				readTranscript: deps.readTranscript,
+				formatModelId: abbreviateModelId,
+				presentAgentOutput: (runId, text) => recordedRunAnswerLines(runId, text, deps.stateDir),
+				...(deps.queueNavigator
+					? {
+							queuedMessageIds: () => new Set(deps.queueNavigator?.chat.queueEntries().map((entry) => entry.id)),
+						}
+					: {}),
+			}),
+			...(initialFilter ? { initialFilter } : {}),
+			notice: deps.notify,
+			onClose: deps.closeOverlay,
+		});
+		deps.requestRender();
+	};
+
+	const toggleDispatchBoard = (): void => {
+		if (deps.transitions.state === "dispatch-board") {
+			deps.closeOverlay();
+			return;
+		}
+		if (deps.transitions.state !== "closed") return;
+		deps.transitions.state = "dispatch-board";
+		deps.dispatchBoard.resetSelection();
+		deps.transitions.handle = showOverlayFrameFactory(deps.tui, deps.dispatchBoard, {
+			markerId: "dispatch-board",
+			title: "Fleet Runs",
+			footerHint: dispatchBoardHint,
+			anchor: "center",
+			width: Math.max(1, deps.terminal.columns - 4),
+		});
+		deps.startDispatchBoardTicker();
+		deps.requestRender();
+	};
+
+	const dispatchBoardHint = (innerWidth: number): string =>
+		buildResponsiveHint(
+			dispatchBoardHintEntries(deps.dispatchBoard),
+			dispatchBoardEscapeEntry(deps.dispatchBoard),
+		)(innerWidth);
+
+	/**
+	 * `/btw <question>`: one model round beside the session, rendered in an
+	 * overlay and nowhere else. Esc aborts a round that is still streaming and
+	 * closes one that has settled; both paths run through the same abort
+	 * controller, so a cancelled round never keeps a stream alive behind a closed
+	 * overlay.
+	 */
+	const openSideQuestion = (question: string): void => {
+		if (deps.transitions.state !== "closed") return;
+		const ask = deps.askSideQuestion;
+		if (!ask) {
+			deps.notify("error", "/btw is not wired in this session", "btw:unavailable");
+			return;
+		}
+		const controller = new AbortController();
+		deps.transitions.state = "side-question";
+		const session = openSideQuestionOverlayFactory(deps.tui, {
+			question,
+			columns: deps.terminal.columns,
+			onClose: () => controller.abort(),
+			// Live as the rail reads it: a streaming turn, or a worker the board has not settled.
+			isRunLive: () =>
+				deps.isTurnInFlight?.() === true ||
+				deps.telemetry.snapshot().runs.some((run) => !["completed", "failed", "aborted", "dead"].includes(run.status)),
+		});
+		deps.transitions.handle = session;
+		deps.requestRender();
+		void ask(question, {
+			signal: controller.signal,
+			onDelta: (partialText) => session.setAnswer(partialText),
+			onRoute: (route) => session.setRoute?.(outOfTurnRouteLabel(route)),
+		})
+			.then((outcome) => {
+				if (outcome.status === "answered") {
+					if (outcome.route !== undefined) session.setRoute?.(outOfTurnRouteLabel(outcome.route));
+					session.settle({ kind: "answered", text: outcome.text });
+					return;
+				}
+				if (outcome.status === "aborted") {
+					session.settle({ kind: "aborted", text: outcome.text });
+					return;
+				}
+				// A refusal or a failed round is a question nobody answered; say so, or the
+				// bare reason reads like a status line (#415).
+				session.settle({ kind: "error", reason: `Not answered: ${outcome.reason.replace(/\.?$/u, ".")}` });
+			})
+			.catch((error: unknown) => {
+				session.settle({ kind: "error", reason: error instanceof Error ? error.message : String(error) });
+			});
+	};
+
+	/**
+	 * `/draft [N] <request>`: N candidate rounds in parallel.
+	 */
+	const openDraft = (request: string, count: number): void => {
+		if (deps.transitions.state !== "closed") return;
+		const run = deps.draftCandidates;
+		if (!run) {
+			deps.notify("error", "/draft is not wired in this session", "draft:unavailable");
+			return;
+		}
+		const composer = deps.composer;
+		const controller = new AbortController();
+		deps.transitions.state = "draft";
+		const session = (deps.openDraftOverlay ?? openDraftOverlay)(deps.tui, {
+			request,
+			count,
+			columns: deps.terminal.columns,
+			rows: process.stdout.rows ?? 40,
+			onEscape: () => deps.closeOverlay(),
+			...(composer
+				? {
+						onUse: (taken: TakenDraft) => {
+							// Appended, never replaced: the composer has no confirm-before-replace
+							// path, and a typed message must survive taking a draft.
+							const held = composer.getText().trimEnd();
+							composer.setText(held.length > 0 ? `${held}\n\n${taken.text}` : taken.text);
+							deps.closeOverlay();
+						},
+					}
+				: {}),
+			onClose: () => controller.abort(),
+		});
+		deps.transitions.handle = session;
+		deps.requestRender();
+		void (async () => {
+			const outcome = await run(request, count, {
+				signal: controller.signal,
+				onCandidate: (index, partialText) => session.setCandidate(index, { kind: "streaming", text: partialText }),
+				onRoute: (route) => session.setRoute?.(outOfTurnRouteLabel(route)),
+			});
+			if (outcome.status === "refused") {
+				session.refuse(outcome.reason);
+				return;
+			}
+			outcome.candidates.forEach((candidate, index) => {
+				const route = candidate.route === undefined ? {} : { route: outOfTurnRouteLabel(candidate.route) };
+				session.setCandidate(
+					index,
+					candidate.status === "drafted"
+						? // An abort leaves whatever a candidate had, which no later text can resolve (#446).
+							{ kind: "drafted", text: outcome.aborted ? holdCutOffText(candidate.text) : candidate.text, ...route }
+						: { kind: "failed", reason: candidate.reason, ...route },
+				);
+			});
+		})().catch((error: unknown) => {
+			session.refuse(error instanceof Error ? error.message : String(error));
+		});
+	};
+
+	/**
+	 * `/fleet run <playbook>`: compile the plan, show it, and dispatch only what the
+	 * operator accepted.
+	 *
+	 * Nothing is dispatched and nothing is written before the accept key. A
+	 * contract that fails preflight opens the same overlay with its diagnostics
+	 * and no accept action, so the only exit from a broken plan is to leave it.
+	 */
+	// The fleet this session started and has not seen settle. Launch returns at
+	// once so the session stays usable, which made a running fleet easy to read
+	// as finished; a second start is refused while one runs (Portus v3).
+	let fleetInFlight: { name: string } | null = null;
+
+	const startFleetRun = (
+		name: string,
+		vars: Readonly<Record<string, string>>,
+		options: FleetRunStartOptions = {},
+	): void => {
+		if (deps.transitions.state !== "closed") return;
+		if (fleetInFlight !== null) {
+			deps.notify(
+				"info",
+				`plan ${fleetInFlight.name} is still running; start another once it settles ${GLYPH.sep} /fleet`,
+				"fleet-run:in-flight",
+			);
+			return;
+		}
+		// Refused, never queued: an approved plan describes the workspace as it
+		// stands, and a turn still in flight is about to change it.
+		if (deps.isTurnInFlight?.() === true) {
+			deps.notify("warning", "a turn is in flight; /fleet run is refused rather than queued", "fleet-run:in-flight");
+			return;
+		}
+		const agents = deps.agents;
+		if (!agents) {
+			deps.notify("error", "/fleet run needs the agents domain, which is not wired in this session", "fleet-run:agents");
+			return;
+		}
+		const workspaceRoot = deps.getSessionMeta()?.cwd ?? process.cwd();
+		const roleFacts = agentRoleFactsResolver((id) => agents.getSpec(id));
+		const budget = deps.getBudgetPreflight?.();
+		const result = compileFleetRunPreview({
+			workspaceRoot,
+			name,
+			vars,
+			getAgentSpec: (agentId) => agents.getSpec(agentId),
+			roleFacts,
+			...(budget ? { budget } : {}),
+			...(deps.loadFleetSources ? { load: deps.loadFleetSources } : {}),
+			...(options.resume !== undefined ? { resume: options.resume } : {}),
+			resolveRoute: fleetRouteResolver(deps.dispatch.preview, roleFacts, undefined, deps.standingTurnConstraints?.()),
+		});
+
+		deps.transitions.state = "fleet-run-approval";
+		deps.transitions.handle = (deps.openFleetRunApprovalOverlay ?? openFleetRunApprovalOverlay)(deps.tui, {
+			subject: result.ok ? { ok: true, preview: result.preview } : { ok: false, name, diagnostics: result.diagnostics },
+			columns: deps.terminal.columns,
+			onAccept: () => {
+				deps.closeOverlay();
+				if (result.ok) dispatchFleetRun(result.preview, agents);
+			},
+			onCancel: () => {
+				deps.closeOverlay();
+				deps.notify("info", `plan ${name}: cancelled; nothing was started`, "fleet-run:cancelled");
+			},
+		});
+		deps.requestRender();
+	};
+
+	const dispatchFleetRun = (preview: FleetRunPreview, agents: AgentsContract): void => {
+		const fleetRootId = `fleet-${randomBytes(6).toString("hex")}`;
+		const run = deps.runFleet ?? executeFleetRun;
+		// The arguments are built before the single-run guard is taken: a throw
+		// from a settings or session read would otherwise leave it set and refuse
+		// every later fleet run in this session.
+		const turnConstraints = deps.standingTurnConstraints?.();
+		// The board's cancel reaches the runner through this, which stops the running step's process (J2-F02).
+		const stop = new AbortController();
+		const args: Parameters<typeof executeFleetRun>[0] = {
+			signal: stop.signal,
+			plan: preview.plan,
+			playbookName: preview.name,
+			commands: preview.commands,
+			workspaceRoot: deps.getSessionMeta()?.cwd ?? process.cwd(),
+			fleetRootId,
+			dispatch: deps.dispatch,
+			agents: { getSpec: (agentId) => agents.getSpec(agentId) },
+			...(deps.getDecisionBoard ? { getDecisionBoard: deps.getDecisionBoard } : {}),
+			attributionEnabled: deps.getSettings?.().integrations.git.commitAttribution ?? true,
+			vars: preview.vars,
+			...(preview.resume !== undefined
+				? { resume: { record: preview.resume.record, replayed: preview.resume.replayed } }
+				: {}),
+			...(turnConstraints !== undefined ? { turnConstraints } : {}),
+			onStepDispatched: (event) => {
+				deps.setFleetRunPhase?.(event.assignmentId, { wave: event.waveIndex, stepId: event.stepId });
+				deps.fleetPlans?.stepDispatched(fleetRootId, event);
+			},
+			// Supplying this also stops the runner printing each step as a raw log line.
+			onStepSettled: (outcome) => deps.fleetPlans?.stepSettled(fleetRootId, outcome),
+			onStarted: () => {
+				deps.fleetPlans?.start(fleetRootId, preview);
+				deps.fleetPlans?.bindStop(fleetRootId, () => stop.abort());
+				// Counted from the waves, as the approval card counts them, so a resumed run names only what it runs. Only the
+				// first wave starts now; the rest wait on it, so the notice says how many run at once rather than all of them.
+				const steps = preview.waves.reduce((total, wave) => total + wave.steps.length, 0);
+				const first = preview.waves[0]?.steps.length ?? 0;
+				const shape =
+					first >= steps ? `${steps} ${steps === 1 ? "step" : "steps"} running` : `${first} of ${steps} steps running`;
+				deps.notify(
+					"info",
+					`plan ${preview.name} started ${GLYPH.sep} ${shape} ${GLYPH.sep} /fleet follows it`,
+					"fleet-run:started",
+				);
+			},
+			// A gate notice (a loop decision or checkpoint) is progress, not a failure; a write-boundary breach and the rest stay errors.
+			onNotice: (text, kind) =>
+				(kind === "gate" ? (deps.stdout ?? deps.stderr) : deps.stderr)(`plan ${preview.name}: ${text}\n`),
+		};
+		// The settled card reads each step beside its worker's own row, and draws at the width of each paint.
+		const appendPlanCard = (settled: FleetPlanRunView): FleetPlanRunView => {
+			const view = planWithWorkerRows(settled, deps.getDispatchRows?.() ?? []);
+			const render = (width: number) =>
+				renderFleetPlanCard(view, width, deps.getSettings?.().interface.outputDetail ?? "standard");
+			if (deps.appendBlock !== undefined) deps.appendBlock(render);
+			else deps.stderr(`${render(deps.terminal.columns).join("\n")}\n`);
+			return view;
+		};
+		fleetInFlight = { name: preview.name };
+		void run(args)
+			.then((outcome) => {
+				fleetInFlight = null;
+				deps.dismissNotification?.("fleet-run:started");
+				// A stop asked for from the board, and a refusal that said this plan runs, are over once it settles.
+				for (const key of [...progressNoticeKeys(fleetRootId), "fleet-run:in-flight"]) deps.dismissNotification?.(key);
+				const plan = deps.fleetPlans?.settle(fleetRootId, outcome);
+				const warned = plan ? planWarnedStepCount(appendPlanCard(plan)) : 0;
+				if (plan?.state === "cancelled") {
+					deps.notify(
+						"info",
+						`plan ${preview.name}: cancelled ${GLYPH.sep} ${outcome.succeededStepCount}/${outcome.requiredStepCount} steps succeeded before the stop`,
+						"fleet-run:settled",
+					);
+					return;
+				}
+				deps.notify(
+					outcome.cleanRun && warned === 0 ? "success" : "warning",
+					// An unpriced run keeps the total a lower bound, never a measured $0.00 nobody put a number on. Steps whose
+					// worker finished with a warning say so, as their rows on the card do.
+					`plan ${preview.name}: ${outcome.succeededStepCount}/${outcome.requiredStepCount} steps ${warned === 0 ? "succeeded" : `finished, ${warned} with warnings`}, ${plan?.loops === undefined ? "" : `${plan.loops.resolved}/${plan.loops.total} ${plan.loops.total === 1 ? "loop" : "loops"} resolved, `}${plan?.costText === null ? "no model calls" : `cost ${renderPricingSum(outcome.totalCost)}`}`,
+					"fleet-run:settled",
+				);
+			})
+			.catch((error: unknown) => {
+				fleetInFlight = null;
+				deps.dismissNotification?.("fleet-run:started");
+				// A stop asked for from the board, and a refusal that said this plan runs, are over once it settles.
+				for (const key of [...progressNoticeKeys(fleetRootId), "fleet-run:in-flight"]) deps.dismissNotification?.(key);
+				const failed = deps.fleetPlans?.fail(fleetRootId, error instanceof Error ? error.message : String(error));
+				if (failed?.state === "cancelled") {
+					appendPlanCard(failed);
+					deps.notify("info", `plan ${preview.name}: cancelled before every step settled`, "fleet-run:settled");
+					return;
+				}
+				if (error instanceof WriterSetBusyError) {
+					deps.notify("warning", `plan ${preview.name}: ${error.message}`, "fleet-run:refused");
+					return;
+				}
+				deps.notify(
+					"error",
+					`plan ${preview.name}: ${error instanceof Error ? error.message : String(error)}`,
+					"fleet-run:failed",
+				);
+			});
+	};
+
+	const openQueueNavigatorFactory = deps.openQueueNavigatorOverlay ?? openQueueNavigatorOverlay;
+	const openQueueNavigator = (): void => {
+		if (deps.transitions.state !== "closed") return;
+		const queue = deps.queueNavigator;
+		if (!queue) {
+			deps.notify("info", "the steering queue navigator is unavailable in this session", "queue:unavailable");
+			return;
+		}
+		if (queue.chat.queueEntries().length === 0) {
+			deps.notify("info", "nothing is queued; Enter during a run queues a message", "queue:empty");
+			return;
+		}
+		deps.transitions.state = "queue-navigator";
+		deps.transitions.handle = openQueueNavigatorFactory(deps.tui, {
+			entries: () => queue.chat.queueEntries(),
+			isHeld: () => !queue.chat.isStreaming() && queue.chat.turnPreparation().phase === "idle",
+			isRunning: () => queue.chat.isStreaming(),
+			interruptRefusal: () => queue.chat.interruptRefusal(),
+			remove: (id) => void queue.chat.removeQueuedEntry(id),
+			move: (id, delta) => queue.chat.moveQueuedEntry(id, delta),
+			toggleKind: (entry) => void queue.chat.setQueuedEntryKind(entry.id, entry.kind === "steer" ? "follow-up" : "steer"),
+			toEditor: (entry) => queue.toEditor(entry),
+			sendNow: (entry) => queue.sendNow(entry),
+			restoreAll: () => queue.restoreAll(),
+			matchesRestoreAll: (data) => queue.matchesRestoreAll(data),
+			onClose: deps.closeOverlay,
+			requestRender: deps.requestRender,
+		});
+		deps.requestRender();
+	};
+
+	return {
+		openUsage,
+		openContextView,
+		openContextReset,
+		openThinkingLevel,
+		toggleFooter,
+		openTasks,
+		openDecisions,
+		openResearch,
+		openMemory,
+		openRewind,
+		openView,
+		toggleDispatchBoard,
+		openQueueNavigator,
+		openSideQuestion,
+		openDraft,
+		startFleetRun,
+	};
+}

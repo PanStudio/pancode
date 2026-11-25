@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { runningBuildAt, runningBuildId } from "./build-id.js";
+import { readPancodeVersion } from "./package-root.js";
+
+/**
+ * Injected by tsup (`define`) when the bundle is built from a git checkout.
+ * Source runs under tsx, tarball builds and tests leave both undeclared.
+ */
+declare const __PANCODE_BUILD_COMMIT__: string | undefined;
+declare const __PANCODE_BUILD_DIRTY__: boolean | undefined;
+
+/** Captured in the loaded module; reading disk here would hide processes that outlive a rebuild. */
+export { runningBuildId } from "./build-id.js";
+
+interface BuildProvenance {
+	/** Short commit hash the bundle was built from. */
+	commit: string;
+	/** The working tree had uncommitted changes at build time. */
+	dirty: boolean;
+}
+
+/** Which build wrote a session or journal: its commit, dirty flag, build id and build time, each when recorded (C-31). */
+export interface BuildStamp {
+	commit?: string;
+	dirty?: boolean;
+	id?: string;
+	builtAt?: string;
+}
+
+/** The running build's stamp, or undefined for a source run that recorded none of it (C-31). */
+export function readBuildStamp(
+	build: BuildProvenance | null = readBuildProvenance(),
+	id: string | null = runningBuildId,
+	builtAt: string | null = runningBuildAt,
+): BuildStamp | undefined {
+	const stamp: BuildStamp = {
+		...(build ? { commit: build.commit, dirty: build.dirty } : {}),
+		...(id ? { id } : {}),
+		...(builtAt ? { builtAt } : {}),
+	};
+	return Object.keys(stamp).length > 0 ? stamp : undefined;
+}
+
+/** `67b3247-dirty built 2026-11-21T00:51:02.000Z (build <id>)`, for `session show` (C-31). */
+export function buildStampText(stamp: BuildStamp): string {
+	return [
+		stamp.commit ? `${stamp.commit}${stamp.dirty ? "-dirty" : ""}` : "commit unknown",
+		...(stamp.builtAt ? [`built ${stamp.builtAt}`] : []),
+		...(stamp.id ? [`(build ${stamp.id})`] : []),
+	].join(" ");
+}
+
+/**
+ * A `-dev` prerelease is a development tree that has no published artifact.
+ * Release candidates (`-rc.1`) are published under `beta` and display their exact package version.
+ */
+export function isDevVersion(version: string): boolean {
+	return /^\d+\.\d+\.\d+-dev(?:[.+]|$)/.test(version);
+}
+
+/** The recorded commit of this bundle, or null when it was not built from a checkout. */
+export function readBuildProvenance(): BuildProvenance | null {
+	if (typeof __PANCODE_BUILD_COMMIT__ !== "string" || __PANCODE_BUILD_COMMIT__.length === 0) return null;
+	return {
+		commit: __PANCODE_BUILD_COMMIT__,
+		dirty: typeof __PANCODE_BUILD_DIRTY__ === "boolean" && __PANCODE_BUILD_DIRTY__,
+	};
+}
+
+/**
+ * `0.6.0-dev (unreleased · 03923cf-dirty)` for a development version, the plain
+ * version for everything else. A release build from a tagged commit carries no
+ * `-dev`, so it never grows a suffix even though its commit is recorded.
+ */
+function describeVersion(version: string, build: BuildProvenance | null = readBuildProvenance()): string {
+	if (!isDevVersion(version)) return version;
+	const commit = build === null ? " · source" : ` · ${build.commit}${build.dirty ? "-dirty" : ""}`;
+	return `${version} (unreleased${commit})`;
+}
+
+/**
+ * `0.8.0-dev@67b3247` (`-dirty` when the tree was), or the plain version when the
+ * bundle records no commit: short enough for a process title and a footer.
+ */
+function pancodeBuildLabel(
+	version = readPancodeVersion(),
+	build: BuildProvenance | null = readBuildProvenance(),
+): string {
+	return build === null ? version : `${version}@${build.commit}${build.dirty ? "-dirty" : ""}`;
+}
+
+/** What `ps -o args=` and `/proc/<pid>/cmdline` show for a running PanCode, so a build can be verified from outside. */
+export function pancodeProcessTitle(): string {
+	return `pancode ${pancodeBuildLabel()}`;
+}
+
+/** The version for display: banner, `--version`, doctor and the ACP handshake. */
+export function readPancodeVersionLabel(): string {
+	return describeVersion(readPancodeVersion());
+}
+
+/**
+ * Version used to test extension and plugin ranges. SemVer ranges exclude every
+ * prerelease unless the range names one, so `>=0.5.0` would reject `0.6.0-dev`
+ * and mark every extension incompatible with the tree that is meant to run them.
+ * A dev tree and a release candidate are each judged as
+ * the release they are becoming, so `0.6.2-rc.1` runs packages that need `>=0.6.2`.
+ */
+const PRERELEASE_OF_RELEASE = /^(\d+\.\d+\.\d+)-(?:dev|rc)(?:[.+]|$)/;
+export function compatibilityVersion(version: string): string {
+	return PRERELEASE_OF_RELEASE.exec(version)?.[1] ?? version;
+}

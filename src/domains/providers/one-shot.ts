@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * A tool-free side completion, and the admission every such request passes. The
+ * safety judge and System One's LLM engine both ask through this, so neither
+ * owns it.
+ */
+
+import type { CallObservation } from "../../core/call-failure.js";
+
+export interface LlmRequestUsage {
+	/** True only when fields were read directly from provider usage, including explicit zero (#434). */
+	readonly providerReported?: boolean;
+	readonly input: number;
+	readonly output: number;
+	readonly cacheRead?: number;
+	readonly cacheWrite?: number;
+	readonly cacheWrite1h?: number;
+	readonly reasoning?: number;
+	readonly totalTokens?: number;
+	readonly costUsd?: number;
+	/** The provider billed costUsd itself, so it outranks declared rates (#434). */
+	readonly costFromProvider?: boolean;
+	/** The runtime computed no cost (copilot-sdk), so costUsd is a placeholder and the counts are priced instead (#434). */
+	readonly costUncomputed?: boolean;
+	/** The counts the provider sent, when the runtime lists them; an unlisted count is unknown (#434). */
+	readonly reportedFields?: readonly string[];
+}
+
+/**
+ * The per-request accounting sink. `withContext` runs the request inside its journal call, so the engine seam marks
+ * the send and a request that never left reads as never sent by its own stages (#429, #434).
+ */
+export type LlmRequestAccounting = ((usage: LlmRequestUsage | null, observation?: CallObservation) => void) & {
+	readonly withContext?: <T>(work: () => T) => T;
+};
+
+/** Admission captures the originating session and returns its per-request accounting sink. */
+export type LlmRequestAdmission = (request: {
+	/** The System One engine asking, which names the call's agent; absent for a caller that is not an engine (#434). */
+	readonly engine?: string;
+	readonly targetId: string;
+	readonly model: string;
+	readonly signal: AbortSignal;
+}) => Promise<LlmRequestAccounting>;
+
+/** A refused request invalidates the whole decision, including answers from earlier requests. */
+export class LlmAdmissionRefused extends Error {}
+
+/**
+ * One tool-free completion through a runtime that has no chat-completions
+ * wire (subscription and CLI-backed ones). The composition root supplies it
+ * because only the engine layer may speak to those runtimes, and the answer
+ * is text: an LLM engine behind a port can vote but cannot read logprobs.
+ */
+export type OneShotPort = (request: {
+	/** The System One engine asking, passed through to request admission (#434). */
+	engine?: string;
+	targetId: string;
+	model: string | null;
+	system: string;
+	user: string;
+	schema?: object;
+	maxTokens: number;
+	signal: AbortSignal;
+}) => Promise<{ text: string; usage?: { input: number; output: number }; model?: string }>;
+
+/**
+ * What a port request adds to its round. A System One ask names its engine, typed triage
+ * included, and holds its reply where the runtime can. The safety judge names none, so its
+ * request stays as it is until holding it has been measured on the models it runs on. An
+ * ask's items differ from one ask to the next, so a cache write on one is rarely read back.
+ */
+export function oneShotRoundOptions(request: Parameters<OneShotPort>[0]): {
+	responseSchema?: { name: string; schema: Record<string, unknown> };
+	holdReply?: boolean;
+	cacheRetention?: "none";
+} {
+	return {
+		...(request.schema !== undefined
+			? { responseSchema: { name: "system_one_vote", schema: request.schema as Record<string, unknown> } }
+			: {}),
+		...(request.engine !== undefined ? { holdReply: true, cacheRetention: "none" as const } : {}),
+	};
+}
+
+/** What a port reports: a cached prompt is still input the model read, which is what a chat wire's prompt count says. */
+export function oneShotTokens(usage: {
+	readonly input: number;
+	readonly output: number;
+	readonly cacheRead?: number;
+	readonly cacheWrite?: number;
+}): { input: number; output: number } {
+	return { input: usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0), output: usage.output };
+}

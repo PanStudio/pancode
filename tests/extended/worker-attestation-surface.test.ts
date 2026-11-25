@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { ok, strictEqual } from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { ToolNames } from "../../src/core/tool-names.js";
+import { READONLY_SCOPE, WORKSPACE_SCOPE } from "../../src/domains/safety/scope.js";
+import { attestedToolSignature, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
+import { registerCoreTools } from "../../src/tools/core-bootstrap.js";
+import { createRegistry } from "../../src/tools/registry.js";
+import { toolSignatureOf } from "../../src/worker/protocol.js";
+
+/**
+ * The orchestrator admits `ledger` for every member of a batch and signs the
+ * admitted surface; the worker signs the names a bare worker registry
+ * produces, before it knows whether this run bound a ledger port. The two
+ * signatures agree only if the worker registry always registers the tool.
+ * Gating the session's registration on a port (0.4.2) silently broke that:
+ * every batch worker was refused for "tool surface drift" while single
+ * dispatches, which never admit `ledger`, kept attesting fine.
+ */
+describe("worker attestation: ledger on the signed surface", () => {
+	const batchSurface = [ToolNames.Read, ToolNames.Grep, ToolNames.Edit, ToolNames.Context, ToolNames.Ledger] as const;
+
+	it("registers ledger on a worker registry with no port bound", () => {
+		const registry = createWorkerToolRegistry();
+		ok(registry.get(ToolNames.Ledger), "worker registry must carry ledger before any port is bound");
+	});
+
+	it("signs a batch member's surface with ledger in it, port or no port", () => {
+		const signature = attestedToolSignature({
+			allowedTools: [...batchSurface],
+			toolsSupported: true,
+			agentId: "coder",
+			task: "edit src/parser.ts",
+		});
+		strictEqual(signature, toolSignatureOf([...batchSurface]));
+		const withoutLedger = toolSignatureOf(batchSurface.filter((name) => name !== ToolNames.Ledger));
+		ok(signature !== withoutLedger, "the signed surface must not drop ledger for want of a port");
+	});
+
+	it("keeps ledger off the session registry, which binds no port and has no peers", () => {
+		const registry = createRegistry({
+			safety: {
+				classify: () => ({ actionClass: "read" as const, reasons: [] }),
+				evaluate: () => ({ kind: "allow" as const, classification: { actionClass: "read" as const, reasons: [] } }),
+				observeLoop: () => ({ looping: false, key: "contract", count: 0 }),
+				scopes: { readonly: READONLY_SCOPE, workspace: WORKSPACE_SCOPE },
+				isSubset: () => true,
+				decisions: {},
+			},
+		});
+		const registration = registerCoreTools(registry);
+		strictEqual(registration.includeLedgerTools, false);
+		strictEqual(registry.get(ToolNames.Ledger), undefined);
+	});
+});
+
+/**
+ * #449: dispatch admission attaches `gateway` only where PanCode runs the tool
+ * loop, so a claude-code run admitting `context` or `git` was approved without
+ * it while the worker signed it in, and every such dispatch was refused for
+ * tool surface drift before the CLI started.
+ */
+describe("worker attestation: gateway follows the runtime's tool loop", () => {
+	const admitted = [ToolNames.Read, ToolNames.Grep, ToolNames.Context, ToolNames.Git] as const;
+	const signed = (runtime: { kind: string; id: string }) =>
+		attestedToolSignature({ allowedTools: [...admitted], toolsSupported: true, agentId: "architect", runtime });
+
+	it("signs an external agent loop's admitted surface without gateway", () => {
+		strictEqual(signed({ kind: "subprocess", id: "claude-code" }), toolSignatureOf([...admitted]));
+		strictEqual(signed({ kind: "http", id: "claude-sdk" }), toolSignatureOf([...admitted]));
+	});
+
+	it("still signs gateway onto a native runtime's surface", () => {
+		// A native run's envelope carries gateway for its gatewayed capabilities, and the worker signs what it was sealed.
+		const surface = [...admitted, ToolNames.Gateway];
+		strictEqual(
+			attestedToolSignature({
+				allowedTools: surface,
+				toolsSupported: true,
+				agentId: "architect",
+				runtime: { kind: "http", id: "litellm" },
+			}),
+			toolSignatureOf(surface),
+		);
+	});
+});

@@ -1,0 +1,110 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { homedir } from "node:os";
+import { readLayeredSettings } from "../../../../../src/core/settings-layers.js";
+import { resolvePancodeDirs } from "../../../../../src/core/xdg.js";
+import {
+	acceptInteropAgents,
+	declineInteropAgents,
+	detectInteropAgents,
+	discoverInteropInventory,
+	INTEROP_AGENT_KINDS,
+	type InteropAgentId,
+	interopProposals,
+	resolveOnPath,
+} from "../../../../../src/domains/interop/index.js";
+import { runDoctor } from "../../../../../src/domains/lifecycle/doctor.js";
+
+export function inspectSystem() {
+	return {
+		checkedAt: new Date().toISOString(),
+		paths: resolvePancodeDirs(),
+		findings: runDoctor({ fix: false }).map((row) => {
+			// Failed parsers can quote credential values or the offending YAML line.
+			const detailRedacted = !row.ok && ["settings.yaml", "credentials"].includes(row.name);
+			return {
+				...row,
+				level: row.level ?? (row.ok ? "ok" : "error"),
+				detailRedacted,
+				detail: detailRedacted
+					? `PanCode reported a problem with ${row.name}. Inspect the source locally with pancode doctor; parser details are withheld to protect credentials.`
+					: row.detail,
+			};
+		}),
+	};
+}
+/**
+ * Opening the page reads files and nothing else. Only an explicit `probe` runs a foreign executable,
+ * and then only a bounded `--version` inside a scratch home; without it the version is the last one
+ * PanCode recorded for the same binary.
+ */
+export async function inspectInterop(cwd: string, probe: boolean, fixture = false) {
+	const home = fixture ? process.env.PANCODE_HOME : undefined;
+	const report = await detectInteropAgents({ cwd, inventory: true, probeVersion: probe, ...(home ? { home } : {}) });
+	// Wiring is decided by the same function the terminal review uses, so this page can never offer
+	// or withhold an agent the review would treat differently.
+	let wired: { configured: Set<string>; proposed: Set<string> } | undefined;
+	try {
+		const { settings } = readLayeredSettings(cwd);
+		wired = {
+			configured: new Set(settings.integrations.externalAgents.entries.map((agent) => agent.id)),
+			proposed: new Set(interopProposals(report, settings).map((proposal) => proposal.kind)),
+		};
+	} catch {
+		wired = undefined;
+	}
+	return {
+		detectedAt: report.detectedAt,
+		agents: INTEROP_AGENT_KINDS.map((kind) => {
+			const row = report.agents.find((row) => row.kind === kind.id);
+			const resolved = row ?? resolveOnPath(kind.binaryNames);
+			const wiring = !wired
+				? ("unknown" as const)
+				: wired.configured.has(kind.id)
+					? ("configured" as const)
+					: kind.acp === undefined
+						? ("not-acp" as const)
+						: wired.proposed.has(kind.id)
+							? ("proposed" as const)
+							: row?.decision !== undefined
+								? ("decided" as const)
+								: ("not-offered" as const);
+			return {
+				kind: kind.id,
+				label: kind.label,
+				hasExecutable: kind.binaryNames.length > 0,
+				presence: resolved.presence,
+				binary: resolved.binary ?? null,
+				version: row?.version ?? null,
+				versionSource: row?.version === undefined ? null : probe ? ("probed" as const) : ("recorded" as const),
+				installDir: row?.installDir ?? null,
+				adapter: row?.adapter ?? null,
+				decision: row?.decision ?? null,
+				decidedAt: row?.decidedAt ?? null,
+				decisionStale: row?.decision !== undefined && row.decidedFingerprint !== row.fingerprint,
+				wiring,
+				skillCount: row?.skillCount ?? null,
+				projectArtifacts: row?.projectArtifacts ?? null,
+				inventory: row?.inventory ?? discoverInteropInventory(kind, home ?? homedir(), cwd, home ? {} : process.env),
+			};
+		}),
+	};
+}
+
+/**
+ * The terminal review's `a` and `d`, for one agent. Detection runs again first, without a version
+ * probe, so the decision is recorded against the facts the page just showed; accepting only wires an
+ * agent the review would still offer, and the domain says so when it would not.
+ */
+export async function decideInterop(cwd: string, kind: string, decision: "accept" | "decline", fixture = false) {
+	if (!INTEROP_AGENT_KINDS.some((entry) => entry.id === kind))
+		return { decided: [], wired: [], diagnostics: [`${kind} is not a known agent`] };
+	const home = fixture ? process.env.PANCODE_HOME : undefined;
+	const report = await detectInteropAgents({ cwd, inventory: false, probeVersion: false, ...(home ? { home } : {}) });
+	const ids = [kind as InteropAgentId];
+	if (decision === "accept") return acceptInteropAgents(ids, report);
+	// A declined answer applies only to an agent that is on offer, as the review's `d` does.
+	if (!interopProposals(report, readLayeredSettings(cwd).settings).some((proposal) => proposal.kind === kind))
+		return { decided: [], wired: [], diagnostics: [`${kind} is not a pending proposal`] };
+	return declineInteropAgents(ids, report);
+}

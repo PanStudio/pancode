@@ -1,0 +1,3 @@
+# Pack trees PanCode refuses to offer, install or run, by content digest.
+# hub:pin copies this list into hub/index.yaml; a signed index carries it to every install.
+revoked: []

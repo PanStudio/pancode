@@ -1,0 +1,702 @@
+# Evidence Corpus and Long-Term Memory
+
+The [proactive memory guide](../guide/proactive-memory.md) explains when memory is offered and restored.
+
+PanCode treats run claims and agent lessons as structured artifacts to support reproducibility and scientific provenance. A finished run's evidence is its sealed telemetry scope: when a dispatched run settles, the run's journal owner assesses it and journals an `evidence.assessed` record after `run.settled` and before `run.sealed`, so the seal covers the assessment. There is no evidence directory to build and no evidence index; every reader reads the read model's run DTO. Long-term memory records are local and evidence-linked, and only an approved record reaches prompt selection. Approval comes from the operator, either through `memory approve` or by stating the memory in their own words, or from the narrow repository-knowledge gate described below. Proactive task memory is a separate tier that runs by default on session task banks, and its model-tier reminders can propose durable records whose approval remains governed separately. Use the TUI [`/view`](observability.md#view) command for interactive inspection of runs, dispatch output, durable tool output, compaction summaries, and session accountability before citing evidence.
+
+Source of truth: `src/domains/evidence/`, `src/domains/memory/`, `src/domains/evolution/`, `src/domains/claims/`, [evidence.ts](../../src/cli/evidence.ts), [memory.ts](../../src/cli/memory.ts), [claims.ts](../../src/cli/claims.ts), and [evolve.ts](../../src/cli/evolve.ts). The journal, seal and bundle format are specified in [Telemetry](telemetry.md#evidence).
+
+---
+
+## Evidence CLI
+
+```bash
+pancode evidence inspect <runId> [--json]
+pancode evidence list [--json]
+```
+
+| Command | Behavior |
+| --- | --- |
+| `inspect <runId>` | Prints the run id, the seal verdict, when the run was assessed, its outcome and exit code, a `step pipeline:` line for a run with a step template (`done`, or `incomplete` with what stopped it, and the step tool), tool-call and blocked-tool counts, token and cost totals, first-pass success, a `quality:` line with one `failed validation:` line per failed validation and one `baseline before the change (not judged):` line per baseline check, an `unclassified after last check:` count with the first few commands, tags, one `trust:` summary and its axis line, one `gate <decisionId>:` line per verdict, a `provenance:` block when the seal verifies, and a `findings:` count followed by every finding with its severity, tag and sentence. Exit 1 when the run has no settled record, or when its seal was checked and rejected (the record is still printed). |
+| `inspect <fleetRootId>` | A fleet root is a playbook run, not one run, and settles no record of its own. Prints the root, its seal (`verified`, `pending`, or `unsealed`/`failed` with the reason: a broken event journal chain, a root record that is not the one `fleet_sealed` names, or the root's telemetry seal), its sealed outcome, one line per settled step with its run id and failure reason, and where to look next. Exit 1 until the root has sealed and its seal verifies. Under `--json` the run document carries the same read as `fleetRoot`. |
+| `inspect <runId> --json` | Prints a fixed record and exits 0 whatever the seal verdict: `version`, `generatedAt`, `runId`, `assessed`, `integrity` (`verified`, `unsealed` or `failed`), the verdict tier, every axis by its canonical state and `quality` as `{verdict, failedValidationCount}`. It then adds what the text form prints, from the same read: `trustSummary` and `evidence`, the run's evidence record with the seal reason, outcome, totals, quality with failed validation names and baselines, tags, gate verdicts, provenance and findings with their prose. |
+| `list` | Prints `N runs`, then one row per run scope on this host, newest settlement first: run id, outcome (or `unsettled`), state (`assessed`, `unassessed`, `unsealed` or `failed`) and tags. Fleet roots follow apart under `N fleet roots (playbook runs)`: root id, sealed outcome, seal state and playbook. |
+| `list --json` | Prints `{version: 1, runs}` in the same order, one object per row: `runId`, `outcome` and `exitCode` (null when unsettled), `state`, `assessedAt` (null when unassessed) and `tags`, plus `fleetRoots`: `rootId`, `playbook`, `outcome`, `seal`, `sealReason` and `steps`. |
+
+Exit codes are 0 on success, 1 for a runtime failure, and 2 for a usage error or an invalid run id (usage text goes to stderr). A run with no settled record prints the reason and a remedy on separate lines:
+
+```text
+error: run <runId> has no settled record: <reason>
+  run `pancode evidence list` to see local runs
+```
+
+Nothing builds evidence and nothing prunes it separately. A run's evidence lives and expires with its run scope under telemetry [retention](telemetry.md#retention), and `pancode telemetry verify <scope-dir>` checks it with only the scope's own files.
+
+### Assessment at settlement
+
+The run's journal owner assesses a run once, from the run's journal records, after it writes `run.settled`. The assessment reads the gate decisions that name the run and, when the run cited decisions, the decision board on its session's active path. A read that fails leaves its part unresolved rather than failing the run. A run with no `run.settled` is not assessed. The assessment is pure over those inputs, and its integrity axis says the producer held the record; a reader replaces that axis with the seal's own verdict.
+
+`evidence.assessed` (version 1) carries structured, content-free facts:
+
+| Field | Meaning |
+| --- | --- |
+| `attempt` | The dispatch lineage attempt; null for a run dispatched without a lineage. |
+| `firstPassSuccess` | True only when the run succeeded on lineage attempt 0 and no `no-validation` finding was raised. The accountability read model folds this value into its first-pass success rate. |
+| `failureCause` | The tag a non-zero exit is attributed to, from termination facts only; null for a run that exited 0. |
+| `trust` | The canonical five-axis trust status described below. |
+| `findings` | Up to 128 entries of `id` (`finding-NNN`), `severity` (`info` or `warn`) and `tag`. |
+| `verdicts` | Up to 64 gate decisions that judged the run by settlement: `decisionId`, `digest`, `outcome`, and the independent-review state each produced. |
+| `provenance` | The decision refs the run cited and whether each resolved, the pipeline step it ran as, and the persona override that composed its prompt. Null when recovery sealed the run after its owner died. |
+| `text` | A reference to the run's `evidence-findings` object, which holds each finding's sentence and the decision records the run cited. |
+
+Token and cost totals come from the run's folded quantities, so a partially measured run keeps its known subtotal and says what is unknown. A run whose seal does not verify states no totals.
+
+### Redaction
+
+Secret-shaped values are replaced with `[redacted:<kind>]` in a run's settled facts before they are journaled, and in every object the telemetry object store writes. Raw session files under `<stateDir>/sessions/` are not touched.
+
+### Secret-shaped value patterns
+
+[redact.ts](../../src/domains/evidence/redact.ts) holds the ordered pattern list for secret-shaped values matched on content. Run settlement, the telemetry journal writer and object store, memory promotion and handoff, tool-result summaries, the `consult` tool, the System One state scrubber, every request to a memory route and the prior-session line (`redactForMemoryRoute` in [secret-text.ts](../../src/domains/memory/secret-text.ts)) all call it. A match becomes `[redacted:<kind>]` and is counted in the caller's tally. Display-time redaction of tool-call arguments, as the transcript renderer and the workers dashboard apply, is a separate rule set in [redaction.ts](../../src/domains/safety/redaction.ts). Surfaces showing text still being written hold back the part of the last token that may still become a password (`holdUnresolvedUserinfo`). After an authority opener, which is `://` after any scheme, its JSON-escaped form `:\/\/`, or a `//` or `\/\/` that starts a word, everything after the authority's first colon waits until the token ends at whitespace or a closing quote, or the colon proves to start a numeric port followed by `/`. A name that starts with a git host token prefix waits whole. A percent-encoded URL waits from the `%3A` ahead of its password, or from its `%3A%2F%2F` opener when the name is a git host token, and an Oracle JDBC URL waits from the `/` after its user. Text that finishes on purpose goes through full redaction. A stream that was aborted, errored, hit its length limit or ended with a failed run keeps the hold and also hides a name of the username token's shape at its very end (`holdCutOffText`). Past 2048 code units a frame only gains a `[held]` marker.
+
+| Kind | Matches |
+| --- | --- |
+| `url-userinfo` | The password in URL userinfo, by the patterns display redaction uses. Any scheme opens it, such as `https://`, `postgres://` or `mongodb+srv://`, and so do the JSON-escaped `:\/\/` and a `//` or `\/\/` that starts a word. A `//` inside a word, as in `a//b`, is a path. The name ends at its first colon and the password runs to the authority's last `@`, so `https://u:pa:ss@h` hides `pa:ss`. A port followed by `;` opens JDBC parameters, so `jdbc:sqlserver://db:1433;password=hun@ter;` is read as parameters. A percent-encoded URL in a query value, such as `https%3A%2F%2Falice%3Apw%40h`, hides what lies between the name's `%3A` and the last `%40`, and an Oracle JDBC URL such as `jdbc:oracle:thin:scott/tiger@//db:1521/svc` hides what lies between the `/` after the user and the `@`. The scheme, username, `@` and host stay, and a `$NAME` or `${name}` reference or an earlier pass's marker is left alone. |
+| `url-username` | A username that is itself a token, after any opener above: 20 or more letters, digits, `_` or `-` holding a digit and followed by `@`, or a git host token (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_` or `glpat-` and 8 or more characters) followed by a colon, a password and `@`. In a percent-encoded URL the name ends at `%40`, or at `%3A` with a later `%40`. Ordinary names such as `alice` and `first.last` stay. |
+| `pem` | A `-----BEGIN ... PRIVATE KEY-----` block through its `END` line, or to the end of the text when the block is unterminated. |
+| `aws-access-key` | `AKIA` followed by 16 uppercase letters or digits. |
+| `github-token` | `ghp_`, `gho_`, `ghu_`, `ghs_` or `ghr_` followed by 20 or more alphanumerics, and `github_pat_` followed by 20 or more word characters. |
+| `sk-key` | `sk-`, an optional hyphen-terminated segment of 2 to 20 characters, then 16 or more of `[A-Za-z0-9_-]`. |
+| `slack-token` | `xoxb-`, `xoxp-`, `xoxa-`, `xoxr-` or `xoxs-` followed by 8 or more characters. |
+| `google-api-key` | `AIza` followed by 30 or more characters. |
+| `gitlab-token` | `glpat-`, `gldt-`, `glrt-`, `glptt-`, `glsoat-` or `glft-` followed by 20 or more of `[A-Za-z0-9_-]`, with any `.`-separated suffix. |
+| `slack-webhook` | A `hooks.slack.com/services/`, `/workflows/` or `/triggers/` URL and its path, with or without the scheme. Whoever holds the path can post as the integration. |
+| `discord-webhook` | A `discord.com` or `discordapp.com` (also `canary.` and `ptb.`) `/api/webhooks/<id>/<token>` URL through its token. |
+| `telegram-bot-token` | A bot id of 5 to 12 digits, `:` and 30 or more of `[A-Za-z0-9_-]`, standing alone or after `/bot` in a Bot API URL. The `/bot` stays. |
+| `aws-secret-key` | Exactly 40 of `[A-Za-z0-9/+]` holding upper case, lower case and a digit, with at most three `/`, whose letters and digits switch class on at least 3 in 10 characters. A 40-character path or name stays. |
+| `jwt` | Three dot-separated base64url segments, the first starting `eyJ`. |
+| `authorization` | The credential after an `Authorization` header's `Bearer`, `Basic` or `Token` scheme, or after a bare `Bearer` when it holds a digit: 8 or more of `[A-Za-z0-9._~+/-]` with any `=` padding. The header and scheme stay. |
+| `env-secret` | A credential assigned to a secret variable name. The name holds a secret word (`api_key`, `access_key`, `account_key`, `secret`, `token`, `password`, `passwd`, `passphrase`, `credential`, `pass` or `pwd`) that ends at a `_` or at the name's end, spelled all capitals as the environment and `.env` files do (`AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN`, `DB_PASSWORD`) or all lower case as `~/.aws/credentials` does. An `=` with optional spaces, or an `=` and a quote, joins it to a value of 16 or more of `[\w/+=.~-]` holding a letter and a digit. Only the value is replaced. `MAX_TOKENS`, camel-case code names, `GITHUB_TOKEN=$(gh auth token)`, `SECRET_KEY=test-secret-key-for-ci` and a source literal such as `const TOKEN = "fixture"` stay. |
+| `assignment` | A secret-flavored key and its value, described below. Only the value is replaced; the key and separator stay. |
+| `url-param` | A query, fragment or in-URL `;` parameter value whose name is a secret word, by the display rule, as in `?token=`, `&password=`, `#access_token=` or `;password=`. It runs after the patterns above, so a value they already hid keeps its marker. |
+
+The `assignment` pattern reads `key=value`, `key: value` and `"key": "value"` shapes. The key is any name containing `api_key`, `api-key`, `apikey`, `secret`, `token`, `passwd`, `password` or `credential`, case-insensitive. The value is a run of 8 or more characters that are not whitespace, quotes, backticks or any of `; , & | < >`. A value that opens a call is code, not a credential, and is left alone: an identifier of letters, digits, underscores and dots, then `(`, then whitespace, a quote, `{`, `[`, `)` or the end of the text. `BASE_TOKENS = frozenset({` and `token = getToken()` therefore stay readable. A call with a real argument still reads as a value, so `password=Summer2024(!)` becomes `password=[redacted:assignment]`.
+
+### Command output
+
+What `bash`, `run_script`, an operator shell line (`!cmd`, `!!cmd` and ACP's shell line) and a `panes` read print is masked before the model, the transcript, a live frame, a bash offload or a `run_script` log sees it ([output-mask.ts](../../src/domains/evidence/output-mask.ts)). A credential value of 8 or more characters that the command's environment holds or that PanCode resolved becomes `[redacted:known]`. These kinds from the table above are masked by shape: `url-userinfo`, `url-username`, `pem`, `aws-access-key`, `github-token`, `sk-key` when it holds a digit, `slack-token`, `google-api-key`, `gitlab-token`, `slack-webhook`, `discord-webhook`, `telegram-bot-token`, `jwt`, `authorization`, `env-secret`, and `url-param` when its value is 8 or more plain URL characters, so printed source such as `"?token=" + value` keeps its quote. `assignment` stays out, since build and test output is full of lines such as `max_tokens: 128000000` that it would blank, and so does `aws-secret-key`, whose randomness check is a guess that output such as base64 blobs would trip.
+
+Output is masked as it arrives. A live frame holds back a run that may still become a credential, so a token split across writes never shows, and a tail window that lost its head drops the token the cut landed in and the one after it, counting their bytes in its `[... N bytes omitted ...]` marker. `run_script` writes `stdout.log` and `stderr.log` through the same mask, byte for byte except where it replaces a credential, and `run.json` still counts the bytes the script wrote.
+
+`redactSecretsDeep` walks plain objects and arrays and redacts string values with the same patterns. It does not see property names. The telemetry object store serializes objects through `secretRedactingReplacer`, which redacts each string leaf and also treats a string under a secret-flavored property name as an assignment value; see [Objects](telemetry.md#objects).
+
+---
+
+## Run evidence layout
+
+A run's evidence is its run scope:
+
+```text
+<stateDir>/telemetry/runs/<runId>/
+├── journal.jsonl     run.started … run.settled, evidence.assessed, run.sealed
+├── objects/          the result object and the evidence-findings object
+└── bundle.json       written by the seal
+```
+
+The sealed scope directory is a self-contained bundle that verifies with only its own files; see [Seals and bundles](telemetry.md#seals-and-bundles). Tool facts are `tool.settled` records and the journal is the transcript of what the run did. `/view` accountability views, `pancode evidence`, ACP's evidence-ready notice and the GUI evidence view all read the read model's run DTO over this directory. A run whose seal verifies is read through its assessment; a run whose scope is unsealed reads as not yet evidence, and a run whose seal fails reads as a `run-seal` warning.
+
+When a run was chained (pipeline), composed with a persona override, or escalated for a permission, `pancode evidence inspect` prints those facts as a `provenance:` block. Pipeline and persona facts come from the sealed assessment and escalation counts from `run.settled`, never from the mutable run ledger. The block is printed only for a run whose seal verifies.
+
+A run can succeed while the fleet step it ran for fails, for example on a write-boundary rollback or a gate baseline, so the fleet root's verdict is shown beside the run's own outcome. For a run a fleet step settled, `pancode evidence inspect` prints `fleet step: <rootId> <stepId> succeeded` or `failed: <reason>`, and `--json` carries the same verdict as `fleetStep` (null for a run no fleet step settled). Fleet surfaces such as `pancode fleet view` show the step's verdict, not the run's.
+
+### Decision provenance
+
+Decision refs a run cited are resolved once, at assessment, against the decision board on its session's active path. Each ref adds a `context-provenance` finding: `info` when it resolves, `warn` when it does not. Resolved decision records go into the run's `evidence-findings` object and are shown with the run's evidence. Decisions remain session facts; evidence does not reinterpret them as validation results. Wiki page writers receive up to twelve active decisions matching their source paths or symbols and cite those refs in the body and optional `decisions` frontmatter instead of inferring rationale.
+
+### Run result facts
+
+`src/domains/dispatch/run-result-facts.ts` reads a run's DTO over its sealed scope and projects the compact terminal facts that the TUI worker block, the exit summary and ACP terminal fleet frames report. A run that has not settled reads as `result unavailable`.
+
+---
+
+## Evidence Tag Taxonomy and Failure Causes
+
+PanCode classifies every run using a closed set of 22 canonical tags (`EVIDENCE_TAGS`, exported from `src/domains/evidence/types.ts`). These tags distinguish general execution characteristics from actual failure causes.
+
+### Complete Taxonomy
+
+| Tag | Category | Trigger / Meaning |
+| --- | --- | --- |
+| `timeout` | Failure | Execution exceeded the maximum duration limit. |
+| `context-overflow` | Constraint | Model context limit was exceeded. |
+| `provider-transient` | Transient | Temporary API or model gateway connection error. |
+| `missing-dependency`| Failure | Python, Node, or system package dependency was missing. |
+| `wrong-runtime` | Configuration | Execution failed due to incorrect compiler or runtime environment. |
+| `proxy-validation` | Validation | The run claimed validation that was not grounded in an observed execution. |
+| `no-validation` | Validation | A succeeded run has no linked validation evidence. |
+| `destructive-cleanup`| Precaution | Clean-up rules triggered to prevent workspace pollution or damage. |
+| `blocked-tool` | Failure | The safety net blocked a tool call requested by the model. |
+| `escalation` | Precaution | A worker permission escalation timed out or was denied. |
+| `external-bypass` | Security | An external runner used its own permissions outside PanCode policy. |
+| `external-approximation` | Reserved | Reserved in the vocabulary. PanCode does not emit it. |
+| `independent-review` | Validation | The canonical independent-review axis: a failed or correlated review is a warning; an inconclusive review is an info row. A run no review judged carries no row; its trust line says it was not independently reviewed. |
+| `context-provenance` | Provenance | The canonical context-provenance axis read `invalid`, or a cited decision ref resolved (info) or did not resolve (warning). |
+| `completion-evidence` | Validation | The canonical completion-evidence axis: a mutation that finished without validation evidence at the completion boundary is a warning; an explicit limitation is an info row. |
+| `run-seal` | Security | The run's seal did not verify. A seal that was checked and rejected is a warning; a run scope not yet sealed is an info row. |
+| `protected-artifact`| Precaution | Mutating a path protected by project or system safety policies. |
+| `tool-loop` | Constraint | The run exhausted its tool-call cap, or the loop guard disabled its tools. |
+| `test-failure` | Failure | A verification command containing test/lint keywords exited non-zero. |
+| `build-failure` | Failure | A verification command containing build keywords exited non-zero. |
+| `auth-failure` | Failure | Missing or invalid credentials/API keys. |
+| `unknown` | Undefined | Unclassified execution failure. |
+
+---
+
+### Failure-Cause Tag Subset
+
+A subset of the taxonomy represents actual failure causes (`FAILURE_CAUSE_TAG_ORDER`): `timeout`, `auth-failure`, `missing-dependency`, `build-failure`, `test-failure` and `blocked-tool`. The accountability summary counts only these tags in its failure-cause histogram ([accountability.ts](../../src/domains/telemetry/accountability.ts)).
+
+A run that exited non-zero gets one `warn` finding whose tag `attributeEvidenceFailure` ([failure-attribution.ts](../../src/domains/evidence/failure-attribution.ts)) picks from termination facts only, and the same tag is the assessment's `failureCause`. Typed outcome codes decide first: `worker_context_exhausted` is `context-overflow`, a tool-call cap or a loop guard that disabled tools is `tool-loop`, `worker_mutation_blocked` is `blocked-tool`, and a `timed_out` or `stalled` outcome is `timeout`. Otherwise the outcome detail and the recorded failure message are matched in order for `auth-failure` (401, 403, unauthorized, invalid API key), `provider-transient` (429, rate limits, 502 to 504), `context-overflow`, `missing-dependency`, `wrong-runtime`, `test-failure` and `build-failure`. A run with no diagnostic text, or text that matches none of them, is `unknown`. The task text is never causal evidence. Separately, any blocked tool call adds a `blocked-tool` warning.
+
+---
+
+## Run findings
+
+A run's findings are its assessment's. `run.settled` carries no findings block: the run's result quality and verification facts are derived from its in-memory result draft at settlement ([run-findings.ts](../../src/domains/dispatch/run-findings.ts)), and every finding, tag and first-pass verdict comes from the `evidence.assessed` record that follows it ([assessment.ts](../../src/domains/evidence/assessment.ts)).
+
+- **Findings**: `no-validation` for a succeeded run with absent or unknown validation grounding, `proxy-validation` for ungrounded validation, `blocked-tool` (naming each blocked tool and the rule that refused it, grouped by reason code, for example `2 blocked tool call(s): code_nav x2 outside the active skill's tool list (skill_surface)`; another reason reads `<tools> blocked by <code>`, and a tool a rule id refused reads `<tool> (rule <id>)`), `escalation` for a timed-out or denied permission ask, `external-bypass` for a run under agent-managed peer permissions, the independent-review finding (and one `independent-review` warning per failed check of a review whose own verdict failed, `review found: <check>: <evidence>`), `context-provenance` for a contradictory context record or a cited decision ref, `completion-evidence`, and the failure cause of a non-zero exit. A reader adds a `run-seal` finding when the seal did not verify.
+- **First-pass success**: `true` only when the run succeeded on lineage attempt 0 and no `no-validation` finding was raised. The accountability read model folds this value into its first-pass success rate.
+- **Integrity**: A run's record is trusted only when its scope's seal verifies. The seal covers every journal line, `run.settled` and `evidence.assessed` included, through the hash chain and `bundle.json`; [Verify](telemetry.md#verify) describes the check. The chain catches an edited record, but a scope rewritten together with a recomputed chain and bundle is not detected, because the seal is not a signature.
+
+Seal verification and validation evidence answer different questions. The
+former proves that a run's record is what was written; the latter records
+whether applicable validation evidence was observed. Briefing provenance is
+also distinct from bounded project-context provenance: both can be absent or
+present independently, and neither hash is evidence for the other.
+
+### Canonical trust status
+
+[trust-status.ts](../../src/domains/evidence/trust-status.ts) defines the version 1 canonical trust
+status. It is a five-axis algebra, not an overall trust verdict, confidence
+percentage, or pass/fail score. Consumers project only the axes needed for a
+decision and preserve every other axis unchanged.
+
+| Axis | Closed states | Question answered |
+|---|---|---|
+| Artifact integrity | `verified`, `failed`, `absent`, `unknown`, `not_applicable` | Did the run's seal verify the record it covers? |
+| Validation grounding | `validated`, `failed`, `ungrounded`, `absent`, `unknown`, `not_applicable` | What correctness-bearing validation was observed and grounded? |
+| Independent review | `passed`, `failed`, `inconclusive`, `not_independent`, `absent`, `unknown`, `not_applicable` | What outcome did a verified independent reviewer or judge record? |
+| Context provenance | `recorded`, `invalid`, `absent`, `unknown`, `not_applicable` | Is the origin of briefing, worker context, or project context recorded consistently? |
+| Completion evidence | `evidenced`, `incomplete`, `limited`, `absent`, `unknown`, `not_applicable` | What did the finish contract observe at the completion boundary? |
+
+`absent` means no fact was recorded and carries a reason but no invented
+attribution. `unknown` means a named source exists but cannot establish the
+answer. `not_applicable` means a named authority determined that the axis does
+not apply. Every non-absent state names both its source and its authority.
+Sources may retain up to 16 typed artifact references. References contain an
+artifact kind, identifier, and optional SHA-256 digest; they never embed the
+artifact body. Normalization sorts the references and rejects duplicates,
+unbounded lists, unknown fields within an axis, invalid identifiers, and
+sources that are not permitted to speak for an axis.
+
+The composition rules prohibit cross-axis promotion:
+
+- Verified artifact integrity never promotes validation grounding.
+- Recorded context provenance never promotes validation or correctness.
+- A passing review never establishes authorship or context origin.
+- A completion self-report never promotes validation grounding. Only a
+  `finish_contract` source may speak for completion evidence, and a run
+  assessment records the axis as `absent` (`not_recorded`).
+
+The main agent's `finish` declaration is recorded the same way: as a claim
+beside the host's assessment, never in place of it. The declaration is the
+`finish` tool call and its result in the session ledger. At the end of the turn
+the host seals `claimed` (`done`, `partly_done` or `not_done`) with `assessed`,
+which lowers a claimed `done` to `partly_done` when any fact stands against it
+(`unvalidated_mutation`, `failed_check`, `uncollected_run`, `open_task` or
+`observation_budget`), and an undeclared turn is assessed `unknown`
+([finish.ts](../../src/tools/finish.ts)). A headless run's `run_end` envelope
+carries the sealed record as its `completion` block.
+
+#### Validation grounding precedence
+
+For a run whose record is authenticated, `adaptRunTrustStatus` reads the run's settled facts and takes the first rule that applies:
+
+1. No run record: `absent` with `artifact_missing`.
+2. Host verification `rejected`: `failed` by `host-verification`. When every failing host check also failed on the task base, the change did not cause the failure, so the state is `unknown` by `host-verification-baseline-failed` and the human clause reads `check also failed on task base; change validation unknown`.
+3. Host verification `verified`: `failed` by `result-quality` when the run's settled quality fails, since the worker's own report can lower assurance but never raise it. Otherwise `validated` by `host-verification` only when a check executed for this run and none was reused from another run's memo. A reused pass, a run whose every check was skipped, and a record that carries no executed, reused and skipped counts read `unknown` by `host-verification-reused`, `host-verification-skipped` and `host-verification-unrecorded`. Host verification `not_implicated` (a batch member the failure was charged away from): `unknown` by `host-verification`.
+4. Shell checks the host observed the run execute: `failed` by `host-observed-command` when one of them failed, otherwise `validated` by `host-observed-command` unless the settled quality fails. Only checks observed since the run's last workspace mutation count.
+5. The settled quality carries a failed typed validation or a failing result contract: `failed` by `result-quality`.
+6. Command grounding: the run's `validationGrounding.basis` is `no-command-executed` and it claims more than it grounded, or lists ungrounded claims: `ungrounded` by `command-grounding`. A report that names the typed `verify` tool is grounded by the successful `verify` tool result the run recorded, not by a shell command.
+7. A passed typed validation or a passing result contract: `validated` by `result-quality`.
+8. The run's `verification` fact: `verified` is `validated` by the recorded basis, `unverified` is `absent` with `not_observed`, and `not_applicable` carries through.
+9. Otherwise `unknown`, attributed to the recorded basis; an ACP delegation the host could not observe is attributed to `acp-delegation`.
+
+The `verification` fact is the receipt's descriptive marker ([run-findings.ts](../../src/domains/dispatch/run-findings.ts)). Its basis names what answered: `validation-tool` (the typed `verify` tool), `host-observed-command` (only shell checks the host observed), `host-verification` (the host's own run of the declared checks, which outranks the worker's evidence), `read-only-agent`, `acp-external-unobserved`, `result-unavailable`, `no-validation-tool` (no check ran), and `retired-by-change` (a check passed, then a later change to the tree retired it, so no pass judged the final tree). A headless main run that settled no standing check of its own, with basis `no-validation-tool` or `retired-by-change`, is credited with the dispatched workers whose sealed run records passed and that no later change by the main run retired: its basis becomes `dispatch-run-record` and its `detail` names each credited run as `run <id> agent <agent>`.
+
+| Recorded fact | Canonical mapping |
+|---|---|
+| Missing run record | Every axis is `absent` with `artifact_missing`. |
+| Run scope not yet sealed | Artifact integrity is `unknown`. Validation grounding and context provenance are `absent` with `not_observed`; no unauthenticated claim contributes a state. |
+| Seal verifies or fails | Artifact integrity is `verified` or `failed`. A failed seal leaves validation grounding and context provenance `absent` with `not_observed`, and the run reads as a `run-seal` warning. |
+| `verification.state: verified` | Validation grounding is `validated` unless a stronger typed failure or ungrounded claim is present. |
+| `verification.state: unverified` | Validation grounding is `absent` with `not_observed`; lack of a validation tool is not a failed validation. |
+| Typed validation or result-contract quality | A passing correctness-bearing fact maps to `validated`; a failing fact maps to `failed`; an ungrounded passing claim maps to `ungrounded`. |
+| Context provenance | Judged once at settlement and kept on `run.settled` with the hashes, never the context. A valid briefing, worker context, bounded project context, or none-tier workspace-root record is `recorded`. A `none`-tier run still receives the workspace-root message, so a none-tier block naming exactly `workspace-root` with a well-formed count and hash is `recorded`. Explicit project-context tier `none` with nothing sent is `not_applicable`; a run with no project-context record and nothing sent is `unknown`; a contradictory block (a handbook section under a none policy, a hash with no section, a malformed count, an invalid briefing or worker context) is `invalid`. |
+| Gate decision | A gate subject cites the run by the digest of its `run.settled`. A verified independent pass or fail maps to `passed` or `failed`; for a compete `winner` outcome the winning subject maps to `passed` and every other subject to `failed`. Correlated review maps to `not_independent`. A decision with no decider or correlation record is `inconclusive`. An unauthenticated artifact or a mismatched subject digest maps to `unknown`; operator confirmation or yolo authority alone is `not_applicable` to independent review. The latest decision is the run's review, and earlier cycles stay listed as verdicts. |
+
+Run inspection, worker output, monitor details, and the assessment all
+use the same trust boundary over the run's settled record. The assessment
+then composes independently verified gate decisions without changing
+record-owned axes. Findings such as
+`no-validation`, `proxy-validation`, `external-bypass`,
+`independent-review`, `context-provenance`, and `completion-evidence`
+are selected from settled facts and canonical states. `evidence inspect`
+prints the summary and every axis before those findings, while
+their detailed facts remain in the run's journal and objects.
+
+`evidence.assessed` is version 1 and gate decisions remain version 2.
+
+### Trust projection
+
+[trust-projection.ts](../../src/domains/evidence/trust-projection.ts) is the one place the canonical
+status is turned into words. Every operator surface prints from it, so the
+same canonical input renders the same verdict on the dispatch run line, in a
+monitor block, under `pancode evidence inspect`, on the
+Fleet Runs board, in the `/view` run details, and on the ACP wire.
+
+The compact human body has five fixed clauses in a fixed order and answers the
+four operator questions without record internals. `evidence inspect` prints it
+after `trust:`, and the dispatch tool quotes it as `trust="..."`:
+
+```text
+sealed; grounded by host-verification; not independently reviewed; context recorded; completion evidenced
+```
+
+Run-record headers (the `/view` run details and `pancode fleet view`)
+add the verdict tier under one versioned label:
+
+```text
+trust v1: grounded; sealed; grounded by host-verification; not independently reviewed; context recorded; completion evidenced
+```
+
+| Clause | Axis | Question it answers |
+|---|---|---|
+| `sealed` / `seal broken` / `seal unchecked` / `no run record` | Artifact integrity | Can the record be trusted to be what was written? |
+| `grounded by <claimant>` / `validation failed by <claimant>` / `inferred: validation claimed, none observed` / `no validation observed` / `validation unknown (<system>)` / `validation not applicable` | Validation grounding | Who claims the result, and what was observed? |
+| `independently reviewed: pass` / `independently reviewed: fail` / `independent review inconclusive` / `review not independent` / `not independently reviewed` | Independent review | What did a second, uncorrelated authority check? |
+| `context recorded` / `context record invalid` / `context not recorded` | Context provenance | Is what the worker was given recorded consistently? |
+| `completion evidenced` / `completion unevidenced` / `completion limited` / `completion not recorded` | Completion evidence | What did the finish contract observe? |
+
+`inferred` is the word for an `ungrounded` claim. A failure that comes from
+the run's recorded quality reads `recorded validation failed` and no claimant. Every
+`unknown` and `absent` state prints as such, so what remains unknown is
+part of the line, never an omission.
+
+The drill-down line prints every axis by its canonical state id and is the
+same on every text surface:
+
+```text
+trust_status=v1 artifactIntegrity:verified validationGrounding:validated independentReview:absent contextProvenance:recorded completionEvidence:evidenced
+```
+
+The machine projection (`TrustSummaryProjection`, `trust` on the `dispatch`
+tool's `details.runs[]` entries and on the `monitor` run details) is
+bounded and versioned (`TRUST_SUMMARY_VERSION = 1`): the verdict tier, the five
+axis states, the claimant, the axes still unknown, the compact text, and up to 8
+`<kind>:<id>` references into the detailed artifacts. It is flat by design so a
+depth-capped wire such as ACP `rawOutput` carries it whole where the nested
+canonical status's artifact references fall off the depth cap.
+
+The verdict tier styles a surface and never scores a run. `reviewed` is the
+only tier styled as independently verified; a sealed record with observed
+validation is `grounded`, a sealed record with nothing observed is
+`unverified`, a broken seal, failed or inferred validation,
+failed or correlated review, or contradictory context record is
+`compromised`, and an unchecked or missing seal is `unknown`. Human run summaries name the failed axis instead of printing `compromised`; the machine verdict tier is unchanged. The Fleet Runs board
+never carries a verdict on the terminal bus event: the event is published
+before the run's sealed record has been read back and verified, so the board
+reads the run's record back and projects that verified status, and shows
+`run record not read back` until it can.
+
+### Mutation-report grounding
+
+A `mutation-report` result lists `mutatedPaths` and `validations`. The validator measures the report against what the run's own tool calls did (`ObservedRunEffects`, recorded by `src/domains/safety/run-effects.ts`) instead of believing it:
+
+- A reported path the run wrote through a successful tool call is accepted.
+- A reported path whose only write attempt was refused or errored fails conformance, and route quality is sealed `unmeasured`.
+- A reported path the run never wrote but that exists on disk is accepted as unverified: route quality cannot reach `pass` and stays `unmeasured`.
+- A reported path the run never wrote and that does not exist fails conformance, with route quality `unmeasured`.
+- A validation marked `"baseline": true` ran before the change. Quality judges only the other validations, so a baseline is never a failure and never a pass, and `evidence inspect` prints it as taken before the change. A baseline's own observed red is excused only while the run observed no mutation; after one, every standing check outcome judged the changed tree.
+- A reported failing validation with no matching observed final pass, or an observed failing check still standing, seals `fail`. A check whose latest `verify` receipt says it could not run (a runner usage error, for example) is not a reported failure. A workspace mutation clears the outcomes observed before it, so a red from before the last edit seals nothing.
+- `pass` requires at least one reported validation that is not a baseline, every path observed, and at least one validation command the run executed to a clean exit after its last edit.
+
+The source is `validateMutation` in `src/domains/agents/result-contract-builder-report.ts`. `pancode run --agent` exits 1 when the sealed result-contract quality is `fail`, while the run's outcome stays `succeeded`.
+
+---
+
+## Change manifests and `pancode dev evolve`
+
+A change manifest is a typed JSON record of one proposed change to PanCode itself, linked to the evidence that justifies it (`src/domains/evolution/`).
+
+```bash
+pancode dev evolve manifest init
+pancode dev evolve manifest validate <path>
+pancode dev evolve manifest summarize <path>
+```
+
+`init` prints a template (`version: 1`, `iterationId: exploratory-1`, one change) to stdout and exits 0. `validate` and `summarize` load the JSON, resolve every non-empty `evidenceRef` against the run scopes on this host, and exit 1 on an invalid manifest, an unreadable file or invalid JSON. `summarize` prints the iteration, base SHA, change count, authority levels, components, files changed, predicted regressions and validation-step count. A usage error exits 2. When the run scopes cannot be listed, every non-empty ref fails as not found.
+
+| Field | Rule |
+| --- | --- |
+| `version` | Must equal `1` (`CHANGE_MANIFEST_VERSION`). |
+| `iterationId`, `baseGitSha`, `createdAt` | Non-empty strings. |
+| `changes[].id`, `rootCause`, `targetedFix`, `rollbackPlan` | Non-empty strings. |
+| `changes[].componentIds`, `filesChanged` | String arrays; at least one of the two must be non-empty. |
+| `changes[].authorityLevel` | One of `prompt`, `tool-description`, `tool-implementation`, `middleware`, `memory`, `runtime`, `safety`, `schema`, `cli`. |
+| `changes[].predictedRegressions` | Must hold an entry when the authority level is high: `tool-implementation`, `middleware`, `runtime`, `safety`, `schema` or `cli`. |
+| `changes[].evidenceRefs` | Empty only for the iteration `exploratory-1`. Each ref must be a run id whose scope exists under `<stateDir>/telemetry/runs/`. |
+| `changes[].predictedFixes`, `validationPlan` | String arrays. |
+| `changes[].expectedBudgetImpact` | Optional; `risk` is `lower`, `same` or `higher`, with optional finite `tokenDelta` and `wallTimeDeltaMs`. |
+
+Nothing enforces a manifest at edit time. The self-edit gate that would require a validated manifest before PanCode edits its own high-authority paths is designed but not built; `src/domains/evolution/SELF_EDIT_GATE.md` records why it is deferred.
+
+---
+
+## Memory CLI
+
+```bash
+pancode memory list [--approved-by operator|guardian] [--json]
+pancode memory propose --from-evidence <runId> [scope options]
+pancode memory propose --from-claim <claim-id-prefix>
+pancode memory promote --from-handoff <path> [--entry <id>...] --scope <scope> [scope options]
+pancode memory approve <memoryId>
+pancode memory reject <memoryId>
+pancode memory prune --stale
+pancode memory consolidate [--json]
+```
+
+Memory records live in:
+
+```text
+<dataDir>/memory/records.json
+```
+
+The store is a JSON object `{ "version": 2, "records": [...] }` (`MEMORY_VERSION`), capped at `500` records and sorted by scope, key, creation time, and id for stable writes. A write that would pass the cap first evicts unpromoted notes, those that cite no `command:` or `source:` evidence before the others and then the one observed longest ago first; approved and operator-rejected records are never evicted, and the write fails with `memory store limit reached (500); run pancode memory prune --stale` only when too few proposals can go. The store is written with mode 0600. A store whose envelope fails validation, or that holds any version other than 2, makes every memory command and the prompt reader fail with `memory store invalid`, listing each issue path. A store a newer version wrote fails with `memory store version <n> is newer than this build supports (2)`. `pancode doctor` names a version 2 store that holds records or envelope fields this build does not read as a `memory store` warning, and `pancode doctor --fix` rewrites it, keeping the records this build reads and dropping the rest; a store of another version or an unparseable one is never touched. A single invalid record is skipped instead: the rest of the store keeps working, one notice per process names the count, and the next store write drops the record.
+
+| Command | Behavior |
+| --- | --- |
+| `list` | Prints the record count, then per record: ID, status (`proposed`, `approved`, `rejected`), scope, confidence, evidence refs, key, lesson and each regression. `--approved-by operator` or `--approved-by guardian` keeps the approved records that approver let into the prompt. Both listings note on stderr how many records the store set aside as invalid, and `--json` lists them under `invalid` with their issues. |
+| `propose` | Builds one unapproved record from a run's evidence and prints it with a `review:` hint. A repeated proposal for the same run and scope returns the existing record. `--from-claim` instead builds an unapproved `repo` record citing `claim:<id>` for one claim of the project at the current directory; it takes no scope options and is refused, like an evidence proposal, when the claim's run or session carries an information-flow restriction. |
+| `promote` | Builds unapproved records from a version 2 handoff snapshot. |
+| `approve <id>` | Sets `approved`, stamps `lastVerifiedAt` with the current time and clears `rejectedAt`. It stamps `approval.by: operator` and clears regressions. Approving an approved record refreshes `lastVerifiedAt`. |
+| `reject <id>` | Clears `approved` and stamps `rejectedAt`. |
+| `prune --stale` | Deletes stale records and prints the count; see [Retention and pruning](#retention-and-pruning). |
+| `consolidate` | One pass over the records the current checkout would use, with no model call ([consolidate.ts](../../src/domains/memory/consolidate.ts)). Records of one claim identity merge into one, the other wordings kept as revisions. A lesson of this repository that fails the delivery check is demoted to a note with a regression, or reported as withheld when an operator approved it. A note the automatic tier wrote with no `command:` or `source:` evidence, no observation and no delivery is dropped. Operator-approved and operator-rejected records and other repositories' records are left as they are. See [Consolidate the store](../guide/proactive-memory.md#consolidate-the-store). |
+
+Usage errors exit 2 with the usage text on stderr; every other failure exits 1.
+
+### Memory record schema
+
+| Field | Meaning |
+| --- | --- |
+| `id` | `mem-` followed by 16 lowercase hex characters, derived from the source so a retried proposal finds the existing record. An operator-stated record takes a random id instead. |
+| `scope` | One of `global`, `repo`, `language`, `runtime`, `agent`, `task-family`, `hpc-domain`. |
+| `key` | A stable key such as `evidence:<runId>`, `claim:<claimId>`, `promotion:<sourceKind>:<sessionId>:<entryId>` or `operator-stated/<kind>/<normalized statement>`. |
+| `lesson`, `appliesWhen`, `avoidWhen` | The lesson text and the conditions around it. Evidence proposals truncate the lesson to 240 characters. A claim proposal's lesson is `Recorded claim: <text>`, truncated to 480 characters. |
+| `evidenceRefs` | At least one reference. Required for prompt injection. |
+| `confidence` | A number from 0 to 1. Evidence proposals score 0.55 to 0.75; claim proposals score 0.5; promotions start at 0.6; operator-stated records are 1. |
+| `createdAt`, `lastVerifiedAt`, `rejectedAt`, `approved`, `regressions` | Lifecycle fields. An approved record must not carry `rejectedAt`. A non-empty `regressions` list suppresses injection. |
+| `repository`, `runtime`, `agent` | Structured applicability identities, required for the matching scope and invalid for any other. |
+| `provenance` | Source kind (`evidence`, `task-bank-entry`, `handoff-snapshot` or `operator-stated`), source session and entry, and the redaction facts. An `operator-stated` record also names its `statedKind`: `fact`, `preference`, `rule` or `command`. |
+
+Only `global`, `repo`, `runtime` and `agent` records can be created by the CLI, the `/memory` overlay or the automatic proposal. The other three scopes validate, but no selection path reads them, so they are never injected.
+
+### Operator-stated memory
+
+When the operator says to remember something, in phrases such as `remember that ...`, `don't forget ...` or `from now on ...`, or through `/remember`, the words are the consent ([operator-statement.ts](../../src/domains/memory/operator-statement.ts)). The statement is stored approved with `approval.by: operator`, confidence 1 and an `operator:<sessionId>` evidence ref (the last 8 are kept), with no propose or approve step. Project scope writes a `repo` record with the workspace's repository identity, and global scope writes a `global` record. The same words stated again in an applicable scope update the existing record instead of adding a copy. A session-scope statement is not written to the store: it lives in the session ledger and is added to the `# Memory` section as a `[note-…]` entry (`withOperatorSessionNotes` in `src/domains/memory/prompt-section.ts`). A forget request removes the best-matching operator-stated record and rejects a matching evidence-backed lesson, so its evidence does not propose it again. Detection, scope words and the `/remember` subcommands are described in [Tell PanCode what to remember](../guide/proactive-memory.md#tell-pancode-what-to-remember).
+
+---
+
+## Memory record lifecycle
+
+```mermaid
+stateDiagram-v2
+    evidence --> proposed: propose --from-evidence
+    claim --> proposed: propose --from-claim
+    taskBank --> proposed: /memory selected-entry action
+    taskBank --> proposed: model-tier reminder reaches the operator
+    redactedHandoff --> proposed: promote --from-handoff
+    operatorStatement --> approved: operator states it (remember, /remember)
+    proposed --> approved: operator approve or eligible guardian gate
+    proposed --> rejected: reject <id>
+    approved --> rejected: reject <id>
+    approved --> proposed: contradiction after guardian approval
+    rejected --> approved: approve <id>
+    proposed --> pruned: prune --stale after 30 days
+    rejected --> pruned: prune --stale after 30 days
+    approved --> pruned: prune --stale after 180 days since lastVerifiedAt/createdAt
+```
+
+Records must cite at least one evidence ID to be considered for prompt injection. Rejected records remain in the store until stale pruning so the same bad lesson is not immediately re-proposed from the same evidence.
+
+### Retention and pruning
+
+`memory prune --stale` and `memory consolidate` are the only deletion paths apart from the eviction of unpromoted notes at the 500-record cap. A record is stale when the time since `lastVerifiedAt` (or `createdAt` when it was never verified) exceeds 30 days for an unapproved record, proposed or rejected, or 180 days for an approved record. A record whose reference timestamp does not parse is stale. Re-approving a record restarts its clock. Nothing else prunes automatically and nothing decays a record's confidence; prompt priority is the reference timestamp, newest first.
+
+Task-bank promotion is a reviewed export from transient execution memory. The
+`/memory` overlay offers repo and global proposal actions only on selected
+knowledge and procedural rows. Status remains private and cannot enter the
+promotion service. The first global action arms a warning, and the second
+action acknowledges the broader applicability. A successful overlay action writes an
+unapproved record and names the separate `memory approve` command required to
+make it eligible for injection.
+
+A model-tier reminder the host found inside an admitted request can propose its cited reusable entries as repository-scoped records. Plain one-line repeated-failure records are not reusable lessons; retained knowledge can also pass the evidence gate. Those cite `session:<sessionId>`, plus a `command:` identity for a simple command quoted whole in the entry and a `source:` identity for a quoted source; a record promoted from the overlay or a handoff cites `session-<sessionId>`. See [Where what the tier writes ends up](../guide/proactive-memory.md#where-what-the-tier-writes-ends-up). The model tier runs on the active chat route unless `context.memory.target` and `context.memory.model` name a dedicated route, so these reminders and proposals need no extra configuration. `context.memory.enabled: false` stops them.
+
+The CLI consumes a version 2 `pancode-task-memory` handoff snapshot of at most
+1,000,000 bytes. Omitting `--entry` proposes every knowledge and procedural
+entry; repeating `--entry` selects exact entry IDs. Version 2 snapshots carry
+source session, evidence, runtime, agent, timestamps, and export-redaction facts.
+
+Every promotion redacts secret-shaped values before `records.json` is written.
+The durable provenance block records the source kind, session, selected entry,
+entry class and timestamps, plus the replacement count and source field paths.
+Explicit overlay and handoff promotion leave proposals unapproved. Automatic task-bank proposals can carry host-checked `held` evidence and pass the separate guardian gate described below.
+
+### Host-evidence approval for repository knowledge
+
+PanCode's durable-memory gate in [guardian-gate.ts](../../src/domains/memory/guardian-gate.ts) treats a record as a claim: its identity is the repository, the claim kind (`command`, `fix` or `source`), the claim body and any stated condition, so one claim is one record however many sessions file it. The gate can approve a repository-scoped note that came from `task-bank-entry` knowledge, a `memory_note` command note or a rule-captured fix pair after two complete demonstrations of its current wording from distinct sessions other than its author, provided there is no contradiction or regression, the record cites a `command:` ref and not only `source:` refs (a file quote is provenance, not proof, so a record backed by quotes alone waits for the operator), and no other approved, unrejected record of the same repository already carries one of its `command:` evidence refs; such a record waits for the operator, and nothing merges by command. Procedural proposals and global, runtime and agent scopes still require operator approval. Operator approvals and rejections are never reversed by the gate. A later contradiction demotes a guardian-approved record, removes its approval stamp and records a regression.
+
+The claims log is the other regression producer ([record.ts](../../src/domains/claims/record.ts)). When a judged check that agreed disagrees with the same pinned conditions (for `numeric-compare`, possibly with a different working tree at the same commit), every memory record whose evidence refs cite one of the overturned agreeing claims (`claim:<id>`, or the run id whose host verification produced it) gets a regression naming both claims and what matched between them, appended inside the store's locked mutation. Approval is left as it was, the suppression filter keeps the record out of the prompt and recall, and `approve` clears the regression.
+
+A new durable lesson earns a host-held observation only through [lesson-evidence.ts](../../src/domains/memory/lesson-evidence.ts): its text must quote the exact complete command that succeeded as one simple invocation that is not a help or version call or a command that cannot fail (such as `echo`, `ls`, `true` or a `test` without a file operator), or contain a source quote both visible in that path's successful read excerpt and still present in the current file. The entry must declare `durable: true`; model confidence or a path alone supplies no evidence. Source reads for that check are capped at 2 MiB. A successful pure `&&` chain run from the workspace root counts for each of its segments, while `;`, `||`, pipes, background launches, substitutions, a state-changing word in the chain, and a shell call given a `cwd` other than the root count for nothing ([command-evidence.ts](../../src/domains/memory/command-evidence.ts)). A wrapper that exits with the status of the command it runs (`env`, `nice`, `time`, `timeout`, `nohup`, `command`, `exec` or `builtin`) is judged by that command, so `env FOO=1 true` or `timeout 5 true` grounds nothing, and a wrapper form the host cannot read with certainty, such as `env -S` or `command -v`, grounds no lesson. Delivery observations track whether a previously delivered lesson held or was contradicted: it holds only when a later receipt satisfies its own command or source evidence, and two recurrences of the failure it was about after submission contradict it. The gate input is bounded evidence of that observation, not proof of general correctness.
+
+### Session task-bank snapshots
+
+The active PanCode task bank is session-local, but [task-bank-store.ts](../../src/domains/memory/task-bank-store.ts) saves its version-1 snapshot at `<stateDir>/memory/banks/<sessionId>.json` when the session is parked and on the headless completion path. Only that same session can restore it on resume. The loader caps snapshots at 512 KiB; missing, oversized or invalid files yield an empty bank. Saving an empty bank removes an older snapshot, and best-effort pruning keeps the newest 64 by mtime. Resume consumes the snapshot before restoring it, and session navigation discards stale snapshots ([orchestrator.ts](../../src/entry/orchestrator.ts)). This is separate from approved durable lessons in `records.json` and explicit handoff exports.
+
+### Explicit scope selection
+
+Reviewed scope options are closed to four choices:
+
+| Scope | Required selection | Validation |
+| --- | --- | --- |
+| `repo` | `--repository <canonical-absolute-path>` | The path must exist and already equal its canonical absolute identity. Symlink aliases and paths containing unresolved segments are rejected. |
+| `global` | `--acknowledge-global` | The acknowledgement is separate from `--scope global`. |
+| `runtime` | `--runtime <id>` | The ID must be valid and must occur in the source provenance. |
+| `agent` | `--agent <id>` | The ID must be valid and must occur in the source provenance. |
+
+The same options may be added to `memory propose --from-evidence`. With no
+scope option, evidence proposals infer a scope: `repo` when exactly one recorded
+working directory canonicalizes to a usable repository, otherwise `runtime` when
+the evidence names a runtime, otherwise `agent`, otherwise `global`. An
+explicit repository may differ from the repository that produced the
+evidence, which supports a reviewed lesson about repository A learned while
+working in repository B. Runtime and agent overrides may only select an exact
+identity already recorded by the evidence. Global scope always requires its
+own acknowledgement. No inference path widens an explicit choice.
+
+---
+
+## Claims ledger
+
+The claims ledger is an append-only per-project log of judged check results ([store.ts](../../src/domains/claims/store.ts), [record.ts](../../src/domains/claims/record.ts)). It lives at `<stateDir>/claims/<sha256 of project key>.jsonl`. It is kept in the state directory so a cloned repository cannot ship claims. Each line is one JSON record with `v: 1`, appended under a state lock and fsynced. A line over 64 KiB is never appended and reads as unreadable. A line torn by a crash is skipped on read and closed off by the next append. Record ids hash their content, so a line repeated by a retried append is read once, at its first position, and `pancode claims` counts the repeats. The line types are `claim`, `edge`, `regression`, `dispute`, `import`, `hypothesis`, `check-start` and `hypothesis-test`.
+
+### Project key
+
+Claims and long-term memory share one project key, `canonicalCheckout` in [project-root.ts](../../src/core/project-root.ts): the real path of the enclosing repository root, so every subdirectory of a checkout shares one log. A linked worktree folds into its main checkout only when the main repository vouches for it, which means `<commonDir>/worktrees/<name>/gitdir` points back at the worktree's own `.git` file. A `.git` file that names a worktree its repository does not record, or that cannot be read, marks the checkout `forged`; a forged checkout keys on its own root and records nothing (see [Capture](#capture)). A submodule or another checkout with its own repository keys on itself. Memory's repository identity calls the same function, so a memory record and the claims that back it agree on which project they belong to.
+
+### What a claim records
+
+Only the two judged check kinds record claims: `reproduce` and `numeric-compare` ([types.ts](../../src/domains/claims/types.ts)). Command and perf-budget checks record nothing, and neither does a refusal, a crash, a timeout, an unjudgeable payload, or a failed `numeric-compare` that compared nothing (an empty reference, or failing keys with nothing in them), since none of them concluded agreement or disagreement ([capture.ts](../../src/domains/claims/capture.ts)). A claim's `verdict` is `agrees` or `disagrees`: agreement within the check's tolerance, never a verdict on truth. Every claim is `evidence: "grounded"`.
+
+| Field | Meaning |
+| --- | --- |
+| `id` | SHA-256 of the record's canonical JSON without the id. `pancode claims show` accepts a prefix. |
+| `kind`, `verdict`, `text` | The check kind, the verdict, and one sentence stating it. The sentence names the conditions the verdict holds under: the commit, the command (clipped to 160 characters) and, for `numeric-compare`, the platform as `on <os>/<arch>, node <version>`, or `platform not recorded` for a claim that carries no platform. It never states more than those conditions. |
+| `subject`, `keys` | The check id and the digests of every judged payload and input, plus the check id, canonical argv and judged paths used to match later work. Paths are relative to the checkout the check ran in. |
+| `conditions` | Tolerance, comparison rule, reference digest and per-metric or per-key verdicts. A `reproduce` claim adds commit, working directory, inputs, seed, environment and platform (OS, architecture, kernel release, Node, PanCode and interpreter versions), the tracked-tree state, the count of untracked files git does not ignore, and any declared provenance probes as they ran. A `numeric-compare` claim adds argv, the HEAD commit (or null), the working-tree state and the platform (OS, architecture, Node version), and keeps at most 256 per-key verdicts, failing keys first, with the rest counted. |
+| `worktree` | The linked worktree root the claim was captured in. Absent in the main checkout. |
+| `source` | `verify` (session, tool call and `requestedBy`: `model` when the agent asked, `harness` when PanCode itself did) or `host-verification` (run id and receipt digest). |
+| `flagged` | `instruction-markers` when the claim text is instruction-shaped. Delivery then withholds the text. |
+
+### Capture
+
+Capture runs in the main session only. A main-thread `verify` result is recorded by the `observer.claims-capture` middleware, and host verification of a worker run records a claim when the run declares a gate. A worker's own `verify` call never writes the log, and `run --agent` records none. Tool output and answer prose never create a claim.
+
+Capture happens only in a checkout the project vouches for. In a forged checkout, `verify` capture and its `check-start`, host-verification claims, hypothesis slates, research iteration claims, agent-ledger disputes and `claims import` all record nothing. Reading, delivery, export and compaction are not gated.
+
+### Edges and statuses
+
+Edges are derived under the lock at append time and compare no text ([edges.ts](../../src/domains/claims/edges.ts)). Each kind pins its conditions. For `numeric-compare` the pins are the commit, argv, reference, and tolerance with its combine and non-finite rules; the working tree and the platform are recorded but not pinned. For `reproduce` they are the commit, argv and working directory, reference, input digests, tolerance, comparison, seed, environment and platform (OS, architecture, Node, interpreter and its version; kernel release and PanCode version excluded). The judged output is never pinned. A new claim:
+
+- `contradicts` the latest earlier claim of the same check, run and kind with equal pins when the two verdicts differ. Only a flip adds an edge, so several agreements followed by one disagreement add one edge. The working tree of a `numeric-compare` claim is not pinned, so an uncommitted edit at the same commit can still contradict, and the edge sentence says how the trees differed. A contradiction crosses worktrees of the same project.
+- `supersedes` every earlier claim of the same check, run, kind and worktree whose pins differ, such as a new commit or new input digests, unless it is already superseded.
+
+For edges only, a sweep claim that recorded no run of its own takes the run its command names when the command names exactly one directory under the runs directory that later claims of the check recorded, and otherwise stays keyed by its check alone. A claim with no recorded commit has no pins, so it can be superseded but never contradicted.
+
+A claim's status is one of four, in this precedence:
+
+| Status | Meaning |
+| --- | --- |
+| `superseded` | A supersedes edge targets it. |
+| `retired` | A pass that a later failure overturned: a contradicts edge runs from a `disagrees` claim to an `agrees` claim, and every earlier agreeing claim of that check, run and kind with equal pins that nothing superseded is retired, not only the edge's target. |
+| `contested` | It sits on either end of a contradicts edge and is not retired. The failure that retired a pass reads `contested`. |
+| `standing` | None of the above. |
+
+A contradiction withdraws a pass but never restores one: a later pass contradicting an earlier failure leaves both `contested` and retires nothing.
+
+### Memory regressions
+
+When a later claim disagrees under the same pins as an earlier claim that agreed, every earlier agreeing claim that is not superseded is overturned and reads `retired`. Every memory record citing one of them, by `claim:<id>` or by the run id whose host verification produced it, receives a regression through [claim-link.ts](../../src/domains/memory/claim-link.ts), as described under [Host-evidence approval](#host-evidence-approval-for-repository-knowledge). The log also appends a `regression` line listing the memory ids reached, empty when none were. A flip back to agreement also appends an empty `regression` line, which closes the pending contradiction. `pancode memory propose --from-claim <prefix>` (at least 4 hex characters) builds the unapproved `repo` record that cites a claim, with key `claim:<id>` and the conditions the claim recorded. It refuses a prefix that matches only an imported claim, because only a claim this project's own checks recorded can back a memory.
+
+### Disputes
+
+The agent ledger is a machine-wide ring of recent dispatches that no later session reads. When a dispatch appends a `review` with `passed: false` that targets another entry on the same ledger, the host also writes a `dispute` line to the project's claims log, so the disagreement outlives the dispatch ([record.ts](../../src/domains/claims/record.ts)). The dispute holds both posts as their authors wrote them: entry id, run, agent, kind, path and line where the post has one, and text collapsed to one line and clipped to 280 characters. A finding's text is its claim, a `claim` entry's is its intent and scope, and a review's is its evidence. When either post carries an information-flow restriction, both texts read `[text withheld: flow-restricted]`, paths are dropped and the dispute is marked `withheld`. Texts and paths that look instruction-shaped mark it `flagged`.
+
+A dispute is `evidence: "inferred"`. It never merges the two sides into a verdict, never forms an edge, never backs a memory record and never changes a claim's status. `pancode claims` lists disputes in their own section, and `--json` gives each one `status: "contested"`.
+
+### Import and export
+
+`pancode claims export [--check <id>] [--out <file>]` writes a `pancode.claims-export.v1` bundle: the exporting project's origin, the export time and every unflagged claim this project recorded, optionally limited to one check ([transfer.ts](../../src/domains/claims/transfer.ts)). Disputes and imports are not exported. The origin is the SHA-256 of the project key, the repository's root commit (or null) and the `origin` remote with any userinfo stripped. Without `--out` the bundle is printed; with it, the file is written mode 0600.
+
+`pancode claims import <file> [--json]` refuses a forged checkout, a file that is not a claims export, an export with no valid origin, and an export from this same project. Each claim must be intact: version 1, grounded, well formed, and its `id` must match its content. Anything else is rejected and counted. An accepted claim becomes an `import` line that keeps the claim verbatim with its origin and is `evidence: "inferred"`. Its text, check id and paths are screened again, because the origin's own flag is not trusted. Importing the same claim from the same origin again is counted as a repeat and writes nothing. The result counts imported, repeated, rejected and flagged claims.
+
+An imported claim is shown as `imported from <remote, root commit or project digest>@<commit>, inferred, not verified here`, in its own section with status `imported` (`inferred` in JSON). It never enters edge derivation, so it cannot contradict, supersede, retire or ground a claim of this project, and it cannot back a memory record.
+
+### Log index and compaction
+
+A `<digest>.index.json` beside the log caches what an append needs to derive edges: every claim nothing superseded, the latest claim of each check, run and pin set, up to 8 superseded pin sets per check, the sweep-run layouts, the 512 most recent record ids and check-starts, the contradictions still awaiting a regression line, and the current revision of each hypothesis. It records the log size it covers and the SHA-256 of the 4,096 bytes before that offset. A reader uses it only when that tail still matches, folds in lines appended since, and otherwise rebuilds it from a full read. Deleting it is safe. A claim append reads the whole log only when a contradiction is waiting for its regression line; a dispute or import append reads it to skip records already there.
+
+Compaction runs only when the operator runs `pancode claims compact [--prune-superseded-before <iso-date>] [--dry-run] [--json]`. Under the state lock it drops `check-start` lines that bound no hypothesis and repeated ids, moves unreadable, over-long, tampered, mismatched or unlinked lines to `<digest>.quarantine.jsonl`, and keeps lines of an unknown version or type verbatim. With `--prune-superseded-before`, it also prunes superseded claims recorded before that date, with the edges that point at them (an edge from a pruned claim stays, so the claim it superseded still reads superseded), unless a regression, a hypothesis test, either end of a contradicts edge or a memory record's `claim:<id>` ref cites them. The previous log is kept as `<digest>.prev.jsonl`, overwritten by each compaction. The new log is written to a temporary file, fsynced and renamed over the log, and the index is then deleted. `--dry-run` reports the counts and writes nothing.
+
+Recording keeps the log bounded on its own. When an append takes a log past 4,096 claims (`CLAIMS_LOG_MAX_CLAIMS` in [store.ts](../../src/domains/claims/store.ts)), the oldest superseded claims that no regression, hypothesis test, contradiction or memory record names move to `<digest>.evicted.jsonl`, with the edges pointing at them, until 3,072 remain. A claim is never refused and nothing is deleted. A log that cannot get under the cap tries again each 1,024 claims past it, and eviction is skipped when memory's citations cannot be read. `pancode claims` reports how many claims were evicted and where they are kept.
+
+### Delivery to the main agent
+
+When work touches a check with an open contradiction or a superseded claim, the main agent receives a note in the message tail: a `<system-reminder>` at turn start, or a note on the tool result ([delivery.ts](../../src/domains/claims/delivery.ts)). The system prompt and tool schemas never change. Work touches a check when the check id or one of its paths appears as a whole token in the task text, when `verify` names the check, or when a read, edit or write touches a path from the check's keys or command, resolved against the session's own checkout. A contradiction is open while its later side is `contested` and its earlier side is `contested` or `retired`. The note names both sides of an open contradiction with the conditions each was recorded under, marks a retired side `(retired: this failure overturned it)`, counts superseded claims, and tells the agent not to repeat a superseded verdict as current. A claim recorded at a commit HEAD has moved past carries `[stale: recorded at commit <commit>; HEAD is now <commit>]`; HEAD is read from the git files without a subprocess. The note opens with the untrusted-content banner, because check ids and paths come from the project's catalog. A note is capped at 1,300 characters per check including the banner, two checks per hook point and 280 characters of claim text.
+
+A dispute whose post names a path is delivered when the task text names that path as a whole token, or when a read, edit or write touches it. At most two disputes are offered per hook point beside the checks, each capped at 1,300 characters with the banner. The note quotes both sides and says that both are model-authored and inferred, not verified, and that no verdict was merged.
+
+Each check's state is offered once per session, and again only when its open contradiction or latest supersede changes, or once when its latest claim turns stale. Each dispute is offered once per session. Offers persist in `<stateDir>/claims/<digest>.offers.jsonl`, so a `run --session` continuation does not repeat them. When a session first loads its offers and the file is over 256 KiB, it is rewritten keeping only offers from the last 30 days. Workers receive no claim notes.
+
+### Hypotheses
+
+A hypothesis slate (`pancode.hypothesis-slate.v1`, written by the literature pack's hypothesis workflow skill, see [Science packs](../guide/panhub.md#science-packs)) is recorded in the same log ([hypotheses.ts](../../src/domains/claims/hypotheses.ts)). The main session's Write or Edit of a `.json` slate of at most 1 MiB is read back from disk and its digest taken from the raw bytes. A worker's slate is recorded only from bytes the host accepted, for at most 64 paths per run, and only entries still at `proposed`. Statement and prediction are clipped to 1,000 characters, ids match `H<n>`, and hypothesis text is never evidence. A changed entry becomes a new record that revises the earlier one.
+
+A hypothesis names a check to test it. Its status is derived from the log, never from the slate:
+
+| Status | Meaning |
+| --- | --- |
+| `proposed` | Recorded from a slate; no run of its check yet. A slate always records `proposed`. |
+| `tested` | Its check ran but produced no judged claim (a command check, a crash, a timeout or an unjudgeable payload). |
+| `supported` | The latest judged run of its check recorded an `agrees` claim. |
+| `refuted` | The latest judged run of its check recorded a `disagrees` claim. |
+
+A later unjudged run does not demote `supported` or `refuted`. A `check-start` line binds the current revisions before the check runs, so a revision appended during a run is not credited. A `verify` call that ran a hypothesis's check also gets the hypothesis status once per deciding test, with an instruction to report the ledger status and leave the slate as written.
+
+`pancode claims [list] [--check <id>] [--json]` lists claims, disputes, imports, hypotheses and their statuses, and `pancode claims show <id-prefix> [--json]` prints one claim or hypothesis. `--check` also takes `<id>/<run>`. `claims export`, `claims import` and `claims compact` are described above; see [Commands and modes](../guide/commands-and-modes.md).
+
+---
+
+## Prompt injection rules
+
+Approved memory reaches the main system prompt as a `# Memory` section that sits after the project-context section and before the runtime block (`SESSION_PROMPT_SECTION_ORDER` in `src/domains/prompts/compiler.ts`). Main sessions build it through `createMemoryPromptReader` in `src/domains/memory/prompt-cache.ts`; `pancode run --agent` and dispatched workers build it once with `buildDispatchMemorySection()` in `src/domains/memory/dispatch-section.ts`, and the worker receives it as the `dispatch-memory` message.
+
+Defaults:
+
+| Constraint | Default |
+| --- | --- |
+| Base scopes | `global`, `repo` (`MEMORY_PROMPT_DEFAULT_SCOPES`) |
+| Token budget | `400` estimated tokens |
+| Max records | `5` |
+| Required status | `approved: true` |
+| Required provenance | At least one `evidenceRefs[]` entry |
+| Suppression | Records with active `regressions[]` entries are skipped |
+| Order | Operator-stated records first, then the rest; within each, `lastVerifiedAt`, or `createdAt` when never verified, newest first, then ID |
+| Relevance (main sessions) | Only records the turn concerns; see below |
+| Delivery | `context.memory.surfaces.delivery: off` delivers nothing from the store. The section carries a lesson with `command:` evidence or an operator approval. A lesson that fails its once-per-session delivery check is withheld; see [Delivery checks](../guide/proactive-memory.md#delivery-checks) |
+
+Rendered memory lines always cite record ID, scope, who stands behind the record, lesson, and evidence IDs, and may add `Applies when:` and `Avoid when:` lines. The standing reads `operator-stated <kind>` for a record the operator stated, `operator-approved` for one the operator approved, `retained automatically from execution evidence` for one the evidence gate kept on a `command:` ref, and `unreviewed, quoted from a repository file` for an automatically kept record that cites only file quotes. The prompt tells the model not to extrapolate beyond cited findings. A record that would push the section past the token budget or the item limit is skipped.
+
+Attended and headless main sessions additionally admit `runtime` records for the exact
+active runtime. `pancode run --agent` admits `runtime` records for the exact resolved
+runtime, only when the initial and every fallback route resolve to the same runtime,
+and `agent` records for the selected agent. Runtime and agent records use structured identity
+fields; `appliesWhen` text cannot grant either applicability. Missing,
+malformed, or different active identities exclude those records.
+
+The main-session reader rereads the store at each prepared operator turn, so an approval made in another terminal is visible at the next turn, and keeps the selection frozen for the continuations of that turn. A change of session or branch, data root, repository, or active target, runtime and model also forces a fresh read. A store that cannot be read, is larger than 16 MiB, or holds more than 500 records yields no memory section and revokes the cached one.
+
+Main sessions gate the selection on the turn (`selectRelevantMemory` in `src/domains/memory/relevance.ts`). A record is carried only when it names one of the turn's active paths or symbols, or when its lesson and `Applies when:` text share at least two distinctive subject terms with the operator's request. Distinctive terms are three or more characters, with plurals folded and function words and generic coding words (`fix`, `test`, `file`, `code`, `run` and similar) and path fragments (`src`, `docs`, `json` and similar) dropped. A record with no overlap is never carried, so a turn about something else, or a turn with no text yet such as a prewarm, carries no memory. An operator-stated record bypasses the gate: the operator asked for it to stand whatever the turn is about. So does an approved `repo` lesson whose claim is a check (a command PanCode classifies as validation, or exactly the argv of a check `verify` can run in the workspace), unless the record is demoted; it stays inside the same item and token caps (`checkLessonTest` in `src/domains/memory/prompt-cache.ts`). `memory_recall` still reaches every eligible record. `pancode run --agent` and dispatched workers apply no relevance gate and keep the order in the table above.
+
+Each turn's carried records (the section's selection, lesson reminders and `memory_recall` hits) are compared with what the turn did ([recall-use.ts](../../src/domains/memory/recall-use.ts)). A record counts as used when the turn's tool arguments or final text cite its id, repeat a path, flag or backticked span its lesson names, or carry at least 40% (two to five) of its distinctive terms that the request did not already hold. Aborted and failed turns are not counted. The counts go to `<stateDir>/memory/recall-use-v1.json`. A record carried five turns running without use is demoted: the gate then requires four shared terms unless one of the turn's active paths or symbols names it. One use clears the demotion. Nothing is deleted or unapproved.
+
+The reader's selection and the `# Memory` section in the compiled prompt are separate. The session compiles the section once and holds those bytes, so a memory change does not recompile the prompt and re-bill the conversation. The held section is replaced only after a completed compaction, a session switch, or a recompile that another input forces. A record approved or revised since the compile reaches the model in the next turn's reminder as a `# Memory update` block, and a record rejected or deleted since arrives there as a `[<id>] withdrawn. Do not use this memory record.` line. A record that only dropped out of the live ranking is not withdrawn. `memorySectionDelta` in `src/domains/memory/prompt-section.ts` builds the block against what the model last received for each record id, reading the compiled section and then each earlier update in history order. A record an earlier reminder already delivered is not repeated, while restoring a record's earlier wording or reapproving a withdrawn record reaches the model again.
+
+### Repository-scoped identity
+
+Repository memory is selected by an exact canonical absolute-path identity: the enclosing repository root, so a launch from a subdirectory shares the repository's lessons, plus the repository's root commit as a `fingerprint` when one can be read at session start. The interactive orchestrator and `pancode run --agent` compute that identity from the active working directory; symlink aliases collapse to the same key. A linked Git worktree shares its main checkout's identity only when it is registered in the main repository: `<commondir>/worktrees/<name>/gitdir` must point back at the worktree's own `.git` file, so a directory with a forged `.git` pointer keeps its own identity. When both the record and the session carry a fingerprint, the record applies only when its fingerprint is a root commit some ref of the repository reaches, so a new repository at a reused path does not inherit the old one's lessons while a branch whose history starts at another root, such as an orphan branch, keeps them; a shallow clone, an empty repository or a directory outside Git matches by path alone. A record keyed on a subdirectory path applies when that directory still resolves to the session's repository; a subdirectory of a nested repository, or of a directory outside Git, keeps its own identity. A dispatched worker's repository records follow the worker's checkout: a request whose `cwd` names another repository carries that repository's records and none of the host's (`buildDispatchMemorySection` in `src/domains/memory/dispatch-section.ts`). A repository move, an unregistered worktree, a malformed identity, or a missing identity does not inherit another repository's memory. Global records are unaffected.
+
+Every `scope: "repo"` record must carry:
+
+```json
+"repository": { "kind": "canonical-path", "key": "/canonical/absolute/repository/path", "fingerprint": "<root commit id>" }
+```
+
+`fingerprint` is optional; records written without one keep matching by path.
+
+The structured `repository` field is the only applicability mechanism: store validation rejects repo records without it, and `appliesWhen` tokens never grant repository applicability. There is intentionally no automatic path rewrite for moved repositories: a filesystem move produces a different identity and the record simply stops applying until it is re-scoped with new evidence.
+
+Runtime and agent records follow the same fail-closed shape:
+
+```json
+{ "runtime": { "kind": "runtime", "key": "openai" } }
+```
+
+```json
+{ "agent": { "kind": "agent", "key": "coder" } }
+```
+
+Only the field matching the record scope is present.
+
+---
+
+## Operator notes in compaction summaries
+
+Operator notes are not a memory store. They are a block at the end of a compaction summary that keeps the operator's explicit requests verbatim, because a summarizing model can drop them. The text given to `/compact <text>` also binds the summarizer through an `<operator-instructions>` block that overrides the default summary scope; the note is the copy that survives when the summarizer ignores it. A summary ends with `<operator-notes encoding="xml">` holding one bullet per note, with `&`, `<` and `>` escaped. A note comes from three places: the instructions given to `/compact <text>`, recorded as `/compact: <text>`; any sentence in the compacted span that starts with `remember`, `please remember`, `keep in mind` or `don't forget`; and the notes block of an earlier summary in the same session. Each note is clipped to 400 characters, except the `/compact` note, which is kept verbatim as one note with its line breaks up to 8,000 characters, and the newest 30 are kept. The block is stored inside the `compactionSummary` entry of the session ledger under `<stateDir>/sessions/`, so it persists with the session, comes back with `/resume`, and is read back on the next compaction, where the summarizer's own copy of the block is replaced by the extracted one (`src/domains/session/compaction/compact.ts`). The compaction contract is in [Context continuity and recovery](../guide/context-continuity.md).
+
+---
+
+## Recommended workflow
+
+1. Find the run that taught the lesson with `pancode evidence list`.
+2. Inspect its evidence and findings with `pancode evidence inspect <runId>`.
+3. Propose memory from the evidence, or promote selected public task memory from `/memory` or a redacted handoff.
+4. Review the proposed lesson, source provenance, redaction facts, and exact scope.
+5. Approve only if it is durable and useful under that scope.
+6. Reject incorrect or overbroad records.
+7. Prune stale records periodically.
+
+Memory is meant to reduce repeated mistakes, not to become an unreviewed second instruction system.
+
+## Convention retention and decisions
+
+Capture conventions as source-grounded knowledge or procedural memory. Propose
+an existing bank entry through `/memory` with `p`, or promote a selected record
+from a version-2 handoff export. Promotion creates an unapproved proposal;
+approval admits it to scoped, bounded selection. Operator review and the narrow repository-knowledge gate are the two approval paths.
+
+Proposal and approval are separate operations. Approval persists the record;
+scoped selection and delivery occur at a prepared turn boundary. Delivery
+provenance identifies which record reached the session. Memory selection follows
+the configured scope and budget.
+
+A no-edit task includes handbooks and other repository files. Review memory
+proposals within that scope and obtain authorization for any required writes.
+
+Decision references and commit trailers record attribution. Agents receive the
+active decision semantics as guidance for implementation and review. A changed
+agent-owned decision requires an explicit same-key revision; operator decisions
+remain operator-owned.

@@ -1,0 +1,134 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Presentation model for context operations. The rail above the composer and
+ * the transcript result card both read it, so a running state and its result
+ * name the same operation the same way. It formats facts the harness measured
+ * and never derives new ones.
+ */
+import type { ContextOperation, ContextOperationOutcome } from "../core/context-operation.js";
+import { GLYPH } from "../core/glyphs.js";
+import type { ContextActivityKind } from "../core/telemetry/live-events.js";
+import { stripTerminalSequences } from "../engine/tui.js";
+import { footerTokens } from "../session-control/compaction-lines.js";
+import type { TurnPreparationPhase } from "../session-control/turn-state.js";
+
+export const CONTEXT_KIND_TITLES: Record<ContextActivityKind, string> = {
+	"context-init": "Context init",
+	"context-clear": "Context reset",
+	"context-refresh": "Context refresh",
+	"context-recall": "Context recall",
+	"context-recover": "Context recover",
+	compaction: "Context compact",
+};
+
+/** Progress text and paths can carry file names and provider errors; neither may carry terminal controls. */
+export function plain(value: string): string {
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: progress includes untrusted filenames and provider error text.
+	const cleaned = stripTerminalSequences(value).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+	return cleaned.replace(/\s+/g, " ").trim();
+}
+
+export function outcomeWord(outcome: ContextOperationOutcome): string {
+	switch (outcome) {
+		case "completed":
+			return "complete";
+		case "previewed":
+			return "preview ready";
+		case "unchanged":
+			return "no change";
+		case "cancelled":
+			return "cancelled";
+		case "failed":
+			return "failed";
+	}
+}
+
+export type OutcomeTone = "success" | "warning" | "error" | "annotation";
+
+export function outcomeTone(outcome: ContextOperationOutcome): OutcomeTone {
+	if (outcome === "failed") return "error";
+	// A cancel the operator asked for is quiet, as a cancelled turn's receipt is; a warning's colour said something broke.
+	if (outcome === "cancelled") return "annotation";
+	if (outcome === "unchanged") return "annotation";
+	return "success";
+}
+
+/**
+ * Whether an outcome earns a transcript card. A compaction that failed,
+ * cancelled or found nothing to cut already leaves an error or explanatory
+ * notice from the chat loop, and a second block would repeat it. Routine
+ * automatic maintenance stays quiet unless it fails.
+ */
+export function showsContextResult(operation: ContextOperation): boolean {
+	if (operation.outcome === undefined) return false;
+	if (operation.kind === "compaction") return operation.outcome === "completed";
+	if (operation.origin === "automatic") return operation.outcome === "failed";
+	return true;
+}
+
+/**
+ * Qualifier for a settled compaction card. The summarizer is the only stage
+ * that records a summarized fact, so a completed compaction without one only
+ * evicted or masked tool output, which stays recallable. Live, a 43 ms
+ * eviction pass read exactly like a 17 s summarizer checkpoint.
+ */
+export function compactionQualifier(operation: Pick<ContextOperation, "kind" | "outcome" | "facts">): string {
+	if (operation.kind !== "compaction" || operation.outcome !== "completed") return "";
+	return (operation.facts ?? []).some((fact) => fact.kind === "summarized") ? "" : ` ${GLYPH.sep} no summary`;
+}
+
+/** Runtime estimates on both sides of one accounting; the basis stays visible. */
+export function tokenRow(operation: ContextOperation): string | null {
+	const tokens = operation.tokens;
+	if (!tokens) return null;
+	const change = tokens.before > 0 ? Math.round(((tokens.after - tokens.before) / tokens.before) * 100) : undefined;
+	const delta =
+		change === undefined || change === 0 ? "" : ` ${GLYPH.sep} ${change < 0 ? GLYPH.minus : "+"}${Math.abs(change)}%`;
+	return `${footerTokens(tokens.before)} ${GLYPH.next} ${footerTokens(tokens.after)} tokens${delta} ${GLYPH.sep} estimate`;
+}
+
+/**
+ * The context size a settled operation left unchanged, leading the rail's
+ * reason so a narrow rail still shows it (#422). Before and after are equal
+ * by definition, so one figure says it.
+ */
+export function unchangedTokenLead(operation: Pick<ContextOperation, "outcome" | "tokens"> | undefined): string {
+	if (operation?.outcome !== "unchanged" || !operation.tokens) return "";
+	return `${footerTokens(operation.tokens.after)} tokens ${GLYPH.sep} `;
+}
+
+const WARNINGS_SHOWN = 6;
+
+/**
+ * A failed or cancelled operation appends its own conclusion to `warnings`
+ * (`createContextOperation().finish`), so that last entry is the cause and the
+ * ones before it are warnings gathered while it ran.
+ */
+export function splitWarnings(operation: ContextOperation): { cause: string | null; warnings: string[] } {
+	const all = (operation.warnings ?? []).map(plain).filter((text) => text.length > 0);
+	const ended = operation.outcome === "failed" || operation.outcome === "cancelled";
+	const cause = ended ? (all.at(-1) ?? null) : null;
+	const rest = [...new Set(ended ? all.slice(0, -1) : all)];
+	const hidden = rest.length - WARNINGS_SHOWN;
+	return {
+		cause,
+		warnings: hidden > 0 ? [...rest.slice(0, WARNINGS_SHOWN), `${hidden} more warnings omitted`] : rest,
+	};
+}
+
+/**
+ * What Enter does with a message typed while a compaction runs, read from the
+ * chat loop's own state. A streaming run takes it as a queued steer; a consumed
+ * prompt still being prepared holds it behind the admission gate. Operations
+ * that do not gate chat say nothing.
+ */
+export function admissionHint(
+	activity: { kind: ContextActivityKind; completedAtMs: number | null },
+	chat: { streaming: boolean; preparation: TurnPreparationPhase },
+): string | null {
+	if (activity.kind !== "compaction" || activity.completedAtMs !== null) return null;
+	if (chat.streaming) return "typed messages queue";
+	if (chat.preparation !== "idle") return "Enter holds your message";
+	return null;
+}

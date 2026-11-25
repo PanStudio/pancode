@@ -1,0 +1,444 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { isPackageIdentity } from "./package-identity.js";
+
+export type SkillActivationTrigger = "slash-command" | "tool";
+export type PendingSkillRequestSource = "slash-command" | "selector" | "marketplace" | "recipe";
+
+/**
+ * The one reply shape every surface teaches for skill suggestions: the
+ * context(scope="skills") listing footer, the first-turn middleware
+ * reminder, and the operator-gate denial all cite this exact line so the
+ * model learns a single protocol.
+ */
+export const SKILL_SUGGESTION_ANCHOR = "Suggested skill: /skill <name>";
+
+/**
+ * The part of the anchor a real reply keeps once `<name>` is substituted.
+ *
+ * Surfaces that recognize a suggestion in live output must match this, not the
+ * template: no model ever writes the literal `<name>`, so a full-anchor test is
+ * always false. The chat panel's glyph guard was exactly that, and the
+ * suggestion held the turn's ■ while the answer beneath it hung plain.
+ */
+export const SKILL_SUGGESTION_PREFIX = SKILL_SUGGESTION_ANCHOR.slice(0, SKILL_SUGGESTION_ANCHOR.indexOf("<name>"));
+
+/**
+ * The four fixed answer labels of a marketplace install offer. Every surface
+ * that teaches or reads the offer (the marketplace-offer middleware, the
+ * skills fragment, the context listing footer) cites these exact strings, so
+ * the after_tool observer that records declines and runs consented installs
+ * recognizes the operator's choice by label identity, never by paraphrase.
+ */
+export const SKILL_INSTALL_OFFER_OPTION_PROJECT = "Install for this project";
+export const SKILL_INSTALL_OFFER_OPTION_USER = "Install globally";
+export const SKILL_INSTALL_OFFER_OPTION_NOT_NOW = "Not now";
+export const SKILL_INSTALL_OFFER_OPTION_NEVER = "Never offer this skill";
+
+/**
+ * The marker the model echoes in an install-offer question so the harness binds
+ * the operator's answer to that offer. It is plumbing: the tool seam hides it
+ * from every surface that shows the question and puts it back before the
+ * answer reaches the model and the after_tool observer. The tag travels only in
+ * a system reminder, so injected user or file content cannot forge it onto an
+ * unrelated question.
+ */
+export function skillInstallOfferTag(offerTag: string): string {
+	return `[pancode-install:${offerTag}]`;
+}
+
+const SKILL_INSTALL_OFFER_TAG_PATTERN = /[ \t]*\[pancode-install:[^\]\s]*\][ \t]*/gu;
+
+/** The question as an operator should read it, without the binding marker. */
+export function stripSkillInstallOfferTag(text: string): string {
+	if (!text.includes("[pancode-install:")) return text;
+	return text.replace(SKILL_INSTALL_OFFER_TAG_PATTERN, " ").replace(/ +\n/gu, "\n").trim();
+}
+
+export interface PendingSkillRequest {
+	name: string;
+	args: string;
+	source: PendingSkillRequestSource;
+	installed: boolean;
+	filePath?: string;
+	marketplaceRef?: string;
+}
+
+/** Tool surface a loaded SKILL.md declares for its own workflow. */
+export interface SkillDeclaredToolPolicy {
+	allowedTools?: ReadonlyArray<string>;
+	disallowedTools?: ReadonlyArray<string>;
+}
+
+export interface PendingSkillToolPolicy {
+	allowedSkillNames: ReadonlyArray<string>;
+	requests: ReadonlyArray<PendingSkillRequest>;
+	loadedSkillNames: Set<string>;
+	/** Declared tool policy per successfully loaded skill, recorded by context(scope=skills). */
+	loadedSkillPolicies: Map<string, SkillDeclaredToolPolicy>;
+	/**
+	 * True once this policy is a surface that outlived the turn that armed it.
+	 * The narrowing is identical; the flag exists so a load request the policy
+	 * does not cover reads as "only the operator activates skills" rather than
+	 * claiming a pending request that no longer exists.
+	 */
+	carriedSurface?: boolean;
+	/**
+	 * True when the session's autonomy level lets the model activate an
+	 * installed skill itself instead of emitting the suggestion anchor and
+	 * waiting for `/skill`. Activation is the same per-run policy the operator's
+	 * path produces: skills only ever narrow the tool surface, so this grants
+	 * nothing the level had not already granted. Marketplace (not yet
+	 * installed) skills stay operator-gated at every level.
+	 */
+	modelActivation?: boolean;
+	/** Yolo treats a skill's positive tool list as guidance; explicit denials still apply. */
+	allowListAdvisory?: boolean;
+	/** Already admitted tools needed to deliver the worker's required result. Explicit skill denials still win. */
+	resultTools?: ReadonlyArray<string>;
+}
+
+/**
+ * The surface that stays armed after an interactive turn ends.
+ *
+ * A skill an operator loaded narrows the tools for the workflow it started,
+ * and a multi-turn workflow (an interview skill asking a question per turn)
+ * is still inside that workflow on the operator's next message. Dropping the
+ * narrowing at turn end handed the workflow back the full surface partway
+ * through, which is how a `bash` call correctly refused in turn one ran in
+ * turn six. Returns undefined when nothing declared a narrowing, which is the
+ * signal to clear whatever surface was armed before.
+ */
+export function armedSkillSurface(policy: PendingSkillToolPolicy | undefined): PendingSkillToolPolicy | undefined {
+	if (!policy) return undefined;
+	const declared = [...policy.loadedSkillPolicies.entries()].filter(
+		([, declaration]) =>
+			(policy.allowListAdvisory !== true && (declaration.allowedTools?.length ?? 0) > 0) ||
+			(declaration.disallowedTools?.length ?? 0) > 0,
+	);
+	if (declared.length === 0) return undefined;
+	return {
+		allowedSkillNames: [...policy.allowedSkillNames],
+		requests: [...policy.requests],
+		loadedSkillNames: new Set(policy.loadedSkillNames),
+		loadedSkillPolicies: new Map(declared),
+		carriedSurface: true,
+		...(policy.allowListAdvisory === undefined ? {} : { allowListAdvisory: policy.allowListAdvisory }),
+		...(policy.resultTools === undefined ? {} : { resultTools: policy.resultTools }),
+	};
+}
+
+/** Skill names contributing a declaration to an armed surface, for the operator notice. */
+export function skillSurfaceNames(policy: PendingSkillToolPolicy | undefined): ReadonlyArray<string> {
+	return policy ? [...policy.loadedSkillPolicies.keys()] : [];
+}
+
+/**
+ * Why a skill did not load, as the context tool's error details state it, so
+ * a refusal reads as plainly as a load instead of as the model-facing text.
+ */
+export type SkillRefusalKind =
+	| "manual-only"
+	| "untrusted"
+	| "not-imported"
+	| "not-installed"
+	| "not-ready"
+	| "unknown"
+	| "operator-only"
+	| "recipe-bound"
+	| "not-requested"
+	| "already-loaded";
+
+export interface SkillLoadRefusal {
+	subject: "skill";
+	name: string;
+	kind: SkillRefusalKind;
+	/** Where an installed or discovered skill sits (`not-ready`, `not-imported`). */
+	scope?: string;
+	/** Where a discovered skill came from (`not-imported`). */
+	source?: string;
+	/** The installed package's state (`not-ready`). */
+	state?: string;
+}
+
+export function isSkillLoadRefusal(value: unknown): value is SkillLoadRefusal {
+	if (value === null || typeof value !== "object") return false;
+	const record = value as Record<string, unknown>;
+	return record.subject === "skill" && typeof record.name === "string" && typeof record.kind === "string";
+}
+
+/** Session custom entry that records a change to the armed skill surface, so a resume states it again. */
+export const SKILL_SURFACE_ENTRY = "skillSurface";
+
+/**
+ * A change to the tool surface skills arm across turns, as the transcript
+ * states it: `armed` (a surface now narrows the tools), `replaced` (another
+ * skill's surface took over), `cleared` (the full tool surface is back).
+ * `loaded` is a skill that loaded without narrowing anything; its load row
+ * already says so, and no surface changed.
+ */
+export interface SkillSurfaceChange {
+	version: 1;
+	state: "armed" | "replaced" | "cleared" | "loaded";
+	/** Skills whose surface is armed now (armed, replaced), or that loaded (loaded). */
+	names: string[];
+	/** Skills whose surface this change replaced or cleared. */
+	previous: string[];
+	/** Tools the armed surface allows, when its skills declared an allow-list. */
+	allowedTools: string[];
+	/** Tools the armed surface removes, when its skills declared only exclusions. */
+	disallowedTools: string[];
+}
+
+/** The change from one armed surface to the next, or null when the surface did not change. */
+export function skillSurfaceChange(
+	previous: ReadonlyArray<string>,
+	next: PendingSkillToolPolicy | undefined,
+): SkillSurfaceChange | null {
+	const names = [...skillSurfaceNames(next)];
+	if (names.join("\u0000") === previous.join("\u0000")) return null;
+	const declarations = next === undefined ? [] : [...next.loadedSkillPolicies.values()];
+	const unique = (lists: ReadonlyArray<ReadonlyArray<string> | undefined>) => [
+		...new Set(lists.flatMap((list) => list ?? [])),
+	];
+	return {
+		version: 1,
+		state: names.length === 0 ? "cleared" : previous.length === 0 ? "armed" : "replaced",
+		names,
+		previous: [...previous],
+		allowedTools:
+			next?.allowListAdvisory === true ? [] : unique(declarations.map((declaration) => declaration.allowedTools)),
+		disallowedTools: unique(declarations.map((declaration) => declaration.disallowedTools)),
+	};
+}
+
+export function isSkillSurfaceChange(value: unknown): value is SkillSurfaceChange {
+	if (value === null || typeof value !== "object") return false;
+	const record = value as Record<string, unknown>;
+	const strings = (field: unknown) => Array.isArray(field) && field.every((item) => typeof item === "string");
+	return (
+		record.version === 1 &&
+		(record.state === "armed" ||
+			record.state === "replaced" ||
+			record.state === "cleared" ||
+			record.state === "loaded") &&
+		strings(record.names) &&
+		strings(record.previous) &&
+		strings(record.allowedTools) &&
+		strings(record.disallowedTools)
+	);
+}
+
+/**
+ * The same names, each tagged with who activated it. A skill the operator
+ * named arrives as a pending request; anything else was activated by the model
+ * under `modelActivation`, and the operator's one line about the surface is
+ * where that distinction has to be visible.
+ */
+export function skillSurfaceLabels(policy: PendingSkillToolPolicy | undefined): ReadonlyArray<string> {
+	if (!policy) return [];
+	return [...policy.loadedSkillPolicies.keys()].map((name) =>
+		policy.requests.some((request) => request.name === name) ? `${name} (operator)` : `${name} (model)`,
+	);
+}
+
+/**
+ * Stamp (or clear) the model-activation grant on the policy this turn runs
+ * under, creating one when nothing else did. Mutates in place so a surface
+ * carried from an earlier turn keeps its identity, and re-stamps every turn so
+ * a level change takes effect on the next message rather than the next skill.
+ */
+export function withModelSkillActivation(
+	policy: PendingSkillToolPolicy | undefined,
+	enabled: boolean,
+): PendingSkillToolPolicy | undefined {
+	if (policy) {
+		policy.modelActivation = enabled;
+		return policy;
+	}
+	if (!enabled) return undefined;
+	return {
+		allowedSkillNames: [],
+		requests: [],
+		loadedSkillNames: new Set<string>(),
+		loadedSkillPolicies: new Map<string, SkillDeclaredToolPolicy>(),
+		modelActivation: true,
+	};
+}
+
+/**
+ * Tools admitted regardless of any active skill narrowing: context so the
+ * remaining requested skills of the same turn can still load, ask_user as
+ * the escape hatch the block message points at when a workflow genuinely
+ * needs a tool its skill did not declare, and gateway because find and
+ * describe are harmless and a gateway call is checked again, under the
+ * capability's own name, by the nested admission it makes.
+ */
+const SKILL_SURFACE_EXEMPT_TOOLS: ReadonlySet<string> = new Set(["context", "ask_user", "gateway"]);
+
+export interface SkillToolSurfaceViolation {
+	/** Every loaded skill that contributed a declaration to the merged surface. */
+	skills: ReadonlyArray<string>;
+	/** Merged allowed-tools union when allow-narrowing applies; null for a disallow hit. */
+	mergedAllowedTools: ReadonlyArray<string> | null;
+	/** Skills whose disallowed-tools name the tool directly. */
+	disallowedBy: ReadonlyArray<string>;
+	/** True when the surface outlived the turn that armed it, which changes the lifetime the block message states. */
+	carriedSurface: boolean;
+}
+
+/**
+ * Evaluate a tool call against the tool surface declared by the skills loaded
+ * so far under `policy`. Narrowing only ever blocks; it never grants anything
+ * the safety net or autonomy mapping would refuse. Merge semantics:
+ *
+ * - Denials win: a tool named in any loaded skill's disallowed-tools is out.
+ * - Allow-narrowing applies only while every loaded skill declares
+ *   allowed-tools; the merged surface is their union. A loaded skill with no
+ *   allowed-tools keeps the full surface for its own workflow, so it lifts
+ *   the allow-narrowing (but not the denials) for the turn.
+ *
+ * Returns null when the call is inside the surface or no narrowing is active.
+ */
+export function evaluateSkillToolSurface(
+	policy: PendingSkillToolPolicy | undefined,
+	tool: string,
+): SkillToolSurfaceViolation | null {
+	if (!policy || policy.loadedSkillPolicies.size === 0) return null;
+	if (SKILL_SURFACE_EXEMPT_TOOLS.has(tool)) return null;
+	const entries = [...policy.loadedSkillPolicies.entries()];
+	const skills = entries.map(([name]) => name);
+	const carriedSurface = policy.carriedSurface === true;
+	const disallowedBy = entries
+		.filter(([, declared]) => declared.disallowedTools?.includes(tool) === true)
+		.map(([name]) => name);
+	if (disallowedBy.length > 0) return { skills, mergedAllowedTools: null, disallowedBy, carriedSurface };
+	// finish and limitation are the run's completion receipts and perform no action, so a skill's allowed-tools
+	// never takes them away (a bundled tdd skill blocked finish); an explicit denial above still holds.
+	if (tool === "finish" || tool === "limitation") return null;
+	if (policy.resultTools?.includes(tool)) return null;
+	if (policy.allowListAdvisory === true) return null;
+	const allowLists = entries.map(([, declared]) => declared.allowedTools);
+	if (allowLists.some((list) => list === undefined || list.length === 0)) return null;
+	const merged = [...new Set(allowLists.flatMap((list) => [...(list ?? [])]))];
+	if (merged.includes(tool)) return null;
+	return { skills, mergedAllowedTools: merged, disallowedBy: [], carriedSurface };
+}
+
+/**
+ * Per-run skill policy for a dispatched worker whose agent recipe declares
+ * skills. The worker may load exactly these skill names; anything else gets
+ * the same deterministic rejection an unrequested skill gets interactively.
+ */
+export function agentSkillToolPolicy(
+	skillNames: ReadonlyArray<string>,
+	resultTools: ReadonlyArray<string> = [],
+): PendingSkillToolPolicy | undefined {
+	const allowedSkillNames = [...new Set(skillNames.map((name) => name.trim()).filter((name) => name.length > 0))];
+	if (allowedSkillNames.length === 0) return undefined;
+	return {
+		allowedSkillNames,
+		requests: allowedSkillNames.map((name) => ({ name, args: "", source: "recipe" as const, installed: true })),
+		loadedSkillNames: new Set<string>(),
+		loadedSkillPolicies: new Map<string, SkillDeclaredToolPolicy>(),
+		resultTools: [...new Set(resultTools)],
+	};
+}
+
+export interface SkillActivation {
+	owner?: import("./package-identity.js").PackageIdentity;
+	name: string;
+	filePath: string;
+	hash: string;
+	source: string;
+	/** Precise root provenance, for example extension:user:<id> or codex-project. */
+	sourceOrigin?: string;
+	/** Pinned-manifest comparison verdict; "mismatch" records skill_drift. */
+	drift?: "match" | "mismatch";
+	/** Who requested the load; "recipe" is the worker's admitted bound skill policy. */
+	requestSource?: "recipe" | "model" | "operator";
+	triggeredBy: SkillActivationTrigger;
+	turnId?: string;
+	/**
+	 * Dispatch run whose worker performed this activation. Absent on
+	 * main-agent activations; set when a dispatch completion folds a worker
+	 * receipt's activations into the session ledger.
+	 */
+	runId?: string;
+}
+
+export interface SkillActivationSource {
+	owner?: import("./package-identity.js").PackageIdentity;
+	name: string;
+	filePath: string;
+	hash: string;
+	source: string;
+	sourceOrigin?: string;
+	sourceInfo?: { source?: string; owner?: import("./package-identity.js").PackageIdentity };
+}
+
+function trimmedString(value: unknown): string | null {
+	return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function skillActivationFromSource(
+	source: SkillActivationSource,
+	triggeredBy: SkillActivationTrigger,
+	turnId?: string,
+): SkillActivation {
+	const sourceOrigin = trimmedString(source.sourceOrigin) ?? trimmedString(source.sourceInfo?.source);
+	const owner = source.owner ?? source.sourceInfo?.owner;
+	return {
+		name: source.name,
+		filePath: source.filePath,
+		hash: source.hash,
+		source: source.source,
+		...(sourceOrigin ? { sourceOrigin } : {}),
+		triggeredBy,
+		...(owner ? { owner } : {}),
+		...(turnId ? { turnId } : {}),
+	};
+}
+
+export function skillActivationFromToolDetails(details: unknown, turnId?: string): SkillActivation | null {
+	if (!details || typeof details !== "object" || Array.isArray(details)) return null;
+	const record = details as Record<string, unknown>;
+	const name = trimmedString(record.name);
+	const filePath = trimmedString(record.filePath) ?? trimmedString(record.path);
+	const hash = trimmedString(record.hash);
+	const source = trimmedString(record.source);
+	const sourceOrigin = trimmedString(record.sourceOrigin) ?? trimmedString(record.origin);
+	if (!name || !filePath || !hash || !source) return null;
+	const activation = skillActivationFromSource(
+		{ name, filePath, hash, source, ...(sourceOrigin ? { sourceOrigin } : {}) },
+		"tool",
+		turnId,
+	);
+	if (record.drift === "match" || record.drift === "mismatch") activation.drift = record.drift;
+	const owner = record.owner ?? (record.sourceInfo as SkillActivationSource["sourceInfo"])?.owner;
+	if (isPackageIdentity(owner)) activation.owner = owner;
+	if (record.activation === "recipe" || record.activation === "model" || record.activation === "operator") {
+		activation.requestSource = record.activation;
+	}
+	return activation;
+}
+
+export function isSkillActivation(value: unknown): value is SkillActivation {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const record = value as Record<string, unknown>;
+	return (
+		typeof record.name === "string" &&
+		typeof record.filePath === "string" &&
+		typeof record.hash === "string" &&
+		typeof record.source === "string" &&
+		(record.sourceOrigin === undefined || typeof record.sourceOrigin === "string") &&
+		(record.owner === undefined || isPackageIdentity(record.owner)) &&
+		(record.requestSource === undefined ||
+			record.requestSource === "recipe" ||
+			record.requestSource === "model" ||
+			record.requestSource === "operator") &&
+		(record.triggeredBy === "slash-command" || record.triggeredBy === "tool") &&
+		(record.turnId === undefined || typeof record.turnId === "string") &&
+		(record.runId === undefined || typeof record.runId === "string")
+	);
+}

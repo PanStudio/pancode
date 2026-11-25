@@ -1,0 +1,861 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Everything `pancode configure` knows about building one target, with no
+ * prompting in it.
+ *
+ * This was the middle of configure.ts. It moved out when the first-run wizard
+ * became its own screen flow: both the wizard and the flag-driven path resolve
+ * a URL, probe it, decide what the model list is, and write the same pointers,
+ * and the alternative to a shared module was a circular import between the two
+ * files that prompt.
+ */
+import { createConnection } from "node:net";
+import chalk from "chalk";
+
+import type { PancodeSettings } from "../core/config.js";
+import { resolveFundingBinding } from "../core/funding-config.js";
+import { openAuthStorage, resolveAuthTarget, targetRequiresAuth } from "../domains/providers/auth/index.js";
+import { getCatalogModelForRuntime } from "../domains/providers/catalog.js";
+import { credentialsPresent } from "../domains/providers/credentials.js";
+import { FUNDING_SIGNAL_LABELS, targetFundingEvidence } from "../domains/providers/funding-evidence.js";
+import {
+	isOrchestratorEligibleRuntime,
+	listKnownModelsForRuntime,
+	type ProviderSupportEntry,
+	readTargetModelSnapshot,
+	recordProbedModelSnapshot,
+	recordTargetModelSnapshot,
+	resolveRuntimeAuthTarget,
+	runtimeListsModelsLive,
+	unverifiedModelListNote,
+} from "../domains/providers/index.js";
+import { probeCapabilitiesForModel } from "../domains/providers/model-capabilities.js";
+import { loadedContextWindowForModel, offeredAsChatModel } from "../domains/providers/model-discovery.js";
+import { getRuntimeRegistry } from "../domains/providers/registry.js";
+import { runtimeNotRegistered } from "../domains/providers/runtime-not-registered.js";
+import type { CapabilityFlags } from "../domains/providers/types/capability-flags.js";
+import type {
+	ProbeContext,
+	ProbeModelStatus,
+	ProbeResult,
+	RuntimeDescriptor,
+} from "../domains/providers/types/runtime-descriptor.js";
+import type { CopilotContextTier, TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
+import type { ConfigureCategory } from "./configure-layout.js";
+import { type LiveModelInventory, validateModelChoice } from "./validate-model.js";
+
+export const DEFAULT_PORTS: Readonly<Record<string, number>> = {
+	llamacpp: 8080,
+	"llamacpp-anthropic": 8080,
+	"llamacpp-completion": 8080,
+	"llamacpp-embed": 8080,
+	"llamacpp-rerank": 8080,
+	lmstudio: 1234,
+	ollama: 11434,
+	vllm: 8000,
+	sglang: 30000,
+	"lemonade-anthropic": 8000,
+	lemonade: 8000,
+	"anthropic-compat": 8000,
+	"openai-compat": 8000,
+	litellm: 4000,
+};
+
+function trimTrailing(url: string): string {
+	return url.endsWith("/") && url.length > 1 ? url.slice(0, -1) : url;
+}
+
+/**
+ * What is wrong with a URL as typed, or null when it can be probed. Without this
+ * a typo reached the probe and read as a dead server, because `not a url` becomes
+ * `http://not a url` and every later failure looks like the network's fault.
+ */
+export function targetUrlProblem(input: string): string | null {
+	const trimmed = input.trim();
+	if (trimmed.length === 0) return null;
+	if (/\s/u.test(trimmed)) return `"${trimmed}" has a space in it; a URL looks like http://host:port`;
+	const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//iu.test(trimmed);
+	if (!hasScheme && /^[a-z][a-z0-9+.-]*:\/?$/iu.test(trimmed)) return `"${trimmed}" has a scheme but no host`;
+	let parsed: URL;
+	try {
+		parsed = new URL(hasScheme ? trimmed : `http://${trimmed}`);
+	} catch {
+		return `"${trimmed}" is not a URL; a URL looks like http://host:port`;
+	}
+	if (!/^(?:https?|wss?):$/u.test(parsed.protocol)) {
+		return `${parsed.protocol.replace(/:$/u, "")} is not supported here; use http or https`;
+	}
+	if (parsed.hostname.length === 0) return `"${trimmed}" has no host; a URL looks like http://host:port`;
+	return null;
+}
+
+export function normalizeUrl(input: string, runtimeId: string): string {
+	const trimmed = input.trim();
+	if (trimmed.length === 0) return defaultUrlFor(runtimeId);
+	const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed);
+	let withScheme = hasScheme ? trimmed : `http://${trimmed}`;
+	if (runtimeId === "lmstudio") withScheme = withScheme.replace(/^ws:/u, "http:").replace(/^wss:/u, "https:");
+	try {
+		const parsed = new URL(withScheme);
+		if (!hasScheme && !parsed.port && DEFAULT_PORTS[runtimeId]) {
+			parsed.port = String(DEFAULT_PORTS[runtimeId]);
+		}
+		return trimTrailing(parsed.toString());
+	} catch {
+		return trimTrailing(withScheme);
+	}
+}
+
+export function defaultUrlFor(runtimeId: string): string {
+	const port = DEFAULT_PORTS[runtimeId];
+	return port ? `http://127.0.0.1:${port}` : "http://127.0.0.1:8080";
+}
+
+/** The URL configure offers for a runtime, or undefined when the operator has to name its gateway. */
+export function offeredUrlFor(runtime: Pick<RuntimeDescriptor, "id" | "gatewayUrl">): string | undefined {
+	return runtime.gatewayUrl ? undefined : defaultUrlFor(runtime.id);
+}
+
+/** What configure says above a gateway URL prompt; empty for a runtime with a local default. */
+export function gatewayUrlGuidance(runtime: Pick<RuntimeDescriptor, "gatewayUrl">): string[] {
+	const gateway = runtime.gatewayUrl;
+	if (!gateway) return [];
+	return [`Required. For example ${gateway.example}`, ...(gateway.detail ? [gateway.detail] : [])];
+}
+
+export function deriveTargetId(runtimeId: string, existing: ReadonlyArray<TargetDescriptor>): string {
+	const base = runtimeId;
+	const taken = new Set(existing.map((e) => e.id));
+	if (!taken.has(base)) return base;
+	for (let i = 2; i < 1000; i++) {
+		const candidate = `${base}-${i}`;
+		if (!taken.has(candidate)) return candidate;
+	}
+	return `${base}-${Date.now()}`;
+}
+
+/** A renamed target can still own the credential under its previous name. */
+export function targetApiKeyRef(targetId: string, targets: ReadonlyArray<TargetDescriptor>): string {
+	const taken = new Set(targets.filter((target) => target.id !== targetId).map((target) => target.auth?.apiKeyRef));
+	const base = `target:${targetId}`;
+	let ref = base;
+	for (let suffix = 2; taken.has(ref); suffix += 1) ref = `${base}-${suffix}`;
+	return ref;
+}
+
+async function buildProbeContext(runtime?: RuntimeDescriptor, target?: TargetDescriptor): Promise<ProbeContext> {
+	const probeCtx: ProbeContext = {
+		credentialsPresent: credentialsPresent(),
+		httpTimeoutMs: 5000,
+	};
+	if (!runtime || !target) return probeCtx;
+	const auth = openAuthStorage();
+	const authTarget = resolveAuthTarget(target, runtime);
+	// The runtime probes read the environment for any name listed in credentialsPresent; a refused target gets none.
+	if (auth.statusForTarget(authTarget, { includeFallback: false }).refused) {
+		probeCtx.credentialsPresent = new Set();
+		probeCtx.credentialRefused = true;
+		return probeCtx;
+	}
+	if (!targetRequiresAuth(target, runtime)) return probeCtx;
+	try {
+		const resolution = await auth.resolveForTarget(authTarget, {
+			includeFallback: false,
+		});
+		if (resolution.apiKey) probeCtx.authToken = resolution.apiKey;
+	} catch {
+		// Let the runtime's probe report its own missing-auth diagnostic.
+	}
+	return probeCtx;
+}
+
+function runtimeKnownModelsFor(runtimeId: string): ReadonlyArray<string> {
+	return listKnownModelsForRuntime(runtimeId);
+}
+
+function catalogContextWindowFor(runtime: RuntimeDescriptor, modelId: string): number | null {
+	const catalogModel = getCatalogModelForRuntime(runtime.id, modelId);
+	if (typeof catalogModel?.contextWindow === "number" && catalogModel.contextWindow > 0) {
+		return catalogModel.contextWindow;
+	}
+	if (runtimeKnownModelsFor(runtime.id).includes(modelId) && runtime.defaultCapabilities.contextWindow > 0) {
+		return runtime.defaultCapabilities.contextWindow;
+	}
+	return null;
+}
+
+/**
+ * Check the resolved model against the catalog where there is one and against
+ * the target's own list where there is not. A runtime with no catalog used to
+ * pass any string here while the same command had a live list that ruled it
+ * out, so the target saved as `ok` and failed on its first
+ * turn. Without a catalog or any model list there is nothing to check against,
+ * and the note says so rather than implying the id was verified; a list that
+ * is not the live answer gets the caller's fallback note instead.
+ */
+export function validateResolvedModel(
+	runtime: RuntimeDescriptor,
+	target: Pick<TargetDescriptor, "id" | "url">,
+	modelId: string | undefined,
+	force: boolean,
+	inventory: WireModelInventory,
+): boolean {
+	if (!modelId) return true;
+	const knownModels = runtimeKnownModelsFor(runtime.id);
+	const live = inventory.source === "probe" ? liveInventoryFor(target, inventory) : undefined;
+	const validation = validateModelChoice({ runtimeId: runtime.id, modelId, knownModels, live, force });
+	if (!validation.ok) {
+		process.stderr.write(`error: ${validation.reason}\n`);
+		return false;
+	}
+	if (validation.warning) process.stderr.write(`warning: ${validation.warning}\n`);
+	if (knownModels.length === 0 && inventory.models.length === 0 && runtime.kind === "http") {
+		process.stderr.write(
+			`warning: could not verify model '${modelId}': ${target.url ?? `target '${target.id}'`} returned no model list; it is saved as written\n`,
+		);
+	}
+	return true;
+}
+
+/** The same check without the stderr diagnostics, for a screen that owns its own rail. */
+export function modelChoiceRefusal(
+	runtime: RuntimeDescriptor,
+	target: { id: string; url?: string | undefined },
+	modelId: string,
+	inventory: WireModelInventory,
+): string | null {
+	const live = inventory.source === "probe" ? liveInventoryFor(target, inventory) : undefined;
+	const validation = validateModelChoice({
+		runtimeId: runtime.id,
+		modelId,
+		knownModels: runtimeKnownModelsFor(runtime.id),
+		live,
+		force: false,
+	});
+	return validation.ok ? null : validation.reason;
+}
+
+export function validateContextWindowOverride(
+	runtime: RuntimeDescriptor,
+	modelId: string | undefined,
+	contextWindow: number | undefined,
+	force: boolean,
+): boolean {
+	if (contextWindow === undefined || !modelId) return true;
+	const catalogMax = catalogContextWindowFor(runtime, modelId);
+	if (catalogMax === null || contextWindow <= catalogMax) return true;
+	const message = `--context-window ${contextWindow} exceeds catalog max ${catalogMax} for model '${modelId}'`;
+	if (!force) {
+		process.stderr.write(`error: ${message}. Use --force to override.\n`);
+		return false;
+	}
+	process.stderr.write(`warning: ${message}\n`);
+	return true;
+}
+
+async function loopbackConnectionFailure(target: TargetDescriptor): Promise<ProbeResult | null> {
+	if (!target.url) return null;
+	let url: URL;
+	try {
+		url = new URL(target.url);
+	} catch {
+		// The runtime still owns validation of its address.
+		return null;
+	}
+	if (!/^https?:$/.test(url.protocol)) return null;
+	const host = url.hostname;
+	if (!/^127(?:\.\d{1,3}){3}$/.test(host) && host !== "[::1]") return null;
+	const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+	const started = performance.now();
+	// An absent local listener can silently drop SYNs on WSL rather than refuse them. Bound the
+	// TCP check before the runtime repeats HTTP discovery; a listener still gets its full checks.
+	return new Promise((resolve) => {
+		const socket = createConnection({ host: host === "[::1]" ? "::1" : host, port });
+		const finish = (error: string | null) => {
+			socket.destroy();
+			resolve(
+				error
+					? {
+							ok: false,
+							failureKind: "missing",
+							latencyMs: Math.round(performance.now() - started),
+							error,
+						}
+					: null,
+			);
+		};
+		socket.setTimeout(750, () =>
+			finish(`Connection timed out at ${host}:${port}. Start the server or check its address.`),
+		);
+		socket.once("connect", () => finish(null));
+		socket.once("error", (error: NodeJS.ErrnoException) =>
+			finish(
+				error.code === "ECONNREFUSED"
+					? `Connection refused at ${host}:${port}. Start the server or check its address.`
+					: null,
+			),
+		);
+	});
+}
+
+export async function runtimeProbe(
+	runtime: RuntimeDescriptor,
+	target: TargetDescriptor,
+	authToken?: string,
+	options: Pick<ProbeContext, "fresh"> = {},
+): Promise<ProbeResult | null> {
+	if (typeof runtime.probe !== "function") return null;
+	const refused = await loopbackConnectionFailure(target);
+	if (refused) return refused;
+	try {
+		const context = { ...(await buildProbeContext(runtime, target)), ...options };
+		return await runtime.probe(target, authToken === undefined ? context : { ...context, authToken });
+	} catch (err) {
+		return { ok: false, error: err instanceof Error ? err.message : String(err) };
+	}
+}
+
+async function runtimeProbeModels(
+	runtime: RuntimeDescriptor,
+	target: TargetDescriptor,
+	authToken?: string,
+): Promise<string[]> {
+	if (typeof runtime.probeModels !== "function") return [];
+	if (await loopbackConnectionFailure(target)) return [];
+	try {
+		const context = await buildProbeContext(runtime, target);
+		return await runtime.probeModels(target, authToken === undefined ? context : { ...context, authToken });
+	} catch {
+		return [];
+	}
+}
+
+export function applyTarget(settings: PancodeSettings, descriptor: TargetDescriptor): void {
+	const idx = settings.targets.findIndex((e) => e.id === descriptor.id);
+	const previous = settings.targets[idx];
+	if (previous) {
+		settings.targets[idx] = {
+			...descriptor,
+			...(descriptor.funding === undefined && previous.funding !== undefined ? { funding: previous.funding } : {}),
+		};
+	} else settings.targets.push(descriptor);
+}
+
+export function setOrchestratorPointer(
+	settings: PancodeSettings,
+	descriptor: TargetDescriptor,
+	model?: string | null,
+): void {
+	const runtime = getRuntimeRegistry().get(descriptor.runtime);
+	if (!runtime) {
+		throw new Error(
+			`cannot use target '${descriptor.id}' as orchestrator target because ${runtimeNotRegistered(descriptor.runtime)}`,
+		);
+	}
+	if (!isOrchestratorEligibleRuntime(runtime)) {
+		throw new Error(
+			`cannot use target '${descriptor.id}' as orchestrator target because runtime '${runtime.id}' is not an HTTP/native runtime`,
+		);
+	}
+	settings.chat.target = descriptor.id;
+	settings.chat.model = model ?? descriptor.defaultModel ?? null;
+}
+
+export function setWorkerDefaultPointer(
+	settings: PancodeSettings,
+	descriptor: TargetDescriptor,
+	model?: string | null,
+): void {
+	settings.fleet.default.target = descriptor.id;
+	settings.fleet.default.model = model ?? descriptor.defaultModel ?? null;
+}
+
+export function setBackgroundPointer(
+	settings: PancodeSettings,
+	descriptor: TargetDescriptor,
+	model?: string | null,
+): void {
+	const runtime = getRuntimeRegistry().get(descriptor.runtime);
+	if (!runtime || !isOrchestratorEligibleRuntime(runtime)) {
+		throw new Error(
+			`cannot use target '${descriptor.id}' as background target because runtime '${descriptor.runtime}' is not an HTTP/native runtime`,
+		);
+	}
+	settings.context.memory.target = descriptor.id;
+	settings.context.memory.model = model ?? descriptor.defaultModel ?? null;
+}
+
+export function assertOrchestratorReplacementEligible(settings: PancodeSettings, descriptor: TargetDescriptor): void {
+	if (settings.chat.target !== descriptor.id && settings.context.memory.target !== descriptor.id) return;
+	const role = settings.chat.target === descriptor.id ? "orchestrator" : "background";
+	const runtime = getRuntimeRegistry().get(descriptor.runtime);
+	if (!runtime) {
+		throw new Error(
+			`cannot update ${role} target '${descriptor.id}' because ${runtimeNotRegistered(descriptor.runtime)}`,
+		);
+	}
+	if (!isOrchestratorEligibleRuntime(runtime)) {
+		throw new Error(`cannot update ${role} target '${descriptor.id}' to non-HTTP/native runtime '${runtime.id}'`);
+	}
+}
+
+export function setWorkerProfilePointer(
+	settings: PancodeSettings,
+	name: string,
+	descriptor: TargetDescriptor,
+	model?: string | null,
+): void {
+	const trimmed = name.trim();
+	if (trimmed.length === 0) throw new Error("fleet profile name must be non-empty");
+	settings.fleet.profiles[trimmed] = {
+		target: descriptor.id,
+		model: model ?? descriptor.defaultModel ?? null,
+		thinkingLevel: "off",
+	};
+}
+
+/**
+ * Whether a target that was probed successfully still has no context window to
+ * work from, in which case it will run against the runtime descriptor's
+ * placeholder. Callers say so at the moment the target is written, because the
+ * alternative is a plausible-looking number the operator never chose and the
+ * server never claimed.
+ */
+export function contextWindowUndiscovered(descriptor: TargetDescriptor, probe: ProbeResult | null): boolean {
+	if (!probe?.ok) return false;
+	if (typeof descriptor.capabilities?.contextWindow === "number" && descriptor.capabilities.contextWindow > 0) {
+		return false;
+	}
+	if (
+		descriptor.defaultModel &&
+		loadedContextWindowForModel({ discoveredModelStates: probe.modelStates ?? null }, descriptor.defaultModel) !== null
+	) {
+		return false;
+	}
+	const discovered = probeCapabilitiesForModel(
+		{
+			target: descriptor,
+			probeCapabilities: probe.discoveredCapabilities ?? null,
+			probeModelCapabilities: probe.modelCapabilities ?? null,
+			probeModelId: probe.capabilityModelId ?? null,
+		},
+		descriptor.defaultModel,
+	);
+	return !(typeof discovered?.contextWindow === "number" && discovered.contextWindow > 0);
+}
+
+export function warnUndiscoveredContextWindow(descriptor: TargetDescriptor, probe: ProbeResult | null): void {
+	if (!contextWindowUndiscovered(descriptor, probe)) return;
+	process.stdout.write(
+		"  warning: the target reported no context window; PanCode will use the runtime default as a guess. Set one with --context-window.\n",
+	);
+}
+
+/** Whether the chosen model is one PanCode will send a thinking level to. */
+export function modelSupportsThinking(
+	runtime: RuntimeDescriptor,
+	descriptor: TargetDescriptor,
+	probe: ProbeResult | null,
+): boolean {
+	const discovered = probe
+		? probeCapabilitiesForModel(
+				{
+					target: descriptor,
+					probeCapabilities: probe.discoveredCapabilities ?? null,
+					probeModelCapabilities: probe.modelCapabilities ?? null,
+					probeModelId: probe.capabilityModelId ?? null,
+				},
+				descriptor.defaultModel,
+			)
+		: null;
+	if (typeof discovered?.reasoning === "boolean") return discovered.reasoning;
+	if (typeof descriptor.capabilities?.reasoning === "boolean") return descriptor.capabilities.reasoning;
+	return runtime.defaultCapabilities.reasoning === true;
+}
+
+/**
+ * What the probe read, as opposed to whether it connected.
+ *
+ * A health check can pass while every enrichment read behind it returns
+ * nothing, and reporting that as `probe ok` makes it indistinguishable from a
+ * full read. That is how a target gets blessed at configure time and then
+ * fails on the first turn. Naming the gap is the difference between a user who
+ * knows to look now and one who finds out from a raw 404 later.
+ */
+export function probeReadings(probe: ProbeResult): string[] {
+	const readings: string[] = [];
+	if (probe.models && probe.models.length > 0)
+		readings.push(`${probe.models.length} ${probe.models.length === 1 ? "model" : "models"}`);
+	if (probe.serverVersion) readings.push(probe.serverVersion);
+	if (probe.discoveredCapabilities && Object.keys(probe.discoveredCapabilities).length > 0) {
+		readings.push("capabilities");
+	}
+	return readings;
+}
+
+/** The probe result as the lines a user reads, cause and next step included. */
+export function probeLines(descriptor: TargetDescriptor, probe: ProbeResult): string[] {
+	const latency = probe.latencyMs !== undefined ? ` (${probe.latencyMs}ms)` : "";
+	if (!probe.ok) {
+		if (descriptor.runtime === "antigravity-code") {
+			const next =
+				probe.failureKind === "missing"
+					? "install the official Antigravity CLI and put `agy` on PATH"
+					: probe.failureKind === "authentication"
+						? "run `agy` yourself and complete sign-in; PanCode never reads or manages that session"
+						: probe.failureKind === "unsupported-feature"
+							? "update `agy`; this integration requires its structured JSON model catalog"
+							: "run `agy` directly to inspect setup, then re-run `pancode targets --probe`";
+			return [`probe failed${latency}: ${probe.error ?? "unknown"}`, `  ${next}`];
+		}
+		if (descriptor.runtime === "copilot-sdk") {
+			const next =
+				probe.failureKind === "missing"
+					? "install the Copilot SDK component with `pancode tools install copilot-sdk`, then re-run `pancode targets --probe`"
+					: probe.failureKind === "authentication"
+						? "sign in with `copilot login` or `gh auth login`; PanCode never signs in to Copilot itself. A login kept only in the system keychain is closed to headless runs; `pancode doctor` in a terminal shows which login the runtime sees"
+						: "check that `copilot login` succeeded and the account has Copilot models enabled, then re-run `pancode targets --probe`";
+			return [`probe failed${latency}: ${probe.error ?? "unknown"}`, `  ${next}`];
+		}
+		const where = descriptor.url ? ` ${descriptor.url}` : "";
+		return [
+			`probe failed${latency}:${where} ${probe.error ?? "unknown"}`,
+			`  check the server is running and reachable, then re-run: pancode configure --id ${descriptor.id} --url <url>`,
+		];
+	}
+	const readings = probeReadings(probe);
+	if (readings.length > 0) return [`probe ok${latency} ${readings.join(", ")}`];
+	return [
+		`probe reachable${latency}, but the target answered no model list and no version`,
+		"  PanCode cannot verify the model id or the context window from here and will send both as written.",
+		"  re-read them once the server serves them with: pancode targets --probe",
+	];
+}
+
+export interface DescriptorParts {
+	url?: string;
+	model?: string;
+	apiKeyEnv?: string;
+	apiKeyRef?: string;
+	oauthProfile?: string;
+	gateway?: boolean;
+	lifecycle?: TargetDescriptor["lifecycle"];
+	contextWindow?: number;
+	maxTokens?: number;
+	reasoning?: boolean;
+	lmstudio?: TargetDescriptor["lmstudio"];
+	litellm?: TargetDescriptor["litellm"];
+	ollama?: TargetDescriptor["ollama"];
+}
+
+export function buildDescriptor(runtime: RuntimeDescriptor, id: string, parts: DescriptorParts): TargetDescriptor {
+	const descriptor: TargetDescriptor = { id, runtime: runtime.id };
+	if (parts.url) descriptor.url = parts.url;
+	if (parts.model) descriptor.defaultModel = parts.model;
+	const auth: NonNullable<TargetDescriptor["auth"]> = {};
+	if (parts.apiKeyEnv) auth.apiKeyEnvVar = parts.apiKeyEnv;
+	if (parts.apiKeyRef) auth.apiKeyRef = parts.apiKeyRef;
+	if (parts.oauthProfile) auth.oauthProfile = parts.oauthProfile;
+	if (Object.keys(auth).length > 0) descriptor.auth = auth;
+	if (parts.gateway) descriptor.gateway = true;
+	if (parts.lifecycle) descriptor.lifecycle = parts.lifecycle;
+	const caps: NonNullable<TargetDescriptor["capabilities"]> = {};
+	if (parts.contextWindow !== undefined) caps.contextWindow = parts.contextWindow;
+	if (parts.maxTokens !== undefined) caps.maxTokens = parts.maxTokens;
+	if (parts.reasoning !== undefined) caps.reasoning = parts.reasoning;
+	if (Object.keys(caps).length > 0) descriptor.capabilities = caps;
+	if (parts.lmstudio) descriptor.lmstudio = parts.lmstudio;
+	if (parts.litellm) descriptor.litellm = parts.litellm;
+	if (parts.ollama) descriptor.ollama = parts.ollama;
+	return descriptor;
+}
+
+/**
+ * Why `--context-tier` cannot apply to a runtime, or null when it can. The tier is a Copilot SDK session option,
+ * so only a copilot-sdk target takes it.
+ */
+export function contextTierProblem(
+	runtime: RuntimeDescriptor | null,
+	tier: CopilotContextTier | undefined,
+): string | null {
+	if (tier === undefined || runtime?.id === "copilot-sdk") return null;
+	return runtime === null
+		? "--context-tier applies only to copilot-sdk targets; pass --runtime copilot-sdk"
+		: `--context-tier applies only to copilot-sdk targets, not runtime ${runtime.id}`;
+}
+
+/**
+ * Sets a `--context-tier` choice on a descriptor built over an existing target. `default` removes the opt-in the
+ * existing target carried, since an absent tier is the default.
+ */
+export function applyContextTier(descriptor: TargetDescriptor, tier: CopilotContextTier | undefined): void {
+	if (tier === "long_context") descriptor.contextTier = tier;
+	else if (tier === "default") delete descriptor.contextTier;
+}
+
+export function describeAuthStatus(runtime: RuntimeDescriptor, target?: TargetDescriptor): string {
+	const status = openAuthStorage().statusForTarget(
+		target ? resolveAuthTarget(target, runtime) : resolveRuntimeAuthTarget(runtime),
+		{ includeFallback: false },
+	);
+	// This describes a credential, not a network state. It is printed before the
+	// wizard has asked for a URL, so `not connected` read as a connection that
+	// had already been tried and failed.
+	if (!status.available) return "none stored";
+	if (status.source === "environment") return `environment${status.detail ? ` (${status.detail})` : ""}`;
+	if (status.source === "stored-api-key") return "stored api key";
+	if (status.source === "stored-oauth") return "stored oauth";
+	return status.source;
+}
+
+export function describeTargetFunding(target: TargetDescriptor, definitions: PancodeSettings["funding"]): string {
+	const observation =
+		target.funding !== undefined && definitions[target.funding.pool]?.scheme === "detected"
+			? targetFundingEvidence(target).observation
+			: undefined;
+	const resolved = resolveFundingBinding(definitions, target.funding, observation);
+	if (resolved.status === "unknown") {
+		if (resolved.reason === "unbound") return "unknown (not bound)";
+		return `unknown (${resolved.reason.replaceAll("-", " ")}; ${target.funding?.pool ?? "not bound"})`;
+	}
+	const { fee, grant, local, nativeUnit, payer } = resolved.pool;
+	const grantAmount = nativeUnit === undefined ? undefined : grant?.amount;
+	return [
+		`${resolved.status}: ${resolved.poolId}`,
+		...(resolved.status === "detected"
+			? [`${FUNDING_SIGNAL_LABELS[resolved.detection.signal]}, checked ${resolved.detection.verifiedAt}`]
+			: []),
+		...(payer === undefined ? [] : [`payer ${payer}`]),
+		...(fee === undefined ? [] : [`${fee.amount} ${fee.currency} / ${fee.period}`]),
+		...(grant === undefined
+			? []
+			: [`grant${grantAmount === undefined ? "" : ` ${grantAmount} ${nativeUnit}`} expires ${grant.expiresAt}`]),
+		...(local?.activeWatts === undefined ? [] : [`${local.activeWatts} W active`]),
+		...(local?.idleWatts === undefined ? [] : [`${local.idleWatts} W idle`]),
+		...(local?.tariff === undefined ? [] : [`${local.tariff.ratePerKwh} ${local.tariff.currency} / kWh`]),
+	].join(" · ");
+}
+
+/**
+ * The model ids a target can be configured with, and where they came from.
+ * `probe` is the only source that says anything about the server in front of
+ * us right now; `catalog` is static provider knowledge, and `existing` is the
+ * list a previous configure recorded, which the server may no longer match.
+ */
+export interface WireModelInventory {
+	models: string[];
+	source: "catalog" | "probe" | "cache" | "existing" | "none";
+	labels?: Readonly<Record<string, string>>;
+	/** Why a runtime that lists its models live gave no live list: the probe's redacted diagnostic. */
+	probeError?: string;
+	/** Per-model load state when the probe reported it. */
+	modelStates?: Readonly<Record<string, ProbeModelStatus>> | undefined;
+	/** Per-model capabilities when the probe reported them, so pickers can leave out embedding models. */
+	modelCapabilities?: Readonly<Record<string, Partial<CapabilityFlags>>> | undefined;
+}
+
+/** The inventory ids a chat-model picker offers: no embedding or rerank models. */
+export function chatPickerModels(inventory: Pick<WireModelInventory, "models" | "modelCapabilities">): string[] {
+	return inventory.models.filter((model) => offeredAsChatModel(model, inventory.modelCapabilities?.[model]));
+}
+
+/**
+ * Every id the runtime would resolve. LM Studio lists a loaded model under its
+ * instance id and keeps the model key only in the state map, and the request
+ * path accepts either, so both count as advertised.
+ */
+function advertisedModelIds(inventory: Pick<WireModelInventory, "models" | "modelStates">): string[] {
+	const ids = [...inventory.models];
+	for (const id of Object.keys(inventory.modelStates ?? {})) if (!ids.includes(id)) ids.push(id);
+	return ids;
+}
+
+function residentModelIds(modelStates: WireModelInventory["modelStates"]): string[] {
+	return Object.entries(modelStates ?? {})
+		.filter(([, status]) => status.state === "loaded" || status.state === "loading")
+		.map(([id]) => id);
+}
+
+function liveInventoryFor(
+	target: { id: string; url?: string | undefined },
+	inventory: WireModelInventory,
+): LiveModelInventory {
+	return {
+		targetId: target.id,
+		url: target.url,
+		models: advertisedModelIds(inventory),
+		resident: residentModelIds(inventory.modelStates),
+	};
+}
+
+export async function resolveSupportedWireModels(
+	runtime: RuntimeDescriptor,
+	target: TargetDescriptor,
+	existing?: TargetDescriptor,
+	authToken?: string,
+): Promise<WireModelInventory> {
+	let probeError: string | undefined;
+	const listsLive = runtimeListsModelsLive(runtime);
+	// A runtime that can list its models live is asked first, and its answer
+	// replaces the static catalog. The catalog, like the cache, is what the
+	// screen falls back to when that answer does not come, labeled with why.
+	if (listsLive) {
+		// The full probe carries load state alongside the ids; a runtime that
+		// lists models only through probeModels still gets its ids checked.
+		// The model is refused or saved on this answer, so a runtime that keeps
+		// a cached listing is asked live.
+		const probe = await runtimeProbe(runtime, target, authToken, { fresh: true });
+		if (probe?.ok && probe.models && probe.models.length > 0) {
+			recordProbedModelSnapshot(target, runtime, probe);
+			return {
+				models: [...probe.models],
+				source: probe.modelsSource ?? "probe",
+				modelStates: probe.modelStates,
+				...(probe.modelLabels ? { labels: probe.modelLabels } : {}),
+				...(probe.modelCapabilities ? { modelCapabilities: probe.modelCapabilities } : {}),
+			};
+		}
+		probeError = probe?.error ?? (probe?.ok ? "the provider listed no models" : undefined);
+		const discovered = await runtimeProbeModels(runtime, target, authToken);
+		if (discovered.length > 0) {
+			recordTargetModelSnapshot(target, discovered);
+			return { models: discovered, source: "probe" };
+		}
+	}
+	const known = listKnownModelsForRuntime(runtime.id);
+	// A runtime that cannot list live never cached a live answer, so its catalog outranks the cache.
+	if (!listsLive && known.length > 0) return { models: known, source: "catalog" };
+	const cached = readTargetModelSnapshot(target);
+	if (cached && cached.models.length > 0) {
+		return {
+			models: [...cached.models],
+			source: "cache",
+			...(cached.modelLabels ? { labels: cached.modelLabels } : {}),
+			...(probeError ? { probeError } : {}),
+		};
+	}
+	if (known.length > 0) return { models: known, source: "catalog", ...(probeError ? { probeError } : {}) };
+	if (existing?.wireModels && existing.wireModels.length > 0) {
+		recordTargetModelSnapshot(target, existing.wireModels);
+		return { models: [...existing.wireModels], source: "existing", ...(probeError ? { probeError } : {}) };
+	}
+	return { models: [], source: "none", ...(probeError ? { probeError } : {}) };
+}
+
+/**
+ * What the configure surfaces print beside a model list that is not the
+ * provider's live answer, in the same words `models` and the picker use. Null
+ * when the list is live or empty.
+ */
+export function inventoryNote(runtime: RuntimeDescriptor, inventory: WireModelInventory): string | null {
+	if (inventory.source === "probe" || inventory.source === "none") return null;
+	const origin =
+		inventory.source === "cache" ? "cache" : inventory.source === "catalog" ? "catalog" : ("configured" as const);
+	return unverifiedModelListNote(origin, {
+		runtimeId: runtime.id,
+		listsLive: runtimeListsModelsLive(runtime),
+		reason: inventory.probeError,
+	});
+}
+
+/**
+ * The model to preselect from an inventory, or undefined when nothing in it is
+ * worth recommending. A curated default the provider still lists wins. A live
+ * list's head is taken only where list order means something, and a provider's
+ * order, live or catalog, does not: Gemini's first entry is whatever sorts first.
+ */
+export function preferredModelFor(
+	inventory: Pick<WireModelInventory, "models" | "source">,
+	support: Pick<ProviderSupportEntry, "defaultModel" | "modelSource">,
+): string | undefined {
+	const curated = support.defaultModel;
+	if (inventory.source === "probe") {
+		if (curated !== undefined && inventory.models.includes(curated)) return curated;
+		return support.modelSource === "catalog" ? undefined : inventory.models[0];
+	}
+	return curated ?? (support.modelSource === "catalog" ? undefined : inventory.models[0]);
+}
+
+/** Why a target offered no model list, in the words the screen shows. */
+/**
+ * What an operator can do about a transport failure, in place of the socket code a probe reports. A bare host is
+ * read as http, so a port that speaks only TLS looks exactly like the reset below.
+ */
+export function plainConnectionProblem(error: string): string {
+	if (/ECONNRESET|socket hang up|other side closed/iu.test(error))
+		return `the connection closed with no answer (${error}). A port that speaks only https does this, so type the https:// address if this server has one`;
+	if (/ENOTFOUND|EAI_AGAIN/u.test(error)) return `that host name does not resolve (${error})`;
+	if (/ECONNREFUSED/u.test(error)) return `nothing is listening there (${error}). Start the server or check its address`;
+	return error;
+}
+
+const UNTRUSTED_CERTIFICATE = /self.signed|certificate|\bCERT_|UNABLE_TO_VERIFY/iu;
+
+/** True when an https failure says the server answered with a certificate PanCode's TLS does not trust. */
+export function isUntrustedCertificate(error: string | undefined): boolean {
+	return error !== undefined && UNTRUSTED_CERTIFICATE.test(error);
+}
+
+export function inventoryGap(
+	runtime: RuntimeDescriptor,
+	target: { url?: string | undefined },
+	probeError?: string | undefined,
+): string {
+	if (runtime.externalAgentLoop?.modelCatalog === "live-authoritative") {
+		return "Antigravity returned no live model catalog; run `agy` yourself, complete sign-in, then probe again";
+	}
+	if (!runtimeListsModelsLive(runtime))
+		return `${runtime.id} does not list its models; type the id the provider documents`;
+	const where = target.url ?? runtime.id;
+	return probeError
+		? `No model list from ${where}: ${plainConnectionProblem(probeError)}`
+		: `${where} answered with no model list`;
+}
+
+export const LOCAL_APP_RUNTIME_IDS: ReadonlySet<string> = new Set(["ollama", "lmstudio", "lemonade"]);
+
+// Generic protocol-compatible runtimes. They are classified local-http (they
+// carry a probe and no cloud catalog entry), but a hosted endpoint such as
+// Inception/Mercury is exactly an OpenAI-compatible cloud API, so the wizard
+// also surfaces them under the Cloud API path.
+export const PROTOCOL_COMPAT_RUNTIME_IDS: ReadonlySet<string> = new Set(["openai-compat", "anthropic-compat"]);
+
+export function runtimesForCategory(
+	entries: ReadonlyArray<ProviderSupportEntry>,
+	category: ConfigureCategory,
+): ProviderSupportEntry[] {
+	switch (category) {
+		case "local-app":
+			return entries.filter((entry) => LOCAL_APP_RUNTIME_IDS.has(entry.runtimeId));
+		case "local-server":
+			return entries.filter((entry) => entry.group === "local-http" && !LOCAL_APP_RUNTIME_IDS.has(entry.runtimeId));
+		case "subscription":
+			return entries.filter((entry) => entry.group === "featured" || entry.group === "subscription");
+		case "cloud-api": {
+			const byLabel = (a: ProviderSupportEntry, b: ProviderSupportEntry) =>
+				a.label.localeCompare(b.label) || a.runtimeId.localeCompare(b.runtimeId);
+			const named = entries
+				.filter((entry) => entry.group === "cloud-api")
+				.slice()
+				.sort(byLabel);
+			// A compatible API may be hosted or self-managed, so it is intentionally
+			// reachable from both trajectories. This is classification, not a claim
+			// about where the endpoint runs.
+			const compat = entries
+				.filter((entry) => PROTOCOL_COMPAT_RUNTIME_IDS.has(entry.runtimeId))
+				.map((entry) => ({ ...entry, group: "cloud-api" as const }))
+				.sort(byLabel);
+			return [...named, ...compat];
+		}
+		case "external-worker":
+			return entries.filter(
+				(entry) => entry.group === "external-worker" || (entry.group === "subscription" && !entry.connectable),
+			);
+	}
+}
+
+/** The rail prefix the interactive prompts draw on, matching the presenter's. */
+export function railPrefix(plain: boolean): string {
+	return plain ? "  " : `${chalk.cyan("│")}  `;
+}

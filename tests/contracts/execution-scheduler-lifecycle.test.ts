@@ -1,0 +1,945 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, rejects, strictEqual, throws } from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { runPlaybookGraph } from "../../src/cli/playbook-graph.js";
+import { setPresentationTier } from "../../src/core/presentation-tier.js";
+import { parsePlaybook, renderPlaybookPrompt } from "../../src/domains/agents/playbook.js";
+import { readAgentLedger } from "../../src/domains/dispatch/agent-ledger-store.js";
+import type { ExecutionPlanAgentStep } from "../../src/domains/dispatch/execution-plan.js";
+import { compileExecutionPlan, spliceExecutionPlan } from "../../src/domains/dispatch/execution-plan.js";
+import type { ExecutionSchedulerAdapter, ExecutionStepResult } from "../../src/domains/dispatch/execution-scheduler.js";
+import { executePlan } from "../../src/domains/dispatch/execution-scheduler.js";
+import { fleetNodeTaskBrief } from "../../src/domains/dispatch/fleet-node-prompt.js";
+import { compileFleetExecutionPlan } from "../../src/domains/dispatch/fleet-plan.js";
+import type { FleetRunPreview } from "../../src/domains/dispatch/fleet-run-preview.js";
+import { stripTerminalSequences } from "../../src/engine/tui.js";
+import { formatFleetRunApprovalBody } from "../../src/interactive/overlays/fleet-run-approval.js";
+import type { IsolatedPancodeEnv } from "../harness/scratch-env.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	let reject!: (error: unknown) => void;
+	const promise = new Promise<T>((yes, no) => {
+		resolve = yes;
+		reject = no;
+	});
+	return { promise, resolve, reject };
+}
+const step = (id: string, dependencies: string[] = []): ExecutionPlanAgentStep => ({
+	kind: "agent",
+	id,
+	dependencies,
+	agentId: "scout",
+	executionRole: "explorer",
+	scope: "readonly",
+	expectedResultContract: "provenance-report",
+	requestedAuthority: "read-only",
+	approvedAuthority: "read-only",
+	task: `Inspect ${id}`,
+});
+const result = (id: string, succeeded = true): ExecutionStepResult => ({
+	stepId: id,
+	assignmentId: id,
+	terminalRunId: `run-${id}`,
+	runDigest: `digest-${id}`,
+	output: `output-${id}`,
+	succeeded,
+	integrityValid: true,
+});
+const plan = (steps = [step("a"), step("b"), step("dependent", ["a", "b"])]) =>
+	compileExecutionPlan({ topology: "parallel", rootTask: "Inspect fixtures", maxWorkers: 2, onFailure: "stop", steps });
+
+function fixture() {
+	type Handle = Awaited<ReturnType<ExecutionSchedulerAdapter["run"]>>;
+	const launches = new Map<string, ReturnType<typeof deferred<Handle>>>();
+	const entered = new Map(["a", "b", "dependent"].map((id) => [id, deferred<void>()]));
+	const canceled = new Map(["a", "b"].map((id) => [id, deferred<void>()]));
+	const log: string[] = [];
+	let ledgerId: string | undefined;
+	const adapter: ExecutionSchedulerAdapter = {
+		preflight: (step) => ({ step, costUpperBoundUsd: 1, nodeId: "local" }),
+		reserve: () => ({ ownerId: "owner" }),
+		run: (step, _handoffs, _reservation, ledger) => {
+			ledgerId = ledger?.id;
+			log.push(`launch:${step.id}`);
+			const launch = deferred<Awaited<ReturnType<ExecutionSchedulerAdapter["run"]>>>();
+			launches.set(step.id, launch);
+			entered.get(step.id)?.resolve();
+			return launch.promise;
+		},
+		cancel: (id) => {
+			log.push(`cancel:${id}`);
+			canceled.get(id)?.resolve();
+		},
+		release: () => {
+			log.push("release");
+		},
+		releaseUnconsumed: () => {
+			log.push("release-unconsumed");
+		},
+	};
+	return {
+		adapter,
+		launches,
+		entered,
+		canceled,
+		log,
+		ledger: () => (ledgerId === undefined ? null : readAgentLedger(ledgerId)),
+	};
+}
+
+describe("execution scheduler lifecycle", () => {
+	let scratch: IsolatedPancodeEnv;
+	beforeEach(async () => {
+		scratch = await isolatePancodeEnv("pancode-scheduler-");
+	});
+	afterEach(() => scratch.restore());
+
+	for (const late of [false, true]) {
+		it(`owns sibling startup and terminal cleanup when rejection comes ${late ? "before" : "after"} its handle`, async () => {
+			const f = fixture();
+			const terminal = deferred<ExecutionStepResult>();
+			const error = new Error("startup failed");
+			const completed = executePlan(plan(), f.adapter);
+			const rejection = rejects(completed, (observed) => observed === error);
+			await f.entered.get("b")?.promise;
+			if (!late) f.launches.get("a")?.resolve({ assignmentId: "a", result: terminal.promise });
+			f.launches.get("b")?.reject(error);
+			if (late) f.launches.get("a")?.resolve({ assignmentId: "a", result: terminal.promise });
+			await f.canceled.get("a")?.promise;
+			strictEqual(f.log.includes("release"), false);
+			strictEqual(f.log.includes("release-unconsumed"), false);
+			strictEqual(f.ledger()?.closedAt, null);
+			terminal.resolve(result("a"));
+			await rejection;
+			deepStrictEqual(
+				f.log.filter((line) => line.startsWith("cancel:")),
+				["cancel:a"],
+			);
+			strictEqual(f.log.includes("launch:dependent"), false);
+			ok(f.ledger()?.closedAt);
+		});
+	}
+
+	for (const timing of ["before", "during", "after"] as const) {
+		it(`cancels ${timing} startup without admitting a passing dependent`, async () => {
+			const f = fixture();
+			const controller = new AbortController();
+			if (timing === "before") controller.abort();
+			const terminal = deferred<ExecutionStepResult>();
+			const execution = executePlan(plan([step("a"), step("dependent", ["a"])]), f.adapter, controller.signal);
+			if (timing !== "before") {
+				await f.entered.get("a")?.promise;
+				if (timing === "during") controller.abort();
+				f.launches.get("a")?.resolve({ assignmentId: "a", result: terminal.promise });
+				if (timing === "after") {
+					await Promise.resolve();
+					controller.abort();
+				}
+				await f.canceled.get("a")?.promise;
+				strictEqual(f.log.includes("release"), false);
+				const receipt = result("a");
+				terminal.resolve(receipt);
+				const outcome = await execution;
+				strictEqual(receipt.succeeded, true, "never alter the adapter's receipt projection");
+				strictEqual(outcome.results.get("a")?.succeeded, false);
+				strictEqual(outcome.results.get("a")?.runDigest, receipt.runDigest);
+			} else await execution;
+			strictEqual(f.log.includes("launch:dependent"), false);
+			if (timing === "before")
+				strictEqual(
+					f.log.some((line) => line.startsWith("launch:")),
+					false,
+				);
+		});
+	}
+
+	it("observes result rejection while sibling startup is pending and drains the late handle", async () => {
+		const f = fixture();
+		const terminal = deferred<ExecutionStepResult>();
+		const sibling = deferred<ExecutionStepResult>();
+		const failed = new Error("result rejected");
+		const rejection = rejects(executePlan(plan(), f.adapter), (error) => error === failed);
+		await f.entered.get("b")?.promise;
+		f.launches.get("a")?.resolve({ assignmentId: "a", result: terminal.promise });
+		await Promise.resolve();
+		terminal.reject(failed);
+		f.launches.get("b")?.resolve({ assignmentId: "b", result: sibling.promise });
+		await f.canceled.get("b")?.promise;
+		strictEqual(f.log.includes("release"), false);
+		sibling.resolve(result("b", false));
+		await rejection;
+		ok(f.ledger()?.closedAt);
+	});
+
+	it("preserves primary startup and cleanup errors and attempts all releases", async () => {
+		const f = fixture();
+		const terminal = deferred<ExecutionStepResult>();
+		const startup = new Error("primary startup");
+		const cancel = new Error("cancel failed");
+		const release = new Error("release failed");
+		const unconsumed = new Error("unconsumed failed");
+		const normalCancel = f.adapter.cancel;
+		f.adapter.cancel = (id) => {
+			normalCancel(id);
+			throw cancel;
+		};
+		f.adapter.release = () => {
+			f.log.push("release");
+			throw release;
+		};
+		f.adapter.releaseUnconsumed = () => {
+			f.log.push("release-unconsumed");
+			throw unconsumed;
+		};
+		const rejection = rejects(executePlan(plan(), f.adapter), (error: unknown) => {
+			ok(error instanceof AggregateError);
+			strictEqual(error.cause, startup);
+			deepStrictEqual(error.errors, [startup, cancel, unconsumed, release]);
+			return true;
+		});
+		await f.entered.get("b")?.promise;
+		f.launches.get("a")?.resolve({ assignmentId: "a", result: terminal.promise });
+		f.launches.get("b")?.reject(startup);
+		await f.canceled.get("a")?.promise;
+		strictEqual(f.log.includes("release"), false);
+		terminal.resolve(result("a"));
+		await rejection;
+		ok(f.ledger()?.closedAt);
+	});
+
+	it("preserves parallel successes, receipt handoffs, boundaries and downstream work", async () => {
+		const f = fixture();
+		const handoffs: string[] = [];
+		f.adapter.run = async (step, upstream) => {
+			handoffs.push(...upstream.map((item) => item.runDigest));
+			return { assignmentId: step.id, result: Promise.resolve(result(step.id)) };
+		};
+		const boundaries: string[] = [];
+		f.adapter.beginWriteBoundary = (window) => {
+			boundaries.push(`begin:${window}`);
+		};
+		f.adapter.verifyWriteBoundary = async (window) => {
+			boundaries.push(`verify:${window}`);
+			return { window, violated: false, failedStepIds: [], detail: null };
+		};
+		const outcome = await executePlan(
+			plan([{ ...step("a"), writes: [] }, { ...step("b"), writes: [] }, step("dependent", ["a", "b"])]),
+			f.adapter,
+		);
+		deepStrictEqual([...outcome.results.keys()], ["a", "b", "dependent"]);
+		deepStrictEqual(handoffs, ["digest-a", "digest-b"]);
+		deepStrictEqual(boundaries, ["begin:wave-0", "verify:wave-0"]);
+		strictEqual(
+			f.log.some((line) => line.startsWith("cancel:")),
+			false,
+		);
+	});
+	it("normal stop cancels the failed member and live peers and preserves receipt diagnostics", async () => {
+		const f = fixture();
+		const a = deferred<ExecutionStepResult>();
+		const b = deferred<ExecutionStepResult>();
+		const saved: ExecutionStepResult[] = [];
+		f.adapter.onStepSettled = (_step, result) => {
+			saved.push(result);
+		};
+		const pending = executePlan(plan(), f.adapter);
+		await f.entered.get("b")?.promise;
+		f.launches.get("a")?.resolve({ assignmentId: "a", result: a.promise });
+		f.launches.get("b")?.resolve({ assignmentId: "b", result: b.promise });
+		a.resolve(result("a", false));
+		await f.canceled.get("b")?.promise;
+		deepStrictEqual(
+			f.log.filter((line) => line.startsWith("cancel:")),
+			["cancel:a", "cancel:b"],
+		);
+		b.resolve({ ...result("b", false), failureReason: "worker cancellation acknowledged" });
+		await pending;
+		strictEqual(saved.find((row) => row.stepId === "b")?.failureReason, "worker cancellation acknowledged");
+		strictEqual(f.log.includes("launch:dependent"), false);
+	});
+
+	it("aborts code work and waits for its terminal result before releasing capacity", async () => {
+		const f = fixture();
+		const controller = new AbortController();
+		const entered = deferred<AbortSignal>();
+		const terminal = deferred<ExecutionStepResult>();
+		f.adapter.runCode = async (_step, _handoffs, signal) => {
+			entered.resolve(signal);
+			return terminal.promise;
+		};
+		const p = compileExecutionPlan({
+			topology: "sequential",
+			rootTask: "code",
+			maxWorkers: 1,
+			onFailure: "stop",
+			steps: [
+				{ kind: "code", id: "code", commandId: "fixture", scope: "readonly", dependencies: [] },
+				step("dependent", ["code"]),
+			],
+		});
+		const pending = executePlan(p, f.adapter, controller.signal);
+		const signal = await entered.promise;
+		controller.abort();
+		strictEqual(signal.aborted, true);
+		strictEqual(f.log.includes("release"), false);
+		terminal.resolve(result("code"));
+		const outcome = await pending;
+		strictEqual(outcome.results.get("code")?.succeeded, false);
+		strictEqual(f.log.includes("launch:dependent"), false);
+	});
+
+	it("startup cancellation never starts admitted code siblings", async () => {
+		const f = fixture();
+		const controller = new AbortController();
+		const terminal = deferred<ExecutionStepResult>();
+		let codeStarts = 0;
+		f.adapter.runCode = async () => {
+			codeStarts += 1;
+			return result("code");
+		};
+		const p = compileExecutionPlan({
+			topology: "parallel",
+			rootTask: "mixed",
+			maxWorkers: 2,
+			onFailure: "stop",
+			steps: [step("a"), { kind: "code", id: "code", commandId: "fixture", scope: "readonly", dependencies: [] }],
+		});
+		const pending = executePlan(p, f.adapter, controller.signal);
+		await f.entered.get("a")?.promise;
+		controller.abort();
+		f.launches.get("a")?.resolve({ assignmentId: "a", result: terminal.promise });
+		await f.canceled.get("a")?.promise;
+		terminal.resolve(result("a"));
+		await pending;
+		strictEqual(codeStarts, 0);
+	});
+
+	it("checks write boundaries and records owned receipts even after sibling startup failure", async () => {
+		const f = fixture();
+		const terminal = deferred<ExecutionStepResult>();
+		const log: string[] = [];
+		f.adapter.beginWriteBoundary = () => {
+			log.push("begin");
+		};
+		f.adapter.verifyWriteBoundary = async (window) => {
+			log.push("verify");
+			return { window, violated: true, failedStepIds: ["a"], detail: "outside declared boundary" };
+		};
+		f.adapter.onStepSettled = (_step, result) => {
+			strictEqual(result.succeeded, false);
+			strictEqual(result.boundaryViolated, true);
+			strictEqual(result.runDigest, "digest-a");
+			log.push("saved");
+		};
+		const p = plan([
+			{ ...step("a"), writes: [] },
+			{ ...step("b"), writes: [] },
+		]);
+		const rejection = rejects(executePlan(p, f.adapter), /startup/u);
+		await f.entered.get("b")?.promise;
+		f.launches.get("a")?.resolve({ assignmentId: "a", result: terminal.promise });
+		f.launches.get("b")?.reject(new Error("startup"));
+		await f.canceled.get("a")?.promise;
+		terminal.resolve(result("a"));
+		await rejection;
+		deepStrictEqual(log, ["begin", "verify", "saved"]);
+	});
+
+	it("serializes declared writers until the preceding writer terminal settles", async () => {
+		const f = fixture();
+		const first = deferred<ExecutionStepResult>();
+		const p = compileExecutionPlan({
+			topology: "parallel",
+			rootTask: "writers",
+			maxWorkers: 2,
+			writers: 1,
+			onFailure: "stop",
+			steps: [
+				{ ...step("a"), scope: "workspace" },
+				{ ...step("b"), scope: "workspace" },
+			],
+		});
+		const pending = executePlan(p, f.adapter);
+		await f.entered.get("a")?.promise;
+		strictEqual(f.log.includes("launch:b"), false);
+		f.launches.get("a")?.resolve({ assignmentId: "a", result: first.promise });
+		await Promise.resolve();
+		strictEqual(f.log.includes("launch:b"), false);
+		first.resolve(result("a"));
+		await f.entered.get("b")?.promise;
+		f.launches.get("b")?.resolve({ assignmentId: "b", result: Promise.resolve(result("b")) });
+		await pending;
+	});
+
+	it("preserves bounded code verification and repair loops", async () => {
+		const f = fixture();
+		const log: string[] = [];
+		f.adapter.run = async (step) => {
+			log.push(step.id);
+			return { assignmentId: step.id, result: Promise.resolve(result(step.id)) };
+		};
+		f.adapter.runCode = async (step) => {
+			log.push(step.id);
+			return result(step.id, step.id !== "check-1");
+		};
+		const p = compileExecutionPlan({
+			topology: "fleet",
+			rootTask: "loop",
+			maxWorkers: 1,
+			onFailure: "stop",
+			loops: [
+				{ id: "loop", checkKind: "code", maxAttempts: 2, checkStepIds: ["check-1", "check-2"], repairStepIds: ["repair"] },
+			],
+			steps: [
+				step("build"),
+				{
+					kind: "code",
+					id: "check-1",
+					commandId: "check",
+					scope: "readonly",
+					dependencies: ["build"],
+					loop: { loopId: "loop", role: "check", attempt: 1 },
+				},
+				{ ...step("repair", ["check-1", "build"]), loop: { loopId: "loop", role: "repair", attempt: 1 } },
+				{
+					kind: "code",
+					id: "check-2",
+					commandId: "check",
+					scope: "readonly",
+					dependencies: ["repair"],
+					loop: { loopId: "loop", role: "check", attempt: 2 },
+				},
+				step("dependent", ["check-2"]),
+			],
+		});
+		const outcome = await executePlan(p, f.adapter);
+		deepStrictEqual(log, ["build", "check-1", "repair", "check-2", "dependent"]);
+		strictEqual(outcome.loops[0]?.resolved, true);
+		strictEqual(outcome.loops[0]?.attempts, 2);
+		// A check no edit can turn green, such as a changed test whose runner needs provisioning, earns no repair.
+		log.length = 0;
+		f.adapter.runCode = async (step) => {
+			log.push(step.id);
+			return { ...result(step.id, false), unrepairable: true };
+		};
+		const unrepairable = await executePlan(p, f.adapter);
+		deepStrictEqual(log, ["build", "check-1"]);
+		strictEqual(unrepairable.loops[0]?.reason, "loop_step_failed");
+	});
+
+	it("hands a build-test repair both the failed check and the previous attempt's report", async () => {
+		const path = new URL("../../src/domains/agents/playbooks/build-test.md", import.meta.url);
+		const playbook = parsePlaybook(readFileSync(path, "utf8"), path.pathname);
+		const p = compileFleetExecutionPlan({
+			playbook,
+			task: "Fix the parser",
+			resolveAgent: () => ({
+				requestedAuthority: "workspace-edit",
+				approvedAuthority: "workspace-edit",
+				expectedResultContract: "mutation-report",
+				executionRole: "builder",
+			}),
+		});
+		const f = fixture();
+		const repairInputs: Array<Array<[string, string]>> = [];
+		f.adapter.run = async (step, handoffs) => {
+			if (step.loop?.role === "repair") repairInputs.push(handoffs.map(({ stepId, output }) => [stepId, output]));
+			return { assignmentId: step.id, result: Promise.resolve(result(step.id)) };
+		};
+		f.adapter.runCode = async (step) => result(step.id, step.loop?.attempt === 3);
+		const outcome = await executePlan(p, f.adapter);
+		deepStrictEqual(repairInputs, [
+			[
+				["build", "output-build"],
+				["suite.check.1", "output-suite.check.1"],
+			],
+			[
+				["suite.check.2", "output-suite.check.2"],
+				["suite.repair.1", "output-suite.repair.1"],
+			],
+		]);
+		strictEqual(outcome.loops[0]?.resolved, true);
+		strictEqual(outcome.loops[0]?.attempts, 3);
+		strictEqual(outcome.loops[0]?.repairs, 2);
+	});
+
+	it("ships seat-stretch as static scout, build and one-revision review steps, one worker at a time (S17)", () => {
+		const path = new URL("../../src/domains/agents/playbooks/seat-stretch.md", import.meta.url);
+		const playbook = parsePlaybook(readFileSync(path, "utf8"), path.pathname);
+		deepStrictEqual(
+			playbook.steps.map((step) => [step.kind, step.id, step.dependencies]),
+			[
+				["agent", "scout", []],
+				["agent", "build", ["scout"]],
+				["loop", "review", ["build"]],
+			],
+		);
+		strictEqual(playbook.maxWorkers, 1);
+		strictEqual(playbook.onFailure, "stop");
+		strictEqual(playbook.budgetUsd, null);
+		ok(playbook.body.includes("{{task}}"));
+	});
+
+	it("gives a build-review check step its own verification task, never the builder's prompt", () => {
+		const path = new URL("../../src/domains/agents/playbooks/build-review.md", import.meta.url);
+		const playbook = parsePlaybook(readFileSync(path, "utf8"), path.pathname);
+		const vars = { task: "Add clamp(x, lo, hi) to src/math.js" };
+		const p = compileFleetExecutionPlan({
+			playbook,
+			vars,
+			task: renderPlaybookPrompt(playbook.body, vars),
+			resolveAgent: (context) =>
+				context.gateRole === "reviewer"
+					? {
+							requestedAuthority: "read-only",
+							approvedAuthority: "read-only",
+							expectedResultContract: "review-verdict",
+							executionRole: "reviewer",
+						}
+					: {
+							requestedAuthority: "workspace-edit",
+							approvedAuthority: "workspace-edit",
+							expectedResultContract: "mutation-report",
+							executionRole: "builder",
+						},
+		});
+		const task = (id: string): string => {
+			const found = p.steps.find((candidate) => candidate.id === id);
+			return found?.kind === "agent" ? found.task : "";
+		};
+		ok(task("build").startsWith("Implement this change"));
+		// The whole chain runs in one kept task worktree, so `fleet land <root>` lands it.
+		strictEqual(p.isolation, "worktree");
+		// The approval card says where the run writes and how it lands; a writing step reads `worktree`.
+		const byId = new Map(p.steps.map((entry) => [entry.id, entry]));
+		const preview = {
+			name: "build-review",
+			planHash: "approval",
+			plan: p,
+			waves: p.waves.map((ids, index) => ({
+				index,
+				steps: ids.flatMap((id) => {
+					const entry = byId.get(id);
+					if (entry?.kind !== "agent") return [];
+					return [{ kind: "agent", stepId: id, agentId: entry.agentId, scope: entry.scope, writes: entry.writes }];
+				}),
+			})),
+			budget: { playbookUsd: null, ceilingUsd: 0, currentUsd: 0 },
+		} as unknown as FleetRunPreview;
+		// Each step's scope and write boundary are provenance the card shows at detailed.
+		setPresentationTier("detailed");
+		const card = formatFleetRunApprovalBody({ ok: true, preview }, 200, 0, 400).map(stripTerminalSequences);
+		setPresentationTier("standard");
+		match(
+			card.join(" ").replace(/\s+/g, " "),
+			/one task worktree cut from HEAD on pancode\/task\/<root>, kept after the run; this checkout does not change until pancode fleet land <root> lands it/,
+		);
+		// Each step's row is followed by its route and scope rows.
+		const factsOf = (id: string): string[] => {
+			const at = card.findIndex((line) => new RegExp(`^w\\d+\\s+${id.replace(/\./g, "\\.")}\\s`).test(line));
+			return at < 0 ? [] : card.slice(at, at + 4);
+		};
+		ok(
+			factsOf("build").some((line) => line.includes("worktree ·")),
+			card.join("\n"),
+		);
+		ok(
+			factsOf("review.check.1").some((line) => line.includes("readonly ·")),
+			card.join("\n"),
+		);
+		// `playbook graph` says the same: plan isolation, and the writing steps' scope.
+		const printed: string[] = [];
+		const write = process.stdout.write;
+		process.stdout.write = ((chunk: string | Uint8Array) => {
+			printed.push(String(chunk));
+			return true;
+		}) as typeof process.stdout.write;
+		let exit: number;
+		try {
+			exit = runPlaybookGraph(["build-review", "--json"]);
+		} finally {
+			process.stdout.write = write;
+		}
+		strictEqual(exit, 0, printed.join(""));
+		const graph = JSON.parse(printed.join("")) as {
+			isolation?: string;
+			waves: Array<{ steps: Array<{ id: string; scope: string }> }>;
+			loops: Array<{ check: Array<{ scope: string }>; repair: Array<{ scope: string }> }>;
+		};
+		strictEqual(graph.isolation, "worktree");
+		strictEqual(graph.waves[0]?.steps[0]?.scope, "worktree");
+		strictEqual(graph.loops[0]?.check[0]?.scope, "readonly");
+		strictEqual(graph.loops[0]?.repair[0]?.scope, "worktree");
+		ok(task("review.repair.1").startsWith("Implement this change"));
+		for (const [id, authors] of [
+			["review.check.1", "`build` (coder)"],
+			["review.check.2", "`build` (coder), `review.repair.1` (coder)"],
+		] as const) {
+			// What `fleet view` shows as the step's task is the verification brief.
+			const brief = fleetNodeTaskBrief(task(id));
+			ok(brief.startsWith("Verify the change"), brief);
+			ok(!brief.includes("Implement this change"), brief);
+			ok(!brief.includes("If it fails you"), brief);
+			ok(brief.includes(vars.task), brief);
+			ok(brief.includes(authors), brief);
+			ok(task(id).includes("`review-verdict`"));
+		}
+	});
+
+	it("names every allowed value when a playbook refuses a scope or another literal", () => {
+		const raw = (scope: string, onFailure = "stop") =>
+			[
+				"---",
+				"version: 3",
+				"name: wt",
+				"steps:",
+				`  - {kind: agent, id: build, agent: coder, scope: ${scope}, dependencies: []}`,
+				"maxWorkers: 1",
+				`onFailure: ${onFailure}`,
+				"---",
+				"{{task}}",
+			].join("\n");
+		throws(
+			() => parsePlaybook(raw("isolated"), "wt.md"),
+			/: \/steps\/0\/scope: must be one of 'readonly', 'workspace', 'worktree'$/,
+		);
+		throws(() => parsePlaybook(raw("worktree", "halt"), "wt.md"), /: \/onFailure: must be one of 'stop', 'continue'$/);
+		// A code step is judged as a code step, not as the agent shape the union lists first.
+		throws(
+			() =>
+				parsePlaybook(
+					raw("isolated").replace("kind: agent, id: build, agent: coder", "kind: code, id: build, command: test"),
+					"wt.md",
+				),
+			/: \/steps\/0\/scope: must be one of 'readonly', 'workspace', 'worktree'$/,
+		);
+		throws(
+			() =>
+				parsePlaybook(
+					raw("worktree")
+						.replace("agent: coder, scope: worktree", "agent: coder, scope: workspace")
+						.replace(
+							"\nmaxWorkers",
+							"\n  - {kind: agent, id: other, agent: coder, scope: worktree, dependencies: []}\nmaxWorkers",
+						),
+					"wt.md",
+				),
+			/step 'other' has scope 'worktree' but step 'build' has scope 'workspace'/,
+		);
+	});
+
+	it("admission failure launches no work, and invalid replay releases the reservation", async () => {
+		const f = fixture();
+		f.adapter.preflight = () => {
+			throw new Error("admission denied");
+		};
+		await rejects(executePlan(plan(), f.adapter), /admission denied/u);
+		deepStrictEqual(f.log, []);
+		const replay = fixture();
+		replay.adapter.replayed = new Map([["a", result("a", false)]]);
+		await rejects(executePlan(plan(), replay.adapter), /not a completed successful step/u);
+		deepStrictEqual(replay.log, ["release-unconsumed", "release"]);
+	});
+	for (const before of [false, true]) {
+		it(`counts canceled code verification accurately when aborted ${before ? "before" : "during"} the check`, async () => {
+			const f = fixture();
+			const controller = new AbortController();
+			let checks = 0;
+			f.adapter.runCode = async (step) => {
+				checks += 1;
+				controller.abort();
+				return result(step.id, false);
+			};
+			const p = compileExecutionPlan({
+				topology: "fleet",
+				rootTask: "code check",
+				maxWorkers: 1,
+				onFailure: "stop",
+				loops: [{ id: "suite", checkKind: "code", maxAttempts: 1, checkStepIds: ["suite.check.1"], repairStepIds: [] }],
+				steps: [
+					{
+						kind: "code",
+						id: "suite.check.1",
+						commandId: "test",
+						scope: "readonly",
+						dependencies: [],
+						loop: { loopId: "suite", role: "check", attempt: 1 },
+					},
+				],
+			});
+			if (before) controller.abort();
+			const outcome = await executePlan(p, f.adapter, controller.signal);
+			strictEqual(checks, before ? 0 : 1);
+			deepStrictEqual(outcome.loops[0], {
+				loopId: "suite",
+				resolved: false,
+				attempts: before ? 0 : 1,
+				repairs: 0,
+				reason: before ? "loop_not_reached" : "loop_canceled",
+			});
+		});
+	}
+
+	it("preserves a check that finished before a sibling was interrupted", async () => {
+		const f = fixture();
+		const controller = new AbortController();
+		const checked = deferred<void>();
+		f.adapter.runCode = async (step) => {
+			if (step.id === "suite.check.1") {
+				checked.resolve();
+				return result(step.id);
+			}
+			await checked.promise;
+			controller.abort();
+			return result(step.id, false);
+		};
+		const p = compileExecutionPlan({
+			topology: "fleet",
+			rootTask: "code check with sibling",
+			maxWorkers: 2,
+			onFailure: "stop",
+			loops: [{ id: "suite", checkKind: "code", maxAttempts: 1, checkStepIds: ["suite.check.1"], repairStepIds: [] }],
+			steps: [
+				{
+					kind: "code",
+					id: "suite.check.1",
+					commandId: "test",
+					scope: "readonly",
+					dependencies: [],
+					loop: { loopId: "suite", role: "check", attempt: 1 },
+				},
+				{ kind: "code", id: "sibling", commandId: "test", scope: "readonly", dependencies: [] },
+			],
+		});
+		const outcome = await executePlan(p, f.adapter, controller.signal);
+		strictEqual(outcome.results.get("suite.check.1")?.succeeded, true);
+		strictEqual(outcome.results.get("sibling")?.succeeded, false);
+		deepStrictEqual(outcome.loops[0], {
+			loopId: "suite",
+			resolved: true,
+			attempts: 1,
+			repairs: 0,
+			reason: "resolved",
+		});
+	});
+
+	it("canceled agent verification cannot publish a passing loop decision", async () => {
+		const f = fixture();
+		const controller = new AbortController();
+		const terminal = deferred<ExecutionStepResult>();
+		let decisions = 0;
+		f.adapter.decideLoop = async () => {
+			decisions += 1;
+			return { resolved: true, findings: null };
+		};
+		const p = compileExecutionPlan({
+			topology: "fleet",
+			rootTask: "agent gate",
+			maxWorkers: 1,
+			onFailure: "stop",
+			loops: [{ id: "gate", checkKind: "agent", maxAttempts: 1, checkStepIds: ["a"], repairStepIds: [] }],
+			steps: [{ ...step("a"), loop: { loopId: "gate", role: "check", attempt: 1 } }, step("dependent", ["a"])],
+		});
+		const pending = executePlan(p, f.adapter, controller.signal);
+		await f.entered.get("a")?.promise;
+		controller.abort();
+		f.launches.get("a")?.resolve({ assignmentId: "a", result: terminal.promise });
+		await f.canceled.get("a")?.promise;
+		terminal.resolve(result("a"));
+		const outcome = await pending;
+		strictEqual(decisions, 0);
+		strictEqual(outcome.loops[0]?.resolved, false);
+		strictEqual(outcome.loops[0]?.attempts, 1);
+		strictEqual(outcome.loops[0]?.reason, "loop_canceled");
+		strictEqual(f.log.includes("launch:dependent"), false);
+	});
+
+	it("revalidates stale code verification before a dependent consumes its handoff", async () => {
+		const f = fixture();
+		let checks = 0;
+		const log: string[] = [];
+		f.adapter.run = async (step) => {
+			log.push(step.id);
+			return { assignmentId: step.id, result: Promise.resolve(result(step.id)) };
+		};
+		f.adapter.runCode = async (step) => {
+			checks += 1;
+			log.push(step.id);
+			return result(step.id);
+		};
+		const p = compileExecutionPlan({
+			topology: "fleet",
+			rootTask: "staleness",
+			maxWorkers: 1,
+			onFailure: "stop",
+			steps: [
+				{ kind: "code", id: "verify", commandId: "verify", scope: "readonly", dependencies: [], verification: true },
+				{ ...step("mutate", ["verify"]), scope: "workspace" },
+				step("dependent", ["mutate"]),
+			],
+		});
+		const outcome = await executePlan(p, f.adapter);
+		strictEqual(checks, 2);
+		deepStrictEqual(log, ["verify", "mutate", "verify", "dependent"]);
+		deepStrictEqual(outcome.revalidated, ["verify"]);
+	});
+
+	it("revalidates a verification before every later workspace wave, however many the plan declares", async () => {
+		const f = fixture();
+		const log: string[] = [];
+		f.adapter.run = async (step) => {
+			log.push(step.id);
+			return { assignmentId: step.id, result: Promise.resolve(result(step.id)) };
+		};
+		f.adapter.runCode = async (step) => {
+			log.push(step.id);
+			return result(step.id);
+		};
+		const chain = ["m0", "m1", "m2", "m3", "m4"];
+		const p = compileExecutionPlan({
+			topology: "fleet",
+			rootTask: "staleness",
+			maxWorkers: 1,
+			onFailure: "stop",
+			steps: [
+				{ kind: "code", id: "verify", commandId: "verify", scope: "readonly", dependencies: [], verification: true },
+				...chain.map((id, index) => ({
+					...step(id, [index === 0 ? "verify" : (chain[index - 1] as string)]),
+					scope: "workspace" as const,
+				})),
+			],
+		});
+		const outcome = await executePlan(p, f.adapter);
+		deepStrictEqual(log, ["verify", "m0", "verify", "m1", "verify", "m2", "verify", "m3", "verify", "m4"]);
+		strictEqual(outcome.revalidated.length, 4);
+		ok(chain.every((id) => outcome.results.get(id)?.succeeded === true));
+	});
+
+	it("runs a plan step's dependents only after the tasks it generated", async () => {
+		const f = fixture();
+		const log: string[] = [];
+		f.adapter.run = async (step) => {
+			log.push(step.id);
+			return { assignmentId: step.id, result: Promise.resolve(result(step.id)) };
+		};
+		f.adapter.runCode = async (step) => {
+			log.push(step.id);
+			return result(step.id);
+		};
+		f.adapter.beginWriteBoundary = () => {};
+		f.adapter.verifyWriteBoundary = async (window) => ({ window, violated: false, failedStepIds: [], detail: null });
+		const tasks = ["t1", "t2", "t3"];
+		f.adapter.spliceAfter = (current, parent) =>
+			spliceExecutionPlan(
+				current,
+				parent.id,
+				tasks.map((id) => ({
+					id,
+					agentId: "scout",
+					task: `Write ${id}`,
+					dependencies: [],
+					writes: [`work/${id}.md`],
+					requestedAuthority: "workspace-edit",
+					approvedAuthority: "workspace-edit",
+					expectedResultContract: "mutation-report",
+					executionRole: "builder",
+				})),
+			);
+		const p = compileExecutionPlan({
+			topology: "fleet",
+			rootTask: "plan then build on it",
+			maxWorkers: 3,
+			writers: 1,
+			onFailure: "stop",
+			steps: [
+				{
+					...step("next"),
+					scope: "workspace",
+					writes: ["work/"],
+					plan: { roster: ["scout"], maxTasks: 3, proposals: false },
+				},
+				{ kind: "code", id: "story", commandId: "story", scope: "workspace", writes: ["story/"], dependencies: ["next"] },
+			],
+		});
+		await executePlan(p, f.adapter);
+		strictEqual(log[0], "next");
+		strictEqual(log.at(-1), "story", log.join(" -> "));
+		deepStrictEqual([...log.slice(1, -1)].sort(), tasks);
+	});
+
+	it("skips a plan step's dependent when a task it generated fails under onFailure continue", async () => {
+		const f = fixture();
+		const log: string[] = [];
+		f.adapter.run = async (step) => {
+			log.push(step.id);
+			return { assignmentId: step.id, result: Promise.resolve(result(step.id, step.id !== "t2")) };
+		};
+		f.adapter.runCode = async (step) => {
+			log.push(step.id);
+			return result(step.id);
+		};
+		f.adapter.beginWriteBoundary = () => {};
+		f.adapter.verifyWriteBoundary = async (window) => ({ window, violated: false, failedStepIds: [], detail: null });
+		f.adapter.spliceAfter = (current, parent) =>
+			spliceExecutionPlan(
+				current,
+				parent.id,
+				["t1", "t2"].map((id) => ({
+					id,
+					agentId: "scout",
+					task: `Write ${id}`,
+					dependencies: [],
+					writes: [`work/${id}.md`],
+					requestedAuthority: "workspace-edit",
+					approvedAuthority: "workspace-edit",
+					expectedResultContract: "mutation-report",
+					executionRole: "builder",
+				})),
+			);
+		const p = compileExecutionPlan({
+			topology: "fleet",
+			rootTask: "plan then build on it",
+			maxWorkers: 2,
+			writers: 1,
+			onFailure: "continue",
+			steps: [
+				{
+					...step("next"),
+					scope: "workspace",
+					writes: ["work/"],
+					plan: { roster: ["scout"], maxTasks: 2, proposals: false },
+				},
+				{ kind: "code", id: "story", commandId: "story", scope: "workspace", writes: ["story/"], dependencies: ["next"] },
+			],
+		});
+		const outcome = await executePlan(p, f.adapter);
+		ok(!log.includes("story"), log.join(" -> "));
+		ok(outcome.skipped.includes("story"), JSON.stringify(outcome.skipped));
+	});
+
+	it("opens a ledger only for agent steps that can run together", async () => {
+		const ledgers = async (maxWorkers: number, steps: ExecutionPlanAgentStep[]) => {
+			const seen: Array<string | undefined> = [];
+			const f = fixture();
+			f.adapter.run = async (s, _handoffs, _reservation, ledger) => {
+				seen.push(ledger?.id);
+				return { assignmentId: s.id, result: Promise.resolve(result(s.id)) };
+			};
+			await executePlan(
+				compileExecutionPlan({ topology: "parallel", rootTask: "ledger", maxWorkers, onFailure: "stop", steps }),
+				f.adapter,
+			);
+			return seen;
+		};
+		const ordered = await ledgers(2, [step("a"), step("b", ["a"])]);
+		deepStrictEqual(ordered, [undefined, undefined]);
+		const serial = await ledgers(1, [step("a"), step("b")]);
+		deepStrictEqual(serial, [undefined, undefined]);
+		const parallel = await ledgers(2, [step("a"), step("b")]);
+		ok(parallel.every((id) => id !== undefined && id === parallel[0]));
+	});
+});

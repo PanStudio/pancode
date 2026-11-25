@@ -1,0 +1,311 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import chalk from "chalk";
+import { loadDomains } from "../core/domain-loader.js";
+import { formatCount } from "../core/format-time.js";
+import { ConfigDomainModule } from "../domains/config/index.js";
+import { ensurePancodeState } from "../domains/lifecycle/index.js";
+import type { ProvidersContract, TargetStatus } from "../domains/providers/contract.js";
+import {
+	modelCandidatesForStatus,
+	modelListNoteForStatus,
+	ProvidersDomainModule,
+	resolveModelCapabilities,
+	resolveRuntimeTarget,
+} from "../domains/providers/index.js";
+import { printError } from "./shared.js";
+
+export interface ModelRow {
+	targetId: string;
+	runtimeId: string;
+	modelId: string;
+	label?: string;
+	createdAt?: string;
+	source: string;
+	caps: string;
+	contextWindow: number;
+	maxTokens: number;
+	reasoning: boolean;
+	/** The thinking levels the route offers, from the resolution ACP advertises; absent when the route does not resolve. */
+	thinkingLevels?: string[];
+	state: string;
+	/** Present when this target's list is not the provider's live answer: what it is instead, and why. */
+	note?: string;
+}
+
+const HELP = `pancode models [search] [--target <id>] [--json] [--offline]
+
+List the models each configured target serves. A target whose provider lists
+its models live is asked; when it cannot be asked or does not answer, the list
+is the cached list or the provider catalog, with a note saying why.
+
+Options:
+  --offline   use cached/configured/catalog model hints without probing targets
+`;
+
+interface ModelArgs {
+	json: boolean;
+	offline: boolean;
+	target?: string;
+	search?: string;
+	help: boolean;
+}
+
+function parseModelArgs(args: ReadonlyArray<string>): ModelArgs {
+	const parsed: ModelArgs = { json: false, offline: false, help: false };
+	for (let i = 0; i < args.length; i += 1) {
+		const arg = args[i];
+		if (arg === undefined) continue;
+		if (arg === "--help" || arg === "-h") {
+			parsed.help = true;
+			continue;
+		}
+		if (arg === "--json") {
+			parsed.json = true;
+			continue;
+		}
+		if (arg === "--offline") {
+			parsed.offline = true;
+			continue;
+		}
+		if (arg === "--target") {
+			const value = args[i + 1];
+			if (!value) throw new Error("--target requires a value");
+			parsed.target = value;
+			i += 1;
+			continue;
+		}
+		if (arg?.startsWith("-")) throw new Error(`unknown flag: ${arg}`);
+		if (parsed.search) throw new Error("models accepts at most one search term");
+		parsed.search = arg;
+	}
+	return parsed;
+}
+
+export async function runModelsCommand(args: ReadonlyArray<string>): Promise<number> {
+	let parsed: ModelArgs;
+	try {
+		parsed = parseModelArgs(args);
+	} catch (error) {
+		printError(error instanceof Error ? error.message : String(error));
+		process.stderr.write(HELP);
+		return 2;
+	}
+	if (parsed.help) {
+		process.stdout.write(HELP);
+		return 0;
+	}
+
+	ensurePancodeState();
+	const loaded = await loadDomains([ConfigDomainModule, ProvidersDomainModule]);
+	const providers = loaded.getContract("providers");
+	if (!providers) {
+		process.stderr.write("models: provider domain not loaded\n");
+		await loaded.stop();
+		return 1;
+	}
+	if (!parsed.offline) {
+		try {
+			await providers.probeAllLive();
+		} catch (err) {
+			process.stderr.write(`models: live probe failed: ${err instanceof Error ? err.message : String(err)}\n`);
+		}
+	}
+	const entries = providers.list();
+	if (parsed.target !== undefined && !entries.some((e) => e.target.id === parsed.target)) {
+		printError(`no target with id ${parsed.target}. ${targetCount(entries.length)} configured.`);
+		await loaded.stop();
+		return 2;
+	}
+	const filtered = parsed.target ? entries.filter((e) => e.target.id === parsed.target) : entries;
+	const rows = collectRows(filtered, providers).filter((row) => matchesSearch(row, parsed.search));
+
+	if (parsed.json) {
+		process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
+	} else if (rows.length === 0) {
+		process.stdout.write(`${emptyModelsMessage(parsed, entries.length, filtered.length)}\n`);
+	} else {
+		renderRows(rows);
+	}
+	await loaded.stop();
+	return 0;
+}
+
+function collectRows(entries: ReadonlyArray<TargetStatus>, providers: ProvidersContract): ModelRow[] {
+	const rows: ModelRow[] = [];
+	for (const status of entries) {
+		const runtimeId = status.runtime?.id ?? status.target.runtime;
+		const candidates = modelCandidatesForStatus(status);
+		const note = modelListNoteForStatus(status);
+		if (candidates.length === 0) {
+			const caps = resolveRowCapabilities(status, status.target.defaultModel ?? null, providers);
+			rows.push({
+				targetId: status.target.id,
+				runtimeId,
+				modelId: "(no models)",
+				source: status.discoveredModelsSource ?? "none",
+				state: "-",
+				...formatCapabilities(caps),
+			});
+			continue;
+		}
+		for (const candidate of candidates) {
+			const modelId = candidate.id;
+			const caps = resolveRowCapabilities(status, modelId, providers);
+			const thinkingLevels = routeThinkingLevels(status, modelId, providers);
+			rows.push({
+				targetId: status.target.id,
+				runtimeId,
+				modelId,
+				...(candidate.label ? { label: candidate.label } : {}),
+				...(candidate.createdAt ? { createdAt: candidate.createdAt } : {}),
+				source: candidate.source,
+				state: candidate.loadState ?? "-",
+				...formatCapabilities(caps),
+				...(thinkingLevels ? { thinkingLevels } : {}),
+				...(note ? { note } : {}),
+			});
+		}
+	}
+	return rows;
+}
+
+function resolveRowCapabilities(status: TargetStatus, modelId: string | null, providers: ProvidersContract) {
+	return resolveModelCapabilities(status, modelId, providers.knowledgeBase, {
+		detectedReasoning: modelId ? providers.getDetectedReasoning(status.target.id, modelId) : null,
+	});
+}
+
+/**
+ * The thinking levels a route offers, resolved as ACP resolves its thinking options (bt-20 papercut 1); a target only
+ * dispatch can drive resolves for dispatch.
+ */
+function routeThinkingLevels(
+	status: TargetStatus,
+	modelId: string,
+	providers: ProvidersContract,
+): string[] | undefined {
+	for (const use of ["orchestrator", "dispatch"] as const) {
+		const resolved = resolveRuntimeTarget(providers, { targetId: status.target.id, wireModelId: modelId, use });
+		if (resolved.ok) return [...resolved.target.modelRuntime.thinking.supportedLevels];
+	}
+	return undefined;
+}
+
+function formatCapabilities(
+	c: ReturnType<typeof resolveRowCapabilities>,
+): Pick<ModelRow, "caps" | "contextWindow" | "maxTokens" | "reasoning"> {
+	return {
+		caps: capabilityBadges(c),
+		contextWindow: c.contextWindow,
+		maxTokens: c.maxTokens,
+		reasoning: c.reasoning,
+	};
+}
+
+function capabilityBadges(c: ReturnType<typeof resolveRowCapabilities>): string {
+	const badge = (on: boolean, letter: string): string => (on ? letter : "-");
+	return [
+		badge(c.chat, "C"),
+		badge(c.tools, "T"),
+		badge(c.reasoning, "R"),
+		badge(c.vision, "V"),
+		badge(c.embeddings, "E"),
+		badge(c.rerank, "K"),
+		badge(c.fim, "F"),
+	].join("");
+}
+
+function compactTokenCount(value: number): string {
+	return Number.isFinite(value) && value > 0 ? formatCount(value) : "-";
+}
+
+function emptyModelsMessage(
+	args: Pick<ModelArgs, "search" | "target">,
+	configuredTargets: number,
+	matchedTargets: number,
+): string {
+	if (configuredTargets === 0) {
+		return "no targets configured; run `pancode configure` to add one.";
+	}
+	if (args.target !== undefined && matchedTargets === 0) {
+		return `no target with id ${args.target}. ${targetCount(configuredTargets)} configured.`;
+	}
+	if (args.search !== undefined) {
+		return `no models matched "${args.search}" across ${targetCount(matchedTargets)}.`;
+	}
+	return `no models found across ${targetCount(matchedTargets)}.`;
+}
+
+function targetCount(n: number): string {
+	return `${n} target${n === 1 ? "" : "s"}`;
+}
+
+const MODEL_ID_WIDTH_CAP = 56;
+const COLUMN_GAP = "  ";
+
+function truncateModelId(id: string): string {
+	if (id.length <= MODEL_ID_WIDTH_CAP) return id;
+	return `${id.slice(0, MODEL_ID_WIDTH_CAP - 3)}...`;
+}
+
+function modelTableLines(rows: ReadonlyArray<ModelRow>): string[] {
+	const includeState = rows.some((row) => row.state && row.state !== "-");
+	const includeLabel = rows.some((row) => row.label && row.label !== row.modelId);
+	const headers = includeState
+		? [
+				"target",
+				"runtime",
+				"model",
+				...(includeLabel ? ["label"] : []),
+				"source",
+				"state",
+				"caps",
+				"ctx",
+				"max",
+				"thinking",
+			]
+		: ["target", "runtime", "model", ...(includeLabel ? ["label"] : []), "source", "caps", "ctx", "max", "thinking"];
+	const cells = rows.map((row) => {
+		const base = [row.targetId, row.runtimeId, truncateModelId(row.modelId)];
+		if (includeLabel) base.push(row.label ?? "-");
+		base.push(row.source);
+		if (includeState) base.push(row.state || "-");
+		base.push(
+			row.caps,
+			compactTokenCount(row.contextWindow),
+			compactTokenCount(row.maxTokens),
+			row.thinkingLevels?.join(",") || "-",
+		);
+		return base;
+	});
+	const widths = headers.map((h, col) => Math.max(h.length, ...cells.map((cell) => cell[col]?.length ?? 0)));
+	const formatLine = (values: ReadonlyArray<string>): string =>
+		values
+			.map((value, col) => value.padEnd(widths[col] ?? 0))
+			.join(COLUMN_GAP)
+			.trimEnd();
+	const notes = new Map<string, string>();
+	for (const row of rows) if (row.note && !notes.has(row.targetId)) notes.set(row.targetId, row.note);
+	const noteLines = [...notes].map(([targetId, note]) => `${targetId}: ${note}`);
+	return [formatLine(headers), ...cells.map(formatLine), ...(noteLines.length > 0 ? ["", ...noteLines] : [])];
+}
+
+function renderRows(rows: ReadonlyArray<ModelRow>): void {
+	const [header, ...body] = modelTableLines(rows);
+	process.stdout.write(`${chalk.bold(header ?? "")}\n`);
+	for (const line of body) {
+		process.stdout.write(`${line}\n`);
+	}
+}
+
+function matchesSearch(row: ModelRow, search: string | undefined): boolean {
+	if (!search) return true;
+	const needle = search.toLowerCase();
+	return (
+		row.targetId.toLowerCase().includes(needle) ||
+		row.runtimeId.toLowerCase().includes(needle) ||
+		row.modelId.toLowerCase().includes(needle) ||
+		row.state.toLowerCase().includes(needle)
+	);
+}

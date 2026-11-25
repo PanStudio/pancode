@@ -1,0 +1,433 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * `/rewind`: the workspace snapshots of this session, newest first, and the
+ * confirmation that restores one. `/tree` rewinds the conversation; this
+ * rewinds files. The snapshot service lives in `src/domains/workspace-snapshots/`;
+ * this module only renders what it reports.
+ */
+
+import { tierPolicy } from "../../core/presentation-tier.js";
+import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
+import type {
+	RewindOutcome,
+	RewindPlan,
+	RewindRef,
+	SnapshotDifferences,
+	SnapshotPin,
+	WorkspaceSnapshotRecord,
+} from "../../domains/workspace-snapshots/index.js";
+import type { Component, OverlayHandle, TUI } from "../../engine/tui.js";
+import { isKeyRelease, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../../engine/tui.js";
+import { displaySafe } from "../display-safe.js";
+import { clockLocal, dateLocal } from "../format-time.js";
+import {
+	buildResponsiveHint,
+	FocusBox,
+	type RowBudgetedBody,
+	showPancodeOverlayFrame,
+	windowRows,
+} from "../overlay-frame.js";
+import {
+	chip,
+	chipRow,
+	chipRows,
+	choiceRows,
+	commandBlock,
+	type Fact,
+	factRows,
+	GLYPH,
+	pancodeTheme,
+	positionRow,
+	sectionRule,
+	statusChip,
+	titleRow,
+} from "../theme/index.js";
+import { type ListOverlayHandle, openListOverlay } from "./list-overlay.js";
+import { detailWithHead, type ListOverlayItem } from "./list-overlay-model.js";
+
+export const REWIND_EMPTY =
+	"No workspace snapshots in this session yet. PanCode takes one before it first changes files in a turn and before every destructive command, in a Git work tree with safety.snapshots on.";
+
+export const REWIND_TURN_RUNNING =
+	"Panos is working, so nothing restores now. Wait for the turn to finish, or close this and stop it.";
+
+/** Differences from the work tree: still counting, counted, or not countable. */
+export type RewindCounts = "pending" | SnapshotDifferences;
+
+/**
+ * How far the work tree has moved from a snapshot, as one chip. The count is
+ * the fact the operator picks a snapshot by, so it carries the outcome glyph:
+ * nothing to restore reads as a check, a count still being taken says so, and
+ * a count that could not be taken says so instead of printing a question mark.
+ */
+function differenceChip(n: number, counts: RewindCounts): string {
+	const theme = pancodeTheme();
+	if (counts === "pending") return chip(theme, "counting differences", "muted", GLYPH.running);
+	if (counts.kind === "unavailable") return statusChip(theme, "warning", "not counted");
+	const count = counts.counts.get(n);
+	if (count === undefined) return statusChip(theme, "warning", "not counted");
+	if (count === 0) return statusChip(theme, "ok", "same as now");
+	return chip(theme, `${count} file${count === 1 ? "" : "s"} differ${count === 1 ? "s" : ""}`, "neutral");
+}
+
+/** One pinned ref as the operator reads it: what it is and the commit it holds. */
+function pinLabel(pin: SnapshotPin): string {
+	const short = pin.sha.slice(0, 12);
+	if (pin.kind === "head") return `HEAD ${short} ${pin.branch !== undefined ? `on ${pin.branch}` : "(detached)"}`;
+	if (pin.kind === "stash") return `stash@{${pin.index}} ${short}${pin.message.length > 0 ? ` ${pin.message}` : ""}`;
+	return `branch ${pin.name} ${short}`;
+}
+
+const REF_STATE_LABEL: Readonly<Record<RewindRef["state"], string>> = {
+	"in-place": "still in place",
+	moved: "moved since",
+	gone: "gone",
+	unknown: "not checked",
+};
+
+const FACT_OPTIONS = { labelRole: "fieldName" as const, stack: "never" as const };
+/** Paths or refs a detailed pane lists before counting the rest. */
+const DETAIL_LIST_SHOWN = 12;
+/** Paths a standard pane lists before counting the rest; compact states the count alone. */
+const KEY_LIST_SHOWN = 3;
+
+/** What a snapshot was taken before, in words; reasons the service does not name pass through. */
+const SNAPSHOT_REASON_WORDS: Readonly<Record<string, string>> = {
+	"turn-start": "before a turn's changes",
+	destructive: "before a destructive call",
+};
+/** PanCode's own bookkeeping tools: naming one would not tell the operator what the turn changed. */
+const INTERNAL_SNAPSHOT_TOOLS: ReadonlySet<string> = new Set(["store"]);
+
+export function snapshotWhat(record: Pick<WorkspaceSnapshotRecord, "reason" | "tool">): string {
+	const reason = Object.hasOwn(SNAPSHOT_REASON_WORDS, record.reason)
+		? (SNAPSHOT_REASON_WORDS[record.reason] ?? record.reason)
+		: record.reason;
+	if (record.tool === undefined || INTERNAL_SNAPSHOT_TOOLS.has(record.tool)) return reason;
+	return `${reason} ${GLYPH.sep} ${record.tool}`;
+}
+
+/**
+ * Rows for the snapshot list, one per snapshot, newest first as the service
+ * returns them. The clock is enough while every snapshot is from one day; a
+ * list that spans days carries the date too, so two snapshots an hour apart on
+ * different days never read as one hour apart.
+ */
+function rewindListItems(
+	raw: ReadonlyArray<WorkspaceSnapshotRecord>,
+	counts: RewindCounts,
+	turnRunning: () => boolean,
+): ListOverlayItem[] {
+	// Reasons, tool names, skipped paths and stash messages are text from the
+	// work tree; they are neutralized once here.
+	const records = displaySafe(raw);
+	const days = new Set(records.map((record) => dateLocal(record.at)));
+	return records.map((record) => {
+		const when = days.size > 1 ? `${dateLocal(record.at)} ${clockLocal(record.at)}` : clockLocal(record.at);
+		const what = snapshotWhat(record);
+		return {
+			id: String(record.n),
+			label: `#${record.n} ${when} ${what}`,
+			cells: { lead: `#${record.n}`, text: `${when}  ${what}` },
+			get meta() {
+				return differenceChip(record.n, counts);
+			},
+			...detailWithHead((width) => {
+				const theme = pancodeTheme();
+				// Compact keeps the outcome and anything adverse; standard adds the key
+				// facts; detailed adds the raw reason, the call id, the ref and every list.
+				const detail = tierPolicy().pickerDetail;
+				const listShown = detail === "pane" ? DETAIL_LIST_SHOWN : detail === "facts" ? KEY_LIST_SHOWN : 0;
+				const facts: Fact[] = [];
+				if (detail !== "status") facts.push({ label: "Taken", value: `${dateLocal(record.at)} ${clockLocal(record.at)}` });
+				if (detail === "pane") facts.push({ label: "Reason", value: record.reason });
+				if (record.tool !== undefined && detail !== "status")
+					facts.push({
+						label: "Before",
+						value: `${record.tool}${record.toolCallId && detail === "pane" ? ` (${record.toolCallId})` : ""}`,
+					});
+				if (counts !== "pending" && counts.kind === "unavailable")
+					facts.push({ label: "Not counted", value: sanitizeCallTargetText(counts.reason), tone: "warning" });
+				if (detail !== "status")
+					facts.push({
+						label: "Commit",
+						value: `${record.commit.slice(0, 12)}${detail === "pane" && record.ref !== undefined ? ` (${record.ref})` : ""}`,
+					});
+				const skipped = record.skipped
+					.slice(0, listShown)
+					.map((skip) => `${skip.path} (${skip.why === "too-large" ? "untracked, over 16 MiB" : "nested repository"})`);
+				if (record.skipped.length > listShown)
+					skipped.push(
+						listShown === 0
+							? `${record.skipped.length} path${record.skipped.length === 1 ? "" : "s"}`
+							: `and ${record.skipped.length - listShown} more`,
+					);
+				if (skipped.length > 0) facts.push({ label: "Not in it", value: skipped.join("\n"), tone: "warning" });
+				const pinCount = record.pins?.length ?? 0;
+				if (detail === "pane") {
+					const pins = (record.pins ?? []).slice(0, DETAIL_LIST_SHOWN).map(pinLabel);
+					if (pinCount > DETAIL_LIST_SHOWN) pins.push(`and ${pinCount - DETAIL_LIST_SHOWN} more`);
+					if (pins.length > 0) facts.push({ label: "Pinned refs", value: pins.join("\n") });
+				} else if (detail === "facts" && pinCount > 0) {
+					facts.push({ label: "Pinned refs", value: String(pinCount) });
+				}
+				// The title, the difference and the Enter choice stay pinned while the
+				// facts scroll, so the key that previews is never scrolled away.
+				return {
+					head: [
+						titleRow(theme, `Snapshot #${record.n}`, width, { meta: `${dateLocal(record.at)} ${clockLocal(record.at)}` }),
+						...chipRows(theme, [differenceChip(record.n, counts), chip(theme, what, "muted")], width),
+						...(turnRunning()
+							? []
+							: choiceRows(
+									theme,
+									[
+										{
+											key: "Enter",
+											verb: "preview rewind",
+											consequence: "shows what restoring this snapshot would change; nothing is written until you confirm",
+											tone: "action",
+										},
+									],
+									width,
+								)),
+					],
+					rest: facts.length > 0 ? ["", ...factRows(theme, facts, width, FACT_OPTIONS)] : [],
+				};
+			}),
+		};
+	});
+}
+
+export interface OpenRewindListOptions {
+	records: ReadonlyArray<WorkspaceSnapshotRecord>;
+	/** A turn may still change these files, so the list reads but offers no restore while it runs. */
+	turnRunning?: () => boolean;
+	onSelect: (n: number) => void;
+	onClose: () => void;
+}
+
+export interface RewindListHandle extends ListOverlayHandle {
+	setCounts(counts: RewindCounts): void;
+}
+
+export function openRewindListOverlay(tui: TUI, options: OpenRewindListOptions): RewindListHandle {
+	const turnRunning = options.turnRunning ?? ((): boolean => false);
+	const handle = openListOverlay(tui, {
+		markerId: "rewind",
+		title: "Rewind workspace files",
+		items: rewindListItems(options.records, "pending", turnRunning),
+		layout: "split",
+		unit: "snapshots",
+		emptyMessage: REWIND_EMPTY,
+		hints: () => (turnRunning() ? [] : [{ key: "Enter", verb: "preview rewind", short: "preview", critical: true }]),
+		leadWithHints: true,
+		status: (width) => {
+			if (!turnRunning() || options.records.length === 0) return undefined;
+			const text = `${GLYPH.warn} ${REWIND_TURN_RUNNING}`;
+			const fitted = visibleWidth(text) <= width ? text : `${GLYPH.warn} Panos is working, so nothing restores now.`;
+			return pancodeTheme().fg("warning", truncateToWidth(fitted, width, GLYPH.ellipsis));
+		},
+		onSelect: (item) => options.onSelect(Number(item.id)),
+		onClose: options.onClose,
+	});
+	return Object.assign(handle, {
+		setCounts(counts: RewindCounts): void {
+			handle.setItems(rewindListItems(options.records, counts, turnRunning));
+		},
+	});
+}
+
+/** Rows the confirmation shows while the frame has not said how many it has. */
+const REWIND_DEFAULT_ROWS = 22;
+
+/**
+ * The confirmation body: what is restored, what is removed, what is left
+ * alone, each under a labelled rule that carries its count, and the exact
+ * recovery commands in a command block so nothing in them is ever cut. The
+ * path lists are the preview of the subject, so the tier bounds them
+ * (`decisionPreviewRows`); every count, ref, recovery command and the choice
+ * stay whole at every tier.
+ */
+function formatRewindConfirmRows(rawRecord: WorkspaceSnapshotRecord, rawPlan: RewindPlan, width: number): string[] {
+	const theme = pancodeTheme();
+	const pathsShown = tierPolicy().decisionPreviewRows;
+	const record = displaySafe(rawRecord);
+	const plan = displaySafe(rawPlan);
+	const contentWidth = Math.max(1, Math.floor(width));
+	const rows: string[] = [];
+	const wrap = (token: Parameters<typeof theme.fg>[0], text: string): void => {
+		rows.push(...wrapTextWithAnsi(theme.fg(token, text), contentWidth));
+	};
+	const changes = plan.restore.length + plan.remove.length;
+	rows.push(
+		chipRow(
+			theme,
+			[
+				chip(theme, `snapshot #${record.n}`, "accent"),
+				chip(theme, `${dateLocal(record.at)} ${clockLocal(record.at)}`, "muted"),
+				chip(theme, snapshotWhat(record), "muted"),
+			],
+			contentWidth,
+		),
+	);
+	if (changes === 0) {
+		wrap("info", "The workspace already matches this snapshot. Nothing would change.");
+	} else {
+		wrap(
+			"info",
+			`Restores ${plan.restore.length} file${plan.restore.length === 1 ? "" : "s"} and removes ${plan.remove.length}. A pre-rewind snapshot is taken first, so /rewind can undo this.`,
+		);
+	}
+	const group = (heading: string, paths: ReadonlyArray<string>): void => {
+		if (paths.length === 0) return;
+		rows.push(sectionRule(theme, contentWidth, heading, { meta: String(paths.length) }));
+		for (const rel of paths.slice(0, pathsShown)) wrap("menuDescription", `  ${rel}`);
+		if (paths.length > pathsShown) wrap("annotation", `  and ${paths.length - pathsShown} more`);
+	};
+	group("Restore", plan.restore);
+	group("Remove", plan.remove);
+	group(
+		"Left alone",
+		plan.kept.map((kept) => `${kept.path}: ${kept.why}`),
+	);
+	if (plan.refs.length > 0) {
+		rows.push(sectionRule(theme, contentWidth, "Pinned refs", { meta: String(plan.refs.length) }));
+		for (const ref of plan.refs) {
+			wrap("menuDescription", `  ${pinLabel(ref.pin)} ${GLYPH.sep} ${REF_STATE_LABEL[ref.state]}`);
+			if (ref.recover !== null)
+				rows.push(...commandBlock(theme, ref.recover, contentWidth - 2).map((line) => `  ${line}`));
+		}
+	}
+	rows.push(sectionRule(theme, contentWidth, "Never touched"));
+	wrap("annotation", "Gitignored files are never touched. Your Git index, HEAD and branches do not change.");
+	if (plan.refs.some((ref) => ref.recover !== null))
+		wrap("annotation", "A rewind restores files only. Run the commands shown to bring back a moved or deleted ref.");
+	return rows;
+}
+
+/** The rows the dock can show, windowed around `scroll`, with a position line while more remain. */
+function formatRewindConfirmBody(
+	record: WorkspaceSnapshotRecord,
+	plan: RewindPlan,
+	width: number,
+	scroll: number,
+	rows: number,
+): string[] {
+	const all = formatRewindConfirmRows(record, plan, width);
+	const budget = rows > 0 ? rows : REWIND_DEFAULT_ROWS;
+	const height = all.length > budget ? Math.max(1, budget - 1) : budget;
+	const { window, position } = windowRows(all, scroll, height);
+	if (position === null) return window;
+	return [
+		...window,
+		positionRow(pancodeTheme(), { ...position, keys: [`${GLYPH.upDown} scroll`] }, Math.max(1, Math.floor(width))),
+	];
+}
+
+export interface OpenRewindConfirmOptions {
+	record: WorkspaceSnapshotRecord;
+	plan: RewindPlan;
+	columns: number;
+	/** Enter: restore. Never called when the plan changes nothing. */
+	onConfirm: () => void;
+	/** Esc: nothing is written. */
+	onCancel: () => void;
+}
+
+/** The focus box hands the frame's row budget to the body it wraps. */
+class RewindFocusBox extends FocusBox implements RowBudgetedBody {
+	constructor(
+		private readonly body: RewindConfirmBody,
+		onInput: (data: string) => void,
+	) {
+		super(body, { onInput });
+	}
+
+	override setBodyRows(rows: number): void {
+		this.body.setBodyRows(rows);
+	}
+}
+
+class RewindConfirmBody implements Component, RowBudgetedBody {
+	scroll = 0;
+	private rows = 0;
+
+	constructor(
+		private readonly record: WorkspaceSnapshotRecord,
+		private readonly plan: RewindPlan,
+	) {}
+
+	setBodyRows(rows: number): void {
+		this.rows = Math.max(0, Math.floor(rows));
+	}
+
+	render(width: number): string[] {
+		return formatRewindConfirmBody(this.record, this.plan, width, this.scroll, this.rows);
+	}
+
+	invalidate(): void {}
+}
+
+export function openRewindConfirmOverlay(tui: TUI, options: OpenRewindConfirmOptions): OverlayHandle {
+	const body = new RewindConfirmBody(options.record, options.plan);
+	const actionable = options.plan.restore.length + options.plan.remove.length > 0;
+	let settled = false;
+	const focus = new RewindFocusBox(body, (data: string): void => {
+		if (settled || isKeyRelease(data)) return;
+		if (matchesKey(data, "up")) {
+			body.scroll = Math.max(0, body.scroll - 1);
+			tui.requestRender();
+			return;
+		}
+		if (matchesKey(data, "down")) {
+			body.scroll += 1;
+			tui.requestRender();
+			return;
+		}
+		if (matchesKey(data, "enter") && actionable) {
+			settled = true;
+			options.onConfirm();
+			return;
+		}
+		if (matchesKey(data, "escape")) {
+			settled = true;
+			options.onCancel();
+		}
+	});
+	return showPancodeOverlayFrame(tui, focus, {
+		anchor: "center",
+		width: Math.max(48, Math.min(110, options.columns - 4)),
+		markerId: "rewind-confirm",
+		title: `Rewind files to snapshot #${options.record.n}`,
+		...(actionable ? { approval: true, awaitingInput: true, tone: "decisionCue" as const } : {}),
+		footerHint: buildResponsiveHint(
+			[...(actionable ? [{ key: "Enter", verb: "restore files" }] : []), { key: GLYPH.upDown, verb: "scroll" }],
+			{ key: "Esc", verb: "back to snapshots, nothing changed", short: "back" },
+		),
+	});
+}
+
+/** One notice line for a finished rewind. */
+export function formatRewindOutcome(outcome: RewindOutcome): {
+	level: "success" | "warning" | "error";
+	text: string;
+} {
+	if (outcome.kind === "unavailable") return { level: "error", text: `/rewind: ${outcome.reason}` };
+	if (outcome.kind === "failed")
+		return {
+			level: "error",
+			text: `/rewind failed: ${outcome.reason}. Snapshot #${outcome.preRewind.n} holds the files from before the rewind.`,
+		};
+	const left = outcome.kept.length + outcome.failed.length;
+	const recover = outcome.refs.flatMap((ref) => (ref.recover !== null ? [`  ${ref.recover}`] : []));
+	const refs =
+		recover.length > 0
+			? `\nRefs pinned by snapshot #${outcome.n} have moved or are gone. Run these to bring them back:\n${recover.join("\n")}`
+			: "";
+	return {
+		level: outcome.failed.length > 0 || recover.length > 0 ? "warning" : "success",
+		text: `Rewound files to snapshot #${outcome.n}: restored ${outcome.restored.length}, removed ${outcome.removed.length}${left > 0 ? `, left ${left} alone` : ""}${outcome.failed.length > 0 ? ` (${outcome.failed.map((f) => `${f.path}: ${f.why}`).join("; ")})` : ""}. Snapshot #${outcome.preRewind.n} holds the files from before the rewind.${refs}`,
+	};
+}

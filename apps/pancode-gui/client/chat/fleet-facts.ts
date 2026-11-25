@@ -1,0 +1,495 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// The fleet taxonomy. `SessionSnapshot.fleet` is an append-only list of facts, and rendering it as
+// one row per fact with a JSON payload underneath is what the strip does today: five rows for one
+// dispatched run, none of them saying what the run is doing.
+//
+// This folds the feed into one row per `runId` and gives every fact type a label, a tone and a
+// sentence. Two rules carry the weight.
+//
+//  - `fleet.progress` is not a phase of its own. It is a running run that has reported activity,
+//    kept distinct so the strip can show that a run is doing work rather than merely admitted.
+//  - The supervisor logs and drops an event kind it does not recognise rather than killing the
+//    session, so a fact type this build has never heard of must reduce to a readable row. Never a
+//    crash, and never a silent drop.
+//
+// Every value shown is a reported fact. Nothing is derived, and nothing is shown for a run that was
+// never reported. `taskPreview` is PanCode's own sanitized 160-byte prefix, never the exact task.
+
+import type { FleetItem } from "../../contracts/fleet-events.js";
+import type { SessionWorkerRun } from "../../contracts/session-overview.js";
+import { formatDuration } from "../api/clock.js";
+import type { StatusTone } from "../design/status.js";
+import { tokensText } from "./session-usage-model.js";
+
+/**
+ * The feed as it may actually arrive. A newer engine can put a fact type on the wire that this
+ * build's union does not name, so the reducer reads the envelope structurally and never assumes the
+ * payload has the shape its type claims.
+ */
+export type FleetItemLike = Omit<FleetItem, "fact"> & {
+	readonly fact: { readonly type: string; readonly payload?: unknown };
+};
+
+/**
+ * `ended` is never folded from the feed: it is a run the feed last saw live that the server no longer holds, so its
+ * final event never reached this view. It says what the view knows, not how the run went.
+ */
+export type FleetRunState = "queued" | "running" | "progress" | "done" | "failed" | "stopped" | "ended";
+
+export interface FleetRun {
+	readonly runId: string;
+	readonly agentId: string;
+	readonly state: FleetRunState;
+	readonly taskPreview: string | null;
+	readonly node: string | null;
+	readonly attempt: number | null;
+	/** How many progress events the worker sent, a liveness count that is neither steps nor calls. */
+	readonly progressCount: number;
+	readonly progressTruncated: boolean;
+	/** Model calls the settled run measured; null while it runs or when it measured none. */
+	readonly modelCalls: number | null;
+	readonly outcome: string | null;
+	readonly durationMs: number | null;
+	/** The server's wording of the completed frame's token count; null when the frame reported none. */
+	readonly tokens: string | null;
+	readonly updatedAt: string;
+	readonly record?: FleetItem["record"];
+}
+
+/**
+ * Plain-text glyphs for a run. A run that is live in an open session draws the PanCode spinner instead
+ * (`isWorkingRun`); these remain for queued and settled runs and for any record read afterwards.
+ */
+export const FLEET_GLYPHS: Readonly<Record<FleetRunState, string>> = {
+	queued: "…",
+	running: "◐",
+	progress: "◑",
+	done: "✓",
+	failed: "✕",
+	stopped: "■",
+	ended: "○",
+};
+
+/** Sentence case, because a run row speaks in the conversation's voice. */
+export const FLEET_STATE_LABELS: Readonly<Record<FleetRunState, string>> = {
+	queued: "Queued",
+	running: "Running",
+	progress: "Working",
+	done: "Done",
+	failed: "Failed",
+	stopped: "Stopped",
+	ended: "Ended (final event not received)",
+};
+
+export const FLEET_STATE_TONES: Readonly<Record<FleetRunState, StatusTone>> = {
+	queued: "neutral",
+	running: "running",
+	progress: "running",
+	done: "success",
+	failed: "fail",
+	stopped: "neutral",
+	ended: "neutral",
+};
+
+/** A run in one of these is still live; the rest have settled and must never disappear unannounced. */
+const LIVE_STATES: ReadonlySet<FleetRunState> = new Set<FleetRunState>(["queued", "running", "progress"]);
+
+export const isLiveRun = (run: FleetRun): boolean => LIVE_STATES.has(run.state);
+
+/** A worker that is executing, as opposed to queued. Only meaningful while the session is open. */
+export const isWorkingRun = (run: FleetRun): boolean => run.state === "running" || run.state === "progress";
+
+/** The strip keeps this many runs, dropping the oldest settled one first. */
+export const FLEET_RUN_CAP = 64;
+
+const record = (value: unknown): Readonly<Record<string, unknown>> =>
+	typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+const text = (value: unknown): string | null => (typeof value === "string" && value.length > 0 ? value : null);
+const integer = (value: unknown): number | null =>
+	typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null;
+const flag = (value: unknown): boolean => value === true;
+
+const RUN_FACTS: ReadonlySet<string> = new Set([
+	"fleet.enqueued",
+	"fleet.started",
+	"fleet.progress",
+	"fleet.completed",
+	"fleet.failed",
+]);
+
+/** True for the five fact types that fold into a run row. The other two belong to other surfaces. */
+export const isRunFact = (type: string): boolean => RUN_FACTS.has(type);
+
+function blank(runId: string, at: string): FleetRun {
+	return {
+		runId,
+		agentId: "an unnamed agent",
+		state: "queued",
+		taskPreview: null,
+		node: null,
+		attempt: null,
+		progressCount: 0,
+		progressTruncated: false,
+		modelCalls: null,
+		outcome: null,
+		durationMs: null,
+		tokens: null,
+		updatedAt: at,
+	};
+}
+
+function measuredCount(value: unknown): number | null {
+	const fact = record(value);
+	return fact.kind === "measured" ? integer(fact.value) : null;
+}
+
+/**
+ * A code and its detail as one line. A detail that already opens with the code in words
+ * ("assurance compromised: …" for `assurance_compromised`) is not prefixed with it again (gui-verify 10).
+ */
+export function codedDetail(code: string | null, detail: string | null): string | null {
+	if (detail === null || code === null) return detail ?? code;
+	const words = code.replaceAll(/[_-]+/g, " ").toLowerCase();
+	return detail.toLowerCase().startsWith(words) ? detail : `${code}: ${detail}`;
+}
+
+function terminalOutcome(payload: Readonly<Record<string, unknown>>): string | null {
+	const code = text(payload.outcomeCode) ?? text(payload.reason) ?? text(payload.outcome);
+	return codedDetail(code, text(payload.outcomeDetail));
+}
+
+const TERMINAL_STATES: ReadonlySet<FleetRunState> = new Set<FleetRunState>(["done", "failed", "stopped"]);
+
+/**
+ * The engine settles a stopped run through `run.failed` with the outcome `canceled` (`resolveRunOutcome`); a stop is
+ * not a failure, so it neither reads as one nor offers a report.
+ */
+function isStop(payload: Readonly<Record<string, unknown>>): boolean {
+	const outcome = text(payload.outcome);
+	return outcome === "canceled" || outcome === "cancelled";
+}
+
+/** A stop's reason and detail, without the cancel code that the state word already says. */
+function stopOutcome(payload: Readonly<Record<string, unknown>>): string | null {
+	return codedDetail(text(payload.outcomeCode), text(payload.outcomeDetail));
+}
+
+function apply(run: FleetRun, type: string, payload: Readonly<Record<string, unknown>>, at: string): FleetRun {
+	// A late progress or start frame must not bring a settled run back to life.
+	if (
+		TERMINAL_STATES.has(run.state) &&
+		(type === "fleet.progress" || type === "fleet.started" || type === "fleet.enqueued")
+	)
+		return run;
+	const base = { ...run, agentId: text(payload.agentId) ?? run.agentId, updatedAt: at };
+	switch (type) {
+		case "fleet.enqueued":
+		case "fleet.started":
+			return {
+				...base,
+				state: type === "fleet.enqueued" ? "queued" : "running",
+				taskPreview: text(payload.taskPreview) ?? base.taskPreview,
+				node: text(payload.node) ?? base.node,
+				attempt: integer(payload.attempt) ?? base.attempt,
+			};
+		case "fleet.progress":
+			return {
+				...base,
+				state: "progress",
+				progressCount: integer(payload.progressCount) ?? base.progressCount,
+				progressTruncated: flag(payload.truncated),
+			};
+		case "fleet.completed":
+			return {
+				...base,
+				state: "done",
+				outcome: terminalOutcome(payload) ?? base.outcome,
+				durationMs: integer(payload.durationMs) ?? base.durationMs,
+				tokens: text(payload.tokenDisplay) ?? base.tokens,
+				modelCalls: measuredCount(payload.apiCalls) ?? base.modelCalls,
+			};
+		case "fleet.failed":
+			return {
+				...base,
+				state: isStop(payload) ? "stopped" : "failed",
+				outcome: (isStop(payload) ? stopOutcome(payload) : terminalOutcome(payload)) ?? base.outcome,
+				durationMs: integer(payload.durationMs) ?? base.durationMs,
+				tokens: text(payload.tokenDisplay) ?? base.tokens,
+				modelCalls: measuredCount(payload.apiCalls) ?? base.modelCalls,
+			};
+		default:
+			return base;
+	}
+}
+
+/**
+ * Fold the append-only feed into one row per run, in first-seen order so a row never jumps position
+ * as it reports. The cap drops the oldest settled run first, because a settled row disappearing is
+ * an acceptable loss and a live one disappearing is not.
+ */
+export function foldFleetRuns(items: readonly FleetItemLike[]): readonly FleetRun[] {
+	const runs = new Map<string, FleetRun>();
+	const ordered = [...items].sort((left, right) => left.sourceSequence - right.sourceSequence);
+	for (const item of ordered) {
+		if (!isRunFact(item.fact.type)) continue;
+		const payload = record(item.fact.payload),
+			runId = text(payload.runId);
+		if (runId === null) continue;
+		const run = apply(runs.get(runId) ?? blank(runId, item.at), item.fact.type, payload, item.at);
+		runs.set(runId, item.record ? { ...run, record: item.record } : run);
+	}
+	if (runs.size <= FLEET_RUN_CAP) return [...runs.values()];
+	const over = runs.size - FLEET_RUN_CAP;
+	const settled = [...runs.values()].filter((run) => !isLiveRun(run)).slice(0, over);
+	for (const run of settled) runs.delete(run.runId);
+	while (runs.size > FLEET_RUN_CAP) {
+		const oldest = runs.keys().next();
+		if (oldest.done) break;
+		runs.delete(oldest.value);
+	}
+	return [...runs.values()];
+}
+
+/**
+ * The feed's runs checked against the live set the server holds, which outlives the feed's bound. A run both
+ * know is the feed's row. A live run the feed no longer holds becomes a bare row: its agent and state, nothing the
+ * feed would have said. A run the feed shows live that the server no longer holds has settled without its final
+ * event reaching this view. Without a server list the feed stands as it is.
+ *
+ * `asOf` is the server list's newest fact time. A run whose latest fact is newer than the list may simply not be in
+ * it yet, so it keeps its feed row until the next read.
+ */
+export function reconcileRuns(
+	folded: readonly FleetRun[],
+	server: readonly SessionWorkerRun[] | undefined,
+	asOf?: string | null,
+): readonly FleetRun[] {
+	if (server === undefined) return folded;
+	const listed = new Map(server.map((run) => [run.runId, run]));
+	const seen = new Set(folded.map((run) => run.runId));
+	const cutoff = asOf === undefined || asOf === null ? Number.POSITIVE_INFINITY : Date.parse(asOf);
+	const missing: FleetRun[] = server
+		.filter((run) => !seen.has(run.runId))
+		.map((run) => {
+			const row = blank(run.runId, asOf ?? "");
+			return {
+				...row,
+				agentId: run.agentId ?? row.agentId,
+				state: run.state === "active" ? "running" : "queued",
+				node: run.node,
+			};
+		});
+	const reconciled = folded.map((run): FleetRun => {
+		if (!isLiveRun(run) || listed.has(run.runId)) return run;
+		// Never later than the list's own newest fact; NaN on either side keeps the feed's row.
+		return Date.parse(run.updatedAt) <= cutoff ? { ...run, state: "ended" } : run;
+	});
+	// A run the feed lost started before every run it still holds.
+	return missing.length === 0 ? reconciled : [...missing, ...reconciled];
+}
+
+/** The state column: the state label, then `· `-separated reported fragments in a fixed order. */
+export function fleetRunDetail(run: FleetRun): string {
+	const parts = [FLEET_STATE_LABELS[run.state]];
+	if (run.outcome !== null) parts.push(run.outcome);
+	// A settled run says what it measured. The progress count is only how often a live worker reported,
+	// so it is worded as updates and never as steps.
+	if (run.modelCalls !== null) parts.push(`${run.modelCalls} ${run.modelCalls === 1 ? "model call" : "model calls"}`);
+	else if (isLiveRun(run) && run.progressCount > 0)
+		parts.push(
+			`${run.progressCount}${run.progressTruncated ? "+" : ""} ${run.progressCount === 1 && !run.progressTruncated ? "update" : "updates"}`,
+		);
+	if (run.durationMs !== null) parts.push(formatDuration(run.durationMs));
+	return parts.join(" · ");
+}
+
+export const fleetRunTitle = (run: FleetRun): string => run.taskPreview ?? "No task preview was reported.";
+export const fleetRunNote = (run: FleetRun): string | null => (run.node === null ? null : `node ${run.node}`);
+
+export const fleetSummaryLabel = (runs: readonly FleetRun[]): string =>
+	`Fleet · ${runs.filter(isLiveRun).length} running of ${runs.length}`;
+
+// ---- the closed fact taxonomy ----------------------------------------------------------------
+
+export interface FleetFactPresentation {
+	readonly label: string;
+	readonly tone: StatusTone;
+	readonly summary: string;
+	/** False for a type this build does not classify, which the strip prints as a plain row. */
+	readonly known: boolean;
+}
+
+const amount = (value: number | null): string => (value === null ? "not reported" : value.toLocaleString("en-US"));
+
+const DISPOSITION_LABELS: Readonly<Record<string, string>> = {
+	block: "blocked the call",
+	lockout: "locked the tool out for the rest of the turn",
+	stop: "stopped the turn",
+};
+
+/**
+ * Type to label, tone and one sentence, for every fact the wire names, plus a readable row for one
+ * it does not. The two non-run facts are here so the strip can show them rather than drop them:
+ * `evidence.ready` belongs to the evidence surface and `fleet.loopBlocked` to the activity group,
+ * but neither surface is this one's problem and a fact that reaches here is still reported.
+ */
+export function presentFleetFact(fact: { readonly type: string; readonly payload?: unknown }): FleetFactPresentation {
+	const payload = record(fact.payload);
+	switch (fact.type) {
+		case "fleet.enqueued":
+			return {
+				label: "Run queued",
+				tone: "neutral",
+				known: true,
+				summary: `${text(payload.agentId) ?? "An unnamed agent"} was admitted${text(payload.node) === null ? "" : ` on node ${text(payload.node)}`}.`,
+			};
+		case "fleet.started":
+			return {
+				label: "Run started",
+				tone: "running",
+				known: true,
+				summary: `${text(payload.agentId) ?? "An unnamed agent"} started work.`,
+			};
+		case "fleet.progress":
+			return {
+				label: "Run reporting",
+				tone: "running",
+				known: true,
+				summary: `${amount(integer(payload.progressCount))} progress ${integer(payload.progressCount) === 1 ? "update" : "updates"} reported${flag(payload.truncated) ? ", and PanCode truncated the report" : ""}.`,
+			};
+		case "fleet.completed": {
+			const tokens = text(payload.tokenDisplay);
+			return {
+				label: "Run done",
+				tone: "success",
+				known: true,
+				summary: `${terminalOutcome(payload) ?? "Finished"} after ${integer(payload.durationMs) === null ? "an unreported time" : formatDuration(integer(payload.durationMs) ?? 0)}, ${tokens === null ? "tokens not reported" : tokensText(tokens)}.`,
+			};
+		}
+		case "fleet.failed":
+			return isStop(payload)
+				? { label: "Run stopped", tone: "neutral", known: true, summary: `${stopOutcome(payload) ?? "Stopped"}.` }
+				: {
+						label: "Run failed",
+						tone: "fail",
+						known: true,
+						summary: `${terminalOutcome(payload) ?? "PanCode reported no reason"}.`,
+					};
+		case "fleet.loopBlocked": {
+			const disposition = text(payload.disposition);
+			return {
+				label: "Loop guard",
+				tone: flag(payload.interrupted) ? "fail" : "warn",
+				known: true,
+				summary: `${text(payload.tool) ?? "A tool"} repeated ${amount(integer(payload.repeatCount))} times against a budget of ${amount(integer(payload.budget))}, so PanCode ${disposition === null ? "intervened" : (DISPOSITION_LABELS[disposition] ?? disposition)}.`,
+			};
+		}
+		case "evidence.ready": {
+			const findings = integer(payload.findingCount);
+			return {
+				label: "Evidence ready",
+				tone: flag(payload.firstPassSuccess) ? "success" : "warn",
+				known: true,
+				summary: `${amount(findings)} ${findings === 1 ? "finding" : "findings"} recorded${flag(payload.firstPassSuccess) ? " on the first pass" : ""}.`,
+			};
+		}
+		default:
+			return {
+				label: fact.type,
+				tone: "neutral",
+				known: false,
+				summary: "PanCode reported a fact this build does not classify.",
+			};
+	}
+}
+
+export interface FleetNotice {
+	readonly id: string;
+	readonly at: string;
+	readonly presentation: FleetFactPresentation;
+}
+
+/** The facts that are not runs, in reported order, so nothing in the feed is dropped in silence. */
+export function fleetNotices(items: readonly FleetItemLike[]): readonly FleetNotice[] {
+	return items
+		.filter((item) => !isRunFact(item.fact.type))
+		.map((item) => ({ id: item.id, at: item.at, presentation: presentFleetFact(item.fact) }));
+}
+
+export interface FleetEvidence {
+	readonly id: string;
+	readonly at: string;
+	readonly runId: string;
+	readonly firstPassSuccess: boolean;
+	readonly findingCount: number | null;
+}
+
+/**
+ * The runs assessed in this conversation, newest first. The run id names both the run's sealed evidence
+ * and its dispatch record, so the chat opens either without a lookup (#434).
+ */
+export function fleetEvidence(items: readonly FleetItemLike[]): readonly FleetEvidence[] {
+	return items
+		.flatMap((item): FleetEvidence[] => {
+			if (item.fact.type !== "evidence.ready") return [];
+			const payload = record(item.fact.payload);
+			const runId = text(payload.runId);
+			if (runId === null) return [];
+			return [
+				{
+					id: item.id,
+					at: item.at,
+					runId,
+					firstPassSuccess: flag(payload.firstPassSuccess),
+					findingCount: integer(payload.findingCount),
+				},
+			];
+		})
+		.sort((left, right) => right.at.localeCompare(left.at));
+}
+
+/* --------------------------------------------------------------- steering */
+
+/**
+ * The engine answers a refused steer with a closed reason code
+ * (src/engine/acp/server-session-input.ts, `dispatchSteerReason`). Each reads as a sentence the
+ * operator can act on. An unknown code is printed as reported, never hidden.
+ */
+export const STEER_REFUSALS: Readonly<Record<string, string>> = {
+	"dispatch-unavailable": "This PanCode build has no dispatch domain to steer.",
+	"fleet-unavailable": "The fleet control channel is not available in this task.",
+	"run-not-active": "That run is no longer active, so there is nothing to steer.",
+	"cancel-failed": "PanCode could not stop that run. It may already be settling.",
+	"empty-message": "Guidance needs some text.",
+	"steering-unsupported": "That worker's runtime does not accept live guidance. It can still be stopped.",
+	"no-input-channel": "That worker has no input channel, so guidance cannot reach it. It can still be stopped.",
+	"input-closed": "That worker no longer accepts input. It is finishing on its own.",
+	"run-terminating": "That run is already terminating.",
+	"steer-failed": "PanCode refused the guidance and reported no specific reason.",
+};
+
+export interface SteerOutcome {
+	readonly tone: StatusTone;
+	readonly message: string;
+}
+
+/** `accepted` means queued on the worker's stdin, not delivered, and the sentence must not overclaim. */
+export function steerOutcome(
+	action: "guide" | "cancel",
+	result: { readonly accepted: boolean; readonly reason?: string },
+): SteerOutcome {
+	if (result.accepted)
+		return {
+			tone: "success",
+			message:
+				action === "guide"
+					? "Guidance queued. The worker reads it at its next step."
+					: "Stop requested. The run row settles when the worker exits.",
+		};
+	const reason = result.reason ?? "steer-failed";
+	return { tone: "warn", message: STEER_REFUSALS[reason] ?? `PanCode refused: ${reason}.` };
+}
+
+/** Guidance is trimmed before it is sent; whitespace alone is refused upstream with a 422. */
+export const guidanceReady = (text: string): boolean => text.trim().length > 0;

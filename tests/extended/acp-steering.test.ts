@@ -1,0 +1,564 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
+import { describe, it } from "node:test";
+import { setImmediate as tick } from "node:timers/promises";
+import { AcpRequestError } from "../../src/engine/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
+import type { AcpDispatchControl, AcpServerChat } from "../../src/engine/acp/server-options.js";
+import { fakeTransport } from "../harness/acp-fake-transport.js";
+
+/**
+ * A chat whose run the test starts and stops by hand. `submit` stays pending
+ * exactly as the real loop does while a turn streams, which is the only state
+ * in which the engine admits a steer.
+ */
+function fakeChat(overrides: Partial<AcpServerChat> = {}) {
+	const steer: string[] = [];
+	const followUp: string[] = [];
+	let streaming = false;
+	let release: () => void = () => {};
+	let interruptRefusal: string | null = null;
+	let cancels = 0;
+	const chat: AcpServerChat = {
+		submit: async () => {
+			streaming = true;
+			await new Promise<void>((resolve) => {
+				release = () => {
+					streaming = false;
+					resolve();
+				};
+			});
+		},
+		cancel: () => {
+			cancels += 1;
+			release();
+		},
+		onEvent: () => () => {},
+		isStreaming: () => streaming,
+		getSessionId: () => null,
+		steer: (text) => {
+			if (!streaming) return false;
+			steer.push(text);
+			return true;
+		},
+		queueFollowUp: (text) => {
+			if (!streaming) return false;
+			followUp.push(text);
+			return true;
+		},
+		queuedMessages: () => ({ steer: [...steer], followUp: [...followUp] }),
+		clearQueuedFollowUps: () => {
+			const drained = [...steer, ...followUp];
+			steer.length = 0;
+			followUp.length = 0;
+			return drained;
+		},
+		interruptRefusal: () => interruptRefusal,
+		...overrides,
+	};
+	return {
+		chat,
+		get cancels() {
+			return cancels;
+		},
+		refuseInterrupt(reason: string | null) {
+			interruptRefusal = reason;
+		},
+		finish() {
+			release();
+		},
+	};
+}
+
+async function openSession(peer: ReturnType<typeof fakeTransport>): Promise<string> {
+	await peer.call("initialize", { protocolVersion: 1 });
+	const created = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+	return created.sessionId;
+}
+
+/**
+ * Starts a prompt without awaiting it and returns once the run is streaming.
+ * The pending request is handed back inside a box: awaiting a promise that
+ * resolves to a promise would chain onto the turn this helper is meant to leave
+ * running.
+ */
+async function startPrompt(
+	peer: ReturnType<typeof fakeTransport>,
+	sessionId: string,
+): Promise<{ prompt: Promise<unknown> }> {
+	const prompt = peer.call("session/prompt", { sessionId, prompt: [{ type: "text", text: "go" }] });
+	await tick();
+	return { prompt };
+}
+
+describe("contracts/acp exposes the engine steering queues without a second prompt", () => {
+	it("queues a steer on the queue its mode names and reads both queues back", async () => {
+		const peer = fakeTransport();
+		const loop = fakeChat();
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat: loop.chat, cwd: process.cwd() });
+		const sessionId = await openSession(peer);
+		const { prompt } = await startPrompt(peer, sessionId);
+
+		deepStrictEqual(await peer.call("_pancode/session/steer", { sessionId, text: "use the cached index" }), {
+			accepted: true,
+			queue: "steer",
+		});
+		deepStrictEqual(
+			await peer.call("_pancode/session/steer", {
+				sessionId,
+				text: "then write the report",
+				mode: "end-of-turn",
+			}),
+			{ accepted: true, queue: "follow-up" },
+		);
+		deepStrictEqual(await peer.call("_pancode/session/queue", { sessionId }), {
+			steer: ["use the cached index"],
+			followUp: ["then write the report"],
+		});
+
+		loop.finish();
+		await prompt;
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("refuses a steer while nothing is streaming instead of throwing or queueing it", async () => {
+		const peer = fakeTransport();
+		const loop = fakeChat();
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat: loop.chat, cwd: process.cwd() });
+		const sessionId = await openSession(peer);
+
+		const idle = (await peer.call("_pancode/session/steer", { sessionId, text: "too early" })) as {
+			accepted: boolean;
+			queue: string;
+			refusal: string;
+		};
+		strictEqual(idle.accepted, false);
+		strictEqual(idle.queue, "steer");
+		ok(idle.refusal.includes("no prompt is active"));
+		deepStrictEqual(await peer.call("_pancode/session/queue", { sessionId }), { steer: [], followUp: [] });
+
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("refuses an unknown steering mode rather than defaulting it", async () => {
+		const peer = fakeTransport();
+		const loop = fakeChat();
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat: loop.chat, cwd: process.cwd() });
+		const sessionId = await openSession(peer);
+		// `interrupt` is a real engine mode and is deliberately not admitted here:
+		// it would resubmit the text as a turn this client never requested.
+		await rejects(
+			peer.call("_pancode/session/steer", { sessionId, text: "now", mode: "interrupt" }),
+			(error: unknown) => {
+				ok(error instanceof AcpRequestError);
+				strictEqual(error.detail.code, "invalid_params");
+				return true;
+			},
+		);
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("hands back everything queue_clear drained so the client owns the text", async () => {
+		const peer = fakeTransport();
+		const loop = fakeChat();
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat: loop.chat, cwd: process.cwd() });
+		const sessionId = await openSession(peer);
+		const { prompt } = await startPrompt(peer, sessionId);
+
+		await peer.call("_pancode/session/steer", { sessionId, text: "first" });
+		await peer.call("_pancode/session/steer", { sessionId, text: "second", mode: "end-of-turn" });
+		deepStrictEqual(await peer.call("_pancode/session/queue_clear", { sessionId }), {
+			restored: ["first", "second"],
+		});
+		deepStrictEqual(await peer.call("_pancode/session/queue", { sessionId }), { steer: [], followUp: [] });
+
+		loop.finish();
+		await prompt;
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("refuses a queue_clear it could not hand back whole, before anything drains (A5)", async () => {
+		const peer = fakeTransport();
+		// A text Pi already took into the run sits in flight: the waiting queues do not show it, but a clear drains it.
+		const inFlight = ["x".repeat(16 * 1024 + 1)];
+		const loop = fakeChat();
+		const waiting = loop.chat.clearQueuedFollowUps;
+		let drains = 0;
+		loop.chat.restorableQueuedTexts = () => [...inFlight, ...(loop.chat.queuedMessages?.().steer ?? [])];
+		loop.chat.clearQueuedFollowUps = () => {
+			drains += 1;
+			return [...inFlight.splice(0), ...(waiting?.() ?? [])];
+		};
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat: loop.chat, cwd: process.cwd() });
+		const sessionId = await openSession(peer);
+		const { prompt } = await startPrompt(peer, sessionId);
+		await peer.call("_pancode/session/steer", { sessionId, text: "kept" });
+
+		await rejects(peer.call("_pancode/session/queue_clear", { sessionId }), (error: unknown) => {
+			ok(error instanceof AcpRequestError);
+			strictEqual(error.detail.code, "queue_too_large");
+			return true;
+		});
+		strictEqual(drains, 0);
+		strictEqual(inFlight.length, 1);
+		deepStrictEqual(await peer.call("_pancode/session/queue", { sessionId }), { steer: ["kept"], followUp: [] });
+
+		inFlight.length = 0;
+		for (let index = 0; index < 128; index += 1) {
+			await peer.call("_pancode/session/steer", { sessionId, text: `more ${index}` });
+		}
+		await rejects(peer.call("_pancode/session/queue_clear", { sessionId }), (error: unknown) => {
+			ok(error instanceof AcpRequestError);
+			strictEqual(error.detail.code, "queue_too_large");
+			return true;
+		});
+		strictEqual(drains, 0);
+
+		loop.finish();
+		await prompt;
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("hands back every entry of a queue deeper than one read-back page (A5)", async () => {
+		const peer = fakeTransport();
+		const loop = fakeChat();
+		loop.chat.restorableQueuedTexts = () => {
+			const queued = loop.chat.queuedMessages?.() ?? { steer: [], followUp: [] };
+			return [...queued.steer, ...queued.followUp];
+		};
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat: loop.chat, cwd: process.cwd() });
+		const sessionId = await openSession(peer);
+		const { prompt } = await startPrompt(peer, sessionId);
+		const sent = Array.from({ length: 100 }, (_, index) => `entry ${index}`);
+		for (const text of sent) await peer.call("_pancode/session/steer", { sessionId, text });
+
+		deepStrictEqual(await peer.call("_pancode/session/queue_clear", { sessionId }), { restored: sent });
+
+		loop.finish();
+		await prompt;
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("cancels on interrupt and lets the outstanding prompt return stopReason cancelled", async () => {
+		const peer = fakeTransport();
+		const loop = fakeChat();
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat: loop.chat, cwd: process.cwd() });
+		const sessionId = await openSession(peer);
+		const { prompt } = await startPrompt(peer, sessionId);
+
+		deepStrictEqual(await peer.call("_pancode/session/interrupt", { sessionId, reason: "wrong file" }), {
+			cancelled: true,
+		});
+		strictEqual(loop.cancels, 1);
+		const response = (await prompt) as { stopReason: string };
+		strictEqual(response.stopReason, "cancelled");
+		// A steer after the interrupt is refused: the engine would strand it and
+		// resubmit it as a fresh prompt with no request to answer.
+		const afterwards = (await peer.call("_pancode/session/steer", { sessionId, text: "one more" })) as {
+			accepted: boolean;
+		};
+		strictEqual(afterwards.accepted, false);
+
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("answers a steer triage read as a stop with the run it redirected to, not as cancelled (bt-41)", async () => {
+		const peer = fakeTransport();
+		const listeners = new Set<(event: never) => void>();
+		const emit = (message: Record<string, unknown>) => {
+			for (const listener of listeners) listener({ type: "message_end", message } as never);
+		};
+		let streaming = false;
+		let delivered: Promise<void> = Promise.resolve();
+		let releaseRun: () => void = () => {};
+		const loop = fakeChat({
+			submit: async () => {
+				streaming = true;
+				await new Promise<void>((resolve) => {
+					releaseRun = resolve;
+				});
+			},
+			onEvent: (handler) => {
+				listeners.add(handler);
+				return () => listeners.delete(handler);
+			},
+			isStreaming: () => streaming,
+			// The chat loop's triage reads the steer as a stop: the run ends aborted and its own run delivers the steer.
+			steer: (text) => {
+				emit({ role: "assistant", content: [], stopReason: "aborted" });
+				releaseRun();
+				delivered = tick().then(() => {
+					emit({ role: "assistant", content: [{ type: "text", text: `stopped: ${text}` }], stopReason: "stop" });
+					streaming = false;
+				});
+				return true;
+			},
+			whenSettled: () => delivered,
+		});
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat: loop.chat, cwd: process.cwd() });
+		const sessionId = await openSession(peer);
+		const { prompt } = await startPrompt(peer, sessionId);
+
+		await peer.call("_pancode/session/steer", { sessionId, text: "Stop now and report" });
+		strictEqual(((await prompt) as { stopReason: string }).stopReason, "end_turn");
+		strictEqual(streaming, false);
+
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("reports the engine's refusal instead of cancelling, and reports an idle session", async () => {
+		const peer = fakeTransport();
+		const loop = fakeChat();
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat: loop.chat, cwd: process.cwd() });
+		const sessionId = await openSession(peer);
+
+		deepStrictEqual(await peer.call("_pancode/session/interrupt", { sessionId }), {
+			cancelled: false,
+			refusal: "no prompt is active on this session",
+		});
+
+		const { prompt } = await startPrompt(peer, sessionId);
+		loop.refuseInterrupt("an attached dispatch is running");
+		deepStrictEqual(await peer.call("_pancode/session/interrupt", { sessionId }), {
+			cancelled: false,
+			refusal: "an attached dispatch is running",
+		});
+		strictEqual(loop.cancels, 0);
+
+		loop.finish();
+		await prompt;
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("refuses cleanly when the chat this server was given cannot steer at all", async () => {
+		const peer = fakeTransport();
+		const narrow: AcpServerChat = {
+			submit: async () => {},
+			cancel: () => {},
+			onEvent: () => () => {},
+			isStreaming: () => false,
+			getSessionId: () => null,
+		};
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat: narrow, cwd: process.cwd() });
+		await peer.call("initialize", { protocolVersion: 1 });
+		const created = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+		const sessionId = created.sessionId;
+
+		const refused = (await peer.call("_pancode/session/steer", { sessionId, text: "steer me" })) as {
+			accepted: boolean;
+			refusal: string;
+		};
+		strictEqual(refused.accepted, false);
+		ok(refused.refusal.includes("does not expose"));
+		// A queue read has no field to carry a refusal, so an unreadable queue
+		// is refused as method_not_found rather than reporting two empty lists it never saw.
+		for (const method of ["_pancode/session/queue", "_pancode/session/queue_clear"]) {
+			await rejects(peer.call(method, { sessionId }), (error: unknown) => {
+				ok(error instanceof AcpRequestError);
+				strictEqual(error.detail.code, "method_not_found");
+				return true;
+			});
+		}
+		deepStrictEqual(await peer.call("_pancode/session/interrupt", { sessionId }), {
+			cancelled: false,
+			refusal: "no prompt is active on this session",
+		});
+
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("announces the wired queues in initialize _meta", async () => {
+		const wired = fakeTransport();
+		const loop = fakeChat();
+		const servedWired = servePancodeAcpAgent({ transport: wired.transport, chat: loop.chat, cwd: process.cwd() });
+		const init = (await wired.call("initialize", { protocolVersion: 1 })) as {
+			protocolVersion: number;
+			agentCapabilities: { _meta: Record<string, Record<string, unknown>> };
+		};
+		strictEqual(init.protocolVersion, 1);
+		const steering = init.agentCapabilities._meta["pancode/steering"];
+		strictEqual(steering?.version, 1);
+		strictEqual(steering?.main, true);
+		strictEqual(steering?.dispatch, false);
+		strictEqual(steering?.interrupt, true);
+		deepStrictEqual(steering?.modes, ["next-slot", "end-of-turn"]);
+		deepStrictEqual(steering?.methods, {
+			steer: "_pancode/session/steer",
+			queue: "_pancode/session/queue",
+			clear: "_pancode/session/queue_clear",
+			interrupt: "_pancode/session/interrupt",
+			dispatch: "_pancode/dispatch/steer",
+		});
+		wired.transport.close();
+		strictEqual(await servedWired, 0);
+
+		const narrow = fakeTransport();
+		const servedNarrow = servePancodeAcpAgent({
+			transport: narrow.transport,
+			chat: {
+				submit: async () => {},
+				cancel: () => {},
+				onEvent: () => () => {},
+				isStreaming: () => false,
+				getSessionId: () => null,
+			},
+			cwd: process.cwd(),
+		});
+		const narrowInit = (await narrow.call("initialize", { protocolVersion: 1 })) as {
+			agentCapabilities: { _meta: Record<string, Record<string, unknown>> };
+		};
+		strictEqual(narrowInit.agentCapabilities._meta["pancode/steering"]?.main, false);
+		narrow.transport.close();
+		strictEqual(await servedNarrow, 0);
+	});
+});
+
+describe("contracts/acp reports dispatch steering as queued, never as delivered", () => {
+	const fleet = (overrides: Partial<AcpDispatchControl> = {}) => {
+		const steers: Array<{ runId: string; text: string }> = [];
+		const aborts: string[] = [];
+		const control: AcpDispatchControl = {
+			steer: (runId, text) => {
+				steers.push({ runId, text });
+			},
+			abort: (runId) => {
+				aborts.push(runId);
+			},
+			snapshot: () => ({ running: [{ runId: "run-live", runtimeKind: "http" }], retrying: [] }),
+			...overrides,
+		};
+		return { control, steers, aborts };
+	};
+
+	it("queues guidance for a live worker and refuses a kind that cannot be steered", async () => {
+		const peer = fakeTransport();
+		const loop = fakeChat();
+		const dispatch = fleet();
+		const served = servePancodeAcpAgent({
+			transport: peer.transport,
+			chat: loop.chat,
+			dispatch: dispatch.control,
+			cwd: process.cwd(),
+		});
+		const init = (await peer.call("initialize", { protocolVersion: 1 })) as {
+			agentCapabilities: { _meta: Record<string, Record<string, unknown>> };
+		};
+		strictEqual(init.agentCapabilities._meta["pancode/steering"]?.dispatch, true);
+		const created = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+		const sessionId = created.sessionId;
+
+		deepStrictEqual(
+			await peer.call("_pancode/dispatch/steer", {
+				sessionId,
+				runId: "run-live",
+				action: "guide",
+				message: "prefer the smaller fixture",
+			}),
+			{ accepted: true },
+		);
+		deepStrictEqual(dispatch.steers, [{ runId: "run-live", text: "prefer the smaller fixture" }]);
+
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("maps each dispatch refusal to its own reason and never echoes the thrown prose", async () => {
+		const cases: Array<[string, string]> = [
+			["steer: run 'r' (subprocess:codex) does not support live steering", "steering-unsupported"],
+			["steer: run 'r' (http:local) has no input channel", "no-input-channel"],
+			["steer: run 'r' no longer accepts input; the worker has exited or its stdin is closed", "input-closed"],
+			["steer: run 'r' is aborting and cannot be steered", "run-terminating"],
+			["steer: run or assignment 'r' is not active; only running HTTP/SDK workers accept guidance", "run-not-active"],
+			["steer: the stdin writer threw", "steer-failed"],
+		];
+		for (const [thrown, reason] of cases) {
+			const peer = fakeTransport();
+			const loop = fakeChat();
+			const dispatch = fleet({
+				steer: () => {
+					throw new Error(thrown);
+				},
+			});
+			const diagnostics: string[] = [];
+			const served = servePancodeAcpAgent({
+				transport: peer.transport,
+				chat: loop.chat,
+				dispatch: dispatch.control,
+				cwd: process.cwd(),
+				diagnostics: (line) => diagnostics.push(line),
+			});
+			const sessionId = await openSession(peer);
+			deepStrictEqual(
+				await peer.call("_pancode/dispatch/steer", {
+					sessionId,
+					runId: "run-live",
+					action: "guide",
+					message: "hello",
+				}),
+				{ accepted: false, reason },
+			);
+			strictEqual(diagnostics.length, 1);
+			peer.transport.close();
+			strictEqual(await served, 0);
+		}
+	});
+
+	it("cancels only a run the fleet reports, and refuses when no fleet is wired", async () => {
+		const peer = fakeTransport();
+		const loop = fakeChat();
+		const dispatch = fleet();
+		const served = servePancodeAcpAgent({
+			transport: peer.transport,
+			chat: loop.chat,
+			dispatch: dispatch.control,
+			cwd: process.cwd(),
+		});
+		const sessionId = await openSession(peer);
+
+		deepStrictEqual(await peer.call("_pancode/dispatch/steer", { sessionId, runId: "run-live", action: "cancel" }), {
+			accepted: true,
+		});
+		deepStrictEqual(dispatch.aborts, ["run-live"]);
+		deepStrictEqual(await peer.call("_pancode/dispatch/steer", { sessionId, runId: "run-gone", action: "cancel" }), {
+			accepted: false,
+			reason: "run-not-active",
+		});
+		deepStrictEqual(dispatch.aborts, ["run-live"]);
+		await rejects(
+			peer.call("_pancode/dispatch/steer", {
+				sessionId,
+				runId: "run-live",
+				action: "cancel",
+				message: "why",
+			}),
+			(error: unknown) => {
+				ok(error instanceof AcpRequestError);
+				strictEqual(error.detail.code, "invalid_params");
+				return true;
+			},
+		);
+		peer.transport.close();
+		strictEqual(await served, 0);
+
+		const bare = fakeTransport();
+		const servedBare = servePancodeAcpAgent({ transport: bare.transport, chat: fakeChat().chat, cwd: process.cwd() });
+		const bareSession = await openSession(bare);
+		deepStrictEqual(
+			await bare.call("_pancode/dispatch/steer", { sessionId: bareSession, runId: "run-live", action: "cancel" }),
+			{ accepted: false, reason: "dispatch-unavailable" },
+		);
+		bare.transport.close();
+		strictEqual(await servedBare, 0);
+	});
+});

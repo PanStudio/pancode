@@ -1,0 +1,236 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { ok, strictEqual } from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, it } from "node:test";
+import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
+import { pancodeConfigPath } from "../../src/core/xdg.js";
+import type { DispatchRequest } from "../../src/domains/dispatch/contract.js";
+import {
+	compareHostVerificationBase,
+	hostVerificationRejection,
+	hostVerificationSandbox,
+	runHostVerification,
+} from "../../src/domains/dispatch/host-verification.js";
+import { judgedFileSha256, readJudgedFile } from "../../src/tools/verify/scripts.js";
+
+process.env.PANCODE_VERIFICATION_SLOT_DIR = mkdtempSync(join(tmpdir(), "pancode-verification-slot-"));
+
+type ResolvedCheck = NonNullable<DispatchRequest["resolvedVerification"]>[number];
+
+const scratches: string[] = [];
+
+afterEach(() => {
+	while (scratches.length > 0) {
+		const dir = scratches.pop();
+		if (dir !== undefined) rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+function git(root: string, ...args: string[]): string {
+	return execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+it("leaves the base not compared when the linked base tree cannot resolve the check's toolchain", {
+	skip: !(sandboxAvailability().available && sandboxAvailability().backend === "bwrap"),
+}, async () => {
+	const root = mkdtempSync(join(tmpdir(), "pancode-host-verification-base-"));
+	scratches.push(root);
+	const project = join(root, "project");
+	const stateDir = join(root, "state");
+	mkdirSync(join(project, "src"), { recursive: true });
+	mkdirSync(stateDir, { recursive: true });
+	writeFileSync(join(project, "src", "a.ts"), "export const a = 1;\n");
+	writeFileSync(join(project, "package.json"), '{"devDependencies":{"@biomejs/biome":"1.0.0"}}\n');
+	git(project, "init", "-q", "-b", "main");
+	git(project, "config", "user.name", "Host Verification Base");
+	git(project, "config", "user.email", "host-verification@example.invalid");
+	git(project, "add", "-A");
+	git(project, "commit", "-q", "-m", "baseline");
+	const base = git(project, "rev-parse", "HEAD").trim();
+	const declared: ResolvedCheck = {
+		check: "lint",
+		cwd: project,
+		timeoutMs: 5_000,
+		argv: [process.execPath, "-e", "process.exit(1)"],
+	};
+	const request = {
+		resolvedVerification: [declared],
+		taskWorktree: { root: project, path: project, runId: "preflight", branch: "main", base, ownerToken: "fixture" },
+	};
+	const verification = await runHostVerification({ runId: "preflight", request, workerSuccessful: true, stateDir });
+	ok(verification?.checks[0]);
+	verification.checks[0].durationMs = 1;
+	await compareHostVerificationBase({ verification, request, stateDir });
+	strictEqual(verification.checks[0].baseComparison?.status, "not_compared");
+	strictEqual(verification.checks[0].baseComparison?.reason, "the check could not start on the base");
+	strictEqual(verification.status, "rejected");
+	ok(!/also fails on base/u.test(hostVerificationRejection(verification)?.detail ?? ""));
+	// A base that could not start is not a fact about the base, so it is never cached.
+	strictEqual(existsSync(join(stateDir, "dispatch-verification-base")), false);
+});
+
+it("seals a compete candidate's check that could not start for a host cause as not run, a cwd or input the candidate deleted or retyped as a rejection, and compares a failure on its base (M10a)", async () => {
+	const root = mkdtempSync(join(tmpdir(), "pancode-host-verification-base-"));
+	scratches.push(root);
+	const project = join(root, "project");
+	const stateDir = join(root, "state");
+	mkdirSync(project, { recursive: true });
+	mkdirSync(stateDir, { recursive: true });
+	writeFileSync(join(project, "a.txt"), "a\n");
+	mkdirSync(join(project, "pkg"));
+	writeFileSync(join(project, "pkg", "b.txt"), "b\n");
+	git(project, "init", "-q", "-b", "main");
+	git(project, "config", "user.name", "Host Verification Base");
+	git(project, "config", "user.email", "host-verification@example.invalid");
+	git(project, "add", "-A");
+	git(project, "commit", "-q", "-m", "baseline");
+	const base = git(project, "rev-parse", "HEAD").trim();
+	rmSync(join(project, "pkg"), { recursive: true });
+	const checks: ResolvedCheck[] = [
+		{ check: "passes", cwd: project, timeoutMs: 5_000, argv: [process.execPath, "-e", "process.exit(0)"] },
+		{ check: "absent", cwd: project, timeoutMs: 5_000, argv: [join(project, "no-such-tool")] },
+	];
+	const candidateWorktree = { root: project, path: project, base };
+	const candidate = await runHostVerification({
+		runId: "candidate",
+		request: { resolvedVerification: checks, candidateWorktree },
+		workerSuccessful: true,
+		stateDir,
+	});
+	strictEqual(candidate?.checks[1]?.notRun, "spawn-failed");
+	strictEqual(candidate?.status, "skipped");
+	strictEqual(candidate?.reason, "check_not_started");
+	strictEqual(hostVerificationRejection(candidate), null);
+	// A cwd the candidate deleted from its worktree was the candidate's doing: the check rejects it, naming the path.
+	// One the starting commit never had is not, and stays not run.
+	const gone: ResolvedCheck = {
+		check: "pkg",
+		cwd: join(project, "pkg"),
+		timeoutMs: 5_000,
+		argv: [process.execPath, "-e", "process.exit(0)"],
+	};
+	const never: ResolvedCheck = { ...gone, check: "never", cwd: join(project, "never") };
+	const removed = await runHostVerification({
+		runId: "candidate-removed",
+		request: { resolvedVerification: [checks[0] as ResolvedCheck, gone], candidateWorktree },
+		workerSuccessful: true,
+		stateDir,
+	});
+	strictEqual(removed?.status, "rejected");
+	strictEqual(removed?.checks[1]?.notRun, undefined);
+	ok(removed?.reason?.includes(join(project, "pkg")), removed?.reason);
+	ok(
+		hostVerificationRejection(removed)?.detail.includes(join(project, "pkg")),
+		hostVerificationRejection(removed)?.detail,
+	);
+	const untracked = await runHostVerification({
+		runId: "candidate-untracked",
+		request: { resolvedVerification: [never], candidateWorktree },
+		workerSuccessful: true,
+		stateDir,
+	});
+	strictEqual(untracked?.status, "skipped");
+	strictEqual(untracked?.reason, "check_not_started");
+	// A tracked input the candidate replaced with a directory is broken the same way: provenance would refuse it.
+	rmSync(join(project, "a.txt"));
+	mkdirSync(join(project, "a.txt"));
+	const swapped: ResolvedCheck = {
+		...(checks[0] as ResolvedCheck),
+		check: "num",
+		kind: "numeric-compare",
+		numeric: {
+			reference: join(root, "ref.json"),
+			referenceSha256: judgedFileSha256(readJudgedFile(join(root, "ref.json"))),
+			tolerance: { absolute: 0 },
+			inputs: [join(project, "a.txt")],
+		},
+	};
+	const retyped = await runHostVerification({
+		runId: "candidate-retyped",
+		request: { resolvedVerification: [swapped], candidateWorktree },
+		workerSuccessful: true,
+		stateDir,
+	});
+	strictEqual(retyped?.status, "rejected");
+	strictEqual(retyped?.checks[0]?.notRun, undefined);
+	ok(retyped?.reason?.includes(`'${join(project, "a.txt")}' is a directory`), retyped?.reason);
+	ok(
+		hostVerificationRejection(retyped)?.detail.includes(join(project, "a.txt")),
+		hostVerificationRejection(retyped)?.detail,
+	);
+	// A failure the candidate's base has too is compared there, as a task worktree's is.
+	const red: ResolvedCheck = {
+		check: "red",
+		cwd: project,
+		timeoutMs: 5_000,
+		argv: [process.execPath, "-e", "process.exit(1)"],
+	};
+	const request = { resolvedVerification: [red], candidateWorktree };
+	const failing = await runHostVerification({ runId: "candidate-red", request, workerSuccessful: true, stateDir });
+	strictEqual(failing?.status, "rejected");
+	await compareHostVerificationBase({ verification: failing, request, stateDir });
+	strictEqual(failing?.checks[0]?.baseComparison?.base, base);
+	if (sandboxAvailability().available && sandboxAvailability().backend === "bwrap") {
+		strictEqual(failing?.checks[0]?.baseComparison?.status, "failed");
+		strictEqual(failing?.status, "not_implicated");
+	}
+});
+
+it("masks the source checkout's and the worktree's secret files and PanCode's settings from the check and its base replay", {
+	skip: !(sandboxAvailability().available && sandboxAvailability().backend === "bwrap"),
+}, async () => {
+	const root = mkdtempSync(join(tmpdir(), "pancode-host-verification-base-"));
+	scratches.push(root);
+	const project = join(root, "project");
+	const worktree = join(project, ".pancode", "worktrees", "masks");
+	const stateDir = join(root, "state");
+	mkdirSync(project, { recursive: true });
+	mkdirSync(pancodeConfigPath(), { recursive: true });
+	const settings = join(pancodeConfigPath(), "settings.yaml");
+	const secrets = [settings, join(project, ".env"), join(project, "svc", ".env"), join(worktree, ".env")];
+	writeFileSync(
+		join(project, "check.js"),
+		`for (const file of ${JSON.stringify(secrets)}) { try { console.log(require("node:fs").readFileSync(file, "utf8")); } catch {} }\nprocess.exit(1);\n`,
+	);
+	git(project, "init", "-q", "-b", "main");
+	git(project, "config", "user.name", "Host Verification Base");
+	git(project, "config", "user.email", "host-verification@example.invalid");
+	git(project, "add", "-A");
+	git(project, "commit", "-q", "-m", "baseline");
+	const base = git(project, "rev-parse", "HEAD").trim();
+	git(project, "worktree", "add", "-q", "-b", "task", worktree, base);
+	mkdirSync(join(project, "svc"));
+	for (const [index, file] of secrets.entries()) writeFileSync(file, `secret-marker-${"sabc"[index]}\n`);
+	const taskWorktree = { root: project, path: worktree, runId: "masks", branch: "task", base, ownerToken: "fixture" };
+	const request = {
+		resolvedVerification: [{ check: "probe", cwd: worktree, timeoutMs: 10_000, argv: [process.execPath, "check.js"] }],
+		taskWorktree,
+	};
+	// Scratch roots get their own secret scan; keep the source checkout out of them, as a real project is.
+	const inherited = process.env.TMPDIR;
+	process.env.TMPDIR = join(root, "tmp");
+	mkdirSync(process.env.TMPDIR);
+	const shellSandbox = hostVerificationSandbox(undefined, taskWorktree);
+	process.env.TMPDIR = inherited;
+	ok(shellSandbox);
+	const verification = await runHostVerification({
+		runId: "masks",
+		request,
+		workerSuccessful: true,
+		stateDir,
+		shellSandbox,
+	});
+	ok(verification?.checks[0]);
+	// The task side masks PanCode's settings only when a target declares auth headers.
+	ok(!/secret-marker-[abc]/u.test(verification.checks[0].outputTail), verification.checks[0].outputTail);
+	await compareHostVerificationBase({ verification, request, stateDir });
+	strictEqual(verification.checks[0].baseComparison?.status, "failed");
+	const replays = join(stateDir, "dispatch-verification-base");
+	const stored = readdirSync(replays).map((name) => readFileSync(join(replays, name), "utf8"));
+	strictEqual(stored.length, 1);
+	ok(!/secret-marker/u.test(stored.join("\n")), stored.join("\n"));
+});

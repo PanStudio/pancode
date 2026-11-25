@@ -1,0 +1,538 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { canonicalJson } from "../../core/canonical-json.js";
+import type { DelegationToolGovernance, WorkerPermissionMode } from "../../core/defaults.js";
+import { sha256Hex } from "../../core/hash.js";
+import { isMcpToolName, mcpToolName, ToolNames } from "../../core/tool-names.js";
+import type { TurnConstraints } from "../../core/turn-constraints.js";
+import { turnDelegatesTool } from "../../core/turn-constraints.js";
+import { workerPermitDigest } from "../../worker/protocol.js";
+import { capabilityClassExcludes } from "../agents/role-class.js";
+import type { AgentCapabilityClass } from "../agents/spec.js";
+import type { RuntimeEnforcement } from "../providers/index.js";
+import { readOnlyWorkAdmitted } from "../providers/runtime-enforcement.js";
+import { classify } from "./action-classifier.js";
+import type { ApprovalAuthority } from "./admission.js";
+
+/**
+ * The effective worker permit (Codex review, "The corrected authority
+ * contract"). The host computes it once per attempt and it never changes
+ * during the run. It separates the hard ceiling C, which nothing grants past,
+ * from the standing allowance S inside it. A grant never changes either.
+ */
+
+const WORKER_PERMIT_VERSION = 1;
+
+/** Standing Git allowance. `inspect` grants no standing mutation; `worktree` is Phase C's attested task-branch set. */
+const WORKER_GIT_ALLOWANCES = ["inspect", "worktree"] as const;
+export type WorkerGitAllowance = (typeof WORKER_GIT_ALLOWANCES)[number];
+
+/** Where an ordinary approval-required call goes. `deny` and `fail` have equal authority. */
+const WORKER_ASK_ROUTES = ["deny", "fail", "main"] as const;
+type WorkerAskRoute = (typeof WORKER_ASK_ROUTES)[number];
+
+/** The recipe frontmatter `permissions:` block, and the per-task narrowing, share this shape. */
+export interface WorkerPermissionDeclaration {
+	git?: WorkerGitAllowance;
+	asks?: WorkerAskRoute;
+}
+
+/** The action classes an MCP trust record or declaration can give a tool. */
+const WORKER_MCP_ACTION_CLASSES = ["read", "execute", "destructive", "unknown"] as const;
+type WorkerMcpActionClass = (typeof WORKER_MCP_ACTION_CLASSES)[number];
+
+/**
+ * One MCP tool as admission resolved it, without launching anything: the
+ * declaration that owns the name, the digest that declaration had when it was
+ * trusted, and the class the shared classifier gave the tool. The worker
+ * launches only a declaration whose digest still matches.
+ */
+export interface WorkerMcpToolAttestation {
+	serverId: string;
+	digest: string;
+	/** The server's own tool name; the capability is `mcp_<serverId>__<tool>`. */
+	tool: string;
+	actionClass: WorkerMcpActionClass;
+	/**
+	 * The tool surface digest the operator approved for this server, the same
+	 * on each of its entries. The worker refuses every call to a server whose
+	 * served surface has another digest.
+	 */
+	surfaceDigest: string;
+	/**
+	 * The operator's network grant for this server, the same on each of its
+	 * entries. Only its sandboxed process gets network; the worker's own
+	 * commands keep the run's policy. Absent unless granted.
+	 */
+	network?: true;
+}
+
+export interface WorkerMcpAttestation {
+	/** Canonical project root the declarations and trust records were read from. */
+	projectRoot: string;
+	/** Sorted by capability name. */
+	tools: ReadonlyArray<WorkerMcpToolAttestation>;
+}
+
+/** The capability name an attestation admits. */
+function attestedMcpToolName(entry: Pick<WorkerMcpToolAttestation, "serverId" | "tool">): string | null {
+	return mcpToolName(entry.serverId, entry.tool);
+}
+
+interface WorkerPermitCeiling {
+	capabilityClass: AgentCapabilityClass;
+	/** Tools this run may ever call: admitted tools the delegation ceiling also covers, sorted. */
+	tools: ReadonlyArray<string>;
+	readOnly: boolean;
+	writeRoots: ReadonlyArray<string>;
+	/** What the selected runtime itself enforces for this run. */
+	enforcement: RuntimeEnforcement;
+	/** Present only when the ceiling's tools name MCP capabilities, one attestation per name. */
+	mcp?: WorkerMcpAttestation;
+}
+
+export interface WorkerPermitAllowance {
+	/**
+	 * The operator's yolo, bound by the host for every action class (#407);
+	 * absent keeps default admission. Receipts carry this name.
+	 */
+	executeAutonomy?: "yolo";
+	git: WorkerGitAllowance;
+	asks: WorkerAskRoute;
+	/**
+	 * Who decides an ask routed to `main`. `operator` is the escalate
+	 * route: the main agent's card, always decided by a person. `main` lets
+	 * the main agent grant ordinary asks through the grant broker (Phase D),
+	 * on native local workers only.
+	 */
+	approvalAuthority: ApprovalAuthority;
+}
+
+export interface WorkerPermit {
+	version: typeof WORKER_PERMIT_VERSION;
+	ceiling: WorkerPermitCeiling;
+	allowance: WorkerPermitAllowance;
+	/**
+	 * Present when an unmediated runtime took write-capable work because the
+	 * operator marked its target trusted: the runtime's own authority, not
+	 * PanCode's per-call mediation, governed the run.
+	 */
+	trustedUnmediated?: true;
+	/** sha256 over the canonical ceiling, allowance and trust opt-in. */
+	digest: string;
+}
+
+/** A permit request the host must refuse rather than quietly narrow. */
+class WorkerPermitAdmissionError extends Error {
+	constructor(message: string) {
+		super(`dispatch: permit admission denied: ${message}`);
+		this.name = "WorkerPermitAdmissionError";
+	}
+}
+
+function includes<T extends string>(values: ReadonlyArray<T>, value: unknown): value is T {
+	return typeof value === "string" && (values as ReadonlyArray<string>).includes(value);
+}
+
+/**
+ * Strict parser for a `permissions:` block. Unknown keys and values are
+ * rejected, never ignored: a misspelled `asks: mian` must not silently keep
+ * the default route.
+ */
+export function parseWorkerPermissionDeclaration(value: unknown, source: string): WorkerPermissionDeclaration {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) {
+		throw new Error(`${source} must be a map with optional git and asks keys`);
+	}
+	const record = value as Record<string, unknown>;
+	for (const key of Object.keys(record)) {
+		if (key !== "git" && key !== "asks") throw new Error(`${source}.${key} is unknown; expected git or asks`);
+	}
+	const out: WorkerPermissionDeclaration = {};
+	if (record.git !== undefined) {
+		if (!includes(WORKER_GIT_ALLOWANCES, record.git)) {
+			throw new Error(`${source}.git must be one of ${WORKER_GIT_ALLOWANCES.join(", ")}`);
+		}
+		out.git = record.git;
+	}
+	if (record.asks !== undefined) {
+		if (!includes(WORKER_ASK_ROUTES, record.asks)) {
+			throw new Error(`${source}.asks must be one of ${WORKER_ASK_ROUTES.join(", ")}`);
+		}
+		out.asks = record.asks;
+	}
+	return out;
+}
+
+/** Declaration errors that depend on the capability class. */
+export function workerPermissionDeclarationErrors(
+	capabilityClass: AgentCapabilityClass,
+	declaration: WorkerPermissionDeclaration | undefined,
+): string[] {
+	if (declaration?.git === "worktree" && capabilityClass !== "workspace-edit") {
+		return [`permissions.git: worktree requires capabilityClass workspace-edit, not ${capabilityClass}`];
+	}
+	return [];
+}
+
+/** The fleet permission mode expressed as a standing ask route. */
+export function askRouteForMode(mode: WorkerPermissionMode): {
+	asks: WorkerAskRoute;
+	approvalAuthority: ApprovalAuthority;
+} {
+	// escalate is an operator decision (Q7 revised).
+	if (mode === "escalate") return { asks: "main", approvalAuthority: "operator" };
+	// The explicit opt-in for the main agent to decide ordinary worker asks.
+	// Under judge the main session's safety judge decides them with the same
+	// main authority, so neither can clear an operator rail; dispatch resolves
+	// judge to deny wherever no judge can answer.
+	if (mode === "main" || mode === "judge") return { asks: "main", approvalAuthority: "main" };
+	return { asks: mode, approvalAuthority: "operator" };
+}
+
+/**
+ * The worker-side resolution the permit's allowance runs as. Every ask routed
+ * to `main` parks: an operator-authority permit for a person's card, a
+ * main-authority permit for the grant broker, which binds each decision to
+ * the attempt and the parked call (Phase D).
+ */
+export function workerPermissionModeForPermit(allowance: WorkerPermitAllowance): "deny" | "fail" | "escalate" {
+	if (allowance.asks === "main") return "escalate";
+	return allowance.asks;
+}
+
+/** True when asks go to the main agent with main authority, which only native local workers can honor. */
+export function mainGrantsUnavailable(allowance: Pick<WorkerPermitAllowance, "asks" | "approvalAuthority">): boolean {
+	return allowance.asks === "main" && allowance.approvalAuthority === "main";
+}
+
+/** Denial reason for an ask a main-authority permit cannot route on this runtime. */
+export const MAIN_GRANTS_UNAVAILABLE_REASON =
+	"main-agent grants reach only native local workers (fleet.permissions.mode=main); the ask is denied, not sent to the operator";
+
+/** Why a tool list exceeds a capability class's ceiling, read from the one role class table. */
+function capabilityClassCeilingErrors(
+	capabilityClass: AgentCapabilityClass,
+	tools: ReadonlyArray<string>,
+	mcp: WorkerMcpAttestation | undefined,
+): string[] {
+	const errors: string[] = [];
+	const mcpEntries = new Map(
+		(mcp?.tools ?? []).flatMap((entry) => {
+			const name = attestedMcpToolName(entry);
+			return name === null ? [] : [[name, entry] as const];
+		}),
+	);
+	for (const tool of tools) {
+		const before = errors.length;
+		// The gateway is the transport for capabilities already named; it carries no authority of its own.
+		if (tool === ToolNames.Gateway) continue;
+		// A name alone carries no MCP class; the attested one runs through the same table.
+		const attested = isMcpToolName(tool) ? mcpEntries.get(tool) : undefined;
+		const action = isMcpToolName(tool) ? (attested?.actionClass ?? "unknown") : classify({ tool }).actionClass;
+		if (action === "dispatch" || tool === ToolNames.AskUser) {
+			errors.push(`${tool} is orchestrator-only and no worker runtime mediates it`);
+			continue;
+		}
+		const reason = capabilityClassExcludes(capabilityClass, tool, action);
+		if (reason !== null) errors.push(`${capabilityClass} ceiling ${reason}`);
+		if (attested !== undefined && errors.length > before) {
+			errors[errors.length - 1] +=
+				` (MCP server '${attested.serverId}' gives it class ${action}; the server's trust record or declaration sets that class: pancode mcp trust ${attested.serverId} --action-class <class>, or toolActionClasses in its declaration)`;
+		}
+	}
+	return errors;
+}
+
+export interface WorkerPermitInput {
+	agentId: string;
+	capabilityClass: AgentCapabilityClass;
+	/** The final admitted tool surface for this attempt. */
+	tools: ReadonlyArray<string>;
+	/** Host task scope; its delegation ceiling is `delegatedTools ?? allowedTools`. */
+	turnConstraints?: TurnConstraints;
+	readOnly: boolean;
+	writeRoots: ReadonlyArray<string>;
+	/** The recipe's `permissions:` block, when it declares one. */
+	declared?: WorkerPermissionDeclaration;
+	/** Per-task narrowing a host caller requests. A widening request is refused. */
+	narrowing?: WorkerPermissionDeclaration;
+	/**
+	 * The allowance of the attempt this one retries. It caps the result
+	 * without refusing: a retry that fails over to another recipe or sees
+	 * changed settings still runs no wider than the attempt it replaces.
+	 */
+	inherited?: WorkerPermitAllowance;
+	/** Effective operator posture from host settings, never a task field. */
+	operatorAutonomy?: "default" | "yolo";
+	/** fleet.permissions.mode. */
+	mode: WorkerPermissionMode;
+	/** True when the host selected an internal helper protocol for this run. */
+	hostHelper?: boolean;
+	/** The selected runtime and target, and whether the operator trusts it unmediated. */
+	runtime: {
+		id: string;
+		targetId: string;
+		enforcement: RuntimeEnforcement;
+		trustedUnmediated: boolean;
+		/** The runtime confines its own tools in an OS-level read-only sandbox for a read-only run. */
+		readOnlySandbox?: boolean;
+	};
+	/** Admission's attestation for every MCP capability in `tools`. */
+	mcp?: WorkerMcpAttestation;
+}
+
+/**
+ * Resolve the immutable permit for one attempt. Narrowing only narrows: a
+ * request for a wider allowance than the recipe and settings give is an
+ * admission error, not an ignored preference.
+ */
+export function resolveWorkerPermit(input: WorkerPermitInput): WorkerPermit {
+	const who = `agent '${input.agentId}'`;
+	if (input.capabilityClass === "orchestration") {
+		throw new WorkerPermitAdmissionError(
+			`${who} is an orchestration agent; no worker runtime mediates nested dispatch, so it cannot run as a worker`,
+		);
+	}
+	if (input.capabilityClass === "internal" && input.hostHelper !== true) {
+		throw new WorkerPermitAdmissionError(
+			`${who} declares capabilityClass internal without a host-selected helper protocol; internal authority is never derived from the label`,
+		);
+	}
+	const declarationErrors = workerPermissionDeclarationErrors(input.capabilityClass, input.declared);
+	if (declarationErrors.length > 0) throw new WorkerPermitAdmissionError(`${who}: ${declarationErrors.join("; ")}`);
+	const ceilingErrors = capabilityClassCeilingErrors(input.capabilityClass, input.tools, input.mcp);
+	if (ceilingErrors.length > 0) throw new WorkerPermitAdmissionError(`${who}: ${ceilingErrors.join("; ")}`);
+	if (input.readOnly && !readOnlyWorkAdmitted(input.runtime)) {
+		throw new WorkerPermitAdmissionError(
+			`runtime '${input.runtime.id}' cannot run read-only work: PanCode cannot mediate its individual calls and it has no OS-level read-only sandbox, so it could change user files; trustedUnmediated does not change this. Choose a native, claude-sdk or codex-cli target for target '${input.runtime.targetId}'`,
+		);
+	}
+	// Operator decision Q6: a runtime PanCode cannot mediate per call takes
+	// write-capable work only when its target is explicitly trusted.
+	const unmediatedWrite = !input.readOnly && !input.runtime.enforcement.perCallMediation;
+	if (unmediatedWrite && !input.runtime.trustedUnmediated) {
+		throw new WorkerPermitAdmissionError(
+			`runtime '${input.runtime.id}' runs its own tool loop and PanCode cannot mediate its individual calls, so it is refused write-capable work; choose a native or claude-sdk target, or set trustedUnmediated: true on target '${input.runtime.targetId}' in settings.yaml to accept the runtime's own authority`,
+		);
+	}
+
+	const route = askRouteForMode(input.mode);
+	// fleet.permissions.mode is a ceiling. Project recipes load without a trust
+	// gate, so a recipe that routes asks to main under a deny or fail mode would
+	// let a cloned repository turn the operator's refusal into approval cards.
+	// The recipe is capped to the operator's route, not refused; deny and fail
+	// still narrow any mode.
+	const declaredAsks = input.declared?.asks;
+	const baseAsks = declaredAsks === "main" && route.asks !== "main" ? route.asks : (declaredAsks ?? route.asks);
+	const baseGit = input.declared?.git ?? "inspect";
+	const narrowing = input.narrowing ?? {};
+	if (narrowing.git === "worktree" && baseGit !== "worktree") {
+		throw new WorkerPermitAdmissionError(`${who}: git ${baseGit} cannot be widened to worktree for one task`);
+	}
+	if (narrowing.asks === "main" && baseAsks !== "main") {
+		throw new WorkerPermitAdmissionError(`${who}: asks ${baseAsks} cannot be widened to main for one task`);
+	}
+	const inherited = input.inherited;
+	let asks = narrowing.asks ?? baseAsks;
+	if (inherited !== undefined && inherited.asks !== "main" && asks === "main") asks = inherited.asks;
+	// The ceiling dominates the allowance: a read-only run has no Git mutation to allow.
+	const git = input.readOnly || inherited?.git === "inspect" ? "inspect" : (narrowing.git ?? baseGit);
+	// Authority is the operator's setting; a recipe routing asks to main never
+	// raises who decides them.
+	const approvalAuthority: ApprovalAuthority =
+		asks === "main" && route.asks === "main" && inherited?.approvalAuthority !== "operator"
+			? route.approvalAuthority
+			: "operator";
+
+	const ceilingTools = [...new Set(input.tools.filter((tool) => turnDelegatesTool(input.turnConstraints, tool)))].sort();
+	const mcpTools = (input.mcp?.tools ?? []).filter((entry) => {
+		const name = attestedMcpToolName(entry);
+		return name !== null && ceilingTools.includes(name);
+	});
+	const unattested = ceilingTools.filter(
+		(tool) => isMcpToolName(tool) && !mcpTools.some((entry) => attestedMcpToolName(entry) === tool),
+	);
+	if (unattested.length > 0) {
+		throw new WorkerPermitAdmissionError(
+			`${who}: MCP capabilities without an admission attestation: ${unattested.join(", ")}`,
+		);
+	}
+	const ceiling: WorkerPermitCeiling = {
+		capabilityClass: input.capabilityClass,
+		tools: ceilingTools,
+		readOnly: input.readOnly,
+		writeRoots: [...input.writeRoots],
+		enforcement: { ...input.runtime.enforcement },
+		// Absent when no MCP capability is admitted, so every other permit keeps its digest.
+		...(mcpTools.length > 0 && input.mcp !== undefined
+			? { mcp: { projectRoot: input.mcp.projectRoot, tools: mcpTools.map((entry) => ({ ...entry })) } }
+			: {}),
+	};
+	const executeAuthorized =
+		input.operatorAutonomy === "yolo" &&
+		input.runtime.enforcement.perCallMediation &&
+		!input.readOnly &&
+		input.declared?.asks !== "deny" &&
+		input.declared?.asks !== "fail" &&
+		narrowing.asks !== "deny" &&
+		narrowing.asks !== "fail" &&
+		(inherited === undefined || inherited.executeAutonomy === "yolo");
+	const allowance: WorkerPermitAllowance = {
+		git,
+		asks,
+		approvalAuthority,
+		...(executeAuthorized ? { executeAutonomy: "yolo" as const } : {}),
+	};
+	return Object.freeze({
+		version: WORKER_PERMIT_VERSION,
+		...(unmediatedWrite ? { trustedUnmediated: true as const } : {}),
+		ceiling: Object.freeze({
+			...ceiling,
+			tools: Object.freeze([...ceiling.tools]),
+			writeRoots: Object.freeze([...ceiling.writeRoots]),
+			...(ceiling.mcp !== undefined
+				? {
+						mcp: Object.freeze({
+							projectRoot: ceiling.mcp.projectRoot,
+							tools: Object.freeze(ceiling.mcp.tools.map((entry) => Object.freeze({ ...entry }))),
+						}),
+					}
+				: {}),
+		}),
+		allowance: Object.freeze(allowance),
+		digest: workerPermitDigest({
+			version: WORKER_PERMIT_VERSION,
+			ceiling,
+			allowance,
+			...(unmediatedWrite ? { trustedUnmediated: true as const } : {}),
+		}),
+	});
+}
+
+/**
+ * The permit without the operator's yolo grant, every other field unchanged and
+ * the digest sealed again. A dispatcher that left yolo while its attempt waited
+ * for capacity launches the worker with this, so no worker ends up above its
+ * dispatcher.
+ */
+export function withoutExecuteAutonomy(permit: WorkerPermit): WorkerPermit {
+	if (permit.allowance.executeAutonomy === undefined) return permit;
+	const { executeAutonomy: _dropped, ...allowance } = permit.allowance;
+	return Object.freeze({
+		...permit,
+		allowance: Object.freeze(allowance),
+		digest: workerPermitDigest({
+			version: permit.version,
+			ceiling: permit.ceiling,
+			allowance,
+			...(permit.trustedUnmediated === true ? { trustedUnmediated: true as const } : {}),
+		}),
+	});
+}
+
+/**
+ * Marks a permit PanCode recorded and did not enforce. An ACP peer runs its own
+ * tools, and PanCode answers only the permission requests the peer chooses to
+ * send, under the agent's toolGovernance. A call the peer never asks about
+ * reaches no PanCode check.
+ */
+interface WorkerPermitRecordOnly {
+	mediation: "peer-asks-only";
+	toolGovernance: DelegationToolGovernance;
+}
+
+export interface RecordOnlyWorkerPermit {
+	version: typeof WORKER_PERMIT_VERSION;
+	ceiling: WorkerPermitCeiling;
+	allowance: WorkerPermitAllowance;
+	trustedUnmediated?: true;
+	recordOnly: WorkerPermitRecordOnly;
+	/** sha256 over the canonical ceiling, allowance, trust opt-in and record-only marker. */
+	digest: string;
+}
+
+/**
+ * The permit an ACP delegation is sealed under, for the record. It states the
+ * intended ceiling and never passes through resolveWorkerPermit, whose
+ * unmediated-write refusal would refuse every write-capable pancode-policy
+ * peer. Nothing reads it as a cap: a retry of an ACP run inherits no permit.
+ */
+export function recordOnlyAcpPermit(input: {
+	readOnly: boolean;
+	toolGovernance: DelegationToolGovernance;
+	trustedUnmediated: boolean;
+}): RecordOnlyWorkerPermit {
+	const ceiling: WorkerPermitCeiling = {
+		// ACP delegation has no recipe class; a run not pinned read-only is an edit assignment.
+		capabilityClass: input.readOnly ? "read-only" : "workspace-edit",
+		// PanCode admits none of its own tools to a peer, whose inventory is its own.
+		tools: [],
+		readOnly: input.readOnly,
+		// ACP dispatch refuses declared write roots, so none is ever intended.
+		writeRoots: [],
+		// PanCode judges only the calls the peer asks about and never parks one. It
+		// cannot narrow the peer's tools or scope, and it can still cancel the peer.
+		enforcement: {
+			perCallMediation: false,
+			toolNarrowing: "none",
+			scopeEnforcement: false,
+			grantPauseResume: false,
+			cancellation: true,
+		},
+	};
+	// No operator answers a delegation's approval-required call, so the mediator
+	// denies it. Agent-managed governance approves every call instead, which the
+	// trustedUnmediated opt-in records.
+	const allowance: WorkerPermitAllowance = { git: "inspect", asks: "deny", approvalAuthority: "operator" };
+	const recordOnly: WorkerPermitRecordOnly = { mediation: "peer-asks-only", toolGovernance: input.toolGovernance };
+	const payload = {
+		version: WORKER_PERMIT_VERSION,
+		ceiling,
+		allowance,
+		recordOnly,
+		...(input.trustedUnmediated ? { trustedUnmediated: true } : {}),
+	};
+	return Object.freeze({
+		version: WORKER_PERMIT_VERSION,
+		...(input.trustedUnmediated ? { trustedUnmediated: true as const } : {}),
+		ceiling: Object.freeze({ ...ceiling, tools: Object.freeze([]), writeRoots: Object.freeze([]) }),
+		allowance: Object.freeze(allowance),
+		recordOnly: Object.freeze(recordOnly),
+		// A distinct domain keeps a record-only digest from ever matching an enforced permit's.
+		digest: sha256Hex(`pancode.workerPermit.recordOnly:${canonicalJson(payload)}`),
+	});
+}
+
+/** One prompt line naming the permit the worker runs under. */
+export function workerPermitPromptLine(view: {
+	executeAutonomy?: "yolo";
+	capabilityClass?: AgentCapabilityClass;
+	git: WorkerGitAllowance;
+	asks: WorkerAskRoute;
+	approvalAuthority: ApprovalAuthority;
+	/** True when the host created a task worktree this run owns. */
+	taskWorktree?: boolean;
+}): string {
+	const asks =
+		view.asks === "main"
+			? view.approvalAuthority === "main"
+				? "main (the main agent decides ordinary asks; operator rails go to the operator)"
+				: "main (operator decides)"
+			: view.asks;
+	const scope = view.capabilityClass !== undefined ? `${view.capabilityClass}, ` : "";
+	const line = `Permit: ${scope}git ${view.git}, asks ${asks}.${view.executeAutonomy === "yolo" ? " Autonomy: the operator's yolo, for every action; your dispatch scope, sandbox and the yolo floor still apply." : ""}`;
+	// The host commits the task worktree when the run settles, but only tracked
+	// changes, staged files and the files the run's own edit and write calls
+	// made. Without this a worker told to commit burns calls on denied `git
+	// commit` attempts, and one whose shell made a file it means to ship loses it.
+	const hostCommit =
+		"When you finish, PanCode commits your changes to tracked files and the new files you wrote with edit or write; a new file made any other way, such as by a shell command, ships only if you stage it through the git capability.";
+	if (view.git !== "worktree") {
+		return view.taskWorktree === true ? `${line} ${hostCommit} Git mutations need approval.` : line;
+	}
+	// Phase C: the allowance is effective only inside the run's own task worktree.
+	return view.taskWorktree === true
+		? `${line} On your task branch you may stage and commit without asking, only through the git capability: gateway(op="call", capability="git", args={op:"add", paths:["<literal path>"]}), then args={op:"commit", message:"<message>"}. Bash git add and commit ask. Every other Git mutation (switch, stash, rebase, merge, reset, branch, tag, config, push) needs approval, and HEAD must stay on your task branch. ${hostCommit}`
+		: `${line} This run has no task worktree, so every Git mutation needs approval.`;
+}

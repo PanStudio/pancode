@@ -1,0 +1,643 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, rejects, strictEqual } from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
+import {
+	BLOCKED_ATTEMPT_REASON_MAX_CHARS,
+	BLOCKED_ATTEMPTS_LIMIT,
+	recordBlockedAttempt,
+} from "../../src/cli/modes/headless-run-events.js";
+import {
+	HEADLESS_PERMISSION_DENIED_MARKER,
+	HEADLESS_PERMISSION_DENIED_REASON,
+} from "../../src/core/headless-permission.js";
+import { WORKER_OUTPUT_MAX_BYTES } from "../../src/domains/dispatch/event-pump.js";
+
+import type { SafetyBlockedAttempt } from "../../src/domains/dispatch/types.js";
+import { inspectRunEvidence } from "../../src/domains/evidence/run-evidence.js";
+import { readVerifiedRun } from "../../src/domains/telemetry/index.js";
+import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import type { ChatLoopEvent } from "../../src/session-control/chat-loop.js";
+import { resolveAgentTools } from "../../src/tools/agent-tools.js";
+import { bashTool } from "../../src/tools/bash.js";
+import { createRegistry } from "../../src/tools/registry.js";
+import { inline } from "../harness/headless-denial-fixture.js";
+import { type HeadlessScratch, headlessScratch, runCli } from "../harness/headless-run.js";
+import {
+	closeServer,
+	type OpenAICompatFixture,
+	type OpenAICompatToolCallScript,
+	seedOpenAICompatToolOrchestrator,
+	startOpenAICompatFixture,
+} from "../harness/openai-compat-fixture.js";
+import { readRunJournal } from "../harness/run-journal.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
+
+const pivot =
+	"Do not retry this action through another tool or a respelled command (other flags, quoting, or a wrapper) unless a hint above names one; pivot or report the blocker.";
+let env: IsolatedPancodeEnv;
+let previousCwd: string;
+beforeEach(async () => {
+	env = await isolatePancodeEnv("d6-");
+	previousCwd = process.cwd();
+	process.chdir(env.dir);
+	writeFileSync("sentinel.txt", "blocked is harmless fixture text\n");
+});
+afterEach(() => {
+	process.chdir(previousCwd);
+	env.restore();
+});
+
+function tools() {
+	const safety = createWorkerSafety({ cwd: env.dir });
+	const registry = createRegistry({ safety, autonomy: () => "default" });
+	registry.register(bashTool);
+	return { safety, registry };
+}
+
+test("headless denied asks preserve the actual cause/rule, final denial and bounded no-bypass feedback", async () => {
+	const { safety, registry } = tools();
+	const original = safety.evaluate({ tool: "bash", args: { command: inline } });
+	strictEqual(original.kind, "ask", "default mode must review hidden shell content");
+	strictEqual(original.policy?.ruleId, "bash-hidden-content");
+	registry.onPermissionRequired(() => registry.cancelParkedCalls(HEADLESS_PERMISSION_DENIED_REASON));
+	const bash = resolveAgentTools({ registry })[0];
+	ok(bash);
+	await rejects(bash.execute("denied-inline", { command: inline }), (error: unknown) => {
+		ok(error instanceof Error);
+		ok(error.message.startsWith(HEADLESS_PERMISSION_DENIED_MARKER));
+		match(error.message, /rule: bash-hidden-content/);
+		match(error.message, /shell variables, unparsed shell scripts or interpreter source hide which paths it touches/);
+		match(error.message, /denied|not approved/);
+		doesNotMatch(error.message, /hard block|is parked|resumeParked|awaiting approval/);
+		ok(error.message.endsWith(pivot));
+		ok(error.message.split("\n").length <= 16);
+		ok(error.message.split("\n").every((line) => line.length <= 301));
+		return true;
+	});
+	strictEqual(registry.parkedCount(), 0);
+	strictEqual(readFileSync("sentinel.txt", "utf8"), "blocked is harmless fixture text\n");
+});
+
+test("interactive denials remain terminal, while actual hard blocks retain hard-block guidance", async () => {
+	const { safety, registry } = tools();
+	registry.onPermissionRequired(() => registry.cancelParkedCalls("Operator denied this action.", { denied: true }));
+	const bash = resolveAgentTools({ registry })[0];
+	ok(bash);
+	await rejects(bash.execute("interactive", { command: inline }), (error: unknown) => {
+		ok(error instanceof Error);
+		strictEqual(
+			error.message,
+			`Operator denied this action.\nRefused by operator approval (bash-hidden-content); PanCode classifies this call as execute. Not retryable: an identical call asks the operator again.\nTo allow it: the operator must approve it; ask what to do instead of repeating it.\n${pivot}`,
+		);
+		return true;
+	});
+	strictEqual(safety.evaluate({ tool: "bash", args: { command: 'rm -f "$PWD/sentinel.txt"' } }).kind, "block");
+	await rejects(
+		bash.execute("hard", { command: 'rm -f "$PWD/sentinel.txt"' }),
+		/hard block; confirmation cannot override/,
+	);
+	strictEqual(readFileSync("sentinel.txt", "utf8"), "blocked is harmless fixture text\n");
+});
+
+test("headless production correlation and receipt preserve authoritative outcomes rather than classifying text", async () => {
+	const eventsPath = join(env.dir, "events.json");
+	const child = spawnSync(
+		process.execPath,
+		[
+			"--import",
+			import.meta.resolve("tsx"),
+			fileURLToPath(new URL("../fixtures/headless-denial-driver.ts", import.meta.url)),
+			eventsPath,
+		],
+		{ cwd: env.dir, env: process.env, encoding: "utf8", timeout: 30_000 },
+	);
+	strictEqual(child.error, undefined);
+	strictEqual(child.status, 1, `the unresolved hard block fails the run: ${child.stderr}`);
+	const output = child.stdout;
+	const events = JSON.parse(readFileSync(eventsPath, "utf8")) as ChatLoopEvent[];
+	const { safety } = tools();
+	const ends = events.filter((event) => event.type === "tool_execution_end") as Array<
+		Extract<ChatLoopEvent, { type: "tool_execution_end" }> & {
+			outcome?: string;
+			ruleId?: string;
+			reasonCode?: string;
+			policySource?: string;
+		}
+	>;
+	deepStrictEqual(
+		ends.slice(0, 2).map((event) => event.toolCallId),
+		["error-second", "ask-first"],
+	);
+	strictEqual(readFileSync("sentinel.txt", "utf8"), "blocked is harmless fixture text\n");
+	for (const [id, command, outcome] of [
+		["ask-first", inline, "blocked"],
+		["error-second", "ls missing-blocked.txt", "error"],
+		["success", "ls sentinel.txt", "ok"],
+		["hard", 'rm -f "$PWD/sentinel.txt"', "blocked"],
+	] as const) {
+		const event = ends.find((entry) => entry.toolCallId === id);
+		ok(event);
+		const policy = safety.evaluate({ tool: "bash", args: { command } }).policy;
+		ok(policy);
+		deepStrictEqual(
+			{ outcome: event.outcome, ruleId: event.ruleId, reasonCode: event.reasonCode, policySource: event.policySource },
+			{ outcome, ruleId: policy.ruleId, reasonCode: policy.reasonCode, policySource: policy.policySource },
+			id,
+		);
+		const wire = output
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line))
+			.find((entry) => entry.type === "tool_execution_end" && entry.toolCallId === id);
+		strictEqual(wire.ruleId, policy.ruleId);
+	}
+	for (const legacy of ends.filter((event) => event.toolName === "legacy")) {
+		strictEqual(legacy.outcome, undefined);
+		strictEqual(legacy.ruleId, undefined);
+	}
+	{
+		const journal = readRunJournal(join(env.dir, "state"));
+		ok(journal);
+		strictEqual(journal.envelopes.size, 1);
+		const envelope = [...journal.envelopes.values()][0];
+		ok(envelope);
+		strictEqual(envelope.outcome, "failed");
+	}
+});
+
+test("the headless blockedAttempts list is bounded and counts what it leaves out", () => {
+	const stats = { blockedAttempts: [] as SafetyBlockedAttempt[], blockedAttemptsTruncated: 0 };
+	const reason = "x".repeat(BLOCKED_ATTEMPT_REASON_MAX_CHARS + 100);
+	for (let index = 0; index < BLOCKED_ATTEMPTS_LIMIT + 10; index += 1) {
+		recordBlockedAttempt(stats, { tool: "write", actionClass: "write", reason });
+	}
+	strictEqual(stats.blockedAttempts.length, BLOCKED_ATTEMPTS_LIMIT);
+	strictEqual(stats.blockedAttemptsTruncated, 10);
+	strictEqual(stats.blockedAttempts[0]?.reason, `${reason.slice(0, BLOCKED_ATTEMPT_REASON_MAX_CHARS)}…`);
+	stats.blockedAttempts = [];
+	recordBlockedAttempt(stats, { tool: "edit", reason: "short" });
+	deepStrictEqual(stats.blockedAttempts, [{ tool: "edit", reason: "short" }]);
+});
+
+/**
+ * Ticket #378 end to end: the built binary, a scripted OpenAI-compatible model,
+ * and the exit code and sealed receipt an external driver would read.
+ */
+describe("headless no-op contract through the built binary", () => {
+	const fixtures: OpenAICompatFixture[] = [];
+	const scratches: HeadlessScratch[] = [];
+	afterEach(async () => {
+		await Promise.all(fixtures.splice(0).map((fixture) => closeServer(fixture.server)));
+		for (const scratch of scratches.splice(0)) scratch.cleanup();
+	});
+
+	// A source file, not notes: a `.txt` write is prose and owes no validation (d8260f987).
+	const PROOF_PATH = "c2-proof.ts";
+	const PROOF = 'export const proof = "written by the no-op contract test";\n';
+	const writeProof: OpenAICompatToolCallScript = {
+		id: "call-write",
+		name: "write",
+		arguments: { path: PROOF_PATH, content: PROOF },
+	};
+	// bash is a direct tool, so the gateway's call op refuses it; only a chain step may name it.
+	// At default a contained command runs in the sandbox, so the denied write
+	// asks to leave it, which keeps the hidden-content ask on every host.
+	const deniedArgs = { command: inline, unsandboxed: true };
+	const deniedInline: OpenAICompatToolCallScript = {
+		id: "call-inline",
+		name: "bash",
+		arguments: deniedArgs,
+	};
+
+	/** Tool results already in the conversation, which is how far the script has got. */
+	function toolResults(request: Record<string, unknown>): number {
+		const messages = Array.isArray(request.messages) ? request.messages : [];
+		return messages.filter((message) => (message as { role?: unknown }).role === "tool").length;
+	}
+
+	async function headlessTurn(input: {
+		autonomy: string;
+		steps: ReadonlyArray<OpenAICompatToolCallScript>;
+		failOnNoop: boolean;
+		reply?: string;
+		packageScripts?: Record<string, string>;
+		turnMode?: "answer" | "proposal" | "change";
+		prompt?: string;
+		flags?: ReadonlyArray<string>;
+		settingsPatch?: (yaml: string) => string;
+		projectFiles?: Record<string, string>;
+	}) {
+		const scratch = headlessScratch("pancode-noop-");
+		scratches.push(scratch);
+		const fixture = await startOpenAICompatFixture(input.reply ?? "I could not apply the change.", {
+			toolCall: (request) => input.steps[toolResults(request)] ?? null,
+		});
+		fixtures.push(fixture);
+		seedOpenAICompatToolOrchestrator(scratch.configDir, fixture.url, input.autonomy);
+		if (input.settingsPatch) {
+			const settingsPath = join(scratch.configDir, "settings.yaml");
+			writeFileSync(settingsPath, input.settingsPatch(readFileSync(settingsPath, "utf8")));
+		}
+		const project = join(scratch.root, "project");
+		mkdirSync(project);
+		writeFileSync(join(project, "sentinel.txt"), "blocked is harmless fixture text\n");
+		for (const [name, text] of Object.entries(input.projectFiles ?? {})) writeFileSync(join(project, name), text);
+		if (input.packageScripts)
+			writeFileSync(join(project, "package.json"), JSON.stringify({ scripts: input.packageScripts }));
+		const turn = await runCli(
+			[
+				"--no-context-files",
+				"--no-skills",
+				"run",
+				"--autonomy",
+				input.autonomy,
+				...(input.failOnNoop ? ["--fail-on-noop"] : []),
+				...(input.turnMode ? ["--turn-mode", input.turnMode] : []),
+				...(input.flags ?? []),
+				input.prompt ?? "Apply the change.",
+			],
+			{ env: scratch.env, cwd: project },
+		);
+		const runJournal = readRunJournal(scratch.stateDir);
+		ok(runJournal);
+		const envelope = [...runJournal.envelopes.values()][0];
+		ok(envelope);
+		strictEqual(envelope.exitCode, turn.code, "the receipt and the process must agree on the exit code");
+		strictEqual(readFileSync(join(project, "sentinel.txt"), "utf8"), "blocked is harmless fixture text\n");
+		return { turn, envelope, project, fixture, stateDir: scratch.stateDir };
+	}
+
+	test("--on-permission fail ends the run at the first refused ask with exit 3 before another request", async () => {
+		const { turn, envelope, fixture } = await headlessTurn({
+			autonomy: "default",
+			steps: [deniedInline, deniedInline],
+			failOnNoop: false,
+			flags: ["--on-permission", "fail"],
+		});
+		strictEqual(turn.code, 3, turn.stderr);
+		strictEqual(envelope.outcomeDetail, "permission_required");
+		match(turn.stderr, /--on-permission fail: bash needed approval/);
+		// Main-loop requests carry the tool set; a side call (title, judge) carries none and is not a continuation.
+		const mainLoop = fixture.requests.filter((request) => Array.isArray(request.tools) && request.tools.length > 0);
+		strictEqual(mainLoop.length, 1);
+	});
+
+	const readSentinel = (id: string): OpenAICompatToolCallScript => ({
+		id,
+		name: "read",
+		arguments: { path: "sentinel.txt" },
+	});
+	const lastJson = (stdout: string): Record<string, unknown> =>
+		JSON.parse(stdout.trim().split("\n").filter(Boolean).at(-1) ?? "{}") as Record<string, unknown>;
+
+	test("--max-requests stops the main loop before the request past the cap: exit 4, cause max_requests", async () => {
+		const { turn, envelope, fixture } = await headlessTurn({
+			autonomy: "default",
+			steps: [readSentinel("r1"), readSentinel("r2"), readSentinel("r3")],
+			failOnNoop: false,
+			flags: ["--max-requests", "2", "--output-format", "json"],
+		});
+		strictEqual(turn.code, 4, turn.stderr);
+		strictEqual(envelope.outcomeDetail, "max_requests");
+		const mainLoop = fixture.requests.filter((request) => Array.isArray(request.tools) && request.tools.length > 0);
+		strictEqual(mainLoop.length, 2);
+		const causes = lastJson(turn.stdout).causes as Array<Record<string, unknown>>;
+		deepStrictEqual(
+			{ code: causes[0]?.code, limit: causes[0]?.limit, observed: causes[0]?.observed },
+			{ code: "max_requests", limit: 2, observed: 2 },
+		);
+		// SPEC 6.9: the envelope lists what was requested and what is enforced.
+		deepStrictEqual(lastJson(turn.stdout).limits, { requested: { maxRequests: 2 }, enforced: ["maxRequests"] });
+	});
+
+	test("--max-tool-calls refuses the batch past the cap and ends the run: exit 4, cause max_tool_calls", async () => {
+		const { turn, envelope, fixture } = await headlessTurn({
+			autonomy: "default",
+			steps: [readSentinel("t1"), readSentinel("t2"), readSentinel("t3")],
+			failOnNoop: false,
+			flags: ["--max-tool-calls", "1", "--output-format", "json"],
+		});
+		strictEqual(turn.code, 4, turn.stderr);
+		strictEqual(envelope.outcomeDetail, "max_tool_calls");
+		// Request 2 brought the refused call; no request follows it.
+		const mainLoop = fixture.requests.filter((request) => Array.isArray(request.tools) && request.tools.length > 0);
+		strictEqual(mainLoop.length, 2);
+		const causes = lastJson(turn.stdout).causes as Array<Record<string, unknown>>;
+		deepStrictEqual(
+			{ code: causes[0]?.code, limit: causes[0]?.limit, observed: causes[0]?.observed },
+			{ code: "max_tool_calls", limit: 1, observed: 2 },
+		);
+	});
+
+	test("an --output the run never writes refuses the first finish(done), then seals partly_done: exit 1, cause missing_output (M-4)", async () => {
+		const finishDone = (id: string): OpenAICompatToolCallScript => ({
+			id,
+			name: "finish",
+			arguments: { state: "done" },
+			text: "The report is written.",
+		});
+		const { turn, envelope, fixture } = await headlessTurn({
+			autonomy: "default",
+			steps: [finishDone("f1"), finishDone("f2")],
+			failOnNoop: false,
+			prompt: "Write the report.",
+			flags: ["--output", "report.md", "--output-format", "json"],
+		});
+		strictEqual(turn.code, 1, turn.stderr);
+		strictEqual(envelope.outcomeDetail, "missing_output");
+		const mainLoop = fixture.requests.filter((request) => Array.isArray(request.tools) && request.tools.length > 0);
+		strictEqual(mainLoop.length, 2);
+		// The flag is the prompt's marker line; the one refusal names the absent path, and the second finish runs.
+		ok(JSON.stringify(mainLoop[0]?.messages).includes("output: report.md"));
+		ok(JSON.stringify(mainLoop[1]?.messages).includes("the operator named an output that does not exist: report.md"));
+		const result = lastJson(turn.stdout);
+		strictEqual(result.outcome, "failed");
+		strictEqual((result.causes as Array<Record<string, unknown>>)[0]?.code, "missing_output");
+		const completion = result.completion as { claimed?: string; state?: string; facts?: string[]; unverified?: string[] };
+		deepStrictEqual(
+			{ claimed: completion.claimed, state: completion.state, facts: completion.facts },
+			{ claimed: "done", state: "partly_done", facts: ["missing_output"] },
+		);
+		ok(completion.unverified?.includes("missing output: report.md"), JSON.stringify(completion));
+	});
+
+	for (const failOnNoop of [true, false]) {
+		test(`a run whose shell write was denied ${failOnNoop ? "fails under --fail-on-noop" : "also fails without the flag"}`, async () => {
+			// Hidden shell content asks in default mode, and a headless run has no
+			// operator, so the ask is denied and the model answers with prose.
+			const { turn, envelope, project } = await headlessTurn({ autonomy: "default", steps: [deniedInline], failOnNoop });
+			ok(!existsSync(join(project, PROOF_PATH)), "the denied write must not land");
+
+			if (failOnNoop) {
+				strictEqual(turn.code, 1, turn.stderr);
+				strictEqual(envelope.outcome, "failed");
+				strictEqual(envelope.outcomeDetail, "noop");
+				match(turn.stderr, /no-op under --fail-on-noop: 1 tool call was blocked without recovery and no write succeeded/);
+				// The model's answer still reaches stdout; stderr says why the run failed.
+				match(turn.stdout, /I could not apply the change\./);
+			} else {
+				strictEqual(turn.code, 1, turn.stderr);
+				strictEqual(envelope.outcome, "failed");
+				strictEqual(envelope.outcomeDetail, "noop");
+				match(turn.stderr, /no-op: 1 tool call was blocked without recovery/);
+			}
+		});
+	}
+
+	test("an answer turn whose command was blocked still succeeds and names the blocked call", async () => {
+		// A question asks for no change, so a refused command along the way is no unmet part of the task.
+		const { turn, envelope, project, stateDir } = await headlessTurn({
+			autonomy: "default",
+			steps: [{ id: "call-grep", name: "bash", arguments: { command: "grep -n fixture sentinel.txt" } }, deniedInline],
+			failOnNoop: true,
+			turnMode: "answer",
+			prompt: "What does sentinel.txt say?",
+			reply: "It says the fixture text.",
+		});
+		ok(!existsSync(join(project, PROOF_PATH)), "the denied write must not land");
+		strictEqual(turn.code, 0, turn.stderr);
+		strictEqual(envelope.outcome, "succeeded");
+		match(turn.stdout, /It says the fixture text\./);
+		doesNotMatch(turn.stderr, /no-op/);
+		match(turn.stderr, /answered with 1 blocked call: bash \(/);
+		// C-37: a shell command that only reads is no change to validate.
+		strictEqual((await inspectRunEvidence(stateDir, envelope.id)).firstPassSuccess, true);
+	});
+
+	test("a --read-only review whose read was blocked still succeeds and names the blocked call", async () => {
+		// C-1: a read-only run asks for no change, so a read a rule refused along the way left nothing unmet.
+		const { turn, envelope, stateDir } = await headlessTurn({
+			autonomy: "default",
+			steps: [
+				{ id: "call-read", name: "read", arguments: { path: ".env" } },
+				{ id: "call-grep", name: "bash", arguments: { command: "grep -n fixture sentinel.txt" } },
+				{ id: "call-verify", name: "verify", arguments: { check: "lint" } },
+			],
+			failOnNoop: false,
+			flags: ["--read-only"],
+			prompt: "Review sentinel.txt.",
+			reply: "The fixture text reads fine.",
+			// A check the run does not declare is refused under --read-only, so the run holds no validation.
+			packageScripts: { test: "node -e 0" },
+		});
+		strictEqual(turn.code, 0, turn.stderr);
+		strictEqual(envelope.outcome, "succeeded");
+		match(turn.stdout, /The fixture text reads fine\./);
+		doesNotMatch(turn.stderr, /no-op/);
+		match(turn.stderr, /answered with 2 blocked calls: read \(path-policy:zeroAccessPaths\), verify \(task:read_only\)/);
+		// C-37: a read-only shell command and a check change nothing, so the review owes no validation.
+		strictEqual((await inspectRunEvidence(stateDir, envelope.id)).firstPassSuccess, true);
+	});
+
+	test("a run that wrote only through an opaque shell command owes validation (C-37)", async () => {
+		const { turn, envelope, project, stateDir } = await headlessTurn({
+			autonomy: "default",
+			steps: [
+				{
+					id: "call-script-write",
+					name: "bash",
+					arguments: { command: `node -e 'require("fs").writeFileSync("c37.txt", "x")'` },
+				},
+			],
+			failOnNoop: false,
+			reply: "done",
+		});
+		strictEqual(turn.code, 0, turn.stderr);
+		strictEqual(readFileSync(join(project, "c37.txt"), "utf8"), "x");
+		strictEqual((await inspectRunEvidence(stateDir, envelope.id)).firstPassSuccess, false);
+	});
+
+	test("a run whose write succeeded is not a no-op under --fail-on-noop", async () => {
+		const { turn, envelope, project, stateDir } = await headlessTurn({
+			autonomy: "default",
+			steps: [writeProof],
+			failOnNoop: true,
+			// The secret starts 13 bytes before the result object's bound would cut it.
+			reply: `done ${"x".repeat(WORKER_OUTPUT_MAX_BYTES - 38)} sk_live_${"A1b2C3d4E5".repeat(2)}A1b2 end`,
+		});
+		strictEqual(turn.code, 0, turn.stderr);
+		strictEqual(readFileSync(join(project, PROOF_PATH), "utf8"), PROOF);
+		strictEqual(envelope.outcome, "succeeded");
+		// C-11: the seal cites the finish contract decision the run's session recorded at its end.
+		const evidence = await inspectRunEvidence(stateDir, envelope.id);
+		strictEqual(evidence.trust.completionEvidence.state, "incomplete", JSON.stringify(evidence.trust));
+		// A run that wrote a file without validation is no first-pass success (C-37).
+		strictEqual(evidence.firstPassSuccess, false);
+		// C-12: the main run's result object holds its answer, as a worker's does.
+		const result = readVerifiedRun(stateDir, envelope.id)?.result;
+		const output = result?.state === "resolved" ? result.value.output : undefined;
+		match(output?.text ?? "", /^done/);
+		// C-12: the answer is redacted before its bound, so no part of a secret the bound cuts is stored.
+		strictEqual(output?.truncated, true);
+		doesNotMatch(output?.text ?? "", /sk_live_/);
+		ok(Buffer.byteLength(output?.text ?? "", "utf8") <= WORKER_OUTPUT_MAX_BYTES);
+	});
+
+	test("one blocked call and one successful write is not a no-op under --fail-on-noop", async () => {
+		const { turn, envelope, project } = await headlessTurn({
+			autonomy: "default",
+			steps: [deniedInline, writeProof],
+			failOnNoop: true,
+			reply: "done",
+		});
+		strictEqual(turn.code, 0, turn.stderr);
+		strictEqual(readFileSync(join(project, PROOF_PATH), "utf8"), PROOF);
+		strictEqual(envelope.outcome, "succeeded");
+	});
+
+	test("a report artifact after a blocked edit is still a no-op under --fail-on-noop", async () => {
+		// The edit is a hard block on a zero-access path, so the only successful
+		// write-class call is the artifact explaining the failure. That artifact
+		// is the turn's answer, not a change to the workspace.
+		const { turn, envelope, project } = await headlessTurn({
+			autonomy: "default",
+			steps: [
+				{ id: "call-edit", name: "edit", arguments: { path: ".env", edits: [{ oldText: "A=1", newText: "A=2" }] } },
+				{
+					id: "call-artifact",
+					name: "gateway",
+					arguments: {
+						op: "call",
+						capability: "artifact",
+						args: { kind: "report", content: "# Blocked\n\nThe edit was refused by policy.\n" },
+					},
+				},
+			],
+			failOnNoop: true,
+		});
+		ok(existsSync(join(project, ".pancode", "artifacts", "REPORT.md")), "the artifact itself must land");
+		strictEqual(turn.code, 1, turn.stderr);
+
+		strictEqual(envelope.outcome, "failed");
+		strictEqual(envelope.outcomeDetail, "noop");
+	});
+
+	test("a partial chain preserves its successful write after a denied operation", async () => {
+		const { project, turn } = await headlessTurn({
+			autonomy: "default",
+			steps: [
+				{
+					id: "call-chain",
+					name: "gateway",
+					arguments: {
+						op: "chain",
+						steps: [
+							{ id: "write", capability: "write", args: writeProof.arguments },
+							{ id: "denied", capability: "bash", args: deniedArgs, after: ["write"] },
+						],
+					},
+				},
+			],
+			failOnNoop: true,
+		});
+		strictEqual(readFileSync(join(project, PROOF_PATH), "utf8"), PROOF);
+		// The two steps are the run's calls; the chain wrapper adds none (bt-14).
+		match(turn.stderr, /observed: 2 tool calls, 1 refused/u);
+	});
+
+	test("a prose answer with no tool call is not a no-op under --fail-on-noop", async () => {
+		const { turn, envelope, stateDir } = await headlessTurn({
+			autonomy: "default",
+			steps: [],
+			failOnNoop: true,
+			flags: ["--output-schema", "answer.schema.json"],
+			projectFiles: { "answer.schema.json": JSON.stringify({ type: "object", required: ["answer"] }) },
+			reply: '```json\n{"answer": 42}\n```',
+		});
+		strictEqual(turn.code, 0, turn.stderr);
+		strictEqual(envelope.status, "completed");
+
+		strictEqual(envelope.outcome, "succeeded");
+		// C-37: an answer that changed nothing needs no validation to be a first-pass success.
+		strictEqual((await inspectRunEvidence(stateDir, envelope.id)).firstPassSuccess, true);
+		// C-12: the result object stores the answer stdout printed, the validated JSON alone.
+		strictEqual(turn.stdout, '{"answer": 42}\n');
+		const result = readVerifiedRun(stateDir, envelope.id)?.result;
+		strictEqual(result?.state === "resolved" ? result.value.output?.text : undefined, '{"answer": 42}');
+	});
+
+	test("tools that all failed without a block are a no-op under --fail-on-noop", async () => {
+		const { turn, envelope } = await headlessTurn({
+			autonomy: "default",
+			steps: [{ id: "call-read", name: "read", arguments: { path: "missing-input.txt" } }],
+			failOnNoop: true,
+		});
+		strictEqual(turn.code, 1, turn.stderr);
+
+		strictEqual(envelope.outcome, "failed");
+		strictEqual(envelope.outcomeDetail, "noop");
+		match(turn.stderr, /no-op under --fail-on-noop: 1 tool call ran and none succeeded/);
+	});
+
+	test("a delegated task that never started fails the run as a no-op (c16-B)", async () => {
+		const { turn, envelope } = await headlessTurn({
+			autonomy: "default",
+			steps: [
+				{
+					id: "call-dispatch",
+					name: "dispatch",
+					arguments: { agent: "coder", task: "Apply the change.", node: "no-such-node" },
+				},
+			],
+			failOnNoop: false,
+			reply: "The worker could not start, so the change was not applied.",
+		});
+		strictEqual(turn.code, 1, turn.stderr);
+		strictEqual(envelope.outcome, "failed");
+		strictEqual(envelope.outcomeDetail, "noop");
+		match(turn.stderr, /no-op: the delegated task never started \([^)]*unknown fleet node 'no-such-node'/u);
+	});
+
+	test("--require-priced passes a priced main route and refuses an unpriced dispatch at admission, back to the model", async () => {
+		const { turn, fixture } = await headlessTurn({
+			autonomy: "default",
+			steps: [
+				{
+					id: "call-dispatch",
+					name: "dispatch",
+					arguments: { agent: "coder", task: "Apply the change.", target: "unpriced", model: "mock-model" },
+				},
+			],
+			failOnNoop: false,
+			reply: "The worker route was refused.",
+			flags: ["--require-priced"],
+			// mock-chat gains rates; a copy without them is a route no fleet setting names, so only admission sees it.
+			settingsPatch: (yaml) => {
+				const block = /^ {2}- id: mock-chat\n[\s\S]*?^ {6}- mock-model\n/m.exec(yaml)?.[0];
+				ok(block, "seeded mock-chat target block");
+				const priced = block.replace(
+					"    defaultModel: mock-model\n",
+					"    defaultModel: mock-model\n    pricing:\n      input: 1\n      output: 1\n",
+				);
+				return yaml.replace(block, priced + block.replace("id: mock-chat", "id: unpriced"));
+			},
+		});
+		doesNotMatch(turn.stderr, /routes this run can reach have no known pricing/);
+		const toolMessages = fixture.requests.flatMap((request) =>
+			(Array.isArray(request.messages) ? request.messages : []).filter(
+				(message) => (message as { role?: unknown }).role === "tool",
+			),
+		);
+		match(
+			JSON.stringify(toolMessages),
+			/admission denied: --require-priced: unpriced\/mock-model has no known pricing/,
+			turn.stderr,
+		);
+	});
+
+	test("--fail-on-noop is refused on the --agent path", async () => {
+		const scratch = headlessScratch("pancode-noop-agent-");
+		scratches.push(scratch);
+		const turn = await runCli(["run", "--fail-on-noop", "--agent", "coder", "Apply the change."], {
+			env: scratch.env,
+			cwd: scratch.root,
+		});
+		strictEqual(turn.code, 2, turn.stderr);
+		match(turn.stderr, /--fail-on-noop applies to the main agent, not --agent dispatch/);
+	});
+});

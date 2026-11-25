@@ -1,0 +1,1139 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { classifyCallFailure, readCallFailure } from "../core/call-failure.js";
+import { sha256Hex } from "../core/hash.js";
+import { messageCallsForAccounting, messageUsageForAccounting } from "../core/message-accounting.js";
+import { isFreeRule, type Pricing, type PricingSum, sumPricing } from "../core/telemetry/pricing.js";
+import type { CallSettled } from "../core/telemetry/schemas.js";
+import type { CacheReadField } from "../core/token-split.js";
+import type { EffectivePricing } from "../domains/providers/catalog.js";
+import { callSettlementFromMessage, type InterruptedUsageEstimate } from "../domains/telemetry/call-facts.js";
+import { addCallTotals, type CallTotals, emptyCallTotals } from "../domains/telemetry/folds.js";
+import type { TurnFailureRecord } from "../domains/turn-control/outcome.js";
+/**
+ * Pure helpers over agent messages, tool policies, and session payload
+ * shaping for the chat loop. Everything here is stateless: functions take
+ * pi-ai `AgentMessage` values (or tool/usage records) and return derived
+ * data. The stateful loop itself lives in chat-loop.ts.
+ */
+
+import { randomUUID } from "node:crypto";
+import { assistantOutputChars } from "../core/assistant-output.js";
+import {
+	type BackendCacheVerdict,
+	type BackendCompletionTimings,
+	uncachedPrefillTokens,
+} from "../core/cache-telemetry.js";
+import { settingsPath } from "../core/config.js";
+import {
+	addResponseModelIdObservationCount,
+	differingResponseModelId,
+	emptyResponseModelIdObservationCounts,
+	type ResponseModelIdObservation,
+	type ResponseModelIdObservationCounts,
+	responseModelIdObservationFromRecord,
+} from "../core/response-model-id.js";
+import type { PendingSkillRequest, PendingSkillToolPolicy, SkillDeclaredToolPolicy } from "../core/skill-activation.js";
+import { proseAnnouncesCall, readTrailingWrittenCalls, stripDeadToolCallMarkup } from "../core/tool-call-markup.js";
+import { ToolNames } from "../core/tool-names.js";
+import { type TurnConstraints, turnAllowsTool } from "../core/turn-constraints.js";
+import { describeMissing } from "../domains/lifecycle/setup-status.js";
+import { toContextOverflowError } from "../domains/providers/errors.js";
+import type { ResolvedRuntimeTarget } from "../domains/providers/index.js";
+import { ceilChars } from "../domains/session/context-accounting.js";
+import type { AgentMessage } from "../engine/types.js";
+import type { AskUserToolPolicy, ToolRegistry } from "../tools/registry-contract.js";
+import { toolSpecPlacement } from "../tools/surface.js";
+import { attachedToolSchemaBytes, attachedToolSchemasFromState } from "./prompt-cache-identity.js";
+
+/** Minimal structural view of the engine agent used by state-inspection helpers. */
+export interface AgentStateView {
+	state: { messages: AgentMessage[]; errorMessage?: unknown };
+}
+
+/** Minimal structural view of the chat-loop runtime used by tool-surface helpers. */
+export interface RuntimeResolutionView {
+	runtimeResolution: ResolvedRuntimeTarget;
+}
+
+/**
+ * Why chat cannot start, in the words `pancode doctor` uses on its chat row,
+ * so the two surfaces name the same missing piece and the same next command.
+ */
+export function notConfiguredNotice(chat: { target?: string | null; model?: string | null } = {}): string {
+	const target = chat.target?.trim();
+	if (target && !chat.model?.trim()) {
+		return `[PanCode] ${describeMissing({ kind: "model", target }).sentence}`;
+	}
+	return [
+		"[PanCode] No model target is configured; run `pancode configure` to choose one.",
+		"Without a terminal: pancode configure --id <id> --runtime <runtime> --url <url> --model <model> --set-orchestrator",
+		`(chat.target and chat.model live in ${settingsPath()})`,
+	].join("\n");
+}
+
+/**
+ * Pi's failure for a route with no credential names the provider but not the way out. A target that reads its key
+ * from an environment variable is fixed by setting that variable, not by a stored sign-in (CLI audit 11).
+ */
+export function nameMissingCredentialRemedy(
+	message: AgentMessage,
+	target?: { id: string; auth?: { apiKeyEnvVar?: string } },
+): void {
+	if (message.role !== "assistant") return;
+	const failure = message as { stopReason?: unknown; errorMessage?: unknown };
+	if (failure.stopReason !== "error" || typeof failure.errorMessage !== "string") return;
+	const missing = /^No API key for provider: (\S+)$/u.exec(failure.errorMessage.trim());
+	if (!missing?.[1]) return;
+	const variable = target?.auth?.apiKeyEnvVar?.trim();
+	failure.errorMessage =
+		target !== undefined && variable
+			? `${missing[0]}. ${describeMissing({ kind: "env", target: target.id, variable }).sentence.replace(/\.$/u, "")}; set it with \`export ${variable}=<key>\`, or reconfigure the target with \`pancode configure\`.`
+			: `${missing[0]}. ${describeMissing({ kind: "credential", target: missing[1], provider: missing[1] }).sentence}`;
+}
+
+export function extractText(message: AgentMessage | undefined): string {
+	if (
+		!message ||
+		typeof message !== "object" ||
+		message === null ||
+		!("role" in message) ||
+		message.role !== "assistant"
+	) {
+		return "";
+	}
+	const content = "content" in message && Array.isArray(message.content) ? message.content : [];
+	return content
+		.filter((item): item is { type: "text"; text: string } => item?.type === "text" && typeof item.text === "string")
+		.map((item) => item.text)
+		.join("");
+}
+
+export function extractUserText(message: AgentMessage | undefined): string {
+	if (!message || typeof message !== "object" || message === null || !("role" in message) || message.role !== "user") {
+		return "";
+	}
+	const content = "content" in message ? message.content : "";
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((item): item is { type: "text"; text: string } => item?.type === "text" && typeof item.text === "string")
+		.map((item) => item.text)
+		.join("");
+}
+
+export function extractThinking(message: AgentMessage | undefined): string {
+	if (
+		!message ||
+		typeof message !== "object" ||
+		message === null ||
+		!("role" in message) ||
+		message.role !== "assistant"
+	) {
+		return "";
+	}
+	const content = "content" in message && Array.isArray(message.content) ? message.content : [];
+	return content
+		.filter(
+			(item): item is { type: "thinking"; thinking: string } =>
+				item?.type === "thinking" && typeof item.thinking === "string",
+		)
+		.map((item) => item.thinking)
+		.join("");
+}
+
+export interface TerminalAssistantFailure {
+	stopReason: "error" | "aborted";
+	errorMessage: string;
+	failure?: TurnFailureRecord;
+	message?: AgentMessage;
+}
+
+export function terminalFailureFromAssistantMessage(
+	message: AgentMessage | undefined,
+): TerminalAssistantFailure | null {
+	if (
+		!message ||
+		typeof message !== "object" ||
+		message === null ||
+		!("role" in message) ||
+		message.role !== "assistant"
+	) {
+		return null;
+	}
+	const stopReason = (message as { stopReason?: unknown }).stopReason;
+	if (stopReason !== "error" && stopReason !== "aborted") return null;
+	const rawError = (message as { errorMessage?: unknown }).errorMessage;
+	const errorMessage =
+		typeof rawError === "string" && rawError.length > 0
+			? rawError
+			: stopReason === "aborted"
+				? "request aborted"
+				: "model target returned an error";
+	const rawFailure = (message as unknown as { failure?: TurnFailureRecord }).failure;
+	const observedFailure = readCallFailure(
+		rawFailure?.stage === "budget" ? { ...rawFailure, stage: "admission" } : rawFailure,
+	);
+	const usage = messageUsageForAccounting(message);
+	const failure =
+		observedFailure ??
+		(usage
+			? classifyCallFailure(errorMessage, {
+					invoked: usage.callInvoked !== false,
+					aborted: stopReason === "aborted",
+					retryAttempts: 0,
+				})
+			: undefined);
+	return {
+		stopReason,
+		errorMessage,
+		message,
+		...(failure
+			? { failure: { ...failure, ...(rawFailure?.stage === "budget" ? { stage: "budget" as const } : {}) } }
+			: {}),
+	};
+}
+
+/**
+ * An interrupted turn PanCode wrote itself: aborted, carrying its own explanation
+ * as text, with no provider error attached. `noticeMessage` produces exactly
+ * this, and both the loop guard and an operator cancel persist it.
+ *
+ * Such a turn is aborted because that is what happened, and because the context
+ * estimator skips usage on aborted turns. It is not a failure to render,
+ * though. Both render paths synthesize a stand-in string when an aborted turn
+ * carries no `errorMessage`, which put a red "[aborted] request aborted" line
+ * under the cancellation notice on every resume, reintroducing on replay the
+ * noise the live path suppresses.
+ *
+ * A genuine mid-stream abort keeps its line. pi-agent-core attaches
+ * `errorMessage: "Request was aborted."` to those, and an aborted turn with no
+ * text of its own still gets the synthesized stand-in.
+ */
+export function isSelfExplainingAbort(view: { stopReason: unknown; errorMessage: unknown; text: string }): boolean {
+	if (view.stopReason !== "aborted") return false;
+	// The operator pressed Esc, so the turn receipt's `Cancelled` outcome is the
+	// whole report. An `[aborted] ...` line under a partial answer read as a
+	// failure the operator never caused.
+	if (isOperatorCancelReason(view.errorMessage)) return true;
+	if (typeof view.errorMessage === "string" && view.errorMessage.length > 0) return false;
+	return view.text.trim().length > 0;
+}
+
+/** What the model and the ledger are told when the operator cancels a streaming turn. */
+export const OPERATOR_CANCEL_REASON = "Cancelled at your request.";
+
+export function isOperatorCancelReason(value: unknown): boolean {
+	return value === OPERATOR_CANCEL_REASON;
+}
+
+export function isLengthStopAssistantMessage(message: AgentMessage | undefined): boolean {
+	return (
+		!!message &&
+		typeof message === "object" &&
+		message !== null &&
+		"role" in message &&
+		message.role === "assistant" &&
+		(message as { stopReason?: unknown }).stopReason === "length"
+	);
+}
+
+/**
+ * A reply cut off by the output cap while it was still thinking: thinking, but
+ * no text and no tool call. The chat loop recovers from the first one in an
+ * operator turn and a headless run fails on the next one, so both ask this.
+ */
+export function isThinkingOnlyLengthStop(message: AgentMessage | undefined): boolean {
+	return (
+		isLengthStopAssistantMessage(message) &&
+		extractThinking(message).trim().length > 0 &&
+		extractText(message).trim().length === 0 &&
+		!hasStructuredToolCall(message)
+	);
+}
+
+/** Why a turn ended on a second thinking-only length stop, and what changes the outcome. */
+export const THINKING_LENGTH_STOP_REASON =
+	"[PanCode] the model spent its whole output budget thinking and stopped before acting or answering, twice in this turn. Lower --thinking or raise the output cap (chat.maxOutputTokens) and resume.";
+
+/** The key of overflow recovery's last notice when compaction could not make the refused request fit (FX-22a). */
+export const CONTEXT_OVERFLOW_STOP_NOTICE_KEY = "turn.context-overflow-stop";
+
+/**
+ * The post-tool context guard ended this reply: the turn runtime stamps the guard's stop with the harness stage and
+ * the guard's own class, so a reader never needs its words (FX-22a).
+ */
+export function isContextGuardStop(message: unknown): boolean {
+	const failure = (message as { failure?: { stage?: unknown; errorClass?: unknown } } | null | undefined)?.failure;
+	return failure?.stage === "harness" && failure.errorClass === "oversized_tool_result";
+}
+
+/**
+ * An aborted assistant message with no text, thinking, or structured tool
+ * call. Only a hollow abort needs a synthetic closing record; streamed
+ * thinking belongs to the same durable assistant as any partial answer.
+ */
+export function isEmptyAbortedAssistantMessage(message: AgentMessage | undefined): boolean {
+	if (
+		!message ||
+		typeof message !== "object" ||
+		message === null ||
+		!("role" in message) ||
+		message.role !== "assistant"
+	) {
+		return false;
+	}
+	if ((message as { stopReason?: unknown }).stopReason !== "aborted") return false;
+	if (extractText(message).trim().length > 0) return false;
+	if (extractThinking(message).trim().length > 0) return false;
+	return !hasStructuredToolCall(message);
+}
+
+/** Apply host cancellation provenance only to a structurally aborted message. */
+export function explainInterruptedAssistant(message: AgentMessage, reason: string | null): boolean {
+	if (reason === null || message.role !== "assistant" || message.stopReason !== "aborted") return false;
+	message.errorMessage = reason;
+	return true;
+}
+
+function lengthStopMetadata(message: AgentMessage): Record<string, unknown> {
+	const usage = (message as { usage?: unknown }).usage;
+	const metadata: Record<string, unknown> = {
+		kind: "provider_length_stop",
+		stopReason: "length",
+		message:
+			"Model target hit its generation/output limit before a complete assistant response. This is not a safety denial; compacting helps only when the prompt and tool observations are also near the context window.",
+	};
+	if (usage && typeof usage === "object") {
+		const u = usage as Record<string, unknown>;
+		for (const [from, to] of [
+			["input", "inputTokens"],
+			["output", "outputTokens"],
+			["totalTokens", "totalTokens"],
+		] as const) {
+			const value = u[from];
+			if (typeof value === "number" && Number.isFinite(value)) metadata[to] = value;
+		}
+	}
+	return metadata;
+}
+
+export function hasStructuredToolCall(message: AgentMessage | undefined): boolean {
+	if (!message || typeof message !== "object" || !("content" in message) || !Array.isArray(message.content))
+		return false;
+	return message.content.some((block) => block?.type === "toolCall");
+}
+
+/** Why a run that stopped normally left the operator nothing to read. */
+export type TurnNoAnswerCause =
+	| "tool_call_in_reasoning"
+	| "tool_call_as_text"
+	| "tool_call_announced"
+	| "reasoning_only"
+	| "empty";
+
+/**
+ * How a normally stopped run closed when it wrote no answer. `no_answer` is a failed request: nothing answers it, and a
+ * call the model only wrote out never ran. `quiet` did real tool work and simply wrote no closing message, which is a
+ * finished turn missing its summary and not the same failure. `call_not_run` answered in prose and then wrote a call
+ * that never ran, so the answer stands and the turn owes the operator that one fact.
+ */
+export type TurnEnding =
+	| { kind: "no_answer"; cause: TurnNoAnswerCause; toolsRan: number; writtenTools?: ReadonlyArray<string> }
+	| { kind: "quiet"; toolsRan: number }
+	| { kind: "call_not_run"; toolsRan: number; writtenTools: ReadonlyArray<string> };
+
+/**
+ * The notice key of the line saying the requested thinking level cannot apply as-is on this route. It is host
+ * information about the route, not reply text, so a protocol surface routes it off the reply by this tag.
+ */
+export const THINKING_CLAMP_NOTICE_KEY = "runtime.thinking-clamp";
+
+/**
+ * The notice key of an informational host status line: what the route, the model's residency, the loaded skill
+ * surface, the image sidecar or the prompt's project instructions are doing. It reports, asks nothing of the operator
+ * and names no failure, so a protocol surface routes it off the reply by this tag.
+ */
+export const HOST_STATUS_NOTICE_KEY = "host.status";
+
+/** The notice key the status surface reads as the one re-prompt for a written-out tool call starting. */
+export const TOOL_MARKUP_REPROMPT_NOTICE_KEY = "turn.tool-markup-reprompt";
+export const TOOL_MARKUP_REPROMPT_NOTICE =
+	"[PanCode] The model wrote its tool call as text, so it did not run. PanCode asked it to make the call properly.";
+export const TOOL_MARKUP_REPROMPT =
+	"<system-reminder>Your last reply wrote a tool call as text, so it did not run and nothing happened. Calls written as text never run. If the work still needs a tool, make the call through the tool interface now. Otherwise answer in plain prose and say plainly what was not done.</system-reminder>";
+
+/** The notice key for the re-prompt after a reply that held neither an answer nor a tool call. */
+export const EMPTY_ANSWER_REPROMPT_NOTICE_KEY = "turn.empty-answer-reprompt";
+export const EMPTY_ANSWER_REPROMPT_NOTICE =
+	"[PanCode] The model ended its reply with no answer and no tool call. PanCode asked it to continue.";
+export const EMPTY_ANSWER_REPROMPT =
+	"<system-reminder>Your last reply was empty: it held no answer and no tool call, so nothing happened and the operator saw nothing. Act now: if the work still needs a tool, make the call through the tool interface; otherwise write your answer in plain prose and say plainly what was not done.</system-reminder>";
+
+/**
+ * The re-prompt for a reply that answered nothing, or null when its ending is
+ * not one. A local Qwen-family model ended six turns with long reasoning and
+ * no reply (WTF-P campaign, 2026-11-15), each a turn the operator had to ask
+ * again; the reasoning usually held the next step it never took.
+ */
+export function noAnswerReprompt(
+	ending: TurnEnding | null,
+	ranCalls: ReadonlyArray<string> = [],
+): { reminder: string; notice: string; noticeKey: string } | null {
+	if (ending?.kind !== "no_answer") return null;
+	switch (ending.cause) {
+		case "tool_call_in_reasoning":
+		case "tool_call_as_text":
+		case "tool_call_announced":
+			return {
+				reminder: withRanCalls(TOOL_MARKUP_REPROMPT, ranCalls),
+				notice: TOOL_MARKUP_REPROMPT_NOTICE,
+				noticeKey: TOOL_MARKUP_REPROMPT_NOTICE_KEY,
+			};
+		case "reasoning_only":
+		case "empty":
+			return {
+				reminder: EMPTY_ANSWER_REPROMPT,
+				notice: EMPTY_ANSWER_REPROMPT_NOTICE,
+				noticeKey: EMPTY_ANSWER_REPROMPT_NOTICE_KEY,
+			};
+	}
+}
+
+/** The most recent calls a written-out-call nudge names; earlier ones are counted. */
+const RAN_CALLS_NAMED = 8;
+
+/**
+ * A nudge that names the calls this turn already ran. A model that wrote its
+ * next call as text was told only that nothing happened, read that as its
+ * earlier edit never landing, and applied it again (SC-1).
+ */
+function withRanCalls(reminder: string, ranCalls: ReadonlyArray<string>): string {
+	if (ranCalls.length === 0) return reminder;
+	const named = ranCalls.slice(-RAN_CALLS_NAMED);
+	const earlier = ranCalls.length - named.length;
+	const note = ` Only that written call failed to run. These calls already ran this turn and their effects are applied, so do not repeat them: ${named.join("; ")}${earlier > 0 ? ` (and ${earlier} earlier)` : ""}.`;
+	const close = reminder.lastIndexOf("</system-reminder>");
+	return close < 0 ? `${reminder}${note}` : `${reminder.slice(0, close)}${note}${reminder.slice(close)}`;
+}
+
+const CALL_LABEL_PATH_KEYS = ["path", "file_path", "file", "script"] as const;
+const CALL_LABEL_COMMAND_CHARS = 80;
+
+/** A short label for a call that ran: its tool and target path or command, such as `edit src/x.py`. */
+export function toolCallLabel(name: string, args: Record<string, unknown> | undefined): string {
+	for (const key of CALL_LABEL_PATH_KEYS) {
+		const value = args?.[key];
+		if (typeof value === "string" && value.trim().length > 0) return `${name} ${value.trim()}`;
+	}
+	const command = typeof args?.command === "string" ? args.command.replace(/\s+/gu, " ").trim() : "";
+	if (command.length === 0) return name;
+	const shown =
+		command.length > CALL_LABEL_COMMAND_CHARS ? `${command.slice(0, CALL_LABEL_COMMAND_CHARS - 3)}...` : command;
+	return `${name} \`${shown}\``;
+}
+
+/** At most this many no-answer re-prompts (written-out calls or empty replies) in a row, with no real call between. */
+export const TOOL_MARKUP_REPROMPT_CAP = 3;
+
+/** Which operator turn spent written-out-call re-prompts, how many in a row, and the tool-call count at the last one. */
+export interface ToolMarkupRepromptBudget {
+	turnId: string;
+	count: number;
+	toolCallsAt: number;
+}
+
+/**
+ * Claims one re-prompt for a tool call the model only wrote out. The count is
+ * of consecutive no-answer replies: a real call started since the last
+ * re-prompt means the model recovered, so the count starts over, and only a
+ * model that writes markup back to back past the cap ends the turn. Qwen-family
+ * models wrote calls into reasoning several times in one long turn (WTF-P
+ * campaign, 2026-11-15; bt-30), and a per-turn total ended long tasks with no
+ * answer however well they recovered.
+ */
+export function claimToolMarkupReprompt(
+	budget: ToolMarkupRepromptBudget | null,
+	turnId: string,
+	toolCalls: number,
+): ToolMarkupRepromptBudget | null {
+	if (budget === null || budget.turnId !== turnId || budget.toolCallsAt !== toolCalls)
+		return { turnId, count: 1, toolCallsAt: toolCalls };
+	if (budget.count >= TOOL_MARKUP_REPROMPT_CAP) return null;
+	return { turnId, count: budget.count + 1, toolCallsAt: toolCalls };
+}
+
+/**
+ * The budget after a continuation zeroes the per-run tool count. The count it
+ * claimed at stays relative to that run, so the reset never reads as a real
+ * call and a model writing markup back to back keeps its spent re-prompts
+ * (x2-2).
+ */
+export function rebaseToolMarkupReprompt(budget: ToolMarkupRepromptBudget | null): ToolMarkupRepromptBudget | null {
+	return budget === null ? null : { ...budget, toolCallsAt: 0 };
+}
+
+/** A call that succeeded and was not a question to the operator, so it did work toward the request. */
+function ranRealTool(message: AgentMessage): boolean {
+	const result = message as { role?: unknown; isError?: unknown; toolName?: unknown };
+	return result.role === "toolResult" && result.isError !== true && result.toolName !== ToolNames.AskUser;
+}
+
+/**
+ * The one reading of a settled run's last reply, shared by the TUI, headless run and ACP. Null when the run answered or
+ * has a stop reason of its own to report: an error, an abort, an output limit, or a terminating tool call. Reasoning
+ * may quote markup on the way to a real answer, so it only counts when no text followed, and text that keeps anything
+ * besides markup stays the answer.
+ */
+/** The turn ended because the operator dismissed the interview it was waiting on, which is not a finished answer. */
+export function endedOnCancelledInterview(messages: ReadonlyArray<unknown>): boolean {
+	const last = messages.at(-1) as { role?: unknown; toolName?: unknown; details?: { cancelled?: unknown } } | undefined;
+	return last?.role === "toolResult" && last.toolName === ToolNames.AskUser && last.details?.cancelled === true;
+}
+
+/**
+ * Whether the run's last file change failed: its newest edit or write result is an error. A turn that closed `✓ Done`
+ * after an edit that did not apply read as a change made.
+ */
+export function endedWithFailedChange(messages: ReadonlyArray<unknown>): boolean {
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const message = messages[index] as { role?: unknown; toolName?: unknown; isError?: unknown } | undefined;
+		if (message?.role !== "toolResult") continue;
+		if (message.toolName !== ToolNames.Edit && message.toolName !== ToolNames.Write) continue;
+		return message.isError === true;
+	}
+	return false;
+}
+
+/**
+ * Stamps a settled reply that ended on calls it only wrote out, with the tools they named. Only the turn runtime knows
+ * the session's surface, and the stamp rides the message so a replay and every later reader get the same reading.
+ */
+export function noteWrittenCalls(message: AgentMessage, onSurface: (tool: string) => boolean): void {
+	if ((message as { stopReason?: unknown }).stopReason !== "stop" || hasStructuredToolCall(message)) return;
+	const written = readTrailingWrittenCalls(extractText(message), onSurface);
+	if (written !== null) (message as { pancodeWrittenCalls?: string[] }).pancodeWrittenCalls = written.tools;
+}
+
+/** The tools a settled reply only wrote out, as {@link noteWrittenCalls} recorded them. */
+export function writtenCallsOf(message: unknown): ReadonlyArray<string> {
+	const stamped = (message as { pancodeWrittenCalls?: unknown } | null | undefined)?.pancodeWrittenCalls;
+	return Array.isArray(stamped) ? (stamped as string[]) : [];
+}
+
+/** A reply's text as the operator reads it: the calls it only wrote out are stated by its receipt instead. */
+export function proseBeforeWrittenCalls(message: unknown, text: string): string {
+	const tools = writtenCallsOf(message);
+	if (tools.length === 0) return text;
+	return readTrailingWrittenCalls(text, (tool) => tools.includes(tool))?.prose ?? text;
+}
+
+/** One written call by name, several by count, for a fact on a receipt. */
+export function writtenCallsFact(tools: ReadonlyArray<string>): string {
+	return tools.length === 1 ? `written ${tools[0]} call did not run` : `${tools.length} written calls did not run`;
+}
+
+export function classifyTurnEnding(messages: ReadonlyArray<AgentMessage>): TurnEnding | null {
+	const last = [...messages].reverse().find((message) => message?.role === "assistant");
+	if (last === undefined) return null;
+	const stopReason = (last as { stopReason?: unknown }).stopReason;
+	if ((stopReason !== undefined && stopReason !== "stop") || hasStructuredToolCall(last)) return null;
+	const toolsRan = messages.filter(ranRealTool).length;
+	const text = extractText(last).trim();
+	if (text.length > 0) {
+		if (stripDeadToolCallMarkup(text).length === 0) return { kind: "no_answer", cause: "tool_call_as_text", toolsRan };
+		const writtenTools = writtenCallsOf(last);
+		if (writtenTools.length === 0) return null;
+		return proseAnnouncesCall(proseBeforeWrittenCalls(last, text))
+			? { kind: "no_answer", cause: "tool_call_announced", toolsRan, writtenTools }
+			: { kind: "call_not_run", toolsRan, writtenTools };
+	}
+	const thinking = extractThinking(last);
+	// A route that keeps no reasoning leaves the fact on the message once the text is gone.
+	const dropped = last as { pancodeReasoningNotRetained?: unknown; pancodeReasoningToolMarkup?: unknown };
+	if (stripDeadToolCallMarkup(thinking) !== thinking || dropped.pancodeReasoningToolMarkup === true) {
+		return { kind: "no_answer", cause: "tool_call_in_reasoning", toolsRan };
+	}
+	if (toolsRan > 0) return { kind: "quiet", toolsRan };
+	const reasoned = thinking.trim().length > 0 || dropped.pancodeReasoningNotRetained === true;
+	return { kind: "no_answer", cause: reasoned ? "reasoning_only" : "empty", toolsRan };
+}
+
+/** Why a turn has no answer, in the words every surface states it. A surface adds the next step it can offer. */
+export function turnNoAnswerSentence(ending: Extract<TurnEnding, { kind: "no_answer" }>): string {
+	const earlier =
+		ending.toolsRan === 0
+			? ""
+			: ` ${ending.toolsRan === 1 ? "The tool call before it did run" : `The ${ending.toolsRan} tool calls before it did run`}.`;
+	switch (ending.cause) {
+		case "tool_call_in_reasoning":
+			return `The model wrote a tool call into its reasoning instead of making it, so that call did not run.${earlier}`;
+		case "tool_call_as_text":
+			return `The model wrote a tool call as plain text instead of making it, so that call did not run.${earlier}`;
+		case "tool_call_announced": {
+			const tools = ending.writtenTools ?? [];
+			const named = tools.length === 1 ? `the ${tools[0]} call` : "those calls";
+			return `The model said what it would do next and wrote ${named} as plain text instead of making ${tools.length === 1 ? "it" : "them"}, so nothing after that ran.${earlier}`;
+		}
+		case "reasoning_only":
+			return "The model reasoned but wrote no reply and made no tool call.";
+		case "empty":
+			return "The model returned nothing: no reply and no tool call.";
+	}
+}
+
+/** The fact a `call_not_run` turn owes every surface beside its answer. */
+export function turnCallsNotRunSentence(ending: Extract<TurnEnding, { kind: "call_not_run" }>): string {
+	const tools = ending.writtenTools;
+	return tools.length === 1
+		? `The answer ends on a written ${tools[0]} call. The model wrote it as plain text, so it did not run.`
+		: `The answer ends on ${tools.length} written calls. The model wrote them as plain text, so they did not run.`;
+}
+
+export function toolNamesFromAgentState(tools: ReadonlyArray<unknown>): string[] {
+	const names: string[] = [];
+	for (const tool of tools) {
+		if (!tool || typeof tool !== "object") continue;
+		const name = (tool as { name?: unknown }).name;
+		if (typeof name === "string" && name.trim().length > 0) names.push(name);
+	}
+	return names;
+}
+
+/**
+ * The durable closing turn for an interrupted run, operator cancel and loop
+ * guard alike.
+ *
+ * `stopReason` is `aborted` because that is what happened, and because the
+ * engine's context estimator depends on it. `getLastAssistantUsageInfo` skips
+ * assistant messages marked `aborted` or `error` before it dereferences
+ * `usage`, which encodes the contract that an assistant turn either carries
+ * usage or is marked as one of those two. This message carries no usage, so
+ * labelling it `stop` walked it straight past that guard and
+ * `calculateContextTokens` threw on `usage.totalTokens`.
+ *
+ * The process that did the cancelling never noticed, because it does not
+ * re-read the record it just wrote. Any later reconstruction from disk did:
+ * every turn in the resumed session failed in tens of milliseconds, before a
+ * single network call, and went on failing until the session was abandoned.
+ */
+export function noticeMessage(text: string): AgentMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		stopReason: "aborted",
+		timestamp: Date.now(),
+	} as AgentMessage;
+}
+
+/**
+ * Render the pending-skill instruction that precedes the user's text in the
+ * same user message. Plain visible text, persisted in the ledger: skill
+ * requests are turn data, not prompt machinery.
+ */
+export function pendingSkillRequestPreamble(
+	requests: ReadonlyArray<PendingSkillRequest>,
+	activeTools: ReadonlyArray<{ name: string }> = [],
+): string {
+	const named = requests.filter((request) => request.name.trim().length > 0);
+	if (named.length === 0) return "";
+	const allowed = [...new Set(named.map((request) => request.name.trim()))];
+	const lines = named.map((request) => {
+		const status = request.installed ? "installed" : "not-installed";
+		const args = request.args.trim();
+		return `- ${request.name} (${status}, source=${request.source})${args.length > 0 ? ` — task: ${args}` : ""}`;
+	});
+	return [
+		"[Skill request]",
+		...lines,
+		// The coordinator attaches gateway, not context; name the call it can make.
+		!activeTools.some((tool) => tool.name === ToolNames.Context) &&
+		activeTools.some((tool) => tool.name === ToolNames.Gateway)
+			? `First load each through gateway(op="call", capability="context", args={scope:"skills",name:"<name>"}) for: ${allowed.join(", ")}. Only these pending skill names are allowed this turn. After the skill loads, follow the loaded workflow.`
+			: `First call context with scope="skills" and name for: ${allowed.join(", ")}. Only these pending skill names are allowed this turn. After the skill loads, follow the loaded workflow.`,
+	].join("\n");
+}
+
+/**
+ * Hash of the serialized tool schemas the provider sees this turn. Stamped on
+ * every persisted context snapshot so a cold backend cache can be traced to a
+ * tool-surface change.
+ */
+export function toolSignatureFromState(tools: ReadonlyArray<unknown>): string {
+	return sha256Hex(attachedToolSchemaBytes(attachedToolSchemasFromState(tools)));
+}
+
+/**
+ * Built-in identity text used when `deps.prompts` is not wired (tests, degraded
+ * boot). Production always overrides this via the prompts compiler; the
+ * fallback exists so a chat-loop without a compiler still identifies as Panos.
+ *
+ * Kept short on purpose: small instruction-tuned models will copy the most
+ * emphatic verbatim phrasing out of the system prompt into their replies. A
+ * compact persona description lets the model speak naturally; the canonical
+ * identity block lives in src/domains/prompts/fragments/identity/pancode.md.
+ */
+export function fallbackIdentityPrompt(): string {
+	return [
+		"You are Panos, the orchestrator agent of PanCode, the harness you run in.",
+		"Whichever weights run you, you are Panos: not Claude, GPT, Qwen, Gemini, Llama, Mistral or any other vendor's assistant, and you do not adopt the vendor's persona.",
+	].join(" ");
+}
+
+export function createPendingSkillToolPolicy(
+	requests: ReadonlyArray<PendingSkillRequest>,
+): PendingSkillToolPolicy | undefined {
+	const allowedSkillNames = [
+		...new Set(requests.map((request) => request.name.trim()).filter((name) => name.length > 0)),
+	];
+	if (allowedSkillNames.length === 0) return undefined;
+	return {
+		allowedSkillNames,
+		requests: [...requests],
+		loadedSkillNames: new Set<string>(),
+		loadedSkillPolicies: new Map<string, SkillDeclaredToolPolicy>(),
+	};
+}
+
+/**
+ * The coordinator reaches ask_user through the attached gateway. That interview
+ * still needs the turn-scoped policy: without it every call gets a standalone
+ * policy, so the round cap and question dedup reset per call and the turn-end
+ * finalization never writes the operator's decisions to the ledger.
+ */
+function askUserReachable(
+	activeTools: ReadonlyArray<{ name: string }>,
+	registry: Pick<ToolRegistry, "get"> | undefined,
+	constraints: TurnConstraints | undefined,
+): boolean {
+	if (activeTools.some((tool) => tool.name === ToolNames.AskUser)) return true;
+	const spec = registry?.get(ToolNames.AskUser);
+	return (
+		spec !== undefined &&
+		toolSpecPlacement(spec) === "gateway" &&
+		activeTools.some((tool) => tool.name === ToolNames.Gateway) &&
+		turnAllowsTool(constraints, ToolNames.AskUser)
+	);
+}
+
+export function createAskUserToolPolicy(
+	activeTools: ReadonlyArray<{ name: string }>,
+	registry?: Pick<ToolRegistry, "get">,
+	constraints?: TurnConstraints,
+): AskUserToolPolicy | undefined {
+	if (!askUserReachable(activeTools, registry, constraints)) return undefined;
+	const now = new Date().toISOString();
+	return {
+		id: randomUUID(),
+		status: "idle",
+		startedAt: now,
+		updatedAt: now,
+		exposure: "local",
+		rounds: [],
+		decisions: [],
+		inFlight: false,
+		cancelled: false,
+		answerCount: 0,
+		callCount: 0,
+		maxCalls: 6,
+		askedQuestionKeys: new Set<string>(),
+	};
+}
+
+/**
+ * A run's usage over its calls as the journal fold sums it, one fact sum per quantity (#434): a call that reported
+ * nothing leaves a sum partial, never zero, and an estimate keeps its estimated coverage.
+ */
+export interface RunUsageSummary {
+	totals: CallTotals;
+	/** The calls' cost; `free` holds only when every call was a free target's measured zero. */
+	cost: PricingSum;
+	/** Calls that reached a provider. */
+	apiCalls: number;
+	hadReasoning: boolean;
+	hadUsage: boolean;
+	responseModelIdObservationCounts: ResponseModelIdObservationCounts;
+	lastResponseModelIdObservation: ResponseModelIdObservation;
+	lastDifferingResponseModelId: string | null;
+}
+
+type SettledUsage = Pick<CallSettled, "disposition" | "usage" | "pricing">;
+
+/**
+ * One assistant message's calls: the journal's settlements when the message carries them, else the message's own usage
+ * read the way its call.settled would read it, priced by what the reply's call accounting recorded (#434).
+ */
+function messageSettlements(
+	message: AgentMessage,
+	fallbackPricedBy: EffectivePricing["pricedBy"] = "none",
+): { settled: SettledUsage[]; journaled: readonly CallSettled[] | null } {
+	const journaled = messageCallsForAccounting(message);
+	if (journaled !== undefined) return { settled: [...journaled], journaled };
+	const usage = messageUsageForAccounting(message);
+	if (usage === null) return { settled: [], journaled: null };
+	const pricedBy =
+		typeof usage.pricedBy === "string" ? (usage.pricedBy as EffectivePricing["pricedBy"]) : fallbackPricedBy;
+	const freeRule = isFreeRule(usage.freeRule) ? usage.freeRule : undefined;
+	return {
+		settled: [callSettlementFromMessage({ ...message, usage }, { pricedBy, ...(freeRule ? { freeRule } : {}) })],
+		journaled: null,
+	};
+}
+
+/**
+ * One assistant message's calls as settlements, with the journal attempt id when the journal holds them, so a host
+ * that folds its own run's spend counts each attempt once. `fallbackPricedBy` prices a reply with no call accounting.
+ */
+export function messageCallSpends(
+	message: AgentMessage,
+	fallbackPricedBy: EffectivePricing["pricedBy"] = "none",
+): Array<SettledUsage & { attemptId?: string }> {
+	if (message.role !== "assistant") return [];
+	const { settled, journaled } = messageSettlements(message, fallbackPricedBy);
+	return journaled ? journaled.map((call) => ({ ...call })) : settled;
+}
+
+function observationOf(call: CallSettled): ResponseModelIdObservation {
+	const model = call.target.reportedModel;
+	return model.kind === "measured"
+		? { state: "reported", reportedModelId: model.value }
+		: model.kind === "unknown" && model.reason === "provider-omitted"
+			? { state: "not-reported" }
+			: { state: "not-observed" };
+}
+
+/**
+ * Sum per-call usage across every assistant message in a single agent run.
+ * pi-ai emits one `AssistantMessage` per API call, each carrying its own
+ * `Usage` object; a multi-turn tool-calling loop produces several assistant
+ * messages, and every one of them counts.
+ */
+export function sumRunUsage(messages: ReadonlyArray<AgentMessage>): RunUsageSummary {
+	const totals = emptyCallTotals();
+	const pricings: Pricing[] = [];
+	const summary = {
+		apiCalls: 0,
+		hadReasoning: false,
+		hadUsage: false,
+		responseModelIdObservationCounts: emptyResponseModelIdObservationCounts(),
+		lastResponseModelIdObservation: { state: "not-observed" } as ResponseModelIdObservation,
+		lastDifferingResponseModelId: null as string | null,
+	};
+	const seenAttempts = new Set<string>();
+	for (const message of messages) {
+		if (!message || typeof message !== "object" || message.role !== "assistant") continue;
+		const { settled, journaled } = messageSettlements(message);
+		const unique = journaled
+			? journaled.filter((call) => {
+					if (seenAttempts.has(call.attemptId)) return false;
+					seenAttempts.add(call.attemptId);
+					return true;
+				})
+			: settled;
+		let sent = false;
+		for (const call of unique) {
+			if (call.disposition === "never_sent") continue;
+			sent = true;
+			addCallTotals(totals, call);
+			summary.hadUsage = true;
+			summary.apiCalls += 1;
+			pricings.push(call.pricing);
+			summary.hadReasoning ||= call.usage?.reasoning.kind === "measured";
+		}
+		if (!sent) continue;
+		if (journaled) {
+			for (const call of unique as unknown as readonly CallSettled[]) {
+				if (call.disposition === "never_sent") continue;
+				const observation = observationOf(call);
+				summary.lastResponseModelIdObservation = observation;
+				addResponseModelIdObservationCount(summary.responseModelIdObservationCounts, observation);
+				summary.lastDifferingResponseModelId =
+					observation.state === "reported" && observation.reportedModelId !== call.target.requestedModel
+						? observation.reportedModelId
+						: null;
+			}
+			continue;
+		}
+		const record = message as unknown as Record<string, unknown>;
+		summary.lastResponseModelIdObservation = responseModelIdObservationFromRecord(record);
+		addResponseModelIdObservationCount(summary.responseModelIdObservationCounts, summary.lastResponseModelIdObservation);
+		summary.lastDifferingResponseModelId = differingResponseModelId(record.model, record.responseModel);
+	}
+	return { ...summary, totals, cost: sumPricing(pricings) };
+}
+
+export type { BackendCacheVerdict } from "../core/cache-telemetry.js";
+
+function classifyCacheUsage(uncachedPrefill: number, cacheRead: number): BackendCacheVerdict {
+	if (cacheRead > 0) return uncachedPrefill >= 2000 ? "partial" : "hot";
+	return uncachedPrefill >= 2000 ? "cold" : "small";
+}
+
+/**
+ * Classify one API call's provider-reported usage. When normalized provider
+ * usage reports no cache read but the serving backend supplies cache_n, use
+ * that direct observation instead. This is the single definition of a cache
+ * verdict; the ledger, the overlay, and any forensics reader all consume the
+ * persisted value rather than reclassifying. Uncached prefill is normalized
+ * input plus cacheWrite, which already includes the 1h write bucket:
+ *   hot      cacheRead > 0  and prefill < 2000   (prefix reused, prefill ≈ user text)
+ *   partial  cacheRead > 0  and prefill >= 2000  (prefix reused up to a divergence point)
+ *   cold     reported cacheRead == 0 and prefill >= 2000
+ *   unknown  no cache-read count was supplied on the wire
+ *   small    cacheRead == 0 and prefill < 2000   (too small to judge)
+ */
+export function backendCacheVerdict(
+	input: number,
+	cacheRead: number,
+	cacheWrite: number,
+	backend?: BackendCompletionTimings | null,
+	cacheReadField?: CacheReadField,
+): BackendCacheVerdict {
+	if (cacheRead === 0 && backend?.cachedTokens !== null && backend?.cachedTokens !== undefined) {
+		const backendInput = uncachedPrefillTokens(backend);
+		if (backendInput !== null) return classifyCacheUsage(backendInput, backend.cachedTokens);
+	}
+	if (cacheRead === 0 && cacheReadField === "omitted") return "unknown";
+	return classifyCacheUsage(input + cacheWrite, cacheRead);
+}
+
+/** Native stream-invocation latency, measured on one monotonic clock. */
+export interface AssistantCallTiming {
+	/** Invocation to first assistant output; null when no output arrived. */
+	ttftMs: number | null;
+	/** Invocation to message_end for the same assistant API call. */
+	apiMs: number;
+}
+
+export function assistantSessionPayload(
+	message: AgentMessage,
+	failure: TerminalAssistantFailure | null,
+): Record<string, unknown> {
+	const text = extractText(message).trim();
+	const thinking = extractThinking(message).trim();
+	const payload: Record<string, unknown> = { text };
+	const raw = message as unknown as Record<string, unknown>;
+	if (Array.isArray(raw.content)) payload.content = raw.content;
+	if (thinking.length > 0) payload.thinking = thinking;
+	payload.responseModelIdObservation = responseModelIdObservationFromRecord(raw);
+	for (const key of [
+		"usage",
+		"callId",
+		"attemptId",
+		"callInvoked",
+		"failure",
+		"api",
+		"provider",
+		"model",
+		"responseModel",
+		"responseId",
+		"providerThinkingLevel",
+		"gatewayRouting",
+		"diagnostics",
+		"toolRounds",
+		"pancodeAbortReason",
+		"pancodeReasoningNotRetained",
+		"pancodeReasoningToolMarkup",
+		"pancodeWrittenCalls",
+		"copilotDroppedToolMarkers",
+	]) {
+		if (raw[key] !== undefined) payload[key] = raw[key];
+	}
+	if (failure?.failure) payload.failure = failure.failure;
+
+	const usage = raw.usage as Record<string, unknown> | null | undefined;
+	if (raw.callInvoked === false || usage?.callInvoked === false || failure?.failure?.invoked === false) {
+		// Keep the SDK's in-memory shape, but never persist synthetic usage for an unsent call (#434).
+		payload.usage = null;
+		payload.callInvoked = false;
+	}
+	if (failure && !isSelfExplainingAbort({ stopReason: raw.stopReason, errorMessage: raw.errorMessage, text })) {
+		payload.stopReason = failure.stopReason;
+		payload.errorMessage = failure.errorMessage;
+	} else {
+		const stopReason = raw.stopReason;
+		if (stopReason !== undefined) payload.stopReason = stopReason;
+		if (stopReason === "length") payload.contextExhaustion = lengthStopMetadata(message);
+	}
+	return payload;
+}
+
+/**
+ * Usage for an interrupted assistant turn whose provider never reported any.
+ *
+ * A cancel lands a partial assistant message carrying the usage object the
+ * stream was initialized with and never updated: all zeros, persisted next to
+ * thousands of characters of streamed text, on a call whose prompt was paid for
+ * the moment it was sent. The prompt side is known from the turn's own context
+ * accounting and the output side from the text that actually arrived, so both
+ * are recorded as estimates rather than as zero.
+ *
+ * The call's settlement journals it as `interruptedEstimate`, beside the
+ * provider's usage and never inside it, and surfaces read it from the read
+ * model as an estimate (#434). It never rides on the message.
+ *
+ * A call that ended normally or failed without reporting usage gets the same
+ * estimate, so a priced route's cost cap can charge it.
+ *
+ * Returns null when the provider did report usage (there is nothing to fill in)
+ * or when neither prompt nor output tokens can be estimated. Never-sent
+ * requests have no display estimate (#430).
+ */
+export function estimatedUsageForInterruptedTurn(
+	message: AgentMessage,
+	promptSideTokens: number,
+): InterruptedUsageEstimate | null {
+	const reported = (message as { usage?: Record<string, unknown> }).usage;
+	// A request cancelled before invocation sent no prompt. Estimating one put
+	// the whole context on the meter for each budget-wait abort in #423.
+	if (
+		reported?.callInvoked === false ||
+		(message as { callInvoked?: boolean }).callInvoked === false ||
+		(message as { failure?: { invoked?: boolean } }).failure?.invoked === false
+	)
+		return null;
+	if (reported && typeof reported === "object" && reported.estimated !== true) {
+		for (const key of ["input", "output", "cacheRead", "cacheWrite", "totalTokens"] as const) {
+			const value = reported[key];
+			if (typeof value === "number" && value > 0) return null;
+		}
+	}
+	const streamedChars = assistantOutputChars(message);
+	const input = Math.max(0, Math.round(promptSideTokens));
+	if (streamedChars === 0 && input === 0) return null;
+	const output = streamedChars > 0 ? Math.max(1, ceilChars(streamedChars)) : 0;
+	return { input, output };
+}
+
+export function hasPersistableAssistantContent(
+	payload: Record<string, unknown>,
+	failure: TerminalAssistantFailure | null,
+): boolean {
+	if (failure) return true;
+	if (payload.stopReason === "length") return true;
+	if (typeof payload.text === "string" && payload.text.trim().length > 0) return true;
+	if (typeof payload.thinking === "string" && payload.thinking.trim().length > 0) return true;
+	if (Array.isArray(payload.content) && payload.content.length > 0) return true;
+	return false;
+}
+
+export function recordValue(value: unknown): Record<string, unknown> | null {
+	return value !== null && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+}
+
+function textFromToolResultContent(content: unknown): string {
+	if (!Array.isArray(content)) return "";
+	return content
+		.map((block) => {
+			const item = recordValue(block);
+			if (item?.type !== "text" || typeof item?.text !== "string") return "";
+			return item.text;
+		})
+		.join("");
+}
+
+export function toolResultSummary(result: unknown): Record<string, unknown> {
+	const obj = recordValue(result);
+	const text = textFromToolResultContent(obj?.content) || (typeof result === "string" ? result : "");
+	const bytes = Buffer.byteLength(text, "utf8");
+	const details = recordValue(obj?.details);
+	const size = recordValue(details?.resultSize);
+	const disposition = recordValue(details?.resultDisposition);
+	const truncation = recordValue(details?.truncation);
+	const observation = recordValue(details?.observation);
+	const offloadPath =
+		typeof disposition?.offloadPath === "string"
+			? disposition.offloadPath
+			: typeof observation?.offloadPath === "string"
+				? observation.offloadPath
+				: typeof size?.offloadPath === "string"
+					? size.offloadPath
+					: null;
+	const displayedBytes =
+		typeof disposition?.displayedBytes === "number" && Number.isFinite(disposition.displayedBytes)
+			? disposition.displayedBytes
+			: bytes;
+	return {
+		bytes: displayedBytes,
+		truncated:
+			disposition?.presentationTruncated === true ||
+			size?.truncated === true ||
+			truncation?.truncated === true ||
+			observation?.truncated === true ||
+			text.includes("[tool result truncated]"),
+		...(typeof disposition?.capturedBytes === "number" ? { capturedBytes: disposition.capturedBytes } : {}),
+		...(typeof disposition?.displayedBytes === "number" ? { displayedBytes: disposition.displayedBytes } : {}),
+		...(typeof disposition?.contextBytes === "number" ? { contextBytes: disposition.contextBytes } : {}),
+		...(disposition?.contextTruncated === true ? { contextTruncated: true } : {}),
+		...(typeof size?.policy === "string" ? { policy: size.policy } : {}),
+		...(typeof size?.followUpHint === "string" ? { followUpHint: size.followUpHint } : {}),
+		...(offloadPath !== null ? { offloadPath } : {}),
+		// Observation envelope counts (OBSERVE plane): unit, shown/total counts
+		// and bytes, format, exact continuation, offload path. Persisted with
+		// the turn so the ledger line renders identically live and on replay.
+		...(observation !== null ? { observation } : {}),
+	};
+}
+
+export function runtimeSupportsTools(agentRuntime: RuntimeResolutionView): boolean {
+	return agentRuntime.runtimeResolution.capabilityDecisions.tools === true;
+}
+
+export function detectTerminalFailureFromState(agent: AgentStateView): TerminalAssistantFailure | null {
+	const msgs = agent.state.messages;
+	const tail = Array.isArray(msgs) ? msgs[msgs.length - 1] : undefined;
+	const failure = terminalFailureFromAssistantMessage(tail);
+	if (failure) return failure;
+	return null;
+}
+
+/** Drop a trailing error/aborted assistant message so it never replays to the provider. */
+export function pruneFailedAssistantFromContext(agent: AgentStateView): void {
+	const messages = agent.state.messages;
+	const tail = Array.isArray(messages) ? messages[messages.length - 1] : undefined;
+	if (!terminalFailureFromAssistantMessage(tail)) return;
+	agent.state.messages = messages.slice(0, -1);
+}
+
+/**
+ * Inspect the agent's state after `agent.prompt` resolves. pi-agent-core's
+ * `handleRunFailure` records the upstream error on the assistant message
+ * (stopReason="error", errorMessage="<text>") and on `state.errorMessage`,
+ * then resolves the prompt() Promise normally. Returns a ContextOverflowError
+ * when either surface matches the heuristic in src/domains/providers/errors.ts.
+ */
+export function detectOverflowFromState(agent: AgentStateView): ReturnType<typeof toContextOverflowError> {
+	const direct = agent.state.errorMessage;
+	if (typeof direct === "string" && direct.length > 0) {
+		const match = toContextOverflowError(direct);
+		if (match) return match;
+	}
+	const msgs = agent.state.messages;
+	const tail = Array.isArray(msgs) ? msgs[msgs.length - 1] : undefined;
+	if (tail && typeof tail === "object" && (tail as { stopReason?: unknown }).stopReason === "error") {
+		const em = (tail as { errorMessage?: unknown }).errorMessage;
+		if (typeof em === "string") {
+			const match = toContextOverflowError(em);
+			if (match) return match;
+		}
+	}
+	return null;
+}
+
+// `run --output-schema` (SPEC 6.8) reaches the host's structured finish through this seam, so the CLI needs no new
+// Stage 0 seam; the module's own closure is core only and its validator loads by dynamic import.
+export {
+	loadOutputSchema,
+	OUTPUT_SCHEMA_REFUSAL_PREFIX,
+	outputSchemaInstruction,
+	outputSchemaSummaryInstruction,
+	type StructuredEnforcement,
+	type StructuredVerdict,
+	schemaMismatchMessage,
+	structuredRepairConstraints,
+	structuredRepairPrompt,
+	validateStructuredAnswer,
+} from "./structured-finish.js";

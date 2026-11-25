@@ -1,0 +1,276 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0 AND MIT
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Cut-point detection for compaction.
+ *
+ * Walks an entry list newest-to-oldest, accumulating estimated tokens, and
+ * reports where to slice so the suffix carries at least `keepRecentTokens`
+ * tokens of recent context. Ports pi-coding-agent's `findCutPoint` +
+ * `findTurnStartIndex` (pi-mono/packages/coding-agent/src/core/compaction/
+ * compaction.ts) against PanCode's SessionEntry union.
+ *
+ * Invariant: the returned cut never lands on a `tool_result` message. Tool
+ * results must stay attached to the tool call that produced them, otherwise
+ * the replayed context shows a result with no originating call.
+ */
+
+import { HOST_INSERT_CUSTOM_TYPE, type SessionEntry } from "../entries.js";
+import { estimateTokens } from "./tokens.js";
+
+export interface CutPointResult {
+	/** Index of the first entry to keep (start of the retained suffix). */
+	firstKeptEntryIndex: number;
+	/**
+	 * When the cut falls mid-turn (cut point is not a user turn start), the
+	 * index of the user message that started the turn being split. -1 when
+	 * the cut already lands on a turn boundary.
+	 */
+	turnStartIndex: number;
+	/** True when the cut splits a turn; `turnStartIndex` is valid in that case. */
+	isSplitTurn: boolean;
+}
+
+export interface FindCutPointOptions {
+	/** Inclusive lower bound on the search window. Defaults to 0. */
+	startIndex?: number;
+	/** Exclusive upper bound on the search window. Defaults to entries.length. */
+	endIndex?: number;
+}
+
+/**
+ * Scan backwards from `entryIndex` until we hit the user (or bashExecution)
+ * message that opened the current turn. Returns -1 when no such start is
+ * found inside the supplied window. `branchSummary` entries count as turn
+ * starts because they replace the upstream history at a fork point.
+ */
+function findTurnStartIndex(entries: ReadonlyArray<SessionEntry>, entryIndex: number, startIndex = 0): number {
+	for (let i = entryIndex; i >= startIndex; i--) {
+		if (isTurnStart(entries[i])) return i;
+	}
+	return -1;
+}
+
+function isTurnStart(entry: SessionEntry | undefined): boolean {
+	return (
+		entry?.kind === "branchSummary" ||
+		entry?.kind === "bashExecution" ||
+		(entry?.kind === "message" && entry.role === "user")
+	);
+}
+
+/**
+ * Whether the suffix kept from `cutIndex` holds a message of the turn the cut sits in. A cut on a bookkeeping row after
+ * that turn's last message keeps none of it, so the whole turn is summarized as history and nothing is split.
+ */
+function keepsTurnMessages(entries: ReadonlyArray<SessionEntry>, cutIndex: number, endIndex: number): boolean {
+	for (let i = cutIndex; i < endIndex; i++) {
+		const entry = entries[i];
+		if (isTurnStart(entry)) return false;
+		if (entry?.kind === "message") return true;
+	}
+	return false;
+}
+
+/** Entries we can cut at. Tool rows must stay with their assistant declaration. */
+function isValidCutPoint(entry: SessionEntry): boolean {
+	switch (entry.kind) {
+		case "message":
+			return entry.role !== "tool_result" && entry.role !== "tool_call";
+		// A host insert renders beside its anchor, so a cut that starts at one would drop the anchor it needs.
+		case "custom":
+			return entry.customType !== HOST_INSERT_CUSTOM_TYPE;
+		case "bashExecution":
+		case "skillActivation":
+		case "branchSummary":
+		case "compactionSummary":
+			return true;
+		case "modelChange":
+		case "thinkingLevelChange":
+		case "fileEntry":
+		case "sessionInfo":
+		case "label":
+		case "protectedArtifact":
+		case "taskLedger":
+		case "decisionLedger":
+		case "workerRun":
+		case "contextEviction":
+		case "contextRecall":
+		// Transaction bookkeeping is not a place the conversation can be sliced.
+		// A cut landing on a handoff record would put the summary boundary in the
+		// middle of a durable transaction, and the records carry no conversation
+		// text for the retained suffix to be about.
+		case "handoffTransaction":
+		case "continuityCommit":
+			return false;
+	}
+}
+
+/**
+ * Valid cuts outside an open tool batch. A `custom`, `bashExecution` or `skillActivation` row written between an
+ * assistant's tool calls and their results is not a boundary: cutting there splits the batch, and replay repairs it by
+ * synthesizing the assistant message without its text or signed thinking.
+ */
+function findValidCutPoints(entries: ReadonlyArray<SessionEntry>, startIndex: number, endIndex: number): number[] {
+	const cuts: number[] = [];
+	const pending = new Set<string>();
+	for (let i = startIndex; i < endIndex; i++) {
+		const entry = entries[i];
+		if (!entry) continue;
+		if (entry.kind === "message") {
+			if (entry.role === "tool_result") {
+				const id = (entry.payload as { toolCallId?: unknown } | null)?.toolCallId;
+				if (typeof id === "string") pending.delete(id);
+			} else if (entry.role === "user" || entry.role === "assistant") {
+				pending.clear();
+				const content = (entry.payload as { content?: unknown } | null)?.content;
+				if (entry.role === "assistant" && Array.isArray(content))
+					for (const block of content) if (block?.type === "toolCall" && typeof block.id === "string") pending.add(block.id);
+			}
+		}
+		if (pending.size > 0 && !(entry.kind === "message" && entry.role === "assistant")) continue;
+		if (isValidCutPoint(entry)) cuts.push(i);
+	}
+	return cuts;
+}
+
+/** Retain the assistant declaration and its entire tool batch when the tail alone exceeds the budget. */
+function findToolBatchStart(
+	entries: ReadonlyArray<SessionEntry>,
+	resultIndex: number,
+	startIndex: number,
+	endIndex: number,
+): number {
+	for (let index = resultIndex - 1; index >= startIndex; index--) {
+		const entry = entries[index];
+		if (entry?.kind !== "message") continue;
+		if (entry.role === "user") break;
+		if (entry.role !== "assistant") continue;
+		const payload = entry.payload as { content?: unknown } | null;
+		if (!Array.isArray(payload?.content)) break;
+		const callIds = new Set<string>();
+		for (const block of payload.content) {
+			if (block?.type === "toolCall" && typeof block.id === "string") callIds.add(block.id);
+		}
+		if (callIds.size === 0) break;
+		for (let tail = index + 1; tail < endIndex; tail++) {
+			const result = entries[tail];
+			if (result?.kind !== "message" || result.role !== "tool_result") continue;
+			const id = (result.payload as { toolCallId?: unknown } | null)?.toolCallId;
+			if (typeof id !== "string" || !callIds.has(id)) return -1;
+		}
+		return index;
+	}
+	return -1;
+}
+
+/**
+ * Find the cut point that keeps at least `keepRecentTokens` tokens in the
+ * retained suffix. Never cuts at a `tool_result`. When walking forward from
+ * the chosen cut would swallow non-message bookkeeping entries (modelChange,
+ * thinkingLevelChange, fileEntry, sessionInfo), the cut is widened so those
+ * entries ride along with the suffix instead of being summarized.
+ *
+ * Small-session fallback: when the walker exhausts `entries` without ever
+ * accumulating `keepRecentTokens`, the pi-coding-agent reference left
+ * `cutIndex` at the oldest valid cut, which made `compact()` produce an
+ * empty `pre` slice and the chat-loop report "nothing to compact" on
+ * populated sessions below the keep-recent window. PanCode's manual `/context compact`
+ * expects to summarize whatever older history exists, so when no suffix
+ * crosses the threshold the cut falls back to the newest turn start (user
+ * message, bashExecution, or branchSummary). Sessions with only a single
+ * turn still land the cut at index 0. `pre` stays empty and the caller
+ * surfaces the honest "nothing to compact" notice.
+ */
+export function findCutPoint(
+	entries: ReadonlyArray<SessionEntry>,
+	keepRecentTokens: number,
+	opts: FindCutPointOptions = {},
+): CutPointResult {
+	const startIndex = opts.startIndex ?? 0;
+	const endIndex = opts.endIndex ?? entries.length;
+	const cutPoints = findValidCutPoints(entries, startIndex, endIndex);
+	if (cutPoints.length === 0) {
+		return { firstKeptEntryIndex: startIndex, turnStartIndex: -1, isSplitTurn: false };
+	}
+
+	let accumulated = 0;
+	let cutIndex = -1;
+	for (let i = endIndex - 1; i >= startIndex; i--) {
+		const entry = entries[i];
+		if (!entry) continue;
+		accumulated += estimateTokens(entry);
+		if (accumulated >= keepRecentTokens) {
+			for (const candidate of cutPoints) {
+				if (candidate >= i) {
+					cutIndex = candidate;
+					break;
+				}
+			}
+			// No newer cut exists inside a final tool-result batch. Snap back to
+			// its assistant, not the whole user turn or an individual call row.
+			// The suffix may exceed the target; the continuation guard still
+			// checks whether summarizing older work actually made the request fit.
+			if (cutIndex === -1 && entry.kind === "message" && (entry.role === "tool_result" || entry.role === "tool_call")) {
+				cutIndex = findToolBatchStart(entries, i, startIndex, endIndex);
+			}
+			// A row written inside an open tool batch is no boundary: keep the whole batch from its assistant.
+			if (cutIndex === -1 && isValidCutPoint(entry) && !cutPoints.includes(i)) {
+				for (const candidate of cutPoints) if (candidate < i) cutIndex = candidate;
+			}
+			break;
+		}
+	}
+
+	if (cutIndex === -1) {
+		// Walker never crossed keepRecentTokens, or found neither a newer cut
+		// nor a verifiable assistant declaration for the final result batch.
+		// Prefer the newest turn start so older turns still feed the
+		// summary prompt. Absent any turn start, fall back to the oldest valid
+		// cut. That matches the pre-fix behavior, so pre stays empty and the
+		// orchestrator reports nothing to compact.
+		const lastTurnStart = findTurnStartIndex(entries, endIndex - 1, startIndex);
+		cutIndex = lastTurnStart !== -1 ? lastTurnStart : (cutPoints[0] ?? startIndex);
+	}
+
+	// Scan backwards from cutIndex to fold bookkeeping entries into the suffix.
+	while (cutIndex > startIndex) {
+		const prev = entries[cutIndex - 1];
+		if (!prev) break;
+		if (prev.kind === "compactionSummary") break;
+		if (
+			prev.kind === "message" ||
+			prev.kind === "bashExecution" ||
+			prev.kind === "custom" ||
+			prev.kind === "skillActivation" ||
+			prev.kind === "branchSummary" ||
+			// Stop before a continuity record rather than widening onto it. The
+			// widening exists so bookkeeping rides with the retained suffix, but
+			// the cut index also names `firstKeptTurnId`, which becomes the new
+			// summary's structural parent. Parking that on a transaction record
+			// would anchor the summary to a non-message, and `entryBelongsToPath`
+			// resolves a summary through its anchor: on a branched session the
+			// summary would then be filtered off its own active path. Continuity
+			// records ahead of the cut lose nothing by being on the summarized
+			// side, because `serializeConversation` never projects them into the
+			// prompt and the fold reads the full pre-cut ledger rather than the
+			// replay slice.
+			prev.kind === "handoffTransaction" ||
+			prev.kind === "continuityCommit"
+		) {
+			break;
+		}
+		cutIndex--;
+	}
+
+	// A cut splits a turn only when the kept suffix starts after that turn's start and still holds one of its messages.
+	// A cut on a shell or branch row starts its own turn, and one on a row trailing a finished turn keeps none of it.
+	const turnStartIndex =
+		isTurnStart(entries[cutIndex]) || !keepsTurnMessages(entries, cutIndex, endIndex)
+			? -1
+			: findTurnStartIndex(entries, cutIndex, startIndex);
+	return {
+		firstKeptEntryIndex: cutIndex,
+		turnStartIndex,
+		isSplitTurn: turnStartIndex !== -1,
+	};
+}

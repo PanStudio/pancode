@@ -1,0 +1,424 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Secret redaction by value shape. An evidence bundle applies it at the export
+ * boundary, where previews, transcript text, and receipt payloads are scrubbed
+ * before serialization and the overview records how much was filtered. Raw
+ * session files stay untouched. It also runs synchronously during live turns:
+ * memory-route text, System One state and session-start facts pass through it, so
+ * every pattern here has to stay linear in its input.
+ */
+
+import {
+	AUTHORIZATION_SHAPE,
+	CREDENTIAL_SHAPES,
+	type CredentialShape,
+	GITHUB_TOKEN_SHAPE,
+	GITLAB_TOKEN_SHAPE,
+	SECRET_KEY_WORDS,
+	SLACK_TOKEN_SHAPE,
+	SLACK_WEBHOOK_SHAPE,
+} from "../../core/secret-shapes.js";
+import {
+	redactQuotedSecrets,
+	replaceSecretUrlParams,
+	secretUrlParamValues,
+	URL_USERINFO_PATTERNS,
+	URL_USERNAME_TOKEN_RE,
+	urlUserinfoHoldsSecret,
+} from "../safety/redaction.js";
+
+export interface RedactionTally {
+	count: number;
+}
+
+export function createRedactionTally(): RedactionTally {
+	return { count: 0 };
+}
+
+/**
+ * Value-shaped secrets, matched on content alone. Deliberately conservative:
+ * each pattern targets a documented credential format, plus one generic
+ * key/token/secret/password assignment shape. Audit rows already get
+ * key-name-based redaction at write time; this pass catches values that
+ * escaped into free text, command output, or tool arguments. Key names come from {@link SECRET_KEY_WORDS}, which display
+ * redaction shares.
+ */
+const SECRET_PATTERNS: ReadonlyArray<CredentialShape> = [
+	// Shares its patterns with display redaction so the two hide the same text (#446, #448). They run first because the
+	// assignment value below would swallow the `@` and host of `https://u:token=abcdefgh@h`.
+	...URL_USERINFO_PATTERNS.map((re) => ({ kind: "url-userinfo", re })),
+	{ kind: "url-username", re: URL_USERNAME_TOKEN_RE },
+	{
+		kind: "pem",
+		re: /-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|PRIVATE KEY BLOCK)-----[\s\S]*?(?:-----END [A-Z0-9 ]*(?:PRIVATE KEY|PRIVATE KEY BLOCK)-----|$)/g,
+	},
+	{ kind: "aws-access-key", re: /\bAKIA[0-9A-Z]{16}\b/g },
+	GITHUB_TOKEN_SHAPE,
+	{ kind: "sk-key", re: /\bsk-(?:[A-Za-z0-9_-]{2,20}-)?[A-Za-z0-9_-]{16,}\b/g },
+	SLACK_TOKEN_SHAPE,
+	// Groq, Hugging Face, xAI, NVIDIA, Cerebras, Perplexity, Replicate and npm keys: a fixed prefix, then the key.
+	{ kind: "provider-key", re: /\b(?:gsk_|hf_|xai-|nvapi-|csk-|pplx-|r8_|npm_)[A-Za-z0-9_-]{20,}\b/g },
+	{ kind: "google-api-key", re: /\bAIza[0-9A-Za-z_-]{30,}\b/g },
+	GITLAB_TOKEN_SHAPE,
+	SLACK_WEBHOOK_SHAPE,
+	{
+		kind: "discord-webhook",
+		re: /\b(?:https?:\/\/)?(?:(?:canary|ptb)\.)?discord(?:app)?\.com\/api\/(?:v\d+\/)?webhooks\/\d+\/[A-Za-z0-9_-]{20,}/gi,
+	},
+	// Bot API URLs carry the token as `/bot<id>:<secret>/`; the lookbehind lets the id start right after `bot`.
+	{
+		kind: "telegram-bot-token",
+		re: /(?:(?<=\/bot)|(?<![A-Za-z0-9_:-]))\d{5,12}:[A-Za-z0-9_-]{30,}(?![A-Za-z0-9_-])/g,
+	},
+	{
+		kind: "aws-secret-key",
+		// Exactly 40 base64 characters holding upper case, lower case and a digit; awsSecretKeyHolds then
+		// requires it to read as random, so a 40-character name or path stays.
+		re: /(?<![A-Za-z0-9/+=])(?=[A-Za-z0-9/+]*[A-Z])(?=[A-Za-z0-9/+]*[a-z])(?=[A-Za-z0-9/+]*\d)[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+=])/g,
+	},
+	// The shapes display redaction and the sandbox env scrub share; the first entries above repeat some of them.
+	...CREDENTIAL_SHAPES,
+	{
+		kind: "jwt",
+		// Group 1 is the run ahead of the token and stays in the text. The first `eyJ` of a run is the only start that can
+		// win, so testing the shape once from the run's start keeps `eyJaaaaaaaa-` repeated from rescanning at each one.
+		re: /(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\b)([A-Za-z0-9_-]*?)\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\b/g,
+	},
+	AUTHORIZATION_SHAPE,
+	{
+		kind: "assignment",
+		// KEY=value / key: value / "api_key": "value" shapes where the key name
+		// is secret-flavored and the value is long enough to be a credential.
+		// A value that opens a call with no argument, a literal or a line break
+		// is code, not a credential: source constants such as
+		// `BASE_TOKENS = frozenset({` were redacted on every read (DF-12). A
+		// password like `Summer2024(!)` still reads as a value.
+		//
+		// A key spans one run of name characters and always reaches the run's end, so only the run's first word can
+		// start a match and the secret word need only be found once. Two stars around the word took 7.6 s on 8 KB of
+		// `token-`, and `\\s*["']?\\s*` split a run of spaces every possible way.
+		//
+		re: new RegExp(
+			String.raw`\b(?<=(?:^|[^A-Za-z0-9_-])-*)(?=[A-Za-z0-9_-]*?(?:${SECRET_KEY_WORDS}))([A-Za-z0-9_-]*\s*(?:["']\s*)?[:=]\s*["']?)(?![A-Za-z_][\w.]*\((?:[\s"'{[)]|$))([^\s"'\x60;,&|<>]{8,})`,
+			"g",
+		),
+	},
+];
+
+/**
+ * How often adjacent letters and digits switch between upper case, lower case
+ * and digit, per letter or digit. Random base64 or base62 switches on most
+ * characters, hex on about half; words, dates and camel-case names rarely do.
+ */
+export function characterClassSwitchRate(text: string): number {
+	let previous = "";
+	let counted = 0;
+	let switches = 0;
+	for (const char of text) {
+		const kind =
+			char >= "A" && char <= "Z" ? "U" : char >= "a" && char <= "z" ? "L" : char >= "0" && char <= "9" ? "D" : "";
+		if (kind === "") continue;
+		counted += 1;
+		if (previous !== "" && kind !== previous) switches += 1;
+		previous = kind;
+	}
+	return counted === 0 ? 0 : switches / counted;
+}
+
+/** A path of 40 characters has several `/` and few class switches; an AWS secret key has neither. */
+function awsSecretKeyHolds(value: string): boolean {
+	return value.split("/").length <= 4 && characterClassSwitchRate(value) >= 0.3;
+}
+
+/** Whether a match of `kind` is the credential its pattern describes, for the patterns whose shape alone is not enough. */
+function secretShapeHolds(kind: string, value: string): boolean {
+	return kind !== "aws-secret-key" || awsSecretKeyHolds(value);
+}
+
+/** The assignment pattern's key half, for a key that arrives as a JSON property name. */
+const SECRET_PROPERTY_NAME = new RegExp(`(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*$)[A-Za-z0-9_-]*?(?:${SECRET_KEY_WORDS})`);
+
+/**
+ * A known value shorter than this is too likely to be ordinary text (a word,
+ * a port, a short flag) to mask everywhere it appears.
+ */
+export const KNOWN_SECRET_MIN_LENGTH = 8;
+
+let knownSecretPattern: { key: string; re: RegExp | null } | null = null;
+
+/** One alternation over the maskable values, longest first, rebuilt only when the set changes. */
+function knownSecretRegExp(values: Iterable<string>): RegExp | null {
+	const usable = [...new Set(values)]
+		.filter((value) => value.length >= KNOWN_SECRET_MIN_LENGTH)
+		.sort((a, b) => b.length - a.length || (a < b ? -1 : a > b ? 1 : 0));
+	const key = usable.join("\0");
+	if (knownSecretPattern?.key === key) return knownSecretPattern.re;
+	const re =
+		usable.length === 0
+			? null
+			: new RegExp(usable.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g");
+	knownSecretPattern = { key, re };
+	return re;
+}
+
+/**
+ * Replace each occurrence of a known credential value (a resolved key, a
+ * credential variable's value) with `[redacted:known]`. Unlike the patterns
+ * above this matches exact values, so it also catches a credential with no
+ * recognizable shape.
+ */
+export function redactKnownSecrets(text: string, values: Iterable<string>, tally?: RedactionTally): string {
+	if (text.length < KNOWN_SECRET_MIN_LENGTH) return text;
+	const re = knownSecretRegExp(values);
+	if (re === null) return text;
+	return text.replace(re, () => {
+		if (tally) tally.count += 1;
+		return "[redacted:known]";
+	});
+}
+
+/**
+ * The head of text about to be redacted synchronously, for text of no fixed size such as a pasted prompt. A token the
+ * bound lands inside goes whole, since what is left of it could be a partial secret no pattern recognizes.
+ */
+export function headForRedaction(text: string, maxChars: number): string {
+	if (text.length <= maxChars) return text;
+	let end = maxChars;
+	if (!/\s/u.test(text.charAt(end))) while (end > 0 && !/\s/u.test(text.charAt(end - 1))) end -= 1;
+	return text.slice(0, end).trimEnd();
+}
+
+// Command output reaches the model and the operator as a program printed it, so it masks only the shapes that are almost
+// never anything but a credential. The assignment shape stays out: test and build output is full of `max_tokens: 128000000`
+// and fixture `secret: placeholder` lines whose values it would blank.
+const COMMAND_OUTPUT_SECRET_KINDS: ReadonlySet<string> = new Set([
+	"url-userinfo",
+	"url-username",
+	"pem",
+	"aws-access-key",
+	"github-token",
+	"sk-key",
+	"slack-token",
+	"google-api-key",
+	"gitlab-token",
+	"slack-webhook",
+	"discord-webhook",
+	"telegram-bot-token",
+	"jwt",
+	"authorization",
+	...CREDENTIAL_SHAPES.map((shape) => shape.kind),
+]);
+const COMMAND_OUTPUT_SECRET_PATTERNS = SECRET_PATTERNS.filter((pattern) =>
+	COMMAND_OUTPUT_SECRET_KINDS.has(pattern.kind),
+);
+// A real `sk-` key holds a digit, while a hyphenated name such as `sk-worker-deployment` does not.
+const HAS_DIGIT_RE = /\d/u;
+// A query value in printed source is often code, as in `"?token=" + value`, whose quote the URL rule would take. Only a
+// plain value long enough to be a credential is masked in output.
+const COMMAND_OUTPUT_URL_PARAM_VALUE_RE = /^[A-Za-z0-9._~%+/=-]{8,}$/u;
+
+/**
+ * Mask the credential shapes trusted on command output: URL userinfo and username tokens, plain secret query values, PEM
+ * private keys, AWS access keys, GitHub, GitLab, `sk-`, Slack and Google API keys, Slack and Discord webhooks, Telegram
+ * bot tokens, JWTs and Authorization headers.
+ */
+export function redactCommandOutputSecrets(text: string, tally?: RedactionTally): string {
+	let out = redactWholeQuotedSecrets(text, tally);
+	for (const pattern of COMMAND_OUTPUT_SECRET_PATTERNS) {
+		out = out.replace(pattern.re, (...match: unknown[]) => {
+			if (pattern.kind === "sk-key" && !HAS_DIGIT_RE.test(String(match[0]))) return String(match[0]);
+			return replaceSecretMatch(pattern.kind, match, tally);
+		});
+	}
+	return replaceSecretUrlParams(out, (secret) => {
+		if (!COMMAND_OUTPUT_URL_PARAM_VALUE_RE.test(secret)) return null;
+		if (tally) tally.count += 1;
+		return "[redacted:url-param]";
+	});
+}
+
+const QUOTED_MARKER = "[redacted]";
+const WHOLE_MARKER_RE = /^\[redacted(?::[a-z-]+)?\]$/u;
+const QUOTED_ASSIGNMENT_MARKER = "[redacted:assignment]";
+// A quoted header whose value only names a variable, `"Authorization: Bearer $TOKEN"`, which the quoted pass would hide.
+const QUOTED_HEADER_ENV_REFERENCE_RE =
+	/(["'])\s*[A-Za-z0-9_-]+\s*:\s*(?:(?:bearer|basic|token)\s+)?\$(?:[A-Z_][A-Z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})\1/giu;
+const HELD_SEGMENT_RE = /\uE000(\d+)\uE001/gu;
+const HELD_SEGMENT_SHAPE_RE = /\uE000\d+\uE001/u;
+
+/**
+ * Replace a quoted credential value (`TOKEN="a b"`, `--password 'a b'`) whole, before the value-shaped patterns run:
+ * they stop at whitespace, so a space inside the quotes left the rest of the secret in the text.
+ */
+function redactWholeQuotedSecrets(text: string, tally?: RedactionTally): string {
+	// Only text already holding this pass's own token shape is skipped; a marker mask (`\uE000\uE1xx`) is not one.
+	if (HELD_SEGMENT_SHAPE_RE.test(text)) return text;
+	const held: string[] = [];
+	const guarded = text.replace(QUOTED_HEADER_ENV_REFERENCE_RE, (segment: string) => {
+		held.push(segment);
+		return `\uE000${held.length - 1}\uE001`;
+	});
+	const masked = redactQuotedSecrets(guarded);
+	if (masked === guarded) return text;
+	const quoted =
+		held.length === 0 ? masked : masked.replace(HELD_SEGMENT_RE, (_m, index: string) => held[Number(index)] ?? "");
+	const parts = quoted.split(QUOTED_MARKER);
+	const added = parts.length - text.split(QUOTED_MARKER).length;
+	if (tally && added > 0) tally.count += added;
+	// A marker already in the text is not ours to rename.
+	return added === parts.length - 1 ? parts.join(QUOTED_ASSIGNMENT_MARKER) : quoted;
+}
+
+const HEAD_KEEPING_KINDS: ReadonlySet<string> = new Set(
+	CREDENTIAL_SHAPES.filter((shape) => shape.keepsHead).map((shape) => shape.kind),
+);
+
+/** The replacement for one {@link SECRET_PATTERNS} match: the head a pattern keeps, then its marker. */
+function replaceSecretMatch(kind: string, match: unknown[], tally?: RedactionTally): string {
+	if (kind === "url-userinfo") {
+		if (!urlUserinfoHoldsSecret(String(match[2]))) return String(match[0]);
+		if (tally) tally.count += 1;
+		return `${String(match[1])}[redacted:url-userinfo]`;
+	}
+	if (tally) tally.count += 1;
+	if (kind === "assignment" || kind === "authorization" || kind === "jwt" || HEAD_KEEPING_KINDS.has(kind)) {
+		// Keep the key and separator, or the run ahead of the token; replace only the value.
+		return `${String(match[1])}[redacted:${kind}]`;
+	}
+	return `[redacted:${kind}]`;
+}
+
+/** Replace every secret-shaped value in `text`, tallying replacements. */
+export function redactSecretsText(
+	text: string,
+	tally: RedactionTally,
+	options?: {
+		/**
+		 * A caller that knows more about its text may keep an assignment value this rule would hide. `before` is the text
+		 * ahead of the value, which is what says whether the value sits inside a URL.
+		 */
+		keepAssignmentValue?: (value: string, before: string) => boolean;
+	},
+): string {
+	let out = redactWholeQuotedSecrets(text, tally);
+	for (const pattern of SECRET_PATTERNS) {
+		out = out.replace(pattern.re, (...match: unknown[]) => {
+			if (!secretShapeHolds(pattern.kind, String(match[0]))) return String(match[0]);
+			// The quoted pass already hid and counted this value; matching its marker again counted one secret twice (SF-6).
+			// It keeps the assignment kind on a bare marker, uncounted, so readers still see what was hidden.
+			if (pattern.kind === "assignment" && WHOLE_MARKER_RE.test(String(match[2]))) {
+				const value = String(match[2]);
+				return value === QUOTED_MARKER ? String(match[0]).replace(value, QUOTED_ASSIGNMENT_MARKER) : String(match[0]);
+			}
+			if (pattern.kind === "assignment" && options?.keepAssignmentValue) {
+				const key = String(match[1]);
+				const before = String(match[4]).slice(0, Number(match[3]) + key.length);
+				if (options.keepAssignmentValue(String(match[2]), before)) return String(match[0]);
+			}
+			return replaceSecretMatch(pattern.kind, match, tally);
+		});
+	}
+	// The display rule's query values, which the assignment pattern misses when they are short or hold a `;`. They go
+	// last, so a value that pattern already hid keeps its marker, and a journal never shows what a screen hides (#446).
+	return replaceSecretUrlParams(out, (secret) => {
+		if (!urlUserinfoHoldsSecret(secret)) return null;
+		tally.count += 1;
+		return "[redacted:url-param]";
+	});
+}
+
+const EXISTING_MARKER_RE = /\[redacted:[a-z-]+\]/gu;
+
+/**
+ * {@link redactSecretsText} for text that may already hold `[redacted:…]` markers, which it keeps byte for byte instead of
+ * re-redacting `TOKEN=[redacted:sk-key]` as `[redacted:assignment]` and counting it twice. Each marker is masked as
+ * `\uE000` plus one private-use codepoint from `\uE100`, the shape `REDACTED_USERINFO_RE` in `safety/redaction.ts` accepts.
+ */
+export function redactSecretsPreservingMarkers(text: string, tally: RedactionTally): string {
+	const markers: string[] = [];
+	const masked = text.replace(EXISTING_MARKER_RE, (marker) => {
+		markers.push(marker);
+		return `\uE000${String.fromCharCode(0xe100 + markers.length - 1)}`;
+	});
+	let redacted = redactSecretsText(masked, tally);
+	for (let index = 0; index < markers.length; index += 1) {
+		redacted = redacted.replaceAll(`\uE000${String.fromCharCode(0xe100 + index)}`, markers[index] ?? "");
+	}
+	return redacted;
+}
+
+/**
+ * Deep-redact every string in a JSON-shaped value. Arrays and plain objects
+ * are walked; other object types (dates, buffers) pass through untouched.
+ */
+export function redactSecretsDeep<T>(value: T, tally: RedactionTally): T {
+	if (typeof value === "string") return redactSecretsText(value, tally) as unknown as T;
+	if (Array.isArray(value)) return value.map((item) => redactSecretsDeep(item, tally)) as unknown as T;
+	if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+		const out: Record<string, unknown> = {};
+		for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+			out[key] = redactSecretsDeep(item, tally);
+		}
+		return out as unknown as T;
+	}
+	return value;
+}
+
+/**
+ * A `JSON.stringify` replacer or `JSON.parse` reviver that redacts string
+ * leaves one at a time. Redacting the serialized text instead let the
+ * assignment value swallow the backslash of an escaped quote, which left an
+ * unescaped quote in the durable trace and an undecodable payload (DF-12).
+ * Leaf by leaf the assignment pattern never sees a property name, so a
+ * credential-named property has its whole value redacted, whatever its shape.
+ * This is the one key-aware redaction evidence and telemetry objects share.
+ */
+export function secretRedactingReplacer(tally: RedactionTally): (key: string, value: unknown) => unknown {
+	return (key, value) => {
+		if (typeof value !== "string") return value;
+		if (value !== "" && SECRET_PROPERTY_NAME.test(key)) {
+			tally.count += 1;
+			return "[redacted:assignment]";
+		}
+		return redactSecretsText(value, tally);
+	};
+}
+
+/** Redact across display frame boundaries while retaining each frame's timestamp. */
+export function redactSecretSegments(segments: string[], tally: RedactionTally): string[] {
+	const joined = segments.join("");
+	const ranges: { start: number; end: number; kind: string }[] = [];
+	for (const pattern of SECRET_PATTERNS) {
+		for (const match of joined.matchAll(new RegExp(pattern.re.source, pattern.re.flags))) {
+			if (!secretShapeHolds(pattern.kind, match[0])) continue;
+			const userinfo = pattern.kind === "url-userinfo";
+			if (userinfo && !urlUserinfoHoldsSecret(match[2] ?? "")) continue;
+			const keepsHead =
+				userinfo || pattern.kind === "assignment" || pattern.kind === "jwt" || HEAD_KEEPING_KINDS.has(pattern.kind);
+			const start = match.index + (keepsHead ? (match[1]?.length ?? 0) : 0);
+			ranges.push({ start, end: match.index + match[0].length, kind: pattern.kind });
+			tally.count += 1;
+		}
+	}
+	for (const { start, end } of secretUrlParamValues(joined)) {
+		if (!urlUserinfoHoldsSecret(joined.slice(start, end))) continue;
+		ranges.push({ start, end, kind: "url-param" });
+		tally.count += 1;
+	}
+	ranges.sort((a, b) => a.start - b.start || b.end - a.end);
+	let offset = 0;
+	return segments.map((segment) => {
+		const start = offset;
+		offset += segment.length;
+		let cursor = start;
+		let result = "";
+		for (const range of ranges) {
+			if (range.end <= cursor || range.start >= offset) continue;
+			result += joined.slice(cursor, Math.max(cursor, range.start));
+			result += `[redacted:${range.kind}]`;
+			cursor = Math.min(offset, range.end);
+		}
+		return result + joined.slice(cursor, offset);
+	});
+}

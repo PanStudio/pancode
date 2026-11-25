@@ -1,0 +1,233 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, strictEqual } from "node:assert/strict";
+import { afterEach, beforeEach, test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import type { ProvidersContract } from "../../src/domains/providers/contract.js";
+import llamacpp from "../../src/domains/providers/runtimes/local-native/llamacpp.js";
+import { createEngineAgent } from "../../src/engine/agent.js";
+import type { PrewarmRoundInput, PrewarmRoundResult } from "../../src/engine/prewarm.js";
+import type { TurnContext } from "../../src/session-control/turn-context.js";
+import { createTurnPrewarm } from "../../src/session-control/turn-prewarm.js";
+import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
+
+let scratch: IsolatedPancodeEnv;
+beforeEach(async () => {
+	scratch = await isolatePancodeEnv("pancode-cache-prewarm-");
+});
+afterEach(() => scratch.restore());
+
+function fixture(
+	budget: { maxInputTokens?: number; contextWindow?: number } = {},
+	options: {
+		unbound?: boolean;
+		runtime?: string;
+		attended?: boolean;
+		authGate?: { entered: () => void; open: Promise<void> };
+	} = {},
+) {
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.chat.prewarm = true;
+	settings.chat.target = "local";
+	settings.chat.model = "fixture";
+	const target = {
+		id: "local",
+		runtime: options.runtime ?? "llamacpp",
+		url: "https://fixture.invalid",
+		...(budget.maxInputTokens !== undefined ? { cache: { warm: { maxInputTokens: budget.maxInputTokens } } } : {}),
+	};
+	const model = llamacpp.synthesizeModel(target, "fixture", null);
+	if (budget.contextWindow !== undefined) model.contextWindow = budget.contextWindow;
+	const { agent } = createEngineAgent({ initialState: { model, thinkingLevel: "off" } });
+	const runtime = { agent, targetId: target.id, runtimeId: target.runtime, wireModelId: model.id } as AgentRuntime;
+	const rounds: Array<{ input: PrewarmRoundInput; finish: (value: PrewarmRoundResult) => void }> = [];
+	let started!: () => void;
+	const roundStarted = new Promise<void>((resolve) => {
+		started = resolve;
+	});
+	let reservations = 0;
+	let visible = 0;
+	const notices: string[] = [];
+	const observeDeployment = async () => ({
+		observedAt: Date.now(),
+		backend: "llamacpp" as const,
+		model: "fixture",
+		build: "fixture",
+		epoch: null,
+		endpoint: target.url,
+		requestControls: ["cache_prompt" as const],
+		warm: "bounded" as const,
+		administration: "unsupported" as const,
+		reason: "fixture",
+	});
+	const warm = createTurnPrewarm({
+		state: createTurnState("off"),
+		getSettings: () => settings,
+		providers: {
+			getTarget: () => target,
+			getRuntime: () => llamacpp,
+			auth: {
+				resolveForTarget: async () => {
+					options.authGate?.entered();
+					await options.authGate?.open;
+					return { apiKey: "fixture" };
+				},
+			},
+		} as unknown as ProvidersContract,
+		context: {
+			ensureSessionPrompt: async () => {},
+			notePrewarm: () => {
+				visible += 1;
+			},
+		} as unknown as TurnContext,
+		isLatencySurface: () => true,
+		isTurnActive: () => false,
+		hasActiveDispatch: () => false,
+		prepareRuntime: async () => ({ ok: true, runtime, apiKey: "fixture" }),
+		applySessionTools: () => {},
+		// An unbound target goes through the real observation, which sends nothing without a binding.
+		...(options.unbound ? {} : { observeDeployment }),
+		notice: (text) => notices.push(text),
+		isAttended: () => options.attended !== false,
+		registerEndpointSlot: () => {
+			reservations += 1;
+			return () => {
+				reservations -= 1;
+			};
+		},
+		runPrewarm: (input) =>
+			new Promise((finish) => {
+				rounds.push({ input, finish });
+				started();
+			}),
+	});
+	return { warm, rounds, roundStarted, notices, counts: () => ({ reservations, visible }) };
+}
+
+const completed: PrewarmRoundResult = {
+	aborted: false,
+	usage: null,
+	backend: null,
+	timing: { ttftMs: null, apiMs: 1 },
+	errorMessage: null,
+};
+
+test("prewarm on a local target that binds no cache.deployment says so once instead of skipping silently", async () => {
+	const f = fixture({}, { unbound: true });
+	try {
+		f.warm.schedule("session-start");
+		deepStrictEqual(await f.warm.settled(), {
+			ran: false,
+			reason: "deployment",
+			detail: "deployment-unbound",
+			unbound: { targetId: "local", backend: "llamacpp" },
+		});
+		f.warm.schedule("resume");
+		await f.warm.settled();
+		strictEqual(f.rounds.length, 0);
+		strictEqual(f.notices.length, 1, "one notice per target, not one per skipped trigger");
+		match(f.notices[0] ?? "", /chat\.prewarm is on, but target local binds no cache\.deployment/u);
+		match(f.notices[0] ?? "", /backend llamacpp, controlUrl, model and build/u);
+	} finally {
+		f.warm.dispose();
+	}
+	// Silent off the terminal UI (ACP), on a local runtime no binding can warm, and from a round a submit let go of.
+	const acp = fixture({}, { unbound: true, attended: false });
+	const ollama = fixture({}, { unbound: true, runtime: "ollama" });
+	let entered!: () => void;
+	let releaseAuth!: () => void;
+	const authEntered = new Promise<void>((resolve) => (entered = resolve));
+	const open = new Promise<void>((resolve) => (releaseAuth = resolve));
+	const detached = fixture({}, { unbound: true, authGate: { entered: () => entered(), open } });
+	try {
+		acp.warm.schedule("resume");
+		await acp.warm.settled();
+		ollama.warm.schedule("resume");
+		deepStrictEqual(await ollama.warm.settled(), { ran: false, reason: "deployment", detail: "deployment-unbound" });
+		detached.warm.schedule("resume");
+		await authEntered;
+		detached.warm.cancel();
+		releaseAuth();
+		deepStrictEqual(await detached.warm.settled(), { ran: false, reason: "superseded" });
+		deepStrictEqual([acp.notices, ollama.notices, detached.notices], [[], [], []]);
+	} finally {
+		acp.warm.dispose();
+		ollama.warm.dispose();
+		detached.warm.dispose();
+	}
+});
+
+test("detached warming retains ownership and collapses repeated triggers to one latest round", async () => {
+	const f = fixture();
+	try {
+		f.warm.schedule("session-start");
+		await f.roundStarted;
+		strictEqual(f.rounds.length, 1);
+		for (let i = 0; i < 10; i += 1) {
+			f.warm.schedule("resume");
+			await delay(1);
+		}
+		strictEqual(f.rounds.length, 1);
+		strictEqual(f.counts().reservations, 1);
+		strictEqual(f.rounds[0]?.input.signal?.aborted, false, "detach is not backend cancellation");
+		f.warm.schedule("compaction");
+		f.rounds[0]?.finish(completed);
+		await delay(10);
+		strictEqual(f.rounds.length, 1, "cooldown also bounds repeated work after the detached round");
+		deepStrictEqual(await f.warm.settled(), { ran: false, reason: "cooldown" });
+		deepStrictEqual(f.counts(), { reservations: 0, visible: 0 });
+	} finally {
+		f.warm.dispose();
+	}
+});
+
+test("shutdown aborts detached work and forbids later schedules without releasing its reservation early", async () => {
+	const f = fixture();
+	f.warm.schedule("resume");
+	await f.roundStarted;
+	f.warm.cancel();
+	f.warm.dispose();
+	strictEqual(f.rounds[0]?.input.signal?.aborted, true);
+	strictEqual(f.counts().reservations, 1);
+	f.warm.schedule("resume");
+	f.rounds[0]?.finish({ ...completed, aborted: true });
+	await f.warm.settled();
+	strictEqual(f.rounds.length, 1);
+	deepStrictEqual(f.counts(), { reservations: 0, visible: 0 });
+});
+
+test("journaled warming keeps its display result without writing a second usage row", async () => {
+	const f = fixture();
+	try {
+		f.warm.schedule("session-start");
+		await f.roundStarted;
+		f.rounds[0]?.finish({ ...completed, callId: "call-fixture", attemptId: "attempt-fixture" });
+		await f.warm.settled();
+		deepStrictEqual(f.counts(), { reservations: 0, visible: 1 });
+	} finally {
+		f.warm.dispose();
+	}
+});
+
+test("an unset warm budget fits the attended prompt within the serving window; an operator cap wins", async () => {
+	for (const [budget, expected] of [
+		[{ contextWindow: 131_072 }, 16_384],
+		[{ contextWindow: 12_000 }, 12_000],
+		// PV-8: an unknown window (0) no longer keeps the 8,192 cap that refused the ordinary 11K warm.
+		[{ contextWindow: 0 }, 16_384],
+		[{ contextWindow: 131_072, maxInputTokens: 4096 }, 4096],
+	] as const) {
+		const f = fixture(budget);
+		try {
+			f.warm.schedule("session-start");
+			await f.roundStarted;
+			strictEqual(f.rounds[0]?.input.maxInputTokens, expected);
+			f.rounds[0]?.finish(completed);
+			await f.warm.settled();
+		} finally {
+			f.warm.dispose();
+		}
+	}
+});

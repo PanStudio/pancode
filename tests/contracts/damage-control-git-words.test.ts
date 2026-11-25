@@ -1,0 +1,168 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { strictEqual } from "node:assert/strict";
+import { it } from "node:test";
+import { createSafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
+
+it("review round 2 G: git word quoting, global options and continuations retain destructive rails", () => {
+	const engine = createSafetyPolicyEngine({ cwd: process.cwd() });
+	for (const [command, expected] of [
+		["git -C . clean -fd", "block"],
+		["git --git-dir=.git --work-tree=. clean -fd", "block"],
+		["git -c k=v reset --hard", "block"],
+		['"git" clean -fd', "block"],
+		['g"i"t clean -fd', "block"],
+		['git c"lean" -fd', "block"],
+		['git clean "-fd"', "block"],
+		['echo "git stash clear"; git s"tash" clear', "block"],
+		['git restore "."', "ask"],
+		["git restore './'", "ask"],
+		['git checkout -- "."', "ask"],
+		["git \\\nclean -fd", "block"],
+	] as const)
+		for (const level of ["default", "yolo"] as const)
+			strictEqual(engine.evaluate({ tool: "bash", args: { command } }, level).kind, expected, command);
+});
+
+it("review round 2 G: combined and abbreviated destructive git flags cannot bypass rules", () => {
+	const engine = createSafetyPolicyEngine({ cwd: process.cwd() });
+	for (const command of ["git clean -xfd", "git reset --har", "git push --forc"])
+		for (const level of ["default", "yolo"] as const)
+			strictEqual(engine.evaluate({ tool: "bash", args: { command } }, level).kind, "block", command);
+});
+
+it("review round 2 G: checkout discard forms and force push refspecs are gated", () => {
+	const engine = createSafetyPolicyEngine({ cwd: process.cwd() });
+	for (const [command, expected] of [
+		["git checkout .", "ask"],
+		["git checkout -f", "ask"],
+		["git push origin +main", "block"],
+	] as const)
+		for (const level of ["default", "yolo"] as const)
+			strictEqual(engine.evaluate({ tool: "bash", args: { command } }, level).kind, expected, command);
+});
+
+it("F2: a path-spelled or wrapped git with global options still meets the hard git rails", () => {
+	const engine = createSafetyPolicyEngine({ cwd: process.cwd() });
+	for (const command of ["/usr/bin/git -C . push --force", "env git -C . reset --hard"])
+		for (const level of ["default", "yolo"] as const)
+			strictEqual(engine.evaluate({ tool: "bash", args: { command } }, level).kind, "block", `${level}: ${command}`);
+});
+
+it("a separate-word --attr-source value does not hide the git subcommand from the hard rails", () => {
+	const engine = createSafetyPolicyEngine({ cwd: process.cwd() });
+	for (const command of [
+		"git --attr-source HEAD reset --hard",
+		"git --attr-source HEAD clean -fdx",
+		"git --attr-source HEAD push --force origin main",
+	])
+		for (const level of ["default", "yolo"] as const)
+			strictEqual(engine.evaluate({ tool: "bash", args: { command } }, level).kind, "block", `${level}: ${command}`);
+});
+
+it("accepted clean and checkout force prefixes retain destructive rails", () => {
+	const engine = createSafetyPolicyEngine({ cwd: process.cwd() });
+	for (const flag of ["--f", "--fo", "--for", "--forc"]) {
+		for (const level of ["default", "yolo"] as const) {
+			for (const command of [`git clean ${flag}`, `git -C . clean ${flag} -d`])
+				strictEqual(engine.evaluate({ tool: "bash", args: { command } }, level).kind, "block", command);
+			for (const command of [`git checkout ${flag} main`, `git -c k=v checkout ${flag} main`])
+				strictEqual(engine.evaluate({ tool: "bash", args: { command } }, level).kind, "ask", command);
+			for (const command of [`git clean ${flag} --dry-run`, `git clean ${flag} -nd`])
+				strictEqual(engine.evaluate({ tool: "bash", args: { command } }, level).kind, "allow", command);
+			strictEqual(
+				engine.evaluate({ tool: "bash", args: { command: `git clean ${flag} -- --dry-run` } }, level).kind,
+				"block",
+			);
+		}
+	}
+});
+
+it("force-with-lease uses ordinary command rails while unconditional force stays blocked", () => {
+	const engine = createSafetyPolicyEngine({ cwd: process.cwd() });
+	for (const level of ["default", "yolo"] as const) {
+		for (const command of [
+			"git push --force-with-lease",
+			"git push origin main --force-with-lease",
+			"git push --force-with-lease=refs/heads/main:abc",
+		]) {
+			strictEqual(engine.evaluate({ tool: "bash", args: { command } }, level).kind, "allow", `${level}: ${command}`);
+		}
+		for (const command of [
+			"git push --force",
+			"git push origin main --force",
+			"git push -f",
+			"git push --forc",
+			"git push origin +main",
+		]) {
+			strictEqual(engine.evaluate({ tool: "bash", args: { command } }, level).kind, "block", `${level}: ${command}`);
+		}
+	}
+});
+
+it("single-path source restores follow normal git rails and whole-tree restores still ask", () => {
+	const engine = createSafetyPolicyEngine({ cwd: process.cwd() });
+	for (const level of ["default", "yolo"] as const) {
+		for (const command of [
+			"git restore --source=HEAD~1 f",
+			"git restore --source HEAD~1 -- f",
+			"git restore -s HEAD~1 f",
+			"git restore f",
+		]) {
+			strictEqual(engine.evaluate({ tool: "bash", args: { command } }, level).kind, "allow", `${level}: ${command}`);
+		}
+		for (const command of [
+			"git branch -d x",
+			"git restore --staged .",
+			"git restore --source=HEAD~1 .",
+			"git restore --source HEAD~1 -- ./",
+		]) {
+			strictEqual(engine.evaluate({ tool: "bash", args: { command } }, level).kind, "ask", `${level}: ${command}`);
+		}
+	}
+});
+
+it("git clean previews run while forced deletion remains blocked", () => {
+	const engine = createSafetyPolicyEngine({ cwd: process.cwd() });
+	for (const level of ["default", "yolo"] as const) {
+		for (const flags of [
+			"-nd",
+			"-ndx",
+			"-ndf",
+			"-dn",
+			"-d -n",
+			"--dry-run",
+			"-fdn",
+			"-f -d -n",
+			"-n -f -d",
+			"-fd --dry-run",
+			"--dry-run --force -d",
+			"-d --dry-run",
+		]) {
+			strictEqual(
+				engine.evaluate({ tool: "bash", args: { command: `git clean ${flags}` } }, level).kind,
+				"allow",
+				`${level} ${flags}`,
+			);
+		}
+		for (const flags of ["-fd", "-df", "-xfd", "-f -d", "--force -d", "-f", "-ffdx"]) {
+			strictEqual(
+				engine.evaluate({ tool: "bash", args: { command: `git clean ${flags}` } }, level).kind,
+				"block",
+				`${level} ${flags}`,
+			);
+		}
+		strictEqual(
+			engine.evaluate({ tool: "bash", args: { command: "git clean -nd && git clean -fd" } }, level).kind,
+			"block",
+		);
+	}
+});
+
+it("git clean path operands cannot masquerade as a dry-run flag", () => {
+	const engine = createSafetyPolicyEngine({ cwd: process.cwd() });
+	for (const level of ["default", "yolo"] as const) {
+		strictEqual(engine.evaluate({ tool: "bash", args: { command: "git clean -fd -- -n" } }, level).kind, "block");
+		strictEqual(engine.evaluate({ tool: "bash", args: { command: "git clean -fd -- --dry-run" } }, level).kind, "block");
+	}
+});

@@ -1,0 +1,610 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * A run's display feed: the full rows a worker's dashboard card and `pancode fleet view --follow` stream from.
+ *
+ * The run's telemetry journal keeps only the structural projection of each feed row (kind, type, outcome, duration,
+ * ids), so a viewer in another process cannot rebuild the worker's prose, call descriptors, reasons or token counts
+ * from it. This file is run state like the session ledger: local, append-only, never shared and never folded into
+ * telemetry (#434). It sits in the run's state directory next to its recordings, `<stateDir>/runs/<runId>/feed.jsonl`,
+ * and leaves with the run's ledger row.
+ *
+ * Format version 1, one JSON object per line, newest last: `{ v: 1, seq, at, kind, ... }`, where the rest is one
+ * {@link RunEventJournalBody}. `seq` increases by one per line and run. Every string is secret-redacted before it is
+ * written. Prose streams in coalesced rows that can split a credential, so a text row holds back its last two words
+ * and the next text row or the row that ends the text writes them. A row that says nothing about the text, such as a
+ * route warning, passes them by, so it lands ahead of them and they stay whole (#446).
+ *
+ * Bounding follows the telemetry journal: past {@link RUN_FEED_CAP_BYTES} display `event` rows are dropped behind one
+ * `journal_truncated` row, while `open`, `result` and `terminal` always land. The `terminal` row closes the feed.
+ * Nothing here throws into a dispatch.
+ */
+
+import {
+	closeSync,
+	constants,
+	lstatSync,
+	mkdirSync,
+	openSync,
+	readdirSync,
+	readSync,
+	rmSync,
+	statSync,
+	writeSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
+import { unlinkedStateDirectory } from "../../core/state-boundary.js";
+import { isRecord } from "../../core/type-guards.js";
+import { pancodeStateDir, stateRootRemoved } from "../../core/xdg.js";
+import type { ToolCallFacts } from "../../tools/agent-tools.js";
+import { createRedactionTally, redactSecretsDeep } from "../evidence/redact.js";
+import type { CutHeadGuard } from "../safety/redaction.js";
+import {
+	cutHeadGuard,
+	dropCutHead,
+	endsInOpenCredential,
+	firstAuthorityOpener,
+	formingCredentialStart,
+	headGuardAfter,
+	holdCutOffText,
+	holdUnresolvedUserinfo,
+	messageStopCompleted,
+	namesSecret,
+	openNameStart,
+	SCHEME_CHAR_RE,
+} from "../safety/redaction.js";
+import type { RunEventJournalBody } from "./run-event-journal.js";
+
+export const RUN_FEED_VERSION = 1;
+export const RUN_FEED_FILE = "feed.jsonl";
+/** Per-run size cap; crossing it drops display rows behind one marker. */
+export const RUN_FEED_CAP_BYTES = 2 * 1024 * 1024;
+/** Tail bytes a reader pulls, so following a capped feed stays cheap. */
+export const RUN_FEED_READ_TAIL_BYTES = 256 * 1024;
+/** Prose a text row may hold back while it waits for a word boundary. */
+const TEXT_CARRY_MAX_CHARS = 4096;
+/** The most of a query parameter or an open URL a bound keeps back whole, so a value's name stays on the row with its value (#446). */
+const OPEN_TAIL_KEEP_CHARS = 1024;
+/** Rows that follow a finished text block in every runtime, so no URL spans them and the carry goes out whole. */
+const TEXT_BLOCK_END_EVENTS: ReadonlySet<string> = new Set([
+	"thinking",
+	"pancode_tool_start",
+	"pancode_tool_finish",
+	"pancode_tool_observation",
+]);
+/** Runs whose writer state one process keeps; an evicted run reloads it from its file. */
+const WRITER_LIMIT = 256;
+
+export type RunFeedLine = { v: typeof RUN_FEED_VERSION; seq: number; at: string } & RunEventJournalBody;
+
+/**
+ * Run ids are generated base36, and fleet and gate ids add a prefix and hex. Nothing legitimate contains a path
+ * separator, so anything that does is refused before a path is built from it.
+ */
+function isSafeRunId(runId: string): boolean {
+	return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(runId) && runId !== "." && runId !== "..";
+}
+
+function runStateDirectory(stateDir: string, runId: string): string {
+	return join(stateDir, "runs", runId);
+}
+
+/** One run's feed file. */
+export function runFeedPath(runId: string, stateDir: string = pancodeStateDir()): string {
+	return join(runStateDirectory(stateDir, runId), RUN_FEED_FILE);
+}
+
+/** The run whose display feed was written most recently, for `/panes open logs` (#434). */
+export function newestRunFeedRunId(stateDir: string = pancodeStateDir()): string | null {
+	if (stateRootRemoved()) return null;
+	let names: string[];
+	try {
+		names = readdirSync(join(stateDir, "runs"));
+	} catch {
+		return null;
+	}
+	let newest: { runId: string; at: number } | null = null;
+	for (const runId of names) {
+		if (!isSafeRunId(runId)) continue;
+		try {
+			const stats = statSync(runFeedPath(runId, stateDir), { throwIfNoEntry: false });
+			if (stats === undefined || !stats.isFile()) continue;
+			if (newest === null || stats.mtimeMs > newest.at) newest = { runId, at: stats.mtimeMs };
+		} catch {
+			// A run pruned while the directory is scanned has no feed to follow (#434).
+		}
+	}
+	return newest?.runId ?? null;
+}
+
+/** Remove the feeds of runs that left the ledger ring; recordings beside them keep their own authority. */
+export function removeRunFeeds(stateDir: string, runIds: Iterable<string>): void {
+	for (const runId of runIds) {
+		if (!isSafeRunId(runId)) continue;
+		try {
+			const path = runFeedPath(runId, stateDir);
+			if (unlinkedStateDirectory(stateDir, dirname(path))) rmSync(path, { force: true });
+		} catch {
+			// A feed we could not remove is retained display state, not an error.
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Writer
+// ---------------------------------------------------------------------------
+
+interface WriterState {
+	seq: number;
+	bytes: number;
+	dropping: boolean;
+	closed: boolean;
+	/** The held-back tail of the last text row. */
+	carry: string;
+	carryAt: string;
+	/** The carry was cut at its bound mid-URL, and what follows it stays off the feed until the guard runs out. */
+	headGuard: CutHeadGuard | null;
+	/** The carry is a name a bound kept back that names a secret, and the next text decides whether its value is attached. */
+	boundSecretName: boolean;
+	/** How far into the carry {@link holdBack} has proved every word start leads into a secret; 0 once the carry is replaced. */
+	carryGuardedThrough: number;
+	/** The seq of the truncation marker this writer wrote, so the run's journal can mirror it (C-29). */
+	truncatedSeq?: number;
+}
+
+/**
+ * Where an append put its rows: the body's own seq when it was written, and the seq of the truncation marker when the
+ * cap wrote one during that append, after which the feed drops events (C-29). Undefined when it wrote neither.
+ */
+export type RunFeedPosition = { seq?: number; truncatedSeq?: number };
+
+const writers = new Map<string, WriterState>();
+
+/** A run's directory, refusing a symlink or a non-directory where the run state belongs. */
+function ensureRunDirectory(stateDir: string, runId: string): string {
+	const directory = runStateDirectory(stateDir, runId);
+	mkdirSync(directory, { recursive: true, mode: 0o700 });
+	for (const path of [join(stateDir, "runs"), directory]) {
+		const stat = lstatSync(path);
+		if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("run state directory is not a regular directory");
+	}
+	return directory;
+}
+
+/** Resume a feed this process did not start, such as a recovered run, from its last lines. */
+function loadWriterState(path: string): WriterState {
+	const state: WriterState = {
+		seq: 0,
+		bytes: 0,
+		dropping: false,
+		closed: false,
+		carry: "",
+		carryAt: "",
+		headGuard: null,
+		boundSecretName: false,
+		carryGuardedThrough: 0,
+	};
+	const tail = readTail(path, 64 * 1024);
+	if (tail === null) return state;
+	state.bytes = tail.size;
+	for (const raw of tail.text.split("\n")) {
+		const line = readRunFeedLine(raw);
+		if (line === null) continue;
+		state.seq = Math.max(state.seq, line.seq);
+		if (line.kind === "journal_truncated") state.dropping = true;
+		if (line.kind === "terminal") state.closed = true;
+	}
+	return state;
+}
+
+function writerFor(path: string): WriterState {
+	let state = writers.get(path);
+	if (state !== undefined) return state;
+	state = loadWriterState(path);
+	writers.set(path, state);
+	for (const [key, held] of writers) {
+		if (writers.size <= WRITER_LIMIT) break;
+		// A later row reloads seq from the file, but held prose and a guard do not survive that, so a writer holding either
+		// stays past the limit until its run ends: writing it early would split it from the text still to come (#446).
+		if (key !== path && held.carry.length === 0 && held.headGuard === null) writers.delete(key);
+	}
+	return state;
+}
+
+function writeRow(path: string, state: WriterState, body: RunEventJournalBody, at: string): void {
+	const row = redactSecretsDeep({ v: RUN_FEED_VERSION, seq: state.seq + 1, at, ...body }, createRedactionTally());
+	const line = `${JSON.stringify(row)}\n`;
+	const handle = openSync(
+		path,
+		constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW,
+		0o600,
+	);
+	try {
+		writeSync(handle, line);
+	} finally {
+		closeSync(handle);
+	}
+	state.seq += 1;
+	state.bytes += Buffer.byteLength(line);
+}
+
+function writeBounded(path: string, state: WriterState, body: RunEventJournalBody, at: string): boolean {
+	if (body.kind === "event" && (state.dropping || state.bytes >= RUN_FEED_CAP_BYTES)) {
+		if (!state.dropping) {
+			state.dropping = true;
+			writeRow(path, state, { kind: "journal_truncated", reason: "per-run size cap", droppedFromSeq: state.seq + 1 }, at);
+			state.truncatedSeq = state.seq;
+		}
+		return false;
+	}
+	writeRow(path, state, body, at);
+	if (body.kind === "terminal") state.closed = true;
+	return true;
+}
+
+/** Where the last word ending at or before `end` starts, or -1 when only whitespace is left. */
+function wordStartBefore(text: string, end: number): number {
+	let at = end;
+	while (at > 0 && /\s/u.test(text.charAt(at - 1))) at -= 1;
+	if (at === 0) return -1;
+	while (at > 0 && !/\s/u.test(text.charAt(at - 1))) at -= 1;
+	return at;
+}
+
+/**
+ * Split prose at the start of its last two words, the most a credential pattern spans across whitespace, and further back
+ * while the head would end in a key whose value is left in the tail, since neither row could then match it (#446).
+ *
+ * `guardedThrough` is where the previous call's walk began in the carry that leads `text`. Every word start from there back to
+ * the carry's start already failed the check against this same prefix, so a walk reaching it ends at the start. Text that
+ * repeats `password: ` fails at every word, and rescanning the whole carry per delta cost 3.5 ms each (#448). `guardAfter`
+ * is the check itself, which a caller can count to see the walk stay bounded.
+ */
+export function holdBack(
+	text: string,
+	guardedThrough: number,
+	guardAfter: (removed: string) => CutHeadGuard | null = headGuardAfter,
+): { head: string; tail: string; guardedThrough: number } {
+	const last = wordStartBefore(text, text.length);
+	if (last <= 0) return { head: "", tail: text, guardedThrough };
+	const previous = wordStartBefore(text, last);
+	const start = previous < 0 ? last : previous;
+	let cut = start;
+	while (cut > 0 && guardAfter(text.slice(0, cut)) !== null) {
+		if (cut <= guardedThrough) {
+			cut = 0;
+			break;
+		}
+		const word = wordStartBefore(text, cut);
+		if (word < 0) break;
+		cut = word;
+	}
+	return { head: text.slice(0, cut), tail: text.slice(cut), guardedThrough: start - cut };
+}
+
+/**
+ * Where a bound cuts an outgrown carry: ahead of whatever text still to come could complete. That is a short final query
+ * parameter, a URL with no colon yet, or a name ending in a colon or `=`, which every word of compact JSON can be. Keeping it back
+ * loses nothing, where a row ending in it would leave a piece on each side that no later row could recognize (#446).
+ */
+function carryBoundCut(carry: string): number {
+	const split = carryTailCut(carry);
+	const bounded = carry.slice(0, split);
+	if (
+		holdUnresolvedUserinfo(bounded) === bounded &&
+		!endsInOpenCredential(bounded) &&
+		formingCredentialStart(bounded) === null
+	)
+		return split;
+	// A row ending inside a URL would make the discard take the text after it, though `http://localhost:8` holds no secret. The
+	// kept URLs go to the next row whole instead, with the one scheme character the pattern reads, starting from the first since
+	// `http://a,http://b` leaves the first open. Only a URL that outgrows the keep is left to the discard, as nothing tells a
+	// password that long from a host (#446). Escaped, percent-encoded and scheme-relative URLs move the same way (#448).
+	const url = firstAuthorityOpener(carry, carry.length - OPEN_TAIL_KEEP_CHARS);
+	return url > 0 && url < split ? url - 1 : split;
+}
+
+function carryTailCut(carry: string): number {
+	const param = Math.max(carry.lastIndexOf("&"), carry.lastIndexOf("?"), carry.lastIndexOf("#"));
+	if (param > 0 && carry.length - param <= OPEN_TAIL_KEEP_CHARS && !/\s/u.test(carry.slice(param))) return param;
+	// One character is all the pattern reads ahead of a `://`, and any word can turn out to be a scheme. A piece of an escaped
+	// opener or an Oracle JDBC prefix goes to the next row whole. `jdbc:oracle:` also ends in a name, so the earlier start
+	// wins (#448).
+	const name = openNameStart(carry);
+	const forming = formingCredentialStart(carry);
+	if (name !== null || forming !== null) return Math.min(name ?? carry.length, forming ?? carry.length);
+	return SCHEME_CHAR_RE.test(carry.charAt(carry.length - 1)) ? carry.length - 1 : carry.length;
+}
+
+/**
+ * What a row means for prose still held back. Only a message that stopped on purpose releases it, as everywhere else (#446).
+ * A cut-off message, a new attempt in the same stream or the run's end leaves any open URL unresolved for good. A message
+ * row without a stop reason is not the model's, and it and any other row can arrive mid-word, so the carry waits for them.
+ */
+function carryAfter(body: RunEventJournalBody): "keep" | "release" | "hold" {
+	if (body.kind === "result" || body.kind === "terminal") return "hold";
+	if (body.kind !== "event") return "keep";
+	if (body.type === "attempt_start") return "hold";
+	if (body.type === "message_end" && body.stopReason !== undefined)
+		return messageStopCompleted(body.stopReason) ? "release" : "hold";
+	return TEXT_BLOCK_END_EVENTS.has(body.type) ? "release" : "keep";
+}
+
+/**
+ * Append one display row to a run's feed. Best-effort: a feed that cannot be written loses the row, and the dispatch
+ * never learns about it. Returns where the row landed, which the run's journal projection mirrors so both stores
+ * number a row alike and truncate at the same row (C-29).
+ */
+export function appendRunFeed(
+	runId: string,
+	body: RunEventJournalBody,
+	at: string = new Date().toISOString(),
+): RunFeedPosition | undefined {
+	if (!isSafeRunId(runId) || stateRootRemoved()) return undefined;
+	try {
+		const stateDir = pancodeStateDir();
+		const path = runFeedPath(runId, stateDir);
+		const state = writerFor(path);
+		if (state.closed) return undefined;
+		// A marker written by any row of this append, held prose included, is what the journal mirrors (C-29).
+		const wasDropping = state.dropping;
+		const truncation = (): RunFeedPosition | undefined =>
+			!wasDropping && state.dropping && state.truncatedSeq !== undefined
+				? { truncatedSeq: state.truncatedSeq }
+				: undefined;
+		if (state.seq === 0 && state.bytes === 0) ensureRunDirectory(stateDir, runId);
+		if (body.kind === "event" && body.type === "text" && body.detail !== undefined) {
+			let detail = body.detail;
+			if (state.boundSecretName && detail.length > 0) {
+				state.boundSecretName = false;
+				if (/^\s/u.test(detail)) {
+					// A value set apart from its name can be too short for a row's own rule, and a bound already split this run.
+					writeBounded(path, state, { kind: "event", type: "text", detail: state.carry }, state.carryAt);
+					state.headGuard = headGuardAfter(state.carry);
+					state.carry = "";
+					state.carryGuardedThrough = 0;
+				}
+			}
+			if (state.headGuard !== null) {
+				detail = dropCutHead(detail, state.headGuard);
+				if (state.headGuard.tokens === 0) state.headGuard = null;
+			}
+			const { head, tail, guardedThrough } = holdBack(state.carry + detail, state.carryGuardedThrough);
+			if (state.carry.length === 0) state.carryAt = at;
+			if (head.length > 0) writeBounded(path, state, { ...body, detail: head }, state.carryAt);
+			state.carry = tail;
+			state.carryGuardedThrough = guardedThrough;
+			state.carryAt = head.length > 0 ? at : state.carryAt;
+			if (state.carry.length > TEXT_CARRY_MAX_CHARS) {
+				// One run outgrew the carry. A piece of a URL on each side of this row would match nothing (#446).
+				const split = carryBoundCut(state.carry);
+				const bounded = state.carry.slice(0, split);
+				const shown = holdUnresolvedUserinfo(bounded);
+				const open = shown !== bounded || endsInOpenCredential(bounded);
+				if (open) state.headGuard = cutHeadGuard();
+				writeBounded(path, state, { kind: "event", type: "text", detail: shown }, state.carryAt);
+				state.carry = open ? "" : state.carry.slice(split);
+				state.carryGuardedThrough = 0;
+				state.carryAt = at;
+				state.boundSecretName = openNameStart(state.carry) === 0 && namesSecret(state.carry);
+			}
+			return truncation();
+		}
+		const carry = carryAfter(body);
+		if (carry !== "keep") {
+			const detail = carry === "hold" ? holdCutOffText(state.carry) : state.carry;
+			if (detail.length > 0) writeBounded(path, state, { kind: "event", type: "text", detail }, state.carryAt);
+			state.carry = "";
+			state.carryGuardedThrough = 0;
+			// The next text starts a new block, so nothing of it continues what the guard covers.
+			state.headGuard = null;
+			state.boundSecretName = false;
+		}
+		const wrote = writeBounded(path, state, body, at);
+		const marker = truncation();
+		if (!wrote) return marker;
+		return { seq: state.seq, ...marker };
+	} catch {
+		// Display state is best-effort; the run's telemetry journal still holds its structural feed.
+		return undefined;
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Reader
+// ---------------------------------------------------------------------------
+
+function readTail(path: string, tailBytes: number): { text: string; size: number; headDropped: boolean } | null {
+	let handle: number;
+	try {
+		handle = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+	} catch {
+		return null;
+	}
+	try {
+		const size = statSync(path).size;
+		const start = Math.max(0, size - Math.max(0, Math.floor(tailBytes)));
+		const chunk = Buffer.alloc(size - start);
+		const count = readSync(handle, chunk, 0, chunk.length, start);
+		let bytes = chunk.subarray(0, count);
+		if (start > 0) {
+			const newline = bytes.indexOf(0x0a);
+			bytes = bytes.subarray(newline < 0 ? bytes.length : newline + 1);
+		}
+		return { text: bytes.toString("utf8"), size, headDropped: start > 0 };
+	} catch {
+		return null;
+	} finally {
+		closeSync(handle);
+	}
+}
+
+/** A tool call's facts, read defensively from a producer payload or a feed row. */
+export function parseToolCallFacts(value: unknown): ToolCallFacts | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const record = value as Record<string, unknown>;
+	if (typeof record.target !== "string" || record.target.length === 0) return undefined;
+	const callFacts: ToolCallFacts = { target: record.target };
+	for (const key of [
+		"offset",
+		"limit",
+		"tail",
+		"returnedBytes",
+		"observationBytes",
+		"poolLimitBytes",
+		"poolUsedBeforeBytes",
+	] as const) {
+		const count = record[key];
+		if (typeof count === "number" && Number.isFinite(count) && count >= 0) callFacts[key] = count;
+	}
+	for (const key of ["startLine", "endLine"] as const) {
+		const count = record[key];
+		if (count === null || (typeof count === "number" && Number.isSafeInteger(count) && count >= 1))
+			callFacts[key] = count;
+	}
+	for (const key of ["partialLine", "truncated", "poolExhausted"] as const) {
+		if (typeof record[key] === "boolean") callFacts[key] = record[key];
+	}
+	if (record.targetTruncated === true) callFacts.targetTruncated = true;
+	if (record.rangeUnit === "physical-lines" || record.rangeUnit === "rendered-lines")
+		callFacts.rangeUnit = record.rangeUnit;
+	return callFacts;
+}
+
+function optionalString<K extends string>(record: Record<string, unknown>, key: K): { [P in K]?: string } {
+	const value = record[key];
+	return (typeof value === "string" ? { [key]: value } : {}) as { [P in K]?: string };
+}
+
+function optionalCount<K extends string>(record: Record<string, unknown>, key: K): { [P in K]?: number } {
+	const value = record[key];
+	return (typeof value === "number" && Number.isFinite(value) && value >= 0 ? { [key]: value } : {}) as {
+		[P in K]?: number;
+	};
+}
+
+function readBody(record: Record<string, unknown>): RunEventJournalBody | null {
+	switch (record.kind) {
+		case "open":
+			return typeof record.runId === "string" && typeof record.agentId === "string"
+				? { kind: "open", runId: record.runId, agentId: record.agentId }
+				: null;
+		case "event": {
+			if (typeof record.type !== "string") return null;
+			const outcome = record.outcome;
+			const callFacts = parseToolCallFacts(record.callFacts);
+			const scope = record.usageScope;
+			return {
+				kind: "event",
+				type: record.type,
+				...optionalString(record, "detail"),
+				...optionalString(record, "tool"),
+				...optionalString(record, "callId"),
+				...optionalString(record, "verb"),
+				...optionalString(record, "reason"),
+				...optionalCount(record, "durationMs"),
+				...optionalCount(record, "tokens"),
+				...optionalCount(record, "callIndex"),
+				...(outcome === "ok" || outcome === "error" || outcome === "blocked" ? { outcome } : {}),
+				...(outcome === "ok" && record.notExecuted === "observation_budget"
+					? { notExecuted: "observation_budget" as const }
+					: {}),
+				...(scope === "call" || scope === "run-aggregate" ? { usageScope: scope } : {}),
+				...(callFacts !== undefined ? { callFacts } : {}),
+			};
+		}
+		case "journal_truncated":
+			return typeof record.reason === "string" && Number.isSafeInteger(record.droppedFromSeq)
+				? { kind: "journal_truncated", reason: record.reason, droppedFromSeq: record.droppedFromSeq as number }
+				: null;
+		case "result":
+			if (typeof record.outcome !== "string") return null;
+			if (record.exitCode !== null && typeof record.exitCode !== "number") return null;
+			return {
+				kind: "result",
+				outcome: record.outcome,
+				exitCode: record.exitCode,
+				...optionalString(record, "attemptRunId"),
+			};
+		case "terminal":
+			return typeof record.outcome === "string"
+				? { kind: "terminal", outcome: record.outcome, ...optionalString(record, "detail") }
+				: null;
+		default:
+			return null;
+	}
+}
+
+/** One feed line, read defensively: null for anything malformed, of another version, or of an unknown kind. */
+export function readRunFeedLine(raw: string): RunFeedLine | null {
+	if (raw.length === 0) return null;
+	let value: unknown;
+	try {
+		value = JSON.parse(raw);
+	} catch {
+		return null;
+	}
+	if (!isRecord(value) || value.v !== RUN_FEED_VERSION) return null;
+	if (!Number.isSafeInteger(value.seq) || (value.seq as number) < 1 || typeof value.at !== "string") return null;
+	const body = readBody(value);
+	return body === null ? null : { v: RUN_FEED_VERSION, seq: value.seq as number, at: value.at, ...body };
+}
+
+export interface ReadRunFeedOptions {
+	stateDir?: string;
+	/** Keep at most this many lines, newest last. */
+	maxLines?: number;
+	tailBytes?: number;
+}
+
+export interface RunFeedRead {
+	path: string;
+	present: boolean;
+	bytes: number;
+	lines: RunFeedLine[];
+	/** True when the writer dropped display rows, or when this read skipped a file head. */
+	truncated: boolean;
+	terminal: { outcome: string; detail?: string } | null;
+	agentId: string | null;
+}
+
+/**
+ * Read one run's feed. Reads at most the last {@link RUN_FEED_READ_TAIL_BYTES}, discarding a leading partial line, so
+ * a viewer polling a capped feed never pulls megabytes per tick. A skipped head reports as `truncated` for the same
+ * reason the writer's marker does: the transcript on screen is not the whole run.
+ */
+export function readRunFeed(runId: string, options: ReadRunFeedOptions = {}): RunFeedRead {
+	const path = runFeedPath(runId, options.stateDir);
+	const empty: RunFeedRead = {
+		path,
+		present: false,
+		bytes: 0,
+		lines: [],
+		truncated: false,
+		terminal: null,
+		agentId: null,
+	};
+	if (!isSafeRunId(runId)) return empty;
+	const tail = readTail(path, options.tailBytes ?? RUN_FEED_READ_TAIL_BYTES);
+	if (tail === null) return empty;
+	const lines: RunFeedLine[] = [];
+	let truncated = tail.headDropped;
+	let terminal: { outcome: string; detail?: string } | null = null;
+	let agentId: string | null = null;
+	for (const raw of tail.text.split("\n")) {
+		// A trailing partial line is the writer mid-append, not corruption.
+		const line = readRunFeedLine(raw);
+		if (line === null) continue;
+		if (line.kind === "journal_truncated") truncated = true;
+		if (line.kind === "open") agentId = line.agentId;
+		if (line.kind === "terminal")
+			terminal = line.detail === undefined ? { outcome: line.outcome } : { outcome: line.outcome, detail: line.detail };
+		lines.push(line);
+	}
+	const maxLines = options.maxLines;
+	if (maxLines !== undefined && lines.length > maxLines) {
+		lines.splice(0, lines.length - maxLines);
+		truncated = true;
+	}
+	return { path, present: true, bytes: tail.size, lines, truncated, terminal, agentId };
+}

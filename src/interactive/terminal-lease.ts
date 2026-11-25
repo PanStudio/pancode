@@ -1,0 +1,695 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Single-owner Stage 0 -> Stage 1 terminal transaction.
+ *
+ * This module is deliberately a leaf of the interactive graph. It constructs
+ * the one terminal, renderer, root host, editor, input listener, and SIGINT
+ * listener used for the entire interactive process. Hydration swaps delegates
+ * and the root host synchronously; it never starts a second terminal or copies
+ * editor text into a replacement editor.
+ */
+
+import type { PancodeSettings } from "../core/config.js";
+import { installDiagnosticSink } from "../core/diagnostics.js";
+import { incompleteInstallationAdvice } from "../core/incomplete-installation.js";
+import { getTerminationCoordinator } from "../core/termination.js";
+import { writeCrashRecord } from "../domains/report/crash.js";
+import type { ApplicationInputTui } from "../engine/tui.js";
+import {
+	type Component,
+	Container,
+	isKeyRelease,
+	isKeyRepeat,
+	matchesKey,
+	ScrollView,
+	truncateToWidth,
+	VStack,
+} from "../engine/tui.js";
+import { createProcessInteractiveShell } from "./interactive-shell.js";
+import { APPLICATION_DOUBLE_TAP_MS } from "./interrupt-window.js";
+import {
+	actionKeyLabel,
+	createKeybindingManager,
+	formatKeyLabel,
+	type PancodeKeybindingManager,
+} from "./keybinding-manager.js";
+import { PancodeEditor } from "./pancode-editor.js";
+import type { EditorChrome } from "./pancode-editor-model.js";
+import { terminalReportKind } from "./terminal-reports.js";
+import { GLYPH, pancodeTheme } from "./theme/index.js";
+import { createBootWelcome } from "./welcome-dashboard.js";
+
+export const INSTANT_SHELL_ENV = "PANCODE_INSTANT_SHELL";
+const DIAGNOSTIC_LIMIT_BYTES = 64 * 1024;
+
+export type TerminalLeaseState = "created" | "mounted" | "adopting" | "adopted" | "closing" | "closed";
+
+export interface BootSubmission {
+	readonly sequence: number;
+	readonly rawText: string;
+	readonly submittedAt: number;
+}
+
+export interface BootDiagnostic {
+	readonly stream: "stdout" | "stderr";
+	readonly text: string;
+}
+
+export type TuiInputDelegate = (data: string) => { consume?: boolean; data?: string } | undefined;
+
+export interface TerminalLeaseSignalCoordinator {
+	takeInterruptOwnership(): () => void;
+	on(signal: "SIGINT", listener: () => void): void;
+	off(signal: "SIGINT", listener: () => void): void;
+}
+
+/**
+ * How long the Stage 0 editor could not answer input. Stage 0 paints before
+ * hydration, but keystrokes echo only when the event loop turns, so the longest
+ * loop block between the two frames is what an operator typing at Stage 0 waits.
+ * Times are milliseconds since process start.
+ */
+export interface BootInteractivity {
+	readonly stage0Ms: number;
+	readonly hydratedMs: number;
+	readonly inputBlockedMaxMs: number;
+}
+
+export interface TerminalLeaseAdoption {
+	root: Component;
+	editorChrome: EditorChrome;
+	admitSubmission: (submission: BootSubmission) => Promise<void>;
+	/** The operator's queued messages still waiting for a slot, which exiting abandons. */
+	undeliveredMessages?: () => readonly string[];
+	/** Shows a warning notice; a missing lazy chunk after a rebuild lands here instead of ending the session. */
+	notice?: (text: string) => void;
+	onHydratedFrame?: (frameId: number | null, interactivity: BootInteractivity) => void;
+}
+
+export interface TerminalLease {
+	readonly shell: ReturnType<typeof createProcessInteractiveShell>;
+	readonly terminal: ReturnType<typeof createProcessInteractiveShell>["terminal"];
+	readonly tui: ApplicationInputTui;
+	readonly editor: PancodeEditor;
+	readonly keybindings: PancodeKeybindingManager;
+	readonly pending: Component;
+	readonly state: TerminalLeaseState;
+	readonly epoch: number;
+	readonly abortSignal: AbortSignal;
+	writeDiagnostic(stream: "stdout" | "stderr", text: string): void;
+	/** Trace-only output held until after terminal restoration. */
+	deferDiagnostic(stream: "stdout" | "stderr", text: string): void;
+	takeDiagnostics(): BootDiagnostic[];
+	registerApplicationInput(delegate: TuiInputDelegate): () => void;
+	readonly applicationSignals: TerminalLeaseSignalCoordinator;
+	adopt(adoption: TerminalLeaseAdoption): boolean;
+	close(options?: { recoverInput?: boolean }): Promise<void>;
+	fail(): Promise<void>;
+}
+
+export interface CreateProcessTerminalLeaseOptions {
+	settings: Readonly<PancodeSettings>;
+	onStage0Commit?: (frameId: number) => void;
+	shutdown?: (code: number) => void | Promise<void>;
+	/** Narrow construction seams used by deterministic ownership contracts. */
+	testing?: {
+		shell?: ReturnType<typeof createProcessInteractiveShell>;
+		termination?: {
+			installSignalHandlers(): void;
+			releaseInterruptOwnership(): () => void;
+			onDrain(hook: () => void | Promise<void>): void;
+			shutdown(code: number): Promise<void>;
+		};
+		signals?: Pick<NodeJS.Process, "on" | "off">;
+		/** Streams whose EIO or EPIPE means the terminal is gone. */
+		streams?: ReadonlyArray<NodeJS.EventEmitter>;
+		write?: (stream: "stdout" | "stderr", text: string) => void;
+		now?: () => number;
+	};
+}
+
+/** `0` is the immediate rollback. Unset and `1` enable the accepted default. */
+export function instantShellEnabled(env: Readonly<Record<string, string | undefined>> = process.env): boolean {
+	return env[INSTANT_SHELL_ENV] !== "0";
+}
+
+/**
+ * A closed terminal (window closed, ssh dropped) fails the next write with EIO
+ * or EPIPE. Unheard, that error kills the process before the shutdown hooks
+ * that follow the terminal restore can run. The listeners stay for the process
+ * lifetime because restore and recovery writes come after the lease closes.
+ */
+const guardedStreams = new WeakSet<NodeJS.EventEmitter>();
+let onTerminalGone: () => void = () => {};
+function guardTerminalStreams(streams: ReadonlyArray<NodeJS.EventEmitter>, onGone: () => void): void {
+	onTerminalGone = onGone;
+	for (const stream of streams) {
+		if (guardedStreams.has(stream)) continue;
+		guardedStreams.add(stream);
+		stream.on("error", (error: NodeJS.ErrnoException) => {
+			if (error.code !== "EIO" && error.code !== "EPIPE") throw error;
+			onTerminalGone();
+		});
+	}
+}
+
+interface RootHost extends Component {
+	replace(next: Component): void;
+}
+
+/** Fullscreen lays the root out against the viewport height, so its host is a flex stack. */
+class FlexRootHost extends VStack implements RootHost {
+	constructor(current: Component) {
+		super();
+		this.replace(current);
+	}
+
+	replace(next: Component): void {
+		this.clear();
+		this.addChild(next, { grow: 1, shrink: 1, minSize: 1 });
+	}
+}
+
+/**
+ * Regular mode renders into scrollback with no height to allocate, so its host
+ * only delegates. A stack here copied every transcript row twice per frame, the
+ * second time through a spread push that throws once a transcript passes
+ * roughly 150k rows.
+ */
+class DirectRootHost implements RootHost {
+	constructor(private current: Component) {}
+
+	replace(next: Component): void {
+		this.current = next;
+	}
+
+	render(width: number): string[] {
+		return this.current.render(width);
+	}
+
+	invalidate(): void {
+		this.current.invalidate();
+	}
+}
+
+class BootSubmissionPanel implements Component {
+	private records: BootSubmission[] = [];
+
+	set(records: ReadonlyArray<BootSubmission>): void {
+		this.records = [...records];
+	}
+
+	render(width: number): string[] {
+		if (this.records.length === 0) return [];
+		const theme = pancodeTheme();
+		return this.records.map((record) => {
+			const oneLine = record.rawText.replace(/\s+/gu, " ").trim();
+			const room = Math.max(0, width - 11);
+			const preview =
+				oneLine.length > room ? `${oneLine.slice(0, Math.max(0, room - GLYPH.ellipsis.length))}${GLYPH.ellipsis}` : oneLine;
+			return `${theme.fg("attention", `${GLYPH.queued} queued`)} ${theme.fg("body", preview)}`;
+		});
+	}
+
+	invalidate(): void {}
+}
+
+function stageZeroRoot(
+	settings: Readonly<PancodeSettings>,
+	submitKeyLabel: string | null,
+	editor: PancodeEditor,
+	pending: Component,
+	shutdownArmed: () => boolean,
+	keybindings: PancodeKeybindingManager,
+): Component {
+	const theme = pancodeTheme();
+	const heading = createBootWelcome(settings, submitKeyLabel, (action) =>
+		keybindings.isDisabled(action) ? null : actionKeyLabel(action),
+	);
+	const footer: Component = {
+		render: (width) =>
+			shutdownArmed()
+				? [
+						truncateToWidth(
+							theme.fg("warning", `Ctrl+C again to exit ${GLYPH.sep} typed input will be recovered`),
+							width,
+							GLYPH.ellipsis,
+						),
+					]
+				: [""],
+		invalidate: () => {},
+	};
+	if (settings.interface.mode === "fullscreen") {
+		const document = new Container();
+		document.addChild(heading);
+		const transcript = new ScrollView(document, { follow: "end", primary: true, overscroll: "chain" });
+		const dock = new VStack();
+		dock.addChild(pending, { shrink: 1, minSize: 0 });
+		dock.addChild(editor, { shrink: 1, minSize: 3 });
+		dock.addChild(footer, { shrink: 1, minSize: 1 });
+		const root = new VStack();
+		root.addChild(transcript, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
+		root.addChild(dock, { basis: "auto", grow: 0, shrink: 1, minSize: 1 });
+		return root;
+	}
+	const root = new Container();
+	root.addChild(heading);
+	root.addChild(pending);
+	root.addChild(editor);
+	root.addChild(footer);
+	return root;
+}
+
+function recoveryText(
+	records: ReadonlyArray<BootSubmission>,
+	draft: string,
+	adopted: boolean,
+	queued: readonly string[] = [],
+): string | null {
+	if (records.length === 0 && draft.length === 0 && queued.length === 0) return null;
+	// The session booted fine; this is a quit that left words behind. Blank lines
+	// part the messages, since any one of them can span several lines itself.
+	if (adopted && records.length === 0) {
+		const left: string[] = [];
+		if (queued.length > 0) {
+			const count = queued.length === 1 ? "Queued message" : `${queued.length} queued messages`;
+			left.push(`${count}, not delivered to PanCode:\n${queued.join("\n\n")}`);
+		}
+		if (draft.length > 0) left.push(`Unsent draft, not delivered to PanCode:\n${draft}`);
+		return left.join("\n\n");
+	}
+	const sections = records.map((record) => `[queued ${record.sequence}] ${record.rawText}`);
+	if (draft.length > 0) sections.push(`[draft] ${draft}`);
+	return `PanCode recovered input from an interrupted boot; copy and resubmit after restart:\n${sections.join("\n")}`;
+}
+
+export function createProcessTerminalLease(options: CreateProcessTerminalLeaseOptions): TerminalLease {
+	const settings = options.settings;
+	const keybindings = createKeybindingManager(settings);
+	let editorChrome: EditorChrome = {
+		getMotionEnabled: () => true,
+		getAutonomy: () => settings.safety.autonomy,
+		getSubmitKeyLabel: () => keybindings.getKeys("tui.input.submit")[0] ?? "Enter",
+		getNewlineKeyLabel: () => keybindings.getKeys("tui.input.newLine")[0] ?? "Ctrl+J",
+	};
+	// Presentation drives the lease's editor through this proxy. Required makes
+	// the next new input-owned chrome field a type error here; the animation
+	// clock is a rendering-test seam that the editor already defaults.
+	const editorChromeProxy: Required<Omit<EditorChrome, "getAnimationTime" | "getBesideCard">> = {
+		getApprovalActor: () => editorChrome.getApprovalActor?.() ?? "",
+		getAutonomy: () => editorChrome.getAutonomy?.() ?? settings.safety.autonomy,
+		getMotionEnabled: () => editorChrome.getMotionEnabled?.() ?? true,
+		isStreaming: () => editorChrome.isStreaming?.() ?? false,
+		isAwaitingApproval: () => editorChrome.isAwaitingApproval?.() ?? false,
+		getPermissionInspection: () => editorChrome.getPermissionInspection?.() ?? "none",
+		getPermissionTerms: () => editorChrome.getPermissionTerms?.() ?? "closed",
+		getTurnPreparation: () => editorChrome.getTurnPreparation?.() ?? "idle",
+		willEnterSteer: (text) => (editorChrome.willEnterSteer ? editorChrome.willEnterSteer(text) : text.trim().length > 0),
+		getDraftOperator: (text) => editorChrome.getDraftOperator?.(text) ?? null,
+		getSteerRecipient: (token) => editorChrome.getSteerRecipient?.(token) ?? null,
+		getQueuedFollowUpCount: () => editorChrome.getQueuedFollowUpCount?.() ?? 0,
+		getQueueReviewKeyLabel: () => editorChrome.getQueueReviewKeyLabel?.() ?? null,
+		isShellDraftLearned: () => editorChrome.isShellDraftLearned?.() ?? false,
+		showCompactKeysDoor: () => editorChrome.showCompactKeysDoor?.() ?? false,
+		onCompactKeysDoorShown: () => editorChrome.onCompactKeysDoorShown?.(),
+		getSubmitKeyLabel: () => editorChrome.getSubmitKeyLabel?.() ?? "Enter",
+		getNewlineKeyLabel: () => editorChrome.getNewlineKeyLabel?.() ?? "Ctrl+J",
+	};
+	let undeliveredMessages: TerminalLeaseAdoption["undeliveredMessages"];
+	const shell =
+		options.testing?.shell ??
+		createProcessInteractiveShell({
+			tuiMode: settings.interface.mode,
+			...(options.onStage0Commit ? { onFirstFrameCommit: options.onStage0Commit } : {}),
+		});
+	const tui = shell.tui;
+	const editor = new PancodeEditor(tui, editorChromeProxy);
+	editor.focused = true;
+	const pendingPanel = new BootSubmissionPanel();
+	let shutdownArmed = false;
+	const submitKey = keybindings.isDisabled("tui.input.submit") ? undefined : keybindings.getKeys("tui.input.submit")[0];
+	const stage0 = stageZeroRoot(
+		settings,
+		submitKey ? formatKeyLabel(submitKey, "") : null,
+		editor,
+		pendingPanel,
+		() => shutdownArmed,
+		keybindings,
+	);
+	const host: RootHost =
+		settings.interface.mode === "fullscreen" ? new FlexRootHost(stage0) : new DirectRootHost(stage0);
+
+	let state: TerminalLeaseState = "created";
+	let epoch = 0;
+	const bootAbort = new AbortController();
+	let sequence = 0;
+	const submissions: BootSubmission[] = [];
+	const diagnostics: BootDiagnostic[] = [];
+	const deferredDiagnostics: BootDiagnostic[] = [];
+	let diagnosticBytes = 0;
+	let deferredDiagnosticBytes = 0;
+	let diagnosticsTruncated = false;
+	let deferredDiagnosticsTruncated = false;
+	let inputDelegate: TuiInputDelegate;
+	let applicationInput: TuiInputDelegate | null = null;
+	let applicationSignal: (() => void) | null = null;
+	let lastCtrlCAt = 0;
+	let closePromise: Promise<void> | null = null;
+	let inputDisposed = false;
+	let signalDisposed = false;
+	let removeDiagnosticSink = () => {};
+	let stage0Ms = 0;
+	// A delay histogram records a sample only when its timer fires, so one block
+	// spanning the whole window reads as zero. Track loop turns directly and
+	// count the gap still open when hydration commits.
+	let turnProbe: NodeJS.Timeout | null = null;
+	let lastTurnAt = 0;
+	let longestTurnGap = 0;
+	const finishInputBlock = (): number => {
+		if (!turnProbe) return 0;
+		clearInterval(turnProbe);
+		turnProbe = null;
+		return Math.max(longestTurnGap, performance.now() - lastTurnAt);
+	};
+
+	const termination = options.testing?.termination ?? getTerminationCoordinator();
+	const signals = options.testing?.signals ?? process;
+	const now = options.testing?.now ?? (() => performance.now());
+	const write =
+		options.testing?.write ??
+		((stream: "stdout" | "stderr", text: string): void => {
+			(stream === "stdout" ? process.stdout : process.stderr).write(text);
+		});
+	termination.installSignalHandlers();
+	const restoreInterruptOwner = termination.releaseInterruptOwnership();
+	guardTerminalStreams(options.testing?.streams ?? [process.stdout, process.stderr, process.stdin], () => {
+		void termination.shutdown(129);
+	});
+	// A throw in a render or event handler, or a stray rejection, still runs the
+	// shutdown hooks: the drain hook restores the terminal and the draft is recovered.
+	let faultNotice: ((text: string) => void) | undefined;
+	const onProcessFault = (error: unknown, origin?: unknown): void => {
+		// A lazy chunk a rebuild deleted under this session gets the reinstall advice, not a stack.
+		const advice = incompleteInstallationAdvice(error);
+		// A rejected lazy import broke one feature, not the loaded session: say so and keep running.
+		if (advice && origin !== "uncaughtException" && faultNotice) {
+			faultNotice(advice);
+			return;
+		}
+		// Never throws: a crash the next session can offer to report, written before shutdown.
+		writeCrashRecord(error, "tui");
+		lease.writeDiagnostic(
+			"stderr",
+			advice
+				? `PanCode: ${advice}\n`
+				: `PanCode: unexpected error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+		);
+		void termination.shutdown(1);
+	};
+	signals.on("uncaughtException", onProcessFault);
+	signals.on("unhandledRejection", onProcessFault);
+
+	const requestShutdown = (): void => {
+		void (async () => {
+			let cleanupError: unknown;
+			try {
+				await lease.close({ recoverInput: state !== "adopted" });
+			} catch (error) {
+				cleanupError = error;
+			}
+			if (options.shutdown) await options.shutdown(0);
+			else await termination.shutdown(0);
+			if (cleanupError) throw cleanupError;
+		})().catch((error) => {
+			try {
+				write("stderr", `PanCode: terminal shutdown failed: ${error instanceof Error ? error.message : String(error)}\n`);
+			} catch {
+				// Every restoration path was already attempted; there is no safer sink.
+			}
+		});
+	};
+
+	const disarmShutdown = (): void => {
+		if (!shutdownArmed) return;
+		shutdownArmed = false;
+		lastCtrlCAt = 0;
+		tui.requestRender();
+	};
+	const handleStage0CtrlC = (): void => {
+		if (submissions.length > 0) {
+			disarmShutdown();
+			return;
+		}
+		const pressedAt = now();
+		if (shutdownArmed && pressedAt - lastCtrlCAt <= APPLICATION_DOUBLE_TAP_MS) {
+			lastCtrlCAt = 0;
+			requestShutdown();
+			return;
+		}
+		lastCtrlCAt = pressedAt;
+		shutdownArmed = true;
+		tui.requestRender();
+	};
+
+	inputDelegate = (data) => {
+		if (isKeyRelease(data)) return { consume: true };
+		if (
+			isKeyRepeat(data) &&
+			(matchesKey(data, "ctrl+c") ||
+				keybindings.matches(data, "pancode.exit") ||
+				keybindings.matches(data, "tui.input.submit"))
+		)
+			return { consume: true };
+		if (matchesKey(data, "ctrl+c")) {
+			handleStage0CtrlC();
+			return { consume: true };
+		}
+		// A pointer or focus report is not the operator going on working.
+		if (terminalReportKind(data) !== undefined) return undefined;
+		disarmShutdown();
+		if (keybindings.matches(data, "pancode.exit") && editor.getText().length === 0 && submissions.length === 0) {
+			requestShutdown();
+			return { consume: true };
+		}
+		return undefined;
+	};
+
+	editor.onSubmit = (rawText) => {
+		const record = Object.freeze({ sequence: ++sequence, rawText, submittedAt: performance.now() });
+		submissions.push(record);
+		pendingPanel.set(submissions);
+		tui.requestRender();
+	};
+
+	const stableInput = (data: string) => inputDelegate(data);
+	const removeStableInput = tui.setApplicationInputPolicy(stableInput);
+	const stableSignal = (): void => {
+		if (applicationSignal) applicationSignal();
+		else handleStage0CtrlC();
+	};
+	signals.on("SIGINT", stableSignal);
+
+	const disposeStableOwners = (): void => {
+		if (!inputDisposed) {
+			inputDisposed = true;
+			removeStableInput();
+		}
+		if (!signalDisposed) {
+			signalDisposed = true;
+			signals.off("SIGINT", stableSignal);
+			signals.off("uncaughtException", onProcessFault);
+			signals.off("unhandledRejection", onProcessFault);
+			restoreInterruptOwner();
+		}
+	};
+
+	const flushDiagnostics = (): void => {
+		for (const diagnostic of [...diagnostics.splice(0), ...deferredDiagnostics.splice(0)]) {
+			write(diagnostic.stream, diagnostic.text);
+		}
+	};
+	const enqueueDiagnostic = (stream: "stdout" | "stderr", text: string, deferred: boolean): void => {
+		const target = deferred ? deferredDiagnostics : diagnostics;
+		const bytes = Buffer.byteLength(text, "utf8");
+		const used = deferred ? deferredDiagnosticBytes : diagnosticBytes;
+		if (used + bytes <= DIAGNOSTIC_LIMIT_BYTES) {
+			target.push(Object.freeze({ stream, text }));
+			if (deferred) deferredDiagnosticBytes += bytes;
+			else diagnosticBytes += bytes;
+			return;
+		}
+		const alreadyTruncated = deferred ? deferredDiagnosticsTruncated : diagnosticsTruncated;
+		if (alreadyTruncated) return;
+		if (deferred) deferredDiagnosticsTruncated = true;
+		else diagnosticsTruncated = true;
+		target.push({ stream: "stderr", text: "PanCode: additional boot diagnostics were truncated.\n" });
+	};
+
+	const lease: TerminalLease = {
+		shell,
+		terminal: shell.terminal,
+		tui,
+		editor,
+		keybindings,
+		pending: pendingPanel,
+		get state() {
+			return state;
+		},
+		get epoch() {
+			return epoch;
+		},
+		get abortSignal() {
+			return bootAbort.signal;
+		},
+		writeDiagnostic(stream, text): void {
+			if (state === "closed") {
+				write(stream, text);
+				return;
+			}
+			enqueueDiagnostic(stream, text, false);
+		},
+		deferDiagnostic(stream, text): void {
+			if (state === "closed") {
+				write(stream, text);
+				return;
+			}
+			enqueueDiagnostic(stream, text, true);
+		},
+		takeDiagnostics(): BootDiagnostic[] {
+			const taken = diagnostics.splice(0);
+			diagnosticBytes = 0;
+			return taken;
+		},
+		registerApplicationInput(delegate): () => void {
+			applicationInput = delegate;
+			return () => {
+				if (applicationInput === delegate) applicationInput = null;
+			};
+		},
+		applicationSignals: {
+			takeInterruptOwnership: () => () => {},
+			on: (_signal, listener) => {
+				applicationSignal = listener;
+			},
+			off: (_signal, listener) => {
+				if (applicationSignal === listener) applicationSignal = null;
+			},
+		},
+		adopt(adoption): boolean {
+			if (state !== "mounted" || bootAbort.signal.aborted || !applicationInput) return false;
+			state = "adopting";
+			const adoptedEpoch = epoch;
+			// No await is permitted in this transaction: editor callbacks, root,
+			// input, and SIGINT become Stage 1 as one JavaScript turn.
+			editorChrome = adoption.editorChrome;
+			undeliveredMessages = adoption.undeliveredMessages;
+			faultNotice = adoption.notice;
+			inputDelegate = applicationInput;
+			host.replace(adoption.root);
+			tui.setFocus(editor);
+			state = "adopted";
+			const hydratedFrame = shell.nextCommittedFrame();
+			tui.requestRender();
+			void hydratedFrame.then((frameId) => {
+				const interactivity = {
+					stage0Ms,
+					hydratedMs: performance.now(),
+					inputBlockedMaxMs: finishInputBlock(),
+				};
+				if (epoch === adoptedEpoch && state === "adopted") adoption.onHydratedFrame?.(frameId, interactivity);
+			});
+			void (async () => {
+				for (const record of [...submissions]) {
+					if (epoch !== adoptedEpoch || state !== "adopted") return;
+					await adoption.admitSubmission(record);
+					if (epoch !== adoptedEpoch || state !== "adopted") return;
+					const index = submissions.findIndex((entry) => entry.sequence === record.sequence);
+					if (index >= 0) submissions.splice(index, 1);
+					pendingPanel.set(submissions);
+					tui.requestRender();
+				}
+			})().catch((error) => {
+				if (bootAbort.signal.aborted) return;
+				lease.writeDiagnostic(
+					"stderr",
+					`PanCode: queued boot submission failed: ${error instanceof Error ? error.message : String(error)}\n`,
+				);
+			});
+			return true;
+		},
+		close(closeOptions = {}): Promise<void> {
+			if (closePromise) return closePromise;
+			const adopted = state === "adopted";
+			state = "closing";
+			epoch += 1;
+			closePromise = (async () => {
+				const errors: unknown[] = [];
+				const attempt = (operation: () => void): void => {
+					try {
+						operation();
+					} catch (error) {
+						errors.push(error);
+					}
+				};
+				try {
+					attempt(() => finishInputBlock());
+					attempt(() => bootAbort.abort());
+					attempt(() => disposeStableOwners());
+					attempt(() => shell.releaseAnchor());
+					attempt(() => shell.stop());
+					try {
+						await shell.settle();
+					} catch (error) {
+						errors.push(error);
+					}
+					attempt(() => flushDiagnostics());
+					const unsent = editor.unsentDraft();
+					let queued: readonly string[] = [];
+					attempt(() => {
+						queued = undeliveredMessages?.() ?? [];
+					});
+					if (closeOptions.recoverInput || submissions.length > 0 || unsent.length > 0 || queued.length > 0) {
+						attempt(() => {
+							const recovered = recoveryText(submissions, unsent, adopted, queued);
+							if (recovered) write("stderr", `${recovered}\n`);
+						});
+					}
+				} finally {
+					state = "closed";
+					removeDiagnosticSink();
+				}
+				if (errors.length > 0) throw new AggregateError(errors, "terminal lease cleanup failed");
+			})();
+			return closePromise;
+		},
+		fail(): Promise<void> {
+			return lease.close({ recoverInput: true });
+		},
+	};
+
+	removeDiagnosticSink = installDiagnosticSink((text) => lease.writeDiagnostic("stderr", text));
+	termination.onDrain(() => lease.close({ recoverInput: state !== "adopted" }));
+	try {
+		shell.mount(host, editor);
+		state = "mounted";
+		// TuiBase.start() schedules its initial frame. The orchestrator import that
+		// follows is synchronous module evaluation and would starve that callback,
+		// turning Stage 0 into a label on the eventual Stage 1 paint. Commit the
+		// shell now so the terminal write actually precedes heavyweight hydration.
+		tui.renderNow(false);
+		stage0Ms = performance.now();
+		lastTurnAt = stage0Ms;
+		turnProbe = setInterval(() => {
+			const tickAt = performance.now();
+			longestTurnGap = Math.max(longestTurnGap, tickAt - lastTurnAt);
+			lastTurnAt = tickAt;
+			if (shutdownArmed && now() - lastCtrlCAt > APPLICATION_DOUBLE_TAP_MS) disarmShutdown();
+		}, 10);
+		turnProbe.unref();
+	} catch (error) {
+		void lease.close({ recoverInput: true }).catch(() => {});
+		throw error;
+	}
+	return lease;
+}

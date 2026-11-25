@@ -1,0 +1,250 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, strictEqual } from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { ToolNames } from "../../src/core/tool-names.js";
+import { executeCodewikiBuildOutcome } from "../../src/domains/context/codewiki/build-operation.js";
+import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
+import { loadCodewikiForTool } from "../../src/tools/codewiki/shared.js";
+import type { ToolInvokeOptions, ToolRegistry } from "../../src/tools/registry-contract.js";
+import type { ToolResult } from "../../src/tools/tool-spec.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
+
+/**
+ * code_nav through a worker registry over a three-file TypeScript workspace
+ * indexed on demand. Each mode is held to the exact files and relationships
+ * the fixture declares, and the workspace must come out unwritten because the
+ * tool builds its index read-only.
+ */
+
+const FILES: Record<string, string> = {
+	"package.json": JSON.stringify({ name: "navfixture", type: "module", main: "src/index.ts" }),
+	"src/index.ts":
+		'import { parseGrid } from "./grid.js";\nexport function solve(input: string): number {\n\treturn parseGrid(input).length;\n}\n',
+	"src/grid.ts":
+		'import { readFileSync } from "node:fs";\nexport interface Grid {\n\tcells: number[];\n}\nexport function parseGrid(text: string): number[] {\n\treturn text.split(",").map(Number);\n}\nexport function loadGrid(path: string): number[] {\n\treturn parseGrid(readFileSync(path, "utf8"));\n}\n',
+	"src/cli.ts": 'import { solve } from "./index.js";\nconsole.log(solve(process.argv[2] ?? ""));\n',
+};
+
+describe("code_nav tool", () => {
+	let scratch: IsolatedPancodeEnv;
+	let registry: ToolRegistry;
+	let workspace: string;
+	let previousCwd: string;
+	beforeEach(async () => {
+		scratch = await isolatePancodeEnv("pancode-code-nav-");
+		workspace = join(scratch.dir, "workspace");
+		for (const [path, text] of Object.entries(FILES)) {
+			mkdirSync(join(workspace, path, ".."), { recursive: true });
+			writeFileSync(join(workspace, path), text);
+		}
+		previousCwd = process.cwd();
+		process.chdir(workspace);
+		registry = createWorkerToolRegistry(undefined, createWorkerSafety({ cwd: workspace }));
+	});
+	afterEach(() => {
+		process.chdir(previousCwd);
+		scratch.restore();
+	});
+
+	async function call(args: Record<string, unknown>, options?: ToolInvokeOptions): Promise<ToolResult> {
+		const verdict = await registry.invoke({ tool: ToolNames.CodeNav, args }, options);
+		if (verdict.kind !== "ok") throw new Error(`code_nav was not admitted: ${JSON.stringify(verdict)}`);
+		return verdict.result;
+	}
+
+	async function payload(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+		const result = await call(args);
+		if (result.kind !== "ok") throw new Error(`expected ok for ${JSON.stringify(args)}, got ${JSON.stringify(result)}`);
+		return JSON.parse(result.output) as Record<string, unknown>;
+	}
+
+	const paths = (value: unknown): string[] => (value as Array<{ path: string }>).map((file) => file.path);
+
+	it("answers every mode from the workspace index without writing to the workspace", async () => {
+		const symbol = await payload({ mode: "symbol", query: "parseGrid" });
+		deepStrictEqual(
+			(symbol.symbols as Array<Record<string, unknown>>).map(({ name, kind, line, path }) => ({ name, kind, line, path })),
+			[{ name: "parseGrid", kind: "func", line: 5, path: "src/grid.ts" }],
+		);
+		deepStrictEqual(paths((await payload({ mode: "path", query: "src/" })).files), [
+			"src/cli.ts",
+			"src/grid.ts",
+			"src/index.ts",
+		]);
+		deepStrictEqual(paths((await payload({ mode: "entries" })).files), ["src/index.ts", "src/cli.ts"]);
+		const outline = await payload({ mode: "outline", query: "src/grid.ts" });
+		deepStrictEqual(
+			(outline.symbols as Array<{ name: string; kind: string }>).map(({ name, kind }) => [name, kind]),
+			[
+				["Grid", "iface"],
+				["parseGrid", "func"],
+				["loadGrid", "func"],
+			],
+		);
+		deepStrictEqual((await payload({ mode: "deps", query: "src/index.ts" })).deps, {
+			internal: ["src/grid.ts"],
+			external: [],
+		});
+		deepStrictEqual((await payload({ mode: "dependents", query: "src/grid.ts" })).dependents, ["src/index.ts"]);
+		strictEqual(existsSync(join(workspace, ".pancode")), false, "the read-only index leaves no artifact behind");
+	});
+
+	it("bounds a result by limit and names the continuation, or the next mode to try on a miss", async () => {
+		const bounded = await payload({ mode: "path", query: "src/", limit: 1 });
+		deepStrictEqual(paths(bounded.files), ["src/cli.ts"]);
+		strictEqual(bounded.omitted, 2);
+		strictEqual(bounded.next, "limit=2");
+		const miss = await payload({ mode: "symbol", query: "noSuchSymbol" });
+		deepStrictEqual([miss.symbols, miss.next], [[], "mode=path query=noSuchSymbol"]);
+		strictEqual((await payload({ mode: "path", query: "docs/" })).next, "mode=entries");
+	});
+
+	it("fits a list over the call cap to the rows that fit instead of an empty oversize stub", async () => {
+		// Field F3: 134 same-named definitions overflowed the cap, and the stub showed zero rows and suggested a
+		// larger limit that could not fit either.
+		for (let i = 0; i < 12; i++) {
+			writeFileSync(
+				join(workspace, `src/record-guard-${String(i).padStart(2, "0")}.ts`),
+				'export function isRecord(value: unknown): value is Record<string, unknown> {\n\treturn typeof value === "object" && value !== null;\n}\n',
+			);
+		}
+		const capBytes = 2048;
+		const result = await call(
+			{ mode: "symbol", query: "isRecord" },
+			{ observationRunPool: { limitBytes: 1024 * 1024, resultCapBytes: capBytes } },
+		);
+		if (result.kind !== "ok") throw new Error(JSON.stringify(result));
+		const observation = (
+			result.details as { observation: { shownCount: number; totalCount: number; offloadPath?: string } }
+		).observation;
+		const fitted = JSON.parse(result.output) as {
+			symbols?: unknown[];
+			omitted?: number;
+			next?: string;
+			byteLimited?: boolean;
+			offloadPath?: string;
+			rest?: string;
+		};
+		strictEqual(observation.totalCount, 12);
+		strictEqual((fitted.symbols ?? []).length > 0, true, result.output);
+		strictEqual(Buffer.byteLength(result.output) <= capBytes, true);
+		strictEqual(observation.shownCount, fitted.symbols?.length);
+		strictEqual((fitted.omitted ?? 0) + observation.shownCount, observation.totalCount);
+		// A limit continuation would return the same rows, so the cut names the offloaded full listing instead.
+		strictEqual(fitted.byteLimited, true);
+		strictEqual(fitted.next, undefined, "no limit continuation that repeats the shown rows");
+		match(String(fitted.rest), /offloadPath/);
+		if (fitted.offloadPath === undefined) throw new Error(`no offloadPath in ${result.output}`);
+		strictEqual(observation.offloadPath, fitted.offloadPath);
+		const offloaded = JSON.parse(readFileSync(fitted.offloadPath, "utf8")) as { symbols: unknown[]; omitted: number };
+		deepStrictEqual([offloaded.symbols.length, offloaded.omitted], [12, 0]);
+	});
+
+	it("says what an empty search covered, that it proves no file absent, and the call that lists them", async () => {
+		// M-39: a worker read one empty code_nav search as "the workspace has no src/ tree".
+		const miss = await payload({ mode: "path", query: "src grid index" });
+		deepStrictEqual(miss.files, []);
+		match(String(miss.noMatch), /4 indexed paths for the substring "src grid index"/);
+		match(String(miss.noMatch), /matched as one string, spaces included/);
+		match(String(miss.noMatch), /not evidence that files are absent.*code_nav mode=path query=src\//);
+		match(String((await payload({ mode: "symbol", query: "noSuchSymbol" })).noMatch), /exact name "noSuchSymbol"/);
+		strictEqual((await payload({ mode: "path", query: "src/" })).noMatch, undefined);
+		for (const [tool, args, searched] of [
+			[ToolNames.Grep, { pattern: "noSuchText", path: "." }, /file contents under \. for the pattern sent/],
+			[ToolNames.Find, { pattern: "**/*.py", path: "." }, /paths under \. for the glob sent/],
+		] as const) {
+			const verdict = await registry.invoke({ tool, args });
+			if (verdict.kind !== "ok" || verdict.result.kind !== "ok") throw new Error(`${tool}: ${JSON.stringify(verdict)}`);
+			match(verdict.result.output, searched);
+			match(verdict.result.output, /not evidence that files are absent.*code_nav mode=path query=<dir>\//);
+		}
+	});
+
+	it("keeps an unchanged private index without a return clone and still detects same-metadata source edits", async () => {
+		const initial = await loadCodewikiForTool(workspace);
+		if (!initial.ok) throw new Error(initial.message);
+		for (const needsBackfill of [false, true]) {
+			const outcome = await executeCodewikiBuildOutcome({
+				kind: "check",
+				cwd: workspace,
+				current: { needsBackfill, loc: initial.fingerprint.loc },
+				previous: initial.fingerprint,
+			});
+			strictEqual(outcome.changed, needsBackfill);
+			strictEqual(outcome.codewiki, null);
+			deepStrictEqual(outcome.fingerprint, initial.fingerprint);
+		}
+		const unchanged = await loadCodewikiForTool(workspace);
+		if (!unchanged.ok) throw new Error(unchanged.message);
+		strictEqual(unchanged.codewiki, initial.codewiki);
+		const file = join(workspace, "src/grid.ts");
+		const stats = statSync(file);
+		writeFileSync(file, readFileSync(file, "utf8").replaceAll("parseGrid", "parseCell"));
+		utimesSync(file, stats.atime, stats.mtime);
+		deepStrictEqual((await payload({ mode: "symbol", query: "parseGrid" })).symbols, []);
+		strictEqual(((await payload({ mode: "symbol", query: "parseCell" })).symbols as unknown[]).length, 1);
+		strictEqual(existsSync(join(workspace, ".pancode")), false);
+	});
+
+	it("reports an absent wiki as operator-only instead of generating one", async () => {
+		const wiki = await payload({ mode: "wiki" });
+		deepStrictEqual(wiki.pages, []);
+		match(String(wiki.message), /wiki generation is operator-only/);
+		strictEqual(existsSync(join(workspace, ".pancode")), false);
+	});
+
+	it("rejects an invalid mode without reading source", { skip: process.platform === "win32" }, () => {
+		// A source FIFO makes an accidental index build hang in a bounded child.
+		// Artifact absence alone would not detect a private read-only build.
+		// Allow cold TypeScript loading under contention; this is not a boot benchmark.
+		execFileSync("mkfifo", [join(workspace, "blocked.ts")]);
+		const module = new URL("../../src/tools/codewiki/code-nav.ts", import.meta.url).href;
+		const loader = new URL("../../node_modules/tsx/dist/loader.mjs", import.meta.url).pathname;
+		const output = execFileSync(
+			process.execPath,
+			[
+				"--import",
+				loader,
+				"--input-type=module",
+				"-e",
+				`import {codeNavTool} from ${JSON.stringify(module)}; console.log(JSON.stringify(await codeNavTool.run({mode:"invalid"})))`,
+			],
+			{ cwd: workspace, timeout: 30_000, encoding: "utf8" },
+		);
+		match(output, /mode must be/);
+		strictEqual(existsSync(join(workspace, ".pancode")), false);
+	});
+
+	it("names the malformed argument for every mode and refuses an arbitrary source root", async () => {
+		const cases: Array<[Record<string, unknown>, RegExp]> = [
+			[{ source: workspace, mode: "symbol", query: "solve" }, /source must be workspace or pancode; got '/],
+			[{ source: "pancode", mode: "wiki" }, /source=pancode does not provide mode=wiki/],
+			[
+				{ mode: "grep", query: "x" },
+				/mode must be symbol, path, entries, outline, deps, dependents, wiki, or project; got 'grep'/,
+			],
+			[{ mode: "symbol" }, /mode=symbol requires query/],
+			[{ mode: "path", query: "  " }, /mode=path requires query/],
+			[{ mode: "outline" }, /mode=outline requires query path/],
+			[{ mode: "deps" }, /mode=deps requires query path/],
+			[{ mode: "dependents" }, /mode=dependents requires query path/],
+			[{ mode: "outline", query: "src/missing.ts" }, /path 'src\/missing\.ts' is not an indexed file path/],
+		];
+		for (const [args, expected] of cases) {
+			const result = await call(args);
+			if (result.kind !== "error") throw new Error(`expected error for ${JSON.stringify(args)}`);
+			match(result.message, /^code_nav: /);
+			match(result.message, expected, JSON.stringify(args));
+		}
+		// The remedy names pancode_docs only where the run may call it (bt-37).
+		const unadmitted = await call(
+			{ source: "pancode", mode: "wiki" },
+			{ allowedTools: [ToolNames.CodeNav, ToolNames.Gateway] },
+		);
+		match(unadmitted.kind === "error" ? unadmitted.message : "", /documentation is not available on this run$/);
+	});
+});

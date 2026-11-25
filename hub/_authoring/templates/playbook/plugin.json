@@ -1,0 +1,23 @@
+{
+	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+	"name": "pipeline-review",
+	"version": "1.0.0",
+	"description": "Multi-agent coordination recipe for reviewing scientific data pipelines.",
+	"license": "Apache-2.0",
+	"extensions": {
+		"dev.pancode": {
+			"manifestVersion": 1,
+			"kind": "playbook",
+			"resources": {
+				"playbooks": "playbooks"
+			},
+			"components": [
+				{
+					"kind": "playbook",
+					"id": "pipeline-review",
+					"path": "playbooks/pipeline-review.md"
+				}
+			]
+		}
+	}
+}

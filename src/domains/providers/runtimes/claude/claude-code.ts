@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { Api, Model } from "../../../../engine/types.js";
+import { UNMEDIATED_ENFORCEMENT } from "../../runtime-enforcement.js";
+import type { KnowledgeBaseHit } from "../../types/knowledge-base.js";
+import type { RuntimeDescriptor } from "../../types/runtime-descriptor.js";
+import type { TargetDescriptor } from "../../types/target-descriptor.js";
+import {
+	CLAUDE_CODE_AUTH_NOTICE,
+	CLAUDE_CODE_MODELS,
+	claudeCodeCapabilities,
+	synthesizeClaudeDelegatedModel,
+} from "./common.js";
+
+const claudeCodeRuntime: RuntimeDescriptor = {
+	id: "claude-code",
+	displayName: "Claude Code CLI",
+	kind: "subprocess",
+	tier: "subscription",
+	apiFamily: "claude-code-subprocess",
+	auth: "claude-cli",
+	authNotice: CLAUDE_CODE_AUTH_NOTICE,
+	knownModels: [...CLAUDE_CODE_MODELS],
+	binaryName: "claude",
+	headlessCommand: "claude -p --output-format stream-json",
+	outputParser: "claude-code-stream-json",
+	defaultCapabilities: claudeCodeCapabilities,
+	enforcement: UNMEDIATED_ENFORCEMENT,
+	// Coexist: `--setting-sources user` would skip the project's CLAUDE.md but also its .claude/settings*.json,
+	// whose permission rules and hooks are the peer's only project guardrails, since PanCode does not mediate its tools.
+	repositoryInstructions: {
+		files: ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"],
+		fallback: ["AGENTS.md"],
+		delivery: "coexist",
+	},
+	// The Claude CLI runs its own tool loop. PanCode observes only the stream, so a
+	// declared per-tool budget is recorded as external-one-shot, never enforced.
+	externalAgentLoop: {
+		tools: "externally-governed-unobserved",
+		network: "externally-governed-unobserved",
+		budget: "external-one-shot",
+		generatingRetry: "allowed",
+		modelCatalog: "static",
+	},
+	synthesizeModel(target: TargetDescriptor, wireModelId: string, kb: KnowledgeBaseHit | null): Model<Api> {
+		return synthesizeClaudeDelegatedModel({
+			target,
+			wireModelId,
+			kb,
+			defaultCapabilities: claudeCodeCapabilities,
+			runtimeId: "claude-code",
+			apiFamily: "claude-code-subprocess",
+		});
+	},
+};
+
+export default claudeCodeRuntime;

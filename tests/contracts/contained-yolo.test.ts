@@ -1,0 +1,682 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, rejects, strictEqual } from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { readSettings, settingsPath } from "../../src/core/config.js";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { initializePancodeHome } from "../../src/core/init.js";
+import { yoloContainedNotice } from "../../src/core/sandbox/main-session.js";
+import { readLayeredSettings } from "../../src/core/settings-layers.js";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import { ToolNames } from "../../src/core/tool-names.js";
+import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
+import { pancodeStateDir } from "../../src/core/xdg.js";
+import type { ConfigContract } from "../../src/domains/config/index.js";
+import { takeContainedYoloNotice } from "../../src/domains/lifecycle/state.js";
+import type { MiddlewareContract } from "../../src/domains/middleware/contract.js";
+import { runMiddlewareRegistrations } from "../../src/domains/middleware/runtime.js";
+import { createMiddlewareToolChoiceControl } from "../../src/domains/middleware/tool-choice-control.js";
+import type { CompletionFact, MiddlewareEffect, MiddlewareHookInput } from "../../src/domains/middleware/types.js";
+import { renderSessionPostureUpdate } from "../../src/domains/prompts/compiler.js";
+import { loadFragments } from "../../src/domains/prompts/fragment-loader.js";
+import { admissionAutonomy, effectiveYoloConfinement } from "../../src/domains/safety/autonomy.js";
+import {
+	createAutonomyWindow,
+	describeOpenDecision,
+	type OpenDecision,
+} from "../../src/domains/safety/autonomy-window.js";
+import { projectScriptConsequences } from "../../src/domains/safety/call-consequence.js";
+import type { CompletionEvaluationInput } from "../../src/domains/safety/decision-events.js";
+import {
+	CONTAINED_YOLO_CHECK_WAIVER,
+	createFinishContractRegistration,
+} from "../../src/domains/safety/finish-contract-registration.js";
+import { parseRigorOverride, rigorResolution } from "../../src/domains/safety/rigor.js";
+import {
+	createSafetyJudge,
+	type SafetyJudgeConfig,
+	type SafetyJudgeNote,
+} from "../../src/domains/safety/safety-judge.js";
+import { SessionCostCeilingError } from "../../src/domains/scheduling/budget.js";
+import { createSchedulingBundle } from "../../src/domains/scheduling/extension.js";
+import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import {
+	createYoloActivation,
+	YOLO_UNCONFINED_ACCEPT_LABEL,
+	YOLO_UNCONFINED_DECLINE_LABEL,
+} from "../../src/interactive/yolo-activation.js";
+import { createTurnMiddleware } from "../../src/session-control/turn-middleware.js";
+import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
+import { createRegistry } from "../../src/tools/registry.js";
+import type { PermissionRequiredMeta, RegistryDeps } from "../../src/tools/registry-contract.js";
+import type { ToolSpec } from "../../src/tools/tool-spec.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+const CONFIG: SafetyJudgeConfig = { enabled: true, target: "local", model: "m", environment: [], allow: [], deny: [] };
+const UNRECOGNIZED = "./scripts/sync-assets --all";
+
+/**
+ * The operator's main-session registry at contained yolo, wired as the
+ * orchestrator wires it: admission at `default`, and asks never parked.
+ */
+function containedRegistry(
+	reply: () => string,
+	observe: Pick<RegistryDeps, "onUnattendedRefusal"> & { note?: (note: SafetyJudgeNote) => void } = {},
+) {
+	const cwd = realpathSync(mkdtempSync(join(tmpdir(), "pancode-contained-yolo-")));
+	let judged = 0;
+	const judge = createSafetyJudge({
+		config: () => CONFIG,
+		complete: async () => {
+			judged += 1;
+			return { text: reply() };
+		},
+		operatorMessages: () => ["sync the assets"],
+		session: () => "session-1",
+		consequences: () => [],
+		...(observe.note !== undefined ? { note: observe.note } : {}),
+	});
+	const registry = createRegistry({
+		safety: createWorkerSafety({ cwd }),
+		autonomy: () => admissionAutonomy("yolo", "contained"),
+		safetyJudge: judge,
+		unattendedAsks: () => true,
+		...(observe.onUnattendedRefusal !== undefined ? { onUnattendedRefusal: observe.onUnattendedRefusal } : {}),
+	});
+	const ran: string[] = [];
+	const tool = (name: ToolSpec["name"], extra: Partial<ToolSpec> = {}): ToolSpec => ({
+		name,
+		description: `fake ${name}`,
+		parameters: {} as ToolSpec["parameters"],
+		baseActionClass: "execute",
+		async run(args) {
+			ran.push(String(args.command ?? name));
+			return { kind: "ok", output: "ran" };
+		},
+		...extra,
+	});
+	registry.register(tool(ToolNames.Bash));
+	registry.register(
+		tool(ToolNames.ConfigurePancode, { baseActionClass: "write", confirmationRuleId: "fleet-routing-settings" }),
+	);
+	const parks: PermissionRequiredMeta[] = [];
+	registry.onPermissionRequired((_call, _decision, meta) => parks.push(meta));
+	return { registry, ran, parks, judged: () => judged };
+}
+
+test("confinement resolves to contained unless unconfined is both chosen and accepted", async (t) => {
+	// A PanCode bash child exports the confinement pin; isolate so the case reads only settings.
+	const home = await isolatePancodeEnv("pancode-yolo-confinement-resolve-");
+	t.after(() => home.restore());
+	const safety = DEFAULT_SETTINGS.safety;
+	strictEqual(effectiveYoloConfinement(safety), "contained");
+	strictEqual(effectiveYoloConfinement({ ...safety, yoloConfinement: "unconfined" }), "contained");
+	strictEqual(
+		effectiveYoloConfinement({ ...safety, yoloConfinement: "unconfined", yoloUnconfinedAccepted: true }),
+		"unconfined",
+	);
+	strictEqual(admissionAutonomy("yolo", "contained"), "default");
+	strictEqual(admissionAutonomy("yolo", "unconfined"), "yolo");
+	strictEqual(admissionAutonomy("default", "unconfined"), "default");
+});
+
+test("contained yolo runs what the judge allows and refuses what it blocks", async () => {
+	const allowed = containedRegistry(() => JSON.stringify({ verdict: "allow", rule: "operator-named", reason: "asked" }));
+	strictEqual((await allowed.registry.invoke({ tool: ToolNames.Bash, args: { command: UNRECOGNIZED } })).kind, "ok");
+	deepStrictEqual(allowed.ran, [UNRECOGNIZED]);
+
+	const blocked = containedRegistry(() => JSON.stringify({ verdict: "block", rule: "publish", reason: "uploads" }));
+	const verdict = await blocked.registry.invoke({ tool: ToolNames.Bash, args: { command: UNRECOGNIZED } });
+	strictEqual(verdict.kind, "blocked");
+	if (verdict.kind === "blocked") strictEqual(verdict.denial?.code, "safety-judge:publish");
+	deepStrictEqual([blocked.ran, blocked.parks.length], [[], 0]);
+});
+
+test("contained yolo refuses a call the judge left without a verdict instead of parking it, and remembers it", async () => {
+	const { registry, ran, parks, judged } = containedRegistry(() => "I am not sure.");
+	const call = { tool: ToolNames.Bash, args: { command: UNRECOGNIZED } };
+	const first = await registry.invoke(call, { turnId: "turn-1" });
+	strictEqual(first.kind, "blocked");
+	if (first.kind !== "blocked") return;
+	match(first.reason, /contained yolo runs without the operator/u);
+	match(first.reason, /Do not retry it/u);
+	match(first.denial?.allowedBy ?? "", /contained yolo never waits/u);
+	deepStrictEqual([ran, parks.length, judged()], [[], 0, 1]);
+
+	const repeat = await registry.invoke(call, { turnId: "turn-1" });
+	strictEqual(repeat.kind, "blocked");
+	if (repeat.kind === "blocked") strictEqual(repeat.decision.policy?.reasonCode, "denied_repeat");
+	deepStrictEqual([ran, parks.length, judged()], [[], 0, 1]);
+});
+
+test("a judge streak halts yolo only once the crossing block is recorded, inside the call that crossed it", async () => {
+	// Wired as the orchestrator wires it: the registry records the refusal, the judge's escalation halts the window.
+	const seen: OpenDecision[][] = [];
+	let inCall = false;
+	const window = createAutonomyWindow({
+		caps: () => ({ toolCalls: 0, minutes: 0, tokens: 0 }),
+		session: () => "session-1",
+		onHalt: () => {
+			ok(inCall, "the halt lands while the crossing call is still running, so it cancels that turn");
+			seen.push(window.openDecisions(true));
+		},
+	});
+	// The streak counts blocks under distinct rules only (FX-36).
+	const rules = ["publish", "remote-code", "unclear"];
+	const { registry } = containedRegistry(
+		() => JSON.stringify({ verdict: "block", rule: rules.shift(), reason: "uploads" }),
+		{
+			onUnattendedRefusal: (call, decision, kind, rule) =>
+				window.openDecision(describeOpenDecision(call, decision, kind, rule)),
+			note: (note) => {
+				if (note.kind === "escalation") window.haltFor("judge", "3 blocks in a row", note.workerRunId === undefined);
+			},
+		},
+	);
+	for (let i = 0; i < 3; i += 1) {
+		inCall = true;
+		const pending = registry.invoke({ tool: ToolNames.Bash, args: { command: `${UNRECOGNIZED} ${i}` } });
+		const verdict = await pending;
+		inCall = false;
+		strictEqual(verdict.kind, "blocked");
+	}
+	strictEqual(seen.length, 1);
+	strictEqual(seen[0]?.length, 3, "the notice names the block that crossed the line");
+	strictEqual(window.halted()?.kind, "judge");
+});
+
+test("a throwing refusal observer never changes contained yolo's denial or its bookkeeping", async () => {
+	const { registry } = containedRegistry(() => "I am not sure.", {
+		onUnattendedRefusal: () => {
+			throw new Error("observer failed");
+		},
+	});
+	const call = { tool: ToolNames.Bash, args: { command: UNRECOGNIZED } };
+	const first = await registry.invoke(call, { turnId: "turn-1" });
+	strictEqual(first.kind, "blocked");
+	if (first.kind === "blocked") match(first.reason, /contained yolo runs without the operator/u);
+	const repeat = await registry.invoke(call, { turnId: "turn-1" });
+	strictEqual(repeat.kind, "blocked");
+	if (repeat.kind === "blocked") strictEqual(repeat.decision.policy?.reasonCode, "denied_repeat");
+
+	const blocked = containedRegistry(() => JSON.stringify({ verdict: "block", rule: "publish", reason: "uploads" }), {
+		onUnattendedRefusal: () => {
+			throw new Error("observer failed");
+		},
+	});
+	const verdict = await blocked.registry.invoke({ tool: ToolNames.Bash, args: { command: UNRECOGNIZED } });
+	strictEqual(verdict.kind, "blocked");
+	if (verdict.kind === "blocked") strictEqual(verdict.denial?.code, "safety-judge:publish");
+});
+
+test("contained yolo refuses an operator-only ask without the judge or a card", async () => {
+	const { registry, ran, parks, judged } = containedRegistry(() =>
+		JSON.stringify({ verdict: "allow", rule: "x", reason: "y" }),
+	);
+	const verdict = await registry.invoke({
+		tool: ToolNames.ConfigurePancode,
+		args: { action: "apply", proposalId: "p" },
+	});
+	strictEqual(verdict.kind, "blocked");
+	if (verdict.kind === "blocked") match(verdict.reason, /contained yolo runs without the operator/u);
+	deepStrictEqual([ran, parks.length, judged()], [[], 0, 0]);
+});
+
+test("contained yolo runs a plan-scale dispatch without the judge or a card", async () => {
+	const { registry, parks, judged } = containedRegistry(() => "unused");
+	const runs: string[] = [];
+	registry.register({
+		name: ToolNames.Dispatch,
+		description: "stub dispatch",
+		parameters: {} as ToolSpec["parameters"],
+		baseActionClass: "dispatch",
+		async run() {
+			runs.push("dispatched");
+			return { kind: "ok", output: "dispatched" };
+		},
+	});
+	const plan = {
+		tasks: [
+			{ agent: "scout", task: "Survey the soil samples" },
+			{ agent: "writer", task: "Draft the comparison report" },
+		],
+	};
+	strictEqual((await registry.invoke({ tool: ToolNames.Dispatch, args: plan })).kind, "ok");
+	deepStrictEqual([runs, parks.length, judged()], [["dispatched"], 0, 0]);
+});
+
+test("the unconfined prompt body appears only at effective unconfined yolo", () => {
+	const table = loadFragments();
+	const contained = renderSessionPostureUpdate(table, "yolo", { coordinatorCapabilities: [] });
+	const unconfined = renderSessionPostureUpdate(table, "yolo", {
+		coordinatorCapabilities: [],
+		yoloConfinement: "unconfined",
+	});
+	match(contained, /Yolo is contained/u);
+	doesNotMatch(contained, /Yolo mode \(unconfined\)/u);
+	match(unconfined, /Yolo mode \(unconfined\)/u);
+	doesNotMatch(unconfined, /Yolo is contained/u);
+});
+
+test("the unconfined prompt says how an outward command leaves a required sandbox", () => {
+	const unconfined = renderSessionPostureUpdate(loadFragments(), "yolo", {
+		coordinatorCapabilities: [],
+		yoloConfinement: "unconfined",
+	});
+	match(unconfined, /outward command[^.]*leaves it only on a line of its own with literal arguments/u);
+	match(unconfined, /only the options on that CLI's list, each spelled in full and apart/u);
+	match(unconfined, /or is refused where the host has no sandbox/u);
+	match(unconfined, /--body-file/u);
+});
+
+test("choosing unconfined yolo asks its own card and records the acceptance only on accept", async (t) => {
+	const home = await isolatePancodeEnv("pancode-yolo-unconfined-accept-");
+	t.after(() => home.restore());
+	const harness = (answer: string | null) => {
+		let settings = structuredClone(readSettings());
+		settings.safety.autonomy = "yolo";
+		settings.safety.yoloAccepted = true;
+		const commits: Array<[string, unknown, string]> = [];
+		const activation = createYoloActivation({
+			getSettings: () => settings,
+			refusal: null,
+			commitSetting: (id, next, scope) => {
+				commits.push([
+					id,
+					id === "safety.yoloConfinement" ? next.safety.yoloConfinement : next.safety.yoloUnconfinedAccepted,
+					scope,
+				]);
+				settings = structuredClone(next);
+			},
+			ask: async () =>
+				answer === null
+					? { answers: [], cancelled: true }
+					: { answers: [{ question: "Unconfined yolo", answer, options: [answer] }] },
+			prepareScreen: () => {},
+			notify: () => {},
+		});
+		const choose = async () => {
+			const next = structuredClone(settings);
+			next.safety.yoloConfinement = "unconfined";
+			activation.commit("safety.yoloConfinement", next, "global");
+			for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
+		};
+		return { choose, commits };
+	};
+	const declined = harness(YOLO_UNCONFINED_DECLINE_LABEL);
+	await declined.choose();
+	deepStrictEqual(declined.commits, []);
+	const cancelled = harness(null);
+	await cancelled.choose();
+	deepStrictEqual(cancelled.commits, []);
+	const accepted = harness(YOLO_UNCONFINED_ACCEPT_LABEL);
+	await accepted.choose();
+	deepStrictEqual(accepted.commits, [
+		["safety.yoloUnconfinedAccepted", true, "global"],
+		["safety.yoloConfinement", "unconfined", "global"],
+	]);
+});
+
+test("a project layer cannot set yolo confinement or its acceptance", async (t) => {
+	const home = await isolatePancodeEnv("pancode-yolo-confinement-project-");
+	t.after(() => home.restore());
+	const workspace = join(home.dir, "workspace");
+	mkdirSync(join(workspace, ".pancode"), { recursive: true });
+	mkdirSync(join(home.dir, "config"), { recursive: true });
+	writeFileSync(join(home.dir, "config", "settings.yaml"), "version: 2\nsafety:\n  autonomy: yolo\n");
+	writeFileSync(
+		join(workspace, ".pancode", "settings.local.yaml"),
+		"safety:\n  yoloConfinement: unconfined\n  yoloUnconfinedAccepted: true\n",
+	);
+	const snapshot = captureProjectSurface(workspace, "settings");
+	if (!snapshot.contentHash) throw new Error("missing project settings hash");
+	recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
+	const layered = readLayeredSettings(workspace);
+	strictEqual(layered.settings.safety.yoloConfinement, "contained");
+	strictEqual(layered.settings.safety.yoloUnconfinedAccepted, false);
+	const paths = layered.issues.filter((issue) => issue.origin === "project.local").map((issue) => issue.path);
+	deepStrictEqual(paths.sort(), ["safety.yoloConfinement", "safety.yoloUnconfinedAccepted"]);
+});
+
+test("the contained-yolo notice is claimed once in lifecycle state and never rewrites the operator's settings", async (t) => {
+	const home = await isolatePancodeEnv("pancode-yolo-confinement-notice-");
+	t.after(() => home.restore());
+	initializePancodeHome();
+	const operator = 'version: 2\nsafety: { sandbox: "off", autonomy: yolo }\n';
+	writeFileSync(settingsPath(), operator);
+	const safety = readSettings().safety;
+	match(takeContainedYoloNotice(safety) ?? "", /without an OS sandbox \(safety\.sandbox is off\)/u);
+	strictEqual(readFileSync(settingsPath(), "utf8"), operator);
+	strictEqual(takeContainedYoloNotice(safety), null);
+	// The claim survives the boot that rewrites home.json for a changed node or version.
+	const record = join(pancodeStateDir(), "home.json");
+	writeFileSync(record, JSON.stringify({ ...JSON.parse(readFileSync(record, "utf8")), nodeVersion: "v0.0.0" }));
+	initializePancodeHome();
+	strictEqual(takeContainedYoloNotice(safety), null);
+	// Settings that already name a confinement chose it and hear nothing, even with no claim on record.
+	const { containedYoloNoticedAt: _claim, ...unclaimed } = JSON.parse(readFileSync(record, "utf8"));
+	writeFileSync(record, JSON.stringify(unclaimed));
+	writeFileSync(settingsPath(), "version: 2\nsafety:\n  yoloConfinement: contained\n");
+	strictEqual(takeContainedYoloNotice(DEFAULT_SETTINGS.safety), null);
+	match(readFileSync(settingsPath(), "utf8"), /yoloConfinement: contained/u);
+});
+
+test("the contained-yolo notice states the sandbox backend and judge state a yolo run records", () => {
+	const bwrap = { available: true, backend: "bwrap" as const, executable: "/usr/bin/bwrap", reason: null };
+	const off = yoloContainedNotice({ sandbox: "off", judge: { enabled: true } }, bwrap);
+	match(off, /without an OS sandbox \(safety\.sandbox is off\)/u);
+	doesNotMatch(off, /OS sandbox and the safety judge stay on|in the bwrap/u);
+	match(off, /the safety judge reviews/u);
+	const on = yoloContainedNotice({ sandbox: "auto", judge: { enabled: false } }, bwrap);
+	match(on, /commands run in the bwrap OS sandbox/u);
+	match(on, /the safety judge is off \(safety\.judge\.enabled\)/u);
+	const none = { available: false, backend: null, executable: null, reason: "bwrap not found" };
+	match(
+		yoloContainedNotice({ sandbox: "auto", judge: { enabled: true } }, none),
+		/without an OS sandbox \(bwrap not found\)/u,
+	);
+	match(on, /^Yolo runs contained: commands run in the bwrap OS sandbox/u);
+	match(on, /To run yolo unconfined, set safety\.yoloConfinement: unconfined/u);
+});
+
+test("contained yolo runs an outward call the judge allows only when the operator named it", async () => {
+	const push = { tool: ToolNames.Bash, args: { command: "git push origin HEAD:main" } };
+	const named = containedRegistry(() => JSON.stringify({ verdict: "allow", rule: "operator-named", reason: "asked" }));
+	strictEqual((await named.registry.invoke(push)).kind, "ok");
+
+	const inferred = containedRegistry(() =>
+		JSON.stringify({ verdict: "allow", rule: "workspace", reason: "serves the task" }),
+	);
+	const verdict = await inferred.registry.invoke(push, { turnId: "turn-1" });
+	strictEqual(verdict.kind, "blocked");
+	if (verdict.kind === "blocked") {
+		match(verdict.reason, /contained yolo runs without the operator/u);
+		match(
+			verdict.decision.kind === "allow" ? "" : verdict.decision.rejection.detail,
+			/allowed this outward call under rule workspace/u,
+		);
+	}
+	deepStrictEqual([inferred.ran, inferred.parks.length, inferred.judged()], [[], 0, 1]);
+});
+
+test("contained yolo refuses a Scout external read root without a card", async () => {
+	const { registry, parks } = containedRegistry(() => "unused");
+	strictEqual(await registry.requestReadRootApproval?.("/srv/elsewhere"), null);
+	strictEqual(parks.length, 0);
+});
+
+test("the judge reads the package.json body a named project script runs", () => {
+	const cwd = realpathSync(mkdtempSync(join(tmpdir(), "pancode-script-body-")));
+	writeFileSync(
+		join(cwd, "package.json"),
+		JSON.stringify({ scripts: { release: "git push --force origin HEAD:main; cat .env", prerelease: "node lint.mjs" } }),
+	);
+	const lines = (command: string) => projectScriptConsequences({ tool: ToolNames.Bash, args: { command, cwd } });
+	deepStrictEqual(lines("npm test && npm run release"), [
+		'runs package.json script "release", repository data that executes as written: prerelease: node lint.mjs; release: git push --force origin HEAD:main; cat .env',
+	]);
+	deepStrictEqual(lines("pnpm release"), lines("npm run release"));
+	deepStrictEqual(lines("git status"), []);
+});
+
+test("contained yolo refuses a paid request at the ceiling instead of waiting for a raise", async () => {
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.safety.limits.sessionCostUsd = 1;
+	const config = { get: () => settings, onChange: () => () => {} } as unknown as ConfigContract;
+	const spent = { usd: 1.25, estimated: false, unpriced: false, ref: null };
+	const telemetry = { sessionSpend: () => spent, settledSessionSpend: async () => spent };
+	const { contract, extension } = createSchedulingBundle({
+		bus: createTelemetryHub(),
+		getContract: (<T>(name: string) =>
+			(name === "config" ? config : name === "telemetry" ? telemetry : undefined) as T | undefined) as never,
+	});
+	await extension.start?.();
+	try {
+		let contained = true;
+		contract.setNeverWaitForRaise?.(() => contained);
+		await rejects(contract.admitPaidRequest?.({ waitForRaise: true }) ?? Promise.resolve(), SessionCostCeilingError);
+		contained = false;
+		const controller = new AbortController();
+		const held = contract.admitPaidRequest?.({ waitForRaise: true, signal: controller.signal });
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		controller.abort(new Error("operator left"));
+		await rejects(held ?? Promise.resolve(), /operator left/u);
+	} finally {
+		await extension.stop?.();
+	}
+});
+
+test("contained yolo raises rigor to high, and an explicit PANCODE_RIGOR still wins", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pancode-contained-rigor-"));
+	deepStrictEqual(rigorResolution({ cwd, containedYolo: true }), { rigor: "high", source: "contained-yolo" });
+	deepStrictEqual(rigorResolution({ cwd, containedYolo: true, override: parseRigorOverride("normal") }), {
+		rigor: "normal",
+		source: "override",
+	});
+	strictEqual(rigorResolution({ cwd, containedYolo: false }).rigor, "normal");
+});
+
+function finishGateTurn(
+	contained: boolean,
+	options: { tools?: string[]; checks?: unknown[]; extra?: MiddlewareEffect[] } = {},
+) {
+	const entries: unknown[] = [
+		{ kind: "message", role: "user", turnId: "user-1", payload: { text: "change the file" } },
+		{
+			kind: "message",
+			role: "tool_call",
+			turnId: "write-1",
+			payload: { name: ToolNames.Write, toolCallId: "write-1", args: { path: "src/thing.ts", content: "x" } },
+		},
+		{
+			kind: "message",
+			role: "tool_result",
+			turnId: "write-1",
+			payload: { toolName: ToolNames.Write, toolCallId: "write-1", isError: false, result: { kind: "ok" } },
+		},
+		...(options.checks ?? []),
+	];
+	const audits: CompletionEvaluationInput[] = [];
+	// Wired as the composition root wires it: a declared partly_done or not_done turn's facts reach the seal from the host.
+	let declaredFacts: ReadonlyArray<CompletionFact> = [];
+	const registration = createFinishContractRegistration({
+		readSessionEntries: () => entries,
+		resolveRigor: () => (contained ? "high" : "normal"),
+		reserveVerificationNudge: () => contained,
+		recordDecision: (input) => audits.push(input),
+		reportDeclaredFacts: (facts) => {
+			declaredFacts = facts;
+		},
+	});
+	const state = createTurnState("off");
+	// Another producer already spent the one nudge this prompt shares, and its resubmit went out.
+	state.continuation.request();
+	state.continuation.takeRequest();
+	const footer: string[] = [];
+	const nudges: string[] = [];
+	const notices: string[] = [];
+	const footerText: string[] = [];
+	const middleware = createTurnMiddleware({
+		state,
+		middleware: {
+			runHook: (input: MiddlewareHookInput) => {
+				const ran = runMiddlewareRegistrations(input, [registration]);
+				const result = { ...ran, effects: [...ran.effects, ...(options.extra ?? [])] };
+				for (const effect of result.effects) if (effect.kind === "request_continuation") nudges.push(effect.message);
+				return result;
+			},
+		} as unknown as MiddlewareContract,
+		middlewareToolChoice: createMiddlewareToolChoiceControl(),
+		emitNotice: (text) => notices.push(text),
+		emitFooterNotice: (_level, text, key) => {
+			footer.push(key);
+			footerText.push(text);
+		},
+		hostCompletionFacts: () => [...declaredFacts],
+	});
+	const runtime = {
+		wireModelId: "fixture",
+		runtimeId: "fixture",
+		runtimeResolution: {},
+		agent: {
+			state: {
+				tools: (options.tools ?? [ToolNames.Bash, ToolNames.Limitation]).map((name) => ({ name })),
+				messages: [],
+			},
+		},
+	} as unknown as AgentRuntime;
+	const finish = () =>
+		middleware.fireTurnEnd(runtime, [
+			{ role: "assistant", content: [{ type: "text", text: "Done." }], stopReason: "stop" },
+		] as never);
+	return { state, footer, footerText, audits, nudges, notices, middleware, finish };
+}
+
+test("contained yolo's finish gate keeps its own nudge and records an exhausted check as unverified", async () => {
+	const turn = finishGateTurn(true);
+	await turn.finish();
+	strictEqual(turn.state.continuation.requested, true);
+	strictEqual(turn.state.continuation.verificationNudgeSpent, true);
+	// batch8: an operator who said "no need to run anything" gets an unverified change, not a limitation's exit 1.
+	ok(turn.nudges[0]?.endsWith(CONTAINED_YOLO_CHECK_WAIVER));
+	turn.state.continuation.takeRequest();
+	await turn.finish();
+	strictEqual(turn.state.continuation.requested, false);
+	strictEqual(turn.footer.at(-1), "nudge.verification.spent");
+	deepStrictEqual(
+		turn.audits.map((audit) => [audit.decision, audit.rigor]),
+		[
+			["engage", "high"],
+			["engage", "high"],
+		],
+	);
+
+	const attended = finishGateTurn(false);
+	await attended.finish();
+	strictEqual(attended.state.continuation.requested, false);
+	strictEqual(attended.state.continuation.verificationNudgeSpent, false);
+
+	// Fleet design 4.3: `finish` is turn-terminal; a declared done takes no further round, and the gate's fact is sealed.
+	const unvalidated = "declared done, assessed partly done: the change has no validation evidence yet";
+	const declare = async (turn: ReturnType<typeof finishGateTurn>, state: "done" | "partly_done" | "not_done") => {
+		turn.state.turnCompletion = { state, limitations: [], unverified: [] };
+		await turn.finish();
+		strictEqual(turn.state.continuation.requested, false);
+		// FX-38: no finish-gate reminder shows after the declared end or rides the next request.
+		deepStrictEqual(turn.notices, []);
+		strictEqual(turn.middleware.flushPendingReminders(), "");
+		return turn;
+	};
+	const declared = await declare(finishGateTurn(true), "done");
+	strictEqual(declared.state.turnSealedCompletion?.assessed, "partly_done");
+	deepStrictEqual(declared.state.turnSealedCompletion?.facts, ["unvalidated_mutation"]);
+	// FX-38: one footer line per declared turn, the assessment, whichever reminder carried the fact.
+	deepStrictEqual([declared.footer, declared.footerText], [["finish.assessed"], [unvalidated]]);
+	// High rigor with no recovery in reach (no verification tool, no limitation) carries the fact on an advisory.
+	const unrecoverable = await declare(finishGateTurn(true, { tools: [] }), "done");
+	deepStrictEqual([unrecoverable.footer, unrecoverable.footerText], [["finish.assessed"], [unvalidated]]);
+	// FX-38: an honest partly_done or not_done is not lowered, so no line follows it, even with a fact still open. The
+	// contract still assesses it, and its unvalidated change seals beside the claim from the host.
+	const openTask: MiddlewareEffect = {
+		kind: "inject_reminder",
+		message: "tasks open",
+		severity: "warn",
+		fact: "open_task",
+	};
+	for (const claim of ["partly_done", "not_done"] as const) {
+		const turn = await declare(finishGateTurn(true, { extra: [openTask] }), claim);
+		strictEqual(turn.state.turnSealedCompletion?.assessed, claim);
+		deepStrictEqual(turn.state.turnSealedCompletion?.facts, ["open_task", "unvalidated_mutation"]);
+		deepStrictEqual(turn.footer, []);
+	}
+	const cwd = process.cwd();
+	// Normal rigor without a quality policy, and a check that failed after the change, carry their facts on advisories.
+	const plain = realpathSync(mkdtempSync(join(tmpdir(), "pancode-finish-plain-")));
+	process.chdir(plain);
+	try {
+		const advisory = await declare(finishGateTurn(false), "done");
+		deepStrictEqual([advisory.footer, advisory.footerText], [["finish.assessed"], [unvalidated]]);
+		const bash = (id: string, command: string, exitCode: number) => [
+			{
+				kind: "message",
+				role: "tool_call",
+				turnId: id,
+				payload: { name: ToolNames.Bash, toolCallId: id, args: { command } },
+			},
+			{
+				kind: "message",
+				role: "tool_result",
+				turnId: id,
+				payload: { toolName: ToolNames.Bash, toolCallId: id, isError: exitCode !== 0, result: { details: { exitCode } } },
+			},
+		];
+		const checks = [...bash("lint-1", "npm run lint", 0), ...bash("tsc-1", "npx tsc --noEmit", 2)];
+		const failed = await declare(finishGateTurn(false, { checks }), "done");
+		deepStrictEqual(failed.state.turnSealedCompletion?.facts, ["failed_check"]);
+		deepStrictEqual(
+			[failed.footer, failed.footerText],
+			[["finish.assessed"], ["declared done, assessed partly done: a check failed after the last change"]],
+		);
+	} finally {
+		process.chdir(cwd);
+	}
+	// FX-38: an unpaired finish-gate reminder (a project quality policy at normal rigor) follows no declaration either.
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "pancode-finish-quality-")));
+	mkdirSync(join(root, ".pancode"));
+	writeFileSync(
+		join(root, ".pancode", "quality.yaml"),
+		'version: 1\nrules:\n  - id: src\n    paths: ["src/**"]\n    checks: [test]\n',
+	);
+	process.chdir(root);
+	try {
+		const undeclared = finishGateTurn(false);
+		await undeclared.finish();
+		match(undeclared.notices.join("\n"), /project quality policy has outstanding checks/);
+		const quality = await declare(finishGateTurn(false), "done");
+		strictEqual(quality.state.turnSealedCompletion?.assessed, "partly_done");
+		deepStrictEqual([quality.footer, quality.footerText], [["finish.assessed"], [unvalidated]]);
+	} finally {
+		process.chdir(cwd);
+	}
+});
+
+test("a declared partly_done or not_done turn seals a check that failed after its change, without a reminder", async () => {
+	const cwd = process.cwd();
+	const plain = realpathSync(mkdtempSync(join(tmpdir(), "pancode-finish-short-")));
+	process.chdir(plain);
+	try {
+		const bash = (id: string, command: string, exitCode: number) => [
+			{
+				kind: "message",
+				role: "tool_call",
+				turnId: id,
+				payload: { name: ToolNames.Bash, toolCallId: id, args: { command } },
+			},
+			{
+				kind: "message",
+				role: "tool_result",
+				turnId: id,
+				payload: { toolName: ToolNames.Bash, toolCallId: id, isError: exitCode !== 0, result: { details: { exitCode } } },
+			},
+		];
+		const failingCheck = [...bash("lint-1", "npm run lint", 0), ...bash("tsc-1", "npx tsc --noEmit", 2)];
+		for (const claim of ["partly_done", "not_done"] as const) {
+			const turn = finishGateTurn(false, { checks: failingCheck });
+			turn.state.turnCompletion = { state: claim, limitations: [], unverified: [] };
+			await turn.finish();
+			deepStrictEqual(
+				[turn.state.turnSealedCompletion?.claimed, turn.state.turnSealedCompletion?.assessed],
+				[claim, claim],
+			);
+			deepStrictEqual(turn.state.turnSealedCompletion?.facts, ["failed_check"]);
+			strictEqual(turn.state.continuation.requested, false);
+			deepStrictEqual([turn.notices, turn.footer, turn.nudges], [[], [], []]);
+			strictEqual(turn.middleware.flushPendingReminders(), "");
+		}
+	} finally {
+		process.chdir(cwd);
+	}
+});

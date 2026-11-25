@@ -1,0 +1,1344 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Append-only coordinator evidence for review and compete decisions.
+ *
+ * Worker receipts seal before a reviewer verdict or judge winner can be
+ * parsed. Mutating those receipts would invalidate their evidence, so the
+ * coordinator writes a separate integrity-covered artifact that links the
+ * decider receipt to every subject receipt. One file per decision keeps the
+ * crash boundary atomic and makes pass/fail/winner evidence recoverable
+ * without an in-memory tool result.
+ */
+
+import { randomBytes } from "node:crypto";
+import type { Stats } from "node:fs";
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, rmSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { Value } from "typebox/value";
+import { sha256Hex } from "../../core/hash.js";
+import { parseJsonObjectPayload } from "../../core/json-payload.js";
+import { listStateDirectorySync, readStateFileSync } from "../../core/state-boundary.js";
+import type { TelemetryContext } from "../../core/telemetry/context.js";
+import { TelemetryContextSchema, telemetryContext } from "../../core/telemetry/context.js";
+import type { EventPayload } from "../../core/telemetry/events.js";
+import { isRecord } from "../../core/type-guards.js";
+import { pancodeStateDir } from "../../core/xdg.js";
+import { atomicWrite } from "../../engine/session.js";
+import { parseGateCites, parseReviewVerdict, parseVerifierResult } from "../agents/result-contract-gate.js";
+import type { ResultContract, VerifierCheck, VerifierResult } from "../agents/result-contract-types.js";
+import { publishGateDecision } from "../telemetry/index.js";
+import type { GateRouteCorrelation } from "./execution-role.js";
+import type { GateVerdictFacts } from "./grading.js";
+import type { RunGateSubjectRef } from "./types.js";
+
+export type GateDecisionOutcome =
+	| "pass"
+	| "fail"
+	| "revise"
+	| "exhausted"
+	| "winner"
+	| "no-winner"
+	| "operator-confirmed"
+	| "yolo-applied";
+
+export interface GateDecisionRef {
+	id: string;
+	digest: string;
+}
+
+/**
+ * Sealed correlation between the decider route and the subject route it graded.
+ *
+ * A verdict from a route that shares the subject's agent or model family is a
+ * measurement of the same system twice. Recording the correlation on the
+ * decision means a small fleet still produces a usable audit trail: the gate is
+ * visible and its independence is a stated fact rather than an assumption.
+ */
+export type GateDecisionCorrelation = Pick<
+	GateRouteCorrelation,
+	"agent" | "target" | "modelFamily" | "runtime" | "node" | "independent"
+>;
+
+export interface GateDecisionArtifact {
+	version: 2;
+	id: string;
+	group: string;
+	topology: "review" | "compete";
+	cycle: number;
+	outcome: GateDecisionOutcome;
+	subjects: RunGateSubjectRef[];
+	decider?: RunGateSubjectRef;
+	/** Required whenever a decider run produced this decision. */
+	correlation?: GateDecisionCorrelation;
+	winner?: { index: number; subject: RunGateSubjectRef; branch: string };
+	/** Prior judge decision explicitly confirmed by a supervised operator. */
+	confirmation?: GateDecisionRef;
+	detail?: string;
+	createdAt: string;
+	integrity: { algorithm: "sha256"; digest: string };
+}
+
+// ---------------------------------------------------------------------------
+// Structured gate results
+// ---------------------------------------------------------------------------
+
+/**
+ * A gate result is a typed answer to the coordinator's question, not a trailing
+ * prose line. Two schemas exist because the two topologies ask different
+ * questions:
+ *
+ *   - Review asks "does this work pass?", which is exactly the
+ *     `verifier-report` contract. There is deliberately no `revise` verdict:
+ *     whether a failure is worth another cycle is the coordinator's bounded
+ *     continuation policy, not a decision the reviewed model gets to author.
+ *   - Compete asks "which candidate wins?", which no recipe contract expresses
+ *     because it is a property of the topology rather than of any one agent.
+ *     That schema therefore lives here, next to the winner shape the decision
+ *     artifact already validates, and reuses the same typed check evidence.
+ */
+export type GateCheck = VerifierCheck;
+
+export type ReviewGateResult = VerifierResult;
+
+export interface CompeteGateResult {
+	/** 1-based candidate ordinal, validated against the enumerated subjects. */
+	winner: number;
+	checks: ReadonlyArray<GateCheck>;
+}
+
+export type GateResultParse<T> = { ok: true; result: T } | { ok: false; reason: string };
+
+/** Parse a reviewer answer under its review-verdict contract, or a Hoare verifier report a playbook check may return. */
+function parseReviewGateResult(output: string): GateResultParse<ReviewGateResult> {
+	const result = parseReviewVerdict(output) ?? parseVerifierResult(output);
+	return result === null
+		? { ok: false, reason: "reviewer did not return a valid review verdict" }
+		: { ok: true, result };
+}
+
+/** The packet ids a verdict's checks cite, deduplicated in order: the references a decision records (M10). */
+function citedPacketIds(checks: ReadonlyArray<GateCheck>): string[] {
+	return [...new Set(checks.flatMap((check) => check.cites ?? []))];
+}
+
+/** The packet ids a verdict's checks cite, as a decision's detail records them (M10). */
+export function verdictCitesDetail(checks: ReadonlyArray<GateCheck>): string {
+	const cited = citedPacketIds(checks);
+	return cited.length === 0 ? "cites=none" : `cites=${cited.join(",")}`;
+}
+
+/**
+ * What the grader sealed about a gate decider's run (DESIGN 4.8): whether it left its cited-evidence obligation unmet,
+ * which is a verdict citing none of its evidence packet, a citation of an id the packet does not hold, or a pass
+ * resting on checks its report claims and never ran. The gate reads the sealed verdict and counts nothing itself.
+ */
+export interface ReviewerInspection {
+	obligationUnmet: boolean;
+}
+
+export function reviewerInspectionOf(run: {
+	outcomeCode?: string | null;
+	verdict?: { obligation: string } | null;
+}): ReviewerInspection {
+	return { obligationUnmet: run.outcomeCode === "obligation_unmet" && run.verdict?.obligation === "cited-evidence" };
+}
+
+export interface ReviewGateDecisionInput {
+	group: string;
+	cycle: number;
+	/** True when this cycle is the configured bound, so a failure is terminal. */
+	terminalCycle: boolean;
+	subjects: RunGateSubjectRef[];
+	decider: RunGateSubjectRef;
+	correlation: GateDecisionCorrelation;
+	output: string;
+	reviewer: ReviewerInspection;
+}
+
+export interface ReviewGateDecision {
+	draft: GateDecisionDraft;
+	/** Terminal verdict, or null when the gate continues or needs the operator. */
+	verdict: "pass" | "fail" | null;
+	/** Structured findings threaded to the next builder, or null when the gate ended. */
+	findings: string | null;
+	/** Operator-facing reason when the gate ended without a verdict. */
+	needsDecision: string | null;
+	/** The checks the reviewer failed, so a fail or revise can be read where it is announced. */
+	failedChecks: ReadonlyArray<GateCheck>;
+}
+
+/**
+ * Apply the coordinator's review policy to one reviewer answer.
+ *
+ * The reviewer answers pass or fail under its verifier-report contract and nothing
+ * else. `revise` is this function's bounded continuation decision: a failure
+ * with cycles left earns another builder attempt, the same failure at the bound
+ * is simply the terminal fail, and an answer that does not satisfy the contract
+ * is a broken gate rather than a free extra cycle. The live loop and the
+ * crash-replay path share this so a recovered decision is byte-identical to the
+ * one the original process would have written.
+ */
+export function decideReviewGate(input: ReviewGateDecisionInput): ReviewGateDecision {
+	const base = {
+		group: input.group,
+		topology: "review" as const,
+		cycle: input.cycle,
+		subjects: input.subjects,
+		decider: input.decider,
+		correlation: input.correlation,
+	};
+	const parsed = parseReviewGateResult(input.output);
+	if (!parsed.ok) {
+		return {
+			draft: { ...base, outcome: "exhausted", detail: parsed.reason },
+			verdict: null,
+			findings: null,
+			needsDecision: `review gate produced no structured verdict in cycle ${input.cycle}: ${parsed.reason}`,
+			failedChecks: [],
+		};
+	}
+	const facts = `obligation=cited-evidence:${input.reviewer.obligationUnmet ? "unmet" : "met"}; ${verdictCitesDetail(parsed.result.checks)}`;
+	const failed = parsed.result.checks.filter((check) => !check.passed);
+	// A pass the reviewer never looked behind is a broken gate, not a verdict.
+	if (parsed.result.verdict === "pass" && input.reviewer.obligationUnmet) {
+		const reason = "the reviewer passed the work without inspecting it: obligation cited-evidence unmet";
+		return {
+			draft: { ...base, outcome: "exhausted", detail: `${reason}; ${facts}` },
+			verdict: null,
+			findings: null,
+			needsDecision: `review gate in cycle ${input.cycle}: ${reason}`,
+			failedChecks: failed,
+		};
+	}
+	if (parsed.result.verdict === "pass" || input.terminalCycle) {
+		return {
+			draft: { ...base, outcome: parsed.result.verdict, detail: facts },
+			verdict: parsed.result.verdict,
+			findings: null,
+			needsDecision: null,
+			failedChecks: failed,
+		};
+	}
+	return {
+		draft: {
+			...base,
+			outcome: "revise",
+			detail: `reviewer reported ${failed.length} failed check(s); ${verdictCitesDetail(parsed.result.checks)}`,
+		},
+		verdict: null,
+		findings: JSON.stringify({
+			verdict: "fail",
+			checks: failed,
+			...(parsed.result.assurance !== undefined ? { assurance: parsed.result.assurance } : {}),
+		}),
+		needsDecision: null,
+		failedChecks: failed,
+	};
+}
+
+function parseGateChecks(value: unknown): GateCheck[] | null {
+	if (!Array.isArray(value) || value.length === 0) return null;
+	const checks: GateCheck[] = [];
+	for (const entry of value) {
+		if (!isRecord(entry)) return null;
+		const keys = Object.keys(entry);
+		const cites = parseGateCites(entry.cites);
+		if (
+			keys.some((key) => key !== "name" && key !== "passed" && key !== "evidence" && key !== "cites") ||
+			cites === null ||
+			typeof entry.name !== "string" ||
+			entry.name.trim().length === 0 ||
+			typeof entry.passed !== "boolean" ||
+			typeof entry.evidence !== "string" ||
+			entry.evidence.trim().length === 0
+		) {
+			return null;
+		}
+		checks.push({
+			name: entry.name,
+			passed: entry.passed,
+			evidence: entry.evidence,
+			...(cites !== undefined ? { cites } : {}),
+		});
+	}
+	return checks;
+}
+
+/** Parse a judge answer. The winner must name an enumerated candidate ordinal. */
+export function parseCompeteGateResult(output: string, candidateCount: number): GateResultParse<CompeteGateResult> {
+	const parsed = parseJsonObjectPayload(output);
+	if (!parsed.ok) {
+		return {
+			ok: false,
+			reason: parsed.reason === "not-object" ? "judge result must be a JSON object" : "judge result must be valid JSON",
+		};
+	}
+	const value = parsed.value;
+	if (Object.keys(value).some((key) => key !== "winner" && key !== "checks")) {
+		return { ok: false, reason: "judge result has unknown fields" };
+	}
+	const winner = value.winner;
+	if (typeof winner !== "number" || !Number.isSafeInteger(winner) || winner < 1 || winner > candidateCount) {
+		return { ok: false, reason: `judge winner must be an integer 1..${candidateCount}` };
+	}
+	const checks = parseGateChecks(value.checks);
+	if (checks === null) return { ok: false, reason: "judge result must carry typed checks with evidence" };
+	return { ok: true, result: { winner, checks } };
+}
+
+export type GateDecisionDraft = Omit<GateDecisionArtifact, "version" | "id" | "createdAt" | "integrity"> & {
+	createdAt?: string;
+};
+
+/**
+ * The typed fields of a gate decider's answer the grader reads (M10): a reviewer's verdict, and each check's citations
+ * of its evidence packet. Null for a run with no gate verdict contract, a council synthesis, or an answer that does not
+ * parse under its contract.
+ */
+export function gateVerdictFactsOf(
+	contract: ResultContract | null,
+	output: string | null,
+	ground: (claim: { name: string; evidence: string }) => { command: boolean; ran: boolean },
+): GateVerdictFacts | null {
+	const cites = (checks: ReadonlyArray<GateCheck>) =>
+		checks.map((check) => ({
+			name: check.name,
+			cites: [...(check.cites ?? [])],
+			passed: check.passed,
+			...ground({ name: check.name, evidence: check.evidence }),
+		}));
+	if (contract?.kind === "review-verdict") {
+		const parsed = parseReviewVerdict(output);
+		return parsed === null ? null : { verdict: parsed.verdict, checks: cites(parsed.checks) };
+	}
+	if (contract?.kind === "judge-verdict" && contract.candidates !== undefined && output !== null) {
+		const parsed = parseCompeteGateResult(output, contract.candidates);
+		return parsed.ok ? { verdict: null, checks: cites(parsed.result.checks) } : null;
+	}
+	return null;
+}
+
+export type GateDecisionVerification = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Raw terminal output staged as soon as the reviewer/judge event stream
+ * settles. At this point the decider receipt may still be finalizing, so the
+ * run id is durable but its receipt digest is intentionally not guessed.
+ */
+export interface PendingGateOutputDraft {
+	telemetry?: TelemetryContext;
+	group: string;
+	topology: "review" | "compete";
+	cycle: number;
+	subjects: RunGateSubjectRef[];
+	deciderRunId: string;
+	finalOutput: string;
+	/** Review cycle bound was reached; revise/unparseable also implies exhaustion. */
+	terminalCycle?: boolean;
+	/** Repository resource owner for compete restart settlement. */
+	resourceRoot?: string;
+	createdAt?: string;
+}
+
+export interface PendingGateOutputRecord {
+	telemetry: TelemetryContext;
+	version: 1;
+	kind: "output";
+	id: string;
+	group: string;
+	topology: "review" | "compete";
+	cycle: number;
+	subjects: RunGateSubjectRef[];
+	deciderRunId: string;
+	finalOutput: string;
+	terminalCycle?: boolean;
+	resourceRoot?: string;
+	createdAt: string;
+	integrity: { algorithm: "sha256"; digest: string };
+}
+
+/**
+ * A fully resolved decision waiting to be materialized. The nested artifact
+ * already has its final id and digest, making replay safe when a process dies
+ * after the artifact rename but before pending-file removal.
+ */
+export interface PendingGateArtifactRecord {
+	telemetry: TelemetryContext;
+	version: 1;
+	kind: "decision";
+	id: string;
+	decision: GateDecisionArtifact;
+	finalOutput?: string;
+	resourceRoot?: string;
+	createdAt: string;
+	integrity: { algorithm: "sha256"; digest: string };
+}
+
+export type PendingGateDecisionRecord = PendingGateOutputRecord | PendingGateArtifactRecord;
+
+export interface PendingGateDecisionHandle {
+	record: PendingGateDecisionRecord;
+	path: string;
+	stateDir: string;
+}
+
+export interface PendingGateDecisionReadResult {
+	records: PendingGateDecisionHandle[];
+	/** `runIds` are read leniently from a damaged record so it can still be attributed to its owner. */
+	errors: Array<{ path: string; message: string; runIds: string[] }>;
+}
+
+/**
+ * Whether this session owns one run: true or false for a run it knows, null
+ * for a run it cannot see (evicted, or written by a process after this one
+ * opened its ledger).
+ */
+export type PendingGateRunOwnership = (runId: string) => boolean | null;
+
+export interface PendingGateDecisionRecoveryOptions {
+	/**
+	 * Recover only records this session owns. The journal is machine-wide, and
+	 * without this filter every dispatch call in every session recovered every
+	 * record: a live compete in one project made the next dispatch anywhere
+	 * fail closed on "still has a live coordinator", and a record whose decider
+	 * receipt was not sealed yet failed it on the missing receipt. Absent means
+	 * every record.
+	 */
+	ownsRun?: PendingGateRunOwnership;
+}
+
+export interface PendingGateDecisionRecoveryPlan {
+	/** Resolved records that passed final-artifact collision checks but are not materialized yet. */
+	ready: PendingGateDecisionHandle[];
+	/** Output-first records need the caller's protocol/policy parser and receipt digest. */
+	unresolved: PendingGateDecisionHandle[];
+}
+
+export interface StagePendingGateDecisionOptions {
+	telemetry?: TelemetryContext;
+	/** Exact final assistant output, retained until the artifact is durable. */
+	finalOutput?: string;
+	resourceRoot?: string;
+	stateDir?: string;
+}
+
+/**
+ * Where the durable decision artifacts live.
+ *
+ * Exported so a read-only projection can bound its own scan without duplicating
+ * the layout. Nothing outside this module may compose an artifact path from it.
+ */
+export function gateDecisionsDirectory(stateDir = pancodeStateDir()): string {
+	return join(stateDir, "gate-decisions");
+}
+
+function pendingDecisionsDirectory(stateDir = pancodeStateDir()): string {
+	return join(gateDecisionsDirectory(stateDir), "pending");
+}
+
+/** A gate directory's names; none when it is missing, symlinked or outside the state root, and other errors throw. */
+function listGateDirectory(stateDir: string, directory: string): string[] {
+	try {
+		return listStateDirectorySync(stateDir, directory);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		throw error;
+	}
+}
+
+function isSubjectRef(value: unknown): value is RunGateSubjectRef {
+	if (!isRecord(value) || typeof value.runId !== "string" || value.runId.trim().length === 0) return false;
+	return typeof value.digest === "string" && /^[0-9a-f]{64}$/.test(value.digest);
+}
+
+function isSafeDecisionId(value: unknown): value is string {
+	return typeof value === "string" && value.length > 0 && value.length <= 256 && /^[A-Za-z0-9._-]+$/.test(value);
+}
+
+function isCorrelation(value: unknown): value is GateDecisionCorrelation {
+	if (!isRecord(value)) return false;
+	const fields = ["agent", "target", "modelFamily", "runtime", "node", "independent"] as const;
+	if (Object.keys(value).some((key) => !(fields as ReadonlyArray<string>).includes(key))) return false;
+	if (!fields.every((field) => typeof value[field] === "boolean")) return false;
+	// The independence rule is part of the sealed fact, not the writer's opinion:
+	// a shared agent or model family is what makes a verdict self-confirming.
+	return value.independent === (!value.agent && !value.modelFamily);
+}
+
+function semanticError(value: unknown): string | null {
+	if (!isRecord(value)) return "gate decision is not an object";
+	const { outcome } = value;
+	if (value.version !== 2) return "unsupported gate decision version";
+	if (!isSafeDecisionId(value.id)) return "gate decision id invalid";
+	if (typeof value.group !== "string" || value.group.length === 0) return "gate decision group invalid";
+	if (value.topology !== "review" && value.topology !== "compete") return "gate decision topology invalid";
+	if (typeof value.cycle !== "number" || !Number.isInteger(value.cycle) || value.cycle < 1) {
+		return "gate decision cycle invalid";
+	}
+	const reviewOutcome = outcome === "pass" || outcome === "fail" || outcome === "revise" || outcome === "exhausted";
+	// A compete gate is exhausted when its judge left its cited-evidence obligation unmet (M10); the operator decides.
+	const competeOutcome =
+		outcome === "winner" ||
+		outcome === "no-winner" ||
+		outcome === "exhausted" ||
+		outcome === "operator-confirmed" ||
+		outcome === "yolo-applied";
+	if ((value.topology === "review" && !reviewOutcome) || (value.topology === "compete" && !competeOutcome)) {
+		return "gate decision outcome is incompatible with topology";
+	}
+	if (!Array.isArray(value.subjects) || value.subjects.length === 0 || !value.subjects.every(isSubjectRef)) {
+		return "gate decision subjects invalid";
+	}
+	if (value.decider !== undefined && !isSubjectRef(value.decider)) return "gate decision decider invalid";
+	if (value.decider === undefined) {
+		if (value.correlation !== undefined) return "gate decision correlation requires a decider";
+	} else if (!isCorrelation(value.correlation)) {
+		return "gate decision correlation invalid";
+	}
+	if (typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt))) {
+		return "gate decision timestamp invalid";
+	}
+	const needsWinner = outcome === "winner" || outcome === "operator-confirmed" || outcome === "yolo-applied";
+	if (needsWinner) {
+		if (
+			!isRecord(value.winner) ||
+			typeof value.winner.index !== "number" ||
+			!Number.isInteger(value.winner.index) ||
+			value.winner.index < 1 ||
+			!isSubjectRef(value.winner.subject) ||
+			typeof value.winner.branch !== "string" ||
+			value.winner.branch !== `pancode/compete/${value.group}/${value.winner.index}`
+		) {
+			return "gate decision winner invalid";
+		}
+		const winnerSubject = value.winner.subject as RunGateSubjectRef;
+		if (!value.subjects.some((subject) => subject.runId === winnerSubject.runId)) {
+			return "gate decision winner is not a subject";
+		}
+	} else if (value.winner !== undefined) {
+		return "gate decision winner is not valid for this outcome";
+	}
+	const needsConfirmation = outcome === "operator-confirmed" || outcome === "yolo-applied";
+	if (needsConfirmation) {
+		if (
+			!isRecord(value.confirmation) ||
+			typeof value.confirmation.id !== "string" ||
+			value.confirmation.id.length === 0 ||
+			typeof value.confirmation.digest !== "string" ||
+			!/^[0-9a-f]{64}$/.test(value.confirmation.digest)
+		) {
+			return "gate decision confirmation invalid";
+		}
+	} else if (value.confirmation !== undefined) {
+		return "gate decision confirmation is not valid for this outcome";
+	}
+	if (value.detail !== undefined && typeof value.detail !== "string") return "gate decision detail invalid";
+	if (
+		!isRecord(value.integrity) ||
+		value.integrity.algorithm !== "sha256" ||
+		typeof value.integrity.digest !== "string"
+	) {
+		return "gate decision integrity invalid";
+	}
+	return null;
+}
+
+function safeGroup(group: string): string {
+	const safe = group.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 128);
+	return safe.length > 0 ? safe : "gate";
+}
+
+function newDecisionId(group: string): string {
+	return `${safeGroup(group)}-${Date.now().toString(36)}-${randomBytes(6).toString("hex")}`;
+}
+
+function decisionArtifactPath(id: string, stateDir = pancodeStateDir()): string {
+	return join(gateDecisionsDirectory(stateDir), `${id}.json`);
+}
+
+function pendingDecisionPath(id: string, stateDir = pancodeStateDir()): string {
+	return join(pendingDecisionsDirectory(stateDir), `${id}.json`);
+}
+
+function decisionPayload(decision: Omit<GateDecisionArtifact, "integrity">): Record<string, unknown> {
+	return {
+		contract: "pancode.gateDecision.integrity",
+		version: decision.version,
+		id: decision.id,
+		group: decision.group,
+		topology: decision.topology,
+		cycle: decision.cycle,
+		outcome: decision.outcome,
+		subjects: decision.subjects.map((subject) => ({ runId: subject.runId, digest: subject.digest })),
+		...(decision.decider !== undefined
+			? { decider: { runId: decision.decider.runId, digest: decision.decider.digest } }
+			: {}),
+		...(decision.correlation !== undefined ? { correlation: { ...decision.correlation } } : {}),
+		...(decision.winner !== undefined
+			? {
+					winner: {
+						index: decision.winner.index,
+						subject: {
+							runId: decision.winner.subject.runId,
+							digest: decision.winner.subject.digest,
+						},
+						branch: decision.winner.branch,
+					},
+				}
+			: {}),
+		...(decision.confirmation !== undefined
+			? { confirmation: { id: decision.confirmation.id, digest: decision.confirmation.digest } }
+			: {}),
+		...(decision.detail !== undefined ? { detail: decision.detail } : {}),
+		createdAt: decision.createdAt,
+	};
+}
+
+function decisionDigest(decision: Omit<GateDecisionArtifact, "integrity">): string {
+	return sha256Hex(JSON.stringify(decisionPayload(decision)));
+}
+
+function artifactWithoutIntegrity(artifact: GateDecisionArtifact): Omit<GateDecisionArtifact, "integrity"> {
+	const result: Omit<GateDecisionArtifact, "integrity"> = {
+		version: artifact.version,
+		id: artifact.id,
+		group: artifact.group,
+		topology: artifact.topology,
+		cycle: artifact.cycle,
+		outcome: artifact.outcome,
+		subjects: artifact.subjects.map((subject) => ({ ...subject })),
+		createdAt: artifact.createdAt,
+	};
+	if (artifact.decider !== undefined) result.decider = { ...artifact.decider };
+	if (artifact.correlation !== undefined) result.correlation = { ...artifact.correlation };
+	if (artifact.winner !== undefined) {
+		result.winner = {
+			index: artifact.winner.index,
+			subject: { ...artifact.winner.subject },
+			branch: artifact.winner.branch,
+		};
+	}
+	if (artifact.confirmation !== undefined) result.confirmation = { ...artifact.confirmation };
+	if (artifact.detail !== undefined) result.detail = artifact.detail;
+	return result;
+}
+
+export function verifyGateDecisionArtifact(artifact: GateDecisionArtifact): GateDecisionVerification {
+	const invalid = semanticError(artifact);
+	if (invalid !== null) return { ok: false, reason: invalid };
+	if (!/^[0-9a-f]{64}$/.test(artifact.integrity.digest)) return { ok: false, reason: "gate decision integrity invalid" };
+	const withoutIntegrity = artifactWithoutIntegrity(artifact);
+	return decisionDigest(withoutIntegrity) === artifact.integrity.digest
+		? { ok: true }
+		: { ok: false, reason: "gate decision integrity mismatch" };
+}
+
+function buildGateDecisionArtifact(
+	draft: GateDecisionDraft,
+	id = newDecisionId(draft.group),
+	createdAt = draft.createdAt ?? new Date().toISOString(),
+): GateDecisionArtifact {
+	if (draft.group.trim().length === 0) throw new Error("gate decision group is required");
+	if (!Number.isInteger(draft.cycle) || draft.cycle < 1)
+		throw new Error("gate decision cycle must be a positive integer");
+	if (draft.subjects.length === 0) throw new Error("gate decision requires at least one subject run");
+	const withoutIntegrity: Omit<GateDecisionArtifact, "integrity"> = {
+		version: 2,
+		id,
+		group: draft.group,
+		topology: draft.topology,
+		cycle: draft.cycle,
+		outcome: draft.outcome,
+		subjects: draft.subjects.map((subject) => ({ ...subject })),
+		createdAt,
+	};
+	if (draft.decider !== undefined) withoutIntegrity.decider = { ...draft.decider };
+	if (draft.correlation !== undefined) withoutIntegrity.correlation = { ...draft.correlation };
+	if (draft.winner !== undefined) {
+		withoutIntegrity.winner = {
+			index: draft.winner.index,
+			subject: { ...draft.winner.subject },
+			branch: draft.winner.branch,
+		};
+	}
+	if (draft.confirmation !== undefined) withoutIntegrity.confirmation = { ...draft.confirmation };
+	if (draft.detail !== undefined) withoutIntegrity.detail = draft.detail;
+	const artifact: GateDecisionArtifact = {
+		...withoutIntegrity,
+		integrity: { algorithm: "sha256", digest: decisionDigest(withoutIntegrity) },
+	};
+	const verification = verifyGateDecisionArtifact(artifact);
+	if (!verification.ok) throw new Error(verification.reason);
+	return artifact;
+}
+
+/** Every gate file is read through the state boundary: a symlinked or escaping file is never opened (#434). */
+function readStateJson(stateDir: string, path: string): unknown {
+	return JSON.parse(readStateFileSync(stateDir, path).toString("utf8")) as unknown;
+}
+
+function readVerifiedArtifact(stateDir: string, path: string): GateDecisionArtifact {
+	let value: unknown;
+	try {
+		value = readStateJson(stateDir, path);
+	} catch (error) {
+		throw new Error(
+			`gate decision artifact is unreadable at ${path}: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	const artifact = value as GateDecisionArtifact;
+	const verification = verifyGateDecisionArtifact(artifact);
+	if (!verification.ok) throw new Error(`gate decision artifact is invalid at ${path}: ${verification.reason}`);
+	return artifact;
+}
+
+function persistGateDecisionArtifact(
+	artifact: GateDecisionArtifact,
+	stateDir: string,
+	allowIdenticalExisting: boolean,
+): { artifact: GateDecisionArtifact; path: string } {
+	const verification = verifyGateDecisionArtifact(artifact);
+	if (!verification.ok) throw new Error(verification.reason);
+	const directory = gateDecisionsDirectory(stateDir);
+	mkdirSync(directory, { recursive: true });
+	const path = decisionArtifactPath(artifact.id, stateDir);
+	if (existsSync(path)) {
+		const existing = readVerifiedArtifact(stateDir, path);
+		if (
+			allowIdenticalExisting &&
+			existing.id === artifact.id &&
+			existing.integrity.digest === artifact.integrity.digest
+		) {
+			return { artifact: existing, path };
+		}
+		throw new Error(`gate decision artifact collision: ${artifact.id}`);
+	}
+	atomicWrite(path, JSON.stringify(artifact, null, 2));
+	return { artifact, path };
+}
+
+/**
+ * The decision as `gate.decided` carries it: identities, verdict, the decider's independence and digest; findings stay
+ * in the artifact. The journal record is what later readers trust; the artifact stays dispatch state (#434).
+ */
+function gateDecidedFacts(artifact: GateDecisionArtifact): EventPayload<"gate.decided"> {
+	return {
+		decisionId: artifact.id,
+		group: artifact.group,
+		topology: artifact.topology,
+		cycle: artifact.cycle,
+		outcome: artifact.outcome,
+		subjects: artifact.subjects.map((subject) => ({ runId: subject.runId, digest: subject.digest })),
+		...(artifact.decider !== undefined
+			? { decider: { runId: artifact.decider.runId, digest: artifact.decider.digest } }
+			: {}),
+		...(artifact.correlation !== undefined ? { independent: artifact.correlation.independent } : {}),
+		...(artifact.winner !== undefined
+			? { winner: { index: artifact.winner.index, runId: artifact.winner.subject.runId } }
+			: {}),
+		...(artifact.confirmation !== undefined ? { confirms: artifact.confirmation.id } : {}),
+		digest: artifact.integrity.digest,
+	};
+}
+
+type PendingGateRecordWithoutIntegrity =
+	| Omit<PendingGateOutputRecord, "integrity">
+	| Omit<PendingGateArtifactRecord, "integrity">;
+
+function cloneGateDecisionArtifact(artifact: GateDecisionArtifact): GateDecisionArtifact {
+	return {
+		...artifactWithoutIntegrity(artifact),
+		integrity: { ...artifact.integrity },
+	};
+}
+
+function pendingRecordPayload(record: PendingGateRecordWithoutIntegrity): Record<string, unknown> {
+	if (record.kind === "output") {
+		return {
+			contract: "pancode.gateDecision.pending",
+			version: record.version,
+			telemetry: { ...record.telemetry },
+			kind: record.kind,
+			id: record.id,
+			group: record.group,
+			topology: record.topology,
+			cycle: record.cycle,
+			subjects: record.subjects.map((subject) => ({ runId: subject.runId, digest: subject.digest })),
+			deciderRunId: record.deciderRunId,
+			finalOutput: record.finalOutput,
+			...(record.terminalCycle !== undefined ? { terminalCycle: record.terminalCycle } : {}),
+			...(record.resourceRoot !== undefined ? { resourceRoot: record.resourceRoot } : {}),
+			createdAt: record.createdAt,
+		};
+	}
+	const decisionWithoutIntegrity = artifactWithoutIntegrity(record.decision);
+	return {
+		contract: "pancode.gateDecision.pending",
+		version: record.version,
+		telemetry: { ...record.telemetry },
+		kind: record.kind,
+		id: record.id,
+		decision: {
+			...decisionPayload(decisionWithoutIntegrity),
+			integrity: { ...record.decision.integrity },
+		},
+		...(record.finalOutput !== undefined ? { finalOutput: record.finalOutput } : {}),
+		...(record.resourceRoot !== undefined ? { resourceRoot: record.resourceRoot } : {}),
+		createdAt: record.createdAt,
+	};
+}
+
+function pendingRecordDigest(record: PendingGateRecordWithoutIntegrity): string {
+	return sha256Hex(JSON.stringify(pendingRecordPayload(record)));
+}
+
+function pendingRecordWithoutIntegrity(record: PendingGateDecisionRecord): PendingGateRecordWithoutIntegrity {
+	if (record.kind === "output") {
+		return {
+			version: record.version,
+			telemetry: { ...record.telemetry },
+			kind: record.kind,
+			id: record.id,
+			group: record.group,
+			topology: record.topology,
+			cycle: record.cycle,
+			subjects: record.subjects.map((subject) => ({ ...subject })),
+			deciderRunId: record.deciderRunId,
+			finalOutput: record.finalOutput,
+			...(record.terminalCycle !== undefined ? { terminalCycle: record.terminalCycle } : {}),
+			...(record.resourceRoot !== undefined ? { resourceRoot: record.resourceRoot } : {}),
+			createdAt: record.createdAt,
+		};
+	}
+	return {
+		version: record.version,
+		telemetry: { ...record.telemetry },
+		kind: record.kind,
+		id: record.id,
+		decision: cloneGateDecisionArtifact(record.decision),
+		...(record.finalOutput !== undefined ? { finalOutput: record.finalOutput } : {}),
+		...(record.resourceRoot !== undefined ? { resourceRoot: record.resourceRoot } : {}),
+		createdAt: record.createdAt,
+	};
+}
+
+function pendingSemanticError(value: unknown): string | null {
+	if (!isRecord(value)) return "pending gate decision is not an object";
+	if (value.version !== 1) return "unsupported pending gate decision version";
+	if (!Value.Check(TelemetryContextSchema, value.telemetry)) return "pending gate decision telemetry context invalid";
+	if (!isSafeDecisionId(value.id)) return "pending gate decision id invalid";
+	if (typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt))) {
+		return "pending gate decision timestamp invalid";
+	}
+	if (
+		!isRecord(value.integrity) ||
+		value.integrity.algorithm !== "sha256" ||
+		typeof value.integrity.digest !== "string" ||
+		!/^[0-9a-f]{64}$/.test(value.integrity.digest)
+	) {
+		return "pending gate decision integrity invalid";
+	}
+	if (value.kind === "output") {
+		if (typeof value.group !== "string" || value.group.trim().length === 0) {
+			return "pending gate output group invalid";
+		}
+		if (value.topology !== "review" && value.topology !== "compete") {
+			return "pending gate output topology invalid";
+		}
+		if (typeof value.cycle !== "number" || !Number.isInteger(value.cycle) || value.cycle < 1) {
+			return "pending gate output cycle invalid";
+		}
+		if (!Array.isArray(value.subjects) || value.subjects.length === 0 || !value.subjects.every(isSubjectRef)) {
+			return "pending gate output subjects invalid";
+		}
+		if (typeof value.deciderRunId !== "string" || value.deciderRunId.trim().length === 0) {
+			return "pending gate output decider run id invalid";
+		}
+		if (typeof value.finalOutput !== "string") return "pending gate output text invalid";
+		if (value.terminalCycle !== undefined && typeof value.terminalCycle !== "boolean") {
+			return "pending gate output terminal-cycle marker invalid";
+		}
+		if (value.resourceRoot !== undefined && (typeof value.resourceRoot !== "string" || value.resourceRoot.length === 0)) {
+			return "pending gate output resource root invalid";
+		}
+		return null;
+	}
+	if (value.kind !== "decision") return "pending gate decision kind invalid";
+	if (!isRecord(value.decision)) return "pending gate decision artifact invalid";
+	const verification = verifyGateDecisionArtifact(value.decision as unknown as GateDecisionArtifact);
+	if (!verification.ok) return `pending gate decision artifact invalid: ${verification.reason}`;
+	if (value.decision.id !== value.id) return "pending gate decision artifact id mismatch";
+	if (value.decision.createdAt !== value.createdAt) return "pending gate decision artifact timestamp mismatch";
+	if (value.finalOutput !== undefined && typeof value.finalOutput !== "string") {
+		return "pending gate decision output invalid";
+	}
+	if (value.resourceRoot !== undefined && (typeof value.resourceRoot !== "string" || value.resourceRoot.length === 0)) {
+		return "pending gate decision resource root invalid";
+	}
+	return null;
+}
+
+/** Verify both the pending envelope and its nested final artifact, when resolved. */
+function verifyPendingGateDecisionRecord(record: PendingGateDecisionRecord): GateDecisionVerification {
+	const invalid = pendingSemanticError(record);
+	if (invalid !== null) return { ok: false, reason: invalid };
+	const withoutIntegrity = pendingRecordWithoutIntegrity(record);
+	return pendingRecordDigest(withoutIntegrity) === record.integrity.digest
+		? { ok: true }
+		: { ok: false, reason: "pending gate decision integrity mismatch" };
+}
+
+function clonePendingGateDecisionRecord(record: PendingGateDecisionRecord): PendingGateDecisionRecord {
+	const without = pendingRecordWithoutIntegrity(record);
+	return {
+		...without,
+		integrity: { ...record.integrity },
+	} as PendingGateDecisionRecord;
+}
+
+function parsePendingGateDecisionRecord(value: unknown): PendingGateDecisionRecord {
+	const invalid = pendingSemanticError(value);
+	if (invalid !== null) throw new Error(invalid);
+	const record = clonePendingGateDecisionRecord(value as PendingGateDecisionRecord);
+	const verification = verifyPendingGateDecisionRecord(record);
+	if (!verification.ok) throw new Error(verification.reason);
+	return record;
+}
+
+function assertPendingHandlePath(handle: PendingGateDecisionHandle): void {
+	const expected = pendingDecisionPath(handle.record.id, handle.stateDir);
+	if (resolve(handle.path) !== resolve(expected)) {
+		throw new Error(`pending gate decision path does not match id ${handle.record.id}`);
+	}
+}
+
+function pendingHandle(record: PendingGateDecisionRecord, stateDir: string): PendingGateDecisionHandle {
+	return {
+		record: clonePendingGateDecisionRecord(record),
+		path: pendingDecisionPath(record.id, stateDir),
+		stateDir,
+	};
+}
+
+function persistPendingGateDecision(
+	record: PendingGateDecisionRecord,
+	stateDir: string,
+	allowReplace: boolean,
+): PendingGateDecisionHandle {
+	const verification = verifyPendingGateDecisionRecord(record);
+	if (!verification.ok) throw new Error(verification.reason);
+	const path = pendingDecisionPath(record.id, stateDir);
+	mkdirSync(dirname(path), { recursive: true });
+	if (!allowReplace && existsSync(path)) throw new Error(`pending gate decision collision: ${record.id}`);
+	atomicWrite(path, JSON.stringify(record, null, 2));
+	return pendingHandle(record, stateDir);
+}
+
+function loadPendingGateDecision(handle: PendingGateDecisionHandle): PendingGateDecisionHandle | null {
+	assertPendingHandlePath(handle);
+	if (!existsSync(handle.path)) return null;
+	const record = parsePendingGateDecisionRecord(readStateJson(handle.stateDir, handle.path));
+	if (record.id !== handle.record.id) throw new Error("pending gate decision changed identity on disk");
+	return pendingHandle(record, handle.stateDir);
+}
+
+function fsyncDirectoryBestEffort(path: string): void {
+	let fd: number | null = null;
+	try {
+		fd = openSync(path, "r");
+		fsyncSync(fd);
+	} catch {
+		// Some filesystems/platforms reject directory fsync. A resurrected
+		// pending record is harmless because materialization is idempotent.
+	} finally {
+		if (fd !== null) closeSync(fd);
+	}
+}
+
+function clearPendingGateDecision(handle: PendingGateDecisionHandle): void {
+	assertPendingHandlePath(handle);
+	rmSync(handle.path, { force: true });
+	fsyncDirectoryBestEffort(dirname(handle.path));
+}
+
+function sameSubjectRefs(left: ReadonlyArray<RunGateSubjectRef>, right: ReadonlyArray<RunGateSubjectRef>): boolean {
+	return (
+		left.length === right.length &&
+		left.every((subject, index) => {
+			const other = right[index];
+			return other !== undefined && subject.runId === other.runId && subject.digest === other.digest;
+		})
+	);
+}
+
+/** A decision must retain its original owner across a coordinator crash (#434). */
+function requireGateTelemetry(explicit: TelemetryContext | undefined): TelemetryContext {
+	const context = explicit ?? telemetryContext();
+	if (!context || !Value.Check(TelemetryContextSchema, context))
+		throw new Error("gate decision requires an owning telemetry context at stage time");
+	return { ...context };
+}
+
+/**
+ * Cross the output-loss boundary before waiting for the decider receipt. The
+ * returned handle is later resolved with that receipt's authenticated digest.
+ */
+export function stagePendingGateOutput(
+	draft: PendingGateOutputDraft,
+	stateDir = pancodeStateDir(),
+): PendingGateDecisionHandle {
+	const telemetry = requireGateTelemetry(draft.telemetry);
+	const id = newDecisionId(draft.group);
+	const withoutIntegrity: Omit<PendingGateOutputRecord, "integrity"> = {
+		telemetry,
+		version: 1,
+		kind: "output",
+		id,
+		group: draft.group,
+		topology: draft.topology,
+		cycle: draft.cycle,
+		subjects: draft.subjects.map((subject) => ({ ...subject })),
+		deciderRunId: draft.deciderRunId,
+		finalOutput: draft.finalOutput,
+		...(draft.terminalCycle !== undefined ? { terminalCycle: draft.terminalCycle } : {}),
+		...(draft.resourceRoot !== undefined ? { resourceRoot: draft.resourceRoot } : {}),
+		createdAt: draft.createdAt ?? new Date().toISOString(),
+	};
+	const record: PendingGateOutputRecord = {
+		...withoutIntegrity,
+		integrity: { algorithm: "sha256", digest: pendingRecordDigest(withoutIntegrity) },
+	};
+	if (existsSync(decisionArtifactPath(id, stateDir))) throw new Error(`gate decision artifact collision: ${id}`);
+	return persistPendingGateDecision(record, stateDir, false);
+}
+
+/** Stage a fully parsed decision before attempting its final artifact write. */
+export function stagePendingGateDecision(
+	draft: GateDecisionDraft,
+	options: StagePendingGateDecisionOptions = {},
+): PendingGateDecisionHandle {
+	const telemetry = requireGateTelemetry(options.telemetry);
+	const stateDir = options.stateDir ?? pancodeStateDir();
+	const id = newDecisionId(draft.group);
+	const createdAt = draft.createdAt ?? new Date().toISOString();
+	const decision = buildGateDecisionArtifact(draft, id, createdAt);
+	const withoutIntegrity: Omit<PendingGateArtifactRecord, "integrity"> = {
+		telemetry,
+		version: 1,
+		kind: "decision",
+		id,
+		decision,
+		...(options.finalOutput !== undefined ? { finalOutput: options.finalOutput } : {}),
+		...(options.resourceRoot !== undefined ? { resourceRoot: options.resourceRoot } : {}),
+		createdAt,
+	};
+	const record: PendingGateArtifactRecord = {
+		...withoutIntegrity,
+		integrity: { algorithm: "sha256", digest: pendingRecordDigest(withoutIntegrity) },
+	};
+	if (existsSync(decisionArtifactPath(id, stateDir))) throw new Error(`gate decision artifact collision: ${id}`);
+	return persistPendingGateDecision(record, stateDir, false);
+}
+
+/**
+ * Bind a staged reviewer/judge output to its now-sealed receipt and parsed
+ * outcome. The decision-bearing replacement is atomic; either the raw output
+ * or the complete artifact survives a crash.
+ */
+export function resolvePendingGateDecision(
+	handle: PendingGateDecisionHandle,
+	draft: GateDecisionDraft,
+): PendingGateDecisionHandle {
+	const loaded = loadPendingGateDecision(handle);
+	if (loaded === null) throw new Error(`pending gate decision is missing: ${handle.record.id}`);
+	if (loaded.record.kind === "decision") {
+		const expected = buildGateDecisionArtifact(draft, loaded.record.id, loaded.record.createdAt);
+		if (expected.integrity.digest !== loaded.record.decision.integrity.digest) {
+			throw new Error("pending gate decision was already resolved to a different artifact");
+		}
+		return loaded;
+	}
+	const pending = loaded.record;
+	if (
+		draft.group !== pending.group ||
+		draft.topology !== pending.topology ||
+		draft.cycle !== pending.cycle ||
+		!sameSubjectRefs(draft.subjects, pending.subjects)
+	) {
+		throw new Error("resolved gate decision does not match staged output context");
+	}
+	if (draft.decider === undefined || draft.decider.runId !== pending.deciderRunId) {
+		throw new Error("resolved gate decision does not match staged decider run");
+	}
+	if (draft.createdAt !== undefined && draft.createdAt !== pending.createdAt) {
+		throw new Error("resolved gate decision cannot change the staged timestamp");
+	}
+	const decision = buildGateDecisionArtifact(draft, pending.id, pending.createdAt);
+	const withoutIntegrity: Omit<PendingGateArtifactRecord, "integrity"> = {
+		telemetry: { ...pending.telemetry },
+		version: 1,
+		kind: "decision",
+		id: pending.id,
+		decision,
+		finalOutput: pending.finalOutput,
+		...(pending.resourceRoot !== undefined ? { resourceRoot: pending.resourceRoot } : {}),
+		createdAt: pending.createdAt,
+	};
+	const resolvedRecord: PendingGateArtifactRecord = {
+		...withoutIntegrity,
+		integrity: { algorithm: "sha256", digest: pendingRecordDigest(withoutIntegrity) },
+	};
+	return persistPendingGateDecision(resolvedRecord, loaded.stateDir, true);
+}
+
+/** Keep the WAL until its artifact and owning journal both hold the decision (#434). */
+export async function materializePendingGateDecision(
+	handle: PendingGateDecisionHandle,
+): Promise<{ artifact: GateDecisionArtifact; path: string }> {
+	const loaded = loadPendingGateDecision(handle);
+	const record = loaded?.record ?? handle.record;
+	if (record.kind !== "decision") {
+		throw new Error(`pending gate output requires subject run resolution: ${record.id}`);
+	}
+	const path = decisionArtifactPath(record.decision.id, handle.stateDir);
+	if (loaded === null && !existsSync(path)) {
+		throw new Error(`pending gate decision and artifact are both missing: ${record.id}`);
+	}
+	const written = persistGateDecisionArtifact(record.decision, handle.stateDir, true);
+	const persisted = readVerifiedArtifact(handle.stateDir, written.path);
+	if (persisted.integrity.digest !== record.decision.integrity.digest) {
+		throw new Error(`materialized gate decision does not match pending record: ${record.id}`);
+	}
+	await publishGateDecision(handle.stateDir, record.telemetry, gateDecidedFacts(persisted));
+	if (loaded !== null) clearPendingGateDecision(loaded);
+	return { artifact: persisted, path: written.path };
+}
+
+/** Resolve an output-first record, materialize its artifact, and clear the WAL. */
+export async function finalizePendingGateDecision(
+	handle: PendingGateDecisionHandle,
+	draft: GateDecisionDraft,
+): Promise<{ artifact: GateDecisionArtifact; path: string }> {
+	return materializePendingGateDecision(resolvePendingGateDecision(handle, draft));
+}
+
+export function readPendingGateDecisions(stateDir = pancodeStateDir()): PendingGateDecisionReadResult {
+	const directory = pendingDecisionsDirectory(stateDir);
+	const names = listGateDirectory(stateDir, directory);
+	const records: PendingGateDecisionHandle[] = [];
+	const errors: PendingGateDecisionReadResult["errors"] = [];
+	for (const name of names.filter((entry) => entry.endsWith(".json")).sort()) {
+		const path = join(directory, name);
+		let raw: unknown;
+		try {
+			raw = readStateJson(stateDir, path);
+			const record = parsePendingGateDecisionRecord(raw);
+			if (name !== `${record.id}.json`) throw new Error("pending gate decision filename does not match its id");
+			records.push({ record, path, stateDir });
+		} catch (error) {
+			errors.push({
+				path,
+				message: error instanceof Error ? error.message : String(error),
+				runIds: pendingRecordRunIds(raw),
+			});
+		}
+	}
+	return { records, errors };
+}
+
+/** Fail closed on any final artifact that conflicts with a resolved WAL record. */
+export function preflightPendingGateDecisionMaterialization(handles: ReadonlyArray<PendingGateDecisionHandle>): void {
+	for (const handle of handles) {
+		if (handle.record.kind !== "decision") continue;
+		const path = decisionArtifactPath(handle.record.decision.id, handle.stateDir);
+		if (!existsSync(path)) continue;
+		const existing = readVerifiedArtifact(handle.stateDir, path);
+		if (existing.integrity.digest !== handle.record.decision.integrity.digest) {
+			throw new Error(`gate decision artifact conflicts with pending record: ${handle.record.id}`);
+		}
+	}
+}
+
+/**
+ * Every run id a pending record names (decider first, then subjects), read
+ * without trusting the record's shape.
+ */
+function pendingRecordRunIds(value: unknown): string[] {
+	const ids: string[] = [];
+	const push = (id: unknown): void => {
+		if (typeof id === "string" && id.length > 0 && !ids.includes(id)) ids.push(id);
+	};
+	const pushSubjects = (subjects: unknown): void => {
+		if (!Array.isArray(subjects)) return;
+		for (const subject of subjects) if (isRecord(subject)) push(subject.runId);
+	};
+	if (!isRecord(value)) return ids;
+	push(value.deciderRunId);
+	const decision = isRecord(value.decision) ? value.decision : null;
+	if (decision !== null && isRecord(decision.decider)) push(decision.decider.runId);
+	pushSubjects(value.subjects);
+	if (decision !== null) pushSubjects(decision.subjects);
+	return ids;
+}
+
+/**
+ * A record is this session's when at least one run it names is known and
+ * owned and none of them is known and foreign. A record naming only runs this
+ * session cannot see is left for the session that can.
+ */
+function pendingRecordOwned(runIds: ReadonlyArray<string>, ownsRun: PendingGateRunOwnership): boolean {
+	let owned = false;
+	for (const runId of runIds) {
+		const verdict = ownsRun(runId);
+		if (verdict === false) return false;
+		if (verdict === true) owned = true;
+	}
+	return owned;
+}
+
+/**
+ * Build a mutation-free restart plan. Raw-output records remain unresolved so
+ * dispatch can apply its receipt-backed protocol parser. Corrupt journals and
+ * conflicting final artifacts fail closed before external resources settle.
+ *
+ * With `ownsRun`, the plan covers this session's records only. A corrupt
+ * record still fails closed when it is this session's or names no run at all,
+ * since nothing can say whose it is; one that names another session's run is
+ * that session's to fail on.
+ */
+export function preparePendingGateDecisionRecovery(
+	stateDir = pancodeStateDir(),
+	options: PendingGateDecisionRecoveryOptions = {},
+): PendingGateDecisionRecoveryPlan {
+	const pending = readPendingGateDecisions(stateDir);
+	const ownsRun = options.ownsRun;
+	const errors =
+		ownsRun === undefined
+			? pending.errors
+			: pending.errors.filter((entry) => entry.runIds.length === 0 || pendingRecordOwned(entry.runIds, ownsRun));
+	if (errors.length > 0) {
+		throw new Error(
+			`pending gate decision journal is untrustworthy: ${errors.map((entry) => `${entry.path}: ${entry.message}`).join("; ")}`,
+		);
+	}
+	const records =
+		ownsRun === undefined
+			? pending.records
+			: pending.records.filter((handle) => pendingRecordOwned(pendingRecordRunIds(handle.record), ownsRun));
+	const ready = records.filter((handle) => handle.record.kind === "decision");
+	preflightPendingGateDecisionMaterialization(ready);
+	return {
+		ready,
+		unresolved: records.filter((handle) => handle.record.kind === "output"),
+	};
+}
+
+interface ArtifactIdentity {
+	dev: number;
+	ino: number;
+	size: number;
+	mtimeMs: number;
+	ctimeMs: number;
+}
+
+interface CachedArtifact {
+	identity: ArtifactIdentity;
+	/** The verified artifact, frozen; null when the file is unreadable or fails verification. */
+	artifact: GateDecisionArtifact | null;
+}
+
+/**
+ * Verified artifacts per resolved state directory, keyed by file name. Artifacts are written once by rename, so a
+ * file whose stat identity is unchanged holds the bytes that were verified; any change re-reads and re-verifies it.
+ */
+const artifactCache = new Map<string, Map<string, CachedArtifact>>();
+const ARTIFACT_CACHE_DIRECTORIES = 16;
+const ARTIFACT_CACHE_ENTRIES = 4096;
+
+function sameArtifactIdentity(left: ArtifactIdentity, right: Stats): boolean {
+	return (
+		left.dev === right.dev &&
+		left.ino === right.ino &&
+		left.size === right.size &&
+		left.mtimeMs === right.mtimeMs &&
+		left.ctimeMs === right.ctimeMs
+	);
+}
+
+function deepFreeze<T>(value: T): T {
+	if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
+		Object.freeze(value);
+		for (const child of Object.values(value)) deepFreeze(child);
+	}
+	return value;
+}
+
+function artifactCacheFor(stateDir: string): Map<string, CachedArtifact> {
+	const key = resolve(stateDir);
+	let cache = artifactCache.get(key);
+	if (cache === undefined) {
+		cache = new Map();
+		artifactCache.set(key, cache);
+		for (const stale of artifactCache.keys()) {
+			if (artifactCache.size <= ARTIFACT_CACHE_DIRECTORIES) break;
+			artifactCache.delete(stale);
+		}
+	}
+	return cache;
+}
+
+/**
+ * Integrity-valid decision artifacts, optionally of one group, in file name order. One directory listing and one
+ * lstat per file serve an unchanged archive; a new or changed file is read and verified again. The artifacts are
+ * frozen and shared across calls.
+ */
+export function readGateDecisionArtifacts(
+	group?: string,
+	stateDir = pancodeStateDir(),
+): Array<{ artifact: GateDecisionArtifact; path: string }> {
+	const directory = gateDecisionsDirectory(stateDir);
+	const names = listGateDirectory(stateDir, directory)
+		.filter((entry) => entry.endsWith(".json"))
+		.sort();
+	const cache = artifactCacheFor(stateDir);
+	const present = new Set(names);
+	for (const name of cache.keys()) if (!present.has(name)) cache.delete(name);
+	const out: Array<{ artifact: GateDecisionArtifact; path: string }> = [];
+	for (const name of names) {
+		const path = join(directory, name);
+		let stats: Stats;
+		try {
+			// The directory was bounded by the listing; lstat never follows a symlinked entry.
+			stats = lstatSync(path);
+		} catch {
+			continue;
+		}
+		if (!stats.isFile()) continue;
+		let entry = cache.get(name);
+		if (entry === undefined || !sameArtifactIdentity(entry.identity, stats)) {
+			let artifact: GateDecisionArtifact | null = null;
+			try {
+				const parsed = readStateJson(stateDir, path) as GateDecisionArtifact;
+				if (verifyGateDecisionArtifact(parsed).ok) artifact = deepFreeze(parsed);
+			} catch {
+				// Read APIs ignore malformed artifacts; verification tooling can inspect
+				// the file directly without treating it as trusted evidence.
+			}
+			entry = {
+				identity: { dev: stats.dev, ino: stats.ino, size: stats.size, mtimeMs: stats.mtimeMs, ctimeMs: stats.ctimeMs },
+				artifact,
+			};
+			cache.delete(name);
+			cache.set(name, entry);
+			for (const stale of cache.keys()) {
+				if (cache.size <= ARTIFACT_CACHE_ENTRIES) break;
+				cache.delete(stale);
+			}
+		}
+		if (entry.artifact === null) continue;
+		if (group !== undefined && entry.artifact.group !== group) continue;
+		out.push({ artifact: entry.artifact, path });
+	}
+	return out;
+}

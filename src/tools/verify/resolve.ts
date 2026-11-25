@@ -1,0 +1,365 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { type Dirent, readdirSync, realpathSync, statSync } from "node:fs";
+import path from "node:path";
+import { resolveSafeCwd } from "../../core/safe-exec.js";
+import { isVerificationScriptName, VERIFICATION_SCRIPT_FAMILY_HINT } from "../../core/verification-scripts.js";
+import { type DeclaredCheck, PROJECT_VERIFIER_CATALOG_RELATIVE_PATH } from "./catalog.js";
+import { type DeclaredCheckDiscoveryResult, discoverDeclaredChecksAtRoot } from "./discovery.js";
+import { isVerifyListing, prepareVerifyArguments } from "./surface.js";
+import {
+	findTaskGate,
+	taskGateCheck,
+	taskGateFallbackHint,
+	taskGatesConfined,
+	taskGatesContainable,
+} from "./task-gates.js";
+import { ENVIRONMENT_RUNNER_TAG, resolveCleanRunArgv } from "./toolchain.js";
+import {
+	discoverToolchainChecks,
+	NO_CHECKS_DECLARED_NOTE,
+	TOOLCHAIN_DISCOVERY_SOURCES,
+	type ToolchainCheck,
+	toolchainArgv,
+} from "./toolchain-checks.js";
+
+/**
+ * What one verify call runs. The tool executes the resolution and the safety
+ * policy engine scans it, so the two can never disagree about the command: a
+ * model-supplied check string runs only when it names a declared or derived
+ * check, and every other string resolves to `unresolved`, which runs nothing.
+ */
+export type VerifyResolution =
+	| { kind: "list" }
+	| { kind: "frontend" }
+	/** `run` is the repository-relative run directory a `runs` check judges; its argv already ends with it. */
+	| { kind: "catalog"; check: DeclaredCheck; run?: string }
+	| { kind: "package"; check: DeclaredCheck; packageRoot: string }
+	| { kind: "toolchain"; check: ToolchainCheck; argv: string[] }
+	/** A gate the dispatched verifier task names; `confined` is the worker's OS sandbox, read by the safety scan. */
+	| { kind: "task"; check: DeclaredCheck; confined: boolean; containable: boolean }
+	| { kind: "unavailable"; check: ToolchainCheck }
+	/** `noChecksDeclared`: the workspace declares and derives no check and no task gate applies, a fact, not a failure. */
+	| { kind: "unresolved"; message: string; noChecksDeclared?: true };
+
+const FAMILY_WORDS = new Set(["test", "lint", "check", "typecheck", "format", "build", "ci"]);
+
+/**
+ * The checks a family word names. When several own it, the ones that can run win, then a direct runner wins over
+ * one that builds its own environments: `test` in a project declaring pytest and tox runs pytest instead of
+ * refusing as ambiguous (FL-2). Several left still need a name.
+ */
+function familyOwners(derived: ReadonlyArray<ToolchainCheck>, word: string): ToolchainCheck[] {
+	if (!FAMILY_WORDS.has(word)) return [];
+	let owners = derived.filter((candidate) => candidate.tags.includes(word));
+	for (const prefer of [
+		(candidate: ToolchainCheck) => candidate.availability === undefined,
+		(candidate: ToolchainCheck) => !candidate.tags.includes(ENVIRONMENT_RUNNER_TAG),
+	]) {
+		const narrowed = owners.filter(prefer);
+		if (narrowed.length > 0) owners = narrowed;
+	}
+	return owners;
+}
+
+function extraArgs(args: Record<string, unknown>): string[] {
+	return Array.isArray(args.args) ? args.args.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+export type RunnableCheckDiscoveryResult =
+	| {
+			ok: true;
+			checks: DeclaredCheck[];
+			/** Family words (`test`, `lint`, ...) no id takes that verify maps to one derived owner (FL-12). */
+			familyAliases?: ReadonlyMap<string, DeclaredCheck>;
+	  }
+	| { ok: false; reason: string };
+
+/**
+ * Every check `verify(check=<id>)` runs by exact id: package scripts and
+ * catalog entries for `cwdArg`, then the available checks derived from the
+ * workspace's toolchain files. Dispatch admits exactly these ids as
+ * intent.verification and seals each one's argv, so a worker's host
+ * verification runs the command verify would.
+ */
+export function runnableChecksAtRoot(workspaceRoot: string, cwdArg: string | undefined): RunnableCheckDiscoveryResult {
+	const discovery = discoverDeclaredChecksAtRoot(workspaceRoot, cwdArg);
+	if (!discovery.ok) return discovery;
+	const declared = discovery.sources.flatMap((source) => source.checks);
+	let derived: ToolchainCheck[] = [];
+	try {
+		derived = availableToolchainChecks(workspaceRoot, declared).filter((check) => check.availability === undefined);
+	} catch {
+		// Derived checks are a convenience; a discovery fault leaves the declared ones.
+	}
+	const checks = [...declared, ...derived];
+	const taken = new Set(checks.map((check) => check.id));
+	const familyAliases = new Map<string, DeclaredCheck>();
+	for (const word of FAMILY_WORDS) {
+		const owners = taken.has(word) ? [] : familyOwners(derived, word);
+		if (owners.length === 1 && owners[0] !== undefined) familyAliases.set(word, owners[0]);
+	}
+	return { ok: true, checks, ...(familyAliases.size > 0 ? { familyAliases } : {}) };
+}
+
+/**
+ * The ids `verify({})` lists at the workspace root: the project catalog's
+ * first (the project wrote them for this), then package scripts, then derived
+ * toolchain checks that are available. Empty when discovery fails.
+ */
+export function declaredCheckIds(workspaceRoot: string): string[] {
+	const runnable = runnableChecksAtRoot(workspaceRoot, undefined);
+	if (!runnable.ok) return [];
+	const rank = (check: DeclaredCheck) =>
+		check.source.kind === "project-catalog" ? 0 : check.source.kind === "toolchain" ? 2 : 1;
+	return [...new Set([...runnable.checks].sort((a, b) => rank(a) - rank(b)).map((check) => check.id))];
+}
+
+/** Derived checks that no package script or catalog entry already owns by id. */
+export function availableToolchainChecks(
+	workspaceRoot: string,
+	declared: ReadonlyArray<DeclaredCheck>,
+	diagnostics?: string[],
+): ToolchainCheck[] {
+	const taken = new Set(declared.map((check) => check.id));
+	return discoverToolchainChecks(workspaceRoot, diagnostics).filter((check) => !taken.has(check.id));
+}
+
+function nothingDeclared(root: string, diagnostics: ReadonlyArray<string>): string {
+	const skipped = diagnostics.length > 0 ? ` Skipped during discovery: ${diagnostics.join(" ")}` : "";
+	const fallback = taskGateFallbackHint() || ` ${NO_CHECKS_DECLARED_NOTE}`;
+	return `no declared or derivable verification checks in ${root}. Looked for ${TOOLCHAIN_DISCOVERY_SOURCES}.${fallback}${skipped}`;
+}
+
+interface VerifyDiscoveryCache {
+	discovery: DeclaredCheckDiscoveryResult;
+	derived: (declared: ReadonlyArray<DeclaredCheck>) => ToolchainCheck[];
+}
+
+/** One fresh root discovery per assessment; normal admission/execution still resolves each call independently. */
+export function createRootVerifyResolver(workspaceRoot: string): (check: string) => VerifyResolution {
+	const discovery = discoverDeclaredChecksAtRoot(workspaceRoot, undefined);
+	let derived: ToolchainCheck[] | undefined;
+	const cache: VerifyDiscoveryCache = {
+		discovery,
+		derived: (declared) => (derived ??= availableToolchainChecks(workspaceRoot, declared)),
+	};
+	return (check) => resolveWithDiscovery(workspaceRoot, { check }, cache);
+}
+
+export function resolveVerifyCall(workspaceRoot: string, args: Record<string, unknown>): VerifyResolution {
+	return resolveTaskGate(args) ?? resolveWithDiscovery(workspaceRoot, args);
+}
+
+/**
+ * A verify call naming a gate of the dispatched task. Only verify calls see
+ * gates; the quality policy's root resolver does not, so a task cannot satisfy
+ * a repository's own quality rule. A gate runs exactly as the task wrote it.
+ */
+function resolveTaskGate(rawArgs: Record<string, unknown>): VerifyResolution | null {
+	const args = prepareVerifyArguments(rawArgs);
+	const check = typeof args.check === "string" ? args.check.trim() : "";
+	if (check.length === 0) return null;
+	const gate = findTaskGate(check);
+	if (gate === null) return null;
+	if (!("id" in gate)) {
+		return {
+			kind: "unresolved",
+			message: `the task names \`${gate.text}\`, but it cannot run as a gate: ${gate.reason}. Report it unverified with that reason.`,
+		};
+	}
+	if (extraArgs(args).length > 0) {
+		return {
+			kind: "unresolved",
+			message: `task gate '${gate.id}' runs exactly as the task wrote it (${gate.text}); call it with no args.`,
+		};
+	}
+	return {
+		kind: "task",
+		check: taskGateCheck(gate),
+		confined: taskGatesConfined(),
+		containable: taskGatesContainable(),
+	};
+}
+
+/**
+ * The argv a resolved verify call executes, or null when the resolution runs no
+ * command. The safety scan and the approval card both name this one command, so
+ * neither can describe a check the tool would not run.
+ */
+export function verifyResolutionArgv(
+	resolution: VerifyResolution,
+	args: Record<string, unknown>,
+	workspaceRoot: string = process.cwd(),
+): string[] | null {
+	switch (resolution.kind) {
+		case "catalog": {
+			// A reproduce check runs its python command through the resolved
+			// interpreter; the scan and the approval card name that argv.
+			if (resolution.check.kind !== "reproduce") return resolution.check.command;
+			const clean = resolveCleanRunArgv(resolution.check.command, workspaceRoot);
+			return clean.ok ? clean.argv : resolution.check.command;
+		}
+		case "toolchain":
+			return resolution.argv;
+		case "task":
+			return resolution.check.command;
+		case "package": {
+			const extra = extraArgs(args);
+			return ["npm", "run", resolution.check.id, ...(extra.length > 0 ? ["--", ...extra] : [])];
+		}
+		default:
+			return null;
+	}
+}
+
+const RUN_NAME_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/u;
+
+/** One run of a sweep check, resolved: the check with the run directory on its argv, and that directory. */
+export type SweepRunResolution = { ok: true; check: DeclaredCheck; run: string } | { ok: false; message: string };
+
+/**
+ * One run of a sweep check: `<id>/<run>` names a directory directly under the check's `runs`, and the check's argv
+ * gains that directory as its last argument, written relative to the check's cwd. The run directory is part of the
+ * argv, so the safety scan, the approval card and the claim the result records all name the run that was judged.
+ */
+export function resolveSweepRun(workspaceRoot: string, check: DeclaredCheck, run: string): SweepRunResolution {
+	if (check.runs === undefined) {
+		return {
+			ok: false,
+			message: `'${check.id}' declares no runs directory, so it takes no run; call it as check="${check.id}".`,
+		};
+	}
+	if (!RUN_NAME_PATTERN.test(run) || run.length > 128) {
+		return {
+			ok: false,
+			message: `run '${run}' must be one directory name under ${check.runs} (letters, digits, '.', '_', '-', at most 128 characters).`,
+		};
+	}
+	const declaredRun = path.posix.join(check.runs, run);
+	try {
+		const resolved = resolveSafeCwd(declaredRun, workspaceRoot);
+		if (!statSync(resolved).isDirectory()) throw new Error("not a directory");
+		resolveSafeCwd(realpathSync(resolved), realpathSync(workspaceRoot));
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		return { ok: false, message: `run directory ${declaredRun} is not a directory inside the workspace (${reason}).` };
+	}
+	const argument = path.posix.relative(check.cwd === "." ? "" : check.cwd, declaredRun) || ".";
+	return { ok: true, check: { ...check, command: [...check.command, argument] }, run: declaredRun };
+}
+
+/** The runs a sweep check can judge: the directory names under its `runs` that `<id>/<run>` accepts, sorted. */
+export function sweepRunNames(workspaceRoot: string, check: DeclaredCheck): string[] {
+	if (check.runs === undefined) return [];
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(resolveSafeCwd(check.runs, workspaceRoot), { withFileTypes: true });
+	} catch {
+		return [];
+	}
+	return entries
+		.filter((entry) => entry.isDirectory() && RUN_NAME_PATTERN.test(entry.name) && entry.name.length <= 128)
+		.map((entry) => entry.name)
+		.sort();
+}
+
+/** The script a bare package-manager run names (`npm test`, `yarn run lint`), or null. `bun test` is bun's own runner. */
+function packageScriptInvoked(command: string): string | null {
+	const match = /^(npm|pnpm|yarn|bun)\s+(?:(run|run-script)\s+)?([^\s-][^\s]*)$/u.exec(command);
+	if (match === null) return null;
+	const [, manager, run, script] = match;
+	if (manager === "bun" && run === undefined) return null;
+	return script ?? null;
+}
+
+function resolveRunCheck(workspaceRoot: string, check: DeclaredCheck, run: string): VerifyResolution {
+	const resolved = resolveSweepRun(workspaceRoot, check, run);
+	return resolved.ok
+		? { kind: "catalog", check: resolved.check, run: resolved.run }
+		: { kind: "unresolved", message: resolved.message };
+}
+
+function resolveWithDiscovery(
+	workspaceRoot: string,
+	args: Record<string, unknown>,
+	cache?: VerifyDiscoveryCache,
+): VerifyResolution {
+	args = prepareVerifyArguments(args);
+	if (isVerifyListing(args)) return { kind: "list" };
+	const check = typeof args.check === "string" ? args.check.trim() : "";
+	if (check === "frontend") return { kind: "frontend" };
+	const cwdArg = typeof args.cwd === "string" && args.cwd.length > 0 ? args.cwd : undefined;
+	const discovery = cache?.discovery ?? discoverDeclaredChecksAtRoot(workspaceRoot, cwdArg);
+	if (!discovery.ok) return { kind: "unresolved", message: discovery.reason };
+	const declared = discovery.sources.flatMap((source) => source.checks);
+	const named = declared.find((candidate) => candidate.id === check);
+	// `npm test`, `pnpm run lint`: a package manager running a declared script is that script's check.
+	const script = named === undefined ? packageScriptInvoked(check) : null;
+	const hit =
+		named ??
+		(script === null
+			? undefined
+			: declared.find((candidate) => candidate.source.kind === "package.json" && candidate.id === script));
+	if (hit?.source.kind === "project-catalog") {
+		if (hit.runs !== undefined) {
+			return {
+				kind: "unresolved",
+				message: `'${check}' judges one run under ${hit.runs}; call it as check="${check}/<run>", where <run> is one directory there.`,
+			};
+		}
+		return { kind: "catalog", check: hit };
+	}
+	const separator = check.indexOf("/");
+	if (separator > 0) {
+		const owner = declared.find(
+			(candidate) => candidate.source.kind === "project-catalog" && candidate.id === check.slice(0, separator),
+		);
+		if (owner !== undefined) return resolveRunCheck(workspaceRoot, owner, check.slice(separator + 1));
+	}
+	if (hit?.source.kind === "package.json") {
+		return { kind: "package", check: hit, packageRoot: path.dirname(hit.source.path) };
+	}
+
+	const derived = cache?.derived(declared) ?? availableToolchainChecks(workspaceRoot, declared);
+	const exact = derived.find((candidate) => candidate.id === check);
+	const owners = familyOwners(derived, check);
+	const chosen = exact ?? (owners.length === 1 ? owners[0] : undefined);
+	if (chosen !== undefined) {
+		if (chosen.availability) return { kind: "unavailable", check: chosen };
+		const argv = toolchainArgv(chosen, extraArgs(args));
+		if (argv instanceof Error) return { kind: "unresolved", message: argv.message };
+		return { kind: "toolchain", check: chosen, argv };
+	}
+
+	const ids = [...declared.map((candidate) => candidate.id), ...derived.map((candidate) => candidate.id)];
+	if (ids.length === 0) {
+		let root = workspaceRoot;
+		try {
+			root = resolveSafeCwd(cwdArg, workspaceRoot);
+		} catch {
+			// discoverDeclaredChecksAtRoot already accepted this cwd; keep the workspace root for the message.
+		}
+		// Rediscover only on this empty path, to name the files that were skipped.
+		const diagnostics = [...(discovery.diagnostics ?? [])];
+		discoverToolchainChecks(workspaceRoot, diagnostics);
+		return {
+			kind: "unresolved",
+			message: nothingDeclared(root, diagnostics),
+			...(taskGateFallbackHint() === "" ? { noChecksDeclared: true as const } : {}),
+		};
+	}
+	if (owners.length > 1) {
+		return {
+			kind: "unresolved",
+			message: `'${check}' matches several checks (${owners.map((owner) => owner.id).join(", ")}); name one.`,
+		};
+	}
+	const hint = isVerificationScriptName(check)
+		? ""
+		: ` Check ids are ${VERIFICATION_SCRIPT_FAMILY_HINT} package scripts, ${PROJECT_VERIFIER_CATALOG_RELATIVE_PATH} ids, or the derived ids listed.`;
+	return {
+		kind: "unresolved",
+		message: `'${check}' is not a declared check. Declared checks: ${ids.join(", ")}.${hint}${taskGateFallbackHint() || " For any other command, use bash."}`,
+	};
+}

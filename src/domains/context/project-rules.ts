@@ -1,0 +1,287 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Path-scoped project rules under `.pancode/rules/**\/*.md`. A rule is a markdown
+ * file with optional YAML frontmatter:
+ *
+ *   - `paths:`    activation globs. When present the rule is path-scoped and
+ *                 activates only while a matching file is already in working
+ *                 context. Absent means the rule is unconditional and loads
+ *                 with project context.
+ *   - `excludes:` globs contributed to the project context-exclude set.
+ *   - `enabled:`  defaults true.
+ *   - `description:` one-line summary for the inspector.
+ *
+ * Loading is deterministic and cache-stable: rules sort by id (their path under
+ * `.pancode/rules`), so the prompt prefix a local model caches does not reorder
+ * between runs. Every rule carries a content hash and a token estimate so an
+ * activated rule can be accounted in the context ledger. Reads are best-effort:
+ * a malformed file is reported and skipped.
+ */
+
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
+import { parse as parseYaml } from "yaml";
+import { sha256Hex } from "../../core/hash.js";
+import { pancodeProjectRoot } from "../../core/project-root.js";
+import { isRecord } from "../../core/type-guards.js";
+import { compileGlobRegex, normalizeGlobInput } from "../../tools/ignore-policy.js";
+import { ceilChars } from "../session/context-accounting.js";
+import { realpathInside } from "./contained-path.js";
+
+export interface ProjectRule {
+	/** Stable id: the rule's posix path under `.pancode/rules`. */
+	id: string;
+	/** The session's cwd relative to the directory holding these rules, set only when they differ; `paths` are rooted there. */
+	pathBase?: string;
+	sourcePath: string;
+	hash: string;
+	tokenEstimate: number;
+	/** Activation globs; absent means the rule is unconditional. */
+	paths?: string[];
+	enabled: boolean;
+	description?: string;
+	/** Markdown body after frontmatter; the text that enters the prompt. */
+	body: string;
+}
+
+export interface ProjectRulesLoad {
+	rules: ProjectRule[];
+	/** Aggregated `context.excludes` globs from every rule's frontmatter. */
+	excludes: string[];
+	issues: string[];
+}
+
+const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?/;
+
+function readStringArray(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const out: string[] = [];
+	for (const item of value) {
+		if (typeof item === "string" && item.length > 0) out.push(item);
+	}
+	return out.length > 0 ? out : undefined;
+}
+
+function validateGlobArray(
+	value: unknown,
+	field: "paths" | "excludes",
+	id: string,
+	issues: string[],
+): string[] | undefined {
+	const parsed = readStringArray(value);
+	if (parsed === undefined) {
+		issues.push(`${id}: frontmatter ${field} must be a non-empty string array`);
+		return undefined;
+	}
+	for (const pattern of parsed) {
+		try {
+			compileGlobRegex(pattern);
+		} catch (err) {
+			issues.push(
+				`${id}: invalid ${field} glob ${JSON.stringify(pattern)}: ${err instanceof Error ? err.message : String(err)}`,
+			);
+			return undefined;
+		}
+	}
+	return parsed;
+}
+
+function walkMarkdown(dir: string, root: string, out: string[]): void {
+	let entries: import("node:fs").Dirent[];
+	try {
+		entries = readdirSync(dir, { withFileTypes: true });
+	} catch {
+		return;
+	}
+	for (const entry of entries) {
+		const full = join(dir, entry.name);
+		if (entry.isDirectory()) walkMarkdown(full, root, out);
+		else if (entry.isFile() && entry.name.endsWith(".md")) out.push(full);
+	}
+}
+
+function parseRule(filePath: string, root: string, issues: string[]): { rule?: ProjectRule; excludes: string[] } {
+	let text: string;
+	try {
+		text = readFileSync(filePath, "utf8").replace(/\r\n/g, "\n");
+	} catch (err) {
+		issues.push(`${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+		return { excludes: [] };
+	}
+	const id = relative(root, filePath).split(sep).join("/");
+	let body = text;
+	let paths: string[] | undefined;
+	let excludes: string[] = [];
+	let enabled = true;
+	let description: string | undefined;
+	let invalidFrontmatter = false;
+
+	const match = FRONTMATTER_RE.exec(text);
+	if (match) {
+		body = text.slice(match[0].length);
+		try {
+			const front = parseYaml(match[1] ?? "");
+			if (isRecord(front)) {
+				if (Object.hasOwn(front, "paths")) {
+					const parsedPaths = validateGlobArray(front.paths, "paths", id, issues);
+					if (parsedPaths === undefined) invalidFrontmatter = true;
+					else paths = parsedPaths;
+				}
+				if (Object.hasOwn(front, "excludes")) {
+					const parsedExcludes = validateGlobArray(front.excludes, "excludes", id, issues);
+					if (parsedExcludes === undefined) invalidFrontmatter = true;
+					else excludes = parsedExcludes;
+				}
+				if (Object.hasOwn(front, "enabled")) {
+					if (typeof front.enabled === "boolean") enabled = front.enabled;
+					else {
+						issues.push(`${id}: frontmatter enabled must be a boolean`);
+						invalidFrontmatter = true;
+					}
+				}
+				if (Object.hasOwn(front, "description")) {
+					if (typeof front.description === "string") description = front.description;
+					else {
+						issues.push(`${id}: frontmatter description must be a string`);
+						invalidFrontmatter = true;
+					}
+				}
+			} else if (front !== null && front !== undefined) {
+				issues.push(`${id}: frontmatter must be a mapping`);
+				invalidFrontmatter = true;
+			}
+		} catch (err) {
+			issues.push(`${id}: invalid frontmatter: ${err instanceof Error ? err.message : String(err)}`);
+			invalidFrontmatter = true;
+		}
+	} else if (text.startsWith("---\n")) {
+		issues.push(`${id}: invalid frontmatter: missing closing marker`);
+		invalidFrontmatter = true;
+	}
+	if (invalidFrontmatter) return { excludes: [] };
+
+	const trimmedBody = body.trim();
+	const hash = sha256Hex(trimmedBody).slice(0, 16);
+	const rule: ProjectRule = {
+		id,
+		sourcePath: join(".pancode", "rules", id),
+		hash,
+		tokenEstimate: ceilChars(trimmedBody.length),
+		enabled,
+		body: trimmedBody,
+	};
+	if (paths !== undefined) rule.paths = paths;
+	if (description !== undefined) rule.description = description;
+	return { rule, excludes };
+}
+
+/**
+ * Load every rule under `.pancode/rules`, deterministically ordered by id. Returns
+ * the rules, the aggregated exclude set, and any per-file issues.
+ */
+export function loadProjectRules(cwd: string): ProjectRulesLoad {
+	const projectRoot = pancodeProjectRoot(cwd, "rules");
+	const root = join(projectRoot, ".pancode", "rules");
+	const pathBase = relative(projectRoot, resolve(cwd)).split(sep).join("/");
+	const issues: string[] = [];
+	const files: string[] = [];
+	// A linked `.pancode` or `rules` directory must not pull files from outside the project.
+	if (existsSync(root) && !realpathInside(root, projectRoot)) {
+		issues.push(".pancode/rules is a link that leaves the project; ignored");
+		return { rules: [], excludes: [], issues };
+	}
+	walkMarkdown(root, root, files);
+	files.sort();
+	const rules: ProjectRule[] = [];
+	const excludeSet = new Set<string>();
+	for (const file of files) {
+		const parsed = parseRule(file, root, issues);
+		if (parsed.rule) rules.push(pathBase ? { ...parsed.rule, pathBase } : parsed.rule);
+		for (const glob of parsed.excludes) excludeSet.add(glob);
+	}
+	rules.sort((a, b) => a.id.localeCompare(b.id));
+	return { rules, excludes: [...excludeSet], issues };
+}
+
+function ruleMatchesAnyPath(rule: ProjectRule, workingPaths: ReadonlyArray<string>): boolean {
+	for (const pattern of rule.paths ?? []) {
+		let regex: RegExp;
+		try {
+			regex = compileGlobRegex(pattern);
+		} catch {
+			continue;
+		}
+		for (const path of workingPaths) {
+			const normalized = normalizeGlobInput(rule.pathBase ? `${rule.pathBase}/${path}` : path);
+			if (regex.test(normalized)) return true;
+			if (normalized.endsWith("/") && globMatchesInsideDirectory(regex, pattern, normalized)) return true;
+		}
+	}
+	return false;
+}
+
+function materializedGlobVariants(pattern: string): string[] {
+	let variants = [""];
+	const normalized = normalizeGlobInput(pattern);
+	for (let index = 0; index < normalized.length; index += 1) {
+		const character = normalized[index];
+		if (character === undefined) break;
+		if (character === "*" && normalized[index + 1] === "*" && normalized[index + 2] === "/") {
+			variants = variants.flatMap((prefix) => [prefix, `${prefix}x/`]).slice(0, 64);
+			index += 2;
+			continue;
+		}
+		if (character === "*" && normalized[index + 1] === "*") {
+			variants = variants.map((prefix) => `${prefix}x`);
+			index += 1;
+			continue;
+		}
+		if (character === "*" || character === "?") {
+			variants = variants.map((prefix) => `${prefix}x`);
+			continue;
+		}
+		if (character === "[") {
+			const end = normalized.indexOf("]", index + 1);
+			const selected = end === -1 ? "x" : (normalized[index + 1] ?? "x");
+			variants = variants.map((prefix) => `${prefix}${selected}`);
+			index = end === -1 ? index : end;
+			continue;
+		}
+		variants = variants.map((prefix) => `${prefix}${character}`);
+	}
+	return variants;
+}
+
+function globMatchesInsideDirectory(regex: RegExp, pattern: string, directory: string): boolean {
+	const candidates = new Set<string>([`${directory}x`, `${directory}x/x`]);
+	for (const materialized of materializedGlobVariants(pattern)) {
+		if (materialized.startsWith(directory)) candidates.add(materialized);
+		const segments = materialized.split("/");
+		for (let index = 0; index < segments.length; index += 1) {
+			const suffix = segments.slice(index).join("/");
+			if (suffix.length > 0) candidates.add(`${directory}${suffix}`);
+		}
+		for (let index = 0; index < materialized.length; index += 1) {
+			candidates.add(`${directory}${materialized.slice(index)}`);
+		}
+	}
+	return [...candidates].some((candidate) => regex.test(candidate));
+}
+
+/**
+ * Select the rules that should load now. Unconditional rules (no `paths`) always
+ * load; a path-scoped rule loads only when one of its globs matches a path
+ * already in working context. Disabled rules never load. Order is preserved for
+ * cache stability.
+ */
+export function selectActiveRules(
+	rules: ReadonlyArray<ProjectRule>,
+	workingContextPaths: ReadonlyArray<string>,
+): ProjectRule[] {
+	return rules.filter((rule) => {
+		if (!rule.enabled) return false;
+		if (rule.paths === undefined) return true;
+		return ruleMatchesAnyPath(rule, workingContextPaths);
+	});
+}

@@ -1,0 +1,209 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Operator syntax in a submitted request, expanded the same way on every surface that submits one:
+ * `/skill` requests become pending skill loads, a prompt template's name becomes its body, and
+ * `@path` references inline the file, or attach it when it is an image. The terminal and the ACP
+ * server both call this, so a request typed in the graphical app means what it means in the TUI.
+ */
+
+import { homedir } from "node:os";
+import path from "node:path";
+import { expandInlineFileReferencesAsync } from "../../core/file-references.js";
+import { PLUGIN_RESOURCE_USE, recordPackageActivity } from "../../core/package-activity.js";
+import { relativePathEscapes } from "../../core/path-containment.js";
+import type { PendingSkillRequest } from "../../core/skill-activation.js";
+import type { TurnConstraints } from "../../core/turn-constraints.js";
+import { templateTurnConstraints } from "../../core/turn-constraints.js";
+import type { ImageContent } from "../../engine/types.js";
+import type { ResourcesContract } from "./contract.js";
+import { pluginResourceComponents } from "./package-references.js";
+
+export interface SubmitExpansion {
+	text: string;
+	images: ImageContent[];
+	workingContextPaths: string[];
+	pendingSkillRequests: PendingSkillRequest[];
+	/**
+	 * What the transcript paints as the operator's turn when `text` is a prompt
+	 * template's body: the line they typed, and a note naming the template. The
+	 * model still receives `text`; a `/wtfp:new-paper` body is several hundred
+	 * lines the operator never wrote, and painting it as their message buried
+	 * the command under it. An `@path` reference gets the same treatment: the
+	 * injected `<file name="/home/...">` block is the model's copy, and the
+	 * note names the attached files by their short paths.
+	 */
+	display?: { text: string; note?: string };
+	/** An expanded template's `allowed-tools`, `delegated-tools`, `budget` and `turnPolicy`, submitted as the turn's constraint. */
+	constraints?: TurnConstraints;
+	/** The prompt template `text` expanded from, when one did. */
+	template?: string;
+	/**
+	 * Why a `/name` line that names a template did not expand, such as a plugin
+	 * changed on disk under the session. `text` is then the literal line, which
+	 * a caller that bypasses slash dispatch must not send to the model.
+	 */
+	promptRefusal?: string;
+}
+
+const ATTACHMENT_NOTE_LIMIT = 3;
+
+/** Workspace-relative when inside the cwd, `~/` when inside the home, otherwise absolute. */
+function shortAttachmentPath(filePath: string, cwd: string): string {
+	for (const [root, prefix] of [
+		[path.resolve(cwd), ""],
+		[path.resolve(homedir()), "~/"],
+	] as const) {
+		const rel = path.relative(root, filePath);
+		if (rel.length > 0 && !relativePathEscapes(rel)) return `${prefix}${rel.split(path.sep).join("/")}`;
+	}
+	return filePath;
+}
+
+/**
+ * What the transcript says about the files a request named. A file whose bytes
+ * went to the model is "attached"; a large or binary one went by name only,
+ * and calling that attached let the operator believe the model had read it.
+ * A file that could not be read is said too, since nothing else would say it.
+ */
+function attachmentNote(
+	paths: ReadonlyArray<string>,
+	diagnostics: ReadonlyArray<{ type: string; message: string; path?: string }>,
+	cwd: string,
+): string | undefined {
+	const named = new Map(
+		diagnostics.flatMap((item) => (item.type === "warning" && item.path ? [[item.path, item.message] as const] : [])),
+	);
+	const partial = new Map(
+		diagnostics.flatMap((item) => (item.type === "info" && item.path ? [[item.path, item.message] as const] : [])),
+	);
+	const inlined = paths.filter((filePath) => !named.has(filePath) && !partial.has(filePath));
+	const byName = paths.filter((filePath) => named.has(filePath));
+	const unreadable = diagnostics.filter((item) => item.type === "error" && item.path);
+	const parts: string[] = [];
+	if (inlined.length > 0) {
+		const shown = inlined.slice(0, ATTACHMENT_NOTE_LIMIT).map((filePath) => shortAttachmentPath(filePath, cwd));
+		const more = inlined.length - shown.length;
+		parts.push(`attached ${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}`);
+	}
+	for (const [filePath, pages] of [...partial].slice(0, ATTACHMENT_NOTE_LIMIT))
+		parts.push(
+			`attached ${pages} of ${shortAttachmentPath(filePath, cwd)}, which is all that fits; PanCode reads the rest with its tools`,
+		);
+	for (const filePath of byName.slice(0, ATTACHMENT_NOTE_LIMIT))
+		parts.push(
+			`sent ${shortAttachmentPath(filePath, cwd)} by name only: ${named.get(filePath)}, so PanCode reads it in parts with its tools`,
+		);
+	if (byName.length > ATTACHMENT_NOTE_LIMIT) parts.push(`${byName.length - ATTACHMENT_NOTE_LIMIT} more by name only`);
+	for (const item of unreadable.slice(0, ATTACHMENT_NOTE_LIMIT))
+		parts.push(`could not attach ${shortAttachmentPath(item.path ?? "", cwd)}: ${item.message}`);
+	if (parts.length === 0) return undefined;
+	const note = parts.join("; ");
+	return `${note[0]?.toUpperCase() ?? ""}${note.slice(1)}.`;
+}
+
+/**
+ * The operator's turn as the transcript paints it and as prompt_submit hooks judge it: the line they typed
+ * whenever a template or `@path` changed what the model receives. Headless `run` shares it with the terminal
+ * and ACP; without it a hook there saw the expanded body as typed and refused `/name` scoped actions.
+ */
+export function submitDisplay(input: {
+	typed: string;
+	/** The typed line with `/skill` requests taken out. */
+	parsedText: string;
+	template?: { name: string; text: string };
+	referencedPaths: ReadonlyArray<string>;
+	diagnostics: ReadonlyArray<{ type: string; message: string; path?: string }>;
+	cwd: string;
+}): { text: string; note?: string } | undefined {
+	const attached = attachmentNote(input.referencedPaths, input.diagnostics, input.cwd);
+	if (input.template)
+		return {
+			text: input.parsedText.trim(),
+			note: [
+				`expanded prompt template ${input.template.name} (${input.template.text.split("\n").length} lines)`,
+				...(attached ? [attached] : []),
+			].join("; "),
+		};
+	return attached ? { text: input.typed.trim(), note: attached } : undefined;
+}
+
+export interface SubmitExpansionOptions {
+	/** Aborts a slow attachment read; the expansion then rejects with the signal's reason. */
+	signal?: AbortSignal;
+	/** Names an attachment, by its short path, as its slow extraction starts. */
+	onExtract?: (shortPath: string) => void;
+}
+
+/**
+ * A plugin template's turn names the resources its plugin declares, so the
+ * model reads a schema by path instead of finding it with bash (WTF-P
+ * campaign: find, read and grep over the plugin tree before every record).
+ */
+function withPluginResources(text: string, template: { name: string; packageRoot?: string }): string {
+	if (template.packageRoot === undefined) return text;
+	const resources = pluginResourceComponents(template.packageRoot);
+	if (resources.length === 0) return text;
+	return [
+		text,
+		"",
+		`[Plugin resources] ${template.name} runs with these files its plugin declares; read them by path when the workflow needs them instead of searching for them:`,
+		...resources.map((resource) => `- ${resource.id}: ${resource.path}`),
+	].join("\n");
+}
+
+export async function expandSubmitText(
+	text: string,
+	resources: ResourcesContract | undefined,
+	cwd = process.cwd(),
+	options: SubmitExpansionOptions = {},
+): Promise<SubmitExpansion> {
+	const { signal, onExtract } = options;
+	const parsed = resources?.parsePendingSkillRequests(text, cwd) ?? {
+		text,
+		pendingSkillRequests: [],
+	};
+	const promptExpansion = resources?.expandPromptTemplate(parsed.text, cwd);
+	const promptOwner = promptExpansion?.expanded ? promptExpansion.template.sourceInfo?.owner : undefined;
+	if (promptExpansion?.expanded && promptOwner)
+		recordPackageActivity({
+			type: PLUGIN_RESOURCE_USE,
+			kind: "prompt",
+			owner: promptOwner,
+			outcome: "expanded",
+			details: { name: promptExpansion.template.name },
+		});
+	const promptText = promptExpansion?.expanded
+		? withPluginResources(promptExpansion.text, promptExpansion.template)
+		: parsed.text;
+	const constraints = promptExpansion?.expanded ? templateTurnConstraints(promptExpansion.template) : undefined;
+	const fileExpansion = await expandInlineFileReferencesAsync(promptText, {
+		cwd,
+		includeImages: true,
+		missing: "leave",
+		...(signal ? { signal } : {}),
+		...(onExtract ? { onExtract: (filePath: string) => onExtract(shortAttachmentPath(filePath, cwd)) } : {}),
+	});
+	const display = submitDisplay({
+		typed: text,
+		parsedText: parsed.text,
+		...(promptExpansion?.expanded
+			? { template: { name: promptExpansion.template.name, text: promptExpansion.text } }
+			: {}),
+		referencedPaths: fileExpansion.referencedPaths,
+		diagnostics: fileExpansion.diagnostics,
+		cwd,
+	});
+	return {
+		text: fileExpansion.text,
+		images: fileExpansion.images,
+		workingContextPaths: fileExpansion.referencedPaths,
+		pendingSkillRequests: parsed.pendingSkillRequests,
+		...(display ? { display } : {}),
+		...(promptExpansion?.expanded ? { template: promptExpansion.template.name } : {}),
+		...(promptExpansion?.expanded === false && promptExpansion.refusal
+			? { promptRefusal: promptExpansion.refusal.message }
+			: {}),
+		...(constraints ? { constraints } : {}),
+	};
+}

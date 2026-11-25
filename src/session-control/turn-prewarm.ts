@@ -1,0 +1,647 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { CallJournalOptions } from "../domains/telemetry/call-scope.js";
+/**
+ * Pre-warm ownership: when the prefix is sent, what stops it, and what it
+ * records. The round itself lives in `prewarm.ts`.
+ *
+ * Three moments hand the backend a prefix the operator has not paid for yet:
+ * the session prompt compiling at session start, a resume rebuilding the
+ * message array, and a compaction settling. All three leave a known prefix and
+ * an operator who is reading rather than waiting on a turn. Everything else is
+ * a refusal: another tier, a turn in flight, a running dispatch, a surface with
+ * nobody watching.
+ */
+
+import type { PancodeSettings } from "../core/config.js";
+import { sha256Hex } from "../core/hash.js";
+import type { TelemetryHub } from "../core/telemetry/hub.js";
+import { telemetryHub } from "../core/telemetry/hub.js";
+import { endpointCapacityUsage } from "../domains/dispatch/index.js";
+import { registerForegroundStream } from "../domains/providers/endpoint-capacity.js";
+import {
+	type CacheDeploymentObservation,
+	observeCacheDeployment,
+	type ProvidersContract,
+	type WarmableBackend,
+	warmableBackend,
+} from "../domains/providers/index.js";
+import type { SessionContract } from "../domains/session/contract.js";
+import { type PrewarmTrigger, prewarmPromptTokens, runPrewarmRound } from "./prewarm.js";
+import type { TurnContext } from "./turn-context.js";
+import type { AgentRuntime, TurnPrewarmState } from "./turn-state.js";
+
+/** Why a pre-warm did not run. Returned for contracts; never shown to the operator. */
+export type PrewarmSkipReason =
+	| "disabled"
+	| "flow"
+	| "surface"
+	| "turn-active"
+	| "dispatch-active"
+	| "tier"
+	| "unresolved"
+	| "deployment"
+	| "cooldown"
+	| "expired"
+	| "superseded";
+
+export type PrewarmOutcome =
+	| { ran: true; trigger: PrewarmTrigger }
+	| {
+			ran: false;
+			reason: PrewarmSkipReason;
+			detail?: string;
+			/** Set with `deployment-unbound` on a runtime a binding could warm: the target this round observed. */
+			unbound?: { targetId: string; backend: WarmableBackend };
+	  };
+
+export interface TurnPrewarmDeps {
+	state: TurnPrewarmState;
+	getSettings: () => Readonly<PancodeSettings>;
+	providers: ProvidersContract;
+	session?: SessionContract | undefined;
+	context: TurnContext;
+	bus?: TelemetryHub | undefined;
+	/**
+	 * True on a surface where a person is about to type the next turn. False for
+	 * headless `run`: the pre-warm buys latency an unattended run never spends.
+	 * Workers never reach here at all; they do not build a chat loop.
+	 */
+	isLatencySurface: () => boolean;
+	/** True while a submit owns, or is about to own, the turn state machine. */
+	isTurnActive: () => boolean;
+	/**
+	 * True while an attached dispatch is running. Detached runs are counted from
+	 * the bus instead, so a composition without this predicate still stands down
+	 * for the worker traffic the bus reports.
+	 */
+	hasActiveDispatch: () => boolean;
+	/** Resolve the runtime and credentials the next turn would use, or a refusal. */
+	prepareRuntime: (
+		signal: AbortSignal,
+	) => Promise<{ ok: true; runtime: AgentRuntime; apiKey: string | undefined } | { ok: false; reason: string }>;
+	/** Freeze the session tool surface onto the agent, exactly as a submit does. */
+	applySessionTools: (runtime: AgentRuntime) => void;
+	/** Report the round's provider usage under its own `/usage` label. */
+	callJournal?: (
+		runtime: AgentRuntime,
+		origin: ReturnType<SessionContract["current"]>,
+	) => { telemetry?: CallJournalOptions };
+	/**
+	 * Claim one in-flight request on the runtime's endpoint for the duration of
+	 * the round, returning the release handle. This is the seam brief 06 (#250)
+	 * fills: on a merged tree the chat loop passes
+	 *
+	 *   (runtime) => {
+	 *     const key = canonicalEndpointKey(runtime.runtimeResolution.target);
+	 *     return key === null ? null : registerForegroundStream(key);
+	 *   }
+	 *
+	 * from `src/domains/providers/index.ts`, so endpoint capacity counts the
+	 * pre-warm the same way it counts the orchestrator's streaming turn. Until
+	 * then it is absent and `dispatchActive()` stands in with a blanket skip.
+	 */
+	registerEndpointSlot?: (runtime: AgentRuntime) => (() => void) | null;
+	/**
+	 * Information-flow admission of the context-bearing round: the block reason
+	 * when the session's restricted history may not reach this runtime's target,
+	 * or null. The empty-context wake request sends no history and is not asked.
+	 */
+	admitRuntimeFlow?: (runtime: AgentRuntime) => string | null;
+	/** Test seam. Production uses the real provider round. */
+	runPrewarm?: typeof runPrewarmRound;
+	observeDeployment?: typeof observeCacheDeployment;
+	/**
+	 * A transcript notice. The one pre-warm says out loud: `chat.prewarm` is on and the target binds no
+	 * `cache.deployment`, which no round can fix, so a skip that is otherwise diagnostics would read as a silent no-op.
+	 */
+	notice?: (text: string) => void;
+	/**
+	 * True only on the terminal UI. The unbound notice is for a person reading the transcript; on ACP a transcript
+	 * notice can reach the client inside a reply, so every other surface stays silent. Defaults to false.
+	 */
+	isAttended?: () => boolean;
+}
+
+export interface TurnPrewarm {
+	/**
+	 * Queue a pre-warm for the next tick. Repeated calls before it fires collapse
+	 * onto one round: boot and a boot-time resume both land in the same tick, and
+	 * warming the pre-resume history would be work thrown away.
+	 */
+	schedule(trigger: PrewarmTrigger): void;
+	/** Stop an in-flight or queued pre-warm. The operator's turn owns the slot now. */
+	cancel(): void;
+	/** Resolves once nothing is queued or in flight. For contracts and shutdown. */
+	settled(): Promise<PrewarmOutcome | null>;
+	dispose(): void;
+}
+
+/**
+ * Whether a submit aborts the in-flight pre-warm's HTTP request, or only stops
+ * treating it as the current one.
+ *
+ * Measured against the operator's llama.cpp router, build `b226-2115b73d8`,
+ * Qwen3.8-27B, `--parallel 1`: aborting the request 1.5 s into a 47,620-token
+ * prefill did not cancel the server's work. The server finished prefilling, so
+ * the prefix did survive the abort, and the very next request read 47,596 of
+ * 47,620 tokens from cache and spent 927 ms in prompt. That request also waited
+ * 89.5 s of wall clock for the abandoned one to finish, on a server that serves
+ * one slot. Letting the pre-warm complete instead cost 89.3 s plus a 1.3 s turn:
+ * the same wall clock, arrived at honestly.
+ *
+ * The abort therefore frees no slot and saves the operator no time on this
+ * backend. All it does is discard the usage and timings of prefill the server
+ * performed, which is spend the ledger should carry. So a submit detaches the
+ * round: PanCode stops calling it the current pre-warm and never waits on it, and
+ * it still records what it cost. Set this true for a backend that honors
+ * cancellation, where dropping the request genuinely releases the slot.
+ */
+const ABORT_ROUND_ON_SUBMIT = false;
+
+/**
+ * Input budget when the target sets no `cache.warm.maxInputTokens`. The attended
+ * surface's system prompt and tool schemas alone estimate near 11,000 tokens, so
+ * the old 8,192 refused the ordinary first warm. The cap never exceeds a known
+ * serving window; an unknown one gets the same budget and the server judges the
+ * request, since the old budget refused the ordinary warm there too (PV-8).
+ */
+function defaultWarmInputTokens(contextWindow: number): number {
+	return contextWindow > 0 && Number.isFinite(contextWindow) ? Math.min(16_384, contextWindow) : 16_384;
+}
+
+/** What a target on this runtime must bind before a pre-warm can run against it. */
+function unboundNotice(targetId: string, backend: WarmableBackend): string {
+	const requirement =
+		backend === "lmstudio"
+			? "set cache.deployment on the target with backend lmstudio, controlUrl and model, and set cache.warm.startup to true"
+			: "set cache.deployment on the target with backend llamacpp, controlUrl, model and build (the server's build_info)";
+	return `[PanCode] chat.prewarm is on, but target ${targetId} binds no cache.deployment, so PanCode does not prewarm it. To prewarm it, ${requirement}; otherwise set chat.prewarm to false.`;
+}
+
+export function createTurnPrewarm(deps: TurnPrewarmDeps): TurnPrewarm {
+	const round = deps.runPrewarm ?? runPrewarmRound;
+	let pendingTrigger: PrewarmTrigger | null = null;
+	let timer: ReturnType<typeof setTimeout> | null = null;
+	let active: AbortController | null = null;
+	// Ownership outlives detachment: one request and at most one newer trigger.
+	let running: AbortController | null = null;
+	let disposed = false;
+	let pendingSince = 0;
+	let lastFinished = 0;
+	let lastPrefix: string | null = null;
+	let lastSkip: string | null = null;
+	// Targets already told that pre-warm needs their `cache.deployment` binding: once per target per session.
+	const unboundNoticed = new Set<string>();
+	// Rounds a submit or a session switch let go of. Their result is still
+	// recorded, but it no longer describes the prefix the next turn will send, so
+	// it never reaches the `/context` line.
+	const detached = new WeakSet<AbortController>();
+	let inFlight: Promise<PrewarmOutcome | null> = Promise.resolve(null);
+	// Dispatch traffic PanCode can see without an endpoint registry: the run
+	// lifecycle the bus already publishes. `hasActiveDispatch` covers the attached
+	// calls the composition root holds; this covers detached ones. Both are the
+	// stand-in for #250's per-endpoint slot accounting.
+	let dispatchesInFlight = 0;
+	const unsubscribeDispatch = [
+		deps.bus?.subscribe("run.started", () => {
+			dispatchesInFlight += 1;
+		}) ?? null,
+		...(["run.completed", "run.failed"] as const).map(
+			(channel) =>
+				deps.bus?.subscribe(channel, () => {
+					dispatchesInFlight = Math.max(0, dispatchesInFlight - 1);
+				}) ?? null,
+		),
+	];
+	const dispatchActive = (): boolean => dispatchesInFlight > 0 || deps.hasActiveDispatch();
+
+	const admissionRefusal = (): PrewarmSkipReason | null => {
+		if (deps.getSettings().chat.prewarm === false) return "disabled";
+		if (!deps.isLatencySurface()) return "surface";
+		if (deps.state.streaming || deps.isTurnActive()) return "turn-active";
+		// Fleet interaction. Without per-endpoint slot accounting a pre-warm cannot
+		// know whether a worker is already occupying the server it would warm, so
+		// it stands down whenever any dispatch is outstanding. `registerEndpointSlot`
+		// is the other half: the round claims a slot on its endpoint while its
+		// request is out, so capacity sees it. Once that registry answers here too,
+		// this blanket skip narrows to "the endpoint is at its bound".
+		if (dispatchActive()) return "dispatch-active";
+		// The tier is settled from configuration before anything is resolved. The
+		// resolved runtime is checked again below, but asking here means a target
+		// that was never eligible costs no capability probe, no agent, and no
+		// notice from either.
+		const targetId = deps.getSettings().chat?.target?.trim();
+		const runtimeId = targetId ? deps.providers.getTarget(targetId)?.runtime : undefined;
+		if (
+			runtimeId === undefined ||
+			(deps.providers.getRuntime(runtimeId)?.tier !== "local-native" &&
+				runtimeId !== "openai-codex" &&
+				!(runtimeId === "litellm" && targetId && deps.providers.getTarget(targetId)?.cache?.deployment))
+		)
+			return "tier";
+		return null;
+	};
+
+	const runOnce = async (trigger: PrewarmTrigger, controller: AbortController): Promise<PrewarmOutcome> => {
+		const refusal = admissionRefusal();
+		if (refusal) return { ran: false, reason: refusal };
+		const targetId = deps.getSettings().chat.target;
+		const target = targetId ? deps.providers.getTarget(targetId) : null;
+		if (!target) return { ran: false, reason: "unresolved" };
+		const targetSettings = JSON.stringify(target);
+		const started = Date.now();
+		if (target.cache?.deployment?.backend === "lmstudio" && target.cache.warm?.startup !== true)
+			return { ran: false, reason: "disabled", detail: "local-warming-not-enabled" };
+		if (target.cache?.retention === "none") return { ran: false, reason: "disabled" };
+		if (target.pricing && target.pricing !== "free" && Object.values(target.pricing).some((rate) => rate > 0))
+			return { ran: false, reason: "deployment", detail: "paid-warming-disabled" };
+		const cooldown = Math.max(1000, target.cache?.warm?.cooldownMs ?? 60000);
+		if (Date.now() - lastFinished < cooldown) return { ran: false, reason: "cooldown" };
+		const observe = deps.observeDeployment ?? observeCacheDeployment;
+		const descriptor = deps.providers.getRuntime(target.runtime);
+		if (!descriptor) return { ran: false, reason: "unresolved" };
+		const auth = await deps.providers.auth.resolveForTarget(target, descriptor, { signal: controller.signal });
+		if (auth.refused) return { ran: false, reason: "unresolved", detail: "credential-refused" };
+		const observeOptions = { signal: controller.signal, ...(auth.apiKey ? { gatewayApiKey: auth.apiKey } : {}) };
+		const selectedModel = deps.getSettings().chat.model ?? target.defaultModel ?? "";
+		const stillSelected = () =>
+			JSON.stringify(deps.providers.getTarget(target.id)) === targetSettings &&
+			deps.getSettings().chat.target === target.id &&
+			(deps.getSettings().chat.model ?? target.defaultModel ?? "") === selectedModel;
+		const canSend = () =>
+			!admissionRefusal() && !detached.has(controller) && !controller.signal.aborted && stillSelected();
+		let deployment: CacheDeploymentObservation = await observe(target, selectedModel, observeOptions);
+		if (
+			deployment.warm !== "bounded" &&
+			!(
+				deployment.backend === "lmstudio" &&
+				deployment.reason === "model-not-loaded" &&
+				target.cache?.warm?.startup === true
+			)
+		) {
+			// A round a submit or a switch let go of no longer speaks for the selected target.
+			if (detached.has(controller) || controller.signal.aborted || !stillSelected())
+				return { ran: false, reason: "superseded" };
+			const backend = deployment.reason === "deployment-unbound" ? warmableBackend(target.runtime) : null;
+			return {
+				ran: false,
+				reason: "deployment",
+				detail: deployment.reason,
+				...(backend ? { unbound: { targetId: target.id, backend } } : {}),
+			};
+		}
+
+		if (admissionRefusal() || detached.has(controller) || controller.signal.aborted)
+			return { ran: false, reason: "superseded" };
+		const prepared = await deps.prepareRuntime(controller.signal);
+		if (!prepared.ok) return { ran: false, reason: "unresolved" };
+		const runtime = prepared.runtime;
+		const origin = deps.session?.current() ?? null;
+		if (runtime.targetId !== target.id || runtime.wireModelId !== selectedModel || runtime.runtimeId !== target.runtime)
+			return { ran: false, reason: "superseded" };
+		if (
+			deps.providers.getRuntime(runtime.runtimeId)?.tier !== "local-native" &&
+			// OI-7: Codex warms with generate:false, which writes the prefix and produces nothing.
+			!(runtime.runtimeId === "openai-codex" && deployment.backend === "openai-codex") &&
+			!(
+				runtime.runtimeId === "litellm" &&
+				deployment.backend === "lmstudio" &&
+				(deployment.warm === "bounded" || deployment.reason === "model-not-loaded")
+			)
+		) {
+			// Off on every other tier regardless of the setting. A cloud provider
+			// caches by exact prefix on its own schedule and bills the request; a
+			// one-token pre-warm there is spend without a latency win.
+			return { ran: false, reason: "tier" };
+		}
+
+		if (
+			deployment.backend === "lmstudio" &&
+			deployment.reason === "model-not-loaded" &&
+			target.cache?.warm?.startup === true &&
+			!admissionRefusal() &&
+			!controller.signal.aborted &&
+			!detached.has(controller) &&
+			stillSelected() &&
+			deployment.endpoint &&
+			(endpointCapacityUsage()[deployment.endpoint] ?? 0) === 0
+		) {
+			// Wake-up is a tiny separate request; exact-prefix work follows only
+			// after residency is observed. Neither operation gates TUI startup.
+			const release = registerForegroundStream(deployment.endpoint);
+			const deadline = setTimeout(() => controller.abort(), Math.min(target.cache.warm.maxDurationMs ?? 30000, 120000));
+			try {
+				const wake = await round({
+					...deps.callJournal?.(runtime, origin),
+					model: runtime.agent.state.model,
+					state: { systemPrompt: "", messages: [], tools: [], thinkingLevel: "off" },
+					...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
+					signal: controller.signal,
+					maxInputTokens: Math.min(256, target.cache.warm.maxInputTokens ?? 256),
+					canSend,
+				});
+				telemetryHub().emit("prewarm.settled", {
+					round: "model-wake",
+					targetId: target.id,
+					model: selectedModel,
+					ttftMs: wake.timing.ttftMs,
+					apiMs: wake.timing.apiMs,
+					aborted: wake.aborted,
+					failed: Boolean(wake.errorMessage),
+				});
+				if (wake.aborted || wake.errorMessage) return { ran: false, reason: "deployment", detail: "wake-incomplete" };
+			} finally {
+				clearTimeout(deadline);
+				release();
+			}
+			deployment = await observe(target, selectedModel, observeOptions);
+		}
+
+		if (deployment.warm !== "bounded") return { ran: false, reason: "deployment", detail: deployment.reason };
+
+		if (admissionRefusal() || detached.has(controller) || controller.signal.aborted || !stillSelected())
+			return { ran: false, reason: "superseded" };
+
+		deps.applySessionTools(runtime);
+		await deps.context.ensureSessionPrompt(runtime);
+
+		// Re-check after the awaits: a submit or a dispatch may have started while
+		// the prompt compiled, and the pre-warm must never be the request the
+		// operator's turn queues behind.
+		const lateRefusal = admissionRefusal();
+		if (lateRefusal) return { ran: false, reason: lateRefusal };
+		if (detached.has(controller) || controller.signal.aborted) return { ran: false, reason: "superseded" };
+		// Binding/residency can change during preparation. Discovery itself never
+		// loads models and missing evidence leaves ordinary inference untouched.
+		deployment = await observe(target, runtime.wireModelId, observeOptions);
+		if (deployment.warm !== "bounded") return { ran: false, reason: "deployment", detail: deployment.reason };
+		const finalRefusal = admissionRefusal();
+		if (finalRefusal) return { ran: false, reason: finalRefusal };
+		if (detached.has(controller) || controller.signal.aborted || !stillSelected())
+			return { ran: false, reason: "superseded" };
+		if (Date.now() - started > 30000) return { ran: false, reason: "expired" };
+		// The round below sends the live history; a restricted history that this
+		// target may not receive skips the pre-warm rather than sending it.
+		const flowRefusal = deps.admitRuntimeFlow?.(runtime) ?? null;
+		if (flowRefusal !== null) return { ran: false, reason: "flow", detail: flowRefusal };
+		// This includes shared dispatch leases/reservations and this process's
+		// foreground streams. It is a fresh check, not an atomic global warm lease;
+		// server slot observations above also include unrelated active traffic.
+		if (deployment.endpoint && (endpointCapacityUsage()[deployment.endpoint] ?? 0) > 0)
+			return { ran: false, reason: "dispatch-active" };
+		const prefix = sha256Hex(
+			JSON.stringify({
+				model: runtime.agent.state.model,
+				system: runtime.agent.state.systemPrompt,
+				messages: runtime.agent.state.messages,
+				tools: runtime.agent.state.tools,
+				thinking: runtime.agent.state.thinkingLevel,
+			}),
+		);
+		if (prefix === lastPrefix && Date.now() - lastFinished < Math.max(cooldown, 60000))
+			return { ran: false, reason: "cooldown" };
+
+		// The claim is taken before the request goes out and released in the
+		// finally, including on the detach path, because the request the server is
+		// still finishing is the one occupying the slot.
+		const releaseEndpointSlot = deps.registerEndpointSlot?.(runtime) ?? null;
+		const releaseBackend =
+			runtime.runtimeId === "litellm" && deployment.endpoint ? registerForegroundStream(deployment.endpoint) : null;
+		let result: Awaited<ReturnType<typeof round>>;
+		const deadline = setTimeout(() => controller.abort(), Math.min(target.cache?.warm?.maxDurationMs ?? 30000, 120000));
+		try {
+			result = await round({
+				...deps.callJournal?.(runtime, origin),
+				model: runtime.agent.state.model,
+				agent: runtime.agent,
+				state: {
+					systemPrompt: runtime.agent.state.systemPrompt,
+					messages: runtime.agent.state.messages,
+					tools: runtime.agent.state.tools,
+					thinkingLevel: runtime.agent.state.thinkingLevel ?? "off",
+				},
+				...(prepared.apiKey !== undefined ? { apiKey: prepared.apiKey } : {}),
+				signal: controller.signal,
+				maxInputTokens:
+					target.cache?.warm?.maxInputTokens ?? defaultWarmInputTokens(runtime.agent.state.model.contextWindow),
+				canSend,
+			});
+		} finally {
+			clearTimeout(deadline);
+			lastFinished = Date.now();
+			releaseEndpointSlot?.();
+			releaseBackend?.();
+		}
+		lastPrefix = result.aborted || result.errorMessage ? null : prefix;
+
+		// The prefill the server did is spend whatever the operator did next, so a
+		// let-go round is recorded exactly like a completed one. Only the
+		// `/context` line is withheld: it answers "is the prefix the next turn
+		// wants already resident", and a detached round is no longer about that
+		// prefix.
+		const wasDetached = detached.has(controller) || controller.signal.aborted;
+		const promptTokens = prewarmPromptTokens(result);
+		if (!wasDetached && !result.errorMessage) {
+			deps.context.notePrewarm({
+				tokens: promptTokens,
+				ms: result.timing.apiMs,
+				aborted: result.aborted,
+			});
+		}
+		telemetryHub().emit("prewarm.settled", {
+			round: "prompt",
+			targetId: runtime.targetId,
+			model: runtime.wireModelId,
+			trigger,
+			ttftMs: result.timing.ttftMs,
+			apiMs: result.timing.apiMs,
+			...(promptTokens === null ? {} : { promptTokens }),
+			aborted: result.aborted,
+			detached: wasDetached,
+			failed: Boolean(result.errorMessage),
+		});
+
+		try {
+			deps.session?.appendEntry({
+				kind: "custom",
+				customType: "prewarm",
+				// Never a model message and never a rendered transcript block: a
+				// pre-warm is a fact about the backend, not something the session said.
+				display: false,
+				parentTurnId: deps.state.lastTurnId,
+				data: {
+					trigger,
+					deployment,
+					target: runtime.targetId,
+					model: runtime.wireModelId,
+					promptTokens,
+					aborted: result.aborted,
+					detached: wasDetached,
+					timing: result.timing,
+					promptCache: {
+						input: result.usage?.input ?? null,
+						cacheRead: result.usage?.cacheRead ?? null,
+						cacheWrite: result.usage?.cacheWrite ?? null,
+						...(result.usage?.cacheWrite1h === undefined ? {} : { cacheWrite1h: result.usage.cacheWrite1h }),
+						...(result.backend ? { backend: { ...result.backend } } : {}),
+					},
+					...(result.errorMessage ? { error: result.errorMessage } : {}),
+				},
+			});
+		} catch {
+			// The ledger entry is diagnostics. A session that refuses it must not
+			// turn an optimization into a failure.
+		}
+		return { ran: true, trigger };
+	};
+
+	/**
+	 * Let go of the round in flight. On a backend that honors cancellation this
+	 * also aborts the request; see {@link ABORT_ROUND_ON_SUBMIT} for why the
+	 * measured one does not.
+	 */
+	const releaseActiveRound = (): void => {
+		const controller = active;
+		if (controller === null) return;
+		detached.add(controller);
+		if (ABORT_ROUND_ON_SUBMIT) controller.abort();
+		active = null;
+	};
+
+	const fire = (): void => {
+		timer = null;
+		if (disposed || running !== null) return;
+		const trigger = pendingTrigger;
+		pendingTrigger = null;
+		if (trigger === null) return;
+		const controller = new AbortController();
+		const diagnosticStart = performance.now();
+		active = controller;
+		running = controller;
+		inFlight = (
+			Date.now() - pendingSince > 30000
+				? Promise.resolve<PrewarmOutcome>({ ran: false, reason: "expired" })
+				: runOnce(trigger, controller)
+		)
+			.then((outcome) => {
+				if (deps.isLatencySurface()) {
+					const { target, model } = deps.getSettings().chat;
+					telemetryHub().emit("prewarm.decided", {
+						round: "prompt",
+						trigger,
+						...(target ? { targetId: target } : {}),
+						...(model ? { model } : {}),
+						durationMs: Math.round(performance.now() - diagnosticStart),
+						ran: outcome.ran,
+						...(outcome.ran ? {} : { reason: outcome.reason }),
+						...(!outcome.ran && outcome.detail ? { detail: outcome.detail } : {}),
+					});
+				}
+				if (!outcome.ran && deps.getSettings().chat.prewarm && outcome.reason !== "surface") {
+					const unbound = outcome.unbound;
+					if (unbound && deps.isAttended?.() === true && !unboundNoticed.has(unbound.targetId)) {
+						unboundNoticed.add(unbound.targetId);
+						deps.notice?.(unboundNotice(unbound.targetId, unbound.backend));
+					}
+					const key = `${outcome.reason}:${outcome.detail ?? ""}`;
+					if (lastSkip !== key) {
+						lastSkip = key;
+						try {
+							deps.session?.appendEntry({
+								kind: "custom",
+								customType: "prewarmSkipped",
+								display: false,
+								parentTurnId: deps.state.lastTurnId,
+								data: { trigger, ...outcome },
+							});
+						} catch {
+							/* Optional diagnostics. */
+						}
+					}
+				} else if (outcome.ran) lastSkip = null;
+				return outcome;
+			})
+			.catch(() => {
+				if (deps.isLatencySurface())
+					telemetryHub().emit("prewarm.decided", { round: "prompt", trigger, ran: false, reason: "preparation-failed" });
+				return null;
+			})
+			.finally(() => {
+				if (active === controller) active = null;
+				running = null;
+				if (!disposed && pendingTrigger !== null && timer === null)
+					timer = setTimeout(fire, pendingTrigger === "session-start" && deps.isLatencySurface() ? 1000 : 0);
+			});
+	};
+
+	return {
+		schedule(trigger: PrewarmTrigger): void {
+			if (disposed) return;
+			// A newer trigger describes a newer prefix; the older round is no longer
+			// warming history this session has.
+			releaseActiveRound();
+			pendingTrigger = trigger;
+			pendingSince = Date.now();
+			if (timer !== null || running !== null) return;
+			// Give startup a quiet second before speculative work. Headless surfaces
+			// never schedule model work; other triggers coalesce on the next tick.
+			timer = setTimeout(fire, trigger === "session-start" && deps.isLatencySurface() ? 1000 : 0);
+		},
+
+		cancel(): void {
+			pendingTrigger = null;
+			if (timer !== null) {
+				clearTimeout(timer);
+				timer = null;
+			}
+			releaseActiveRound();
+		},
+
+		async settled(): Promise<PrewarmOutcome | null> {
+			// One hop past the scheduling tick so a caller that just scheduled a
+			// round waits for that round rather than for the previous one. The timer
+			// is deliberately ref'd, unlike the scheduling timer above: the caller is
+			// awaiting this promise, so the event loop must stay alive for the one
+			// tick that lets the scheduled round start. Node 22 drains the loop past
+			// a due unref'd timer when nothing else holds it, which left this promise
+			// pending forever and cancelled every later test in the lane; Node 24
+			// happens to fire the due timer first, which is why the hang never
+			// reproduced on a 24.x development machine.
+			let outcome: PrewarmOutcome | null;
+			do {
+				await new Promise<void>((resolve) => setTimeout(resolve, 0));
+				outcome = await inFlight;
+			} while (timer !== null || running !== null || pendingTrigger !== null);
+			return outcome;
+		},
+
+		dispose(): void {
+			disposed = true;
+			for (const unsubscribe of unsubscribeDispatch) unsubscribe?.();
+			pendingTrigger = null;
+			if (timer !== null) {
+				clearTimeout(timer);
+				timer = null;
+			}
+			// Shutdown always aborts: the process is going away, and a socket held
+			// open for a round nobody will read is not a latency question.
+			running?.abort();
+			active = null;
+		},
+	};
+}
+
+/**
+ * Subscribe the pre-warm to compaction settling. A summary or an eviction moves
+ * the byte prefix, so the next turn is known to be cold, and the operator is
+ * usually reading the summary rather than typing. The idle guard inside
+ * `schedule` is what keeps this from firing for the auto-compaction a submit
+ * runs on its way to the provider.
+ */
+export function subscribePrewarmToCompaction(bus: TelemetryHub | undefined, prewarm: TurnPrewarm): () => void {
+	const unsubscribe = bus?.subscribe("compaction.ended", () => {
+		prewarm.schedule("compaction");
+	});
+	return () => unsubscribe?.();
+}

@@ -1,0 +1,156 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * `pancode playbook` operator surface.
+ *
+ *   pancode playbook list                       enumerate playbooks with validity
+ *   pancode playbook new <name> --from <name>   copy a shipped playbook into the project
+ *   pancode playbook validate|graph <name>      inspect a playbook without executing it
+ *   pancode playbook commands init              draft a repository command registry
+ *
+ * A playbook is repo-owned policy (.pancode/playbooks/<name>.md). The fleet
+ * runs it with `pancode fleet run <playbook>`; nothing here executes one.
+ */
+
+import {
+	listPlaybooks,
+	PLAYBOOK_COMMANDS_REMEDY,
+	PLAYBOOK_COMMANDS_REPO_PATH,
+	type PlaybookListing,
+	type PlaybookStep,
+} from "../domains/agents/index.js";
+import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
+
+const HELP = `pancode playbook <subcommand>
+
+Author and check repo-owned playbooks. The fleet runs them: pancode fleet run <playbook>.
+
+Subcommands:
+  list [--json]                 list built-in, plugin, user and project playbooks with validation status
+  new <name> --from <builtin> [--json]
+                                copy the build-review, build-test, sdlc, or seat-stretch playbook into .pancode/playbooks/
+  validate <name> [--var key=value ...] [--json]
+                                run a playbook's execution preflight without side effects
+  graph <name> [--var key=value ...] [--json]
+                                print a playbook's compiled waves, loops, scopes, and write boundaries
+  commands init [--json]        draft a commented playbook command registry from declared project entries
+`;
+
+function renderStep(step: PlaybookStep): string {
+	if (step.kind === "code") return `code:${step.command}[${step.scope}]`;
+	if (step.kind === "agent") return `${step.agent}[${step.scope}]`;
+	if (step.kind === "gate") return `gate:${step.path}[${step.run}]`;
+	if (step.kind === "plan") {
+		return `plan:${step.agent}[${step.roster.join(",")}; max ${step.maxTasks}]`;
+	}
+	const check =
+		step.check.kind === "code"
+			? `code:${step.check.command}`
+			: step.check.kind === "gate"
+				? `gate:${step.check.gate}`
+				: step.check.agent;
+	return `loop:${step.id}(${check} -> ${step.repair.agent} x${step.maxAttempts})`;
+}
+
+function listingLine(entry: PlaybookListing, state: string, detail: string): string {
+	return `${entry.name}  ${entry.source}  ${state.padEnd(7)}  ${detail}\n`;
+}
+
+function runList(args: ReadonlyArray<string>): number {
+	// `list` took no arguments and silently ignored whatever followed it, so
+	// `playbook list --bogus` exited 0 with the normal table and `playbook list --json`
+	// printed the human one. Its siblings status, drain, and resume all reject an
+	// unrecognised flag, and so do `agents` and `models`.
+	const json = args.includes("--json");
+	const unknown = args.find((arg) => arg !== "--json");
+	if (unknown !== undefined) {
+		writeCliFailure({
+			path: ["playbook", "list"],
+			slug: unknown.startsWith("-") ? "unknown_flag" : "usage",
+			message: unknown.startsWith("-") ? `unknown flag: ${unknown}` : `unexpected argument: ${unknown}`,
+			json,
+		});
+		return 2;
+	}
+	const listings = listPlaybooks(process.cwd());
+	if (json) {
+		const playbooks = listings.map((entry) => ({
+			name: entry.name,
+			source: entry.source,
+			path: entry.path,
+			state: entry.playbook !== null ? "valid" : entry.needsCommands !== null ? "setup" : "invalid",
+			...(entry.playbook !== null
+				? { description: entry.playbook.description, steps: entry.playbook.steps.map(renderStep) }
+				: {}),
+			...(entry.playbook === null && entry.needsCommands !== null ? { needsCommands: [...entry.needsCommands] } : {}),
+			...(entry.playbook === null && entry.needsCommands === null ? { error: entry.error ?? "unknown error" } : {}),
+		}));
+		process.stdout.write(`${JSON.stringify(jsonDocument({ playbooks }))}\n`);
+		return 0;
+	}
+	if (listings.length === 0) {
+		process.stdout.write("no playbooks found (.pancode/playbooks/*.md)\n");
+		return 0;
+	}
+	for (const entry of listings) {
+		if (entry.playbook !== null) {
+			const steps = entry.playbook.steps.map(renderStep).join(" -> ");
+			process.stdout.write(listingLine(entry, "valid", steps));
+			if (entry.playbook.description.length > 0) {
+				process.stdout.write(`  ${entry.playbook.description}\n`);
+			}
+			continue;
+		}
+		// A shipped playbook whose only gap is a registry this repo has never written
+		// is unfinished setup, not a broken playbook. Both stay unrunnable; only
+		// one of them is fixed by writing a file, so only one is told to.
+		if (entry.needsCommands !== null) {
+			process.stdout.write(
+				listingLine(entry, "setup", `needs ${PLAYBOOK_COMMANDS_REPO_PATH} declaring ${entry.needsCommands.join(", ")}`),
+			);
+			process.stdout.write(`  ${PLAYBOOK_COMMANDS_REMEDY}\n`);
+			continue;
+		}
+		process.stdout.write(listingLine(entry, "invalid", entry.error ?? "unknown error"));
+	}
+	return 0;
+}
+
+export async function runPlaybookCommand(args: ReadonlyArray<string>): Promise<number> {
+	const sub = args[0];
+	// Asking for help is not a usage error, and it is not an argument either.
+	if (sub === "help" || args.includes("--help") || args.includes("-h")) {
+		process.stdout.write(HELP);
+		return 0;
+	}
+	if (sub === undefined) {
+		process.stderr.write(HELP);
+		return 2;
+	}
+	switch (sub) {
+		case "list":
+			return runList(args.slice(1));
+		case "new":
+			return (await import("./playbook-new.js")).runPlaybookNew(args.slice(1));
+		case "validate":
+			return (await import("./playbook-validate.js")).runPlaybookValidate(args.slice(1));
+		case "graph":
+			return (await import("./playbook-graph.js")).runPlaybookGraph(args.slice(1));
+		case "commands":
+			return (await import("./playbook-commands.js")).runPlaybookCommands(args.slice(1));
+		default:
+			// One diagnostic and a pointer to help, never the whole page (C3).
+			writeCliFailure({
+				path: ["playbook"],
+				slug: sub === "--json" ? "usage" : sub.startsWith("-") ? "unknown_flag" : "unknown_command",
+				message:
+					sub === "--json"
+						? "name a subcommand"
+						: sub.startsWith("-")
+							? `unknown flag: ${sub}`
+							: `unknown subcommand '${sub}'`,
+				json: args.includes("--json"),
+			});
+			return 2;
+	}
+}

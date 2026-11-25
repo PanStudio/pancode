@@ -1,0 +1,857 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, rejects, strictEqual } from "node:assert/strict";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import type { PancodeSettings } from "../../src/core/config.js";
+import { foldWorkingSet } from "../../src/domains/context/working-set/fold.js";
+import { projectWorkingSet } from "../../src/domains/context/working-set/project.js";
+import { resolveRecall } from "../../src/domains/context/working-set/recall.js";
+import type { MiddlewareToolChoiceControl } from "../../src/domains/middleware/index.js";
+import { type CompactionCallObservation, compact } from "../../src/domains/session/compaction/compact.js";
+import { calculateContextTokens, estimateTokens } from "../../src/domains/session/compaction/tokens.js";
+import { estimateAgentContextTokens } from "../../src/domains/session/context-accounting.js";
+import type { SessionContract } from "../../src/domains/session/contract.js";
+import type { MessageEntry, SessionEntry } from "../../src/domains/session/entries.js";
+import { HANDOFF_SEED_CUSTOM_TYPE } from "../../src/domains/session/handoff.js";
+import { registerEngineFauxProvider } from "../../src/engine/api-registry.js";
+import { resolvedRequestContext } from "../../src/engine/context.js";
+import type { AgentMessage } from "../../src/engine/types.js";
+import { retireActiveUserContextForNextOperator } from "../../src/interactive/chat-renderer.js";
+import { buildModelReplayAgentMessagesFromTurns } from "../../src/session-control/model-session-replay.js";
+import { createTurnPersistence } from "../../src/session-control/turn-persistence.js";
+import type { ChatTurnState } from "../../src/session-control/turn-state.js";
+import { syntheticCompactionSummary } from "../harness/compaction-summary.js";
+
+const timestamp = "2026-09-06T00:00:00.000Z";
+function message(turnId: string, role: MessageEntry["role"], payload: unknown): MessageEntry {
+	return { kind: "message", turnId, parentTurnId: null, timestamp, role, payload };
+}
+function chain(entries: SessionEntry[]): SessionEntry[] {
+	return entries.map((entry, index) => ({ ...entry, parentTurnId: entries[index - 1]?.turnId ?? null }));
+}
+
+it("charges custom entries only when replay turns them into model context", () => {
+	const base = [message("u1", "user", { text: "Answer briefly" })];
+	const displayTypes = ["operatorCommand", "workerSettled", "skillSurface", "promptRecompiled"];
+	const display = displayTypes.map((customType, index) => ({
+		kind: "custom" as const,
+		turnId: `display-${index}`,
+		parentTurnId: null,
+		timestamp,
+		customType,
+		data: { text: "display-only".repeat(10_000) },
+	}));
+	strictEqual(calculateContextTokens([...base, ...display]), calculateContextTokens(base));
+	for (const entry of display) strictEqual(estimateTokens(entry), 0, entry.customType);
+	const seed = {
+		kind: "custom" as const,
+		turnId: "seed",
+		parentTurnId: null,
+		timestamp,
+		customType: HANDOFF_SEED_CUSTOM_TYPE,
+		data: { fromSessionId: "source", goal: "Finish", document: "The reviewed handoff" },
+	};
+	ok(estimateTokens(seed) > 0);
+});
+function evictedHistory(): SessionEntry[] {
+	return chain([
+		message("u1", "user", { text: "Keep the exact constraint CONSTRAINT_42" }),
+		message("a1", "assistant", {
+			usage: { input: 60000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 60100 },
+			content: [
+				{ type: "thinking", thinking: `EVICTED_THINKING ${"x".repeat(212000)}` },
+				{ type: "text", text: "Visible decision" },
+				{ type: "toolCall", id: "call1", name: "read", arguments: { path: "src/evidence.ts" } },
+			],
+		}),
+		message("r1", "tool_result", {
+			toolCallId: "call1",
+			toolName: "read",
+			result: { content: [{ type: "text", text: "EVICTED_TOOL_BODY" }] },
+		}),
+		{
+			kind: "contextEviction",
+			basis: "request-context",
+			turnId: "eviction",
+			parentTurnId: null,
+			timestamp,
+			policyId: "age-horizon",
+			trigger: "pressure",
+			tokensBefore: 54000,
+			tokensAfter: 1000,
+			pressureBefore: 0.9,
+			snapshotIdBefore: null,
+			evicted: ["a1", "r1"].map((entry) => ({
+				ref: { entry },
+				reason: "age_horizon" as const,
+				tokensFreed: 100,
+				marker: `[evicted ref=${entry} reason=age_horizon]`,
+			})),
+		},
+		message("u2", "user", { text: "Newest request" }),
+	]);
+}
+
+describe("compaction working-set provider boundary", () => {
+	let faux: ReturnType<typeof registerEngineFauxProvider>;
+	let calls: Array<{ text: string; inputTokens: number; maxTokens: number | undefined }>;
+	beforeEach(() => {
+		calls = [];
+		faux = registerEngineFauxProvider({
+			api: "compaction-projection-fixture",
+			models: [{ id: "summary" }],
+			tokensPerSecond: 0,
+		});
+		faux.setResponses(
+			Array.from({ length: 10 }, () => (context, options, _state, resolved) => {
+				calls.push({
+					text: JSON.stringify(context),
+					inputTokens: estimateAgentContextTokens(resolvedRequestContext(context)),
+					maxTokens: options?.maxTokens,
+				});
+				return {
+					role: "assistant",
+					content: [{ type: "text", text: syntheticCompactionSummary("Canonical checkpoint") }],
+					api: resolved.api,
+					provider: resolved.provider,
+					model: resolved.id,
+					stopReason: "stop",
+					timestamp: Date.now(),
+					usage: {
+						input: 10,
+						output: 5,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 15,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+				};
+			}),
+		);
+	});
+	afterEach(() => faux.unregister());
+	function model(contextWindow = 32768, maxTokens = 4096) {
+		const resolved = faux.getModel("summary");
+		ok(resolved);
+		return { ...resolved, contextWindow, maxTokens };
+	}
+
+	it("retains the entire parallel declaration when the budget crosses a call row", async () => {
+		const entries = chain([
+			message("task", "user", { text: "Continue the MPI repair; do not change numerical tolerances." }),
+			message("earlier", "assistant", { text: "Earlier evidence ".repeat(1000) }),
+			message("batch", "assistant", {
+				content: [
+					{ type: "text", text: "Compare both rank layouts before modifying the exchange." },
+					{ type: "toolCall", id: "one", name: "read", arguments: { path: "one.c" } },
+					{ type: "toolCall", id: "two", name: "read", arguments: { path: "two.c" } },
+				],
+			}),
+			message("call-one", "tool_call", { toolCallId: "one", name: "read", args: { path: "one.c" } }),
+			message("call-two", "tool_call", { toolCallId: "two", name: "read", args: { path: "two.c" } }),
+			message("result-one", "tool_result", {
+				toolCallId: "one",
+				toolName: "read",
+				result: { content: [{ type: "text", text: "FIRST_EVIDENCE" }] },
+			}),
+			message("result-two", "tool_result", {
+				toolCallId: "two",
+				toolName: "read",
+				result: { content: [{ type: "text", text: "SECOND_EVIDENCE" }] },
+			}),
+		]);
+		const result = await compact({
+			entries,
+			model: model(),
+			keepRecentTokens: entries.slice(-2).reduce((sum, entry) => sum + estimateTokens(entry), 0) + 1,
+		});
+		const replay = buildModelReplayAgentMessagesFromTurns([
+			...entries,
+			{
+				kind: "compactionSummary",
+				turnId: "summary",
+				parentTurnId: "result-two",
+				timestamp,
+				summary: result.summary,
+				firstKeptTurnId: result.firstKeptTurnId ?? "",
+				tokensBefore: result.tokensBefore,
+				messagesSummarized: result.messagesSummarized,
+				...(result.userContext ? { userContext: result.userContext } : {}),
+			},
+		]);
+		const serialized = JSON.stringify(replay);
+		match(serialized, /Compare both rank layouts before modifying the exchange/);
+		match(serialized, /FIRST_EVIDENCE/);
+		match(serialized, /SECOND_EVIDENCE/);
+		const declarations = replay.flatMap((entry) =>
+			entry.role === "assistant"
+				? entry.content.filter((block) => block.type === "toolCall").map((block) => block.id)
+				: [],
+		);
+		deepStrictEqual(declarations, ["one", "two"]);
+		strictEqual(result.firstKeptTurnId, "batch");
+		strictEqual(
+			result.userContext?.text,
+			"Continue the MPI repair; do not change numerical tolerances.",
+			"manual compaction preserves the latest operator intent without an explicit active-turn hint",
+		);
+	});
+
+	it("counts what it summarized in provider messages, the unit a context snapshot counts (bt-12 #11)", async () => {
+		const entries = chain([
+			message("u1", "user", { text: "Trace the exchange." }),
+			message("a1", "assistant", {
+				content: [
+					{ type: "text", text: "Reading it." },
+					{ type: "toolCall", id: "x", name: "read", arguments: { path: "x.c" } },
+				],
+			}),
+			message("x-call", "tool_call", { toolCallId: "x", name: "read", args: { path: "x.c" } }),
+			message("x-result", "tool_result", {
+				toolCallId: "x",
+				toolName: "read",
+				result: { content: [{ type: "text", text: "X_BODY" }] },
+			}),
+			{ kind: "custom", turnId: "bookkeeping", parentTurnId: null, timestamp, customType: "promptRecompiled", data: {} },
+			message("a2", "assistant", { text: "Earlier evidence ".repeat(1000) }),
+			message("u2", "user", { text: "Now fix it." }),
+			message("a3", "assistant", { text: "Fixing." }),
+		]);
+		const result = await compact({
+			entries,
+			model: model(),
+			keepRecentTokens: entries.slice(-2).reduce((sum, entry) => sum + estimateTokens(entry), 0) + 1,
+		});
+		const summarized = entries.slice(0, result.firstKeptEntryIndex);
+		strictEqual(result.messagesSummarized, summarized.length, "the ledger field still counts entries");
+		strictEqual(result.conversationMessagesSummarized, buildModelReplayAgentMessagesFromTurns(summarized).length);
+		ok(result.conversationMessagesSummarized < result.messagesSummarized, JSON.stringify(result));
+	});
+
+	it("drops verbatim instructions from a completed turn when a newer user turn is retained", async () => {
+		const newUser = message("new-user", "user", { text: "Review the screenshot." });
+		const tail = message("new-tail", "assistant", { text: "Inspecting the screenshot." });
+		const entries = chain([
+			message("old-user", "user", { text: "Fix the seed." }),
+			message("old-assistant", "assistant", { text: "Seed fix complete." }),
+			{
+				kind: "compactionSummary",
+				turnId: "prior",
+				parentTurnId: null,
+				timestamp,
+				summary: "Prior work complete.",
+				firstKeptTurnId: "old-assistant",
+				tokensBefore: 10000,
+				userContext: { turnId: "old-user", text: "Fix the seed." },
+			},
+			message("older-work", "assistant", { text: "Earlier evidence ".repeat(1000) }),
+			newUser,
+			tail,
+		]);
+		const result = await compact({
+			entries,
+			model: model(),
+			keepRecentTokens: estimateTokens(newUser) + estimateTokens(tail),
+		});
+		strictEqual(result.firstKeptTurnId, "new-user");
+		strictEqual(result.userContext, undefined);
+	});
+
+	it("retires an unsent checkpoint request at the next operator turn and keeps one a reply carried (bt-40)", () => {
+		const entries = chain([
+			message("old-user", "user", { text: "Fix the seed." }),
+			message("old-answer", "assistant", { text: "Seed fix complete." }),
+			{
+				kind: "compactionSummary",
+				turnId: "checkpoint",
+				parentTurnId: null,
+				timestamp,
+				summary: "Seed fix in progress.",
+				firstKeptTurnId: "old-answer",
+				tokensBefore: 10000,
+				messagesSummarized: 1,
+				userContext: { turnId: "old-user", text: "Fix the seed." },
+			},
+		]);
+		const live = buildModelReplayAgentMessagesFromTurns(entries);
+		match(JSON.stringify(live), /Active user instructions \(verbatim\):\\nFix the seed/);
+		const synthetic = {
+			...message("middleware", "user", { text: "Continue.", synthetic: true }),
+			parentTurnId: "checkpoint",
+		};
+		match(
+			JSON.stringify(buildModelReplayAgentMessagesFromTurns([...entries, synthetic])),
+			/Active user instructions \(verbatim\):\\nFix the seed/,
+		);
+		const next = { ...message("next-user", "user", { text: "Review the screenshot." }), parentTurnId: "checkpoint" };
+		doesNotMatch(
+			JSON.stringify(retireActiveUserContextForNextOperator(live, [...entries, next])),
+			/Active user instructions \(verbatim\):\\nFix the seed/,
+		);
+		doesNotMatch(
+			JSON.stringify(buildModelReplayAgentMessagesFromTurns([...entries, next])),
+			/Active user instructions \(verbatim\):\\nFix the seed/,
+		);
+		// A reply after the checkpoint means a request carried the block: it is sent history now, live and on resume.
+		const replied = [...entries, { ...message("tail", "assistant", { text: "Carried." }), parentTurnId: "checkpoint" }];
+		const repliedLive = buildModelReplayAgentMessagesFromTurns(replied);
+		const after = [...replied, { ...next, parentTurnId: "tail" }];
+		deepStrictEqual(retireActiveUserContextForNextOperator(repliedLive, after), repliedLive);
+		deepStrictEqual(buildModelReplayAgentMessagesFromTurns(after).slice(0, repliedLive.length), repliedLive);
+		const ledger = [...entries];
+		const state = {
+			lastTurnId: "checkpoint",
+			runtime: {
+				agent: { state: { messages: [...live], systemPrompt: "", tools: [] } },
+				runtimeResolution: { modelRuntime: { thinking: {} }, effectiveThinkingLevel: "off" },
+			},
+		} as unknown as ChatTurnState;
+		const session = {
+			current: () => ({ id: "test-session" }),
+			append: ({ payload, parentId }: { payload: unknown; parentId: string }) => {
+				ledger.push({ ...next, parentTurnId: parentId, payload });
+				return { id: "next-user" };
+			},
+		} as unknown as SessionContract;
+		const persistence = createTurnPersistence({
+			state,
+			session,
+			readSessionEntries: () => ledger,
+			getSettings: () => ({ chat: {} }) as PancodeSettings,
+			middlewareToolChoice: { reset: () => {} } as unknown as MiddlewareToolChoiceControl,
+			consumePersistedEcho: (text) => text === "Continue.",
+			// The steer the run drained names its queue on the row, so a replay keeps it inside that run's turn (ACP-5).
+			removeQueuedMirrorEntry: (text) => (text === "Review the screenshot." ? { kind: "steer" } : undefined),
+			promptCachePayloadForAssistant: () => ({}),
+		});
+		persistence.appendQueuedUserTurn({ role: "user", content: "Continue.", timestamp: Date.now() } as AgentMessage);
+		match(JSON.stringify(state.runtime?.agent.state.messages), /Active user instructions \(verbatim\):\\nFix the seed/);
+		persistence.appendQueuedUserTurn({
+			role: "user",
+			content: "Review the screenshot.",
+			timestamp: Date.now(),
+		} as AgentMessage);
+		doesNotMatch(
+			JSON.stringify(state.runtime?.agent.state.messages),
+			/Active user instructions \(verbatim\):\\nFix the seed/,
+		);
+		deepStrictEqual((ledger.at(-1) as { payload?: unknown } | undefined)?.payload, {
+			text: "Review the screenshot.",
+			queued: "steer",
+		});
+	});
+
+	it("does not treat middleware continuation rows as operator requests", async () => {
+		const base = chain([
+			message("operator", "user", { text: "Keep the exact task." }),
+			message("older", "assistant", { text: "Earlier evidence ".repeat(1000) }),
+			message("synthetic", "user", { text: "Continue the run.", synthetic: true }),
+			message("tail", "assistant", { text: "Recent work." }),
+		]);
+		const synthetic = base[2];
+		const tail = base[3];
+		ok(synthetic && tail);
+		const keepRecentTokens = estimateTokens(synthetic) + estimateTokens(tail);
+		const first = await compact({ entries: base, model: model(), keepRecentTokens });
+		strictEqual(first.userContext?.text, "Keep the exact task.");
+		const prior = {
+			kind: "compactionSummary" as const,
+			turnId: "prior",
+			parentTurnId: "tail",
+			timestamp,
+			summary: first.summary,
+			firstKeptTurnId: first.firstKeptTurnId ?? "",
+			tokensBefore: first.tokensBefore,
+			userContext: first.userContext,
+		};
+		const second = await compact({
+			entries: [...base, prior, message("more", "assistant", { text: "Later evidence ".repeat(1000) })],
+			model: model(),
+			keepRecentTokens: 100,
+		});
+		strictEqual(second.summary, "");
+		strictEqual(calls.length, 1, "the small retained suffix does not justify rewriting the checkpoint");
+	});
+
+	it("retires a completed request when the next operator turn is pending outside the ledger", async () => {
+		const entries = chain([
+			message("old-user", "user", { text: "Finish the old task." }),
+			message("old-work", "assistant", { text: "Evidence ".repeat(1000) }),
+			message("old-done", "assistant", { text: "Old task complete." }),
+		]);
+		const result = await compact({
+			entries,
+			model: model(),
+			keepRecentTokens: 100,
+			pendingOperatorTurn: true,
+		});
+		strictEqual(result.userContext, undefined);
+	});
+
+	for (const cancelBeforeCall of [true, false]) {
+		it(`rejects cancellation ${cancelBeforeCall ? "before invocation" : "before accepting a late summary"}`, async () => {
+			const controller = new AbortController();
+			const observations: CompactionCallObservation[] = [];
+			let invoked = 0;
+			if (cancelBeforeCall) controller.abort();
+			await rejects(
+				compact({
+					entries: evictedHistory(),
+					model: model(),
+					signal: controller.signal,
+					onCall: (call) => observations.push(call),
+					summarize: async () => {
+						invoked++;
+						controller.abort();
+						return { text: syntheticCompactionSummary("Late checkpoint"), usage: { input: 10, output: 5, totalTokens: 15 } };
+					},
+				}),
+				/abort/i,
+			);
+			strictEqual(invoked, cancelBeforeCall ? 0 : 1);
+			strictEqual(observations.length, invoked);
+			if (!cancelBeforeCall) {
+				strictEqual(observations[0]?.outcome, "aborted");
+				strictEqual((observations[0]?.usage as { totalTokens: number }).totalTokens, 15);
+			}
+		});
+	}
+
+	it("invalidates pre-checkpoint usage with eviction while fresh provider usage anchors replay again", () => {
+		const entries = chain([
+			...evictedHistory(),
+			message("retained", "assistant", {
+				text: "Retained answer",
+				usage: { input: 60000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 60100 },
+			}),
+			{
+				kind: "compactionSummary",
+				turnId: "checkpoint",
+				parentTurnId: null,
+				timestamp,
+				summary: "Canonical state",
+				firstKeptTurnId: "u2",
+				tokensBefore: 60100,
+				messagesSummarized: 3,
+			},
+		]);
+		const original = structuredClone(entries);
+		const projected = projectWorkingSet(entries, foldWorkingSet(entries));
+		const retained = projected.find((entry) => entry.turnId === "retained");
+		ok(retained?.kind === "message");
+		strictEqual((retained.payload as { contextUsageInvalidated: boolean }).contextUsageInvalidated, true);
+		deepStrictEqual(projectWorkingSet(projected, foldWorkingSet(projected)), projected);
+		const replay = buildModelReplayAgentMessagesFromTurns(entries);
+		ok(estimateAgentContextTokens({ messages: replay }) < 1000);
+		deepStrictEqual(entries, original, "projection preserves sealed provider usage and raw observations");
+		entries.push({
+			...message("fresh", "assistant", {
+				text: "Fresh measured response",
+				usage: { input: 40000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 40100 },
+			}),
+			parentTurnId: "retained",
+		});
+		const freshReplay = buildModelReplayAgentMessagesFromTurns(entries);
+		ok(
+			estimateAgentContextTokens({ messages: freshReplay }) >= 40100,
+			"a genuinely post-checkpoint provider count becomes authoritative again",
+		);
+	});
+
+	it("does not invalidate the selected branch with an abandoned sibling checkpoint", () => {
+		const entries: SessionEntry[] = [
+			message("root", "user", { text: "Task" }),
+			{
+				...message("active", "assistant", {
+					text: "Active measured response",
+					usage: { input: 40000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 40100 },
+				}),
+				parentTurnId: "root",
+			},
+			{ ...message("sibling", "user", { text: "Abandoned" }), parentTurnId: "root" },
+			{
+				kind: "compactionSummary",
+				turnId: "abandoned-checkpoint",
+				parentTurnId: "sibling",
+				timestamp,
+				summary: "Abandoned checkpoint",
+				firstKeptTurnId: "sibling",
+				tokensBefore: 50000,
+				messagesSummarized: 1,
+			},
+		];
+		const replay = buildModelReplayAgentMessagesFromTurns(entries, { activeLeafTurnId: "active" });
+		ok(estimateAgentContextTokens({ messages: replay }) >= 40100);
+		doesNotMatch(JSON.stringify(replay), /Abandoned/);
+	});
+
+	for (const operatorText of [undefined, "", " \n\t"]) {
+		it(`preserves legacy text when canonical operator text is ${JSON.stringify(operatorText)}`, async () => {
+			const entries = evictedHistory();
+			const user = entries[0];
+			ok(user?.kind === "message");
+			const text = "No edits.\nRun Scout then dependent Documenter.";
+			user.payload = { text, ...(operatorText === undefined ? {} : { operatorText }) };
+			const result = await compact({ entries, model: model(), keepRecentTokens: 100000, preserveUserTurnId: user.turnId });
+			strictEqual(result.userContext?.text, text);
+		});
+	}
+
+	it("summarizes projected bytes while retaining raw identities, file evidence and exact recall", async (t) => {
+		const entries = evictedHistory();
+		const original = structuredClone(entries);
+		const observations: CompactionCallObservation[] = [];
+		const result = await compact({
+			entries,
+			model: model(),
+			keepRecentTokens: 100000,
+			onCall: (call) => observations.push(call),
+		});
+		strictEqual(calls.length, 1);
+		const call = calls[0];
+		ok(call);
+		t.diagnostic(
+			JSON.stringify({
+				estimatedInputTokens: call.inputTokens,
+				maxOutputTokens: call.maxTokens,
+				contextWindow: 32768,
+				tokensBefore: result.tokensBefore,
+				includesEvictedThinking: call.text.includes("EVICTED_THINKING"),
+				includesEvictedToolBody: call.text.includes("EVICTED_TOOL_BODY"),
+			}),
+		);
+		doesNotMatch(call.text, /EVICTED_THINKING|EVICTED_TOOL_BODY/);
+		match(call.text, /CONSTRAINT_42/);
+		match(call.text, /\[evicted ref=r1/);
+		ok(call.inputTokens + (call.maxTokens ?? 0) <= 32768);
+		strictEqual(result.firstKeptEntryIndex, 3);
+		strictEqual(result.firstKeptTurnId, entries[3]?.turnId);
+		strictEqual(result.tokensBefore, calculateContextTokens(projectWorkingSet(entries, foldWorkingSet(entries))));
+		ok(result.tokensBefore < 1000, "pre-eviction provider usage must not override the projected estimate");
+		match(
+			result.summary,
+			/<exact-facts source="pancode">\n[^\n]*scope="recall"[^\n]*\nread src\/evidence.ts ref=r1\n<\/exact-facts>/,
+		);
+		strictEqual(observations.length, 1);
+		strictEqual(result.usage?.apiCalls, 1);
+		deepStrictEqual(entries, original);
+		const recalled = resolveRecall(entries, foldWorkingSet(entries), "r1");
+		ok(recalled.ok);
+		strictEqual(recalled.result.body, "EVICTED_TOOL_BODY");
+	});
+
+	it("carries the latest canonical checkpoint and projected retained suffix into the history prompt once (bt-18)", async () => {
+		const entries = chain([
+			...evictedHistory().slice(0, 4),
+			{
+				kind: "compactionSummary",
+				turnId: "prior",
+				parentTurnId: null,
+				timestamp,
+				summary: "CANONICAL_CONSTRAINT",
+				firstKeptTurnId: "a1",
+				tokensBefore: 54000,
+			},
+			message("new-history", "user", { text: "New work" }),
+			message("active", "user", { text: "Continue current turn" }),
+			message("tail", "assistant", { text: "retained tail".repeat(1000) }),
+		]);
+		const result = await compact({ entries, model: model(), keepRecentTokens: 1000 });
+		strictEqual(result.isSplitTurn, true);
+		strictEqual(result.firstKeptEntryIndex, 7);
+		strictEqual(result.firstKeptTurnId, "tail");
+		strictEqual(calls.length, 2);
+		strictEqual(result.usage?.apiCalls, 2);
+		const [history, split] = calls;
+		match(history?.text ?? "", /CANONICAL_CONSTRAINT/);
+		match(history?.text ?? "", /\[evicted ref=r1/);
+		// The split-turn prompt carrying it too wrote the prior checkpoint twice, so every checkpoint grew by a copy.
+		doesNotMatch(split?.text ?? "", /CANONICAL_CONSTRAINT|<previous-context>\\n/);
+		match(split?.text ?? "", /Continue current turn/);
+		for (const call of calls) doesNotMatch(call.text, /EVICTED_THINKING|EVICTED_TOOL_BODY|CONSTRAINT_42/);
+	});
+
+	it("keeps recalled originals evicted and includes only the explicit recall at the tail", async () => {
+		const entries = chain([
+			...evictedHistory().slice(0, 4),
+			{
+				kind: "contextRecall",
+				turnId: "recall",
+				parentTurnId: null,
+				timestamp,
+				ref: { entry: "r1" },
+				trigger: "tool",
+				tokensReadmitted: 10,
+				toolCallId: "recall-call",
+			},
+			message("recall-result", "tool_result", {
+				toolCallId: "recall-call",
+				toolName: "context_recall",
+				result: { content: [{ type: "text", text: "EVICTED_TOOL_BODY" }] },
+			}),
+			message("newest", "user", { text: "Continue" }),
+		]);
+		const original = structuredClone(entries);
+		await compact({ entries, model: model(), keepRecentTokens: 10000 });
+		strictEqual(calls[0]?.text.match(/EVICTED_TOOL_BODY/g)?.length, 1);
+		match(calls[0]?.text ?? "", /\[evicted ref=r1/);
+		deepStrictEqual(entries, original);
+		strictEqual(foldWorkingSet(entries).evicted.has("r1"), true);
+	});
+
+	it("keeps operator-private commands out of the actual summarization request", async () => {
+		const entries = chain([
+			message("old", "user", { text: "Visible request" }),
+			{
+				kind: "bashExecution",
+				turnId: "private",
+				parentTurnId: null,
+				timestamp,
+				command: "PRIVATE_COMMAND",
+				output: "PRIVATE_OUTPUT",
+				exitCode: 0,
+				cancelled: false,
+				truncated: false,
+				excludeFromContext: true,
+			},
+			message("new", "user", { text: "Continue" }),
+		]);
+		await compact({ entries, model: model(), keepRecentTokens: 10000 });
+		strictEqual(calls.length, 1);
+		doesNotMatch(calls[0]?.text ?? "", /PRIVATE_COMMAND|PRIVATE_OUTPUT/);
+	});
+
+	it("skips a checkpoint rewrite after one small exchange", async () => {
+		const entries = chain([
+			message("old", "user", { text: "Old work ".repeat(1000) }),
+			message("recent", "user", { text: "Continue" }),
+			message("answer", "assistant", { text: "Done" }),
+		]);
+		const first = await compact({ entries, model: model(), keepRecentTokens: 10000 });
+		strictEqual(calls.length, 1);
+		const checkpoint: SessionEntry = {
+			kind: "compactionSummary",
+			turnId: "checkpoint",
+			parentTurnId: null,
+			timestamp,
+			summary: first.summary,
+			firstKeptTurnId: first.firstKeptTurnId ?? "",
+			tokensBefore: first.tokensBefore,
+		};
+		const next = await compact({
+			entries: chain([
+				...entries,
+				checkpoint,
+				message("next", "user", { text: "One more" }),
+				message("next-answer", "assistant", { text: "Done again" }),
+			]),
+			model: model(),
+			keepRecentTokens: 10000,
+		});
+		strictEqual(next.summary, "");
+		strictEqual(calls.length, 1);
+	});
+
+	it("sizes a non-reasoning summary to the reserve's room under a large output limit", async () => {
+		await compact({
+			entries: evictedHistory(),
+			model: model(131072, 32768),
+			reserveTokens: 16384,
+			keepRecentTokens: 10000,
+		});
+		strictEqual(calls[0]?.maxTokens, 13107);
+	});
+
+	it("gives a reasoning route its output limit until it reports a share, then the room plus that share", async () => {
+		const reasoning = { ...model(131072, 32768), reasoning: true, baseUrl: "https://reasoning-share.invalid" };
+		const caps: Array<number | undefined> = [];
+		// Faux usage carries no reasoning split, so the summarizer seam reports one directly.
+		const summarize = async (request: { maxTokens?: number }) => {
+			caps.push(request.maxTokens);
+			return {
+				text: syntheticCompactionSummary("Reasoned checkpoint"),
+				usage: { input: 10, output: 2000, reasoning: 1000, totalTokens: 2010 },
+			};
+		};
+		const input = {
+			entries: evictedHistory(),
+			model: reasoning,
+			reserveTokens: 8192,
+			keepRecentTokens: 10000,
+			summarize,
+		};
+		await compact(input);
+		await compact(input);
+		// Half of the observed output was reasoning, so the 6553-token room doubles.
+		deepStrictEqual(caps, [32768, 13106]);
+	});
+
+	it("caps summary output at the resolved model limit", async () => {
+		await compact({ entries: evictedHistory(), model: model(32768, 512), reserveTokens: 16384, keepRecentTokens: 10000 });
+		strictEqual(calls[0]?.maxTokens, 512);
+	});
+
+	it("protects the latest skill activation turn while compacting older projected history", async () => {
+		const entries = chain([
+			...evictedHistory().slice(0, 4),
+			message("skill-turn", "user", { text: "Activate the testing skill" }),
+			{
+				kind: "skillActivation",
+				turnId: "skill",
+				parentTurnId: null,
+				timestamp,
+				activation: {
+					name: "testing",
+					source: "project",
+					hash: "abc123",
+					filePath: "skills/testing/SKILL.md",
+					triggeredBy: "slash-command",
+				},
+			},
+			message("newest", "user", { text: "Keep working" }),
+			message("tail", "assistant", { text: "tail".repeat(2000) }),
+		]);
+		const result = await compact({ entries, model: model(), keepRecentTokens: 100 });
+		strictEqual(result.firstKeptEntryIndex, 4);
+		strictEqual(result.firstKeptTurnId, "skill-turn");
+		strictEqual(result.isSplitTurn, false);
+		strictEqual(calls.length, 1);
+		doesNotMatch(calls[0]?.text ?? "", /EVICTED_THINKING|EVICTED_TOOL_BODY|Activate the testing skill/);
+		match(calls[0]?.text ?? "", /CONSTRAINT_42/);
+	});
+
+	it("checks the complete request plus output at the estimated window boundary", async () => {
+		const entries = chain([
+			message("old", "user", { text: "Retain this constraint" }),
+			message("new", "user", { text: "Continue" }),
+		]);
+		await compact({ entries, model: model(), reserveTokens: 1280 });
+		const inputTokens = calls[0]?.inputTokens;
+		ok(inputTokens);
+		await compact({ entries, model: model(inputTokens + 1024), reserveTokens: 1280 });
+		strictEqual(calls.length, 2);
+		await rejects(compact({ entries, model: model(inputTokens + 1023), reserveTokens: 1280 }), /estimated input/);
+		strictEqual(calls.length, 2);
+	});
+
+	it("fits the summary output into a small window instead of refusing the request", async () => {
+		// `--max-context-tokens 16000` on a local model: the default reserve asked
+		// for 13107 output tokens and left 2893 for a 3399-token summary request.
+		const entries = chain([
+			message("old", "user", { text: "Retain this constraint. ".repeat(600) }),
+			message("new", "user", { text: "Continue" }),
+		]);
+		await compact({ entries, model: model(16_000, 32_768) });
+		const call = calls[0];
+		ok(call?.maxTokens !== undefined && call.inputTokens > 16_000 - 13_107, JSON.stringify(call));
+		ok(call.inputTokens + call.maxTokens <= 16_000, JSON.stringify(call));
+	});
+
+	it("rejects an invalid reserve budget or context window without a provider call", async () => {
+		const entries = chain([message("old", "user", { text: "Old" }), message("new", "user", { text: "New" })]);
+		for (const invalid of [0, Number.NaN, Number.POSITIVE_INFINITY]) {
+			await rejects(compact({ entries, model: model(), reserveTokens: invalid }), /positive finite reserve token budget/);
+		}
+		for (const invalid of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+			await rejects(compact({ entries, model: model(invalid) }), /non-negative finite model context window/);
+		}
+		strictEqual(calls.length, 0);
+	});
+
+	it("sends no output cap when the model reports no usable output limit", async () => {
+		const entries = chain([message("old", "user", { text: "Old work" }), message("new", "user", { text: "New" })]);
+		for (const unknown of [0, Number.NaN, Number.POSITIVE_INFINITY]) {
+			calls = [];
+			await compact({ entries, model: model(32768, unknown) });
+			strictEqual(calls.length, 1);
+			strictEqual(calls[0]?.maxTokens, undefined);
+		}
+	});
+
+	it("summarizes against an unreported window and lets the server judge the request", async () => {
+		// A route whose serving window is unknown resolves to contextWindow 0. The
+		// reactive overflow retry compacts on such routes, so 0 must not refuse.
+		const entries = chain([message("old", "user", { text: "Old work" }), message("new", "user", { text: "New" })]);
+		await compact({ entries, model: model(0) });
+		strictEqual(calls.length, 1);
+	});
+
+	it("clips an oversized conversation message for the summarizer and leaves the ledger whole", async () => {
+		// S-22 (dbb8edd9c): one huge user or assistant message must not block every compaction.
+		const huge = "PRESERVE_EXACT_CONSTRAINT ".repeat(10000);
+		const entries = chain([
+			message("old", "user", { text: huge }),
+			message("middle", "user", { text: "New work" }),
+			message("new", "user", { text: "Continue" }),
+		]);
+		const original = structuredClone(entries);
+		await compact({ entries, model: model(), keepRecentTokens: 100000 });
+		strictEqual(calls.length, 1);
+		match(calls[0]?.text ?? "", /characters omitted from this message; the full text is in the session ledger/);
+		deepStrictEqual(entries, original);
+	});
+
+	it("renders a persisted write call once and clips its arguments to fit a small summarizer", async () => {
+		// Astra r1-2: the assistant block and the tool_call row carried the same 40 KiB body into the summary.
+		const body = "WRITE_BODY_LINE\n".repeat(2560);
+		const args = { path: "src/big.ts", content: body };
+		const entries = chain([
+			message("ask", "user", { text: "Write the file" }),
+			message("call", "assistant", {
+				text: "",
+				content: [{ type: "toolCall", id: "w1", name: "write", arguments: args }],
+			}),
+			message("row", "tool_call", { toolCallId: "w1", name: "write", args }),
+			message("legacy", "tool_call", { toolCallId: "w0", name: "read", args: { path: "src/old.ts" } }),
+			message("result", "tool_result", { toolCallId: "w1", toolName: "write", result: "wrote src/big.ts" }),
+			message("new", "user", { text: "Continue" }),
+		]);
+		await compact({ entries, model: model(16_000, 4096), keepRecentTokens: 100 });
+		strictEqual(calls.length, 1);
+		const text = calls[0]?.text ?? "";
+		strictEqual(text.split("write(").length - 1, 1, "one rendering of the write call");
+		match(text, /read\(\{\\"path\\":\\"src\/old\.ts\\"\}\)/, "a row with no assistant block still renders");
+		match(text, /characters omitted from this message/);
+		ok((calls[0]?.inputTokens ?? Number.POSITIVE_INFINITY) <= 16_000 - 4096, JSON.stringify(calls[0]?.inputTokens));
+	});
+
+	for (const oversized of ["system", "instructions", "previous"] as const) {
+		it(`rejects an oversized ${oversized} before invoking or accounting for a provider`, async () => {
+			const huge = "PRESERVE_EXACT_CONSTRAINT ".repeat(10000);
+			const entries = chain([
+				message("old", "user", { text: "Old work" }),
+				...(oversized === "previous"
+					? [
+							{
+								kind: "compactionSummary" as const,
+								turnId: "prior",
+								parentTurnId: null,
+								timestamp,
+								summary: huge,
+								firstKeptTurnId: "",
+								tokensBefore: 60000,
+							},
+						]
+					: []),
+				message("middle", "user", { text: "New work" }),
+				message("new", "user", { text: "Continue" }),
+			]);
+			const original = structuredClone(entries);
+			const observations: CompactionCallObservation[] = [];
+			await rejects(
+				compact({
+					entries,
+					model: model(),
+					keepRecentTokens: 100000,
+					...(oversized === "system" ? { systemPrompt: huge } : {}),
+					...(oversized === "instructions" ? { instructions: huge } : {}),
+					onCall: (call) => observations.push(call),
+				}),
+				/compaction.*estimated input.*output.*context window/i,
+			);
+			strictEqual(calls.length, 0);
+			strictEqual(observations.length, 0);
+			deepStrictEqual(entries, original);
+		});
+	}
+});

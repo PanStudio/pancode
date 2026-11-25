@@ -1,0 +1,232 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/** Plan and consume active read-only route authority through the shared resolver. */
+
+import type { RoutingActivationSettings } from "../../core/defaults.js";
+import type { AgentCapabilityClass } from "../agents/spec.js";
+import { activeRoutingEnabled, applyActiveRouteSelection, assertActiveRouteIdentity } from "./assignment.js";
+import type { DispatchPlanTaskResolution, DispatchRequest } from "./contract.js";
+import {
+	type ApprovedAssignmentRoute,
+	assertApprovedAssignmentRoute,
+	assertApprovedRecoveryCapability,
+} from "./route-approval.js";
+import type { RouteCandidate, RouteDecisionV1 } from "./route-decision.js";
+import type { RouteObservationHandle } from "./route-observer.js";
+import type { DispatchFailoverMode, JobSpec } from "./validation.js";
+
+interface ActivationInputs {
+	request: DispatchRequest;
+	settings: RoutingActivationSettings | undefined;
+	capabilityClass: AgentCapabilityClass | null;
+	failover: DispatchFailoverMode;
+}
+
+export function routeValidationProjection(
+	request: DispatchRequest,
+	allowUnenvelopedApproval = false,
+): { jobSpec: JobSpec; restore(validated: JobSpec): DispatchRequest } {
+	const {
+		externalReadRoot,
+		externalReadApproval,
+		record,
+		// Generated-context sampling and its synthesis deadline are host-owned, outside model-authored job arguments.
+		sampling,
+		synthesisAt,
+		// The batch's answer budget is fixed by the dispatch tool, never by model arguments (M3).
+		answerBudgetBytes,
+		turnConstraints,
+		contextSeed,
+		systemPrompt,
+		reservation,
+		agentSelection,
+		routeApproval,
+		routeAttemptDecision,
+		assignmentDeadlineAt,
+		// The run's wall clock is stamped by dispatch beside its deadline (M8), never model-authored.
+		runWallMs,
+		// Orchestrator-minted, never model-authored: the ledger reference is
+		// stripped before validation for the same reason the reservation is.
+		ledger,
+		// Presentation-only parentage stamped by the calling tool, on the same
+		// terms: a model must not be able to author it.
+		parentToolCallId,
+		// Sealed from the parent decision board by the dispatch tool; a model
+		// must not be able to author which decisions a receipt claims.
+		decisionRefs,
+		// Stamped by the dispatch domain from the process owner; a model must
+		// not be able to file a run under another session.
+		ownerSessionId,
+		ownerSessionCwdHash,
+		resolvedVerification,
+		resultContractOverride,
+		resultSummary,
+		taskWorktree,
+		candidateWorktree,
+		runIdHint,
+		taskWorktreeDestination,
+		// Host-owned permit narrowing and a retry's inherited cap; a model
+		// must not be able to author either.
+		permitNarrowing,
+		inheritedPermitAllowance,
+		// Stamped by the dispatch tool from its own topology (Phase D); a model
+		// must not be able to claim its caller can yield for a live grant.
+		mainGrantRoute,
+		// Set by the argument parser from the caller's own pins; a model must
+		// not be able to free a sealed route.
+		routeFree,
+		...raw
+	} = request;
+	const awaitingEnvelope =
+		allowUnenvelopedApproval && raw.failover === "approved" && raw.allowedCandidates === undefined;
+	return {
+		jobSpec: awaitingEnvelope ? { ...raw, failover: "none" } : raw,
+		restore: (validated) => ({
+			...request,
+			...validated,
+			...(externalReadRoot !== undefined ? { externalReadRoot } : {}),
+			...(externalReadApproval !== undefined ? { externalReadApproval } : {}),
+			...(record !== undefined ? { record } : {}),
+			...(sampling !== undefined ? { sampling } : {}),
+			...(synthesisAt !== undefined ? { synthesisAt } : {}),
+			...(answerBudgetBytes !== undefined ? { answerBudgetBytes } : {}),
+			...(turnConstraints !== undefined ? { turnConstraints } : {}),
+			...(contextSeed !== undefined ? { contextSeed } : {}),
+			...(systemPrompt !== undefined ? { systemPrompt } : {}),
+			...(reservation !== undefined ? { reservation } : {}),
+			...(agentSelection !== undefined ? { agentSelection } : {}),
+			...(routeApproval !== undefined ? { routeApproval } : {}),
+			...(routeAttemptDecision !== undefined ? { routeAttemptDecision } : {}),
+			...(assignmentDeadlineAt !== undefined ? { assignmentDeadlineAt } : {}),
+			...(runWallMs !== undefined ? { runWallMs } : {}),
+			...(ledger !== undefined ? { ledger } : {}),
+			...(parentToolCallId !== undefined ? { parentToolCallId } : {}),
+			...(decisionRefs !== undefined ? { decisionRefs } : {}),
+			...(ownerSessionId !== undefined ? { ownerSessionId } : {}),
+			...(ownerSessionCwdHash !== undefined ? { ownerSessionCwdHash } : {}),
+			...(resolvedVerification !== undefined
+				? { resolvedVerification: resolvedVerification.map((check) => ({ ...check, argv: [...check.argv] })) }
+				: {}),
+			...(resultContractOverride !== undefined ? { resultContractOverride } : {}),
+			...(resultSummary !== undefined ? { resultSummary: { ...resultSummary } } : {}),
+			...(taskWorktree !== undefined ? { taskWorktree } : {}),
+			...(candidateWorktree !== undefined ? { candidateWorktree: { ...candidateWorktree } } : {}),
+			...(runIdHint !== undefined ? { runIdHint } : {}),
+			...(taskWorktreeDestination !== undefined ? { taskWorktreeDestination } : {}),
+			...(permitNarrowing !== undefined ? { permitNarrowing: { ...permitNarrowing } } : {}),
+			...(inheritedPermitAllowance !== undefined ? { inheritedPermitAllowance: { ...inheritedPermitAllowance } } : {}),
+			...(mainGrantRoute !== undefined ? { mainGrantRoute: { ...mainGrantRoute } } : {}),
+			...(routeFree !== undefined ? { routeFree } : {}),
+			...(awaitingEnvelope ? { failover: "approved" as const } : {}),
+		}),
+	};
+}
+
+function enabled(input: ActivationInputs): boolean {
+	const posture = input.request.routingIntent?.posture ?? "balanced";
+	if (input.request.agentSelection?.mode === "auto") {
+		return (
+			input.settings !== undefined &&
+			posture !== "manual" &&
+			input.failover === "approved" &&
+			input.settings.postures.includes(posture as (typeof input.settings.postures)[number]) &&
+			input.settings.agentRoles.length > 0
+		);
+	}
+	return (
+		input.settings !== undefined &&
+		input.capabilityClass !== null &&
+		activeRoutingEnabled({
+			settings: input.settings,
+			role: input.request.executionRole,
+			posture,
+			capabilityClass: input.capabilityClass,
+			failover: input.failover,
+		})
+	);
+}
+
+export function planActiveRoute(
+	input: ActivationInputs & {
+		fixed: DispatchPlanTaskResolution;
+		maxAttempts: number;
+		resolveDecision(): RouteDecisionV1;
+		preview(request: DispatchRequest): DispatchPlanTaskResolution;
+	},
+): DispatchPlanTaskResolution {
+	if (input.request.lineage !== undefined || !enabled(input)) return input.fixed;
+	const started = process.hrtime.bigint();
+	const decision = input.resolveDecision();
+	decision.decisionDurationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+	const selectedRequest = applyActiveRouteSelection(input.request, decision);
+	const selected = input.preview(selectedRequest);
+	let perAttemptUpperBoundUsd = selected.costUpperBoundUsd;
+	for (const candidate of decision.approvedFallbacks) {
+		const alternate = input.preview({
+			...selectedRequest,
+			agentId: candidate.agentId,
+			executionRole: candidate.executionRole,
+			target: candidate.targetId,
+			model: candidate.modelId,
+			node: candidate.nodeId,
+			workerRuntime: candidate.runtimeId,
+		});
+		perAttemptUpperBoundUsd = Math.max(perAttemptUpperBoundUsd, alternate.costUpperBoundUsd);
+	}
+	const approval: ApprovedAssignmentRoute = {
+		version: 1,
+		decision,
+		totalCostUpperBoundUsd: perAttemptUpperBoundUsd * input.maxAttempts,
+		deadlineMs: input.request.routingIntent?.deadlineMs ?? null,
+		maxAttempts: input.maxAttempts,
+	};
+	assertApprovedAssignmentRoute(approval);
+	const maxCostUsd = input.request.routingIntent?.maxCostUsd;
+	if (maxCostUsd !== null && maxCostUsd !== undefined && approval.totalCostUpperBoundUsd > maxCostUsd) {
+		throw new Error("dispatch: active route aggregate cost bound exceeds routing.maxCostUsd");
+	}
+	return { ...selected, routeApproval: approval };
+}
+
+export function consumeActiveRouteApproval<T>(
+	input: ActivationInputs & {
+		requestedAt: string;
+		observe(request: DispatchRequest, decision: RouteDecisionV1): T;
+	},
+): { request: DispatchRequest; observation: T } | null {
+	const approval = input.request.routeApproval;
+	if (enabled(input) && approval === undefined) {
+		throw new Error("dispatch: active routing requires a registry-authenticated route approval");
+	}
+	if (approval === undefined) return null;
+	assertApprovedAssignmentRoute(approval);
+	if (input.failover !== "approved" || (input.request.routingIntent?.posture ?? "balanced") === "manual") {
+		throw new Error("dispatch: active route approval is incompatible with exact or manual routing");
+	}
+	const decision = input.request.lineage === undefined ? approval.decision : input.request.routeAttemptDecision;
+	if (decision === undefined) {
+		throw new Error("dispatch: active recovery requires a resolver-authenticated attempt decision");
+	}
+	const request = applyActiveRouteSelection(input.request, decision);
+	if (input.request.lineage === undefined && approval.deadlineMs !== null) {
+		const deadline = Date.parse(input.requestedAt) + approval.deadlineMs;
+		request.assignmentDeadlineAt = Math.min(request.assignmentDeadlineAt ?? deadline, deadline);
+	}
+	return { request, observation: input.observe(request, decision) };
+}
+
+export function approvedRouteObservation(input: {
+	request: DispatchRequest;
+	active: RouteObservationHandle | null;
+	actual(): RouteCandidate;
+	shadow(): RouteObservationHandle;
+}): RouteObservationHandle {
+	if (input.active === null && input.request.routeApproval === undefined) return input.shadow();
+	const actual = input.actual();
+	if (input.active !== null) {
+		assertActiveRouteIdentity(input.active.decision, actual);
+		return input.active;
+	}
+	assertApprovedRecoveryCapability(input.request.routeApproval as ApprovedAssignmentRoute, actual);
+	return input.shadow();
+}

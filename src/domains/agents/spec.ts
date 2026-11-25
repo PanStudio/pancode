@@ -1,0 +1,469 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { sha256Hex } from "../../core/hash.js";
+import {
+	type BuiltinToolName,
+	isBuiltinToolName,
+	isMcpToolName,
+	type ToolName,
+	ToolNames,
+} from "../../core/tool-names.js";
+import { classify } from "../safety/action-classifier.js";
+import { type WorkerPermissionDeclaration, workerPermissionDeclarationErrors } from "../safety/worker-permit.js";
+import type { AgentBudget, AgentRecipe, AgentToolRequirement } from "./recipe.js";
+import type { ResultContract } from "./result-contract-types.js";
+import { capabilityClassExcludes } from "./role-class.js";
+
+export type AgentCategory =
+	| "explore"
+	| "plan"
+	| "research"
+	| "implement"
+	| "quality"
+	| "science"
+	| "evolution"
+	| "operations"
+	| "internal";
+
+export type AgentCapabilityClass =
+	| "read-only"
+	| "artifact-write"
+	| "workspace-edit"
+	| "verification"
+	| "orchestration"
+	| "internal";
+
+/** Authority classes a bounded coordinator plan may grant to agent automation. */
+export const AGENT_AUTOMATION_AUTHORITIES = ["read-only", "verification", "artifact-write", "workspace-edit"] as const;
+export type AgentAutomationAuthority = (typeof AGENT_AUTOMATION_AUTHORITIES)[number];
+
+export type AgentLatencyClass = "fast" | "balanced" | "deep";
+
+/**
+ * How much durable project context a worker run receives as a dynamic prompt
+ * message: "bounded" is the capped name/conventions/invariants projection,
+ * "none" is nothing. Defaults derive from the capability class so read-only
+ * scouts never pay the PANCODE.md read; recipe frontmatter may override.
+ */
+export type AgentProjectContextTier = "none" | "bounded";
+
+export type AgentAudience = "base" | "shadow" | "custom" | "internal";
+
+/**
+ * What a run delivers, which is what decides the shape of its reserve window.
+ * The reserve ends discovery, not the run's own product, so the delivery tools
+ * a run keeps inside it depend on what it is producing. An "orientation" run
+ * delivers a description of a codebase, so `code_nav` is a delivery tool for it
+ * the way `write` and `edit` are for a run that delivers files.
+ *
+ * Closed on purpose: it widens the reserve admission set, so an unrecognized
+ * value must be a loud parse error rather than a silent degrade back to the
+ * default set. `product: orientaton` in a recipe would otherwise cost the run
+ * its navigation tool with no diagnostic anywhere.
+ */
+export type AgentProduct = "orientation";
+
+const AGENT_PRODUCTS: ReadonlyArray<AgentProduct> = ["orientation"];
+
+/**
+ * What a recipe declares about how the host treats its runs, so no code outside this domain asks which recipe a run
+ * is (fleet M12). Closed for the same reason as {@link AgentProduct}: a misspelled trait is a parse error.
+ *
+ * - `context-generator`: internal runs generate project context (the handbook, wiki pages). They report through the
+ *   context rail rather than a worker card, and their repository-wide read scope is expected, not a diagnostic.
+ * - `peer-tool-loop`: on a subprocess peer runtime the peer's own tool loop stands in for the declared required
+ *   tools, which PanCode cannot observe there. Write roots and protected artifacts keep their own gates.
+ * - `inline-deliverable`: a terminal mutation report may deliver its answer in the summary rather than in files, so
+ *   the parent is told to check the summary against the request.
+ */
+export type AgentTrait = "context-generator" | "peer-tool-loop" | "inline-deliverable";
+
+const AGENT_TRAITS: ReadonlyArray<AgentTrait> = ["context-generator", "peer-tool-loop", "inline-deliverable"];
+
+/** Handbook sections a worker of this recipe receives beyond the ones its capability class implies. */
+export type AgentHandbookAudience = "write" | "verify" | "docs" | "git" | "orchestrator";
+
+const AGENT_HANDBOOK_AUDIENCES: ReadonlyArray<AgentHandbookAudience> = [
+	"write",
+	"verify",
+	"docs",
+	"git",
+	"orchestrator",
+];
+
+const AGENT_CATEGORIES: ReadonlyArray<AgentCategory> = [
+	"explore",
+	"plan",
+	"research",
+	"implement",
+	"quality",
+	"science",
+	"evolution",
+	"operations",
+	"internal",
+];
+
+/**
+ * What each recipe category is for. A decision model choosing a category
+ * before a recipe reads this, so a catalog of any size is narrowed by the
+ * category a recipe declares rather than by its name. `internal` recipes are
+ * never offered to a model and have none.
+ */
+export const AGENT_CATEGORY_PURPOSE: Readonly<Record<Exclude<AgentCategory, "internal">, string>> = {
+	explore: "Find and map code, files and structure in the workspace without changing it.",
+	plan: "Design an approach, break down work or review a proposal before implementation.",
+	research: "Gather and synthesize information from documentation, papers or the web.",
+	implement: "Make code or file changes in the workspace.",
+	quality: "Test, verify, review or audit existing work.",
+	science: "Analyze data, run experiments or work with scientific computing.",
+	evolution: "Improve PanCode, its recipes or its own prompts over time.",
+	operations: "Operate machines, services, deployments or infrastructure.",
+};
+
+const AGENT_CAPABILITY_CLASSES: ReadonlyArray<AgentCapabilityClass> = [
+	"read-only",
+	"artifact-write",
+	"workspace-edit",
+	"verification",
+	"orchestration",
+	"internal",
+];
+
+const AGENT_LATENCY_CLASSES: ReadonlyArray<AgentLatencyClass> = ["fast", "balanced", "deep"];
+
+const AGENT_AUDIENCES: ReadonlyArray<AgentAudience> = ["base", "shadow", "custom", "internal"];
+
+const AGENT_PROJECT_CONTEXT_TIERS: ReadonlyArray<AgentProjectContextTier> = ["none", "bounded"];
+
+export interface AgentToolRequirements {
+	required: ReadonlyArray<ToolName | { anyOf: ReadonlyArray<ToolName> }>;
+	optional: ReadonlyArray<ToolName>;
+}
+
+export interface AgentSpec {
+	version: 1;
+	id: string;
+	name: string;
+	description: string;
+	source: AgentRecipe["source"] | "custom";
+	filepath: string;
+	tools: ReadonlyArray<ToolName>;
+	toolRequirements: AgentToolRequirements;
+	category: AgentCategory;
+	capabilityClass: AgentCapabilityClass;
+	latencyClass: AgentLatencyClass;
+	projectContextTier: AgentProjectContextTier;
+	audience: AgentAudience;
+	tags: ReadonlyArray<string>;
+	skills: ReadonlyArray<string>;
+	resultContract: ResultContract;
+	product?: AgentProduct;
+	traits?: ReadonlyArray<AgentTrait>;
+	handbook?: ReadonlyArray<AgentHandbookAudience>;
+	permissions?: WorkerPermissionDeclaration;
+	budget: AgentBudget;
+	body: string;
+}
+
+function includes<T extends string>(values: ReadonlyArray<T>, value: unknown): value is T {
+	return typeof value === "string" && (values as ReadonlyArray<string>).includes(value);
+}
+
+export function isAgentCategory(value: unknown): value is AgentCategory {
+	return includes(AGENT_CATEGORIES, value);
+}
+
+export function isAgentCapabilityClass(value: unknown): value is AgentCapabilityClass {
+	return includes(AGENT_CAPABILITY_CLASSES, value);
+}
+
+export function isAgentLatencyClass(value: unknown): value is AgentLatencyClass {
+	return includes(AGENT_LATENCY_CLASSES, value);
+}
+
+export function isAgentAudience(value: unknown): value is AgentAudience {
+	return includes(AGENT_AUDIENCES, value);
+}
+
+export function isAgentProjectContextTier(value: unknown): value is AgentProjectContextTier {
+	return includes(AGENT_PROJECT_CONTEXT_TIERS, value);
+}
+
+export function isAgentProduct(value: unknown): value is AgentProduct {
+	return includes(AGENT_PRODUCTS, value);
+}
+
+export function isAgentTrait(value: unknown): value is AgentTrait {
+	return includes(AGENT_TRAITS, value);
+}
+
+export function isAgentHandbookAudience(value: unknown): value is AgentHandbookAudience {
+	return includes(AGENT_HANDBOOK_AUDIENCES, value);
+}
+
+/** Whether a recipe declares `trait`; the one way code outside this domain tells recipes apart. */
+export function agentHasTrait(
+	spec: { traits?: ReadonlyArray<AgentTrait> } | null | undefined,
+	trait: AgentTrait,
+): boolean {
+	return spec?.traits?.includes(trait) === true;
+}
+
+/**
+ * A read-only explorer: the only recipe kind an outside read root admits, and the one whose job is navigation, so it
+ * is never steered away from `code_nav`. Declared by `category: explore` on a `read-only` recipe.
+ */
+export function isReadOnlyExplorer(spec: Pick<AgentSpec, "category" | "capabilityClass"> | null | undefined): boolean {
+	return spec?.category === "explore" && spec.capabilityClass === "read-only";
+}
+
+function normalizeTools(recipe: AgentRecipe): ReadonlyArray<ToolName> {
+	const seen = new Set<string>();
+	const tools: ToolName[] = [];
+	for (const tool of recipe.tools) {
+		if (typeof tool !== "string" || tool.trim().length === 0) {
+			throw new Error(`agent recipe '${recipe.id}' declares an invalid tool name`);
+		}
+		if (seen.has(tool)) continue;
+		seen.add(tool);
+		tools.push(isBuiltinToolName(tool as ToolName) ? (tool as BuiltinToolName) : (tool as ToolName));
+	}
+	return tools;
+}
+
+function asToolName(tool: string): ToolName {
+	return isBuiltinToolName(tool as ToolName) ? (tool as BuiltinToolName) : (tool as ToolName);
+}
+
+function normalizeToolRequirements(recipe: AgentRecipe, tools: ReadonlyArray<ToolName>): AgentToolRequirements {
+	if (!recipe.toolRequirements) {
+		throw new Error(`agent recipe '${recipe.id}' must declare tools.required and tools.optional`);
+	}
+	const declared = new Set(tools);
+	const required = recipe.toolRequirements.required.map((requirement: AgentToolRequirement, index) => {
+		if (typeof requirement === "string") return asToolName(requirement);
+		if (!Array.isArray(requirement.anyOf) || requirement.anyOf.length === 0) {
+			throw new Error(`agent recipe '${recipe.id}' tools.required[${index}].anyOf must be non-empty`);
+		}
+		return { anyOf: requirement.anyOf.map(asToolName) };
+	});
+	const optional = recipe.toolRequirements.optional.map(asToolName);
+	const mentioned = required.flatMap((requirement) =>
+		typeof requirement === "string" ? [requirement] : requirement.anyOf,
+	);
+	for (const tool of [...mentioned, ...optional]) {
+		if (!declared.has(tool)) throw new Error(`agent recipe '${recipe.id}' requirement '${tool}' is not declared`);
+	}
+	if (new Set([...mentioned, ...optional]).size !== mentioned.length + optional.length) {
+		throw new Error(`agent recipe '${recipe.id}' contains duplicate tool requirements`);
+	}
+	if (new Set([...mentioned, ...optional]).size !== tools.length) {
+		throw new Error(`agent recipe '${recipe.id}' has declared tools without required/optional semantics`);
+	}
+	return { required, optional };
+}
+
+export interface AgentToolCompatibility {
+	compatible: boolean;
+	missingRequired: ReadonlyArray<string>;
+	lostOptional: ReadonlyArray<ToolName>;
+}
+
+/**
+ * `waived` names required tools the run's envelope lacks on purpose: a role that does not hold a tool, such as an
+ * explorer seated on a builder recipe, was never going to use it. They are not counted as missing; every other
+ * requirement keeps the full gate.
+ */
+export function resolveAgentToolCompatibility(
+	spec: Pick<AgentSpec, "toolRequirements">,
+	effectiveTools: ReadonlyArray<ToolName>,
+	options: { mediatesDispatch: boolean; waived?: ReadonlySet<string> },
+): AgentToolCompatibility {
+	const available = new Set(effectiveTools);
+	const waived = options.waived ?? new Set<string>();
+	const missingRequired: string[] = [];
+	for (const requirement of spec.toolRequirements.required) {
+		if (typeof requirement === "string") {
+			if (waived.has(requirement)) continue;
+			if (!available.has(requirement)) missingRequired.push(requirement);
+			continue;
+		}
+		if (requirement.anyOf.every((tool) => waived.has(tool))) continue;
+		if (!requirement.anyOf.some((tool) => available.has(tool))) {
+			missingRequired.push(`anyOf(${requirement.anyOf.join("|")})`);
+		}
+	}
+	if (available.has(ToolNames.Dispatch) && !options.mediatesDispatch) {
+		missingRequired.push("dispatch(runtime mediation unavailable)");
+	}
+	return {
+		compatible: missingRequired.length === 0,
+		missingRequired,
+		lostOptional: spec.toolRequirements.optional.filter((tool) => !available.has(tool)),
+	};
+}
+
+export function normalizeAgentSpec(recipe: AgentRecipe): AgentSpec {
+	const tools = normalizeTools(recipe);
+	const toolRequirements = normalizeToolRequirements(recipe, tools);
+	return {
+		version: recipe.version,
+		id: recipe.id,
+		name: recipe.name,
+		description: recipe.description,
+		source: recipe.source,
+		filepath: recipe.filepath,
+		tools,
+		toolRequirements,
+		category: recipe.category,
+		capabilityClass: recipe.capabilityClass,
+		latencyClass: recipe.latencyClass,
+		projectContextTier: recipe.projectContextTier,
+		audience: recipe.audience,
+		tags: recipe.tags,
+		skills: recipe.skills,
+		resultContract: recipe.resultContract,
+		...(recipe.product !== undefined ? { product: recipe.product } : {}),
+		...(recipe.traits !== undefined ? { traits: recipe.traits } : {}),
+		...(recipe.handbook !== undefined ? { handbook: recipe.handbook } : {}),
+		...(recipe.permissions !== undefined ? { permissions: recipe.permissions } : {}),
+		budget: recipe.budget,
+		body: recipe.body,
+	};
+}
+
+/**
+ * Stable identity of everything about a recipe that changes what a route means.
+ *
+ * Route statistics are only comparable when they were produced by the same
+ * agent. A Coder run under a reviewer persona, a Coder whose declared tools
+ * changed, and a Coder whose body was rewritten are three different things to
+ * aggregate, so each gets a different fingerprint. Display-only metadata
+ * (name, description, category, filepath, source, tags) is excluded: display
+ * metadata edits must not invalidate measured history.
+ */
+export function agentSpecFingerprint(spec: AgentSpec): string {
+	const requirement = (entry: AgentToolRequirement): string =>
+		typeof entry === "string" ? entry : `anyOf(${[...entry.anyOf].sort().join("|")})`;
+	const payload = JSON.stringify({
+		id: spec.id,
+		tools: [...spec.tools].sort(),
+		required: spec.toolRequirements.required.map(requirement).sort(),
+		optional: [...spec.toolRequirements.optional].sort(),
+		capabilityClass: spec.capabilityClass,
+		latencyClass: spec.latencyClass,
+		projectContextTier: spec.projectContextTier,
+		audience: spec.audience,
+		skills: [...spec.skills].sort(),
+		resultContract: spec.resultContract,
+		budget: spec.budget,
+		// Declared permissions change what a route may do. Absent keeps every
+		// existing fingerprint, and the measured history behind it, unchanged.
+		...(spec.permissions !== undefined
+			? { permissions: { git: spec.permissions.git, asks: spec.permissions.asks } }
+			: {}),
+		body: sha256Hex(spec.body),
+	});
+	return sha256Hex(payload);
+}
+
+export function isUserVisibleAgent(spec: AgentSpec): boolean {
+	return spec.audience === "base" || spec.audience === "custom";
+}
+
+/**
+ * Every shipped shadow recipe is read-only and no user-facing recipe is, so an
+ * operator reaches that work through `coder` narrowed by `--read-only`. PanCode
+ * once recommended `run --agent scout`, which the audience gate refuses (DF-3).
+ */
+export const SHADOW_AGENT_OPERATOR_STAND_IN = "coder";
+
+function audienceRefusalHead(spec: Pick<AgentSpec, "id" | "audience">): string {
+	return `dispatch: agent '${spec.id}' is a ${spec.audience} agent reserved for PanCode internal orchestration`;
+}
+
+/**
+ * The refusal a user-origin request for a non-visible agent gets. A shadow
+ * one names `standIn` only when the caller's own admission check found that
+ * recipe admissible read-only on the same route; null names nothing, so the
+ * refusal never sends the operator to a command that is refused in turn.
+ */
+export function userOriginAudienceRefusal(spec: AgentSpec, standIn: string | null): string {
+	const refusal = audienceRefusalHead(spec);
+	if (spec.audience !== "shadow" || standIn === null) return refusal;
+	return `${refusal}; for the same read-only work use the user-facing agent '${standIn}' with --read-only`;
+}
+
+/** Whether `message` is the audience refusal for `spec`, with or without a stand-in. */
+export function isUserOriginAudienceRefusal(spec: AgentSpec, message: string): boolean {
+	const head = audienceRefusalHead(spec);
+	return message === head || message.startsWith(`${head}; `);
+}
+
+/** The stand-in a shadow refusal named, or null when it named none. */
+export function audienceRefusalStandIn(message: string): string | null {
+	return (
+		/; for the same read-only work use the user-facing agent '([^']+)' with --read-only$/u.exec(message)?.[1] ?? null
+	);
+}
+
+export function isShadowAgent(spec: AgentSpec): boolean {
+	return spec.audience === "shadow" || spec.audience === "internal";
+}
+
+export function agentSpecPolicyErrors(spec: AgentSpec): string[] {
+	const errors: string[] = [];
+	const requiredGroups = spec.toolRequirements.required.map((requirement) =>
+		typeof requirement === "string" ? [requirement] : requirement.anyOf,
+	);
+	const requiresTool = (tool: ToolName): boolean =>
+		requiredGroups.some((group) => group.length > 0 && group.every((candidate) => candidate === tool));
+	const requiresMutation = requiredGroups.some(
+		(group) => group.length > 0 && group.every((tool) => tool === ToolNames.Write || tool === ToolNames.Edit),
+	);
+	if (spec.capabilityClass === "workspace-edit" && (!requiresTool(ToolNames.Read) || !requiresMutation)) {
+		errors.push(`workspace-edit agent '${spec.id}' must require read and write|edit`);
+	}
+	if (spec.capabilityClass === "verification" && !requiresTool(ToolNames.Verify)) {
+		errors.push(`verification agent '${spec.id}' must require verify`);
+	}
+	if (spec.capabilityClass === "artifact-write" && !requiresTool(ToolNames.Artifact)) {
+		errors.push(`artifact-write agent '${spec.id}' must require artifact`);
+	}
+	if (spec.skills.length > 0 && !requiresTool(ToolNames.Context)) {
+		errors.push(`agent '${spec.id}' must require context for bound skills`);
+	}
+	if (
+		spec.capabilityClass === "orchestration" &&
+		spec.tools.includes(ToolNames.Dispatch) &&
+		!requiresTool(ToolNames.Dispatch)
+	) {
+		errors.push(`orchestration agent '${spec.id}' must require dispatch when it is declared`);
+	}
+	// One ceiling for every class: the role class table the permit and the envelope also read.
+	for (const tool of spec.tools) {
+		// An MCP name carries no class until dispatch admission resolves its server's trust; the permit applies it then.
+		if (isMcpToolName(tool)) continue;
+		const reason = capabilityClassExcludes(spec.capabilityClass, tool, classify({ tool }).actionClass);
+		if (reason !== null) errors.push(`${spec.capabilityClass} agent '${spec.id}' ${reason}`);
+	}
+	if (spec.capabilityClass !== "orchestration" && spec.tools.includes(ToolNames.Dispatch)) {
+		errors.push(`agent '${spec.id}' exposes dispatch without orchestration capability`);
+	}
+	if (spec.tools.includes(ToolNames.AskUser)) {
+		errors.push(`agent '${spec.id}' exposes ask_user, which is only available to the orchestrator`);
+	}
+	if (spec.skills.length > 0 && !spec.tools.includes(ToolNames.Context)) {
+		errors.push(`agent '${spec.id}' declares skills but does not expose context`);
+	}
+	for (const error of workerPermissionDeclarationErrors(spec.capabilityClass, spec.permissions)) {
+		errors.push(`agent '${spec.id}' ${error}`);
+	}
+	return errors;
+}
+
+export function assertAgentSpecPolicy(spec: AgentSpec): void {
+	const errors = agentSpecPolicyErrors(spec);
+	if (errors.length > 0) throw new Error(`agent policy violation:\n${errors.map((error) => `- ${error}`).join("\n")}`);
+}

@@ -1,0 +1,190 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
+import { describe, it } from "node:test";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import type { EvidenceAssessedPayload } from "../../src/core/telemetry/live-events.js";
+import { composeTrustStatus } from "../../src/domains/evidence/index.js";
+import { AcpRequestError } from "../../src/engine/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
+import type { AcpServerChat } from "../../src/engine/acp/server-options.js";
+import { fakeTransport } from "../harness/acp-fake-transport.js";
+
+const chat: AcpServerChat = {
+	submit: async () => {},
+	cancel: () => {},
+	onEvent: () => () => {},
+	isStreaming: () => false,
+	getSessionId: () => null,
+};
+
+/** A live assessment whose findings carry the given tags; the ACP frame keeps only its counters (#434). */
+function assessment(runId: string, tags: string[]): EvidenceAssessedPayload {
+	return {
+		runId,
+		version: 1,
+		attempt: 0,
+		firstPassSuccess: true,
+		failureCause: null,
+		trust: JSON.parse(JSON.stringify(composeTrustStatus())),
+		findings: tags.map((tag, index) => ({
+			id: `finding-00${index + 1}`,
+			severity: "info",
+			tag,
+		})) as EvidenceAssessedPayload["findings"],
+		verdicts: [],
+		provenance: null,
+		text: {
+			label: "resolvable",
+			function: "sha256",
+			canonicalization: "json-sorted-v1",
+			subject: "evidence-findings",
+			id: `obj_${"0".repeat(64)}`,
+		},
+	};
+}
+
+const EVIDENCE = assessment("run-7", ["no-validation", "independent-review"]);
+
+function eventsOf(peer: ReturnType<typeof fakeTransport>): Array<Record<string, unknown>> {
+	return peer.notifications
+		.filter((entry) => entry.method === "_pancode/event")
+		.map((entry) => entry.params as Record<string, unknown>);
+}
+
+describe("contracts/acp forwards accountability.evidenceReady only to a client that opted in", () => {
+	it("advertises the kind, forwards the assessment's counters, and does not mark it terminal", async () => {
+		const bus = createTelemetryHub();
+		const peer = fakeTransport();
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat, bus, cwd: process.cwd() });
+		const init = (await peer.call("initialize", {
+			protocolVersion: 1,
+			clientCapabilities: { _meta: { "pancode/events": { version: 1, kinds: ["evidence.assessed"] } } },
+		})) as { agentCapabilities: { _meta: Record<string, { kinds: string[] }> } };
+		ok(init.agentCapabilities._meta["pancode/events"]?.kinds.includes("evidence.assessed"));
+		const session = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+
+		bus.emit("evidence.assessed", EVIDENCE);
+		// Tags that are not bounded identifiers (a control character, over 64
+		// bytes) are dropped, never truncated into new ones.
+		bus.emit("evidence.assessed", assessment("run-8", ["ok", "bad\u0007tag", "x".repeat(65)]));
+
+		const events = eventsOf(peer);
+		strictEqual(events.length, 2);
+		const first = events[0] ?? {};
+		strictEqual(first.kind, "evidence.assessed");
+		strictEqual(first.sessionId, session.sessionId);
+		// The assessment is journaled before the run's seal, so it precedes the run's terminal frame.
+		strictEqual(first.terminal, false);
+		strictEqual(first.turnId, null);
+		deepStrictEqual(first.payload, {
+			runId: "run-7",
+			firstPassSuccess: true,
+			findingCount: 2,
+			tags: ["no-validation", "independent-review"],
+		});
+		const second = events[1]?.payload as { tags: string[] };
+		deepStrictEqual(second.tags, ["ok"]);
+
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("sends nothing to a client that opted into the dispatch kinds but not this one", async () => {
+		const bus = createTelemetryHub();
+		const peer = fakeTransport();
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat, bus, cwd: process.cwd() });
+		await peer.call("initialize", {
+			protocolVersion: 1,
+			clientCapabilities: { _meta: { "pancode/events": { version: 1, kinds: ["run.completed"] } } },
+		});
+		await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] });
+		bus.emit("evidence.assessed", EVIDENCE);
+		strictEqual(eventsOf(peer).length, 0);
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
+	it("drops an event whose run id cannot be represented instead of repairing it", async () => {
+		const bus = createTelemetryHub();
+		const peer = fakeTransport();
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat, bus, cwd: process.cwd() });
+		await peer.call("initialize", {
+			protocolVersion: 1,
+			clientCapabilities: { _meta: { "pancode/events": { version: 1, kinds: ["evidence.assessed"] } } },
+		});
+		await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] });
+		bus.emit("evidence.assessed", { ...EVIDENCE, runId: "run\u001bid" });
+		strictEqual(eventsOf(peer).length, 0);
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+});
+
+it("ACP shows the client a context-handoff refusal and its pointer to /handoff", async () => {
+	const peer = fakeTransport();
+	let emit: (event: unknown) => void = () => {};
+	const refusedChat: AcpServerChat = {
+		...chat,
+		onEvent: (handler) => {
+			emit = handler;
+			return () => {
+				emit = () => {};
+			};
+		},
+		submit: async () => {
+			emit({
+				type: "notice",
+				level: "warning",
+				surface: "transcript",
+				text: "context-handoff refused: Use /handoff <goal>.",
+				admission: { reason: "handoff-skill-refused" },
+			});
+		},
+	};
+	const served = servePancodeAcpAgent({ transport: peer.transport, chat: refusedChat, cwd: process.cwd() });
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const session = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+		await peer.call("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: "hi" }] });
+		ok(JSON.stringify(peer.notifications).includes("Use /handoff <goal>."));
+	} finally {
+		peer.transport.close();
+		strictEqual(await served, 0);
+	}
+});
+
+it("ACP returns a typed context admission refusal without exposing dropped notice prose", async () => {
+	const peer = fakeTransport();
+	let emit: (event: unknown) => void = () => {};
+	const refusedChat: AcpServerChat = {
+		...chat,
+		onEvent: (handler) => {
+			emit = handler;
+			return () => {
+				emit = () => {};
+			};
+		},
+		submit: async () => {
+			emit({ type: "notice", text: "private/path must not cross ACP", admission: { reason: "context-window-exceeded" } });
+		},
+	};
+	const served = servePancodeAcpAgent({ transport: peer.transport, chat: refusedChat, cwd: process.cwd() });
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const session = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+		await rejects(
+			peer.call("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: "hi" }] }),
+			(error: unknown) => {
+				ok(error instanceof AcpRequestError);
+				deepStrictEqual(error.detail, { code: "prompt_not_admitted", reason: "context-window-exceeded" });
+				ok(!error.message.includes("private/path"));
+				return true;
+			},
+		);
+		strictEqual(peer.notifications.length, 0);
+	} finally {
+		peer.transport.close();
+		strictEqual(await served, 0);
+	}
+});

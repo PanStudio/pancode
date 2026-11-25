@@ -1,0 +1,600 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { existsSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
+import {
+	asDirectoryPathBoundary,
+	normalizePathBoundaryEntry,
+	PathBoundaryError,
+	pathBoundaryCovers,
+	resolvePathBoundary,
+} from "../../core/path-boundary.js";
+import { relativePathEscapes } from "../../core/path-containment.js";
+import { maskCodeMembers } from "./code-members.js";
+import type { DispatchRequest } from "./contract.js";
+import type { WithheldCapability } from "./envelope.js";
+import type { RunLedgerProjection } from "./types.js";
+
+/** Path-like tokens retained for requests that do not carry typed intent. */
+const DISPATCH_PATH_TOKEN_RE = /\/?(?:[\w.-]+\/)+[\w.-]+|\b[\w-]+\.[A-Za-z0-9]{1,8}\b/g;
+// Any `<scheme>://...` URI names a resource, not a workspace path (`https://`,
+// `project://paper/background`). `file://` stays visible because its path is a
+// real filesystem path, and a one-letter scheme would swallow `C://` drive text.
+const SCHEME_URI_RE = /\b(?!file:)[A-Za-z][A-Za-z0-9+.-]+:\/\/\S+/giu;
+// A home path (`~/notes/plan.md`) names the operator's home, never a repository path. Left in, the token grammar
+// starts at its slash and reads `/notes/plan.md`, an absolute path the prose never wrote.
+const HOME_PATH_RE = /(?<![\w.~/-])~\/[^\s"'`)]*/gu;
+// Group 2 holds a directory's trailing slash, so a quoted "<root>/src/" closes right after the match.
+const POSIX_ABSOLUTE_TOKEN_RE = /(?:^|[\s("'`])((?:\/[\w.~+-]+)+)(\/?)/gu;
+const WINDOWS_ABSOLUTE_TOKEN_RE = /(?:^|[\s("'])([A-Za-z]:[\\/][^\s"']+)/gu;
+// A sentence that ends on a path ("... in /repo/src.") puts its period on the token.
+const TRAILING_SENTENCE_DOTS_RE = /(?<=[^/.])\.+$/u;
+const BACKSLASH_PATH_RE = /\b[A-Za-z_.-][\w.-]*\\(?:(?:[\w.-]+\\)+[\w.-]+|[\w-]+\.[A-Za-z0-9]{1,8})\b/gu;
+const DOUBLE_SEPARATOR_PATH_RE = /\b[\w.-]+\/\/[\w./-]+/gu;
+const PARENT_PREFIX_RE = /^(?:\.\.\/)+/u;
+
+export type DispatchPathProvenanceKind = "declared" | "derived" | "inferred";
+export type DispatchPathConfidence = "certain" | "high" | "medium" | "low";
+export type DispatchPathProvenanceSource =
+	| "intent.read_roots"
+	| "intent.write_roots"
+	| "intent.relevant_paths"
+	| "writeRoots"
+	| "task"
+	| "briefing";
+export type DispatchPathProvenanceReason =
+	| "explicit_intent"
+	| "request_write_roots"
+	| "task_path_token"
+	| "briefing_path_token";
+
+export interface DispatchPathProvenanceEvidence {
+	provenance: DispatchPathProvenanceKind;
+	source: DispatchPathProvenanceSource;
+	confidence: DispatchPathConfidence;
+	reason: DispatchPathProvenanceReason;
+}
+
+export interface DispatchPathProvenanceEntry {
+	path: string;
+	evidence: DispatchPathProvenanceEvidence[];
+}
+
+export interface DispatchPathScopeProvenance {
+	version: 1;
+	mode: "declared" | "inferred";
+	workingContextPaths: DispatchPathProvenanceEntry[];
+	writeBoundaries: DispatchPathProvenanceEntry[];
+}
+
+/**
+ * A prose token whose leading "../" run inference had to reinterpret, kept so
+ * the notice can name the raw token beside the scope it produced. `resolved` is
+ * the repository path the stripped remainder anchored to, or null when nothing
+ * under the dispatch root carried it and the token took no part in scope.
+ */
+export interface DispatchInferredParentToken {
+	token: string;
+	resolved: string | null;
+	source: "task" | "briefing";
+}
+
+export interface DispatchPathScope {
+	source: "declared" | "inferred";
+	workingContextPaths: ReadonlyArray<string>;
+	writeBoundaries: ReadonlyArray<string>;
+	inferredOnlyPaths: ReadonlyArray<string>;
+	parentTokens: ReadonlyArray<DispatchInferredParentToken>;
+	provenance: DispatchPathScopeProvenance;
+}
+
+export interface DeclaredScopeReplacementNotice {
+	code: "typed_scope_replaced_inferred_paths";
+	level: "warning";
+	omittedPaths: ReadonlyArray<string>;
+	message: string;
+}
+
+export interface InferredScopeParentTokenNotice {
+	code: "inferred_scope_parent_tokens";
+	level: "warning";
+	paths: ReadonlyArray<{
+		path: string;
+		policy: "working-context";
+		provenance: "inferred";
+		source: "task" | "briefing";
+		confidence: "low";
+	}>;
+	message: string;
+}
+
+export type DispatchPathScopeInferenceErrorCode = "scope_path_absolute" | "scope_path_malformed";
+
+export class DispatchPathScopeInferenceError extends Error {
+	readonly code: DispatchPathScopeInferenceErrorCode;
+	readonly source: "task" | "briefing";
+	readonly token: string;
+
+	constructor(code: DispatchPathScopeInferenceErrorCode, source: "task" | "briefing", token: string, detail: string) {
+		super(`${code}: ${source} contains ${detail} '${token}'; declare intent explicitly`);
+		this.name = "DispatchPathScopeInferenceError";
+		this.code = code;
+		this.source = source;
+		this.token = token;
+	}
+}
+
+const DECLARED_EVIDENCE = {
+	readRoots: {
+		provenance: "declared",
+		source: "intent.read_roots",
+		confidence: "certain",
+		reason: "explicit_intent",
+	},
+	writeRoots: {
+		provenance: "declared",
+		source: "intent.write_roots",
+		confidence: "certain",
+		reason: "explicit_intent",
+	},
+	relevantPaths: {
+		provenance: "declared",
+		source: "intent.relevant_paths",
+		confidence: "certain",
+		reason: "explicit_intent",
+	},
+} as const satisfies Record<"readRoots" | "writeRoots" | "relevantPaths", DispatchPathProvenanceEvidence>;
+
+function cloneEvidence(evidence: DispatchPathProvenanceEvidence): DispatchPathProvenanceEvidence {
+	return { ...evidence };
+}
+
+function addProvenance(
+	entries: Map<string, DispatchPathProvenanceEntry>,
+	path: string,
+	evidence: DispatchPathProvenanceEvidence,
+): void {
+	const current = entries.get(path);
+	if (current === undefined) {
+		entries.set(path, { path, evidence: [cloneEvidence(evidence)] });
+		return;
+	}
+	if (!current.evidence.some((entry) => entry.source === evidence.source)) {
+		current.evidence.push(cloneEvidence(evidence));
+	}
+}
+
+function sortedEntries(entries: Map<string, DispatchPathProvenanceEntry>): DispatchPathProvenanceEntry[] {
+	return [...entries.values()]
+		.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
+		.map((entry) => ({ path: entry.path, evidence: entry.evidence.map(cloneEvidence) }));
+}
+
+/** Build the required field-level provenance for normalized declared intent. */
+export function declaredIntentPathProvenance(input: {
+	readRoots: ReadonlyArray<string>;
+	writeRoots: ReadonlyArray<string>;
+	relevantPaths: ReadonlyArray<string>;
+}): DispatchPathProvenanceEntry[] {
+	const entries = new Map<string, DispatchPathProvenanceEntry>();
+	for (const path of input.readRoots) addProvenance(entries, path, DECLARED_EVIDENCE.readRoots);
+	for (const path of input.writeRoots) addProvenance(entries, path, DECLARED_EVIDENCE.writeRoots);
+	for (const path of input.relevantPaths) addProvenance(entries, path, DECLARED_EVIDENCE.relevantPaths);
+	return sortedEntries(entries);
+}
+
+/** One prose token read as a repository path, as an anchored "../" quote, or as neither. */
+type InferredPathToken =
+	| { kind: "token"; token: string }
+	| { kind: "anchored"; token: string; resolved: string }
+	| { kind: "dropped"; token: string };
+
+function inferredPaths(
+	req: Pick<DispatchRequest, "task" | "briefing">,
+	root: string,
+): { paths: string[]; droppedTokens: string[] } {
+	const paths = new Set<string>();
+	const droppedTokens = new Set<string>();
+	const text = withoutMemberCalls(
+		`${req.task}\n${req.briefing ?? ""}`
+			.replace(/^```json[^\n]*\n[\s\S]*?^```[ \t]*$/gmu, "")
+			.replace(SCHEME_URI_RE, "")
+			.replace(HOME_PATH_RE, ""),
+	);
+	for (const match of text.matchAll(DISPATCH_PATH_TOKEN_RE)) {
+		const inferred = inferredPathToken(match[0], root);
+		if (inferred.kind === "dropped") {
+			droppedTokens.add(inferred.token);
+			continue;
+		}
+		const token = inferred.kind === "anchored" ? inferred.resolved : inferred.token;
+		const local = isAbsolute(token) ? relative(root, token) : token;
+		paths.add(local === ".." || local.startsWith("../") ? token : local);
+	}
+	return { paths: [...paths], droppedTokens: [...droppedTokens] };
+}
+
+/**
+ * A leading "./" is how prose quotes an import specifier ("./parser.js"); it
+ * names the same repository path without the prefix, and the boundary grammar
+ * would otherwise refuse the whole dispatch for a dot segment.
+ *
+ * A leading "../" run is that same quote copied out of a file whose location
+ * this function never sees. Both callers, strictInferredPaths and
+ * inferredPaths, are handed the task or briefing text and nothing else, so the
+ * origin the run is measured against is unknowable here and no arithmetic on
+ * the run's length can decide whether it escapes. What is decidable is whether
+ * the remainder names something under the dispatch root, so the run is
+ * stripped and the remainder probed: "../src/store.js" quoted out of
+ * test/store.test.ts anchors to src/store.js, and "../../../etc/passwd"
+ * anchors to nothing in a checkout that holds no etc/passwd.
+ *
+ * That is a deliberate reading of issue #266, recorded here because it is the
+ * one place the choice is made. Criterion 1 ("never rejects the dispatch") and
+ * criterion 2 ("a prose token whose .. segments would leave the repository
+ * root is still refused") ask for opposite answers on a leading run, and only
+ * criterion 1 is decidable without an origin, so a run that names nothing is
+ * dropped rather than refused. Neither outcome widens authority: an inferred
+ * path selects project rules and compiles context but never becomes a write
+ * boundary, and an anchored remainder carries no ".." so path.resolve keeps it
+ * under the root. Both outcomes are named to the operator by
+ * inferredScopeParentTokenNotice, so the reinterpretation is never silent.
+ *
+ * The probe costs one existsSync per "../"-leading token (3 microseconds on a
+ * hit and 2 on a miss over 5,000 warm calls on this checkout) and no stat at
+ * all for the ordinary token, which the grammar matches dozens of per dispatch
+ * (the 27 tokens per task measured for REPORTABLE_OMITTED_PATH_RE below).
+ *
+ * A ".." or "." outside the leading run ("../src/../../b.ts", "../src/./b.ts")
+ * walks back out of a segment it already anchored, which is decidable without
+ * an origin, so it falls through to the boundary grammar and keeps its
+ * refusal, as does a run that leaves no remainder at all ("../..").
+ */
+function inferredPathToken(raw: string, root: string): InferredPathToken {
+	const token = raw.replace(/^\.\//u, "").replace(/\.+$/u, "");
+	const parents = PARENT_PREFIX_RE.exec(token)?.[0];
+	if (parents === undefined) return { kind: "token", token };
+	const rest = token.slice(parents.length);
+	const segments = rest.split("/");
+	if (rest.length === 0 || segments.includes("..") || segments.includes(".")) return { kind: "token", token };
+	return existsSync(resolvePathBoundary(root, rest))
+		? { kind: "anchored", token, resolved: rest }
+		: { kind: "dropped", token };
+}
+
+/** A method call (`m.add(1,1)`, `x.name()`) names code, not a file: its member is blanked so `m.add` is no path (M-42). */
+function withoutMemberCalls(text: string): string {
+	return maskCodeMembers(text, { verbs: false }, (name) => " ".repeat(name.length));
+}
+
+function withoutNonWorkspaceTokens(text: string): string {
+	return text
+		.replace(SCHEME_URI_RE, (url) => " ".repeat(url.length))
+		.replace(HOME_PATH_RE, (path) => " ".repeat(path.length));
+}
+
+/** The words an absolute token naming the run's own working directory becomes. */
+export const WORKING_DIRECTORY_PHRASE = "the working directory";
+
+/**
+ * Prose names the workspace by its absolute path ("/home/me/repo", "/home/me/repo/src/a.ts.")
+ * or quotes a workspace path with a leading slash ("/paper/background"). Each names a path
+ * the run already reads, so dispatch normalization rewrites it to its workspace-relative form,
+ * and the root itself to {@link WORKING_DIRECTORY_PHRASE}, keeping any sentence period. Only a
+ * token outside the workspace stays absolute, and prose inference refuses it. The
+ * leading-slash reading applies only when no such host path exists and the workspace holds it,
+ * so "/etc/passwd" stays as written. A token opened by a quote or backtick is rewritten only when
+ * that quote closes right after it or after its trailing slash: a quoted path that runs on
+ * ("<root> archive/a.md") names another place, so it stays as written for inference to refuse.
+ * A closed quote holds the path literally, so its trailing dots are part of it ("<root>." names
+ * a sibling), not a sentence period.
+ */
+export function relativizeWorkspaceAbsoluteTokens(
+	text: string,
+	root: string,
+): { text: string; rewrites: Array<{ from: string; to: string }> } {
+	const base = resolve(root);
+	const rewrites: Array<{ from: string; to: string }> = [];
+	const rewritten = text.replace(
+		POSIX_ABSOLUTE_TOKEN_RE,
+		(match: string, raw: string, slash: string, offset: number) => {
+			const prefix = match.slice(0, match.length - raw.length - slash.length);
+			const opener = prefix.at(-1);
+			const quoted = opener === '"' || opener === "'" || opener === "`";
+			if (quoted && text[offset + match.length] !== opener) return match;
+			const token = quoted ? raw : raw.replace(TRAILING_SENTENCE_DOTS_RE, "");
+			const trailing = raw.slice(token.length);
+			const local = relative(base, token);
+			let to: string | null = null;
+			if (local === "") to = WORKING_DIRECTORY_PHRASE;
+			else if (!relativePathEscapes(local)) to = local;
+			else {
+				const anchored = token.slice(1);
+				const walks = anchored.split("/").some((segment) => segment === ".." || segment === ".");
+				if (!walks && !existsSync(token) && existsSync(resolve(base, anchored))) to = anchored;
+			}
+			if (to === null) return match;
+			rewrites.push({ from: token, to });
+			return `${prefix}${to}${trailing}${to === WORKING_DIRECTORY_PHRASE ? "" : slash}`;
+		},
+	);
+	return { text: rewritten, rewrites };
+}
+
+function failMalformedText(text: string, source: "task" | "briefing"): void {
+	const withoutUrls = withoutNonWorkspaceTokens(text);
+	const absolute = POSIX_ABSOLUTE_TOKEN_RE.exec(withoutUrls)?.[1];
+	POSIX_ABSOLUTE_TOKEN_RE.lastIndex = 0;
+	if (absolute !== undefined) {
+		throw new DispatchPathScopeInferenceError("scope_path_absolute", source, absolute, "an absolute path token");
+	}
+	const windowsAbsolute = WINDOWS_ABSOLUTE_TOKEN_RE.exec(withoutUrls)?.[1];
+	WINDOWS_ABSOLUTE_TOKEN_RE.lastIndex = 0;
+	if (windowsAbsolute !== undefined) {
+		throw new DispatchPathScopeInferenceError("scope_path_absolute", source, windowsAbsolute, "an absolute path token");
+	}
+	for (const pattern of [BACKSLASH_PATH_RE, DOUBLE_SEPARATOR_PATH_RE]) {
+		const malformed = pattern.exec(withoutUrls)?.[0];
+		pattern.lastIndex = 0;
+		if (malformed !== undefined) {
+			throw new DispatchPathScopeInferenceError("scope_path_malformed", source, malformed, "a malformed path token");
+		}
+	}
+}
+
+function strictInferredPaths(
+	text: string,
+	source: "task" | "briefing",
+	root: string,
+): {
+	paths: Array<{ path: string; evidence: DispatchPathProvenanceEvidence }>;
+	parentTokens: DispatchInferredParentToken[];
+} {
+	failMalformedText(text, source);
+	const withoutUrls = withoutMemberCalls(withoutNonWorkspaceTokens(text));
+	const evidence: DispatchPathProvenanceEvidence =
+		source === "task"
+			? { provenance: "inferred", source, confidence: "medium", reason: "task_path_token" }
+			: { provenance: "inferred", source, confidence: "low", reason: "briefing_path_token" };
+	const paths: Array<{ path: string; evidence: DispatchPathProvenanceEvidence }> = [];
+	const parentTokens: DispatchInferredParentToken[] = [];
+	for (const match of withoutUrls.matchAll(DISPATCH_PATH_TOKEN_RE)) {
+		const inferred = inferredPathToken(match[0], root);
+		if (inferred.kind === "dropped") {
+			parentTokens.push({ token: inferred.token, resolved: null, source });
+			continue;
+		}
+		if (inferred.kind === "anchored") {
+			parentTokens.push({ token: inferred.token, resolved: inferred.resolved, source });
+		}
+		const token = inferred.kind === "anchored" ? inferred.resolved : inferred.token;
+		try {
+			paths.push({ path: normalizePathBoundaryEntry(token), evidence });
+		} catch (error) {
+			const code =
+				error instanceof PathBoundaryError && error.code === "absolute" ? "scope_path_absolute" : "scope_path_malformed";
+			throw new DispatchPathScopeInferenceError(
+				code,
+				source,
+				token,
+				code === "scope_path_absolute" ? "an absolute path token" : "a malformed path token",
+			);
+		}
+	}
+	return { paths, parentTokens };
+}
+
+function inferredPathScope(req: DispatchRequest, cwd: string): DispatchPathScope {
+	const workingEntries = new Map<string, DispatchPathProvenanceEntry>();
+	const writeEntries = new Map<string, DispatchPathProvenanceEntry>();
+	const writeEvidence: DispatchPathProvenanceEvidence = {
+		provenance: "derived",
+		source: "writeRoots",
+		confidence: "high",
+		reason: "request_write_roots",
+	};
+	for (const root of req.writeRoots ?? []) {
+		addProvenance(workingEntries, root, writeEvidence);
+		addProvenance(writeEntries, asDirectoryPathBoundary(resolvePathBoundary(cwd, root)), writeEvidence);
+	}
+	// One map across both fields, first field winning: an orchestrator that
+	// restates the file it is asking about quotes the same specifier in the task
+	// and in the briefing, and the notice must name it once rather than spend two
+	// of its twelve render slots on the same token.
+	const parentTokens = new Map<string, DispatchInferredParentToken>();
+	const recordParentTokens = (entries: ReadonlyArray<DispatchInferredParentToken>): void => {
+		for (const entry of entries) if (!parentTokens.has(entry.token)) parentTokens.set(entry.token, entry);
+	};
+	const taskScope = strictInferredPaths(req.task, "task", cwd);
+	for (const candidate of taskScope.paths) addProvenance(workingEntries, candidate.path, candidate.evidence);
+	recordParentTokens(taskScope.parentTokens);
+	if (req.briefing !== undefined) {
+		const briefingScope = strictInferredPaths(req.briefing, "briefing", cwd);
+		for (const candidate of briefingScope.paths) addProvenance(workingEntries, candidate.path, candidate.evidence);
+		recordParentTokens(briefingScope.parentTokens);
+	}
+	const workingContext = [...workingEntries.values()].map((entry) => ({
+		path: entry.path,
+		evidence: entry.evidence.map(cloneEvidence),
+	}));
+	const writeBoundaries = [...writeEntries.values()].map((entry) => ({
+		path: entry.path,
+		evidence: entry.evidence.map(cloneEvidence),
+	}));
+	return {
+		source: "inferred",
+		workingContextPaths: workingContext.map((entry) => entry.path),
+		writeBoundaries: writeBoundaries.map((entry) => entry.path),
+		inferredOnlyPaths: [],
+		parentTokens: [...parentTokens.values()],
+		provenance: {
+			version: 1,
+			mode: "inferred",
+			workingContextPaths: workingContext,
+			writeBoundaries,
+		},
+	};
+}
+
+/** Resolve every policy-bearing path projection for one dispatch request. */
+export function resolveDispatchPathScope(req: DispatchRequest): DispatchPathScope {
+	const cwd = req.cwd ?? process.cwd();
+	if (req.intent === undefined) return inferredPathScope(req, cwd);
+
+	const declaredProvenance = declaredIntentPathProvenance(req.intent);
+	const declaredPaths = declaredProvenance.map((entry) => entry.path);
+	const inferred = inferredPaths(req, cwd);
+	// A dropped token cannot be covered by a declaration, so it is always listed.
+	// An anchored one is listed under the path it anchored to and goes through
+	// the same coverage test the notice has always applied, which is why
+	// "../src/store.js" under a declared "src/" stops reading as an omitted path.
+	const inferredOnlyPaths = [
+		...inferred.paths.filter((candidate) => !pathBoundaryCovers(declaredPaths, candidate)),
+		...inferred.droppedTokens,
+	];
+	const writeEvidence = DECLARED_EVIDENCE.writeRoots;
+	const writeBoundaries = req.intent.writeRoots.map((root) => ({
+		path: resolvePathBoundary(cwd, root),
+		evidence: [cloneEvidence(writeEvidence)],
+	}));
+	return {
+		source: "declared",
+		workingContextPaths: declaredPaths,
+		writeBoundaries: writeBoundaries.map((entry) => entry.path),
+		inferredOnlyPaths,
+		// Empty on purpose: the declaration is the scope here, so no "../" token
+		// changed what the worker sees and there is nothing for the parent-token notice
+		// to report. A dropped one still reaches the operator through
+		// inferredOnlyPaths above.
+		parentTokens: [],
+		provenance: {
+			version: 1,
+			mode: "declared",
+			workingContextPaths: declaredProvenance,
+			writeBoundaries,
+		},
+	};
+}
+
+/**
+ * The prose token grammar also matches version numbers, ratios, and Latin
+ * abbreviations ("0.5", "v24.9", "e.g", "dead/raw"). Those never select a rule
+ * or a boundary, so the replacement notice names only tokens that read as
+ * repository paths: a segment with a source or document file extension, or
+ * a trailing directory separator. Method names (`Store.fromText`, `store.set`)
+ * share the dotted shape and are excluded by the extension list. A live three-task dispatch printed 27
+ * "omitted paths" per task, most of them numbers, three times over.
+ */
+const REPORTABLE_OMITTED_PATH_RE =
+	/\.(?:[cm]?[jt]sx?|json|ya?ml|md|txt|py|go|rs|c|h|cc|cpp|hpp|java|rb|sh|toml|css|html|sql|lock)(?:\/|$)|\/$/u;
+const OMITTED_PATH_REPORT_CAP = 12;
+
+/** Omitted prose paths worth telling the operator about, capped for the transcript. */
+function reportableOmittedPaths(scope: DispatchPathScope): string[] {
+	return scope.inferredOnlyPaths.filter((path) => REPORTABLE_OMITTED_PATH_RE.test(path));
+}
+
+function renderOmittedPaths(paths: ReadonlyArray<string>): string {
+	if (paths.length <= OMITTED_PATH_REPORT_CAP) return paths.join(", ");
+	return `${paths.slice(0, OMITTED_PATH_REPORT_CAP).join(", ")} and ${paths.length - OMITTED_PATH_REPORT_CAP} more`;
+}
+
+/** Render the named diagnostic for the declared-scope replacement tradeoff. */
+export function declaredScopeReplacementDiagnostic(scope: DispatchPathScope): string | null {
+	if (scope.source !== "declared") return null;
+	const omitted = reportableOmittedPaths(scope);
+	if (omitted.length === 0) return null;
+	return `typed_scope_replaced_inferred_paths: typed intent omitted prose-inferred paths ${renderOmittedPaths(
+		omitted,
+	)}; those paths did not select project rules or expand worker authority`;
+}
+
+/** Render the interactive warning for the declared-scope replacement tradeoff. */
+export function declaredScopeReplacementNotice(scope: DispatchPathScope): DeclaredScopeReplacementNotice | null {
+	if (scope.source !== "declared") return null;
+	const omittedPaths = reportableOmittedPaths(scope);
+	if (omittedPaths.length === 0) return null;
+	return {
+		code: "typed_scope_replaced_inferred_paths",
+		level: "warning",
+		omittedPaths,
+		message: `[dispatch scope] Typed intent replaced prose path inference; omitted paths: ${renderOmittedPaths(
+			omittedPaths,
+		)}. Those paths did not select project rules or expand worker authority.`,
+	};
+}
+
+/**
+ * A reinterpreted "../" token is the one inferred-mode scope fact worth the
+ * transcript. It fires only where a leading "../" run made inference choose
+ * between a path the prose never literally spelled and no path at all, so unlike a per-dispatch
+ * inference notice it cannot warn on the ordinary case that
+ * `publishDispatchPathScope` deliberately keeps quiet. The anchored token earns
+ * the line more than the dropped one: dropping subtracts from scope, while
+ * anchoring puts "src/store.js" in working context because prose said
+ * "../src/store.js", and a rewrite the operator cannot see is one nobody can
+ * check.
+ *
+ * Declared mode records none. The declaration is the scope there, and a prose
+ * token that never entered it is already the subject of
+ * `declaredScopeReplacementNotice`. That notice filters by
+ * REPORTABLE_OMITTED_PATH_RE, so a declared-mode drop of "../data/blob.bin" or
+ * "../src/helper" is in fact named nowhere; that is the accepted cost of not
+ * spending a second per-dispatch notice on a token that took no part in a scope
+ * the intent had already fixed.
+ *
+ * The inferred-mode list is not filtered by REPORTABLE_OMITTED_PATH_RE, because the
+ * "../" prefix is itself the filter: the version numbers, ratios, and Latin
+ * abbreviations that filter exists for ("0.5", "v24.9", "e.g", "4/10") cannot
+ * carry one.
+ *
+ * The notice reads as plain sentences at narrow widths: dropped tokens are
+ * named as paths that were not granted, anchored ones as `<raw> as <anchored>`,
+ * each list under the same twelve-entry cap the replacement notice uses.
+ */
+function renderParentTokens(tokens: ReadonlyArray<DispatchInferredParentToken>): string {
+	const dropped = tokens.filter((entry) => entry.resolved === null).map((entry) => entry.token);
+	const anchored = tokens.flatMap((entry) => (entry.resolved === null ? [] : [`${entry.token} as ${entry.resolved}`]));
+	const sentences: string[] = [];
+	if (dropped.length > 0)
+		sentences.push(`Paths outside the workspace were not granted: ${renderOmittedPaths(dropped)}.`);
+	if (anchored.length > 0) sentences.push(`Read from the workspace root: ${renderOmittedPaths(anchored)}.`);
+	return sentences.join(" ");
+}
+
+/** Render the interactive warning for prose tokens whose leading "../" run was reinterpreted. */
+export function inferredScopeParentTokenNotice(scope: DispatchPathScope): InferredScopeParentTokenNotice | null {
+	const tokens = scope.parentTokens;
+	if (tokens.length === 0) return null;
+	return {
+		code: "inferred_scope_parent_tokens",
+		level: "warning",
+		// Every entry names the raw prose token, the one spelling both outcomes
+		// share; the message carries what each one resolved to.
+		paths: tokens.map((entry) => ({
+			path: entry.token,
+			policy: "working-context",
+			provenance: "inferred",
+			source: entry.source,
+			confidence: "low",
+		})),
+		message: `[dispatch scope] ${renderParentTokens(tokens)}`,
+	};
+}
+
+/** S8: display only admitted declarations, never paths inferred from task prose. */
+export function runLedgerProjection(
+	req: DispatchRequest,
+	scope: DispatchPathScope,
+	withheld: ReadonlyArray<WithheldCapability> = [],
+): RunLedgerProjection {
+	const source = req.intent !== undefined ? "intent" : (req.writeRoots?.length ?? 0) > 0 ? "write-roots" : "none";
+	return {
+		version: 1,
+		ledgerId: req.ledger?.id ?? null,
+		readRoots: req.intent !== undefined ? [...req.intent.readRoots] : [],
+		writeRoots: source === "none" ? [] : [...scope.writeBoundaries],
+		scopeSource: source,
+		...(withheld.length > 0 ? { withheld: withheld.map((entry) => ({ ...entry })) } : {}),
+	};
+}

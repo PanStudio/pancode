@@ -1,0 +1,1339 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { type TestContext, test } from "node:test";
+import type { PancodeSettings } from "../../src/core/config.js";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { rememberMessageCalls } from "../../src/core/message-accounting.js";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import type { MiddlewareToolChoiceControl } from "../../src/domains/middleware/index.js";
+import type { ProvidersContract } from "../../src/domains/providers/index.js";
+import type { SessionContract } from "../../src/domains/session/contract.js";
+import type { SessionEntry } from "../../src/domains/session/entries.js";
+import type { TelemetryView } from "../../src/domains/telemetry/contract.js";
+import { stripTerminalSequences } from "../../src/engine/tui.js";
+import { createChatPanel } from "../../src/interactive/chat-panel.js";
+import { buildReplayAgentMessagesFromTurns, rehydrateChatPanelFromTurns } from "../../src/interactive/chat-renderer.js";
+import { appendOperatorCommand } from "../../src/interactive/command-output.js";
+import { renderSessionHtml } from "../../src/interactive/export-html/index.js";
+import {
+	createInteractiveSlashRuntime,
+	type InteractiveSlashRuntimeDeps,
+} from "../../src/interactive/interactive-slash-runtime.js";
+import { createInteractiveSubscriptions } from "../../src/interactive/interactive-subscriptions.js";
+import { turnSpend } from "../../src/interactive/turn-spend.js";
+import type { WorkerRunEntryFields, WorkerSettledFields } from "../../src/interactive/worker-replay.js";
+import { type ChatLoopEvent, type CreateChatLoopDeps, createChatLoop } from "../../src/session-control/chat-loop.js";
+import { toolResultSummary } from "../../src/session-control/chat-loop-messages.js";
+import { createTurnPersistence } from "../../src/session-control/turn-persistence.js";
+import type { ChatTurnState } from "../../src/session-control/turn-state.js";
+import type { WorkerEntryState, WorkerRunResultFacts } from "../../src/session-control/worker-stream.js";
+import { FINISH_WITHOUT_REPLY_REFUSAL } from "../../src/tools/finish.js";
+import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
+import { telemetryCall, telemetryViewOf } from "../harness/telemetry-view.js";
+
+const usage = {
+	input: 7,
+	output: 5,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 12,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+/** Pins the operator's zone and time locale for one test, so a receipt's end time never depends on the host. */
+function pinZone(t: TestContext, zone: string, locale = "C"): void {
+	const pinned = { TZ: zone, LC_ALL: locale };
+	for (const [name, value] of Object.entries(pinned)) {
+		const saved = process.env[name];
+		process.env[name] = value;
+		t.after(() => {
+			if (saved === undefined) delete process.env[name];
+			else process.env[name] = saved;
+		});
+	}
+}
+function replay(items: Array<{ role: "user" | "assistant"; payload: unknown } | { retry: true }>): string {
+	const entries: SessionEntry[] = items.map((item, index) => ({
+		turnId: `turn-${index}`,
+		parentTurnId: index === 0 ? null : `turn-${index - 1}`,
+		timestamp: "2026-09-17T00:00:00Z",
+		...("retry" in item
+			? {
+					kind: "custom" as const,
+					customType: "retryStatus",
+					data: { phase: "scheduled", attempt: 1, maxAttempts: 1, errorMessage: "HTTP 503 Unavailable" },
+				}
+			: { kind: "message" as const, ...item }),
+	}));
+	const panel = createChatPanel();
+	rehydrateChatPanelFromTurns(panel, entries);
+	return panel.render(120).map(stripTerminalSequences).join("\n");
+}
+const toolCall = {
+	role: "assistant" as const,
+	payload: {
+		stopReason: "toolUse",
+		content: [{ type: "toolCall", id: "read-1", name: "read", arguments: { path: "notes.txt" } }],
+		usage,
+	},
+};
+const success = {
+	role: "assistant" as const,
+	payload: { stopReason: "stop", content: [{ type: "text", text: "Recovered answer" }], usage },
+};
+
+for (const stopReason of ["error", "aborted"] as const) {
+	test(`a later tool-use turn cannot stamp Done on a previous ${stopReason} replay`, () => {
+		const output = replay([
+			{ role: "user", payload: { text: "First request" } },
+			{
+				role: "assistant",
+				payload: {
+					stopReason,
+					errorMessage: "HTTP 503 Request ended",
+					content: [],
+					usage: { ...usage, input: 0, output: 0, totalTokens: 0 },
+				},
+			},
+			{ role: "user", payload: { text: "Second request" } },
+			toolCall,
+			success,
+		]);
+		const [first, second] = output.split("▌ Second request");
+		assert.ok(first !== undefined && second !== undefined);
+		assert.match(first, /503/);
+		assert.doesNotMatch(first, /\bDone\b/);
+		assert.match(second, /Recovered answer/);
+		assert.match(second, /\bDone\b/);
+	});
+}
+
+test("transient error followed by tool use and recovery retains one final success receipt", () => {
+	const output = replay([
+		{ role: "user", payload: { text: "One request" } },
+		{ role: "assistant", payload: { stopReason: "error", errorMessage: "HTTP 503 Unavailable", content: [] } },
+		{ retry: true },
+		toolCall,
+		success,
+	]);
+	assert.match(output, /503/);
+	assert.match(output, /Recovered answer/);
+	assert.equal((output.match(/\bDone\b/g) ?? []).length, 1);
+	assert.ok(output.indexOf("Done") > output.indexOf("Recovered answer"));
+});
+
+test("actual final failure after tool use retains a failed outcome while success remains Done", () => {
+	for (const stopReason of ["error", "aborted", "stop"] as const) {
+		const output = replay([
+			{ role: "user", payload: { text: "One request" } },
+			toolCall,
+			{
+				role: "assistant",
+				payload: { stopReason, errorMessage: "Request ended", content: [{ type: "text", text: "Final response" }], usage },
+			},
+		]);
+		assert.match(output, stopReason === "error" ? /Failed/ : stopReason === "aborted" ? /Stopped/ : /Done/);
+		if (stopReason !== "stop") assert.doesNotMatch(output, /\bDone\b/);
+	}
+});
+
+test("the reasoning behind a final answer replays where it streamed, in every style", () => {
+	const plan = { type: "thinking", thinking: "Plan: read the notes first." };
+	const weigh = { type: "thinking", thinking: "Weigh it: the notes answer the question." };
+	const call = { type: "toolCall", id: "read-1", name: "read", arguments: { path: "notes.txt" } };
+	const answer = { type: "text", text: "The notes answer it." };
+	const first = { role: "assistant", stopReason: "toolUse", content: [plan, call], usage };
+	const last = { role: "assistant", stopReason: "stop", content: [weigh, answer], usage };
+	const at = (second: number) => `2026-09-17T00:00:0${second}.000Z`;
+	const entries = [
+		{ turnId: "u", parentTurnId: null, timestamp: at(0), kind: "message", role: "user", payload: { text: "Q" } },
+		{ turnId: "a1", parentTurnId: "u", timestamp: at(1), kind: "message", role: "assistant", payload: first },
+		{
+			turnId: "c1",
+			parentTurnId: "a1",
+			timestamp: at(1),
+			kind: "message",
+			role: "tool_call",
+			payload: { name: "read", toolCallId: "read-1", args: { path: "notes.txt" } },
+		},
+		{
+			turnId: "r1",
+			parentTurnId: "c1",
+			timestamp: at(2),
+			kind: "message",
+			role: "tool_result",
+			payload: { toolCallId: "read-1", toolName: "read", result: "notes", isError: false, durationMs: 5 },
+		},
+		{ turnId: "a2", parentTurnId: "r1", timestamp: at(3), kind: "message", role: "assistant", payload: last },
+	] as SessionEntry[];
+	for (const style of ["compact", "standard", "detailed"] as const) {
+		// The live clock stands still, so a loaded machine cannot give the live
+		// read a duration the ledger does not have.
+		const live = createChatPanel({ getOutputStyle: () => style, now: () => 1_000 });
+		live.appendUser("Q");
+		live.applyEvent({ type: "agent_start" } as ChatLoopEvent);
+		for (const message of [first, last]) {
+			live.applyEvent({ type: "message_start", message: { role: "assistant", content: [] } } as unknown as ChatLoopEvent);
+			const thinking = message.content[0] as { thinking: string };
+			live.applyEvent({ type: "thinking_delta", contentIndex: 0, delta: thinking.thinking } as ChatLoopEvent);
+			live.applyEvent({ type: "message_end", message } as unknown as ChatLoopEvent);
+			if (message === first) {
+				live.applyEvent({ type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: call.arguments });
+				live.applyEvent({
+					type: "tool_execution_end",
+					toolCallId: "read-1",
+					toolName: "read",
+					result: "notes",
+					isError: false,
+					durationMs: 5,
+				} as ChatLoopEvent);
+			}
+		}
+		live.applyEvent({ type: "agent_end", messages: [first, last] } as unknown as ChatLoopEvent);
+		const replayed = createChatPanel({ getOutputStyle: () => style });
+		rehydrateChatPanelFromTurns(replayed, entries);
+		const plain = (panel: ReturnType<typeof createChatPanel>) =>
+			panel
+				.render(100)
+				.map(stripTerminalSequences)
+				.filter((row) => !/Done|^✓ \d/u.test(row))
+				.join("\n");
+		assert.equal(plain(replayed), plain(live), style);
+		if (style === "standard") {
+			const rows = plain(replayed);
+			assert.ok(rows.indexOf("Weigh it") >= 0 && rows.indexOf("Weigh it") < rows.indexOf("The notes answer it."), rows);
+		}
+	}
+});
+
+test("only a prompt the server never accepted replays bounded", () => {
+	const at = "2026-11-01T00:00:00.000Z";
+	const answer = (index: number, payload: unknown) =>
+		({
+			kind: "message",
+			role: "assistant",
+			turnId: `a${index}`,
+			parentTurnId: index === 0 ? "big" : `a${index - 1}`,
+			timestamp: at,
+			payload,
+		}) as SessionEntry;
+	const refusal = {
+		stopReason: "error",
+		errorMessage: "400: request (262118 tokens) exceeds the available context size (180224 tokens), try increasing it",
+		content: [],
+	};
+	const success = { stopReason: "stop", content: [{ type: "text", text: "fits now" }] };
+	const toolRound = { stopReason: "toolUse", content: [] };
+	const aborted = { stopReason: "aborted", errorMessage: "Request was aborted", content: [{ type: "text", text: "" }] };
+	const serverError = { stopReason: "error", errorMessage: "500: upstream exploded", content: [] };
+	const prompt = {
+		kind: "message",
+		role: "user",
+		turnId: "big",
+		parentTurnId: null,
+		timestamp: at,
+		payload: { role: "user", content: [{ type: "text", text: "x".repeat(100_000) }] },
+	} as SessionEntry;
+	const promptLength = (answers: unknown[]) => {
+		const entries = [prompt, ...answers.map((payload, index) => answer(index, payload))];
+		const first = buildReplayAgentMessagesFromTurns(entries).find((entry) => entry.role === "user");
+		return JSON.stringify(first).length;
+	};
+	assert.ok(promptLength([refusal]) < 21_000, "refused and never accepted");
+	assert.ok(promptLength([refusal, aborted]) < 21_000, "an abort during recovery says nothing about size");
+	assert.ok(promptLength([refusal, success]) > 100_000, "compaction made it fit");
+	assert.ok(promptLength([refusal, serverError]) > 100_000, "a later non-size failure shows it fit");
+	assert.ok(promptLength([toolRound, refusal]) > 100_000, "accepted before a tool result overflowed");
+});
+
+test("a replay ending at an intermediate tool-use message does not invent completion", () => {
+	const output = replay([{ role: "user", payload: { text: "Incomplete request" } }, toolCall]);
+	assert.doesNotMatch(output, /\bDone\b/);
+});
+
+test("a legacy replayed prompt drops the skill-request preamble the model received", () => {
+	const composed = [
+		"[Skill request]",
+		"- test-hygiene (installed, source=slash-command) — task: pin the timers",
+		'First call context with scope="skills" and name for: test-hygiene. Only these pending skill names are allowed this turn. After the skill loads, follow the loaded workflow.',
+		"",
+		"/skill test-hygiene pin the timers",
+	].join("\n");
+	const output = replay([{ role: "user", payload: { text: composed } }]);
+	assert.doesNotMatch(output, /\[Skill request\]|Only these pending skill names/u);
+	assert.match(output, /▌ \/skill test-hygiene pin the timers/u);
+});
+
+test("an unknown dynamic tool reads by its persisted action class, live and on replay", () => {
+	const persisted: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+	const session = {
+		append(turn: { kind: string; payload: Record<string, unknown> }) {
+			persisted.push(turn);
+			return { id: `persisted-${persisted.length}` };
+		},
+		current: () => null,
+	} as unknown as SessionContract;
+	const persistence = createTurnPersistence({
+		state: { lastTurnId: null } as ChatTurnState,
+		session,
+		getSettings: () => ({}) as PancodeSettings,
+		middlewareToolChoice: {} as MiddlewareToolChoiceControl,
+		consumePersistedEcho: () => false,
+		removeQueuedMirrorEntry: () => {},
+		promptCachePayloadForAssistant: () => ({}),
+	});
+	const args = { stage: "staging" };
+	// Enriched the way the turn runtime enriches every end event it forwards.
+	const result = { content: [{ type: "text", text: "preview deployed" }], details: {} };
+	const end = {
+		type: "tool_execution_end" as const,
+		toolCallId: "deploy-1",
+		toolName: "deploy_preview",
+		result,
+		isError: false,
+		durationMs: 1_200,
+		resultSummary: toolResultSummary(result),
+		actionClass: "execute",
+	};
+	persistence.appendToolResultTurn(end);
+	assert.equal(persisted[0]?.payload.actionClass, "execute");
+
+	const rowOf = (lines: string[]) => lines.map(stripTerminalSequences).find((line) => line.includes("deploy_preview"));
+	const live = createChatPanel();
+	live.applyEvent({
+		type: "tool_execution_start",
+		toolCallId: "deploy-1",
+		toolName: "deploy_preview",
+		args,
+	} as ChatLoopEvent);
+	live.applyEvent(end as ChatLoopEvent);
+	const liveRow = rowOf(live.render(120));
+	assert.equal(liveRow, "$ ran deploy_preview · 16B ✓ · 1.2s");
+
+	const replayed = createChatPanel();
+	rehydrateChatPanelFromTurns(replayed, [
+		{
+			turnId: "turn-0",
+			parentTurnId: null,
+			timestamp: "2026-09-17T00:00:00Z",
+			kind: "message",
+			role: "tool_call",
+			payload: { name: "deploy_preview", toolCallId: "deploy-1", args },
+		},
+		{
+			turnId: "turn-1",
+			parentTurnId: "turn-0",
+			timestamp: "2026-09-17T00:00:01Z",
+			kind: "message",
+			role: "tool_result",
+			payload: persisted[0]?.payload,
+		},
+	] as SessionEntry[]);
+	assert.equal(rowOf(replayed.render(120)), liveRow);
+});
+
+test("a refused skill load reads the same live and on replay, from its persisted refusal", () => {
+	const persisted: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+	const session = {
+		append(turn: { kind: string; payload: Record<string, unknown> }) {
+			persisted.push(turn);
+			return { id: `persisted-${persisted.length}` };
+		},
+		current: () => null,
+	} as unknown as SessionContract;
+	const persistence = createTurnPersistence({
+		state: { lastTurnId: null } as ChatTurnState,
+		session,
+		getSettings: () => ({}) as PancodeSettings,
+		middlewareToolChoice: {} as MiddlewareToolChoiceControl,
+		consumePersistedEcho: () => false,
+		removeQueuedMirrorEntry: () => {},
+		promptCachePayloadForAssistant: () => ({}),
+	});
+	const args = { scope: "skills", name: "tech-spec" };
+	const result = {
+		content: [{ type: "text", text: 'context: skill "tech-spec" requires explicit operator activation.' }],
+		details: { refusal: { subject: "skill", name: "tech-spec", kind: "manual-only" } },
+	};
+	const end = {
+		type: "tool_execution_end" as const,
+		toolCallId: "load-1",
+		toolName: "context",
+		result,
+		isError: true,
+		resultSummary: toolResultSummary(result),
+	};
+	persistence.appendToolResultTurn(end);
+
+	// A fixed clock keeps the live row's optional duration out of this replay
+	// parity check, even when the suite pauses between start and end events.
+	const live = createChatPanel({ now: () => Date.parse("2026-09-17T00:00:00Z") });
+	live.applyEvent({ type: "tool_execution_start", toolCallId: "load-1", toolName: "context", args } as ChatLoopEvent);
+	live.applyEvent(end as ChatLoopEvent);
+	const plain = (lines: string[]) => lines.map(stripTerminalSequences).filter((line) => line.length > 0);
+	assert.deepEqual(plain(live.render(120)), ["§ skill tech-spec not loaded · manual-only: /skill tech-spec ✗ failed"]);
+
+	// The replay clock advances on every read, as a slow runner's does. A
+	// replayed row may only state a duration the ledger recorded, never the
+	// time rehydration itself took.
+	let replayClock = Date.parse("2026-09-17T00:00:00Z");
+	const replayed = createChatPanel({ now: () => (replayClock += 7) });
+	rehydrateChatPanelFromTurns(replayed, [
+		{
+			turnId: "turn-0",
+			parentTurnId: null,
+			timestamp: "2026-09-17T00:00:00Z",
+			kind: "message",
+			role: "tool_call",
+			payload: { name: "context", toolCallId: "load-1", args },
+		},
+		{
+			turnId: "turn-1",
+			parentTurnId: "turn-0",
+			timestamp: "2026-09-17T00:00:01Z",
+			kind: "message",
+			role: "tool_result",
+			payload: persisted[0]?.payload,
+		},
+	] as SessionEntry[]);
+	assert.deepEqual(plain(replayed.render(120)), plain(live.render(120)));
+});
+
+test("a finish the completion protocol refused leaves no transcript row, live or on replay; the session keeps it (R2-F15)", () => {
+	const persisted: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+	const session = {
+		append(turn: { kind: string; payload: Record<string, unknown> }) {
+			persisted.push(turn);
+			return { id: `persisted-${persisted.length}` };
+		},
+		current: () => null,
+	} as unknown as SessionContract;
+	const persistence = createTurnPersistence({
+		state: { lastTurnId: null } as ChatTurnState,
+		session,
+		getSettings: () => ({}) as PancodeSettings,
+		middlewareToolChoice: {} as MiddlewareToolChoiceControl,
+		consumePersistedEcho: () => false,
+		removeQueuedMirrorEntry: () => {},
+		promptCachePayloadForAssistant: () => ({}),
+	});
+	const args = { state: "done" };
+	const result = { content: [{ type: "text", text: FINISH_WITHOUT_REPLY_REFUSAL }], details: {} };
+	const end = {
+		type: "tool_execution_end" as const,
+		toolCallId: "finish-1",
+		toolName: "finish",
+		result,
+		isError: true,
+		resultSummary: toolResultSummary(result),
+		protocolRetry: true as const,
+	};
+	persistence.appendToolResultTurn(end);
+	assert.equal(persisted[0]?.payload.protocolRetry, true);
+	assert.deepEqual(persisted[0]?.payload.result, result);
+
+	const plain = (lines: string[]) => lines.map(stripTerminalSequences).filter((line) => line.length > 0);
+	const live = createChatPanel();
+	live.applyEvent({ type: "tool_execution_start", toolCallId: "finish-1", toolName: "finish", args } as ChatLoopEvent);
+	live.applyEvent(end as ChatLoopEvent);
+	assert.deepEqual(plain(live.render(120)), []);
+
+	const replayed = createChatPanel();
+	rehydrateChatPanelFromTurns(replayed, [
+		{
+			turnId: "turn-0",
+			parentTurnId: null,
+			timestamp: "2026-09-17T00:00:00Z",
+			kind: "message",
+			role: "tool_call",
+			payload: { name: "finish", toolCallId: "finish-1", args },
+		},
+		{
+			turnId: "turn-1",
+			parentTurnId: "turn-0",
+			timestamp: "2026-09-17T00:00:01Z",
+			kind: "message",
+			role: "tool_result",
+			payload: persisted[0]?.payload,
+		},
+	] as SessionEntry[]);
+	assert.deepEqual(plain(replayed.render(120)), []);
+});
+
+test("a replayed receipt states the duration, cold-cache reasons and end time the live one did", (t) => {
+	// Chicago, where the turn ends on Sep 17 while UTC is already on Sep 18: the end time and its day are local.
+	pinZone(t, "America/Chicago");
+	// The receipt's spend is the read model's for the operator turn, which live and replay both name (#434 §11.3).
+	const turnCall = (turnId: string, cacheRead = 0) =>
+		telemetryCall("replay-receipt", { turnId, usage: { input: 7, output: 5, cacheRead }, usd: null });
+	const view = telemetryViewOf("replay-receipt", [...turnCall("u"), ...turnCall("u2")]);
+	const plainRows = (panel: ReturnType<typeof createChatPanel>) =>
+		panel
+			.render(120)
+			.map(stripTerminalSequences)
+			.filter((line) => line.length > 0);
+	const final = {
+		role: "assistant" as const,
+		content: [{ type: "text", text: "Answer" }],
+		stopReason: "stop",
+		usage,
+	};
+	// Live: the run measures its own clock, and the chat loop's footer cache
+	// notice hands the transcript the reasons it expected a cold cache for. The
+	// loop consumes those reasons just before it prompts, so the notice lands
+	// ahead of the run's agent_start.
+	let clock = Date.parse("2026-09-17T23:42:00Z");
+	const live = createChatPanel({ now: () => clock, getOutputStyle: () => "detailed", getTelemetry: () => view });
+	live.appendUser("Question");
+	live.applyEvent({
+		type: "notice",
+		level: "info",
+		surface: "footer",
+		text: "cache may be cold: prompt recompiled",
+		key: "context.cache.cold",
+		coldReasons: ["prompt_recompiled"],
+	} as ChatLoopEvent);
+	live.applyEvent({ type: "agent_start", turnId: "u" } as ChatLoopEvent);
+	live.applyEvent({ type: "message_start", message: { role: "assistant", content: [] } } as unknown as ChatLoopEvent);
+	live.applyEvent({ type: "message_end", message: final } as unknown as ChatLoopEvent);
+	clock += 5_000;
+	live.applyEvent({ type: "agent_end", messages: [final] } as unknown as ChatLoopEvent);
+	const liveRows = plainRows(live);
+	assert.equal(liveRows.at(-1), "✓ Done · 5.0s · in 7 · out 5 · prompt read again after a prompt rebuild · 18:42");
+	// The reasons belong to that run alone: the next one, a queued follow-up
+	// here, starts warm.
+	live.applyEvent({ type: "agent_start", turnId: "u2" } as ChatLoopEvent);
+	live.applyEvent({ type: "message_start", message: { role: "assistant", content: [] } } as unknown as ChatLoopEvent);
+	live.applyEvent({ type: "message_end", message: final } as unknown as ChatLoopEvent);
+	live.applyEvent({ type: "agent_end", messages: [final] } as unknown as ChatLoopEvent);
+	assert.equal(plainRows(live).at(-1), "✓ Done · 0ms · in 7 · out 5 · 18:42");
+	assert.doesNotMatch(liveRows.join("\n"), /cache may be cold/u, "the notice itself stays in the footer");
+
+	// Replay: the same facts from the ledger's timestamps and prompt-cache record.
+	// The replay reads the ledger's end, not its own clock, which runs later the same local day.
+	const ledger = [
+		{
+			turnId: "u",
+			parentTurnId: null,
+			timestamp: "2026-09-17T23:42:00.000Z",
+			kind: "message",
+			role: "user",
+			payload: { text: "Question" },
+		},
+		{
+			turnId: "a",
+			parentTurnId: "u",
+			timestamp: "2026-09-17T23:42:05.000Z",
+			kind: "message",
+			role: "assistant",
+			payload: {
+				...final,
+				promptCache: { input: 7, cacheRead: 0, cacheWrite: 0, expectedColdReasons: ["prompt_recompiled"] },
+			},
+		},
+	] as SessionEntry[];
+	const replayed = createChatPanel({
+		now: () => Date.parse("2026-09-18T01:00:00Z"),
+		getOutputStyle: () => "detailed",
+		getTelemetry: () => view,
+	});
+	rehydrateChatPanelFromTurns(replayed, ledger);
+	assert.equal(plainRows(replayed).at(-1), liveRows.at(-1));
+	// After /fork the copied turn's calls stay in the parent's journal; the child's receipt still states them.
+	const forkView = telemetryViewOf("replay-fork", [], new Map(), {
+		sessionId: "replay-receipt",
+		records: turnCall("u"),
+		turnId: "a",
+		at: "2026-09-17T23:42:05.000Z",
+	});
+	const forked = createChatPanel({
+		now: () => Date.parse("2026-09-18T01:00:00Z"),
+		getOutputStyle: () => "detailed",
+		getTelemetry: () => forkView,
+	});
+	rehydrateChatPanelFromTurns(forked, ledger);
+	assert.equal(plainRows(forked).at(-1), liveRows.at(-1));
+	// Resumed on a later day, the receipt names the day the turn ended.
+	const resumed = createChatPanel({
+		now: () => Date.parse("2026-09-19T15:00:00Z"),
+		getOutputStyle: () => "detailed",
+		getTelemetry: () => view,
+	});
+	rehydrateChatPanelFromTurns(resumed, ledger);
+	assert.equal(
+		plainRows(resumed).at(-1),
+		"✓ Done · 5.0s · in 7 · out 5 · prompt read again after a prompt rebuild · Sep 17 18:42",
+	);
+
+	// A cache that served tokens was not cold: the receipt states the reuse instead.
+	const warmView = telemetryViewOf("replay-receipt", turnCall("u", 68_608));
+	const warm = createChatPanel({
+		now: () => Date.parse("2026-09-17T12:00:00Z"),
+		getOutputStyle: () => "detailed",
+		getTelemetry: () => warmView,
+	});
+	const cached = { ...final, usage: { ...usage, cacheRead: 68_608 } };
+	rehydrateChatPanelFromTurns(warm, [
+		{
+			turnId: "u",
+			parentTurnId: null,
+			timestamp: "2026-09-17T00:00:00Z",
+			kind: "message",
+			role: "user",
+			payload: { text: "Q" },
+		},
+		{
+			turnId: "a",
+			parentTurnId: "u",
+			timestamp: "2026-09-17T00:01:36Z",
+			kind: "message",
+			role: "assistant",
+			payload: { ...cached, promptCache: { expectedColdReasons: ["dispatch"] } },
+		},
+	] as SessionEntry[]);
+	assert.equal(plainRows(warm).at(-1), "✓ Done · 1m36s · in 7 · out 5 · cached 68.6k · Sep 16 19:01");
+});
+
+test("a receipt's clock follows the time locale, and a receipt rendered before midnight gains its date after", (t) => {
+	pinZone(t, "America/Chicago", "en_US.UTF-8");
+	let clock = Date.parse("2026-09-17T23:42:00Z");
+	const panel = createChatPanel({ now: () => clock, getOutputStyle: () => "detailed" });
+	const final = { role: "assistant" as const, content: [{ type: "text", text: "Answer" }], stopReason: "stop", usage };
+	panel.appendUser("Question");
+	panel.applyEvent({ type: "agent_start", turnId: "u" } as ChatLoopEvent);
+	panel.applyEvent({ type: "message_end", message: final } as unknown as ChatLoopEvent);
+	panel.applyEvent({ type: "agent_end", messages: [final] } as unknown as ChatLoopEvent);
+	const receipt = () =>
+		panel
+			.render(120)
+			.map(stripTerminalSequences)
+			.filter((line) => line.length > 0)
+			.at(-1);
+	assert.match(receipt() ?? "", / · 6:42\sPM$/u);
+	// Nothing changed but the local day: the settled receipt is not served from the cache.
+	clock = Date.parse("2026-09-18T06:00:00Z");
+	assert.match(receipt() ?? "", / · Sep 17 6:42\sPM$/u);
+});
+
+test("a middleware reminder reads the same live and on replay, and a skill activation adds no line", () => {
+	const message = "[PanCode] This turn used 9+ read-only exploration calls without a successful Scout dispatch.";
+	const rows = (panel: ReturnType<typeof createChatPanel>) =>
+		panel
+			.render(60)
+			.map(stripTerminalSequences)
+			.filter((line) => line.length > 0);
+	const live = createChatPanel();
+	live.applyEvent({
+		type: "notice",
+		level: "info",
+		surface: "transcript",
+		text: message,
+		source: "reminder",
+	} as ChatLoopEvent);
+	const replayed = createChatPanel();
+	rehydrateChatPanelFromTurns(replayed, [
+		{
+			turnId: "r",
+			parentTurnId: null,
+			timestamp: "2026-09-17T00:00:00Z",
+			kind: "custom",
+			customType: "middlewareReminder",
+			display: true,
+			data: { message, severity: "advisory", source: "reminder" },
+		},
+		{
+			turnId: "s",
+			parentTurnId: "r",
+			timestamp: "2026-09-17T00:00:01Z",
+			kind: "skillActivation",
+			activation: {
+				name: "tdd",
+				filePath: "/skills/tdd/SKILL.md",
+				hash: "a".repeat(64),
+				source: "pancode",
+				triggeredBy: "tool",
+				turnId: "s",
+				drift: "match",
+			},
+		},
+	] as SessionEntry[]);
+	// Text written to the model keeps one row in the operator's transcript; /view holds the rest.
+	assert.deepEqual(rows(live), ["i Reminder to the model · This turn used 9+ read-on… · /view"]);
+	assert.deepEqual(rows(replayed), rows(live));
+	assert.doesNotMatch(rows(replayed).join("\n"), /\[skill\]/u);
+});
+
+// A memory note is an advisory: a titled callout at every width, the same live and
+// replayed, with the `Memory:` prefix and the `[tm-p-1]` refs the model and the
+// ledger keep taken off the operator's copy.
+test("a memory note renders as a titled callout without refs at 40 through 200 columns, live and replayed", () => {
+	const message =
+		"Memory: [tm-p-1] you already tried `pnpm test` at step 4 and it failed twice ([tm-p-1], [tm-p-2]) because the fixture home was missing.";
+	for (const width of [40, 60, 80, 120, 200]) {
+		const rows = (panel: ReturnType<typeof createChatPanel>) =>
+			panel
+				.render(width)
+				.map(stripTerminalSequences)
+				.filter((line) => line.length > 0);
+		const live = createChatPanel();
+		live.applyEvent({
+			type: "notice",
+			level: "info",
+			surface: "transcript",
+			text: message,
+			source: "memory",
+		} as ChatLoopEvent);
+		const entry = (data: Record<string, unknown>) =>
+			({
+				turnId: "m",
+				parentTurnId: null,
+				timestamp: "2026-09-17T00:00:00Z",
+				kind: "custom",
+				customType: "middlewareReminder",
+				display: true,
+				data,
+			}) as SessionEntry;
+		const replayed = createChatPanel();
+		rehydrateChatPanelFromTurns(replayed, [entry({ message, severity: "advisory", source: "memory" })]);
+		// A ledger written before the source was stored carries only the prefix.
+		const legacy = createChatPanel();
+		rehydrateChatPanelFromTurns(legacy, [entry({ message, severity: "advisory" })]);
+		const text = rows(live).join("\n");
+		assert.match(rows(live)[0] ?? "", /^i Memory ─+$/u, `${width}`);
+		const sentence = text.replace(/[│┌┐└┘─]/gu, " ").replace(/\s+/gu, " ");
+		assert.match(
+			sentence,
+			/i Memory You already tried `pnpm test` at step 4 and it failed twice because the fixture home was missing\./u,
+		);
+		assert.doesNotMatch(text, /tm-p-|Memory:/u);
+		assert.ok(
+			rows(live).every((line) => line.length <= width),
+			`${width}: a row exceeds the terminal`,
+		);
+		assert.deepEqual(rows(replayed), rows(live));
+		assert.deepEqual(rows(legacy), rows(live));
+	}
+});
+
+test("a replayed act states the age its ledger entry records in /view, not the age of the resume", () => {
+	const entries = [
+		{
+			turnId: "turn-0",
+			parentTurnId: null,
+			timestamp: "2026-09-17T00:00:00Z",
+			kind: "message",
+			role: "user",
+			payload: { text: "run the tests" },
+		},
+		{
+			turnId: "turn-1",
+			parentTurnId: "turn-0",
+			timestamp: "2026-09-17T00:01:00Z",
+			kind: "message",
+			role: "tool_call",
+			payload: { name: "bash", toolCallId: "b1", args: { command: "npm test" } },
+		},
+		{
+			turnId: "turn-2",
+			parentTurnId: "turn-1",
+			timestamp: "2026-09-17T00:01:02Z",
+			kind: "message",
+			role: "tool_result",
+			payload: { toolCallId: "b1", toolName: "bash", result: "ok", isError: false },
+		},
+		{
+			turnId: "turn-3",
+			parentTurnId: "turn-2",
+			timestamp: "2026-09-17T00:05:00Z",
+			kind: "modelChange",
+			provider: "dynamo",
+			modelId: "qwopus",
+			target: "blade",
+		},
+	] as SessionEntry[];
+	let clock = Date.parse("2026-09-23T12:00:00Z");
+	const panel = createChatPanel({ now: () => clock });
+	rehydrateChatPanelFromTurns(panel, entries);
+	const stamps = panel
+		.inspectionArtifacts()
+		.map((artifact) => [artifact.title, new Date(artifact.timestamp).toISOString()]);
+	assert.deepEqual(stamps, [
+		["$ Panos ran `npm test`", "2026-09-17T00:01:00.000Z"],
+		["i Now using blade · qwopus", "2026-09-17T00:05:00.000Z"],
+	]);
+	// Live acts after the resume carry the live clock again.
+	clock += 1_000;
+	panel.applyEvent({ type: "notice", level: "info", surface: "transcript", text: "back live" } as never);
+	assert.equal(panel.inspectionArtifacts().at(-1)?.timestamp, clock);
+});
+
+test("an aborted worker writes one settled row, from its terminal event", () => {
+	const noop = (): void => undefined;
+	const bus = createTelemetryHub();
+	const settled: WorkerSettledFields[] = [];
+	const subscriptions = createInteractiveSubscriptions({
+		bus,
+		refreshFooter: noop,
+		renderTaskIsland: noop,
+		renderContextIsland: noop,
+		requestRender: noop,
+		notify: noop,
+		recordWorkerSettled: (fields) => settled.push(fields),
+		readWorkerRunResult: () => ({ outcome: "canceled", durationMs: 1, tokenCount: 0, toolCalls: 0, text: "" }),
+	});
+	const identity = {
+		agentId: "scout",
+		requestOrigin: "agent" as const,
+		targetId: "blade",
+		wireModelId: "dynamo/qwopus",
+		runtimeId: "blade",
+		runtimeKind: "http" as const,
+	};
+	bus.emit("run.started", {
+		...identity,
+		runId: "run-a",
+		pid: null,
+		assignmentId: "run-a",
+		attempt: 0,
+	} as never);
+	bus.emit("run.progressed", {
+		...identity,
+		runId: "run-a",
+		event: {
+			type: "message_end",
+			message: { role: "assistant", usage: { input: 900, output: 100, cacheRead: 0, cacheWrite: 0 } },
+		},
+	} as never);
+	bus.emit("run.aborted", { source: "dispatch_abort", runId: "run-a", startedAt: null, elapsedMs: 5 });
+	assert.deepEqual(settled, []);
+	bus.emit("run.failed", { ...identity, runId: "run-a", reason: "canceled" } as never);
+	subscriptions.dispose();
+	assert.deepEqual(settled, [{ runId: "run-a", contextTokens: 1_000 }]);
+});
+
+test("an operator /run resumes with its command above its card, the spend its live card stated and its calls", () => {
+	const noop = (): void => undefined;
+	const receipt: WorkerRunResultFacts = {
+		outcome: "succeeded",
+		durationMs: 42_000,
+		tokenCount: 18_200,
+		toolCalls: 7,
+		text: "Documented the retry options.",
+	};
+	// Live: the host records the run as it starts and what its stream knew as it settles.
+	const bus = createTelemetryHub();
+	const runs: WorkerRunEntryFields[] = [];
+	const settled: WorkerSettledFields[] = [];
+	let liveState: WorkerEntryState | undefined;
+	const subscriptions = createInteractiveSubscriptions({
+		bus,
+		refreshFooter: noop,
+		renderTaskIsland: noop,
+		renderContextIsland: noop,
+		requestRender: noop,
+		notify: noop,
+		applyWorkerState: (state) => {
+			liveState = state;
+		},
+		recordWorkerRun: (fields) => runs.push(fields),
+		recordWorkerSettled: (fields) => settled.push(fields),
+		readWorkerRunResult: () => receipt,
+	});
+	const identity = {
+		agentId: "documenter",
+		requestOrigin: "user" as const,
+		targetId: "blade",
+		wireModelId: "dynamo/qwopus",
+		runtimeId: "blade",
+		runtimeKind: "http" as const,
+	};
+	bus.emit("run.started", {
+		...identity,
+		runId: "run-d",
+		pid: null,
+		assignmentId: "run-d",
+		attempt: 0,
+	} as never);
+	bus.emit("run.progressed", {
+		...identity,
+		runId: "run-d",
+		event: {
+			type: "message_end",
+			message: { role: "assistant", usage: { input: 5_000, output: 1_000, cacheRead: 0, cacheWrite: 200 } },
+		},
+	} as never);
+	const calls = [
+		{ tool: "read", toolCallId: "t1", action: { verb: "reading", object: "docs/retry.md" } },
+		{ tool: "grep", toolCallId: "t2", action: { verb: "searching", object: "retry|opt", truncated: true } },
+	];
+	for (const payload of calls) {
+		for (const type of ["pancode_tool_start", "pancode_tool_finish"]) {
+			bus.emit("run.progressed", { ...identity, runId: "run-d", event: { type, payload } } as never);
+		}
+	}
+	bus.emit("run.completed", { ...identity, runId: "run-d", outcome: "succeeded" } as never);
+	subscriptions.dispose();
+	assert.deepEqual(settled, [
+		{
+			runId: "run-d",
+			contextTokens: 6_200,
+			calls: [
+				{ tool: "grep", verb: "searching", object: "retry|opt", truncated: true },
+				{ tool: "read", verb: "reading", object: "docs/retry.md" },
+			],
+		},
+	]);
+	const command = "/run documenter --target blade --model dynamo/qwopus document the retry options";
+	let style: "standard" | "detailed" = "standard";
+	const view = telemetryViewOf(
+		"run-replay",
+		[],
+		new Map([
+			[
+				"run-d",
+				[
+					...telemetryCall("run-replay", { role: "worker", usage: { input: 10_000, output: 2_000 } }),
+					...telemetryCall("run-replay", { role: "worker", usage: { input: 5_000, output: 1_000, cacheWrite: 200 } }),
+				],
+			],
+		]),
+	);
+	const live = createChatPanel({ getOutputStyle: () => style, getTelemetry: () => view });
+	appendOperatorCommand(command, { appendReplayBlock: (block) => live.appendReplayBlock(block), requestRender: noop });
+	assert.ok(liveState);
+	live.applyWorkerState(liveState);
+	// Resume: the ledger holds the echo, the run and the settled fact, in that order.
+	const timestamp = "2026-09-23T10:00:00Z";
+	const entries = [
+		{
+			turnId: "c",
+			parentTurnId: null,
+			timestamp,
+			kind: "custom",
+			customType: "operatorCommand",
+			data: { text: command },
+		},
+		{ ...runs[0], turnId: "w", parentTurnId: null, timestamp },
+		{
+			turnId: "s",
+			parentTurnId: null,
+			timestamp,
+			kind: "custom",
+			customType: "workerSettled",
+			display: false,
+			data: settled[0],
+		},
+	] as SessionEntry[];
+	const replayed = createChatPanel({ getOutputStyle: () => style, getTelemetry: () => view });
+	rehydrateChatPanelFromTurns(replayed, entries, { readWorkerRunResult: () => receipt });
+	const plain = (panel: ReturnType<typeof createChatPanel>) => panel.render(100).map(stripTerminalSequences).join("\n");
+	assert.match(plain(replayed), /^▌ \/run documenter --target blade/u);
+	assert.match(plain(replayed), /0 calls · 18.2k tokens/u);
+	assert.match(plain(replayed), /18.2k tokens/u);
+	assert.equal(plain(replayed), plain(live));
+	// Detailed lists the calls the run made, oldest first, on /resume as it did live.
+	style = "detailed";
+	live.invalidate();
+	replayed.invalidate();
+	assert.match(plain(replayed), /│ ▹ read docs\/retry\.md\n {2}│ ▹ searched retry\|opt…/u);
+	assert.equal(plain(replayed), plain(live));
+	// The echo is a display record: the model's replayed context never carries it.
+	assert.doesNotMatch(JSON.stringify(buildReplayAgentMessagesFromTurns(entries)), /document the retry options/u);
+});
+
+test("the TUI echoes an operator command and hands the host the same line to record", () => {
+	const blocks: Array<(width: number) => string[]> = [];
+	const recorded: string[] = [];
+	const runtime = createInteractiveSlashRuntime({
+		bus: createTelemetryHub(),
+		io: { stdout() {}, stderr() {} },
+		chatPanel: { appendReplayBlock: (block: (width: number) => string[]) => blocks.push(block), appendUser() {} },
+		requestRender() {},
+		refreshFooter() {},
+		recordSubmittedTurn() {},
+		recordOperatorCommand: (text: string) => recorded.push(text),
+		chat: {},
+	} as unknown as InteractiveSlashRuntimeDeps);
+	runtime.context.echoOperatorCommand?.("/run documenter document the retry options");
+	assert.deepEqual(recorded, ["/run documenter document the retry options"]);
+	assert.deepEqual(blocks.flatMap((block) => block(80)).map(stripTerminalSequences), [
+		"▌ /run documenter document the retry options",
+	]);
+});
+
+test("/export reports a workspace file by its relative path, after a notice that paints before the render", async () => {
+	const workspace = mkdtempSync(join(tmpdir(), "pancode-export-notice-"));
+	const blocks: Array<(width: number) => string[]> = [];
+	const target = join(workspace, ".pancode", "exports", "session.html");
+	try {
+		const runtime = createInteractiveSlashRuntime({
+			bus: createTelemetryHub(),
+			io: { stdout() {}, stderr() {} },
+			chat: { getSessionId: () => "session" },
+			chatPanel: { appendReplayBlock: (block: (width: number) => string[]) => blocks.push(block) },
+			readStructuredEntries: () => [],
+			getCwd: () => workspace,
+			requestRender() {},
+			now: () => new Date("2026-09-23T12:00:00Z"),
+		} as unknown as InteractiveSlashRuntimeDeps);
+		const pending = runtime.context.exportTranscript?.(target);
+		const shown = () =>
+			blocks
+				.flatMap((block) => block(100))
+				.map(stripTerminalSequences)
+				.join("\n");
+		assert.equal(existsSync(target), false);
+		assert.match(shown(), /\[\/export\] exporting session session/u);
+		await pending;
+		assert.equal(existsSync(target), true);
+		// A transcript is as private as the session file it copies.
+		if (process.platform !== "win32") assert.equal(statSync(target).mode & 0o077, 0);
+		const notice = shown();
+		assert.match(notice, /\[\/export\] wrote \d+ lines to \.pancode\/exports\/session\.html/u);
+		assert.doesNotMatch(notice, new RegExp(workspace));
+	} finally {
+		rmSync(workspace, { recursive: true, force: true });
+	}
+});
+
+test("a collected block is persisted before the first model call while operator text stays raw", async () => {
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.chat.prewarm = false;
+	const context = dispatchStubContext({ settings });
+	const target = settings.targets[0];
+	assert.ok(target);
+	settings.chat.target = target.id;
+	settings.chat.model = target.defaultModel ?? "gpt-4o";
+	const entries: SessionEntry[] = [];
+	let leaf: string | null = null;
+	const session = {
+		current: () => ({ id: "orientation-session", cwd: process.cwd() }),
+		tree: () => ({ leafId: leaf }),
+		leafId: () => leaf,
+		append(turn: Parameters<SessionContract["append"]>[0]) {
+			const id = turn.id ?? `turn-${entries.length + 1}`;
+			leaf = id;
+			entries.push({
+				kind: "message",
+				turnId: id,
+				parentTurnId: turn.parentId,
+				timestamp: new Date().toISOString(),
+				role: turn.kind,
+				payload: turn.payload,
+			} as SessionEntry);
+			return { id };
+		},
+		appendEntry(entry: Parameters<SessionContract["appendEntry"]>[0]) {
+			const row = { ...entry, turnId: `entry-${entries.length + 1}`, timestamp: new Date().toISOString() } as SessionEntry;
+			entries.push(row);
+			return row;
+		},
+	} as unknown as SessionContract;
+	const block = "[Collected]\nfinished batch results";
+	let submitted = "";
+	const loop = createChatLoop({
+		getSettings: () => settings,
+		providers: context.getContract("providers") as ProvidersContract,
+		knownTargets: () => new Set([target.id]),
+		session,
+		readSessionEntries: () => entries,
+		turnControl: {
+			async run(input) {
+				assert.equal(entries.filter((entry) => entry.kind === "message" && entry.role === "user").length, 0);
+				return {
+					block,
+					record: {
+						version: 1,
+						turnId: input.userTurnId,
+						factsDigest: "facts",
+						decision: { kind: "collect", batchIds: ["finished"] },
+						decisionHash: "decision",
+						executed: { runIds: ["scout-1"], blockChars: block.length, durationMs: 1 },
+					},
+				};
+			},
+		},
+		createAgent: ((options: Parameters<NonNullable<CreateChatLoopDeps["createAgent"]>>[0]) => ({
+			agent: {
+				state: options?.initialState,
+				subscribe: () => () => {},
+				abort() {},
+				async prompt(text: string) {
+					submitted = text;
+					assert.ok(entries.some((entry) => entry.kind === "custom" && entry.customType === "turnControl"));
+				},
+			},
+		})) as unknown as NonNullable<CreateChatLoopDeps["createAgent"]>,
+	});
+	try {
+		await loop.submit("explore this repo");
+		const user = entries.find((entry) => entry.kind === "message" && entry.role === "user");
+		assert.ok(user?.kind === "message");
+		const payload = user.payload as { text: string; operatorText: string };
+		assert.equal(payload.text, submitted);
+		assert.match(payload.text, /\[Collected\]/);
+		assert.equal(payload.operatorText, "explore this repo");
+		const control = entries.find((entry) => entry.kind === "custom" && entry.customType === "turnControl");
+		assert.ok(control?.kind === "custom");
+		assert.equal((control.data as { turnId: string }).turnId, user.turnId);
+		const outcome = entries.find((entry) => entry.kind === "custom" && entry.customType === "turnOutcome");
+		assert.ok(outcome?.kind === "custom");
+		assert.deepEqual((outcome.data as { control: unknown }).control, {
+			decision: "collect",
+			decisionHash: "decision",
+			executed: true,
+		});
+	} finally {
+		loop.dispose();
+		await loop.whenSettled();
+	}
+});
+
+// These records are synthetic; model identity must come from each assistant,
+// even when the session's current route and header have changed.
+test("a mid-session model switch attributes both replayed assistant turns", () => {
+	const output = replay([
+		{ role: "user", payload: { text: "First request" } },
+		{
+			role: "assistant",
+			payload: {
+				provider: "litellm",
+				model: "dynamo/qwopus-fixture",
+				content: [{ type: "text", text: "First answer" }],
+				usage,
+				stopReason: "stop",
+			},
+		},
+		{ role: "user", payload: { text: "Second request" } },
+		{
+			role: "assistant",
+			payload: {
+				provider: "anthropic",
+				model: "haiku-fixture",
+				content: [{ type: "text", text: "Second answer" }],
+				usage,
+				stopReason: "stop",
+			},
+		},
+	]);
+	assert.match(output, /litellm · dynamo\/qwopus-fixture/u);
+	assert.match(output, /anthropic · haiku-fixture/u);
+	assert.ok(output.indexOf("qwopus-fixture") < output.indexOf("First answer"));
+	assert.ok(output.indexOf("haiku-fixture") > output.indexOf("First answer"));
+	assert.ok(output.indexOf("haiku-fixture") < output.indexOf("Second answer"));
+});
+
+test("live assistant model attribution survives copied and HTML transcript views", () => {
+	const panel = createChatPanel();
+	for (const [provider, model] of [
+		["litellm", "qwopus-fixture"],
+		["anthropic", "haiku-fixture"],
+	]) {
+		panel.appendUser(`Request for ${model}`);
+		panel.applyEvent({ type: "agent_start" } as never);
+		const message = {
+			role: "assistant",
+			provider,
+			model,
+			content: [{ type: "text", text: "Answer" }],
+			usage,
+			stopReason: "stop",
+		};
+		panel.applyEvent({ type: "message_start", message } as never);
+		panel.applyEvent({ type: "message_end", message } as never);
+		panel.applyEvent({ type: "agent_end", messages: [message] } as never);
+	}
+	const copied = panel.render(120).map(stripTerminalSequences).join("\n");
+	assert.match(copied, /litellm · qwopus-fixture/u);
+	assert.match(copied, /anthropic · haiku-fixture/u);
+	const html = renderSessionHtml({
+		sessionId: "synthetic",
+		exportedAt: "2026-10-09T00:00:00Z",
+		ansiLines: panel.render(120),
+	});
+	assert.match(html, /litellm · qwopus-fixture/u);
+	assert.match(html, /anthropic · haiku-fixture/u);
+});
+
+test("a receipt whose run ended before its last call was folded settles on the turn once the fold lands (#434 §11.3)", (t) => {
+	pinZone(t, "UTC");
+	const first = telemetryCall("settle-receipt", { turnId: "u", usage: { input: 7, output: 5 }, usd: null });
+	const last = telemetryCall("settle-receipt", { turnId: "u", usage: { input: 3, output: 2 }, usd: null });
+	const settledOf = (records: typeof first) =>
+		records.flatMap((record) => (record.k === "call.settled" ? [record.data] : []));
+	const message = (calls: typeof first, text: string) => {
+		const value = { role: "assistant" as const, content: [{ type: "text", text }], stopReason: "stop", usage };
+		rememberMessageCalls(value, settledOf(calls));
+		return value;
+	};
+	const messages = [message(first, "One"), message(last, "Two")];
+	// The writer's batch holding the run's last call has not been folded when the run ends.
+	let runReads = 0;
+	const firstView = telemetryViewOf("settle-receipt", first);
+	let view: TelemetryView = {
+		...firstView,
+		runs: () => {
+			runReads += 1;
+			return firstView.runs();
+		},
+	};
+	const panel = createChatPanel({ getOutputStyle: () => "detailed", getTelemetry: () => view, now: () => 0 });
+	const receipt = () =>
+		panel
+			.render(120)
+			.map(stripTerminalSequences)
+			.filter((line) => line.length > 0)
+			.at(-1);
+	panel.appendUser("Question");
+	panel.applyEvent({ type: "agent_start", turnId: "u" } as ChatLoopEvent);
+	for (const value of messages) {
+		panel.applyEvent({ type: "message_start", message: { role: "assistant", content: [] } } as unknown as ChatLoopEvent);
+		panel.applyEvent({ type: "message_end", message: value } as unknown as ChatLoopEvent);
+	}
+	panel.applyEvent({ type: "agent_end", messages } as unknown as ChatLoopEvent);
+	assert.equal(receipt(), "✓ Done · 0ms · in 7 · out 5 · 00:00");
+	assert.equal(runReads, 1, "every receipt read against one view shares its run list");
+	view = telemetryViewOf("settle-receipt", [...first, ...last]);
+	assert.equal(receipt(), "✓ Done · 0ms · 2 calls · in 10 · out 7 · 00:00");
+	// Settled: a later view no longer moves this turn's receipt.
+	view = telemetryViewOf("settle-receipt", [...first, ...last, ...telemetryCall("settle-receipt", { turnId: "u" })]);
+	assert.equal(receipt(), "✓ Done · 0ms · 2 calls · in 10 · out 7 · 00:00");
+});
+
+test("a /compact charged to the settled turn leaves its replayed receipt as the live one read it (tui finding 11)", () => {
+	const call = (role: "main" | "compaction", at: string, input: number) =>
+		telemetryCall("late-compact", { turnId: "u", role, at, usage: { input, output: 1 }, usd: null });
+	const turn = [
+		...call("main", "2026-01-01T00:00:00.000Z", 5),
+		...call("compaction", "2026-01-01T00:00:01.000Z", 40),
+		...call("main", "2026-01-01T00:00:02.000Z", 7),
+	];
+	const live = turnSpend(telemetryViewOf("late-compact", turn), "u");
+	assert.equal(live?.calls, 3, "a compaction inside the turn stays the turn's");
+	assert.equal(live?.tokens, "in 52 · out 3");
+	const later = [
+		...call("compaction", "2026-01-01T00:04:00.000Z", 600),
+		...call("compaction", "2026-01-01T00:04:03.000Z", 9),
+	];
+	const replayed = turnSpend(telemetryViewOf("late-compact", [...turn, ...later]), "u", undefined, "lineage");
+	assert.deepEqual(replayed, live);
+});
+
+test("a narrow receipt keeps the cached share beside the amounts it is part of (bt-11 dispatch-cached)", (t) => {
+	pinZone(t, "UTC");
+	const calls = [
+		telemetryCall("cached-receipt", {
+			turnId: "u",
+			usage: { input: 20_000, output: 4_000, cacheRead: 50_000 },
+			usd: null,
+		}),
+		telemetryCall("cached-receipt", {
+			turnId: "u",
+			usage: { input: 20_000, output: 4_000, cacheRead: 50_000 },
+			usd: null,
+		}),
+	];
+	const messages = calls.map((records, index) => {
+		const value = {
+			role: "assistant" as const,
+			content: [{ type: "text", text: `Step ${index}` }],
+			stopReason: "stop",
+			usage,
+		};
+		rememberMessageCalls(
+			value,
+			records.flatMap((record) => (record.k === "call.settled" ? [record.data] : [])),
+		);
+		return value;
+	});
+	const view = telemetryViewOf("cached-receipt", calls.flat());
+	const panel = createChatPanel({ getOutputStyle: () => "standard", getTelemetry: () => view, now: () => 0 });
+	panel.appendUser("Question");
+	panel.applyEvent({ type: "agent_start", turnId: "u" } as ChatLoopEvent);
+	for (const value of messages) {
+		panel.applyEvent({ type: "message_start", message: { role: "assistant", content: [] } } as unknown as ChatLoopEvent);
+		panel.applyEvent({ type: "message_end", message: value } as unknown as ChatLoopEvent);
+	}
+	panel.applyEvent({ type: "agent_end", messages } as unknown as ChatLoopEvent);
+	const receipt = (width: number) =>
+		panel
+			.render(width)
+			.map(stripTerminalSequences)
+			.filter((line) => line.length > 0)
+			.at(-1);
+	assert.equal(receipt(120), "✓ Done · 0ms · 2 calls · in 40.0k · out 8.0k · cached 100k · 00:00");
+	// Too narrow for every fact: the call count yields before `cached`, the rest of the prompt beside `in`.
+	assert.equal(receipt(60), "✓ Done · 0ms · in 40.0k · out 8.0k · cached 100k · 00:00");
+	// Narrower still, the amounts leave together instead of reading the uncached remainder as the whole prompt, and a
+	// mark says they were cut, so the call count is not read as the whole spend (bt-11 i22-d).
+	assert.equal(receipt(40), "✓ Done · 0ms · 2 calls · … · 00:00");
+});
+
+test("a replayed receipt says the turn ended with workers still running when their receipts place them past its end (bt-11 a)", (t) => {
+	pinZone(t, "UTC");
+	const answer = (text: string) => ({ role: "assistant", content: [{ type: "text", text }], stopReason: "stop", usage });
+	const ledger = [
+		{
+			kind: "message",
+			role: "user",
+			turnId: "u1",
+			parentTurnId: null,
+			timestamp: "2026-09-17T11:00:00.000Z",
+			payload: "Go",
+		},
+		{
+			kind: "workerRun",
+			turnId: "w1",
+			parentTurnId: "u1",
+			timestamp: "2026-09-17T11:00:01.000Z",
+			assignmentId: "run-a",
+			runId: "run-a",
+			origin: "agent",
+			agentId: "coder",
+			runtime: { kind: "pancode", targetId: "local", wireModelId: "worker-model" },
+		},
+		{
+			kind: "message",
+			role: "assistant",
+			turnId: "a1",
+			parentTurnId: "w1",
+			timestamp: "2026-09-17T11:00:03.000Z",
+			payload: answer("Dispatched"),
+		},
+		{
+			kind: "message",
+			role: "user",
+			turnId: "u2",
+			parentTurnId: "a1",
+			timestamp: "2026-09-17T11:01:00.000Z",
+			payload: "And?",
+		},
+		{
+			kind: "message",
+			role: "assistant",
+			turnId: "a2",
+			parentTurnId: "u2",
+			timestamp: "2026-09-17T11:01:02.000Z",
+			payload: answer("It finished"),
+		},
+	] as SessionEntry[];
+	const receipts = (durationMs: number) => {
+		const panel = createChatPanel({ getOutputStyle: () => "standard" });
+		rehydrateChatPanelFromTurns(panel, ledger, {
+			readWorkerRunResult: () => ({ outcome: "succeeded", durationMs }) as WorkerRunResultFacts,
+		});
+		return panel
+			.render(120)
+			.map(stripTerminalSequences)
+			.filter((line) => /^(✓|⇲) /u.test(line));
+	};
+	// The worker ran 30s from 11:00:01, past the first turn's end at 11:00:03 and settled before the second's.
+	const [first, second] = receipts(30_000);
+	assert.match(first ?? "", /^⇲ Turn ended · 1 worker running · /u);
+	assert.match(second ?? "", /^✓ Done · /u);
+	// One that settled before the turn ended leaves it Done.
+	assert.match(receipts(1_000)[0] ?? "", /^✓ Done · /u);
+});

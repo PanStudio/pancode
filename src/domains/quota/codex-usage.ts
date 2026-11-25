@@ -1,0 +1,264 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Shared reader for the ChatGPT backend's Codex usage endpoint.
+ *
+ * Two runtimes spend a ChatGPT subscription: `openai-codex` with the OAuth
+ * credential PanCode itself holds, and `codex-cli` with the Codex CLI's own
+ * login. The account surface is the same endpoint and response shape, so
+ * only the token source and the client identity differ. This module owns
+ * the request and the parsing; each adapter owns its credential (#434).
+ */
+
+import { codexAccountScope } from "../../core/codex-account.js";
+import { sha256Hex } from "../../core/hash.js";
+import { isRecord } from "../../core/type-guards.js";
+import { accountPseudonym, codexAccess } from "./pool-reading.js";
+import type { UsageCredits, UsageSnapshot, UsageWindow } from "./types.js";
+import { formatPlan, parseRetryAfterSeconds } from "./types.js";
+
+export const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+
+const WINDOW_ORDER: Record<string, number> = { session: 0, weekly: 1 };
+const WEEKLY_THRESHOLD_SECONDS = 86_400;
+const WEEK_SECONDS = 604_800;
+
+/** The token and account a usage read sends. */
+export interface CodexAccountToken {
+	accessToken: string;
+	accountId: string | null;
+}
+
+/** What one usage read produced, before an adapter stamps its own identity on it. */
+export interface CodexUsageOutcome {
+	status: UsageSnapshot["status"];
+	message: string | null;
+	windows: UsageWindow[];
+	credits: UsageCredits | null;
+	plan: string | null;
+	retryAfterSeconds: number | null;
+	/** The pool evidence of a successful read: the account's pool, its deny status and its overage. */
+	pool: Pick<UsageSnapshot, "accountPseudonym" | "access" | "overage">;
+}
+
+export interface CodexUsageDependencies {
+	fetch: typeof globalThis.fetch;
+	timeoutMs: number;
+	/** The client identity headers of the program whose credential this is. */
+	identity: Record<string, string>;
+}
+
+function outcome(
+	status: UsageSnapshot["status"],
+	message: string | null,
+	extra: Partial<CodexUsageOutcome> = {},
+): CodexUsageOutcome {
+	return { status, message, windows: [], credits: null, plan: null, retryAfterSeconds: null, pool: {}, ...extra };
+}
+
+/**
+ * The scope of the account the poll queried: the token's own ChatGPT account, unless an explicit ChatGPT-Account-Id
+ * selected another one, which the token cannot vouch for, so that poll names no pool.
+ */
+function queriedAccountScope(token: CodexAccountToken): string | null {
+	const scope = codexAccountScope(token.accessToken);
+	if (token.accountId === null) return scope;
+	return scope === sha256Hex(token.accountId) ? scope : null;
+}
+
+/**
+ * Read current Codex usage for one account, reporting failure as a status. The timeout covers the body as well as the
+ * headers: a response whose body stalls would otherwise hold the caller, and its sibling adapter queued behind it.
+ */
+export async function fetchCodexUsage(
+	token: CodexAccountToken,
+	dependencies: CodexUsageDependencies,
+): Promise<CodexUsageOutcome> {
+	const headers: Record<string, string> = {
+		...dependencies.identity,
+		Authorization: `Bearer ${token.accessToken}`,
+	};
+	if (token.accountId !== null) headers["ChatGPT-Account-Id"] = token.accountId;
+
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), dependencies.timeoutMs);
+	try {
+		let response: Response;
+		try {
+			response = await dependencies.fetch(CODEX_USAGE_URL, { method: "GET", headers, signal: controller.signal });
+		} catch (error) {
+			return outcome("error", describeError(error, dependencies.timeoutMs));
+		}
+
+		if (response.status === 401 || response.status === 403) {
+			await discardBody(response);
+			return outcome("expired", null);
+		}
+		if (response.status === 429) {
+			await discardBody(response);
+			return outcome("error", "HTTP 429", {
+				retryAfterSeconds: parseRetryAfterSeconds(response.headers.get("Retry-After")),
+			});
+		}
+		if (response.status !== 200) {
+			await discardBody(response);
+			return outcome("error", `HTTP ${response.status}`);
+		}
+
+		let body: unknown;
+		try {
+			body = await untilAborted(response.json(), controller.signal);
+		} catch {
+			return outcome(
+				"error",
+				controller.signal.aborted ? `timeout after ${dependencies.timeoutMs}ms` : "Unexpected usage response",
+			);
+		}
+		if (!isRecord(body)) {
+			return outcome("error", "Unexpected usage response");
+		}
+
+		const pool = accountPseudonym("chatgpt", queriedAccountScope(token));
+		return outcome("ok", null, {
+			windows: usageWindows(body.rate_limit),
+			credits: usageCredits(body.credits),
+			plan: formatPlan(typeof body.plan_type === "string" ? body.plan_type : null),
+			pool: { ...codexAccess(limitSignal(body)), ...(pool === undefined ? {} : { accountPseudonym: pool }) },
+		});
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/** Settle with `work`, or reject once `signal` aborts; a body read the abort outran is left to settle unobserved. */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+	work.catch(() => undefined);
+	if (signal.aborted) return Promise.reject(new Error("aborted"));
+	return new Promise<T>((resolve, reject) => {
+		const onAbort = (): void => reject(new Error("aborted"));
+		signal.addEventListener("abort", onAbort, { once: true });
+		work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+	});
+}
+
+/** Windows from the `rate_limit.primary_window` and `.secondary_window` slots. */
+function usageWindows(raw: unknown): UsageWindow[] {
+	if (!isRecord(raw)) return [];
+	const windows: UsageWindow[] = [];
+	const primary = buildWindow(raw.primary_window, "session");
+	if (primary !== null) windows.push(primary);
+	const secondary = buildWindow(raw.secondary_window, "weekly");
+	if (secondary !== null) windows.push(secondary);
+	return windows.sort((left, right) => {
+		const order = (WINDOW_ORDER[left.key] ?? 2) - (WINDOW_ORDER[right.key] ?? 2);
+		return order !== 0 ? order : left.label.localeCompare(right.label);
+	});
+}
+
+/**
+ * One `rate_limit` window slot. The key defaults by slot when `limit_window_seconds` is absent; the label always comes
+ * from the reported duration, and names the slot rather than a guessed duration when none is reported.
+ */
+function buildWindow(raw: unknown, defaultKey: "session" | "weekly"): UsageWindow | null {
+	if (!isRecord(raw)) return null;
+	const usedPct = asNumber(raw.used_percent);
+	if (usedPct === null) return null;
+	const key = windowKey(raw.limit_window_seconds, defaultKey);
+	const { label, short } = windowLabel(raw.limit_window_seconds, defaultKey);
+	const reported = asNumber(raw.limit_window_seconds);
+	const seconds = reported === null ? 0 : Math.round(reported);
+	return {
+		key,
+		label,
+		short,
+		usedPct,
+		resetsAt: epochSecondsToIso(raw.reset_at),
+		unit: "percent",
+		...(seconds >= 1 ? { durationSeconds: seconds } : {}),
+	};
+}
+
+/** The poll's `rate_limit.allowed`/`limit_reached` and `credits`, as the stream event carries them too. */
+function limitSignal(body: Record<string, unknown>): Parameters<typeof codexAccess>[0] {
+	const limit = isRecord(body.rate_limit) ? body.rate_limit : {};
+	const credits = isRecord(body.credits) ? body.credits : null;
+	const flag = (value: unknown): boolean | null => (typeof value === "boolean" ? value : null);
+	return {
+		allowed: flag(limit.allowed),
+		limitReached: flag(limit.limit_reached),
+		credits:
+			credits === null
+				? null
+				: {
+						hasCredits: flag(credits.has_credits),
+						unlimited: flag(credits.unlimited),
+						balance: typeof credits.balance === "string" && /^\d+(?:\.\d+)?$/.test(credits.balance) ? credits.balance : null,
+					},
+	};
+}
+
+/** "Weekly" for exactly seven days, otherwise the largest whole unit of the reported duration, such as "3h". */
+function windowLabel(limitWindowSeconds: unknown, slot: "session" | "weekly"): { label: string; short: string } {
+	const reported = asNumber(limitWindowSeconds);
+	const seconds = reported === null ? 0 : Math.round(reported);
+	if (seconds <= 0)
+		return slot === "session" ? { label: "Primary", short: "pri" } : { label: "Secondary", short: "sec" };
+	if (seconds === WEEK_SECONDS) return { label: "Weekly", short: "wk" };
+	const compact =
+		seconds % 86_400 === 0
+			? `${seconds / 86_400}d`
+			: seconds % 3_600 === 0
+				? `${seconds / 3_600}h`
+				: seconds % 60 === 0
+					? `${seconds / 60}m`
+					: `${seconds}s`;
+	return { label: compact, short: compact };
+}
+
+function windowKey(limitWindowSeconds: unknown, defaultKey: "session" | "weekly"): "session" | "weekly" {
+	const seconds = asNumber(limitWindowSeconds);
+	if (seconds === null) return defaultKey;
+	return seconds >= WEEKLY_THRESHOLD_SECONDS ? "weekly" : "session";
+}
+
+/** Credit balance from the `credits` block, present only for credit-billed plans. */
+function usageCredits(raw: unknown): UsageCredits | null {
+	if (!isRecord(raw)) return null;
+	if (raw.unlimited === true) return { display: "Unlimited", usedPct: null, unit: "provider-credits" };
+	if (raw.has_credits === true && typeof raw.balance === "string" && raw.balance.length > 0) {
+		return { display: raw.balance, usedPct: null, unit: "provider-credits" };
+	}
+	return null;
+}
+
+export function asNumber(value: unknown): number | null {
+	if (typeof value === "number") return Number.isFinite(value) ? value : null;
+	if (typeof value === "string") {
+		const parsed = Number.parseFloat(value.trim());
+		return Number.isFinite(parsed) ? parsed : null;
+	}
+	return null;
+}
+
+/** Convert a UNIX epoch seconds value into an ISO 8601 instant. */
+function epochSecondsToIso(value: unknown): string | null {
+	const seconds = asNumber(value);
+	if (seconds === null) return null;
+	const date = new Date(seconds * 1000);
+	return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function describeError(error: unknown, timeoutMs: number): string {
+	if (error instanceof Error) {
+		return error.name === "AbortError" ? `timeout after ${timeoutMs}ms` : error.message;
+	}
+	return String(error);
+}
+
+async function discardBody(response: Response): Promise<void> {
+	try {
+		await response.body?.cancel();
+	} catch {
+		return;
+	}
+}

@@ -1,0 +1,664 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { existsSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
+import {
+	CONTEXT_OPERATION_CUSTOM_TYPE,
+	contextOperationWarning,
+	createContextOperation,
+} from "../../core/context-operation.js";
+import type { DomainBundle, DomainContext, DomainExtension } from "../../core/domain-loader.js";
+import { boundedExternalDiagnostic } from "../../core/external-diagnostic.js";
+import { relativePathEscapes } from "../../core/path-containment.js";
+import type { ContextActivityPayload } from "../../core/telemetry/live-events.js";
+import { pancodeDataDir, pancodeStateDir } from "../../core/xdg.js";
+import { loadMemoryRecordsSync } from "../memory/index.js";
+import { describeValidationContract, loadValidationContract } from "../safety/index.js";
+import { createSemanticBackgroundRefresh } from "../semantic-app/background.js";
+import { readSessionEntriesForId } from "../session/archive-readers.js";
+import { foldDecisionBoard } from "../session/decision-board.js";
+import { filterEntriesToActivePath } from "../session/tree/active-path.js";
+import { detectProjectTypeHint, type ProjectType } from "../session/workspace/project-type.js";
+import { adoptionSourcesChanged } from "./adoption.js";
+import { runBootstrap } from "./bootstrap.js";
+import { acceptHandbookProposal, proposalId } from "./bootstrap-proposals.js";
+import { runContextClear } from "./clear.js";
+import { codemapPath } from "./codewiki/artifact.js";
+import { coordinateCodewikiExclusive, coordinateCodewikiWrite, drainCodewikiWrites } from "./codewiki/coordinator.js";
+import {
+	compiledProjectHandbook,
+	refreshCompiledHandbook,
+	renderEffectivePromptContext,
+	stopCompiledHandbookRefreshes,
+} from "./compiled-handbook.js";
+import type { ContextContract, ContextState, StartupHint } from "./contract.js";
+import { readHandbookFreshness } from "./handbook-ledger.js";
+import {
+	bootstrapOperationFacts,
+	ContextOperationAbortError,
+	clearOperationFacts,
+	refreshOperationFacts,
+} from "./operation-result.js";
+import { loadProjectPancodeMd } from "./pancode-md.js";
+import { renderPromptContext } from "./prompt-context.js";
+import { runContextRefresh } from "./refresh.js";
+import { stopSisterRepositoryRefreshes } from "./sister-repository.js";
+import { type PancodeProjectState, readPancodeState, writePancodeState } from "./state.js";
+
+/**
+ * Persist the current PanCode state for `cwd`, preserving imported-context source
+ * tracking and stamping the supplied fingerprint/index time. Shared by the session-start
+ * freshness check, in-session incremental updates, and session stop.
+ */
+function persistState(
+	cwd: string,
+	fingerprint: PancodeProjectState["fingerprint"],
+	indexedAt: string,
+	prev: PancodeProjectState | null,
+	codewiki: import("./codewiki/schema.js").Codewiki,
+	projectType: ProjectType,
+): void {
+	writePancodeState(
+		cwd,
+		{
+			version: 1,
+			projectType: prev?.projectType ?? projectType,
+			fingerprint,
+			codewikiVersion: codewiki.version,
+			...(prev?.contextSources ? { contextSources: prev.contextSources } : {}),
+			...(prev?.contextSourceHash ? { contextSourceHash: prev.contextSourceHash } : {}),
+			...(prev?.lastBootstrap ? { lastBootstrap: prev.lastBootstrap } : {}),
+			...(prev?.bootstrapFingerprint ? { bootstrapFingerprint: prev.bootstrapFingerprint } : {}),
+			...(prev?.lastInitAt ? { lastInitAt: prev.lastInitAt } : {}),
+			lastSessionAt: prev?.lastSessionAt ?? new Date().toISOString(),
+			lastIndexedAt: indexedAt,
+		},
+		codewiki,
+	);
+}
+
+/**
+ * Rebuild the codewiki when it is missing or the working tree has drifted since
+ * the last full index. Runs once at session start (catches branch switches, git
+ * pulls, and out-of-session edits). Skips projects that were never indexed so we
+ * never index an arbitrary directory unprompted, and resolves false for them so
+ * the semantic background refresh skips them too. This is the only place a
+ * session reconciles the index with the tree: in-session edits arrive through
+ * `noteFileChanges`, and stop() deliberately does no indexing at all.
+ *
+ * Every phase runs through one shared slicer. This work overlaps a mounted TUI:
+ * before slicing, a drifted tree on a 1100-file repository held the event loop
+ * for roughly four seconds at session start, during which the prompt was on
+ * screen and keystrokes queued silently. `void` on the promise never helped,
+ * because nothing inside it awaited.
+ */
+async function ensureCodewikiFresh(cwd: string): Promise<boolean> {
+	const state = readPancodeState(cwd);
+	if (!state && !existsSync(codemapPath(cwd))) return false;
+	const indexedAt = new Date().toISOString();
+	await coordinateCodewikiWrite(
+		cwd,
+		(current, workspace) => {
+			const language = readPancodeState(workspace)?.projectType ?? current?.language;
+			return {
+				kind: "ensure",
+				cwd,
+				...(language ? { language } : {}),
+				current,
+				previous: readPancodeState(workspace)?.fingerprint ?? null,
+			};
+		},
+		{
+			afterCommit: ({ codewiki, fingerprint }, workspace) =>
+				persistState(workspace, fingerprint, indexedAt, readPancodeState(workspace), codewiki, codewiki.language),
+		},
+	);
+	return true;
+}
+
+const CONTEXT_STATE_CACHE_TTL_MS = 1500;
+
+function memoryCount(): number {
+	try {
+		return loadMemoryRecordsSync(pancodeDataDir()).length;
+	} catch {
+		return 0;
+	}
+}
+
+function resolvePancodeMdState(cwd: string): ContextState["pancodeMd"] {
+	const pancode = loadProjectPancodeMd(cwd);
+	if (pancode.files.length === 0 && pancode.errors.length === 0) return "none";
+	if (pancode.errors.length > 0) return "malformed";
+	// Stale means the last `context init --verify` flagged rules that no longer match the code.
+	return readHandbookFreshness(cwd).attention > 0 ? "stale" : "ok";
+}
+
+function createContextStateReader(): {
+	read(cwd?: string): ContextState;
+	invalidate(cwd?: string): void;
+} {
+	let cached: { cwd: string; at: number; state: ContextState } | null = null;
+	return {
+		read(cwd = process.cwd()): ContextState {
+			if (cached && cached.cwd === cwd && Date.now() - cached.at < CONTEXT_STATE_CACHE_TTL_MS) return cached.state;
+			const state: ContextState = { pancodeMd: resolvePancodeMdState(cwd), memoryCount: memoryCount() };
+			// Stamp after the work: a computation slower than the TTL must still cache.
+			cached = { cwd, at: Date.now(), state };
+			return state;
+		},
+		invalidate(cwd) {
+			if (!cached) return;
+			if (!cwd || cached.cwd === cwd) cached = null;
+		},
+	};
+}
+
+/** How one host words and shows startup hints; the hint text itself lives only here. */
+export interface StartupHintHost {
+	/** The context init command as an operator of this host would send it. */
+	initCommand: string;
+	/** False where nobody can act on a suggestion to run a command. Warnings still flow. */
+	suggest: boolean;
+	/** Takes the hints as the session starts. A host without one reads `startupHints()` for its own surface. */
+	sink?: (hint: StartupHint) => void;
+}
+
+export interface ContextBundleOptions {
+	noContextFiles?: boolean;
+	startupHintHost?: StartupHintHost;
+}
+
+function collectStartupHints(
+	cwd: string,
+	options: ContextBundleOptions = {},
+	pancode = loadProjectPancodeMd(cwd),
+): StartupHint[] {
+	const { initCommand, suggest } = options.startupHintHost ?? { initCommand: "/context init", suggest: true };
+	const hints: StartupHint[] = [];
+	// Runs at session start with the TUI mounting. Use a root-only hint; an
+	// indexed project answers from the type its state
+	// already records; only a never-indexed directory pays for detection.
+	const state = readPancodeState(cwd);
+	let projectType: ReturnType<typeof detectProjectTypeHint>;
+	try {
+		projectType = state?.projectType ?? detectProjectTypeHint(cwd);
+	} catch {
+		projectType = "unknown";
+	}
+	const absent = pancode.files.length === 0 && pancode.errors.length === 0 && options.noContextFiles !== true && suggest;
+	// Never written without the command: the session runs on the compile and the operator is told once.
+	const compiled = absent ? compiledProjectHandbook(cwd) : null;
+	if (compiled) {
+		hints.push({
+			level: "info",
+			text: `No project handbook; using ${compiled.rules} rule${compiled.rules === 1 ? "" : "s"} compiled from ${compiled.sources.join(", ")}. Run ${initCommand} to write one.`,
+		});
+	} else if (absent && projectType !== "unknown") {
+		hints.push({
+			level: "info",
+			text: `No PANCODE.md detected. Run ${initCommand} to explore the repo and bootstrap context.`,
+		});
+	}
+	for (const issue of pancode.errors) {
+		hints.push({ level: "warning", text: `malformed ${issue.path} ignored: ${issue.error}` });
+	}
+	if (suggest && pancode.files.length > 0) {
+		const { attention } = readHandbookFreshness(cwd);
+		if (attention > 0) {
+			hints.push({
+				level: "warning",
+				text: `The project handbook has ${attention} rule${attention === 1 ? "" : "s"} that no longer match the code; run pancode context init --verify`,
+			});
+		}
+	}
+	// An invalid validation contract leaves rigor at normal; say so once here
+	// rather than letting the finish gate quietly behave as if no contract existed.
+	const contract = loadValidationContract(cwd);
+	if (!contract.ok) {
+		hints.push({
+			level: "warning",
+			text: `validation contract ignored, rigor stays normal: ${describeValidationContract(contract)}`,
+		});
+	}
+	if (!state) return hints;
+	if (suggest && state.contextSources !== undefined) {
+		const changed = adoptionSourcesChanged(state.contextSources, { cwd });
+		if (changed) {
+			hints.push({
+				level: "warning",
+				text: `Imported agent context changed. Run ${initCommand} --adopt to refresh.`,
+			});
+		}
+	}
+	return hints;
+}
+
+export function createContextBundle(
+	_context: DomainContext,
+	options: ContextBundleOptions = {},
+): DomainBundle<ContextContract> {
+	let lastCwd = process.cwd();
+	let stopping = false;
+	let startupHints: StartupHint[] = [];
+	const contextState = createContextStateReader();
+	const semanticBackground = createSemanticBackgroundRefresh(() => _context.getContract("config")?.get());
+	const onStart = (): void => {
+		lastCwd = process.cwd();
+		void ensureCodewikiFresh(lastCwd)
+			.then((indexed) => {
+				if (indexed) semanticBackground.schedule(lastCwd);
+			})
+			.catch(() => {
+				// Indexing is best-effort; a failed refresh must not block session start.
+			});
+		const pancode = loadProjectPancodeMd(lastCwd);
+		// Compiled off the event loop; this session's prompt reads whatever cache is already on disk.
+		if (pancode.files.length === 0 && pancode.errors.length === 0 && options.noContextFiles !== true)
+			void refreshCompiledHandbook(lastCwd);
+		startupHints = collectStartupHints(lastCwd, options, pancode);
+		const sink = options.startupHintHost?.sink;
+		if (sink) for (const hint of startupHints) sink(hint);
+	};
+
+	// Incremental updates are read-modify-write on the artifact; overlapping runs
+	// would compute from a stale base and drop each other's records, so batches
+	// serialize through this queue and stop() drains it before the process exits.
+	let incrementalQueue: Promise<void> = Promise.resolve();
+	const noteFileChanges = (paths: ReadonlyArray<string>, cwd: string = lastCwd): void => {
+		if (stopping) return;
+		const workspace = resolve(cwd);
+		incrementalQueue = incrementalQueue
+			.then(async () => {
+				if (paths.length === 0) return;
+				const rel = paths
+					.map((p) => (isAbsolute(p) ? relative(workspace, p) : p))
+					.filter((p) => p.length > 0 && !relativePathEscapes(p));
+				// Fires after every write the agent makes, mid-turn, with the TUI
+				// mounted; an edge rebuild here is the same cost as one at start.
+				await coordinateCodewikiWrite(
+					workspace,
+					(current) =>
+						current
+							? {
+									kind: "incremental",
+									cwd: workspace,
+									current,
+									paths: rel,
+									previous: readPancodeState(workspace)?.fingerprint ?? null,
+								}
+							: null,
+					{
+						requireExisting: true,
+						afterCommit: ({ codewiki, fingerprint, changed }, committedWorkspace) => {
+							if (!changed) return;
+							persistState(
+								committedWorkspace,
+								fingerprint,
+								new Date().toISOString(),
+								readPancodeState(committedWorkspace),
+								codewiki,
+								codewiki.language,
+							);
+							semanticBackground.schedule(committedWorkspace);
+						},
+					},
+				);
+				contextState.invalidate(workspace);
+			})
+			.catch(() => {
+				// Best-effort: never let incremental indexing surface as a tool error.
+			});
+	};
+
+	let unsubscribeSessionStart: (() => void) | null = null;
+	const extension: DomainExtension = {
+		start() {
+			unsubscribeSessionStart = _context.bus.subscribe("session.started", onStart);
+		},
+		async stop() {
+			stopping = true;
+			await Promise.all([semanticBackground.stop(), stopCompiledHandbookRefreshes(), stopSisterRepositoryRefreshes()]);
+			unsubscribeSessionStart?.();
+			unsubscribeSessionStart = null;
+			// Everything the session changed already went through noteFileChanges,
+			// so the only work still owed at stop is the tail of that queue. Nothing
+			// here re-indexes: a stop-time rebuild used to run the same full scan as
+			// start on every exit, on the shutdown path, where one synchronous
+			// tree-sitter parse of a large file holds the event loop past every
+			// shutdown budget (issue #99). Out-of-band drift is start's job on the
+			// next session, and a never-indexed cwd stays that way; indexing an
+			// arbitrary directory because a process exited in it is not a favor.
+			await Promise.all([incrementalQueue, drainCodewikiWrites(lastCwd)]);
+			if (!readPancodeState(lastCwd)) return;
+			await coordinateCodewikiExclusive(lastCwd, (workspace) => {
+				// Read under the same lease as index publication: a late session
+				// timestamp cannot overwrite another process's newer source snapshot.
+				const state = readPancodeState(workspace);
+				if (state) writePancodeState(workspace, { ...state, lastSessionAt: new Date().toISOString() });
+			});
+		},
+	};
+
+	function promptSourceState(cwd: string): string | null {
+		try {
+			return JSON.stringify(renderPromptContext(cwd));
+		} catch {
+			// Enumeration can fail on unreadable or oversized trees. Bookkeeping
+			// must not prevent clear/recovery or replace the operation's own error.
+			return null;
+		}
+	}
+
+	/**
+	 * Explicit operations are snapshot boundaries. A rejected operation can still
+	 * have published an index or handbook before failing; compare the actual
+	 * project context so that failure refreshes when visible sources changed
+	 * or could not be inspected.
+	 * These disk reads happen at the command boundary, never on ordinary turns.
+	 */
+	async function withPromptSourceBoundary<T>(
+		cwd: string,
+		operation: () => Promise<T>,
+		committed: (result: T) => boolean,
+	): Promise<T> {
+		const workspace = resolve(cwd);
+		const before = promptSourceState(workspace);
+		let refreshSources = false;
+		try {
+			const result = await operation();
+			refreshSources = committed(result);
+			return result;
+		} finally {
+			if (refreshSources || before === null || promptSourceState(workspace) !== before) {
+				contextState.invalidate(workspace);
+				_context.bus.emit("context.sources_changed", { cwd: workspace });
+			}
+		}
+	}
+
+	let activeOperation: { id: string; sessionId: string | null; cwd: string; controller: AbortController } | null = null;
+	function beginOperation(
+		kind: "context-init" | "context-clear" | "context-refresh",
+		cwd: string,
+		signal?: AbortSignal,
+	) {
+		if (activeOperation !== null) throw new Error("Another project context operation is still running.");
+		const session = _context.getContract("session");
+		if (session && !session.current()) session.create({ cwd });
+		const sessionId = session?.current()?.id ?? null;
+		const controller = new AbortController();
+		const operation = createContextOperation(
+			{ kind, cwd, sessionId, origin: "operator", reason: "operator command" },
+			(event) => {
+				if (event.operation?.outcome) activeOperation = null;
+				_context.bus.emit("context.activity_changed", event);
+				if (
+					event.operation?.outcome &&
+					sessionId &&
+					session?.current()?.id === sessionId &&
+					resolve(process.cwd()) === resolve(cwd)
+				) {
+					try {
+						session.appendEntry({
+							kind: "custom",
+							customType: CONTEXT_OPERATION_CUSTOM_TYPE,
+							parentTurnId: session.leafId(sessionId) ?? null,
+							data: event.operation,
+						});
+					} catch {
+						// A ledger failure must not change a completed filesystem operation into a failure.
+					}
+				}
+			},
+		);
+		activeOperation = { id: operation.operation.id, sessionId, cwd: resolve(cwd), controller };
+		operation.start(
+			kind === "context-init" ? "scan" : kind === "context-refresh" ? "codewiki" : "state",
+			"Preparing project context",
+		);
+		return { ...operation, signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal };
+	}
+
+	const contract: ContextContract = {
+		cancelOperation(sessionId, cwd, operationId) {
+			if (
+				!activeOperation ||
+				activeOperation.sessionId !== sessionId ||
+				activeOperation.cwd !== resolve(cwd) ||
+				(operationId !== undefined && activeOperation.id !== operationId)
+			)
+				return false;
+			activeOperation.controller.abort();
+			return true;
+		},
+		async runBootstrap(input) {
+			const operation = beginOperation("context-init", input?.cwd ?? process.cwd(), input?.signal);
+			const warnings: string[] = [];
+			const io = {
+				stdout: (text: string) => input?.io?.stdout(text),
+				stderr: (text: string) => {
+					warnings.push(contextOperationWarning(boundedExternalDiagnostic(text, 1024)));
+					input?.io?.stderr(text);
+				},
+			};
+			const emitProgress = (event: Omit<ContextActivityPayload, "kind" | "at" | "operation">): void => {
+				if (event.phase !== "done") operation.progress(event);
+				input?.onProgress?.(event);
+			};
+			try {
+				const result = await withPromptSourceBoundary(
+					input?.cwd ?? process.cwd(),
+					() => runBootstrap({ ...input, signal: operation.signal, io, onProgress: emitProgress }),
+					(result) => result.summary.action !== "previewed",
+				);
+				const cwd = input?.cwd ?? process.cwd();
+				contextState.invalidate(cwd);
+				if (cwd === lastCwd) startupHints = collectStartupHints(cwd, options);
+				if (result.summary.adoption.conflictCount)
+					warnings.push(`${result.summary.adoption.conflictCount} import conflicts detected.`);
+				if (result.preload.mode === "partial" || result.preload.mode === "synopsis")
+					warnings.push(`Project instructions: ${result.preload.label}`);
+				if (result.summary.action === "proposed" && result.summary.proposalPath)
+					warnings.push(
+						`Review the proposal, then write it with /context init --accept ${proposalId(result.summary.proposalPath)}.`,
+					);
+				operation.finish(result.summary.action === "previewed" ? "previewed" : "completed", "Context init finished", {
+					facts: bootstrapOperationFacts(result),
+					warnings: warnings.slice(0, 8),
+				});
+				return result;
+			} catch (err) {
+				operation.finish(
+					err instanceof Error && err.name === "AbortError" ? "cancelled" : "failed",
+					err instanceof Error ? err.message : String(err),
+					{
+						warnings: warnings.slice(0, 8),
+						...(err instanceof ContextOperationAbortError
+							? {
+									facts: err.facts,
+									warnings: [
+										...warnings,
+										...(err.facts.length ? ["Earlier committed context changes were retained."] : []),
+									].slice(0, 8),
+								}
+							: {}),
+					},
+				);
+				emitProgress({
+					phase: "done",
+					status: "failed",
+					message: "context init failed",
+					detail: err instanceof Error ? err.message : String(err),
+				});
+				throw err;
+			}
+		},
+		acceptProposal(input) {
+			const cwd = input?.cwd ?? process.cwd();
+			const operation = beginOperation("context-init", cwd);
+			const result = acceptHandbookProposal(cwd, input?.ref);
+			const shown = (path: string): string => relative(cwd, path) || path;
+			if (result.ok) {
+				contextState.invalidate(cwd);
+				if (cwd === lastCwd) startupHints = collectStartupHints(cwd, options);
+				operation.finish("completed", "Proposal accepted", {
+					facts: [
+						{ kind: "updated", unit: "paths", count: 1, paths: [shown(result.handbookPath)] },
+						{ kind: "read", unit: "paths", count: 1, paths: [shown(result.proposalPath)] },
+					],
+				});
+			} else {
+				operation.finish("failed", `context init --accept refused: ${result.reason}`, {
+					...(result.proposalPath
+						? { facts: [{ kind: "preserved", unit: "paths", count: 1, paths: [shown(result.proposalPath)] }] }
+						: {}),
+				});
+			}
+			return result;
+		},
+		async runContextClear(input) {
+			const operation = beginOperation("context-clear", input?.cwd ?? process.cwd(), input?.signal);
+			const warnings: string[] = [];
+			const io = {
+				stdout: (text: string) => input?.io?.stdout(text),
+				stderr: (text: string) => {
+					warnings.push(contextOperationWarning(boundedExternalDiagnostic(text, 1024)));
+					input?.io?.stderr(text);
+				},
+			};
+			const emitProgress = (event: Omit<ContextActivityPayload, "kind" | "at" | "operation">): void => {
+				if (event.phase !== "done") operation.progress(event);
+			};
+			emitProgress({ phase: "state", status: "started", message: "clearing accumulated project context" });
+			try {
+				const result = await withPromptSourceBoundary(
+					input?.cwd ?? process.cwd(),
+					() => runContextClear({ ...input, signal: operation.signal, io }),
+					(result) => result.action === "cleared",
+				);
+				const cwd = input?.cwd ?? process.cwd();
+				contextState.invalidate(cwd);
+				if (cwd === lastCwd) startupHints = collectStartupHints(cwd, options);
+				emitProgress({
+					phase: "done",
+					status: "completed",
+					message: result.action === "cancelled" ? "context reset cancelled" : "context cleared",
+				});
+				operation.finish(
+					result.action === "cancelled" ? "cancelled" : "completed",
+					result.action === "cancelled" ? "Context reset cancelled" : "Context reset finished",
+					{
+						facts: clearOperationFacts(result),
+						warnings: warnings.slice(0, 8),
+					},
+				);
+				return result;
+			} catch (err) {
+				operation.finish(
+					err instanceof Error && err.name === "AbortError" ? "cancelled" : "failed",
+					err instanceof Error ? err.message : String(err),
+					{
+						warnings: warnings.slice(0, 8),
+						...(err instanceof ContextOperationAbortError
+							? {
+									facts: err.facts,
+									warnings: [
+										...warnings,
+										...(err.facts.length ? ["Earlier committed context changes were retained."] : []),
+									].slice(0, 8),
+								}
+							: {}),
+					},
+				);
+				emitProgress({
+					phase: "done",
+					status: "failed",
+					message: "context clear failed",
+					detail: err instanceof Error ? err.message : String(err),
+				});
+				throw err;
+			}
+		},
+		async runContextRefresh(input) {
+			const operation = beginOperation("context-refresh", input?.cwd ?? process.cwd(), input?.signal);
+			const warnings: string[] = [];
+			const io = {
+				stdout: (text: string) => input?.io?.stdout(text),
+				stderr: (text: string) => {
+					warnings.push(contextOperationWarning(boundedExternalDiagnostic(text, 1024)));
+					input?.io?.stderr(text);
+				},
+			};
+			const emitProgress = (event: Omit<ContextActivityPayload, "kind" | "at" | "operation">): void => {
+				if (event.phase !== "done") operation.progress(event);
+				input?.onProgress?.(event);
+			};
+			try {
+				const result = await withPromptSourceBoundary(
+					input?.cwd ?? process.cwd(),
+					async () =>
+						runContextRefresh({
+							...input,
+							signal: operation.signal,
+							io,
+							...(input?.wiki ? { decisions: input.decisions ?? (await currentDecisions(_context)) } : {}),
+							onProgress: emitProgress,
+						}),
+					() => true,
+				);
+				const cwd = input?.cwd ?? process.cwd();
+				contextState.invalidate(cwd);
+				if (cwd === lastCwd) startupHints = collectStartupHints(cwd, options);
+				operation.finish(
+					result.wiki?.status === "failed" ? "failed" : "completed",
+					result.wiki?.status === "failed" ? "Wiki refresh failed; index refreshed" : "Context refresh finished",
+					{
+						facts: refreshOperationFacts(result),
+						warnings: [...warnings, ...(result.hint ? [result.hint] : []), ...(result.wiki?.problems ?? [])].slice(0, 8),
+					},
+				);
+				return result;
+			} catch (err) {
+				operation.finish(
+					err instanceof Error && err.name === "AbortError" ? "cancelled" : "failed",
+					err instanceof Error ? err.message : String(err),
+					{
+						warnings: warnings.slice(0, 8),
+						...(err instanceof ContextOperationAbortError
+							? {
+									facts: err.facts,
+									warnings: [
+										...warnings,
+										...(err.facts.length ? ["Earlier committed context changes were retained."] : []),
+									].slice(0, 8),
+								}
+							: {}),
+					},
+				);
+				emitProgress({
+					phase: "done",
+					status: "failed",
+					message: "context refresh failed",
+					detail: err instanceof Error ? err.message : String(err),
+				});
+				throw err;
+			}
+		},
+		renderPromptContext: renderEffectivePromptContext,
+		contextState: contextState.read,
+		startupHints: () => [...startupHints],
+		noteFileChanges,
+	};
+
+	return { extension, contract };
+}
+
+async function currentDecisions(context: DomainContext) {
+	const session = context.getContract("session");
+	const current = session?.current();
+	if (!session || !current) return [];
+	session.flushAppends?.();
+	const read = await readSessionEntriesForId(pancodeStateDir(), current.id);
+	return foldDecisionBoard(filterEntriesToActivePath(read.entries, session.leafId(current.id) ?? undefined));
+}

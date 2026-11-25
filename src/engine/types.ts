@@ -1,0 +1,180 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Re-exports of PanCode engine-boundary types consumed by the rest of the codebase.
+ *
+ * Importing engine package types from anywhere else in the codebase violates the engine boundary.
+ * Add new re-exports here when domains need additional engine types, and update the audit
+ * document in the same commit.
+ */
+
+export type {
+	AgentEvent,
+	AgentMessage,
+	AgentTool,
+	AgentToolResult,
+	AgentToolUpdateCallback,
+} from "@earendil-works/pi-agent-core";
+
+import type { AgentState as PiAgentState } from "@earendil-works/pi-agent-core";
+
+/**
+ * Writable view onto the engine AgentState. The public typings mark
+ * `errorMessage` as readonly because the agent itself is the canonical
+ * mutator, but the chat-loop legitimately needs to clear it before retrying
+ * after a recoverable failure (overflow recovery, transient retry chains).
+ * Pi's runtime assigns to `_state.errorMessage = undefined` in the same
+ * shape, so the field is writable in practice. Exposing the writable view
+ * here keeps the engine boundary clean and lets call sites avoid `as unknown`
+ * casts on the private surface.
+ */
+export type MutableAgentState = Omit<PiAgentState, "errorMessage"> & {
+	errorMessage?: string | undefined;
+};
+
+export type {
+	AnthropicMessagesCompat,
+	Api,
+	AuthOperationOptions,
+	ImageContent,
+	KnownProvider,
+	Model,
+	OpenAICompletionsCompat,
+	Usage,
+} from "@earendil-works/pi-ai";
+
+import type { Api as PiApi, Model as PiModel } from "@earendil-works/pi-ai";
+
+/**
+ * The one PanCode-facing model shape. Runtime descriptors synthesize
+ * `Model<Api>` values and every consumer (chat loop, orchestrator, worker
+ * runtime, payload patchers) holds this erased view; `Model<never>` and the
+ * `as unknown as` casts it forced are banned.
+ */
+export type EngineModel = PiModel<PiApi>;
+export type {
+	EditorTheme,
+	SelectItem,
+	SelectListLayoutOptions,
+	SelectListTheme,
+	SettingItem,
+	SettingsListTheme,
+	TUI,
+} from "@earendil-works/pi-tui";
+
+/** Sanitized same-request Codex plan windows. No credential or raw account identity. */
+export interface CodexQuotaObservation {
+	accountScope: string;
+	observedAt: string;
+	windows: Array<{ windowMinutes: number; usedPercent: number; resetsAt: string | null }>;
+	plan: string | null;
+	credits: { hasCredits: boolean; unlimited: boolean; balance: string | null } | null;
+	allowed: boolean | null;
+	limitReached: boolean | null;
+}
+
+/** Sanitized per-call Anthropic response facts for #423. No credential or raw org/workspace id. */
+export interface AnthropicResponseObservation {
+	observedAt: string;
+	status: number | null;
+	attempts: number;
+	requestId: string | null;
+	accountScope: string | null;
+	retryAfterSeconds: number | null;
+	/** Unified rate-limit headers retain provider extensions for consumers (#423). */
+	rateLimit: Record<string, string>;
+	/** Preserve message_start diagnostics without response content (#423). */
+	messageStart: Record<string, unknown> | null;
+	/**
+	 * What each request of this call asked of Pi's Anthropic message threads, in send order. Absent when none carried
+	 * a thread. A `continue` followed by anything else is Pi resending after the API rejected the continuation.
+	 */
+	threadRequests?: Array<"create" | "continue" | "none">;
+}
+
+/** Codex context generation; positions are durable ledger user-turn ids (#423). */
+export interface CodexConfiguration {
+	initialEffort: string;
+	updates: ReadonlyArray<{ position: string; effort: string }>;
+}
+
+/** Private opaque state is addressed by integrity hash, never embedded in a ledger or prompt (#423). */
+export interface ProviderCheckpointHandle {
+	version: 1;
+	digest: string;
+	/** Provider-measured output tokens of the compaction call; never inferred from encrypted bytes. */
+	outputTokens: number;
+	/** Inclusive measured first-replay input is a conservative bound for its opaque contribution (#423). */
+	replayInputTokens?: number;
+}
+
+export interface ProviderCompactionResult {
+	outputJson: string;
+	usage: import("@earendil-works/pi-ai").Usage;
+	compatibility: {
+		accountScope: string;
+		provider: string;
+		model: string;
+		protocol: "codex-responses-trigger-v1";
+	};
+	initialEffort: string;
+	effectiveEffort: string;
+	policyDigest: string;
+}
+
+/** Effective routing attempts retained in existing run records and receipts (#426). */
+export interface ToolRoundRecord {
+	kind: "required" | "text-only" | "tools-removed";
+	toolName?: string;
+	choice: unknown;
+	attempt: 0 | 1;
+	downgradeReason?: string;
+	/** Host enforcement of an auto-routed requirement, separate from routing retries (#423). */
+	enforcement?: "follow-up" | "unmet";
+}
+
+/** #423: physical WebSocket sends, not provider usage or SSE HTTP retry counts. */
+export interface CodexTransportCounters {
+	requests: number;
+	connectionsCreated: number;
+	connectionsReused: number;
+	fullContextRequests: number;
+	deltaRequests: number;
+	websocketFailures: number;
+	sseFallbacks: number;
+}
+
+/**
+ * The public Responses API's verdict on one request's prompt cache against the previous response of the same
+ * conversation (`prompt_cache_options.comparison_response_id`), as the provider stated it. `unavailable` and
+ * `comparison_response_not_found` say nothing about a hit or a miss.
+ */
+export interface ResponsesCacheDiagnostic {
+	provider: "openai";
+	type: string;
+	reason?: string;
+	missedInputTokens?: number;
+	comparisonReusableTokens?: number;
+}
+
+/**
+ * #423 / #427 AC4: sanitized per-call transport attribution and safe-boundary recovery, for Codex and public
+ * Responses calls alike (`src/engine/apis/responses-transport.ts`). Each call counts its own sends, so a call with a
+ * session is `exclusive`; `overlap` and `counter_reset` appear only in records from before PanCode owned the socket.
+ */
+export interface CodexTransportObservation {
+	mode: "websocket" | "sse" | "unknown";
+	request: "full" | "delta" | "unknown";
+	attribution: "exclusive" | "overlap" | "no_session" | "counter_reset";
+	counters: CodexTransportCounters | null;
+	lastInputItems: number | null;
+	fallbackActive: boolean;
+	reason?: string;
+	cooldownMs?: number | null;
+	retryAt?: string | null;
+	recovery?: {
+		action: "cooldown_reset" | "auth_reset";
+		countersBeforeReset: CodexTransportCounters;
+		outcome: "eligible" | "recovered" | "failed" | "unknown";
+	};
+}

@@ -1,0 +1,1294 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Scoped settings layering. Effective settings come from four file layers plus
+ * CLI flags, lowest precedence first:
+ *
+ *   built-in  <  user settings.yaml  <  project .pancode/settings.yaml
+ *             <  project .pancode/settings.local.yaml  <  CLI flags
+ *
+ * Layering happens on the raw parsed blobs so each effective leaf can be
+ * attributed to the layer that set it, then the merged blob is validated against
+ * the one strict schema (core/config.ts). Project layers are committed
+ * team configuration and must stay secrets-free, so credential-bearing keys are
+ * stripped from the project and project.local layers with a diagnostic.
+ * Autonomy is operator-owned and is also stripped from project layers, as are
+ * yolo's scratch roots and any raise of telemetry capture.
+ *
+ * Merge semantics, documented and explicit: objects deep-merge key by key;
+ * arrays and scalars replace wholesale (a later layer's array wins entirely).
+ * Replacing arrays keeps the result predictable and avoids ambiguous element
+ * identity. Reads are best-effort: a missing file is skipped, and a malformed
+ * file degrades to the lower layers with an issue rather than throwing.
+ */
+
+import { existsSync, lstatSync } from "node:fs";
+import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { parse as parseYaml } from "yaml";
+import {
+	type AutonomyLevel,
+	autonomyRank,
+	DEFAULT_AUTONOMY_LEVEL,
+	isAutonomyLevel,
+} from "../domains/safety/autonomy.js";
+import {
+	applySettingsDelta,
+	type PancodeSettings,
+	pinSettingsLeaf,
+	reportSettingsWarnings,
+	type SettingsMutator,
+	STORE_PROJECT_ID_USER_MESSAGE,
+	settingsPath,
+	settingsReadPath,
+	updateSavedSettingsDocument,
+	userStoreProjectIdIssue,
+} from "./config.js";
+import { DEFAULT_SETTINGS } from "./defaults.js";
+import { pancodeProjectRoot } from "./project-root.js";
+import { isProjectKeyVariableName, noteProjectTargets } from "./project-target-urls.js";
+import { safeResourceWrite } from "./safe-resource-write.js";
+import type { SettingsDocumentRead } from "./settings-document.js";
+import { readSettingsDocument } from "./settings-document.js";
+import { type SettingsIssue, SettingsValidationError } from "./settings-issues.js";
+import { validateSettings } from "./settings-validate.js";
+import { withStateFileLockSync } from "./state-file-lock.js";
+import { isRecord } from "./type-guards.js";
+import {
+	captureProjectSurface,
+	type ProjectSurfaceFile,
+	projectSurfaceTrustNotice,
+	recordProjectSurfaceTrust,
+} from "./workspace-trust.js";
+import { renderYamlPreservingLayout } from "./yaml-preserve.js";
+
+export type SettingsOrigin = "built-in" | "user" | "project" | "project.local" | "cli";
+
+export interface SettingsLayerIssue {
+	origin: SettingsOrigin;
+	path: string;
+	message: string;
+	kind?: NonNullable<SettingsIssue["kind"]>;
+}
+
+export interface SettingsLayerInfo {
+	origin: SettingsOrigin;
+	path: string;
+	present: boolean;
+}
+
+export interface LayeredSettings {
+	settings: PancodeSettings;
+	/** Setting path with JSON brackets for literal map keys. Missing keys are built-in defaults. */
+	sources: Record<string, SettingsOrigin>;
+	issues: SettingsLayerIssue[];
+	layers: SettingsLayerInfo[];
+}
+
+const STRICT_USER_ISSUES = Symbol("strict-user-issues");
+type InternalLayeredSettings = LayeredSettings & { [STRICT_USER_ISSUES]: SettingsIssue[] };
+
+// Keys whose presence in a project layer means a credential leaked into a
+// committed file. `auth` carries target headers and api keys; the rest cover
+// stray secrets. Stripped from project layers with a diagnostic.
+const CREDENTIAL_KEYS: ReadonlySet<string> = new Set(["auth", "apikey", "api_key", "token", "secret", "password"]);
+
+function deepEquals(a: unknown, b: unknown): boolean {
+	if (a === b) return true;
+	if (Array.isArray(a) || Array.isArray(b)) {
+		if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+		return a.every((entry, index) => deepEquals(entry, b[index]));
+	}
+	if (!isRecord(a) || !isRecord(b)) return false;
+	const keys = Object.keys(a);
+	if (keys.length !== Object.keys(b).length) return false;
+	return keys.every((key) => key in b && deepEquals(a[key], b[key]));
+}
+
+function settingPath(segments: readonly string[]): string {
+	return segments.reduce(
+		(path, key) => (/^[\w-]+$/u.test(key) ? `${path ? `${path}.` : ""}${key}` : `${path}[${JSON.stringify(key)}]`),
+		"",
+	);
+}
+
+function settingPathSegments(path: string): string[] {
+	return Array.from(
+		path.matchAll(/([^.[\]]+)|\[("(?:[^"\\]|\\.)*"|\d+)\]/gu),
+		(match) => match[1] ?? (JSON.parse(match[2] ?? '""') as string | number).toString(),
+	);
+}
+
+export function settingsValueFor(root: unknown, path: string): unknown {
+	let current = root;
+	for (const key of settingPathSegments(path)) {
+		if (current === null || typeof current !== "object") return undefined;
+		current = (current as Record<string, unknown>)[key];
+	}
+	return current;
+}
+
+function pruneSources(sources: Record<string, SettingsOrigin>, path: string): void {
+	for (const key of Object.keys(sources)) {
+		if (key === path || key.startsWith(`${path}.`) || key.startsWith(`${path}[`)) delete sources[key];
+	}
+}
+
+function recordSources(
+	value: unknown,
+	path: readonly string[],
+	origin: SettingsOrigin,
+	sources: Record<string, SettingsOrigin>,
+): void {
+	sources[settingPath(path)] = origin;
+	if (isRecord(value)) {
+		for (const [key, child] of Object.entries(value)) recordSources(child, [...path, key], origin, sources);
+	}
+}
+
+interface RawLayer {
+	origin: SettingsOrigin;
+	path: string;
+	blob: Record<string, unknown> | undefined;
+}
+
+function rawLayerGraphIssue(value: unknown): { path: string; message: string } | undefined {
+	const ancestors = new Set<object>();
+	let remaining = 100_000;
+	const visit = (node: unknown, path: string, depth: number): ReturnType<typeof rawLayerGraphIssue> => {
+		if (--remaining < 0) return { path, message: "settings graph exceeds 100000 expanded values" };
+		if (node === null || typeof node !== "object") return undefined;
+		if (ancestors.has(node)) return { path, message: "cyclic YAML alias is not allowed in settings" };
+		if (depth > 100) return { path, message: "settings graph exceeds 100 nested collections" };
+		ancestors.add(node);
+		for (const [key, child] of Object.entries(node)) {
+			const childPath = Array.isArray(node) ? `${path}[${key}]` : path ? `${path}.${key}` : key;
+			const issue = visit(child, childPath, depth + 1);
+			if (issue) return issue;
+		}
+		ancestors.delete(node);
+		return undefined;
+	};
+	return visit(value, "", 0);
+}
+
+function readRawLayer(
+	origin: SettingsOrigin,
+	path: string,
+	issues: SettingsLayerIssue[],
+	capturedText?: string,
+): RawLayer {
+	if (capturedText === undefined && !existsSync(path)) return { origin, path, blob: undefined };
+	let read: SettingsDocumentRead;
+	if (capturedText === undefined) read = readSettingsDocument(path);
+	else {
+		try {
+			read = { kind: "parsed", document: parseYaml(capturedText, { maxAliasCount: 100 }) };
+		} catch (error) {
+			read = { kind: "invalid", error };
+		}
+	}
+	if (read.kind !== "parsed") {
+		const reason = read.error instanceof Error ? read.error.message : String(read.error);
+		issues.push({
+			origin,
+			path: "(root)",
+			message: read.kind === "unreadable" ? `unreadable: ${reason}` : `${path}: invalid YAML: ${reason}`,
+			kind: read.kind === "unreadable" ? "unreadable" : "syntax",
+		});
+		return { origin, path, blob: undefined };
+	}
+	const parsed = read.document;
+	if (parsed === null || parsed === undefined) return { origin, path, blob: {} };
+	if (!isRecord(parsed)) {
+		issues.push({ origin, path: "(root)", message: "settings file must be a mapping at the root" });
+		return { origin, path, blob: undefined };
+	}
+	const graphIssue = rawLayerGraphIssue(parsed);
+	if (graphIssue) {
+		issues.push({ origin, path: graphIssue.path || "(root)", message: `${path}: ${graphIssue.message}`, kind: "syntax" });
+		return { origin, path, blob: undefined };
+	}
+	return { origin, path, blob: parsed };
+}
+
+/**
+ * Remove credential-bearing keys from a project layer, recording where each was
+ * dropped. Recurses through nested objects and arrays so a credential nested
+ * under `targets[].auth` is caught too.
+ */
+function stripCredentials(value: unknown, origin: SettingsOrigin, path: string, issues: SettingsLayerIssue[]): unknown {
+	if (Array.isArray(value)) {
+		return value.map((item, index) => stripCredentials(item, origin, `${path}[${index}]`, issues));
+	}
+	if (!isRecord(value)) return value;
+	const out: Record<string, unknown> = {};
+	for (const [key, child] of Object.entries(value)) {
+		if (key === "auth" && /^targets\[\d+\]$/u.test(path) && isRecord(child)) {
+			const kept = projectTargetKeyName(child, origin, `${path}.auth`, issues);
+			if (kept !== undefined) out[key] = kept;
+			continue;
+		}
+		if (CREDENTIAL_KEYS.has(key.toLowerCase())) {
+			issues.push({
+				origin,
+				path: path ? `${path}.${key}` : key,
+				message: "credentials are not allowed in project settings; key ignored",
+			});
+			continue;
+		}
+		out[key] = stripCredentials(child, origin, path ? `${path}.${key}` : key, issues);
+	}
+	return out;
+}
+
+/**
+ * A project target may name the variable that holds its key (`auth.apiKeyEnvVar`), never a key: the name is what
+ * the trust card shows ("sends $NAME to <url>"), and auth resolution sends that variable alone to the project's
+ * URL. Every other auth key, and a value that is not a variable name, is dropped.
+ */
+function projectTargetKeyName(
+	auth: Record<string, unknown>,
+	origin: SettingsOrigin,
+	path: string,
+	issues: SettingsLayerIssue[],
+): { apiKeyEnvVar: string } | undefined {
+	let kept: { apiKeyEnvVar: string } | undefined;
+	for (const [key, child] of Object.entries(auth)) {
+		if (key === "apiKeyEnvVar" && typeof child === "string" && isProjectKeyVariableName(child)) {
+			kept = { apiKeyEnvVar: child };
+			continue;
+		}
+		issues.push({
+			origin,
+			path: `${path}.${key}`,
+			message:
+				key === "apiKeyEnvVar"
+					? "a project target's auth.apiKeyEnvVar must be an environment variable name; key ignored"
+					: "credentials are not allowed in project settings; key ignored",
+		});
+	}
+	return kept;
+}
+
+/** The operator's own level, which a project layer may tighten but never loosen. */
+function userAutonomy(userBlob: Record<string, unknown> | undefined): AutonomyLevel {
+	const safety = userBlob?.safety;
+	return isRecord(safety) && isAutonomyLevel(safety.autonomy) ? safety.autonomy : DEFAULT_AUTONOMY_LEVEL;
+}
+
+function stripProjectAutonomy(
+	blob: Record<string, unknown>,
+	origin: SettingsOrigin,
+	issues: SettingsLayerIssue[],
+	operatorLevel: AutonomyLevel,
+): Record<string, unknown> {
+	if (!isRecord(blob.safety) || !Object.hasOwn(blob.safety, "autonomy")) return blob;
+	const requested = blob.safety.autonomy;
+	// A repository may ask for more confirmation than the operator's default,
+	// never less. The kept value is a starting point: the session toggle and
+	// --autonomy still belong to the operator.
+	if (isAutonomyLevel(requested) && autonomyRank(requested) <= autonomyRank(operatorLevel)) return blob;
+	issues.push({
+		origin,
+		path: "safety.autonomy",
+		message: isAutonomyLevel(requested)
+			? "project autonomy may only tighten the level in user settings; project value ignored"
+			: "autonomy is set only in user settings or by the operator; project value ignored",
+	});
+	const safety = { ...blob.safety };
+	delete safety.autonomy;
+	const cleaned = { ...blob };
+	if (Object.keys(safety).length === 0) delete cleaned.safety;
+	else cleaned.safety = safety;
+	return cleaned;
+}
+
+/**
+ * A repository may lower telemetry capture but never raise it, so opening a
+ * cloned project cannot switch the operator into research mode or turn on a
+ * research flag their own file leaves off (#434, O6). Content capture still
+ * needs the operator's workspace consent, which no settings layer grants.
+ */
+function stripProjectTelemetry(
+	blob: Record<string, unknown>,
+	origin: SettingsOrigin,
+	issues: SettingsLayerIssue[],
+	userBlob: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+	if (!isRecord(blob.telemetry)) return blob;
+	const operator = isRecord(userBlob?.telemetry) ? userBlob.telemetry : {};
+	const operatorResearch = isRecord(operator.research) ? operator.research : {};
+	const telemetry: Record<string, unknown> = { ...blob.telemetry };
+	let stripped = false;
+	const reject = (path: string) => {
+		issues.push({
+			origin,
+			path,
+			message: "a project may only lower telemetry capture from user settings; project value ignored",
+		});
+		stripped = true;
+	};
+	if (Object.hasOwn(telemetry, "mode")) {
+		const operatorMode = operator.mode === "research" ? "research" : DEFAULT_SETTINGS.telemetry.mode;
+		if (telemetry.mode !== "standard" && telemetry.mode !== operatorMode) {
+			reject("telemetry.mode");
+			delete telemetry.mode;
+		}
+	}
+	if (isRecord(telemetry.research)) {
+		const research: Record<string, unknown> = { ...telemetry.research };
+		for (const [flag, requested] of Object.entries(research)) {
+			if (requested === false || !Object.hasOwn(DEFAULT_SETTINGS.telemetry.research, flag)) continue;
+			const fallback = DEFAULT_SETTINGS.telemetry.research[flag as keyof PancodeSettings["telemetry"]["research"]];
+			const operatorFlag = typeof operatorResearch[flag] === "boolean" ? operatorResearch[flag] : fallback;
+			if (requested === true && operatorFlag === true) continue;
+			reject(`telemetry.research.${flag}`);
+			delete research[flag];
+		}
+		if (Object.keys(research).length === 0) delete telemetry.research;
+		else telemetry.research = research;
+	}
+	if (!stripped) return blob;
+	const cleaned = { ...blob };
+	if (Object.keys(telemetry).length === 0) delete cleaned.telemetry;
+	else cleaned.telemetry = telemetry;
+	return cleaned;
+}
+
+/**
+ * Every limit under `safety.limits` and `fleet.limits` bounds what PanCode does
+ * without the operator, so a repository may tighten one and never loosen or
+ * switch it off (R2-safety-secrets-19): a project value stays only when it is
+ * positive and no larger than the operator's own. Where 0 means off (the
+ * session cost ceiling and the autonomous caps), the operator's 0 leaves any
+ * positive value tighter.
+ */
+const PROJECT_LIMIT_KEYS: ReadonlyArray<{
+	block: "safety" | "fleet";
+	key: string;
+	zeroIsOff: boolean;
+	/** Null is the tightest value: no raise at all. */
+	nullIsTightest?: true;
+}> = [
+	{ block: "safety", key: "sessionCostUsd", zeroIsOff: true },
+	{ block: "safety", key: "chatToolCallsPerTurn", zeroIsOff: false },
+	{ block: "safety", key: "readBytesPerCall", zeroIsOff: false },
+	{ block: "safety", key: "observationBytesPerTurn", zeroIsOff: false },
+	// A ceiling a template budget may raise a turn to; with no operator value a project cannot set one.
+	{ block: "safety", key: "templateToolCallsPerTurnMax", zeroIsOff: false, nullIsTightest: true },
+	{ block: "safety", key: "templateObservationBytesPerTurnMax", zeroIsOff: false, nullIsTightest: true },
+	{ block: "safety", key: "workerResponseSeconds", zeroIsOff: false },
+	{ block: "safety", key: "autonomousToolCalls", zeroIsOff: true },
+	{ block: "safety", key: "autonomousMinutes", zeroIsOff: true },
+	{ block: "safety", key: "autonomousTokens", zeroIsOff: true },
+	{ block: "safety", key: "bashIdleSeconds", zeroIsOff: true },
+	{ block: "fleet", key: "toolCallsPerRun", zeroIsOff: false },
+	{ block: "fleet", key: "runTimeoutMs", zeroIsOff: false },
+	{ block: "fleet", key: "internalRunTimeoutMs", zeroIsOff: false },
+];
+const AUTONOMOUS_CAP_KEYS: ReadonlySet<string> = new Set([
+	"autonomousToolCalls",
+	"autonomousMinutes",
+	"autonomousTokens",
+]);
+
+function stripProjectLimits(
+	blob: Record<string, unknown>,
+	origin: SettingsOrigin,
+	issues: SettingsLayerIssue[],
+	userBlob: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+	let cleaned = blob;
+	for (const block of ["safety", "fleet"] as const) {
+		const section = cleaned[block];
+		if (!isRecord(section) || !isRecord(section.limits)) continue;
+		const operatorSection = userBlob?.[block];
+		const operatorLimits = isRecord(operatorSection) && isRecord(operatorSection.limits) ? operatorSection.limits : {};
+		const defaults = DEFAULT_SETTINGS[block].limits as unknown as Record<string, unknown>;
+		const limits: Record<string, unknown> = { ...section.limits };
+		let stripped = false;
+		for (const { key, zeroIsOff, nullIsTightest } of PROJECT_LIMIT_KEYS.filter((rule) => rule.block === block)) {
+			if (!Object.hasOwn(limits, key)) continue;
+			const requested = limits[key];
+			const operatorValue = typeof operatorLimits[key] === "number" ? operatorLimits[key] : defaults[key];
+			const tighter =
+				(requested === null && nullIsTightest === true) ||
+				(typeof requested === "number" &&
+					Number.isFinite(requested) &&
+					requested > 0 &&
+					typeof operatorValue === "number" &&
+					((zeroIsOff && operatorValue === 0) || requested <= operatorValue));
+			if (tighter) continue;
+			issues.push({
+				origin,
+				path: `${block}.limits.${key}`,
+				message: AUTONOMOUS_CAP_KEYS.has(key)
+					? "a project may only tighten an autonomous cap from user settings; project value ignored"
+					: "a project may only tighten a limit from user settings; project value ignored",
+			});
+			delete limits[key];
+			stripped = true;
+		}
+		if (!stripped) continue;
+		const next: Record<string, unknown> = { ...section };
+		if (Object.keys(limits).length === 0) delete next.limits;
+		else next.limits = limits;
+		cleaned = { ...cleaned, [block]: next };
+	}
+	return stripProjectReview(cleaned, origin, issues, userBlob);
+}
+
+/**
+ * The review watchdog checks the session for the operator, so a repository may
+ * switch it on or make it fire more often, never switch it off or slow it
+ * (R2-safety-secrets-19).
+ */
+function stripProjectReview(
+	blob: Record<string, unknown>,
+	origin: SettingsOrigin,
+	issues: SettingsLayerIssue[],
+	userBlob: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+	if (!isRecord(blob.safety) || !isRecord(blob.safety.review)) return blob;
+	const operatorSafety = isRecord(userBlob?.safety) ? userBlob.safety : {};
+	const operator = isRecord(operatorSafety.review) ? operatorSafety.review : {};
+	const review: Record<string, unknown> = { ...blob.safety.review };
+	let stripped = false;
+	const drop = (key: string, message: string) => {
+		issues.push({ origin, path: `safety.review.${key}`, message });
+		delete review[key];
+		stripped = true;
+	};
+	const operatorEnabled =
+		typeof operator.enabled === "boolean" ? operator.enabled : DEFAULT_SETTINGS.safety.review.enabled;
+	if (Object.hasOwn(review, "enabled") && review.enabled !== true && operatorEnabled) {
+		drop("enabled", "the review watchdog is switched off only in user settings; project value ignored");
+	}
+	if (Object.hasOwn(review, "cadenceToolCalls") && review.cadenceToolCalls !== null) {
+		const requested = review.cadenceToolCalls;
+		const operatorCadence = typeof operator.cadenceToolCalls === "number" ? operator.cadenceToolCalls : null;
+		const tighter =
+			typeof requested === "number" && requested > 0 && (operatorCadence === null || requested <= operatorCadence);
+		if (!tighter)
+			drop("cadenceToolCalls", "a project may only tighten a limit from user settings; project value ignored");
+	}
+	if (!stripped) return blob;
+	const safety: Record<string, unknown> = { ...blob.safety };
+	if (Object.keys(review).length === 0) delete safety.review;
+	else safety.review = review;
+	return { ...blob, safety };
+}
+
+/**
+ * Safety keys only the operator's own file may set. Scratch roots widen where
+ * yolo may delete outside the workspace (#419), so a repository can neither set
+ * nor extend them. The unattended window decides how long PanCode waits for this
+ * operator before answering a card or a question itself (#421), so a
+ * repository cannot shorten it to answer ahead of them. The safety judge
+ * reviews calls against the operator's words, so a repository can neither
+ * write its rules nor switch it off; it may only move the judge's route
+ * (`projectJudgeRoute`).
+ */
+const OPERATOR_ONLY_SAFETY_KEYS: ReadonlyArray<{ key: string; message: string }> = [
+	{ key: "scratchRoots", message: "scratch roots are set only in user settings; project value ignored" },
+	// A repository could otherwise hand its own commands the operator's tokens.
+	{
+		key: "sandboxPassEnv",
+		message: "sandbox environment pass-through is set only in user settings; project value ignored",
+	},
+	// A repository could otherwise hand its own commands the operator's Copilot login.
+	{
+		key: "liveCheckTargets",
+		message: "live-check login targets are set only in user settings; project value ignored",
+	},
+	// A repository could otherwise reopen the sockets that run code outside the sandbox.
+	{
+		key: "sandboxUnixSockets",
+		message: "sandbox unix-socket access is set only in user settings; project value ignored",
+	},
+	// The cache is the home's, not a repository's, and a tiny cap would make every startup empty it.
+	{
+		key: "sandboxCacheMaxGiB",
+		message: "the sandbox cache cap is set only in user settings; project value ignored",
+	},
+	{
+		key: "unattendedAfterSeconds",
+		message: "the unattended timeout is set only in user settings; project value ignored",
+	},
+	// Acceptance of yolo is the operator's own, never a repository's (#407).
+	{ key: "yoloAccepted", message: "yolo acceptance is recorded only in user settings; project value ignored" },
+	// A repository could otherwise lift yolo's containment, or accept that for the operator.
+	{ key: "yoloConfinement", message: "yolo confinement is set only in user settings; project value ignored" },
+	{
+		key: "yoloUnconfinedAccepted",
+		message: "unconfined yolo acceptance is recorded only in user settings; project value ignored",
+	},
+];
+
+/** The judge fields a trusted project may set: its route, never its rules or whether it runs. */
+const PROJECT_JUDGE_ROUTE_KEYS = new Set(["target", "model"]);
+
+/**
+ * A trusted project's `safety.judge`, cut to its route. A project kept fully on
+ * one provider had to edit the operator's user file to move the judge there
+ * (F-C3). Naming a target the user layer declares only narrows where the
+ * judge's data goes, so target and model stay; a target the user layer does
+ * not declare, `enabled`, `environment` and the allow and deny rules decide
+ * which calls run without the operator and are dropped.
+ */
+function projectJudgeRoute(
+	judge: unknown,
+	origin: SettingsOrigin,
+	issues: SettingsLayerIssue[],
+	userBlob: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+	if (!isRecord(judge)) {
+		issues.push({
+			origin,
+			path: "safety.judge",
+			message: "the safety judge's route is set as a map; project value ignored",
+		});
+		return undefined;
+	}
+	const route: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(judge)) {
+		if (!PROJECT_JUDGE_ROUTE_KEYS.has(key)) {
+			issues.push({
+				origin,
+				path: `safety.judge.${key}`,
+				message: "a project sets only the safety judge's target and model; project value ignored",
+			});
+			continue;
+		}
+		if (key === "target" && typeof value === "string") {
+			const declared = Array.isArray(userBlob?.targets)
+				? userBlob.targets.some((entry) => isRecord(entry) && entry.id === value)
+				: false;
+			if (!declared) {
+				// The model was chosen for that target, so neither half of the route stays.
+				issues.push({
+					origin,
+					path: "safety.judge.target",
+					message: `a project may point the safety judge only at a target your user settings declare, and '${value}' is not one; project target and model ignored`,
+				});
+				return undefined;
+			}
+		}
+		route[key] = value;
+	}
+	return Object.keys(route).length === 0 ? undefined : route;
+}
+
+function stripProjectOperatorSafety(
+	blob: Record<string, unknown>,
+	origin: SettingsOrigin,
+	issues: SettingsLayerIssue[],
+	userBlob: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+	if (!isRecord(blob.safety)) return blob;
+	const safety: Record<string, unknown> = { ...blob.safety };
+	let stripped = false;
+	for (const { key, message } of OPERATOR_ONLY_SAFETY_KEYS) {
+		if (!Object.hasOwn(safety, key)) continue;
+		issues.push({ origin, path: `safety.${key}`, message });
+		delete safety[key];
+		stripped = true;
+	}
+	if (Object.hasOwn(safety, "judge")) {
+		const route = projectJudgeRoute(safety.judge, origin, issues, userBlob);
+		if (!isDeepStrictEqual(route, safety.judge)) {
+			stripped = true;
+			if (route === undefined) delete safety.judge;
+			else safety.judge = route;
+		}
+	}
+	if (!stripped) return blob;
+	const cleaned = { ...blob };
+	if (Object.keys(safety).length === 0) delete cleaned.safety;
+	else cleaned.safety = safety;
+	return cleaned;
+}
+
+const SANDBOX_RANK: Record<string, number> = { off: 0, auto: 1, required: 2 };
+// Lower is tighter: deny and fail refuse, escalate asks the operator, judge and main let PanCode decide.
+const FLEET_MODE_RANK: Record<string, number> = { deny: 0, fail: 0, escalate: 1, judge: 2, main: 3 };
+
+/**
+ * Trusted project settings may tighten containment, never widen it: the
+ * sandbox, its network, snapshots and the fleet ask route only move toward the
+ * stricter side of the operator's value, and project layers cannot load code
+ * into PanCode or trust their own imports.
+ */
+function stripProjectWidening(
+	blob: Record<string, unknown>,
+	origin: SettingsOrigin,
+	issues: SettingsLayerIssue[],
+	userBlob: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+	let cleaned = blob;
+	const drop = (path: string, message: string) => issues.push({ origin, path, message });
+	const userSafety = isRecord(userBlob?.safety) ? userBlob.safety : {};
+	if (isRecord(blob.safety)) {
+		const safety: Record<string, unknown> = { ...blob.safety };
+		let changed = false;
+		if (Object.hasOwn(safety, "sandbox")) {
+			const operator = SANDBOX_RANK[String(userSafety.sandbox)] ?? SANDBOX_RANK[DEFAULT_SETTINGS.safety.sandbox] ?? 1;
+			const requested = SANDBOX_RANK[String(safety.sandbox)];
+			if (requested === undefined || requested < operator) {
+				drop("safety.sandbox", "a project may only tighten the sandbox from user settings; project value ignored");
+				delete safety.sandbox;
+				changed = true;
+			}
+		}
+		if (Object.hasOwn(safety, "sandboxNetwork") && safety.sandboxNetwork !== false) {
+			drop("safety.sandboxNetwork", "sandbox network access is enabled only in user settings; project value ignored");
+			delete safety.sandboxNetwork;
+			changed = true;
+		}
+		if (Object.hasOwn(safety, "snapshots") && safety.snapshots !== "auto") {
+			drop("safety.snapshots", "snapshots are turned off only in user settings; project value ignored");
+			delete safety.snapshots;
+			changed = true;
+		}
+		if (changed) {
+			cleaned = { ...cleaned };
+			if (Object.keys(safety).length === 0) delete cleaned.safety;
+			else cleaned.safety = safety;
+		}
+	}
+	if (isRecord(blob.fleet) && isRecord(blob.fleet.permissions) && Object.hasOwn(blob.fleet.permissions, "mode")) {
+		const userFleet = isRecord(userBlob?.fleet) ? userBlob.fleet : {};
+		const userPermissions = isRecord(userFleet.permissions) ? userFleet.permissions : {};
+		const operator =
+			FLEET_MODE_RANK[String(userPermissions.mode)] ?? FLEET_MODE_RANK[DEFAULT_SETTINGS.fleet.permissions.mode] ?? 2;
+		const requested = FLEET_MODE_RANK[String(blob.fleet.permissions.mode)];
+		if (requested === undefined || requested > operator) {
+			drop(
+				"fleet.permissions.mode",
+				"a project may only tighten the fleet permission mode from user settings; project value ignored",
+			);
+			const { mode: _ignored, ...permissions } = blob.fleet.permissions;
+			cleaned = { ...cleaned, fleet: { ...blob.fleet, permissions } };
+		}
+	}
+	if (isRecord(blob.integrations)) {
+		const integrations: Record<string, unknown> = { ...blob.integrations };
+		let changed = false;
+		if (Object.hasOwn(integrations, "runtimePlugins")) {
+			drop("integrations.runtimePlugins", "runtime plugins are loaded only from user settings; project value ignored");
+			delete integrations.runtimePlugins;
+			changed = true;
+		}
+		if (isRecord(integrations.projectResources) && Object.hasOwn(integrations.projectResources, "trustProjectImports")) {
+			drop(
+				"integrations.projectResources.trustProjectImports",
+				"project imports are trusted only in user settings; project value ignored",
+			);
+			const { trustProjectImports: _ignored, ...projectResources } = integrations.projectResources;
+			integrations.projectResources = projectResources;
+			changed = true;
+		}
+		if (changed) cleaned = { ...cleaned, integrations };
+	}
+	return cleaned;
+}
+
+/**
+ * `trustedUnmediated` hands a runtime its own authority over writes, so only
+ * the operator's user settings may grant it. A trusted project layer that
+ * defines targets or external agents could otherwise trust itself.
+ */
+function stripProjectRuntimeTrust(
+	blob: Record<string, unknown>,
+	origin: SettingsOrigin,
+	issues: SettingsLayerIssue[],
+): Record<string, unknown> {
+	const strip = (entries: unknown, path: string): unknown => {
+		if (!Array.isArray(entries)) return entries;
+		return entries.map((entry, index) => {
+			if (!isRecord(entry) || !Object.hasOwn(entry, "trustedUnmediated")) return entry;
+			issues.push({
+				origin,
+				path: `${path}[${index}].trustedUnmediated`,
+				message: "trustedUnmediated is set only in user settings; project value ignored",
+			});
+			const { trustedUnmediated: _ignored, ...rest } = entry;
+			return rest;
+		});
+	};
+	let cleaned = blob;
+	if (Array.isArray(blob.targets)) cleaned = { ...cleaned, targets: strip(blob.targets, "targets") };
+	const integrations = blob.integrations;
+	if (
+		isRecord(integrations) &&
+		isRecord(integrations.externalAgents) &&
+		Array.isArray(integrations.externalAgents.entries)
+	) {
+		cleaned = {
+			...cleaned,
+			integrations: {
+				...integrations,
+				externalAgents: {
+					...integrations.externalAgents,
+					entries: strip(integrations.externalAgents.entries, "integrations.externalAgents.entries"),
+				},
+			},
+		};
+	}
+	return cleaned;
+}
+
+/**
+ * A project cannot say where the operator's disks keep PanStore tags, so its
+ * roots and placement go. Its id stays, from the tracked file only: the
+ * private local file does not travel with the checkout to another host.
+ */
+function stripProjectStore(
+	blob: Record<string, unknown>,
+	origin: SettingsOrigin,
+	issues: SettingsLayerIssue[],
+): Record<string, unknown> {
+	if (!Object.hasOwn(blob, "store")) return blob;
+	const { store, ...cleaned } = blob;
+	if (!isRecord(store)) {
+		issues.push({
+			origin,
+			path: "store",
+			message: "store roots and placement are set only in user settings; project value ignored",
+		});
+		return cleaned;
+	}
+	const kept: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(store)) {
+		if (key === "projectId" && origin === "project") kept[key] = value;
+		else if (key === "projectId") {
+			issues.push({
+				origin,
+				path: "store.projectId",
+				message: "store.projectId is set only in the project's tracked .pancode/settings.yaml; value ignored",
+			});
+		} else {
+			issues.push({
+				origin,
+				path: `store.${key}`,
+				message: "store roots and placement are set only in user settings; project value ignored",
+			});
+		}
+	}
+	return Object.keys(kept).length > 0 ? { ...cleaned, store: kept } : cleaned;
+}
+
+/** The user layer without `store.projectId`, which only a project's tracked file sets; reported when present. */
+function stripUserStoreProjectId(layer: RawLayer, issues: SettingsLayerIssue[]): RawLayer {
+	if (userStoreProjectIdIssue(layer.blob) === null || layer.blob === undefined) return layer;
+	issues.push({ origin: "user", path: "store.projectId", message: STORE_PROJECT_ID_USER_MESSAGE });
+	const { projectId: _ignored, ...store } = layer.blob.store as Record<string, unknown>;
+	return { ...layer, blob: { ...layer.blob, store } };
+}
+
+function stripProjectFunding(
+	blob: Record<string, unknown>,
+	origin: SettingsOrigin,
+	issues: SettingsLayerIssue[],
+): Record<string, unknown> {
+	const reject = (path: string) =>
+		issues.push({ origin, path, message: "funding is set only in user settings; project value ignored" });
+	const cleaned = { ...blob };
+	if (Object.hasOwn(blob, "funding")) {
+		reject("funding");
+		delete cleaned.funding;
+	}
+	if (Array.isArray(blob.targets)) {
+		cleaned.targets = blob.targets.map((entry, index) => {
+			if (!isRecord(entry) || !Object.hasOwn(entry, "funding")) return entry;
+			reject(`targets[${index}].funding`);
+			const { funding: _ignored, ...target } = entry;
+			return target;
+		});
+	}
+	return cleaned;
+}
+
+/**
+ * Deep-merge raw layer blobs in precedence order, recording the origin that last
+ * set each leaf. Objects recurse; arrays and scalars replace.
+ */
+function mergeLayersWithSources(layers: ReadonlyArray<RawLayer>): {
+	merged: Record<string, unknown>;
+	sources: Record<string, SettingsOrigin>;
+} {
+	const merged: Record<string, unknown> = {};
+	const sources: Record<string, SettingsOrigin> = {};
+	for (const layer of layers) {
+		if (layer.blob === undefined) continue;
+		mergeInto(merged, layer.blob, layer.origin, [], sources);
+	}
+	return { merged, sources };
+}
+
+function mergeInto(
+	target: Record<string, unknown>,
+	source: Record<string, unknown>,
+	origin: SettingsOrigin,
+	prefix: readonly string[],
+	sources: Record<string, SettingsOrigin>,
+): void {
+	for (const [key, value] of Object.entries(source)) {
+		// YAML keeps `__proto__` as an own key; merging it would write into Object.prototype.
+		if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
+		const segments = [...prefix, key];
+		const path = settingPath(segments);
+		if (isRecord(value)) {
+			const existing = target[key];
+			const nested = isRecord(existing) ? existing : {};
+			mergeInto(nested, value, origin, segments, sources);
+			target[key] = nested;
+			sources[path] = origin;
+		} else {
+			if (isRecord(target[key])) pruneSources(sources, path);
+			target[key] = Array.isArray(value) ? [...value] : value;
+			sources[path] = origin;
+		}
+	}
+}
+
+export interface ReadLayeredSettingsOptions {
+	/** Override the user settings.yaml path; defaults to the resolved config dir. */
+	userPath?: string;
+}
+
+interface PreparedLayers {
+	projectFile: string;
+	localFile: string;
+	projectRaw: RawLayer;
+	localRaw: RawLayer;
+	project: RawLayer;
+	local: RawLayer;
+}
+
+/** No project: the user layer stands alone, as for a surface with no workspace open. */
+const NO_PROJECT_LAYERS: PreparedLayers = {
+	projectFile: "",
+	localFile: "",
+	projectRaw: { origin: "project", path: "", blob: undefined },
+	localRaw: { origin: "project.local", path: "", blob: undefined },
+	project: { origin: "project", path: "", blob: undefined },
+	local: { origin: "project.local", path: "", blob: undefined },
+};
+
+function prepareProjectLayers(
+	cwd: string | null,
+	issues: SettingsLayerIssue[],
+	userBlob: Record<string, unknown> | undefined,
+): PreparedLayers {
+	if (cwd === null) return NO_PROJECT_LAYERS;
+	const operatorLevel = userAutonomy(userBlob);
+	const root = pancodeProjectRoot(cwd, "settings.yaml", "settings.local.yaml");
+	const projectFile = join(root, ".pancode", "settings.yaml");
+	const localFile = join(root, ".pancode", "settings.local.yaml");
+	const snapshot = captureProjectSurface(cwd, "settings");
+	const readProjectLayer = (origin: SettingsOrigin, path: string, file: ProjectSurfaceFile | undefined): RawLayer => {
+		if (file?.error !== undefined) issues.push({ origin, path, message: file.error, kind: "unreadable" });
+		if (file?.text === null || file === undefined) return { origin, path, blob: undefined };
+		const raw = readRawLayer(origin, path, issues, file.text);
+		const blob =
+			raw.blob === undefined
+				? undefined
+				: stripProjectLimits(
+						stripProjectTelemetry(
+							stripProjectWidening(
+								stripProjectOperatorSafety(
+									stripProjectRuntimeTrust(
+										stripProjectAutonomy(
+											stripProjectFunding(stripProjectStore(raw.blob, origin, issues), origin, issues),
+											origin,
+											issues,
+											operatorLevel,
+										),
+										origin,
+										issues,
+									),
+									origin,
+									issues,
+									userBlob,
+								),
+								origin,
+								issues,
+								userBlob,
+							),
+							origin,
+							issues,
+							userBlob,
+						),
+						origin,
+						issues,
+						userBlob,
+					);
+		if (snapshot.verdict !== "trusted") {
+			issues.push({ origin, path, message: projectSurfaceTrustNotice(snapshot, file.path) });
+			return { origin, path, blob: undefined };
+		}
+		return { ...raw, blob };
+	};
+	const projectRaw = readProjectLayer("project", projectFile, snapshot.files[0]);
+	const localRaw = readProjectLayer("project.local", localFile, snapshot.files[1]);
+	const project: RawLayer = {
+		...projectRaw,
+		blob:
+			projectRaw.blob === undefined
+				? undefined
+				: (stripCredentials(projectRaw.blob, "project", "", issues) as Record<string, unknown>),
+	};
+	const local: RawLayer = {
+		...localRaw,
+		blob:
+			localRaw.blob === undefined
+				? undefined
+				: (stripCredentials(localRaw.blob, "project.local", "", issues) as Record<string, unknown>),
+	};
+	return { projectFile, localFile, projectRaw, localRaw, project, local };
+}
+
+/**
+ * Arrays replace wholesale, so a project `targets:` list can leave a route the
+ * user layer set (the judge, the reviewer, a roster member) naming a target
+ * this checkout no longer has (CLI-P32). The user file is valid on its own, so
+ * the dangling reference is reported against the project layer that set
+ * `targets`, the route falls back to its default here, and the session boots.
+ * The user's targets are not merged back in: a trusted project gains no
+ * credential route it did not declare. A reference to a target the user layer
+ * never declared stays the user's own validation error.
+ */
+function downgradeProjectRemovedTargets(
+	merged: Record<string, unknown>,
+	userBlob: Record<string, unknown> | undefined,
+	validation: { settings: PancodeSettings; issues: ReadonlyArray<SettingsIssue> },
+	targetsOrigin: SettingsOrigin,
+): { paths: Set<string>; issues: SettingsLayerIssue[] } {
+	const paths = new Set<string>();
+	const issues: SettingsLayerIssue[] = [];
+	const userIds = new Set(
+		(Array.isArray(userBlob?.targets) ? userBlob.targets : []).flatMap((entry) =>
+			isRecord(entry) && typeof entry.id === "string" ? [entry.id] : [],
+		),
+	);
+	const effectiveIds = new Set(validation.settings.targets.map((target) => target.id));
+	const removed = (path: string, value: unknown): value is string =>
+		typeof value === "string" &&
+		userIds.has(value) &&
+		!effectiveIds.has(value) &&
+		validation.issues.some((issue) => issue.path === path);
+	const note = (path: string, value: string, effect: string) => {
+		paths.add(path);
+		issues.push({
+			origin: targetsOrigin,
+			path,
+			message: `target '${value}' from user settings is not in this file's targets list; ${effect}`,
+		});
+	};
+	const safety = isRecord(merged.safety) ? merged.safety : {};
+	const judge = isRecord(safety.judge) ? safety.judge : {};
+	if (removed("safety.judge.target", judge.target)) {
+		note("safety.judge.target", judge.target, "the safety judge uses its default route in this checkout");
+		// The model was chosen for that target, so neither half of the route stays.
+		if (judge.model !== undefined && judge.model !== null) {
+			paths.add("safety.judge.model");
+			validation.settings.safety.judge.model = DEFAULT_SETTINGS.safety.judge.model;
+		}
+	}
+	const review = isRecord(safety.review) ? safety.review : {};
+	if (removed("safety.review.target", review.target)) {
+		note("safety.review.target", review.target, "the reviewer uses its default route in this checkout");
+	}
+	const fleet = isRecord(merged.fleet) ? merged.fleet : {};
+	for (const [rawName, roster] of Object.entries(isRecord(fleet.rosters) ? fleet.rosters : {})) {
+		if (!isRecord(roster) || !Array.isArray(roster.members)) continue;
+		const name = rawName.trim();
+		for (const [index, member] of roster.members.entries()) {
+			const path = `fleet.rosters.${name}.members[${index}].target`;
+			if (!isRecord(member) || !removed(path, member.target)) continue;
+			note(path, member.target, `roster '${name}' is unavailable in this checkout`);
+			delete validation.settings.fleet.rosters[name];
+		}
+	}
+	return { paths, issues };
+}
+
+function validateLayerStack(
+	user: RawLayer,
+	prepared: PreparedLayers,
+	issues: SettingsLayerIssue[],
+): { settings: PancodeSettings; sources: Record<string, SettingsOrigin> } {
+	const { merged, sources } = mergeLayersWithSources([user, prepared.project, prepared.local]);
+	const validation = validateSettings(merged);
+	let downgraded: Set<string> = new Set();
+	// Arrays replace wholesale, so a project layer that sets `targets` supplied every entry.
+	if (sources.targets === "project" || sources.targets === "project.local") {
+		noteProjectTargets(validation.settings.targets);
+		const removed = downgradeProjectRemovedTargets(merged, user.blob, validation, sources.targets);
+		downgraded = removed.paths;
+		issues.push(...removed.issues);
+	}
+	for (const issue of validation.issues) {
+		if (downgraded.has(issue.path)) continue;
+		issues.push({ origin: settingsSourceFor(sources, issue.path), path: issue.path, message: issue.message });
+	}
+	// AUD-2 finding 4: keep rejected input in diagnostics before attributing its fallback.
+	for (const path of Object.keys(sources)) {
+		const effective = settingsValueFor(validation.settings, path);
+		const raw = settingsValueFor(merged, path);
+		if (effective === undefined) {
+			delete sources[path];
+		} else if (
+			!deepEquals(raw, effective) &&
+			(!isRecord(effective) || !isRecord(raw)) &&
+			(!Array.isArray(effective) || !Array.isArray(raw)) &&
+			(downgraded.has(settingPathSegments(path).join(".")) ||
+				validation.issues.some((issue) => issue.path === settingPathSegments(path).join(".")))
+		) {
+			pruneSources(sources, path);
+			recordSources(effective, settingPathSegments(path), "built-in", sources);
+		}
+	}
+	return { settings: validation.settings, sources };
+}
+
+/**
+ * Read and layer settings for `cwd`, returning the validated effective settings
+ * plus per-leaf source attribution. Never throws: validation issues and layer
+ * problems are returned, and the effective settings always validate (invalid
+ * merges fall back to the schema defaults for the offending keys). A null `cwd`
+ * reads the user layer alone, with no project lookup and no project layers.
+ */
+export function readLayeredSettings(cwd: string | null, options: ReadLayeredSettingsOptions = {}): LayeredSettings {
+	const issues: SettingsLayerIssue[] = [];
+	const userFile = options.userPath ?? settingsReadPath();
+	const user = stripUserStoreProjectId(readRawLayer("user", userFile, issues), issues);
+	const prepared = prepareProjectLayers(cwd, issues, user.blob);
+	const { settings, sources } = validateLayerStack(user, prepared, issues);
+	reportSettingsWarnings(settings);
+
+	const strictUserIssues =
+		user.blob === undefined
+			? []
+			: validateSettings(user.blob).issues.map((issue) => ({
+					path: issue.path,
+					message: issue.message,
+					...(issue.kind ? { kind: issue.kind } : {}),
+				}));
+	return {
+		settings,
+		sources,
+		issues,
+		layers: [
+			{ origin: "built-in", path: "(defaults)", present: true },
+			{ origin: "user", path: userFile, present: user.blob !== undefined },
+			...(cwd === null
+				? []
+				: [
+						{ origin: "project" as const, path: prepared.projectFile, present: prepared.projectRaw.blob !== undefined },
+						{
+							origin: "project.local" as const,
+							path: prepared.localFile,
+							present: prepared.localRaw.blob !== undefined,
+						},
+					]),
+		],
+		[STRICT_USER_ISSUES]: strictUserIssues,
+	} as InternalLayeredSettings;
+}
+
+/**
+ * Read the complete effective stack once while retaining settings.yaml's
+ * strict launch gate. Project-layer issues remain diagnostics, matching the
+ * established best-effort workspace overlay contract.
+ */
+export function readStrictLayeredSettings(cwd: string, options: ReadLayeredSettingsOptions = {}): LayeredSettings {
+	const layered = readLayeredSettings(cwd, options) as InternalLayeredSettings;
+	const reportedUserIssues = layered.issues
+		.filter((issue) => issue.origin === "user")
+		.map(
+			({ path, message, kind }): SettingsIssue => ({
+				path,
+				message,
+				...(kind ? { kind } : {}),
+			}),
+		);
+	const same = (a: SettingsIssue, b: SettingsIssue) => a.path === b.path && a.message === b.message && a.kind === b.kind;
+	const all = [...reportedUserIssues, ...layered[STRICT_USER_ISSUES]];
+	const userIssues = all.filter((issue, index) => all.findIndex((candidate) => same(candidate, issue)) === index);
+	if (userIssues.length > 0) throw new SettingsValidationError(userIssues);
+	return layered;
+}
+
+/**
+ * Atomically persist a mutation of the effective workspace settings into the
+ * user layer. The candidate user document is re-layered with the same project
+ * files before it is written. This preserves references to project-only
+ * targets while refusing a mutation that a higher-precedence project leaf
+ * would silently override. A null `cwd` re-layers with no project at all.
+ */
+export function updateLayeredSettings(cwd: string | null, mutate: SettingsMutator): PancodeSettings {
+	let committed: PancodeSettings | null = null;
+	updateSavedSettingsDocument((saved) => {
+		const userValidation = validateSettings(saved);
+		const projectIdIssue = userStoreProjectIdIssue(saved);
+		if (userValidation.issues.length > 0 || projectIdIssue !== null) {
+			throw new SettingsValidationError([...userValidation.issues, ...(projectIdIssue !== null ? [projectIdIssue] : [])]);
+		}
+		const issues: SettingsLayerIssue[] = [];
+		const prepared = prepareProjectLayers(cwd, issues, isRecord(saved) ? saved : undefined);
+		const user: RawLayer = {
+			origin: "user",
+			path: settingsPath(),
+			blob: isRecord(saved) ? saved : {},
+		};
+		const before = validateLayerStack(user, prepared, issues).settings;
+		const candidate = structuredClone(before);
+		const next = mutate(candidate) ?? candidate;
+		const candidateValidation = validateSettings(JSON.parse(JSON.stringify(next)));
+		if (candidateValidation.issues.length > 0) throw new SettingsValidationError(candidateValidation.issues);
+
+		const nextSaved = applySettingsDelta(saved, before, candidateValidation.settings);
+		const savedIdIssue = userStoreProjectIdIssue(nextSaved);
+		if (savedIdIssue !== null) throw new SettingsValidationError([savedIdIssue]);
+		const finalIssues: SettingsLayerIssue[] = [];
+		const final = validateLayerStack(
+			{ origin: "user", path: settingsPath(), blob: isRecord(nextSaved) ? nextSaved : {} },
+			prepared,
+			finalIssues,
+		).settings;
+		if (!deepEquals(final, candidateValidation.settings)) {
+			throw new Error("a higher-precedence project setting prevents this settings update");
+		}
+		committed = final;
+		return nextSaved;
+	});
+	if (committed === null) throw new Error("layered settings update did not commit");
+	return committed;
+}
+
+/**
+ * Persist one explicit project-scoped settings mutation in the private local
+ * layer. The existing settings surface must already be trusted, unless both
+ * project files are absent. The exact bytes written are then approved so the
+ * setting remains active on the next read and boot; a later manual edit still
+ * invalidates that approval. `pin` names a leaf written even when it equals the
+ * inherited value, so an explicit `config set --scope project` takes effect in this layer.
+ */
+export function updateProjectLocalSettings(
+	cwd: string,
+	mutate: SettingsMutator,
+	options: { pin?: string } = {},
+): PancodeSettings {
+	const root = pancodeProjectRoot(cwd, "settings.yaml", "settings.local.yaml");
+	const localFile = join(root, ".pancode", "settings.local.yaml");
+	const configDir = join(root, ".pancode");
+	try {
+		if (lstatSync(configDir).isSymbolicLink()) throw new Error(`project settings path is a symlink: ${configDir}`);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	return withStateFileLockSync(localFile, () => {
+		for (const path of [configDir, join(configDir, "settings.yaml"), localFile]) {
+			try {
+				if (lstatSync(path).isSymbolicLink()) throw new Error(`project settings path is a symlink: ${path}`);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			}
+		}
+		const beforeSurface = captureProjectSurface(cwd, "settings");
+		const bothAbsent = beforeSurface.files.every((file) => file.text === null && file.error === undefined);
+		if (beforeSurface.verdict !== "trusted" && !bothAbsent) {
+			throw new Error(
+				`project settings are ${beforeSurface.verdict}; review with pancode config trust settings before saving`,
+			);
+		}
+		const current = readStrictLayeredSettings(cwd).settings;
+		const candidate = structuredClone(current);
+		const next = mutate(candidate) ?? candidate;
+		const validation = validateSettings(JSON.parse(JSON.stringify(next)));
+		if (validation.issues.length > 0) throw new SettingsValidationError(validation.issues);
+		const localIssues: SettingsLayerIssue[] = [];
+		const local = readRawLayer("project.local", localFile, localIssues, beforeSurface.files[1]?.text ?? undefined);
+		if (localIssues.length > 0 || (local.blob === undefined && beforeSurface.files[1]?.text !== null)) {
+			throw new Error("project local settings cannot be parsed for saving");
+		}
+		const delta = applySettingsDelta(local.blob ?? {}, current, validation.settings);
+		const saved = options.pin !== undefined ? pinSettingsLeaf(delta, validation.settings, options.pin) : delta;
+		const fundingIssues: SettingsLayerIssue[] = [];
+		stripProjectFunding(saved as Record<string, unknown>, "project.local", fundingIssues);
+		if (fundingIssues.length > 0) throw new Error(`funding is set only in user settings: ${fundingIssues[0]?.path}`);
+		const storeIssues: SettingsLayerIssue[] = [];
+		stripProjectStore(saved as Record<string, unknown>, "project.local", storeIssues);
+		if (storeIssues.length > 0) throw new Error(`${storeIssues[0]?.path}: ${storeIssues[0]?.message}`);
+		const credentialIssues: SettingsLayerIssue[] = [];
+		stripCredentials(saved, "project.local", "", credentialIssues);
+		if (credentialIssues.length > 0) {
+			throw new Error(`credentials are not allowed in project settings: ${credentialIssues[0]?.path}`);
+		}
+		const userIssues: SettingsLayerIssue[] = [];
+		const user = readRawLayer("user", settingsPath(), userIssues);
+		const stackIssues: SettingsLayerIssue[] = [];
+		const prepared = prepareProjectLayers(cwd, stackIssues, user.blob);
+		if (stackIssues.length > 0) throw new Error(`project settings cannot be saved: ${stackIssues[0]?.message}`);
+		stackIssues.push(...userIssues);
+		const final = validateLayerStack(
+			user,
+			{
+				...prepared,
+				local: { origin: "project.local", path: localFile, blob: saved as Record<string, unknown> },
+			},
+			stackIssues,
+		).settings;
+		if (stackIssues.length > 0 || !deepEquals(final, validation.settings)) {
+			throw new Error("project settings save would not produce the requested effective settings");
+		}
+		const bytes = renderYamlPreservingLayout(beforeSurface.files[1]?.text ?? null, saved);
+		const teamBefore = beforeSurface.files[0]?.hash;
+		safeResourceWrite(localFile, bytes, { mode: 0o600 });
+		const afterSurface = captureProjectSurface(cwd, "settings");
+		if (
+			afterSurface.files[0]?.hash !== teamBefore ||
+			afterSurface.files[1]?.text !== bytes ||
+			!afterSurface.contentHash
+		) {
+			throw new Error("project settings changed while saving; review with pancode config trust settings");
+		}
+		recordProjectSurfaceTrust(cwd, "settings", afterSurface.contentHash);
+		const committed = readStrictLayeredSettings(cwd).settings;
+		if (!deepEquals(committed, validation.settings)) {
+			throw new Error("project settings save was overridden by another settings layer");
+		}
+		return committed;
+	});
+}
+
+/**
+ * Effective origin of one dotted key path: the layer that set it, or built-in
+ * when no layer did. A parent path's origin applies when the exact leaf was not
+ * individually tracked.
+ */
+function hasRecordedChild(sources: Record<string, SettingsOrigin>, parent: string): boolean {
+	return Object.keys(sources).some((key) => key.startsWith(`${parent}.`) || key.startsWith(`${parent}[`));
+}
+
+export function settingsSourceFor(sources: Record<string, SettingsOrigin>, keyPath: string): SettingsOrigin {
+	const path = sources[keyPath]
+		? keyPath
+		: (Object.keys(sources).find((path) => settingPathSegments(path).join(".") === keyPath) ?? keyPath);
+	const segments = settingPathSegments(path);
+	const exact = sources[settingPath(segments)];
+	if (exact) return exact;
+	segments.pop();
+	while (segments.length > 0) {
+		const parent = settingPath(segments);
+		const direct = sources[parent];
+		// Arrays and scalars replace wholesale, so such a parent set everything under it. An object merges key by key:
+		// `interface:` in a file says nothing about a key it does not list, which stays at its default (F10).
+		if (direct && !hasRecordedChild(sources, parent)) return direct;
+		segments.pop();
+	}
+	return "built-in";
+}

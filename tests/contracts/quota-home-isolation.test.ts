@@ -1,0 +1,163 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, strictEqual } from "node:assert";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { test } from "node:test";
+import { isPancodeHomeRelocated, resolvePancodeDirs } from "../../src/core/xdg.js";
+import { createAnthropicMaxQuotaProvider } from "../../src/domains/quota/anthropic-max-provider.js";
+import { createAntigravityQuotaProvider } from "../../src/domains/quota/antigravity-provider.js";
+import { createClaudeCodeQuotaProvider } from "../../src/domains/quota/claude-code-provider.js";
+import { createCodexCliQuotaProvider } from "../../src/domains/quota/codex-cli-provider.js";
+import { createCodexQuotaProvider } from "../../src/domains/quota/codex-provider.js";
+import { createCopilotQuotaProvider } from "../../src/domains/quota/copilot-provider.js";
+import { buildQuotaProviders } from "../../src/domains/quota/registry.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+test("BT-006 relocated homes exclude implicit sibling credentials before detection or network reads", async () => {
+	const env = await isolatePancodeEnv();
+	try {
+		process.env.HOME = env.dir;
+		for (const key of ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "ANTIGRAVITY_HOME", "COPILOT_HOME"]) delete process.env[key];
+		const fixtures = [
+			[".codex/auth.json", { tokens: { access_token: "scratch" } }],
+			[".claude/.credentials.json", { claudeAiOauth: { accessToken: "scratch" } }],
+			[".gemini/antigravity-cli/antigravity-oauth-token", { token: { access_token: "scratch" } }],
+		] as const;
+		for (const [path, data] of fixtures) {
+			const full = join(env.dir, path);
+			mkdirSync(join(full, ".."), { recursive: true });
+			writeFileSync(full, JSON.stringify(data));
+		}
+		let requests = 0;
+		const fetch: typeof globalThis.fetch = async () => {
+			requests++;
+			throw new Error("unexpected network");
+		};
+		for (const provider of [
+			createCodexCliQuotaProvider({ fetch }),
+			createClaudeCodeQuotaProvider({ fetch }),
+			createAntigravityQuotaProvider({ fetch }),
+			createCopilotQuotaProvider(),
+		]) {
+			strictEqual(await provider.detect(), false);
+			strictEqual((await provider.fetch()).status, "no_credentials");
+		}
+		strictEqual(requests, 0);
+		deepStrictEqual(
+			buildQuotaProviders().map((p) => p.id),
+			["anthropic-max", "codex"],
+		);
+	} finally {
+		env.restore();
+	}
+});
+
+test("BT-006 explicit sibling homes opt in independently and default roots preserve connected accounts", async () => {
+	const env = await isolatePancodeEnv();
+	try {
+		process.env.HOME = env.dir;
+		delete process.env.PANCODE_INTEROP_HOME;
+		process.env.XDG_CONFIG_HOME = join(env.dir, "xdg-config");
+		process.env.XDG_DATA_HOME = join(env.dir, "xdg-data");
+		process.env.XDG_STATE_HOME = join(env.dir, "xdg-state");
+		process.env.XDG_CACHE_HOME = join(env.dir, "xdg-cache");
+		process.env.APPDATA = join(env.dir, "appdata");
+		process.env.LOCALAPPDATA = join(env.dir, "localappdata");
+		for (const key of ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "ANTIGRAVITY_HOME", "COPILOT_HOME"]) delete process.env[key];
+		const homes = ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "ANTIGRAVITY_HOME"] as const;
+		const leaves = ["auth.json", ".credentials.json", "antigravity-oauth-token"];
+		const records = [
+			{ tokens: { access_token: "scratch" } },
+			{ claudeAiOauth: { accessToken: "scratch" } },
+			{ token: { access_token: "scratch" } },
+		];
+		const factories = [createCodexCliQuotaProvider, createClaudeCodeQuotaProvider, createAntigravityQuotaProvider];
+		for (const [index, key] of homes.entries()) {
+			process.env[key] = env.dir;
+			writeFileSync(join(env.dir, leaves[index] ?? "missing"), JSON.stringify(records[index]));
+			strictEqual(await factories[index]?.().detect(), true);
+			strictEqual(buildQuotaProviders().length, 3);
+			delete process.env[key];
+		}
+		process.env.COPILOT_HOME = env.dir;
+		strictEqual(buildQuotaProviders().length, 3);
+		strictEqual(buildQuotaProviders().at(-1)?.id, "copilot");
+		delete process.env.COPILOT_HOME;
+		for (const key of [
+			"PANCODE_HOME",
+			"PANCODE_CONFIG_DIR",
+			"PANCODE_DATA_DIR",
+			"PANCODE_STATE_DIR",
+			"PANCODE_CACHE_DIR",
+		])
+			delete process.env[key];
+		strictEqual(isPancodeHomeRelocated(), false);
+		deepStrictEqual(
+			buildQuotaProviders().map((p) => p.id),
+			["anthropic-max", "claude-code", "codex", "codex-cli", "antigravity", "copilot"],
+		);
+		process.env.PANCODE_CONFIG_DIR = resolvePancodeDirs().config;
+		strictEqual(isPancodeHomeRelocated(), false);
+		process.env.PANCODE_CACHE_DIR = join(env.dir, "relocated-cache");
+		strictEqual(isPancodeHomeRelocated(), true);
+		deepStrictEqual(
+			buildQuotaProviders().map((p) => p.id),
+			["anthropic-max", "codex"],
+		);
+	} finally {
+		env.restore();
+	}
+});
+
+test("BT-006 PanCode-owned Anthropic and OpenAI Codex credentials stay usable in a relocated home", async () => {
+	const env = await isolatePancodeEnv();
+	try {
+		mkdirSync(join(env.dir, "config"), { recursive: true });
+		writeFileSync(
+			join(env.dir, "config", "credentials.yaml"),
+			JSON.stringify({
+				version: 2,
+				entries: {
+					"anthropic-max": {
+						type: "oauth",
+						access: "scratch",
+						refresh: "scratch",
+						expires: Date.now() + 3600000,
+						updatedAt: new Date().toISOString(),
+					},
+					"openai-codex": {
+						type: "oauth",
+						access: "scratch",
+						refresh: "scratch",
+						expires: Date.now() + 3600000,
+						accountId: "acct-scratch",
+						updatedAt: new Date().toISOString(),
+					},
+				},
+			}),
+		);
+		let requests = 0;
+		const provider = createAnthropicMaxQuotaProvider({
+			fetch: async () => {
+				requests++;
+				return new Response(JSON.stringify({ five_hour: { utilization: 5 } }), { status: 200 });
+			},
+		});
+		strictEqual(await provider.detect(), true);
+		strictEqual((await provider.fetch()).status, "ok");
+		strictEqual(requests, 1);
+		const accounts: Array<string | null> = [];
+		const codex = createCodexQuotaProvider({
+			fetch: async (_input, init) => {
+				accounts.push(new Headers(init?.headers).get("chatgpt-account-id"));
+				return new Response(JSON.stringify({ rate_limit: {} }), { status: 200 });
+			},
+		});
+		strictEqual(await codex.detect(), true);
+		strictEqual((await codex.fetch()).status, "ok");
+		deepStrictEqual(accounts, ["acct-scratch"]);
+	} finally {
+		env.restore();
+	}
+});

@@ -1,0 +1,728 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// What the setup wizard shows for each prompt the configure child sends, before any of it is drawn.
+//
+// The transport is the one `pancode configure --gui-host` already speaks: select prompts with a
+// heading and choices, text prompts with a hint and a mask, and plain message lines. This module reads
+// the TUI's own strings (src/cli/configure-onboarding.ts, configure-oauth.ts, configure-layout.ts) and
+// turns each prompt into a typed step. A prompt it does not recognise becomes a `generic` step that is
+// still answerable, so a newer CLI can add a question without breaking the wizard. The child owns the
+// order of the steps and what each answer means. Nothing here decides what to ask next.
+
+import type { SetupAnswer, SetupState } from "../../contracts/setup.js";
+
+export type Prompt = NonNullable<SetupState["prompt"]>;
+type SelectPrompt = Extract<Prompt, { kind: "select" }>;
+type TextPrompt = Extract<Prompt, { kind: "text" }>;
+export type Choice = SelectPrompt["choices"][number];
+
+/** The stepper's stages. A step belongs to exactly one. */
+export type StageId = "provider" | "connect" | "model" | "test" | "workspace";
+
+export const STAGE_LABELS: Readonly<Record<StageId, string>> = {
+	provider: "Provider",
+	connect: "Connect",
+	model: "Model",
+	test: "Test",
+	workspace: "Workspace",
+};
+
+export type WizardMode = "first" | "add" | "repair";
+
+/**
+ * The stages a run shows. A machine that already has a workspace skips that stage. Repair keeps the
+ * provider stage because the CLI still asks it first; the wizard answers it with the saved provider.
+ */
+export function stagesFor(_mode: WizardMode, needsWorkspace: boolean): readonly StageId[] {
+	const stages: StageId[] = ["provider", "connect", "model", "test"];
+	if (needsWorkspace) stages.push("workspace");
+	return stages;
+}
+
+/**
+ * The scene behind a step, one per stage so the scene changes where the work does: PanCode reads when it
+ * starts, focuses while a provider and model are chosen, sends helpers while the connection is reached,
+ * inspects what was verified, and settles when saved. Every scene shows the static PanCode mark until
+ * approved scene art exists.
+ */
+export type SceneId = "read" | "focus" | "helpers" | "inspect" | "finale";
+
+export type CategoryKey = "local-app" | "local-server" | "subscription" | "cloud-api" | "external-worker";
+
+const CATEGORY_BY_LABEL: Readonly<Record<string, CategoryKey>> = {
+	"An app on this computer": "local-app",
+	"A model server": "local-server",
+	"An AI subscription": "subscription",
+	"A provider account or API": "cloud-api",
+	"An installed coding agent": "external-worker",
+};
+
+interface CategoryOption {
+	readonly choice: Choice;
+	readonly key: CategoryKey | null;
+	readonly label: string;
+	readonly summary: string;
+}
+
+export interface ProviderOption {
+	readonly choice: Choice;
+	/** The runtime's id, taken from the hint the CLI prints after the summary. */
+	readonly runtimeId: string | null;
+	readonly label: string;
+	readonly summary: string;
+	/** One or two letters for the tile. */
+	readonly monogram: string;
+}
+
+type CredentialSource = "env" | "stored" | "keep" | "skip";
+
+export interface CredentialOption {
+	readonly choice: Choice;
+	readonly source: CredentialSource | null;
+	readonly label: string;
+	readonly hint: string;
+}
+
+export interface ModelOption {
+	readonly choice: Choice;
+	/** The id PanCode will send. The CLI may print a friendly name after it. */
+	readonly id: string;
+	readonly name: string | null;
+	/** "default", or the state the provider reports. */
+	readonly note: string | null;
+	readonly recommended: boolean;
+}
+
+export interface ReviewFact {
+	readonly key: string;
+	readonly label: string;
+	readonly text: string;
+	readonly tone: "ok" | "warn" | "info";
+}
+
+interface Base {
+	readonly stage: StageId;
+	readonly scene: SceneId;
+}
+
+export type StepView =
+	| (Base & { kind: "category"; prompt: SelectPrompt; options: readonly CategoryOption[] })
+	| (Base & { kind: "provider"; prompt: SelectPrompt; options: readonly ProviderOption[]; searchable: boolean })
+	| (Base & {
+			kind: "signin";
+			prompt: SelectPrompt;
+			provider: string;
+			status: string;
+			note: string | null;
+			connect: Choice | null;
+			later: Choice | null;
+			/** What Connect now does, in the backend's own words: it knows the flow and whether a browser can open there. */
+			lede: string;
+	  })
+	| (Base & {
+			kind: "credential-source";
+			prompt: SelectPrompt;
+			status: string;
+			options: readonly CredentialOption[];
+	  })
+	| (Base & { kind: "credential-env"; prompt: TextPrompt })
+	| (Base & {
+			kind: "credential-key";
+			prompt: TextPrompt;
+			/** How the backend's platform protects credentials.yaml, from its hint; null when the hint does not say. */
+			protection: "file mode 0600" | "an owner-only ACL" | null;
+	  })
+	| (Base & { kind: "oauth-code"; prompt: TextPrompt })
+	| (Base & { kind: "server"; prompt: TextPrompt; title: string; guidance: readonly string[] })
+	| (Base & { kind: "detected"; prompt: SelectPrompt; served: string; options: readonly Choice[] })
+	/** The routes PanCode found before the first question, best first, and the way out to set up something else. */
+	| (Base & { kind: "offered"; prompt: SelectPrompt; routes: readonly Choice[]; other: Choice | null })
+	| (Base & { kind: "login-method"; prompt: SelectPrompt; provider: string; options: readonly Choice[] })
+	| (Base & {
+			kind: "model";
+			prompt: SelectPrompt;
+			note: string | null;
+			models: readonly ModelOption[];
+			searchable: boolean;
+	  })
+	| (Base & {
+			kind: "model-missing";
+			prompt: SelectPrompt;
+			reason: string | null;
+			retry: Choice | null;
+			key: Choice | null;
+			change: Choice | null;
+			manual: Choice | null;
+	  })
+	| (Base & { kind: "model-manual"; prompt: TextPrompt; warning: string | null })
+	| (Base & {
+			kind: "review";
+			prompt: SelectPrompt;
+			facts: readonly ReviewFact[];
+			notes: readonly string[];
+			verified: boolean;
+			/** Save sends the test request before it saves. */
+			tests: boolean;
+			save: Choice | null;
+			details: Choice | null;
+			back: Choice | null;
+	  })
+	| (Base & {
+			kind: "test-failed";
+			prompt: SelectPrompt;
+			/** What to change, in the CLI's words. */
+			fix: string | null;
+			retry: Choice | null;
+			change: Choice | null;
+			model: Choice | null;
+			save: Choice | null;
+			details: Choice | null;
+			cancel: Choice | null;
+	  })
+	| (Base & {
+			kind: "details";
+			prompt: SelectPrompt;
+			title: string;
+			lines: readonly string[];
+			next: Choice | null;
+			previous: Choice | null;
+	  })
+	| (Base & { kind: "generic"; prompt: Prompt });
+
+export type WizardView =
+	| { kind: "welcome" }
+	/** The child is starting and has not said yet whether a returning user's route needs no setup at all. */
+	| { kind: "starting" }
+	| StepView
+	| (Base & { kind: "working"; label: string; signIn: SignIn | null })
+	| (Base & {
+			kind: "saved";
+			summary: readonly string[];
+			warnings: readonly string[];
+			verified: boolean;
+			/** How the test request went, as `answered in 0.8 s`; null when none answered. */
+			tested: string | null;
+	  })
+	| { kind: "failed"; problem: string }
+	| { kind: "cancelled" };
+
+export interface SignIn {
+	readonly url: string | null;
+	readonly code: string | null;
+}
+
+const head = (prompt: Prompt): string => prompt.heading[0] ?? "";
+const rest = (prompt: Prompt): string[] => prompt.heading.slice(1);
+
+/** The first character or two of a name, for a tile that has no logo of its own. */
+export function monogram(label: string): string {
+	const words = label.split(/[\s/()-]+/u).filter((word) => /[A-Za-z0-9]/u.test(word));
+	const [first, second] = words;
+	if (first === undefined) return "?";
+	if (second !== undefined && /^[A-Z]/u.test(second)) return `${first[0] ?? ""}${second[0] ?? ""}`.toUpperCase();
+	return first.slice(0, 2).replace(/^./u, (letter) => letter.toUpperCase());
+}
+
+/** `Ollama, LM Studio · runtime ollama` is the CLI's hint for a provider. */
+function splitProviderHint(hint: string): { summary: string; runtimeId: string | null } {
+	const match = /^(.*?)\s*·\s*runtime\s+(\S+)\s*$/u.exec(hint);
+	return match ? { summary: match[1] ?? "", runtimeId: match[2] ?? null } : { summary: hint, runtimeId: null };
+}
+
+function byLabel(prompt: SelectPrompt, pattern: RegExp): Choice | null {
+	return prompt.choices.find((choice) => pattern.test(choice.label)) ?? null;
+}
+
+const CREDENTIAL_LABELS: ReadonlyArray<readonly [RegExp, CredentialSource]> = [
+	[/^Environment variable$/u, "env"],
+	[/^Store the key$/u, "stored"],
+	[/^Keep what is there$/u, "keep"],
+	[/^No key$/u, "skip"],
+];
+
+/** `gpt-5 — Friendly name` is a model id with a label; a bare id has none. */
+function splitModel(label: string): { id: string; name: string | null } {
+	const cut = label.indexOf(" — ");
+	return cut < 0 ? { id: label, name: null } : { id: label.slice(0, cut), name: label.slice(cut + 3) || null };
+}
+
+const VERIFIED_ENDPOINT = /reachable/iu;
+const SAVE_TESTS = "Save sends one short test message first.";
+const UNVERIFIED = /not verified|no passive check|not reachable|unverified/iu;
+
+function reviewFacts(lines: readonly string[]): { facts: ReviewFact[]; notes: string[]; verified: boolean } {
+	const facts: ReviewFact[] = [];
+	const notes: string[] = [];
+	let endpointOk = false;
+	let modelsLive = false;
+	for (const line of lines) {
+		const pair = /^(Connection|Model|Endpoint|Models|Model ID|Automatic local workers):\s*(.+)$/u.exec(line);
+		if (pair) {
+			const [, key = "", text = ""] = pair;
+			if (key === "Endpoint") {
+				const ok = VERIFIED_ENDPOINT.test(text) && !UNVERIFIED.test(text);
+				endpointOk = ok;
+				facts.push({ key, label: "Endpoint", text, tone: ok ? "ok" : "warn" });
+			} else if (key === "Models") {
+				const live = /listed live/iu.test(text);
+				modelsLive = live;
+				facts.push({ key, label: "Model list", text, tone: live ? "ok" : "warn" });
+			} else if (key === "Model ID") facts.push({ key, label: "Model", text, tone: "warn" });
+			else if (key === "Connection") facts.push({ key, label: "Connection", text, tone: "info" });
+			else if (key === "Model") facts.push({ key, label: "Model", text, tone: "info" });
+			else facts.push({ key, label: "Local workers", text, tone: "info" });
+			continue;
+		}
+		if (/^ALCF catalog reachable/iu.test(line)) {
+			endpointOk = true;
+			facts.push({ key: "Endpoint", label: "Endpoint", text: line, tone: "ok" });
+			continue;
+		}
+		notes.push(line);
+	}
+	return { facts, notes, verified: endpointOk && modelsLive };
+}
+
+/** The prompt as a step, or null when it is not a prompt this module knows how to present. */
+export function stepFor(prompt: Prompt): StepView {
+	const title = head(prompt);
+	if (prompt.kind === "select") {
+		if (title === "Where does your model come from?")
+			return {
+				kind: "category",
+				stage: "provider",
+				scene: "focus",
+				prompt,
+				options: prompt.choices.map((choice) => ({
+					choice,
+					key: CATEGORY_BY_LABEL[choice.label] ?? null,
+					label: choice.label,
+					summary: choice.hint,
+				})),
+			};
+		if (title === "Which provider or app do you use?")
+			return {
+				kind: "provider",
+				stage: "provider",
+				scene: "focus",
+				prompt,
+				searchable: prompt.searchable,
+				options: prompt.choices.map((choice) => {
+					const { summary, runtimeId } = splitProviderHint(choice.hint);
+					return { choice, runtimeId, label: choice.label, summary, monogram: monogram(choice.label) };
+				}),
+			};
+		if (title.startsWith("Sign in to ")) {
+			const lines = rest(prompt);
+			const status =
+				lines
+					.find((line) => line.startsWith("credential:"))
+					?.slice("credential:".length)
+					.trim() ?? "";
+			const connect = byLabel(prompt, /^Connect now$/u);
+			return {
+				kind: "signin",
+				stage: "connect",
+				scene: "helpers",
+				prompt,
+				provider: title.slice("Sign in to ".length),
+				status,
+				note: lines.find((line) => /^Sign-in stores credentials/u.test(line)) ?? null,
+				connect,
+				later: byLabel(prompt, /^Later$/u),
+				lede: connect?.hint ? `PanCode ${connect.hint}.` : "PanCode signs you in to this provider.",
+			};
+		}
+		if (title === "How should PanCode get the API key?")
+			return {
+				kind: "credential-source",
+				stage: "connect",
+				scene: "helpers",
+				prompt,
+				status:
+					rest(prompt)
+						.find((line) => line.startsWith("currently:"))
+						?.slice("currently:".length)
+						.trim() ?? "",
+				options: prompt.choices.map((choice) => ({
+					choice,
+					source: CREDENTIAL_LABELS.find(([pattern]) => pattern.test(choice.label))?.[1] ?? null,
+					label: choice.label,
+					hint: choice.hint,
+				})),
+			};
+		// configure-oauth.ts asks which sign-in flow to use when a provider has more than one.
+		const method = /^Select (.+) login method:?$/u.exec(title);
+		if (method)
+			return {
+				kind: "login-method",
+				stage: "connect",
+				scene: "helpers",
+				prompt,
+				provider: method[1] ?? "",
+				options: prompt.choices,
+			};
+		if (title === "PanCode found a way to reach a model:") {
+			const other = byLabel(prompt, /^Set up something else$/u);
+			return {
+				kind: "offered",
+				stage: "provider",
+				scene: "focus",
+				prompt,
+				routes: prompt.choices.filter((choice) => choice !== other),
+				other,
+			};
+		}
+		if (title === "What do you have?") return { kind: "generic", stage: "provider", scene: "focus", prompt };
+		if (title === "The test request failed")
+			return {
+				kind: "test-failed",
+				stage: "test",
+				scene: "inspect",
+				prompt,
+				fix: rest(prompt)[0] ?? null,
+				retry: byLabel(prompt, /^Try again$/u),
+				change: byLabel(prompt, /^Change the key or address$/u),
+				model: byLabel(prompt, /^Choose a different model$/u),
+				save: byLabel(prompt, /^Save anyway$/u),
+				details: byLabel(prompt, /machine details$/u),
+				cancel: byLabel(prompt, /^Cancel setup$/u),
+			};
+		if (title.startsWith("That URL is serving "))
+			return {
+				kind: "detected",
+				stage: "connect",
+				scene: "helpers",
+				prompt,
+				served: title.slice("That URL is serving ".length).replace(/\.$/u, ""),
+				options: prompt.choices,
+			};
+		if (title === "Which model?")
+			return {
+				kind: "model",
+				stage: "model",
+				scene: "focus",
+				prompt,
+				note: rest(prompt)[0] ?? null,
+				searchable: prompt.searchable,
+				models: prompt.choices.map((choice) => {
+					const { id, name } = splitModel(choice.label);
+					return { choice, id, name, note: choice.hint || null, recommended: choice.hint === "default" };
+				}),
+			};
+		if (title === "PanCode could not read a model list")
+			return {
+				kind: "model-missing",
+				stage: "model",
+				scene: "focus",
+				prompt,
+				reason: rest(prompt)[0] ?? null,
+				retry: byLabel(prompt, /^Check again$/u),
+				key: byLabel(prompt, /^This server needs an API key$/u),
+				change: byLabel(prompt, /^Change the connection$/u),
+				manual: byLabel(prompt, /^Enter an unverified model ID$/u),
+			};
+		if (title === "Review what PanCode could verify") {
+			const lines = rest(prompt);
+			const tests = lines.includes(SAVE_TESTS);
+			const { facts, notes, verified } = reviewFacts(lines.filter((line) => line !== SAVE_TESTS));
+			return {
+				kind: "review",
+				stage: "test",
+				scene: "inspect",
+				prompt,
+				facts,
+				notes,
+				verified,
+				tests,
+				save: byLabel(prompt, /^Save/u),
+				details: byLabel(prompt, /machine details$/u),
+				back: byLabel(prompt, /^Back$/u),
+			};
+		}
+		if (/^(Connection details|Connection address|Credential handling|Machine observations)$/u.test(title))
+			return {
+				kind: "details",
+				stage: "test",
+				scene: "inspect",
+				prompt,
+				title,
+				lines: rest(prompt),
+				next: byLabel(prompt, /^(Next|Return to review)$/u),
+				previous: byLabel(prompt, /^(Previous|Return to review)$/u),
+			};
+		return { kind: "generic", stage: "connect", scene: "helpers", prompt };
+	}
+	if (title === "Which environment variable?")
+		return { kind: "credential-env", stage: "connect", scene: "helpers", prompt };
+	if (title === "Paste the API key") {
+		// credentialFileProtection() on the backend: mode 0600 on POSIX, an owner-only ACL on Windows.
+		const stated = /\((mode 0600|owner-only ACL), not encrypted\)/u.exec(prompt.hint)?.[1];
+		const protection = stated === "mode 0600" ? "file mode 0600" : stated === undefined ? null : "an owner-only ACL";
+		return { kind: "credential-key", stage: "connect", scene: "helpers", prompt, protection };
+	}
+	if (/verification code/iu.test(title)) return { kind: "oauth-code", stage: "connect", scene: "helpers", prompt };
+	if (title === "Unverified model id")
+		return { kind: "model-manual", stage: "model", scene: "focus", prompt, warning: rest(prompt)[0] ?? null };
+	// The server address is the one text prompt whose hint names how to write a URL.
+	if (/^(host:port is enough|paste the whole URL)/u.test(prompt.hint))
+		return { kind: "server", stage: "connect", scene: "helpers", prompt, title, guidance: rest(prompt) };
+	return { kind: "generic", stage: "connect", scene: "helpers", prompt };
+}
+
+// ---- messages ------------------------------------------------------------------------------------
+
+// The CLI wraps its introduction at 80 columns, so the tails of two sentences arrive as lines of their own.
+const INTRO =
+	/^(Welcome to PanCode|Add a target|Edit target:|Choose what you already use|Back returns|Escape goes back|Saved result:|provider allows it\.|you complete\.)/u;
+
+interface ProbeReading {
+	readonly state: "reachable" | "unreachable" | "auth-failed" | "warning";
+	readonly text: string;
+}
+
+interface Recap {
+	readonly label: string;
+	readonly value: string;
+}
+
+interface TestReading {
+	readonly state: "answered" | "failed";
+	/** `answered in 0.8 s`, or the CLI's line naming why the model did not answer. */
+	readonly text: string;
+}
+
+interface ReadMessages {
+	/** The route the CLI took for a returning user without asking: `Chat: openai / gpt-6-luna from OPENAI_API_KEY.` */
+	readonly chat: string | null;
+	readonly signIn: SignIn | null;
+	readonly probe: ProbeReading | null;
+	/** The last test request's outcome, when one finished. */
+	readonly test: TestReading | null;
+	/** The CLI's last line says it is waiting on the test request. */
+	readonly testing: boolean;
+	readonly recap: readonly Recap[];
+	readonly saved: readonly string[];
+	readonly warnings: readonly string[];
+	/** Anything else the CLI said, in order, without its introduction. */
+	readonly other: readonly string[];
+}
+
+const RECAP_LABELS = /^(Source|Provider|URL|Credential|Model|Thinking|Context|Colleague|Detected)\s{2,}(.*\S)\s*$/u;
+const SIGN_IN_URL = /^\s*Open:\s*(https?:\/\/\S+)\s*$/u;
+const CHAT_ROUTE = /^Chat: \S+ \/ .+ from .+\.$/u;
+const TESTING = /^Testing .+ \.\.\.$/u;
+const TEST_ANSWERED = /^✓\s*Testing .+ \.\.\. (answered in .+?)\.?$/u;
+
+/** A sign-in link is only offered when it is a plain http(s) URL without credentials in it. */
+function safeUrl(text: string): string | null {
+	try {
+		const url = new URL(text);
+		return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password ? url.href : null;
+	} catch {
+		// Not a URL, so it is shown as text and never linked.
+		return null;
+	}
+}
+
+export function readMessages(messages: readonly string[]): ReadMessages {
+	let chat: string | null = null;
+	let url: string | null = null;
+	let code: string | null = null;
+	let probe: ProbeReading | null = null;
+	let tested: TestReading | null = null;
+	const recap: Recap[] = [];
+	const saved: string[] = [];
+	const warnings: string[] = [];
+	const other: string[] = [];
+	for (const raw of new Set(messages)) {
+		const line = raw.trim();
+		if (line === "" || INTRO.test(line) || TESTING.test(line)) continue;
+		const answered = TEST_ANSWERED.exec(line);
+		if (answered) {
+			tested = { state: "answered", text: answered[1] ?? "" };
+			continue;
+		}
+		if (/^\S.* did not answer: /u.test(line)) {
+			tested = { state: "failed", text: line };
+			continue;
+		}
+		if (CHAT_ROUTE.test(line)) {
+			chat = line;
+			continue;
+		}
+		const link = SIGN_IN_URL.exec(line);
+		if (link) {
+			url = safeUrl(link[1] ?? "") ?? url;
+			continue;
+		}
+		const device = /^Enter code:\s*(\S+)/u.exec(line);
+		if (device) {
+			code = device[1] ?? null;
+			continue;
+		}
+		const row = RECAP_LABELS.exec(line);
+		if (row) {
+			recap.push({ label: row[1] ?? "", value: row[2] ?? "" });
+			continue;
+		}
+		if (/^authentication failed/iu.test(line)) probe = { state: "auth-failed", text: line };
+		else if (/^not reachable/iu.test(line)) probe = { state: "unreachable", text: line };
+		else if (/reachable/iu.test(line) && !/^not /iu.test(line)) probe = { state: "reachable", text: line };
+		else if (/answered, but not with/iu.test(line)) probe = { state: "warning", text: line };
+		if (/^✓\s/u.test(line)) {
+			saved.push(line.replace(/^✓\s*/u, ""));
+			continue;
+		}
+		if (probe?.text === line) continue;
+		if (
+			/stored unencrypted|reported no context window|did not complete|not stored|saved without a passed test request/iu.test(
+				line,
+			)
+		)
+			warnings.push(line);
+		else other.push(line);
+	}
+	const testing = TESTING.test(messages.at(-1)?.trim() ?? "");
+	return {
+		chat,
+		signIn: url || code ? { url, code } : null,
+		probe,
+		test: tested,
+		testing,
+		recap,
+		saved,
+		warnings,
+		other,
+	};
+}
+
+const SUMMARY_LABELS: Readonly<Record<string, string>> = {
+	Provider: "Provider",
+	URL: "Address",
+	Model: "Model",
+	Credential: "Credential",
+};
+
+/** The rows of the saved screen, from what was chosen. */
+function savedSummary(recap: readonly Recap[]): string[] {
+	return recap.flatMap((row) => {
+		const label = SUMMARY_LABELS[row.label];
+		return label ? [`${label}: ${row.value}`] : [];
+	});
+}
+
+/** A sentence from a fragment the CLI printed: capitalised, with a full stop. */
+export function sentence(text: string): string {
+	const trimmed = text.trim();
+	if (trimmed === "") return "";
+	const cap = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+	return /[.!?]$/u.test(cap) ? cap : `${cap}.`;
+}
+
+/** What the child is doing while no prompt is open, in the words the setup shows. */
+export function workingLabel(read: ReadMessages, after: WizardView | null = null): string {
+	if (read.signIn) return "Waiting for you to finish signing in";
+	if (read.testing) return "Sending the model a test message";
+	// The answer just sent says what the CLI is doing with it better than its messages do.
+	switch (after && "kind" in after ? after.kind : null) {
+		case "server":
+			return "Checking the address and reading the model list";
+		case "model-missing":
+			return "Checking the endpoint again";
+		case "model":
+		case "model-manual":
+			return "Reading what the model supports";
+		case "detected":
+			return "Reading the model list";
+		case "review":
+			return "Saving your connection";
+		case "credential-key":
+		case "credential-env":
+		case "credential-source":
+			return "Checking the credential";
+		default:
+			break;
+	}
+	const last = read.other.at(-1) ?? "";
+	if (/checking the endpoint|probe|read(ing)? .*model/iu.test(last)) return "Reading the model list";
+	if (read.probe?.state === "reachable") return "Server answered. Reading what it offers";
+	return "Setting this up";
+}
+
+/**
+ * The step for a snapshot. While the child is working, `previous` keeps the stage and scene of the last
+ * prompt so the stepper does not jump.
+ */
+export function viewFor(state: SetupState | null, previous: WizardView | null): WizardView {
+	if (state === null) return { kind: "welcome" };
+	const read = readMessages(state.messages);
+	switch (state.status) {
+		case "prompt":
+			return state.prompt ? stepFor(state.prompt) : { kind: "failed", problem: "Setup sent an empty step." };
+		case "working": {
+			const held = previous && "stage" in previous ? previous : null;
+			return {
+				kind: "working",
+				stage: held?.stage ?? "provider",
+				scene: read.signIn ? "helpers" : (held?.scene ?? "focus"),
+				label: workingLabel(read, held),
+				signIn: read.signIn,
+			};
+		}
+		case "saved":
+			return {
+				kind: "saved",
+				stage: "test",
+				scene: "finale",
+				// The CLI says nothing after it saves, so the summary is the choices made on the way.
+				summary: [...savedSummary(read.recap), ...read.saved],
+				warnings: read.warnings,
+				// A model that answered the test request is the strongest check there is; without one, the passive checks decide.
+				verified:
+					read.test === null
+						? read.probe?.state === "reachable" && read.recap.some((row) => row.label === "Model" && row.value.trim() !== "")
+						: read.test.state === "answered",
+				tested: read.test?.state === "answered" ? read.test.text : null,
+			};
+		case "cancelled":
+			return { kind: "cancelled" };
+		case "failed":
+			return { kind: "failed", problem: state.problem ?? "Setup could not finish." };
+	}
+}
+
+// ---- answers -------------------------------------------------------------------------------------
+
+export const selectAnswer = (prompt: Prompt, choice: Choice): SetupAnswer => ({
+	promptId: prompt.id,
+	action: "select",
+	choice: choice.id,
+});
+export const textAnswer = (prompt: Prompt, value: string): SetupAnswer => ({
+	promptId: prompt.id,
+	action: "text",
+	value,
+});
+export const backAnswer = (prompt: Prompt): SetupAnswer => ({ promptId: prompt.id, action: "back" });
+
+/** Case-folded substring match over what a person sees on a tile. */
+export function matches(text: readonly string[], query: string): boolean {
+	const needle = query.trim().toLocaleLowerCase();
+	return needle === "" || text.some((part) => part.toLocaleLowerCase().includes(needle));
+}
+
+/** The model to start on: the CLI's own default, else the first listed. */
+export function startingModel(models: readonly ModelOption[], initial: number): ModelOption | undefined {
+	return models.find((model) => model.recommended) ?? models.find((model) => model.choice.id === initial) ?? models[0];
+}
+
+/** A required blank answer cannot advance; whitespace is preserved only for masked credentials. */
+export function canSubmitText(value: string, initial: string, masked = false): boolean {
+	return (masked ? value : value.trim()) !== "" || initial !== "";
+}
+
+/** Searching must not submit a model choice that the current list hides. */
+export function modelChoiceVisible(models: readonly ModelOption[], picked: number | undefined): boolean {
+	return models.some((model) => model.choice.id === picked);
+}

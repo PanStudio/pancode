@@ -1,0 +1,489 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual, throws } from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { taskWorktreeFindings } from "../../src/cli/doctor-task-worktrees.js";
+import { validateSettings } from "../../src/core/settings-validate.js";
+import { captureWorkspaceSnapshot } from "../../src/domains/dispatch/write-boundary.js";
+import { workspaceRelative } from "../../src/tools/presentation.js";
+import {
+	applyTaskWorktree,
+	cleanupTaskWorktree,
+	createTaskWorktree,
+	withStrayWrites,
+} from "../../src/tools/task-worktree.js";
+import { recoverTaskWorktrees } from "../../src/tools/task-worktree-claims.js";
+import { shareTaskWorktreeDependencies } from "../../src/tools/task-worktree-dependencies.js";
+import { overlayTaskWorktree, restoreTaskWorktreeOverlay } from "../../src/tools/task-worktree-overlay.js";
+import { builderChangeDiff } from "../../src/tools/worktree-branch-diff.js";
+import {
+	allowedWorktreeParents,
+	diskWorktreeParent,
+	prepareWorktreeParent,
+	resolveWorktreeRoot,
+	WORKTREE_FREE_SPACE_MARGIN_BYTES,
+	type WorktreeRootFacts,
+} from "../../src/tools/worktree-root.js";
+
+/**
+ * `fleet.worktrees.root`. A directory stands in for the tmpfs mount and the
+ * host facts are injected, so every mode and the fallback run without a real
+ * tmpfs and without filling a disk.
+ */
+describe("task worktree root", () => {
+	let scratch: string;
+	let root: string;
+	let shm: string;
+
+	function git(cwd: string, ...args: string[]): string {
+		return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
+	}
+
+	function facts(overrides: Partial<WorktreeRootFacts> = {}): WorktreeRootFacts {
+		return {
+			tmpfsCandidates: () => [shm],
+			filesystemType: (path) => (path === shm ? "tmpfs" : "ext4"),
+			freeBytes: () => 8 * 1024 ** 3,
+			workingTreeBytes: () => 10 * 1024 ** 2,
+			userSegment: () => "pancode-test",
+			...overrides,
+		};
+	}
+
+	beforeEach(() => {
+		scratch = realpathSync(mkdtempSync(join(tmpdir(), "pancode-worktree-root-")));
+		root = join(scratch, "repo");
+		shm = join(scratch, "shm");
+		mkdirSync(root);
+		mkdirSync(shm);
+		git(root, "init", "-q", "-b", "main");
+		git(root, "config", "user.email", "t@local");
+		git(root, "config", "user.name", "t");
+		writeFileSync(join(root, ".gitignore"), ".pancode/\n");
+		writeFileSync(join(root, "a.txt"), "a\n");
+		git(root, "add", ".");
+		git(root, "commit", "-q", "-m", "init");
+	});
+
+	afterEach(() => {
+		rmSync(scratch, { recursive: true, force: true });
+	});
+
+	it("defaults to disk, which is today's location", () => {
+		deepStrictEqual(resolveWorktreeRoot({ setting: "disk", projectRoot: root, remoteEligible: false, facts: facts() }), {
+			parent: join(root, ".pancode", "worktrees"),
+			kind: "disk",
+		});
+	});
+
+	it("parses auto, tmpfs, disk, and an absolute path, and names the key for anything else", () => {
+		strictEqual(validateSettings({ version: 2, fleet: {} }).settings.fleet.worktrees.root, "disk");
+		for (const value of ["auto", "tmpfs", "disk", "/mnt/scratch/worktrees"]) {
+			const result = validateSettings({ version: 2, fleet: { worktrees: { root: value } } });
+			deepStrictEqual(result.issues, [], value);
+			strictEqual(result.settings.fleet.worktrees.root, value);
+		}
+		for (const value of ["ram", "relative/dir", 3, null]) {
+			const result = validateSettings({ version: 2, fleet: { worktrees: { root: value } } });
+			deepStrictEqual(
+				result.issues.map((issue) => issue.path),
+				["fleet.worktrees.root"],
+				String(value),
+			);
+			strictEqual(result.settings.fleet.worktrees.root, "disk");
+		}
+		deepStrictEqual(
+			validateSettings({ version: 2, fleet: { worktrees: { dir: "x" } } }).issues.map((issue) => issue.path),
+			["fleet.worktrees.dir"],
+		);
+	});
+
+	it("resolves tmpfs and auto to this user's directory for this checkout on the tmpfs mount", () => {
+		for (const setting of ["tmpfs", "auto"]) {
+			const resolved = resolveWorktreeRoot({ setting, projectRoot: root, remoteEligible: false, facts: facts() });
+			strictEqual(resolved.kind, "tmpfs", setting);
+			match(resolved.parent, new RegExp(`^${shm}/pancode-test/worktrees/[0-9a-f]{16}$`, "u"));
+			strictEqual(resolved.notice, undefined);
+		}
+		const other = resolveWorktreeRoot({ setting: "tmpfs", projectRoot: scratch, remoteEligible: false, facts: facts() });
+		ok(
+			other.parent !==
+				resolveWorktreeRoot({ setting: "tmpfs", projectRoot: root, remoteEligible: false, facts: facts() }).parent,
+		);
+	});
+
+	it("falls back to disk with a notice when the tmpfs is short of room, and silently under auto when there is none", () => {
+		const needed = 10 * 1024 ** 2 * 2 + WORKTREE_FREE_SPACE_MARGIN_BYTES;
+		const short = facts({ freeBytes: () => needed - 1 });
+		for (const setting of ["tmpfs", "auto"]) {
+			const resolved = resolveWorktreeRoot({ setting, projectRoot: root, remoteEligible: false, facts: short });
+			strictEqual(resolved.kind, "disk", setting);
+			match(resolved.notice ?? "", /has \d+ MiB free and a worktree needs \d+ MiB/u, setting);
+		}
+		strictEqual(
+			resolveWorktreeRoot({
+				setting: "tmpfs",
+				projectRoot: root,
+				remoteEligible: false,
+				facts: facts({ freeBytes: () => needed }),
+			}).kind,
+			"tmpfs",
+		);
+		const none = facts({ filesystemType: () => "ext4" });
+		deepStrictEqual(resolveWorktreeRoot({ setting: "auto", projectRoot: root, remoteEligible: false, facts: none }), {
+			parent: diskWorktreeParent(root),
+			kind: "disk",
+		});
+		match(
+			resolveWorktreeRoot({ setting: "tmpfs", projectRoot: root, remoteEligible: false, facts: none }).notice ?? "",
+			/no usable tmpfs \(.*is ext4, not tmpfs\)/u,
+		);
+	});
+
+	it("keeps remote-eligible runs under the project root whatever the setting", () => {
+		for (const setting of ["tmpfs", "auto", join(scratch, "elsewhere")]) {
+			const resolved = resolveWorktreeRoot({ setting, projectRoot: root, remoteEligible: true, facts: facts() });
+			strictEqual(resolved.parent, diskWorktreeParent(root), setting);
+			match(resolved.notice ?? "", /fleet nodes are configured/u);
+		}
+	});
+
+	it("uses an absolute path, keyed by checkout, with the same free-space check", () => {
+		const custom = join(scratch, "elsewhere");
+		mkdirSync(custom);
+		const resolved = resolveWorktreeRoot({ setting: custom, projectRoot: root, remoteEligible: false, facts: facts() });
+		strictEqual(resolved.kind, "path");
+		match(resolved.parent, new RegExp(`^${custom}/[0-9a-f]{16}$`, "u"));
+		strictEqual(
+			resolveWorktreeRoot({
+				setting: custom,
+				projectRoot: root,
+				remoteEligible: false,
+				facts: facts({ freeBytes: () => 1 }),
+			}).kind,
+			"disk",
+		);
+	});
+
+	it("creates, applies, and cleans a worktree off the project root while the claim stays in the project", () => {
+		const resolved = resolveWorktreeRoot({ setting: "tmpfs", projectRoot: root, remoteEligible: false, facts: facts() });
+		strictEqual(prepareWorktreeParent(resolved), null);
+		strictEqual(statSync(join(shm, "pancode-test")).mode & 0o777, 0o700);
+		const task = createTaskWorktree(root, "run-tmpfs", undefined, "merge", resolved.parent);
+		strictEqual(task.path, join(resolved.parent, "run-tmpfs"));
+		ok(existsSync(join(task.path, "a.txt")));
+		const claim = join(root, ".pancode", "worktrees", "run-tmpfs.task-owner.json");
+		strictEqual((JSON.parse(readFileSync(claim, "utf8")) as { path: string }).path, task.path);
+		strictEqual(existsSync(`${task.path}.task-owner.json`), false);
+
+		writeFileSync(join(task.path, "a.txt"), "changed in the worktree\n");
+		const receipt = applyTaskWorktree({ worktree: task, apply: "merge", authoredPaths: [] });
+		strictEqual(receipt.applied, true);
+		strictEqual(
+			receipt.detail,
+			`merged ${git(root, "rev-parse", "HEAD").slice(0, 7)} onto ${git(root, "branch", "--show-current")}`,
+		);
+		strictEqual(readFileSync(join(root, "a.txt"), "utf8"), "changed in the worktree\n");
+		cleanupTaskWorktree(task, true);
+		strictEqual(existsSync(task.path), false);
+		strictEqual(existsSync(claim), false);
+		strictEqual(git(root, "branch", "--list", "pancode/task/*"), "");
+	});
+
+	it("shares each workspace package's ignored node_modules, not only the root's", () => {
+		writeFileSync(join(root, ".gitignore"), ".pancode/\nnode_modules/\n");
+		writeFileSync(join(root, "package.json"), '{"name":"ws"}\n');
+		writeFileSync(join(root, "pnpm-workspace.yaml"), 'packages:\n  - "."\n  - "apps/*"\n');
+		for (const pkg of ["one", "two"]) {
+			mkdirSync(join(root, "apps", pkg), { recursive: true });
+			writeFileSync(join(root, "apps", pkg, "package.json"), `{"name":"${pkg}"}\n`);
+		}
+		git(root, "add", ".");
+		git(root, "commit", "-q", "-m", "workspace");
+		mkdirSync(join(root, "node_modules", "root-dep"), { recursive: true });
+		mkdirSync(join(root, "apps", "one", "node_modules", "playwright-core"), { recursive: true });
+		mkdirSync(join(root, "apps", "two", "node_modules", "two-dep"), { recursive: true });
+		const resolved = resolveWorktreeRoot({ setting: "tmpfs", projectRoot: root, remoteEligible: false, facts: facts() });
+		strictEqual(prepareWorktreeParent(resolved), null);
+		const task = createTaskWorktree(root, "run-ws", undefined, "merge", resolved.parent);
+		const roots = shareTaskWorktreeDependencies(task);
+		ok(existsSync(join(task.path, "node_modules", "root-dep")));
+		ok(existsSync(join(task.path, "apps", "one", "node_modules", "playwright-core")));
+		ok(existsSync(join(task.path, "apps", "two", "node_modules", "two-dep")));
+		ok(roots.includes(root));
+		ok(roots.includes(join(root, "apps", "one")));
+		strictEqual(git(task.path, "status", "--porcelain"), "");
+		cleanupTaskWorktree(task, true);
+	});
+
+	it("refuses ownership of a path outside the parent it was created under", () => {
+		const resolved = resolveWorktreeRoot({ setting: "tmpfs", projectRoot: root, remoteEligible: false, facts: facts() });
+		prepareWorktreeParent(resolved);
+		const task = createTaskWorktree(root, "run-owned", undefined, "merge", resolved.parent);
+		const outside = join(scratch, "victim");
+		mkdirSync(outside);
+		throws(() => cleanupTaskWorktree({ ...task, path: outside }, true), /invalid ownership path/u);
+		throws(
+			() => cleanupTaskWorktree({ ...task, parent: scratch, path: join(scratch, "run-owned") }, true),
+			/do not match/u,
+		);
+		ok(existsSync(outside));
+		ok(existsSync(task.path));
+	});
+
+	it("refuses a tmpfs directory another user could have planted", () => {
+		const resolved = resolveWorktreeRoot({ setting: "tmpfs", projectRoot: root, remoteEligible: false, facts: facts() });
+		mkdirSync(join(scratch, "planted"));
+		symlinkSync(join(scratch, "planted"), join(shm, "pancode-test"));
+		match(prepareWorktreeParent(resolved) ?? "", /is not a plain directory/u);
+		// unlink, not rmSync: Node 24.9's rmSync refuses a link to a directory with EISDIR.
+		unlinkSync(join(shm, "pancode-test"));
+		mkdirSync(join(shm, "pancode-test"), { mode: 0o777 });
+		spawnSync("chmod", ["777", join(shm, "pancode-test")]);
+		match(prepareWorktreeParent(resolved) ?? "", /is writable by other users/u);
+	});
+
+	function crash(claimPath: string): void {
+		const marker = JSON.parse(readFileSync(claimPath, "utf8")) as { owner: { host: string } };
+		const dead = spawnSync(process.execPath, ["-e", ""]);
+		writeFileSync(
+			claimPath,
+			JSON.stringify({ ...marker, owner: { host: marker.owner.host, pid: dead.pid, birthToken: "linux:1" } }),
+		);
+	}
+
+	it("recovers a worktree under the configured root, and one whose tmpfs was lost at reboot", () => {
+		const resolved = resolveWorktreeRoot({ setting: "tmpfs", projectRoot: root, remoteEligible: false, facts: facts() });
+		prepareWorktreeParent(resolved);
+		const allowed = allowedWorktreeParents("tmpfs", root, facts());
+		const claimOf = (runId: string) => join(root, ".pancode", "worktrees", `${runId}.task-owner.json`);
+
+		const clean = createTaskWorktree(root, "run-clean", undefined, "merge", resolved.parent);
+		crash(claimOf("run-clean"));
+		const lost = createTaskWorktree(root, "run-lost", undefined, "merge", resolved.parent);
+		writeFileSync(join(lost.path, "uncommitted.txt"), "gone with the mount\n");
+		crash(claimOf("run-lost"));
+		const kept = createTaskWorktree(root, "run-kept", undefined, "merge", resolved.parent);
+		writeFileSync(join(kept.path, "a.txt"), "committed\n");
+		git(kept.path, "-c", "user.name=w", "-c", "user.email=w@local", "commit", "-qam", "work");
+		crash(claimOf("run-kept"));
+		// The reboot: the mount comes back empty.
+		rmSync(lost.path, { recursive: true, force: true });
+		rmSync(kept.path, { recursive: true, force: true });
+
+		// Without the configured root the sweep does not recognize any of them.
+		deepStrictEqual(recoverTaskWorktrees(root), { removed: [], preserved: [], failed: [] });
+		const result = recoverTaskWorktrees(root, allowed);
+		deepStrictEqual(result.removed.sort(), ["run-clean", "run-lost"]);
+		deepStrictEqual(result.failed, []);
+		strictEqual(result.preserved.length, 1);
+		match(result.preserved[0]?.reason ?? "", /1 commit\(s\) beyond its base \(its working tree is gone\)/u);
+		strictEqual(existsSync(clean.path), false);
+		strictEqual(git(root, "branch", "--list", "pancode/task/*", "--format=%(refname:short)"), "pancode/task/run-kept");
+		strictEqual(git(root, "worktree", "list", "--porcelain").includes("run-lost"), false, "stale git metadata is pruned");
+	});
+
+	it("refuses a task worktree in a repository with no commits and baselines it on the empty tree (D4)", () => {
+		const unborn = join(scratch, "unborn");
+		mkdirSync(unborn);
+		git(unborn, "init", "-q", "-b", "main");
+		throws(() => createTaskWorktree(unborn, "run-unborn"), /^Error: worktree_unborn_head/u);
+		strictEqual(captureWorkspaceSnapshot(unborn).head, "4b825dc642cb6eb9a060e54bf8d69288fbee4904");
+	});
+
+	it("never believes a claim that points outside the allowed parents", () => {
+		const victim = join(scratch, "victim");
+		git(root, "worktree", "add", "-q", "-b", "pancode/task/run-forged", victim);
+		mkdirSync(join(root, ".pancode", "worktrees"), { recursive: true });
+		const honest = createTaskWorktree(root, "run-honest");
+		const claimPath = join(root, ".pancode", "worktrees", "run-forged.task-owner.json");
+		const marker = JSON.parse(readFileSync(join(root, ".pancode", "worktrees", "run-honest.task-owner.json"), "utf8"));
+		writeFileSync(
+			claimPath,
+			JSON.stringify({
+				...marker,
+				runId: "run-forged",
+				branch: "pancode/task/run-forged",
+				path: victim,
+				owner: { ...marker.owner, pid: spawnSync(process.execPath, ["-e", ""]).pid, birthToken: "linux:1" },
+			}),
+		);
+		deepStrictEqual(recoverTaskWorktrees(root, allowedWorktreeParents("tmpfs", root, facts())), {
+			removed: [],
+			preserved: [],
+			failed: [],
+		});
+		ok(existsSync(victim));
+		ok(existsSync(honest.path));
+	});
+
+	it("doctor reports the resolved root, its filesystem, and free space, and warns on a fallback", () => {
+		const [ok1] = taskWorktreeFindings(root, { rootSetting: "tmpfs", remoteEligible: false, facts: facts() });
+		deepStrictEqual([ok1?.name, ok1?.level], ["task worktree root", "ok"]);
+		match(
+			ok1?.detail ?? "",
+			/fleet\.worktrees\.root tmpfs: .*\/shm\/pancode-test\/worktrees\/[0-9a-f]{16} \(tmpfs, 8\.0 GB free\)$/u,
+		);
+		const [short] = taskWorktreeFindings(root, {
+			rootSetting: "tmpfs",
+			remoteEligible: false,
+			facts: facts({ freeBytes: () => 1 }),
+		});
+		strictEqual(short?.level, "warn");
+		match(short?.detail ?? "", /\.pancode\/worktrees \(ext4, .*\); .* using the project root$/u);
+	});
+
+	it("never lands a file PanCode overlaid in a worktree, even when the run dies before putting it back", () => {
+		const crashed = createTaskWorktree(root, "run-overlay-crash", undefined, "merge");
+		overlayTaskWorktree(crashed, [{ file: "a.txt", content: "compiled rules\n" }]);
+		strictEqual(readFileSync(join(crashed.path, "a.txt"), "utf8"), "compiled rules\n");
+		strictEqual(git(crashed.path, "status", "--porcelain"), "");
+		const forced = spawnSync("git", ["-C", crashed.path, "add", "a.txt"], { encoding: "utf8" });
+		ok(forced.status !== 0, "an explicit add of an overlaid path is refused");
+		writeFileSync(join(crashed.path, "b.txt"), "b\n");
+		const receipt = applyTaskWorktree({
+			worktree: crashed,
+			apply: "merge",
+			authoredPaths: [join(crashed.path, "b.txt")],
+		});
+		strictEqual(receipt.applied, true);
+		strictEqual(readFileSync(join(root, "a.txt"), "utf8"), "a\n");
+		strictEqual(readFileSync(join(root, "b.txt"), "utf8"), "b\n");
+		cleanupTaskWorktree(crashed, true);
+
+		const run = createTaskWorktree(root, "run-overlay", undefined, "merge");
+		const overlay = overlayTaskWorktree(run, [{ file: "a.txt", content: "compiled rules\n" }]);
+		writeFileSync(join(run.path, "a.txt"), "the worker edited the overlay\n");
+		restoreTaskWorktreeOverlay(overlay);
+		strictEqual(readFileSync(join(run.path, "a.txt"), "utf8"), "a\n");
+		strictEqual(git(run.path, "ls-files", "-v", "a.txt"), "H a.txt");
+		throws(() => overlayTaskWorktree(run, [{ file: "../repo/a.txt", content: "x" }]), /leaves the worktree/u);
+		throws(() => overlayTaskWorktree(run, [{ file: "untracked.txt", content: "x" }]));
+		cleanupTaskWorktree(run, true);
+	});
+
+	it("names a worker's writes outside its worktree on the receipt, because they reach no branch", () => {
+		const worktree = { path: "/work/repo/.pancode/worktrees/run1" };
+		const merged = { applied: true, detail: "nothing merged: the task branch holds no change beyond its base" };
+		deepStrictEqual(withStrayWrites(merged, worktree, ["/work/repo/.pancode/worktrees/run1/src/a.py"]), merged);
+		match(
+			withStrayWrites(merged, worktree, ["/work/repo/.pancode/worktrees/run1/src/a.py", "/work/repo/src/a.py"]).detail ??
+				"",
+			/nothing merged.*outside its task worktree.*on no branch: \/work\/repo\/src\/a\.py$/u,
+		);
+	});
+
+	it("keeps a child whose name starts with .. inside its root and a ../ path outside", () => {
+		const worktree = { path: join(scratch, "wt") };
+		const merged = { applied: true, detail: "nothing merged" };
+		for (const [child, inside] of [
+			["..cache/a.py", true],
+			["..", false],
+			["../a.py", false],
+		] as const) {
+			const target = join(worktree.path, child);
+			strictEqual(withStrayWrites(merged, worktree, [target]) === merged, inside, `stray ${child}`);
+			strictEqual(workspaceRelative(child, worktree.path) !== null, inside, `workspace ${child}`);
+			const parent = prepareWorktreeParent({ kind: "tmpfs", base: shm, parent: join(shm, child) });
+			strictEqual(parent === null, inside, `parent ${child}: ${parent}`);
+		}
+	});
+});
+
+describe("a reviewer's packet diff (M10)", () => {
+	it("diffs a task commit after its worktree is gone, takes the observed delta over the operator's tree, and keeps recorded paths under a symlinked root", () => {
+		const top = realpathSync(mkdtempSync(join(tmpdir(), "review-diff-")));
+		try {
+			const repo = join(top, "repo");
+			mkdirSync(join(repo, "sub"), { recursive: true });
+			const git = (...args: string[]) =>
+				execFileSync("git", ["-C", repo, "-c", "user.name=F", "-c", "user.email=f@example.invalid", ...args], {
+					encoding: "utf8",
+				}).trim();
+			git("init", "-q");
+			writeFileSync(join(repo, "a.txt"), "a\n");
+			writeFileSync(join(repo, "sub", "b.txt"), "b\n");
+			git("add", "-A");
+			git("commit", "-qm", "base");
+			const base = git("rev-parse", "HEAD");
+			git("checkout", "-qb", "task");
+			writeFileSync(join(repo, "a.txt"), "task change\n");
+			git("commit", "-qam", "task");
+			const commit = git("rev-parse", "HEAD");
+			git("checkout", "-q", "-");
+			// (a) A merged and removed task worktree: its commit against its base, from the checkout it was cut from.
+			const gone = join(top, "gone");
+			const task = builderChangeDiff({ cwd: gone, worktree: { path: gone, root: repo, base, commit }, recorded: null });
+			strictEqual(task?.scope, "task-commit");
+			match(task?.patch ?? "", /\+task change/u);
+			// (b) The operator's own edits and untracked files never reach the packet; an open record hands over nothing.
+			writeFileSync(join(repo, "a.txt"), "operator edit\n");
+			writeFileSync(join(repo, "operator-notes.txt"), "operator plans\n");
+			writeFileSync(join(repo, "sub", "b.txt"), "builder edit\n");
+			const observed = builderChangeDiff({
+				cwd: repo,
+				checkoutChanges: { cwd: repo, changedPaths: ["sub/b.txt"] },
+				recorded: null,
+			});
+			strictEqual(observed?.scope, "observed-delta");
+			match(observed?.patch ?? "", /\+builder edit/u);
+			ok(!observed?.patch.includes("operator"), observed?.patch);
+			strictEqual(builderChangeDiff({ cwd: repo, recorded: null }), null);
+			// (c) A builder in a subdirectory, reached through a symlinked alias of the checkout.
+			const alias = join(top, "alias");
+			symlinkSync(repo, alias);
+			for (const recorded of [[join(alias, "sub", "b.txt")], ["sub/b.txt"]]) {
+				const diff = builderChangeDiff({ cwd: join(alias, "sub"), recorded });
+				strictEqual(diff?.scope, "attributed-paths", JSON.stringify(recorded));
+				match(diff?.patch ?? "", /\+builder edit/u, JSON.stringify(recorded));
+				ok(!diff?.patch.includes("operator"));
+			}
+		} finally {
+			rmSync(top, { recursive: true, force: true });
+		}
+	});
+
+	it("never reads an untracked entry that is not a regular file", () => {
+		const top = realpathSync(mkdtempSync(join(tmpdir(), "review-diff-links-")));
+		try {
+			const repo = join(top, "repo");
+			mkdirSync(repo);
+			const git = (...args: string[]) =>
+				execFileSync("git", ["-C", repo, "-c", "user.name=F", "-c", "user.email=f@example.invalid", ...args], {
+					encoding: "utf8",
+				}).trim();
+			git("init", "-q");
+			writeFileSync(join(repo, "a.txt"), "a\n");
+			git("add", "-A");
+			git("commit", "-qm", "base");
+			const base = git("rev-parse", "HEAD");
+			writeFileSync(join(top, "credentials"), "outside the checkout\n");
+			symlinkSync(join(top, "credentials"), join(repo, "leak"));
+			// A link to a device that never ends is named, not read: the diff returns.
+			if (existsSync("/dev/zero")) symlinkSync("/dev/zero", join(repo, "zero"));
+			writeFileSync(join(repo, "new.txt"), "builder file\n");
+			const diff = builderChangeDiff({ cwd: repo, worktree: { path: repo, root: repo, base }, recorded: null });
+			strictEqual(diff?.scope, "task-worktree");
+			match(diff?.patch ?? "", /\+builder file/u);
+			ok(!diff?.patch.includes("outside the checkout"), diff?.patch);
+			match(diff?.patch ?? "", /b\/leak\n[\s\S]*not a regular file/u);
+		} finally {
+			rmSync(top, { recursive: true, force: true });
+		}
+	});
+});

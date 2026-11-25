@@ -1,0 +1,195 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, notStrictEqual, ok, strictEqual, throws } from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { chmodSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { enumerateWorkspaceFiles } from "../../src/core/workspace-files.js";
+import { codemapPath, writeCodewiki } from "../../src/domains/context/codewiki/artifact.js";
+import { executeCodewikiBuildOutcome } from "../../src/domains/context/codewiki/build-operation.js";
+import { buildCodewiki, updateCodewikiPaths } from "../../src/domains/context/codewiki/indexer.js";
+import { isIndexablePath } from "../../src/domains/context/codewiki/paths.js";
+import type { Codewiki } from "../../src/domains/context/codewiki/schema.js";
+import { EXCLUDED_DIRS } from "../../src/domains/context/excluded-dirs.js";
+import { computeFingerprint } from "../../src/domains/context/fingerprint.js";
+import { renderPromptContext } from "../../src/domains/context/prompt-context.js";
+import { readPancodeState, statePath, writePancodeState } from "../../src/domains/context/state.js";
+import { ensureCodewikiOnDisk } from "../harness/codewiki-ensure.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
+
+// Frozen pre-upgrade tree digest from 9214789's fingerprint.ts. This fixture
+// deliberately has no dependency on the current fingerprint's hash domain.
+function legacyTreeHash(cwd: string, salt = ""): string {
+	const hash = createHash("sha256").update(salt);
+	for (const relPath of enumerateWorkspaceFiles(cwd, EXCLUDED_DIRS).filter(isIndexablePath)) {
+		let stat: ReturnType<typeof statSync>;
+		try {
+			stat = statSync(join(cwd, relPath));
+		} catch {
+			continue;
+		}
+		hash.update(`${relPath}:${stat.size}:${Math.floor(stat.mtimeMs)}\n`);
+	}
+	return hash.digest("hex");
+}
+
+function certifyLegacyIndex(cwd: string, codewiki: Codewiki): void {
+	writeCodewiki(cwd, codewiki);
+	writePancodeState(cwd, {
+		version: 1,
+		projectType: codewiki.language,
+		codewikiVersion: codewiki.version,
+		fingerprint: { ...computeFingerprint(cwd, codewiki), treeHash: legacyTreeHash(cwd) },
+	});
+}
+
+async function assertSecondEnsureDoesNotRewrite(cwd: string, expected: Codewiki): Promise<void> {
+	const paths = [codemapPath(cwd), statePath(cwd)];
+	const before = paths.map((path) => ({
+		text: readFileSync(path, "utf8"),
+		mtimeNs: statSync(path, { bigint: true }).mtimeNs,
+	}));
+	const loaded = await ensureCodewikiOnDisk(cwd);
+	deepStrictEqual(loaded.codewiki, expected);
+	deepStrictEqual(
+		paths.map((path) => ({ text: readFileSync(path, "utf8"), mtimeNs: statSync(path, { bigint: true }).mtimeNs })),
+		before,
+	);
+}
+
+describe("context fingerprint upgrade", () => {
+	let isolated: IsolatedPancodeEnv;
+	beforeEach(async () => {
+		isolated = await isolatePancodeEnv("pancode-fingerprint-upgrade-");
+	});
+	afterEach(() => isolated.restore());
+
+	it("repairs legacy state that falsely certified an external edit alongside a notified edit", async () => {
+		const cwd = isolated.dir;
+		writeFileSync(join(cwd, "a.ts"), "export function agentBefore() {}\n");
+		writeFileSync(join(cwd, "b.ts"), "export function externalBefore() {}\n");
+		const original = await buildCodewiki({ cwd, language: "typescript" });
+		writeFileSync(join(cwd, "a.ts"), "export function agentAfterLonger() {}\n");
+		writeFileSync(join(cwd, "b.ts"), "export function externalAfterLonger() {}\n");
+		const partial = await updateCodewikiPaths(cwd, original, ["a.ts"]);
+		ok(partial.symbols.some((symbol) => symbol.name === "externalBefore"));
+		certifyLegacyIndex(cwd, partial);
+		strictEqual(readPancodeState(cwd)?.fingerprint.treeHash, legacyTreeHash(cwd));
+
+		const loaded = await ensureCodewikiOnDisk(cwd);
+		ok(loaded.codewiki.symbols.some((symbol) => symbol.name === "externalAfterLonger"));
+		strictEqual(
+			loaded.codewiki.symbols.some((symbol) => symbol.name === "externalBefore"),
+			false,
+		);
+		deepStrictEqual(loaded.codewiki, await buildCodewiki({ cwd, language: "typescript" }));
+		deepStrictEqual(readPancodeState(cwd)?.fingerprint, computeFingerprint(cwd, loaded.codewiki));
+		notStrictEqual(readPancodeState(cwd)?.fingerprint.treeHash, legacyTreeHash(cwd));
+		await assertSecondEnsureDoesNotRewrite(cwd, loaded.codewiki);
+	});
+
+	it("discovers source hidden by a falsely certified empty legacy index", async () => {
+		const cwd = isolated.dir;
+		const empty = await buildCodewiki({ cwd, language: "typescript" });
+		strictEqual(empty.files.length, 0);
+		writeFileSync(join(cwd, "new.ts"), "export function newlyDiscovered() {}\n");
+		certifyLegacyIndex(cwd, empty);
+
+		const loaded = await ensureCodewikiOnDisk(cwd);
+		ok(loaded.codewiki.symbols.some((symbol) => symbol.name === "newlyDiscovered"));
+		deepStrictEqual(loaded.codewiki, await buildCodewiki({ cwd, language: "typescript" }));
+		deepStrictEqual(readPancodeState(cwd)?.fingerprint, computeFingerprint(cwd, loaded.codewiki));
+		await assertSecondEnsureDoesNotRewrite(cwd, loaded.codewiki);
+	});
+
+	it("upgrades a truly empty legacy tree once without changing its empty index", async () => {
+		const cwd = isolated.dir;
+		const empty = await buildCodewiki({ cwd, language: "typescript" });
+		certifyLegacyIndex(cwd, empty);
+		strictEqual(legacyTreeHash(cwd), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+
+		const loaded = await ensureCodewikiOnDisk(cwd);
+		deepStrictEqual(loaded.codewiki, empty);
+		notStrictEqual(readPancodeState(cwd)?.fingerprint.treeHash, legacyTreeHash(cwd));
+		deepStrictEqual(readPancodeState(cwd)?.fingerprint, computeFingerprint(cwd, empty));
+		await assertSecondEnsureDoesNotRewrite(cwd, empty);
+	});
+
+	it("reconciles legacy metadata by reading source and reusing unchanged records", async () => {
+		const cwd = isolated.dir;
+		writeFileSync(join(cwd, "a.ts"), "export function unchanged() {}\n");
+		const current = await buildCodewiki({ cwd, language: "typescript" });
+		const previous = { ...computeFingerprint(cwd, current), treeHash: legacyTreeHash(cwd) };
+		const reads: string[] = [];
+		const result = await executeCodewikiBuildOutcome(
+			{ kind: "ensure", cwd, current, previous },
+			{
+				readFile: (path) => {
+					reads.push(path);
+					return readFileSync(path, "utf8");
+				},
+			},
+		);
+		deepStrictEqual(reads, [join(cwd, "a.ts")]);
+		strictEqual(result.codewiki, current);
+		strictEqual(result.changed, true);
+		notStrictEqual(result.fingerprint.treeHash, previous.treeHash);
+		const next = await executeCodewikiBuildOutcome(
+			{ kind: "ensure", cwd, current, previous: result.fingerprint },
+			{
+				readFile: () => {
+					throw new Error("second ensure must not read source");
+				},
+			},
+		);
+		strictEqual(next.codewiki, current);
+		strictEqual(next.changed, false);
+	});
+
+	it("detects equal-size edits with restored metadata", async () => {
+		const cwd = isolated.dir;
+		const path = join(cwd, "a.ts");
+		writeFileSync(path, "export function before() {}\n");
+		// Integer timestamps avoid filesystem timestamp rounding in the oracle.
+		utimesSync(path, 1_700_000_000, 1_700_000_000);
+		const current = await buildCodewiki({ cwd, language: "typescript" });
+		const before = computeFingerprint(cwd, current);
+		const metadata = legacyTreeHash(cwd, "pancode-codewiki-tree:v2\n");
+		writeFileSync(path, "export function after_() {}\n");
+		utimesSync(path, 1_700_000_000, 1_700_000_000);
+		strictEqual(legacyTreeHash(cwd, "pancode-codewiki-tree:v2\n"), metadata);
+		const after = computeFingerprint(cwd, current);
+		notStrictEqual(after.treeHash, before.treeHash);
+		const result = await executeCodewikiBuildOutcome({ kind: "ensure", cwd, current, previous: before });
+		ok(result.codewiki);
+		ok(result.codewiki.symbols.some((symbol) => symbol.name === "after_"));
+		deepStrictEqual(result.fingerprint, computeFingerprint(cwd, result.codewiki));
+	});
+
+	it("migrates v2 metadata fingerprints and rejects unreadable sources", async () => {
+		const cwd = isolated.dir;
+		const path = join(cwd, "a.ts");
+		writeFileSync(path, "export const current = true;\n");
+		const current = await buildCodewiki({ cwd, language: "typescript" });
+		const previous = { ...computeFingerprint(cwd, current), treeHash: legacyTreeHash(cwd, "pancode-codewiki-tree:v2\n") };
+		const result = await executeCodewikiBuildOutcome({ kind: "ensure", cwd, current, previous });
+		strictEqual(result.changed, true);
+		notStrictEqual(result.fingerprint.treeHash, previous.treeHash);
+		if (process.platform !== "win32" && process.getuid?.() !== 0) {
+			writeCodewiki(cwd, current);
+			writePancodeState(cwd, { version: 1, fingerprint: result.fingerprint });
+			writeFileSync(join(cwd, "PANCODE.md"), "# Local\n\nKeep authored guidance.\n");
+			chmodSync(path, 0);
+			try {
+				throws(() => computeFingerprint(cwd, current), { code: "EACCES" });
+				const prompt = renderPromptContext(cwd);
+				ok(prompt.text.includes("Keep authored guidance."));
+				ok(prompt.text.includes("available snapshot; freshness checked on retrieval"));
+				deepStrictEqual(prompt.warnings, []);
+			} finally {
+				chmodSync(path, 0o600);
+			}
+		}
+	});
+});

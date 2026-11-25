@@ -1,0 +1,307 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type {
+	ExtensionOutputV2,
+	Interview,
+	InterviewAnswer,
+	InterviewNext,
+	InterviewStep,
+	View,
+} from "@pancode/sdk/extension";
+import { validateInterview, validateInterviewStep } from "@pancode/sdk/pack";
+import type { ParkedInterviewResult } from "../domains/extensions/runtime-hook-bridge.js";
+import type { AskUserHandler, AskUserQuestion, AskUserResult } from "./ask-user.js";
+import type { ToolInvokeOptions } from "./registry-contract.js";
+import { createHarnessHold } from "./registry-contract.js";
+
+function stepToQuestions(step: InterviewStep): AskUserQuestion[] {
+	return step.questions.map((question) => {
+		const initial = typeof question.initial === "string" ? question.initial : question.initial?.[0];
+		const preferred = question.options?.findIndex((option) => option.value === initial) ?? -1;
+		return {
+			question: `${question.label}${question.help ? `\n\n${question.help}` : ""}`,
+			header: question.label,
+			...(question.options?.length
+				? {
+						options: question.options.map((option) => ({
+							label: option.label,
+							...(option.detail === undefined ? {} : { description: option.detail }),
+						})),
+					}
+				: {}),
+			...(question.kind === "multi" ? { multi_select: true } : {}),
+			...(preferred < 0 ? {} : { defaultOption: preferred }),
+			...(question.checkpoint === undefined ? {} : { checkpoint: question.checkpoint }),
+		};
+	});
+}
+
+function resultToAnswer(interview: Interview, step: InterviewStep, result: AskUserResult): InterviewAnswer {
+	const base = { id: interview.id, step: step.key };
+	if (result.cancelled || result.unavailable)
+		return {
+			...base,
+			answers: {},
+			nav: "cancel",
+			reason: result.unavailable ? "preempted" : result.unscripted ? "unscripted" : "operator",
+		};
+	if (result.answers.length !== step.questions.length) throw new Error("interview round did not answer every question");
+	const answers: InterviewAnswer["answers"] = {};
+	const notes: Record<string, string> = {};
+	const other: Record<string, true> = {};
+	let scripted: InterviewAnswer["scripted"];
+	for (const [index, question] of step.questions.entries()) {
+		const answer = result.answers[index];
+		if (answer === undefined) throw new Error(`missing answer for ${question.id}`);
+		if (answer.scripted !== undefined) {
+			scripted ??= { file: answer.scripted.file, rules: {} };
+			scripted.rules[question.id] = answer.scripted.rule;
+		}
+		// Typed input is the submitted value of a text question; the overlay's
+		// joined display string is not that value (S4).
+		if (question.kind === "text") {
+			answers[question.id] = answer.value ?? answer.answer;
+			continue;
+		}
+		const options = question.options ?? [];
+		const labels =
+			answer.options ??
+			(answer.value === undefined && options.some((option) => option.label === answer.answer) ? [answer.answer] : []);
+		if (labels.length === 0) {
+			// "Other": free text that names no offered option.
+			answers[question.id] = answer.value ?? answer.answer;
+			other[question.id] = true;
+			continue;
+		}
+		for (const label of labels) {
+			if (!options.some((option) => option.label === label)) throw new Error(`unknown selected option for ${question.id}`);
+		}
+		const selected = options.filter((option) => labels.includes(option.label)).map((option) => option.value);
+		if (question.kind === "single") {
+			if (selected.length !== 1) throw new Error(`single question ${question.id} has multiple selected options`);
+			answers[question.id] = selected[0] ?? "";
+		} else answers[question.id] = selected;
+		// A note typed beside chosen options rides next to them; it never
+		// replaces the option value the handler matches on.
+		if (answer.value !== undefined) notes[question.id] = answer.value;
+	}
+	return {
+		...base,
+		answers,
+		...(Object.keys(notes).length > 0 ? { notes } : {}),
+		...(Object.keys(other).length > 0 ? { other } : {}),
+		...(scripted === undefined ? {} : { scripted }),
+		nav: "next",
+	};
+}
+
+function initialDrafts(
+	step: InterviewStep,
+): NonNullable<NonNullable<ToolInvokeOptions["harnessInterview"]>["initial"]> {
+	return step.questions.map((question) => {
+		if (question.kind === "text") return typeof question.initial === "string" ? { text: question.initial } : {};
+		if (question.initial === undefined) return {};
+		const values = typeof question.initial === "string" ? [question.initial] : question.initial;
+		return {
+			selected: (question.options ?? []).flatMap((option, index) => (values.includes(option.value) ? [index] : [])),
+		};
+	});
+}
+
+/**
+ * Every surface that asks an extension's interview: the terminal's overlay,
+ * and an ACP client's interview channel. Only the terminal can draw a step's
+ * intro view, so a surface without `renderIntro` asks the questions without it.
+ */
+export interface ExtensionInterviewDeps {
+	ask: AskUserHandler;
+	renderIntro?: (view: View, width: number) => string[];
+}
+
+export async function runExtensionInterview(
+	deps: ExtensionInterviewDeps,
+	interview: Interview,
+	owner: { extensionId: string; title: string },
+	onAnswer: (answer: InterviewAnswer) => Promise<InterviewNext>,
+	signal?: AbortSignal,
+): Promise<{
+	outcome: "done" | "cancelled";
+	output?: ExtensionOutputV2;
+	reason?: string;
+	/** The step was cancelled because a run's answers file had no answer for it. */
+	unscripted?: true;
+	/** The handler finished with `pipelineDone: true`. */
+	pipelineDone?: true;
+}> {
+	const hold = createHarnessHold();
+	let active = interview;
+	let position = 1;
+	const cancel = async (
+		answer: InterviewAnswer,
+		reason?: string,
+	): Promise<{ outcome: "cancelled"; reason?: string; unscripted?: true }> => {
+		await onAnswer(answer);
+		return {
+			outcome: "cancelled",
+			...(reason === undefined ? {} : { reason }),
+			...(answer.reason === "unscripted" ? { unscripted: true as const } : {}),
+		};
+	};
+	const interrupted = (reason: string): Promise<{ outcome: "cancelled"; reason?: string; unscripted?: true }> =>
+		cancel(
+			{
+				id: active.id,
+				step: active.step?.key ?? "",
+				answers: {},
+				nav: "cancel",
+				reason: "preempted",
+			},
+			`${owner.extensionId}: ${reason}`,
+		);
+	try {
+		const validated = validateInterview(interview);
+		if (!validated.ok) return await interrupted(`invalid interview at ${validated.path}: ${validated.reason}`);
+		active = validated.interview;
+		while (true) {
+			if (signal?.aborted) return await interrupted("interview aborted");
+			const validatedStep = validateInterviewStep(active.step);
+			if (!validatedStep.ok) return await interrupted(`invalid step at ${validatedStep.path}: ${validatedStep.reason}`);
+			const step = validatedStep.step;
+			const intro = step.intro;
+			active = { ...active, step };
+			let answer: InterviewAnswer;
+			try {
+				const result = await deps.ask(stepToQuestions(step), {
+					origin: "harness",
+					harnessHold: hold,
+					...(signal === undefined ? {} : { signal }),
+					harnessInterview: {
+						title: `${owner.title} · ${active.title}`,
+						step: position,
+						...(active.total === undefined ? {} : { total: active.total }),
+						...(intro === undefined || deps.renderIntro === undefined
+							? {}
+							: { intro: (width: number) => deps.renderIntro?.(intro, width) ?? [] }),
+						initial: initialDrafts(step),
+					},
+				});
+				answer = resultToAnswer(active, step, result);
+			} catch (error) {
+				return await interrupted(`interview round failed: ${error instanceof Error ? error.message : String(error)}`);
+			}
+			if (signal?.aborted) return await interrupted("interview aborted");
+			if (answer.nav === "cancel") return await cancel(answer, answer.reason);
+			const next = await onAnswer(answer);
+			// Cancelled while the handler ran: the caller is told it did not finish.
+			if (signal?.aborted) return await interrupted("interview aborted");
+			if ("done" in next && next.done === true) {
+				const { done: _done, pipelineDone, ...output } = next;
+				return { outcome: "done", output, ...(pipelineDone === true ? { pipelineDone } : {}) };
+			}
+			const candidate = { ...active, ...next, step: "step" in next ? next.step : undefined };
+			const validatedNext = validateInterview(candidate);
+			if (!validatedNext.ok) {
+				active = { ...active, step: candidate.step ?? active.step };
+				return await interrupted(`invalid next step at ${validatedNext.path}: ${validatedNext.reason}`);
+			}
+			active = validatedNext.interview;
+			position++;
+		}
+	} finally {
+		hold.release();
+	}
+}
+
+/**
+ * An interview a tool call asked for. The call stays parked on it, and what
+ * the operator answered, step by step, becomes the tool's result; only the
+ * operator's answers are recorded, never anything inferred from prose.
+ */
+export async function runParkedInterview(
+	deps: ExtensionInterviewDeps,
+	interview: Interview,
+	owner: { extensionId: string; title: string },
+	onAnswer: (answer: InterviewAnswer) => Promise<InterviewNext>,
+	signal?: AbortSignal,
+): Promise<ParkedInterviewResult> {
+	const answers: ParkedInterviewResult["answers"] = {};
+	const notes: NonNullable<ParkedInterviewResult["notes"]> = {};
+	const other: NonNullable<ParkedInterviewResult["other"]> = {};
+	const scripted: NonNullable<ParkedInterviewResult["scripted"]> = {};
+	const checkpoints: string[] = [];
+	const ask: AskUserHandler = (questions, options) => {
+		for (const question of questions)
+			if (question.checkpoint !== undefined && !checkpoints.includes(question.checkpoint))
+				checkpoints.push(question.checkpoint);
+		return deps.ask(questions, options);
+	};
+	const result = await runExtensionInterview(
+		{ ...deps, ask },
+		interview,
+		owner,
+		(answer) => {
+			if (answer.nav === "next") {
+				answers[answer.step] = answer.answers;
+				if (answer.notes !== undefined) notes[answer.step] = answer.notes;
+				if (answer.other !== undefined) other[answer.step] = answer.other;
+				if (answer.scripted !== undefined) scripted[answer.step] = answer.scripted;
+			}
+			return onAnswer(answer);
+		},
+		signal,
+	);
+	return {
+		outcome: result.outcome,
+		answers,
+		...(Object.keys(notes).length > 0 ? { notes } : {}),
+		...(Object.keys(other).length > 0 ? { other } : {}),
+		...(Object.keys(scripted).length > 0 ? { scripted } : {}),
+		...(result.unscripted === true ? { reason: "unscripted" as const } : {}),
+		...(checkpoints.length > 0 ? { checkpoints } : {}),
+		...(result.pipelineDone === true ? { pipelineDone: true as const } : {}),
+		text: result.output?.text ?? result.reason ?? (result.outcome === "cancelled" ? "cancelled by the operator" : ""),
+	};
+}
+
+/**
+ * An interview a tool call asked for in a session nobody can answer: a
+ * headless run, or an ACP client that answers no interviews. The extension's
+ * handler still receives the step, cancelled with reason `headless`, so it can
+ * record that no author was available, and its closing text becomes the
+ * result. The call never waits for an answer that cannot come.
+ */
+export async function cancelUnansweredInterview(
+	interview: Interview,
+	onAnswer: (answer: InterviewAnswer) => Promise<InterviewNext>,
+): Promise<ParkedInterviewResult> {
+	const fallback = "no operator can answer an interview in this session";
+	let text = fallback;
+	try {
+		const next = await onAnswer({
+			id: typeof interview?.id === "string" ? interview.id : "",
+			step: typeof interview?.step?.key === "string" ? interview.step.key : "",
+			answers: {},
+			nav: "cancel",
+			reason: "headless",
+		});
+		if ("done" in next && next.done === true && typeof next.text === "string" && next.text.length > 0) text = next.text;
+	} catch (error) {
+		text = `${fallback}; the extension's handler failed: ${error instanceof Error ? error.message : String(error)}`;
+	}
+	const questions: ReadonlyArray<unknown> = Array.isArray(interview?.step?.questions) ? interview.step.questions : [];
+	const checkpoints = [
+		...new Set(
+			questions.flatMap((question) => {
+				const checkpoint = (question as { checkpoint?: unknown } | null)?.checkpoint;
+				return typeof checkpoint === "string" ? [checkpoint] : [];
+			}),
+		),
+	];
+	return {
+		outcome: "cancelled",
+		answers: {},
+		text,
+		reason: "headless",
+		...(checkpoints.length > 0 ? { checkpoints } : {}),
+	};
+}

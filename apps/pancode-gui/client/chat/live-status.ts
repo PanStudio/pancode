@@ -1,0 +1,142 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// The live status chip. The whole liveness signal today is the string " · PanCode is working…"
+// appended to a status line, which tells the operator nothing during a silent five-minute run. Nine
+// states are derivable from facts already on the wire, and the running tool's own PanCode-reported
+// title is carried as the chip's detail, so the chip is where the operator learns which command is
+// running.
+
+import type { Permission } from "../../contracts/permissions.js";
+import type { Turn } from "../../contracts/sessions.js";
+import type { StatusTone } from "../design/status.js";
+import type { ChatTurn } from "./turns.js";
+import { endingSentence, isStoppedEarly, turnEnding } from "./turns.js";
+
+export type LiveState =
+	| "queued"
+	| "starting"
+	| "thinking"
+	| "writing"
+	| "acting"
+	| "waiting"
+	| "stopping"
+	| "done"
+	| "failed"
+	| "stopped";
+
+export interface LiveStatus {
+	readonly state: LiveState;
+	readonly label: string;
+	readonly detail: string | null;
+}
+
+/**
+ * Single-codepoint glyphs. The four working states render the PanCode spinner instead (`isWorking`);
+ * their entries remain as the plain-text form of the same state.
+ */
+export const LIVE_GLYPHS: Readonly<Record<LiveState, string>> = {
+	queued: "◌",
+	starting: "◌",
+	thinking: "◔",
+	writing: "◑",
+	acting: "◐",
+	waiting: "!",
+	stopping: "–",
+	done: "✓",
+	failed: "✕",
+	stopped: "–",
+};
+
+/**
+ * The states in which PanCode itself is doing something. Those draw the PanCode spinner; the rest keep their
+ * glyph and word. A state is only "working" for a turn that is live in an open session, which the
+ * caller decides: a replayed or recorded turn never reaches one of these states.
+ */
+export const WORKING_STATES: ReadonlySet<LiveState> = new Set<LiveState>(["starting", "thinking", "writing", "acting"]);
+
+export const isWorking = (state: LiveState): boolean => WORKING_STATES.has(state);
+
+/**
+ * The tone is supplementary. `StatusMark` renders a glyph and a word alongside it, so the state
+ * survives a greyscale screenshot.
+ */
+export const LIVE_TONES: Readonly<Record<LiveState, StatusTone>> = {
+	queued: "neutral",
+	starting: "unverified",
+	thinking: "running",
+	writing: "running",
+	acting: "running",
+	waiting: "warn",
+	stopping: "warn",
+	done: "success",
+	failed: "fail",
+	stopped: "neutral",
+};
+
+/** True while the turn can still change, which is what the shared one-second clock keys on. */
+export const isLive = (status: LiveStatus): boolean =>
+	status.state !== "done" && status.state !== "failed" && status.state !== "stopped";
+
+const capitalized = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
+/**
+ * `row` is the `Turn` row for this turn, which carries the outcome; `pending` is the permission the
+ * conversation is currently parked on, if any; `stopping` is the cancel mutation's own in-flight
+ * flag, because the contract has no session-level cancelling phase to read.
+ *
+ * A running tool may carry `partialOutput`. That is a progress snapshot and never means the call
+ * finished, so only `status` decides the state here.
+ */
+export function liveStatus(
+	turn: ChatTurn,
+	row: Turn | undefined,
+	pending: Permission | null,
+	stopping = false,
+	liveWorkers = 0,
+): LiveStatus {
+	if (row !== undefined && row.status !== "running") {
+		if (row.status === "failed") return { state: "failed", label: "Failed", detail: row.problem?.detail ?? null };
+		if (row.status === "cancelled") return { state: "stopped", label: "Stopped", detail: null };
+		const ending = turnEnding(row);
+		if (ending !== null && isStoppedEarly(ending))
+			return { state: "stopped", label: "Stopped early", detail: endingSentence(ending, row.stopReason) };
+		return { state: "done", label: "Complete", detail: null };
+	}
+	if (turn.origin === "replay") return { state: "done", label: "Earlier record", detail: null };
+	if (stopping) return { state: "stopping", label: "Stopping", detail: null };
+	// The server runs a bounded number of turns at once; this one is recorded and has not started.
+	if (row?.queued) return { state: "queued", label: "Waiting for a slot", detail: null };
+	if (pending !== null && pending.turnId === turn.turnId)
+		return { state: "waiting", label: "Waiting for your approval", detail: pending.title };
+	// A dispatched worker can run for minutes while the orchestrator's own timeline stays silent.
+	// Saying "Starting" through that is the one thing this line must never do.
+	if (liveWorkers > 0)
+		return {
+			state: "acting",
+			label: liveWorkers === 1 ? "Waiting on 1 worker" : `Waiting on ${liveWorkers} workers`,
+			detail: null,
+		};
+	const last = turn.items.at(-1);
+	// Once the server has admitted the turn the agent holds the prompt, so a silent agent is working, as the header
+	// says; "Starting" is only the gap before that admission.
+	if (last === undefined || last.kind === "user")
+		return row?.startedAt
+			? { state: "acting", label: "Working", detail: null }
+			: { state: "starting", label: "Starting", detail: null };
+	// The safety judge is reviewing the call before it runs, in the engine's words.
+	if (last.kind === "tool" && last.status === "in_progress" && last.admission)
+		return { state: "waiting", label: capitalized(last.admission), detail: last.title ?? null };
+	if (last.kind === "tool" && last.status === "in_progress")
+		return { state: "acting", label: "Running", detail: last.title ?? null };
+	if (last.kind === "thought") return { state: "thinking", label: "Thinking", detail: null };
+	if (last.kind === "text") return { state: "writing", label: "Writing", detail: null };
+	// A trailing notice is not a pending approval: resolved permissions and shell outcomes land as
+	// notices too. Only the `pending` branch above reads the real permission.
+	return { state: "acting", label: "Working", detail: null };
+}
+
+/**
+ * The placeholder for a live turn that has produced no segments yet, so the response block is never
+ * a blank box while the model is still deciding what to do.
+ */
+export const livePlaceholder = (status: LiveStatus): string => `${status.label}…`;

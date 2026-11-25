@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { type Static, Type } from "typebox";
+import { ClientIdentity } from "./auth.js";
+
+export const Id = Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" });
+/**
+ * The widest artifact window the server keeps per family. Every list route is
+ * clamped below it, so the cap is not the operating limit: it is the assertion
+ * that a projection which somehow returned an unbounded list is a bug to be
+ * surfaced rather than an allowlist to be filled.
+ */
+export const MAX_SERVED_ARTIFACT_IDS = 64;
+export const PageCursor = Type.String({ maxLength: 1024, pattern: "^[A-Za-z0-9_-]+$" });
+export const Empty = Type.Object({}, { additionalProperties: false });
+export const ProblemCode = Type.Union([
+	Type.Literal("validation"),
+	Type.Literal("unauthorized"),
+	Type.Literal("not_found"),
+	Type.Literal("conflict"),
+	Type.Literal("unsupported"),
+	Type.Literal("unavailable"),
+	Type.Literal("upstream_acp"),
+	Type.Literal("operation_failed"),
+	Type.Literal("internal"),
+]);
+export type ProblemCode = Static<typeof ProblemCode>;
+export const ModelSelectionRefusal = Type.Object(
+	{
+		code: Type.Literal("model_not_declared"),
+		targetId: Type.Union([Type.String({ maxLength: 128 }), Type.Null()]),
+		requestedModel: Type.Union([Type.String({ maxLength: 256 }), Type.Null()]),
+		availableModels: Type.Array(Type.String({ maxLength: 256 }), { maxItems: 64 }),
+		remedy: Type.String({ maxLength: 1024 }),
+	},
+	{ additionalProperties: false },
+);
+export type ModelSelectionRefusal = Static<typeof ModelSelectionRefusal>;
+/** A request a viewing client made on a session another client controls. */
+export const ControlRefusal = Type.Object(
+	{ sessionId: Id, controller: ClientIdentity },
+	{ additionalProperties: false },
+);
+export type ControlRefusal = Static<typeof ControlRefusal>;
+export const Problem = Type.Object(
+	{
+		type: Type.String(),
+		title: Type.String(),
+		status: Type.Integer(),
+		detail: Type.String(),
+		code: ProblemCode,
+		instance: Type.String(),
+		modelSelection: Type.Optional(ModelSelectionRefusal),
+		control: Type.Optional(ControlRefusal),
+	},
+	{ additionalProperties: false },
+);
+export type Problem = Static<typeof Problem>;

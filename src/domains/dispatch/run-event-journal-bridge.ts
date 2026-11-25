@@ -1,0 +1,438 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { readToolRounds } from "./types.js";
+/**
+ * Domain-owned writer for the run event journal.
+ *
+ * The journal was originally teed from `createDispatchRunEventRegistry`
+ * (src/tools/dispatch-run-events.ts), the display-tail helper behind the
+ * model-facing `dispatch` tool. That helper is not on the operator paths:
+ * `pancode run --agent` (src/cli/run.ts), `pancode fleet run`
+ * (src/cli/fleet.ts), and the TUI `/run` slash command each take a handle
+ * straight off `DispatchContract.dispatch` and iterate `handle.events`
+ * themselves, so no registry is ever built and the sink never fired. The
+ * writer had to move to something every dispatch reaches.
+ *
+ * `"run.progressed"` is that thing. The dispatch domain publishes
+ * it from inside the event pump for every consumer-visible event of every run,
+ * "attached, detached, batched, and retry runs, exactly once" (see
+ * src/core/telemetry/live-events.ts), whether or not anyone iterates the handle. The
+ * terminal pair `DispatchCompleted`/`DispatchFailed` closes every run the same
+ * way. Subscribing here makes the journal a property of dispatching, not of
+ * which caller happened to build a registry.
+ *
+ * Ownership is explicit rather than ambient: the bridge attaches only when a
+ * composition root asks for it (`DispatchBundleOptions.journalRunEvents`), and
+ * `registerAllTools` hands its registry `journal: null` in that same process.
+ * One writer per file, decided at one place, so a tool-path run in the TUI is
+ * not transcribed twice.
+ *
+ * Every write is best-effort. The sink degrades itself on I/O failure and a
+ * listener that throws is contained by the safe bus, so nothing here can fail a
+ * dispatch.
+ *
+ * The lines it writes are the feed the workers dashboard streams from, so they
+ * carry more than the display tail does: a tool call's start and finish with
+ * its redacted descriptor, outcome and duration, the tokens each model call
+ * processed, a reasoning block opening (never its content), approvals and
+ * refusals, and the worker's prose. Prose arrives as streaming deltas, which
+ * are coalesced per run into one line per {@link TEXT_COALESCE_MS} rather than
+ * one line per token. Coalescing needs no timer: a buffer is written when the
+ * next delta lands past the window, when any other event arrives, and before
+ * the run seals, so a finished process holds no handle and a sealed run has no
+ * text left behind. Lifecycle noise the richer lines already cover
+ * (`tool_execution_*`, message and turn boundaries) is not written at all.
+ */
+
+import type { TelemetryHub } from "../../core/telemetry/hub.js";
+import type {
+	DispatchCompletedPayload,
+	DispatchFailedPayload,
+	DispatchProgressPayload,
+} from "../../core/telemetry/live-events.js";
+import { normalizeCallUsage } from "../../core/token-split.js";
+import { isRecord } from "../../core/type-guards.js";
+import { runTailEntryFromEvent } from "../../tools/dispatch-run-events.js";
+import { truncateUtf8 } from "../../tools/truncate-utf8.js";
+import { createRedactionTally, redactSecretsText } from "../evidence/redact.js";
+import { sanitizeCallTargetText } from "../safety/call-target.js";
+import { holdCutOffText, messageStopCompleted, redactSecretString } from "../safety/redaction.js";
+import { isThinkingEvent, workerTextDelta } from "../telemetry/worker-progress.js";
+import { defaultRunEventJournal, type RunEventJournalEntry, type RunEventJournalSink } from "./run-event-journal.js";
+import { parseToolCallFacts } from "./run-feed.js";
+
+/** Window one coalesced prose line covers. A viewer polls at the same cadence. */
+export const TEXT_COALESCE_MS = 250;
+/** A coalesced prose line is written early once it holds this much. */
+const TEXT_CHUNK_MAX_BYTES = 4096;
+/** Bytes kept of a reason or a call object; the viewer bounds its rows again. */
+const FACT_MAX_BYTES = 240;
+/** Bytes kept of a blocked call's reason: a refusal limit names every refused command (fleet finding 6). */
+const BLOCKED_REASON_MAX_BYTES = 2048;
+/** Bytes kept of a terminal result the worker refused, so a failed run shows what was submitted. */
+const REJECTED_RESULT_MAX_BYTES = 4096;
+
+/**
+ * Events the feed does not write. Each is either covered by a richer line
+ * (`pancode_tool_*` for `tool_execution_*`, coalesced prose for deltas) or
+ * is a boundary with nothing an operator reads in it. `tool_execution_*` also
+ * carries the call's literal arguments, which never belong on disk here.
+ */
+const UNJOURNALED_TYPES = new Set([
+	"pancode_telemetry",
+	"heartbeat",
+	"message_start",
+	"message_update",
+	"text_delta",
+	"thinking_delta",
+	"turn_start",
+	"turn_end",
+	"tool_execution_start",
+	"tool_execution_update",
+	"tool_execution_end",
+]);
+
+/**
+ * Runs whose `open` line this bridge has already written. Bounded so a
+ * long-lived orchestrator cannot grow it without limit; the journal writer
+ * keeps its own bound for the same reason. Evicting a run only forgets that it
+ * was opened, and a later event for it writes a second `open` line, which the
+ * reader and the writer both tolerate.
+ */
+const OPENED_RUN_LIMIT = 512;
+
+export interface RunEventJournalBridge {
+	/** Write the run's closing feed rows now, so they land inside the seal that precedes its terminal event. */
+	closeFeed(outcome: string, detail: string | null | undefined, payload: unknown): void;
+	/** Unsubscribe from the bus. Idempotent. */
+	stop(): void;
+}
+
+export interface AttachRunEventJournalBridgeOptions {
+	/** Skip projection when neither history nor explicit recording needs this run. */
+	acceptRun?: (runId: string) => boolean;
+	/** Sink override; defaults to the process-wide journal. */
+	journal?: RunEventJournalSink;
+	/** Monotonic clock for the coalescing window; tests pin it. */
+	nowMs?: () => number;
+}
+
+function runIdentity(payload: unknown): { runId: string; agentId: string } | null {
+	if (!isRecord(payload)) return null;
+	if (typeof payload.runId !== "string" || payload.runId.length === 0) return null;
+	return { runId: payload.runId, agentId: typeof payload.agentId === "string" ? payload.agentId : "unknown" };
+}
+
+function boundedText(value: unknown, maxBytes = FACT_MAX_BYTES): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const text = value.trim();
+	// A bound first would cut a secret into a piece the row's own redaction cannot recognize (#446).
+	return text.length === 0 ? undefined : truncateUtf8(redactSecretsText(text, createRedactionTally()), maxBytes, "…");
+}
+
+function finiteCount(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : undefined;
+}
+
+/**
+ * The feed line for a `pancode_tool_start` or `pancode_tool_finish`
+ * event: the tool, its correlation id, and the descriptor the tool-admission
+ * seam composed from the arguments (its verb, and its object as the detail).
+ */
+function toolEntry(type: string, payload: Record<string, unknown>, at: string): RunEventJournalEntry | null {
+	const tool = boundedText(payload.tool);
+	if (tool === undefined) return null;
+	const action = isRecord(payload.action) ? payload.action : null;
+	const verb = boundedText(action?.verb);
+	const object = boundedText(action?.object);
+	const outcome = payload.outcome;
+	const durationMs = finiteCount(payload.durationMs);
+	const reason = boundedText(payload.reason, outcome === "blocked" ? BLOCKED_REASON_MAX_BYTES : FACT_MAX_BYTES);
+	const callId = boundedText(payload.toolCallId);
+	const finished = type === "pancode_tool_finish" || type === "pancode_tool_observation";
+	const callFacts = parseToolCallFacts(payload.callFacts);
+	if (callFacts) {
+		const target = sanitizeCallTargetText(redactSecretString(callFacts.target));
+		callFacts.target = truncateUtf8(target, 4096, "…");
+		if (Buffer.byteLength(target) > 4096) callFacts.targetTruncated = true;
+	}
+	return {
+		at,
+		type,
+		tool,
+		...(callFacts ? { callFacts } : {}),
+		...(callId !== undefined ? { callId } : {}),
+		...(verb !== undefined ? { verb } : {}),
+		...(object !== undefined ? { detail: action?.truncated === true ? `${object}…` : object } : {}),
+		...(finished && (outcome === "ok" || outcome === "error" || outcome === "blocked") ? { outcome } : {}),
+		...(finished && outcome === "ok" && payload.notExecuted === "observation_budget"
+			? { notExecuted: "observation_budget" as const }
+			: {}),
+		...(finished && durationMs !== undefined ? { durationMs } : {}),
+		...(finished && outcome !== "ok" && reason !== undefined ? { reason } : {}),
+	};
+}
+
+/**
+ * Project one non-delta worker event into a feed line, or null when the feed
+ * does not keep it. `streamed` says prose deltas already carried this
+ * message's text, so its `message_end` keeps only the token count.
+ */
+function runFeedEntryFromEvent(
+	event: unknown,
+	streamed: boolean,
+	at: string,
+	callIndex?: number,
+): RunEventJournalEntry | null {
+	if (!isRecord(event)) return null;
+	const type = typeof event.type === "string" ? event.type : "unknown";
+	if (UNJOURNALED_TYPES.has(type)) return null;
+	const payload = isRecord(event.payload) ? event.payload : {};
+	if (type === "pancode_tool_start" || type === "pancode_tool_finish" || type === "pancode_tool_observation")
+		return toolEntry(type, payload, at);
+	if (type === "pancode_model_call") {
+		const rawUsage = isRecord(payload.usage) ? payload.usage : {};
+		return {
+			at,
+			type,
+			...(callIndex !== undefined ? { callIndex } : {}),
+			usage: normalizeCallUsage({ ...rawUsage, estimated: rawUsage.estimated === true || rawUsage.observed === false }),
+			usageScope: "call",
+		};
+	}
+	if (type === "message_end") {
+		const message = isRecord(event.message) ? event.message : {};
+		const rawUsage = isRecord(message.usage) ? message.usage : {};
+		const aggregate = rawUsage.pancodeSdkAggregate === true;
+		const toolRounds = readToolRounds(message);
+		const usage =
+			callIndex !== undefined || aggregate
+				? normalizeCallUsage({ ...rawUsage, estimated: rawUsage.estimated === true || rawUsage.observed === false })
+				: undefined;
+		const tokens = usage?.observed ? usage.totalTokens : undefined;
+		const tail = streamed ? null : runTailEntryFromEvent(event, at);
+		if (usage === undefined && tail?.detail === undefined) return null;
+		const assistant = message.role === "assistant";
+		const stopReason = assistant ? (boundedText(message.stopReason) ?? "unknown") : undefined;
+		// This row carries the text of a message no delta wrote, and a cut-off one can stop inside a URL (#446).
+		const cutOff = assistant && !messageStopCompleted(stopReason);
+		const detail = cutOff && tail?.detail !== undefined ? holdCutOffText(tail.detail) : tail?.detail;
+		return {
+			at,
+			type,
+			...(detail !== undefined ? { detail } : {}),
+			...(stopReason !== undefined ? { stopReason } : {}),
+			...(tokens !== undefined ? { tokens } : {}),
+			...(toolRounds.length > 0 ? { toolRounds } : {}),
+			...(usage ? { usage, usageScope: aggregate ? ("run-aggregate" as const) : ("call" as const) } : {}),
+			...(callIndex !== undefined ? { callIndex } : {}),
+		};
+	}
+	if (type === "pancode_permission_escalated") {
+		const tool = boundedText(payload.tool);
+		const detail = boundedText(payload.target) ?? boundedText(payload.summary);
+		return { at, type, ...(tool !== undefined ? { tool } : {}), ...(detail !== undefined ? { detail } : {}) };
+	}
+	if (type === "pancode_permission_resolved") {
+		const tool = boundedText(payload.tool);
+		const decision = payload.decision === "approved" || payload.decision === "denied" ? payload.decision : undefined;
+		const reason = boundedText(payload.reason);
+		return {
+			at,
+			type,
+			...(tool !== undefined ? { tool } : {}),
+			outcome: decision === "approved" ? "ok" : "blocked",
+			detail: decision ?? (typeof payload.mode === "string" ? payload.mode : "deny"),
+			...(reason !== undefined ? { reason } : {}),
+		};
+	}
+	if (type === "pancode_run_outcome") {
+		const code = boundedText(payload.outcomeCode) ?? "unknown";
+		const reason = boundedText(payload.detail);
+		return { at, type, detail: code, ...(reason !== undefined ? { reason } : {}) };
+	}
+	if (type === "pancode_steer_received") {
+		const chars = finiteCount(payload.chars);
+		return { at, type, ...(chars !== undefined ? { detail: `${chars} chars` } : {}) };
+	}
+	if (type === "pancode_helper_result_rejected") {
+		const reason = boundedText(payload.reason);
+		const submitted = typeof payload.submitted === "string" ? payload.submitted.trim() : "";
+		// Redacted before the bound, like every row (#446).
+		const detail =
+			submitted.length > 0
+				? truncateUtf8(redactSecretsText(submitted, createRedactionTally()), REJECTED_RESULT_MAX_BYTES, "…")
+				: undefined;
+		return { at, type, ...(detail !== undefined ? { detail } : {}), ...(reason !== undefined ? { reason } : {}) };
+	}
+	return runTailEntryFromEvent(event, at);
+}
+
+/** Prose waiting to be written as one line, and what the run is doing between lines. */
+interface RunFeedState {
+	modelCallIndex: number;
+	text: string;
+	textBytes: number;
+	/** Monotonic instant the first buffered delta arrived. */
+	since: number;
+	/** A reasoning block is open; its line was written when it opened. */
+	thinking: boolean;
+	/** Prose deltas were written since the last `message_end`. */
+	streamed: boolean;
+}
+
+/**
+ * Subscribe the journal to a dispatch bus. Returns a handle whose `stop()` the
+ * owning bundle calls on shutdown so a second bundle in the same process (tests
+ * do this) never inherits the first one's listeners.
+ */
+export function attachRunEventJournalBridge(
+	bus: TelemetryHub,
+	options: AttachRunEventJournalBridgeOptions = {},
+): RunEventJournalBridge {
+	const journal = options.journal ?? defaultRunEventJournal();
+	const nowMs = options.nowMs ?? (() => performance.now());
+	const opened = new Set<string>();
+	const feeds = new Map<string, RunFeedState>();
+
+	const ensureOpen = (runId: string, agentId: string): void => {
+		if (opened.has(runId)) return;
+		opened.add(runId);
+		while (opened.size > OPENED_RUN_LIMIT) {
+			const oldest = opened.values().next();
+			if (oldest.done === true) break;
+			opened.delete(oldest.value);
+			feeds.delete(oldest.value);
+		}
+		journal.open(runId, agentId);
+	};
+
+	const feedFor = (runId: string): RunFeedState => {
+		let feed = feeds.get(runId);
+		if (feed === undefined) {
+			feed = { modelCallIndex: 0, text: "", textBytes: 0, since: 0, thinking: false, streamed: false };
+			feeds.set(runId, feed);
+		}
+		return feed;
+	};
+
+	const flushText = (runId: string): void => {
+		const feed = feeds.get(runId);
+		if (feed === undefined || feed.text.length === 0) return;
+		journal.append(runId, { at: new Date().toISOString(), type: "text", detail: feed.text });
+		feed.text = "";
+		feed.textBytes = 0;
+		feed.streamed = true;
+	};
+
+	const bufferText = (runId: string, delta: string): void => {
+		const feed = feedFor(runId);
+		const now = nowMs();
+		if (feed.text.length === 0) feed.since = now;
+		feed.text += delta;
+		feed.textBytes += Buffer.byteLength(delta, "utf8");
+		feed.thinking = false;
+		if (now - feed.since >= TEXT_COALESCE_MS || feed.textBytes >= TEXT_CHUNK_MAX_BYTES) flushText(runId);
+	};
+
+	/**
+	 * Write the result facts and close the run. Read defensively for the same
+	 * reason the registry's seal is: a terminal payload that is missing a field
+	 * it is typed to have must degrade the transcript, never throw back into the
+	 * finalizer that emitted it.
+	 */
+	const seal = (outcome: string, detail: string | null | undefined, payload: unknown): void => {
+		const identity = runIdentity(payload);
+		if (identity === null || options.acceptRun?.(identity.runId) === false) return;
+		// The finalizer closes the feed itself before it seals the run, so the event that follows writes nothing.
+		if (closedAhead.delete(identity.runId)) return;
+		ensureOpen(identity.runId, identity.agentId);
+		flushText(identity.runId);
+		feeds.delete(identity.runId);
+		const exitCode = isRecord(payload) && typeof payload.exitCode === "number" ? payload.exitCode : null;
+		journal.result(identity.runId, { outcome, exitCode });
+		journal.terminal(identity.runId, outcome, detail ?? undefined);
+		opened.delete(identity.runId);
+	};
+
+	const closedAhead = new Set<string>();
+
+	const unsubscribes = [
+		bus.subscribe("run.progressed", (payload: DispatchProgressPayload) => {
+			const identity = runIdentity(payload);
+			if (identity === null || options.acceptRun?.(identity.runId) === false) return;
+			const { runId } = identity;
+			const event = payload.event;
+			const delta = workerTextDelta(event);
+			if (delta.length > 0) {
+				ensureOpen(runId, identity.agentId);
+				bufferText(runId, delta);
+				return;
+			}
+			if (isRecord(event) && isThinkingEvent(event)) {
+				// The block opening is the state change worth a line; its content
+				// is never read, and every later delta of it is the same fact.
+				const feed = feedFor(runId);
+				if (feed.thinking) return;
+				ensureOpen(runId, identity.agentId);
+				flushText(runId);
+				feed.thinking = true;
+				journal.append(runId, { at: new Date().toISOString(), type: "thinking" });
+				return;
+			}
+			const feed = feedFor(runId);
+			const callIndex =
+				isRecord(event) &&
+				(event.type === "pancode_model_call" ||
+					(event.type === "message_end" &&
+						isRecord(event.message) &&
+						event.message.role === "assistant" &&
+						// A message PanCode wrote into the loop reached no provider.
+						(!isRecord(event.message.usage) ||
+							(event.message.usage.pancodeSdkAggregate !== true && event.message.usage.callInvoked !== false))))
+					? ++feed.modelCallIndex
+					: undefined;
+			// Opening the run only once an event survives the feed's filter keeps
+			// a heartbeat-only run from creating an empty journal directory.
+			// Prose still waiting in the coalesce window was streamed too: the flush below writes it ahead of this entry.
+			const streamed = feed.streamed || feed.text.length > 0;
+			const entry = runFeedEntryFromEvent(event, streamed, new Date().toISOString(), callIndex);
+			if (entry === null) return;
+			ensureOpen(runId, identity.agentId);
+			flushText(runId);
+			if (feed !== undefined) {
+				feed.thinking = false;
+				if (entry.type === "message_end") feed.streamed = false;
+			}
+			// Route resolution warnings use `message`, while worker transcript
+			// events generally project their text through `detail`. Preserve the
+			// warning at this dispatch-owned durability seam so fleet view does not
+			// render a content-free `route_warning` line.
+			const message = isRecord(event) && typeof event.message === "string" ? event.message : undefined;
+			journal.append(runId, entry.detail === undefined && message !== undefined ? { ...entry, detail: message } : entry);
+		}),
+		bus.subscribe("run.completed", (payload: DispatchCompletedPayload) => {
+			seal(payload.outcome, payload.outcomeDetail, payload);
+		}),
+		bus.subscribe("run.failed", (payload: DispatchFailedPayload) => {
+			seal(payload.outcome, payload.outcomeDetail, payload);
+		}),
+	];
+
+	let stopped = false;
+	return {
+		closeFeed(outcome, detail, payload): void {
+			seal(outcome, detail, payload);
+			const identity = runIdentity(payload);
+			if (identity !== null && options.acceptRun?.(identity.runId) !== false) closedAhead.add(identity.runId);
+		},
+		stop(): void {
+			if (stopped) return;
+			stopped = true;
+			for (const unsubscribe of unsubscribes) unsubscribe();
+			for (const runId of feeds.keys()) flushText(runId);
+			feeds.clear();
+			opened.clear();
+		},
+	};
+}

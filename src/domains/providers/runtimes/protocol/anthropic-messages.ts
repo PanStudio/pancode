@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { Api, Model } from "../../../../engine/types.js";
+
+import { synthesizeCatalogBackedModel } from "../../catalog.js";
+import type { CapabilityFlags } from "../../types/capability-flags.js";
+import type { KnowledgeBaseHit } from "../../types/knowledge-base.js";
+import type { TargetDescriptor } from "../../types/target-descriptor.js";
+
+export interface AnthropicMessagesSynthesisInput {
+	target: TargetDescriptor;
+	wireModelId: string;
+	kb: KnowledgeBaseHit | null;
+	defaultCapabilities: CapabilityFlags;
+	provider: string;
+	defaultBaseUrl: string;
+	/** Cache retention for the session's own turn requests; workers and side calls keep the provider default (#422). */
+	mainThreadCacheRetention?: "long";
+	/** Wire flags the runtime sets for its own endpoint, merged over the catalog entry's. */
+	compat?: Model<"anthropic-messages">["compat"];
+}
+
+export function synthesizeAnthropicMessagesModel(input: AnthropicMessagesSynthesisInput): Model<Api> {
+	return synthesizeCatalogBackedModel({
+		target: input.target,
+		wireModelId: input.wireModelId,
+		kb: input.kb,
+		defaultCapabilities: input.defaultCapabilities,
+		runtimeId: "anthropic",
+		api: "anthropic-messages",
+		provider: input.provider,
+		defaultBaseUrl: input.defaultBaseUrl,
+		...(input.mainThreadCacheRetention !== undefined ? { mainThreadCacheRetention: input.mainThreadCacheRetention } : {}),
+		...(input.compat !== undefined ? { anthropicCompat: input.compat } : {}),
+	});
+}

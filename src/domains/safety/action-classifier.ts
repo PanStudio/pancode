@@ -1,0 +1,1382 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { globSync, lstatSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import path from "node:path";
+import { artifactDefaultPath } from "../../core/artifact-paths.js";
+import { canonicalizeExistingPath, canonicalizePath, canonicalizeRawPath } from "../../core/path-canonical.js";
+import { isSameOrDescendant, isStrictDescendant } from "../../core/path-containment.js";
+import { shellQuote } from "../../core/shell-quote.js";
+import { storeReadRoots, storeReplacedBytes, storeWriteTarget } from "../../core/store-paths.js";
+import { isHarnessExtensionToolName, ToolNames } from "../../core/tool-names.js";
+import { resolvePancodeDirs } from "../../core/xdg.js";
+import { expandPath, normalizeToolPath, runScriptCwd } from "../../tools/path-utils.js";
+import type { CommandPathEvent } from "./command-path-walks.js";
+import { extractCommandPathWalks } from "./command-path-walks.js";
+import { normalizedGitCommands } from "./git-command-normalization.js";
+import { inertQuotedMatch, matchesOnlyCommandText } from "./literal-exemption.js";
+import {
+	BASH_BUILTINS,
+	commandHasPart,
+	parseShellScript,
+	type ShellSimpleCommand,
+	type ShellWord,
+	staticCommandName,
+	staticWordValue,
+} from "./shell-syntax.js";
+
+/**
+ * Deterministic action classifier for tool calls. Pure function, no I/O, no
+ * state. Dispatch admission and tool audit consume it. This module only
+ * owns the mapping from (tool, args) to an ActionClass.
+ */
+
+export type ActionClass =
+	| "read"
+	| "write"
+	| "execute"
+	| "dispatch"
+	| "system_modify"
+	| "git_destructive"
+	| "destructive"
+	| "unknown";
+
+export interface ClassifierCall {
+	tool: string;
+	args?: Record<string, unknown>;
+	/**
+	 * Set only by a trusted tool's own `safetyCall` projection, never from
+	 * model arguments: the effect is that tool's fixed argv spelled as bash.
+	 * `mcp-server` is an execute-class MCP tool's launch vector: the call runs
+	 * on that already running server, never in the main-session sandbox.
+	 */
+	projection?: "typed-git" | "mcp-server";
+}
+
+export interface Classification {
+	actionClass: ActionClass;
+	reasons: ReadonlyArray<string>;
+	exposure?: "outward";
+}
+
+interface NamedPattern {
+	name: string;
+	re: RegExp;
+}
+
+const GIT_DESTRUCTIVE_PATTERNS: ReadonlyArray<NamedPattern> = [
+	{ name: "git-push-force-long", re: /\bgit\s+push\s+--force(?![\w-])/i },
+	{ name: "git-push-force-short", re: /\bgit\s+push\s+-f\b/i },
+	{ name: "git-reset-hard", re: /\bgit\s+reset\s+--hard\b/i },
+	// Preview flags can follow force flags; the damage-control rule checks the whole clean command.
+	{ name: "git-checkout-dot", re: /\bgit\s+checkout\s+--\s+\./i },
+	{ name: "git-branch-D", re: /\bgit\s+branch\s+-D\b/i },
+	// A source ref changes which content is restored; whole-tree pathspecs own the confirmation rail.
+];
+
+const SYSTEM_MODIFY_PATTERNS: ReadonlyArray<NamedPattern> = [
+	{ name: "sudo-or-doas", re: /\b(sudo|doas)\b/i },
+	// allow rm -rf /tmp/... and /var/tmp/... but flag everything else rooted at /
+	{ name: "rm-rf-root", re: /\brm\s+-rf?\s+\/(?!(tmp|var\/tmp)(?:\/|\s|$))/i },
+	{ name: "apt-install", re: /\bapt(-get)?\s+(install|remove|purge)/i },
+	{ name: "brew-install", re: /\bbrew\s+(install|uninstall|reinstall)/i },
+	{ name: "npm-install-global", re: /\bnpm\s+install\s+-g\b/i },
+	{ name: "pip-install", re: /\bpip\s+install\b/i },
+	{ name: "systemctl", re: /\bsystemctl\s+/i },
+	{ name: "chmod-root", re: /\bchmod\s+[0-7]{3,4}\s+\//i },
+	{ name: "chown", re: /\bchown\s+/i },
+];
+
+/**
+ * `/run` is here because path resolution canonicalizes symlinks: on every
+ * systemd distribution `/var/run` is a symlink to `/run` and `/var/lock` to
+ * `/run/lock`, so a write aimed at either landed on a path no prefix covered
+ * and escaped the system-root rule whenever the workspace happened to sit
+ * under it. Found while auditing the `/var` subdirectories for the carve-out
+ * below. `/private/etc` and `/private/var` close the same hole on macOS, where
+ * `/etc` and `/var` are links into `/private`: a workspace opened in `/etc`
+ * there is `/private/etc`, and every write inside it looked like a plain write.
+ */
+const SYSTEM_WRITE_ROOT_PREFIXES: ReadonlyArray<string> = [
+	"/etc",
+	"/usr",
+	"/var",
+	"/bin",
+	"/sbin",
+	"/run",
+	"/private/etc",
+	"/private/var",
+];
+
+/**
+ * Temp trees that sit under a protected root but are ordinary scratch space,
+ * not system state. `/var/tmp` is the FHS's persistent temp directory and
+ * `/var/folders` is macOS's per-user temp tree, and both are where an operator
+ * or a harness puts a throwaway workspace. Classifying them as system_modify
+ * made every mutating call from a workspace there require a confirmation, which
+ * headless runs answer with a denial: a `pancode run` in a `/var/tmp` sandbox
+ * could not write one byte, and the model's recovery was to report work it had
+ * not done. The exemption is a carve-out rather than an enumeration of the
+ * system directories under `/var` on purpose: `/var/log`, `/var/lib`,
+ * `/var/spool`, `/var/db` and every other subdirectory, including ones this
+ * list has never heard of, stay exactly as protected as before.
+ *
+ * `rm -rf` already reads the same line (SYSTEM_MODIFY_PATTERNS rm-rf-root
+ * exempts `/tmp` and `/var/tmp`), so the two checks now agree. Write targets
+ * are canonical, so on macOS both trees are named where they land, in
+ * `/private/var`.
+ */
+const SYSTEM_WRITE_EXEMPT_PREFIXES: ReadonlyArray<string> = [
+	"/var/tmp",
+	"/var/folders",
+	"/private/var/tmp",
+	"/private/var/folders",
+];
+
+function isUnderPrefix(abs: string, prefix: string): boolean {
+	return abs === prefix || abs.startsWith(`${prefix}/`);
+}
+
+/**
+ * Trees outside the workspace that PanCode writes and tells the model to read:
+ * the offload scratch `writeToolOffload` (src/tools/result-shaping.ts) spills
+ * an oversized result into, and this project's store directory, whose blob
+ * paths the store tool hands back. Resolved without creating anything, and an
+ * unresolvable PanCode home names none.
+ */
+function harnessReadRoots(): string[] {
+	try {
+		const candidates = [path.join(resolvePancodeDirs().state, "scratch"), ...storeReadRoots(process.cwd())];
+		return candidates.map((candidate) => canonicalizePath(candidate)).filter((root) => root !== null);
+	} catch {
+		// An unresolvable PanCode home permits no extra cd target.
+		return [];
+	}
+}
+
+/** The classifier's tag on a steer cancel: a control action the read-only gate admits. */
+export const STEER_CANCEL_REASON = "steer:cancel-run";
+
+function baseClassify(tool: string): ActionClass | null {
+	switch (tool) {
+		case ToolNames.Evidence:
+		case ToolNames.Read:
+		case ToolNames.Grep:
+		case ToolNames.Find:
+		case ToolNames.Ls:
+		case ToolNames.Count:
+		// web_read is the GET-only half of the web split: no method, headers,
+		// or body can make it outward, so it is read class unconditionally.
+		case ToolNames.WebRead:
+		case ToolNames.WebFetch:
+		case ToolNames.Git:
+		case ToolNames.CodeNav:
+		case ToolNames.SelfCompact:
+		case ToolNames.Context:
+		// pancode_docs and pancode_hub read PanCode's bundled documentation and the
+		// recipe catalog; data streams structured files. None writes.
+		case ToolNames.PancodeDocs:
+		case ToolNames.PancodeHub:
+		case ToolNames.Data:
+		// memory_recall reads the task bank and the durable store; it never writes.
+		case ToolNames.MemoryRecall:
+		// memory_note writes one unverified note to PanCode's own memory store, never a workspace file.
+		case ToolNames.MemoryNote:
+		// gateway lists and describes capabilities on its own; a call carries
+		// the capability's own class through a nested admission, so the outer
+		// call stays read class.
+		case ToolNames.Gateway:
+		case ToolNames.Monitor:
+		case ToolNames.AskUser:
+		case ToolNames.Report:
+		case ToolNames.CredentialPresent:
+		// tasks pick mutates only PanCode-owned session-ledger and project-local
+		// .pancode runtime state, never source-workspace files. By intentional
+		// policy it stays read class and ungated; the tool itself still requires
+		// a durable operator task id before it can mutate either store.
+		case ToolNames.Tasks:
+		// ledger posts a typed contribution to a coordination board and reads a
+		// local mirror. Neither touches the workspace, so it is never gated
+		// behind a confirmation.
+		case ToolNames.Ledger:
+		// Non-handoff panes actions operate on PanCode-owned terminal surfaces and
+		// expose only fixed utility presets. The peer handoff action is classified
+		// as dispatch above because its coding CLI may edit the workspace.
+		case ToolNames.Panes:
+		// music plays and stops PanCode's own player in PanCode's own dock.
+		case ToolNames.Music:
+		// limitation appends a typed receipt to the session ledger and touches
+		// nothing else, so it is never gated behind a confirmation.
+		case ToolNames.Limitation:
+		// finish declares how the turn ended; the ledger pair is its whole effect.
+		case ToolNames.Finish:
+		// decide appends the model's own design decision to the session
+		// decision board. One ledger append, no workspace effect, never gated.
+		case ToolNames.Decide:
+		// consult sends text the model wrote, plus redacted heads of workspace
+		// files and offloaded output the read tool could already return, to the
+		// System One engine the operator bound, and changes nothing anywhere.
+		case ToolNames.Consult:
+		case ToolNames.Vision:
+			return "read";
+		case ToolNames.Write:
+		case ToolNames.Edit:
+		case ToolNames.Artifact:
+		case ToolNames.ConfigurePancode:
+		case ToolNames.RestartSession:
+			return "write";
+		case ToolNames.Bash:
+		case ToolNames.Verify:
+		// run_script runs an interpreter over a workspace script; its
+		// safetyCall projects the exact argv to a bash command so the policy
+		// engine applies the shell rules to it.
+		case ToolNames.RunScript:
+		// browser drives a sandboxed session worker; safetyCall projects each op to the driver command as bash.
+		case ToolNames.Browser:
+			return "execute";
+		case ToolNames.Dispatch:
+		case ToolNames.Job:
+		case ToolNames.Steer:
+			return "dispatch";
+		default:
+			return isHarnessExtensionToolName(tool) ? "execute" : null;
+	}
+}
+
+function scanStringOf(args: Record<string, unknown> | undefined): string {
+	if (!args) return "";
+	const parts: string[] = [];
+	for (const value of Object.values(args)) {
+		if (value == null) continue;
+		if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+			parts.push(String(value));
+		} else {
+			try {
+				parts.push(JSON.stringify(value));
+			} catch {
+				// ignore values that cannot be serialized
+			}
+		}
+	}
+	return parts.join(" ");
+}
+
+/**
+ * The first pattern the text matches outside what `exempt` proves is never
+ * run. The git patterns keep the quoted-argument exemption damage control
+ * shares; the system patterns read the whole line (Astra r2-8).
+ */
+function matchFirst(
+	patterns: ReadonlyArray<NamedPattern>,
+	haystack: string,
+	command = haystack,
+	exempt: (command: string, pattern: RegExp) => boolean = inertQuotedMatch,
+): NamedPattern | null {
+	for (const p of patterns) {
+		if (p.re.test(haystack) && !exempt(command, p.re)) return p;
+	}
+	return null;
+}
+
+/**
+ * The directory a bash call runs in. The bash tool resolves its cwd argument
+ * lexically (resolveSafeCwd) and the kernel follows links on chdir, so this
+ * reads it the same way.
+ */
+function candidateBase(baseCwd?: string): string {
+	return canonicalizeExistingPath(path.resolve(baseCwd ?? process.cwd()));
+}
+
+/**
+ * Where a write through a model-supplied path lands. The kernel resolves an
+ * open or a redirect one component at a time, so `data/link/../x` lands beside
+ * the link's target, not in `data`. Null when the path cannot be canonicalized.
+ */
+function resolveCandidate(p: string, baseCwd?: string): string | null {
+	// ~ expansion is not performed here; any ~-prefixed path is treated as an
+	// absolute user-home reference. We keep it as-is so the caller-visible
+	// string drives the escape check, and classify conservatively as modify.
+	if (p.startsWith("~")) return p;
+	return canonicalizeRawPath(p, candidateBase(baseCwd));
+}
+
+/**
+ * Where a shell `cd` lands, under both readings. A shell `cd` is logical by
+ * default: it collapses `link/..` against the path it names and then follows
+ * links. `cd -P` and `set -P` walk physically instead. Null for a reading that
+ * cannot be canonicalized.
+ */
+function resolveCdCandidates(target: string, baseCwd?: string): Array<string | null> {
+	const base = candidateBase(baseCwd);
+	const logical = canonicalizePath(path.resolve(base, target));
+	const physical = canonicalizeRawPath(target, base);
+	return logical === physical ? [logical] : [logical, physical];
+}
+
+// A path that cannot be canonicalized (a link loop, too many links) is
+// outside, never inside: nothing proves where a write through it lands.
+function isInsideCwd(abs: string): boolean {
+	const cwd = canonicalizePath(path.resolve(process.cwd()));
+	const candidate = canonicalizePath(abs);
+	if (cwd === null || candidate === null) return false;
+	return isSameOrDescendant(candidate, cwd);
+}
+
+function writePathClass(pathArg: string, baseCwd?: string): { cls: "system_modify" | "write"; reason?: string } {
+	if (pathArg.startsWith("~")) {
+		return { cls: "system_modify", reason: `write-path-home-escape: ${pathArg}` };
+	}
+	const abs = resolveCandidate(pathArg, baseCwd);
+	// Nothing proves where a write through an unresolvable path lands.
+	if (abs === null) return { cls: "system_modify", reason: `write-path-outside-cwd: ${pathArg}` };
+	const exempt = SYSTEM_WRITE_EXEMPT_PREFIXES.some((prefix) => isUnderPrefix(abs, prefix));
+	if (!exempt) {
+		for (const prefix of SYSTEM_WRITE_ROOT_PREFIXES) {
+			if (isUnderPrefix(abs, prefix)) {
+				return { cls: "system_modify", reason: `write-path-system-root: ${prefix}` };
+			}
+		}
+	}
+	if (!isInsideCwd(abs)) {
+		return { cls: "system_modify", reason: `write-path-outside-cwd: ${abs}` };
+	}
+	return { cls: "write" };
+}
+
+/** More directories than this after a run of cds is treated as an unknown base. */
+const MAX_SHELL_BASES = 32;
+
+/**
+ * A word the shell expands at run time: a variable, a substitution, a glob, or
+ * a brace expansion (`{a,b}`, `{1..3}`). A lone `{}` is literal to the shell.
+ */
+function isDynamicShellPath(p: string): boolean {
+	return /[$`*?[]/u.test(p) || /\{[^{}]*(?:,|\.\.)[^{}]*\}/u.test(p);
+}
+
+function expandShellHome(p: string): string | null {
+	if (p === "~") return homedir();
+	if (p.startsWith("~/")) return path.join(homedir(), p.slice(2));
+	return p.startsWith("~") ? null : p;
+}
+
+/** Where the shell can be; null once a cd leaves it unknown. */
+type ShellBases = string[] | null;
+
+function mergeBases(left: ShellBases, right: ShellBases): ShellBases {
+	if (left === null || right === null) return null;
+	const merged = [...new Set([...left, ...right])];
+	return merged.length > MAX_SHELL_BASES ? null : merged;
+}
+
+/**
+ * Reasons a bash command reaches outside the workspace through the paths it
+ * names. The walk keeps every directory the shell can be in and resolves each
+ * relative write, cd, and link from all of them. A cd adds where it lands under
+ * both readings and never removes a directory, because the cd may fail, run in
+ * a pipeline, or be something the scanner misreads as a cd (a heredoc line, a
+ * backtick script), and a later command then runs where the shell already
+ * was. So the call's cwd is always a base, and nothing is judged from fewer
+ * directories than before cds were followed. A subshell's cds end at its `)`.
+ * A cd the shell expands at run time, or one a loop, a function, or CDPATH can
+ * repeat or redirect, leaves the base unknown, and a relative write after it
+ * cannot be placed.
+ */
+function bashPathReasons(command: string, argCwd: string | undefined, scratchRoots?: ReadonlyArray<string>): string[] {
+	const reasons = new Set<string>();
+	const scratch = resolveScratchDeleteOperands(command);
+	for (const walk of extractCommandPathWalks(scratch.command)) {
+		for (const reason of walkPathReasons(walk, argCwd, scratchRoots, scratch.leadingCd)) reasons.add(reason);
+	}
+	return [...reasons];
+}
+
+/** Every reason a delete target produces starts with this; the policy engine hard-blocks on it. */
+export const DELETE_PATH_REASON_PREFIX = "delete-path-";
+
+/**
+ * Deletes a bash command would make outside the workspace, in its .git, or at a
+ * place it cannot name. `scratchRoots` (canonical) come only from the
+ * operator's own default scope (#419): deletes inside them are judged like ones
+ * inside the workspace, and a cd into one is followed as a base.
+ */
+export function bashDeleteReasons(
+	command: string,
+	argCwd: string | undefined,
+	scratchRoots?: ReadonlyArray<string>,
+): string[] {
+	return bashPathReasons(command, argCwd, scratchRoots).filter((reason) => reason.startsWith(DELETE_PATH_REASON_PREFIX));
+}
+
+/** Scratch roots a delete may clean without leaving the workspace rules. */
+function tmpDeleteRoots(): string[] {
+	const roots = [tmpdir(), "/tmp", ...SYSTEM_WRITE_EXEMPT_PREFIXES].map((root) => canonicalizePath(root));
+	return [...new Set(roots.filter((root): root is string => root !== null))];
+}
+
+/**
+ * Where a delete lands, judged by target and never by flags. A target inside
+ * the workspace goes through the ordinary approval path. The workspace root,
+ * anything above or outside it, its .git, and a target the shell only names at
+ * run time are hard blocks at every autonomy level, with scratch roots
+ * exempt. `children` scope removes entries under a directory, so that
+ * directory may itself be the workspace root.
+ */
+function deleteTargetReason(
+	target: string,
+	scope: "path" | "children",
+	base: string | undefined,
+	pattern: string | null,
+	scratchRoots: ReadonlyArray<string>,
+	throughLink: (abs: string, follows?: boolean) => boolean = () => false,
+): string | null {
+	const abs = canonicalizeRawPath(target, candidateBase(base));
+	const workspace = canonicalizePath(path.resolve(process.cwd()));
+	if (abs === null || workspace === null) return `${DELETE_PATH_REASON_PREFIX}unresolved: ${target}`;
+	// The workspace's own root and history outrank the scratch exemption, so a
+	// checkout that lives under /tmp keeps them.
+	if (isUnderPrefix(abs, path.join(workspace, ".git"))) return `${DELETE_PATH_REASON_PREFIX}git-metadata: ${abs}`;
+	// `rm -rf .*` at the root matches .git without naming it.
+	if (scope === "children" && abs === workspace && pattern?.startsWith(".") === true)
+		return `${DELETE_PATH_REASON_PREFIX}git-metadata: ${path.join(abs, pattern)}`;
+	if (scope === "children" ? isUnderPrefix(abs, workspace) : isStrictDescendant(abs, workspace)) return null;
+	if (abs === workspace) return `${DELETE_PATH_REASON_PREFIX}workspace-root: ${abs}`;
+	if (isUnderPrefix(workspace, abs)) return `${DELETE_PATH_REASON_PREFIX}outside-workspace: ${abs}`;
+	const inScratch = [...tmpDeleteRoots(), ...scratchRoots].some((root) =>
+		scope === "children" ? isUnderPrefix(abs, root) : isStrictDescendant(abs, root),
+	);
+	// A link the command plants first is followed by the delete, and nothing here can see where it points (row 261).
+	// A `..` after a link climbs from where the link points, not from the link's own directory, so each prefix
+	// the path walks before a `..` is checked too.
+	const climbsThroughLink = (): boolean => {
+		let walked = path.isAbsolute(target) ? "/" : candidateBase(base);
+		for (const segment of target.split("/")) {
+			if (segment === ".." && throughLink(walked, true)) return true;
+			walked = path.join(walked, segment);
+		}
+		return false;
+	};
+	if (inScratch && (throughLink(abs) || climbsThroughLink()))
+		return `${DELETE_PATH_REASON_PREFIX}unresolved: ${target} below a link this command creates`;
+	return inScratch ? null : `${DELETE_PATH_REASON_PREFIX}outside-workspace: ${abs}`;
+}
+
+/**
+ * Statements that can give a variable a value the text does not show: the same discipline as the yolo floor's
+ * PanCode-variable pins (`yolo-floor.ts` DYNAMIC_ASSIGNERS).
+ */
+const TEMP_DIR_ASSIGNERS =
+	/(?:^|[\s;&|(){}`])(?:eval|source|\.|declare|typeset|local|readonly|read|mapfile|readarray|unset|export|let|getopts|alias|enable|builtin)(?=[\s;&|)]|$)|\bprintf\b[^\n;&|]*\s-v|\bwait\b[^\n;&|]*\s-p|\$\{!/u;
+
+/**
+ * The bash command with each `$TMPDIR` and `${TMPDIR}` the outer shell expands spelled as this process's temp
+ * directory, which the command inherits, so `rm "$TMPDIR/f"` meets every rule exactly as `rm /that/dir/f` does (FX-7).
+ * The command is returned unchanged when anything in it can assign TMPDIR (every mention of the name must be a plain
+ * reference, and no dynamic assigner may appear), when a quoted here-document or ANSI-C string could hold the
+ * reference as text, or when TMPDIR is not the directory `tmpdir()` resolves to or is `/`, the home or above it.
+ * Single-quoted and escaped references are text to the outer shell and stay as they are. A TMPDIR that is not an
+ * existing directory is no temp root at all: a cd into it fails and the shell stays where it was. The value is never
+ * trimmed: the shell keeps leading and trailing whitespace and word-splits an unquoted reference on it, so a padded
+ * TMPDIR fails the character check and stays named.
+ */
+function stableTempDir(): string | null {
+	const value = process.env.TMPDIR?.replace(/(.)\/+$/u, "$1");
+	if (value === undefined || !path.isAbsolute(value) || !/^[\w./+@%,:-]+$/u.test(value)) return null;
+	if (statSync(value, { throwIfNoEntry: false })?.isDirectory() !== true) return null;
+	const temp = canonicalizePath(tmpdir());
+	const home = canonicalizePath(homedir());
+	if (
+		temp === null ||
+		canonicalizePath(value) !== temp ||
+		temp === "/" ||
+		(home !== null && isSameOrDescendant(home, temp))
+	)
+		return null;
+	return value;
+}
+
+/**
+ * Row 261: a TMPDIR rebinding the reading below misses because quotes or escapes split its words (`T''MPDIR=.`,
+ * `\\declare`), or a `trap` or `coproc` that may assign it later. It only ever withholds the expansion.
+ */
+function quotedTempDirRebinding(command: string): boolean {
+	const plain = command.replace(/['"\\]/gu, "");
+	const names = plain.match(/\bTMPDIR\b/gu)?.length ?? 0;
+	const references = command.match(/\$\{TMPDIR\}|\$TMPDIR(?![A-Za-z0-9_])/gu)?.length ?? 0;
+	return (
+		names > references || TEMP_DIR_ASSIGNERS.test(plain) || /(?:^|[\s;&|(){}`])(?:trap|coproc)(?=[\s;&|)]|$)/u.test(plain)
+	);
+}
+
+function hasStableTempDirReferences(command: string): boolean {
+	// Row 287: a line continuation can split a TMPDIR rebinding (`TM\<newline>PDIR=.`) past every count below.
+	if (command.includes("\\\n") || quotedTempDirRebinding(command)) return false;
+	const names = command.match(/\bTMPDIR\b/gu)?.length ?? 0;
+	const references = command.match(/\$\{TMPDIR\}|\$TMPDIR(?![A-Za-z0-9_])/gu)?.length ?? 0;
+	// A `$'...'` escape or a `$"..."` locale string (translated through TEXTDOMAIN at run time) can spell TMPDIR.
+	return names === references && !TEMP_DIR_ASSIGNERS.test(command) && !/<<-?\s*[^\s<;&|]*['"\\]|\$['"]/u.test(command);
+}
+
+function expandTempDirReferences(command: string): string {
+	if (!command.includes("TMPDIR")) return command;
+	if (!hasStableTempDirReferences(command)) return expandLeadingSourceOperand(command);
+	const value = stableTempDir();
+	if (value === null) return command;
+	return spellTempDir(command, value);
+}
+
+/**
+ * FX-8: a command that opens with `source FILE` or `. FILE` expands that step's own words before anything in it runs,
+ * so their `$TMPDIR` is this process's temp directory even when the file itself may rebind TMPDIR for what follows.
+ * Only that step's operands are spelled out, so the floor reads the sourced file instead of handing a scratch home's
+ * env file to the judge as a name built at run time; every later reference stays as written.
+ */
+function expandLeadingSourceOperand(command: string): string {
+	const script = parseShellScript(command);
+	const step = script?.items[0]?.andOr.pipelines[0]?.commands[0];
+	const [head, first] = step?.words ?? [];
+	if (step === undefined || head === undefined || first === undefined || step.assignments.length > 0) return command;
+	const name = staticWordValue(head);
+	if (name !== "source" && name !== ".") return command;
+	const operands = command.slice(first.start, step.end);
+	if (!operands.includes("TMPDIR") || !hasStableTempDirReferences(operands)) return command;
+	const value = stableTempDir();
+	if (value === null) return command;
+	return `${command.slice(0, first.start)}${spellTempDir(operands, value)}${command.slice(step.end)}`;
+}
+
+/** Each `$TMPDIR` and `${TMPDIR}` the shell expands in `command`, spelled as `value`. */
+function spellTempDir(command: string, value: string): string {
+	let out = "";
+	let single = false;
+	let double = false;
+	for (let index = 0; index < command.length; index += 1) {
+		const char = command[index] as string;
+		if (single) {
+			if (char === "'") single = false;
+			out += char;
+		} else if (char === "\\") {
+			out += command.slice(index, index + 2);
+			index += 1;
+		} else if (char === "'" && !double) {
+			single = true;
+			out += char;
+		} else if (char === '"') {
+			double = !double;
+			out += char;
+		} else {
+			const reference = char === "$" ? /^\$(?:\{TMPDIR\}|TMPDIR(?![A-Za-z0-9_]))/u.exec(command.slice(index)) : null;
+			if (reference === null) out += char;
+			else {
+				out += value;
+				index += reference[0].length - 1;
+			}
+		}
+	}
+	return out;
+}
+
+/**
+ * Names the shell itself sets, rewrites (cd sets PWD and OLDPWD; read, getopts and mapfile set theirs), refuses
+ * (readonly) or reads for its own behaviour; an assignment to one never proves the value a later reference sees.
+ */
+const SCRATCH_SPECIAL =
+	/^(?:BASH\w*|CDPATH|CHILD_MAX|COLUMNS|COMP\w*|COPROC\w*|DIRSTACK|ENV|EPOCH\w*|EUID|EXECIGNORE|FCEDIT|FIGNORE|FUNCNAME|FUNCNEST|GLOB\w*|GROUPS|HIST\w*|histchars|HOME|HOST\w*|IFS|IGNOREEOF|INPUTRC|LANG|LANGUAGE|LC_\w*|LINENO|LINES|MACHTYPE|MAIL\w*|MAPFILE|OLDPWD|OPTARG|OPTERR|OPTIND|OSTYPE|PATH|PIPESTATUS|POSIXLY_CORRECT|PPID|PROMPT\w*|PS[0-4]|PWD|RANDOM|READLINE\w*|REPLY|SECONDS|SHELL|SHELLOPTS|SHLVL|SRANDOM|TEXTDOMAIN|TEXTDOMAINDIR|TIMEFORMAT|TMOUT|TMPDIR|UID|_|LD_\w*|DYLD_\w*|GCONV_PATH|GLIBC_TUNABLES|LOCPATH|NLSPATH|MALLOC_\w*|HOSTALIASES|POSIXLY_CORRECT)$/u;
+const SCRATCH_DELETES: ReadonlySet<string> = new Set(["rm", "rmdir", "unlink"]);
+/** Options of a delete that leave where it deletes alone. */
+const SCRATCH_DELETE_OPTION =
+	/^(?:-[rRfvdiI]+|--(?:recursive|force|verbose|dir|one-file-system|preserve-root|interactive=never))$/u;
+/** Builtins a projected call may run: none sets a variable, plants a link or moves the shell. */
+const SCRATCH_INERT_BUILTINS: ReadonlySet<string> = new Set([
+	":",
+	"true",
+	"false",
+	"echo",
+	"printf",
+	"pwd",
+	"test",
+	"[",
+]);
+const SCRATCH_SET_FLAGS = /^[-+][befhmnptuvxBCEHPT]+$/u;
+const SCRATCH_SET_NAMES: ReadonlySet<string> = new Set([
+	"errexit",
+	"nounset",
+	"pipefail",
+	"xtrace",
+	"noglob",
+	"noclobber",
+	"verbose",
+	"errtrace",
+	"functrace",
+	"physical",
+]);
+
+interface ScratchPin {
+	target: string;
+	/** A path a `mktemp -d` printed: empty when mktemp failed, so only the bare reference is that path. */
+	fresh: boolean;
+}
+
+/** `set` with options only (`set -e`, `set -o pipefail`): it changes no variable a pin reads. */
+function scratchSetOptions(args: ReadonlyArray<string | null>): boolean {
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index];
+		if (arg === null || arg === undefined) return false;
+		// `-o NAME`, alone or ending a cluster (`-euo pipefail`), names one option.
+		const named = /^[-+][befhmnptuvxBCEHPT]*o$/u.test(arg);
+		if (!named && !SCRATCH_SET_FLAGS.test(arg)) return false;
+		if (named) {
+			index += 1;
+			if (!SCRATCH_SET_NAMES.has(args[index] ?? "")) return false;
+		}
+	}
+	return true;
+}
+
+/** The path a `$(mktemp -d ...)` assignment pins: a template under the temp root, or null for any other form. */
+function scratchTemplate(word: ShellWord, temp: string): string | null {
+	const [part] = word.parts;
+	if (word.parts.length !== 1 || part?.kind !== "command") return null;
+	const script = parseShellScript(part.script, 1);
+	const item = script?.items.length === 1 ? script.items[0] : undefined;
+	const step = item?.andOr.pipelines.length === 1 ? item.andOr.pipelines[0] : undefined;
+	const command = step?.commands.length === 1 && !step.negated ? step.commands[0] : undefined;
+	if (item === undefined || item.background || command === undefined) return null;
+	if (command.assignments.length > 0 || command.redirects.length > 0) return null;
+	const words = command.words.map((each) => staticWordValue(each, (name) => (name === "TMPDIR" ? temp : undefined)));
+	if (words[0] !== "mktemp" || words[1] !== "-d" || words.some((each) => each === null)) return null;
+	const rest = words.slice(2) as string[];
+	if (rest.length === 0) return `${temp}/tmp.XXXXXXXXXX`;
+	const template = rest[0] === "-t" && rest.length === 2 ? rest[1] : rest.length === 1 ? rest[0] : undefined;
+	if (template === undefined || template.startsWith("-") || !/^[\w./+@%,:-]+X{3,}$/u.test(template)) return null;
+	if (rest[0] === "-t") return template.includes("/") ? null : `${temp}/${template}`;
+	return template.startsWith(`${temp}/`) ? template : null;
+}
+
+/**
+ * XR-43, rebuilt on the parsed command (row 287): project delete operands only for the path classifier and the
+ * snapshot check, never for command execution or other rails. The call must parse ({@link parseShellScript}: no
+ * compound command, subshell, function or reserved word) and hold no background job, here-document, arithmetic or
+ * `${...}` operator form, and no command substitution but the exact `$(mktemp -d ...)` assignment. Steps are read in
+ * order. A builtin outside a closed inert set (`set` with options, `echo`, `printf` without `-v`, `true`, ...) can
+ * rebind a pin or the shell (read, declare, trap, eval, pushd, ...) and leaves the whole call to the conservative walk.
+ * A plain assignment pins a temp path: at the head of an and-or it holds for the rest of the call, past an `&&` only
+ * to the end of that and-or, and after an `||`, in a pipeline, negated, appended or as a prefix it kills the name.
+ * A name the shell manages is never assigned. A cd moves relative operands only when it is proven to land or stop
+ * the run: alone in its pipeline, not negated, no prefix or redirection, one absolute operand that is a real
+ * directory under the temp root today with no link in its path, no program run before it, and only `&&` from it to
+ * the delete; after `;`, `||` or a newline a relative operand stays the walk's. Any other program may plant a link,
+ * so once one has run only an entry directly in the temp root, named without a trailing slash, is still placed: rm
+ * never follows its last component. Every vouched operand is resolved through the real path of its deepest existing
+ * ancestor now, and one that leaves the real temp root fails the whole call closed. `leadingCd` names the first cd
+ * when the whole call is one `&&` chain from it, which lets the walk follow it as a base.
+ */
+export function resolveScratchDeleteOperands(command: string): { command: string; leadingCd: string | null } {
+	const unchanged = { command, leadingCd: null };
+	if (!/\b(?:rm|unlink|rmdir)\b/u.test(command)) return unchanged;
+	// Base's own reading of TMPDIR mentions only ever withholds: a name written outside a reference stays the walk's.
+	if (!hasStableTempDirReferences(command)) return unchanged;
+	const temp = stableTempDir();
+	if (temp === null) return unchanged;
+	const canonicalTemp = canonicalizePath(temp);
+	if (canonicalTemp === null) return unchanged;
+	const script = parseShellScript(command);
+	if (script === null || script.heredocs.length > 0) return unchanged;
+	const pins = new Map<string, ScratchPin>();
+	const lookup = (name: string): string | undefined => {
+		if (name === "TMPDIR") return temp;
+		const pin = pins.get(name);
+		return pin === undefined || pin.fresh ? undefined : pin.target;
+	};
+	/** The parts below the temp root of a lexically clean path, or null for any other path. */
+	const tempSuffix = (target: string): string[] | null => {
+		const root = [temp, canonicalTemp].find((each) => target === each || target.startsWith(`${each}/`));
+		if (root === undefined) return null;
+		const suffix = target
+			.slice(root.length)
+			.split("/")
+			.filter((part) => part !== "" && part !== ".");
+		return suffix.includes("..") ? null : suffix;
+	};
+	/** The real path now must be the lexical one: a link below the temp root, even one inside it, could lead out. */
+	const realUnderTemp = (target: string, suffix: ReadonlyArray<string>): boolean =>
+		canonicalizeRawPath(target, "/") === path.join(canonicalTemp, ...suffix);
+	const edits: Array<{ start: number; end: number; text: string }> = [];
+	/** The cd rewrites, which the walk reads as bases: a program run anywhere in the call voids them. */
+	const cdEdits: typeof edits = [];
+	let leadingCd: string | null = null;
+	let linkRisk = false;
+	let hasDelete = false;
+	let failed = false;
+	/**
+	 * A delete operand the projection left for the walk while a cd may have moved the shell: a glob or brace (`*\/../..`)
+	 * or a path below a link the walk would read from the cd base, so the cd neither stays a base nor is rewritten.
+	 */
+	let unplaced = false;
+	const singleChain = script.items.length === 1 && script.items[0]?.andOr.ops.every((op) => op === "&&") === true;
+	const quoted = (value: string): string => (/^[\w./+@%,:=-]+$/u.test(value) ? value : shellQuote(value));
+
+	const projectDelete = (step: ShellSimpleCommand, cdBase: string | null): void => {
+		hasDelete = true;
+		const planned: typeof edits = [];
+		let options = true;
+		for (const word of step.words.slice(1)) {
+			const value = staticWordValue(word, lookup);
+			if (options && value === "--") {
+				options = false;
+				continue;
+			}
+			if (options && value?.startsWith("-") && value !== "-") {
+				// An option the reader does not know may change what the delete reaches: the step stays the walk's.
+				if (!SCRATCH_DELETE_OPTION.test(value)) {
+					unplaced = true;
+					return;
+				}
+				continue;
+			}
+			const [only] = word.parts;
+			const freshPin = word.parts.length === 1 && only?.kind === "param" ? pins.get(only.name) : undefined;
+			let target: string | null = freshPin?.fresh === true ? freshPin.target : value;
+			if (target === null || target === "") {
+				unplaced = true;
+				continue;
+			}
+			const relative = !path.isAbsolute(target);
+			if (relative) {
+				if (cdBase === null) {
+					unplaced = true;
+					continue;
+				}
+				target = `${cdBase}/${target}`;
+			}
+			const follows = /\/\.?$/u.test(target);
+			const suffix = tempSuffix(target);
+			if (suffix === null || suffix.length === 0) {
+				if (relative) unplaced = true;
+				continue;
+			}
+			const clean = path.join(target.startsWith(canonicalTemp) ? canonicalTemp : temp, ...suffix);
+			if (!realUnderTemp(clean, suffix)) {
+				failed = true;
+				return;
+			}
+			if (linkRisk && (suffix.length !== 1 || follows)) {
+				if (relative) unplaced = true;
+				continue;
+			}
+			planned.push({ start: word.start, end: word.end, text: quoted(follows ? `${clean}/` : clean) });
+		}
+		edits.push(...planned);
+	};
+
+	for (const [itemIndex, item] of script.items.entries()) {
+		if (item.background) return unchanged;
+		const { pipelines, ops } = item.andOr;
+		const chainNames = new Set<string>();
+		let cdBase: string | null = null;
+		let conditional = false;
+		for (const [index, pipeline] of pipelines.entries()) {
+			if (index > 0 && ops[index - 1] === "||") {
+				conditional = true;
+				cdBase = null;
+				// The `||` side runs exactly when an earlier step failed, so a pin made past the head may never have been made.
+				for (const name of chainNames) pins.delete(name);
+			}
+			const alone = pipeline.commands.length === 1;
+			for (const step of pipeline.commands) {
+				if (commandHasPart(step, ["opaque"])) return unchanged;
+				for (const each of [...step.words, ...step.redirects.map((redirect) => redirect.target)])
+					if (each.parts.some((part) => part.kind === "command")) return unchanged;
+				for (const assignment of step.assignments) {
+					if (SCRATCH_SPECIAL.test(assignment.name)) return unchanged;
+					const template = scratchTemplate(assignment.value, temp);
+					if (template === null && assignment.value.parts.some((part) => part.kind === "command")) return unchanged;
+				}
+				if (step.words.length === 0) {
+					if (step.redirects.length > 0) return unchanged;
+					const pinnable = alone && !pipeline.negated && !conditional;
+					for (const assignment of step.assignments) {
+						const template = scratchTemplate(assignment.value, temp);
+						const [only] = assignment.value.parts;
+						const source = assignment.value.parts.length === 1 && only?.kind === "param" ? pins.get(only.name) : undefined;
+						const target = template ?? (source?.fresh === true ? source.target : staticWordValue(assignment.value, lookup));
+						const suffix = target === null ? null : tempSuffix(target);
+						if (!pinnable || assignment.append || target === null || suffix === null || suffix.length === 0) {
+							pins.delete(assignment.name);
+							continue;
+						}
+						pins.set(assignment.name, { target, fresh: template !== null || source?.fresh === true });
+						if (index > 0) chainNames.add(assignment.name);
+					}
+					continue;
+				}
+				for (const assignment of step.assignments) pins.delete(assignment.name);
+				const name = staticCommandName(step);
+				if (name === null) return unchanged;
+				const args = step.words.slice(1).map((word) => staticWordValue(word, lookup));
+				if (name === "cd") {
+					const operands = args[0] === "--" ? args.slice(1) : args;
+					const [operand] = operands;
+					const next = ops[index];
+					const landing = operand === null || operand === undefined ? null : operand.replace(/(.)\/+$/u, "$1");
+					const suffix = landing === null || !path.isAbsolute(landing) ? null : tempSuffix(landing);
+					const provable =
+						alone &&
+						!pipeline.negated &&
+						!conditional &&
+						!linkRisk &&
+						step.assignments.length === 0 &&
+						step.redirects.length === 0 &&
+						operands.length === 1 &&
+						(next === undefined || next === "&&") &&
+						landing !== null &&
+						suffix !== null &&
+						path.normalize(landing) === landing &&
+						statSync(landing, { throwIfNoEntry: false })?.isFile() !== true &&
+						realUnderTemp(landing, suffix);
+					cdBase = provable ? landing : null;
+					if (provable && landing !== null) {
+						const word = step.words[step.words.length - 1] as ShellWord;
+						cdEdits.push({ start: word.start, end: word.end, text: quoted(landing) });
+						if (itemIndex === 0 && index === 0 && singleChain) leadingCd = landing;
+					}
+					continue;
+				}
+				if (name === "set") {
+					if (!scratchSetOptions(args)) return unchanged;
+					continue;
+				}
+				if (SCRATCH_INERT_BUILTINS.has(name)) {
+					if (name === "printf" && args.some((arg) => arg === null || arg.startsWith("-v"))) return unchanged;
+					continue;
+				}
+				if (BASH_BUILTINS.has(name)) return unchanged;
+				if (name === "mkdir") continue;
+				if (SCRATCH_DELETES.has(name)) {
+					if (alone) projectDelete(step, cdBase);
+					else unplaced = true;
+					if (failed) return unchanged;
+					continue;
+				}
+				linkRisk = true;
+				// Row 287 (neon): the program may plant a link below the cd landing, so no later operand is placed from it.
+				cdBase = null;
+			}
+		}
+		// After the and-or a pin made past its head may never have been made, and the shell may be wherever a cd left it.
+		for (const name of chainNames) pins.delete(name);
+	}
+	// A program may plant a link where the walk would follow the cd as a base, so only a call that runs none keeps it,
+	// and the cd stays as written: a rewritten landing would be a base the walk places under a scratch root. A delete
+	// operand left unplaced (a glob, a brace, `..`) is read by the walk from that base, so it voids the cd the same way.
+	if (linkRisk || unplaced) leadingCd = null;
+	else edits.push(...cdEdits);
+	if (!hasDelete || (edits.length === 0 && leadingCd === null)) return unchanged;
+	let projected = command;
+	for (const edit of [...edits].sort((left, right) => right.start - left.start))
+		projected = `${projected.slice(0, edit.start)}${edit.text}${projected.slice(edit.end)}`;
+	return { command: projected, leadingCd };
+}
+
+function deleteEventReasons(
+	event: Extract<CommandPathEvent, { kind: "delete" }>,
+	bases: ShellBases,
+	scratchRoots: ReadonlyArray<string> | undefined,
+	throughLink?: (abs: string, follows: boolean) => boolean,
+): string[] {
+	if (event.scope === "input") return [`${DELETE_PATH_REASON_PREFIX}unresolved: operands from input`];
+	if (event.scope === "remote") return [`${DELETE_PATH_REASON_PREFIX}remote: ${event.target}`];
+	const raw = event.target;
+	const expanded = expandShellHome(raw);
+	// A variable or substitution is named only at run time.
+	if (expanded === null || /[$`]/u.test(expanded)) return [`${DELETE_PATH_REASON_PREFIX}unresolved: ${raw}`];
+	let target = expanded;
+	// Only the operator's yolo, which passes its scratch roots, judges an
+	// unfiltered find root like `rm -rf` of it; default and worker views keep
+	// judging its children, as they always have (#419).
+	let scope: "path" | "children" = scratchRoots !== undefined && event.findRoot === "unfiltered" ? "path" : event.scope;
+	let pattern: string | null = null;
+	if (isDynamicShellPath(expanded)) {
+		// A glob or brace expands to entries of the directory before its first
+		// wildcard, so that directory bounds where the delete lands.
+		const wildcard = expanded.search(/[*?[{]/u);
+		const slash = expanded.lastIndexOf("/", wildcard);
+		target = slash < 0 ? "." : slash === 0 ? "/" : expanded.slice(0, slash);
+		pattern = expanded.slice(slash + 1);
+		scope = "children";
+	}
+	if (!path.isAbsolute(target) && bases === null) return [`${DELETE_PATH_REASON_PREFIX}unresolved: ${raw}`];
+	// A delete goes through a link it names when the path ends in `/` or `/.`, expands a glob below it, or is a find
+	// root; a bare link name removes only the link.
+	const follows =
+		scope === "children" || event.scope === "children" || event.findRoot !== undefined || /\/\.?$/u.test(expanded);
+	const through =
+		throughLink === undefined ? undefined : (abs: string, always?: boolean) => throughLink(abs, always ?? follows);
+	const from = path.isAbsolute(target) ? [undefined] : (bases ?? []);
+	const reasons = new Set<string>();
+	for (const base of from) {
+		const reason = deleteTargetReason(target, scope, base, pattern, scratchRoots ?? [], through);
+		if (reason !== null) reasons.add(reason);
+	}
+	return [...reasons];
+}
+
+/** Where a link a command plants lands, as written and through the real path of its directory today. */
+function linkForms(link: string, base: string): string[] {
+	const lexical = path.resolve(base, link);
+	const real = canonicalizeRawPath(link, base);
+	return real === null || real === lexical ? [lexical] : [lexical, real];
+}
+
+function walkPathReasons(
+	walk: ReadonlyArray<CommandPathEvent>,
+	argCwd: string | null | undefined,
+	scratchRoots?: ReadonlyArray<string>,
+	leadingScratchCd?: string | null,
+): string[] {
+	const writeReasons = new Set<string>();
+	const cdReasons = new Set<string>();
+	let bases: ShellBases = argCwd === null ? null : [candidateBase(argCwd)];
+	const subshells: ShellBases[] = [];
+	// An outside cd is reported but never becomes a base, so a relative delete
+	// after it would otherwise resolve from the workspace it already left.
+	let escaped = false;
+	const escapedSubshells: boolean[] = [];
+	// Links the command plants before a delete, resolved from every base; `unknownLink` once one cannot be placed.
+	const planted: string[] = [];
+	let unknownLink = false;
+	const throughLink = (abs: string, follows: boolean): boolean =>
+		unknownLink || planted.some((link) => (follows || abs !== link) && isSameOrDescendant(abs, link));
+	for (const [index, event] of walk.entries()) {
+		if (event.kind === "subshell") {
+			if (event.open) {
+				subshells.push(bases);
+				escapedSubshells.push(escaped);
+			} else if (subshells.length > 0) {
+				bases = subshells.pop() as ShellBases;
+				escaped = escapedSubshells.pop() ?? escaped;
+			}
+			continue;
+		}
+		if (event.kind === "write") {
+			const target = event.target;
+			// A write into the workspace's own .git (config, hooks) runs as code the next time git runs (row 261).
+			const gitDirs = [path.resolve(process.cwd()), canonicalizePath(path.resolve(process.cwd()))]
+				.filter((root): root is string => root !== null)
+				.map((root) => path.join(root, ".git"));
+			const expandedWrite = expandShellHome(target);
+			if (expandedWrite !== null && !isDynamicShellPath(expandedWrite)) {
+				const from = path.isAbsolute(expandedWrite) ? ["/"] : (bases ?? [process.cwd()]).map(candidateBase);
+				for (const base of from) {
+					const abs = path.resolve(base, expandedWrite);
+					if (gitDirs.some((git) => isUnderPrefix(abs, git))) writeReasons.add(`bash-write-target: git-metadata: ${abs}`);
+				}
+			}
+			// `> $HOME/x`, `> ${OUT}`, and `tee {a,b}` land where the shell says.
+			if (isDynamicShellPath(target) && !target.startsWith("/dev/")) {
+				writeReasons.add(`write-path-unknown-base: ${target}`);
+			} else if (target.startsWith("~") || path.isAbsolute(target)) {
+				const decision = writePathClass(target);
+				if (decision.cls === "system_modify") writeReasons.add(decision.reason ?? `bash-write-target: ${target}`);
+			} else if (bases === null) {
+				writeReasons.add(`write-path-unknown-base: ${target}`);
+			} else {
+				for (const base of bases) {
+					const decision = writePathClass(target, base);
+					if (decision.cls === "system_modify") writeReasons.add(decision.reason ?? `bash-write-target: ${target}`);
+				}
+			}
+			continue;
+		}
+		if (event.kind === "link") {
+			for (const reason of linkReasons(event, bases)) writeReasons.add(reason);
+			if (!event.symbolic) continue;
+			for (const link of event.links ?? [""]) {
+				const expanded = expandShellHome(link);
+				if (expanded === null || expanded === "" || isDynamicShellPath(expanded)) unknownLink = true;
+				else if (path.isAbsolute(expanded)) planted.push(...linkForms(expanded, "/"));
+				else if (bases === null) unknownLink = true;
+				else for (const base of bases) planted.push(...linkForms(expanded, candidateBase(base)));
+			}
+			continue;
+		}
+		if (event.kind === "delete") {
+			if (
+				escaped &&
+				event.scope !== "input" &&
+				event.scope !== "remote" &&
+				!path.isAbsolute(event.target) &&
+				!event.target.startsWith("~")
+			)
+				writeReasons.add(`${DELETE_PATH_REASON_PREFIX}outside-workspace: ${event.target} after a cd out of the workspace`);
+			for (const reason of deleteEventReasons(event, bases, scratchRoots, throughLink)) writeReasons.add(reason);
+			continue;
+		}
+		const target = event.target;
+		if (target.startsWith("~")) {
+			cdReasons.add(`bash-cd-home-escape: ${target}`);
+			escaped = true;
+			continue;
+		}
+		if (isDynamicShellPath(target)) {
+			bases = null;
+			continue;
+		}
+		const from = path.isAbsolute(target) ? [undefined] : (bases ?? []);
+		const landed: string[] = [];
+		for (const base of from) {
+			for (const landing of resolveCdCandidates(target, base)) {
+				// Inside means inside under the logical and the physical reading.
+				if (landing === null || !isInsideCwd(landing)) {
+					// The offload scratch is where PanCode itself points the model to
+					// read a spilled result, so a cd there is not an escape; what
+					// follows is judged from it like any base (K7).
+					if (landing !== null && harnessReadRoots().some((root) => isUnderPrefix(landing, root))) {
+						landed.push(landing);
+						continue;
+					}
+					cdReasons.add(`bash-cd-outside-workspace: ${landing ?? target}`);
+					// Under the operator's yolo a cd into a scratch root becomes a base,
+					// so `cd /tmp/run && rm -rf out` is judged where it lands (#419).
+					if (
+						landing !== null &&
+						((scratchRoots ?? []).some((root) => isUnderPrefix(landing, root)) ||
+							(index === 0 && target === leadingScratchCd && isUnderPrefix(landing, canonicalizeExistingPath(tmpdir()))))
+					)
+						landed.push(landing);
+					else escaped = true;
+				} else landed.push(landing);
+			}
+		}
+		// A relative cd from an unknown base lands somewhere unknown too.
+		bases = event.unmodeled || bases === null ? null : mergeBases(bases, landed);
+	}
+	return [...writeReasons, ...cdReasons];
+}
+
+/**
+ * A link a command creates is followed by every later path through it, which
+ * static admission cannot model. A symbolic link whose text, resolved from the
+ * link's directory, leaves the workspace escalates the command, and so does a
+ * hard link to a file outside it, since a write through the link changes that
+ * file. A link whose target or directory the shell expands at run time counts
+ * as outside. `mv` and a link-keeping `cp` escalate when a source is an
+ * existing link that resolves outside, and a link made from `xargs` or `find
+ * -exec` input always escalates.
+ */
+function linkReasons(event: Extract<CommandPathEvent, { kind: "link" }>, bases: ShellBases): string[] {
+	const reasons: string[] = [];
+	const label = event.symbolic ? "bash-symlink-outside-workspace" : "bash-hardlink-outside-workspace";
+	if (event.origin === "input") return event.sources.map((source) => `${label}: ${source}`);
+	if (event.origin === "copied") {
+		for (const base of bases ?? [null]) {
+			for (const source of event.sources) {
+				const landing = copiedLinkOutside(source, base);
+				if (landing !== null) reasons.push(`${label}: ${landing}`);
+			}
+		}
+		return [...new Set(reasons)];
+	}
+	const outside = (source: string, from: string | null): string | null => {
+		const expanded = expandShellHome(source);
+		if (expanded === null || isDynamicShellPath(source)) return source;
+		if (!path.isAbsolute(expanded) && from === null) return source;
+		const landing = canonicalizeRawPath(expanded, from ?? process.cwd());
+		return landing !== null && isInsideCwd(landing) ? null : (landing ?? source);
+	};
+	const dirsFrom = (base: string | null): Array<string | null> => {
+		if (!event.symbolic) return [base];
+		return event.linkDirs.map((dir) => {
+			const expanded = expandShellHome(dir);
+			if (expanded === null || isDynamicShellPath(dir)) return null;
+			if (!path.isAbsolute(expanded) && base === null) return null;
+			return canonicalizeRawPath(expanded, base ?? process.cwd());
+		});
+	};
+	for (const base of bases ?? [null]) {
+		for (const from of dirsFrom(base)) {
+			for (const source of event.sources) {
+				const landing = outside(source, from);
+				if (landing !== null) reasons.push(`${label}: ${landing}`);
+			}
+		}
+	}
+	return [...new Set(reasons)];
+}
+
+/** More matches than this for a moved or copied glob count as outside. */
+const MAX_COPIED_LINK_MATCHES = 256;
+
+/**
+ * Where an existing link a command moves or copies points, when that is
+ * outside the workspace; null when the source is not a link or points inside.
+ * A glob or brace source is matched now, from the base; a variable or a
+ * substitution cannot be, so it counts as outside.
+ */
+function copiedLinkOutside(source: string, base: string | null): string | null {
+	const expanded = expandShellHome(source);
+	if (expanded === null || /[$`]/u.test(source)) return source;
+	if (!path.isAbsolute(expanded) && base === null) return source;
+	const from = base ?? process.cwd();
+	let matches = [expanded];
+	if (isDynamicShellPath(source)) {
+		try {
+			matches = globSync(expanded, { cwd: from });
+		} catch {
+			return source;
+		}
+		if (matches.length > MAX_COPIED_LINK_MATCHES) return source;
+	}
+	for (const match of matches) {
+		// The kernel follows every component but the last, which is the link itself.
+		const parent = canonicalizeRawPath(path.dirname(match), from);
+		if (parent === null) return source;
+		const entry = path.join(parent, path.basename(match));
+		let isLink = false;
+		try {
+			isLink = lstatSync(entry).isSymbolicLink();
+		} catch {
+			continue;
+		}
+		if (!isLink) continue;
+		const landing = canonicalizeRawPath(entry, "/");
+		if (landing === null || !isInsideCwd(landing)) return landing ?? source;
+	}
+	return null;
+}
+
+/**
+ * The artifact tool writes a default file name when the call names no path, so
+ * a classifier that only reads the path argument saw no target at all and
+ * returned plain write for a call that writes into whatever the cwd is. The
+ * live evidence: in a `/var/tmp` workspace where write, edit and every bash
+ * redirect were refused as system_modify, `artifact(kind:"report")` wrote a
+ * report into that same directory. The default now resolves through
+ * core/artifact-paths.ts, the one place the tool, the write-root check, and the
+ * protected-artifacts guard all read, so the four can never disagree.
+ */
+function extractWritePath(tool: string, args: Record<string, unknown> | undefined): string | null {
+	const candidate = args?.path ?? args?.file_path ?? args?.filePath;
+	if (typeof candidate === "string" && candidate.length > 0) return candidate;
+	return tool === ToolNames.Artifact ? artifactDefaultPath(args?.kind) : null;
+}
+
+/** Shared by classification and registry exposure; an empty body still sends data. */
+export function webFetchIsOutward(args: Record<string, unknown> | undefined): boolean {
+	const method = typeof args?.method === "string" && args.method.length > 0 ? args.method.toUpperCase() : "GET";
+	return (method !== "GET" && method !== "HEAD") || args?.body !== undefined;
+}
+
+/** Tools that resolve their path through path-utils, against the process cwd. */
+const PATH_UTILS_TOOLS: ReadonlySet<string> = new Set([
+	ToolNames.Read,
+	ToolNames.Ls,
+	ToolNames.Count,
+	ToolNames.Grep,
+	ToolNames.Find,
+	ToolNames.Write,
+	ToolNames.Edit,
+	ToolNames.Artifact,
+]);
+
+/**
+ * The call as its tool reads it. The file tools drop a leading `@` and fold
+ * Unicode spaces before they resolve a path, and they resolve it against the
+ * process cwd whatever `cwd` the call carries; bash makes the same spelling
+ * change to its `cwd` and reads a leading `~` as the home directory, through
+ * the {@link expandPath} its tool calls. Judging the raw arguments judged a
+ * different path: `@../x` read as a directory named `@..` inside the
+ * workspace, a `cwd` of `~` as a folder named `~` in it, and a `cwd`
+ * padded with missing levels pulled `../../x` back inside it. run_script trims
+ * its `cwd` and drops a blank one ({@link runScriptCwd}), so `" /usr"` is
+ * `/usr`, not a folder in the workspace. Idempotent, so
+ * the policy engine normalizes once and classify can do it again.
+ */
+export function normalizeCallPaths(call: ClassifierCall): ClassifierCall {
+	const args = call.args;
+	if (!args) return call;
+	if (call.tool === ToolNames.Bash) {
+		let next: Record<string, unknown> = args;
+		if (typeof args.command === "string") {
+			const command = expandTempDirReferences(args.command);
+			if (command !== args.command) next = { ...next, command };
+		}
+		if (typeof args.cwd === "string") {
+			const cwd = expandPath(args.cwd);
+			if (cwd !== args.cwd) next = { ...next, cwd };
+		}
+		return next === args ? call : { ...call, args: next };
+	}
+	if (call.tool === ToolNames.RunScript) {
+		if (!("cwd" in args)) return call;
+		const cwd = runScriptCwd(args.cwd);
+		if (cwd === args.cwd) return call;
+		const { cwd: _dropped, ...rest } = args;
+		return { ...call, args: cwd === undefined ? rest : { ...rest, cwd } };
+	}
+	if (!PATH_UTILS_TOOLS.has(call.tool)) return call;
+	let next: Record<string, unknown> | null = null;
+	for (const key of ["path", "file_path", "filePath"]) {
+		const value = args[key];
+		if (typeof value !== "string") continue;
+		const normalized = normalizeToolPath(value);
+		if (normalized !== value) next = { ...(next ?? args), [key]: normalized };
+	}
+	if ("cwd" in args) {
+		next = { ...(next ?? args) };
+		delete next.cwd;
+	}
+	return next === null ? call : { ...call, args: next };
+}
+
+const STORE_WRITE_OPS: ReadonlySet<unknown> = new Set(["create", "put", "note"]);
+
+function isRegularFile(target: string): boolean {
+	try {
+		return lstatSync(target).isFile();
+	} catch {
+		// Missing, or under a non-directory: nothing there to replace.
+		return false;
+	}
+}
+
+/**
+ * Set on a store write's admission arguments, never by the model, when this session may not make
+ * it (a worker without a grant for the tag). Admission reads the call as the refusal it will be and
+ * names no write target, so the tool answers with how to get the grant instead of a write-root refusal.
+ */
+export const STORE_UNGRANTED_ARG = "__storeUngranted";
+
+/**
+ * The store is one tool with read, write and destructive ops, and its writes
+ * land in PanCode's own data directory rather than at the `path` argument, which
+ * for `put` is the source. So each op is judged for what it does, and a write
+ * names the target `storeWriteTarget` predicts, the one the tool writes. That
+ * target is outside the workspace by design, so it does not escalate to
+ * system_modify, for the same reason the artifact default does not.
+ */
+function classifyStore(args: Record<string, unknown> | undefined): Classification {
+	const op = args?.op;
+	if (op === "remove") {
+		// prepareStoreArguments reads `ref` only when `tag` is absent, so the reason does too and names the blob removed.
+		const ref =
+			typeof args?.tag === "string" || typeof args?.ref !== "string"
+				? `${String(args?.tag)}:${String(args?.blob)}`
+				: args.ref;
+		return { actionClass: "destructive", reasons: [`store-remove: ${ref}`] };
+	}
+	// tags, list, stat, get, and a missing or unknown op, which the tool rejects.
+	if (!STORE_WRITE_OPS.has(op)) return { actionClass: "read", reasons: [] };
+	// The tool refuses a marked call before it touches the store; any marker makes it refuse.
+	if (args?.[STORE_UNGRANTED_ARG] === true) return { actionClass: "read", reasons: ["store-ungranted"] };
+	const sourceArg = args?.path ?? args?.file_path ?? args?.file;
+	if (op === "put" && typeof sourceArg === "string" && sourceArg.length > 0) {
+		const source = resolveCandidate(sourceArg);
+		// A source outside the workspace is a read of that path, and the tool refuses it.
+		if (source === null || source.startsWith("~") || !isInsideCwd(source)) {
+			return { actionClass: "read", reasons: ["store-put-source-outside-workspace"] };
+		}
+	}
+	let target: string | null = null;
+	try {
+		target = storeWriteTarget(process.cwd(), args);
+	} catch {
+		// An unresolvable PanCode home names no target; the tool refuses the call too.
+	}
+	// The local backend keeps no blob versions and no snapshot covers the store, so a put over an
+	// existing blob destroys its bytes like remove does and is admitted like remove. Another backend's
+	// blob is stat before admission and marked on the arguments.
+	if (op === "put" && target !== null && (storeReplacedBytes(args) !== null || isRegularFile(target))) {
+		const blob = typeof args?.blob === "string" && args.blob.length > 0 ? args.blob : path.basename(String(sourceArg));
+		return { actionClass: "destructive", reasons: [`store-replace: ${String(args?.tag)}:${blob}`] };
+	}
+	return { actionClass: "write", reasons: target === null ? [] : [`store-write: ${target}`] };
+}
+
+export function classify(rawCall: ClassifierCall): Classification {
+	const call = normalizeCallPaths(rawCall);
+	if (call.tool === ToolNames.Store) return classifyStore(call.args);
+	// Cancelling a run stops a worker and changes no file, so the read-only gate
+	// admits it (CLI-P38); the steer tool still refuses a run this session did
+	// not dispatch. The class stays dispatch, and guide, approve and deny carry
+	// no tag: a message or a grant hands work to the worker.
+	if (call.tool === ToolNames.Steer && call.args?.action === "cancel") {
+		return { actionClass: "dispatch", reasons: [STEER_CANCEL_REASON] };
+	}
+	if (call.tool === ToolNames.Panes && call.args?.action === "handoff") {
+		return { actionClass: "dispatch", reasons: ["panes:interactive-peer-handoff"] };
+	}
+	// Input typed into a peer is work handed to another agent, the same act as
+	// the handoff that opened it, so it is admitted the same way.
+	if (call.tool === ToolNames.Panes && call.args?.action === "send") {
+		return { actionClass: "dispatch", reasons: ["panes:interactive-peer-input"] };
+	}
+	if (call.tool === ToolNames.WebFetch && webFetchIsOutward(call.args)) {
+		return { actionClass: "write", reasons: ["web-fetch:outward"] };
+	}
+	// A configure_pancode preview reads the saved settings and returns a diff; only
+	// apply saves, so a read-only or headless run can still propose a change.
+	if (call.tool === ToolNames.ConfigurePancode && call.args?.action === "preview") {
+		return { actionClass: "read", reasons: ["configure-pancode:preview"] };
+	}
+	const base = baseClassify(call.tool);
+	if (base === null) {
+		return { actionClass: "unknown", reasons: [`unknown tool: ${call.tool}`] };
+	}
+
+	const reasons: string[] = [];
+
+	if (call.tool === ToolNames.Bash) {
+		const scan = scanStringOf(call.args);
+		const commandText = typeof call.args?.command === "string" ? call.args.command : "";
+		const gitHit =
+			matchFirst(GIT_DESTRUCTIVE_PATTERNS, scan, commandText) ??
+			normalizedGitCommands(typeof call.args?.command === "string" ? call.args.command : "")
+				.map((candidate) => matchFirst(GIT_DESTRUCTIVE_PATTERNS, candidate))
+				.find((hit) => hit !== null);
+		if (gitHit) {
+			return { actionClass: "git_destructive", reasons: [`pattern:${gitHit.name}`] };
+		}
+		const sysHit = matchFirst(SYSTEM_MODIFY_PATTERNS, scan, commandText, matchesOnlyCommandText);
+		if (sysHit) {
+			return { actionClass: "system_modify", reasons: [`pattern:${sysHit.name}`] };
+		}
+		// Apply the same path-class gate we use for the write tool to every
+		// shell write-target the command exposes (redirects, tee, cp/mv
+		// destinations). Without this the model can dodge the write tool's
+		// confirmation gate by emitting `echo X > /tmp/foo.txt` after the user
+		// cancels the original write call. Relative write targets are
+		// resolved against the bash call's explicit cwd argument when
+		// supplied so a model cannot launder a write outside the workspace
+		// by combining a relative redirect with a cwd outside the workspace.
+		const command = typeof call.args?.command === "string" ? call.args.command : null;
+		const argCwd = typeof call.args?.cwd === "string" && call.args.cwd.length > 0 ? call.args.cwd : undefined;
+		if (command !== null) {
+			const targetReasons = bashPathReasons(command, argCwd);
+			if (targetReasons.length > 0) {
+				return { actionClass: "system_modify", reasons: targetReasons };
+			}
+		}
+		if (
+			normalizedGitCommands(commandText).some(
+				(candidate) => /^git push(?:\s|$)/u.test(candidate) && !/(?:^|\s)--dry-run(?:\s|$)/u.test(candidate),
+			)
+		) {
+			return { actionClass: "execute", reasons: ["git-push:outward"], exposure: "outward" };
+		}
+		return { actionClass: "execute", reasons };
+	}
+
+	if (base === "write") {
+		const pathArg = extractWritePath(call.tool, call.args);
+		if (pathArg) {
+			const decision = writePathClass(pathArg);
+			if (decision.cls === "system_modify") {
+				return { actionClass: "system_modify", reasons: decision.reason ? [decision.reason] : [] };
+			}
+		}
+		return { actionClass: "write", reasons };
+	}
+
+	return { actionClass: base, reasons };
+}

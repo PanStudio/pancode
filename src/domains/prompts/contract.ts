@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { CompiledSessionPrompt, SessionPromptInputs, WorkerPromptInputs } from "./compiler.js";
+
+export interface CompileSessionPromptInput {
+	/** Stable session identity that owns the compiler's frozen disk-input snapshot. */
+	sessionId: string;
+	sessionInputs: SessionPromptInputs;
+	autonomy?: string;
+	cwd?: string;
+	/**
+	 * Files already present in the session's working context. Project rules with
+	 * `paths:` frontmatter are selected from this set into `scopedRules`, never
+	 * into the system prompt.
+	 */
+	workingContextPaths?: ReadonlyArray<string>;
+	/**
+	 * When the bound session was created, from its meta. Absent before the first
+	 * turn creates the session; the snapshot then records its own capture time.
+	 */
+	sessionStartedAt?: string;
+}
+
+export interface CompileWorkerPromptInput extends WorkerPromptInputs {
+	/** Working directory the rule loader and repo-awareness checks run against; defaults to `process.cwd()`. */
+	cwd?: string;
+	/**
+	 * Canonical paths for this worker's declared intent. Requests without
+	 * intent retain path-like task and briefing inference. The prompt compiler
+	 * consumes the resolved set without deriving another one.
+	 */
+	workingContextPaths?: ReadonlyArray<string>;
+	/**
+	 * "operator-only" drops the project's `.pancode/rules` and project
+	 * profile and keeps the user profile: a run in another repository whose
+	 * handbook the operator has not trusted takes no project prompt text from it.
+	 */
+	projectCustomization?: "project" | "operator-only";
+}
+
+export interface PromptsContract {
+	/**
+	 * Revision of compiler-owned inputs. Fragment, agent-catalog, and
+	 * session-source invalidation components advance independently and are
+	 * combined without loss. Project handbooks, rules, operator profile, and
+	 * repo awareness are frozen in a real per-session snapshot until a config
+	 * invalidation, an explicit context operation in that workspace or an ancestor,
+	 * or a new session. Previews, cancellations, and failures leave snapshots
+	 * stable when published project context is unchanged; an unreadable source
+	 * comparison conservatively invalidates.
+	 */
+	inputEpoch(): string;
+
+	/**
+	 * Compile the layered system prompt when its complete typed input identity
+	 * changes, including turn scope and ready-skill inventory as well as model,
+	 * autonomy, context and fragment changes. Identical inputs reuse the result.
+	 * Compiler-owned disk inputs are selected from the session snapshot even when
+	 * another identity input causes a recompile.
+	 */
+	compileSessionPrompt(input: CompileSessionPromptInput): Promise<CompiledSessionPrompt>;
+	/** Use the session compiler's loaded fragment table for host policy changes (#423). */
+	renderSessionPostureUpdate?(level: string, inputs: SessionPromptInputs): string;
+
+	/**
+	 * Compile the canonical stable harness for one mediated fleet worker. The
+	 * result's `rulesApplied` and `operatorProfileApplied` are the receipt
+	 * provenance for this run's customization layer: dispatch reads them
+	 * straight off this return rather than re-deriving them.
+	 */
+	compileWorkerPrompt(input: CompileWorkerPromptInput): Promise<CompiledSessionPrompt>;
+}

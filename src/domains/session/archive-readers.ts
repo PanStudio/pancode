@@ -1,0 +1,141 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { isRecord } from "../../core/type-guards.js";
+import { isSessionEntry, isSessionHeader, type SessionEntry } from "./entries.js";
+
+/**
+ * Shared read-only readers over the per-session ledger files under the state dir. Evidence
+ * building and the cross-session usage report both consume these; they were
+ * factored out of evidence/build.ts so the parsers exist exactly once.
+ *
+ * The module lives in the session domain because that is its only dependency,
+ * and it is re-exported from the session index so consumers reach it through
+ * the barrel. It used to live under telemetry, where the barrel could not
+ * be used: the telemetry extension imports the evidence domain, so an
+ * evidence-side import through the telemetry index would cycle.
+ */
+
+export interface SessionReadResult {
+	/** Persisted /tree selection, when the session has not appended past it. */
+	leafTurnId?: string;
+	entries: SessionEntry[];
+	missing: boolean;
+	errors: string[];
+}
+
+/** A discovered session ledger file under <stateDir>/sessions/. */
+export interface SessionLedgerRef {
+	cwdHash: string;
+	sessionId: string;
+	path: string;
+}
+
+/**
+ * Find and parse the ledger for one session id by scanning the cwd-hash
+ * directories. `missing` is true when no ledger exists anywhere.
+ */
+export async function readSessionEntriesForId(stateDir: string, sessionId: string): Promise<SessionReadResult> {
+	const root = join(stateDir, "sessions");
+	let cwdHashes: string[];
+	try {
+		cwdHashes = await readdir(root);
+	} catch (error) {
+		const err = error as NodeJS.ErrnoException;
+		if (err.code === "ENOENT") return { entries: [], missing: true, errors: [] };
+		return { entries: [], missing: false, errors: [`session root read error: ${err.message ?? String(err)}`] };
+	}
+	for (const cwdHash of cwdHashes.sort(compareStrings)) {
+		const currentPath = join(root, cwdHash, sessionId, "current.jsonl");
+		let raw: string;
+		let source = currentPath;
+		try {
+			raw = await readFile(currentPath, "utf8");
+		} catch (error) {
+			const err = error as NodeJS.ErrnoException;
+			if (err.code === "ENOENT") {
+				const tmpPath = `${currentPath}.tmp`;
+				try {
+					raw = await readFile(tmpPath, "utf8");
+					source = tmpPath;
+				} catch {
+					continue;
+				}
+			} else if (err.code === "ENOTDIR") {
+				continue;
+			} else {
+				return { entries: [], missing: false, errors: [`${currentPath}: ${err.message ?? String(err)}`] };
+			}
+		}
+		const result = parseSessionEntries(raw, source);
+		try {
+			const meta: unknown = JSON.parse(await readFile(join(root, cwdHash, sessionId, "meta.json"), "utf8"));
+			if (isRecord(meta) && typeof meta.pinnedLeafTurnId === "string") result.leafTurnId = meta.pinnedLeafTurnId;
+		} catch {
+			// Without readable metadata the newest message branch stands.
+		}
+		return result;
+	}
+	return { entries: [], missing: true, errors: [] };
+}
+
+/** Parse a session ledger containing a header and structured entries. */
+export function parseSessionEntries(raw: string, source: string): SessionReadResult {
+	const entries: SessionEntry[] = [];
+	const errors: string[] = [];
+	const lines = raw.split("\n");
+	for (let index = 0; index < lines.length; index += 1) {
+		const line = lines[index];
+		if (line === undefined || line.trim().length === 0) continue;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(line) as unknown;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			errors.push(`${source}:${index + 1}: invalid JSON: ${message}`);
+			continue;
+		}
+		if (isSessionHeader(parsed)) continue;
+		if (isSessionEntry(parsed)) {
+			entries.push(parsed);
+			continue;
+		}
+		errors.push(
+			`session ledger contains an unreadable entry (missing kind discriminant): ${source}. Remove or compact the session to reset.`,
+		);
+	}
+	return { entries, missing: false, errors };
+}
+
+/**
+ * Enumerate every session ledger under `<stateDir>/sessions/`, optionally
+ * restricted to one cwd hash. Read-only; missing roots yield an empty list.
+ */
+export async function listSessionLedgerRefs(stateDir: string, onlyCwdHash?: string): Promise<SessionLedgerRef[]> {
+	const root = join(stateDir, "sessions");
+	let cwdHashes: string[];
+	try {
+		cwdHashes = await readdir(root);
+	} catch {
+		return [];
+	}
+	const refs: SessionLedgerRef[] = [];
+	for (const cwdHash of cwdHashes.sort(compareStrings)) {
+		if (onlyCwdHash !== undefined && cwdHash !== onlyCwdHash) continue;
+		let sessionIds: string[];
+		try {
+			sessionIds = await readdir(join(root, cwdHash));
+		} catch {
+			continue;
+		}
+		for (const sessionId of sessionIds.sort(compareStrings)) {
+			refs.push({ cwdHash, sessionId, path: join(root, cwdHash, sessionId, "current.jsonl") });
+		}
+	}
+	return refs;
+}
+
+function compareStrings(a: string, b: string): number {
+	return a.localeCompare(b);
+}

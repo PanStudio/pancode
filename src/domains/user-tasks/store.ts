@@ -1,0 +1,327 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { PANCODE_PROJECT_DIR } from "../../core/artifact-paths.js";
+import { isRecord } from "../../core/type-guards.js";
+import { atomicWrite } from "../../engine/session.js";
+import { normalizeUserTaskAcceptance, type UserTaskAcceptance } from "./acceptance.js";
+
+export const USER_TASKS_FILE_VERSION = 1 as const;
+export const USER_TASKS_RELATIVE_PATH = `${PANCODE_PROJECT_DIR}/user-tasks.json`;
+
+export type UserTaskStatus = "open" | "handed" | "picked" | "done" | "dropped";
+
+export interface UserTask {
+	id: string;
+	title: string;
+	note?: string;
+	acceptance?: UserTaskAcceptance;
+	status: UserTaskStatus;
+	createdAt: string;
+	updatedAt: string;
+	handedSessionId?: string;
+	boardTaskId?: string;
+}
+
+interface UserTasksFile {
+	version: typeof USER_TASKS_FILE_VERSION;
+	nextId: number;
+	tasks: UserTask[];
+}
+
+export interface UserTasksStoreDeps {
+	cwd: string;
+	now?: () => Date;
+	exists?: (path: string) => boolean;
+	read?: (path: string) => string;
+	write?: (path: string, body: string) => void;
+}
+
+export interface UserTasksStore {
+	readonly path: string;
+	snapshot(): ReadonlyArray<UserTask>;
+	get(id: string): UserTask | null;
+	add(title: string, note?: string, acceptance?: UserTaskAcceptance): UserTask;
+	setAcceptance(id: string, acceptance: UserTaskAcceptance): UserTask;
+	hand(id: string, sessionId?: string): UserTask;
+	done(id: string): UserTask;
+	drop(id: string): UserTask;
+	recordPicked(id: string, sessionId: string, boardTaskId: string): UserTask;
+	recordDone(id: string, sessionId: string, boardTaskId: string): UserTask;
+	reconcile(links: ReadonlyArray<UserTaskBoardLink>, sessionId: string): ReadonlyArray<UserTask>;
+}
+
+export interface UserTaskBoardLink {
+	userTaskId: string;
+	boardTaskId: string;
+	status: "pending" | "active" | "completed" | "blocked" | "cancelled";
+}
+
+export class UserTasksStoreError extends Error {
+	constructor(message: string, options?: ErrorOptions) {
+		super(message, options);
+		this.name = "UserTasksStoreError";
+	}
+}
+
+const USER_TASK_STATUSES: ReadonlyArray<UserTaskStatus> = ["open", "handed", "picked", "done", "dropped"];
+const FILE_KEYS = new Set(["version", "nextId", "tasks"]);
+const TASK_KEYS = new Set([
+	"id",
+	"title",
+	"note",
+	"acceptance",
+	"status",
+	"createdAt",
+	"updatedAt",
+	"handedSessionId",
+	"boardTaskId",
+]);
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): boolean {
+	return Object.keys(value).every((key) => allowed.has(key));
+}
+
+function isOptionalString(value: unknown): boolean {
+	return value === undefined || typeof value === "string";
+}
+
+function isUserTask(value: unknown): value is UserTask {
+	if (!isRecord(value) || !hasOnlyKeys(value, TASK_KEYS)) return false;
+	if (value.acceptance !== undefined) {
+		try {
+			normalizeUserTaskAcceptance(value.acceptance);
+		} catch {
+			return false;
+		}
+	}
+	return (
+		typeof value.id === "string" &&
+		/^u[1-9]\d*$/.test(value.id) &&
+		typeof value.title === "string" &&
+		value.title.trim().length > 0 &&
+		typeof value.status === "string" &&
+		USER_TASK_STATUSES.includes(value.status as UserTaskStatus) &&
+		typeof value.createdAt === "string" &&
+		typeof value.updatedAt === "string" &&
+		isOptionalString(value.note) &&
+		isOptionalString(value.handedSessionId) &&
+		isOptionalString(value.boardTaskId)
+	);
+}
+
+function parseFile(body: string, path: string): UserTasksFile {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(body);
+	} catch (error) {
+		throw new UserTasksStoreError(`user tasks file is corrupt JSON: ${path}`, { cause: error });
+	}
+	if (!isRecord(parsed) || !hasOnlyKeys(parsed, FILE_KEYS)) {
+		throw new UserTasksStoreError(`user tasks file has an invalid top-level shape: ${path}`);
+	}
+	if (
+		parsed.version !== USER_TASKS_FILE_VERSION ||
+		!Number.isSafeInteger(parsed.nextId) ||
+		(parsed.nextId as number) < 1 ||
+		!Array.isArray(parsed.tasks) ||
+		!parsed.tasks.every(isUserTask)
+	) {
+		throw new UserTasksStoreError(`user tasks file failed schema validation: ${path}`);
+	}
+	const ids = new Set<string>();
+	let maxId = 0;
+	for (const task of parsed.tasks) {
+		if (ids.has(task.id)) throw new UserTasksStoreError(`user tasks file contains duplicate id ${task.id}: ${path}`);
+		ids.add(task.id);
+		maxId = Math.max(maxId, Number(task.id.slice(1)));
+	}
+	if ((parsed.nextId as number) <= maxId) {
+		throw new UserTasksStoreError(`user tasks file nextId would reuse an existing id: ${path}`);
+	}
+	return {
+		version: USER_TASKS_FILE_VERSION,
+		nextId: parsed.nextId as number,
+		tasks: parsed.tasks.map(copyTask),
+	};
+}
+
+function copyTask(task: UserTask): UserTask {
+	return { ...task, ...(task.acceptance ? { acceptance: normalizeUserTaskAcceptance(task.acceptance) } : {}) };
+}
+
+function initialFile(): UserTasksFile {
+	return { version: USER_TASKS_FILE_VERSION, nextId: 1, tasks: [] };
+}
+
+export function createUserTasksStore(deps: UserTasksStoreDeps): UserTasksStore {
+	const path = join(deps.cwd, USER_TASKS_RELATIVE_PATH);
+	const exists = deps.exists ?? existsSync;
+	const read = deps.read ?? ((target: string) => readFileSync(target, "utf8"));
+	const write = deps.write ?? ((target: string, body: string) => atomicWrite(target, body));
+	const now = (): string => (deps.now?.() ?? new Date()).toISOString();
+
+	const load = (): UserTasksFile => {
+		if (!exists(path)) return initialFile();
+		try {
+			return parseFile(read(path), path);
+		} catch (error) {
+			if (error instanceof UserTasksStoreError) throw error;
+			throw new UserTasksStoreError(`could not read user tasks file: ${path}`, { cause: error });
+		}
+	};
+
+	const save = (file: UserTasksFile): void => {
+		try {
+			write(path, `${JSON.stringify(file, null, 2)}\n`);
+		} catch (error) {
+			throw new UserTasksStoreError(`could not write user tasks file: ${path}`, { cause: error });
+		}
+	};
+
+	const mutate = (
+		id: string,
+		allowed: ReadonlyArray<UserTaskStatus>,
+		status: UserTaskStatus,
+		sessionId?: string,
+	): UserTask => {
+		const file = load();
+		const index = file.tasks.findIndex((task) => task.id === id);
+		const current = file.tasks[index];
+		if (!current) throw new UserTasksStoreError(`operator task ${id} was not found`);
+		if (!allowed.includes(current.status)) {
+			throw new UserTasksStoreError(`operator task ${id} is ${current.status}; it cannot move to ${status}`);
+		}
+		const updated: UserTask = { ...current, status, updatedAt: now() };
+		if (status === "handed" && sessionId) updated.handedSessionId = sessionId;
+		file.tasks[index] = updated;
+		save(file);
+		return copyTask(updated);
+	};
+
+	const recordLink = (id: string, status: "picked" | "done", sessionId: string, boardTaskId: string): UserTask => {
+		const file = load();
+		const index = file.tasks.findIndex((task) => task.id === id);
+		const current = file.tasks[index];
+		if (!current) throw new UserTasksStoreError(`operator task ${id} was not found`);
+		if (current.status === "done" || current.status === "dropped") {
+			throw new UserTasksStoreError(`operator task ${id} is ${current.status}; it cannot move to ${status}`);
+		}
+		const updated: UserTask = {
+			...current,
+			status,
+			updatedAt: now(),
+			handedSessionId: sessionId,
+			boardTaskId,
+		};
+		file.tasks[index] = updated;
+		save(file);
+		return copyTask(updated);
+	};
+
+	return {
+		path,
+		snapshot(): ReadonlyArray<UserTask> {
+			return load().tasks.map(copyTask);
+		},
+		get(id: string): UserTask | null {
+			const task = load().tasks.find((candidate) => candidate.id === id);
+			return task ? copyTask(task) : null;
+		},
+		add(title: string, note?: string, acceptance?: UserTaskAcceptance): UserTask {
+			const normalizedAcceptance = acceptance === undefined ? undefined : normalizeAcceptance(acceptance);
+			const normalizedTitle = title.trim();
+			if (normalizedTitle.length === 0) throw new UserTasksStoreError("operator task title cannot be empty");
+			const normalizedNote = note?.trim();
+			const file = load();
+			const timestamp = now();
+			const task: UserTask = {
+				id: `u${file.nextId}`,
+				title: normalizedTitle,
+				...(normalizedNote ? { note: normalizedNote } : {}),
+				...(normalizedAcceptance ? { acceptance: normalizedAcceptance } : {}),
+				status: "open",
+				createdAt: timestamp,
+				updatedAt: timestamp,
+			};
+			file.nextId += 1;
+			file.tasks.push(task);
+			save(file);
+			return copyTask(task);
+		},
+		setAcceptance(id: string, acceptance: UserTaskAcceptance): UserTask {
+			const normalized = normalizeAcceptance(acceptance);
+			const file = load();
+			const task = file.tasks.find((item) => item.id === id);
+			if (!task) throw new UserTasksStoreError(`operator task ${id} was not found`);
+			task.acceptance = normalized;
+			task.updatedAt = now();
+			save(file);
+			return copyTask(task);
+		},
+		hand(id: string, sessionId?: string): UserTask {
+			return mutate(id, ["open"], "handed", sessionId);
+		},
+		done(id: string): UserTask {
+			return mutate(id, ["open", "handed", "picked"], "done");
+		},
+		drop(id: string): UserTask {
+			return mutate(id, ["open", "handed", "picked"], "dropped");
+		},
+		recordPicked(id: string, sessionId: string, boardTaskId: string): UserTask {
+			return recordLink(id, "picked", sessionId, boardTaskId);
+		},
+		recordDone(id: string, sessionId: string, boardTaskId: string): UserTask {
+			return recordLink(id, "done", sessionId, boardTaskId);
+		},
+		reconcile(links: ReadonlyArray<UserTaskBoardLink>, sessionId: string): ReadonlyArray<UserTask> {
+			const file = load();
+			let changed = false;
+			for (const [index, current] of file.tasks.entries()) {
+				if (current.status === "done" || current.status === "dropped") continue;
+				const candidates = links.filter((link) => link.userTaskId === current.id);
+				const completed = candidates.find((link) => link.status === "completed");
+				const open = candidates.find((link) => link.status === "active" || link.status === "pending");
+				const link = completed ?? open;
+				if (link) {
+					const status = completed ? "done" : "picked";
+					if (
+						current.status !== status ||
+						current.boardTaskId !== link.boardTaskId ||
+						current.handedSessionId !== sessionId
+					) {
+						file.tasks[index] = {
+							...current,
+							status,
+							boardTaskId: link.boardTaskId,
+							handedSessionId: sessionId,
+							updatedAt: now(),
+						};
+						changed = true;
+					}
+					continue;
+				}
+				// An empty link set is authoritative only for the session recorded as
+				// owning this pickup. Reconciling session B must not release durable
+				// work that session A still owns, or B can pick the same project task.
+				if (current.status === "picked" && current.handedSessionId === sessionId) {
+					const repaired: UserTask = { ...current, status: "handed", updatedAt: now() };
+					delete repaired.boardTaskId;
+					file.tasks[index] = repaired;
+					changed = true;
+				}
+			}
+			if (changed) save(file);
+			return file.tasks.map(copyTask);
+		},
+	};
+}
+
+function normalizeAcceptance(raw: unknown): UserTaskAcceptance {
+	try {
+		return normalizeUserTaskAcceptance(raw);
+	} catch (error) {
+		throw new UserTasksStoreError(error instanceof Error ? error.message : String(error), { cause: error });
+	}
+}

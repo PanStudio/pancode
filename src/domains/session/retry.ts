@@ -1,0 +1,456 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Retry settings and countdown helper.
+ *
+ * pi-agent-core surfaces provider failures as a terminal assistant message
+ * with `stopReason: "error"` + `errorMessage: <provider text>`. It does not
+ * schedule retries itself; application wrappers decide whether to treat the
+ * error as transient, wait, and call `agent.continue()`. pi-mono's
+ * coding-agent implements that in `core/agent-session.ts` via an exponential
+ * backoff, a countdown UI, and an abort handle.
+ *
+ * This module is the pure building block for the PanCode equivalent. It:
+ *   1. Declares the RetrySettings shape and sensible defaults.
+ *   2. Routes generic provider classification through pi-ai 0.87.1's
+ *      `isRetryableAssistantError`, retaining only PanCode's local-model delta.
+ *   3. Computes the backoff delay for a given attempt (`recoveryRetryDelayMs`)
+ *      with the cap the settings declare; callers schedule the wait.
+ *   4. Provides `createRetryCountdown` so the TUI can show seconds remaining
+ *      and cancel a pending retry on `Esc` without coupling to a specific
+ *      timer abstraction.
+ *
+ * No I/O. The engine dependencies are the classifier and backoff re-exported by
+ * `src/engine/ai.ts`. The chat-loop wiring (which decides whether an
+ * agent_end with stopReason "error" triggers a retry) lives in
+ * `src/session-control/chat-loop.ts` and consumes this module; keeping the two
+ * split so the countdown can be exercised in unit tests without spinning up a
+ * runtime.
+ */
+
+import { performance } from "node:perf_hooks";
+import { isCopilotRefusal } from "../../core/copilot-refusal.js";
+import type { RetrySettings } from "../../core/defaults.js";
+import { isLiteLLMConnectionFailure } from "../../core/gateway-routing.js";
+import { isProviderAuthRejection } from "../../core/provider-auth-error.js";
+import {
+	engineRetryDelayMs,
+	isEngineContextOverflow,
+	isEngineRetryableAssistantError,
+	isHarmonyTerminalFailure,
+} from "../../engine/ai.js";
+import type { RuntimeTier } from "../providers/index.js";
+import { isCopilotTransientFailure } from "../providers/index.js";
+import { SESSION_COST_CEILING_REASON } from "../scheduling/budget.js";
+
+export type { RetrySettings } from "../../core/defaults.js";
+
+/**
+ * User-facing retry configuration lives in core defaults so settings and the
+ * session retry helper share one structural type.
+ */
+export const DEFAULT_RETRY_SETTINGS: RetrySettings = {
+	enabled: true,
+	maxRetries: 3,
+	baseDelayMs: 2000,
+	maxDelayMs: 60000,
+	streamStallMs: 180000,
+	firstTokenStallMs: 600000,
+};
+
+/** First tokens a hosted route must have shown in this process before its first-token limit adapts to them. */
+const ADAPTIVE_FIRST_TOKEN_MIN_SAMPLES = 5;
+/** The adaptive limit never drops below this, however fast the route usually starts. */
+const ADAPTIVE_FIRST_TOKEN_FLOOR_MS = 30_000;
+/** The adaptive limit is this many times the route's p95 time to first token. */
+const ADAPTIVE_FIRST_TOKEN_FACTOR = 10;
+/** The newest first tokens kept per route; older ones stop describing it. */
+const FIRST_TOKEN_SAMPLES_KEPT = 64;
+
+/** Time to first token per route (target and wire model) observed by this process's main turns (MD11). */
+const firstTokenSamples = new Map<string, number[]>();
+
+function firstTokenRouteKey(targetId: string, modelId: string): string {
+	return `${targetId}\0${modelId}`;
+}
+
+/** Record one main call's time to first token on its route. Only a call that produced output is a sample. */
+export function recordFirstTokenMs(targetId: string, modelId: string, ms: number): void {
+	if (!Number.isFinite(ms) || ms < 0) return;
+	const key = firstTokenRouteKey(targetId, modelId);
+	const samples = firstTokenSamples.get(key) ?? [];
+	samples.push(ms);
+	if (samples.length > FIRST_TOKEN_SAMPLES_KEPT) samples.splice(0, samples.length - FIRST_TOKEN_SAMPLES_KEPT);
+	firstTokenSamples.set(key, samples);
+}
+
+/** The route's recorded times to first token in this process, oldest first. */
+export function routeFirstTokenSamples(targetId: string, modelId: string): readonly number[] {
+	return firstTokenSamples.get(firstTokenRouteKey(targetId, modelId)) ?? [];
+}
+
+/** Nearest-rank 95th percentile. */
+function p95(samples: readonly number[]): number {
+	const sorted = [...samples].sort((a, b) => a - b);
+	return sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)] ?? 0;
+}
+
+/**
+ * The silence a call may keep before its first token, or null for no limit. The long first-token window exists for a
+ * self-hosted server that slept and must reload and prefill cold; a hosted service has no model to load, so its first
+ * token is held to the mid-stream window and a call that never starts is reported long before a run's own timeout.
+ * Once a hosted route has shown `ADAPTIVE_FIRST_TOKEN_MIN_SAMPLES` first tokens in this process (`samples`), its limit
+ * is ten times their p95, at least 30 s and never past the mid-stream window, so a request the route would normally
+ * have started long ago is retried sooner; a cold route keeps the mid-stream window (MD11).
+ * The main turn's watchdog and the compaction summary's (CLI-P9) share this rule; the summary passes no samples.
+ */
+export function firstTokenStallLimitMs(
+	retry: Pick<RetrySettings, "streamStallMs" | "firstTokenStallMs">,
+	tier: RuntimeTier | undefined,
+	samples: readonly number[] = [],
+): number | null {
+	if (retry.streamStallMs <= 0 || retry.firstTokenStallMs <= 0) return null;
+	if (tier === "cloud" || tier === "subscription") {
+		if (samples.length < ADAPTIVE_FIRST_TOKEN_MIN_SAMPLES) return retry.streamStallMs;
+		return Math.min(
+			retry.streamStallMs,
+			Math.max(ADAPTIVE_FIRST_TOKEN_FLOOR_MS, Math.ceil(ADAPTIVE_FIRST_TOKEN_FACTOR * p95(samples))),
+		);
+	}
+	return Math.max(retry.firstTokenStallMs, retry.streamStallMs);
+}
+
+/**
+ * A self-hosted server refusing a request because the model is not resident.
+ *
+ * Measured against LM Studio, which answers a request for an evicted model
+ * with `500 Internal Server Error` on the first attempt and the bare string
+ * `Model is unloaded.` on the next, while it loads. llama.cpp behind
+ * llama-swap and Ollama phrase the same condition differently, so the pattern
+ * covers the family rather than one vendor's wording.
+ *
+ * Deliberately kept outside pi's generic classifier: this is transient in
+ * a different unit. A rate limit clears in a second or two; a 35B model loads
+ * off disk in twenty to sixty, and retrying it on a rate limit's backoff burns
+ * every attempt before the server is ready. `pancode run --target node-a --model
+ * example-coder-model` failed exactly this way: two attempts, six
+ * seconds, "Model is unloaded." on stdout, while the load was still running.
+ */
+const MODEL_LOADING_PATTERN =
+	/model is unloaded|model is (?:still )?loading|model not loaded|no model (?:is )?loaded|loading model|model_?load(?:ing)?_?in_?progress|is not loaded/i;
+
+/** Floor for a retry that is waiting on a model load rather than on a provider. */
+const MODEL_LOADING_MIN_DELAY_MS = 15000;
+
+/**
+ * True when the error says the target is loading the model, so the wait should
+ * be sized for disk and VRAM rather than for a provider backing off.
+ */
+function isModelLoadingErrorMessage(errorMessage: string | null | undefined): boolean {
+	if (!errorMessage || errorMessage.length === 0) return false;
+	return MODEL_LOADING_PATTERN.test(errorMessage);
+}
+
+/**
+ * True when an error message looks like a transient failure worth retrying:
+ * a provider backing off, or a self-hosted target loading the model.
+ * Context-overflow errors are intentionally excluded: those route through
+ * compaction + one-shot recovery, not this retry loop.
+ *
+ * Callers pass `assistantMessage.errorMessage` directly; an empty string
+ * returns false so a missing provider error never triggers an unnecessary
+ * retry.
+ */
+export function isRetryableErrorMessage(errorMessage: string | null | undefined): boolean {
+	if (!errorMessage || errorMessage.length === 0) return false;
+	if (isHarmonyTerminalFailure(errorMessage) || isCopilotRefusal(errorMessage)) return false;
+	return (
+		isEngineRetryableAssistantError(errorMessage) ||
+		MODEL_LOADING_PATTERN.test(errorMessage) ||
+		isCopilotTransientFailure(errorMessage)
+	);
+}
+
+export type RecoveryFailureKind =
+	| "cancelled"
+	| "context-overflow"
+	| "auth"
+	| "connection"
+	| "model-loading"
+	| "transient-provider"
+	| "terminal-provider";
+
+export type RecoveryFailure = {
+	[Kind in RecoveryFailureKind]: {
+		kind: Kind;
+		message: string;
+		cause?: unknown;
+		status?: unknown;
+	};
+}[RecoveryFailureKind];
+
+export interface RecoveryFailureInput {
+	message: string;
+	runtimeId: string;
+	cancelled?: boolean;
+	contextOverflow?: boolean;
+	hasAttemptOutput?: boolean;
+	cause?: unknown;
+	status?: unknown;
+}
+
+/** Preserve route policy at the recovery boundary, before any backoff decision. */
+export function classifyRecoveryFailure(input: RecoveryFailureInput): RecoveryFailure {
+	let kind: RecoveryFailureKind;
+	if (input.cancelled) kind = "cancelled";
+	// PanCode's own ceiling refused the request before any provider saw it. Its
+	// dollar amounts can contain "500", which the provider pattern reads as a
+	// server error, and another attempt meets the same ceiling (#423).
+	else if (input.message.startsWith(`${SESSION_COST_CEILING_REASON}:`)) kind = "terminal-provider";
+	else if (isCopilotRefusal(input.message)) kind = "terminal-provider";
+	else if (input.contextOverflow ?? isEngineContextOverflow(input.message)) kind = "context-overflow";
+	// The engine already retried a Harmony server failure once and wrote this
+	// code; its code, not its wording, makes it final here (#435).
+	else if (isHarmonyTerminalFailure(input.message)) kind = "terminal-provider";
+	else if (isProviderAuthRejection(input.message, input.status)) kind = "auth";
+	else if (input.runtimeId === "litellm") {
+		kind = !input.hasAttemptOutput && isLiteLLMConnectionFailure(input.message) ? "connection" : "terminal-provider";
+	} else if (isModelLoadingErrorMessage(input.message)) kind = "model-loading";
+	// Copilot's empty response names another attempt as its remedy; it gets the same bounded ladder (bt finding 8).
+	else if (input.runtimeId === "copilot-sdk" && isCopilotTransientFailure(input.message)) kind = "transient-provider";
+	else kind = isEngineRetryableAssistantError(input.message) ? "transient-provider" : "terminal-provider";
+	return {
+		kind,
+		message: input.message,
+		...(input.cause !== undefined ? { cause: input.cause } : {}),
+		...(input.status !== undefined ? { status: input.status } : {}),
+	};
+}
+
+export function isRetryableRecoveryFailure(failure: RecoveryFailure): boolean {
+	return failure.kind === "connection" || failure.kind === "model-loading" || failure.kind === "transient-provider";
+}
+
+/**
+ * The longest one chain of attempts on a request waits on a provider, summed over its waits. A provider that states
+ * more than what is left gets no attempt at all: going back early would ignore what it said (#445).
+ */
+export const RATE_LIMIT_WAIT_BUDGET_MS = 3_600_000;
+
+/** The most stated waits one chain sits out, however short each one is. */
+export const PROVIDER_WAIT_LIMIT = 30;
+
+const CAPACITY_PATTERN = /overloaded|server_busy|model is at capacity|high demand/i;
+
+const NAMED_RATE_LIMIT_PATTERN = /rate.?limit|too many requests|(?<![a-z0-9.$])429(?![a-z0-9])/i;
+
+/** The engine reads this failure as one a later attempt may clear: not PanCode's own ceiling, a Harmony final or a refusal. */
+function isTransientProviderMessage(errorMessage: string | null | undefined): errorMessage is string {
+	if (!errorMessage || errorMessage.startsWith(`${SESSION_COST_CEILING_REASON}:`)) return false;
+	if (isHarmonyTerminalFailure(errorMessage) || isCopilotRefusal(errorMessage)) return false;
+	return isEngineRetryableAssistantError(errorMessage);
+}
+
+/**
+ * A provider naming a rate limit, which only time clears. Quota and billing exhaustion stay terminal, because waiting
+ * does not clear them. Overload wording is not a rate limit: a server that says it is busy gets the capped ladder a 500
+ * gets, since waiting out the hour on it hammered a down endpoint 425 times at 200 ms (M-9).
+ */
+export function isRateLimitErrorMessage(errorMessage: string | null | undefined): boolean {
+	return isTransientProviderMessage(errorMessage) && NAMED_RATE_LIMIT_PATTERN.test(errorMessage);
+}
+
+/** What a target's refusal says it is waiting on. Only its own words count: a bare 503 names nothing. */
+export type RetryWaitCause = "model-loading" | "capacity" | "rate-limit";
+
+export function retryWaitCause(failure: RecoveryFailure): RetryWaitCause | null {
+	if (failure.kind === "model-loading") return "model-loading";
+	if (isRateLimitErrorMessage(failure.message)) return "rate-limit";
+	return isTransientProviderMessage(failure.message) && CAPACITY_PATTERN.test(failure.message) ? "capacity" : null;
+}
+
+/**
+ * The provider's own wait for this failure: the response header the call tracker saw, the Anthropic response facts,
+ * or the error text; null when it named none.
+ */
+export function failureRetryAfterMs(message: unknown, errorMessage: string | null | undefined): number | null {
+	const facts = message as
+		| { retryAfterMs?: unknown; anthropicResponse?: { retryAfterSeconds?: unknown } }
+		| null
+		| undefined;
+	if (typeof facts?.retryAfterMs === "number" && Number.isFinite(facts.retryAfterMs) && facts.retryAfterMs >= 0) {
+		return facts.retryAfterMs;
+	}
+	const observed = facts?.anthropicResponse?.retryAfterSeconds;
+	if (typeof observed === "number" && Number.isFinite(observed) && observed >= 0) return observed * 1000;
+	const named = errorMessage?.match(
+		/(?:retry[- ]after[:=\s]+|try again in\s+|please retry in\s+|server requested\s+)(\d+(?:\.\d+)?)\s*(ms|milliseconds?|m|mins?|minutes?|h|hours?)?/i,
+	);
+	if (!named?.[1]) return null;
+	const unit = (named[2] ?? "s").toLowerCase();
+	const scale =
+		unit.startsWith("ms") || unit.startsWith("milli")
+			? 1
+			: unit.startsWith("h")
+				? 3_600_000
+				: unit.startsWith("m")
+					? 60_000
+					: 1000;
+	return Number(named[1]) * scale;
+}
+
+/**
+ * The wait a provider stated for a failure that time can clear; null when it stated none. An error a wait does not
+ * clear, such as spent quota or a bad request, stays what it is whatever its response carried.
+ */
+export function statedRetryWaitMs(message: unknown, errorMessage: string | null | undefined): number | null {
+	if (!errorMessage || errorMessage.startsWith(`${SESSION_COST_CEILING_REASON}:`)) return null;
+	if (
+		isHarmonyTerminalFailure(errorMessage) ||
+		isCopilotRefusal(errorMessage) ||
+		!isEngineRetryableAssistantError(errorMessage)
+	)
+		return null;
+	const wait = failureRetryAfterMs(message, errorMessage);
+	return wait !== null && wait > 0 ? wait : null;
+}
+
+/** A wait in the units a person plans by: `48s`, `56m52s`, `2h`, `1h30m`. */
+export function formatStatedWait(ms: number): string {
+	const seconds = Math.max(0, Math.ceil(ms / 1000));
+	if (seconds < 60) return `${seconds}s`;
+	if (seconds < 3600) return seconds % 60 === 0 ? `${seconds / 60}m` : `${Math.floor(seconds / 60)}m${seconds % 60}s`;
+	const minutes = Math.floor((seconds % 3600) / 60);
+	return `${Math.floor(seconds / 3600)}h${minutes === 0 ? "" : `${minutes}m`}`;
+}
+
+/**
+ * Compute the delay before attempt `attempt` (1-indexed). Matches pi-mono's
+ * formula `baseDelayMs * 2 ** (attempt - 1)`, then clamps to `maxDelayMs` so
+ * the 4th retry never stalls for minutes. Attempt < 1 is normalized to 1 so
+ * callers that miscount still get a sane first delay.
+ * A model load keeps the loading floor, still capped by `maxDelayMs`.
+ */
+export function recoveryRetryDelayMs(attempt: number, settings: RetrySettings, failure: RecoveryFailure): number {
+	const base = engineRetryDelayMs(settings.baseDelayMs, settings.maxDelayMs, Math.max(1, Math.floor(attempt)));
+	return failure.kind === "model-loading"
+		? Math.min(Math.max(base, MODEL_LOADING_MIN_DELAY_MS), settings.maxDelayMs)
+		: base;
+}
+
+/**
+ * Runtime state for a single retry wait. `seconds` counts down from the
+ * initial delay; `done` flips true when the deadline is reached; `cancelled`
+ * flips true when a caller aborts via `cancel()` before the deadline.
+ */
+interface RetryCountdownState {
+	attempt: number;
+	maxAttempts: number;
+	seconds: number;
+	done: boolean;
+	cancelled: boolean;
+}
+
+interface RetryCountdownOptions {
+	/** 1-indexed attempt id displayed to the user, e.g. "Retrying (1/3)". */
+	attempt: number;
+	/** Upper bound displayed alongside `attempt`. */
+	maxAttempts: number;
+	/** Total wait in milliseconds. Callers usually pass `recoveryRetryDelayMs(attempt, settings, failure)`. */
+	delayMs: number;
+	/** Fires on every tick with the latest state so the TUI can redraw. */
+	onTick: (state: RetryCountdownState) => void;
+	/** Fires once when the countdown reaches zero naturally. */
+	onDone: () => void;
+	/** Fires once when `cancel()` runs before the deadline. */
+	onCancel?: () => void;
+	/**
+	 * Schedule a callback after `ms` milliseconds. Defaults to `setTimeout`.
+	 * Tests swap this for a deterministic clock so the countdown advances
+	 * without wall-clock waits.
+	 */
+	setTimer?: (cb: () => void, ms: number) => unknown;
+	/** Mirror of `clearTimeout`. Paired with `setTimer`. */
+	clearTimer?: (id: unknown) => void;
+	/**
+	 * Monotonic millisecond source for the countdown. Defaults to
+	 * `performance.now`: the remaining wait is a span, so a clock correction
+	 * mid-countdown must not shorten or extend it.
+	 */
+	now?: () => number;
+}
+
+export interface RetryCountdownHandle {
+	/** Latest state snapshot. Useful for tests that inspect without subscribing. */
+	getState(): RetryCountdownState;
+	/** Abort the countdown before the deadline; fires `onCancel` if registered. */
+	cancel(): void;
+}
+
+/**
+ * One-second-resolution countdown loop that drives a TUI retry indicator.
+ * The first `onTick` fires synchronously so the caller can paint an initial
+ * frame without waiting a whole second; subsequent ticks fire every 1000ms
+ * until the deadline is reached or `cancel()` is called. All state lives in
+ * the returned handle; the function itself has no module-level mutable
+ * state, which keeps parallel retry counters safe under concurrent tests.
+ */
+export function createRetryCountdown(options: RetryCountdownOptions): RetryCountdownHandle {
+	const setTimer = options.setTimer ?? ((cb, ms) => setTimeout(cb, ms));
+	const clearTimer = options.clearTimer ?? ((id) => clearTimeout(id as ReturnType<typeof setTimeout>));
+	const now = options.now ?? (() => performance.now());
+
+	const start = now();
+	const deadline = start + Math.max(0, options.delayMs);
+
+	const state: RetryCountdownState = {
+		attempt: options.attempt,
+		maxAttempts: options.maxAttempts,
+		seconds: Math.max(0, Math.ceil(options.delayMs / 1000)),
+		done: false,
+		cancelled: false,
+	};
+
+	let timer: unknown = null;
+	let settled = false;
+
+	const emit = (): void => {
+		options.onTick({ ...state });
+	};
+
+	const schedule = (): void => {
+		if (settled) return;
+		const remaining = deadline - now();
+		if (remaining <= 0) {
+			state.seconds = 0;
+			state.done = true;
+			settled = true;
+			emit();
+			options.onDone();
+			return;
+		}
+		state.seconds = Math.max(0, Math.ceil(remaining / 1000));
+		emit();
+		timer = setTimer(schedule, Math.min(remaining, 1000));
+	};
+
+	schedule();
+
+	return {
+		getState() {
+			return { ...state };
+		},
+		cancel() {
+			if (settled) return;
+			settled = true;
+			if (timer !== null) {
+				clearTimer(timer);
+				timer = null;
+			}
+			state.cancelled = true;
+			state.seconds = 0;
+			emit();
+			options.onCancel?.();
+		},
+	};
+}

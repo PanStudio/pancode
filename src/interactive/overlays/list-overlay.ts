@@ -1,0 +1,1758 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { tierPolicy, tierRevision } from "../../core/presentation-tier.js";
+import {
+	type Component,
+	fuzzyFilter,
+	Input,
+	Markdown,
+	matchesKey,
+	type OverlayHandle,
+	stripTerminalSequences,
+	type TUI,
+	truncateToWidth,
+	visibleWidth,
+	wrapTextWithAnsi,
+} from "../../engine/tui.js";
+import { backOutOneLayer, type EscapeLayers, escapeHintEntry, innermostEscapeLayer } from "../escape-layers.js";
+import { localKey } from "../keyboard-owner.js";
+import {
+	buildHint,
+	FILTER_HINT,
+	fitHintEntries,
+	fitHintEntryList,
+	type HintEntry,
+	type OverlayEscVerb,
+	showPancodeOverlayFrame,
+} from "../overlay-frame.js";
+import {
+	chipRows,
+	dotSep,
+	emptyState,
+	errorState,
+	fitUnits,
+	fitUnitsKept,
+	GLYPH,
+	innerDivider,
+	keyCap,
+	listGroupHeader,
+	markdownTheme,
+	padAnsi,
+	pancodeTheme,
+	positionRow,
+	rule,
+	selectionRow,
+	wrapPaths,
+} from "../theme/index.js";
+import { skinEpoch } from "../theme/tokens.js";
+import { confirmOnceRail } from "./confirm-once.js";
+import type { ListOverlayItem, ListOverlayTab, RenderedRow } from "./list-overlay-model.js";
+import { groupedByBestMatch, NARROW_ROW_WIDTH } from "./list-overlay-model.js";
+
+/** The share of a row the lead column of a two-column list may take. */
+const LEAD_COLUMN_SHARE = 0.4;
+/** The focused row in full: a rule, then two rows of lead and text. */
+const FOCUS_LINE_ROWS = 3;
+/** A list shorter than this keeps every row for the cursor. */
+const FOCUS_LINE_MIN_LIST_ROWS = 8;
+/** Narrowest text column the focused row's text wraps in beside its lead. */
+const FOCUS_LINE_MIN_TEXT = 24;
+
+/** Fewest list rows a stacked detail pane may leave, and fewest rows it needs to be drawn at all. */
+const STACKED_LIST_MIN_ROWS = 3;
+const STACKED_DETAIL_MIN_ROWS = 2;
+/** Most rows the standard tier's key facts of the selection take under a list with no pane. */
+const SELECTION_FACT_ROWS = 4;
+
+/** The one key the body never repeats: a pane that overflows names it on its own position row. */
+const PANE_REMINDERS = new Set(["PgUp/PgDn"]);
+/** Keys the chrome may already show by their glyph alone: the compact tab bar ends in ←→. */
+const NAVIGATION_KEYS = new Set<string>([GLYPH.leftRight, GLYPH.upDown]);
+
+export interface ListOverlayOptions {
+	title: string;
+	/** Allow long lists to use the full body budget; the outer frame keeps a fixed height. */
+	fullScreen?: boolean;
+	/**
+	 * A reference the operator reads through rather than a menu they pick from:
+	 * on a tall terminal the dock gives it up to half the screen instead of the
+	 * height every menu shares.
+	 */
+	tall?: boolean;
+	items: ReadonlyArray<ListOverlayItem>;
+	/**
+	 * Tabs, drawn as a bar above the filter row and switched with ←/→, which is
+	 * the key vocabulary the Settings Center already uses to move between
+	 * sections. Omitted leaves the overlay untabbed and every tab code path
+	 * inert.
+	 */
+	tabs?: ReadonlyArray<ListOverlayTab>;
+	/** Tab the overlay opens on; defaults to the first. */
+	activeTabId?: string;
+	/** Notified after ←/→ changes the active tab. */
+	onTabChange?: (tabId: string) => void;
+	/** Enables the type-to-filter input row. */
+	filterable?: boolean;
+	/** What the empty filter row says it searches; a bare `>` said nothing. Defaults to `type to filter`. */
+	filterPlaceholder?: string;
+	/** Start in the list; / enters search, whose letters and arrows belong to the input. */
+	explicitSearch?: boolean;
+	/** Persistent, width-aware scope/mode text, including when the selected tab is empty. */
+	status?: (width: number) => string | undefined;
+	/** Actions that do not require a selected row, such as scope or view mode. */
+	globalActions?: Record<string, () => void>;
+	globalHints?: ReadonlyArray<HintEntry>;
+	/** Global keys that ask once (E-21): the first press arms and shows the rail, the same key again runs it. */
+	confirmGlobal?: Record<string, { verb: string; label: string }>;
+	/** Row keys that ask once on the row they act on; `applies` limits it to the rows the key changes. */
+	confirmActions?: Record<
+		string,
+		{ verb: string; label: (item: ListOverlayItem) => string; applies?: (item: ListOverlayItem) => boolean }
+	>;
+	/**
+	 * An inner level Esc leaves before it closes the overlay, such as a package's
+	 * member list. `active` is asked by the footer so the key it advertises is the
+	 * key the operator gets; `back` is called only when Esc actually fires.
+	 */
+	onBack?: { active: () => boolean; back: () => void };
+	/** Pre-applied filter text. */
+	initialFilter?: string;
+	/**
+	 * When some row holds every search word as written, show only those. Reference
+	 * lists want this: a letter-by-letter match of `Alt` across a sentence is noise
+	 * beside the rows that actually say Alt.
+	 */
+	exactMatchesOnly?: boolean;
+	/**
+	 * E-13 pick list: a printable key typed while the selection has focus goes back to the filter instead of
+	 * acting as `j`/`k` movement. Help sets it; lists with letter actions leave it off.
+	 */
+	typingRefocusesFilter?: boolean;
+	/**
+	 * Extra hint entries beyond movement/filter/Esc (builder appends Esc). A
+	 * function is asked per frame and is handed the selected row, so a footer can
+	 * advertise the keys that row actually offers rather than a fixed set.
+	 */
+	hints?: ReadonlyArray<HintEntry> | ((selected: ListOverlayItem | undefined) => ReadonlyArray<HintEntry>);
+	/** The row's own keys lead the rail, for a list whose whole point is its commit verb. */
+	leadWithHints?: boolean;
+	/** Custom message when list is empty; a function is asked per frame. */
+	emptyMessage?: string | (() => string);
+	/** What would fill the list, or the key that does, under the empty message. */
+	emptyRemedy?: string | (() => string);
+	/** A read that failed, asked per frame; drawn as the error state in place of the empty message while it returns text. */
+	emptyError?: () => string | undefined;
+	/** Noun for the rows in the position line; `rows` by default. */
+	unit?: string;
+	/** Layout mode: stack (detail below list) or split (detail to the right). */
+	layout?: "stack" | "split";
+	/** Primary action; omitted means Enter toggles the detail pane. */
+	onSelect?: (item: ListOverlayItem) => void;
+	/** Secondary keyed actions, e.g. { i: install }. */
+	actions?: Record<string, (item: ListOverlayItem) => void>;
+	onClose: () => void;
+	/** What the last Esc does, in the rail's words, for a list opened over another surface that it returns to. */
+	closeVerb?: { verb: string; short?: string };
+}
+
+export class ListOverlayView implements Component {
+	/** A confirmGlobal key pressed once and waiting for its second press. */
+	private armedGlobal: string | null = null;
+	/** A confirmActions key pressed once on a row and waiting for its second press there. */
+	private armedAction: { key: string; id: string } | null = null;
+	private viewportRows = 24;
+	private selectedIndex = 0;
+	private filterText = "";
+	private isFilterFocused = false;
+	private showDetail = false;
+	/** The operator put away the pane the detailed tier draws by default; the detail key brings it back. */
+	private paneDismissed = false;
+	/**
+	 * Rows the selection block holds at this width and tier: the most any selection asked for, so moving the cursor
+	 * never resizes the list window. Reset when the width, the tier or the rows change.
+	 */
+	private selectionReserve = { key: "", rows: 0 };
+	/**
+	 * Whether the pane may take the whole body over. An opener that shows the
+	 * pane by default gets it only when it stacks under the list; the takeover,
+	 * which hides every row and the cursor, is for an operator who pressed the
+	 * detail key and can press it again.
+	 */
+	private takeoverAllowed = false;
+	/** The pane has the body to itself, so the detail key is the way back to the rows. */
+	private detailTakeover = false;
+	private listScrollOffset = 0;
+	private detailScrollOffset = 0;
+	/**
+	 * Whether the last frame actually drew a detail pane.
+	 *
+	 * The split pane is gated on the render width and the stacked one on
+	 * showDetail, and `getHint` is handed neither. The frame renders the child
+	 * before it fits the footer, so the last frame is the one the hint describes.
+	 * It starts on the router's own belief in `detailPaneVisible`, which is what
+	 * the scroll keys would do before any render has corrected it.
+	 */
+	private detailPaneDrawn: boolean;
+	/** Whether the pane on screen is the split one, which Tab cannot put away. */
+	private detailPaneSplit = false;
+	/**
+	 * A detail key pressed since the last frame. Two presses that land before
+	 * a repaint each inverted the pane the last frame drew, so the second was
+	 * a no-op and the pane stayed where the first press put it.
+	 */
+	private detailKeyPending = false;
+	/** Cells the rail under this list has for keys, or zero while the composer has not said. */
+	private railRoom = 0;
+	/** Rows one PgUp or PgDn moves the selection by while no pane takes those keys. */
+	private listPage = 1;
+	/** Lines one PgUp or PgDn moves the pane by: the rows it shows, never a fixed count. */
+	private detailPage = 1;
+	/** Rendered rows of the pinned head the last frame drew, for the key row to check against. */
+	private detailHeadText = "";
+	private readonly input: Input;
+	/**
+	 * The live item set. Separate from `options.items` because a surface backed by
+	 * data that changes under the operator (the memory bank refreshes once a
+	 * second) replaces its rows without rebuilding the view, which is what keeps
+	 * the selection and the detail scroll where they were left.
+	 */
+	private items: ReadonlyArray<ListOverlayItem>;
+	/** Bumped by setItems; part of the render memo key so replaced rows never serve a stale frame. */
+	private itemsEpoch = 0;
+	/**
+	 * Filter memo: the item set is fixed at construction, so the fuzzy pass is a
+	 * pure function of the query. Re-scoring every item per frame defeated the
+	 * overlay frame's identity cache, since each frame returned a fresh array.
+	 */
+	private filterMemo: { query: string; items: ReadonlyArray<ListOverlayItem> } | null = null;
+	/** Detail pane memo: one Markdown render per (item, width), not per frame. */
+	private detailMemo: { item: ListOverlayItem; width: number; epoch: number; tier: number; lines: string[] } | null =
+		null;
+	/** Rendered-frame memo keyed on every render input, for frame-cache identity. */
+	private renderMemo: { key: string; lines: string[] } | null = null;
+	/** Bumped on every keystroke routed into the filter input; part of the memo key. */
+	private inputEpoch = 0;
+	/** Active tab id, or the empty string on an untabbed overlay. */
+	private activeTabId = "";
+	/** Row count per tab id, refreshed whenever the tab set is rebuilt. */
+	private tabCounts = new Map<string, number>();
+
+	constructor(
+		private readonly options: ListOverlayOptions,
+		private readonly onChange: () => void,
+	) {
+		this.isFilterFocused = !!options.filterable && !options.explicitSearch;
+		this.filterText = options.initialFilter ?? "";
+		this.items = options.items;
+		this.detailPaneDrawn = options.layout === "split" && tierPolicy().pickerDetail !== "status";
+		this.input = new Input();
+		if (options.initialFilter) {
+			this.input.setValue(options.initialFilter);
+		}
+		const tabs = options.tabs;
+		if (tabs && tabs.length > 0) {
+			const requested = tabs.find((tab) => tab.id === options.activeTabId);
+			this.activeTabId = (requested ?? tabs[0])?.id ?? "";
+			this.refreshTabs();
+		}
+	}
+
+	/** The tab the overlay is on, or undefined when it is untabbed. */
+	activeTab(): ListOverlayTab | undefined {
+		return this.options.tabs?.find((tab) => tab.id === this.activeTabId);
+	}
+
+	/**
+	 * Rebuild every tab's rows, adopt the active tab's, and record each count.
+	 *
+	 * Every tab is rebuilt rather than only the active one because the tab bar
+	 * states each tab's count, and an install performed on one tab can satisfy a
+	 * requirement another tab reports. A stale count there is the same lie a
+	 * stale row is.
+	 */
+	refreshTabs(): void {
+		const tabs = this.options.tabs;
+		if (!tabs || tabs.length === 0) return;
+		const counts = new Map<string, number>();
+		let activeItems: ReadonlyArray<ListOverlayItem> = [];
+		for (const tab of tabs) {
+			const rows = tab.items();
+			counts.set(tab.id, tab.count?.(rows) ?? rows.length);
+			if (tab.id === this.activeTabId) activeItems = rows;
+		}
+		this.tabCounts = counts;
+		this.setItems(activeItems);
+	}
+
+	/**
+	 * Move the cursor onto a row by id, reporting whether that row is here.
+	 *
+	 * A command that names one package opens the browser on it rather than at the
+	 * top of a list the operator then has to search. A miss is reported instead of
+	 * silently landing on row zero, because "not found" and "found, first" are
+	 * different answers.
+	 */
+	selectById(id: string): boolean {
+		const index = this.filteredItems().findIndex((item) => item.id === id);
+		if (index === -1) return false;
+		this.selectIndex(index);
+		this.renderMemo = null;
+		return true;
+	}
+
+	/**
+	 * Drop a typed filter and leave search focus, for a caller that replaces its
+	 * rows with a different set: a filter typed to reach an agent's inventory
+	 * hid every row of the adoption plan that took the inventory's place.
+	 */
+	clearFilter(): void {
+		if (this.filterText.length === 0 && !this.isFilterFocused) return;
+		this.filterText = "";
+		this.input.setValue("");
+		this.isFilterFocused = false;
+		this.inputEpoch += 1;
+		this.selectIndex(0);
+		this.renderMemo = null;
+	}
+
+	/** Show or hide the stacked detail pane, for callers that bind their own key to it. */
+	/**
+	 * The detail key: it opens a pane when none is on screen and hides the one
+	 * that is, judged by what was drawn rather than what was wanted, so a pane
+	 * the opener asked for but the rows could not hold never makes the first
+	 * press a no-op. From here on the pane may take the body over.
+	 */
+	private toggleDetailByKey(): void {
+		// With no pane to change the press changes nothing: a no-match filter or an
+		// empty tab has no row to describe, and the split pane is always drawn.
+		// Flipping the request here would surface later as a pane that moved on its own.
+		if (!this.filteredItems()[this.selectedIndex]?.detail || this.detailPaneSplit) {
+			this.onChange();
+			return;
+		}
+		this.takeoverAllowed = true;
+		// Before the first frame nothing has been drawn yet, and after a press the
+		// frame has not caught up with, the request is what the key inverts.
+		this.showDetail = this.renderMemo && !this.detailKeyPending ? !this.detailPaneDrawn : !this.showDetail;
+		this.paneDismissed = !this.showDetail;
+		this.detailKeyPending = true;
+		this.onChange();
+	}
+
+	toggleDetail(): void {
+		this.showDetail = !this.showDetail;
+		this.paneDismissed = !this.showDetail;
+		this.renderMemo = null;
+	}
+
+	/**
+	 * Put the pane on screen for the selected row, taking the body over when
+	 * the rows leave no room to stack it. A request to see a row's facts never
+	 * hides facts already on screen, which a blind toggle did when the opener
+	 * had the pane up already.
+	 */
+	openDetail(): void {
+		this.takeoverAllowed = true;
+		this.showDetail = true;
+		this.paneDismissed = false;
+		this.detailKeyPending = true;
+		this.renderMemo = null;
+	}
+
+	/** Switch tabs and rebuild. A tab id this overlay does not carry is ignored. */
+	setActiveTab(tabId: string): void {
+		const tabs = this.options.tabs;
+		if (!tabs?.some((tab) => tab.id === tabId)) return;
+		this.activeTabId = tabId;
+		this.refreshTabs();
+		// After the rows, not before: setItems re-anchors the cursor on the id it
+		// was on, and on a tab switch that id belongs to a list the operator has
+		// left. A new tab starts at its first row.
+		this.selectedIndex = 0;
+		this.listScrollOffset = 0;
+		this.detailScrollOffset = 0;
+		this.renderMemo = null;
+	}
+
+	/**
+	 * The frame title. A tabbed overlay names the tab it is on, so the border
+	 * and the rows below it describe the same thing.
+	 */
+	title(): string {
+		const tab = this.activeTab();
+		return tab === undefined ? this.options.title : `${this.options.title} ${GLYPH.sep} ${tab.label}`;
+	}
+
+	private stepTab(delta: number): boolean {
+		const tabs = this.options.tabs;
+		if (!tabs || tabs.length === 0) return false;
+		const current = tabs.findIndex((tab) => tab.id === this.activeTabId);
+		const next = tabs[((((current === -1 ? 0 : current) + delta) % tabs.length) + tabs.length) % tabs.length];
+		if (!next || next.id === this.activeTabId) return false;
+		// The owner is told first: it keeps its own view state keyed on the tab, and
+		// rebuilding the rows before it knew which tab they were for built one tab's
+		// rows against the previous tab's subjects.
+		this.options.onTabChange?.(next.id);
+		this.setActiveTab(next.id);
+		this.onChange();
+		return true;
+	}
+
+	/** The tab bar: every tab with its count, the active one in the accent token. */
+	private renderTabBar(width: number): string[] {
+		const tabs = this.options.tabs;
+		if (!tabs || tabs.length === 0) return [];
+		const theme = pancodeTheme();
+		const parts = tabs.map((tab) => {
+			const text = `${tab.label} ${this.tabCounts.get(tab.id) ?? 0}`;
+			return tab.id === this.activeTabId
+				? theme.style("selectedOption", `${GLYPH.cursor} ${text}`, { bold: true })
+				: theme.fg("menuOption", `  ${text}`);
+		});
+		const full = parts.join(theme.fg("border", ` ${GLYPH.rail} `));
+		if (visibleWidth(full) > width) {
+			const active = this.activeTab();
+			if (active) {
+				const position = tabs.findIndex((tab) => tab.id === active.id) + 1;
+				return [
+					this.padLine(
+						theme.fg(
+							"selectedOption",
+							`${GLYPH.cursor} ${active.label} ${this.tabCounts.get(active.id) ?? 0} ${GLYPH.sep} ${position}/${tabs.length} ${GLYPH.leftRight}`,
+						),
+						width,
+					),
+				];
+			}
+		}
+		return [this.padLine(full, width)];
+	}
+
+	/**
+	 * Replace the rows, keeping the operator's place.
+	 *
+	 * Selection is re-anchored on the selected row's id rather than its index,
+	 * because a refresh that prepends a row would otherwise slide the cursor onto
+	 * a different entry. The detail scroll survives only while the same id stays
+	 * selected; on any other row it is a position in a document that is gone.
+	 */
+	setItems(items: ReadonlyArray<ListOverlayItem>): void {
+		const selectedId = this.filteredItems()[this.selectedIndex]?.id;
+		this.items = items;
+		this.itemsEpoch += 1;
+		this.filterMemo = null;
+		this.renderMemo = null;
+		const nextIndex = selectedId === undefined ? -1 : this.filteredItems().findIndex((item) => item.id === selectedId);
+		if (nextIndex === -1) {
+			this.selectIndex(Math.max(0, Math.min(this.selectedIndex, this.filteredItems().length - 1)));
+			return;
+		}
+		this.selectedIndex = nextIndex;
+	}
+
+	private filteredItems(): ReadonlyArray<ListOverlayItem> {
+		const query = this.filterText.trim();
+		if (query.length === 0) return this.items;
+		if (this.filterMemo?.query === query) return this.filterMemo.items;
+		const searchText = (item: ListOverlayItem): string =>
+			item.searchGroup === false ? item.label : `${item.label} ${item.group ?? ""}`;
+		const ranked = fuzzyFilter([...this.items], query, searchText);
+		const words = query
+			.toLowerCase()
+			.split(/[\s/]+/u)
+			.filter(Boolean);
+		const exact = this.options.exactMatchesOnly
+			? ranked.filter((item) => {
+					const text = searchText(item).toLowerCase();
+					return words.every((word) => text.includes(word));
+				})
+			: [];
+		const items = groupedByBestMatch(exact.length > 0 ? exact : ranked);
+		this.filterMemo = { query, items };
+		return items;
+	}
+
+	private selectIndex(index: number): void {
+		this.selectedIndex = index;
+		this.detailScrollOffset = 0;
+	}
+
+	/**
+	 * Run the action bound to a key, if one is bound. Reports whether the key was
+	 * claimed, so a list with rows swallows its own action keys either way rather
+	 * than letting one fall through to the filter.
+	 */
+	private runAction(data: string, filteredItems: ReadonlyArray<ListOverlayItem>): boolean {
+		const global = this.options.globalActions?.[data];
+		const confirm = this.options.confirmGlobal?.[data];
+		if (global && confirm && this.armedGlobal !== data) {
+			this.armedGlobal = data;
+			this.onChange();
+			return true;
+		}
+		this.armedGlobal = null;
+		if (global) {
+			global();
+			this.onChange();
+			return true;
+		}
+		const action = this.options.actions?.[data];
+		if (!action) return false;
+		const selectedItem = filteredItems[this.selectedIndex];
+		const ask = this.options.confirmActions?.[data];
+		const armed = this.armedAction;
+		this.armedAction = null;
+		if (selectedItem && ask && (ask.applies?.(selectedItem) ?? true)) {
+			if (armed?.key !== data || armed.id !== selectedItem.id) {
+				this.armedAction = { key: data, id: selectedItem.id };
+				this.onChange();
+				return true;
+			}
+		}
+		if (selectedItem) action(selectedItem);
+		return true;
+	}
+
+	/**
+	 * Esc by the shared rule: a nonempty filter clears first, explicit search then
+	 * returns to the list, an inner level is left before the overlay is (drilling
+	 * into a package's members and pressing Esc returns to the packages, not out of
+	 * PanHub with the category, mode and scope the operator set), and only
+	 * then does Esc close. The footer reads its Esc word from the same list.
+	 */
+	private escapeLayers(): EscapeLayers {
+		const onBack = this.options.onBack;
+		return [
+			// A pane the operator opened with the detail key is a layer: Esc puts it
+			// away and leaves the rows, where it used to close the whole overlay from
+			// inside a view the operator had only opened to read. A pane an opener
+			// shows by default, or the split pane beside the list, is part of the list.
+			this.takeoverAllowed &&
+				this.detailPaneDrawn &&
+				!this.detailPaneSplit && {
+					verb: "back to list",
+					short: "back",
+					back: () => {
+						this.showDetail = false;
+						this.paneDismissed = true;
+						this.detailKeyPending = true;
+						this.onChange();
+					},
+				},
+			this.filterText.length > 0 && {
+				verb: "clear filter",
+				back: () => {
+					this.filterText = "";
+					this.input.setValue("");
+					this.selectIndex(0);
+					this.onChange();
+				},
+			},
+			this.options.explicitSearch === true &&
+				this.isFilterFocused && {
+					verb: "back to list",
+					short: "back",
+					back: () => {
+						this.isFilterFocused = false;
+						this.onChange();
+					},
+				},
+			onBack?.active() === true && {
+				verb: "back",
+				back: () => {
+					onBack.back();
+					this.onChange();
+				},
+			},
+			{
+				verb: this.options.closeVerb?.verb ?? "close",
+				...(this.options.closeVerb?.short !== undefined ? { short: this.options.closeVerb.short } : {}),
+				back: () => this.options.onClose(),
+			},
+		];
+	}
+
+	private clearFilterOrClose(): void {
+		backOutOneLayer(this.escapeLayers());
+	}
+
+	/** The verb Esc carries right now, read from the layers the key backs out of. */
+	private escapeVerb(): OverlayEscVerb {
+		return (innermostEscapeLayer(this.escapeLayers())?.verb ?? "close") as OverlayEscVerb;
+	}
+
+	/**
+	 * The tab entry a tabbed footer carries. The verb names the active tab and
+	 * how many rows it holds, so the count a reader sees is the count of the tab
+	 * they are on rather than of the overlay as a whole.
+	 */
+	private tabHintEntry(): HintEntry | null {
+		const tab = this.activeTab();
+		if (tab === undefined) return null;
+		// The rows on screen, not the tab bar's count, which a drilled-in tab keeps at its catalog's size.
+		const count = this.items.length;
+		const countLabel = tab.countLabel?.(count) ?? `${count} ${tab.label.toLowerCase()}`;
+		// The tab bar itself is on screen at every width, naming ←→ when it is
+		// narrow, so the footer entry is a reminder that gives way before a row's keys.
+		return { key: GLYPH.leftRight, verb: `tab ${GLYPH.sep} ${countLabel}`, short: "tab" };
+	}
+
+	/**
+	 * The footer, fitted to the rail it is drawn on. With a width the entries
+	 * narrow by the shared rule, so a key a surface marked critical outlives the
+	 * conveniences; without one the full hint is returned for callers that fit
+	 * it themselves.
+	 */
+	getHint(innerWidth?: number): string {
+		const { entries, esc } = this.hintEntries();
+		if (innerWidth === undefined) return buildHint(entries, esc);
+		return fitHintEntries(
+			[...entries, escapeHintEntry(this.escapeLayers()) ?? { key: "Esc", verb: esc }],
+			innerWidth - 3,
+		);
+	}
+
+	private hintEntries(): { entries: HintEntry[]; esc: OverlayEscVerb } {
+		if (this.options.explicitSearch && this.isFilterFocused) {
+			return {
+				entries: [{ key: "Enter", verb: "back to list", critical: true }],
+				esc: this.escapeVerb(),
+			};
+		}
+		const tabEntry = this.tabHintEntry();
+		// A list with no rows has no row to select, invoke, or act on. Offering
+		// those keys anyway is the same lie the empty state exists to stop telling.
+		// A tab key is the exception: on an empty tab it is the way to a full one.
+		if (this.items.length === 0)
+			return { entries: [...(tabEntry ? [tabEntry] : []), ...(this.options.globalHints ?? [])], esc: this.escapeVerb() };
+
+		const hintEntries: HintEntry[] = [];
+		const armed = this.armedGlobal !== null ? this.options.confirmGlobal?.[this.armedGlobal] : undefined;
+		if (this.armedGlobal !== null && armed !== undefined)
+			return { entries: confirmOnceRail(this.armedGlobal, armed.verb, armed.label), esc: this.escapeVerb() };
+		const armedRow = this.armedAction;
+		const armedAsk = armedRow !== null ? this.options.confirmActions?.[armedRow.key] : undefined;
+		const armedItem = armedRow !== null ? this.items.find((item) => item.id === armedRow.id) : undefined;
+		if (armedRow !== null && armedAsk !== undefined && armedItem !== undefined)
+			return { entries: confirmOnceRail(armedRow.key, armedAsk.verb, armedAsk.label(armedItem)), esc: this.escapeVerb() };
+		if (tabEntry) hintEntries.push(tabEntry);
+		hintEntries.push({ key: GLYPH.upDown, verb: "select" });
+		// Navigation before actions, which is the order a narrowing footer drops in:
+		// droppable entries go left to right, so the last one written is the last one
+		// standing. Scrolling a pane is reachable only once the pane is on screen, and
+		// it is the widest entry, so it goes with the arrows: at 120 columns it used
+		// to outlive every global key and leave n, b and s off the rail.
+		// The selected row decides: a list mixing rows advertised Tab on a row where the press does nothing.
+		const hasDetail = !!this.filteredItems()[this.selectedIndex]?.detail;
+		if (hasDetail && this.detailPaneDrawn) hintEntries.push({ key: "PgUp/PgDn", verb: "scroll detail" });
+		if (this.options.filterable) {
+			hintEntries.push(this.options.explicitSearch ? { key: "/", verb: "filter", critical: true } : FILTER_HINT);
+		}
+		hintEntries.push(...(this.options.globalHints ?? []));
+
+		// Below the split threshold the footer used to advertise the scroll keys,
+		// which did nothing, and drop `Enter/Tab detail`, which was the way in.
+		// While no pane is on screen this key is the only way to a row's facts,
+		// so a narrow footer keeps it; once a stacked pane is drawn it is a
+		// toggle. The split pane is always drawn beside the list, so there the
+		// key does nothing and is not advertised. While the pane has the body
+		// to itself it is the way back to the rows, so it goes after the row's
+		// own keys, which the pane names, and is the last key a rail lets go.
+		const detailKey: HintEntry | null =
+			hasDetail && !this.detailPaneSplit
+				? {
+						key: this.options.onSelect ? "Tab" : "Enter/Tab",
+						verb: this.detailPaneDrawn ? "hide detail" : "detail",
+						short: this.detailPaneDrawn ? "list" : "detail",
+						critical: !this.detailPaneDrawn || this.detailTakeover,
+					}
+				: null;
+		if (detailKey && !this.detailTakeover) hintEntries.push(detailKey);
+
+		const hints =
+			typeof this.options.hints === "function"
+				? this.options.hints(this.filteredItems()[this.selectedIndex])
+				: this.options.hints;
+		// A row's own keys are named in its detail pane; while no pane is drawn
+		// the footer is the only place they appear, so they outlive the
+		// navigation reminders there.
+		if (hints) {
+			const rowKeys = hints.map((hint) => (this.detailPaneDrawn ? hint : { ...hint, critical: hint.critical ?? true }));
+			if (this.options.leadWithHints) hintEntries.unshift(...rowKeys);
+			else hintEntries.push(...rowKeys);
+		}
+		if (detailKey && this.detailTakeover) hintEntries.push(detailKey);
+
+		// The footer follows clearFilterOrClose(). With a filter typed, Esc does
+		// not close, and saying it does sent operators out of an overlay they were
+		// still in and back in again to find out.
+		return { entries: hintEntries, esc: this.escapeVerb() };
+	}
+
+	private padLine(line: string, targetWidth: number): string {
+		const w = visibleWidth(line);
+		if (w >= targetWidth) return truncateToWidth(line, targetWidth, GLYPH.ellipsis, true);
+		return line + " ".repeat(targetWidth - w);
+	}
+
+	/**
+	 * The lead column of a two-column list at this width: the widest lead among
+	 * the rows that have one, capped so the text column always keeps most of
+	 * the row. Measured over every filtered row, not the visible window, so the
+	 * column does not jump while the operator scrolls.
+	 */
+	private leadWidth(width: number, items: ReadonlyArray<ListOverlayItem>): number {
+		const narrow = width <= NARROW_ROW_WIDTH;
+		const cap = Math.max(8, Math.floor(width * LEAD_COLUMN_SHARE));
+		let widest = 0;
+		for (const item of items) {
+			const cells = item.cells;
+			if (!cells) continue;
+			const full = visibleWidth(cells.lead);
+			const short = cells.narrowLead === undefined ? full : visibleWidth(cells.narrowLead);
+			widest = Math.max(widest, narrow || full > cap ? short : full);
+		}
+		return Math.min(widest, cap);
+	}
+
+	/**
+	 * The meta column of a two-column list: the widest meta among its rows, so
+	 * every row's text is cut at one edge and the metas read as a column. Like
+	 * the lead it is measured over every filtered row, so scrolling never moves it.
+	 */
+	private metaWidth(items: ReadonlyArray<ListOverlayItem>): number {
+		let widest = 0;
+		for (const item of items) {
+			if (!item.cells) continue;
+			const meta = item.meta;
+			if (meta !== undefined) widest = Math.max(widest, visibleWidth(meta));
+		}
+		return widest;
+	}
+
+	/**
+	 * A row's label. A plain two-column row paints its lead in the option role
+	 * and its text in the description role; the focused row stays plain so the
+	 * selection rule paints it whole in the accent, which is how every other
+	 * list marks the cursor.
+	 */
+	private rowLabel(item: ListOverlayItem, focused: boolean, width: number, leadWidth: number): string {
+		const cells = item.cells;
+		if (!cells) return item.label;
+		const theme = pancodeTheme();
+		const narrow = width <= NARROW_ROW_WIDTH;
+		// A lead the column would cut takes its short form at any width: a whole
+		// `/run <agent> <task>` says more than `/run [--agent-profile <profile>] […`.
+		const lead =
+			cells.narrowLead !== undefined && (narrow || visibleWidth(cells.lead) > leadWidth) ? cells.narrowLead : cells.lead;
+		const fitted = padAnsi(truncateToWidth(lead, leadWidth, GLYPH.ellipsis, false), leadWidth);
+		if (focused) return `${fitted}  ${cells.text}`;
+		return `${theme.fg("menuOption", fitted)}  ${theme.fg("menuDescription", cells.text)}`;
+	}
+
+	/** Whether the width cuts the lead or the text of enough two-column rows to give the focused one its own line. */
+	private anyRowCut(width: number, items: ReadonlyArray<ListOverlayItem>, leadWidth: number): boolean {
+		const room = width - 2;
+		let rows = 0;
+		let cut = 0;
+		for (const item of items) {
+			const cells = item.cells;
+			if (!cells) continue;
+			rows += 1;
+			const lead = cells.narrowLead !== undefined && visibleWidth(cells.lead) > leadWidth ? cells.narrowLead : cells.lead;
+			if (visibleWidth(lead) > leadWidth || leadWidth + 2 + visibleWidth(cells.text) > room) cut += 1;
+		}
+		// A width that cuts one row in a hundred keeps its rows for the list; the detail key reads that one.
+		return cut > 0 && cut * 5 >= rows;
+	}
+
+	/**
+	 * The focused two-column row in full: its lead, then its whole text, wrapped under a quiet rule and held to
+	 * FOCUS_LINE_ROWS rows. A row the width did not cut is stated too, so the reserved rows never read as empty.
+	 */
+	private focusLineRows(width: number, focused: ListOverlayItem | undefined): string[] {
+		const theme = pancodeTheme();
+		const cells = focused?.cells;
+		const rows: string[] = [this.padLine(`  ${innerDivider(theme, Math.max(1, width - 4))}`, width)];
+		// The short lead is whole where it exists; the text is what the row cut, so it gets the rows.
+		const lead = cells?.narrowLead ?? cells?.lead ?? "";
+		const room = Math.max(1, width - 4);
+		const textColumn = visibleWidth(lead) + 2;
+		// The text wraps under its own column, as a table cell does; a lead too wide to leave the text a
+		// readable column takes the first row alone and the text starts under it.
+		let wrapped: string[] = [];
+		if (cells && room - textColumn >= FOCUS_LINE_MIN_TEXT) {
+			const text = wrapTextWithAnsi(theme.fg("menuDescription", cells.text), room - textColumn);
+			wrapped = text.map((row, index) =>
+				index === 0 ? `${theme.fg("menuOption", lead)}  ${row}` : `${" ".repeat(textColumn)}${row}`,
+			);
+		} else if (cells) {
+			wrapped = [
+				...wrapTextWithAnsi(theme.fg("menuOption", lead), room).slice(0, 1),
+				...wrapTextWithAnsi(theme.fg("menuDescription", cells.text), room),
+			];
+		}
+		for (let index = 0; index < FOCUS_LINE_ROWS - 1; index += 1) {
+			const row = wrapped[index] ?? "";
+			const cut = index === FOCUS_LINE_ROWS - 2 && wrapped.length > FOCUS_LINE_ROWS - 1;
+			rows.push(
+				this.padLine(
+					`  ${cut ? truncateToWidth(row, Math.max(1, width - 4 - visibleWidth(GLYPH.ellipsis)), "", false) + GLYPH.ellipsis : row}`,
+					width,
+				),
+			);
+		}
+		return rows;
+	}
+
+	/**
+	 * The selection as the tier states it under a list with no pane: one status row at compact, its key facts at
+	 * standard and detailed. A row with nothing to say about itself has no block.
+	 */
+	private selectionBlock(width: number, item: ListOverlayItem | undefined): string[] {
+		if (item === undefined) return [];
+		const room = Math.max(1, width - 2);
+		let rows: string[];
+		if (tierPolicy().pickerDetail === "status") {
+			const row = item.summary?.(room) ?? item.facts?.(room)[0] ?? this.derivedFacts(room, item)[0];
+			rows = row === undefined ? [] : [row];
+		} else {
+			rows = (item.facts?.(room) ?? this.derivedFacts(room, item)).slice(0, SELECTION_FACT_ROWS);
+		}
+		return rows.map((row) => this.padLine(`  ${row}`, width));
+	}
+
+	/** The first detail rows after the title, which the list row already states. */
+	private derivedFacts(width: number, item: ListOverlayItem): string[] {
+		if (!item.detail) return [];
+		const rows = this.detailLines(width, item).filter((line) => stripTerminalSequences(line).trim().length > 0);
+		return (rows.length > 1 ? rows.slice(1) : rows).slice(0, SELECTION_FACT_ROWS);
+	}
+
+	/** The selection block padded to the rows this width and tier reserve, so the list window holds still. */
+	private reservedSelectionBlock(width: number, items: ReadonlyArray<ListOverlayItem>): string[] {
+		const rows = this.selectionBlock(width, items[this.selectedIndex]);
+		const key = `${width}|${tierRevision()}|${this.itemsEpoch}|${this.filterText}`;
+		if (this.selectionReserve.key !== key) this.selectionReserve = { key, rows: 0 };
+		this.selectionReserve.rows = Math.max(this.selectionReserve.rows, rows.length);
+		while (rows.length < this.selectionReserve.rows) rows.push(" ".repeat(width));
+		return rows;
+	}
+
+	/** The list's rows in draw order: each group header, then its items. */
+	private renderedRowsFor(filteredItems: ReadonlyArray<ListOverlayItem>): RenderedRow[] {
+		const uniqueGroups: string[] = [];
+		const seenGroups = new Set<string>();
+		// A search has already put the best group first; with no search this is the list's own order.
+		for (const item of filteredItems) {
+			if (item.group && !seenGroups.has(item.group)) {
+				seenGroups.add(item.group);
+				uniqueGroups.push(item.group);
+			}
+		}
+
+		const grouped = new Map<string | undefined, ListOverlayItem[]>();
+		for (const item of filteredItems) {
+			const g = item.group;
+			if (!grouped.has(g)) {
+				grouped.set(g, []);
+			}
+			grouped.get(g)?.push(item);
+		}
+
+		// Indexes come from one pass over the filtered rows; `indexOf` per row
+		// made a five-thousand-row list quadratic on every keystroke.
+		const indexOf = new Map<ListOverlayItem, number>();
+		for (const [index, item] of filteredItems.entries()) indexOf.set(item, index);
+		const renderedRows: RenderedRow[] = [];
+		if (grouped.has(undefined)) {
+			for (const item of grouped.get(undefined) ?? []) {
+				renderedRows.push({ type: "item", item, itemIndex: indexOf.get(item) ?? -1 });
+			}
+		}
+		for (const group of uniqueGroups) {
+			if (grouped.has(group)) {
+				renderedRows.push({ type: "group", groupName: group });
+				for (const item of grouped.get(group) ?? []) {
+					renderedRows.push({ type: "item", item, itemIndex: indexOf.get(item) ?? -1 });
+				}
+			}
+		}
+		return renderedRows;
+	}
+
+	private renderList(
+		width: number,
+		listMaxLines: number,
+		filteredItems: ReadonlyArray<ListOverlayItem>,
+		renderedRows: ReadonlyArray<RenderedRow>,
+		focusLine = false,
+	): string[] {
+		const lines: string[] = [];
+		const allItems = this.items;
+
+		if (filteredItems.length === 0) {
+			// A list with nothing in it and a filter that matched nothing are
+			// different states. Only the first one is the caller's empty state, and
+			// it wraps rather than truncating so a remedy survives a narrow pane.
+			const empty =
+				typeof this.options.emptyMessage === "function" ? this.options.emptyMessage() : this.options.emptyMessage;
+			const remedy =
+				typeof this.options.emptyRemedy === "function" ? this.options.emptyRemedy() : this.options.emptyRemedy;
+			const noMatch = allItems.length > 0;
+			const error = noMatch ? undefined : this.options.emptyError?.();
+			const text = noMatch ? "No matches found" : (empty ?? "No matches found");
+			// A read that failed is not an empty PanHub. It says what failed, and
+			// the remedy beneath it is the key that reads again.
+			const rows =
+				error !== undefined
+					? errorState(pancodeTheme(), error, Math.max(1, width - 2), { detail: remedy ?? "" })
+					: emptyState(pancodeTheme(), text, Math.max(1, width - 2), {
+							remedy: noMatch ? "Esc clears the filter" : (remedy ?? ""),
+						});
+			// Keys sit below these rows and the frame cuts from the bottom, so the
+			// message gives up its tail before a key goes off screen.
+			const kept = rows.slice(0, Math.max(1, listMaxLines));
+			for (const [index, wrapped] of kept.entries()) {
+				const cut = index === kept.length - 1 && kept.length < rows.length;
+				lines.push(this.padLine(`  ${wrapped}${cut ? ` ${GLYPH.ellipsis}` : ""}`, width));
+			}
+		} else {
+			const leadWidth = this.leadWidth(width - 2, filteredItems);
+			const metaWidth = this.metaWidth(filteredItems);
+			// With no detail pane, a two-column row the width cuts is stated whole under the list for the focused
+			// row. The rows are reserved whenever any row is cut, so moving the cursor never resizes the window.
+			let focus =
+				focusLine && listMaxLines >= FOCUS_LINE_MIN_LIST_ROWS && this.anyRowCut(width - 2, filteredItems, leadWidth)
+					? this.focusLineRows(width, filteredItems[this.selectedIndex])
+					: [];
+			// With no pane the tier states the selection under the list, whether or not the width cut its text: the focus
+			// line restates the row, the block says what the row leaves out.
+			const block = focusLine ? this.reservedSelectionBlock(width, filteredItems) : [];
+			const windowFor = (blockRows: number): { scrollRows: number; itemRows: number } => {
+				const room = listMaxLines - focus.length - blockRows;
+				const scroll = renderedRows.length > room && listMaxLines > 1 ? 1 : 0;
+				return { scrollRows: scroll, itemRows: room - scroll };
+			};
+			// Before the list falls under the rows a cursor needs, the focus line gives way, then the block, last row first.
+			const listFloor = Math.min(STACKED_LIST_MIN_ROWS, renderedRows.length);
+			if (focus.length > 0 && windowFor(block.length).itemRows < listFloor) focus = [];
+			let blockRows = block.length;
+			while (blockRows > 0 && windowFor(blockRows).itemRows < listFloor) blockRows -= 1;
+			const scrollRows = windowFor(blockRows).scrollRows;
+			const itemRows = Math.max(1, windowFor(blockRows).itemRows);
+			const selectedRowIndex = renderedRows.findIndex(
+				(row) => row.type === "item" && row.itemIndex === this.selectedIndex,
+			);
+
+			if (selectedRowIndex !== -1) {
+				if (selectedRowIndex < this.listScrollOffset) {
+					this.listScrollOffset = selectedRowIndex;
+				} else if (selectedRowIndex >= this.listScrollOffset + itemRows) {
+					this.listScrollOffset = selectedRowIndex - itemRows + 1;
+				}
+			}
+
+			this.listScrollOffset = Math.max(0, Math.min(this.listScrollOffset, renderedRows.length - itemRows));
+			this.listPage = Math.max(1, itemRows);
+
+			const visibleRows = renderedRows.slice(this.listScrollOffset, this.listScrollOffset + itemRows);
+
+			for (const row of visibleRows) {
+				if (row.type === "group") {
+					lines.push(this.padLine(listGroupHeader(pancodeTheme(), row.groupName ?? "", width), width));
+				} else {
+					const item = row.item;
+					if (!item) {
+						continue;
+					}
+					const isSelected = row.itemIndex === this.selectedIndex;
+					// Read once: a row's meta may be a getter that composes its chips.
+					const meta = item.meta;
+					// The name comes first at every width. Metadata used to take whatever
+					// it wanted, so at 48 columns a row of origin, scope and state left
+					// the package name as a single ellipsis: a list of rows nobody could
+					// identify. `selectionRow` keeps the label at least half the row and
+					// compacts the metadata into what is left, for every list alike.
+					lines.push(
+						...selectionRow(pancodeTheme(), {
+							focused: isSelected,
+							label: this.rowLabel(item, isSelected, width - 2, leadWidth),
+							...(meta !== undefined && meta.length > 0 ? { meta } : {}),
+							...(item.cells !== undefined && metaWidth > 0 ? { metaWidth } : {}),
+							width,
+						}),
+					);
+				}
+			}
+
+			lines.push(...focus);
+			if (scrollRows > 0) {
+				// The position counts the rows a reader can select; a group header slides
+				// with the window but is not one of them. The unit says what the rows are.
+				const before = renderedRows.slice(0, this.listScrollOffset).filter((row) => row.type === "item").length;
+				const shown = visibleRows.filter((row) => row.type === "item").length;
+				const total = renderedRows.filter((row) => row.type === "item").length;
+				const start = Math.min(before + 1, total);
+				lines.push(
+					this.padLine(
+						positionRow(
+							pancodeTheme(),
+							{
+								start,
+								end: Math.max(start, before + shown),
+								total,
+								...(this.options.unit !== undefined ? { unit: this.options.unit } : {}),
+								...(this.detailPaneVisible() ? {} : { keys: ["PgUp/PgDn page"] }),
+							},
+							width,
+						),
+						width,
+					),
+				);
+			}
+			lines.push(...block.slice(0, blockRows));
+		}
+
+		return lines;
+	}
+
+	/** The pane's lines for an item at a width, memoized per item, width and skin. */
+	private detailLines(width: number, selectedItem: ListOverlayItem): string[] {
+		if (
+			this.detailMemo &&
+			this.detailMemo.item === selectedItem &&
+			this.detailMemo.width === width &&
+			this.detailMemo.epoch === skinEpoch() &&
+			this.detailMemo.tier === tierRevision()
+		) {
+			return this.detailMemo.lines;
+		}
+		const detailLines = selectedItem.detail?.(width) ?? [];
+		let lines: string[];
+		if (selectedItem.detailFormat === "rows") {
+			// Rows laid out from the primitives already fit; only prose that was
+			// handed over unwrapped folds here, at the pane's real width.
+			lines = detailLines.flatMap((line) => (visibleWidth(line) <= width ? [line] : wrapPaths(line, Math.max(1, width))));
+		} else {
+			const md = new Markdown(detailLines.join("\n"), 0, 0, markdownTheme(pancodeTheme()));
+			lines = md.render(width);
+		}
+		this.detailMemo = { item: selectedItem, width, epoch: skinEpoch(), tier: tierRevision(), lines };
+		return lines;
+	}
+
+	/**
+	 * The pane at `height` rows: a pinned head when the item names one and the
+	 * rows leave room to scroll under it, a divider under that head, then the
+	 * window over the rest, then the position row while more remain. The
+	 * position row counts the rows under the divider, so an unscrolled pane
+	 * starts at 1, and its page is the page PgUp and PgDn move by, so no row is
+	 * ever skipped.
+	 */
+	private renderDetail(width: number, height: number, selectedItem: ListOverlayItem | undefined): string[] {
+		this.detailHeadText = "";
+		if (!selectedItem?.detail || height <= 0) {
+			return [];
+		}
+		const all = this.detailLines(width, selectedItem);
+		const fit = (line: string): string => {
+			const w = visibleWidth(line);
+			if (w >= width) return truncateToWidth(line, width, GLYPH.ellipsis, true);
+			return line + " ".repeat(width - w);
+		};
+		if (all.length <= height) {
+			this.detailScrollOffset = 0;
+			this.detailPage = Math.max(1, height);
+			return all.map(fit);
+		}
+		// A pinned head keeps the title, status and keys on screen; it gives way
+		// when it would leave fewer than two rows to scroll, because a pane that
+		// cannot move is worse than one whose keys scroll. A one-row pane has no
+		// room for its position either and shows the row alone.
+		const wanted =
+			selectedItem.detailFormat === "rows" ? Math.max(0, Math.floor(selectedItem.detailHead?.(width) ?? 0)) : 0;
+		// The divider under a pinned head takes the place of the blank row that opens the rest, when there is one,
+		// so scrolled text never runs into the head's last sentence (tui-verify 2).
+		const blankAfter = (index: number): boolean => stripTerminalSequences(all[index] ?? "").trim() === "";
+		const dividerCost = blankAfter(wanted) ? 0 : 1;
+		// The head stays pinned only while a third of the pane is left to scroll; a
+		// tall head over a two-row window showed almost none of the detail.
+		const head =
+			height > 1 && wanted > 0 && height - wanted - dividerCost - 1 >= Math.max(2, Math.ceil(height / 3))
+				? Math.min(wanted, all.length)
+				: 0;
+		const divider = head > 0 ? 1 : 0;
+		const scrollable = all.slice(head > 0 && blankAfter(head) ? head + 1 : head);
+		const below = height - head - divider;
+		const withPosition = below >= 2;
+		const page = withPosition ? below - 1 : Math.max(1, below);
+		const maxScrollOffset = Math.max(0, scrollable.length - page);
+		this.detailScrollOffset = Math.max(0, Math.min(this.detailScrollOffset, maxScrollOffset));
+		this.detailPage = page;
+		const headRows = all.slice(0, head).map(fit);
+		this.detailHeadText = stripTerminalSequences(headRows.join("\n"));
+		if (divider > 0) headRows.push(pancodeTheme().fg("divider", GLYPH.rule.repeat(Math.max(1, width))));
+		const window = scrollable.slice(this.detailScrollOffset, this.detailScrollOffset + page).map(fit);
+		if (!withPosition) return [...headRows, ...window];
+		const position = this.padLine(
+			positionRow(
+				pancodeTheme(),
+				{
+					start: this.detailScrollOffset + 1,
+					end: this.detailScrollOffset + window.length,
+					total: scrollable.length,
+					keys: ["PgUp/PgDn scroll"],
+				},
+				width,
+			),
+			width,
+		);
+		return [...headRows, ...window, position];
+	}
+
+	setBodyRows(rows: number): void {
+		if (rows > 0) this.setViewportRows(rows + 2);
+	}
+
+	/** The rail's room for keys; every entry it would drop is drawn in the body instead. */
+	setRailRoom(cells: number): void {
+		this.railRoom = Math.max(0, Math.floor(cells));
+	}
+
+	/** The dock asks this before it sizes the body; only a `tall` reference grows. */
+	wantsGrowth(): boolean {
+		return this.options.tall === true;
+	}
+
+	/** Called by the mounted overlay's visibility callback before each render. */
+	setViewportRows(rows: number): void {
+		this.viewportRows = Math.max(1, Math.floor(rows));
+	}
+
+	/**
+	 * The entries the rail drops that nothing else on screen names: the arrow
+	 * reminder is left out because the pane's own position row names it, and a
+	 * key already drawn in the chrome (the status row's b, s and n, the compact
+	 * tab bar's ←→) or in the pinned pane head is not repeated. Shedding a
+	 * chrome row therefore brings the key it carried into the body.
+	 */
+	private droppedKeys(entries: ReadonlyArray<HintEntry>, esc: OverlayEscVerb, shownText: string): HintEntry[] {
+		if (this.railRoom <= 0) return [];
+		const all: HintEntry[] = [...entries, escapeHintEntry(this.escapeLayers()) ?? { key: "Esc", verb: esc }];
+		const { kept } = fitHintEntryList(all, this.railRoom);
+		const shown = (entry: HintEntry): boolean =>
+			shownText.includes(`[${entry.key}]`) || (NAVIGATION_KEYS.has(entry.key) && shownText.includes(entry.key));
+		return all.filter((entry) => !kept.includes(entry) && !PANE_REMINDERS.has(entry.key) && !shown(entry));
+	}
+
+	/** Dropped keys as key caps with their verbs, wrapped so none is lost. */
+	private keyRows(width: number, dropped: ReadonlyArray<HintEntry>): string[] {
+		if (dropped.length === 0) return [];
+		const theme = pancodeTheme();
+		const rows = (label: (entry: HintEntry) => string): string[] =>
+			chipRows(
+				theme,
+				dropped.map((entry) => `${keyCap(theme, entry.key)} ${theme.fg("menuDescription", label(entry))}`),
+				width,
+			).map((row) => this.padLine(row, width));
+		const full = rows((entry) => entry.verb);
+		if (full.length <= 1) return full;
+		// More than one row of keys: the short verbs, the way the rail shortens
+		// its labels before it drops any, so the pane and the list keep their rows.
+		return rows((entry) => entry.short ?? entry.verb);
+	}
+
+	render(width: number): string[] {
+		// Any frame has caught up with the presses, a memoized one too.
+		this.detailKeyPending = false;
+		const filteredItems = this.filteredItems();
+		const status = this.options.status?.(width);
+
+		if (this.selectedIndex >= filteredItems.length) {
+			this.selectIndex(Math.max(0, filteredItems.length - 1));
+		}
+
+		const selectedItem = filteredItems[this.selectedIndex];
+		const hasDetail = !!selectedItem?.detail;
+		// The tier decides how much of the selection shows beside the list: compact keeps the list and its status row,
+		// standard draws the side pane where it fits, and detailed also stacks the pane when the side one does not fit.
+		const pickerDetail = tierPolicy().pickerDetail;
+		const isSplit = this.options.layout === "split" && width >= 90 && pickerDetail !== "status";
+		const paneByTier = pickerDetail === "pane" && !this.paneDismissed;
+		// Frame memo: identical inputs return the identical array, which lets the
+		// overlay frame's childLines identity cache short-circuit the whole frame.
+		const memoKey = [
+			skinEpoch(),
+			tierRevision(),
+			width,
+			this.viewportRows,
+			this.railRoom,
+			this.filterText,
+			this.selectedIndex,
+			this.isFilterFocused,
+			this.showDetail,
+			this.paneDismissed,
+			this.takeoverAllowed,
+			this.listScrollOffset,
+			this.detailScrollOffset,
+			this.inputEpoch,
+			this.itemsEpoch,
+			this.activeTabId,
+			status,
+		].join("|");
+		if (this.renderMemo?.key === memoKey) return this.renderMemo.lines;
+		const theme = pancodeTheme();
+
+		let tabRows = this.renderTabBar(width);
+		let statusRows = status !== undefined ? [this.padLine(status, width)] : [];
+		let filterRows: string[] = [];
+		if (this.options.filterable) {
+			this.input.focused = this.isFilterFocused;
+			filterRows = this.input.render(width).map((line) => theme.base("searchQuery", line));
+			if (this.filterText.length === 0 && width > 6) {
+				// The prompt and its cursor at their own width, so the words follow the cursor instead of the padding.
+				const prompt = this.input.render(3).map((line) => theme.base("searchQuery", line))[0] ?? "";
+				const placeholder = this.options.filterPlaceholder ?? "type to filter";
+				filterRows = [truncateToWidth(`${prompt} ${theme.fg("annotation", placeholder)}`, width, GLYPH.ellipsis, false)];
+			}
+		}
+		// The dock's rows are the budget. When they would leave no row for the
+		// cursor, the chrome gives way: an empty, unfocused filter first, then the
+		// tab bar, whose tab the title already names, then the status row.
+		const bodyRows = Math.max(1, this.viewportRows - 2);
+		const chromeRows = (): number => tabRows.length + statusRows.length + filterRows.length;
+		const filterSheddable = (): boolean => filterRows.length > 0 && this.filterText.length === 0 && !this.isFilterFocused;
+		// A short dock spends no row on an empty, unfocused search line; "/" still opens it.
+		if ((bodyRows < 10 || bodyRows - chromeRows() < 1) && filterSheddable()) filterRows = [];
+		if (bodyRows - chromeRows() < 1) tabRows = [];
+		if (bodyRows - chromeRows() < 1) statusRows = [];
+
+		// Every list is docked now and the dock's rows are the budget, so a list
+		// fills them rather than stopping at the twelve rows a floating box kept.
+		const renderedRows = this.renderedRowsFor(filteredItems);
+		const paneWanted = hasDetail && (isSplit || this.showDetail || paneByTier);
+
+		interface Layout {
+			lines: string[];
+			headText: string;
+			drawn: boolean;
+			/** The pane took the body over; no list row is on screen. */
+			takeover: boolean;
+			/** Rows the pane got, position row included; 0 when it is not drawn. */
+			paneRows: number;
+		}
+		interface Composition {
+			chrome: string[];
+			final: Layout;
+			/** Keys the cap left no room for; they sit behind the dim marker, or nowhere when no row was spared. */
+			overflow: number;
+		}
+		// One composition of the body under one chrome and one assumption about
+		// whether the pane is drawn. The hints read that assumption, so the key
+		// rows and the Tab verb describe the frame they sit in.
+		const compose = (assumeDrawn: boolean): Composition => {
+			const chrome = [...tabRows, ...statusRows, ...filterRows];
+			const chromeText = stripTerminalSequences(chrome.join("\n"));
+			const availableRows = Math.max(1, bodyRows - chrome.length);
+			this.detailPaneDrawn = assumeDrawn;
+			this.detailPaneSplit = isSplit && hasDetail && assumeDrawn;
+			const { entries, esc } = this.hintEntries();
+			let overflow = 0;
+
+			const layout = (keyLines: ReadonlyArray<string>): Layout => {
+				const avail = Math.max(1, availableRows - keyLines.length);
+				const lines: string[] = [];
+				if (isSplit && hasDetail) {
+					// A space either side of the divider, so a right-aligned row state and the
+					// pane's first word never touch the rule between them.
+					const detailWidth = Math.max(32, Math.floor(width * 0.45)) - 1;
+					const listWidth = width - detailWidth - 3;
+					const listLines = this.renderList(listWidth, avail, filteredItems, renderedRows);
+					const detailLines = this.renderDetail(detailWidth, avail, selectedItem);
+					const rows = Math.min(avail, Math.max(listLines.length, detailLines.length));
+					const separator = theme.fg("border", GLYPH.rail);
+					for (let i = 0; i < rows; i++) {
+						lines.push(`${listLines[i] ?? " ".repeat(listWidth)} ${separator} ${detailLines[i] ?? " ".repeat(detailWidth)}`);
+					}
+					lines.push(...keyLines);
+					return { lines, headText: this.detailHeadText, drawn: true, takeover: false, paneRows: rows };
+				}
+				if (paneWanted) {
+					// A stacked pane takes at most half the rows, or more when the list is
+					// shorter than its half, and only what its own lines need; the list
+					// keeps three rows so the cursor can move. When even two pane rows
+					// cannot be stacked under three list rows, the pane takes the body
+					// over instead, titled by the row it describes, so the detail key is
+					// never dead while two rows exist, and Tab brings the list back.
+					const listFloor = Math.min(STACKED_LIST_MIN_ROWS, avail);
+					const listShare = Math.max(listFloor, Math.min(renderedRows.length, Math.floor((avail - 1) / 2)));
+					const detailCeiling = avail - 1 - listShare;
+					if (detailCeiling >= STACKED_DETAIL_MIN_ROWS) {
+						const detailLines = this.renderDetail(width, detailCeiling, selectedItem);
+						const listMaxLines = Math.max(listFloor, avail - 1 - detailLines.length);
+						lines.push(...this.renderList(width, listMaxLines, filteredItems, renderedRows));
+						lines.push(...keyLines);
+						lines.push(rule(theme, width));
+						lines.push(...detailLines);
+						return {
+							lines,
+							headText: this.detailHeadText,
+							drawn: true,
+							takeover: false,
+							paneRows: detailLines.length,
+						};
+					}
+					if (avail >= STACKED_DETAIL_MIN_ROWS && this.takeoverAllowed) {
+						lines.push(...keyLines);
+						const detailLines = this.renderDetail(width, avail, selectedItem);
+						lines.push(...detailLines);
+						return { lines, headText: this.detailHeadText, drawn: true, takeover: true, paneRows: detailLines.length };
+					}
+				}
+				this.detailHeadText = "";
+				lines.push(...this.renderList(width, avail, filteredItems, renderedRows, true));
+				lines.push(...keyLines);
+				return { lines, headText: "", drawn: false, takeover: false, paneRows: 0 };
+			};
+
+			// The key rows depend on what the pinned pane head shows, and the pane's
+			// height on how many key rows there are; one pass with every dropped key
+			// finds the head, the second lays out with the keys the head leaves. Keys
+			// leave the cursor its row, or a wanted pane its two, and take at most half
+			// of eight rows or more and a third of fewer; past that, the rows they do get are whole
+			// and the last one is fitted, with the dim marker for what it still holds.
+			// The overflow counts keys, not rows: shedding a chrome row that moved
+			// one key into the rows and bought a row for three others read as no
+			// gain by rows, and the frame kept a tab bar over every key it hid.
+			const cap = (dropped: ReadonlyArray<HintEntry>): string[] => {
+				const rows = this.keyRows(width, dropped);
+				// A pane that may take the body over keeps its two rows from the keys; a
+				// pane that only stacks is already behind the list's three.
+				const reserve = paneWanted && !isSplit && this.takeoverAllowed ? STACKED_DETAIL_MIN_ROWS : 1;
+				// Under eight rows the keys take a third: four rows of legend over a single item at 40x15 left a
+				// list nobody could scan, and the keys past the marker still work and are listed in /help.
+				const most =
+					availableRows >= 8
+						? Math.floor(availableRows / 2)
+						: Math.max(0, Math.min(Math.max(1, Math.floor(availableRows / 3)), availableRows - reserve));
+				if (rows.length <= most) return rows;
+				overflow = dropped.length;
+				// No row to spare: the keys the rail dropped are off screen.
+				if (most < 1 || dropped.length === 0) return [];
+				const separator = dotSep(theme);
+				let rest = dropped.map(
+					(entry) => `${keyCap(theme, entry.key)} ${theme.fg("menuDescription", entry.short ?? entry.verb)}`,
+				);
+				const kept: string[] = [];
+				while (kept.length < most - 1 && rest.length > 0) {
+					let take = rest.length;
+					while (take > 1 && visibleWidth(rest.slice(0, take).join(separator)) > width) take -= 1;
+					kept.push(this.padLine(rest.slice(0, take).join(separator), width));
+					rest = rest.slice(take);
+					overflow -= take;
+				}
+				if (rest.length > 0) {
+					kept.push(this.padLine(fitUnits(theme, "", rest, width), width));
+					overflow -= fitUnitsKept(theme, "", rest, width);
+				}
+				return kept;
+			};
+			const first = layout(cap(this.droppedKeys(entries, esc, chromeText)));
+			overflow = 0;
+			const final = layout(cap(this.droppedKeys(entries, esc, `${chromeText}\n${first.headText}`)));
+			return { chrome, final, overflow };
+		};
+
+		// The chrome gives way a second time when it would buy the operator a
+		// key or the pane: an empty, unfocused filter row is shed when the key
+		// rows are cut or a stacked pane is down to a row or two of facts, since
+		// `/` is in the keys and a pane that pages one row at a time reads
+		// nothing; the tab bar, whose ←→ then moves into the keys, goes next for
+		// the same reasons, and the status row last, when the pane still cannot
+		// get its two rows or a key is still behind the marker, since its own
+		// keys then move into the rows. A row is shed only if the frame without
+		// it is better: fewer keys behind the marker, a pane that now draws, or
+		// a thin pane that grew. Otherwise it stays, because what it said is not
+		// elsewhere.
+		let composed = compose(paneWanted);
+		const thin = (): boolean =>
+			paneWanted && (!composed.final.drawn || composed.final.paneRows < STACKED_DETAIL_MIN_ROWS + 2);
+		const wantsRoom = (): boolean => composed.overflow > 0 || thin();
+		const better = (next: Composition, prev: Composition): boolean =>
+			next.overflow < prev.overflow ||
+			(paneWanted && !prev.final.drawn && next.final.drawn) ||
+			(paneWanted &&
+				prev.final.drawn &&
+				prev.final.paneRows < STACKED_DETAIL_MIN_ROWS + 2 &&
+				next.final.paneRows > prev.final.paneRows &&
+				next.overflow <= prev.overflow);
+		const tryShed = (assumeDrawn: boolean, shed: () => void, restore: () => void): void => {
+			shed();
+			const next = compose(assumeDrawn);
+			if (better(next, composed)) composed = next;
+			else restore();
+		};
+		const shedForRoom = (assumeDrawn: boolean): void => {
+			if (wantsRoom() && filterSheddable()) {
+				const kept = filterRows;
+				tryShed(
+					assumeDrawn,
+					() => {
+						filterRows = [];
+					},
+					() => {
+						filterRows = kept;
+					},
+				);
+			}
+			if (wantsRoom() && tabRows.length > 0) {
+				const kept = tabRows;
+				tryShed(
+					assumeDrawn,
+					() => {
+						tabRows = [];
+					},
+					() => {
+						tabRows = kept;
+					},
+				);
+			}
+			if (((paneWanted && !isSplit && !composed.final.drawn) || composed.overflow > 0) && statusRows.length > 0) {
+				const kept = statusRows;
+				tryShed(
+					assumeDrawn,
+					() => {
+						statusRows = [];
+					},
+					() => {
+						statusRows = kept;
+					},
+				);
+			}
+		};
+		// The hints assumed the pane state; when the layout decided otherwise the
+		// frame is composed again under the real one, so the Tab verb and the key
+		// rows never describe a pane that is not there, and the key that brings
+		// the rows back outranks the rest while the pane has the body to itself.
+		const settle = (): void => {
+			for (
+				let pass = 0;
+				pass < 2 && (composed.final.drawn !== this.detailPaneDrawn || composed.final.takeover !== this.detailTakeover);
+				pass += 1
+			) {
+				this.detailTakeover = composed.final.takeover;
+				composed = compose(composed.final.drawn);
+			}
+		};
+		shedForRoom(paneWanted);
+		settle();
+		// The settled state changes which keys the rail keeps: without a pane a
+		// row's own keys outrank the navigation reminders, so the body gets a
+		// different set, and one that needs a row the first pass never asked
+		// for ended behind the dim marker. The chrome is offered once more
+		// under the hints the frame will actually carry.
+		shedForRoom(composed.final.drawn);
+		settle();
+		this.detailTakeover = composed.final.takeover;
+		this.detailPaneDrawn = composed.final.drawn;
+		this.detailPaneSplit = composed.final.drawn && isSplit;
+		const lines = [...composed.chrome, ...composed.final.lines];
+
+		this.renderMemo = { key: memoKey, lines };
+		return lines;
+	}
+
+	private detailPaneVisible(): boolean {
+		return this.detailPaneDrawn;
+	}
+
+	get keyboardScope(): "edit" | "browse" {
+		return this.isFilterFocused ? "edit" : "browse";
+	}
+	undoInput(): boolean {
+		if (!this.isFilterFocused) return false;
+		this.input.applyEdit("undo");
+		this.filterText = this.input.getValue();
+		this.inputEpoch += 1;
+		this.selectIndex(0);
+		this.onChange();
+		return true;
+	}
+	handleInput(data: string): void {
+		data = localKey(data);
+		if (this.armedGlobal !== null && data !== this.armedGlobal) {
+			this.armedGlobal = null;
+			this.onChange();
+		}
+		if (this.armedAction !== null && data !== this.armedAction.key) {
+			this.armedAction = null;
+			this.onChange();
+		}
+		if (matchesKey(data, "escape")) {
+			this.clearFilterOrClose();
+			return;
+		}
+		if (this.options.filterable && this.options.explicitSearch && !this.isFilterFocused && data === "/") {
+			this.isFilterFocused = true;
+			this.onChange();
+			return;
+		}
+		// Explicit search owns its cursor arrows. Otherwise ←/→ switch tabs,
+		// matching the Settings Center's section navigation.
+		if (this.options.tabs && this.options.tabs.length > 0 && !(this.options.explicitSearch && this.isFilterFocused)) {
+			if (matchesKey(data, "left")) {
+				this.stepTab(-1);
+				return;
+			}
+			if (matchesKey(data, "right")) {
+				this.stepTab(1);
+				return;
+			}
+		}
+
+		// PgDn / Ctrl+D and PgUp / Ctrl+U scroll the detail pane, but only
+		// while one is visible; otherwise the keys fall through untouched.
+		if (this.detailPaneVisible() && !(this.options.explicitSearch && this.isFilterFocused)) {
+			if (data === "\x1b[6~" || data === "\x04") {
+				this.detailScrollOffset += this.detailPage;
+				this.onChange();
+				return;
+			}
+			if (data === "\x1b[5~" || data === "\x15") {
+				this.detailScrollOffset = Math.max(0, this.detailScrollOffset - this.detailPage);
+				this.onChange();
+				return;
+			}
+		}
+
+		const filteredItems = this.filteredItems();
+
+		// With no pane on screen the page keys move the selection through the list.
+		if (matchesKey(data, "pageUp") || matchesKey(data, "pageDown")) {
+			if (
+				filteredItems.length > 0 &&
+				!this.detailPaneVisible() &&
+				!(this.options.explicitSearch && this.isFilterFocused)
+			) {
+				const next = this.selectedIndex + (matchesKey(data, "pageDown") ? this.listPage : -this.listPage);
+				this.selectIndex(Math.max(0, Math.min(next, filteredItems.length - 1)));
+				this.isFilterFocused = false;
+				this.onChange();
+			}
+			return;
+		}
+
+		if (this.isFilterFocused) {
+			if (matchesKey(data, "up")) {
+				if (filteredItems.length > 0) {
+					this.selectIndex(this.selectedIndex === 0 ? filteredItems.length - 1 : this.selectedIndex - 1);
+				}
+				this.isFilterFocused = false;
+				this.onChange();
+				return;
+			}
+			if (matchesKey(data, "down")) {
+				if (filteredItems.length > 0) {
+					this.selectIndex(this.selectedIndex === filteredItems.length - 1 ? 0 : this.selectedIndex + 1);
+				}
+				this.isFilterFocused = false;
+				this.onChange();
+				return;
+			}
+			if (matchesKey(data, "enter") || data === "\n") {
+				if (this.options.explicitSearch) {
+					this.isFilterFocused = false;
+					this.onChange();
+					return;
+				}
+				if (this.options.onSelect) {
+					const selectedItem = filteredItems[this.selectedIndex];
+					if (selectedItem) {
+						this.options.onSelect(selectedItem);
+					}
+				} else {
+					this.toggleDetailByKey();
+				}
+				return;
+			}
+			if (matchesKey(data, "tab")) {
+				this.toggleDetailByKey();
+				return;
+			}
+			if (matchesKey(data, "esc")) {
+				this.clearFilterOrClose();
+				return;
+			}
+
+			this.inputEpoch += 1;
+			this.input.handleInput(data);
+			const next = this.input.getValue();
+			if (next !== this.filterText) {
+				this.filterText = next;
+				this.selectIndex(0);
+			}
+			this.onChange();
+		} else {
+			if (this.options.typingRefocusesFilter && this.options.filterable && /^[\p{L}\p{N}\p{P}\p{S} ]$/u.test(data)) {
+				this.isFilterFocused = true;
+				this.inputEpoch += 1;
+				this.input.handleInput(data);
+				this.filterText = this.input.getValue();
+				this.selectIndex(0);
+				this.onChange();
+				return;
+			}
+			if (matchesKey(data, "up") || data === "k") {
+				if (filteredItems.length > 0) {
+					this.selectIndex(this.selectedIndex === 0 ? filteredItems.length - 1 : this.selectedIndex - 1);
+				}
+				this.onChange();
+				return;
+			}
+			if (matchesKey(data, "down") || data === "j") {
+				if (filteredItems.length > 0) {
+					this.selectIndex(this.selectedIndex === filteredItems.length - 1 ? 0 : this.selectedIndex + 1);
+				}
+				this.onChange();
+				return;
+			}
+			if (matchesKey(data, "enter") || data === "\n") {
+				if (this.options.onSelect) {
+					const selectedItem = filteredItems[this.selectedIndex];
+					if (selectedItem) {
+						this.options.onSelect(selectedItem);
+					}
+				} else {
+					this.toggleDetailByKey();
+				}
+				return;
+			}
+			if (matchesKey(data, "tab")) {
+				this.toggleDetailByKey();
+				return;
+			}
+			if (matchesKey(data, "esc")) {
+				this.clearFilterOrClose();
+				return;
+			}
+
+			if (this.runAction(data, filteredItems)) return;
+
+			if (this.options.filterable && !this.options.explicitSearch && matchesKey(data, "backspace")) {
+				this.isFilterFocused = true;
+				this.inputEpoch += 1;
+				this.input.handleInput(data);
+				this.filterText = this.input.getValue();
+				this.selectIndex(0);
+				this.onChange();
+				return;
+			}
+
+			if (this.options.filterable && !this.options.explicitSearch && data.length === 1 && !matchesKey(data, "space")) {
+				this.isFilterFocused = true;
+				this.inputEpoch += 1;
+				this.input.handleInput(data);
+				this.filterText = this.input.getValue();
+				this.selectIndex(0);
+				this.onChange();
+				return;
+			}
+		}
+	}
+
+	invalidate(): void {
+		this.input.invalidate();
+	}
+}
+
+export interface ListOverlayHandle extends OverlayHandle {
+	/**
+	 * Replace the rows and repaint. The view memoizes its whole frame on a row-set
+	 * epoch only this bumps, so a caller that mutates the array it handed in draws
+	 * the frame from before its own change until some other key moves the memo key.
+	 */
+	setItems(items: ReadonlyArray<ListOverlayItem>): void;
+	/**
+	 * Rebuild every tab's rows in place, keeping the active tab and the
+	 * operator's place in it. Inert on an untabbed overlay.
+	 */
+	refreshTabs(): void;
+	/** Switch tabs programmatically. An id this overlay does not carry is ignored. */
+	setActiveTab(tabId: string): void;
+	/** The active tab's id, or the empty string on an untabbed overlay. */
+	activeTabId(): string;
+	/** Move the cursor onto a row by id; false when this view has no such row. */
+	selectById(id: string): boolean;
+	/** Show or hide the stacked detail pane. */
+	toggleDetail(): void;
+	/** Put the pane on screen for the selected row; a no-op while it is already there. */
+	openDetail(): void;
+	/** Drop a typed filter and leave search focus. */
+	clearFilter(): void;
+}
+
+/**
+ * The marker id rides on the opener rather than on `ListOverlayOptions` because
+ * it belongs to the mounted modal, not to the view: the view renders the same
+ * rows whether it is a modal or a body inside something else. It is named by
+ * the surface rather than derived from `title`, because a tabbed overlay's
+ * rendered title names the active tab while the modal holding the keyboard has
+ * not changed hands.
+ */
+export function openListOverlay(tui: TUI, options: ListOverlayOptions & { markerId: string }): ListOverlayHandle {
+	const view = new ListOverlayView(options, () => tui.requestRender());
+	const handle = showPancodeOverlayFrame(tui, view, {
+		anchor: "center",
+		width: options.fullScreen ? "100%" : 100,
+		...(options.fullScreen
+			? {
+					margin: 0,
+					maxHeight: "100%" as const,
+					visible: (_width: number, rows: number) => {
+						view.setViewportRows(rows);
+						return true;
+					},
+				}
+			: {}),
+		markerId: options.markerId,
+		// A function, not the string: on a tabbed overlay the title names the tab
+		// and must be re-read after every switch.
+		title: () => view.title(),
+		footerHint: (innerWidth) => view.getHint(innerWidth),
+	});
+	return Object.assign(handle, {
+		setItems(items: ReadonlyArray<ListOverlayItem>): void {
+			view.setItems(items);
+			tui.requestRender();
+		},
+		refreshTabs(): void {
+			view.refreshTabs();
+			tui.requestRender();
+		},
+		setActiveTab(tabId: string): void {
+			view.setActiveTab(tabId);
+			tui.requestRender();
+		},
+		activeTabId(): string {
+			return view.activeTab()?.id ?? "";
+		},
+		selectById(id: string): boolean {
+			const found = view.selectById(id);
+			if (found) tui.requestRender();
+			return found;
+		},
+		toggleDetail(): void {
+			view.toggleDetail();
+			tui.requestRender();
+		},
+		openDetail(): void {
+			view.openDetail();
+			tui.requestRender();
+		},
+		clearFilter(): void {
+			view.clearFilter();
+			tui.requestRender();
+		},
+	});
+}

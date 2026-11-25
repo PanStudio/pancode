@@ -1,0 +1,29 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* The first-run stage: the static canonical PanCode mark with setup progress as words under it. --stage-size is
+   set by the page. */
+.pancode-stage {
+	--stage-size: 52px;
+	display: grid;
+	justify-items: center;
+	gap: var(--space-3);
+}
+.pancode-stage__mark {
+	display: block;
+	width: var(--stage-size);
+	height: var(--stage-size);
+}
+.pancode-stage__caption {
+	min-height: 1.5em;
+	margin: 0;
+	font: 500 var(--text-instrument) / 1.5 var(--font-mono);
+	letter-spacing: var(--tracking-instrument);
+	text-transform: uppercase;
+	color: var(--ink-muted);
+}
+.pancode-stage[data-finale] .pancode-stage__caption {
+	color: var(--ink);
+}
+.pancode-stage__caption:empty {
+	display: none;
+}

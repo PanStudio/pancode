@@ -1,0 +1,98 @@
+PanCode works in the repository you open. For your first session, give it a small, concrete task: explain how the project builds and runs its tests. That lets you see how it reads code and uses tools before asking it to make a change.
+
+::: note Version scope
+The recordings on this page come from a small JavaScript project with one failing test and GPT-6 Luna through a GitHub Copilot subscription. The first starts with no model configured and one stored sign-in. The install step was not recorded.
+:::
+
+## 1. Install PanCode
+
+The installer brings its own Node.js and needs no root. Linux, macOS, and WSL are the primary platforms. Native Windows is best effort, so use the current stable release. On Linux, the installer offers to add the desktop app when it finishes.
+
+```sh
+curl -fsSL https://pancode.dev/install.sh | sh
+```
+
+## 2. Connect a model
+
+Open a terminal in a repository you know and start PanCode:
+
+```sh
+cd /path/to/your/project
+pancode
+```
+
+With no model configured, setup starts on its own:
+
+```text
+No model target is configured. PanCode needs a model before it can do anything else, so setup starts now.
+```
+
+Setup looks for a provider key in your environment, a stored sign-in and a local model server, and lists what it found. Pick one, or choose **Set up something else** and answer what you have: an API key, a subscription, a model server or gateway, or a setup file from your lab or team. Use a model that supports tool calling.
+
+PanCode sends the model one short test request and saves only when it answers; a browser sign-in you complete is the exception. In the recording of `pancode configure` on a fresh profile, setup found the stored GitHub Copilot sign-in and recommended gpt-6-luna. Choosing it printed these lines:
+
+```text
+◇  Testing copilot-sdk / gpt-6-luna ... answered in 1.7 s.
+◇  target copilot-sdk saved, runtime copilot-sdk
+◇  chat runs on copilot-sdk, model gpt-6-luna
+◇  fleet default is copilot-sdk
+◇  settings written to ~/.config/pancode/settings.yaml
+◇  Saved. Chat and workers use this model. Change it any time with /model or /config.
+```
+
+`pancode configure` runs setup again at any time. Its **Connect by endpoint** is the shortcut when you already know the URL. LM Studio commonly serves at `http://localhost:1234`; Ollama commonly serves at `http://localhost:11434`. The [connection guide](/docs/guide/configuration-and-targets.html) covers setup and credentials.
+
+If you have used PanCode before, you can skip this step. A chat route you already chose stays in use, and PanCode will not swap it for another when it stops working.
+
+If a connection fails, run:
+
+```sh
+pancode doctor
+```
+
+## 3. Open a workspace
+
+When setup saves, the terminal workspace opens in the same folder. In the recording, its status line read `✓ ready` and ended with `copilot-sdk · gpt-6-luna`. Later, `pancode` opens the workspace directly.
+
+Or open the desktop alpha in your browser:
+
+```sh
+pancode gui --open
+```
+
+In the desktop, open a workspace folder and start a task. If you have not configured a model, **Guided setup** is also available in the browser; terminal configuration is optional. For this tutorial, either interface gives you a place to enter the first request.
+
+## 4. Ask a focused question
+
+Try this request:
+
+> Explain how this repository builds and runs its tests. Identify the main entry points and suggest one verification task. Do not change files yet.
+
+Follow the tool activity as PanCode reads the repository. In the recording, the agent read `package.json`, `README.md`, `temperature.mjs` and `calibration.test.mjs`, then named `npm test` as the test command and the two files as the main entry points. If an approval card appears, read the call before allowing it. If the answer misses an important directory or build system, name it in a follow-up.
+
+## 5. Make the next task specific
+
+Once you understand the project, ask for one change you can check. Name the problem, what to do and how to verify it. The recording below gave this request for the project's one failing test:
+
+> The absolute-zero test fails. Find the cause, fix it, and run the test check.
+
+::: capture cast-first-task
+:::
+
+The agent changed `kelvin <= 0` to `kelvin < 0` in `temperature.mjs`, ran the declared test check (`checked test · exit 0`), and ended its report with `The test check passes: all 7 tests passed.`
+
+Use your project's real test name. Read the diff and the check output yourself before you commit the change.
+
+## Keep going
+
+In the terminal, `/help` lists commands, `/model` selects a model, `/settings` opens the settings center, and `/config` opens your connections, where **Add a target** runs setup again without leaving the session.
+
+When you quit, PanCode prints a summary of the session and a `pancode --resume <id>` line. Run that line to return to the conversation, `pancode --continue` to reopen the most recent one, or `pancode --resume` alone to pick from a list.
+
+The [commands guide](/docs/guide/commands-and-modes.html) covers shortcuts and session controls. The [tools guide](/docs/guide/tool-usage.html) explains the repository tools and their permissions.
+
+::: next
+- [Let PanCode work without watching every call](/tutorials/let-it-work-with-containment-and-rewind.html)
+- [A numerical change, checked with PanCode](/tutorials/temperature-calibration.html)
+- [Commands and modes](/docs/guide/commands-and-modes.html)
+:::

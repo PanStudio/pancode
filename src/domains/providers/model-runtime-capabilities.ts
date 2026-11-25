@@ -1,0 +1,915 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { Api, Model } from "../../engine/types.js";
+import { getCatalogModelForRuntime } from "./catalog.js";
+import type { ProvidersContract, TargetStatus } from "./contract.js";
+import { resolveModelCapabilities } from "./model-capabilities.js";
+import { inferLocalModelFamily, isHarmonyModelId } from "./model-family.js";
+import {
+	defaultAnthropicBudgetForLevel,
+	defaultAnthropicEffortForLevel,
+	type ThinkingEffortByLevel,
+	thinkingBudgetFromMap,
+	thinkingEffortFromMap,
+} from "./thinking-control-policy.js";
+import {
+	availableThinkingLevels,
+	type CapabilityFlags,
+	type ThinkingLevel,
+	VALID_THINKING_LEVELS,
+} from "./types/capability-flags.js";
+import type { KnowledgeBase, KnowledgeBaseHit } from "./types/knowledge-base.js";
+import {
+	extractLocalModelQuirks,
+	type HarmonyReasoningField,
+	type LocalModelQuirks,
+	type ThinkingMechanism,
+	type ThinkingQuirks,
+} from "./types/local-model-quirks.js";
+import type { RuntimeApiFamily, RuntimeDescriptor } from "./types/runtime-descriptor.js";
+import type { TargetDescriptor } from "./types/target-descriptor.js";
+
+export type AppliedThinkingNoticeKind = "applied" | "ignored-on-off" | "always-on" | "unsupported";
+export type ThinkingBudgetEnforcement = "enforced" | "informational" | "none";
+export type ResponseParserKind = "none" | "harmony";
+
+export interface AppliedThinking {
+	thinkingActive: boolean;
+	mechanism: ThinkingMechanism;
+	effort?: string;
+	budgetTokens?: number;
+	chatTemplateKwargs?: Record<string, boolean | string | number>;
+	noticeKind: AppliedThinkingNoticeKind;
+	notice: string;
+}
+
+export interface ResolvedThinkingCapability extends AppliedThinking {
+	configuredLevel: ThinkingLevel;
+	effectiveLevel: ThinkingLevel;
+	supportedLevels: ReadonlyArray<ThinkingLevel>;
+	display: string;
+	budgetEnforcement: ThinkingBudgetEnforcement;
+}
+
+export interface ResolvedRequestCapability {
+	reasoningEffort?: string;
+	budgetTokens?: number;
+	budgetEnforcement: ThinkingBudgetEnforcement;
+	chatTemplateKwargs?: Record<string, boolean | string | number>;
+	/**
+	 * Family-declared chat-template kwargs the runtime cannot carry. LM Studio
+	 * ignores `chat_template_kwargs` for every family measured, so the keys are
+	 * named here for the resolution diagnostics instead of riding in
+	 * `chatTemplateKwargs` only to be deleted at the wire.
+	 */
+	undeliverableChatTemplateKwargs?: UndeliverableChatTemplateKwargs;
+}
+
+export interface UndeliverableChatTemplateKwargs {
+	keys: string[];
+	/** True when the family entry itself marks the block `lmstudio: unsupported`. */
+	declaredUnsupported: boolean;
+}
+
+export interface ResolvedResponseCapability {
+	parser: ResponseParserKind;
+	stripTokenizerSentinels: boolean;
+	/** Replay field for reasoning recovered from raw Harmony markers; set only for the harmony parser (#435). */
+	recoveredReasoningField?: HarmonyReasoningField;
+}
+
+const DEFAULT_RECOVERED_REASONING_FIELD: HarmonyReasoningField = "reasoning_content";
+
+function resolveRecoveredReasoningField(
+	quirks: LocalModelQuirks | undefined,
+	runtimeId: string,
+): HarmonyReasoningField {
+	const declared = quirks?.harmony?.recoveredReasoningField;
+	if (declared === undefined) return DEFAULT_RECOVERED_REASONING_FIELD;
+	if (typeof declared === "string") return declared;
+	return declared[runtimeId] ?? declared.default ?? DEFAULT_RECOVERED_REASONING_FIELD;
+}
+
+export interface ResolvedModelRuntimeCapabilities {
+	targetId: string | null;
+	runtimeId: string;
+	apiFamily: RuntimeApiFamily | string | null;
+	modelId: string;
+	family: string;
+	capabilities: CapabilityFlags;
+	quirks?: LocalModelQuirks;
+	thinking: ResolvedThinkingCapability;
+	request: ResolvedRequestCapability;
+	response: ResolvedResponseCapability;
+}
+
+export interface ResolveRuntimeCapabilitiesInput {
+	targetId?: string | null;
+	runtimeId: string;
+	apiFamily?: RuntimeApiFamily | string | null;
+	modelId: string;
+	capabilities: CapabilityFlags;
+	kbHit?: KnowledgeBaseHit | null;
+	quirks?: LocalModelQuirks;
+	configuredThinkingLevel?: ThinkingLevel;
+	adaptiveThinking?: boolean;
+	thinkingLevelMap?: ThinkingEffortByLevel;
+}
+
+interface CapabilityHints {
+	reasoning?: boolean;
+	thinkingFormat?: string;
+	maxTokens?: number | undefined;
+	adaptiveThinking?: boolean | undefined;
+	thinkingLevelMap?: ThinkingEffortByLevel | undefined;
+}
+
+function capabilityHints(input: {
+	reasoning: boolean | undefined;
+	thinkingFormat: string | undefined;
+	maxTokens?: number | undefined;
+	adaptiveThinking?: boolean | undefined;
+	thinkingLevelMap?: ThinkingEffortByLevel | undefined;
+}): CapabilityHints {
+	const hints: CapabilityHints = {};
+	if (input.reasoning !== undefined) hints.reasoning = input.reasoning;
+	if (input.thinkingFormat !== undefined) hints.thinkingFormat = input.thinkingFormat;
+	if (input.maxTokens !== undefined) hints.maxTokens = input.maxTokens;
+	if (input.adaptiveThinking !== undefined) hints.adaptiveThinking = input.adaptiveThinking;
+	if (input.thinkingLevelMap !== undefined) hints.thinkingLevelMap = input.thinkingLevelMap;
+	return hints;
+}
+
+interface PancodeRuntimeMetadata {
+	pancode?: {
+		targetId?: string;
+		runtimeId?: string;
+		lifecycle?: "user-managed" | "pancode-managed";
+		gateway?: boolean;
+		family?: string;
+		thinkingControlRuntime?: CapabilityFlags["thinkingControlRuntime"];
+		reasoningLevels?: CapabilityFlags["reasoningLevels"];
+		reasoningDefaultLevel?: CapabilityFlags["reasoningDefaultLevel"];
+		quirks?: LocalModelQuirks;
+	};
+	compat?: {
+		thinkingFormat?: string;
+		forceAdaptiveThinking?: boolean;
+	};
+}
+
+const LEVELS_ON_OFF: ReadonlyArray<ThinkingLevel> = ["off", "low"];
+const LEVELS_ALWAYS_ON: ReadonlyArray<ThinkingLevel> = ["high"];
+const LEVELS_NONE: ReadonlyArray<ThinkingLevel> = ["off"];
+const HARMONY_LEVELS: ReadonlyArray<ThinkingLevel> = ["low", "medium", "high"];
+
+function effortFor(
+	quirks: ThinkingQuirks | undefined,
+	level: ThinkingLevel,
+	caps?: CapabilityHints,
+): string | undefined {
+	const explicit = thinkingEffortFromMap(quirks?.effortByLevel, level);
+	if (explicit !== undefined) return explicit;
+	if (quirks?.effortByLevel) return undefined;
+	if (caps?.thinkingFormat === "anthropic-extended" && caps.adaptiveThinking === true) {
+		return defaultAnthropicEffortForLevel(level, caps.thinkingLevelMap);
+	}
+	return undefined;
+}
+
+function budgetFor(
+	quirks: ThinkingQuirks | undefined,
+	level: ThinkingLevel,
+	caps?: CapabilityHints,
+): number | undefined {
+	if (quirks?.budgetByLevel) return thinkingBudgetFromMap(quirks.budgetByLevel, level);
+	if (caps?.thinkingFormat === "anthropic-extended" && caps.adaptiveThinking !== true) {
+		return defaultAnthropicBudgetForLevel(level, caps.maxTokens);
+	}
+	return undefined;
+}
+
+export function isHarmonyThinkingFormat(format: string | null | undefined): boolean {
+	return format === "harmony";
+}
+
+export type HarmonyReasoningEffort = "low" | "medium" | "high";
+
+export function harmonyReasoningEffort(level: string | undefined): HarmonyReasoningEffort {
+	if (level === "high" || level === "xhigh") return "high";
+	if (level === "medium") return "medium";
+	return "low";
+}
+
+/**
+ * Reasoning class of a model, derived from its thinking mechanism. Catalog
+ * data (quirks.thinking.mechanism plus capabilities.reasoning) is the single
+ * source: "never" must not emit thinking at any dial, "always" cannot be
+ * silenced, "switchable" follows the dial through a wire/template control.
+ */
+export type ReasoningClass = "never" | "switchable" | "always";
+
+/**
+ * Minimum completion room for a memory envelope on an always-on-thinking
+ * model. A 9B local route has been measured reasoning for more than 1,800
+ * tokens before its first `<operations>` byte, while an always-on 35B spent a
+ * 400-token allowance entirely on reasoning and ended at length. Four thousand
+ * leaves the configured 2,000-token content budget after that preamble.
+ */
+export const MEMORY_ALWAYS_ON_MODEL_MIN_OUTPUT_TOKENS = 4_000;
+
+/**
+ * Derive the memory step's request budget from the resolved model capability.
+ * Switchable models are requested with thinking off and need only the normal
+ * content budget. An always-on mechanism cannot honor that request, so it gets
+ * explicit reasoning headroom. The runtime's known cap remains authoritative.
+ */
+export function memoryInterventionModelMaxTokens(input: {
+	configuredMaxTokens: number;
+	thinkingMechanism: ThinkingMechanism;
+	modelMaxTokens?: number;
+}): number {
+	const configured =
+		Number.isSafeInteger(input.configuredMaxTokens) && input.configuredMaxTokens > 0 ? input.configuredMaxTokens : 1;
+	const requested =
+		input.thinkingMechanism === "always-on"
+			? Math.max(configured * 2, MEMORY_ALWAYS_ON_MODEL_MIN_OUTPUT_TOKENS)
+			: configured;
+	const modelCap = input.modelMaxTokens;
+	return typeof modelCap === "number" && Number.isSafeInteger(modelCap) && modelCap > 0
+		? Math.min(requested, modelCap)
+		: requested;
+}
+
+export function reasoningClassForMechanism(mechanism: ThinkingMechanism | null | undefined): ReasoningClass {
+	if (mechanism === "none") return "never";
+	if (mechanism === "always-on") return "always";
+	return "switchable";
+}
+
+export function inferThinkingMechanism(
+	quirks: LocalModelQuirks | undefined,
+	caps: CapabilityHints | undefined,
+): ThinkingMechanism {
+	if (quirks?.thinking?.mechanism) return quirks.thinking.mechanism;
+	if (!caps?.reasoning) return "none";
+	switch (caps.thinkingFormat) {
+		case "anthropic-extended":
+			return caps.adaptiveThinking === true ? "effort-levels" : "budget-tokens";
+		case "openai-codex":
+		case "harmony":
+			return "effort-levels";
+		default:
+			return "on-off";
+	}
+}
+
+export function applyThinkingMechanism(
+	quirks: LocalModelQuirks | undefined,
+	level: ThinkingLevel,
+	caps?: CapabilityHints,
+	resolvedMechanism?: ThinkingMechanism,
+): AppliedThinking {
+	const mechanism = resolvedMechanism ?? inferThinkingMechanism(quirks, caps);
+	const requestedActive = level !== "off";
+
+	switch (mechanism) {
+		case "none":
+			return {
+				thinkingActive: false,
+				mechanism,
+				noticeKind: requestedActive ? "unsupported" : "applied",
+				notice: requestedActive ? "model does not support thinking; level ignored" : "",
+			};
+		case "always-on":
+			return {
+				thinkingActive: true,
+				mechanism,
+				noticeKind: level === "off" ? "always-on" : "applied",
+				notice: level === "off" ? "model emits chain-of-thought unconditionally; off was ignored" : "",
+			};
+		case "on-off": {
+			const result: AppliedThinking = {
+				thinkingActive: requestedActive,
+				mechanism,
+				chatTemplateKwargs: { enable_thinking: requestedActive },
+				noticeKind: "applied",
+				notice: "",
+			};
+			if (requestedActive && level !== "low") {
+				result.noticeKind = "ignored-on-off";
+				result.notice = `This model only turns thinking on or off, so Thinking ${level} runs as on.`;
+			}
+			return result;
+		}
+		case "effort-levels": {
+			const effort = effortFor(quirks?.thinking, level, caps);
+			const result: AppliedThinking = {
+				thinkingActive: requestedActive,
+				mechanism,
+				noticeKind: "applied",
+				notice: "",
+			};
+			// An off-effort is carried too. Suppressing a model that reasons by
+			// default is an instruction that has to reach the wire; omitting the
+			// field only works for models whose default is already silence.
+			if (effort) result.effort = effort;
+			return result;
+		}
+		case "budget-tokens": {
+			const budget = budgetFor(quirks?.thinking, level, caps);
+			const result: AppliedThinking = {
+				thinkingActive: requestedActive,
+				mechanism,
+				noticeKind: "applied",
+				notice: "",
+			};
+			if (requestedActive && budget !== undefined) result.budgetTokens = budget;
+			return result;
+		}
+	}
+}
+
+function supportedBudgetLevels(
+	baseLevels: ReadonlyArray<ThinkingLevel>,
+	quirks: LocalModelQuirks | undefined,
+): ReadonlyArray<ThinkingLevel> {
+	const budgets = quirks?.thinking?.budgetByLevel;
+	if (!budgets) return baseLevels;
+	const out: ThinkingLevel[] = ["off"];
+	if (budgets.minimal !== undefined) out.push("minimal");
+	if (budgets.low !== undefined) out.push("low");
+	if (budgets.medium !== undefined) out.push("medium");
+	if (budgets.high !== undefined) out.push("high");
+	if (budgets.xhigh !== undefined) out.push("xhigh");
+	return out;
+}
+
+function supportedEffortLevels(
+	baseLevels: ReadonlyArray<ThinkingLevel>,
+	quirks: LocalModelQuirks | undefined,
+	harmony: boolean,
+): ReadonlyArray<ThinkingLevel> {
+	if (harmony) return HARMONY_LEVELS;
+	const efforts = quirks?.thinking?.effortByLevel;
+	const byLevelValues = (quirks?.chatTemplateKwargs ?? quirks?.thinking?.chatTemplateKwargs)?.byLevel?.values;
+	if (!efforts && !byLevelValues) return baseLevels;
+	const out: ThinkingLevel[] = [];
+	if (baseLevels.includes("off")) out.push("off");
+	if (efforts?.minimal !== undefined || byLevelValues?.minimal !== undefined) out.push("minimal");
+	if (efforts?.low !== undefined || byLevelValues?.low !== undefined) out.push("low");
+	if (efforts?.medium !== undefined || byLevelValues?.medium !== undefined) out.push("medium");
+	if (efforts?.high !== undefined || byLevelValues?.high !== undefined) out.push("high");
+	if (efforts?.xhigh !== undefined || byLevelValues?.xhigh !== undefined) out.push("xhigh");
+	return out.length > 0 ? out : baseLevels;
+}
+
+export function restrictThinkingLevelsByMechanism(
+	levels: ReadonlyArray<ThinkingLevel>,
+	mechanism: ThinkingMechanism | null,
+	quirks?: LocalModelQuirks,
+	options?: { harmony?: boolean },
+): ReadonlyArray<ThinkingLevel> {
+	if (mechanism === "none") return LEVELS_NONE;
+	if (mechanism === "always-on") return LEVELS_ALWAYS_ON;
+	if (mechanism === "on-off") return LEVELS_ON_OFF;
+	if (mechanism === "budget-tokens") return supportedBudgetLevels(levels, quirks);
+	if (mechanism === "effort-levels") return supportedEffortLevels(levels, quirks, options?.harmony === true);
+	return levels;
+}
+
+export function effectiveThinkingLevel(
+	configured: ThinkingLevel | undefined,
+	available: ReadonlyArray<ThinkingLevel>,
+): ThinkingLevel {
+	const fallback = available[0] ?? "off";
+	if (!configured) return fallback;
+	if (available.includes(configured)) return configured;
+	// A family with xhigh but no high keeps the released high alias at its
+	// supported ceiling; neither high nor max may fall through to low.
+	if ((configured === "max" || (configured === "high" && !available.includes("high"))) && available.includes("xhigh"))
+		return "xhigh";
+	if ((configured === "high" || configured === "xhigh" || configured === "max") && available.includes("high")) {
+		return "high";
+	}
+	if (configured === "medium" && available.includes("medium")) return "medium";
+	if (configured !== "off" && available.includes("low")) return "low";
+	if (configured === "off" && !available.includes("off") && available.includes("low")) return "low";
+	return fallback;
+}
+
+export function thinkingLevelDisplayWord(mechanism: ThinkingMechanism | null, level: ThinkingLevel): string {
+	if (mechanism === "none") return "off";
+	if (mechanism === "always-on") return "forced";
+	if (mechanism === "on-off") return level === "off" ? "off" : "on";
+	return level;
+}
+
+export function thinkingLevelFromChoiceLabel(value: string): ThinkingLevel | null {
+	if (value === "on") return "low";
+	if (value === "forced") return "high";
+	if (
+		value === "off" ||
+		value === "minimal" ||
+		value === "low" ||
+		value === "medium" ||
+		value === "high" ||
+		value === "xhigh" ||
+		value === "max"
+	) {
+		return value;
+	}
+	return null;
+}
+
+function acceptsBudgetTokensField(
+	input: Pick<ResolveRuntimeCapabilitiesInput, "runtimeId" | "apiFamily" | "capabilities">,
+): boolean {
+	const format = input.capabilities.thinkingFormat;
+	if (format === "anthropic-extended") {
+		return input.apiFamily === "anthropic-messages" || input.apiFamily === "claude-agent-sdk";
+	}
+	if (input.apiFamily !== "openai-completions") return false;
+	if (input.runtimeId === "vllm") return true;
+	return format === "openrouter" || format === "zai";
+}
+
+function resolveBudgetEnforcement(
+	mechanism: ThinkingMechanism,
+	input: Pick<ResolveRuntimeCapabilitiesInput, "runtimeId" | "apiFamily" | "capabilities">,
+): ThinkingBudgetEnforcement {
+	if (mechanism !== "budget-tokens") return "none";
+	return acceptsBudgetTokensField(input) ? "enforced" : "informational";
+}
+
+function appendNotice(base: AppliedThinking, notice: string, kind: AppliedThinkingNoticeKind): AppliedThinking {
+	if (notice.length === 0) return base;
+	return {
+		...base,
+		noticeKind: base.notice.length > 0 ? base.noticeKind : kind,
+		notice: base.notice.length > 0 ? `${base.notice}; ${notice}` : notice,
+	};
+}
+
+function resolveResponseParser(input: ResolveRuntimeCapabilitiesInput, family: string): ResponseParserKind {
+	if (input.capabilities.thinkingFormat === "harmony") return "harmony";
+	if (family === "openai-gpt-oss") return "harmony";
+	if (isHarmonyModelId(input.modelId)) return "harmony";
+	return "none";
+}
+
+function capabilityFamily(input: ResolveRuntimeCapabilitiesInput): string {
+	return input.kbHit?.entry.family ?? inferLocalModelFamily(input.modelId);
+}
+
+function resolveQuirks(input: ResolveRuntimeCapabilitiesInput): LocalModelQuirks | undefined {
+	return input.quirks ?? extractLocalModelQuirks(input.kbHit?.entry.quirks);
+}
+
+/** Copilot's listing names the `reasoningEffort` values a model takes, so its levels are efforts, never a switch. */
+function listsEffortValues(input: Pick<ResolveRuntimeCapabilitiesInput, "apiFamily">): boolean {
+	return input.apiFamily === "copilot-sdk";
+}
+
+/**
+ * The listed level that serves a requested one. A listed level serves itself. Off without a listed off runs at
+ * the listed default, else at the lowest listed level; any other level never resolves to off and takes the
+ * nearest listed level, the lower one on a tie.
+ */
+function listedEffortLevel(
+	requested: ThinkingLevel,
+	listed: ReadonlyArray<ThinkingLevel>,
+	preset: ThinkingLevel | undefined,
+): ThinkingLevel {
+	if (listed.includes(requested)) return requested;
+	if (requested === "off" && preset !== undefined && preset !== "off" && listed.includes(preset)) return preset;
+	const candidates: ThinkingLevel[] = listed.filter((level) => level !== "off");
+	const rank = (level: ThinkingLevel) => VALID_THINKING_LEVELS.indexOf(level);
+	let best = candidates[0] ?? listed[0] ?? "off";
+	for (const level of candidates) {
+		if (Math.abs(rank(level) - rank(requested)) < Math.abs(rank(best) - rank(requested))) best = level;
+	}
+	return best;
+}
+
+function isOnOffLevels(levels: ReadonlyArray<ThinkingLevel>): boolean {
+	return levels.includes("low") && levels.every((level) => level === "off" || level === "low");
+}
+
+/**
+ * Mechanism precedence: what the server reported (no reasoning, or a binary control), then
+ * the profile's mechanism when the server said nothing about it, then what the capability
+ * flags imply. A profile mechanism never overrides a live report: "none" cannot stand
+ * against reasoning the server or operator turned on, and a switchable mechanism cannot
+ * stand against reasoning reported false.
+ */
+function resolveMechanism(
+	input: ResolveRuntimeCapabilitiesInput,
+	quirks: LocalModelQuirks | undefined,
+	hints: CapabilityHints,
+): ThinkingMechanism {
+	if (!input.capabilities.reasoning) return "none";
+	const live = input.capabilities.reasoningLevels;
+	if (live && listsEffortValues(input)) return "effort-levels";
+	if (live && isOnOffLevels(live)) return "on-off";
+	const declared = quirks?.thinking?.mechanism;
+	if (declared && declared !== "none") return declared;
+	return inferThinkingMechanism(undefined, hints);
+}
+
+function resolveThinkingCapability(
+	input: ResolveRuntimeCapabilitiesInput,
+	quirks: LocalModelQuirks | undefined,
+	parser: ResponseParserKind,
+): ResolvedThinkingCapability {
+	const configuredLevel = input.configuredThinkingLevel ?? "off";
+	const harmony = parser === "harmony";
+	const thinkingFormat = harmony ? "harmony" : input.capabilities.thinkingFormat;
+	const hints = capabilityHints({
+		reasoning: input.capabilities.reasoning,
+		thinkingFormat,
+		maxTokens: input.capabilities.maxTokens,
+		adaptiveThinking: input.adaptiveThinking,
+		thinkingLevelMap: input.thinkingLevelMap,
+	});
+	const mechanism = resolveMechanism(input, quirks, hints);
+	const baseLevels = availableThinkingLevels(input.capabilities, {
+		runtimeId: input.runtimeId,
+		modelId: input.modelId,
+	});
+	const liveLevels = input.capabilities.reasoningLevels;
+	// Options the server enumerates are the levels this deployment has. The profile's levels
+	// apply only when the server omits them.
+	const supportedLevels =
+		liveLevels && !harmony && mechanism !== "none" && mechanism !== "always-on"
+			? liveLevels
+			: restrictThinkingLevelsByMechanism(baseLevels, mechanism, quirks, { harmony });
+	const listedEfforts = liveLevels && mechanism === "effort-levels" && listsEffortValues(input) ? liveLevels : undefined;
+	const listedDefault = input.capabilities.reasoningDefaultLevel;
+	const effectiveLevel = listedEfforts
+		? listedEffortLevel(configuredLevel, listedEfforts, listedDefault)
+		: effectiveThinkingLevel(configuredLevel, supportedLevels);
+	let applied = applyThinkingMechanism(quirks, effectiveLevel, hints, mechanism);
+
+	if (harmony) {
+		const effort = harmonyReasoningEffort(effectiveLevel);
+		applied = {
+			...applied,
+			thinkingActive: true,
+			mechanism: "effort-levels",
+			effort,
+		};
+		if (configuredLevel !== effectiveLevel) {
+			applied = appendNotice(
+				applied,
+				`Harmony models support low/medium/high reasoning only; ${configuredLevel} was coerced to ${effectiveLevel}`,
+				"applied",
+			);
+		}
+	} else if (listedEfforts && configuredLevel !== effectiveLevel) {
+		applied = appendNotice(
+			applied,
+			configuredLevel === "off"
+				? `This model cannot turn thinking off, so Thinking off runs at ${effectiveLevel === listedDefault ? "its default level, " : ""}${effectiveLevel}.`
+				: `This model offers thinking ${listedEfforts.join(", ")}, so Thinking ${configuredLevel} runs as ${effectiveLevel}.`,
+			"applied",
+		);
+	} else if (mechanism === "on-off" && configuredLevel !== effectiveLevel) {
+		applied = {
+			...applied,
+			notice: `This model only turns thinking on or off, so Thinking ${configuredLevel} runs as ${thinkingLevelDisplayWord(mechanism, effectiveLevel)}.`,
+			noticeKind: "ignored-on-off",
+		};
+	} else if (mechanism === "always-on" && configuredLevel !== effectiveLevel) {
+		applied = appendNotice(applied, `${configuredLevel} was ignored because thinking is always on`, "always-on");
+	} else if (mechanism === "none" && configuredLevel !== effectiveLevel) {
+		applied = appendNotice(applied, `${configuredLevel} was ignored because thinking is unsupported`, "unsupported");
+	}
+
+	const budgetEnforcement = resolveBudgetEnforcement(mechanism, input);
+	if (applied.thinkingActive && mechanism === "budget-tokens" && budgetEnforcement === "informational") {
+		applied = appendNotice(
+			applied,
+			"target does not expose an enforceable per-request thinking budget; level is advisory",
+			"applied",
+		);
+	}
+
+	return {
+		...applied,
+		configuredLevel,
+		effectiveLevel,
+		supportedLevels,
+		display: thinkingLevelDisplayWord(applied.mechanism, effectiveLevel),
+		budgetEnforcement,
+	};
+}
+
+/**
+ * Runtimes whose OpenAI-compatible surface ignores `chat_template_kwargs`
+ * and reads every thinking control from `reasoning_effort`. Measured against
+ * dynamo (LM Studio) on 2026-08-11 with `nvidia-nemotron-3.5-lightning-30b-a3b`
+ * and again on 2026-09-02 across three mechanisms: `enable_thinking: false`
+ * left 26 reasoning tokens on qwen3.8-27b (effort-levels), 52 on
+ * gemma-4-26b-a4b-it (on-off) and 105 on nemotron-3.5-lightning (on-off),
+ * while `reasoning_effort: "none"` produced 0 on each; llama.cpp does the
+ * reverse. Sending the wrong spelling reads as "no preference" to the
+ * server, so the model keeps reasoning at every dial. The same runtime drops
+ * a family's own kwargs (#267) for the same reason, so those are reported as
+ * undeliverable rather than merged into the request (#268).
+ */
+const REASONING_EFFORT_ONLY_RUNTIMES: ReadonlySet<string> = new Set(["lmstudio", "flm"]);
+
+/** `none` is the observed LM Studio HTTP off value; on-off models have no finer dial than `low`. */
+function onOffReasoningEffort(thinkingActive: boolean): string {
+	return thinkingActive ? "low" : "none";
+}
+
+function resolveFamilyChatTemplateKwargs(
+	quirks: LocalModelQuirks | undefined,
+	effectiveLevel: ThinkingLevel,
+	configuredLevel: ThinkingLevel,
+): Record<string, boolean | string | number> | undefined {
+	const block = quirks?.chatTemplateKwargs ?? quirks?.thinking?.chatTemplateKwargs;
+	if (!block) return undefined;
+	const out: Record<string, boolean | string | number> = {};
+	if (block.static) {
+		for (const [k, v] of Object.entries(block.static)) {
+			out[k] = v;
+		}
+	}
+	if (block.byLevel) {
+		const byLevel = block.byLevel;
+		const val = byLevel.values[effectiveLevel] ?? byLevel.values[configuredLevel];
+		if (val !== undefined) {
+			out[byLevel.key] = val;
+		}
+	}
+	return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function familyKwargsDeclaredUnsupported(quirks: LocalModelQuirks | undefined, runtimeId: string): boolean {
+	if (runtimeId !== "lmstudio") return false;
+	const block = quirks?.chatTemplateKwargs ?? quirks?.thinking?.chatTemplateKwargs;
+	return block?.lmstudio === "unsupported" || block?.byLevel?.lmstudio === "unsupported";
+}
+
+function resolveRequestCapability(
+	thinking: ResolvedThinkingCapability,
+	parser: ResponseParserKind,
+	runtimeId: string,
+	quirks?: LocalModelQuirks,
+): ResolvedRequestCapability {
+	const request: ResolvedRequestCapability = { budgetEnforcement: thinking.budgetEnforcement };
+	const effortOnly = REASONING_EFFORT_ONLY_RUNTIMES.has(runtimeId);
+	const familyKwargs = resolveFamilyChatTemplateKwargs(quirks, thinking.effectiveLevel, thinking.configuredLevel);
+	if (familyKwargs && effortOnly) {
+		request.undeliverableChatTemplateKwargs = {
+			keys: Object.keys(familyKwargs),
+			declaredUnsupported: familyKwargsDeclaredUnsupported(quirks, runtimeId),
+		};
+	} else if (familyKwargs) {
+		request.chatTemplateKwargs = { ...familyKwargs };
+	}
+	if (thinking.mechanism === "effort-levels" && thinking.effort) {
+		request.reasoningEffort = thinking.effort;
+	}
+	if (thinking.mechanism === "effort-levels" && !thinking.thinkingActive) {
+		request.chatTemplateKwargs = { ...(request.chatTemplateKwargs ?? {}), enable_thinking: false };
+	}
+	if (thinking.mechanism === "budget-tokens" && thinking.budgetTokens !== undefined) {
+		request.budgetTokens = thinking.budgetTokens;
+	}
+	if (thinking.mechanism === "on-off" && thinking.chatTemplateKwargs) {
+		request.chatTemplateKwargs = { ...(request.chatTemplateKwargs ?? {}), ...thinking.chatTemplateKwargs };
+	}
+	if (parser === "harmony" && thinking.effort) {
+		request.reasoningEffort = thinking.effort;
+		request.chatTemplateKwargs = { ...(request.chatTemplateKwargs ?? {}), reasoning_effort: thinking.effort };
+	}
+	// Every mechanism that means "off" has to reach an effort-only runtime as
+	// reasoning_effort "none": the template flag above is what llama.cpp reads
+	// and what LM Studio drops. An interactive session with thinking "off" had
+	// spent 37k reasoning tokens before the effort-levels case reached the
+	// wire, and on-off and budget-tokens families reasoned on the same way.
+	if (effortOnly && thinking.mechanism !== "none" && thinking.mechanism !== "always-on") {
+		if (!thinking.thinkingActive) request.reasoningEffort = onOffReasoningEffort(false);
+		else if (thinking.mechanism === "on-off") request.reasoningEffort = onOffReasoningEffort(true);
+	}
+	return request;
+}
+
+export function resolveModelRuntimeCapabilities(
+	input: ResolveRuntimeCapabilitiesInput,
+): ResolvedModelRuntimeCapabilities {
+	const family = capabilityFamily(input);
+	const quirks = resolveQuirks(input);
+	const parser = resolveResponseParser(input, family);
+	const thinking = resolveThinkingCapability(input, quirks, parser);
+	const result: ResolvedModelRuntimeCapabilities = {
+		targetId: input.targetId ?? null,
+		runtimeId: input.runtimeId,
+		apiFamily: input.apiFamily ?? null,
+		modelId: input.modelId,
+		family,
+		capabilities: input.capabilities,
+		thinking,
+		request: resolveRequestCapability(
+			thinking,
+			parser,
+			input.runtimeId === "litellm" ? (input.capabilities.thinkingControlRuntime ?? input.runtimeId) : input.runtimeId,
+			quirks,
+		),
+		response: {
+			parser,
+			stripTokenizerSentinels: true,
+			...(parser === "harmony"
+				? { recoveredReasoningField: resolveRecoveredReasoningField(quirks, input.runtimeId) }
+				: {}),
+		},
+	};
+	if (quirks) result.quirks = quirks;
+	return result;
+}
+
+export function resolveModelRuntimeCapabilitiesForStatus(
+	status: Pick<TargetStatus, "target" | "runtime" | "capabilities" | "probeCapabilities" | "probeModelId">,
+	wireModelId: string | null | undefined,
+	knowledgeBase: KnowledgeBase | null,
+	options?: { detectedReasoning?: boolean | null; configuredThinkingLevel?: ThinkingLevel },
+): ResolvedModelRuntimeCapabilities {
+	const modelId = wireModelId?.trim() || status.target.defaultModel?.trim() || "";
+	const kbHit = modelId ? (knowledgeBase?.lookup(modelId, status.runtime?.id ?? status.target.runtime) ?? null) : null;
+	const capabilities = resolveModelCapabilities(status, modelId, knowledgeBase, {
+		detectedReasoning: options?.detectedReasoning ?? null,
+	});
+	const runtimeId = status.runtime?.id ?? status.target.runtime;
+	return resolveModelRuntimeCapabilities({
+		targetId: status.target.id,
+		runtimeId,
+		apiFamily: status.runtime?.apiFamily ?? null,
+		modelId,
+		capabilities,
+		kbHit,
+		...thinkingHintsForCatalogModel(runtimeId, modelId),
+		...(options?.configuredThinkingLevel ? { configuredThinkingLevel: options.configuredThinkingLevel } : {}),
+	});
+}
+
+/** Why the level that runs differs from the level asked for, in words; null when they match. */
+export function thinkingEffectNote(thinking: {
+	mechanism: string;
+	configuredLevel: ThinkingLevel;
+	effectiveLevel: ThinkingLevel;
+	display: string;
+	supportedLevels?: ReadonlyArray<ThinkingLevel>;
+	model?: string;
+}): string | null {
+	if (thinking.configuredLevel === thinking.effectiveLevel) return null;
+	if (
+		thinking.configuredLevel === "high" &&
+		thinking.effectiveLevel === "xhigh" &&
+		!thinking.supportedLevels?.includes("high")
+	) {
+		const model = thinking.model?.trim();
+		return model ? `high isn't offered by ${model}; using xhigh` : "high isn't offered by this model; using xhigh";
+	}
+	return thinking.mechanism === "none"
+		? "no thinking control"
+		: `${thinking.configuredLevel} runs as ${thinking.display}`;
+}
+
+export function resolveModelRuntimeCapabilitiesForProviders(
+	providers: ProvidersContract,
+	targetId: string | null | undefined,
+	wireModelId: string | null | undefined,
+	configuredThinkingLevel?: ThinkingLevel,
+): ResolvedModelRuntimeCapabilities | null {
+	const id = targetId?.trim();
+	if (!id) return null;
+	const status = providers.list().find((entry) => entry.target.id === id);
+	if (!status) return null;
+	const modelId = wireModelId?.trim() || status.target.defaultModel?.trim() || "";
+	const detectedReasoning =
+		modelId && typeof providers.getDetectedReasoning === "function" ? providers.getDetectedReasoning(id, modelId) : null;
+	return resolveModelRuntimeCapabilitiesForStatus(status, modelId, providers.knowledgeBase, {
+		detectedReasoning,
+		...(configuredThinkingLevel ? { configuredThinkingLevel } : {}),
+	});
+}
+
+function thinkingHintsForModel(
+	model: Model<Api> | undefined,
+): Pick<ResolveRuntimeCapabilitiesInput, "adaptiveThinking" | "thinkingLevelMap"> {
+	const out: Pick<ResolveRuntimeCapabilitiesInput, "adaptiveThinking" | "thinkingLevelMap"> = {};
+	if (!model) return out;
+	const compat = model.compat as { forceAdaptiveThinking?: boolean } | undefined;
+	if (compat?.forceAdaptiveThinking !== undefined) out.adaptiveThinking = compat.forceAdaptiveThinking;
+	if (model.thinkingLevelMap) out.thinkingLevelMap = model.thinkingLevelMap as ThinkingEffortByLevel;
+	return out;
+}
+
+function thinkingHintsForCatalogModel(
+	runtimeId: string | null | undefined,
+	modelId: string,
+): Pick<ResolveRuntimeCapabilitiesInput, "adaptiveThinking" | "thinkingLevelMap"> {
+	if (!runtimeId || modelId.length === 0) return {};
+	return thinkingHintsForModel(getCatalogModelForRuntime(runtimeId, modelId));
+}
+
+function thinkingFormatFromModelApi(api: Api): CapabilityFlags["thinkingFormat"] | undefined {
+	switch (api) {
+		case "anthropic-messages":
+		case "claude-agent-sdk":
+		case "claude-code-subprocess":
+			return "anthropic-extended";
+		case "openai-codex-responses":
+			return "openai-codex";
+		default:
+			return undefined;
+	}
+}
+
+function capabilitiesFromModel(model: Model<Api> & PancodeRuntimeMetadata): CapabilityFlags {
+	const format = model.compat?.thinkingFormat ?? thinkingFormatFromModelApi(model.api);
+	const controlRuntime = model.pancode?.thinkingControlRuntime;
+	const reasoningLevels = model.pancode?.reasoningLevels;
+	const reasoningDefaultLevel = model.pancode?.reasoningDefaultLevel;
+	const caps: CapabilityFlags = {
+		chat: true,
+		tools: true,
+		reasoning: model.reasoning === true,
+		vision: Array.isArray(model.input) && model.input.includes("image"),
+		audio: false,
+		embeddings: false,
+		rerank: false,
+		fim: false,
+		contextWindow: model.contextWindow,
+		maxTokens: model.maxTokens,
+		...(controlRuntime ? { thinkingControlRuntime: controlRuntime } : {}),
+		...(reasoningLevels ? { reasoningLevels } : {}),
+		...(reasoningDefaultLevel ? { reasoningDefaultLevel } : {}),
+	};
+	if (
+		format === "qwen-chat-template" ||
+		format === "openrouter" ||
+		format === "zai" ||
+		format === "anthropic-extended" ||
+		format === "deepseek-r1" ||
+		format === "openai-codex" ||
+		format === "harmony"
+	) {
+		caps.thinkingFormat = format;
+	}
+	return caps;
+}
+
+export function resolveModelRuntimeCapabilitiesForModel<TApi extends Api>(
+	model: Model<TApi>,
+	configuredThinkingLevel?: ThinkingLevel,
+): ResolvedModelRuntimeCapabilities {
+	const runtimeModel = model as Model<TApi> & PancodeRuntimeMetadata;
+	const metadata = runtimeModel.pancode;
+	const caps = capabilitiesFromModel(model as Model<Api> & PancodeRuntimeMetadata);
+	return resolveModelRuntimeCapabilities({
+		targetId: metadata?.targetId ?? null,
+		runtimeId: metadata?.runtimeId ?? model.provider,
+		apiFamily: model.api,
+		modelId: model.id,
+		capabilities: caps,
+		...thinkingHintsForModel(model),
+		...(metadata?.quirks ? { quirks: metadata.quirks } : {}),
+		kbHit: metadata?.family
+			? {
+					matchKind: "family",
+					entry: {
+						family: metadata.family,
+						matchPatterns: [metadata.family],
+						capabilities: {},
+					},
+				}
+			: null,
+		...(configuredThinkingLevel ? { configuredThinkingLevel } : {}),
+	});
+}
+
+export function resolveTargetRuntimeCapabilities(
+	target: TargetDescriptor,
+	runtime: RuntimeDescriptor,
+	wireModelId: string,
+	capabilities: CapabilityFlags,
+	knowledgeBase: KnowledgeBase | null,
+	configuredThinkingLevel?: ThinkingLevel,
+): ResolvedModelRuntimeCapabilities {
+	const kbHit = knowledgeBase?.lookup(wireModelId, runtime.id) ?? null;
+	return resolveModelRuntimeCapabilities({
+		targetId: target.id,
+		runtimeId: runtime.id,
+		apiFamily: runtime.apiFamily,
+		modelId: wireModelId,
+		capabilities,
+		kbHit,
+		...thinkingHintsForCatalogModel(runtime.id, wireModelId),
+		...(configuredThinkingLevel ? { configuredThinkingLevel } : {}),
+	});
+}

@@ -1,0 +1,167 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import { validateSettingsFile } from "../../../../../src/core/config.js";
+import { cwdHash } from "../../../../../src/core/cwd-hash.js";
+import { pancodeStateDir } from "../../../../../src/core/xdg.js";
+import type { RunListCursor } from "../../../../../src/domains/session/index.js";
+import {
+	listRunTelemetrySources,
+	loadRunCallsTelemetrySource,
+	loadRunScopeFiles,
+	loadRunTelemetrySource,
+	loadSessionTelemetrySource,
+	runTelemetryDirectoryExists,
+} from "../../../../../src/domains/session/index.js";
+import {
+	cacheReport,
+	callsReport,
+	costReport,
+	emptyUsageDiagnostics,
+	explain,
+	explainRepoRef,
+	isRepoRef,
+	runCostReport,
+	runRowTelemetry,
+	runTelemetry,
+	runTimeline,
+	sessionOperatorMetrics,
+	sessionTelemetry,
+	timeline,
+	usageReport,
+	usageWindow,
+	whyStopped,
+} from "../../../../../src/domains/telemetry/index.js";
+import { Id } from "../../../contracts/common.js";
+import type { TelemetryRequest } from "../../../contracts/telemetry.js";
+import { parseFactRef } from "../../../contracts/wire.js";
+import { AppProblem } from "../../services/problem.js";
+import { preflightLedger } from "./sessions.js";
+
+/**
+ * The telemetry read model for the GUI (#434 §11.3): cold reads over the journals on disk through the same loader
+ * and folds the CLI uses, so a number served here is the number `pancode telemetry … --json` prints. Nothing
+ * here sums, prices or words a value; the DTOs come back as the read model built them.
+ */
+export async function readTelemetry(input: TelemetryRequest): Promise<unknown> {
+	const state = pancodeStateDir();
+	if (input.kind === "metrics") {
+		const to = Date.now();
+		const from = to - 30 * 24 * 60 * 60 * 1000;
+		const diagnostics = emptyUsageDiagnostics();
+		const { repo } = await usageWindow(state, input.cwd === null ? null : cwdHash(input.cwd), 30, to, diagnostics);
+		if (diagnostics.notes.length) throw new AppProblem("unavailable", diagnostics.notes.join("; "));
+		// The window lists the operator's declared pools' fees once per period, as `usage report` does; one session or run carries none.
+		const report = usageReport(repo, from, to, validateSettingsFile().settings.funding);
+		return {
+			from: new Date(from).toISOString(),
+			to: new Date(to).toISOString(),
+			cost: report.cost,
+			performance: report.performance,
+		};
+	}
+	if (input.kind === "explain") {
+		const ref = parseFactRef(input.ref);
+		if (!ref) throw new AppProblem("validation", "Invalid telemetry reference.");
+		// A repository window is rebuilt the way `usage report` folds it, ending now, exactly as the CLI's explain does.
+		const repo = isRepoRef(ref);
+		if (!repo && !Value.Check(Id, ref.owner)) throw new AppProblem("validation", "Invalid telemetry reference.");
+		if (!repo && ref.scope !== "run" && !preflightLedger()) throw notFound();
+		const explained = repo
+			? await explainRepoRef(state, input.ref, ref.owner)
+			: ref.scope === "run"
+				? explain(input.ref, { runId: ref.owner, run: loadRunCallsTelemetrySource(state, ref.owner) })
+				: resolveSession(state, ref.owner, false, (session) => explain(input.ref, { session }));
+		if (!explained) throw new AppProblem("not_found", "Nothing in the journals resolves that telemetry reference.");
+		return explained;
+	}
+	if (input.kind === "runs") {
+		const page = listRunTelemetrySources(state, { limit: input.limit, before: cursorOf(input.cursor) });
+		return {
+			runs: page.runs.map(({ runId, source }) => runRowTelemetry(runId, source)),
+			nextCursor: page.nextBefore ? Buffer.from(JSON.stringify(page.nextBefore)).toString("base64url") : null,
+		};
+	}
+	if (input.kind === "run" || input.kind === "run-timeline" || input.kind === "run-cost") {
+		if (!Value.Check(Id, input.runId)) throw new AppProblem("validation", "Invalid run identifier.");
+		// A run that never had a directory is not found; one whose journal is missing or torn is unknown coverage.
+		if (!runTelemetryDirectoryExists(state, input.runId))
+			throw new AppProblem("not_found", "No run journal holds that id.");
+		if (input.kind === "run-cost")
+			return runCostReport(input.runId, loadRunCallsTelemetrySource(state, input.runId), "model");
+		const source = loadRunTelemetrySource(state, input.runId);
+		return input.kind === "run"
+			? runTelemetry(input.runId, source, {}, loadRunScopeFiles(state, input.runId))
+			: runTimeline(input.runId, source);
+	}
+	if (!Value.Check(Id, input.sessionId)) throw new AppProblem("validation", "Invalid session identifier.");
+	if (!preflightLedger() && !input.knownSession) throw notFound();
+	return resolveSession(state, input.sessionId, input.knownSession === true, (source) => {
+		switch (input.kind) {
+			case "session-metrics":
+				return sessionOperatorMetrics(source);
+			case "session":
+				return sessionTelemetry(source);
+			case "calls":
+				return callsReport(source, input.filter);
+			case "cost":
+				return costReport(source, input.by);
+			case "cache":
+				return cacheReport(source);
+			case "timeline":
+				return timeline(source, input.range);
+			case "why-stopped":
+				return whyStopped(source);
+		}
+	});
+}
+
+const Cursor = Type.Object(
+	{ writtenMs: Type.Union([Type.Number(), Type.Null()]), runId: Id },
+	{ additionalProperties: false },
+);
+function cursorOf(encoded: string | undefined): RunListCursor | null {
+	if (encoded === undefined) return null;
+	try {
+		const decoded: unknown = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+		if (!Value.Check(Cursor, decoded)) throw new Error("cursor");
+		return decoded;
+	} catch {
+		throw new AppProblem("validation", "Invalid telemetry run cursor.");
+	}
+}
+
+function notFound() {
+	return new AppProblem("not_found", "No session journal or ledger holds that id.");
+}
+
+/**
+ * A session the host holds but no directory journals: one from before journaling, or one that never made a model
+ * call. Its coverage is unknown, which the read model says by folding an unreadable journal, never by a zero (R9).
+ */
+function unknownCoverage(sessionId: string): NonNullable<ReturnType<typeof loadSessionTelemetrySource>> {
+	return {
+		sessionId,
+		journal: { present: false, records: [], modes: [], skipped: 1, damaged: 0 },
+		runs: new Map(),
+		parent: null,
+	};
+}
+
+function resolveSession<T>(
+	state: string,
+	sessionId: string,
+	known: boolean,
+	read: (source: NonNullable<ReturnType<typeof loadSessionTelemetrySource>>) => T,
+): T {
+	let source: ReturnType<typeof loadSessionTelemetrySource>;
+	try {
+		source = loadSessionTelemetrySource(state, sessionId);
+	} catch (error) {
+		if (error instanceof AppProblem) throw error;
+		throw new AppProblem("unavailable", "The session's telemetry journal cannot be read.");
+	}
+	if (!source && !known) throw notFound();
+	return read(source ?? unknownCoverage(sessionId));
+}

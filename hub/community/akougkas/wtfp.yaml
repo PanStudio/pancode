@@ -1,0 +1,26 @@
+rows:
+  - kind: plugin
+    publisher: akougkas
+    name: wtfp
+    version: 0.9.0
+    description: Portable, evidence-grounded academic research and writing workflows.
+    source:
+      repo: https://github.com/akougkas/wtf-p
+      commit: d227608f6a7b814b914c2bb2fabbee5611b846b8
+      subdir: pancode/plugin
+    sha256: c0a73ae539ba73838f7a37d363d99a6390e4b8c6d396b929ba8c1690676db2c1
+    license: MIT
+    tier: verified
+  - kind: extension
+    publisher: akougkas
+    name: wtfp
+    version: 0.9.0
+    description: The WTF-P writing desk for PanCode; paper state, gates and the write guard run in code.
+    source:
+      repo: https://github.com/akougkas/wtf-p
+      commit: d227608f6a7b814b914c2bb2fabbee5611b846b8
+      subdir: pancode/extension
+    sha256: 69ecae553e9f4858887692dab08bebbe12f2c8aec03cf936248ed8f8ee578e58
+    license: MIT
+    tier: verified
+    plugin: wtfp

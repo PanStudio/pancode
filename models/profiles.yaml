@@ -1,0 +1,371 @@
+# Packaged upstream local model facts and recommendations.
+# Model context maxima are catalog claims, never loaded serving limits.
+# Tool parsing, structured output and sampling extensions depend on the runtime.
+# Packaged entries also back the substring fallback for ids no profile matches (profile-knowledge.ts), in this
+# order and ahead of model-catalog.d overlays, so keep the first two entries first.
+version: 1
+models:
+  - id: meta-llama-4-maverick
+    match:
+      exactIds:
+        - meta-llama/llama-4-maverick
+      familyPrefixes:
+        - llama-4-maverick
+    claims: {}
+    provenance:
+      source: pancode-compatibility-catalog
+      notes: Ported from the retired ALCF compatibility catalog (cloud-models/alcf.yaml), which named this family for
+        the ALCF inference gateway. Its capability and limit fields were never served once profiles took over, so
+        the entry only names the family; the gateway's live report decides capabilities.
+  - id: meta-llama-4-scout
+    match:
+      exactIds:
+        - meta-llama/llama-4-scout
+      familyPrefixes:
+        - llama-4-scout
+    claims: {}
+    provenance:
+      source: pancode-compatibility-catalog
+      notes: Ported from the retired ALCF compatibility catalog (cloud-models/alcf.yaml); family name only, as for
+        meta-llama-4-maverick.
+  - id: openai-gpt-oss
+    match:
+      exactIds:
+        - openai/gpt-oss-120b
+        - openai/gpt-oss-20b
+      familyPrefixes:
+        - gpt-oss-120b
+        - gpt-oss-20b
+    claims:
+      modelMaxContext: 131072
+      capabilities:
+        chat: true
+        tools: true
+        toolCallFormat: openai
+        reasoning: true
+        thinkingFormat: harmony
+        vision: false
+        audio: false
+        embeddings: false
+        rerank: false
+        fim: false
+    behavior:
+      thinking:
+        mechanism: effort-levels
+        effortByLevel:
+          low: low
+          medium: medium
+          high: high
+        guidance: Harmony accepts low, medium and high reasoning effort. There is no upstream thinking-off mode; off
+          and minimal resolve to low. Tool calls use Harmony assistant messages addressed to functions, with
+          analysis and final channels.
+    recommendations:
+      runtimePreference:
+        llamaCpp: Use the checkpoint chat template with --jinja and the OpenAI-compatible chat-completions endpoint.
+          Send template controls through chat_template_kwargs. Choose the loaded context for available memory;
+          the model maximum does not size the server. Reasoning streams as reasoning_content.
+        lmstudio: Reasoning streams as reasoning; chat_template_kwargs is unsupported and the effort goes as
+          reasoning_effort only (#269).
+        vllm: vllm serve <model> --reasoning-parser openai_gptoss --tool-call-parser openai --enable-auto-tool-choice.
+          Without the reasoning parser the analysis channel arrives as raw Harmony markers in content; without the
+          tool-call parser tool calls arrive as raw commentary frames addressed to functions.<name>. PanCode recovers
+          both from content and `targets --probe --tools` reports the server's Harmony parsing level, but the server
+          flags keep reasoning replay exact. Recovered reasoning replays as reasoning_content unless
+          quirks.harmony.recoveredReasoningField names another field per runtime; which field vLLM reads back is
+          unverified (#435).
+        alcfSophia: ALCF Sophia serves gpt-oss through vLLM (resource_server/sophia/vllm/v1) with flags the operator
+          does not control; probe it with --tools before relying on tool loops (#435).
+        alcfMetis: ALCF Metis (resource_server/metis/api/v1) is not vLLM. It returns structured tool calls and a
+          reasoning field, rejects chat_template_kwargs with 422, and answers a bare 400 to an assistant turn that
+          carries content, reasoning and tool_calls together, so tool turns replay with one analysis message (#414).
+    provenance:
+      source: upstream-model-card
+      url: https://huggingface.co/openai/gpt-oss-20b
+      retrieved: 2026-10-03
+      config: https://huggingface.co/openai/gpt-oss-20b/blob/main/config.json
+      generationConfig: https://huggingface.co/openai/gpt-oss-20b/blob/main/generation_config.json
+      chatTemplate: https://huggingface.co/openai/gpt-oss-20b/blob/main/chat_template.jinja
+      notes: Context comes from config.json max_position_embeddings. The card and generation config publish no
+        recommended temperature or top_p; retain runtime sampling defaults instead of inventing a sampler.
+        gpt-oss-120b (https://huggingface.co/openai/gpt-oss-120b) shares the 131072 context, the Harmony chat
+        template and the effort levels; only its parameter count differs, so it matches this profile (#435).
+      runtimeSources:
+        - https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md
+        - https://docs.litellm.ai/docs/providers/openai_compatible
+  - id: qwen3.8-27b
+    match:
+      exactIds:
+        - Qwen/Qwen3.8-27B
+      familyPrefixes:
+        - qwen3.8-27b
+        - qwen3_8-27b
+        - qwen3-8-27b
+    claims:
+      modelMaxContext: 262144
+      capabilities:
+        chat: true
+        tools: true
+        toolCallFormat: qwen
+        reasoning: true
+        thinkingFormat: qwen-chat-template
+        vision: true
+        audio: false
+        embeddings: false
+        rerank: false
+        fim: false
+    behavior:
+      thinking:
+        mechanism: effort-levels
+        effortByLevel:
+          low: low
+          medium: medium
+          xhigh: xhigh
+        chatTemplateKwargs:
+          byLevel:
+            key: reasoning_effort
+            values:
+              low: low
+              medium: medium
+              xhigh: xhigh
+            lmstudio: unsupported
+        guidance: The upstream template defaults to thinking on and accepts exactly low, medium and xhigh. High and
+          max resolve to xhigh; off uses enable_thinking:false. preserve_thinking defaults to true. Tools use
+          <tool_call><function=...><parameter=...> XML and <tool_response> replies.
+    recommendations:
+      sampling:
+        thinking:
+          temperature: 1
+          topP: 0.95
+          topK: 20
+          minP: 0
+          presencePenalty: 0
+          repeatPenalty: 1
+        instruct:
+          temperature: 0.7
+          topP: 0.8
+          topK: 20
+          minP: 0
+          presencePenalty: 1.5
+          repeatPenalty: 1
+      outputTokens: 131072
+      runtimePreference:
+        llamaCpp: Use the checkpoint chat template with --jinja and the OpenAI-compatible chat-completions endpoint.
+          Send template controls through chat_template_kwargs. Choose the loaded context for available memory;
+          the model maximum does not size the server.
+    provenance:
+      source: upstream-model-card
+      url: https://huggingface.co/Qwen/Qwen3.8-27B
+      retrieved: 2026-10-03
+      config: https://huggingface.co/Qwen/Qwen3.8-27B/blob/main/config.json
+      generationConfig: https://huggingface.co/Qwen/Qwen3.8-27B/blob/main/generation_config.json
+      chatTemplate: https://huggingface.co/Qwen/Qwen3.8-27B/blob/main/chat_template.jinja
+      notes: Sampling follows the card thinking and instruct profiles. Native context is 262144; the advertised
+        1000000 requires RoPE scaling. outputTokens is a suggested shared completion budget using the card
+        final-response allowance, clamped to the loaded window and server cap; it is not a model output
+        maximum.
+      runtimeSources:
+        - https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md
+        - https://docs.litellm.ai/docs/providers/openai_compatible
+  - id: gemma4-26b-a4b
+    match:
+      exactIds:
+        - google/gemma-4-26B-A4B-it
+      familyPrefixes:
+        - gemma-4-26b-a4b-it
+        - gemma4-26b-a4b-it
+    claims:
+      modelMaxContext: 262144
+      capabilities:
+        chat: true
+        tools: true
+        toolCallFormat: openai
+        reasoning: true
+        vision: true
+        audio: false
+        embeddings: false
+        rerank: false
+        fim: false
+    behavior:
+      thinking:
+        mechanism: on-off
+        guidance: The instruction-tuned upstream template defaults enable_thinking to false. Set it true to emit
+          <|channel>thought blocks; intermediate effort levels resolve to on. Native tool calls use
+          <|tool_call>call:name{...}<tool_call|>, converted by the runtime to OpenAI tool_calls.
+    recommendations:
+      sampling:
+        thinking:
+          temperature: 1
+          topP: 0.95
+          topK: 64
+        instruct:
+          temperature: 1
+          topP: 0.95
+          topK: 64
+      runtimePreference:
+        llamaCpp: Use the checkpoint chat template with --jinja and the OpenAI-compatible chat-completions endpoint.
+          Send template controls through chat_template_kwargs. Choose the loaded context for available memory;
+          the model maximum does not size the server. Image input also requires the matching multimodal
+          projector (--mmproj).
+    provenance:
+      source: upstream-model-card
+      url: https://huggingface.co/google/gemma-4-26B-A4B-it
+      retrieved: 2026-10-03
+      config: https://huggingface.co/google/gemma-4-26B-A4B-it/blob/main/config.json
+      generationConfig: https://huggingface.co/google/gemma-4-26B-A4B-it/blob/main/generation_config.json
+      chatTemplate: https://huggingface.co/google/gemma-4-26B-A4B-it/blob/main/chat_template.jinja
+      notes: Use the instruction-tuned checkpoint, not the pretrained variant. Sampling follows
+        generation_config.json and the card Best Practices, which publish one sampler for both modes. The 26B
+        A4B model supports images and text, not audio.
+      runtimeSources:
+        - https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md
+        - https://docs.litellm.ai/docs/providers/openai_compatible
+  - id: nemotron-3.5-lightning-30b-a3b
+    match:
+      exactIds:
+        - nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+      familyPrefixes:
+        - nvidia-nemotron-3.5-lightning-30b-a3b
+        - nemotron-3.5-lightning-30b-a3b
+    claims:
+      modelMaxContext: 1048576
+      capabilities:
+        chat: true
+        tools: true
+        toolCallFormat: qwen
+        reasoning: true
+        thinkingFormat: qwen-chat-template
+        vision: false
+        audio: false
+        embeddings: false
+        rerank: false
+        fim: false
+    behavior:
+      thinking:
+        mechanism: on-off
+        guidance: The upstream template defaults enable_thinking to true and supports true/false per request.
+          Intermediate effort levels resolve to on. There is no documented numeric reasoning budget. Tool use
+          follows the Qwen coder XML template and requires the runtime tool parser. The card recommends
+          force_nonempty_content:true for coding agents; it requires a runtime that forwards template kwargs.
+        chatTemplateKwargs:
+          static:
+            force_nonempty_content: true
+          lmstudio: unsupported
+    recommendations:
+      sampling:
+        thinking:
+          temperature: 1
+          topP: 0.95
+        instruct:
+          temperature: 1
+          topP: 0.95
+      runtimePreference:
+        llamaCpp: Use the checkpoint chat template with --jinja and the OpenAI-compatible chat-completions endpoint.
+          Send template controls through chat_template_kwargs. Choose the loaded context for available memory;
+          the model maximum does not size the server.
+    provenance:
+      source: upstream-model-card
+      url: https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+      retrieved: 2026-10-03
+      config: https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16/blob/main/config.json
+      generationConfig: https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16/blob/main/generation_config.json
+      chatTemplate: https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16/blob/main/chat_template.jinja
+      notes: The card documents up to 1048576 context with explicit long-context serving recipes; config.json
+        defaults to 262144. Neither is the loaded server window. Temperature and top_p follow both the card
+        and generation_config.json; no top_k, penalties or numeric thinking budget are prescribed.
+      runtimeSources:
+        - https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md
+        - https://docs.litellm.ai/docs/providers/openai_compatible
+  - id: nemotron-3.5-bolt-74b-a9b
+    match:
+      exactIds:
+        - nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB
+        - nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-BF16
+      familyPrefixes:
+        - nvidia-nemotron-3.5-bolt-74b-a9b
+        - nemotron-3.5-bolt-74b-a9b
+    claims:
+      modelMaxContext: 262144
+      capabilities:
+        chat: true
+        tools: true
+        toolCallFormat: qwen
+        reasoning: true
+        thinkingFormat: qwen-chat-template
+        vision: true
+        audio: false
+    recommendations:
+      outputTokens: 16384
+    provenance:
+      source: upstream-model-card
+      url: https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB
+      retrieved: 2026-11-06
+      notes: The card serves up to 256K context (vLLM --max-model-len 262144), takes image, video and text and
+        returns text, parses tools with qwen3_coder, and switches reasoning with the enable_thinking chat-template
+        kwarg. Reasoning and the final answer share max_tokens, and the card's client examples send 16384 and treat
+        a length finish as an error, so outputTokens 16384 is the runaway guard after a 169,506-token run; it is not
+        a model output maximum. Sampling is left unset here.
+  - id: qwen3.5-4b
+    match:
+      exactIds:
+        - Qwen/Qwen3.5-4B
+      familyPrefixes:
+        - qwen3.5-4b
+        - qwen3_5-4b
+        - qwen3-5-4b
+    claims:
+      modelMaxContext: 262144
+      capabilities:
+        chat: true
+        tools: true
+        toolCallFormat: qwen
+        reasoning: true
+        thinkingFormat: qwen-chat-template
+        vision: true
+        audio: false
+        embeddings: false
+        rerank: false
+        fim: false
+    behavior:
+      thinking:
+        mechanism: on-off
+        guidance: The upstream template defaults to thinking on. Disable it with
+          chat_template_kwargs.enable_thinking:false; intermediate effort levels resolve to on. Tools use
+          <tool_call><function=...><parameter=...> XML and <tool_response> replies. FLM uses top-level
+          reasoning_effort:none for off and low for on; higher efforts do not select a finer depth.
+    recommendations:
+      sampling:
+        thinking:
+          temperature: 0.6
+          topP: 0.95
+          topK: 20
+          minP: 0
+          presencePenalty: 0
+          repeatPenalty: 1
+        instruct:
+          temperature: 0.7
+          topP: 0.8
+          topK: 20
+          minP: 0
+          presencePenalty: 1.5
+          repeatPenalty: 1
+      runtimePreference:
+        llamaCpp: Use the checkpoint chat template with --jinja and the OpenAI-compatible chat-completions endpoint.
+          Send template controls through chat_template_kwargs. Choose the loaded context for available memory;
+          the model maximum does not size the server.
+        flm: FastFlowLM v1.0.5 reads top-level reasoning_effort none/low as an off/on toggle for Qwen3.5. It does not
+          read chat_template_kwargs. A gateway must explicitly declare thinking_control_runtime:flm so PanCode
+          sends the supported control.
+    provenance:
+      source: upstream-model-card
+      url: https://huggingface.co/Qwen/Qwen3.5-4B
+      retrieved: 2026-10-03
+      config: https://huggingface.co/Qwen/Qwen3.5-4B/blob/main/config.json
+      generationConfig: Not published; raw/main/generation_config.json returned HTTP 404 on retrieval.
+      chatTemplate: https://huggingface.co/Qwen/Qwen3.5-4B/blob/main/chat_template.jinja
+      notes: Thinking sampling uses the card precise-coding profile; instruct sampling uses its general non-thinking
+        profile. Native context is 262144; the longer advertised window requires RoPE scaling. The card
+        includes vLLM and SGLang tool-serving recipes.
+      runtimeSources:
+        - https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md
+        - https://docs.litellm.ai/docs/providers/openai_compatible
+        - https://github.com/FastFlowLM/FastFlowLM/blob/v1.0.5/src/include/AutoModel/modeling_qwen3_5vl.hpp

@@ -1,0 +1,34 @@
+---
+id: operating.memory-guidance
+version: 1
+description: Memory capture, proposal, approval, and delivery procedures disclosed for memory questions
+---
+
+# Memory procedures
+
+Capture is selective: rules require repeated failures; spontaneous reminders
+require task-bank citations. Remembering does not guarantee capture or retention.
+For an existing source-grounded knowledge/procedural entry, the operator can
+select it in `/memory` and press `p` to propose repo memory, then separately
+review and approve the proposal. Include both steps when explaining this workflow. Alternatively,
+explicitly request context-handoff, export the actual bank snapshot where writes
+are authorized, and run `pancode memory promote --from-handoff <path>
+--entry <id> --scope repo --repository <canonical-absolute-path>`.
+With memory off there is no bank to export and the request carries no snapshot.
+If the entry is absent, report that limit; never invent entries, provenance, or
+a memory tool. {memory_recall} `memory_recall` only reads: it searches task-bank
+knowledge and procedural entries, and the lessons and unverified notes that apply
+here, each labelled. {memory_note} `memory_note` writes one unverified note: a command it names must
+have succeeded in this session and a path must have been read here, and a note with
+neither is found only by recall and never promoted without the operator. Promotion persists an unapproved proposal. The operator
+reviews its lesson, citations and scope with `pancode memory list`, then
+separately runs `pancode memory approve <memoryId>`, or selects it under
+pending review in `/memory` and presses `a` to approve or `x` to reject.
+A repository lesson that reached you as a reminder can approve itself once the
+session shows it held, and withdraw itself when a later session contradicts it;
+global, runtime and agent scope always wait for the operator.
+Do not treat a general request to remember as approval of an unseen record.
+Report proposal, approval and persistence only from observed results; never
+claim retention from acknowledgement, transcript recovery, or unrelated memory.
+Claim fresh-session consumption only from delivery of the matching approved
+record. Selection is scoped and bounded; approval does not guarantee delivery.

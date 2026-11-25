@@ -1,0 +1,376 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { Api, Model } from "../../../engine/types.js";
+import type { ProfileId } from "../../system-one/profiles.js";
+import type { CapabilityFlags } from "./capability-flags.js";
+import type { ContextWindowSlots } from "./context-window-slots.js";
+import type {
+	CompleteOptions,
+	CompletionChunk,
+	DecideOptions,
+	DecideResult,
+	EmbedResult,
+	InfillOptions,
+	RerankResult,
+} from "./inference.js";
+import type { KnowledgeBaseHit } from "./knowledge-base.js";
+import type { CopilotContextTier, TargetDescriptor } from "./target-descriptor.js";
+
+export type RuntimeKind = "http" | "sdk" | "subprocess";
+export type RuntimeTier = "protocol" | "cloud" | "local-native" | "subscription";
+
+export type RuntimeApiFamily =
+	| "openai-completions"
+	| "openai-responses"
+	| "openai-codex-responses"
+	| "anthropic-messages"
+	| "google-generative-ai"
+	| "google-vertex"
+	| "mistral-conversations"
+	| "ollama-native"
+	| "rerank-http"
+	| "embeddings-http"
+	| "claude-agent-sdk"
+	| "copilot-sdk"
+	| "claude-code-subprocess"
+	| "external-agent-subprocess";
+
+export type RuntimeAuth = "api-key" | "oauth" | "vertex-adc" | "claude-cli" | "none";
+
+export interface ProbeContext {
+	credentialsPresent: ReadonlySet<string>;
+	httpTimeoutMs: number;
+	signal?: AbortSignal;
+	/**
+	 * Resolved bearer/API token for the target being probed, when one is
+	 * available from stored auth, environment, or refreshed OAuth credentials.
+	 * Auth-gated discovery endpoints can use this instead of reaching into auth
+	 * storage directly.
+	 */
+	authToken?: string;
+	/**
+	 * Set when PanCode refuses to send any credential to this target, for a URL a
+	 * project chose. Callers also pass an empty credentialsPresent; a probe that
+	 * reads the environment itself must check this and send nothing.
+	 */
+	credentialRefused?: true;
+	/**
+	 * Ask the provider now: a runtime that answers from a cached listing (the Copilot SDK snapshot) lists live instead.
+	 * Set when a refusal would rest on the answer, so a stale cache never refuses a model the provider now serves.
+	 */
+	fresh?: true;
+}
+
+/**
+ * Map of which inference surfaces a probe found at the target.
+ * Composite local descriptors (llamacpp, lemonade) populate this from a
+ * batched HEAD/GET sweep; fields are absent when the surface did not respond.
+ * Values are the path the probe used so callers can cite it in errors.
+ */
+export interface ProbeSurfaceMap {
+	anthropicMessages?: string;
+	openaiChat?: string;
+	embeddings?: string;
+	rerank?: string;
+	completion?: string;
+	infill?: string;
+	nativeV1?: string;
+	nativeV0?: string;
+}
+
+export type ProbeModelLoadState = "loaded" | "loading" | "unloaded" | "failed" | "unknown";
+
+export interface ProbeModelStatus {
+	state: ProbeModelLoadState;
+	detail?: string;
+	/** The per-request window is `totalContextSize / slots`; absent when the server does not split. */
+	contextSlots?: ContextWindowSlots;
+	/**
+	 * Context the runtime has this model loaded at, when it reports one. LM
+	 * Studio serves a loaded instance at whatever window it was opened with,
+	 * which is routinely well below the model's `max_context_length`, and that
+	 * smaller number is the one a run has to be planned against. Absent when the
+	 * model is not resident or the runtime does not report it.
+	 */
+	contextLength?: number;
+	/** The model's supported maximum, separate from the resident instance's window. */
+	modelMaxContextLength?: number;
+	/**
+	 * Resident footprint reported by the runtime when a model is loaded. Ollama
+	 * exposes both via `/api/ps` (`size_vram` is the GPU-resident portion,
+	 * `size` the total); the model picker reads them without re-probing.
+	 */
+	sizeVramBytes?: number;
+	sizeBytes?: number;
+	/** Downloaded model key that owns this configured id or loaded instance. */
+	key?: string;
+	/** Loaded instance id selected for this model, when one exists. */
+	instanceId?: string;
+	/** Load configuration echoed by LM Studio for the selected instance. */
+	loadConfig?: Readonly<Record<string, unknown>>;
+	/** Reasoning levels accepted by this model after LM Studio option clamping. */
+	reasoningLevels?: ReadonlyArray<"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max">;
+}
+
+export interface ProbeResult {
+	ok: boolean;
+	latencyMs?: number;
+	error?: string;
+	/** Set when `error` is specifically the server rejecting the credential, not a reachability failure. */
+	authFailed?: boolean;
+	serverVersion?: string;
+	models?: string[];
+	/** #416: an SDK snapshot is usable inventory, without claiming a fresh provider answer. */
+	modelsSource?: "cache";
+	/** Human-readable labels keyed by the exact wire id returned in `models`. */
+	modelLabels?: Record<string, string>;
+	/** Provider-reported creation timestamps keyed by exact wire id (#416). */
+	modelCreatedAt?: Record<string, string>;
+	/** Stable cause class for setup UX; `error` remains the redacted human diagnostic. */
+	failureKind?: "missing" | "authentication" | "unsupported-feature" | "catalog-unavailable" | "cancelled" | "generic";
+	/** Probe-only per-model load state when the runtime exposes it. */
+	modelStates?: Record<string, ProbeModelStatus>;
+	discoveredCapabilities?: Partial<CapabilityFlags>;
+	/** Probe-only capabilities keyed by wire model id when a runtime can list model metadata. */
+	modelCapabilities?: Record<string, Partial<CapabilityFlags>>;
+	/** Each listed model's window on every context tier, for a runtime whose window depends on the target's tier. */
+	modelContextWindows?: Record<string, Partial<Record<CopilotContextTier, number>>>;
+	/** Wire model id those discovered capabilities describe, when known. */
+	capabilityModelId?: string;
+	/**
+	 * Free-form diagnostic notes from the probe. llama.cpp uses this to flag a
+	 * mismatch between the configured wire model id and the server's loaded
+	 * weights (single-model server, so there is no eviction recourse).
+	 */
+	notes?: ReadonlyArray<string>;
+	/**
+	 * Server settings the probe could see that defeat prefix-cache reuse, each
+	 * naming the setting that fixes it. Every entry is also one of `notes`;
+	 * `pancode doctor` reports these without surfacing the other notes.
+	 */
+	cacheAdvisories?: ReadonlyArray<string>;
+	/**
+	 * Composite descriptors set this to the api family they will use for chat.
+	 * `synthesizeModel` reads it back out of the cached probe state to choose
+	 * which provider implementation pi-ai routes to. Absent when the descriptor
+	 * is single-surface or no chat surface was reachable.
+	 */
+	chatApiFamily?: RuntimeApiFamily;
+	surfaces?: ProbeSurfaceMap;
+}
+
+export interface ReasoningProbeResult {
+	/** Only true establishes observed support; false/null are inconclusive. */
+	reasoning: boolean | null;
+	latencyMs: number;
+	error?: string;
+}
+
+/**
+ * What PanCode itself enforces for a worker on this runtime. A runtime that runs
+ * its own tool loop declares none of the per-call guarantees, whatever its own
+ * permission modes promise.
+ */
+export interface RuntimeEnforcement {
+	/** PanCode admits each tool call before it runs. */
+	perCallMediation: boolean;
+	/** Whether PanCode can narrow the tool surface to the exact admitted set. */
+	toolNarrowing: "exact" | "none";
+	/** Write roots and path policy are judged per call. */
+	scopeEnforcement: boolean;
+	/** A call can park for a decision and resume on the answer. */
+	grantPauseResume: boolean;
+	/** A live run can be cancelled. */
+	cancellation: boolean;
+}
+
+/** A short `systemOne.use` route name a decision runtime answers to, which brings its own target. */
+export interface DecisionAlias {
+	readonly name: string;
+	readonly defaultModel: string;
+	readonly profile: ProfileId;
+}
+
+/**
+ * The repository instruction files a delegated harness loads on its own, and how a dispatched run's rules reach it.
+ * In each directory from the repository root down to the run's directory the harness reads every name in `files`
+ * that is present there, or, when none is, the first present name in `fallback`. With `oneName` the harness instead
+ * takes the first name in `files` then `fallback` present in any of those directories and reads it in each of them.
+ * With "single-source" the adapter
+ * starts the harness with its documented switch that skips those files, so the rules compiled for the run are the
+ * only project rules it reads. A harness without such a switch declares "overlay": when the run has its own task
+ * worktree the compiled rules are written over those files there for the run and put back before its change is
+ * taken; otherwise, and for "coexist", the harness reads its files and the compiled rules ride beside them.
+ */
+export interface RepositoryInstructionFiles {
+	files: ReadonlyArray<string>;
+	fallback?: ReadonlyArray<string>;
+	oneName?: true;
+	delivery: "single-source" | "overlay" | "coexist";
+}
+
+export interface RuntimeDescriptor {
+	id: string;
+	/** Other ids that resolve to this descriptor object. */
+	aliases?: ReadonlyArray<string>;
+	displayName: string;
+	kind: RuntimeKind;
+	tier?: RuntimeTier;
+	apiFamily: RuntimeApiFamily;
+	auth: RuntimeAuth;
+	credentialsEnvVar?: string;
+	/**
+	 * The provider reports each call's cost itself (OpenRouter), so a model with
+	 * no catalog or target price still counts toward the session cost ceiling.
+	 */
+	reportsCallCost?: true;
+	/**
+	 * pi-ai OAuth provider id backing this runtime when `auth === "oauth"` and it
+	 * differs from `id`. `openai-codex` omits this because its registry id, target
+	 * `oauthProfile`, and pi-ai provider id all coincide. The Claude Pro/Max
+	 * runtime sets this to `"anthropic"` so login/refresh/credential storage key
+	 * on the pi-ai `anthropic` OAuth provider while keeping a distinct registry id
+	 * (`anthropic-max`) from the api-key `anthropic` runtime.
+	 */
+	oauthProviderId?: string;
+	/**
+	 * How an OAuth sign-in finishes, so setup can say what Connect now does. `device-code` waits on a browser callback
+	 * and, with no local browser, shows a link and a code to enter on any device;
+	 * `paste-code` waits on the callback too but, with no local browser, asks for the code the sign-in page shows;
+	 * `paste-only` always asks for that code, opening the page in a browser where one can. Unset reads as `paste-code`,
+	 * which never promises a code PanCode would show.
+	 */
+	oauthSignIn?: "device-code" | "paste-code" | "paste-only";
+	/**
+	 * Optional one-line notice printed before an interactive `pancode auth login` or
+	 * configure connect for this runtime. Used to surface subscription usage-terms
+	 * considerations so OAuth subscription paths are an explicit, informed opt-in.
+	 */
+	authNotice?: string;
+	/**
+	 * Display name of a sign-in another program owns and the runtime reads itself, for a runtime with
+	 * `auth: "none"` (Copilot: `copilot login`). Target and doctor listings show it in place of `none`.
+	 */
+	externalLogin?: string;
+	/**
+	 * Set by a runtime that reaches a remote gateway whose URL the operator has
+	 * to supply. Configure then offers no localhost default and asks for this URL
+	 * by name, with an example: a local default looks usable, lets setup finish,
+	 * and leaves the target down.
+	 */
+	gatewayUrl?: {
+		/** What configure asks for, as the prompt's heading. */
+		label: string;
+		/** One real URL of the right shape. */
+		example: string;
+		/** What else decides the URL, as one sentence. */
+		detail?: string;
+	};
+	knownModels?: string[];
+	/**
+	 * Set when the provider serves model ids its live listing leaves out (the
+	 * Copilot runtime does not list every model an account can call). An id
+	 * named on this target alone, as `target/model` or under `--target`, then
+	 * resolves as typed. Resolution only: before a main turn's request the live
+	 * list is asked once and an id it lacks is refused (row 384).
+	 */
+	servesUnlistedModels?: boolean;
+	/**
+	 * Set when the live model listing carries each model's capabilities for the
+	 * account (the Copilot runtime lists reasoning efforts and windows). The
+	 * listing cache keeps them, a status read from that cache uses them, and an
+	 * ACP session lists live when the cache has none.
+	 */
+	listsModelCapabilities?: true;
+	/** Curated chat choice from knownModels or the pinned provider catalog. */
+	defaultModel?: string;
+	binaryName?: string;
+	defaultBinaryPath?: string;
+	headlessCommand?: string;
+	outputParser?: string;
+	defaultCapabilities: CapabilityFlags;
+	/**
+	 * Declares a black-box agent loop owned by an external executable. `tools`
+	 * in CapabilityFlags stays false because PanCode neither sends nor observes
+	 * typed calls on this path; this field records the distinct external fact.
+	 */
+	/**
+	 * Worker-permit guarantees this runtime can honor. HTTP runtimes run in the
+	 * native worker and need no declaration; any other runtime that omits it is
+	 * treated as unmediated (see runtime-enforcement.ts).
+	 */
+	enforcement?: RuntimeEnforcement;
+	/**
+	 * "os" when the runtime confines its own tools in an OS-level read-only
+	 * sandbox for a read-only run (codex-cli's `--sandbox read-only`), so a run
+	 * PanCode cannot mediate per call still changes no user file. An unmediated
+	 * runtime without it is refused read-only work.
+	 */
+	readOnlySandbox?: "os";
+	/** The repository instruction files this subprocess runtime's harness reads; absent when it reads none. */
+	repositoryInstructions?: RepositoryInstructionFiles;
+	externalAgentLoop?: {
+		tools: "externally-governed-unobserved";
+		network: "externally-governed-unobserved";
+		budget: "external-one-shot";
+		generatingRetry: "forbidden" | "allowed";
+		modelCatalog: "live-authoritative" | "static";
+	};
+	/**
+	 * When true, this id is a real, distinct runtime (e.g. `llamacpp-anthropic`,
+	 * the Anthropic Messages surface on llama.cpp, or the embed/rerank runtimes)
+	 * that stays resolvable by id but is hidden from `pancode configure --list` and
+	 * the interactive wizard, where a composite descriptor owns the
+	 * user-visible slot.
+	 */
+	hidden?: boolean;
+	probe?(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult>;
+	/**
+	 * Per-model windows a hosted provider reports about itself, for a runtime
+	 * that has no `probe`. Configure, doctor and the model lists key on `probe`
+	 * meaning "reachability and a live model list", so a window-only source
+	 * stays apart from it. Its result merges like a probe's (`modelCapabilities`
+	 * carries the serving window, `modelStates[].modelMaxContextLength` the
+	 * model maximum) but is supplementary: a failure leaves the target usable
+	 * with an unknown window instead of marking it down. The selected route
+	 * re-asks on the same TTL as a local runtime's probe.
+	 */
+	probeServingWindows?(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult>;
+	/**
+	 * Window this target asks the server to open the model at on every request,
+	 * when the runtime sends one (Ollama `num_ctx`). The server reloads the
+	 * model at that size, so it outranks whatever window is loaded now.
+	 */
+	requestedContextWindow?(target: TargetDescriptor): number | undefined;
+	/**
+	 * Largest window to plan a model at while it is not resident, when the
+	 * runtime opens a cold model at a server-chosen size no API reports before
+	 * load (Ollama's `OLLAMA_CONTEXT_LENGTH`). A model maximum above it is what
+	 * the weights allow, not what the next load will serve.
+	 */
+	coldContextWindowCap?: number;
+	probeModels?(target: TargetDescriptor, ctx: ProbeContext): Promise<string[]>;
+	/**
+	 * Optional per-model reasoning capability probe. Protocol-compatible local
+	 * servers (LM Studio, llama.cpp, Ollama, ...) advertise an OpenAI or
+	 * Anthropic wire surface regardless of whether the loaded model supports
+	 * thinking. Implementations here send a one-shot priming request and look at
+	 * `reasoning_content` / `reasoning` / `reasoning_text` in the response.
+	 * Only positive observations are cached per (target, model). This generates
+	 * tokens and must be explicitly requested, never part of routine discovery.
+	 */
+	probeReasoning?(target: TargetDescriptor, modelId: string, ctx: ProbeContext): Promise<ReasoningProbeResult>;
+	synthesizeModel(target: TargetDescriptor, wireModelId: string, kb: KnowledgeBaseHit | null): Model<Api>;
+	complete?(target: TargetDescriptor, opts: CompleteOptions, ctx: ProbeContext): AsyncIterable<CompletionChunk>;
+	infill?(target: TargetDescriptor, opts: InfillOptions, ctx: ProbeContext): AsyncIterable<CompletionChunk>;
+	embed?(target: TargetDescriptor, input: string | string[], ctx: ProbeContext): Promise<EmbedResult>;
+	rerank?(target: TargetDescriptor, query: string, documents: string[], ctx: ProbeContext): Promise<RerankResult>;
+	/**
+	 * Answer closed-form typed questions against a body of evidence. Unlike
+	 * `complete`/`infill` this never returns tokens, so callers that route,
+	 * classify, or gate on the result read a distribution rather than parsing
+	 * prose. Every question is independent, so a batch costs one round trip.
+	 */
+	decide?(target: TargetDescriptor, opts: DecideOptions, ctx: ProbeContext): Promise<DecideResult>;
+	decisionAlias?: DecisionAlias;
+}

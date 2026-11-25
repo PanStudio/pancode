@@ -1,0 +1,379 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { isRecord } from "../../core/type-guards.js";
+import type { WorkerBudget } from "../../worker/spec-contract.js";
+import type { AgentBudget, AgentBudgetPhase } from "../agents/recipe.js";
+
+/** Invocation-level phase requested by dispatch. */
+export interface DispatchBudgetPhase {
+	toolCalls: number;
+}
+
+/** Typed advisory invocation estimate. A later phase may use a different estimate. */
+export interface DispatchBudgetRequest extends DispatchBudgetPhase {
+	retryRevision?: DispatchBudgetPhase;
+}
+
+export type BudgetEnvelopeReasonCode = "global-cap-clamp" | "retry-growth-authorized" | "revision-growth-authorized";
+
+export interface BudgetEnvelopeReason {
+	code: BudgetEnvelopeReasonCode;
+	detail: string;
+}
+
+export interface RunToolBudgetEnvelope {
+	version: 1;
+	enforcement:
+		| {
+				classification: "native-per-tool";
+				perTool: "advisory";
+				pancodeControls: ReadonlyArray<"tool-observation" | "cancellation">;
+		  }
+		| {
+				classification: "external-one-shot";
+				perTool: "unobserved-not-enforced";
+				pancodeControls: ReadonlyArray<"single-launch" | "wall-clock" | "output-cap" | "cancellation" | "result-contract">;
+		  };
+	policy: {
+		recipeId: string;
+		default: AgentBudgetPhase & { synthesis: boolean };
+		maximum: AgentBudgetPhase;
+		exact: boolean;
+	};
+	request: DispatchBudgetRequest | null;
+	effective: WorkerBudget;
+	reasons: ReadonlyArray<BudgetEnvelopeReason>;
+}
+
+const ADVISORY_PANCODE_CONTROLS = ["tool-observation", "cancellation"] as const;
+const EXTERNAL_PANCODE_CONTROLS = [
+	"single-launch",
+	"wall-clock",
+	"output-cap",
+	"cancellation",
+	"result-contract",
+] as const;
+
+export type BudgetAdmissionDenialCode = "ceiling-below-request";
+
+export class BudgetAdmissionError extends Error {
+	readonly code: BudgetAdmissionDenialCode;
+
+	constructor(code: BudgetAdmissionDenialCode, message: string) {
+		super(`dispatch: budget admission denied (${code}): ${message}`);
+		this.name = "BudgetAdmissionError";
+		this.code = code;
+	}
+}
+
+function clonePhase(value: unknown, prefix: string): DispatchBudgetPhase {
+	if (!isRecord(value)) throw new Error(`${prefix} must be an object`);
+	for (const key of Object.keys(value)) {
+		if (key !== "toolCalls") throw new Error(`${prefix}.${key} is unknown`);
+	}
+	if (!Object.hasOwn(value, "toolCalls")) throw new Error(`${prefix}.toolCalls is required`);
+	const toolCalls = value.toolCalls;
+	if (typeof toolCalls !== "number" || !Number.isSafeInteger(toolCalls) || toolCalls <= 0) {
+		throw new Error(`${prefix}.toolCalls must be a positive safe integer`);
+	}
+	return { toolCalls };
+}
+
+/** Strict validation and cloning for model, CLI, and persisted request inputs. */
+export function cloneDispatchBudgetRequest(value: unknown, prefix = "budget"): DispatchBudgetRequest {
+	if (!isRecord(value)) throw new Error(`${prefix} must be an object`);
+	for (const key of Object.keys(value)) {
+		if (key !== "toolCalls" && key !== "retryRevision") throw new Error(`${prefix}.${key} is unknown`);
+	}
+	const phase = clonePhase({ toolCalls: value.toolCalls }, prefix);
+	const retryRevision =
+		value.retryRevision === undefined ? undefined : clonePhase(value.retryRevision, `${prefix}.retryRevision`);
+	return { ...phase, ...(retryRevision === undefined ? {} : { retryRevision }) };
+}
+
+function freezeEnvelope(envelope: RunToolBudgetEnvelope): RunToolBudgetEnvelope {
+	Object.freeze(envelope.enforcement.pancodeControls);
+	Object.freeze(envelope.enforcement);
+	Object.freeze(envelope.policy.default);
+	Object.freeze(envelope.policy.maximum);
+	Object.freeze(envelope.policy);
+	if (envelope.request !== null) {
+		if (envelope.request.retryRevision !== undefined) Object.freeze(envelope.request.retryRevision);
+		Object.freeze(envelope.request);
+	}
+	Object.freeze(envelope.effective);
+	for (const reason of envelope.reasons) Object.freeze(reason);
+	Object.freeze(envelope.reasons);
+	return Object.freeze(envelope);
+}
+
+function samePhase(left: DispatchBudgetPhase, right: AgentBudgetPhase): boolean {
+	return left.toolCalls === right.toolCalls;
+}
+
+export interface ResolveToolBudgetEnvelopeInput {
+	recipeId: string;
+	policy: AgentBudget;
+	request?: DispatchBudgetRequest;
+	hardCap: number;
+	retry: boolean;
+	revision: boolean;
+	enforcement?: "native-per-tool" | "external-one-shot";
+}
+
+/**
+ * Resolve the one immutable envelope used by admission, enforcement, and evidence. Every recipe is advisory: the
+ * estimate steers the worker and `fleet.limits.toolCallsPerRun` is the only hard tool bound; the run's handback phase
+ * ends it at a context, time or tool bound (DESIGN 4.5).
+ */
+export function resolveToolBudgetEnvelope(input: ResolveToolBudgetEnvelopeInput): RunToolBudgetEnvelope {
+	if (!Number.isSafeInteger(input.hardCap) || input.hardCap <= 0) {
+		throw new Error("dispatch: worker tool-call cap must be a positive safe integer");
+	}
+
+	const request = input.request === undefined ? null : cloneDispatchBudgetRequest(input.request);
+	if (request?.retryRevision && request.retryRevision.toolCalls < request.toolCalls) {
+		throw new BudgetAdmissionError("ceiling-below-request", "retryRevision must not be smaller than the requested phase");
+	}
+	const base: DispatchBudgetPhase = { toolCalls: (request ?? input.policy).toolCalls };
+	const reasons: BudgetEnvelopeReason[] = [];
+	let selected: DispatchBudgetPhase = base;
+	const phaseKind = input.retry ? "retry" : input.revision ? "revision" : null;
+	if (phaseKind !== null) {
+		const ceiling = request?.retryRevision;
+		if (ceiling !== undefined && !samePhase(ceiling, base)) {
+			selected = ceiling;
+			reasons.push({
+				code: phaseKind === "retry" ? "retry-growth-authorized" : "revision-growth-authorized",
+				detail: `${phaseKind} phase grew from ${base.toolCalls} to the advisory estimate ${ceiling.toolCalls}`,
+			});
+		}
+	}
+	// A native run stops at fleet.limits.toolCallsPerRun: a request may plan for less, never for more (M6).
+	const advisoryCap = input.enforcement !== "external-one-shot" ? input.hardCap : Number.POSITIVE_INFINITY;
+	if (selected.toolCalls > advisoryCap) {
+		reasons.push({
+			code: "global-cap-clamp",
+			detail: `the ${selected.toolCalls} tool calls estimated were held at fleet.limits.toolCallsPerRun ${input.hardCap}`,
+		});
+	}
+
+	const toolCalls = Math.min(selected.toolCalls, advisoryCap);
+
+	const authoredMaximum = input.policy.maximum ?? input.policy;
+	const envelope: RunToolBudgetEnvelope = {
+		version: 1,
+		enforcement:
+			input.enforcement === "external-one-shot"
+				? {
+						classification: "external-one-shot",
+						perTool: "unobserved-not-enforced",
+						pancodeControls: [...EXTERNAL_PANCODE_CONTROLS],
+					}
+				: {
+						classification: "native-per-tool",
+						perTool: "advisory",
+						pancodeControls: [...ADVISORY_PANCODE_CONTROLS],
+					},
+		policy: {
+			recipeId: input.recipeId,
+			default: { toolCalls: input.policy.toolCalls, synthesis: input.policy.synthesis },
+			maximum: { toolCalls: authoredMaximum.toolCalls },
+			exact: input.policy.maximum === undefined,
+		},
+		request,
+		effective: {
+			mode: "advisory",
+			toolCalls,
+			synthesis: input.policy.synthesis,
+			hardCap: input.hardCap,
+		},
+		reasons,
+	};
+	if (input.enforcement !== "external-one-shot") envelope.effective = workerBudgetFromEnvelope(envelope);
+	return freezeEnvelope(envelope);
+}
+
+/**
+ * The budget a worker enforces. An advisory envelope gains a hard ceiling at
+ * `fleet.limits.toolCallsPerRun`, tightened to the recipe's explicit maximum
+ * when it declares one, and never below the estimate the request was admitted with,
+ * which resolution already holds at the cap.
+ */
+export function workerBudgetFromEnvelope(envelope: RunToolBudgetEnvelope): RunToolBudgetEnvelope["effective"] & {
+	ceiling?: number;
+} {
+	const effective = envelope.effective;
+	const limit = envelope.policy.exact
+		? effective.hardCap
+		: Math.min(envelope.policy.maximum.toolCalls, effective.hardCap);
+	return { ...effective, ceiling: Math.max(effective.toolCalls, limit) };
+}
+
+export function formatBudgetPolicy(envelope: RunToolBudgetEnvelope): string {
+	const policy = envelope.policy;
+	return `${policy.recipeId} advisory default ${policy.default.toolCalls}, recommended max ${policy.maximum.toolCalls}`;
+}
+
+export function formatBudgetRequest(envelope: RunToolBudgetEnvelope): string {
+	const request = envelope.request;
+	if (request === null) return "recipe default";
+	const ceiling = request.retryRevision;
+	return `${request.toolCalls} advisory${ceiling ? `, retry/revision estimate ${ceiling.toolCalls}` : ""}`;
+}
+
+export function formatEffectiveBudget(envelope: RunToolBudgetEnvelope): string {
+	const budget = envelope.effective;
+	const enforcement =
+		envelope.enforcement.classification === "external-one-shot"
+			? "external one-shot; per-tool unobserved/not enforced"
+			: "native per-tool observed/advisory";
+	return `${budget.toolCalls}, advisory baseline ${budget.hardCap}${budget.ceiling === undefined ? "" : `, worker ceiling ${budget.ceiling}`}, synthesis=${budget.synthesis ? "on" : "off"}; ${enforcement}`;
+}
+
+export function formatBudgetReasons(envelope: RunToolBudgetEnvelope): string {
+	return envelope.reasons.length === 0 ? "none" : envelope.reasons.map((reason) => reason.code).join(",");
+}
+
+const BUDGET_REASON_CODES: ReadonlySet<string> = new Set<BudgetEnvelopeReasonCode>([
+	"global-cap-clamp",
+	"retry-growth-authorized",
+	"revision-growth-authorized",
+]);
+
+function isExactStringArray(value: unknown[], expected: readonly string[]): boolean {
+	return value.length === expected.length && value.every((item, index) => item === expected[index]);
+}
+
+/** Safely project an envelope that crossed a persistence or event boundary. */
+export function cloneRunToolBudgetEnvelope(value: unknown): RunToolBudgetEnvelope | undefined {
+	try {
+		if (!isRecord(value) || value.version !== 1 || !isRecord(value.policy) || !isRecord(value.effective)) {
+			return undefined;
+		}
+		const recipeId = value.policy.recipeId;
+		if (typeof recipeId !== "string" || recipeId.length === 0 || typeof value.policy.exact !== "boolean") {
+			return undefined;
+		}
+		if (!isRecord(value.policy.default) || typeof value.policy.default.synthesis !== "boolean") return undefined;
+		const defaultPhase = clonePhase({ toolCalls: value.policy.default.toolCalls }, "budget.policy.default");
+		const maximum = clonePhase(value.policy.maximum, "budget.policy.maximum");
+		const request = value.request === null ? null : cloneDispatchBudgetRequest(value.request);
+		const effectivePhase = clonePhase({ toolCalls: value.effective.toolCalls }, "budget.effective");
+		if (
+			value.effective.mode !== "advisory" ||
+			typeof value.effective.synthesis !== "boolean" ||
+			typeof value.effective.hardCap !== "number" ||
+			!Number.isSafeInteger(value.effective.hardCap) ||
+			value.effective.hardCap <= 0 ||
+			!Array.isArray(value.reasons)
+		) {
+			return undefined;
+		}
+		const ceiling = value.effective.ceiling;
+		if (
+			ceiling !== undefined &&
+			(typeof ceiling !== "number" ||
+				!Number.isSafeInteger(ceiling) ||
+				ceiling !==
+					Math.max(
+						effectivePhase.toolCalls,
+						value.policy.exact ? value.effective.hardCap : Math.min(maximum.toolCalls, value.effective.hardCap),
+					))
+		)
+			return undefined;
+		if (
+			maximum.toolCalls < defaultPhase.toolCalls ||
+			(value.policy.exact && !samePhase(maximum, defaultPhase)) ||
+			value.effective.synthesis !== value.policy.default.synthesis
+		) {
+			return undefined;
+		}
+		const reasons: BudgetEnvelopeReason[] = [];
+		for (const reason of value.reasons) {
+			if (
+				!isRecord(reason) ||
+				typeof reason.code !== "string" ||
+				!BUDGET_REASON_CODES.has(reason.code) ||
+				typeof reason.detail !== "string"
+			) {
+				return undefined;
+			}
+			reasons.push({ code: reason.code as BudgetEnvelopeReasonCode, detail: reason.detail });
+		}
+		const enforcement = (() => {
+			if (!isRecord(value.enforcement) || !Array.isArray(value.enforcement.pancodeControls)) return null;
+			if (
+				Object.keys(value.enforcement).some(
+					(key) => key !== "classification" && key !== "perTool" && key !== "pancodeControls",
+				)
+			) {
+				return null;
+			}
+			if (
+				value.enforcement.classification === "external-one-shot" &&
+				value.enforcement.perTool === "unobserved-not-enforced" &&
+				isExactStringArray(value.enforcement.pancodeControls, EXTERNAL_PANCODE_CONTROLS)
+			) {
+				return {
+					classification: "external-one-shot" as const,
+					perTool: "unobserved-not-enforced" as const,
+					pancodeControls: [...EXTERNAL_PANCODE_CONTROLS],
+				};
+			}
+			if (
+				value.enforcement.classification === "native-per-tool" &&
+				value.enforcement.perTool === "advisory" &&
+				isExactStringArray(value.enforcement.pancodeControls, ADVISORY_PANCODE_CONTROLS)
+			)
+				return {
+					classification: "native-per-tool" as const,
+					perTool: "advisory" as const,
+					pancodeControls: [...ADVISORY_PANCODE_CONTROLS],
+				};
+			return null;
+		})();
+		if (enforcement === null) return undefined;
+		return freezeEnvelope({
+			version: 1,
+			enforcement,
+			policy: {
+				recipeId,
+				default: { ...defaultPhase, synthesis: value.policy.default.synthesis },
+				maximum,
+				exact: value.policy.exact,
+			},
+			request,
+			effective: {
+				mode: "advisory",
+				...effectivePhase,
+				synthesis: value.effective.synthesis,
+				hardCap: value.effective.hardCap,
+				...(ceiling === undefined ? {} : { ceiling }),
+			},
+			reasons,
+		});
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The run's tool-call limit as a person reads it: how many calls it was planned for and where PanCode stops it. The
+ * recipe policy, the request and the reason codes stay in `/view` and `pancode fleet view`, which keep them whole.
+ */
+export function budgetLimitWords(envelope: RunToolBudgetEnvelope): string {
+	if (envelope.enforcement.classification === "external-one-shot") {
+		return "one launch; PanCode cannot count its tool calls, so its time and output limits bound it";
+	}
+	const budget = workerBudgetFromEnvelope(envelope);
+	const clamped = envelope.reasons.some((reason) => reason.code === "global-cap-clamp");
+	const stop = budget.ceiling ?? budget.hardCap;
+	// A plan that equals the stop is one number, said once: `about 20; stops at 20` read as two limits.
+	const limit =
+		budget.toolCalls === stop
+			? `PanCode stops it at ${stop} tool calls`
+			: `planned for about ${budget.toolCalls} tool calls; PanCode stops it at ${stop}`;
+	return clamped ? `${limit} (lowered to PanCode's overall limit)` : limit;
+}

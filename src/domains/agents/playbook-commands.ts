@@ -1,0 +1,342 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Repo-owned deterministic command registry for playbook code steps.
+ *
+ * A code step names a command id; it never authors a shell string. The binding
+ * from id to argv lives in the repository at `.pancode/playbooks/commands.yaml`,
+ * beside the playbooks that reference it. Two properties follow:
+ *
+ *   - A model cannot invent an invocation. The worst a playbook can do is name
+ *     an id, and an unknown id fails playbook validation before any dispatch.
+ *   - A playbook stays portable. A shipped SDLC playbook can say "run the test
+ *     command" without knowing whether this repo uses npm, uv, or bun.
+ *
+ * The registry is deliberately not a front-matter block on each playbook: the
+ * same `test` binding is needed by every playbook that tests, and duplicating
+ * argv per playbook is how one of the copies silently rots.
+ *
+ * Fail closed. A missing registry is not an empty registry; a playbook with a
+ * code step and no registry is invalid, so an unconfigured repo cannot pass a
+ * test phase that never ran anything.
+ */
+
+import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, join, normalize } from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import yaml from "yaml";
+import { pancodeProjectRoot } from "../../core/project-root.js";
+
+/** Upper bound on any single deterministic step, generous enough for a full suite. */
+const PLAYBOOK_COMMAND_MAX_TIMEOUT_MS = 3_600_000;
+const PLAYBOOK_COMMAND_MIN_TIMEOUT_MS = 1_000;
+export const PLAYBOOK_COMMAND_DEFAULT_TIMEOUT_MS = 600_000;
+
+/**
+ * Variables every registered command receives. Code steps run with a closed
+ * environment rather than the operator's, so a subprocess cannot read a
+ * provider key that happens to be exported in the orchestrator's shell. A
+ * command that genuinely needs one more variable names it in `env`.
+ */
+export const PLAYBOOK_COMMAND_BASE_ENV: ReadonlyArray<string> = ["PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR"];
+
+export interface PlaybookCommandArgumentSlot {
+	name: string;
+	maxLength: number;
+}
+
+export interface PlaybookCommand {
+	/** Operator-owned required positional data slots; omission forbids appended args. */
+	argumentSlots?: ReadonlyArray<PlaybookCommandArgumentSlot>;
+	id: string;
+	/** argv list, never a shell string: no quoting bugs and no shell injection. */
+	argv: ReadonlyArray<string>;
+	/** Workspace-relative working directory; "" means the workspace root. */
+	cwd: string;
+	timeoutMs: number;
+	/** Extra environment variable names passed through on top of the base allowlist. */
+	env: ReadonlyArray<string>;
+	description: string;
+}
+
+export interface PlaybookCommandRegistry {
+	version: 1;
+	commands: ReadonlyMap<string, PlaybookCommand>;
+	path: string;
+}
+
+const CommandSchema = Type.Object(
+	{
+		argv: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+		argumentSlots: Type.Optional(
+			Type.Array(
+				Type.Object(
+					{
+						name: Type.String({ pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$" }),
+						maxLength: Type.Integer({ minimum: 1, maximum: 8192 }),
+					},
+					{ additionalProperties: false },
+				),
+				{ minItems: 1, maxItems: 64 },
+			),
+		),
+		cwd: Type.Optional(Type.String({ minLength: 1 })),
+		timeoutMs: Type.Optional(
+			Type.Integer({ minimum: PLAYBOOK_COMMAND_MIN_TIMEOUT_MS, maximum: PLAYBOOK_COMMAND_MAX_TIMEOUT_MS }),
+		),
+		env: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+		description: Type.Optional(Type.String()),
+	},
+	{ additionalProperties: false },
+);
+
+const RegistrySchema = Type.Object(
+	{
+		version: Type.Literal(1),
+		commands: Type.Record(Type.String({ minLength: 1 }), CommandSchema, { minProperties: 1 }),
+	},
+	{ additionalProperties: false },
+);
+
+const COMMAND_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
+const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/u;
+
+export function playbookCommandsPath(cwd: string): string {
+	return join(pancodeProjectRoot(cwd, join("playbooks", "commands.yaml")), ".pancode", "playbooks", "commands.yaml");
+}
+
+interface SchemaErrorLike {
+	keyword: string;
+	schemaPath: string;
+	instancePath: string;
+	message: string;
+	params: object;
+}
+
+function quotedSchemaValue(value: unknown): string {
+	return typeof value === "string" ? `'${value}'` : JSON.stringify(value);
+}
+
+/**
+ * The `anyOf` branches a value's `kind` rules out: a playbook step or loop half is a union discriminated by `kind`,
+ * and TypeBox reports every branch, so the first error is otherwise the first branch's shape (an agent step's
+ * missing `agent`) rather than what is wrong with the kind the author wrote.
+ */
+function wrongKindBranches(errors: ReadonlyArray<SchemaErrorLike>): string[] {
+	const branches: string[] = [];
+	for (const error of errors) {
+		const kindConst = /^(.*\/anyOf\/\d+)\/properties\/kind$/u.exec(error.schemaPath);
+		if (error.keyword === "const" && kindConst?.[1] !== undefined) branches.push(kindConst[1]);
+		const required = (error.params as { requiredProperties?: unknown }).requiredProperties;
+		if (
+			error.keyword === "required" &&
+			/\/anyOf\/\d+$/u.test(error.schemaPath) &&
+			Array.isArray(required) &&
+			required.includes("kind")
+		)
+			branches.push(error.schemaPath);
+	}
+	return branches;
+}
+
+/** The schema node a TypeBox `schemaPath` (`#/properties/steps/items/anyOf/1/...`) names, or undefined. */
+function schemaNodeAt(schema: unknown, schemaPath: string): unknown {
+	let node: unknown = schema;
+	for (const key of schemaPath.replace(/^#\/?/u, "").split("/")) {
+		if (key.length === 0) continue;
+		if (typeof node !== "object" || node === null) return undefined;
+		node = (node as Record<string, unknown>)[key.replaceAll("~1", "/").replaceAll("~0", "~")];
+	}
+	return node;
+}
+
+/**
+ * Every value a refused literal could have been, read from the schema rather than the error list: TypeBox reports a
+ * later union branch only up to its first failure, so the errors alone can name one literal of three.
+ */
+function allowedValues(schema: unknown, error: SchemaErrorLike): unknown[] {
+	const node = schemaNodeAt(schema, error.schemaPath) as { const?: unknown; enum?: unknown } | undefined;
+	if (error.keyword === "enum") return Array.isArray(node?.enum) ? node.enum : [];
+	if (node === undefined || !("const" in node)) return [];
+	const union = /^(.*)\/anyOf\/\d+$/u.exec(error.schemaPath)?.[1];
+	const members =
+		union === undefined ? undefined : (schemaNodeAt(schema, union) as { anyOf?: unknown } | undefined)?.anyOf;
+	if (
+		Array.isArray(members) &&
+		members.every((member) => typeof member === "object" && member !== null && "const" in member)
+	) {
+		return members.map((member) => (member as { const: unknown }).const);
+	}
+	return [node.const];
+}
+
+/**
+ * The first schema refusal as `<path>: <message>`, from the union branch the value's `kind` selects. A `const` or
+ * `enum` refusal names every value the path accepts: a union of literals fails once per literal, and TypeBox's own
+ * text for each ("must be equal to constant") names none of them.
+ */
+export function playbookSchemaErrorText(schema: unknown, errors: Iterable<SchemaErrorLike>, fallback: string): string {
+	const every = [...errors];
+	const ruledOut = wrongKindBranches(every);
+	const kept = every.filter(
+		(error) => !ruledOut.some((branch) => error.schemaPath === branch || error.schemaPath.startsWith(`${branch}/`)),
+	);
+	const first = (kept.length > 0 ? kept : every)[0];
+	if (first === undefined) return fallback;
+	const path = first.instancePath || "(root)";
+	if (first.keyword !== "const" && first.keyword !== "enum") return `${path}: ${first.message}`;
+	const allowed = allowedValues(schema, first);
+	if (allowed.length === 0) return `${path}: ${first.message}`;
+	const names = allowed.map(quotedSchemaValue);
+	return `${path}: must be ${names.length === 1 ? names[0] : `one of ${names.join(", ")}`}`;
+}
+
+function firstSchemaError(value: unknown): string | null {
+	if (Value.Check(RegistrySchema, value)) return null;
+	return playbookSchemaErrorText(
+		RegistrySchema,
+		Value.Errors(RegistrySchema, value),
+		"command registry failed validation",
+	);
+}
+
+/** Reject a relative directory that climbs out of the workspace or is absolute. */
+function checkCwd(id: string, value: string, sourcePath: string): string {
+	if (isAbsolute(value)) {
+		throw new Error(`playbook commands ${sourcePath}: command '${id}' cwd must be workspace-relative`);
+	}
+	const normalized = normalize(value);
+	if (normalized === ".." || normalized.startsWith(`..${"/"}`) || normalized.split(/[\\/]/u).includes("..")) {
+		throw new Error(`playbook commands ${sourcePath}: command '${id}' cwd escapes the workspace`);
+	}
+	return normalized === "." ? "" : normalized;
+}
+
+export function parsePlaybookCommands(raw: string, sourcePath: string): PlaybookCommandRegistry {
+	let parsed: unknown;
+	try {
+		parsed = yaml.parse(raw);
+	} catch (err) {
+		const reason = err instanceof Error ? err.message : String(err);
+		throw new Error(`playbook commands ${sourcePath}: invalid YAML (${reason})`);
+	}
+	const schemaError = firstSchemaError(parsed);
+	if (schemaError !== null) throw new Error(`playbook commands ${sourcePath}: ${schemaError}`);
+	const registry = parsed as {
+		version: 1;
+		commands: Record<
+			string,
+			{
+				argv: string[];
+				argumentSlots?: PlaybookCommandArgumentSlot[];
+				cwd?: string;
+				timeoutMs?: number;
+				env?: string[];
+				description?: string;
+			}
+		>;
+	};
+	const commands = new Map<string, PlaybookCommand>();
+	for (const [id, entry] of Object.entries(registry.commands)) {
+		if (!COMMAND_ID_RE.test(id)) {
+			throw new Error(`playbook commands ${sourcePath}: command id '${id}' must match ${COMMAND_ID_RE.source}`);
+		}
+		const executable = entry.argv[0] ?? "";
+		if (executable.trim().length === 0) {
+			throw new Error(`playbook commands ${sourcePath}: command '${id}' has an empty executable`);
+		}
+		for (const name of entry.env ?? []) {
+			if (!ENV_NAME_RE.test(name)) {
+				throw new Error(`playbook commands ${sourcePath}: command '${id}' env name '${name}' is not a variable name`);
+			}
+		}
+		if (entry.argumentSlots)
+			validatePlaybookCommandArgs(
+				{ id, argv: entry.argv, cwd: "", timeoutMs: 1000, env: [], description: "", argumentSlots: entry.argumentSlots },
+				entry.argumentSlots.map(() => "{{slot}}"),
+				{ allowTemplates: true },
+			);
+		commands.set(id, {
+			id,
+			argv: [...entry.argv],
+			...(entry.argumentSlots ? { argumentSlots: entry.argumentSlots.map((slot) => ({ ...slot })) } : {}),
+			cwd: entry.cwd === undefined ? "" : checkCwd(id, entry.cwd, sourcePath),
+			timeoutMs: entry.timeoutMs ?? PLAYBOOK_COMMAND_DEFAULT_TIMEOUT_MS,
+			env: [...(entry.env ?? [])],
+			description: entry.description ?? "",
+		});
+	}
+	return { version: 1, commands, path: sourcePath };
+}
+
+/**
+ * Read the registry, or null when the repo declares none. Null is a distinct
+ * answer from an empty registry: callers turn it into a validation failure
+ * only for playbooks that actually contain a code step. A file holding only
+ * comments declares nothing, which is the draft `playbook commands init`
+ * writes until the operator uncomments an entry.
+ */
+export function loadPlaybookCommands(cwd: string): PlaybookCommandRegistry | null {
+	const path = playbookCommandsPath(cwd);
+	if (!existsSync(path)) return null;
+	const raw = readFileSync(path, "utf8");
+	if (yaml.parseDocument(raw).contents === null) return null;
+	return parsePlaybookCommands(raw, path);
+}
+
+/** Bind authored code-step arguments before plan admission; each stays one argv token. */
+export function resolvePlaybookCommandArgs(
+	args: ReadonlyArray<string>,
+	vars: Readonly<Record<string, string>> = {},
+): string[] {
+	if (args.length > 64) throw new Error("playbook code args: at most 64 arguments are allowed");
+	return args.map((token) => {
+		const match = /^\{\{\s*([A-Za-z_][A-Za-z0-9_-]*)\s*\}\}$/u.exec(token);
+		if (!match && token.includes("{{")) throw new Error("playbook code args: placeholders must occupy a whole argument");
+		const value = match ? vars[match[1] ?? ""] : token;
+		if (value === undefined)
+			throw new Error(`playbook code args: missing variable ${match?.[1]} (pass --var ${match?.[1]}="...")`);
+		if (value.includes("\0") || value.length > 8192)
+			throw new Error("playbook code args: invalid NUL or oversized argument");
+		return value;
+	});
+}
+
+/** Enforce operator-declared data slots; playbooks cannot append flags or executable code. */
+export function validatePlaybookCommandArgs(
+	command: PlaybookCommand,
+	args: ReadonlyArray<string>,
+	options: { allowTemplates?: boolean } = {},
+): void {
+	const slots = command.argumentSlots ?? [];
+	if (
+		slots.length > 64 ||
+		new Set(slots.map((slot) => slot.name)).size !== slots.length ||
+		slots.some(
+			(slot) =>
+				!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(slot.name) ||
+				!Number.isInteger(slot.maxLength) ||
+				slot.maxLength < 1 ||
+				slot.maxLength > 8192,
+		)
+	) {
+		throw new Error(`playbook command '${command.id}': invalid argumentSlots declaration`);
+	}
+	if (args.length !== slots.length) {
+		throw new Error(
+			`playbook command '${command.id}': expected ${slots.length} declared argument slots, got ${args.length}; the operator must declare argumentSlots in commands.yaml`,
+		);
+	}
+	for (let index = 0; index < slots.length; index++) {
+		const slot = slots[index];
+		const value = args[index];
+		if (!slot || typeof value !== "string") throw new Error(`playbook command '${command.id}': invalid argument`);
+		if (options.allowTemplates && /^\{\{\s*([A-Za-z_][A-Za-z0-9_-]*)\s*\}\}$/u.test(value)) continue;
+		if (value.length === 0 || value.length > slot.maxLength || value.includes("\0") || value.startsWith("-")) {
+			throw new Error(
+				`playbook command '${command.id}': argument '${slot.name}' must be nonempty data of at most ${slot.maxLength} characters, without NUL or a leading dash; fixed flags belong in argv`,
+			);
+		}
+	}
+}

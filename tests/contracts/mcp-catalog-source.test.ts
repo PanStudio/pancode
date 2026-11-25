@@ -1,0 +1,524 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import type { ToolName } from "../../src/core/tool-names.js";
+import {
+	approveMcpSurface,
+	createMcpStdioClient,
+	type McpBuiltinSource,
+	type McpClient,
+	type McpClientOptions,
+	type McpServerSpec,
+	trustMcpServer,
+} from "../../src/domains/gateway/mcp/index.js";
+import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { createMcpCapabilitySource, type McpCapabilitySource } from "../../src/tools/gateway/index.js";
+import { createRegistry } from "../../src/tools/registry.js";
+import type { ToolRegistry } from "../../src/tools/registry-contract.js";
+import { emptyBuiltinSource } from "../fixtures/mcp-builtin-server.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
+
+/**
+ * Metadata discovery separated from executable registration. The source can
+ * answer what a declared server offers from its recorded catalog without
+ * constructing a client, publish a catalog after a live listing, and launch
+ * exactly one server when a scoped refresh names it. A cached descriptor is
+ * never a registry entry, so it can never skip live setup or be called.
+ */
+
+const FIXTURE = resolve("tests/fixtures/mcp-fake-server.mjs");
+const roots: string[] = [];
+
+interface Scenario {
+	project: string;
+	configDir: string;
+	markerPath: string;
+	/** Ships no server, so only the project declarations are listed. */
+	builtin: McpBuiltinSource;
+}
+
+/** Two project servers: the fixture, and one that proves a launch by writing a marker file. */
+function scenario(): Scenario {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "pancode-mcp-catalog-src-")));
+	roots.push(root);
+	const project = join(root, "project");
+	const configDir = join(root, "config");
+	mkdirSync(join(project, ".pancode"), { recursive: true });
+	mkdirSync(configDir, { recursive: true });
+	const markerPath = join(root, "marker-launched");
+	const launchScript = "require('fs').writeFileSync(process.argv[1], 'launched')";
+	writeFileSync(
+		join(project, ".pancode", "mcp.yaml"),
+		[
+			"version: 1",
+			"servers:",
+			"  - id: fake",
+			`    command: ${JSON.stringify(process.execPath)}`,
+			`    args: [${JSON.stringify(FIXTURE)}, "normal"]`,
+			"  - id: marker",
+			`    command: ${JSON.stringify(process.execPath)}`,
+			`    args: ["-e", ${JSON.stringify(launchScript)}, ${JSON.stringify(markerPath)}]`,
+			"",
+		].join("\n"),
+	);
+	return { project, configDir, markerPath, builtin: emptyBuiltinSource(root) };
+}
+
+interface Wired {
+	registry: ToolRegistry;
+	source: McpCapabilitySource;
+	/** Every client the source constructed, in order. */
+	clients: McpClient[];
+}
+
+function wire(scene: Scenario, factory?: (spec: McpServerSpec, options: McpClientOptions) => McpClient): Wired {
+	const clients: McpClient[] = [];
+	const registry = createRegistry({ safety: createWorkerSafety({ cwd: scene.project }), autonomy: () => "yolo" });
+	const source = createMcpCapabilitySource({
+		cwd: scene.project,
+		configDir: scene.configDir,
+		builtin: scene.builtin,
+		registry,
+		requestTimeoutMs: 5_000,
+		clientFactory: (spec, options) => {
+			const client = (factory ?? createMcpStdioClient)(spec, { ...options, initializeTimeoutMs: 5_000, killGraceMs: 200 });
+			clients.push(client);
+			return client;
+		},
+	});
+	return { registry, source, clients };
+}
+
+const ECHO = "mcp_fake__echo";
+
+describe("MCP catalog source", () => {
+	let env: IsolatedPancodeEnv;
+	const open: McpCapabilitySource[] = [];
+	beforeEach(async () => {
+		env = await isolatePancodeEnv("pancode-mcp-catalog-src-env-");
+	});
+	afterEach(async () => {
+		await Promise.all(open.splice(0).map((source) => source.close()));
+		for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+		env.restore();
+	});
+
+	it("reports a missing catalog without constructing a client", () => {
+		const scene = scenario();
+		ok(trustMcpServer({ cwd: scene.project, configDir: scene.configDir, id: "fake", actionClass: "read" }).ok);
+		const { source, clients } = wire(scene);
+		open.push(source);
+		const catalog = source.catalog();
+		strictEqual(clients.length, 0, "an offline catalog constructs nothing");
+		deepStrictEqual(catalog.entries, []);
+		deepStrictEqual(catalog.missing, ["fake"]);
+		const fake = catalog.servers.find((server) => server.id === "fake");
+		deepStrictEqual(
+			{ status: fake?.status, catalog: fake?.catalog, remedy: fake?.catalogRemedy },
+			{ status: "trusted", catalog: "missing", remedy: 'gateway(op="find", server="fake", refresh=true)' },
+		);
+		// An untrusted declaration has no catalog provenance at all: a recorded
+		// listing would suggest tools that cannot be reached.
+		const marker = catalog.servers.find((server) => server.id === "marker");
+		strictEqual(marker?.status, "untrusted");
+		strictEqual(marker.catalog, undefined);
+		strictEqual(source.metadata(ECHO).metadata, null);
+		ok(source.metadata(ECHO).reason?.includes('gateway(op="find", server="fake", refresh=true)'));
+		strictEqual(clients.length, 0, "describing an uncached tool launches nothing");
+		deepStrictEqual(source.declaredIds().sort(), ["fake", "marker"]);
+	});
+
+	it("publishes after a live listing and answers a later session offline", async () => {
+		const scene = scenario();
+		ok(trustMcpServer({ cwd: scene.project, configDir: scene.configDir, id: "fake", actionClass: "read" }).ok);
+		const first = wire(scene);
+		open.push(first.source);
+		const refreshed = await first.source.refresh("fake");
+		strictEqual(refreshed.reason, undefined);
+		strictEqual(refreshed.listing?.status, "connected");
+		strictEqual(refreshed.listing.catalog, "live");
+		strictEqual(first.clients.length, 1, "a scoped refresh launches exactly its own server");
+		strictEqual(existsSync(scene.markerPath), false, "the other declared server was never launched");
+		await first.source.close();
+
+		const second = wire(scene);
+		open.push(second.source);
+		const catalog = second.source.catalog();
+		strictEqual(second.clients.length, 0, "the new session answers from the recorded catalog");
+		const fake = catalog.servers.find((server) => server.id === "fake");
+		strictEqual(fake?.catalog, "cached");
+		strictEqual(fake.status, "trusted", "a cache hit must never report a connected server");
+		strictEqual(fake.tools, undefined, "a cached server does not repeat the capability list");
+		deepStrictEqual(catalog.missing, []);
+		ok(catalog.entries.some((entry) => entry.name === ECHO));
+		const metadata = second.source.metadata(ECHO).metadata;
+		strictEqual(metadata?.provenance, "cached");
+		strictEqual(metadata.actionClass, "read");
+		ok("text" in ((metadata.parameters as { properties?: Record<string, unknown> }).properties ?? {}));
+		strictEqual(second.clients.length, 0);
+	});
+
+	it("never registers a cached descriptor, so a call still runs live setup", async () => {
+		const scene = scenario();
+		ok(trustMcpServer({ cwd: scene.project, configDir: scene.configDir, id: "fake", actionClass: "read" }).ok);
+		const first = wire(scene);
+		open.push(first.source);
+		await first.source.refresh("fake");
+		await first.source.close();
+
+		const second = wire(scene);
+		open.push(second.source);
+		second.source.catalog();
+		second.source.metadata(ECHO);
+		strictEqual(second.registry.get(ECHO as ToolName), undefined, "a catalog read must not populate the registry");
+		strictEqual(second.clients.length, 0);
+		const ensured = await second.source.ensure(ECHO);
+		ok(ensured.spec, ensured.reason);
+		strictEqual(second.clients.length, 1, "the first call constructs exactly the owning server's client");
+		strictEqual(existsSync(scene.markerPath), false);
+		strictEqual(second.source.metadata(ECHO).metadata?.provenance, "live");
+	});
+
+	it("shares one initialization across concurrent ensures and refreshes", async () => {
+		const scene = scenario();
+		ok(trustMcpServer({ cwd: scene.project, configDir: scene.configDir, id: "fake", actionClass: "read" }).ok);
+		const { source, clients } = wire(scene);
+		open.push(source);
+		const results = await Promise.all([source.ensure(ECHO), source.refresh("fake"), source.ensure(ECHO)]);
+		strictEqual(clients.length, 1, "three concurrent requests share one client");
+		ok(results[0].spec);
+		strictEqual(results[1].listing?.status, "connected");
+		ok(results[2].spec);
+	});
+
+	it("notifications and explicit refresh reconcile the live catalog", async () => {
+		const scene = scenario();
+		ok(trustMcpServer({ cwd: scene.project, configDir: scene.configDir, id: "fake", actionClass: "read" }).ok);
+		let version = 0;
+		let changed = false;
+		let notifyDuringListing = false;
+		let lists = 0;
+		let calls = 0;
+		const { source, registry, clients } = wire(scene, (spec, options) => {
+			const client = createMcpStdioClient(spec, options);
+			return {
+				...client,
+				callTool: (...args) => {
+					calls++;
+					return client.callTool(...args);
+				},
+				toolsChanged: () => changed,
+				acknowledgeToolsChanged: () => {
+					changed = false;
+				},
+				listTools: async () => {
+					lists++;
+					const listedVersion = version;
+					if (notifyDuringListing) {
+						notifyDuringListing = false;
+						changed = true;
+						version++;
+					}
+					return {
+						tools: [
+							{
+								name: listedVersion === 0 ? "old" : `new${listedVersion}`,
+								title: null,
+								description: "Changing catalog",
+								inputSchema: { type: "object" },
+								annotations: null,
+							},
+						],
+						truncated: false,
+					};
+				},
+			};
+		});
+		open.push(source);
+		await source.refresh("fake");
+		const previous = registry.get("mcp_fake__old" as ToolName);
+		ok(previous);
+		version = 1;
+		changed = true;
+		ok((await source.ensure("mcp_fake__new1")).spec);
+		strictEqual(registry.get("mcp_fake__old" as ToolName), undefined);
+		strictEqual((await previous.run({})).kind, "error");
+		strictEqual(calls, 0, "a retained old spec must not bypass refreshed metadata");
+		version = 2;
+		notifyDuringListing = true;
+		await source.refresh("fake");
+		strictEqual(registry.get("mcp_fake__new1" as ToolName), undefined);
+		ok(registry.get("mcp_fake__new2" as ToolName));
+		strictEqual(source.metadata("mcp_fake__new2").metadata?.provenance, "live");
+		ok((await source.ensure("mcp_fake__new3")).spec, "a notification during tools/list must not be lost");
+		strictEqual(lists, 4);
+		strictEqual(clients.length, 1);
+	});
+
+	it("refuses to discover an undeclared, untrusted, or stale server", async () => {
+		const scene = scenario();
+		const { source, clients } = wire(scene);
+		open.push(source);
+		const undeclared = await source.refresh("nope");
+		strictEqual(undeclared.listing, null);
+		ok(undeclared.reason?.includes("no MCP server named 'nope' is declared"));
+		const untrusted = await source.refresh("marker");
+		strictEqual(untrusted.listing?.status, "untrusted");
+		ok(untrusted.reason?.includes("pancode mcp trust marker"));
+		strictEqual(existsSync(scene.markerPath), false, "an untrusted refresh launches nothing");
+		strictEqual(clients.length, 0);
+
+		// Trust the fixture, then change what it runs: a stale record is as
+		// unlaunchable as an untrusted one, and its old catalog is unreadable.
+		ok(trustMcpServer({ cwd: scene.project, configDir: scene.configDir, id: "fake", actionClass: "read" }).ok);
+		const trusted = wire(scene);
+		open.push(trusted.source);
+		await trusted.source.refresh("fake");
+		await trusted.source.close();
+		writeFileSync(
+			join(scene.project, ".pancode", "mcp.yaml"),
+			`version: 1\nservers:\n  - id: fake\n    command: ${JSON.stringify(process.execPath)}\n    args: [${JSON.stringify(FIXTURE)}, "endless-tools"]\n`,
+		);
+		const stale = wire(scene);
+		open.push(stale.source);
+		const catalog = stale.source.catalog();
+		strictEqual(catalog.servers.find((server) => server.id === "fake")?.status, "stale");
+		strictEqual(catalog.servers.find((server) => server.id === "fake")?.catalog, undefined);
+		deepStrictEqual(catalog.entries, [], "a stale declaration's recorded catalog is not offered");
+		ok((await stale.source.refresh("fake")).reason?.includes("stale"));
+		strictEqual(stale.clients.length, 0);
+	});
+
+	it("does not publish a catalog from aborted discovery", async () => {
+		const scene = scenario();
+		const server = join(scene.project, "slow-server.mjs");
+		const ready = join(scene.project, "paged");
+		writeFileSync(
+			server,
+			`
+			import {createInterface} from 'node:readline';
+			import {writeFileSync} from 'node:fs';
+			createInterface({input: process.stdin}).on('line', line => {
+				const req = JSON.parse(line);
+				const reply = result => process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:req.id,result})+'\\n');
+				if (req.method === 'initialize') reply({protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'slow',version:'1'}});
+				if (req.method === 'tools/list') {
+					if (req.params?.cursor) { writeFileSync(${JSON.stringify(ready)}, 'ready'); return; }
+					reply({tools:[{name:'echo',description:'echo',inputSchema:{type:'object'}}],nextCursor:'next'});
+				}
+			});
+		`,
+		);
+		writeFileSync(
+			join(scene.project, ".pancode", "mcp.yaml"),
+			`version: 1\nservers:\n  - id: fake\n    command: ${JSON.stringify(process.execPath)}\n    args: [${JSON.stringify(server)}]\n`,
+		);
+		ok(trustMcpServer({ cwd: scene.project, configDir: scene.configDir, id: "fake", actionClass: "read" }).ok);
+		const { source } = wire(scene);
+		open.push(source);
+		const controller = new AbortController();
+		const pending = rejects(source.refresh("fake", { signal: controller.signal }), /aborted/);
+		const deadline = Date.now() + 5_000;
+		while (!existsSync(ready)) {
+			if (Date.now() > deadline) throw new Error("the server never reached its second page");
+			await new Promise((settle) => setTimeout(settle, 10));
+		}
+		controller.abort();
+		await pending;
+		await source.close();
+
+		const next = wire(scene);
+		open.push(next.source);
+		deepStrictEqual(next.source.catalog().missing, ["fake"], "aborted discovery leaves no catalog behind");
+		strictEqual(next.clients.length, 0);
+	});
+
+	it("carries truncation across publication for both the tool cap and the page cap", async () => {
+		// Completeness must come from the client's flag, never from counting what
+		// was recorded. The page-cap case records 100 tools, far under the
+		// 500-tool cap, so code that inferred completeness from the count would
+		// call it complete and pass every other test in this file.
+		for (const shape of [
+			{ id: "toolcap", perPage: 100, expected: 500 },
+			{ id: "pagecap", perPage: 1, expected: 100 },
+		]) {
+			const scene = scenario();
+			const server = join(scene.project, `${shape.id}-server.mjs`);
+			writeFileSync(
+				server,
+				`
+				import {createInterface} from 'node:readline';
+				createInterface({input: process.stdin}).on('line', line => {
+					const req = JSON.parse(line);
+					const reply = result => process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:req.id,result})+'\\n');
+					if (req.method === 'initialize') reply({protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'endless',version:'1'}});
+					if (req.method === 'tools/list') {
+						const page = Number(req.params?.cursor ?? 0);
+						const tools = Array.from({length: ${shape.perPage}}, (_, i) => ({
+							name: 't' + (page * ${shape.perPage} + i),
+							description: 'endless',
+							inputSchema: {type: 'object'},
+						}));
+						reply({tools, nextCursor: String(page + 1)});
+					}
+				});
+			`,
+			);
+			writeFileSync(
+				join(scene.project, ".pancode", "mcp.yaml"),
+				`version: 1\nservers:\n  - id: fake\n    command: ${JSON.stringify(process.execPath)}\n    args: [${JSON.stringify(server)}]\n`,
+			);
+			ok(trustMcpServer({ cwd: scene.project, configDir: scene.configDir, id: "fake", actionClass: "read" }).ok);
+			const first = wire(scene);
+			open.push(first.source);
+			const refreshed = await first.source.refresh("fake");
+			strictEqual(refreshed.listing?.truncated, true, `${shape.id}: the live listing is partial`);
+			strictEqual(refreshed.listing.catalogCount, shape.expected, `${shape.id}: recorded tool count`);
+			await first.source.close();
+
+			const second = wire(scene);
+			open.push(second.source);
+			const fake = second.source.catalog().servers.find((entry) => entry.id === "fake");
+			deepStrictEqual(
+				{ catalog: fake?.catalog, truncated: fake?.truncated, count: fake?.catalogCount },
+				{ catalog: "cached", truncated: true, count: shape.expected },
+				`${shape.id}: a known-partial catalog reads back partial`,
+			);
+			const metadata = second.source.metadata("mcp_fake__t0").metadata;
+			strictEqual(metadata?.provenance, "cached", `${shape.id}: describe reads the catalog`);
+			strictEqual(metadata.truncated, true, `${shape.id}: describe says its catalog is incomplete`);
+			strictEqual(second.clients.length, 0, `${shape.id}: none of this constructed a client`);
+		}
+	});
+
+	it("keeps a live call working when the catalog cannot be written", async () => {
+		const scene = scenario();
+		ok(trustMcpServer({ cwd: scene.project, configDir: scene.configDir, id: "fake", actionClass: "read" }).ok);
+		// A regular file where the cache directory belongs makes every write fail.
+		rmSync(join(env.dir, "cache"), { recursive: true, force: true });
+		writeFileSync(join(env.dir, "cache"), "not a directory");
+		const { source, clients } = wire(scene);
+		open.push(source);
+		const ensured = await source.ensure(ECHO);
+		ok(ensured.spec, ensured.reason);
+		strictEqual(clients.length, 1);
+		const served = source.servedSurface("fake");
+		ok(served && approveMcpSurface({ cwd: scene.project, configDir: scene.configDir, id: "fake", surface: served }).ok);
+		const result = await ensured.spec.run({ text: "still works" });
+		strictEqual(result.kind, "ok");
+		strictEqual(source.catalog().servers.find((server) => server.id === "fake")?.catalog, "live");
+	});
+
+	it("tells the next failed call when the live listing changed since the recorded catalog (K9)", async () => {
+		const scene = scenario();
+		ok(trustMcpServer({ cwd: scene.project, configDir: scene.configDir, id: "fake", actionClass: "read" }).ok);
+		const first = wire(scene);
+		open.push(first.source);
+		await first.source.refresh("fake");
+		await first.source.close();
+
+		// The same declaration now runs an upgraded server whose echo takes one more parameter.
+		const upgraded = (spec: McpServerSpec, clientOptions: McpClientOptions): McpClient => {
+			const client = createMcpStdioClient(spec, clientOptions);
+			const listTools = client.listTools.bind(client);
+			client.listTools = async (signal) => {
+				const listing = await listTools(signal);
+				return {
+					...listing,
+					tools: listing.tools.map((tool) =>
+						tool.name !== "echo"
+							? tool
+							: {
+									...tool,
+									inputSchema: {
+										...tool.inputSchema,
+										properties: {
+											...((tool.inputSchema.properties as Record<string, unknown> | undefined) ?? {}),
+											group_by: { type: "string" },
+										},
+									},
+								},
+					),
+				};
+			};
+			return client;
+		};
+		const groupBy = (parameters: unknown): boolean =>
+			"group_by" in ((parameters as { properties?: Record<string, unknown> }).properties ?? {});
+		const second = wire(scene, upgraded);
+		open.push(second.source);
+		strictEqual(groupBy(second.source.metadata(ECHO).metadata?.parameters), false, "the session first sees A");
+		const ensured = await second.source.ensure(ECHO);
+		ok(ensured.spec, ensured.reason);
+		const served = second.source.servedSurface("fake");
+		ok(served && approveMcpSurface({ cwd: scene.project, configDir: scene.configDir, id: "fake", surface: served }).ok);
+		const result = await ensured.spec.run({ text: "hi" });
+		strictEqual(result.kind, "ok");
+		strictEqual(result.output, JSON.stringify({ text: "hi" }), "a successful output stays the server's bytes");
+		const fail = await second.source.ensure("mcp_fake__fail");
+		ok(fail.spec, fail.reason);
+		const failed = await fail.spec.run({});
+		strictEqual(failed.kind, "error");
+		strictEqual(
+			failed.message.split("\n")[0],
+			"fake catalog changed since recorded: echo schema changed; describe it again",
+		);
+		const again = await fail.spec.run({});
+		strictEqual(again.kind === "error" && again.message.includes("catalog changed"), false, "the line is said once");
+		ok(groupBy(second.source.metadata(ECHO).metadata?.parameters), "describe shows B");
+
+		// Recorded at launch, while the upgraded server is still running.
+		const third = wire(scene);
+		open.push(third.source);
+		const cached = third.source.metadata(ECHO).metadata;
+		strictEqual(cached?.provenance, "cached");
+		ok(groupBy(cached.parameters), "a later session's find and describe read B");
+		strictEqual(third.clients.length, 0);
+	});
+
+	it("routes a cached name by the longest declared server prefix", async () => {
+		const scene = scenario();
+		writeFileSync(
+			join(scene.configDir, "mcp.yaml"),
+			JSON.stringify({
+				version: 1,
+				servers: [
+					{ id: "a", command: process.execPath, args: [FIXTURE, "normal"] },
+					{ id: "a__b", command: process.execPath, args: [FIXTURE, "normal"] },
+				],
+			}),
+		);
+		writeFileSync(join(scene.project, ".pancode", "mcp.yaml"), "version: 1\nservers: []\n");
+		// Server `a` also offers a tool literally named `b__echo`, so both
+		// declarations compose the name mcp_a__b__echo.
+		const collide = (spec: McpServerSpec, clientOptions: McpClientOptions): McpClient => {
+			const client = createMcpStdioClient(spec, { ...clientOptions, killGraceMs: 50 });
+			if (spec.id !== "a") return client;
+			const listTools = client.listTools.bind(client);
+			client.listTools = async () => {
+				const listing = await listTools();
+				const echo = listing.tools[0];
+				ok(echo);
+				return { ...listing, tools: [...listing.tools, { ...echo, name: "b__echo" }] };
+			};
+			return client;
+		};
+		const first = wire(scene, collide);
+		open.push(first.source);
+		await first.source.refresh("a");
+		await first.source.refresh("a__b");
+		await first.source.close();
+
+		const second = wire(scene, collide);
+		open.push(second.source);
+		const names = second.source.catalog().entries.map((entry) => entry.name);
+		strictEqual(names.filter((name) => name === "mcp_a__b__echo").length, 1, "one owner, from the longest prefix");
+		strictEqual(second.source.metadata("mcp_a__b__echo").metadata?.provenance, "cached");
+		ok(second.source.authorityNote("mcp_a__b__echo")?.startsWith("Local stdio MCP server a__b ("));
+		strictEqual(second.clients.length, 0);
+	});
+});

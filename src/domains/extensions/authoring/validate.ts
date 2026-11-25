@@ -1,0 +1,130 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import type { ExtensionCapabilityEnvelope, ExtensionDiagnostic } from "@pancode/sdk/pack";
+import {
+	capabilityEnvelope,
+	createMemoryKeyValueHost as createMemoryExtensionKeyValueHost,
+	envelopeDigest,
+} from "@pancode/sdk/pack";
+import { sha256Hex } from "../../../core/hash.js";
+import type { UnixSocketMode } from "../../../core/sandbox/types.js";
+import { loadManifestFromRoot } from "../discovery.js";
+import { extensionContentDigestWithCapture } from "../integrity.js";
+import { ExtensionRuntimeProcessV2 } from "../runtime-process-v2.js";
+import type { LoadableExtension } from "../types.js";
+
+const EXECUTION_NOTICE =
+	"Registration check executes the package's startup code in a private copy under its declared Node permissions, inside the OS sandbox when one is available (network blocked unless declared). Permissions are a seat belt, not a boundary against hostile code. No activation or handler invocation occurs.";
+
+export interface ExtensionValidationReport {
+	path: string;
+	valid: boolean;
+	diagnostics: ExtensionDiagnostic[];
+	envelope: ExtensionCapabilityEnvelope | null;
+	envelopeDigest: string | null;
+	registration: {
+		status: "passed" | "failed" | "skipped";
+		notice: string;
+		actions?: readonly string[];
+		interviews?: readonly string[];
+		reason?: string;
+	};
+}
+
+/** `unixSockets` is the operator's `safety.sandboxUnixSockets`, so registration runs in the sandbox an install would. */
+export async function validateExtensionPackage(
+	root: string,
+	options: { unixSockets?: UnixSocketMode } = {},
+): Promise<ExtensionValidationReport> {
+	const path = resolve(root);
+	const candidate = loadManifestFromRoot(path);
+	const declaration = candidate.manifest?.runtimeV2;
+	const envelope = declaration ? capabilityEnvelope(declaration, candidate.manifest?.plugin) : null;
+	const report: ExtensionValidationReport = {
+		path,
+		valid: candidate.valid,
+		diagnostics: [...candidate.diagnostics],
+		envelope,
+		envelopeDigest: envelope ? envelopeDigest(envelope) : null,
+		registration: {
+			status: "skipped",
+			notice: EXECUTION_NOTICE,
+			reason: candidate.valid ? "no api 2 runtime declared" : "discovery reported errors",
+		},
+	};
+	if (candidate.manifest && candidate.manifest.license === undefined)
+		report.diagnostics.push({
+			type: "warning",
+			message:
+				"extension_license_missing: declare license: <SPDX expression>; a PanHub row without a licence fails review",
+			...(candidate.manifestPath ? { path: candidate.manifestPath } : {}),
+		});
+	if (!candidate.valid || !candidate.manifest || !candidate.manifestPath || !declaration) return report;
+	let scratch: string | undefined;
+	let child: ExtensionRuntimeProcessV2 | undefined;
+	try {
+		const canonicalRoot = realpathSync(path);
+		const extension: LoadableExtension = {
+			...candidate.manifest,
+			scope: "user",
+			rootPath: canonicalRoot,
+			manifestPath: candidate.manifestPath,
+			enabled: true,
+			valid: true,
+			compatible: true,
+			effective: true,
+			loadable: true,
+			diagnostics: [],
+			provenance: {
+				id: candidate.manifest.id,
+				scope: "user",
+				canonicalRoot,
+				manifestDigest: sha256Hex(readFileSync(candidate.manifestPath)),
+				contentDigest: extensionContentDigestWithCapture(canonicalRoot).digest,
+			},
+		};
+		scratch = mkdtempSync(join(tmpdir(), "pancode-author-validate-"));
+		// Startup prepares declared write roots under the workspace. The author's
+		// cwd is often the package itself, so a root such as `.planning` landed
+		// inside the tree that was just digested and the copy no longer matched.
+		// Registration needs no real workspace; a private one keeps the source untouched.
+		const workspace = join(scratch, "workspace");
+		mkdirSync(workspace);
+		child = new ExtensionRuntimeProcessV2(extension, {
+			snapshot: {
+				workspace: realpathSync(workspace),
+				sessionId: null,
+				generation: 1,
+				mode: "headless",
+				activeWorkspace: null,
+				plugin: null,
+			},
+			options: Object.fromEntries(declaration.config.map((field) => [field.key, field.default])),
+			keyValue: createMemoryExtensionKeyValueHost(),
+			storeDir: join(scratch, "store"),
+			...(options.unixSockets !== undefined ? { unixSockets: options.unixSockets } : {}),
+		});
+		await child.staged;
+		report.registration = {
+			status: "passed",
+			notice: EXECUTION_NOTICE,
+			actions: child.actions,
+			interviews: child.interviews,
+		};
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		report.valid = false;
+		report.diagnostics.push({ type: "error", message: `registration: ${reason}`, path: candidate.manifestPath });
+		report.registration = { status: "failed", notice: EXECUTION_NOTICE, reason };
+	} finally {
+		try {
+			await child?.dispose("author-validation");
+		} finally {
+			if (scratch) rmSync(scratch, { recursive: true, force: true });
+		}
+	}
+	return report;
+}

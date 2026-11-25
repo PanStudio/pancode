@@ -1,0 +1,526 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { canonicalizeRawPath } from "../../core/path-canonical.js";
+import { relativeWithin } from "../../core/path-containment.js";
+import { dispatchTargetsScout, isReadOnlyCall } from "../../core/read-only-calls.js";
+import { renderCalls } from "../../core/telemetry/render.js";
+import { ToolNames } from "../../core/tool-names.js";
+import { expandPath } from "../../tools/path-utils.js";
+import type { DispatchContract } from "../dispatch/contract.js";
+import { refusedCallsWords } from "../dispatch/failure-headline.js";
+import { dispatchOwnerOf, dispatchOwnership } from "../dispatch/ownership.js";
+import { readRunResultFacts } from "../dispatch/run-result-facts.js";
+import { isTerminalRunEnvelope, type RunOutcome } from "../dispatch/types.js";
+import { dispatchMutatedParentWorkspace } from "../dispatch/workspace-mutation.js";
+import type { MiddlewareHookEvaluationContext, MiddlewareHookRegistration } from "./runtime.js";
+import type { MiddlewareEffect, MiddlewareHookInput } from "./types.js";
+import { turnCanCallTool } from "./types.js";
+
+/**
+ * Detached-dispatch collection nudge, packaged as a turn_end hook
+ * registration (same shape as the open-tasks nudge in task-nudge.ts).
+ *
+ * A detached batch returns before its runs finish, so nothing in the turn
+ * forces the model back to the results. When a settled turn ends while at
+ * least one uncollected batch has every run terminal, the turn is carried
+ * onward with a `request_continuation`. The turn controller collects the
+ * ready batches before the next model call and supplies their results. Collection marks the batch in the
+ * durable store, which removes it from the open list and silences the nudge,
+ * including across session resume.
+ *
+ * Deliberate non-triggers: batches with runs still in flight (there is
+ * nothing to collect yet; the dispatch board shows live progress), aborted or
+ * errored turns, and surfaces without the monitor tool (nudging them would
+ * loop against a wall).
+ */
+
+export const DETACHED_DISPATCH_NUDGE_REGISTRATION_ID = "nudge.detached-dispatch";
+export const READ_ONLY_EXPLORATION_NUDGE_REGISTRATION_ID = "nudge.read-only-exploration";
+export const READ_ONLY_EXPLORATION_NUDGE_CALL_THRESHOLD = 9;
+export const UNBACKED_WORKER_CLAIM_REGISTRATION_ID = "rail.unbacked-worker-claim";
+
+const EXPLORATION_NUDGE_TURN_LIMIT = 32;
+const NO_TURN = "no-turn";
+// A short follow-up may reuse exploration; five idle minutes end that scope.
+// The stale advice in #431 survived 45 minutes and crossed into a new task.
+const EXPLORATION_ADVISORY_IDLE_MS = 5 * 60_000;
+const EXPLORATION_FOLLOW_UP = /^(?:continue|go on|keep going|carry on|proceed)(?:[.!]|\s+please[.!]?)?$/iu;
+
+interface ExplorationTurnState {
+	readOnlyCalls: number;
+	mutated: boolean;
+	scoutSucceeded: boolean;
+	/** The advisory was already issued for this user turn. */
+	advised: boolean;
+}
+
+function buildReadOnlyExplorationMessage(): string {
+	return `[PanCode] This turn used ${READ_ONLY_EXPLORATION_NUDGE_CALL_THRESHOLD}+ read-only exploration calls without a successful Scout dispatch; delegate broad repository reconnaissance to Scout when more exploration is needed. If Scout already failed, confirm its useful leads with focused reads and synthesize; do not repeat its entire search.`;
+}
+
+function isNonRepositoryContextCall(input: MiddlewareHookInput): boolean {
+	if (input.toolName !== ToolNames.Context) return false;
+	const scope = typeof input.toolArgs?.scope === "string" ? input.toolArgs.scope.trim().toLowerCase() : null;
+	return scope !== null && scope !== "workspace";
+}
+
+export function isReadOnlyExplorationCall(input: MiddlewareHookInput, workspaceRoot: string): boolean {
+	if (isNonRepositoryContextCall(input) || !isReadOnlyCall(input.toolName ?? "", input.toolArgs)) return false;
+	// A shell command can read several roots and hide them behind variables.
+	// Count only tools whose repository scope can be established (#431).
+	if (input.toolName === ToolNames.Bash) return false;
+	return isWorkspaceCall(input, workspaceRoot);
+}
+
+function isWorkspaceCall(input: MiddlewareHookInput, workspaceRoot: string): boolean {
+	return workspaceRelativeTarget(input, workspaceRoot) !== null;
+}
+
+/** The call's `path` (under its `cwd`) relative to the workspace root; null outside the workspace or unresolvable. */
+export function workspaceRelativeTarget(input: MiddlewareHookInput, workspaceRoot: string): string | null {
+	const raw = input.toolArgs?.path ?? ".";
+	const cwd = input.toolArgs?.cwd ?? workspaceRoot;
+	if (typeof raw !== "string" || typeof cwd !== "string") return null;
+	const root = canonicalizeRawPath(workspaceRoot, process.cwd());
+	const base = canonicalizeRawPath(expandPath(cwd), workspaceRoot);
+	if (root === null || base === null) return null;
+	const target = canonicalizeRawPath(expandPath(raw), base);
+	if (target === null) return null;
+	return relativeWithin(target, root);
+}
+
+function hasActiveTool(input: MiddlewareHookInput, toolName: string): boolean {
+	const activeToolNames = input.metadata?.activeCapabilityNames ?? input.metadata?.activeToolNames;
+	return (
+		typeof activeToolNames === "string" &&
+		activeToolNames
+			.split(",")
+			.map((name) => name.trim())
+			.includes(toolName)
+	);
+}
+
+function newExplorationTurnState(advised = false): ExplorationTurnState {
+	return {
+		readOnlyCalls: 0,
+		mutated: false,
+		scoutSucceeded: false,
+		advised,
+	};
+}
+
+function markScoutSuccess(state: ExplorationTurnState): void {
+	state.scoutSucceeded = true;
+}
+
+/**
+ * Advise Scout for repository exploration without successful mutation or Scout.
+ * Keep a completed turn's advice pending until a short, explicit continuation;
+ * a fresh task must never inherit it (#431).
+ */
+export function createReadOnlyExplorationNudgeRegistration(deps: { workspaceRoot?: () => string } = {}): {
+	registration: MiddlewareHookRegistration;
+} {
+	let pending: { at: number; sessionId: string | undefined } | null = null;
+	const byTurn = new Map<string, ExplorationTurnState>();
+	const turnKey = (input: MiddlewareHookInput): string => {
+		const userTurnId = input.hook === "turn_end" ? input.metadata?.userTurnId : undefined;
+		return (
+			(typeof userTurnId === "string" && userTurnId.length > 0 ? userTurnId : input.turnId) ?? input.runId ?? NO_TURN
+		);
+	};
+	const remember = (key: string, state: ExplorationTurnState): ExplorationTurnState => {
+		if (byTurn.size >= EXPLORATION_NUDGE_TURN_LIMIT && !byTurn.has(key)) {
+			const oldest = byTurn.keys().next().value;
+			if (oldest !== undefined) byTurn.delete(oldest);
+		}
+		byTurn.set(key, state);
+		return state;
+	};
+	const stateForTool = (key: string): ExplorationTurnState =>
+		byTurn.get(key) ?? remember(key, newExplorationTurnState());
+	// Counts restart for the next model round of the same user turn; whether the
+	// advisory is already spent carries across those rounds.
+	const takeTurnEndState = (key: string): ExplorationTurnState | null => {
+		const bound = byTurn.get(key);
+		if (bound === undefined) return null;
+		const carried = newExplorationTurnState(bound.advised);
+		carried.scoutSucceeded = bound.scoutSucceeded;
+		carried.mutated = bound.mutated;
+		byTurn.set(key, carried);
+		return bound;
+	};
+	const markAdvised = (key: string): void => {
+		const carried = byTurn.get(key);
+		if (carried) carried.advised = true;
+	};
+	return {
+		registration: {
+			id: READ_ONLY_EXPLORATION_NUDGE_REGISTRATION_ID,
+			description: "advise Scout delegation after prolonged read-only repository exploration",
+			hooks: ["turn_start", "before_tool", "after_tool", "turn_end"],
+			evaluate(input: MiddlewareHookInput, context?: MiddlewareHookEvaluationContext): ReadonlyArray<MiddlewareEffect> {
+				if (input.hook === "turn_start") {
+					const advice = pending;
+					pending = null;
+					if (
+						advice === null ||
+						advice.sessionId !== input.sessionId ||
+						performance.now() - advice.at >= EXPLORATION_ADVISORY_IDLE_MS ||
+						(input.metadata?.requestContinuation !== true && !EXPLORATION_FOLLOW_UP.test(input.text?.trim() ?? "")) ||
+						!turnCanCallTool(input, ToolNames.Dispatch)
+					)
+						return [];
+					// The count belongs to the turn that ended; this turn only follows it up (#431).
+					context?.evidence?.("count:read-only-calls@prior-turn");
+					return [
+						{ kind: "inject_reminder", message: buildReadOnlyExplorationMessage(), severity: "info", audience: "model" },
+					];
+				}
+				const key = turnKey(input);
+				if (input.hook === "before_tool" || input.hook === "after_tool") {
+					if (input.metadata?.origin === "harness") return [];
+					const state = stateForTool(key);
+					if (
+						input.hook === "after_tool" &&
+						input.metadata?.resultKind === "ok" &&
+						(((input.toolName === ToolNames.Edit || input.toolName === ToolNames.Write || input.toolName === "apply_patch") &&
+							isWorkspaceCall(input, deps.workspaceRoot?.() ?? process.cwd())) ||
+							(input.toolName === ToolNames.Dispatch && dispatchMutatedParentWorkspace(input.toolResultDetails)))
+					) {
+						state.mutated = true;
+						state.readOnlyCalls = 0;
+					}
+					if (input.toolName === ToolNames.Dispatch) {
+						if (input.hook === "after_tool" && dispatchTargetsScout(input.toolArgs)) {
+							if (input.metadata?.resultKind === "ok") markScoutSuccess(state);
+						}
+						return [];
+					}
+					if (input.hook === "after_tool" || !isReadOnlyExplorationCall(input, deps.workspaceRoot?.() ?? process.cwd()))
+						return [];
+					state.readOnlyCalls += 1;
+					return [];
+				}
+				if (input.hook !== "turn_end") return [];
+				const state = takeTurnEndState(key);
+				const stopReason = input.metadata?.stopReason;
+				if (stopReason !== undefined && stopReason !== "stop") return [];
+				if (!hasActiveTool(input, ToolNames.Dispatch)) return [];
+				if (
+					!state ||
+					state.advised ||
+					state.mutated ||
+					state.scoutSucceeded ||
+					state.readOnlyCalls < READ_ONLY_EXPLORATION_NUDGE_CALL_THRESHOLD
+				) {
+					return [];
+				}
+				markAdvised(key);
+				pending = { at: performance.now(), sessionId: input.sessionId };
+				return [];
+			},
+		},
+	};
+}
+
+/**
+ * Honesty rail for fabricated worker results.
+ *
+ * A model under context pressure can narrate a worker it never dispatched:
+ * "the scout investigation is complete" after twelve inline greps, headed
+ * "Scout Shadow Report". Nothing in the turn contradicts it, and the operator
+ * has no receipt id to check against.
+ *
+ * The check is per-turn and mechanical, never an LLM judge: the final
+ * assistant text matched against worker-result claim shapes, and whether any
+ * dispatch call ran in the same turn. When a claim is made and no dispatch
+ * ran, the turn ends with one advisory transcript line. Detection is
+ * deliberately conservative: an intention ("let me dispatch a scout") is not a
+ * claim, so only a claim of results trips it. A shared `[worker result]` note
+ * or collected detached batch also backs a claim without a dispatch in this turn.
+ */
+const WORKER_NOUN = "(?:scouts?|shadow (?:agent|worker)s?|sub-?agents?|workers?)";
+const RESULT_VERB =
+	"(?:found|reported|returned|investigated|explored|concluded|confirmed|discovered|surfaced|completed|is complete|came back)";
+// Prose that explains how dispatch works ("when the worker has completed, the
+// coordinator reads the receipt") shares nouns and verbs with a fabricated
+// result. A claim is a definite, specific worker plus a result verb with no
+// conditional or modal word between them.
+const DEFINITE = "(?<!\\b(?:if|when|whenever|once|until|unless|whether)\\s)(?:the|this|that|our|my|each|both)";
+const NOT_HYPOTHETICAL =
+	"(?:(?!\\b(?:if|when|whenever|once|until|unless|whether|can|could|may|might|will|would|should|must|shall)\\b)[^.\\n])";
+
+const WORKER_CLAIM_PATTERNS: ReadonlyArray<RegExp> = [
+	// "the scout found ...", "the scout investigation is complete", "both workers came back ..."
+	new RegExp(
+		`\\b${DEFINITE}\\s+(?:[\\w-]+\\s+){0,2}?${WORKER_NOUN}\\b${NOT_HYPOTHETICAL}{0,40}?\\b${RESULT_VERB}\\b`,
+		"i",
+	),
+	// "... reported by the scout"
+	new RegExp(`\\b${RESULT_VERB}\\b${NOT_HYPOTHETICAL}{0,24}\\bby\\s+${DEFINITE}\\s+${WORKER_NOUN}\\b`, "i"),
+	// A titled worker deliverable, only as a heading or bold title: "## Scout Shadow Report",
+	// "**Worker findings**". A mid-sentence "worker summary" is architecture prose.
+	/^[ \t]*(?:#{1,6}[ \t]+|\*\*|__)(?:the\s+)?(?:scout|shadow|worker)\b[^\n]{0,20}\b(?:report|findings|summary)\b/im,
+];
+
+export function claimsWorkerResults(text: string | undefined): boolean {
+	if (typeof text !== "string" || text.trim().length === 0) return false;
+	return WORKER_CLAIM_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function buildUnbackedWorkerClaimMessage(): string {
+	return "[PanCode] No dispatch ran this turn; worker results named above are not backed by a run record. Dispatch the work or state plainly that you did it inline.";
+}
+
+/**
+ * Contradicts a worker claim that no dispatch call backs. One advisory line,
+ * no continuation: the turn is already over and the operator, not another
+ * model round, decides what to do about it.
+ */
+export function createUnbackedWorkerClaimRegistration(): MiddlewareHookRegistration {
+	const dispatchedTurns = new Set<string>();
+	const turnKey = (input: MiddlewareHookInput): string => {
+		const userTurnId = input.hook === "turn_end" ? input.metadata?.userTurnId : undefined;
+		return (
+			(typeof userTurnId === "string" && userTurnId.length > 0 ? userTurnId : input.turnId) ?? input.runId ?? NO_TURN
+		);
+	};
+	const remember = (key: string): void => {
+		if (dispatchedTurns.size >= EXPLORATION_NUDGE_TURN_LIMIT && !dispatchedTurns.has(key)) {
+			const oldest = dispatchedTurns.values().next().value;
+			if (oldest !== undefined) dispatchedTurns.delete(oldest);
+		}
+		dispatchedTurns.add(key);
+	};
+	return {
+		id: UNBACKED_WORKER_CLAIM_REGISTRATION_ID,
+		description: "contradict a worker/scout result claim that no dispatch call in the turn backs",
+		hooks: ["after_tool", "turn_end"],
+		evidence: "regex:WORKER_CLAIM_PATTERNS@assistant-text",
+		evaluate(input: MiddlewareHookInput): ReadonlyArray<MiddlewareEffect> {
+			const key = turnKey(input);
+			if (input.hook === "after_tool") {
+				// Any completed dispatch counts, succeeded or not: a run that failed is
+				// still visible in the transcript and honestly reportable. Only a turn
+				// with no dispatch call at all can fabricate one.
+				if (input.toolName === ToolNames.Dispatch) remember(key);
+				return [];
+			}
+			if (input.hook !== "turn_end") return [];
+			const dispatched = dispatchedTurns.delete(key);
+			const stopReason = input.metadata?.stopReason;
+			if (stopReason !== undefined && stopReason !== "stop") return [];
+			// A surface without the dispatch tool cannot have dispatched, so a worker
+			// mention there is discussion, not a fabricated result.
+			if (!hasActiveTool(input, ToolNames.Dispatch)) return [];
+			// Shared notes and detached collections bring worker results into this
+			// turn without a new dispatch (#73, CLI-P23).
+			if (input.metadata?.sharedWorkerNote === true || input.metadata?.collectedDetachedBatch === true) return [];
+			if (dispatched || !claimsWorkerResults(input.text)) return [];
+			return [{ kind: "inject_reminder", message: buildUnbackedWorkerClaimMessage(), severity: "warn" }];
+		},
+	};
+}
+
+type DetachedTerminalOutcome = RunOutcome | "missing" | "unknown";
+type DetachedTerminalOutcomeCounts = Partial<Record<DetachedTerminalOutcome, number>>;
+
+export interface DetachedBatchNudgeView {
+	id: string;
+	total: number;
+	terminal: number;
+	terminalOutcomes?: Readonly<DetachedTerminalOutcomeCounts>;
+}
+
+function incrementTerminalOutcome(counts: DetachedTerminalOutcomeCounts, outcome: DetachedTerminalOutcome): void {
+	counts[outcome] = (counts[outcome] ?? 0) + 1;
+}
+
+/**
+ * Open (uncollected) detached batches this session owns or inherited from a
+ * session it was forked from, with terminal-run progress, computed from the
+ * durable batch store and the run ledger. A ledger row pruned from the bounded
+ * ring counts as terminal: it can never complete, so the batch must stay
+ * collectible instead of pending forever.
+ *
+ * The batch store is machine-wide. Without the ownership filter a batch
+ * another project dispatched, or one a crashed session left behind, turned
+ * every other session's turn end into a forced continuation telling the model
+ * to collect results it knew nothing about.
+ */
+export function openDetachedBatchViews(
+	dispatch: Pick<DispatchContract, "detached" | "getRun" | "owner" | "assignments">,
+): DetachedBatchNudgeView[] {
+	const detached = dispatch.detached;
+	if (!detached) return [];
+	let records: ReturnType<typeof detached.list>;
+	try {
+		records = detached.list();
+	} catch {
+		return [];
+	}
+	const ownership = dispatchOwnership(dispatchOwnerOf(dispatch));
+	const owned = records.filter((record) => ownership.collectsBatch(record));
+	return owned.map((record) => {
+		let terminal = 0;
+		const terminalOutcomes: DetachedTerminalOutcomeCounts = {};
+		for (const run of record.runs) {
+			const assignment = dispatch.assignments?.getStored(run.assignmentId) ?? null;
+			if (assignment?.status === "running") continue;
+			const row = dispatch.getRun(assignment?.terminalRunId ?? run.runId);
+			if (row === null) {
+				terminal += 1;
+				incrementTerminalOutcome(terminalOutcomes, "missing");
+			} else if (isTerminalRunEnvelope(row)) {
+				terminal += 1;
+				incrementTerminalOutcome(terminalOutcomes, row.outcome ?? "unknown");
+			}
+		}
+		return { id: record.id, total: record.runs.length, terminal, terminalOutcomes };
+	});
+}
+
+export function finishedDetachedBatchIds(
+	dispatch: Pick<DispatchContract, "detached" | "getRun" | "owner" | "assignments">,
+): ReadonlyArray<string> {
+	return openDetachedBatchViews(dispatch)
+		.filter((view) => view.total > 0 && view.terminal >= view.total)
+		.map((view) => view.id);
+}
+
+/** A batch this session dispatched that a fork of it collected first, which this session has not been told about. */
+export interface CollectedElsewhereView {
+	id: string;
+	collectedBy: string;
+	/**
+	 * `refusedCalls` and `guardedCalls` come from the run's settled facts, the worker card's source, so a run whose
+	 * only call was refused is not reported as a clean success.
+	 */
+	runs: ReadonlyArray<{
+		runId: string;
+		agentId: string;
+		outcome: string;
+		toolCalls?: number;
+		refusedCalls?: number;
+		guardedCalls?: number;
+	}>;
+}
+
+/**
+ * Batches this session dispatched that another session collected first. Only
+ * a fork of this session can (first collector wins), and collection silences
+ * this session's nudge, so without this the dispatching model goes on saying
+ * the runs are still in the background.
+ */
+export function batchesCollectedElsewhere(
+	dispatch: Pick<DispatchContract, "detached" | "getRun" | "owner" | "assignments">,
+	fallbackSessionId?: string | null,
+): CollectedElsewhereView[] {
+	const detached = dispatch.detached;
+	if (!detached) return [];
+	const sessionId = dispatchOwnerOf(dispatch, fallbackSessionId).sessionId;
+	if (sessionId === null) return [];
+	let records: ReturnType<typeof detached.list>;
+	try {
+		records = detached.list({ includeCollected: true });
+	} catch {
+		return [];
+	}
+	return records.flatMap((record) => {
+		const collectedBy = record.collectedBy;
+		if (record.sessionId !== sessionId || record.collectedAt === null || record.ownerToldAt !== undefined) return [];
+		if (collectedBy === undefined || collectedBy === sessionId) return [];
+		const runs = record.runs.map((run) => {
+			const assignment = dispatch.assignments?.getStored(run.assignmentId) ?? null;
+			const row = dispatch.getRun(assignment?.terminalRunId ?? run.runId);
+			const outcome = row === null ? "ledger row missing" : (row.outcome ?? row.status);
+			const runId = row?.id ?? run.runId;
+			const facts = readRunResultFacts(runId);
+			return {
+				runId,
+				agentId: run.agentId,
+				outcome,
+				...(facts?.toolCalls !== undefined ? { toolCalls: facts.toolCalls } : {}),
+				...(facts?.refusedCalls !== undefined ? { refusedCalls: facts.refusedCalls } : {}),
+				...(facts?.guardedCalls !== undefined ? { guardedCalls: facts.guardedCalls } : {}),
+			};
+		});
+		return [{ id: record.id, collectedBy, runs }];
+	});
+}
+
+/** The outcome, plus the worker card's call counts when a call was kept from running. */
+function collectedRunOutcome(run: CollectedElsewhereView["runs"][number]): string {
+	const refused = run.refusedCalls ?? 0;
+	if (refused <= 0) return run.outcome;
+	const calls = run.toolCalls !== undefined ? [renderCalls(String(run.toolCalls))] : [];
+	return [run.outcome, ...calls, refusedCallsWords(refused, run.guardedCalls ?? 0)].join(" · ");
+}
+
+export function collectedElsewhereLine(view: CollectedElsewhereView): string {
+	const runs = view.runs.map((run) => `run ${run.runId} (${run.agentId}) ${collectedRunOutcome(run)}`).join(", ");
+	return (
+		`- batch ${view.id} was collected by session ${view.collectedBy}: ${runs || "no runs"}. ` +
+		`It is settled, not running in the background; its results went to that session. ` +
+		`monitor(mode="collect", batch_id="${view.id}") re-reads them here.`
+	);
+}
+
+export interface CreateDetachedDispatchNudgeRegistrationOptions {
+	/** Live view of open detached batches; see openDetachedBatchViews. */
+	getOpenBatches: () => ReadonlyArray<DetachedBatchNudgeView>;
+}
+
+export function createDetachedDispatchNudgeRegistration(
+	options: CreateDetachedDispatchNudgeRegistrationOptions,
+): MiddlewareHookRegistration {
+	return {
+		id: DETACHED_DISPATCH_NUDGE_REGISTRATION_ID,
+		description:
+			"request continuation so the turn controller collects finished detached results before the next model call",
+		hooks: ["turn_end"],
+		evidence: "count:ready-detached-batches@turn-end",
+		evaluate(input: MiddlewareHookInput): ReadonlyArray<MiddlewareEffect> {
+			if (input.hook !== "turn_end") return [];
+			// Only settled stop turns are candidates; aborted and errored turns
+			// already carry their own recovery path. Absent stopReason is "stop",
+			// mirroring the finish contract.
+			const stopReason = input.metadata?.stopReason;
+			if (stopReason !== undefined && stopReason !== "stop") return [];
+			// A surface without access to monitor can never collect a batch, so
+			// nudging it would loop against a wall.
+			const activeToolNames = input.metadata?.activeCapabilityNames ?? input.metadata?.activeToolNames;
+			if (typeof activeToolNames === "string" && !activeToolNames.split(",").includes(ToolNames.Monitor)) return [];
+			let views: ReadonlyArray<DetachedBatchNudgeView>;
+			try {
+				views = options.getOpenBatches();
+			} catch {
+				return [];
+			}
+			const ready = views.filter((view) => view.total > 0 && view.terminal >= view.total);
+			if (ready.length === 0) {
+				// Fleet design 4.3: a declared turn over a child still running has an uncollected run; nothing is ready
+				// to collect, so only the fact is sealed.
+				if (input.metadata?.completionState === undefined || views.length === 0) return [];
+				return [
+					{
+						kind: "inject_reminder",
+						audience: "model",
+						message: `[PanCode] ${views.length} detached dispatch batch(es) are still running and uncollected; collect them with monitor before calling the work done.`,
+						fact: "uncollected_run",
+					},
+				];
+			}
+			return [
+				{
+					kind: "request_continuation",
+					note: "finished detached batches are waiting",
+					toolFree: true,
+					message: `PanCode will collect ${ready.length} finished detached batch(es) before the next model call.`,
+					fact: "uncollected_run",
+				},
+			];
+		},
+	};
+}

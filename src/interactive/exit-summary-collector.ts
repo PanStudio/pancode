@@ -1,0 +1,846 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { homedir } from "node:os";
+import { relative, resolve } from "node:path";
+import { GLYPH } from "../core/glyphs.js";
+import { relativePathEscapes, relativeWithin } from "../core/path-containment.js";
+import type { FactMetric, Quantity } from "../core/telemetry/dto.js";
+import { factRef } from "../core/telemetry/dto.js";
+import type { EconomyQuantities } from "../core/telemetry/economy.js";
+import type { TelemetryHub } from "../core/telemetry/hub.js";
+import { freshCachedTokens, renderUpperBound } from "../core/telemetry/render.js";
+import { isRecord } from "../core/type-guards.js";
+import {
+	usageCoverage,
+	usageEstimatedCalls,
+	usageEstimates,
+	usageGap,
+	usageLineFigure,
+	usageLineNotes,
+} from "../core/views/usage-words.js";
+import type { DispatchContract } from "../domains/dispatch/contract.js";
+import { plainOutcomeLabel, settledRunCaveat, TOOL_GUARD_REASON_CODE } from "../domains/dispatch/failure-headline.js";
+import { summarizeTrustStatus, trustFailureWords } from "../domains/evidence/trust-projection.js";
+import type { AutonomyReport } from "../domains/safety/autonomy-window.js";
+import { mutatingReceipts } from "../domains/safety/finish-mutations.js";
+import { UNATTENDED_DECIDED_BY } from "../domains/safety/unattended.js";
+import type { SessionContract } from "../domains/session/contract.js";
+import type { TelemetryView } from "../domains/telemetry/contract.js";
+import type { TelemetryContract } from "../domains/telemetry/index.js";
+import type { ChatLoopEvent } from "../session-control/chat-loop.js";
+import { COUNCIL_SEALED_REPORT_AGENT_ID } from "../session-control/council.js";
+import type { WorkerRunResultFacts } from "../session-control/worker-stream.js";
+import { effectiveToolCall, gatewayChainReceipts } from "../tools/surface.js";
+import {
+	neverSentCallCount,
+	sentCallCount,
+	sentCallTime,
+	sessionVerifiedOutcomes,
+	type VerifiedOutcomeWords,
+	verifiedOutcomeWords,
+} from "./usage-words.js";
+
+export interface ExitSummarySnapshot {
+	sessionId: string;
+	sessionName: string | null;
+	wallMs: number;
+	turns: number;
+	models: ReadonlyArray<{ target: string; model: string }>;
+	/** Whole-session spend across every branch, read from the telemetry read model at exit (#434 §11.3). */
+	spend: ExitSpend;
+	/** `lastFailed` is the tool's latest settled call, so a check that failed and then passed is not left failing. */
+	tools: ReadonlyArray<{ tool: string; count: number; failures: number; lastFailed?: boolean }>;
+	files: ReadonlyArray<string>;
+	fileChanges: ReadonlyArray<{ path: string; count: number }>;
+	/**
+	 * Workers this visit whose writes no record observed, so `files` cannot hold them. The card counts worker calls,
+	 * and a bare `0 files changed` beside them read as a worker that edited nothing.
+	 */
+	unrecordedWorkerFiles: number;
+	workers: ReadonlyArray<{
+		runId: string;
+		agent: string;
+		target: string;
+		model: string;
+		outcome: string;
+		/**
+		 * Why a run whose process finished cannot be leaned on, such as `validation failed`, from its sealed record
+		 * through the rule the worker card and Fleet read. The card said `2 succeeded` beside Fleet's two failures.
+		 */
+		against?: string;
+		/** Calls kept from running, from the sealed record, so the Workers row says what the collected block says. */
+		refusedCalls?: number;
+		guardedCalls?: number;
+		record: string;
+		/** Why a `compromised` record cannot be leaned on, in plain words such as `validation failed`. */
+		recordFailure?: string;
+		/** Whether a write record or receipt saw the run change a file; absent when neither said. */
+		wrote?: boolean;
+	}>;
+	permissions: { granted: number; denied: number; expired: number; blocked: number };
+	/**
+	 * What PanCode answered itself because nobody answered in time (#421):
+	 * ask_user questions it chose for, and permission cards it denied.
+	 */
+	unattended: { questions: number; permissions: number };
+	timeline: ReadonlyArray<{ elapsedMs: number; text: string }>;
+	timelineOmitted: number;
+	compactions: number;
+	/**
+	 * Git hook files added, changed or removed during this visit, by workspace
+	 * path. A hook runs outside PanCode's sandbox on the next git command, so the
+	 * summary names them whatever its style. `key` names an executable git
+	 * config value; `path` is then the config file that sets it.
+	 */
+	gitHooks?: ReadonlyArray<{ path: string; kind: string; key?: string }>;
+	/**
+	 * Git operations PanCode ran itself after such a change, by `outcome`: a
+	 * mutation with hooks off and the changed config overridden (`hooks-off`)
+	 * or as configured under yolo (`yolo`), and its read-only git with the
+	 * changed config overridden (`overridden`) or not run (`skipped`)
+	 * (src/domains/safety/internal-git-policy.ts).
+	 */
+	internalGit?: ReadonlyArray<{
+		operation: string;
+		outcome: string;
+		changes: ReadonlyArray<{ path: string; kind: string; key?: string }>;
+	}>;
+	/** The session's yolo audit: its window, its halt and the calls left for the operator (ob-yolo D7). */
+	autonomy?: AutonomyReport;
+	/**
+	 * Sessions this visit opened, the current one included, when it switched at least once (/resume, /fork, /tree,
+	 * /handoff, /new). The visit's own counts cover them all; the telemetry read model is the current session's, so
+	 * its model calls are that session's only.
+	 */
+	visitSessions?: number;
+	/** When the visit switched sessions: the named session's own turns, beside the visit's `turns` (TUI-6). */
+	sessionTurns?: number;
+	/**
+	 * When the visit switched sessions: tool calls the other sessions made this visit, their workers' included, so a
+	 * Tools row that counts only the named session's says what it left out rather than vanishing (TUI-6).
+	 */
+	otherSessionToolCalls?: number;
+}
+
+/** A path inside the workspace by its workspace path, any other as given. */
+function workspacePath(file: string): string {
+	const local = relative(process.cwd(), file);
+	return relativePathEscapes(local) ? file : local;
+}
+
+/** Questions PanCode answered for an absent operator in one tool result, a gateway chain's steps included. */
+function autoResolvedQuestions(toolName: string, result: unknown): number {
+	const count = (candidate: unknown): number => {
+		const details = isRecord(candidate) ? candidate.details : undefined;
+		const unattended = isRecord(details) ? details.unattended : undefined;
+		const n = isRecord(unattended) ? unattended.autoResolved : undefined;
+		return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
+	};
+	return count(result) + gatewayChainReceipts(toolName, result).reduce((sum, child) => sum + count(child.result), 0);
+}
+
+interface CollectorDeps {
+	bus: TelemetryHub;
+	telemetry: TelemetryContract;
+	dispatch: Pick<DispatchContract, "observedRunWrites" | "observedRunWriteAttribution">;
+	session?: Pick<SessionContract, "current">;
+	getTurns: () => number | null;
+	getToolCounts: () => ReadonlyMap<string, number>;
+	getModel: () => { target: string; model: string } | null;
+	/** The session's whole ledger, every branch, for the verified outcomes its spend is divided over. */
+	readSessionEntries?: () => ReadonlyArray<unknown>;
+	/** The git hook drift guard's account of hook files changed this visit (src/domains/safety/hook-drift.ts). */
+	gitHookChanges?: () => ReadonlyArray<{ path: string; kind: string; key?: string }>;
+	/** The autonomy window's audit; null when the session never ran at yolo. */
+	autonomy?: () => AutonomyReport | null;
+	/**
+	 * A settled run's receipt, the checkout delta /usage's Changes row agrees with. A worker card that /fork or
+	 * /resume replaced never hands its receipt over, so a run with no write record is read here at the snapshot.
+	 */
+	readRunResult?: (runId: string) => WorkerRunResultFacts | null;
+	/**
+	 * Operator messages still queued: each counted as a turn when typed, none ever reached the model. A steer queued
+	 * behind a turn Ctrl+C stopped read `2 turns` for one prompt.
+	 */
+	undeliveredTurns?: () => number;
+	now?: () => number;
+}
+
+/**
+ * Every figure is the read model's own display, so the card never sums a number (#434 §11.3). Lines of several facts
+ * join them with ` · `, which the formatter wraps at.
+ */
+export type ExitSpend =
+	| { kind: "unavailable" }
+	| {
+			kind: "ready";
+			/** The session total, then the same notes as `breakdown`. */
+			tokens: string;
+			/** The session total's fresh and cached parts, when every call measured both and some were cached (F9). */
+			freshCached: { fresh: number; cached: number } | null;
+			/** `in · out · cache read · cache write · reasoning` where something was reported, then the notes. */
+			breakdown: string;
+			cost: string;
+			/** The read model's own session totals, unsummed here, for the `--session-file` record. */
+			totals: { tokens: Quantity; usd: Quantity };
+			/**
+			 * Model calls sent since the visit began, counted by `sentCallCount` as the /usage model calls row counts them:
+			 * a retry is another attempt of the same call, and a worker run's calls are included. The card once said
+			 * `3 model calls · 2 workers` beside a /usage total of 5, because it left the workers' calls out.
+			 */
+			visitCalls: number;
+			/** Calls begun this visit that never went out, which `visitCalls` leaves out and the footer names. */
+			visitNeverSent: number;
+			/**
+			 * The session spent before this visit began, so its whole-session rows (tokens, cost, models) are not this
+			 * visit's: a resumed card read `1 model call` beside a prior visit's tokens and models.
+			 */
+			sessionBeforeVisit?: boolean;
+			byRole: string;
+			/**
+			 * Those calls' time from each one starting to its settle, so a model silent before its first token is
+			 * counted; null when the visit sent none. Streaming alone (`modelTime`) read 404ms beside a 1m26s turn (B2).
+			 */
+			callTime: string | null;
+			/** `4 calls had no timing data`, said once after the time rather than inside it (F4). */
+			callTimeCoverage: string | null;
+			models: ReadonlyArray<{ key: string; calls: string; cost: string; breakdown: string }>;
+			/** The session's verified outcomes and its tokens and cost per outcome, as /usage words them. */
+			verified: VerifiedOutcomeWords;
+			/**
+			 * The read model's cached share of the prompt tokens sent, for the session and its last turn, as
+			 * `telemetry cache` words them, and where a resumed transcript's replay broke the cache; null when no call
+			 * reported its cache read.
+			 */
+			cache: CacheWords | null;
+			/** The session's economics total as the S10 projection folds it, for the receipt beside the cost. */
+			economy?: EconomyQuantities;
+	  };
+
+/**
+ * The session's (or one model group's) token figures and the notes that qualify them, each note said once. The
+ * figures carry one mark at most; the notes say which figures nobody reported, how many calls reported nothing, and
+ * how many PanCode estimated (E1).
+ */
+function tokenFacts(view: TelemetryView, model?: string): { figures: string[]; total: string; notes: string[] } {
+	const quantity = (metric: FactMetric) =>
+		view.quantity(
+			factRef({
+				scope: "session",
+				owner: view.sessionId,
+				metric,
+				...(model === undefined ? {} : { group: { by: "model", key: model } }),
+			}),
+		);
+	// In and out are the amounts; the rest earn a place only with something to say, what nobody reported is said once,
+	// and the calls that reported nothing are counted once at the end rather than beside every figure (F4).
+	// `in` is the uncached input, as /usage, the turn receipt and the footer say it, with the cache read beside it: the
+	// whole prompt here read `in ≥150,060` beside /usage's `input ≥27,054 · cache read ≥123,006` (bt-11).
+	const figures = [
+		{ label: "in", quantity: quantity("input") },
+		{ label: "out", quantity: quantity("output") },
+		{ label: "cache read", quantity: quantity("cacheRead") },
+		{ label: "cache write", quantity: quantity("cacheWrite") },
+		{ label: "reasoning", quantity: quantity("reasoning") },
+	];
+	const [input, output] = figures;
+	const { shown, notes } = usageLineNotes(figures);
+	// Each figure keeps one mark at most; what PanCode estimated is said once, by the calls behind the total (E1).
+	const estimates = usageEstimates(usageEstimatedCalls(quantity("total")));
+	return {
+		figures: [
+			// Label first, as the turn receipt and /usage write it: one notation for tokens on every surface (U5).
+			`in ${usageLineFigure(input?.quantity)}`,
+			`out ${usageLineFigure(output?.quantity)}`,
+			...shown.map((entry) => `${entry.label} ${usageLineFigure(entry.quantity)}`),
+		],
+		total: usageLineFigure(quantity("total")),
+		notes: [...notes, ...(estimates !== null ? [estimates] : [])],
+	};
+}
+
+function tokenBreakdown(view: TelemetryView, model?: string): string {
+	const { figures, notes } = tokenFacts(view, model);
+	return [...figures, ...notes].join(` ${GLYPH.sep} `);
+}
+
+export function exitSpend(
+	view: TelemetryView | null | undefined,
+	visitFrom: string,
+	entries: ReadonlyArray<unknown> = [],
+): ExitSpend {
+	if (!view) return { kind: "unavailable" };
+	const session = view.session();
+	const sessionTokens = tokenFacts(view);
+	// `settle` runs from each attempt's start, retries included, so it holds the silent wait for the first token that
+	// `modelTime` (first token to settle) leaves out. It also holds any admission hold PanCode put on the request. Workers'
+	// calls are in it as they are in `visitCalls`; parallel calls add up, so it is model-call time, not wall time.
+	const callTime = sentCallTime(view, visitFrom);
+	const cacheRead = view.quantity(factRef({ scope: "session", owner: view.sessionId, metric: "cacheRead" }));
+	return {
+		kind: "ready",
+		// The total's own gap counts a call that reported in and out but no cache read as a call with no usage data, so
+		// the brief line once named more such calls than the standard line beside the same session. Both share notes.
+		tokens: [sessionTokens.total, ...sessionTokens.notes].join(` ${GLYPH.sep} `),
+		freshCached: cacheRead === null ? null : freshCachedTokens(session.totals.tokens.fact, cacheRead.fact),
+		breakdown: tokenBreakdown(view),
+		cost: session.totals.usd.display,
+		totals: { tokens: session.totals.tokens, usd: session.totals.usd },
+		visitCalls: sentCallCount(view, { from: visitFrom }),
+		visitNeverSent: neverSentCallCount(view, { from: visitFrom }),
+		sessionBeforeVisit: spentBefore(view, visitFrom),
+		byRole: session.byRole.map((row) => `${row.role} ${row.calls.display}`).join(` ${GLYPH.sep} `),
+		callTime: callTime === null ? null : usageLineFigure(callTime.time),
+		callTimeCoverage: usageCoverage(usageGap(callTime?.time) + (callTime?.untimed ?? 0), "timing data"),
+		models: view.cost("model").groups.map((group) => ({
+			key: group.key,
+			calls: group.calls.display,
+			cost: group.usd.display,
+			breakdown: tokenBreakdown(view, group.key),
+		})),
+		verified: verifiedOutcomeWords(view, sessionVerifiedOutcomes(view, entries)),
+		cache: cacheShareWords(view),
+		economy: view.economy().total,
+	};
+}
+
+/** Whether the session has a call or a worker run that began before `visitFrom`. */
+function spentBefore(view: TelemetryView, visitFrom: string): boolean {
+	try {
+		return (
+			view.calls({ to: visitFrom, limit: 1 }).matched > 0 ||
+			view.runs().some((run) => run.firstAt !== null && run.firstAt < visitFrom)
+		);
+	} catch {
+		return false;
+	}
+}
+
+/** A share some call reported or derived a read for; one no call did stays out of the card. */
+const shareWords = (share: Quantity | undefined): string | null =>
+	share && !("kind" in share.fact) && share.fact.coverage.measured + share.fact.coverage.estimated > 0
+		? share.display
+		: null;
+
+interface CacheWords {
+	share: string;
+	lastTurn: string | null;
+	/** `resumed transcript differed at <section>`, with the breaks and tokens prefilled again; null without one. */
+	replay: string | null;
+}
+
+function cacheShareWords(view: TelemetryView): CacheWords | null {
+	const report = view.cache();
+	const share = shareWords(report.share);
+	if (share === null) return null;
+	return { share, lastTurn: shareWords(report.lastTurnShare), replay: replayWords(report.replayMismatch) };
+}
+
+function replayWords(replay: ReturnType<TelemetryView["cache"]>["replayMismatch"]): string | null {
+	if (replay === undefined) return null;
+	const fact = replay.rePrefilled.fact;
+	const known =
+		"kind" in fact
+			? fact.kind === "measured" || fact.kind === "estimated"
+			: fact.unknownCount === 0 && fact.absentCount === 0;
+	const facts = [`${replay.breaks} ${replay.breaks === 1 ? "break" : "breaks"}`];
+	if (known) facts.push(`${renderUpperBound(fact, replay.rePrefilled.display)} re-prefilled`);
+	return `resumed transcript differed at ${replay.firstDivergentSection.display} (${facts.join(", ")})`;
+}
+
+/**
+ * A settled run's timeline words. The run's settle event said `succeeded` before its sealed record was read, and the
+ * timeline kept `verifier succeeded` beside a Workers row that read `validation failed` from that record, so a success
+ * is claimed only once the record has been read, in the words the Workers row uses.
+ */
+function settledWords(worker: ExitSummarySnapshot["workers"][number]): string {
+	if (worker.outcome !== "succeeded") return plainOutcomeLabel(worker.outcome);
+	if (worker.record === "not available") return "finished, run record not read";
+	return worker.against ?? worker.outcome;
+}
+
+/** This visit's account. All ledger folds and record reads happen while events arrive. */
+const BLOCK_REASON_MAX_CHARS = 120;
+
+/**
+ * Who stopped a worker's call, in the timeline's words. Every blocked finish used to read `Worker safety refusal:
+ * grep`, so a scout whose repeated grep the loop guard held back sent the operator looking for a safety rule that
+ * never fired. A guard block says so and quotes its reason; a policy block names its rule.
+ */
+function workerBlockWords(
+	tool: string,
+	payload: { reason?: string; ruleId?: string; reasonCode?: string; redundantRepeat?: boolean },
+): { guard: boolean; words: string } {
+	// The first sentence says what stopped the call; the rest is recovery advice addressed to the model.
+	const reason = (payload.reason ?? "").split(/\n|(?<=\.)\s/u)[0]?.trim() ?? "";
+	const clipped =
+		reason.length > BLOCK_REASON_MAX_CHARS ? `${reason.slice(0, BLOCK_REASON_MAX_CHARS)}${GLYPH.ellipsis}` : reason;
+	if (payload.redundantRepeat === true || payload.reasonCode === TOOL_GUARD_REASON_CODE) {
+		return { guard: true, words: `Worker tool guard stopped ${tool}${clipped ? `: ${clipped}` : ""}` };
+	}
+	const rule = payload.ruleId ?? payload.reasonCode;
+	return {
+		guard: false,
+		words: `Worker safety refusal: ${tool}${rule ? ` by rule ${rule}` : ""}${clipped ? `: ${clipped}` : ""}`,
+	};
+}
+
+export function createExitSummaryCollector(deps: CollectorDeps) {
+	const now = deps.now ?? (() => performance.now());
+	const startedAt = now();
+	const visitFrom = new Date().toISOString();
+	let baseTurns = deps.getTurns() ?? 0;
+	let priorTurns = 0;
+	/** Turns each parked session ran this visit, so the card can name the current session's own beside the visit's. */
+	const parkedTurns = new Map<string, number>();
+	let hasModelTurn = deps.session?.current()?.hasModelTurn === true;
+	/**
+	 * The session this visit reopened rather than started. A live session's meta
+	 * never carries `hasModelTurn` (only the history scan fills it in), so without
+	 * this a resumed session looked empty until a new turn ran, and quitting
+	 * printed no resume line for a session that plainly had one. A session already
+	 * current when the collector starts is one too: a fresh launch creates its
+	 * session on the first prompt.
+	 */
+	let reopenedSessionId = deps.session?.current()?.id ?? null;
+	/**
+	 * Committed folds each session ran this visit, by the session the event names. The card counts the named session's own,
+	 * so a fork never shows the parent's `Compactions: 11` (bt-47 D3), as its Tools row never shows the parent's calls.
+	 */
+	const compactions = new Map<string, number>();
+	const models = new Map<string, { target: string; model: string }>();
+	const files = new Map<string, number>();
+	/**
+	 * Each worker's changed files as absolute paths, with the workspace its record says they are in. A task worktree's
+	 * file is named as the repository path it lands at, so the write its call named and the path its record kept are
+	 * one file: the summary read `2 files changed` for a worktree coder that changed one (finding 9).
+	 */
+	const workerFiles = new Map<string, { root?: string; paths: Set<string> }>();
+	const workersWithoutWriteRecord = new Set<string>();
+	const workersWithReceiptPaths = new Set<string>();
+	/** Runs whose partial write record still named paths their own calls wrote. */
+	const workersWithRecordedPaths = new Set<string>();
+	const failures = new Map<string, number>();
+	/**
+	 * Tool calls each parked session made this visit, by session. The footer's tally restarts with every session, so a
+	 * session resumed back keeps the calls it made before it was parked (bt-11), and the card counts only the current
+	 * session's own: a fork never shows its parent's `dispatch 1` (bt-11 h).
+	 */
+	const parkedTools = new Map<string, Map<string, number>>();
+	/** A settled run's entry names its run, so its words are read from the run's record when the snapshot is taken. */
+	const timeline: Array<{ elapsedMs: number; text: string; runId?: string }> = [];
+	let timelineOmitted = 0;
+	const permissions = { granted: 0, denied: 0, expired: 0, blocked: 0 };
+	const unattended = { questions: 0, permissions: 0 };
+	const highlight = (text: string, runId?: string): void => {
+		timeline.push({ elapsedMs: Math.max(0, now() - startedAt), text, ...(runId !== undefined ? { runId } : {}) });
+		if (timeline.length > 32) {
+			timeline.shift();
+			timelineOmitted += 1;
+		}
+	};
+	const lastFailed = new Map<string, boolean>();
+	const noteFailure = (tool: string): void => {
+		failures.set(tool, (failures.get(tool) ?? 0) + 1);
+	};
+	const calls = new Map<string, { entry: unknown; cwd: string; tool: string }>();
+	const workers = new Map<string, ExitSummarySnapshot["workers"][number]>();
+	/** The run each assignment's latest attempt is, so a failover counts one worker. */
+	const assignmentRuns = new Map<string, string>();
+	const workerTools = new Map<string, ReadonlyArray<{ tool: string; count: number }>>();
+	/**
+	 * The session that dispatched each run, so its tool calls count on that session's Tools row, as its own calls do. A
+	 * fork's card listed the `read 4` of a worker its parent dispatched before the fork (TUI-9).
+	 */
+	const runSessions = new Map<string, string>();
+	const workerCapabilities = new Map<string, string>();
+	const noteModel = (target: string, model: string): void => {
+		if (target && model) models.set(`${target}\0${model}`, { target, model });
+	};
+	const absolutePath = (path: string, cwd: string): string =>
+		resolve(cwd, path.startsWith("~/") ? resolve(homedir(), path.slice(2)) : path);
+	const fileName = (abs: string, root?: string): string => {
+		const within = root === undefined ? null : relativeWithin(abs, root);
+		if (within !== null) return within || ".";
+		const local = relative(process.cwd(), abs);
+		return relativePathEscapes(local) ? abs : local || ".";
+	};
+	const noteFiles = (paths: ReadonlyArray<string>, cwd = process.cwd()): void => {
+		for (const path of paths) {
+			const name = fileName(absolutePath(path, cwd));
+			files.set(name, (files.get(name) ?? 0) + 1);
+		}
+	};
+	const noteRunFiles = (runId: string, paths: ReadonlyArray<string>, cwd = process.cwd()): void => {
+		const run = workerFiles.get(runId) ?? { paths: new Set<string>() };
+		workerFiles.set(runId, run);
+		for (const path of paths) run.paths.add(absolutePath(path, cwd));
+	};
+	/** The visit's changed files by name, each worker counting a file once however many records named it. */
+	const changedFiles = (): Map<string, number> => {
+		const counted = new Map(files);
+		for (const run of workerFiles.values()) {
+			for (const name of new Set([...run.paths].map((abs) => fileName(abs, run.root)))) {
+				counted.set(name, (counted.get(name) ?? 0) + 1);
+			}
+		}
+		return counted;
+	};
+	/** Every session this visit has had current, so the card can say its counts span more than the one it names. */
+	const visitSessions = new Set<string>();
+	const noteSession = (): void => {
+		const id = deps.session?.current()?.id;
+		if (id) visitSessions.add(id);
+	};
+	noteSession();
+	/**
+	 * Another session became current. The visit is the process, so its turns, files, workers and time keep counting
+	 * across the switch; wiping them read "0 turns · 0 files changed · 8.9s" after a /resume in a 5m49s visit with two
+	 * edits (bt-11). The park before the switch already folded the old session's turns into `priorTurns`, so only the
+	 * turn baseline and the resume line's facts move to the new session.
+	 */
+	const sessionChanged = (): void => {
+		baseTurns = deps.getTurns() ?? 0;
+		hasModelTurn ||= deps.session?.current()?.hasModelTurn === true;
+		noteSession();
+	};
+	/** Runs whose receipt this collector has read, so a receipt with no changed paths is read once. */
+	const receiptsRead = new Set<string>();
+	const observeRunResult = (runId: string, record: WorkerRunResultFacts | null): void => {
+		const worker = workers.get(runId);
+		if (!worker || record === null) return;
+		receiptsRead.add(runId);
+		const { against: _prior, refusedCalls: _refused, guardedCalls: _guarded, recordFailure: _failure, ...rest } = worker;
+		const caveat = settledRunCaveat(record);
+		const trust = record.trust ? summarizeTrustStatus(record.trust) : null;
+		const recordFailure = trust === null ? null : trustFailureWords(trust);
+		workers.set(runId, {
+			...rest,
+			...(caveat?.kind === "against" ? { against: caveat.words } : {}),
+			...((record.refusedCalls ?? 0) > 0
+				? { refusedCalls: record.refusedCalls, guardedCalls: record.guardedCalls ?? 0 }
+				: {}),
+			record: trust?.verdict ?? "unknown",
+			...(recordFailure !== null ? { recordFailure } : {}),
+			...(record.changedPaths !== undefined ? { wrote: rest.wrote === true || record.changedPaths.length > 0 } : {}),
+		});
+		if (record.toolCounts) workerTools.set(runId, record.toolCounts);
+		if (record.changedPaths !== undefined) workersWithReceiptPaths.add(runId);
+		if (record.changedRoot !== undefined) {
+			const run = workerFiles.get(runId) ?? { paths: new Set<string>() };
+			workerFiles.set(runId, { ...run, root: record.changedRoot });
+		}
+		noteRunFiles(runId, record.changedPaths ?? [], record.changedRoot);
+	};
+	const settled = (run: { runId: string; agentId: string; outcome: string }): void => {
+		const worker = workers.get(run.runId);
+		if (!worker) return;
+		workers.set(run.runId, { ...worker, outcome: run.outcome });
+		highlight(`${run.agentId} ${plainOutcomeLabel(run.outcome)}`, run.runId);
+		const writes = deps.dispatch.observedRunWrites?.(run.runId);
+		if (writes !== undefined && writes !== null)
+			workers.set(run.runId, { ...worker, outcome: run.outcome, wrote: worker.wrote === true || writes.length > 0 });
+		if (writes !== null) {
+			noteRunFiles(run.runId, writes ?? []);
+			return;
+		}
+		// The closed list is null once the worker ran bash or another opaque tool, yet the paths its own edit and write
+		// calls named stay recorded as a lower bound. Outside git no checkout delta stands in, so a coder that edited a
+		// file and ran its test read "0 files changed" (bt2-2). The receipt is still read for a measured delta.
+		workersWithoutWriteRecord.add(run.runId);
+		const recorded = deps.dispatch.observedRunWriteAttribution?.(run.runId)?.recorded ?? [];
+		if (recorded.length > 0) workersWithRecordedPaths.add(run.runId);
+		noteRunFiles(run.runId, recorded);
+	};
+	// Like the git hook line, this account is the process's, never reset with the visit.
+	const internalGit = new Map<
+		string,
+		{ operation: string; outcome: string; changes: Map<string, { path: string; kind: string; key?: string }> }
+	>();
+	const unsubscribers = [
+		deps.bus.subscribe("safety.internal_git_drifted", (event) => {
+			if (typeof event?.operation !== "string" || !Array.isArray(event.changes)) return;
+			const outcome = typeof event.outcome === "string" ? event.outcome : event.hardened === true ? "hooks-off" : "yolo";
+			const id = `${event.operation}\0${outcome}`;
+			const entry = internalGit.get(id) ?? { operation: event.operation, outcome, changes: new Map() };
+			for (const change of event.changes) {
+				entry.changes.set(`${change.path}\0${change.key ?? ""}`, {
+					path: workspacePath(change.path),
+					kind: change.kind,
+					...(change.key !== undefined ? { key: change.key } : {}),
+				});
+			}
+			internalGit.set(id, entry);
+		}),
+		deps.bus.subscribe("session.reattached", ({ sessionId }) => {
+			visitSessions.add(sessionId);
+			baseTurns = deps.getTurns() ?? 0;
+			hasModelTurn ||= deps.session?.current()?.hasModelTurn === true;
+			reopenedSessionId = sessionId;
+		}),
+		deps.bus.subscribe("session.parked", ({ sessionId }) => {
+			visitSessions.add(sessionId);
+			reopenedSessionId = null;
+			const ran = Math.max(0, (deps.getTurns() ?? 0) - baseTurns);
+			priorTurns += ran;
+			parkedTurns.set(sessionId, (parkedTurns.get(sessionId) ?? 0) + ran);
+			baseTurns = deps.getTurns() ?? 0;
+			// The footer's tally restarts with the next session, so the visit keeps the parked one's here.
+			const parked = parkedTools.get(sessionId) ?? new Map<string, number>();
+			for (const [tool, count] of deps.getToolCounts()) parked.set(tool, (parked.get(tool) ?? 0) + count);
+			parkedTools.set(sessionId, parked);
+		}),
+		// One fold is one compaction however many of its stages committed; a fold that failed or gained nothing is none.
+		// Counting `context.pruned` counted each committed stage, so an eviction plus a summary read as two.
+		deps.bus.subscribe("context.fold", (fold, context) => {
+			if (context?.agent?.role === "worker" || !fold.stages.some((stage) => stage.outcome === "committed")) return;
+			const sessionId = context?.sessionId ?? deps.session?.current()?.id ?? "";
+			compactions.set(sessionId, (compactions.get(sessionId) ?? 0) + 1);
+			highlight("Context compacted");
+		}),
+		deps.bus.subscribe("run.started", (run) => {
+			hasModelTurn = true;
+			// A council's sealed report is no worker: it runs no model and carries a member's route.
+			if (run.agentId === COUNCIL_SEALED_REPORT_AGENT_ID) return;
+			// A failover's next attempt is the same worker: it replaces the attempt before it rather than counting again.
+			const assignment = (run as { assignmentId?: unknown }).assignmentId;
+			if (typeof assignment === "string") {
+				const earlier = assignmentRuns.get(assignment);
+				if (earlier !== undefined && earlier !== run.runId) workers.delete(earlier);
+				assignmentRuns.set(assignment, run.runId);
+			}
+			workers.set(run.runId, {
+				runId: run.runId,
+				agent: run.agentId,
+				target: run.targetId,
+				model: run.wireModelId,
+				outcome: "running",
+				record: "not available",
+			});
+			workerFiles.set(run.runId, { paths: new Set() });
+			const owner = (run as { sessionId?: unknown }).sessionId;
+			const dispatcher = typeof owner === "string" && owner ? owner : deps.session?.current()?.id;
+			if (dispatcher) runSessions.set(run.runId, dispatcher);
+			highlight(`${run.agentId} started on ${run.targetId}`);
+			noteModel(run.targetId, run.wireModelId);
+		}),
+		deps.bus.subscribe("run.progressed", ({ runId, event }) => {
+			if (!workers.has(runId) || !event || typeof event !== "object") return;
+			const frame = event as {
+				type?: string;
+				message?: { role?: string };
+				toolName?: string;
+				toolCallId?: string;
+				args?: unknown;
+				payload?: {
+					tool?: string;
+					toolCallId?: string;
+					outcome?: string;
+					decision?: string;
+					reason?: string;
+					ruleId?: string;
+					reasonCode?: string;
+					redundantRepeat?: boolean;
+				};
+			};
+			if (
+				frame.type === "tool_execution_start" &&
+				typeof frame.toolName === "string" &&
+				typeof frame.toolCallId === "string"
+			) {
+				workerCapabilities.set(`${runId}\0${frame.toolCallId}`, effectiveToolCall(frame.toolName, frame.args).toolName);
+			}
+			if (frame.type === "pancode_tool_finish" && typeof frame.payload?.tool === "string") {
+				const key = `${runId}\0${frame.payload.toolCallId ?? ""}`;
+				const tool = workerCapabilities.get(key) ?? frame.payload.tool;
+				workerCapabilities.delete(key);
+				const stats = new Map((workerTools.get(runId) ?? []).map((stat) => [stat.tool, stat.count]));
+				stats.set(tool, (stats.get(tool) ?? 0) + 1);
+				workerTools.set(
+					runId,
+					[...stats].map(([tool, count]) => ({ tool, count })),
+				);
+				if (frame.payload.outcome === "error") noteFailure(tool);
+				lastFailed.set(tool, frame.payload.outcome === "error");
+				if (frame.payload.outcome === "blocked" || frame.payload.decision === "blocked") {
+					const blocked = workerBlockWords(tool, frame.payload);
+					// A guard holding back a repeated call is no approval or refusal, so it stays out of that tally.
+					if (!blocked.guard) permissions.blocked += 1;
+					highlight(blocked.words);
+				}
+			}
+		}),
+		deps.bus.subscribe("approval.resolved", (event) => {
+			permissions[event.status] += 1;
+			if (event.decidedBy === UNATTENDED_DECIDED_BY) {
+				unattended.permissions += 1;
+				highlight(`Permission timed out unanswered, denied${event.tool ? `: ${event.tool}` : ""}`);
+				return;
+			}
+			highlight(`Permission ${event.status}${event.tool ? `: ${event.tool}` : ""}`);
+		}),
+		deps.bus.subscribe("safety.blocked", (event) => {
+			permissions.blocked += 1;
+			highlight(`Safety refusal: ${event.tool}`);
+		}),
+		deps.bus.subscribe("run.completed", settled),
+		deps.bus.subscribe("run.failed", settled),
+	];
+	return {
+		sessionChanged,
+		observeChat(event: ChatLoopEvent): void {
+			if (event.type === "agent_start") {
+				const model = deps.getModel();
+				if (model) {
+					if (!models.has(`${model.target}\0${model.model}`)) highlight(`Model ${model.target} / ${model.model}`);
+					noteModel(model.target, model.model);
+				}
+			}
+			if (event.type === "message_end" && event.message.role === "assistant") hasModelTurn = true;
+			if (event.type === "tool_execution_start") {
+				hasModelTurn = true;
+				const args = event.args as Record<string, unknown> | undefined;
+				const effective = effectiveToolCall(event.toolName, args);
+				calls.set(event.toolCallId, {
+					tool: effective.toolName,
+					entry: {
+						kind: "message",
+						role: "tool_call",
+						payload: { name: event.toolName, args, toolCallId: event.toolCallId },
+					},
+					cwd: typeof effective.args?.cwd === "string" ? resolve(process.cwd(), effective.args.cwd) : process.cwd(),
+				});
+			}
+			if (event.type === "tool_execution_end") {
+				const call = calls.get(event.toolCallId);
+				// A call the output limit cut off never ran, so it is no failed tool (bt-39 a).
+				// Nor is a finish the completion protocol refused and the model retried (R2-F15).
+				if (
+					(event as { notRun?: unknown }).notRun === undefined &&
+					(event as { protocolRetry?: unknown }).protocolRetry !== true
+				) {
+					if (event.isError) noteFailure(call?.tool ?? event.toolName);
+					lastFailed.set(call?.tool ?? event.toolName, event.isError === true);
+				}
+				const answeredAlone = event.isError ? 0 : autoResolvedQuestions(event.toolName, event.result);
+				if (answeredAlone > 0) {
+					unattended.questions += answeredAlone;
+					highlight(`PanCode answered ${answeredAlone} unanswered question${answeredAlone === 1 ? "" : "s"}`);
+				}
+				if (call) {
+					const payload = { ...event };
+					const place = { workspaceRoot: process.cwd(), cwd: call.cwd };
+					noteFiles(
+						mutatingReceipts([call.entry, { kind: "message", role: "tool_result", payload }], place).paths,
+						call.cwd,
+					);
+					calls.delete(event.toolCallId);
+				}
+			}
+		},
+		observeRunResult,
+		observeLocalEntry(entry: unknown): void {
+			noteFiles(mutatingReceipts([entry], { workspaceRoot: process.cwd() }).paths);
+		},
+		snapshot(): ExitSummarySnapshot | null {
+			const session = deps.session?.current();
+			if (!session || (!hasModelTurn && reopenedSessionId !== session.id)) return null;
+			for (const runId of workersWithoutWriteRecord) {
+				if (!workers.has(runId) || receiptsRead.has(runId)) continue;
+				try {
+					observeRunResult(runId, deps.readRunResult?.(runId) ?? null);
+				} catch {
+					// An unreadable receipt leaves the worker named as one that kept no write record.
+				}
+			}
+			const changed = changedFiles();
+			let gitHooks: ReadonlyArray<{ path: string; kind: string; key?: string }> = [];
+			try {
+				gitHooks = (deps.gitHookChanges?.() ?? []).map((change) => ({
+					path: workspacePath(change.path),
+					kind: change.kind,
+					...(change.key !== undefined ? { key: change.key } : {}),
+				}));
+			} catch {
+				// The guard reads the filesystem; an unreadable tree leaves the line out rather than the summary.
+			}
+			const tools = new Map(parkedTools.get(session.id));
+			for (const [tool, count] of deps.getToolCounts()) tools.set(tool, (tools.get(tool) ?? 0) + count);
+			let otherSessionToolCalls = 0;
+			for (const [sessionId, parked] of parkedTools) {
+				if (sessionId === session.id) continue;
+				for (const count of parked.values()) otherSessionToolCalls += count;
+			}
+			for (const [runId, stats] of workerTools) {
+				const own = (runSessions.get(runId) ?? session.id) === session.id;
+				for (const { tool, count } of stats) {
+					if (own) tools.set(tool, (tools.get(tool) ?? 0) + count);
+					else otherSessionToolCalls += count;
+				}
+			}
+			let entries: ReadonlyArray<unknown> = [];
+			try {
+				entries = deps.readSessionEntries?.() ?? [];
+			} catch {
+				// An unreadable ledger counts no ledger outcome; the card still closes with the spend it has.
+			}
+			const spend = exitSpend(deps.telemetry.read?.live(), visitFrom, entries);
+			const autonomy = deps.autonomy?.() ?? null;
+			const sessions = new Set([...visitSessions, session.id]).size;
+			const liveTurns = Math.max(0, (deps.getTurns() ?? 0) - baseTurns - (deps.undeliveredTurns?.() ?? 0));
+			return {
+				sessionId: session.id,
+				sessionName: session.name ?? null,
+				wallMs: Math.max(0, now() - startedAt),
+				turns: priorTurns + liveTurns,
+				models: [...models.values()],
+				spend,
+				// A tool no call ran (a worker's refused calls settle as zero) is not a row.
+				tools: [...tools]
+					.filter(([, count]) => count > 0)
+					.map(([tool, count]) => ({
+						tool,
+						count,
+						failures: failures.get(tool) ?? 0,
+						...(lastFailed.has(tool) ? { lastFailed: lastFailed.get(tool) === true } : {}),
+					}))
+					.sort((a, b) => a.tool.localeCompare(b.tool)),
+				files: [...changed.keys()].sort(),
+				fileChanges: [...changed].map(([path, count]) => ({ path, count })).sort((a, b) => a.path.localeCompare(b.path)),
+				unrecordedWorkerFiles: [...workersWithoutWriteRecord].filter(
+					(runId) => workers.has(runId) && !workersWithReceiptPaths.has(runId) && !workersWithRecordedPaths.has(runId),
+				).length,
+				permissions: { ...permissions },
+				unattended: { ...unattended },
+				timeline: timeline.map(({ elapsedMs, text, runId }) => {
+					const worker = runId !== undefined ? workers.get(runId) : undefined;
+					return { elapsedMs, text: worker ? `${worker.agent} ${settledWords(worker)}` : text };
+				}),
+				timelineOmitted,
+				workers: [...workers.values()],
+				compactions: compactions.get(session.id) ?? 0,
+				...(gitHooks.length > 0 ? { gitHooks } : {}),
+				...(autonomy !== null ? { autonomy } : {}),
+				...(sessions > 1
+					? {
+							visitSessions: sessions,
+							sessionTurns: (parkedTurns.get(session.id) ?? 0) + liveTurns,
+							otherSessionToolCalls,
+						}
+					: {}),
+				...(internalGit.size > 0
+					? {
+							internalGit: [...internalGit.values()].map((entry) => ({
+								operation: entry.operation,
+								outcome: entry.outcome,
+								changes: [...entry.changes.values()],
+							})),
+						}
+					: {}),
+			};
+		},
+		dispose(): void {
+			for (const unsubscribe of unsubscribers) unsubscribe();
+		},
+	};
+}

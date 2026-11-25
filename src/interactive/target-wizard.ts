@@ -1,0 +1,588 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { ConfigureWizardHost, HostedTargetOptions } from "../cli/configure-host.js";
+import type { SelectOptions, SelectResult, TextPromptOptions, TextResult } from "../cli/select.js";
+import type { Component, OverlayHandle, TUI } from "../engine/tui.js";
+import {
+	Input,
+	isKeyRelease,
+	matchesKey,
+	stripTerminalSequences,
+	truncateToWidth,
+	visibleWidth,
+	wrapTextWithAnsi,
+} from "../engine/tui.js";
+import { backOutOneLayer, type EscapeLayers, escapeHintEntry } from "./escape-layers.js";
+import { maybeOpenExternalUrl } from "./open-external-url.js";
+import type { HintEntry, RowBudgetedBody } from "./overlay-frame.js";
+import {
+	centeredWindow,
+	FILTER_HINT,
+	fitHintEntries,
+	fitHintEntryList,
+	fitRows,
+	selectionLabel,
+	selectionMark,
+	showPancodeOverlayFrame,
+} from "./overlay-frame.js";
+import { GLYPH, type PancodeTheme, pancodeTheme } from "./theme/index.js";
+
+/** An http(s) link: the operator copies it whole (a sign-in URL), so it is never shortened. */
+const LINK = /https?:\/\//;
+
+/**
+ * A note wrapped on its words, with a word wider than the row (a settings path)
+ * shortened in its middle so it stays one readable token instead of breaking
+ * mid-word across two rows. A link wraps across rows whole instead.
+ */
+function wrapNote(line: string, width: number): string[] {
+	const room = Math.max(4, width);
+	const words = line.split(" ").map((word) => {
+		if (visibleWidth(word) <= room || LINK.test(word)) return word;
+		const mark = visibleWidth(GLYPH.ellipsis);
+		const tail = Math.ceil((room - mark) * 0.6);
+		return `${word.slice(0, room - mark - tail)}${GLYPH.ellipsis}${word.slice(word.length - tail)}`;
+	});
+	return wrapTextWithAnsi(words.join(" "), room);
+}
+
+/**
+ * A note on one row. A row that ends in a path keeps the file name: the path
+ * gives up its middle, because `~/…/config/settings.yaml` still says where the
+ * result goes and `~/projects/scratch/…` does not.
+ */
+function noteRow(line: string, width: number): string {
+	if (visibleWidth(line) <= width) return line;
+	const words = line.split(" ");
+	const last = words.at(-1) ?? "";
+	const before = words.slice(0, -1).join(" ");
+	const room = width - visibleWidth(before) - 1;
+	if (words.length > 1 && last.includes("/") && room >= 12) {
+		const mark = visibleWidth(GLYPH.ellipsis);
+		const tail = Math.ceil((room - mark) * 0.6);
+		return `${before} ${last.slice(0, room - mark - tail)}${GLYPH.ellipsis}${last.slice(last.length - tail)}`;
+	}
+	return truncateToWidth(line, width, GLYPH.ellipsis);
+}
+
+/** At most `max` rows, the last marked when more were cut. */
+function capRows(rows: string[], max: number, width: number): string[] {
+	if (rows.length <= max) return rows;
+	const kept = rows.slice(0, max);
+	const last = kept.at(-1) ?? "";
+	kept[max - 1] =
+		visibleWidth(last) + 1 + visibleWidth(GLYPH.ellipsis) <= width
+			? `${last} ${GLYPH.ellipsis}`
+			: truncateToWidth(last, width, GLYPH.ellipsis);
+	return kept;
+}
+
+/** The step's question in bold, the lines under it dimmed, the way the CLI prints them. */
+function askTone(theme: PancodeTheme, row: string, index: number): string {
+	return index === 0 ? theme.style("body", row, { bold: true }) : theme.fg("annotation", row);
+}
+
+/**
+ * The head of a step too tall for its rows: the question, then as many lines
+ * under it as fit, then the newest notes behind a row that counts the rest.
+ * Each note is kept whole or not at all, so a link never loses rows.
+ */
+function questionFirst(
+	theme: PancodeTheme,
+	notes: ReadonlyArray<ReadonlyArray<string>>,
+	asks: ReadonlyArray<string>,
+	room: number,
+	width: number,
+): string[] {
+	const askRows = asks.slice(0, Math.max(1, Math.min(asks.length, room)));
+	const noteRoom = room - askRows.length;
+	const all = notes.flat();
+	if (noteRoom >= all.length) return [...all, ...askRows];
+	if (noteRoom < 1) return askRows;
+	const kept: string[] = [];
+	let left = notes.length;
+	for (let note = notes[left - 1]; note && kept.length + note.length <= noteRoom - 1; note = notes[left - 1]) {
+		kept.unshift(...note);
+		left -= 1;
+	}
+	return [
+		theme.fg("annotation", noteRow(`${GLYPH.ellipsis} ${left} earlier ${left === 1 ? "note" : "notes"}`, width)),
+		...kept,
+		...askRows,
+	];
+}
+
+/** What the docked surface runs: the shared target wizard, or Quick Connect from an endpoint URL. */
+export type TargetWizardOptions = HostedTargetOptions | { mode: "url" };
+
+interface PendingChoice {
+	kind: "select";
+	options: SelectOptions<unknown>;
+	selected: number;
+	finish: (result: SelectResult<unknown>) => void;
+}
+interface PendingText {
+	kind: "text";
+	options: TextPromptOptions;
+	finish: (result: TextResult) => void;
+}
+
+/** A text step's identity across visits: what it asks, which is the same each time the wizard walks onto it. */
+function textStepKey(options: TextPromptOptions): string {
+	const heading = options.heading;
+	return JSON.stringify([typeof heading === "string" ? [heading] : [...(heading ?? [])], options.hint ?? ""]);
+}
+
+/** #385: prompts are dock components; the shared CLI wizard retains every step and write. */
+export class TargetWizardSurface implements Component, RowBudgetedBody, ConfigureWizardHost {
+	private readonly abort = new AbortController();
+	readonly signal = this.abort.signal;
+	private pending: PendingChoice | PendingText | null = null;
+	private readonly input = new Input();
+	private messages: string[] = [];
+	/** Where the reports since the last answer start: the prompt on screen shows every one, because they say why it is there. */
+	private freshFrom = 0;
+	private bodyRows = 16;
+	/** Cells the composer rail has for this wizard's keys; zero before the first dock render. */
+	private railRoom = 0;
+	private complete = false;
+	private problem = "";
+	private waitLabel: string | null = null;
+	/** Stops the wait on screen without leaving the wizard (a browser sign-in); null when nothing can be stopped. */
+	private stopWait: (() => void) | null = null;
+	/** Esc walks back one step, and the rail promises Ctrl+C leaves the wizard. */
+	readonly ownsCtrlC = true;
+	/** Answers the wizard has taken and not gone back over: none means Esc leaves the wizard rather than a step. */
+	private answered = 0;
+	/** Text typed into a step and left with Esc, by step, so walking forward again finds it. Masked steps keep nothing. */
+	private readonly keptText = new Map<string, string>();
+
+	constructor(
+		private readonly requestRender: () => void,
+		private readonly close: () => void,
+	) {}
+
+	get keyboardScope(): "edit" | "review" {
+		return this.pending?.kind === "text" || (this.pending?.kind === "select" && this.pending.options.searchable)
+			? "edit"
+			: "review";
+	}
+
+	undoInput(): boolean {
+		if (this.keyboardScope !== "edit") return false;
+		this.input.applyEdit("undo");
+		return true;
+	}
+
+	setBodyRows(rows: number): void {
+		this.bodyRows = Math.max(1, rows);
+	}
+
+	setRailRoom(cells: number): void {
+		this.railRoom = Math.max(0, Math.floor(cells));
+	}
+
+	/**
+	 * The step on screen, counted from the first question: the flow branches on
+	 * the answers, so the wizard knows how far in it is but never how many steps
+	 * remain, and the title says only what it knows. Null when no step is asking.
+	 */
+	stepNumber(): number | null {
+		return this.pending === null || this.complete ? null : this.answered + 1;
+	}
+	cancelled(): boolean {
+		return this.signal.aborted;
+	}
+	clearMessages(): void {
+		this.messages = [];
+		this.freshFrom = 0;
+	}
+	report(line: string): void {
+		this.messages.push(stripTerminalSequences(line));
+		this.requestRender();
+	}
+	waiting(label: string | null): void {
+		this.waitLabel = label;
+		this.requestRender();
+	}
+	openUrl(url: string): void {
+		maybeOpenExternalUrl(url);
+	}
+	stoppableWait(stop: (() => void) | null): void {
+		this.stopWait = stop;
+		this.requestRender();
+	}
+	dismissPrompt(): void {
+		const pending = this.pending;
+		this.pending = null;
+		pending?.finish({ kind: "quit" });
+		this.requestRender();
+	}
+	cancel(): void {
+		this.abort.abort();
+		this.dismissPrompt();
+	}
+
+	select<T>(options: SelectOptions<T>): Promise<SelectResult<T>> {
+		if (this.cancelled()) return Promise.resolve({ kind: "quit" });
+		this.input.setValue("");
+		this.waitLabel = null;
+		return new Promise((resolve) => {
+			this.pending = {
+				kind: "select",
+				options: options as SelectOptions<unknown>,
+				selected: options.initialIndex ?? 0,
+				finish: (result) => resolve(result as SelectResult<T>),
+			};
+			this.problem = "";
+			this.requestRender();
+		});
+	}
+
+	text(options: TextPromptOptions): Promise<TextResult> {
+		if (this.cancelled()) return Promise.resolve({ kind: "quit" });
+		const kept = options.mask ? undefined : this.keptText.get(textStepKey(options));
+		this.input.setValue(kept ?? options.initial ?? "");
+		this.input.handleInput("\x1b[F");
+		this.waitLabel = null;
+		return new Promise((resolve) => {
+			this.pending = { kind: "text", options, finish: resolve };
+			this.problem = "";
+			this.requestRender();
+		});
+	}
+
+	async start(options: TargetWizardOptions): Promise<number> {
+		try {
+			let code: number;
+			if (options.mode === "url") {
+				const { runHostedQuickConnect } = await import("./quick-connect-host.js");
+				code = await runHostedQuickConnect(this);
+			} else {
+				const { runHostedTargetWizard } = await import("../cli/configure-host.js");
+				code = await runHostedTargetWizard(this, options);
+			}
+			this.complete = true;
+			this.requestRender();
+			return code;
+		} catch (error) {
+			this.report(error instanceof Error ? error.message : String(error));
+			this.complete = true;
+			return 1;
+		}
+	}
+
+	private choices(pending: PendingChoice): number[] {
+		const query = this.input.getValue().toLowerCase();
+		return pending.options.choices.flatMap((choice, index) =>
+			!pending.options.searchable || `${choice.label} ${choice.hint ?? ""}`.toLowerCase().includes(query) ? [index] : [],
+		);
+	}
+
+	handleInput(data: string): void {
+		if (isKeyRelease(data)) return;
+		if (matchesKey(data, "ctrl+c")) {
+			this.cancel();
+			this.close();
+			return;
+		}
+		if (matchesKey(data, "escape")) {
+			backOutOneLayer(this.escapeLayers());
+			return;
+		}
+		const pending = this.pending;
+		if (!pending) {
+			if (this.complete && matchesKey(data, "enter")) this.close();
+			return;
+		}
+		if (matchesKey(data, "enter")) {
+			if (pending.kind === "text") {
+				const value = this.input.getValue();
+				this.problem = pending.options.validate?.(value) ?? "";
+				if (this.problem) {
+					this.requestRender();
+					return;
+				}
+				this.pending = null;
+				this.answered += 1;
+				this.freshFrom = this.messages.length;
+				this.keptText.delete(textStepKey(pending.options));
+				pending.finish({ kind: "value", value });
+			} else {
+				const choice = pending.options.choices[pending.selected];
+				if (choice && this.choices(pending).includes(pending.selected)) {
+					this.pending = null;
+					this.answered += 1;
+					this.freshFrom = this.messages.length;
+					pending.finish({ kind: "selected", value: choice.value });
+				}
+			}
+			return;
+		}
+		if (pending.kind === "select" && (matchesKey(data, "up") || matchesKey(data, "down"))) {
+			const choices = this.choices(pending);
+			const delta = matchesKey(data, "up") ? -1 : 1;
+			const at = Math.max(0, choices.indexOf(pending.selected));
+			pending.selected = choices[(at + delta + choices.length) % choices.length] ?? 0;
+		} else if (this.keyboardScope === "edit") {
+			this.input.handleInput(data);
+			if (pending.kind === "select" && !this.choices(pending).includes(pending.selected))
+				pending.selected = this.choices(pending)[0] ?? 0;
+		}
+		this.requestRender();
+	}
+
+	render(width: number): string[] {
+		const theme = pancodeTheme();
+		const pending = this.pending;
+		const rows: string[] = [];
+		if (!pending) {
+			// Newest rows win: a wrapped sign-in link would otherwise push what the wizard is waiting on out of the body.
+			const log = this.messages.flatMap((line) => wrapTextWithAnsi(line, width));
+			rows.push(...log.slice(-Math.max(1, this.bodyRows - 1)));
+			rows.push(
+				theme.fg(
+					"annotation",
+					this.complete ? "Enter returns to Settings" : (this.waitLabel ?? `Reading target details${GLYPH.ellipsis}`),
+				),
+			);
+			return fitRows(rows, width, this.bodyRows);
+		}
+		// A rail too narrow for Ctrl+C names it under the step instead, so the way out of the whole wizard is never on no surface.
+		const lost = this.railRoom > 0 && this.ctrlCDropped();
+		const prompt = this.renderPrompt(pending, width, lost ? 1 : 0);
+		if (lost) prompt.push(theme.fg("annotation", noteRow("Ctrl+C cancels the wizard, nothing saved", width)));
+		return fitRows(prompt, width, this.bodyRows);
+	}
+
+	private ctrlCDropped(): boolean {
+		const entries = this.railEntries();
+		const ctrlC = entries.find((entry) => entry.key === "Ctrl+C");
+		return ctrlC !== undefined && !fitHintEntryList(entries, this.railRoom).kept.includes(ctrlC);
+	}
+
+	/**
+	 * A step in the rows the dock has. The question and the choices outrank the
+	 * notes above them: when the step does not fit, each note shrinks to one
+	 * marked row, then the lines under the question do, then the oldest notes give
+	 * way to a row that counts them, and a list still too long for its rows
+	 * windows around the selection with a row that says where it is. Nothing is
+	 * cut without a mark. The selected choice's description wraps in full under
+	 * it, so a narrow dock still reads what the choice means.
+	 */
+	private renderPrompt(pending: PendingChoice | PendingText, width: number, reserved = 0): string[] {
+		const theme = pancodeTheme();
+		const budget = Math.max(1, this.bodyRows - reserved);
+		// A prompt that follows a failure is there because of it, so everything reported since the last answer stays up.
+		const fresh = this.messages.slice(this.freshFrom);
+		const notes = fresh.length > 0 ? fresh : this.messages.slice(-1);
+		const heading = pending.options.heading;
+		const asks = [
+			...(typeof heading === "string" ? [heading] : [...(heading ?? [])]),
+			...(pending.kind === "text" && pending.options.hint ? [pending.options.hint] : []),
+		]
+			.map((line) => stripTerminalSequences(line))
+			.filter((line) => line.trim());
+		const problem = this.problem ? wrapTextWithAnsi(theme.fg("error", this.problem), width) : [];
+		const field =
+			pending.kind === "text"
+				? pending.options.mask
+					? // A masked field still shows where typing goes; an empty one was a blank row under the prompt.
+						[
+							this.input.getValue().length > 0
+								? theme.fg("inputText", `> ${GLYPH.bullet.repeat(this.input.getValue().length)}`)
+								: `${theme.fg("inputText", ">")} ${theme.fg("annotation", `type or paste; each character shows as ${GLYPH.bullet}`)}`,
+						]
+					: this.input.render(width).map((line) => theme.base("inputText", line))
+				: pending.options.searchable
+					? [theme.fg("searchQuery", `Filter: ${this.input.getValue()}`)]
+					: [];
+		const fixed = problem.length + field.length;
+		const fullNotes = notes.flatMap((line) => wrapNote(line, width).map((row) => theme.fg("body", row)));
+		const fullAsks = asks.flatMap((line, index) => wrapNote(line, width).map((row) => askTone(theme, row, index)));
+		// A note with a link keeps every row of it, trimmed of blank rows; any other note shrinks to one marked row.
+		const shortNoteRows = notes.map((line) =>
+			(LINK.test(line) ? wrapNote(line.trim(), width) : [noteRow(line, width)]).map((row) => theme.fg("body", row)),
+		);
+		const shortNotes = shortNoteRows.flat();
+		const shortAsks = asks.map((line, index) => askTone(theme, noteRow(line, width), index));
+		if (pending.kind === "text") {
+			const head = [fullNotes, shortNotes].map((noteRows) => [...noteRows, ...fullAsks]);
+			const fit =
+				head.find((rows) => rows.length + fixed <= budget) ??
+				questionFirst(theme, shortNoteRows, shortAsks, budget - fixed, width);
+			return [...fit, ...problem, ...field];
+		}
+		const choices = this.choices(pending);
+		const hintWidth = Math.max(8, width - 4);
+		const hintOf = (index: number): string[] => {
+			const hint = pending.options.choices[index]?.hint;
+			return hint ? capRows(wrapNote(stripTerminalSequences(hint), hintWidth), 3, hintWidth) : [];
+		};
+		const hintRows = hintOf(pending.selected);
+		// Room for the longest description, so the notes keep one form as the selection moves.
+		const hintRoom = Math.max(hintRows.length, ...choices.map((index) => hintOf(index).length));
+		const allChoiceRows = Math.max(1, choices.length) + hintRoom;
+		const fewestChoiceRows =
+			choices.length === 0 ? 1 : Math.min(choices.length, 3) + hintRoom + (choices.length > 3 ? 1 : 0);
+		const tiers = [
+			[...fullNotes, ...fullAsks],
+			[...shortNotes, ...fullAsks],
+			[...shortNotes, ...shortAsks],
+		];
+		// Every choice on screen beats every note at full length; a windowed list is the last resort.
+		const head =
+			tiers.find((tier) => tier.length + fixed + allChoiceRows <= budget) ??
+			tiers.find((tier) => tier.length + fixed + fewestChoiceRows <= budget) ??
+			questionFirst(theme, shortNoteRows, shortAsks, budget - fixed - fewestChoiceRows, width);
+		const out = [...head, ...problem, ...field];
+		if (choices.length === 0) {
+			out.push(theme.fg("emptyState", "No matching choices"));
+			return out;
+		}
+		const height = Math.max(fewestChoiceRows, budget - out.length);
+		const windowed = choices.length + hintRows.length > height;
+		const slots = Math.max(1, height - hintRows.length - (windowed ? 1 : 0));
+		const [start, end] = centeredWindow(choices.length, Math.max(0, choices.indexOf(pending.selected)), slots);
+		for (const index of choices.slice(start, end)) {
+			const choice = pending.options.choices[index];
+			if (!choice) continue;
+			const selected = index === pending.selected;
+			const label = stripTerminalSequences(choice.label);
+			const hint = choice.hint ? stripTerminalSequences(choice.hint) : "";
+			// An unselected row carries its hint only whole, and only when the hint adds
+			// to the label: `LiteLLM gateway · LiteLLM gateway with…` said the name twice
+			// and cut the rest. The selected row's hint is wrapped beneath it in full.
+			const inline = `${selectionMark(false)} ${selectionLabel(false, label)}${theme.fg("annotation", ` ${GLYPH.sep} ${hint}`)}`;
+			const showHint =
+				hint.length > 0 && !hint.toLowerCase().startsWith(label.toLowerCase()) && visibleWidth(inline) <= width;
+			out.push(selected || !showHint ? `${selectionMark(selected)} ${selectionLabel(selected, label)}` : inline);
+			if (selected) for (const row of hintRows) out.push(`    ${theme.fg("annotation", row)}`);
+		}
+		if (windowed) {
+			out.push(
+				theme.fg(
+					"annotation",
+					noteRow(`${start + 1}${GLYPH.range}${end} of ${choices.length} choices ${GLYPH.sep} ${GLYPH.upDown} more`, width),
+				),
+			);
+		}
+		return out;
+	}
+
+	invalidate(): void {}
+
+	/**
+	 * Esc by the shared rule: a step with an answer behind it goes back to that
+	 * answer, keeping typed text; the first step has nothing behind it, so Esc
+	 * leaves the wizard and returns to Settings at once, with nothing saved. It
+	 * used to send the first step a `back` the flow read as a cancel, which
+	 * printed a cancelled page that took a second Esc to leave.
+	 */
+	private escapeLayers(): EscapeLayers {
+		const pending = this.pending;
+		const leave = (): void => {
+			this.cancel();
+			this.close();
+		};
+		const stopWait = this.stopWait;
+		return [
+			// A typed filter is the innermost layer of a searchable step: Esc clears it and keeps the step.
+			pending?.kind === "select" &&
+				pending.options.searchable === true &&
+				this.input.getValue().length > 0 && {
+					verb: "clear filter",
+					short: "clear",
+					back: () => {
+						this.input.setValue("");
+						this.requestRender();
+					},
+				},
+			pending === null &&
+				stopWait !== null && {
+					verb: "stop waiting, back a step",
+					short: "stop waiting",
+					back: () => {
+						this.stopWait = null;
+						stopWait();
+					},
+				},
+			pending !== null &&
+				this.answered > 0 && {
+					verb: pending.kind === "text" && !pending.options.mask ? "back, keeps draft" : "back a step",
+					short: "back",
+					back: () => this.stepBack(pending),
+				},
+			this.complete && { verb: "back to Settings", back: () => this.close() },
+			{ verb: "cancel, nothing saved", short: "cancel", back: leave },
+		];
+	}
+
+	private stepBack(pending: PendingChoice | PendingText): void {
+		if (pending.kind === "text" && !pending.options.mask) {
+			const typed = this.input.getValue();
+			const key = textStepKey(pending.options);
+			if (typed !== (pending.options.initial ?? "") && typed.trim().length > 0) this.keptText.set(key, typed);
+			else this.keptText.delete(key);
+		}
+		this.pending = null;
+		this.answered = Math.max(0, this.answered - 1);
+		this.freshFrom = this.messages.length;
+		pending.finish({ kind: "back" });
+	}
+
+	/** The rail for the step on screen: a finished wizard offers only the way out, and Enter and Esc both take it. */
+	railHint(innerWidth: number): string {
+		return fitHintEntries(this.railEntries(), innerWidth - 3);
+	}
+
+	private railEntries(): HintEntry[] {
+		const pending = this.pending;
+		const esc = escapeHintEntry(this.escapeLayers());
+		const cancel: HintEntry = { key: "Ctrl+C", verb: "cancel, nothing saved", short: "cancel" };
+		if (!pending) {
+			if (this.complete) return [{ key: "Enter/Esc", verb: "back to Settings" }];
+			return [...(this.stopWait === null ? [] : [cancel]), ...(esc === null ? [] : [esc])];
+		}
+		return [
+			...(pending.kind === "select"
+				? [{ key: GLYPH.upDown, verb: "choose" }, ...(pending.options.searchable ? [FILTER_HINT] : [])]
+				: []),
+			{ key: "Enter", verb: "continue" },
+			...(this.answered > 0 ? [cancel] : []),
+			...(esc === null ? [] : [esc]),
+		];
+	}
+}
+
+export function openTargetWizard(tui: TUI, options: TargetWizardOptions, onClose: () => void): OverlayHandle {
+	let handle: OverlayHandle | undefined;
+	const close = (): void => {
+		handle?.hide();
+		onClose();
+		tui.requestRender();
+	};
+	const body = new TargetWizardSurface(() => tui.requestRender(), close);
+	handle = showPancodeOverlayFrame(tui, body, {
+		title: () => {
+			const step = body.stepNumber();
+			const name =
+				options.mode === "edit"
+					? `Edit target: ${options.target.id}`
+					: options.mode === "url"
+						? "Connect by URL"
+						: "Add target";
+			return step === null ? name : `${name} ${GLYPH.sep} step ${step}`;
+		},
+		markerId: "target-wizard",
+		footerHint: (innerWidth) => body.railHint(innerWidth),
+	});
+	void body.start(options);
+	return {
+		...handle,
+		hide() {
+			body.cancel();
+			handle?.hide();
+		},
+	};
+}

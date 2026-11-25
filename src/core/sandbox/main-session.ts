@@ -1,0 +1,1238 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { randomUUID } from "node:crypto";
+import {
+	chmodSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import path from "node:path";
+import type { YoloConfinement } from "../../domains/safety/autonomy.js";
+import { canonicalizePath } from "../path-canonical.js";
+import { isSameOrDescendant, relativePathEscapes } from "../path-containment.js";
+import { renderCount } from "../telemetry/render.js";
+import {
+	assertPancodeDirLayout,
+	pancodeCachePath,
+	pancodeConfigPath,
+	pancodeDataPath,
+	pancodeStatePath,
+} from "../xdg.js";
+import { sandboxAvailability } from "./availability.js";
+import { buildSandboxInvocation } from "./invocation.js";
+import { withMountAliases } from "./mount-aliases.js";
+import { holdSandboxCacheLease, sandboxCacheDir } from "./sandbox-cache.js";
+import { discoverSecretMasks, SECRET_SCAN_LIMITS } from "./secret-files.js";
+import type {
+	SandboxAvailability,
+	SandboxCommand,
+	SandboxEnvPolicy,
+	SandboxInvocationSpec,
+	SandboxMaskedPath,
+	SandboxMode,
+	UnixSocketMode,
+} from "./types.js";
+import { unixSocketHostState, unixSocketLaunch, unixSocketStateLine } from "./unix-sockets.js";
+import { protectedInside } from "./worker-policy.js";
+import { pancodeConfigDirMask, physicalSandboxPath, settingsFileMasks, workerSandboxMasks } from "./worker-process.js";
+
+/**
+ * The main session's shell sandbox. At autonomy default every bash and
+ * run_script call of the operator's own session, and every verify check that
+ * runs a project command, runs inside the OS sandbox the
+ * dispatched workers use, whenever a backend exists and `safety.sandbox` is
+ * not off: the filesystem stays readable, writes land only in the workspace,
+ * the effective scratch roots, PanCode's sandbox cache and the repository's git
+ * dirs, credentials and the SSH agent are masked, the secret files inside the
+ * workspace and scratch roots cannot be read, the inherited environment loses
+ * its credential variables (env-scrub.ts), the command gets its own PID
+ * namespace, and the network stays on because this is the operator's own
+ * session. Unlike a worker the command sees the real /tmp, where operators
+ * expect benchmark outputs. Containment is what lets such a call run without
+ * an approval ask; a call that asks to leave it (`unsandboxed: true`) or that
+ * publishes is judged instead. Under the operator's yolo nothing runs here
+ * unless `safety.sandbox` is required: then every command default would
+ * contain, and every script, runs here (#419, #407).
+ */
+
+/**
+ * Whether the main session's shell calls at autonomy default run contained on
+ * this host: `safety.sandbox` is auto or required and a backend answered the
+ * probe. With no backend nothing is contained and the default rails apply.
+ */
+export function mainShellContained(mode: SandboxMode, availability: SandboxAvailability): boolean {
+	if (mode === "off") return false;
+	return availability.available && availability.backend !== null && availability.executable !== null;
+}
+
+/**
+ * How the operator's yolo treats a script on this host. Yolo runs scripts
+ * unsandboxed by default (#407): it is the operator's skip-permissions mode,
+ * and `auto` keeps the OS sandbox for dispatched workers only. Only
+ * `safety.sandbox: required` keeps the script sandbox: `sandboxed` runs the
+ * script under the backend, and `refused` refuses it because no backend
+ * exists.
+ */
+export type YoloScriptSandboxState = "sandboxed" | "unsandboxed" | "refused";
+
+export function yoloScriptSandboxState(mode: SandboxMode, availability: SandboxAvailability): YoloScriptSandboxState {
+	if (mode !== "required") return "unsandboxed";
+	if (availability.available && availability.backend !== null && availability.executable !== null) return "sandboxed";
+	return "refused";
+}
+
+/**
+ * How the operator's yolo runs shell commands on this host. Contained yolo
+ * (the default, `effectiveYoloConfinement`) admits as default does, so its
+ * commands run wherever default's do; only unconfined yolo falls to the
+ * script sandbox state above. Doctor reads this so its row matches what a
+ * yolo run records and does (TC-1 Q2).
+ */
+type YoloShellState = "contained-sandbox" | "contained-rails" | YoloScriptSandboxState;
+
+export function yoloShellState(
+	confinement: YoloConfinement,
+	mode: SandboxMode,
+	availability: SandboxAvailability,
+): YoloShellState {
+	if (confinement === "contained")
+		return mainShellContained(mode, availability) ? "contained-sandbox" : "contained-rails";
+	return yoloScriptSandboxState(mode, availability);
+}
+
+/** Whether the main session's shell commands run under the OS sandbox at this autonomy level. */
+export function mainSessionShellSandboxed(
+	autonomy: string,
+	confinement: YoloConfinement,
+	mode: SandboxMode,
+	availability: SandboxAvailability,
+): boolean {
+	if (autonomy !== "yolo") return mainShellContained(mode, availability);
+	const state = yoloShellState(confinement, mode, availability);
+	return state === "contained-sandbox" || state === "sandboxed";
+}
+
+/**
+ * What a yolo notice may say about contained yolo's shell sandbox and safety
+ * judge, read from the facts a yolo run records: the same mode and probe as
+ * `yoloShellState` and a dispatch envelope's sandbox backend, and the judge
+ * switch the judge itself reads. No notice claims a sandbox or a judge that is off (M-19).
+ */
+export function yoloContainmentNotes(
+	mode: SandboxMode,
+	availability: SandboxAvailability,
+	judgeEnabled: boolean,
+): { backend: SandboxAvailability["backend"]; why: string | null; sandbox: string; judge: string } {
+	const contained = mainShellContained(mode, availability);
+	const why = contained
+		? null
+		: mode === "off"
+			? "safety.sandbox is off"
+			: (availability.reason ?? "no sandbox backend");
+	return {
+		backend: contained ? availability.backend : null,
+		why,
+		sandbox: contained
+			? `commands run in the ${availability.backend} OS sandbox`
+			: `commands run without an OS sandbox (${why}), as default runs them`,
+		judge: judgeEnabled
+			? "the safety judge reviews what would need approval"
+			: "the safety judge is off (safety.judge.enabled), so what would need approval is refused",
+	};
+}
+
+/**
+ * Shown once when yolo first runs on a home that has not recorded its confinement (ob-yolo D1), with this host's real
+ * containment.
+ */
+export function yoloContainedNotice(
+	safety: { sandbox: SandboxMode; judge: { enabled: boolean } },
+	availability: SandboxAvailability,
+): string {
+	const notes = yoloContainmentNotes(safety.sandbox, availability, safety.judge.enabled);
+	return `Yolo runs contained: ${notes.sandbox}; ${notes.judge}; nothing waits for you, and a call that would need you is refused back to PanCode instead of asking. To run yolo unconfined, set safety.yoloConfinement: unconfined and safety.yoloUnconfinedAccepted: true in your user settings, or choose it in /settings.`;
+}
+
+export interface MainSandboxPolicyInput {
+	/** The session workspace root. */
+	workspace: string;
+	/** Effective scratch roots: the built-in temp roots, the real /tmp among them, plus `safety.scratchRoots`. */
+	scratchRoots: ReadonlyArray<string>;
+	/**
+	 * The contained commands' own tool cache under PanCode's cache dir, which the
+	 * cache variables point at. The operator's ~/.cache and ~/.npm stay
+	 * read-only: tools there run code later outside the sandbox. Unlike the
+	 * scratch roots it is not a delete target for the judge.
+	 */
+	sandboxCache?: string;
+	/** PanCode's own config, data, state and cache directories. */
+	pancodeDirs: ReadonlyArray<string>;
+	/** The workspace repository's git layout, when the workspace is inside one. */
+	git?: MainSandboxGitLayout;
+	/** How the command's inherited environment is scrubbed. Absent scrubs with no pass list. */
+	env?: SandboxEnvPolicy;
+	/** `safety.sandboxUnixSockets`. Absent blocks them. */
+	unixSockets?: UnixSocketMode;
+	/** The checkout a task worktree was cut from, when the workspace is one. Its secret files are masked too. */
+	sourceCheckout?: string;
+}
+
+/** No pass list and no target credential names: the scrub's name and value rules alone. */
+const DEFAULT_SANDBOX_ENV_POLICY: SandboxEnvPolicy = { passEnv: [], secretNames: [] };
+
+export interface MainSandboxPolicy {
+	writableRoots: ReadonlyArray<string>;
+	/** Re-bound read-only inside the writable roots, after them. */
+	readOnlyPaths: ReadonlyArray<string>;
+	/** Git hooks directories that do not exist yet; bubblewrap covers each with an empty tmpfs. */
+	absentGitHooks: ReadonlyArray<string>;
+	/** Git config and commondir files that do not exist yet; one a script leaves behind is removed. */
+	absentGitFiles: ReadonlyArray<string>;
+	/**
+	 * PanCode's own roots, also in `readOnlyPaths`. The spawn plan creates an absent
+	 * one, because bubblewrap's -try binds skip it and a script could then create
+	 * it, under a writable cache root, with contents PanCode later trusts.
+	 */
+	pancodeDirs: ReadonlyArray<string>;
+	/** Main calls retain network; declared proof checks explicitly disable it. */
+	network: boolean;
+	/**
+	 * Where each launch looks for secret files to mask: the workspace, the
+	 * source checkout of a task worktree, then the scratch roots.
+	 */
+	secretRoots: { workspace: string; scratchRoots: ReadonlyArray<string>; sourceCheckout?: string };
+	env: SandboxEnvPolicy;
+	/** Whether a contained command may create Unix-domain sockets (unix-sockets.ts). */
+	unixSockets: UnixSocketMode;
+	/** Also a writable root; bound again after the read-only paths, since it lives inside PanCode's cache dir. */
+	sandboxCache?: string;
+	/**
+	 * The read-only sandbox of a read-only session: the one writable root is
+	 * the session's scratch directory, created at spawn, and the command gets
+	 * a private /tmp. Only bubblewrap runs it.
+	 */
+	readOnly?: true;
+}
+
+/**
+ * Where git in a sandboxed script may write, and what stays read-only. A
+ * write to a hooks directory, a config file or a `commondir` file becomes code
+ * that runs later outside the sandbox (core.hooksPath, core.fsmonitor,
+ * aliases, filter drivers), so those stay read-only while objects, refs and
+ * the index stay writable for commit, fetch, pull and checkout (#419).
+ */
+export interface MainSandboxGitLayout {
+	/**
+	 * Bound writable as mounts of their own: every git dir, the `worktrees`
+	 * and `modules` directories on the way to one, and submodule checkouts in
+	 * the workspace. A mount cannot be renamed, so a script cannot move a
+	 * protected directory aside and put a forged one in its place.
+	 */
+	mountDirs: ReadonlyArray<string>;
+	/**
+	 * Existing hooks directories, config and commondir files, the `.git` files
+	 * that point at a git dir, and the directories core.hooksPath names.
+	 */
+	readOnlyPaths: ReadonlyArray<string>;
+	absentHooks: ReadonlyArray<string>;
+	absentFiles: ReadonlyArray<string>;
+	/**
+	 * Every hooks directory git could run from, present or not: each
+	 * repository's and submodule's default `hooks`, and each directory
+	 * core.hooksPath names, at or above the workspace included. The hook drift
+	 * guard fingerprints what they hold (git-hooks-fingerprint.ts).
+	 */
+	hooksDirs?: ReadonlyArray<string>;
+	/**
+	 * The files whose change can change the configuration git reads for the
+	 * work tree: {@link gitConfigScopeFiles} and the git dir's `HEAD`, which an
+	 * `includeIf "onbranch:"` section depends on. The hook drift guard
+	 * re-reads executable config only after one of them moves.
+	 */
+	configFiles?: ReadonlyArray<string>;
+}
+
+/** Read in every git dir: config.worktree applies with extensions.worktreeConfig, commondir redirects the common dir. */
+const GIT_DIR_FILES = ["config", "config.worktree", "commondir"] as const;
+/** Submodule names may nest; a deeper modules tree is not walked. */
+const GIT_MODULES_DEPTH = 8;
+
+function isDirectory(entry: string): boolean {
+	try {
+		return lstatSync(entry).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+function pathExists(entry: string): boolean {
+	try {
+		lstatSync(entry);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function realDir(entry: string): string | null {
+	try {
+		const real = realpathSync(entry);
+		return isDirectory(real) ? real : null;
+	} catch {
+		return null;
+	}
+}
+
+/** The git dir a `.git` file names, relative to the file's directory. */
+function gitFileTarget(dotGit: string): string | null {
+	try {
+		const match = /^gitdir:\s*(.+?)\s*$/mu.exec(readFileSync(dotGit, "utf8"));
+		return match?.[1] === undefined ? null : realDir(path.resolve(path.dirname(dotGit), match[1]));
+	} catch {
+		return null;
+	}
+}
+
+/** A submodule git dir's `core.worktree`, resolved against the git dir. */
+function moduleWorktree(gitDir: string): string | null {
+	try {
+		const match = /^\s*worktree\s*=\s*(.+?)\s*$/mu.exec(readFileSync(path.join(gitDir, "config"), "utf8"));
+		return match?.[1] === undefined ? null : path.resolve(gitDir, match[1]);
+	} catch {
+		return null;
+	}
+}
+
+/** Includes followed while reading core.hooksPath. */
+const GIT_CONFIG_INCLUDE_DEPTH = 4;
+
+/** One git config value: quotes removed, escapes applied, an unquoted comment dropped. */
+function gitConfigValue(raw: string): string {
+	let value = "";
+	let quoted = false;
+	for (let at = 0; at < raw.length; at++) {
+		const char = raw[at];
+		if (char === "\\" && at + 1 < raw.length) {
+			const next = raw[++at];
+			value += next === "n" ? "\n" : next === "t" ? "\t" : next;
+			continue;
+		}
+		if (char === '"') {
+			quoted = !quoted;
+			continue;
+		}
+		if (!quoted && (char === "#" || char === ";")) break;
+		value += char;
+	}
+	return value.trim();
+}
+
+/** A config path value: `~/` is the home directory, a relative path is taken from `base`. */
+function gitConfigPath(value: string, base: string): string {
+	if (value === "~") return homedir();
+	if (value.startsWith("~/")) return path.join(homedir(), value.slice(2));
+	return path.resolve(base, value);
+}
+
+/** Every core.hooksPath value in one config file and in the files it includes, conditionally or not. */
+function configHooksPaths(file: string, depth: number): string[] {
+	let text: string;
+	try {
+		text = readFileSync(file, "utf8");
+	} catch {
+		return [];
+	}
+	const values: string[] = [];
+	let section = "";
+	for (const raw of text.split(/\r?\n/u)) {
+		let line = raw.trim();
+		const header = /^\[([^\]]*)\](.*)$/u.exec(line);
+		if (header !== null) {
+			section = (header[1] ?? "").trim().toLowerCase();
+			line = (header[2] ?? "").trim();
+		}
+		const entry = /^([A-Za-z][\w-]*)\s*=(.*)$/u.exec(line);
+		if (entry === null) continue;
+		const key = (entry[1] ?? "").toLowerCase();
+		const value = gitConfigValue(entry[2] ?? "");
+		if (value === "") continue;
+		if (section === "core" && key === "hookspath") values.push(value);
+		else if (
+			key === "path" &&
+			(section === "include" || section.startsWith("includeif")) &&
+			depth < GIT_CONFIG_INCLUDE_DEPTH
+		) {
+			values.push(...configHooksPaths(gitConfigPath(value, path.dirname(file)), depth + 1));
+		}
+	}
+	return values;
+}
+
+/**
+ * The config files git reads before the command line, present or not: the
+ * system and global files, then, inside a repository, the common dir's
+ * `config` and the git dir's `config.worktree`.
+ */
+export function gitConfigScopeFiles(commonDir: string | null, gitDir: string | null): string[] {
+	const xdg = process.env.XDG_CONFIG_HOME?.trim();
+	const configHome = xdg !== undefined && path.isAbsolute(xdg) ? xdg : path.join(homedir(), ".config");
+	const files = [
+		"/etc/gitconfig",
+		process.env.GIT_CONFIG_SYSTEM,
+		path.join(configHome, "git", "config"),
+		path.join(homedir(), ".gitconfig"),
+		process.env.GIT_CONFIG_GLOBAL,
+		commonDir === null ? undefined : path.join(commonDir, "config"),
+		gitDir === null ? undefined : path.join(gitDir, "config.worktree"),
+	].filter((file): file is string => file !== undefined && file.length > 0);
+	return [...new Set(files)];
+}
+
+/**
+ * Impure: the hooks directories core.hooksPath names for the work tree at
+ * `top`, from the system, global, repository and worktree config. Every value
+ * counts, not only the one git would pick, and a relative one is taken from
+ * the work tree, where git runs hooks. Husky 9 names `.husky/_`, whose stubs
+ * run the scripts in `.husky` itself, so that parent counts too.
+ */
+function configuredHooksDirs(top: string, commonDir: string, gitDir: string): string[] {
+	const dirs = gitConfigScopeFiles(commonDir, gitDir)
+		.flatMap((file) => configHooksPaths(file, 0))
+		.map((value) => gitConfigPath(value, top));
+	return [...new Set(dirs.flatMap((dir) => (path.basename(dir) === "_" ? [dir, path.dirname(dir)] : [dir])))];
+}
+
+/** Impure: the directory holding the nearest `.git` at or above `workspace`, or null outside a repository. */
+function gitRepositoryTop(workspace: string): string | null {
+	let top = path.resolve(workspace);
+	while (!pathExists(path.join(top, ".git"))) {
+		const parent = path.dirname(top);
+		if (parent === top) return null;
+		top = parent;
+	}
+	return top;
+}
+
+/**
+ * Impure: the git layout of the repository holding the workspace, or
+ * undefined outside one. The nearest `.git` at or above the workspace names
+ * the repository; a `.git` file (a linked worktree or a submodule) is
+ * followed to its git dir and that dir's `commondir`.
+ */
+export function mainSandboxGitLayout(workspace: string): MainSandboxGitLayout | undefined {
+	const root = path.resolve(workspace);
+	const top = gitRepositoryTop(root);
+	if (top === null) return undefined;
+	const mountDirs: string[] = [];
+	const readOnlyPaths: string[] = [];
+	const absentHooks: string[] = [];
+	const absentFiles: string[] = [];
+	const hooksDirs: string[] = [];
+	const dotGit = path.join(top, ".git");
+	const gitDir = isDirectory(dotGit) ? realDir(dotGit) : gitFileTarget(dotGit);
+	if (gitDir === null) return undefined;
+	if (!isDirectory(dotGit)) readOnlyPaths.push(dotGit);
+
+	const addGitDir = (dir: string): void => {
+		mountDirs.push(dir);
+		for (const name of GIT_DIR_FILES) {
+			const file = path.join(dir, name);
+			(pathExists(file) ? readOnlyPaths : absentFiles).push(file);
+		}
+	};
+	const addModules = (dir: string, depth: number): void => {
+		if (depth > GIT_MODULES_DEPTH || !isDirectory(dir)) return;
+		mountDirs.push(dir);
+		for (const entry of readdirSync(dir, { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			const child = path.join(dir, entry.name);
+			if (!pathExists(path.join(child, "HEAD"))) {
+				addModules(child, depth + 1);
+				continue;
+			}
+			addRepository(child, depth + 1);
+			const checkout = moduleWorktree(child);
+			// A submodule's own core.hooksPath is read from its config, relative to its checkout.
+			if (checkout !== null) {
+				for (const value of configHooksPaths(path.join(child, "config"), 0)) {
+					hooksDirs.push(gitConfigPath(value, checkout));
+				}
+			}
+			if (checkout === null || !pathExists(path.join(checkout, ".git"))) continue;
+			readOnlyPaths.push(path.join(checkout, ".git"));
+			// The checkout holds its `.git` file; inside the workspace it could otherwise be renamed aside.
+			if (isSameOrDescendant(checkout, root) && checkout !== root) mountDirs.push(checkout);
+		}
+	};
+	// Hooks, linked worktrees and submodules hang off a common dir.
+	const addRepository = (commonDir: string, depth: number): void => {
+		addGitDir(commonDir);
+		const hooks = path.join(commonDir, "hooks");
+		(pathExists(hooks) ? readOnlyPaths : absentHooks).push(hooks);
+		hooksDirs.push(hooks);
+		const worktrees = path.join(commonDir, "worktrees");
+		if (isDirectory(worktrees)) {
+			mountDirs.push(worktrees);
+			for (const entry of readdirSync(worktrees, { withFileTypes: true })) {
+				if (entry.isDirectory()) addGitDir(path.join(worktrees, entry.name));
+			}
+		}
+		addModules(path.join(commonDir, "modules"), depth);
+	};
+
+	const commonFile = path.join(gitDir, "commondir");
+	const commonDir = existsSync(commonFile)
+		? realDir(path.resolve(gitDir, readFileSync(commonFile, "utf8").trim()))
+		: gitDir;
+	if (commonDir === null) return undefined;
+	addRepository(commonDir, 0);
+	// A linked worktree's own git dir lies under the common dir's worktrees and is already covered.
+	if (!mountDirs.includes(gitDir)) addGitDir(gitDir);
+	// core.hooksPath moves the hooks git runs (husky's .husky, a .githooks
+	// directory) out of the git dir, so the directory it names stays read-only
+	// too. One at or above the workspace is skipped: keeping it read-only would
+	// freeze the whole workspace.
+	for (const hooks of configuredHooksDirs(top, commonDir, gitDir)) {
+		hooksDirs.push(hooks);
+		if (isSameOrDescendant(root, hooks)) continue;
+		// Only the workspace root is sure to be a writable mount, so only there
+		// can bubblewrap mount an empty tmpfs over an absent hooks directory.
+		const masked = !pathExists(hooks) && path.dirname(hooks) === root;
+		(masked ? absentHooks : readOnlyPaths).push(hooks);
+	}
+	const unique = (entries: string[]): string[] => [...new Set(entries)];
+	return {
+		mountDirs: unique(mountDirs),
+		readOnlyPaths: unique(readOnlyPaths),
+		absentHooks: unique(absentHooks),
+		absentFiles: unique(absentFiles),
+		hooksDirs: unique(hooksDirs),
+		configFiles: [...gitConfigScopeFiles(commonDir, gitDir), path.join(gitDir, "HEAD")],
+	};
+}
+
+/**
+ * Impure: the workspace repository's git control paths, the hooks
+ * directories, config and commondir files and `.git` pointer files that
+ * {@link resolveMainSandboxPolicy} keeps read-only, present or not. The
+ * policy engine asks before a typed tool writes one, so typed writes and the
+ * contained shell agree on what runs code outside the sandbox.
+ */
+export function mainSandboxGitControlPaths(workspace: string): string[] {
+	const git = mainSandboxGitLayout(workspace);
+	return git === undefined ? [] : [...new Set([...git.readOnlyPaths, ...git.absentHooks, ...git.absentFiles])];
+}
+
+/**
+ * Pure: the writable roots are the workspace, the scratch roots, the sandbox
+ * cache and the workspace repository's git dirs, and nothing else. Each other root's .git
+ * and every .pancode are re-bound read-only as the worker policy does, the
+ * git layout keeps its hooks and config read-only, and so are PanCode's own
+ * directories, which matters when one of them lives under a scratch root.
+ * Absent git paths are listed read-only too: seatbelt denies creating them,
+ * while bubblewrap's -try binds skip them and the spawn plan covers them.
+ */
+export function resolveMainSandboxPolicy(input: MainSandboxPolicyInput): MainSandboxPolicy {
+	const git = input.git;
+	const writableRoots = [
+		...new Set([
+			input.workspace,
+			...input.scratchRoots,
+			...(input.sandboxCache !== undefined ? [input.sandboxCache] : []),
+			...(git?.mountDirs ?? []),
+		]),
+	];
+	const workspaceProtected =
+		git === undefined ? protectedInside(input.workspace) : [path.join(input.workspace, ".pancode")];
+	return {
+		writableRoots,
+		readOnlyPaths: [
+			...new Set([
+				...workspaceProtected,
+				...input.scratchRoots.flatMap(protectedInside),
+				...(git?.readOnlyPaths ?? []),
+				...(git?.absentHooks ?? []),
+				...(git?.absentFiles ?? []),
+				...input.pancodeDirs,
+			]),
+		],
+		absentGitHooks: git?.absentHooks ?? [],
+		absentGitFiles: git?.absentFiles ?? [],
+		pancodeDirs: [...input.pancodeDirs],
+		network: true,
+		secretRoots: {
+			workspace: input.workspace,
+			scratchRoots: input.scratchRoots,
+			...(input.sourceCheckout !== undefined ? { sourceCheckout: input.sourceCheckout } : {}),
+		},
+		env: input.env ?? DEFAULT_SANDBOX_ENV_POLICY,
+		unixSockets: input.unixSockets ?? "block",
+		...(input.sandboxCache !== undefined ? { sandboxCache: input.sandboxCache } : {}),
+	};
+}
+
+/**
+ * Pure: whether a contained command can write `target`. bwrap mounts the
+ * writable roots, then the read-only paths, then the sandbox cache, and the
+ * last mount covering a path decides; anything none covers is the read-only
+ * root.
+ */
+function sandboxWritable(
+	target: string,
+	policy: Pick<MainSandboxPolicy, "writableRoots" | "readOnlyPaths" | "sandboxCache">,
+): boolean {
+	let writable = false;
+	const layers: Array<[ReadonlyArray<string>, boolean]> = [
+		[policy.writableRoots, true],
+		[policy.readOnlyPaths, false],
+		[policy.sandboxCache !== undefined ? [policy.sandboxCache] : [], true],
+	];
+	for (const [roots, canWrite] of layers) {
+		if (roots.some((root) => !relativePathEscapes(path.relative(root, target)))) writable = canWrite;
+	}
+	return writable;
+}
+
+function envHas(env: NodeJS.ProcessEnv, name: string): boolean {
+	const lower = name.toLowerCase();
+	return Object.entries(env).some(([key, value]) => key.toLowerCase() === lower && value !== undefined && value !== "");
+}
+
+/**
+ * Pure: the variables that point package managers and tools at the sandbox
+ * cache. pnpm keeps its store under XDG_DATA_HOME or PNPM_HOME, which stay
+ * read-only. pnpm 10 places its store under PNPM_HOME and pnpm 11 and later
+ * read pnpm_config_store_dir; npm 11 warns about every npm_config_store_dir
+ * spelling, so that one is never set. A store the operator chose, or a
+ * PNPM_HOME a contained command can write, is left alone. `npmUserConfig`
+ * stands in for a masked ~/.npmrc, which npm and pnpm otherwise report as
+ * unreadable on every call, unless the operator named a user config.
+ */
+function mainSandboxCacheEnv(
+	cache: string,
+	npmUserConfig?: string,
+	env: NodeJS.ProcessEnv = process.env,
+	policy?: Pick<MainSandboxPolicy, "writableRoots" | "readOnlyPaths" | "sandboxCache">,
+): Record<string, string> {
+	const pnpmHome = env.PNPM_HOME;
+	const storeChosen =
+		envHas(env, "npm_config_store_dir") ||
+		envHas(env, "pnpm_config_store_dir") ||
+		(pnpmHome !== undefined && pnpmHome !== "" && policy !== undefined && sandboxWritable(pnpmHome, policy));
+	const home = path.join(cache, "pnpm");
+	return {
+		XDG_CACHE_HOME: cache,
+		npm_config_cache: path.join(cache, "npm"),
+		...(storeChosen ? {} : { PNPM_HOME: home, pnpm_config_store_dir: path.join(home, "store") }),
+		...(npmUserConfig !== undefined && !envHas(env, "npm_config_userconfig")
+			? { NPM_CONFIG_USERCONFIG: npmUserConfig }
+			: {}),
+		PIP_CACHE_DIR: path.join(cache, "pip"),
+		UV_CACHE_DIR: path.join(cache, "uv"),
+		PLAYWRIGHT_BROWSERS_PATH: path.join(cache, "ms-playwright"),
+	};
+}
+
+/**
+ * Impure: the empty npm user config a contained command reads when `masks`
+ * hide the operator's ~/.npmrc, else undefined. It sits beside the sandbox
+ * cache, in PanCode's cache directory, and is used only where `policy` leaves it
+ * read-only to contained commands, so none can replace, link, chmod or race
+ * it. Every launch checks it again: anything but an empty readable regular
+ * file with one link, owned by this user, is replaced by renaming a new one
+ * over it, which never follows a link. A file that cannot be made leaves the
+ * variable unset.
+ */
+export function mainSandboxNpmUserConfig(
+	cache: string,
+	masks: ReadonlyArray<SandboxMaskedPath>,
+	home: string,
+	policy: Pick<MainSandboxPolicy, "writableRoots" | "readOnlyPaths" | "sandboxCache">,
+): string | undefined {
+	const npmrc = physicalSandboxPath(path.join(home, ".npmrc"));
+	if (!masks.some((mask) => mask.path === npmrc)) return undefined;
+	const file = path.join(path.dirname(cache), "sandbox-npmrc");
+	if (sandboxWritable(file, policy)) return undefined;
+	const uid = process.getuid?.();
+	const temp = `${file}.${process.pid}.${randomUUID()}`;
+	try {
+		const stat = lstatSync(file, { throwIfNoEntry: false });
+		if (
+			stat?.isFile() === true &&
+			stat.size === 0 &&
+			stat.nlink === 1 &&
+			(stat.mode & 0o777) === 0o444 &&
+			(uid === undefined || stat.uid === uid)
+		)
+			return file;
+		writeFileSync(temp, "", { flag: "wx", mode: 0o444 });
+		chmodSync(temp, 0o444);
+		if (stat?.isDirectory() === true) rmSync(file, { recursive: true, force: true });
+		renameSync(temp, file);
+		return file;
+	} catch {
+		rmSync(temp, { force: true });
+		return undefined;
+	}
+}
+
+/**
+ * The policy for roots an admission decided, with this process's PanCode
+ * directories kept read-only. Naming them creates none: doctor describes this
+ * policy on a home that may not have them, and only a spawn needs them.
+ */
+export function mainSandboxPolicy(roots: {
+	workspace: string;
+	scratchRoots: ReadonlyArray<string>;
+	env?: SandboxEnvPolicy;
+	unixSockets?: UnixSocketMode;
+	sourceCheckout?: string;
+}): MainSandboxPolicy {
+	const git = mainSandboxGitLayout(roots.workspace);
+	assertPancodeDirLayout();
+	return resolveMainSandboxPolicy({
+		...roots,
+		// The contained commands' tool cache, kept across sessions so installs stay warm and pruned to its cap
+		// (sandbox-cache.ts). The operator's ~/.cache, ~/.npm and ~/.local stay read-only: npx, corepack, uv,
+		// pre-commit, Playwright, shell frameworks and ~/.local/bin on PATH all run what they hold later and outside it.
+		sandboxCache: sandboxCacheDir(),
+		pancodeDirs: [pancodeConfigPath(), pancodeDataPath(), pancodeStatePath(), pancodeCachePath()],
+		...(git !== undefined ? { git } : {}),
+	});
+}
+
+/**
+ * Impure: every tree the main-session sandbox lets a contained command write,
+ * the writable roots {@link mainSandboxPolicy} binds: the workspace, the
+ * scratch roots, the sandbox cache and the workspace repository's git dirs.
+ * A program or config in one of them may be a file a contained command planted.
+ */
+export function mainSandboxWritableRoots(
+	workspace: string,
+	scratchRoots: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+	const git = mainSandboxGitLayout(workspace);
+	return resolveMainSandboxPolicy({
+		workspace,
+		scratchRoots,
+		sandboxCache: sandboxCacheDir(),
+		pancodeDirs: [],
+		...(git !== undefined ? { git } : {}),
+	}).writableRoots;
+}
+
+/** The one directory a read-only session's contained commands may write, under PanCode's state root. */
+export function readOnlyScratchDir(sessionId: string | undefined, stateDir: string = pancodeStatePath()): string {
+	const id = sessionId !== undefined && /^[A-Za-z0-9._-]+$/u.test(sessionId) ? sessionId : `pid-${process.pid}`;
+	return path.join(stateDir, "scratch", "read-only", id);
+}
+
+/**
+ * Pure: the read-only sandbox. The whole filesystem is read-only except the
+ * session's scratch directory; the workspace, its git dirs, the scratch
+ * roots, the package caches, the host /tmp and PanCode's other directories
+ * included. Secret files in the workspace and scratch roots stay masked.
+ */
+export function readOnlyMainSandboxPolicy(roots: {
+	workspace: string;
+	scratchRoots: ReadonlyArray<string>;
+	scratchDir: string;
+	env?: SandboxEnvPolicy;
+	unixSockets?: UnixSocketMode;
+}): MainSandboxPolicy {
+	return {
+		writableRoots: [roots.scratchDir],
+		readOnlyPaths: [],
+		absentGitHooks: [],
+		absentGitFiles: [],
+		pancodeDirs: [],
+		network: true,
+		secretRoots: { workspace: roots.workspace, scratchRoots: roots.scratchRoots },
+		env: roots.env ?? DEFAULT_SANDBOX_ENV_POLICY,
+		unixSockets: roots.unixSockets ?? "block",
+		readOnly: true,
+	};
+}
+
+/**
+ * Pure: the backend-neutral spec for one script command. Credentials and
+ * runtime sockets are masked with the worker sandbox's own list, and the
+ * agent socket variable goes with them.
+ */
+export function mainSandboxInvocationSpec(
+	policy: MainSandboxPolicy,
+	command: SandboxCommand,
+	cwd: string,
+	maskedPaths: ReadonlyArray<SandboxMaskedPath>,
+	npmUserConfig?: string,
+	env: NodeJS.ProcessEnv = process.env,
+): SandboxInvocationSpec {
+	return {
+		command,
+		cwd,
+		writableRoots: policy.writableRoots,
+		readOnlyPaths: policy.readOnlyPaths,
+		network: policy.network,
+		maskedPaths,
+		unsetEnv: ["SSH_AUTH_SOCK"],
+		...(policy.readOnly === true
+			? {
+					privateTmp: true,
+					readableRoots: [policy.secretRoots.workspace],
+					setEnv: { TMPDIR: "/tmp", TMP: "/tmp", TEMP: "/tmp" },
+				}
+			: {
+					privateTmp: false,
+					...(policy.sandboxCache !== undefined
+						? {
+								gitWritablePaths: [policy.sandboxCache],
+								setEnv: mainSandboxCacheEnv(policy.sandboxCache, npmUserConfig, env, policy),
+							}
+						: {}),
+				}),
+	};
+}
+
+export type MainSandboxSpawnPlan =
+	| { kind: "sandboxed"; file: string; args: string[]; afterExit: () => void; env: SandboxEnvPolicy }
+	| { kind: "refused"; message: string };
+
+/**
+ * How one contained command spawns. Admission let it run without an ask
+ * because a backend was there, so a backend that is gone at spawn time
+ * refuses the command instead of running it bare.
+ *
+ * Under bubblewrap an absent hooks directory gets an empty tmpfs, so a hook
+ * written there vanishes with the sandbox. An absent config or commondir file
+ * cannot be covered the same way: the mount point would leave an empty file,
+ * and git refuses an empty commondir. `afterExit` removes one the script
+ * created; the caller runs it once the sandbox has exited, which ends every
+ * process in its PID namespace. The caller spawns the sandbox with the
+ * environment scrubbed by `env`. An absent PanCode root is created first so its
+ * read-only bind holds; one that cannot be created refuses the command.
+ */
+export function planMainSandboxSpawn(
+	policy: MainSandboxPolicy,
+	command: SandboxCommand,
+	cwd: string,
+	availability: SandboxAvailability = sandboxAvailability(),
+): MainSandboxSpawnPlan {
+	if (!availability.available || availability.backend === null || availability.executable === null) {
+		return {
+			kind: "refused",
+			message: `sandbox: the main-session sandbox is unavailable (${availability.reason ?? "no backend"}); the command was not run`,
+		};
+	}
+	if (policy.readOnly === true && availability.backend !== "bwrap") {
+		return {
+			kind: "refused",
+			message: `sandbox: a read-only run's commands need the bubblewrap sandbox, and this host has ${availability.backend}; the command was not run`,
+		};
+	}
+	// A read-only bind needs its path to exist, and naming the policy created none.
+	// No existence shortcut: a recursive mkdir passes only a directory, so a
+	// dangling link or a regular file in a root's place refuses the command.
+	// A read-only run's scratch directory is created the same way.
+	for (const dir of [
+		...policy.pancodeDirs,
+		...(policy.sandboxCache !== undefined ? [policy.sandboxCache] : []),
+		...(policy.readOnly === true ? policy.writableRoots : []),
+	]) {
+		try {
+			mkdirSync(dir, { recursive: true });
+		} catch (error) {
+			return {
+				kind: "refused",
+				message: `sandbox: could not create PanCode's directory ${dir} to keep it read-only (${error instanceof Error ? error.message : String(error)}); the command was not run`,
+			};
+		}
+	}
+	// From here this process may run contained commands that use the cache, so its pruner leaves it alone.
+	if (policy.sandboxCache !== undefined) holdSandboxCacheLease(policy.sandboxCache);
+	const physicalPolicy: MainSandboxPolicy = {
+		...policy,
+		writableRoots: policy.writableRoots.map(physicalSandboxPath),
+		readOnlyPaths: policy.readOnlyPaths.map(physicalSandboxPath),
+		...(policy.sandboxCache !== undefined ? { sandboxCache: physicalSandboxPath(policy.sandboxCache) } : {}),
+	};
+	const hookMasks: SandboxMaskedPath[] = policy.absentGitHooks
+		.filter((hooks) => !pathExists(hooks))
+		.map((hooks) => ({ path: hooks, kind: "directory" }));
+	const configMask =
+		availability.backend === "bwrap"
+			? pancodeConfigDirMask(
+					[
+						policy.secretRoots.workspace,
+						...policy.secretRoots.scratchRoots,
+						...policy.writableRoots,
+						...(policy.sandboxCache !== undefined ? [policy.sandboxCache] : []),
+					],
+					{ revealSettings: policy.env.maskSettings !== true },
+				)
+			: null;
+	const revealed = revealedFiles(policy.env.revealFiles);
+	const baseMasks = [
+		...workerSandboxMasks(),
+		...mainSandboxAgentMasks(),
+		...mainSandboxKerberosMasks(process.env, ["/tmp", "/var/tmp", tmpdir(), ...policy.secretRoots.scratchRoots]),
+		...(availability.backend === "bwrap"
+			? mainSandboxModuleCacheMasks(
+					["/tmp", "/var/tmp", tmpdir(), ...policy.secretRoots.scratchRoots],
+					policy.writableRoots,
+				)
+			: []),
+		...hookMasks,
+		...(configMask === null && policy.env.maskSettings === true ? settingsFileMasks() : []),
+	].filter((mask) => !(mask.kind === "file" && revealed.has(mask.path)));
+	// The config mask goes after the scan, which drops a find inside a masked directory, even a revealed one.
+	const secretMasks = [
+		...(configMask !== null ? [configMask] : []),
+		...discoverSecretMasks(
+			{
+				workspaceRoots: [
+					policy.secretRoots.workspace,
+					...(policy.secretRoots.sourceCheckout !== undefined ? [policy.secretRoots.sourceCheckout] : []),
+				],
+				scratchRoots: policy.secretRoots.scratchRoots,
+			},
+			baseMasks,
+		).masks,
+	];
+	// The command sees the host's network namespace, and outside a read-only
+	// run its /tmp, where a multiplexer, display or daemon socket runs code
+	// outside the sandbox.
+	const sockets = unixSocketLaunch(
+		policy.unixSockets,
+		availability,
+		{
+			workspaceRoots: [policy.secretRoots.workspace],
+			scratchRoots: policy.secretRoots.scratchRoots,
+			privateTmp: policy.readOnly === true,
+		},
+		[...baseMasks, ...secretMasks],
+	);
+	const masks = [...baseMasks, ...secretMasks, ...sockets.masks];
+	const aliased =
+		availability.backend === "bwrap"
+			? withMountAliases(masks, undefined, [
+					physicalSandboxPath(cwd),
+					physicalSandboxPath(policy.secretRoots.workspace),
+					...policy.secretRoots.scratchRoots.map(physicalSandboxPath),
+					...(policy.secretRoots.sourceCheckout !== undefined
+						? [physicalSandboxPath(policy.secretRoots.sourceCheckout)]
+						: []),
+					...physicalPolicy.writableRoots,
+				])
+			: masks;
+	if (aliased instanceof Error) {
+		return {
+			kind: "refused",
+			message: `sandbox: the main-session sandbox is unavailable (${aliased.message}); the command was not run`,
+		};
+	}
+	const npmUserConfig =
+		policy.readOnly !== true && physicalPolicy.sandboxCache !== undefined
+			? mainSandboxNpmUserConfig(physicalPolicy.sandboxCache, aliased, homedir(), physicalPolicy)
+			: undefined;
+	const spec = {
+		...mainSandboxInvocationSpec(physicalPolicy, command, physicalSandboxPath(cwd), aliased, npmUserConfig),
+		...sockets.fields,
+	};
+	const invocation = buildSandboxInvocation(spec, availability.backend, availability.executable);
+	const absentFiles = policy.absentGitFiles.filter((file) => !pathExists(file));
+	return {
+		kind: "sandboxed",
+		file: invocation.file,
+		args: invocation.args,
+		afterExit: () => sweepMainSandboxGitFiles(absentFiles),
+		env: policy.env,
+	};
+}
+
+/**
+ * Keeps worker parity for ssh-agent. A worker's private /tmp hides the
+ * sockets OpenSSH's agent puts under `/tmp/ssh-*`; a contained command sees
+ * the host's /tmp, so those directories are masked here, and so is the
+ * session's own SSH_AUTH_SOCK wherever it lives (#419).
+ */
+/**
+ * The physical paths of the live-check login files the operator declared, which the launch leaves unmasked. Only a
+ * file mask on exactly that file is dropped: a mask on a directory holding it, or on a link to it, still stands.
+ */
+function revealedFiles(files: ReadonlyArray<string> | undefined): ReadonlySet<string> {
+	const out = new Set<string>();
+	for (const file of files ?? []) {
+		try {
+			out.add(realpathSync(file));
+		} catch {
+			// An absent login file has no mask to leave off.
+		}
+	}
+	return out;
+}
+
+export function mainSandboxAgentMasks(env: NodeJS.ProcessEnv = process.env, tmp: string = "/tmp"): SandboxMaskedPath[] {
+	const masks: SandboxMaskedPath[] = [];
+	try {
+		for (const entry of readdirSync(tmp, { withFileTypes: true })) {
+			if (entry.isDirectory() && entry.name.startsWith("ssh-")) {
+				masks.push({ path: path.join(tmp, entry.name), kind: "directory" });
+			}
+		}
+	} catch {
+		// An unreadable /tmp has no agent directory this process could list.
+	}
+	const socket = env.SSH_AUTH_SOCK?.trim();
+	if (socket !== undefined && path.isAbsolute(socket) && pathExists(socket)) {
+		if (!masks.some((mask) => isSameOrDescendant(socket, mask.path))) masks.push({ path: socket, kind: "file" });
+	}
+	return masks;
+}
+
+/**
+ * The operator's Kerberos ticket caches. A worker's private /tmp hides them; a contained command sees the
+ * host's temp roots, where MIT Kerberos keeps `krb5cc_<uid>` and sshd's GSSAPI logins add `krb5cc_<uid>_*`.
+ * Each launch lists the temp roots' top level afresh, so a cache made since the last secret scan is still
+ * hidden, as is a `DIR:` collection named that way, and the cache `KRB5CCNAME` names wherever it lives.
+ * A file mask covers the cache present at launch: a `kinit` during a running command renames a new cache
+ * over the masked path, which drops the mask, and the command can read the new ticket. A `DIR:` collection
+ * is masked as a directory, which holds for every ticket written into it later. `KEYRING:`, `KCM:` and
+ * `MEMORY:` caches are not files and are not covered here.
+ */
+function mainSandboxKerberosMasks(
+	env: NodeJS.ProcessEnv,
+	tempRoots: ReadonlyArray<string>,
+	uid: number | undefined = process.getuid?.(),
+): SandboxMaskedPath[] {
+	const masks: SandboxMaskedPath[] = [];
+	const add = (entry: string) => {
+		let stat: ReturnType<typeof lstatSync>;
+		try {
+			stat = lstatSync(entry);
+		} catch {
+			return;
+		}
+		if (uid !== undefined && stat.uid !== uid) return;
+		if (!stat.isFile() && !stat.isDirectory()) return;
+		if (masks.some((mask) => mask.path === entry || isSameOrDescendant(entry, mask.path))) return;
+		masks.push({ path: entry, kind: stat.isDirectory() ? "directory" : "file" });
+	};
+	const roots = new Set<string>();
+	for (const root of tempRoots) {
+		try {
+			roots.add(realpathSync(root));
+		} catch {
+			// A temp root that does not exist holds no cache.
+		}
+	}
+	for (const root of roots) {
+		try {
+			for (const name of readdirSync(root)) if (name.startsWith("krb5cc")) add(path.join(root, name));
+		} catch {
+			// An unreadable temp root has no cache this process could list.
+		}
+	}
+	const named = env.KRB5CCNAME?.trim();
+	if (named !== undefined && named !== "") {
+		const typed = /^([A-Za-z]+):(.*)$/su.exec(named);
+		const type = typed?.[1]?.toUpperCase();
+		const rest = typed?.[2] ?? named;
+		// `DIR::<file>` names one cache of a collection; the collection is its directory.
+		const target =
+			type === undefined || type === "FILE"
+				? rest
+				: type === "DIR"
+					? rest.startsWith(":")
+						? path.dirname(rest.slice(1))
+						: rest
+					: undefined;
+		if (target !== undefined && path.isAbsolute(target)) {
+			let real = target;
+			try {
+				real = realpathSync(target);
+			} catch {
+				// Gone: nothing to mask.
+			}
+			add(real);
+		}
+	}
+	return masks;
+}
+
+/**
+ * Code caches host tools keep in a temp root and run later: tsx's `tsx-<euid>`, jiti's `jiti` and Node's default
+ * `node-compile-cache`. A contained command shares the host's temp roots, so an entry it rewrote would run outside
+ * the sandbox the next time the operator used that tool. Under bubblewrap each one in a temp root the command can
+ * write is an empty tmpfs, present or not: the command gets a private cache and the host's stays as it was. An
+ * absent one leaves an empty directory behind as the mount point, which is never swept, since removing it from the
+ * host would detach the mount in a command still running.
+ */
+function mainSandboxModuleCacheMasks(
+	tempRoots: ReadonlyArray<string>,
+	writableRoots: ReadonlyArray<string>,
+	euid: number | undefined = process.geteuid?.(),
+): SandboxMaskedPath[] {
+	const real = (entry: string): string | null => {
+		try {
+			return realpathSync(entry);
+		} catch {
+			return null;
+		}
+	};
+	const writable = writableRoots.map(real).filter((root): root is string => root !== null);
+	const roots = new Set<string>();
+	for (const root of tempRoots) {
+		const resolved = real(root);
+		if (resolved !== null && writable.some((parent) => isSameOrDescendant(resolved, parent))) roots.add(resolved);
+	}
+	const names = [`tsx-${euid ?? ""}`, "jiti", "node-compile-cache"].filter((name) => name !== "tsx-");
+	const masks: SandboxMaskedPath[] = [];
+	for (const root of roots) {
+		for (const name of names) {
+			const entry = path.join(root, name);
+			let stat: ReturnType<typeof lstatSync> | undefined;
+			try {
+				stat = lstatSync(entry);
+			} catch {
+				stat = undefined;
+			}
+			// A link leads the host tool to its target, so that is the directory to cover.
+			const target = stat?.isSymbolicLink() === true ? real(entry) : entry;
+			if (target === null || (stat !== undefined && !isDirectory(target))) continue;
+			if (!masks.some((mask) => mask.path === target)) masks.push({ path: target, kind: "directory" });
+		}
+	}
+	return masks;
+}
+
+/** Removes the git files in `absent` that exist now, and returns them. */
+function sweepMainSandboxGitFiles(absent: ReadonlyArray<string>): string[] {
+	const planted = absent.filter(pathExists);
+	for (const file of planted) {
+		try {
+			rmSync(file, { recursive: true, force: true });
+		} catch {
+			// Runs from a child's exit listener, where a throw would take the session down; a file left behind is bound read-only from the next run on.
+		}
+	}
+	return planted;
+}
+
+const WRITE_REFUSED = /\b(?:EROFS|EACCES|EPERM)\b|Read-only file system|Permission denied|Operation not permitted/u;
+
+function displayWritableRoots(roots: ReadonlyArray<string>): string {
+	const rootSet = new Set(roots);
+	const worktrees = new Map<string, number>();
+	for (const root of roots) {
+		const parent = path.dirname(root);
+		if (path.basename(parent) === "worktrees" && rootSet.has(parent) && rootSet.has(path.dirname(parent))) {
+			worktrees.set(parent, (worktrees.get(parent) ?? 0) + 1);
+		}
+	}
+	return roots
+		.filter((root) => !worktrees.has(path.dirname(root)))
+		.map((root) => {
+			const count = worktrees.get(root);
+			return count === undefined ? root : `${root} (${count} worktree${count === 1 ? "" : "s"})`;
+		})
+		.join(", ");
+}
+
+/** One line for a failed contained command whose output shows a refused write, else null. */
+export function mainSandboxWriteHint(output: string, policy: MainSandboxPolicy): string | null {
+	if (!WRITE_REFUSED.test(output)) return null;
+	if (policy.readOnly === true) {
+		return `sandbox: this run is read-only, so this command could write only to its scratch directory ${displayWritableRoots(policy.writableRoots)} and a private /tmp; the workspace and every other file outside PanCode's home stay unchanged, and a read-only run has no unsandboxed commands.`;
+	}
+	const temp = writableTempDir(policy.writableRoots);
+	const cache =
+		policy.sandboxCache !== undefined
+			? ` The operator's ~/.cache and ~/.npm stay read-only because tools later run code from them outside the sandbox; contained commands get their own cache at ${policy.sandboxCache} through XDG_CACHE_HOME, npm_config_cache, PNPM_HOME and pnpm_config_store_dir (pnpm's store), PIP_CACHE_DIR, UV_CACHE_DIR and PLAYWRIGHT_BROWSERS_PATH: point any other tool's cache variable at a new directory there.`
+			: temp === null
+				? ""
+				: ` A tool cache outside these roots, such as uv's ~/.cache/uv or a UV_CACHE_DIR set elsewhere, stays read-only because the tool later runs code from it outside the sandbox: point it at a new directory under ${temp} for this command (UV_CACHE_DIR=${path.join(temp, "uv-cache")}).`;
+	return `sandbox: this command could write only to ${displayWritableRoots(policy.writableRoots)} (git hooks and config, scratch roots' .git and .pancode read-only; credentials, credential variables and secret files hidden).${cache} If it failed because of the sandbox, rerun it with unsandboxed: true and it is reviewed against the operator's request (PanCode's own settings and credentials are never changed from a shell: propose settings with configure_pancode and leave credentials to the operator); a directory scripts should always write belongs in safety.scratchRoots in the user settings.`;
+}
+
+/** The run's own temp directory when it is a writable root, else /tmp when that is one, else null. */
+function writableTempDir(roots: ReadonlyArray<string>): string | null {
+	const temp = canonicalizePath(tmpdir()) ?? tmpdir();
+	if (roots.includes(temp)) return temp;
+	return roots.includes("/tmp") ? "/tmp" : null;
+}
+
+/** What one doctor run's secret-file discovery found for the main sandbox. */
+export interface MainSandboxSecretFiles {
+	count: number;
+	capped: boolean;
+	/** The roots whose search stopped at its limit, as {@link discoverSecretMasks} reports them. */
+	cappedRoots: ReadonlyArray<string>;
+	/** The physical workspace, to tell it from the scratch roots among `cappedRoots`. */
+	workspace: string;
+}
+
+/** Doctor's clause on secret files: how many are masked and, when the search stopped, where and what to do. */
+function secretFilesLine(found: MainSandboxSecretFiles): string {
+	const masked = `${found.count} secret ${found.count === 1 ? "file" : "files"} in the workspace and scratch roots ${found.count === 1 ? "is" : "are"} masked`;
+	if (!found.capped) return masked;
+	if (found.cappedRoots.length === 0) return `${masked}, the most one launch masks, so others stay readable`;
+	const scratch = found.cappedRoots.filter((root) => root !== found.workspace);
+	const advice = [
+		...(scratch.length < found.cappedRoots.length
+			? [`start PanCode in the project's own directory or move bulk data out of ${found.workspace}`]
+			: []),
+		...(scratch.length > 0
+			? [
+					`remove stale trees from ${scratch.join(", ")} or keep secret files out of ${scratch.length === 1 ? "it" : "them"}`,
+				]
+			: []),
+	];
+	const limit = `${renderCount(SECRET_SCAN_LIMITS.directoryBudget)} directories or ${renderCount(SECRET_SCAN_LIMITS.entryBudget)} names`;
+	return `${masked}, but the search of ${found.cappedRoots.join(", ")} stopped at its limit of ${limit} per root, so secret files further in stay readable: ${advice.join("; ")}`;
+}
+
+/** One line for doctor: how the main session's shell calls run on this host, and where a contained one can write. */
+export function mainSandboxLine(
+	mode: SandboxMode,
+	availability: SandboxAvailability,
+	writableRoots: ReadonlyArray<string>,
+	confinement: YoloConfinement,
+	secretFiles?: MainSandboxSecretFiles,
+	unixSockets: UnixSocketMode = "block",
+): string {
+	const yolo = yoloShellState(confinement, mode, availability);
+	const yoloLine =
+		yolo === "contained-sandbox"
+			? "yolo runs contained in the same sandbox"
+			: yolo === "contained-rails"
+				? "contained yolo runs commands as default does and refuses what would ask"
+				: yolo === "sandboxed"
+					? "unconfined yolo commands run sandboxed too (safety.sandbox is required)"
+					: yolo === "refused"
+						? `unconfined yolo refuses commands: safety.sandbox is required and no sandbox is available (${availability.reason ?? "no backend"})`
+						: "unconfined yolo runs unsandboxed";
+	if (mainShellContained(mode, availability)) {
+		const warnings: string[] = [];
+		const details = [
+			`default-autonomy shell commands run in the ${availability.backend} sandbox`,
+			`writable roots: ${displayWritableRoots(writableRoots)}`,
+			"package managers use PanCode's sandbox cache (pnpm's store through PNPM_HOME and pnpm_config_store_dir unless the operator chose one) and read an empty NPM_CONFIG_USERCONFIG in place of a masked ~/.npmrc",
+		];
+		const masked = secretFiles === undefined ? "" : secretFilesLine(secretFiles);
+		if (masked) (secretFiles?.capped ? warnings : details).push(masked);
+		const socketState = unixSocketHostState(unixSockets, availability);
+		(socketState.kind === "masks" ? warnings : details).push(unixSocketStateLine(socketState));
+		(yolo === "refused" ? warnings : details).push(yoloLine);
+		return [...warnings, ...details].join("; ");
+	}
+	const why = mode === "off" ? "safety.sandbox is off" : (availability.reason ?? "no sandbox backend");
+	return `${why}; ${yoloLine}; default-autonomy shell commands run uncontained and keep the approval rails`;
+}

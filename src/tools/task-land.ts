@@ -1,0 +1,549 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * `fleet land`: put a finished run's task branch onto the branch it was
+ * dispatched from, after the run itself kept it (a withheld merge, apply mode
+ * preserve, a conflict, a headless run, a crash recovery kept). The landing
+ * commit is built with plumbing (`merge-tree --write-tree`, `commit-tree`), so
+ * a conflict is found and reported before anything changes, and the only step
+ * that touches the operator's checkout is `merge --ff-only`, which Git refuses
+ * when it would overwrite a local change.
+ */
+
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative } from "node:path";
+import { attributeCommitMessage } from "../core/commit-attribution.js";
+import { autonomousLandAuthorship } from "../core/git-commit-attribution.js";
+import { copyGitIndex } from "../core/git-index-copy.js";
+import { sha256Hex } from "../core/hash.js";
+import { internalGitArgv, withoutRepositoryEnv } from "../core/internal-git.js";
+import { SAFE_TASK_RUN_ID } from "../core/task-worktree-claim.js";
+import { dropHostTerminalEnv, TOOL_SESSION_SPAWN } from "../core/tool-env-controls.js";
+import {
+	cleanupAccountedTaskWorktree,
+	discardTaskWorktree,
+	landedUntrackedPaths,
+	leftOutOfLanding,
+	recordTaskWorktreeAccounted,
+	type TaskWorktree,
+	type TaskWorktreeState,
+} from "./task-worktree.js";
+import { listPreservedTaskWorktrees, loadKeptTaskWorktree } from "./task-worktree-claims.js";
+import {
+	destinationRefusal,
+	keptTaskWorktreeDetail,
+	mergeDestination,
+	type TaskWorktreePreview,
+	taskWorktreeChangedSincePreview,
+} from "./task-worktree-preview.js";
+import { protectedPathsChangedBetween, protectedPathsChangedByWorktreeBranch } from "./worktree-branch-diff.js";
+import { COMMIT_IDENTITY, commitWorktreePath, hostCommitIdentity } from "./worktree-commit.js";
+import { gitOperationInProgress } from "./worktree-merge.js";
+
+export type TaskLandMode = "merge" | "squash";
+
+export interface TaskLandPlan {
+	root: string;
+	runId: string;
+	branch: string;
+	/** The run's claimed worktree; null for a branch whose claim was already released. */
+	worktree: TaskWorktree | null;
+	/** Modified, staged or untracked paths in the kept worktree that landing commits onto the branch first. */
+	uncommitted: number;
+	/** Files the run's commit left out and that have not changed since, with their stamps: they do not land. */
+	leftOut: ReadonlyMap<string, string>;
+	/** Authored files ignore rules kept out of the run's commit: they never land and keep the worktree. */
+	ignored: ReadonlyArray<string>;
+	tip: string;
+	/** Tree of the branch tip plus any uncommitted work: what the task contributes. */
+	sourceTree: string;
+	base: string;
+	destination: string;
+	destinationHead: string;
+	mode: TaskLandMode;
+	fastForward: boolean;
+	/** Every change the task carries is already on the destination. */
+	alreadyLanded: boolean;
+	/** Tree the destination holds after landing. */
+	tree: string;
+	/** `<short> <subject>` for the branch's own commits, newest first, at most 20. */
+	commits: string[];
+	changed: string;
+	/** Digest of what the plan would land; `--plan` refuses a landing that drifted from it. */
+	planId: string;
+	refusal: string | null;
+}
+
+export interface TaskLandResult {
+	/** The commit the destination now points at; null when nothing new landed. */
+	landed: string | null;
+	cleaned: boolean;
+	detail: string;
+}
+
+interface GitResult {
+	status: number | null;
+	stdout: string;
+	stderr: string;
+}
+
+// merge-tree conflict lines and ff refusals are parsed or shown, so Git speaks one locale.
+function run(cwd: string, args: string[], env: NodeJS.ProcessEnv = {}): GitResult {
+	const result = spawnSync("git", internalGitArgv(["-C", cwd, ...args]), {
+		encoding: "utf8",
+		timeout: 60_000,
+		maxBuffer: 16 * 1024 * 1024,
+		// A merge runs the repository's hooks: away from the TUI's terminal and its pane host (M-12).
+		...TOOL_SESSION_SPAWN,
+		env: { ...dropHostTerminalEnv(withoutRepositoryEnv()), LC_ALL: "C", LANGUAGE: "", ...env },
+	});
+	return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
+function firstLine(text: string): string {
+	return (
+		text
+			.split(/\r?\n/u)
+			.find((line) => line.trim().length > 0)
+			?.trim() ?? ""
+	);
+}
+
+function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): string {
+	const result = run(cwd, args, env);
+	if (result.status !== 0) throw new Error(firstLine(result.stderr) || `git ${args[0] ?? ""} failed`);
+	return result.stdout.trim();
+}
+
+/** Git's refusal with the paths it names, which it prints on tab-indented lines after the message. */
+function refusalText(stderr: string): string {
+	const message = firstLine(stderr)
+		.replace(/^error: /u, "")
+		.replace(/:$/u, "");
+	const paths = stderr
+		.split(/\r?\n/u)
+		.filter((line) => line.startsWith("\t"))
+		.map((line) => line.trim());
+	return `${message || "unknown reason"}${paths.length > 0 ? ` (${paths.slice(0, 10).join(", ")})` : ""}`;
+}
+
+function succeeds(cwd: string, args: string[]): boolean {
+	return run(cwd, args).status === 0;
+}
+
+function configured(root: string, key: string): string | null {
+	const value = run(root, ["config", "--get", key]).stdout.trim();
+	return value.length > 0 ? value : null;
+}
+
+const PATHSPEC_BATCH = 256;
+
+function runIdOf(ref: string): string {
+	const runId = ref.startsWith("pancode/task/") ? ref.slice("pancode/task/".length) : ref;
+	if (!SAFE_TASK_RUN_ID.test(runId)) throw new Error(`'${ref}' is not a task run id or pancode/task/<run id> branch`);
+	return runId;
+}
+
+/**
+ * The tree the kept worktree would commit, written through a copy of its index
+ * so neither the worktree's index nor its HEAD changes while only previewing.
+ * The copy keeps what the worker staged, and the adds take tracked changes and
+ * `untracked`, what `commitWorktreePath` takes for the same list. The copy
+ * keeps the index's racily clean entries racy, so a same-size edit made in the
+ * second the index was written is rehashed, not skipped.
+ */
+function snapshotTree(path: string, tip: string, untracked: ReadonlyArray<string>): string {
+	const directory = mkdtempSync(join(tmpdir(), "pancode-land-index-"));
+	try {
+		const env = { GIT_INDEX_FILE: join(directory, "index") };
+		const gitPathIndex = git(path, ["rev-parse", "--git-path", "index"]);
+		const index = isAbsolute(gitPathIndex) ? gitPathIndex : join(path, gitPathIndex);
+		if (existsSync(index)) copyGitIndex(index, env.GIT_INDEX_FILE);
+		else git(path, ["read-tree", tip], env);
+		git(path, ["add", "-u", "--", "."], env);
+		for (let index = 0; index < untracked.length; index += PATHSPEC_BATCH) {
+			const batch = untracked.slice(index, index + PATHSPEC_BATCH);
+			git(path, ["add", "--", ...batch.map((entry) => `:(top,literal)${relative(path, entry)}`)], env);
+		}
+		return git(path, ["write-tree"], env);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+}
+
+export function planTaskLand(input: {
+	root: string;
+	ref: string;
+	mode: TaskLandMode;
+	allowedParents?: ReadonlyArray<string>;
+}): TaskLandPlan {
+	const root = git(input.root, ["rev-parse", "--show-toplevel"]);
+	const runId = runIdOf(input.ref);
+	const loaded = loadKeptTaskWorktree(root, runId, input.allowedParents);
+	if (loaded?.kind === "running")
+		throw new Error(`task ${runId} is still running; wait for it to settle or cancel it first`);
+	const worktree = loaded?.worktree ?? null;
+	const branch = worktree?.branch ?? `pancode/task/${runId}`;
+	const tipLookup = run(root, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/heads/${branch}^{commit}`]);
+	if (tipLookup.status !== 0) throw new Error(`no branch ${branch} for task ${runId}`);
+	const tip = tipLookup.stdout.trim();
+	const destinationHead = git(root, ["rev-parse", "HEAD"]);
+	const base =
+		worktree?.base ?? configured(root, `branch.${branch}.pancode-base`) ?? git(root, ["merge-base", "HEAD", tip]);
+	const sourceBranch = worktree?.sourceBranch ?? configured(root, `branch.${branch}.pancode-source`) ?? undefined;
+	const refusals: string[] = [];
+
+	let uncommitted = 0;
+	let leftOut: ReadonlyMap<string, string> = new Map();
+	let sourceTree = git(root, ["rev-parse", `${tip}^{tree}`]);
+	if (worktree !== null && existsSync(worktree.path)) {
+		const head = run(worktree.path, ["symbolic-ref", "-q", "HEAD"]).stdout.trim();
+		if (head !== `refs/heads/${branch}`) {
+			refusals.push(
+				`the kept worktree ${worktree.path} is on ${head || "a detached HEAD"}, not ${branch}; move its work onto ${branch} first`,
+			);
+		} else {
+			const status = git(worktree.path, ["status", "--porcelain", "--untracked-files=all"]);
+			leftOut = leftOutOfLanding(worktree.path, tip, loaded?.kind === "kept" ? loaded.accounted : undefined);
+			uncommitted = (status.length > 0 ? status.split("\n").length : 0) - leftOut.size;
+			if (uncommitted > 0) sourceTree = snapshotTree(worktree.path, tip, landedUntrackedPaths(worktree.path, leftOut));
+		}
+	}
+	// Merge analysis needs a commit; this one is a dangling object, never a ref.
+	const source =
+		uncommitted > 0
+			? git(root, [...hostCommitIdentity(root, COMMIT_IDENTITY), "commit-tree", sourceTree, "-p", tip, "-m", "snapshot"])
+			: tip;
+
+	const destination = mergeDestination(root);
+	const operation = gitOperationInProgress(git(root, ["rev-parse", "--absolute-git-dir"]));
+	if (operation !== null) refusals.push(`a ${operation} is in progress in ${root}; finish or abort it first`);
+	const stranded = destinationRefusal(
+		{ root, runId, path: worktree?.path ?? "", branch, base, ...(sourceBranch ? { sourceBranch } : {}), ownerToken: "" },
+		destination,
+	);
+	if (stranded !== null) refusals.push(stranded);
+
+	const headTree = git(root, ["rev-parse", "HEAD^{tree}"]);
+	let alreadyLanded = succeeds(root, ["merge-base", "--is-ancestor", source, destinationHead]);
+	const fastForward = !alreadyLanded && succeeds(root, ["merge-base", "--is-ancestor", destinationHead, source]);
+	let tree = headTree;
+	let conflicted = false;
+	if (fastForward) tree = sourceTree;
+	else if (!alreadyLanded) {
+		const merged = run(root, ["merge-tree", "--write-tree", "--name-only", "--no-messages", destinationHead, source]);
+		const lines = merged.stdout.split("\n").filter((line) => line.length > 0);
+		if (merged.status === 1) {
+			conflicted = true;
+			const files = lines.slice(1);
+			refusals.push(
+				`it conflicts with ${destination} in ${files.slice(0, 10).join(", ")}${files.length > 10 ? ` and ${files.length - 10} more` : ""}; resolve the conflict on ${branch} or merge it by hand`,
+			);
+		} else if (merged.status !== 0 || lines[0] === undefined) {
+			throw new Error(`git merge-tree --write-tree failed (Git 2.38 or newer is required): ${firstLine(merged.stderr)}`);
+		}
+		tree = lines[0] ?? headTree;
+	}
+	// A merge that would change nothing has already landed by other means.
+	if (!alreadyLanded && refusals.length === 0 && tree === headTree) alreadyLanded = true;
+	// A conflicted tree holds conflict markers, so its diff would overstate the task.
+	const changed = alreadyLanded
+		? "no changes"
+		: conflicted
+			? "unknown until the conflict is resolved"
+			: git(root, ["diff", "--shortstat", destinationHead, tree]) || "no changes";
+	const commits = git(root, ["log", "--format=%h %s", "-n", "20", `${base}..${tip}`])
+		.split("\n")
+		.filter((line) => line.length > 0);
+	const planId = sha256Hex([tip, sourceTree, destinationHead, input.mode].join("\0")).slice(0, 12);
+	return {
+		root,
+		runId,
+		branch,
+		worktree,
+		uncommitted,
+		leftOut,
+		ignored: loaded?.kind === "kept" ? (loaded.accounted?.ignored ?? []) : [],
+		tip,
+		sourceTree,
+		base,
+		destination,
+		destinationHead,
+		mode: input.mode,
+		fastForward,
+		alreadyLanded,
+		tree,
+		commits,
+		changed,
+		planId,
+		refusal: refusals.length > 0 ? refusals.join("; ") : null,
+	};
+}
+
+/**
+ * One commit keeps its own message and author, trailers included. Several
+ * become one commit named after the newest, listing the rest.
+ */
+function squashCommit(plan: TaskLandPlan, source: string, message: string | undefined) {
+	const shas = git(plan.root, ["rev-list", "--reverse", `${plan.base}..${source}`])
+		.split("\n")
+		.filter((sha) => sha.length > 0);
+	if (message !== undefined) return { message, env: {} };
+	const only = shas.length === 1 ? shas[0] : undefined;
+	if (only !== undefined) {
+		const [name, email, date] = git(plan.root, ["log", "-1", "--format=%an%x00%ae%x00%aI", only]).split("\0");
+		return {
+			message: git(plan.root, ["log", "-1", "--format=%B", only]),
+			env: {
+				...(name ? { GIT_AUTHOR_NAME: name } : {}),
+				...(email ? { GIT_AUTHOR_EMAIL: email } : {}),
+				...(date ? { GIT_AUTHOR_DATE: date } : {}),
+			},
+		};
+	}
+	const subjects = shas.map((sha) => git(plan.root, ["log", "-1", "--format=%s", sha]));
+	return {
+		message: `${subjects.at(-1) ?? `PanCode task ${plan.runId}`}\n\nSquashes ${shas.length} commits from ${plan.branch}:\n${subjects.map((subject) => `- ${subject}`).join("\n")}\n\nPanCode task ${plan.runId}`,
+		env: {},
+	};
+}
+
+export function executeTaskLand(
+	plan: TaskLandPlan,
+	options: { message?: string; keep?: boolean } = {},
+): TaskLandResult {
+	if (plan.refusal !== null) throw new Error(plan.refusal);
+	const tipNow = git(plan.root, ["rev-parse", "--verify", "--end-of-options", `refs/heads/${plan.branch}^{commit}`]);
+	if (tipNow !== plan.tip) throw new Error(`${plan.branch} moved since it was planned; plan again`);
+	let source = plan.tip;
+	if (plan.uncommitted > 0 && plan.worktree !== null) {
+		commitWorktreePath(plan.worktree.path, COMMIT_IDENTITY, `PanCode task ${plan.runId}`, {
+			// Only what the run's commit left out stays out. The run journal keeps tool
+			// outcomes without their paths, so a run that never reached that commit has
+			// no record of what it wrote and every untracked file lands.
+			authoredPaths: landedUntrackedPaths(plan.worktree.path, plan.leftOut),
+		});
+		source = git(plan.root, ["rev-parse", "--verify", "--end-of-options", `refs/heads/${plan.branch}^{commit}`]);
+		recordTaskWorktreeAccounted(plan.worktree, { commit: source, untracked: plan.leftOut, ignored: plan.ignored });
+		if (git(plan.root, ["rev-parse", `${source}^{tree}`]) !== plan.sourceTree)
+			throw new Error(
+				`the worktree changed since it was planned; its work is now committed on ${plan.branch} and nothing landed`,
+			);
+	}
+	let landed: string | null = null;
+	if (!plan.alreadyLanded) {
+		let landing = source;
+		if (plan.mode === "squash" || !plan.fastForward) {
+			const parents = plan.mode === "merge" ? ["-p", plan.destinationHead, "-p", source] : ["-p", plan.destinationHead];
+			const commit =
+				plan.mode === "squash" ? squashCommit(plan, source, options.message) : { message: options.message, env: {} };
+			// A single-commit squash keeps that commit's author; any other landing commit is PanCode's under `auto`.
+			const authorship = Object.keys(commit.env).length === 0 ? autonomousLandAuthorship(plan.root) : null;
+			const landingMessage = commit.message ?? `Merge branch '${plan.branch}'`;
+			landing = git(
+				plan.root,
+				[
+					...hostCommitIdentity(plan.root, COMMIT_IDENTITY),
+					"commit-tree",
+					plan.tree,
+					...parents,
+					"-m",
+					authorship === null
+						? landingMessage
+						: attributeCommitMessage(landingMessage, {}, true, { pancodeAuthorFor: authorship.human }),
+				],
+				authorship === null ? commit.env : { ...commit.env, ...authorship.env },
+			);
+		}
+		if (git(plan.root, ["rev-parse", "HEAD"]) !== plan.destinationHead)
+			throw new Error(`${plan.destination} moved since it was planned; plan again`);
+		const fastForwarded = run(plan.root, ["merge", "--ff-only", "--quiet", landing]);
+		if (fastForwarded.status !== 0)
+			throw new Error(
+				`Git refused to fast-forward ${plan.destination}: ${refusalText(fastForwarded.stderr)}; nothing changed on ${plan.destination}${source !== plan.tip ? `, and the worktree's work is committed on ${plan.branch}` : ""}`,
+			);
+		landed = landing;
+	}
+	if (options.keep) {
+		return { landed, cleaned: false, detail: `kept ${plan.branch}${plan.worktree !== null ? " and its worktree" : ""}` };
+	}
+	try {
+		if (plan.worktree !== null) {
+			// The landed commit and the files the plan said stay out permit removal; nothing else does.
+			const drift = cleanupAccountedTaskWorktree(plan.worktree, {
+				commit: source,
+				untracked: plan.leftOut,
+				ignored: plan.ignored,
+			});
+			if (drift !== null) return { landed, cleaned: false, detail: keptTaskWorktreeDetail(plan.worktree, source, drift) };
+		} else git(plan.root, ["branch", "-D", plan.branch]);
+	} catch (error) {
+		// The destination has already moved, so a failed cleanup is reported beside the landing, never as no landing.
+		return {
+			landed,
+			cleaned: false,
+			detail: `cleanup failed after the landing, so ${plan.branch}${plan.worktree !== null ? " or its worktree" : ""} may remain: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+	return {
+		landed,
+		cleaned: true,
+		detail: `removed ${plan.branch}${plan.worktree !== null ? ", its worktree and its claim" : ""}`,
+	};
+}
+
+/**
+ * Delete a task the operator chose not to land: its kept worktree with any uncommitted work, its branch and its
+ * claim. Nothing on the destination changes, so a plan's refusal to land does not stop a discard. Returns what went.
+ */
+export function discardTaskLand(plan: TaskLandPlan): string {
+	const tipNow = git(plan.root, ["rev-parse", "--verify", "--end-of-options", `refs/heads/${plan.branch}^{commit}`]);
+	if (tipNow !== plan.tip) throw new Error(`${plan.branch} moved since it was planned; plan again`);
+	if (plan.worktree === null) {
+		git(plan.root, ["branch", "-D", plan.branch]);
+		return `removed ${plan.branch}`;
+	}
+	const discard = discardTaskWorktree(plan.worktree);
+	const reason = (error: unknown) => (error instanceof Error ? error.message : String(error));
+	switch (discard.outcome) {
+		case "discarded":
+			return `removed ${plan.branch} and its worktree${discard.claimReleased ? " and claim" : "; its claim file could not be removed"}`;
+		case "branch_kept":
+			throw new Error(`removed the worktree ${plan.worktree.path} but not ${plan.branch}: ${reason(discard.error)}`);
+		case "kept":
+			throw new Error(`nothing was removed: ${reason(discard.error)}`);
+		case "changed":
+			throw new Error(discard.detail);
+	}
+}
+
+/**
+ * The checks a Land the host carries out for the operator runs: every refusal
+ * `fleet land` makes, work no commit accounts for, and the protected paths no
+ * merge ever lands, read on the branch and on the exact tree that would land.
+ * Null when the plan may land.
+ */
+export function hostLandRefusal(plan: TaskLandPlan, protectedPaths: ReadonlyArray<string>): string | null {
+	if (plan.refusal !== null) return plan.refusal;
+	if (plan.uncommitted > 0)
+		return `its worktree holds ${plan.uncommitted} uncommitted ${plan.uncommitted === 1 ? "path" : "paths"} no commit accounts for; commit or remove them first`;
+	const blocked = [
+		...new Set([
+			...protectedPathsChangedByWorktreeBranch(plan.root, plan.tip, protectedPaths),
+			...protectedPathsChangedBetween(plan.root, plan.destinationHead, plan.tree, protectedPaths),
+		]),
+	]
+		.sort()
+		.map((path) => relative(plan.root, path) || path);
+	if (blocked.length === 0) return null;
+	return `${plan.branch} changes protected ${blocked.length === 1 ? "path" : "paths"} ${blocked.join(", ")}, which a merge never lands`;
+}
+
+/** What a Land card showed: the branch tip, and the destination branch and its head the operator agreed to. */
+export interface LandCardPin {
+	tip: string;
+	destination: string;
+	destinationHead: string;
+}
+
+export function landCardPin(plan: TaskLandPlan): LandCardPin {
+	return { tip: plan.tip, destination: plan.destination, destinationHead: plan.destinationHead };
+}
+
+/** The pin for a held branch's card, read when the card names its destination; null when Git cannot say. */
+export function heldLandCardPin(root: string, tip: string): LandCardPin | null {
+	const head = run(root, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
+	if (head.status !== 0) return null;
+	return { tip, destination: mergeDestination(root), destinationHead: head.stdout.trim() };
+}
+
+/** Why `plan` is no longer what the card showed, or null when it still is. */
+export function landCardPinDrift(plan: TaskLandPlan, shown: LandCardPin): string | null {
+	if (plan.tip !== shown.tip)
+		return `${plan.branch} moved from ${shown.tip.slice(0, 9)} to ${plan.tip.slice(0, 9)} after the card showed it`;
+	if (plan.destination !== shown.destination)
+		return `the checkout is on ${plan.destination}, not ${shown.destination} the card showed`;
+	if (plan.destinationHead !== shown.destinationHead)
+		return `${plan.destination} moved from ${shown.destinationHead.slice(0, 9)} to ${plan.destinationHead.slice(0, 9)} after the card showed it`;
+	return null;
+}
+
+/**
+ * Land a branch the merge gate held, for the operator who chose Land on its
+ * card: fleet land's plan, checks and landing, pinned to the worktree, branch
+ * tip and destination the card showed. Anything the card did not show (a
+ * changed worktree, a moved tip, another destination) refuses rather than
+ * lands. The caller settles the run's claim first, since a live claim reads as
+ * a running task, and removes the worktree when it seals the receipt, so this
+ * keeps it.
+ */
+export function landHeldTaskBranch(input: {
+	worktree: TaskWorktree;
+	preview: TaskWorktreePreview;
+	shown: LandCardPin;
+	protectedPaths: ReadonlyArray<string>;
+}): { landed: string | null; destination: string } {
+	const drift = taskWorktreeChangedSincePreview(input.worktree, input.preview);
+	if (drift !== null) throw new Error(`task worktree ${input.worktree.runId} ${drift} since the card showed it`);
+	const plan = planTaskLand({
+		root: input.worktree.root,
+		ref: input.worktree.runId,
+		mode: "merge",
+		...(input.worktree.parent !== undefined ? { allowedParents: [input.worktree.parent] } : {}),
+	});
+	if (plan.worktree === null) throw new Error(`the claim of task ${plan.runId} could not be read`);
+	const moved = landCardPinDrift(plan, input.shown);
+	if (moved !== null) throw new Error(moved);
+	const refusal = hostLandRefusal(plan, input.protectedPaths);
+	if (refusal !== null) throw new Error(refusal);
+	return { landed: executeTaskLand(plan, { keep: true }).landed, destination: plan.destination };
+}
+
+export interface LandableTask {
+	runId: string;
+	branch: string;
+	/** `branch only` is a task branch whose claim was released. */
+	state: TaskWorktreeState | "branch only";
+	commits: number | null;
+	worktreePresent: boolean;
+	reason: string;
+}
+
+/** Task branches a finished run left behind, with or without their claims. */
+export function listLandableTasks(root: string, allowedParents?: ReadonlyArray<string>): LandableTask[] {
+	const top = git(root, ["rev-parse", "--show-toplevel"]);
+	const count = (base: string, branch: string): number | null => {
+		const value = Number.parseInt(run(top, ["rev-list", "--count", `${base}..refs/heads/${branch}`]).stdout, 10);
+		return Number.isSafeInteger(value) ? value : null;
+	};
+	const kept = listPreservedTaskWorktrees(top, allowedParents).filter((entry) => !entry.stale);
+	const out: LandableTask[] = kept.map((entry) => ({
+		runId: entry.runId,
+		branch: entry.branch,
+		state: entry.state,
+		commits: count(entry.base, entry.branch),
+		worktreePresent: existsSync(entry.path),
+		reason: entry.reason,
+	}));
+	const claimed = new Set(kept.map((entry) => entry.branch));
+	for (const branch of git(top, ["for-each-ref", "--format=%(refname:short)", "refs/heads/pancode/task/"])
+		.split("\n")
+		.filter((name) => name.length > 0 && !claimed.has(name))) {
+		const runId = branch.slice("pancode/task/".length);
+		// A live run's claim is not listed as kept; its branch is not landable either.
+		if (!SAFE_TASK_RUN_ID.test(runId) || loadKeptTaskWorktree(top, runId, allowedParents)?.kind === "running") continue;
+		const base =
+			configured(top, `branch.${branch}.pancode-base`) ?? run(top, ["merge-base", "HEAD", branch]).stdout.trim();
+		out.push({
+			runId,
+			branch,
+			state: "branch only",
+			commits: base.length > 0 ? count(base, branch) : null,
+			worktreePresent: false,
+			reason: "its claim was released and the branch kept",
+		});
+	}
+	return out;
+}

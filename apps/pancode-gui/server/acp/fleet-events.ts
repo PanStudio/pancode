@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { randomUUID } from "node:crypto";
+import type { Static } from "typebox";
+import { Value } from "typebox/value";
+import { ContextActivity } from "../../contracts/context-work.js";
+import {
+	ACP_TO_WEB_EVENT,
+	FleetFact,
+	type FleetItem,
+	HEALTH_EVENT_TYPES,
+	HealthFact,
+	type HealthItem,
+} from "../../contracts/fleet-events.js";
+import { RunResultFacts } from "../../contracts/run-result-facts.js";
+import { ACP_RUN_RESULT_META_KEY, AcpJob } from "../../contracts/wire.js";
+import { AppProblem } from "../services/problem.js";
+import { record } from "./client.js";
+import { projectTelemetryValue } from "./telemetry.js";
+
+const HEALTH = new Set<string>(HEALTH_EVENT_TYPES);
+
+export type AcpEvent =
+	| { type: "context.activity"; activity: Static<typeof ContextActivity>; sequence: number }
+	| { type: "job.changed"; job: AcpJob; sequence: number }
+	| { type: (typeof ACP_TO_WEB_EVENT)[keyof typeof ACP_TO_WEB_EVENT]; item: FleetItem | HealthItem; sequence: number }
+	| { type: null; item: null; sequence: number };
+
+/** An event envelope fault the caller drops and reports by class instead of ending the session. */
+export class EventFault extends AppProblem {
+	constructor(
+		readonly faultClass: "foreign session" | "event sequence",
+		detail: string,
+	) {
+		super("upstream_acp", detail);
+	}
+}
+
+/**
+ * Projects one `_pancode/event` frame, or reports that it is not projectable.
+ *
+ * Two failures are deliberately not the same thing. A kind this build has never
+ * heard of is a newer engine talking to an older app: it comes back with
+ * `type: null` and the caller logs and drops it, because killing a live session
+ * over a fact the UI would not have drawn anyway is the worse outcome. A frame
+ * of a kind this app DOES claim to handle, whose envelope or payload is wrong,
+ * is a broken or hostile peer and still throws: that is the case where
+ * continuing means rendering something no contract describes, so the caller
+ * drops that frame (and only that frame) and tells the task. The envelope
+ * check comes first either way, because an out-of-order or foreign-session
+ * frame is malformed whatever kind it names.
+ */
+export function fleetEvent(value: unknown, sessionId: string, previousSequence: number): AcpEvent {
+	const event = record(value),
+		kind = event.kind;
+	if (event.sessionId !== sessionId)
+		throw new EventFault("foreign session", "ACP event names a different session identity.");
+	if (event.version !== 1 || typeof kind !== "string" || !Number.isSafeInteger(event.sequence))
+		throw new AppProblem("upstream_acp", "Invalid ACP event envelope.");
+	const sequence = event.sequence as number;
+	if (sequence <= previousSequence) throw new EventFault("event sequence", "Out-of-order ACP event.");
+	if (kind === "context.activity_changed") {
+		const activity = Value.Clean(ContextActivity, structuredClone(event.payload));
+		if (!Value.Check(ContextActivity, activity) || !activity.operation || activity.operation.sessionId !== sessionId)
+			throw new AppProblem("upstream_acp", "ACP context activity does not identify the bound session.");
+		return { type: "context.activity", activity, sequence };
+	}
+	if (kind === "job.changed") {
+		// The engine builds this payload against the same schema; a record that fails it is a broken peer.
+		const job = Value.Clean(AcpJob, structuredClone(event.payload));
+		if (!Value.Check(AcpJob, job))
+			throw new AppProblem("upstream_acp", "ACP job does not match its public projection contract.");
+		return { type: "job.changed", job, sequence };
+	}
+	if (!Object.hasOwn(ACP_TO_WEB_EVENT, kind)) return { type: null, item: null, sequence };
+	const type = ACP_TO_WEB_EVENT[kind as keyof typeof ACP_TO_WEB_EVENT];
+	const schema = HEALTH.has(type) ? HealthFact : FleetFact;
+	// A terminal frame's tokenDisplay is the engine's wording of its count and call coverage, forwarded as sent (#434).
+	const fact = Value.Clean(schema, { type, payload: event.payload });
+	if (!Value.Check(schema, fact) || Buffer.byteLength(JSON.stringify(fact)) > 8192)
+		throw new AppProblem("upstream_acp", "ACP event exceeds its public projection contract.");
+	const rawResult = record(event._meta)[ACP_RUN_RESULT_META_KEY];
+	const result = rawResult === undefined ? undefined : projectTelemetryValue(RunResultFacts, rawResult);
+	if (result && result.runId !== record(event.payload).runId)
+		throw new AppProblem("upstream_acp", "Run result identifies a different run.");
+	const item = {
+		id: randomUUID(),
+		at: new Date().toISOString(),
+		sourceSequence: sequence,
+		fact,
+		...(result ? { record: result } : {}),
+	} as FleetItem | HealthItem;
+	return { type, item, sequence };
+}

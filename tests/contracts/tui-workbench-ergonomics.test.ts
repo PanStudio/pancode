@@ -1,0 +1,408 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { resolveToolBudgetEnvelope } from "../../src/domains/dispatch/budget-envelope.js";
+import { stripTerminalSequences, type Terminal, TuiMainScreen, visibleWidth } from "../../src/engine/tui.js";
+import { createDispatchBoardView } from "../../src/interactive/dispatch-board.js";
+import type { DispatchBoardRow } from "../../src/interactive/dispatch-row-model.js";
+import { renderCompactDashboard } from "../../src/interactive/footer/pages.js";
+import {
+	createOverlayGeneralOpeners,
+	type OverlayGeneralOpenersDeps,
+} from "../../src/interactive/overlay-general-openers.js";
+import { PancodeEditor } from "../../src/interactive/pancode-editor.js";
+import { renderWorkerEntryLines } from "../../src/interactive/renderers/worker-entry.js";
+import {
+	abbreviateModelId,
+	fitIdentityLabel,
+	formatTargetLabel,
+	MODEL_ID_LABEL_WIDTH,
+} from "../../src/interactive/theme/labels.js";
+import { transcriptDetail } from "../../src/interactive/transcript-detail.js";
+import type { WorkerEntryState } from "../../src/session-control/worker-stream.js";
+import { footerState } from "../harness/footer-fixture.js";
+
+const widths = [40, 44, 60, 92, 120];
+const plain = (rows: string[]) => rows.map(stripTerminalSequences).join("\n");
+function bounded(rows: string[], width: number): void {
+	for (const row of rows) assert.ok(visibleWidth(row) <= width, `${visibleWidth(row)} > ${width}: ${row}`);
+}
+function worker(): WorkerEntryState {
+	return {
+		assignmentId: "assignment-研究-long-id",
+		runId: "run-研究-long-id",
+		origin: "agent",
+		agentId: "scout",
+		runtime: { kind: "pancode", targetId: "blade-gateway", wireModelId: "mini/qwopus3.8-27b-q6" },
+		text: "Useful outcome",
+		droppedLines: 0,
+		tools: ["read", "bash"],
+		attempts: [],
+		pending: true,
+		progress: {
+			phase: "tool",
+			tailText: "",
+			droppedLines: 0,
+			droppedBytes: 0,
+			currentAction: { tool: "current-研究" },
+			recentActions: ["newest", "older", "oldest", "earliest"].map((tool) => ({ tool })),
+			toolNames: ["read", "bash"],
+			settled: false,
+		},
+	};
+}
+function boardRow(id: string): DispatchBoardRow {
+	return {
+		runId: id,
+		agentId: `scout-${id}`,
+		runtimeKind: "http",
+		runtimeId: "native",
+		targetId: "blade-gateway",
+		wireModelId: "mini/qwopus3.8-27b-q6",
+		status: "enqueued",
+		elapsedMs: 1000,
+		usage: { kind: "pending" },
+		lastContextTokens: null,
+		ttft: null,
+		taskSummary: "Inspect 研究 paths",
+	};
+}
+
+test("abbreviated identities retain variant suffixes and complete graphemes", () => {
+	const a = abbreviateModelId("mini/very-long-model-family-name-variant-q6");
+	const b = abbreviateModelId("mini/very-long-model-family-name-variant-q8");
+	assert.ok(a.includes("…"));
+	assert.notEqual(a, b);
+	assert.ok(a.endsWith("q6"));
+	assert.ok(b.endsWith("q8"));
+	for (const width of widths) {
+		const label = fitIdentityLabel(`研究/👩‍🔬/${"é".repeat(80)}-q6`, width);
+		assert.ok(label.endsWith("-q6"));
+		assert.ok(visibleWidth(label) <= width);
+		assert.doesNotMatch(label, /…\p{Mark}/u);
+	}
+});
+
+test("target identities drop placement and cut only at model token boundaries", () => {
+	const model = "dynamo/qwopus3.8-27b-flash@q4_k_m";
+	for (const width of [12, 18, 24, 35, 40]) {
+		const label = formatTargetLabel("blade", model, { width });
+		assert.ok(visibleWidth(label) <= width, `${width}: ${label}`);
+		assert.ok(label.endsWith("@q4_k_m"), `${width}: ${label}`);
+		if (label.includes("…")) assert.match(label, /…[/.@_-]/u, `${width}: ${label}`);
+		assert.doesNotMatch(label, /dynamo\//u, `${width}: placement should yield first`);
+	}
+	assert.equal(formatTargetLabel("blade", model, { width: 40 }), "blade · qwopus3.8-27b-flash@q4_k_m");
+	assert.equal(formatTargetLabel("blade", model, { width: 42 }), `blade · ${model}`);
+});
+
+for (const width of widths) {
+	test(`composer keeps normal rails clean and preserves exceptional modes and draft at ${width} columns`, () => {
+		let streaming = false;
+		let approval = false;
+		let preparation: "idle" | "preparing" | "compacting" = "idle";
+		const terminal = { columns: width, rows: 24, write() {} } as unknown as Terminal;
+		const editor = new PancodeEditor(new TuiMainScreen(terminal), {
+			isStreaming: () => streaming,
+			isAwaitingApproval: () => approval,
+			getTurnPreparation: () => preparation,
+		});
+		let rows = editor.render(width);
+		bounded(rows, width);
+		assert.doesNotMatch(plain(rows), /MESSAGE|blade-gateway|q6|newline/u);
+
+		streaming = true;
+		assert.doesNotMatch(plain(editor.render(width)), /FOLLOW-UP/u);
+		editor.setText("Research 研究 é");
+		assert.match(plain(editor.render(width)), /STEER/u);
+		assert.doesNotMatch(plain(editor.render(width)), /q6/u);
+		approval = true;
+		rows = editor.render(width);
+		bounded(rows, width);
+		assert.match(plain(rows), /needs appro(?:val|…)/u);
+		assert.equal(editor.getText(), "Research 研究 é");
+		approval = false;
+		streaming = false;
+		preparation = "preparing";
+		assert.match(plain(editor.render(width)), /HOLD/u);
+		preparation = "compacting";
+		assert.match(plain(editor.render(width)), /HOLD/u);
+		assert.equal(editor.getText(), "Research 研究 é");
+	});
+
+	test(`footer keeps workspace, phase and model identity bounded at ${width} columns`, () => {
+		const snapshot = footerState();
+		snapshot.session.targetId = "blade";
+		snapshot.session.modelId = "dynamo/qwopus";
+		snapshot.workspace.cwd = `/tmp/${"very-long-parent/".repeat(5)}研究-worktree`;
+		snapshot.agent.statusText = "Needs approval";
+		snapshot.dispatchRows = [];
+		const rows = renderCompactDashboard(snapshot, width);
+		bounded(rows, width);
+		assert.match(plain(rows), /qwopus/u);
+		if (width >= 80) assert.match(plain(rows), /v050/u);
+		if (width >= 60) assert.match(plain(rows), /tree/u);
+		// Standard is two rows; a W1 width keeps the status bar alone.
+		assert.equal(rows.length, width < 44 ? 1 : 2);
+	});
+
+	test(`empty board and multiple-worker navigation fit ${width} columns`, () => {
+		let rows: DispatchBoardRow[] = [];
+		const board = createDispatchBoardView(
+			() => rows,
+			() => undefined,
+		);
+		const empty = board.render(width);
+		bounded(empty, width);
+		assert.match(plain(empty), /\/run <agent> <task> starts one/u);
+		board.selectNext();
+		assert.equal(board.selectedRow(), null);
+		rows = [boardRow("研究-long-1"), boardRow("研究-long-2")];
+		bounded(board.render(width), width);
+		board.selectNext();
+		assert.equal(board.selectedRow()?.runId, "研究-long-2");
+		board.toggleDetail();
+		bounded(board.render(width), width);
+		// The route is a fact of the open detail at standard (boardFacts).
+		assert.match(plain(board.render(width)), /q6/u);
+		rows = [...rows].reverse();
+		assert.equal(board.selectedRow()?.runId, "研究-long-2");
+		board.selectPrevious();
+		assert.equal(board.selectedRow()?.runId, "研究-long-1");
+	});
+
+	test(`worker preview favors current work and preserves pending input at ${width} columns`, () => {
+		const entry = worker();
+		const original = structuredClone(entry);
+		let rows = renderWorkerEntryLines(entry, width, { detail: transcriptDetail("detailed"), terminalRows: 14 });
+		bounded(rows, width);
+		// The row states the current call; detailed adds one telemetry row with the route and the last call, and omits
+		// unknown telemetry.
+		assert.equal(rows.length, 2);
+		assert.equal(rows[0], renderWorkerEntryLines(entry, width, { detail: transcriptDetail("compact") })[0]);
+		assert.match(plain(rows), /^● ◆ scout +current-研究/u);
+		assert.match(plain(rows), /\n {2}│ blade-gateway /u);
+		assert.doesNotMatch(plain(rows), /state |tools |\?/u);
+		assert.deepEqual(entry, original);
+		entry.result = { outcome: "succeeded", durationMs: 1000 };
+		entry.pending = false;
+		entry.text = "needs_input: checkpoint:decision\nWhich 研究 dataset should I inspect?";
+		rows = renderWorkerEntryLines(entry, width, { detail: transcriptDetail("compact") });
+		bounded(rows, width);
+		assert.match(plain(rows), /needs input/u);
+		assert.match(plain(rows), /dataset should I inspect\?/u);
+		assert.doesNotMatch(plain(rows), /▹ current/u);
+	});
+}
+
+for (const width of widths) {
+	test(`active board discloses policy and full task only on detail at ${width} columns`, () => {
+		const row = boardRow("run-live");
+		const progress = worker().progress;
+		assert.ok(progress);
+		row.progress = progress;
+		row.taskSummary =
+			"Read only 研究 notes.txt and report the first line and line count. Do not edit files or run commands. ".repeat(3);
+		row.budget = resolveToolBudgetEnvelope({
+			recipeId: "debugger",
+			policy: { toolCalls: 24, synthesis: true },
+			hardCap: 150,
+			retry: false,
+			revision: false,
+		});
+		const before = structuredClone(row);
+		const board = createDispatchBoardView(
+			() => [row],
+			() => undefined,
+		);
+		const folded = board.render(width);
+		bounded(folded, width);
+		assert.match(plain(folded), /doing.*now: current-研究/u);
+		assert.doesNotMatch(plain(folded), /policy|budget|phase.*—/u);
+		assert.ok(folded.length <= 13, `compact card used ${folded.length} rows`);
+		board.toggleDetail();
+		const expanded = board.render(width);
+		bounded(expanded, width);
+		assert.match(plain(expanded).replace(/\s+/gu, " "), /limit .*PanCode stops it at/u);
+		assert.doesNotMatch(plain(expanded), /synthesis=|advisory default/u);
+		assert.ok(expanded.length > folded.length);
+		assert.equal(plain(expanded).replace(/\s/g, "").includes("mini/qwopus3.8-27b-q6"), true);
+		assert.deepEqual(row, before);
+	});
+
+	test(`board hints expose only available actions at ${width} columns`, () => {
+		let rows: DispatchBoardRow[] = [];
+		const board = createDispatchBoardView(
+			() => rows,
+			() => undefined,
+		);
+		let hint: ((width: number) => string | undefined) | undefined;
+		const deps = {
+			transitions: { state: "closed" },
+			dispatchBoard: board,
+			terminal: { columns: width },
+			requestRender() {},
+			startDispatchBoardTicker() {},
+			showOverlayFrame: (
+				_tui: unknown,
+				_child: unknown,
+				options: { footerHint: (width: number) => string | undefined },
+			) => {
+				hint = options.footerHint;
+				return {};
+			},
+		} as unknown as OverlayGeneralOpenersDeps;
+		createOverlayGeneralOpeners(deps).toggleDispatchBoard();
+		assert.equal(hint?.(width), "[Esc] close");
+		rows = [{ ...boardRow("live"), runtimeKind: "http", status: "running" }];
+		let text = hint?.(width) ?? "";
+		bounded([text], width - 3);
+		assert.match(text, /\[m\] steer/u);
+		assert.match(text, /\[x\] cancel/u);
+		rows = [{ ...boardRow("peer"), runtimeKind: "acp-delegation", status: "running" }];
+		text = hint?.(width) ?? "";
+		assert.doesNotMatch(text, /steer/u);
+		assert.match(text, /cancel/u);
+		rows = [{ ...boardRow("done"), status: "completed" }];
+		text = hint?.(width) ?? "";
+		assert.doesNotMatch(text, /steer|cancel/u);
+		assert.match(text, /Enter.*detail/u);
+	});
+}
+
+for (const width of widths) {
+	test(`idle footer stays bounded and names live workers at ${width} columns`, () => {
+		const snapshot = footerState();
+		snapshot.session.targetId = "blade";
+		snapshot.session.modelId = "dynamo/qwopus";
+		snapshot.workspace.cwd = `/tmp/${"parent/".repeat(15)}worktree`;
+		snapshot.agent.statusText = "Ready";
+		snapshot.dispatchRows = [
+			{ ...boardRow("one"), status: "running" },
+			{ ...boardRow("two"), status: "running" },
+		];
+		const rows = renderCompactDashboard(snapshot, width);
+		bounded(rows, width);
+		if (width >= 60) assert.match(plain(rows), /2 workers/u);
+		if (width > 60) assert.match(plain(rows), /tree/u);
+		else assert.equal(rows.length, width < 44 ? 1 : 2);
+	});
+}
+
+for (const width of widths) {
+	test(`identity and footer sanitize OSC, CSI and C0 before fitting at ${width} columns`, () => {
+		const payload = `${"x".repeat(80)}\x1b]0;FAKE_MODEL_NAME\x07-q6`;
+		const sanitized = `${"x".repeat(80)}-q6`;
+		assert.equal(fitIdentityLabel(payload, width), fitIdentityLabel(sanitized, width));
+		assert.equal(abbreviateModelId(payload), abbreviateModelId(sanitized));
+		const variants = [
+			["\x1b]0;OSC_TITLE_PAYLOAD\x07", ""],
+			["\x1b]0;OSC_TITLE_PAYLOAD\x1b\\", ""],
+			["\x1b[2J\x1b[31m", ""],
+			["\x00\x07\x1f\x7f\t\r\n", " "],
+		] as const;
+		for (const [controls, replacement] of variants) {
+			const raw = `mini/qwopus${controls}3.8-27b-q6`;
+			const clean = `mini/qwopus${replacement}3.8-27b-q6`;
+			assert.equal(
+				formatTargetLabel("blade-gateway", raw, { width }),
+				formatTargetLabel("blade-gateway", clean, { width }),
+			);
+			assert.equal(
+				formatTargetLabel(`blade${controls}gateway`, clean, { width }),
+				formatTargetLabel(`blade${replacement}gateway`, clean, { width }),
+			);
+			const cwd = `/tmp/${"a".repeat(80)}${controls}/leaf`;
+			const cleanCwd = `/tmp/${"a".repeat(80)}${replacement}/leaf`;
+			const render = (path: string) => {
+				const snapshot = footerState();
+				snapshot.workspace.cwd = path;
+				return renderCompactDashboard(snapshot, width).join("\n");
+			};
+			const actual = render(cwd);
+			assert.equal(actual, render(cleanCwd));
+			bounded(actual.split("\n"), width);
+			const plain = stripTerminalSequences(actual).replaceAll("\n", "");
+			assert.doesNotMatch(plain, /OSC_TITLE_PAYLOAD/u);
+			assert.ok([...plain].every((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127));
+		}
+	});
+}
+
+test("shared model labels let long placement yield before distinct families", () => {
+	const first = abbreviateModelId("very-long-placement/qwopus3.8-27b-q6");
+	const second = abbreviateModelId("very-long-placement/llamus3.8-27b-q6");
+	assert.notEqual(first, second);
+	assert.match(first, /qwopus.*q6/u);
+	assert.match(second, /llamus.*q6/u);
+	bounded([first, second], MODEL_ID_LABEL_WIDTH);
+});
+
+test("quant-suffixed gateway routes that differ only in version keep distinct labels", () => {
+	// At 24 cells both mini routes rendered as mini/qwopus3.…ense-q4km, and the second is mini's default.
+	for (const route of [
+		"mini/qwopus3.6-27b-dense-q4km",
+		"mini/qwopus3.8-27b-dense-q4km",
+		"mini/nemotron3-30b-moe-omni-udq4km",
+	]) {
+		assert.equal(abbreviateModelId(route), route);
+	}
+	assert.notEqual(
+		abbreviateModelId("dynamo/qwopus3.6-27b-coder-mtp"),
+		abbreviateModelId("dynamo/qwopus3.6-35b-a3b-coder-mtp"),
+	);
+});
+
+for (const width of widths) {
+	test(`completed trust remains honest and full provenance opens on Enter at ${width} columns`, () => {
+		const row = boardRow("completed-run");
+		row.status = "completed";
+		row.trust = {
+			version: 1,
+			verdict: "unverified",
+			claimant: "worker",
+			unknown: [],
+			refs: [],
+			axes: {
+				artifactIntegrity: "verified",
+				validationGrounding: "absent",
+				independentReview: "absent",
+				contextProvenance: "recorded",
+				completionEvidence: "absent",
+			},
+			text: "sealed; no validation observed; not independently reviewed; context recorded; completion not recorded",
+		};
+		const original = structuredClone(row);
+		const board = createDispatchBoardView(
+			() => [row],
+			() => undefined,
+		);
+		const folded = board.render(width);
+		bounded(folded, width);
+		const words = (lines: string[]) => plain(lines).replace(/│/gu, " ").replace(/\s+/gu, " ");
+		assert.match(words(folded), /unverified: no checks observed/u);
+		assert.doesNotMatch(words(folded), /independently reviewed|context recorded/u);
+		board.toggleDetail();
+		const full = board.render(width);
+		bounded(full, width);
+		// An ordinary sealed run's axes only restate its verdict, so they stay with the receipt even on Enter.
+		assert.match(words(full), /unverified: no checks observed/u);
+		assert.doesNotMatch(words(full), /independently reviewed|context recorded/u);
+		assert.deepEqual(row, original);
+		board.toggleDetail();
+		row.trust = {
+			...row.trust,
+			axes: { ...row.trust.axes, contextProvenance: "unknown" },
+			text: row.trust.text.replace("context recorded", "context unknown"),
+		};
+		assert.match(words(board.render(width)), /context unknown/u);
+		row.trust = {
+			...row.trust,
+			verdict: "compromised",
+			axes: { ...row.trust.axes, validationGrounding: "failed" },
+			text: row.trust.text.replace("no validation observed", "validation failed by host"),
+		};
+		assert.match(words(board.render(width)), /not trusted.*validation failed by host/u);
+	});
+}

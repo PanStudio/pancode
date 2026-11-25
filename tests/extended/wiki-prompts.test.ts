@@ -1,0 +1,219 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, strictEqual } from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { describe, it } from "node:test";
+import type { Codewiki } from "../../src/domains/context/codewiki/schema.js";
+import { readWikiPage } from "../../src/domains/context/wiki/frontmatter.js";
+import { renderWikiPage } from "../../src/domains/context/wiki/markdown.js";
+import { buildWikiPagePrompt } from "../../src/domains/context/wiki/prompts.js";
+import type { DecisionLedgerEntry } from "../../src/domains/session/entries.js";
+import { agentDecision } from "../harness/decision.js";
+
+const codewiki: Codewiki = {
+	version: 5,
+	language: "typescript",
+	files: [{ id: "cache", path: "src/cache.ts", lang: "typescript", loc: 20, role: "module", hash: "hash", imports: [] }],
+	symbols: [{ name: "main", kind: "func", fileId: "cache", line: 1 }],
+	edges: [],
+};
+function prompt(decisions: DecisionLedgerEntry[], sources = ["src/cache.ts"]) {
+	return buildWikiPagePrompt({
+		cwd: process.cwd(),
+		mode: "init",
+		codewiki,
+		decisions,
+		page: { path: "cache.md", title: "Cache", intent: "Explain the cache", sources, status: "pending", attempts: 0 },
+		siblings: [],
+		outputDir: "/staging",
+		seeded: false,
+	});
+}
+function records(text: string): Array<Record<string, unknown>> {
+	const block = /# Recorded decisions\s+```json\s+([\s\S]*?)\s+```/u.exec(text);
+	return block ? JSON.parse(block[1] ?? "[]") : [];
+}
+
+describe("wiki page decision prompts", () => {
+	it("balances symbol slots across every anchor, reuses spare slots, and ranks verified exports first", () => {
+		const sources = ["src/large.ts", "src/small.ts", "src/empty.ts", "src/missing.ts"];
+		const files = sources.slice(0, 3).map((path, index) => ({
+			id: String(index),
+			path,
+			lang: "typescript" as const,
+			loc: 200,
+			bytes: 1234,
+			role: "module" as const,
+			hash: "hash",
+			imports: [],
+		}));
+		const symbols = [
+			...Array.from({ length: 80 }, (_, index) => ({
+				name: `large${index}`,
+				kind: "func" as const,
+				fileId: "0",
+				line: index + 1,
+				...(index === 79 ? { exported: true } : {}),
+			})),
+			{ name: "small", kind: "func" as const, fileId: "1", line: 2 },
+		];
+		const text = buildWikiPagePrompt({
+			cwd: process.cwd(),
+			mode: "init",
+			codewiki: { ...codewiki, files, symbols },
+			page: { path: "area.md", title: "Area", intent: "Explain the area", sources, status: "pending", attempts: 0 },
+			siblings: [],
+			outputDir: "/staging",
+			seeded: false,
+		});
+		const digest = /## Indexed symbols under those sources\s+```text\s+([\s\S]*?)\s+```/u.exec(text)?.[1] ?? "";
+		match(
+			digest,
+			/src\/large\.ts: 200 indexed lines; 1234 bytes; 59\/80 symbols\n {2}- large79 func :80 \[export\]\n {2}- large0 func :1/,
+		);
+		match(digest, /src\/small\.ts: 200 indexed lines; 1234 bytes; 1\/1 symbols\n {2}- small func :2/);
+		match(digest, /src\/empty\.ts:[^\n]+\n {2}No indexed symbols/);
+		match(digest, /src\/missing\.ts: not indexed; unknown bytes; 0\/0 symbols\n {2}No indexed symbols/);
+		strictEqual(digest.match(/^ {2}- /gm)?.length, 60);
+		doesNotMatch(digest, /large58 func/);
+	});
+
+	it("shares the allowance evenly and distributes the remainder in anchor order", () => {
+		const sources = Array.from({ length: 7 }, (_, index) => `src/${index}.ts`);
+		const anchor = codewiki.files[0];
+		if (!anchor) throw new Error("missing anchor");
+		const files = sources.map((path, index) => ({ ...anchor, id: String(index), path }));
+		const symbols = files.flatMap((file) =>
+			Array.from({ length: 20 }, (_, index) => ({
+				name: `symbol${index}`,
+				kind: "func" as const,
+				fileId: file.id,
+				line: index + 1,
+			})),
+		);
+		const text = buildWikiPagePrompt({
+			cwd: process.cwd(),
+			mode: "init",
+			codewiki: { ...codewiki, files, symbols: symbols.reverse() },
+			page: { path: "area.md", title: "Area", intent: "Explain the area", sources, status: "pending", attempts: 0 },
+			siblings: [],
+			outputDir: "/staging",
+			seeded: false,
+		});
+		const counts = [...text.matchAll(/src\/\d\.ts: 20 indexed lines; unknown bytes; (\d+)\/20 symbols/g)].map((match) =>
+			Number(match[1]),
+		);
+		deepStrictEqual(counts, [9, 9, 9, 9, 8, 8, 8]);
+	});
+
+	it("preserves coverage gaps through metadata repair and requires qualified central-workflow coverage", () => {
+		const content =
+			'---\nsources: []\ncoverage_gaps:\n  - "Inspect the caller and the failure-path assertion."\n---\n# Area\n\nDraft details.\n';
+		const parsed = readWikiPage({ pagePath: "area.md", content });
+		const repaired = renderWikiPage(parsed.metadata, parsed.body);
+		deepStrictEqual(readWikiPage({ pagePath: "area.md", content: repaired }).metadata.coverage_gaps, [
+			"Inspect the caller and the failure-path assertion.",
+		]);
+		const text = prompt([]);
+		match(text, /caller -> arguments -> enforcing\s+branch -> observable outcome/);
+		match(text, /Coverage gaps prevent completion and require normal writing/);
+		match(text, /compare every frontmatter invariant with the body's conditions/);
+	});
+
+	it("gives a seeded writer retry fresh bounded draft diagnostics ahead of the stale failure", () => {
+		const diagnostics = [`${"x".repeat(1100)} first`, ...Array.from({ length: 40 }, (_, index) => `reason ${index}`)];
+		const text = buildWikiPagePrompt({
+			cwd: process.cwd(),
+			mode: "init",
+			codewiki,
+			page: {
+				path: "cache.md",
+				title: "Cache",
+				intent: "Explain the cache",
+				sources: ["src/cache.ts"],
+				status: "pending",
+				attempts: 1,
+				lastFailure: { phase: "validation", detail: "stale failure detail", runId: "old-run" },
+			},
+			siblings: [],
+			outputDir: "/staging",
+			seeded: true,
+			diagnostics,
+		});
+		const block = /## Current draft publication diagnostics[\s\S]*?```json\s+([\s\S]*?)\s+```/u.exec(text);
+		const parsed = JSON.parse(block?.[1] ?? "{}") as { reasons: string[]; omittedDiagnostics?: number };
+		strictEqual(parsed.reasons.length, 32);
+		strictEqual(parsed.reasons[0]?.length, 1000);
+		strictEqual(parsed.omittedDiagnostics, 9);
+		match(text, /unread assigned implementation, configuration, or existing tests remain coverage gaps/);
+		doesNotMatch(text, /Previous attempt diagnostic|stale failure detail/);
+	});
+
+	it("keeps the writer agent prompt consistent with the page fragment on unverified wording and coverage_gaps", () => {
+		const agent = readFileSync(new URL("../../src/domains/agents/builtins/wiki-writer.md", import.meta.url), "utf8");
+		match(agent, /`coverage_gaps` frontmatter list/);
+		match(agent, /never a substitute for reading a source the task assigned/);
+		doesNotMatch(agent, /say what is unverified instead of writing the claim/);
+	});
+
+	it("carries recorded arguments, origin, timestamp and refs and instructs citation", async () => {
+		const entry = await agentDecision();
+		const text = prompt([entry]);
+		const record = records(text)[0];
+		strictEqual(record?.key, "cache-key");
+		strictEqual(record?.value, "capability tuple");
+		strictEqual(record?.source, "agent");
+		strictEqual(record?.decidedAt, entry.decisions[0]?.decidedAt);
+		deepStrictEqual(record?.alternatives, entry.decisions[0]?.alternatives);
+		strictEqual(record?.rationale, entry.decisions[0]?.rationale);
+		strictEqual(record?.ref, `${entry.interviewId}/cache-key`);
+		match(text, /cite its refs in the body/u);
+		match(text, /instead of inferring/u);
+	});
+	it("matches symbols and descendant paths, excludes unrelated and superseded records, and caps at twelve", async () => {
+		const entry = await agentDecision();
+		const base = entry.decisions[0];
+		if (!base) throw new Error("missing decision");
+		const operator = { ...base };
+		delete operator.source;
+		strictEqual(
+			records(
+				prompt([
+					{
+						...entry,
+						origin: "interview",
+						decisions: [{ ...operator, key: "main", rationale: "because", alternatives: [] }],
+					},
+				]),
+			)[0]?.source,
+			"operator",
+		);
+		strictEqual(records(prompt([entry], ["src"])).length, 1);
+		doesNotMatch(prompt([entry], ["src/cach"]), /# Recorded decisions/u);
+		doesNotMatch(
+			prompt([{ ...entry, decisions: [{ ...base, status: "superseded", revisedAt: base.decidedAt }] }]),
+			/# Recorded decisions/u,
+		);
+		doesNotMatch(prompt([]), /# Recorded decisions/u);
+		const many = { ...entry, decisions: Array.from({ length: 16 }, (_, i) => ({ ...base, key: `key-${i}` })) };
+		strictEqual(records(prompt([many])).length, 12);
+		strictEqual(records(prompt([many]))[11]?.key, "key-11");
+		strictEqual(
+			records(prompt([{ ...entry, decisions: [{ ...base, rationale: "src/cache.ts.bak", alternatives: [] }] }])).length,
+			0,
+		);
+	});
+	it("retains optional cited refs through frontmatter repair and rendering", () => {
+		const parsed = readWikiPage({
+			pagePath: "cache.md",
+			content:
+				"---\ntitle: Cache\ndecisions:\n  - agent:set/cache-key\n  - agent:set/cache-key\n---\n# Cache\n\nRecorded choice.",
+		});
+		deepStrictEqual(parsed.metadata.decisions, ["agent:set/cache-key"]);
+		deepStrictEqual(
+			readWikiPage({ pagePath: "cache.md", content: renderWikiPage(parsed.metadata, parsed.body) }).metadata.decisions,
+			parsed.metadata.decisions,
+		);
+		strictEqual(readWikiPage({ pagePath: "old.md", content: "# Old" }).metadata.decisions, undefined);
+	});
+});

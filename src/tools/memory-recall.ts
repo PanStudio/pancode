@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { Type } from "typebox";
+import { ToolNames } from "../core/tool-names.js";
+import {
+	MEMORY_RECALL_DEFAULT_LIMIT,
+	MEMORY_RECALL_MAX_LIMIT,
+	recallMemory,
+	renderMemoryRecall,
+} from "../domains/memory/recall.js";
+import type { TaskMemorySnapshot } from "../domains/memory/task-bank.js";
+import type { MemoryRecord, MemoryRetrievalOptions } from "../domains/memory/types.js";
+import type { ToolResult, ToolSpec } from "./tool-spec.js";
+
+export interface MemoryRecallDeps {
+	/** Off means off: a recalled record would enter the next request and the ledger as a tool result. */
+	enabled?: () => boolean;
+	onRecall?: (ids: readonly string[]) => void;
+	/** The live session task bank; null when the session has none. */
+	bank: () => TaskMemorySnapshot | null;
+	/** The durable store as read now. A throw reports as a tool error. */
+	records: () => ReadonlyArray<MemoryRecord>;
+	/** Active repository, runtime and agent identity gating durable records. */
+	eligibility: () => Omit<MemoryRetrievalOptions, "tokenBudget">;
+}
+
+/**
+ * Orchestrator-only and read-only: the tool never saves, proposes, approves or
+ * rejects. Writes stay with `memory_note`, rules capture and the operator's review.
+ */
+export function createMemoryRecallTool(deps: MemoryRecallDeps): ToolSpec {
+	return {
+		name: ToolNames.MemoryRecall,
+		description:
+			"Search this session's task memory (knowledge and procedural entries) and the durable lessons and unverified notes that apply to this repository and runtime, each labelled with its layer and evidence. Read-only: it cannot save, propose or approve memory.",
+		parameters: Type.Object({
+			query: Type.String({ minLength: 1, description: "Words to match against memory text." }),
+			limit: Type.Optional(
+				Type.Integer({
+					minimum: 1,
+					maximum: MEMORY_RECALL_MAX_LIMIT,
+					description: `Most entries to return (default ${MEMORY_RECALL_DEFAULT_LIMIT}).`,
+				}),
+			),
+		}),
+		baseActionClass: "read",
+		executionMode: "parallel",
+		async run(args): Promise<ToolResult> {
+			if (deps.enabled?.() === false) return { kind: "error", message: "memory_recall: memory is off" };
+			const query = typeof args.query === "string" ? args.query.trim() : "";
+			if (query.length === 0) return { kind: "error", message: "memory_recall: query is required" };
+			const limit = typeof args.limit === "number" ? args.limit : undefined;
+			try {
+				const hits = recallMemory({
+					query,
+					...(limit !== undefined ? { limit } : {}),
+					bank: deps.bank(),
+					records: deps.records(),
+					eligibility: deps.eligibility(),
+				});
+				try {
+					deps.onRecall?.(hits.map((hit) => hit.id));
+				} catch {
+					/* Diagnostics never change recall results. */
+				}
+				return { kind: "ok", output: renderMemoryRecall(hits), details: { hits } };
+			} catch (err) {
+				return { kind: "error", message: `memory_recall: ${err instanceof Error ? err.message : String(err)}` };
+			}
+		},
+	};
+}

@@ -1,0 +1,1182 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Session-ledger replay as model messages.
+ *
+ * Pure ledger logic: which entries a replay works from, and the agent messages
+ * they become. Nothing here renders, so the turn engine can import it without
+ * reaching the terminal renderers; `chat-renderer.ts` re-exports the public
+ * names and shares the entry-decoding helpers.
+ */
+
+import { createHostPolicyMessage } from "../core/host-policy-message.js";
+import { markHostAuthored } from "../core/message-accounting.js";
+import { compactionCut } from "../domains/context/working-set/visible.js";
+import { toContextOverflowError } from "../domains/providers/errors.js";
+import { captureSkillContext } from "../domains/session/compaction/compact.js";
+import { foldDecisionBoard } from "../domains/session/decision-board.js";
+import type {
+	BashExecutionEntry,
+	BranchSummaryEntry,
+	CompactionSummaryEntry,
+	HostInsertRecord,
+	MessageEntry,
+	PreservedSkillContext,
+	SessionEntry,
+} from "../domains/session/entries.js";
+import {
+	decisionRef,
+	HOST_INSERT_CUSTOM_TYPE,
+	isHostInsertData,
+	latestSkillContextState,
+	verifiedSkillContextCheckpoint,
+} from "../domains/session/entries.js";
+import { HANDOFF_SEED_CUSTOM_TYPE, handoffSeedContextText, isHandoffSeedData } from "../domains/session/handoff.js";
+import { foldTaskBoard } from "../domains/session/task-board.js";
+import { filterEntriesToActivePath } from "../domains/session/tree/active-path.js";
+import {
+	type BashExecutionMessage,
+	BRANCH_SUMMARY_PREFIX,
+	BRANCH_SUMMARY_SUFFIX,
+	bashExecutionToText,
+	COMPACTION_SUMMARY_PREFIX,
+	COMPACTION_SUMMARY_SUFFIX,
+} from "../engine/messages.js";
+import type { AgentMessage } from "../engine/types.js";
+import { type AgentStateView, isSelfExplainingAbort } from "./chat-loop-messages.js";
+import { readPostureGeneration, readPostureUpdate } from "./posture-policy.js";
+import type { WorkerRunResultReader } from "./worker-stream.js";
+
+const MAX_REPLAY_TEXT_CHARS = 20_000;
+
+/**
+ * Options for the rehydrate helper used by /resume and /fork.
+ */
+export interface RehydrateChatPanelOptions {
+	/** The target the session opened on, until the ledger records a route change. */
+	routeTarget?: string;
+	/** Unprojected ledger for verifying historical skill receipts after eviction projection. */
+	skillContextEntries?: ReadonlyArray<SessionEntry>;
+	/**
+	 * Select the active branch ancestry without truncating later sidecars.
+	 * Live compaction replay uses this so a summary appended after the current
+	 * message leaf remains visible. Unset offline readers retain their
+	 * file-order fallback.
+	 */
+	activeLeafTurnId?: string;
+	/**
+	 * Pin the active-branch leaf and stop replay after that turn (inclusive).
+	 * /tree switches and /fork pass the selected turn id so replay follows
+	 * that turn's ancestry. Unset (default) treats the most recently appended
+	 * message turn as the leaf.
+	 */
+	uptoTurnId?: string;
+	/**
+	 * Render orphan tool results (results with no matching prior call) in full,
+	 * without the live view's middle-elision. `/export` sets this so its
+	 * throwaway panel writes complete tool bodies; the paired-result path reads
+	 * the same intent from the panel's `unboundedToolBodies` option.
+	 */
+	unboundedToolBodies?: boolean;
+	/**
+	 * Run record reader for the worker blocks a `workerRun` entry names.
+	 * Defaults to the run's sealed scope; tests inject their own. This is the
+	 * one place replay reads outside the entry stream, and it swallows every
+	 * failure, so a session whose run records are gone still replays.
+	 */
+	readWorkerRunResult?: WorkerRunResultReader;
+	/**
+	 * Already-rendered continuity blocks, in order, from
+	 * `continuityReplayBlocks`. Each is emitted verbatim exactly once and never
+	 * routed through `appendContextMessage`, whose trim and replay cap would
+	 * crop an accepted note; §4 forbids trimming, normalizing or regenerating
+	 * accepted text. Resolving which blocks these are needs the session and fork
+	 * facts a renderer does not have, so the caller supplies the finished text
+	 * and this module only places it.
+	 */
+	continuityBlocks?: ReadonlyArray<string>;
+}
+
+/**
+ * The active-path slice a replay works from, **before** the compaction cut.
+ *
+ * Exported because the continuity fold needs exactly this array: evidence for a
+ * transaction routinely sits older than the cut, and `selectReplayEntries`
+ * would both drop it and renumber every surviving position. A caller that
+ * resolves a projection folds this, then renders, so the two agree on one
+ * ordered input.
+ */
+export function activeEntriesBeforeCompactionCut(
+	turns: ReadonlyArray<SessionEntry>,
+	options: RehydrateChatPanelOptions = {},
+	/**
+	 * Whether to apply `uptoTurnId`'s positional truncation.
+	 *
+	 * Display replay always does. Continuity does not, unless the selection is a
+	 * genuine historical cut, because `uptoTurnId` carries two different meanings
+	 * through one option: a live `/tree` switch passes it to stop the transcript
+	 * at the selected message, and a historical fork passes it to describe a
+	 * moment that really had no later records. Truncating for the first case
+	 * physically discards a pause, a delivery or an acknowledgement anchored
+	 * after the selected message, and a fold cannot restore a record it was never
+	 * shown: leaving a `historical` flag false does not undo a cut already made.
+	 * The branch selection honors the leaf either way; only the positional cut
+	 * is conditional.
+	 */
+	truncateAtSelection = true,
+): SessionEntry[] {
+	const active = filterEntriesToActivePath(turns, options.activeLeafTurnId ?? options.uptoTurnId);
+	return truncateAtSelection ? truncateAtTurn(active, options.uptoTurnId, turns) : active;
+}
+
+export function extractTurnText(payload: unknown): string {
+	if (typeof payload === "string") return payload;
+	if (!payload || typeof payload !== "object") return "";
+	const p = payload as Record<string, unknown>;
+	if (typeof p.text === "string") return p.text;
+	if (Array.isArray(p.content)) {
+		for (const block of p.content) {
+			if (!block || typeof block !== "object") continue;
+			const b = block as Record<string, unknown>;
+			if (b.type === "text" && typeof b.text === "string") return b.text;
+		}
+	}
+	return "";
+}
+
+export function stringifyPreview(value: unknown, limit = 600): string {
+	if (value === undefined) return "";
+	const clip = (text: string): string => {
+		if (text.length <= limit) return text;
+		const end = limit - 3;
+		const cut = end > 0 && isHighSurrogate(text.charCodeAt(end - 1)) ? end - 1 : end;
+		return `${text.slice(0, cut)}...`;
+	};
+	if (typeof value === "string") return clip(value);
+	try {
+		const text = JSON.stringify(value);
+		if (!text) return "";
+		return clip(text);
+	} catch {
+		return clip(String(value));
+	}
+}
+
+export function truncateReplayText(text: string, limit = MAX_REPLAY_TEXT_CHARS): string {
+	if (text.length <= limit) return text;
+	// A cut between a surrogate pair would send a lone surrogate to the model.
+	const cut = limit > 0 && isHighSurrogate(text.charCodeAt(limit - 1)) ? limit - 1 : limit;
+	const omitted = text.length - cut;
+	return `${text.slice(0, cut)}\n\n[... ${omitted} more characters truncated from replay context]`;
+}
+
+function isHighSurrogate(code: number): boolean {
+	return code >= 0xd800 && code <= 0xdbff;
+}
+
+const REPLAY_TRUNCATION_MARKER = /\n\n\[\.\.\. \d+ more characters truncated from replay context\]$/u;
+
+/** The text of a user message, text blocks joined. */
+export function userMessageText(message: AgentMessage | undefined): string | null {
+	if (message?.role !== "user") return null;
+	if (typeof message.content === "string") return message.content;
+	return message.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+}
+
+/** True for a user message replay bounded, as `boundRefusedPrompt` and the ledger rebuild of a refused prompt do. */
+export function isBoundedReplayCopy(message: AgentMessage | undefined): boolean {
+	if (message?.role !== "user") return false;
+	if (typeof message.content === "string") return REPLAY_TRUNCATION_MARKER.test(message.content);
+	return message.content.some((block) => block.type === "text" && REPLAY_TRUNCATION_MARKER.test(block.text));
+}
+
+/**
+ * A prompt the server refused for size was never cached, so the byte-exact replay #423 needs does not apply to it.
+ * Resent whole it fails every later turn, and compaction cannot help while the summarizer must read it too. Bounds only
+ * the current request: any answer before it ends the walk, so an earlier prompt and an overflow caused later by tool
+ * results keep their bytes. A second refusal leaves the bounded text alone, so replay still sees the same bytes.
+ */
+export function boundRefusedPrompt(agent: AgentStateView): void {
+	const bound = (text: string): string => (REPLAY_TRUNCATION_MARKER.test(text) ? text : truncateReplayText(text));
+	const messages = [...agent.state.messages];
+	let reachedRequest = false;
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const message = messages[index];
+		if (message?.role === "assistant") {
+			if (reachedRequest || (message.stopReason !== "error" && message.stopReason !== "aborted")) break;
+			continue;
+		}
+		if (message?.role !== "user") continue;
+		reachedRequest = true;
+		const content =
+			typeof message.content === "string"
+				? bound(message.content)
+				: message.content.map((block) => (block.type === "text" ? { ...block, text: bound(block.text) } : block));
+		messages[index] = { ...message, content };
+	}
+	agent.state.messages = messages;
+}
+
+/** Prompts the server never accepted: refused for size, with no later answer showing that the request fit. */
+function refusedPromptTurns(entries: ReadonlyArray<SessionEntry>): ReadonlySet<string> {
+	const refused = new Set<string>();
+	const accepted = new Set<string>();
+	let prompt: string | null = null;
+	for (const entry of entries) {
+		if (entry.kind !== "message") continue;
+		if (entry.role === "user") prompt = entry.turnId;
+		if (entry.role !== "assistant" || prompt === null) continue;
+		// An abort says nothing about size, whether it hit the first request or the retry after compaction.
+		if (payloadObject(entry.payload)?.stopReason === "aborted") continue;
+		const failure = messageFailure(entry);
+		if (failure !== null && toContextOverflowError(failure.errorMessage) !== null) {
+			if (!accepted.has(prompt)) refused.add(prompt);
+			continue;
+		}
+		refused.delete(prompt);
+		accepted.add(prompt);
+	}
+	return refused;
+}
+
+export function timestampMillis(timestamp: string): number {
+	const parsed = Date.parse(timestamp);
+	return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+export function makeTextMessage(role: "user" | "assistant", text: string, timestamp: string): AgentMessage {
+	const message: Record<string, unknown> = {
+		role,
+		content: [{ type: "text", text }],
+		timestamp: timestampMillis(timestamp),
+	};
+	if (role === "assistant") message.stopReason = "stop";
+	return message as unknown as AgentMessage;
+}
+
+function cloneContentBlocks(content: unknown, maxTextChars?: number): unknown[] | null {
+	if (!Array.isArray(content)) return null;
+	return content
+		.filter((block) => !!block && typeof block === "object")
+		.map((block) => {
+			const cloned: Record<string, unknown> = { ...(block as Record<string, unknown>) };
+			if (typeof maxTextChars === "number") {
+				if (typeof cloned.text === "string") cloned.text = truncateReplayText(cloned.text, maxTextChars);
+				if (typeof cloned.thinking === "string") cloned.thinking = truncateReplayText(cloned.thinking, maxTextChars);
+			}
+			return cloned;
+		});
+}
+
+export function richMessageFromEntry(entry: MessageEntry, maxTextChars?: number): AgentMessage | null {
+	if (entry.role !== "user" && entry.role !== "assistant") return null;
+	const obj = payloadObject(entry.payload);
+	const content = cloneContentBlocks(obj?.content, maxTextChars);
+	const original = extractTurnText(entry.payload);
+	const text = maxTextChars === undefined ? original : truncateReplayText(original, maxTextChars);
+	const stopReason = typeof obj?.stopReason === "string" ? obj.stopReason : undefined;
+	if (!content && text.length === 0 && !messageFailure(entry) && stopReason !== "length") return null;
+	const message: Record<string, unknown> = {
+		role: entry.role,
+		content: content ?? [{ type: "text", text }],
+		timestamp: timestampMillis(entry.timestamp),
+	};
+	if (entry.role === "assistant") {
+		const failure = messageFailure(entry);
+		message.stopReason = failure?.stopReason ?? stopReason ?? "stop";
+		if (obj?.pancodeAbortReason === "tool_argument_generation" || obj?.pancodeAbortReason === "repetition")
+			message.pancodeAbortReason = obj.pancodeAbortReason;
+		if (failure) message.errorMessage = failure.errorMessage;
+		for (const key of [
+			"usage",
+			"callId",
+			"attemptId",
+			"callInvoked",
+			"callAccounting",
+			"failure",
+			"api",
+			"provider",
+			"model",
+			"baseUrlDigest",
+			"responseModelIdObservation",
+			"responseModel",
+			"responseId",
+			"providerThinkingLevel",
+			"gatewayRouting",
+			"diagnostics",
+			"contextUsageInvalidated",
+			"pancodeReasoningNotRetained",
+			"pancodeReasoningToolMarkup",
+			"pancodeWrittenCalls",
+		]) {
+			if (obj?.[key] !== undefined) message[key] = obj[key];
+		}
+	}
+	return message as unknown as AgentMessage;
+}
+
+function toolCallIdsFromMessage(message: AgentMessage): string[] {
+	const content = (message as { content?: unknown }).content;
+	if (!Array.isArray(content)) return [];
+	const ids: string[] = [];
+	for (const block of content) {
+		if (!block || typeof block !== "object") continue;
+		const b = block as Record<string, unknown>;
+		if (b.type !== "toolCall") continue;
+		if (typeof b.id === "string" && b.id.length > 0) ids.push(b.id);
+	}
+	return ids;
+}
+
+function recordToolCallsFromMessage(message: AgentMessage, seen: Set<string>): void {
+	for (const id of toolCallIdsFromMessage(message)) seen.add(id);
+}
+
+/**
+ * Replay sink that hands tool results to the model in the order the assistant
+ * issued the calls.
+ *
+ * The ledger appends a tool result when its tool finishes, while the live loop
+ * appends a parallel batch's results by call index (pi executes the batch and
+ * pushes results in the assistant's order). A two-call turn whose second call
+ * finished first is therefore recorded as [b, a] and was sent as [a, b]. A
+ * resume that replayed the ledger order sent different bytes from that point
+ * on, and the provider's prefix cache missed for the rest of the session.
+ * Results are staged until the next non-result message and released in call
+ * order; an id the staged assistant turn never issued keeps its ledger order
+ * after the known ones.
+ */
+function createOrderedReplaySink(): {
+	messages: AgentMessage[];
+	sourceIds: Array<string | null>;
+	push(message: AgentMessage, sourceId: string | null): void;
+	stageToolResult(message: AgentMessage, sourceId: string): void;
+	flush(): void;
+} {
+	const messages: AgentMessage[] = [];
+	const sourceIds: Array<string | null> = [];
+	let callOrder: string[] = [];
+	let staged: Array<{ message: AgentMessage; sourceId: string }> = [];
+	const rank = (message: AgentMessage): number => {
+		const id = (message as { toolCallId?: unknown }).toolCallId;
+		const index = typeof id === "string" ? callOrder.indexOf(id) : -1;
+		return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+	};
+	const flush = (): void => {
+		if (staged.length === 0) return;
+		staged.sort((a, b) => rank(a.message) - rank(b.message));
+		for (const item of staged) {
+			messages.push(item.message);
+			sourceIds.push(item.sourceId);
+		}
+		staged = [];
+		callOrder = [];
+	};
+	return {
+		messages,
+		sourceIds,
+		flush,
+		push(message, sourceId) {
+			flush();
+			messages.push(message);
+			sourceIds.push(sourceId);
+			// Consecutive assistant messages (one standalone tool_call entry per
+			// call) share one batch; anything else starts a new one.
+			if (message.role === "assistant") callOrder.push(...toolCallIdsFromMessage(message));
+			else callOrder = [];
+		},
+		stageToolResult(message, sourceId) {
+			staged.push({ message, sourceId });
+		},
+	};
+}
+
+function toolCallMessageFromEntry(entry: MessageEntry): AgentMessage {
+	const call = extractToolCall(entry);
+	const block: Record<string, unknown> = { type: "toolCall", id: call.id, name: call.name };
+	if (call.args !== undefined) block.arguments = call.args;
+	return {
+		role: "assistant",
+		content: [block],
+		stopReason: "toolUse",
+		timestamp: timestampMillis(entry.timestamp),
+	} as unknown as AgentMessage;
+}
+
+export function toolResultContent(result: unknown, unbounded = false): unknown[] {
+	const obj = payloadObject(result);
+	if (Array.isArray(obj?.content)) {
+		return cloneContentBlocks(obj.content, unbounded ? undefined : MAX_REPLAY_TEXT_CHARS) ?? [];
+	}
+	if (isTextResult(result)) return [{ type: "text", text: unbounded ? result.text : truncateReplayText(result.text) }];
+	if (typeof result === "string") return [{ type: "text", text: unbounded ? result : truncateReplayText(result) }];
+	return [{ type: "text", text: stringifyPreview(result, unbounded ? Number.POSITIVE_INFINITY : 10_000) }];
+}
+
+function isTextResult(value: unknown): value is { text: string } {
+	return payloadObject(value)?.text !== undefined && typeof (value as { text?: unknown }).text === "string";
+}
+
+function toolResultMessageFromEntry(entry: MessageEntry): AgentMessage {
+	const result = extractToolResult(entry);
+	return {
+		role: "toolResult",
+		// The ledger stores the finalized content Pi sent, including tool-side caps (#423).
+		content: toolResultContent(result.result, true),
+		toolCallId: result.id ?? entry.turnId,
+		toolName: result.name,
+		isError: result.isError,
+		timestamp: timestampMillis(entry.timestamp),
+	} as AgentMessage;
+}
+
+/** The per-entry conversion shared by replay and injected token pricing (#422). */
+function replayMessageFromEntry(entry: MessageEntry): AgentMessage | null {
+	if (entry.role === "user" || entry.role === "assistant") {
+		if (entry.role === "assistant" && messageFailure(entry)) return null;
+		// Replay must preserve the original provider prefix, even for long operator turns (#423).
+		return richMessageFromEntry(entry);
+	}
+	if (entry.role === "tool_call") return toolCallMessageFromEntry(entry);
+	if (entry.role === "tool_result") return toolResultMessageFromEntry(entry);
+	const text = truncateReplayText(`System note: ${textBlockFromEntry(entry)}`.trim());
+	return text ? makeTextMessage("user", text, entry.timestamp) : null;
+}
+
+export function textBlockFromEntry(entry: MessageEntry): string {
+	const text = extractTurnText(entry.payload);
+	if (text.length > 0) return text;
+	return stringifyPreview(entry.payload);
+}
+
+export function messageFailure(entry: MessageEntry): { stopReason: "error" | "aborted"; errorMessage: string } | null {
+	const obj = payloadObject(entry.payload);
+	if (!obj) return null;
+	const stopReason = obj?.stopReason;
+	if (stopReason !== "error" && stopReason !== "aborted") return null;
+	const raw = obj.errorMessage;
+	if (isSelfExplainingAbort({ stopReason, errorMessage: raw, text: extractTurnText(entry.payload) })) return null;
+	const errorMessage =
+		typeof raw === "string" && raw.length > 0
+			? raw
+			: stopReason === "aborted"
+				? "request aborted"
+				: "model target returned an error";
+	return { stopReason, errorMessage };
+}
+
+/** Only host-written closures change presentation; unmarked historical turns retain their replay (#430). */
+export function messageInterruptClosure(entry: MessageEntry): { text: string; operatorCancel: boolean } | null {
+	const obj = payloadObject(entry.payload);
+	if (obj?.stopReason !== "aborted") return null;
+	const closure = payloadObject(obj.interruptClosure);
+	return typeof closure?.operatorCancel === "boolean"
+		? { text: extractTurnText(entry.payload), operatorCancel: closure.operatorCancel }
+		: null;
+}
+
+export function payloadObject(payload: unknown): Record<string, unknown> | null {
+	return payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>) : null;
+}
+
+function parseMaybeJson(value: unknown): unknown {
+	if (typeof value !== "string") return value;
+	const trimmed = value.trim();
+	if (!trimmed) return value;
+	try {
+		return JSON.parse(trimmed) as unknown;
+	} catch {
+		return value;
+	}
+}
+
+function firstContentBlock(payload: unknown, type: string): Record<string, unknown> | null {
+	const obj = payloadObject(payload);
+	const content = obj?.content;
+	if (!Array.isArray(content)) return null;
+	for (const block of content) {
+		if (!block || typeof block !== "object") continue;
+		const b = block as Record<string, unknown>;
+		if (b.type === type) return b;
+	}
+	return null;
+}
+
+export interface ReplayToolCall {
+	id: string;
+	name: string;
+	args: unknown;
+}
+
+export function extractToolCall(entry: MessageEntry): ReplayToolCall {
+	const payload = entry.payload;
+	const obj = payloadObject(payload);
+	const block = firstContentBlock(payload, "toolCall");
+	const fn = payloadObject(obj?.function);
+	const id =
+		(typeof obj?.id === "string" && obj.id) ||
+		(typeof obj?.toolCallId === "string" && obj.toolCallId) ||
+		(typeof obj?.tool_call_id === "string" && obj.tool_call_id) ||
+		(typeof block?.id === "string" && block.id) ||
+		entry.turnId;
+	const name =
+		(typeof obj?.name === "string" && obj.name) ||
+		(typeof obj?.toolName === "string" && obj.toolName) ||
+		(typeof obj?.tool === "string" && obj.tool) ||
+		(typeof fn?.name === "string" && fn.name) ||
+		(typeof block?.name === "string" && block.name) ||
+		"tool";
+	const args =
+		obj?.arguments ??
+		obj?.args ??
+		obj?.input ??
+		parseMaybeJson(fn?.arguments) ??
+		block?.arguments ??
+		block?.args ??
+		undefined;
+	return { id, name, args };
+}
+
+export interface ReplayToolResult {
+	id: string | null;
+	name: string;
+	result: unknown;
+	isError: boolean;
+	durationMs?: number;
+	resultSummary?: Record<string, unknown>;
+	/** Persisted admission verdict; absent on history written before it was recorded. */
+	outcome?: string;
+	blockReason?: string;
+	/** Admission's action class; an unknown dynamic tool is classified by it, live and on replay. */
+	actionClass?: string;
+	autoApproved?: "yolo";
+	/** A finish the completion protocol refused and the model retried; its row stays out of the transcript (R2-F15). */
+	protocolRetry?: true;
+}
+
+export function extractToolResult(entry: MessageEntry): ReplayToolResult {
+	const payload = entry.payload;
+	const obj = payloadObject(payload);
+	const contentText = extractTurnText(payload);
+	const id =
+		(typeof obj?.toolCallId === "string" && obj.toolCallId) ||
+		(typeof obj?.tool_call_id === "string" && obj.tool_call_id) ||
+		(typeof obj?.id === "string" && obj.id) ||
+		null;
+	const name =
+		(typeof obj?.toolName === "string" && obj.toolName) ||
+		(typeof obj?.name === "string" && obj.name) ||
+		(typeof obj?.tool === "string" && obj.tool) ||
+		"tool";
+	const result =
+		obj?.result ?? obj?.output ?? obj?.out ?? obj?.content ?? (contentText.length > 0 ? contentText : payload);
+	const durationMs = typeof obj?.durationMs === "number" && Number.isFinite(obj.durationMs) ? obj.durationMs : undefined;
+	const resultSummary = payloadObject(obj?.resultSummary) ?? undefined;
+	const outcome = typeof obj?.outcome === "string" && obj.outcome.length > 0 ? obj.outcome : undefined;
+	const blockReason = typeof obj?.blockReason === "string" && obj.blockReason.length > 0 ? obj.blockReason : undefined;
+	const actionClass = typeof obj?.actionClass === "string" && obj.actionClass.length > 0 ? obj.actionClass : undefined;
+	return {
+		id,
+		name,
+		result,
+		isError: obj?.isError === true || obj?.error === true,
+		...(durationMs !== undefined ? { durationMs } : {}),
+		...(resultSummary !== undefined ? { resultSummary } : {}),
+		...(outcome !== undefined ? { outcome } : {}),
+		...(blockReason !== undefined ? { blockReason } : {}),
+		...(actionClass !== undefined ? { actionClass } : {}),
+		...(obj?.autoApproved === "yolo" ? { autoApproved: "yolo" as const } : {}),
+		...(obj?.protocolRetry === true ? { protocolRetry: true as const } : {}),
+	};
+}
+
+/**
+ * The path through the selected row. Host-insert records written after it and before the next message row describe the
+ * request that carried it, such as a restoration placed before it, so they stay for render to place by their anchors.
+ */
+function truncateAtTurn(
+	entries: ReadonlyArray<SessionEntry>,
+	uptoTurnId: string | undefined,
+	turns: ReadonlyArray<SessionEntry>,
+): SessionEntry[] {
+	if (!uptoTurnId) return [...entries];
+	const index = entries.findIndex((entry) => entry.turnId === uptoTurnId);
+	if (index < 0) return [...entries];
+	const written = new Set<string>();
+	for (let at = turns.findIndex((entry) => entry.turnId === uptoTurnId) + 1; at > 0 && at < turns.length; at += 1) {
+		const entry = turns[at];
+		if (entry?.kind === "message") break;
+		if (entry?.kind === "custom" && entry.customType === HOST_INSERT_CUSTOM_TYPE) written.add(entry.turnId);
+	}
+	return [...entries.slice(0, index + 1), ...entries.slice(index + 1).filter((entry) => written.has(entry.turnId))];
+}
+
+function toolCallIdsInEntry(entry: SessionEntry): string[] {
+	if (entry.kind !== "message") return [];
+	if (entry.role === "tool_call") return [extractToolCall(entry).id];
+	if (entry.role !== "assistant") return [];
+	const obj = payloadObject(entry.payload);
+	if (!Array.isArray(obj?.content)) return [];
+	const ids: string[] = [];
+	for (const block of obj.content) {
+		if (!block || typeof block !== "object") continue;
+		const record = block as Record<string, unknown>;
+		if (record.type !== "toolCall") continue;
+		if (typeof record.id === "string" && record.id.length > 0) ids.push(record.id);
+	}
+	return ids;
+}
+
+function toolResultIdInEntry(entry: SessionEntry): string | null {
+	if (entry.kind !== "message" || entry.role !== "tool_result") return null;
+	return extractToolResult(entry).id;
+}
+
+function findPriorToolCallEntry(
+	entries: ReadonlyArray<SessionEntry>,
+	toolCallId: string,
+	endExclusive: number,
+): SessionEntry | null {
+	for (let index = Math.min(endExclusive, entries.length) - 1; index >= 0; index -= 1) {
+		const entry = entries[index];
+		if (!entry) continue;
+		if (toolCallIdsInEntry(entry).includes(toolCallId)) return entry;
+	}
+	return null;
+}
+
+function repairToolResultOrphans(
+	allEntries: ReadonlyArray<SessionEntry>,
+	selected: ReadonlyArray<SessionEntry>,
+	compactionIndex: number,
+): SessionEntry[] {
+	const out: SessionEntry[] = [];
+	const seenToolCalls = new Set<string>();
+	const emittedTurnIds = new Set<string>();
+	const remember = (entry: SessionEntry): void => {
+		emittedTurnIds.add(entry.turnId);
+		for (const id of toolCallIdsInEntry(entry)) seenToolCalls.add(id);
+	};
+	for (const entry of selected) {
+		const resultId = toolResultIdInEntry(entry);
+		if (resultId !== null && !seenToolCalls.has(resultId)) {
+			const dependency = findPriorToolCallEntry(allEntries, resultId, compactionIndex);
+			if (dependency !== null && !emittedTurnIds.has(dependency.turnId)) {
+				out.push(dependency);
+				remember(dependency);
+			}
+		}
+		out.push(entry);
+		remember(entry);
+	}
+	return out;
+}
+
+/**
+ * Normalize a heterogeneous session JSONL stream into the entry sequence the
+ * replay surfaces should show. The stream is first narrowed to the active
+ * branch of the turn tree (activeLeafTurnId selects a live branch;
+ * uptoTurnId selects and historically truncates; otherwise the most recent
+ * append wins), so abandoned sibling turns from earlier /tree switches never
+ * replay. When the remaining slice contains a compaction boundary, render the
+ * latest summary first and keep only the retained suffix plus later entries,
+ * mirroring pi-coding-agent's buildSessionContext behavior.
+ */
+export function selectReplayEntries(
+	turns: ReadonlyArray<SessionEntry>,
+	options: RehydrateChatPanelOptions = {},
+): SessionEntry[] {
+	const active = filterEntriesToActivePath(turns, options.activeLeafTurnId ?? options.uptoTurnId);
+	const entries = truncateAtTurn(active, options.uptoTurnId, turns);
+	// The cut itself is the working-set layer's definition of "what the model
+	// can see", shared with the eviction policy input so the two cannot drift.
+	const cut = compactionCut(entries);
+	if (cut.compactionIndex < 0) return entries;
+	const compaction = entries[cut.compactionIndex] as CompactionSummaryEntry;
+	// A retained suffix can contain an older native cut; only the current cut owns replay (#423).
+	const selected: SessionEntry[] = [
+		compaction,
+		...cut.visible.filter((entry) => entry.kind !== "compactionSummary" || !entry.providerCheckpoint),
+	];
+	return repairToolResultOrphans(entries, selected, cut.compactionIndex);
+}
+
+/**
+ * Whether a reply followed a checkpoint's verbatim instructions before another operator turn. A request then carried
+ * the block right after the summary, so it is sent history: retiring it would rewrite the cached prefix there, and a
+ * resume would rebuild a request that diverges at that point (bt-40). Read from ledger order, which the live retirement
+ * and the replay share, so the two cannot disagree.
+ */
+function userContextSent(activeEntries: ReadonlyArray<SessionEntry>, checkpoint: CompactionSummaryEntry): boolean {
+	const start = activeEntries.findIndex((entry) => entry.turnId === checkpoint.turnId);
+	if (start < 0) return false;
+	for (const entry of activeEntries.slice(start + 1)) {
+		if (entry.kind !== "message") continue;
+		if (entry.role === "assistant") return true;
+		if (
+			entry.role === "user" &&
+			(entry.payload as { synthetic?: unknown } | null)?.synthetic !== true &&
+			entry.turnId !== checkpoint.userContext?.turnId
+		)
+			return false;
+	}
+	return false;
+}
+
+/** Retire the exact replay block a later operator turn supersedes, while no request has carried it yet. */
+export function retireActiveUserContextForNextOperator(
+	messages: AgentMessage[],
+	turns: ReadonlyArray<SessionEntry>,
+	options: RehydrateChatPanelOptions = {},
+): AgentMessage[] {
+	const checkpoint = selectReplayEntries(turns, options).find((entry) => entry.kind === "compactionSummary");
+	if (checkpoint?.kind !== "compactionSummary" || !checkpoint.userContext) return messages;
+	if (userContextSent(activeEntriesBeforeCompactionCut(turns, options), checkpoint)) return messages;
+	const text = `Active user instructions (verbatim):\n${checkpoint.userContext.text}`;
+	const timestamp = timestampMillis(checkpoint.timestamp);
+	return messages.filter(
+		(message) =>
+			message.role !== "user" ||
+			message.timestamp !== timestamp ||
+			!Array.isArray(message.content) ||
+			message.content.length !== 1 ||
+			message.content[0]?.type !== "text" ||
+			message.content[0].text !== text,
+	);
+}
+
+function compactionContextText(entry: CompactionSummaryEntry): string {
+	return `${COMPACTION_SUMMARY_PREFIX}${entry.summary}${COMPACTION_SUMMARY_SUFFIX}`;
+}
+
+function branchContextText(entry: BranchSummaryEntry): string {
+	return `${BRANCH_SUMMARY_PREFIX}${entry.summary}${BRANCH_SUMMARY_SUFFIX}`;
+}
+
+const CHECKPOINT_DECISIONS_CAP = 12;
+const CHECKPOINT_DECISION_FIELD_CHARS = 160;
+
+function oneLine(text: string): string {
+	const flat = text.replace(/\s+/gu, " ").trim();
+	return flat.length > CHECKPOINT_DECISION_FIELD_CHARS ? `${flat.slice(0, CHECKPOINT_DECISION_FIELD_CHARS - 1)}…` : flat;
+}
+
+/**
+ * The active decisions a checkpoint's history recorded, newest first, one line
+ * each, so a summary that paraphrased or dropped one does not leave the model
+ * arguing with what its workers were sealed against. Null when there are none.
+ */
+function decisionsAsOfCheckpoint(entries: ReadonlyArray<SessionEntry>): string | null {
+	const rows = foldDecisionBoard(entries).flatMap((interview) =>
+		interview.decisions
+			.filter((decision) => decision.status === "active")
+			.map((decision) => {
+				const why = decision.rationale ?? decision.source_question;
+				return `${decisionRef(interview.interviewId, decision.key)} ${oneLine(decision.value)}${why ? ` (${oneLine(why)})` : ""}`;
+			}),
+	);
+	if (rows.length === 0) return null;
+	const more = rows.length > CHECKPOINT_DECISIONS_CAP ? ` (newest ${CHECKPOINT_DECISIONS_CAP} of ${rows.length})` : "";
+	return [`[Decisions as of checkpoint]${more}`, ...rows.slice(0, CHECKPOINT_DECISIONS_CAP)].join("\n");
+}
+
+/** Project PanCode's ledger entry onto pi's bash message so pi owns the replay wording. */
+function bashContextText(entry: BashExecutionEntry): string {
+	const message: BashExecutionMessage = {
+		role: "bashExecution",
+		command: entry.command,
+		output: truncateReplayText(entry.output),
+		exitCode: entry.exitCode ?? undefined,
+		cancelled: entry.cancelled,
+		truncated: entry.truncated,
+		...(entry.fullOutputPath !== undefined ? { fullOutputPath: entry.fullOutputPath } : {}),
+		timestamp: Date.parse(entry.timestamp) || 0,
+	};
+	return bashExecutionToText(message);
+}
+
+function appendContextMessage(
+	out: { push(message: AgentMessage, sourceId: string | null): void },
+	role: "user" | "assistant",
+	text: string,
+	entry: SessionEntry,
+): void {
+	const trimmed = text.trim();
+	if (trimmed.length === 0) return;
+	out.push(makeTextMessage(role, truncateReplayText(trimmed), entry.timestamp), entry.turnId);
+}
+
+const UNVERIFIED_SKILL_CHECKPOINT_TEXT =
+	"Preserved skill instructions on this checkpoint failed integrity verification and were not replayed. If a skill still applies, ask the operator to run /skill <name> again.";
+
+/** Selected but unverifiable: name the skill and the exact ledger ref instead of dropping it. */
+function unverifiedSkillContextText(skill: PreservedSkillContext): string {
+	const activation = skill.activation;
+	return `Preserved skill instructions for ${activation.name} (source=${activation.source} hash=${activation.hash} path=${activation.filePath}) could not be re-verified against this session's ledger and were not replayed. If the skill still applies, recall the original load with context(scope="recall", ref="${skill.resultRef}") or ask the operator to run /skill ${activation.name} again.`;
+}
+
+function skillActivationContextText(entry: Extract<SessionEntry, { kind: "skillActivation" }>): string {
+	const activation = entry.activation;
+	const turn = activation.turnId ? ` turn=${activation.turnId}` : "";
+	return `Active skill loaded: ${activation.name} source=${activation.source} hash=${activation.hash} path=${activation.filePath} triggeredBy=${activation.triggeredBy}${turn}. Continue honoring this skill unless the user changes direction.`;
+}
+
+function replaySkillContext(turns: ReadonlyArray<SessionEntry>, options: RehydrateChatPanelOptions) {
+	const activeEntries = activeEntriesBeforeCompactionCut(turns, options);
+	const skillState = latestSkillContextState(activeEntries);
+	const evidence = activeEntriesBeforeCompactionCut(options.skillContextEntries ?? turns, options);
+	return { activeEntries, skillState, verified: captureSkillContext(evidence, skillState) };
+}
+
+/** Price the same complete message bodies that model replay sends (#422, #423). */
+export function createReplayMessageConverter(
+	_turns: ReadonlyArray<SessionEntry>,
+	_options: RehydrateChatPanelOptions = {},
+): (entry: MessageEntry) => AgentMessage | null {
+	return replayMessageFromEntry;
+}
+
+/**
+ * Replay elements and, in parallel, the ledger row each came from (SPEC §1.1). A tool result, a message, a summary
+ * and every block a summary expands into carry their row's turn id; a continuity block carries null, because it is
+ * resolved from the owner's whole record chain rather than read from one row.
+ */
+export interface ReplayRender {
+	messages: AgentMessage[];
+	sourceIds: Array<string | null>;
+}
+
+/**
+ * Whether a ledger row becomes a replay element (SPEC §1.3). The host-insert writer picks its anchor with this and
+ * render places inserts with it, so the two cannot disagree: a failed assistant and the synthetic terminal-tool row
+ * render nothing and are never anchors.
+ */
+export function rowRenders(entry: SessionEntry): boolean {
+	switch (entry.kind) {
+		case "message":
+			if (entry.role === "assistant")
+				return !messageFailure(entry) && payloadObject(entry.payload)?.terminalToolResult !== true;
+			return true;
+		case "bashExecution":
+			return !entry.excludeFromContext;
+		case "branchSummary":
+		case "compactionSummary":
+			return true;
+		case "custom":
+			return entry.customType === HANDOFF_SEED_CUSTOM_TYPE && isHandoffSeedData(entry.data);
+		default:
+			return false;
+	}
+}
+
+/** The host-insert records on a path, in record order, without the ones a later retraction withdrew. */
+export function readHostInserts(entries: ReadonlyArray<SessionEntry>): HostInsertRecord[] {
+	const records: HostInsertRecord[] = [];
+	const retracted = new Set<string>();
+	for (const entry of entries) {
+		if (entry.kind !== "custom" || entry.customType !== HOST_INSERT_CUSTOM_TYPE || !isHostInsertData(entry.data))
+			continue;
+		if ("retract" in entry.data) retracted.add(entry.data.id);
+		else records.push(entry.data);
+	}
+	return records.filter((record) => !retracted.has(record.id));
+}
+
+function insertAnchor(record: HostInsertRecord): string {
+	return "after" in record.place ? record.place.after : record.place.before;
+}
+
+/**
+ * Inserts whose anchor renders in this replay window, grouped by anchor, and the rows they stand for. Those rows come
+ * from every record on the uncut path: a cut that removes a recovery's anchor but keeps its stopped reply and call
+ * must not bring them back without the exchange.
+ */
+function visibleHostInserts(
+	replayEntries: ReadonlyArray<SessionEntry>,
+	pathEntries: ReadonlyArray<SessionEntry>,
+): {
+	before: Map<string, HostInsertRecord[]>;
+	after: Map<string, HostInsertRecord[]>;
+	replaced: Set<string>;
+} {
+	const rendering = new Set(replayEntries.filter(rowRenders).map((entry) => entry.turnId));
+	const visible = readHostInserts(replayEntries).filter((record) => rendering.has(insertAnchor(record)));
+	const replaced = new Set(readHostInserts(pathEntries).flatMap((record) => record.replaces ?? []));
+	const before = new Map<string, HostInsertRecord[]>();
+	const after = new Map<string, HostInsertRecord[]>();
+	for (const record of visible) {
+		const anchor = insertAnchor(record);
+		if (replaced.has(anchor)) continue;
+		const group = "after" in record.place ? after : before;
+		group.set(anchor, [...(group.get(anchor) ?? []), record]);
+	}
+	return { before, after, replaced };
+}
+
+/** A fresh copy of the recorded bytes; a recovery's assistant stays host-authored, as the live one was. */
+function hostInsertElement(record: HostInsertRecord, element: AgentMessage): AgentMessage {
+	const copy = structuredClone(element);
+	return record.source.endsWith("-recovery") && copy.role === "assistant" ? markHostAuthored(copy) : copy;
+}
+
+/**
+ * The newest row the model would read on this path, in render order: after a checkpoint with a kept suffix that is
+ * the last kept row, not the checkpoint, because render places the suffix after the checkpoint's carry.
+ */
+export function newestRenderedRow(
+	turns: ReadonlyArray<SessionEntry>,
+	leaf: string | null,
+	exclude: ReadonlySet<string> = new Set(),
+): string | null {
+	const options = leaf !== null ? { activeLeafTurnId: leaf } : {};
+	const replayEntries = selectReplayEntries(turns, options);
+	const { replaced } = visibleHostInserts(replayEntries, activeEntriesBeforeCompactionCut(turns, options));
+	for (let i = replayEntries.length - 1; i >= 0; i -= 1) {
+		const entry = replayEntries[i];
+		if (entry && rowRenders(entry) && !replaced.has(entry.turnId) && !exclude.has(entry.turnId)) return entry.turnId;
+	}
+	return null;
+}
+
+/** Whether a record's anchor renders on this path, which is whether the record itself renders. */
+export function hostInsertVisible(
+	turns: ReadonlyArray<SessionEntry>,
+	leaf: string | null,
+	record: HostInsertRecord,
+): boolean {
+	const options = leaf !== null ? { activeLeafTurnId: leaf } : {};
+	const { before, after } = visibleHostInserts(
+		selectReplayEntries(turns, options),
+		activeEntriesBeforeCompactionCut(turns, options),
+	);
+	return [...before.values(), ...after.values()].some((group) => group.some((item) => item.id === record.id));
+}
+
+export function buildReplayAgentMessagesFromTurns(
+	turns: ReadonlyArray<SessionEntry>,
+	options: RehydrateChatPanelOptions = {},
+): AgentMessage[] {
+	return renderReplayElements(turns, options).messages;
+}
+
+export function renderReplayElements(
+	turns: ReadonlyArray<SessionEntry>,
+	options: RehydrateChatPanelOptions = {},
+): ReplayRender {
+	const out = createOrderedReplaySink();
+	const seenToolCalls = new Set<string>();
+	const failedToolCalls = new Set<string>();
+	const { activeEntries, skillState, verified } = replaySkillContext(turns, options);
+	const postureEntries = activeEntriesBeforeCompactionCut(turns, options, false);
+	const postureGeneration = readPostureGeneration(postureEntries);
+	const postureUpdates = new Map<string, { entry: SessionEntry; text: string }>();
+	for (const entry of postureEntries) {
+		const update = readPostureUpdate(entry);
+		if (update && update.generationId === postureGeneration?.id)
+			postureUpdates.set(update.userTurnId, { entry, text: update.text });
+	}
+	// One emission point for the continuity blocks, tracked by a flag rather than
+	// by counting occurrences: the note has to appear exactly once whether the
+	// replay window holds a carrying summary, an eviction-only commit, or
+	// neither. `selectReplayEntries` keeps at most one compaction summary, so
+	// the in-loop emission below cannot fire twice.
+	let continuityEmitted = false;
+	const emitContinuity = (timestamp: string): void => {
+		if (continuityEmitted) return;
+		continuityEmitted = true;
+		// Verbatim. The accepted note is agent-authored handoff text and is
+		// carried as data; it is never presented as an operator turn and never
+		// passes through the trimming/truncating context helper.
+		for (const block of options.continuityBlocks ?? []) out.push(makeTextMessage("user", block, timestamp), null);
+	};
+	const replayEntries = selectReplayEntries(turns, options);
+	const refusedPrompts = refusedPromptTurns(replayEntries);
+	// Without a summary in the window, the note goes right after the newest commit there: that is where the live
+	// process installed it (`installReplay` follows the persisted commit), and a later row cannot move it. At the end of
+	// history it would follow whatever prompt the render's cursor reaches, so a restore taken before a prompt and a
+	// render that includes it would disagree on the order.
+	const continuityCommitTurnId = [...replayEntries].reverse().find((entry) => entry.kind === "continuityCommit")?.turnId;
+	const latestOperator = [...replayEntries]
+		.reverse()
+		.find(
+			(entry) =>
+				entry.kind === "message" &&
+				entry.role === "user" &&
+				(entry.payload as { synthetic?: unknown } | null)?.synthetic !== true,
+		);
+	const inserts = visibleHostInserts(replayEntries, activeEntries);
+	const placeInserts = (records: ReadonlyArray<HostInsertRecord> | undefined): void => {
+		for (const record of records ?? []) {
+			for (const element of record.elements) out.push(hostInsertElement(record, element), record.id);
+		}
+	};
+	for (const entry of replayEntries) {
+		if (inserts.replaced.has(entry.turnId)) continue;
+		placeInserts(inserts.before.get(entry.turnId));
+		const policy = postureUpdates.get(entry.turnId);
+		if (entry.kind === "message" && entry.role === "user" && policy)
+			out.push(
+				createHostPolicyMessage(policy.entry.turnId, policy.text, timestampMillis(policy.entry.timestamp)),
+				policy.entry.turnId,
+			);
+		switch (entry.kind) {
+			case "message": {
+				const text = textBlockFromEntry(entry);
+				if (entry.role === "user" || entry.role === "assistant") {
+					if (entry.role === "assistant" && messageFailure(entry)) {
+						const message = richMessageFromEntry(entry, MAX_REPLAY_TEXT_CHARS);
+						if (message) recordToolCallsFromMessage(message, failedToolCalls);
+						break;
+					}
+					const message = refusedPrompts.has(entry.turnId)
+						? richMessageFromEntry(entry, MAX_REPLAY_TEXT_CHARS)
+						: replayMessageFromEntry(entry);
+					if (message) {
+						out.push(message, entry.turnId);
+						recordToolCallsFromMessage(message, seenToolCalls);
+					}
+				} else if (entry.role === "tool_call") {
+					const call = extractToolCall(entry);
+					if (!seenToolCalls.has(call.id) && !failedToolCalls.has(call.id)) {
+						const message = replayMessageFromEntry(entry);
+						if (!message) break;
+						out.push(message, entry.turnId);
+						recordToolCallsFromMessage(message, seenToolCalls);
+					}
+				} else if (entry.role === "tool_result") {
+					const result = extractToolResult(entry);
+					if (seenToolCalls.has(result.id ?? entry.turnId)) {
+						out.stageToolResult(toolResultMessageFromEntry(entry), entry.turnId);
+					}
+				} else if (entry.role === "system") {
+					appendContextMessage(out, "user", `System note: ${text}`, entry);
+				}
+				break;
+			}
+			case "bashExecution":
+				if (!entry.excludeFromContext) appendContextMessage(out, "user", bashContextText(entry), entry);
+				break;
+			case "branchSummary":
+				appendContextMessage(out, "user", branchContextText(entry), entry);
+				break;
+			case "compactionSummary": {
+				const message = makeTextMessage("user", compactionContextText(entry), entry.timestamp);
+				if (entry.providerCheckpoint) {
+					Object.assign(message, { pancodeProviderCheckpoint: entry.providerCheckpoint });
+					out.push(message, entry.turnId);
+					// Constraints and recall refs remain inspectable host data after the opaque splice (#423).
+					out.push(makeTextMessage("user", compactionContextText(entry), entry.timestamp), entry.turnId);
+				} else out.push(message, entry.turnId);
+				const checkpointIndex = activeEntries.findIndex((candidate) => candidate.turnId === entry.turnId);
+				const board = checkpointIndex < 0 ? null : foldTaskBoard(activeEntries.slice(0, checkpointIndex));
+				if (board) {
+					const rows = board.tasks.map((task) => `${task.id} ${task.status} ${task.title}`);
+					out.push(
+						makeTextMessage("user", [`[Task board as of checkpoint] ${board.title}`, ...rows].join("\n"), entry.timestamp),
+						entry.turnId,
+					);
+				}
+				const decisions = checkpointIndex < 0 ? null : decisionsAsOfCheckpoint(activeEntries.slice(0, checkpointIndex));
+				if (decisions) out.push(makeTextMessage("user", decisions, entry.timestamp), entry.turnId);
+				if (
+					entry.userContext &&
+					(!latestOperator || latestOperator.turnId === entry.userContext.turnId || userContextSent(activeEntries, entry))
+				)
+					out.push(
+						makeTextMessage("user", `Active user instructions (verbatim):\n${entry.userContext.text}`, entry.timestamp),
+						entry.turnId,
+					);
+				if (entry.skillContext !== undefined) {
+					const retainedSkills = entry.skillContext.skills.length;
+					if (!verifiedSkillContextCheckpoint(entry.skillContext)) {
+						// The raw pairs behind a tampered checkpoint are already outside the
+						// replay window. Say so rather than dropping the skill without a trace.
+						if (retainedSkills > 0) {
+							out.push(makeTextMessage("user", UNVERIFIED_SKILL_CHECKPOINT_TEXT, entry.timestamp), entry.turnId);
+						}
+						break;
+					}
+					for (const skill of entry.skillContext.skills) {
+						// An explicit later state that no longer names this activation is a
+						// deliberate off or replacement; it leaves no trace, by design.
+						if (skillState && !skillState.unknown && !skillState.activationRefs.includes(skill.activationRef)) continue;
+						const receipt = verified?.skills.find((candidate) => candidate.activationRef === skill.activationRef);
+						if (!receipt || JSON.stringify(receipt) !== JSON.stringify(skill)) {
+							// Still selected, but its original receipt cannot be re-verified
+							// (masked, rewritten, or unknown state). Never inject unverified
+							// bytes, and never lose the skill silently either.
+							out.push(makeTextMessage("user", unverifiedSkillContextText(skill), entry.timestamp), entry.turnId);
+							continue;
+						}
+						// This is historical instruction context, not a generated summary or a tool result.
+						// Keep the exact captured blocks outside summary replay's text cap.
+						out.push(
+							makeTextMessage("user", `Preserved skill request (verbatim):\n${skill.requestText}`, entry.timestamp),
+							entry.turnId,
+						);
+						out.push(
+							makeTextMessage("user", `Verified loaded skill: ${JSON.stringify(skill.activation)}`, entry.timestamp),
+							entry.turnId,
+						);
+						for (const block of skill.content) out.push(makeTextMessage("user", block.text, entry.timestamp), entry.turnId);
+					}
+				}
+				// The reduction boundary is where the handoff happened, so the note
+				// sits directly after the summary that replaced the history it
+				// describes, whether or not this summary is the one that carried it.
+				emitContinuity(entry.timestamp);
+				break;
+			}
+			case "skillActivation":
+				// A tool-triggered load sits between its call and result in the ledger; the tool result already
+				// carries the skill body, so replay sends what the live process sent and keeps the pairing intact.
+				if (entry.activation.triggeredBy === "tool") break;
+				if (entry.activation.runId !== undefined || (skillState && !skillState.activationRefs.includes(entry.turnId)))
+					break;
+				appendContextMessage(out, "user", skillActivationContextText(entry), entry);
+				break;
+			// The one custom entry that becomes a model message. `/handoff` seeds a
+			// new session with a reviewed document, and the seed is the first thing
+			// the model reads there; it is labelled by its origin session and
+			// carried as data, never as a user turn the operator did not write.
+			case "custom":
+				if (entry.customType === HANDOFF_SEED_CUSTOM_TYPE && isHandoffSeedData(entry.data)) {
+					appendContextMessage(out, "user", handoffSeedContextText(entry.data), entry);
+				}
+				break;
+			case "modelChange":
+			case "thinkingLevelChange":
+			case "fileEntry":
+			case "sessionInfo":
+			case "label":
+			case "protectedArtifact":
+			case "taskLedger":
+			case "decisionLedger":
+			// A worker's answer is not the operator's words and not the model's.
+			// It reaches the model only when an operator shares it, and a share
+			// is already a user message by the time it lands in the ledger.
+			case "workerRun":
+			// Working-set entries are folded into a view by the context domain
+			// and applied as a projection before this builder runs; the
+			// entries themselves never become messages.
+			case "contextEviction":
+			case "contextRecall":
+			// Continuity records are bookkeeping. The chain and the commit payload
+			// never become model messages; the one thing that reaches the model is
+			// the accepted note, projected once through `continuityBlocks`. Handling
+			// each commit here instead would emit a copy per record and would still
+			// miss a commit that sits before the cut.
+			case "handoffTransaction":
+			case "continuityCommit":
+				break;
+		}
+		placeInserts(inserts.after.get(entry.turnId));
+		if (entry.turnId === continuityCommitTurnId) emitContinuity(entry.timestamp);
+	}
+	// Neither a compaction summary nor a commit in the replay window: the note
+	// still has to be carried, so it lands at the end of the replayed history
+	// rather than being dropped.
+	emitContinuity(activeEntries[activeEntries.length - 1]?.timestamp ?? new Date(0).toISOString());
+	out.flush();
+	return { messages: out.messages, sourceIds: out.sourceIds };
+}

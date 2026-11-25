@@ -1,0 +1,420 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, strictEqual } from "node:assert/strict";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import {
+	emptyHarnessProfile,
+	type HarnessProfile,
+	harnessProfilePath,
+	readHarnessProfile,
+	recordHarnessFeature,
+	recordLessonShown,
+} from "../../src/core/harness-profile.js";
+import { createMiddlewareBundle } from "../../src/domains/middleware/extension.js";
+import {
+	createGuidanceRegistration,
+	GUIDANCE_LESSONS,
+	type GuidanceDeps,
+	harnessQuestionTopics,
+	LESSON_LIFETIME_SHOWS,
+	NEWCOMER_LESSONS,
+	SESSION_TIP_BUDGET,
+} from "../../src/domains/middleware/guidance.js";
+import { createMiddlewareToolChoiceControl } from "../../src/domains/middleware/tool-choice-control.js";
+import type { MiddlewareEffect, MiddlewareHookInput } from "../../src/domains/middleware/types.js";
+import type { AgentMessage } from "../../src/engine/types.js";
+import { BUILTIN_SLASH_COMMANDS } from "../../src/session-control/slash-commands.js";
+import { createTurnMiddleware } from "../../src/session-control/turn-middleware.js";
+import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
+
+// Demo guidance shows the operator one capability tip after a turn, picked by
+// the harness from what the turn did and what the operator already knows. The
+// model never sees it. With interface.demo off nothing runs and nothing is
+// written.
+
+interface FakeProfile {
+	profile: HarnessProfile;
+	calls: string[];
+	io: NonNullable<GuidanceDeps["profile"]>;
+}
+
+function fakeProfile(): FakeProfile {
+	const profile = emptyHarnessProfile();
+	const calls: string[] = [];
+	return {
+		profile,
+		calls,
+		io: {
+			read: () => {
+				calls.push("read");
+				return profile;
+			},
+			lessonShown: (id) => {
+				calls.push(`shown:${id}`);
+				profile.lessons[id] = { shown: (profile.lessons[id]?.shown ?? 0) + 1, lastShownAt: "t" };
+			},
+			feature: (name) => {
+				calls.push(`feature:${name}`);
+				profile.features[name] = (profile.features[name] ?? 0) + 1;
+			},
+			topic: (name) => {
+				calls.push(`topic:${name}`);
+				profile.topics[name] = (profile.topics[name] ?? 0) + 1;
+			},
+		},
+	};
+}
+
+function guidance(overrides: Partial<GuidanceDeps> = {}, store = fakeProfile()) {
+	let enabled = true;
+	const hook = createGuidanceRegistration({
+		enabled: () => enabled,
+		autonomy: () => "default",
+		keyFor: (id) => (id === "pancode.output.cycle" ? "Alt+O" : null),
+		hasProjectContext: () => true,
+		profile: store.io,
+		...overrides,
+	});
+	const turn = (
+		prompt: string,
+		options: {
+			sessionId?: string;
+			prior?: number;
+			tools?: Array<Pick<MiddlewareHookInput, "toolName" | "toolArgs" | "metadata">>;
+			end?: Record<string, number | string | boolean>;
+			continuation?: boolean;
+		} = {},
+	): ReadonlyArray<MiddlewareEffect> => {
+		const sessionId = options.sessionId ?? "s1";
+		hook.evaluate({
+			hook: "turn_start",
+			sessionId,
+			text: prompt,
+			metadata: {
+				conversationMessages: options.prior ?? 2,
+				...(options.continuation ? { requestContinuation: true } : {}),
+			},
+		});
+		for (const tool of options.tools ?? [])
+			hook.evaluate({ hook: "after_tool", sessionId, ...tool, metadata: { resultKind: "ok", ...tool.metadata } });
+		return hook.evaluate({ hook: "turn_end", sessionId, metadata: { stopReason: "stop", ...options.end } });
+	};
+	return {
+		hook,
+		store,
+		turn,
+		setEnabled: (value: boolean) => {
+			enabled = value;
+		},
+	};
+}
+
+const tipOf = (effects: ReadonlyArray<MiddlewareEffect>): string | undefined =>
+	effects.find((effect) => effect.kind === "notify_operator")?.message;
+
+describe("demo guidance tips", () => {
+	for (const [topic, question] of [
+		["model", "How do I switch the model to something faster in pancode?"],
+		["thinking level", "How do I change the thinking level in PanCode?"],
+	] as const) {
+		it(`answers a ${topic} settings question with an operator-only tip`, () => {
+			const { turn, store } = guidance();
+			const effects = turn(question);
+			deepStrictEqual(
+				effects.map((effect) => effect.kind),
+				["notify_operator"],
+			);
+			const tip = tipOf(effects) ?? "";
+			match(tip, /^\[tip\] Next time just ask: I can preview a PanCode settings change/);
+			// The first tip ever says where tips come from and how to stop them.
+			match(tip, /Demo guidance in \/settings/);
+			ok(store.calls.includes("shown:settings-change"));
+			ok(store.calls.includes("topic:model"));
+		});
+	}
+
+	it("does nothing and touches no profile while demo guidance is off", () => {
+		const { turn, store, setEnabled } = guidance();
+		setEnabled(false);
+		deepStrictEqual(turn("How do I switch the model in pancode?"), []);
+		deepStrictEqual(turn("btw what is a monad", { tools: [{ toolName: "bash", toolArgs: { command: "ls" } }] }), []);
+		deepStrictEqual(store.calls, []);
+	});
+
+	it("stays quiet on ordinary work, continuations, and turns with nothing to teach", () => {
+		const { turn } = guidance();
+		deepStrictEqual(
+			turn("fix the off-by-one in the parser", { tools: [{ toolName: "read", toolArgs: { path: "a.ts" } }] }),
+			[],
+		);
+		deepStrictEqual(turn("How do I switch the model in pancode?", { continuation: true }), []);
+		// A question about ordinary project work is not about the harness.
+		deepStrictEqual(harnessQuestionTopics("how do I train the model on this dataset?"), []);
+		ok(harnessQuestionTopics("where is the keybinding for the model picker?").includes("keys"));
+	});
+
+	it("gives a newcomer one extra tip a session, and a veteran one tip even for a direct match", () => {
+		const count = (store: FakeProfile): number => {
+			const { turn } = guidance({}, store);
+			let shown = tipOf(turn("btw, what does this regex do?")) ? 1 : 0;
+			for (const prompt of ["How do I switch the model in pancode?", "how much have I spent so far?"])
+				for (let index = 0; index < 10; index++) if (tipOf(turn(prompt))) shown += 1;
+			return shown;
+		};
+		strictEqual(count(fakeProfile()), SESSION_TIP_BUDGET + 1);
+		const veteran = fakeProfile();
+		for (let index = 0; index < NEWCOMER_LESSONS; index++)
+			veteran.profile.lessons[`old-${index}`] = { shown: 1, lastShownAt: "t" };
+		// Footer tips share the profile but are not post-turn lessons.
+		veteran.profile.lessons["footer:welcome"] = { shown: 3, lastShownAt: "t" };
+		strictEqual(count(veteran), SESSION_TIP_BUDGET);
+	});
+
+	it("retires the skills tip so no lesson with that id is selectable", () => {
+		ok(!GUIDANCE_LESSONS.some((lesson) => lesson.id === "skills"));
+		doesNotMatch(tipOf(guidance().turn("how can I use skills in pancode?")) ?? "", /\/hub skills lists the skills/);
+	});
+
+	it("teaches usage, doctor and PanHub from questions about them", () => {
+		for (const [prompt, pattern] of [
+			["how much have I spent today?", /^\[tip\] \/usage shows/],
+			["my pancode login seems broken, how do I check it?", /\/doctor checks this install/],
+			["can you install a skill for writing changelogs", /Alt\+L opens PanHub/],
+		] as const) {
+			const { turn } = guidance({ keyFor: (id) => (id === "pancode.hub.toggle" ? "Alt+L" : null) });
+			match(tipOf(turn(prompt)) ?? "", pattern, prompt);
+		}
+		// A cost question about the project is not about the operator's spend.
+		strictEqual(tipOf(guidance().turn("what is the cost of this algorithm?")), undefined);
+	});
+
+	it("offers YOLO only after the operator approved stops at default autonomy, naming the bound key", () => {
+		const approved = { toolName: "bash", toolArgs: { command: "make" }, metadata: { operatorApproved: true } };
+		const keyFor = (id: string) => (id === "pancode.autonomy.toggle" ? "Ctrl+G Y" : null);
+		match(
+			tipOf(guidance({ keyFor }).turn("build it", { tools: [approved, approved] })) ?? "",
+			/Ctrl\+G Y switches this session to YOLO: nothing stops for approval and commands run unsandboxed/,
+		);
+		strictEqual(tipOf(guidance({ keyFor }).turn("build it", { tools: [approved] })), undefined);
+		strictEqual(
+			tipOf(guidance({ keyFor, autonomy: () => "yolo" }).turn("build it", { tools: [approved, approved] })),
+			undefined,
+		);
+		strictEqual(tipOf(guidance().turn("build it", { tools: [approved, approved] })), undefined);
+	});
+
+	it("suggests a read-only worker for a long investigation that changed nothing", () => {
+		const reads = Array.from({ length: 8 }, (_, index) => ({ toolName: "read", toolArgs: { path: `src/m${index}.ts` } }));
+		const prompt = "review the architecture of this codebase";
+		match(tipOf(guidance().turn(prompt, { tools: reads })) ?? "", /\/run coder --read-only <task>/);
+		strictEqual(
+			tipOf(guidance().turn(prompt, { tools: [...reads, { toolName: "edit", toolArgs: { path: "src/a.ts" } }] })),
+			undefined,
+		);
+		strictEqual(tipOf(guidance().turn(prompt, { tools: reads.slice(0, 7) })), undefined);
+	});
+
+	it("prefers a worker lesson over /view when a long turn qualifies for both", () => {
+		const reads = Array.from({ length: 12 }, (_, index) => ({
+			toolName: "read",
+			toolArgs: { path: `src/m${index}.ts` },
+		}));
+		match(
+			tipOf(guidance().turn("investigate the code in this repo", { tools: reads, end: { turnToolCalls: 12 } })) ?? "",
+			/\/run coder --read-only <task>/,
+		);
+		const commands = Array.from({ length: 15 }, (_, index) => ({
+			toolName: "bash",
+			toolArgs: { command: `make t${index}` },
+		}));
+		match(
+			tipOf(guidance().turn("fix the build", { tools: commands, end: { turnToolCalls: 15 } })) ?? "",
+			/\/run coder <task> hands a bounded task/,
+		);
+	});
+
+	it("starts a new session's budget and spacing afresh", () => {
+		const { turn } = guidance();
+		ok(tipOf(turn("btw, quick thing", { sessionId: "a" })));
+		strictEqual(tipOf(turn("btw, another", { sessionId: "a" })), undefined);
+		ok(tipOf(turn("How do I switch the model in pancode?", { sessionId: "b" })));
+	});
+
+	it("retires a lesson once the operator uses its feature or it was shown enough", () => {
+		const learned = fakeProfile();
+		learned.profile.features["/btw"] = 1;
+		strictEqual(tipOf(guidance({}, learned).turn("btw, what is this?")), undefined);
+		const worn = fakeProfile();
+		worn.profile.lessons["side-question"] = { shown: LESSON_LIFETIME_SHOWS, lastShownAt: "t" };
+		strictEqual(tipOf(guidance({}, worn).turn("btw, what is this?")), undefined);
+		// Asking PanCode through its docs counts as knowing the docs route.
+		const asked = guidance();
+		asked.turn("how do I add a skill in pancode?", {
+			tools: [{ toolName: "gateway", toolArgs: { op: "call", capability: "pancode_docs" } }],
+		});
+		ok(asked.store.calls.includes("feature:ask-pancode"));
+	});
+
+	it("names a key only when it is bound, and grounds a mention tip in the prompt", () => {
+		const bound = guidance();
+		match(tipOf(bound.turn("explain it", { end: { assistantTextChars: 9_000 } })) ?? "", /Alt\+O cycles output detail/);
+		const unbound = guidance({ keyFor: () => null });
+		strictEqual(tipOf(unbound.turn("explain it", { end: { assistantTextChars: 9_000 } })), undefined);
+		const mention = guidance();
+		match(
+			tipOf(
+				mention.turn("what does src/app/main.ts do", {
+					tools: [{ toolName: "read", toolArgs: { path: "src/app/main.ts" } }],
+				}),
+			) ?? "",
+			/@src\/app\/main\.ts/,
+		);
+	});
+
+	it("teaches only slash commands that exist", () => {
+		const names = new Set(BUILTIN_SLASH_COMMANDS.map((command) => command.name));
+		const context = {
+			autonomy: "default",
+			keyFor: () => "Alt+O",
+			hasProjectContext: false,
+			contextPressure: 0.9,
+			profile: emptyHarnessProfile(),
+			promptPath: "src/app.ts",
+		};
+		for (const lesson of GUIDANCE_LESSONS) {
+			const text = lesson.text(context) ?? "";
+			for (const [, name] of text.matchAll(/(?:^|[\s(])\/([a-z][\w-]*)/gu)) {
+				ok(names.has(name ?? ""), `${lesson.id} names /${name}`);
+			}
+		}
+	});
+});
+
+describe("notify_operator delivery", () => {
+	it("reaches the operator after a turn and never the model", async () => {
+		const tips: string[] = [];
+		const notices: string[] = [];
+		const { contract } = createMiddlewareBundle({
+			registrations: [
+				{
+					id: "fixture.tip",
+					description: "operator-only tip",
+					hooks: ["turn_end"],
+					evaluate: () => [{ kind: "notify_operator", message: "[tip] try /view", key: "guidance.view" }],
+				},
+			],
+		});
+		const runtime = {
+			wireModelId: "fixture",
+			runtimeId: "fixture",
+			runtimeResolution: {},
+			agent: { state: { tools: [], messages: [] } },
+		} as unknown as AgentRuntime;
+		const turn = createTurnMiddleware({
+			state: createTurnState("off"),
+			middleware: contract,
+			middlewareToolChoice: createMiddlewareToolChoiceControl(),
+			emitNotice: (text) => notices.push(text),
+			emitFooterNotice: () => {},
+			emitOperatorTip: (message, key) => tips.push(`${key} ${message}`),
+		});
+		turn.fireTurnStart(runtime, "inspect");
+		await turn.fireTurnEnd(runtime, [
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "done" }],
+				stopReason: "stop",
+				timestamp: 1,
+			} as unknown as AgentMessage,
+		]);
+		deepStrictEqual(tips, ["guidance.view [tip] try /view"]);
+		deepStrictEqual(notices, []);
+		strictEqual(turn.flushPendingReminders(), "");
+	});
+});
+
+describe("advisory sources", () => {
+	const runtime = {
+		wireModelId: "fixture",
+		runtimeId: "fixture",
+		runtimeResolution: {},
+		agent: { state: { tools: [], messages: [] } },
+	} as unknown as AgentRuntime;
+	const done = [
+		{ role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop", timestamp: 1 },
+	] as unknown as AgentMessage[];
+
+	it("names a reminder and a memory note as advisories and puts a tip in the footer, led by tip: instead of [tip]", async () => {
+		const notices: string[] = [];
+		const footer: string[] = [];
+		const { contract } = createMiddlewareBundle({
+			registrations: [
+				{
+					id: "fixture.advisories",
+					description: "one of each advisory",
+					hooks: ["turn_end"],
+					evaluate: () => [
+						{ kind: "notify_operator", message: "[tip] try /view", key: "guidance.view" },
+						{ kind: "inject_reminder", message: "Finish the open steps.", severity: "warn" },
+						{ kind: "inject_reminder", message: "Memory: [tm-p-1] it failed.", severity: "advisory", source: "memory" },
+					],
+				},
+			],
+		});
+		const turn = createTurnMiddleware({
+			state: createTurnState("off"),
+			middleware: contract,
+			middlewareToolChoice: createMiddlewareToolChoiceControl(),
+			emitNotice: (text, level, source) => notices.push(`${source}/${level}/${text}`),
+			emitFooterNotice: (level, text, key) => footer.push(`${key}/${level}/${text}`),
+		});
+		await turn.fireTurnEnd(runtime, done);
+		deepStrictEqual(notices, ["reminder/warning/Finish the open steps.", "memory/info/Memory: [tm-p-1] it failed."]);
+		deepStrictEqual(footer, ["guidance.view/info/tip: try /view"]);
+		// The model-facing block keeps the prefix and the ref.
+		match(turn.flushPendingReminders(), /Memory: \[tm-p-1\] it failed\./u);
+	});
+
+	it("titles a deferred memory reminder and a deferred watchdog notice by the source that sent them", () => {
+		const notices: string[] = [];
+		const turn = createTurnMiddleware({
+			state: createTurnState("off"),
+			middlewareToolChoice: createMiddlewareToolChoiceControl(),
+			emitNotice: (text, level, source) => notices.push(`${source}/${level}/${text}`),
+			emitFooterNotice: () => {},
+		});
+		turn.injectDeferredReminder("Memory: it failed.", "advisory", undefined, "memory");
+		turn.emitDeferredNotice(
+			"[watchdog] 1 blocker after this turn: tests. Nothing was changed or queued.",
+			"warning",
+			"watchdog",
+		);
+		deepStrictEqual(notices, [
+			"memory/info/Memory: it failed.",
+			"watchdog/warning/[watchdog] 1 blocker after this turn: tests. Nothing was changed or queued.",
+		]);
+	});
+});
+
+describe("harness profile", () => {
+	let env: IsolatedPancodeEnv;
+	beforeEach(async () => {
+		env = await isolatePancodeEnv("pancode-harness-profile-");
+	});
+	afterEach(() => env.restore());
+
+	it("persists features and lessons in the state dir and survives a corrupt file", () => {
+		recordHarnessFeature("/view");
+		recordHarnessFeature("/view");
+		recordLessonShown("view", new Date("2026-01-01T00:00:00Z"));
+		const onDisk = JSON.parse(readFileSync(harnessProfilePath(), "utf8"));
+		strictEqual(onDisk.features["/view"], 2);
+		deepStrictEqual(onDisk.lessons.view, { shown: 1, lastShownAt: "2026-01-01T00:00:00.000Z" });
+		writeFileSync(harnessProfilePath(), "{not json");
+		recordHarnessFeature("!");
+		deepStrictEqual(readHarnessProfile().features, { "!": 1 });
+		ok(existsSync(harnessProfilePath()));
+	});
+});

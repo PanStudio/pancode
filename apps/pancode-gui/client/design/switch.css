@@ -1,0 +1,87 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* A two-state control: a 32x18 track with a 14px thumb, and the state in words beside it. Every colour is
+   a token. The global button rules (a 34px bordered control with its own hover ground) are restated
+   here so that neither the size nor the hover repaints the track. */
+.switch-field {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+.switch {
+	position: relative;
+	flex: none;
+	display: inline-block;
+	width: 32px;
+	height: 18px;
+	min-height: 0;
+	padding: 0;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: var(--wb-active);
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+	cursor: pointer;
+	transition: background-color var(--motion-fast) var(--ease-standard);
+}
+.switch[aria-checked="true"] {
+	background: var(--primary-fill);
+	box-shadow: none;
+}
+/* The track carries no label, so it dims as a whole; the words beside it say the state. */
+.switch:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+.switch:hover:not(:disabled),
+.switch:active:not(:disabled) {
+	background: var(--wb-active);
+}
+.switch[aria-checked="true"]:hover:not(:disabled),
+.switch[aria-checked="true"]:active:not(:disabled) {
+	background: var(--primary-fill);
+}
+.switch__thumb {
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 14px;
+	height: 14px;
+	border-radius: var(--radius-sm);
+	/* --raised would be the natural thumb, but in dark it is within 1.04:1 of the track and the thumb vanishes. */
+	background: var(--ink-muted);
+	transition:
+		transform var(--motion-fast) var(--ease-standard),
+		background-color var(--motion-fast) var(--ease-standard);
+}
+.switch[aria-checked="true"] .switch__thumb {
+	background: var(--on-primary);
+	transform: translateX(14px);
+}
+/* At phone width the box grows to a 24px target through transparent borders; the track is painted
+   inside them, so it still reads as 32x18 and the thumb keeps its place. */
+@media (max-width: 390px) {
+	.switch {
+		height: 24px;
+		border-block: 3px solid transparent;
+	}
+	/* Each state's `background` shorthand resets the clip, so every one of them restates it. */
+	.switch,
+	.switch[aria-checked="true"],
+	.switch:hover:not(:disabled),
+	.switch:active:not(:disabled),
+	.switch[aria-checked="true"]:hover:not(:disabled),
+	.switch[aria-checked="true"]:active:not(:disabled) {
+		background-clip: padding-box;
+	}
+}
+.switch__state {
+	min-width: 3ch;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+	.switch,
+	.switch__thumb {
+		transition: none;
+	}
+}

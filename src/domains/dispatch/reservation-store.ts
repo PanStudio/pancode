@@ -1,0 +1,779 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { randomBytes } from "node:crypto";
+import { hostname } from "node:os";
+import { processBirthToken, processIdentityAlive } from "../../core/process-identity.js";
+import {
+	tryWithStateFileLockSync,
+	withStateFileLockSection,
+	withStateFileLockSync,
+} from "../../core/state-file-lock.js";
+import { endpointLabel } from "../providers/endpoint-capacity.js";
+import type { AcquireCapacityLeaseInput } from "./capacity-lease.js";
+import {
+	acquireCapacityLeaseUnsafe,
+	activeCapacityDrainUnsafe,
+	type CapacityLease,
+	type CapacityLimits,
+	type CapacityStateFile,
+	capacityDrainRefusal,
+	capacityStateLockPath,
+	countsInGlobalCap,
+	countsOnThisEndpoint,
+	countsOnThisNode,
+	describeEndpointCapacityHolders,
+	endpointCapacityRemedy,
+	readCapacityStateRepairUnsafe,
+	readCapacityStateUnsafe,
+	updateCapacityStateAsync,
+	validReservationRecord,
+	withAdmissionLockSync,
+	writeCapacityStateUnsafe,
+} from "./capacity-lease.js";
+import { COUNCIL_MIN_MEMBERS } from "./gate-role-prompts.js";
+import { leaseInstant, leaseLapsed } from "./lease-clock.js";
+
+const MAX_RESERVATION_RECORDS = 500;
+export const DEFAULT_RESERVATION_TTL_MS = 15 * 60_000;
+
+/**
+ * `council` is carried rather than flattened into `parallel` because it is the
+ * one topology with a floor on its own width. Every other plan can answer a
+ * capacity denial by dispatching fewer at once; a council of two cannot, and a
+ * denial that tells it to is advice it cannot take.
+ */
+export type ReservationTopology =
+	| "parallel"
+	| "detached"
+	| "sequential"
+	| "pipeline"
+	| "review"
+	| "compete"
+	| "council";
+export type ReservationMemberStatus = "held" | "consumed" | "released";
+export type ReservationStatus = "active" | "released" | "rolled_back" | "expired";
+
+/**
+ * A reservation holds global, per-node, and inference-endpoint concurrency
+ * slots and records an advisory cost upper bound. Node and endpoint identity
+ * matter only because slots bind on
+ * those dimensions. Agent, target, model, and runtime
+ * identity are route identity, which the failover envelope owns
+ * (`assertRouteWithinApprovedEnvelope`); pinning them here made a
+ * plan-approved dispatch unable to fail over at all.
+ */
+export interface ReservationPlanTask {
+	memberId: string;
+	wave: number;
+	nodeId: string;
+	endpointKey?: string;
+	costUpperBoundUsd: number;
+}
+
+export interface ReservationMember extends ReservationPlanTask {
+	status: ReservationMemberStatus;
+	consumedAt: string | null;
+	releasedAt: string | null;
+}
+
+export interface DispatchReservationRecord {
+	ownerId: string;
+	/** Process that owns execution; startup cleanup preserves live sibling processes. */
+	ownerPid: number;
+	/** Owner host. */
+	host: string;
+	/** Owner birth token; absent where the platform has no birth-token source. */
+	processBirthToken?: string;
+	topology: ReservationTopology;
+	status: ReservationStatus;
+	createdAt: string;
+	expiresAt: string;
+	settledAt: string | null;
+	members: ReservationMember[];
+}
+
+export interface ReservationCapacitySnapshot {
+	global: { active: number; limit: number };
+	/** `note` names what binds an automatically sized node limit, carried into its capacity refusal. */
+	nodes: Readonly<Record<string, { active: number; limit: number; note?: string }>>;
+	endpoints: Readonly<Record<string, { active: number; limit: number; leases?: number; foregroundStreams?: number }>>;
+	budget: { currentUsd: number; ceilingUsd: number };
+}
+
+export interface ReservationAllocation {
+	globalSlots: number;
+	nodeSlots: Readonly<Record<string, number>>;
+	endpointSlots: Readonly<Record<string, number>>;
+	budgetUsd: number;
+}
+
+export type ReservationPlanResult = { ok: true; allocation: ReservationAllocation } | { ok: false; reason: string };
+
+function nodeNote(node: { note?: string }): string {
+	return node.note === undefined ? "" : `: ${node.note}`;
+}
+
+function endpointCapacityDenial(input: {
+	endpointKey: string;
+	limit: number;
+	used: number;
+	requested: number;
+	leases: number;
+	reservations: number;
+	foregroundStreams: number;
+	topology?: ReservationTopology;
+}): string {
+	const remedy = endpointCapacityRemedy(
+		input.endpointKey,
+		input.topology === "council" ? { rosterFloor: COUNCIL_MIN_MEMBERS } : undefined,
+	);
+	return `dispatch: admission denied: endpoint '${endpointLabel(input.endpointKey)}' capacity exceeded (${input.used + input.requested}/${input.limit} slots): ${describeEndpointCapacityHolders(input)}; ${remedy}`;
+}
+
+function copyRecord(record: DispatchReservationRecord): DispatchReservationRecord {
+	return { ...record, members: record.members.map((member) => ({ ...member })) };
+}
+
+function parseReservations(values: ReadonlyArray<unknown>): DispatchReservationRecord[] {
+	// The read already dropped every invalid record or refused the store; this guards in-memory state only.
+	if (!values.every(validReservationRecord)) throw new Error("dispatch admission store has invalid reservation records");
+	return values.map((record) => copyRecord(record));
+}
+
+function readStore(): DispatchReservationRecord[] {
+	return parseReservations(readCapacityStateUnsafe().reservations);
+}
+
+function replaceReservations(state: CapacityStateFile, records: ReadonlyArray<DispatchReservationRecord>): void {
+	state.reservations = records.slice(0, MAX_RESERVATION_RECORDS).map(copyRecord);
+}
+
+function writeStore(records: ReadonlyArray<DispatchReservationRecord>): void {
+	const state = readCapacityStateUnsafe();
+	replaceReservations(state, records);
+	writeCapacityStateUnsafe(state);
+}
+
+function peakBy(tasks: ReadonlyArray<Pick<ReservationPlanTask, "wave"> & { key: string }>): Record<string, number> {
+	const byKeyWave = new Map<string, Map<number, number>>();
+	for (const task of tasks) {
+		const waves = byKeyWave.get(task.key) ?? new Map<number, number>();
+		waves.set(task.wave, (waves.get(task.wave) ?? 0) + 1);
+		byKeyWave.set(task.key, waves);
+	}
+	const result: Record<string, number> = {};
+	for (const [key, waves] of byKeyWave) result[key] = Math.max(0, ...waves.values());
+	return result;
+}
+
+function reservationAllocation(tasks: ReadonlyArray<ReservationPlanTask>): ReservationAllocation {
+	const globalSlots = Math.max(
+		0,
+		...Array.from(new Set(tasks.map((task) => task.wave))).map(
+			(wave) => tasks.filter((task) => task.wave === wave).length,
+		),
+	);
+	const nodeSlots = peakBy(tasks.map((task) => ({ wave: task.wave, key: task.nodeId })));
+	const endpointSlots = peakBy(
+		tasks.flatMap((task) => (task.endpointKey === undefined ? [] : [{ wave: task.wave, key: task.endpointKey }])),
+	);
+	return {
+		globalSlots,
+		nodeSlots,
+		endpointSlots,
+		budgetUsd: tasks.reduce((sum, task) => sum + task.costUpperBoundUsd, 0),
+	};
+}
+
+function outstandingTasks(record: DispatchReservationRecord): ReservationPlanTask[] {
+	return record.members
+		.filter((member) => member.status === "held")
+		.map(({ status: _status, consumedAt: _consumedAt, releasedAt: _releasedAt, ...task }) => task);
+}
+
+/** Slots another plan holds against this host, by the rules `capacity-lease.ts` counts leases with. */
+function heldAllocation(record: DispatchReservationRecord): ReservationAllocation {
+	const tasks = outstandingTasks(record);
+	const onNodes = reservationAllocation(tasks.filter((task) => countsOnThisNode(record.host, task.nodeId)));
+	const onEndpoints = reservationAllocation(
+		tasks.filter(
+			(task) => task.endpointKey !== undefined && countsOnThisEndpoint(record.host, task.nodeId, task.endpointKey),
+		),
+	);
+	return {
+		...onNodes,
+		globalSlots: countsInGlobalCap(record.host) ? onNodes.globalSlots : 0,
+		endpointSlots: onEndpoints.endpointSlots,
+	};
+}
+
+/**
+ * Split each wave whose width passes a concurrency limit into consecutive waves that fit it (DESIGN 4.5, fleet M8). A
+ * council runs its whole roster at once, so its waves stay as given. Pure.
+ */
+function splitReservationWaves(
+	tasks: ReadonlyArray<ReservationPlanTask>,
+	capacity: Pick<ReservationCapacitySnapshot, "global" | "nodes" | "endpoints">,
+	topology?: ReservationTopology,
+): ReservationPlanTask[] {
+	if (topology === "council") return tasks.map((task) => ({ ...task }));
+	const limitOf = (limit: number | undefined): number =>
+		limit === undefined || !Number.isFinite(limit) ? Number.POSITIVE_INFINITY : Math.max(1, limit);
+	// The main turn's own request holds its endpoint slot until the dispatch call returns, so a wave wider than the
+	// slots left to workers would wait on itself and never admit. A wave of one still meets the foreground refusal.
+	const endpointLimitOf = (endpoint: ReservationCapacitySnapshot["endpoints"][string] | undefined): number =>
+		endpoint === undefined ? Number.POSITIVE_INFINITY : limitOf(endpoint.limit - (endpoint.foregroundStreams ?? 0));
+	const out: ReservationPlanTask[] = [];
+	let next = 0;
+	for (const wave of [...new Set(tasks.map((task) => task.wave))].sort((a, b) => a - b)) {
+		let counts = { global: 0, nodes: new Map<string, number>(), endpoints: new Map<string, number>() };
+		for (const task of tasks.filter((entry) => entry.wave === wave)) {
+			const nodeFull = (counts.nodes.get(task.nodeId) ?? 0) >= limitOf(capacity.nodes[task.nodeId]?.limit);
+			const endpointFull =
+				task.endpointKey !== undefined &&
+				(counts.endpoints.get(task.endpointKey) ?? 0) >= endpointLimitOf(capacity.endpoints[task.endpointKey]);
+			if (counts.global > 0 && (counts.global >= limitOf(capacity.global.limit) || nodeFull || endpointFull)) {
+				next += 1;
+				counts = { global: 0, nodes: new Map(), endpoints: new Map() };
+			}
+			counts.global += 1;
+			counts.nodes.set(task.nodeId, (counts.nodes.get(task.nodeId) ?? 0) + 1);
+			if (task.endpointKey !== undefined)
+				counts.endpoints.set(task.endpointKey, (counts.endpoints.get(task.endpointKey) ?? 0) + 1);
+			out.push({ ...task, wave: next });
+		}
+		next += 1;
+	}
+	return out;
+}
+
+/**
+ * Admit a plan whose every wave fits the limits. Slots in use or held by other plans do not refuse it: its members
+ * queue for them with their run's deadline, behind every plan reserved before it (DESIGN 4.5, fleet M8). Refusal is
+ * left for a wave that can never fit.
+ */
+function allocateReservation(
+	tasks: ReadonlyArray<ReservationPlanTask>,
+	capacity: ReservationCapacitySnapshot,
+	topology?: ReservationTopology,
+): ReservationPlanResult {
+	if (tasks.length === 0) return { ok: false, reason: "reservation requires at least one task" };
+	const duplicate = tasks.find((task, index) => tasks.slice(0, index).some((entry) => entry.memberId === task.memberId));
+	if (duplicate) return { ok: false, reason: `duplicate reservation member '${duplicate.memberId}'` };
+	const requested = reservationAllocation(tasks);
+	if (requested.globalSlots > capacity.global.limit) {
+		return {
+			ok: false,
+			reason: `global concurrency capacity exceeded (${requested.globalSlots}/${capacity.global.limit})`,
+		};
+	}
+	for (const [nodeId, slots] of Object.entries(requested.nodeSlots)) {
+		const node = capacity.nodes[nodeId];
+		if (!node || !Number.isFinite(node.limit)) continue;
+		if (slots > node.limit) {
+			return { ok: false, reason: `node '${nodeId}' capacity exceeded (${slots}/${node.limit})${nodeNote(node)}` };
+		}
+	}
+	for (const [endpointKey, slots] of Object.entries(requested.endpointSlots)) {
+		const endpoint = capacity.endpoints[endpointKey];
+		if (!endpoint || !Number.isFinite(endpoint.limit)) continue;
+		if (slots > endpoint.limit) {
+			return {
+				ok: false,
+				reason: endpointCapacityDenial({
+					endpointKey,
+					limit: endpoint.limit,
+					used: 0,
+					requested: slots,
+					leases: endpoint.leases ?? endpoint.active - (endpoint.foregroundStreams ?? 0),
+					reservations: 0,
+					foregroundStreams: endpoint.foregroundStreams ?? 0,
+					...(topology === undefined ? {} : { topology }),
+				}),
+			};
+		}
+	}
+	// Cost estimates remain recorded in the allocation, but do not deny useful work.
+	return { ok: true, allocation: requested };
+}
+
+export function createDispatchReservation(input: {
+	topology: ReservationTopology;
+	tasks: ReadonlyArray<ReservationPlanTask>;
+	capacity: ReservationCapacitySnapshot;
+	nowMs?: number;
+	ttlMs?: number;
+	/** Lock acquisition budget; the default is the store-wide one. */
+	lockTimeoutMs?: number;
+}): DispatchReservationRecord {
+	const lock = input.lockTimeoutMs !== undefined ? { timeoutMs: input.lockTimeoutMs } : {};
+	return withAdmissionLockSync(() => {
+		const nowMs = input.nowMs ?? Date.now();
+		const state = readCapacityStateUnsafe();
+		const records = expireRecords(parseReservations(state.reservations), nowMs, takeStartupSweep());
+		const drain = activeCapacityDrainUnsafe(state, nowMs);
+		if (drain !== null) {
+			replaceReservations(state, records);
+			writeCapacityStateUnsafe(state);
+			throw new Error(capacityDrainRefusal("reservation", drain));
+		}
+		const tasks = splitReservationWaves(input.tasks, input.capacity, input.topology);
+		const planned = allocateReservation(tasks, input.capacity, input.topology);
+		if (!planned.ok) {
+			replaceReservations(state, records);
+			writeCapacityStateUnsafe(state);
+			throw new Error(
+				planned.reason.startsWith("dispatch:") ? planned.reason : `dispatch: reservation denied: ${planned.reason}`,
+			);
+		}
+		const createdAt = leaseInstant(nowMs);
+		const birthToken = processBirthToken();
+		const record: DispatchReservationRecord = {
+			ownerId: `plan-${nowMs.toString(36)}-${randomBytes(6).toString("hex")}`,
+			ownerPid: process.pid,
+			host: hostname(),
+			...(birthToken !== null ? { processBirthToken: birthToken } : {}),
+			topology: input.topology,
+			status: "active",
+			createdAt,
+			expiresAt: leaseInstant(nowMs + (input.ttlMs ?? DEFAULT_RESERVATION_TTL_MS)),
+			settledAt: null,
+			members: tasks.map((task) => ({ ...task, status: "held", consumedAt: null, releasedAt: null })),
+		};
+		replaceReservations(state, [record, ...records]);
+		writeCapacityStateUnsafe(state);
+		ownedPlans.add(record.ownerId);
+		return copyRecord(record);
+	}, lock);
+}
+
+interface ReservationTransferInput {
+	ownerId: string;
+	memberId: string;
+	assignmentId: string;
+	nodeId: string;
+	endpointKey?: string;
+	limits: CapacityLimits;
+	nowMs?: number;
+	ttlMs?: number;
+}
+
+/** Atomically convert one held plan member into the assignment's durable lease; the caller holds the capacity state lock. */
+export function transferDispatchReservationToLeaseUnsafe(input: ReservationTransferInput): CapacityLease {
+	return acquireCapacityLeaseUnsafe(reservationTransferLease(input));
+}
+
+function reservationTransferLease(input: ReservationTransferInput): AcquireCapacityLeaseInput {
+	const nowMs = input.nowMs ?? Date.now();
+	return {
+		assignmentId: input.assignmentId,
+		nodeId: input.nodeId,
+		...(input.endpointKey !== undefined ? { endpointKey: input.endpointKey } : {}),
+		limits: input.limits,
+		nowMs,
+		...(input.ttlMs !== undefined ? { ttlMs: input.ttlMs } : {}),
+		reservation: { ownerId: input.ownerId, memberId: input.memberId },
+		onAcquiredUnderLock: (state) => {
+			const records = expireRecords(parseReservations(state.reservations), nowMs, false);
+			const record = records.find((entry) => entry.ownerId === input.ownerId);
+			if (record?.status !== "active") throw new Error(`dispatch: reservation '${input.ownerId}' is not active`);
+			const member = record.members.find((entry) => entry.memberId === input.memberId);
+			if (member?.status !== "held") throw new Error(`dispatch: reservation member '${input.memberId}' is not held`);
+			member.status = "consumed";
+			member.consumedAt = leaseInstant(nowMs);
+			refreshExpiry(record, nowMs);
+			state.reservations = records.map(copyRecord);
+		},
+	};
+}
+
+/** Hosts that cannot probe a plan's owner judge it by its expiry; a live plan keeps it current. */
+function refreshExpiry(record: DispatchReservationRecord, nowMs: number): void {
+	const refreshed = nowMs + DEFAULT_RESERVATION_TTL_MS;
+	if (refreshed > Date.parse(record.expiresAt)) record.expiresAt = leaseInstant(refreshed);
+}
+
+/**
+ * Extend the active plans behind renewed member leases, under the caller's capacity lock. A member can run
+ * far longer than the plan's lifetime, and without this a sibling host expires the plan mid-run and its
+ * next member is refused.
+ */
+export function refreshReservationsForLeasesUnsafe(
+	state: CapacityStateFile,
+	leases: ReadonlyArray<{ reservationOwnerId: string | null }>,
+	nowMs: number,
+): void {
+	const owners = new Set(
+		leases.flatMap((lease) => (lease.reservationOwnerId === null ? [] : [lease.reservationOwnerId])),
+	);
+	if (owners.size === 0) return;
+	let records: DispatchReservationRecord[];
+	try {
+		records = parseReservations(state.reservations);
+	} catch {
+		return; // a damaged plan store must not stop the leases renewing; admission reports it
+	}
+	let changed = false;
+	for (const record of records) {
+		if (record.status !== "active" || !owners.has(record.ownerId)) continue;
+		const before = record.expiresAt;
+		refreshExpiry(record, nowMs);
+		changed ||= record.expiresAt !== before;
+	}
+	if (changed) state.reservations = records.map(copyRecord);
+}
+
+/** Plans this process created and has not seen settle; the admission heartbeat keeps their expiry current. */
+const ownedPlans = new Set<string>();
+
+/** True while this process owns a plan that may still be active, so its heartbeat has a plan to refresh. */
+export function ownsActiveReservations(): boolean {
+	return ownedPlans.size > 0;
+}
+
+/**
+ * Extend every active plan this process owns, under the caller's capacity lock, whether or not one of its members
+ * holds a lease now. A plan whose next member waits in the writer-set queue, or behind a long step between members,
+ * holds no running lease, and another host judges it by this expiry alone. Plans that are no longer active leave the
+ * owned set. True when `state` changed and the caller must write it.
+ */
+export function refreshOwnedReservationsUnsafe(state: CapacityStateFile, nowMs: number): boolean {
+	if (ownedPlans.size === 0) return false;
+	let records: DispatchReservationRecord[];
+	try {
+		records = parseReservations(state.reservations);
+	} catch {
+		return false; // a damaged plan store must not stop the heartbeat; admission reports it
+	}
+	const active = new Set<string>();
+	let changed = false;
+	for (const record of records) {
+		if (record.status !== "active" || !ownedPlans.has(record.ownerId)) continue;
+		active.add(record.ownerId);
+		const before = record.expiresAt;
+		refreshExpiry(record, nowMs);
+		changed ||= record.expiresAt !== before;
+	}
+	for (const ownerId of [...ownedPlans]) if (!active.has(ownerId)) ownedPlans.delete(ownerId);
+	if (changed) state.reservations = records.map(copyRecord);
+	return changed;
+}
+
+/**
+ * Move a member's held capacity to the node a retry actually resolved and
+ * record the retry's own cost estimate. Allocation rechecks capacity while
+ * retaining cost as advisory accounting. Atomic under the state-file lock:
+ * the old node's slot is released and the new one acquired
+ * in a single write, so a concurrent plan can never observe both held. Fails
+ * closed with a named reason, which the caller surfaces as an admission denial
+ * rather than letting the attempt escape its reservation.
+ */
+export function rebindDispatchReservationMember(input: {
+	ownerId: string;
+	memberId: string;
+	nodeId: string;
+	endpointKey?: string;
+	costUpperBoundUsd: number;
+	capacity: ReservationCapacitySnapshot;
+	nowMs?: number;
+}): Promise<DispatchReservationRecord> {
+	// Retry admission runs inside the async dispatch attempt, so it can yield
+	// while waiting for the cross-process lock instead of blocking the event loop.
+	// The section form releases before returning, so a same-process sync caller
+	// never meets this lock still held across a microtask.
+	return withStateFileLockSection(capacityStateLockPath(), () => {
+		const nowMs = input.nowMs ?? Date.now();
+		const records = expireRecords(readStore(), nowMs, false);
+		const record = records.find((entry) => entry.ownerId === input.ownerId);
+		if (record?.status !== "active") throw new Error(`dispatch: reservation '${input.ownerId}' is not active`);
+		const member = record.members.find((entry) => entry.memberId === input.memberId);
+		if (!member) throw new Error(`dispatch: reservation '${input.ownerId}' has no member '${input.memberId}'`);
+		if (member.status === "released") {
+			throw new Error(`dispatch: reservation member '${input.memberId}' was already released`);
+		}
+		if (
+			member.nodeId === input.nodeId &&
+			member.endpointKey === input.endpointKey &&
+			member.costUpperBoundUsd === input.costUpperBoundUsd
+		) {
+			return copyRecord(record);
+		}
+		const others = records.filter((entry) => entry.status === "active" && entry.ownerId !== input.ownerId);
+		if (member.endpointKey !== input.endpointKey && input.endpointKey !== undefined) {
+			const endpointKey = input.endpointKey;
+			const endpoint = input.capacity.endpoints[endpointKey];
+			if (endpoint !== undefined && Number.isFinite(endpoint.limit)) {
+				const siblingSlots = record.members.filter(
+					(entry) => entry !== member && entry.status !== "released" && entry.endpointKey === endpointKey,
+				).length;
+				const otherHeld = others.reduce((sum, entry) => sum + (heldAllocation(entry).endpointSlots[endpointKey] ?? 0), 0);
+				const used = endpoint.active + otherHeld + siblingSlots;
+				if (used + 1 > endpoint.limit) {
+					throw new Error(
+						endpointCapacityDenial({
+							endpointKey,
+							limit: endpoint.limit,
+							used,
+							requested: 1,
+							leases: endpoint.leases ?? endpoint.active - (endpoint.foregroundStreams ?? 0),
+							reservations: otherHeld + siblingSlots,
+							foregroundStreams: endpoint.foregroundStreams ?? 0,
+						}),
+					);
+				}
+			}
+		}
+
+		if (member.nodeId !== input.nodeId) {
+			const node = input.capacity.nodes[input.nodeId];
+			if (node !== undefined && Number.isFinite(node.limit)) {
+				// Siblings inside this same reservation still hold their own slots.
+				const siblingSlots = record.members.filter(
+					(entry) => entry !== member && entry.status !== "released" && entry.nodeId === input.nodeId,
+				).length;
+				const otherHeld = others.reduce((sum, entry) => sum + (heldAllocation(entry).nodeSlots[input.nodeId] ?? 0), 0);
+				const used = node.active + otherHeld + siblingSlots;
+				if (used + 1 > node.limit) {
+					throw new Error(
+						`dispatch: reservation rebind denied: node '${input.nodeId}' capacity exceeded (${used + 1}/${node.limit})${nodeNote(node)}`,
+					);
+				}
+			}
+		}
+
+		member.nodeId = input.nodeId;
+		if (input.endpointKey === undefined) delete member.endpointKey;
+		else member.endpointKey = input.endpointKey;
+		member.costUpperBoundUsd = Math.max(0, input.costUpperBoundUsd);
+		writeStore(records);
+		return copyRecord(record);
+	});
+}
+
+export function releaseDispatchReservationMemberAsync(
+	ownerId: string,
+	memberId: string,
+	nowMs = Date.now(),
+): Promise<DispatchReservationRecord | null> {
+	return updateCapacityStateAsync((state) => {
+		const records = parseReservations(state.reservations);
+		const record = records.find((entry) => entry.ownerId === ownerId);
+		if (!record) return { result: null, changed: false };
+		const member = record.members.find((entry) => entry.memberId === memberId);
+		if (record.status !== "active" || !member || member.status === "released")
+			return { result: copyRecord(record), changed: false };
+		member.status = "released";
+		member.releasedAt = leaseInstant(nowMs);
+		if (record.members.every((entry) => entry.status === "released")) {
+			record.status = "released";
+			record.settledAt = leaseInstant(nowMs);
+		}
+		replaceReservations(state, records);
+		return { result: copyRecord(record), changed: true };
+	});
+}
+
+/** Settle every member after the scheduler has finished the reserved plan. */
+export function releaseDispatchReservation(ownerId: string, nowMs = Date.now()): DispatchReservationRecord | null {
+	ownedPlans.delete(ownerId);
+	return withStateFileLockSync(capacityStateLockPath(), () => {
+		const records = readStore();
+		const record = records.find((entry) => entry.ownerId === ownerId);
+		if (!record) return null;
+		if (record.status !== "active") return copyRecord(record);
+		const settledAt = leaseInstant(nowMs);
+		for (const member of record.members) {
+			if (member.status === "released") continue;
+			member.status = "released";
+			member.releasedAt = settledAt;
+		}
+		record.status = "released";
+		record.settledAt = settledAt;
+		writeStore(records);
+		return copyRecord(record);
+	});
+}
+
+export function rollbackDispatchReservation(ownerId: string, nowMs = Date.now()): DispatchReservationRecord | null {
+	ownedPlans.delete(ownerId);
+	return withStateFileLockSync(capacityStateLockPath(), () => {
+		const records = readStore();
+		const record = records.find((entry) => entry.ownerId === ownerId);
+		if (!record) return null;
+		if (record.status !== "active") return copyRecord(record);
+		const settledAt = leaseInstant(nowMs);
+		for (const member of record.members) {
+			if (member.status === "released") continue;
+			member.status = "released";
+			member.releasedAt = settledAt;
+		}
+		record.status = "rolled_back";
+		record.settledAt = settledAt;
+		writeStore(records);
+		return copyRecord(record);
+	});
+}
+
+/** Release a denied/unexecuted plan without disturbing a plan that has begun execution. */
+export function rollbackUnconsumedDispatchReservation(
+	ownerId: string,
+	nowMs = Date.now(),
+): DispatchReservationRecord | null {
+	const record = getDispatchReservation(ownerId);
+	if (record?.status !== "active") return record;
+	if (record.members.some((member) => member.status === "consumed")) return record;
+	return rollbackDispatchReservation(ownerId, nowMs);
+}
+
+/** True or false for an owner on this host, null for one on another host. */
+function reservationOwnerAlive(record: DispatchReservationRecord): boolean | null {
+	return processIdentityAlive({
+		host: record.host,
+		pid: record.ownerPid,
+		birthToken: record.processBirthToken ?? null,
+	});
+}
+
+function expireRecord(record: DispatchReservationRecord, settledAt: string): void {
+	for (const member of record.members) {
+		if (member.status === "released") continue;
+		member.status = "released";
+		member.releasedAt = settledAt;
+	}
+	record.status = "expired";
+	record.settledAt = settledAt;
+}
+
+function expireRecords(
+	records: DispatchReservationRecord[],
+	nowMs: number,
+	startup: boolean,
+): DispatchReservationRecord[] {
+	const settledAt = leaseInstant(nowMs);
+	for (const record of records) {
+		if (record.status !== "active") continue;
+		const alive = reservationOwnerAlive(record);
+		// On a shared state dir a local pid probe would inspect the wrong process, so neither it nor the
+		// startup sweep may judge another host's plan; only its expiry past the skew tolerance does. The owner
+		// pushes the expiry out as it consumes members and on every heartbeat of a running member's lease, so only
+		// a lost node's plan lapses.
+		if (alive === null) {
+			if (!leaseLapsed(record.expiresAt, nowMs, true)) continue;
+		} else if (
+			// A healthy collective may outlive its planning estimate. Reclaim only orphaned owners.
+			(alive && !(startup && record.ownerPid === process.pid)) ||
+			(!startup && !leaseLapsed(record.expiresAt, nowMs, false))
+		)
+			continue;
+		expireRecord(record, settledAt);
+	}
+	return records;
+}
+
+/**
+ * Expire every active reservation owned by exactly `owner`. Another host's
+ * plan is never reclaimed early by the sweep, so `pancode session terminate
+ * --force` calls this, as it calls `releaseCapacityLeasesOwnedBy`, once that
+ * owner's session is known dead.
+ */
+export function expireDispatchReservationsOwnedBy(owner: { host: string; pid: number; birth: string | null }): number {
+	return withStateFileLockSync(capacityStateLockPath(), () => {
+		if (owner.birth === null) return 0;
+		const records = readStore();
+		const settledAt = leaseInstant(Date.now());
+		let expired = 0;
+		for (const record of records) {
+			if (
+				record.status !== "active" ||
+				record.host !== owner.host ||
+				record.ownerPid !== owner.pid ||
+				record.processBirthToken !== owner.birth
+			)
+				continue;
+			expireRecord(record, settledAt);
+			expired += 1;
+		}
+		if (expired > 0) writeStore(records);
+		return expired;
+	});
+}
+
+export function cleanupDispatchReservations(options?: { startup?: boolean; nowMs?: number }): number {
+	return withStateFileLockSync(capacityStateLockPath(), () =>
+		sweepReservationsUnsafe(options?.startup === true, options?.nowMs ?? Date.now()),
+	);
+}
+
+function sweepReservationsUnsafe(startup: boolean, nowMs: number): number {
+	// The startup sweep runs under the lock, so it is where invalid settled records leave the file.
+	const { state, dropped } = readCapacityStateRepairUnsafe();
+	const records = parseReservations(state.reservations);
+	const before = records.filter((record) => record.status === "active").length;
+	expireRecords(records, nowMs, startup);
+	const after = records.filter((record) => record.status === "active").length;
+	if (before !== after || dropped > 0) {
+		replaceReservations(state, records);
+		writeCapacityStateUnsafe(state);
+	}
+	return before - after;
+}
+
+/** Set while boot's startup sweep waits for the admission lock; the next plan admission runs it under its own lock. */
+let startupSweepPending = false;
+
+function takeStartupSweep(): boolean {
+	const pending = startupSweepPending;
+	startupSweepPending = false;
+	return pending;
+}
+
+/**
+ * Boot's reservation sweep (M-35). It never waits for the admission lock: another process may hold it for as long as
+ * its section takes, and domain load must not stall or fail on that. A free lock sweeps now; a held one leaves the
+ * sweep to the next plan admission, which takes the lock anyway, after a lock-free read of the store (writers rename
+ * it into place) still refuses a damaged one as the locked sweep would.
+ */
+export function sweepDispatchReservationsAtStartup(nowMs = Date.now()): "swept" | "deferred" {
+	const attempt = tryWithStateFileLockSync(capacityStateLockPath(), () => sweepReservationsUnsafe(true, nowMs));
+	startupSweepPending = !attempt.held;
+	if (attempt.held) return "swept";
+	parseReservations(readCapacityStateRepairUnsafe(nowMs).state.reservations);
+	return "deferred";
+}
+
+/**
+ * The concurrent peak a plan reserved, which is the widest wave it was admitted
+ * against. Members settle as the plan runs, but the bound does not move.
+ */
+export function reservedPlanPeakSlots(ownerId: string, onError?: (error: unknown) => void): number | undefined {
+	try {
+		const record = getDispatchReservation(ownerId);
+		if (record === null || record.status !== "active") return undefined;
+		return reservationAllocation(record.members).globalSlots;
+	} catch (error) {
+		// An unreadable store cannot bound a plan; capacity still bounds admission.
+		onError?.(error);
+		return undefined;
+	}
+}
+
+/** Queue identity for a reserved member: its plan, ordered by reserved wave. */
+export function planQueueSlot(
+	ownerId: string,
+	memberId: string,
+	onError?: (error: unknown) => void,
+): { planId: string; planOrder?: number } {
+	try {
+		const wave = getDispatchReservation(ownerId)?.members.find((member) => member.memberId === memberId)?.wave;
+		return { planId: ownerId, ...(wave !== undefined ? { planOrder: wave } : {}) };
+	} catch (error) {
+		// Plan identity still holds without wave order; ordering falls back to FIFO.
+		onError?.(error);
+		return { planId: ownerId };
+	}
+}
+
+export function getDispatchReservation(ownerId: string): DispatchReservationRecord | null {
+	const record = readStore().find((entry) => entry.ownerId === ownerId);
+	return record ? copyRecord(record) : null;
+}

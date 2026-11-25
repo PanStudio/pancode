@@ -1,0 +1,416 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { rememberMessageCalls } from "../../src/core/message-accounting.js";
+import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
+import type { ContextLedger } from "../../src/domains/session/context-ledger.js";
+import type { TelemetryReadModel } from "../../src/domains/telemetry/contract.js";
+import { projectContextLedger } from "../../src/engine/acp/context-ledger.js";
+import { AcpRequestError } from "../../src/engine/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
+import type { AcpUsageMeta } from "../../src/engine/acp/types.js";
+import { readModelOf, telemetryCall } from "../harness/telemetry-view.js";
+
+const LEDGER: ContextLedger = {
+	provider: "mini",
+	model: "gemma",
+	contextWindow: 131072,
+	contextWindowSource: "loaded",
+	contextWindowSlots: { totalContextSize: 524288, slots: 4 },
+	usedTokens: 20480,
+	reserveTokens: 16384,
+	freeTokens: 94208,
+	overTriggerTokens: 0,
+	percent: 15.625,
+	measured: true,
+	compactionThreshold: 0.8,
+	compactionAuto: true,
+	projectPreload: "handbook",
+	projectHandbookFiles: ["PANCODE.md"],
+	toolCount: 14,
+	groups: [
+		{ category: "system", label: "System prompt", tokens: 4096, percent: 3.125 },
+		{ category: "messages", label: "Conversation", tokens: 16384, percent: 12.5 },
+	],
+	meter: [],
+	lastCompaction: { stage: "summary", tokensBefore: 90000, tokensAfter: 12000, trigger: "auto" },
+	promptCache: {
+		shellReused: true,
+		cacheReadTokens: 8000,
+		cacheWriteTokens: null,
+		uncachedInputTokens: 400,
+		backend: null,
+		uncachedPrefillTokens: null,
+		backendVerdict: "hot",
+	},
+	prewarm: null,
+};
+
+test("the context ledger projection keeps the accounting and keeps unknown unknown", () => {
+	const projected = projectContextLedger(LEDGER);
+	assert.equal(projected.usedTokens, 20480);
+	assert.equal(projected.measured, true);
+	assert.deepEqual(projected.contextWindowSlots, { slots: 4, totalTokens: 524288 });
+	assert.deepEqual(
+		projected.groups.map((group) => [group.category, group.tokens]),
+		[
+			["system", 4096],
+			["messages", 16384],
+		],
+	);
+	assert.equal(projected.promptCache?.backendVerdict, "hot");
+	const unknown = projectContextLedger({
+		...LEDGER,
+		contextWindow: 0,
+		percent: null,
+		measured: false,
+		contextWindowSlots: null,
+		promptCache: null,
+		lastCompaction: null,
+		groups: Array.from({ length: 40 }, (_, index) => ({
+			category: "messages" as const,
+			label: `group ${index}\u0007`,
+			tokens: Number.NaN,
+			percent: null,
+		})),
+	});
+	assert.equal(unknown.contextWindow, 0);
+	assert.equal(unknown.percent, null, "an unknown window is not zero percent");
+	assert.equal(unknown.measured, false);
+	assert.equal(unknown.groups.length, 32);
+	assert.ok(unknown.groups.every((group) => group.tokens === 0 && !group.label.includes("\u0007")));
+});
+
+test("the ledger method answers for the bound session and is absent without a ledger source", async () => {
+	for (const wired of [true, false]) {
+		const handlers = new Map<string, (params: unknown) => unknown>();
+		let close: () => void = () => {};
+		const transport: AcpJsonRpcPeerTransport = {
+			closed: false,
+			request: async () => ({}) as never,
+			notify: () => {},
+			onNotification: () => () => {},
+			onRequest: (method, handler) => {
+				handlers.set(method, handler);
+				return () => handlers.delete(method);
+			},
+			onClose: (handler) => {
+				close = handler;
+				return () => {};
+			},
+			close: () => close(),
+		};
+		const served = servePancodeAcpAgent({
+			transport,
+			cwd: process.cwd(),
+			autonomy: () => "default",
+			...(wired ? { contextLedger: () => LEDGER } : {}),
+			chat: {
+				submit: async () => {},
+				cancel: () => {},
+				onEvent: () => () => {},
+				isStreaming: () => false,
+				getSessionId: () => null,
+			},
+		});
+		const call = async (method: string, params: unknown) => await handlers.get(method)?.(params);
+		const init = (await call("initialize", { protocolVersion: 1 })) as {
+			agentCapabilities: { _meta: Record<string, unknown> };
+		};
+		const { sessionId } = (await call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+		if (wired) {
+			assert.deepEqual(init.agentCapabilities._meta["pancode/context"], {
+				version: 1,
+				ledger: "_pancode/context/ledger",
+				status: "_pancode/context/status",
+			});
+			const ledger = (await call("_pancode/context/ledger", { sessionId })) as { usedTokens: number };
+			assert.equal(ledger.usedTokens, 20480);
+			assert.deepEqual(await call("_pancode/context/status", { sessionId }), {
+				version: 1,
+				active: null,
+				latest: null,
+			});
+		} else {
+			assert.equal(init.agentCapabilities._meta["pancode/context"], undefined);
+			await assert.rejects(
+				call("_pancode/context/ledger", { sessionId }),
+				(error: unknown) => error instanceof AcpRequestError && error.detail.code === "method_not_found",
+			);
+		}
+		close();
+		await served;
+	}
+});
+
+test("a long turn streams usage_update per model response with the meter rising and totals matching the response", async () => {
+	const handlers = new Map<string, (params: unknown) => unknown>();
+	const updates: Array<Record<string, unknown>> = [];
+	let close: () => void = () => {};
+	let onEvent: (event: unknown) => void = () => {};
+	let used = 1000;
+	// The session's journal as the read model folds it, a call landing with each response (#434 §11.3).
+	const records: TelemetryRecord[] = [];
+	const land = (options: Parameters<typeof telemetryCall>[1]) => records.push(...telemetryCall("usage-update", options));
+	// Two priced calls before the turn, with no tokens.
+	land({ usage: {}, usd: 0.5 });
+	land({ usage: {}, usd: 0.5 });
+	let bound: string | null = null;
+	const transport: AcpJsonRpcPeerTransport = {
+		closed: false,
+		request: async () => ({}) as never,
+		notify: (method, params) => {
+			if (method === "session/update") updates.push((params as { update: Record<string, unknown> }).update);
+		},
+		onNotification: () => () => {},
+		onRequest: (method, handler) => {
+			handlers.set(method, handler);
+			return () => handlers.delete(method);
+		},
+		onClose: (handler) => {
+			close = handler;
+			return () => {};
+		},
+		close: () => close(),
+	};
+	const response = (text: string) => ({
+		role: "assistant",
+		content: [{ type: "text", text }],
+		stopReason: "stop",
+		usage: { input: 100, output: 20, cacheRead: 50, totalTokens: 170, cost: { total: 0.25 }, pricedBy: "target-rates" },
+	});
+	const served = servePancodeAcpAgent({
+		transport,
+		cwd: process.cwd(),
+		autonomy: () => "default",
+		contextLedger: () => ({ ...LEDGER, usedTokens: used }),
+		telemetryReadModel: readModelOf(
+			() => bound,
+			() => records,
+		),
+		chat: {
+			submit: async () => {
+				// The turn's own calls journal under its operator turn; the side calls are the session's.
+				const main = () => land({ turnId: "turn-1", usage: { input: 100, output: 20, cacheRead: 50 }, usd: 0.25 });
+				onEvent({ type: "agent_start", turnId: "turn-1" });
+				for (const text of ["one", "two", "three"]) {
+					used += 4000;
+					main();
+					if (text === "two") {
+						land({ role: "system-one", usage: { input: 40, output: 20 }, usd: 0.25, pricedBy: "catalog" });
+						land({ role: "memory", usage: { input: null, output: null }, usd: null });
+					}
+					onEvent({ type: "message_end", message: response(text) });
+					await new Promise((resolve) => setImmediate(resolve));
+				}
+				// A burst in one tick is one frame.
+				used += 4000;
+				main();
+				onEvent({ type: "message_end", message: response("four") });
+				main();
+				onEvent({ type: "message_end", message: response("five") });
+				onEvent({ type: "agent_end", turnId: "turn-1", messages: [] });
+			},
+			cancel: () => {},
+			onEvent: (handler) => {
+				onEvent = handler;
+				return () => {
+					onEvent = () => {};
+				};
+			},
+			isStreaming: () => false,
+			getSessionId: () => null,
+		},
+	});
+	const call = async (method: string, params: unknown) => await handlers.get(method)?.(params);
+	await call("initialize", { protocolVersion: 1, clientCapabilities: { _meta: { "pancode/usage": { version: 1 } } } });
+	const { sessionId } = (await call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+	bound = sessionId;
+	assert.equal(updates.filter((update) => update.sessionUpdate === "usage_update").length, 0, "a new session is quiet");
+	const result = (await call("session/prompt", { sessionId, prompt: [{ type: "text", text: "go" }] })) as {
+		_meta: Record<string, unknown>;
+	};
+	const frames = updates.filter((update) => update.sessionUpdate === "usage_update") as Array<{
+		used: number;
+		size: number;
+		cost?: { amount: number; currency: string };
+		_meta: Record<string, Record<string, unknown>>;
+	}>;
+	assert.deepEqual(
+		frames.map((frame) => frame.used),
+		[5000, 9000, 13000, 17000],
+	);
+	assert.ok(frames.every((frame) => frame.size === 131072));
+	assert.equal(frames[0]?._meta["pancode/context"]?.compactionThreshold, 0.8);
+	const last = frames.at(-1);
+	const promptUsage = result._meta["pancode/usage"] as { quantities: { output: { display: string } } };
+	assert.deepEqual(last?._meta["pancode/usage"]?.turn, promptUsage.quantities);
+	assert.equal(promptUsage.quantities.output.display, "100");
+	const session = last?._meta["pancode/usage"]?.session as {
+		totals: { usd: { display: string }; tokens: { display: string } };
+		context: { cache: { share?: { display: string }; lastTurnShare?: { display: string } } | null };
+	};
+	// The cache block carries the cached share `telemetry cache` reports: the session's, a bound past the memory call
+	// that reported no usage, then its last turn's.
+	assert.deepEqual(
+		[session.context.cache?.share?.display, session.context.cache?.lastTurnShare?.display],
+		["≥31.6% (1 call unknown)", "33.3%"],
+	);
+	assert.equal(session.totals.usd.display, "~$2.50 +?");
+	assert.ok(session.totals.tokens.display.includes("910"));
+	// A route-price estimate is not money the user paid: without a confirmed personal charge ACP `cost` stays absent.
+	assert.ok(frames.every((frame) => frame.cost === undefined));
+	close();
+	await served;
+});
+
+test("the prompt response waits for the read model to fold the turn's last call, and repeats the turn's last frame", async () => {
+	const handlers = new Map<string, (params: unknown) => unknown>();
+	const updates: Array<Record<string, unknown>> = [];
+	let close: () => void = () => {};
+	let onEvent: (event: unknown) => void = () => {};
+	const records: TelemetryRecord[] = [];
+	let bound: string | null = null;
+	let probes = 0;
+	// The test orders its batches on the frames the server sends, never on timers, so a stalled loop cannot reorder them.
+	const awaited: Array<{ match: (usage: Record<string, unknown>) => boolean; resolve: () => void }> = [];
+	const sent = (match: (usage: Record<string, unknown>) => boolean) =>
+		new Promise<void>((resolve) => awaited.push({ match, resolve }));
+	const ownCalls = (usage: Record<string, unknown>) =>
+		(usage.session as { own: { counts: { calls: { display: string } } } } | null)?.own.counts.calls.display;
+	// The server subscribes more than once; a fold the turn's waiter never hears ends only at its 2 s bound.
+	const listeners = new Set<Parameters<TelemetryReadModel["subscribe"]>[1]>();
+	const folded = () => {
+		for (const listener of listeners)
+			listener({
+				v: 1,
+				kind: "telemetry_update",
+				sessionId: bound,
+				seq: 1,
+				generatedAt: new Date().toISOString(),
+				topics: ["session"],
+			});
+	};
+	const transport: AcpJsonRpcPeerTransport = {
+		closed: false,
+		request: async () => ({}) as never,
+		notify: (method, params) => {
+			if (method !== "session/update") return;
+			const update = (params as { update: Record<string, unknown> }).update;
+			updates.push(update);
+			const usage = (update._meta as Record<string, Record<string, unknown>> | undefined)?.["pancode/usage"];
+			if (usage === undefined) return;
+			for (const waiter of awaited.filter((entry) => entry.match(usage))) {
+				awaited.splice(awaited.indexOf(waiter), 1);
+				waiter.resolve();
+			}
+		},
+		onNotification: () => () => {},
+		onRequest: (method, handler) => {
+			handlers.set(method, handler);
+			return () => handlers.delete(method);
+		},
+		onClose: (handler) => {
+			close = handler;
+			return () => {};
+		},
+		close: () => close(),
+	};
+	const served = servePancodeAcpAgent({
+		transport,
+		cwd: process.cwd(),
+		autonomy: () => "default",
+		contextLedger: () => LEDGER,
+		telemetryReadModel: {
+			...readModelOf(
+				() => bound,
+				() => records,
+			),
+			subscribe: (_topic, listener) => {
+				listeners.add(listener);
+				return () => {
+					listeners.delete(listener);
+				};
+			},
+		},
+		// The probe a write starts is still in flight when the turn settles; a batch folds while the response waits on it,
+		// after the turn's folded frame and before the probe lands.
+		workspace: async (cwd) => {
+			probes++;
+			if (probes > 1) {
+				await sent((usage) => (usage.turn as { output: { display: string } } | null)?.output.display === "20");
+				const late = sent((usage) => ownCalls(usage) === "2");
+				records.push(...telemetryCall("late", { turnId: "turn-2", usage: { input: 7, output: 3 }, usd: 0.01 }));
+				folded();
+				await late;
+			}
+			return {
+				cwd,
+				isGit: false,
+				branch: null,
+				dirty: null,
+				ahead: null,
+				behind: null,
+				recentCommits: [],
+				remoteUrl: null,
+				projectType: "unknown",
+				capturedAt: new Date().toISOString(),
+			};
+		},
+		chat: {
+			submit: async () => {
+				onEvent({ type: "tool_execution_start", toolCallId: "w1", toolName: "write", args: { path: "a.txt" } });
+				onEvent({ type: "tool_execution_end", toolCallId: "w1", toolName: "write", result: "ok", isError: false });
+				const call = telemetryCall("late", { turnId: "turn-1", usage: { input: 100, output: 20 }, usd: 0.25 });
+				const settled = call.find((record) => record.k === "call.settled");
+				assert.ok(settled?.k === "call.settled");
+				const message = {
+					role: "assistant",
+					content: [{ type: "text", text: "done" }],
+					stopReason: "stop",
+					usage: { input: 100, output: 20, totalTokens: 120, cost: { total: 0.25 }, pricedBy: "target-rates" },
+				};
+				rememberMessageCalls(message, [settled.data]);
+				onEvent({ type: "agent_start", turnId: "turn-1" });
+				onEvent({ type: "message_end", message });
+				onEvent({ type: "agent_end", turnId: "turn-1", messages: [message] });
+				// The writer's batch holding the call is durable only after the run ended, so the response is already waiting.
+				setImmediate(() => {
+					records.push(...call);
+					folded();
+				});
+			},
+			cancel: () => {},
+			onEvent: (handler) => {
+				onEvent = handler;
+				return () => {
+					onEvent = () => {};
+				};
+			},
+			isStreaming: () => false,
+			getSessionId: () => null,
+		},
+	});
+	const call = async (method: string, params: unknown) => await handlers.get(method)?.(params);
+	await call("initialize", { protocolVersion: 1, clientCapabilities: { _meta: { "pancode/usage": { version: 1 } } } });
+	const { sessionId } = (await call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+	bound = sessionId;
+	const result = (await call("session/prompt", { sessionId, prompt: [{ type: "text", text: "go" }] })) as {
+		_meta: Record<string, Record<string, unknown>>;
+	};
+	const reply = (result._meta["pancode/usage"] ?? {}) as AcpUsageMeta;
+	assert.equal(reply.quantities?.output.display, "20");
+	assert.equal(reply.quantities?.usd.display, "$0.25");
+	const frames = updates
+		.filter((update) => update.sessionUpdate === "usage_update")
+		.map((update) => (update as { _meta: Record<string, Record<string, unknown>> })._meta["pancode/usage"] ?? {});
+	// The turn's last frame, session block included, is what the response repeats.
+	assert.deepEqual(frames.filter((frame) => frame.turn !== null).at(-1)?.turn, reply.quantities);
+	// The batch that folded during the workspace wait reached a later session frame, not the response.
+	assert.equal(reply.session?.quantities.calls.display, "1");
+	assert.equal(ownCalls(frames.at(-1) ?? {}), "2");
+	close();
+	await served;
+});

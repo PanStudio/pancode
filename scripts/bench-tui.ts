@@ -1,0 +1,475 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/** Deterministic, provider-free render workloads. Timings exclude terminal emulator painting. */
+import { parseArgs } from "node:util";
+import {
+	InstrumentedTuiAltScreen,
+	InstrumentedTuiMainScreen,
+	type Terminal,
+	Text,
+	type TuiMode,
+	type TuiRenderObserver,
+} from "../src/engine/tui.js";
+import { type ChatPanel, createChatPanel } from "../src/interactive/chat-panel.js";
+import { buildLayout } from "../src/interactive/layout.js";
+import type { WorkerEntryState } from "../src/session-control/worker-stream.js";
+
+const { values } = parseArgs({
+	options: {
+		turns: { type: "string", default: "400" },
+		frames: { type: "string", default: "120" },
+		repeats: { type: "string", default: "3" },
+		columns: { type: "string", default: "120" },
+		rows: { type: "string", default: "40" },
+		mode: { type: "string" },
+		workload: { type: "string" },
+		style: { type: "string" },
+		echo: { type: "boolean", default: false },
+		verify: { type: "boolean", default: false },
+	},
+});
+function positive(value: string): number {
+	const number = Number(value);
+	if (!Number.isSafeInteger(number) || number < 1) throw new Error(`Expected a positive integer, got ${value}`);
+	return number;
+}
+const turns = positive(values.turns);
+const frames = positive(values.frames);
+const repeats = positive(values.repeats);
+
+const columns = positive(values.columns);
+class CountingTerminal implements Terminal {
+	columns = columns;
+	rows = positive(values.rows);
+	kittyProtocolActive = false;
+	bytes = 0;
+	start(): void {}
+	stop(): void {}
+	async drainInput(): Promise<void> {}
+	write(data: string): void {
+		this.bytes += Buffer.byteLength(data);
+	}
+	moveBy(): void {}
+	hideCursor(): void {}
+	showCursor(): void {}
+	clearLine(): void {}
+	clearFromCursor(): void {}
+	clearScreen(): void {}
+	setTitle(): void {}
+	setProgress(): void {}
+	setProgramStatus(): void {}
+}
+
+function settle(panel: ChatPanel, text: string): void {
+	const message = { role: "assistant", content: [{ type: "text", text }], stopReason: "stop" };
+	panel.applyEvent({ type: "message_end", message } as never);
+	panel.applyEvent({ type: "agent_end", messages: [message] } as never);
+}
+
+const answer = [
+	"The render loop keeps **settled output** stable while the live tail grows.",
+	"",
+	"- Preserve input responsiveness.",
+	"- Keep tool events ordered.",
+	"",
+	"```ts",
+	"const result = await runTool(input);",
+	"return result;",
+	"```",
+].join("\n");
+const diagram = "```mermaid\nflowchart TD\nA[Prompt] --> B[Model]\nB --> C[Tool]\nC --> B\nB --> D[Answer]\n```\n\n";
+// Active replies of a fixed size that keep growing at the tail, for showing how per-delta cost scales.
+const replySizes = { "reply-20k": 20_000, "reply-100k": 100_000, "reply-500k": 500_000 } as const;
+const workloads = [
+	"composer",
+	"text",
+	"long-text",
+	"tool",
+	"tool-burst",
+	"read-burst",
+	"diagram",
+	"workers",
+	"workers-long",
+	"telemetry",
+	"turn",
+	"skill",
+	// A worker still running near the top of a long session while the reply streams at the end.
+	"live-early",
+	// A width that changes every frame, as a drag-resize delivers it, so no cached layout matches.
+	"resize",
+	// Alt+O cycling the three output styles, one per frame.
+	"style",
+	...(Object.keys(replySizes) as (keyof typeof replySizes)[]),
+] as const;
+const modes = ["regular", "fullscreen"] as const;
+if (values.mode && !modes.some((mode) => mode === values.mode)) throw new Error("Unknown mode");
+if (values.workload && !workloads.some((workload) => workload === values.workload)) throw new Error("Unknown workload");
+type Workload = (typeof workloads)[number];
+const styles = ["compact", "standard", "detailed"] as const;
+const outputStyle = styles.find((style) => style === values.style);
+if (values.style && !outputStyle) throw new Error("Unknown style");
+
+/** The renderers the application ships, with frame observation off. */
+const unobserved: TuiRenderObserver = {
+	isEnabled: () => false,
+	beginFrame: () => undefined,
+	endFrame: () => {},
+	beginPhase: () => undefined,
+	endPhase: () => {},
+};
+
+function workerState(index: number, pending: boolean): WorkerEntryState {
+	return {
+		assignmentId: `assignment-${index}`,
+		runId: `run-${index}`,
+		origin: "agent",
+		agentId: `worker-${index}`,
+		runtime: { kind: "pancode", targetId: "test", wireModelId: "test" },
+		text: "Starting investigation",
+		droppedLines: 0,
+		tools: [],
+		attempts: [],
+		pending,
+		startedAtMs: 0,
+	};
+}
+
+/** A read-model view holding only what the transcript reads; each published batch is a new object. */
+function telemetryView(elapsed: (runId: string) => string): never {
+	return {
+		seeding: false,
+		runs: () => [],
+		run: (runId: string) => ({
+			row: { tokens: { display: "1.2k" } },
+			activity: { elapsed: { display: elapsed(runId) }, toolCalls: { display: "3" }, contextTokens: null },
+		}),
+	} as never;
+}
+
+/** Prose, loose lists, fences and tables in the mix a long model reply carries, closed at a paragraph. */
+function longReply(size: number): string {
+	const blocks: string[] = [];
+	let length = 0;
+	for (let index = 0; length < size; index++) {
+		const block = [
+			`## Finding ${index}`,
+			"",
+			`The render loop keeps **settled output** stable while \`tail ${index}\` grows, and it wraps at the terminal width so this sentence is long enough to take more than one row at a typical column count.`,
+			"",
+			`- Preserve input responsiveness for item ${index}.`,
+			"",
+			"- Keep tool events ordered.",
+			"",
+			"```ts",
+			`const result${index} = await runTool(input);`,
+			`return result${index};`,
+			"```",
+			"",
+			"| Field | Value |",
+			"| --- | --- |",
+			`| index | ${index} |`,
+			"",
+			"",
+		].join("\n");
+		blocks.push(block);
+		length += block.length;
+	}
+	return blocks.join("");
+}
+
+/**
+ * Back to the event loop between frames, as the application always is. pi-tui's
+ * Markdown holds its lexed tokens in a WeakRef, and a WeakRef keeps its target
+ * alive until the current job ends, so frames rendered in one long synchronous
+ * job retained every frame's tokens: 1.47 MB per frame at reply-100k, a 4 GB
+ * out-of-memory crash at reply-500k, and old-generation pauses in the numbers.
+ */
+const recorded = new Set<string | symbol>(["appendUser", "applyEvent", "applyWorkerState"]);
+function recording(panel: ChatPanel, calls: Array<(target: ChatPanel) => void>): ChatPanel {
+	if (!values.verify) return panel;
+	return new Proxy(panel, {
+		get(target, key, receiver) {
+			const value = Reflect.get(target, key, receiver);
+			if (!recorded.has(key) || typeof value !== "function") return value;
+			return (...args: unknown[]) => {
+				calls.push((fresh) => Reflect.get(fresh, key).apply(fresh, args));
+				return value.apply(target, args);
+			};
+		},
+	});
+}
+
+/** The rows a renderer holds as painted: the regular screen's diff baseline, or the fullscreen screen. */
+function paintedRows(tui: InstrumentedTuiMainScreen | InstrumentedTuiAltScreen): readonly string[] {
+	const state = tui as unknown as { previousLines?: readonly string[]; previousScreen?: readonly string[] };
+	return (tui instanceof InstrumentedTuiAltScreen ? state.previousScreen : state.previousLines) ?? [];
+}
+
+const yieldToLoop = (): Promise<void> => new Promise((done) => setImmediate(done));
+
+function mount(
+	mode: TuiMode,
+	terminal: Terminal,
+	chat: ChatPanel,
+	editor: Text,
+): InstrumentedTuiMainScreen | InstrumentedTuiAltScreen {
+	const tui =
+		mode === "regular"
+			? new InstrumentedTuiMainScreen(terminal, unobserved)
+			: new InstrumentedTuiAltScreen(terminal, unobserved);
+	const root = buildLayout(
+		{ banner: new Text("PanCode", 0, 0), chat, editor, footer: new Text("ready", 0, 0) },
+		{ mode },
+	);
+	if (tui instanceof InstrumentedTuiAltScreen) tui.setLayoutRoot(root);
+	else tui.addChild(root);
+	tui.start();
+	return tui;
+}
+
+async function sample(
+	mode: TuiMode,
+	workload: Workload,
+): Promise<{ milliseconds: number[]; bytes: number; documentBytes: number; verified: number; mismatches: number }> {
+	const terminal = new CountingTerminal();
+	let view: never | null = null;
+	let style: (typeof styles)[number] | undefined = outputStyle;
+	// The application's idle scheduler, run between frames: rendering ahead and the viewport-first re-layout's catch-up.
+	const idle: Array<() => boolean> = [];
+	const pump = (): void => {
+		const step = idle[0];
+		if (step !== undefined && !step()) idle.shift();
+		if (idle.length > 0) setImmediate(pump);
+	};
+	const scheduleIdle = (step: () => boolean): void => {
+		idle.push(step);
+		if (idle.length === 1) setImmediate(pump);
+	};
+	const drainIdle = (): void => {
+		for (let step = idle[0]; step !== undefined; step = idle[0]) if (!step()) idle.shift();
+	};
+	const panelOptions = {
+		now: () => 1_000,
+		getTerminalRows: () => terminal.rows,
+		getTelemetry: () => view,
+		...(outputStyle || workload === "style" ? { getOutputStyle: () => style ?? "standard" } : {}),
+		copyMarks: mode === "fullscreen",
+	};
+	// Under --verify every transcript call is kept, so a fresh panel can replay it with no render cache.
+	const calls: Array<(target: ChatPanel) => void> = [];
+	const panel = recording(createChatPanel({ ...panelOptions, scheduleIdle, deferRelayout: true }), calls);
+	for (let index = 0; index < turns; index++) {
+		panel.appendUser(`Question ${index}`);
+		// Workloads that scan history need the history they scan: tool rows, and settled worker cards.
+		if (workload === "tool-burst") {
+			const toolCallId = `history-${index}`;
+			panel.applyEvent({ type: "tool_execution_start", toolCallId, toolName: "bash", args: { command: "ls" } } as never);
+			panel.applyEvent({
+				type: "tool_execution_end",
+				toolCallId,
+				result: { content: [{ type: "text", text: "ok" }] },
+				isError: false,
+			} as never);
+		}
+		settle(panel, answer);
+		if (workload === "live-early" && index === 0) panel.applyWorkerState(workerState(9_000, true));
+		if (workload === "telemetry" && index % 10 === 0) panel.applyWorkerState(workerState(1_000 + index, false));
+	}
+	let draft = "draft";
+	const editor = new Text(draft, 0, 0);
+	const tui = mount(mode, terminal, panel, editor);
+	/**
+	 * Whether the renderer's painted rows equal a from-scratch render of the same transcript and draft: at once the
+	 * rows on screen, which a pending re-layout renders first, then every row once the idle steps have caught up.
+	 */
+	const matchesFresh = (): boolean => {
+		const fresh = createChatPanel(panelOptions);
+		for (const replay of calls) replay(fresh);
+		const freshTerminal = new CountingTerminal();
+		freshTerminal.columns = terminal.columns;
+		const freshTui = mount(mode, freshTerminal, fresh, new Text(draft, 0, 0));
+		const same = (expected: readonly string[], actual: readonly string[]): boolean =>
+			expected.length === actual.length && expected.every((row, index) => row === actual[index]);
+		try {
+			freshTui.renderNow();
+			const expected = paintedRows(freshTui);
+			const shown = same(expected.slice(-terminal.rows), paintedRows(tui).slice(-terminal.rows));
+			drainIdle();
+			tui.renderNow();
+			return shown && same(expected, paintedRows(tui));
+		} finally {
+			freshTui.stop();
+		}
+	};
+	try {
+		const workers = Array.from({ length: 8 }, (_, index) => workerState(index, true));
+		if (workload !== "composer") {
+			panel.appendUser("Continue");
+			panel.applyEvent({ type: "agent_start" } as never);
+		}
+		if (workload === "long-text") panel.applyEvent({ type: "text_delta", delta: `${answer}\n\n`.repeat(80) } as never);
+		if (workload in replySizes)
+			panel.applyEvent({
+				type: "text_delta",
+				delta: longReply(replySizes[workload as keyof typeof replySizes]),
+			} as never);
+		if (workload === "diagram") panel.applyEvent({ type: "text_delta", delta: diagram } as never);
+		if (workload === "workers-long") for (const worker of workers) worker.text = `${answer}\n\n`.repeat(150);
+		if (workload === "workers" || workload === "workers-long" || workload === "telemetry")
+			for (const worker of workers) panel.applyWorkerState(worker);
+		if (workload === "telemetry") view = telemetryView(() => "1.0s");
+		if (workload === "tool")
+			panel.applyEvent({
+				type: "tool_execution_start",
+				toolCallId: "bench",
+				toolName: "bash",
+				args: { command: "build" },
+			} as never);
+		tui.renderNow();
+		let output = "";
+		const mutate = (index: number): void => {
+			if (workload === "composer") {
+				draft = `draft ${index % 10}`;
+				editor.setText(draft);
+			} else if (values.echo) {
+				// A keystroke while the reply is open: only the composer changes.
+				draft = `draft ${index}`;
+				editor.setText(draft);
+			} else if (workload === "tool") {
+				output += `Build step ${index} complete\n`;
+				panel.applyEvent({
+					type: "tool_execution_update",
+					toolCallId: "bench",
+					partialResult: { content: [{ type: "text", text: output }] },
+				} as never);
+			} else if (workload === "workers" || workload === "workers-long") {
+				const worker = workers[index % workers.length];
+				if (worker) {
+					worker.text += ` finding${index}`;
+					panel.applyWorkerState(worker);
+				}
+			} else if (workload === "telemetry") {
+				// One batch moved one running worker's clock; every other card reads the same as before.
+				const moved = `run-${index % workers.length}`;
+				view = telemetryView((runId) => (runId === moved ? `${index}.0s` : "1.0s"));
+			} else if (workload === "tool-burst" || workload === "read-burst") {
+				const toolCallId = `burst-${index}`;
+				const call =
+					workload === "read-burst"
+						? { toolName: "read", args: { path: `src/file-${index}.ts` } }
+						: { toolName: "bash", args: { command: "ls" } };
+				panel.applyEvent({ type: "tool_execution_start", toolCallId, ...call } as never);
+				panel.applyEvent({
+					type: "tool_execution_update",
+					toolCallId,
+					partialResult: { content: [{ type: "text", text: "line" }] },
+				} as never);
+				panel.applyEvent({
+					type: "tool_execution_end",
+					toolCallId,
+					result: { content: [{ type: "text", text: "ok" }] },
+					isError: false,
+				} as never);
+			} else if (workload === "resize") {
+				terminal.columns = columns - (index % 40);
+			} else if (workload === "style") {
+				style = styles[index % styles.length];
+			} else if (workload === "turn") {
+				panel.appendUser(`Prompt ${index}`);
+				panel.applyEvent({ type: "agent_start" } as never);
+				settle(panel, `Answer ${index}`);
+			} else if (workload === "skill") {
+				panel.applyEvent({
+					type: "notice",
+					level: "info",
+					surface: "transcript",
+					text: "Skill armed",
+					skillSurface: {
+						version: 1,
+						state: "armed",
+						names: [`skill-${index}`],
+						previous: [],
+						allowedTools: ["read", "edit"],
+						disallowedTools: [],
+					},
+				} as never);
+			} else panel.applyEvent({ type: "text_delta", delta: ` word${index}` } as never);
+		};
+		// Warm the same growing workload before sampling; setup and history rendering are excluded.
+		for (let index = 0; index < 20; index++) {
+			mutate(index);
+			tui.renderNow();
+			await yieldToLoop();
+		}
+		terminal.bytes = 0;
+		let documentBytes = 0;
+		const milliseconds: number[] = [];
+		let verified = 0;
+		let mismatches = 0;
+		for (let index = 0; index < frames; index++) {
+			const start = performance.now();
+			mutate(index + 20);
+			tui.renderNow();
+			milliseconds.push(performance.now() - start);
+			// Outside the timed span: the size of the transcript frame, every row of history included. The fullscreen
+			// transcript keeps a column for its scrollbar; at that width this is the frame just rendered, a cache hit.
+			if (index === frames - 1)
+				for (const row of panel.render(mode === "fullscreen" ? terminal.columns - 1 : terminal.columns))
+					documentBytes += Buffer.byteLength(row) + 1;
+			// Outside the timed span; every tenth frame and the last, since each check re-renders the whole transcript.
+			if (values.verify && (index % 10 === 0 || index === frames - 1)) {
+				verified += 1;
+				if (!matchesFresh()) mismatches += 1;
+			}
+			await yieldToLoop();
+		}
+		return { milliseconds, bytes: terminal.bytes, documentBytes, verified, mismatches };
+	} finally {
+		tui.stop();
+	}
+}
+
+const results = [];
+for (const mode of modes) {
+	if (values.mode && values.mode !== mode) continue;
+	for (const workload of workloads) {
+		if (values.workload && values.workload !== workload) continue;
+		const samples: Array<Awaited<ReturnType<typeof sample>>> = [];
+		for (let repeat = 0; repeat < repeats; repeat += 1) samples.push(await sample(mode, workload));
+		const times = samples.flatMap((entry) => entry.milliseconds).sort((a, b) => a - b);
+		const percentile = (p: number): number => Number((times[Math.ceil(times.length * p) - 1] ?? 0).toFixed(3));
+		results.push({
+			mode,
+			workload,
+			p50Ms: percentile(0.5),
+			p95Ms: percentile(0.95),
+			p99Ms: percentile(0.99),
+			maxMs: percentile(1),
+			bytesPerFrame: Math.round(samples.reduce((sum, entry) => sum + entry.bytes, 0) / times.length),
+			documentBytes: samples[0]?.documentBytes ?? 0,
+			...(values.verify
+				? {
+						verifiedFrames: samples.reduce((sum, entry) => sum + entry.verified, 0),
+						mismatches: samples.reduce((sum, entry) => sum + entry.mismatches, 0),
+					}
+				: {}),
+		});
+	}
+}
+console.log(
+	JSON.stringify(
+		{
+			node: process.version,
+			platform: process.platform,
+			columns,
+			rows: positive(values.rows),
+			turns,
+			frames,
+			repeats,
+			echo: values.echo,
+			results,
+		},
+		null,
+		2,
+	),
+);

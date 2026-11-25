@@ -1,0 +1,825 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, it } from "node:test";
+import {
+	attributeCommitMessage,
+	decisionTrailerRefs,
+	PANCODE_COMMIT_EMAIL,
+	PANCODE_COMMIT_IDENTITY,
+	PANCODE_COMMIT_TRAILERS,
+	PANCODE_DECISION_TRAILER_CAP,
+} from "../../src/core/commit-attribution.js";
+import {
+	enterAutonomousCommitScope,
+	setAutonomousCommitProcess,
+	setCommitDecisionRefsProvider,
+	setGitCommitAttributionEnabled,
+	setGitCommitAuthorSetting,
+	withManagedGitCommitAttributionEnvironment,
+} from "../../src/core/git-commit-attribution.js";
+import { resolvePackageRoot } from "../../src/core/package-root.js";
+import { installWindowsLauncher, windowsLaunchFile } from "../../src/core/windows-launcher.js";
+import type { ExecutionPlan, ExecutionPlanCodeStep } from "../../src/domains/dispatch/execution-plan.js";
+import {
+	changedCheckFiles,
+	deriveFleetCommitAttribution,
+	isVacuousCheckArgv,
+} from "../../src/domains/dispatch/fleet-commit-attribution.js";
+import { commitWorktreePath } from "../../src/tools/worktree-commit.js";
+import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+const REFS = ["interview-1/db_engine", "agent:a1b2/cache-key-shape"];
+
+describe("PanCode-Decision commit trailer", () => {
+	it("renders one sorted trailer per ref, idempotently, after the role trailers", () => {
+		const once = attributeCommitMessage("feat: add cache\n", { materiallyAuthored: true, decisions: REFS });
+		strictEqual(
+			once,
+			[
+				"feat: add cache",
+				"",
+				PANCODE_COMMIT_TRAILERS.assisted,
+				PANCODE_COMMIT_TRAILERS.coAuthored,
+				"PanCode-Decision: agent:a1b2/cache-key-shape",
+				"PanCode-Decision: interview-1/db_engine",
+				"",
+			].join("\n"),
+		);
+		strictEqual(attributeCommitMessage(once, { materiallyAuthored: true, decisions: REFS }), once);
+	});
+
+	it("respects a human-cased duplicate and drops a repeated PanCode line", () => {
+		const message = "fix: thing\n\npancode-decision: INTERVIEW-1/db\nPancode-Decision: interview-1/db\n";
+		const result = attributeCommitMessage(message, { decisions: ["interview-1/db"] });
+		strictEqual(result, "fix: thing\n\npancode-decision: INTERVIEW-1/db\n");
+	});
+
+	it("writes only well-formed refs and caps the count", () => {
+		deepStrictEqual(
+			decisionTrailerRefs(["b/k", "a/k", "a/k", "nokey", "a/Bad Key", "x/k\nInjected: y", "/k", "a/", "a/_k", "a/k-"]),
+			["a/k", "b/k"],
+		);
+		const many = Array.from(
+			{ length: PANCODE_DECISION_TRAILER_CAP + 5 },
+			(_, index) => `i/k-${String(index).padStart(2, "0")}`,
+		);
+		strictEqual(decisionTrailerRefs(many).length, PANCODE_DECISION_TRAILER_CAP);
+		const message = attributeCommitMessage("chore: x", { decisions: ["x/k\nInjected: y"] });
+		strictEqual(message, "chore: x\n");
+	});
+
+	it("adds nothing when evidence carries no decisions", () => {
+		strictEqual(
+			attributeCommitMessage("chore: x\n", { validationSucceeded: true }),
+			`chore: x\n\n${PANCODE_COMMIT_TRAILERS.tested}\n`,
+		);
+	});
+});
+
+describe("fleet commit seam", () => {
+	it("takes the decision refs from the committed step's sealed receipt", () => {
+		const agentStep = { id: "build", kind: "agent", scope: "workspace" } as unknown as ExecutionPlan["steps"][number];
+		const commitStep = { id: "commit", kind: "code", commitFrom: ["build"] } as unknown as ExecutionPlanCodeStep;
+		const plan = { steps: [agentStep, commitStep] } as unknown as ExecutionPlan;
+		const digest = "a".repeat(64);
+		const evidence = deriveFleetCommitAttribution({
+			plan,
+			step: commitStep,
+			priorResults: new Map([["build", { succeeded: true, integrityValid: true, runDigest: digest, decisionRefs: REFS }]]),
+			validationFresh: true,
+			independentReviewFresh: false,
+		});
+		deepStrictEqual(evidence.decisions, REFS);
+		strictEqual(evidence.materiallyAuthored, true);
+		strictEqual(evidence.run?.digest, digest);
+		const bare = deriveFleetCommitAttribution({
+			plan,
+			step: commitStep,
+			priorResults: new Map([["build", { succeeded: true, integrityValid: true, runDigest: digest }]]),
+			validationFresh: false,
+			independentReviewFresh: false,
+		});
+		strictEqual("decisions" in bare, false);
+	});
+});
+
+describe("session commit seam", () => {
+	const roots: string[] = [];
+	afterEach(() => {
+		setCommitDecisionRefsProvider(null);
+		for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+	});
+
+	function outsideGit(): string {
+		const root = mkdtempSync(join(tmpdir(), "pancode-commit-decisions-"));
+		roots.push(root);
+		return root;
+	}
+
+	it("passes the live board's active refs through the spawn environment like assistance", () => {
+		setCommitDecisionRefsProvider(() => ["interview-1/db", "agent:a1b2/cache-key-shape", "bad ref"]);
+		const { env } = withManagedGitCommitAttributionEnvironment({}, { cwd: outsideGit(), enabled: true });
+		strictEqual(env.PANCODE_COMMIT_ASSISTED, "1");
+		strictEqual(env.PANCODE_COMMIT_DECISIONS, "agent:a1b2/cache-key-shape interview-1/db");
+	});
+
+	it("prefers explicit spawn evidence over the provider and omits the variable when empty", () => {
+		setCommitDecisionRefsProvider(() => ["interview-1/db"]);
+		const explicit = withManagedGitCommitAttributionEnvironment(
+			{},
+			{ cwd: outsideGit(), enabled: true, evidence: { materiallyAssisted: true, decisions: ["agent:z/only"] } },
+		);
+		strictEqual(explicit.env.PANCODE_COMMIT_DECISIONS, "agent:z/only");
+		setCommitDecisionRefsProvider(() => []);
+		const empty = withManagedGitCommitAttributionEnvironment({}, { cwd: outsideGit(), enabled: true });
+		strictEqual("PANCODE_COMMIT_DECISIONS" in empty.env, false);
+	});
+
+	it("strips an inherited value so a nested seam starts clean", () => {
+		const { env } = withManagedGitCommitAttributionEnvironment(
+			{ PANCODE_COMMIT_DECISIONS: "forged/ref" },
+			{ cwd: outsideGit(), enabled: false },
+		);
+		strictEqual("PANCODE_COMMIT_DECISIONS" in env, false);
+		ok(!("PANCODE_COMMIT_ASSISTED" in env));
+		match(env.PANCODE_GIT_COMMITS_ENABLED ?? "", /^0$/u);
+	});
+});
+
+describe("PanCode commit identity", () => {
+	it("lands Co-authored-by in the final trailer paragraph Git and GitHub parse, through the managed hook", async () => {
+		const isolated = await isolatePancodeEnv("pancode-commit-identity-");
+		try {
+			const repo = join(isolated.dir, "repo");
+			mkdirSync(repo);
+			const git = (args: string[], env: NodeJS.ProcessEnv = process.env) =>
+				execFileSync("git", args, { cwd: repo, env, encoding: "utf8" });
+			git(["init", "-q"]);
+			git(["config", "user.name", "Human"]);
+			git(["config", "user.email", "human@example.com"]);
+			const { env, diagnostic } = withManagedGitCommitAttributionEnvironment(process.env, { cwd: repo, enabled: true });
+			strictEqual(diagnostic, null);
+			git(["commit", "-q", "--allow-empty", "-m", "feat: x\n\nBody.\nFixes #12"], env);
+			const paragraphs = git(["log", "-1", "--format=%B"]).trimEnd().split("\n\n");
+			deepStrictEqual(paragraphs.at(-1)?.split("\n"), [
+				PANCODE_COMMIT_TRAILERS.assisted,
+				PANCODE_COMMIT_TRAILERS.coAuthored,
+			]);
+			strictEqual(git(["log", "-1", "--format=%(trailers:key=Co-authored-by,valueonly)"]).trim(), PANCODE_COMMIT_IDENTITY);
+		} finally {
+			isolated.restore();
+		}
+	});
+});
+
+describe("autonomous commit authorship", () => {
+	const HUMAN = "Human <human@example.com>";
+	const PanCode = `PanCode <${PANCODE_COMMIT_EMAIL}>`;
+
+	afterEach(() => {
+		setAutonomousCommitProcess(false);
+	});
+
+	it("swaps PanCode's trailers for the human co-author and keeps every other trailer", () => {
+		const message = attributeCommitMessage(
+			`feat: x\n\n${PANCODE_COMMIT_TRAILERS.assisted}\n${PANCODE_COMMIT_TRAILERS.coAuthored}\nSigned-off-by: ${HUMAN}\n`,
+			{ materiallyAuthored: true, decisions: ["i/k"] },
+			true,
+			{ pancodeAuthorFor: HUMAN },
+		);
+		strictEqual(message, `feat: x\n\nSigned-off-by: ${HUMAN}\nCo-authored-by: ${HUMAN}\nPanCode-Decision: i/k\n`);
+		strictEqual(attributeCommitMessage("feat: x", {}, true, { pancodeAuthorFor: PanCode }), "feat: x\n");
+	});
+
+	async function withRepo(run: (repo: string, git: (args: string[], env?: NodeJS.ProcessEnv) => string) => void) {
+		const isolated = await isolatePancodeEnv("pancode-commit-author-");
+		try {
+			const repo = join(isolated.dir, "repo");
+			mkdirSync(repo);
+			const git = (args: string[], env: NodeJS.ProcessEnv = process.env) =>
+				execFileSync("git", args, { cwd: repo, env, encoding: "utf8" });
+			git(["init", "-q"]);
+			git(["config", "user.name", "Human"]);
+			git(["config", "user.email", "human@example.com"]);
+			setGitCommitAttributionEnabled(true);
+			setGitCommitAuthorSetting("auto");
+			run(repo, git);
+		} finally {
+			isolated.restore();
+		}
+	}
+
+	function commitThroughSeam(
+		repo: string,
+		git: (args: string[], env?: NodeJS.ProcessEnv) => string,
+		source = process.env,
+	) {
+		const { env, diagnostic } = withManagedGitCommitAttributionEnvironment(source, {
+			cwd: repo,
+			enabled: true,
+			evidence: { materiallyAuthored: true },
+		});
+		strictEqual(diagnostic, null);
+		git(["commit", "-q", "--allow-empty", "-m", "feat: x"], env);
+		return {
+			ident: git(["log", "-1", "--format=%an <%ae>|%cn <%ce>"]).trim(),
+			trailers: git(["log", "-1", "--format=%(trailers:only)"]).trim().split("\n"),
+		};
+	}
+
+	it("makes PanCode the author of an autonomous commit and the human its committer and co-author", async () => {
+		await withRepo((repo, git) => {
+			setAutonomousCommitProcess(true);
+			const { ident, trailers } = commitThroughSeam(repo, git);
+			strictEqual(ident, `${PanCode}|${HUMAN}`);
+			deepStrictEqual(trailers, [`Co-authored-by: ${HUMAN}`]);
+		});
+	});
+
+	it("keeps the human author with PanCode trailers for interactive work, the human setting, and an explicit author", async () => {
+		await withRepo((repo, git) => {
+			const interactive = commitThroughSeam(repo, git);
+			strictEqual(interactive.ident, `${HUMAN}|${HUMAN}`);
+			deepStrictEqual(interactive.trailers, [PANCODE_COMMIT_TRAILERS.assisted, PANCODE_COMMIT_TRAILERS.coAuthored]);
+
+			setAutonomousCommitProcess(true);
+			setGitCommitAuthorSetting("human");
+			strictEqual(commitThroughSeam(repo, git).ident, `${HUMAN}|${HUMAN}`);
+
+			setGitCommitAuthorSetting("auto");
+			const chosen = commitThroughSeam(repo, git, { ...process.env, GIT_AUTHOR_NAME: "Op", GIT_AUTHOR_EMAIL: "op@x.io" });
+			strictEqual(chosen.ident, `Op <op@x.io>|${HUMAN}`);
+		});
+	});
+
+	function autonomousSeam(repo: string) {
+		setAutonomousCommitProcess(true);
+		const { env, diagnostic } = withManagedGitCommitAttributionEnvironment(process.env, { cwd: repo, enabled: true });
+		strictEqual(diagnostic, null);
+		return env;
+	}
+
+	it("keeps the human author on commands that write commits without the hook", async () => {
+		await withRepo((repo, git) => {
+			git(["commit", "-q", "--allow-empty", "-m", "init"]);
+			const env = autonomousSeam(repo);
+			const tree = git(["commit-tree", "-p", "HEAD", "-m", "plumbing", "HEAD^{tree}"], env).trim();
+			strictEqual(git(["log", "-1", "--format=%an <%ae>", tree]).trim(), HUMAN);
+			writeFileSync(join(repo, "a.txt"), "a\n");
+			git(["add", "a.txt"]);
+			git(["stash", "-q"], env);
+			strictEqual(git(["log", "-1", "--format=%an <%ae>", "stash@{0}"]).trim(), HUMAN);
+		});
+	});
+
+	it("keeps the human author when a commit option takes -m as its value or cancels the message, and never loops through a shim symlink", async () => {
+		await withRepo((repo, git) => {
+			git(["commit", "-q", "--allow-empty", "-m", "init"]);
+			const env = autonomousSeam(repo);
+			writeFileSync(join(repo, "-m"), "template body\n");
+			for (const options of [
+				["-t", "-m"],
+				["--template", "-m"],
+				["-m", "subject", "--no-message"],
+				["-F", "-m", "--no-fil"],
+			]) {
+				git(["commit", "-q", "--allow-empty", ...options], { ...env, GIT_EDITOR: 'printf "edited\\n" >>' });
+				strictEqual(git(["log", "-1", "--format=%an <%ae>"]).trim(), HUMAN, options.join(" "));
+			}
+			const shimDirectory = (env.PATH ?? "").split(":")[0] ?? "";
+			const link = join(repo, "..", "link");
+			mkdirSync(link);
+			symlinkSync(join(shimDirectory, "git"), join(link, "git"));
+			const version = execFileSync("git", ["--version"], {
+				env: { ...env, PATH: `${link}:${env.PATH}` },
+				encoding: "utf8",
+				timeout: 10_000,
+			});
+			match(version, /^git version /u);
+		});
+	});
+
+	it("gives an absolute-path git the PanCode author with the human credited, and an abandoned editor stays aborted", async () => {
+		await withRepo((repo, git) => {
+			git(["commit", "-q", "--allow-empty", "-m", "init"]);
+			const env = autonomousSeam(repo);
+			const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+			const absolute = (args: string[], editor: string) =>
+				execFileSync(realGit, args, { cwd: repo, env: { ...env, GIT_EDITOR: editor }, encoding: "utf8" });
+			const last = () => ({
+				ident: git(["log", "-1", "--format=%an <%ae>|%cn <%ce>"]).trim(),
+				trailers: git(["log", "-1", "--format=%(trailers:only)"]).trim().split("\n"),
+			});
+			absolute(["commit", "-q", "--allow-empty", "-m", "feat: message"], "true");
+			deepStrictEqual(last(), { ident: `${PanCode}|${HUMAN}`, trailers: [`Co-authored-by: ${HUMAN}`] });
+			absolute(["commit", "-q", "--allow-empty"], 'sed -i "1s/^/feat: edited/"');
+			deepStrictEqual(last(), { ident: `${PanCode}|${HUMAN}`, trailers: [`Co-authored-by: ${HUMAN}`] });
+			const head = git(["rev-parse", "HEAD"]);
+			try {
+				absolute(["commit", "-q", "--allow-empty"], "true");
+			} catch {
+				// An all-comment message aborts the commit, as it must.
+			}
+			strictEqual(git(["rev-parse", "HEAD"]), head);
+			// core.commentChar=auto: a template line starting with '#' moves git's comment character to ';'.
+			git(["config", "core.commentChar", "auto"]);
+			writeFileSync(join(repo, "..", "template"), "#hashtag subject\n");
+			absolute(["commit", "-q", "--allow-empty", "-t", join(repo, "..", "template")], 'sed -i "1s/$/ edited/"');
+			deepStrictEqual(last(), { ident: `${PanCode}|${HUMAN}`, trailers: [`Co-authored-by: ${HUMAN}`] });
+			strictEqual(git(["log", "-1", "--format=%s"]).trim(), "#hashtag subject edited");
+			const autoHead = git(["rev-parse", "HEAD"]);
+			try {
+				absolute(["commit", "-q", "--allow-empty"], "true");
+			} catch {
+				// Still aborted under auto.
+			}
+			strictEqual(git(["rev-parse", "HEAD"]), autoHead);
+			// commit -v under auto: the @@ lines below the scissors must not pick the comment character.
+			writeFileSync(join(repo, "v.txt"), "v\n");
+			git(["add", "v.txt"]);
+			absolute(["commit", "-q", "-v"], 'sed -i "1s/^/feat: verbose/"');
+			deepStrictEqual(last(), { ident: `${PanCode}|${HUMAN}`, trailers: [`Co-authored-by: ${HUMAN}`] });
+			git(["config", "--unset", "core.commentChar"]);
+			// Through the shim on PATH the same editor commit is the human's.
+			git(["commit", "-q", "--allow-empty"], { ...env, GIT_EDITOR: 'sed -i "1s/^/feat: shim/"' });
+			strictEqual(last().ident, `${HUMAN}|${HUMAN}`);
+		});
+	});
+
+	it("installs a Windows git.cmd whose Node half decides exactly like the POSIX shim and skips other shims on PATH", async () => {
+		const isolated = await isolatePancodeEnv("pancode-50%-shim-");
+		try {
+			const repo = join(isolated.dir, "repo");
+			mkdirSync(repo);
+			const git = (args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+			git(["init", "-q"]);
+			git(["config", "user.name", "Human"]);
+			git(["config", "user.email", "human@example.com"]);
+			setGitCommitAttributionEnabled(true);
+			setGitCommitAuthorSetting("auto");
+			const env = autonomousSeam(repo);
+			const shimDirectory = (env.PATH ?? "").split(":")[0] ?? "";
+			const nodeShim = join(shimDirectory, "git-shim.cjs");
+			const cmd = readFileSync(join(shimDirectory, "git.cmd"), "utf8");
+			const doubled = (path: string) => `"${path.replace(/%/gu, "%%")}"`;
+			ok(nodeShim.includes("%"));
+			deepStrictEqual(cmd.split("\r\n").slice(-3), [
+				`${doubled(process.execPath)} ${doubled(nodeShim)} %*`,
+				"exit /b %ERRORLEVEL%",
+				"",
+			]);
+
+			// Both halves front a fake git that reports the author it was given.
+			const fake = join(isolated.dir, "fake-bin");
+			mkdirSync(fake);
+			writeFileSync(join(fake, "git"), '#!/bin/sh\nprintf "%s" "$GIT_AUTHOR_NAME"\n', { mode: 0o755 });
+			const fakeEnv = { ...env, PATH: `${shimDirectory}:${fake}` };
+			const shim = createRequire(import.meta.url)(nodeShim) as {
+				keepsPancodeAuthor: (args: string[]) => boolean;
+				findRealGit: (host: object) => string | null;
+			};
+			for (const args of [
+				["commit", "-m", "x"],
+				["-C", ".", "-c", "k=v", "commit", "-qam", "x"],
+				["commit", "--message=x", "--no-verify"],
+				["commit", "-F", "-m"],
+				["commit", "-t", "-m"],
+				["commit", "--template", "-m"],
+				["commit", "-m", "x", "--no-message"],
+				["commit", "-m", "x", "-e"],
+				["commit", "-m"],
+				["commit-tree", "HEAD^{tree}", "-m", "x"],
+				["stash"],
+				["merge", "--no-ff", "b"],
+				["revert", "HEAD"],
+				["-C"],
+			]) {
+				const posix = execFileSync(join(shimDirectory, "git"), args, { env: fakeEnv, encoding: "utf8" });
+				const node = execFileSync(process.execPath, [nodeShim, ...args], { env: fakeEnv, encoding: "utf8" });
+				const expected = shim.keepsPancodeAuthor(args) ? "PanCode" : "";
+				deepStrictEqual([posix, node], [expected, expected], args.join(" "));
+			}
+
+			const exists = new Set([
+				"C:\\Users\\op\\state\\git-hooks\\v7-shim\\git.exe",
+				"C:\\Tools\\git.cmd",
+				"C:\\Program Files\\Git\\cmd\\git.com",
+				"C:\\Program Files\\Git\\cmd\\git.exe",
+				"C:\\Links\\git.exe",
+			]);
+			const windowsHost = (path: string, pathext?: string) => ({
+				platform: "win32",
+				env: { Path: path, ...(pathext === undefined ? {} : { PATHEXT: pathext }) },
+				shimFile: "C:\\Users\\op\\state\\git-hooks\\v9-shim\\git-shim.cjs",
+				isExecutableFile: (candidate: string) => exists.has(candidate),
+				// C:\Links\git.exe is a link to the shim's own launcher.
+				sameFile: (candidate: string, own: string) =>
+					candidate === "C:\\Links\\git.exe" && own === "C:\\Users\\op\\state\\git-hooks\\v9-shim\\git.exe",
+			});
+			const path =
+				'C:\\Users\\op\\state\\git-hooks\\V8-SHIM;C:\\Users\\op\\state\\git-hooks\\v7-shim;C:\\Tools;"C:\\Program Files\\Git\\cmd"';
+			strictEqual(shim.findRealGit(windowsHost(path)), "C:\\Program Files\\Git\\cmd\\git.com");
+			strictEqual(shim.findRealGit(windowsHost(path, ".EXE;.CMD")), "C:\\Program Files\\Git\\cmd\\git.exe");
+			strictEqual(shim.findRealGit(windowsHost("C:\\Tools")), null);
+			strictEqual(
+				shim.findRealGit(windowsHost('C:\\Links;"C:\\Program Files\\Git\\cmd"', ".EXE")),
+				"C:\\Program Files\\Git\\cmd\\git.exe",
+			);
+		} finally {
+			isolated.restore();
+		}
+	});
+
+	it("installs the native Windows launcher only from bytes that match its pin", () => {
+		const root = mkdtempSync(join(tmpdir(), "pancode-git-launcher-"));
+		try {
+			const shimDirectory = join(root, "shim");
+			mkdirSync(shimDirectory);
+			const launchFile = windowsLaunchFile("C:\\Program Files\\nodejs\\node.exe", [
+				"C:\\Users\\A B\\git-shim.cjs",
+				"C:\\x\\",
+			]);
+			strictEqual(launchFile, 'C:\\Program Files\\nodejs\\node.exe\n"C:\\Users\\A B\\git-shim.cjs" C:\\x\\\n');
+			const launcher = join(shimDirectory, "git.exe");
+			const shipped = readFileSync(join(resolvePackageRoot(), "assets", "windows-launcher", "win32-x64", "launcher.exe"));
+			strictEqual(installWindowsLauncher(shimDirectory, "git", launchFile, { arch: "x64" }), null);
+			ok(readFileSync(launcher).equals(shipped));
+			strictEqual(readFileSync(join(shimDirectory, "git.launch"), "utf8"), launchFile);
+
+			// An altered package launcher is never installed, and a stale one is removed so git.cmd takes over.
+			const altered = join(root, "package", "assets", "windows-launcher", "win32-x64");
+			mkdirSync(altered, { recursive: true });
+			writeFileSync(join(altered, "launcher.exe"), Buffer.concat([shipped, Buffer.from([0])]));
+			writeFileSync(launcher, "stale");
+			const issue = installWindowsLauncher(shimDirectory, "git", launchFile, {
+				arch: "x64",
+				packageRoot: join(root, "package"),
+			});
+			match(issue ?? "", /does not match its pinned SHA-256/);
+			strictEqual(existsSync(launcher), false);
+			match(
+				installWindowsLauncher(shimDirectory, "git", launchFile, { arch: "ia32" }) ?? "",
+				/no Windows launcher is built for ia32/,
+			);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("passes %NAME% in git arguments through the native launcher literally on Windows", {
+		skip: process.platform !== "win32" && "needs native Windows",
+	}, async () => {
+		await withRepo((repo, git) => {
+			const env = autonomousSeam(repo);
+			const shimDirectory = (env[Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "Path"] ?? "").split(
+				";",
+			)[0];
+			ok(existsSync(join(shimDirectory ?? "", "git.exe")));
+			writeFileSync(join(repo, "file%USERNAME%.txt"), "x\n");
+			// PowerShell runs git.exe directly; it would run git.cmd through cmd.exe, which expands %NAME%.
+			execFileSync(
+				"powershell.exe",
+				[
+					"-NoProfile",
+					"-NonInteractive",
+					"-Command",
+					"git add 'file%USERNAME%.txt'; git commit -q -m 'feat: %PATH% %USERNAME%'; exit $LASTEXITCODE",
+				],
+				{ cwd: repo, env: { ...env, USERNAME: "operator" }, encoding: "utf8" },
+			);
+			strictEqual(git(["log", "-1", "--format=%s"]).trim(), "feat: %PATH% %USERNAME%");
+			strictEqual(git(["ls-files"]).trim(), "file%USERNAME%.txt");
+			deepStrictEqual(
+				[git(["log", "-1", "--format=%an <%ae>|%cn <%ce>"]).trim(), git(["log", "-1", "--format=%(trailers:only)"]).trim()],
+				[`${PanCode}|${HUMAN}`, `Co-authored-by: ${HUMAN}`],
+			);
+		});
+	});
+
+	it("credits the human on a revert finished after a conflict", async () => {
+		await withRepo((repo, git) => {
+			const write = (text: string) => writeFileSync(join(repo, "f.txt"), text);
+			write("one\n");
+			git(["add", "f.txt"]);
+			git(["commit", "-q", "-m", "one"]);
+			write("two\n");
+			git(["commit", "-q", "-am", "two"]);
+			write("three\n");
+			git(["commit", "-q", "-am", "three"]);
+			const env = autonomousSeam(repo);
+			try {
+				git(["revert", "--no-edit", "HEAD~1"], env);
+			} catch {
+				// The conflict is the point.
+			}
+			write("resolved\n");
+			git(["add", "f.txt"]);
+			git(["revert", "--continue"], { ...env, GIT_EDITOR: "true" });
+			strictEqual(git(["log", "-1", "--format=%an <%ae>|%cn <%ce>"]).trim(), `${PanCode}|${HUMAN}`);
+			deepStrictEqual(git(["log", "-1", "--format=%(trailers:only)"]).trim().split("\n"), [`Co-authored-by: ${HUMAN}`]);
+		});
+	});
+
+	it("credits the human after an operator's hooks run in a repository PanCode's hook does not own", async () => {
+		await withRepo((repo) => {
+			const env = autonomousSeam(repo);
+			const other = join(repo, "..", "other");
+			const hooks = join(repo, "..", "operator-hooks");
+			mkdirSync(other);
+			mkdirSync(hooks);
+			writeFileSync(join(hooks, "prepare-commit-msg"), '#!/bin/sh\nprintf "Operator-hook: ran\\n\\n" >> "$1"\n', {
+				mode: 0o755,
+			});
+			const inOther = (args: string[], spawnEnv: NodeJS.ProcessEnv = process.env) =>
+				execFileSync("git", args, { cwd: other, env: spawnEnv, encoding: "utf8" });
+			inOther(["init", "-q"]);
+			inOther(["config", "user.name", "Human"]);
+			inOther(["config", "user.email", "human@example.com"]);
+			inOther(["config", "core.hooksPath", hooks]);
+			inOther(["commit", "-q", "--allow-empty", "-m", "feat: y"], env);
+			strictEqual(inOther(["log", "-1", "--format=%an <%ae>|%cn <%ce>"]).trim(), `${PanCode}|${HUMAN}`);
+			const message = inOther(["log", "-1", "--format=%B"]);
+			match(message, /Operator-hook: ran/);
+			deepStrictEqual(inOther(["log", "-1", "--format=%(trailers:only)"]).trim().split("\n").slice(-1), [
+				`Co-authored-by: ${HUMAN}`,
+			]);
+		});
+	});
+
+	it("leaves the human author when no committer identity is configured, so nobody is dropped", async () => {
+		await withRepo((repo, git) => {
+			git(["config", "--unset", "user.name"]);
+			git(["config", "--unset", "user.email"]);
+			const release = enterAutonomousCommitScope();
+			try {
+				const env = { ...process.env, GIT_COMMITTER_NAME: "", GIT_COMMITTER_EMAIL: "" };
+				const { env: spawned } = withManagedGitCommitAttributionEnvironment(env, { cwd: repo, enabled: true });
+				ok(spawned.GIT_AUTHOR_EMAIL !== PANCODE_COMMIT_EMAIL);
+			} finally {
+				release();
+			}
+		});
+	});
+
+	it("lands a worker's worktree as PanCode with the human co-author, unless attribution is off", async () => {
+		await withRepo((repo, git) => {
+			git(["commit", "-q", "--allow-empty", "-m", "init"]);
+			writeFileSync(join(repo, "a.txt"), "a\n");
+			commitWorktreePath(repo, "pancode", "task: a", { authoredPaths: null });
+			strictEqual(git(["log", "-1", "--format=%an <%ae>|%cn <%ce>"]).trim(), `${PanCode}|${HUMAN}`);
+			strictEqual(git(["log", "-1", "--format=%B"]), `task: a\n\nCo-authored-by: ${HUMAN}\n\n`);
+
+			setGitCommitAttributionEnabled(false);
+			writeFileSync(join(repo, "b.txt"), "b\n");
+			commitWorktreePath(repo, "pancode", "task: b", { authoredPaths: null });
+			strictEqual(git(["log", "-1", "--format=%an <%ae>"]).trim(), HUMAN);
+			strictEqual(git(["log", "-1", "--format=%B"]), "task: b\n\n");
+		});
+	});
+});
+
+describe("vacuous loop checks", () => {
+	it("a check that cannot fail earns no Tested-by", () => {
+		for (const argv of [["true"], ["/usr/bin/true"], [":"], ["sh", "-c", "exit 0"], ["bash", "-c", "true"]])
+			strictEqual(isVacuousCheckArgv(argv), true, argv.join(" "));
+		for (const argv of [
+			["pnpm", "test"],
+			["sh", "-c", "pnpm test"],
+			["true", "x"],
+		])
+			strictEqual(isVacuousCheckArgv(argv), false, argv.join(" "));
+	});
+
+	it("a check over files a worker changed earns no Tested-by", () => {
+		const changed = [
+			"src/a.ts",
+			"tests/a.test.ts",
+			"packages/x/package.json",
+			"node_modules/y/package.json",
+			"README.md",
+		];
+		deepStrictEqual(changedCheckFiles([{ argv: ["node", "--test", "tests/a.test.ts"], cwd: "" }], changed), [
+			"packages/x/package.json",
+			"tests/a.test.ts",
+		]);
+		deepStrictEqual(changedCheckFiles([{ argv: ["node", "--test", "a.test.ts"], cwd: "tests" }], changed), [
+			"packages/x/package.json",
+			"tests/a.test.ts",
+		]);
+		deepStrictEqual(changedCheckFiles([{ argv: ["pnpm", "test"], cwd: "" }], ["package.json", ".npmrc"]), [
+			".npmrc",
+			"package.json",
+		]);
+		deepStrictEqual(changedCheckFiles([{ argv: ["bash", "./scripts/check.sh"], cwd: "" }], ["scripts/check.sh"]), [
+			"scripts/check.sh",
+		]);
+		deepStrictEqual(
+			changedCheckFiles([{ argv: ["vitest", "--config=vitest.config.ts"], cwd: "" }], ["vitest.config.ts"]),
+			["vitest.config.ts"],
+		);
+		// The code under check is not the check: directory operands and unrelated files do not count.
+		deepStrictEqual(
+			changedCheckFiles([{ argv: ["biome", "check", "src", "."], cwd: "" }], ["src/a.ts", "README.md"]),
+			[],
+		);
+		deepStrictEqual(changedCheckFiles([{ argv: ["node", "--test", "../outside.ts"], cwd: "" }], ["outside.ts"]), []);
+	});
+
+	it("counts every command a loop check ran, runner configs, and the files a package script names", () => {
+		const root = mkdtempSync(join(tmpdir(), "pancode-check-files-"));
+		try {
+			mkdirSync(join(root, "web"));
+			writeFileSync(
+				join(root, "package.json"),
+				JSON.stringify({
+					scripts: {
+						pretest: "bash ./scripts/prep.sh",
+						test: "node scripts/run-tests.mjs && pnpm run lint",
+						lint: "biome check src --config-path=tools/biome.json",
+					},
+				}),
+			);
+			// The registered command passed; the changed test the step also ran is what the worker wrote.
+			const ran = [
+				{ argv: ["pnpm", "test"], cwd: "" },
+				{ argv: ["node", "--test", "./tests/x.test.ts"], cwd: root },
+				{ argv: ["node", "--test", "./y.test.ts"], cwd: join(root, "web") },
+			];
+			const changed = [
+				"src/a.ts",
+				"tests/x.test.ts",
+				"web/y.test.ts",
+				"vitest.config.ts",
+				"web/tsconfig.build.json",
+				"scripts/prep.sh",
+				"scripts/run-tests.mjs",
+				"tools/biome.json",
+				"docs/guide.md",
+			];
+			deepStrictEqual(changedCheckFiles(ran, changed, root), [
+				"scripts/prep.sh",
+				"scripts/run-tests.mjs",
+				"tests/x.test.ts",
+				"tools/biome.json",
+				"vitest.config.ts",
+				"web/tsconfig.build.json",
+				"web/y.test.ts",
+			]);
+			// Without the workspace an absolute cwd and the scripts stay unread; configs still count.
+			deepStrictEqual(changedCheckFiles(ran, changed), ["vitest.config.ts", "web/tsconfig.build.json"]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("counts a worker's test the check's runner executes through its own discovery", () => {
+		const root = mkdtempSync(join(tmpdir(), "pancode-check-discovery-"));
+		try {
+			writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { test: "pnpm exec node --test" } }));
+			const changed = ["src/a.ts", "tests/new.test.ts", "web/b.spec.ts", "py/test_x.py", "pkg/x_test.go", "README.md"];
+			const files = (argv: string[], cwd = "") => changedCheckFiles([{ argv, cwd }], changed, root);
+			// `pnpm test` runs `node --test`, whose discovery picks up any test a worker added.
+			deepStrictEqual(files(["pnpm", "test"]), ["tests/new.test.ts", "web/b.spec.ts"]);
+			deepStrictEqual(files(["npx", "vitest", "run", "web"]), ["web/b.spec.ts"]);
+			deepStrictEqual(files(["jest", "--config", "jest.json"]), ["tests/new.test.ts", "web/b.spec.ts"]);
+			deepStrictEqual(files(["python3", "-m", "pytest", "py"]), ["py/test_x.py"]);
+			deepStrictEqual(files(["go", "test", "./..."]), ["pkg/x_test.go"]);
+			// A runner given files, another directory, or a cwd the test is outside of does not run it.
+			deepStrictEqual(files(["node", "--test", "tests/old.test.ts"]), []);
+			deepStrictEqual(files(["vitest", "run", "api"]), []);
+			deepStrictEqual(files(["go", "test"]), []);
+			deepStrictEqual(files(["node", "--test"], "web"), ["web/b.spec.ts"]);
+			deepStrictEqual(files(["biome", "check", "."]), []);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reads a runner behind an environment prefix, uv run, poetry run or sh -c, and node's default test names", () => {
+		const changed = [
+			"tests/new.test.ts",
+			"src/a-test.js",
+			"src/test-b.mjs",
+			"lib/test.js",
+			"lib/contest.js",
+			"py/test_x.py",
+		];
+		const files = (argv: string[]) => changedCheckFiles([{ argv, cwd: "" }], changed);
+		const node = ["lib/test.js", "src/a-test.js", "src/test-b.mjs", "tests/new.test.ts"];
+		deepStrictEqual(files(["node", "--test"]), node);
+		deepStrictEqual(files(["NODE_ENV=test", "node", "--test"]), node);
+		deepStrictEqual(files(["TZ=UTC", "jest"]), ["tests/new.test.ts"]);
+		deepStrictEqual(files(["bash", "-c", "pnpm build && NODE_ENV=test node --test"]), node);
+		deepStrictEqual(files(["uv", "run", "--with", "pytest-xdist", "pytest", "py"]), ["py/test_x.py"]);
+		deepStrictEqual(files(["uv", "run", "-m", "pytest"]), ["py/test_x.py"]);
+		deepStrictEqual(files(["poetry", "run", "python", "-m", "pytest"]), ["py/test_x.py"]);
+		deepStrictEqual(files(["uv", "run", "ruff", "check"]), []);
+		deepStrictEqual(files(["sh", "-c", "echo node --test"]), []);
+	});
+
+	it("a fleet loop check whose changed-test run executes a worker's test earns no Tested-by", async () => {
+		const { compileExecutionPlan } = await import("../../src/domains/dispatch/execution-plan.js");
+		const { executeFleetRun } = await import("../../src/domains/dispatch/fleet-run.js");
+		const scratch = await isolatePancodeEnv("pancode-check-wiring-");
+		const root = mkdtempSync(join(tmpdir(), "pancode-check-wiring-repo-"));
+		try {
+			const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+			git("init", "-q");
+			git("config", "user.name", "Contract");
+			git("config", "user.email", "contract@example.invalid");
+			writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module", scripts: { test: "node --test" } }));
+			git("add", ".");
+			git("commit", "-qm", "base");
+			const plan = compileExecutionPlan({
+				topology: "fleet",
+				rootTask: "add a test",
+				maxWorkers: 1,
+				onFailure: "stop",
+				steps: [
+					{
+						kind: "agent",
+						id: "edit",
+						agentId: "coder",
+						executionRole: "builder",
+						scope: "workspace",
+						expectedResultContract: "mutation-report",
+						requestedAuthority: "workspace-edit",
+						approvedAuthority: "workspace-edit",
+						dependencies: [],
+						task: "add a test",
+					},
+					{
+						kind: "code",
+						id: "check",
+						commandId: "check",
+						scope: "readonly",
+						dependencies: ["edit"],
+						verification: true,
+						loop: { loopId: "review", role: "check", attempt: 1 },
+					},
+				],
+				loops: [{ id: "review", checkKind: "code", maxAttempts: 1, checkStepIds: ["check"], repairStepIds: [] }],
+			});
+			const receipt = {
+				...fixtureReceiptDraft(fixtureEnvelope("edit-run")),
+				digest: "0".repeat(64),
+				worktree: { changedPaths: ["tests/a.test.js"] },
+			};
+			const dispatch = {
+				preview: () => ({ costUpperBoundUsd: 0, node: { id: "local" } }),
+				reservations: {
+					prepare: () => ({ ownerId: "reservation" }),
+					release: () => null,
+					rollback: () => null,
+					rollbackUnconsumed: () => null,
+				},
+				abort: () => {},
+				dispatch: async () => {
+					mkdirSync(join(root, "tests"));
+					writeFileSync(join(root, "tests", "a.test.js"), 'import { test } from "node:test";\ntest("a", () => {});\n');
+					return { runId: receipt.runId, events: (async function* () {})(), finalPromise: Promise.resolve(receipt) };
+				},
+			} as unknown as Parameters<typeof executeFleetRun>[0]["dispatch"];
+			// The registered check names no file; only the changed-test run the step adds executes the worker's test.
+			const check = {
+				id: "check",
+				argv: [process.execPath, "-e", "process.exit(0)"],
+				cwd: "",
+				timeoutMs: 30_000,
+				env: [],
+				description: "check",
+			};
+			const notices: string[] = [];
+			const outcome = await executeFleetRun({
+				plan,
+				playbookName: "test",
+				commands: { version: 1, path: join(root, "commands.yaml"), commands: new Map([["check", check]]) },
+				workspaceRoot: root,
+				fleetRootId: "check-wiring",
+				dispatch,
+				agents: { getSpec: () => null } as unknown as Parameters<typeof executeFleetRun>[0]["agents"],
+				attributionEnabled: false,
+				onNotice: (text) => notices.push(text),
+			});
+			strictEqual(outcome.cleanRun, true, notices.join("\n"));
+			ok(
+				notices.some((text) =>
+					/^step check: check passed without Tested-by: worker step 'edit' changed the check's own files \(tests\/a\.test\.js\)$/u.test(
+						text,
+					),
+				),
+				notices.join("\n"),
+			);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+			scratch.restore();
+		}
+	});
+});

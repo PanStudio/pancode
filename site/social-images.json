@@ -1,0 +1,187 @@
+{
+	"default": "gui-task",
+	"images": {
+		"cast-first-launch": {
+			"source": "assets/guides/cast-first-launch.png",
+			"path": "assets/social/cast-first-launch.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "3d7914b84a37d90d258396ee55112309994c4aaa0ef599dc9f4edd5751f4b862"
+		},
+		"cast-headless-run": {
+			"source": "assets/guides/cast-headless-run.png",
+			"path": "assets/social/cast-headless-run.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "6316086161fcb6b1b2011faeb10bfe30bc4d1827ec921674b9ee7693d9748633"
+		},
+		"cast-let-it-work": {
+			"source": "assets/guides/cast-let-it-work.png",
+			"path": "assets/social/cast-let-it-work.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "bf9cad05bc0a35a8cf27486dd9ba55ea7a8eeae4f235236bebf7df1bd1bb68fd"
+		},
+		"cli-arena": {
+			"source": "assets/guides/cli-arena.png",
+			"path": "assets/social/cli-arena.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "0e67af56c948494350ede243f789f9643be5ffe5aaaa319bdab70d1e2ff66e66"
+		},
+		"cli-diffusion-mercury": {
+			"source": "assets/guides/cli-diffusion-mercury.png",
+			"path": "assets/social/cli-diffusion-mercury.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "db73389d36a43ffe8b6e96360d2757cc83c1e79defc74dde2cc6d442f2ecbd9d"
+		},
+		"cli-extension-validate": {
+			"source": "assets/guides/cli-extension-validate.png",
+			"path": "assets/social/cli-extension-validate.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "bb16154159b0be81106d29120ed0c6b3e3862b53cba54b005d793a872dee60fa"
+		},
+		"cli-flow-trust": {
+			"source": "assets/guides/cli-flow-trust.png",
+			"path": "assets/social/cli-flow-trust.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "aa9f73fdb7fb6c3a0c9a32fbabb0e5f6172db554aeee6c8ddde952491d952598"
+		},
+		"cli-lab-import": {
+			"source": "assets/guides/cli-lab-import.png",
+			"path": "assets/social/cli-lab-import.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "d779a707e756ab64f75e3bd7d79e3e0b6b86b2bc782cfef2070dd3857a906cea"
+		},
+		"cli-local-runtimes": {
+			"source": "assets/guides/cli-local-runtimes.png",
+			"path": "assets/social/cli-local-runtimes.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "f2dbe100381162ae91c0907615cffa1086b068ea078965f5845c979c75ecfe43"
+		},
+		"cli-playbook-graph": {
+			"source": "assets/guides/cli-playbook-graph.png",
+			"path": "assets/social/cli-playbook-graph.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "c9ca70f1dbbb2fd08cc5ea267fcf0ca11de442c128a7729d1b8e91e7172a01d5"
+		},
+		"cli-project-tighten": {
+			"source": "assets/guides/cli-project-tighten.png",
+			"path": "assets/social/cli-project-tighten.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "c618617cee53764c89547fa227ea865d0285109d3d7f99165598337d10a051dd"
+		},
+		"cli-recorded-run": {
+			"source": "assets/guides/cli-recorded-run.png",
+			"path": "assets/social/cli-recorded-run.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "45af587c83fd696eaf14e350ab71a9f467ab85461b354a2aabf7796406c35860"
+		},
+		"cli-report-preview": {
+			"source": "assets/guides/cli-report-preview.png",
+			"path": "assets/social/cli-report-preview.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "72b21d4e51f107e84bfa32f59691d01e558e3dab1be12e8eb27cdbe6d9f7f61c"
+		},
+		"cli-store-stat": {
+			"source": "assets/guides/cli-store-stat.png",
+			"path": "assets/social/cli-store-stat.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "0ff6cab86347a3eb3278786f13a779b0420de1f82831a950e5bc8e90588815e5"
+		},
+		"gui-task": {
+			"source": "assets/gui-task.png",
+			"path": "assets/social/gui-task.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "5fca1a7397961834deaf1be7c92626032f1782def7643894382ed7819d8e5ffe"
+		},
+		"tui-configure-saved": {
+			"source": "assets/guides/tui-configure-saved.png",
+			"path": "assets/social/tui-configure-saved.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "2e46d101fd15ff656bc1711ae8fd3da4b4811b2e4f10a50dc4a7859d0ca0e4df"
+		},
+		"tui-context": {
+			"source": "assets/guides/tui-context.png",
+			"path": "assets/social/tui-context.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "384ae9998fac1b8a4d0431f750aad2a531b75170581f05e1f08cec94f2a7f39e"
+		},
+		"tui-experiment-contract": {
+			"source": "assets/guides/tui-experiment-contract.png",
+			"path": "assets/social/tui-experiment-contract.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "f20f27b988be010e391301ad1ec0fda182dd4d129e2a1c4422620065ae8990eb"
+		},
+		"tui-hub-installed": {
+			"source": "assets/guides/tui-hub-installed.png",
+			"path": "assets/social/tui-hub-installed.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "afb27de670b4593d7811d428ec61dd02816fec44ea5354b939236891d004710e"
+		},
+		"tui-interop": {
+			"source": "assets/guides/tui-interop.png",
+			"path": "assets/social/tui-interop.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "4c93e9fabaca8e4e699c7bb611945ac026c7e86621f3e0c407cbe5cfff8720a3"
+		},
+		"tui-poll": {
+			"source": "assets/guides/tui-poll.png",
+			"path": "assets/social/tui-poll.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "db8d8dc1b870d63e3a0e047cc627f27bf0692f3466637c349c3d17bfb1f679ae"
+		},
+		"tui-settings-fleet": {
+			"source": "assets/guides/tui-settings-fleet.png",
+			"path": "assets/social/tui-settings-fleet.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "5f15d2f700a720922c3966b691eff2adf6a430c8bdc24b8373920b54e82e8268"
+		},
+		"tui-usage": {
+			"source": "assets/guides/tui-usage.png",
+			"path": "assets/social/tui-usage.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "29439b1df1110c1fa2756581a3b81e7a18df128cf68395fe4f5666d908b0628a"
+		},
+		"tui-verify-result": {
+			"source": "assets/guides/tui-verify-result.png",
+			"path": "assets/social/tui-verify-result.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "1a49884d907293c68672d0f26cd1bfbfbce2d2ca1727b355b30ce626a6f2ba78"
+		},
+		"tui-view-result": {
+			"source": "assets/guides/tui-view-result.png",
+			"path": "assets/social/tui-view-result.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "6e43f522ae34ba361032964721b6f1e96154358f252c2b3e307c2ea27d901be5"
+		},
+		"tui-worker-list": {
+			"source": "assets/guides/tui-worker-list.png",
+			"path": "assets/social/tui-worker-list.png",
+			"width": 1200,
+			"height": 630,
+			"sha256": "b311837a624938b692ab67111ceb5c7482a54c0cdf4b7b5511af996a430ad7d2"
+		}
+	}
+}

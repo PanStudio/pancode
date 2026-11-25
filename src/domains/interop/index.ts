@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { DomainModule } from "../../core/domain-loader.js";
+import { createInteropBundle } from "./extension.js";
+import { InteropManifest } from "./manifest.js";
+
+export const InteropDomainModule: DomainModule<"interop"> = {
+	manifest: InteropManifest,
+	createExtension: createInteropBundle,
+};
+
+export type { AdoptionKind, InteropAdoptionEntry, InteropAdoptionPlan, PreparedAdoption } from "./adopt.js";
+export {
+	ADOPTION_KINDS,
+	applyInteropAdoption,
+	isAdoptableKind,
+	planInteropAdoption,
+	prepareForeignPackage,
+	preparePortablePackage,
+	renderInteropAdoptionPlan,
+} from "./adopt.js";
+export {
+	acceptInteropAgents,
+	declineInteropAgents,
+	delegationEntryForKind,
+	INHERITED_PROJECT_CONTEXT,
+	interopProposals,
+	interopUnofferedReasons,
+	renderProposalEntry,
+} from "./consent.js";
+export type { InteropContract } from "./contract.js";
+export { detectInteropAgents, resolveOnPath } from "./detect.js";
+export type {
+	ForeignPluginDetection,
+	ForeignPluginFormat,
+	ForeignPluginProjection,
+	ForeignResourceOutcome,
+} from "./foreign.js";
+export { detectForeignPlugin, FOREIGN_MANIFESTS, projectForeignPlugin } from "./foreign.js";
+export type { HubImportApplyResult, HubImportPlan, HubImportSource } from "./import.js";
+export {
+	applyHubImport,
+	hubImportPlanSummary,
+	planHubImport,
+	releaseHubImport,
+	renderHubImportPlan,
+} from "./import.js";
+export { discoverInteropInventory } from "./inventory.js";
+export { InteropManifest } from "./manifest.js";
+export {
+	type PeerModeCapability,
+	type PeerModeContext,
+	type PeerModeStatus,
+	peerModeCapabilities,
+} from "./peer-modes.js";
+export { foreignAgentDirs, INTEROP_AGENT_KINDS, interopAgentKind, interopSourceRank } from "./registry.js";
+export { readInteropReport, writeInteropReport } from "./state.js";
+export type {
+	InteropAgentId,
+	InteropAgentKind,
+	InteropAgentRecord,
+	InteropDecisionResult,
+	InteropDetectInput,
+	InteropPresence,
+	InteropProposal,
+	InteropReport,
+} from "./types.js";

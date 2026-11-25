@@ -1,0 +1,293 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { InfiniteQueryObserver, QueryClient } from "@tanstack/react-query";
+import {
+	ARTIFACT_MAX_PAGES,
+	ARTIFACT_PAGE_SIZE,
+	admittedPages,
+	retainedLinksLive,
+} from "../client/pages/artifact-pagination.js";
+import { Problem } from "../contracts/common.js";
+import { EvidencePage } from "../contracts/evidence.js";
+import { DispatchRuns, FleetRoots } from "../contracts/fleet.js";
+import { ArtifactWindow } from "../server/services/artifact-window.js";
+import { harness, json } from "./harness/app.js";
+import { seedEvidence } from "./harness/evidence-fixture.js";
+import { seedFleet } from "./harness/fleet-fixture.js";
+
+test("the window refuses malformed, unserved and aged-out references before any lookup", () => {
+	const artifacts = new ArtifactWindow();
+	for (const hostile of [
+		"../../etc/passwd",
+		"run-alpha/../run-beta",
+		"/absolute/run",
+		"--force",
+		"run alpha",
+		"run\0alpha",
+		"a".repeat(129),
+		"",
+		42,
+		null,
+		undefined,
+	])
+		assert.throws(() => artifacts.admit("run", hostile), { reason: "malformed" }, `Admitted ${String(hostile)}`);
+	// The two operator states a bare 404 would blur together stay apart.
+	assert.throws(() => artifacts.admit("evidence", "evidence-000"), { reason: "no-window" });
+	artifacts.serve("evidence", ["evidence-000", "evidence-001"]);
+	assert.throws(() => artifacts.admit("evidence", "evidence-002"), { reason: "outside-window" });
+	assert.equal(artifacts.admit("evidence", "evidence-001"), "evidence-001");
+	// Per family: an evidence id is no license for a run.
+	assert.throws(() => artifacts.admit("run", "evidence-001"), { reason: "no-window" });
+	// admitAny reports the actionable refusal: refresh beats read-the-record.
+	artifacts.serve("dispatch", ["run-a"]);
+	assert.equal(artifacts.admitAny(["run", "dispatch"], "run-a"), "run-a");
+	assert.throws(() => artifacts.admitAny(["run", "dispatch"], "run-b"), { reason: "outside-window" });
+	// A second snapshot narrows; it never widens.
+	artifacts.serve("evidence", ["evidence-001", "evidence-002"]);
+	assert.equal(artifacts.size("evidence"), 2);
+	assert.throws(() => artifacts.admit("evidence", "evidence-000"), { reason: "outside-window" });
+	artifacts.extend("evidence", ["evidence-003"]);
+	assert.equal(artifacts.size("evidence"), 3);
+	artifacts.clear();
+	assert.throws(() => artifacts.admit("evidence", "evidence-001"), { reason: "no-window" });
+});
+
+test("a projection that over-serves or repeats an id is a server bug, never a widened window", () => {
+	const artifacts = new ArtifactWindow();
+	assert.throws(
+		() =>
+			artifacts.serve(
+				"run",
+				Array.from({ length: 65 }, (_, index) => `run-${index}`),
+			),
+		/could not record which artifacts/,
+	);
+	assert.equal(artifacts.size("run"), 0);
+	assert.throws(() => artifacts.serve("run", ["run-a", "run-a"]), /could not record which artifacts/);
+	// Eviction is oldest-first and only a cursored page may reach it.
+	artifacts.serve(
+		"run",
+		Array.from({ length: 64 }, (_, index) => `run-${index}`),
+	);
+	artifacts.extend("run", ["run-later"]);
+	assert.equal(artifacts.size("run"), 64);
+	assert.throws(() => artifacts.admit("run", "run-0"), { reason: "outside-window" });
+	assert.equal(artifacts.admit("run", "run-later"), "run-later");
+});
+
+test("evidence detail admits only what the listing showed, and a refusal is not a not-found", async (t) => {
+	const h = await harness();
+	t.after(h.close);
+	await seedEvidence(h.home.path, h.home.env);
+	// The source worker imports the evidence adapter through tsx on its first call, which
+	// under a parallel tier with a cold transform cache outlasts the 10 s read deadline.
+	// Pay that import here on its own budget so every asserted read keeps the shipped deadline.
+	await h.reads.call("evidence.read", { kind: "list", limit: 1 }, { deadlineMs: 60_000 });
+	const cold = await h.request("/api/evidence/evidence-039");
+	assert.equal(cold.status, 403, "A bookmarked detail opened cold names an id this host never served");
+	assert.equal((await json(cold, Problem)).code, "unauthorized");
+	const page = await json(await h.request("/api/evidence?limit=10"), EvidencePage);
+	assert.equal(page.items[0]?.run.runId, "evidence-039");
+	assert.equal((await h.request("/api/evidence/evidence-039")).status, 200);
+	// Well-shaped but never served: refused rather than looked up and 404ed.
+	const invented = await h.request("/api/evidence/evidence-999");
+	assert.equal(invented.status, 403);
+	assert.match((await json(invented, Problem)).detail, /not in the record this session is showing/);
+	// A refresh replaces the window instead of widening it, so page one's tail ages out.
+	assert.equal((await h.request("/api/evidence?limit=3")).status, 200);
+	assert.equal((await h.request("/api/evidence/evidence-030")).status, 403);
+	assert.equal((await h.request("/api/evidence/evidence-039")).status, 200);
+});
+
+test("a run id reaches no child process until a fleet listing has served it", async (t) => {
+	const h = await harness();
+	t.after(h.close);
+	const seeded = await seedEvidence(h.home.path, h.home.env);
+	const workspace = await h.workspaces.open(h.home.path);
+	for (const path of [`/api/workspaces/${workspace.id}/runs/${seeded.runId}/verify`]) {
+		const refused = await h.post(path);
+		assert.equal(refused.status, 403);
+		assert.equal((await json(refused, Problem)).code, "unauthorized");
+	}
+	assert.equal(h.cli.activeCount, 0, "A refused reference must not start a CLI child");
+	assert.equal(h.operations.activeCount, 0, "A refused reference must not create an operation row");
+	assert.equal((await h.request(`/api/fleet/runs/${seeded.runId}/record`)).status, 403);
+	await seedFleet(h.home.path, h.home.env);
+	const dispatches = await json(await h.request("/api/fleet/dispatches"), DispatchRuns);
+	assert.ok(dispatches.items.length > 0);
+	const served = dispatches.items[0]?.id ?? "";
+	assert.equal((await h.request(`/api/fleet/runs/${served}/record`)).status, 200);
+	// The fleet page shows roots and dispatches at once, so their windows are
+	// separate: reading one listing must not unlink the other's records.
+	const roots = await json(await h.request("/api/fleet/runs?limit=5"), FleetRoots);
+	assert.ok(roots.items.length > 0);
+	assert.equal((await h.request(`/api/fleet/runs/${served}/record`)).status, 200);
+	assert.equal((await h.request(`/api/fleet/runs/${roots.items[0]?.id}/record`)).status, 200);
+	// A refresh of one listing still narrows that listing's own window.
+	const narrowed = await json(await h.request("/api/fleet/dispatches?limit=1"), DispatchRuns);
+	assert.equal(narrowed.items.length, 1);
+	if (narrowed.items[0]?.id !== served) assert.equal((await h.request(`/api/fleet/runs/${served}/record`)).status, 403);
+});
+
+test("every response carries the full security header set", async (t) => {
+	const h = await harness();
+	t.after(h.close);
+	for (const path of ["/api/meta", "/api/evidence/not-served"]) {
+		const response = await h.request(path);
+		const csp = response.headers.get("Content-Security-Policy") ?? "";
+		assert.match(csp, /object-src 'none'/);
+		assert.match(csp, /form-action 'self'/);
+		assert.match(csp, /frame-ancestors 'none'/);
+		assert.equal(response.headers.get("X-Frame-Options"), "DENY");
+		assert.equal(response.headers.get("Cross-Origin-Opener-Policy"), "same-origin");
+		assert.equal(response.headers.get("Cross-Origin-Resource-Policy"), "same-origin");
+		assert.equal(response.headers.get("Referrer-Policy"), "no-referrer");
+		assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
+		assert.match(response.headers.get("Permissions-Policy") ?? "", /camera=\(\)/);
+	}
+});
+
+/**
+ * Mirrors EvidencePage: the same page size, retention and rendered pages, fed by
+ * a stand-in for the list route that records what it served exactly as the
+ * route does. `failWhen` fails a request before or after the server records it.
+ * Each time the server records a page, `moments` notes whether the page still
+ * offered links and which rendered ids the window no longer admitted.
+ */
+function paginatedEvidence() {
+	const artifacts = new ArtifactWindow();
+	let served = Array.from({ length: 200 }, (_, index) => `evidence-${String(index).padStart(3, "0")}`);
+	const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	const state = {
+		failWhen: undefined as undefined | ((cursor: string | undefined) => "before-record" | "after-record" | undefined),
+	};
+	const moments: { live: boolean; refused: string[] }[] = [];
+	const observer = new InfiniteQueryObserver(queries, {
+		queryKey: ["evidence"],
+		initialPageParam: undefined as string | undefined,
+		queryFn: async ({ pageParam }) => {
+			const failure = state.failWhen?.(pageParam);
+			if (failure === "before-record") throw new Error("the list read failed");
+			const start = pageParam ? Number(pageParam) : 0;
+			const ids = served.slice(start, start + ARTIFACT_PAGE_SIZE);
+			artifacts.page("evidence", pageParam, ids);
+			moments.push({
+				live: retainedLinksLive(observer.getCurrentResult()),
+				refused: rendered().filter((id) => {
+					try {
+						return artifacts.admit("evidence", id) !== id;
+					} catch {
+						return true;
+					}
+				}),
+			});
+			if (failure === "after-record") throw new Error("response lost after the server recorded the page");
+			const next = start + ids.length;
+			return { ids, nextCursor: next < served.length ? String(next) : null };
+		},
+		getNextPageParam: (page) => page.nextCursor ?? undefined,
+		maxPages: ARTIFACT_MAX_PAGES,
+	});
+	const rendered = () => admittedPages(observer.getCurrentResult()).flatMap((page) => page.ids);
+	const unsubscribe = observer.subscribe(() => {});
+	/** Every link a page offered was admitted at every moment the server changed its window. */
+	const followable = () => moments.filter((moment) => moment.live && moment.refused.length);
+	return {
+		artifacts,
+		observer,
+		rendered,
+		state,
+		moments,
+		followable,
+		prepend: (ids: string[]) => {
+			served = [...ids, ...served];
+		},
+		close: () => {
+			unsubscribe();
+			queries.clear();
+		},
+	};
+}
+
+test("every evidence link the paginated page still renders stays admitted, even while the next page is in flight", async () => {
+	const { artifacts, observer, rendered, state, moments, followable, close } = paginatedEvidence();
+	try {
+		await observer.refetch();
+		for (let page = 0; page < 6; page++) {
+			const result = await observer.fetchNextPage();
+			assert.equal(result.status, "success", String(result.error));
+			for (const id of rendered()) assert.equal(artifacts.admit("evidence", id), id);
+		}
+		// A load-more whose response never reaches the browser leaves the old pages
+		// on screen, so the server must not have evicted them either.
+		state.failWhen = (cursor) => (cursor ? "after-record" : undefined);
+		const before = rendered();
+		assert.equal((await observer.fetchNextPage()).status, "error");
+		assert.deepEqual(rendered(), before);
+		for (const id of before) assert.equal(artifacts.admit("evidence", id), id);
+		// Retention stays bounded: the first page aged out on both sides.
+		assert.throws(() => artifacts.admit("evidence", "evidence-000"), { reason: "outside-window" });
+		// A load-more keeps its links followable throughout, and none was ever refused.
+		assert.ok(moments.length >= 8 && moments.every((moment) => moment.live && !moment.refused.length));
+		assert.deepEqual(followable(), []);
+	} finally {
+		close();
+	}
+});
+
+test("a refresh whose later page fails renders no link the narrowed window refuses", async () => {
+	const { artifacts, observer, rendered, state, prepend, followable, close } = paginatedEvidence();
+	try {
+		await observer.refetch();
+		await observer.fetchNextPage();
+		const secondPage = observer.getCurrentResult().data?.pages[1]?.ids ?? [];
+		assert.equal(secondPage.length, ARTIFACT_PAGE_SIZE);
+		// New evidence arrives, then a refresh serves a fresh first page, narrowing
+		// the window, and the second page's read fails.
+		prepend(["evidence-new"]);
+		for (const failure of ["before-record", "after-record"] as const) {
+			state.failWhen = (cursor) => (cursor ? failure : undefined);
+			const result = await observer.refetch();
+			assert.match(String(result.error), failure === "before-record" ? /list read failed/ : /response lost/);
+			assert.equal(result.isRefetchError, true);
+			// The stale second page is still cached, and the server no longer admits it.
+			assert.deepEqual(result.data?.pages[1]?.ids, secondPage);
+			assert.throws(() => artifacts.admit("evidence", secondPage.at(-1)), { reason: "outside-window" });
+			// Nothing refused is rendered, and load-more cannot resurrect the stale page.
+			assert.deepEqual(rendered(), []);
+			const shown = observer.getCurrentResult();
+			assert.equal(shown.hasNextPage && !shown.isRefetchError, false);
+		}
+		state.failWhen = undefined;
+		assert.equal((await observer.refetch()).status, "success");
+		assert.equal(rendered().length, 2 * ARTIFACT_PAGE_SIZE);
+		for (const id of rendered()) assert.equal(artifacts.admit("evidence", id), id);
+		assert.deepEqual(followable(), []);
+	} finally {
+		close();
+	}
+});
+
+test("a successful refresh offers no retained link between narrowing the window and refetching the rest", async () => {
+	const { observer, rendered, moments, prepend, followable, close } = paginatedEvidence();
+	try {
+		await observer.refetch();
+		await observer.fetchNextPage();
+		prepend(["evidence-new"]);
+		const lastSeen = rendered().at(-1);
+		const before = moments.length;
+		assert.equal((await observer.refetch()).status, "success");
+		// The moment the server served the fresh first page, the old second page was
+		// still on screen and already refused, so none of its links was followable.
+		const interval = moments[before];
+		assert.ok(interval?.refused.includes(lastSeen ?? ""), "the fresh first page narrowed the window");
+		assert.equal(interval?.live, false);
+		assert.equal(retainedLinksLive(observer.getCurrentResult()), true);
+		assert.equal(rendered()[0], "evidence-new");
+		assert.deepEqual(followable(), []);
+	} finally {
+		close();
+	}
+});

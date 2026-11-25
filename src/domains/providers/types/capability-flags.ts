@@ -1,0 +1,141 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { catalogThinkingLevelsForRuntime } from "../catalog.js";
+import { isHarmonyModelId } from "../model-family.js";
+
+export const TOOL_CALL_FORMATS = ["openai", "anthropic", "hermes", "llama3-json", "mistral", "qwen", "xml"] as const;
+
+export type ToolCallFormat = (typeof TOOL_CALL_FORMATS)[number];
+
+export const THINKING_FORMATS = [
+	"qwen-chat-template",
+	"openrouter",
+	"zai",
+	"anthropic-extended",
+	"deepseek-r1",
+	"openai-codex",
+	"harmony",
+] as const;
+
+export type ThinkingFormat = (typeof THINKING_FORMATS)[number];
+
+export const STRUCTURED_OUTPUT_MODES = ["json-schema", "gbnf", "xgrammar", "none"] as const;
+
+export type StructuredOutputMode = (typeof STRUCTURED_OUTPUT_MODES)[number];
+
+export interface CapabilityFlags {
+	chat: boolean;
+	tools: boolean;
+	toolCallFormat?: ToolCallFormat;
+	reasoning: boolean;
+	thinkingFormat?: ThinkingFormat;
+	/** Probe-declared upstream control dialect only; never changes gateway routing or residency. */
+	thinkingControlRuntime?: "lmstudio" | "llamacpp" | "flm";
+	/**
+	 * Levels the server itself enumerates for this model (LM Studio `allowed_options`
+	 * mapped onto PanCode's vocabulary). A live report only: no profile or catalog sets it,
+	 * so its presence means the server answered and `["off", "low"]` means on/off.
+	 */
+	reasoningLevels?: ReadonlyArray<ThinkingLevel>;
+	/** The level the server runs at when no effort is sent, when it names one (Copilot `defaultReasoningEffort`). */
+	reasoningDefaultLevel?: ThinkingLevel;
+	structuredOutputs?: StructuredOutputMode;
+	vision: boolean;
+	audio: boolean;
+	embeddings: boolean;
+	rerank: boolean;
+	fim: boolean;
+	/**
+	 * Answers closed-form typed questions through `RuntimeDescriptor.decide()`
+	 * instead of generating text. Optional so the 30-odd existing capability
+	 * literals stay valid; absent reads as false.
+	 */
+	decisions?: boolean;
+	contextWindow: number;
+	maxTokens: number;
+	/** Request slots reported by the endpoint probe. This is deployment capacity, not a model trait. */
+	parallelSlots?: number;
+}
+
+export const EMPTY_CAPABILITIES: CapabilityFlags = {
+	chat: false,
+	tools: false,
+	reasoning: false,
+	vision: false,
+	audio: false,
+	embeddings: false,
+	rerank: false,
+	fim: false,
+	contextWindow: 0,
+	maxTokens: 0,
+};
+
+export const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+export type ThinkingLevel = (typeof VALID_THINKING_LEVELS)[number];
+
+const THINKING_LEVELS_WITHOUT_XHIGH: ReadonlyArray<ThinkingLevel> = ["off", "minimal", "low", "medium", "high"];
+const THINKING_LEVELS_OPENAI_5_1_MINI: ReadonlyArray<ThinkingLevel> = ["off", "minimal", "low", "medium", "high"];
+const THINKING_LEVELS_OPENAI_5_2_PLUS: ReadonlyArray<ThinkingLevel> = [
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+];
+const THINKING_LEVELS_OPENAI_5_6: ReadonlyArray<ThinkingLevel> = [...THINKING_LEVELS_OPENAI_5_2_PLUS, "max"];
+const THINKING_LEVELS_HARMONY: ReadonlyArray<ThinkingLevel> = ["low", "medium", "high"];
+
+function normalizeModelId(modelId: string | undefined): string | undefined {
+	if (!modelId) return undefined;
+	const trimmed = modelId.trim();
+	if (trimmed.length === 0) return undefined;
+	return trimmed.includes("/") ? (trimmed.split("/").pop() ?? trimmed) : trimmed;
+}
+
+function availableOpenAICodexThinkingLevels(modelId: string | undefined): ReadonlyArray<ThinkingLevel> {
+	const normalized = normalizeModelId(modelId);
+	if (!normalized) return VALID_THINKING_LEVELS;
+	if (normalized === "gpt-5.1-codex-mini") return THINKING_LEVELS_OPENAI_5_1_MINI;
+	if (
+		normalized.startsWith("gpt-5.2") ||
+		normalized.startsWith("gpt-5.3") ||
+		normalized.startsWith("gpt-5.4") ||
+		normalized.startsWith("gpt-5.5")
+	) {
+		return THINKING_LEVELS_OPENAI_5_2_PLUS;
+	}
+	if (normalized.startsWith("gpt-5.6")) {
+		return THINKING_LEVELS_OPENAI_5_6;
+	}
+	return THINKING_LEVELS_WITHOUT_XHIGH;
+}
+
+export function availableThinkingLevels(
+	caps: CapabilityFlags,
+	options?: { runtimeId?: string; modelId?: string },
+): ReadonlyArray<ThinkingLevel> {
+	if (!caps.reasoning) return ["off"];
+	if (caps.thinkingFormat === "harmony" || isHarmonyModelId(options?.modelId)) {
+		return THINKING_LEVELS_HARMONY;
+	}
+	const catalogLevels =
+		options?.runtimeId && options.modelId
+			? catalogThinkingLevelsForRuntime(options.runtimeId, options.modelId)
+			: undefined;
+	if (catalogLevels) {
+		// Pi 0.80.6 exposes `max` for some catalog entries whose runtime
+		// metadata still does not support extended effort levels. Preserve PanCode's
+		// fail-closed capability boundary for those models.
+		if (!catalogLevels.includes("xhigh")) return catalogLevels.filter((level) => level !== "max");
+		return catalogLevels;
+	}
+	if (caps.thinkingFormat === "openai-codex" || options?.runtimeId === "openai-codex") {
+		return availableOpenAICodexThinkingLevels(options?.modelId);
+	}
+	if (caps.thinkingFormat === "anthropic-extended") {
+		return THINKING_LEVELS_WITHOUT_XHIGH;
+	}
+	return THINKING_LEVELS_WITHOUT_XHIGH;
+}

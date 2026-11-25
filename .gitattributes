@@ -1,0 +1,5 @@
+# Text is stored and checked out with LF on every platform, so a Windows clone
+# runs the shell installers and holds the same bytes the release ships.
+* text=auto eol=lf
+# Upstream license texts, kept byte for byte as published.
+*-OFL.txt -text

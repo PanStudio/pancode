@@ -1,0 +1,99 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { Api, Model, SimpleStreamOptions, StreamOptions } from "@earendil-works/pi-ai";
+import { isRecord } from "../../core/type-guards.js";
+
+type Payload = Record<string, unknown>;
+
+/**
+ * Move the Codex request's top-level `instructions` and `tools` into leading
+ * input items, the shape Codex CLI 0.159.1 sends (DF-0).
+ *
+ * The Responses API never carries top-level `instructions` or `tools` across
+ * `previous_response_id`, so a continuation frame had to repeat them: about
+ * 25 KB of system prompt and tool schemas on every call of a headless run,
+ * with only the new tool outputs as real delta. Input items do chain. Pi's
+ * WebSocket continuation diffs the full body against the last one and sends
+ * only the input past the stored prefix, so once these two leading items sit
+ * in that prefix they reach the server once per connection. A full resend
+ * (continuation rejected, a changed prompt or tool surface, SSE fallback)
+ * still carries both items, so the server sees the same prompt either way.
+ *
+ * Measured on gpt-6-luna, 2026-10-30 (#423): the backend reuses its cache at
+ * item granularity. After a recompile that changed the instructions item
+ * 9,258 characters in (about 2,000 of its 6,100 tokens), the next request read
+ * 3,840 of 10,203 prompt tokens, the tools item at its rendered size and
+ * nothing of the instructions item, although both bodies shared that item's
+ * head; the 2,048 tokens every recompile turn reused before Pi 1.4 were the
+ * smaller tools item of that layout. A changed leading item is paid in full
+ * from its first byte, which is why the session prompt stays frozen and
+ * posture, memory and effort changes travel as later items.
+ */
+function moveCodexPromptIntoInput(payload: Payload): Payload {
+	const input = payload.input;
+	if (!Array.isArray(input)) return payload;
+	const instructions = typeof payload.instructions === "string" ? payload.instructions : "";
+	const tools = Array.isArray(payload.tools) ? payload.tools : [];
+	if (instructions.length === 0 && tools.length === 0) return payload;
+	const { instructions: _instructions, tools: _tools, ...rest } = payload;
+	const leading: Payload[] = [];
+	// Codex wraps its function tools in the `functions` namespace, which is how
+	// the top-level `tools` field renders to the model.
+	if (tools.length > 0) {
+		leading.push({
+			type: "additional_tools",
+			role: "developer",
+			tools: [{ type: "namespace", name: "functions", description: "", tools }],
+		});
+	}
+	if (instructions.length > 0) {
+		leading.push({ type: "message", role: "developer", content: [{ type: "input_text", text: instructions }] });
+	}
+	// Terminal tools are introduced after the work history. Keep that boundary
+	// and use the same namespace as the initial declarations so handoff does
+	// not rewrite the cached leading item or rename its callable tools (#423).
+	const history = input.map((item: unknown) => {
+		if (
+			!isRecord(item) ||
+			item.type !== "additional_tools" ||
+			!Array.isArray(item.tools) ||
+			item.tools.some((tool: unknown) => isRecord(tool) && tool.type === "namespace")
+		)
+			return item;
+		return {
+			...item,
+			tools: [{ type: "namespace", name: "functions", description: "", tools: item.tools }],
+		};
+	});
+	// Pi 1.4 already declares the initial tools in an additional_tools item at the head of the input instead of
+	// top-level tools (upstream #10940). Keep that item ahead of the instructions, where top-level tools land, so
+	// the leading prefix stays byte-identical across the upgrade and cached continuations survive it.
+	const head =
+		tools.length === 0 && isRecord(history[0]) && history[0].type === "additional_tools" ? history.slice(0, 1) : [];
+	return { ...rest, input: [...head, ...leading, ...history.slice(head.length)] };
+}
+
+/**
+ * Pi keys a Codex WebSocket continuation on the session that also becomes
+ * `prompt_cache_key`, so a body without one (no session id, cache retention
+ * off) is a full request every call, as is SSE. Those keep the stock shape.
+ */
+function codexCanContinue(payload: Payload): boolean {
+	return typeof payload.prompt_cache_key === "string" && payload.prompt_cache_key.length > 0;
+}
+
+/** Run every caller patch first, then reshape the finished Codex body. */
+export function withCodexPromptItems<T extends StreamOptions | SimpleStreamOptions>(
+	model: Model<Api>,
+	options: T | undefined,
+): T | undefined {
+	if (model.api !== "openai-codex-responses" || options?.transport === "sse") return options;
+	const previous = options?.onPayload;
+	return {
+		...options,
+		onPayload: async (payload: unknown, currentModel: Model<Api>) => {
+			const base = (await previous?.(payload, currentModel)) ?? payload;
+			return isRecord(base) && codexCanContinue(base) ? moveCodexPromptIntoInput(base) : base;
+		},
+	} as T;
+}

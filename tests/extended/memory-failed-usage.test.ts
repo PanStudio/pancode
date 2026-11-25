@@ -1,0 +1,849 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { join } from "node:path";
+import test from "node:test";
+import {
+	type AssistantMessage,
+	type AssistantMessageEventStream,
+	createAssistantMessageEventStream,
+} from "@earendil-works/pi-ai";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import { factKnownValue } from "../../src/core/telemetry/known.js";
+import { registerProcessTelemetrySink } from "../../src/core/telemetry/producer.js";
+import {
+	acquireCapacityLease,
+	endpointCapacityUsage,
+	releaseCapacityLease,
+} from "../../src/domains/dispatch/capacity-lease.js";
+import { createDispatchReservation, releaseDispatchReservation } from "../../src/domains/dispatch/reservation-store.js";
+import {
+	createBackgroundMemoryModelClient,
+	createBackgroundMemoryRouting,
+} from "../../src/domains/memory/background-route.js";
+import { createMemoryGuardian } from "../../src/domains/memory/guardian.js";
+import { createMemoryInterventionRegistration } from "../../src/domains/memory/intervention.js";
+import { createTaskMemoryTelemetrySink } from "../../src/domains/memory/memory-events.js";
+import { TaskMemoryBank } from "../../src/domains/memory/task-bank.js";
+import type { TaskMemoryStepUsage } from "../../src/domains/memory/task-memory-policy.js";
+import { readTaskMemorySpendSummary } from "../../src/domains/memory/task-memory-spend.js";
+import { canonicalEndpointKey, registerForegroundStream } from "../../src/domains/providers/endpoint-capacity.js";
+import { EMPTY_CAPABILITIES } from "../../src/domains/providers/index.js";
+import { createSessionBundle } from "../../src/domains/session/extension.js";
+import { usageCallsFromAttempts } from "../../src/domains/session/journal-usage.js";
+import { openCallJournal, readCallJournal } from "../../src/domains/telemetry/call-journal.js";
+import { telemetryProcessDirectory, telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
+import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
+import { completeEngineText } from "../../src/engine/ai.js";
+import {
+	createEngineFauxCore,
+	registerEngineApiProvider,
+	registerEngineFauxProvider,
+} from "../../src/engine/api-registry.js";
+import { bindTaskMemoryLifecycle } from "../../src/entry/task-memory-lifecycle.js";
+import { holdEventLoop } from "../harness/dispatch.js";
+import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+const TEXT =
+	'<operations>[{"op":"save_knowledge","content":"private origin fact"}]</operations><context_for_action>[tm-k-1] origin reminder</context_for_action>';
+const USAGE = {
+	input: 7,
+	output: 3,
+	cacheRead: 5,
+	cacheWrite: 2,
+	reasoning: 1,
+	totalTokens: 17,
+	cost: { input: 0.1, output: 0.2, cacheRead: 0.05, cacheWrite: 0.025, total: 0.375 },
+};
+
+/**
+ * Faux estimates its own usage, so reported cache and cost facts have to be
+ * stamped onto the stream. The engine reads usage from the terminal `done` or
+ * `error` event (its prose filter re-emits the source's events and ends on the
+ * event it pushed, never on the source's `result()`), so that event is where a
+ * real provider's accounting sits and where the fixture has to put it.
+ */
+function reportTerminalMessage(
+	source: AssistantMessageEventStream,
+	patch: (message: AssistantMessage) => AssistantMessage,
+): AssistantMessageEventStream {
+	const output = createAssistantMessageEventStream();
+	void (async () => {
+		for await (const event of source) {
+			if (event.type === "done") output.push({ ...event, message: patch(event.message) });
+			else if (event.type === "error") output.push({ ...event, error: patch(event.error) });
+			else output.push(event);
+		}
+		output.end();
+	})();
+	return output;
+}
+
+for (const ending of ["error", "aborted", "stop", "no-usage"] as const) {
+	for (const switched of [false, true]) {
+		test(`memory engine usage: ${ending}, ${switched ? "switched origin" : "current origin"}`, async (t) => {
+			const env = await isolatePancodeEnv("pancode-memory-engine-");
+			t.after(() => {
+				registerEngineFauxProvider({ api: "memory-usage-fixture" }).unregister();
+				env.restore();
+			});
+			const faux = createEngineFauxCore({ api: "memory-usage-fixture", models: [{ id: "memory-model" }] });
+			const model = faux.getModel();
+			const provider = faux;
+			let release!: () => void;
+			const gate = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			let entered!: () => void;
+			const started = new Promise<void>((resolve) => {
+				entered = resolve;
+			});
+			faux.setResponses([
+				async () => {
+					entered();
+					await gate;
+					if (ending === "no-usage") throw new Error("fixture transport failed before usage");
+					return {
+						role: "assistant",
+						api: model.api,
+						provider: model.provider,
+						model: model.id,
+						timestamp: 1,
+						content: [{ type: "text", text: TEXT }],
+						usage: USAGE,
+						stopReason: ending,
+						...(ending === "stop" ? {} : { errorMessage: `fixture ${ending}` }),
+					};
+				},
+			]);
+			// Decorate only the terminal event with explicit reported cache/cost
+			// facts, before the real engine boundary.
+			// Dropping the signal in the stop case exercises an abort-ignoring host.
+			registerEngineApiProvider({
+				...provider,
+				streamSimple: (m, context, options) => {
+					const effectiveOptions = { ...options };
+					if (ending === "stop") delete effectiveOptions.signal;
+					const stream = provider.streamSimple(m, context, effectiveOptions);
+					if (ending === "no-usage") return stream;
+					return reportTerminalMessage(stream, (response) => ({
+						...response,
+						usage: USAGE,
+						backendTimings: {
+							promptTokens: 12,
+							cachedTokens: 5,
+							predictedTokens: 3,
+							promptMs: 4,
+							predictedMs: 2,
+							source: "llamacpp-timings",
+						},
+					}));
+				},
+			});
+			const settings = structuredClone(DEFAULT_SETTINGS);
+			settings.targets = [{ id: "origin-target", runtime: "openai-compat", defaultModel: model.id }];
+			settings.context.memory.target = "origin-target";
+			settings.context.memory.model = model.id;
+			const providers = dispatchStubContext({
+				settings,
+				runtime: {
+					id: "openai-compat",
+					displayName: "fixture",
+					kind: "http",
+					apiFamily: "openai-completions",
+					auth: "none",
+					defaultCapabilities: { ...EMPTY_CAPABILITIES, chat: true, contextWindow: 32768, maxTokens: 4096 },
+					synthesizeModel: () => model,
+				},
+			}).getContract("providers");
+			assert.ok(providers);
+			const route = createBackgroundMemoryModelClient(providers, settings, 1000, null);
+			assert.ok(route);
+			const bus = createTelemetryHub();
+			const { contract: session } = createSessionBundle({ bus, getContract: () => undefined });
+			const origin = session.create({ cwd: env.dir });
+			const journals = createSessionJournals(join(env.dir, "state"), () => {});
+			const live: number[] = [];
+			const routing = createBackgroundMemoryRouting(
+				providers,
+				() => settings,
+				null,
+				undefined,
+				true,
+				undefined,
+				(targetId) => ({
+					origin: session.current() ?? origin,
+					acquire: journals.acquire,
+					role: "memory",
+					targetId,
+					runtimeId: "openai-compat",
+					pricedBy: "none",
+					onSettled: (facts) => {
+						if (session.current()?.id === origin.id) {
+							for (const call of usageCallsFromAttempts([{ started: facts, settled: facts }]))
+								live.push(call.facts ? factKnownValue(call.facts.totalTokens) : 0);
+						}
+					},
+				}),
+			);
+
+			const bank = new TaskMemoryBank();
+			const reminders: string[] = [];
+			const proposals: unknown[] = [];
+			const registration = createMemoryInterventionRegistration({
+				// These pin the model tiers, which ship off (`rules`) as a policy choice.
+				surfaces: { correct: "model", bank: "model" },
+				bank,
+				telemetry: createTaskMemoryTelemetrySink(),
+				getModelClient: routing.getModelClient,
+				onDeferredReminder: (text) => reminders.push(text),
+				onInjectedEntries: (entries) => proposals.push(entries),
+			});
+			const dispose = bindTaskMemoryLifecycle(bus, registration);
+			try {
+				registration.evaluate({ hook: "turn_start", sessionId: origin.id, text: "origin task" });
+				registration.signalLoop();
+				await registration.evaluateAsync({ hook: "turn_end", sessionId: origin.id, turnId: "origin-turn" });
+				await started;
+				const idle = registration.whenIdle();
+				if (switched) session.create({ cwd: env.dir });
+				release();
+				await idle;
+				await new Promise<void>((resolve) => setImmediate(resolve));
+				await journals.flush();
+				const calls = (await readCallJournal(telemetrySessionDirectory(join(env.dir, "state"), origin.id))).records
+					.map(({ record }) => record)
+					.filter((record) => record.k === "call.settled");
+				assert.equal(calls.length, 1);
+				assert.equal(calls[0]?.ctx.sessionId, origin.id);
+				assert.equal(calls[0]?.ctx.agent.role, "memory");
+				assert.equal(calls[0]?.data.disposition, ending === "stop" && !switched ? "settled" : "sent_unsettled");
+				if (!switched) {
+					const steps = (await readCallJournal(telemetrySessionDirectory(join(env.dir, "state"), origin.id))).records
+						.map(({ record }) => record)
+						.filter((record) => record.k === "memory.step_decided");
+					assert.ok(
+						steps.some(
+							(step) =>
+								step.ctx.sessionId === origin.id && step.data.calls?.some((call) => call.callId === calls[0]?.data.callId),
+						),
+					);
+					const spend = readTaskMemorySpendSummary(join(env.dir, "state"));
+					assert.equal(spend.totalTokens.unknownCount, ending === "stop" ? 0 : 1);
+				}
+				// Counts a provider reported before a failed ending are a measured lower bound (#434).
+				assert.deepEqual(live, switched ? [] : [ending === "no-usage" ? 0 : 17]);
+				const usable = ending === "stop" && !switched;
+				assert.equal(bank.snapshot().knowledge.length, usable ? 1 : 0);
+				assert.equal(reminders.length, usable ? 1 : 0);
+				assert.equal(proposals.length, 0, "a produced reminder is not yet delivered");
+				if (usable) registration.acknowledgeSubmission([`<system-reminder>\n${reminders[0]}\n</system-reminder>`]);
+				assert.equal(proposals.length, usable ? 1 : 0);
+				assert.equal(faux.state.callCount, 1);
+			} finally {
+				release();
+				dispose();
+				await session.close();
+			}
+		});
+	}
+}
+
+test("engine text callers still reject failures rather than returning their content", async () => {
+	const faux = registerEngineFauxProvider();
+	try {
+		faux.setResponses([
+			() => {
+				throw new Error("fixture engine failure");
+			},
+		]);
+		await assert.rejects(
+			completeEngineText({
+				model: faux.getModel(),
+				systemPrompt: "fixture",
+				userPrompt: "fixture",
+				maxTokens: 10,
+				thinkingLevel: "off",
+				signal: new AbortController().signal,
+				timeoutMs: 1000,
+			}),
+			/fixture engine failure/u,
+		);
+	} finally {
+		faux.unregister();
+	}
+});
+
+for (const unavailable of ["available", "down", "missing-model", "missing-credential", "unloaded"] as const) {
+	test(`production memory route prefers dedicated then chat for ${unavailable}`, async (t) => {
+		const env = await isolatePancodeEnv("pancode-memory-route-");
+		t.after(() => env.restore());
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.targets = [
+			{ id: "memory", runtime: "openai-compat", url: "http://gateway.invalid:4000", defaultModel: "memory-model" },
+			{ id: "chat", runtime: "openai-compat", url: "http://gateway.invalid:4000", defaultModel: "chat-model" },
+		];
+		settings.context.memory.target = "memory";
+		settings.context.memory.model = "memory-model";
+		settings.chat.target = "chat";
+		settings.chat.model = "chat-model";
+		const faux = createEngineFauxCore({ models: [{ id: "memory-model" }, { id: "chat-model", reasoning: true }] });
+		const providers = dispatchStubContext({
+			settings,
+			runtime: {
+				id: "openai-compat",
+				displayName: "fixture",
+				kind: "http",
+				apiFamily: "openai-completions",
+				auth: "none",
+				defaultCapabilities: { ...EMPTY_CAPABILITIES, chat: true, reasoning: true, contextWindow: 32768, maxTokens: 4096 },
+				synthesizeModel: (_target, wireModelId) => {
+					const model = faux.getModel(wireModelId);
+					assert.ok(model);
+					return model;
+				},
+			},
+		}).getContract("providers");
+		assert.ok(providers);
+		const status = providers.list()[0];
+		assert.ok(status);
+		if (unavailable === "down") status.health.status = "down";
+		if (unavailable === "missing-credential") {
+			status.available = false;
+			status.reason = "No API key for provider: litellm";
+		}
+		if (unavailable === "missing-model") {
+			status.discoveredModelsSource = "probe";
+			status.discoveredModels = ["other"];
+		}
+		if (unavailable === "unloaded") status.discoveredModelStates = { "memory-model": { state: "unloaded" } };
+		const route = createBackgroundMemoryModelClient(providers, settings, 1000, null);
+		assert.ok(route);
+		assert.equal(route.targetId, unavailable === "available" ? "memory" : "chat");
+		if (unavailable === "missing-credential")
+			assert.match(route.fallbackReason ?? "", /No API key for provider: litellm/);
+		if (unavailable === "down") assert.match(route.fallbackReason ?? "", /endpoint unreachable/);
+		if (unavailable === "missing-model") assert.match(route.fallbackReason ?? "", /unknown model: memory-model/);
+		settings.context.memory.target = "chat";
+		settings.context.memory.model = "chat-model";
+		assert.ok(
+			createBackgroundMemoryModelClient(providers, settings, 1000, null),
+			"shared reasoning chat model can serve memory with capacity",
+		);
+		settings.context.memory.target = null;
+		settings.context.memory.model = null;
+		const chatRoute = createBackgroundMemoryModelClient(providers, settings, 1000, null);
+		assert.ok(chatRoute, "unset memory route uses the chat route");
+		assert.equal(chatRoute.targetId, "chat");
+		assert.equal(chatRoute.wireModelId, "chat-model");
+	});
+}
+
+function routingFixture() {
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.targets = [
+		{ id: "memory", runtime: "litellm", url: "http://gateway.invalid:4000", defaultModel: "memory-model" },
+		{ id: "chat", runtime: "litellm", url: "http://gateway.invalid:4000", defaultModel: "chat-model" },
+	];
+	settings.chat.target = "chat";
+	settings.chat.model = "chat-model";
+	settings.context.memory.target = "memory";
+	settings.context.memory.model = "memory-model";
+	const faux = createEngineFauxCore({
+		api: "memory-fallback-fixture",
+		models: [{ id: "memory-model" }, { id: "chat-model", reasoning: true }],
+	});
+	const providers = dispatchStubContext({
+		settings,
+		runtime: {
+			id: "litellm",
+			displayName: "fixture",
+			tier: "protocol",
+			kind: "http",
+			apiFamily: "openai-completions",
+			auth: "none",
+			defaultCapabilities: { ...EMPTY_CAPABILITIES, chat: true, reasoning: true, contextWindow: 32768, maxTokens: 4096 },
+			synthesizeModel: (_target, id) => {
+				const model = faux.getModel(id);
+				assert.ok(model);
+				return model;
+			},
+		},
+	}).getContract("providers");
+	assert.ok(providers);
+	return { settings, providers, faux };
+}
+
+test("production callbacks use gateway capacity evidence and count foreground, leases and reservations", async (t) => {
+	const env = await isolatePancodeEnv("pancode-memory-capacity-");
+	t.after(() => env.restore());
+	const { settings, providers } = routingFixture();
+	const callbacks = createBackgroundMemoryRouting(providers, () => settings, null);
+	const target = settings.targets[0];
+	const status = providers.list()[0];
+	assert.ok(target);
+	assert.ok(status);
+	const key = canonicalEndpointKey(target);
+	assert.ok(key);
+	const release = registerForegroundStream(key);
+	t.after(release);
+	assert.ok(callbacks.getModelClient());
+	assert.equal(callbacks.backgroundEndpointBusy(), true, "unknown memory capacity defaults to one occupied slot");
+	for (const slots of [1, 2, 4]) {
+		target.maxConcurrentRequests = slots;
+		assert.ok(callbacks.getModelClient());
+		assert.equal(callbacks.backgroundEndpointBusy(), slots === 1, `one active chat request with ${slots} slots`);
+	}
+	target.maxConcurrentRequests = 2;
+	callbacks.getModelClient();
+	const reservation = createDispatchReservation({
+		topology: "parallel",
+		tasks: [{ memberId: "held", wave: 0, nodeId: "node", endpointKey: key, costUpperBoundUsd: 0 }],
+		capacity: {
+			global: { active: 0, limit: 10 },
+			nodes: {},
+			endpoints: { [key]: { active: 1, limit: 2 } },
+			budget: { currentUsd: 0, ceilingUsd: 10 },
+		},
+	});
+	assert.equal(endpointCapacityUsage()[key], 2);
+	assert.equal(callbacks.backgroundEndpointBusy(), true, "held reservations use capacity");
+	releaseDispatchReservation(reservation.ownerId);
+	assert.equal(callbacks.backgroundEndpointBusy(), false);
+	const lease = acquireCapacityLease({
+		assignmentId: "worker",
+		nodeId: "node",
+		endpointKey: key,
+		limits: { global: 10, nodes: {}, endpoints: { [key]: 2 } },
+	});
+	assert.equal(callbacks.backgroundEndpointBusy(), true, "active workers use capacity");
+	releaseCapacityLease(lease.leaseId);
+	assert.equal(callbacks.backgroundEndpointBusy(), false);
+	delete target.maxConcurrentRequests;
+	status.probeCapabilities = { parallelSlots: 1 };
+	callbacks.getModelClient();
+	assert.equal(callbacks.backgroundEndpointBusy(), true, "current discovery is authoritative");
+	status.probeCapabilities = { parallelSlots: 4 };
+	callbacks.getModelClient();
+	assert.equal(callbacks.backgroundEndpointBusy(), false);
+});
+
+test("production runtime fallback calls chat once and keeps failed and fallback spend with their routes", async (t) => {
+	const env = await isolatePancodeEnv("pancode-memory-fallback-");
+	t.after(() => env.restore());
+	const { settings, providers, faux } = routingFixture();
+	t.after(() => registerEngineFauxProvider({ api: "memory-fallback-fixture" }).unregister());
+	faux.setResponses([
+		() => {
+			throw new Error("dedicated transport unavailable");
+		},
+		() => {
+			const model = faux.getModel("chat-model");
+			assert.ok(model);
+			return {
+				role: "assistant",
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				timestamp: Date.now(),
+				content: [{ type: "text", text: TEXT }],
+				usage: USAGE,
+				stopReason: "stop",
+			};
+		},
+	]);
+	const calls: string[] = [];
+	registerEngineApiProvider({
+		...faux,
+		streamSimple: (model, context, options) => {
+			calls.push(model.id);
+			return reportTerminalMessage(faux.streamSimple(model, context, options), (response) => ({
+				...response,
+				usage: USAGE,
+			}));
+		},
+	});
+	const bus = createTelemetryHub();
+	const notices: string[] = [];
+	const ended: string[] = [];
+	bus.subscribe("runtime.notice_raised", (event) => {
+		notices.push(event.message);
+	});
+	bus.subscribe("memory.step_completed", (event) => {
+		ended.push(event.targetId);
+	});
+	const callbacks = createBackgroundMemoryRouting(providers, () => settings, bus);
+	const bank = new TaskMemoryBank();
+	const reasons: string[] = [];
+	const routes: Array<string | undefined> = [];
+	const registration = createMemoryInterventionRegistration({
+		// These pin the model tiers, which ship off (`rules`) as a policy choice.
+		surfaces: { correct: "model", bank: "model" },
+		bank,
+		...callbacks,
+		telemetry: {
+			record: (row) => {
+				reasons.push(row.reason);
+				routes.push(row.route === undefined ? undefined : `${row.route.targetId}/${row.route.modelId}`);
+			},
+		},
+	});
+	const result = await registration.runPromptedStep({ deterministicTrigger: true, task: "preserve the origin fact" });
+	assert.equal(result.decision, "injected", JSON.stringify({ result, calls, reasons, notices }));
+	assert.deepEqual(calls, ["memory-model", "chat-model"]);
+	assert.deepEqual(routes, ["memory/memory-model", "chat/chat-model"], "each row names the route that served it");
+	assert.deepEqual(reasons, ["client_error", "intervened"]);
+	assert.deepEqual(ended, ["memory", "chat"]);
+	assert.equal(endpointCapacityUsage()["http://gateway.invalid:4000"], undefined, "both per-call holds released");
+	assert.equal(bank.snapshot().knowledge.length, 1);
+	assert.match(notices[0] ?? "", /chat fallback chat\/chat-model/);
+	assert.match(notices[0] ?? "", /dedicated transport unavailable/);
+	assert.equal(result.usage?.targetId, "chat", "final result does not merge provider identities");
+	assert.equal(callbacks.getFallbackModelClient(), null, "a fallback never falls back again");
+});
+
+for (const ending of ["silent", "malformed", "abort", "deadline", "scope-change", "fallback-fails"] as const) {
+	test(`memory fallback stays bounded for ${ending}`, async () => {
+		const bank = new TaskMemoryBank();
+		let attempts = 0;
+		let fallbackAttempts = 0;
+		const registration = createMemoryInterventionRegistration({
+			// These pin the model tiers, which ship off (`rules`) as a policy choice.
+			surfaces: { correct: "model", bank: "model" },
+			bank,
+			timeoutMs: 20,
+			getModelClient: () => ({
+				complete: async () => {
+					attempts += 1;
+					if (ending === "deadline") return new Promise(() => {});
+					if (ending === "scope-change") {
+						registration.reset();
+						throw new Error("old route failed");
+					}
+					if (ending === "abort") throw new DOMException("transport aborted", "AbortError");
+					if (ending === "fallback-fails") throw new Error("route failed");
+					return { text: ending === "silent" ? "<operations>[]</operations><no_intervention/>" : "broken envelope" };
+				},
+			}),
+			getFallbackModelClient: () => ({
+				complete: async () => {
+					fallbackAttempts += 1;
+					throw new Error("fallback failed");
+				},
+			}),
+		});
+		await registration.runPromptedStep({ deterministicTrigger: true });
+		assert.equal(attempts, 1);
+		assert.equal(fallbackAttempts, ending === "fallback-fails" ? 1 : 0);
+		assert.equal(bank.snapshot().knowledge.length, 0);
+	});
+}
+
+test("fallback shares the original deadline and cancellation discards its late content but retains origin spend", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let clockNs = 0n;
+	t.mock.method(process.hrtime, "bigint", () => clockNs);
+	let release!: (value: { text: string; usage: TaskMemoryStepUsage }) => void;
+	const response = new Promise<{ text: string; usage: TaskMemoryStepUsage }>((resolve) => {
+		release = resolve;
+	});
+	let fallbackSignal: AbortSignal | undefined;
+	const bank = new TaskMemoryBank();
+	const registration = createMemoryInterventionRegistration({
+		// These pin the model tiers, which ship off (`rules`) as a policy choice.
+		surfaces: { correct: "model", bank: "model" },
+		bank,
+		timeoutMs: 50,
+		getModelClient: () => ({
+			complete: async () => {
+				clockNs = 35_000_000n;
+				throw new Error("route unavailable");
+			},
+		}),
+		getFallbackModelClient: () => ({
+			complete: (input) => {
+				fallbackSignal = input.signal;
+				input.onCall?.({ sessionId: "origin", repoIdentity: "repo", callId: "call-fixture", attemptId: "attempt-fixture" });
+				return response;
+			},
+		}),
+	});
+	const result = registration.runPromptedStep({ deterministicTrigger: true });
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	assert.ok(fallbackSignal);
+	assert.equal(fallbackSignal.aborted, false);
+	t.mock.timers.tick(14);
+	await Promise.resolve();
+	assert.equal(fallbackSignal.aborted, false);
+	t.mock.timers.tick(1);
+	const timedOut = await result;
+	assert.equal(timedOut.reason, "deadline", "fallback gets 15 remaining milliseconds, not a new 50");
+	assert.deepEqual(timedOut.calls, [
+		{ sessionId: "origin", repoIdentity: "repo", callId: "call-fixture", attemptId: "attempt-fixture" },
+	]);
+	assert.equal(fallbackSignal.aborted, true);
+	registration.reset();
+	const known: TaskMemoryStepUsage = {
+		targetId: "chat",
+		attributedModelId: "chat-model",
+		input: { kind: "measured", value: 7, source: "provider" },
+		output: { kind: "measured", value: 3, source: "provider" },
+		cacheRead: { kind: "measured", value: 0, source: "provider" },
+		cacheWrite1h: { kind: "unknown", reason: "provider-omitted" },
+		cacheWrite: { kind: "measured", value: 0, source: "provider" },
+		reasoning: { kind: "measured", value: 0, source: "provider" },
+		totalTokens: { kind: "measured", value: 10, source: "provider" },
+		pricing: { usd: { kind: "unknown", reason: "not-observed" }, pricedBy: "none" },
+		durationMs: 15,
+		backend: null,
+	};
+	release({ text: TEXT, usage: known });
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	assert.equal(bank.snapshot().knowledge.length, 0);
+});
+
+test("a failed fallback capacity read preserves the dedicated call's result and known usage", async () => {
+	let choosingFallback = false;
+	let fallbackCalls = 0;
+	const known: TaskMemoryStepUsage = {
+		targetId: "dedicated",
+		attributedModelId: "memory",
+		input: { kind: "measured", value: 7, source: "provider" },
+		output: { kind: "measured", value: 3, source: "provider" },
+		cacheRead: { kind: "measured", value: 0, source: "provider" },
+		cacheWrite1h: { kind: "unknown", reason: "provider-omitted" },
+		cacheWrite: { kind: "measured", value: 0, source: "provider" },
+		reasoning: { kind: "measured", value: 0, source: "provider" },
+		totalTokens: { kind: "measured", value: 10, source: "provider" },
+		pricing: { usd: { kind: "unknown", reason: "not-observed" }, pricedBy: "none" },
+		durationMs: 1,
+		backend: null,
+	};
+	const registration = createMemoryInterventionRegistration({
+		// These pin the model tiers, which ship off (`rules`) as a policy choice.
+		surfaces: { correct: "model", bank: "model" },
+		bank: new TaskMemoryBank(),
+		getModelClient: () => ({
+			complete: async (request) => {
+				request.onUsage?.(known);
+				throw new Error("dedicated transport failed");
+			},
+		}),
+		getFallbackModelClient: () => {
+			choosingFallback = true;
+			return {
+				complete: async () => {
+					fallbackCalls += 1;
+					return { text: TEXT };
+				},
+			};
+		},
+		backgroundEndpointBusy: () => {
+			if (choosingFallback) throw new Error("capacity store unreadable");
+			return false;
+		},
+	});
+	const result = await registration.runPromptedStep({ deterministicTrigger: true });
+	assert.equal(result.reason, "client_error");
+	assert.equal(result.usage, known);
+	assert.deepEqual(result.inputTokens, { kind: "measured", value: 7, source: "provider" });
+	assert.equal(fallbackCalls, 0);
+});
+
+test("the history guardian retains an explicit missing-usage observation in its spend ledger", async (t) => {
+	const env = await isolatePancodeEnv("pancode-memory-history-usage-");
+	t.after(() => env.restore());
+	const hold = holdEventLoop();
+	t.after(() => hold.release());
+	const stateDir = join(env.dir, "state");
+	const sink = createTaskMemoryTelemetrySink();
+	const context = {
+		sessionId: null,
+		processId: "history-process",
+		agent: { role: "memory", id: "history-process" },
+	} as const;
+	const journal = await openCallJournal({
+		directory: telemetryProcessDirectory(stateDir, "history-process"),
+		context,
+		writer: { pancodeVersion: "fixture", piVersion: "fixture" },
+	});
+	const unregister = registerProcessTelemetrySink(context, journal);
+	t.after(async () => {
+		unregister();
+		await journal.close();
+	});
+	const steps: Parameters<ReturnType<typeof createTaskMemoryTelemetrySink>["record"]>[0][] = [];
+	let recorded!: () => void;
+	const completed = new Promise<void>((resolve) => {
+		recorded = resolve;
+	});
+	const guardian = createMemoryGuardian({
+		enabled: () => true,
+		isForegroundActive: () => false,
+		live: { pendingWork: () => false, stepInFlight: () => false, runIdleStep: async () => "none" },
+		historyMining: () => true,
+		historySource: () => ({
+			repositoryKey: "test-repository",
+			next: () => ({
+				slice: {
+					sessionId: "earlier-session",
+					root: env.dir,
+					text: "An earlier test command failed.",
+					succeededCommands: new Set(),
+					observedReads: new Map(),
+					advance: { key: "earlier-session", cursor: { offset: 0, size: 0, identity: "test-ledger" }, seenCalls: [] },
+				},
+				exhausted: true,
+			}),
+			commit() {},
+		}),
+		client: {
+			getModelClient: () => ({
+				complete: async () => ({
+					text: '<operations>[{"op":"save_lesson","content":"The earlier test command failed."}]</operations>',
+					usage: {
+						targetId: "history-target",
+						attributedModelId: "history-model",
+						input: { kind: "unknown", reason: "provider-omitted" },
+						output: { kind: "unknown", reason: "provider-omitted" },
+						cacheRead: { kind: "unknown", reason: "provider-omitted" },
+						cacheWrite1h: { kind: "unknown", reason: "provider-omitted" },
+						cacheWrite: { kind: "unknown", reason: "provider-omitted" },
+						reasoning: { kind: "unknown", reason: "provider-omitted" },
+						totalTokens: { kind: "unknown", reason: "provider-omitted" },
+						pricing: { usd: { kind: "unknown", reason: "not-observed" }, pricedBy: "none" },
+						durationMs: 1,
+						backend: null,
+					},
+				}),
+			}),
+			getFallbackModelClient: () => null,
+			getModelMaxTokens: (max) => max,
+			backgroundEndpointBusy: () => false,
+		},
+		settings: () => ({ maxTokens: 2_000, timeoutMs: 1_000 }),
+		workspaceRoot: () => env.dir,
+		getKeptLessons: () => [],
+		onHistoryLessons() {},
+		onStateChange() {},
+		scopeKey: () => "current-session",
+		telemetry: {
+			record(step) {
+				steps.push(step);
+				sink.record(step);
+				recorded();
+			},
+		},
+	});
+	t.after(() => guardian.dispose());
+	guardian.wake("ready");
+	await completed;
+	guardian.dispose();
+	await journal.flush();
+	const spend = readTaskMemorySpendSummary(stateDir);
+	assert.equal(spend.llmSteps, 1);
+	assert.equal(spend.totalTokens.unknownCount, 1);
+	// C-20: the step's bank delta is what the review wrote, not a constant zero.
+	assert.deepEqual(steps[0]?.bankDelta.knowledge, { added: 1, updated: 0, deleted: 0 });
+});
+
+test("an ACP host's guardian starts no history review before the first turn, at boot or on a reopen (ACP-6)", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let steps = 0;
+	const guardian = createMemoryGuardian({
+		enabled: () => true,
+		isForegroundActive: () => {
+			steps += 1;
+			return false;
+		},
+		live: { pendingWork: () => false, stepInFlight: () => false, runIdleStep: async () => "none" },
+		historyMining: () => true,
+		historySource: () => null,
+		client: {} as never,
+		settings: () => ({ maxTokens: 2_000, timeoutMs: 1_000 }),
+		workspaceRoot: () => process.cwd(),
+		getKeptLessons: () => [],
+		onHistoryLessons() {},
+		onStateChange() {},
+		scopeKey: () => "acp-session",
+		awaitFirstTurn: true,
+	});
+	t.after(() => guardian.dispose());
+	const settle = async () => {
+		t.mock.timers.runAll();
+		await new Promise((resolve) => setImmediate(resolve));
+	};
+	// Boot, then the client's session/load binding the reopened session.
+	guardian.wake("ready");
+	guardian.reset();
+	guardian.wake("settings");
+	await settle();
+	assert.equal(steps, 0);
+	guardian.wake("turn-start");
+	await settle();
+	assert.ok(steps > 0, "the first turn arms the guardian");
+});
+
+test("a TUI guardian reviews no history until a turn has bound a session, and none after /new before the next one (C-20)", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let steps = 0;
+	let bound = false;
+	let enabled = false;
+	const guardian = createMemoryGuardian({
+		enabled: () => enabled,
+		isForegroundActive: () => {
+			steps += 1;
+			return false;
+		},
+		live: { pendingWork: () => false, stepInFlight: () => false, runIdleStep: async () => "none" },
+		historyMining: () => true,
+		historySource: () => null,
+		client: {} as never,
+		settings: () => ({ maxTokens: 2_000, timeoutMs: 1_000 }),
+		workspaceRoot: () => process.cwd(),
+		getKeptLessons: () => [],
+		onHistoryLessons() {},
+		onStateChange() {},
+		scopeKey: () => "tui-session",
+		awaitFirstTurn: true,
+		sessionBound: () => bound,
+	});
+	t.after(() => guardian.dispose());
+	const settle = async () => {
+		t.mock.timers.runAll();
+		await new Promise((resolve) => setImmediate(resolve));
+	};
+	guardian.wake("ready");
+	assert.equal(guardian.state(), "off", "a disabled guardian says so before any turn");
+	enabled = true;
+	guardian.wake("settings");
+	assert.equal(guardian.state(), "idle", "enabled before any turn, it is idle again");
+	// The first prompt's turn_start fires before the TUI creates its session; a turn refused there binds none.
+	guardian.wake("turn-start");
+	await settle();
+	guardian.wake("turn-end");
+	await settle();
+	assert.equal(steps, 0);
+	bound = true;
+	guardian.wake("turn-end");
+	await settle();
+	assert.ok(steps > 0, "a turn that bound its session arms the guardian");
+	// /new parks the old session while it is still current, then creates the new one: nothing runs until a turn of
+	// the new session. ACP's session/close then session/new parks with the old session current too.
+	const before = steps;
+	guardian.reset();
+	guardian.wake("settings");
+	await settle();
+	assert.equal(steps, before);
+	bound = false;
+	guardian.reset();
+	bound = true;
+	guardian.wake("settings");
+	await settle();
+	assert.equal(steps, before);
+	guardian.wake("turn-end");
+	await settle();
+	assert.ok(steps > before, "the new session's first turn arms it");
+});

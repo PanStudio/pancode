@@ -1,0 +1,114 @@
+# Local scientific extensions
+
+These installable examples are extensions: PanCode code in its own process, declared
+in `pancode-extension.yaml` or `.json`. They are separate from plugins, which
+carry content only, and from the components (skills, agents, prompt templates and
+playbooks) that `pancode hub components` lists. `lab-status` is an
+operator runtime api 1 example, `measurements` is a command-tool package, and
+`git-pulse` and `peer-guard` use runtime api 2. Each manifest enforces its
+minimum PanCode version.
+
+From the repository root:
+
+```bash
+pancode extensions discover examples/extensions/lab-status --json
+pancode extensions install examples/extensions/lab-status --project
+pancode extensions run lab-status dashboard
+pancode extensions run lab-status dashboard --json
+```
+
+In PanCode, reload through `/extensions reload`, then invoke
+`/ext:lab-status:dashboard`. Core renders the panel, owns scrolling and Escape,
+and displays the status with the extension's owner label. The default record is
+`jobs.synthetic.json`: **SYNTHETIC FIXTURE**, two completed jobs and one running
+job. These are deterministic demonstration records, not measured cluster facts.
+
+Pass a local JSON record filename as the argument to inspect your own data:
+
+```bash
+pancode extensions run lab-status dashboard -- /absolute/path/experiment.json
+```
+
+The record has `experiment` and `jobs` fields. Each job supplies a string `id`,
+positive integer `ranks`, `state` (`queued`, `running`, `completed`, `failed`) and
+nonnegative finite `elapsedSeconds`. Set `synthetic: true` for simulated data.
+Records without that marker are labeled local reported data, not independently
+verified results. Files are regular local files up to 32 KiB and at most 100 jobs.
+The example performs no SSH, scheduler query, submission, provider request or
+credential access. Turn observations repeat the last explicit snapshot; invoke
+the dashboard again to refresh the file. Runtime state resets on reload.
+
+The separate measurement package keeps the existing model tool contract:
+
+```bash
+pancode extensions install examples/extensions/measurements --project
+```
+
+Start a new session. The admitted model tool is
+`extension_measurements__summarize`, with input such as
+`{"values":[1,2,3],"units":"seconds"}`. That input is a **synthetic deterministic
+example**, with mean 2 and sample standard deviation 1. A one-value input returns
+`null` for sample standard deviation. Numeric overflow errors instead of
+reporting null or invented valid measurements. Execution still passes the tool
+registry's safety, autonomy and approval rules. Native worker agent definitions
+must explicitly admit the qualified tool. Installing a runtime never adds tools to
+existing model schemas.
+
+Update source, reinstall with `--force`, then reload operator runtimes at idle.
+Disable and remove exact copies with `--project` or `--user`:
+
+```bash
+pancode extensions disable lab-status --project
+pancode extensions enable lab-status --project
+pancode extensions remove lab-status --project
+```
+
+Do not edit installed package bytes in place. Whole-tree digest drift revokes
+calls; mixed tool/UI packages need a new session even when only UI bytes change.
+Installed api 1 runtime code and command tools have your account's
+filesystem/network authority. A child process gives bounded teardown and fresh
+module caches, not an OS sandbox. An api 2 runtime reviewed through its
+capability envelope also runs under the OS sandbox when one exists (bubblewrap on
+Linux), with its network following the manifest; `/extensions` shows the
+confinement line.
+
+## Git pulse (api 2)
+
+`git-pulse/` keeps an owner-labelled status line and band with branch, dirty-path
+count and local upstream ahead/behind. It watches `.git/HEAD` and `.git/index`,
+polls every five seconds for working-file changes, and retains its last snapshot
+in session state. `/ext:git-pulse:pulse` refreshes and opens a card. No upstream is
+reported explicitly; Git failures produce unavailable facts, never a fake clean
+repository. It invokes only Git with fixed argv and no shell, fetch or push;
+`exec: true` nevertheless grants general child-process authority, not a Git-only
+allowlist. Workspace reads are declared; network and direct writes are disabled.
+
+## Peer guard (api 2)
+
+`peer-guard/` provides `/ext:peer-guard:claim <path>`, `release <path>` and a
+`claims` table. Its awaited write/edit hook blocks exact canonical workspace
+paths claimed by a different owner within ten minutes; `claimMinutes` is the
+manifest default and can be varied in test fixtures. The shared store is scoped
+to this extension and PanCode state home. Claims use compare-and-set updates,
+resolve existing symlink parents, expire on read, and can be renewed or released
+by their owner. Claims require an established PanCode session: before the first turn, commands
+explain this requirement and leave the store unchanged.
+Errors/timeouts pass: this is cooperative coordination, not protection from
+scripts, other mutation tools or sessions using a different state home.
+
+Both examples require operator runtime api 2, so the operator reviews each
+capability envelope before an install, an update or a dev load, and the recorded
+envelope digest must match when the package loads. Validate and run their public
+package tests first. Both commands start the package's own code, so a model shell
+call that runs them asks the operator:
+
+```bash
+pancode extensions validate examples/extensions/git-pulse
+pancode extensions test examples/extensions/git-pulse
+pancode extensions validate examples/extensions/peer-guard
+pancode extensions test examples/extensions/peer-guard
+```
+
+For iteration, copy an example to `.pancode/dev/extensions/<id>/` and start the
+TUI there, or use `/extensions dev <folder>`. Saves reload at idle after consent;
+`/extensions mute <id>` and `unmute` remove/restore its session runtime.

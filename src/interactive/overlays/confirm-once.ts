@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { matchesKey } from "../../engine/tui.js";
+import type { HintEntry } from "../overlay-frame.js";
+import { GLYPH } from "../theme/index.js";
+
+const LABEL_MAX = 32;
+
+/**
+ * The rail a destructive key shows after its first press: the same key again does it, any other key keeps
+ * the row. One shape for every list, so a removal never happens on a single stray letter.
+ */
+export function confirmOnceRail(key: string, verb: string, label: string): HintEntry[] {
+	const flat = label.replace(/\s+/gu, " ").trim();
+	const short = flat.length > LABEL_MAX ? `${flat.slice(0, LABEL_MAX - GLYPH.ellipsis.length)}${GLYPH.ellipsis}` : flat;
+	return [
+		{ key: `${key} again`, verb: `to ${verb} "${short}"`, short: verb, critical: true },
+		{ key: "any other key", verb: "keeps it", short: "keep" },
+	];
+}
+
+/** Rows one PgUp or PgDn moves in a list overlay that does not know its own height. */
+const LIST_PAGE_ROWS = 10;
+
+/** E-13 paging: PgUp, PgDn, Home and End move a list selection and stop at its ends; null for any other key. */
+export function listJump(data: string, index: number, count: number): number | null {
+	if (count <= 0) return null;
+	const last = count - 1;
+	if (matchesKey(data, "home")) return 0;
+	if (matchesKey(data, "end")) return last;
+	if (matchesKey(data, "pageUp")) return Math.max(0, index - LIST_PAGE_ROWS);
+	if (matchesKey(data, "pageDown")) return Math.min(last, index + LIST_PAGE_ROWS);
+	return null;
+}
+
+/**
+ * E-13 paging for a scroll body: PgUp and PgDn move a page, Home goes to the top and End to `max` when the
+ * body knows it. Returns the new offset, or null for any other key.
+ */
+export function scrollJump(data: string, scroll: number, max?: number): number | null {
+	const cap = (value: number): number => Math.max(0, max === undefined ? value : Math.min(max, value));
+	if (matchesKey(data, "home")) return 0;
+	if (max !== undefined && matchesKey(data, "end")) return cap(max);
+	if (matchesKey(data, "pageUp")) return cap(scroll - LIST_PAGE_ROWS);
+	if (matchesKey(data, "pageDown")) return cap(scroll + LIST_PAGE_ROWS);
+	return null;
+}

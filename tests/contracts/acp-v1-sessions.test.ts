@@ -1,0 +1,2170 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { hostname } from "node:os";
+import { test } from "node:test";
+import type { TSchema } from "typebox";
+import { Value } from "typebox/value";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
+import type { TelemetryHub } from "../../src/core/telemetry/hub.js";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import { pancodeStateDir } from "../../src/core/xdg.js";
+import type { StartupHint } from "../../src/domains/context/contract.js";
+import { createProvidersBundle } from "../../src/domains/providers/extension.js";
+import { suggestedSessionCostCeilingUsd } from "../../src/domains/scheduling/budget.js";
+import { buildContextLedger } from "../../src/domains/session/context-ledger.js";
+import type { SessionContract, SessionMeta } from "../../src/domains/session/contract.js";
+import type { SessionEntry } from "../../src/domains/session/entries.js";
+import { IN_RUN_CONTINUATION_ENTRY } from "../../src/domains/session/entries.js";
+import { acpUsageSums } from "../../src/engine/acp/adapter.js";
+import { commandResultLines } from "../../src/engine/acp/command-result.js";
+import type { AcpCommandControl } from "../../src/engine/acp/commands.js";
+import { AcpRequestError } from "../../src/engine/acp/errors.js";
+import { compactUsage, createAcpLiveTelemetry } from "../../src/engine/acp/live-telemetry.js";
+import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
+import type { AcpUsageMeta } from "../../src/engine/acp/types.js";
+import { AcpCompactUsageMetaSchema } from "../../src/engine/acp/types.js";
+import {
+	ACP_UPSTREAM_V1,
+	ACP_V1_TOOL_CALL_STATUSES,
+	AcpV1InitializeResponseSchema,
+	AcpV1LoadSessionResponseSchema,
+	AcpV1NewSessionResponseSchema,
+	AcpV1ResumeSessionResponseSchema,
+} from "../../src/engine/acp/upstream-schema.js";
+import { CURRENT_SESSION_FORMAT_VERSION } from "../../src/engine/session.js";
+import { budgetAlertNotice } from "../../src/interactive/bus-notices.js";
+import { stdioPeer } from "../harness/acp-fake-transport.js";
+import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
+import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+import { writeSettledRun } from "../harness/settled-run.js";
+import { readModelOf, telemetryCall, telemetryViewOf } from "../harness/telemetry-view.js";
+
+function fixture(
+	entries: ReadonlyArray<SessionEntry> = [],
+	onSubmit?: (emit: (event: unknown) => void) => void,
+	commands?: AcpCommandControl,
+	saveSettings = false,
+	settlement?: { wait: () => Promise<void>; cancel?: () => void },
+	bus?: TelemetryHub,
+	/** The session's journal as the read model folds it, for a test that reads the usage block (#434 §11.3). */
+	telemetry?: () => readonly TelemetryRecord[],
+	startupHints?: () => ReadonlyArray<StartupHint>,
+) {
+	const requests = new Map<string, (params: unknown) => unknown>();
+	const updates: Array<Record<string, unknown>> = [];
+	const events: Array<Record<string, unknown>> = [];
+	const cwd = process.cwd();
+	const timestamp = "2026-09-25T12:00:00.000Z";
+	const history: SessionMeta[] = Array.from({ length: 55 }, (_, index) => ({
+		id: `session-${index}`,
+		cwd,
+		cwdHash: "fixture",
+		createdAt: timestamp,
+		endedAt: timestamp,
+		model: "model-a",
+		target: "target-a",
+		pancodeVersion: "0.5.6",
+		piMonoVersion: "fixture",
+		platform: "fixture",
+		nodeVersion: "fixture",
+		sessionFormatVersion: CURRENT_SESSION_FORMAT_VERSION,
+		name: `Session ${index}`,
+	}));
+	let current: SessionMeta | null = null;
+	let close: () => void = () => {};
+	let cancelled = false;
+	let settlePrompt: () => void = () => {};
+	let promptPending = false;
+	let resets = 0;
+	const routingChanges: Array<{ model?: string; thinkingLevel?: string }> = [];
+	let safeSettings = {
+		target: "target-a",
+		model: "model-a",
+		thinkingLevel: "medium" as "medium" | "high",
+		autonomy: "default" as const,
+	};
+	let eventHandler: (event: unknown) => void = () => {};
+	const transport: AcpJsonRpcPeerTransport = {
+		closed: false,
+		request: async () => ({}) as never,
+		notify: (method, params) => {
+			if (method === "session/update") updates.push(params as Record<string, unknown>);
+			else if (method === "_pancode/event") events.push(params as Record<string, unknown>);
+		},
+		onRequest: (method, handler) => {
+			requests.set(method, handler);
+			return () => requests.delete(method);
+		},
+		onNotification: () => () => {},
+		onClose: (handler) => {
+			close = handler;
+			return () => {};
+		},
+		close: () => close(),
+	};
+	const session = {
+		current: () => current,
+		history: () => history,
+		create: () => {
+			const initial = history[0];
+			if (!initial) throw new Error("fixture has no session template");
+			const meta = { ...initial, id: "created", endedAt: null };
+			current = meta;
+			history.unshift(meta);
+			return meta;
+		},
+		resume: (id: string) => {
+			const meta = history.find((row) => row.id === id);
+			if (!meta) throw new Error("missing");
+			current = meta;
+			return meta;
+		},
+		close: async () => {
+			if (current) current.endedAt = timestamp;
+			current = null;
+		},
+		checkpoint: async (reason?: string) => {
+			if (current) current.lastCheckpointReason = reason ?? null;
+		},
+		tree: () => ({ leafId: null }),
+		leafId: () => null,
+		setName: (name: string, id: string) => {
+			const meta = history.find((row) => row.id === id);
+			if (meta) meta.name = name;
+		},
+		deleteSession: (id: string) => {
+			const index = history.findIndex((row) => row.id === id);
+			if (index >= 0) history.splice(index, 1);
+		},
+	} as unknown as SessionContract;
+	const done = servePancodeAcpAgent({
+		transport,
+		session,
+		cwd,
+		autonomy: () => "default",
+		routing: () => ({ target: "target-a", model: "model-a" }),
+		settings: {
+			read: () => safeSettings,
+			commit: (patch) => {
+				if (saveSettings) {
+					safeSettings = {
+						...safeSettings,
+						model: patch["chat.model"] ?? safeSettings.model,
+						thinkingLevel: patch["chat.thinkingLevel"] === "high" ? "high" : safeSettings.thinkingLevel,
+					};
+					return safeSettings;
+				}
+				throw new Error("config option must not persist a default");
+			},
+		},
+		...(commands ? { commands } : {}),
+		...(bus ? { bus } : {}),
+		...(startupHints ? { startupHints } : {}),
+		...(telemetry
+			? { usage: { quota: async () => [] }, telemetryReadModel: readModelOf(() => current?.id ?? null, telemetry) }
+			: {}),
+		setSessionRouting: (patch) => {
+			routingChanges.push(patch);
+		},
+		readSessionEntries: () => entries,
+		buildReplayMessages: () => [],
+		chat: {
+			...(settlement ? { whenSettled: settlement.wait } : {}),
+			submit: async () => {
+				if (onSubmit) {
+					onSubmit(eventHandler);
+					return;
+				}
+				promptPending = true;
+				await new Promise<void>((resolve) => {
+					settlePrompt = resolve;
+				});
+				promptPending = false;
+			},
+			cancel: () => {
+				cancelled = true;
+				settlePrompt();
+				settlement?.cancel?.();
+			},
+			onEvent: (handler) => {
+				eventHandler = handler;
+				return () => {
+					eventHandler = () => {};
+				};
+			},
+			isStreaming: () => promptPending,
+			getSessionId: () => current?.id ?? null,
+			resetForSession: () => {
+				resets++;
+			},
+		},
+	});
+	return {
+		cwd,
+		requests,
+		emit: (event: unknown) => eventHandler(event),
+		updates,
+		events,
+		history,
+		session,
+		routingChanges,
+		get cancelled() {
+			return cancelled;
+		},
+		get resets() {
+			return resets;
+		},
+		call: async (method: string, params: unknown) => {
+			const handler = requests.get(method);
+			if (!handler) throw new Error(`missing handler: ${method}`);
+			return await handler(params);
+		},
+		stop: async () => {
+			close();
+			await done;
+		},
+	};
+}
+
+test("ACP saved routing updates the bound session config before a conversation choice", async () => {
+	const peer = fixture([], undefined, undefined, true);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		await peer.call("session/new", { cwd: peer.cwd, mcpServers: [] });
+		await peer.call("_pancode/settings/patch_safe", {
+			patch: { "chat.model": "model-b", "chat.thinkingLevel": "high" },
+		});
+		const latest = peer.updates.at(-1)?.update as {
+			sessionUpdate: string;
+			configOptions: Array<{ id: string; currentValue: string }>;
+		};
+		strictEqual(latest.sessionUpdate, "config_option_update");
+		strictEqual(latest.configOptions.find((row) => row.id === "model")?.currentValue, "model-b");
+		const selected = (await peer.call("session/set_config_option", {
+			sessionId: "created",
+			configId: "model",
+			value: "model-b",
+		})) as { configOptions: Array<{ id: string; currentValue: string }> };
+		strictEqual(selected.configOptions.find((row) => row.id === "thinkingLevel")?.currentValue, "high");
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP session/new carries the models block under _meta and _pancode/session/set_model selects through the model option", async () => {
+	const peer = fixture([], undefined, undefined, true);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const opened = (await peer.call("session/new", { cwd: peer.cwd, mcpServers: [] })) as {
+			sessionId: string;
+			models?: unknown;
+			_meta?: Record<string, unknown>;
+		};
+		// ACP v1 has no models block, so it travels as PanCode's own metadata.
+		strictEqual(opened.models, undefined);
+		deepStrictEqual(opened._meta?.["pancode/models"], {
+			currentModelId: "model-a",
+			availableModels: [{ modelId: "model-a", name: "model-a" }],
+		});
+		strictEqual(peer.requests.has("session/set_model"), false);
+		await rejects(
+			peer.call("_pancode/session/set_model", { sessionId: opened.sessionId, modelId: "model-z" }),
+			/model is not declared for this target/u,
+		);
+		deepStrictEqual(
+			await peer.call("_pancode/session/set_model", { sessionId: opened.sessionId, modelId: "model-a" }),
+			{},
+		);
+		await rejects(peer.call("_pancode/session/set_model", { sessionId: opened.sessionId, model: "model-a" }), /invalid/u);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP re-sends the thinking option once the live probe finds the reasoning a cold cache lacked", async () => {
+	const env = await isolatePancodeEnv("pancode-acp-thinking-probe-");
+	const stub = createServer((req, res) => {
+		const path = (req.url ?? "").split("?")[0] ?? "";
+		const body = path.endsWith("/model/info")
+			? {
+					data: [
+						{
+							model_name: "fake/m",
+							litellm_params: { model: "openai/m" },
+							model_info: { max_input_tokens: 131072, max_output_tokens: 32768, supports_reasoning: true },
+						},
+					],
+				}
+			: path.endsWith("/models")
+				? { data: [{ id: "fake/m", object: "model" }] }
+				: { status: "ok" };
+		res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
+	});
+	await new Promise<void>((resolve) => stub.listen(0, "127.0.0.1", resolve));
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	const url = `http://127.0.0.1:${(stub.address() as AddressInfo).port}`;
+	// A second target on the same endpoint keeps its own cold cache until something probes it.
+	settings.targets = [
+		{ id: "litellm", runtime: "litellm", url, defaultModel: "fake/m" },
+		{ id: "litellm-b", runtime: "litellm", url, defaultModel: "fake/m" },
+	];
+	settings.chat = { ...settings.chat, target: "litellm", model: "fake/m", thinkingLevel: "low" };
+	const providers = createProvidersBundle(dispatchStubContext({ settings }), { getSettings: () => settings });
+	await providers.extension.start();
+	const peer = stdioPeer();
+	const cwd = process.cwd();
+	const done = servePancodeAcpAgent({
+		transport: peer.transport,
+		session: {
+			current: () => null,
+			create: () => ({ id: "acp-probe", cwd, cwdHash: "hash", createdAt: "2026-10-16T00:00:00.000Z", endedAt: null }),
+			tree: () => ({ leafId: null }),
+			leafId: () => null,
+		} as unknown as SessionContract,
+		cwd,
+		autonomy: () => "default",
+		providers: providers.contract,
+		settings: {
+			read: () => ({ target: "litellm", model: "fake/m", thinkingLevel: "low", autonomy: "default" }),
+			commit: () => {
+				throw new Error("unused");
+			},
+		},
+		routing: () => ({ target: "litellm", model: "fake/m" }),
+		setSessionRouting: () => {},
+		chat: {
+			submit: async () => {},
+			cancel: () => {},
+			onEvent: () => () => {},
+			isStreaming: () => false,
+			getSessionId: () => "acp-probe",
+		},
+		readSessionEntries: () => [],
+		buildReplayMessages: () => [],
+	});
+	const thinkingOption = (rows: unknown) =>
+		(rows as Array<Record<string, unknown>> | undefined)?.find((row) => row.id === "thinkingLevel") as
+			| { currentValue: string; notice?: string; _meta?: { "pancode/notice"?: { level: string; text: string } } }
+			| undefined;
+	const noticeText = (rows: unknown) => {
+		const option = thinkingOption(rows);
+		// The notice is PanCode's own, so it rides the option's `_meta` and never the option itself.
+		strictEqual(option?.notice, undefined);
+		return option?._meta?.["pancode/notice"]?.text;
+	};
+	const configUpdates = () => peer.updates().filter((frame) => frame.update.sessionUpdate === "config_option_update");
+	const nextConfigUpdate = async (seen: number) => {
+		const deadline = Date.now() + 5_000;
+		while (configUpdates().length <= seen && Date.now() < deadline)
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		return configUpdates()[seen];
+	};
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const opened = (await peer.call("session/new", { cwd, mcpServers: [] })) as {
+			configOptions: Array<Record<string, unknown>>;
+		};
+		strictEqual(noticeText(opened.configOptions), "low was ignored because thinking is unsupported");
+		const refreshed = thinkingOption((await nextConfigUpdate(0))?.update.configOptions);
+		strictEqual(refreshed?.currentValue, "low");
+		strictEqual(noticeText((await nextConfigUpdate(0))?.update.configOptions), undefined);
+		// A target switch resolves thinking from the new target's cold cache, so it probes as an opener does (ACP-4).
+		const seen = configUpdates().length;
+		const switched = (await peer.call("session/set_config_option", {
+			sessionId: "acp-probe",
+			configId: "target",
+			value: "litellm-b",
+		})) as { configOptions: Array<Record<string, unknown>> };
+		strictEqual(noticeText(switched.configOptions), "low was ignored because thinking is unsupported");
+		const probed = await nextConfigUpdate(seen + 1);
+		deepStrictEqual(probed?._meta?.["pancode/session"], { target: "litellm-b", model: "fake/m" });
+		strictEqual(thinkingOption(probed?.update.configOptions)?.currentValue, "low");
+		strictEqual(noticeText(probed?.update.configOptions), undefined);
+	} finally {
+		peer.close();
+		await done;
+		await providers.extension.stop?.();
+		await new Promise((resolve) => stub.close(resolve));
+		env.restore();
+	}
+});
+
+test("ACP stable session list pages SessionInfo and filters cwd", async () => {
+	const peer = fixture();
+	try {
+		const init = (await peer.call("initialize", { protocolVersion: 1 })) as {
+			agentCapabilities: { sessionCapabilities: Record<string, unknown> };
+		};
+		deepStrictEqual(Object.keys(init.agentCapabilities.sessionCapabilities).sort(), [
+			"close",
+			"delete",
+			"fork",
+			"list",
+			"resume",
+		]);
+		const first = (await peer.call("session/list", { cwd: peer.cwd })) as {
+			sessions: Array<Record<string, unknown>>;
+			nextCursor?: string;
+		};
+		strictEqual(first.sessions.length, 50);
+		deepStrictEqual(first.sessions[0], {
+			sessionId: "session-0",
+			cwd: peer.cwd,
+			title: "Session 0",
+			updatedAt: "2026-09-25T12:00:00.000Z",
+			_meta: {
+				"pancode/session": {
+					createdAt: "2026-09-25T12:00:00.000Z",
+					endedAt: "2026-09-25T12:00:00.000Z",
+					target: "target-a",
+					model: "model-a",
+				},
+			},
+		});
+		strictEqual(typeof first.nextCursor, "string");
+		const second = (await peer.call("session/list", { cursor: first.nextCursor })) as {
+			sessions: Array<Record<string, unknown>>;
+			nextCursor?: string;
+		};
+		strictEqual(second.sessions.length, 5);
+		strictEqual(second.nextCursor, undefined);
+		deepStrictEqual(await peer.call("session/list", { cwd: "/different-workspace" }), { sessions: [] });
+		await rejects(peer.call("session/list", { cursor: "bad" }), /cursor/u);
+		strictEqual(peer.requests.has("_pancode/session/list"), false);
+		deepStrictEqual(await peer.call("session/delete", { sessionId: "session-0" }), {});
+		strictEqual(
+			peer.history.some((row) => row.id === "session-0"),
+			false,
+		);
+		strictEqual(peer.requests.has("_pancode/session/delete"), false);
+		await peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] });
+		await rejects(
+			peer.call("session/delete", { sessionId: "session-1" }),
+			(err: AcpRequestError) => err.detail.code === "session_open" && /close it first \(session\/close/u.test(err.message),
+		);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP resume restores without replay, while mode and config controls share the session", async () => {
+	const peer = fixture();
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const resumed = (await peer.call("session/resume", {
+			sessionId: "session-1",
+			cwd: peer.cwd,
+			mcpServers: [],
+		})) as {
+			modes: { currentModeId: string; availableModes: Array<{ id: string }> };
+			configOptions: Array<{ category: string }>;
+		};
+		strictEqual(peer.resets, 1);
+		strictEqual(peer.updates.length, 0);
+		strictEqual(resumed.modes.currentModeId, "default");
+		deepStrictEqual(
+			resumed.modes.availableModes.map((mode: { id: string }) => mode.id),
+			["default", "yolo"],
+		);
+		deepStrictEqual(
+			resumed.configOptions.map((option: { category: string }) => option.category),
+			["mode", "model", "thought_level"],
+		);
+		deepStrictEqual(await peer.call("session/set_mode", { sessionId: "session-1", modeId: "yolo" }), {});
+		strictEqual((peer.updates.at(-2)?.update as Record<string, unknown>).sessionUpdate, "current_mode_update");
+		strictEqual((peer.updates.at(-1)?.update as Record<string, unknown>).sessionUpdate, "config_option_update");
+		const changed = (await peer.call("session/set_config_option", {
+			sessionId: "session-1",
+			configId: "autonomy",
+			value: "default",
+		})) as { configOptions: Array<{ currentValue: string }> };
+		strictEqual(changed.configOptions[0]?.currentValue, "default");
+		await peer.call("session/set_config_option", {
+			sessionId: "session-1",
+			configId: "thinkingLevel",
+			value: "high",
+		});
+		deepStrictEqual(peer.routingChanges, [{ thinkingLevel: "high" }]);
+		await peer.call("_pancode/session/label", { sessionId: "session-1", label: "Renamed" });
+		deepStrictEqual(peer.updates.at(-1)?.update, { sessionUpdate: "session_info_update", title: "Renamed" });
+		strictEqual(peer.requests.has("_pancode/session/autonomy"), false);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP initialize, session/new, session/load and session/resume answer as the pinned upstream v1 schema says", async () => {
+	const conforms = (schema: TSchema, value: unknown, method: string): void => {
+		const first = Value.Errors(schema, value)[0];
+		ok(first === undefined, `${method} (${ACP_UPSTREAM_V1.tag}): ${first?.instancePath} ${first?.message}`);
+	};
+	// One session per server process, so each way of opening one gets its own.
+	for (const method of ["session/new", "session/resume", "session/load"] as const) {
+		const peer = fixture();
+		try {
+			conforms(AcpV1InitializeResponseSchema, await peer.call("initialize", { protocolVersion: 1 }), "initialize");
+			const reopen = { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] };
+			if (method === "session/new")
+				conforms(AcpV1NewSessionResponseSchema, await peer.call(method, { cwd: peer.cwd, mcpServers: [] }), method);
+			else if (method === "session/resume")
+				conforms(AcpV1ResumeSessionResponseSchema, await peer.call(method, reopen), method);
+			else conforms(AcpV1LoadSessionResponseSchema, await peer.call(method, reopen), method);
+		} finally {
+			await peer.stop();
+		}
+	}
+});
+
+test("ACP close cancels and waits for an active prompt", async () => {
+	const peer = fixture();
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const opened = (await peer.call("session/new", { cwd: peer.cwd, mcpServers: [] })) as { sessionId: string };
+		const prompt = peer.call("session/prompt", {
+			sessionId: opened.sessionId,
+			prompt: [{ type: "text", text: "Hello" }],
+		});
+		await Promise.resolve();
+		peer.emit({ type: "tool_execution_start", toolCallId: "open-1", toolName: "read", args: { path: "README.md" } });
+		await rejects(peer.call("session/set_mode", { sessionId: opened.sessionId, modeId: "yolo" }), /active prompt/u);
+		deepStrictEqual(await peer.call("session/close", { sessionId: opened.sessionId }), {});
+		strictEqual(peer.cancelled, true);
+		strictEqual(((await prompt) as { stopReason: string }).stopReason, "cancelled");
+		// The call the close cut off settles with a status ACP v1 has: failed, the cancel named in its content.
+		const swept = peer.updates
+			.map((params) => params.update as { sessionUpdate?: string; status?: string; content?: unknown })
+			.filter((update) => update.sessionUpdate === "tool_call_update" && update.status !== "in_progress");
+		strictEqual(swept.length, 1);
+		ok((ACP_V1_TOOL_CALL_STATUSES as readonly string[]).includes(swept[0]?.status ?? ""), swept[0]?.status);
+		strictEqual(swept[0]?.status, "failed");
+		ok(JSON.stringify(swept[0]?.content).includes("cancelled"), JSON.stringify(swept[0]?.content));
+		const closed = peer.history.find((meta) => meta.id === opened.sessionId);
+		strictEqual(closed?.lastCheckpointReason, "close", "the close is checkpointed before the session is released");
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP load sent while a close is still in flight waits for the close instead of refusing a second session", async () => {
+	const peer = fixture();
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		await peer.call("session/resume", { sessionId: "session-4", cwd: peer.cwd, mcpServers: [] });
+		const prompt = peer.call("session/prompt", { sessionId: "session-4", prompt: [{ type: "text", text: "Hello" }] });
+		await Promise.resolve();
+		// The client sends its next open without awaiting the close, which waits for the cancelled prompt to settle.
+		const closing = peer.call("session/close", { sessionId: "session-4" });
+		const loaded = (await peer.call("session/load", { sessionId: "session-5", cwd: peer.cwd, mcpServers: [] })) as {
+			_meta: Record<string, { sessionId?: string }>;
+		};
+		deepStrictEqual(await closing, {});
+		strictEqual(((await prompt) as { stopReason: string }).stopReason, "cancelled");
+		ok(
+			Object.values(loaded._meta).some((meta) => meta?.sessionId === "session-5"),
+			"the load bound the session it named",
+		);
+		strictEqual(peer.session.current()?.id, "session-5");
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP reports a turn the loop guard stopped as max_turn_requests, not cancelled", async () => {
+	const bus = createTelemetryHub();
+	const peer = fixture(
+		[],
+		(emit) => {
+			emit({ type: "agent_start", turnId: "turn-1" });
+			bus.emit("turn.aborted", { source: "loop_guard", at: Date.now(), reason: "tool-call ceiling: 75 calls" });
+			emit({
+				type: "message_end",
+				message: { role: "assistant", content: [{ type: "text", text: "partial" }], stopReason: "aborted" },
+			});
+			emit({ type: "agent_end", turnId: "turn-1", messages: [] });
+		},
+		undefined,
+		false,
+		undefined,
+		bus,
+	);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const opened = (await peer.call("session/new", { cwd: peer.cwd, mcpServers: [] })) as { sessionId: string };
+		const result = (await peer.call("session/prompt", {
+			sessionId: opened.sessionId,
+			prompt: [{ type: "text", text: "poll CI" }],
+		})) as { stopReason: string };
+		strictEqual(result.stopReason, "max_turn_requests");
+	} finally {
+		await peer.stop();
+	}
+});
+
+for (const [second, streamed] of [
+	[["It's Wednesday."], [["It's Wednesday.", 0]]],
+	// A later message whose text arrives only on message_end opens at its own offset, not the prompt's (x7-6).
+	[["Done."], []],
+	[["Fixed it; tests pass now."], []],
+	// The tail starts where the deltas stopped (x8-3), and a message's text blocks part on a blank line (bt-acp-tail).
+	[
+		["Plan:", "Done."],
+		[
+			["Plan:", 0],
+			["Do", 1],
+		],
+	],
+	[["Plan:", "Done."], [["Plan:", 0]]],
+	[["Plan:", "Done."], []],
+] as const) {
+	test(`ACP separates assistant messages and their text blocks on a blank line without touching their content (bt-41): ${second.join("|")} after ${streamed.length} deltas`, async () => {
+		const first = "Let me look at the file.";
+		const peer = fixture([], (emit) => {
+			emit({ type: "agent_start", turnId: "turn-1" });
+			for (const [blocks, deltas] of [
+				[[first], [[first, 0]]],
+				[second, streamed],
+			] as const) {
+				// No message_start: the assistant message_end alone resets the offset.
+				for (const [text, contentIndex] of deltas) emit({ type: "text_delta", text, contentIndex });
+				const content = blocks.map((text) => ({ type: "text", text }));
+				emit({ type: "message_end", message: { role: "assistant", content } });
+			}
+			emit({ type: "agent_end", turnId: "turn-1", messages: [] });
+		});
+		try {
+			await peer.call("initialize", { protocolVersion: 1 });
+			const opened = (await peer.call("session/new", { cwd: peer.cwd, mcpServers: [] })) as { sessionId: string };
+			await peer.call("session/prompt", { sessionId: opened.sessionId, prompt: [{ type: "text", text: "status?" }] });
+			const text = peer.updates
+				.filter((params) => (params.update as { sessionUpdate?: string }).sessionUpdate === "agent_message_chunk")
+				.map((params) => (params.update as { content: { text: string } }).content.text)
+				.join("");
+			strictEqual(text, `${first}\n\n${second.join("\n\n")}`);
+		} finally {
+			await peer.stop();
+		}
+	});
+}
+
+test("ACP replay parts one message's text blocks on a blank line, as the live stream does (bt-acp-tail)", async () => {
+	const timestamp = "2026-09-25T12:00:00.000Z";
+	const peer = fixture([
+		{ kind: "message", role: "user", turnId: "u1", parentTurnId: null, timestamp, payload: "status?" },
+		{
+			kind: "message",
+			role: "assistant",
+			turnId: "a1",
+			parentTurnId: "u1",
+			timestamp,
+			payload: {
+				content: [
+					{ type: "text", text: "Plan:" },
+					{ type: "text", text: "" },
+					{ type: "text", text: "Done." },
+				],
+				stopReason: "stop",
+			},
+		},
+	]);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		await peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] });
+		const text = peer.updates
+			.filter((params) => (params.update as { sessionUpdate?: string }).sessionUpdate === "agent_message_chunk")
+			.map((params) => (params.update as { content: { text: string } }).content.text)
+			.join("");
+		strictEqual(text, "Plan:\n\nDone.");
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP resume and load of the session the process already hosts serve it, and refuse a reopen under an active prompt", async () => {
+	const timestamp = "2026-09-25T12:00:00.000Z";
+	const peer = fixture([
+		{ kind: "message", role: "user", turnId: "u1", parentTurnId: null, timestamp, payload: "status?" },
+		{
+			kind: "message",
+			role: "assistant",
+			turnId: "a1",
+			parentTurnId: "u1",
+			timestamp,
+			payload: { content: [{ type: "text", text: "All green." }], stopReason: "stop" },
+		},
+	]);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const reopen = { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] };
+		await peer.call("session/resume", reopen);
+		const replayed = () =>
+			peer.updates.filter(
+				(params) => (params.update as { sessionUpdate?: string }).sessionUpdate === "agent_message_chunk",
+			).length;
+		// A second resume of the hosted session answers its state, with no replay and no chat reset.
+		const resumed = (await peer.call("session/resume", reopen)) as { modes: { currentModeId: string } };
+		strictEqual(resumed.modes.currentModeId, "default");
+		strictEqual(peer.resets, 1);
+		strictEqual(replayed(), 0);
+		// A load of it replays the branch before answering.
+		await peer.call("session/load", reopen);
+		strictEqual(replayed(), 1);
+		strictEqual(peer.resets, 1);
+		await rejects(
+			peer.call("session/resume", {
+				...reopen,
+				mcpServers: [{ name: "fixture", command: process.execPath, args: [], env: [] }],
+			}),
+			/client MCP servers it was opened with/u,
+		);
+		const prompt = peer.call("session/prompt", { sessionId: "session-1", prompt: [{ type: "text", text: "Hi" }] });
+		await Promise.resolve();
+		await rejects(peer.call("session/load", reopen), (err: AcpRequestError) => err.detail.code === "prompt_active");
+		// Another session is still refused while this one is open.
+		await rejects(
+			peer.call("session/load", { ...reopen, sessionId: "session-2" }),
+			(err: AcpRequestError) => err.detail.code === "session_limit",
+		);
+		await peer.call("session/close", { sessionId: "session-1" });
+		await prompt;
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP replay parts two assistant messages of one turn on one blank line, as the live stream does", async () => {
+	// bt-session-res J9: live sent "files.\n\nDone:", replay sent "files." and "Done:" with nothing between them.
+	// ACP-5: a steer the run drained stays inside the prompt it answered, live and on replay, and the run's outcome names it.
+	const timestamp = "2026-09-25T12:00:00.000Z";
+	const message = (turnId: string, parentTurnId: string, payload: unknown): SessionEntry => ({
+		kind: "message",
+		role: "assistant",
+		turnId,
+		parentTurnId,
+		timestamp,
+		payload,
+	});
+	const peer = fixture([
+		{ kind: "message", role: "user", turnId: "u1", parentTurnId: null, timestamp, payload: "list files" },
+		message("a1", "u1", { content: [{ type: "text", text: "Plan: read the files." }], stopReason: "toolUse" }),
+		message("a2", "a1", { content: [{ type: "thinking", thinking: "no text here" }], stopReason: "toolUse" }),
+		{
+			kind: "message",
+			role: "user",
+			turnId: "s1",
+			parentTurnId: "a2",
+			timestamp,
+			payload: { text: "count them too", queued: "steer" },
+		},
+		message("a3", "s1", {
+			content: [
+				{ type: "text", text: "Done:" },
+				{ type: "text", text: "two files." },
+			],
+			stopReason: "stop",
+		}),
+		{
+			kind: "custom",
+			customType: "turnOutcome",
+			turnId: "o1",
+			parentTurnId: "a3",
+			timestamp,
+			data: { version: 1, turnId: "s1", stopReason: "length" },
+		} as SessionEntry,
+		{ kind: "message", role: "user", turnId: "u2", parentTurnId: "a3", timestamp, payload: "again" },
+		message("a4", "u2", { content: [{ type: "text", text: "Same." }], stopReason: "stop" }),
+	]);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		await peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] });
+		const byTurn = new Map<number, string>();
+		const userByTurn = new Map<number, string[]>();
+		const stopByTurn = new Map<number, string | undefined>();
+		for (const params of peer.updates) {
+			const update = params.update as { sessionUpdate?: string; content?: { text: string } };
+			const replay = (params._meta as Record<string, { turn?: number; stopReason?: string }> | undefined)?.[
+				"pancode/replay"
+			];
+			const turn = replay?.turn ?? 0;
+			stopByTurn.set(turn, replay?.stopReason);
+			if (update.sessionUpdate === "user_message_chunk")
+				userByTurn.set(turn, [...(userByTurn.get(turn) ?? []), update.content?.text ?? ""]);
+			if (update.sessionUpdate !== "agent_message_chunk") continue;
+			byTurn.set(turn, (byTurn.get(turn) ?? "") + (update.content?.text ?? ""));
+		}
+		// One separator between messages, the block separator unchanged, and none carried into the next turn.
+		deepStrictEqual([...byTurn.values()], ["Plan: read the files.\n\nDone:\n\ntwo files.", "Same."]);
+		deepStrictEqual([...userByTurn.values()], [["list files", "count them too"], ["again"]]);
+		deepStrictEqual([...stopByTurn.values()], ["max_tokens", "end_turn"]);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP load streams the complete active history beyond the former 64 turn limit", async () => {
+	const timestamp = "2026-09-25T12:00:00.000Z";
+	const entries: SessionEntry[] = [];
+	let parentTurnId: string | null = null;
+	for (let index = 0; index < 70; index++) {
+		const userId = `user-${index}`;
+		const replyId = `reply-${index}`;
+		entries.push({ kind: "message", role: "user", turnId: userId, parentTurnId, timestamp, payload: `Prompt ${index}` });
+		entries.push({
+			kind: "message",
+			role: "assistant",
+			turnId: replyId,
+			parentTurnId: userId,
+			timestamp,
+			payload: `Reply ${index}`,
+		});
+		parentTurnId = replyId;
+	}
+	const peer = fixture(entries);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const result = (await peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] })) as {
+			_meta: { "pancode/session": { replayed: { turns: number; truncated: boolean } } };
+		};
+		deepStrictEqual(result._meta["pancode/session"].replayed, { turns: 70, truncated: false });
+		strictEqual(peer.updates.length, 140);
+		strictEqual((peer.updates[0]?.update as { content: { text: string } }).content.text, "Prompt 0");
+		strictEqual((peer.updates.at(-1)?.update as { content: { text: string } }).content.text, "Reply 69");
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP replay keeps URL credentials out of terminal tool and shell content (#446)", async () => {
+	const secret = "cloned https://user:hunter2@host/x; BASE_TOKENS=100";
+	const redacted = "cloned https://user:[redacted]@host/x; BASE_TOKENS=100";
+	const peer = fixture([
+		{
+			kind: "message",
+			role: "user",
+			turnId: "user",
+			parentTurnId: null,
+			timestamp: "2026-09-25T12:00:00.000Z",
+			payload: { text: "clone it" },
+		},
+		{
+			kind: "message",
+			role: "tool_call",
+			turnId: "call",
+			parentTurnId: "user",
+			timestamp: "2026-09-25T12:00:01.000Z",
+			payload: { name: "bash", toolCallId: "bash-1", args: { command: `git clone ${secret}` } },
+		},
+		{
+			kind: "message",
+			role: "tool_result",
+			turnId: "result",
+			parentTurnId: "call",
+			timestamp: "2026-09-25T12:00:02.000Z",
+			payload: { toolCallId: "bash-1", toolName: "bash", result: secret, isError: false },
+		},
+		{
+			kind: "bashExecution",
+			turnId: "shell",
+			parentTurnId: "result",
+			timestamp: "2026-09-25T12:00:03.000Z",
+			command: `git remote add origin ${secret}`,
+			output: secret,
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+		},
+	]);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		await peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] });
+		const terminal = peer.updates
+			.map(
+				(entry) => entry.update as { sessionUpdate?: string; status?: string; content?: { content: { text: string } }[] },
+			)
+			.filter((update) => update.sessionUpdate === "tool_call_update" && update.status === "completed");
+		deepStrictEqual(
+			terminal.map((update) => update.content?.[0]?.content.text),
+			[redacted, redacted],
+		);
+		// Raw records and the shell line's echo carry what the content field hides (#446).
+		ok(!JSON.stringify(peer.updates).includes("hunter2"), JSON.stringify(peer.updates));
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP replay marks a persisted request without a terminal outcome as an error", async () => {
+	const peer = fixture([
+		{
+			kind: "message",
+			role: "user",
+			turnId: "interrupted-user",
+			parentTurnId: null,
+			timestamp: "2026-09-25T12:00:00.000Z",
+			payload: "The process died while answering this request",
+		},
+		{
+			kind: "message",
+			role: "assistant",
+			turnId: "interrupted-assistant",
+			parentTurnId: "interrupted-user",
+			timestamp: "2026-09-25T12:00:01.000Z",
+			payload: { stopReason: "toolUse", content: [] },
+		},
+		{
+			kind: "message",
+			role: "tool_call",
+			turnId: "interrupted-call",
+			parentTurnId: "interrupted-assistant",
+			timestamp: "2026-09-25T12:00:01.000Z",
+			payload: { name: "read", toolCallId: "read-1", args: { path: "notes.txt" } },
+		},
+		{
+			kind: "message",
+			role: "tool_result",
+			turnId: "interrupted-result",
+			parentTurnId: "interrupted-call",
+			timestamp: "2026-09-25T12:00:02.000Z",
+			payload: { toolCallId: "read-1", toolName: "read", result: "notes", isError: false },
+		},
+		{
+			kind: "bashExecution",
+			turnId: "later-shell",
+			parentTurnId: "interrupted-result",
+			timestamp: "2026-09-25T12:00:03.000Z",
+			command: "ls",
+			output: "notes.txt",
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+		},
+		{
+			kind: "message",
+			role: "user",
+			turnId: "later-user",
+			parentTurnId: "later-shell",
+			timestamp: "2026-09-25T12:00:04.000Z",
+			payload: "Asked later",
+		},
+		{
+			kind: "message",
+			role: "assistant",
+			turnId: "later-assistant",
+			parentTurnId: "later-user",
+			timestamp: "2026-09-25T12:00:05.000Z",
+			payload: { stopReason: "stop", content: [{ type: "text", text: "Done" }] },
+		},
+	]);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		await peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] });
+		const metas = peer.updates.map((update) => (update._meta as Record<string, unknown>)["pancode/replay"]);
+		const first = metas.filter((meta) => (meta as { turn?: number }).turn === 1);
+		const second = metas.filter((meta) => (meta as { turn?: number }).turn === 2);
+		ok(first.length >= 3 && second.length > 0, JSON.stringify(metas));
+		for (const meta of first) {
+			deepStrictEqual(meta, {
+				turn: 1,
+				stopReason: "error",
+				// The ledger's own times, so a reloaded request shows when it was asked rather than "not recorded". Its
+				// finish is its last own entry, not the later shell line or request.
+				startedAt: "2026-09-25T12:00:00.000Z",
+				finishedAt: "2026-09-25T12:00:02.000Z",
+			});
+		}
+		const finished = Date.parse((first[0] as { finishedAt: string }).finishedAt);
+		ok(finished < Date.parse("2026-09-25T12:00:03.000Z"));
+		ok(finished < Date.parse((second[0] as { startedAt: string }).startedAt));
+		for (const meta of second) {
+			deepStrictEqual(meta, {
+				turn: 2,
+				stopReason: "end_turn",
+				startedAt: "2026-09-25T12:00:04.000Z",
+				finishedAt: "2026-09-25T12:00:05.000Z",
+			});
+		}
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP replay settles a call the output limit cut off as not run, not failed (ACP-1)", async () => {
+	const entry = (
+		role: "user" | "assistant" | "tool_call" | "tool_result",
+		turnId: string,
+		parentTurnId: string | null,
+		payload: unknown,
+	) => ({
+		kind: "message" as const,
+		role,
+		turnId,
+		parentTurnId,
+		timestamp: "2026-09-25T12:00:00.000Z",
+		payload,
+	});
+	const cutCall = { type: "toolCall", id: "write-1", name: "write", arguments: { path: "a.txt" } };
+	const peer = fixture([
+		entry("user", "u", null, "write it"),
+		entry("assistant", "a1", "u", { stopReason: "toolUse", content: [] }),
+		entry("tool_call", "c1", "a1", { name: "read", toolCallId: "read-1", args: { path: "b.txt" } }),
+		entry("tool_result", "r1", "c1", { toolCallId: "read-1", toolName: "read", result: "ENOENT", isError: true }),
+		entry("assistant", "a2", "r1", { stopReason: "length", content: [cutCall] }),
+		entry("tool_call", "c2", "a2", { name: "write", toolCallId: "write-1", args: { path: "a.txt" } }),
+		entry("tool_result", "r2", "c2", { toolCallId: "write-1", toolName: "write", result: "not executed", isError: true }),
+	]);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		await peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] });
+		deepStrictEqual(
+			peer.updates
+				.map((params) => params.update as Record<string, unknown>)
+				.filter((update) => update.sessionUpdate === "tool_call_update")
+				.map((update) => [update.status, (update.rawOutput as Record<string, unknown>).notRun]),
+			[
+				["failed", undefined],
+				["completed", "output_limit"],
+			],
+		);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP replay keeps a crashed middleware continuation from reading as Done", async () => {
+	const turn = (role: "user" | "assistant", turnId: string, parentTurnId: string | null, payload: unknown) => ({
+		kind: "message" as const,
+		role,
+		turnId,
+		parentTurnId,
+		timestamp: "2026-09-25T12:00:00.000Z",
+		payload,
+	});
+	const request = turn("user", "ask", null, "Finish the work");
+	const answer = turn("assistant", "answer", "ask", {
+		stopReason: "stop",
+		content: [{ type: "text", text: "Done so far" }],
+	});
+	const nudge = turn("user", "nudge", "answer", { synthetic: true, role: "user", content: [] });
+	const crashed = fixture([request, answer, nudge]);
+	const canceled = fixture([
+		request,
+		answer,
+		nudge,
+		{
+			kind: "custom" as const,
+			customType: "turnOutcome",
+			turnId: "outcome",
+			parentTurnId: "nudge",
+			timestamp: "2026-09-25T12:00:01.000Z",
+			display: false,
+			data: { version: 1, turnId: "nudge", stopReason: "stop", operator: { canceled: true } },
+		},
+	]);
+	try {
+		for (const [peer, stopReason, finishedAt] of [
+			[crashed, "error", "2026-09-25T12:00:00.000Z"],
+			[canceled, "cancelled", "2026-09-25T12:00:01.000Z"],
+		] as const) {
+			await peer.call("initialize", { protocolVersion: 1 });
+			await peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] });
+			strictEqual(peer.updates.length, 2);
+			for (const update of peer.updates) {
+				deepStrictEqual((update._meta as Record<string, unknown>)["pancode/replay"], {
+					turn: 1,
+					stopReason,
+					startedAt: "2026-09-25T12:00:00.000Z",
+					finishedAt,
+				});
+			}
+		}
+	} finally {
+		await crashed.stop();
+		await canceled.stop();
+	}
+});
+
+test("ACP load reopens a crashed session and refuses one whose owner is alive", async () => {
+	const peer = fixture();
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const row = peer.history.find((meta) => meta.id === "session-1");
+		ok(row);
+		const load = { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] };
+		Object.assign(row, { endedAt: null, owner: { pid: process.pid, host: hostname(), birth: null } });
+		await rejects(peer.call("session/load", load), /session may already be open/u);
+		// No process has this pid: the kernel caps pids well below it.
+		Object.assign(row, { owner: { pid: 2 ** 31 - 1, host: hostname(), birth: null } });
+		await peer.call("session/load", load);
+	} finally {
+		await peer.stop();
+	}
+});
+
+// A live terminal session must not get a second writer from a remote client's resume.
+test("ACP resume refuses a session another process claims between its check and the resume's own claim, and a newer format by name", async () => {
+	const peer = fixture();
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const row = peer.history.find((meta) => meta.id === "session-2");
+		ok(row);
+		// The record read ended at the check; the locked claim then finds a live owner and refuses.
+		peer.session.resume = () => {
+			Object.assign(row, { endedAt: null, owner: { pid: process.pid, host: hostname(), birth: null } });
+			throw new Error("session session-2 is open in another process; end it there first");
+		};
+		await rejects(
+			peer.call("session/resume", { sessionId: "session-2", cwd: peer.cwd, mcpServers: [] }),
+			(err: AcpRequestError) => err.detail.code === "session_open",
+		);
+		// A session a newer build wrote says how to resume it, not that loading failed (B-2).
+		peer.session.resume = () => {
+			throw new Error(
+				"session was written by a newer PanCode (format version 99, this build reads version 7): /home/u/s/meta.json. Upgrade PanCode to resume this session.",
+			);
+		};
+		await rejects(
+			peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] }),
+			(err: AcpRequestError) =>
+				err.rpcCode === -32602 &&
+				err.detail.code === "session_format" &&
+				err.message ===
+					"session was written by a newer PanCode (format version 99, this build reads version 7). Upgrade PanCode to resume this session.",
+		);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP replay keeps a crash after an in-run continuation from reading as Done", async () => {
+	const peer = fixture([
+		{
+			kind: "message" as const,
+			role: "user" as const,
+			turnId: "ask",
+			parentTurnId: null,
+			timestamp: "2026-09-25T12:00:00.000Z",
+			payload: "Finish the work",
+		},
+		{
+			kind: "message" as const,
+			role: "assistant" as const,
+			turnId: "answer",
+			parentTurnId: "ask",
+			timestamp: "2026-09-25T12:00:01.000Z",
+			payload: { stopReason: "stop", content: [{ type: "text", text: "Done so far" }] },
+		},
+		{
+			kind: "custom" as const,
+			customType: IN_RUN_CONTINUATION_ENTRY,
+			turnId: "reopened",
+			parentTurnId: "answer",
+			timestamp: "2026-09-25T12:00:02.000Z",
+			display: false,
+			data: { version: 1 },
+		},
+	]);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		await peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] });
+		strictEqual(peer.updates.length, 2);
+		for (const update of peer.updates) {
+			deepStrictEqual((update._meta as Record<string, unknown>)["pancode/replay"], {
+				turn: 1,
+				stopReason: "error",
+				startedAt: "2026-09-25T12:00:00.000Z",
+				finishedAt: "2026-09-25T12:00:02.000Z",
+			});
+		}
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP load streams history beyond the former four MiB byte limit", async () => {
+	const largeText = "x".repeat(5 * 1024 * 1024);
+	const peer = fixture([
+		{
+			kind: "message",
+			role: "user",
+			turnId: "large-user",
+			parentTurnId: null,
+			timestamp: "2026-09-25T12:00:00.000Z",
+			payload: largeText,
+		},
+	]);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		await peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] });
+		const replayed = peer.updates.map((params) => (params.update as { content: { text: string } }).content.text).join("");
+		strictEqual(replayed.length, largeText.length);
+		strictEqual(replayed, largeText);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP prompt usage writes the pricing facts that the delegation adapter reads", async () => {
+	// The turn's one call, priced from the catalog, as the read model folds it.
+	const records = telemetryCall("acp", {
+		turnId: "turn-1",
+		usage: { input: 3, output: 2 },
+		usd: 0.01,
+		pricedBy: "catalog",
+	});
+	const peer = fixture(
+		[],
+		(emit) => {
+			emit({ type: "agent_start", turnId: "turn-1" });
+			emit({
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "done" }],
+					usage: { input: 3, output: 2, cost: { total: 0.01 }, pricedBy: "catalog" },
+				},
+			});
+			emit({ type: "agent_end", turnId: "turn-1", messages: [] });
+		},
+		undefined,
+		false,
+		undefined,
+		undefined,
+		() => records,
+	);
+	try {
+		await peer.call("initialize", {
+			protocolVersion: 1,
+			clientCapabilities: { _meta: { "pancode/usage": { version: 1 } } },
+		});
+		const opened = (await peer.call("session/new", { cwd: peer.cwd, mcpServers: [] })) as { sessionId: string };
+		const result = (await peer.call("session/prompt", {
+			sessionId: opened.sessionId,
+			prompt: [{ type: "text", text: "Hello" }],
+		})) as { _meta: { "pancode/usage": AcpUsageMeta } };
+		const usd = result._meta["pancode/usage"].quantities?.usd.fact;
+		ok(usd);
+		// A catalog price stays an estimate on the wire, and the delegation adapter reads it back as one (#434).
+		ok("kind" in usd ? usd.kind === "estimated" : usd.coverage.estimated === 1);
+		strictEqual(acpUsageSums(result._meta["pancode/usage"]).pricing.usd.coverage.estimated, 1);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP prompt usage is each quantity's display unless the client asks for the full form (F23)", async () => {
+	const records = telemetryCall("acp", {
+		turnId: "turn-1",
+		usage: { input: 3, output: 2 },
+		usd: 0.01,
+		pricedBy: "catalog",
+	});
+	const peer = fixture(
+		[],
+		(emit) => {
+			emit({ type: "agent_start", turnId: "turn-1" });
+			emit({
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "done" }],
+					usage: { input: 3, output: 2, cost: { total: 0.01 }, pricedBy: "catalog" },
+				},
+			});
+			emit({ type: "agent_end", turnId: "turn-1", messages: [] });
+		},
+		undefined,
+		false,
+		undefined,
+		undefined,
+		() => records,
+	);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const opened = (await peer.call("session/new", { cwd: peer.cwd, mcpServers: [] })) as { sessionId: string };
+		const result = (await peer.call("session/prompt", {
+			sessionId: opened.sessionId,
+			prompt: [{ type: "text", text: "Hello" }],
+		})) as { _meta: Record<string, unknown> };
+		const usage = result._meta["pancode/usage"];
+		ok(Value.Check(AcpCompactUsageMetaSchema, usage), JSON.stringify(usage));
+		strictEqual(usage.quantities?.input, "3");
+		strictEqual(usage.session?.quantities.calls, "1");
+	} finally {
+		await peer.stop();
+	}
+	// The meter's frames are as compact, and the response repeats the last one.
+	const frames: Array<Record<string, unknown>> = [];
+	const live = createAcpLiveTelemetry({
+		notify: (_sessionId, update) => frames.push(update),
+		sessionId: () => "acp",
+		cwd: process.cwd(),
+		contextLedger: () =>
+			buildContextLedger({
+				provider: "fixture",
+				model: "fixture",
+				contextWindow: 32768,
+				systemPromptTokens: 1200,
+				toolSchemaTokens: 800,
+				messageTokens: 1000,
+				compactionThreshold: 0.9,
+				compactionAuto: true,
+			}),
+		sessionTelemetry: () => telemetryViewOf("acp", records),
+	});
+	try {
+		live.turnStarted({ turnIds: new Set(["turn-1"]), attemptIds: new Set() });
+		const settled = await live.turnSettled();
+		ok(settled);
+		const meter = frames.filter((update) => update.sessionUpdate === "usage_update").at(-1)?._meta as
+			| Record<string, { turn: unknown; session: unknown }>
+			| undefined;
+		const compact = compactUsage(settled);
+		deepStrictEqual(meter?.["pancode/usage"], { turn: compact.quantities, session: compact.session?.quantities });
+		strictEqual(compact.quantities?.input, "3");
+	} finally {
+		live.dispose();
+	}
+});
+
+test("a reloaded session replays a finished run's token facts as the live frame words them (#434)", async () => {
+	const timestamp = "2026-09-25T12:00:00.000Z";
+	const measured = (value: number) => ({ kind: "measured" as const, value, source: "provider" as const });
+	const settle = (runId: string, outcome: "succeeded" | "failed", apiCalls: number | null) =>
+		writeSettledRun(
+			pancodeStateDir(),
+			{
+				...fixtureReceiptDraft({ ...fixtureEnvelope(runId), startedAt: timestamp, endedAt: timestamp }),
+				outcome,
+				exitCode: outcome === "succeeded" ? 0 : 1,
+			},
+			{
+				usage: {
+					input: measured(1_000),
+					output: measured(200),
+					cacheRead: measured(0),
+					cacheWrite: measured(0),
+					cacheWrite1h: measured(0),
+					reasoning: measured(0),
+				},
+				totalTokens: measured(1_200),
+				apiCalls: apiCalls === null ? { kind: "unknown", reason: "not-observed" } : measured(apiCalls),
+				pricing: { usd: measured(0), pricedBy: "none" },
+			},
+		);
+	await settle("replay-partial", "succeeded", 3);
+	await settle("replay-failed", "failed", 2);
+	await settle("replay-legacy", "succeeded", null);
+	const worker = (runId: string, index: number): SessionEntry =>
+		({
+			kind: "workerRun",
+			turnId: `worker-${index}`,
+			parentTurnId: "ask",
+			timestamp,
+			assignmentId: runId,
+			runId,
+			origin: "agent",
+			agentId: "coder",
+			runtime: { kind: "pancode", targetId: "target-a", wireModelId: "model-a" },
+		}) as SessionEntry;
+	const loaded = fixture([
+		{ kind: "message", role: "user", turnId: "ask", parentTurnId: null, timestamp, payload: "Ship it" },
+		worker("replay-partial", 1),
+		worker("replay-failed", 2),
+		worker("replay-legacy", 3),
+	]);
+	try {
+		await loaded.call("initialize", {
+			protocolVersion: 1,
+			clientCapabilities: {
+				_meta: { "pancode/events": { version: 1, kinds: ["run.completed", "run.failed"] } },
+			},
+		});
+		await loaded.call("session/load", { sessionId: "session-1", cwd: loaded.cwd, mcpServers: [] });
+		deepStrictEqual(
+			loaded.events.map((event) => {
+				const { runId, totalTokens, apiCalls, tokenDisplay } = event.payload as Record<string, unknown>;
+				return { kind: event.kind, runId, totalTokens, apiCalls, tokenDisplay };
+			}),
+			[
+				{
+					kind: "run.completed",
+					runId: "replay-partial",
+					totalTokens: measured(1_200),
+					apiCalls: { kind: "measured", value: 3, source: "local-count" },
+					tokenDisplay: "1,200",
+				},
+				{
+					kind: "run.failed",
+					runId: "replay-failed",
+					totalTokens: measured(1_200),
+					apiCalls: { kind: "measured", value: 2, source: "local-count" },
+					tokenDisplay: "1,200",
+				},
+				{
+					kind: "run.completed",
+					runId: "replay-legacy",
+					totalTokens: measured(1_200),
+					apiCalls: null,
+					tokenDisplay: "1,200",
+				},
+			],
+		);
+	} finally {
+		await loaded.stop();
+	}
+});
+
+test("ACP startup notices cross once per session: a load of a prompted session in a new process sends none", async () => {
+	const timestamp = "2026-09-25T12:00:00.000Z";
+	const hints = () => [{ level: "info" as const, text: "No PANCODE.md detected." }];
+	const notices = (updates: ReadonlyArray<Record<string, unknown>>) =>
+		updates.filter((frame) => {
+			const update = frame.update as Record<string, unknown>;
+			return (
+				update.sessionUpdate === "session_info_update" &&
+				(update._meta as Record<string, unknown> | undefined)?.["pancode/notice"] !== undefined
+			);
+		}).length;
+	const prompted = fixture(
+		[{ kind: "message", role: "user", turnId: "ask", parentTurnId: null, timestamp, payload: "one" }],
+		() => {},
+		undefined,
+		false,
+		undefined,
+		undefined,
+		undefined,
+		hints,
+	);
+	const unprompted = fixture([], () => {}, undefined, false, undefined, undefined, undefined, hints);
+	try {
+		for (const [peer, method, sessionId] of [
+			[prompted, "session/load", "session-1"],
+			[unprompted, "session/resume", "session-2"],
+		] as const) {
+			await peer.call("initialize", { protocolVersion: 1 });
+			await peer.call(method, { sessionId, cwd: peer.cwd, mcpServers: [] });
+			await peer.call("session/prompt", { sessionId, prompt: [{ type: "text", text: "two" }] });
+		}
+		strictEqual(notices(prompted.updates), 0);
+		// A session that never took a prompt never showed them, so its first prompt does.
+		strictEqual(notices(unprompted.updates), 1);
+	} finally {
+		await prompted.stop();
+		await unprompted.stop();
+	}
+});
+
+test("ACP tool call start includes the canonical tool name", async () => {
+	const peer = fixture([], (emit) => {
+		emit({ type: "tool_execution_start", toolCallId: "call-1", toolName: "read", args: { path: "README.md" } });
+	});
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const opened = (await peer.call("session/new", { cwd: peer.cwd, mcpServers: [] })) as { sessionId: string };
+		await peer.call("session/prompt", { sessionId: opened.sessionId, prompt: [{ type: "text", text: "Read" }] });
+		strictEqual((peer.updates[0]?.update as { name: string }).name, "read");
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP reports each tool call's engine span and the target and model that served the turn", async () => {
+	const peer = fixture([], (emit) => {
+		emit({ type: "tool_execution_start", toolCallId: "timed", toolName: "read", args: { path: "README.md" } });
+		emit({
+			type: "tool_execution_end",
+			toolCallId: "timed",
+			toolName: "read",
+			result: "ok",
+			isError: false,
+			durationMs: 1234.4,
+		});
+		emit({ type: "tool_execution_start", toolCallId: "untimed", toolName: "read", args: { path: "README.md" } });
+		emit({ type: "tool_execution_end", toolCallId: "untimed", toolName: "read", result: "ok", isError: false });
+		emit({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				model: "model-b",
+				callAccounting: { usageObserved: true, pricedBy: "none", targetId: "target-b" },
+				content: [{ type: "text", text: "Read it" }],
+				stopReason: "stop",
+			},
+		});
+	});
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const opened = (await peer.call("session/new", { cwd: peer.cwd, mcpServers: [] })) as { sessionId: string };
+		const result = (await peer.call("session/prompt", {
+			sessionId: opened.sessionId,
+			prompt: [{ type: "text", text: "Read" }],
+		})) as { _meta: Record<string, Record<string, unknown>> };
+		strictEqual(result._meta["pancode/turn"]?.model, "model-b");
+		strictEqual(result._meta["pancode/turn"]?.target, "target-b");
+		const timing = peer.updates
+			.filter((params) => (params.update as Record<string, unknown>).sessionUpdate === "tool_call_update")
+			.map((params) => (params._meta as Record<string, unknown> | undefined)?.["pancode/toolTiming"]);
+		deepStrictEqual(timing, [{ durationMs: 1234 }, undefined]);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP replay carries each turn's recorded model and route and each call's recorded span", async () => {
+	const message = (
+		role: "user" | "assistant" | "tool_call" | "tool_result",
+		turnId: string,
+		parentTurnId: string | null,
+		payload: unknown,
+	) => ({
+		kind: "message" as const,
+		role,
+		turnId,
+		parentTurnId,
+		timestamp: "2026-09-25T12:00:00.000Z",
+		payload,
+	});
+	const peer = fixture([
+		message("user", "ask-1", null, "Read the notes"),
+		message("assistant", "call-1", "ask-1", { stopReason: "toolUse", model: "model-a", content: [] }),
+		message("tool_call", "read-call", "call-1", { name: "read", toolCallId: "read-1", args: { path: "notes.txt" } }),
+		message("tool_result", "read-result", "read-call", {
+			toolCallId: "read-1",
+			toolName: "read",
+			result: "notes",
+			isError: false,
+			durationMs: 42,
+		}),
+		message("assistant", "answer-1", "read-result", { stopReason: "stop", model: "model-a", content: [] }),
+		{
+			kind: "modelChange" as const,
+			turnId: "swap",
+			parentTurnId: "answer-1",
+			timestamp: "2026-09-25T12:00:01.000Z",
+			provider: "runtime-b",
+			modelId: "model-b",
+			target: "target-b",
+		},
+		message("user", "ask-2", "answer-1", "Again"),
+		message("assistant", "answer-2", "ask-2", {
+			stopReason: "stop",
+			model: "model-b",
+			content: [{ type: "text", text: "Done" }],
+		}),
+	]);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		await peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] });
+		const metas = peer.updates.map((params) => params._meta as Record<string, Record<string, unknown>>);
+		deepStrictEqual(
+			[...new Set(metas.map((meta) => JSON.stringify([meta["pancode/replay"]?.turn, meta["pancode/turn"]])))],
+			[
+				JSON.stringify([1, { model: "model-a", target: "target-a" }]),
+				JSON.stringify([2, { model: "model-b", target: "target-b" }]),
+			],
+		);
+		const terminal = peer.updates.find(
+			(params) =>
+				(params.update as Record<string, unknown>).sessionUpdate === "tool_call_update" &&
+				(params.update as Record<string, unknown>).status === "completed",
+		);
+		deepStrictEqual((terminal?._meta as Record<string, unknown>)["pancode/toolTiming"], { durationMs: 42 });
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP replay carries each turn's recorded usage on its last frame, as its prompt response did (gui-verify 6)", async () => {
+	const message = (role: "user" | "assistant", turnId: string, parentTurnId: string | null, payload: unknown) => ({
+		kind: "message" as const,
+		role,
+		turnId,
+		parentTurnId,
+		timestamp: "2026-09-25T12:00:00.000Z",
+		payload,
+	});
+	const records = [
+		...telemetryCall("first", { turnId: "ask-1", usage: { input: 30, output: 4 } }),
+		...telemetryCall("second", { turnId: "ask-2", usage: { input: 50, output: 7 } }),
+	];
+	const peer = fixture(
+		[
+			message("user", "ask-1", null, "First"),
+			message("assistant", "answer-1", "ask-1", { stopReason: "stop", content: [{ type: "text", text: "One" }] }),
+			message("user", "ask-2", "answer-1", "Second"),
+			message("assistant", "answer-2", "ask-2", { stopReason: "stop", content: [{ type: "text", text: "Two" }] }),
+		],
+		undefined,
+		undefined,
+		false,
+		undefined,
+		undefined,
+		() => records,
+	);
+	try {
+		await peer.call("initialize", {
+			protocolVersion: 1,
+			clientCapabilities: { _meta: { "pancode/usage": { version: 1 } } },
+		});
+		await peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] });
+		const replayed = peer.updates
+			.map((params) => params._meta as Record<string, Record<string, unknown>>)
+			.filter((meta) => meta["pancode/replay"] !== undefined);
+		const usage = replayed.map((meta) => {
+			const quantities = (meta["pancode/usage"] as AcpUsageMeta | undefined)?.quantities;
+			return quantities === undefined
+				? null
+				: [meta["pancode/replay"]?.turn, quantities.input.display, quantities.output.display];
+		});
+		// Only the last frame of each turn carries the block, so the client reads it once per turn.
+		deepStrictEqual(
+			usage.filter((row) => row !== null),
+			[
+				[1, "30", "4"],
+				[2, "50", "7"],
+			],
+		);
+		strictEqual(usage.at(-1)?.[0], 2);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP replay presents a gateway call under the live title, kind and locations (M-10)", async () => {
+	const args = { op: "call", capability: "ls", args: { path: "ws" } };
+	const message = (
+		role: "user" | "tool_call" | "tool_result",
+		turnId: string,
+		parentTurnId: string | null,
+		payload: unknown,
+	) => ({
+		kind: "message" as const,
+		role,
+		turnId,
+		parentTurnId,
+		timestamp: "2026-09-25T12:00:00.000Z",
+		payload,
+	});
+	const peer = fixture(
+		[
+			message("user", "ask", null, "List"),
+			message("tool_call", "call", "ask", { name: "gateway", toolCallId: "gw-1", args }),
+			message("tool_result", "result", "call", { toolCallId: "gw-1", toolName: "gateway", result: "a", isError: false }),
+		],
+		(emit) => {
+			emit({ type: "tool_execution_start", toolCallId: "gw-1", toolName: "gateway", args });
+			emit({ type: "tool_execution_end", toolCallId: "gw-1", toolName: "gateway", result: "a", isError: false });
+		},
+	);
+	const shown = (from: number) =>
+		peer.updates
+			.slice(from)
+			.map((params) => params.update as Record<string, unknown>)
+			.filter((update) => update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update")
+			.map(({ sessionUpdate, title, kind, locations }) => ({ sessionUpdate, title, kind, locations }));
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		await peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] });
+		const replayed = shown(0);
+		const from = peer.updates.length;
+		await peer.call("session/prompt", { sessionId: "session-1", prompt: [{ type: "text", text: "List" }] });
+		const live = shown(from);
+		strictEqual(live[0]?.title, "ls: ws");
+		deepStrictEqual(replayed, live);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP advertises only slash commands executable from a prompt", async () => {
+	let submitted = false;
+	const commands: AcpCommandControl = {
+		catalog: () => ({
+			version: 1,
+			commands: [
+				{ name: "doctor", summary: "Inspect PanCode", usage: "/doctor", group: "help", args: {} },
+				{ name: "share", summary: "Share a note", usage: "/share <text>", group: "help", args: {}, injectsUserTurn: true },
+			],
+		}),
+		invoke: () => ({ level: "info", lines: ["Doctor ready"] }),
+		injectsUserTurn: () => false,
+		capability: {},
+	};
+	const peer = fixture(
+		[],
+		() => {
+			submitted = true;
+		},
+		commands,
+	);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const opened = (await peer.call("session/new", { cwd: peer.cwd, mcpServers: [] })) as { sessionId: string };
+		const announced = peer.updates.find(
+			(params) => (params.update as Record<string, unknown>).sessionUpdate === "available_commands_update",
+		);
+		deepStrictEqual(
+			(announced?.update as { availableCommands: Array<{ name: string }> }).availableCommands.map((entry) => entry.name),
+			["doctor"],
+		);
+		await peer.call("session/prompt", { sessionId: opened.sessionId, prompt: [{ type: "text", text: "/doctor" }] });
+		strictEqual(submitted, false);
+		strictEqual(
+			(
+				peer.updates.find((params) => (params.update as Record<string, unknown>).sessionUpdate === "agent_message_chunk")
+					?.update as { content: { text: string } }
+			).content.text,
+			"Doctor ready",
+		);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("a slash command's failure line crosses a prompt once, as reply text, not again as its result", async () => {
+	// bt-session-res J10: `/context compact` failed and the line went out as a notice chunk and again as the result.
+	// ACP-5: a line past the result's line bound is cut there, so the cut form must still match the whole notice line.
+	const failure =
+		"[/context compact] failed; context unchanged at 9.6K tokens. The summary call failed: Connection error.: bad port. /context compact tries again; /model picks another route to summarize on.";
+	const detail = `provider said: ${"upstream refused the request; ".repeat(60).trimEnd()}`;
+	let emit: (event: unknown) => void = () => {};
+	const commands: AcpCommandControl = {
+		catalog: () => ({
+			version: 1,
+			commands: [{ name: "context", summary: "Context", usage: "/context compact", group: "help", args: {} }],
+		}),
+		invoke: () => {
+			// The host hears the chat loop's notice and answers with it, as the orchestrator's runCompact does.
+			emit({ type: "notice", surface: "transcript", level: "error", text: `${failure}\n${detail}` });
+			return {
+				level: "error",
+				lines: [...commandResultLines(`${failure}\n${detail}`), "Run /doctor if it keeps failing."],
+			};
+		},
+		injectsUserTurn: () => false,
+		capability: {},
+	};
+	const peer = fixture([], undefined, commands);
+	emit = peer.emit;
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const opened = (await peer.call("session/new", { cwd: peer.cwd, mcpServers: [] })) as { sessionId: string };
+		await peer.call("session/prompt", {
+			sessionId: opened.sessionId,
+			prompt: [{ type: "text", text: "/context compact" }],
+		});
+		const reply = peer.updates
+			.filter((params) => (params.update as { sessionUpdate?: string }).sessionUpdate === "agent_message_chunk")
+			.map((params) => (params.update as { content: { text: string } }).content.text)
+			.join("");
+		strictEqual(reply.split(failure).length - 1, 1, reply);
+		ok(Buffer.byteLength(detail) > 1024);
+		strictEqual(reply.split(detail).length - 1, 1, reply);
+		ok(!reply.includes("…[truncated]"), reply);
+		// A result line no notice carried still answers.
+		ok(reply.includes("Run /doctor if it keeps failing."), reply);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP slash command input errors keep the invalid-params code", async () => {
+	const commands: AcpCommandControl = {
+		catalog: () => ({
+			version: 1,
+			commands: [{ name: "doctor", summary: "Inspect PanCode", usage: "/doctor", group: "help", args: {} }],
+		}),
+		invoke: () => {
+			throw new AcpRequestError(-32602, "invalid command arguments", { code: "invalid_params" });
+		},
+		injectsUserTurn: () => false,
+		capability: {},
+	};
+	const peer = fixture([], undefined, commands);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const opened = (await peer.call("session/new", { cwd: peer.cwd, mcpServers: [] })) as { sessionId: string };
+		await rejects(
+			peer.call("session/prompt", { sessionId: opened.sessionId, prompt: [{ type: "text", text: "/doctor bad" }] }),
+			(error: unknown) => (error as AcpRequestError).rpcCode === -32602,
+		);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("an injected command stays inside its ACP prompt until settlement, including cancellation", async () => {
+	for (const cancel of [false, true]) {
+		let finish = () => {};
+		let began = () => {};
+		const done = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+		const started = new Promise<void>((resolve) => {
+			began = resolve;
+		});
+		const commands: AcpCommandControl = {
+			catalog: () => ({
+				version: 1,
+				commands: [
+					{
+						name: "skill",
+						summary: "Use a skill",
+						usage: "/skill <name>",
+						group: "Session",
+						args: {},
+						injectsUserTurn: true,
+					},
+				],
+			}),
+			invoke: () => {
+				began();
+				return { level: "info", lines: ["Skill started"] };
+			},
+			injectsUserTurn: () => true,
+			capability: {},
+		};
+		const peer = fixture([], () => {}, commands, false, { wait: () => done, cancel: finish });
+		try {
+			await peer.call("initialize", { protocolVersion: 1 });
+			await peer.call("session/new", { cwd: peer.cwd, mcpServers: [] });
+			const announcement = peer.updates.find(
+				(params) => (params.update as { sessionUpdate?: string }).sessionUpdate === "available_commands_update",
+			);
+			strictEqual(
+				(announcement?.update as { availableCommands: Array<{ name: string }> }).availableCommands.some(
+					(command) => command.name === "skill",
+				),
+				true,
+			);
+			let answered = false;
+			const prompt = peer
+				.call("session/prompt", { sessionId: "created", prompt: [{ type: "text", text: "/skill survey" }] })
+				.then((result) => {
+					answered = true;
+					return result as { stopReason: string };
+				});
+			await started;
+			await Promise.resolve();
+			strictEqual(answered, false);
+			peer.emit({ type: "text_delta", text: "Visible skill response" });
+			if (cancel) await peer.call("_pancode/session/cancel", { sessionId: "created" });
+			else {
+				peer.emit({
+					type: "message_end",
+					message: { role: "assistant", content: [{ type: "text", text: "Visible skill response" }] },
+				});
+				finish();
+			}
+			strictEqual((await prompt).stopReason, cancel ? "cancelled" : "end_turn");
+			strictEqual(
+				peer.updates.some(
+					(params) => (params.update as { content?: { text: string } }).content?.text === "Visible skill response",
+				),
+				true,
+			);
+			const response = peer.updates
+				.filter((params) => (params.update as { sessionUpdate?: string }).sessionUpdate === "agent_message_chunk")
+				.map((params) => (params.update as { content: { text: string } }).content.text)
+				.join("");
+			strictEqual(response.includes("Visible skill response\n\nSkill started"), true);
+		} finally {
+			finish();
+			await peer.stop();
+		}
+	}
+});
+
+test("a refused injecting command does not produce a successful ACP turn", async () => {
+	const commands: AcpCommandControl = {
+		catalog: () => ({
+			version: 1,
+			commands: [
+				{
+					name: "skill",
+					summary: "Use a skill",
+					usage: "/skill <name>",
+					group: "Session",
+					args: {},
+					injectsUserTurn: true,
+				},
+			],
+		}),
+		invoke: () => ({ level: "error", lines: ["No such skill"] }),
+		injectsUserTurn: () => true,
+		capability: {},
+	};
+	const peer = fixture([], () => {}, commands, false, { wait: async () => {} });
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		await peer.call("session/new", { cwd: peer.cwd, mcpServers: [] });
+		await rejects(
+			peer.call("session/prompt", { sessionId: "created", prompt: [{ type: "text", text: "/skill missing" }] }),
+			(error: unknown) =>
+				error instanceof AcpRequestError && error.rpcCode === -32603 && error.message === "the prompt turn failed",
+		);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP load replays the compaction row as the notice the live compaction sent, never as agent text", async () => {
+	const peer = fixture([
+		{
+			kind: "compactionSummary",
+			turnId: "summary",
+			parentTurnId: null,
+			timestamp: "2026-09-25T12:00:00.000Z",
+			firstKeptTurnId: "summary",
+			tokensBefore: 8000,
+			tokensAfter: 4000,
+			summary: "Remember: preserve the output format.",
+		},
+	]);
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		await peer.call("session/load", { sessionId: "session-1", cwd: peer.cwd, mcpServers: [] });
+		const frame = peer.updates[0] as { update: Record<string, unknown> };
+		deepStrictEqual(frame.update, {
+			sessionUpdate: "session_info_update",
+			_meta: { "pancode/notice": { level: "info", text: "PanCode compacted 8K → 4K tokens" } },
+		});
+		strictEqual(
+			peer.updates.some(
+				(update) => (update as { update: { sessionUpdate?: string } }).update.sessionUpdate === "agent_message_chunk",
+			),
+			false,
+		);
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP session listing hides empty failed turns before pagination", async () => {
+	const peer = fixture();
+	const empty = peer.history[0];
+	if (!empty) throw new Error("missing fixture session");
+	empty.hasModelTurn = false;
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const result = (await peer.call("session/list", {})) as { sessions: Array<{ sessionId: string }> };
+		strictEqual(result.sessions.length, 50);
+		strictEqual(
+			result.sessions.some((row) => row.sessionId === "session-0"),
+			false,
+		);
+		strictEqual(result.sessions[0]?.sessionId, "session-1");
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP session/new carries the workspace view and an edit that dirties the tree re-sends it", async () => {
+	const requests = new Map<string, (params: unknown) => unknown>();
+	const updates: Array<Record<string, unknown>> = [];
+	let close: () => void = () => {};
+	let onEvent: (event: unknown) => void = () => {};
+	let dirty = false;
+	let probes = 0;
+	const transport: AcpJsonRpcPeerTransport = {
+		closed: false,
+		request: async () => ({}) as never,
+		notify: (method, params) => {
+			if (method === "session/update") updates.push((params as { update: Record<string, unknown> }).update);
+		},
+		onRequest: (method, handler) => {
+			requests.set(method, handler);
+			return () => requests.delete(method);
+		},
+		onNotification: () => () => {},
+		onClose: (handler) => {
+			close = handler;
+			return () => {};
+		},
+		close: () => close(),
+	};
+	const settle = (id: string, toolName: string) => {
+		onEvent({ type: "tool_execution_start", toolCallId: id, toolName, args: { path: "README.md" } });
+		onEvent({ type: "tool_execution_end", toolCallId: id, toolName, result: "ok", isError: false });
+	};
+	const served = servePancodeAcpAgent({
+		transport,
+		cwd: process.cwd(),
+		workspace: async (cwd) => {
+			probes++;
+			return {
+				cwd,
+				isGit: true,
+				branch: "v060",
+				dirty,
+				ahead: 0,
+				behind: null,
+				recentCommits: [{ sha: "abc", subject: "private subject" }],
+				remoteUrl: "https://user:secret-token@github.com/akougkas/pancode",
+				projectType: "unknown",
+				capturedAt: new Date().toISOString(),
+			};
+		},
+		chat: {
+			submit: async () => {
+				settle("r1", "read");
+				dirty = true;
+				settle("e1", "edit");
+			},
+			cancel: () => {},
+			onEvent: (handler) => {
+				onEvent = handler;
+				return () => {
+					onEvent = () => {};
+				};
+			},
+			isStreaming: () => false,
+			getSessionId: () => null,
+		},
+	});
+	const call = async (method: string, params: unknown) => await requests.get(method)?.(params);
+	const init = (await call("initialize", { protocolVersion: 1 })) as {
+		agentCapabilities: { _meta: Record<string, unknown> };
+	};
+	deepStrictEqual(init.agentCapabilities._meta["pancode/workspace"], { version: 1, update: "session_info_update" });
+	const created = (await call("session/new", { cwd: process.cwd(), mcpServers: [] })) as {
+		sessionId: string;
+		_meta: Record<string, Record<string, unknown>>;
+	};
+	const view = created._meta["pancode/workspace"];
+	strictEqual(view?.dirty, false);
+	strictEqual(view?.branch, "v060");
+	strictEqual(view?.remoteUrl, "https://github.com/akougkas/pancode");
+	strictEqual(view?.recentCommits, undefined);
+	strictEqual(probes, 1);
+	await call("session/prompt", { sessionId: created.sessionId, prompt: [{ type: "text", text: "edit" }] });
+	strictEqual(probes, 2, "a read settles without a probe; the edit probes once");
+	const infos = updates.filter((update) => update.sessionUpdate === "session_info_update") as Array<{
+		_meta: Record<string, Record<string, unknown>>;
+	}>;
+	strictEqual(infos.length, 1);
+	strictEqual(infos[0]?._meta["pancode/workspace"]?.dirty, true);
+	close();
+	await served;
+});
+
+test("ACP carries a session cost ceiling stop as a notice chunk with its figures, live and on replay", async () => {
+	const budgetMeta = (frame: Record<string, unknown>) => (frame._meta as Record<string, unknown>)["pancode/budget"];
+	const text = (frame: Record<string, unknown>) =>
+		((frame.update as { content: { text: string } }).content as { text: string }).text;
+	// Live: the alert the admission wait raises inside a prompt crosses as that prompt's chunk,
+	// with the TUI's exact notice text and the raise a client can apply.
+	const bus = createTelemetryHub();
+	const live = fixture([], undefined, undefined, false, undefined, bus);
+	const alert = { level: "at" as const, currentUsd: 5.0008, ceilingUsd: 5, contextTokens: 12345.4 };
+	try {
+		const init = (await live.call("initialize", { protocolVersion: 1 })) as {
+			agentCapabilities: { _meta: Record<string, unknown> };
+		};
+		deepStrictEqual(init.agentCapabilities._meta["pancode/budget"], {
+			version: 1,
+			meta: "pancode/budget",
+			update: "agent_message_chunk",
+			setting: "safety.limits.sessionCostUsd",
+			replay: true,
+		});
+		bus.emit("budget.alerted", alert);
+		strictEqual(live.updates.length, 0, "an alert outside a prompt has no turn to belong to");
+		const opened = (await live.call("session/new", { cwd: live.cwd, mcpServers: [] })) as { sessionId: string };
+		const prompt = live.call("session/prompt", { sessionId: opened.sessionId, prompt: [{ type: "text", text: "Go" }] });
+		await Promise.resolve();
+		const before = live.updates.length;
+		bus.emit("budget.alerted", alert);
+		const frame = live.updates[before];
+		if (frame === undefined) throw new Error("the parked prompt sent no budget frame");
+		strictEqual((frame.update as { sessionUpdate: string }).sessionUpdate, "agent_message_chunk");
+		strictEqual(text(frame), `${budgetAlertNotice(alert)?.text}\n`);
+		deepStrictEqual((frame._meta as Record<string, unknown>)["pancode/notice"], { level: "warning" });
+		deepStrictEqual(budgetMeta(frame), {
+			version: 1,
+			currentDisplay: "$5.00",
+			ceilingDisplay: "$5.00",
+			raiseDisplay: "$5.50",
+			level: "at",
+			currentUsd: 5.0008,
+			ceilingUsd: 5,
+			contextTokens: 12345,
+			raiseToUsd: suggestedSessionCostCeilingUsd(5.0008, 5),
+			setting: "safety.limits.sessionCostUsd",
+		});
+		await live.call("_pancode/session/cancel", { sessionId: opened.sessionId });
+		strictEqual(((await prompt) as { stopReason: string }).stopReason, "cancelled");
+	} finally {
+		await live.stop();
+	}
+	// Replay: the durable block comes back inside its turn with the raise it recorded, and no
+	// other custom entry crosses.
+	const timestamp = "2026-09-25T12:00:00.000Z";
+	const block = {
+		level: "over" as const,
+		currentUsd: 5.2,
+		ceilingUsd: 5,
+		contextTokens: 9000,
+		raiseToUsd: 5.72,
+		setting: "safety.limits.sessionCostUsd" as const,
+	};
+	const loaded = fixture([
+		{ kind: "message", role: "user", turnId: "ask", parentTurnId: null, timestamp, payload: "Ship it" },
+		{
+			kind: "custom",
+			customType: "budgetBlock",
+			turnId: "stop",
+			parentTurnId: "ask",
+			timestamp,
+			display: true,
+			data: block,
+		},
+		{
+			kind: "custom",
+			customType: "retryStatus",
+			turnId: "retry",
+			parentTurnId: "ask",
+			timestamp,
+			display: true,
+			data: {},
+		},
+	]);
+	try {
+		await loaded.call("initialize", { protocolVersion: 1 });
+		await loaded.call("session/load", { sessionId: "session-1", cwd: loaded.cwd, mcpServers: [] });
+		const frames = loaded.updates.filter((frame) => budgetMeta(frame) !== undefined);
+		strictEqual(frames.length, 1);
+		const frame = frames[0];
+		if (frame === undefined) throw new Error("unreachable");
+		strictEqual(loaded.updates.filter((candidate) => text(candidate) === "").length, 0);
+		strictEqual(text(frame), `${budgetAlertNotice(block)?.text}\n`);
+		deepStrictEqual((frame._meta as Record<string, unknown>)["pancode/replay"], {
+			turn: 1,
+			stopReason: "error",
+			startedAt: timestamp,
+			finishedAt: timestamp,
+		});
+		deepStrictEqual((frame._meta as Record<string, unknown>)["pancode/notice"], { level: "error" });
+		deepStrictEqual(budgetMeta(frame), {
+			version: 1,
+			...block,
+			currentDisplay: "$5.20",
+			ceilingDisplay: "$5.00",
+			raiseDisplay: "$5.72",
+		});
+		strictEqual(
+			loaded.updates.filter(
+				(candidate) => (candidate.update as { sessionUpdate: string }).sessionUpdate !== "user_message_chunk",
+			).length,
+			1,
+			"the retry status entry stays off the wire",
+		);
+	} finally {
+		await loaded.stop();
+	}
+});

@@ -1,0 +1,18 @@
+{
+	"$schema": "https://cdn.agentclientprotocol.com/registry/v1/latest/agent.schema.json",
+	"id": "pancode",
+	"name": "PanCode",
+	"version": "0.9.0",
+	"description": "Systems software for coding agents: it drives the model you have, schedules bounded workers and checks finished work against what ran.",
+	"repository": "https://github.com/akougkas/pancode",
+	"website": "https://pancode.dev",
+	"license": "LicenseRef-PanCode-1.0",
+	"license_url": "https://github.com/akougkas/pancode/blob/main/LICENSE",
+	"authors": ["Anthony Kougkas <a.kougkas@gmail.com>"],
+	"distribution": {
+		"npx": {
+			"package": "pancode",
+			"args": ["acp"]
+		}
+	}
+}

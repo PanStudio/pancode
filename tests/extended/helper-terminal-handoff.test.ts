@@ -1,0 +1,431 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { join } from "node:path";
+import { test } from "node:test";
+import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
+import type { AgentEvent } from "../../src/engine/types.js";
+import type { PancodeWorkerEvent } from "../../src/engine/worker-events.js";
+import type { WorkerRunHandle } from "../../src/engine/worker-run-types.js";
+import { startWorkerRun } from "../../src/engine/worker-runtime.js";
+import { attestedToolSignature } from "../../src/engine/worker-tools.js";
+import { projectWorkerEventForStdout } from "../../src/worker/event-projection.js";
+import { isReceiptBearingFrame, toolSignatureOf } from "../../src/worker/protocol.js";
+import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+const data = { findings: [{ claim: "No grounded evidence is available." }], needsSplit: false, proposedSubtasks: [] };
+const submit = (args: unknown = data) => ({ name: "pancode_submit_result", arguments: JSON.stringify(args) });
+const longData = { ...data, findings: [{ claim: "Substantive finding. ".repeat(600) }] };
+const write = { name: "write", arguments: JSON.stringify({ path: "forbidden.txt", content: "must not execute" }) };
+const mutationData = {
+	completion: { state: "done", limitations: [], unverified: [] },
+	mutatedPaths: ["changed.txt"],
+	validations: [],
+	observations: ["Updated the assigned file."],
+};
+const mutationWrite = { name: "write", arguments: JSON.stringify({ path: "changed.txt", content: "changed" }) };
+const scenarios: Array<{
+	name: string;
+	rounds: Array<Array<ReturnType<typeof submit>> | string>;
+	code: number;
+	expectedData?: Record<string, unknown>;
+	mutation?: boolean;
+	toolsSupported?: boolean;
+	terminalRound?: number;
+	synthesisDuringWrite?: boolean;
+	noWorkRecovery?: boolean;
+}> = [
+	{
+		name: "coder prose repairs through a typed mutation handoff",
+		mutation: true,
+		rounds: [[mutationWrite], "Updated the file.", [submit(mutationData)]],
+		code: 0,
+		expectedData: mutationData,
+		terminalRound: 2,
+	},
+	{
+		name: "coder typed handoff rejects an unsupported path claim",
+		mutation: true,
+		rounds: [
+			[mutationWrite],
+			"Updated the file.",
+			[submit({ ...mutationData, mutatedPaths: ["missing.ts"] })],
+			[submit(mutationData)],
+		],
+		code: 0,
+		expectedData: mutationData,
+		terminalRound: 2,
+	},
+	{
+		name: "coder without tool support accepts ordinary JSON",
+		mutation: true,
+		toolsSupported: false,
+		rounds: [
+			JSON.stringify({
+				completion: { state: "done", limitations: [], unverified: [] },
+				mutatedPaths: [],
+				validations: [],
+				summary: null,
+				commitMessage: null,
+			}),
+		],
+		code: 0,
+		expectedData: {
+			completion: { state: "done", limitations: [], unverified: [] },
+			mutatedPaths: [],
+			validations: [],
+			summary: null,
+			commitMessage: null,
+		},
+	},
+	{
+		name: "coder ordinary JSON seals without a submission round",
+		mutation: true,
+		rounds: [[mutationWrite], JSON.stringify(mutationData)],
+		code: 0,
+		expectedData: mutationData,
+		terminalRound: 2,
+	},
+	{
+		name: "entering synthesis during a write retains both terminal repairs",
+		mutation: true,
+		synthesisDuringWrite: true,
+		rounds: [
+			[mutationWrite],
+			[
+				submit({
+					completion: { state: "done", limitations: [], unverified: [] },
+					mutatedPaths: [],
+					validations: "invalid",
+				}),
+			],
+			[
+				submit({
+					completion: { state: "done", limitations: [], unverified: [] },
+					mutatedPaths: [],
+					validations: "invalid",
+				}),
+			],
+			[submit(mutationData)],
+		],
+		code: 0,
+		expectedData: mutationData,
+		terminalRound: 1,
+	},
+	{
+		name: "repeated malformed no-work replies fail the change-or-declared obligation",
+		mutation: true,
+		noWorkRecovery: true,
+		rounds: ["Done.", "Done."],
+		code: 1,
+		terminalRound: 2,
+	},
+	{
+		name: "accepts a report larger than the old 8 KiB capture limit",
+		rounds: [[submit(longData)]],
+		code: 0,
+		expectedData: longData,
+	},
+	{ name: "validated JSON text fallback", rounds: [JSON.stringify(data)], code: 0 },
+	{ name: "prose never becomes structured evidence", rounds: ["Done.", "Done.", "Done."], code: 1 },
+	{ name: "accepted handoff terminates without prose round", rounds: [[submit()]], code: 0 },
+	{ name: "schema failure repairs once", rounds: [[submit({ findings: [] })], [submit()]], code: 0 },
+	{
+		name: "unobserved citation fails validation then repairs",
+		rounds: [[submit({ ...data, findings: [{ claim: "invented", path: "missing.ts", line: 1 }] })], [submit()]],
+		code: 0,
+	},
+	{ name: "work preceding handoff cannot execute", rounds: [[write, submit()], [submit()]], code: 0 },
+	{ name: "work following handoff cannot execute", rounds: [[submit(), write], [submit()]], code: 0 },
+	{ name: "duplicate handoffs are rejected", rounds: [[submit(), submit()], [submit()]], code: 0 },
+	{ name: "work cannot reopen during repair", rounds: [[submit({ findings: [] })], [write], [submit()]], code: 0 },
+	{
+		name: "invalid arguments exhaust two repairs",
+		rounds: [[submit({ findings: [] })], [submit({ findings: [] })], [submit({ findings: [] })]],
+		code: 1,
+	},
+	{
+		name: "malformed transport arguments fail closed",
+		rounds: [[{ name: "pancode_submit_result", arguments: "{" }]],
+		code: 1,
+	},
+];
+for (const scenario of scenarios) {
+	test(`internal helper: ${scenario.name}`, { timeout: 15000 }, async (context) => {
+		const env = await isolatePancodeEnv("pancode-helper-terminal-");
+		const previousCwd = process.cwd();
+		process.chdir(env.dir);
+		const requests: Array<{
+			tools?: Array<{ function: { name: string; parameters?: unknown } }>;
+			messages: Array<{ role: string; content: unknown }>;
+			tool_choice?: unknown;
+			parallel_tool_calls?: unknown;
+		}> = [];
+		const sessionIds: Array<string | string[] | undefined> = [];
+		const events: Array<AgentEvent | PancodeWorkerEvent> = [];
+		let worker: WorkerRunHandle | undefined;
+		const server = createServer(async (req, res) => {
+			sessionIds.push(req.headers["x-litellm-session-id"]);
+			requests.push(JSON.parse(await readRequestBody(req)));
+			const round = scenario.rounds[requests.length - 1] ?? [submit({ findings: [] })];
+			res.setHeader("content-type", "text/event-stream");
+			res.end(
+				`data: ${JSON.stringify({ model: "fixture", choices: [{ index: 0, delta: typeof round === "string" ? { content: round } : { role: "assistant", tool_calls: round.map((call, index) => ({ index, id: `call_${requests.length}_${index}`, type: "function", function: call === mutationWrite ? { ...call, arguments: JSON.stringify({ path: join(env.dir, "changed.txt"), content: "changed" }) } : call })) }, finish_reason: typeof round === "string" ? "stop" : "tool_calls" }] })}\n\ndata: [DONE]\n\n`,
+			);
+		});
+		try {
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			if (scenario.synthesisDuringWrite) context.mock.timers.enable({ apis: ["setTimeout"] });
+			worker = startWorkerRun(
+				{
+					agentId: scenario.mutation ? "coder" : "scout",
+					systemPrompt: "Inspect and return a Scout report.",
+					task: "Summarize available evidence.",
+					target: { id: "fixture", runtime: "litellm", url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` },
+					runtime: litellm,
+					wireModelId: "fixture",
+					apiKey: "fixture",
+					thinkingLevel: "off",
+					modelCapabilities: { contextWindow: 131072, maxTokens: 8192, tools: scenario.toolsSupported !== false },
+					allowedTools: scenario.toolsSupported === false ? [] : ["write"],
+					writeRoots: [env.dir],
+					...(scenario.synthesisDuringWrite ? { synthesisAt: Date.now() + 60_000 } : {}),
+					budget: { mode: "advisory", toolCalls: 18, synthesis: true, hardCap: 150 },
+					product: "orientation",
+					noSkills: true,
+					cwd: env.dir,
+					helperResult: true,
+					resultContract: { kind: scenario.mutation ? "mutation-report" : "scout-report" },
+				},
+				(event) => {
+					events.push(event);
+					if (scenario.synthesisDuringWrite && event.type === "pancode_tool_start" && event.payload.tool === "write")
+						context.mock.timers.tick(60_000);
+					if (event.type === "pancode_helper_result") worker?.steer?.("Attempt another write after acceptance.");
+				},
+			);
+			const result = await worker.promise;
+			strictEqual(result.exitCode, scenario.code, JSON.stringify(result));
+			strictEqual(requests.length, scenario.rounds.length);
+			if (scenario.synthesisDuringWrite)
+				strictEqual(JSON.stringify(requests[1]?.messages).includes("pancode-result-contract-repair"), false);
+			if (scenario.noWorkRecovery)
+				deepStrictEqual(
+					events.filter((event) => event.type === "pancode_run_outcome").map((event) => event.payload),
+					[
+						{
+							outcomeCode: "obligation_unmet",
+							detail: "obligation change-or-declared unmet: worker executed no tools, so it did none of its assignment",
+						},
+					],
+				);
+			ok(
+				typeof sessionIds[0] === "string" && sessionIds[0].length > 0 && sessionIds.every((id) => id === sessionIds[0]),
+				"provider options must carry one stable session ID across the worker's calls and repair rounds",
+			);
+			ok(requests[0]);
+			if (scenario.toolsSupported !== false)
+				ok(
+					requests[0].tools?.some((tool) => tool.function.name === "write"),
+					"fixture must expose a real work tool before terminal lock",
+				);
+			if (!scenario.mutation) {
+				strictEqual(
+					toolSignatureOf((requests[0].tools ?? []).map((tool) => tool.function.name)),
+					attestedToolSignature({
+						allowedTools: ["write"],
+						toolsSupported: true,
+						helperResult: true,
+						agentId: "scout",
+						task: "Summarize available evidence.",
+					}),
+				);
+			} else {
+				for (const request of requests.slice(0, scenario.terminalRound ?? requests.length)) {
+					ok(!JSON.stringify(request.tools ?? []).includes("pancode_submit_result"));
+					ok(
+						!JSON.stringify(request.messages.filter((message) => message.role === "system")).includes(
+							"Internal helper protocol",
+						),
+					);
+				}
+				if (scenario.toolsSupported !== false && scenario.code === 0)
+					strictEqual(readFileSync(join(env.dir, "changed.txt"), "utf8"), "changed");
+				if (scenario.name.includes("unsupported path")) {
+					const rejected = events.filter(
+						(event) => event.type === "tool_execution_end" && event.toolName === "pancode_submit_result" && event.isError,
+					);
+					strictEqual(rejected.length, 1);
+					ok(JSON.stringify(rejected[0]).includes("this run never wrote"));
+				}
+			}
+			// FL-16: on this non-native route the handoff never rewrites the system prompt mid-run; phase notes ride the tail.
+			const systemOf = (request: (typeof requests)[number]) =>
+				JSON.stringify(request.messages.filter((message) => message.role === "system"));
+			for (const request of requests.slice(1)) strictEqual(systemOf(request), systemOf(requests[0] ?? request));
+			const handoffRequest = scenario.mutation ? requests[scenario.terminalRound ?? requests.length] : undefined;
+			if (handoffRequest?.tools?.some((tool) => tool.function.name === "pancode_submit_result"))
+				ok(JSON.stringify(handoffRequest.messages.at(-1)).includes("Internal helper protocol"));
+			strictEqual(existsSync(join(env.dir, "forbidden.txt")), false);
+			if (
+				!scenario.mutation &&
+				scenario.rounds.some((round) => Array.isArray(round) && round.some((call) => call.name === "write"))
+			) {
+				const deniedWrite = events.find((event) => event.type === "tool_execution_end" && event.toolName === "write");
+				ok(deniedWrite?.type === "tool_execution_end");
+				strictEqual(deniedWrite.isError, true);
+				ok(/mixed or duplicate|Work tools are disabled/.test(JSON.stringify(deniedWrite.result)));
+			}
+			const accepted = events.filter((event) => event.type === "pancode_helper_result");
+			strictEqual(accepted.length, scenario.code === 0 ? 1 : 0);
+			if (accepted[0]) {
+				deepStrictEqual(accepted[0].payload, {
+					version: 1,
+					kind: scenario.mutation ? "mutation-report" : "scout-report",
+					data: scenario.expectedData ?? data,
+				});
+				strictEqual(projectWorkerEventForStdout(accepted[0]), accepted[0]);
+				strictEqual(isReceiptBearingFrame(accepted[0]), true);
+			}
+			// Completions keep the work surface at the handoff and name the result tool, so the prefill survives (row 158);
+			// a handoff reply that ignored the named choice narrows every later handoff on the route.
+			const firstTerminal = scenario.terminalRound ?? (scenario.mutation ? requests.length : 1);
+			let ignored = false;
+			for (const [index, request] of requests.entries()) {
+				if (index < firstTerminal) continue;
+				if (ignored) {
+					deepStrictEqual(
+						(request.tools ?? []).map((tool) => tool.function.name),
+						["pancode_submit_result"],
+					);
+					strictEqual(request.tool_choice, "required");
+				} else {
+					deepStrictEqual(
+						(request.tools ?? []).map((tool) => tool.function.name),
+						["write", "pancode_submit_result"],
+					);
+					if (!scenario.mutation) deepStrictEqual(request.tools, requests[0].tools);
+					deepStrictEqual(request.tool_choice, { type: "function", function: { name: "pancode_submit_result" } });
+				}
+				if (scenario.mutation)
+					ok(request.tools?.find((tool) => tool.function.name === "pancode_submit_result")?.function.parameters);
+				strictEqual(request.parallel_tool_calls, false);
+				const reply = scenario.rounds[index];
+				if (!Array.isArray(reply) || !reply.some((call) => call.name === "pancode_submit_result")) ignored = true;
+			}
+			if (scenario.code === 1 && scenario.rounds.length === 3) {
+				const exhausted = events.filter(
+					(event) => event.type === "pancode_run_outcome" && event.payload.outcomeCode === "result_contract_exhausted",
+				);
+				strictEqual(exhausted.length, 1);
+				// The receipt can only say why if the event carries the reason.
+				ok(exhausted[0]?.type === "pancode_run_outcome");
+				ok(/^result contract failed after 2 bounded repair rounds: \S/u.test(exhausted[0].payload.detail ?? ""));
+			}
+		} finally {
+			worker?.abort();
+			await worker?.promise;
+			if (scenario.synthesisDuringWrite) context.mock.timers.reset();
+			await closeServer(server);
+			process.chdir(previousCwd);
+			env.restore();
+		}
+	});
+}
+
+// M-31: a scout that submits an empty result before reading keeps its read tools for the repair and is told to read.
+test("internal helper: a premature empty scout submission repairs by reading", { timeout: 15000 }, async () => {
+	const env = await isolatePancodeEnv("pancode-helper-evidence-repair-");
+	const previousCwd = process.cwd();
+	process.chdir(env.dir);
+	writeFileSync(join(env.dir, "mod.js"), "export function alpha() {}\n");
+	const grounded = {
+		findings: [{ claim: "exports alpha", path: "mod.js", line: 1 }],
+		needsSplit: false,
+		proposedSubtasks: [],
+	};
+	const rounds = [
+		[submit({ findings: [], needsSplit: false, proposedSubtasks: [] })],
+		[{ name: "read", arguments: JSON.stringify({ path: "mod.js" }) }, write],
+		[submit(grounded)],
+	];
+	const requests: Array<{
+		tools?: unknown;
+		messages: Array<{ role: string; content: unknown }>;
+		tool_choice?: unknown;
+	}> = [];
+	const events: Array<AgentEvent | PancodeWorkerEvent> = [];
+	let worker: WorkerRunHandle | undefined;
+	const server = createServer(async (req, res) => {
+		requests.push(JSON.parse(await readRequestBody(req)));
+		const round = rounds[requests.length - 1] ?? [submit({ findings: [] })];
+		res.setHeader("content-type", "text/event-stream");
+		res.end(
+			`data: ${JSON.stringify({ model: "fixture", choices: [{ index: 0, delta: { role: "assistant", tool_calls: round.map((call, index) => ({ index, id: `call_${requests.length}_${index}`, type: "function", function: call })) }, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`,
+		);
+	});
+	try {
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		worker = startWorkerRun(
+			{
+				agentId: "scout",
+				systemPrompt: "Inspect and return a Scout report.",
+				task: "Read only mod.js and report the exported function name.",
+				target: { id: "fixture", runtime: "litellm", url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` },
+				runtime: litellm,
+				wireModelId: "fixture",
+				apiKey: "fixture",
+				thinkingLevel: "off",
+				modelCapabilities: { contextWindow: 131072, maxTokens: 8192, tools: true },
+				allowedTools: ["read", "write"],
+				writeRoots: [env.dir],
+				budget: { mode: "advisory", toolCalls: 18, synthesis: true, hardCap: 150 },
+				product: "orientation",
+				noSkills: true,
+				cwd: env.dir,
+				helperResult: true,
+				resultContract: { kind: "scout-report" },
+			},
+			(event) => events.push(event),
+		);
+		const result = await worker.promise;
+		strictEqual(result.exitCode, 0, JSON.stringify(result));
+		strictEqual(requests.length, 3);
+		// The repair round keeps the work phase's tool declarations and does not force the handoff.
+		deepStrictEqual(requests[1]?.tools, requests[0]?.tools);
+		ok(
+			JSON.stringify(requests[1]?.tool_choice ?? null).includes("pancode_submit_result") === false,
+			"evidence repair must not force the terminal handoff",
+		);
+		ok(/read the inputs the assignment names/i.test(JSON.stringify(requests[1]?.messages.at(-1))));
+		const read = events.find((event) => event.type === "tool_execution_end" && event.toolName === "read");
+		ok(read?.type === "tool_execution_end");
+		strictEqual(read.isError, false);
+		// Only reading reopens: the write beside it is refused at admission.
+		ok(
+			JSON.stringify(events.find((event) => event.type === "tool_execution_end" && event.toolName === "write")).includes(
+				"evidence repair",
+			),
+		);
+		strictEqual(existsSync(join(env.dir, "forbidden.txt")), false);
+		const accepted = events.filter((event) => event.type === "pancode_helper_result");
+		strictEqual(accepted.length, 1);
+	} finally {
+		worker?.abort();
+		await worker?.promise;
+		await closeServer(server);
+		process.chdir(previousCwd);
+		env.restore();
+	}
+});
+
+test("tool-disabled targets attest no terminal helper tool", () => {
+	strictEqual(
+		attestedToolSignature({ allowedTools: ["write"], toolsSupported: false, helperResult: true }),
+		attestedToolSignature({ allowedTools: ["write"], toolsSupported: false }),
+	);
+});

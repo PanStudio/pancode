@@ -1,0 +1,456 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { PancodeKeybinding } from "../domains/config/keybindings.js";
+import { decodePrintableKey, isKeyRelease, isKeyRepeat, matchesKey } from "../engine/tui.js";
+import { backOutOneLayer } from "./escape-layers.js";
+import { SCROLL_PAGE } from "./overlay-frame.js";
+import {
+	MUTATION_PREVIEW_KEY,
+	PERMISSION_SESSION_SCOPE_KEY,
+	PERMISSION_STOP_KEY,
+	PERMISSION_TERMS_KEY,
+	permissionEscapeLayers,
+} from "./permission-hint.js";
+
+export type OverlayState =
+	| "closed"
+	| "permission-confirm"
+	| "dispatch-board"
+	| "auth"
+	| "usage"
+	| "context-view"
+	| "context-reset"
+	| "thinking-level"
+	| "tasks"
+	| "decisions"
+	| "research"
+	| "memory"
+	| "view"
+	| "model"
+	| "model-scope"
+	| "settings"
+	| "resume"
+	| "tree"
+	| "rewind"
+	| "message-picker"
+	| "cwd-fallback"
+	| "ask-user"
+	| "help"
+	| "extensions"
+	| "interop"
+	| "project-trust"
+	| "skills-hub"
+	| "side-question"
+	| "draft"
+	| "handoff-review"
+	| "report-review"
+	| "report-status"
+	| "fleet-run-approval"
+	| "queue-navigator";
+
+export interface PermissionOverlayKeyDeps {
+	cancelPermission: () => void;
+	confirmPermission: () => void;
+	/** Whether the card offers its sandbox escape's session option, and choosing it (M-7). */
+	canConfirmPermissionForSession?: () => boolean;
+	confirmPermissionForSession?: () => void;
+	stopTurnFromPermission: () => void;
+	/**
+	 * Whether the composer holds text. Enter must not allow a parked call while
+	 * it does (issue #186): an operator who typed a message and pressed the
+	 * habitual send key meant to send, and on a safety rail the ambiguous key
+	 * resolves away from "allow". Absent means an empty composer.
+	 */
+	composerHasDraft?: () => boolean;
+	/** Enter met a draft and allowed nothing: say why, so a typed `/fork` is not silently dropped (bt-11 p). */
+	explainHeldDraft?: () => void;
+	/**
+	 * Whether the card opened too recently for Enter to be an answer to it. A
+	 * key already on its way (a double tap, two Enters in one read, an Enter
+	 * meant for the overlay the card interrupted) must not allow a call the
+	 * operator has not seen. Deny and stop still act at once.
+	 */
+	isPermissionSettling?: () => boolean;
+	/**
+	 * Deliver a draft-editing key to the composer while the prompt owns input,
+	 * so the draft that makes Enter inert can be cleared without first denying
+	 * the call. Only the deletion keys in `isDraftEditKey` arrive here.
+	 */
+	editDraft?: (operation: DraftEditOperation) => void;
+	/** Literal text stays in the composer while the approval owns the screen. */
+	editComposer?: (data: string) => void;
+	/** Whether this card has a mutation the operator can read locally (issue #254). */
+	canInspectMutation?: () => boolean;
+	isInspectingMutation?: () => boolean;
+	toggleMutationInspection?: () => void;
+	scrollMutationInspection?: (delta: number) => void;
+	/** Fold or unfold the standing approval terms on the card. */
+	togglePermissionTerms?: () => void;
+	/** Whether the terms are unfolded, so Esc folds them before it denies. */
+	isShowingPermissionTerms?: () => boolean;
+	/** Scroll a card taller than its rows (BT-005); false leaves the key unconsumed. */
+	scrollPermissionCard?: (delta: number) => boolean;
+	/** Page the fullscreen transcript behind a card that has nothing of its own to scroll; false when there is no viewport. */
+	scrollTranscript?: (direction: -1 | 1) => boolean;
+}
+
+export interface DispatchBoardOverlayKeyDeps {
+	closeOverlay: () => void;
+	selectPreviousDispatch: () => void;
+	selectNextDispatch: () => void;
+	steerSelectedDispatch: () => void;
+	cancelSelectedDispatch: () => void;
+	/** First `x` asks: false arms the selected run and holds the key; true means it was armed, so cancel. */
+	confirmCancelSelectedDispatch?: () => boolean;
+	/** Any key other than `x` keeps the run. */
+	disarmCancelSelectedDispatch?: () => void;
+	/** Open or close the selected run's worker-progress detail. */
+	toggleSelectedDispatchDetail: () => void;
+	/** Whether the selected run's detail is open, so Esc folds it before it closes the board. */
+	isSelectedDispatchDetailOpen?: () => boolean;
+	scrollSelectedDispatchDetail?: (direction: -1 | 1) => void;
+	/**
+	 * Open or retarget the watch pane for the selected run. True when the pane
+	 * layer took the key; false hands Enter back to the inline detail toggle,
+	 * which is the whole behavior when panes are off or the run is terminal.
+	 */
+	watchSelectedDispatch: () => boolean;
+	/**
+	 * `/` closes the board and hands the key to the composer, so a typed command
+	 * runs instead of its Enter opening a row behind a stale steer notice.
+	 */
+	startSlashCommand?: (data: string) => void;
+}
+
+interface CloseOverlayKeyDeps {
+	closeOverlay: () => void;
+}
+
+export interface AskUserOverlayKeyDeps {
+	cancelAskUser: () => void;
+}
+
+export interface OverlayKeyDeps extends PermissionOverlayKeyDeps, DispatchBoardOverlayKeyDeps, AskUserOverlayKeyDeps {
+	canToggleOwner?: () => boolean;
+}
+
+export function isEscapeKey(data: string): boolean {
+	return matchesKey(data, "escape") && !isKeyRelease(data);
+}
+
+export type DraftEditOperation =
+	| "deleteCharBackward"
+	| "deleteCharForward"
+	| "deleteToLineStart"
+	| "deleteToLineEnd"
+	| "deleteWordBackward";
+const DRAFT_EDITS: ReadonlyArray<readonly [import("../engine/tui.js").KeyId, DraftEditOperation]> = [
+	["backspace", "deleteCharBackward"],
+	["delete", "deleteCharForward"],
+	["ctrl+u", "deleteToLineStart"],
+	["ctrl+k", "deleteToLineEnd"],
+	["ctrl+w", "deleteWordBackward"],
+	["alt+backspace", "deleteWordBackward"],
+	["ctrl+backspace", "deleteWordBackward"],
+];
+/** How far a key scrolls the open mutation or card, or 0 when the key is not a scroll key. A page is the pane's own window. */
+function mutationScrollDelta(data: string): number {
+	if (matchesKey(data, "up")) return -1;
+	if (matchesKey(data, "down")) return 1;
+	if (matchesKey(data, "pageUp")) return -SCROLL_PAGE;
+	if (matchesKey(data, "pageDown")) return SCROLL_PAGE;
+	return 0;
+}
+
+/** The keys `ScrollingBody` answers. */
+function isScrollKey(data: string): boolean {
+	return (
+		matchesKey(data, "up") ||
+		matchesKey(data, "down") ||
+		matchesKey(data, "pageUp") ||
+		matchesKey(data, "pageDown") ||
+		matchesKey(data, "home") ||
+		matchesKey(data, "ctrl+home") ||
+		matchesKey(data, "end") ||
+		matchesKey(data, "ctrl+end")
+	);
+}
+
+/** Pure permission overlay key router: returns true when the input was consumed. */
+function routePermissionOverlayKey(data: string, deps: PermissionOverlayKeyDeps): boolean {
+	if (matchesKey(data, "enter") && !isKeyRelease(data)) {
+		// Consumed either way: with a draft the press changes nothing, and the
+		// composer rail says what clears it. Letting it fall through would hand
+		// Enter to the editor, which is the send path this guard exists to block.
+		if (deps.composerHasDraft?.() ?? false) deps.explainHeldDraft?.();
+		else if (!(deps.isPermissionSettling?.() ?? false)) deps.confirmPermission();
+		return true;
+	}
+	// The session option of a sandbox escape (M-7): held like Enter while a draft is in the composer.
+	if (
+		matchesKey(data, PERMISSION_SESSION_SCOPE_KEY) &&
+		!isKeyRelease(data) &&
+		(deps.canConfirmPermissionForSession?.() ?? false)
+	) {
+		if (deps.composerHasDraft?.() ?? false) deps.explainHeldDraft?.();
+		else if (!(deps.isPermissionSettling?.() ?? false)) deps.confirmPermissionForSession?.();
+		return true;
+	}
+	const edit = DRAFT_EDITS.find(([key]) => matchesKey(data, key));
+	if (deps.editDraft && edit) {
+		deps.editDraft(edit[1]);
+		return true;
+	}
+	// Reading the mutation is the one thing this dialog does that is not an
+	// answer, so it toggles rather than navigating away: Enter and Alt+X keep
+	// their meanings the whole time the mutation is on screen. Esc puts the
+	// details away first, because an operator backing out of a view they opened
+	// means to go back, not to deny; the card is then as it was and a second Esc
+	// denies. A card with nothing local to inspect leaves the key inert.
+	if (
+		matchesKey(data, MUTATION_PREVIEW_KEY) &&
+		!isKeyRelease(data) &&
+		(deps.canInspectMutation?.() ?? false) &&
+		deps.toggleMutationInspection
+	) {
+		deps.toggleMutationInspection();
+		return true;
+	}
+	if (
+		matchesKey(data, PERMISSION_TERMS_KEY) &&
+		deps.togglePermissionTerms &&
+		!(deps.isInspectingMutation?.() ?? false)
+	) {
+		deps.togglePermissionTerms();
+		return true;
+	}
+	if ((deps.isInspectingMutation?.() ?? false) && deps.scrollMutationInspection && !isKeyRelease(data)) {
+		const delta = mutationScrollDelta(data);
+		if (delta !== 0) {
+			deps.scrollMutationInspection(delta);
+			return true;
+		}
+	}
+	if (deps.scrollPermissionCard && !isKeyRelease(data)) {
+		const delta = mutationScrollDelta(data);
+		if (delta !== 0 && deps.scrollPermissionCard(delta)) return true;
+	}
+	// A card that fits its rows leaves the page keys free, and the parked call sits at the tail of
+	// a transcript the operator may need to read before deciding.
+	if (deps.scrollTranscript && !isKeyRelease(data)) {
+		const direction = matchesKey(data, "pageUp") ? -1 : matchesKey(data, "pageDown") ? 1 : 0;
+		if (direction !== 0 && deps.scrollTranscript(direction)) return true;
+	}
+	if (isEscapeKey(data)) {
+		const inspecting = (deps.isInspectingMutation?.() ?? false) && deps.toggleMutationInspection !== undefined;
+		const terms = (deps.isShowingPermissionTerms?.() ?? false) && deps.togglePermissionTerms !== undefined;
+		backOutOneLayer(
+			permissionEscapeLayers(inspecting ? "open" : "closed", terms ? "open" : "closed", {
+				hideDetails: () => deps.toggleMutationInspection?.(),
+				hideTerms: () => deps.togglePermissionTerms?.(),
+				deny: deps.cancelPermission,
+			}),
+		);
+		return true;
+	}
+	// Denying one call does not stop the model asking again, and it re-asked six
+	// times with the command mutated each time. Escape answers this call; Alt+X
+	// answers the turn.
+	if (matchesKey(data, PERMISSION_STOP_KEY) && !isKeyRelease(data)) {
+		deps.stopTurnFromPermission();
+		return true;
+	}
+	if (
+		decodePrintableKey(data) !== undefined ||
+		(data.length > 0 && [...data].every((char) => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127))
+	) {
+		deps.editComposer?.(data);
+		return true;
+	}
+	return false;
+}
+
+/** Pure overlay key router for the dispatch board. */
+function routeDispatchBoardOverlayKey(data: string, deps: DispatchBoardOverlayKeyDeps): boolean {
+	if (!isKeyRelease(data) && !matchesKey(data, "x")) deps.disarmCancelSelectedDispatch?.();
+	if (isEscapeKey(data)) {
+		if (deps.isSelectedDispatchDetailOpen?.() === true) deps.toggleSelectedDispatchDetail();
+		else deps.closeOverlay();
+		return true;
+	}
+	if (isKeyRelease(data)) return false;
+	if (deps.isSelectedDispatchDetailOpen?.() && (matchesKey(data, "pageUp") || matchesKey(data, "pageDown"))) {
+		deps.scrollSelectedDispatchDetail?.(matchesKey(data, "pageUp") ? -1 : 1);
+		return true;
+	}
+	if (matchesKey(data, "up") || matchesKey(data, "k")) {
+		deps.selectPreviousDispatch();
+		return true;
+	}
+	if (matchesKey(data, "down") || matchesKey(data, "j")) {
+		deps.selectNextDispatch();
+		return true;
+	}
+	if (matchesKey(data, "m")) {
+		deps.steerSelectedDispatch();
+		return true;
+	}
+	if (matchesKey(data, "x")) {
+		if (deps.confirmCancelSelectedDispatch?.() === false) return true;
+		deps.cancelSelectedDispatch();
+		return true;
+	}
+	// Enter opens the detail in place everywhere. The watch pane is a separate,
+	// named choice on `w`, because opening it splits the terminal and an operator
+	// who pressed Enter to read a row did not ask for the layout to change (LA06).
+	// E-13: Tab is Enter's twin for the detail; Fleet Runs has no tabs to change.
+	if (matchesKey(data, "enter") || matchesKey(data, "tab")) {
+		deps.toggleSelectedDispatchDetail();
+		return true;
+	}
+	if (matchesKey(data, "w")) {
+		deps.watchSelectedDispatch();
+		return true;
+	}
+	if (deps.startSlashCommand !== undefined && (data === "/" || decodePrintableKey(data) === "/")) {
+		deps.closeOverlay();
+		deps.startSlashCommand(data);
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Auth overlays own their Esc: the dialog backs out of a typed field before it
+ * cancels the sign-in, so the key goes to the dialog like every other key.
+ */
+function routeAuthOverlayKey(_data: string, _deps: CloseOverlayKeyDeps): boolean {
+	return false;
+}
+
+/** Esc closes an inspection overlay; callers decide how to route its remaining keys. */
+function routeReadOnlyOverlayKey(data: string, deps: CloseOverlayKeyDeps): boolean {
+	if (isEscapeKey(data)) {
+		deps.closeOverlay();
+		return true;
+	}
+	return false;
+}
+
+/** Pure overlay key router for the /fork message-picker. */
+function routeMessagePickerOverlayKey(data: string, deps: CloseOverlayKeyDeps): boolean {
+	if (isEscapeKey(data)) {
+		deps.closeOverlay();
+		return true;
+	}
+	return false;
+}
+
+export function overlayOwnsInput(overlayState: OverlayState): boolean {
+	return overlayState !== "closed";
+}
+
+export function routeOverlayKey(
+	data: string,
+	overlayState: OverlayState,
+	deps: OverlayKeyDeps,
+	matches: (data: string, id: PancodeKeybinding) => boolean,
+): boolean {
+	if (overlayState === "closed") return false;
+	if (isKeyRelease(data)) return true;
+	if (overlayState === "permission-confirm") {
+		if (data.includes("\x1b[200~")) {
+			deps.editComposer?.(data);
+			return true;
+		}
+		if (isKeyRepeat(data)) {
+			if (decodePrintableKey(data) !== undefined) deps.editComposer?.(data);
+			return true;
+		}
+	}
+	if (
+		!isKeyRepeat(data) &&
+		(deps.canToggleOwner?.() ?? true) &&
+		((overlayState === "dispatch-board" && matches(data, "pancode.dispatchBoard.toggle")) ||
+			(overlayState === "tasks" && matches(data, "pancode.tasks.open")) ||
+			(overlayState === "tree" && matches(data, "pancode.session.tree")) ||
+			(overlayState === "model" && matches(data, "pancode.model.select")) ||
+			(overlayState === "skills-hub" && matches(data, "pancode.hub.toggle")) ||
+			(overlayState === "queue-navigator" && matches(data, "pancode.queue.open")) ||
+			false)
+	) {
+		deps.closeOverlay();
+		return true;
+	}
+	if (overlayState === "permission-confirm") {
+		routePermissionOverlayKey(data, deps);
+		return true;
+	}
+	if (overlayState === "auth") return routeAuthOverlayKey(data, deps);
+	if (overlayState === "usage") return routeReadOnlyOverlayKey(data, deps);
+	// The page is taller than a narrow terminal, so its scroll keys reach the
+	// body. Everything else stays swallowed, as it always was here.
+	if (overlayState === "context-view") {
+		if (isScrollKey(data)) return false;
+		routeReadOnlyOverlayKey(data, deps);
+		return true;
+	}
+	// Esc is the only key the side-question overlay answers: it aborts a round
+	// that is still streaming and closes one that has settled. Everything else is
+	// swallowed so a keystroke cannot reach the composer behind it.
+	if (overlayState === "side-question") {
+		routeReadOnlyOverlayKey(data, deps);
+		return true;
+	}
+	// The draft overlay owns the arrows, the number keys, and Esc itself.
+	if (overlayState === "draft") return false;
+	// The handoff review overlay owns Enter, `e`, the arrows, and Esc itself, so
+	// every key goes to its own focus box rather than through the router.
+	if (overlayState === "handoff-review") return false;
+	// The report review owns Enter, its letter keys, the arrows and Esc; the status list is a list overlay.
+	if (overlayState === "report-review" || overlayState === "report-status") return false;
+	// The fleet-run approval overlay owns Enter, the arrows, and Esc itself, so
+	// every key goes to its own focus box rather than through the router.
+	if (overlayState === "fleet-run-approval") return false;
+	// The queue navigator owns its arrows, letters, Enter and Esc.
+	if (overlayState === "queue-navigator") return false;
+	if (overlayState === "context-reset") return false;
+	if (overlayState === "thinking-level") return false;
+	if (overlayState === "tasks") return false;
+	if (overlayState === "decisions") return false;
+	if (overlayState === "research") return false;
+	if (overlayState === "memory") return false;
+	if (overlayState === "view") return false;
+	if (overlayState === "model") return false;
+	// The scope dialog owns Esc itself: cancelling it must leave the model where
+	// it was, and a router-level close cannot say that to the caller waiting on it.
+	if (overlayState === "model-scope") return false;
+	// Settings owns Esc itself: its stack is sections → rows → detail, and a
+	// router-level close made every Esc leave the overlay from wherever the
+	// operator was, so a cancelled picker and a finished visit looked the same.
+	if (overlayState === "settings") return false;
+	if (overlayState === "resume") return false;
+	if (overlayState === "tree") return false;
+	// The snapshot list and its confirmation own their keys and Esc.
+	if (overlayState === "rewind") return false;
+	if (overlayState === "message-picker") return routeMessagePickerOverlayKey(data, deps);
+	if (overlayState === "cwd-fallback") return false;
+	if (overlayState === "ask-user") return false;
+	if (
+		overlayState === "help" ||
+		overlayState === "extensions" ||
+		overlayState === "interop" ||
+		overlayState === "project-trust" ||
+		overlayState === "skills-hub"
+	) {
+		return false;
+	}
+	if (overlayState === "dispatch-board") {
+		routeDispatchBoardOverlayKey(data, deps);
+		return true;
+	}
+	// Adding an OverlayState without an explicit route is a compile error. At
+	// runtime an invalid cast still fails closed by swallowing the modal input.
+	overlayState satisfies never;
+	return true;
+}

@@ -1,0 +1,1413 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* The workbench shell: a task rail on the left, one inset card for the work, no masthead.
+   Colour comes from client/design/tokens.css only. Overlays are derived with color-mix so the
+   rail follows the theme without a raw value. */
+
+/* Hover and press are neutral ink tints, so they never read as the selected state, which is
+   the only green fill. They live on the root because dialogs are portaled to the body, outside .wb. */
+:root {
+	--wb-hover: color-mix(in srgb, var(--ink) 6%, transparent);
+	--wb-active: color-mix(in srgb, var(--ink) 11%, transparent);
+	--wb-faint: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+.app-layout {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	grid-template-rows: minmax(0, 1fr) auto;
+	height: 100dvh;
+}
+.app-setup {
+	min-height: 0;
+	overflow: auto;
+}
+.app-setup .wizard {
+	min-height: 100%;
+}
+
+.wb {
+	--wb-side: 320px;
+	--wb-aside: 400px;
+	--wb-gap: 8px;
+	--wb-radius: var(--radius-md);
+	--wb-row: 40px;
+	display: grid;
+	grid-template-columns: var(--wb-side) minmax(0, 1fr) 0;
+	min-height: 0;
+	background: var(--surface);
+	color: var(--ink);
+	transition: grid-template-columns var(--motion-base) var(--ease-standard);
+}
+.wb[data-sidebar="collapsed"] {
+	grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+/* The right sidebar is the rail's mirror: the same chrome, the same column treatment. */
+.wb[data-aside="expanded"] {
+	grid-template-columns: var(--wb-side) minmax(0, 1fr) var(--wb-aside);
+}
+.wb[data-sidebar="collapsed"][data-aside="expanded"] {
+	grid-template-columns: 0 minmax(0, 1fr) var(--wb-aside);
+}
+.wb-sidebar {
+	grid-column: 1;
+	grid-row: 1;
+}
+.wb-stage {
+	grid-column: 2;
+	grid-row: 1;
+}
+.wb-aside {
+	grid-column: 3;
+	grid-row: 1;
+	position: relative;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+	font-size: var(--text-meta);
+}
+.wb-aside[hidden] {
+	display: none;
+}
+.wb-aside__slot {
+	width: var(--wb-aside);
+	height: 100%;
+	min-height: 0;
+}
+.wb[data-aside="expanded"] .wb-stage {
+	margin-right: 0;
+}
+
+/* ---- rail ---------------------------------------------------------------- */
+.wb-sidebar {
+	position: relative;
+	min-width: 0;
+	overflow: hidden;
+	font-size: var(--text-meta);
+}
+.wb[data-sidebar="collapsed"] .wb-sidebar {
+	visibility: hidden;
+}
+.wb-side {
+	width: var(--wb-side);
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	padding: var(--space-2) var(--space-2) 0;
+}
+.wb-side__top {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+	min-height: 52px;
+	padding: 0 var(--space-1) 0 var(--space-2);
+	margin-bottom: var(--space-2);
+}
+.wb-brand,
+.wb-back {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+	color: var(--ink);
+	text-decoration: none;
+	font-weight: 650;
+	font-size: var(--text-body);
+	letter-spacing: -0.2px;
+}
+.wb-brand__identity {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 2px var(--space-2);
+	min-width: 0;
+}
+.wb-brand__identity > span {
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.wb-brand__version {
+	color: var(--ink-muted);
+	font: 400 var(--text-instrument) / var(--leading-tight) var(--font-mono);
+	letter-spacing: 0;
+}
+.wb-back {
+	font-weight: 500;
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+	padding: 6px 8px;
+	margin-left: -8px;
+	border-radius: var(--radius-sm);
+}
+.wb-back:hover {
+	background: var(--wb-hover);
+	color: var(--ink);
+}
+
+/* One reset for every control in the rail, so the global bordered `button` never leaks in. */
+.wb-icon,
+.wb-action,
+.wb-task__main,
+.wb-project__toggle,
+.wb-more,
+.wb-link {
+	min-height: 0;
+	margin: 0;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink);
+	font: inherit;
+	text-decoration: none;
+	cursor: pointer;
+}
+.wb-icon {
+	display: inline-grid;
+	place-items: center;
+	flex: none;
+	width: 36px;
+	height: 36px;
+	padding: 0;
+	color: var(--ink-muted);
+}
+/* An even glyph in an even button: an odd one sits on a half pixel and its strokes blur. */
+.wb-icon .icon {
+	width: var(--icon-md);
+	height: var(--icon-md);
+}
+.wb-icon--small {
+	width: 26px;
+	height: 26px;
+}
+.wb-icon--small .icon {
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+}
+/* A finger needs a larger target; the glyph keeps its size. */
+@media (pointer: coarse) {
+	.wb-icon {
+		width: 40px;
+		height: 40px;
+	}
+	.wb-icon--small {
+		width: 36px;
+		height: 36px;
+	}
+}
+.wb-icon:active:not(:disabled),
+.wb-action:active:not(:disabled),
+.wb-task__main:active:not(:disabled) {
+	background: var(--wb-active);
+}
+.wb-icon:hover:not(:disabled),
+.wb-action:hover:not(:disabled),
+.wb-task__main:hover:not(:disabled),
+.wb-project__toggle:hover:not(:disabled),
+.wb-more:hover:not(:disabled) {
+	background: var(--wb-hover);
+	border-color: transparent;
+	color: var(--ink);
+}
+.wb-icon:disabled,
+.wb-action:disabled {
+	color: var(--disabled-fg);
+}
+.wb-icon:hover:not(:disabled) .icon,
+.wb-action:hover:not(:disabled) .icon,
+.wb-icon:focus-visible .icon,
+.wb-action:focus-visible .icon {
+	color: var(--accent);
+}
+
+.wb-side__actions {
+	display: grid;
+	gap: 2px;
+	margin: 0;
+}
+.wb-action {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 42px;
+	padding: 0 10px;
+	width: 100%;
+	text-align: left;
+}
+.wb-action .icon {
+	width: var(--icon-md);
+	height: var(--icon-md);
+	color: var(--ink-muted);
+}
+.wb-action--primary .icon {
+	color: var(--accent);
+}
+.wb-action > span {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.wb-action kbd {
+	font: inherit;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	letter-spacing: 0.02em;
+}
+/* A router link marks its page with aria-current; a button marks its view with data-active. */
+.wb-action:is([data-active="true"], [aria-current="page"]) {
+	background: var(--accent-soft);
+	color: var(--ink);
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+.wb-action:is([data-active="true"], [aria-current="page"]) .icon {
+	color: var(--accent);
+}
+
+.wb-side__heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin: var(--space-4) 0 var(--space-1);
+	padding: 0 var(--space-1) 0 10px;
+}
+.wb-side__heading h2,
+.wb-side__label {
+	margin: 0;
+	font-size: var(--text-exact);
+	font-weight: 500;
+	letter-spacing: 0.01em;
+	color: var(--ink-muted);
+}
+.wb-side__label {
+	padding: var(--space-4) 10px var(--space-1);
+}
+.wb-side__label:first-child {
+	padding-top: var(--space-2);
+}
+.wb-side__heading > div {
+	display: flex;
+	gap: 2px;
+}
+.wb-side__filter {
+	padding: 0 var(--space-1) var(--space-2);
+}
+.wb-side__filter input {
+	height: 30px;
+	padding: 0 10px;
+	font-size: var(--text-meta);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--wb-faint);
+}
+.wb-side__sections {
+	display: grid;
+	gap: 2px;
+	align-content: start;
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+}
+.wb-side__panel {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+}
+
+/* ---- tasks ---------------------------------------------------------------- */
+.wb-side__tasks {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	margin: 0 calc(var(--space-1) * -1);
+	padding: 0 var(--space-1) var(--space-3);
+	scrollbar-gutter: stable;
+}
+.wb-side__tasks:focus-visible {
+	outline-offset: -2px;
+}
+.wb-project {
+	margin-bottom: var(--space-1);
+}
+.wb-project__head {
+	position: relative;
+	display: flex;
+	align-items: center;
+}
+.wb-project__toggle {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex: 1;
+	min-width: 0;
+	height: var(--wb-row);
+	padding: 0 10px;
+	text-align: left;
+	color: var(--ink-muted);
+	font-weight: 500;
+}
+.wb-project[data-current="true"] .wb-project__toggle {
+	color: var(--ink);
+}
+.wb-project[data-current="true"] .wb-project__toggle .icon {
+	color: var(--secondary);
+}
+.wb-project__toggle .icon {
+	width: var(--icon-md);
+	height: var(--icon-md);
+	flex: none;
+}
+.wb-project__toggle span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.wb-project__new {
+	position: absolute;
+	right: 2px;
+	opacity: 0;
+}
+.wb-project__head:hover .wb-project__new,
+.wb-project__new:focus-visible {
+	opacity: 1;
+}
+.wb-tasks {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 1px;
+}
+.wb-tasks > li {
+	min-width: 0;
+	animation: wb-task-arrive var(--motion-base) var(--ease-standard) backwards;
+}
+/* A task that appears in the rail rises into its row once; rows never move after that. The fill is
+   backwards only: a transform held after the rise made the row the containing block of its fixed
+   action menu, which then opened hundreds of pixels below its button. */
+@keyframes wb-task-arrive {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+}
+.wb-task {
+	position: relative;
+	display: flex;
+	align-items: center;
+	border-radius: var(--radius-sm);
+}
+.wb-task__main {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: 1;
+	min-width: 0;
+	height: var(--wb-row);
+	padding: 0 10px 0 12px;
+	text-align: left;
+	color: var(--ink);
+}
+.wb-task[data-selected="true"] .wb-task__main {
+	background: var(--accent-soft);
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+.wb-task__glyph {
+	display: inline-grid;
+	place-items: center;
+	flex: none;
+	width: 16px;
+	height: 16px;
+}
+.wb-task__title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.wb-task__age {
+	flex: none;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	font-variant-numeric: tabular-nums;
+}
+.wb-task__menu {
+	position: absolute;
+	right: 4px;
+	opacity: 0;
+}
+.wb-task:hover .wb-task__menu,
+.wb-task:focus-within .wb-task__menu,
+.wb-task__menu:has(.wb-menu[open]) {
+	opacity: 1;
+}
+.wb-task:hover .wb-task__age,
+.wb-task:focus-within:has(.wb-task__menu) .wb-task__age,
+.wb-task:has(.wb-menu[open]) .wb-task__age {
+	visibility: hidden;
+}
+@media (pointer: coarse) {
+	.wb-task__menu {
+		opacity: 1;
+	}
+	.wb-task__age {
+		visibility: hidden;
+	}
+}
+.wb-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+}
+.wb-dot--approval {
+	background: var(--action-line);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-line) 24%, transparent);
+}
+.wb-dot--failed {
+	background: var(--status-fail-line);
+}
+.wb-more,
+.wb-link {
+	display: block;
+	width: 100%;
+	height: 28px;
+	padding: 0 10px 0 34px;
+	text-align: left;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.wb-link {
+	display: inline;
+	width: auto;
+	height: auto;
+	padding: 0;
+	text-decoration: underline;
+}
+.wb-note {
+	margin: 0;
+	padding: 6px 10px 6px 34px;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	list-style: none;
+}
+.wb-project__history {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	color: var(--ink-muted);
+	font-size: var(--text-instrument);
+	text-decoration: none;
+}
+.wb-project__history .icon {
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+}
+.wb-side__tasks > .wb-note {
+	padding-left: 10px;
+}
+
+/* ---- footer --------------------------------------------------------------- */
+.wb-side__foot {
+	container-type: inline-size;
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	padding: var(--space-2) var(--space-1) var(--space-3) var(--space-2);
+	border-top: 1px solid var(--line);
+}
+.wb-runtime {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	flex: 1;
+	min-width: 0;
+	min-height: 40px;
+	padding: var(--space-1);
+	border-radius: var(--radius-sm);
+	color: var(--ink);
+	text-decoration: none;
+}
+.wb-runtime:hover,
+.wb-runtime:focus-visible {
+	background: var(--wb-hover);
+}
+.wb-runtime > .icon {
+	flex: none;
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+	color: var(--ink-muted);
+}
+.wb-runtime:hover > .icon,
+.wb-runtime:focus-visible > .icon {
+	color: var(--accent);
+}
+.wb-runtime__identity {
+	display: grid;
+	flex: 1;
+	min-width: 0;
+	gap: 2px;
+	line-height: var(--leading-tight);
+}
+.wb-runtime__identity strong {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	font-weight: 500;
+	font-size: var(--text-exact);
+}
+.wb-runtime__platform {
+	color: var(--ink-muted);
+	font-size: var(--text-instrument);
+	font-weight: 400;
+}
+@container (max-width: 230px) {
+	.wb-runtime > .icon,
+	.wb-runtime__platform {
+		display: none;
+	}
+}
+.wb-status {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	min-width: 0;
+	font-size: var(--text-instrument);
+	color: var(--ink-muted);
+}
+.wb-status__glyph {
+	flex: none;
+	width: 12px;
+	text-align: center;
+}
+.wb-status__label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.wb-status[data-tone="success"] {
+	color: var(--status-success-fg);
+}
+.wb-status[data-tone="warn"] {
+	color: var(--status-warn-fg);
+}
+.wb-status[data-tone="fail"] {
+	color: var(--status-fail-fg);
+}
+
+/* ---- the activity indicator's box; shell/mark.css draws its live dot and check ---- */
+.pancode-pulse {
+	position: relative;
+	display: inline-block;
+	flex: none;
+	vertical-align: middle;
+	contain: layout paint style;
+}
+
+/* ---- stage: the inset card that holds the work ---------------------------- */
+.wb-stage {
+	position: relative;
+	display: flex;
+	min-width: 0;
+	min-height: 0;
+	margin: var(--wb-gap) var(--wb-gap) var(--wb-gap) 0;
+	border: 1px solid var(--stage-edge);
+	border-radius: var(--wb-radius);
+	background: var(--paper);
+	box-shadow: var(--shadow-stage);
+	overflow: hidden;
+}
+.wb[data-sidebar="collapsed"] .wb-stage {
+	margin-left: var(--wb-gap);
+}
+.wb-main {
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	scroll-margin-top: 0;
+}
+/* Settings and inspection pages keep their document-style layout inside the card. */
+.wb-main[data-mode="settings"] {
+	display: block;
+	overflow-y: auto;
+	padding: var(--space-10) var(--space-10) var(--space-16);
+	scrollbar-gutter: stable;
+}
+.wb-main[data-mode="settings"] > * {
+	max-width: 1120px;
+	margin-inline: auto;
+}
+/* The rail's toggle, floating on the card while the rail is collapsed. */
+.wb-float {
+	position: absolute;
+	top: 8px;
+	left: 8px;
+	z-index: 4;
+	display: none;
+}
+.wb[data-sidebar="collapsed"] .wb-stage[data-mode="settings"] .wb-float {
+	display: block;
+}
+
+/* ---- top bar used by task screens ------------------------------------------ */
+/* The bar is as tall as the two sidebars' headers and starts one card edge lower, so the brand, the
+   task's name and the sidebar's title sit on one line across the window. */
+.wb-bar {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	flex: none;
+	min-height: 52px;
+	padding: 0 var(--space-3);
+}
+.wb-bar__lead {
+	display: none;
+	gap: 2px;
+}
+.wb[data-sidebar="collapsed"] .wb-bar__lead {
+	display: flex;
+}
+.wb-bar__title {
+	margin: 0;
+	/* Shrinks eight times as readily as the project chip beside it, down to the minimum below. */
+	flex: 0 8 auto;
+	/* The task's name is the last thing a narrow bar gives up: chips shrink and drop first. */
+	min-width: min(14ch, 40%);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--font-ui);
+	font-size: var(--text-body);
+	font-weight: 600;
+	letter-spacing: -0.1px;
+	line-height: 1.3;
+}
+.wb-bar__spacer {
+	flex: 1;
+}
+.wb-bar__end {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 2px;
+}
+/* A filled action in the bar is cut to the bar's control height. */
+.wb-bar > .primary {
+	min-height: 30px;
+	padding: 0 12px;
+	gap: var(--space-2);
+}
+.wb-bar > .primary .icon {
+	width: var(--icon-md);
+	height: var(--icon-md);
+}
+.wb-bar .wb-icon[aria-pressed="true"],
+.wb-bar .wb-icon[aria-expanded="true"] {
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+.wb-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 26px;
+	min-height: 0;
+	max-width: 14rem;
+	padding: 0 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--wb-faint);
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+	text-decoration: none;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.wb-chip .icon {
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+}
+/* The chip clips, so its words carry the ellipsis; without this a long path was cut mid-letter. */
+.wb-chip > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+a.wb-chip:hover,
+button.wb-chip:hover:not(:disabled) {
+	color: var(--ink);
+	border-color: var(--line-strong);
+}
+.wb-chip[data-tone="working"] {
+	color: var(--status-running-fg);
+}
+/* Live figures: tabular so a ticking number never shifts its neighbours, and never squeezed. */
+.wb-chip--meter,
+.wb-chip--figure {
+	flex: none;
+	font: 500 var(--text-exact) / 1 var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	color: var(--ink);
+	cursor: pointer;
+}
+.wb-chip--meter {
+	color: var(--accent);
+}
+.wb-ring {
+	width: 18px;
+	height: 18px;
+	transform: rotate(-90deg);
+}
+.wb-ring circle {
+	fill: none;
+	stroke-width: 2.5;
+}
+.wb-ring__track {
+	stroke: var(--line);
+}
+.wb-ring__fill {
+	stroke: var(--accent);
+	stroke-linecap: round;
+	transition: stroke-dasharray var(--motion-base) var(--ease-standard);
+}
+.wb-chip--meter[data-tone="warn"] .wb-ring__fill {
+	stroke: var(--status-warn-line);
+}
+.wb-chip--meter[data-tone="warn"] {
+	color: var(--status-warn-fg);
+}
+.wb-chip--meter[data-tone="full"] .wb-ring__fill {
+	stroke: var(--status-fail-line);
+}
+.wb-chip--meter[data-tone="full"] {
+	color: var(--status-fail-fg);
+}
+/* A pending approval is an action waiting on the operator, so the chip and the rail dot take the
+   action tokens the approval strip uses, not the warning ramp. */
+.wb-chip[data-tone="approval"] {
+	color: var(--action-fg);
+	border-color: var(--action-line);
+}
+
+/* In the bar a chip is a reading on an instrument strip, not a tag: no frame and no fill, the same
+   quiet control as the icon buttons beside it, filling only when pointed at. One chip keeps its
+   frame, the approval that is waiting on the operator, so it is the only boxed thing in the bar. */
+.wb-bar .wb-chip {
+	height: 30px;
+	/* The status chip is a paragraph; its default margin made the bar taller than its controls. */
+	margin: 0;
+	padding: 0 8px;
+	border-color: transparent;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	transition:
+		background var(--motion-fast) var(--ease-standard),
+		color var(--motion-fast) var(--ease-standard);
+}
+.wb-bar a.wb-chip:hover,
+.wb-bar button.wb-chip:hover:not(:disabled) {
+	border-color: transparent;
+	background: var(--wb-hover);
+	color: var(--ink);
+}
+.wb-bar :is(.wb-chip--meter, .wb-chip--figure):hover:not(:disabled) {
+	box-shadow: inset 0 -1px 0 var(--accent-line);
+}
+.wb-bar .wb-chip--figure:hover:not(:disabled) {
+	color: var(--accent);
+}
+.wb-bar .wb-chip--meter[data-tone="warn"]:hover:not(:disabled) {
+	color: var(--status-warn-fg);
+}
+.wb-bar .wb-chip--meter[data-tone="full"]:hover:not(:disabled) {
+	color: var(--status-fail-fg);
+}
+.wb-bar a.wb-chip:active,
+.wb-bar button.wb-chip:active:not(:disabled) {
+	background: var(--wb-active);
+}
+.wb-bar .wb-chip--status {
+	padding-inline: var(--space-1);
+}
+.wb-bar .wb-chip--status[data-tone="approval"] {
+	height: 26px;
+	padding-inline: 10px;
+	border-color: var(--action-line);
+	border-radius: var(--radius-sm);
+	background: var(--action-tint);
+}
+/* What a tight bar gives up, in order: the end controls' words, the title down to its minimum, the project's name
+   down to its own, and only then a whole reading. Status, the readings and the end controls never clip. */
+.wb-bar {
+	container: bar / inline-size;
+}
+/* The title and the project's name shrink, eight to one, so far ahead of the readings (shrink 1) that a reading loses
+   no fraction of a pixel until both are at their minimums. A factor under 1 on the readings would instead stop them
+   shrinking once they are the last flexible item, so the weight sits here. */
+.wb-bar .wb-bar__title {
+	flex-shrink: 8000000;
+}
+.wb-bar .wb-chip--place {
+	flex: 0 1000000 auto;
+	min-width: min(12ch, 30%);
+}
+.wb-bar :is(.wb-chip--status, .wb-chip--meter, .wb-chip--figure) {
+	flex: none;
+}
+/* A figure is the server's display, read whole (#434), never cut to the chip cap. */
+.wb-bar :is(.wb-chip--meter, .wb-chip--figure) {
+	max-width: none;
+}
+/* The live readings take the room the title leaves, right-aligned, and shrink only once the title and the project's
+   name are at their minimums. A reading that still does not fit wraps onto a second line the bar hides, so it shows
+   whole or not at all, and the controls after it never leave the bar.
+   On a wide bar the basis is every reading on one line, so a long title gives way before a reading does. Once the
+   bar is narrow enough that some reading will wrap out anyway, the basis drops to one ring's width, so the title is
+   not squeezed for readings nobody sees. */
+.wb-bar__readings {
+	display: flex;
+	flex: 1 1 auto;
+	flex-wrap: wrap;
+	align-content: flex-start;
+	align-items: center;
+	justify-content: flex-end;
+	column-gap: var(--space-2);
+	min-width: 0;
+	height: 30px;
+	overflow: hidden;
+}
+/* So the readings' clip never cuts an explanation, it is fixed where `placePanel` anchors it. */
+.wb-bar .explain__panel {
+	position: fixed;
+	top: calc(var(--explain-top, 0px) + var(--space-2));
+	left: calc(var(--explain-left, 0px) + var(--explain-shift, 0px));
+}
+/* Before the bar runs out of room, the end controls drop their words; each keeps its accessible name. */
+@container bar (max-width: 1120px) {
+	.wb-bar__end .wb-icon--text > span:not(.diffstat, .pane-attention),
+	.wb-bar__end .conversation__find > span {
+		display: none;
+	}
+}
+/* A page's own bar (Sessions, a project's work) gives way on the same terms, and once it is phone-narrow its primary
+   action keeps only its mark. The words stay in the accessibility tree, so each control keeps its name. */
+@container bar (max-width: 1120px) {
+	.wb-bar > .wb-icon--text > span {
+		display: none;
+	}
+}
+@container bar (max-width: 30rem) {
+	.wb-bar > .primary {
+		gap: 0;
+		padding-inline: var(--space-2);
+		font-size: 0;
+	}
+	.wb-bar > .wb-icon.wb-icon--text {
+		padding-inline: 6px;
+	}
+}
+/* At phone width such a bar also closes its gaps, so the sidebar and New task buttons, the title, four controls
+   and the primary action share 390px. */
+@media (max-width: 560px) {
+	.wb-bar:has(> .primary) {
+		gap: var(--space-1);
+	}
+}
+/* A page's name is short; a floor wider than the name itself pushed the primary action out of a phone-width bar. */
+@container bar (max-width: 30rem) {
+	.wb-bar:has(> .primary) > .wb-bar__title {
+		min-width: 0;
+	}
+}
+@container bar (max-width: 60rem) {
+	.wb-bar__readings {
+		flex-basis: 0;
+		min-width: 5.5rem;
+	}
+}
+/* On a phone-width bar the readings and the project's name give up their room before the controls leave the bar.
+   The drawer's bar at a 561–650 px window is still this tight: the floors alone summed past it at 40rem. */
+@container bar (max-width: 40rem) {
+	.wb-bar__readings {
+		min-width: 0;
+	}
+	.wb-bar .wb-chip--place {
+		min-width: min(6ch, 20%);
+	}
+}
+@container bar (max-width: 760px) {
+	.wb-bar .wb-chip__tokens {
+		display: none;
+	}
+	.wb-bar__title {
+		min-width: min(10ch, 30%);
+	}
+}
+/* The two figures sit as one reading: the ring and its share, then the spend. */
+.wb-bar .wb-chip--meter + .wb-chip--figure {
+	margin-inline-start: -4px;
+}
+
+/* ---- phones: the rail becomes a drawer ------------------------------------- */
+.wb-scrim {
+	display: none;
+}
+@media (max-width: 760px) {
+	.wb {
+		display: block;
+	}
+	.wb-sidebar,
+	.wb[data-sidebar="collapsed"] .wb-sidebar {
+		position: fixed;
+		inset: 0 auto 0 0;
+		z-index: 30;
+		width: min(86vw, 320px);
+		background: var(--surface);
+		border-right: 1px solid var(--line);
+		visibility: hidden;
+		transform: translateX(-100%);
+		transition:
+			transform var(--motion-base) var(--ease-standard),
+			visibility 0s linear var(--motion-base);
+	}
+	.wb[data-drawer="open"] .wb-sidebar {
+		visibility: visible;
+		transform: none;
+		transition: transform var(--motion-base) var(--ease-standard);
+	}
+	.wb-side {
+		width: 100%;
+	}
+	.wb[data-drawer="open"] .wb-scrim {
+		display: block;
+		position: fixed;
+		inset: 0;
+		z-index: 20;
+		min-height: 0;
+		border: 0;
+		border-radius: 0;
+		background: var(--scrim);
+	}
+	.wb-stage,
+	.wb[data-sidebar="collapsed"] .wb-stage {
+		height: 100%;
+		margin: 0;
+		border: 0;
+		border-radius: 0;
+	}
+	.wb-bar__lead {
+		display: flex;
+	}
+	/* No sidebars to line up with on a phone, and a finger needs the taller strip. */
+	.wb-bar {
+		min-height: 48px;
+	}
+	.wb-main[data-mode="settings"] {
+		padding: var(--space-8) var(--space-4) var(--space-12);
+	}
+	.wb-stage[data-mode="settings"] .wb-float {
+		display: block;
+	}
+}
+
+/* ---- action menu (a details element) ---------------------------------------- */
+.wb-menu {
+	position: relative;
+	margin: 0;
+	font-size: var(--text-meta);
+	color: var(--ink);
+}
+.wb-menu > summary {
+	list-style: none;
+}
+.wb-menu > summary::-webkit-details-marker {
+	display: none;
+}
+.wb-menu[open] > summary {
+	background: var(--wb-active);
+	color: var(--ink);
+}
+.wb-menu__panel {
+	position: absolute;
+	right: 0;
+	top: calc(100% + 6px);
+	z-index: 20;
+	display: grid;
+	gap: 1px;
+	/* As wide as its longest item, so each item is one line; the cap keeps a long project name on screen. */
+	width: max-content;
+	min-width: 12.5rem;
+	max-width: min(28rem, calc(100vw - var(--space-4)));
+	padding: 5px;
+	border: 1px solid var(--line-float);
+	border-radius: var(--radius-md);
+	background: var(--overlay);
+	box-shadow: var(--shadow-panel);
+	animation: wb-menu-open var(--motion-fast) var(--ease-standard);
+}
+/* The task's menu follows its title at the left of the bar, so it opens toward the free side
+   instead of back over the name it belongs to. */
+.wb-bar > .wb-menu > .wb-menu__panel {
+	right: auto;
+	left: 0;
+	/* The task menu has twenty items, taller than a phone's screen: it scrolls itself rather than the conversation. */
+	max-height: calc(100dvh - 4rem - env(safe-area-inset-bottom, 0px));
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+/* On a phone the menu hangs from the bar's own left gutter, so it fits whatever the title's width. */
+@media (max-width: 560px) {
+	.wb-bar {
+		position: relative;
+	}
+	.wb-bar > .wb-menu {
+		position: static;
+	}
+	/* Against the bar, not the viewport, so the panel's right edge stays inside a bar that starts past x = 0. */
+	.wb-bar > .wb-menu > .wb-menu__panel {
+		left: var(--space-2);
+		right: auto;
+		max-width: calc(100% - 2 * var(--space-2));
+	}
+}
+/* No scale: Menu.tsx measures the panel while it opens to place a floating one. */
+@keyframes wb-menu-open {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+}
+.wb-menu__item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	min-height: 40px;
+	padding: var(--space-2) 10px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink);
+	text-align: left;
+	font-size: var(--text-meta);
+	white-space: nowrap;
+}
+/* Only when the panel's cap binds: the label ends in an ellipsis instead of breaking onto a second line. */
+.wb-menu__item > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.wb-menu__item:hover:not(:disabled) {
+	background: var(--wb-hover);
+	border-color: transparent;
+}
+.wb-menu__item:active:not(:disabled) {
+	background: var(--wb-active);
+}
+.wb-menu__item .icon {
+	flex: none;
+	width: var(--icon-md);
+	height: var(--icon-md);
+	color: var(--ink-muted);
+}
+.wb-menu__item:hover:not(:disabled) .icon {
+	color: var(--ink);
+}
+/* A destructive item sits apart from the ones above it and answers a hover in its own tone. */
+.wb-menu__item[data-tone="danger"] {
+	color: var(--status-fail-fg);
+}
+.wb-menu__item[data-tone="danger"]:hover:not(:disabled) {
+	background: var(--status-fail-tint);
+}
+.wb-menu__item[data-tone="danger"] .icon,
+.wb-menu__item[data-tone="danger"]:hover:not(:disabled) .icon {
+	color: inherit;
+}
+.wb-menu__item:not([data-tone="danger"]) + .wb-menu__item[data-tone="danger"] {
+	margin-top: 5px;
+}
+.wb-menu__item:not([data-tone="danger"]) + .wb-menu__item[data-tone="danger"]::before {
+	content: "";
+	position: absolute;
+	inset: -3px 0 auto;
+	height: 1px;
+	background: var(--line);
+}
+.wb-menu__item[data-tone="danger"] {
+	position: relative;
+}
+
+/* Touch screens have no chords to print, and a narrow bar keeps the title rather than the project chip. */
+@media (pointer: coarse) {
+	.wb-action kbd {
+		display: none;
+	}
+}
+@media (max-width: 560px) {
+	.wb-bar .wb-chip:not(.wb-chip--status) {
+		display: none;
+	}
+	/* A phone keeps the controls and drops their words; each still has its accessible name. */
+	.wb-bar .wb-icon--text > span {
+		display: none;
+	}
+}
+/* At phone width the status may give way before the end controls leave the bar, and a waiting
+   approval says it in two words beside the strip's mark. The full label stays in the chip's text, so
+   its accessible name is unchanged; the short words are generated and carry no name of their own. */
+@media (max-width: 390px) {
+	.wb-bar .wb-chip--status {
+		flex: 0 1 auto;
+		min-width: 0;
+	}
+	.wb-bar .wb-chip--status[data-tone="approval"] {
+		position: relative;
+		gap: var(--space-1);
+		padding-inline: var(--space-2);
+	}
+	.wb-bar .wb-chip--status[data-tone="approval"] > span {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+	.wb-bar .wb-chip--status[data-tone="approval"]::before {
+		content: "!" / "";
+		font-family: var(--font-mono);
+		font-weight: 700;
+	}
+	.wb-bar .wb-chip--status[data-tone="approval"]::after {
+		content: "Approval needed" / "";
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+}
+/* A phone-width disclosure is at least a 24px target. Zero specificity: a summary sized on purpose,
+   and the 44px row a touch pointer gets, both keep their own rule. Padding grows it, never the type. */
+@media (max-width: 390px) {
+	:where(summary) {
+		min-block-size: 24px;
+		padding-block: 3px;
+	}
+}
+
+.wb-icon.wb-icon--text {
+	display: inline-flex;
+	gap: 6px;
+	width: auto;
+	padding: 0 8px;
+}
+
+/* ---- Open workspace dialog ---------------------------------------------------------- */
+.wb-open {
+	display: flex;
+	gap: var(--space-2);
+	margin-bottom: var(--space-4);
+}
+.wb-open input {
+	flex: 1;
+	font-family: var(--font-mono);
+}
+.wb-open button {
+	flex: none;
+}
+
+/* A menu inside a scrolling list opens in a fixed layer so the list cannot clip it. */
+.wb-menu[data-float="yes"] > .wb-menu__panel {
+	position: fixed;
+	right: auto;
+	top: var(--menu-top, -9999px);
+	left: var(--menu-left, 0);
+}
+
+/* ---- inline rename ---------------------------------------------------------- */
+.wb-rename {
+	flex: 1;
+	min-width: 0;
+	height: 26px;
+	min-height: 0;
+	padding: 0 8px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	color: var(--ink);
+	font: inherit;
+}
+.wb-bar__title .wb-rename {
+	height: 28px;
+	width: min(32ch, 100%);
+	font-size: var(--text-meta);
+	font-weight: 600;
+}
+/* The bleed sits on the heading, not the button: a negative margin on the button made the heading's
+   shrink-to-fit width 12 px narrower than the button's own box, so max-width cut the title with room to spare. */
+.wb-bar__title--rename {
+	margin-inline: -6px;
+}
+.wb-bar__rename {
+	display: block;
+	max-width: 100%;
+	min-height: 0;
+	margin: 0;
+	padding: 2px 6px;
+	overflow: hidden;
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	letter-spacing: inherit;
+	text-align: left;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	cursor: text;
+}
+.wb-bar__rename:hover {
+	background: var(--wb-hover);
+	border-color: transparent;
+}
+
+/* ---- delete confirmation on a task row ------------------------------------- */
+.wb-task__confirm {
+	display: flex;
+	margin: 0;
+	border: 0;
+	flex: 1;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+	height: var(--wb-row);
+	padding: 0 4px 0 12px;
+	font-size: var(--text-meta);
+}
+.wb-task__confirm span {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.wb-task__confirm button {
+	min-height: 0;
+	height: 24px;
+	padding: 0 9px;
+	font-size: var(--text-exact);
+}
+.wb-task__confirm .wb-task__delete {
+	border-color: var(--status-fail-line);
+	color: var(--status-fail-fg);
+}
+
+/* Activation can wait for a conversation or setup prompt. Keep that state visible in both shells. */
+.app-update-notice {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	padding: var(--space-4);
+	border-bottom: 1px solid var(--line);
+	background: var(--paper);
+	color: var(--ink);
+}
+
+/* The browser supplies caption-button geometry; normal browser tabs keep their existing layout. */
+.window-titlebar {
+	display: none;
+}
+@media (display-mode: window-controls-overlay) {
+	:root {
+		--window-titlebar-height: env(titlebar-area-height, 32px);
+	}
+	body {
+		padding-top: var(--window-titlebar-height);
+	}
+	.app-layout {
+		height: calc(100dvh - var(--window-titlebar-height));
+	}
+	.pane__dialog {
+		height: calc(100dvh - var(--space-4) - var(--window-titlebar-height));
+		margin-top: calc(var(--space-2) + var(--window-titlebar-height));
+	}
+	.window-titlebar {
+		position: fixed;
+		z-index: 10;
+		top: env(titlebar-area-y, 0px);
+		left: env(titlebar-area-x, 0px);
+		width: env(titlebar-area-width, 100%);
+		height: var(--window-titlebar-height);
+		display: flex;
+		align-items: center;
+		padding-inline: var(--space-4);
+		background: var(--paper);
+		color: var(--ink-muted);
+		font: 500 var(--text-instrument) / 1 var(--font-ui);
+		user-select: none;
+		app-region: drag;
+		-webkit-app-region: drag;
+	}
+}
+
+/* Machine switcher: which machine's app this window shows. */
+.wb-machine {
+	margin: 0 0 var(--space-2);
+}
+.wb-machine > summary.wb-action {
+	cursor: pointer;
+}
+.wb-machine__label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: 600;
+}
+.wb-machine__panel {
+	left: 0;
+	right: auto;
+	min-width: 17rem;
+}
+.wb-machine__item[aria-current="true"] {
+	background: var(--accent-soft);
+	box-shadow: inset 2px 0 0 var(--accent);
+	color: var(--ink);
+}
+.wb-machine__choice {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+.wb-machine__choice small {
+	color: var(--ink-muted);
+	font-size: var(--text-instrument);
+}
+.wb-machine__choice [data-tone="success"] {
+	color: var(--status-success-fg);
+}
+.wb-machine__choice [data-tone="running"] {
+	color: var(--status-running-fg);
+}
+.wb-machine__choice [data-tone="warn"] {
+	color: var(--status-warn-fg);
+}
+.wb-machine__choice [data-tone="fail"] {
+	color: var(--status-fail-fg);
+}
+.wb-machine .wb-note {
+	padding: var(--space-2) 10px;
+	margin: 0;
+}

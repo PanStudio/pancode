@@ -1,0 +1,284 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* The composer's slash palette: a list anchored above the field, read like the command palette
+   (`client/interaction/interaction.css`) and sized like the composer's options panel. Colours are
+   tokens only; the active row is marked by a rule and a tint, never by colour alone. */
+
+.slash-palette {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: calc(100% + var(--space-2));
+	z-index: 6;
+	display: grid;
+	gap: var(--space-1);
+	padding: var(--space-2);
+	border: 1px solid var(--line-float);
+	border-radius: var(--radius-md);
+	background: var(--raised);
+	box-shadow: var(--shadow-panel);
+}
+.slash-palette__list {
+	max-height: min(22rem, 46dvh);
+	overflow: auto;
+	overscroll-behavior: contain;
+}
+.slash-palette .slash-palette__list:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: -2px;
+}
+.slash-palette__group {
+	padding: var(--space-2) var(--space-2) var(--space-1);
+	color: var(--ink-muted);
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+.slash-palette__group:first-child {
+	padding-top: var(--space-1);
+}
+.slash-palette__option {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--space-4);
+	padding: 7px var(--space-3);
+	border-radius: var(--radius-sm);
+	cursor: default;
+}
+.slash-palette__option:hover:not([data-active="true"]) {
+	background: var(--wb-faint);
+}
+.slash-palette__option[data-active="true"] {
+	background: var(--accent-soft);
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+.slash-palette__name {
+	flex: 0 0 auto;
+	font-family: var(--font-mono);
+	font-size: var(--text-meta);
+	color: var(--ink);
+	white-space: nowrap;
+}
+.slash-palette__hint {
+	color: var(--ink-muted);
+}
+.slash-palette__summary {
+	flex: 0 1 auto;
+	min-width: 0;
+	text-align: end;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+}
+.slash-palette__keys {
+	margin: 0;
+	padding: var(--space-2) var(--space-3) var(--space-1);
+	border-top: 1px solid var(--line);
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+}
+.slash-palette__keys kbd {
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.slash-palette__keys code {
+	font-family: var(--font-mono);
+	color: var(--ink);
+}
+
+/* A typed `/name args` line: the grammar it is held to and what Enter will send. */
+.slash-palette--line {
+	padding: var(--space-2) var(--space-3);
+}
+.slash-palette__line {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--space-1) var(--space-3);
+	margin: 0;
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+}
+.slash-palette__line code {
+	font-family: var(--font-mono);
+	color: var(--ink);
+	overflow-wrap: anywhere;
+}
+.slash-palette--line .slash-palette__keys {
+	padding-inline: 0;
+	margin-top: var(--space-1);
+}
+.slash-palette__error {
+	margin: var(--space-1) 0 0;
+	padding-top: var(--space-1);
+	border-top: 1px solid var(--line);
+	color: var(--status-fail-fg);
+	font-size: var(--text-meta);
+}
+
+/* What a command answered, under the field until dismissed. */
+.slash-result {
+	display: grid;
+	gap: var(--space-1);
+	min-width: 0;
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--well);
+	font-size: var(--text-meta);
+}
+.slash-result__head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--space-2);
+	margin: 0;
+}
+.slash-result__head code {
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+}
+.slash-result__head .composer__secondary {
+	min-height: 32px;
+	margin-inline-start: auto;
+	font-size: var(--text-exact);
+}
+.slash-result pre,
+.slash-result p {
+	margin: 0;
+}
+.slash-result pre {
+	max-height: 12rem;
+	overflow: auto;
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+/* A session action in its dialog. The dialog's own heading is the only one, so a panel's first
+   block sits flush under it. */
+.slash-dialog:focus {
+	outline: none;
+}
+.slash-dialog > :first-child > :first-child {
+	margin-top: 0;
+}
+
+@media (max-width: 650px) {
+	.slash-palette__option {
+		flex-direction: column;
+		gap: 0;
+	}
+	.slash-palette__name {
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+	.slash-palette__summary {
+		text-align: start;
+		white-space: normal;
+	}
+}
+
+@media (forced-colors: active) {
+	.slash-palette__option[data-active="true"] {
+		forced-color-adjust: none;
+		outline: 2px solid Highlight;
+		outline-offset: -2px;
+	}
+}
+
+/* A suggestion row: the word or name leads with its icon and what it is trails. A path summary is
+   shortened from the front so the nearest folders stay readable. */
+.suggestion-option .slash-palette__name {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+	flex: 0 1 auto;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.suggestion-option .slash-palette__name .icon {
+	flex: none;
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+	color: var(--ink-muted);
+}
+.suggestion-option .slash-palette__summary {
+	flex: 0 10 auto;
+}
+.suggestion-option--path .slash-palette__summary {
+	direction: rtl;
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+}
+
+/* Ctrl+R: the search field heads the sheet and each row is the line of a sent message the query
+   hit. The hit is marked by weight and an underline, never by colour alone. */
+.history-search__field {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-1) var(--space-2);
+}
+.history-search__label {
+	flex: 0 0 auto;
+	color: var(--ink-muted);
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+.history-search__input {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: var(--space-1) var(--space-2);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--well);
+	color: var(--ink);
+	font: inherit;
+	font-size: var(--text-meta);
+}
+.history-search__option {
+	align-items: center;
+}
+.history-search__text {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--ink);
+	font-size: var(--text-meta);
+}
+.history-search__text mark {
+	background: none;
+	color: var(--ink-strong);
+	font-weight: 600;
+	text-decoration: underline 2px var(--accent);
+	text-underline-offset: 3px;
+}
+.history-search__empty {
+	margin: 0;
+	padding: var(--space-2) var(--space-3);
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+}
+@media (max-width: 650px) {
+	.history-search__option {
+		flex-direction: row;
+		gap: var(--space-2);
+	}
+}
+
+/* A row that refuses a pick, an unavailable template, reads dimmed; its summary says why. */
+.slash-palette__option[aria-disabled="true"] .slash-palette__name {
+	color: var(--ink-muted);
+}

@@ -1,0 +1,576 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { TSchema } from "typebox";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import type { FleetSettings } from "../core/defaults.js";
+import { isRecord } from "../core/type-guards.js";
+import { RESULT_SUMMARY_MAX_BYTES_CEILING } from "../domains/agents/result-contract-allowance.js";
+import { WORKER_CONTEXT_SPLICE_TOKENS } from "../domains/context/worker/contract.js";
+import { DISPATCH_BRIEFING_MAX_BYTES } from "../domains/dispatch/validation.js";
+import { StringEnum } from "../engine/ai.js";
+import { TOOL_PROFILE_NAMES } from "./profiles.js";
+
+/**
+ * Which optional blocks of the `dispatch` argument schema a session advertises.
+ *
+ * The schema is composed once per session from the fleet the session was
+ * started with. A block whose feature the fleet cannot exercise is left off the
+ * wire, because every first turn pays for every description whether or not the
+ * feature is reachable: on Qwen3.8-27B the council block costs 233 tokens, the
+ * compete block 216, and the adaptive routing fields about 100. Admission keeps
+ * reading every field regardless, so a caller that sends a hidden field is
+ * still honored; only the advertisement moves.
+ */
+export interface DispatchSchemaComposition {
+	/** `roster`, `members`, `synthesis`, `rounds`: a council needs a configured roster to name. */
+	council: boolean;
+	/** `candidates`, `judge`, `apply_winner`: distinct executions may share one fleet route. */
+	compete: boolean;
+	/** `routing.posture`, `minimumQuality`, `locality`, `failover`: they act only once adaptive routing is activated. */
+	adaptiveRouting: boolean;
+}
+
+export const FULL_DISPATCH_SCHEMA_COMPOSITION: DispatchSchemaComposition = Object.freeze({
+	council: true,
+	compete: true,
+	adaptiveRouting: true,
+});
+
+type FleetShape = Pick<FleetSettings, "rosters" | "adaptiveRouting">;
+
+export function dispatchSchemaCompositionFor(fleet: FleetShape): DispatchSchemaComposition {
+	const routing = fleet.adaptiveRouting;
+	return {
+		council: Object.keys(fleet.rosters).length > 0,
+		// The runner isolates candidate executions and dispatches a separate judge;
+		// route diversity is not required. Normal admission still validates routes.
+		compete: true,
+		adaptiveRouting: routing.roles.length > 0 || routing.postures.length > 0 || routing.agentRoles.length > 0,
+	};
+}
+
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+/** The compact schema's required `task` stands for nothing on a list or batch call, or when a model leaves it out. */
+export const COORDINATOR_DISPATCH_ARGUMENTS = {
+	prepare: (args: Record<string, unknown>): Record<string, unknown> =>
+		Object.hasOwn(args, "task") ? args : { ...args, task: "" },
+	restore(args: Record<string, unknown>): Record<string, unknown> {
+		// Fields described on demand, not attached, reach a grammar parser untyped, so it sends them as strings (cf1h-D4).
+		const fields = offSchemaFields();
+		const { task, tasks: sent, ...rest } = decodeOffSchema(args, fields.call);
+		const tasks = Array.isArray(sent)
+			? sent.map((item: unknown) => (isRecord(item) ? decodeOffSchema(item, fields.task) : item))
+			: sent;
+		// A task beside a batch, a label or a copy of its one item, is ignored by the batch (dispatchTaskArgs).
+		return {
+			...rest,
+			...(task !== "" ? { task } : {}),
+			// A grammar offers the trailing batch field after any assignment, and models fill it with an empty list.
+			...(tasks !== undefined && !(Array.isArray(tasks) && tasks.length === 0) ? { tasks } : {}),
+		};
+	},
+};
+
+/** Ordinary delegation on the permanent surface. Advanced composition is described on demand. */
+export function coordinatorDispatchParameters() {
+	const intent = Type.Object({
+		// No description: intent renders twice here and every request resends it.
+		// The Scout absolute-checkout form is taught on demand by the admission
+		// refusals for an outside read root (scout-workspace.ts, intent.ts) (#433).
+		read_roots: Type.Optional(Type.Array(Type.String())),
+		write_roots: Type.Optional(Type.Array(Type.String())),
+		expected_outputs: Type.Optional(Type.Array(Type.String())),
+		verification: Type.Optional(DispatchVerificationSchema),
+	});
+	return Type.Object({
+		node: Type.Optional(Type.String()),
+		target: Type.Optional(Type.String()),
+		model: Type.Optional(Type.String()),
+		list: Type.Optional(Type.Boolean({ description: "List worker recipes and their tools." })),
+		agent: Type.Optional(Type.String({ description: "Recipe id from list." })),
+		// Required so it comes first. A local server's grammar fixes the property order, so
+		// a model that opened with an option could never reach an optional task after it:
+		// dynamo sent 5 of 12 dispatches with none, and none recovered from the refusal.
+		task: Type.String({
+			description:
+				"One self-contained assignment with outcome and constraints, never the operator's words; empty with list; tasks wins. A checker runs task lines `check: <command>`.",
+		}),
+		intent: Type.Optional(intent),
+		// No `tags`: store grants are taught on demand (gateway describe dispatch); the canonical schema admits them.
+		// `context` stays off too, but a model cannot ask for a field it never saw, so a fork worker ran isolated (FL-5).
+		// The tool description leaves briefing to this line, and detach to its own sentence, to stay in the byte budget.
+		briefing: Type.Optional(
+			Type.String({ description: "Parent evidence; history (context fork or splice): gateway describe dispatch." }),
+		),
+		// A plain string: this schema is checked before the canonical one, so an
+		// enum here would refuse the compete and council modes describe teaches.
+		// The last clause is the only cue that those modes exist at all.
+		mode: Type.Optional(
+			Type.String({
+				description:
+					"parallel: independent tasks; sequential: ordered tasks; pipeline: tasks consuming the previous result. compete, council and review: gateway describe dispatch.",
+			}),
+		),
+		// false is accepted as omitted: a model told "expected true" spent a round on it (bt-23).
+		worktree: Type.Optional(Type.Boolean()),
+		apply: Type.Optional(
+			StringEnum(["merge", "preserve"], { description: "With worktree: merge (default) or keep the branch." }),
+		),
+		detach: Type.Optional(Type.Boolean()),
+		// Last for the same reason: a batch stays reachable after any option a model opens with.
+		tasks: Type.Optional(
+			Type.Array(
+				Type.Union([
+					Type.String(),
+					Type.Object({
+						node: Type.Optional(Type.String()),
+						agent: Type.Optional(Type.String()),
+						task: Type.String(),
+						briefing: Type.Optional(Type.String()),
+						intent: Type.Optional(intent),
+					}),
+				]),
+			),
+		),
+	});
+}
+
+const CouncilMemberSchema = Type.Object(
+	{
+		label: Type.String({ pattern: "^[a-z][a-z0-9_-]{0,31}$" }),
+		target: Type.String(),
+		model: Type.Optional(Type.String()),
+		thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
+		agent: Type.Optional(Type.String({ description: "Agent this member runs as; defaults to the call's agent." })),
+	},
+	{ additionalProperties: false },
+);
+
+const DispatchBudgetPhaseSchema = Type.Object(
+	{
+		toolCalls: Type.Integer({ minimum: 1 }),
+	},
+	{ additionalProperties: false },
+);
+
+const DispatchBudgetSchema = Type.Object(
+	{
+		toolCalls: Type.Integer({
+			minimum: 1,
+			description: "Planning estimate; native workers stop at a hard tool-call ceiling.",
+		}),
+		retryRevision: Type.Optional(DispatchBudgetPhaseSchema),
+	},
+	{
+		additionalProperties: false,
+		description: "Estimates, not stop points; only the native ceiling is hard. retryRevision estimates a retry.",
+	},
+);
+
+const DispatchVerificationSchema = Type.Array(
+	Type.Object(
+		{
+			check: Type.String(),
+			timeout_ms: Type.Optional(Type.Integer({ minimum: 1, description: "Within the check's declared bounds." })),
+		},
+		{ additionalProperties: false },
+	),
+	{
+		maxItems: 8,
+		description: 'Array of {check:"id"} of declared ids; never invent ids or pass shell commands.',
+	},
+);
+
+// Keep nested schemas self-contained. Pi 1.5.2 keeps root $defs in Anthropic
+// non-strict schemas, but Google's legacy `parameters` path strips $defs and
+// strict sampling refuses $ref, so a reference would still break there.
+// Inline objects cost more prompt tokens but hold on every provider.
+const DispatchIntentSchema = Type.Object(
+	{
+		read_roots: Type.Optional(
+			Type.Array(Type.String(), {
+				maxItems: 32,
+				description:
+					"Workspace-relative reads, or one absolute checkout directory for read-only Scout with per-run operator approval. Headless refuses that task.",
+			}),
+		),
+		write_roots: Type.Optional(
+			Type.Array(Type.String(), {
+				maxItems: 32,
+				description:
+					"Allowed write paths containing every expected output. Confines the worker and disables bash/verify; declare checks in verification.",
+			}),
+		),
+		relevant_paths: Type.Optional(Type.Array(Type.String(), { maxItems: 32 })),
+		expected_outputs: Type.Optional(
+			Type.Array(Type.String(), {
+				maxItems: 32,
+				description:
+					"Repository-relative file paths such as src/duration.js, never commit, a change description, or '.'. The host commits task worktrees.",
+			}),
+		),
+		verification: Type.Optional(DispatchVerificationSchema),
+	},
+	{
+		additionalProperties: false,
+		description:
+			"Required paths and check IDs. Per-task values override defaults. Parallel write_roots must be disjoint; expected_outputs does not confine access.",
+	},
+);
+
+const DispatchStoreTagsSchema = Type.Array(Type.String(), {
+	maxItems: 16,
+	description: "Existing store tags this worker may put blobs into. Per-task values override defaults.",
+});
+
+const MODE_DESCRIPTION: Record<"full" | "noCouncil" | "noCompete" | "neither", string> = {
+	full:
+		"parallel (default); sequential; pipeline, where each task receives the previous output; compete, where candidates build the same task in scratch worktrees and a judge picks; council, where roster members answer the same question.",
+	noCouncil:
+		"parallel (default); sequential; pipeline, where each task receives the previous output; compete, where candidates build the same task in scratch worktrees and a judge picks.",
+	noCompete:
+		"parallel (default); sequential; pipeline, where each task receives the previous output; council, where roster members answer the same question.",
+	neither: "parallel (default); sequential; pipeline, where each task receives the previous output.",
+};
+
+/**
+ * Build the `dispatch` argument schema for one session. Every field keeps one
+ * discriminating sentence; the tool description states only the call shape.
+ * Optional blocks come and go with `composition`, and the `mode` enum only
+ * names the modes whose fields are advertised.
+ */
+const WorkerContextSchema = Type.Union(
+	[
+		Type.Object({ mode: Type.Literal("isolated") }, { additionalProperties: false }),
+		Type.Object(
+			{ mode: Type.Literal("fork"), max_tokens: Type.Optional(Type.Integer({ minimum: 256, maximum: 262144 })) },
+			{ additionalProperties: false },
+		),
+		Type.Object(
+			{
+				mode: Type.Literal("splice"),
+				max_tokens: Type.Optional(Type.Integer({ minimum: 256, maximum: 262144 })),
+				paths: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 4096 }), { minItems: 1, maxItems: 64 })),
+				refs: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 4096 }), { minItems: 1, maxItems: 64 })),
+			},
+			{ additionalProperties: false },
+		),
+	],
+	{
+		description: `Parent history: isolated (default), fork (native only, full transcript), splice (selected text, default ${WORKER_CONTEXT_SPLICE_TOKENS} tokens). refs: tool:<id> or message:<index>. Per-task overrides allowed.`,
+	},
+);
+
+/** The canonical fields, of the call and of one batch task, that the attached schema leaves to gateway describe. */
+let offSchema: { call: ReadonlyMap<string, TSchema>; task: ReadonlyMap<string, TSchema> } | undefined;
+
+function offSchemaFields(): { call: ReadonlyMap<string, TSchema>; task: ReadonlyMap<string, TSchema> } {
+	if (offSchema !== undefined) return offSchema;
+	const canonical = buildDispatchParameters().properties;
+	const attached: Record<string, TSchema> = coordinatorDispatchParameters().properties;
+	const taskFields = (tasks: TSchema | undefined): Record<string, TSchema> => {
+		const variants = (tasks as { items?: { anyOf?: { properties?: Record<string, TSchema> }[] } } | undefined)?.items
+			?.anyOf;
+		return variants?.find((variant) => isRecord(variant.properties))?.properties ?? {};
+	};
+	const hidden = (all: Record<string, TSchema>, shown: Record<string, TSchema>) =>
+		new Map(Object.entries(all).filter(([key]) => !Object.hasOwn(shown, key)));
+	offSchema = {
+		call: hidden(canonical, attached),
+		task: hidden(taskFields(canonical.tasks), taskFields(attached.tasks)),
+	};
+	return offSchema;
+}
+
+/** Decode each off-schema string whose field refuses a string and whose JSON is that field's valid value; any other stays for canonical refusal. */
+function decodeOffSchema(args: Record<string, unknown>, fields: ReadonlyMap<string, TSchema>): Record<string, unknown> {
+	const decoded = { ...args };
+	for (const [key, schema] of fields) {
+		const text = args[key];
+		if (typeof text !== "string" || Value.Check(schema, text)) continue;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(text);
+		} catch {
+			continue;
+		}
+		if (Value.Check(schema, parsed)) decoded[key] = parsed;
+	}
+	return decoded;
+}
+
+/**
+ * `judge` serves both compete and council synthesis, and their defaults
+ * differ: compete falls back to the verifier (`gateDeciderAgentId`), a council
+ * judge to oracle, or researcher when oracle is seated (`councilJudgeAgentId`).
+ */
+function judgeSchema(composition: DispatchSchemaComposition) {
+	const both = composition.compete && composition.council;
+	return Type.Object(
+		{
+			agent: Type.Optional(
+				Type.String({
+					description: both
+						? "Judge recipe id (default: verifier for compete; oracle for council, researcher if oracle is seated)."
+						: composition.compete
+							? "Judge recipe id (default: verifier)."
+							: "Judge recipe id (default: oracle, or researcher if oracle is seated).",
+				}),
+			),
+			model: Type.Optional(Type.String()),
+			target: Type.Optional(Type.String()),
+			node: Type.Optional(Type.String({ description: "Fleet node pin for the judge." })),
+		},
+		{
+			description: both
+				? "Read-only judge that ranks compete candidates or synthesizes a council with synthesis judge."
+				: composition.compete
+					? "Read-only judge that ranks compete candidates."
+					: "Read-only judge for council synthesis judge.",
+		},
+	);
+}
+
+export function buildDispatchParameters(composition: DispatchSchemaComposition = FULL_DISPATCH_SCHEMA_COMPOSITION) {
+	const modes = [
+		"parallel",
+		"sequential",
+		"pipeline",
+		...(composition.compete ? ["compete" as const] : []),
+		...(composition.council ? ["council" as const] : []),
+	];
+	const modeDescription =
+		composition.compete && composition.council
+			? MODE_DESCRIPTION.full
+			: composition.compete
+				? MODE_DESCRIPTION.noCouncil
+				: composition.council
+					? MODE_DESCRIPTION.noCompete
+					: MODE_DESCRIPTION.neither;
+	return Type.Object({
+		list: Type.Optional(Type.Boolean({ description: "List the agent roster instead of dispatching." })),
+		record: Type.Optional(
+			Type.Boolean({
+				description:
+					"Opt in to a bounded redacted worker-display asciicast, including SSH runs. Default off; per-task overrides allowed. Evidence exposes the recording manifest.",
+			}),
+		),
+		from_scout: Type.Optional(
+			Type.Object(
+				{
+					run_id: Type.String({ description: "Terminal Scout run id." }),
+					run_digest: Type.String({ description: "Its sha256 run digest." }),
+				},
+				{
+					additionalProperties: false,
+					description: "Compile a Scout split result into one approval-gated dependency plan; use with no other argument.",
+				},
+			),
+		),
+		task: Type.Optional(
+			Type.String({
+				description: "One self-contained worker assignment, never the operator's words. Use tasks for a batch.",
+			}),
+		),
+		continue_run: Type.Optional(
+			Type.String({
+				description:
+					"Settled run id of an ACP agent's earlier delegation in this session: the task continues in that peer session.",
+			}),
+		),
+		tasks: Type.Optional(
+			Type.Array(
+				Type.Union([
+					Type.String(),
+					// A task carries only what varies per task. persona, tool_profile,
+					// cwd, and apply come from the batch defaults (admission still reads
+					// them when a caller sends them; the schema does not spend the
+					// tokens advertising them twice).
+					Type.Object({
+						task: Type.String({ description: "The assignment, with expected output and constraints." }),
+						record: Type.Optional(Type.Boolean({ description: "Override the shared recording choice for this task." })),
+						context: Type.Optional(WorkerContextSchema),
+						briefing: Type.Optional(
+							Type.String({ description: `Per-task parent context, max ${DISPATCH_BRIEFING_MAX_BYTES} UTF-8 bytes.` }),
+						),
+						agent: Type.Optional(
+							Type.String({
+								description:
+									"Recipe id for this task: set scout/documenter explicitly in a mixed pipeline; names in task text do not select recipes, and omission inherits the batch's, else the job's.",
+							}),
+						),
+						budget: Type.Optional(DispatchBudgetSchema),
+						target: Type.Optional(Type.String()),
+						model: Type.Optional(Type.String()),
+						node: Type.Optional(Type.String({ description: "Fleet node pin: local or a fleet.nodes id." })),
+						worktree: Type.Optional(
+							Type.Boolean({ description: "true runs this writer in an isolated git worktree; false works in place." }),
+						),
+						tags: Type.Optional(DispatchStoreTagsSchema),
+						intent: Type.Optional(DispatchIntentSchema),
+						gate: Type.Optional(Type.String({ description: "One declared check id, shorthand for intent.verification." })),
+						result_summary_max_bytes: Type.Optional(
+							Type.Integer({
+								minimum: 1,
+								maximum: RESULT_SUMMARY_MAX_BYTES_CEILING,
+								description: "This task's inline summary allowance; mutation-report workers (coder, documenter) only.",
+							}),
+						),
+					}),
+				]),
+				{ description: "Batch of assignments; one string or object is wrapped." },
+			),
+		),
+		mode: Type.Optional(StringEnum(modes, { description: modeDescription })),
+		...(composition.council
+			? {
+					roster: Type.Optional(Type.String({ description: "Configured fleet.rosters name (council)." })),
+					members: Type.Optional(
+						Type.Array(CouncilMemberSchema, { minItems: 2, maxItems: 5, description: "Explicit council members, 2 to 5." }),
+					),
+					synthesis: Type.Optional(StringEnum(["none", "judge", "vote"] as const, { description: "Council synthesis." })),
+					rounds: Type.Optional(Type.Integer({ minimum: 1, maximum: 3, description: "Council rounds." })),
+					member_deadline_ms: Type.Optional(
+						Type.Integer({ minimum: 1, description: "End a council member past this; the council returns partial." }),
+					),
+				}
+			: {}),
+		writers: Type.Optional(
+			Type.Literal(1, { description: "Serialize writer admission in task order while readers run concurrently." }),
+		),
+		worktree: Type.Optional(
+			Type.Boolean({
+				description: "true runs a singular writer task in an isolated git worktree; false or omitted works in place.",
+			}),
+		),
+		tags: Type.Optional(DispatchStoreTagsSchema),
+		apply: Type.Optional(
+			StringEnum(["merge", "preserve"], { description: "merge (default) or preserve the worktree branch." }),
+		),
+		detach: Type.Optional(
+			Type.Boolean({
+				description:
+					"Return run ids immediately and collect with monitor before final synthesis. Parallel mode only; not with review or timeout_ms.",
+			}),
+		),
+		review: Type.Optional(
+			Type.Union(
+				[
+					Type.Boolean(),
+					Type.Object({
+						reviewer: Type.Optional(Type.String({ description: "Reviewer recipe id (default: reviewer)." })),
+						max_cycles: Type.Optional(
+							Type.Number({ description: "Review/revise cycles before an operator decision (default 2, max 4)." }),
+						),
+						node: Type.Optional(Type.String({ description: "Fleet node pin for the reviewer." })),
+						model: Type.Optional(Type.String({ description: "Model for the reviewer." })),
+						target: Type.Optional(Type.String({ description: "Target for the reviewer." })),
+					}),
+				],
+				{
+					description: "Read-only review of one task: pass, fail, or revise (re-run builder with findings).",
+				},
+			),
+		),
+		...(composition.compete || composition.council ? { judge: Type.Optional(judgeSchema(composition)) } : {}),
+		...(composition.compete
+			? {
+					candidates: Type.Optional(
+						Type.Union(
+							[
+								Type.Number(),
+								Type.Array(Type.Object({ target: Type.Optional(Type.String()), model: Type.Optional(Type.String()) })),
+							],
+							{ description: "Compete candidates, 2 to 4 (default 2), or one {target, model} each." },
+						),
+					),
+					apply_winner: Type.Optional(
+						Type.Object(
+							{
+								branch: Type.String({ description: "Preserved winner branch: pancode/compete/<group>/<n>." }),
+								cwd: Type.Optional(Type.String({ description: "Repository root (default: current directory)." })),
+							},
+							{
+								description:
+									"Merge a preserved compete winner and clean up its group; default autonomy parks this for operator confirmation.",
+							},
+						),
+					),
+				}
+			: {}),
+		land: Type.Optional(
+			Type.String({
+				description:
+					"Kept task branch to land, as its run id or pancode/task/<run id>: the operator answers a Land card and PanCode lands it on the host with the checks fleet land runs. Use this, never fleet land through a shell.",
+			}),
+		),
+		agent: Type.Optional(
+			Type.String({
+				description: composition.council
+					? "Recipe or configured ACP peer ID; omitted: the job's (council: scout)."
+					: "Recipe or configured ACP peer ID; omitted: the job's.",
+			}),
+		),
+		context: Type.Optional(WorkerContextSchema),
+		briefing: Type.Optional(
+			Type.String({
+				description: `Parent context for task, or the shared default for tasks; never instructions. Max ${DISPATCH_BRIEFING_MAX_BYTES} UTF-8 bytes.`,
+			}),
+		),
+		intent: Type.Optional(DispatchIntentSchema),
+		gate: Type.Optional(Type.String({ description: "One declared check id, shorthand for intent.verification." })),
+		persona: Type.Optional(Type.String({ description: "Default persona for the batch, max 8000 chars." })),
+		tool_profile: Type.Optional(StringEnum(TOOL_PROFILE_NAMES, { description: "Default worker tool profile." })),
+		budget: Type.Optional(DispatchBudgetSchema),
+		target: Type.Optional(
+			Type.String({
+				description: "Target ID; configured external CLI selects headless mode.",
+			}),
+		),
+		model: Type.Optional(Type.String({ description: "Default model override." })),
+		node: Type.Optional(Type.String({ description: "Default fleet node pin (omit for automatic placement)." })),
+		routing: Type.Optional(
+			Type.Object(
+				{
+					...(composition.adaptiveRouting
+						? { posture: Type.Optional(StringEnum(["manual", "quality", "balanced", "latency", "economy"] as const)) }
+						: {}),
+					maxCostUsd: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+					deadlineMs: Type.Optional(Type.Integer({ exclusiveMinimum: 0 })),
+					...(composition.adaptiveRouting ? { minimumQuality: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })) } : {}),
+					requiredCapabilities: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+					...(composition.adaptiveRouting
+						? {
+								locality: Type.Optional(StringEnum(["local-only", "prefer-local", "any"] as const)),
+								failover: Type.Optional(StringEnum(["none", "approved"] as const)),
+							}
+						: {}),
+				},
+				{
+					additionalProperties: false,
+					description: composition.adaptiveRouting
+						? "Advisory posture and hard routing bounds; exact target, model, and node pins stay manual."
+						: "Hard routing bounds: cost ceiling, deadline, and required model capabilities.",
+				},
+			),
+		),
+		thinking_level: Type.Optional(StringEnum(THINKING_LEVELS)),
+		cwd: Type.Optional(Type.String({ description: "Default worker working directory." })),
+		timeout_ms: Type.Optional(Type.Number({ description: "Abort the dispatch after this many ms." })),
+		max_output_bytes: Type.Optional(
+			Type.Number({
+				description:
+					'Unset, each run returns a compact form: key facts, trust line and an answer excerpt; monitor(mode="record") shows it up to the sealed answer budget and monitor(mode="answer") returns the whole answer. Set, each run returns its full answer within this many bytes in total (default 20000).',
+			}),
+		),
+		result_summary_max_bytes: Type.Optional(
+			Type.Integer({
+				minimum: 1,
+				maximum: RESULT_SUMMARY_MAX_BYTES_CEILING,
+				description: `Stored inline summary limit in UTF-8 bytes for mutation-report workers (coder, documenter); default 16384. Other steps ignore it. max_output_bytes separately limits the returned preview.`,
+			}),
+		),
+	});
+}

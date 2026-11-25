@@ -1,0 +1,409 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
+
+const app = fileURLToPath(new URL("../", import.meta.url));
+const root = resolve(app, "../..");
+// The engine's ACP wire contract, split by protocol domain; the shims re-export each module whole.
+const acpWireTypes = [
+	"src/engine/acp/types.ts",
+	"src/engine/acp/types-capabilities.ts",
+	"src/engine/acp/types-fleet.ts",
+	"src/engine/acp/types-readouts.ts",
+	"src/engine/acp/types-session.ts",
+	"src/engine/acp/types-settings.ts",
+	"src/engine/acp/types-tools.ts",
+	"src/engine/acp/types-views.ts",
+];
+// The presentation both surfaces draw: pure, browser-safe modules the client imports directly, so the GUI and the
+// terminal word a view from one source. The closure test below holds the tree free of Node builtins.
+const sharedViews = "src/core/views";
+const httpModules = new Map([
+	// The server records its loaded build and reads activation so live status can report a pending upgrade.
+	// The context ledger's and fleet frames' counts, and every limit, are worded by the canonical renderer on the
+	// server; browser contracts carry only rendered strings (#434).
+	[
+		"src/core/telemetry/render.ts",
+		new Set(["renderCompactCount", "renderCount", "renderFact", "renderUsdLimit", "renderUsdSpend"]),
+	],
+	["src/core/running-build.ts", new Set(["registerRunningBuild", "pendingInstalledVersion"])],
+	// The exact loaded build, so a remote node's GUI is driven by this client only when both builds agree.
+	["src/core/build-info.ts", new Set(["runningBuildId"])],
+	["src/engine/acp/transport.ts", new Set(["createStdioTransport", "AcpJsonRpcTransport"])],
+	["src/engine/acp/errors.ts", new Set(["AcpProcessError", "AcpTimeoutError", "AcpRequestError", "AcpProtocolError"])],
+	...acpWireTypes.map((path) => [path, new Set(["*"])] as const),
+	["src/core/xdg.ts", new Set(["pancodeStateDir", "pancodeDataDir", "pancodeConfigDir", "resolvePancodeDirs"])],
+	["src/core/package-root.ts", new Set(["resolvePackageRoot"])],
+	["src/core/path-containment.ts", new Set(["relativePathEscapes"])],
+	["src/core/context-operation.ts", new Set(["ACP_CONTEXT_STATUS_METHOD"])],
+	["src/core/process-identity.ts", new Set(["processAlive", "processBirthToken"])],
+	["src/domains/lifecycle/version.ts", new Set(["getVersionInfo"])],
+	// A file preview withholds the same secret names the agent's read tool and shell sandbox refuse.
+	["src/domains/safety/secret-paths.ts", new Set(["WORKSPACE_SECRET_PATHS"])],
+]);
+// The read-model DTO schemas and types cross into the browser contract through wire-shims (#434). dto.ts keeps a
+// typebox-only value-import closure, which the closure test below holds for the whole contract directory.
+const wireDtoNames = new Set([
+	"CacheReportV1",
+	"CallFilter",
+	"CallRowV1",
+	"CallsReportV1",
+	"CostReportV1",
+	"ExplanationV1",
+	"FactRef",
+	"Quantity",
+	"RunEvidenceV1",
+	"RunRowV1",
+	"RunTelemetryV1",
+	"RunTimelineEntry",
+	"RunTimelineV1",
+	"SessionTelemetryV1",
+	"TelemetryTopic",
+	"TelemetryUpdateV1",
+	"TimelineEntry",
+	"TimelineV1",
+	"WhyStoppedV1",
+	"CallFilterSchema",
+	"FactRefSchema",
+	"parseFactRef",
+	"TELEMETRY_DTO_SCHEMAS",
+	"TELEMETRY_TOPICS",
+]);
+const adapters = new Set([
+	"src/domains/interop/index.ts",
+	// The report dialog's host: the same plan and send as the terminal and ACP flows (R-24).
+	"src/domains/report/dialog-flow.ts",
+	// The bundle builder and offer rules for the Attach step and the offer notice, through the domain's index.
+	"src/domains/report/index.ts",
+	"src/domains/lifecycle/doctor.ts",
+	"src/domains/lifecycle/setup-status.ts",
+	"src/domains/resources/hub-inventory.ts",
+	"src/domains/resources/hub-actions.ts",
+	"src/domains/extensions/manager.ts",
+	"src/domains/evidence/provenance.ts",
+	"src/domains/evidence/trust-projection.ts",
+	"src/domains/evidence/types.ts",
+	"src/domains/dispatch/state.ts",
+	"src/domains/dispatch/types.ts",
+	"src/domains/dispatch/council-topology.ts",
+	"src/domains/dispatch/gate-topology.ts",
+	"src/core/settings-layers.ts",
+	"src/core/project-target-urls.ts",
+	"src/core/settings-controls.ts",
+	"src/core/settings-areas.ts",
+	"src/core/config.ts",
+	"src/core/settings-issues.ts",
+	"src/core/settings-validate.ts",
+	"src/domains/config/classify.ts",
+	"src/domains/providers/registry.ts",
+	"src/domains/providers/runtimes/builtins.ts",
+	"src/domains/providers/support.ts",
+	"src/domains/providers/auth/index.ts",
+	"src/domains/providers/auth/storage.ts",
+	"src/cli/config-inspect.ts",
+	"src/core/package-root.ts",
+	"src/domains/toolchain/index.ts",
+	"src/core/xdg.ts",
+	"src/core/cwd-hash.ts",
+	"src/core/workspace-files.ts",
+	"src/domains/session/history.ts",
+	// The telemetry read model and its cold loader; the adapter serves their DTOs unchanged (#434).
+	"src/domains/telemetry/index.ts",
+	"src/domains/session/index.ts",
+	"src/domains/evidence/index.ts",
+	"src/domains/telemetry/read-model.ts",
+	"src/domains/session/telemetry-source.ts",
+	// The repository window `usage report` folds, so a repo reference explains to the CLI's number (#434 §11.4).
+	"src/domains/telemetry/usage-window.ts",
+]);
+// Test-only root seams are intentionally enumerated independently of production.
+const testModules = new Set([
+	// Tests that compare with the canonical CLI run the checkout's source, not a build (tests/fixtures/source-cli.mjs).
+	"src/cli/index.ts",
+	"src/domains/extensions/manager.ts",
+	"src/engine/session.ts",
+	"src/domains/session/entries.ts",
+	"tests/harness/receipt.ts",
+	"tests/harness/settled-run.ts",
+	"src/domains/evidence/index.ts",
+	"src/domains/dispatch/state.ts",
+	"src/domains/dispatch/types.ts",
+	"src/domains/dispatch/gate-decisions.ts",
+	"src/core/settings-layers.ts",
+	"src/core/init.ts",
+	"src/core/settings-controls.ts",
+	"src/core/workspace-trust.ts",
+	"src/cli/config-inspect.ts",
+	"src/domains/providers/auth/index.ts",
+	"src/domains/toolchain/index.ts",
+	"tests/harness/openai-compat-fixture.ts",
+	"tests/harness/telemetry-view.ts",
+	"tests/harness/telemetry-lies.ts",
+	"src/domains/telemetry/call-journal.ts",
+	"src/domains/telemetry/paths.ts",
+	"src/core/xdg.ts",
+	"src/domains/evidence/trust-status.ts",
+	"src/core/telemetry/schemas.ts",
+	"src/domains/telemetry/index.ts",
+	"src/domains/dispatch/run-settlement.ts",
+	// The fixture child serves telemetry the CLI's own live model computes from records the CLI's encoder writes.
+	"src/core/telemetry/envelope.ts",
+	"src/core/telemetry/segment.ts",
+	"src/domains/quota/observed.ts",
+	"src/domains/telemetry/telemetry-live.ts",
+]);
+function files(directory: string): string[] {
+	return readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
+		entry.name === "node_modules" || entry.name === "dist"
+			? []
+			: entry.isDirectory()
+				? files(resolve(directory, entry.name))
+				: /\.(?:[cm]?ts|tsx|[cm]?js)$/.test(entry.name)
+					? [resolve(directory, entry.name)]
+					: [],
+	);
+}
+
+function violations(file: string, source: string): string[] {
+	const name = relative(app, file),
+		errors: string[] = [];
+	const production = !name.startsWith("tests/") && !name.startsWith("scripts/");
+	const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+	const check = (specifier: string, names: string[], typeOnly = false) => {
+		if (
+			production &&
+			/^(node:)?(http|https|http2|net|tls|dgram)$/.test(specifier) &&
+			!typeOnly &&
+			!(name === "server/local-server.ts" && specifier === "node:http" && names.every((name) => name === "request"))
+		)
+			errors.push("direct socket access outside the pinned downloader and HTTP server dependency");
+		if (production && /^(node:)?child_process$/.test(specifier) && name !== "server/process-policy.ts")
+			errors.push("process creation outside chokepoint");
+		if (
+			production &&
+			/^(node:)?worker_threads$/.test(specifier) &&
+			names.some((symbol) => !["parentPort", "workerData", "threadId", "isMainThread"].includes(symbol)) &&
+			!typeOnly &&
+			name !== "server/process-policy.ts"
+		)
+			errors.push("Worker outside chokepoint");
+		if (production && /^(?:client|contracts)\//.test(name) && /^(node:)/.test(specifier) && !typeOnly)
+			errors.push("Node runtime dependency on browser surface");
+		if (!specifier.startsWith(".")) return;
+		const target = resolve(dirname(file), specifier).replace(/\.js$/, ".ts");
+		const localTarget = relative(app, target),
+			rootTarget = relative(root, target);
+		if (
+			production &&
+			localTarget === "server/pancode/http-shims.ts" &&
+			name !== "server/process-policy.ts" &&
+			!typeOnly &&
+			names.some((symbol) => symbol === "createStdioTransport" || symbol === "*")
+		)
+			errors.push("ACP process creation outside chokepoint");
+		if (production && /^(?:client|contracts)\//.test(name) && localTarget === "server/pancode/http-shims.ts" && !typeOnly)
+			errors.push("process shim on browser surface");
+		if (rootTarget.startsWith("src/") || rootTarget.startsWith("tests/")) {
+			if (!existsSync(target)) errors.push(`root target does not exist: ${rootTarget}`);
+			if (name === "server/pancode/wire-shims.ts") {
+				const sharedContextTypes = new Map([
+					["src/core/context-operation.ts", new Set(["ContextOperation", "ContextOperationFact", "ContextOperationStatus"])],
+					["src/core/telemetry/live-events.ts", new Set(["ContextActivityPayload"])],
+				]);
+				const contextTypes = sharedContextTypes.get(rootTarget);
+				const dtoNames = rootTarget === "src/core/telemetry/dto.ts" ? wireDtoNames : undefined;
+				if (
+					!(
+						(acpWireTypes.includes(rootTarget) && names.every((symbol) => symbol === "*")) ||
+						(typeOnly && contextTypes && names.every((symbol) => contextTypes.has(symbol))) ||
+						(dtoNames && names.every((symbol) => dtoNames.has(symbol)))
+					)
+				)
+					errors.push(`wire shim allowlist: ${rootTarget} ${names}`);
+			} else if (name === "server/pancode/wire-runtime.ts") {
+				if (rootTarget !== "src/engine/acp/runtime.ts" || names.some((symbol) => symbol !== "ACP_MAX_JOBS"))
+					errors.push(`wire runtime allowlist: ${rootTarget} ${names}`);
+			} else if (name === "server/pancode/http-shims.ts") {
+				const allowed = httpModules.get(rootTarget);
+				if (!allowed || names.some((symbol) => !allowed.has(symbol)))
+					errors.push(`HTTP shim allowlist: ${rootTarget} ${names}`);
+				if (acpWireTypes.includes(rootTarget) && !typeOnly) errors.push("wire types must be type-only");
+			} else if (name.startsWith("server/pancode/adapters/")) {
+				if (!adapters.has(rootTarget)) errors.push(`adapter allowlist: ${rootTarget}`);
+			} else if (name.startsWith("tests/harness/") || name.startsWith("tests/fixtures/")) {
+				if (!testModules.has(rootTarget)) errors.push(`test seam allowlist: ${rootTarget}`);
+			} else if (!(name.startsWith("client/") && rootTarget.startsWith(`${sharedViews}/`)))
+				errors.push(`root import outside pancode seam: ${rootTarget}`);
+		}
+		if (
+			localTarget.startsWith("server/pancode/adapters/") &&
+			!name.startsWith("server/pancode/adapters/") &&
+			!["server/worker/reads-main.ts", "server/worker/ops-main.ts", "tests/harness/adapter.ts"].includes(name)
+		)
+			errors.push("blocking adapter outside worker entry");
+		if (
+			production &&
+			localTarget.startsWith("tests/") &&
+			!["server/worker/reads-main.ts", "server/worker/ops-main.ts"].includes(name)
+		)
+			errors.push("test dependency outside fixture-enabled worker entry");
+	};
+	const walk = (node: ts.Node) => {
+		if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal))
+			check(node.argument.literal.text, ["*"], true);
+		if (
+			(ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+			node.moduleSpecifier &&
+			ts.isStringLiteral(node.moduleSpecifier)
+		) {
+			const bindings = ts.isImportDeclaration(node) ? node.importClause?.namedBindings : node.exportClause;
+			const names =
+				bindings && (ts.isNamedImports(bindings) || ts.isNamedExports(bindings))
+					? bindings.elements.map((entry) => entry.propertyName?.text ?? entry.name.text)
+					: ["*"];
+			check(
+				node.moduleSpecifier.text,
+				names,
+				ts.isImportDeclaration(node) ? node.importClause?.isTypeOnly : node.isTypeOnly,
+			);
+		}
+		if (
+			ts.isCallExpression(node) &&
+			(node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+				(ts.isIdentifier(node.expression) && node.expression.text === "require"))
+		) {
+			const argument = node.arguments[0];
+			if (argument && ts.isStringLiteral(argument)) check(argument.text, ["*"]);
+			else errors.push("nonliteral module import");
+		}
+		ts.forEachChild(node, walk);
+	};
+	walk(tree);
+	return errors;
+}
+
+test("source import targets, shim exports, worker ownership, and process chokepoint", () => {
+	const errors = files(app).flatMap((file) =>
+		violations(file, readFileSync(file, "utf8")).map((error) => `${relative(app, file)}: ${error}`),
+	);
+	assert.deepEqual(errors, []);
+});
+
+test("boundary checker rejects representative bypasses", () => {
+	for (const source of [
+		'import { toolStatuses } from "../../../../src/domains/toolchain/index.js";',
+		'import { Worker as Thread } from "node:worker_threads";',
+		'export * from "../pancode/adapters/toolchain.js";',
+		"const module = await import(path);",
+		'import cp from "child_process";',
+		'import { request } from "node:https";',
+		'import { createStdioTransport as spawnAcp } from "../pancode/http-shims.js";',
+	])
+		assert.ok(violations(resolve(app, "server/http/escape.ts"), source).length > 0, source);
+	assert.ok(
+		violations(resolve(app, "server/pancode/wire-runtime.ts"), 'export * from "../../../../src/engine/acp/types.js";')
+			.length > 0,
+	);
+	const client = resolve(app, "client/chat/escape.ts");
+	assert.deepEqual(
+		violations(client, 'import { actionClassWords } from "../../../../src/core/views/approval-words.js";'),
+		[],
+	);
+	assert.ok(
+		violations(
+			client,
+			'import { classifyDecisionPresentation } from "../../../../src/domains/safety/decision-presentation.js";',
+		).length > 0,
+	);
+});
+
+test("the browser contract and the shared views reach no Node builtin through their value imports", () => {
+	const seen = new Set<string>();
+	const reached: string[] = [];
+	const visit = (file: string) => {
+		if (seen.has(file) || !existsSync(file)) return;
+		seen.add(file);
+		const tree = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+		ts.forEachChild(tree, (node) => {
+			if (!(ts.isImportDeclaration(node) || ts.isExportDeclaration(node))) return;
+			if (!node.moduleSpecifier || !ts.isStringLiteral(node.moduleSpecifier)) return;
+			if (ts.isImportDeclaration(node) ? node.importClause?.isTypeOnly : node.isTypeOnly) return;
+			const specifier = node.moduleSpecifier.text;
+			if (/^node:|^(?:async_hooks|child_process|crypto|fs|http|https|net|os|path|tls|worker_threads)$/.test(specifier))
+				reached.push(`${relative(root, file)} -> ${specifier}`);
+			if (specifier.startsWith(".")) visit(resolve(dirname(file), specifier).replace(/\.js$/, ".ts"));
+		});
+	};
+	for (const file of [...files(resolve(app, "contracts")), ...files(resolve(root, sharedViews))]) visit(file);
+	assert.deepEqual(reached, []);
+});
+
+test("the initial shell's static value graph excludes route and wire validators", () => {
+	const seen = new Set<string>();
+	const forbidden: string[] = [];
+	const visit = (file: string) => {
+		if (seen.has(file) || !existsSync(file)) return;
+		seen.add(file);
+		const tree = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+		for (const node of tree.statements) {
+			if (!(ts.isImportDeclaration(node) || ts.isExportDeclaration(node))) continue;
+			if (!node.moduleSpecifier || !ts.isStringLiteral(node.moduleSpecifier)) continue;
+			if (ts.isImportDeclaration(node) ? node.importClause?.isTypeOnly : node.isTypeOnly) continue;
+			const bindings = ts.isImportDeclaration(node) ? node.importClause?.namedBindings : node.exportClause;
+			if (
+				bindings &&
+				(ts.isNamedImports(bindings) || ts.isNamedExports(bindings)) &&
+				bindings.elements.every((element) => element.isTypeOnly)
+			)
+				continue;
+			const specifier = node.moduleSpecifier.text;
+			if (specifier === "typebox" || specifier.startsWith("typebox/"))
+				forbidden.push(`${relative(root, file)} -> ${specifier}`);
+			if (!specifier.startsWith(".") || !/\.js$/.test(specifier)) continue;
+			const base = resolve(dirname(file), specifier).slice(0, -3);
+			const target = [".ts", ".tsx"].map((extension) => base + extension).find(existsSync);
+			if (target) visit(target);
+		}
+	};
+	visit(resolve(app, "client/main.tsx"));
+	assert.deepEqual(forbidden, []);
+	assert.equal(seen.has(resolve(app, "contracts/routes.ts")), false);
+	for (const path of acpWireTypes) assert.equal(seen.has(resolve(root, path)), false, path);
+});
+
+test("the client and server sum no telemetry quantity: no accumulation over tokens, cost, calls or missing-usage counts", () => {
+	const sums: string[] = [];
+	// The read model's quantity names; plain counters such as a tool tally or an attachment size are not these.
+	const telemetry =
+		/\b(?:tokens|totalTokens|tokenCount|input|output|cacheRead|cacheWrite|reasoning|usd|costUsd|knownUsd|unmeteredCalls|apiCalls)\b/;
+	for (const file of [...files(resolve(app, "client")), ...files(resolve(app, "server"))]) {
+		const tree = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+		const walk = (node: ts.Node) => {
+			if (
+				ts.isBinaryExpression(node) &&
+				(node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken ||
+					node.operatorToken.kind === ts.SyntaxKind.PlusToken) &&
+				!ts.isStringLiteral(node.left) &&
+				!ts.isStringLiteral(node.right) &&
+				(telemetry.test(node.left.getText(tree)) ||
+					(node.operatorToken.kind === ts.SyntaxKind.PlusToken && telemetry.test(node.right.getText(tree))))
+			)
+				sums.push(`${relative(app, file)}: ${node.getText(tree)}`);
+			if (
+				ts.isCallExpression(node) &&
+				ts.isPropertyAccessExpression(node.expression) &&
+				node.expression.name.text === "reduce" &&
+				telemetry.test(node.arguments.map((argument) => argument.getText(tree)).join(" "))
+			)
+				sums.push(`${relative(app, file)}: ${node.expression.getText(tree)}(…)`);
+			ts.forEachChild(node, walk);
+		};
+		walk(tree);
+	}
+	assert.deepEqual(sums, []);
+});

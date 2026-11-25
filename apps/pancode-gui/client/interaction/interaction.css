@@ -1,0 +1,534 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* Every style the interaction primitives need. Tokens are consumed by name so the design system can
+   be rewritten underneath without touching this file. */
+
+.dialog-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 30;
+	display: grid;
+	place-items: center;
+	padding: 24px;
+	background: var(--scrim);
+}
+/* A dialog is the highest thing on the page: the overlay ground, the float line and the deepest shadow.
+   It rises a few pixels into place so it reads as arriving over the work, not replacing it. */
+.dialog {
+	background: var(--overlay);
+	color: var(--ink);
+	border: 1px solid var(--line-float);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-float);
+	width: min(560px, 100%);
+	max-height: min(80vh, 760px);
+	display: grid;
+	grid-template-rows: auto minmax(0, 1fr);
+	overflow: hidden;
+	animation: dialog-open var(--motion-base) var(--ease-standard);
+}
+@keyframes dialog-open {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+}
+.dialog-backdrop {
+	animation: dialog-scrim var(--motion-fast) linear;
+}
+@keyframes dialog-scrim {
+	from {
+		opacity: 0;
+	}
+}
+.dialog--wide {
+	width: min(900px, 100%);
+}
+.dialog__header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 18px 20px 14px;
+	border-bottom: 1px solid var(--line);
+}
+.dialog__actions {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 8px;
+}
+.dialog__header h2 {
+	font-family: var(--font-editorial);
+	font-size: var(--text-reading);
+	font-weight: 700;
+	letter-spacing: -0.2px;
+	line-height: var(--leading-tight);
+	margin: 0;
+}
+.dialog__header .eyebrow {
+	color: var(--muted);
+	font-size: var(--text-caption);
+	letter-spacing: 0.08em;
+}
+.dialog__body {
+	overflow: auto;
+	padding: 18px 20px 22px;
+}
+/* The page-wide `code` is a block for command listings; in a sentence it has to stay in the line. */
+:where(.dialog__body) :is(p, li, dd) > code {
+	display: inline;
+	padding: 0;
+}
+
+.drawer-layer {
+	position: fixed;
+	inset: 0;
+	z-index: 30;
+	display: flex;
+}
+.drawer-layer--end {
+	justify-content: flex-end;
+}
+.drawer-scrim {
+	position: absolute;
+	inset: 0;
+	background: var(--scrim);
+}
+.drawer {
+	position: relative;
+	display: grid;
+	grid-template-rows: auto minmax(0, 1fr);
+	width: min(360px, 88vw);
+	background: var(--overlay);
+	color: var(--ink);
+	border-inline: 1px solid var(--line-float);
+	box-shadow: var(--shadow-float);
+}
+
+.filter__query label {
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: var(--text-caption);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+/* The wrapper owns the focus ring so a composite field reads as one control. */
+.filter__field {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 10px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	background: var(--wb-faint);
+}
+.filter__field:focus-within {
+	border-color: var(--focus);
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+.filter__field input {
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 36px;
+	border: 0;
+	background: transparent;
+	color: inherit;
+}
+/* The global focus rule also paints a halo; inside the wrapper it shows as a notch at the field's edge. */
+.filter__field input:focus-visible {
+	outline: none;
+	box-shadow: none;
+}
+.filter__field button {
+	border: 0;
+	background: transparent;
+	min-height: 26px;
+	padding: 0 6px;
+	color: var(--muted);
+}
+.palette,
+.dialog-loading {
+	display: grid;
+	gap: 10px;
+}
+/* The palette hangs from a fixed line instead of centring, so its field stays put while the result
+   count changes under it, and only the result list scrolls. */
+.dialog--palette {
+	align-self: start;
+	margin-top: min(12vh, 120px);
+	max-height: min(76vh, 760px);
+}
+.dialog--palette .dialog__body {
+	overflow: hidden;
+}
+.palette__list {
+	max-height: min(46vh, calc(76vh - 200px));
+	overflow: auto;
+}
+.palette__group {
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: var(--text-caption);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	padding: 12px 8px 4px;
+}
+.palette__option {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	min-height: 34px;
+	padding: 6px 12px;
+	border-radius: var(--radius-sm);
+	font-size: var(--text-meta);
+	cursor: default;
+}
+.palette__option:hover:not([data-active="true"]) {
+	background: var(--wb-hover);
+}
+/* The same active row as the composer's slash palette: the accent wash and a rule at the edge. */
+.palette__option[data-active="true"] {
+	background: var(--accent-soft);
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+/* Keycaps: the one shortcut notation (palette, Help, Settings). */
+.keycaps {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-1);
+	color: var(--ink-muted);
+	font-size: var(--text-instrument);
+}
+.keycaps kbd {
+	padding: 2px 5px;
+	min-width: 25px;
+	border: 1px solid var(--line-strong);
+	border-bottom-width: 2px;
+	border-radius: var(--radius-sm);
+	background: var(--well);
+	color: var(--ink);
+	font: 400 var(--text-instrument) / 1.4 var(--font-mono);
+	text-align: center;
+	white-space: nowrap;
+}
+.palette__option .keycaps {
+	flex: none;
+}
+.palette__empty {
+	color: var(--muted);
+}
+
+.filter {
+	display: grid;
+	gap: 12px;
+	padding: 14px 0;
+}
+.filter__query {
+	display: grid;
+	gap: 6px;
+	max-width: 420px;
+}
+.filter__group {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 10px;
+}
+.filter__group-label {
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: var(--text-caption);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+.filter__chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+.filter__chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 26px;
+	padding: 2px 9px 2px 8px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--muted);
+	font-size: var(--text-instrument);
+	line-height: 1.2;
+	transition:
+		border-color var(--motion-fast) var(--ease-standard),
+		color var(--motion-fast) var(--ease-standard),
+		background var(--motion-fast) var(--ease-standard);
+}
+/* The pressed state is carried by the filled dot and the border, not by colour alone. */
+.filter__chip::before {
+	content: "";
+	width: 6px;
+	height: 6px;
+	border: 1px solid currentcolor;
+	border-radius: 50%;
+	flex: 0 0 auto;
+}
+.filter__chip[aria-pressed="true"] {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+	color: var(--ink);
+}
+.filter__chip[aria-pressed="true"]::before {
+	background: var(--accent);
+	border-color: var(--accent);
+}
+.filter__chip small {
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: var(--text-caption);
+}
+.filter__chip[aria-pressed="true"] small {
+	color: var(--accent);
+}
+.filter__summary {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px 14px;
+	padding-top: 8px;
+	border-top: 1px solid var(--line);
+}
+.filter__summary p {
+	margin: 0;
+	color: var(--muted);
+	font-size: var(--text-instrument);
+}
+.filter__clear {
+	border: 0;
+	background: transparent;
+	color: var(--accent);
+	min-height: 26px;
+	padding: 0;
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+/* The stack floats over the work instead of taking a row of the app layout: a row cost the workbench
+   its height, and with a few notices the composer fell out of the window. It sits above the
+   workbench's own menus (20) and below dialogs and the phone drawer (30). On a task page it is not an
+   overlay at all: notifications.tsx places it in the composer dock (.notice-dock below). */
+.notice-region {
+	position: fixed;
+	right: var(--space-4);
+	bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+	z-index: 25;
+	width: min(480px, calc(100vw - 2 * var(--space-4)));
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	max-height: min(40dvh, 24rem);
+	pointer-events: none;
+}
+.notice-region:not(:has(.notice, .notice-region__lead > *)) {
+	display: none;
+}
+.notice-region > * {
+	pointer-events: auto;
+}
+.notice-region__lead:empty {
+	display: none;
+}
+/* Off a task page the stack floats, so the page frame never moves when a notice comes or goes; in
+   exchange the page reserves the stack's height (--notice-reserve, set by notifications.tsx while it
+   floats) after its last content and as scroll padding. Every control can then be scrolled above the
+   stack, and focus or scrollIntoView never leaves one under it. A reserve after the content moves
+   nothing already on screen, which a reserve at the top would. Home centres its content, so its
+   reserve is an absolute box below the content instead (home.css). */
+.wb-main[data-mode="settings"],
+.wb-main[data-mode="work"] > :is(.taskpage, .skills, .newtask) {
+	scroll-padding-bottom: var(--notice-reserve, 0px);
+}
+.wb-main[data-mode="settings"]::after,
+.wb-main[data-mode="work"] > :is(.taskpage, .skills)::after {
+	content: "";
+	display: block;
+	height: var(--notice-reserve, 0px);
+}
+/* A phone-width window spans the stack across the page gutter. */
+@media (max-width: 599.98px) {
+	.notice-region {
+		left: var(--space-3);
+		right: var(--space-3);
+		width: auto;
+	}
+}
+/* In the dock the stack is a row above the composer, so it never covers the approval card, the
+   transcript's controls or Send and Stop. Its height is capped and the list scrolls, which keeps the
+   composer in the window with a full stack; a phone gets a quarter of the window. */
+.notice-dock .notice-region {
+	position: static;
+	width: min(480px, 100%);
+	margin: 0 0 var(--space-2) auto;
+	max-height: min(35dvh, 22rem);
+}
+@media (max-width: 599.98px) {
+	.notice-dock .notice-region {
+		width: auto;
+		margin-inline: 0;
+		max-height: min(25dvh, 20rem);
+	}
+}
+.notice-region__controls {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 6px 10px;
+	background: var(--overlay);
+	border: 1px solid var(--line);
+	font-size: var(--text-meta);
+}
+.notice-region__controls button {
+	min-height: 44px;
+}
+.notice-region__list {
+	display: grid;
+	gap: var(--space-2);
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+.notice {
+	padding: 0 var(--space-4) var(--space-3);
+	overflow-wrap: anywhere;
+	background: var(--overlay);
+	color: var(--ink);
+	border: 1px solid var(--line-float);
+	border-left: 3px solid var(--status-neutral-line);
+	border-radius: var(--radius-md);
+	box-shadow: var(--shadow-panel);
+}
+.notice--error {
+	border-left-color: var(--status-fail-line);
+}
+.notice--warning {
+	border-left-color: var(--status-warn-line);
+}
+.notice--info {
+	border-left-color: var(--status-neutral-line);
+}
+.notice--success {
+	border-left-color: var(--status-success-line);
+}
+.notice__heading {
+	position: sticky;
+	top: 0;
+	background: var(--overlay);
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+.notice__heading strong {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.notice__heading button {
+	border: 0;
+	background: transparent;
+	min-height: 44px;
+	min-width: 44px;
+	flex: 0 0 auto;
+	padding: 0 var(--space-2);
+	color: var(--muted);
+}
+.notice__glyph {
+	display: inline-grid;
+	place-items: center;
+	width: 18px;
+	height: 18px;
+	border: 1px solid currentcolor;
+	border-radius: 50%;
+	font-family: var(--font-mono);
+	font-size: var(--text-caption);
+	flex: 0 0 auto;
+}
+.notice--error .notice__glyph {
+	color: var(--status-fail-fg);
+}
+.notice--warning .notice__glyph {
+	color: var(--status-warn-fg);
+}
+.notice--success .notice__glyph {
+	color: var(--status-success-fg);
+}
+.notice p {
+	margin: 8px 0 0;
+	font-size: var(--text-meta);
+	line-height: 1.5;
+}
+.notice code {
+	display: inline-block;
+	margin-top: 8px;
+	color: var(--muted);
+}
+.notice small {
+	display: block;
+	color: var(--muted);
+	overflow-wrap: anywhere;
+}
+.notice__repeat {
+	color: var(--muted);
+	font-size: var(--text-meta);
+}
+.notice__meta {
+	margin-top: var(--space-2);
+	font-size: var(--text-instrument);
+	color: var(--ink-muted);
+}
+.notice__meta > summary {
+	cursor: pointer;
+	width: fit-content;
+}
+.notice__meta > div {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	margin-top: var(--space-2);
+}
+.notice__meta code,
+.notice__meta small {
+	margin-top: 0;
+	font-size: inherit;
+}
+
+/* Opacity only: a slide-in transform fights a list that is already moving under it. */
+@media (prefers-reduced-motion: no-preference) {
+	.notice {
+		animation: notice-in var(--motion-fast) var(--ease-standard);
+	}
+}
+@keyframes notice-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@media (forced-colors: active) {
+	.filter__chip::before,
+	.notice__glyph,
+	.palette__option[data-active="true"] {
+		forced-color-adjust: none;
+	}
+	.palette__option[data-active="true"] {
+		outline: 2px solid Highlight;
+		outline-offset: -2px;
+	}
+}

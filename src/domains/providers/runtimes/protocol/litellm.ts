@@ -1,0 +1,398 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * LiteLLM proxy: an OpenAI-compatible gateway that fronts a fleet.
+ *
+ * This is a separate runtime from `openai-compat` rather than a target flag on
+ * it, because a gateway answers two questions the generic protocol cannot.
+ *
+ * First, capability discovery. A gateway may publish aliases or truthful
+ * physical names such as `dynamo/qwen3.8-27b`. LiteLLM's `/v1/models` is the
+ * plain OpenAI listing, so every row flattens to a bare id and the context
+ * window, tool support, and modality of the model behind it are all erased.
+ * Reached over
+ * `openai-compat`, a 262k tool-calling coder is indistinguishable from a 4k
+ * chat toy, and PanCode plans the session against its own assumed floor. LiteLLM
+ * publishes the real numbers on `/v1/model/info` instead, which is what this
+ * probe reads.
+ *
+ * Structured output is the one property worth stating explicitly, because
+ * getting it wrong is silent. `src/core/response-schema.ts` deliberately keys
+ * the schema dialect on runtime id and not on api family, since a generic
+ * OpenAI-compatible gateway answers HTTP 200 to a `response_format` spelling it
+ * does not implement and returns unconstrained JSON. LiteLLM earns its entry in
+ * that table by measurement rather than by assumption: against the homelab
+ * gateway on 2026-08-30, `{"type":"json_schema", json_schema:{...}}` was
+ * grammar-enforced end to end on both a llama.cpp upstream and an LM Studio
+ * upstream, `{"type":"json_object", schema:{...}}` was enforced on llama.cpp
+ * and rejected HTTP 400 by LM Studio, and the same prompt with no
+ * `response_format` returned plain prose. `drop_params: true` did not strip
+ * either spelling. The standard `json_schema` dialect is therefore the one that
+ * holds across every measured upstream, and a gateway must publish that fact
+ * explicitly per route in `model_info` before PanCode relies on it.
+ */
+
+import { PANCODE_MIN_CONTEXT_WINDOW, PANCODE_MIN_MAX_OUTPUT_TOKENS } from "../../../../core/context-floor.js";
+import type { Api, Model } from "../../../../engine/types.js";
+import { probeJson } from "../../probe/http.js";
+import type { CapabilityFlags } from "../../types/capability-flags.js";
+import type { KnowledgeBaseHit } from "../../types/knowledge-base.js";
+import type { ProbeContext, ProbeModelStatus, ProbeResult, RuntimeDescriptor } from "../../types/runtime-descriptor.js";
+import type { TargetDescriptor } from "../../types/target-descriptor.js";
+import { stripTrailingSlash, synthLocalModel, withV1 } from "../common/local-synth.js";
+
+const LITELLM_PROVIDER = "litellm";
+
+/**
+ * `tools` is on until a report says otherwise. A gateway that does not publish
+ * `model_info`, or a first probe that failed, has told PanCode nothing, and unknown
+ * must never mean "no tools": without the schemas the model prints raw
+ * `<tool_call>` text instead of calling. A live `supports_function_calling:
+ * false`, an operator value or a profile still turns tools off.
+ */
+const defaultCapabilities: CapabilityFlags = {
+	chat: true,
+	tools: true,
+	reasoning: false,
+	vision: false,
+	audio: false,
+	embeddings: false,
+	rerank: false,
+	fim: false,
+	structuredOutputs: "none",
+	contextWindow: PANCODE_MIN_CONTEXT_WINDOW,
+	maxTokens: PANCODE_MIN_MAX_OUTPUT_TOKENS,
+};
+
+/** The server root. This runtime's own paths carry `/v1` where they need it. */
+function rootUrl(target: TargetDescriptor): string | null {
+	if (!target.url) return null;
+	const trimmed = stripTrailingSlash(target.url);
+	return trimmed.endsWith("/v1") ? trimmed.slice(0, -"/v1".length) : trimmed;
+}
+
+function bearerHeaders(target: TargetDescriptor, ctx: ProbeContext): Record<string, string> {
+	const headers: Record<string, string> = { ...(target.auth?.headers ?? {}) };
+	const envName = target.auth?.apiKeyEnvVar;
+	const fromEnv = envName && ctx.credentialsPresent.has(envName) ? process.env[envName]?.trim() : undefined;
+	const token = ctx.authToken?.trim() || fromEnv;
+	if (token) headers.authorization = `Bearer ${token}`;
+	return headers;
+}
+
+interface LiteLLMModelInfoRow {
+	model_name?: unknown;
+	litellm_params?: { model?: unknown; api_base?: unknown };
+	model_info?: Record<string, unknown>;
+}
+
+interface LiteLLMModelInfoResponse {
+	data?: ReadonlyArray<LiteLLMModelInfoRow>;
+}
+
+interface LiteLLMModelsResponse {
+	data?: ReadonlyArray<{ id?: unknown }>;
+}
+
+function positiveInteger(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+}
+
+function boolean(value: unknown): boolean | undefined {
+	return typeof value === "boolean" ? value : undefined;
+}
+
+/**
+ * Project one LiteLLM `model_info` block onto PanCode's capability flags.
+ *
+ * Only fields the gateway actually filled in are returned. A `model_info` that
+ * declares nothing leaves the whole record empty rather than reporting zeros,
+ * so the caller can tell "the gateway says this model has no vision" apart from
+ * "the gateway did not say", and merge accordingly.
+ */
+export function capabilitiesFromLiteLLMModelInfo(info: Record<string, unknown>): Partial<CapabilityFlags> {
+	const caps: Partial<CapabilityFlags> = {};
+	// This is a deployment declaration, never inferred from a URL, port or alias.
+	const controlRuntime = info.thinking_control_runtime ?? info.runtime;
+	if (controlRuntime === "lmstudio" || controlRuntime === "lm-studio") caps.thinkingControlRuntime = "lmstudio";
+	else if (controlRuntime === "llamacpp" || controlRuntime === "llama.cpp") caps.thinkingControlRuntime = "llamacpp";
+	else if (controlRuntime === "flm") caps.thinkingControlRuntime = "flm";
+	// max_tokens may be catalog training metadata. The gateway's route-specific
+	// max_input_tokens is the serving limit PanCode can admit a request against.
+	const contextWindow = positiveInteger(info.max_input_tokens);
+	if (contextWindow !== undefined) caps.contextWindow = contextWindow;
+	// An output limit as large as the whole window is a filler a gateway writes for every model, not a limit; the
+	// model's known or default output limit then holds (PV-7).
+	const maxTokens = positiveInteger(info.max_output_tokens);
+	if (maxTokens !== undefined && (contextWindow === undefined || maxTokens < contextWindow)) caps.maxTokens = maxTokens;
+	const tools = boolean(info.supports_function_calling);
+	if (tools !== undefined) caps.tools = tools;
+	const vision = boolean(info.supports_vision);
+	if (vision !== undefined) caps.vision = vision;
+	const reasoning = boolean(info.supports_reasoning);
+	if (reasoning !== undefined) caps.reasoning = reasoning;
+	const audio = boolean(info.supports_audio_input);
+	if (audio !== undefined) caps.audio = audio;
+	// `mode` is LiteLLM's own surface discriminator. An embedding deployment is
+	// not a chat deployment, and admitting it as one produces a run that fails
+	// at the first completion rather than at selection.
+	if (info.mode === "embedding") {
+		caps.chat = false;
+		caps.embeddings = true;
+	}
+	if (info.mode === "rerank") {
+		caps.chat = false;
+		caps.rerank = true;
+	}
+	if (info.mode === "chat") caps.chat = true;
+	// Measured, not inferred: see the module header. An explicit false must
+	// override this runtime's measured default for an upstream that cannot
+	// preserve the schema contract.
+	const responseSchema = boolean(info.supports_response_schema);
+	if (responseSchema !== undefined) caps.structuredOutputs = responseSchema ? "json-schema" : "none";
+	return caps;
+}
+
+const BOOLEAN_CAPABILITIES = [
+	"chat",
+	"tools",
+	"reasoning",
+	"vision",
+	"audio",
+	"embeddings",
+	"rerank",
+	"fim",
+] as const satisfies ReadonlyArray<keyof CapabilityFlags>;
+
+/**
+ * One alias may load-balance across heterogeneous deployments. PanCode can only
+ * promise what every possible route supports: numerical limits take the
+ * smallest fully-published value, booleans require unanimous publication, and
+ * one explicit false defeats a true. Missing data never becomes a capability.
+ */
+export function aggregateLiteLLMCapabilities(rows: ReadonlyArray<Partial<CapabilityFlags>>): Partial<CapabilityFlags> {
+	if (rows.length === 0) return {};
+	const aggregate: Partial<CapabilityFlags> = {};
+	for (const key of ["contextWindow", "maxTokens"] as const) {
+		const values = rows.map((row) => row[key]);
+		if (values.every((value): value is number => typeof value === "number")) {
+			aggregate[key] = Math.min(...values);
+		}
+	}
+	for (const key of BOOLEAN_CAPABILITIES) {
+		const values = rows.map((row) => row[key]);
+		if (values.some((value) => value === false)) aggregate[key] = false;
+		else if (values.every((value) => value === true)) aggregate[key] = true;
+	}
+	const controlRuntime = rows[0]?.thinkingControlRuntime;
+	if (controlRuntime !== undefined && rows.every((row) => row.thinkingControlRuntime === controlRuntime)) {
+		aggregate.thinkingControlRuntime = controlRuntime;
+	}
+	const structuredOutputs = rows.map((row) => row.structuredOutputs);
+	if (structuredOutputs.some((value) => value === "none")) aggregate.structuredOutputs = "none";
+	else if (structuredOutputs.every((value) => value === "json-schema")) aggregate.structuredOutputs = "json-schema";
+	return aggregate;
+}
+
+interface LiteLLMCatalog {
+	/** Whether the authenticated inference listing returned a valid catalog. */
+	listed: boolean;
+	models: string[];
+	modelCapabilities: Record<string, Partial<CapabilityFlags>>;
+	modelStates: Record<string, ProbeModelStatus>;
+	/** Physical deployment behind each alias, for display. */
+	deployments: Record<string, Array<{ model: string; apiBase?: string }>>;
+	/** Whether the empty catalog is specifically because the gateway rejected the key. */
+	authFailed: boolean;
+	notes?: string[];
+}
+
+const EMPTY_CATALOG: LiteLLMCatalog = {
+	listed: false,
+	models: [],
+	modelCapabilities: {},
+	modelStates: {},
+	deployments: {},
+	authFailed: false,
+};
+
+/** Whether a failed probe leg failed specifically on the credential, not on reachability. */
+function isAuthError(leg: { ok: boolean; error?: string }): boolean {
+	return !leg.ok && /^HTTP 40[13]\b/u.test(leg.error ?? "");
+}
+
+/**
+ * The inference listing controls alias availability; detail only enriches exact
+ * aliases. Detail access may be restricted independently of inference access.
+ */
+async function fetchCatalog(base: string, ctx: ProbeContext, headers: Record<string, string>): Promise<LiteLLMCatalog> {
+	const options = { timeoutMs: ctx.httpTimeoutMs, headers, ...(ctx.signal ? { signal: ctx.signal } : {}) };
+	const list = await probeJson<LiteLLMModelsResponse>({ ...options, url: `${base}/v1/models` });
+	if (isAuthError(list)) return { ...EMPTY_CATALOG, authFailed: true };
+	const listed = list.ok && Array.isArray(list.data?.data);
+	const models = listed
+		? [...new Set(list.data?.data?.flatMap((row) => (typeof row?.id === "string" && row.id.length > 0 ? [row.id] : [])))]
+		: [];
+	// An explicitly empty inference listing must not be broadened by admin metadata.
+	if (listed && models.length === 0) return { ...EMPTY_CATALOG, listed: true };
+
+	let detail = await probeJson<LiteLLMModelInfoResponse>({ ...options, url: `${base}/v1/model/info` });
+	if (
+		(!detail.ok && /^HTTP (404|405|501)\b/u.test(detail.error ?? "")) ||
+		(detail.ok && !Array.isArray(detail.data?.data))
+	) {
+		detail = await probeJson<LiteLLMModelInfoResponse>({ ...options, url: `${base}/model/info` });
+	}
+	const catalog: LiteLLMCatalog = {
+		listed,
+		models,
+		modelCapabilities: {},
+		modelStates: {},
+		deployments: {},
+		authFailed: false,
+	};
+	if (!detail.ok || !Array.isArray(detail.data?.data)) {
+		catalog.notes = ["Gateway detail metadata is unavailable; route capabilities are unknown."];
+		return catalog;
+	}
+	if (!listed) {
+		catalog.notes = [
+			"Inference model listing is unavailable; aliases come from gateway detail metadata and availability is unverified.",
+		];
+	}
+	const available = new Set(models);
+	const capabilityRows: Record<string, Array<Partial<CapabilityFlags>>> = {};
+	for (const row of detail.data.data) {
+		if (typeof row?.model_name !== "string" || row.model_name.length === 0) continue;
+		const alias = row.model_name;
+		if (listed && !available.has(alias)) continue;
+		if (catalog.deployments[alias] === undefined) {
+			if (!listed) catalog.models.push(alias);
+			catalog.deployments[alias] = [];
+			capabilityRows[alias] = [];
+		}
+		capabilityRows[alias]?.push(row.model_info ? capabilitiesFromLiteLLMModelInfo(row.model_info) : {});
+		const upstream = row.litellm_params?.model;
+		const apiBase = row.litellm_params?.api_base;
+		catalog.deployments[alias]?.push({
+			model: typeof upstream === "string" ? upstream : alias,
+			...(typeof apiBase === "string" ? { apiBase } : {}),
+		});
+	}
+	for (const alias of catalog.models) {
+		const caps = aggregateLiteLLMCapabilities(capabilityRows[alias] ?? []);
+		if (Object.keys(caps).length > 0) catalog.modelCapabilities[alias] = caps;
+	}
+	return catalog;
+}
+
+const litellmRuntime: RuntimeDescriptor = {
+	id: "litellm",
+	displayName: "LiteLLM gateway",
+	kind: "http",
+	tier: "protocol",
+	apiFamily: "openai-completions",
+	auth: "api-key",
+	defaultCapabilities,
+
+	async probe(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult> {
+		const base = rootUrl(target);
+		if (!base) return { ok: false, error: "target has no url" };
+		const headers = bearerHeaders(target, ctx);
+
+		// Liveness is supplementary: a reverse proxy may restrict this public
+		// endpoint while the authenticated inference listing remains usable.
+		const liveOpts = { url: `${base}/health/liveliness`, timeoutMs: ctx.httpTimeoutMs } as const;
+		const live = await (ctx.signal
+			? probeJson<unknown>({ ...liveOpts, signal: ctx.signal })
+			: probeJson<unknown>(liveOpts));
+
+		const catalog = await fetchCatalog(base, ctx, headers);
+		if (!catalog.listed || catalog.models.length === 0) {
+			const result: ProbeResult = {
+				ok: false,
+				error: catalog.authFailed
+					? "gateway rejected model-list access"
+					: "gateway inference model catalog is unavailable or empty",
+				failureKind: catalog.authFailed
+					? "authentication"
+					: live.ok || catalog.listed || catalog.models.length > 0
+						? "catalog-unavailable"
+						: "generic",
+				...(catalog.models.length > 0 ? { models: catalog.models } : {}),
+				...(catalog.notes ? { notes: catalog.notes } : {}),
+			};
+			if (catalog.authFailed) result.authFailed = true;
+			if (live.latencyMs !== undefined) result.latencyMs = live.latencyMs;
+			return result;
+		}
+
+		const result: ProbeResult = { ok: true, models: catalog.models };
+		if (live.latencyMs !== undefined) result.latencyMs = live.latencyMs;
+		if (Object.keys(catalog.modelCapabilities).length > 0) {
+			result.modelCapabilities = catalog.modelCapabilities;
+			const selected = target.defaultModel?.trim();
+			const selectedCaps = selected ? catalog.modelCapabilities[selected] : undefined;
+			if (selected && selectedCaps) {
+				result.discoveredCapabilities = selectedCaps;
+				result.capabilityModelId = selected;
+			}
+		}
+		const notes: string[] = [...(catalog.notes ?? [])];
+		if (!live.ok) notes.push("Unauthenticated liveness check failed; authenticated model listing succeeded.");
+		const configured = target.defaultModel?.trim();
+		if (configured && !catalog.models.includes(configured)) {
+			notes.push(`configured model '${configured}' is not in the gateway catalog`);
+		}
+		// A node/model catalog already names placement. Summarize those one-to-one
+		// routes instead of flooding target diagnostics with dozens of tautologies;
+		// retain the explicit mapping for genuine aliases and multi-deployments.
+		const routeEntries = Object.entries(catalog.deployments);
+		const physical = routeEntries.filter(([alias, deployments]) => {
+			const slash = alias.indexOf("/");
+			if (slash <= 0 || deployments.length !== 1) return false;
+			const upstream = deployments[0]?.model.replace(/^openai\//u, "");
+			return upstream === alias.slice(slash + 1);
+		});
+		if (physical.length > 0) notes.push(`physical routes: ${physical.length} node/model names map one-to-one`);
+		const routed = routeEntries
+			.filter(([alias]) => !physical.some(([physicalAlias]) => physicalAlias === alias))
+			.map(([alias, deployments]) => {
+				const models = [...new Set(deployments.map((deployment) => deployment.model))];
+				return `${alias}=${models.join("|")}`;
+			})
+			.sort();
+		if (routed.length > 0) notes.push(`routes: ${routed.join(", ")}`);
+		if (notes.length > 0) result.notes = notes;
+		return result;
+	},
+
+	async probeModels(target: TargetDescriptor, ctx: ProbeContext): Promise<string[]> {
+		const base = rootUrl(target);
+		if (!base) return [];
+		const catalog = await fetchCatalog(base, ctx, bearerHeaders(target, ctx));
+		// This string-array surface cannot distinguish hints from live IDs.
+		return catalog.listed ? catalog.models : [];
+	},
+
+	synthesizeModel(target: TargetDescriptor, wireModelId: string, kb: KnowledgeBaseHit | null): Model<Api> {
+		return synthLocalModel({
+			// A LiteLLM target is a gateway whether or not settings said so. The
+			// residency layer reads this to stay observe-only: the models behind an
+			// alias are the proxy's to load and evict, and a PanCode stream that tried
+			// to manage them would be issuing load commands to a host that does not
+			// take them. The one exception is an operator's `lmstudio.load` profile:
+			// PanCode then loads on the LM Studio server the gateway declares for the
+			// route (engine/apis/lmstudio.ts), never on the gateway itself.
+			target: { ...target, gateway: true },
+			wireModelId,
+			kb,
+			defaultCapabilities,
+			apiFamily: "openai-completions",
+			provider: LITELLM_PROVIDER,
+			baseUrlForTarget: withV1,
+		});
+	},
+};
+
+export default litellmRuntime;

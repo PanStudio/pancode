@@ -1,0 +1,1203 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { renderUsdEstimate, renderUsdLimit } from "../core/telemetry/render.js";
+import {
+	parseWorkerContextPolicy,
+	type WorkerContextPolicy,
+	type WorkerContextProvenance,
+} from "../domains/context/worker/contract.js";
+import { parseWorkerContextProvenance } from "../worker/context-seed.js";
+
+/**
+ * Plan-scale dispatch detection and the operator-facing plan artifact.
+ *
+ * A dispatch call is plan-scale when it fans out more than one task, runs a
+ * compete topology, applies a compete winner, or places work on a remote
+ * fleet node. Default autonomy routes exactly these calls through
+ * ONE plan approval: the registry parks the call with the rendered plan as
+ * the ask, and approving it approves the whole plan. Yolo never stops;
+ * the dispatch tool logs the same artifact's hash into every run's receipt
+ * (RunPlanProvenance) so the chain records what would have been approved.
+ *
+ * Production calls carry a strict v3 resolved artifact attached by the
+ * dispatch tool's admission planner. That artifact pins effective
+ * target/model/node choices and any active route approval into execution.
+ * Older artifact versions are rejected rather than interpreted.
+ */
+
+import { sha256Hex } from "../core/hash.js";
+import { isRecord } from "../core/type-guards.js";
+import type { ResultContract } from "../domains/agents/result-contract-types.js";
+import { AGENT_AUTOMATION_AUTHORITIES, type AgentAutomationAuthority } from "../domains/agents/spec.js";
+import type { DispatchRequest } from "../domains/dispatch/contract.js";
+import { type ExecutionRole, isExecutionRole } from "../domains/dispatch/execution-role.js";
+import { type DispatchIntent, isDispatchIntent } from "../domains/dispatch/intent.js";
+import { DispatchPathScopeInferenceError, resolveDispatchPathScope } from "../domains/dispatch/path-scope.js";
+import {
+	type ApprovedAssignmentRoute,
+	cloneApprovedAssignmentRoute,
+	isApprovedAssignmentRoute,
+} from "../domains/dispatch/route-approval.js";
+import { isRouteDecisionAgentSelection, type RouteDecisionV1 } from "../domains/dispatch/route-decision.js";
+import { ROUTE_POLICY_VERSION } from "../domains/dispatch/route-policy.js";
+import { isRoutingIntent, type RoutingIntent } from "../domains/dispatch/routing-intent.js";
+import type { DispatchFailoverCandidate, DispatchFailoverMode } from "../domains/dispatch/validation.js";
+import { prepareDispatchArguments } from "./dispatch-arguments.js";
+
+export type DispatchPlanTopology =
+	| "parallel"
+	| "sequential"
+	| "pipeline"
+	| "review"
+	| "compete"
+	| "council"
+	| "detached"
+	| "fleet";
+
+export type DispatchPlanSource = null | {
+	kind: "scout-transition";
+	runId: string;
+	runDigest: string;
+	executionPlanHash: string;
+};
+
+export type DispatchPlanAuthorityGrant = null | {
+	requested: AgentAutomationAuthority;
+	basis: "operator-plan-approval" | "yolo-policy" | "harness-read-only";
+};
+
+export interface DispatchPlanTaskView {
+	record?: boolean;
+	agent: string;
+	/** Exact bounded task being approved, sanitized only when rendered. */
+	task: string;
+	/** Exact canonical bounded briefing approved for this task. */
+	briefing?: string;
+	context?: WorkerContextPolicy;
+	workerContext?: WorkerContextProvenance;
+	worktree?: true;
+	apply?: "merge" | "preserve";
+	worktreeDestination?: string;
+	model?: string;
+	node?: string;
+	/** Effective transport identity; host is authenticated for SSH placement. */
+	nodeKind?: "local" | "ssh";
+	nodeHost?: string;
+	/** Effective configured target id used as the execution pin. */
+	target?: string;
+	/** Coordinator role when the topology expands one user task into several runs. */
+	role?: "task" | "builder" | "reviewer" | "candidate" | "judge" | "member" | "synthesis";
+	council?: { label: string; color?: string; round: number; rounds: number; synthesis: "none" | "judge" | "vote" };
+	/** One-based source task or gate cycle/candidate number. */
+	position?: number;
+	/** Normalized advisory posture and hard bounds sealed into the plan. */
+	routingIntent?: RoutingIntent;
+	/** Approved failover mode sealed into the plan. */
+	failover?: DispatchFailoverMode;
+	/** Exact approved fallback tuples, order-significant, present only for approved failover. */
+	allowedCandidates?: ReadonlyArray<DispatchFailoverCandidate>;
+	/** Active authority is always explicit; null is the shadow/fixed posture. */
+	routeApproval: ApprovedAssignmentRoute | null;
+	/** Concrete baseline and authenticated authority basis for agent:auto; null for explicit requests. */
+	agentSelection: NonNullable<DispatchRequest["agentSelection"]> | null;
+	stepId: string | null;
+	dependencies: ReadonlyArray<string>;
+	executionRole: ExecutionRole;
+	expectedResultContract: ResultContract["kind"] | null;
+	authorityGrant: DispatchPlanAuthorityGrant;
+	agentDecision: RouteDecisionV1 | null;
+	wave: number | null;
+	intent?: DispatchIntent;
+	resolvedVerification?: NonNullable<DispatchRequest["resolvedVerification"]>;
+	/** Admission parts only the run can settle, shown on the card as checked at run. */
+	checkedAtRun?: ReadonlyArray<string>;
+	/** The bounds that stop this run (cost estimate, or wall clock and tool ceiling on an unpriced route). */
+	limits?: string;
+	/** Where the run writes, from its envelope (M7). */
+	writes?: string;
+	/** Which setting chose the route (`fleet default`, a fleet profile, a target named in the call). */
+	route?: string;
+	/** Capabilities the run's envelope withheld, one line each (M7). */
+	withheld?: ReadonlyArray<string>;
+	/** Each candidate route's forecast beside the choice, one line each, the route that runs first (R4). */
+	forecasts?: ReadonlyArray<string>;
+}
+
+export interface DispatchPlanView {
+	topology: DispatchPlanTopology;
+	taskCount: number;
+	/** True when this call requires plan approval at default autonomy. */
+	planScale: boolean;
+	/**
+	 * Set when a plan-scale call is admitted at default autonomy without the plan stop: every task of the
+	 * host-sealed plan is a read-only run on this machine (maintainer 2026-11-21 13:40Z). See `isReadOnlyPlan`.
+	 */
+	readOnlyPlan?: true;
+	tasks: DispatchPlanTaskView[];
+	/**
+	 * Rendered plan artifact, deterministic for identical arguments against an
+	 * unchanged working tree. The tree is an input because an intent-less task's scope
+	 * lines resolve a "../"-leading prose token by probing the dispatch root, so
+	 * creating or deleting the probed file between two renders of the same call
+	 * changes this text and the hash below. Nothing re-derives the hash to compare
+	 * it; both renders of one call happen in the same synchronous admission pass.
+	 */
+	text: string;
+	/** sha256 of the rendered artifact. */
+	hash: string;
+	/** Scheduling ceiling visible in the approved artifact; 0 means no session ceiling. */
+	costCeilingUsd?: number;
+	/** Whole-plan deadline for a Scout dependency plan. */
+	deadlineMs?: number;
+	/** Supervised compete-winner confirmation, when this is an apply action. */
+	confirmation?: { branch: string; group: string; index: number; cwd?: string };
+}
+
+export const RESOLVED_DISPATCH_PLAN_ARGUMENT = "__pancode_resolved_dispatch_plan";
+export const DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT = "__pancode_dispatch_plan_preparation_error";
+
+export interface ResolvedDispatchPlanArtifact {
+	version: 3;
+	topology: DispatchPlanTopology;
+	source: DispatchPlanSource;
+	maxWorkers: number | null;
+	onFailure: "stop" | "continue" | null;
+	tasks: Array<
+		Required<Pick<DispatchPlanTaskView, "agent" | "task" | "model" | "node" | "target">> &
+			Required<Pick<DispatchPlanTaskView, "nodeKind" | "failover">> &
+			Required<Pick<DispatchPlanTaskView, "routingIntent">> &
+			Pick<
+				DispatchPlanTaskView,
+				| "briefing"
+				| "record"
+				| "context"
+				| "workerContext"
+				| "worktree"
+				| "apply"
+				| "worktreeDestination"
+				| "nodeHost"
+				| "role"
+				| "council"
+				| "position"
+				| "allowedCandidates"
+				| "intent"
+				| "resolvedVerification"
+				| "checkedAtRun"
+				| "limits"
+				| "writes"
+				| "route"
+				| "withheld"
+				| "forecasts"
+			> &
+			Required<
+				Pick<
+					DispatchPlanTaskView,
+					| "routeApproval"
+					| "agentSelection"
+					| "stepId"
+					| "dependencies"
+					| "executionRole"
+					| "expectedResultContract"
+					| "authorityGrant"
+					| "agentDecision"
+					| "wave"
+				>
+			>
+	>;
+	costCeilingUsd: number;
+	deadlineMs: number | null;
+	confirmation?: { branch: string; group: string; index: number; cwd?: string };
+}
+
+/**
+ * Compete candidate `index` (1-based) on the route its call entry named. Plan
+ * admission and the runner both build candidates here, so the previewed plan
+ * and the executed candidates pin the same route.
+ */
+export function withCompeteCandidateRoute(
+	request: DispatchRequest,
+	routes: ReadonlyArray<{ target?: string; model?: string }> | undefined,
+	index: number,
+): DispatchRequest {
+	const route = routes?.[index - 1];
+	if (route === undefined) return request;
+	return {
+		...request,
+		...(route.target !== undefined ? { target: route.target } : {}),
+		...(route.model !== undefined ? { model: route.model } : {}),
+	};
+}
+
+export function withResolvedPlanTaskPin(
+	request: DispatchRequest,
+	task: ResolvedDispatchPlanArtifact["tasks"][number] | undefined,
+	options: { pinTask?: boolean; pinBriefing?: boolean } = {},
+): DispatchRequest {
+	if (task === undefined) return request;
+	if (task.workerContext !== undefined && request.contextSeed?.provenance.contentHash !== task.workerContext.contentHash)
+		throw new Error("worker context: admitted seed no longer matches the plan");
+	const {
+		record: _record,
+		briefing: _briefing,
+		context: _context,
+		contextSeed: _contextSeed,
+		failover: _failover,
+		allowedCandidates: _candidates,
+		agentSelection: _agentSelection,
+		routeApproval: _approval,
+		assignmentDeadlineAt: _deadline,
+		runWallMs: _wall,
+		executionRole: _executionRole,
+		...base
+	} = request;
+	return {
+		...base,
+		agentId: task.agent,
+		...(task.record !== undefined ? { record: task.record } : {}),
+		...(task.context ? { context: structuredClone(task.context) } : {}),
+		...(task.workerContext && request.contextSeed ? { contextSeed: structuredClone(request.contextSeed) } : {}),
+		executionRole: task.executionRole,
+		...(request.reservation !== undefined &&
+		(task.stepId !== null || (task.role !== undefined && task.position !== undefined))
+			? {
+					reservation: {
+						ownerId: request.reservation.ownerId,
+						memberId: task.stepId ?? `${task.role}-${task.position}`,
+					},
+				}
+			: {}),
+		routingIntent: structuredClone(task.routingIntent),
+		failover: task.failover,
+		...(task.agentSelection === null ? {} : { agentSelection: structuredClone(task.agentSelection) }),
+		...(task.routeApproval === null ? {} : { routeApproval: cloneApprovedAssignmentRoute(task.routeApproval) }),
+		...(task.allowedCandidates === undefined
+			? {}
+			: { allowedCandidates: task.allowedCandidates.map((candidate) => ({ ...candidate })) }),
+		task: options.pinTask === false ? request.task : task.task,
+		...(options.pinBriefing === false
+			? request.briefing !== undefined
+				? { briefing: request.briefing }
+				: {}
+			: task.briefing !== undefined
+				? { briefing: task.briefing }
+				: {}),
+		...(task.worktree === true
+			? {
+					worktree: true as const,
+					apply: task.apply ?? "merge",
+					...(task.worktreeDestination === undefined ? {} : { taskWorktreeDestination: task.worktreeDestination }),
+				}
+			: {}),
+		...(task.intent !== undefined ? { intent: structuredClone(task.intent) } : {}),
+		...(task.resolvedVerification !== undefined
+			? { resolvedVerification: task.resolvedVerification.map((check) => ({ ...check, argv: [...check.argv] })) }
+			: {}),
+		target: task.target,
+		model: task.model,
+		node: task.node,
+		plannedNode: {
+			id: task.node,
+			kind: task.nodeKind,
+			...(task.nodeHost !== undefined ? { host: task.nodeHost } : {}),
+		},
+	};
+}
+
+function isStringArray(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+/** A sealed reference or baseline digest: a sha256, or null for a file absent at admission. */
+function isSealedDigest(value: unknown): boolean {
+	return value === null || (typeof value === "string" && /^[0-9a-f]{64}$/u.test(value));
+}
+
+function str(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+/** Keep terminal control bytes and line breaks out of approval artifacts without losing their identity. */
+function safeField(value: string, bindChangedValue = true, keepLines = false): string {
+	let result = "";
+	for (const character of value) {
+		const code = character.codePointAt(0) ?? 0;
+		// A JSON-quoted preview keeps its line breaks escaped on the plan line, so a reader can show them as rows.
+		if (keepLines && character === "\n") result += "\n";
+		else if (keepLines && character === "\t") result += " ";
+		else result += code < 32 || (code >= 127 && code <= 159) ? "?" : character;
+		if (result.length >= 256) {
+			result = `${result.slice(0, 255)}…`;
+			break;
+		}
+	}
+	if (!bindChangedValue || result === value) return result;
+	return `${result}{sha256=${sha256Hex(value)}}`;
+}
+
+/**
+ * The scope lines of the approval artifact, for a task with no typed intent.
+ *
+ * `cwd` is the dispatch's own working directory, not this process's: prose
+ * inference probes a "../"-leading token against the dispatch root, so a plan
+ * rendered against `process.cwd()` would show the operator a working context
+ * the run does not resolve whenever the call carries an explicit `cwd` (a
+ * worktree, most often). Passing it makes this render and admission read the
+ * same tree, which is also the sense in which the artifact is deterministic:
+ * identical arguments against an unchanged tree, not against any tree.
+ */
+function renderInferredPathScope(task: DispatchPlanTaskView, cwd: string | undefined): string[] {
+	if (task.intent !== undefined) return [];
+	let scope: ReturnType<typeof resolveDispatchPathScope>;
+	try {
+		scope = resolveDispatchPathScope({
+			agentId: task.agent,
+			executionRole: task.executionRole,
+			task: task.task,
+			...(cwd !== undefined ? { cwd } : {}),
+			...(task.briefing !== undefined ? { briefing: task.briefing } : {}),
+		});
+	} catch (error) {
+		// Admission renders this plan before any tool hook fires. A throw here
+		// escaped every hook, so the turn record, the loop guard and the audit
+		// never saw the call; the run itself rejects the same scope with its error.
+		if (!(error instanceof DispatchPathScopeInferenceError)) throw error;
+		return [`    scope mode=inferred unresolved=${error.code}`];
+	}
+	const lines = ["    scope mode=inferred"];
+	for (const [policy, entries] of [
+		["working_context", scope.provenance.workingContextPaths],
+		["write_boundary", scope.provenance.writeBoundaries],
+	] as const) {
+		for (const entry of entries) {
+			for (const evidence of entry.evidence) {
+				lines.push(
+					`    scope ${policy} path=${JSON.stringify(safeField(entry.path))} provenance=${evidence.provenance} source=${evidence.source} confidence=${evidence.confidence} reason=${evidence.reason}`,
+				);
+			}
+		}
+	}
+	if (scope.provenance.workingContextPaths.length === 0 && scope.provenance.writeBoundaries.length === 0) {
+		lines.push("    scope policy_paths=none");
+	}
+	// Named here as well as on the dispatch-time notice, because this artifact is
+	// the surface an operator approves: a token the run anchored somewhere the
+	// prose did not spell, or discarded outright, would otherwise be visible in
+	// the plan only as a scope line that has no counterpart in the task text.
+	for (const entry of scope.parentTokens) {
+		lines.push(
+			`    scope parent_token raw=${JSON.stringify(safeField(entry.token))} resolved=${
+				entry.resolved === null ? "dropped" : JSON.stringify(safeField(entry.resolved))
+			} source=${entry.source}`,
+		);
+	}
+	return lines;
+}
+
+function taskViews(args: Record<string, unknown>): DispatchPlanTaskView[] {
+	const tasks = Array.isArray(args.tasks) ? args.tasks : [];
+	const sharedAgent = str(args.agent) ?? "coder";
+	const sharedModel = str(args.model);
+	const sharedNode = str(args.node);
+	const sharedTarget = str(args.target);
+	return tasks.map((item) => {
+		const record = isRecord(item) ? item : {};
+		const view: DispatchPlanTaskView = {
+			agent: str(record.agent) ?? sharedAgent,
+			task: str(item) ?? str(record.task) ?? "(invalid task)",
+			routeApproval: null,
+			agentSelection: null,
+			stepId: null,
+			dependencies: [],
+			executionRole: "builder",
+			expectedResultContract: null,
+			authorityGrant: null,
+			agentDecision: null,
+			wave: null,
+		};
+		const capture = "record" in record ? record.record : args.record;
+		if (typeof capture === "boolean") view.record = capture;
+		const briefing = "briefing" in record ? str(record.briefing) : str(args.briefing);
+		if (briefing !== undefined) view.briefing = briefing;
+		const worktree = "worktree" in record ? record.worktree : args.worktree;
+		if (worktree === true) {
+			view.worktree = true;
+			const apply = "apply" in record ? record.apply : args.apply;
+			view.apply = apply === "preserve" ? "preserve" : "merge";
+		}
+		const model = str(record.model) ?? sharedModel;
+		if (model !== undefined) view.model = model;
+		const node = str(record.node) ?? sharedNode;
+		if (node !== undefined) view.node = node;
+		const target = str(record.target) ?? sharedTarget;
+		if (target !== undefined) view.target = target;
+		const failover = failoverModeOf(record.failover) ?? failoverModeOf(args.failover);
+		if (failover !== undefined) view.failover = failover;
+		const rawCandidates = "allowedCandidates" in record ? record.allowedCandidates : args.allowedCandidates;
+		const candidates = canonicalCandidates(rawCandidates);
+		if (failover === "approved" && candidates !== null) view.allowedCandidates = candidates;
+		return view;
+	});
+}
+
+function failoverModeOf(value: unknown): DispatchFailoverMode | undefined {
+	return value === "none" || value === "approved" ? value : undefined;
+}
+
+/**
+ * Canonicalize an approved failover envelope: trim every field, drop malformed
+ * tuples, and preserve order (order is the approved preference and is part of
+ * the plan hash). Returns null when the list is absent or empty after cleanup.
+ */
+function canonicalCandidates(value: unknown): DispatchFailoverCandidate[] | null {
+	if (!Array.isArray(value)) return null;
+	const out: DispatchFailoverCandidate[] = [];
+	for (const item of value) {
+		if (!isRecord(item)) return null;
+		const agentId = str(item.agentId);
+		const target = str(item.target);
+		const model = str(item.model);
+		const node = str(item.node);
+		if (!agentId || !target || !model || !node) return null;
+		out.push({ agentId, target, model, node });
+	}
+	return out.length > 0 ? out : null;
+}
+
+/** Select topology without rendering unresolved task scope or consulting provider state. */
+export function dispatchPlanTopology(args: Record<string, unknown>): DispatchPlanTopology {
+	if (isRecord(args.apply_winner)) return "compete";
+	if (args.mode === "compete") return "compete";
+	if (args.mode === "council") return "council";
+	if (args.review === true || isRecord(args.review)) return "review";
+	if (args.detach === true) return "detached";
+	if (args.mode === "sequential") return "sequential";
+	if (args.mode === "pipeline") return "pipeline";
+	return "parallel";
+}
+
+function renderPlanText(
+	topology: DispatchPlanTopology,
+	tasks: ReadonlyArray<DispatchPlanTaskView>,
+	costCeilingUsd: number | undefined,
+	deadlineMs: number | null,
+	source: DispatchPlanSource,
+	maxWorkers: number | null,
+	onFailure: ResolvedDispatchPlanArtifact["onFailure"],
+	cwd: string | undefined,
+	confirmation?: ResolvedDispatchPlanArtifact["confirmation"],
+): string {
+	const lines = [
+		`dispatch plan: topology=${topology} tasks=${tasks.length}`,
+		`advisory session cost baseline: ${costCeilingUsd === undefined ? "unavailable" : costCeilingUsd === 0 ? "no ceiling" : renderUsdLimit(costCeilingUsd)}`,
+		`deadline: ${deadlineMs === null ? "none (advisory planning)" : `${deadlineMs}ms whole-plan`}`,
+	];
+	if (confirmation !== undefined) {
+		lines.push(
+			`winner confirmation: group=${safeField(confirmation.group)} candidate=${confirmation.index} branch=${safeField(confirmation.branch)}${confirmation.cwd === undefined ? "" : ` cwd=${safeField(confirmation.cwd)}`}`,
+		);
+	}
+	if (source !== null) {
+		lines.push(
+			`source: scout-transition run=${safeField(source.runId)} run-digest=${source.runDigest} execution-plan=${source.executionPlanHash} max-workers=${maxWorkers ?? "?"} on-failure=${onFailure ?? "?"}`,
+		);
+	}
+	for (const [index, task] of tasks.entries()) {
+		const model = task.model !== undefined ? ` model=${safeField(task.model)}` : "";
+		const target = task.target !== undefined ? ` target=${safeField(task.target)}` : "";
+		const node = ` node=${safeField(task.node ?? "local")}${
+			task.nodeKind !== undefined ? ` kind=${task.nodeKind}` : ""
+		}${task.nodeHost !== undefined ? ` host=${safeField(task.nodeHost)}` : ""}`;
+		const role =
+			task.role !== undefined ? ` role=${task.role}${task.position !== undefined ? `#${task.position}` : ""}` : "";
+		const failover = task.failover !== undefined ? ` failover=${task.failover}` : "";
+		const routing = task.routingIntent;
+		const routingText =
+			routing === undefined
+				? ""
+				: ` posture=${routing.posture} maxCostUsd=${routing.maxCostUsd ?? "none"} deadlineMs=${routing.deadlineMs ?? "none"} minimumQuality=${routing.minimumQuality ?? "none"} locality=${routing.locality}`;
+		lines.push(
+			`  ${index + 1}.${role} agent=${safeField(task.agent)}${target}${model}${node}${failover}${routingText} task_bytes=${Buffer.byteLength(task.task, "utf8")} task_sha256=${sha256Hex(task.task)} task_preview=${JSON.stringify(safeField(task.task, false, true))}`,
+		);
+		if (task.council !== undefined) {
+			lines.push(
+				`    council label=${safeField(task.council.label)} color=${safeField(task.council.color ?? "none")} round=${task.council.round} rounds=${task.council.rounds} synthesis=${task.council.synthesis}`,
+			);
+		}
+		if (task.record === true) lines.push("    record=true (bounded redacted display asciicast)");
+		if (task.limits !== undefined) lines.push(`    limits: ${safeField(task.limits)}`);
+		if (task.writes !== undefined) lines.push(`    writes: ${safeField(task.writes)}`);
+		if (task.route !== undefined) lines.push(`    route: ${safeField(task.route)}`);
+		for (const line of task.withheld ?? []) lines.push(`    withheld: ${safeField(line)}`);
+		for (const line of task.forecasts ?? []) lines.push(`    forecast: ${safeField(line)}`);
+		for (const note of task.checkedAtRun ?? []) lines.push(`    checked at run: ${safeField(note)}`);
+		if (task.worktree === true)
+			lines.push(
+				`    worktree=true apply=${task.apply ?? "merge"} destination=${safeField(task.worktreeDestination ?? "unresolved")}`,
+			);
+		if (task.allowedCandidates !== undefined) {
+			for (const [candidateIndex, candidate] of task.allowedCandidates.entries()) {
+				lines.push(
+					`    candidate#${candidateIndex + 1} agent=${safeField(candidate.agentId)} target=${safeField(candidate.target)} model=${safeField(candidate.model)} node=${safeField(candidate.node)}`,
+				);
+			}
+		}
+		if (task.routeApproval !== null) {
+			const approval = task.routeApproval;
+			const selected = approval.decision.selected;
+			lines.push(
+				`    active policy=${safeField(approval.decision.policyVersion)} decision=${approval.decision.decisionHash} runtime=${safeField(selected.runtimeId)} thinking=${safeField(selected.thinkingLevel ?? "default")} totalCostUpperBoundUsd=${renderUsdEstimate(approval.totalCostUpperBoundUsd)} deadlineMs=${approval.deadlineMs ?? "none"} maxAttempts=${approval.maxAttempts}`,
+			);
+		}
+		if (task.agentSelection !== null) {
+			lines.push(
+				`    agent-selection=auto baseline=${safeField(task.agentSelection.baselineAgentId)} authority=${task.agentSelection.approvedAuthorities.map((authority) => safeField(authority)).join(",")} basis=${task.agentSelection.authorityBasis}`,
+			);
+		}
+		if (task.stepId !== null) {
+			lines.push(
+				`    step=${safeField(task.stepId)} wave=${task.wave ?? "?"} role=${task.executionRole} dependencies=${task.dependencies.map((dependency) => safeField(dependency)).join(",") || "none"} result=${task.expectedResultContract ?? "none"} authority=${task.authorityGrant?.requested ?? "none"} basis=${task.authorityGrant?.basis ?? "none"}`,
+			);
+			const agentReasons = task.agentDecision?.agentSelection.evaluations
+				.filter((evaluation) => evaluation.rejections.length > 0)
+				.slice(0, 8)
+				.map(
+					(evaluation) =>
+						`${safeField(evaluation.agentId)}:${evaluation.rejections
+							.slice(0, 4)
+							.map((rejection) => safeField(rejection))
+							.join(",")}`,
+				);
+			if (agentReasons !== undefined && agentReasons.length > 0)
+				lines.push(`    agent-exclusions=${agentReasons.join(";")}`);
+		}
+		if (task.context !== undefined)
+			lines.push(
+				`    context=${task.context.mode}${task.workerContext ? ` tokens=${task.workerContext.estimatedTokens} omitted=${task.workerContext.omittedMessages} sha256=${task.workerContext.contentHash}` : ""}`,
+			);
+		if (task.briefing !== undefined) {
+			lines.push(
+				`    briefing_bytes=${Buffer.byteLength(task.briefing, "utf8")} briefing_sha256=${sha256Hex(task.briefing)} briefing_preview=${JSON.stringify(safeField(task.briefing, false, true))}`,
+			);
+		}
+		if (task.intent !== undefined) {
+			const serialized = JSON.stringify(task.intent);
+			lines.push(`    intent_sha256=${sha256Hex(serialized)}`);
+		}
+		lines.push(...renderInferredPathScope(task, cwd));
+		for (const check of task.resolvedVerification ?? []) {
+			lines.push(
+				`    verification check=${safeField(check.check)}${check.kind !== undefined ? ` kind=${check.kind}` : ""} argv=${JSON.stringify(check.argv)} cwd=${JSON.stringify(check.cwd)} timeout_ms=${check.timeoutMs}`,
+			);
+		}
+	}
+	return lines.join("\n");
+}
+
+function isResolvedTask(value: unknown): value is ResolvedDispatchPlanArtifact["tasks"][number] {
+	if (!isRecord(value)) return false;
+	try {
+		const context = value.context === undefined ? undefined : parseWorkerContextPolicy(value.context);
+		const provenance = value.workerContext === undefined ? undefined : parseWorkerContextProvenance(value.workerContext);
+		if (provenance && provenance.mode !== context?.mode) return false;
+		if (context && context.mode !== "isolated" && !provenance) return false;
+	} catch {
+		return false;
+	}
+	const allowedKeys = new Set([
+		"agent",
+		"task",
+		"briefing",
+		"record",
+		"context",
+		"workerContext",
+		"worktree",
+		"apply",
+		"worktreeDestination",
+		"model",
+		"node",
+		"nodeKind",
+		"nodeHost",
+		"target",
+		"role",
+		"council",
+		"position",
+		"routingIntent",
+		"failover",
+		"allowedCandidates",
+		"routeApproval",
+		"agentSelection",
+		"stepId",
+		"dependencies",
+		"executionRole",
+		"expectedResultContract",
+		"authorityGrant",
+		"agentDecision",
+		"wave",
+		"intent",
+		"resolvedVerification",
+		"checkedAtRun",
+		"limits",
+		"writes",
+		"route",
+		"withheld",
+		"forecasts",
+	]);
+	if (Object.keys(value).some((key) => !allowedKeys.has(key))) return false;
+	for (const key of [
+		"agent",
+		"task",
+		"model",
+		"node",
+		"nodeKind",
+		"target",
+		"routingIntent",
+		"failover",
+		"routeApproval",
+		"agentSelection",
+		"stepId",
+		"dependencies",
+		"executionRole",
+		"expectedResultContract",
+		"authorityGrant",
+		"agentDecision",
+		"wave",
+	])
+		if (!Object.hasOwn(value, key)) return false;
+	if (
+		value.role !== undefined &&
+		value.role !== "task" &&
+		value.role !== "builder" &&
+		value.role !== "reviewer" &&
+		value.role !== "candidate" &&
+		value.role !== "judge" &&
+		value.role !== "member" &&
+		value.role !== "synthesis"
+	) {
+		return false;
+	}
+	if (value.position !== undefined && (!Number.isInteger(value.position) || Number(value.position) < 1)) return false;
+	if (value.council !== undefined) {
+		if (
+			!isRecord(value.council) ||
+			typeof value.council.label !== "string" ||
+			value.council.label.length === 0 ||
+			(value.council.color !== undefined && typeof value.council.color !== "string") ||
+			!Number.isInteger(value.council.round) ||
+			Number(value.council.round) < 1 ||
+			!Number.isInteger(value.council.rounds) ||
+			Number(value.council.rounds) < 1 ||
+			(value.council.synthesis !== "none" && value.council.synthesis !== "judge" && value.council.synthesis !== "vote")
+		)
+			return false;
+	}
+	if (value.nodeKind !== "local" && value.nodeKind !== "ssh") return false;
+	if (value.nodeKind === "ssh" && (typeof value.nodeHost !== "string" || value.nodeHost.trim().length === 0))
+		return false;
+	if (value.nodeKind === "local" && value.nodeHost !== undefined) return false;
+	if (value.briefing !== undefined && (typeof value.briefing !== "string" || value.briefing.trim().length === 0))
+		return false;
+	if (value.record !== undefined && typeof value.record !== "boolean") return false;
+	if (
+		value.checkedAtRun !== undefined &&
+		(!Array.isArray(value.checkedAtRun) ||
+			value.checkedAtRun.length === 0 ||
+			!value.checkedAtRun.every((note) => typeof note === "string" && note.length > 0))
+	)
+		return false;
+	if (value.limits !== undefined && (typeof value.limits !== "string" || value.limits.length === 0)) return false;
+	if (value.writes !== undefined && (typeof value.writes !== "string" || value.writes.length === 0)) return false;
+	if (value.route !== undefined && (typeof value.route !== "string" || value.route.length === 0)) return false;
+	if (
+		value.withheld !== undefined &&
+		(!Array.isArray(value.withheld) ||
+			value.withheld.length === 0 ||
+			!value.withheld.every((line) => typeof line === "string" && line.length > 0))
+	)
+		return false;
+	if (
+		value.forecasts !== undefined &&
+		(!Array.isArray(value.forecasts) ||
+			value.forecasts.length === 0 ||
+			!value.forecasts.every((line) => typeof line === "string" && line.length > 0))
+	)
+		return false;
+	if (value.worktree !== undefined && value.worktree !== true) return false;
+	if (value.apply !== undefined && value.apply !== "merge" && value.apply !== "preserve") return false;
+	if (value.apply !== undefined && value.worktree !== true) return false;
+	if (value.worktreeDestination !== undefined && typeof value.worktreeDestination !== "string") return false;
+	if (failoverModeOf(value.failover) === undefined) return false;
+	if (!isRoutingIntent(value.routingIntent)) return false;
+	if (value.routeApproval !== null && !isApprovedAssignmentRoute(value.routeApproval)) return false;
+	if (value.routeApproval !== null && value.failover !== "approved") return false;
+	if (value.agentSelection !== null && !isResolvedAgentSelection(value.agentSelection)) return false;
+	if (
+		!isExecutionRole(value.executionRole) ||
+		!Array.isArray(value.dependencies) ||
+		!value.dependencies.every((dependency) => typeof dependency === "string" && dependency.length > 0) ||
+		new Set(value.dependencies).size !== value.dependencies.length
+	)
+		return false;
+	if (value.stepId !== null && (typeof value.stepId !== "string" || value.stepId.length === 0)) return false;
+	if (value.wave !== null && (!Number.isInteger(value.wave) || Number(value.wave) < 0)) return false;
+	if (
+		value.expectedResultContract !== null &&
+		!RESULT_CONTRACT_KINDS.has(value.expectedResultContract as ResultContract["kind"])
+	)
+		return false;
+	if (value.authorityGrant !== null && !isAuthorityGrant(value.authorityGrant)) return false;
+	if (value.agentDecision !== null && !isAgentDecision(value.agentDecision)) return false;
+	if (value.intent !== undefined && !isDispatchIntent(value.intent)) return false;
+	if (
+		value.resolvedVerification !== undefined &&
+		(!Array.isArray(value.resolvedVerification) ||
+			!value.resolvedVerification.every(
+				(check) =>
+					isRecord(check) &&
+					typeof check.check === "string" &&
+					Array.isArray(check.argv) &&
+					check.argv.every((arg) => typeof arg === "string") &&
+					typeof check.cwd === "string" &&
+					typeof check.timeoutMs === "number" &&
+					(check.kind === undefined ||
+						check.kind === "numeric-compare" ||
+						check.kind === "perf-budget" ||
+						check.kind === "reproduce") &&
+					(check.kind !== "reproduce" ||
+						(isRecord(check.reproduce) &&
+							isRecord(check.reproduce.spec) &&
+							isRecord(check.reproduce.spec.compare) &&
+							typeof check.reproduce.declaredCwd === "string" &&
+							(check.reproduce.spec.compare.mode === "reference"
+								? isSealedDigest(check.reproduce.referenceSha256)
+								: check.reproduce.referenceSha256 === undefined))) &&
+					(check.numeric === undefined ||
+						(isRecord(check.numeric) &&
+							typeof check.numeric.reference === "string" &&
+							isSealedDigest(check.numeric.referenceSha256) &&
+							(check.numeric.inputs === undefined || isStringArray(check.numeric.inputs)) &&
+							(check.numeric.provenance === undefined ||
+								(Array.isArray(check.numeric.provenance) && check.numeric.provenance.every(isStringArray))) &&
+							(check.numeric.seed === undefined ||
+								(isRecord(check.numeric.seed) &&
+									typeof check.numeric.seed.env === "string" &&
+									typeof check.numeric.seed.value === "string")) &&
+							(check.numeric.repeat === undefined ||
+								(Number.isSafeInteger(check.numeric.repeat) &&
+									(check.numeric.repeat as number) >= 1 &&
+									(check.numeric.repeat as number) <= 5)))) &&
+					(check.perf === undefined ||
+						(isRecord(check.perf) &&
+							(typeof check.perf.baseline === "string"
+								? isSealedDigest(check.perf.baselineSha256)
+								: check.perf.baseline === undefined && check.perf.baselineSha256 === undefined))),
+			))
+	)
+		return false;
+	if (value.failover === "approved") {
+		if (canonicalCandidates(value.allowedCandidates) === null) return false;
+	} else if (value.allowedCandidates !== undefined) {
+		return false;
+	}
+	return [value.agent, value.task, value.model, value.node, value.target].every(
+		(candidate) => typeof candidate === "string" && candidate.trim().length > 0,
+	);
+}
+
+const RESULT_CONTRACT_KINDS = new Set<ResultContract["kind"]>([
+	"architect-plan",
+	"scout-report",
+	"verifier-report",
+	"review-verdict",
+	"council-report",
+	"debugger-report",
+	"research-report",
+	"world-knowledge-report",
+	"mutation-report",
+	"provenance-report",
+	"oracle-report",
+	"external-delegation",
+	"artifact-report",
+	"text-report",
+	"context-handbook",
+	"delegation-plan",
+]);
+
+function isAuthorityGrant(value: unknown): value is Exclude<DispatchPlanAuthorityGrant, null> {
+	return (
+		isRecord(value) &&
+		Object.keys(value).sort().join("\u0000") === "basis\u0000requested" &&
+		AGENT_AUTOMATION_AUTHORITIES.includes(value.requested as AgentAutomationAuthority) &&
+		(value.basis === "operator-plan-approval" || value.basis === "yolo-policy" || value.basis === "harness-read-only")
+	);
+}
+
+function isAgentDecision(value: unknown): value is RouteDecisionV1 {
+	return (
+		isRecord(value) &&
+		value.policyVersion === ROUTE_POLICY_VERSION &&
+		(value.mode === "shadow" || value.mode === "active" || value.mode === "fixed") &&
+		isRecord(value.selected) &&
+		isRecord(value.executedRoute) &&
+		Array.isArray(value.approvedFallbacks) &&
+		Array.isArray(value.candidateEvaluations) &&
+		Array.isArray(value.hardConstraints) &&
+		Array.isArray(value.reasonCodes) &&
+		typeof value.decisionHash === "string" &&
+		/^[0-9a-f]{64}$/u.test(value.decisionHash) &&
+		isRouteDecisionAgentSelection(value.agentSelection)
+	);
+}
+
+function isResolvedAgentSelection(value: unknown): value is NonNullable<DispatchRequest["agentSelection"]> {
+	if (!isRecord(value)) return false;
+	if (
+		Object.keys(value).sort().join("\u0000") !==
+		["approvedAuthorities", "authorityBasis", "baselineAgentId", "mode", "version"].sort().join("\u0000")
+	)
+		return false;
+	if (value.version !== 1 || value.mode !== "auto") return false;
+	if (typeof value.baselineAgentId !== "string" || value.baselineAgentId.trim().length === 0) return false;
+	const authorityBasis = value.authorityBasis;
+	if (
+		authorityBasis !== "operator-plan-approval" &&
+		authorityBasis !== "yolo-policy" &&
+		authorityBasis !== "harness-read-only"
+	)
+		return false;
+	if (
+		!Array.isArray(value.approvedAuthorities) ||
+		value.approvedAuthorities.length === 0 ||
+		value.approvedAuthorities.some(
+			(authority) =>
+				typeof authority !== "string" ||
+				!AGENT_AUTOMATION_AUTHORITIES.includes(authority as (typeof AGENT_AUTOMATION_AUTHORITIES)[number]),
+		) ||
+		new Set(value.approvedAuthorities).size !== value.approvedAuthorities.length
+	)
+		return false;
+	return true;
+}
+
+export function resolvedDispatchPlanFromArgs(args: Record<string, unknown>): ResolvedDispatchPlanArtifact | null {
+	const value = args[RESOLVED_DISPATCH_PLAN_ARGUMENT];
+	if (!isRecord(value) || value.version !== 3) return null;
+	const artifactKeys = new Set([
+		"version",
+		"topology",
+		"source",
+		"maxWorkers",
+		"onFailure",
+		"tasks",
+		"costCeilingUsd",
+		"deadlineMs",
+		"confirmation",
+	]);
+	if (Object.keys(value).some((key) => !artifactKeys.has(key))) return null;
+	for (const key of [
+		"version",
+		"topology",
+		"source",
+		"maxWorkers",
+		"onFailure",
+		"tasks",
+		"costCeilingUsd",
+		"deadlineMs",
+	]) {
+		if (!Object.hasOwn(value, key)) return null;
+	}
+	if (!Array.isArray(value.tasks) || !value.tasks.every(isResolvedTask)) return null;
+	let confirmation: ResolvedDispatchPlanArtifact["confirmation"];
+	if (value.confirmation !== undefined) {
+		if (
+			!isRecord(value.confirmation) ||
+			!["branch\u0000group\u0000index", "branch\u0000cwd\u0000group\u0000index"].includes(
+				Object.keys(value.confirmation).sort().join("\u0000"),
+			) ||
+			typeof value.confirmation.branch !== "string" ||
+			value.confirmation.branch.trim().length === 0 ||
+			typeof value.confirmation.group !== "string" ||
+			value.confirmation.group.trim().length === 0 ||
+			(value.confirmation.cwd !== undefined &&
+				(typeof value.confirmation.cwd !== "string" || value.confirmation.cwd.trim().length === 0)) ||
+			!Number.isInteger(value.confirmation.index) ||
+			Number(value.confirmation.index) < 1
+		) {
+			return null;
+		}
+		confirmation = {
+			branch: value.confirmation.branch.trim(),
+			group: value.confirmation.group.trim(),
+			index: Number(value.confirmation.index),
+			...(value.confirmation.cwd === undefined ? {} : { cwd: value.confirmation.cwd.trim() }),
+		};
+	}
+	if (value.tasks.length === 0 && confirmation === undefined) return null;
+	if (
+		value.topology !== "parallel" &&
+		value.topology !== "sequential" &&
+		value.topology !== "pipeline" &&
+		value.topology !== "review" &&
+		value.topology !== "compete" &&
+		value.topology !== "council" &&
+		value.topology !== "detached" &&
+		value.topology !== "fleet"
+	) {
+		return null;
+	}
+	if (typeof value.costCeilingUsd !== "number" || !Number.isFinite(value.costCeilingUsd) || value.costCeilingUsd < 0) {
+		return null;
+	}
+	const source = parsePlanSource(value.source);
+	if (source === undefined) return null;
+	const fleet = value.topology === "fleet";
+	if (fleet !== (source !== null)) return null;
+	if (fleet) {
+		if (
+			!Number.isInteger(value.maxWorkers) ||
+			Number(value.maxWorkers) < 1 ||
+			(value.onFailure !== "stop" && value.onFailure !== "continue") ||
+			(value.deadlineMs !== null && (!Number.isInteger(value.deadlineMs) || Number(value.deadlineMs) < 1))
+		)
+			return null;
+		if (
+			value.tasks.some(
+				(task) =>
+					task.stepId === null ||
+					task.expectedResultContract === null ||
+					task.authorityGrant === null ||
+					task.agentDecision === null ||
+					task.wave === null ||
+					task.agentSelection === null ||
+					task.role !== "task" ||
+					task.position === undefined,
+			)
+		)
+			return null;
+	} else if (
+		value.maxWorkers !== null ||
+		value.onFailure !== null ||
+		value.deadlineMs !== null ||
+		value.tasks.some(
+			(task) =>
+				task.stepId !== null ||
+				task.dependencies.length > 0 ||
+				task.expectedResultContract !== null ||
+				task.authorityGrant !== null ||
+				task.agentDecision !== null ||
+				task.wave !== null,
+		)
+	)
+		return null;
+	return {
+		version: 3,
+		topology: value.topology,
+		source,
+		maxWorkers: value.maxWorkers as number | null,
+		onFailure: value.onFailure as "stop" | "continue" | null,
+		tasks: value.tasks.map((task) => ({
+			agent: task.agent.trim(),
+			task: task.task.trim(),
+			...(task.briefing !== undefined ? { briefing: task.briefing.trim() } : {}),
+			...(task.record !== undefined ? { record: task.record } : {}),
+			...(task.checkedAtRun !== undefined ? { checkedAtRun: [...task.checkedAtRun] } : {}),
+			...(typeof task.limits === "string" ? { limits: task.limits } : {}),
+			...(typeof task.writes === "string" ? { writes: task.writes } : {}),
+			...(typeof task.route === "string" ? { route: task.route } : {}),
+			...(task.withheld !== undefined ? { withheld: [...task.withheld] } : {}),
+			...(task.forecasts !== undefined ? { forecasts: [...task.forecasts] } : {}),
+			...(task.context !== undefined ? { context: parseWorkerContextPolicy(task.context) } : {}),
+			...(task.workerContext !== undefined ? { workerContext: structuredClone(task.workerContext) } : {}),
+			...(task.worktree === true
+				? {
+						worktree: true as const,
+						apply: task.apply ?? "merge",
+						...(task.worktreeDestination === undefined ? {} : { worktreeDestination: task.worktreeDestination }),
+					}
+				: {}),
+			model: task.model.trim(),
+			node: task.node.trim(),
+			nodeKind: task.nodeKind,
+			target: task.target.trim(),
+			failover: task.failover,
+			routingIntent: structuredClone(task.routingIntent),
+			routeApproval: task.routeApproval === null ? null : cloneApprovedAssignmentRoute(task.routeApproval),
+			agentSelection: task.agentSelection === null ? null : structuredClone(task.agentSelection),
+			stepId: task.stepId,
+			dependencies: [...task.dependencies],
+			executionRole: task.executionRole,
+			expectedResultContract: task.expectedResultContract,
+			authorityGrant: task.authorityGrant === null ? null : { ...task.authorityGrant },
+			agentDecision: task.agentDecision === null ? null : structuredClone(task.agentDecision),
+			wave: task.wave,
+			...(task.failover === "approved" && canonicalCandidates(task.allowedCandidates) !== null
+				? { allowedCandidates: canonicalCandidates(task.allowedCandidates) as DispatchFailoverCandidate[] }
+				: {}),
+			...(task.nodeHost !== undefined ? { nodeHost: task.nodeHost.trim() } : {}),
+			...(task.role !== undefined ? { role: task.role } : {}),
+			...(task.council !== undefined ? { council: { ...task.council } } : {}),
+			...(task.position !== undefined ? { position: task.position } : {}),
+			...(task.intent !== undefined ? { intent: structuredClone(task.intent) } : {}),
+			...(task.resolvedVerification !== undefined
+				? { resolvedVerification: task.resolvedVerification.map((check) => ({ ...check, argv: [...check.argv] })) }
+				: {}),
+		})),
+		costCeilingUsd: value.costCeilingUsd,
+		deadlineMs: value.deadlineMs as number | null,
+		...(confirmation !== undefined ? { confirmation } : {}),
+	};
+}
+
+function parsePlanSource(value: unknown): DispatchPlanSource | undefined {
+	if (value === null) return null;
+	if (
+		!isRecord(value) ||
+		Object.keys(value).sort().join("\u0000") !== "executionPlanHash\u0000kind\u0000runDigest\u0000runId"
+	)
+		return undefined;
+	if (
+		value.kind !== "scout-transition" ||
+		typeof value.runId !== "string" ||
+		value.runId.length === 0 ||
+		typeof value.runDigest !== "string" ||
+		!/^[0-9a-f]{64}$/u.test(value.runDigest) ||
+		typeof value.executionPlanHash !== "string" ||
+		!/^[0-9a-f]{64}$/u.test(value.executionPlanHash)
+	)
+		return undefined;
+	return {
+		kind: "scout-transition",
+		runId: value.runId,
+		runDigest: value.runDigest,
+		executionPlanHash: value.executionPlanHash,
+	};
+}
+
+export function withResolvedDispatchPlan(
+	args: Record<string, unknown>,
+	artifact: ResolvedDispatchPlanArtifact,
+): Record<string, unknown> {
+	return { ...args, [RESOLVED_DISPATCH_PLAN_ARGUMENT]: structuredClone(artifact) };
+}
+
+/**
+ * Derive the plan view for a dispatch tool call. Arguments are normalized
+ * through the same prepareDispatchArguments the tool itself applies, so the
+ * admission-time view and the execution-time view agree.
+ */
+/** Topologies that only fan tasks out or chain them; gates (review, compete, council), detached and fleet runs are not here. */
+const READ_ONLY_PLAN_TOPOLOGIES: ReadonlySet<DispatchPlanTopology> = new Set(["parallel", "sequential", "pipeline"]);
+
+/**
+ * Whether a sealed plan changes nothing and stays on this machine, so default autonomy need not stop for it
+ * (maintainer 2026-11-21 13:40Z; a headless default run could otherwise never fan out, lab L9). Every task must
+ * have resolved to the `explorer` role, which admission derives from the recipe's capability class or a read-only
+ * request and the envelope then enforces, never from the task text. A task that names write roots or expected
+ * outputs, runs in a worktree, sits in a gate, carries an approved failover, an agent selection or an authority
+ * grant, carries a host verification check (the host runs it outside the worker's read-only envelope), or leaves
+ * the local node keeps the approval, as does any plan with a Scout source or a confirmation, or a call that
+ * declared any write scope (`declaredWriteScope`).
+ */
+function isReadOnlyPlan(
+	artifact: ResolvedDispatchPlanArtifact,
+	applyWinner: boolean,
+	declaredWriteScope: boolean,
+): boolean {
+	if (applyWinner || declaredWriteScope || artifact.source !== null || artifact.confirmation !== undefined) return false;
+	if (!READ_ONLY_PLAN_TOPOLOGIES.has(artifact.topology) || artifact.tasks.length === 0) return false;
+	return artifact.tasks.every(
+		(task) =>
+			task.executionRole === "explorer" &&
+			(task.role === undefined || task.role === "task") &&
+			task.nodeKind === "local" &&
+			task.node === "local" &&
+			task.worktree !== true &&
+			task.apply === undefined &&
+			task.failover === "none" &&
+			task.council === undefined &&
+			task.agentSelection === null &&
+			task.authorityGrant === null &&
+			(task.resolvedVerification?.length ?? 0) === 0 &&
+			(task.intent === undefined ||
+				(task.intent.writeRoots.length === 0 &&
+					task.intent.expectedOutputs.length === 0 &&
+					task.intent.verification.length === 0)),
+	);
+}
+
+/**
+ * Whether the call declared a write scope anywhere: write roots or expected outputs on the batch or on a task.
+ * Intent normalization drops a `.` write root (the whole workspace), so the sealed intent alone would read that
+ * declaration as none; admission seals this judgement into the snapshot's plan view, and it can only keep a stop.
+ */
+function declaresWriteScope(args: Record<string, unknown>): boolean {
+	const listed = (value: unknown) => Array.isArray(value) && value.length > 0;
+	const declares = (holder: unknown) =>
+		isRecord(holder) &&
+		(listed(holder.writeRoots) ||
+			(isRecord(holder.intent) && (listed(holder.intent.write_roots) || listed(holder.intent.expected_outputs))));
+	return declares(args) || (Array.isArray(args.tasks) && args.tasks.some(declares));
+}
+
+/**
+ * `hostSealed` says the resolved artifact on the arguments is the one the admission planner holds for this call,
+ * not a value that arrived with the call; only then can the plan be judged read-only.
+ */
+export function describeDispatchPlan(
+	rawArgs: Record<string, unknown> | undefined,
+	hostSealed = false,
+): DispatchPlanView {
+	const args = prepareDispatchArguments(rawArgs ?? {});
+	const preparationFailed = typeof args[DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT] === "string";
+	const resolved = resolvedDispatchPlanFromArgs(args);
+	const topology = resolved?.topology ?? dispatchPlanTopology(args);
+	const tasks = resolved?.tasks ?? taskViews(args);
+	const costCeilingUsd = resolved?.costCeilingUsd;
+	const deadlineMs = resolved?.deadlineMs ?? null;
+	const confirmation = resolved?.confirmation;
+	const source = resolved?.source ?? null;
+	const maxWorkers = resolved?.maxWorkers ?? null;
+	const onFailure = resolved?.onFailure ?? null;
+	const remote = tasks.some((task) => task.node !== undefined && task.node !== "local");
+	const planScale =
+		!preparationFailed &&
+		args.list !== true &&
+		(tasks.length > 1 ||
+			source !== null ||
+			topology === "compete" ||
+			topology === "council" ||
+			remote ||
+			tasks.some((task) => task.failover === "approved") ||
+			confirmation !== undefined ||
+			isRecord(args.apply_winner));
+	const text = renderPlanText(
+		topology,
+		tasks,
+		costCeilingUsd,
+		deadlineMs,
+		source,
+		maxWorkers,
+		onFailure,
+		// Read off the whole call rather than a task view: `cwd` is one top-level
+		// dispatch argument, so it survives on both the freshly parsed path and
+		// the resolved-artifact path, where the sealed task shape carries no cwd.
+		str(args.cwd),
+		confirmation,
+	);
+	return {
+		topology,
+		taskCount: Math.max(1, tasks.length),
+		planScale,
+		...(planScale &&
+		hostSealed &&
+		resolved !== null &&
+		isReadOnlyPlan(resolved, isRecord(args.apply_winner), declaresWriteScope(rawArgs ?? {}) || declaresWriteScope(args))
+			? { readOnlyPlan: true as const }
+			: {}),
+		tasks,
+		text,
+		hash: sha256Hex(text),
+		...(costCeilingUsd !== undefined ? { costCeilingUsd } : {}),
+		...(deadlineMs !== null ? { deadlineMs } : {}),
+		...(confirmation !== undefined ? { confirmation } : {}),
+	};
+}

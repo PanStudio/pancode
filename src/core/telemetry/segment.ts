@@ -1,0 +1,169 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { createHash } from "node:crypto";
+import type { RecordRead, SegmentHeader, TelemetryRecord } from "./envelope.js";
+import { readTelemetryRecord } from "./envelope.js";
+
+const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
+	let crc = index;
+	for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+	return crc >>> 0;
+});
+
+/** IEEE CRC32 over UTF-8 bytes; corruption detection, never a content commitment (#434). */
+export function crc32(bytes: Uint8Array): string {
+	let crc = 0xffffffff;
+	for (const byte of bytes) crc = (crc >>> 8) ^ (crcTable[(crc ^ byte) & 0xff] ?? 0);
+	return ((crc ^ 0xffffffff) >>> 0).toString(16).padStart(8, "0");
+}
+
+export function encodeTelemetryLine(value: TelemetryRecord | SegmentHeader): Buffer {
+	return frameTelemetryJson(JSON.stringify(value));
+}
+
+function frameTelemetryJson(text: string): Buffer {
+	const json = Buffer.from(text, "utf8");
+	return Buffer.concat([json, Buffer.from(`\t#${crc32(json)}\n`)]);
+}
+
+/**
+ * The exact JSON text of records this process's writer already accepted through `readTelemetryRecord`. Schema
+ * validation costs one to five milliseconds a record, and every journal this process writes is read back by the
+ * same process (the live fold, run usage, seal checks), so a line whose text is byte-identical to one accepted here
+ * reads without validating again. Any other text, including an edit of an accepted line, takes the full check.
+ * The JSON round trip keeps an accepted record accepted: the schemas hold only JSON types and finite numbers.
+ */
+const acceptedLines = new Set<string>();
+let acceptedChars = 0;
+// About 1300 records at the ~760 characters a record measures, process-wide and held for the process's life: at
+// most 1 MB of one-byte strings, 2 MB if a record carries non-Latin-1 text. Readers re-read recent lines (the live
+// fold right after a batch, run usage at a turn's end), so older lines falling out only costs a full check.
+const ACCEPTED_CHARS_MAX = 1024 * 1024;
+
+/** Encode a record `readTelemetryRecord` has just accepted, and remember its text for this process's readers. */
+export function encodeAcceptedTelemetryLine(record: TelemetryRecord): Buffer {
+	const text = JSON.stringify(record);
+	if (!acceptedLines.has(text) && text.length <= ACCEPTED_CHARS_MAX) {
+		acceptedLines.add(text);
+		acceptedChars += text.length;
+		for (const oldest of acceptedLines) {
+			if (acceptedChars <= ACCEPTED_CHARS_MAX) break;
+			acceptedLines.delete(oldest);
+			acceptedChars -= oldest.length;
+		}
+	}
+	return frameTelemetryJson(text);
+}
+
+function readTelemetryLine(text: string): RecordRead {
+	if (acceptedLines.has(text)) return { kind: "record", record: JSON.parse(text) as TelemetryRecord };
+	return readTelemetryRecord(JSON.parse(text));
+}
+
+export interface SegmentScan {
+	rows: RecordRead[];
+	/** Last complete physical line, including future records the reader cannot interpret. */
+	validBytes: number;
+	tornTailBytes: number;
+	/** First damaged interior line; it never truncates valid later records, which the scan keeps reading. */
+	corruptOffset: number | null;
+}
+
+const BACKSLASH = 0x5c;
+const SEGMENT_OPEN = "segment.open";
+
+/**
+ * Pure scan: only the adjudicated writer may repair a tail; read-only queries never mutate (#434).
+ *
+ * `wanted` is for a reader that consumes only records of those kinds. A checksummed line that holds no backslash, no
+ * wanted kind and no `segment.open` is left out of `rows` without being parsed: without a backslash JSON can spell no
+ * key or kind through an escape, so such a line's `k` can be none of them, and it would decode to another kind's
+ * record or a skipped line with no `segment` flag, none of which yields a wanted record or moves the
+ * clock origin later records take. Headers and every line that might be one are still parsed. The checksum runs
+ * first, so `validBytes`, `tornTailBytes`, `corruptOffset` and every `damaged` row are as an unfiltered scan's;
+ * only `rows` loses those lines, so a fold over it counts fewer `skipped` and holds no record of an unwanted kind.
+ */
+export function scanTelemetrySegment(bytes: Buffer, wanted?: readonly string[]): SegmentScan {
+	const result: SegmentScan = { rows: [], validBytes: 0, tornTailBytes: 0, corruptOffset: null };
+	let offset = 0;
+	while (offset < bytes.length) {
+		const newline = bytes.indexOf(0x0a, offset);
+		if (newline < 0) {
+			result.tornTailBytes = bytes.length - offset;
+			break;
+		}
+		const line = bytes.subarray(offset, newline);
+		const suffix = line.subarray(-10).toString("ascii");
+		const json = line.subarray(0, -10);
+		if (!/^\t#[0-9a-f]{8}$/.test(suffix) || crc32(json) !== suffix.slice(2)) {
+			if (newline === bytes.length - 1) {
+				result.tornTailBytes = bytes.length - offset;
+				break;
+			}
+			// A damaged interior line is one unknown row; the scan resyncs at its newline and keeps later records.
+			result.corruptOffset ??= offset;
+			result.rows.push({ kind: "damaged" });
+			offset = newline + 1;
+			result.validBytes = offset;
+			continue;
+		}
+		// Byte search equals text search here: UTF-8 never encodes an ASCII character inside a multi-byte sequence. A
+		// wanted line's kind sits near its start, so testing the kinds first keeps the search short on lines parsed anyway.
+		if (
+			wanted !== undefined &&
+			!wanted.some((kind) => json.includes(kind)) &&
+			!json.includes(SEGMENT_OPEN) &&
+			!json.includes(BACKSLASH)
+		) {
+			offset = newline + 1;
+			result.validBytes = offset;
+			continue;
+		}
+		try {
+			result.rows.push(readTelemetryLine(json.toString("utf8")));
+		} catch {
+			// A complete checksummed but invalid JSON record is skipped and counted, never truncated (#434).
+			result.rows.push({ kind: "skipped", reason: "invalid-record" });
+		}
+		offset = newline + 1;
+		result.validBytes = offset;
+	}
+	return result;
+}
+
+/**
+ * A scope's journal hash chain (#434): `head_n = sha256(head_{n-1} || line_n)` over the raw 32-byte previous head and
+ * the exact bytes of each framed line, CRC suffix included and newline excluded. The empty chain has no head, so
+ * `head_0` is the sha256 of the first segment header line. `lines` counts every chained line, headers included.
+ */
+export interface TelemetryChain {
+	head: Buffer | null;
+	lines: number;
+}
+
+export const EMPTY_TELEMETRY_CHAIN: TelemetryChain = Object.freeze({ head: null, lines: 0 });
+
+/** Extend a chain by one framed line, with or without its trailing newline. */
+export function chainTelemetryLine(chain: TelemetryChain, line: Uint8Array): TelemetryChain {
+	const body = line.length > 0 && line[line.length - 1] === 0x0a ? line.subarray(0, -1) : line;
+	const hash = createHash("sha256");
+	if (chain.head) hash.update(chain.head);
+	return { head: hash.update(body).digest(), lines: chain.lines + 1 };
+}
+
+/** Extend a chain by every complete line in `bytes`; a trailing partial line is not chained. */
+export function chainTelemetryBytes(chain: TelemetryChain, bytes: Buffer): TelemetryChain {
+	let next = chain;
+	let offset = 0;
+	while (offset < bytes.length) {
+		const newline = bytes.indexOf(0x0a, offset);
+		if (newline < 0) break;
+		next = chainTelemetryLine(next, bytes.subarray(offset, newline));
+		offset = newline + 1;
+	}
+	return next;
+}
+
+export function telemetryChainHead(chain: TelemetryChain): string | null {
+	return chain.head ? chain.head.toString("hex") : null;
+}

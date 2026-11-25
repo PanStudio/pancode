@@ -1,0 +1,123 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* Usage: the conversation's totals as one row of figures, spend per model, then each provider's
+   windows as slim bars. A bar keeps meter semantics through role="meter", so its fill is announced
+   as a value without the native meter's chrome. */
+.usage-panel__stats {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+	gap: var(--space-3);
+	margin: 0;
+}
+.usage-panel__stats > div {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+.usage-panel__stats dt {
+	font: 500 var(--text-instrument) / var(--leading-body) var(--font-ui);
+	letter-spacing: 0.01em;
+	color: var(--ink-muted);
+}
+.usage-panel__stats dd {
+	margin: 0;
+	font: 500 var(--text-body) / var(--leading-tight) var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	letter-spacing: -0.01em;
+	color: var(--ink);
+	overflow-wrap: anywhere;
+}
+.usage-panel__models > li {
+	grid-template-columns: minmax(0, 1fr) auto;
+}
+.usage-panel__route {
+	font-weight: 500;
+}
+.usage-panel__cost {
+	font-size: var(--text-exact);
+	color: var(--ink);
+}
+.usage-panel__quota {
+	display: grid;
+	gap: var(--space-4);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.usage-panel__quota > li {
+	display: grid;
+	gap: var(--space-2);
+	min-width: 0;
+}
+.usage-panel__quota > li + li {
+	padding-top: var(--space-2);
+}
+.usage-panel__provider {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+	margin: 0;
+	font-size: var(--text-meta);
+}
+.usage-panel__provider strong {
+	font-weight: 500;
+}
+.usage-panel__window {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: baseline;
+	gap: 5px var(--space-3);
+	margin-top: var(--space-1);
+	font-size: var(--text-meta);
+}
+.usage-panel__used {
+	font-size: var(--text-exact);
+}
+.usage-panel__bar {
+	grid-column: 1 / -1;
+	display: block;
+	/* The context meter's weight, so every bar in the sidebar is one instrument. */
+	height: 6px;
+	border-radius: var(--radius-sm);
+	background: var(--wb-active);
+	overflow: hidden;
+}
+.usage-panel__bar > span {
+	display: block;
+	height: 100%;
+	min-width: 2px;
+	border-radius: inherit;
+	background: var(--accent);
+	transition: width var(--motion-base) var(--ease-standard);
+}
+.usage-panel__window[data-tone="warn"] .usage-panel__bar > span {
+	background: var(--status-warn-line);
+}
+.usage-panel__window[data-tone="full"] .usage-panel__bar > span {
+	background: var(--status-fail-line);
+}
+.usage-panel__window > small {
+	grid-column: 1 / -1;
+	font-size: var(--text-instrument);
+	color: var(--ink-muted);
+}
+
+/* The header's quota warning takes the status ramp the context ring uses at the same severity. The bar's
+   hover rules colour a figure chip with the accent, so the warning keeps its tone when pointed at too. */
+.wb-chip--quota[data-tone="warn"],
+.wb-bar .wb-chip--quota[data-tone="warn"]:hover:not(:disabled) {
+	color: var(--status-warn-fg);
+}
+.wb-chip--quota[data-tone="fail"],
+.wb-bar .wb-chip--quota[data-tone="fail"]:hover:not(:disabled) {
+	color: var(--status-fail-fg);
+}
+/* A parked task's ring is its last reading, not a live gauge, so it drops the accent. */
+.wb-chip--meter[data-tone="neutral"] {
+	color: var(--status-neutral-fg);
+}
+.wb-chip--meter[data-tone="neutral"] .wb-ring__fill {
+	stroke: var(--status-neutral-line);
+}

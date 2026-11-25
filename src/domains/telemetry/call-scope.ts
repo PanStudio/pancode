@@ -1,0 +1,125 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { writeDiagnostic } from "../../core/diagnostics.js";
+import type { SurfaceId } from "../../core/side-surfaces.js";
+import { asSideAgent } from "../../core/telemetry/context.js";
+import type { AgentRole } from "../../core/telemetry/enums.js";
+import { pricingBasisFields } from "../../core/telemetry/pricing.js";
+import type { TelemetryCall } from "../../core/telemetry/producer.js";
+import { beginCall, processTelemetryContext } from "../../core/telemetry/producer.js";
+import type { CallSettled, CallStarted } from "../../core/telemetry/schemas.js";
+import type { EffectivePricing } from "../providers/catalog.js";
+import { callSettlementFromMessage, reportedModelFromMessage, sideCallShutdownCause } from "./call-facts.js";
+import type { TelemetryContract } from "./contract.js";
+import type { TelemetrySessionOrigin } from "./session-journals.js";
+
+export interface CallJournalOptions {
+	/** Null for a call no session owns, such as a startup warm: it is the process's own call (#434). */
+	origin: TelemetrySessionOrigin | null;
+	acquire: NonNullable<TelemetryContract["acquireTelemetrySession"]>;
+	/** The side agent making the call, named by the session it serves or, with no session, by the process (#434). */
+	role: AgentRole;
+	/** The side surface the call is for, journaled on its `call.started` (memory design 4.1). */
+	purpose?: SurfaceId;
+	/** The turn the call serves, journaled on its context so accounting charges it there. */
+	turnId?: string;
+	targetId: string;
+	runtimeId: string;
+	pricedBy: EffectivePricing["pricedBy"];
+	freeRule?: EffectivePricing["freeRule"];
+	/** The route's rates, so a target-rates call is priced from its settled counts (#434). */
+	rates?: EffectivePricing["rates"];
+	onSettled?: (facts: CallSettled) => void;
+}
+
+/** Filled by an admission gate while it runs; `waitedOn` names what held the request (#424, #434). */
+export interface AdmissionHold {
+	waitedOn?: "budget" | "capacity" | "steering";
+}
+
+/** One logical helper call retains its originating writer across schema and auth retries (#434). */
+export async function openCallScope(options: CallJournalOptions | undefined, model: { api: string; id: string }) {
+	const acquired = options?.origin
+		? await options.acquire(options.origin, { role: options.role, id: options.origin.id }, options.turnId)
+		: undefined;
+	// A session writer that failed to open owns no call; its journal records the gap (#434). A call with no session is
+	// the process journal's.
+	const lease = acquired?.journaled ? acquired : undefined;
+	const processContext = options?.origin === null ? processTelemetryContext() : undefined;
+	const owner = options && processContext ? asSideAgent(processContext, options.role) : lease?.context;
+	let call: TelemetryCall | undefined;
+	let settledIdentity: { callId: string; attemptId: string } | undefined;
+	const settled = (facts: CallSettled | undefined): CallSettled | undefined => {
+		if (facts) settledIdentity = { callId: facts.callId, attemptId: facts.attemptId };
+		if (facts && options?.onSettled) {
+			try {
+				options.onSettled(facts);
+			} catch {
+				writeDiagnostic("[pancode:telemetry] live helper projection failed; journal retains the call\n");
+			}
+		}
+		return facts;
+	};
+	return {
+		identity: () => settledIdentity,
+		startAttempt(
+			request?: Partial<Pick<CallStarted, "roundKind" | "toolChoice" | "thinkingLevel">>,
+		): { callId: string; attemptId: string } | undefined {
+			if (!options || !owner) return;
+			const previousAttempt = call?.attemptId;
+			call = call
+				? (call.nextAttempt(request) ?? call)
+				: beginCall(
+						{
+							target: {
+								targetId: options.targetId,
+								runtimeId: options.runtimeId,
+								api: model.api,
+								requestedModel: model.id,
+								reportedModel: { kind: "unknown", reason: "not-observed" },
+							},
+							roundKind: "tools-removed",
+							...(options.purpose !== undefined ? { purpose: options.purpose } : {}),
+							toolChoice: "none",
+							...request,
+						},
+						owner,
+					);
+			if (call.attemptId !== previousAttempt) settledIdentity = undefined;
+			return { callId: call.callId, attemptId: call.attemptId };
+		},
+		settle(message: unknown): CallSettled | undefined {
+			if (!call || !options) return undefined;
+			return settled(
+				call.settle(
+					callSettlementFromMessage(
+						message,
+						{ ...pricingBasisFields(options), ...(options.rates !== undefined ? { rates: options.rates } : {}) },
+						sideCallShutdownCause(message),
+					),
+					reportedModelFromMessage(message),
+				),
+			);
+		},
+		/** Time a gate as the current attempt's admission stage, so a wait reads as admission and never as a stall. */
+		async admit<T>(gate: (hold: AdmissionHold) => T | Promise<T>): Promise<T> {
+			const hold: AdmissionHold = {};
+			call?.stage("admission", "start");
+			try {
+				// Inside the attempt's context, so a budget hold the gate makes is journaled for this call (#424, #434).
+				return await (call ? call.withContext(() => gate(hold)) : gate(hold));
+			} finally {
+				call?.stage("admission", "end", hold);
+			}
+		},
+		withContext<T>(work: () => T): T {
+			return call ? call.withContext(work) : work();
+		},
+		async close(): Promise<void> {
+			// An attempt that got no message before its helper finished still settles; a settled one is untouched (#434).
+			if (call) settled(call.abandon("internal"));
+			await acquired?.release();
+		},
+	};
+}
+export type CallScope = Awaited<ReturnType<typeof openCallScope>>;

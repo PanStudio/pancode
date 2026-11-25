@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { sha256Hex } from "../../core/hash.js";
+import { internalGitArgv } from "../../core/internal-git.js";
+import { buildSafeToolEnv } from "../../core/safe-exec.js";
+
+/** Stable recovery namespace; labels never enter Git's ref grammar unchecked. */
+export function workspaceCheckpointRef(kind: "loop" | "compete", identity: string): string {
+	return `refs/pancode/${kind}/${sha256Hex(identity)}`;
+}
+
+/** Capture tracked and nonignored untracked state without modifying HEAD or the user's index.
+ * The immutable ref makes retries idempotent and keeps the object alive across GC. */
+export function captureWorkspaceCheckpoint(cwd: string, ref: string, message: string): string {
+	if (!/^refs\/pancode\/(loop|compete)\/[a-f0-9]{64}$/.test(ref)) throw new Error("invalid workspace checkpoint ref");
+	const directory = mkdtempSync(join(tmpdir(), "pancode-checkpoint-index-"));
+	const env = buildSafeToolEnv({
+		GIT_INDEX_FILE: join(directory, "index"),
+		GIT_AUTHOR_NAME: "PanCode checkpoint",
+		GIT_AUTHOR_EMAIL: "checkpoint@pancode.invalid",
+		GIT_COMMITTER_NAME: "PanCode checkpoint",
+		GIT_COMMITTER_EMAIL: "checkpoint@pancode.invalid",
+	});
+	const config = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"];
+	const git = (args: string[]) =>
+		execFileSync("git", internalGitArgv(["-C", cwd, ...config, ...args]), {
+			env,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+			timeout: 30000,
+			maxBuffer: 1024 * 1024,
+		}).trim();
+	try {
+		try {
+			git(["rev-parse", "--verify", ref]);
+			return ref;
+		} catch {
+			/* First capture owns this immutable reference. */
+		}
+		// A repository with no commits checkpoints as a parentless commit from an
+		// empty index rather than failing on rev-parse (D4).
+		let head: string | null;
+		try {
+			head = git(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
+		} catch {
+			head = null;
+		}
+		// Automatic preservation must not run repository-configured filter commands.
+		// Names stay argv values; Git's ordinary text normalization still applies.
+		const filterKeys = git(["config", "--null", "--name-only", "--list"])
+			.split("\0")
+			.filter((key) => /^filter\..*\.(?:clean|process|required)$/.test(key));
+		for (const key of filterKeys) config.push("-c", `${key}=${key.endsWith(".required") ? "false" : ""}`);
+		git(head === null ? ["read-tree", "--empty"] : ["read-tree", head]);
+		git(["add", "-A", "--", "."]);
+		const tree = git(["write-tree"]);
+		const commit = git(["commit-tree", "--no-gpg-sign", tree, ...(head === null ? [] : ["-p", head]), "-m", message]);
+		git(["update-ref", ref, commit, ""]);
+		return ref;
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+}

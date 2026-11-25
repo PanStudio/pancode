@@ -1,0 +1,34 @@
+---
+name: dataset-curation
+description: Inspects, curates and validates a scientific dataset's files and metadata against the curation guide and FAIR data standards. Use when preparing a dataset for sharing or reviewing its schema and metadata.
+version: 1.0.0
+license: Apache-2.0
+pancode:
+  registry-id: dataset-curation
+  source-url: https://github.com/akougkas/pancode/tree/main/hub/_authoring/templates/plugin
+triggers:
+  - curate dataset
+  - fair data check
+  - validate dataset schema
+  - dataset curation
+allowed-tools:
+  - read
+  - grep
+  - find
+  - ls
+---
+
+# Dataset Curation Skill
+
+Guide for inspecting, curating, and validating scientific datasets against FAIR data standards.
+
+## Reference Guidelines
+
+Consult ${pluginRoot}/assets/curation-guide.md for domain quality invariants and metadata checklists.
+
+## Procedure
+
+1. **Scan Dataset Directory**: Use `ls` and `find` to map all data files and metadata descriptors.
+2. **Review Metadata**: Verify existence of licensing, provenance records, and format declarations.
+3. **Inspect Content**: Verify column names, missing-value sentinels, and unit definitions against the curation guidelines.
+4. **Compile Assessment**: Report missing fields, format violations, and recommendations for FAIR compliance.

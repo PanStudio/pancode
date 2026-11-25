@@ -1,0 +1,356 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { ok, rejects, strictEqual, throws } from "node:assert/strict";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import fs, { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { hostname, tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it, mock } from "node:test";
+import { pathToFileURL } from "node:url";
+import { processBirthToken, setProcStatusReaderForTesting } from "../../src/core/process-identity.js";
+import { tryWithStateFileLockSync, withStateFileLock, withStateFileLockSync } from "../../src/core/state-file-lock.js";
+
+// One implementation now backs settings.yaml, the dispatch admission state
+// file, credentials.yaml and residency mutations, so its policy is worth
+// pinning directly rather than only through each caller.
+describe("contracts/state-file-lock", () => {
+	let dir = "";
+	let target = "";
+	let lockPath = "";
+
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "pancode-file-lock-"));
+		target = join(dir, "state.json");
+		lockPath = `${target}.lock`;
+	});
+
+	afterEach(() => {
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	// Legacy record shape: no host, no birth token. It must keep adjudicating as
+	// a record from this host, so the tests below that use it pin that path.
+	function holdLock(pid: number, ageMs = 0, extra: { host?: string; birthToken?: string } = {}): void {
+		writeFileSync(lockPath, `${JSON.stringify({ ...extra, pid, at: new Date().toISOString() })}\n`, "utf8");
+		if (ageMs > 0) {
+			const past = new Date(Date.now() - ageMs);
+			utimesSync(lockPath, past, past);
+		}
+	}
+
+	it("removes the lock it created when writing the owner record fails, such as on ENOSPC", () => {
+		const write = mock.method(fs, "writeSync", () => {
+			throw Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+		});
+		syncBuiltinESMExports();
+		try {
+			throws(() => withStateFileLockSync(target, () => undefined), /no space left/);
+		} finally {
+			write.mock.restore();
+			syncBuiltinESMExports();
+		}
+		strictEqual(existsSync(lockPath), false);
+	});
+
+	it("takes and releases the lock around the critical section", () => {
+		const seen = withStateFileLockSync(target, () => {
+			ok(existsSync(lockPath), "the lock exists while the section runs");
+			return JSON.parse(readFileSync(lockPath, "utf8")) as { host: string; pid: number; birthToken: string | null };
+		});
+		strictEqual(seen.pid, process.pid);
+		strictEqual(seen.host, hostname());
+		strictEqual(seen.birthToken, processBirthToken());
+		strictEqual(existsSync(lockPath), false);
+	});
+
+	it("never adjudicates a record from another host, even for a pid that is dead here", () => {
+		holdLock(999999, 120_000, { host: `${hostname()}-elsewhere`, birthToken: "foreign" });
+		throws(() => withStateFileLockSync(target, () => "unreachable", { timeoutMs: 50 }), /timed out .* waiting for/);
+		ok(existsSync(lockPath), "a foreign host's lock is that host's to reclaim");
+	});
+
+	it("reclaims another host's lock only once its refreshed lease has expired, when the caller opts in", async () => {
+		const foreign = { host: `${hostname()}-elsewhere`, birthToken: "foreign" };
+		holdLock(999999, 1_000, foreign);
+		await rejects(
+			withStateFileLock(target, () => "unreachable", { timeoutMs: 50, foreignExpiresMs: 60_000 }),
+			/timed out/,
+		);
+		holdLock(999999, 120_000, foreign);
+		strictEqual(await withStateFileLock(target, () => "taken", { timeoutMs: 50, foreignExpiresMs: 60_000 }), "taken");
+	});
+
+	it("reclaims a same-host record whose pid was reused by another process", () => {
+		const token = processBirthToken();
+		if (token === null || token.startsWith("pid-")) return; // no birth-token source on this platform
+		holdLock(process.pid, 0, { host: hostname(), birthToken: `${token}-earlier-incarnation` });
+		strictEqual(
+			withStateFileLockSync(target, () => "taken", { timeoutMs: 50 }),
+			"taken",
+		);
+		// And a matching token still identifies a live holder.
+		holdLock(process.pid, 0, { host: hostname(), birthToken: token });
+		throws(() => withStateFileLockSync(target, () => "unreachable", { timeoutMs: 50 }), /timed out .* waiting for/);
+	});
+
+	it("releases the lock when the critical section throws", () => {
+		throws(() =>
+			withStateFileLockSync(target, () => {
+				throw new Error("boom");
+			}),
+		);
+		strictEqual(existsSync(lockPath), false);
+	});
+
+	it("never steals from a live owner, however old the lockfile is", () => {
+		// Two minutes is past every retired stale window (5s, 30s, 130s). The
+		// owner is alive, so its age says nothing about whether it is done.
+		holdLock(process.pid, 120_000);
+		throws(() => withStateFileLockSync(target, () => "unreachable", { timeoutMs: 50 }), /timed out .* waiting for/);
+		ok(existsSync(lockPath), "a failed acquisition must not disturb the holder");
+	});
+
+	it("reclaims a lock whose owner is gone, without waiting out a stale window", () => {
+		holdLock(999999);
+		strictEqual(
+			withStateFileLockSync(target, () => "taken", { timeoutMs: 50 }),
+			"taken",
+		);
+		strictEqual(existsSync(lockPath), false);
+	});
+
+	it("reclaims a dead owner's lock only under the reclaim guard", () => {
+		const guardPath = `${lockPath}.reclaim.lock`;
+		const deadPid = 999_999_999;
+		holdLock(deadPid);
+		writeFileSync(guardPath, `${JSON.stringify({ pid: process.pid })}\n`, "utf8");
+		const before = readFileSync(lockPath, "utf8");
+		throws(() => withStateFileLockSync(target, () => "entered", { timeoutMs: 0 }), /timed out/);
+		strictEqual(readFileSync(lockPath, "utf8"), before, "a live guard defers the reclaim and leaves the lock alone");
+		writeFileSync(guardPath, `${JSON.stringify({ pid: deadPid })}\n`, "utf8");
+		strictEqual(
+			withStateFileLockSync(target, () => "entered", { timeoutMs: 0 }),
+			"entered",
+		);
+		ok(!existsSync(guardPath), "a guard left by a dead reclaimer is recovered and released");
+		ok(!existsSync(lockPath));
+	});
+
+	it("falls back to age for a record whose owner cannot be read", () => {
+		writeFileSync(lockPath, "not-a-lock-record\n", "utf8");
+		throws(() => withStateFileLockSync(target, () => "unreachable", { timeoutMs: 50 }), /timed out .* waiting for/);
+		const past = new Date(Date.now() - 60_000);
+		utimesSync(lockPath, past, past);
+		strictEqual(
+			withStateFileLockSync(target, () => "taken", { timeoutMs: 50 }),
+			"taken",
+		);
+	});
+
+	it("refreshes the lockfile mtime while an async holder works", async (t) => {
+		t.mock.timers.enable({ apis: ["setInterval"] });
+		await withStateFileLock(target, async () => {
+			// Stand in for a holder that has been inside its section long enough
+			// for every retired stale window to have expired underneath it.
+			const past = new Date(Date.now() - 120_000);
+			utimesSync(lockPath, past, past);
+			ok(Date.now() - statSync(lockPath).mtimeMs > 60_000, "backdated before the refresh tick");
+			t.mock.timers.tick(5_000);
+			ok(Date.now() - statSync(lockPath).mtimeMs < 1_000, "the refresh drags the held lock back to now");
+		});
+		strictEqual(existsSync(lockPath), false);
+	});
+
+	it("hands the lock back when an abort lands just after acquisition", async () => {
+		// The abort is observed on the check that follows a successful take: the
+		// path that used to rethrow before reaching the release.
+		let checks = 0;
+		const signal = {
+			throwIfAborted() {
+				checks += 1;
+				if (checks >= 2) throw new Error("aborted after acquisition");
+			},
+		} as unknown as AbortSignal;
+		let ran = false;
+		await rejects(
+			withStateFileLock(
+				target,
+				() => {
+					ran = true;
+				},
+				{ signal },
+			),
+			/aborted after acquisition/,
+		);
+		strictEqual(ran, false);
+		strictEqual(existsSync(lockPath), false, "the lock taken before the abort was released");
+	});
+
+	it("run-unlocked runs the section anyway when the lock cannot be taken", async () => {
+		holdLock(process.pid);
+		let ran = false;
+		await withStateFileLock(
+			target,
+			async () => {
+				ran = true;
+			},
+			{ timeoutMs: 50, onAcquireFailure: "run-unlocked" },
+		);
+		ok(ran, "residency mutations must not fail a turn on a busy lock");
+		ok(existsSync(lockPath), "and must not release a lock they never held");
+	});
+
+	it("fails closed by default when the lock cannot be taken", async () => {
+		holdLock(process.pid);
+		await rejects(
+			withStateFileLock(target, async () => "unreachable", { timeoutMs: 50 }),
+			/timed out .* waiting for/,
+		);
+	});
+
+	it("cancels a lock convoy without entering the critical section", async () => {
+		holdLock(process.pid);
+		let ran = false;
+		const controller = new AbortController();
+		const waiting = withStateFileLock(
+			target,
+			async () => {
+				ran = true;
+			},
+			{ timeoutMs: 20_000, signal: controller.signal },
+		);
+		controller.abort(new Error("operator cancelled lock wait"));
+		await rejects(waiting, /operator cancelled lock wait/);
+		strictEqual(ran, false, "an aborted waiter never enters the protected mutation");
+		ok(existsSync(lockPath), "cancelling a waiter does not release the live holder's lock");
+	});
+});
+
+// An Apptainer `--pid` or `--containall` instance keeps the host's hostname and boot but runs in its own pid
+// namespace. `unshare --user --pid --fork --mount-proc` reproduces that without privilege where user namespaces are
+// allowed; elsewhere these tests skip. `--kill-child` takes the namespace down with unshare, so no peer outlives
+// its test.
+const NAMESPACES =
+	process.platform === "linux" &&
+	spawnSync("unshare", ["-Urpf", "--kill-child", "--mount-proc", "true"], { stdio: "ignore", timeout: 10_000 })
+		.status === 0;
+
+describe("contracts/state-file-lock across pid namespaces", {
+	skip: !NAMESPACES && "no unprivileged pid namespaces",
+}, () => {
+	let dir = "";
+	let target = "";
+	let lockPath = "";
+	let script = "";
+	const children: ChildProcess[] = [];
+
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "pancode-file-lock-ns-"));
+		target = join(dir, "state.json");
+		lockPath = `${target}.lock`;
+		script = join(dir, "lock-peer.mts");
+		const lockModule = pathToFileURL(join(process.cwd(), "src/core/state-file-lock.ts")).href;
+		writeFileSync(
+			script,
+			`import { tryWithStateFileLockSync, withStateFileLock } from ${JSON.stringify(lockModule)};
+const [mode, target] = process.argv.slice(2);
+if (mode === "hold") {
+	await withStateFileLock(target, async () => {
+		process.stdout.write("held\\n");
+		await new Promise((resolve) => process.stdin.on("end", resolve).resume());
+	});
+} else if (mode === "abandon") {
+	await withStateFileLock(target, () => {
+		process.stdout.write("held\\n");
+		process.exit(0);
+	});
+} else {
+	process.stdout.write(tryWithStateFileLockSync(target, () => true).held ? "taken\\n" : "busy\\n");
+}
+`,
+		);
+	});
+
+	afterEach(() => {
+		for (const child of children.splice(0)) child.kill("SIGKILL");
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	function inNamespace(command: string): ChildProcess {
+		const child = spawn("unshare", ["-Urpf", "--kill-child", "--mount-proc", "sh", "-c", command], {
+			cwd: process.cwd(),
+			stdio: ["pipe", "pipe", "inherit"],
+		});
+		children.push(child);
+		return child;
+	}
+	const peer = (mode: string) =>
+		`${JSON.stringify(process.execPath)} --import tsx ${JSON.stringify(script)} ${mode} ${JSON.stringify(target)}`;
+
+	function firstLine(child: ChildProcess): Promise<string> {
+		return new Promise((resolve, reject) => {
+			let out = "";
+			child.stdout?.on("data", (chunk: Buffer) => {
+				out += chunk.toString();
+				if (out.includes("\n")) resolve(out.split("\n")[0] as string);
+			});
+			child.on("exit", (code) => reject(new Error(`peer exited ${code} before answering: ${out}`)));
+		});
+	}
+
+	const takeHere = () => tryWithStateFileLockSync(target, () => true).held;
+
+	it("a holder in another pid namespace is not judged by the pid it recorded", async () => {
+		// The holder is pid 1 in its namespace; here pid 1 is a different, live process.
+		const holder = inNamespace(`exec ${peer("hold")}`);
+		strictEqual(await firstLine(holder), "held");
+		strictEqual(takeHere(), false, "a live holder in a container keeps its lock");
+		const record = JSON.parse(readFileSync(lockPath, "utf8")) as { pid: number; pidNs?: string; bootId?: string };
+		strictEqual(record.pid, 1);
+		ok(record.pidNs && record.bootId, "the record carries its pid namespace and boot");
+		holder.stdin?.end();
+		await once(holder, "exit");
+		strictEqual(existsSync(lockPath), false, "the holder released its own lock");
+	});
+
+	it("a kernel without NSpid keeps a live container holder's lock until it ages out", async (t) => {
+		// Before Linux 4.1 (EL7) /proc/<pid>/status has no NSpid line, so the holder's namespace pid cannot be matched.
+		setProcStatusReaderForTesting((pid) => readFileSync(`/proc/${pid}/status`, "utf8").replace(/^NSpid:.*\n/m, ""));
+		t.after(() => setProcStatusReaderForTesting(null));
+		const holder = inNamespace(`exec ${peer("hold")}`);
+		strictEqual(await firstLine(holder), "held");
+		strictEqual(takeHere(), false, "a namespace seen without NSpid does not prove its holder gone");
+		const past = new Date(Date.now() - 60_000);
+		utimesSync(lockPath, past, past);
+		strictEqual(takeHere(), true, "the age backstop still applies");
+	});
+
+	it("a waiter in another pid namespace does not reclaim a host holder it cannot see", async () => {
+		await withStateFileLock(target, async () => {
+			const waiter = inNamespace(`exec ${peer("try")}`);
+			strictEqual(await firstLine(waiter), "busy");
+		});
+	});
+
+	it("reclaims a holder that died inside a namespace that is still running", async () => {
+		// sh stays as pid 1, so the namespace remains visible after the holder (pid 2) exits without releasing.
+		const box = inNamespace(`${peer("abandon")}; echo gone; exec sleep 60`);
+		strictEqual(await firstLine(box), "held");
+		await new Promise<void>((resolve) => box.stdout?.on("data", (chunk: Buffer) => chunk.includes("gone") && resolve()));
+		ok(existsSync(lockPath));
+		strictEqual(takeHere(), true);
+	});
+
+	it("an exited namespace's lock falls to the stale-lock age, not to a local pid", async () => {
+		const holder = inNamespace(`exec ${peer("abandon")}`);
+		strictEqual(await firstLine(holder), "held");
+		await once(holder, "exit");
+		// pid 1 is alive here, so a local pid check would keep this lock forever; a fresh lock waits out its age.
+		strictEqual(takeHere(), false);
+		const past = new Date(Date.now() - 60_000);
+		utimesSync(lockPath, past, past);
+		strictEqual(takeHere(), true);
+	});
+});

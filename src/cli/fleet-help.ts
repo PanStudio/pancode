@@ -1,0 +1,141 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+export const FLEET_HELP = `pancode fleet <subcommand>
+
+Run repo-owned playbooks on the fleet, and inspect the dispatch status surface.
+Author and check playbooks with pancode playbook.
+
+Subcommands:
+  nodes setup|add|discover|install|tools|list|remove|test
+                                manage SSH worker nodes and project verification
+  land [<run>] [options]        list, preview or land task branches finished runs kept
+  run <playbook> [task] [--var k=v ...]
+                                preflight and execute a playbook; a task argument fills its {{task}}
+       [--resume <runId>]        replay a completed prefix from a prior run of the same plan
+       [--output-format text|json|stream-json]
+                                json prints one fleet_end result document; stream-json prints
+                                fleet_started, step_dispatched, step_settled and fleet_end lines
+       [--cwd <dir>]             run as if started in <dir>
+       [--timeout <duration>]    stop the fleet when the deadline passes and exit 124 (bare number: seconds)
+       [--max-cost-usd <usd>]    stop the fleet once settled steps spend this much and exit 4; the cap
+                                is the lower of this and the playbook's budgetUsd
+       [--detach]               start the fleet in the background and return once its root is recorded;
+                                json prints one fleet_accepted line
+  status [--json] [--all]       show running, retrying, and total dispatch state
+  list [--all-projects] [--limit N] [--json]
+                                list this project's fleet roots, newest first, with each one's state
+                                (sealed, ended, running, orphaned) and sealed outcome; --all is an alias
+  decisions --json [--all]      emit a bounded window of sealed review and compete gate verdicts
+  view <runId> [--follow] [--all]  read one run's ledger entry, event journal, and run record
+  view <fleetRootId> [--all]    list a fleet run's steps and the run id to view for each
+  code-steps <rootId> [--json]  list the deterministic code steps one fleet root ran, from the
+                                code_step.settled records in the root's run journal
+  events <fleetRootId> [--follow] [--json] [--all]
+                                print a fleet run's live event journal of hash-chained, unsigned
+                                lines; each settled step names the manifest bytes written at that
+                                moment, and --follow exits after fleet_sealed
+  verify <runId|fleetRootId> [--json] [--exit-code]
+                                re-verify one run's sealed scope now and print its trust state; a
+                                fleet root checks its journal chain, sealed record and step runs;
+                                --exit-code exits 0 verified, 1 failed or unavailable, 75 pending
+  admission [status|drain|open] [--json]
+                                show the dispatch admission gate, deny new execution starts for up
+                                to one hour (drain), or reopen it (open)
+  cancel <runId> [--json] [--reason <text>]
+                                cancel one running run from any terminal
+  cancel <fleetRootId> [--json] [--reason <text>]
+                                stop a fleet root: no further step starts and its running steps are canceled;
+                                a root that already sealed exits 0 with its recorded outcome
+  wait <fleetRootId> [--timeout <duration>] [--json]
+                                wait for a fleet root to seal and print its fleet result; exits with the
+                                root's exit code, 1 when its owner died unsealed, 75 when --timeout expires
+
+Notes:
+  Inspection defaults to this project. Pass --all to inspect machine-wide state.
+  status reads the durable run ledger. Rows started by another process show
+  heartbeat liveness from the recorded worker pid; per-token live meters are
+  only available inside the process that owns the run.
+  view is read-only and shares no memory with the orchestrator, so it follows a
+  run from a second terminal or over SSH. Its transcript comes from the run
+  event journal, written when fleet.history.journal is on (the default). Handed the
+  fleet-<hex> root id that run prints, it lists that run's steps instead.
+  admission drain preserves running work. Repeat it to renew the one-hour
+  expiry; admission open clears it early. The expiry keeps an abandoned drain
+  from wedging PanCode.
+  cancel asks the process that owns the run to abort it and waits up to 15s
+  for the run to seal canceled; it exits 1 while the request is still pending.
+  When the owning process is gone it terminates the orphaned worker's process
+  group and settles the ledger row itself.
+  fleet run exits 0 when every required step succeeded and every loop converged,
+  1 otherwise, and the signal's code when interrupted. With --output-format it
+  exits 141 once the fleet has sealed if stdout's reader went away; the fleet is
+  never canceled for that.
+`;
+
+/**
+ * Leaves whose `--help` answers with their own usage instead of the group help. The other leaves either own their help
+ * in their module (view, events, nodes, land) or still answer with the group help.
+ */
+const FLEET_LEAF_HELP: Readonly<Record<string, string>> = {
+	admission: `pancode fleet admission [status|drain|open] [--json]
+
+Show the dispatch admission gate (status, the default), deny new execution starts
+for up to one hour (drain), or reopen it (open). drain preserves running work;
+repeat it to renew the one-hour expiry.
+
+  --json    print the admission document
+`,
+	wait: `pancode fleet wait <fleetRootId> [--timeout <duration>] [--json]
+
+Wait for a fleet root to seal and print the fleet result its owner persisted.
+
+  --timeout <duration>  give up after this long (bare number: seconds)
+  --json                print the fleet result document
+
+Exit codes: the root's own exit code once it seals, 1 when its owner died
+unsealed, 2 usage, 75 when --timeout expires with the fleet still live.
+`,
+	cancel: `pancode fleet cancel <runId|fleetRootId> [--json] [--reason <text>]
+
+Cancel one running run from any terminal, or stop a fleet root: no further
+step starts and its running steps are canceled.
+
+  --json           print the cancel report
+  --reason <text>  record why the run was canceled
+
+A run's owning process aborts it and the command waits up to 15s for it to seal
+canceled. When the owner is gone it terminates the orphaned worker's process
+group and settles the run itself. A run or root that already sealed reports its
+recorded outcome.
+
+Exit codes: 0 sealed (now or already), 75 cancel accepted but still settling,
+1 the cancel failed or nothing matched, 2 usage.
+`,
+};
+
+/**
+ * Answer the fleet group's own help without loading src/cli/fleet.ts and its domain graph, the way run-help.ts
+ * answers `run --help`. The checks mirror runFleetCommand's, in its order: `view` and `events` own their help, so
+ * they return null; `admission`, `wait` and `cancel` print their own usage on stdout (exit 0); otherwise `help` or
+ * `--help`/`-h` anywhere prints the group help on stdout (exit 0), and no verb prints it on stderr (exit 2). Returns
+ * null when the arguments ask for a fleet verb.
+ */
+export function answerFleetHelp(args: ReadonlyArray<string>): number | null {
+	const sub = args[0];
+	const asksHelp = args.includes("--help") || args.includes("-h");
+	if ((sub === "view" || sub === "events") && asksHelp) return null;
+	const leafHelp = sub !== undefined && Object.hasOwn(FLEET_LEAF_HELP, sub) ? FLEET_LEAF_HELP[sub] : undefined;
+	if (leafHelp !== undefined && asksHelp) {
+		process.stdout.write(leafHelp);
+		return 0;
+	}
+	if (sub === "help" || asksHelp) {
+		process.stdout.write(FLEET_HELP);
+		return 0;
+	}
+	if (sub === undefined) {
+		process.stderr.write(FLEET_HELP);
+		return 2;
+	}
+	return null;
+}

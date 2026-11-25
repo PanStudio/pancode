@@ -1,0 +1,23 @@
+{
+	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+	"name": "pancode-dev",
+	"version": "0.7.2",
+	"description": "Develop PanCode inside its own repository: orient on the running build versus the workspace, trace owners, avoid the checks that fail landings, apply each edit the right way and hand the work back. Use before changing PanCode source, prompts, tools or PanHub; pair with pancode-test for validation.",
+	"license": "LicenseRef-PanCode-1.0",
+	"extensions": {
+		"dev.pancode": {
+			"manifestVersion": 1,
+			"kind": "skill",
+			"resources": {
+				"skills": "."
+			},
+			"components": [
+				{
+					"kind": "skill",
+					"id": "pancode-dev",
+					"path": "SKILL.md"
+				}
+			]
+		}
+	}
+}

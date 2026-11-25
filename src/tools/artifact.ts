@@ -1,0 +1,124 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import path from "node:path";
+import { Type } from "typebox";
+import { artifactDefaultPath, PANCODE_ARTIFACT_DIR, PANCODE_PROJECT_DIR } from "../core/artifact-paths.js";
+import { isSameOrDescendant } from "../core/path-containment.js";
+import { ensureProjectIgnore } from "../core/project-root.js";
+import { ToolNames } from "../core/tool-names.js";
+import { StringEnum } from "../engine/ai.js";
+import { type AtomicPublishResult, publishFileAtomically, withFileMutationQueue } from "./file-mutation-queue.js";
+import { resolveToCwd } from "./path-utils.js";
+import type { ToolInvokeOptions } from "./registry-contract.js";
+import { artifactToolLanding, hookLandingRefusal, publishTargetAdmission } from "./tool-landing.js";
+import type { ToolResult, ToolSpec } from "./tool-spec.js";
+
+/**
+ * The artifact tool: terminal document writers. kind=plan|review|report writes
+ * a Markdown artifact and terminates the turn: writing the artifact IS the
+ * answer, so pi-agent-core skips the follow-up LLM call that would only
+ * summarize it.
+ *
+ * Placement: gateway. The terminal contract survives the indirection because
+ * the gateway propagates `terminate`, `details.kind`, and `details.paths`
+ * from this result unchanged, so the turn still ends and `/view` still lists
+ * the document. The agent-tool adapter then sets an event's `details.kind` to
+ * the result kind ("ok"), so a reader of tool events takes the artifact's kind
+ * from the call's arguments. The write is an atomic publish (temp file, fsync,
+ * rename) so a failed write never leaves a half-written artifact behind.
+ *
+ * A pathless call lands under `.pancode/artifacts/`, not in the repo working
+ * tree. A turn nobody asked for a file from used to drop REPORT.md into the
+ * project root, which the operator then had to notice and delete; the working
+ * tree holds files a human asked for, and everything PanCode generates on its own
+ * belongs in the gitignored project directory. An explicit `path` still writes
+ * wherever the caller says, inside the workspace. See core/artifact-paths.ts
+ * and docs/architecture/artifact-placement.md.
+ *
+ * Skills are not artifacts: a skill is a SKILL.md folder written with the
+ * ordinary write tool and validated by the skills loader on load. The
+ * skill-authoring shipped skill documents the format.
+ */
+
+const ARTIFACT_KINDS = ["plan", "review", "report"] as const;
+type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
+
+export interface ArtifactToolDeps {
+	getCwd?: () => string;
+}
+
+function cwdFromDeps(deps?: ArtifactToolDeps): string {
+	return deps?.getCwd?.() ?? process.cwd();
+}
+
+async function writeTerminalArtifact(
+	kind: ArtifactKind,
+	args: Record<string, unknown>,
+	cwd: string,
+	options: ToolInvokeOptions | undefined,
+): Promise<ToolResult> {
+	const content = typeof args.content === "string" ? args.content : "";
+	if (content.length === 0) return { kind: "error", message: `artifact: kind=${kind} requires non-empty content` };
+	const rawPath =
+		typeof args.path === "string" && args.path.trim().length > 0 ? args.path.trim() : artifactDefaultPath(kind);
+	const target = resolveToCwd(rawPath, cwd);
+	if (!isSameOrDescendant(target, cwd)) {
+		return { kind: "error", message: `artifact: path escapes workspace root: ${target}` };
+	}
+	const moved = hookLandingRefusal("artifact", options?.hookLanding, target, cwd);
+	if (moved !== null) return { kind: "error", message: moved };
+	const admitTarget = publishTargetAdmission("artifact", options?.hookLanding, options?.writeTargetViolation);
+	const title = typeof args.title === "string" ? args.title.trim() : "";
+	const body = title.length > 0 && !content.trimStart().startsWith("#") ? `# ${title}\n\n${content}` : content;
+	if (target.startsWith(`${path.join(cwd, PANCODE_PROJECT_DIR)}${path.sep}`)) ensureProjectIgnore(cwd);
+	let published: AtomicPublishResult;
+	try {
+		published = await withFileMutationQueue(target, () =>
+			publishFileAtomically(target, body, admitTarget ? { admitTarget } : {}),
+		);
+	} catch (err) {
+		return { kind: "error", message: `artifact: ${err instanceof Error ? err.message : String(err)}` };
+	}
+	const rel = path.relative(cwd, target) || rawPath;
+	const bytes = Buffer.byteLength(body, "utf8");
+	return {
+		kind: "ok",
+		output: `wrote ${kind} artifact (${bytes}B) to ${rel}${published.durabilityWarning ? `\n${published.durabilityWarning}` : ""}`,
+		// shownBytes is the artifact's real size; the ledger otherwise measures
+		// this confirmation sentence (a 4753B plan rendered as "60B", #76).
+		details: {
+			kind,
+			paths: [target],
+			observation: { shownBytes: bytes },
+			file: { before: published.before, after: published.after },
+		},
+		// Writing the artifact is the whole turn; terminate skips the follow-up
+		// LLM call that would only restate what was just written.
+		terminate: true,
+	};
+}
+
+export function createArtifactTool(deps: ArtifactToolDeps = {}): ToolSpec {
+	return {
+		name: ToolNames.Artifact,
+		description: `Write a named artifact: kind=plan|review|report writes a terminal Markdown document and completes the turn, so close the task board (tasks done/block/drop) before writing it. Without an explicit path it lands in ${PANCODE_ARTIFACT_DIR}/ (PLAN.md, REVIEW.md, REPORT.md); pass path only when the user asked for a file at a specific place.`,
+		parameters: Type.Object({
+			kind: StringEnum(ARTIFACT_KINDS, { description: "Artifact kind." }),
+			content: Type.String({ description: "Full Markdown body." }),
+			title: Type.Optional(Type.String({ description: "Heading added when content does not start with #." })),
+			path: Type.Optional(
+				Type.String({ description: "Override the default artifact path; must stay inside the workspace." }),
+			),
+		}),
+		baseActionClass: "write",
+		executionMode: "sequential",
+		describeHookLanding: (args) => artifactToolLanding(args, cwdFromDeps(deps)),
+		async run(args, options): Promise<ToolResult> {
+			const kind = typeof args.kind === "string" ? args.kind : "";
+			if (!(ARTIFACT_KINDS as ReadonlyArray<string>).includes(kind)) {
+				return { kind: "error", message: `artifact: kind must be plan, review, or report; got '${kind}'` };
+			}
+			return writeTerminalArtifact(kind as ArtifactKind, args, cwdFromDeps(deps), options);
+		},
+	};
+}

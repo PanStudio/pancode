@@ -1,0 +1,174 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import test from "node:test";
+import { setupWorkspaceId, withOpenedWorkspace, workspaceNotice } from "../client/pages/home-draft-model.js";
+import { readMessages, stepFor, viewFor, workingLabel } from "../client/wizard/wizard-model.js";
+import type { SetupState } from "../contracts/setup.js";
+
+const select = (heading: string[], labels: string[]) =>
+	({
+		id: 7,
+		kind: "select",
+		heading,
+		choices: labels.map((label, id) => ({ id, label, hint: "" })),
+		initial: 0,
+		searchable: false,
+	}) as const;
+
+const state = (status: SetupState["status"], messages: string[]): SetupState => ({
+	id: "setup-1",
+	status,
+	prompt: null,
+	messages,
+	problem: null,
+});
+
+test("the routes PanCode found and the test-request failure are steps of their own, not generic prompts", () => {
+	const offered = stepFor(
+		select(
+			["PanCode found a way to reach a model:"],
+			["Anthropic, with the key in ANTHROPIC_API_KEY", "Set up something else"],
+		),
+	);
+	assert.equal(offered.kind, "offered");
+	if (offered.kind !== "offered") return;
+	assert.equal(offered.stage, "provider");
+	assert.deepEqual(
+		offered.routes.map((choice) => choice.label),
+		["Anthropic, with the key in ANTHROPIC_API_KEY"],
+	);
+	assert.equal(offered.other?.label, "Set up something else");
+
+	const have = stepFor(select(["What do you have?"], ["An API key", "A subscription"]));
+	assert.equal(have.stage, "provider");
+
+	const failed = stepFor(
+		select(
+			["The test request failed", "Check the key for Anthropic."],
+			["Try again", "Change the key or address", "Save anyway", "Connection and machine details", "Cancel setup"],
+		),
+	);
+	assert.equal(failed.kind, "test-failed");
+	if (failed.kind !== "test-failed") return;
+	assert.equal(failed.stage, "test");
+	assert.equal(failed.fix, "Check the key for Anthropic.");
+	assert.equal(failed.retry?.label, "Try again");
+	assert.equal(failed.save?.label, "Save anyway");
+	assert.equal(failed.model, null);
+	assert.equal(failed.cancel?.label, "Cancel setup");
+
+	const review = stepFor(
+		select(
+			["Review what PanCode could verify", "Connection: anthropic", "Save sends one short test message first."],
+			["Save target", "Connection and machine details", "Back", "Cancel setup"],
+		),
+	);
+	assert.equal(review.kind === "review" && review.tests, true);
+	assert.deepEqual(review.kind === "review" ? review.notes : null, []);
+
+	// The sign-in lede is the backend's own Connect now hint: only a device-code flow shows a code, and a host with no
+	// browser opens none.
+	const signIn = (hint: string) => {
+		const view = stepFor({
+			...select(["Sign in to ALCF Inference (Globus)", "credential: none"], ["Connect now", "Later"]),
+			choices: [
+				{ id: 0, label: "Connect now", hint },
+				{ id: 1, label: "Later", hint: "" },
+			],
+		});
+		return view.kind === "signin" ? view.lede : null;
+	};
+	assert.equal(
+		signIn("shows a sign-in link for any device, then asks for the code that page shows"),
+		"PanCode shows a sign-in link for any device, then asks for the code that page shows.",
+	);
+	assert.equal(
+		signIn("opens your browser and waits for the sign-in"),
+		"PanCode opens your browser and waits for the sign-in.",
+	);
+
+	// The key step names the protection the backend's platform applies, as its hint reports it.
+	const key = (hint: string) => {
+		const view = stepFor({ id: 8, kind: "text", heading: ["Paste the API key"], initial: "", hint, mask: true });
+		return view.kind === "credential-key" ? view.protection : undefined;
+	};
+	assert.equal(key("stored at ~/.config/pancode/credentials.yaml (owner-only ACL, not encrypted)"), "an owner-only ACL");
+	assert.equal(key("stored at ~/.config/pancode/credentials.yaml (mode 0600, not encrypted)"), "file mode 0600");
+	assert.equal(key("stored at ~/.config/pancode/credentials.yaml"), null);
+	const stored = "API key stored unencrypted (owner-only ACL). Any process running as you can read it.";
+	assert.deepEqual(readMessages([stored]).warnings, [stored]);
+});
+
+test("the test request is read from the CLI's lines: waiting on it, its answer, and a save without it", () => {
+	const waiting = readMessages(["Testing anthropic / claude ..."]);
+	assert.equal(workingLabel(waiting, null), "Sending the model a test message");
+	assert.equal(
+		workingLabel(readMessages(["Testing anthropic / claude ...", "✓ Testing anthropic / claude ... answered in 0.8 s."])),
+		"Setting this up",
+	);
+
+	const failed = readMessages([
+		"Testing anthropic / claude ...",
+		"anthropic / claude did not answer: 401 invalid x-api-key",
+	]);
+	assert.deepEqual(failed.test, { state: "failed", text: "anthropic / claude did not answer: 401 invalid x-api-key" });
+
+	const saved = viewFor(
+		state("saved", [
+			"Testing anthropic / claude ...",
+			"anthropic / claude did not answer: overloaded",
+			"Testing anthropic / claude ...",
+			"✓ Testing anthropic / claude ... answered in 0.8 s.",
+		]),
+		null,
+	);
+	assert.equal(saved.kind, "saved");
+	if (saved.kind !== "saved") return;
+	assert.equal(saved.verified, true);
+	assert.equal(saved.tested, "answered in 0.8 s");
+	assert.deepEqual(saved.summary, []);
+
+	const anyway = viewFor(
+		state("saved", [
+			"Testing anthropic / claude ...",
+			"anthropic / claude did not answer: overloaded",
+			"anthropic was saved without a passed test request.",
+		]),
+		null,
+	);
+	assert.equal(anyway.kind === "saved" && anyway.verified, false);
+	assert.deepEqual(anyway.kind === "saved" ? anyway.warnings : null, [
+		"anthropic was saved without a passed test request.",
+	]);
+});
+
+test("the new-task screen checks the model connection only against a listed workspace", () => {
+	// Live: a workspace id this browser remembered from another home made /api/setup answer not-found, so a ready
+	// model read "Connect a model" beside "The model connection could not be checked".
+	const listed = [{ id: "ws-a" }];
+	assert.equal(setupWorkspaceId("ws-a", listed), "ws-a");
+	assert.equal(setupWorkspaceId("ws-gone", listed), null);
+	assert.equal(setupWorkspaceId("ws-gone", []), null);
+	assert.equal(setupWorkspaceId(null, listed), null);
+});
+
+test("an empty workspace list has one empty state: the onboarding step, not a second recovery box", () => {
+	const listed = { pending: false, failed: false, listed: 1, missing: false };
+	assert.equal(workspaceNotice({ ...listed, listed: 0 }), null, "the onboarding step already offers Open workspace");
+	assert.equal(workspaceNotice(listed), null);
+	assert.equal(workspaceNotice({ ...listed, pending: true })?.alert, false);
+	assert.equal(workspaceNotice({ ...listed, failed: true })?.alert, true);
+	assert.match(workspaceNotice({ ...listed, missing: true })?.text ?? "", /no longer listed/);
+});
+
+test("an opened workspace is listed at once, even when the list read before the open lacks it", () => {
+	const older = [{ id: "ws-z" }, { id: "ws-a" }];
+	assert.deepEqual(withOpenedWorkspace(undefined, { id: "ws-a" }), [{ id: "ws-a" }]);
+	assert.deepEqual(withOpenedWorkspace([{ id: "ws-z" }], { id: "ws-a" }), [{ id: "ws-a" }, { id: "ws-z" }]);
+	assert.deepEqual(
+		withOpenedWorkspace(older, { id: "ws-a" }),
+		[{ id: "ws-a" }, { id: "ws-z" }],
+		"a reopen moves, not copies",
+	);
+});

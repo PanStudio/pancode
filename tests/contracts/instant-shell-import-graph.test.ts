@@ -1,0 +1,255 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { ok, strictEqual } from "node:assert/strict";
+import { readFileSync, statSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
+import { test } from "node:test";
+import type { Metafile } from "esbuild";
+
+const root = resolve(import.meta.dirname, "../..");
+const buildDirectory = process.env.PANCODE_TEST_BUILD_DIR ?? "dist";
+// The 0.6.2 sprint measured Effect at 55-117 ms per cold first use and cut it.
+// An externalized import evades a byte count, so both input and external paths
+// are checked for every eagerly loaded chunk.
+const effectPackage = /(?:^effect(?:\/|$)|node_modules\/(?:.*\/)?effect(?:\/|$))/u;
+
+function readMetafile(): Metafile {
+	return JSON.parse(readFileSync(resolve(root, buildDirectory, "metafile-esm.json"), "utf8")) as Metafile;
+}
+
+function assertNoEffect(metadata: Metafile, entry: string, label: string): void {
+	const seen = new Set<string>();
+	const visit = (name: string): void => {
+		if (seen.has(name)) return;
+		const output = metadata.outputs[name];
+		ok(output, `missing static output: ${name}`);
+		seen.add(name);
+		for (const source of Object.keys(output.inputs)) {
+			ok(!effectPackage.test(source), `${label} bundles Effect: ${source}`);
+		}
+		for (const dependency of output.imports) {
+			if (dependency.kind === "dynamic-import") continue;
+			if (dependency.external) ok(!effectPackage.test(dependency.path), `${label} imports Effect: ${dependency.path}`);
+			else visit(dependency.path);
+		}
+	};
+	visit(entry);
+}
+
+test("production Stage 0 static closure stays within its measured bundle budget", () => {
+	const metadata = readMetafile();
+	const owners = Object.entries(metadata.outputs).filter(
+		([, output]) => "src/interactive/terminal-lease.ts" in output.inputs,
+	);
+	strictEqual(owners.length, 1, "build with pnpm build before checking the Stage 0 artifact");
+	const owner = owners[0];
+	ok(owner);
+	// Metafile output names belong to the build checkout. Resolve the Stage 0
+	// chunks against the selected artifact directory, including isolated builds.
+	const chunkPath = (name: string): string => resolve(root, buildDirectory, relative(dirname(owner[0]), name));
+	const closure = new Set<string>();
+	const visit = (name: string): void => {
+		if (closure.has(name)) return;
+		const output = metadata.outputs[name];
+		ok(output, `missing static output: ${name}`);
+		closure.add(name);
+		ok(statSync(chunkPath(name)).isFile(), `missing built chunk: ${name}`);
+		for (const dependency of output.imports) {
+			if (dependency.kind === "dynamic-import") continue;
+			if (dependency.external) {
+				ok(
+					!/^@earendil-works\/pi-(ai|agent-core)(?:\/|$)/u.test(dependency.path),
+					`Stage 0 must not load the model/agent SDK: ${dependency.path}`,
+				);
+			} else visit(dependency.path);
+		}
+	};
+	visit(owner[0]);
+	assertNoEffect(metadata, owner[0], "Stage 0");
+	let totalBytes = 0;
+	let pancodeBytes = 0;
+	const forbidden =
+		/^(?:src\/(?:entry\/orchestrator|domains\/(?:providers|dispatch|session)|tools\/|worker\/|engine\/(?:agent|api-registry|models|session))|.*node_modules\/.*(?:pi-ai|pi-agent-core|tree-sitter))/u;
+	for (const name of closure) {
+		const output = metadata.outputs[name];
+		ok(output);
+		// tsup appends source-map comments after esbuild reports its byte count.
+		totalBytes += statSync(chunkPath(name)).size;
+		for (const [source, contribution] of Object.entries(output.inputs)) {
+			ok(!forbidden.test(source), `heavy runtime source entered Stage 0: ${source}`);
+			// Workspace packages are PanCode source bundled from packages/<name>/src, so code moved there stays counted.
+			if (source.startsWith("src/") || source.startsWith("packages/")) pancodeBytes += contribution.bytesInOutput;
+		}
+	}
+	// Pi 0.87.1 bundled TUI: 13 chunks / 670,404 B, including 156,272 B of PanCode.
+	// 0.5.6 measured 15 chunks and 171,937 B of PanCode: the composer dock and the
+	// terminal background probe both draw the first frame, so they belong here.
+	// 0.5.7 measured 15 chunks / 731,619 B with 211,363 B of PanCode after the
+	// composer rail's context meter moved into a leaf; the caps were doubled
+	// from 16 / 700,000 / 175,000 for the larger first frame. A leak through a
+	// render module still shows here at several times these numbers.
+	// Keep vendor bytes visible, with a separate cap so they cannot hide PanCode growth.
+	ok(closure.size <= 32, `Stage 0 chunks: ${closure.size} > 32`);
+	ok(totalBytes <= 1_400_000, `Stage 0 bytes: ${totalBytes} > 1,400,000`);
+	// 0.9.0 raised the PanCode cap from 350,000 to 400,000 by maintainer ruling: the TUI elevation adds color depth,
+	// 16-color pairs, NO_COLOR rules and redesigned first-frame chrome. First-frame speed is still the goal; the cap
+	// only catches a leak.
+	ok(pancodeBytes <= 400_000, `Stage 0 PanCode source bytes: ${pancodeBytes} > 400,000`);
+});
+
+test("CLI entry static closure loads no Effect", () => {
+	const metadata = readMetafile();
+	const entries = Object.entries(metadata.outputs).filter(([, output]) => output.entryPoint === "src/cli/index.ts");
+	strictEqual(entries.length, 1, "build with pnpm build before checking the CLI artifact");
+	const entry = entries[0];
+	ok(entry);
+	assertNoEffect(metadata, entry[0], "CLI entry");
+});
+
+test("run --help answers from a module that does not load the run command", () => {
+	const metadata = readMetafile();
+	const owners = Object.entries(metadata.outputs).filter(([, output]) => "src/cli/run-help.ts" in output.inputs);
+	strictEqual(owners.length, 1, "build with pnpm build before checking the run help artifact");
+	const owner = owners[0];
+	ok(owner);
+	const seen = new Set<string>();
+	const visit = (name: string): void => {
+		if (seen.has(name)) return;
+		const output = metadata.outputs[name];
+		ok(output, `missing static output: ${name}`);
+		seen.add(name);
+		for (const source of Object.keys(output.inputs))
+			ok(!/^src\/(?:cli\/run\.ts|domains\/(?:dispatch|providers|session)\/)/u.test(source), `run help loads ${source}`);
+		for (const dependency of output.imports)
+			if (dependency.kind !== "dynamic-import" && !dependency.external) visit(dependency.path);
+	};
+	visit(owner[0]);
+});
+
+test("fleet --help answers from a module that does not load the fleet command", () => {
+	const metadata = readMetafile();
+	const owners = Object.entries(metadata.outputs).filter(([, output]) => "src/cli/fleet-help.ts" in output.inputs);
+	strictEqual(owners.length, 1, "build with pnpm build before checking the fleet help artifact");
+	const owner = owners[0];
+	ok(owner);
+	const seen = new Set<string>();
+	const visit = (name: string): void => {
+		if (seen.has(name)) return;
+		const output = metadata.outputs[name];
+		ok(output, `missing static output: ${name}`);
+		seen.add(name);
+		for (const source of Object.keys(output.inputs))
+			ok(
+				!/^src\/(?:cli\/fleet\.ts|domains\/(?:dispatch|providers|session)\/)/u.test(source),
+				`fleet help loads ${source}`,
+			);
+		for (const dependency of output.imports) {
+			if (dependency.kind === "dynamic-import") continue;
+			if (dependency.external)
+				ok(
+					!/^@earendil-works\/pi-(ai|agent-core)(?:\/|$)/u.test(dependency.path),
+					`fleet help loads the model/agent SDK: ${dependency.path}`,
+				);
+			else visit(dependency.path);
+		}
+	};
+	visit(owner[0]);
+	// 0.8.5 measured 2 chunks (133 files / 8,963,064 B loaded before fleet.ts stopped holding the help text).
+	ok(seen.size <= 16, `fleet help chunks: ${seen.size} > 16`);
+});
+
+test("fleet status answers from a module that does not load the fleet command, ledger rows included", () => {
+	const metadata = readMetafile();
+	const owners = Object.entries(metadata.outputs).filter(([, output]) => "src/cli/fleet-status.ts" in output.inputs);
+	strictEqual(owners.length, 1, "build with pnpm build before checking the fleet status artifact");
+	const owner = owners[0];
+	ok(owner);
+	const visit = (name: string, seen: Set<string>, forbidden: RegExp): void => {
+		if (seen.has(name)) return;
+		const output = metadata.outputs[name];
+		ok(output, `missing static output: ${name}`);
+		seen.add(name);
+		for (const source of Object.keys(output.inputs)) ok(!forbidden.test(source), `fleet status loads ${source}`);
+		for (const dependency of output.imports) {
+			if (dependency.kind === "dynamic-import") continue;
+			if (dependency.external)
+				ok(
+					!/^@earendil-works\/pi-(ai|agent-core)(?:\/|$)/u.test(dependency.path),
+					`fleet status loads the model/agent SDK: ${dependency.path}`,
+				);
+			else visit(dependency.path, seen, forbidden);
+		}
+	};
+	const seen = new Set<string>();
+	visit(owner[0], seen, /^src\/(?:cli\/fleet\.ts|entry\/|domains\/(?:dispatch|providers|session)\/)/u);
+	// 0.8.5 measured 5 static chunks (25 loaded with the settings and admission reads, against 266 / 10,003,472 B before).
+	ok(seen.size <= 8, `fleet status chunks: ${seen.size} > 8`);
+	// Ledger rows add the ledger, the project scope and the light run-journal reader, never a domain module, the
+	// session loader or the fleet command. 0.8.5 measured 48 chunks in this closure and 49 / 1,862,408 B loaded over five
+	// ledger rows (CLI-P11), against 142 / 9,363,218 B loaded when per-run telemetry came through fleet.ts. Row 363 measured
+	// 50 after the ledger stopped value-importing execution-role.ts, whose recipe rules (agent spec, result contracts,
+	// safety classifier) had grown it to 62. 0.9.0 measured 58 / 1,790,077 B after the migration modules and their
+	// import() sites left, against 53 / 1,846,544 B before: less code, regrouped by scripts/chunk-merge.ts into more files.
+	const rows = new Set(seen);
+	const rowsForbidden =
+		/^src\/(?:cli\/fleet\.ts|entry\/|session-control\/|interactive\/|domains\/[^/]+\/(?:extension|index)\.ts|domains\/session\/telemetry-source\.ts)$/u;
+	for (const dependency of metadata.outputs[owner[0]]?.imports ?? [])
+		if (dependency.kind === "dynamic-import") visit(dependency.path, rows, rowsForbidden);
+	ok(rows.size <= 60, `fleet status chunks over ledger rows: ${rows.size} > 60`);
+});
+
+test("headless run refuses before boot from a closure without the composition root or the model SDK", () => {
+	const metadata = readMetafile();
+	const owners = Object.entries(metadata.outputs).filter(([, output]) => "src/cli/run.ts" in output.inputs);
+	strictEqual(owners.length, 1, "build with pnpm build before checking the run artifact");
+	const owner = owners[0];
+	ok(owner);
+	const chunkPath = (name: string): string => resolve(root, buildDirectory, relative(dirname(owner[0]), name));
+	const closure = new Set<string>();
+	const visit = (name: string): void => {
+		if (closure.has(name)) return;
+		const output = metadata.outputs[name];
+		ok(output, `missing static output: ${name}`);
+		closure.add(name);
+		for (const source of Object.keys(output.inputs))
+			ok(!/^src\/(?:entry\/orchestrator|cli\/pancode)\.ts$/u.test(source), `run's pre-boot closure loads ${source}`);
+		for (const dependency of output.imports) {
+			if (dependency.kind === "dynamic-import") continue;
+			if (dependency.external)
+				ok(
+					!/^@earendil-works\/pi-(ai|agent-core)(?:\/|$)/u.test(dependency.path),
+					`run's pre-boot closure loads the model/agent SDK: ${dependency.path}`,
+				);
+			else visit(dependency.path);
+		}
+	};
+	visit(owner[0]);
+	let totalBytes = 0;
+	for (const name of closure) totalBytes += statSync(chunkPath(name)).size;
+	// 0.8.5 measured 32 chunks / 867,066 B (126 / 10,994,573 B before run.ts loaded its boot graph lazily).
+	ok(closure.size <= 48, `run pre-boot chunks: ${closure.size} > 48`);
+	ok(totalBytes <= 1_300_000, `run pre-boot bytes: ${totalBytes} > 1,300,000`);
+});
+
+test("Stage 1 preload loads each package's subpaths on their own turns before its root and its importers", () => {
+	const metadata = readMetafile();
+	const preload = Object.keys(metadata.outputs).find((name) => /\/boot-preload-1-[^/]+\.js$/u.test(name));
+	ok(preload, "build with pnpm build before checking the Stage 1 preload list");
+	const listed =
+		/files:"([^"]*)"/u
+			.exec(readFileSync(resolve(root, buildDirectory, relative(dirname(preload), preload)), "utf8"))?.[1]
+			?.split(",") ?? [];
+	const at = (entry: string): number => listed.indexOf(entry);
+	const piAi = at("@earendil-works/pi-ai");
+	ok(piAi >= 0, "the Stage 1 preload list names the model SDK root");
+	const subpaths = listed.filter((entry) => entry.startsWith("@earendil-works/pi-ai/"));
+	ok(subpaths.length > 0, "the Stage 1 preload list names the model SDK subpaths");
+	for (const subpath of subpaths) ok(at(subpath) < piAi, `${subpath} loads after the model SDK root`);
+	for (const [name, output] of Object.entries(metadata.outputs)) {
+		const index = at(`./${relative(dirname(preload), name)}`);
+		if (index < 0) continue;
+		for (const dependency of output.imports)
+			if (dependency.external && dependency.kind === "import-statement" && at(dependency.path) >= 0)
+				ok(at(dependency.path) < index, `${name} preloads before the package it imports: ${dependency.path}`);
+	}
+});

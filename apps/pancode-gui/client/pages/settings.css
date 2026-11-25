@@ -1,0 +1,368 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+.settings-filter {
+	display: block;
+	max-width: 45rem;
+	margin-block: var(--space-6);
+	font-size: var(--text-meta);
+}
+.settings-filter input {
+	display: block;
+	width: 100%;
+	margin-top: 0.5rem;
+}
+/* Section tabs are the site's chapter navigation: text on one rule, the current one marked by an
+   accent rule that sits on the shared line, never a row of bordered pills. */
+/* One row that never wraps: on a phone it scrolls sideways, so the selected tab's underline always sits on
+   the row's own hairline. The hairline is an inset shadow because a scroll box would clip a tab that
+   overlaps its border. */
+.settings-tabs {
+	display: flex;
+	flex-wrap: nowrap;
+	gap: 0 var(--space-6);
+	margin-block: var(--space-6) var(--space-8);
+	overflow-x: auto;
+	overscroll-behavior-x: contain;
+	scrollbar-width: none;
+	box-shadow: inset 0 -1px 0 var(--line);
+}
+.settings-tabs::-webkit-scrollbar {
+	display: none;
+}
+.settings-tabs > :is(a, button) {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+	min-height: 44px;
+	padding: 0;
+	border: 0;
+	border-bottom: 2px solid transparent;
+	white-space: nowrap;
+	border-radius: 0;
+	background: none;
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+	font-weight: 500;
+	text-decoration: none;
+	transition:
+		color var(--motion-fast) var(--ease-standard),
+		border-color var(--motion-fast) var(--ease-standard);
+}
+.settings-tabs > :is(a, button):hover:not(:disabled) {
+	background: none;
+	color: var(--ink);
+}
+.settings-tabs > :is(a, button):focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: -2px;
+}
+.settings-tabs [aria-current="page"],
+.settings-tabs [aria-pressed="true"],
+.settings-tabs [aria-selected="true"] {
+	border-bottom-color: var(--accent);
+	color: var(--ink);
+	font-weight: 600;
+}
+.settings-list > div {
+	display: grid;
+	grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) 6rem;
+	gap: var(--space-4);
+	border-top: 1px solid var(--line);
+	padding-block: var(--space-4);
+	font-size: var(--text-meta);
+	line-height: var(--leading-body);
+}
+.settings-list dt,
+.settings-list dd,
+.config-path,
+.config-entries h3 {
+	overflow-wrap: anywhere;
+	min-width: 0;
+}
+.settings-list dd {
+	margin: 0;
+}
+/* The key sits on the same line as its value; the global block padding on code would drop it. */
+.setting-key {
+	padding: 0;
+}
+.setting-source {
+	font-size: var(--text-instrument);
+}
+.settings-list small {
+	display: block;
+}
+.config-entries {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+	gap: 1rem;
+}
+.config-entries .trace-panel {
+	margin: 0;
+}
+.config-fact {
+	display: flex;
+	gap: 1rem;
+}
+.config-category {
+	margin-top: 2.5rem;
+}
+.config-layers {
+	list-style: none;
+	padding: 0;
+	display: grid;
+	gap: var(--space-3);
+}
+.config-layers code {
+	display: block;
+	overflow-wrap: anywhere;
+}
+.setting-family {
+	border-top: 1px solid var(--line-strong);
+	padding-block: var(--space-3);
+}
+.setting-family > summary {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: var(--space-3);
+	cursor: pointer;
+}
+.setting-family > .settings-list {
+	margin: var(--space-3) 0 0;
+}
+.influence-path {
+	list-style: none;
+	margin: var(--space-4) 0 0;
+	padding: 0;
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: var(--space-4);
+}
+.influence-path > li {
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	padding: var(--space-4);
+	min-width: 0;
+	position: relative;
+}
+/* The arrow is the diagram: it sits in the gap and never overlaps a stage. */
+.influence-path > li + li::before {
+	content: "→";
+	position: absolute;
+	left: calc(var(--space-4) * -1);
+	top: var(--space-4);
+	width: var(--space-4);
+	text-align: center;
+	color: var(--ink-muted);
+}
+.influence-path__index {
+	font-family: var(--font-mono);
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+}
+.influence-path h3 {
+	margin: var(--space-1) 0;
+}
+.influence-path p {
+	margin: 0 0 var(--space-3);
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+}
+.influence-path ul {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+.influence-path ul li {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--space-3);
+	border-top: 1px solid var(--line);
+	padding-block: var(--space-2);
+	font-size: var(--text-meta);
+}
+.influence-path ul li > span {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.influence-path code {
+	display: inline;
+	margin-right: var(--space-2);
+}
+.influence-path small {
+	display: block;
+	color: var(--ink-muted);
+}
+/* A count keeps its digits on one line; the label beside it wraps instead (gui-verify 8). */
+.influence-path ul li > strong {
+	font-family: var(--font-mono);
+	flex: none;
+	white-space: nowrap;
+}
+@media (max-width: 750px) {
+	.influence-path {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.influence-path > li + li::before {
+		content: "↓";
+		left: 0;
+		top: calc(var(--space-4) * -1);
+		width: 100%;
+		height: var(--space-4);
+		line-height: var(--space-4);
+	}
+	.settings-list > div {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.5rem;
+	}
+}
+.settings-precedence {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	list-style: none;
+	padding: 0;
+	font-size: var(--text-meta);
+}
+.settings-precedence li {
+	display: flex;
+	gap: var(--space-2);
+	align-items: center;
+}
+.settings-precedence li + li::before {
+	content: "→";
+	color: var(--ink-muted);
+}
+.setting-source a {
+	display: block;
+	margin-top: var(--space-2);
+	font-size: var(--text-meta);
+}
+
+.settings-inspection,
+.settings-connections {
+	max-width: 1120px;
+}
+.settings-filter {
+	max-width: none;
+}
+.settings-filter__count {
+	display: block;
+	margin-top: var(--space-2);
+	color: var(--ink-muted);
+	font-size: var(--text-instrument);
+}
+.settings-empty {
+	border: 1px dashed var(--line-strong);
+	padding: var(--space-5);
+	margin-block: var(--space-4);
+}
+.connection-setup > a {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-3);
+	padding: var(--space-3) var(--space-4);
+	background: var(--accent-soft);
+	border: 1px solid var(--accent-line);
+	border-radius: var(--radius-sm);
+	text-decoration: none;
+	color: var(--accent);
+	font-weight: 600;
+}
+.connection-card {
+	border-top: 2px solid var(--accent-line);
+}
+.connection-card h2 {
+	margin-bottom: var(--space-1);
+}
+.connection-card__model {
+	display: grid;
+	gap: var(--space-1);
+	padding: var(--space-3);
+	background: var(--surface);
+	border-left: 2px solid var(--line-strong);
+}
+.connection-card__model dt {
+	color: var(--ink-muted);
+	font-size: var(--text-instrument);
+}
+.connection-card__model dd {
+	margin: 0;
+	font-family: var(--font-mono);
+	overflow-wrap: anywhere;
+}
+.connection-card__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	padding-bottom: var(--space-4);
+}
+.connection-card__advanced {
+	border-top: 1px solid var(--line);
+	font-size: var(--text-meta);
+}
+.connection-card__advanced .actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	padding-block: var(--space-3);
+}
+.connection-card__advanced button {
+	color: var(--status-fail-fg);
+}
+.routing-guide {
+	margin-top: var(--space-6);
+	padding: var(--space-5);
+	background: var(--well);
+	border-left: 2px solid var(--accent);
+}
+.routing-guide__title {
+	font-family: var(--font-editorial);
+	font-size: var(--text-h2);
+	font-weight: 700;
+}
+.routing-guide p {
+	margin-bottom: 0;
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+}
+.config-category > summary {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-3);
+	padding-block: var(--space-3);
+	border-bottom: 1px solid var(--line-strong);
+	cursor: pointer;
+}
+.config-category > summary h2 {
+	margin: 0;
+	font-size: var(--text-h3);
+}
+.config-category > summary::before {
+	content: "+";
+	color: var(--ink-faint);
+	font-family: var(--font-mono);
+}
+.config-category[open] > summary::before {
+	content: "−";
+}
+.config-category > summary:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+
+.routing-capabilities {
+	display: inline-flex;
+	flex-wrap: wrap;
+	gap: var(--space-1);
+}
+.routing-capabilities__chip {
+	padding: 2px var(--space-2);
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-size: var(--text-instrument);
+	border: 1px solid var(--accent-line);
+	border-radius: var(--radius-xs);
+}

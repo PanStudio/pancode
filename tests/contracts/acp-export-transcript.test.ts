@@ -1,0 +1,239 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import type { DomainContext } from "../../src/core/domain-loader.js";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import { collectSessionEntries } from "../../src/domains/session/compaction/session-entries.js";
+import type { SessionContract } from "../../src/domains/session/contract.js";
+import type { SessionEntry } from "../../src/domains/session/entries.js";
+import { createSessionBundle } from "../../src/domains/session/extension.js";
+import { renderTranscriptMarkdown, writeTranscriptExport } from "../../src/domains/session/transcript-export.js";
+import { type AcpCommandHost, acpCommandControl } from "../../src/engine/acp/commands.js";
+import { openSession, sessionPaths } from "../../src/engine/session.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+const refuse = (member: string) =>
+	new Proxy(
+		{},
+		{
+			get() {
+				throw new Error(`test host: ${member} was reached`);
+			},
+		},
+	);
+const readEntries = (sessionId: string) => {
+	const reader = openSession(sessionId);
+	return collectSessionEntries(reader.turns(), sessionPaths(reader.meta()).current);
+};
+const at = (second: number) => `2026-09-26T09:00:0${second}.000Z`;
+
+async function withSession(body: (root: string, contract: SessionContract, sessionId: string) => Promise<void>) {
+	const scratch = await isolatePancodeEnv("pancode-acp-export-");
+	const contract: SessionContract = createSessionBundle({ bus: { emit() {} } } as unknown as DomainContext).contract;
+	try {
+		const root = realpathSync(scratch.dir);
+		const meta = contract.create({ cwd: root });
+		contract.append({ id: "u1", parentId: null, at: at(1), kind: "user", payload: { text: "Compare <b>A</b> & B" } });
+		contract.append({
+			id: "c1",
+			parentId: "u1",
+			at: at(2),
+			kind: "tool_call",
+			payload: { toolCallId: "t1", name: "read", args: { path: "README.md" } },
+		});
+		contract.append({
+			id: "r1",
+			parentId: "c1",
+			at: at(3),
+			kind: "tool_result",
+			payload: { toolCallId: "t1", toolName: "read", result: { content: [{ type: "text", text: "B reads 4.2 ```" }] } },
+		});
+		contract.append({
+			id: "a1",
+			parentId: "r1",
+			at: at(4),
+			kind: "assistant",
+			payload: {
+				text: "A reads 3.1",
+				content: [
+					{ type: "thinking", thinking: "private" },
+					{ type: "text", text: "A reads 3.1; B reads 4.2. <script>alert(1)</script>" },
+				],
+			},
+		});
+		contract.append({ id: "u2", parentId: "a1", at: at(5), kind: "user", payload: { text: "abandoned question" } });
+		contract.switchTurn("a1");
+		contract.append({ id: "u3", parentId: "a1", at: at(6), kind: "user", payload: { text: "which is higher?" } });
+		contract.append({ id: "a3", parentId: "u3", at: at(7), kind: "assistant", payload: { text: "B is higher." } });
+		await contract.checkpoint();
+		await body(root, contract, meta.id);
+	} finally {
+		await contract.close();
+		scratch.restore();
+	}
+}
+
+test("export writes the branch the session is on as escaped HTML with no script, through the command bridge", async () => {
+	await withSession(async (root, contract, sessionId) => {
+		const control = acpCommandControl({
+			dispatch: refuse("dispatch") as AcpCommandHost["dispatch"],
+			bus: createTelemetryHub(),
+			providers: refuse("providers") as AcpCommandHost["providers"],
+			exportTranscript: (path?: string) =>
+				writeTranscriptExport({
+					sessionId,
+					leafTurnId: (id) => contract.tree(id).leafId,
+					readEntries,
+					cwd: root,
+					now: () => new Date(2026, 8, 26, 9, 30),
+					...(path === undefined ? {} : { path }),
+				}),
+		});
+		assert.ok(control.catalog().commands.some((row) => row.name === "export"));
+		const result = await control.invoke({ command: "export", argv: [] });
+		assert.equal(result.level, "success", result.lines.join("\n"));
+		const expected = join(root, ".pancode", "exports", `${sessionId}-2026-09-26.html`);
+		assert.match(result.lines.join("\n"), /wrote 2 requests to \.pancode\/exports\//);
+		assert.ok(existsSync(expected));
+		// A transcript is as private as the session file it copies.
+		if (process.platform !== "win32") assert.equal(statSync(expected).mode & 0o077, 0);
+		const html = readFileSync(expected, "utf8");
+		assert.match(html, /Compare &lt;b&gt;A&lt;\/b&gt; &amp; B/);
+		assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+		assert.doesNotMatch(html, /<script/i, "the export runs nothing");
+		assert.match(html, /which is higher\?/);
+		assert.doesNotMatch(html, /abandoned question/, "an abandoned branch is not exported");
+		assert.doesNotMatch(html, /private/, "reasoning is noted, not copied");
+		assert.match(html, /Reasoning was reported for this reply and is not included/);
+		assert.match(html, /B reads 4\.2/);
+	});
+});
+
+test("export writes Markdown to a named .md path with fences longer than any in the text, and refuses with no session", async () => {
+	await withSession(async (root, contract, sessionId) => {
+		const report = writeTranscriptExport({
+			sessionId,
+			leafTurnId: (id) => contract.tree(id).leafId,
+			readEntries,
+			cwd: root,
+			path: "notes/session.md",
+		});
+		assert.equal(report.text, "wrote 2 requests to notes/session.md");
+		const markdown = readFileSync(join(root, "notes", "session.md"), "utf8");
+		assert.match(markdown, /^# PanCode session /);
+		assert.match(
+			markdown,
+			/````text\nB reads 4\.2 ```\n````/,
+			"a result that contains a fence is wrapped in a longer one",
+		);
+		assert.doesNotMatch(markdown, /abandoned question/);
+		assert.deepEqual(writeTranscriptExport({ sessionId: null, leafTurnId: () => null, readEntries, cwd: root }), {
+			level: "error",
+			text: "no active session to export",
+		});
+	});
+});
+
+test("Markdown and HTML exports retain each assistant model and the switch divider", async () => {
+	const scratch = await isolatePancodeEnv("pancode-model-export-");
+	try {
+		const entries: SessionEntry[] = [
+			{
+				kind: "message",
+				role: "assistant",
+				payload: { provider: "litellm", model: "qwopus-fixture", text: "First answer" },
+			},
+			{ kind: "modelChange", provider: "anthropic", modelId: "haiku-fixture", target: "anthropic" },
+			{
+				kind: "message",
+				role: "assistant",
+				payload: { provider: "anthropic", model: "haiku-fixture", text: "Second answer" },
+			},
+		].map((entry, i) => ({
+			...entry,
+			turnId: `turn-${i}`,
+			parentTurnId: i === 0 ? null : `turn-${i - 1}`,
+			timestamp: "2026-10-09T00:00:00Z",
+		})) as SessionEntry[];
+		for (const format of ["md", "html"]) {
+			const path = join(scratch.dir, `models.${format}`);
+			const result = writeTranscriptExport({
+				sessionId: "synthetic",
+				cwd: scratch.dir,
+				path,
+				leafTurnId: () => null,
+				readEntries: () => entries,
+			});
+			assert.equal(result.level, "success");
+			const output = readFileSync(path, "utf8");
+			assert.match(output, /litellm · qwopus-fixture/u);
+			assert.match(output, /anthropic · haiku-fixture/u);
+			assert.match(output, /Model changed/u);
+			assert.ok(output.indexOf("qwopus-fixture") < output.indexOf("First answer"));
+			assert.ok(output.lastIndexOf("haiku-fixture") < output.indexOf("Second answer"));
+		}
+	} finally {
+		scratch.restore();
+	}
+});
+
+test("a transcript pairs parallel tool results with their calls by id, and a default jsonl export stays out of Git (row 362)", async () => {
+	await withSession(async (root, contract, sessionId) => {
+		contract.append({ id: "u4", parentId: "a3", at: at(8), kind: "user", payload: { text: "read both" } });
+		contract.append({
+			id: "c2",
+			parentId: "u4",
+			at: at(9),
+			kind: "tool_call",
+			payload: { toolCallId: "t2", name: "read", args: { path: "first.md" } },
+		});
+		contract.append({
+			id: "c3",
+			parentId: "c2",
+			at: at(9),
+			kind: "tool_call",
+			payload: { toolCallId: "t3", name: "read", args: { path: "second.md" } },
+		});
+		// The second call settles first, so the ledger holds its result first.
+		for (const [id, parentId, toolCallId, text] of [
+			["r3", "c3", "t3", "SECOND BODY"],
+			["r2", "r3", "t2", "FIRST BODY"],
+		] as const)
+			contract.append({
+				id,
+				parentId,
+				at: at(9),
+				kind: "tool_result",
+				payload: { toolCallId, toolName: "read", result: { content: [{ type: "text", text }] } },
+			});
+		await contract.checkpoint();
+		const md = renderTranscriptMarkdown({
+			sessionId,
+			exportedAt: at(9),
+			entries: readEntries(sessionId),
+			leafTurnId: contract.tree(sessionId).leafId,
+		}).text;
+		const order = ["first.md", "FIRST BODY", "second.md", "SECOND BODY"].map((needle) => md.indexOf(needle));
+		assert.ok(
+			order.every((index, i) => index >= 0 && (i === 0 || index > (order[i - 1] ?? 0))),
+			md,
+		);
+		const cli = fileURLToPath(new URL("../../dist/cli/index.js", import.meta.url));
+		const exported = spawnSync(process.execPath, [cli, "session", "export", sessionId, "--format", "jsonl", "--json"], {
+			cwd: root,
+			env: { ...process.env, PANCODE_INTERACTIVE: "0" },
+			encoding: "utf8",
+			timeout: 20_000,
+		});
+		assert.equal(exported.status, 0, exported.stderr);
+		const path = (JSON.parse(exported.stdout) as { path: string }).path;
+		assert.ok(path.startsWith(join(root, ".pancode", "exports")), path);
+		assert.ok(existsSync(join(root, ".pancode", ".gitignore")), "a default export keeps .pancode/ out of Git");
+		if (process.platform !== "win32") assert.equal(statSync(path).mode & 0o077, 0);
+	});
+});

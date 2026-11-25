@@ -1,0 +1,178 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { writeDiagnostic } from "../../core/diagnostics.js";
+import type { DomainBundle, DomainContext, DomainExtension } from "../../core/domain-loader.js";
+import { assertAgentIdNamespace } from "../config/agent-namespace.js";
+import { pluginSnapshotFor, withPluginDiscoveryPass } from "../plugins/index.js";
+import type { AgentsContract } from "./contract.js";
+import type { AgentRecipe } from "./recipe.js";
+import { discoverAgentRecipes } from "./registry.js";
+import { type AgentSpec, normalizeAgentSpec } from "./spec.js";
+
+export function createAgentsBundle(_context: DomainContext): DomainBundle<AgentsContract> {
+	let recipes: ReadonlyArray<AgentRecipe> = [];
+	let specs: ReadonlyArray<AgentSpec> = [];
+	let revision = 0;
+	let rediscoveryPending = false;
+	let attemptedRecipes: ReadonlyArray<AgentRecipe> | null = null;
+	/** Digest of the plugin projection the cached recipes were discovered from. */
+	let discoveredPluginDigest: string | null = null;
+
+	function discover(): void {
+		attemptedRecipes = null;
+		discoveredPluginDigest = null;
+		// Read the digest in the discovery's own pass, so it names exactly the
+		// verified projection the recipes came from without a second walk.
+		const { merged, pluginDigest } = withPluginDiscoveryPass(() => ({
+			merged: discoverAgentRecipes(process.cwd()),
+			pluginDigest: pluginSnapshotFor(process.cwd()).digest,
+		}));
+		attemptedRecipes = merged;
+		const config = _context.getContract("config");
+		assertAgentIdNamespace(merged, config?.get()?.integrations.externalAgents?.entries ?? []);
+		recipes = merged;
+		specs = recipes.map(normalizeAgentSpec);
+		revision += 1;
+		rediscoveryPending = false;
+		discoveredPluginDigest = pluginDigest;
+	}
+
+	let unsubscribePluginsReload: (() => void) | null = null;
+	let unsubscribeConfigChange: (() => void) | null = null;
+	const extension: DomainExtension = {
+		async start() {
+			discover();
+			unsubscribeConfigChange =
+				_context.getContract("config")?.onChange("nextTurn", ({ diff }) => {
+					if (
+						diff.nextTurn.some(
+							(path) =>
+								path === "integrations.externalAgents.entries" || path.startsWith("integrations.externalAgents.entries."),
+						)
+					) {
+						revision += 1;
+					}
+				}) ?? null;
+			// Recipes are cached at start; plugin agent roots come from the
+			// committed plugin generation, so a changed generation rediscovers.
+			// The first reload after boot always reports a change, because no
+			// generation was committed before it. When it commits the projection
+			// start() already discovered from, the cached recipes are current.
+			const onResourceReload = (payload: unknown): string | null => {
+				const event = payload as { changed?: unknown; digest?: unknown } | undefined;
+				if (!rediscoveryPending && (event?.changed !== true || event.digest === discoveredPluginDigest)) return null;
+				try {
+					discover();
+					return null;
+				} catch (error) {
+					// Snapshot admission may already have revoked packages. Never retain
+					// their cached authority when namespace or filesystem discovery fails.
+					rediscoveryPending = true;
+					recipes = attemptedRecipes ?? recipes.filter((recipe) => recipe.source === "builtin");
+					let conflictingIds = new Set<string>();
+					try {
+						const config = _context.getContract("config");
+						conflictingIds = new Set((config?.get()?.integrations.externalAgents?.entries ?? []).map((agent) => agent.id));
+					} catch {
+						// If even current operator configuration is unreadable, no custom
+						// cached recipe has a trustworthy namespace admission decision.
+						recipes = recipes.filter((recipe) => recipe.source === "builtin");
+					}
+					recipes = recipes.filter((recipe) => recipe.source !== "plugin" && !conflictingIds.has(recipe.id));
+					specs = recipes.map(normalizeAgentSpec);
+					revision += 1;
+					const message = error instanceof Error ? error.message : String(error);
+					writeDiagnostic(`[pancode:agents] rediscovery after resource reload failed: ${message}\n`);
+					return message;
+				}
+			};
+			const unsubscribePlugins = _context.bus.subscribe("plugin.reloaded", (payload) => {
+				onResourceReload(payload);
+			});
+			const unsubscribeRequested = _context.bus.subscribe("prompts.reload_requested", (payload) => {
+				rediscoveryPending = true;
+				const failure = onResourceReload(undefined);
+				// The reload report reads this slot: a failed rediscovery is not "failed: none".
+				if (failure !== null) (payload as { failures?: string[] } | undefined)?.failures?.push(failure);
+			});
+			unsubscribePluginsReload = () => {
+				unsubscribePlugins();
+				unsubscribeRequested();
+			};
+		},
+		async stop() {
+			unsubscribePluginsReload?.();
+			unsubscribePluginsReload = null;
+			unsubscribeConfigChange?.();
+			unsubscribeConfigChange = null;
+		},
+	};
+
+	const contract: AgentsContract = {
+		revision() {
+			return revision;
+		},
+		list() {
+			return recipes;
+		},
+		get(id: string): AgentRecipe | null {
+			return recipes.find((r) => r.id === id) ?? null;
+		},
+		listSpecs() {
+			const config = _context.getContract("config");
+			const delegationAgents = config?.get()?.integrations.externalAgents?.entries ?? [];
+			const delegationSpecs = delegationAgents.map((agent) => ({
+				version: 1 as const,
+				id: agent.id,
+				name: agent.id,
+				description: `External ACP delegation agent: ${agent.command} ${(agent.args ?? []).join(" ")}`,
+				source: "custom" as const,
+				filepath: "settings.yaml",
+				tools: [],
+				toolRequirements: { required: [], optional: [] },
+				category: "explore" as const,
+				capabilityClass: "orchestration" as const,
+				latencyClass: "deep" as const,
+				projectContextTier: "none" as const,
+				audience: "custom" as const,
+				tags: ["delegation", "acp"],
+				skills: [],
+				resultContract: { kind: "external-delegation" } as const,
+				budget: { toolCalls: 1, synthesis: false },
+				body: "External ACP delegation.",
+			}));
+			return [...specs, ...delegationSpecs];
+		},
+		getSpec(id: string): AgentSpec | null {
+			const found = specs.find((r) => r.id === id);
+			if (found) return found;
+			const config = _context.getContract("config");
+			const agent = config?.get()?.integrations.externalAgents?.entries?.find((entry) => entry.id === id);
+			if (agent) {
+				return {
+					version: 1 as const,
+					id: agent.id,
+					name: agent.id,
+					description: `External ACP delegation agent: ${agent.command} ${(agent.args ?? []).join(" ")}`,
+					source: "custom" as const,
+					filepath: "settings.yaml",
+					tools: [],
+					toolRequirements: { required: [], optional: [] },
+					category: "explore" as const,
+					capabilityClass: "orchestration" as const,
+					latencyClass: "deep" as const,
+					projectContextTier: "none" as const,
+					audience: "custom" as const,
+					tags: ["delegation", "acp"],
+					skills: [],
+					resultContract: { kind: "external-delegation" } as const,
+					budget: { toolCalls: 1, synthesis: false },
+					body: "External ACP delegation.",
+				};
+			}
+			return null;
+		},
+	};
+
+	return { extension, contract };
+}

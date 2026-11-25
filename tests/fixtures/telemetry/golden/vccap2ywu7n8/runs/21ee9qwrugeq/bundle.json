@@ -1,0 +1,29 @@
+{
+	"format": "pancode.telemetry.bundle",
+	"version": 1,
+	"scope": {
+		"kind": "run",
+		"id": "21ee9qwrugeq"
+	},
+	"sealedAt": "2026-10-19T12:23:20.000Z",
+	"pancodeVersion": "0.6.6-dev",
+	"host": "golden-fixture",
+	"segments": [
+		{
+			"name": "journal.jsonl",
+			"sha256": "7ddb8ae9f8b2c21530f79c47e32321aac2d29e8c692bbacc942ee6fc27ec1d31",
+			"bytes": 9284
+		}
+	],
+	"objects": [
+		{
+			"id": "obj_455d55e5364aeec55c68085f73bf9e5330a7326210d34183e2a2e4248f6167a9",
+			"sha256": "455d55e5364aeec55c68085f73bf9e5330a7326210d34183e2a2e4248f6167a9",
+			"bytes": 133
+		}
+	],
+	"seal": {
+		"recordId": "rec_01a192a1-a08c-7ee4-9b4f-fb549d6424cc",
+		"head": "e2c9685e7e8961a6154d045cb493db512d2190b5c2657a3344216e52b63f85ed"
+	}
+}

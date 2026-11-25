@@ -1,0 +1,276 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { asciiOnly } from "./terminal-preferences.js";
+
+/**
+ * PanCode's chrome glyphs. The table lives in core so the pane process, which cannot import
+ * `src/interactive`, draws the same vocabulary as the TUI. ASCII mode is a promise about this chrome only: a path,
+ * a command, a task or an answer is printed byte for byte in every mode.
+ */
+const UNICODE_GLYPHS = {
+	// The PanCode mark in three cells: the P of the wordmark on its tile, whose edges are the two half
+	// blocks. Shown in the welcome and dashboard headers and the status line.
+	brand: "▐P▌",
+	// Agent voice glyph for the chat reply prefix: the mark's tile in one cell. It renders in accent
+	// on a normal turn and error red on a failed one.
+	agent: "■",
+	user: "›",
+	// Operator input in the transcript. Every row of a prompt carries the bar in
+	// the gutter, so a multi-line prompt reads as one block that is plainly the
+	// operator's and never as the agent's first sentence.
+	userBar: "▌",
+	// Selection focus marker for list overlays. It is deliberately distinct from
+	// the tool ledger's toolHeader so a focused row never reads as a tool line.
+	cursor: "❯",
+	// The lane that owns the keys on a multi-lane surface: this and its rule read without colour.
+	laneOwner: "▶",
+	laneRule: "━",
+	// Where a lane's cursor would be while another lane owns the keys.
+	laneCurrent: "›",
+	// Action rows carry their class in the gutter: `▸` observes or searches,
+	// `§` consults PanCode's knowledge, `±` changes files, `$` executes, `↗`
+	// reaches the network, `◆` delegates, `?` asks the operator and `⇢` calls a
+	// capability outside PanCode. The shape alone tells the acts apart.
+	toolHeader: "▸",
+	classKnowledge: "§",
+	classMutate: "±",
+	classExecute: "$",
+	classNetwork: "↗",
+	classInteraction: "?",
+	classExternal: "⇢",
+	running: "●",
+	queued: "◌",
+	ok: "✓",
+	error: "✗",
+	cancelled: "⊘",
+	// The tip or lane the operator is on. Filled diamonds belong to model-started work.
+	active: "◉",
+	// A setting changed from its default. Hollow diamonds belong to operator-started work.
+	scoped: "*",
+	up: "↑",
+	down: "↓",
+	left: "←",
+	right: "→",
+	// Arrow key pairs as a hint names them: list movement and tab switching.
+	upDown: "↑↓",
+	leftRight: "←→",
+	// Between the steps of a breadcrumb (`/fleet › run`, a settings trail). One entry, so a split matches its join.
+	crumb: "›",
+	// A slash command whose verbs open a submenu.
+	submenu: "▸",
+	// An empty mark: an unselected choice, a node that is down or not ready, an inner tree node.
+	hollow: "○",
+	// A route or node that answers but is degraded, probing or recovering.
+	degraded: "◐",
+	// A cell with no value.
+	none: "—",
+	// Between the two ends of a span: `3–18 of 42 rows`.
+	range: "–",
+	quoteOpen: "“",
+	quoteClose: "”",
+	// A tree row that opens a branch with more siblings below it; the last one takes bottomLeft.
+	branch: "├",
+	// A session forked from another.
+	forked: "↰",
+	rail: "│",
+	rule: "─",
+	topLeft: "┌",
+	topRight: "┐",
+	bottomLeft: "└",
+	bottomRight: "┘",
+	// The corners of a box a view asks to draw round.
+	roundTopLeft: "╭",
+	roundTopRight: "╮",
+	roundBottomLeft: "╰",
+	roundBottomRight: "╯",
+	dot: "·",
+	// The fact separator between two facts on one row, so ASCII mode can replace it.
+	sep: "·",
+	innerDivider: "╌",
+	barFull: "█",
+	barEmpty: "░",
+	contextFull: "▰",
+	contextFree: "▱",
+	// Autocompact reserve cells: held-back headroom is neither used nor free,
+	// so it carries its own glyph and never reads as filled when only color is
+	// lost. The medium-shade block is single-width in the same fonts that carry
+	// the barFull/barEmpty fallbacks.
+	contextReserve: "▒",
+	// One-row history, lowest to highest: one cell per level.
+	spark: "▁▂▃▄▅▆▇█",
+	// One mark for an estimated quantity.
+	estimate: "≈",
+	// One mark for a lower bound.
+	atLeast: "≥",
+	info: "i",
+	warn: "!",
+	warnInline: "!",
+	phaseWaiting: "◔",
+	phaseThinking: "◐",
+	// Nerd Font nf-fa-brain: a full, symmetric two-hemisphere monochrome glyph.
+	// Opt-in only; the composer uses ordinary dots unless font support is declared.
+	brain: "\uEE9C",
+	phaseWriting: "◑",
+	// A tool call made by a worker: the hollow form of the tool gutter `▸`.
+	phaseTool: "▹",
+	// A wait on the operator. U+2016 is in every monospace font and has no emoji fallback.
+	phaseBlocked: "‖",
+	// A turn that a schedule started, not the operator or the model.
+	scheduled: "◷",
+	phaseRetry: "↻",
+	phaseCompact: "≡",
+	phaseDispatch: "⇲",
+	// Marks a run that PanCode started for itself (a shadow worker or an internal
+	// harness run) so internal activity reads as a sub-process of the current
+	// turn. It replaces the old `sh:`/`in:` agent-name prefixes; the two
+	// audiences are told apart by tone, not by a second glyph.
+	subProcess: "↳",
+	// Who asked for a dispatched run. Hollow is the operator's own (/run,
+	// /delegate); filled is one the model started by calling a dispatch tool.
+	// The transcript block, the board row, and the footer count share the pair,
+	// so a running ◇ anywhere is work the operator started themselves.
+	workerHuman: "◇",
+	workerAgent: "◆",
+	// A run neither the operator nor the model asked for: wiki documenting, a
+	// bootstrap scout, a judge. It stays off the transcript entirely, so the
+	// board is the only surface that shows it and it gets the quietest mark
+	// that still holds the origin column.
+	workerInternal: "·",
+	ellipsis: "…",
+	// A model picked recently, in the model picker's mark column.
+	recent: "↺",
+	// Quota and resource meters: consumed and remaining cells. Heavier than the
+	// frame's own line so a meter never reads as a border.
+	meterFull: "━",
+	meterEmpty: "─",
+	// The rest of a code line that wrapped: the row above it continues here.
+	codeWrap: "↪",
+	// A sequence or next step: dashboard page order, a key chord's second key.
+	next: "→",
+	// A count of the same thing repeated: a worker's repeated call, a helper kind.
+	times: "×",
+	favorite: "★",
+	// A list item's lead, and the mask over each character of a secret as it is typed.
+	bullet: "•",
+	// A decrease beside its `+`: the minus sign, as wide as the plus.
+	minus: "−",
+} as const;
+
+/**
+ * Written out entry by entry, never spread from the Unicode table, so every value is ASCII bytes by construction
+ * and a new Unicode entry fails to compile until it has an ASCII form. Blocked (`=`) differs from warning (`!`).
+ */
+const ASCII_GLYPHS: { readonly [K in keyof typeof UNICODE_GLYPHS]: string } = {
+	brand: "[P]",
+	agent: "*",
+	user: ">",
+	userBar: "|",
+	cursor: ">",
+	laneOwner: ">",
+	laneRule: "-",
+	laneCurrent: ">",
+	toolHeader: ">",
+	classKnowledge: "K",
+	classMutate: "+",
+	classExecute: "$",
+	classNetwork: "N",
+	classInteraction: "?",
+	classExternal: "E",
+	running: "@",
+	queued: "o",
+	ok: "+",
+	error: "x",
+	cancelled: "-",
+	active: "O",
+	scoped: "*",
+	up: "^",
+	down: "v",
+	left: "<",
+	right: ">",
+	upDown: "^v",
+	leftRight: "<>",
+	crumb: ">",
+	submenu: ">",
+	hollow: "o",
+	degraded: "~",
+	none: "-",
+	range: "-",
+	quoteOpen: '"',
+	quoteClose: '"',
+	branch: "+",
+	forked: "<",
+	rail: "|",
+	rule: "-",
+	topLeft: "+",
+	topRight: "+",
+	bottomLeft: "+",
+	bottomRight: "+",
+	roundTopLeft: "+",
+	roundTopRight: "+",
+	roundBottomLeft: "+",
+	roundBottomRight: "+",
+	dot: ".",
+	sep: "|",
+	innerDivider: "-",
+	barFull: "#",
+	barEmpty: ".",
+	contextFull: "#",
+	contextFree: ".",
+	contextReserve: ":",
+	spark: ".:-=+*#@",
+	estimate: "~",
+	atLeast: ">=",
+	info: "i",
+	warn: "!",
+	warnInline: "!",
+	phaseWaiting: "o",
+	phaseThinking: "?",
+	brain: "?",
+	phaseWriting: ">",
+	phaseTool: ">",
+	phaseBlocked: "=",
+	scheduled: "t",
+	phaseRetry: "r",
+	phaseCompact: "c",
+	phaseDispatch: "D",
+	subProcess: ">",
+	workerHuman: "o",
+	workerAgent: "*",
+	workerInternal: ".",
+	ellipsis: "...",
+	recent: "r",
+	meterFull: "#",
+	meterEmpty: "-",
+	codeWrap: ">",
+	next: ">",
+	times: "x",
+	favorite: "*",
+	bullet: "*",
+	minus: "-",
+};
+
+/** One glyph vocabulary for the process; cards never select their own fallback. */
+export const GLYPH = asciiOnly() ? ASCII_GLYPHS : UNICODE_GLYPHS;
+
+/**
+ * The Unicode table in every mode, for reading text a mode-blind producer wrote: a read model's figure, a recorded
+ * label, a tool's own summary. Never for drawing; chrome draws {@link GLYPH}.
+ */
+export const UNICODE_GLYPH = UNICODE_GLYPHS;
+
+/**
+ * In-band markers, not chrome: code points PanCode writes into text for a parser or a later pass of its own, never to
+ * be read as a glyph, so they keep one value in every glyph mode.
+ */
+export const MARKER = {
+	// One column wide and not whitespace to Pi's tokenizer; it holds a code block's spaces through Pi's wrap.
+	codeSpace: "\u2800",
+	// A noncharacter that opens each source line of a code block.
+	codeLine: "\uFDD1",
+	// A noncharacter that tags the fence rows the export panel resolves.
+	exportFence: "\uFDD0",
+	// An invisible separator that keeps a pasted `!` from running as a shell command.
+	pastedOperatorGuard: "\u2063",
+	// A no-break space, so a blank line's code span still has content and keeps its cell.
+	emptyCodeSpan: "\u00a0",
+} as const;

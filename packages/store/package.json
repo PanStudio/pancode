@@ -1,0 +1,49 @@
+{
+	"name": "@pancode/store",
+	"version": "0.9.0",
+	"private": true,
+	"description": "PanStore, the project store, usable as a library without the harness.",
+	"type": "module",
+	"license": "SEE LICENSE IN LICENSE",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/akougkas/pancode.git",
+		"directory": "packages/store"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"bin": {
+		"panstore": "./dist/cli/main.js"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./backend": {
+			"types": "./dist/backend/index.d.ts",
+			"import": "./dist/backend/index.js"
+		},
+		"./cli": {
+			"types": "./dist/cli/index.d.ts",
+			"import": "./dist/cli/index.js"
+		},
+		"./paths": {
+			"types": "./dist/paths/index.d.ts",
+			"import": "./dist/paths/index.js"
+		},
+		"./testing": {
+			"types": "./dist/testing/index.d.ts",
+			"import": "./dist/testing/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsup"
+	}
+}

@@ -1,0 +1,333 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, strictEqual } from "node:assert/strict";
+import { describe, it, mock } from "node:test";
+import { EMPTY_CAPABILITIES } from "../../src/domains/providers/index.js";
+import { resolveModelRuntimeCapabilities } from "../../src/domains/providers/model-runtime-capabilities.js";
+import { extractLocalModelQuirks } from "../../src/domains/providers/types/local-model-quirks.js";
+import { createHttpChannel } from "../../src/domains/system-one/engines/llm-wire.js";
+import { packagedModelCatalog } from "../harness/packaged-model-catalog.js";
+
+const effortLevelsQuirks = {
+	thinking: {
+		mechanism: "effort-levels",
+		effortByLevel: { low: "low", medium: "medium", high: "xhigh", xhigh: "xhigh" },
+	},
+} as const;
+
+describe("thinking off reaches the wire", () => {
+	it("sends reasoning_effort none to LM Studio for an effort-levels family", () => {
+		const resolved = resolveModelRuntimeCapabilities({
+			runtimeId: "lmstudio",
+			modelId: "qwen3.8-27b-dynamo",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true, reasoning: true },
+			quirks: effortLevelsQuirks as never,
+			configuredThinkingLevel: "off",
+		});
+		strictEqual(resolved.thinking.thinkingActive, false);
+		strictEqual(resolved.request.reasoningEffort, "none");
+		strictEqual(resolved.request.chatTemplateKwargs?.enable_thinking, false);
+	});
+
+	it("keeps llama.cpp on the template flag alone, which that runtime honors", () => {
+		const resolved = resolveModelRuntimeCapabilities({
+			runtimeId: "llamacpp",
+			modelId: "qwen3.8-27b-dense",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true, reasoning: true },
+			quirks: effortLevelsQuirks as never,
+			configuredThinkingLevel: "off",
+		});
+		strictEqual(resolved.request.reasoningEffort, undefined);
+		strictEqual(resolved.request.chatTemplateKwargs?.enable_thinking, false);
+	});
+
+	it("does not touch an active level", () => {
+		const resolved = resolveModelRuntimeCapabilities({
+			runtimeId: "lmstudio",
+			modelId: "qwen3.8-27b-dynamo",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true, reasoning: true },
+			quirks: effortLevelsQuirks as never,
+			configuredThinkingLevel: "medium",
+		});
+		strictEqual(resolved.thinking.thinkingActive, true);
+		strictEqual(resolved.request.reasoningEffort, "medium");
+	});
+
+	it("forwards static chat-template kwargs on llama.cpp and reports them undeliverable on LM Studio", () => {
+		const staticQuirks = {
+			chatTemplateKwargs: {
+				static: { force_nonempty_content: true },
+			},
+		} as const;
+		const llama = resolveModelRuntimeCapabilities({
+			runtimeId: "llamacpp",
+			modelId: "nvidia-nemotron-3.5-lightning-30b-a3b",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true },
+			quirks: staticQuirks as never,
+		});
+		strictEqual(llama.request.chatTemplateKwargs?.force_nonempty_content, true);
+		strictEqual(llama.request.undeliverableChatTemplateKwargs, undefined);
+
+		// LM Studio ignores chat_template_kwargs for every family measured, so
+		// the resolver names the keys instead of carrying a map the wire deletes.
+		const lmstudio = resolveModelRuntimeCapabilities({
+			runtimeId: "lmstudio",
+			modelId: "nvidia-nemotron-3.5-lightning-30b-a3b",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true },
+			quirks: staticQuirks as never,
+		});
+		strictEqual(lmstudio.request.chatTemplateKwargs, undefined);
+		deepStrictEqual(lmstudio.request.undeliverableChatTemplateKwargs, {
+			keys: ["force_nonempty_content"],
+			declaredUnsupported: false,
+		});
+
+		const declared = resolveModelRuntimeCapabilities({
+			runtimeId: "lmstudio",
+			modelId: "nvidia-nemotron-3.5-lightning-30b-a3b",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true },
+			quirks: { chatTemplateKwargs: { ...staticQuirks.chatTemplateKwargs, lmstudio: "unsupported" } } as never,
+		});
+		strictEqual(declared.request.undeliverableChatTemplateKwargs?.declaredUnsupported, true);
+	});
+
+	// Issue #268: measured 2026-09-02 on dynamo, enable_thinking:false left 52
+	// reasoning tokens on gemma-4-26b-a4b-it and 105 on nemotron-3.5-lightning,
+	// while reasoning_effort:"none" produced 0 on both.
+	it("sends reasoning_effort none to LM Studio for an on-off family", () => {
+		const onOffQuirks = { thinking: { mechanism: "on-off" } } as const;
+		const off = resolveModelRuntimeCapabilities({
+			runtimeId: "lmstudio",
+			modelId: "gemma-4-26b-a4b-it",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true, reasoning: true },
+			quirks: onOffQuirks as never,
+			configuredThinkingLevel: "off",
+		});
+		strictEqual(off.thinking.mechanism, "on-off");
+		strictEqual(off.request.reasoningEffort, "none");
+		strictEqual(off.request.chatTemplateKwargs?.enable_thinking, false);
+
+		const on = resolveModelRuntimeCapabilities({
+			runtimeId: "lmstudio",
+			modelId: "gemma-4-26b-a4b-it",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true, reasoning: true },
+			quirks: onOffQuirks as never,
+			configuredThinkingLevel: "low",
+		});
+		strictEqual(on.request.reasoningEffort, "low");
+
+		const llama = resolveModelRuntimeCapabilities({
+			runtimeId: "llamacpp",
+			modelId: "gemma4-26b-moe",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true, reasoning: true },
+			quirks: onOffQuirks as never,
+			configuredThinkingLevel: "off",
+		});
+		strictEqual(llama.request.reasoningEffort, undefined);
+		strictEqual(llama.request.chatTemplateKwargs?.enable_thinking, false);
+	});
+
+	it("sends reasoning_effort none to LM Studio for a budget-tokens family", () => {
+		const budgetQuirks = {
+			thinking: { mechanism: "budget-tokens", budgetByLevel: { low: 1024, medium: 4096, high: 16384 } },
+		} as const;
+		const off = resolveModelRuntimeCapabilities({
+			runtimeId: "lmstudio",
+			modelId: "budget-model",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true, reasoning: true },
+			quirks: budgetQuirks as never,
+			configuredThinkingLevel: "off",
+		});
+		strictEqual(off.thinking.mechanism, "budget-tokens");
+		strictEqual(off.request.reasoningEffort, "none");
+
+		const on = resolveModelRuntimeCapabilities({
+			runtimeId: "lmstudio",
+			modelId: "budget-model",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true, reasoning: true },
+			quirks: budgetQuirks as never,
+			configuredThinkingLevel: "medium",
+		});
+		strictEqual(on.request.reasoningEffort, undefined);
+		strictEqual(on.request.budgetTokens, 4096);
+
+		const llama = resolveModelRuntimeCapabilities({
+			runtimeId: "llamacpp",
+			modelId: "budget-model",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true, reasoning: true },
+			quirks: budgetQuirks as never,
+			configuredThinkingLevel: "off",
+		});
+		strictEqual(llama.request.reasoningEffort, undefined);
+	});
+
+	it("resolves the shipped Gemma 4 and Nemotron 3.5 entries to reasoning_effort none on LM Studio", () => {
+		const kb = packagedModelCatalog();
+		const gemma = kb.lookup("gemma-4-26b-a4b-it");
+		strictEqual(gemma?.entry.family, "gemma4-26b-a4b");
+		const gemmaResolved = resolveModelRuntimeCapabilities({
+			runtimeId: "lmstudio",
+			modelId: "gemma-4-26b-a4b-it",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true, reasoning: true },
+			kbHit: gemma,
+			configuredThinkingLevel: "off",
+		});
+		strictEqual(gemmaResolved.thinking.mechanism, "on-off");
+		strictEqual(gemmaResolved.request.reasoningEffort, "none");
+
+		const nemotron = kb.lookup("nvidia-nemotron-3.5-lightning-30b-a3b");
+		strictEqual(nemotron?.entry.family, "nemotron-3.5-lightning-30b-a3b");
+		const nemotronResolved = resolveModelRuntimeCapabilities({
+			runtimeId: "lmstudio",
+			modelId: "nvidia-nemotron-3.5-lightning-30b-a3b",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true, reasoning: true },
+			kbHit: nemotron,
+			configuredThinkingLevel: "off",
+		});
+		strictEqual(nemotronResolved.thinking.mechanism, "on-off");
+		strictEqual(nemotronResolved.request.reasoningEffort, "none");
+		deepStrictEqual(nemotronResolved.request.undeliverableChatTemplateKwargs, {
+			keys: ["force_nonempty_content"],
+			declaredUnsupported: true,
+		});
+	});
+
+	it("resolves level-keyed chat-template kwargs from thinking level high", () => {
+		const levelQuirks = {
+			thinking: {
+				mechanism: "effort-levels",
+				chatTemplateKwargs: {
+					byLevel: {
+						key: "reasoning_strength",
+						values: { low: "low", medium: "medium", high: "high", xhigh: "xhigh" },
+					},
+				},
+			},
+		} as const;
+		const resolved = resolveModelRuntimeCapabilities({
+			runtimeId: "llamacpp",
+			modelId: "muse-30b-dense",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true, reasoning: true },
+			quirks: levelQuirks as never,
+			configuredThinkingLevel: "high",
+		});
+		strictEqual(resolved.request.chatTemplateKwargs?.reasoning_strength, "high");
+	});
+
+	it("preserves numeric chat-template kwargs as numbers on the wire", () => {
+		const numericQuirks = {
+			thinking: {
+				mechanism: "budget-tokens",
+				chatTemplateKwargs: {
+					static: { reasoning_budget: 16384 },
+				},
+			},
+		} as const;
+		const resolved = resolveModelRuntimeCapabilities({
+			runtimeId: "llamacpp",
+			modelId: "nemotron3-30b-moe-omni",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true, reasoning: true },
+			quirks: numericQuirks as never,
+		});
+		strictEqual(resolved.request.chatTemplateKwargs?.reasoning_budget, 16384);
+		strictEqual(typeof resolved.request.chatTemplateKwargs?.reasoning_budget, "number");
+	});
+
+	it("preserves existing thinking controls and lets them win on key collision", () => {
+		const collisionQuirks = {
+			thinking: {
+				mechanism: "effort-levels",
+				effortByLevel: { low: "low", medium: "medium", high: "xhigh", xhigh: "xhigh" },
+				chatTemplateKwargs: {
+					static: { enable_thinking: true, custom_flag: "active" },
+				},
+			},
+		} as const;
+		const resolved = resolveModelRuntimeCapabilities({
+			runtimeId: "llamacpp",
+			modelId: "qwen3.8-27b-dense",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true, reasoning: true },
+			quirks: collisionQuirks as never,
+			configuredThinkingLevel: "off",
+		});
+		strictEqual(resolved.request.chatTemplateKwargs?.enable_thinking, false);
+		strictEqual(resolved.request.chatTemplateKwargs?.custom_flag, "active");
+	});
+
+	it("rejects unknown chat-template kwargs shapes during quirk extraction", () => {
+		strictEqual(extractLocalModelQuirks({ chatTemplateKwargs: "not-an-object" }), undefined);
+		strictEqual(extractLocalModelQuirks({ chatTemplateKwargs: { byLevel: { key: 123 } } }), undefined);
+		strictEqual(extractLocalModelQuirks({ chatTemplateKwargs: { byLevel: { key: "x", values: "none" } } }), undefined);
+		strictEqual(
+			extractLocalModelQuirks({ chatTemplateKwargs: { byLevel: { key: "x", values: { invalid_level: "y" } } } }),
+			undefined,
+		);
+	});
+
+	it("resolves kwargs from local coding target knowledge base entries", () => {
+		const kb = packagedModelCatalog();
+		const nemotronLightning = kb.lookup("nvidia-nemotron-3.5-lightning-30b-a3b");
+
+		strictEqual(nemotronLightning?.entry.family, "nemotron-3.5-lightning-30b-a3b");
+		const lightningResolved = resolveModelRuntimeCapabilities({
+			runtimeId: "llamacpp",
+			modelId: "nvidia-nemotron-3.5-lightning-30b-a3b",
+			capabilities: { ...EMPTY_CAPABILITIES, chat: true },
+			kbHit: nemotronLightning,
+		});
+		strictEqual(lightningResolved.request.chatTemplateKwargs?.force_nonempty_content, true);
+	});
+});
+
+describe("System One's thinking switch reaches the wire", () => {
+	it("sends both spellings to Lemonade, which fronts backends that read different ones", async (t) => {
+		const bodies: Array<Record<string, unknown>> = [];
+		const fetchMock = mock.method(globalThis, "fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+			bodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+			return new Response(JSON.stringify({ choices: [{ message: { content: "A" } }] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		});
+		t.after(() => fetchMock.mock.restore());
+		const channel = createHttpChannel({
+			engine: "test",
+			target: { id: "zbook", runtime: "lemonade", url: "http://127.0.0.1:13305/api/v1" } as never,
+			runtime: { id: "lemonade", auth: "none" } as never,
+			model: "m",
+			baseUrl: "http://127.0.0.1:13305/api/v1",
+			host: { auth: undefined, credentialsPresent: () => new Set<string>() } as never,
+			signal: new AbortController().signal,
+		});
+		await channel.batch({ system: "s", user: "u" }, {}, 1);
+		strictEqual(bodies.length, 1);
+		strictEqual(bodies[0]?.reasoning_effort, "none");
+		deepStrictEqual(bodies[0]?.chat_template_kwargs, { enable_thinking: false });
+	});
+
+	it("names PanCode and its OpenRouter app category on the direct chat wire", async (t) => {
+		const headers: Headers[] = [];
+		const fetchMock = mock.method(globalThis, "fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+			headers.push(new Headers(init?.headers));
+			return new Response(JSON.stringify({ choices: [{ message: { content: "A" } }] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		});
+		t.after(() => fetchMock.mock.restore());
+		const channel = createHttpChannel({
+			engine: "test",
+			target: { id: "router", runtime: "openrouter" } as never,
+			runtime: { id: "openrouter", auth: "none" } as never,
+			model: "m",
+			baseUrl: "https://openrouter.ai/api/v1",
+			host: { auth: undefined, credentialsPresent: () => new Set<string>() } as never,
+			signal: new AbortController().signal,
+		});
+		await channel.batch({ system: "s", user: "u" }, {}, 1);
+		strictEqual(headers.length, 1);
+		strictEqual(headers[0]?.get("http-referer"), "https://github.com/akougkas/pancode");
+		strictEqual(headers[0]?.get("x-openrouter-title"), "PanCode");
+		strictEqual(headers[0]?.get("x-openrouter-categories"), "cli-agent");
+	});
+});

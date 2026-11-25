@@ -1,0 +1,772 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* The conversation. Colour comes only from client/design/tokens.css; every status also carries a
+   glyph and a word through StatusMark, so meaning survives a greyscale screenshot. */
+
+.chat-transcript {
+	position: relative;
+	min-height: 0;
+	min-width: 0;
+	overflow-y: auto;
+	overflow-x: hidden;
+	overscroll-behavior: contain;
+	/* Both edges, so the centred column lines up with the composer below, which has no scrollbar. */
+	scrollbar-gutter: stable both-edges;
+	/* This is the single everyday scroller. The header and composer stay within reach. */
+}
+.chat-transcript__content {
+	display: grid;
+	gap: var(--space-8);
+	padding-block: var(--space-8) var(--space-10);
+}
+
+.chat-turn {
+	display: grid;
+	gap: var(--space-6);
+	min-width: 0;
+	contain-intrinsic-size: auto 320px;
+}
+.chat-turn + .chat-turn {
+	border-top: 1px solid var(--line);
+	padding-top: var(--space-8);
+}
+.chat-turn:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: var(--space-3);
+	border-radius: var(--radius-sm);
+}
+/* A settled turn can no longer change, so the browser may skip its layout and paint while it is off
+   screen: a streamed frame then lays out the live turn, not the whole conversation. Every turn keeps
+   its last rendered height (`auto`), recorded while it was still live too, so scrolling back and the
+   follow-latest pin never land on an estimate. Containment clips descendants at the turn's edge;
+   the clip margin keeps the focus ring of a control flush with that edge visible. */
+.chat-turn.is-settled {
+	content-visibility: auto;
+	overflow: clip;
+	overflow-clip-margin: var(--space-2);
+}
+/* A long answer is hundreds of finished paragraphs and tool groups inside one turn, and that turn
+   is on screen while it streams. Segments come in chunks of sixteen (ChatTurn.tsx). A finished chunk
+   off screen skips its layout and paint as one box, and inside the chunk on screen each finished
+   segment off screen does too, so a streamed frame lays out the growing segment rather than the
+   whole answer, and the browser tracks tens of boxes rather than hundreds. The growing segment is
+   the last child of the last chunk and stays fully rendered; it records its height then, before it
+   is skipped. */
+.chat-response__chunk {
+	display: grid;
+	gap: var(--space-4);
+	min-width: 0;
+}
+.chat-response__body > * {
+	contain-intrinsic-size: auto 120px;
+}
+.chat-response__chunk > * {
+	contain-intrinsic-size: auto 120px;
+}
+/* A finished chunk never rendered yet stands in at the height its sixteen segments would. */
+.chat-response__body > .chat-response__chunk {
+	contain-intrinsic-size: auto 1920px;
+}
+.chat-response__body > :not(:last-child),
+.chat-response__chunk > :not(:last-child) {
+	content-visibility: auto;
+	overflow: clip;
+	overflow-clip-margin: var(--space-2);
+}
+
+.transcript-history {
+	display: grid;
+	gap: var(--space-3);
+	padding-block: var(--space-3) var(--space-6);
+	border-bottom: 1px solid var(--line);
+	color: var(--muted);
+	font-size: var(--text-meta);
+}
+.transcript-history > p {
+	margin: 0;
+}
+.transcript-history > div {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-3);
+}
+.transcript-history button {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+/* A grid item's automatic minimum size is its min-content width, so a card holding a long command
+   or a wide diff refuses to shrink and pushes the whole page sideways on a phone. Every level of
+   the transcript's nesting opts out, which is what lets each card's own `overflow-x: auto` do the
+   scrolling instead of the document. */
+.chat-transcript__content > *,
+.chat-turn > *,
+.chat-request > *,
+.chat-response > *,
+.chat-response__body > *,
+.chat-response__chunk > *,
+.activity > *,
+.activity__rows > *,
+.activity__row > *,
+.approval-card > *,
+.approval-card__actions > *,
+.approval-preview > *,
+.tool-card > * {
+	min-width: 0;
+}
+/* A chip row, a headline and a fact are prose, not code: they wrap rather than scroll. */
+.approval-card__chips,
+.approval-card__title,
+.approval-card__facts li,
+.approval-preview__value,
+.tool-card__headline {
+	overflow-wrap: anywhere;
+	min-width: 0;
+}
+/* In the conversation, and on the pages that open one, a status is a glyph and a word in the reading
+   voice, not an uppercase pill: the glyph's shape and the word carry the meaning, the tone only
+   colours them. It also carries a detail, which can be a whole sentence or a path, so it wraps
+   instead of deciding how wide the page is. */
+:is(.conversation, .projects) .status-mark {
+	flex-wrap: wrap;
+	align-items: baseline;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	font-family: var(--font-ui);
+	font-size: var(--text-meta);
+	letter-spacing: 0;
+	text-transform: none;
+	white-space: normal;
+	overflow-wrap: anywhere;
+	min-width: 0;
+}
+/* A mark in the top bar is a short state, not a sentence: it keeps its width and the title truncates. */
+:is(.conversation, .projects) .wb-bar > .status-mark {
+	flex: none;
+	white-space: nowrap;
+	overflow-wrap: normal;
+}
+:is(.conversation, .projects) .status-mark__glyph {
+	font-family: var(--font-mono);
+}
+/* The page-wide disclosure margin spaces settings forms; in the record every disclosure is a line and
+   its rhythm comes from the transcript grid. */
+.chat-transcript details {
+	margin: 0;
+}
+/* A disclosure summary is not a scroll container and has to wrap instead. */
+.activity__row summary,
+.chat-response__body summary {
+	overflow-wrap: anywhere;
+}
+.chat-turn.is-replay {
+	opacity: 1;
+}
+/* The operator's words on one quiet ground, right-aligned. Agent prose and tool activity remain on the
+   page ground, so the two voices are told apart by place and ground rather than by labels. */
+.chat-request {
+	display: grid;
+	justify-items: end;
+	gap: var(--space-1);
+	min-width: 0;
+	max-width: min(80%, 40rem);
+	margin-left: auto;
+}
+.chat-request__meta,
+.chat-response__meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--space-3);
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	font-variant-numeric: tabular-nums;
+}
+.chat-request__meta {
+	justify-content: flex-end;
+	min-height: 24px;
+}
+/* When the request was sent is a lookup, not reading matter: it surfaces with the copy action. */
+.chat-request__time {
+	opacity: 0;
+	transition: opacity var(--motion-fast) var(--ease-standard);
+}
+.chat-request:hover .chat-request__time,
+.chat-request:focus-within .chat-request__time {
+	opacity: 1;
+}
+@media (hover: none) {
+	.chat-request__time {
+		opacity: 1;
+	}
+}
+.chat-response__who {
+	font-weight: 600;
+	color: var(--ink-strong);
+	font-size: var(--text-meta);
+}
+.chat-request__images {
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.chat-request__replay {
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	padding: 1px var(--space-2);
+	text-transform: uppercase;
+	letter-spacing: var(--tracking-instrument);
+	font-size: var(--text-instrument);
+}
+.chat-request__prompt {
+	margin: 0;
+	padding: var(--space-3) var(--space-4);
+	border-radius: var(--radius-md);
+	background: var(--well);
+	border: 1px solid var(--line);
+	color: var(--ink-strong);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	line-height: var(--leading-body);
+	font-size: var(--text-reading);
+}
+/* A stated absence is not the operator's words and must not be read as them. */
+.chat-request__prompt.is-missing {
+	color: var(--ink-subtle);
+	font-style: italic;
+}
+.chat-request__long {
+	width: 100%;
+	box-sizing: border-box;
+	padding: var(--space-3) var(--space-4);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--well);
+}
+.chat-request__long > summary {
+	display: grid;
+	gap: var(--space-3);
+	cursor: pointer;
+	list-style: none;
+}
+.chat-request__long > summary::-webkit-details-marker {
+	display: none;
+}
+.chat-request__preview,
+.chat-request__full {
+	margin: 0;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	font-size: var(--text-reading);
+	line-height: var(--leading-body);
+	color: var(--ink-strong);
+}
+.chat-request__expand {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--space-2) var(--space-3);
+	font-size: var(--text-exact);
+	color: var(--accent);
+}
+.chat-request__expand small {
+	font-size: inherit;
+	color: var(--ink-muted);
+}
+.chat-request__hide,
+.chat-request__long[open] .chat-request__show,
+.chat-request__long[open] .chat-request__preview {
+	display: none;
+}
+.chat-request__long[open] .chat-request__hide {
+	display: inline;
+}
+.chat-request__full {
+	margin-top: var(--space-3);
+}
+
+.chat-response {
+	display: grid;
+	gap: var(--space-3);
+	min-width: 0;
+}
+.chat-response__body {
+	display: grid;
+	gap: var(--space-4);
+	min-width: 0;
+}
+.chat-response__placeholder {
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+}
+.chat-response__footer {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--space-2) var(--space-4);
+	min-height: 28px;
+}
+.chat-response__footer > .turn-outcome {
+	flex: 1 1 auto;
+}
+.chat-response__footer > .message-actions {
+	margin-left: auto;
+}
+
+/* Response prose. Headings speak in the interface voice at reading sizes, and a table or a code block
+   gets the same breathing room as a paragraph. */
+.chat-response .markdown > :first-child {
+	margin-top: 0;
+}
+.chat-response .markdown .md-heading {
+	font-family: var(--font-ui);
+	font-weight: 650;
+	letter-spacing: -0.01em;
+	color: var(--ink-strong);
+	margin: 1.4em 0 0.4em;
+}
+.chat-response .markdown > .md-heading:first-child {
+	margin-top: 0;
+}
+.chat-response .markdown .md-heading--1 {
+	font-size: var(--text-h2);
+}
+.chat-response .markdown .md-heading--2 {
+	font-size: var(--text-h3);
+}
+.chat-response .markdown .md-heading--3 {
+	font-size: var(--text-reading);
+}
+.chat-response .markdown :is(.md-heading--4, .md-heading--5, .md-heading--6) {
+	font-size: var(--text-reading);
+}
+.chat-response .markdown > :is(.md-table, .code-block, .diagram) {
+	margin-block: 1.1em;
+}
+
+.live-chip {
+	display: inline-flex;
+	align-items: baseline;
+	gap: var(--space-2);
+}
+.live-chip[data-state="waiting"],
+.live-chip[data-state="stopping"] {
+	font-weight: 600;
+}
+
+/* Reported reasoning stays behind a disclosure: one quiet line
+   with its first sentence, the full text on the reasoning tint once opened. */
+.reasoning {
+	min-width: 0;
+	color: var(--reason-fg);
+	font-size: var(--text-meta);
+}
+.reasoning__summary {
+	cursor: pointer;
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	min-width: 0;
+	padding: 3px var(--space-2);
+	margin-left: calc(-1 * var(--space-2));
+	border-radius: var(--radius-sm);
+	list-style: none;
+}
+.reasoning__summary::-webkit-details-marker {
+	display: none;
+}
+.reasoning__summary:hover {
+	background: var(--reason-tint);
+}
+.reasoning__glyph {
+	flex: none;
+	width: 1.25em;
+	text-align: center;
+}
+.reasoning__label {
+	flex: none;
+	font-weight: 600;
+}
+.reasoning__preview {
+	flex: 1 1 auto;
+	min-width: 0;
+	font-style: italic;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.reasoning[open] .reasoning__preview {
+	visibility: hidden;
+}
+.reasoning__body {
+	margin-top: var(--space-1);
+	padding: var(--space-3) var(--space-4);
+	border-left: 2px solid var(--reason-line);
+	border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+	background: var(--reason-tint);
+}
+.reasoning__source {
+	margin: 0 0 var(--space-2);
+	font-size: var(--text-exact);
+	/* --ink-subtle clears 4.5:1 on the page ground but not on the reasoning tint. */
+	color: var(--ink-muted);
+}
+.reasoning__text {
+	margin: 0;
+	overflow-wrap: anywhere;
+	line-height: var(--leading-body);
+	color: var(--ink);
+}
+
+/* `CopyButton` is shared with the code block, where it sits on a fixed dark paper and carries fixed
+   light ink to match. Reused in the transcript it lands on the page ground, where that ink is
+   invisible, so the transcript restates it in tokens that follow the theme. */
+.message-actions .code-block__copy {
+	min-height: auto;
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	padding: var(--space-1) var(--space-2);
+	background: transparent;
+	color: var(--ink-muted);
+	font: inherit;
+	font-size: var(--text-exact);
+	cursor: pointer;
+}
+.message-actions .code-block__copy:hover {
+	color: var(--ink);
+	background: var(--well);
+}
+.message-actions .code-block__copy.is-copied {
+	color: var(--status-success-fg);
+}
+.message-actions .code-block__copy.is-failed {
+	color: var(--status-fail-fg);
+}
+
+/* Activity is a quiet line in the record, not a card inside the response. Opened, it lists one line
+   per call; each line opens to its own evidence. */
+.activity {
+	min-width: 0;
+}
+.activity__summary {
+	cursor: pointer;
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	min-width: 0;
+	width: fit-content;
+	max-width: 100%;
+	padding: 4px var(--space-2);
+	margin-left: calc(-1 * var(--space-2));
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+	line-height: var(--leading-tight);
+	list-style: none;
+}
+.activity__summary::-webkit-details-marker {
+	display: none;
+}
+.activity__summary::after {
+	content: "›";
+	flex: none;
+	color: var(--ink-muted);
+	font-family: var(--font-mono);
+	transition: transform var(--motion-fast) var(--ease-standard);
+}
+.activity[open] > .activity__summary::after {
+	transform: rotate(90deg);
+}
+.activity__summary:hover {
+	background: var(--well);
+	color: var(--ink);
+}
+/* Only a group that is waiting on the operator is drawn as more than a line. */
+.activity--warning > .activity__summary {
+	border-color: var(--status-warn-line);
+	background: var(--status-warn-tint);
+	color: var(--status-warn-fg);
+}
+.activity__glyph {
+	flex: none;
+	font-family: var(--font-mono);
+	color: var(--ink-muted);
+}
+.activity--success .activity__glyph {
+	color: var(--status-success-fg);
+}
+.activity--action .activity__glyph {
+	color: var(--status-running-fg);
+}
+.activity--warning .activity__glyph {
+	color: var(--status-warn-fg);
+}
+.activity--error .activity__glyph {
+	color: var(--status-fail-fg);
+}
+.activity__label {
+	flex: none;
+	font-weight: 600;
+	color: inherit;
+	white-space: nowrap;
+}
+.activity--error .activity__label,
+.activity--action .activity__label {
+	color: var(--ink);
+}
+.activity__current {
+	color: var(--ink-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+}
+.activity__current::before {
+	content: "· ";
+}
+.activity__rows {
+	list-style: none;
+	margin: var(--space-2) 0 0;
+	padding: 0 0 0 var(--space-3);
+	border-left: 1px solid var(--line);
+	display: grid;
+	gap: 1px;
+}
+/* A single settled call stands as its own line, with no group line above it and no rail beside it. */
+.activity--solo > .activity__summary {
+	display: none;
+}
+.activity--solo > .activity__rows {
+	margin: 0;
+	padding: 0;
+	border-left: 0;
+}
+.activity__row {
+	display: grid;
+	gap: var(--space-2);
+	min-width: 0;
+}
+.activity__kind {
+	color: var(--ink-muted);
+}
+.activity__notice {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	margin: 0;
+	padding: 5px 0;
+	font-size: var(--text-meta);
+	color: var(--ink);
+	overflow-wrap: anywhere;
+}
+.activity__notice-glyph {
+	flex: none;
+	width: 1.25em;
+	text-align: center;
+	font-family: var(--font-mono);
+	color: var(--ink-muted);
+}
+
+/* A notice about the turn's own flow (a yolo continuation), at the point it happened. */
+.chat-notice {
+	margin: 0;
+	padding: 5px 0;
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+	overflow-wrap: anywhere;
+}
+
+/* Health facts rendered at the point in the conversation they happened. */
+.turn-health,
+.session-health__rows {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	gap: var(--space-2);
+	font-size: var(--text-meta);
+}
+.turn-health li {
+	border-left: 2px solid var(--line-strong);
+	padding-left: var(--space-3);
+}
+
+/* Session chrome: the standing context warning and the provider strip. */
+.context-banner {
+	border: 1px solid var(--status-warn-line);
+	background: var(--status-warn-tint);
+	color: var(--status-warn-fg);
+	border-radius: var(--radius-md);
+	padding: var(--space-3) var(--space-4);
+	margin-block: var(--space-4);
+	font-size: var(--text-meta);
+}
+.session-health {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-3);
+	align-items: baseline;
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+}
+
+.chat-empty {
+	display: grid;
+	align-content: center;
+	justify-items: center;
+	gap: var(--space-5);
+	min-height: min(60dvh, 30rem);
+	padding: var(--space-8) 0;
+}
+.chat-empty h2 {
+	margin: 0;
+	text-align: center;
+	font-family: var(--font-editorial);
+	font-size: clamp(26px, 2.8vw, 34px);
+	font-weight: 700;
+	line-height: 1.15;
+	letter-spacing: -0.4px;
+	color: var(--ink);
+}
+.chat-empty h2 em {
+	color: var(--accent);
+}
+.chat-empty__starters {
+	display: grid;
+	width: min(100%, 36rem);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.chat-empty__starters li + li {
+	border-top: 1px solid var(--line);
+}
+.chat-empty__starters button {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	width: 100%;
+	min-height: 0;
+	padding: 11px var(--space-3);
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink-muted);
+	font: inherit;
+	font-size: var(--text-meta);
+	line-height: 1.4;
+	text-align: left;
+}
+.chat-empty__starters button::before {
+	content: "↳";
+	flex: none;
+	color: var(--accent);
+}
+.chat-empty__starters button:hover {
+	background: var(--wb-faint);
+	color: var(--ink);
+}
+
+@media (max-width: 640px) {
+	.chat-request {
+		max-width: 92%;
+	}
+}
+
+/* Two corrections the components could only be measured for once they were mounted in a page.
+   They belong in approval.css and tool-cards.css and should be folded back into them; they are
+   here because those files belong to other tracks and this one does not edit across that line. */
+
+/* The chord hint inherits the muted ink that is correct beside a quiet button and unreadable
+   inside the filled primary one. */
+.approval-card .primary .approval-card__chord,
+.approval-strip__actions .primary .approval-card__chord {
+	color: var(--on-primary);
+}
+.approval-card .primary:hover:not(:disabled) .approval-card__chord,
+.approval-strip__actions .primary:hover:not(:disabled) .approval-card__chord {
+	color: var(--on-primary);
+}
+.approval-card .primary:disabled .approval-card__chord,
+.approval-strip__actions .primary:disabled .approval-card__chord {
+	color: inherit;
+}
+
+/* The same shared CopyButton as above, this time on the tool card's sunken ground. */
+.tool-card .code-block__copy,
+.diff .code-block__copy {
+	min-height: auto;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	padding: var(--space-1) var(--space-2);
+	background: transparent;
+	color: var(--ink-muted);
+	font: inherit;
+	font-size: var(--text-exact);
+	cursor: pointer;
+}
+.tool-card .code-block__copy:hover,
+.diff .code-block__copy:hover {
+	color: var(--ink);
+}
+.tool-card .code-block__copy.is-copied,
+.diff .code-block__copy.is-copied {
+	color: var(--status-success-fg);
+}
+.tool-card .code-block__copy.is-failed,
+.diff .code-block__copy.is-failed {
+	color: var(--status-fail-fg);
+}
+
+/* The PanCode spinner in a glyph slot that was sized for one text character. */
+:is(.activity__glyph, .tool-card__glyph, .status-mark__glyph, .fleet-run__glyph) {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+/* What a live turn adds arrives with a short rise, so the eye finds the new line without hunting.
+   Only a live turn animates: a settled conversation opens still, and a turn that settles drops the
+   animation without replaying it. Opacity and translate only. */
+@keyframes turn-enter {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+}
+@media (prefers-reduced-motion: no-preference) {
+	.chat-turn.is-live > .chat-request,
+	.chat-turn.is-live .chat-response__body > :not(.chat-response__chunk),
+	.chat-turn.is-live .chat-response__chunk > *,
+	.chat-turn.is-live .activity__rows > * {
+		animation: turn-enter var(--motion-base) var(--ease-standard) both;
+	}
+}
+
+/* Transcript detail, the terminal's interface.outputDetail tiers. The tier is a data attribute on the
+   transcript, so switching it restyles the page without re-rendering a single settled turn. No tier
+   hides an approval, a failure or a stop: those carry their own tone and stay in every rule below. */
+.chat-transcript[data-detail="compact"] .reasoning__preview,
+.chat-transcript[data-detail="compact"] .turn-outcome[data-tone="success"] .turn-outcome__line > :not(.status-mark) {
+	display: none;
+}
+.chat-transcript[data-detail="compact"] .turn-outcome[data-tone="success"] {
+	color: var(--ink-subtle);
+}
+.chat-transcript[data-detail="detailed"] .turn-outcome__nerd {
+	display: flex;
+}
+.chat-transcript[data-detail="detailed"] .tool-card__took {
+	display: inline;
+}
+
+/* ---- phone-width hit areas (x090 layout) ----------------------------------------------------- */
+/* The outcome line is a one-line disclosure; at phone width padding makes it a 24px target. */
+@media (max-width: 390px) {
+	summary.turn-outcome__line {
+		min-block-size: 24px;
+		padding-block: 3px;
+	}
+}

@@ -1,0 +1,209 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// The verbs behind the sidebar: start a task, resume a saved one, close a running one, and remember
+// which project the operator was last in. Every call goes through a route the old Sessions pages
+// already used, so this adds no server surface.
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
+import { routes } from "../../contracts/runtime-routes.js";
+import type { SessionOverview } from "../../contracts/session-overview.js";
+import { ApiProblem, type Client, emptyInput } from "../api/client.js";
+import { clock } from "../api/clock.js";
+import { advanceSessionReadScope, SESSION_CACHES, sessionBuffer } from "../api/sessions.js";
+import { afterStreamHello } from "../api/stream-gate.js";
+import { discardDraftStore } from "../chat/draft-registry.js";
+import { homeDraft, updateHomeDraft } from "../pages/home-draft.js";
+import { type ProjectLaunch, useProjectLaunch } from "../pages/project-open.js";
+import type { SessionControlTarget } from "../pages/session-control-model.js";
+import { ownDrafts } from "./own-drafts.js";
+import { useSessionCommands } from "./SessionControls.js";
+import { reusableDraft, sessionIdFromPath } from "./shell-model.js";
+import { openAppWindow } from "./windows.js";
+
+const WORKSPACE_KEY = "pancode-gui-workspace";
+
+export function rememberedWorkspace(): string | null {
+	try {
+		return localStorage.getItem(WORKSPACE_KEY);
+	} catch {
+		return null;
+	}
+}
+
+export function rememberWorkspace(id: string): void {
+	try {
+		localStorage.setItem(WORKSPACE_KEY, id);
+	} catch {
+		// The choice holds for this tab; the next visit falls back to the most recent project.
+	}
+}
+
+export interface TaskActions {
+	readonly launch: ProjectLaunch;
+	/** Open the Home composer, or return to this window's untouched task when Home has no unfinished request. */
+	newTask(workspaceId?: string): void;
+	resume(sessionId: string, workspaceId: string): void;
+	/** Show a task in a second window. A saved one is loaded here first, so the new window finds it open. */
+	openWindow(sessionId: string, workspaceId: string, held: boolean): void;
+	readonly resuming: string | null;
+	close(target: SessionControlTarget): void;
+	controlling(sessionId: string): boolean;
+	readonly error: Error | null;
+}
+
+/** Read after the event stream opens: its first hello supersedes any overview read before it (one request per load). */
+async function readOverview(client: Client, signal: AbortSignal) {
+	await afterStreamHello(client, signal);
+	signal.throwIfAborted();
+	return client.call(routes.sessionOverview, emptyInput, undefined, signal);
+}
+
+export function useSessionOverview(client: Client, enabled = true) {
+	return useQuery({
+		queryKey: ["session-overview"],
+		queryFn: ({ signal }) => readOverview(client, signal),
+		staleTime: Number.POSITIVE_INFINITY,
+		refetchOnWindowFocus: "always",
+		enabled,
+	});
+}
+
+/**
+ * One task's live workers as the server holds them, read from the overview the sidebar already keeps: the count, and
+ * the runs when the list is whole. Undefined while the overview does not list the task, so a caller keeps the feed.
+ */
+export function useSessionWorkers(client: Client, sessionId: string) {
+	const select = useCallback((overview: SessionOverview) => sessionWorkers(overview, sessionId), [sessionId]);
+	return useQuery({
+		queryKey: ["session-overview"],
+		queryFn: ({ signal }) => readOverview(client, signal),
+		staleTime: Number.POSITIVE_INFINITY,
+		refetchOnWindowFocus: "always",
+		select,
+	}).data;
+}
+
+function sessionWorkers(overview: SessionOverview, sessionId: string) {
+	const item = overview.sessions.find((row) => row.id === sessionId);
+	if (!item) return undefined;
+	const count = item.activeWorkers + item.queuedWorkers;
+	return {
+		count,
+		// A lower bound or a capped list cannot say that a run it does not name has ended.
+		runs: item.workersComplete && item.runs.length === count ? item.runs : undefined,
+		asOf: item.updatedAt,
+	};
+}
+
+export function useTaskActions(client: Client, afterNavigate?: () => void): TaskActions {
+	const navigate = useNavigate();
+	const queries = useQueryClient();
+	const launch = useProjectLaunch(client);
+	const { controls, requestClose } = useSessionCommands();
+	const overview = useSessionOverview(client);
+	const resume = useMutation({
+		mutationFn: ({ sessionId, workspaceId }: { sessionId: string; workspaceId: string; window?: boolean }) => {
+			if (controls.records.some((row) => row.sessionId === sessionId && row.stage !== "complete"))
+				throw new Error("Review this session's control request before resuming it. Your draft is kept.");
+			return client.call(routes.loadSession, { params: { id: sessionId }, query: {}, body: { workspaceId } });
+		},
+		onSuccess: (session, request) => {
+			advanceSessionReadScope(session.id);
+			for (const key of SESSION_CACHES) queries.removeQueries({ queryKey: [key, session.id] });
+			queries.setQueryData(["session", session.id], sessionBuffer(session.id).snapshot(session) ?? session);
+			void queries.invalidateQueries({ queryKey: ["sessions"] });
+			void queries.invalidateQueries({ queryKey: ["session-overview"] });
+			if (request.window) return openAppWindow(`/sessions/${session.id}`);
+			afterNavigate?.();
+			void navigate(`/sessions/${session.id}`);
+		},
+	});
+	const newTask = useCallback(
+		(workspaceId?: string) => {
+			const home = homeDraft();
+			if (workspaceId && !home.pending && !home.text && !home.textIssue) {
+				rememberWorkspace(workspaceId);
+				updateHomeDraft({ workspaceId });
+			}
+			const draft =
+				workspaceId && !home.pending && !home.text && !home.textIssue
+					? reusableDraft(overview.data?.sessions ?? [], workspaceId, ownDrafts())
+					: undefined;
+			afterNavigate?.();
+			if (draft) void navigate(`/sessions/${draft.id}`);
+			else void navigate("/");
+		},
+		[overview.data?.sessions, navigate, afterNavigate],
+	);
+	return {
+		launch,
+		newTask,
+		resume: (sessionId, workspaceId) => resume.mutate({ sessionId, workspaceId }),
+		openWindow: (sessionId, workspaceId, held) => {
+			if (held) openAppWindow(`/sessions/${sessionId}`);
+			else resume.mutate({ sessionId, workspaceId, window: true });
+		},
+		resuming: resume.isPending ? (resume.variables?.sessionId ?? null) : null,
+		close: requestClose,
+		controlling: (sessionId) => controls.records.some((row) => row.sessionId === sessionId && row.stage !== "complete"),
+		error: resume.error ?? launch.error,
+	};
+}
+
+/** Save a task's name. An empty label clears it, and the task is named by its first request again. */
+export function useRenameTask(client: Client) {
+	const queries = useQueryClient();
+	return useMutation({
+		mutationFn: async ({ sessionId, workspaceId, label }: { sessionId: string; workspaceId: string; label: string }) => {
+			try {
+				return await client.call(routes.labelSession, {
+					params: { id: sessionId },
+					query: {},
+					body: { label, workspaceId },
+				});
+			} catch (error) {
+				// A task joins the saved history once PanCode has answered in it, and only saved tasks can be named.
+				if (error instanceof ApiProblem && error.problem.status === 404)
+					throw new Error("This task is not saved yet. Rename it after Panos has answered once.");
+				throw error;
+			}
+		},
+		onSuccess: (_result, { sessionId, workspaceId }) => {
+			void queries.invalidateQueries({ queryKey: ["session", sessionId] });
+			void queries.invalidateQueries({ queryKey: ["sessions"] });
+			void queries.invalidateQueries({ queryKey: ["session-overview"] });
+			void queries.invalidateQueries({ queryKey: ["session-history", workspaceId] });
+		},
+	});
+}
+
+/** Delete a saved task for good. The caller asks first; leaving the deleted task's own page is handled here. */
+export function useDeleteTask(client: Client) {
+	const queries = useQueryClient();
+	const navigate = useNavigate();
+	const location = useLocation();
+	return useMutation({
+		mutationFn: ({ sessionId, workspaceId }: { sessionId: string; workspaceId: string }) =>
+			client.call(routes.deleteSession, { params: { id: sessionId }, query: {}, body: { workspaceId } }),
+		onSuccess: (_result, { sessionId, workspaceId }) => {
+			discardDraftStore(sessionId);
+			queries.removeQueries({ queryKey: ["session", sessionId] });
+			void queries.invalidateQueries({ queryKey: ["session-history", workspaceId] });
+			void queries.invalidateQueries({ queryKey: ["sessions"] });
+			void queries.invalidateQueries({ queryKey: ["session-overview"] });
+			if (sessionIdFromPath(location.pathname) === sessionId) void navigate("/");
+		},
+	});
+}
+
+/** A minute-resolution clock for relative ages, so a list of "5m" labels does not freeze. */
+export function useMinuteClock(): number {
+	const [now, setNow] = useState(() => clock.now());
+	useEffect(() => {
+		const timer = setInterval(() => setNow(clock.now()), 30_000);
+		return () => clearInterval(timer);
+	}, []);
+	return now;
+}

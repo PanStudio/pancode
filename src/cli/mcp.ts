@@ -1,0 +1,839 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { mcpToolName } from "../core/tool-names.js";
+import { mcpToolActionClass } from "../domains/gateway/mcp/action-classes.js";
+import type { McpClient, McpServerInfo } from "../domains/gateway/mcp/client.js";
+import type {
+	McpServerEntryScript,
+	McpSurface,
+	McpSurfaceStatus,
+	McpToolPathArguments,
+	ResolvedMcpServer,
+} from "../domains/gateway/mcp/index.js";
+import {
+	approveMcpSurface,
+	currentMcpSurfaceApproval,
+	grantMcpBuiltinNetwork,
+	judgeMcpSurface,
+	MCP_TRUST_ACTION_CLASSES,
+	type McpTrustActionClass,
+	type McpTrustOptions,
+	mcpBuiltinTrustRefusal,
+	mcpSurfaceRemedy,
+	mcpSurfaceRemedyFor,
+	readMcpTrustState,
+	resolveMcpServers,
+	revokeMcpBuiltinNetwork,
+	trustMcpServer,
+	untrustMcpServer,
+} from "../domains/gateway/mcp/index.js";
+import { readMcpServerCatalog } from "../domains/gateway/mcp/metadata-cache.js";
+import { canonicalProjectRoot } from "../domains/gateway/mcp/trust.js";
+import type { RegistryVerdict } from "../tools/registry-contract.js";
+import { printError } from "./shared.js";
+
+const HELP = `pancode mcp <command>
+
+Commands:
+  pancode mcp list [--refresh] [--json]
+  pancode mcp test <id> [--call <tool> [--args <json>]]... [--json]
+  pancode mcp trust <id> [--action-class <class>] [--network] [--json]
+  pancode mcp trust <id> --surface [--hash <sha256>] [--json]
+  pancode mcp untrust <id> [--json]
+
+Action classes: ${MCP_TRUST_ACTION_CLASSES.join(", ")}
+
+Path arguments:
+  A declaration may add toolPathArguments: per tool, a map from a top-level
+  argument name to read or write. A call's value for each is resolved against
+  the server's launch cwd as a builtin read or write resolves its path, and
+  judged as that read or write would be: by the path policy and, in a worker,
+  by the run's read scope and write roots. A declared argument the call leaves
+  out passes, one that is not a string is refused, and an undeclared argument
+  is never read. A write argument on a tool classed read is a declaration
+  error. This judges the paths a call names; it does not confine what a server
+  process running outside a sandbox then reads or writes.
+
+JSON responses (--json):
+  list: {servers: [...], diagnostics: [...], trustDiagnostics: [...]}
+    Each server includes its declaration, trust {status, actionClass, reason?},
+    entry (project servers: the project files its trust binds, [] when none),
+    network, networkSource?, and cached tools with per-tool actionClass.
+    network is true when the server holds the worker network grant
+    described under trust; networkSource says whether the trust file (project,
+    plugin and builtin servers) or the user declaration granted it. --refresh lists
+    trusted servers live and updates their catalogs; untrusted declarations
+    are never launched. A diagnostic with severity "warning" is advisory.
+    A server with scope builtin ships with PanCode: it is trusted by
+    authorship, its tools and their classes come from the policy this PanCode
+    ships (catalog "shipped", builtin {version, title, environment}), and its
+    surface is approved only while it serves that policy, which reinstalling or
+    rebuilding restores. environment names the variables it is started with
+    from PanCode's own environment; values are never shown. A user declaration with its id overrides it, with a
+    warning; a project or plugin declaration with its id is shadowed. trust
+    --network records its network grant and untrust removes that grant; any
+    other trust refuses it.
+    Each trusted server also carries surface {status, digest, approvedDigest,
+    reason?, remedy?}: whether the tool surface it serves is approved (see
+    trust --surface). Without --refresh no server is launched, so digest is
+    null and status says only whether an approval is recorded; with it a
+    changed surface reads as changed.
+  test: {ok, server: {id, scope, trust, network, networkSource?}, protocolVersion, serverInfo,
+    tools: [{name, capability, actionClass, serverHint?}], truncated, surface,
+    calls: [{tool, isError, text, structuredContent?, refused?, denial?,
+      serverPolicyRefusal?} | {tool, error}]}
+    Launches one trusted server through the same client the gateway uses,
+    lists its tools, makes each --call in order, and closes it. Each call is
+    admitted as a session admits it; one that needs approval is refused,
+    because no operator or safety judge reviews it here (a headless run's
+    judge may allow it), and a tool the server does not list is never sent. A
+    call whose request gets no answer is recorded as {tool, error} and ends
+    the calls; a JSON-RPC error answer is that call's error.
+    An untrusted or stale declaration is never launched. Test never records a
+    surface approval, so its calls are refused until the surface is approved.
+    The supported seam for external integration checks; nothing outside
+    PanCode needs to import its source.
+  trust: {ok: true, record: {projectRoot, id, digest, actionClass, trustedAt, network?,
+    entryScriptHashes?}, entry: [...], toolActionClasses, toolPathArguments}
+    entry lists the project files the record binds: an absolute command,
+    every argument not shaped like a flag and every value a flag carries
+    after = (--require=./a.cjs) that names an existing file in the project.
+    Imports, python -m modules, directories, npx or uvx bins and files named
+    through env such as NODE_OPTIONS or PATH are not bound; a symlink whose
+    target is outside the project is bound by path only. entryScriptHashes
+    maps each bound file to its SHA-256. Bindings are checked when a session or worker takes its MCP
+    snapshot, so an edit is caught from the next session or dispatch.
+    --network lets the server's own sandboxed process reach the network in
+    fleet workers; worker shells keep their policy. On Linux that is the host
+    network namespace (internet, localhost services and abstract unix
+    sockets); on macOS the seatbelt profile allows network. Credential masking
+    is a denylist of known paths, so other secrets readable in the home can
+    leave with the grant. A worker whose write roots contain or lie inside
+    the server's launch cwd, the directory of a file it runs (a project
+    server's bound entry files; every existing file argument of a user or
+    plugin server), or a project server's project root starts it without
+    the grant, which an in-place or worktree writer does for a server in its
+    tree; a read-only worker keeps it. A module the server imports is not
+    bound, so a writer's edit to one persists into a later read-only run
+    that holds the grant. Re-trusting without it drops the grant.
+    Trust approves the launch only. Run at a terminal without --json, it then
+    launches the server, prints the tool surface it serves and records that
+    surface as approved; otherwise it records none and names trust --surface.
+  trust --surface: {ok, recorded, surface: {status, digest, approvedDigest,
+    reason?, remedy?}, tools: [{name, sha256}], record?}
+    The second approval of a trusted server: launches it, lists its tools and
+    prints the surface digest, a SHA-256 over each tool's name, input schema
+    and annotations (descriptions and titles are left out, so rewording one
+    changes nothing). Until it is approved, and again whenever a tool is
+    added, removed or changes its schema or annotations, sessions and workers
+    list the server's tools but refuse every call, naming this command; launch
+    trust stands meanwhile. At a terminal without --json it records the
+    surface it shows. --hash records only when the served digest equals the
+    one given, the non-interactive form for a reviewed surface; without it a
+    non-interactive run prints the command that would record it and exits 0.
+    A user-scope server's surface is recorded on its first listing in an
+    attended session and reported as recorded; a headless session or worker
+    never records one. The tool metadata cache is never read as approval.
+    On a builtin server trust takes only --network and returns {ok: true,
+    grant: {id, network, grantedAt}}. The grant is keyed by the server id, not
+    by a project or a digest, so it holds in every project and survives an
+    upgrade; the classes, path arguments and surface stay the shipped policy.
+  untrust: {ok: true, removed: boolean}
+  errors: {ok: false, message: string}
+Exit codes: 0 success; 1 operational failure; 2 invalid usage. A test also
+ exits 1 when its server fails or one of its calls returns an error.
+List retains its response shape on failure and exits 1 when config or trust
+ diagnostics other than warnings are present. Mutation errors return the
+ error shape with a one-line reason. --help prints this text even when --json
+ is supplied.
+`;
+
+/**
+ * The worker network grant as one per-server field. Only a trusted server
+ * carries it; a stale record's grant lapses with its trust.
+ */
+function networkGrant(server: ResolvedMcpServer): { network: boolean; networkSource?: "trust" | "declaration" } {
+	if (server.trust.status !== "trusted" || server.trust.network !== true) return { network: false };
+	return { network: true, networkSource: server.scope === "user" ? "declaration" : "trust" };
+}
+
+/** The project files a project server's trust binds; null for a scope that binds none. */
+function boundEntry(server: ResolvedMcpServer): string[] | null {
+	return server.scope === "project" ? (server.entryScripts ?? []).map((entry) => entry.path) : null;
+}
+
+/**
+ * Each binding as the trust record holds it: a symlinked entry names the real
+ * path whose content is hashed, and one whose target is outside the project
+ * is marked as bound by path only, so the printed list matches the record.
+ */
+function entryLabel(entries: ReadonlyArray<McpServerEntryScript>): string {
+	if (entries.length === 0) return "entry=none";
+	const spelled = entries.map((entry) => {
+		if ("error" in entry || entry.realPath === undefined) return entry.path;
+		return "sha256" in entry ? `${entry.path} -> ${entry.realPath}` : `${entry.path} -> ${entry.realPath} (path only)`;
+	});
+	return `entry=${spelled.join(", ")}`;
+}
+
+/**
+ * The per-tool classes a declaration asks for, printed before trust is granted
+ * so the operator sees what a project or plugin declaration will classify.
+ */
+const CALL_TEXT_MAX_CHARS = 2_000;
+
+/** A call's result, cut with a marker that says so; `--json` carries all of it (dogfood F6). */
+function boundedCallText(text: string): string {
+	if (text.length <= CALL_TEXT_MAX_CHARS) return text;
+	return `${text.slice(0, CALL_TEXT_MAX_CHARS)}… (${text.length - CALL_TEXT_MAX_CHARS} more characters; --json prints the whole result)`;
+}
+
+/**
+ * The server-wide class a text listing prints. A trusted server whose own class is the `unknown` fallback for undeclared
+ * tools, and whose every listed tool declares one class, reads as that class (a builtin server; dogfood F13).
+ */
+function serverClassLabel(
+	trust: { status: string; actionClass: string },
+	tools: ReadonlyArray<{ actionClass: string }>,
+): string {
+	const first = tools[0]?.actionClass;
+	return trust.status === "trusted" &&
+		trust.actionClass === "unknown" &&
+		first !== undefined &&
+		first !== "unknown" &&
+		tools.every((tool) => tool.actionClass === first)
+		? first
+		: trust.actionClass;
+}
+
+function toolClassesLabel(classes: Readonly<Record<string, string>>): string {
+	const names = Object.keys(classes).sort();
+	return names.length === 0 ? "" : ` toolActionClasses=${names.map((name) => `${name}:${classes[name]}`).join(",")}`;
+}
+
+/** The path arguments a declaration asks PanCode to judge, printed beside its classes. */
+function pathArgumentsLabel(declared: McpToolPathArguments | undefined): string {
+	const pairs = Object.keys(declared ?? {})
+		.sort()
+		.flatMap((tool) =>
+			Object.keys(declared?.[tool] ?? {})
+				.sort()
+				.map((argument) => `${tool}.${argument}:${declared?.[tool]?.[argument]}`),
+		);
+	return pairs.length === 0 ? "" : ` toolPathArguments=${pairs.join(",")}`;
+}
+
+function networkLabel(grant: ReturnType<typeof networkGrant>): string {
+	return grant.network
+		? `network=true (${grant.networkSource === "trust" ? "trust record" : "user declaration"})`
+		: "network=false";
+}
+
+/**
+ * The first line of text `mcp test` output. It names the network grant and its
+ * source the way `mcp list` does; only --json carried it before.
+ */
+export function mcpTestHeadline(
+	id: string,
+	info: McpServerInfo,
+	toolCount: number,
+	grant: ReturnType<typeof networkGrant>,
+): string {
+	return `${id}: protocol ${info.protocolVersion}, server ${info.serverInfo?.name ?? "?"} ${info.serverInfo?.version ?? "?"}, ${toolCount} tools, ${networkLabel(grant)}`;
+}
+
+type McpSurfaceReport = McpSurfaceStatus & { remedy?: string };
+
+/**
+ * A trusted server's surface approval against what it served, or against
+ * nothing when it was not launched; null for a server that is not trusted.
+ */
+function surfaceStatusOf(server: ResolvedMcpServer, served: McpSurface | null): McpSurfaceReport | null {
+	if (server.trust.status !== "trusted") return null;
+	const status = judgeMcpSurface(server, server.trust.surface, served);
+	return status.status === "approved" ? status : { ...status, remedy: mcpSurfaceRemedyFor(server) };
+}
+
+/**
+ * The tools a server lists without launching it: a builtin server's from the
+ * policy this PanCode ships, any other trusted server's from its recorded catalog.
+ */
+function offlineTools(
+	server: ResolvedMcpServer,
+	cwd: string,
+): {
+	tools: Array<{ name: string; annotations: Record<string, unknown> | null }>;
+	catalog: "shipped" | "cached" | "missing";
+} {
+	if (server.builtin !== undefined) {
+		return { tools: server.builtin.tools.map(({ name, annotations }) => ({ name, annotations })), catalog: "shipped" };
+	}
+	const catalog =
+		server.trust.status !== "trusted"
+			? null
+			: readMcpServerCatalog({
+					projectRoot: canonicalProjectRoot(cwd),
+					scope: server.scope,
+					declarationPath: server.path,
+					serverId: server.id,
+					digest: server.digest,
+					cwd: server.cwd,
+				});
+	if (catalog === null) return { tools: [], catalog: "missing" };
+	return {
+		tools: catalog.tools.map((tool) => ({ name: tool.name, annotations: tool.annotations ?? null })),
+		catalog: "cached",
+	};
+}
+
+function surfaceLabel(surface: McpSurfaceReport): string {
+	if (surface.status === "approved") return `surface=approved ${surface.approvedDigest ?? ""}`.trimEnd();
+	return `surface=${surface.status}${surface.reason !== undefined ? ` (${surface.reason})` : ""}`;
+}
+
+export interface McpCommandOutput {
+	code: number;
+	text: string;
+	data: unknown;
+}
+
+/** Shared operator outcomes for the CLI and slash command. */
+export function mcpCommandOutput(
+	argv: ReadonlyArray<string>,
+	options: McpTrustOptions = { cwd: process.cwd() },
+	served: ReadonlyMap<string, McpSurface> = new Map(),
+): McpCommandOutput {
+	const fail = (code: number, message: string): McpCommandOutput => {
+		const text = message.replace(/[\r\n]+/gu, " ");
+		return { code, text, data: { ok: false, message: text } };
+	};
+	try {
+		const [command, id, ...rest] = argv;
+		if (command === "list" && id === undefined) {
+			const resolved = resolveMcpServers(options);
+			const result = {
+				...resolved,
+				servers: resolved.servers.map((server) => {
+					const offline = offlineTools(server, options.cwd);
+					const entry = boundEntry(server);
+					const surface = surfaceStatusOf(server, served.get(server.id) ?? null);
+					// The shipped schemas are policy, not a listing; list shows the version, title and the variable names it is given.
+					const { builtin, ...declaration } = server;
+					return {
+						...declaration,
+						// An env value is often a token: list names the keys and never prints a value.
+						env: Object.fromEntries(Object.keys(server.env).map((key) => [key, "[redacted]"])),
+						...(builtin !== undefined
+							? { builtin: { version: builtin.version, title: builtin.title, environment: builtin.environment } }
+							: {}),
+						...(entry !== null ? { entry } : {}),
+						...networkGrant(server),
+						tools: offline.tools.flatMap((tool) => {
+							const capability = mcpToolName(server.id, tool.name);
+							return capability === null
+								? []
+								: [{ name: tool.name, capability, actionClass: mcpToolActionClass(server, tool) }];
+						}),
+						catalog: offline.catalog,
+						...(surface !== null ? { surface } : {}),
+					};
+				}),
+			};
+			// Each server's tools and surface sit under its own header line (CLI audit 7).
+			const lines = result.servers.flatMap((server) => {
+				const block = [
+					`${server.id} scope=${server.scope}${server.plugin !== undefined ? ` plugin=${server.plugin.id}` : ""} command=${JSON.stringify([server.command, ...server.args])} cwd=${JSON.stringify(server.cwd)} trust=${server.trust.status}${"reason" in server.trust ? ` (${server.trust.reason})` : ""} actionClass=${serverClassLabel(server.trust, server.tools)}${toolClassesLabel(server.toolActionClasses)}${pathArgumentsLabel(server.toolPathArguments)}${server.scope === "project" ? ` ${entryLabel(server.entryScripts ?? [])}` : ""}${server.builtin !== undefined && server.builtin.environment.length > 0 ? ` environment=${server.builtin.environment.join(",")}` : ""} ${networkLabel(server)}`,
+				];
+				for (const tool of server.tools) block.push(`  ${tool.capability} actionClass=${tool.actionClass}`);
+				if (server.trust.status === "trusted" && server.catalog === "missing")
+					block.push("  no recorded tool catalog; use pancode mcp list --refresh");
+				if (server.surface !== undefined) block.push(`  ${surfaceLabel(server.surface)}`);
+				return block;
+			});
+			lines.push(
+				...result.diagnostics.map(
+					(entry) => `${entry.severity === "warning" ? "warning: " : ""}${entry.path}: ${entry.message}`,
+				),
+				...result.trustDiagnostics,
+			);
+			const failing = result.diagnostics.filter((entry) => entry.severity !== "warning");
+			return {
+				code: failing.length || result.trustDiagnostics.length ? 1 : 0,
+				text: lines.join("\n") || "mcp: none",
+				data: result,
+			};
+		}
+		if ((command !== "trust" && command !== "untrust") || !id)
+			return fail(
+				2,
+				"usage: pancode mcp list | test <id> [--call <tool> [--args <json>]]... | trust <id> [--action-class <class>] [--network] | untrust <id>",
+			);
+		// A flag where the id belongs is named as a flag, never looked up as a server id (C5); exit 1 stays (NIGHT-DECISIONS 2).
+		if (id.startsWith("-")) return fail(1, `unknown flag: ${id}`);
+		let actionClass: McpTrustActionClass | undefined;
+		let network = false;
+		const flags = [...rest];
+		if (flags.length && command !== "trust") return fail(2, "--action-class and --network apply only to trust");
+		while (flags.length) {
+			const flag = flags.shift();
+			if (flag === "--network" && !network) {
+				network = true;
+				continue;
+			}
+			const value = flags.shift();
+			if (
+				flag !== "--action-class" ||
+				actionClass !== undefined ||
+				!MCP_TRUST_ACTION_CLASSES.includes(value as McpTrustActionClass)
+			)
+				return fail(
+					2,
+					`trust takes --action-class <${MCP_TRUST_ACTION_CLASSES.join("|")}> and --network, each at most once`,
+				);
+			actionClass = value as McpTrustActionClass;
+		}
+		const declared = resolveMcpServers(options).servers.find((entry) => entry.id === id);
+		const builtin = declared?.scope === "builtin";
+		if (command === "trust" && builtin) {
+			// The network grant is the one decision an operator records for a builtin server.
+			if (!network || actionClass !== undefined) return fail(1, mcpBuiltinTrustRefusal(id));
+			const result = grantMcpBuiltinNetwork({ ...options, id });
+			if (!result.ok) return fail(1, result.message);
+			return {
+				code: 0,
+				text: `mcp: granted ${id} network in fleet workers (recorded ${result.grant.grantedAt})`,
+				data: result,
+			};
+		}
+		// A grant outlives the server's removal from a later PanCode, so untrust still finds it.
+		const leftover =
+			declared === undefined &&
+			readMcpTrustState(options.configDir).state.builtins?.some((entry) => entry.id === id) === true;
+		if (command === "untrust" && (builtin || leftover)) {
+			const result = revokeMcpBuiltinNetwork({ ...options, id });
+			return result.ok
+				? {
+						code: 0,
+						text: `mcp: untrusted ${id} (network grant ${result.removed ? "removed" : "already absent"})`,
+						data: result,
+					}
+				: fail(1, result.message);
+		}
+		if (command === "trust") {
+			const result = trustMcpServer({ ...options, id, ...(actionClass ? { actionClass } : {}), network });
+			if (!result.ok) return fail(1, result.message);
+			const { entryScripts, ...data } = result;
+			const { record } = result;
+			// The record itself is --json's; text names what it grants in a sentence.
+			return {
+				code: 0,
+				text: `mcp: trusted ${id} for ${record.projectRoot} with actionClass=${record.actionClass} network=${record.network === true} ${entryLabel(entryScripts)}${toolClassesLabel(result.toolActionClasses)}${pathArgumentsLabel(result.toolPathArguments)} (digest ${record.digest.slice(0, 12)}, recorded ${record.trustedAt})`,
+				data,
+			};
+		}
+		const resolved = resolveMcpServers(options);
+		const server = resolved.servers.find((entry) => entry.id === id);
+		if (!server) return fail(1, `no declared MCP server with id '${id}'`);
+		if (server.scope === "user")
+			return fail(1, `server '${id}' is a user-scope declaration; it is trusted by authorship`);
+		const result = untrustMcpServer({ ...options, id });
+		return result.ok
+			? { code: 0, text: `mcp: untrusted ${id} (record ${result.removed ? "removed" : "already absent"})`, data: result }
+			: fail(1, result.message);
+	} catch (error) {
+		return fail(1, error instanceof Error ? error.message : String(error));
+	}
+}
+
+interface McpTestCall {
+	tool: string;
+	args: Record<string, unknown>;
+}
+
+/** `test <id> [--call <tool> [--args <json>]]...`, or the usage error that refuses it. */
+function parseMcpTestArgs(argv: ReadonlyArray<string>): { id: string; calls: McpTestCall[] } | string {
+	const [, id, ...rest] = argv;
+	if (id === undefined || id.startsWith("--")) return "usage: pancode mcp test <id> [--call <tool> [--args <json>]]...";
+	const calls: McpTestCall[] = [];
+	for (let index = 0; index < rest.length; index += 1) {
+		const flag = rest[index];
+		const value = rest[index + 1];
+		if (flag === "--call" && value !== undefined && !value.startsWith("--")) {
+			calls.push({ tool: value, args: {} });
+			index += 1;
+			continue;
+		}
+		const last = calls.at(-1);
+		if (flag === "--args" && value !== undefined && last !== undefined) {
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(value);
+			} catch {
+				return `--args for ${last.tool} must be a JSON object`;
+			}
+			if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+				return `--args for ${last.tool} must be a JSON object`;
+			last.args = parsed as Record<string, unknown>;
+			index += 1;
+			continue;
+		}
+		return "usage: pancode mcp test <id> [--call <tool> [--args <json>]]...; --args follows its --call";
+	}
+	return { id, calls };
+}
+
+/** One `mcp test` call as the registry settled it. */
+function mcpTestCallRecord(
+	id: string,
+	tool: string,
+	capability: string,
+	verdict: RegistryVerdict,
+): Record<string, unknown> {
+	if (verdict.kind === "not_visible") return { tool, isError: true, refused: true, text: verdict.reason };
+	if (verdict.kind === "blocked") {
+		const denial = verdict.denial;
+		return {
+			tool,
+			isError: true,
+			refused: true,
+			text: verdict.reason,
+			...(denial !== undefined ? { denial } : {}),
+			...(denial?.layer === "mcp_server_policy"
+				? {
+						serverPolicyRefusal: {
+							code: denial.code,
+							message: verdict.decision.classification.reasons[0] ?? verdict.reason,
+						},
+					}
+				: {}),
+		};
+	}
+	const result = verdict.result;
+	const details = result.details ?? {};
+	// A surface that is not approved refuses the call before it is sent.
+	if (result.kind === "error" && (details.refusal as { kind?: unknown } | undefined)?.kind === "mcp_surface_unapproved")
+		return { tool, isError: true, refused: true, text: result.message };
+	// Only a result the server answered carries its id; an error without it is
+	// a request that never got an answer.
+	if (result.kind === "error" && details.server !== id) return { tool, error: result.message };
+	const structured = details.structuredContent;
+	return {
+		tool,
+		isError: result.kind === "error",
+		text: result.kind === "error" ? result.message.replace(`${capability}: `, "") : result.output,
+		...(structured !== undefined ? { structuredContent: structured } : {}),
+	};
+}
+
+/**
+ * Launch one declared server the way the gateway does and report what PanCode
+ * sees: the negotiated protocol, the server's identity, its tools with the
+ * action class PanCode enforces, and the raw result of each requested call. The
+ * launch goes through the gateway's own capability source, so trust gating,
+ * cwd containment, the safe tool environment and teardown are the session's,
+ * not a second copy of them.
+ */
+async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Promise<McpCommandOutput> {
+	const fail = (message: string, data: Record<string, unknown> = {}): McpCommandOutput => ({
+		code: 1,
+		text: `mcp test ${id}: ${message}`,
+		data: { ok: false, message, ...data },
+	});
+	const cwd = process.cwd();
+	const server = resolveMcpServers({ cwd }).servers.find((entry) => entry.id === id);
+	if (server === undefined) return fail(`no declared MCP server with id '${id}'`);
+	const trust = server.trust;
+	const described = { id: server.id, scope: server.scope, trust, ...networkGrant(server) };
+	if (trust.status !== "trusted")
+		return fail(`server '${id}' is ${trust.status}; it is never launched until trusted: pancode mcp trust ${id}`, {
+			server: described,
+		});
+	const [{ createMcpCapabilitySource }, { createRegistry }, { createWorkerSafety }, { createMcpStdioClient }] =
+		await Promise.all([
+			import("../tools/gateway/mcp-capabilities.js"),
+			import("../tools/registry.js"),
+			import("../engine/worker-tools.js"),
+			import("../domains/gateway/mcp/index.js"),
+		]);
+	let client: McpClient | null = null;
+	const registry = createRegistry({ safety: createWorkerSafety({ cwd }) });
+	const source = createMcpCapabilitySource({
+		cwd,
+		registry,
+		// An operator command, as `pancode store put` is: it may write every tag.
+		store: { writable: true },
+		clientFactory: (spec, options) => {
+			const created = createMcpStdioClient(spec, options);
+			if (spec.id === id) client = created;
+			return created;
+		},
+	});
+	try {
+		const refreshed = await source.refresh(id);
+		const live = client as McpClient | null;
+		const info = live?.serverInfo() ?? null;
+		if (live === null || info === null || refreshed.reason !== undefined)
+			return fail(refreshed.reason ?? "the server did not finish initializing", { server: described });
+		const owned = source.catalog().entries.filter((entry) => source.ownerIdOf(entry.name) === id);
+		const tools = owned.map((entry) => ({
+			name: entry.name.slice(`mcp_${id}__`.length),
+			capability: entry.name,
+			actionClass: entry.actionClass,
+			...source.discoveryNote(entry.name),
+		}));
+		// Each call goes through the registry the server's tools were registered
+		// in, so `mcp test` admits exactly what a session admits: action class,
+		// confirmation rule, execute projection, information flow and repeat
+		// refusal. Arguments are not checked against the tool's input schema;
+		// the server validates them. No park listener or safety judge exists
+		// here, so an ask is refused instead of waiting; a headless run's judge
+		// may still allow the same call.
+		const results: Array<Record<string, unknown>> = [];
+		for (const call of calls) {
+			const capability = mcpToolName(id, call.tool);
+			if (capability === null || source.ownerIdOf(capability) !== id || registry.get(capability) === undefined) {
+				results.push({
+					tool: call.tool,
+					isError: true,
+					refused: true,
+					text: `server '${id}' lists no tool named '${call.tool}'; nothing was sent`,
+				});
+				continue;
+			}
+			let verdict: RegistryVerdict;
+			try {
+				verdict = await registry.invoke({ tool: capability, args: call.args });
+			} catch (error) {
+				results.push({ tool: call.tool, error: error instanceof Error ? error.message : String(error) });
+				break;
+			}
+			const record = mcpTestCallRecord(id, call.tool, capability, verdict);
+			results.push(record);
+			// The request got no answer (timeout, a dead server), so later calls
+			// would only report the same transport failure. A JSON-RPC error answer
+			// is that call's own error and the run goes on.
+			if ("error" in record) break;
+		}
+		const listing = refreshed.listing;
+		const surface = surfaceStatusOf(server, source.servedSurface(id));
+		const data = {
+			ok: results.every((result) => result.isError === false),
+			server: described,
+			protocolVersion: info.protocolVersion,
+			serverInfo: info.serverInfo,
+			tools,
+			truncated: listing?.truncated === true,
+			...(surface !== null ? { surface } : {}),
+			calls: results,
+		};
+		const lines = [
+			mcpTestHeadline(id, info, tools.length, described),
+			...tools.map((tool) => `  ${tool.capability} actionClass=${tool.actionClass}`),
+			...(surface !== null ? [`  ${surfaceLabel(surface)}`] : []),
+			...results.map(
+				(result) =>
+					`call ${String(result.tool)}: ${"error" in result ? "failed" : result.refused === true ? "refused" : result.isError === true ? "error" : "ok"} ${boundedCallText(String(result.error ?? result.text))}`,
+			),
+		];
+		return { code: data.ok ? 0 : 1, text: lines.join("\n"), data };
+	} catch (error) {
+		return fail(error instanceof Error ? error.message : String(error), { server: described });
+	} finally {
+		await source.close();
+	}
+}
+
+interface McpSurfaceApprovalOptions extends McpTrustOptions {
+	id: string;
+	/** The reviewed digest; the served surface is recorded only when it matches. */
+	hash?: string;
+	/** Record the served surface without a digest, as an operator at a terminal does. */
+	record?: boolean;
+}
+
+/**
+ * `trust <id> --surface`: launch one trusted server the way the gateway does,
+ * show the tool surface it serves and record it as approved when asked to.
+ * Nothing is recorded for a server that failed to list, and a reviewed digest
+ * that differs from the served one records nothing.
+ */
+async function mcpSurfaceOutput(options: McpSurfaceApprovalOptions): Promise<McpCommandOutput> {
+	const { id } = options;
+	const fail = (message: string, data: Record<string, unknown> = {}): McpCommandOutput => ({
+		code: 1,
+		text: `mcp trust ${id} --surface: ${message}`,
+		data: { ok: false, message, ...data },
+	});
+	const trustOptions = {
+		cwd: options.cwd,
+		...(options.configDir ? { configDir: options.configDir } : {}),
+		...(options.builtin !== undefined ? { builtin: options.builtin } : {}),
+	};
+	const server = resolveMcpServers(trustOptions).servers.find((entry) => entry.id === id);
+	if (server === undefined) return fail(`no declared MCP server with id '${id}'`);
+	if (server.scope === "builtin") return fail(mcpBuiltinTrustRefusal(id));
+	if (server.trust.status !== "trusted")
+		return fail(`server '${id}' is ${server.trust.status}; approve its launch first: pancode mcp trust ${id}`);
+	const [{ createMcpCapabilitySource }, { createRegistry }, { createWorkerSafety }] = await Promise.all([
+		import("../tools/gateway/mcp-capabilities.js"),
+		import("../tools/registry.js"),
+		import("../engine/worker-tools.js"),
+	]);
+	const registry = createRegistry({ safety: createWorkerSafety({ cwd: options.cwd }) });
+	const source = createMcpCapabilitySource({ ...trustOptions, registry, attended: false });
+	let served: McpSurface | null;
+	try {
+		const refreshed = await source.refresh(id);
+		served = source.servedSurface(id);
+		if (served === null) return fail(refreshed.reason ?? "the server listed no tools");
+	} catch (error) {
+		return fail(error instanceof Error ? error.message : String(error));
+	} finally {
+		await source.close();
+	}
+	const tools = Object.entries(served.tools).map(([name, sha256]) => ({ name, sha256 }));
+	const toolLines = tools.map((tool) => `  ${tool.name} ${tool.sha256}`);
+	const before = judgeMcpSurface(server, currentMcpSurfaceApproval(server, trustOptions), served);
+	const report = (status: McpSurfaceStatus): McpSurfaceReport =>
+		status.status === "approved" ? status : { ...status, remedy: mcpSurfaceRemedy(id) };
+	if (options.hash !== undefined && options.hash !== served.digest)
+		return fail(`served surface ${served.digest} differs from the reviewed ${options.hash}; nothing was recorded`, {
+			recorded: false,
+			surface: report(before),
+			tools,
+		});
+	if (before.status === "approved" || (options.hash === undefined && options.record !== true)) {
+		const hint =
+			before.status === "approved"
+				? "surface already approved"
+				: `not recorded; to approve this surface: pancode mcp trust ${id} --surface --hash ${served.digest}`;
+		return {
+			code: 0,
+			text: [`mcp: ${id} surface ${served.digest}`, ...toolLines, hint].join("\n"),
+			data: { ok: true, recorded: false, surface: report(before), tools },
+		};
+	}
+	const approved = approveMcpSurface({ ...trustOptions, id, surface: served, expectedDigest: served.digest });
+	if (!approved.ok) return fail(approved.message, { recorded: false, surface: report(before), tools });
+	const after = judgeMcpSurface(server, approved.surface, served);
+	return {
+		code: 0,
+		text: [`mcp: ${id} surface ${served.digest}`, ...toolLines, `approved surface of ${id}`].join("\n"),
+		data: { ok: true, recorded: true, surface: report(after), tools, record: approved.surface },
+	};
+}
+
+/** `trust <id> --surface [--hash <sha256>]`, or the usage error that refuses it. */
+function parseSurfaceArgs(argv: ReadonlyArray<string>): { id: string; hash?: string } | string {
+	const usage = "usage: pancode mcp trust <id> --surface [--hash <sha256>]";
+	const [, id, ...rest] = argv;
+	if (id === undefined || id.startsWith("-")) return usage;
+	let surface = false;
+	let hash: string | undefined;
+	for (let index = 0; index < rest.length; index += 1) {
+		const flag = rest[index];
+		if (flag === "--surface" && !surface) {
+			surface = true;
+			continue;
+		}
+		const value = rest[index + 1];
+		if (flag === "--hash" && hash === undefined && value !== undefined) {
+			if (!/^[a-f0-9]{64}$/.test(value)) return "--hash takes the 64-character lowercase hex surface digest";
+			hash = value;
+			index += 1;
+			continue;
+		}
+		return `${usage}; --surface takes no launch flags`;
+	}
+	if (!surface) return "--hash applies only to trust --surface";
+	return { id, ...(hash !== undefined ? { hash } : {}) };
+}
+
+export async function runMcpCommand(argv: ReadonlyArray<string>): Promise<number> {
+	if (argv.includes("--help") || argv.includes("-h")) {
+		process.stdout.write(HELP);
+		return 0;
+	}
+	const json = argv.includes("--json");
+	if (argv[0] === "test") {
+		const parsed = parseMcpTestArgs(argv.filter((arg) => arg !== "--json"));
+		const result =
+			typeof parsed === "string"
+				? { code: 2, text: parsed, data: { ok: false, message: parsed } }
+				: await mcpTestOutput(parsed.id, parsed.calls);
+		if (json) process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
+		else if (result.code !== 0 && !("protocolVersion" in (result.data as object))) printError(result.text);
+		else process.stdout.write(`${result.text}\n`);
+		return result.code;
+	}
+	const interactive = !json && process.stdin.isTTY === true && process.stdout.isTTY === true;
+	if (argv[0] === "trust" && (argv.includes("--surface") || argv.includes("--hash"))) {
+		const parsed = parseSurfaceArgs(argv.filter((arg) => arg !== "--json"));
+		const result =
+			typeof parsed === "string"
+				? { code: 2, text: parsed, data: { ok: false, message: parsed } }
+				: await mcpSurfaceOutput({ cwd: process.cwd(), ...parsed, record: interactive });
+		if (json) process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
+		else if (result.code !== 0) printError(result.text);
+		else process.stdout.write(`${result.text}\n`);
+		return result.code;
+	}
+	let refreshFailure: string | null = null;
+	const served = new Map<string, McpSurface>();
+	const refresh =
+		argv[0] === "list" &&
+		argv.includes("--refresh") &&
+		argv.slice(1).every((arg) => arg === "--refresh" || arg === "--json");
+	if (refresh) {
+		const [{ createMcpCapabilitySource }, { createRegistry }, { createWorkerSafety }] = await Promise.all([
+			import("../tools/gateway/mcp-capabilities.js"),
+			import("../tools/registry.js"),
+			import("../engine/worker-tools.js"),
+		]);
+		const registry = createRegistry({ safety: createWorkerSafety({ cwd: process.cwd() }) });
+		const source = createMcpCapabilitySource({ cwd: process.cwd(), registry });
+		try {
+			const listing = await source.list();
+			for (const server of listing.servers) {
+				const surface = source.servedSurface(server.id);
+				if (surface !== null) served.set(server.id, surface);
+			}
+			refreshFailure =
+				listing.servers
+					.filter((server) => server.status === "failed")
+					.map((server) => `${server.id}: ${server.reason}`)
+					.join("; ") || null;
+		} finally {
+			await source.close();
+		}
+	}
+	const result = mcpCommandOutput(
+		argv.filter((arg) => arg !== "--json" && (!refresh || arg !== "--refresh")),
+		{ cwd: process.cwd() },
+		served,
+	);
+	// Launch trust approves a process; the tool surface it serves is a second
+	// approval. At a terminal the operator sees it now and it is recorded.
+	if (argv[0] === "trust" && result.code === 0) {
+		const id = argv[1] as string;
+		if (interactive) {
+			const surface = await mcpSurfaceOutput({ cwd: process.cwd(), id, record: true });
+			// Launch trust is recorded either way; a surface that could not be listed is reported, not fatal.
+			result.text += `\n${surface.text}`;
+		} else if (!json) {
+			const server = resolveMcpServers({ cwd: process.cwd() }).servers.find((entry) => entry.id === id);
+			if (server !== undefined && currentMcpSurfaceApproval(server, { cwd: process.cwd() }) === undefined)
+				result.text += `\nsurface not approved: no tool of ${id} runs until pancode mcp trust ${id} --surface`;
+		}
+	}
+	if (refreshFailure !== null) {
+		result.code = 1;
+		result.text += `\n${refreshFailure}`;
+		(result.data as { trustDiagnostics: string[] }).trustDiagnostics.push(refreshFailure);
+	}
+	if (json) process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
+	// List prints its own failing rows on stdout; a usage error goes to stderr like every other verb's (C3).
+	else if (result.code && (argv[0] !== "list" || result.code === 2)) printError(result.text);
+	else process.stdout.write(`${result.text}\n`);
+	return result.code;
+}

@@ -1,0 +1,676 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, strictEqual } from "node:assert/strict";
+import { test } from "node:test";
+import { DEFAULT_SETTINGS, nextOutputStyle, type OutputStyle } from "../../src/core/defaults.js";
+import {
+	onPresentationTierChange,
+	presentationTier,
+	setPresentationTier,
+	tierRevision,
+} from "../../src/core/presentation-tier.js";
+import { validateSettings } from "../../src/core/settings-validate.js";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import { PANCODE_APP_KEYBINDINGS } from "../../src/domains/config/keybindings.js";
+import { ScrollView, stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
+import { createChatPanel } from "../../src/interactive/chat-panel.js";
+import {
+	appendNotice,
+	appendReferenceCard,
+	createCommandOutputRunIo,
+	renderOperatorCommandRows,
+} from "../../src/interactive/command-output.js";
+import { preserveTranscriptScroll } from "../../src/interactive/layout.js";
+import { renderBashTranscriptExecution, renderToolPreview } from "../../src/interactive/renderers/tool-execution.js";
+import { createStatusController } from "../../src/interactive/status/controller.js";
+import { reduceStatus } from "../../src/interactive/status/state-machine.js";
+import { resolveFooterVerb } from "../../src/interactive/status/verbs.js";
+import { transcriptDetail } from "../../src/interactive/transcript-detail.js";
+import { ViewOverlayView } from "../../src/interactive/view/view-overlay.js";
+import { parseSlashCommand } from "../../src/session-control/slash-commands.js";
+import { INITIAL_STATUS } from "../../src/session-control/status-types.js";
+
+const plain = (rows: string[]) => rows.map(stripTerminalSequences).join("\n");
+
+test("printed reports follow the live tier and preserve every sanitized row for inspection", async () => {
+	let style: OutputStyle = "compact";
+	const panel = createChatPanel({ getOutputStyle: () => style });
+	const sink = { appendReplayBlock: panel.appendReplayBlock, requestRender: () => {} };
+	createCommandOutputRunIo(sink).stdout("Session\nTokens  123\nCost  $0.04\nRoute  long-route-detail\n");
+	match(plain(panel.render(80)), /Tokens 123 · Cost \$0\.04/);
+	strictEqual(panel.render(80).length, 1);
+	style = "standard";
+	const table = plain(panel.render(80));
+	match(table, /Route\s+long-route-detail/);
+	style = "detailed";
+	match(plain(panel.render(80)), /Tokens {2}123/);
+	const artifact = panel.inspectionArtifacts()[0];
+	ok(artifact);
+	const inspected = await artifact.load();
+	match(plain(inspected.lines), /Route {2}long-route-detail/);
+});
+
+test("multiline slash notices and extension results use report cards without flattening or control injection", () => {
+	for (const style of ["compact", "standard", "detailed"] as const) {
+		const panel = createChatPanel({ getOutputStyle: () => style });
+		const sink = { appendReplayBlock: panel.appendReplayBlock, requestRender: () => {} };
+		appendNotice("warn", "Checks\nFailed  2\nWarning  1\nTarget  https://user:password@host/path", sink);
+		appendReferenceCard(
+			{ command: "example:status", source: "example", kind: "result", text: "Ready  3\n\u001b[2JDetail  complete" },
+			sink,
+		);
+		const rows = panel.render(80);
+		const rendered = plain(rows);
+		doesNotMatch(rendered, /user:password|password@/);
+		strictEqual(rows.join("\n").includes("\u001b[2J"), false);
+		if (style === "compact") {
+			match(rendered, /Failed 2 · Warning 1/);
+			match(rendered, /Ready 3/);
+			strictEqual(rows.filter((row) => stripTerminalSequences(row).trim().length > 0).length, 2);
+		} else {
+			match(rendered, /Failed\s+2/);
+			match(rendered, /Warning\s+1/);
+			match(rendered, /Ready\s+3/);
+			match(rendered, /Detail\s+complete/);
+		}
+		ok(rows.every((row) => visibleWidth(row) <= 80));
+	}
+});
+
+test("clipped report cells point to complete inspection even when every row fits", async () => {
+	for (const line of [
+		`Endpoint  https://example.com/${"segment/".repeat(20)}`,
+		"An unusually long report field label  ready",
+	]) {
+		const panel = createChatPanel({ getOutputStyle: () => "standard" });
+		createCommandOutputRunIo({ appendReplayBlock: panel.appendReplayBlock, requestRender: () => {} }).stdout(
+			`Report\n${line}\n`,
+		);
+		match(plain(panel.render(40)), /Detailed or \/view for all/);
+		const artifact = panel.inspectionArtifacts()[0];
+		ok(artifact);
+		const full = plain((await artifact.load()).lines)
+			.replace(/^ {2}\S /gmu, "")
+			.replace(/\s/gu, "");
+		ok(full.includes(line.replace(/\s/gu, "")));
+	}
+});
+
+test("a clipped Minimal report keeps its inspection path on the single counter row", () => {
+	const panel = createChatPanel({ getOutputStyle: () => "compact" });
+	createCommandOutputRunIo({ appendReplayBlock: panel.appendReplayBlock, requestRender: () => {} }).stdout(
+		"An unusually long installation health report title\nErrors  2\nWarnings  1\n",
+	);
+	const rows = panel.render(40);
+	strictEqual(rows.length, 1);
+	match(plain(rows), /Errors 2.*Warnings 1/);
+	match(plain(rows), /\/view$/);
+	ok(visibleWidth(rows[0] ?? "") <= 40);
+});
+
+test("streamed tool arguments show preparation before execution and clear on answer text", () => {
+	const ctx = { now: 1000, localRuntime: true };
+	let state = reduceStatus(INITIAL_STATUS, { type: "agent_start" } as never, ctx);
+	state = reduceStatus(state, { type: "turn_start" } as never, ctx);
+	state = reduceStatus(
+		state,
+		{ type: "message_update", assistantMessageEvent: { type: "toolcall_start" } } as never,
+		ctx,
+	);
+	strictEqual(resolveFooterVerb(state, 1100, 100)?.text, "Preparing tool call");
+	strictEqual(resolveFooterVerb(state, 3400, 100)?.text, "Preparing tool call · 2s");
+	strictEqual(state.toolStartedAt, undefined);
+	state = reduceStatus(state, { type: "text_delta", delta: "Answer" } as never, ctx);
+	strictEqual(resolveFooterVerb(state, 3400, 100)?.text, "Writing · 2s");
+	state = reduceStatus(
+		state,
+		{ type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: {} } as never,
+		ctx,
+	);
+	strictEqual(resolveFooterVerb(state, 13_400, 100)?.text, "Running read · 12s");
+	for (const style of ["compact", "standard", "detailed"] as const) {
+		for (const width of [75, 120]) {
+			const panel = createChatPanel({ getOutputStyle: () => style, now: () => 1000 });
+			const forming = (type: string, args: Record<string, unknown>) =>
+				panel.applyEvent({
+					type: "message_update",
+					assistantMessageEvent: {
+						type,
+						contentIndex: 0,
+						partial: { content: [{ type: "toolCall", id: "stream-1", name: "bash", arguments: args }] },
+					},
+				} as never);
+			forming("toolcall_start", {});
+			match(plain(panel.render(width)), /bash.*preparing/u);
+			forming("toolcall_delta", { command: "echo target" });
+			match(plain(panel.render(width)), /bash.*echo target.*preparing/u);
+			forming("toolcall_end", { command: "echo target" });
+			match(plain(panel.render(width)), /bash.*echo target.*queued/u);
+			panel.applyEvent({
+				type: "tool_execution_start",
+				toolCallId: "stream-1",
+				toolName: "bash",
+				args: { command: `echo target ${"long-argument ".repeat(30)}` },
+			} as never);
+			panel.applyEvent({
+				type: "tool_execution_update",
+				toolCallId: "stream-1",
+				partialResult: "live first\nlive second\nlive third\nlive fourth",
+			} as never);
+			const running = panel.render(width);
+			match(plain(running), /running.*echo target/u);
+			ok(running.every((line) => visibleWidth(line) <= width));
+			if (style === "compact") {
+				strictEqual(running.length, 1);
+				doesNotMatch(plain(running), /live fourth/u);
+			} else match(plain(running), /live fourth/u);
+			forming("toolcall_delta", { command: "ignored late arguments" });
+			doesNotMatch(plain(panel.render(width)), /ignored late arguments/u);
+			panel.applyEvent({
+				type: "tool_execution_end",
+				toolCallId: "stream-1",
+				result: "settled output",
+				isError: false,
+			} as never);
+			const settled = panel.render(width);
+			doesNotMatch(plain(settled), /preparing|queued|live fourth/u);
+			match(stripTerminalSequences(settled[0] ?? ""), /✓$/u);
+			ok(settled.every((line) => visibleWidth(line) <= width));
+		}
+	}
+});
+
+// x6-7b: every delta re-rendered the whole forming command, so a 130 KB heredoc cost ~30 ms a frame.
+test("a forming bash call renders in time independent of its argument size and settles unchanged", () => {
+	const heredoc = (rows: number) =>
+		`cat > data.csv <<'EOF'\n${Array.from({ length: rows }, (_, i) => `${i},sensor-${i % 97},${(i * 0.37).toFixed(3)},ok,${"x".repeat(48)}`).join("\n")}\nEOF`;
+	const small = heredoc(100);
+	const large = heredoc(3600);
+	ok(small.length < 9_000 && large.length > 250_000);
+	const width = 120;
+	const panelFor = (command: string) => {
+		const panel = createChatPanel({ getOutputStyle: () => "detailed", getTerminalRows: () => 48, now: () => 1000 });
+		const step = (type: string) =>
+			panel.applyEvent({
+				type: "message_update",
+				assistantMessageEvent: {
+					type,
+					contentIndex: 0,
+					partial: { content: [{ type: "toolCall", id: "h", name: "bash", arguments: { command } }] },
+				},
+			} as never);
+		step("toolcall_start");
+		return { panel, step };
+	};
+	const medianRenderMs = (command: string) => {
+		const { panel, step } = panelFor(command);
+		const samples: number[] = [];
+		for (let i = 0; i < 9; i++) {
+			step("toolcall_delta");
+			const started = performance.now();
+			panel.render(width);
+			samples.push(performance.now() - started);
+		}
+		return samples.sort((a, b) => a - b)[4] ?? 0;
+	};
+	medianRenderMs(small);
+	const ratio = medianRenderMs(large) / Math.max(medianRenderMs(small), 0.5);
+	ok(ratio < 4, `a ${large.length}-char forming command rendered ${ratio.toFixed(1)}x slower than a small one`);
+	const { panel, step } = panelFor(large);
+	step("toolcall_delta");
+	const formingRows = plain(panel.render(width));
+	match(formingRows, /cat > data\.csv <<'EOF'/u);
+	match(formingRows, /more arguments/u);
+	doesNotMatch(formingRows, /^3599,/mu);
+	step("toolcall_end");
+	const ended = createChatPanel({ getOutputStyle: () => "detailed", getTerminalRows: () => 48, now: () => 1000 });
+	ended.applyEvent({
+		type: "message_update",
+		assistantMessageEvent: {
+			type: "toolcall_end",
+			contentIndex: 0,
+			partial: { content: [{ type: "toolCall", id: "h", name: "bash", arguments: { command: large } }] },
+		},
+	} as never);
+	deepStrictEqual(panel.render(width), ended.render(width));
+});
+
+test("an older output-detail spelling is refused, not read: the upgrade rewrote it", () => {
+	for (const legacy of ["minimal", "default", "verbose"]) {
+		const raw = { version: 2, interface: { outputDetail: legacy }, fleet: { concurrency: 7 } };
+		const snapshot = structuredClone(raw);
+		const result = validateSettings(raw);
+		deepStrictEqual(
+			result.issues.map((issue) => issue.path),
+			["interface.outputDetail"],
+		);
+		strictEqual(result.settings.interface.outputDetail, "standard");
+		strictEqual(result.settings.fleet.concurrency, 7);
+		deepStrictEqual(raw, snapshot);
+	}
+	strictEqual(DEFAULT_SETTINGS.interface.outputDetail, "standard");
+});
+
+test("Alt+O has one preset action and retired /output is no longer a command", () => {
+	strictEqual(PANCODE_APP_KEYBINDINGS["pancode.output.cycle"].defaultKeys, "alt+o");
+	const ids = Object.keys(PANCODE_APP_KEYBINDINGS);
+	ok(!ids.some((id) => /(?:tool\.(?:expand|liveOutput)|thinking\.expand)/u.test(id)));
+	strictEqual(nextOutputStyle("standard"), "detailed");
+	strictEqual(nextOutputStyle(nextOutputStyle(nextOutputStyle("standard"))), "standard");
+	strictEqual(parseSlashCommand("/output verbose").kind, "unknown-command");
+});
+
+test("a long unbroken reasoning paragraph is bounded after wrapping and freezes its tail", async () => {
+	let style: OutputStyle = "standard";
+	const panel = createChatPanel({ getOutputStyle: () => style, getTerminalRows: () => 40 });
+	const reasoning = `Beginning ${"checking boundary behavior ".repeat(200)} final reasoning tail`;
+	panel.applyEvent({ type: "thinking_delta", contentIndex: 0, delta: reasoning, partialThinking: reasoning });
+	const streaming = panel.render(32);
+	strictEqual(streaming.length, 3);
+	match(plain(streaming), /final\s+(?:│ )?reasoning\s+(?:│ )?tail/u);
+	ok(streaming.every((row) => visibleWidth(row) <= 32));
+	panel.applyEvent({
+		type: "message_end",
+		message: { role: "assistant", content: [{ type: "thinking", thinking: reasoning }] },
+	} as never);
+	deepStrictEqual(panel.render(32), streaming);
+	style = "detailed";
+	strictEqual(panel.render(32).length, 12);
+	style = "compact";
+	doesNotMatch(plain(panel.render(32)), /final reasoning tail/u);
+	const artifact = panel.inspectionArtifacts()[0];
+	ok(artifact);
+	strictEqual((await artifact.load()).lines.join("\n"), reasoning);
+});
+
+test("large successful cat output stays bounded in every style; errors and local shell output remain visible", () => {
+	const output = Array.from({ length: 1000 }, (_, i) => `file contents ${i}`).join("\n");
+	const call = {
+		toolCallId: "cat",
+		toolName: "bash",
+		args: { command: "cat large.txt" },
+		// The bash tool's own result shape: the output, and the exit status as a fact.
+		result: { content: [{ type: "text", text: output }], details: { exitCode: 0 } },
+		isError: false,
+	};
+	for (const style of ["compact", "standard", "detailed"] as const) {
+		const policy = transcriptDetail(style);
+		const rendered = renderToolPreview(call, 44, policy);
+		ok(rendered.length <= 14, `${style}: ${rendered.length}`);
+		match(plain(rendered), /cat large.t.*exit 0/u);
+		if (style === "compact") doesNotMatch(plain(rendered), /file contents/u);
+		else match(plain(rendered), /file contents 999/u);
+		const failed = renderToolPreview(
+			{ ...call, isError: true, result: "Missing dependency\nInstall the compiler and retry" },
+			44,
+			policy,
+		);
+		match(plain(failed), /Missing dependency/u);
+		const shell = renderBashTranscriptExecution(
+			{ command: "cat large.txt", output, running: false, exitCode: 0, excludeFromContext: true },
+			44,
+			undefined,
+			{ detail: policy },
+		);
+		match(plain(shell), /file contents 999/u);
+		match(plain(shell), /not sent to model/u);
+		ok(shell.length <= policy.operatorBashRows + 4);
+	}
+});
+
+test("style changes preserve a scrolled text anchor and follow-end remains disabled", () => {
+	let expanded = false;
+	const component = {
+		render: () => [...Array(expanded ? 40 : 10).fill("preview"), ...Array.from({ length: 50 }, (_, i) => `answer ${i}`)],
+		invalidate() {},
+	};
+	const view = new ScrollView(component, { follow: "end" });
+	view.updateLayout(60, 12, () => {});
+	view.scrollTo(14, { disableFollow: true });
+	preserveTranscriptScroll(view, 80, () => {
+		expanded = true;
+	});
+	strictEqual(view.scrollTop, 44);
+	strictEqual(view.isFollowingEnd, false);
+	view.scrollToEnd();
+	preserveTranscriptScroll(view, 80, () => {
+		expanded = false;
+	});
+	strictEqual(view.isFollowingEnd, true);
+});
+
+test("concurrent tools retain their actual running state after a sibling settles", () => {
+	const ctx = { now: 1000, localRuntime: false };
+	let state = reduceStatus(INITIAL_STATUS, { type: "agent_start" } as never, ctx);
+	for (const id of ["one", "two"])
+		state = reduceStatus(
+			state,
+			{ type: "tool_execution_start", toolCallId: id, toolName: "bash", args: {} } as never,
+			ctx,
+		);
+	state = reduceStatus(
+		state,
+		{ type: "tool_execution_end", toolCallId: "two", toolName: "bash", isError: false, result: "" } as never,
+		ctx,
+	);
+	strictEqual(state.phase, "tool_running");
+	strictEqual(state.tool?.toolCallId, "one");
+	state = reduceStatus(
+		state,
+		{ type: "tool_execution_end", toolCallId: "one", toolName: "bash", isError: false, result: "" } as never,
+		ctx,
+	);
+	strictEqual(state.phase, "preparing");
+});
+
+test("background worker lifecycle does not overwrite the main agent phase", () => {
+	const bus = createTelemetryHub();
+	let emit: (event: never) => void = () => {};
+	const controller = createStatusController({
+		chat: {
+			onEvent: (listener: (event: never) => void) => {
+				emit = listener;
+				return () => {};
+			},
+			getSessionId: () => "session",
+		} as never,
+		providers: { list: () => [] } as never,
+		bus,
+		now: () => 1000,
+		setInterval: () => 0,
+		clearInterval() {},
+		setTimeout: () => 0,
+		clearTimeout() {},
+	});
+	try {
+		emit({ type: "agent_start" } as never);
+		emit({ type: "text_delta", delta: "writing" } as never);
+		bus.emit("run.started", { runId: "one" } as never);
+		bus.emit("run.started", { runId: "two" } as never);
+		strictEqual(controller.current().phase, "writing");
+		bus.emit("run.completed", { runId: "one" } as never);
+		strictEqual(controller.current().phase, "writing");
+	} finally {
+		controller.dispose();
+	}
+});
+
+test("bounded diff previews and full inspection redact credentials without altering the result", async () => {
+	const diff = Array.from({ length: 80 }, (_, i) => `+${i + 1} line ${i}`).join("\n");
+	const result = {
+		content: [{ type: "text", text: "changed file" }],
+		details: { diff: `+1 API_KEY=fixture-secret\n${diff}` },
+	};
+	const before = structuredClone(result);
+	const call = { toolCallId: "edit", toolName: "edit", args: { path: "config.env" }, result, isError: false };
+	for (const style of ["standard", "detailed"] as const) {
+		const policy = transcriptDetail(style);
+		const lines = renderToolPreview(call, 60, policy, { terminalRows: 60 });
+		ok(lines.length <= policy.diffRows + 2);
+		doesNotMatch(plain(lines), /fixture-secret/u);
+		match(plain(lines), /redacted/u);
+	}
+	const panel = createChatPanel();
+	panel.applyEvent({ type: "tool_execution_start", toolCallId: "edit", toolName: "edit", args: call.args } as never);
+	panel.applyEvent({ type: "tool_execution_end", ...call } as never);
+	const artifact = panel.inspectionArtifacts()[0];
+	ok(artifact);
+	const full = (await artifact.load()).lines;
+	doesNotMatch(plain(full), /fixture-secret/u);
+	match(plain(full), /line 79/u);
+	deepStrictEqual(result, before);
+});
+
+test("the inspector wraps full text, accepts search letters, and supports Enter then Escape back", async () => {
+	let closed = false;
+	const view = new ViewOverlayView({
+		providers: [
+			{
+				category: "transcript",
+				list: async () => [
+					{
+						id: "reasoning",
+						category: "transcript",
+						title: "reasoning overview",
+						timestamp: 0,
+						load: async () => ({
+							format: "text",
+							lines: [`${"long reasoning paragraph ".repeat(60)} final words remain readable`],
+						}),
+					},
+				],
+			},
+		],
+		getBodyHeight: () => 10,
+		onClose: () => {
+			closed = true;
+		},
+	});
+	view.refresh();
+	await new Promise((resolve) => setImmediate(resolve));
+	for (const key of "reasoning overview") view.handleInput(key);
+	const list = plain(view.render(44));
+	match(list, /^> reasoning overview/mu);
+	doesNotMatch(list, /Accountability|Receipts|\(empty\)/u);
+	view.handleInput("\r");
+	view.render(44);
+	await new Promise((resolve) => setImmediate(resolve));
+	view.render(44);
+	view.handleInput("G");
+	const bottom = view.render(44);
+	match(plain(bottom), /final words remain readable/u);
+	ok(bottom.every((line) => visibleWidth(line) <= 44));
+	view.handleInput("\x1b");
+	strictEqual(closed, false);
+	match(plain(view.render(44)), /^> reasoning overview/mu);
+	// A typed filter clears before the view closes.
+	view.handleInput("\x1b");
+	strictEqual(closed, false);
+	view.handleInput("\x1b");
+	strictEqual(closed, true);
+});
+
+test("/view titles each act with what its row states and ages it from when it happened", async () => {
+	let clock = 1_000_000;
+	const panel = createChatPanel({ now: () => clock });
+	panel.appendUser("Fix the test");
+	const act = (id: string, toolName: string, args: unknown, result: unknown, isError = false) => {
+		panel.applyEvent({ type: "tool_execution_start", toolCallId: id, toolName, args } as never);
+		clock += 5_000;
+		panel.applyEvent({ type: "tool_execution_end", toolCallId: id, toolName, result, isError, durationMs: 5 } as never);
+	};
+	act(
+		"qCIlqk4AJdRA8xNITNIgw",
+		"bash",
+		{ command: "npm test" },
+		{ content: [{ type: "text", text: "not ok 1\n\nCommand exited with code 1" }], details: {} },
+		true,
+	);
+	clock += 60_000;
+	act(
+		"e1",
+		"edit",
+		{ path: "src/net/retry.js" },
+		{ content: [{ type: "text", text: "ok" }], details: { diff: "-1 a\n+1 b" } },
+	);
+	clock += 60_000;
+	panel.applyEvent({ type: "notice", level: "info", surface: "transcript", text: "interrupt refused: queued" } as never);
+	clock += 60_000;
+	const titles = panel
+		.inspectionArtifacts()
+		.map((artifact) => [artifact.title, Math.round((clock - artifact.timestamp) / 1_000)] as const);
+	deepStrictEqual(titles, [
+		["$ Panos ran `npm test` · exit 1", 190],
+		["± edited src/net/retry.js · +1 -1", 125],
+		["i interrupt refused: queued", 60],
+	]);
+	// The call id stays searchable though it is no longer the title.
+	const [bash] = panel.inspectionArtifacts();
+	ok(bash?.searchText?.includes("qCIlqk4AJdRA8xNITNIgw"));
+	// F21: the command and the edit open first, under Diffs & checks, ahead of the rest of the transcript.
+	deepStrictEqual(
+		panel.inspectionArtifacts().map((artifact) => artifact.category),
+		["changes", "changes", "transcript"],
+	);
+	const view = new ViewOverlayView({
+		providers: [{ category: "transcript", list: async () => panel.inspectionArtifacts() }],
+		getBodyHeight: () => 30,
+		onClose: () => {},
+	});
+	view.refresh();
+	await new Promise((resolve) => setImmediate(resolve));
+	const list = view.render(120).map(stripTerminalSequences).join("\n");
+	match(
+		list,
+		/Diffs & checks \(2\)[\s\S]*❯ ± edited src\/net\/retry\.js[\s\S]*npm test[\s\S]*Transcript details[\s\S]*interrupt refused/u,
+		list,
+	);
+});
+
+test("/view redacts secrets in transcript titles and previews", async () => {
+	const panel = createChatPanel();
+	const cursorControl = `${String.fromCharCode(27)}[2J`;
+	const reasoning = `API_KEY=fixture-secret: check the config\nalpha${cursorControl}omega`;
+	panel.applyEvent({
+		type: "thinking_delta",
+		contentIndex: 0,
+		delta: reasoning,
+		partialThinking: reasoning,
+	} as never);
+	panel.appendReplayBlock((width) => renderOperatorCommandRows(`/run --api-key fixture-secret${cursorControl}`, width));
+	// A rendered block can put an SGR boundary immediately after a secret.
+	// Redacting the ANSI string directly used to leave `;2;...m` on screen.
+	const color = `${String.fromCharCode(27)}[38;2;106;122;133m`;
+	panel.appendReplayBlock(() => [`${color}API_KEY=fixture-secret${color} done`]);
+	panel.applyEvent({
+		type: "notice",
+		level: "info",
+		surface: "transcript",
+		text: `queued ${cursorControl}for review`,
+	} as never);
+	for (const artifact of panel.inspectionArtifacts()) {
+		doesNotMatch(artifact.title, /fixture-secret/u);
+		doesNotMatch((artifact.searchText ?? []).join(" "), /fixture-secret/u);
+		const loaded = await artifact.load();
+		doesNotMatch(plain(loaded.lines), /fixture-secret/u);
+		doesNotMatch(plain(loaded.lines), /;2;106;122;133m/u, "redaction leaves no SGR fragment");
+		ok(!loaded.lines.join("\n").includes(cursorControl), "cursor controls stay out of inspection text");
+		if (artifact.title.startsWith("Thinking"))
+			ok(!loaded.lines.join("\n").includes(String.fromCharCode(27)), "control sequences stay out of supplied reasoning");
+		if (loaded.render) {
+			const preview = loaded.render(40);
+			doesNotMatch(plain(preview), /fixture-secret/u);
+			doesNotMatch(plain(preview), /;2;106;122;133m/u, "preview leaves no SGR fragment");
+			ok(!preview.join("\n").includes(cursorControl), "cursor controls stay out of width-specific previews");
+		}
+	}
+});
+
+test("/view renders a transcript block at the preview's width, rail and hanging indent intact", async () => {
+	const panel = createChatPanel();
+	const command = `node scripts/check.js --reporter spec ${"--verbose ".repeat(6)}`;
+	panel.applyEvent({ type: "tool_execution_start", toolCallId: "b", toolName: "bash", args: { command } } as never);
+	panel.applyEvent({
+		type: "tool_execution_end",
+		toolCallId: "b",
+		toolName: "bash",
+		result: {
+			content: [{ type: "text", text: "a line of output long enough to wrap inside a narrow preview pane" }],
+			details: { exitCode: 0 },
+		},
+		isError: false,
+	} as never);
+	const [artifact] = panel.inspectionArtifacts();
+	ok(artifact);
+	const view = new ViewOverlayView({
+		providers: [{ category: "transcript", list: async () => [artifact] }],
+		getBodyHeight: () => 30,
+		onClose: () => {},
+	});
+	view.refresh();
+	await new Promise((resolve) => setImmediate(resolve));
+	view.handleInput("\r");
+	view.render(40);
+	await new Promise((resolve) => setImmediate(resolve));
+	const rows = view.render(40).map(stripTerminalSequences);
+	match(rows.join("\n"), /Preview · 1 of 1[\s\S]*\$ Panos ran `node scripts\/check\.js/u);
+	const previewBody = (shown: string[]) =>
+		shown.slice(shown.findIndex((row) => row.startsWith("changes ·")) + 1).filter((row) => row.trim().length > 0);
+	const body = previewBody(rows);
+	ok(body.length > 4, rows.join("\n"));
+	match(body[0] ?? "", /^\$ Panos ran/u);
+	// The list stacks over the preview at 40 columns, so the rest of the body is read scrolled to its end.
+	view.handleInput("G");
+	const end = view.render(40).map(stripTerminalSequences);
+	const rest = previewBody(end);
+	// Every wrapped row stays in the content column under its rail, as the transcript renders it.
+	for (const row of [...body.slice(1), ...rest])
+		ok(row.startsWith("  "), `a wrapped row restarted at column 0:\n${rows.join("\n")}\n${end.join("\n")}`);
+	ok(
+		[...body, ...rest].some((row) => row.startsWith("  │ ") && row.includes("narrow")),
+		`${rows.join("\n")}\n${end.join("\n")}`,
+	);
+});
+
+test("fresh worker output clears the silence timer while waiting for dispatch", () => {
+	const stalled = {
+		...INITIAL_STATUS,
+		phase: "stuck" as const,
+		resumePhase: "tool_running" as const,
+		tool: { toolName: "dispatch", toolPreview: "worker" },
+		since: 1,
+		lastMeaningfulAt: 1,
+		watchdogTier: 4 as const,
+	};
+	const progress = reduceStatus(stalled, { type: "dispatch_progress" }, { now: 600001, localRuntime: false });
+	strictEqual(progress.lastMeaningfulAt, 600001);
+	strictEqual(progress.watchdogTier, 0);
+	const tick = reduceStatus(progress, { type: "watchdog_tick" }, { now: 600002, localRuntime: false });
+	strictEqual(tick.phase, "tool_running");
+});
+
+test("a shell row names the model that asked for it only when the turn had more than one", () => {
+	const panel = createChatPanel({ getRunTarget: () => "router", now: () => 1_000 });
+	panel.appendUser("check");
+	panel.applyEvent({ type: "agent_start" } as never);
+	const reply = (model: string) =>
+		panel.applyEvent({
+			type: "message_start",
+			message: { role: "assistant", provider: "openai-completions", model, content: [] },
+		} as never);
+	reply("model-a");
+	panel.applyEvent({
+		type: "tool_execution_start",
+		toolCallId: "b1",
+		toolName: "bash",
+		args: { command: "npm test" },
+	} as never);
+	panel.applyEvent({
+		type: "tool_execution_end",
+		toolCallId: "b1",
+		toolName: "bash",
+		result: { content: [{ type: "text", text: "ok" }], details: { exitCode: 0 } },
+		isError: false,
+		durationMs: 5,
+	} as never);
+	const one = panel.render(120).map(stripTerminalSequences).join("\n");
+	match(one, /Reply from/u, one);
+	match(one, /\$ Panos ran `npm test`/u, one);
+	doesNotMatch(one, /requested by/u, "the Reply from row already names the only model in the turn");
+	reply("model-b");
+	const failover = panel.render(120).map(stripTerminalSequences).join("\n");
+	match(failover, /\$ Panos ran `npm test` \(requested by [^)]*model-a[^)]*\)/iu, failover);
+});
+
+test("W0-1: a subscribed listener sees two tier changes as two notifications and the revision rises by two", () => {
+	const start = presentationTier();
+	const before = tierRevision();
+	const seen: OutputStyle[] = [];
+	const off = onPresentationTierChange((tier) => seen.push(tier));
+	const first: OutputStyle = start === "detailed" ? "compact" : "detailed";
+	setPresentationTier(first);
+	setPresentationTier(start);
+	off();
+	deepStrictEqual(seen, [first, start]);
+	strictEqual(tierRevision() - before, 2);
+});

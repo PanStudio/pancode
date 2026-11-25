@@ -1,0 +1,632 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* React token renderer; code and diagrams are contained instruments in either theme. */
+.markdown {
+	min-width: 0;
+	color: var(--ink);
+	font-size: var(--text-reading);
+	line-height: var(--leading-reading);
+	overflow-wrap: anywhere;
+	white-space: normal;
+}
+.markdown > * + * {
+	margin-top: 0.85em;
+}
+.markdown p {
+	margin: 0 0 0.8em;
+	white-space: normal;
+	font-size: inherit;
+	line-height: inherit;
+}
+.markdown .md-heading {
+	font-family: var(--font-editorial);
+	line-height: 1.25;
+	font-weight: 700;
+	margin: 1.2em 0 0.45em;
+}
+.markdown .md-heading--1 {
+	font-size: var(--text-h1);
+}
+.markdown .md-heading--2 {
+	font-size: var(--text-h2);
+}
+.markdown .md-heading--3 {
+	font-size: var(--text-h3);
+}
+.markdown .md-heading--4,
+.markdown .md-heading--5,
+.markdown .md-heading--6 {
+	font-size: var(--text-h3);
+}
+.markdown .md-list {
+	margin: 0.6em 0;
+	padding-left: 1.6em;
+}
+.markdown li {
+	margin: 0.3em 0;
+}
+.markdown .md-list--tasks {
+	list-style: none;
+	padding-left: 0;
+}
+.markdown .md-task {
+	display: inline-block;
+	width: auto;
+	margin: 0 8px 0 0;
+}
+.markdown blockquote {
+	border-left: 3px solid var(--accent);
+	padding-left: 18px;
+	margin-left: 0;
+	color: var(--muted);
+}
+.markdown hr {
+	border: 0;
+	border-top: 1px solid var(--line);
+	margin-block: 24px;
+}
+.markdown .md-link {
+	color: var(--accent);
+	text-underline-offset: 3px;
+	text-decoration-color: var(--accent-line);
+	transition: text-decoration-color var(--motion-fast) var(--ease-standard);
+}
+.markdown .md-link:hover {
+	text-decoration-color: var(--accent);
+}
+/* A refused destination reads as plain text with its own note, so nothing about it invites a click. */
+.markdown .md-link--blocked {
+	border: 0;
+	text-decoration: none;
+	color: var(--ink-muted);
+	cursor: default;
+}
+.markdown .md-link--blocked small {
+	font-size: var(--text-meta);
+}
+.markdown .md-image,
+.markdown .md-html {
+	color: var(--muted);
+	font: var(--text-exact) / 1.7 var(--font-mono);
+}
+.markdown .md-picture {
+	display: block;
+	max-width: 100%;
+	max-height: 520px;
+	margin-block: var(--space-2);
+	border: 1px solid var(--line);
+}
+.markdown p.md-html {
+	white-space: pre-wrap;
+}
+/* Inline code sits on the theme's own well, so it takes the theme's ink, not the dark well's. */
+.markdown code {
+	display: inline;
+	padding: 2px 5px;
+	border-radius: var(--radius-xs);
+	background: var(--inset);
+	color: var(--ink);
+	font: 0.9em var(--font-mono);
+}
+.markdown pre code {
+	display: inline;
+	padding: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	overflow-wrap: normal;
+}
+.md-table-frame {
+	position: relative;
+	min-width: 0;
+}
+/* A long table scrolls inside its frame with the header pinned, so the columns keep their names. */
+.md-table {
+	overflow: auto;
+	max-width: 100%;
+	max-height: min(36rem, 70dvh);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+}
+.markdown table {
+	min-width: 100%;
+	border-collapse: separate;
+	border-spacing: 0;
+	font-size: var(--text-meta);
+}
+.markdown td,
+.markdown th {
+	padding: 9px 13px;
+	border-bottom: 1px solid var(--line);
+	text-align: left;
+	vertical-align: top;
+}
+.markdown th {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	background: var(--inset);
+	font-weight: 600;
+}
+.markdown tbody tr:last-child td {
+	border-bottom: 0;
+}
+.markdown tbody tr:hover td {
+	background: var(--wb-hover);
+}
+.markdown .md-table__number {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+/* Copy sits over the header's end, out of the way until the table is pointed at or focused. A
+   device without hover always shows it. */
+.md-table__action {
+	position: absolute;
+	top: 5px;
+	right: 5px;
+	z-index: 2;
+	opacity: 0;
+	transition: opacity var(--motion-fast) ease;
+}
+.md-table-frame:is(:hover, :focus-within) .md-table__action {
+	opacity: 1;
+}
+@media (hover: none) {
+	.md-table__action {
+		opacity: 1;
+	}
+}
+.md-table__action button {
+	min-height: 26px;
+	padding: 2px var(--space-2);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	color: var(--ink-muted);
+	font: var(--text-meta) / 1.4 var(--font-ui);
+}
+.md-table__action button:hover {
+	color: var(--ink);
+}
+/* A column keeps its words whole. The document sets overflow-wrap: anywhere so long paths cannot
+   push the page wide, but inside a table that lets the layout shrink a label column to one
+   character. Where the columns cannot fit, the table's own wrapper scrolls sideways. */
+.markdown .md-table :is(th, td, code, a) {
+	overflow-wrap: normal;
+	word-break: normal;
+}
+/* The code well owns its ink, including in a light workbench. */
+.code-block,
+.diagram {
+	--focus: var(--code-signal);
+	--focus-halo: var(--code-paper);
+	min-width: 0;
+	margin: 16px 0;
+	border: 1px solid var(--code-line);
+	border-radius: var(--radius-md);
+	overflow: hidden;
+	background: var(--code-paper);
+	color: var(--code-ink);
+}
+.code-block__head {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	min-height: 38px;
+	padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4);
+	border-bottom: 1px solid var(--code-line);
+	background: var(--code-surface);
+	color: var(--code-ink-muted);
+	font: var(--text-exact) / 1.4 var(--font-mono);
+}
+.code-block__lang {
+	min-width: 0;
+	margin-right: auto;
+	color: var(--syntax-keyword);
+}
+.code-block__lines {
+	margin-right: var(--space-2);
+	font-variant-numeric: tabular-nums;
+}
+/* The copy and source actions name themselves, so they stay frameless until hovered or focused. */
+.code-block__head button {
+	flex: none;
+	white-space: nowrap;
+	min-height: 28px;
+	padding: 2px var(--space-2);
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--code-ink-muted);
+	font: var(--text-meta) / 1.4 var(--font-ui);
+}
+.code-block__head button:hover:not(:disabled) {
+	border-color: transparent;
+	background: var(--code-surface);
+	color: var(--code-ink);
+}
+/* A pressed toggle keeps a rule under its word at rest, so its state never rests on weight alone. */
+.code-block__head button[aria-pressed="true"] {
+	box-shadow: inset 0 -2px 0 var(--code-signal);
+	color: var(--code-ink);
+}
+/* "Copied" and "Copy failed" are words; the ink only confirms that something changed. */
+.code-block__head .code-block__copy:is(.is-copied, .is-failed) {
+	color: var(--code-ink);
+}
+.code-block pre,
+.diagram pre {
+	max-height: 520px;
+	margin: 0;
+	padding: var(--space-3) var(--space-4) var(--space-4);
+	overflow: auto;
+	color: var(--code-ink);
+	white-space: pre;
+	font: var(--text-exact) / 1.7 var(--font-mono);
+	tab-size: 4;
+}
+/* An opened long block shows its whole length; the page scrolls instead of the well. */
+.code-block.is-settled:not([data-folded]) pre {
+	max-height: none;
+}
+.code-block[data-folded] pre {
+	mask-image: linear-gradient(to bottom, #000 calc(100% - 3em), transparent);
+}
+.code-block[data-folded] pre:is(:focus-visible, :hover) {
+	mask-image: none;
+}
+.code-block__fold {
+	display: block;
+	width: 100%;
+	min-height: 32px;
+	padding: var(--space-1) var(--space-4);
+	border: 0;
+	border-top: 1px solid var(--code-line);
+	background: var(--code-surface);
+	color: var(--code-ink-muted);
+	font: var(--text-meta) / 1.4 var(--font-ui);
+	text-align: left;
+}
+.code-block__fold:hover {
+	color: var(--code-ink);
+}
+.code-block[data-wrap] pre {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+.code-block__cursor {
+	display: inline-block;
+	width: 6px;
+	height: 13px;
+	background: var(--code-ink-muted);
+	margin-left: 3px;
+}
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata {
+	color: var(--syntax-comment);
+	font-style: italic;
+}
+.token.punctuation,
+.token.operator,
+.token.entity,
+.token.url {
+	color: var(--syntax-punctuation);
+}
+.token.keyword,
+.token.atrule,
+.token.important {
+	color: var(--syntax-keyword);
+}
+.token.string,
+.token.char,
+.token.attr-value,
+.token.template-string {
+	color: var(--syntax-string);
+}
+.token.number,
+.token.boolean,
+.token.constant,
+.token.symbol {
+	color: var(--syntax-number);
+}
+.token.function,
+.token.function-name,
+.token.class-name,
+.token.builtin {
+	color: var(--syntax-function);
+}
+.token.property,
+.token.attr-name,
+.token.variable,
+.token.tag,
+.token.selector {
+	color: var(--syntax-property);
+}
+/* Log levels: an error or a warning is set in weight as well as colour, so it never reads by hue alone. */
+.code-block[data-language="log"] .token.level.error {
+	color: var(--syntax-deleted);
+	font-weight: 700;
+}
+.code-block[data-language="log"] .token.level.warning {
+	color: var(--syntax-string);
+	font-weight: 700;
+}
+.token.directive {
+	color: var(--syntax-property);
+}
+.token.deleted {
+	color: var(--syntax-deleted);
+}
+.token.inserted {
+	color: var(--syntax-inserted);
+}
+.token.bold {
+	font-weight: 700;
+}
+.token.italic {
+	font-style: italic;
+}
+.diagram__canvas {
+	overflow: auto;
+	padding: var(--space-2) var(--space-4) var(--space-4);
+}
+.diagram__canvas svg {
+	display: block;
+	/* Never wider than the column, and never scaled up past the size it was drawn at. */
+	max-width: min(100%, var(--diagram-width, 100%));
+	height: auto;
+	margin-inline: auto;
+}
+/* At full size a large diagram keeps its drawn scale and the canvas scrolls, instead of shrinking
+   every label to fit the column. */
+.diagram[data-zoom] .diagram__canvas {
+	max-height: min(44rem, 80dvh);
+}
+.diagram[data-zoom] .diagram__canvas svg {
+	width: var(--diagram-width);
+	max-width: none;
+	margin-inline: 0;
+}
+.diagram__status {
+	padding: 0 var(--space-4) var(--space-3);
+	font: var(--text-exact) / 1.6 var(--font-mono);
+	color: var(--code-ink-muted);
+	white-space: pre-wrap;
+}
+.code-block pre:focus-visible,
+.diagram pre:focus-visible {
+	outline-offset: -3px;
+}
+
+/* Collapsible sections from <details> in shipped documents: long detail stays one click away. */
+.markdown .md-details {
+	/* The page-level details style is small and muted; a document section reads like the text around it. */
+	margin: 0.85em 0 0;
+	font-size: inherit;
+	color: var(--ink);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+}
+.json-tree__branch > summary {
+	cursor: pointer;
+	white-space: nowrap;
+}
+.markdown .md-details > summary {
+	display: flex;
+	align-items: center;
+	gap: 0.7em;
+	padding: 0.65em 1em;
+	cursor: pointer;
+	font-weight: 600;
+	list-style: none;
+}
+.markdown .md-details > summary::-webkit-details-marker {
+	display: none;
+}
+.markdown .md-details > summary::before {
+	content: "";
+	flex: none;
+	width: 0.45em;
+	height: 0.45em;
+	border-right: 2px solid var(--ink-muted);
+	border-bottom: 2px solid var(--ink-muted);
+	transform: rotate(-45deg);
+	transition: transform var(--motion-fast) var(--ease-standard);
+}
+.markdown .md-details[open] > summary::before {
+	transform: rotate(45deg);
+}
+.markdown .md-details > summary::after {
+	content: "Show";
+	margin-left: auto;
+	font: 400 11px var(--font-mono);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--ink-muted);
+}
+.markdown .md-details[open] > summary::after {
+	content: "Hide";
+}
+.markdown .md-details > summary:hover {
+	background: var(--well);
+}
+.markdown .md-details__body {
+	padding: 0.3em 1em 1em;
+	border-top: 1px solid var(--line);
+}
+.markdown .md-details__body > * + * {
+	margin-top: 0.85em;
+}
+
+.md-math--display {
+	display: block;
+	max-width: 100%;
+	overflow-x: auto;
+	padding-block: var(--space-2);
+}
+
+/* Diff blocks tint whole lines; the code box grows to the widest line so a tint follows a sideways scroll. */
+.code-block[data-language="diff"] code {
+	display: inline-block;
+	min-width: 100%;
+}
+.diff-line {
+	display: block;
+	margin-inline: calc(-1 * var(--space-4));
+	padding-inline: var(--space-4);
+}
+/* The gutter is generated content: it never enters a selection, and its spaces keep the columns aligned. */
+.diff-line[data-ln]::before {
+	content: attr(data-ln);
+	margin-right: var(--space-3);
+	color: var(--code-ink-muted);
+	white-space: pre;
+	font-variant-numeric: tabular-nums;
+	user-select: none;
+}
+.diff-line--add {
+	background: color-mix(in srgb, var(--syntax-inserted) 16%, transparent);
+	color: var(--syntax-inserted);
+}
+.diff-line--remove {
+	background: color-mix(in srgb, var(--syntax-deleted) 16%, transparent);
+	color: var(--syntax-deleted);
+}
+.diff-line--hunk {
+	color: var(--code-signal);
+}
+.diff-line--meta {
+	color: var(--code-ink-muted);
+	font-weight: 600;
+}
+
+/* A code span that names a file reads as a place: no code tint, a quiet underline and no wrap inside a segment. */
+.markdown .md-path-open {
+	display: inline;
+	padding: 0;
+	border: 0;
+	background: none;
+	font: inherit;
+	color: inherit;
+	text-align: start;
+	cursor: pointer;
+}
+.markdown code.md-path {
+	background: transparent;
+	padding-inline: 0;
+	color: var(--ink);
+	text-decoration: underline dotted color-mix(in srgb, var(--ink-muted) 60%, transparent);
+	text-underline-offset: 3px;
+	overflow-wrap: anywhere;
+}
+.markdown .md-path-open:hover code.md-path,
+.markdown .md-path-open:focus-visible code.md-path {
+	color: var(--accent-strong);
+	text-decoration-style: solid;
+}
+
+.md-footnote-ref {
+	font-size: 0.75em;
+	line-height: 0;
+}
+.md-footnote-ref a {
+	padding-inline: 1px;
+	color: var(--accent);
+	text-decoration: none;
+}
+.md-footnote-ref a:hover,
+.md-footnote-ref a:focus-visible {
+	text-decoration: underline;
+}
+.md-footnote {
+	display: flex;
+	gap: var(--space-2);
+	margin-block: var(--space-1);
+	padding-top: var(--space-1);
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+	scroll-margin-block: var(--space-6);
+}
+:not(.md-footnote) + .md-footnote {
+	margin-top: var(--space-4);
+	border-top: 1px solid var(--line);
+}
+.md-footnote:focus-visible,
+.md-footnote:focus {
+	outline: none;
+	background: var(--accent-soft);
+}
+.md-footnote__label {
+	flex: none;
+	min-width: 2ch;
+	color: var(--accent);
+	font-variant-numeric: tabular-nums;
+}
+
+/* A diagram's header holds three actions; in a narrow column they take their short words rather than break. */
+.diagram {
+	container: diagram / inline-size;
+}
+.code-block__short {
+	display: none;
+}
+@container diagram (max-width: 420px) {
+	.diagram .code-block__full {
+		display: none;
+	}
+	.diagram .code-block__short {
+		display: inline;
+	}
+}
+/* A folded JSON value inside a code well or a tool's output: mono, one row per key, and the guide line
+   of each open level drawn once on its left edge. */
+.json-tree {
+	max-height: 520px;
+	padding: var(--space-3) var(--space-4) var(--space-4);
+	overflow: auto;
+	color: var(--code-ink);
+	font: var(--text-exact) / 1.7 var(--font-mono);
+}
+.json-tree__children {
+	margin-left: 0.45em;
+	padding-left: 1.1em;
+	border-left: 1px solid var(--code-line);
+}
+.json-tree__leaf {
+	padding-left: 1.05em;
+	white-space: pre;
+}
+.json-tree__key {
+	color: var(--syntax-property);
+}
+.json-tree__colon,
+.json-tree__count {
+	color: var(--code-ink-muted);
+}
+.json-tree__string {
+	color: var(--syntax-string);
+}
+.json-tree__number,
+.json-tree__boolean {
+	color: var(--syntax-number);
+}
+.json-tree__null {
+	color: var(--syntax-keyword);
+}
+.json-tree__more {
+	min-height: 28px;
+	margin-left: 1.05em;
+	padding: 2px var(--space-2);
+	border: 1px solid var(--code-line);
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--code-ink-muted);
+	font: var(--text-meta) / 1.4 var(--font-ui);
+}
+.json-tree__more:hover {
+	color: var(--code-ink);
+}

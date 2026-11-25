@@ -1,0 +1,1091 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import {
+	projectChosenTargetUrl,
+	projectTargetKeyVariable,
+	unsetKeyVariableSentence,
+} from "../../../core/project-target-urls.js";
+import { rememberResolvedSecret } from "../../../core/sandbox/env-scrub.js";
+import { telemetryHub } from "../../../core/telemetry/hub.js";
+import {
+	getEngineOAuthApiKey,
+	getEngineOAuthProvider,
+	listEngineOAuthProviders,
+	loginWithEngineOAuthProvider,
+	type OAuthLoginCallbacks,
+	refreshEngineOAuthCredentials,
+} from "../../../engine/oauth.js";
+import type { AuthOperationOptions } from "../../../engine/types.js";
+import type { RuntimeAuth, RuntimeDescriptor } from "../types/runtime-descriptor.js";
+import type { TargetDescriptor } from "../types/target-descriptor.js";
+
+import { normalizeStoredApiKeyRef, resolveEnvironmentApiKey, resolveStoredApiKey } from "./api-key.js";
+
+// Refresh before clock skew or request latency can make a locally valid token fail (#427).
+const OAUTH_EXPIRY_MARGIN_MS = 5 * 60_000;
+
+/** The journal's UTC form; a credential stamped otherwise omits its updatedAt (#434). */
+const UTC_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+export interface ApiKeyCredential {
+	type: "api_key";
+	key: string;
+	updatedAt: string;
+}
+
+export interface OAuthCredential {
+	type: "oauth";
+	access: string;
+	refresh: string;
+	expires: number;
+	updatedAt: string;
+	[key: string]: unknown;
+}
+
+export type AuthCredential = ApiKeyCredential | OAuthCredential;
+
+export type AuthStorageData = Record<string, AuthCredential>;
+
+export interface LockResult<T> {
+	result: T;
+	next?: string;
+}
+
+export interface AuthStorageBackend {
+	/** A committed snapshot without creating storage or acquiring a write lock. */
+	read?(): string | undefined;
+	withLock<T>(fn: (current: string | undefined) => LockResult<T>): T;
+	withLockAsync<T>(
+		fn: (current: string | undefined) => Promise<LockResult<T>>,
+		options?: AuthOperationOptions,
+	): Promise<T>;
+	/** Where the store lives, for error text. Absent for non-file backends. */
+	describe?(): string;
+}
+
+/**
+ * Refusal to rewrite a credentials store that did not fully parse. Thrown
+ * rather than recorded because every caller is a write the operator asked for,
+ * and the alternatives are both wrong: writing destroys credentials, and
+ * silently doing nothing reports success over a store that never changed.
+ */
+export class AuthStorageDamagedError extends Error {
+	constructor(
+		readonly damage: string,
+		readonly path: string | undefined,
+	) {
+		super(
+			[
+				`refusing to write credentials: ${damage}.`,
+				path ? `File: ${path}` : null,
+				"Writing would replace the whole file and lose whatever is stored there.",
+				"Move the file aside once you have recovered anything you need, then log in again.",
+			]
+				.filter((line): line is string => line !== null)
+				.join(" "),
+		);
+		this.name = "AuthStorageDamagedError";
+	}
+}
+
+export interface AuthTarget {
+	providerId: string;
+	requiredCredentialType?: AuthCredential["type"];
+	/**
+	 * Target id scoping runtime overrides. Absent for runtime-only targets
+	 * (e.g. the auth-selector list of connectable providers) because those do
+	 * not belong to a specific target.
+	 */
+	targetId?: string;
+	explicitEnvVar?: string;
+	/** Variable the target itself names (`auth.apiKeyEnvVar`); when set it outranks the runtime-wide stored key. */
+	targetEnvVar?: string;
+	runtimeAuth: RuntimeAuth;
+	/** Why no stored or environment credential may be sent for this target; only a per-target `--api-key` still applies. */
+	credentialRefusal?: string;
+	/**
+	 * The one variable a trusted project named for the URL it chose (`auth.apiKeyEnvVar`). Only that variable, or a
+	 * per-target `--api-key`, is sent there; no stored key, sign-in or runtime-wide variable stands in for it.
+	 */
+	projectKeyEnvVar?: string;
+}
+
+export interface AuthStatus {
+	providerId: string;
+	available: boolean;
+	credentialType: AuthCredential["type"] | null;
+	source: "runtime-override" | "stored-api-key" | "stored-oauth" | "environment" | "fallback" | "not-required" | "none";
+	detail: string | null;
+	/** PanCode refuses every stored and environment credential for this target; `detail` says why. Never "no credential". */
+	refused?: true;
+	/** The credentials-file entry the key came from, when it is not the provider id's. */
+	storedRef?: string;
+}
+
+export interface AuthResolution extends AuthStatus {
+	apiKey?: string;
+	/** A stored OAuth key: true only when this process ran the refresh that minted it (#434). */
+	refreshed?: boolean;
+}
+
+interface AuthStorageShapeV2 {
+	version: 2;
+	entries?: Record<string, AuthCredential>;
+}
+
+function nowIso(): string {
+	return new Date().toISOString();
+}
+
+function emptyData(): AuthStorageData {
+	return {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function toApiKeyCredential(raw: unknown): ApiKeyCredential | null {
+	if (!isRecord(raw)) return null;
+	if (raw.type === "api_key" && typeof raw.key === "string" && raw.key.trim().length > 0) {
+		return {
+			type: "api_key",
+			key: raw.key,
+			updatedAt: typeof raw.updatedAt === "string" && raw.updatedAt.length > 0 ? raw.updatedAt : nowIso(),
+		};
+	}
+	return null;
+}
+
+function toOAuthCredential(raw: unknown): OAuthCredential | null {
+	if (!isRecord(raw)) return null;
+	if (
+		raw.type === "oauth" &&
+		typeof raw.access === "string" &&
+		typeof raw.refresh === "string" &&
+		typeof raw.expires === "number"
+	) {
+		return {
+			...raw,
+			type: "oauth",
+			access: raw.access,
+			refresh: raw.refresh,
+			expires: raw.expires,
+			updatedAt: typeof raw.updatedAt === "string" && raw.updatedAt.length > 0 ? raw.updatedAt : nowIso(),
+		};
+	}
+	return null;
+}
+
+/**
+ * The result of reading the credentials file, and whether reading it lost
+ * anything.
+ *
+ * `damage` is non-null when the file held bytes this parser could not turn back
+ * into credentials: invalid YAML, a shape that is not ours, or entries whose
+ * fields we do not recognize. It exists because every write to this file is a
+ * whole-file rewrite of the parsed view. Reading a damaged file as "no
+ * credentials" and then persisting that view serializes the emptiness back over
+ * the secrets, and there is no backup. A caller that is about to write must
+ * refuse when `damage` is set.
+ */
+interface StorageRead {
+	data: AuthStorageData;
+	damage: string | null;
+}
+
+function readStorageData(content: string | undefined): StorageRead {
+	if (!content || content.trim().length === 0) return { data: emptyData(), damage: null };
+	let parsed: unknown;
+	try {
+		parsed = parseYaml(content);
+	} catch (error) {
+		// The YAML error is a summary line followed by the offending source and a
+		// caret diagram. Only the summary survives being embedded in a sentence:
+		// flattening the whole thing turned the diagram into trailing ": : : ^^"
+		// noise that read as corruption of the message itself.
+		const raw = error instanceof Error ? error.message : String(error);
+		// The summary line ends on the colon that introduced the snippet, so
+		// dropping the snippet leaves it dangling in front of whatever follows.
+		const detail = (raw.split("\n")[0] ?? raw).trim().replace(/:$/u, "");
+		return { data: emptyData(), damage: `it is not valid YAML: ${detail}` };
+	}
+	// A document of only comments parses to null. Nothing is stored and nothing
+	// is at risk.
+	if (parsed === null || parsed === undefined) return { data: emptyData(), damage: null };
+	if (!isRecord(parsed)) return { data: emptyData(), damage: "its top level is not a mapping" };
+	// An empty mapping is an empty store holding nothing at risk. This is not a
+	// hypothetical shape: `initializePancodeHome` scaffolds exactly `{}` at
+	// src/core/init.ts:80, so treating it as damage made a brand-new install
+	// unable to log in at all.
+	if (Object.keys(parsed).length === 0) return { data: emptyData(), damage: null };
+	if (!("entries" in parsed) && !("version" in parsed)) {
+		return { data: emptyData(), damage: "it has neither a version nor an entries mapping" };
+	}
+	// `entries:` written as null, or absent next to a version, is an empty store
+	// rather than a damaged one.
+	const entries = isRecord(parsed.entries) ? parsed.entries : null;
+	if (!entries) return { data: emptyData(), damage: null };
+
+	if (parsed.version !== 2) {
+		return { data: emptyData(), damage: `its version ${String(parsed.version)} is not one this version reads` };
+	}
+
+	const data: AuthStorageData = {};
+	const unread: string[] = [];
+	for (const [providerId, value] of Object.entries((entries as AuthStorageShapeV2["entries"]) ?? {})) {
+		const apiKey = toApiKeyCredential(value);
+		if (apiKey) {
+			data[providerId] = apiKey;
+			continue;
+		}
+		const oauth = toOAuthCredential(value);
+		if (oauth) {
+			data[providerId] = oauth;
+			continue;
+		}
+		unread.push(providerId);
+	}
+	return { data, damage: unreadDamage(unread) };
+}
+
+function unreadDamage(unread: ReadonlyArray<string>): string | null {
+	if (unread.length === 0) return null;
+	return `these entries are stored in a shape this version cannot read: ${[...unread].sort().join(", ")}`;
+}
+
+function serializeStorageData(data: AuthStorageData): string {
+	return stringifyYaml({
+		version: 2,
+		entries: data,
+	});
+}
+
+export type RuntimeAuthMetadata = Pick<
+	RuntimeDescriptor,
+	"id" | "auth" | "tier" | "credentialsEnvVar" | "oauthProviderId"
+>;
+
+function targetEnvApiKey(envVar: string | undefined): { envVar: string; apiKey: string } | null {
+	if (!envVar) return null;
+	const apiKey = process.env[envVar]?.trim();
+	return apiKey ? { envVar, apiKey } : null;
+}
+
+/**
+ * A project-chosen URL's credential: the variable the trusted project named, from this shell. Unset, it is a
+ * refusal naming the variable, so no request goes to that URL and no other remedy (a stored key, a sign-in) is
+ * offered: nothing else is ever sent there.
+ */
+function projectKeyResolution(providerId: string, envVar: string, targetId: string): AuthResolution {
+	const env = targetEnvApiKey(envVar);
+	return env
+		? {
+				providerId,
+				available: true,
+				credentialType: "api_key",
+				source: "environment",
+				detail: envVar,
+				apiKey: env.apiKey,
+			}
+		: {
+				providerId,
+				available: false,
+				credentialType: null,
+				source: "none",
+				detail: unsetKeyVariableSentence(targetId, envVar),
+				refused: true,
+			};
+}
+
+/**
+ * Where a copy of a key variable is stored for a process that cannot see the shell's environment (the desktop
+ * app's background service). Only a target naming that variable reads it, and only while the variable is unset,
+ * so the copy goes nowhere the variable itself would not.
+ */
+export function envKeyCopyRef(envVar: string): string {
+	return `env:${envVar}`;
+}
+
+function envKeyCopyDetail(envVar: string): string {
+	return `${envVar} is not set; using its stored copy`;
+}
+
+function storedKeyDetail(providerId: string, targetEnvVar: string | undefined): string {
+	return targetEnvVar ? `${targetEnvVar} is not set; using the stored ${providerId} key` : providerId;
+}
+
+/** A resolved key or token is masked in captured shell output from here on (env-scrub.ts). */
+function remembered(resolution: AuthResolution): AuthResolution {
+	rememberResolvedSecret(resolution.apiKey);
+	return resolution;
+}
+
+/** The credentials-store entry a target reads: its own profile or key ref, else its runtime's. */
+export function targetCredentialKey(target: TargetDescriptor, runtime: RuntimeAuthMetadata): string {
+	return target.auth?.oauthProfile?.trim() || target.auth?.apiKeyRef?.trim() || runtime.oauthProviderId || runtime.id;
+}
+
+export function resolveAuthTarget(target: TargetDescriptor, runtime: RuntimeAuthMetadata): AuthTarget {
+	const providerId = targetCredentialKey(target, runtime);
+	const authTarget: AuthTarget = {
+		providerId,
+		targetId: target.id,
+		runtimeAuth: runtime.auth,
+		...(runtime.auth === "api-key" && !target.auth?.oauthProfile ? { requiredCredentialType: "api_key" as const } : {}),
+	};
+	// An OAuth runtime refuses an API key, so a target's key variable would outrank its login and break it.
+	const targetKeyEnvVar = runtime.auth === "oauth" ? undefined : target.auth?.apiKeyEnvVar;
+	const explicitEnvVar = targetKeyEnvVar ?? runtime.credentialsEnvVar;
+	if (explicitEnvVar) authTarget.explicitEnvVar = explicitEnvVar;
+	const targetEnvVar = target.auth?.apiKeyRef?.trim() ? undefined : targetKeyEnvVar?.trim();
+	if (targetEnvVar) authTarget.targetEnvVar = targetEnvVar;
+	const projectUrl = projectChosenTargetUrl(target, targetRequiresAuth(target, runtime));
+	const projectKey = projectUrl && targetEnvVar !== undefined ? projectTargetKeyVariable(target) : null;
+	if (projectKey !== null && projectKey === targetEnvVar) {
+		authTarget.projectKeyEnvVar = projectKey;
+	} else if (projectUrl) {
+		authTarget.credentialRefusal = `project settings point target ${target.id} at ${projectUrl}; PanCode does not send your stored or environment ${providerId} credential to a URL a project chose. Define this target in your user settings to use it.`;
+	}
+	return authTarget;
+}
+
+export function resolveRuntimeAuthTarget(runtime: RuntimeDescriptor): AuthTarget {
+	const target: AuthTarget = {
+		providerId: runtime.oauthProviderId ?? runtime.id,
+		runtimeAuth: runtime.auth,
+		...(runtime.auth === "api-key" ? { requiredCredentialType: "api_key" as const } : {}),
+	};
+	if (runtime.credentialsEnvVar) target.explicitEnvVar = runtime.credentialsEnvVar;
+	return target;
+}
+
+export function targetRequiresAuth(target: TargetDescriptor, runtime: RuntimeAuthMetadata): boolean {
+	if (runtime.auth === "oauth") return true;
+	if (runtime.auth !== "api-key") return false;
+	if (target.auth?.apiKeyEnvVar || target.auth?.apiKeyRef || target.auth?.oauthProfile) return true;
+	return runtime.tier === "cloud" || Boolean(runtime.credentialsEnvVar);
+}
+
+export function authNotRequiredStatus(providerId: string): AuthStatus {
+	return {
+		providerId,
+		available: true,
+		credentialType: null,
+		source: "not-required",
+		detail: null,
+	};
+}
+
+const NETWORK_ERROR_CODES = new Set([
+	"ECONNREFUSED",
+	"ECONNRESET",
+	"ENOTFOUND",
+	"EAI_AGAIN",
+	"ETIMEDOUT",
+	"ENETUNREACH",
+	"EHOSTUNREACH",
+	"UND_ERR_CONNECT_TIMEOUT",
+	"UND_ERR_SOCKET",
+]);
+
+/** Whether a refresh failed before the token endpoint answered: fetch's own failure or a socket error code. */
+function isNetworkError(error: unknown): boolean {
+	for (let current = error, depth = 0; current instanceof Error && depth < 5; depth += 1) {
+		const code = (current as { code?: unknown }).code;
+		if (typeof code === "string" && NETWORK_ERROR_CODES.has(code)) return true;
+		if (current.name === "TypeError" && current.message === "fetch failed") return true;
+		current = current.cause;
+	}
+	return false;
+}
+
+export class AuthStorage {
+	private data: AuthStorageData = {};
+	private damage: string | null = null;
+	private writeDamage: string | null = null;
+	private readonly failedOAuth = new Map<string, OAuthCredential>();
+	/** Providers whose last failed refresh never reached the token endpoint. */
+	private readonly networkFailedOAuth = new Set<string>();
+	private runtimeOverrides = new Map<string, string>();
+	private fallbackResolver?: (providerId: string) => string | undefined;
+
+	constructor(private readonly backend: AuthStorageBackend) {
+		this.reload();
+	}
+
+	reload(): void {
+		try {
+			const content = this.backend.read ? this.backend.read() : this.backend.withLock((current) => ({ result: current }));
+			const read = readStorageData(content);
+			this.data = read.data;
+			this.damage = read.damage ?? this.writeDamage;
+		} catch (error) {
+			this.data = emptyData();
+			this.damage = error instanceof Error ? `it could not be read: ${error.message}` : "it could not be read";
+		}
+	}
+
+	/**
+	 * Why the store on disk could not be fully read, or why the last write to it
+	 * did not land, or null when it is clean. Callers that report connection
+	 * state must consult this, because a damaged store reads as zero credentials
+	 * and is otherwise indistinguishable from having never logged in, and a
+	 * refused write leaves memory claiming a credential that disk does not hold.
+	 */
+	damageReason(): string | null {
+		return this.damage;
+	}
+
+	private persist(providerId: string, credential: AuthCredential | undefined): void {
+		try {
+			const committed = this.backend.withLock((current) => {
+				const read = readStorageData(current);
+				if (read.damage !== null) {
+					this.damage = read.damage;
+					throw new AuthStorageDamagedError(read.damage, this.backend.describe?.());
+				}
+				const merged = read.data;
+				if (credential) merged[providerId] = credential;
+				else delete merged[providerId];
+				return { result: merged, next: serializeStorageData(merged) };
+			});
+			// The backend writes after the callback returns. Publish the merged
+			// snapshot only once that write has committed, as OAuth refresh does.
+			this.data = committed;
+			this.damage = null;
+			this.writeDamage = null;
+			this.failedOAuth.delete(providerId);
+		} catch (error) {
+			// A write that failed for a reason the damage refusal does not cover: a
+			// lock that could not be taken, a read-only config dir, a full disk.
+			// This used to go into an errors array with no consumer, so the store
+			// reported itself clean while disk held none of what was just written.
+			// damageReason() is the channel `pancode auth` and `pancode doctor` read.
+			if (error instanceof AuthStorageDamagedError) throw error;
+			this.damage = error instanceof Error ? `it could not be written: ${error.message}` : "it could not be written";
+			this.writeDamage = this.damage;
+		}
+	}
+
+	get(providerId: string): AuthCredential | undefined {
+		this.reload();
+		return this.data[providerId];
+	}
+
+	// persist() adopts the merged view on success, so it runs first: assigning
+	// in-memory ahead of it would leave a credential that reads back as stored
+	// while the disk write was refused.
+	set(providerId: string, credential: AuthCredential): void {
+		this.persist(providerId, credential);
+	}
+
+	setApiKey(providerId: string, key: string): void {
+		const resolved = normalizeStoredApiKeyRef(key);
+		if (!resolved) throw new Error(`auth.setApiKey: empty key for provider=${providerId}`);
+		this.set(providerId, { type: "api_key", key: resolved, updatedAt: nowIso() });
+	}
+
+	remove(providerId: string): void {
+		this.persist(providerId, undefined);
+	}
+
+	/**
+	 * Store a copy of the key variable the target names, for the desktop app. Returns the entry written, or null
+	 * when the target names no variable of its own (its key is then the provider id's and is left alone).
+	 */
+	storeEnvKeyCopy(target: AuthTarget, key: string): string | null {
+		if (!target.targetEnvVar) return null;
+		const ref = envKeyCopyRef(target.targetEnvVar);
+		this.setApiKey(ref, key);
+		return ref;
+	}
+
+	private envKeyCopy(envVar: string | undefined): { envVar: string; ref: string; key: string } | null {
+		if (!envVar) return null;
+		const ref = envKeyCopyRef(envVar);
+		const stored = this.data[ref];
+		return stored?.type === "api_key" ? { envVar, ref, key: stored.key } : null;
+	}
+
+	listStored(): ReadonlyArray<{ providerId: string; type: AuthCredential["type"]; updatedAt: string }> {
+		this.reload();
+		return Object.entries(this.data)
+			.map(([providerId, credential]) => ({
+				providerId,
+				type: credential.type,
+				updatedAt: credential.updatedAt,
+			}))
+			.sort((a, b) => a.providerId.localeCompare(b.providerId));
+	}
+
+	hasStored(providerId: string): boolean {
+		this.reload();
+		return providerId in this.data;
+	}
+
+	/**
+	 * Install a process-lifetime API key override scoped to a specific target.
+	 * Overrides are keyed by `targetId` (not providerId) so two targets
+	 * sharing a runtime do not share the override. `pancode --api-key <key>`
+	 * applies only to the active target, not every target on that provider.
+	 */
+	setRuntimeOverride(targetId: string, apiKey: string): void {
+		if (targetId.length === 0) {
+			throw new Error("auth.setRuntimeOverride: empty targetId");
+		}
+		const resolved = normalizeStoredApiKeyRef(apiKey);
+		if (!resolved) throw new Error(`auth.setRuntimeOverride: empty key for target=${targetId}`);
+		this.runtimeOverrides.set(targetId, resolved);
+	}
+
+	clearRuntimeOverride(targetId: string): void {
+		if (targetId.length === 0) return;
+		this.runtimeOverrides.delete(targetId);
+	}
+
+	setFallbackResolver(resolver: (providerId: string) => string | undefined): void {
+		this.fallbackResolver = resolver;
+	}
+
+	status(
+		providerId: string,
+		opts?: { targetId?: string; explicitEnvVar?: string; targetEnvVar?: string; includeFallback?: boolean },
+	): AuthStatus {
+		this.reload();
+		if (opts?.targetId && this.runtimeOverrides.has(opts.targetId)) {
+			return {
+				providerId,
+				available: true,
+				credentialType: "api_key",
+				source: "runtime-override",
+				detail: providerId,
+			};
+		}
+
+		const targetEnv = targetEnvApiKey(opts?.targetEnvVar);
+		if (targetEnv) {
+			return {
+				providerId,
+				available: true,
+				credentialType: "api_key",
+				source: "environment",
+				detail: targetEnv.envVar,
+			};
+		}
+
+		const copy = this.envKeyCopy(opts?.targetEnvVar);
+		if (copy) {
+			return {
+				providerId,
+				available: true,
+				credentialType: "api_key",
+				source: "stored-api-key",
+				detail: envKeyCopyDetail(copy.envVar),
+				storedRef: copy.ref,
+			};
+		}
+
+		const stored = this.data[providerId];
+		if (stored?.type === "api_key") {
+			return {
+				providerId,
+				available: true,
+				credentialType: "api_key",
+				source: "stored-api-key",
+				detail: storedKeyDetail(providerId, opts?.targetEnvVar),
+			};
+		}
+		if (stored?.type === "oauth") {
+			const failed = this.failedOAuth.get(providerId);
+			const refreshFailed =
+				failed?.access === stored.access && failed.refresh === stored.refresh && failed.expires === stored.expires;
+			return {
+				providerId,
+				available: !refreshFailed,
+				credentialType: "oauth",
+				source: "stored-oauth",
+				detail: refreshFailed ? this.oauthFailureDetail(providerId) : providerId,
+			};
+		}
+
+		const env = resolveEnvironmentApiKey(providerId, opts?.explicitEnvVar);
+		if (env.apiKey) {
+			return {
+				providerId,
+				available: true,
+				credentialType: "api_key",
+				source: "environment",
+				detail: env.source ?? providerId,
+			};
+		}
+
+		if (opts?.includeFallback !== false) {
+			const fallback = this.fallbackResolver?.(providerId)?.trim();
+			if (fallback && fallback.length > 0) {
+				return {
+					providerId,
+					available: true,
+					credentialType: "api_key",
+					source: "fallback",
+					detail: providerId,
+				};
+			}
+		}
+
+		return {
+			providerId,
+			available: false,
+			credentialType: null,
+			source: "none",
+			detail: null,
+		};
+	}
+
+	private refusedFor(target: AuthTarget): AuthStatus | null {
+		if (target.targetId && this.runtimeOverrides.has(target.targetId)) return null;
+		if (target.projectKeyEnvVar) {
+			const { apiKey: _key, ...status } = projectKeyResolution(
+				target.providerId,
+				target.projectKeyEnvVar,
+				target.targetId ?? target.providerId,
+			);
+			return status;
+		}
+		if (!target.credentialRefusal) return null;
+		return {
+			providerId: target.providerId,
+			available: false,
+			credentialType: null,
+			source: "none",
+			detail: target.credentialRefusal,
+			refused: true,
+		};
+	}
+
+	statusForTarget(target: AuthTarget, opts?: { includeFallback?: boolean }): AuthStatus {
+		const refused = this.refusedFor(target);
+		if (refused) return refused;
+		const args: { targetId?: string; explicitEnvVar?: string; targetEnvVar?: string; includeFallback?: boolean } = {};
+		if (opts?.includeFallback !== undefined) args.includeFallback = opts.includeFallback;
+		if (target.explicitEnvVar) args.explicitEnvVar = target.explicitEnvVar;
+		if (target.targetEnvVar) args.targetEnvVar = target.targetEnvVar;
+		if (target.targetId) args.targetId = target.targetId;
+		return this.forAuthTarget(target, this.status(target.providerId, args));
+	}
+
+	private oauthFailureDetail(providerId: string): string {
+		if (this.networkFailedOAuth.has(providerId))
+			return "OAuth credential could not be refreshed because of a network error. The stored credential is kept; the next call retries the refresh.";
+		return `OAuth credential could not be refreshed. Run pancode auth login ${providerId} again.`;
+	}
+
+	private recordOAuthFailure(providerId: string, stored: OAuthCredential, error: unknown): void {
+		this.failedOAuth.set(providerId, stored);
+		if (isNetworkError(error)) this.networkFailedOAuth.add(providerId);
+		else this.networkFailedOAuth.delete(providerId);
+	}
+
+	private forAuthTarget<T extends AuthStatus>(target: AuthTarget, resolution: T): T {
+		// The kind check guards stored logins (08e75f205). An explicit per-target
+		// `--api-key` is the operator's choice for that target and always wins.
+		if (resolution.source === "runtime-override") return resolution;
+		const required = target.runtimeAuth === "oauth" ? "oauth" : target.requiredCredentialType;
+		if (required && resolution.credentialType !== null && resolution.credentialType !== required) {
+			const { apiKey: _key, ...status } = resolution as T & { apiKey?: string };
+			return {
+				...status,
+				available: false,
+				detail: `Credential '${target.providerId}' requires ${required === "oauth" ? "OAuth" : "an API key"}; the stored credential is ${resolution.credentialType}. Select the intended login.`,
+			} as T;
+		}
+		return resolution;
+	}
+
+	/**
+	 * One auth.refreshed per refresh under the lock: whether this process called the provider, what came back, and the
+	 * credential's updatedAt before and after, so another writer's rotation is visible. No token is recorded (#427).
+	 */
+	private async refreshOAuthCredentialWithLock(
+		providerId: string,
+		signal: AbortSignal,
+		rejectedApiKey?: string,
+	): Promise<{ apiKey: string; credential: OAuthCredential; refreshed: boolean } | null> {
+		const started = performance.now();
+		const held = this.data[providerId];
+		const attempt = { called: false };
+		let outcome: "refreshed" | "adopted" | "failed" | "cancelled" = "failed";
+		let after: string | undefined;
+		try {
+			const result = await this.refreshOAuthCredentialLocked(providerId, signal, rejectedApiKey, attempt);
+			if (result) {
+				outcome = result.refreshed ? "refreshed" : "adopted";
+				after = result.credential.updatedAt;
+			}
+			return result;
+		} catch (error) {
+			if (signal.aborted) outcome = "cancelled";
+			throw error;
+		} finally {
+			const before = held?.type === "oauth" ? held.updatedAt : undefined;
+			// The refresh belongs to the session or run whose async context ran it; one outside any, such as model
+			// discovery refreshing a launch credential, is a process fact and lands in the process journal (#434).
+			try {
+				telemetryHub().emit("auth.refreshed", {
+					provider: providerId,
+					trigger: rejectedApiKey === undefined ? "expiry" : "rejected",
+					attempted: outcome === "refreshed" || (outcome !== "adopted" && attempt.called),
+					outcome,
+					writerPid: outcome === "refreshed" ? process.pid : null,
+					...(before !== undefined && UTC_MS.test(before) ? { updatedAtBefore: before } : {}),
+					...(after !== undefined && UTC_MS.test(after) ? { updatedAtAfter: after } : {}),
+					durationMs: Math.max(0, performance.now() - started),
+				});
+			} catch {
+				// Recording a refresh never changes the credential it describes (#434).
+			}
+		}
+	}
+
+	private async refreshOAuthCredentialLocked(
+		providerId: string,
+		signal: AbortSignal,
+		rejectedApiKey: string | undefined,
+		attempt: { called: boolean },
+	): Promise<{ apiKey: string; credential: OAuthCredential; refreshed: boolean } | null> {
+		let latestData: AuthStorageData | undefined;
+		const result = await this.backend.withLockAsync(
+			async (current) => {
+				const read = readStorageData(current);
+				if (read.damage !== null) {
+					this.damage = read.damage;
+					throw new AuthStorageDamagedError(read.damage, this.backend.describe?.());
+				}
+				const currentData = read.data;
+				latestData = currentData;
+				const stored = currentData[providerId];
+				if (stored?.type !== "oauth") {
+					return { result: null };
+				}
+				if (
+					Date.now() + OAUTH_EXPIRY_MARGIN_MS < stored.expires &&
+					(rejectedApiKey === undefined || (await getEngineOAuthApiKey(providerId, stored)) !== rejectedApiKey)
+				) {
+					return {
+						result: { apiKey: await getEngineOAuthApiKey(providerId, stored), credential: stored, refreshed: false },
+					};
+				}
+				attempt.called = true;
+				const refreshed = await refreshEngineOAuthCredentials(providerId, stored, signal);
+				const next: OAuthCredential = {
+					type: "oauth",
+					...refreshed,
+					updatedAt: nowIso(),
+				};
+				const merged: AuthStorageData = { ...currentData, [providerId]: next };
+				latestData = merged;
+				return {
+					result: { apiKey: await getEngineOAuthApiKey(providerId, next), credential: next, refreshed: true },
+					next: serializeStorageData(merged),
+				};
+			},
+			{ signal },
+		);
+		// Adopt the view only after the backend has committed it. Pi 0.84's
+		// CredentialStore.modify pattern prevents a cancellation between refresh
+		// and persistence from making memory advertise a token disk never received.
+		if (latestData) this.data = latestData;
+		this.damage = null;
+		this.writeDamage = null;
+		this.failedOAuth.delete(providerId);
+		return result;
+	}
+
+	async forceRefreshApiKey(
+		providerId: string,
+		rejectedApiKey: string,
+		signal: AbortSignal = new AbortController().signal,
+	): Promise<AuthResolution> {
+		return remembered(await this.forceRefreshUnremembered(providerId, rejectedApiKey, signal));
+	}
+
+	private async forceRefreshUnremembered(
+		providerId: string,
+		rejectedApiKey: string,
+		signal: AbortSignal,
+	): Promise<AuthResolution> {
+		let refreshError: unknown;
+		try {
+			// Compare the rejected key under the lock so a concurrent rotation wins (#427).
+			const refreshed = await this.refreshOAuthCredentialWithLock(providerId, signal, rejectedApiKey);
+			if (refreshed) {
+				return {
+					providerId,
+					available: true,
+					credentialType: "oauth",
+					source: "stored-oauth",
+					detail: providerId,
+					apiKey: refreshed.apiKey,
+					refreshed: refreshed.refreshed,
+				};
+			}
+		} catch (error) {
+			if (signal.aborted) throw signal.reason ?? error;
+			refreshError = error;
+			// The rejected token must never be returned after a failed forced refresh (#427).
+			this.reload();
+		}
+		const stored = this.data[providerId];
+		if (stored?.type === "oauth") this.recordOAuthFailure(providerId, stored, refreshError);
+		return {
+			providerId,
+			available: false,
+			credentialType: "oauth",
+			source: "stored-oauth",
+			detail: this.oauthFailureDetail(providerId),
+		};
+	}
+
+	async resolveApiKey(
+		providerId: string,
+		opts?: {
+			targetId?: string;
+			explicitEnvVar?: string;
+			targetEnvVar?: string;
+			includeFallback?: boolean;
+			signal?: AbortSignal;
+			refresh?: false;
+		},
+	): Promise<AuthResolution> {
+		return remembered(await this.resolveApiKeyUnremembered(providerId, opts));
+	}
+
+	private async resolveApiKeyUnremembered(
+		providerId: string,
+		opts?: {
+			targetId?: string;
+			explicitEnvVar?: string;
+			targetEnvVar?: string;
+			includeFallback?: boolean;
+			signal?: AbortSignal;
+			refresh?: false;
+		},
+	): Promise<AuthResolution> {
+		this.reload();
+		if (opts?.targetId) {
+			const override = this.runtimeOverrides.get(opts.targetId);
+			if (override) {
+				return {
+					providerId,
+					available: true,
+					credentialType: "api_key",
+					source: "runtime-override",
+					detail: providerId,
+					apiKey: override,
+				};
+			}
+		}
+
+		const targetEnv = targetEnvApiKey(opts?.targetEnvVar);
+		if (targetEnv) {
+			return {
+				providerId,
+				available: true,
+				credentialType: "api_key",
+				source: "environment",
+				detail: targetEnv.envVar,
+				apiKey: targetEnv.apiKey,
+			};
+		}
+
+		const copy = this.envKeyCopy(opts?.targetEnvVar);
+		if (copy) {
+			const apiKey = resolveStoredApiKey(copy.key, providerId);
+			return {
+				providerId,
+				available: true,
+				credentialType: "api_key",
+				source: "stored-api-key",
+				detail: envKeyCopyDetail(copy.envVar),
+				storedRef: copy.ref,
+				...(apiKey ? { apiKey } : {}),
+			};
+		}
+
+		const stored = this.data[providerId];
+		if (stored?.type === "api_key") {
+			const apiKey = resolveStoredApiKey(stored.key, providerId);
+			return {
+				providerId,
+				available: true,
+				credentialType: "api_key",
+				source: "stored-api-key",
+				detail: storedKeyDetail(providerId, opts?.targetEnvVar),
+				...(apiKey ? { apiKey } : {}),
+			};
+		}
+
+		if (stored?.type === "oauth") {
+			const provider = getEngineOAuthProvider(providerId);
+			if (!provider) {
+				return {
+					providerId,
+					available: false,
+					credentialType: "oauth",
+					source: "stored-oauth",
+					detail: `No OAuth flow is registered for '${providerId}'.`,
+				};
+			}
+			if (Date.now() + OAUTH_EXPIRY_MARGIN_MS < stored.expires) {
+				this.failedOAuth.delete(providerId);
+				return {
+					providerId,
+					available: true,
+					credentialType: "oauth",
+					source: "stored-oauth",
+					detail: providerId,
+					apiKey: await getEngineOAuthApiKey(providerId, stored),
+					refreshed: false,
+				};
+			}
+			// A diagnostic reads credentials without writing them; an expired login stays expired until a real call.
+			if (opts?.refresh === false) {
+				return {
+					providerId,
+					available: false,
+					credentialType: "oauth",
+					source: "stored-oauth",
+					detail: `${providerId} login has expired; the next model call refreshes it`,
+				};
+			}
+			let refreshError: unknown;
+			try {
+				const refreshed = await this.refreshOAuthCredentialWithLock(
+					providerId,
+					opts?.signal ?? new AbortController().signal,
+				);
+				if (refreshed) {
+					return {
+						providerId,
+						available: true,
+						credentialType: "oauth",
+						source: "stored-oauth",
+						detail: providerId,
+						apiKey: refreshed.apiKey,
+						refreshed: refreshed.refreshed,
+					};
+				}
+			} catch (error) {
+				if (opts?.signal?.aborted) throw opts.signal.reason ?? error;
+				refreshError = error;
+				// A refusal already recorded its reason on this.damage; a refresh that
+				// failed for any other reason is answered by re-reading the store below.
+				this.reload();
+				const updated = this.data[providerId];
+				if (updated?.type === "oauth" && Date.now() + OAUTH_EXPIRY_MARGIN_MS < updated.expires) {
+					return {
+						providerId,
+						available: true,
+						credentialType: "oauth",
+						source: "stored-oauth",
+						detail: providerId,
+						apiKey: await getEngineOAuthApiKey(providerId, updated),
+						refreshed: false,
+					};
+				}
+			}
+			this.recordOAuthFailure(providerId, stored, refreshError);
+			return {
+				providerId,
+				available: false,
+				credentialType: "oauth",
+				source: "stored-oauth",
+				detail: this.oauthFailureDetail(providerId),
+			};
+		}
+
+		const env = resolveEnvironmentApiKey(providerId, opts?.explicitEnvVar);
+		if (env.apiKey) {
+			return {
+				providerId,
+				available: true,
+				credentialType: "api_key",
+				source: "environment",
+				detail: env.source ?? providerId,
+				apiKey: env.apiKey,
+			};
+		}
+
+		if (opts?.includeFallback !== false) {
+			const fallback = this.fallbackResolver?.(providerId)?.trim();
+			if (fallback && fallback.length > 0) {
+				return {
+					providerId,
+					available: true,
+					credentialType: "api_key",
+					source: "fallback",
+					detail: providerId,
+					apiKey: fallback,
+				};
+			}
+		}
+
+		return {
+			providerId,
+			available: false,
+			credentialType: null,
+			source: "none",
+			detail: null,
+		};
+	}
+
+	async resolveForTarget(
+		target: AuthTarget,
+		opts?: { includeFallback?: boolean; signal?: AbortSignal; rejectedApiKey?: string; refresh?: false },
+	): Promise<AuthResolution> {
+		if (target.projectKeyEnvVar && !(target.targetId && this.runtimeOverrides.has(target.targetId))) {
+			return remembered(
+				projectKeyResolution(target.providerId, target.projectKeyEnvVar, target.targetId ?? target.providerId),
+			);
+		}
+		const refused = this.refusedFor(target);
+		if (refused) return refused;
+		if (opts?.rejectedApiKey !== undefined) {
+			return this.forAuthTarget(
+				target,
+				await this.forceRefreshApiKey(target.providerId, opts.rejectedApiKey, opts.signal),
+			);
+		}
+		const args: {
+			targetId?: string;
+			explicitEnvVar?: string;
+			targetEnvVar?: string;
+			includeFallback?: boolean;
+			signal?: AbortSignal;
+			refresh?: false;
+		} = {};
+		if (opts?.includeFallback !== undefined) args.includeFallback = opts.includeFallback;
+		if (opts?.signal !== undefined) args.signal = opts.signal;
+		if (opts?.refresh === false) args.refresh = false;
+		if (target.explicitEnvVar) args.explicitEnvVar = target.explicitEnvVar;
+		if (target.targetEnvVar) args.targetEnvVar = target.targetEnvVar;
+		if (target.targetId) args.targetId = target.targetId;
+		return this.forAuthTarget(target, await this.resolveApiKey(target.providerId, args));
+	}
+
+	async login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void> {
+		const credentials = await loginWithEngineOAuthProvider(providerId, callbacks);
+		this.set(providerId, { type: "oauth", ...credentials, updatedAt: nowIso() });
+	}
+
+	logout(providerId: string): void {
+		this.remove(providerId);
+	}
+
+	getOAuthProviders(): ReadonlyArray<{ id: string; name: string }> {
+		return listEngineOAuthProviders()
+			.map((provider) => ({ id: provider.id, name: provider.name }))
+			.sort((a, b) => a.id.localeCompare(b.id));
+	}
+}

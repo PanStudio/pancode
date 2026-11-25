@@ -1,0 +1,686 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual, throws } from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { settingsPath } from "../../src/core/config.js";
+import { readLayeredSettings } from "../../src/core/settings-layers.js";
+import {
+	approveOperatorProjectInstall,
+	captureProjectInstallBaseline,
+	captureProjectSurface,
+	projectSurfaceTrust,
+	recordProjectPackageTrust,
+	recordProjectSurfaceTrust,
+	revokeProjectSurfaceTrust,
+	workspaceTrustDirectory,
+} from "../../src/core/workspace-trust.js";
+import { disableExtension, installExtension, listInstalledExtensions } from "../../src/domains/extensions/state.js";
+import { INTEROP_AGENT_KINDS } from "../../src/domains/interop/registry.js";
+import { runDoctorHarnessChecks } from "../../src/domains/lifecycle/doctor.js";
+import { createMiddlewareBundle } from "../../src/domains/middleware/extension.js";
+import { loadUserHooks, userHookToRegistration } from "../../src/domains/middleware/hooks.js";
+import { buildUserHookRegistrations, spawnSyncCommandRunner } from "../../src/domains/middleware/hooks-io.js";
+import { createSafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
+import { createStdioTransport } from "../../src/engine/acp/transport.js";
+import { createExtensionReloadCoordinator } from "../../src/entry/extension-reload.js";
+import { middlewareOwner } from "../harness/middleware-owner.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+function approve(workspace: string, surface: "safety" | "hooks" | "settings"): string {
+	const snapshot = captureProjectSurface(workspace, surface);
+	ok(snapshot.contentHash);
+	recordProjectSurfaceTrust(workspace, surface, snapshot.contentHash);
+	return snapshot.contentHash;
+}
+
+test("S3-01: a real boot names skipped safety and settings files and the review command", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-boot-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		mkdirSync(join(workspace, ".pancode"), { recursive: true });
+		writeFileSync(join(workspace, ".pancode", "safety.yaml"), "version: 1\ndisableDefaultPathPolicy: true\n");
+		writeFileSync(join(workspace, ".pancode", "settings.yaml"), "chat:\n  retry:\n    streamStallMs: 60000\n");
+		const cli = fileURLToPath(new URL("../../dist/cli/index.js", import.meta.url));
+		const boot = spawnSync(process.execPath, [cli], {
+			cwd: workspace,
+			env: { ...process.env, PANCODE_INTERACTIVE: "0" },
+			encoding: "utf8",
+			timeout: 30_000,
+		});
+		strictEqual(boot.status, 0, boot.stderr);
+		for (const surface of ["safety", "settings"]) {
+			ok(boot.stderr.includes(join(workspace, ".pancode", `${surface}.yaml`)), boot.stderr);
+			ok(boot.stderr.includes(`config trust ${surface}`), boot.stderr);
+		}
+	} finally {
+		home.restore();
+	}
+});
+
+test("S3-01: approved safety, settings, and hooks take effect, and changed bytes restore defaults", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-cycle-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		const config = join(workspace, ".pancode");
+		mkdirSync(config, { recursive: true });
+		writeFileSync(join(config, "safety.yaml"), "version: 1\ndisableDefaultPathPolicy: true\n");
+		writeFileSync(join(config, "settings.yaml"), "chat:\n  retry:\n    streamStallMs: 60000\n");
+		writeFileSync(
+			join(config, "hooks.yaml"),
+			JSON.stringify([
+				{ id: "trusted-command", kind: "command", on: "before_tool", argv: [process.execPath, "-e", "process.exit(0)"] },
+			]),
+		);
+		const readEnv = () => createSafetyPolicyEngine({ cwd: workspace }).evaluate({ tool: "read", args: { path: ".env" } });
+		strictEqual(readEnv().kind, "block");
+		for (const surface of ["safety", "settings", "hooks"] as const) approve(workspace, surface);
+		strictEqual(readEnv().kind, "allow");
+		strictEqual(readLayeredSettings(workspace).settings.chat.retry.streamStallMs, 60000);
+		const hooks = buildUserHookRegistrations({ cwd: workspace, recordReceipt: () => undefined });
+		strictEqual(hooks.registrations.length, 1);
+		// Even a comment change needs fresh consent. No parser normalization can
+		// silently give different source bytes a previous approval.
+		for (const surface of ["safety", "settings", "hooks"] as const) {
+			const file = join(config, `${surface}.yaml`);
+			writeFileSync(file, `${readFileSync(file, "utf8")}\n# changed\n`);
+			strictEqual(captureProjectSurface(workspace, surface).verdict, "changed");
+		}
+		strictEqual(readEnv().kind, "block");
+		strictEqual(readLayeredSettings(workspace).settings.chat.retry.streamStallMs, 180000);
+		deepStrictEqual(buildUserHookRegistrations({ cwd: workspace, recordReceipt: () => undefined }).registrations, []);
+		deepStrictEqual(hooks.registrations[0]?.evaluate({ hook: "before_tool", toolName: "read" }), []);
+	} finally {
+		home.restore();
+	}
+});
+
+test("approving project hooks pins the repository script a hook argv names, so an edit to it asks again", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-hook-script-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		mkdirSync(join(workspace, ".pancode"), { recursive: true });
+		mkdirSync(join(workspace, "scripts"), { recursive: true });
+		writeFileSync(
+			join(workspace, ".pancode", "hooks.yaml"),
+			'version: 1\nhooks:\n  - id: lint\n    on: before_tool\n    kind: command\n    argv: ["sh", "./scripts/lint.sh"]\n',
+		);
+		writeFileSync(join(workspace, "scripts", "lint.sh"), "echo benign\n");
+		approve(workspace, "hooks");
+		strictEqual(captureProjectSurface(workspace, "hooks").verdict, "trusted");
+		writeFileSync(join(workspace, "scripts", "lint.sh"), "echo changed\n");
+		strictEqual(captureProjectSurface(workspace, "hooks").verdict, "changed");
+		strictEqual(buildUserHookRegistrations({ cwd: workspace, recordReceipt: () => undefined }).registrations.length, 0);
+	} finally {
+		home.restore();
+	}
+});
+
+test("S3-01: trust survives a fresh process and canonical aliases without extending to another workspace or surface", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-identity-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		mkdirSync(join(workspace, ".pancode"), { recursive: true });
+		writeFileSync(join(workspace, ".pancode", "hooks.yaml"), "[]\n");
+		const hash = approve(workspace, "hooks");
+		const alias = join(home.dir, "alias");
+		symlinkSync(workspace, alias, "dir");
+		strictEqual(projectSurfaceTrust(alias, "hooks", hash), "trusted");
+		strictEqual(projectSurfaceTrust(workspace, "settings", hash), "untrusted");
+		const child = join(workspace, "nested");
+		mkdirSync(child);
+		strictEqual(projectSurfaceTrust(child, "hooks", hash), "untrusted");
+		const moduleUrl = new URL("../../src/domains/safety/workspace-trust.ts", import.meta.url).href;
+		const restarted = spawnSync(
+			process.execPath,
+			[
+				"--import",
+				"tsx",
+				"--input-type=module",
+				"-e",
+				`import { projectSurfaceTrust } from ${JSON.stringify(moduleUrl)}; process.stdout.write(projectSurfaceTrust(${JSON.stringify(alias)}, "hooks", ${JSON.stringify(hash)}));`,
+			],
+			{ encoding: "utf8", env: process.env },
+		);
+		strictEqual(restarted.status, 0, restarted.stderr);
+		strictEqual(restarted.stdout, "trusted");
+		const [record] = readdirSync(workspaceTrustDirectory());
+		ok(record);
+		writeFileSync(join(workspaceTrustDirectory(), record), "{broken");
+		strictEqual(projectSurfaceTrust(workspace, "hooks", hash), "untrusted");
+		throws(() => recordProjectSurfaceTrust(workspace, "hooks", hash.slice(0, 16)), /SHA-256/);
+	} finally {
+		home.restore();
+	}
+});
+
+test("S3-01: local-file addition invalidates the entire surface and revocation stops published hooks", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-local-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		const config = join(workspace, ".pancode");
+		mkdirSync(config, { recursive: true });
+		writeFileSync(join(config, "hooks.yaml"), "- id: project\n  kind: prompt\n  on: turn_start\n  message: approved\n");
+		approve(workspace, "hooks");
+		writeFileSync(join(config, "hooks.local.yaml"), "- id: local\n  kind: prompt\n  on: turn_start\n  message: local\n");
+		strictEqual(captureProjectSurface(workspace, "hooks").verdict, "changed");
+		deepStrictEqual(buildUserHookRegistrations({ cwd: workspace, recordReceipt: () => undefined }).registrations, []);
+		approve(workspace, "hooks");
+		const notices: string[] = [];
+		const middleware = middlewareOwner(createMiddlewareBundle());
+		const coordinator = createExtensionReloadCoordinator({
+			extensions: undefined,
+			middleware,
+			cwd: () => workspace,
+			recordReceipt: () => undefined,
+			report: (line) => notices.push(line),
+		});
+		coordinator.applyBoot();
+		strictEqual(middleware.runHook({ hook: "turn_start" }).effects.length, 2);
+		revokeProjectSurfaceTrust(workspace, "hooks");
+		deepStrictEqual(middleware.runHook({ hook: "turn_start" }).effects, []);
+		ok(notices.some((line) => line.includes("trust was revoked")));
+		// State removal must never be undone by an authority writer.
+		const hash = captureProjectSurface(workspace, "hooks").contentHash;
+		ok(hash);
+		rmSync(join(home.dir, "config"), { recursive: true, force: true });
+		throws(() => recordProjectSurfaceTrust(workspace, "hooks", hash), /config was removed/);
+		strictEqual(existsSync(join(home.dir, "config")), false);
+	} finally {
+		home.restore();
+	}
+});
+
+function writePackageState(
+	workspace: string,
+	surface: "extensions" | "plugins",
+	installed: Record<string, Record<string, string>>,
+	disabled: string[] = [],
+): void {
+	const dir = join(workspace, ".pancode", surface);
+	mkdirSync(dir, { recursive: true });
+	const records = Object.fromEntries(
+		Object.entries(installed).map(([id, entry]) => [id, { publisher: "local", ...entry }]),
+	);
+	writeFileSync(join(dir, "state.json"), `${JSON.stringify({ version: 1, disabled, installed: records }, null, 2)}\n`);
+}
+
+test("project package trust binds package identities, not install-state bytes", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-packages-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		const a = { source: "./a", contentDigest: "a".repeat(64) };
+		writePackageState(workspace, "extensions", { a: { ...a, installedAt: "2026-10-01T00:00:00.000Z" } });
+		recordProjectPackageTrust(captureProjectSurface(workspace, "extensions"));
+		writePackageState(workspace, "extensions", { a: { ...a, installedAt: "2026-10-02T00:00:00.000Z" } });
+		strictEqual(captureProjectSurface(workspace, "extensions").verdict, "trusted");
+		writePackageState(workspace, "extensions", { a: { ...a, installedAt: "2026-10-02T00:00:00.000Z" } }, ["a"]);
+		strictEqual(captureProjectSurface(workspace, "extensions").verdict, "trusted");
+		const b = { source: "./b", contentDigest: "b".repeat(64), installedAt: "2026-10-03T00:00:00.000Z" };
+		writePackageState(workspace, "extensions", { a: { ...a, installedAt: "2026-10-02T00:00:00.000Z" }, b });
+		strictEqual(captureProjectSurface(workspace, "extensions").verdict, "changed");
+		writePackageState(workspace, "extensions", {
+			a: { ...a, envelopeDigest: "e".repeat(64), installedAt: "2026-10-02T00:00:00.000Z" },
+		});
+		strictEqual(captureProjectSurface(workspace, "extensions").verdict, "changed");
+
+		const plugin = { source: "./p", contentDigest: "c".repeat(64), installedAt: "2026-10-01T00:00:00.000Z" };
+		writePackageState(workspace, "plugins", { p: { ...plugin, trust: "foreign" } });
+		recordProjectPackageTrust(captureProjectSurface(workspace, "plugins"));
+		strictEqual(captureProjectSurface(workspace, "plugins").verdict, "trusted");
+		writePackageState(workspace, "plugins", { p: { ...plugin, trust: "trusted" } });
+		strictEqual(captureProjectSurface(workspace, "plugins").verdict, "changed");
+		writePackageState(workspace, "plugins", { p: { ...plugin, trust: "foreign", kind: "extension" } });
+		strictEqual(captureProjectSurface(workspace, "plugins").verdict, "changed");
+	} finally {
+		home.restore();
+	}
+});
+
+test("an unapproved disabled project extension cannot shadow the user copy under a trusted surface", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-shadow-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		mkdirSync(workspace, { recursive: true });
+		const source = (id: string): string => {
+			const root = join(home.dir, "sources", id);
+			mkdirSync(root, { recursive: true });
+			writeFileSync(
+				join(root, "pancode-extension.yaml"),
+				`id: ${id}\nname: ${id}\nversion: 1.0.0\ndescription: Shadowing fixture.\n`,
+			);
+			return root;
+		};
+		ok(installExtension(source("shared"), { cwd: workspace, scope: "user" }).extension);
+		ok(installExtension(source("other"), { cwd: workspace, scope: "project" }).extension);
+		recordProjectPackageTrust(captureProjectSurface(workspace, "extensions"));
+		ok(installExtension(source("shared"), { cwd: workspace, scope: "project" }).extension);
+		disableExtension("shared", { cwd: workspace, scope: "project" });
+		strictEqual(captureProjectSurface(workspace, "extensions").verdict, "trusted");
+		const shared = listInstalledExtensions(workspace, { all: true }).filter((entry) => entry.id === "shared");
+		const user = shared.find((entry) => entry.scope === "user");
+		const project = shared.find((entry) => entry.scope === "project");
+		strictEqual(user?.effective, true);
+		strictEqual(project?.trustBlocked, true);
+		strictEqual(project?.effective, false);
+		ok(
+			project?.diagnostics.some((diagnostic) => diagnostic.message.includes("project extension shared is not approved")),
+		);
+	} finally {
+		home.restore();
+	}
+});
+
+test("an operator install into a trusted package surface stays trusted without approving disabled packages", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-install-trusted-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		const at = { installedAt: "2026-10-01T00:00:00.000Z" };
+		const a = { source: "./a", contentDigest: "a".repeat(64), ...at };
+		const x = { source: "./x", contentDigest: "f".repeat(64), ...at };
+		writePackageState(workspace, "extensions", { a });
+		recordProjectPackageTrust(captureProjectSurface(workspace, "extensions"));
+		writePackageState(workspace, "extensions", { a, x }, ["x"]);
+		const baseline = captureProjectInstallBaseline(workspace, "extensions");
+		ok(baseline);
+		const b = { source: "./b", contentDigest: "b".repeat(64), ...at };
+		writePackageState(workspace, "extensions", { a, b, x }, ["x"]);
+		strictEqual(approveOperatorProjectInstall(workspace, baseline, [{ id: "b", contentDigest: b.contentDigest }]), true);
+		strictEqual(captureProjectSurface(workspace, "extensions").verdict, "trusted");
+		writePackageState(workspace, "extensions", { a, b, x });
+		strictEqual(captureProjectSurface(workspace, "extensions").verdict, "changed");
+	} finally {
+		home.restore();
+	}
+});
+
+test("an operator install approves only its own records and never undoes a revoke in its window", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-install-window-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		const at = { installedAt: "2026-10-01T00:00:00.000Z" };
+		const a = { source: "./a", contentDigest: "a".repeat(64), ...at };
+		const b = { source: "./b", contentDigest: "b".repeat(64), ...at };
+		const c = { source: "./c", contentDigest: "c".repeat(64), ...at };
+		writePackageState(workspace, "plugins", { a });
+		recordProjectPackageTrust(captureProjectSurface(workspace, "plugins"));
+		const concurrent = captureProjectInstallBaseline(workspace, "plugins");
+		ok(concurrent);
+		writePackageState(workspace, "plugins", { a, b, c });
+		strictEqual(
+			approveOperatorProjectInstall(workspace, concurrent, [{ id: "b", contentDigest: b.contentDigest }]),
+			false,
+		);
+		strictEqual(captureProjectSurface(workspace, "plugins").verdict, "changed");
+		writePackageState(workspace, "plugins", { a, b });
+		strictEqual(captureProjectSurface(workspace, "plugins").verdict, "trusted");
+
+		const revoked = captureProjectInstallBaseline(workspace, "plugins");
+		ok(revoked);
+		revokeProjectSurfaceTrust(workspace, "plugins");
+		writePackageState(workspace, "plugins", { a, b, c });
+		strictEqual(approveOperatorProjectInstall(workspace, revoked, [{ id: "c", contentDigest: c.contentDigest }]), false);
+		strictEqual(captureProjectSurface(workspace, "plugins").verdict, "untrusted");
+
+		// Another writer replaced the installed id before the approval committed.
+		recordProjectPackageTrust(captureProjectSurface(workspace, "plugins"));
+		const replaced = captureProjectInstallBaseline(workspace, "plugins");
+		ok(replaced);
+		const d = { source: "./d", contentDigest: "d".repeat(64), ...at };
+		writePackageState(workspace, "plugins", { a, b, c, d: { ...d, contentDigest: "e".repeat(64) } });
+		strictEqual(approveOperatorProjectInstall(workspace, replaced, [{ id: "d", contentDigest: d.contentDigest }]), false);
+		strictEqual(captureProjectSurface(workspace, "plugins").verdict, "changed");
+	} finally {
+		home.restore();
+	}
+});
+
+test("an operator install into an untrusted package surface stays untrusted", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-install-untrusted-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		const at = { installedAt: "2026-10-01T00:00:00.000Z" };
+		writePackageState(workspace, "plugins", { a: { source: "./a", contentDigest: "a".repeat(64), ...at } });
+		strictEqual(captureProjectInstallBaseline(workspace, "plugins"), null);
+		writePackageState(workspace, "plugins", {
+			a: { source: "./a", contentDigest: "a".repeat(64), ...at },
+			b: { source: "./b", contentDigest: "b".repeat(64), ...at },
+		});
+		strictEqual(captureProjectSurface(workspace, "plugins").verdict, "untrusted");
+	} finally {
+		home.restore();
+	}
+});
+
+test("a version 1 package digest stays an exact-bytes approval and a digest-only record stays version 1", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-packages-v1-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		writePackageState(workspace, "extensions", {
+			a: { source: "./a", contentDigest: "a".repeat(64), installedAt: "2026-10-01T00:00:00.000Z" },
+		});
+		const snapshot = captureProjectSurface(workspace, "extensions");
+		ok(snapshot.contentHash);
+		const recordFile = join(
+			workspaceTrustDirectory(),
+			`${createHash("sha256").update(snapshot.workspaceRoot).digest("hex")}.json`,
+		);
+		mkdirSync(workspaceTrustDirectory(), { recursive: true });
+		writeFileSync(
+			recordFile,
+			JSON.stringify({
+				version: 1,
+				workspaceRoot: snapshot.workspaceRoot,
+				surfaces: { extensions: snapshot.contentHash },
+			}),
+		);
+		strictEqual(captureProjectSurface(workspace, "extensions").verdict, "trusted");
+		writeFileSync(join(workspace, ".pancode", "hooks.yaml"), "[]\n");
+		approve(workspace, "hooks");
+		const rewritten = JSON.parse(readFileSync(recordFile, "utf8")) as {
+			version: number;
+			surfaces: Record<string, unknown>;
+		};
+		strictEqual(rewritten.version, 1);
+		strictEqual(rewritten.surfaces.extensions, snapshot.contentHash);
+		strictEqual(captureProjectSurface(workspace, "extensions").verdict, "trusted");
+		recordProjectPackageTrust(captureProjectSurface(workspace, "extensions"));
+		strictEqual((JSON.parse(readFileSync(recordFile, "utf8")) as { version: number }).version, 2);
+		revokeProjectSurfaceTrust(workspace, "extensions");
+		strictEqual((JSON.parse(readFileSync(recordFile, "utf8")) as { version: number }).version, 1);
+	} finally {
+		home.restore();
+	}
+});
+
+test("S3-01: CLI review is read-only and approval refuses a stale digest", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-cli-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		mkdirSync(join(workspace, ".pancode"), { recursive: true });
+		const file = join(workspace, ".pancode", "settings.yaml");
+		writeFileSync(file, "chat:\n  retry:\n    streamStallMs: 60000\n");
+		const command = (args: string[]) =>
+			spawnSync(
+				process.execPath,
+				[
+					"--import",
+					import.meta.resolve("tsx"),
+					"--input-type=module",
+					"-e",
+					`import { runConfigTrustCommand } from ${JSON.stringify(new URL("../../src/cli/config-trust.ts", import.meta.url).href)};
+			process.exitCode = runConfigTrustCommand(JSON.parse(process.argv[1]), process.cwd());`,
+					JSON.stringify(args),
+				],
+				{ cwd: workspace, env: process.env, encoding: "utf8", timeout: 10_000 },
+			);
+		const review = command(["settings", "--json"]);
+		strictEqual(review.status, 0, review.stderr);
+		const reviewed = JSON.parse(review.stdout) as { contentHash: string };
+		strictEqual(existsSync(workspaceTrustDirectory()), false);
+		writeFileSync(file, "chat:\n  retry:\n    streamStallMs: 70000\n");
+		strictEqual(command(["settings", "--hash", reviewed.contentHash]).status, 1);
+		strictEqual(captureProjectSurface(workspace, "settings").verdict, "untrusted");
+		const current = captureProjectSurface(workspace, "settings");
+		ok(current.contentHash);
+		strictEqual(command(["settings", "--hash", current.contentHash]).status, 0);
+		strictEqual(readLayeredSettings(workspace).settings.chat.retry.streamStallMs, 70000);
+		strictEqual(command(["settings", "--revoke"]).status, 0);
+		strictEqual(readLayeredSettings(workspace).settings.chat.retry.streamStallMs, 180000);
+	} finally {
+		home.restore();
+	}
+});
+
+test("config get, set and unset save one setting per scope, refuse bad input unwritten, and read flags around the verb", async () => {
+	const home = await isolatePancodeEnv("pancode-config-set-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		mkdirSync(join(workspace, ".pancode"), { recursive: true });
+		const argvFor = (args: string[]) => [
+			"--import",
+			new URL("../../node_modules/tsx/dist/loader.mjs", import.meta.url).href,
+			"--input-type=module",
+			"-e",
+			`import {runConfigCommand} from ${JSON.stringify(new URL("../../src/cli/config.ts", import.meta.url).href)}; process.exitCode = await runConfigCommand(JSON.parse(process.argv[1]));`,
+			JSON.stringify(args),
+		];
+		const config = (...args: string[]) =>
+			spawnSync(process.execPath, argvFor(args), { cwd: workspace, env: process.env, encoding: "utf8", timeout: 20_000 });
+		const background = (...args: string[]) =>
+			new Promise<number | null>((resolve) =>
+				spawn(process.execPath, argvFor(args), { cwd: workspace, env: process.env, stdio: "ignore" }).on("exit", resolve),
+			);
+		const before = config("trust", "safety", "--json");
+		strictEqual(before.status, 0, before.stderr);
+		strictEqual(config("--json", "trust", "safety").stdout, before.stdout);
+
+		strictEqual(config("set", "interface.exitSummary", "on").status, 0);
+		const got = JSON.parse(config("get", "interface.exitSummary", "--json").stdout) as Record<string, unknown>;
+		deepStrictEqual([got.version, got.value, got.source, got.file], [1, "on", "user", settingsPath()]);
+		const saved = readFileSync(settingsPath());
+		for (const refused of [
+			["interface.exitSummary", "bogus"],
+			["nope.thing", "1"],
+			["chat.target", "x"],
+		]) {
+			strictEqual(config("set", ...refused).status, 2, refused.join(" "));
+		}
+		ok(readFileSync(settingsPath()).equals(saved));
+
+		deepStrictEqual(
+			await Promise.all([background("set", "interface.demo", "false"), background("set", "interface.exitSummary", "off")]),
+			[0, 0],
+		);
+		const afterRace = readFileSync(settingsPath(), "utf8");
+		match(afterRace, /exitSummary: .?off/u);
+		match(afterRace, /demo: false/u);
+
+		strictEqual(config("unset", "interface.exitSummary").status, 0);
+		const fallback = JSON.parse(config("get", "interface.exitSummary", "--json").stdout) as Record<string, unknown>;
+		strictEqual(fallback.source, "default");
+		// A value equal to the inherited one is still pinned in the scope it was set in.
+		strictEqual(config("set", "interface.exitSummary", "on").status, 0);
+		const pinned = JSON.parse(config("get", "interface.exitSummary", "--scope", "user", "--json").stdout);
+		deepStrictEqual([pinned.value, pinned.source], ["on", "user"]);
+		// A user file that fails validation is refused whole, so get names it instead of reading defaults (FX-47).
+		const valid = readFileSync(settingsPath(), "utf8");
+		writeFileSync(settingsPath(), `${valid}safety:\n  validationWrappers: [7]\n`);
+		for (const scope of ["effective", "user"]) {
+			const refused = config("get", "safety.validationWrappers", "--scope", scope);
+			strictEqual(refused.status, 1, scope);
+			strictEqual(refused.stdout, "", scope);
+			match(
+				refused.stderr,
+				/settings\.yaml failed validation, so PanCode reads none of it: safety\.validationWrappers/u,
+				scope,
+			);
+		}
+		writeFileSync(settingsPath(), valid);
+
+		writeFileSync(join(workspace, ".pancode", "settings.yaml"), "interface:\n  demo: true\n");
+		const untrusted = config("set", "interface.exitSummary", "on", "--scope", "project");
+		strictEqual(untrusted.status, 1);
+		match(untrusted.stderr, /config trust settings/u);
+		strictEqual(existsSync(join(workspace, ".pancode", "settings.local.yaml")), false);
+		approve(workspace, "settings");
+		strictEqual(config("set", "interface.exitSummary", "off", "--scope", "project").status, 0);
+		strictEqual(captureProjectSurface(workspace, "settings").verdict, "trusted");
+		strictEqual(readLayeredSettings(workspace).settings.interface.exitSummary, "off");
+		strictEqual(config("unset", "interface.exitSummary", "--scope", "project").status, 0);
+		strictEqual(captureProjectSurface(workspace, "settings").verdict, "trusted");
+		strictEqual(config("get", "interface.exitSummary", "--scope", "project").status, 1);
+		strictEqual(config("set", "interface.exitSummary", "on").status, 0);
+		strictEqual(config("set", "interface.exitSummary", "on", "--scope", "project").status, 0);
+		const local = JSON.parse(config("get", "interface.exitSummary", "--scope", "project", "--json").stdout);
+		deepStrictEqual([local.value, local.source], ["on", "project.local"]);
+		strictEqual(config("set", "interface.exitSummary", "off").status, 0);
+		strictEqual(readLayeredSettings(workspace).settings.interface.exitSummary, "on");
+	} finally {
+		home.restore();
+	}
+});
+
+test("config inspect names an ignored project settings layer beside the settings it failed to change", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-gate-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		mkdirSync(join(workspace, ".pancode"), { recursive: true });
+		writeFileSync(join(workspace, ".pancode", "settings.yaml"), "chat:\n  retry:\n    streamStallMs: 600000\n");
+		const cli = new URL("../../src/cli/config.ts", import.meta.url).href;
+		const child = spawnSync(
+			process.execPath,
+			[
+				"--import",
+				new URL("../../node_modules/tsx/dist/loader.mjs", import.meta.url).href,
+				"--input-type=module",
+				"-e",
+				`import {runConfigCommand} from ${JSON.stringify(cli)}; runConfigCommand(['inspect']);`,
+			],
+			{ cwd: workspace, encoding: "utf8", env: process.env },
+		);
+		strictEqual(child.status, 0, child.stderr);
+		const settingsBlock = child.stdout.slice(0, child.stdout.indexOf("\n\n", child.stdout.indexOf("Settings (")));
+		match(settingsBlock, /! settings project: .*untrusted; project settings ignored.*config trust settings/u);
+		ok(!settingsBlock.includes("600000"));
+	} finally {
+		home.restore();
+	}
+});
+
+test("S3-01: untrusted project hooks and settings cannot acquire operator authority", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-gate-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		mkdirSync(join(workspace, ".pancode"), { recursive: true });
+		writeFileSync(
+			join(workspace, ".pancode", "hooks.yaml"),
+			JSON.stringify([
+				{ id: "repo-command", kind: "command", on: "before_tool", argv: [process.execPath, "-e", "process.exit(0)"] },
+			]),
+		);
+		writeFileSync(join(workspace, ".pancode", "settings.yaml"), "chat:\n  retry:\n    streamStallMs: 60000\n");
+		const hooks = buildUserHookRegistrations({ cwd: workspace, recordReceipt: () => undefined });
+		deepStrictEqual(hooks.registrations, []);
+		ok(hooks.fileIssues.some((issue) => issue.message.includes("hooks.yaml") && issue.message.includes("untrusted")));
+		const settings = readLayeredSettings(workspace);
+		strictEqual(settings.settings.chat.retry.streamStallMs, 180000);
+		ok(settings.issues.some((issue) => issue.message.includes("settings.yaml") && issue.message.includes("untrusted")));
+	} finally {
+		home.restore();
+	}
+});
+
+test("S3-02: a registered command hook receives a safe environment and preserves attribution opt-out", async () => {
+	const home = await isolatePancodeEnv("pancode-hook-environment-");
+	try {
+		process.env.ANTHROPIC_API_KEY = "fixture-anthropic-secret";
+		process.env.OPENAI_API_KEY = "fixture-openai-secret";
+		process.env.FOO_TOKEN = "fixture-token";
+		process.env.NODE_OPTIONS = "--no-warnings";
+		process.env.PANCODE_GIT_COMMITS_ENABLED = "0";
+		const loaded = loadUserHooks(
+			[
+				{
+					source: { origin: "user", sourcePath: "operator-hook" },
+					declarations: [
+						{
+							id: "env-probe",
+							on: "after_tool",
+							kind: "command",
+							argv: [
+								process.execPath,
+								"-e",
+								`process.stdout.write(JSON.stringify(Object.fromEntries(
+					["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "FOO_TOKEN", "NODE_OPTIONS", "PATH", "HOME", "PANCODE_GIT_COMMITS_ENABLED"]
+					.map(key => [key, process.env[key]]))))`,
+							],
+						},
+					],
+				},
+			],
+			{ workspaceRoot: home.dir },
+		);
+		const hook = loaded.hooks[0];
+		ok(hook);
+		const registration = userHookToRegistration(hook, {
+			recordReceipt: () => undefined,
+			runCommand: spawnSyncCommandRunner(),
+		});
+		const effects = registration.evaluate({ hook: "after_tool", toolName: "read" });
+		const effect = effects[0];
+		ok(effect?.kind === "annotate_tool_result");
+		const env = JSON.parse(effect.message) as NodeJS.ProcessEnv;
+		for (const key of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "FOO_TOKEN", "NODE_OPTIONS"])
+			strictEqual(env[key], undefined, key);
+		strictEqual(env.PATH, process.env.PATH);
+		strictEqual(env.HOME, process.env.HOME);
+		strictEqual(env.PANCODE_GIT_COMMITS_ENABLED, "0");
+	} finally {
+		home.restore();
+	}
+});
+
+test("S3-03: npm ACP recipes approve exact versions", () => {
+	const recipes = INTEROP_AGENT_KINDS.flatMap((kind) => (kind.acp?.npmPackage ? [kind.acp] : []));
+	strictEqual(recipes.length, 2);
+	for (const recipe of recipes) {
+		const spec = recipe.args.find((arg) => arg.startsWith(`${recipe.npmPackage}@`));
+		ok(spec, `${recipe.npmPackage} must have an exact version in its launch arguments`);
+		match(spec.slice((recipe.npmPackage?.length ?? 0) + 1), /^\d+\.\d+\.\d+$/);
+	}
+});
+
+test("S3-03: a real ACP child excludes inherited credentials and accepts only explicit extra environment", async () => {
+	const home = await isolatePancodeEnv("pancode-acp-environment-");
+	try {
+		process.env.ANTHROPIC_API_KEY = "fixture-parent-secret";
+		process.env.OPENAI_API_KEY = "fixture-parent-openai";
+		process.env.FOO_TOKEN = "fixture-parent-token";
+		process.env.NODE_OPTIONS = "--no-warnings";
+		const transport = createStdioTransport(
+			process.execPath,
+			[
+				"-e",
+				`
+			require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+				const request = JSON.parse(line);
+				process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: process.env }) + "\\n");
+			});
+		`,
+			],
+			{ cwd: home.dir, env: { ADAPTER_SETTING: "explicit", OPENAI_API_KEY: "fixture-adapter-key" } },
+		);
+		try {
+			const env = await transport.request<NodeJS.ProcessEnv>("env", {}, 5000);
+			for (const key of ["ANTHROPIC_API_KEY", "FOO_TOKEN", "NODE_OPTIONS"]) strictEqual(env[key], undefined, key);
+			strictEqual(env.OPENAI_API_KEY, "fixture-adapter-key");
+			strictEqual(env.ADAPTER_SETTING, "explicit");
+			strictEqual(env.PATH, process.env.PATH);
+			strictEqual(env.HOME, process.env.HOME);
+		} finally {
+			await transport.forceTerminate();
+		}
+	} finally {
+		home.restore();
+	}
+});
+
+test("doctor names a project playbook that replaces a builtin of the same name", async () => {
+	const home = await isolatePancodeEnv("pancode-trust-playbook-shadow-");
+	try {
+		const workspace = join(home.dir, "workspace");
+		mkdirSync(join(workspace, ".pancode", "playbooks"), { recursive: true });
+		writeFileSync(join(workspace, ".pancode", "playbooks", "build-review.md"), "---\nname: build-review\n---\n");
+		const row = runDoctorHarnessChecks(workspace).find((finding) => finding.name === "playbook build-review");
+		ok(row);
+		strictEqual(row.level, "warn");
+		match(row.detail, /project playbook .* replaces the builtin one/u);
+	} finally {
+		home.restore();
+	}
+});

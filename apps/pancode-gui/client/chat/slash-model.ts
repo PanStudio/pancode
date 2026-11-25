@@ -1,0 +1,720 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * The composer's slash palette, decided without React.
+ *
+ * A draft that starts with `/` lists what this session can do from the composer: the commands the
+ * agent's catalog exposes (run through `routes.invokeSessionCommand`, as the command panel does),
+ * the session actions the terminal reaches by slash command and the app hosts in a dialog, and the
+ * pane views the terminal opens as overlays. An entry is listed only when the session announced the
+ * capability that serves it, because a row that refuses when picked is worse than no row.
+ *
+ * Nothing here imports React, a stylesheet or the API client, so it runs under plain node:test.
+ */
+
+import {
+	listedPrompts,
+	promptRowWords,
+	renderArgsSpec,
+	SLASH_MATCH_ORDER,
+	type SlashMatchClass,
+	slashMatchClass,
+} from "../../../../src/core/views/slash-words.js";
+import type { AgentCapabilities } from "../../contracts/capabilities.js";
+import type { CommandCatalog, CommandDescriptor } from "../../contracts/steering.js";
+import { type CommandFields, type CommandPlan, planCommand } from "./command-model.js";
+import type { PaneTarget } from "./pane-context.js";
+import { ACTIONS, type SlashAction, UNLISTED_COMMANDS } from "./slash-actions.js";
+
+export type { SlashAction };
+/** Pane views a slash name opens beside the conversation, `/decisions` at the board's Decisions. */
+export type SlashPaneView = PaneTarget;
+
+interface EntryBase {
+	readonly id: string;
+	/** What follows the slash, as typed: `tree`, `context compact`, `fleet run`. */
+	readonly name: string;
+	readonly summary: string;
+	/** The argument grammar after the name, empty when there is none. */
+	readonly hint: string;
+	readonly group: SlashGroup;
+}
+
+export type SlashGroup =
+	| "PanCode commands"
+	| "Session"
+	| "Open beside"
+	| "Also works"
+	| "Prompt templates"
+	| "Extension commands";
+
+export type SlashEntry =
+	| (EntryBase & {
+			readonly kind: "command";
+			readonly command: CommandDescriptor;
+			readonly subcommand: string | null;
+			/** A required argument means picking completes the draft rather than running it. */
+			readonly needsArgs: boolean;
+	  })
+	| (EntryBase & { readonly kind: "action"; readonly action: SlashAction; readonly title: string })
+	| (EntryBase & { readonly kind: "pane"; readonly view: SlashPaneView })
+	| (EntryBase & { readonly kind: "alias"; readonly alias: SlashAlias })
+	| (EntryBase & {
+			readonly kind: "prompt";
+			/** Why the template cannot expand; picking the row does nothing, as in the terminal. */
+			readonly unavailable: string | null;
+			/** No argument hint: picking the row runs it, as the terminal does, instead of waiting for arguments. */
+			readonly runsBare: boolean;
+	  })
+	/** A loaded extension's command: the agent answers the typed line locally, with no model turn. */
+	| (EntryBase & { readonly kind: "extension" });
+
+type ArgsSpec = NonNullable<CommandDescriptor["args"]>;
+type LeafArgs = Pick<ArgsSpec, "flags" | "positionals">;
+
+/** The grammar after a name, in the terminal's own usage notation. */
+export const argumentHint = (args: LeafArgs | undefined): string => (args ? renderArgsSpec(args) : "");
+
+function commandEntries(catalog: CommandCatalog | undefined): SlashEntry[] {
+	const entries: SlashEntry[] = [];
+	for (const command of catalog?.commands ?? []) {
+		if (UNLISTED_COMMANDS.has(command.name)) continue;
+		// The bare form of a hub command is refused over ACP, so only its verbs are listed.
+		if (!command.requiresSubcommand)
+			entries.push({
+				kind: "command",
+				id: `command:${command.name}`,
+				name: command.name,
+				summary: command.summary,
+				hint: argumentHint(command.args),
+				group: "PanCode commands",
+				command,
+				subcommand: null,
+				needsArgs: (command.args.positionals ?? []).some((positional) => positional.required),
+			});
+		for (const [subcommand, args] of Object.entries(command.args.subcommands ?? {}))
+			entries.push({
+				kind: "command",
+				id: `command:${command.name}:${subcommand}`,
+				name: `${command.name} ${subcommand}`,
+				summary: command.subcommandSummaries?.[subcommand] ?? command.summary,
+				hint: argumentHint(args),
+				group: "PanCode commands",
+				command,
+				subcommand,
+				needsArgs: (args.positionals ?? []).some((positional) => positional.required),
+			});
+	}
+	return entries;
+}
+
+interface PaneSpec {
+	readonly id: string;
+	readonly name: string;
+	readonly view: SlashPaneView;
+	readonly summary: string;
+	readonly supported: (capabilities: AgentCapabilities) => boolean;
+}
+
+const PANES: readonly PaneSpec[] = [
+	{
+		id: "context",
+		name: "context",
+		view: "context",
+		summary: "Open the context window beside the conversation",
+		supported: (capabilities) => !!capabilities.context,
+	},
+	{
+		id: "usage",
+		name: "usage",
+		view: "usage",
+		summary: "Open usage and quota beside the conversation",
+		supported: (capabilities) => !!capabilities.telemetry,
+	},
+	{
+		id: "tasks",
+		name: "tasks",
+		view: "board",
+		summary: "Open tasks and decisions beside the conversation",
+		supported: (capabilities) => !!capabilities.board,
+	},
+	{
+		id: "decisions",
+		name: "decisions",
+		view: { view: "board", section: "decisions" },
+		summary: "Open this task's decisions beside the conversation",
+		supported: (capabilities) => !!capabilities.board,
+	},
+	{
+		// The bare hub forms the catalog refuses: the terminal opens its live board and memory view for them.
+		id: "fleet",
+		name: "fleet",
+		view: "agents",
+		summary: "Open the live agents beside the conversation",
+		supported: (capabilities) => !!capabilities.fleet,
+	},
+	{
+		id: "memory",
+		name: "memory",
+		view: { view: "board", section: "memory" },
+		summary: "Open what PanCode learned in this task beside the conversation",
+		supported: (capabilities) => !!capabilities.board,
+	},
+];
+
+export interface SlashFacts {
+	readonly capabilities: AgentCapabilities | undefined;
+	readonly catalog: CommandCatalog | undefined;
+	/** False outside a page that hosts the pane, where a pane jump has nowhere to go. */
+	readonly paneAvailable: boolean;
+}
+
+/** Every entry this session can serve, in display order: commands, session actions, pane views. */
+export function slashEntries(facts: SlashFacts): readonly SlashEntry[] {
+	const capabilities = facts.capabilities;
+	if (!capabilities) return [];
+	const entries: SlashEntry[] = capabilities.commands ? commandEntries(facts.catalog) : [];
+	for (const spec of ACTIONS)
+		if (spec.supported(capabilities))
+			entries.push({
+				kind: "action",
+				id: `action:${spec.action}`,
+				name: spec.name,
+				title: spec.title,
+				summary: spec.summary,
+				hint: "",
+				group: "Session",
+				action: spec.action,
+			});
+	if (facts.paneAvailable)
+		for (const spec of PANES)
+			if (spec.supported(capabilities))
+				entries.push({
+					kind: "pane",
+					id: `pane:${spec.id}`,
+					name: spec.name,
+					summary: spec.summary,
+					hint: "",
+					group: "Open beside",
+					view: spec.view,
+				});
+	return entries;
+}
+
+/**
+ * What the palette filters on: the line after its slash, when the draft is one line that starts
+ * with one. A draft with a newline is a message, and `\/` is the escape for a literal slash.
+ */
+export function slashQuery(text: string): string | null {
+	if (!text.startsWith("/") || text.includes("\n")) return null;
+	return text.slice(1);
+}
+
+/** Names a listed row or a catalog command owns, lower-cased: a typed line of that name runs them instead. */
+function takenNames(facts: SlashFacts, listed: readonly SlashEntry[]): Set<string> {
+	return new Set(
+		[...listed.map((entry) => entry.name), ...(facts.catalog?.commands.map((entry) => entry.name) ?? [])].map((name) =>
+			name.toLowerCase(),
+		),
+	);
+}
+
+/**
+ * The prompt templates the agent announced, as rows after everything else, in the terminal's order and words. A name
+ * a listed row, a catalog command or an extension's takeover owns runs that instead, so it is not listed as a template.
+ */
+export function promptEntries(facts: SlashFacts, listed: readonly SlashEntry[]): readonly SlashEntry[] {
+	if (!facts.capabilities?.commands) return [];
+	const taken = takenNames(facts, listed);
+	for (const command of facts.catalog?.extensionCommands ?? []) taken.add(command.name.toLowerCase());
+	return listedPrompts(facts.catalog?.prompts ?? [], "", taken).map((prompt) => {
+		const marks = prompt._meta?.["pancode/prompt"];
+		const { summary, hint } = promptRowWords({
+			description: prompt.description,
+			argumentHint: prompt.input?.hint,
+			unavailable: marks?.unavailable,
+			displayOnly: marks?.displayOnly,
+		});
+		return {
+			kind: "prompt",
+			id: `prompt:${prompt.name}`,
+			name: prompt.name,
+			summary,
+			hint,
+			group: "Prompt templates",
+			unavailable: marks?.unavailable ?? null,
+			runsBare: hint === "",
+		};
+	});
+}
+
+/**
+ * The loaded extensions' commands the agent announced, after the prompt templates, as the terminal lists them. Each
+ * runs bare when picked; the extension answers the line itself.
+ */
+export function extensionEntries(facts: SlashFacts, listed: readonly SlashEntry[]): readonly SlashEntry[] {
+	if (!facts.capabilities?.commands) return [];
+	return listedPrompts(facts.catalog?.extensionCommands ?? [], "", takenNames(facts, listed)).map((command) => ({
+		kind: "extension",
+		id: `extension:${command.name}`,
+		name: command.name,
+		summary: command.description.trim(),
+		hint: "",
+		group: "Extension commands",
+	}));
+}
+
+/** Rows the agent screens as a typed line, listed by name prefix after everything the palette ranks. */
+const typedLine = (entry: SlashEntry): boolean => entry.kind === "prompt" || entry.kind === "extension";
+
+const TITLE_RANK = SLASH_MATCH_ORDER.length;
+
+/**
+ * The terminal's match ladder: exact name, name prefix, a later word of the name, letters in order, then a word of
+ * the summary. An action's title counts only as a prefix of the whole title and ranks below every name match, and
+ * prompt templates, then extension commands, match by name prefix and come last, as the terminal lists them. A query
+ * that has run past every name, `/doctor deep` say, matches nothing, and a name followed by a space is the operator
+ * typing its arguments; both close the palette.
+ */
+export function filterSlashEntries(entries: readonly SlashEntry[], query: string): readonly SlashEntry[] {
+	const needle = query.trimStart().replace(/\s+/gu, " ");
+	if (needle.trim() === "") return entries;
+	if (
+		/\s$/u.test(needle) &&
+		entries.some(
+			(entry) => (entry.kind === "command" || entry.kind === "alias" || typedLine(entry)) && entry.name === needle.trim(),
+		)
+	)
+		return [];
+	const typed = needle.toLowerCase();
+	const rank = (entry: SlashEntry): number | null => {
+		const exact: SlashMatchClass | null = entry.name.toLowerCase() === typed.trim() ? "exact" : null;
+		const found = exact ?? slashMatchClass(typed, entry.name, entry.summary);
+		if (found !== null) return SLASH_MATCH_ORDER.indexOf(found);
+		return entry.kind === "action" && entry.title.toLowerCase().startsWith(typed) ? TITLE_RANK : null;
+	};
+	const ranked = entries
+		.flatMap((entry, index) => {
+			const found = typedLine(entry) ? null : rank(entry);
+			return found === null ? [] : [{ entry, index, rank: found }];
+		})
+		.sort((left, right) => left.rank - right.rank || left.index - right.index)
+		.map((row) => row.entry);
+	// A name followed by a space is finished, as the composer judges it, so `/wtf ` lists no `wtfp:*` template.
+	const listed = (kind: "prompt" | "extension") =>
+		listedPrompts(
+			entries.filter((entry) => entry.kind === kind),
+			needle,
+			new Set(),
+		);
+	return [...ranked, ...listed("prompt"), ...listed("extension")];
+}
+
+/** The draft a picked command with required arguments leaves behind for the operator to finish. */
+export function completedDraft(entry: SlashEntry): string {
+	return `/${entry.name} `;
+}
+
+/** A session action, pane view or terminal name named exactly by the line, for Enter with the palette closed. */
+export function exactEntry(entries: readonly SlashEntry[], text: string): SlashEntry | null {
+	const query = slashQuery(text.trim());
+	if (query === null) return null;
+	const name = query.trim().replace(/\s+/gu, " ");
+	return entries.find((entry) => entry.kind !== "command" && !typedLine(entry) && entry.name === name) ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Terminal names the app answers
+// ---------------------------------------------------------------------------
+
+/** What a terminal habit does here. A notice keeps the draft and says why nothing ran. */
+export type SlashAliasTarget =
+	| { readonly kind: "command"; readonly command: string; readonly subcommand: string; readonly passRest: boolean }
+	| { readonly kind: "control"; readonly control: "model" | "new" | "help" | "rename" | "mention" }
+	| { readonly kind: "pane"; readonly view: SlashPaneView }
+	| { readonly kind: "navigate"; readonly path: string }
+	| { readonly kind: "action"; readonly action: SlashAction }
+	| { readonly kind: "notice"; readonly message: string };
+
+export interface SlashAlias {
+	/** As typed after the slash, `status` or `extensions dev`. */
+	readonly name: string;
+	readonly summary: string;
+	readonly target: SlashAliasTarget;
+	/** Picking completes `/name ` for the operator to finish instead of running it. */
+	readonly needsText: boolean;
+}
+
+export interface SlashAliasSpec {
+	readonly names: readonly string[];
+	readonly summary: string;
+	readonly target: SlashAliasTarget;
+	readonly hint?: string;
+	readonly needsText?: boolean;
+	/** Absent when the name always works. */
+	readonly available?: (facts: SlashFacts) => boolean;
+}
+
+const hasSubcommand = (facts: SlashFacts, command: string, subcommand: string): boolean =>
+	!!facts.capabilities?.commands &&
+	!!facts.catalog?.commands.some(
+		(entry) => entry.name === command && Object.hasOwn(entry.args.subcommands ?? {}, subcommand),
+	);
+
+const terminalOnly = (name: string): SlashAliasSpec => ({
+	names: [name],
+	summary: "Terminal commands with no equivalent in PanCode on the desktop",
+	target: {
+		kind: "notice",
+		message: `/${name} is a terminal command and has no equivalent in PanCode on the desktop.`,
+	},
+});
+
+/** Names follow `src/interactive/slash-commands.ts`; each one lands on the app's own control for it. */
+export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
+	{
+		names: ["compact"],
+		summary: "Compact this conversation's context. Words after the name guide the summary",
+		hint: "[instructions]",
+		target: { kind: "command", command: "context", subcommand: "compact", passRest: true },
+		available: (facts) => hasSubcommand(facts, "context", "compact"),
+	},
+	{
+		names: ["init"],
+		summary: "Run /context init in this task",
+		target: { kind: "command", command: "context", subcommand: "init", passRest: false },
+		available: (facts) => hasSubcommand(facts, "context", "init"),
+	},
+	{
+		names: ["model", "thinking"],
+		summary: "Choose the model and thinking level for this conversation",
+		target: { kind: "control", control: "model" },
+	},
+	{ names: ["new", "clear"], summary: "Start a new task in this project", target: { kind: "control", control: "new" } },
+	{
+		names: ["status", "cost", "usage"],
+		summary: "Open usage and cost beside the conversation",
+		target: { kind: "pane", view: "usage" },
+		available: (facts) => !!facts.capabilities?.telemetry && facts.paneAvailable,
+	},
+	{ names: ["help"], summary: "Open shortcuts and help", target: { kind: "control", control: "help" } },
+	{ names: ["settings", "config"], summary: "Open Settings", target: { kind: "navigate", path: "/settings" } },
+	{
+		names: ["login"],
+		summary: "Manage saved connections in Settings",
+		target: { kind: "navigate", path: "/settings/targets" },
+	},
+	{
+		names: ["tree"],
+		summary: "Continue from an earlier turn or fork from it",
+		target: { kind: "action", action: "tree" },
+		available: (facts) => !!facts.capabilities?.branches,
+	},
+	{
+		names: ["fork"],
+		summary: "Start a new conversation from a turn",
+		target: { kind: "action", action: "fork" },
+		available: (facts) => !!facts.capabilities?.branches?.fork,
+	},
+	{
+		names: ["resume"],
+		summary: "Open Sessions to continue another task",
+		target: { kind: "navigate", path: "/sessions" },
+	},
+	{ names: ["hub"], summary: "Open PanHub", target: { kind: "navigate", path: "/hub" } },
+	{ names: ["research"], summary: "Open Research", target: { kind: "navigate", path: "/research" } },
+	{
+		names: ["quit", "exit"],
+		summary: "Close this task from the task menu",
+		target: {
+			kind: "notice",
+			message: "Close this task from the task menu, or close the window. PanCode keeps running.",
+		},
+	},
+	{
+		names: ["rename"],
+		summary: "Rename this task",
+		hint: "<name>",
+		needsText: true,
+		target: { kind: "control", control: "rename" },
+	},
+	{
+		names: ["rewind", "undo"],
+		summary: "Restore files from a snapshot",
+		// The task page opens its restore dialog from the URL; the dialog says so when the engine keeps no snapshots.
+		target: { kind: "navigate", path: "?rewind=1" },
+	},
+	{
+		names: ["btw"],
+		summary: "Ask a side question without adding a turn",
+		hint: "[question]",
+		// A bare `/btw` is the Session row above; this answers the line that carries its question.
+		target: { kind: "action", action: "btw" },
+		available: (facts) => !!facts.capabilities?.aside?.ask,
+	},
+	{
+		names: ["draft"],
+		summary: "Draft a request several ways and compare them",
+		hint: "[request]",
+		target: { kind: "action", action: "draft" },
+		available: (facts) => !!facts.capabilities?.aside?.draft,
+	},
+	{
+		names: ["reload"],
+		summary: "Reload this task's extension runtimes",
+		target: { kind: "action", action: "extensions" },
+		available: (facts) => !!facts.capabilities?.extensions,
+	},
+	{
+		names: ["view"],
+		summary: "Open this task's artifacts beside the conversation",
+		target: { kind: "pane", view: "artifacts" },
+		available: (facts) => facts.paneAvailable,
+	},
+	{
+		names: ["files"],
+		summary: "Pick a file to mention in the message",
+		target: { kind: "control", control: "mention" },
+	},
+	{
+		names: ["trust"],
+		summary: "Review the project files this task ignored, in the task overview",
+		target: { kind: "pane", view: "session" },
+		available: (facts) => facts.paneAvailable,
+	},
+	...["restart", "upgrade", "panes", "music", "extensions dev"].map(terminalOnly),
+];
+
+const ALIAS_BY_NAME = new Map<string, SlashAliasSpec>(
+	SLASH_ALIASES.flatMap((spec) => spec.names.map((name) => [name, spec] as const)),
+);
+
+// `extensions` starts `/extensions dev`, so a line's first word alone is enough to know the table answers it.
+const ALIAS_FIRST_WORDS = new Set([...ALIAS_BY_NAME.keys()].map((name) => name.split(" ")[0]));
+
+/** True for a name, or a two-word name's first word, the alias table answers, whether or not this task can serve it. */
+export function isSlashAlias(name: string): boolean {
+	return ALIAS_FIRST_WORDS.has(name);
+}
+
+function aliasFor(name: string, spec: SlashAliasSpec): SlashAlias {
+	return { name, summary: spec.summary, target: spec.target, needsText: spec.needsText === true };
+}
+
+/**
+ * The terminal name a line starts with, and what follows it. A name the catalog, a prompt template or an
+ * extension command owns is theirs, so this returns null for it as it does for a name nobody owns. A name this task
+ * cannot serve resolves to a notice that says so, rather than reaching the agent as a prompt.
+ */
+export function resolveAlias(text: string, facts: SlashFacts): { alias: SlashAlias; rest: string } | null {
+	const match = COMMAND_LINE.exec(text.trim());
+	const typed = match?.[1];
+	if (!match || typed === undefined) return null;
+	if (
+		facts.catalog?.commands.some((entry) => entry.name === typed) ||
+		facts.catalog?.prompts?.some((prompt) => prompt.name === typed) ||
+		facts.catalog?.extensionCommands?.some((command) => command.name === typed)
+	)
+		return null;
+	const rest = (match[2] ?? "").trim();
+	const second = /^\S+/u.exec(rest)?.[0];
+	const pair = second === undefined ? undefined : ALIAS_BY_NAME.get(`${typed} ${second}`);
+	const name = pair ? `${typed} ${second}` : typed;
+	const spec = pair ?? ALIAS_BY_NAME.get(typed);
+	if (!spec) return null;
+	const after = pair && second !== undefined ? rest.slice(second.length).trim() : rest;
+	if (spec.available && !spec.available(facts))
+		return {
+			alias: { ...aliasFor(name, spec), target: { kind: "notice", message: `/${name} is not available in this task.` } },
+			rest: after,
+		};
+	return { alias: aliasFor(name, spec), rest: after };
+}
+
+/**
+ * The palette's last group: every terminal name this task can serve that no earlier row already
+ * lists. Notices are left out; a row that only explains itself is not something to pick.
+ */
+export function aliasEntries(facts: SlashFacts, listed: readonly SlashEntry[]): readonly SlashEntry[] {
+	if (!facts.capabilities) return [];
+	const taken = new Set([
+		...listed.map((entry) => entry.name),
+		...(facts.catalog?.commands.map((entry) => entry.name) ?? []),
+		...(facts.catalog?.prompts?.map((prompt) => prompt.name) ?? []),
+		...(facts.catalog?.extensionCommands?.map((command) => command.name) ?? []),
+	]);
+	const entries: SlashEntry[] = [];
+	for (const spec of SLASH_ALIASES) {
+		if (spec.target.kind === "notice" || (spec.available && !spec.available(facts))) continue;
+		for (const name of spec.names) {
+			if (taken.has(name)) continue;
+			taken.add(name);
+			entries.push({
+				kind: "alias",
+				id: `alias:${name}`,
+				name,
+				summary: spec.summary,
+				hint: spec.hint ?? "",
+				group: "Also works",
+				alias: aliasFor(name, spec),
+			});
+		}
+	}
+	return entries;
+}
+
+export type SlashLine =
+	| { readonly kind: "command"; readonly command: CommandDescriptor; readonly plan: CommandPlan; readonly hint: string }
+	| { readonly kind: "invalid"; readonly command: CommandDescriptor; readonly error: string; readonly hint: string };
+
+const COMMAND_LINE = /^\/([A-Za-z][A-Za-z0-9:-]*)(?:\s+([\s\S]*))?$/u;
+
+/** Whitespace-separated tokens with where each starts, so a final rest field keeps its spacing. */
+function tokens(text: string): { value: string; start: number }[] {
+	return [...text.matchAll(/\S+/gu)].map((match) => ({ value: match[0], start: match.index ?? 0 }));
+}
+
+/**
+ * `/loop` sends its task as one typed argv element, so a task the operator wrapped whole in one pair of quotes
+ * is the words inside them, as the terminal's tokenizer reads it. Anything else, including a quote or a backslash
+ * inside the pair, is left as typed and the grammar check refuses it with its usual message.
+ */
+function unquotedTask(text: string): string {
+	const quote = text[0];
+	if ((quote !== '"' && quote !== "'") || text.length < 3 || text.at(-1) !== quote) return text;
+	const inner = text.slice(1, -1);
+	return inner.includes(quote) || inner.includes("\\") || inner.trim() === "" ? text : inner;
+}
+
+/**
+ * Parses `/name args` against the catalog grammar into the form fields the command panel collects,
+ * then validates them with the same `planCommand`, so a typed line and a filled form are held to one
+ * rule. Returns null when the line names no catalog command; it is then a prompt or a template.
+ */
+export function parseSlashLine(text: string, catalog: CommandCatalog | undefined): SlashLine | null {
+	const match = COMMAND_LINE.exec(text.trim());
+	if (!match) return null;
+	const command = catalog?.commands.find((entry) => entry.name === match[1]);
+	if (!command) return null;
+	const rest = match[2] ?? "";
+	const words = tokens(rest);
+	const subcommands = command.args.subcommands;
+	const first = words[0]?.value;
+	const subcommand = first !== undefined && subcommands && Object.hasOwn(subcommands, first) ? first : null;
+	const args = subcommand !== null ? subcommands?.[subcommand] : command.args;
+	const hint = `/${command.name}${subcommand !== null ? ` ${subcommand}` : ""} ${argumentHint(args)}`.trimEnd();
+	const invalid = (error: string): SlashLine => ({ kind: "invalid", command, error, hint });
+	if (subcommand === null && command.requiresSubcommand)
+		return invalid(
+			`/${command.name} needs one of: ${Object.keys(subcommands ?? {})
+				.map((name) => `/${command.name} ${name}`)
+				.join(", ")}.`,
+		);
+	const fields: Record<string, string | boolean> = subcommand !== null ? { subcommand } : {};
+	const positionals = args?.positionals ?? [];
+	let position = 0;
+	for (let index = subcommand !== null ? 1 : 0; index < words.length; index += 1) {
+		const word = words[index];
+		if (word === undefined) break;
+		if (word.value.startsWith("--")) {
+			const flag = args?.flags?.find((entry) => entry.name === word.value);
+			if (!flag) return invalid(`/${command.name} has no option ${word.value}.`);
+			if (!flag.takesValue) {
+				fields[`flag:${flag.name}`] = true;
+				continue;
+			}
+			const value = words[index + 1]?.value;
+			if (value === undefined) return invalid(`${flag.name} needs a value.`);
+			index += 1;
+			const key = `flag:${flag.name}`;
+			const earlier = fields[key];
+			if (typeof earlier === "string" && !flag.repeatable) return invalid(`${flag.name} can be given once.`);
+			fields[key] = typeof earlier === "string" ? `${earlier}\n${value}` : value;
+			continue;
+		}
+		const positional = positionals[position];
+		if (!positional)
+			return invalid(`/${command.name} takes no more arguments after ${words[index - 1]?.value ?? "its name"}.`);
+		if (positional.rest) {
+			const text = rest.slice(word.start).trim();
+			fields[`pos:${position}`] = command.name === "loop" ? unquotedTask(text) : text;
+			position += 1;
+			break;
+		}
+		fields[`pos:${position}`] = word.value;
+		position += 1;
+	}
+	const planned = planCommand(command, fields as CommandFields);
+	return planned.plan ? { kind: "command", command, plan: planned.plan, hint } : invalid(planned.error);
+}
+
+export interface ArgumentSuggestion {
+	/** The word that completes the token under the caret. */
+	readonly value: string;
+	readonly summary: string;
+	/** The whole line once this word is taken, ready for the next one. */
+	readonly draft: string;
+}
+
+/**
+ * What can come next on a `/name …` line, from the catalog grammar alone: a subcommand, an option,
+ * or one of the values an option or argument is limited to. Free text has no suggestions, and a
+ * word already typed in full is not offered back.
+ */
+export function argumentSuggestions(text: string, catalog: CommandCatalog | undefined): readonly ArgumentSuggestion[] {
+	if (text.includes("\n")) return [];
+	const match = /^\/([A-Za-z][A-Za-z0-9:-]*)\s+([\s\S]*)$/u.exec(text);
+	if (!match) return [];
+	const command = catalog?.commands.find((entry) => entry.name === match[1]);
+	if (!command) return [];
+	const rest = match[2] ?? "";
+	const words = tokens(rest);
+	const typing = rest !== "" && !/\s$/u.test(rest);
+	const partial = typing ? (words.at(-1)?.value ?? "") : "";
+	const settled = typing ? words.slice(0, -1) : words;
+	const head = text.slice(0, text.length - partial.length);
+	const offer = (value: string, summary: string): ArgumentSuggestion => ({ value, summary, draft: `${head}${value} ` });
+	const narrowed = (rows: readonly ArgumentSuggestion[]) =>
+		rows.filter((row) => row.value !== partial && row.value.toLowerCase().startsWith(partial.toLowerCase()));
+
+	const subcommands = command.args.subcommands;
+	const first = settled[0]?.value;
+	const subcommand = first !== undefined && subcommands && Object.hasOwn(subcommands, first) ? first : null;
+	if (subcommand === null && settled.length === 0 && subcommands && !partial.startsWith("-")) {
+		const verbs = narrowed(
+			Object.keys(subcommands).map((name) => offer(name, command.subcommandSummaries?.[name] ?? command.summary)),
+		);
+		if (verbs.length > 0 || command.requiresSubcommand) return verbs;
+	}
+	const args: LeafArgs | undefined = subcommand !== null ? subcommands?.[subcommand] : command.args;
+	const flags = args?.flags ?? [];
+	const used = new Set<string>();
+	let position = 0;
+	let awaiting: (typeof flags)[number] | null = null;
+	for (const word of settled.slice(subcommand !== null ? 1 : 0)) {
+		if (awaiting !== null) {
+			awaiting = null;
+			continue;
+		}
+		const flag = word.value.startsWith("--") ? flags.find((entry) => entry.name === word.value) : undefined;
+		if (flag) {
+			used.add(flag.name);
+			if (flag.takesValue) awaiting = flag;
+			continue;
+		}
+		position += 1;
+	}
+	if (awaiting !== null)
+		return narrowed((awaiting.values ?? []).map((value) => offer(value, `${awaiting?.name} value`)));
+	const positional = args?.positionals?.[position];
+	const values = partial.startsWith("-")
+		? []
+		: (positional?.values ?? []).map((value) => offer(value, positional?.name ?? ""));
+	const options = flags
+		.filter((flag) => flag.repeatable || !used.has(flag.name))
+		.map((flag) =>
+			offer(flag.name, flag.takesValue ? `takes ${flag.values?.join(" | ") ?? flag.valueName ?? "a value"}` : "option"),
+		);
+	// Options are offered once a dash is typed, or when nothing else can come next.
+	return narrowed(partial.startsWith("-") || values.length === 0 ? [...values, ...options] : values);
+}

@@ -1,0 +1,961 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, strictEqual, throws } from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, it } from "node:test";
+
+import type { AssistantMessageEvent, Context, Model } from "@earendil-works/pi-ai";
+import { runConfigureCommand } from "../../src/cli/configure.js";
+import { runModelsCommand } from "../../src/cli/models.js";
+import { runTargetsCommand } from "../../src/cli/targets.js";
+import type { PancodeSettings } from "../../src/core/config.js";
+import { readSettings, updateSettings } from "../../src/core/config.js";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { loadDomains } from "../../src/core/domain-loader.js";
+import { presentationTier, setPresentationTier } from "../../src/core/presentation-tier.js";
+import type { TelemetryHub } from "../../src/core/telemetry/hub.js";
+import { pancodeConfigDir } from "../../src/core/xdg.js";
+import { ConfigDomainModule } from "../../src/domains/config/index.js";
+import { ensurePancodeState } from "../../src/domains/lifecycle/index.js";
+import { isOrchestratorEligibleRuntime } from "../../src/domains/providers/eligibility.js";
+import type { ProvidersContract } from "../../src/domains/providers/index.js";
+import { listProviderSupportEntries, ProvidersDomainModule } from "../../src/domains/providers/index.js";
+import { loadPluginRuntimes } from "../../src/domains/providers/plugins.js";
+import { createRuntimeRegistry, getRuntimeRegistry } from "../../src/domains/providers/registry.js";
+import antigravityCodeRuntime, {
+	parseAntigravityModelCatalogDetails,
+} from "../../src/domains/providers/runtimes/antigravity/antigravity-code.js";
+import { registerBuiltinRuntimes } from "../../src/domains/providers/runtimes/builtins.js";
+import claudeCodeRuntime from "../../src/domains/providers/runtimes/claude/claude-code.js";
+import googleRuntime from "../../src/domains/providers/runtimes/cloud/google.js";
+import anthropicCompatRuntime from "../../src/domains/providers/runtimes/protocol/anthropic-compat.js";
+import litellmRuntime, {
+	aggregateLiteLLMCapabilities,
+	capabilitiesFromLiteLLMModelInfo,
+} from "../../src/domains/providers/runtimes/protocol/litellm.js";
+import {
+	makeOpenAICompatRuntime,
+	synthesizeOpenAICompatModel,
+} from "../../src/domains/providers/runtimes/protocol/openai-compat.js";
+import { EMPTY_CAPABILITIES } from "../../src/domains/providers/types/capability-flags.js";
+import { extractLocalModelQuirks } from "../../src/domains/providers/types/local-model-quirks.js";
+import {
+	antigravitySubprocessConfig,
+	buildAgyArgs,
+	buildAgyStdinLine,
+	parseAntigravityStreamLine,
+} from "../../src/engine/antigravity/subprocess-runtime.js";
+import { openAICompletionsApiProvider } from "../../src/engine/apis/openai-completions.js";
+import { restoreTruncatedErrorBody } from "../../src/engine/provider-error-body.js";
+import type { OverlayHandle, TUI } from "../../src/engine/tui.js";
+import type { OverlayState } from "../../src/interactive/overlay-key-routing.js";
+import { createOverlayModelSelectors } from "../../src/interactive/overlay-model-selectors.js";
+import type { OpenModelScopeOverlayDeps } from "../../src/interactive/overlays/model-scope.js";
+import { ModelOverlayView } from "../../src/interactive/overlays/model-selector.js";
+import type { ModelRow } from "../../src/interactive/overlays/model-selector-model.js";
+import { presentProviderError } from "../../src/interactive/renderers/provider-error.js";
+import { resolveWorkerRuntime } from "../../src/worker/runtime-registry.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(() => {
+	for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
+function completionResponse(text: string, headers?: Record<string, string>): Response {
+	const chunks = [
+		{ model: "wire-model", choices: [{ index: 0, delta: { content: text } }] },
+		{
+			model: "wire-model",
+			choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+			usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+		},
+	];
+	const body = [...chunks.map((chunk) => `data: ${JSON.stringify(chunk)}`), "data: [DONE]", ""].join("\n\n");
+	return new Response(body, {
+		status: 200,
+		headers: { "content-type": "text/event-stream", ...Object.fromEntries(new Headers(headers)) },
+	});
+}
+
+function inertOverlayHandle(onHide?: () => void): OverlayHandle {
+	return {
+		hide: () => onHide?.(),
+		setHidden: () => undefined,
+		isHidden: () => false,
+		focus: () => undefined,
+		unfocus: () => undefined,
+		isFocused: () => true,
+		getBounds: () => undefined,
+	};
+}
+
+function selectableModelRow(): ModelRow {
+	const caps = { ...EMPTY_CAPABILITIES, chat: true, tools: true };
+	return {
+		value: "next-target/next-model",
+		target: "next-target",
+		model: "next-model",
+		runtimeName: "Contract runtime",
+		runtimeShortName: "Contract",
+		runtimeId: "contract-runtime",
+		apiFamily: "openai-completions",
+		bucket: "local",
+		source: "configured",
+		authText: "ready",
+		available: true,
+		reason: "",
+		healthToken: "success",
+		healthText: "healthy",
+		caps,
+		capabilityDecisions: {
+			chat: true,
+			tools: true,
+			reasoning: false,
+			vision: false,
+			streaming: true,
+			contextWindow: 32768,
+			maxTokens: 8192,
+		},
+		thinking: "off",
+		streaming: true,
+		badges: "T",
+		context: "32kctx",
+		maxTokens: "8k",
+		active: false,
+		scoped: false,
+		visibleByDefault: true,
+		selectable: true,
+	};
+}
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: strips the picker's ANSI styling
+const ANSI_PATTERN = /\u001b\[[0-9;]*m/gu;
+
+interface GeminiStub {
+	url: string;
+	requests: Array<{ path: string; key: string | undefined }>;
+	close(): Promise<void>;
+}
+
+/** A local Gemini model listing: two pages for "gem-test-key", 403 for any other key. */
+async function startGeminiStub(): Promise<GeminiStub> {
+	const requests: GeminiStub["requests"] = [];
+	const server = createServer((request, response) => {
+		const key = request.headers["x-goog-api-key"];
+		requests.push({ path: request.url ?? "", key: typeof key === "string" ? key : undefined });
+		if (key !== "gem-test-key") {
+			response.writeHead(403, "Forbidden").end();
+			return;
+		}
+		const secondPage = new URL(request.url ?? "/", "http://stub").searchParams.get("pageToken") === "page-2";
+		const body = secondPage
+			? {
+					models: [
+						{
+							name: "models/gemini-b",
+							displayName: "Gemini B",
+							supportedGenerationMethods: ["generateContent", "countTokens"],
+						},
+					],
+				}
+			: {
+					models: [
+						{ name: "models/gemini-a", supportedGenerationMethods: ["generateContent"] },
+						{ name: "models/text-embedding-004", supportedGenerationMethods: ["embedContent"] },
+					],
+					nextPageToken: "page-2",
+				};
+		response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address() as AddressInfo;
+	return {
+		url: `http://127.0.0.1:${address.port}`,
+		requests,
+		close: () => new Promise((resolve) => server.close(() => resolve())),
+	};
+}
+
+async function captureStream(
+	stream: NodeJS.WriteStream,
+	run: () => Promise<number>,
+): Promise<{ code: number; output: string }> {
+	const written: string[] = [];
+	const original = stream.write.bind(stream);
+	stream.write = ((chunk: string | Uint8Array) => {
+		written.push(String(chunk));
+		return true;
+	}) as typeof stream.write;
+	try {
+		const code = await run();
+		return { code, output: written.join("") };
+	} finally {
+		stream.write = original;
+	}
+}
+
+const captureStdout = (run: () => Promise<number>) => captureStream(process.stdout, run);
+const captureStderr = (run: () => Promise<number>) => captureStream(process.stderr, run);
+
+describe("provider transport boundary", () => {
+	it("applies a model-picker selection for the session on Enter", () => {
+		const settings = structuredClone(DEFAULT_SETTINGS) as PancodeSettings;
+		settings.chat.target = "old-target";
+		settings.chat.model = "old-model";
+		const transitions: { state: OverlayState; handle: OverlayHandle | null } = { state: "closed", handle: null };
+		const captured: { modelView?: ModelOverlayView; scopeDeps?: OpenModelScopeOverlayDeps } = {};
+		const closeOverlay = (): void => {
+			if (transitions.state === "closed") return;
+			const handle = transitions.handle;
+			transitions.state = "closed";
+			transitions.handle = null;
+			handle?.hide();
+		};
+		const selectors = createOverlayModelSelectors({
+			tui: { requestRender: () => undefined } as TUI,
+			transitions,
+			providers: { list: () => [] } as unknown as ProvidersContract,
+			bus: {} as TelemetryHub,
+			refreshFooter: () => undefined,
+			notify: () => undefined,
+			closeOverlay,
+			getSettings: () => settings,
+			onSelectModel: (ref, scope) => {
+				strictEqual(scope, "session");
+				settings.chat.target = ref.target;
+				settings.chat.model = ref.model;
+			},
+			openModelOverlay: (_tui, deps) => {
+				captured.modelView = new ModelOverlayView(
+					[selectableModelRow()],
+					{ totalModels: 1, targets: 1, localModels: 1, cloudModels: 0, activeRef: "old-target/old-model" },
+					deps.onSelect,
+					deps.onToggleFavorite,
+					deps.onClose,
+				);
+				return inertOverlayHandle(() => captured.modelView?.dispose());
+			},
+			openModelScopeOverlay: (_tui, deps) => {
+				captured.scopeDeps = deps;
+				return inertOverlayHandle();
+			},
+		});
+
+		selectors.openModelOverlayState();
+		strictEqual(transitions.state, "model");
+		captured.modelView?.handleInput("\r");
+		strictEqual(transitions.state, "closed", "Enter must apply without a scope card");
+		strictEqual(captured.scopeDeps, undefined);
+		strictEqual(settings.chat.target, "next-target");
+		strictEqual(settings.chat.model, "next-model");
+	});
+
+	it("selects canonical built-in runtimes once", () => {
+		const registry = createRuntimeRegistry();
+		registerBuiltinRuntimes(registry);
+		ok(registry.get("lmstudio") !== null);
+		ok(registry.get("ollama") !== null);
+		strictEqual(registry.list().filter((runtime) => runtime.id === "lmstudio").length, 1);
+		strictEqual(registry.get("not-installed"), null);
+	});
+
+	it("declares the Claude CLI agent loop without changing its subscription identity", () => {
+		strictEqual(claudeCodeRuntime.kind, "subprocess");
+		strictEqual(claudeCodeRuntime.auth, "claude-cli");
+		strictEqual(isOrchestratorEligibleRuntime(claudeCodeRuntime), false);
+		strictEqual(claudeCodeRuntime.externalAgentLoop?.tools, "externally-governed-unobserved");
+		strictEqual(claudeCodeRuntime.externalAgentLoop?.network, "externally-governed-unobserved");
+		strictEqual(claudeCodeRuntime.externalAgentLoop?.budget, "external-one-shot");
+		strictEqual(claudeCodeRuntime.externalAgentLoop?.generatingRetry, "allowed");
+		strictEqual(claudeCodeRuntime.externalAgentLoop?.modelCatalog, "static");
+		const registry = createRuntimeRegistry();
+		registerBuiltinRuntimes(registry);
+		const groups = new Map(listProviderSupportEntries(registry.list()).map((entry) => [entry.runtimeId, entry.group]));
+		strictEqual(groups.get("claude-code"), "subscription");
+		strictEqual(groups.get("antigravity-code"), "external-worker");
+	});
+
+	it("keeps Antigravity dispatch-only and consumes its structured CLI contracts", () => {
+		strictEqual(antigravityCodeRuntime.kind, "subprocess");
+		strictEqual(isOrchestratorEligibleRuntime(antigravityCodeRuntime), false);
+		strictEqual(antigravityCodeRuntime.outputParser, "antigravity-stream-json");
+		strictEqual(antigravityCodeRuntime.apiFamily, "external-agent-subprocess");
+		strictEqual(antigravityCodeRuntime.externalAgentLoop?.tools, "externally-governed-unobserved");
+		strictEqual(antigravityCodeRuntime.externalAgentLoop?.budget, "external-one-shot");
+		strictEqual(antigravityCodeRuntime.externalAgentLoop?.generatingRetry, "forbidden");
+		deepStrictEqual(
+			parseAntigravityModelCatalogDetails(
+				JSON.stringify({
+					status: "SUCCESS",
+					command: {
+						name: "models",
+						data: {
+							models: [
+								{ id: "gemini-live-high", label: "Gemini Live (High)" },
+								{ id: "gemini-live-low", label: "Gemini Live (Low)" },
+							],
+						},
+					},
+				}),
+			).models,
+			["gemini-live-high", "gemini-live-low"],
+		);
+		throws(() => parseAntigravityModelCatalogDetails('{"status":"SUCCESS"}'), /unsupported model catalog/);
+		deepStrictEqual(
+			parseAntigravityStreamLine(
+				'{"event":"step_update","step_update":{"conversation_id":"c-1","step_type":"agent_response","text_delta":"hello"}}',
+			),
+			{
+				event: "text",
+				conversationId: "c-1",
+				delta: "hello",
+			},
+		);
+		deepStrictEqual(parseAntigravityStreamLine('{"event":"result","result":{"status":"SUCCESS","response":"hello"}}'), {
+			event: "result",
+			result: { status: "SUCCESS", response: "hello" },
+		});
+	});
+
+	it("launches Antigravity with explicit structured and autonomy controls", () => {
+		const base = {
+			systemPrompt: "Use primary sources.",
+			agentId: "researcher",
+			task: "Compare the two standards.",
+			target: { id: "agy-research", runtime: "antigravity-code" },
+			runtime: antigravityCodeRuntime,
+			wireModelId: "gemini-3.8-flash-high",
+			allowedTools: [],
+			budget: { mode: "advisory" as const, toolCalls: 18, synthesis: true, hardCap: 50 },
+			readOnly: true as const,
+		};
+		const args = buildAgyArgs(base);
+		deepStrictEqual(args.slice(0, 9), [
+			"--mode",
+			"plan",
+			"--sandbox",
+			"--input-format",
+			"stream-json",
+			"--output-format",
+			"stream-json",
+			"--disable-slash-commands",
+			"--model",
+		]);
+		ok(!args.includes("--print"));
+		ok(!args.some((arg) => arg.includes("Compare the two standards.")));
+		deepStrictEqual(JSON.parse(buildAgyStdinLine(base)), {
+			event: "user",
+			message: { content: "Use primary sources.\n\nCompare the two standards." },
+		});
+		strictEqual(antigravitySubprocessConfig(false).externalMode, "accept-edits");
+		strictEqual(antigravitySubprocessConfig(true).externalMode, "plan+sandbox");
+	});
+
+	it("projects only model quirks consumed by the engine", () => {
+		deepStrictEqual(
+			extractLocalModelQuirks({
+				kvCache: { kQuant: "q8_0", vQuant: "q4_0" },
+				sampling: {
+					thinking: { temperature: 0.6, maxTokens: 32_768 },
+					instruct: { topP: 0.9, maxTokens: 4_096 },
+				},
+				thinking: { mechanism: "on-off" },
+			}),
+			{
+				sampling: {
+					thinking: { temperature: 0.6 },
+					instruct: { topP: 0.9 },
+				},
+				thinking: { mechanism: "on-off" },
+			},
+		);
+	});
+
+	it("sends one normalized OpenAI-compatible request and returns the streamed answer", async () => {
+		const model = synthesizeOpenAICompatModel({
+			target: {
+				id: "local",
+				runtime: "openai-compat",
+				url: "http://localhost:1234/v1/",
+				auth: { headers: { "X-Contract": "provider-wire" } },
+			},
+			wireModelId: "wire-model",
+			kb: null,
+			defaultCapabilities: { ...EMPTY_CAPABILITIES, chat: true },
+			provider: "openai-compat",
+		}) as Model<"openai-completions">;
+		strictEqual(model.baseUrl, "http://localhost:1234/v1");
+
+		let requestUrl = "";
+		let payload: Record<string, unknown> | undefined;
+		const events: AssistantMessageEvent[] = [];
+		const context = { messages: [{ role: "user", content: "hello", timestamp: 0 }] } as unknown as Context;
+		for await (const event of openAICompletionsApiProvider.streamSimple(model, context, {
+			apiKey: "test-key",
+			onPayload: (value) => {
+				payload = value as Record<string, unknown>;
+				return undefined;
+			},
+			fetch: async (input) => {
+				requestUrl = String(input);
+				return completionResponse("wire-ok");
+			},
+		})) {
+			events.push(event);
+		}
+		strictEqual(requestUrl, "http://localhost:1234/v1/chat/completions");
+		strictEqual(payload?.model, "wire-model");
+		ok(Array.isArray(payload?.messages));
+		const done = events.find((event) => event.type === "done");
+		ok(done?.type === "done");
+		deepStrictEqual(done.message.content, [{ type: "text", text: "wire-ok" }]);
+	});
+
+	it("fails a partial-text stream that reaches EOF without a finish reason", async () => {
+		const model = litellmRuntime.synthesizeModel(
+			{ id: "gateway", runtime: "litellm", url: "http://gateway.invalid:4000" },
+			"wire-model",
+			null,
+		) as Model<"openai-completions">;
+		const context = { messages: [{ role: "user", content: "hello", timestamp: 0 }] } as unknown as Context;
+		const chunk = { model: "wire-model", choices: [{ index: 0, delta: { content: "partial answer" } }] };
+		const result = await openAICompletionsApiProvider
+			.streamSimple(model, context, {
+				apiKey: "test-key",
+				fetch: async () =>
+					new Response(`data: ${JSON.stringify(chunk)}\n\n`, {
+						status: 200,
+						headers: { "content-type": "text/event-stream" },
+					}),
+			})
+			.result();
+		strictEqual(result.stopReason, "error");
+		ok(result.errorMessage?.includes("response is incomplete"), result.errorMessage);
+		deepStrictEqual(result.content, [{ type: "text", text: "partial answer" }]);
+	});
+
+	it("reports the response model id, cache-read count and llama.cpp timings only when the stream carried them", async () => {
+		const done = async (chunks: ReadonlyArray<Record<string, unknown>>) => {
+			const model = synthesizeOpenAICompatModel({
+				target: { id: "local", runtime: "llamacpp", url: "http://llama.invalid:8080", lifecycle: "user-managed" },
+				wireModelId: "wire-model",
+				kb: null,
+				defaultCapabilities: { ...EMPTY_CAPABILITIES, chat: true },
+				provider: "llamacpp",
+			}) as Model<"openai-completions">;
+			const context = { messages: [{ role: "user", content: "hello", timestamp: 0 }] } as unknown as Context;
+			const body = [...chunks.map((chunk) => `data: ${JSON.stringify(chunk)}`), "data: [DONE]", ""].join("\n\n");
+			const result = await openAICompletionsApiProvider
+				.streamSimple(model, context, {
+					apiKey: "test-key",
+					fetch: async () => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }),
+				})
+				.result();
+			strictEqual(result.stopReason, "stop", result.errorMessage);
+			return result;
+		};
+		const reported = await done([
+			{ model: "served-model", choices: [{ index: 0, delta: { content: "ok" } }] },
+			{
+				model: "served-model",
+				choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+				usage: {
+					prompt_tokens: 100,
+					completion_tokens: 5,
+					total_tokens: 105,
+					prompt_tokens_details: { cached_tokens: 80 },
+				},
+				timings: { prompt_n: 20, prompt_ms: 40, predicted_n: 5, predicted_ms: 100, cache_n: 80 },
+			},
+		]);
+		deepStrictEqual(reported.responseModelIdObservation, { state: "reported", reportedModelId: "served-model" });
+		strictEqual(reported.usage.cacheReadField, "sent");
+		deepStrictEqual(reported.backendTimings, {
+			promptTokens: 100,
+			cachedTokens: 80,
+			predictedTokens: 5,
+			promptMs: 40,
+			predictedMs: 100,
+			source: "llamacpp-timings",
+		});
+		const silent = await done([
+			{ choices: [{ index: 0, delta: { content: "ok" } }] },
+			{
+				choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+				usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+			},
+		]);
+		deepStrictEqual(silent.responseModelIdObservation, { state: "not-reported" });
+		strictEqual(silent.usage.cacheReadField, "omitted");
+		strictEqual(silent.backendTimings, undefined);
+		// Astra r1-6: Pi normalizes DeepSeek's prompt_cache_hit_tokens, so presence must count it too.
+		const deepseek = await done([
+			{
+				choices: [{ index: 0, delta: { content: "ok" }, finish_reason: "stop" }],
+				usage: { prompt_tokens: 10000, completion_tokens: 1, total_tokens: 10001, prompt_cache_hit_tokens: 8192 },
+			},
+		]);
+		deepStrictEqual([deepseek.usage.cacheRead, deepseek.usage.cacheReadField], [8192, "sent"]);
+	});
+
+	it("applies LiteLLM request controls and records its physical route", async () => {
+		const model = litellmRuntime.synthesizeModel(
+			{
+				id: "blade",
+				runtime: "litellm",
+				url: "http://blade.example:4000",
+				litellm: {
+					request: {
+						tags: ["homelab"],
+						timeoutSeconds: 90,
+						streamTimeoutSeconds: 180,
+						numRetries: 1,
+					},
+				},
+			},
+			"dynamo/qwen3.8-27b",
+			null,
+		) as Model<"openai-completions">;
+		let requestHeaders = new Headers();
+		const events: AssistantMessageEvent[] = [];
+		const context = { messages: [{ role: "user", content: "hello", timestamp: 0 }] } as unknown as Context;
+		for await (const event of openAICompletionsApiProvider.streamSimple(model, context, {
+			apiKey: "test-key",
+			sessionId: "session-stable-1234",
+			fetch: async (_input, init) => {
+				requestHeaders = new Headers(init?.headers);
+				return completionResponse("gateway-ok", {
+					"x-litellm-call-id": "call-1",
+					"x-litellm-model-group": "dynamo/qwen3.8-27b",
+					"x-litellm-model-name": "openai/qwen3.8-27b",
+					"x-litellm-model-api-base": "http://user:secret@dynamo.example:1234/v1?token=secret",
+					"x-litellm-model-id": "deployment-1",
+					"x-litellm-attempted-fallbacks": "0",
+					"x-litellm-attempted-retries": "0",
+					"x-litellm-overhead-duration-ms": "1.4",
+				});
+			},
+		})) {
+			events.push(event);
+		}
+		strictEqual(requestHeaders.get("x-litellm-tags"), "pancode,homelab");
+		strictEqual(requestHeaders.get("x-litellm-session-id"), "session-stable-1234");
+		strictEqual(requestHeaders.get("x-litellm-timeout"), "90");
+		strictEqual(requestHeaders.get("x-litellm-stream-timeout"), "180");
+		strictEqual(requestHeaders.get("x-litellm-num-retries"), "1");
+		const done = events.find((event) => event.type === "done");
+		ok(done?.type === "done");
+		deepStrictEqual(done.message.gatewayRouting, {
+			gateway: "litellm",
+			callId: "call-1",
+			modelGroup: "dynamo/qwen3.8-27b",
+			modelName: "openai/qwen3.8-27b",
+			apiBaseHost: "dynamo.example:1234",
+			deploymentId: "deployment-1",
+			attemptedFallbacks: 0,
+			attemptedRetries: 0,
+			overheadMs: 1.4,
+		});
+	});
+
+	it("fails a LiteLLM physical route once with an actionable model-selection error", async () => {
+		const model = litellmRuntime.synthesizeModel(
+			{ id: "blade", runtime: "litellm", url: "http://blade.example:4000" },
+			"dynamo/qwen3.8-27b",
+			null,
+		) as Model<"openai-completions">;
+		let requests = 0;
+		let failure = "";
+		const context = { messages: [{ role: "user", content: "hello", timestamp: 0 }] } as unknown as Context;
+		try {
+			for await (const event of openAICompletionsApiProvider.streamSimple(model, context, {
+				apiKey: "test-key",
+				fetch: async () => {
+					requests += 1;
+					return new Response(JSON.stringify({ error: { message: "unavailable", type: "server_error" } }), {
+						status: 503,
+						headers: { "content-type": "application/json" },
+					});
+				},
+			})) {
+				if (event.type === "error") failure = event.error.errorMessage ?? "";
+			}
+		} catch (error) {
+			failure = error instanceof Error ? error.message : String(error);
+		}
+		strictEqual(requests, 1);
+		ok(failure.includes("unavailable"), failure);
+		ok(failure.includes("dynamo/qwen3.8-27b"), failure);
+		ok(failure.includes("target 'blade'"), failure);
+		ok(failure.includes("/model"), failure);
+		ok(failure.includes("did not substitute"), failure);
+	});
+
+	it("restores the provider error body that the SDK truncated and keeps route advice visible", async () => {
+		const model = litellmRuntime.synthesizeModel(
+			{ id: "blade", runtime: "litellm", url: "http://blade.example:4000" },
+			"dynamo/qwen3.8-27b",
+			null,
+		) as Model<"openai-completions">;
+		const detail = `${"x".repeat(20_000)}TAIL-EVIDENCE`;
+		let failure = "";
+		const context = { messages: [{ role: "user", content: "hello", timestamp: 0 }] } as unknown as Context;
+		for await (const event of openAICompletionsApiProvider.streamSimple(model, context, {
+			apiKey: "test-key",
+			fetch: async () =>
+				new Response(JSON.stringify({ error: { message: detail, type: "server_error" } }), {
+					status: 503,
+					headers: { "content-type": "application/json" },
+				}),
+		})) {
+			if (event.type === "error") failure = event.error.errorMessage ?? "";
+		}
+		ok(failure.includes("TAIL-EVIDENCE"), failure.slice(-300));
+		ok(!failure.includes("[truncated"), failure.slice(-300));
+		ok(presentProviderError(failure).includes("select a different route with /model"));
+		// A body that is not the one the SDK truncated never rewrites its diagnostic.
+		const capped = `503: ${"y".repeat(4000)}... [truncated 9 chars]`;
+		strictEqual(restoreTruncatedErrorBody(capped, JSON.stringify({ error: { message: detail } })), capped);
+	});
+
+	it("does not claim structured output when LiteLLM publishes no capability metadata", () => {
+		strictEqual(litellmRuntime.defaultCapabilities.structuredOutputs, "none");
+	});
+
+	it("uses only a gateway route's max_input_tokens as its serving window", () => {
+		strictEqual(capabilitiesFromLiteLLMModelInfo({ max_tokens: 1_048_576 }).contextWindow, undefined);
+		strictEqual(
+			capabilitiesFromLiteLLMModelInfo({ max_tokens: 1_048_576, max_input_tokens: 880_128 }).contextWindow,
+			880_128,
+		);
+		// PV-7: an output limit equal to the window is the gateway's filler, not the model's limit.
+		strictEqual(
+			capabilitiesFromLiteLLMModelInfo({ max_input_tokens: 262_144, max_output_tokens: 262_144 }).maxTokens,
+			undefined,
+		);
+	});
+
+	it("aggregates a LiteLLM alias to capabilities guaranteed by every deployment", () => {
+		const strong = capabilitiesFromLiteLLMModelInfo({
+			mode: "chat",
+			max_input_tokens: 262_144,
+			max_output_tokens: 65_536,
+			supports_function_calling: true,
+			supports_vision: true,
+			supports_response_schema: true,
+		});
+		const narrow = capabilitiesFromLiteLLMModelInfo({
+			mode: "chat",
+			max_input_tokens: 131_072,
+			max_output_tokens: 32_768,
+			supports_function_calling: true,
+			supports_vision: false,
+			supports_response_schema: false,
+		});
+		deepStrictEqual(aggregateLiteLLMCapabilities([strong, narrow]), {
+			chat: true,
+			tools: true,
+			vision: false,
+			structuredOutputs: "none",
+			contextWindow: 131_072,
+			maxTokens: 32_768,
+		});
+	});
+
+	it("reports an unavailable probe instead of inventing a healthy target", async () => {
+		const runtime = makeOpenAICompatRuntime({
+			id: "contract-runtime",
+			displayName: "Contract Runtime",
+			provider: "contract",
+			auth: "none",
+			tier: "protocol",
+			defaultCapabilities: { ...EMPTY_CAPABILITIES, chat: true },
+		});
+		const result = await runtime.probe?.(
+			{ id: "missing-url", runtime: runtime.id },
+			{ credentialsPresent: new Set(), httpTimeoutMs: 100 },
+		);
+		strictEqual(result?.ok, false);
+		ok((result?.error?.length ?? 0) > 0);
+		strictEqual(result?.models, undefined);
+	});
+
+	it("authenticates Anthropic-compatible setup probes with the resolved target key", async (t) => {
+		t.mock.method(globalThis, "fetch", async (_url: string, init: RequestInit) => {
+			const headers = new Headers(init.headers);
+			strictEqual(headers.get("x-api-key"), "target-test-key");
+			strictEqual(headers.get("anthropic-version"), "2023-06-01");
+			strictEqual(headers.get("authorization"), null);
+			return new Response(JSON.stringify({ data: [{ id: "claude-model" }] }));
+		});
+		const target = { id: "keyed", runtime: "anthropic-compat", url: "http://localhost:8080" };
+		const ctx = { credentialsPresent: new Set<string>(), httpTimeoutMs: 100, authToken: "target-test-key" };
+		strictEqual((await anthropicCompatRuntime.probe?.(target, ctx))?.ok, true);
+		deepStrictEqual(await anthropicCompatRuntime.probeModels?.(target, ctx), ["claude-model"]);
+	});
+
+	it("loads configured runtime packages for providers and worker rehydration", async () => {
+		const env = await isolatePancodeEnv("pancode-runtime-packages-");
+		const workerRegistry = getRuntimeRegistry();
+		const previous = workerRegistry.list();
+		try {
+			mkdirSync(join(pancodeConfigDir(), "runtimes"), { recursive: true });
+			const packageFile = join(pancodeConfigDir(), "runtimes", "runtime-package.mjs");
+			writeFileSync(
+				packageFile,
+				`export const pancodeRuntimes = [{
+				id: "contract-package", displayName: "Contract Package", kind: "http",
+				apiFamily: "openai-completions", auth: "none", defaultCapabilities: { chat: true },
+				synthesizeModel: (_target, wireModelId) => ({ id: wireModelId, provider: "contract-package" })
+			}];\n`,
+			);
+			ensurePancodeState();
+			updateSettings((settings) => {
+				settings.integrations.runtimePlugins = [packageFile];
+			});
+			const registry = createRuntimeRegistry();
+			deepStrictEqual(await loadPluginRuntimes(registry, readSettings()), ["contract-package"]);
+			ok(registry.get("contract-package"));
+			const workerRuntime = await resolveWorkerRuntime("contract-package");
+			ok(workerRuntime);
+			strictEqual(workerRuntime.synthesizeModel({ id: "target", runtime: workerRuntime.id }, "model", null).id, "model");
+		} finally {
+			workerRegistry.clear();
+			for (const descriptor of previous) workerRegistry.register(descriptor);
+			env.restore();
+		}
+	});
+
+	it("loads a valid runtime plugin from a directory", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "pancode-runtime-plugin-"));
+		temporaryDirectories.push(directory);
+		writeFileSync(
+			join(directory, "contract-plugin.js"),
+			`export default {
+				id: "contract-plugin", displayName: "Contract Plugin", kind: "http",
+				apiFamily: "openai-completions", auth: "none",
+				defaultCapabilities: { chat: true },
+				synthesizeModel: (_target, wireModelId) => ({ id: wireModelId, provider: "contract-plugin" })
+			};\n`,
+			"utf8",
+		);
+		const registry = createRuntimeRegistry();
+		deepStrictEqual(await registry.loadFromDir(directory), ["contract-plugin"]);
+		const plugin = registry.get("contract-plugin");
+		ok(plugin !== null);
+		strictEqual(plugin.synthesizeModel({ id: "target", runtime: plugin.id }, "model", null).id, "model");
+	});
+	it("lists only the Gemini models a key can generate with, across pages, and sends nothing without a key", async () => {
+		const stub = await startGeminiStub();
+		const saved = { GOOGLE_API_KEY: process.env.GOOGLE_API_KEY, GEMINI_API_KEY: process.env.GEMINI_API_KEY };
+		try {
+			const target = { id: "gem", runtime: "google", url: `${stub.url}/v1beta` };
+			const ctx = (authToken?: string) => ({
+				credentialsPresent: new Set<string>(),
+				httpTimeoutMs: 2000,
+				...(authToken ? { authToken } : {}),
+			});
+			const listed = await googleRuntime.probe?.(target, ctx("gem-test-key"));
+			strictEqual(listed?.ok, true);
+			deepStrictEqual(listed?.models, ["gemini-a", "gemini-b"]);
+			deepStrictEqual(listed?.modelLabels, { "gemini-b": "Gemini B" });
+			deepStrictEqual(stub.requests, [
+				{ path: "/v1beta/models?pageSize=1000", key: "gem-test-key" },
+				{ path: "/v1beta/models?pageSize=1000&pageToken=page-2", key: "gem-test-key" },
+			]);
+
+			const refused = await googleRuntime.probe?.(target, ctx("bad-key"));
+			strictEqual(refused?.ok, false);
+			strictEqual(refused?.authFailed, true);
+			strictEqual(refused?.failureKind, "authentication");
+			strictEqual(refused?.error, "the Gemini API refused the key (HTTP 403: Forbidden)");
+
+			delete process.env.GOOGLE_API_KEY;
+			delete process.env.GEMINI_API_KEY;
+			const before = stub.requests.length;
+			const keyless = await googleRuntime.probe?.(target, ctx());
+			strictEqual(keyless?.failureKind, "missing");
+			strictEqual(stub.requests.length, before, "a keyless listing must not reach the API");
+		} finally {
+			for (const [name, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+			await stub.close();
+		}
+	});
+
+	it("words the catalog fallback in `models` and lets a live Gemini list replace the catalog", async () => {
+		const env = await isolatePancodeEnv("pancode-models-fallback-");
+		const stub = await startGeminiStub();
+		try {
+			updateSettings((settings) => {
+				settings.targets.push({
+					id: "gem",
+					runtime: "google",
+					url: `${stub.url}/v1beta`,
+					defaultModel: "gemini-unlisted",
+				});
+			});
+			process.env.GOOGLE_API_KEY = "bad-key";
+			const refused = await captureStdout(() => runModelsCommand(["--target", "gem"]));
+			ok(refused.output.includes("gemini-2.5-pro"), `the catalog is the fallback:\n${refused.output}`);
+			ok(
+				refused.output.includes(
+					"gem: provider catalog, not verified live: the Gemini API refused the key (HTTP 403: Forbidden)",
+				),
+				refused.output,
+			);
+
+			process.env.GOOGLE_API_KEY = "gem-test-key";
+			const live = await captureStdout(() => runModelsCommand(["--target", "gem", "--json"]));
+			const rows = JSON.parse(live.output) as Array<{
+				modelId: string;
+				source: string;
+				note?: string;
+				thinkingLevels?: string[];
+			}>;
+			deepStrictEqual(
+				rows.map((row) => [row.modelId, row.source, row.note]),
+				[
+					["gemini-a", "live", undefined],
+					["gemini-b", "live", undefined],
+				],
+			);
+			// Each row names the thinking levels its route offers, as ACP advertises them (bt-20 papercut 1).
+			ok(
+				rows.every((row) => (row.thinkingLevels?.length ?? 0) > 0),
+				live.output,
+			);
+
+			// A live list judges the default model too, where the catalog used to excuse it.
+			const loaded = await loadDomains([ConfigDomainModule, ProvidersDomainModule]);
+			try {
+				const providers = loaded.getContract("providers");
+				await providers?.probeAllLive();
+				const status = providers?.list().find((entry) => entry.target.id === "gem");
+				strictEqual(status?.health.status, "degraded");
+				strictEqual(status?.health.lastError, "default model 'gemini-unlisted' is not advertised by the target");
+			} finally {
+				await loaded.stop();
+			}
+
+			process.env.GOOGLE_API_KEY = "bad-key";
+			const stale = await captureStdout(() => runModelsCommand(["--target", "gem"]));
+			ok(
+				stale.output.includes("gem: cached list, not verified live: the Gemini API refused the key (HTTP 403: Forbidden)"),
+				stale.output,
+			);
+		} finally {
+			await stub.close();
+			env.restore();
+		}
+	});
+
+	it("checks a `targets use` model against the key's live list and words the catalog fallback", async () => {
+		const env = await isolatePancodeEnv("pancode-targets-use-live-");
+		const stub = await startGeminiStub();
+		try {
+			updateSettings((settings) => {
+				for (const id of ["gem", "gem-refused"]) {
+					settings.targets.push({ id, runtime: "google", url: `${stub.url}/v1beta`, defaultModel: "gemini-a" });
+				}
+			});
+			process.env.GOOGLE_API_KEY = "gem-test-key";
+			const unlisted = await captureStderr(() => runTargetsCommand(["use", "gem", "--model", "gemini-2.5-pro"]));
+			strictEqual(unlisted.code, 1);
+			ok(
+				unlisted.output.includes("target 'gem' does not list model 'gemini-2.5-pro' for chat (probe inventory)"),
+				unlisted.output,
+			);
+			strictEqual((await captureStderr(() => runTargetsCommand(["use", "gem", "--model", "gemini-b"]))).code, 0);
+
+			process.env.GOOGLE_API_KEY = "bad-key";
+			const fallback = await captureStderr(() => runTargetsCommand(["use", "gem-refused", "--model", "gemini-2.5-pro"]));
+			strictEqual(fallback.code, 0, fallback.output);
+			ok(
+				fallback.output.includes(
+					"warning: model list for target 'gem-refused' is the provider catalog, not verified live: the Gemini API refused the key (HTTP 403: Forbidden)",
+				),
+				fallback.output,
+			);
+		} finally {
+			await stub.close();
+			env.restore();
+		}
+	});
+
+	it("refuses a configure model the key's live list lacks, and says when only the catalog checked it", async () => {
+		const env = await isolatePancodeEnv("pancode-configure-live-");
+		const stub = await startGeminiStub();
+		const configure = (id: string) =>
+			captureStderr(() =>
+				runConfigureCommand([
+					"--id",
+					id,
+					"--runtime",
+					"google",
+					"--url",
+					`${stub.url}/v1beta`,
+					"--api-key-env",
+					"GOOGLE_API_KEY",
+					"--model",
+					"gemini-2.5-pro",
+				]),
+			);
+		try {
+			process.env.GOOGLE_API_KEY = "gem-test-key";
+			const refused = await configure("gem");
+			strictEqual(refused.code, 2, refused.output);
+			ok(refused.output.includes("does not advertise model 'gemini-2.5-pro'"), refused.output);
+
+			process.env.GOOGLE_API_KEY = "bad-key";
+			const fallback = await configure("gem-offline");
+			strictEqual(fallback.code, 0, fallback.output);
+			ok(
+				fallback.output.includes(
+					"warning: model 'gemini-2.5-pro' was checked against the provider catalog, not verified live: the Gemini API refused the key (HTTP 403: Forbidden)",
+				),
+				fallback.output,
+			);
+			ok(!fallback.output.includes("is not set in this shell"), fallback.output);
+
+			delete process.env.GOOGLE_API_KEY;
+			const unset = await configure("gem-unset");
+			strictEqual(unset.code, 0, unset.output);
+			ok(
+				unset.output.includes("warning: GOOGLE_API_KEY is not set in this shell; export it before using target gem-unset"),
+				unset.output,
+			);
+		} finally {
+			await stub.close();
+			env.restore();
+		}
+	});
+
+	it("puts the fallback note where the model picker names a row's source", () => {
+		const view = new ModelOverlayView(
+			[{ ...selectableModelRow(), source: "catalog", sourceNote: "provider catalog, not verified live: HTTP 503" }],
+			{ totalModels: 1, targets: 1, localModels: 0, cloudModels: 1, activeRef: "" },
+			() => undefined,
+			undefined,
+			() => undefined,
+		);
+		// The runtime fact, where the source is named, is part of the picker's full detail pane.
+		const tier = presentationTier();
+		setPresentationTier("detailed");
+		try {
+			const text = view.render(240).join("\n").replace(ANSI_PATTERN, "");
+			ok(text.includes(" · provider catalog, not verified live: HTTP 503"), text);
+		} finally {
+			setPresentationTier(tier);
+			view.dispose();
+		}
+	});
+});

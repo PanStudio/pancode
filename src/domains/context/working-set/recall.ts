@@ -1,0 +1,284 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/** Exact persisted tool-result recall and bounded discovery on the active path.
+ * Bodies return at the tail through the caller's observation envelope; the raw
+ * ledger, summary cut, and existing eviction markers remain unchanged.
+ */
+
+import { ceilChars } from "../../session/context-accounting.js";
+import type { MessageEntry, SessionEntry } from "../../session/entries.js";
+import { messageText } from "../../session/message-projection.js";
+import { filterEntriesToActivePath } from "../../session/tree/active-path.js";
+import {
+	type ContextRecallFields,
+	EMPTY_WORKING_SET_VIEW,
+	type RecallError,
+	type RecallResult,
+	type RecallTrigger,
+	type WorkingSetView,
+} from "./contract.js";
+import { parseRefKey, refKey } from "./fold.js";
+import { buildPathIndex, callPathsByToolCallId, canonicalize } from "./path-index.js";
+import { offloadPathOf, primaryPathOf, toolResultPayload, toolResultText } from "./payload.js";
+import { compactionCut } from "./visible.js";
+
+export type RecallOutcome = { ok: true; result: RecallResult } | { ok: false; error: RecallError };
+
+function isThinkingEntry(entry: SessionEntry): boolean {
+	return entry.kind === "message" && entry.role === "assistant";
+}
+
+function isToolResultEntry(entry: SessionEntry): entry is MessageEntry {
+	return entry.kind === "message" && entry.role === "tool_result";
+}
+
+/** An assistant turn's own reply text: never its thinking or tool calls. Empty for any other entry. */
+function assistantProse(entry: SessionEntry): string {
+	return entry.kind === "message" && entry.role === "assistant" ? messageText(entry).trim() : "";
+}
+
+export function resolveRecall(
+	entries: ReadonlyArray<SessionEntry>,
+	view: WorkingSetView,
+	ref: string,
+	activeLeafTurnId?: string,
+): RecallOutcome {
+	const parsed = parseRefKey(ref, view);
+	if (parsed === null) return { ok: false, error: { kind: "invalid_ref", ref } };
+	const key = refKey(parsed);
+	const active = filterEntriesToActivePath(entries, activeLeafTurnId);
+	const entry = active.find((candidate) => candidate.turnId === key);
+	if (entry === undefined) {
+		return { ok: false, error: { kind: "not_on_active_path", ref: key } };
+	}
+	// A summary keeps a reply's gist, not its wording: the reply text a cut hid is recallable like a tool result.
+	const prose = assistantProse(entry);
+	if (prose.length > 0) {
+		if (compactionCut(active).visible.some((candidate) => candidate.turnId === key))
+			return { ok: false, error: { kind: "visible", ref: key } };
+		return {
+			ok: true,
+			result: { ref: parsed, state: "summarized", entry, body: prose, tokens: ceilChars(prose.length) },
+		};
+	}
+	if (!isToolResultEntry(entry)) {
+		return { ok: false, error: { kind: "unavailable", ref: key } };
+	}
+	const state = view.evicted.has(key)
+		? "evicted"
+		: compactionCut(active).visible.some((candidate) => candidate.turnId === key)
+			? "visible"
+			: "summarized";
+	if (state === "visible") return { ok: false, error: { kind: "visible", ref: key } };
+	const payload = toolResultPayload(entry.payload);
+	const body = toolResultText(payload.result);
+	const offloadPath = offloadPathOf(payload);
+	return {
+		ok: true,
+		result: {
+			ref: parsed,
+			state,
+			entry,
+			body,
+			tokens: ceilChars(body.length),
+			...(offloadPath !== undefined ? { offloadPath } : {}),
+		},
+	};
+}
+
+/**
+ * Recall by path: the newest evicted read of `path` on the active path. The
+ * path is canonicalized the way the path index keys it, so `src/x.ts`,
+ * `./src/x.ts` and the absolute form all find the same file. A visible read
+ * is not a match (its content is already in context), and a summarized one
+ * is not either: only an evicted read has a marker the model can be pointing
+ * at when it names a file rather than a ref.
+ */
+export function resolveRecallByPath(
+	entries: ReadonlyArray<SessionEntry>,
+	view: WorkingSetView,
+	path: string,
+	cwd: string | null,
+	activeLeafTurnId?: string,
+): RecallOutcome {
+	const active = filterEntriesToActivePath(entries, activeLeafTurnId);
+	const wanted = canonicalize(path, cwd);
+	if (wanted.length === 0) return { ok: false, error: { kind: "no_evicted_read", ref: path, path } };
+	const index = buildPathIndex(active, { cwd });
+	const visible = new Set(compactionCut(active).visible.map((entry) => entry.turnId));
+	for (let i = index.observations.length - 1; i >= 0; i -= 1) {
+		const observation = index.observations[i];
+		if (observation === undefined || observation.op !== "read" || observation.isError) continue;
+		if (observation.path !== wanted || !visible.has(observation.ref.entry) || !view.evicted.has(observation.ref.entry))
+			continue;
+		return resolveRecall(entries, view, observation.ref.entry, activeLeafTurnId);
+	}
+	return { ok: false, error: { kind: "no_evicted_read", ref: path, path } };
+}
+
+/**
+ * The turn a `contextRecall` entry parents onto: the newest message on the
+ * active path. Every recall caller needs this and they must agree, because a
+ * record anchored anywhere else folds onto the wrong branch and a `/tree`
+ * switch would then show a recall the branch never made.
+ */
+export function recallParentTurnId(entries: ReadonlyArray<SessionEntry>, activeLeafTurnId?: string): string | null {
+	const active = filterEntriesToActivePath(entries, activeLeafTurnId);
+	for (let i = active.length - 1; i >= 0; i -= 1) {
+		const candidate = active[i];
+		if (candidate?.kind === "message") return candidate.turnId;
+	}
+	return null;
+}
+
+export function buildRecallFields(
+	result: RecallResult,
+	meta: { trigger: RecallTrigger; toolCallId?: string },
+): ContextRecallFields {
+	return {
+		kind: "contextRecall",
+		ref: { entry: result.ref.entry },
+		trigger: meta.trigger,
+		tokensReadmitted: result.tokens,
+		...(meta.toolCallId !== undefined ? { toolCallId: meta.toolCallId } : {}),
+	};
+}
+
+export interface RecallDiscoveryOptions {
+	/** Case-insensitive terms matched against ref, tool name, and path; a row matching any term is listed. */
+	query?: string;
+	/** Default 8, maximum 12. */
+	limit?: number;
+	/** Zero-based position in matching active-path ledger order. */
+	offset?: number;
+	activeLeafTurnId?: string;
+}
+
+export interface RecallableRefListing {
+	/** Bounded metadata rows; never result bodies or assistant thinking. */
+	refs: string[];
+	remaining: number;
+	total: number;
+	offset: number;
+	nextOffset?: number;
+}
+
+interface RecallableRow {
+	ref: string;
+	toolName: string;
+	path: string | undefined;
+	state: "summarized" | "evicted";
+	entry: SessionEntry;
+}
+
+/**
+ * Recallable active-path results context no longer shows, or with `keptFrom` a cut there hides, in ledger order,
+ * with the assistant replies a cut hid as `toolName: "assistant"` rows.
+ */
+export function recallableRefs(
+	entries: ReadonlyArray<SessionEntry>,
+	view: WorkingSetView,
+	options: { activeLeafTurnId?: string; keptFrom?: number } = {},
+) {
+	const active = filterEntriesToActivePath(entries, options.activeLeafTurnId);
+	const kept = options.keptFrom === undefined ? compactionCut(active).visible : entries.slice(options.keptFrom);
+	const visible = new Set(kept.map((entry) => entry.turnId));
+	const callPaths = callPathsByToolCallId(active);
+	return active.flatMap((entry): RecallableRow[] => {
+		if (assistantProse(entry).length > 0 && !visible.has(entry.turnId)) {
+			return [{ ref: entry.turnId, toolName: "assistant", path: undefined, state: "summarized", entry }];
+		}
+		if (!isToolResultEntry(entry)) return [];
+		const evicted = view.evicted.get(entry.turnId);
+		// An eviction a checkpoint keeps still shows its marker.
+		const shown = visible.has(entry.turnId) && (evicted === undefined || options.keptFrom !== undefined);
+		if (shown) return [];
+		const payload = toolResultPayload(entry.payload);
+		const toolCallId = typeof payload.obj.toolCallId === "string" ? payload.obj.toolCallId : undefined;
+		const path = primaryPathOf(payload) ?? (toolCallId === undefined ? undefined : callPaths.get(toolCallId));
+		const state = evicted === undefined ? "summarized" : "evicted";
+		return [{ ref: evicted?.alias ?? entry.turnId, toolName: payload.toolName, path, state, entry }];
+	});
+}
+
+/** Stable pages for the same active path and query: ledger order, or matched-term count then ledger order. */
+export function recallableRefListing(
+	entries: ReadonlyArray<SessionEntry>,
+	view: WorkingSetView,
+	options: RecallDiscoveryOptions = {},
+): RecallableRefListing {
+	const terms = (options.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+	const limit =
+		typeof options.limit === "number" && Number.isFinite(options.limit)
+			? Math.max(1, Math.min(12, Math.floor(options.limit)))
+			: 8;
+	const offset =
+		typeof options.offset === "number" && Number.isSafeInteger(options.offset) ? Math.max(0, options.offset) : 0;
+	// Any term matches, so a query naming several files or facts lists each; rows matching more terms come first,
+	// ledger order within a count.
+	const matches = recallableRefs(entries, view, options)
+		.map((row) => {
+			const metadata = `${row.ref} ${row.entry.turnId} ${row.toolName} ${row.path ?? ""}`.toLowerCase();
+			return { row, hits: terms.filter((term) => metadata.includes(term)).length };
+		})
+		.filter(({ hits }) => terms.length === 0 || hits > 0)
+		.sort((a, b) => b.hits - a.hits)
+		.map(({ row }) => row);
+	// Keep each row bounded even for unusual tool/path metadata.
+	const refs = matches.slice(offset, offset + limit).map((row) => {
+		const label = `${row.toolName}${row.path === undefined ? "" : ` ${row.path}`}`.replace(/\s+/g, " ").slice(0, 240);
+		return `${row.ref} (${label}) [${row.state}; ${row.entry.timestamp}]`;
+	});
+	const remaining = Math.max(0, matches.length - offset - refs.length);
+	return {
+		refs,
+		remaining,
+		total: matches.length,
+		offset,
+		...(remaining > 0 ? { nextOffset: offset + refs.length } : {}),
+	};
+}
+
+function recallableRefMessage(
+	entries: ReadonlyArray<SessionEntry>,
+	view: WorkingSetView,
+	activeLeafTurnId?: string,
+): string {
+	const listing = recallableRefListing(entries, view, activeLeafTurnId === undefined ? {} : { activeLeafTurnId });
+	if (listing.refs.length === 0) return "No recallable refs on the active path.";
+	const more = listing.remaining > 0 ? `, and ${listing.remaining} more` : "";
+	return `Recallable refs on the active path: ${listing.refs.join(", ")}${more}. Discover all matches with context(scope="recall", limit=8, offset=0), omitting ref; query filters path/tool/ref terms. Follow nextOffset.`;
+}
+
+/**
+ * One-line operator/model-facing message for a recall failure. Says why an
+ * assistant turn is refused instead of calling it "not evicted", and ends with
+ * the refs that can be recalled. `entries` is the active path the view was
+ * folded over; without it the listing is empty.
+ */
+export function recallErrorMessage(
+	error: RecallError,
+	entries: ReadonlyArray<SessionEntry> = [],
+	view: WorkingSetView = EMPTY_WORKING_SET_VIEW,
+	activeLeafTurnId?: string,
+): string {
+	const active = filterEntriesToActivePath(entries, activeLeafTurnId);
+	const listing = ` ${recallableRefMessage(active, view, activeLeafTurnId)}`;
+	switch (error.kind) {
+		case "invalid_ref":
+			return `recall ref must be a single recall alias or turnId without whitespace; got '${error.ref}'.`;
+		case "not_on_active_path":
+			return `ref ${error.ref} is not on the active path of this session (unknown or on an abandoned branch).${listing}`;
+		case "visible":
+			return `ref ${error.ref} is visible; its content is already in context.${listing}`;
+		case "unavailable": {
+			const entry = active.find((candidate) => candidate.turnId === error.ref);
+			if (entry !== undefined && isThinkingEntry(entry)) {
+				return `ref ${error.ref} is an assistant turn with no reply text; thinking is not recallable.${listing}`;
+			}
+			return `ref ${error.ref} has no recallable original tool result (unsupported entry).${listing}`;
+		}
+		case "no_evicted_read":
+			return `no evicted read of ${error.path} on the active path; a visible read is already in context, and a summarized one is recalled by ref.${listing}`;
+	}
+}

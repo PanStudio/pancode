@@ -1,0 +1,419 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Domain-owned eager event ingestion for dispatched runs.
+ *
+ * Correctness-critical event folding (token metering, tool stats, finish
+ * contract, assistant output capture) used to run as a side effect of an
+ * external consumer iterating the returned event stream. A fast worker could
+ * finish before anyone iterated, sealing a zero-token receipt. The pump
+ * inverts that: the dispatch domain starts consuming the source stream the
+ * moment a run is registered, folds every event itself, and hands external
+ * consumers a bounded replay tee. Receipts never depend on whether a UI or
+ * tool happened to subscribe.
+ *
+ * The tee is bounded (drop-oldest) so an absent or abandoned consumer cannot
+ * grow memory: the source channel (worker-spawn) already buffers unboundedly,
+ * and duplicating that here would double the hazard. Dropped events only
+ * degrade live display; every receipt-bearing fact was already folded.
+ */
+
+import { ToolNames } from "../../core/tool-names.js";
+import { isRecord } from "../../core/type-guards.js";
+import { truncateUtf8 } from "../../tools/truncate-utf8.js";
+import { resultContractOutputBytes } from "../agents/result-contract-allowance.js";
+import type { ResultContract, StructuredHelperResult } from "../agents/result-contract-types.js";
+import type { RunResultOutput } from "./types.js";
+
+/** Bounded replay capacity for the external consumer tee. */
+export const EVENT_TEE_LIMIT = 1024;
+
+export interface DispatchEventPump {
+	/** Single-consumer bounded replay of the source stream, oldest first. */
+	events: AsyncIterableIterator<unknown>;
+	/** Settles when every source event has been folded (source exhausted). */
+	done: Promise<void>;
+	/** Events dropped from the tee because no consumer kept pace. */
+	droppedEvents(): number;
+}
+
+export interface StartDispatchEventPumpOptions {
+	/** Synthetic events delivered to the consumer before source events (e.g. route warnings). Not folded. */
+	prelude?: ReadonlyArray<unknown>;
+	limit?: number;
+	/** Invoked for fold or source-iteration failures; ingestion continues where possible. */
+	onError?: (error: unknown) => void;
+	/** Domain-owned live projection invoked once for every consumer-visible event. */
+	onEvent?: (event: unknown) => void;
+}
+
+export interface BoundedTee {
+	/** Single-consumer replay, oldest first. */
+	events: AsyncIterableIterator<unknown>;
+	/** Deliver to a waiting consumer or buffer, dropping the oldest past the limit. Ignored once ended or abandoned. */
+	push(value: unknown): void;
+	/** No further values; the consumer drains what is buffered, then ends. Idempotent. */
+	end(): void;
+	/** Values dropped because no consumer kept pace. */
+	dropped(): number;
+}
+
+/**
+ * Bounded drop-oldest queue for one consumer. Producers never await it, so a
+ * slow or absent reader degrades live display and cannot stall ingestion; the
+ * consumer's early `return()` abandons the queue and later pushes are ignored.
+ */
+export function createBoundedTee(limit: number, prelude: ReadonlyArray<unknown> = []): BoundedTee {
+	const pending = new Map<number, unknown>();
+	let readIndex = 0;
+	let writeIndex = 0;
+	for (const event of prelude) pending.set(writeIndex++, event);
+	const shiftPending = (): unknown => {
+		const value = pending.get(readIndex);
+		pending.delete(readIndex++);
+		if (pending.size === 0) readIndex = writeIndex = 0;
+		return value;
+	};
+	const waiters: Array<(result: IteratorResult<unknown>) => void> = [];
+	let finished = false;
+	let abandoned = false;
+	let dropped = 0;
+
+	const events: AsyncIterableIterator<unknown> = {
+		next(): Promise<IteratorResult<unknown>> {
+			if (pending.size > 0) {
+				return Promise.resolve({ value: shiftPending(), done: false });
+			}
+			if (finished || abandoned) return Promise.resolve({ value: undefined, done: true });
+			return new Promise<IteratorResult<unknown>>((resolve) => {
+				waiters.push(resolve);
+			});
+		},
+		return(): Promise<IteratorResult<unknown>> {
+			abandoned = true;
+			pending.clear();
+			readIndex = writeIndex = 0;
+			while (waiters.length > 0) {
+				waiters.shift()?.({ value: undefined, done: true });
+			}
+			return Promise.resolve({ value: undefined, done: true });
+		},
+		[Symbol.asyncIterator](): AsyncIterableIterator<unknown> {
+			return this;
+		},
+	};
+
+	return {
+		events,
+		push(value: unknown): void {
+			if (abandoned || finished) return;
+			const waiter = waiters.shift();
+			if (waiter) {
+				waiter({ value, done: false });
+				return;
+			}
+			pending.set(writeIndex++, value);
+			while (pending.size > limit) {
+				shiftPending();
+				dropped += 1;
+			}
+		},
+		end(): void {
+			if (finished) return;
+			finished = true;
+			while (waiters.length > 0) {
+				waiters.shift()?.({ value: undefined, done: true });
+			}
+		},
+		dropped: () => dropped,
+	};
+}
+
+/**
+ * Start consuming `source` immediately, folding every event through `fold`
+ * and buffering it for one external consumer. A fold failure is reported and
+ * skipped so one malformed event cannot starve the meters behind it; a source
+ * failure ends the pump. The consumer's early `return()` abandons the tee
+ * without stopping ingestion.
+ */
+export function startDispatchEventPump(
+	source: AsyncIterable<unknown>,
+	fold: (event: unknown) => void,
+	options: StartDispatchEventPumpOptions = {},
+): DispatchEventPump {
+	const tee = createBoundedTee(options.limit ?? EVENT_TEE_LIMIT, options.prelude);
+	const notify = (event: unknown): void => {
+		try {
+			options.onEvent?.(event);
+		} catch (error) {
+			options.onError?.(error);
+		}
+	};
+
+	const done = (async (): Promise<void> => {
+		try {
+			for (const event of options.prelude ?? []) notify(event);
+			for await (const event of source) {
+				try {
+					fold(event);
+				} catch (error) {
+					options.onError?.(error);
+				}
+				notify(event);
+				tee.push(event);
+			}
+		} catch (error) {
+			options.onError?.(error);
+		} finally {
+			tee.end();
+		}
+	})();
+
+	return { events: tee.events, done, droppedEvents: tee.dropped };
+}
+
+/**
+ * Byte bound on the assistant output text sealed into a receipt. Large enough
+ * for a substantive final answer, small enough that receipts stay cheap to
+ * read and render; overflow is recorded explicitly via `truncated`/`bytes`.
+ * A run whose result contract implies a larger conforming result raises its
+ * own bound through `workerOutputCaptureBytes`; this is the floor.
+ */
+export const WORKER_OUTPUT_MAX_BYTES = 8192;
+const WORKER_OUTPUT_TRUNCATION_MARKER = "\n[worker output truncated]";
+
+/**
+ * The capture bound for one run. A mutation report with a 16 KB summary
+ * allowance cannot be sealed in 8 KB, and clipping it produced a receipt whose
+ * only readable fact was "result must be valid JSON" for a result that was
+ * valid (#350). The contract's own whole-result bound wins when it is larger;
+ * structured helpers share their acceptance ceiling; other contracts keep the floor.
+ */
+export function workerOutputCaptureBytes(contract: ResultContract | null | undefined): number {
+	return Math.max(WORKER_OUTPUT_MAX_BYTES, resultContractOutputBytes(contract) ?? 0);
+}
+
+export interface WorkerOutputCapture {
+	observe(event: unknown): void;
+	snapshot(): RunResultOutput | undefined;
+}
+
+export interface WorkerOutputCaptureOptions {
+	/** Byte bound for the sealed text; defaults to WORKER_OUTPUT_MAX_BYTES. */
+	maxBytes?: number;
+	/** Only enabled for an admitted helper on a runtime with host-owned terminal events. */
+	helperResult?: {
+		contract: ResultContract;
+		validate(data: unknown): StructuredHelperResult | null;
+	};
+}
+
+function assistantTextFromContent(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.map((block) => {
+			if (typeof block === "string") return block;
+			if (!isRecord(block)) return "";
+			return typeof block.text === "string" ? block.text : "";
+		})
+		.join("");
+}
+
+function isDurableAssistantMessage(message: Record<string, unknown>): boolean {
+	const stopReason = message.stopReason;
+	if (stopReason === "toolUse" || stopReason === "error" || stopReason === "aborted" || stopReason === "cancelled") {
+		return false;
+	}
+	if (!Array.isArray(message.content)) return true;
+	return !message.content.some((block) => isRecord(block) && block.type === "toolCall");
+}
+
+/**
+ * Extract text only from a completed, durable assistant answer. Tool-use
+ * preambles are intermediate even when an event projection has stripped the
+ * structured call block. Known failure messages are outcome detail, not a
+ * successful worker answer. All other terminal spellings (including ACP's
+ * `end_turn`) remain provider-compatible.
+ */
+export function durableAssistantTextFromEvent(event: unknown): string {
+	if (!isRecord(event) || event.type !== "message_end" || !isRecord(event.message)) return "";
+	if (event.message.role !== "assistant" || !isDurableAssistantMessage(event.message)) return "";
+	return assistantTextFromContent(event.message.content);
+}
+
+const TERMINAL_ARTIFACT_KINDS: ReadonlySet<string> = new Set(["plan", "review", "report"]);
+
+/**
+ * The document a terminal artifact call writes, from its start arguments:
+ * the direct `artifact` tool or a gateway `op=call` of it. Null for any other call.
+ */
+function terminalArtifactBody(toolName: unknown, args: unknown): string | null {
+	if (!isRecord(args)) return null;
+	const call =
+		toolName === ToolNames.Artifact
+			? args
+			: toolName === ToolNames.Gateway && args.op === "call" && args.capability === ToolNames.Artifact
+				? args.args
+				: null;
+	if (!isRecord(call) || typeof call.kind !== "string" || !TERMINAL_ARTIFACT_KINDS.has(call.kind)) return null;
+	const content = typeof call.content === "string" ? call.content.trim() : "";
+	if (content.length === 0) return null;
+	const title = typeof call.title === "string" ? call.title.trim() : "";
+	return title.length > 0 && !content.startsWith("#") ? `# ${title}\n\n${content}` : content;
+}
+
+/**
+ * The artifact tool's one-line receipt ("wrote plan artifact (712B) to <path>") when the call settled as one. The
+ * start arguments already named an artifact call; a gateway call reports `details.kind` "ok", so only the written
+ * `paths` mark the document as landed.
+ */
+function terminalArtifactReceipt(result: unknown): string | null {
+	if (!isRecord(result) || !isRecord(result.details) || !Array.isArray(result.details.paths)) return null;
+	const line = assistantTextFromContent(result.content).trim().split("\n")[0] ?? "";
+	return line.length > 0 ? line : null;
+}
+
+function boundedOutput(state: RunResultOutput["state"], text: string, maxBytes: number): RunResultOutput {
+	const bytes = Buffer.byteLength(text, "utf8");
+	const bounded = truncateUtf8(text, maxBytes, WORKER_OUTPUT_TRUNCATION_MARKER);
+	return { state, text: bounded, bytes, truncated: bounded !== text };
+}
+
+/**
+ * Fold assistant output out of a run's event stream so the receipt can carry
+ * a durable, bounded copy. A completed assistant `message_end` becomes the
+ * final answer only when it ended as normal text (`stop`/`length`, with no
+ * structured tool call). Tool-use preambles are intermediate and never enter
+ * durable output. Streaming `text_delta` fragments accumulate as the in-flight
+ * partial and are discarded when their message completes. A run that ends
+ * with unflushed deltas (abort, stall, kill mid-message) therefore snapshots
+ * as `partial`, never as final. Accumulation is bounded in memory by the same
+ * byte cap the receipt uses; overflow only marks truncation. The cap is the
+ * run's own (`workerOutputCaptureBytes`), never below the module floor.
+ */
+export function createWorkerOutputCapture(options: WorkerOutputCaptureOptions = {}): WorkerOutputCapture {
+	const maxBytes = Math.max(
+		workerOutputCaptureBytes(options.helperResult?.contract),
+		Math.floor(options.maxBytes ?? WORKER_OUTPUT_MAX_BYTES),
+	);
+	let finalText: string | null = null;
+	let partialText = "";
+	let partialBytes = 0;
+	let partialStored = 0;
+	let structuredOutput: RunResultOutput | undefined;
+	// The last text any assistant message carried, tool-use preambles included, and whether the worker reported
+	// its context exhausted: only then does that narration seal, as partial, in place of no text at all (CLI-H3).
+	let narration = "";
+	let contextExhausted = false;
+	// A terminal artifact (plan, review, report) ends the worker's turn, so no assistant message follows it: the
+	// document and the path it landed at are the run's answer, or the caller learns neither (row 295).
+	const pendingArtifacts = new Map<string, string>();
+	let artifactAnswer: string | null = null;
+
+	return {
+		observe(event: unknown): void {
+			if (!isRecord(event)) return;
+			// A validated submission is terminal; subsequent provider narration or
+			// tool acknowledgements cannot replace the host-owned result.
+			if (structuredOutput !== undefined) return;
+			if (event.type === "pancode_helper_result") {
+				const payload = event.payload;
+				if (
+					!options.helperResult ||
+					!isRecord(payload) ||
+					payload.version !== 1 ||
+					payload.kind !== options.helperResult.contract.kind
+				)
+					return;
+				const structured = options.helperResult.validate(payload.data);
+				if (structured === null || structured.kind !== payload.kind) return;
+				const text = JSON.stringify(structured.data);
+				// Never seal an intact structured payload beside clipped compatibility JSON.
+				if (Buffer.byteLength(text, "utf8") > maxBytes) return;
+				structuredOutput = { ...boundedOutput("final", text, maxBytes), structured: structuredClone(structured) };
+				return;
+			}
+			if (
+				event.type === "pancode_run_outcome" &&
+				isRecord(event.payload) &&
+				event.payload.outcomeCode === "worker_context_exhausted"
+			) {
+				contextExhausted = true;
+				return;
+			}
+			if (event.type === "message_end") {
+				// Any message boundary flushes the in-flight stream: its deltas
+				// belong to the message that just completed.
+				const message = isRecord(event.message) ? event.message : null;
+				if (message?.role === "assistant") {
+					const said = assistantTextFromContent(message.content).trim();
+					if (said.length > 0) narration = said;
+				}
+				if (
+					message?.role === "assistant" &&
+					(message.pancodeAbortReason === "worker_turn_timeout" ||
+						message.pancodeAbortReason === "worker_output_cap_exhausted")
+				) {
+					const text = assistantTextFromContent(message.content);
+					partialText = truncateUtf8(text, maxBytes, WORKER_OUTPUT_TRUNCATION_MARKER);
+					partialBytes = Buffer.byteLength(text, "utf8");
+					partialStored = Buffer.byteLength(partialText, "utf8");
+					finalText = null;
+					return;
+				}
+				partialText = "";
+				partialBytes = 0;
+				partialStored = 0;
+				if (message === null || message.role !== "assistant") return;
+				if (!isDurableAssistantMessage(message)) return;
+				const text = assistantTextFromContent(message.content).trim();
+				if (text.length > 0) finalText = text;
+				return;
+			}
+			if (event.type === "tool_execution_start") {
+				const body = terminalArtifactBody(event.toolName, event.args);
+				if (body !== null && typeof event.toolCallId === "string") pendingArtifacts.set(event.toolCallId, body);
+				return;
+			}
+			if (event.type === "tool_execution_end") {
+				if (typeof event.toolCallId !== "string") return;
+				const body = pendingArtifacts.get(event.toolCallId);
+				pendingArtifacts.delete(event.toolCallId);
+				const receipt = body === undefined || event.isError === true ? null : terminalArtifactReceipt(event.result);
+				if (receipt !== null) artifactAnswer = `${receipt}\n\n${body}`;
+				return;
+			}
+			if (event.type !== "message_update") return;
+			const assistantEvent = isRecord(event.assistantMessageEvent) ? event.assistantMessageEvent : null;
+			if (assistantEvent === null || assistantEvent.type !== "text_delta") return;
+			const delta = assistantEvent.delta;
+			if (typeof delta !== "string" || delta.length === 0) return;
+			partialBytes += Buffer.byteLength(delta, "utf8");
+			if (partialStored < maxBytes) {
+				partialText += delta;
+				partialStored += Buffer.byteLength(delta, "utf8");
+			}
+		},
+		snapshot(): RunResultOutput | undefined {
+			if (structuredOutput !== undefined) return structuredClone(structuredOutput);
+			if (partialBytes > 0 && partialText.trim().length > 0) {
+				const bounded = truncateUtf8(partialText.trim(), maxBytes, WORKER_OUTPUT_TRUNCATION_MARKER);
+				return {
+					state: "partial",
+					text: bounded,
+					bytes: partialBytes,
+					truncated: bounded !== partialText.trim() || partialBytes > partialStored,
+				};
+			}
+			// The receipt line leads so the artifact's path survives the byte bound.
+			if (artifactAnswer !== null) {
+				const text = finalText === null ? artifactAnswer : `${artifactAnswer}\n\n${finalText}`;
+				return boundedOutput("final", text, maxBytes);
+			}
+			if (finalText !== null) return boundedOutput("final", finalText, maxBytes);
+			if (contextExhausted && narration.length > 0) return boundedOutput("partial", narration, maxBytes);
+			return undefined;
+		},
+	};
+}

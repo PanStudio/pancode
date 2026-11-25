@@ -1,0 +1,1343 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import chalk from "chalk";
+import {
+	bindAgentProfileInSettings,
+	type PancodeSettings,
+	readSettings,
+	removeFleetProfileFromSettings,
+	setFleetProfileInSettings,
+	type TargetSelectionRole,
+	type UseTargetOptions,
+	unusedSharedModelReason,
+	updateSettings,
+	useTargetInSettings,
+} from "../core/config.js";
+import { THINKING_LEVELS, type ThinkingLevel } from "../core/defaults.js";
+import { loadDomains } from "../core/domain-loader.js";
+import { readLayeredSettings, settingsSourceFor } from "../core/settings-layers.js";
+import { ConfigDomainModule } from "../domains/config/index.js";
+import { ensurePancodeState } from "../domains/lifecycle/index.js";
+import type { ProvidersContract, TargetStatus } from "../domains/providers/contract.js";
+import { missingVllmHarmonyFlags } from "../domains/providers/harmony-server.js";
+import {
+	endpointCapacityForStatus,
+	isOrchestratorEligibleRuntime,
+	isTargetEligibleRuntime,
+	ProvidersDomainModule,
+	runtimeListsModelsLive,
+} from "../domains/providers/index.js";
+import { closestRuntimeId, getRuntimeRegistry } from "../domains/providers/registry.js";
+import { runtimeNotRegistered } from "../domains/providers/runtime-not-registered.js";
+import { registerBuiltinRuntimes } from "../domains/providers/runtimes/builtins.js";
+import type { CapabilityFlags } from "../domains/providers/types/capability-flags.js";
+import type { RuntimeTier } from "../domains/providers/types/runtime-descriptor.js";
+import { inventoryNote, resolveSupportedWireModels } from "./configure-target.js";
+import { runTargetRemove, runTargetRename } from "./configure-target-setup.js";
+import { printError, printOk } from "./shared.js";
+import { column, terminalColumns, truncate, wrapPlain } from "./text-layout.js";
+
+type ProviderOutputTier = RuntimeTier | "unknown";
+
+const HELP = `pancode targets
+
+List and manage configured model targets.
+--probe checks targets live. --reasoning and --tools add qualification probes
+that send generation requests and can load models.
+
+Usage:
+  pancode targets [--json] [--probe [--reasoning] [--tools [--tools-timeout <seconds>]]] [--target <id>]
+  pancode targets use <id> [--model <id>] [--orchestrator-model <id>] [--background-model <id>]
+                       [--fleet-target <id>] [--fleet-model <id>]
+  pancode targets profile list [--json]
+  pancode targets profile set <name> <id> [--model <id>] [--thinking <level>]
+  pancode targets profile <name> <id> [--model <id>] [--thinking <level>]
+  pancode targets profile remove <name> [--force]
+  pancode targets profile rename <old> <new>
+  pancode targets profile bind <agentId> <profileName>
+  pancode targets profile unbind <agentId>
+  pancode targets profile bindings [--json]
+  pancode targets convert <id> --runtime <runtimeId>
+  pancode targets remove <id>
+  pancode targets rename <old> <new>
+`;
+
+const USE_USAGE =
+	"pancode targets use <id> [--model <id>] [--orchestrator-model <id>] [--background-model <id>] [--fleet-target <id>] [--fleet-model <id>]";
+
+/**
+ * `--help` anywhere on a targets subcommand is a question, not an argument.
+ *
+ * `use --help` and `remove --help` read it as the target id and answered
+ * `no target with id --help`; `rename`, `profile`, and `convert` answered their
+ * usage as an error on stderr. Each now prints the same usage on stdout with
+ * status 0 and executes nothing.
+ */
+function wantsHelp(args: ReadonlyArray<string>): boolean {
+	return args.includes("--help") || args.includes("-h");
+}
+
+function printUsage(usage: string): number {
+	process.stdout.write(`usage: ${usage}\n`);
+	return 0;
+}
+
+interface ListArgs {
+	json: boolean;
+	probe: boolean;
+	reasoning: boolean;
+	tools: boolean;
+	toolsTimeoutMs?: number;
+	target?: string;
+	help: boolean;
+}
+
+interface UseArgs {
+	id: string;
+	model?: string;
+	orchestratorModel?: string;
+	backgroundModel?: string;
+	workerModel?: string;
+	workerTarget?: string;
+}
+
+type WorkerThinkingLevel = ThinkingLevel;
+
+const VALID_THINKING = new Set<WorkerThinkingLevel>(THINKING_LEVELS);
+
+interface WorkerProfileArgs {
+	name: string;
+	targetId: string;
+	model?: string;
+	thinkingLevel?: WorkerThinkingLevel;
+}
+
+interface ProfileRemoveArgs {
+	name: string;
+	force: boolean;
+}
+
+interface ProfileRenameArgs {
+	oldName: string;
+	newName: string;
+}
+
+interface ProfileBindArgs {
+	agentId: string;
+	profileName: string;
+}
+
+const PROFILE_SUBCOMMANDS = new Set(["list", "set", "remove", "rename", "bind", "unbind", "bindings"]);
+
+function parseListArgs(args: ReadonlyArray<string>): ListArgs {
+	const parsed: ListArgs = { json: false, probe: false, reasoning: false, tools: false, help: false };
+	for (let i = 0; i < args.length; i += 1) {
+		const arg = args[i];
+		if (arg === "--help" || arg === "-h") {
+			parsed.help = true;
+			continue;
+		}
+		if (arg === "--json") {
+			parsed.json = true;
+			continue;
+		}
+		if (arg === "--probe") {
+			parsed.probe = true;
+			continue;
+		}
+		if (arg === "--reasoning") {
+			parsed.reasoning = true;
+			continue;
+		}
+		if (arg === "--tools") {
+			parsed.tools = true;
+			continue;
+		}
+		if (arg === "--tools-timeout") {
+			const value = args[i + 1];
+			const seconds = value === undefined ? Number.NaN : Number(value);
+			if (!Number.isFinite(seconds) || seconds <= 0)
+				throw new Error("--tools-timeout requires a positive number of seconds");
+			parsed.toolsTimeoutMs = Math.round(seconds * 1000);
+			i += 1;
+			continue;
+		}
+		if (arg === "--target") {
+			const value = args[i + 1];
+			if (!value) throw new Error("--target requires a value");
+			parsed.target = value;
+			i += 1;
+			continue;
+		}
+		if (arg?.startsWith("-")) throw new Error(`unknown flag: ${arg}`);
+		throw new Error(`unknown targets argument: ${arg}`);
+	}
+	if (parsed.reasoning && !parsed.probe) throw new Error("--reasoning requires --probe");
+	if (parsed.tools && !parsed.probe) throw new Error("--tools requires --probe");
+	if (parsed.toolsTimeoutMs !== undefined && !parsed.tools) throw new Error("--tools-timeout requires --tools");
+	return parsed;
+}
+
+export async function runTargetsCommand(args: ReadonlyArray<string>): Promise<number> {
+	const subcommand = args[0];
+	if (subcommand === "use") return runUse(args.slice(1));
+	if (subcommand === "profile") return runProfile(args.slice(1));
+	if (subcommand === "remove") return runRemove(args.slice(1));
+	if (subcommand === "rename") return runRename(args.slice(1));
+	if (subcommand === "convert") return runConvert(args.slice(1));
+	if (subcommand === "--help" || subcommand === "-h") {
+		process.stdout.write(HELP);
+		return 0;
+	}
+
+	let parsed: ListArgs;
+	try {
+		parsed = parseListArgs(args);
+	} catch (error) {
+		printError(error instanceof Error ? error.message : String(error));
+		process.stderr.write(HELP);
+		return 2;
+	}
+	if (parsed.help) {
+		process.stdout.write(HELP);
+		return 0;
+	}
+
+	ensurePancodeState();
+	const loaded = await loadDomains([ConfigDomainModule, ProvidersDomainModule]);
+	const providers = loaded.getContract("providers");
+	if (!providers) {
+		process.stderr.write("targets: provider domain not loaded\n");
+		await loaded.stop();
+		return 1;
+	}
+	if (parsed.probe) {
+		try {
+			// Explicit generation is scoped to the named target when supplied. A probe asks the provider now, since
+			// health read from a runtime's cached listing (the Copilot SDK snapshot) stays unknown.
+			const probeOptions = {
+				fresh: true,
+				reasoning: parsed.reasoning,
+				tools: parsed.tools,
+				...(parsed.toolsTimeoutMs !== undefined ? { toolsTimeoutMs: parsed.toolsTimeoutMs } : {}),
+			};
+			if (parsed.target !== undefined) await providers.probeTarget(parsed.target, probeOptions);
+			else await providers.probeAllLive(probeOptions);
+		} catch (err) {
+			process.stderr.write(`targets: live probe failed: ${err instanceof Error ? err.message : String(err)}\n`);
+		}
+	}
+	const entries = providers.list();
+	if (parsed.target !== undefined && !entries.some((e) => e.target.id === parsed.target)) {
+		printError(
+			`no target with id ${parsed.target}. ${entries.length} target${entries.length === 1 ? "" : "s"} configured.`,
+		);
+		await loaded.stop();
+		return 2;
+	}
+	const filtered = parsed.target ? entries.filter((e) => e.target.id === parsed.target) : entries;
+
+	if (parsed.json) {
+		const settings = readSettings();
+		const candidateFor = (status: TargetStatus): string | null => {
+			const orchestratorModel = settings.chat?.target === status.target.id ? (settings.chat?.model ?? null) : null;
+			return orchestratorModel ?? status.target.defaultModel ?? null;
+		};
+		const rows = filtered.map((status) => {
+			const candidate = candidateFor(status);
+			const detectedReasoning = candidate ? providers.getDetectedReasoning(status.target.id, candidate) : null;
+			return serializeStatus(status, { detectedReasoning, candidateModelId: candidate });
+		});
+		process.stdout.write(`${JSON.stringify({ targets: rows }, null, 2)}\n`);
+	} else if (filtered.length === 0) {
+		process.stdout.write("no targets configured; run `pancode configure` to add one.\n");
+	} else {
+		renderTable(providers, filtered);
+	}
+	await loaded.stop();
+	return 0;
+}
+
+function parseUseArgs(args: ReadonlyArray<string>): UseArgs | null {
+	const id = args[0];
+	if (!id) return null;
+	const parsed: UseArgs = { id };
+	for (let i = 1; i < args.length; i += 1) {
+		const arg = args[i];
+		const need = (): string => {
+			const value = args[i + 1];
+			if (!value) throw new Error(`${arg} requires a value`);
+			i += 1;
+			return value;
+		};
+		if (arg === "--model") {
+			parsed.model = need();
+			continue;
+		}
+		if (arg === "--orchestrator-model") {
+			parsed.orchestratorModel = need();
+			continue;
+		}
+		if (arg === "--background-model") {
+			parsed.backgroundModel = need();
+			continue;
+		}
+		if (arg === "--fleet-model") {
+			parsed.workerModel = need();
+			continue;
+		}
+		if (arg === "--fleet-target") {
+			parsed.workerTarget = need();
+			continue;
+		}
+		if (arg?.startsWith("-")) throw new Error(`unknown flag: ${arg}`);
+		throw new Error(`unknown targets use argument: ${arg}`);
+	}
+	return parsed;
+}
+
+async function runUse(args: ReadonlyArray<string>): Promise<number> {
+	if (wantsHelp(args)) return printUsage(USE_USAGE);
+	let parsed: UseArgs | null;
+	try {
+		parsed = parseUseArgs(args);
+	} catch (error) {
+		printError(error instanceof Error ? error.message : String(error));
+		return 2;
+	}
+	if (!parsed) {
+		printError(`usage: ${USE_USAGE}`);
+		return 2;
+	}
+	const options: UseTargetOptions = {
+		...(parsed.model !== undefined ? { model: parsed.model } : {}),
+		...(parsed.orchestratorModel !== undefined ? { orchestratorModel: parsed.orchestratorModel } : {}),
+		...(parsed.workerModel !== undefined ? { workerModel: parsed.workerModel } : {}),
+		...(parsed.workerTarget !== undefined ? { workerTargetId: parsed.workerTarget } : {}),
+		...(parsed.backgroundModel !== undefined ? { backgroundModel: parsed.backgroundModel } : {}),
+	};
+	const refusal = unusedSharedModelReason(parsed.id, options);
+	if (refusal !== null) {
+		printError(refusal);
+		return 2;
+	}
+	ensurePancodeState();
+	const settings = readSettings();
+	const target = settings.targets.find((entry) => entry.id === parsed.id);
+	if (!target) {
+		printError(`no target with id ${parsed.id}`);
+		return 1;
+	}
+	const registry = getRuntimeRegistry();
+	if (registry.list().length === 0) registerBuiltinRuntimes(registry);
+	const candidate = structuredClone(settings);
+	const selection = useTargetInSettings(candidate, target.id, options);
+	if (!selection) {
+		printError(`no target with id ${parsed.workerTarget}`);
+		return 1;
+	}
+	const labels: Record<TargetSelectionRole, string> = {
+		chat: "chat",
+		fleet: "fleet dispatch",
+		memory: "background memory",
+	};
+	const routes = { chat: candidate.chat, fleet: candidate.fleet.default, memory: candidate.context.memory };
+	const inventories = new Map<string, Awaited<ReturnType<typeof resolveSupportedWireModels>>>();
+	const checkedTargets = new Map<string, string>();
+	// The inventory is per target, so its provenance note is too; roles that share a target state it once.
+	const notedTargets = new Set<string>();
+	for (const role of selection.roles) {
+		const route = routes[role];
+		const selectedTarget = candidate.targets.find((entry) => entry.id === route.target);
+		if (!selectedTarget) throw new Error("selected target disappeared");
+		const runtime = registry.get(selectedTarget.runtime);
+		if (!runtime) {
+			printError(
+				`cannot use target '${selectedTarget.id}' for ${labels[role]}: ${runtimeNotRegistered(selectedTarget.runtime)}`,
+			);
+			return 1;
+		}
+		if (!(role === "fleet" ? isTargetEligibleRuntime(runtime) : isOrchestratorEligibleRuntime(runtime))) {
+			printError(
+				`cannot use target '${selectedTarget.id}' for ${labels[role]}: runtime '${selectedTarget.runtime}' is not eligible`,
+			);
+			return 1;
+		}
+		checkedTargets.set(selectedTarget.id, JSON.stringify(selectedTarget));
+		if (route.model === null) continue;
+		let inventory = inventories.get(selectedTarget.id);
+		if (!inventory) {
+			inventory = await resolveSupportedWireModels(runtime, selectedTarget, selectedTarget);
+			inventories.set(selectedTarget.id, inventory);
+		}
+		if (inventory.models.length > 0 && !inventory.models.includes(route.model)) {
+			printError(
+				`target '${selectedTarget.id}' does not list model '${route.model}' for ${labels[role]} (${inventory.source} inventory). Use an exact listed model id: ${inventory.models.slice(0, 10).join(", ")}`,
+			);
+			return 1;
+		}
+		const note = inventoryNote(runtime, inventory);
+		if (inventory.models.length === 0) {
+			// Keep offline selection possible, but never imply that an unknown id was verified.
+			process.stderr.write(
+				`warning: could not verify model '${route.model}' for ${labels[role]}: target '${selectedTarget.id}' returned no model list; saving the id as written\n`,
+			);
+		} else if (
+			note !== null &&
+			!notedTargets.has(selectedTarget.id) &&
+			(inventory.source !== "catalog" || runtimeListsModelsLive(runtime))
+		) {
+			// A catalog is the whole answer for a runtime that cannot list live; anywhere else it is a fallback.
+			notedTargets.add(selectedTarget.id);
+			process.stderr.write(`warning: model list for target '${selectedTarget.id}' is the ${note}\n`);
+		}
+	}
+	// Re-read under the settings lock. A changed endpoint/default invalidates the
+	// checked inventory; unrelated concurrent role edits are preserved by the scoped mutation.
+	let changedRoles: TargetSelectionRole[] = [];
+	try {
+		updateSettings((fresh) => {
+			for (const [id, descriptor] of checkedTargets) {
+				if (JSON.stringify(fresh.targets.find((entry) => entry.id === id)) !== descriptor) {
+					throw new Error(`target '${id}' changed while checking models; retry targets use`);
+				}
+			}
+			const applied = useTargetInSettings(fresh, target.id, options);
+			if (!applied) throw new Error("target changed while checking models; retry targets use");
+			changedRoles = applied.changedRoles;
+		});
+	} catch (error) {
+		printError(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+	const changedByTarget = new Map<string, string[]>();
+	for (const role of changedRoles) {
+		const id = routes[role].target as string;
+		const names = changedByTarget.get(id) ?? [];
+		names.push(labels[role]);
+		changedByTarget.set(id, names);
+	}
+	printOk(
+		changedRoles.length === 0
+			? "no role settings changed"
+			: `using ${[...changedByTarget].map(([id, names]) => `target ${id} for ${names.join(" and ")}`).join("; ")}`,
+	);
+	return 0;
+}
+
+function parseWorkerArgs(args: ReadonlyArray<string>): WorkerProfileArgs | null {
+	const name = args[0];
+	const targetId = args[1];
+	if (!name || !targetId) return null;
+	const parsed: WorkerProfileArgs = { name, targetId };
+	for (let i = 2; i < args.length; i += 1) {
+		const arg = args[i];
+		const need = (): string => {
+			const value = args[i + 1];
+			if (!value) throw new Error(`${arg} requires a value`);
+			i += 1;
+			return value;
+		};
+		if (arg === "--model") {
+			parsed.model = need();
+			continue;
+		}
+		if (arg === "--thinking") {
+			const value = need();
+			if (!VALID_THINKING.has(value as WorkerThinkingLevel)) {
+				throw new Error("--thinking must be one of: off|minimal|low|medium|high|xhigh|max");
+			}
+			parsed.thinkingLevel = value as WorkerThinkingLevel;
+			continue;
+		}
+		if (arg?.startsWith("-")) throw new Error(`unknown flag: ${arg}`);
+		throw new Error(`unknown targets profile argument: ${arg}`);
+	}
+	return parsed;
+}
+
+function requireTrimmed(value: string | undefined, label: string): string {
+	const trimmed = value?.trim() ?? "";
+	if (trimmed.length === 0) throw new Error(`${label} must be non-empty`);
+	return trimmed;
+}
+
+function parseProfileRemoveArgs(args: ReadonlyArray<string>): ProfileRemoveArgs | null {
+	const name = args[0];
+	if (!name) return null;
+	const parsed: ProfileRemoveArgs = { name: name.trim(), force: false };
+	if (parsed.name.length === 0) throw new Error("profile name must be non-empty");
+	for (let i = 1; i < args.length; i += 1) {
+		const arg = args[i];
+		if (arg === "--force") {
+			parsed.force = true;
+			continue;
+		}
+		if (arg?.startsWith("-")) throw new Error(`unknown flag: ${arg}`);
+		throw new Error(`unknown targets profile remove argument: ${arg}`);
+	}
+	return parsed;
+}
+
+function parseProfileRenameArgs(args: ReadonlyArray<string>): ProfileRenameArgs | null {
+	if (args.length !== 2) return null;
+	const oldName = requireTrimmed(args[0], "old profile name");
+	const newName = requireTrimmed(args[1], "new profile name");
+	return { oldName, newName };
+}
+
+function parseProfileBindArgs(args: ReadonlyArray<string>): ProfileBindArgs | null {
+	if (args.length !== 2) return null;
+	return {
+		agentId: requireTrimmed(args[0], "agent id"),
+		profileName: requireTrimmed(args[1], "profile name"),
+	};
+}
+
+function resolveDispatchProfileTarget(
+	settings: PancodeSettings,
+	targetId: string,
+	role = "fleet profile target",
+): { target: PancodeSettings["targets"][number] } | { exitCode: number } {
+	const target = settings.targets.find((entry) => entry.id === targetId);
+	if (!target) {
+		printError(`no target with id ${targetId}`);
+		return { exitCode: 2 };
+	}
+	const registry = getRuntimeRegistry();
+	if (registry.list().length === 0) registerBuiltinRuntimes(registry);
+	const runtime = registry.get(target.runtime);
+	if (!runtime) {
+		printError(`cannot use target '${target.id}' as ${role} because ${runtimeNotRegistered(target.runtime)}`);
+		return { exitCode: 1 };
+	}
+	if (!isTargetEligibleRuntime(runtime)) {
+		printError(
+			`cannot use target '${target.id}' as ${role} because runtime '${runtime.id}' is not a fleet-dispatch target`,
+		);
+		return { exitCode: 1 };
+	}
+	return { target };
+}
+
+function runProfileSet(
+	args: ReadonlyArray<string>,
+	usage = "pancode targets profile <name> <id> [--model <id>] [--thinking <level>]",
+): number {
+	if (wantsHelp(args)) return printUsage(usage);
+	let parsed: WorkerProfileArgs | null;
+	try {
+		parsed = parseWorkerArgs(args);
+	} catch (error) {
+		printError(error instanceof Error ? error.message : String(error));
+		return 2;
+	}
+	if (!parsed) {
+		printError(`usage: ${usage}`);
+		return 2;
+	}
+	ensurePancodeState();
+	const settings = readSettings();
+	const resolved = resolveDispatchProfileTarget(settings, parsed.targetId);
+	if ("exitCode" in resolved) return resolved.exitCode;
+	const { target } = resolved;
+	updateSettings((fresh) => {
+		setFleetProfileInSettings(fresh, parsed.name, target.id, {
+			...(parsed.model !== undefined ? { model: parsed.model } : {}),
+			...(parsed.thinkingLevel !== undefined ? { thinkingLevel: parsed.thinkingLevel } : {}),
+		});
+	});
+	printOk(`fleet profile ${parsed.name} -> ${target.id}`);
+	return 0;
+}
+
+function runProfileRemove(args: ReadonlyArray<string>): number {
+	if (wantsHelp(args)) return printUsage("pancode targets profile remove <name> [--force]");
+	let parsed: ProfileRemoveArgs | null;
+	try {
+		parsed = parseProfileRemoveArgs(args);
+	} catch (error) {
+		printError(error instanceof Error ? error.message : String(error));
+		return 2;
+	}
+	if (!parsed) {
+		printError("usage: pancode targets profile remove <name> [--force]");
+		return 2;
+	}
+	ensurePancodeState();
+	const settings = readSettings();
+	if (!settings.fleet.profiles[parsed.name]) {
+		printError(`no fleet profile named ${parsed.name}`);
+		return 1;
+	}
+	const boundAgents = Object.entries(settings.fleet.agentProfiles)
+		.filter(([, profileName]) => profileName === parsed.name)
+		.map(([agentId]) => agentId);
+	if (boundAgents.length > 0 && !parsed.force) {
+		printError(
+			`fleet profile ${parsed.name} is bound to ${boundAgents.length} agent${boundAgents.length === 1 ? "" : "s"}; use --force to remove profile and bindings`,
+			boundAgents.join(", "),
+		);
+		return 1;
+	}
+	let removedBindings = 0;
+	updateSettings((fresh) => {
+		removedBindings = removeFleetProfileFromSettings(fresh, parsed.name);
+	});
+	printOk(
+		`removed fleet profile ${parsed.name} (${removedBindings} binding${removedBindings === 1 ? "" : "s"} removed)`,
+	);
+	return 0;
+}
+
+function runProfileRename(args: ReadonlyArray<string>): number {
+	if (wantsHelp(args)) return printUsage("pancode targets profile rename <old> <new>");
+	let parsed: ProfileRenameArgs | null;
+	try {
+		parsed = parseProfileRenameArgs(args);
+	} catch (error) {
+		printError(error instanceof Error ? error.message : String(error));
+		return 2;
+	}
+	if (!parsed) {
+		printError("usage: pancode targets profile rename <old> <new>");
+		return 2;
+	}
+	if (parsed.oldName === parsed.newName) {
+		printError("old and new profile names are identical");
+		return 2;
+	}
+	ensurePancodeState();
+	const settings = readSettings();
+	if (!settings.fleet.profiles[parsed.oldName]) {
+		printError(`no fleet profile named ${parsed.oldName}`);
+		return 1;
+	}
+	if (settings.fleet.profiles[parsed.newName]) {
+		printError(`fleet profile already exists: ${parsed.newName}`);
+		return 2;
+	}
+	let updatedBindings = 0;
+	updateSettings((fresh) => {
+		const profile = fresh.fleet.profiles[parsed.oldName];
+		if (!profile) return;
+		fresh.fleet.profiles[parsed.newName] = profile;
+		delete fresh.fleet.profiles[parsed.oldName];
+		for (const [agentId, profileName] of Object.entries(fresh.fleet.agentProfiles)) {
+			if (profileName !== parsed.oldName) continue;
+			fresh.fleet.agentProfiles[agentId] = parsed.newName;
+			updatedBindings += 1;
+		}
+	});
+	printOk(
+		`renamed fleet profile ${parsed.oldName} to ${parsed.newName} (${updatedBindings} binding${updatedBindings === 1 ? "" : "s"} updated)`,
+	);
+	return 0;
+}
+
+function runProfileBind(args: ReadonlyArray<string>): number {
+	if (wantsHelp(args)) return printUsage("pancode targets profile bind <agentId> <profileName>");
+	let parsed: ProfileBindArgs | null;
+	try {
+		parsed = parseProfileBindArgs(args);
+	} catch (error) {
+		printError(error instanceof Error ? error.message : String(error));
+		return 2;
+	}
+	if (!parsed) {
+		printError("usage: pancode targets profile bind <agentId> <profileName>");
+		return 2;
+	}
+	ensurePancodeState();
+	const settings = readSettings();
+	if (settings.integrations.externalAgents.entries.some((agent) => agent.id === parsed.agentId)) {
+		printError(
+			`cannot bind ACP delegation agent '${parsed.agentId}' to a fleet profile; ACP agents use their own runner and ignore native target routing`,
+		);
+		return 1;
+	}
+	if (!settings.fleet.profiles[parsed.profileName]) {
+		process.stderr.write(
+			`${chalk.yellow("warning:")} fleet profile '${parsed.profileName}' is not configured; binding will resolve after the profile exists\n`,
+		);
+	}
+	updateSettings((fresh) => {
+		bindAgentProfileInSettings(fresh, parsed.agentId, parsed.profileName);
+	});
+	printOk(`bound agent ${parsed.agentId} -> fleet profile ${parsed.profileName}`);
+	return 0;
+}
+
+function runProfileUnbind(args: ReadonlyArray<string>): number {
+	if (wantsHelp(args)) return printUsage("pancode targets profile unbind <agentId>");
+	let parsed: string;
+	try {
+		if (args.length !== 1) throw new Error("usage: pancode targets profile unbind <agentId>");
+		parsed = requireTrimmed(args[0], "agent id");
+	} catch (error) {
+		printError(error instanceof Error ? error.message : String(error));
+		return 2;
+	}
+	ensurePancodeState();
+	const settings = readSettings();
+	if (!settings.fleet.agentProfiles[parsed]) {
+		printError(`agent ${parsed} is not bound to a fleet profile`);
+		return 1;
+	}
+	updateSettings((fresh) => {
+		delete fresh.fleet.agentProfiles[parsed];
+	});
+	printOk(`unbound agent ${parsed}`);
+	return 0;
+}
+
+function runProfileBindings(args: ReadonlyArray<string>): number {
+	let json = false;
+	for (const arg of args) {
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--help" || arg === "-h") {
+			process.stdout.write("usage: pancode targets profile bindings [--json]\n");
+			return 0;
+		}
+		printError(`unknown targets profile bindings argument: ${arg}`);
+		return 2;
+	}
+	ensurePancodeState();
+	// Dispatch routes from the merged trusted layers, so a binding kept in
+	// .pancode/settings.local.yaml must list here too. Mutations stay on the
+	// user layer.
+	const { settings, sources } = readLayeredSettings(process.cwd());
+	const rows = Object.entries(settings.fleet.agentProfiles)
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([agentId, profileName]) => {
+			const profile = settings.fleet.profiles[profileName];
+			return {
+				agentId,
+				profile: profileName,
+				target: profile?.target ?? null,
+				model: profile?.model ?? null,
+				source: settingsSourceFor(sources, `fleet.agentProfiles.${agentId}`),
+				warning: profile ? null : "missing profile",
+			};
+		});
+	if (json) {
+		process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
+		return 0;
+	}
+	if (rows.length === 0) {
+		process.stdout.write(
+			"no agent profile bindings configured. run `pancode targets profile bind <agentId> <profile>` to add one.\n",
+		);
+		return 0;
+	}
+	process.stdout.write(
+		`${column("agent", 18)}${column("profile", 20)}${column("target", 16)}${column("model", 30)}${column("source", 15)}warning\n`,
+	);
+	for (const row of rows) {
+		process.stdout.write(
+			`${column(row.agentId, 18)}${column(row.profile, 20)}${column(row.target ?? "-", 16)}${column(row.model ?? "-", 30)}${column(row.source, 15)}${row.warning ?? "-"}\n`,
+		);
+	}
+	return 0;
+}
+
+function runProfile(args: ReadonlyArray<string>): number {
+	const subcommand = args[0];
+	// Ambiguity: a profile literally named like a subcommand must use
+	// `pancode targets profile set <name> ...`.
+	if (subcommand && PROFILE_SUBCOMMANDS.has(subcommand)) {
+		switch (subcommand) {
+			case "list":
+				return runFleet(args.slice(1), "pancode targets profile list [--json]");
+			case "set":
+				return runProfileSet(args.slice(1), "pancode targets profile set <name> <id> [--model <id>] [--thinking <level>]");
+			case "remove":
+				return runProfileRemove(args.slice(1));
+			case "rename":
+				return runProfileRename(args.slice(1));
+			case "bind":
+				return runProfileBind(args.slice(1));
+			case "unbind":
+				return runProfileUnbind(args.slice(1));
+			case "bindings":
+				return runProfileBindings(args.slice(1));
+		}
+	}
+	return runProfileSet(args);
+}
+
+function runFleet(args: ReadonlyArray<string>, usage = "pancode targets fleet [--json]"): number {
+	let json = false;
+	for (const arg of args) {
+		if (arg === "--json") {
+			json = true;
+			continue;
+		}
+		if (arg === "--help" || arg === "-h") {
+			process.stdout.write(`usage: ${usage}\n`);
+			return 0;
+		}
+		printError(`unknown targets fleet argument: ${arg}`);
+		return 2;
+	}
+	ensurePancodeState();
+	// Same merged trusted view dispatch resolves profiles from; see runProfileBindings.
+	const { settings, sources } = readLayeredSettings(process.cwd());
+	const byId = new Map(settings.targets.map((target) => [target.id, target] as const));
+	const fleetDefault = settings.fleet.default;
+	const defaultTarget = fleetDefault.target ? byId.get(fleetDefault.target) : undefined;
+	const defaultRow = fleetDefault.target
+		? {
+				target: fleetDefault.target,
+				runtime: defaultTarget?.runtime ?? null,
+				model: fleetDefault.model,
+				thinkingLevel: fleetDefault.thinkingLevel,
+				source: settingsSourceFor(sources, "fleet.default.target"),
+			}
+		: null;
+	const rows = Object.entries(settings.fleet.profiles).map(([name, profile]) => {
+		const target = profile.target ? byId.get(profile.target) : undefined;
+		return {
+			name,
+			target: profile.target,
+			runtime: target?.runtime ?? null,
+			model: profile.model,
+			thinkingLevel: profile.thinkingLevel,
+			source: settingsSourceFor(sources, `fleet.profiles.${name}`),
+		};
+	});
+	if (json) {
+		process.stdout.write(`${JSON.stringify({ default: defaultRow, profiles: rows }, null, 2)}\n`);
+		return 0;
+	}
+	if (defaultRow) {
+		const model = defaultRow.model ?? "the target's default";
+		process.stdout.write(
+			`fleet default: target ${defaultRow.target} (${defaultRow.runtime ?? "unknown runtime"}), model ${model}, thinking ${defaultRow.thinkingLevel}, from ${defaultRow.source}\n`,
+		);
+	} else {
+		process.stdout.write("fleet default: not set. run `pancode targets use <id> --fleet-model <model>` to set it.\n");
+	}
+	if (rows.length === 0) {
+		process.stdout.write("no fleet profiles configured. run `pancode targets profile <name> <id>` to add one.\n");
+		return 0;
+	}
+	process.stdout.write(
+		`${column("profile", 18)}${column("target", 16)}${column("runtime", 20)}${column("model", 30)}${column("thinking", 10)}source\n`,
+	);
+	for (const row of rows) {
+		process.stdout.write(
+			`${column(row.name, 18)}${column(row.target ?? "-", 16)}${column(row.runtime ?? "-", 20)}${column(row.model ?? "-", 30)}${column(row.thinkingLevel, 10)}${row.source}\n`,
+		);
+	}
+	return 0;
+}
+
+function runRemove(args: ReadonlyArray<string>): number {
+	if (wantsHelp(args)) return printUsage("pancode targets remove <id>");
+	if (args.length !== 1 || !args[0]) {
+		printError("usage: pancode targets remove <id>");
+		return 2;
+	}
+	ensurePancodeState();
+	return runTargetRemove(args[0]);
+}
+
+function runRename(args: ReadonlyArray<string>): number {
+	if (wantsHelp(args)) return printUsage("pancode targets rename <old> <new>");
+	if (args.length !== 2 || !args[0] || !args[1]) {
+		printError("usage: pancode targets rename <old> <new>");
+		return 2;
+	}
+	ensurePancodeState();
+	return runTargetRename(args[0], args[1]);
+}
+
+const CONVERT_USAGE = "pancode targets convert <id> --runtime <runtimeId>";
+
+function runConvert(args: ReadonlyArray<string>): number {
+	if (wantsHelp(args)) return printUsage(CONVERT_USAGE);
+	const id = args[0];
+	if (!id || id.startsWith("-")) {
+		printError(`usage: ${CONVERT_USAGE}`);
+		return 2;
+	}
+	let runtimeId: string | undefined;
+	for (let i = 1; i < args.length; i += 1) {
+		const arg = args[i];
+		if (arg === "--runtime") {
+			const value = args[i + 1];
+			if (!value) {
+				printError("--runtime requires a value");
+				return 2;
+			}
+			runtimeId = value;
+			i += 1;
+			continue;
+		}
+		printError(`unknown convert argument: ${arg}`);
+		return 2;
+	}
+	if (!runtimeId) {
+		printError("--runtime is required");
+		return 2;
+	}
+	ensurePancodeState();
+	const registry = getRuntimeRegistry();
+	if (registry.list().length === 0) registerBuiltinRuntimes(registry);
+	const runtime = registry.get(runtimeId);
+	if (!runtime) {
+		const suggestion = closestRuntimeId(registry, runtimeId);
+		printError(
+			`unknown runtime id: ${runtimeId}${suggestion ? ` (did you mean '${suggestion}'?)` : ""} (run \`pancode configure --list\` to see registered runtimes)`,
+		);
+		return 2;
+	}
+	// A plugin runtime may declare aliases; the target always stores the canonical id.
+	runtimeId = runtime.id;
+	const settings = readSettings();
+	const target = settings.targets.find((entry) => entry.id === id);
+	if (!target) {
+		printError(`no target with id ${id}`);
+		return 1;
+	}
+	if (target.runtime === runtimeId) {
+		printOk(`target ${id} already uses runtime ${runtimeId}`);
+		return 0;
+	}
+	if (settings.chat.target === id && !isOrchestratorEligibleRuntime(runtime)) {
+		printError(`cannot convert orchestrator target '${id}' to non-HTTP/native runtime '${runtime.id}'`);
+		return 1;
+	}
+	const previousRuntime = target.runtime;
+	updateSettings((fresh) => {
+		const entry = fresh.targets.find((candidate) => candidate.id === id);
+		if (entry) entry.runtime = runtimeId;
+	});
+	printOk(`converted target ${id}: ${previousRuntime} -> ${runtimeId}`);
+	return 0;
+}
+
+/** One row's cells as plain text, before any width has been applied. */
+export interface TargetTableRow {
+	id: string;
+	runtime: string;
+	auth: string;
+	url: string;
+	model: string;
+	health: string;
+	caps: string;
+	notes: string;
+}
+
+type TargetTableColumn = Exclude<keyof TargetTableRow, "notes">;
+type TargetTableWidths = Record<TargetTableColumn, number>;
+
+/** The tier is each group's heading, so it is not also a column. */
+const TABLE_COLUMNS: ReadonlyArray<TargetTableColumn> = ["id", "runtime", "auth", "url", "model", "health", "caps"];
+const TABLE_GAP = 1;
+
+/**
+ * The order the columns give room back in, each down to the floor beside it.
+ *
+ * `id` and `caps` are absent on purpose. A cut id is not an id: it cannot be
+ * passed back to `pancode targets use`, so shortening it turns the column into
+ * something that reads like an identifier and is not one. The badges are one
+ * letter per capability and mean nothing partially printed.
+ */
+const TABLE_SHRINK_ORDER: ReadonlyArray<readonly [TargetTableColumn, number]> = [
+	["url", 12],
+	["model", 12],
+	["auth", 6],
+	["runtime", 6],
+];
+
+/**
+ * The order width above the minimum layout is handed back in, each up to what
+ * its own content needs.
+ *
+ * Shrinking in {@link TABLE_SHRINK_ORDER} until the row fits stops at the first
+ * width that happens to work, and where it stopped was wrong: four targets on
+ * different hosts all printed `http://127.…` while the auth column spent 20
+ * columns on one env var name. So every column drops to its floor, and whatever
+ * the terminal has above that minimum is given back here, url and model first
+ * because they are the two columns whose whole job is to be told apart.
+ */
+const TABLE_GROW_ORDER: ReadonlyArray<TargetTableColumn> = ["url", "model", "auth", "runtime"];
+
+function tableWidths(rows: ReadonlyArray<TargetTableRow>, width: number): TargetTableWidths {
+	const natural = {} as TargetTableWidths;
+	for (const key of TABLE_COLUMNS) {
+		natural[key] = rows.reduce((widest, row) => Math.max(widest, row[key].length), key.length);
+	}
+	const widths = { ...natural };
+	for (const [key, floor] of TABLE_SHRINK_ORDER) widths[key] = Math.min(widths[key], floor);
+	// A terminal too narrow for even the minimum keeps it and takes the row cut
+	// that formatTargetTable applies; there is nothing left to give back.
+	let surplus = width - tableWidth(widths);
+	for (const key of TABLE_GROW_ORDER) {
+		if (surplus <= 0) break;
+		const take = Math.min(surplus, natural[key] - widths[key]);
+		widths[key] += take;
+		surplus -= take;
+	}
+	return widths;
+}
+
+function tableWidth(widths: TargetTableWidths): number {
+	return TABLE_COLUMNS.reduce((sum, key) => sum + widths[key], 0) + TABLE_GAP * (TABLE_COLUMNS.length - 1);
+}
+
+/**
+ * The probe table sized to the terminal it is being written to.
+ *
+ * `--json` is the interface for the full values and is left untouched. Only the
+ * human table is sized, ids are never cut, and every cell that is cut ends in an
+ * ellipsis so a shortened url or model can never be mistaken for a whole one.
+ *
+ * Notes are the last column when every row's notes fit beside the rest, and
+ * otherwise an indented line under each row, so a context window or a failure
+ * reason is never cut to a stub.
+ *
+ * A terminal too narrow to hold the id beside every floor takes the whole row
+ * cut to its width, marked the same way. Colour is dropped on those rows because
+ * the ansi bytes would sit inside the cut; a wrapped row costs more than colour.
+ */
+function formatTargetTable(
+	rows: ReadonlyArray<TargetTableRow>,
+	width: number,
+	paintHealth: (cell: string, row: TargetTableRow) => string = (cell) => cell,
+): { header: string; rows: ReadonlyArray<string>; details: ReadonlyArray<ReadonlyArray<string>> } {
+	const widths = tableWidths(rows, width);
+	const notesInline = rows.every((row) => tableWidth(widths) + TABLE_GAP + row.notes.length <= width);
+	const line = (cells: ReadonlyArray<string>): string => cells.join(" ".repeat(TABLE_GAP)).trimEnd();
+	const formatted = rows.map((row) => {
+		const cells = TABLE_COLUMNS.map((key) => column(row[key], widths[key]));
+		const notes = notesInline ? [row.notes] : [];
+		const plain = line([...cells, ...notes]);
+		const rendered =
+			plain.length > width
+				? truncate(plain, width)
+				: line([
+						...cells.map((cell, index) => (TABLE_COLUMNS[index] === "health" ? paintHealth(cell, row) : cell)),
+						...notes,
+					]);
+		const details = notesInline || row.notes.length === 0 ? [] : notesLines(row.notes, width);
+		return { rendered, details };
+	});
+	return {
+		header: truncate(
+			line([...TABLE_COLUMNS.map((key) => column(key, widths[key])), ...(notesInline ? ["notes"] : [])]),
+			width,
+		),
+		rows: formatted.map(({ rendered }) => rendered),
+		details: formatted.map(({ details }) => details),
+	};
+}
+
+/** A row's notes on indented lines under it, every word kept. */
+function notesLines(notes: string, width: number): string[] {
+	const indent = 2;
+	return wrapPlain(notes, Math.max(8, width - indent), indent).map((line, index) =>
+		index === 0 ? `${" ".repeat(indent)}${line}` : line,
+	);
+}
+
+const CAPABILITY_LEGEND = "caps: C chat, T tools, R reasoning, V vision, E embeddings, K rerank, F fill-in-the-middle";
+
+function renderTable(providers: ProvidersContract, entries: ReadonlyArray<TargetStatus>): void {
+	const sorted = [...entries].sort(compareStatusByTier);
+	const table = formatTargetTable(
+		sorted.map((status) => targetTableRow(providers, status)),
+		terminalColumns(),
+		// The cell is padded before it is painted, so the ansi bytes land outside
+		// the width arithmetic instead of having to be guessed at with slack.
+		(cell, row) => healthColor(row.health)(cell),
+	);
+	let currentTier: ProviderOutputTier | null = null;
+	for (const [index, status] of sorted.entries()) {
+		const tier = statusTier(status);
+		if (tier !== currentTier) {
+			currentTier = tier;
+			process.stdout.write(`${chalk.bold(tierLabel(tier))}\n`);
+			process.stdout.write(`${chalk.bold(table.header)}\n`);
+		}
+		process.stdout.write(`${table.rows[index] ?? ""}\n`);
+		for (const detail of table.details[index] ?? []) process.stdout.write(`${detail}\n`);
+	}
+	for (const line of wrapPlain(CAPABILITY_LEGEND, Math.max(20, terminalColumns() - 6), 6))
+		process.stdout.write(`${chalk.dim(line)}\n`);
+}
+
+function targetTableRow(providers: ProvidersContract, status: TargetStatus): TargetTableRow {
+	return {
+		id: status.target.id,
+		runtime: status.runtime ? status.runtime.id : status.target.runtime,
+		auth: formatAuth(providers, status),
+		url: formatUrl(status),
+		model: status.target.defaultModel ?? "-",
+		health: status.health.status,
+		caps: capabilityBadges(status.capabilities),
+		notes: formatNotes(status),
+	};
+}
+
+function healthColor(status: string): (text: string) => string {
+	switch (status) {
+		case "healthy":
+			return chalk.green;
+		case "degraded":
+			return chalk.yellow;
+		case "down":
+			return chalk.red;
+		default:
+			return chalk.dim;
+	}
+}
+
+function formatUrl(status: TargetStatus): string {
+	if (status.target.url) return status.target.url;
+	return "(built-in)";
+}
+
+function formatAuth(providers: ProvidersContract, status: TargetStatus): string {
+	if (!status.runtime) return "-";
+	if (status.runtime.externalAgentLoop !== undefined && status.runtime.auth !== "claude-cli") return "operator session";
+	if (status.runtime.auth !== "api-key" && status.runtime.auth !== "oauth")
+		return status.runtime.externalLogin ?? status.runtime.auth;
+	const auth = providers.auth.statusForTarget(status.target, status.runtime);
+	if (!auth.available) return "disconnected";
+	if (auth.source === "environment") return auth.detail ? `env:${auth.detail}` : "environment";
+	return auth.source.replace("stored-", "");
+}
+
+function capabilityBadges(caps: CapabilityFlags): string {
+	const badge = (on: boolean, letter: string): string => (on ? letter : "-");
+	return [
+		badge(caps.chat, "C"),
+		badge(caps.tools, "T"),
+		badge(caps.reasoning, "R"),
+		badge(caps.vision, "V"),
+		badge(caps.embeddings, "E"),
+		badge(caps.rerank, "K"),
+		badge(caps.fim, "F"),
+	].join("");
+}
+
+/**
+ * One-word residency summary for the probe notes column, from the per-model
+ * load states local runtimes already report. Null when the runtime exposed
+ * no states (cloud targets); "resident: none" when states are known and
+ * nothing is loaded, so a cold box is distinguishable from an unknown one.
+ */
+function residentModelsSummary(states: TargetStatus["discoveredModelStates"]): string | null {
+	if (!states) return null;
+	const entries = Object.entries(states);
+	if (entries.length === 0) return null;
+	const resident = entries
+		.filter(([, status]) => status.state === "loaded" || status.state === "loading")
+		.map(([id, status]) => (status.state === "loading" ? `${id} (loading)` : id));
+	return resident.length > 0 ? `resident: ${resident.join(", ")}` : "resident: none";
+}
+
+/**
+ * A window nothing declared is the runtime descriptor's placeholder, not a
+ * capability the target reported. Saying so is the difference between a number
+ * a user can plan against and one they cannot.
+ */
+function formatContextWindow(
+	status: Pick<TargetStatus, "capabilities" | "contextWindowProvenance"> &
+		Partial<Pick<TargetStatus, "target" | "discoveredModelStates" | "runtime">>,
+): string {
+	const window = status.capabilities.contextWindow;
+	const modelState = status.target?.defaultModel
+		? status.discoveredModelStates?.[status.target.defaultModel]
+		: undefined;
+	// A resident model's serving window bounds the session below whatever the
+	// model allows, so both are named: the operator sees which one a run is
+	// planned against and how far the model could be raised (issue #375).
+	const serving = modelState?.contextLength;
+	// A configured `num_ctx` is what every request asks for, so the server
+	// serves that window from the next turn on, capped by the model maximum.
+	const requested = status.target ? status.runtime?.requestedContextWindow?.(status.target) : undefined;
+	if (requested !== undefined) {
+		const known = status.contextWindowProvenance !== "runtime-default";
+		const planned = known ? Math.min(requested, window) : requested;
+		const bounds = ["num_ctx", ...(serving !== undefined && serving !== planned ? [`serving ${serving}`] : [])];
+		if (known && window !== planned) bounds.push(`model max ${window}`);
+		return `ctx ${planned} (${bounds.join("; ")})`;
+	}
+	if (serving !== undefined && serving > 0) {
+		if (status.contextWindowProvenance === "configured" && window < serving) return `ctx ${window} (serving ${serving})`;
+		if (status.contextWindowProvenance === "runtime-default" || window === serving) return `ctx ${serving} (serving)`;
+		return `ctx ${serving} (serving; model max ${window})`;
+	}
+	if (status.contextWindowProvenance === "runtime-default") return `ctx ${window} (unverified runtime default)`;
+	// A model that is not resident loads at a window the server picks, so the
+	// runtime's cold cap is planned against and the maximum is named beside it.
+	const cold = status.runtime?.coldContextWindowCap;
+	if (cold !== undefined && status.contextWindowProvenance !== "configured" && window > cold) {
+		return `ctx ${cold} (cold; model max ${window})`;
+	}
+	// A llama.cpp window that is one slot's share of `--ctx-size` names the
+	// split, so `ctx 196608` is not mistaken for the whole server (issue #187).
+	const slots = modelState?.contextSlots;
+	return slots && Math.floor(slots.totalContextSize / slots.slots) === window
+		? `ctx ${window} (${slots.totalContextSize} / ${slots.slots} slots)`
+		: `ctx ${window}`;
+}
+
+function formatNotes(status: TargetStatus): string {
+	const parts: string[] = [];
+	const diagnostic = healthDiagnostic(status);
+	// The health diagnosis leads because gateway, context, and residency facts
+	// are supplementary once the target says it cannot serve its default model.
+	if (diagnostic) parts.push(diagnostic);
+	const endpoint = endpointCapacityForStatus(status);
+	if (endpoint) parts.push(`slots ${endpoint.limit}`);
+	if (status.target.gateway) parts.push("gateway");
+	if (status.runtime?.auth === "oauth") parts.push("oauth");
+	if (status.runtime?.auth === "claude-cli") parts.push("claude-cli");
+	if (status.capabilities.contextWindow > 0) parts.push(formatContextWindow(status));
+	if (!status.available && status.reason && status.reason !== diagnostic) parts.push(status.reason);
+	const residency = residentModelsSummary(status.discoveredModelStates);
+	if (residency) parts.push(residency);
+	if (status.probeNotes && status.probeNotes.length > 0) parts.push(`note: ${status.probeNotes.join("; ")}`);
+	const tools = formatToolProbe(status.toolProbe);
+	if (tools) parts.push(tools);
+	return parts.join(" ");
+}
+
+function formatToolProbe(probe: TargetStatus["toolProbe"]): string | null {
+	if (!probe) return null;
+	const model = probe.modelId ?? "no model";
+	// The level leads so the table's narrow notes column still shows it (#435).
+	const harmony = probe.harmony !== undefined && probe.harmony !== "unknown" ? `, server Harmony ${probe.harmony}` : "";
+	const flags = missingVllmHarmonyFlags(probe.harmony);
+	if (probe.status === "verified") return `tools verified${harmony} (${model}, ${probe.latencyMs}ms)${flags}`;
+	return `tools ${probe.status}${harmony} (${model}): ${probe.error ?? "unknown error"}${flags}`;
+}
+
+/** Why a target cannot serve: a down target's probe error and its remedy are kept, not cut to the notes column. */
+function healthDiagnostic(status: TargetStatus): string | null {
+	if (!status.runtime) return status.reason;
+	const failing = status.health.status === "degraded" || status.health.status === "down";
+	return failing && status.health.lastError ? status.health.lastError : null;
+}
+
+function statusTier(status: TargetStatus): ProviderOutputTier {
+	return status.runtime?.tier ?? "unknown";
+}
+
+function tierLabel(tier: ProviderOutputTier): string {
+	switch (tier) {
+		case "protocol":
+			return "Protocol";
+		case "cloud":
+			return "Cloud";
+		case "subscription":
+			return "Subscription";
+		case "local-native":
+			return "Local native";
+		case "unknown":
+			return "Unknown";
+	}
+}
+
+function tierRank(tier: ProviderOutputTier): number {
+	switch (tier) {
+		case "protocol":
+			return 0;
+		case "cloud":
+			return 1;
+		case "subscription":
+			return 2;
+		case "local-native":
+			return 3;
+		case "unknown":
+			return 4;
+	}
+}
+
+function compareStatusByTier(a: TargetStatus, b: TargetStatus): number {
+	return (
+		tierRank(statusTier(a)) - tierRank(statusTier(b)) ||
+		a.target.id.localeCompare(b.target.id) ||
+		a.target.runtime.localeCompare(b.target.runtime)
+	);
+}
+
+interface SerializedStatus {
+	target: TargetStatus["target"];
+	runtime: TargetStatus["runtime"];
+	available: boolean;
+	reason: string;
+	health: TargetStatus["health"];
+	capabilities: TargetStatus["capabilities"];
+	contextWindowProvenance?: TargetStatus["contextWindowProvenance"];
+	probeCapabilities?: TargetStatus["probeCapabilities"];
+	probeModelId?: TargetStatus["probeModelId"];
+	probeNotes?: TargetStatus["probeNotes"];
+	probeSurfaces?: TargetStatus["probeSurfaces"];
+	toolProbe?: TargetStatus["toolProbe"];
+	discoveredModels: TargetStatus["discoveredModels"];
+	discoveredModelLabels?: TargetStatus["discoveredModelLabels"];
+	discoveredModelsSource?: TargetStatus["discoveredModelsSource"];
+	discoveredModelStates?: TargetStatus["discoveredModelStates"];
+	tier: ProviderOutputTier;
+	detectedReasoning: boolean | null;
+	reasoningCandidateModelId: string | null;
+	endpointCapacity?: ReturnType<typeof endpointCapacityForStatus>;
+}
+
+function serializeStatus(
+	status: TargetStatus,
+	extras: { detectedReasoning: boolean | null; candidateModelId: string | null } = {
+		detectedReasoning: null,
+		candidateModelId: null,
+	},
+): SerializedStatus {
+	const out: SerializedStatus = {
+		target: status.target,
+		runtime: status.runtime,
+		available: status.available,
+		reason: status.reason,
+		health: status.health,
+		capabilities: status.capabilities,
+		discoveredModels: status.discoveredModels,
+		tier: statusTier(status),
+		detectedReasoning: extras.detectedReasoning,
+		reasoningCandidateModelId: extras.candidateModelId,
+	};
+	if (status.discoveredModelLabels !== undefined) out.discoveredModelLabels = status.discoveredModelLabels;
+	const endpointCapacity = endpointCapacityForStatus(status);
+	if (endpointCapacity !== null) out.endpointCapacity = endpointCapacity;
+	if (status.contextWindowProvenance !== undefined) {
+		out.contextWindowProvenance = status.contextWindowProvenance;
+	}
+	if (status.discoveredModelsSource !== undefined) {
+		out.discoveredModelsSource = status.discoveredModelsSource;
+	}
+	if (status.discoveredModelStates !== undefined) {
+		out.discoveredModelStates = status.discoveredModelStates;
+	}
+	if (status.probeCapabilities !== undefined) {
+		out.probeCapabilities = status.probeCapabilities;
+	}
+	if (status.probeModelId !== undefined) {
+		out.probeModelId = status.probeModelId;
+	}
+	if (status.probeNotes !== undefined) {
+		out.probeNotes = status.probeNotes;
+	}
+	if (status.probeSurfaces !== undefined) {
+		out.probeSurfaces = status.probeSurfaces;
+	}
+	if (status.toolProbe !== undefined) {
+		out.toolProbe = status.toolProbe;
+	}
+	return out;
+}

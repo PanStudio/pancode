@@ -1,0 +1,276 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Payload→notice formatters for bus channels the interactive layer renders
+ * as operator notices. Validation lives here so malformed payloads are
+ * dropped in one place and the index.ts subscribers stay wiring-only.
+ * Returning null means "ignore the event".
+ */
+
+import type {
+	MiddlewareHookFailedPayload,
+	PermissionRequestedPayload,
+	SafetyBlockedPayload,
+} from "../core/telemetry/live-events.js";
+import { actionClassWords, safetyNetRailText } from "../core/views/approval-words.js";
+import { HOOK_BUDGET_STALL_FACTOR } from "../domains/middleware/index.js";
+import type { SafetyDecision } from "../domains/safety/contract.js";
+import { describeBudgetBlock, readBudgetBlock } from "../domains/scheduling/budget.js";
+import type { NoticeSource } from "../session-control/notice-source.js";
+import { askAxis } from "./permission-overlay.js";
+
+export interface BusNotice {
+	level: "warn" | "error";
+	text: string;
+	/**
+	 * The advisory source of a multi-sentence notice, chosen by the formatter that
+	 * wrote it. A one-line notice has none and keeps its gutter row.
+	 */
+	source?: NoticeSource;
+}
+
+export interface MiddlewareHookFailedNoticeOptions {
+	noteBudgetWarningSuppression?: boolean;
+}
+
+export function budgetAlertNotice(payload: unknown): BusNotice | null {
+	const block = readBudgetBlock(payload);
+	if (block === null) return null;
+	// One formatter for the live alert, the replayed ledger entry and the ACP frame (#424).
+	return { ...describeBudgetBlock(block), source: "budget" };
+}
+
+/**
+ * Restart-required settings changed under a running session. The level is
+ * always a warning; only the text varies, so this returns the text or null.
+ */
+export function restartRequiredNotice(payload: unknown): string | null {
+	const diff = (payload as { diff?: { restartRequired?: unknown } } | null | undefined)?.diff;
+	const raw = diff?.restartRequired;
+	if (!Array.isArray(raw)) return null;
+	const paths = raw.filter((p): p is string => typeof p === "string" && p.length > 0);
+	if (paths.length === 0) return null;
+	const label = paths.length === 1 ? "setting" : "settings";
+	return `[config] ${label} ${paths.join(", ")} changed; restart PanCode to apply.`;
+}
+
+function isSafetyBlockedPayload(value: unknown): value is SafetyBlockedPayload {
+	if (!value || typeof value !== "object") return false;
+	const p = value as Record<string, unknown>;
+	if (typeof p.tool !== "string" || p.tool.length === 0) return false;
+	if (typeof p.actionClass !== "string" || p.actionClass.length === 0) return false;
+	if (p.ruleId !== undefined && typeof p.ruleId !== "string") return false;
+	if (typeof p.policySource !== "string" || p.policySource.length === 0) return false;
+	if (typeof p.reasonCode !== "string" || p.reasonCode.length === 0) return false;
+	return true;
+}
+
+function isMiddlewareHookFailedPayload(value: unknown): value is MiddlewareHookFailedPayload {
+	if (!value || typeof value !== "object") return false;
+	const p = value as Record<string, unknown>;
+	if (p.kind !== "hook_failed" && p.kind !== "budget_exceeded" && p.kind !== "registration_conflict") return false;
+	if (typeof p.registrationId !== "string" || p.registrationId.length === 0) return false;
+	if (typeof p.hook !== "string" || p.hook.length === 0) return false;
+	if (p.message !== undefined && typeof p.message !== "string") return false;
+	if (p.elapsedMs !== undefined && typeof p.elapsedMs !== "number") return false;
+	if (p.budgetMs !== undefined && typeof p.budgetMs !== "number") return false;
+	if (p.steadyStateWarn !== undefined && typeof p.steadyStateWarn !== "boolean") return false;
+	if (p.p95Ms !== undefined && typeof p.p95Ms !== "number") return false;
+	if (p.overCount !== undefined && typeof p.overCount !== "number") return false;
+	if (p.windowSamples !== undefined && typeof p.windowSamples !== "number") return false;
+	return true;
+}
+
+function isWorkerEscalationPayload(value: unknown): value is PermissionRequestedPayload {
+	if (!value || typeof value !== "object") return false;
+	const p = value as Record<string, unknown>;
+	if (typeof p.requestId !== "string" || p.requestId.length === 0) return false;
+	if (typeof p.tool !== "string" || p.tool.length === 0) return false;
+	if (typeof p.actionClass !== "string" || p.actionClass.length === 0) return false;
+	if (p.origin !== undefined) {
+		if (typeof p.origin !== "string" || !p.origin.startsWith("worker:")) return false;
+	} else if (typeof p.requestedBy !== "string" || p.requestedBy.length === 0) {
+		return false;
+	}
+	if (p.agentId !== undefined && typeof p.agentId !== "string") return false;
+	if (p.axis !== undefined && typeof p.axis !== "string") return false;
+	if (p.ruleId !== undefined && typeof p.ruleId !== "string") return false;
+	if (p.reasonCode !== undefined && typeof p.reasonCode !== "string") return false;
+	return true;
+}
+
+function workerRunId(payload: PermissionRequestedPayload): string {
+	if (payload.origin?.startsWith("worker:")) return payload.origin.slice("worker:".length);
+	return payload.requestedBy ?? "worker";
+}
+
+function workerEscalationAxis(
+	payload: PermissionRequestedPayload,
+): { kind: "net"; ruleId: string } | { kind: "autonomy"; level: string } | null {
+	if (payload.axis?.startsWith("net:")) {
+		const ruleId = payload.axis.slice("net:".length);
+		return ruleId.length > 0 ? { kind: "net", ruleId } : null;
+	}
+	if (payload.axis?.startsWith("autonomy:")) {
+		const level = payload.axis.slice("autonomy:".length);
+		return level.length > 0 ? { kind: "autonomy", level } : null;
+	}
+	if (payload.ruleId !== undefined && payload.ruleId.length > 0) {
+		return { kind: "net", ruleId: payload.ruleId };
+	}
+	return null;
+}
+
+function middlewareBudgetWarningKey(payload: unknown): string | null {
+	if (!isMiddlewareHookFailedPayload(payload)) return null;
+	if (payload.kind !== "budget_exceeded") return null;
+	return `${payload.registrationId}\u0000${payload.hook}`;
+}
+
+/**
+ * A middleware hook registration threw (its effects were discarded) or
+ * overran the soft budget (its effects still applied). The turn proceeded
+ * either way; this warn notice is the operator's only interactive signal
+ * that a guard or assessor is misbehaving.
+ */
+function middlewareHookFailedNotice(
+	payload: unknown,
+	options: MiddlewareHookFailedNoticeOptions = {},
+): BusNotice | null {
+	if (!isMiddlewareHookFailedPayload(payload)) return null;
+	if (payload.kind === "registration_conflict") {
+		const detail =
+			payload.message !== undefined && payload.message.length > 0
+				? payload.message
+				: `registration '${payload.registrationId}' conflicts with an existing id`;
+		return { level: "warn", text: `[middleware] ${detail}` };
+	}
+	if (payload.kind === "hook_failed") {
+		const detail = payload.message !== undefined && payload.message.length > 0 ? `: ${payload.message}` : "";
+		return {
+			level: "warn",
+			text: `[middleware] Hook '${payload.registrationId}' failed on ${payload.hook}${detail}. Its effects were skipped; the turn continued.`,
+			source: "hooks",
+		};
+	}
+	const elapsed = payload.elapsedMs !== undefined ? `${payload.elapsedMs.toFixed(1)}ms` : "unknown";
+	const budget = payload.budgetMs !== undefined ? `${payload.budgetMs}ms` : "budget";
+	if (isHookStall(payload))
+		return {
+			level: "warn",
+			text: `[middleware] hook '${payload.registrationId}' stalled on ${payload.hook} for ${elapsed} (soft budget ${budget}); the turn waited for it. Further budget warnings for this hook are suppressed.`,
+		};
+	const trend =
+		payload.overCount !== undefined && payload.windowSamples !== undefined && payload.windowSamples > 0
+			? ` slow on ${payload.overCount} of the last ${payload.windowSamples} ${payload.hook} calls${
+					payload.p95Ms !== undefined ? `, p95 ${payload.p95Ms.toFixed(1)}ms` : ""
+				};`
+			: ";";
+	const suffix = options.noteBudgetWarningSuppression ? " further budget warnings for this hook suppressed" : "";
+	return {
+		level: "warn",
+		text:
+			`[middleware] hook '${payload.registrationId}' consistently exceeds its soft budget on ${payload.hook} (${elapsed} > ${budget})${trend}${suffix}`.trimEnd(),
+	};
+}
+
+/** A lone overrun of ten times the budget or more: the turn sat waiting on the hook (a cold spawn, a blocking read). */
+function isHookStall(payload: MiddlewareHookFailedPayload): boolean {
+	return (
+		payload.kind === "budget_exceeded" &&
+		payload.elapsedMs !== undefined &&
+		payload.budgetMs !== undefined &&
+		payload.elapsedMs >= payload.budgetMs * HOOK_BUDGET_STALL_FACTOR
+	);
+}
+
+/**
+ * Interactive-notice gate. Steady-state slowness and a stall surface to the
+ * operator; a lone post-warmup spike short of a stall (`steadyStateWarn` false)
+ * rides the bus for telemetry only. The warning set ensures each registration
+ * and hook pair is shown only once.
+ */
+export function middlewareHookFailedSessionNotice(payload: unknown, seenBudgetWarnings: Set<string>): BusNotice | null {
+	if (
+		isMiddlewareHookFailedPayload(payload) &&
+		payload.kind === "budget_exceeded" &&
+		payload.steadyStateWarn === false &&
+		!isHookStall(payload)
+	) {
+		return null;
+	}
+	const key = middlewareBudgetWarningKey(payload);
+	if (key !== null) {
+		if (seenBudgetWarnings.has(key)) return null;
+		seenBudgetWarnings.add(key);
+	}
+	return middlewareHookFailedNotice(payload, { noteBudgetWarningSuppression: key !== null });
+}
+
+export { WATCHDOG_NOTICE_CHECK_LIMIT, watchdogBlockersNotice } from "../session-control/watchdog-notice.js";
+
+/**
+ * A tool call parked for one-shot approval (sd-01 §3.3). The text names the
+ * axis that produced the ask: a safety-net rail asks at every level, the System
+ * One gate asks only about an unrecognized command yolo would have run, and an
+ * autonomy ask exists only because of the current level and can be widened in
+ * .pancode/safety.yaml when it is an execute action.
+ */
+export function approvalParkedNotice(tool: string, decision: SafetyDecision, autonomy: string): BusNotice {
+	const actionClass = decision.classification.actionClass;
+	const axis = askAxis(decision);
+	if (axis.kind === "net") {
+		const asker = safetyNetRailText(axis.ruleId);
+		return {
+			level: "warn",
+			text: `${tool} waits on you because it ${actionClassWords(actionClass)}: ${asker} asks for confirmation. Approve once, or Esc denies this call.`,
+			source: "approval",
+		};
+	}
+	const widen =
+		actionClass === "execute"
+			? " Approve once, or add it to .pancode/safety.yaml commands."
+			: " Approve once, or Esc denies this call.";
+	return {
+		level: "warn",
+		text: `${tool} waits on you because it ${actionClassWords(actionClass)}: autonomy ${autonomy} asks.${widen}`,
+		source: "approval",
+	};
+}
+
+export function workerEscalationNotice(payload: unknown): BusNotice | null {
+	if (!isWorkerEscalationPayload(payload)) return null;
+	const axis = workerEscalationAxis(payload);
+	if (axis === null) return null;
+	const agentId = payload.agentId ?? "worker";
+	const runId = workerRunId(payload);
+	if (axis.kind === "net") {
+		return {
+			level: "warn",
+			text: `Worker ${agentId} asks to run ${payload.tool}, which ${actionClassWords(payload.actionClass)}: ${safetyNetRailText(axis.ruleId)} asks for confirmation. Approve once, or Esc denies this call. /view dispatch:${runId}`,
+			source: "fleet",
+		};
+	}
+	return {
+		level: "warn",
+		text: `Worker ${agentId} asks to run ${payload.tool}, which ${actionClassWords(payload.actionClass)}: autonomy ${axis.level} asks. Approve once, or Esc denies this call. /view dispatch:${runId}`,
+		source: "fleet",
+	};
+}
+
+/**
+ * The blocked call's transcript row states the refusal and its body the
+ * rejection the model received, the rule included, so this notice passes
+ * through the footer's notice slot with the policy dimension: which rule
+ * fired and from which policy source. The closing sentence states that these
+ * gates are level-independent, so the notice never reads as a contradiction of
+ * the autonomy level shown in the dashboards (sd-01).
+ */
+export function safetyBlockedNotice(payload: unknown): BusNotice | null {
+	if (!isSafetyBlockedPayload(payload)) return null;
+	return {
+		level: "warn",
+		text: `PanCode's safety net blocked ${payload.tool} because it ${actionClassWords(payload.actionClass)}. This gate applies at every autonomy level, and /view names the rule.`,
+		source: "safety",
+	};
+}

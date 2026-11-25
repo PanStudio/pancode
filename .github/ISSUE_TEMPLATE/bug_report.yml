@@ -1,0 +1,71 @@
+name: Bug report
+description: Something went wrong in PanCode. Tell us what you saw.
+title: "fix: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened
+      description: A few sentences are enough. `/report bug` inside PanCode, or `pancode report bug` in a shell, fills this form for you and masks private details first.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: What you expected to happen instead.
+    validations:
+      required: false
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps, if you have them
+      description: Commands, config shape, or session steps that bring it back.
+    validations:
+      required: false
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Terminal
+        - Headless run
+        - Editor over ACP
+        - Desktop app
+        - Installer
+    validations:
+      required: false
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: "`pancode --version`, how you installed it, and your target and model. `/report` fills this."
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Only the relevant lines. Remove API keys, host names and private source. Security problems go to a private advisory, not here.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Filled by /report. Leave empty when writing by hand.
+    validations:
+      required: false

@@ -1,0 +1,467 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { type Dirent, existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import path from "node:path";
+import type { ExtensionDiagnostic, PancodeExtensionManifest } from "@pancode/sdk/pack";
+import {
+	ManifestKeyPolicy,
+	parseExtensionCapabilities,
+	parseExtensionRuntime,
+	parseExtensionRuntimeV2,
+	parseIgnorable,
+	resolveExtensionEntrypoint,
+} from "@pancode/sdk/pack";
+import { parse as parseYaml } from "yaml";
+import { isRecord } from "../../core/type-guards.js";
+import { isPluginId } from "../plugins/index.js";
+import { evaluatePancodeCompatibility } from "./compatibility.js";
+import { validateSkin } from "./skin-schema.js";
+import type { ExtensionCandidate } from "./types.js";
+
+const MANIFEST_NAMES = ["pancode-extension.yaml", "pancode-extension.yml", "pancode-extension.json"] as const;
+const MANIFEST_KEYS = new Set([
+	"id",
+	"name",
+	"version",
+	"description",
+	"compatibility",
+	"capabilities",
+	"runtime",
+	"plugin",
+	"ignorable",
+	"license",
+]);
+const COMPATIBILITY_KEYS = new Set(["pancode"]);
+/**
+ * Keys a domain package used to declare here. They are named so the refusal
+ * points at the plugin installer instead of reading as a typo.
+ */
+const PLUGIN_OWNED_KEYS = new Set(["resources", "skills", "prompts", "agents", "playbooks"]);
+const PLUGIN_GUIDANCE = "domain resources belong in a plugin: pancode hub install <path>";
+
+function compareNames(a: { name: string }, b: { name: string }): number {
+	return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+}
+
+export function trimString(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function isExtensionId(id: string): boolean {
+	return validateId(id) === null;
+}
+
+function validateId(id: string): string | null {
+	if (id.length > 80) return "id exceeds 80 characters";
+	if (!/^[a-z0-9][a-z0-9._-]*[a-z0-9]$/.test(id)) {
+		return "id must use lowercase letters, numbers, dots, underscores, or hyphens and start/end alphanumeric";
+	}
+	return null;
+}
+
+function readJsonOrYaml(filePath: string): unknown {
+	const raw = readFileSync(filePath, "utf8");
+	if (filePath.endsWith(".json")) return JSON.parse(raw);
+	return parseYaml(raw);
+}
+
+function rejectUnknownKeys(
+	value: Record<string, unknown>,
+	allowed: ReadonlySet<string>,
+	label: string,
+	manifestPath: string,
+	diagnostics: ExtensionDiagnostic[],
+	policy: ManifestKeyPolicy,
+): void {
+	for (const key of policy.unknown(value, label, allowed).sort())
+		diagnostics.push({ type: "error", message: `unknown ${label} key '${key}'`, path: manifestPath });
+}
+
+/** A plugin-owned key is known, as a refusal, so listing it under `ignorable` never skips it. */
+function rejectManifestKeys(
+	value: Record<string, unknown>,
+	manifestPath: string,
+	diagnostics: ExtensionDiagnostic[],
+	policy: ManifestKeyPolicy,
+): void {
+	const known = { has: (key: string) => MANIFEST_KEYS.has(key) || PLUGIN_OWNED_KEYS.has(key) };
+	const owned = Object.keys(value).filter((key) => PLUGIN_OWNED_KEYS.has(key));
+	for (const key of [...owned, ...policy.unknown(value, "", known)].sort()) {
+		diagnostics.push({
+			type: "error",
+			message: PLUGIN_OWNED_KEYS.has(key)
+				? `extensions cannot declare '${key}'; ${PLUGIN_GUIDANCE}`
+				: `unknown manifest key '${key}'`,
+			path: manifestPath,
+		});
+	}
+}
+
+export function parseExtensionManifest(
+	value: unknown,
+	manifestPath: string,
+): {
+	manifest?: PancodeExtensionManifest;
+	diagnostics: ExtensionDiagnostic[];
+} {
+	const diagnostics: ExtensionDiagnostic[] = [];
+	if (!isRecord(value)) {
+		return { diagnostics: [{ type: "error", message: "extension manifest must be an object", path: manifestPath }] };
+	}
+	let ignorable: string[] = [];
+	try {
+		ignorable = parseIgnorable(value.ignorable);
+	} catch (error) {
+		diagnostics.push({
+			type: "error",
+			message: error instanceof Error ? error.message : String(error),
+			path: manifestPath,
+		});
+	}
+	const policy = new ManifestKeyPolicy(ignorable);
+	rejectManifestKeys(value, manifestPath, diagnostics, policy);
+	const id = trimString(value.id);
+	const name = trimString(value.name) ?? id;
+	const version = trimString(value.version);
+	const description = trimString(value.description);
+	if (!id) diagnostics.push({ type: "error", message: "id is required", path: manifestPath });
+	else {
+		const idError = validateId(id);
+		if (idError) diagnostics.push({ type: "error", message: idError, path: manifestPath });
+	}
+	if (!version) diagnostics.push({ type: "error", message: "version is required", path: manifestPath });
+	if (!description) diagnostics.push({ type: "error", message: "description is required", path: manifestPath });
+	const license = typeof value.license === "string" ? value.license.trim() : undefined;
+	if (value.license !== undefined && (license === undefined || license.length === 0 || license.length > 128))
+		diagnostics.push({
+			type: "error",
+			message: "license must be an SPDX expression of at most 128 characters",
+			path: manifestPath,
+		});
+	const plugin = trimString(value.plugin);
+	if (value.plugin !== undefined && (plugin === undefined || !isPluginId(plugin)))
+		diagnostics.push({
+			type: "error",
+			message: "plugin must name the plugin this extension serves, as a plugin id",
+			path: manifestPath,
+		});
+	let capabilities: PancodeExtensionManifest["capabilities"];
+	let runtime: PancodeExtensionManifest["runtime"];
+	let runtimeV2: PancodeExtensionManifest["runtimeV2"];
+	if (value.runtime !== undefined) {
+		try {
+			if ((value.runtime as { api?: unknown } | null)?.api === 2)
+				runtimeV2 = parseExtensionRuntimeV2(value.runtime, policy);
+			else runtime = parseExtensionRuntime(value.runtime, policy);
+		} catch (error) {
+			diagnostics.push({
+				type: "error",
+				message: error instanceof Error ? error.message : String(error),
+				path: manifestPath,
+			});
+		}
+	}
+	if (value.capabilities !== undefined) {
+		try {
+			capabilities = parseExtensionCapabilities(value.capabilities, id ?? "", policy);
+		} catch (error) {
+			diagnostics.push({
+				type: "error",
+				message: error instanceof Error ? error.message : String(error),
+				path: manifestPath,
+			});
+		}
+	}
+	let compatibility: PancodeExtensionManifest["compatibility"];
+	if (value.compatibility !== undefined) {
+		if (!isRecord(value.compatibility)) {
+			diagnostics.push({ type: "error", message: "compatibility must be an object", path: manifestPath });
+		} else {
+			rejectUnknownKeys(value.compatibility, COMPATIBILITY_KEYS, "compatibility", manifestPath, diagnostics, policy);
+			if (!("pancode" in value.compatibility)) {
+				compatibility = {};
+			} else {
+				const range = trimString(value.compatibility.pancode);
+				if (range === undefined) {
+					diagnostics.push({
+						type: "error",
+						message: "compatibility.pancode must be a non-empty semver range",
+						path: manifestPath,
+					});
+				} else {
+					const evaluation = evaluatePancodeCompatibility(range);
+					if (!evaluation.rangeValid) {
+						diagnostics.push({
+							type: "error",
+							message: `extension ${id ?? "<unknown>"} declares malformed compatibility.pancode range '${range}'`,
+							path: manifestPath,
+						});
+					} else {
+						compatibility = { pancode: range };
+					}
+				}
+			}
+		}
+	}
+	diagnostics.push(...policy.warnings(id, manifestPath));
+	if (!id || !name || !version || !description || diagnostics.some((diag) => diag.type === "error")) {
+		return { diagnostics };
+	}
+	const manifest: PancodeExtensionManifest = { id, name, version, description };
+	if (runtime) manifest.runtime = runtime;
+	if (runtimeV2) manifest.runtimeV2 = runtimeV2;
+	if (capabilities) manifest.capabilities = capabilities;
+	if (compatibility && Object.keys(compatibility).length > 0) manifest.compatibility = compatibility;
+	if (plugin) manifest.plugin = plugin;
+	if (license) manifest.license = license;
+	if (!plugin && runtimeV2?.commands.some((command) => command.replaces === "prompt"))
+		diagnostics.push({
+			type: "error",
+			message: "replaces: prompt needs plugin: <name>, the plugin whose prompt the command takes over",
+			path: manifestPath,
+		});
+	const pancodeRange = manifest.compatibility?.pancode;
+	if (pancodeRange !== undefined) {
+		const evaluation = evaluatePancodeCompatibility(pancodeRange);
+		if (!evaluation.satisfied) {
+			diagnostics.push({
+				type: "error",
+				message: `extension ${manifest.id} requires PanCode '${pancodeRange}', but running PanCode version is '${evaluation.runningVersion}'`,
+				path: manifestPath,
+			});
+		}
+	}
+	return { manifest, diagnostics };
+}
+
+export function findExtensionManifestPath(root: string): string | null {
+	for (const name of MANIFEST_NAMES) {
+		const candidate = path.join(root, name);
+		try {
+			if (statSync(candidate).isFile()) return candidate;
+		} catch {
+			// absent
+		}
+	}
+	return null;
+}
+
+export function loadManifestFromRoot(root: string): ExtensionCandidate {
+	const manifestPath = findExtensionManifestPath(root);
+	if (!manifestPath) {
+		return {
+			path: root,
+			valid: false,
+			diagnostics: [{ type: "error", message: "extension manifest not found", path: root }],
+		};
+	}
+	try {
+		const parsed = parseExtensionManifest(readJsonOrYaml(manifestPath), manifestPath);
+		if (parsed.manifest?.runtime) {
+			try {
+				resolveExtensionEntrypoint(root, parsed.manifest.runtime.entrypoint);
+			} catch (error) {
+				parsed.diagnostics.push({
+					type: "error",
+					message: `runtime: ${error instanceof Error ? error.message : String(error)}`,
+					path: manifestPath,
+				});
+			}
+		}
+		const runtimeV2 = parsed.manifest?.runtimeV2;
+		// A plugin and an extension are separate packages, each with its own
+		// manifest, digest and consent; one root never serves as both.
+		if (existsSync(path.join(root, "plugin.json")))
+			parsed.diagnostics.push({
+				type: "error",
+				message:
+					"an extension root cannot hold plugin.json; publish the plugin and the extension as separate packages and name the plugin with plugin: <name>",
+				path: manifestPath,
+			});
+		if (runtimeV2) {
+			const files = [
+				{ file: runtimeV2.entrypoint, isSkin: false },
+				...runtimeV2.workspaces.flatMap((workspace) => (workspace.skin ? [{ file: workspace.skin, isSkin: true }] : [])),
+			];
+			for (const { file, isSkin } of files) {
+				try {
+					const resolved = resolveExtensionEntrypoint(root, file);
+					// A skin is data; reading it here keeps a broken one out of an install without running anything.
+					if (isSkin) {
+						const skin: unknown = JSON.parse(readFileSync(resolved, "utf8"));
+						const validation = validateSkin(skin);
+						if (!validation.ok) throw new Error(`skin ${validation.path}: ${validation.reason}`);
+					}
+				} catch (error) {
+					parsed.diagnostics.push({
+						type: "error",
+						message: `runtime: ${file}: ${error instanceof Error ? error.message : String(error)}`,
+						path: manifestPath,
+					});
+				}
+			}
+		}
+		for (const tool of parsed.manifest?.capabilities?.tools ?? []) {
+			try {
+				resolveExtensionEntrypoint(root, tool.entrypoint);
+			} catch (error) {
+				parsed.diagnostics.push({
+					type: "error",
+					message: `command tool ${tool.name}: ${error instanceof Error ? error.message : String(error)}`,
+					path: manifestPath,
+				});
+			}
+		}
+		return {
+			path: root,
+			manifestPath,
+			...(parsed.manifest ? { manifest: parsed.manifest } : {}),
+			valid: parsed.manifest !== undefined && !parsed.diagnostics.some((diag) => diag.type === "error"),
+			diagnostics: parsed.diagnostics,
+		};
+	} catch (err) {
+		const reason = err instanceof Error ? err.message : String(err);
+		return {
+			path: root,
+			manifestPath,
+			valid: false,
+			diagnostics: [{ type: "error", message: `extension manifest could not be read: ${reason}`, path: manifestPath }],
+		};
+	}
+}
+
+export function discoverExtensionPackages(root: string): ExtensionCandidate[] {
+	const full = path.resolve(root);
+	if (!existsSync(full)) {
+		return [{ path: full, valid: false, diagnostics: [{ type: "error", message: "path does not exist", path: full }] }];
+	}
+	let stat: ReturnType<typeof statSync>;
+	try {
+		stat = statSync(full);
+	} catch (error) {
+		return [
+			{
+				path: full,
+				valid: false,
+				diagnostics: [
+					{
+						type: "error",
+						message: `extension path could not be inspected: ${error instanceof Error ? error.message : String(error)}`,
+						path: full,
+					},
+				],
+			},
+		];
+	}
+	if (!stat.isDirectory()) {
+		return [
+			{
+				path: full,
+				valid: false,
+				diagnostics: [{ type: "error", message: "extension path is not a directory", path: full }],
+			},
+		];
+	}
+	let canonicalFull: string;
+	try {
+		canonicalFull = realpathSync(full);
+	} catch (error) {
+		return [
+			{
+				path: full,
+				valid: false,
+				diagnostics: [
+					{
+						type: "error",
+						message: `extension path could not be canonicalized: ${error instanceof Error ? error.message : String(error)}`,
+						path: full,
+					},
+				],
+			},
+		];
+	}
+	const direct = loadManifestFromRoot(canonicalFull);
+	if (direct.valid || direct.manifestPath) return [direct];
+	const candidates: ExtensionCandidate[] = [];
+	const discoveryFailures: ExtensionCandidate[] = [];
+	const spellingsByCanonicalRoot = new Map<string, string[]>();
+	let entries: Dirent<string>[];
+	try {
+		entries = readdirSync(canonicalFull, { withFileTypes: true, encoding: "utf8" });
+	} catch (error) {
+		return [
+			{
+				path: canonicalFull,
+				valid: false,
+				diagnostics: [
+					{
+						type: "error",
+						message: `extension directory could not be read: ${error instanceof Error ? error.message : String(error)}`,
+						path: canonicalFull,
+					},
+				],
+			},
+		];
+	}
+	for (const entry of entries.sort(compareNames)) {
+		if (entry.name.startsWith(".")) continue;
+		const child = path.join(canonicalFull, entry.name);
+		try {
+			if (!entry.isDirectory() && !(entry.isSymbolicLink() && statSync(child).isDirectory())) continue;
+			const canonicalChild = realpathSync(child);
+			const spellings = spellingsByCanonicalRoot.get(canonicalChild) ?? [];
+			spellings.push(child);
+			spellingsByCanonicalRoot.set(canonicalChild, spellings);
+		} catch (error) {
+			discoveryFailures.push({
+				path: child,
+				valid: false,
+				diagnostics: [
+					{
+						type: "error",
+						message: `extension child could not be canonicalized: ${error instanceof Error ? error.message : String(error)}`,
+						path: child,
+					},
+				],
+			});
+		}
+	}
+	for (const canonicalChild of [...spellingsByCanonicalRoot.keys()].sort()) {
+		const loaded = loadManifestFromRoot(canonicalChild);
+		const spellings = spellingsByCanonicalRoot.get(canonicalChild) ?? [];
+		if (spellings.length > 1) {
+			loaded.diagnostics.push({
+				type: "warning",
+				message: `duplicate canonical extension root loaded once; discovered as ${spellings.sort().join(", ")}`,
+				path: canonicalChild,
+			});
+		}
+		if (loaded.valid || loaded.manifestPath) candidates.push(loaded);
+	}
+	const discovered = [...candidates, ...discoveryFailures].sort((a, b) =>
+		a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+	);
+	if (discovered.length === 0) discovered.push(direct);
+	const ids = new Map<string, ExtensionCandidate[]>();
+	for (const candidate of discovered) {
+		const id = candidate.manifest?.id;
+		if (!id) continue;
+		const group = ids.get(id) ?? [];
+		group.push(candidate);
+		ids.set(id, group);
+	}
+	for (const [id, group] of ids) {
+		if (group.length < 2) continue;
+		for (const candidate of group) {
+			candidate.valid = false;
+			candidate.diagnostics.push({
+				type: "error",
+				message: `duplicate extension id ${id}`,
+				path: candidate.manifestPath ?? candidate.path,
+			});
+		}
+	}
+	return discovered;
+}

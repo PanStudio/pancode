@@ -1,0 +1,392 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, it } from "node:test";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { getKeybindings, setKeybindings, type Terminal, TuiMainScreen } from "../../src/engine/tui.js";
+import { parseEditorBashCommand } from "../../src/interactive/editor-bash.js";
+import {
+	createEditorSubmitController,
+	type EditorSubmitDeps,
+	type EditorSubmitExpansion,
+} from "../../src/interactive/editor-submit.js";
+import { createKeybindingManager } from "../../src/interactive/keybinding-manager.js";
+import { PancodeEditor } from "../../src/interactive/pancode-editor.js";
+import {
+	createSlashCommandAutocompleteProvider,
+	emptyCompletionSources,
+} from "../../src/interactive/slash-autocomplete.js";
+import type { SlashCommandContext } from "../../src/session-control/slash-command-types.js";
+import { parseSlashCommand } from "../../src/session-control/slash-commands.js";
+import { dispatchSlashCommand } from "../../src/session-control/slash-dispatch.js";
+
+const noop = () => {};
+const cleanups: (() => void)[] = [];
+afterEach(() => {
+	for (const cleanup of cleanups.splice(0).reverse()) cleanup();
+});
+function fixture(expand?: (text: string) => Promise<EditorSubmitExpansion>) {
+	const previous = getKeybindings();
+	createKeybindingManager(DEFAULT_SETTINGS, {});
+	cleanups.push(() => setKeybindings(previous));
+	const terminal = { columns: 80, rows: 24, write: noop } as unknown as Terminal;
+	const tui = new TuiMainScreen(terminal);
+	const editor = new PancodeEditor(tui, {});
+	let queue = ["prior steer", "prior follow-up"];
+	let streaming = true;
+	const accepted: string[] = [];
+	const errors: string[] = [];
+	const uiEvents: string[] = [];
+	const deps: EditorSubmitDeps = {
+		editor,
+		ui: { start: () => uiEvents.push("start"), stop: () => uiEvents.push("stop"), requestRender: noop },
+		io: { stdout: noop, stderr: (text) => errors.push(text) },
+		chat: {
+			isStreaming: () => streaming,
+			runningToolCalls: () => 0,
+			queueEntries: () => [],
+			removeQueuedEntry: () => null,
+			clearQueuedFollowUps: () => {
+				const result = queue;
+				queue = [];
+				return result;
+			},
+			interruptRefusal: () => null,
+			submit: async (text) => {
+				accepted.push(text);
+			},
+			whenSettled: async () => {},
+		},
+		dispatch: { snapshot: () => ({ running: [] }), steer: noop } as unknown as EditorSubmitDeps["dispatch"],
+		sessionTranscript: {
+			ensureSessionForLocalEntry: noop,
+			refreshChatContextFromSession: noop,
+			recordSubmittedTurn: noop,
+		},
+		chatPanel: { appendReplayBlock: noop },
+		dispatchCommand: () => "accepted",
+		expandSubmit: expand ?? (async (text) => ({ text, images: [] })),
+		notify: noop,
+	};
+	const controller = createEditorSubmitController(deps);
+	return {
+		editor,
+		deps,
+		controller,
+		accepted,
+		errors,
+		uiEvents,
+		idle: () => {
+			streaming = false;
+		},
+	};
+}
+for (const action of ["interruptFromEditor"] as const) {
+	it(`${action} owns only its accepted snapshot and rejects duplicate pending presses`, async () => {
+		let resume!: (value: EditorSubmitExpansion) => void;
+		const f = fixture(
+			() =>
+				new Promise((resolve) => {
+					resume = resolve;
+				}),
+		);
+		f.editor.setText("first message");
+		f.controller[action]();
+		f.controller[action]();
+		// The expansion starts after the async egg-discovery seam, so let it
+		// reach its pending state before the draft changes and the deferred resolves.
+		await new Promise((resolve) => setImmediate(resolve));
+		f.editor.setText("new draft typed while expansion waits");
+		resume({ text: "first message", images: [] });
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.deepEqual(f.accepted, ["first message"]);
+		// The queue stays queued across a send-now; only the newer draft remains.
+		assert.equal(f.editor.getText(), "new draft typed while expansion waits");
+	});
+	it(`${action} preserves an image-bearing refused draft`, async () => {
+		const f = fixture(async (text) => ({ text, images: [{}] }));
+		f.editor.setText("image draft");
+		f.controller[action]();
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.equal(f.editor.getText(), "image draft");
+		assert.equal(f.accepted.length, 0);
+		assert.equal(f.errors.length, 1);
+	});
+}
+// A template with tool constraints sent now while a tool ran was refused by the
+// chat loop, yet the editor was already empty and "queued ahead" was shown.
+it("a send-now the live run refuses keeps its draft and reports nothing queued", async () => {
+	const f = fixture(async (text) => ({ text, images: [], template: "review", constraints: { allowedTools: ["read"] } }));
+	const notices: string[] = [];
+	f.deps.notify = (_level, text) => notices.push(text);
+	f.deps.chat.runningToolCalls = () => 1;
+	f.deps.askSendNow = async () => "wait";
+	f.deps.chat.submit = async (_text, options) => options?.onRefused?.("constrained-turn-in-flight");
+	f.editor.setText("/review src");
+	f.controller.interruptFromEditor();
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(f.editor.getText(), "/review src");
+	assert.deepEqual(notices, []);
+});
+it("large literal paste cannot submit or acquire local-bash provenance on undo/external round trip", () => {
+	const f = fixture();
+	let submissions = 0;
+	f.editor.onSubmit = () => {
+		submissions++;
+	};
+	const pasted = `!echo ${"scientific text\n".repeat(90)}`;
+	f.editor.handleInput(`\x1b[200~${pasted}\x1b[201~`);
+	assert.equal(submissions, 0);
+	assert.equal(f.editor.getExpandedText(), pasted);
+	assert.equal(parseEditorBashCommand(f.editor.getTextForSubmit()), null);
+	f.deps.resolveEditor = () => "fixture";
+	f.deps.editExternally = (text) => {
+		assert.equal(text, pasted);
+		return { ok: true, text };
+	};
+	assert.equal(f.controller.openExternalEditorForInput(), true);
+	assert.equal(parseEditorBashCommand(f.editor.getTextForSubmit()), null);
+	assert.deepEqual(f.uiEvents, ["stop", "start"]);
+});
+it("external editor process gets expanded text; failure restores the exact original provenance", () => {
+	const f = fixture();
+	const root = mkdtempSync(join(tmpdir(), "pancode-keyboard-editor-"));
+	cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+	const script = join(root, "editor.mjs");
+	const receipt = join(root, "received.txt");
+	writeFileSync(
+		script,
+		`import {readFileSync,writeFileSync} from 'node:fs'; const file=process.argv.at(-1); writeFileSync(${JSON.stringify(receipt)},readFileSync(file)); writeFileSync(file,'edited text');`,
+	);
+	f.editor.handleInput(`\x1b[200~${"many lines\n".repeat(90)}\x1b[201~`);
+	const original = f.editor.getExpandedText();
+	f.deps.resolveEditor = () => `${process.execPath} ${script}`;
+	assert.equal(f.controller.openExternalEditorForInput(), true);
+	assert.equal(readFileSync(receipt, "utf8"), original);
+	assert.equal(f.editor.getText(), "edited text");
+	f.editor.handleInput("\x1b[200~!literal\x1b[201~");
+	const snapshot = f.editor.getTextForSubmit();
+	f.deps.editExternally = () => {
+		throw new Error("fixture editor failed");
+	};
+	assert.equal(f.controller.openExternalEditorForInput(), false);
+	assert.equal(f.editor.getTextForSubmit(), snapshot);
+	assert.deepEqual(f.uiEvents, ["stop", "start", "stop", "start"]);
+});
+it("queue recovery prefixes both queue kinds exactly once and keeps literal bang safe", () => {
+	const f = fixture();
+	f.editor.setLiteralText("!draft");
+	f.controller.restoreQueuedFollowUpsToEditor();
+	assert.equal(f.editor.getText(), "prior steer\n\nprior follow-up\n\n!draft");
+	f.controller.restoreQueuedFollowUpsToEditor();
+	assert.equal(f.editor.getText(), "prior steer\n\nprior follow-up\n\n!draft");
+});
+it("a mistyped command names the closest one, runs nothing and keeps the draft", () => {
+	const f = fixture();
+	f.idle();
+	const notices: string[] = [];
+	const context = {
+		notice: (_level: string, text: string) => notices.push(text),
+		render: noop,
+	} as unknown as SlashCommandContext;
+	f.deps.dispatchCommand = (text) => dispatchSlashCommand(parseSlashCommand(text), context);
+	for (const [typed, notice] of [
+		["/stauts", "/stauts is not a command. Closest: /status (runs /usage). /help lists them all."],
+		["/sttings", "/sttings is not a command. Closest: /settings. /help lists them all."],
+		["/zzzz", "/zzzz is not a command. Type /help for the list."],
+	] as const) {
+		notices.length = 0;
+		f.editor.setText(typed);
+		f.controller.submitEditorText(typed);
+		assert.deepEqual(notices, [notice], typed);
+		assert.equal(f.editor.getText(), typed, typed);
+	}
+	assert.deepEqual(f.accepted, []);
+});
+it("a removed command name is an unknown command like any other", () => {
+	const notices: string[] = [];
+	const context = {
+		notice: (_level: string, text: string) => notices.push(text),
+		render: noop,
+	} as unknown as SlashCommandContext;
+	for (const line of ["/branch", "/skills", "/share", "/delegate codex task"]) {
+		const parsed = parseSlashCommand(line);
+		assert.equal(parsed.kind, "unknown-command", line);
+		assert.equal(dispatchSlashCommand(parsed, context), "rejected", line);
+	}
+	assert.ok(
+		notices.every((text) => !/ is now /u.test(text)),
+		notices.join("\n"),
+	);
+});
+it("a command that became a key answers with that key", () => {
+	const notices: string[] = [];
+	const context = {
+		notice: (_level: string, text: string) => notices.push(text),
+		render: noop,
+	} as unknown as SlashCommandContext;
+	const keys: Record<string, string> = {
+		"/interrupt": "Alt+S",
+		"/editor": "Alt+G",
+		"/background": "Ctrl+G d",
+		"/notifications": "Ctrl+G x",
+	};
+	for (const [line, key] of Object.entries(keys)) {
+		notices.length = 0;
+		assert.equal(dispatchSlashCommand(parseSlashCommand(line), context), "accepted", line);
+		assert.deepEqual(notices, [`${line} is now a key: press ${key}.`], line);
+	}
+});
+it("clearing pasted input lets a newly typed bang become an intentional command", () => {
+	const f = fixture();
+	f.editor.handleInput("\x1b[200~!literal\x1b[201~");
+	f.editor.applyEdit("deleteToLineStart");
+	assert.equal(f.editor.getText(), "");
+	f.editor.handleInput("!echo typed");
+	assert.deepEqual(parseEditorBashCommand(f.editor.getTextForSubmit()), {
+		command: "echo typed",
+		excludeFromContext: false,
+	});
+});
+
+it("undo restores a large pasted bang token as literal while a typed prefix remains deliberate", () => {
+	const f = fixture();
+	const pasted = `!echo ${"literal ".repeat(2000)}`;
+	f.editor.handleInput(`\x1b[200~${pasted}\x1b[201~`);
+	assert.notEqual(f.editor.getText(), pasted);
+	f.editor.applyEdit("deleteToLineStart");
+	assert.equal(f.editor.getText(), "");
+	f.editor.applyEdit("undo");
+	assert.equal(f.editor.getExpandedText(), pasted);
+	assert.equal(parseEditorBashCommand(f.editor.getTextForSubmit()), null);
+	f.editor.handleInput("\x1b[H");
+	f.editor.handleInput("!typed ");
+	assert.ok(parseEditorBashCommand(f.editor.getTextForSubmit()));
+});
+it("keeps a large paste literal when deleting preceding typed text exposes its bang", () => {
+	const f = fixture();
+	f.editor.handleInput("x");
+	const pasted = `!echo ${"literal ".repeat(2000)}`;
+	f.editor.handleInput(`\x1b[200~${pasted}\x1b[201~`);
+	f.editor.handleInput("\x1b[H");
+	f.editor.applyEdit("deleteCharForward");
+	assert.equal(f.editor.getExpandedText(), pasted);
+	assert.equal(parseEditorBashCommand(f.editor.getTextForSubmit()), null);
+});
+
+it("Enter on a slash row that leaves the typed line unchanged submits it", async () => {
+	const previous = getKeybindings();
+	createKeybindingManager(DEFAULT_SETTINGS, {});
+	cleanups.push(() => setKeybindings(previous));
+	// Submitting schedules a render, so every terminal method the render touches is a no-op.
+	const terminal = new Proxy({ columns: 80, rows: 24 }, { get: (target, key) => Reflect.get(target, key) ?? noop });
+	const tui = new TuiMainScreen(terminal as unknown as Terminal);
+	const editor = new PancodeEditor(tui, {});
+	const submitted: string[] = [];
+	editor.onSubmit = (text) => submitted.push(text);
+	const rows = ["claude-sonnet-5.5", "claude-sonnet-5.5-fast"].map((model) => ({
+		value: model,
+		label: model,
+		path: `model › ${model}`,
+	}));
+	editor.setAutocompleteProvider({
+		getSuggestions: async (lines: string[], _line: number, col: number) => {
+			const prefix = (lines[0] ?? "").slice("/model ".length, col);
+			return { prefix, items: rows.filter((row) => row.value.startsWith(prefix)) };
+		},
+		applyCompletion: (lines: string[], _line: number, _col: number, item: { value: string }, prefix: string) => {
+			const text = `${(lines[0] ?? "").slice(0, (lines[0] ?? "").length - prefix.length)}${item.value}`;
+			return { lines: [text], cursorLine: 0, cursorCol: text.length };
+		},
+	} as unknown as Parameters<PancodeEditor["setAutocompleteProvider"]>[0]);
+	const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+	const open = async (text: string) => {
+		editor.setText(text);
+		editor.handleInput("\t");
+		await settle();
+		assert.equal(editor.isShowingAutocomplete(), true);
+	};
+
+	await open("/model claude-sonnet-5.5");
+	editor.handleInput("\r");
+	assert.deepEqual(submitted, ["/model claude-sonnet-5.5"]);
+
+	// A row that changes the line still only completes it, so the operator confirms before it runs.
+	await open("/model claude-son");
+	editor.handleInput("\r");
+	assert.equal(editor.getText(), "/model claude-sonnet-5.5");
+	assert.deepEqual(submitted, ["/model claude-sonnet-5.5"]);
+});
+it("Enter sends an unknown /tools as typed instead of the /skill its description matched (bt-11)", async () => {
+	const previous = getKeybindings();
+	createKeybindingManager(DEFAULT_SETTINGS, {});
+	cleanups.push(() => setKeybindings(previous));
+	const terminal = new Proxy({ columns: 80, rows: 24 }, { get: (target, key) => Reflect.get(target, key) ?? noop });
+	const editor = new PancodeEditor(new TuiMainScreen(terminal as unknown as Terminal), {});
+	const submitted: string[] = [];
+	editor.onSubmit = (text) => submitted.push(text);
+	editor.setAutocompleteProvider(createSlashCommandAutocompleteProvider({ fdPath: null }));
+	const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+	const type = async (text: string) => {
+		editor.setText("");
+		for (const key of text) editor.handleInput(key);
+		await settle();
+		assert.equal(editor.isShowingAutocomplete(), true, text);
+	};
+
+	await type("/tools");
+	editor.handleInput("\r");
+	assert.deepEqual(submitted, ["/tools"]);
+
+	// Down chooses the row on purpose, and then Enter completes it as before.
+	await type("/tools");
+	editor.handleInput("\x1b[B");
+	editor.handleInput("\r");
+	assert.equal(editor.getText(), "/skill ");
+	assert.deepEqual(submitted, ["/tools"]);
+});
+
+it("Enter sends a typed /thinking level as typed, never the sibling its letters matched (bt-11 thinking-completion)", async () => {
+	const previous = getKeybindings();
+	createKeybindingManager(DEFAULT_SETTINGS, {});
+	cleanups.push(() => setKeybindings(previous));
+	const terminal = new Proxy({ columns: 80, rows: 24 }, { get: (target, key) => Reflect.get(target, key) ?? noop });
+	const editor = new PancodeEditor(new TuiMainScreen(terminal as unknown as Terminal), {});
+	const submitted: string[] = [];
+	editor.onSubmit = (text) => {
+		submitted.push(text);
+		editor.setText("");
+	};
+	let levels = ["low", "off", "medium", "xhigh"];
+	editor.setAutocompleteProvider(
+		createSlashCommandAutocompleteProvider({
+			fdPath: null,
+			completionSources: {
+				...emptyCompletionSources(),
+				"thinking-levels": async () =>
+					levels.map((level) => ({ id: level, value: level, label: level, description: level })),
+			},
+		}),
+	);
+	const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+	const type = async (text: string) => {
+		for (const key of text) editor.handleInput(key);
+		await settle();
+		assert.equal(editor.isShowingAutocomplete(), true, text);
+	};
+
+	// `high` only spells `xhigh` by its letters: Enter sends `high` for the command to refuse, and the next line starts clean.
+	await type("/thinking high");
+	editor.handleInput("\r");
+	assert.deepEqual(submitted, ["/thinking high"]);
+	assert.equal(editor.getText(), "");
+
+	// A level typed in full is submitted as typed, ahead of a longer sibling.
+	levels = ["xhigh", "high", "off"];
+	await type("/thinking high");
+	editor.handleInput("\r");
+	assert.deepEqual(submitted, ["/thinking high", "/thinking high"]);
+});

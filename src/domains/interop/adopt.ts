@@ -1,0 +1,860 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pancodeConfigDir } from "../../core/xdg.js";
+import {
+	installHubPackage,
+	listInstalledPlugins,
+	PLUGIN_EXTENSION_KEY,
+	PLUGIN_SCHEMA,
+	pluginBaseDir,
+	readPluginInstallRecord,
+	readPluginManifest,
+} from "../plugins/index.js";
+import type { PluginOrigin } from "../plugins/types.js";
+import { validateHubPackage } from "../resources/hub-validation.js";
+import { loadPromptTemplates } from "../resources/prompts/loader.js";
+import { bareSkillIdentity, bareSkillManifest } from "../resources/skills/bare-skill.js";
+import { normalizedSkillHash } from "../resources/skills/content-hash.js";
+import { loadSkills } from "../resources/skills/loader.js";
+import { detectForeignPlugin, type ForeignResourceOutcome, projectForeignPlugin } from "./foreign.js";
+import {
+	applyHookAdoption,
+	hookDestinationConflict,
+	mapForeignHooks,
+	type PortedHookDeclaration,
+} from "./hooks-adopt.js";
+import { applyInstructionsAdoption, planInstructionsAdoption } from "./instructions-adopt.js";
+import { inventoryText } from "./inventory.js";
+import { type AdoptedMcpServer, applyMcpAdoption, mapForeignMcpServer, mcpDestinationConflict } from "./mcp-adopt.js";
+import { digest, projectAgent, projectPrompt, projectSkill, prose, safeName, tree } from "./projection.js";
+import type { InteropAgentId, InteropInventory, InteropInventoryItem } from "./types.js";
+
+export type AdoptionKind = "skill" | "agent" | "prompt" | "plugin" | "mcp" | "hook" | "instructions";
+export const ADOPTION_KINDS: ReadonlyArray<AdoptionKind> = [
+	"skill",
+	"agent",
+	"prompt",
+	"plugin",
+	"mcp",
+	"hook",
+	"instructions",
+];
+/** Kinds that install as packs; the rest write a PanCode config file. */
+type PackageAdoptionKind = Exclude<AdoptionKind, "mcp" | "hook" | "instructions">;
+/** Whether an inventory kind has an adoption path; the rest are listed with the reason they are not migrated. */
+export function isAdoptableKind(kind: string): kind is AdoptionKind {
+	return (ADOPTION_KINDS as ReadonlyArray<string>).includes(kind);
+}
+export interface InteropAdoptionEntry {
+	item: InteropInventoryItem;
+	action: "install" | "skip";
+	reason: string;
+	/** A skip because PanCode already holds this content, so the item is adopted rather than awaiting review. */
+	installed?: true;
+	id?: string;
+	destination?: string;
+	digest?: string;
+	omitted?: string[];
+	requirements?: string[];
+	/** Manifest format the package was read as; absent for loose resources. */
+	format?: "portable" | "claude-code" | "codex" | "agent-skill";
+	/** Per-resource conversion results for foreign-format packages. */
+	outcomes?: ForeignResourceOutcome[];
+	/** Host features present in the source that adoption never activates. */
+	unsupported?: string[];
+	/** Immutable bytes reviewed by the operator. Never serialized by the CLI. */
+	files?: Readonly<Record<string, string>>;
+	/** The reviewed MCP server; its env values are never serialized or printed, only its keys. */
+	server?: AdoptedMcpServer;
+	/** The reviewed PanCode hook declarations a foreign event ports to. */
+	hooks?: PortedHookDeclaration[];
+}
+export interface InteropAdoptionPlan {
+	host: InteropAgentId;
+	cwd: string;
+	scope: "user" | "project";
+	entries: InteropAdoptionEntry[];
+}
+export interface PreparedAdoption {
+	id: string;
+	version: string;
+	files: Record<string, string>;
+	note: string;
+	omitted: string[];
+	requirements: string[];
+	format?: "portable" | "claude-code" | "codex" | "agent-skill";
+	outcomes?: ForeignResourceOutcome[];
+	unsupported?: string[];
+}
+/** Portable data-only projection shared by local adoption and explicit import. */
+export function preparePortablePackage(root: string): PreparedAdoption {
+	const candidate = readPluginManifest(root);
+	if (!candidate.valid || !candidate.manifest)
+		throw new Error(
+			`Not adoptable: invalid portable root plugin.json (${candidate.diagnostics.map((d) => d.message).join("; ")}).`,
+		);
+	const manifest = candidate.manifest;
+	const omitted: string[] = [];
+	// Do not silently change the meaning of portable packages by removing dependencies.
+	const files = tree(root, true, omitted);
+	const raw = JSON.parse(files["plugin.json"] ?? "{}") as Record<string, unknown>;
+	const resources = Object.fromEntries(
+		Object.entries(manifest.pancode.resources).filter(([key]) => ["skills", "agents", "prompts"].includes(key)),
+	);
+	const components = manifest.pancode.components.filter(
+		(component) =>
+			["skill", "agent", "prompt", "resource"].includes(component.kind) && files[component.path] !== undefined,
+	);
+	const retained = new Set(components.map((component) => `${component.kind}:${component.id}`));
+	if (components.some((component) => component.requires?.some((ref) => !retained.has(ref))))
+		throw new Error("Not adoptable: retained resources require omitted executable components.");
+	// Preserve the declared package kind; a kind whose only public component is dropped is not a useful plugin.
+	const kind = manifest.pancode.kind ?? "plugin";
+	if (!["plugin", "skill", "agent", "prompt"].includes(kind))
+		throw new Error(`Not adoptable: ${kind} packages have no data-only projection; install them through PanHub instead.`);
+	if (kind !== "plugin" && !components.some((component) => component.kind === kind))
+		throw new Error(`Not adoptable: the ${kind} package's public ${kind} component is not projectable.`);
+	// The portable skills/ convention needs no PanCode component graph. Enumerate
+	// through the shared readers so implicit components and actual runtime names
+	// get the same checks as explicitly declared components.
+	const validation = validateHubPackage(root);
+	if (!validation.valid)
+		throw new Error(
+			`Not adoptable: invalid component content (${validation.validation.diagnostics
+				.filter((item) => item.severity === "error")
+				.map((item) => item.message)
+				.join("; ")}).`,
+		);
+	const adoptable = validation.validation.resources.filter(
+		(resource) => ["skill", "agent", "prompt"].includes(resource.kind) && files[resource.path] !== undefined,
+	);
+	if (adoptable.length === 0)
+		throw new Error("Not adoptable: the portable package has no supported data-only components.");
+	// Retained component text that names an omitted companion cannot be claimed working.
+	const outcomes: ForeignResourceOutcome[] = [];
+	for (const resource of adoptable) {
+		const component = components.find((item) => item.kind === resource.kind && item.path === resource.path);
+		// A root SKILL.md owns the whole package as its companion scope.
+		const skillDir = resource.kind === "skill" ? path.posix.dirname(resource.path) : undefined;
+		const dir = skillDir === undefined ? undefined : skillDir === "." ? "" : `${skillDir}/`;
+		const texts = Object.entries(files)
+			.filter(([file]) => file !== "plugin.json" && (dir === undefined ? file === resource.path : file.startsWith(dir)))
+			.map(([, text]) => text);
+		// Own companions match by package path or basename; shared assets elsewhere only by explicit package path.
+		const needed = omitted.filter((file) => {
+			const own = dir !== undefined && file.startsWith(dir);
+			const base = path.posix.basename(file);
+			return texts.some((text) => text.includes(file) || (own && base.includes(".") && text.includes(base)));
+		});
+		if (needed.length)
+			throw new Error(
+				`Not adoptable: ${resource.kind} ${resource.name} references omitted companions (${needed.join(", ")}); the data-only import cannot claim it works. Use hub install for script-bearing packages.`,
+			);
+		outcomes.push({
+			kind: resource.kind as ForeignResourceOutcome["kind"],
+			name: resource.name,
+			source: resource.path,
+			status: "converted",
+			...(component ? { id: component.id } : {}),
+			destination: resource.path,
+		});
+	}
+	raw.extensions = {
+		[PLUGIN_EXTENSION_KEY]: {
+			manifestVersion: 1,
+			...(kind !== "plugin" ? { kind } : {}),
+			...(manifest.pancode.requires ? { requires: manifest.pancode.requires } : {}),
+			resources,
+			components,
+			...(manifest.pancode.compatibility ? { compatibility: manifest.pancode.compatibility } : {}),
+		},
+	};
+	files["plugin.json"] = JSON.stringify(raw, null, 2);
+	return {
+		id: manifest.name,
+		version: manifest.version ?? "0.0.0",
+		files,
+		note:
+			"Data-only portable projection; hooks, MCP, scripts, tools, playbooks and host settings are skipped. References to omitted files are unavailable.",
+		omitted,
+		requirements: [...(manifest.pancode.requires ?? [])],
+		format: "portable",
+		outcomes,
+	};
+}
+/**
+ * A bare skill directory projected into a one-skill package at the import
+ * boundary. Import stays text only, so a skill whose instructions lean on a
+ * script it would lose is refused here rather than landing hollow, and the
+ * refusal names the route that keeps the script.
+ */
+export function prepareBareSkillPackage(root: string): PreparedAdoption & { format: "agent-skill" } {
+	const raw = inventoryText(path.join(root, "SKILL.md"));
+	const identity = bareSkillIdentity(root, raw);
+	const resource = projectSkill({ skillDir: root, fallbackName: identity.id, lenient: true });
+	if (resource.requiredOmissions.length > 0)
+		throw new Error(
+			`Not adoptable as text: the instructions use ${resource.requiredOmissions.join(", ")}, which import never copies. To keep them, run \`pancode hub package <path>\` on a copy you have reviewed, then \`pancode hub install <path>\`.`,
+		);
+	const componentPath = resource.componentPath;
+	return {
+		id: resource.id,
+		version: identity.version,
+		files: {
+			...resource.files,
+			"plugin.json": bareSkillManifest({ ...identity, id: resource.id }, "skills", componentPath),
+		},
+		note: [
+			"Bare skill directory packaged as one text-only skill; tool lists, scripts and host settings are not imported.",
+			...identity.notes,
+		].join(" "),
+		omitted: resource.omittedFiles,
+		requirements: [],
+		format: "agent-skill",
+		outcomes: [
+			{
+				kind: "skill",
+				name: resource.name,
+				source: "SKILL.md",
+				status: "converted",
+				id: resource.id,
+				destination: componentPath,
+				...(resource.omittedFields.length ? { omittedFields: resource.omittedFields } : {}),
+				...(resource.omittedFiles.length ? { omittedFiles: resource.omittedFiles } : {}),
+			},
+		],
+		unsupported: [],
+	};
+}
+
+/** Foreign-format (Claude Code / Codex) package normalized at the import boundary. */
+export function prepareForeignPackage(
+	root: string,
+	format?: "claude-code" | "codex",
+): PreparedAdoption & { format: "claude-code" | "codex" } {
+	const detection = detectForeignPlugin(root, format);
+	if (detection.format === "portable") throw new Error("Portable root plugin.json present; use the portable route.");
+	if (detection.format === "agent-skill") throw new Error("Bare skill directory; use the bare skill route.");
+	if (detection.format === "none") throw new Error(`Not adoptable: ${detection.diagnostics.join(" ")}`);
+	const projection = projectForeignPlugin({
+		root,
+		format: detection.format,
+		...(detection.manifestPath ? { manifestPath: detection.manifestPath } : {}),
+	});
+	if (!projection.outcomes.some((outcome) => outcome.status === "converted"))
+		throw new Error(
+			`Not adoptable: no supported component converted from ${detection.manifestPath}${
+				projection.outcomes.length
+					? ` (${projection.outcomes.map((o) => `${o.kind} ${o.name}: ${o.reason ?? "unsupported"}`).join("; ")})`
+					: ""
+			}.`,
+		);
+	return {
+		id: projection.id,
+		version: projection.version,
+		files: projection.files,
+		note: `${detection.format === "claude-code" ? "Claude Code" : "Codex"} plugin normalized to a portable PanCode package; hooks, MCP, LSP, scripts and host settings are never activated.${
+			projection.notes.length ? ` ${projection.notes.join(" ")}` : ""
+		}`,
+		omitted: projection.omitted,
+		requirements: projection.requirements,
+		format: detection.format,
+		outcomes: projection.outcomes,
+		unsupported: projection.unsupported,
+	};
+}
+function prepared(item: InteropInventoryItem, host: InteropAgentId): PreparedAdoption {
+	let value: PreparedAdoption;
+	if (item.kind === "plugin") {
+		const detection = detectForeignPlugin(item.path);
+		// An invalid portable manifest is diagnosed; it is never hidden by a foreign fallback.
+		value =
+			detection.format === "claude-code" || detection.format === "codex"
+				? prepareForeignPackage(item.path, detection.format)
+				: preparePortablePackage(item.path);
+	} else {
+		const id = safeName(`${host}-${item.kind}-${item.name}`);
+		const plural = `${item.kind}s`;
+		let note = "Text only; foreign execution settings are not imported.";
+		const resource =
+			item.kind === "skill"
+				? projectSkill({ skillDir: path.dirname(item.path), fallbackName: item.name })
+				: item.kind === "agent"
+					? projectAgent({ file: item.path, name: item.name })
+					: projectPrompt({ file: item.path, name: item.name });
+		if (item.kind === "agent")
+			note =
+				"Persona copied into a read-only PanCode agent; host tools, permissions, model, hooks and skill bindings are omitted.";
+		const files = { ...resource.files };
+		files["plugin.json"] = JSON.stringify(
+			{
+				$schema: PLUGIN_SCHEMA,
+				name: id,
+				version: "0.0.0",
+				description: `Adopted ${item.kind} from ${host}`,
+				extensions: {
+					[PLUGIN_EXTENSION_KEY]: {
+						manifestVersion: 1,
+						kind: item.kind,
+						resources: { [plural]: plural },
+						components: [{ kind: item.kind, id: resource.id, path: resource.componentPath }],
+					},
+				},
+			},
+			null,
+			2,
+		);
+		value = {
+			id,
+			version: "0.0.0",
+			files,
+			note,
+			omitted: [],
+			requirements: [],
+			...(resource.omittedFields.length
+				? {
+						outcomes: [
+							{
+								kind: item.kind as "skill" | "agent" | "prompt",
+								name: resource.name,
+								source: item.path,
+								status: "converted",
+								id: resource.id,
+								destination: resource.componentPath,
+								omittedFields: resource.omittedFields,
+							},
+						],
+					}
+				: {}),
+		};
+	}
+	const manifest = JSON.parse(value.files["plugin.json"] ?? "{}") as { extensions?: Record<string, unknown> };
+	manifest.extensions = {
+		...manifest.extensions,
+		"dev.pancode.interop": {
+			host,
+			source: item.path,
+			sourceScope: item.scope,
+			untrusted: adoptedPackageTrust(item) === "foreign",
+			...(value.format ? { format: value.format } : {}),
+		},
+	};
+	value.files["plugin.json"] = `${JSON.stringify(manifest, null, 2)}\n`;
+	return value;
+}
+/** Requirements must already be usable; adoption never expands the reviewed import set. */
+export function vendorOf(format: PreparedAdoption["format"]): "claude-code" | "codex" | undefined {
+	return format === "claude-code" || format === "codex" ? format : undefined;
+}
+export function unmetRequirements(
+	requirements: ReadonlyArray<string>,
+	cwd: string,
+	scope: "user" | "project",
+	/** When set, direct requirements came from vendor dependencies and need matching import provenance. */
+	vendor?: "claude-code" | "codex",
+): string[] {
+	if (requirements.length === 0) return [];
+	const available = new Map(
+		listInstalledPlugins(cwd, { all: true, ...(scope === "user" ? { scope } : {}) })
+			.filter((pkg) => pkg.loadable)
+			.map((pkg) => [`${pkg.kind ?? "plugin"}:${pkg.id}`, pkg]),
+	);
+	const problems = new Set<string>();
+	if (vendor)
+		for (const ref of requirements) {
+			const pkg = available.get(ref);
+			if (!pkg) continue;
+			const origin = readPluginInstallRecord(pkg.id, { cwd, scope: pkg.scope })?.origin;
+			const provenance =
+				typeof origin === "object" && (origin.kind === "import" || origin.kind === "interop") ? origin.format : undefined;
+			if (provenance !== vendor)
+				problems.add(
+					`${ref} (installed package is not an imported ${vendor} plugin; a same-named native package does not satisfy a vendor dependency)`,
+				);
+		}
+	const visiting = new Set<string>();
+	const checked = new Set<string>();
+	const visit = (ref: string): void => {
+		if (visiting.has(ref)) {
+			problems.add(`${ref} (dependency cycle)`);
+			return;
+		}
+		if (checked.has(ref)) return;
+		const dependency = available.get(ref);
+		if (!dependency) {
+			problems.add(`${ref} (missing, inactive, or unavailable in ${scope} scope)`);
+			return;
+		}
+		visiting.add(ref);
+		for (const nested of dependency.manifest?.pancode.requires ?? []) visit(nested);
+		visiting.delete(ref);
+		checked.add(ref);
+	};
+	for (const ref of requirements) visit(ref);
+	return [...problems];
+}
+
+/** Why a resource PanCode inventories has no adoption path. */
+function unportedReason(item: InteropInventoryItem): string {
+	return `Not adoptable: ${item.kind} is executable configuration or unsupported presentation data.`;
+}
+
+/**
+ * The trust an adopted package installs with. Content read from the
+ * operator's own home (~/.claude, ~/.codex and their peers) is theirs, and
+ * the reviewed plan is the consent, so it works at once. A repository's
+ * agent directories are someone else's writing: those stay foreign behind
+ * integrations.projectResources.trustProjectImports, whatever scope they
+ * are adopted into. The install record keeps the interop origin either way.
+ */
+function adoptedPackageTrust(item: InteropInventoryItem): "trusted" | "foreign" {
+	return item.scope === "user" ? "trusted" : "foreign";
+}
+
+export function planInteropAdoption(input: {
+	host: InteropAgentId;
+	inventory: InteropInventory;
+	cwd?: string;
+	scope?: "user" | "project";
+	kind?: AdoptionKind;
+}): InteropAdoptionPlan {
+	const cwd = path.resolve(input.cwd ?? process.cwd());
+	const scope = input.scope ?? "user";
+	const installed = listInstalledPlugins(cwd, { all: true });
+	const installedSkills = loadSkills({
+		cwd,
+		roots: [
+			{ path: path.join(pancodeConfigDir(), "skills"), scope: "user" },
+			{ path: path.join(cwd, ".pancode/skills"), scope: "project" },
+			...installed.flatMap((pkg) =>
+				pkg.resources.skills
+					? [{ path: path.join(pkg.rootPath, pkg.resources.skills), rootPath: pkg.rootPath, scope: "package" as const }]
+					: [],
+			),
+		],
+	}).items;
+	const installedPrompts = loadPromptTemplates({
+		cwd,
+		roots: [
+			{ path: path.join(pancodeConfigDir(), "prompts"), scope: "user" },
+			{ path: path.join(cwd, ".pancode/prompts"), scope: "project" },
+			...installed.flatMap((pkg) =>
+				pkg.resources.prompts
+					? [{ path: path.join(pkg.rootPath, pkg.resources.prompts), rootPath: pkg.rootPath, scope: "package" as const }]
+					: [],
+			),
+		],
+	}).items;
+	const promptBodies = new Set(
+		installedPrompts.flatMap((prompt) => {
+			try {
+				return [prose(inventoryText(prompt.filePath)).body];
+			} catch {
+				return [];
+			}
+		}),
+	);
+	const installedContent = new Set(
+		installed.flatMap((pkg) => {
+			try {
+				const files = tree(pkg.rootPath);
+				delete files["plugin.json"];
+				return [digest(files)];
+			} catch {
+				return [];
+			}
+		}),
+	);
+	const planned = new Set<string>();
+	/** Source plugins PanCode already holds, so the resources they provide read as adopted too. */
+	const adoptedPlugins = new Set<string>();
+	const plan: InteropAdoptionPlan = { host: input.host, cwd, scope, entries: [] };
+	for (const item of input.inventory.items) {
+		const skip = (reason: string, installed = false): void => {
+			plan.entries.push({ item, action: "skip", reason, ...(installed ? { installed: true as const } : {}) });
+		};
+		if (!isAdoptableKind(item.kind)) {
+			skip(unportedReason(item));
+			continue;
+		}
+		if (input.kind && item.kind !== input.kind) {
+			skip(`Excluded by --kind ${input.kind}.`);
+			continue;
+		}
+		if (item.kind === "hook") {
+			if (item.plugin) {
+				skip("Declared by a plugin; plugin hooks are never activated by adoption.");
+				continue;
+			}
+			const mapping = mapForeignHooks(item, input.host, cwd);
+			if (!mapping.ok) {
+				skip(mapping.reason);
+				continue;
+			}
+			const key = `hook:${mapping.destination}:${item.name}`;
+			const conflict = planned.has(key)
+				? `Hook ids for ${item.name} are already planned from another source.`
+				: hookDestinationConflict(mapping.hooks, mapping.destination);
+			if (conflict !== null) {
+				skip(conflict);
+				continue;
+			}
+			planned.add(key);
+			plan.entries.push({
+				item,
+				action: "install",
+				id: `hook:${item.name}`,
+				destination: mapping.destination,
+				digest: mapping.digest,
+				hooks: mapping.hooks,
+				reason:
+					item.scope === "project"
+						? "Ported into the project hooks file; it runs only after `pancode config trust hooks` approves the changed file."
+						: "Ported into your PanCode hooks file: the same shell command, the event as JSON on stdin, exit 2 blocks.",
+				...(mapping.notes.length ? { unsupported: mapping.notes } : {}),
+			});
+			continue;
+		}
+		if (item.kind === "instructions") {
+			const adoption = planInstructionsAdoption(item, input.host);
+			if (!adoption.ok) {
+				skip(adoption.reason);
+				continue;
+			}
+			plan.entries.push({
+				item,
+				action: "install",
+				id: `instructions:${item.name}`,
+				destination: adoption.destination,
+				digest: adoption.digest,
+				files: { [item.name]: adoption.section },
+				reason: adoption.replaces
+					? "Replaces the section adopted earlier from this file in your user handbook."
+					: "Copied into your user handbook, which PanCode loads ahead of project handbooks from the next session.",
+				...(adoption.notes.length ? { unsupported: adoption.notes } : {}),
+			});
+			continue;
+		}
+		if (item.kind === "mcp") {
+			if (item.plugin) {
+				skip("Declared by a plugin; it arrives with that plugin's package, under plugin MCP trust.");
+				continue;
+			}
+			const mapping = mapForeignMcpServer(item, cwd);
+			if (!mapping.ok) {
+				skip(mapping.reason);
+				continue;
+			}
+			const key = `mcp:${mapping.destination}:${mapping.server.id}`;
+			const conflict = planned.has(key)
+				? `Server id collision: ${mapping.server.id} is already planned from another source.`
+				: mcpDestinationConflict(mapping.server, mapping.destination);
+			if (conflict !== null) {
+				skip(conflict);
+				continue;
+			}
+			planned.add(key);
+			plan.entries.push({
+				item,
+				action: "install",
+				id: mapping.server.id,
+				destination: mapping.destination,
+				digest: mapping.digest,
+				server: mapping.server,
+				reason:
+					item.scope === "project"
+						? `Declared in the project MCP config; it launches only after \`pancode mcp trust ${mapping.server.id}\`.`
+						: "Declared in your PanCode MCP config, which PanCode trusts as your own; it gets no network grant unless you add `network: true`.",
+				...(mapping.omittedFields.length ? { unsupported: mapping.omittedFields.map((f) => `field ${f}`) } : {}),
+			});
+			continue;
+		}
+		if (item.plugin && !input.kind && planned.has(item.plugin)) {
+			skip("Provided by an installed or planned portable plugin.", adoptedPlugins.has(item.plugin));
+			continue;
+		}
+		try {
+			if (
+				item.kind === "skill" &&
+				installedSkills.some((skill) => skill.normalizedHash === normalizedSkillHash(inventoryText(item.path)))
+			) {
+				skip("Already installed: same skill content digest.", true);
+				continue;
+			}
+			if (item.kind === "prompt" && promptBodies.has(prose(inventoryText(item.path)).body)) {
+				skip("Already installed: same prompt content digest.", true);
+				continue;
+			}
+			const value = prepared(item, input.host);
+			const missing = unmetRequirements(value.requirements, cwd, scope, vendorOf(value.format));
+			if (missing.length) {
+				skip(
+					`Unsatisfied package requirements: ${missing.join(", ")}. Install dependencies through PanHub and review a new plan; no extra resources are imported.`,
+				);
+				continue;
+			}
+			const hash = digest(value.files);
+			if (item.kind === "plugin" && installed.some((pkg) => pkg.id === value.id && pkg.version === value.version)) {
+				planned.add(item.path);
+				adoptedPlugins.add(item.path);
+				skip("Already installed: same package id and version.", true);
+				continue;
+			}
+			const resourceFiles = { ...value.files };
+			delete resourceFiles["plugin.json"];
+			if (Object.keys(resourceFiles).length > 0 && installedContent.has(digest(resourceFiles))) {
+				skip("Already installed: same content digest.", true);
+				continue;
+			}
+
+			if (installed.some((pkg) => pkg.id === value.id && pkg.scope === scope) || planned.has(value.id)) {
+				skip("Package identifier collision; existing content will not be replaced.");
+				continue;
+			}
+			planned.add(value.id);
+			if (item.kind === "plugin") planned.add(item.path);
+			plan.entries.push({
+				item,
+				action: "install",
+				id: value.id,
+				destination: path.join(pluginBaseDir(scope, cwd), value.id),
+				files: value.files,
+				digest: hash,
+				reason: value.note,
+				omitted: value.omitted,
+				requirements: value.requirements,
+				...(value.format ? { format: value.format } : {}),
+				...(value.outcomes?.length ? { outcomes: value.outcomes } : {}),
+				...(value.unsupported?.length ? { unsupported: value.unsupported } : {}),
+			});
+		} catch (error) {
+			skip(error instanceof Error ? error.message : String(error));
+		}
+	}
+	return plan;
+}
+function renderOutcomes(outcomes: ReadonlyArray<ForeignResourceOutcome> | undefined): string[] {
+	return (outcomes ?? []).map((outcome) => {
+		const detail = [
+			...(outcome.omittedFields?.length ? [`omitted frontmatter: ${outcome.omittedFields.join(", ")}`] : []),
+			...(outcome.omittedFiles?.length ? [`omitted files: ${outcome.omittedFiles.join(", ")}`] : []),
+			...(outcome.reason ? [outcome.reason] : []),
+		];
+		return outcome.status === "converted"
+			? `  CONVERT ${outcome.kind} ${outcome.name} -> ${outcome.destination}${detail.length ? ` (${detail.join("; ")})` : ""}`
+			: `  UNSUPPORTED ${outcome.kind} ${outcome.name} (${outcome.source}): ${detail.join("; ")}`;
+	});
+}
+function omittedSummary(files: ReadonlyArray<string>): string[] {
+	if (files.length === 0) return [];
+	const named = files.slice(0, 4).join(", ");
+	const more = files.length > 4 ? `, and ${files.length - 4} more` : "";
+	return [`  Leaves out ${plural(files.length, "file")} (executable, host-specific, or non-text): ${named}${more}`];
+}
+
+interface SkipGroup {
+	kinds: Map<string, number>;
+	subjects: string[];
+}
+
+function skippedSummary(
+	entries: ReadonlyArray<InteropAdoptionEntry>,
+	plan: ReadonlyArray<InteropAdoptionEntry>,
+): string[] {
+	if (entries.length === 0) return [];
+	// A component names its plugin by directory, which in a host cache ends in a version; the plugin's own entry
+	// carries the name an operator knows it by.
+	const pluginNames = new Map(
+		plan.filter((entry) => entry.item.kind === "plugin").map((entry) => [entry.item.path, entry.item.name]),
+	);
+	const ownerOf = (item: InteropInventoryItem): string => {
+		if (item.kind === "plugin") return item.name;
+		if (!item.plugin) return "outside any plugin";
+		return pluginNames.get(item.plugin) ?? path.basename(item.plugin);
+	};
+	const owners = new Map<string, Map<string, SkipGroup>>();
+	for (const entry of entries) {
+		const owner = ownerOf(entry.item);
+		const reasons = owners.get(owner) ?? new Map<string, SkipGroup>();
+		// "Executable file is not adoptable: scripts/run.sh" differs per file; one line names them all.
+		const text = entry.reason.replace(/\.$/u, "");
+		const split = /^(?<reason>.+): (?<subject>\S+)$/u.exec(text)?.groups;
+		const reason = split?.reason ?? text;
+		const group = reasons.get(reason) ?? { kinds: new Map<string, number>(), subjects: [] };
+		group.kinds.set(entry.item.kind, (group.kinds.get(entry.item.kind) ?? 0) + 1);
+		if (split?.subject) group.subjects.push(split.subject);
+		reasons.set(reason, group);
+		owners.set(owner, reasons);
+	}
+	const counted = ({ kinds, subjects }: SkipGroup) =>
+		`${[...kinds].map(([kind, count]) => plural(count, kind)).join(", ")}${subjects.length ? ` (${subjects.join(", ")})` : ""}`;
+	return [
+		`Not adopted: ${plural(entries.length, "resource")} (--verbose lists each one):`,
+		...[...owners].flatMap(([owner, reasons]) =>
+			reasons.size === 1
+				? [...reasons].map(([reason, group]) => `  ${owner}: ${counted(group)}. ${reason}`)
+				: [`  ${owner}:`, ...[...reasons].map(([reason, group]) => `    ${counted(group)}. ${reason}`)],
+		),
+	];
+}
+
+function plural(count: number, noun: string): string {
+	return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/**
+ * The plan an operator approves. Every install is shown in full, since approval covers exactly that text. Skips
+ * install nothing, so by default they fold into one line per owning plugin and reason; `verbose` lists each.
+ */
+export function renderInteropAdoptionPlan(plan: InteropAdoptionPlan, options: { verbose?: boolean } = {}): string {
+	const verbose = options.verbose === true;
+	const shown = verbose ? plan.entries : plan.entries.filter((entry) => entry.action === "install");
+	return [
+		`Adopt resources from ${plan.host} into PanCode (${plan.scope})?`,
+		...shown.flatMap((entry) => [
+			`${entry.action.toUpperCase()} ${entry.item.kind} ${entry.item.name} (${entry.item.scope})`,
+			`  Source: ${entry.item.path}`,
+			...(entry.destination ? [`  Destination: ${entry.destination}`, `  SHA-256: ${entry.digest}`] : []),
+			...(entry.hooks ?? []).map(
+				(hook) =>
+					`  Hook ${hook.id}: ${String(hook.on)}${Array.isArray(hook.tools) ? ` [${hook.tools.join(", ")}]` : ""}${hook.once ? " once per session" : ""} runs ${hook.argv.slice(2).join(" ")}`,
+			),
+			// The approval covers exactly this text, so all of it is shown.
+			...(entry.item.kind === "instructions" && entry.files
+				? Object.values(entry.files).flatMap((text) => text.split("\n").map((line) => `  | ${line}`))
+				: []),
+			...(entry.server
+				? [
+						`  Server ${entry.server.id}: ${[entry.server.command, ...entry.server.args].join(" ")}`,
+						...(Object.keys(entry.server.env).length
+							? [`  Env (values copied, not shown): ${Object.keys(entry.server.env).sort().join(", ")}`]
+							: []),
+					]
+				: []),
+			`  ${entry.reason}`,
+			...(entry.format && entry.format !== "portable"
+				? [`  Format: ${entry.format} (normalized to a portable PanCode package)`]
+				: []),
+			...(entry.requirements?.length ? [`  Requires installed packages: ${entry.requirements.join(", ")}`] : []),
+			...renderOutcomes(entry.outcomes),
+			...(entry.unsupported ?? []).map((feature) => `  UNSUPPORTED ${feature}`),
+			...(verbose
+				? (entry.omitted ?? []).map((file) => `  SKIP ${file}: executable, host-specific, or non-text data.`)
+				: omittedSummary(entry.omitted ?? [])),
+		]),
+		...(verbose
+			? []
+			: skippedSummary(
+					plan.entries.filter((entry) => entry.action === "skip"),
+					plan.entries,
+				)),
+		...(plan.entries.some(
+			(entry) =>
+				entry.action === "install" && entry.item.scope === "project" && adoptedPackageTrust(entry.item) === "foreign",
+		)
+			? [
+					"Packages adopted from a project directory stay inactive until integrations.projectResources.trustProjectImports is on; packages from your own home are trusted.",
+				]
+			: []),
+		"Host files are never changed. Approval applies only to the displayed content.",
+	].join("\n");
+}
+function interopOrigin(host: InteropAgentId, entry: InteropAdoptionEntry): PluginOrigin {
+	const marketplace =
+		entry.item.marketplace && entry.item.marketplace !== "unknown" ? entry.item.marketplace : undefined;
+	return {
+		kind: "interop",
+		host,
+		source: path.resolve(entry.item.path),
+		...(entry.format ? { format: entry.format } : {}),
+		...(marketplace ? { marketplace } : {}),
+	};
+}
+export function applyInteropAdoption(
+	plan: InteropAdoptionPlan,
+	approved: boolean,
+): { installed: string[]; diagnostics: string[] } {
+	const result = { installed: [] as string[], diagnostics: [] as string[] };
+	if (!approved) {
+		result.diagnostics.push("Approval required; nothing installed.");
+		return result;
+	}
+	for (const entry of plan.entries) {
+		if (entry.action !== "install" || !entry.id) continue;
+		if (entry.item.kind === "hook") {
+			try {
+				const written = entry.digest ? applyHookAdoption(entry.item, plan.host, plan.cwd, entry.digest) : undefined;
+				if (written?.ok) result.installed.push(entry.id);
+				else result.diagnostics.push(`${entry.item.name}: ${written?.reason ?? "no reviewed digest"}`);
+			} catch (error) {
+				result.diagnostics.push(`${entry.item.name}: ${error instanceof Error ? error.message : String(error)}`);
+			}
+			continue;
+		}
+		if (entry.item.kind === "instructions") {
+			try {
+				const written = entry.digest ? applyInstructionsAdoption(entry.item, plan.host, entry.digest) : undefined;
+				if (written?.ok) result.installed.push(entry.id);
+				else result.diagnostics.push(`${entry.item.name}: ${written?.reason ?? "no reviewed digest"}`);
+			} catch (error) {
+				result.diagnostics.push(`${entry.item.name}: ${error instanceof Error ? error.message : String(error)}`);
+			}
+			continue;
+		}
+		if (entry.item.kind === "mcp") {
+			const written = entry.digest
+				? (() => {
+						try {
+							return applyMcpAdoption(entry.item, plan.cwd, entry.digest as string);
+						} catch (error) {
+							return { ok: false as const, reason: error instanceof Error ? error.message : String(error) };
+						}
+					})()
+				: undefined;
+			if (written?.ok) result.installed.push(`mcp:${written.id}`);
+			else result.diagnostics.push(`${entry.item.name}: ${written?.reason ?? "no reviewed digest"}`);
+			continue;
+		}
+		if (!entry.files) continue;
+		let staging: string | undefined;
+		try {
+			const current = prepared(entry.item, plan.host);
+			if (digest(entry.files) !== entry.digest || digest(current.files) !== entry.digest)
+				throw new Error("Source or plan changed after review; inspect a new plan.");
+			const missing = unmetRequirements(current.requirements, plan.cwd, plan.scope, vendorOf(current.format));
+			if (missing.length)
+				throw new Error(
+					`Unsatisfied package requirements after review: ${missing.join(", ")}. No extra resources are imported.`,
+				);
+			staging = mkdtempSync(path.join(tmpdir(), "pancode-interop-adopt-"));
+			for (const [file, text] of Object.entries(entry.files)) {
+				const target = path.join(staging, file);
+				mkdirSync(path.dirname(target), { recursive: true });
+				writeFileSync(target, text, { mode: 0o644 });
+			}
+			const candidate = readPluginManifest(staging);
+			if (!candidate.valid || !candidate.contentDigest)
+				throw new Error(candidate.diagnostics.map((d) => d.message).join("; "));
+			const installed = installHubPackage({
+				sourcePath: staging,
+				kind: entry.item.kind as PackageAdoptionKind,
+				trust: adoptedPackageTrust(entry.item),
+				cwd: plan.cwd,
+				scope: plan.scope,
+				expectedId: entry.id,
+				expectedDigest: candidate.contentDigest,
+				origin: interopOrigin(plan.host, entry),
+			});
+			if (installed.plugin) result.installed.push(installed.plugin.id);
+			result.diagnostics.push(...installed.diagnostics.map((d) => d.message));
+		} catch (error) {
+			result.diagnostics.push(`${entry.item.name}: ${error instanceof Error ? error.message : String(error)}`);
+		} finally {
+			if (staging) rmSync(staging, { recursive: true, force: true });
+		}
+	}
+	return result;
+}

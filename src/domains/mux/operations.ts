@@ -1,0 +1,343 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * The operator- and model-facing pane vocabulary: presets, results, and the
+ * one operations interface both `/panes` and the `panes` tool drive.
+ *
+ * It is a leaf with no imports, and it lives in the domain rather than beside
+ * either caller because both callers are forbidden from reaching the other's
+ * tree. `src/session-control/slash-commands.ts` is a CLI seam whose value closure
+ * must stay off the render graph, and `src/tools/**` may not import
+ * `src/interactive/**` at all (boundaries rule4). A shared leaf here is the
+ * only place both can name the same preset ids and the same result shapes.
+ *
+ * Presets are the only utility panes the model may open. Arbitrary argv stays
+ * operator-only through the slash command, which is what keeps the tool out of
+ * shell-escape territory (spec 4.8, and the risk register's "tool misuse" row).
+ */
+
+/**
+ * Utility pane presets, in the order `/panes open` lists them.
+ *
+ * The files preset is a PanCode surface named for what it does; yazi is
+ * the engine behind it and shows up only in the install command, because
+ * that is the registry id an operator types.
+ */
+export const PANES_PRESETS = [
+	{
+		id: "files",
+		/** Probed through the toolchain resolution ladder before the pane is split. */
+		binary: "yazi",
+		summary: "file view rooted at the workspace; picks land in the composer",
+		/** Printed verbatim when the probe finds nothing. */
+		installHint: "pancode tools install yazi",
+	},
+	{
+		id: "logs",
+		binary: "tail",
+		summary: "follow the newest dispatched run's event journal",
+		installHint: "install coreutils so `tail` is on PATH",
+	},
+	{
+		id: "shell",
+		binary: "bash",
+		summary: "a plain shell in the workspace",
+		installHint: "install bash, or open a shell with `/panes open <argv>`",
+	},
+] as const;
+
+export type PanesPresetId = (typeof PANES_PRESETS)[number]["id"];
+
+/** Fixed interactive coding peers. The pane tool never accepts an executable name. */
+export const PANE_PEER_IDS = ["pancode", "claude-code", "codex", "opencode", "antigravity", "pi"] as const;
+export type PanePeerId = (typeof PANE_PEER_IDS)[number];
+
+/** The executable a peer runs as, which is what a missing install is reported under. */
+export function panePeerBinary(peer: PanePeerId): string {
+	if (peer === "claude-code") return "claude";
+	if (peer === "antigravity") return "agy";
+	if (peer === "pancode") return "pancode";
+	return peer;
+}
+
+export const PANES_PRESET_IDS: ReadonlyArray<PanesPresetId> = PANES_PRESETS.map((preset) => preset.id);
+
+function isPanesPresetId(value: string): value is PanesPresetId {
+	return PANES_PRESETS.some((preset) => preset.id === value);
+}
+
+/** The canonical preset id for an operator-typed name, or null when it is not a preset. */
+export function resolvePanesPresetId(value: string): PanesPresetId | null {
+	return isPanesPresetId(value) ? value : null;
+}
+
+/** One pane PanCode owns, flattened for display. */
+export interface PanesInventoryEntry {
+	paneId: string;
+	tabId: string;
+	purpose: "watch" | "utility" | "extension";
+	label: string;
+	adopted: boolean;
+	/** An open operation admitted locally but not yet reconciled into the mux registry. */
+	pending?: boolean;
+}
+
+/** Effective pane settings, as `/panes` prints them. */
+export interface PanesEffectiveSettings {
+	notifications: string;
+	/** Boot composition: off, workers, or cockpit. */
+	layout: string;
+	journal: boolean;
+	yazi: {
+		enabled: boolean;
+		mode: "companion" | "chooser";
+		profile: "managed" | "user";
+		followCwd: boolean;
+	};
+}
+
+/** One managed dock's live geometry, flattened for `/panes` status. */
+export interface PanesDockStatus {
+	slot: "workers" | "files" | "music" | "extension";
+	paneId: string;
+	/** Share of the axis the dock currently targets, 0..0.5. */
+	targetShare: number;
+	/** True while the dock waits in the parking tab: running, but out of the layout. */
+	hidden: boolean;
+}
+
+/**
+ * One dock in words, for the model and `/panes`: whether it is in the layout,
+ * parked, or not running, and what it is doing. `detail` is the live fact that
+ * settings files cannot give, such as what the music pane is playing.
+ */
+export interface PanesDockReport {
+	slot: "workers" | "files" | "music" | "extension";
+	state: "visible" | "hidden" | "closed";
+	detail?: string;
+}
+
+/** File-pane return-path state flattened for `/panes` and the model tool. */
+export interface PanesYaziStatus {
+	mode: "companion" | "chooser" | "closed";
+	paneId: string | null;
+	paneCwd: string | null;
+	lastLineAt: number | null;
+	droppedLines: number;
+}
+
+/** What `/panes` with no subcommand answers. */
+export interface PanesStatus {
+	mode: "embedded" | "guest" | "none";
+	available: boolean;
+	/** Why the mux resolved the way it did, straight from detection. */
+	reason: string;
+	socketPath: string | null;
+	server: { version: string; protocol: number } | null;
+	settings: PanesEffectiveSettings;
+	yazi: PanesYaziStatus;
+	/** Managed docks with live geometry; empty below the layout tier. */
+	docks: ReadonlyArray<PanesDockStatus>;
+	panes: ReadonlyArray<PanesInventoryEntry>;
+}
+
+export type PanesShowResult =
+	| { status: "watching"; runId: string; agentId: string; opened: boolean }
+	| { status: "not-found"; target: string; candidates: ReadonlyArray<string> }
+	| { status: "refused"; reason: string }
+	| { status: "unavailable"; reason: string };
+
+/** What one watch call settles to; the controller lives in src/interactive/watch-pane.ts. */
+export type PanesWatchResult =
+	| { status: "watching"; runId: string; paneId: string; opened: boolean }
+	| { status: "unavailable"; reason: string };
+
+/** What the workers key's single tap settles to: a new dock, a parked one shown, or a visible one hidden. */
+export type PanesWorkersResult =
+	| { status: "opened" }
+	| { status: "shown" }
+	| { status: "hidden" }
+	| { status: "unavailable"; reason: string };
+
+/**
+ * Interactive-only watch-pane controller, attached after the TUI exists. A
+ * structural interface here for the same reason {@link PanesYaziController}
+ * is: neither the domain nor the tool may import the interactive tree.
+ */
+export interface PanesWatchController {
+	/**
+	 * Open (or adopt) the watch pane without retargeting it, for boot
+	 * composition under `interface.panes.layout`. False when the host refused.
+	 */
+	ensureOpen(): Promise<boolean>;
+	/**
+	 * Take the dock over for one run, opening, adopting or showing it first if
+	 * needed. It never moves the keyboard: the caller may be the model.
+	 */
+	watch(runId: string): Promise<PanesWatchResult>;
+	/** Retarget only; false when no watch pane is open or the write failed. */
+	follow(runId: string): boolean;
+	/** Update the viewer's presentation without changing its selected run or scroll position. */
+	refreshPresentation?(): boolean;
+	/**
+	 * The workers key's single tap: open the dock on the board or show a parked
+	 * one, and move the keyboard into it; park a visible one.
+	 */
+	toggle(): Promise<PanesWorkersResult>;
+	/** Park the dock with the dashboard still running; true when it is parked afterwards. */
+	hide(): Promise<boolean>;
+	/** End the dashboard for real, parked or not; false when nothing was open. */
+	close(): Promise<boolean>;
+	visibility(): "visible" | "hidden" | "closed";
+	/** True while the watch pane is running, visible or parked. */
+	isOpen(): boolean;
+	/**
+	 * A key meant for PanCode was pressed inside the dashboard: `hide` is its `q`,
+	 * `key` is Alt+W, `tier` is Alt+O. Returns the unsubscribe.
+	 */
+	onDockKey(handler: (key: "hide" | "key" | "tier") => void): () => void;
+	dispose(): void;
+}
+
+export type PanesOpenResult =
+	/** `existing` is true when the preset already had a live pane and it was focused instead of split again. */
+	| { status: "opened"; label: string; paneId: string | null; existing?: boolean; revealed?: boolean; cwd?: string }
+	| { status: "missing-binary"; preset: string; binary: string; installHint: string; detail: string }
+	| { status: "refused"; reason: string }
+	| { status: "unavailable"; reason: string };
+
+export type PanesZoomResult =
+	| { status: "zoomed"; paneId: string; label: string }
+	| { status: "not-found"; target: string }
+	| { status: "unavailable"; reason: string };
+
+/** The keys `send` may press: both cancel, neither approves. */
+export const PANE_INTERRUPT_KEYS = ["esc", "ctrl+c"] as const;
+export type PaneInterruptKey = (typeof PANE_INTERRUPT_KEYS)[number];
+
+/** How a handoff pane's label ends; `read`, `send` and `wait` address only these panes. */
+export const PANE_HANDOFF_LABEL_SUFFIX = " handoff";
+
+export type PanesReadResult =
+	| { status: "read"; paneId: string; label: string; text: string; truncated: boolean }
+	| { status: "not-found"; target: string }
+	| { status: "unavailable"; reason: string };
+
+export type PanesSendResult =
+	/** `queued` is set when a PanCode peer was mid-run and holds the prompt until its current turn ends. */
+	| { status: "sent"; paneId: string; label: string; queued?: boolean }
+	/** A PanCode peer took the request and has not confirmed; it may or may not be on its queue. */
+	| { status: "unconfirmed"; paneId: string; label: string; reason: string }
+	| { status: "not-found"; target: string }
+	| { status: "refused"; reason: string }
+	| { status: "unavailable"; reason: string };
+
+export type PanesWaitResult =
+	/** `blocked` means the peer is asking its operator something. Never `unknown`: that is not an answer. */
+	| { status: "settled"; paneId: string; label: string; state: "idle" | "done" | "blocked" }
+	/** `state` is the last reading, which may be `unknown` or `unrecognized`; nothing is known to have finished. */
+	| { status: "timed-out"; paneId: string; label: string; state: string }
+	| { status: "cancelled"; paneId: string; label: string }
+	| { status: "gone"; target: string }
+	| { status: "not-found"; target: string }
+	| { status: "unavailable"; reason: string };
+
+export type PanesCloseResult =
+	| { status: "closed"; closed: number; labels: ReadonlyArray<string> }
+	| { status: "not-found"; target: string }
+	| { status: "unavailable"; reason: string };
+
+/**
+ * Interactive-only controller attached after the composer and TUI exist.
+ *
+ * This structural interface stays in the shared leaf so the panes domain does
+ * not import the interactive implementation and the tool does not gain a path
+ * into `src/interactive/**`.
+ */
+export interface PanesYaziController {
+	open(options?: {
+		once?: boolean;
+		/** Start parked in the hidden tab, with no layout change and no focus move. */
+		hidden?: boolean;
+	}): Promise<
+		| { status: "opened"; mode: "companion" | "chooser"; paneId: string | null; existing: boolean; revealed?: boolean }
+		| { status: "missing-binary"; binary: "yazi" | "ya"; detail: string }
+		| { status: "profile-error"; reason: string }
+		| { status: "unavailable"; reason: string }
+	>;
+	/** Park the files pane out of sight with Yazi still running where it was. */
+	hide(): Promise<{ status: "hidden" } | { status: "unavailable"; reason: string }>;
+	/** End the files pane for real, parked or not; false when nothing was open. */
+	close(): Promise<boolean>;
+	/** True while a files pane the host still reports is running, visible or parked. */
+	isOpen(): boolean;
+	visibility(): "visible" | "hidden" | "closed";
+	status(): Readonly<PanesYaziStatus>;
+}
+
+/** What `/files` and the files keybinding settle to. */
+export type PanesFilesResult =
+	| { status: "opened"; paneId: string | null; existing: boolean; revealed?: boolean }
+	| { status: "hidden" }
+	| { status: "closed" }
+	| { status: "missing-binary"; binary: string; installHint: string; detail: string }
+	| { status: "refused"; reason: string }
+	| { status: "unavailable"; reason: string };
+
+/**
+ * The operations both callers drive. The tool sees a narrower door: its schema
+ * has no argv field at all, and `open` refuses one even if a caller fabricates
+ * it.
+ */
+export interface PanesOperations {
+	status(): PanesStatus;
+	show(target: string): Promise<PanesShowResult>;
+	open(request: { preset?: string; argv?: ReadonlyArray<string>; once?: boolean }): Promise<PanesOpenResult>;
+	/** Open a fixed coding CLI in an owned pane. This is an interactive handoff, not a managed run. */
+	handoff(request: { peer: PanePeerId; brief?: string; cwd?: string }): Promise<PanesOpenResult>;
+	/** Each peer and whether its executable is on this machine, so `/peer` alone can say which ones would open. */
+	peers?(): ReadonlyArray<{ peer: PanePeerId; binary: string; found: boolean }>;
+	/**
+	 * Toggle zoom on one PanCode-owned pane, matched like `close` (pane id, label
+	 * substring, then purpose; newest first). Zooming steals focus, so this is
+	 * operator-only and never reachable from the model tool.
+	 */
+	zoom(target: string): Promise<PanesZoomResult>;
+	close(target: string): Promise<PanesCloseResult>;
+	/**
+	 * Read, prompt, interrupt and wait on a peer PanCode handed off to. All match
+	 * like `close` but only among handoff panes, so a shell or files pane is
+	 * never a target.
+	 *
+	 * `send` has exactly two forms and never both at once. `text` is a prompt.
+	 * For a PanCode peer it goes through that peer's own inbox onto its turn
+	 * queue (src/domains/mux/peer-inbox.ts) and never into its terminal. For
+	 * any other peer it goes through the pane host's agent admission, which
+	 * refuses a blocked agent; a refusal there is final. `interrupt` presses
+	 * esc or ctrl+c, the only keys PanCode presses on its own, because neither can
+	 * accept an approval. There is no way to send text followed by arbitrary
+	 * keys, which is what could answer a dialog the text itself opened.
+	 */
+	read(target: string, lines?: number): Promise<PanesReadResult>;
+	send(request: {
+		target: string;
+		text?: string;
+		interrupt?: PaneInterruptKey;
+		signal?: AbortSignal;
+	}): Promise<PanesSendResult>;
+	wait(target: string, options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<PanesWaitResult>;
+	/**
+	 * The files pane as one operator verb. `toggle` is the keybinding's single
+	 * tap: it opens or reveals the pane and moves the keyboard in, or parks it
+	 * when it is in the layout. `open`, `hide` and `close` are the explicit
+	 * halves (`close` ends the process, `hide` does not); `pick` borrows the
+	 * pane for one selection.
+	 */
+	files(action: "toggle" | "open" | "hide" | "close" | "pick"): Promise<PanesFilesResult>;
+	/** Live state of every dock, including what the music pane is playing. */
+	docks(): Promise<ReadonlyArray<PanesDockReport>>;
+	/** Bind the composer-facing Yazi bridge without rebuilding this shared object. */
+	attachYazi(controller: PanesYaziController): () => void;
+	/** Bind the workers-view watch controller; `show` routes runs through it. */
+	attachWatch(controller: PanesWatchController): () => void;
+}

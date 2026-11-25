@@ -1,0 +1,39 @@
+{
+	"name": "@pancode/kit",
+	"version": "0.9.0",
+	"private": true,
+	"description": "PanKit, the MCP tool suite for HPC and science.",
+	"type": "module",
+	"license": "SEE LICENSE IN LICENSE",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/akougkas/pancode.git",
+		"directory": "packages/kit"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"files": [
+		"dist",
+		"servers.json",
+		"README.md",
+		"LICENSE"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"bin": {
+		"pankit": "./dist/cli.js"
+	},
+	"scripts": {
+		"build": "tsup"
+	},
+	"dependencies": {
+		"@pancode/scidata": "workspace:*",
+		"@pancode/sdk": "workspace:*",
+		"@pancode/store": "workspace:*"
+	}
+}

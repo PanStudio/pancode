@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { CallFailureRecord } from "../../core/call-failure.js";
+import type { FactSum } from "../../core/telemetry/fact.js";
+import { isRecord } from "../../core/type-guards.js";
+import type { WorkflowDecision } from "./decide.js";
+
+/** Budget admission can fail before a provider call exists (#430). */
+export interface TurnFailureRecord extends Omit<CallFailureRecord, "stage"> {
+	stage: CallFailureRecord["stage"] | "budget";
+}
+
+/** A turn's tokens from one producer, each a fact sum over the calls or runs that contributed (#434). */
+export interface TurnTokens {
+	readonly input: FactSum;
+	readonly output: FactSum;
+	readonly cacheRead: FactSum;
+	readonly total: FactSum;
+}
+
+export interface TurnOutcomeRecord {
+	readonly version: 1;
+	readonly turnId: string; // the user turn id that started the turn
+	readonly turnIndex: number; // operator turns before this one in the session
+	/** True for the automatic follow-up a middleware nudge requested, which is not an operator turn. */
+	readonly continuation: boolean;
+	readonly control: {
+		decision: WorkflowDecision["kind"];
+		decisionHash: string | null;
+		executed: boolean;
+	} | null;
+	readonly coordinator: {
+		readonly toolCalls: number;
+		readonly byTool: Readonly<Record<string, number>>;
+		readonly readOnlyCallsBeforeFirstDispatch: number;
+		/** Every dispatch that launched runs; `failed` marks one whose result was an error or an abort. */
+		readonly dispatches: ReadonlyArray<{
+			mode: string;
+			agentIds: ReadonlyArray<string>;
+			runIds: ReadonlyArray<string>;
+			failed?: true;
+		}>;
+		readonly duplicateDispatch: boolean;
+	};
+	readonly harness: { readonly runIds: ReadonlyArray<string>; readonly reads: number };
+	/**
+	 * The no-progress read streak as the read-streak rule measured it this turn (exploration design 3.4): the longest
+	 * streak reached, carried streak included; the rounds it counted toward serial runs; the notes it attached.
+	 */
+	readonly exploration?: {
+		readonly maxReadStreak: number;
+		readonly serialRounds: number;
+		readonly notes: number;
+	};
+	readonly conversation: {
+		/** Regex facts about the closing text. */
+		readonly endedWithQuestion: boolean;
+		readonly offeredOptions: boolean;
+		readonly taskEstablished: boolean;
+		readonly clarificationStreak: number;
+	};
+	readonly completion: {
+		readonly decision: "ok" | "engage" | "not-assessed";
+		readonly mutatedPaths: number;
+		readonly evidenceKinds: ReadonlyArray<string>;
+	};
+	readonly operator: {
+		readonly canceled: boolean;
+		/** Present with `canceled` when the cancel was a dismissed ask_user interview rather than an aborted stream. */
+		readonly interviewDismissed?: true;
+	};
+	readonly tokens: {
+		readonly coordinator: TurnTokens;
+		readonly workers: TurnTokens;
+	};
+	readonly failure?: TurnFailureRecord;
+	readonly stopReason: string;
+	readonly durationMs: number;
+}
+
+export interface TurnOutcomeInput {
+	readonly control?: TurnOutcomeRecord["control"];
+	readonly turnId: string;
+	readonly turnIndex: number;
+	readonly continuation: boolean;
+	readonly toolNames: ReadonlyArray<string>;
+	readonly readOnlyCallsBeforeFirstDispatch: number;
+	readonly dispatches: TurnOutcomeRecord["coordinator"]["dispatches"];
+	readonly duplicateDispatch: boolean;
+	readonly harness: TurnOutcomeRecord["harness"];
+	readonly exploration?: TurnOutcomeRecord["exploration"];
+	readonly finalAssistantText: string;
+	readonly taskEstablished: boolean;
+	readonly previousClarificationStreak: number;
+	readonly completion: TurnOutcomeRecord["completion"];
+	readonly canceled: boolean;
+	/**
+	 * The operator dismissed an ask_user interview, which ends the turn on their
+	 * say-so. It counts toward the clarification streak and is recorded as an
+	 * operator cancel, the same as an Esc that aborts a stream.
+	 */
+	readonly interviewDismissed?: boolean;
+	readonly tokens: TurnOutcomeRecord["tokens"];
+	readonly failure?: TurnFailureRecord;
+	readonly stopReason: string;
+	readonly durationMs: number;
+}
+
+export function dispatchKeysFromArgs(
+	args: Readonly<Record<string, unknown>> | undefined,
+): ReadonlyArray<{ agentId: string; task: string }> {
+	if (
+		!args ||
+		args.list === true ||
+		args.from_scout !== undefined ||
+		args.apply_winner !== undefined ||
+		args.land !== undefined ||
+		(args.review !== undefined && args.review !== false)
+	)
+		return [];
+	const entries = Array.isArray(args.tasks) ? args.tasks : typeof args.task === "string" ? [{ task: args.task }] : [];
+	const sharedAgent =
+		typeof args.agent === "string" ? args.agent : typeof args.agent_id === "string" ? args.agent_id : "coder";
+	return entries.flatMap((entry: unknown) => {
+		const task = typeof entry === "string" ? entry : isRecord(entry) ? entry.task : undefined;
+		if (typeof task !== "string" || task.trim().length === 0) return [];
+		const agentId =
+			isRecord(entry) && typeof entry.agent === "string"
+				? entry.agent
+				: isRecord(entry) && typeof entry.agent_id === "string"
+					? entry.agent_id
+					: sharedAgent;
+		return [{ agentId, task: task.trim().replace(/\s+/g, " ").toLowerCase() }];
+	});
+}
+
+export function conversationShape(finalAssistantText: string): { endedWithQuestion: boolean; offeredOptions: boolean } {
+	return {
+		endedWithQuestion: finalAssistantText.trim().endsWith("?"),
+		offeredOptions: finalAssistantText.split(/\r?\n/).filter((line) => /^(?:- |\* |\d+[.)])/.test(line)).length >= 2,
+	};
+}
+
+/**
+ * How many consecutive turns ended waiting on the operator. Two endings count.
+ * One is a closing question or option list with no tool call, where `asks` is
+ * the regex shape of the text. The other is an ask_user interview the
+ * operator dismissed. A clarification that goes through ask_user always has a
+ * tool call, so the first test can never see it; an interview the operator
+ * answered is progress and resets the streak like any other tool turn.
+ */
+export function nextClarificationStreak(
+	previous: number,
+	turn: { toolCalls: number; asks: boolean; interviewDismissed?: boolean },
+): number {
+	if (turn.interviewDismissed === true) return previous + 1;
+	return turn.toolCalls === 0 && turn.asks ? previous + 1 : 0;
+}
+
+export function reduceTurnOutcome(input: TurnOutcomeInput): TurnOutcomeRecord {
+	const byTool: Record<string, number> = Object.create(null);
+	for (const tool of input.toolNames) byTool[tool] = (byTool[tool] ?? 0) + 1;
+	const shape = conversationShape(input.finalAssistantText);
+	const interviewDismissed = input.interviewDismissed === true;
+	return {
+		version: 1,
+		turnId: input.turnId,
+		turnIndex: input.turnIndex,
+		continuation: input.continuation,
+		control: input.control ?? null,
+		coordinator: {
+			toolCalls: input.toolNames.length,
+			byTool: { ...byTool },
+			readOnlyCallsBeforeFirstDispatch: input.readOnlyCallsBeforeFirstDispatch,
+			dispatches: input.dispatches.map((dispatch) => ({
+				...dispatch,
+				agentIds: [...dispatch.agentIds],
+				runIds: [...dispatch.runIds],
+			})),
+			duplicateDispatch: input.duplicateDispatch,
+		},
+		harness: { runIds: [...input.harness.runIds], reads: input.harness.reads },
+		...(input.exploration !== undefined ? { exploration: { ...input.exploration } } : {}),
+		conversation: {
+			...shape,
+			taskEstablished: input.taskEstablished,
+			clarificationStreak: nextClarificationStreak(input.previousClarificationStreak, {
+				toolCalls: input.toolNames.length,
+				asks: shape.endedWithQuestion || shape.offeredOptions,
+				interviewDismissed,
+			}),
+		},
+		completion: { ...input.completion, evidenceKinds: [...input.completion.evidenceKinds] },
+		operator: { canceled: input.canceled || interviewDismissed, ...(interviewDismissed ? { interviewDismissed } : {}) },
+		tokens: {
+			coordinator: { ...input.tokens.coordinator },
+			workers: { ...input.tokens.workers },
+		},
+		...(input.failure ? { failure: { ...input.failure } } : {}),
+		stopReason: input.stopReason,
+		durationMs: input.durationMs,
+	};
+}

@@ -1,0 +1,224 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { realpathSync } from "node:fs";
+import path from "node:path";
+import { MAX_TIMER_DELAY_MS } from "../core/timers.js";
+import type { SessionToolLimits } from "../core/tool-limit-flags.js";
+import { parseToolLimitList, toolLimitConflict, toolLimitConstraints } from "../core/tool-limit-flags.js";
+import { createStdioServerTransport } from "../engine/acp/transport.js";
+import { restoreStdout, takeOverStdout, writeRawStdout } from "./output-guard.js";
+import { runPancodeCommand } from "./pancode.js";
+import { printError } from "./shared.js";
+
+const HELP = `pancode acp [--cwd PATH] [--permission-timeout MS] [--autonomy LEVEL] [--allow-tools NAMES] [--delegate-tools NAMES] [--deny-tools NAMES] [--read-only]
+pancode acp [--cwd PATH] auth login
+
+Serve PanCode as an Agent Client Protocol v1 agent over stdio.
+
+  --cwd PATH               Pin this workspace: every session must name it. Without
+                           it, the first workspace request selects the root.
+  --permission-timeout MS  How long a mediated permission request may wait for the
+                           client before the prompt expires. Defaults to the configured
+                           integrations.externalAgents.defaults.permissionTimeoutMs.
+                           A client's negotiated timeoutMs never overrides this flag.
+  --autonomy LEVEL         The most autonomy any session may run at: default or yolo.
+                           It lowers the configured level, never raises it; with
+                           default, a client's attempt to choose yolo is refused.
+  --allow-tools NAMES      Limit the session's tools to these comma-separated
+                           capabilities, as pancode run does; none disables all.
+  --delegate-tools NAMES   Limit the tools the session's dispatched workers may hold.
+  --deny-tools NAMES       Remove these capabilities from the session's tools, also
+                           from an --allow-tools list; denying all of it is refused.
+  --read-only              Hold every session to the read-only ceiling: no file
+                           outside the PanCode home changes.
+  auth login               Open interactive Quick Connect for terminal ACP authentication.
+
+ACP frontends spawn this command; it is not meant to be run by hand. In the
+terminal, delegation runs through /hub agents, /run and the dispatch board.
+`;
+
+interface AcpFlags {
+	cwd?: string;
+	permissionTimeoutMs?: number;
+	autonomyCeiling?: "default" | "yolo";
+	toolLimits?: SessionToolLimits;
+	readOnly?: true;
+}
+
+/** Parsed flags, or the message explaining why the invocation is not usable. */
+export function parseAcpFlags(args: ReadonlyArray<string>): AcpFlags | string {
+	const flags: AcpFlags = {};
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index];
+		const value = args[index + 1];
+		if (arg === "--cwd") {
+			if (value === undefined) return "--cwd needs a directory";
+			flags.cwd = path.resolve(value);
+			index += 1;
+			continue;
+		}
+		if (arg === "--permission-timeout") {
+			const ms = value === undefined ? Number.NaN : Number(value);
+			if (!Number.isInteger(ms) || ms <= 0 || ms > MAX_TIMER_DELAY_MS) {
+				return `--permission-timeout needs a whole number from 1 to ${MAX_TIMER_DELAY_MS} milliseconds`;
+			}
+			flags.permissionTimeoutMs = ms;
+			index += 1;
+			continue;
+		}
+		if (arg === "--autonomy") {
+			if (value !== "default" && value !== "yolo") return "--autonomy needs default or yolo";
+			flags.autonomyCeiling = value;
+			index += 1;
+			continue;
+		}
+		if (arg === "--read-only") {
+			flags.readOnly = true;
+			continue;
+		}
+		if (arg === "--allow-tools" || arg === "--delegate-tools" || arg === "--deny-tools") {
+			if (value === undefined) return `${arg} needs comma-separated capability names, or none`;
+			const names = parseToolLimitList(arg, value);
+			if ("error" in names) return names.error;
+			flags.toolLimits = {
+				...flags.toolLimits,
+				...toolLimitConstraints(arg, names),
+			};
+			const conflict = toolLimitConflict(flags.toolLimits);
+			if (conflict !== undefined) return conflict;
+			index += 1;
+			continue;
+		}
+		return `unknown pancode acp option: ${arg ?? ""}`;
+	}
+	return flags;
+}
+
+/**
+ * The workspace root the server is pinned to, resolved and then canonicalized
+ * through the filesystem. A symlinked launch path is the reason: `process.cwd()`
+ * reports the physical path after chdir, so a session request carrying the same
+ * string the process was launched with used to be refused as a different
+ * workspace. One canonical form on both sides removes that class of mismatch.
+ * Throws when the path cannot be resolved, which the caller reports as an
+ * unusable `--cwd`.
+ */
+function resolveAcpCwd(value: string): string {
+	return realpathSync(path.resolve(value));
+}
+
+export async function runAcpCommand(
+	args: ReadonlyArray<string>,
+	options: { apiKey?: string; noContextFiles?: boolean; noSkills?: boolean; skillPaths?: ReadonlyArray<string> } = {},
+): Promise<number> {
+	const terminalAuth = args.at(-2) === "auth" && args.at(-1) === "login";
+	if (args.includes("--help") || args.includes("-h")) {
+		process.stdout.write(HELP);
+		return 0;
+	}
+	const flags = parseAcpFlags(terminalAuth ? args.slice(0, -2) : args);
+	if (typeof flags === "string") {
+		printError(flags);
+		process.stderr.write(HELP);
+		return 2;
+	}
+	// An explicit root is entered here and pinned on the front. Without one, the
+	// open transport selects the root at the first workspace request before any
+	// project graph loads.
+	if (flags.cwd !== undefined) {
+		try {
+			process.chdir(resolveAcpCwd(flags.cwd));
+		} catch {
+			printError(`--cwd is not a directory this process can enter: ${flags.cwd}`);
+			return 2;
+		}
+	}
+	if (terminalAuth) return (await import("./configure.js")).runConfigureCommand(["--quick"]);
+	takeOverStdout();
+	try {
+		// Both launch forms serve through the deferred front, so initialize is
+		// answered before the orchestrator boots. What the client advertises there
+		// (an attended surface, or none) decides which tools and ask routes the
+		// boot builds, and an eager boot would have to guess it.
+		const launchCwd = process.cwd();
+		process.stdin.pause();
+		const transport = createStdioServerTransport({
+			write: writeRawStdout,
+			diagnostics: (line) => process.stderr.write(`[pancode:acp] ${line}\n`),
+		});
+		process.stdin.pause();
+		try {
+			const [{ ACP_COMMANDS_CAPABILITY }, { serveDeferredAcp }, { createAcpHandshake }, { readPancodeVersionLabel }] =
+				await Promise.all([
+					import("../engine/acp/commands.js"),
+					import("../engine/acp/deferred-boot.js"),
+					import("../engine/acp/server-handshake.js"),
+					import("../core/build-info.js"),
+				]);
+			const handshake = createAcpHandshake({
+				version: readPancodeVersionLabel(),
+				session: true,
+				loadSession: true,
+				settings: true,
+				providers: true,
+				commandsCapability: { ...ACP_COMMANDS_CAPABILITY, promptTurns: true },
+				steer: true,
+				dispatch: true,
+				toolRegistry: true,
+				bus: true,
+				board: true,
+				boardActions: true,
+				branches: true,
+				handoff: true,
+				fleet: true,
+				contextLedger: true,
+				artifacts: true,
+				extensions: true,
+				hubReload: true,
+				aside: true,
+				workspace: true,
+				images: true,
+				interviews: true,
+				workerPermissions: true,
+				...(flags.permissionTimeoutMs === undefined ? {} : { pinnedTimeoutMs: flags.permissionTimeoutMs }),
+				shell: true,
+				queueEdit: true,
+				telemetry: true,
+				jobs: true,
+				ceiling: true,
+			});
+			const serving = serveDeferredAcp({
+				transport,
+				handshake,
+				launchCwd,
+				...(flags.cwd !== undefined ? { pinned: true } : {}),
+				boot: async (_cwd, ready) =>
+					await runPancodeCommand({
+						...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+						...(options.noContextFiles ? { noContextFiles: true } : {}),
+						...(options.noSkills ? { noSkills: true } : {}),
+						...(options.skillPaths && options.skillPaths.length > 0 ? { skillPaths: options.skillPaths } : {}),
+						...(flags.toolLimits === undefined && !flags.readOnly
+							? {}
+							: { toolLimits: { ...flags.toolLimits, ...(flags.readOnly ? { readOnly: true as const } : {}) } }),
+						acp: {
+							transport,
+							handshake,
+							onReady: ready,
+							...(flags.permissionTimeoutMs === undefined ? {} : { permissionTimeoutMs: flags.permissionTimeoutMs }),
+							...(flags.autonomyCeiling === undefined ? {} : { autonomyCeiling: flags.autonomyCeiling }),
+						},
+					}),
+			});
+			process.stdin.resume();
+			return await serving;
+		} catch (error) {
+			transport.close();
+			throw error;
+		} finally {
+			process.stdin.resume();
+		}
+	} finally {
+		restoreStdout();
+	}
+}

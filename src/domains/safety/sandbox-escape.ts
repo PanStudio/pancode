@@ -1,0 +1,156 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { homedir } from "node:os";
+import path from "node:path";
+import { isSameOrDescendant } from "../../core/path-containment.js";
+import { ToolNames } from "../../core/tool-names.js";
+import {
+	extractCommandCdScopedTargets,
+	extractCommandDeleteTargets,
+	extractCommandWriteTargets,
+} from "./command-path-walks.js";
+import type { SafetyDecision } from "./contract.js";
+
+/** Rule id of the ask for a call the operator's default would contain that sets `unsandboxed: true`. */
+export const SANDBOX_ESCAPE_RULE_ID = "sandbox-escape";
+
+export const SANDBOX_ESCAPE_REASON =
+	"unsandboxed: true leaves the main-session sandbox, so the command runs as the operator with the operator's credentials and files; it runs only when the operator's request names this escape or the operator approves it";
+
+/**
+ * True when the ask would run a command outside the main-session sandbox,
+ * whether the escape is the rule that asked or a reason joined to another ask.
+ */
+export function asksToLeaveSandbox(decision: SafetyDecision): boolean {
+	const policy = decision.policy;
+	if (policy === undefined) return false;
+	return policy.ruleId === SANDBOX_ESCAPE_RULE_ID || policy.reasons.includes(SANDBOX_ESCAPE_REASON);
+}
+
+/**
+ * True when an operator message mentions the sandbox. The judge's `operator-named`
+ * citation is the model's word; an escape it allows also needs the operator's own
+ * text to speak of the sandbox, so a judge that misreads a request cannot grant one.
+ */
+export function operatorMentionsSandbox(messages: ReadonlyArray<string>): boolean {
+	return messages.some((text) => /sandbox|unconfined/i.test(text));
+}
+
+/** An answered ask_user question and the option labels the operator chose on it, as ask_user recorded them. */
+export interface AskedApproval {
+	readonly question: string;
+	readonly chosen: ReadonlyArray<string>;
+}
+
+/**
+ * Text that names leaving the sandbox: unsandboxed (the flag included), unconfined, or outside, out of,
+ * without, leaving, escaping, exiting or bypassing the sandbox, unless not, never, no, without or don't
+ * stands right before it. The bare word sandbox never counts: "Run it in the sandbox?" names staying in.
+ */
+const LEAVES_SANDBOX =
+	/(?<!\b(?:not|never|no|without|don't|do not)\s+)(?:\bunsandboxed\b|\bunconfined\b|\b(?:outside|out of|without|leav(?:e|es|ing)|escap(?:e|es|ing)|exit(?:s|ing)?|bypass(?:es|ing)?)\s+(?:of\s+)?(?:the\s+|its\s+|this\s+|a\s+)?sandbox\b)/iu;
+
+/**
+ * True when `text` names leaving the sandbox (unsandboxed, unconfined, outside the sandbox, ...), unless a
+ * negation stands right before it; the bare word sandbox does not count.
+ */
+export function namesLeavingSandbox(text: string): boolean {
+	return LEAVES_SANDBOX.test(text);
+}
+
+/**
+ * The one reading of an affirmative option: its label starts with yes, allow, approve or run it, as a
+ * whole word, and is not a "yes, but" counter-offer or a label that speaks of the sandbox without
+ * naming leaving it ("Yes, in the sandbox").
+ */
+function affirmativeOption(label: string): boolean {
+	const text = label.trim();
+	if (!/^(?:yes|allow|approve|run it)\b/iu.test(text)) return false;
+	if (/^yes\b[\s,;:.!-]*but\b/iu.test(text)) return false;
+	return !/sandbox/iu.test(text) || LEAVES_SANDBOX.test(text);
+}
+
+/**
+ * True when every option the operator chose on an answered ask_user round is affirmative: the round approves
+ * what its question asks. The question and labels stay the agent's text; this reads only the operator's choice.
+ */
+export function askApproves(asked: AskedApproval): boolean {
+	return asked.chosen.length > 0 && asked.chosen.every(affirmativeOption);
+}
+
+/**
+ * True when an answered ask_user round approves leaving the sandbox: the question itself names
+ * leaving it and every option the operator chose is affirmative. The question and the labels are the
+ * agent's text, so neither counts as the operator's words for any guard; together with the operator's
+ * choice they are the approval the escape backstop accepts beside the operator's own typed words.
+ */
+export function askApprovesSandboxEscape(asked: AskedApproval): boolean {
+	return askApproves(asked) && LEAVES_SANDBOX.test(asked.question);
+}
+
+/**
+ * The outside-workspace paths a shell call writes or deletes, or a write or
+ * edit call changes, when the operator's own text names every one of them;
+ * otherwise empty. A call whose targets cannot be read, or that touches nothing
+ * outside the workspace, names nothing. Naming a path is not consent to leave
+ * the sandbox, so for an escape the judge uses this only to hand the call to the
+ * operator instead of a block; for any call it tells the judge the path is the operator's.
+ */
+export function operatorNamedOutsideTargets(
+	call: { tool: string; args: Readonly<Record<string, unknown>> | undefined },
+	messages: ReadonlyArray<string>,
+	workspace: string = process.cwd(),
+	home: string = homedir(),
+): string[] {
+	const spelled: string[] = [];
+	let base = workspace;
+	if (call.tool === ToolNames.Write || call.tool === ToolNames.Edit) {
+		const target = call.args?.path;
+		if (typeof target !== "string" || target.length === 0) return [];
+		spelled.push(target);
+	} else if (call.tool === ToolNames.Bash) {
+		const command = call.args?.command;
+		if (typeof command !== "string" || command.length === 0) return [];
+		const cwdArg = call.args?.cwd;
+		base = path.resolve(workspace, typeof cwdArg === "string" && cwdArg.length > 0 ? cwdArg : ".");
+		spelled.push(
+			...extractCommandWriteTargets(command),
+			...extractCommandDeleteTargets(command),
+			...extractCommandCdScopedTargets(command).map((target) => target.path),
+		);
+	} else {
+		return [];
+	}
+	const outside = new Map<string, Set<string>>();
+	for (const raw of spelled) {
+		const resolved = raw === "~" || raw.startsWith("~/") ? path.join(home, raw.slice(1)) : path.resolve(base, raw);
+		if (isSameOrDescendant(resolved, workspace)) continue;
+		const spellings = outside.get(resolved) ?? new Set([resolved]);
+		if (raw.includes("/")) spellings.add(raw.replace(/\/+$/u, ""));
+		if (isSameOrDescendant(resolved, home) && resolved !== home) spellings.add(`~/${path.relative(home, resolved)}`);
+		outside.set(resolved, spellings);
+	}
+	if (outside.size === 0) return [];
+	for (const spellings of outside.values()) {
+		if (![...spellings].some((spelling) => messages.some((text) => namesPath(text, spelling)))) return [];
+	}
+	return [...outside.keys()];
+}
+
+/**
+ * True when one of `messages` carries the absolute path `target` whole, as spelled or as `~/...` under the
+ * home directory, not as a prefix or suffix of a longer path.
+ */
+export function messagesSpellPath(messages: ReadonlyArray<string>, target: string, home: string = homedir()): boolean {
+	const spellings = [
+		target,
+		...(isSameOrDescendant(target, home) && target !== home ? [`~/${path.relative(home, target)}`] : []),
+	];
+	return spellings.some((spelling) => messages.some((text) => namesPath(text, spelling)));
+}
+
+/** True when `text` carries `spelling` as a whole path, not as a prefix or suffix of a longer one. */
+function namesPath(text: string, spelling: string): boolean {
+	const escaped = spelling.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+	return new RegExp(`(?<![\\w.~/-])${escaped}(?![\\w/-]|\\.[\\w])`, "u").test(text);
+}

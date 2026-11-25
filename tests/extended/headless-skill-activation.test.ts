@@ -1,0 +1,293 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, it } from "node:test";
+import { initializeScratchHome } from "../harness/headless-run.js";
+
+import {
+	closeServer,
+	type OpenAICompatFixture,
+	seedOpenAICompatToolOrchestrator,
+	startOpenAICompatFixture,
+} from "../harness/openai-compat-fixture.js";
+
+const ROOT = new URL("../..", import.meta.url).pathname;
+const CLI = join(ROOT, "dist", "cli", "index.js");
+
+const fixtures: OpenAICompatFixture[] = [];
+const roots: string[] = [];
+
+afterEach(async () => {
+	await Promise.all(fixtures.splice(0).map((fixture) => closeServer(fixture.server)));
+	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+interface Scratch {
+	root: string;
+	configDir: string;
+	env: NodeJS.ProcessEnv;
+}
+
+function scratchHome(): Scratch {
+	const root = mkdtempSync(join(tmpdir(), "pancode-headless-skill-"));
+	roots.push(root);
+	return {
+		root,
+		configDir: join(root, "config"),
+		env: {
+			...process.env,
+			NODE_ENV: "test",
+			NO_COLOR: "1",
+			PANCODE_HOME: root,
+			PANCODE_CONFIG_DIR: join(root, "config"),
+			PANCODE_DATA_DIR: join(root, "data"),
+			PANCODE_STATE_DIR: join(root, "state"),
+			PANCODE_CACHE_DIR: join(root, "cache"),
+			PANCODE_REQUIRE_HOME_PREFIX: "1",
+			PANCODE_TEST_OPENAI_KEY: "fixture-key",
+		},
+	};
+}
+
+async function runCli(
+	args: string[],
+	options: { env: NodeJS.ProcessEnv; timeoutMs?: number; cwd?: string },
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+	const child = spawn(process.execPath, [CLI, ...args], {
+		cwd: options.cwd ?? ROOT,
+		env: options.env,
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	let stdout = "";
+	let stderr = "";
+	child.stdout.setEncoding("utf8");
+	child.stderr.setEncoding("utf8");
+	child.stdout.on("data", (text: string) => {
+		stdout += text;
+	});
+	child.stderr.on("data", (text: string) => {
+		stderr += text;
+	});
+	child.stdin.end();
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			child.kill("SIGKILL");
+			reject(new Error(`CLI timeout: ${args.join(" ")}\nstdout=${stdout}\nstderr=${stderr}`));
+		}, options.timeoutMs ?? 30_000);
+		child.once("error", (error) => {
+			clearTimeout(timer);
+			reject(error);
+		});
+		child.once("close", (code) => {
+			clearTimeout(timer);
+			resolve({ code, stdout, stderr });
+		});
+	});
+}
+
+function writeSkill(dir: string, name: string, narrowing = true): string {
+	const directory = join(dir, name);
+	mkdirSync(directory, { recursive: true });
+	writeFileSync(
+		join(directory, "SKILL.md"),
+		[
+			"---",
+			`name: ${name}`,
+			`description: ${name} workflow for the headless activation contract.`,
+			...(narrowing ? ["allowed-tools: read, grep"] : []),
+			"---",
+			"",
+			`HEADLESS_SKILL_BODY_${name.toUpperCase().replace(/-/gu, "_")}`,
+			"",
+		].join("\n"),
+		"utf8",
+	);
+	return directory;
+}
+
+/** Every JSON line the run wrote, in order. */
+function jsonEvents(stdout: string): Array<Record<string, unknown>> {
+	return stdout
+		.trim()
+		.split("\n")
+		.filter((line) => line.startsWith("{"))
+		.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+/** The tool result text the model was handed for its `context` call. */
+function contextToolResult(events: Array<Record<string, unknown>>): string {
+	const end = contextToolEnd(events);
+	if (!end) return "";
+	return JSON.stringify(end.result ?? end);
+}
+
+function contextToolEnd(events: Array<Record<string, unknown>>): Record<string, unknown> | undefined {
+	return events.find(
+		(event) =>
+			event.type === "tool_execution_end" &&
+			event.toolName === "context" &&
+			event.via === "gateway" &&
+			(event.result as { details?: { capability?: string } } | undefined)?.details?.capability === "context",
+	);
+}
+
+/** Every entry of the one session the run wrote. */
+function sessionEntries(root: string): Array<Record<string, unknown>> {
+	const ledgers = readdirSync(join(root, "state", "sessions"), { recursive: true, encoding: "utf8" }).filter((file) =>
+		file.endsWith("current.jsonl"),
+	);
+	strictEqual(ledgers.length, 1, ledgers.join(", "));
+	return readFileSync(join(root, "state", "sessions", ledgers[0] ?? ""), "utf8")
+		.trim()
+		.split("\n")
+		.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+/**
+ * A refused load reaches the transcript whole: returned rather than thrown, so
+ * the end event and the persisted result keep the structured refusal and
+ * still count as an error.
+ */
+function assertRefusal(turn: { stdout: string; root: string }, refusal: Record<string, unknown>): void {
+	const end = contextToolEnd(jsonEvents(turn.stdout));
+	strictEqual(end?.isError, true, turn.stdout);
+	deepStrictEqual((end?.result as { details?: { refusal?: unknown } } | undefined)?.details?.refusal, refusal);
+	const persisted = sessionEntries(turn.root).find(
+		(entry) => entry.role === "tool_result" && (entry.payload as { toolName?: string }).toolName === "gateway",
+	)?.payload as { isError?: boolean; result?: { details?: { refusal?: unknown } } } | undefined;
+	strictEqual(persisted?.isError, true);
+	deepStrictEqual(persisted?.result?.details?.refusal, refusal);
+}
+
+async function headlessSkillTurn(
+	autonomy: string,
+	skillName: string,
+	narrowing = true,
+): Promise<{
+	stdout: string;
+	stderr: string;
+	code: number | null;
+	skillDir: string;
+	root: string;
+}> {
+	const scratch = scratchHome();
+	initializeScratchHome(scratch.root);
+	// The model loads an installed skill; its display names context while replay keeps gateway.
+	const fixture = await startOpenAICompatFixture("done", {
+		toolCall: {
+			name: "gateway",
+			arguments: { op: "call", capability: "context", args: { scope: "skills", name: skillName } },
+		},
+	});
+	fixtures.push(fixture);
+	seedOpenAICompatToolOrchestrator(scratch.configDir, fixture.url, autonomy);
+	const skillDir = writeSkill(scratch.root, "headless-interview", narrowing);
+	const turn = await runCli(
+		[
+			"--no-context-files",
+			"--skill",
+			skillDir,
+			"run",
+			"--autonomy",
+			autonomy,
+			"--output-format",
+			"stream-json",
+			"HEADLESS_SKILL_ACTIVATION",
+		],
+		{ env: scratch.env },
+	);
+	return { ...turn, skillDir, root: scratch.root };
+}
+
+describe("headless skill activation by autonomy level", () => {
+	it("loads a PanHub-installed skill through the built model tool despite a project compatibility copy", async () => {
+		const scratch = scratchHome();
+		const cwd = join(scratch.root, "project");
+		const env = { ...scratch.env, HOME: scratch.root };
+		const foreign = join(cwd, ".claude/skills/find-skills");
+		cpSync(join(ROOT, "hub/packs/skills/meta/find-skills"), foreign, { recursive: true });
+		writeFileSync(
+			join(foreign, "SKILL.md"),
+			`${readFileSync(join(foreign, "SKILL.md"), "utf8")}\nFOREIGN_COPY_MUST_NOT_LOAD\n`,
+		);
+		initializeScratchHome(scratch.root);
+		const installed = await runCli(["hub", "install", "skill:find-skills", "--user", "--json"], { env, cwd });
+		strictEqual(installed.code, 0, installed.stderr);
+		const fixture = await startOpenAICompatFixture("done", {
+			toolCall: {
+				name: "gateway",
+				arguments: { op: "call", capability: "context", args: { scope: "skills", name: "find-skills" } },
+			},
+		});
+		fixtures.push(fixture);
+		seedOpenAICompatToolOrchestrator(scratch.configDir, fixture.url, "yolo");
+		const turn = await runCli(
+			[
+				"--no-context-files",
+				"run",
+				"--autonomy",
+				"yolo",
+				"--output-format",
+				"stream-json",
+				"Load the installed find-skills skill.",
+			],
+			{ env, cwd },
+		);
+		strictEqual(turn.code, 0, turn.stderr);
+		const result = contextToolResult(jsonEvents(turn.stdout));
+		match(result, /# Find Skills/);
+		match(result, /plugin:user:find-skills/);
+		ok(!result.includes("FOREIGN_COPY_MUST_NOT_LOAD"));
+	});
+
+	it("activates an installed skill on a model call at yolo", async () => {
+		const turn = await headlessSkillTurn("yolo", "headless-interview");
+		strictEqual(turn.code, 0, turn.stderr);
+		const events = jsonEvents(turn.stdout);
+		const result = contextToolResult(events);
+		match(result, /HEADLESS_SKILL_BODY_HEADLESS_INTERVIEW/u, turn.stdout);
+		const notices = events
+			.filter((event) => event.type === "notice")
+			.map((event) => String(event.text ?? ""))
+			.join("\n");
+		match(notices, /Skill activated: headless-interview \(model\)/u, turn.stdout);
+	});
+
+	it("records a skill without tool narrowing as a known selection so compaction can still cut", async () => {
+		const turn = await headlessSkillTurn("yolo", "headless-interview", false);
+		strictEqual(turn.code, 0, turn.stderr);
+		const events = jsonEvents(turn.stdout);
+		match(contextToolResult(events), /HEADLESS_SKILL_BODY_HEADLESS_INTERVIEW/u, turn.stdout);
+		const ledgers = readdirSync(join(turn.root, "state", "sessions"), { recursive: true, encoding: "utf8" }).filter(
+			(file) => file.endsWith("current.jsonl"),
+		);
+		strictEqual(ledgers.length, 1, ledgers.join(", "));
+		const states = readFileSync(join(turn.root, "state", "sessions", ledgers[0] ?? ""), "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { customType?: string; data?: { unknown?: boolean; activationRefs?: unknown[] } })
+			.filter((entry) => entry.customType === "skillContextState");
+		strictEqual(states.length, 1, "the settled turn persists one skill selection");
+		strictEqual(states[0]?.data?.unknown, undefined, "an unknown selection blocks every later compaction");
+		strictEqual(states[0]?.data?.activationRefs?.length, 1);
+	});
+
+	it("activates an installed skill in default mode", async () => {
+		const turn = await headlessSkillTurn("default", "headless-interview");
+		strictEqual(turn.code, 0, turn.stderr);
+		const result = contextToolResult(jsonEvents(turn.stdout));
+		match(result, /HEADLESS_SKILL_BODY_HEADLESS_INTERVIEW/u, turn.stdout);
+	});
+
+	it("still refuses an uninstalled marketplace skill at yolo", async () => {
+		const turn = await headlessSkillTurn("yolo", "not-installed-anywhere");
+		strictEqual(turn.code, 0, turn.stderr);
+		const result = contextToolResult(jsonEvents(turn.stdout));
+		ok(!/HEADLESS_SKILL_BODY_/u.test(result), "an uninstalled skill must not load");
+		assertRefusal(turn, { subject: "skill", name: "not-installed-anywhere", kind: "unknown" });
+	});
+});

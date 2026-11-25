@@ -1,0 +1,204 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { sleep } from "../../core/timers.js";
+import type { DispatchContract } from "../../domains/dispatch/contract.js";
+import { withoutLandCardClause } from "../../domains/dispatch/merge-gate.js";
+import { type RunCallUsage, runUsageFromCallRecords } from "../../domains/dispatch/run-call-usage.js";
+import { isTerminalRunEnvelope, type RunEnvelope, type RunOutcome } from "../../domains/dispatch/types.js";
+import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
+import { readCallJournalSync } from "../../domains/telemetry/call-journal.js";
+import { telemetryRunDirectory } from "../../domains/telemetry/paths.js";
+import { READ_MODEL_FOLD } from "../../domains/telemetry/read-model.js";
+import type { SettledRunEnvelope } from "./run-json-schema-v2.js";
+
+const SETTLE_POLL_MS = 500;
+
+/** Terminal outcomes that mean a dispatched worker did not deliver. */
+const UNDELIVERED_OUTCOMES: ReadonlySet<RunOutcome> = new Set([
+	"failed",
+	"timed_out",
+	"stalled",
+	"canceled",
+	"denied_by_policy",
+	"spawn_failed",
+]);
+
+export interface DispatchedRunsSettlement {
+	/**
+	 * Every run the headless turn dispatched, retried attempts included, oldest first: v2's `run_end.dispatch.runs`.
+	 * A steer-canceled run reads as it does in `canceled`.
+	 */
+	runs: ReadonlyArray<RunEnvelope>;
+	/** Runs still in flight when waiting stopped; shutdown drain cancels them. */
+	live: ReadonlyArray<RunEnvelope>;
+	/** Final attempts that ended without delivering (a retried attempt is not final). */
+	undelivered: ReadonlyArray<RunEnvelope>;
+	/**
+	 * Final attempts of assignments the dispatching session canceled through steer (ns:61). The caller asked for the
+	 * cancel, so they read canceled and do not fail the run. A cancel during a scheduled retry finds the last attempt
+	 * already sealed failed; its entry here still reads canceled and names that attempt's ending in its detail.
+	 */
+	canceled: ReadonlyArray<RunEnvelope>;
+	/**
+	 * Schema v2 only (CLI-5): final attempts that did not deliver but a later dispatch of the same task by the same
+	 * agent and parent did, so they no longer fail the run. Always empty unless the caller asks for it.
+	 */
+	superseded: ReadonlyArray<RunEnvelope>;
+}
+
+/** A steer-canceled run as it settles: canceled, with the sealed attempt's own ending kept when it was not one. */
+function asSteerCanceled(run: RunEnvelope): RunEnvelope {
+	if (run.outcome === "canceled") return { ...run, outcomeCode: null };
+	const ended = run.outcomeCode ?? run.outcome ?? "unknown";
+	return {
+		...run,
+		outcome: "canceled",
+		outcomeCode: null,
+		outcomeDetail: `canceled through steer by the dispatching session before its retry; the last attempt ended ${ended}`,
+	};
+}
+
+function dispatchedBy(dispatch: Pick<DispatchContract, "listRuns">, rootRunId: string): RunEnvelope[] {
+	// The ledger selects before it copies rows; a fake that ignores `where` is still filtered here.
+	const ours = (run: Readonly<RunEnvelope>): boolean => run.id !== rootRunId && run.lineage?.rootRunId === rootRunId;
+	return dispatch.listRuns(undefined, ours).filter(ours);
+}
+
+/**
+ * Whether a later run of the same task delivered: same agent, same parent, byte-identical task, started after it and
+ * sealed `succeeded`. A reworded task is a different task, so its failure still counts.
+ */
+function supersededBy(failed: RunEnvelope, runs: ReadonlyArray<RunEnvelope>): boolean {
+	return runs.some(
+		(later) =>
+			later.id !== failed.id &&
+			later.outcome === "succeeded" &&
+			later.agentId === failed.agentId &&
+			later.task === failed.task &&
+			(later.lineage?.parentRunId ?? null) === (failed.lineage?.parentRunId ?? null) &&
+			later.startedAt > failed.startedAt,
+	);
+}
+
+/**
+ * Wait for every run the headless turn dispatched to seal, then report the ones
+ * that did not deliver. Detached runs are children of this process, so exiting
+ * while they run drains and cancels them; before D3 a coordinator that ended
+ * its turn early silently discarded its whole fan-out. Waiting stops when the
+ * process starts shutting down (a signal or `--timeout`), and whatever is still
+ * live is returned so the caller can name it. With `supersede` (schema v2), a
+ * failure a later dispatch of the same task made good moves to `superseded`.
+ */
+export async function settleDispatchedRuns(
+	dispatch: Pick<DispatchContract, "listRuns" | "canceledBySteer">,
+	rootRunId: string,
+	isShuttingDown: () => boolean,
+	options: { supersede?: boolean } = {},
+): Promise<DispatchedRunsSettlement> {
+	while (!isShuttingDown() && dispatchedBy(dispatch, rootRunId).some((run) => !isTerminalRunEnvelope(run))) {
+		await sleep(SETTLE_POLL_MS);
+	}
+	const runs = dispatchedBy(dispatch, rootRunId);
+	const retried = new Set(
+		runs.flatMap((run) => ((run.lineage?.attempt ?? 0) > 0 && run.lineage?.parentRunId ? [run.lineage.parentRunId] : [])),
+	);
+	const failed = runs.filter(
+		(run) =>
+			isTerminalRunEnvelope(run) &&
+			!retried.has(run.id) &&
+			run.outcome !== undefined &&
+			run.outcome !== null &&
+			UNDELIVERED_OUTCOMES.has(run.outcome),
+	);
+	// The dispatch domain's typed marker, never the outcome text: only a cancel the steer tool issued leaves the list.
+	const steerCanceled = failed.filter((run) => dispatch.canceledBySteer?.(run.id) === true);
+	const undeliveredCandidates = failed.filter((run) => !steerCanceled.includes(run));
+	const superseded = options.supersede === true ? undeliveredCandidates.filter((run) => supersededBy(run, runs)) : [];
+	const canceled = steerCanceled.map(asSteerCanceled);
+	// Oldest first; the sort is stable, so runs that started together keep the ledger's order.
+	const ordered = [...runs].sort((a, b) => (a.startedAt < b.startedAt ? -1 : a.startedAt > b.startedAt ? 1 : 0));
+	return {
+		runs: ordered.map((run) => canceled.find((entry) => entry.id === run.id) ?? run),
+		live: runs.filter((run) => !isTerminalRunEnvelope(run)),
+		undelivered: undeliveredCandidates.filter((run) => !superseded.includes(run)),
+		canceled,
+		superseded,
+	};
+}
+
+/** Roomy enough for a branch name plus the merge recovery hint, small enough for one stderr line. */
+const OUTCOME_DETAIL_MAX_CHARS = 600;
+
+function boundedOutcomeDetail(detail: string): string {
+	const clean = sanitizeCallTargetText(detail);
+	return clean.length <= OUTCOME_DETAIL_MAX_CHARS ? clean : `${clean.slice(0, OUTCOME_DETAIL_MAX_CHARS - 1)}…`;
+}
+
+/**
+ * One entry per run: `id (agent, <outcomeCode or outcome>): <detail>`. A
+ * receipt's outcomeCode and outcomeDetail carry the reason (a rejected host
+ * check, a withheld merge and its recovery hint), so a headless operator who
+ * sees only stderr gets them for every run that has them.
+ */
+export function describeRuns(runs: ReadonlyArray<RunEnvelope>): string {
+	return runs
+		.map((run) => {
+			const outcome = run.outcomeCode ?? run.outcome;
+			const detail = run.outcomeDetail ? `: ${boundedOutcomeDetail(withoutLandCardClause(run.outcomeDetail))}` : "";
+			return `${run.id} (${run.agentId}${outcome ? `, ${outcome}` : ""})${detail}`;
+		})
+		.join(", ");
+}
+
+/**
+ * The sealed envelope (staticHead included) each run's journal settled with, by run id (M-18), so `run
+ * --output-format json` names what a dispatched run was allowed. A run whose journal holds no envelope, or cannot be
+ * read, is left out rather than guessed. The read is synchronous: the caller runs it between the turn and the v2
+ * envelope, where a yielded tick lets other writers into stdout ahead of the envelope.
+ */
+export function settledRunEnvelopes(runIds: ReadonlyArray<string>, stateDir: string): Map<string, SettledRunEnvelope> {
+	const envelopes = new Map<string, SettledRunEnvelope>();
+	for (const runId of runIds) {
+		try {
+			const read = readCallJournalSync(telemetryRunDirectory(stateDir, runId), ["run.settled"]);
+			for (const { record } of read.records) {
+				if (record.k === "run.settled" && record.data.envelope !== undefined) envelopes.set(runId, record.data.envelope);
+			}
+		} catch {
+			// An unreadable journal leaves the run without an envelope in the report; the run's own outcome stands.
+		}
+	}
+	return envelopes;
+}
+
+/**
+ * Each dispatched run's own calls, folded from its run journal as `run_end.usage.children` folds them, so the
+ * per-run rows of `run_end.dispatch.runs` add up to the children's scope. A run whose journal holds neither a call nor a
+ * reported aggregate, or cannot be read, is left out. Synchronous for the same reason as {@link settledRunEnvelopes}.
+ */
+export function settledRunUsage(runIds: ReadonlyArray<string>, stateDir: string): Map<string, RunCallUsage> {
+	const usage = new Map<string, RunCallUsage>();
+	for (const runId of runIds) {
+		try {
+			const read = readCallJournalSync(telemetryRunDirectory(stateDir, runId));
+			const records = read.records.map(({ record }) => record);
+			const folded = runUsageFromCallRecords(records, READ_MODEL_FOLD);
+			// An ACP delegation reports one run-scope aggregate and no call of its own; that aggregate is the run's usage.
+			if (folded.callIds.length > 0 || records.some((record) => record.k === "run.usage_reported"))
+				usage.set(runId, folded);
+		} catch {
+			// An unreadable journal leaves the run without usage in the report; the children's scope still counts it.
+		}
+	}
+	return usage;
+}
+
+export function projectDispatchedRunOutcome(run: RunEnvelope) {
+	return {
+		runId: run.id,
+		agentId: run.agentId,
+		outcome: run.outcome ?? null,
+		outcomeCode: run.outcomeCode ?? null,
+		outcomeDetail: run.outcomeDetail ? boundedOutcomeDetail(run.outcomeDetail) : null,
+	};
+}

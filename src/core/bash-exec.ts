@@ -1,0 +1,853 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { spawn } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
+import type { Socket } from "node:net";
+import { performance } from "node:perf_hooks";
+import { StringDecoder } from "node:string_decoder";
+import { holdUnresolvedUserinfo, isSecretArgKey } from "../domains/safety/redaction.js";
+import { AI_AGENT_NAME } from "./agent-environment.js";
+import { bashShellEnvironment, bashShellPath } from "./bash-shell.js";
+import {
+	gitCommitAttributionEnabled,
+	reportCommitAttributionDiagnostic,
+	withManagedGitCommitAttributionEnvironment,
+} from "./git-commit-attribution.js";
+import { SAFE_EXEC_PIPE_DRAIN_BOUND_MS } from "./safe-exec.js";
+import { holdsNamedCredential, knownSecretValues, scrubSandboxEnv } from "./sandbox/env-scrub.js";
+import { type MainSandboxPolicy, planMainSandboxSpawn } from "./sandbox/main-session.js";
+import { signalSandboxPayload } from "./sandbox/signal.js";
+import type { SandboxEnvPolicy } from "./sandbox/types.js";
+import { planSandboxedSpawn } from "./sandbox/worker-process.js";
+import { clampTimerDelayMs } from "./timers.js";
+import { applyToolEnvControls, GENERATED_TOOL_ENV_KEYS } from "./tool-env-controls.js";
+
+// Hard memory-safety ceiling for a single command's captured output. This is
+// deliberately far above any display cap (see BASH_DISPLAY_MAX_BYTES in
+// bash.ts, ~16 KB): output is retained and spilled to an offload file up to
+// this bound, and only a runaway command that blows past it gets the child
+// killed. Never truncate merely because the *display* cap was hit — the tail
+// (failing assertion, compiler error, exit summary) must survive.
+export const BASH_HARD_CAP_BYTES = 16 * 1024 * 1024;
+
+export interface BashStreamByteCounts {
+	observedStdoutBytes: number;
+	observedStderrBytes: number;
+	retainedStdoutBytes: number;
+	retainedStderrBytes: number;
+}
+
+export interface BashCommandResult extends Partial<BashStreamByteCounts> {
+	error: NodeJS.ErrnoException | null;
+	stdout: string;
+	stderr: string;
+	exitCode: number | null;
+	signal: NodeJS.Signals | null;
+	aborted: boolean;
+	timedOut: boolean;
+	outputCapped: boolean;
+	/** Exact bytes retained from stdout and stderr, never above the hard cap. */
+	outputBytes: number;
+	/**
+	 * The limit that armed the timeout timer: the run's deadline or the call's `timeoutMs`, with its delay. `ms` is 0
+	 * when the deadline had already passed before spawn, and then the command never started.
+	 */
+	timeoutLimit?: BashTimeoutLimit;
+}
+
+export interface BashTimeoutLimit {
+	/** `idle`: the command went `ms` with no output and no CPU in its process tree (`idleMs`, FX-32). */
+	by: "run-deadline" | "timeout" | "idle";
+	ms: number;
+}
+
+export interface BashCommandProgress {
+	/** Cumulative stdout captured so far. */
+	stdout: string;
+	/** Cumulative stderr captured so far. */
+	stderr: string;
+	/** Total bytes accepted from both streams so far. */
+	outputBytes: number;
+}
+
+export interface RunBashCommandOptions {
+	cwd?: string;
+	timeoutMs?: number;
+	/**
+	 * A `performance.now()` instant the command may not outlive: the timeout timer,
+	 * armed after spawn preparation, fires at whichever of it and `timeoutMs` comes first.
+	 * A deadline that has passed by then times the command out without spawning it.
+	 */
+	deadlineAt?: number;
+	signal?: AbortSignal;
+	/** Cumulative snapshots, throttled to keep terminal rendering responsive. */
+	onUpdate?: (progress: BashCommandProgress) => void;
+	/** Each decoded piece of accepted output, unthrottled, before any snapshot that includes it. */
+	onOutput?: BashOutputListener;
+	/** Set by the bash tool for a contained main-session call: it runs in the main-session sandbox with this policy. */
+	shellSandbox?: MainSandboxPolicy;
+	/** Called with the shell's pid once it is spawned; off Windows the pid is also its process group id. */
+	onSpawn?: (pid: number) => void;
+	/**
+	 * Stop the command as timed out (`timeoutLimit.by` "idle") once it has gone this long with no output and, where
+	 * `/proc` shows it, no CPU in the shell's process tree. Absent or 0 is off (FX-32).
+	 */
+	idleMs?: number;
+}
+
+type BashOutputListener = (target: "stdout" | "stderr", text: string) => void;
+
+const BASH_UPDATE_THROTTLE_MS = 100;
+
+export interface BashProgressScheduler {
+	now(): number;
+	setTimeout(callback: () => void, delayMs: number): unknown;
+	clearTimeout(timer: unknown): void;
+}
+
+export interface BashOutputProgressController {
+	/** Raw stream byte counts, independent of UTF-8 decoding and capture clipping. */
+	byteCounts(): BashStreamByteCounts;
+	/** Emit the initial empty cumulative snapshot, when a callback is configured. */
+	start(): void;
+	/** Accept one stream chunk. Returns true only when this chunk reaches the hard cap. */
+	append(target: "stdout" | "stderr", chunk: Buffer): boolean;
+	/** Seal output, cancel progress work, emit the final snapshot, and return the result fields. */
+	settle(): Pick<BashCommandResult, "stdout" | "stderr" | "outputBytes" | "outputCapped">;
+}
+
+const SYSTEM_PROGRESS_SCHEDULER: BashProgressScheduler = {
+	now: Date.now,
+	setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+	clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+};
+
+/**
+ * Cumulative stdout/stderr fold shared by the child stream handlers and a
+ * deterministic contract-test seam. Settlement is a phase, not just a final
+ * boolean: once it starts, re-entrant or queued stream work is rejected while
+ * the one final advisory snapshot is still allowed to publish.
+ */
+export function createBashOutputProgressController(
+	onUpdate?: (progress: BashCommandProgress) => void,
+	scheduler: BashProgressScheduler = SYSTEM_PROGRESS_SCHEDULER,
+	onOutput?: BashOutputListener,
+): BashOutputProgressController {
+	let phase: "active" | "settling" | "settled" = "active";
+	let stdout = "";
+	let stderr = "";
+	const stdoutDecoder = new StringDecoder("utf8");
+	const stderrDecoder = new StringDecoder("utf8");
+	let decodersFinished = false;
+	const counts: BashStreamByteCounts = {
+		observedStdoutBytes: 0,
+		observedStderrBytes: 0,
+		retainedStdoutBytes: 0,
+		retainedStderrBytes: 0,
+	};
+	let outputBytes = 0;
+	let outputCapped = false;
+	let updateTimer: unknown = null;
+	let updateDirty = false;
+	let lastUpdateAt = 0;
+
+	const snapshot = (): BashCommandProgress => ({ stdout, stderr, outputBytes });
+
+	const finishDecoders = (): void => {
+		if (decodersFinished) return;
+		decodersFinished = true;
+		// A hard byte cap may bisect a multibyte code point. Discard the
+		// decoder's incomplete suffix instead of manufacturing U+FFFD.
+		if (outputCapped) return;
+		for (const target of ["stdout", "stderr"] as const) {
+			const rest = target === "stdout" ? stdoutDecoder.end() : stderrDecoder.end();
+			if (rest.length === 0) continue;
+			if (target === "stdout") stdout += rest;
+			else stderr += rest;
+			onOutput?.(target, rest);
+		}
+	};
+
+	const emitUpdate = (final = false): void => {
+		if (onUpdate === undefined || !updateDirty) return;
+		if (phase !== "active" && !(final && phase === "settling")) return;
+		updateDirty = false;
+		lastUpdateAt = scheduler.now();
+		try {
+			onUpdate(snapshot());
+		} catch {
+			// Rendering progress is advisory and must never change command execution.
+		}
+	};
+
+	const clearUpdateTimer = (): void => {
+		if (updateTimer === null) return;
+		scheduler.clearTimeout(updateTimer);
+		updateTimer = null;
+	};
+
+	const scheduleUpdate = (): void => {
+		if (onUpdate === undefined || phase !== "active") return;
+		updateDirty = true;
+		const delay = BASH_UPDATE_THROTTLE_MS - (scheduler.now() - lastUpdateAt);
+		if (delay <= 0) {
+			clearUpdateTimer();
+			emitUpdate();
+			return;
+		}
+		updateTimer ??= scheduler.setTimeout(() => {
+			updateTimer = null;
+			// A timer already queued by the event loop may still invoke its callback
+			// after clearTimeout. The phase check makes that callback inert.
+			emitUpdate();
+		}, delay);
+	};
+
+	return {
+		byteCounts: () => ({ ...counts }),
+		start(): void {
+			if (phase !== "active" || onUpdate === undefined) return;
+			updateDirty = true;
+			emitUpdate();
+		},
+		append(target, chunk): boolean {
+			if (phase !== "active") return false;
+			if (target === "stdout") counts.observedStdoutBytes += chunk.byteLength;
+			else counts.observedStderrBytes += chunk.byteLength;
+			if (outputCapped) return false;
+			const remaining = BASH_HARD_CAP_BYTES - outputBytes;
+			const accepted = chunk.byteLength <= remaining ? chunk : chunk.subarray(0, Math.max(0, remaining));
+			outputBytes += accepted.byteLength;
+			if (target === "stdout") counts.retainedStdoutBytes += accepted.byteLength;
+			else counts.retainedStderrBytes += accepted.byteLength;
+			if (accepted.byteLength > 0) {
+				const decoded = target === "stdout" ? stdoutDecoder.write(accepted) : stderrDecoder.write(accepted);
+				if (target === "stdout") stdout += decoded;
+				else stderr += decoded;
+				if (decoded.length > 0) onOutput?.(target, decoded);
+			}
+			if (accepted.byteLength < chunk.byteLength) outputCapped = true;
+			scheduleUpdate();
+			return outputCapped;
+		},
+		settle() {
+			if (phase === "settled") return { ...snapshot(), outputCapped };
+			if (phase === "settling") return { ...snapshot(), outputCapped };
+			phase = "settling";
+			clearUpdateTimer();
+			finishDecoders();
+			emitUpdate(true);
+			phase = "settled";
+			return { ...snapshot(), outputCapped };
+		},
+	};
+}
+
+export { AUTONOMY_CEILING_ENV, setToolEnvAutonomy } from "./tool-env-controls.js";
+
+/** What every bash command's environment drops, sandboxed or not: exported functions and PanCode's control keys. */
+function baseToolEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	const env = { ...source };
+	for (const key of Object.keys(env)) if (key.startsWith("BASH_FUNC_")) Reflect.deleteProperty(env, key);
+	// Bash commands have always run without ENV; safe-exec children keep it for the apps that read it.
+	Reflect.deleteProperty(env, "ENV");
+	env.AI_AGENT = AI_AGENT_NAME;
+	return applyToolEnvControls(env);
+}
+
+/**
+ * PanCode's environment as a sandboxed bash command would get it, credentials scrubbed by the sandbox's rule
+ * and `safety.sandboxPassEnv` honored. Scheduled job commands run with this, so cluster and toolchain
+ * variables (`SLURM_CONF`, `LD_LIBRARY_PATH`, `MODULEPATH`, `VIRTUAL_ENV`) reach them.
+ */
+export function scrubbedCommandEnv(
+	policy: SandboxEnvPolicy,
+	source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+	const base = baseToolEnv(source);
+	return scrubSandboxEnv(base, policy, base).env;
+}
+
+function buildToolEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+	const env = baseToolEnv(source);
+	// The argument-key rule alone let bare `FOO_KEY`, `GH_PAT` and `PASSWD` through to every unsandboxed command;
+	// the sandbox's name rule already counts them as credentials. A path under such a name is where one lives and stays.
+	for (const [key, value] of Object.entries(env))
+		if (isSecretArgKey(key) || holdsNamedCredential(key, value)) Reflect.deleteProperty(env, key);
+	return env;
+}
+
+// Login-profile sourcing is the dominant per-call spawn overhead: `-l`
+// re-reads /etc/profile and the user's profile chain on EVERY call (~10ms on
+// a lean profile, hundreds of ms with nvm/conda in it). The profile exists to
+// shape the environment, so capture that environment once per process and
+// spawn every subsequent command as `bash -o pipefail -c` with the snapshot. Each
+// call still gets a fresh shell — only the env composition is cached, so
+// there is no state bleed and cancellation semantics are untouched. When the
+// capture fails (profile error, timeout, no PATH), every call falls back to
+// the filtered non-login environment; failed capture must not source secrets again.
+// The capture is one asynchronous run per process, shared: execution awaits it and admission, which is synchronous,
+// reads its snapshot once it settled and says so while it is pending, so a profile with side effects runs once and
+// nothing blocks the event loop on it.
+const LOGIN_ENV_CAPTURE_TIMEOUT_MS = 10_000;
+
+let loginEnvCapture: Promise<NodeJS.ProcessEnv | null> | null = null;
+/** The settled login capture. Null when the capture failed, and meaningful only once {@link loginEnvSettled}. */
+let loginEnvSnapshot: NodeJS.ProcessEnv | null = null;
+let loginEnvSettled = false;
+
+/** `pending` means the login profile has not been captured yet, so what it exports is unknown. */
+export type ToolEnvProbe = "set" | "unset" | "pending";
+
+/**
+ * Whether the environment a bash command will run with sets `key` to a non-empty value. The login profile can export
+ * the key, so until the capture has settled an unset key reads `pending`; a probe starts the capture.
+ */
+export function probeToolEnv(key: string): ToolEnvProbe {
+	const value = buildToolEnv({ ...process.env, ...loginEnvSnapshot })[key];
+	if (value !== undefined && value !== "") return "set";
+	if (loginEnvSettled) return "unset";
+	void startLoginEnvCapture();
+	return "pending";
+}
+
+/** NUL-delimited `env -0` output to an env map; null when unusable (no PATH). */
+function parseNullDelimitedEnv(raw: string): NodeJS.ProcessEnv | null {
+	const env: NodeJS.ProcessEnv = {};
+	for (const entry of raw.split("\0")) {
+		if (entry.length === 0) continue;
+		const eq = entry.indexOf("=");
+		if (eq <= 0) continue;
+		env[entry.slice(0, eq)] = entry.slice(eq + 1);
+	}
+	return typeof env.PATH === "string" && env.PATH.length > 0 ? env : null;
+}
+
+/** The one login capture: a login bash prints its environment. */
+const LOGIN_ENV_SHELL = "/bin/bash";
+const LOGIN_ENV_ARGS = ["-lc", "env -0"];
+
+/**
+ * Git Bash's login environment spells PATH and the other path lists the MSYS way, which the Windows-side env PanCode
+ * hands every child cannot take, so there the capture does not run and reads as failed.
+ */
+const loginEnvCaptureRuns = (): boolean => process.platform !== "win32";
+
+/** Keeps the pending capture's child, pipe and timer alive in the event loop; null once nothing is pending. */
+let holdLoginEnvCapture: (() => void) | null = null;
+
+/**
+ * A login bash prints its environment; null when it failed or timed out. Until a command waits on it the capture holds
+ * no event-loop handle, so a run that ends first is not kept open by it, and a still-running child dies with the process.
+ */
+function captureLoginEnv(): Promise<NodeJS.ProcessEnv | null> {
+	return new Promise<NodeJS.ProcessEnv | null>((resolve) => {
+		let stdout = "";
+		let settled = false;
+		// The login profile is the operator's code: it runs in its own session, away from the TUI's terminal (M-12).
+		const child = spawn(LOGIN_ENV_SHELL, LOGIN_ENV_ARGS, {
+			env: buildToolEnv(),
+			stdio: ["ignore", "pipe", "ignore"],
+			detached: true,
+		});
+		// A piped stdio stream is a socket, which can be unref'd like the child.
+		const pipe = child.stdout as Socket | null;
+		const killOnExit = (): void => {
+			try {
+				if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+			} catch {
+				child.kill("SIGKILL");
+			}
+		};
+		const finish = (value: NodeJS.ProcessEnv | null): void => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			process.off("exit", killOnExit);
+			holdLoginEnvCapture = null;
+			resolve(value);
+		};
+		const timer = setTimeout(() => {
+			killOnExit();
+			finish(null);
+		}, LOGIN_ENV_CAPTURE_TIMEOUT_MS);
+		timer.unref();
+		child.unref();
+		pipe?.unref();
+		process.once("exit", killOnExit);
+		holdLoginEnvCapture = () => {
+			timer.ref();
+			child.ref();
+			pipe?.ref();
+		};
+		pipe?.on("data", (chunk: Buffer) => {
+			stdout += chunk.toString("utf8");
+		});
+		child.on("error", () => finish(null));
+		child.on("close", (code) => finish(code === 0 ? parseNullDelimitedEnv(stdout) : null));
+	});
+}
+
+interface BashSpawnPlan {
+	mode: "-c" | "-lc";
+	env: NodeJS.ProcessEnv;
+	/** The same environment before any credential filter, which `safety.sandboxPassEnv` names are kept from. */
+	source: NodeJS.ProcessEnv;
+}
+
+/**
+ * Starts the process's one login capture, or returns the one already started; every reader shares it, so the profile
+ * runs once. A session calls it as soon as its bash tool's environment controls are set; any first need starts it
+ * otherwise. Where the capture does not run it settles at once as failed.
+ */
+export function startLoginEnvCapture(): Promise<NodeJS.ProcessEnv | null> {
+	if (loginEnvCapture !== null) return loginEnvCapture;
+	if (!loginEnvCaptureRuns()) {
+		loginEnvSettled = true;
+		loginEnvCapture = Promise.resolve(null);
+		return loginEnvCapture;
+	}
+	loginEnvCapture = captureLoginEnv().then((env) => {
+		// The capture ran with this moment's generated keys; the snapshot outlives that moment.
+		if (env !== null) for (const key of GENERATED_TOOL_ENV_KEYS) Reflect.deleteProperty(env, key);
+		loginEnvSnapshot = env;
+		loginEnvSettled = true;
+		return env;
+	});
+	return loginEnvCapture;
+}
+
+async function bashSpawnPlan(): Promise<BashSpawnPlan> {
+	const capture = startLoginEnvCapture();
+	// A command waits on it now, so the capture must keep the process alive until it settles.
+	holdLoginEnvCapture?.();
+	const captured = await capture;
+	if (captured === null) return { mode: "-c", env: buildToolEnv(), source: baseToolEnv(process.env) };
+	// Captured (login-transformed) values win; keys added to process.env after
+	// the capture still flow through; the PanCode control keys are re-stripped
+	// last so they never reach the child from either source.
+	const merged = { ...process.env, ...captured };
+	return { mode: "-c", env: buildToolEnv(merged), source: baseToolEnv(merged) };
+}
+
+/**
+ * The PATH a bash command runs with, read at once: the login profile's once its capture has settled, the process's
+ * when that capture failed or does not run, and null while it is pending, which a read starts. A pending read has no
+ * PATH to fall back on: the launching one is not what the command will run with.
+ */
+export function bashSearchPath(): string | null {
+	if (!loginEnvSettled) {
+		void startLoginEnvCapture();
+		if (!loginEnvSettled) return null;
+	}
+	return buildToolEnv({ ...process.env, ...loginEnvSnapshot }).PATH ?? "";
+}
+
+/** The credential values a command run through {@link runBashCommand} could print, read from the environment it inherits. */
+export async function bashSecretValues(secretNames?: Iterable<string>): Promise<string[]> {
+	return knownSecretValues((await bashSpawnPlan()).source, secretNames);
+}
+
+export function combineBashOutput(result: Pick<BashCommandResult, "stdout" | "stderr">): string {
+	const { stdout, stderr } = result;
+	return stderr.length > 0 ? `${stdout}${stdout.endsWith("\n") || stdout.length === 0 ? "" : "\n"}${stderr}` : stdout;
+}
+
+/**
+ * The merged output of a command still running. The merge writes the newline that keeps stderr off stdout's last line, and
+ * stdout can still grow there, so `https://u:pw` followed by stderr must stay held while `http://h:8080\n` followed by the
+ * same stderr has really ended. The two read the same once merged, which is why the hold comes first (#446).
+ */
+export function combineLiveBashOutput(progress: Pick<BashCommandResult, "stdout" | "stderr">): string {
+	const { stdout, stderr } = progress;
+	return combineBashOutput({ stdout: stderr.length > 0 ? holdUnresolvedUserinfo(stdout) : stdout, stderr });
+}
+
+/** A `required` sandbox with no backend, or a host with no bash: the command never spawned. */
+function notSpawnedResult(message: string): BashCommandResult {
+	return {
+		error: { name: "Error", message, code: 126 } as unknown as NodeJS.ErrnoException,
+		stdout: "",
+		stderr: message,
+		exitCode: 126,
+		signal: null,
+		aborted: false,
+		timedOut: false,
+		outputCapped: false,
+		outputBytes: Buffer.byteLength(message, "utf8"),
+	};
+}
+
+/** The run's deadline passed during spawn preparation: the command times out without starting (XR-12). */
+function deadlinePassedResult(): BashCommandResult {
+	return {
+		error: {
+			name: "Error",
+			message: "the run's deadline passed before the command started",
+			code: "ETIMEDOUT",
+		} as NodeJS.ErrnoException,
+		stdout: "",
+		stderr: "",
+		exitCode: null,
+		signal: null,
+		aborted: false,
+		timedOut: true,
+		outputCapped: false,
+		outputBytes: 0,
+		timeoutLimit: { by: "run-deadline", ms: 0 },
+	};
+}
+
+/**
+ * The timer's delay and which limit sets it, measured now; null when no limit applies. Which limit wins is decided on
+ * the unrounded time left, so a deadline a fraction of a millisecond short of `timeout` is still named as the cause.
+ */
+function armedTimeoutLimit(timeout: number, deadlineAt: number | undefined): BashTimeoutLimit | null {
+	if (deadlineAt === undefined) return timeout > 0 ? { by: "timeout", ms: timeout } : null;
+	const left = deadlineAt - performance.now();
+	return timeout > 0 && timeout <= left
+		? { by: "timeout", ms: timeout }
+		: { by: "run-deadline", ms: Math.max(0, Math.ceil(left)) };
+}
+
+/** Process groups of commands this process started that may still hold members, keyed by leader pid. */
+const liveCommandGroups = new Set<number>();
+
+/** What the idle watchdog read of a command's processes: their summed CPU ticks and how many were still live. */
+interface CommandCpuSample {
+	ticks: number;
+	members: number;
+}
+
+/**
+ * CPU clock ticks spent so far by a command's processes, read from `/proc`; null where `/proc` is not available. The
+ * members are the root and its descendants by parent pid (a sandboxed payload runs in its own session), every process
+ * in the command's group (a backgrounded child outlives the shell and is reparented away from it), the descendants of
+ * both, and every process seen in an earlier sample that is still the same process (`known`, pid to start time; it
+ * keeps a `setsid` descendant found while the shell lived). `known` is updated to this sample's members.
+ */
+function commandCpuSample(rootPid: number, groupId: number, known: Map<number, string>): CommandCpuSample | null {
+	let names: string[];
+	try {
+		names = readdirSync("/proc");
+	} catch {
+		return null;
+	}
+	const children = new Map<number, number[]>();
+	const ticks = new Map<number, number>();
+	const started = new Map<number, string>();
+	const seeds: number[] = [];
+	for (const name of names) {
+		if (!/^\d+$/u.test(name)) continue;
+		let stat: string;
+		try {
+			stat = readFileSync(`/proc/${name}/stat`, "utf8");
+		} catch {
+			continue;
+		}
+		// The command name sits in parentheses and may hold spaces; the fields after it are fixed.
+		const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+		const pid = Number(name);
+		const ppid = Number(fields[1]);
+		const list = children.get(ppid);
+		if (list === undefined) children.set(ppid, [pid]);
+		else list.push(pid);
+		// utime, stime, cutime, cstime.
+		ticks.set(
+			pid,
+			[11, 12, 13, 14].reduce((sum, index) => sum + (Number(fields[index]) || 0), 0),
+		);
+		const start = fields[19] ?? "";
+		started.set(pid, start);
+		// A zombie spends no more CPU and is not a live member.
+		if (fields[0] === "Z") continue;
+		if (pid === rootPid || Number(fields[2]) === groupId || known.get(pid) === start) seeds.push(pid);
+	}
+	let total = 0;
+	const seen = new Set<number>();
+	for (let pid = seeds.pop(); pid !== undefined; pid = seeds.pop()) {
+		if (seen.has(pid)) continue;
+		seen.add(pid);
+		total += ticks.get(pid) ?? 0;
+		seeds.push(...(children.get(pid) ?? []));
+	}
+	known.clear();
+	for (const pid of seen) known.set(pid, started.get(pid) ?? "");
+	return { ticks: total, members: seen.size };
+}
+
+/**
+ * SIGKILL every command group this process started. A dispatched worker calls it when cancelled: each command runs in
+ * its own group, so the parent's kill of the worker's group misses it, and the 5 s escalation timer below dies with
+ * the worker.
+ */
+export function killLiveCommandGroups(): void {
+	for (const pgid of liveCommandGroups) {
+		try {
+			process.kill(-pgid, "SIGKILL");
+		} catch {
+			// Already gone.
+		}
+	}
+	liveCommandGroups.clear();
+}
+
+export async function runBashCommand(command: string, options: RunBashCommandOptions = {}): Promise<BashCommandResult> {
+	const shell = bashShellPath();
+	if (shell === null)
+		return notSpawnedResult(
+			"no bash was found on this host; install Git for Windows (Git Bash) or put its bash.exe on PATH (#421)",
+		);
+	const plan = await bashSpawnPlan();
+	// Preserve an upstream failure through output filters such as tail, so
+	// verification receipts cannot report success merely because the filter
+	// succeeded. A caller can explicitly opt out with `set +o pipefail`.
+	const shellArgv = [shell, "-o", "pipefail", plan.mode, command];
+	// Inside a dispatched worker the command runs under the worker's OS
+	// sandbox (decision Q8), and a contained main-session call runs under the
+	// main-session sandbox; everywhere else the plan is a
+	// direct spawn.
+	const containedPlan =
+		options.shellSandbox !== undefined
+			? planMainSandboxSpawn(options.shellSandbox, { argv: shellArgv }, options.cwd ?? process.cwd())
+			: undefined;
+	const sandbox = containedPlan ?? planSandboxedSpawn({ argv: shellArgv }, options.cwd ?? process.cwd());
+	if (sandbox.kind === "refused") return notSpawnedResult(sandbox.message);
+	// A sandboxed command reaches the network without a judgment, so its
+	// environment loses every credential variable before the sandbox starts;
+	// the scrub covers the names the plain filter drops and more.
+	const toolEnv = bashShellEnvironment(
+		shell,
+		sandbox.kind === "sandboxed" ? scrubSandboxEnv(plan.source, sandbox.env, plan.source).env : plan.env,
+	);
+	const attribution = withManagedGitCommitAttributionEnvironment(toolEnv, {
+		cwd: options.cwd ?? process.cwd(),
+		enabled: gitCommitAttributionEnabled(process.env),
+	});
+	reportCommitAttributionDiagnostic(attribution.diagnostic);
+	const spawnFile = sandbox.kind === "sandboxed" ? sandbox.file : shell;
+	const spawnArgs = sandbox.kind === "sandboxed" ? sandbox.args : shellArgv.slice(1);
+	return new Promise<BashCommandResult>((resolve) => {
+		const timeout = clampTimerDelayMs(options.timeoutMs ?? 300_000);
+		let aborted = false;
+		let timedOut = false;
+		let idledOut = false;
+		let settled = false;
+		let timeoutId: ReturnType<typeof setTimeout> | null = null;
+		let idleTimer: ReturnType<typeof setInterval> | null = null;
+		let killGraceTimer: ReturnType<typeof setTimeout> | null = null;
+		let drainTimer: ReturnType<typeof setTimeout> | null = null;
+		let killSent = false;
+		let pendingClose: (() => void) | null = null;
+		// Checked immediately before spawn: a run deadline spent by preparation starts no command (XR-12).
+		if (armedTimeoutLimit(timeout, options.deadlineAt)?.ms === 0) {
+			resolve(deadlinePassedResult());
+			return;
+		}
+		const output = createBashOutputProgressController(options.onUpdate, undefined, options.onOutput);
+
+		const child = spawn(spawnFile, spawnArgs, {
+			...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+			env: attribution.env,
+			detached: process.platform !== "win32",
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		if (child.pid !== undefined) options.onSpawn?.(child.pid);
+		const groupId = process.platform !== "win32" ? child.pid : undefined;
+		if (groupId !== undefined) liveCommandGroups.add(groupId);
+		const forgetGroup = (): void => {
+			if (groupId !== undefined && !hasOwnedProcesses()) liveCommandGroups.delete(groupId);
+		};
+
+		// The main-session sandbox removes git config and commondir files its command
+		// planted once the sandbox is gone, before the result resolves (#419).
+		if (containedPlan?.kind === "sandboxed") child.once("exit", containedPlan.afterExit);
+
+		output.start();
+
+		const clearKillGraceTimer = (): void => {
+			if (!killGraceTimer) return;
+			clearTimeout(killGraceTimer);
+			killGraceTimer = null;
+		};
+
+		const sendSignal = (signalName: NodeJS.Signals): void => {
+			const pid = child.pid;
+			if (pid && process.platform !== "win32") {
+				// A sandboxed payload sits in its own session inside the sandbox, out of
+				// the launcher's group. TERM goes to the payload alone so its own
+				// handler runs and the launcher exits after it; KILL reaches both.
+				const payloadSignalled = sandbox.kind === "sandboxed" && signalSandboxPayload(pid, signalName);
+				if (payloadSignalled && signalName !== "SIGKILL") return;
+				try {
+					process.kill(-pid, signalName);
+					return;
+				} catch {
+					// Fall through to killing the shell process directly.
+				}
+			}
+			child.kill(signalName);
+		};
+
+		const hasOwnedProcesses = (): boolean => {
+			const pid = child.pid;
+			if (pid === undefined) return false;
+			if (process.platform !== "win32") {
+				try {
+					process.kill(-pid, 0);
+					return true;
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code === "EPERM") return true;
+				}
+			}
+			return child.exitCode === null && child.signalCode === null;
+		};
+
+		const resolveAfterCancellation = (result: BashCommandResult): void => {
+			// A TERM handler can exit while a same-group child ignores TERM and
+			// holds no pipes. Keep the original result, but do not let close discard
+			// the escalation that still owns that child's cancellation.
+			if (killGraceTimer !== null && hasOwnedProcesses()) {
+				pendingClose = () => resolve(result);
+				return;
+			}
+			clearKillGraceTimer();
+			resolve(result);
+		};
+
+		const killChild = (): void => {
+			if (killSent) return;
+			killSent = true;
+			sendSignal("SIGTERM");
+			killGraceTimer = setTimeout(() => {
+				killGraceTimer = null;
+				if (hasOwnedProcesses()) sendSignal("SIGKILL");
+				if (groupId !== undefined) liveCommandGroups.delete(groupId);
+				const finish = pendingClose;
+				pendingClose = null;
+				finish?.();
+				// A descendant outside the group (setsid; on Windows, every child of the
+				// shell, since only the leader is signalled) can hold the output pipes
+				// past the kill, and without this `close` waits for it however long it
+				// runs, so neither an abort nor a timeout settles (#445).
+				if (settled) return;
+				drainTimer = setTimeout(() => {
+					child.stdout?.destroy();
+					child.stderr?.destroy();
+				}, SAFE_EXEC_PIPE_DRAIN_BOUND_MS);
+			}, 5000);
+		};
+
+		function onAbort(): void {
+			aborted = true;
+			killChild();
+		}
+
+		// Measured now, after spawn preparation, so preparation cannot carry the wait past the deadline (XR-12).
+		const armed = armedTimeoutLimit(timeout, options.deadlineAt);
+		const limit = armed === null ? null : { ...armed, ms: Math.max(1, armed.ms) };
+		if (limit !== null) {
+			timeoutId = setTimeout(() => {
+				timedOut = true;
+				killChild();
+			}, limit.ms);
+		}
+		const limitField = limit === null ? {} : { timeoutLimit: limit };
+		// The idle stop names itself as the limit that ended the command; otherwise the armed limit stands.
+		const idleMs = clampTimerDelayMs(options.idleMs ?? 0);
+		const stopLimitField = (): { timeoutLimit?: BashTimeoutLimit } =>
+			idledOut ? { timeoutLimit: { by: "idle", ms: idleMs } } : limitField;
+		let lastActivity = performance.now();
+		if (idleMs > 0 && child.pid !== undefined) {
+			const pid = child.pid;
+			const known = new Map<number, string>();
+			let lastTicks: number | null = null;
+			idleTimer = setInterval(
+				() => {
+					if (settled || killSent) return;
+					// Off Linux (no /proc) only output counts. With /proc, the command's processes are sampled by group and by
+					// descent, so a busy child the shell left behind still counts after the shell is reaped.
+					const sample = commandCpuSample(pid, groupId ?? pid, known);
+					if (sample !== null && sample.members > 0 && sample.ticks !== lastTicks) {
+						lastTicks = sample.ticks;
+						lastActivity = performance.now();
+					}
+					if (performance.now() - lastActivity < idleMs) return;
+					// Nothing could be sampled, yet the command's group still has a member: not proof of idleness.
+					if (sample !== null && sample.members === 0 && hasOwnedProcesses()) return;
+					idledOut = true;
+					timedOut = true;
+					killChild();
+				},
+				Math.max(50, Math.min(5000, Math.floor(idleMs / 4))),
+			);
+			idleTimer.unref?.();
+		}
+		const clearIdleTimer = (): void => {
+			if (idleTimer !== null) clearInterval(idleTimer);
+			idleTimer = null;
+		};
+
+		if (options.signal?.aborted) {
+			onAbort();
+		} else {
+			options.signal?.addEventListener("abort", onAbort, { once: true });
+		}
+
+		const appendChunk = (target: "stdout" | "stderr", chunk: Buffer): void => {
+			lastActivity = performance.now();
+			if (output.append(target, chunk)) killChild();
+		};
+
+		child.stdout?.on("data", (chunk: Buffer) => appendChunk("stdout", chunk));
+		child.stderr?.on("data", (chunk: Buffer) => appendChunk("stderr", chunk));
+		child.on("error", (error) => {
+			if (settled) return;
+			settled = true;
+			if (timeoutId) clearTimeout(timeoutId);
+			clearIdleTimer();
+			if (drainTimer) clearTimeout(drainTimer);
+			const finalOutput = output.settle();
+			options.signal?.removeEventListener("abort", onAbort);
+			resolveAfterCancellation({
+				error: error as NodeJS.ErrnoException,
+				...finalOutput,
+				...output.byteCounts(),
+				exitCode: null,
+				signal: null,
+				aborted,
+				timedOut,
+				...stopLimitField(),
+			});
+		});
+		child.on("close", (code, signalName) => {
+			forgetGroup();
+			if (settled) return;
+			settled = true;
+			if (timeoutId) clearTimeout(timeoutId);
+			clearIdleTimer();
+			if (drainTimer) clearTimeout(drainTimer);
+			const finalOutput = output.settle();
+			options.signal?.removeEventListener("abort", onAbort);
+			const error =
+				code === 0 && signalName === null
+					? null
+					: ({
+							name: "Error",
+							message: signalName ? `command terminated by ${signalName}` : `command exited with code ${code ?? "?"}`,
+							code: code ?? undefined,
+							signal: signalName ?? undefined,
+						} as NodeJS.ErrnoException);
+			resolveAfterCancellation({
+				error,
+				...finalOutput,
+				...output.byteCounts(),
+				exitCode: code,
+				signal: signalName,
+				aborted,
+				timedOut,
+				...stopLimitField(),
+			});
+		});
+	});
+}

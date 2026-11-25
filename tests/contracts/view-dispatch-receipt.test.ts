@@ -1,0 +1,177 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok } from "node:assert/strict";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { test } from "node:test";
+import type { RunEnvelope, RunResultDraft } from "../../src/domains/dispatch/types.js";
+import type { SessionMeta } from "../../src/domains/session/contract.js";
+import type { MessageEntry } from "../../src/domains/session/entries.js";
+import {
+	DispatchArtifactProvider,
+	RunRecordArtifactProvider,
+	ScreenshotArtifactProvider,
+} from "../../src/domains/session/view-artifacts.js";
+import { readAcpArtifact } from "../../src/engine/acp/artifacts.js";
+import { recordedRunAnswerLines } from "../../src/interactive/fleet-run-history.js";
+import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+import { writeSettledRun } from "../harness/settled-run.js";
+
+test("dispatch and run record views read a /run worker's settled output and mutation paths without a dispatch tool entry", async () => {
+	const scratch = await isolatePancodeEnv("pancode-view-dispatch-");
+	try {
+		const stateDir = join(scratch.dir, "state");
+		const result = {
+			mutatedPaths: ["src/rates.mjs", "src/injected\n## Forged\u001b[31m.mjs", "src/`tick`.mjs"],
+			validations: [],
+			summary: "Added the percent JSDoc.",
+		};
+		const rows: RunEnvelope[] = [];
+		const seed = async (runId: string, change: (draft: RunResultDraft) => RunResultDraft) => {
+			const row: RunEnvelope = {
+				...fixtureEnvelope(runId),
+				task: "Add JSDoc",
+				cwd: scratch.dir,
+				sessionId: null,
+				startedAt: "2026-10-16T12:00:00.000Z",
+				endedAt: "2026-10-16T12:00:01.000Z",
+			};
+			rows.push(row);
+			const text = JSON.stringify(result);
+			await writeSettledRun(
+				stateDir,
+				change({
+					...fixtureReceiptDraft(row),
+					output: {
+						state: "final",
+						text,
+						bytes: Buffer.byteLength(text),
+						truncated: false,
+						structured: { version: 1, kind: "mutation-report", data: structuredClone(result) },
+					},
+				}),
+			);
+			return text;
+		};
+		const text = await seed("run-view", (draft) => draft);
+		await seed("run-observed", (draft) => ({
+			...draft,
+			checkoutChanges: {
+				cwd: scratch.dir,
+				changedPaths: ["src/observed\n## Forged\u001b[31m.mjs"],
+				attribution: "observed-delta",
+			},
+		}));
+		await seed("run-empty-reported", (draft) => {
+			const output = draft.output;
+			ok(output);
+			return {
+				...draft,
+				output: {
+					...output,
+					structured: { version: 1, kind: "mutation-report", data: { ...result, mutatedPaths: [] } },
+				},
+			};
+		});
+		await seed("run-empty-observed", (draft) => ({
+			...draft,
+			checkoutChanges: { cwd: scratch.dir, changedPaths: [], attribution: "observed-delta" },
+		}));
+		const deps = {
+			stateDir,
+			dispatch: { listRuns: () => rows, getRun: (id: string) => rows.find((row) => row.id === id) ?? null },
+			readSessionEntries: () => [],
+			sessionMeta: { id: "view-session", cwd: scratch.dir } as SessionMeta,
+			presentAgentOutput: (runId: string, output: string) => recordedRunAnswerLines(runId, output, stateDir),
+		};
+		const byId = async <T extends { id: string }>(list: Promise<T[]>, id: string) =>
+			(await list).find((a) => a.id === id);
+		const dispatch = await byId(new DispatchArtifactProvider(deps).list(), "run-view");
+		const record = await byId(new RunRecordArtifactProvider(deps).list(), "run-view");
+		ok(dispatch && record);
+		const dispatchBody = (await dispatch.load()).lines.join("\n");
+		const recordBody = (await record.load()).lines.join("\n");
+		// The preview words the agent output as the Fleet Runs card does, never the raw JSON.
+		deepStrictEqual(
+			[
+				dispatchBody.includes(text),
+				dispatchBody.includes("agent output:\nchanged src/rates.mjs, src/injected ## Forged.mjs"),
+				dispatchBody.includes("\nAdded the percent JSDoc."),
+				recordBody.includes("- `src/rates.mjs`"),
+				recordBody.includes("Changed paths were not recorded"),
+			],
+			[false, true, true, true, false],
+		);
+		for (const body of [dispatchBody, recordBody]) {
+			ok(body.includes("## What changed"));
+			ok(body.includes("Paths reported by the worker:"));
+			ok(body.includes("- `src/rates.mjs`"));
+			ok(body.includes("- `src/injected ## Forged.mjs`"));
+			ok(body.includes("- ``src/`tick`.mjs``"));
+			ok(!body.includes("\n## Forged"));
+		}
+		for (const artifact of [
+			await byId(new DispatchArtifactProvider(deps).list(), "run-observed"),
+			await byId(new RunRecordArtifactProvider(deps).list(), "run-observed"),
+		]) {
+			ok(artifact);
+			const body = (await artifact.load()).lines.join("\n");
+			const changes = body.split("## What changed")[1]?.split(/\nagent output:|\n## /u)[0] ?? "";
+			ok(changes.includes("- `src/observed ## Forged.mjs`"));
+			ok(!changes.includes("Paths reported by the worker:"));
+			ok(!changes.includes("src/rates.mjs"));
+		}
+		const emptyReported = await byId(new RunRecordArtifactProvider(deps).list(), "run-empty-reported");
+		ok(emptyReported);
+		const emptyReportedBody = (await emptyReported.load()).lines.join("\n");
+		ok(emptyReportedBody.includes("Changed paths were not recorded."));
+		ok(!emptyReportedBody.includes("No changed paths recorded."));
+		const emptyObserved = await byId(new RunRecordArtifactProvider(deps).list(), "run-empty-observed");
+		ok(emptyObserved);
+		const emptyObservedBody = (await emptyObserved.load()).lines.join("\n");
+		ok(emptyObservedBody.includes("No changed paths recorded."));
+		ok(!emptyObservedBody.includes("Changed paths were not recorded."));
+	} finally {
+		scratch.restore();
+	}
+});
+
+test("the screenshots view lists a tool's screenshot files still on disk and an ACP read carries the picture", async () => {
+	const scratch = await isolatePancodeEnv("pancode-view-shots-");
+	try {
+		const png = Buffer.from(
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+			"base64",
+		);
+		const shot = join(scratch.dir, "001-look-1280x800.png");
+		writeFileSync(shot, png);
+		const entry: MessageEntry = {
+			kind: "message",
+			role: "tool_result",
+			turnId: "turn-shot",
+			parentTurnId: null,
+			timestamp: "2026-11-21T12:00:00.000Z",
+			payload: {
+				toolName: "browser",
+				result: { content: [{ type: "text", text: "ok" }], details: { shots: [shot, join(scratch.dir, "gone.png")] } },
+			},
+		};
+		const deps = { stateDir: join(scratch.dir, "state"), readSessionEntries: () => [entry] };
+		const listed = await new ScreenshotArtifactProvider(deps).list();
+		deepStrictEqual(
+			listed.map((artifact) => [artifact.category, artifact.path, artifact.sizeBytes]),
+			[["screenshots", shot, png.length]],
+		);
+		const loaded = await listed[0]?.load();
+		deepStrictEqual(loaded?.format, "image");
+		deepStrictEqual(loaded?.image, { mimeType: "image/png", data: png.toString("base64"), path: shot });
+		const page = await readAcpArtifact(deps, { id: `screenshots/${listed[0]?.id}` });
+		deepStrictEqual(
+			[page.format, page.image?.mimeType, page.image?.data, page.lines[0]],
+			["image", "image/png", png.toString("base64"), shot],
+		);
+	} finally {
+		scratch.restore();
+	}
+});

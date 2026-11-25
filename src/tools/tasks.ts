@@ -1,0 +1,451 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { Type } from "typebox";
+import { ToolNames } from "../core/tool-names.js";
+import {
+	type TaskBoardMutation,
+	type TaskBoardSnapshot,
+	type TaskBoardStore,
+	type TaskBoardTask,
+	taskBoardCounts,
+	unverifiedTaskChecks,
+} from "../domains/session/task-board.js";
+import type { UserTask, UserTasksStore } from "../domains/user-tasks/store.js";
+import { StringEnum } from "../engine/ai.js";
+import type { ToolInvokeOptions } from "./registry-contract.js";
+import type { ToolResult, ToolSpec } from "./tool-spec.js";
+
+/**
+ * The tasks tool: the session task board. The agent declares what it is
+ * about to do (action="plan"), names its current focus ("start"), and closes
+ * each task with a completion claim ("done" + note) or an honest reason
+ * ("block"/"drop"). Every mutation persists a full taskLedger snapshot to the
+ * session, so the board is replayable, survives resume, and feeds the footer
+ * tasks row, the /tasks overlay, and the turn-end open-tasks nudge.
+ *
+ * Every action returns the whole rendered board, not just an ack: local
+ * models keep the current state in the tool result instead of having to
+ * track it across turns.
+ */
+
+const TASKS_ACTIONS = ["plan", "add", "pick", "start", "done", "block", "drop", "list"] as const;
+type TasksAction = (typeof TASKS_ACTIONS)[number];
+
+/** Plain-text status markers for model-facing output; the TUI owns glyphs. */
+const STATUS_MARK: Record<TaskBoardTask["status"], string> = {
+	pending: "[ ]",
+	active: "[>]",
+	completed: "[x]",
+	blocked: "[!]",
+	cancelled: "[-]",
+};
+
+export interface TasksToolDeps {
+	board: TaskBoardStore;
+	userTasks?: UserTasksStore;
+	getSessionId?: () => string | null;
+}
+
+function waitingTrailer(tasks: ReadonlyArray<UserTask>): string[] {
+	return tasks
+		.filter((task) => task.status === "open" || task.status === "handed")
+		.map(
+			(task) =>
+				`operator tasks waiting: ${task.id} ${JSON.stringify(task.title)} — durable status=${task.status}; ` +
+				`not completed; pick only if this is the intended operator task, with action="pick" id="${task.id}" before work`,
+		);
+}
+
+function renderTaskBoardText(
+	board: TaskBoardSnapshot,
+	userTasks: ReadonlyArray<UserTask> = [],
+	showNext = false,
+): string {
+	const counts = taskBoardCounts(board);
+	const lines: string[] = [`board "${board.title}" ${counts.completed}/${counts.total} done`];
+	for (const task of board.tasks) {
+		let line = `${STATUS_MARK[task.status]} ${task.id} ${task.title}`;
+		if (task.status === "completed" && task.evidence) line += ` — completion claim: ${task.evidence}`;
+		const unverified = unverifiedTaskChecks(task);
+		if (unverified) {
+			const reasons = [
+				...(unverified.failed.length > 0 ? [`failed: ${unverified.failed.join(", ")}`] : []),
+				...(unverified.noRecordedPass.length > 0 ? [`no recorded pass: ${unverified.noRecordedPass.join(", ")}`] : []),
+			];
+			line += ` — completion unverified (required checks ${reasons.join("; ")})`;
+		}
+		if (task.status === "blocked" && task.reason) line += ` — blocked: ${task.reason}`;
+		if (task.status === "cancelled" && task.reason) line += ` — dropped: ${task.reason}`;
+		lines.push(line);
+		const operatorTask = userTasks.find((item) => item.id === task.userTaskId);
+		if (task.userTaskId) {
+			lines.push(
+				`  operator task ${task.userTaskId}: durable status=${operatorTask?.status ?? "unavailable"}; ` +
+					`session=${operatorTask?.handedSessionId ?? "unlinked"}; board task=${operatorTask?.boardTaskId ?? "unlinked"}`,
+			);
+		}
+		const outputs = operatorTask?.acceptance?.expectedOutputs;
+		if (outputs?.length) lines.push(`  expected outputs: ${outputs.join(", ")}`);
+		for (const item of task.requiredValidationEvidence ?? []) {
+			const acceptance = item.id.startsWith(`${task.id}.acceptance.`);
+			const check = item.command ?? item.description;
+			if (acceptance && item.status === "required") {
+				lines.push(
+					`  acceptance requirement: ${check} (${item.notes ?? "pending"}; declaration only; execution status is in verification receipts)`,
+				);
+			} else {
+				const label = acceptance
+					? "acceptance result"
+					: item.status === "required"
+						? "validation requirement"
+						: "validation result";
+				lines.push(`  ${label}: ${check} (${item.status}${item.notes ? `; ${item.notes}` : ""})`);
+			}
+		}
+	}
+	if (showNext && counts.open > 0) {
+		lines.push(
+			`next: carry out only operator-authorized work; use action="start" before working a pending task. ` +
+				`An explicit request to start a demo or inspection authorizes read-only work within that request's scope without another approval. ` +
+				`Block only tasks that propose unrequested file changes or await a real operator decision, naming that decision; continue other authorized tasks.`,
+		);
+	}
+	lines.push(...waitingTrailer(userTasks));
+	return lines.join("\n");
+}
+
+function boardDetails(action: TasksAction, board: TaskBoardSnapshot | null): Record<string, unknown> {
+	if (!board) return { action };
+	const counts = taskBoardCounts(board);
+	return {
+		action,
+		boardId: board.boardId,
+		title: board.title,
+		counts,
+		tasks: board.tasks.map((task) => ({ ...task })),
+	};
+}
+
+const TASKS_KEYS: ReadonlySet<string> = new Set(["action", "title", "tasks", "initialStatus", "id", "note"]);
+
+// Keys small models guessed in place of the real ones (bt-22). Dropping them
+// silently left `done` without its note and `start` without its id, behind
+// errors that never named the right key; the tool layer accepts no key
+// aliases, so an unknown key is refused with the key to use instead.
+const TASKS_KEY_HINTS: Readonly<Record<string, string>> = {
+	task_id: "id",
+	taskId: "id",
+	task: "id",
+	evidence: "note",
+	summary: "note",
+	reason: "note",
+	notes: "note",
+	comment: "note",
+	result: "note",
+	name: "title",
+	steps: "tasks",
+	items: "tasks",
+	status: "initialStatus",
+	initial_status: "initialStatus",
+};
+
+function unknownKeyError(args: Record<string, unknown>): string | null {
+	const unknown = Object.keys(args).find((key) => !TASKS_KEYS.has(key));
+	if (unknown === undefined) return null;
+	const hint = TASKS_KEY_HINTS[unknown];
+	return hint
+		? `tasks: unknown key "${unknown}"; use ${hint}`
+		: `tasks: unknown key "${unknown}"; tasks takes only action, title, tasks, initialStatus, id and note`;
+}
+
+function stringArg(args: Record<string, unknown>, key: string): string | null {
+	const value = args[key];
+	return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function taskTitlesArg(args: Record<string, unknown>): string[] {
+	const value = args.tasks;
+	if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
+	if (typeof value === "string" && value.trim().length > 0) return [value];
+	return [];
+}
+
+function mutationFromArgs(action: TasksAction, args: Record<string, unknown>): TaskBoardMutation | { error: string } {
+	const initialStatus = args.initialStatus;
+	if (initialStatus !== undefined && initialStatus !== "pending" && initialStatus !== "blocked") {
+		return { error: 'tasks: initialStatus must be pending or blocked, e.g. initialStatus="blocked"' };
+	}
+	if (initialStatus !== undefined && action !== "plan" && action !== "add") {
+		return { error: `tasks: initialStatus applies only to plan and add; omit it for action="${action}"` };
+	}
+	const initial: { initialStatus?: "pending" | "blocked"; reason?: string } = {
+		...(initialStatus ? { initialStatus } : {}),
+		...(initialStatus === "blocked" ? { reason: stringArg(args, "note") ?? "" } : {}),
+	};
+	switch (action) {
+		case "plan": {
+			const title = stringArg(args, "title");
+			if (!title) return { error: 'tasks: plan requires title (the board name), e.g. title="Fix the flaky test"' };
+			return { op: "plan", title, tasks: taskTitlesArg(args), ...initial };
+		}
+		case "add":
+			return { op: "add", tasks: taskTitlesArg(args), ...initial };
+		case "pick":
+			return { error: "pick is resolved from the durable operator task inbox" };
+		case "start":
+		case "done":
+		case "block":
+		case "drop": {
+			const id = stringArg(args, "id");
+			if (!id) return { error: `tasks: ${action} requires id (e.g. id="t2")` };
+			const note = stringArg(args, "note");
+			if (action === "start") return { op: "start", id };
+			if (action === "done") return { op: "done", id, evidence: note ?? "" };
+			if (action === "block") return { op: "block", id, reason: note ?? "" };
+			return note ? { op: "drop", id, reason: note } : { op: "drop", id };
+		}
+		case "list":
+			return { error: "unreachable" };
+	}
+}
+
+/** `ids` is one action per id, in order, stopping at the first failure (C-24). */
+async function runForEachId(
+	args: Record<string, unknown>,
+	options: ToolInvokeOptions | undefined,
+	runOne: ToolSpec["run"],
+): Promise<ToolResult> {
+	const { ids, ...rest } = args;
+	const action = typeof rest.action === "string" ? rest.action : "";
+	if (!Array.isArray(ids) || ids.length === 0 || ids.some((id) => typeof id !== "string")) {
+		return { kind: "error", message: 'tasks: ids must be a list of task ids, e.g. ids=["t1","t2"]' };
+	}
+	if (rest.id !== undefined) return { kind: "error", message: "tasks: send id or ids, not both" };
+	if (action !== "done" && action !== "block" && action !== "drop") {
+		return {
+			kind: "error",
+			message: `tasks: ids applies to done, block and drop; ${action || "this action"} takes one id`,
+		};
+	}
+	let last: ToolResult = { kind: "error", message: "tasks: ids named no task" };
+	for (const [index, id] of (ids as string[]).entries()) {
+		last = await runOne({ ...rest, id }, options);
+		if (last.kind !== "error") continue;
+		const applied = ids.slice(0, index).join(", ");
+		const skipped = ids.slice(index + 1).join(", ");
+		const parts = [...(applied ? [`${applied} already applied`] : []), ...(skipped ? [`${skipped} not attempted`] : [])];
+		return parts.length > 0 ? { ...last, message: `${last.message} (${parts.join("; ")})` } : last;
+	}
+	return last;
+}
+
+export function createTasksTool(deps: TasksToolDeps): ToolSpec {
+	const reconcileUserTasks = (): ReadonlyArray<UserTask> => {
+		if (!deps.userTasks) return [];
+		const sessionId = deps.getSessionId?.();
+		if (!sessionId) return deps.userTasks.snapshot();
+		const links =
+			deps.board
+				.snapshot()
+				?.tasks.flatMap((task) =>
+					task.userTaskId ? [{ userTaskId: task.userTaskId, boardTaskId: task.id, status: task.status }] : [],
+				) ?? [];
+		return deps.userTasks.reconcile(links, sessionId);
+	};
+
+	const spec: ToolSpec = {
+		name: ToolNames.Tasks,
+		description:
+			"Session task board: chain known start -> work and done -> start -> next work with gateway op=chain and after dependencies; " +
+			"done needs observed evidence; successful returned state is authoritative (no immediate list). " +
+			"When IDs and arguments are known, include bookkeeping with the next substantive operation in the same model response. " +
+			'Example chain steps: {id:"close",capability:"tasks",args:{action:"done",id:"t1",note:"Observed prior result; no checks required"}}, ' +
+			'{id:"start",capability:"tasks",args:{action:"start",id:"t2"},after:["close"]}, ' +
+			'{id:"work",capability:"read",args:{path:"known.txt"},after:["start"]}; substitute actual known IDs, paths and evidence. ' +
+			"plan declares a titled board (replaces any prior board); add appends tasks; " +
+			"pick moves one operator task uN onto the board; start marks one task active (the current focus); " +
+			"done requires a completion claim with failed or unrun checks; only verification receipts prove observed checks. " +
+			"block parks it with a required reason; drop cancels it; list shows the board. " +
+			"For operator handoff, pick the intended uN before work and use its linked tN; CLI hand alone does not pick it. Never pick unrelated tasks. " +
+			"A successful mutation's returned board and operator-task snapshot are authoritative; list only if that state is missing, stale or inconsistent. " +
+			"Before claiming completion, confirm from that state that the linked row is completed and the operator task done on the same session/board link; report IDs and states. " +
+			"Each dependent step's after names its predecessor's step id. Mark done only for work and check results already observed; " +
+			"after orders execution, not evidence: never predict a successful result or prewrite done for work/checks in that chain. " +
+			"Failed mutations, including partial operator-task updates, are not successful completion; inspect and reconcile actual state before claiming success. " +
+			"Initial ID discovery and final closure may stand alone. " +
+			"Work that did not happen is blocked or dropped, never done. A self-created plan is not operator authorization. " +
+			"When the operator explicitly asks to start a demo or inspection, perform read-only work within that request's scope without asking again; " +
+			"block only unrequested file changes or individual tasks awaiting a real operator decision, and continue authorized tasks. " +
+			"For proposal-only work, plan/add with initialStatus=blocked and note naming the pending operator decision; " +
+			"wait for an explicit operator go-ahead before start or implementation. A skill-install choice does not grant that go-ahead.",
+		parameters: Type.Object({
+			action: StringEnum(TASKS_ACTIONS, { description: "Board action." }),
+			title: Type.Optional(Type.String({ description: "Board title (plan)." })),
+			tasks: Type.Optional(Type.Array(Type.String(), { description: "Task titles (plan, add)." })),
+			initialStatus: Type.Optional(
+				StringEnum(["pending", "blocked"], {
+					description: "Initial state for plan/add; use blocked plus note for proposals awaiting a decision.",
+				}),
+			),
+			id: Type.Optional(Type.String({ description: 'Task id like "t2", or operator id "u2" for pick.' })),
+			note: Type.Optional(
+				Type.String({
+					description: "Completion claim with failed/unrun checks (done), or reason (block, drop).",
+				}),
+			),
+		}),
+		baseActionClass: "read",
+		executionMode: "sequential",
+		prepareArguments(args) {
+			const prepared = { ...args };
+			// Weak-model shapes: a numeric or bare-number id becomes "tN", and a
+			// JSON-string tasks array is parsed back into a real array.
+			const idPrefix = prepared.action === "pick" ? "u" : "t";
+			const taskId = (id: unknown): unknown => {
+				if (typeof id === "number" && Number.isFinite(id)) return `${idPrefix}${id}`;
+				if (typeof id === "string" && /^\d+$/.test(id.trim())) return `${idPrefix}${id.trim()}`;
+				return id;
+			};
+			if (prepared.id !== undefined) prepared.id = taskId(prepared.id);
+			if (Array.isArray(prepared.ids)) prepared.ids = prepared.ids.map(taskId);
+			// `create` with `items` is a plan with tasks under other names (C-24).
+			if (prepared.action === "create") {
+				prepared.action = "plan";
+				if (prepared.tasks === undefined && prepared.items !== undefined) {
+					prepared.tasks = prepared.items;
+					delete prepared.items;
+				}
+			}
+			if (typeof prepared.tasks === "string" && prepared.tasks.trim().startsWith("[")) {
+				try {
+					const parsed = JSON.parse(prepared.tasks);
+					if (Array.isArray(parsed)) prepared.tasks = parsed;
+				} catch {
+					// leave the raw string; taskTitlesArg treats it as one title
+				}
+			}
+			if (Array.isArray(prepared.tasks)) {
+				prepared.tasks = prepared.tasks.map((task: unknown) =>
+					task !== null && typeof task === "object" && "title" in task && typeof task.title === "string" ? task.title : task,
+				);
+			}
+			return prepared;
+		},
+		async run(args, options): Promise<ToolResult> {
+			if (options?.turnConstraints?.mode === "proposal" && (args.action === "plan" || args.action === "add")) {
+				args = {
+					...args,
+					initialStatus: "blocked",
+					note: stringArg(args, "note") ?? "Awaiting the operator's decision on this proposal.",
+				};
+			}
+			const action = typeof args.action === "string" ? args.action : "";
+			if (!(TASKS_ACTIONS as ReadonlyArray<string>).includes(action)) {
+				return {
+					kind: "error",
+					message: `tasks: unknown action '${action}'; to create a board use action="plan" with title="..." and tasks=["first task", "second task"]`,
+				};
+			}
+			const keyError = unknownKeyError(args);
+			if (keyError) return { kind: "error", message: keyError };
+			const typedAction = action as TasksAction;
+			let userTasks: ReadonlyArray<UserTask>;
+			try {
+				userTasks = reconcileUserTasks();
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { kind: "error", message: `tasks: could not reconcile the operator task inbox: ${message}` };
+			}
+			if (typedAction === "list") {
+				const board = deps.board.snapshot();
+				if (!board) {
+					const output = [
+						'no task board yet; for an operator handoff, pick the intended uN before work; otherwise declare one with action="plan"',
+						...waitingTrailer(userTasks),
+					].join("\n");
+					return {
+						kind: "ok",
+						output,
+						details: boardDetails("list", null),
+					};
+				}
+				return { kind: "ok", output: renderTaskBoardText(board, userTasks), details: boardDetails("list", board) };
+			}
+			if (typedAction === "pick") {
+				if (!deps.userTasks) return { kind: "error", message: "tasks: operator task inbox is unavailable" };
+				const sessionId = deps.getSessionId?.();
+				if (!sessionId) return { kind: "error", message: "tasks: pick requires an active session" };
+				const id = stringArg(args, "id");
+				if (!id || !/^u[1-9]\d*$/.test(id)) {
+					return { kind: "error", message: 'tasks: pick requires an operator task id (e.g. id="u3")' };
+				}
+				const userTask = userTasks.find((task) => task.id === id);
+				if (!userTask) return { kind: "error", message: `tasks: operator task ${id} was not found` };
+				if (userTask.status !== "open" && userTask.status !== "handed") {
+					return { kind: "error", message: `tasks: operator task ${id} is ${userTask.status}; it cannot be picked` };
+				}
+				const result = deps.board.apply({
+					op: "pick",
+					title: userTask.title,
+					userTaskId: userTask.id,
+					...(userTask.acceptance ? { verification: userTask.acceptance.verification } : {}),
+				});
+				if (!result.ok) return { kind: "error", message: `tasks: ${result.message}` };
+				const picked = result.board.tasks.find((task) => task.userTaskId === userTask.id && task.status === "pending");
+				if (!picked) return { kind: "error", message: `tasks: durable pickup for ${id} did not produce a board row` };
+				try {
+					deps.userTasks.recordPicked(userTask.id, sessionId, picked.id);
+					userTasks = deps.userTasks.snapshot();
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					return {
+						kind: "error",
+						message: `tasks: ${picked.id} durably picked up ${id}, but the operator inbox update failed: ${message}`,
+						details: boardDetails("pick", result.board),
+					};
+				}
+				return {
+					kind: "ok",
+					output: renderTaskBoardText(result.board, userTasks),
+					details: boardDetails("pick", result.board),
+				};
+			}
+			const before = deps.board.snapshot();
+			const mutation = mutationFromArgs(typedAction, args);
+			if ("error" in mutation) return { kind: "error", message: mutation.error };
+			const completedUserTask =
+				typedAction === "done" && mutation.op === "done"
+					? before?.tasks.find((task) => task.id === mutation.id && task.userTaskId)
+					: undefined;
+			const completionSessionId = completedUserTask?.userTaskId && deps.userTasks ? deps.getSessionId?.() : undefined;
+			if (completedUserTask?.userTaskId && deps.userTasks && !completionSessionId) {
+				return { kind: "error", message: "tasks: durable completion requires an active session" };
+			}
+			const result = deps.board.apply(mutation);
+			if (!result.ok) return { kind: "error", message: `tasks: ${result.message}` };
+			if (completedUserTask?.userTaskId && deps.userTasks && completionSessionId) {
+				try {
+					deps.userTasks.recordDone(completedUserTask.userTaskId, completionSessionId, completedUserTask.id);
+					userTasks = deps.userTasks.snapshot();
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					return {
+						kind: "error",
+						message: `tasks: ${completedUserTask.id} completed durably, but operator task ${completedUserTask.userTaskId} could not be updated: ${message}`,
+						details: boardDetails("done", result.board),
+					};
+				}
+			}
+			const noteLines = result.notes.map((note) => `note: ${note}`);
+			const output = [
+				...noteLines,
+				renderTaskBoardText(result.board, userTasks, typedAction === "plan" || typedAction === "start"),
+			].join("\n");
+			return { kind: "ok", output, details: boardDetails(typedAction, result.board) };
+		},
+	};
+	return {
+		...spec,
+		run: (args, options) => (args.ids === undefined ? spec.run(args, options) : runForEachId(args, options, spec.run)),
+	};
+}

@@ -1,0 +1,16 @@
+rows:
+  - kind: plugin
+    publisher: akougkas
+    name: cite-nexus
+    version: 0.2.5
+    description: >-
+      CiteNexus connects research assistants to free scholarly metadata and optional academic APIs. Discover papers,
+      resolve identifiers, check references, and export BibTeX, RIS or CSL-JSON with source provenance. No model or API
+      key is required for default searches.
+    source:
+      repo: https://github.com/akougkas/cite-nexus-mcp
+      commit: 881debc25c03f82abeccc6bbbc86e33954abe674
+      subdir: pancode
+    sha256: 7678668fa62b76d364b04826f304eb0a542efb463e89cdd4beca523189e501f2
+    license: MIT
+    tier: verified

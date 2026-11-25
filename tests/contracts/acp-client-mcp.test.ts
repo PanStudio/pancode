@@ -1,0 +1,230 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
+import { resolve } from "node:path";
+import { test } from "node:test";
+import { ToolNames } from "../../src/core/tool-names.js";
+import type { SessionContract } from "../../src/domains/session/contract.js";
+import { AcpRequestError } from "../../src/engine/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
+import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { createGatewayTool } from "../../src/tools/gateway/index.js";
+import { createMcpCapabilitySource } from "../../src/tools/gateway/mcp-capabilities.js";
+import { createRegistry } from "../../src/tools/registry.js";
+import { emptyBuiltinSource } from "../fixtures/mcp-builtin-server.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+test("ACP client stdio MCP server is callable through gateway and closes with its session", async () => {
+	const env = await isolatePancodeEnv("acp-client-mcp-");
+	const cwd = process.cwd();
+	const fixture = resolve("tests/fixtures/mcp-fake-server.mjs");
+	const registry = createRegistry({ safety: createWorkerSafety({ cwd }), autonomy: () => "yolo" });
+	const source = createMcpCapabilitySource({ cwd, registry, configDir: env.dir, requestTimeoutMs: 5_000 });
+	registry.register(createGatewayTool({ registry, mcp: source }));
+	const handlers = new Map<string, (params: unknown) => Promise<unknown> | unknown>();
+	let stop: () => void = () => {};
+	const transport: AcpJsonRpcPeerTransport = {
+		closed: false,
+		request: async () => ({}) as never,
+		notify: () => {},
+		onNotification: () => () => {},
+		onRequest: (method, handler) => {
+			handlers.set(method, handler);
+			return () => handlers.delete(method);
+		},
+		onClose: (handler) => {
+			stop = handler;
+			return () => {};
+		},
+		close: () => stop(),
+	};
+	type StoredSession = { id: string; cwd: string; createdAt: string; endedAt: string | null };
+	let current: StoredSession | null = null;
+	let stored: StoredSession | null = null;
+	const session = {
+		current: () => current,
+		history: () => (stored ? [stored] : []),
+		create: () => {
+			current = { id: "acp-mcp", cwd, createdAt: new Date().toISOString(), endedAt: null };
+			stored = current;
+			return current;
+		},
+		resume: () => {
+			if (!stored) throw new Error("missing stored session");
+			stored.endedAt = null;
+			current = stored;
+			return stored;
+		},
+		tree: () => ({ leafId: null }),
+		leafId: () => null,
+		checkpoint: async () => {},
+		close: async () => {
+			if (stored) stored.endedAt = new Date().toISOString();
+			current = null;
+		},
+	} as unknown as SessionContract;
+	const done = servePancodeAcpAgent({
+		transport,
+		cwd,
+		session,
+		toolRegistry: registry,
+		mcpCapabilities: source,
+		readSessionEntries: () => [],
+		buildReplayMessages: () => [],
+		chat: {
+			submit: async () => {},
+			cancel: () => {},
+			onEvent: () => () => {},
+			isStreaming: () => false,
+			getSessionId: () => current?.id ?? null,
+			resetForSession: () => {},
+		},
+	});
+	const call = async (method: string, params: unknown) => {
+		const handler = handlers.get(method);
+		if (!handler) throw new Error(`missing ${method}`);
+		return await handler(params);
+	};
+	try {
+		await call("initialize", { protocolVersion: 1 });
+		await rejects(
+			call("session/new", { cwd, mcpServers: [{ type: "http", name: "remote", url: "https://example.invalid" }] }),
+			(error: unknown) => error instanceof AcpRequestError && error.rpcCode === -32602,
+		);
+		const mcpServers = [{ name: "fixture", command: process.execPath, args: [fixture], env: [] }];
+		const created = (await call("session/new", { cwd, mcpServers })) as { sessionId: string };
+		strictEqual(created.sessionId, "acp-mcp");
+		deepStrictEqual(source.connectedIds({ readyOnly: true }), ["acp_fixture"]);
+		const result = await registry.invoke({
+			tool: ToolNames.Gateway,
+			args: { op: "call", capability: "mcp_acp_fixture__echo", args: { text: "through gateway" } },
+		});
+		ok(result.kind === "ok" && result.result.kind === "ok", JSON.stringify(result));
+		deepStrictEqual(JSON.parse(result.result.output), { text: "through gateway" });
+		await call("session/close", { sessionId: created.sessionId });
+		deepStrictEqual(source.connectedIds(), []);
+		strictEqual(source.teardownReports().length, 1);
+		strictEqual(registry.get("mcp_acp_fixture__echo" as never), undefined);
+		for (const method of ["session/resume", "session/load"]) {
+			await call(method, { sessionId: created.sessionId, cwd, mcpServers });
+			deepStrictEqual(source.connectedIds({ readyOnly: true }), ["acp_fixture"]);
+			const replayed = await registry.invoke({
+				tool: ToolNames.Gateway,
+				args: { op: "call", capability: "mcp_acp_fixture__echo", args: { text: method } },
+			});
+			ok(replayed.kind === "ok" && replayed.result.kind === "ok", JSON.stringify(replayed));
+			deepStrictEqual(JSON.parse(replayed.result.output), { text: method });
+			await call("session/close", { sessionId: created.sessionId });
+			deepStrictEqual(source.connectedIds(), []);
+		}
+		strictEqual(source.teardownReports().length, 3);
+	} finally {
+		transport.close();
+		await done;
+		await source.close();
+		env.restore();
+	}
+});
+
+test("a read-only or no-tools ACP session registers client stdio MCP servers without starting them", async () => {
+	const env = await isolatePancodeEnv("acp-client-mcp-ro-");
+	const cwd = process.cwd();
+	const fixture = resolve("tests/fixtures/mcp-fake-server.mjs");
+	const mcpServers = [{ name: "fixture", command: process.execPath, args: [fixture], env: [] }];
+	const sessions: Array<{
+		name: string;
+		operatorToolLimits: { readOnly?: true; allowedTools?: [] } | undefined;
+		extra: Record<string, unknown>;
+		readOnly: boolean;
+	}> = [
+		{ name: "acp --read-only", operatorToolLimits: { readOnly: true }, extra: {}, readOnly: true },
+		{ name: "acp --allow-tools none", operatorToolLimits: { allowedTools: [] }, extra: {}, readOnly: false },
+		{
+			name: "client readOnly ceiling",
+			operatorToolLimits: undefined,
+			extra: { _meta: { "pancode/ceiling": { readOnly: true } } },
+			readOnly: true,
+		},
+	];
+	try {
+		for (const { name, operatorToolLimits, extra, readOnly } of sessions) {
+			const registry = createRegistry({ safety: createWorkerSafety({ cwd }), autonomy: () => "yolo" });
+			const source = createMcpCapabilitySource({
+				cwd,
+				registry,
+				configDir: env.dir,
+				builtin: emptyBuiltinSource(env.dir),
+				requestTimeoutMs: 5_000,
+			});
+			const handlers = new Map<string, (params: unknown) => Promise<unknown> | unknown>();
+			let stop: () => void = () => {};
+			const transport: AcpJsonRpcPeerTransport = {
+				closed: false,
+				request: async () => ({}) as never,
+				notify: () => {},
+				onNotification: () => () => {},
+				onRequest: (method, handler) => {
+					handlers.set(method, handler);
+					return () => handlers.delete(method);
+				},
+				onClose: (handler) => {
+					stop = handler;
+					return () => {};
+				},
+				close: () => stop(),
+			};
+			let current: { id: string; cwd: string; createdAt: string; endedAt: string | null } | null = null;
+			const session = {
+				current: () => current,
+				history: () => (current ? [current] : []),
+				create: () => {
+					current = { id: "acp-mcp-ro", cwd, createdAt: new Date().toISOString(), endedAt: null };
+					return current;
+				},
+				tree: () => ({ leafId: null }),
+				leafId: () => null,
+				checkpoint: async () => {},
+				close: async () => {
+					current = null;
+				},
+			} as unknown as SessionContract;
+			const done = servePancodeAcpAgent({
+				transport,
+				cwd,
+				session,
+				toolRegistry: registry,
+				mcpCapabilities: source,
+				...(operatorToolLimits ? { operatorToolLimits } : {}),
+				readSessionEntries: () => [],
+				buildReplayMessages: () => [],
+				chat: {
+					submit: async () => {},
+					cancel: () => {},
+					onEvent: () => () => {},
+					isStreaming: () => false,
+					getSessionId: () => current?.id ?? null,
+					resetForSession: () => {},
+					setToolCeiling: () => (readOnly ? { readOnly: true } : { allowedTools: [] }),
+				},
+			});
+			try {
+				await handlers.get("initialize")?.({ protocolVersion: 1 });
+				await handlers.get("session/new")?.({ cwd, mcpServers, ...extra });
+				deepStrictEqual(source.connectedIds(), [], name);
+				deepStrictEqual(source.declaredIds(), ["acp_fixture"], name);
+				if (!readOnly) continue;
+				const ensured = await source.ensure("mcp_acp_fixture__echo", { readOnly: true });
+				strictEqual(ensured.spec, null);
+				ok(ensured.reason?.includes("a read-only turn starts only servers trusted as read"), ensured.reason);
+				deepStrictEqual(source.connectedIds(), []);
+			} finally {
+				transport.close();
+				await done;
+				await source.close();
+			}
+		}
+	} finally {
+		env.restore();
+	}
+});

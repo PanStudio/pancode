@@ -1,0 +1,146 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { createHash, type Hash } from "node:crypto";
+import type { BigIntStats } from "node:fs";
+import { closeSync, openSync, readSync, statSync } from "node:fs";
+import type { SessionAppendObservation } from "../../engine/session.js";
+import { isSessionJsonlHeader, readSessionFileEntriesRange } from "../../engine/session.js";
+import { collectSessionEntries } from "./compaction/session-entries.js";
+import type { SessionEntry } from "./entries.js";
+
+function freezeJson(value: unknown): void {
+	if (typeof value !== "object" || value === null || Object.isFrozen(value)) return;
+	for (const child of Object.values(value)) freezeJson(child);
+	Object.freeze(value);
+}
+
+function sameSnapshot(a: BigIntStats | null, b: BigIntStats | null): boolean {
+	return (
+		a !== null &&
+		b !== null &&
+		a.dev === b.dev &&
+		a.ino === b.ino &&
+		a.size === b.size &&
+		a.mtimeNs === b.mtimeNs &&
+		a.ctimeNs === b.ctimeNs
+	);
+}
+
+const PREFIX_READ_BYTES = 64 * 1024;
+
+/** sha256 of the file's first `length` bytes, or null when the file is shorter. */
+function prefixDigest(path: string, length: number): Buffer | null {
+	const hash = createHash("sha256");
+	const fd = openSync(path, "r");
+	try {
+		const buffer = Buffer.allocUnsafe(Math.min(PREFIX_READ_BYTES, Math.max(length, 1)));
+		let position = 0;
+		while (position < length) {
+			const read = readSync(fd, buffer, 0, Math.min(buffer.length, length - position), position);
+			if (read === 0) return null;
+			hash.update(buffer.subarray(0, read));
+			position += read;
+		}
+	} finally {
+		closeSync(fd);
+	}
+	return hash.digest();
+}
+
+/** One live ledger index; no state survives closing or reopening its manager. */
+export class SessionEntriesIndex {
+	private stat: BigIntStats | null = null;
+	// Private storage grows in place; published snapshots are separate frozen
+	// copies, built only when a reader asks, so appends never copy the prefix.
+	private entries: SessionEntry[] = [];
+	private snapshot: ReadonlyArray<SessionEntry> | null = Object.freeze([]);
+	private completeEntries = 0;
+	private offset = 0;
+	private lineNumber = 0;
+	// A running digest of the committed bytes [0, offset), never the bytes
+	// themselves: a long session must not hold a second copy of its ledger.
+	private committed: Hash = createHash("sha256");
+	private observedAppend: BigIntStats | null = null;
+
+	constructor(private readonly path: string) {}
+
+	noteAppend(observation: SessionAppendObservation): void {
+		this.observedAppend = sameSnapshot(this.stat, observation.before) ? observation.after : null;
+	}
+
+	refreshAfterWrite(): void {
+		try {
+			this.ingest();
+		} catch {
+			// Accepted writes keep their existing success contract. The next read
+			// revalidates and reports corrupt or unavailable external ledger state.
+			this.stat = null;
+		}
+	}
+
+	read(): ReadonlyArray<SessionEntry> {
+		this.ingest();
+		this.snapshot ??= Object.freeze(this.entries.slice());
+		return this.snapshot;
+	}
+
+	private ingest(): void {
+		let current: BigIntStats | null;
+		try {
+			current = statSync(this.path, { bigint: true });
+		} catch (error) {
+			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+			current = null;
+		}
+		const prior = this.stat;
+		const sameFile = prior !== null && current !== null && prior.dev === current.dev && prior.ino === current.ino;
+		if (sameSnapshot(prior, current)) return;
+		// Appends preserve the prefix; atomic rewrites change identity. Same-size
+		// edits and truncation must invalidate even when the entry count is unchanged.
+		let append = sameFile && prior !== null && current !== null && current.size > prior.size;
+		// Growth nobody here wrote must keep the committed prefix byte for byte. The
+		// unterminated tail past the cursor is always reparsed, so it needs no check.
+		if (append && !sameSnapshot(current, this.observedAppend)) {
+			const onDisk = prefixDigest(this.path, this.offset);
+			append = onDisk?.equals(this.committed.copy().digest()) === true;
+		}
+		this.observedAppend = null;
+		const range = readSessionFileEntriesRange(this.path, append ? this.offset : 0, append ? this.lineNumber : 0);
+		// An atomic replacement between stat and open invalidates the tail cursor.
+		if (
+			append &&
+			range.stat !== null &&
+			(prior === null || range.stat.dev !== prior.dev || range.stat.ino !== prior.ino || range.stat.size < prior.size)
+		) {
+			this.stat = null;
+			this.ingest();
+			return;
+		}
+		const parsed = collectSessionEntries(
+			range.entries.filter((entry) => !isSessionJsonlHeader(entry)),
+			this.path,
+		);
+		for (const entry of parsed) freezeJson(entry);
+		// Entries past completeEntries came from an unterminated tail that the
+		// range just reparsed from the committed cursor; drop them, never duplicate.
+		const prefixLength = append ? this.completeEntries : 0;
+		if (append) {
+			this.entries.length = prefixLength;
+			for (const entry of parsed) this.entries.push(entry);
+		} else {
+			this.entries = parsed;
+		}
+		let completeParsed = 0;
+		// A header consumes an engine entry but does not appear in the domain list.
+		for (let i = 0; i < range.completeEntries; i++) if (!isSessionJsonlHeader(range.entries[i])) completeParsed++;
+		this.completeEntries = prefixLength + completeParsed;
+		const rangeOffset = append ? this.offset : 0;
+		if (!append) this.committed = createHash("sha256");
+		const completeBytes = range.nextOffset - rangeOffset;
+		if (completeBytes > 0) this.committed.update(range.bytes.subarray(0, completeBytes));
+		this.offset = range.nextOffset;
+		this.lineNumber = range.nextLineNumber;
+		this.stat = range.stat;
+		this.snapshot = null;
+	}
+}

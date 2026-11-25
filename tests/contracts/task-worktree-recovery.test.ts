@@ -1,0 +1,542 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { taskWorktreeFindings } from "../../src/cli/doctor-task-worktrees.js";
+import type { TaskWorktree } from "../../src/tools/task-worktree.js";
+import {
+	applyTaskWorktree,
+	cleanupAccountedTaskWorktree,
+	createTaskWorktree,
+	discardIdleTaskWorktree,
+	discardTaskWorktree,
+	settleTaskWorktree,
+} from "../../src/tools/task-worktree.js";
+import { listPreservedTaskWorktrees, recoverTaskWorktrees } from "../../src/tools/task-worktree-claims.js";
+import { overlayTaskWorktree, restoreTaskWorktreeOverlay } from "../../src/tools/task-worktree-overlay.js";
+import type { TaskWorktreePreview } from "../../src/tools/task-worktree-preview.js";
+import {
+	previewTaskWorktree,
+	receiptWithDrift,
+	taskWorktreePreviewDrift,
+} from "../../src/tools/task-worktree-preview.js";
+import { mergeWorktreeBranch } from "../../src/tools/worktree-merge.js";
+
+/**
+ * Restart recovery for `worktree: true` dispatch. A crash is simulated by
+ * rewriting the claim's owner lease: a PID that has exited, or this process's
+ * PID under a birth token it never had (the PID was reused).
+ */
+describe("task worktree restart recovery", () => {
+	let root: string;
+
+	function git(cwd: string, ...args: string[]): string {
+		return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
+	}
+
+	function markerPath(task: TaskWorktree): string {
+		return `${task.path}.task-owner.json`;
+	}
+
+	function readMarker(task: TaskWorktree): Record<string, unknown> {
+		return JSON.parse(readFileSync(markerPath(task), "utf8")) as Record<string, unknown>;
+	}
+
+	function exitedPid(): number {
+		const child = spawnSync(process.execPath, ["-e", ""]);
+		strictEqual(child.status, 0);
+		return child.pid;
+	}
+
+	function crash(task: TaskWorktree, owner?: { pid: number; birthToken: string | null }): void {
+		const marker = readMarker(task);
+		const lease = marker.owner as { host: string };
+		const dead = owner ?? { pid: exitedPid(), birthToken: "linux:1" };
+		writeFileSync(markerPath(task), `${JSON.stringify({ ...marker, owner: { host: lease.host, ...dead } }, null, 2)}\n`);
+	}
+
+	function branches(): string[] {
+		return git(root, "branch", "--list", "pancode/task/*", "--format=%(refname:short)").split("\n").filter(Boolean);
+	}
+
+	beforeEach(() => {
+		root = realpathSync(mkdtempSync(join(tmpdir(), "pancode-task-recovery-")));
+		git(root, "init", "-q", "-b", "main");
+		git(root, "config", "user.email", "t@local");
+		git(root, "config", "user.name", "t");
+		writeFileSync(join(root, ".gitignore"), ".pancode/\n");
+		writeFileSync(join(root, "a.txt"), "a\n");
+		git(root, "add", ".");
+		git(root, "commit", "-q", "-m", "init");
+	});
+
+	afterEach(() => {
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("records the owner lease, the apply mode, and an active state on the claim", () => {
+		const task = createTaskWorktree(root, "run-claim", undefined, "preserve");
+		const marker = readMarker(task);
+		strictEqual(marker.version, 2);
+		strictEqual(marker.state, "active");
+		strictEqual(marker.apply, "preserve");
+		strictEqual((marker.owner as { pid: number }).pid, process.pid);
+		ok(!Number.isNaN(Date.parse(marker.createdAt as string)));
+	});
+
+	it("removes a dead owner's worktree, branch, and claim when it holds no work", () => {
+		const task = createTaskWorktree(root, "run-clean");
+		crash(task);
+		const result = recoverTaskWorktrees(root);
+		deepStrictEqual(result, { removed: ["run-clean"], preserved: [], failed: [] });
+		strictEqual(existsSync(task.path), false);
+		strictEqual(existsSync(markerPath(task)), false);
+		deepStrictEqual(branches(), []);
+		strictEqual(git(root, "worktree", "list", "--porcelain").includes("run-clean"), false);
+	});
+
+	it("preserves a dead owner's uncommitted files, names them once, and never merges", () => {
+		const task = createTaskWorktree(root, "run-dirty");
+		writeFileSync(join(task.path, "new.txt"), "work\n");
+		crash(task);
+		const result = recoverTaskWorktrees(root);
+		deepStrictEqual(result.removed, []);
+		strictEqual(result.preserved.length, 1);
+		strictEqual(result.preserved[0]?.state, "abandoned");
+		match(result.preserved[0]?.reason ?? "", /1 uncommitted path/u);
+		strictEqual(readFileSync(join(task.path, "new.txt"), "utf8"), "work\n");
+		strictEqual(existsSync(join(root, "new.txt")), false);
+		deepStrictEqual(branches(), ["pancode/task/run-dirty"]);
+		// The second start finds it already reported and stays quiet.
+		deepStrictEqual(recoverTaskWorktrees(root), { removed: [], preserved: [], failed: [] });
+		strictEqual(existsSync(task.path), true);
+	});
+
+	it("preserves a dead owner's commits", () => {
+		const task = createTaskWorktree(root, "run-committed");
+		writeFileSync(join(task.path, "a.txt"), "changed\n");
+		git(task.path, "-c", "user.name=w", "-c", "user.email=w@local", "commit", "-qam", "work");
+		crash(task);
+		const result = recoverTaskWorktrees(root);
+		match(result.preserved[0]?.reason ?? "", /1 commit\(s\) beyond its base/u);
+		strictEqual(readFileSync(join(root, "a.txt"), "utf8"), "a\n");
+		deepStrictEqual(branches(), ["pancode/task/run-committed"]);
+	});
+
+	it("puts back a file PanCode overlaid when its run died before restoring it", () => {
+		const finished = createTaskWorktree(root, "run-overlay-done");
+		const overlay = overlayTaskWorktree(finished, [{ file: "a.txt", content: "compiled rules\n" }]);
+		deepStrictEqual(readMarker(finished).overlay, ["a.txt"]);
+		restoreTaskWorktreeOverlay(overlay);
+		strictEqual(readMarker(finished).overlay, undefined);
+
+		const task = createTaskWorktree(root, "run-overlay-died");
+		overlayTaskWorktree(task, [{ file: "a.txt", content: "compiled rules\n" }]);
+		writeFileSync(join(task.path, "new.txt"), "work\n");
+		crash(task);
+		const result = recoverTaskWorktrees(root);
+		strictEqual(result.preserved[0]?.runId, "run-overlay-died");
+		strictEqual(readFileSync(join(task.path, "a.txt"), "utf8"), "a\n");
+		strictEqual(git(task.path, "ls-files", "-v", "a.txt"), "H a.txt");
+		strictEqual(readMarker(task).overlay, undefined);
+		strictEqual(readFileSync(join(task.path, "new.txt"), "utf8"), "work\n");
+	});
+
+	it("preserves a worktree whose HEAD left the task branch without committing onto the other branch (F5)", () => {
+		for (const apply of ["preserve", "merge"] as const) {
+			const task = createTaskWorktree(root, `run-moved-${apply}`, undefined, apply);
+			git(task.path, "switch", "-q", "-c", `other-${apply}`);
+			writeFileSync(join(task.path, "worker.txt"), "w\n");
+			const receipt = applyTaskWorktree({ worktree: task, apply, authoredPaths: [join(task.path, "worker.txt")] });
+			strictEqual(receipt.reason, "worktree_head_moved");
+			strictEqual(receipt.applied, false);
+			match(receipt.detail ?? "", new RegExp(`refs/heads/other-${apply}`, "u"));
+			strictEqual(git(root, "rev-parse", `other-${apply}`), task.base);
+			strictEqual(git(root, "rev-parse", task.branch), task.base);
+			strictEqual(git(root, "rev-parse", "main"), task.base);
+			ok(existsSync(join(task.path, "worker.txt")));
+		}
+	});
+
+	it("merges only the previewed commit: a pinned merge refuses a branch that moved or a tree that changed", () => {
+		const prepare = (runId: string) => {
+			const task = createTaskWorktree(root, runId, undefined, "merge");
+			writeFileSync(join(task.path, `${runId}.txt`), "w\n");
+			const preview = applyTaskWorktree({
+				worktree: task,
+				apply: "preserve",
+				authoredPaths: [join(task.path, `${runId}.txt`)],
+			});
+			ok(preview.commit !== undefined);
+			return { task, commit: preview.commit, preview: previewTaskWorktree(task, preview.commit) };
+		};
+
+		const clean = prepare("run-pinned-clean");
+		const landed = applyTaskWorktree({
+			worktree: clean.task,
+			apply: "merge",
+			preview: clean.preview,
+			authoredPaths: [],
+		});
+		strictEqual(landed.applied, true);
+		match(landed.detail ?? "", /^merged [a-f0-9]{7} onto /);
+		strictEqual(landed.commit, clean.commit);
+		const vendor = join(clean.task.path, "vendor");
+		git(clean.task.path, "clone", "-q", root, vendor);
+		mkdirSync(join(vendor, "src"));
+		writeFileSync(join(vendor, "src", "worker.txt"), "before preview\n");
+		const directoryPreview = previewTaskWorktree(clean.task, clean.commit);
+		match(taskWorktreePreviewDrift(clean.task, directoryPreview)?.detail ?? "", /untracked directory vendor\//u);
+		writeFileSync(join(vendor, "src", "worker.txt"), "after preview\n");
+		deepStrictEqual(previewTaskWorktree(clean.task, clean.commit).untracked, directoryPreview.untracked);
+		match(taskWorktreePreviewDrift(clean.task, directoryPreview)?.detail ?? "", /untracked directory vendor\//u);
+		const directoryDiscard = discardTaskWorktree(clean.task, directoryPreview);
+		strictEqual(directoryDiscard.outcome, "changed");
+		match(directoryDiscard.outcome === "changed" ? directoryDiscard.detail : "", /untracked directory vendor\//u);
+		strictEqual(readFileSync(join(vendor, "src", "worker.txt"), "utf8"), "after preview\n");
+		ok(existsSync(markerPath(clean.task)) && branches().includes(clean.task.branch));
+
+		const dirty = prepare("run-pinned-dirty");
+		writeFileSync(join(dirty.task.path, "late.txt"), "late\n");
+		const dirtyRefusal = applyTaskWorktree({
+			worktree: dirty.task,
+			apply: "merge",
+			preview: dirty.preview,
+			authoredPaths: [],
+		});
+		strictEqual(dirtyRefusal.reason, "worktree_changed_since_preview");
+		strictEqual(dirtyRefusal.applied, false);
+		strictEqual(dirtyRefusal.commit, dirty.commit);
+		match(dirtyRefusal.detail ?? "", /new or changed untracked files/u);
+		strictEqual(git(root, "rev-parse", dirty.task.branch), dirty.commit, "the refusal commits nothing new");
+		ok(!existsSync(join(root, `${dirty.task.runId}.txt`)), "the previewed work was not merged either");
+
+		const moved = prepare("run-pinned-moved");
+		writeFileSync(join(moved.task.path, "more.txt"), "more\n");
+		git(moved.task.path, "add", "-A");
+		git(moved.task.path, "-c", "user.name=w", "-c", "user.email=w@local", "commit", "-qm", "more");
+		const movedRefusal = applyTaskWorktree({
+			worktree: moved.task,
+			apply: "merge",
+			preview: moved.preview,
+			authoredPaths: [],
+		});
+		strictEqual(movedRefusal.reason, "worktree_changed_since_preview");
+		strictEqual(movedRefusal.applied, false);
+		ok(!existsSync(join(root, "more.txt")));
+		ok(!existsSync(join(root, `${moved.task.runId}.txt`)));
+	});
+
+	it("commits tracked edits, tool-authored and worker-staged new files, and reports byproducts including files created during commit", () => {
+		const task = createTaskWorktree(root, "run-authored", undefined, "merge");
+		writeFileSync(join(task.path, "a.txt"), "fixed\n");
+		writeFileSync(join(task.path, "tool.txt"), "written by edit\n");
+		writeFileSync(join(task.path, "staged.txt"), "made by a shell, staged by the worker\n");
+		git(task.path, "add", "staged.txt");
+		for (const cwd of [task.path, root]) {
+			mkdirSync(join(cwd, "__pycache__"));
+			writeFileSync(join(cwd, "__pycache__", "x.pyc"), `${cwd}\n`);
+		}
+		writeFileSync(
+			join(root, ".git", "hooks", "post-commit"),
+			`#!${process.execPath}
+if (process.cwd() === ${JSON.stringify(task.path)}) require('node:fs').writeFileSync('late.txt', 'created during commit\\n');
+`,
+			{ mode: 0o755 },
+		);
+		const receipt = applyTaskWorktree({
+			worktree: task,
+			apply: "preserve",
+			authoredPaths: [join(task.path, "tool.txt")],
+		});
+		strictEqual(receipt.reason, undefined, receipt.detail);
+		strictEqual(receipt.applied, false);
+		deepStrictEqual(receipt.changedPaths, ["a.txt", "staged.txt", "tool.txt"]);
+		deepStrictEqual(receipt.leftUncommitted, { count: 2, paths: ["__pycache__/x.pyc", "late.txt"] });
+		strictEqual(readFileSync(join(task.path, "late.txt"), "utf8"), "created during commit\n");
+		ok(receipt.commit);
+		const applied = applyTaskWorktree({
+			worktree: task,
+			apply: "merge",
+			preview: previewTaskWorktree(task, receipt.commit),
+			authoredPaths: [],
+		});
+		strictEqual(applied.applied, true, applied.detail);
+		deepStrictEqual(applied.leftUncommitted, receipt.leftUncommitted);
+		strictEqual(existsSync(join(root, "late.txt")), false);
+		strictEqual(git(root, "ls-files", "__pycache__"), "");
+		strictEqual(readFileSync(join(root, "a.txt"), "utf8"), "fixed\n");
+	});
+
+	it("keeps a merged worktree holding a file created after the commit and names it, and removes one holding only what it reported", () => {
+		const merge = (runId: string) => {
+			const task = createTaskWorktree(root, runId, undefined, "merge");
+			writeFileSync(join(task.path, "byproduct.txt"), "reported\n");
+			let accounted: TaskWorktreePreview | undefined;
+			const receipt = applyTaskWorktree({
+				worktree: task,
+				apply: "merge",
+				authoredPaths: [],
+				onAccounted: (entry) => {
+					accounted = entry;
+				},
+			});
+			deepStrictEqual(receipt.leftUncommitted, { count: 1, paths: ["byproduct.txt"] });
+			return { task, receipt, accounted };
+		};
+
+		const reported = merge("run-cleanup-reported");
+		strictEqual(taskWorktreePreviewDrift(reported.task, reported.accounted), null);
+		strictEqual(cleanupAccountedTaskWorktree(reported.task, reported.accounted), null);
+		ok(!existsSync(reported.task.path) && !branches().includes(reported.task.branch));
+
+		const raced = merge("run-cleanup-raced");
+		writeFileSync(join(raced.task.path, "late.txt"), "from a background process\n");
+		writeFileSync(join(raced.task.path, "byproduct.txt"), "changed after reporting\n");
+		const drift = cleanupAccountedTaskWorktree(raced.task, raced.accounted);
+		ok(drift !== null);
+		const sealed = receiptWithDrift(raced.receipt, raced.task, drift);
+		deepStrictEqual(sealed.changedAfterCommit, { count: 2, paths: ["byproduct.txt", "late.txt"] });
+		match(sealed.detail ?? "", /late\.txt/u);
+		strictEqual(readFileSync(join(raced.task.path, "late.txt"), "utf8"), "from a background process\n");
+		strictEqual(readFileSync(join(raced.task.path, "byproduct.txt"), "utf8"), "changed after reporting\n");
+		ok(branches().includes(raced.task.branch));
+		strictEqual((JSON.parse(readFileSync(markerPath(raced.task), "utf8")) as { state: string }).state, "settled");
+	});
+
+	it("withholds a merge when the checkout left its dispatch branch or no longer holds the task's base", () => {
+		const commitOn = (cwd: string, file: string): void => {
+			writeFileSync(join(cwd, file), "w\n");
+			git(cwd, "add", "-A");
+			git(cwd, "-c", "user.name=w", "-c", "user.email=w@local", "commit", "-qm", file);
+		};
+		const mainTip = git(root, "rev-parse", "main");
+		git(root, "switch", "-q", "-c", "feature-a");
+		commitOn(root, "unfinished.txt");
+		const switched = createTaskWorktree(root, "run-dest-switched", undefined, "merge");
+		strictEqual(switched.sourceBranch, "feature-a");
+		writeFileSync(join(switched.path, "task.txt"), "t\n");
+		git(root, "switch", "-q", "main");
+		const refusal = applyTaskWorktree({
+			worktree: switched,
+			apply: "merge",
+			authoredPaths: [join(switched.path, "task.txt")],
+		});
+		strictEqual(refusal.reason, "worktree_destination_moved");
+		strictEqual(refusal.applied, false);
+		match(refusal.detail ?? "", /dispatched from branch feature-a, but the checkout is now on main/u);
+		strictEqual(git(root, "rev-parse", "main"), mainTip, "main did not pick up the unmerged feature work");
+		ok(!existsSync(join(root, "unfinished.txt")) && !existsSync(join(root, "task.txt")));
+		ok(branches().includes(switched.branch), "the task branch is kept");
+
+		// Same branch name, but its history no longer holds the base the task was cut from.
+		git(root, "switch", "-q", "feature-a");
+		const rewound = createTaskWorktree(root, "run-dest-rewound", undefined, "merge");
+		writeFileSync(join(rewound.path, "task.txt"), "t\n");
+		git(root, "reset", "-q", "--hard", mainTip);
+		const lost = applyTaskWorktree({
+			worktree: rewound,
+			apply: "merge",
+			authoredPaths: [join(rewound.path, "task.txt")],
+		});
+		strictEqual(lost.reason, "worktree_destination_moved");
+		match(
+			lost.detail ?? "",
+			/feature-a does not contain base [0-9a-f]{7} that task branch pancode\/task\/run-dest-rewound/u,
+		);
+		strictEqual(git(root, "rev-parse", "HEAD"), mainTip);
+		ok(branches().includes(rewound.branch));
+	});
+
+	it("an operator discard whose branch deletion fails reports the branch kept and releases the claim", () => {
+		const done = createTaskWorktree(root, "run-discard-done", undefined, "merge");
+		writeFileSync(join(done.path, "w.txt"), "w\n");
+		applyTaskWorktree({ worktree: done, apply: "preserve", authoredPaths: [join(done.path, "w.txt")] });
+		deepStrictEqual(discardTaskWorktree(done), { outcome: "discarded", claimReleased: true });
+		ok(!existsSync(done.path) && !existsSync(markerPath(done)) && !branches().includes(done.branch));
+
+		const partial = createTaskWorktree(root, "run-discard-partial", undefined, "merge");
+		writeFileSync(join(partial.path, "w.txt"), "w\n");
+		applyTaskWorktree({ worktree: partial, apply: "preserve", authoredPaths: [join(partial.path, "w.txt")] });
+		// A stale ref lock makes `git branch -D` fail after the worktree is gone.
+		writeFileSync(join(root, ".git", "refs", "heads", `${partial.branch}.lock`), "");
+		const result = discardTaskWorktree(partial);
+		strictEqual(result.outcome, "branch_kept");
+		strictEqual(result.outcome === "branch_kept" && result.claimReleased, true);
+		ok(!existsSync(partial.path), "the worktree is gone");
+		ok(!existsSync(markerPath(partial)), "no claim is left for restart recovery to misread");
+		ok(branches().includes(partial.branch), "the branch holding the work is preserved");
+
+		// A pinned discard removes nothing when work arrived after the preview.
+		const late = createTaskWorktree(root, "run-discard-late", undefined, "merge");
+		writeFileSync(join(late.path, "w.txt"), "w\n");
+		const lateCommit = applyTaskWorktree({
+			worktree: late,
+			apply: "preserve",
+			authoredPaths: [join(late.path, "w.txt")],
+		}).commit;
+		ok(lateCommit !== undefined);
+		const latePreview = previewTaskWorktree(late, lateCommit);
+		writeFileSync(join(late.path, "after-preview.txt"), "x\n");
+		const refused = discardTaskWorktree(late, latePreview);
+		strictEqual(refused.outcome, "changed");
+		match(refused.outcome === "changed" ? refused.detail : "", /new or changed untracked files/u);
+		ok(
+			existsSync(join(late.path, "after-preview.txt")) && branches().includes(late.branch) && existsSync(markerPath(late)),
+		);
+		rmSync(join(late.path, "after-preview.txt"));
+		deepStrictEqual(discardTaskWorktree(late, latePreview), { outcome: "discarded", claimReleased: true });
+
+		// A branch already gone needs no `git branch -D`: the outcome is what the steps did.
+		const gone = createTaskWorktree(root, "run-discard-gone", undefined, "merge");
+		git(gone.path, "checkout", "-q", "--detach");
+		git(root, "branch", "-D", gone.branch);
+		deepStrictEqual(discardTaskWorktree(gone), { outcome: "discarded", claimReleased: true });
+	});
+
+	it("never touches a live owner", () => {
+		const task = createTaskWorktree(root, "run-live");
+		deepStrictEqual(recoverTaskWorktrees(root), { removed: [], preserved: [], failed: [] });
+		strictEqual(existsSync(task.path), true);
+		strictEqual(readMarker(task).state, "active");
+		deepStrictEqual(listPreservedTaskWorktrees(root), []);
+	});
+
+	it("reads a live PID under another birth token as a reused PID, so the owner is gone", () => {
+		const task = createTaskWorktree(root, "run-reused");
+		crash(task, { pid: process.pid, birthToken: "linux:1" });
+		deepStrictEqual(recoverTaskWorktrees(root).removed, ["run-reused"]);
+	});
+
+	it("fails closed: an owner on another host, a version 1 claim, and a foreign claim all stay", () => {
+		const remote = createTaskWorktree(root, "run-remote");
+		const remoteMarker = readMarker(remote);
+		writeFileSync(
+			markerPath(remote),
+			JSON.stringify({ ...remoteMarker, owner: { host: "elsewhere.invalid", pid: exitedPid(), birthToken: "linux:1" } }),
+		);
+		const legacy = createTaskWorktree(root, "run-legacy");
+		const { owner: _owner, state: _state, ...v1 } = readMarker(legacy);
+		writeFileSync(markerPath(legacy), JSON.stringify({ ...v1, version: 1 }));
+		const foreign = createTaskWorktree(root, "run-foreign");
+		crash(foreign);
+		writeFileSync(markerPath(foreign), JSON.stringify({ ...readMarker(foreign), root: "/somewhere/else" }));
+
+		deepStrictEqual(recoverTaskWorktrees(root), { removed: [], preserved: [], failed: [] });
+		for (const task of [remote, legacy, foreign]) strictEqual(existsSync(task.path), true, task.runId);
+		// A version 1 claim is not a claim PanCode recognizes, so it is neither recovered nor listed.
+		deepStrictEqual(listPreservedTaskWorktrees(root), []);
+	});
+
+	it("leaves a settled worktree alone after its owner exits, and doctor lists it with the commands to drop it", () => {
+		const task = createTaskWorktree(root, "run-settled", undefined, "preserve");
+		writeFileSync(join(task.path, "kept.txt"), "kept\n");
+		strictEqual(
+			applyTaskWorktree({ worktree: task, apply: "preserve", authoredPaths: [join(task.path, "kept.txt")] }).applied,
+			false,
+		);
+		settleTaskWorktree(task);
+		crash(task);
+		strictEqual(readMarker(task).state, "settled");
+		deepStrictEqual(recoverTaskWorktrees(root), { removed: [], preserved: [], failed: [] });
+
+		const abandoned = createTaskWorktree(root, "run-abandoned");
+		writeFileSync(join(abandoned.path, "x.txt"), "x\n");
+		crash(abandoned);
+		recoverTaskWorktrees(root);
+
+		mkdirSync(join(root, "sub"));
+		const findings = taskWorktreeFindings(join(root, "sub"), {
+			now: Date.parse(readMarker(task).createdAt as string) + 3 * 3_600_000,
+			rootSetting: "disk",
+		}).slice(1);
+		deepStrictEqual(
+			findings.map((finding) => [finding.name, finding.level, finding.ok]),
+			[
+				["task worktree run-abandoned", "warn", true],
+				["task worktree run-settled", "info", true],
+			],
+		);
+		const settled = findings[1]?.detail ?? "";
+		match(settled, /pancode\/task\/run-settled \(settled, 3h old, kept by its run\)/u);
+		match(settled, /git log [0-9a-f]{40}\.\.pancode\/task\/run-settled/u);
+		match(
+			settled,
+			/git worktree remove --force .*run-settled && git branch -D pancode\/task\/run-settled && rm .*run-settled\.task-owner\.json/u,
+		);
+	});
+
+	it("discards an idle canceled worktree with its branch and claim, and keeps one that holds any work", () => {
+		const idle = createTaskWorktree(root, "run-idle");
+		strictEqual(discardIdleTaskWorktree(idle), true);
+		strictEqual(existsSync(idle.path), false);
+		strictEqual(existsSync(markerPath(idle)), false);
+		deepStrictEqual(branches(), []);
+
+		const commit = (cwd: string): void => {
+			git(cwd, "-c", "user.name=w", "-c", "user.email=w@local", "commit", "-qam", "work");
+		};
+		const held: Record<string, (task: TaskWorktree) => void> = {
+			"run-untracked": (task) => writeFileSync(join(task.path, "new.txt"), "work\n"),
+			"run-modified": (task) => writeFileSync(join(task.path, "a.txt"), "changed\n"),
+			"run-committed": (task) => {
+				writeFileSync(join(task.path, "a.txt"), "changed\n");
+				commit(task.path);
+			},
+			"run-detached": (task) => {
+				git(task.path, "checkout", "-q", "--detach");
+				writeFileSync(join(task.path, "a.txt"), "changed\n");
+				commit(task.path);
+			},
+		};
+		for (const [runId, work] of Object.entries(held)) {
+			const task = createTaskWorktree(root, runId);
+			work(task);
+			strictEqual(discardIdleTaskWorktree(task), false, runId);
+			ok(existsSync(task.path), runId);
+			ok(existsSync(markerPath(task)), runId);
+			ok(branches().includes(task.branch), runId);
+		}
+	});
+
+	it("reports none preserved in a clean checkout and nothing outside a git checkout", () => {
+		deepStrictEqual(taskWorktreeFindings(root, { rootSetting: "disk" }).slice(1), [
+			{ ok: true, name: "task worktrees", detail: "none preserved" },
+		]);
+		const plain = realpathSync(mkdtempSync(join(tmpdir(), "pancode-task-recovery-plain-")));
+		try {
+			deepStrictEqual(taskWorktreeFindings(plain), []);
+		} finally {
+			rmSync(plain, { recursive: true, force: true });
+		}
+	});
+});
+
+it("refuses a merge over overlapping uncommitted work even with merge.autoStash set", () => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "pancode-autostash-")));
+	const g = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
+	try {
+		g("init", "-q");
+		g("config", "user.name", "T");
+		g("config", "user.email", "t@example.invalid");
+		g("config", "merge.autoStash", "true");
+		writeFileSync(join(root, "f.txt"), "base\n");
+		g("add", ".");
+		g("commit", "-qm", "base");
+		g("switch", "-qc", "task");
+		writeFileSync(join(root, "f.txt"), "task\n");
+		g("commit", "-qam", "task");
+		g("switch", "-q", "-");
+		writeFileSync(join(root, "f.txt"), "operator wip\n");
+		const result = mergeWorktreeBranch(root, "task", "fixture");
+		strictEqual(result.ok, false);
+		strictEqual(g("diff", "--name-only", "--diff-filter=U"), "");
+		strictEqual(readFileSync(join(root, "f.txt"), "utf8"), "operator wip\n");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});

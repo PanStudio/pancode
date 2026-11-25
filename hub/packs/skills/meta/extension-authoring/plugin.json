@@ -1,0 +1,23 @@
+{
+	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+	"name": "extension-authoring",
+	"version": "0.1.7",
+	"description": "Builds, tests, and debugs PanCode api 2 extensions with declared capabilities and host-rendered views. Not for instruction-only skills; use skill-authoring.",
+	"license": "LicenseRef-PanCode-1.0",
+	"extensions": {
+		"dev.pancode": {
+			"manifestVersion": 1,
+			"kind": "skill",
+			"resources": {
+				"skills": "."
+			},
+			"components": [
+				{
+					"kind": "skill",
+					"id": "extension-authoring",
+					"path": "SKILL.md"
+				}
+			]
+		}
+	}
+}

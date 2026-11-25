@@ -1,0 +1,916 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Engine lifecycle contracts for the pi 0.84.4 agent loop.
+ *
+ * These lock the ordering PanCode's turn runtime relies on after the 0.84.4
+ * `prepareNextTurn` change: preparation runs only when the loop is about to
+ * start another assistant turn, never after a final or terminating turn;
+ * steering and follow-up messages queued while preparation runs are delivered
+ * before that next assistant call; a preparation failure still closes the run
+ * through the `agent_end` path PanCode finalizes ledgers on; `Agent.reset()` is
+ * refused while a run is active, which is why every PanCode session reset settles
+ * the run first. The remaining cases cover the inherited tool-argument
+ * normalization, the widened pi-tui keybinding table, and the alternate-screen
+ * render seams PanCode instruments.
+ */
+
+import { deepStrictEqual, ok, strictEqual, throws } from "node:assert/strict";
+import { describe, it } from "node:test";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import {
+	type AssistantMessage,
+	type Context,
+	createAssistantMessageEventStream,
+	type Model,
+	parseToolCallArguments,
+	type SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
+import type { Terminal } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
+import { assistantOutputChars } from "../../src/core/assistant-output.js";
+import { classifyCallFailure } from "../../src/core/call-failure.js";
+import { PANCODE_APP_KEYBINDINGS, PANCODE_KEYBINDINGS } from "../../src/domains/config/keybindings.js";
+import { callSettlementFromMessage } from "../../src/domains/telemetry/call-facts.js";
+import { createEngineAgent, type EngineStreamFn as StreamFn } from "../../src/engine/agent.js";
+import { StringEnum, validateEngineToolArguments } from "../../src/engine/ai.js";
+import {
+	InstrumentedTuiAltScreen,
+	type TuiRenderObserver,
+	type TuiRenderPhase,
+} from "../../src/engine/instrumented-tui.js";
+import { guardToolArgumentStream } from "../../src/engine/tool-argument-stream.js";
+import { Text, TUI_KEYBINDINGS } from "../../src/engine/tui.js";
+import type { AgentEvent, AgentTool, EngineModel } from "../../src/engine/types.js";
+import { routeUnattachedToolCalls } from "../../src/engine/unattached-tool-call.js";
+import {
+	applyEscapeTimeoutDefault,
+	createInteractiveShell,
+	type InteractiveShellTui,
+} from "../../src/interactive/interactive-shell.js";
+
+it("leaves the main screen intact when a fullscreen shell stops", () => {
+	for (const mode of ["fullscreen", "regular"] as const) {
+		const stops: Array<{ preserveScreen?: boolean } | undefined> = [];
+		const tui: InteractiveShellTui = {
+			mode,
+			addChild() {},
+			setFocus() {},
+			start() {},
+			stop(options) {
+				stops.push(options);
+			},
+			requestRender() {},
+		};
+		const shell = createInteractiveShell({
+			createTerminal: () => ({}) as Terminal,
+			createTui: () => tui,
+		});
+		shell.stop();
+		deepStrictEqual(stops, [mode === "fullscreen" ? { preserveScreen: true } : undefined]);
+	}
+});
+
+const MODEL: EngineModel = {
+	id: "stub-model",
+	name: "stub-model",
+	api: "openai-completions",
+	provider: "stub",
+	baseUrl: "https://stub.invalid",
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 8192,
+	maxTokens: 1024,
+} as Model<"openai-completions">;
+
+const ZERO_USAGE = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+function assistant(content: AssistantMessage["content"], stopReason: AssistantMessage["stopReason"]): AssistantMessage {
+	return {
+		role: "assistant",
+		content,
+		api: "openai-completions",
+		provider: "stub",
+		model: "stub-model",
+		usage: { ...ZERO_USAGE, cost: { ...ZERO_USAGE.cost } },
+		stopReason,
+		timestamp: Date.now(),
+	};
+}
+
+function toolTurn(id: string, args: import("@earendil-works/pi-ai").ToolCall["arguments"]): AssistantMessage {
+	return assistant([{ type: "toolCall", id, name: "echo", arguments: args }], "toolUse");
+}
+
+function finalTurn(text = "done"): AssistantMessage {
+	return assistant([{ type: "text", text }], "stop");
+}
+
+function user(text: string): AgentMessage {
+	return { role: "user", content: text, timestamp: Date.now() };
+}
+
+function roleOf(message: unknown): string {
+	return typeof message === "object" && message !== null && "role" in message ? String(message.role) : "?";
+}
+
+function userText(message: unknown): string {
+	const content = (message as { content: unknown }).content;
+	if (typeof content === "string") return content;
+	if (Array.isArray(content)) {
+		return content
+			.map((part) => (typeof part === "object" && part !== null && "text" in part ? String(part.text) : ""))
+			.join("");
+	}
+	return String(content);
+}
+
+function userTexts(messages: ReadonlyArray<unknown>): string[] {
+	return messages.filter((message) => roleOf(message) === "user").map(userText);
+}
+
+/**
+ * A scripted provider: each call answers with the next scripted assistant
+ * message and records the context it was handed plus a timeline entry, so a
+ * test can assert what ran before which provider call.
+ */
+function scriptedProvider(script: AssistantMessage[], timeline: string[]) {
+	const calls: Context[] = [];
+	const streamFn = (_model: Model<"openai-completions">, context: Context, _options?: SimpleStreamOptions) => {
+		const next = script.shift();
+		if (!next) throw new Error(`scripted provider exhausted after ${calls.length} call(s)`);
+		calls.push({ ...context, messages: [...context.messages] });
+		timeline.push(`llm:${calls.length}`);
+		const stream = createAssistantMessageEventStream();
+		queueMicrotask(() => {
+			stream.push({ type: "done", reason: next.stopReason === "toolUse" ? "toolUse" : "stop", message: next });
+		});
+		return stream;
+	};
+	return { calls, streamFn: streamFn as unknown as StreamFn };
+}
+
+const echoSchema = Type.Object({
+	value: Type.String(),
+	terminate: Type.Optional(Type.Boolean()),
+});
+
+function echoTool(timeline: string[], onExecute?: () => void): AgentTool<typeof echoSchema, { value: string }> {
+	return {
+		name: "echo",
+		label: "Echo",
+		description: "echo",
+		parameters: echoSchema,
+		async execute(_toolCallId, params) {
+			timeline.push(`tool:${params.value}`);
+			onExecute?.();
+			return {
+				content: [{ type: "text", text: `echoed ${params.value}` }],
+				details: { value: params.value },
+				...(params.terminate === true ? { terminate: true } : {}),
+			};
+		},
+	};
+}
+
+interface RunFixture {
+	timeline: string[];
+	events: AgentEvent[];
+	prepareTails: string[];
+	provider: ReturnType<typeof scriptedProvider>;
+	agent: ReturnType<typeof createEngineAgent>["agent"];
+}
+
+function buildRun(
+	script: AssistantMessage[],
+	options: {
+		prepare?: (fixture: RunFixture) => Promise<void> | void;
+		onExecute?: (fixture: RunFixture) => void;
+	} = {},
+): RunFixture {
+	const timeline: string[] = [];
+	const events: AgentEvent[] = [];
+	const prepareTails: string[] = [];
+	const provider = scriptedProvider(script, timeline);
+	const fixture = { timeline, events, prepareTails, provider } as RunFixture;
+	const handle = createEngineAgent({
+		streamFn: provider.streamFn,
+		initialState: {
+			systemPrompt: "system",
+			model: MODEL,
+			thinkingLevel: "off",
+			tools: [echoTool(timeline, () => options.onExecute?.(fixture))],
+			messages: [],
+		},
+	});
+	fixture.agent = handle.agent;
+	// Mirrors src/session-control/turn-runtime.ts: the continuation guard installs as
+	// `prepareNextTurn` and inspects the agent-state tail exactly as
+	// postToolContinuationGuard does.
+	handle.agent.prepareNextTurn = async () => {
+		const messages = handle.agent.state.messages;
+		prepareTails.push(roleOf(messages[messages.length - 1]));
+		timeline.push("prepare");
+		await options.prepare?.(fixture);
+		return undefined;
+	};
+	handle.agent.subscribe((event) => {
+		events.push(event);
+	});
+	return fixture;
+}
+
+function eventTypes(events: ReadonlyArray<AgentEvent>): string[] {
+	return events.map((event) => event.type);
+}
+
+describe("tool argument generation bounds", () => {
+	it("stops sustained repetition across fragments with a visible abort reason", async () => {
+		const source = createAssistantMessageEventStream();
+		const partial = toolTurn("loop", { value: "partial" });
+		let observedSignal: AbortSignal | undefined;
+		let at = 0;
+		const guarded = guardToolArgumentStream(
+			{ ...MODEL, contextWindow: 131072, maxTokens: 32768 },
+			{ messages: [] },
+			undefined,
+			(options) => {
+				observedSignal = options.signal;
+				return source;
+			},
+			() => at,
+		);
+		source.push({ type: "start", partial });
+		source.push({ type: "toolcall_delta", contentIndex: 0, delta: "abc".repeat(3000), partial });
+		await new Promise((resolve) => setImmediate(resolve));
+		at = 61_000;
+		source.push({ type: "toolcall_delta", contentIndex: 0, delta: "abc".repeat(3000), partial });
+		const result = await guarded.result();
+		strictEqual(result.stopReason, "aborted");
+		ok(result.errorMessage?.includes("3-character cycle"));
+		ok(result.errorMessage?.includes("No tools from this response were executed"));
+		strictEqual(observedSignal?.aborted, true);
+		strictEqual(assistantOutputChars(result), 18_000, "raw fragments count even when partial parsing has not advanced");
+		// A late provider success cannot replace the guard's terminal result.
+		source.push({ type: "done", reason: "toolUse", message: partial });
+		strictEqual(await guarded.result(), result);
+	});
+
+	it("allows large payloads, burst repetition, and slow streams with useful new content", async () => {
+		const source = createAssistantMessageEventStream();
+		const value = "x".repeat(160_000);
+		const partial = toolTurn("large", { value });
+		let at = 0;
+		const guarded = guardToolArgumentStream(
+			{ ...MODEL, contextWindow: 131072, maxTokens: 65536 },
+			{ messages: [] },
+			undefined,
+			() => source,
+			() => at,
+		);
+		source.push({ type: "start", partial });
+		source.push({ type: "toolcall_delta", contentIndex: 0, delta: JSON.stringify({ value }), partial });
+		await new Promise((resolve) => setImmediate(resolve));
+		for (let index = 0; index < 4; index++) {
+			at += 120_000;
+			source.push({ type: "toolcall_delta", contentIndex: 0, delta: `line ${index}: useful content\n`, partial });
+			await new Promise((resolve) => setImmediate(resolve));
+		}
+		source.push({ type: "done", reason: "toolUse", message: partial });
+		strictEqual((await guarded.result()).stopReason, "toolUse");
+	});
+
+	it("cancels the entire batch at the byte ceiling before any valid sibling executes, and prices a delegate's own send", async () => {
+		let invocations = 0;
+		let observedSignal: AbortSignal | undefined;
+		const timeline: string[] = [];
+		const partial = assistant(
+			[
+				{ type: "toolCall", id: "valid", name: "echo", arguments: { value: "valid sibling" } },
+				{ type: "toolCall", id: "oversize", name: "echo", arguments: { value: "partial" } },
+			],
+			"toolUse",
+		);
+		const { agent } = createEngineAgent({
+			initialState: { model: MODEL, tools: [echoTool(timeline)] },
+			streamFn: (_model, _context, options) => {
+				invocations++;
+				observedSignal = options?.signal;
+				const source = createAssistantMessageEventStream();
+				source.push({ type: "start", partial });
+				source.push({ type: "toolcall_delta", contentIndex: 1, delta: "x".repeat(32 * MODEL.maxTokens + 1), partial });
+				source.push({ type: "done", reason: "toolUse", message: partial });
+				return source;
+			},
+		});
+		await agent.prompt("go");
+		strictEqual(invocations, 1, "an aborted response must not restart automatically");
+		strictEqual(observedSignal?.aborted, true);
+		deepStrictEqual(timeline, []);
+		const last = agent.state.messages.at(-1) as AssistantMessage;
+		strictEqual(last.stopReason, "aborted");
+		ok(last.errorMessage?.includes("byte safety ceiling"));
+
+		// cf1h-D3: a transcript past the window before the delegate evicts it priced the ceiling at 32 bytes, so the
+		// agent-level guard cut off a 39-byte read call. A delegate that guards its own send is not guarded twice.
+		const overWindow = [user("x".repeat(MODEL.contextWindow * 8))];
+		const turns = (delegateGuardsToolArguments: boolean) => {
+			const ran: string[] = [];
+			let round = 0;
+			const { agent: worker } = createEngineAgent({
+				initialState: { model: MODEL, tools: [echoTool(ran)], messages: overWindow },
+				delegateGuardsToolArguments,
+				streamFn: () => {
+					const source = createAssistantMessageEventStream();
+					const message = round++ === 0 ? toolTurn("read", { value: "bignotes/pump-1.md limit=30" }) : finalTurn();
+					source.push({ type: "start", partial: message });
+					if (message.stopReason === "toolUse")
+						source.push({
+							type: "toolcall_delta",
+							contentIndex: 0,
+							delta: JSON.stringify({ value: "bignotes/pump-1.md limit=30" }),
+							partial: message,
+						});
+					source.push({ type: "done", reason: message.stopReason === "toolUse" ? "toolUse" : "stop", message });
+					return source;
+				},
+			});
+			return { worker, ran };
+		};
+		const guardedTwice = turns(false);
+		await guardedTwice.worker.prompt("go");
+		const cutOff = guardedTwice.worker.state.messages.at(-1) as AssistantMessage;
+		strictEqual(cutOff.stopReason, "aborted");
+		deepStrictEqual(guardedTwice.ran, []);
+		// A call a bound cut off settles with the bound named, in the vocabulary why-stopped reads.
+		deepStrictEqual(callSettlementFromMessage(cutOff, "none").stop, { reason: "aborted", failure: "generation_guard" });
+		deepStrictEqual(
+			callSettlementFromMessage({ ...cutOff, failure: { stage: "harness", errorClass: "loop_guard" } }, "none").stop,
+			{ reason: "aborted", failure: "loop_guard" },
+		);
+		// A bound's own abort fails the fetch as a transport error; the bound still names the stop, and a drop with no
+		// bound behind it stays a transport drop.
+		const timeout = "worker_turn_timeout: round 1 exceeded the 20 second response limit";
+		const dropped = classifyCallFailure(timeout, { invoked: true, aborted: true, transportFailed: true });
+		const timedOut = { ...cutOff, pancodeAbortReason: "worker_turn_timeout", errorMessage: timeout, failure: dropped };
+		deepStrictEqual(callSettlementFromMessage(timedOut, "none").stop, { reason: "aborted", failure: "turn_timeout" });
+		deepStrictEqual(callSettlementFromMessage({ ...timedOut, pancodeAbortReason: undefined }, "none").stop, {
+			reason: "aborted",
+			failure: "transport_dropped",
+		});
+		const delegated = turns(true);
+		await delegated.worker.prompt("go");
+		deepStrictEqual(delegated.ran, ["tool:bignotes/pump-1.md limit=30"]);
+		strictEqual((delegated.worker.state.messages.at(-1) as AssistantMessage).stopReason, "stop");
+	});
+
+	it("rejects oversized terminal-only tool arguments too", async () => {
+		const source = createAssistantMessageEventStream();
+		const guarded = guardToolArgumentStream(MODEL, { messages: [] }, undefined, () => source);
+		source.push({ type: "done", reason: "toolUse", message: toolTurn("large", { value: "界".repeat(12000) }) });
+		strictEqual((await guarded.result()).stopReason, "aborted");
+	});
+});
+
+describe("engine lifecycle: a provider that serves another model than requested (row 384)", () => {
+	const run = async (reportedModelId: string, guarded = true) => {
+		const ran: string[] = [];
+		const turns = [toolTurn("c1", { value: "x" }), finalTurn()];
+		const { agent } = createEngineAgent({
+			initialState: { model: MODEL, tools: [echoTool(ran)] },
+			refuseServedModelMismatch: () => guarded,
+			streamFn: () => {
+				const source = createAssistantMessageEventStream();
+				const message = Object.assign(turns.shift() as AssistantMessage, {
+					responseModelIdObservation: { state: "reported", reportedModelId },
+				});
+				message.usage = { ...message.usage, input: 120, output: 9, totalTokens: 129 };
+				source.push({ type: "done", reason: message.stopReason === "toolUse" ? "toolUse" : "stop", message });
+				return source;
+			},
+		});
+		await agent.prompt("go");
+		return { ran, last: agent.state.messages.at(-1) as AssistantMessage & { modelRouteRefusal?: unknown } };
+	};
+
+	it("refuses the first response, naming both ids, before any of its tool calls runs", async () => {
+		const { ran, last } = await run("claude-opus-5.5");
+		deepStrictEqual(ran, []);
+		strictEqual(last.stopReason, "error");
+		ok(last.errorMessage?.startsWith("requested stub-model, provider served claude-opus-5.5"), last.errorMessage);
+		deepStrictEqual(last.modelRouteRefusal, {
+			code: "served_model_mismatch",
+			requested: "stub-model",
+			served: "claude-opus-5.5",
+		});
+		strictEqual(
+			last.content.some((block) => block.type === "toolCall"),
+			false,
+		);
+		// The call itself completed: it settles with the provider's stop and usage, and only the turn is refused.
+		const settled = callSettlementFromMessage(last, "none");
+		strictEqual(settled.disposition, "settled");
+		deepStrictEqual(settled.stop, { reason: "toolUse" });
+		deepStrictEqual(settled.usage?.output, { kind: "measured", value: 9, source: "provider" });
+	});
+
+	it("runs a dated snapshot or prefixed alias of the requested model, and any unguarded route", async () => {
+		deepStrictEqual((await run("stub-model-20261101")).ran, ["tool:x"]);
+		deepStrictEqual((await run("vendor/stub-model-latest")).ran, ["tool:x"]);
+		deepStrictEqual((await run("claude-opus-5.5", false)).ran, ["tool:x"]);
+		// A later version of the model is another model, not an alias of it.
+		deepStrictEqual((await run("stub-model.1")).ran, []);
+	});
+});
+
+describe("engine lifecycle: a call to a tool with no attached schema", () => {
+	const run = async (attached: string[]) => {
+		const received: unknown[] = [];
+		const stub = (name: string): AgentTool<ReturnType<typeof Type.Object>, Record<string, never>> => ({
+			name,
+			label: name,
+			description: name,
+			parameters: Type.Object({}, { additionalProperties: true }),
+			async execute(_id, params) {
+				received.push(params);
+				return { content: [{ type: "text", text: "ok" }], details: {} };
+			},
+		});
+		const turns = [
+			assistant([{ type: "toolCall", id: "c1", name: "grep", arguments: { pattern: "x" } }], "toolUse"),
+			finalTurn(),
+		];
+		const { agent } = createEngineAgent({
+			initialState: { model: MODEL, tools: attached.map(stub) },
+			streamFn: () => {
+				const source = createAssistantMessageEventStream();
+				const message = turns.shift() as AssistantMessage;
+				source.push({ type: "done", reason: message.stopReason === "toolUse" ? "toolUse" : "stop", message });
+				return source;
+			},
+		});
+		await agent.prompt("go");
+		return { received, messages: agent.state.messages };
+	};
+
+	it("runs as the gateway call that reaches it, in history too", async () => {
+		const { received, messages } = await run(["gateway"]);
+		const routed = { op: "call", capability: "grep", args: { pattern: "x" } };
+		deepStrictEqual(received, [routed]);
+		const first = messages.find((message) => message.role === "assistant") as AssistantMessage;
+		const call = first.content[0] as import("@earendil-works/pi-ai").ToolCall;
+		strictEqual(call.name, "gateway");
+		deepStrictEqual(call.arguments, routed);
+	});
+
+	it("ends with an error message when the source stream throws", async () => {
+		const source = createAssistantMessageEventStream();
+		source[Symbol.asyncIterator] = () => ({ next: () => Promise.reject(new Error("source failed")) });
+		const routed = routeUnattachedToolCalls(
+			source,
+			[{ name: "gateway", description: "", parameters: Type.Object({}) }],
+			MODEL,
+		);
+		const message = await routed.result();
+		strictEqual(message.stopReason, "error");
+		strictEqual(message.errorMessage, "source failed");
+	});
+
+	it("stays not found on a surface with no gateway", async () => {
+		const { received, messages } = await run(["read"]);
+		deepStrictEqual(received, []);
+		const result = messages.find((message) => message.role === "toolResult") as unknown as {
+			isError: boolean;
+			content: Array<{ text: string }>;
+		};
+		strictEqual(result.isError, true);
+		strictEqual(result.content[0]?.text, "Tool grep not found");
+	});
+});
+
+describe("engine lifecycle: a tool call whose arguments are not valid JSON", () => {
+	const refuse = async (attached: string[], raw: string) => {
+		const received: unknown[] = [];
+		const stub = (name: string): AgentTool<ReturnType<typeof Type.Object>, Record<string, never>> => ({
+			name,
+			label: name,
+			description: name,
+			parameters: Type.Object({}, { additionalProperties: true }),
+			async execute(_id, params) {
+				received.push(params);
+				return { content: [{ type: "text", text: "ok" }], details: {} };
+			},
+		});
+		// Pi's Anthropic stream hands the finished arguments text to parseToolCallArguments the same way.
+		const parsed = parseToolCallArguments(raw);
+		const turns = [assistant([{ type: "toolCall", id: "c1", name: "edit", ...parsed }], "toolUse"), finalTurn()];
+		const { agent } = createEngineAgent({
+			initialState: { model: MODEL, tools: attached.map(stub) },
+			streamFn: () => {
+				const source = createAssistantMessageEventStream();
+				const message = turns.shift() as AssistantMessage;
+				source.push({ type: "done", reason: message.stopReason === "toolUse" ? "toolUse" : "stop", message });
+				return source;
+			},
+		});
+		await agent.prompt("go");
+		const result = agent.state.messages.find((message) => message.role === "toolResult") as unknown as {
+			isError: boolean;
+			content: Array<{ text: string }>;
+		};
+		strictEqual(result.isError, true);
+		deepStrictEqual(received, [], "a refused call never runs");
+		return result.content[0]?.text ?? "";
+	};
+	const tabLed = '{"path":"a.ts","edits":[{"oldText":"\t\tconst a = "b";","newText":"\t\tconst a = 1;"}]}';
+
+	it("names the fault in the received text and how to resend, for tab-led oldText", async () => {
+		const text = await refuse(["edit"], tabLed);
+		ok(text.startsWith('Invalid arguments for tool "edit": the arguments are not valid JSON'), text);
+		ok(text.includes('const a = "<<<HERE>>>b";'), text);
+		ok(text.includes(`at character ${tabLed.indexOf('b";')} of the arguments`), text);
+		ok(text.includes('A string value ended at the " just before HERE.'), text);
+		ok(text.includes('write a double quote as \\"'), text);
+		ok(text.endsWith(`\n\nReceived arguments:\n${tabLed}`), "the model has no other copy of what it sent");
+	});
+
+	it("explains on a surface that also has a gateway, without routing the call", async () => {
+		const text = await refuse(["edit", "gateway"], tabLed);
+		ok(text.startsWith('Invalid arguments for tool "edit": the arguments are not valid JSON'), text);
+	});
+
+	it("names the missing colon on the shape Haiku sends for tab-led oldText", async () => {
+		const text = await refuse(["edit"], '{"path": "a.ts", "edits": [{"oldText">\t\tmode: "dev",\n\t\tretries: 2,}');
+		ok(text.includes('{"oldText"<<<HERE>>>>'), text);
+		ok(text.includes('needs a colon and then a quoted value, as in "name":"value"'), text);
+		ok(!text.includes("A string value ended"), text);
+	});
+
+	it("says a string never closed when the arguments end inside one", async () => {
+		const text = await refuse(["edit"], '{"path":"a.ts","edits":[{"oldText":"\tcut');
+		ok(text.includes("A string value never closed"), text);
+	});
+
+	it("keeps Pi's text as the fault when the JSON parsed but is not an object", async () => {
+		const text = await refuse(["edit"], '"{}"');
+		ok(text.includes("What failed: Tool arguments must be a JSON object."), text);
+		ok(!text.includes("<<<HERE>>>"), text);
+	});
+});
+
+describe("engine lifecycle: prepareNextTurn runs only before another assistant turn", () => {
+	it("prepares once between a tool batch and its continuation, never after the final turn", async () => {
+		const run = buildRun([toolTurn("call-1", { value: "one" }), finalTurn()]);
+		await run.agent.prompt("go");
+
+		deepStrictEqual(run.timeline, ["llm:1", "tool:one", "prepare", "llm:2"]);
+		deepStrictEqual(run.prepareTails, ["toolResult"], "the guard only ever sees a tool-result tail");
+		strictEqual(run.provider.calls.length, 2);
+		const types = eventTypes(run.events);
+		strictEqual(types.filter((type) => type === "turn_start").length, 2, "the opening turn and one continuation");
+		strictEqual(types.filter((type) => type === "turn_end").length, 2);
+		strictEqual(types[types.length - 1], "agent_end");
+		// The continuation's turn_start is emitted after preparation returns, so
+		// the first turn_end precedes the second turn_start and nothing from the
+		// second turn is observable while the guard runs.
+		const secondTurnStart = types.indexOf("turn_start", types.indexOf("turn_start") + 1);
+		const firstTurnEnd = types.indexOf("turn_end");
+		ok(firstTurnEnd < secondTurnStart, "turn_end of the tool turn precedes the continuation turn_start");
+	});
+
+	it("skips preparation entirely after a terminating tool batch", async () => {
+		const run = buildRun([toolTurn("call-1", { value: "artifact", terminate: true })]);
+		await run.agent.prompt("write it");
+
+		deepStrictEqual(run.timeline, ["llm:1", "tool:artifact"]);
+		deepStrictEqual(run.prepareTails, [], "no continuation is coming, so the guard never runs");
+		strictEqual(run.provider.calls.length, 1, "no follow-up provider call after a terminating batch");
+		const types = eventTypes(run.events);
+		strictEqual(types[types.length - 1], "agent_end", "the run still closes through agent_end");
+		const end = run.events.find((event) => event.type === "tool_execution_end");
+		ok(end && end.type === "tool_execution_end");
+		strictEqual(
+			(end.result as { terminate?: boolean }).terminate,
+			true,
+			"terminate reaches the event PanCode persists from",
+		);
+		strictEqual(roleOf(run.agent.state.messages[run.agent.state.messages.length - 1]), "toolResult");
+		strictEqual(run.agent.state.isStreaming, false);
+	});
+
+	it("delivers a steer queued during preparation before the next assistant call", async () => {
+		const run = buildRun([toolTurn("call-1", { value: "one" }), finalTurn()], {
+			prepare: async (fixture) => {
+				fixture.agent.steer(user("steer while compacting"));
+				await new Promise((resolve) => setTimeout(resolve, 5));
+			},
+		});
+		await run.agent.prompt("go");
+
+		deepStrictEqual(run.timeline, ["llm:1", "tool:one", "prepare", "llm:2"]);
+		const second = run.provider.calls[1];
+		ok(second);
+		deepStrictEqual(userTexts(second.messages), ["go", "steer while compacting"]);
+		deepStrictEqual(
+			second.messages.slice(-2).map(roleOf),
+			["toolResult", "user"],
+			"the steer lands after the tool result and before the continuation",
+		);
+		// The steer's message_end (PanCode's queue-to-transcript moment) fires before
+		// the second provider call starts.
+		const steerEnd = run.events.findIndex(
+			(event) =>
+				event.type === "message_end" &&
+				roleOf(event.message) === "user" &&
+				userText(event.message) === "steer while compacting",
+		);
+		const assistantStarts = run.events
+			.map((event, index) => (event.type === "message_start" && roleOf(event.message) === "assistant" ? index : -1))
+			.filter((index) => index >= 0);
+		ok(steerEnd >= 0 && assistantStarts[1] !== undefined && steerEnd < assistantStarts[1]);
+	});
+
+	it("prepares once before a follow-up turn that continues a terminated batch", async () => {
+		const run = buildRun([toolTurn("call-1", { value: "artifact", terminate: true }), finalTurn("answered follow-up")], {
+			onExecute: (fixture) => fixture.agent.followUp(user("and then?")),
+		});
+		await run.agent.prompt("write it");
+
+		deepStrictEqual(run.timeline, ["llm:1", "tool:artifact", "prepare", "llm:2"]);
+		deepStrictEqual(run.prepareTails, ["toolResult"], "the guard sees the terminated batch as the tail it must protect");
+		const second = run.provider.calls[1];
+		ok(second);
+		deepStrictEqual(userTexts(second.messages), ["write it", "and then?"]);
+		strictEqual(eventTypes(run.events).filter((type) => type === "agent_end").length, 1, "one run, one agent_end");
+	});
+
+	it("closes a run through agent_end when preparation throws", async () => {
+		const run = buildRun([toolTurn("call-1", { value: "one" }), finalTurn()], {
+			prepare: () => {
+				throw new Error("[PanCode] post-tool context guard stopped continuation before provider call");
+			},
+		});
+		await run.agent.prompt("go");
+
+		deepStrictEqual(run.timeline, ["llm:1", "tool:one", "prepare"], "no provider call follows a failed guard");
+		const types = eventTypes(run.events);
+		deepStrictEqual(types.slice(-4), ["message_start", "message_end", "turn_end", "agent_end"]);
+		const failure = run.agent.state.messages[run.agent.state.messages.length - 1] as AssistantMessage;
+		strictEqual(failure.role, "assistant");
+		strictEqual(failure.stopReason, "error");
+		ok(failure.errorMessage?.includes("post-tool context guard"));
+		strictEqual(run.agent.state.isStreaming, false);
+	});
+});
+
+describe("engine lifecycle: transcript resets wait for the run to settle", () => {
+	it("keeps saved images but replaces them with a note after switching to a text-only model", async () => {
+		const provider = scriptedProvider([finalTurn("seen"), finalTurn("continued")], []);
+		const image = { type: "image" as const, mimeType: "image/png", data: "SENTINEL_IMAGE_BYTES" };
+		const { agent } = createEngineAgent({
+			streamFn: provider.streamFn,
+			initialState: { model: { ...MODEL, input: ["text", "image"] }, messages: [] },
+		});
+		await agent.prompt("Inspect this image", [image]);
+		ok(JSON.stringify(provider.calls[0]).includes(image.data));
+		const savedImageTurn = agent.state.messages.find((message) => message.role === "user");
+		ok(savedImageTurn);
+
+		agent.state.model = { ...agent.state.model, id: "text-only", input: ["text"] };
+		await agent.prompt("Continue without the image");
+		const textOnlyRequest = JSON.stringify(provider.calls[1]);
+		ok(!textOnlyRequest.includes(image.data));
+		ok(textOnlyRequest.includes("Image omitted"));
+		ok(
+			JSON.stringify(savedImageTurn).includes(image.data),
+			"the session retains the original image for a later vision model",
+		);
+
+		const toolReplay = await agent.convertToLlm([
+			{
+				role: "toolResult",
+				toolCallId: "image-tool",
+				toolName: "read",
+				content: [image],
+				isError: false,
+				timestamp: Date.now(),
+			},
+		]);
+		ok(!JSON.stringify(toolReplay).includes(image.data));
+		ok(JSON.stringify(toolReplay).includes("Image omitted"));
+	});
+
+	it("retains interruption evidence without replaying partial reasoning or tool calls", async () => {
+		const interrupted = assistant(
+			[
+				{ type: "text", text: "First paragraph of the unfinished explanation." },
+				{ type: "thinking", thinking: "private partial reasoning" },
+				{ type: "toolCall", id: "incomplete", name: "echo", arguments: {} },
+			],
+			"aborted",
+		);
+		const provider = scriptedProvider([finalTurn()], []);
+		const { agent } = createEngineAgent({
+			streamFn: provider.streamFn,
+			initialState: { model: MODEL, messages: [user("Explain this"), interrupted] },
+		});
+		await agent.prompt("Did your explanation finish?");
+		const projected = provider.calls[0]?.messages ?? [];
+		const notice = userTexts(projected).find((text) => text.includes("response lifecycle"));
+		ok(notice?.includes("interrupted before completion"));
+		ok(notice?.includes("First paragraph"));
+		ok(!JSON.stringify(projected).includes("private partial reasoning"));
+		ok(!JSON.stringify(projected).includes('"id":"incomplete"'));
+		strictEqual(interrupted.stopReason, "aborted");
+		ok(agent.state.messages.includes(interrupted));
+		const replay = await agent.convertToLlm(agent.state.messages);
+		strictEqual(userTexts(replay).filter((text) => text.includes("response lifecycle")).length, 1);
+	});
+
+	it("refuses Agent.reset() while a run is active and accepts it once idle", async () => {
+		const timeline: string[] = [];
+		const provider = scriptedProvider([finalTurn()], timeline);
+		const handle = createEngineAgent({
+			streamFn: (async (model: Model<"openai-completions">, context: Context, options?: SimpleStreamOptions) => {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				return provider.streamFn(model, context, options);
+			}) as unknown as StreamFn,
+			initialState: { systemPrompt: "system", model: MODEL, thinkingLevel: "off", tools: [], messages: [] },
+		});
+		const run = handle.agent.prompt("go");
+		throws(() => handle.agent.reset(), /already processing/, "0.84.1+: reset is rejected mid-run");
+		strictEqual(handle.agent.state.isStreaming, true, "the rejected reset left the run untouched");
+
+		// PanCode's resetForSession callers cancel and await settlement first
+		// (session-switch-settlement.ts). After that the same reset is accepted.
+		handle.agent.abort();
+		await handle.agent.waitForIdle();
+		await run;
+		handle.agent.reset();
+		deepStrictEqual(handle.agent.state.messages, [{ role: "system", content: "system", timestamp: 0 }]);
+		strictEqual(handle.agent.state.isStreaming, false);
+	});
+});
+
+describe("engine tool boundary: inherited argument normalization", () => {
+	const artifactLike = {
+		name: "artifact",
+		description: "artifact",
+		parameters: Type.Object({
+			kind: StringEnum(["plan", "review"] as const),
+			content: Type.String(),
+			title: Type.Optional(Type.String()),
+		}),
+	};
+
+	it("treats null for an optional non-nullable argument as omitted (pi-ai 0.84.2)", () => {
+		const validated = validateEngineToolArguments(artifactLike, {
+			type: "toolCall",
+			id: "call-1",
+			name: "artifact",
+			arguments: { kind: "plan", content: "body", title: null },
+		}) as Record<string, unknown>;
+		deepStrictEqual(validated, { kind: "plan", content: "body" });
+		ok(!("title" in validated), "the null optional is dropped rather than rejected");
+	});
+
+	it("keeps rejecting null where the schema requires a value", () => {
+		// Only optional properties are normalized; a required enum still fails
+		// validation exactly as it did on 0.84.0.
+		throws(
+			() =>
+				validateEngineToolArguments(artifactLike, {
+					type: "toolCall",
+					id: "call-2",
+					name: "artifact",
+					arguments: { kind: null, content: "body" },
+				}),
+			/Validation failed/,
+		);
+	});
+});
+
+describe("engine TUI: keybinding table and alternate-screen render seams", () => {
+	it("carries pi-tui 0.84.4 alt-screen actions without colliding with PanCode app defaults", () => {
+		const added = [
+			"tui.altScreen.halfPageUp",
+			"tui.altScreen.halfPageDown",
+			"tui.altScreen.lineUp",
+			"tui.altScreen.lineDown",
+			"tui.altScreen.search",
+			"tui.altScreen.searchNext",
+			"tui.altScreen.searchPrevious",
+			"tui.altScreen.searchClose",
+		] as const;
+		for (const id of added) ok(id in PANCODE_KEYBINDINGS, `${id} is routable through PanCode's table`);
+
+		const keysOf = (definition: { defaultKeys: string | readonly string[] }): string[] =>
+			typeof definition.defaultKeys === "string" ? [definition.defaultKeys] : [...definition.defaultKeys];
+		// searchNext/searchPrevious/searchClose only fire while the transcript
+		// search overlay is focused (tui-alt-screen.ts handleViewportInput), so
+		// they are scoped; every other alt-screen chord is consumed by pi-tui's
+		// viewport listener before PanCode's router sees the key.
+		const scoped = new Set(["tui.altScreen.searchNext", "tui.altScreen.searchPrevious", "tui.altScreen.searchClose"]);
+		const upstreamAltScreenKeys = new Set(
+			Object.entries(TUI_KEYBINDINGS)
+				.filter(([id]) => id.startsWith("tui.altScreen.") && !scoped.has(id))
+				.flatMap(([, definition]) => keysOf(definition)),
+		);
+		// 0.84.2 added ctrl+up / ctrl+down prompt jumps and ctrl+shift+f search;
+		// PanCode's own bindings (alt+up dequeue, ctrl+g leader, ctrl+p/ctrl+n
+		// history) must stay disjoint from every unscoped alt-screen chord.
+		ok(upstreamAltScreenKeys.has("ctrl+up") && upstreamAltScreenKeys.has("ctrl+shift+f"));
+		for (const [id, definition] of Object.entries(PANCODE_APP_KEYBINDINGS)) {
+			for (const key of keysOf(definition)) {
+				ok(!upstreamAltScreenKeys.has(key), `${id} default ${key} collides with an upstream alt-screen default`);
+			}
+		}
+		for (const key of ["ctrl+p", "ctrl+n"]) ok(!upstreamAltScreenKeys.has(key), `history key ${key} stays free`);
+		// Known scoped overlap, recorded deliberately: while the search overlay is
+		// focused, ctrl+g advances the match and the leader chord is unavailable.
+		ok(keysOf(TUI_KEYBINDINGS["tui.altScreen.searchNext"]).includes("ctrl+g"));
+		strictEqual(PANCODE_APP_KEYBINDINGS["pancode.leader"].defaultKeys, "ctrl+g");
+		deepStrictEqual(PANCODE_APP_KEYBINDINGS["pancode.autonomy.toggle"].defaultKeys, []);
+		strictEqual(PANCODE_APP_KEYBINDINGS["pancode.autonomy.toggle"].leader, "y");
+		strictEqual(PANCODE_KEYBINDINGS["tui.editor.historyPrevious"].defaultKeys, "ctrl+p");
+		strictEqual(PANCODE_KEYBINDINGS["tui.editor.historyNext"].defaultKeys, "ctrl+n");
+	});
+
+	it("still measures overlay, normalization, and cursor phases inside one fullscreen frame", () => {
+		class FakeTerminal implements Terminal {
+			readonly writes: string[] = [];
+			columns = 60;
+			rows = 12;
+			kittyProtocolActive = false;
+			start(): void {}
+			stop(): void {}
+			async drainInput(): Promise<void> {}
+			write(data: string): void {
+				this.writes.push(data);
+			}
+			moveBy(): void {}
+			hideCursor(): void {}
+			showCursor(): void {}
+			clearLine(): void {}
+			clearFromCursor(): void {}
+			clearScreen(): void {}
+			setTitle(): void {}
+			setProgress(): void {}
+			setProgramStatus(): void {}
+		}
+		const frames: Array<{ mode: string; phases: TuiRenderPhase[] }> = [];
+		const observer: TuiRenderObserver = {
+			beginFrame(fields) {
+				const frame = { mode: fields.mode, phases: [] as TuiRenderPhase[] };
+				frames.push(frame);
+				return frame;
+			},
+			endFrame() {},
+			beginPhase(frame, phase) {
+				(frame as { phases: TuiRenderPhase[] }).phases.push(phase);
+				return phase;
+			},
+			endPhase() {},
+		};
+		const terminal = new FakeTerminal();
+		const tui = new InstrumentedTuiAltScreen(terminal, observer);
+		tui.addChild(new Text("hello fullscreen", 0, 0));
+		tui.start();
+		try {
+			tui.renderNow(true);
+		} finally {
+			tui.stop();
+		}
+		strictEqual(frames.length, 1, "one doRender is one frame");
+		strictEqual(frames[0]?.mode, "fullscreen");
+		// 0.84.2 paints full-width rows as direct line references; the three
+		// protected seams PanCode measures must still run inside that frame.
+		deepStrictEqual(frames[0]?.phases, ["overlay", "cursor", "normalization"]);
+		ok(
+			terminal.writes.some((chunk) => chunk.includes("hello fullscreen")),
+			"the frame reached the terminal",
+		);
+	});
+});
+
+describe("lone ESC timeout", () => {
+	it("waits 50 ms locally, keeps pi-tui's SSH default, and yields to an explicit setting", () => {
+		const local: NodeJS.ProcessEnv = {};
+		applyEscapeTimeoutDefault(local);
+		strictEqual(local.PI_TUI_ESC_TIMEOUT, "50");
+		const ssh: NodeJS.ProcessEnv = { SSH_TTY: "/dev/pts/1" };
+		applyEscapeTimeoutDefault(ssh);
+		strictEqual(ssh.PI_TUI_ESC_TIMEOUT, undefined);
+		const set: NodeJS.ProcessEnv = { PI_TUI_ESC_TIMEOUT: "25" };
+		applyEscapeTimeoutDefault(set);
+		strictEqual(set.PI_TUI_ESC_TIMEOUT, "25");
+	});
+});

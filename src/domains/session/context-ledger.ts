@@ -1,0 +1,451 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Holistic context-window accounting.
+ *
+ * `context-accounting.ts` answers "how full is the window" with a coarse four
+ * way split that the footer bar consumes. This module answers the richer
+ * question the `/context` overlay asks: where does every occupied token live?
+ * It folds the compiled prompt segment manifest, the active tool schemas, the
+ * conversation, and the autocompact reserve into a single categorized ledger
+ * whose content groups always sum to one authoritative `usedTokens` figure.
+ *
+ * The total respects two floors so the breakdown never lies to the user:
+ *  - the decomposed estimate (sum of every category we can name), and
+ *  - the live anchored total (provider-measured usage when one exists).
+ * When the measured total exceeds the decomposition, the delta is attributed
+ * to Messages as an unclassified conversation/framing residual. Tool-result
+ * estimates are tracked separately; provider totals do not measure category splits.
+ */
+
+import type { BackendCacheVerdict, BackendCompletionTimings } from "../../core/cache-telemetry.js";
+import type { ContextWindowSlots, ContextWindowSource } from "../providers/index.js";
+import { DEFAULT_COMPACTION_THRESHOLD } from "./compaction/auto.js";
+
+/** Distinct buckets a context window is divided into for display. */
+export type ContextLedgerCategory =
+	| "system"
+	| "tools"
+	| "toolResults"
+	| "agents"
+	| "skills"
+	| "memory"
+	| "project"
+	| "messages"
+	| "pending"
+	| "reserve"
+	| "free"
+	| "streaming";
+
+/** A compiled-prompt segment with its estimated token cost. */
+export interface ContextLedgerSegment {
+	id: string;
+	tokenEstimate: number;
+}
+
+export interface BuildContextLedgerInput {
+	provider: string | null;
+	model: string | null;
+	/** Reported model context window in tokens; 0 or null when unknown. */
+	contextWindow: number | null;
+	/** Which layer answered `contextWindow`; omitted before a runtime resolves. */
+	contextWindowSource?: ContextWindowSource | null;
+	/** The server-side split the probed window is a share of, when there is one. */
+	contextWindowSlots?: ContextWindowSlots | null;
+	/**
+	 * Per-segment token estimates from the prompt compiler's segment manifest.
+	 * When empty, `systemPromptTokens` is used as a single opaque system bucket.
+	 */
+	promptSegments?: ReadonlyArray<ContextLedgerSegment>;
+	/** Fallback opaque system-prompt estimate when no segment manifest exists. */
+	systemPromptTokens?: number;
+	/** Serialized active tool-schema token estimate (the JSON the provider sees). */
+	toolSchemaTokens?: number;
+	/** Conversation tool-result content, separate from schemas. */
+	toolResultTokens?: number;
+	/** Number of active tool schemas this turn. */
+	toolCount?: number;
+	/** Conversation message token estimate. */
+	messageTokens?: number;
+	/** Tokens for text the user has typed but not yet submitted. */
+	pendingTokens?: number;
+	/** In-flight streaming output tokens. */
+	streamingTokens?: number;
+	agentsTokens?: number;
+	skillsTokens?: number;
+	memoryTokens?: number;
+	projectTokens?: number;
+	/**
+	 * Authoritative live total, already anchored to the latest provider usage
+	 * when one is available. Acts as the measured floor for `usedTokens`.
+	 */
+	liveTotalTokens?: number | null;
+	/** True when `liveTotalTokens` is anchored to real provider-reported usage. */
+	measured?: boolean;
+	/** Compaction trigger ratio (0..1); null when compaction is unconfigured. */
+	compactionThreshold?: number | null;
+	compactionCeilingTokens?: number | null;
+	/** Whether automatic compaction is enabled. */
+	compactionAuto?: boolean;
+	/**
+	 * Project-context preload class label from the compiled session prompt,
+	 * e.g. "full (5.2kB, 130 lines)" or "synopsis (reason: size)". Null before
+	 * a prompt has compiled.
+	 */
+	projectPreload?: string | null;
+	/**
+	 * Absolute paths of the effective project handbooks the compiled prompt
+	 * selected, ancestor to nearest. Null before a prompt has compiled; empty
+	 * when the workspace has no parseable handbook.
+	 */
+	projectHandbookFiles?: ReadonlyArray<string> | null;
+	/** The prior-session line the session's compiled prompt carries; null when it carries none. */
+	priorSessionFact?: string | null;
+	lastCompaction?: {
+		stage: string;
+		tokensBefore: number;
+		tokensAfter: number;
+		trigger: string;
+	} | null;
+	/** Prompt-cache honesty line; null until a turn has compiled and settled. */
+	promptCache?: PromptCacheStats | null;
+	/** Last pre-warm since the previous settled run; null when none has run. */
+	prewarm?: PrewarmStats | null;
+}
+
+/**
+ * One pre-warm's result. It is deliberately not a token category: the pre-warm
+ * spends no window space and adds no message, it only says the backend has
+ * already prefilled the prefix the next turn will send.
+ */
+export interface PrewarmStats {
+	/** Prompt tokens the backend processed; null when it reported no counts. */
+	tokens: number | null;
+	/** Wall clock the round took. */
+	ms: number;
+	/** True when the operator submitted before the round settled. */
+	aborted: boolean;
+}
+
+/**
+ * Shell reuse and provider cache reuse are different facts and the overlay
+ * shows both: `shellReused` only means PanCode's session-shell hash matched the
+ * previous turn; `cacheReadTokens` is what the provider actually reused.
+ * A reused shell with zero cache reads is the dishonest case this surfaces.
+ */
+export interface PromptCacheStats {
+	/** Compiled session-shell hash matched the previous turn. */
+	shellReused: boolean;
+	/** Provider-reported cache-read tokens for the last run; null when the provider reports no cache usage. */
+	cacheReadTokens: number | null;
+	/** Provider-reported cache-write tokens for the last run. */
+	cacheWriteTokens: number | null;
+	/**
+	 * Provider-reported input tokens for the last run. Beside a reported cache read they are the uncached input; a
+	 * provider that omits its cache reads reports its whole prompt here.
+	 */
+	uncachedInputTokens: number | null;
+	/** Serving-backend timings for the run's last API call; null when none were captured. */
+	backend: BackendCompletionTimings | null;
+	/**
+	 * The prompt tokens the serving backend evaluated for the run's last call (llama.cpp's prompt_n), from its own
+	 * timings; null unless those timings also report its cache reads (cache_n).
+	 */
+	uncachedPrefillTokens: number | null;
+	/**
+	 * Cache verdict of the run's first API call, classified by
+	 * `backendCacheVerdict` from normalized provider usage and captured serving
+	 * backend timings when available. Null before any settled run. "Shell reused
+	 * but backend cold" is the dishonest combination the overlay warns about.
+	 */
+	backendVerdict: BackendCacheVerdict | null;
+	/** Cache disturbances PanCode expected before the last settled run. */
+	expectedColdReasons?: ReadonlyArray<string>;
+}
+
+export interface ContextLedgerGroup {
+	category: ContextLedgerCategory;
+	label: string;
+	tokens: number;
+	/** Share of the context window (0..100); null when the window is unknown. */
+	percent: number | null;
+}
+
+export interface ContextLedger {
+	provider: string | null;
+	model: string | null;
+	/** Context window in tokens; 0 when unknown. */
+	contextWindow: number;
+	/**
+	 * Which layer answered `contextWindow`. Null when the ledger was built
+	 * without a resolved runtime. The overlay states it: a window read off a
+	 * loaded instance and one assumed from a catalog are different claims, and
+	 * the difference decides whether autocompact fires in time.
+	 */
+	contextWindowSource: ContextWindowSource | null;
+	/**
+	 * Present when `contextWindow` is one slot's share of the server's KV
+	 * budget, so the overlay can show `196,608 (786,432 / 4 slots)` instead of
+	 * a number that looks like the whole server.
+	 */
+	contextWindowSlots: ContextWindowSlots | null;
+	/** Sum of every content category (system..pending). */
+	usedTokens: number;
+	/** Autocompact headroom the threshold holds above the trigger; a total past the trigger overlaps it. */
+	reserveTokens: number;
+	/** Window left after used + reserve; 0 when the window is unknown. */
+	freeTokens: number;
+	/** Tokens the total holds past the autocompact trigger; 0 under it or with no threshold. */
+	overTriggerTokens: number;
+	/** used/window as a percentage; null when the window is unknown. */
+	percent: number | null;
+	/** True when `usedTokens` is anchored to provider-measured usage. */
+	measured: boolean;
+	compactionThreshold: number | null;
+	compactionCeilingTokens?: number | null;
+	compactionAuto: boolean;
+	/** Preload class label for the project category detail line; null when unknown. */
+	projectPreload: string | null;
+	/**
+	 * Which handbook files won for this session, ancestor to nearest (an
+	 * override resets the inherited chain). Null before a prompt has compiled.
+	 */
+	projectHandbookFiles: ReadonlyArray<string> | null;
+	/** Quoted from the compiled prompt, so the operator reads what the model was sent. */
+	priorSessionFact?: string | null;
+	toolCount: number;
+	/** Non-empty content categories in display order (excludes reserve/free). */
+	groups: ReadonlyArray<ContextLedgerGroup>;
+	/** Every category including reserve and free, for the proportional meter. */
+	meter: ReadonlyArray<ContextLedgerGroup>;
+	lastCompaction?: {
+		stage: string;
+		tokensBefore: number;
+		tokensAfter: number;
+		trigger: string;
+	} | null;
+	promptCache: PromptCacheStats | null;
+	/** Last pre-warm since the previous settled run; null when none has run. */
+	prewarm: PrewarmStats | null;
+}
+
+/** Maps a prompt segment id to the ledger bucket it belongs to. */
+const SEGMENT_CATEGORY: Readonly<Record<string, ContextLedgerCategory>> = {
+	identity: "system",
+	"operating-contract": "system",
+	delegation: "agents",
+	skills: "skills",
+	safety: "system",
+	runtime: "system",
+	"tool-contract": "system",
+	"retrieval-hints": "system",
+	"tool-catalog": "tools",
+	"tools-and-agents": "agents",
+	"agent-fleet-deltas": "agents",
+	"skills-catalog": "skills",
+	memory: "memory",
+	"project-context": "project",
+	"context.project-rules": "project",
+	"context.operator-profile": "memory",
+	"context.pancode-repo-awareness": "system",
+	"history-summary": "messages",
+};
+
+/** Human labels for each bucket, shown verbatim in the overlay legend. */
+export const CONTEXT_CATEGORY_LABEL: Readonly<Record<ContextLedgerCategory, string>> = {
+	system: "System prompt",
+	tools: "Tool definitions",
+	toolResults: "Tool results",
+	agents: "Agent fleet",
+	skills: "Skills",
+	memory: "Memory",
+	project: "Project context",
+	messages: "Messages",
+	pending: "Pending input",
+	reserve: "Autocompact reserve",
+	free: "Free space",
+	streaming: "Assistant output",
+};
+
+/** Display order for the content categories and the meter. */
+const CONTENT_ORDER: ReadonlyArray<ContextLedgerCategory> = [
+	"system",
+	"tools",
+	"agents",
+	"skills",
+	"memory",
+	"project",
+	"messages",
+	"toolResults",
+	"pending",
+	"streaming",
+];
+
+/** The prompt prefix: every content category but the conversation, the pending ask and a response in flight. */
+const PREFIX_CATEGORIES: ReadonlyArray<ContextLedgerCategory> = [
+	"system",
+	"tools",
+	"agents",
+	"skills",
+	"memory",
+	"project",
+];
+
+/**
+ * Single source of truth for the segment-id → bucket mapping. The snapshot
+ * ledger in `context-accounting.ts` reuses this so the overlay and the
+ * persisted JSONL accounting can never disagree about where a segment lives.
+ */
+export function categoryForSegment(id: string): ContextLedgerCategory {
+	return SEGMENT_CATEGORY[id] ?? "system";
+}
+
+function finiteNonNegative(value: number | null | undefined): number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function percentOf(tokens: number, window: number): number | null {
+	if (window <= 0) return null;
+	return Math.min(100, (tokens / window) * 100);
+}
+
+/**
+ * Fold all context sources into a categorized ledger. Pure and synchronous so
+ * it can be unit-tested and called on every overlay open without side effects.
+ */
+export function buildContextLedger(input: BuildContextLedgerInput): ContextLedger {
+	const window = finiteNonNegative(input.contextWindow);
+
+	const raw: Record<ContextLedgerCategory, number> = {
+		system: 0,
+		tools: 0,
+		toolResults: 0,
+		agents: 0,
+		skills: 0,
+		memory: 0,
+		project: 0,
+		messages: 0,
+		pending: 0,
+		reserve: 0,
+		free: 0,
+		streaming: 0,
+	};
+
+	const segments = input.promptSegments ?? [];
+	if (segments.length > 0) {
+		for (const segment of segments) {
+			raw[categoryForSegment(segment.id)] += finiteNonNegative(segment.tokenEstimate);
+		}
+	} else {
+		raw.system += finiteNonNegative(input.systemPromptTokens);
+	}
+	raw.tools += finiteNonNegative(input.toolSchemaTokens);
+	raw.messages += finiteNonNegative(input.messageTokens);
+	raw.toolResults += finiteNonNegative(input.toolResultTokens);
+	raw.pending += finiteNonNegative(input.pendingTokens);
+	raw.streaming += finiteNonNegative(input.streamingTokens);
+	raw.agents += finiteNonNegative(input.agentsTokens);
+	raw.skills += finiteNonNegative(input.skillsTokens);
+	raw.memory += finiteNonNegative(input.memoryTokens);
+	raw.project += finiteNonNegative(input.projectTokens);
+
+	const decomposed = CONTENT_ORDER.reduce((sum, category) => sum + raw[category], 0);
+	const liveTotal = finiteNonNegative(input.liveTotalTokens);
+
+	// Reconcile against the live total, the figure the footer and admission
+	// read: the conversation, the one category that moves each turn, takes any
+	// excess the total counts beyond the decomposition and gives back any it
+	// counts short (a compaction's projected total), as `reconcileSnapshot`
+	// splits a measured total. Only a shortfall the conversation cannot cover
+	// scales the prompt prefix; the pending ask and a response in flight keep
+	// their own figures.
+	if (liveTotal > decomposed) {
+		raw.messages += liveTotal - decomposed;
+	} else if (liveTotal > 0 && decomposed > liveTotal) {
+		const conversation = raw.messages + raw.toolResults;
+		const kept = conversation - Math.min(decomposed - liveTotal, conversation);
+		raw.toolResults = conversation > 0 ? Math.floor((raw.toolResults * kept) / conversation) : 0;
+		raw.messages = kept - raw.toolResults;
+		const prefix = PREFIX_CATEGORIES.reduce((sum, category) => sum + raw[category], 0);
+		const prefixRoom = Math.max(0, liveTotal - raw.pending - raw.streaming);
+		if (prefix > prefixRoom) {
+			for (const category of PREFIX_CATEGORIES) raw[category] = Math.floor((raw[category] * prefixRoom) / prefix);
+		}
+	}
+	const usedTokens = Math.max(
+		CONTENT_ORDER.reduce((sum, category) => sum + raw[category], 0),
+		liveTotal,
+	);
+
+	const effectiveThreshold =
+		typeof input.compactionThreshold === "number" && input.compactionThreshold > 0 && input.compactionThreshold < 1
+			? input.compactionThreshold
+			: input.compactionAuto
+				? DEFAULT_COMPACTION_THRESHOLD
+				: null;
+
+	let reserveTokens = 0;
+	let freeTokens = 0;
+	if (window > 0) {
+		// The reserve is the one the threshold holds, never what is left of the window: a total past the trigger
+		// reads as an overrun (`overTriggerTokens`), not as a reserve that shrank.
+		reserveTokens = effectiveThreshold !== null ? Math.round(window * (1 - effectiveThreshold)) : 0;
+		freeTokens = Math.max(0, window - usedTokens - reserveTokens);
+	}
+
+	const groups: ContextLedgerGroup[] = [];
+	for (const category of CONTENT_ORDER) {
+		const tokens = raw[category];
+		if (tokens <= 0) continue;
+		groups.push({
+			category,
+			label: CONTEXT_CATEGORY_LABEL[category],
+			tokens,
+			percent: percentOf(tokens, window),
+		});
+	}
+
+	const meter: ContextLedgerGroup[] = [...groups];
+	if (window > 0) {
+		meter.push({
+			category: "free",
+			label: CONTEXT_CATEGORY_LABEL.free,
+			tokens: freeTokens,
+			percent: percentOf(freeTokens, window),
+		});
+	}
+	if (reserveTokens > 0) {
+		meter.push({
+			category: "reserve",
+			label: CONTEXT_CATEGORY_LABEL.reserve,
+			tokens: reserveTokens,
+			percent: percentOf(reserveTokens, window),
+		});
+	}
+
+	return {
+		provider: input.provider ?? null,
+		model: input.model ?? null,
+		contextWindow: window,
+		contextWindowSource: input.contextWindowSource ?? null,
+		contextWindowSlots: input.contextWindowSlots ?? null,
+		usedTokens,
+		reserveTokens,
+		freeTokens,
+		overTriggerTokens: reserveTokens > 0 ? Math.max(0, usedTokens - (window - reserveTokens)) : 0,
+		percent: percentOf(usedTokens, window),
+		measured: input.measured === true && liveTotal > 0,
+		compactionThreshold: effectiveThreshold,
+		compactionCeilingTokens: input.compactionCeilingTokens ?? null,
+		compactionAuto: input.compactionAuto === true,
+		projectPreload: input.projectPreload ?? null,
+		projectHandbookFiles: input.projectHandbookFiles ?? null,
+		priorSessionFact: input.priorSessionFact ?? null,
+		toolCount: Math.max(0, Math.floor(input.toolCount ?? 0)),
+		groups,
+		meter,
+		lastCompaction: input.lastCompaction ?? null,
+		promptCache: input.promptCache ?? null,
+		prewarm: input.prewarm ?? null,
+	};
+}

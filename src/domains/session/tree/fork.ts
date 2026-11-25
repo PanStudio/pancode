@@ -1,0 +1,343 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { pancodeStateDir } from "../../../core/xdg.js";
+import {
+	readSessionFileEntries,
+	readSessionMeta,
+	type SessionTreeNode,
+	sessionPaths,
+} from "../../../engine/session.js";
+import { inheritPinnedContext } from "../../extensions/session-state.js";
+import { seedForkCallJournal } from "../../telemetry/call-journal.js";
+import { collectSessionEntries } from "../compaction/session-entries.js";
+import { HANDOFF_RECOVERY_REQUEST_CUSTOM_TYPE } from "../continuity/operator-request.js";
+import type { SessionMeta } from "../contract.js";
+import {
+	type CompactionSummaryEntry,
+	HOST_INSERT_CUSTOM_TYPE,
+	isSessionHeader,
+	type SessionEntry,
+	type SessionInfoEntry,
+	STEP_CHAIN_CUSTOM_TYPE,
+} from "../entries.js";
+import { enrichForkMeta } from "../history.js";
+import { newTurnId, type SessionManagerState, startSession } from "../manager.js";
+import { entryBelongsToPath } from "./active-path.js";
+
+/**
+ * Single-point fork-from-parent-turn orchestration. Closes the caller's
+ * prior state writer, starts a fresh session inheriting cwd/model/target
+ * from the parent meta, then stamps parent pointers atomically via
+ * enrichForkMeta. Returns the new SessionManagerState so the caller can
+ * install it as current.
+ *
+ * Used by SessionContract.fork (current session) and the /fork message
+ * picker overlay. Kept out of extension.ts so the bundle wiring stays thin.
+ */
+export interface ForkInput {
+	/** The state we are forking from. Must carry a live writer. */
+	from: SessionManagerState;
+	/** Id of the parent turn (pinned via /fork message-picker). */
+	parentTurnId: string;
+	/** Optional cwd override; defaults to the parent session's cwd. */
+	cwd?: string;
+	/**
+	 * Runs once the child is created, seeded and stamped, immediately before the
+	 * parent's writer closes. That is the last moment the parent's ledger still
+	 * takes appends, so a caller holding rows pending for the parent has to write
+	 * them here; the System One recorder's flush on park is that caller. It never
+	 * runs for a fork that failed, and it must not throw because the child exists
+	 * by then. The child's entries were read before it runs, so what it appends
+	 * stays in the parent.
+	 */
+	beforeClose?: () => void;
+}
+
+export interface ForkResult {
+	next: SessionManagerState;
+	parentMeta: SessionMeta;
+	nodes: ReadonlyArray<SessionTreeNode>;
+}
+
+interface LinkedRecord {
+	id: string;
+	parentId: string | null;
+	timestamp: string;
+	treeKind: SessionTreeNode["kind"] | null;
+	raw: SessionEntry;
+}
+
+function linkedRecordFromEntry(entry: SessionEntry): LinkedRecord {
+	return {
+		id: entry.turnId,
+		parentId: entry.parentTurnId,
+		timestamp: entry.timestamp,
+		treeKind: entry.kind === "message" ? entry.role : null,
+		raw: entry,
+	};
+}
+
+function traceAncestry(records: ReadonlyArray<LinkedRecord>, leafTurnId: string): LinkedRecord[] {
+	const byId = new Map<string, LinkedRecord>();
+	for (const record of records) byId.set(record.id, record);
+	const path: LinkedRecord[] = [];
+	let current = byId.get(leafTurnId);
+	if (!current) throw new Error(`session.fork: parent turn not found: ${leafTurnId}`);
+	const seen = new Set<string>();
+	while (current) {
+		if (seen.has(current.id)) throw new Error(`session.fork: cycle in parent chain at ${current.id}`);
+		seen.add(current.id);
+		path.unshift(current);
+		if (current.parentId === null) break;
+		const next = byId.get(current.parentId);
+		if (!next) throw new Error(`session.fork: broken parent chain at ${current.id}`);
+		current = next;
+	}
+	return path;
+}
+
+function treeFromLinearPath(path: ReadonlyArray<LinkedRecord>): SessionTreeNode[] {
+	return path
+		.filter((record): record is LinkedRecord & { treeKind: SessionTreeNode["kind"] } => record.treeKind !== null)
+		.map((record) => ({
+			id: record.id,
+			parentId: record.parentId,
+			at: record.timestamp,
+			kind: record.treeKind,
+		}));
+}
+
+/**
+ * Fork-specific tightening of the shared `entryBelongsToPath` verdict. A fork
+ * is a snapshot frozen at `parentTurnId`: a compaction summary written after
+ * a later message summarizes history the fork does not hold even when its
+ * `firstKeptTurnId` names an ancestor turn, so it must not ride along just
+ * because that turn happens to be on the path. One written on top of the fork
+ * message itself, before the path moved past it, covers exactly the fork's
+ * history and rides along. Live `/tree`-switch replay does not need this extra
+ * gate (see the comment on the shared function for why), which is the one
+ * place fork and live replay still deliberately disagree.
+ *
+ * Continuity records need the same gate and for a stronger reason. They anchor
+ * to a turn on the path, so the shared verdict would carry a pause, a delivery,
+ * an acknowledgement or an operator recovery request written *after* the fork
+ * point into a branch that stands before it. That is not just stale display: a
+ * fork inheriting a later `resumed` record, or the control request behind it,
+ * would inherit the evidence for a state it never reached. §8 requires ancestry
+ * **and** file position for both new kinds; the reserved operator control
+ * subtype is named explicitly because §3.1 puts it under the same cutoff, and
+ * because it is the one `custom` record that is authority rather than display.
+ */
+function sessionEntryBelongsToPath(
+	entry: SessionEntry,
+	pathIds: ReadonlySet<string>,
+	atOrBeforeForkPoint: boolean,
+	carriedCompaction: (entry: CompactionSummaryEntry) => boolean,
+): boolean {
+	if (atOrBeforeForkPoint) return entryBelongsToPath(entry, pathIds, atOrBeforeForkPoint);
+	if (entry.kind === "compactionSummary") return carriedCompaction(entry);
+	if (entry.kind === "handoffTransaction" || entry.kind === "continuityCommit") return false;
+	if (entry.kind === "custom" && entry.customType === HANDOFF_RECOVERY_REQUEST_CUSTOM_TYPE) return false;
+	return entryBelongsToPath(entry, pathIds, atOrBeforeForkPoint);
+}
+
+/**
+ * Records that change only what the model is shown. They are not authority, so
+ * the boundary above leaves them alone; the projection cursor below places them.
+ */
+function isDisplayRecord(entry: SessionEntry): boolean {
+	return (
+		entry.kind === "contextEviction" ||
+		entry.kind === "contextRecall" ||
+		(entry.kind === "custom" &&
+			(entry.customType === HOST_INSERT_CUSTOM_TYPE || entry.customType === STEP_CHAIN_CUSTOM_TYPE))
+	);
+}
+
+/**
+ * The file index of the fork message's successor on the parent's path through
+ * it (SPEC §1.4): the current path when the fork message is on it, otherwise the
+ * newest branch below it. -1 when no row follows it there, which copies display
+ * records through the end of the file.
+ */
+function forkSuccessorIndex(
+	parsed: ReadonlyArray<SessionEntry>,
+	forkTurnId: string,
+	currentLeaf: string | undefined,
+): number {
+	const indexById = new Map(parsed.map((entry, index) => [entry.turnId, index]));
+	// The row after the fork message on the path from `leaf` to the root: null at
+	// the leaf itself, undefined when the path does not pass through it.
+	const successorOnPath = (leaf: string): string | null | undefined => {
+		const seen = new Set<string>();
+		let below: string | null = null;
+		for (let id: string | null = leaf; id !== null && !seen.has(id); ) {
+			if (id === forkTurnId) return below;
+			seen.add(id);
+			const index = indexById.get(id);
+			if (index === undefined) return undefined;
+			below = id;
+			id = parsed[index]?.parentTurnId ?? null;
+		}
+		return undefined;
+	};
+	let successor = currentLeaf === undefined ? undefined : successorOnPath(currentLeaf);
+	for (let index = parsed.length - 1; successor === undefined && index >= 0; index -= 1) {
+		const entry = parsed[index];
+		if (entry?.kind === "message") successor = successorOnPath(entry.turnId);
+	}
+	return successor === undefined || successor === null ? -1 : (indexById.get(successor) ?? -1);
+}
+
+function branchEntriesFromParent(
+	parentMeta: SessionMeta,
+	leafTurnId: string,
+): {
+	parentCurrentPath: string;
+	entries: SessionEntry[];
+	tree: SessionTreeNode[];
+} {
+	const parentCurrentPath = sessionPaths(parentMeta).current;
+	const records = readSessionFileEntries(parentCurrentPath).filter((entry) => !isSessionHeader(entry));
+	const parsed = collectSessionEntries(records, parentCurrentPath);
+	const linked = parsed.map(linkedRecordFromEntry);
+	const path = traceAncestry(linked, leafTurnId);
+	const pathIds = new Set(path.map((record) => record.id));
+	const forkPointIndex = parsed.findIndex((entry) => linkedRecordFromEntry(entry).id === leafTurnId);
+	// Forking the current leaf after an idle native cut inherits that cut. Historical selections stay positional (#423).
+	const latestMessage = [...parsed].reverse().find((entry) => entry.kind === "message");
+	const latestCompaction = [...parsed].reverse().find((entry) => entry.kind === "compactionSummary");
+	const currentLeaf = parentMeta.pinnedLeafTurnId ?? latestMessage?.turnId;
+	// Projection cursor: a display record written once the path had moved past the
+	// fork message describes a later request, not the state at the fork (F11).
+	const successorIndex = forkSuccessorIndex(parsed, leafTurnId, currentLeaf);
+	const nativeAtLeaf =
+		currentLeaf === leafTurnId && latestCompaction?.providerCheckpoint && latestCompaction.parentTurnId === leafTurnId
+			? latestCompaction
+			: undefined;
+	// A local compaction written on top of the fork message, before the path moved past it, summarizes exactly the
+	// history the fork holds, so the fork carries it: dropping it showed its card over a window back at the
+	// pre-compaction size, and the next turn re-ran it (memory-audit 9). A native checkpoint keeps the current-leaf
+	// rule above, and a summary carrying a continuity fold stays behind with the transaction it belongs to.
+	const carriedCompaction = (entry: CompactionSummaryEntry, index: number) =>
+		entry.parentTurnId === leafTurnId &&
+		(successorIndex < 0 || index < successorIndex) &&
+		entry.providerCheckpoint === undefined &&
+		entry.continuity === undefined &&
+		(entry.firstKeptTurnId.length === 0 || pathIds.has(entry.firstKeptTurnId));
+	const entries = parsed.filter(
+		(entry, index) =>
+			entry === nativeAtLeaf ||
+			(!(isDisplayRecord(entry) && successorIndex >= 0 && index > successorIndex) &&
+				sessionEntryBelongsToPath(entry, pathIds, forkPointIndex >= 0 && index <= forkPointIndex, (summary) =>
+					carriedCompaction(summary, index),
+				)),
+	);
+	return {
+		parentCurrentPath,
+		entries,
+		tree: treeFromLinearPath(path),
+	};
+}
+
+/**
+ * Fork the given state into a new session. Closes the prior writer once the
+ * child session is known good, so the on-disk endedAt marker on the parent is
+ * never written for a fork that failed; the caller is responsible for
+ * replacing its own state pointer with `result.next`. `beforeClose` runs right
+ * before that close and only on the same condition.
+ */
+export function forkFromState(input: ForkInput): ForkResult {
+	const parentMeta = input.from.meta;
+	// Appends are already synchronous writes (writeSync in the engine writer),
+	// so the read below already sees everything appended in this process
+	// without closing first; flushAppends only fsyncs for durability. Reading
+	// (and traceAncestry inside branchEntriesFromParent, which throws on an
+	// unknown or broken parent chain) happens before the parent writer is
+	// touched, so a broken fork point leaves the parent open and un-ended
+	// instead of orphaning the caller (issue #93).
+	input.from.writer.flushAppends();
+	const branch = branchEntriesFromParent(parentMeta, input.parentTurnId);
+	const next = startForkChild(parentMeta, input.parentTurnId, branch, input.cwd);
+	// Only now is the child known good: created, seeded, and stamped with its
+	// parent pointers. Close (and stamp endedAt on) the parent last, after the
+	// caller's hook, which is the parent's final chance to append.
+	input.beforeClose?.();
+	void input.from.writer.close();
+	return { next, parentMeta, nodes: branch.tree };
+}
+
+/**
+ * Fork a session from its file alone (SPEC L3, 6.7): the parent may be open in another process, so it is read and
+ * never written. The fork point is `atTurnId`, else the parent's pinned leaf, else its last assistant message as
+ * committed to the file at read time. A `name` is part of the child's first write, so a named fork never exists
+ * unnamed. The caller owns `result.next.writer`.
+ */
+export function forkSessionAtRest(
+	parentSessionId: string,
+	input: { atTurnId?: string; name?: string; cwd?: string } = {},
+): ForkResult & { parentTurnId: string } {
+	const parentMeta = readSessionMeta(parentSessionId) as SessionMeta;
+	const parentTurnId = input.atTurnId ?? committedLeafTurnId(parentMeta);
+	if (parentTurnId === undefined) throw new Error(`session ${parentSessionId} has no committed turn to fork from`);
+	const branch = branchEntriesFromParent(parentMeta, parentTurnId);
+	const name = input.name?.trim();
+	if (name !== undefined && name.length > 0) {
+		const entry: SessionInfoEntry = {
+			kind: "sessionInfo",
+			turnId: newTurnId(),
+			parentTurnId: null,
+			timestamp: new Date().toISOString(),
+			name,
+		};
+		branch.entries.push(entry);
+	}
+	const next = startForkChild(parentMeta, parentTurnId, branch, input.cwd);
+	return { next, parentMeta, nodes: branch.tree, parentTurnId };
+}
+
+function committedLeafTurnId(parentMeta: SessionMeta): string | undefined {
+	if (parentMeta.pinnedLeafTurnId) return parentMeta.pinnedLeafTurnId;
+	const path = sessionPaths(parentMeta).current;
+	const parsed = collectSessionEntries(
+		readSessionFileEntries(path).filter((entry) => !isSessionHeader(entry)),
+		path,
+	);
+	const messages = parsed.filter((entry) => entry.kind === "message");
+	const assistant = [...messages].reverse().find((entry) => entry.role === "assistant");
+	return (assistant ?? messages.at(-1))?.turnId;
+}
+
+function startForkChild(
+	parentMeta: SessionMeta,
+	parentTurnId: string,
+	branch: { parentCurrentPath: string; entries: SessionEntry[]; tree: SessionTreeNode[] },
+	cwd: string | undefined,
+): SessionManagerState {
+	const next = startSession({
+		cwd: cwd ?? parentMeta.cwd,
+		model: parentMeta.model,
+		target: parentMeta.target,
+		initialEntries: branch.entries,
+		initialTree: branch.tree,
+		parentSession: branch.parentCurrentPath,
+		parentTurnId,
+	});
+	// The copied name ledger and the child's live metadata must agree (#443).
+	const inheritedName = branch.entries.reduce<string | undefined>(
+		(name, entry) => (entry.kind === "sessionInfo" && entry.name !== undefined ? entry.name.trim() : name),
+		undefined,
+	);
+	if (inheritedName) next.meta.name = inheritedName;
+	enrichForkMeta(next.meta, parentMeta.id, parentTurnId);
+	const parentTurnAt = branch.entries.find((entry) => entry.turnId === parentTurnId)?.timestamp;
+	if (!parentTurnAt) throw new Error("fork boundary timestamp unavailable");
+	seedForkCallJournal(pancodeStateDir(), next.meta.id, {
+		parentSessionId: parentMeta.id,
+		parentCwdHash: parentMeta.cwdHash,
+		parentTurnId,
+		parentTurnAt,
+	});
+	inheritPinnedContext(pancodeStateDir(), parentMeta.id, next.meta.id);
+	return next;
+}

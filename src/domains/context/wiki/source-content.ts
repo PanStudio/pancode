@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { createHash } from "node:crypto";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import { join } from "node:path";
+import { enumerateWorkspaceFiles, WORKSPACE_EXCLUDED_DIRS } from "../../../core/workspace-files.js";
+
+/** Shared, bounded byte evidence for the existing wiki checkpoint/publication. */
+export type WikiSourceContent = Record<string, string | null>;
+const MAX_FILES = 20_000;
+const MAX_BYTES = 128 * 1024 * 1024;
+
+export function parseWikiSourceContent(value: unknown): WikiSourceContent | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const entries = Object.entries(value);
+	if (entries.length > MAX_FILES) return undefined;
+	if (
+		entries.some(([path, hash]) => !path || (hash !== null && (typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash))))
+	)
+		return undefined;
+	return Object.fromEntries(entries);
+}
+
+function capture(cwd: string, files: string[]): { content: WikiSourceContent; add: (path: string) => void } {
+	const content: WikiSourceContent = Object.create(null);
+	let remainingBytes = MAX_BYTES;
+	const buffer = Buffer.alloc(64 * 1024);
+	return {
+		content,
+		add(path) {
+			if (files.length > MAX_FILES) return;
+			let fd: number | undefined;
+			content[path] = null;
+			try {
+				fd = openSync(join(cwd, path), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+				const before = fstatSync(fd);
+				if (!before.isFile() || before.size > remainingBytes) return;
+				remainingBytes -= before.size;
+				const hash = createHash("sha256");
+				let remaining = before.size;
+				while (remaining > 0) {
+					const count = readSync(fd, buffer, 0, Math.min(buffer.length, remaining), null);
+					if (count === 0) return;
+					hash.update(buffer.subarray(0, count));
+					remaining -= count;
+				}
+				const after = fstatSync(fd);
+				if (after.size === before.size && after.mtimeMs === before.mtimeMs && after.ctimeMs === before.ctimeMs)
+					content[path] = hash.digest("hex");
+			} catch {
+				// Missing, replaced, non-regular, and unreadable inputs remain unknown.
+			} finally {
+				if (fd !== undefined) closeSync(fd);
+			}
+		},
+	};
+}
+
+/**
+ * Enumeration shares the workspace's Git/ignore policy; capped evidence never
+ * certifies a prefix. Before/after observations are not a filesystem snapshot:
+ * an intervening edit followed by a revert can escape them.
+ */
+export function captureWikiSourceContent(cwd: string): WikiSourceContent {
+	try {
+		const files = enumerateWorkspaceFiles(cwd, WORKSPACE_EXCLUDED_DIRS);
+		const snapshot = capture(cwd, files);
+		for (const path of files) snapshot.add(path);
+		return snapshot.content;
+	} catch {
+		return {};
+	}
+}
+
+const normalizeClaim = (path: string): string => path.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
+const covers = (source: string, path: string): boolean => path === source || path.startsWith(`${source}/`);
+
+/**
+ * Claims that cover a path in either snapshot. A citation neither snapshot
+ * observed never resolved, so it is a draft defect rather than source change.
+ */
+export function observedWikiSources(
+	previous: WikiSourceContent | undefined,
+	current: WikiSourceContent,
+	sources: readonly string[],
+): string[] {
+	const paths = [...Object.keys(previous ?? {}), ...Object.keys(current)];
+	return sources.filter((source) => {
+		const claim = normalizeClaim(source);
+		return paths.some((path) => covers(claim, path));
+	});
+}
+
+/** A directory claim compares every covered child, including additions and deletions. */
+export function wikiSourcesMatch(
+	previous: WikiSourceContent | undefined,
+	current: WikiSourceContent,
+	sources?: readonly string[],
+): boolean {
+	if (!previous || Object.keys(previous).length === 0 || Object.keys(current).length === 0) return false;
+	// PanCode's gitignored project state is never captured, so a citation of it, such as the run's own
+	// lock file, can never match and would hold its page pending with no failure to report.
+	const claimed = sources?.map(normalizeClaim).filter((claim) => !covers(".pancode", claim));
+	const paths = [...new Set([...Object.keys(previous), ...Object.keys(current)])].filter(
+		(path) => !claimed || claimed.some((source) => covers(source, path)),
+	);
+	if (claimed?.some((source) => !paths.some((path) => covers(source, path)))) return false;
+	return paths.length > 0 && paths.every((path) => previous[path] != null && previous[path] === current[path]);
+}

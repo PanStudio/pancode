@@ -1,0 +1,167 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Pushed context and totals share the session snapshot; settled accounting still supplies model and quota details.
+
+import { queryOptions, skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { ContextLedger } from "../../contracts/context-ledger.js";
+import { routes } from "../../contracts/runtime-routes.js";
+import type { SessionSnapshot } from "../../contracts/sessions.js";
+import type { Client } from "../api/client.js";
+import { sessionReadScope } from "../api/sessions.js";
+
+import { type Spend, tokensText, usageReadable } from "./session-usage-model.js";
+
+type Turns = SessionSnapshot["turns"];
+// A GET may supersede the push it began after, but cannot overwrite a newer push that raced it.
+const contextReadBasis = new WeakMap<ContextLedger, number>();
+
+/** How many of the retained turns have settled. The projection keeps only the newest turns, so this stops at its cap. */
+export const settledTurns = (turns: Turns): number => turns.filter((turn) => turn.status !== "running").length;
+
+/**
+ * Changes on every settle, which is when the ledger and the accounting can have moved, and has no ceiling: the id
+ * of the newest settled turn. A count of settled turns stops moving once the projection drops its oldest turns.
+ */
+export function settledKey(turns: Turns): string {
+	for (let index = turns.length - 1; index >= 0; index--) {
+		const turn = turns[index];
+		if (turn && turn.status !== "running") return turn.id;
+	}
+	return "none";
+}
+
+/** The settle key of the session snapshot every view of this task reads, so each read of a session keys alike. */
+function useSettledKey(client: Client, sessionId: string): string {
+	return (
+		useQuery({
+			queryKey: ["session", sessionId],
+			queryFn: () => client.call(routes.session, { params: { id: sessionId }, query: {}, body: {} }),
+			enabled: false,
+			select: (snapshot) => settledKey(snapshot.turns),
+		}).data ?? "none"
+	);
+}
+
+export function useSessionCapabilities(client: Client, sessionId: string, open: boolean) {
+	return useQuery({
+		queryKey: ["session-capabilities", sessionId],
+		queryFn: () => client.call(routes.sessionCapabilities, { params: { id: sessionId }, query: {}, body: {} }),
+		enabled: open,
+		staleTime: Number.POSITIVE_INFINITY,
+		retry: false,
+	});
+}
+
+export function useSessionTelemetry(client: Client, sessionId: string) {
+	return useQuery({
+		queryKey: ["session", sessionId],
+		queryFn: () => client.call(routes.session, { params: { id: sessionId }, query: {}, body: {} }),
+		enabled: false,
+		select: (snapshot) => snapshot.telemetry ?? null,
+	}).data;
+}
+
+/** Context work is part of the same snapshot as chat and telemetry, including work between turns. */
+export function useContextWork(client: Client, sessionId: string) {
+	return useQuery({
+		queryKey: ["session", sessionId],
+		queryFn: () => client.call(routes.session, { params: { id: sessionId }, query: {}, body: {} }),
+		enabled: false,
+		select: (snapshot) => snapshot.contextWork,
+	}).data;
+}
+
+// `_settled` is the callers' settled-turn count. The key reads the snapshot's settle key instead, because the count
+// stops changing in a long task.
+export function useContextLedger(client: Client, sessionId: string, _settled: number, enabled: boolean) {
+	const queries = useQueryClient();
+	const settled = useSettledKey(client, sessionId);
+	const live = useSessionTelemetry(client, sessionId)?.usage?.context;
+	const operation = useContextWork(client, sessionId)?.latest;
+	const pushedRevision =
+		useQuery<number>({
+			queryKey: ["session-context-push", sessionId],
+			queryFn: skipToken,
+			enabled: false,
+		}).data ?? 0;
+	const scope = sessionReadScope(sessionId);
+	const query = useQuery({
+		queryKey: ["session-context", sessionId, settled, operation?.id ?? null, scope],
+		queryFn: async ({ signal }) => {
+			const basis = queries.getQueryData<number>(["session-context-push", sessionId]) ?? 0;
+			const result = await client.call(
+				routes.sessionContext,
+				{ params: { id: sessionId }, query: {}, body: {} },
+				undefined,
+				signal,
+			);
+			contextReadBasis.set(result, basis);
+			return result;
+		},
+		// Preserve the response identity used for freshness above, including an equal-valued refresh.
+		structuralSharing: false,
+		enabled,
+		retry: false,
+		// A refused read stays refused until a turn settles or the session is reloaded; those paths change the key or
+		// invalidate it, so a remount alone does not ask again.
+		retryOnMount: false,
+		// The previous turn's figure stays on screen while the next one is read, so nothing blinks.
+		placeholderData: (previous, previousQuery) =>
+			previousQuery?.queryKey[1] === sessionId && previousQuery.queryKey.at(-1) === scope ? previous : undefined,
+	});
+	const readIsCurrent = query.data && contextReadBasis.get(query.data) === pushedRevision;
+	const data = readIsCurrent ? query.data : (live ?? query.data);
+	return { ...query, data, isPending: !data && query.isPending };
+}
+
+/**
+ * The session's accounting and provider quota, read only from a build that reports all of it. Its failures are shown
+ * in the Usage view; the header chips and the Session column read it in the background and stay quiet.
+ */
+export function useSessionUsage(client: Client, sessionId: string, _settled: number, enabled: boolean) {
+	const scope = sessionReadScope(sessionId);
+	const settled = useSettledKey(client, sessionId);
+	const readable =
+		useQuery({
+			queryKey: ["session-capabilities", sessionId],
+			queryFn: () => client.call(routes.sessionCapabilities, { params: { id: sessionId }, query: {}, body: {} }),
+			enabled: false,
+			select: usageReadable,
+		}).data ?? false;
+	return useQuery({ ...sessionUsageQuery(client, sessionId, settled, scope), enabled: enabled && readable });
+}
+
+/**
+ * The usage read under one settle key. It takes no abort signal: the key moves at every turn's end, and TanStack
+ * aborts a read that consumed its signal once the last observer leaves, so a read in flight across the settle failed
+ * net::ERR_ABORTED. Unaborted, the retired read completes into its own cache entry and the new key reads on its own.
+ */
+export function sessionUsageQuery(client: Client, sessionId: string, settled: string, scope: number) {
+	return queryOptions({
+		meta: { errorSurface: "inline" },
+		queryKey: ["session-usage", sessionId, settled, scope],
+		queryFn: () => client.call(routes.sessionUsage, { params: { id: sessionId }, query: {}, body: {} }),
+		retry: false,
+		retryOnMount: false,
+		placeholderData: (previous, previousQuery) =>
+			previousQuery?.queryKey[1] === sessionId && previousQuery.queryKey.at(-1) === scope ? previous : undefined,
+	});
+}
+
+/** The read model's own session fold, read cold for a task that is not open (#434). */
+export function useTelemetrySession(client: Client, sessionId: string, enabled: boolean) {
+	return useQuery({
+		meta: { errorSurface: "inline" },
+		queryKey: ["telemetry", sessionId, "session"],
+		queryFn: ({ signal }) =>
+			client.call(routes.telemetrySession, { params: { id: sessionId }, query: {}, body: {} }, undefined, signal),
+		enabled,
+		retry: false,
+		staleTime: 30_000,
+	});
+}
+
+export function spendLine(spend: Spend): string | null {
+	const parts = [spend.tokens === null ? null : tokensText(spend.tokens), spend.cost].filter(Boolean);
+	return parts.length > 0 ? parts.join(" · ") : null;
+}

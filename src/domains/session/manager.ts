@@ -1,0 +1,185 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { existsSync } from "node:fs";
+import { v7 as uuidv7 } from "uuid";
+import { withStateFileLockSync } from "../../core/state-file-lock.js";
+import { stateRootRemoved } from "../../core/xdg.js";
+import {
+	atomicWrite,
+	createSession as engineCreateSession,
+	resumeSession as engineResumeSession,
+	openSession,
+	type PancodeSessionMeta,
+	type PancodeSessionWriter,
+	type PancodeTurnRecord,
+	readSessionMeta,
+	SESSION_FILE_MODE,
+	type SessionTreeNode,
+	sessionPaths,
+} from "../../engine/session.js";
+import { collectSessionEntries } from "./compaction/session-entries.js";
+import type { SessionEntryInput, SessionMeta, TurnInput } from "./contract.js";
+import { isSessionEntry, type SessionEntry } from "./entries.js";
+import { SessionEntriesIndex } from "./entries-index.js";
+import { checkSessionFormatVersion } from "./format-version.js";
+import { startSessionHeartbeat } from "./heartbeat.js";
+import { liveSessionOwner, liveSessionRefusal, registeredLiveOwner, SessionLiveError } from "./live-owner.js";
+
+/**
+ * Wraps engine/session.ts so the session domain can track the single in-memory
+ * current writer + meta. Turn writes go through the engine writer (`append` /
+ * `appendEntry`); metadata-only updates use `persistSessionMeta` so domain
+ * extensions can make newly attached metadata durable without closing.
+ */
+
+export interface SessionManagerState {
+	meta: SessionMeta;
+	writer: PancodeSessionWriter;
+	entriesIndex?: SessionEntriesIndex;
+}
+
+/**
+ * Generate a v7 UUID for session and turn ids. RFC 9562 § 5.7 defines a 48-bit
+ * unix-ms timestamp prefix makes the ids time-sortable, which lets
+ * history()/tree() order by creation without a separate timestamp index.
+ */
+export function newTurnId(): string {
+	return uuidv7();
+}
+
+export function startSession(input: {
+	cwd: string;
+	model?: string | null;
+	target?: string | null;
+	initialEntries?: ReadonlyArray<unknown>;
+	initialTree?: ReadonlyArray<SessionTreeNode>;
+	parentSession?: string;
+	parentTurnId?: string;
+}): SessionManagerState {
+	const { meta, writer } = engineCreateSession({
+		cwd: input.cwd,
+		model: input.model ?? null,
+		target: input.target ?? null,
+		...(input.initialEntries !== undefined ? { initialEntries: input.initialEntries } : {}),
+		...(input.initialTree !== undefined ? { initialTree: input.initialTree } : {}),
+		...(input.parentSession !== undefined ? { parentSession: input.parentSession } : {}),
+		...(input.parentTurnId !== undefined ? { parentTurnId: input.parentTurnId } : {}),
+	});
+	return { meta: meta as SessionMeta, writer: withHeartbeat(meta, writer) };
+}
+
+/** The live record lives exactly as long as the writer; closing it ends the heartbeat (#439). */
+function withHeartbeat(meta: PancodeSessionMeta, writer: PancodeSessionWriter): PancodeSessionWriter {
+	const stop = startSessionHeartbeat({ meta, writer });
+	const close = writer.close;
+	writer.close = async () => {
+		try {
+			await close();
+		} finally {
+			stop();
+		}
+	};
+	return writer;
+}
+
+export function persistSessionMeta(state: SessionManagerState): void {
+	// The other meta.json writer. `sessionPaths` mkdirs on the way, so a metadata
+	// update landing after `pancode uninstall` rebuilds the state root the same way
+	// the shutdown checkpoint did. See core/xdg.ts stateRootRemoved().
+	// A fenced writer lost the session to a forced release (#439); its meta is no longer ours to write.
+	if (stateRootRemoved() || state.writer.fenced) return;
+	atomicWrite(sessionPaths(state.meta).meta, JSON.stringify(state.meta, null, 2), SESSION_FILE_MODE);
+}
+
+export function resumeSessionState(sessionId: string): {
+	state: SessionManagerState;
+	nodes: ReadonlyArray<SessionTreeNode>;
+} {
+	const metaPath = sessionPaths(readSessionMeta(sessionId)).meta;
+	// Checking ownership and publishing the new owner must be one cross-process claim.
+	return withStateFileLockSync(metaPath, () => {
+		// A delete that held the lock first has already taken the record away.
+		if (!existsSync(metaPath)) throw new Error(`session not found: ${sessionId}`);
+		const persistedMeta = readSessionMeta(sessionId) as SessionMeta;
+		// Refuse before reopening can write another process's ledger (#420).
+		// The live registry also names a run that holds the session but has not stamped meta.json (SPEC L3).
+		const owner = liveSessionOwner(persistedMeta) ?? registeredLiveOwner(sessionId);
+		if (owner && owner.pid !== process.pid) throw new SessionLiveError(liveSessionRefusal(sessionId, owner));
+		const paths = sessionPaths(persistedMeta);
+		checkSessionFormatVersion(persistedMeta, paths.meta);
+		const candidate = openSession(sessionId);
+		// Use the replay schema before engineResumeSession clears endedAt or
+		// the domain caller parks its current writer. The engine reader retains
+		// its established tolerance for interrupted JSONL fragments.
+		collectSessionEntries(candidate.turns(), paths.current);
+		const { meta, writer, tree } = engineResumeSession(sessionId, { fileEntries: candidate.fileEntries() });
+		const state: SessionManagerState = { meta: meta as SessionMeta, writer: withHeartbeat(meta, writer) };
+		return { state, nodes: tree };
+	});
+}
+
+export function appendTurn(state: SessionManagerState, input: TurnInput): PancodeTurnRecord {
+	const record: PancodeTurnRecord = {
+		id: input.id ?? newTurnId(),
+		parentId: input.parentId,
+		at: input.at ?? new Date().toISOString(),
+		kind: input.kind,
+		payload: input.payload,
+	};
+	const entry: SessionEntry = {
+		kind: "message",
+		turnId: record.id,
+		parentTurnId: record.parentId,
+		timestamp: record.at,
+		role: record.kind,
+		payload: record.payload,
+	};
+	const index = currentEntriesIndex(state);
+	state.writer.appendEntry(entry, {
+		onAppend: (observation) => index.noteAppend(observation),
+		treeNode: {
+			id: record.id,
+			parentId: record.parentId,
+			at: record.at,
+			kind: record.kind,
+		},
+	});
+	index.refreshAfterWrite();
+	return record;
+}
+
+/**
+ * Append a rich SessionEntry via the engine writer. Non-message kinds are
+ * written as JSON lines to current.jsonl and do not project into tree.json;
+ * the /fork picker offers assistant message turns only.
+ */
+export function appendEntry(state: SessionManagerState, input: SessionEntryInput): SessionEntry {
+	const turnId = input.turnId ?? newTurnId();
+	const timestamp = input.timestamp ?? new Date().toISOString();
+	// Re-assemble the entry with canonical turnId + timestamp. The caller's
+	// kind-specific fields pass through via the spread; the union's structural
+	// shape is preserved because `input` is SessionEntryInput (distributed).
+	const entry = { ...input, turnId, timestamp } as SessionEntry;
+	if (!isSessionEntry(entry)) throw new Error(`session.appendEntry: invalid ${String(input.kind)} entry`);
+	const index = currentEntriesIndex(state);
+	state.writer.appendEntry(entry, { onAppend: (observation) => index.noteAppend(observation) });
+	index.refreshAfterWrite();
+	return entry;
+}
+
+export function replaceEntries(state: SessionManagerState, entries: ReadonlyArray<SessionEntry>): void {
+	for (const entry of entries) {
+		if (!isSessionEntry(entry)) throw new Error("session.replaceEntries: invalid entry");
+	}
+	state.writer.replaceEntries(entries);
+	currentEntriesIndex(state).refreshAfterWrite();
+}
+
+function currentEntriesIndex(state: SessionManagerState): SessionEntriesIndex {
+	state.entriesIndex ??= new SessionEntriesIndex(sessionPaths(state.meta).current);
+	return state.entriesIndex;
+}
+
+export function readCurrentEntries(state: SessionManagerState): ReadonlyArray<SessionEntry> {
+	return currentEntriesIndex(state).read();
+}

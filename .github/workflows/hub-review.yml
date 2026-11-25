@@ -1,0 +1,37 @@
+name: hub review
+
+# Reviews a change to a community row file: fetches each row's commit as data, recomputes its digests, and checks
+# its licence and launcher pins. Envelope growth and body-scan hits are reported for the reviewer. The job holds no
+# secret, comments on nothing and merges nothing.
+on:
+  pull_request:
+    paths: ['hub/community/**']
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    name: review community rows
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Use runner scratch for temporary files
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - name: Review the changed row files
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          FROM_FORK: ${{ github.event.pull_request.head.repo.fork }}
+        run: >-
+          node --import tsx scripts/hub-review.ts
+          --base "origin/$BASE_REF"
+          $([ "$FROM_FORK" = "true" ] && echo --submission)

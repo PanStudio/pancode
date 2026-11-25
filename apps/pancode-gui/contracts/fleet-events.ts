@@ -1,0 +1,254 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { type Static, Type } from "typebox";
+import { Id } from "./common.js";
+import { RunResultFacts } from "./run-result-facts.js";
+
+const closed = { additionalProperties: false };
+const identifier = Type.String({ maxLength: 128 });
+const nullableId = Type.Union([identifier, Type.Null()]);
+const count = Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]);
+const identity = { runId: identifier, agentId: identifier };
+const outcomeDetail = Type.Optional(Type.Union([Type.String({ maxLength: 2048 }), Type.Null()]));
+const start = Type.Object(
+	{
+		...identity,
+		taskPreview: Type.Union([Type.String({ maxLength: 160 }), Type.Null()]),
+		node: nullableId,
+		origin: nullableId,
+		attempt: count,
+	},
+	closed,
+);
+/**
+ * A terminal run's token total as the engine forwards it: the run's settled fact, or null where the run recorded none,
+ * and `tokenDisplay`, the engine's wording of that fact through the canonical renderer, so neither the server nor the
+ * browser formats it (#434).
+ */
+const tokenFact = Type.Union([
+	Type.Object(
+		{
+			kind: Type.Literal("measured"),
+			value: Type.Integer({ minimum: 0 }),
+			source: Type.Union([Type.Literal("provider"), Type.Literal("local-clock"), Type.Literal("local-count")]),
+		},
+		closed,
+	),
+	Type.Object({ kind: Type.Literal("estimated"), value: Type.Integer({ minimum: 0 }), method: identifier }, closed),
+	Type.Object({ kind: Type.Literal("unknown"), reason: identifier }, closed),
+	Type.Object({ kind: Type.Literal("absent"), reason: identifier }, closed),
+]);
+const tokenCoverage = {
+	totalTokens: Type.Optional(Type.Union([tokenFact, Type.Null()])),
+	apiCalls: Type.Optional(Type.Union([tokenFact, Type.Null()])),
+	tokenDisplay: Type.Optional(Type.Union([Type.String({ maxLength: 64 }), Type.Null()])),
+};
+export const FleetPayloads = {
+	"fleet.loopBlocked": Type.Object(
+		{
+			toolCallId: Type.Null(),
+			tool: Type.String({ maxLength: 64 }),
+			repeatCount: count,
+			blocksThisTurn: count,
+			budget: count,
+			disposition: Type.Union([Type.Literal("block"), Type.Literal("lockout"), Type.Literal("stop")]),
+			interrupted: Type.Boolean(),
+			shape: Type.Null(),
+		},
+		closed,
+	),
+	"fleet.enqueued": start,
+	"fleet.started": start,
+	"fleet.progress": Type.Object({ ...identity, progressCount: count, truncated: Type.Boolean() }, closed),
+	"fleet.completed": Type.Object(
+		{
+			...identity,
+			outcome: nullableId,
+			outcomeCode: nullableId,
+			outcomeDetail,
+			durationMs: count,
+			...tokenCoverage,
+		},
+		closed,
+	),
+	"fleet.failed": Type.Object(
+		{
+			...identity,
+			outcome: nullableId,
+			reason: nullableId,
+			outcomeCode: Type.Optional(nullableId),
+			outcomeDetail,
+			durationMs: count,
+			...tokenCoverage,
+		},
+		closed,
+	),
+	"evidence.ready": Type.Object(
+		{
+			runId: identifier,
+			firstPassSuccess: Type.Boolean(),
+			findingCount: count,
+			tags: Type.Array(Type.String({ maxLength: 64 }), { maxItems: 32 }),
+		},
+		closed,
+	),
+};
+export const FleetFacts = {
+	"fleet.loopBlocked": Type.Object(
+		{ type: Type.Literal("fleet.loopBlocked"), payload: FleetPayloads["fleet.loopBlocked"] },
+		closed,
+	),
+	"fleet.enqueued": Type.Object(
+		{ type: Type.Literal("fleet.enqueued"), payload: FleetPayloads["fleet.enqueued"] },
+		closed,
+	),
+	"fleet.started": Type.Object({ type: Type.Literal("fleet.started"), payload: FleetPayloads["fleet.started"] }, closed),
+	"fleet.progress": Type.Object(
+		{ type: Type.Literal("fleet.progress"), payload: FleetPayloads["fleet.progress"] },
+		closed,
+	),
+	"fleet.completed": Type.Object(
+		{ type: Type.Literal("fleet.completed"), payload: FleetPayloads["fleet.completed"] },
+		closed,
+	),
+	"fleet.failed": Type.Object({ type: Type.Literal("fleet.failed"), payload: FleetPayloads["fleet.failed"] }, closed),
+	"evidence.ready": Type.Object(
+		{ type: Type.Literal("evidence.ready"), payload: FleetPayloads["evidence.ready"] },
+		closed,
+	),
+};
+export const FleetFact = Type.Union([
+	FleetFacts["fleet.loopBlocked"],
+	FleetFacts["fleet.enqueued"],
+	FleetFacts["fleet.started"],
+	FleetFacts["fleet.progress"],
+	FleetFacts["fleet.completed"],
+	FleetFacts["fleet.failed"],
+	FleetFacts["evidence.ready"],
+]);
+export const FleetItem = Type.Object(
+	{
+		id: Id,
+		at: Type.String(),
+		sourceSequence: Type.Integer({ minimum: 1 }),
+		fact: FleetFact,
+		record: Type.Optional(RunResultFacts),
+	},
+	closed,
+);
+export type FleetItem = Static<typeof FleetItem>;
+/**
+ * The session's own health, as opposed to the fleet's. These five say the
+ * context window was cut, that it is close to full, that the loop guard stopped
+ * a turn on call volume, that a target changed state, and that a dispatch's scope
+ * entry did something its request did not say. They are kept out of
+ * `fleet` because they describe this conversation rather than a dispatched run,
+ * and a board that mixed them would have to filter its own feed to draw either.
+ */
+export const HealthPayloads = {
+	"health.compacted": Type.Object(
+		{
+			trigger: Type.String({ maxLength: 64 }),
+			outcome: Type.Optional(
+				Type.Union([
+					Type.Literal("completed"),
+					Type.Literal("unchanged"),
+					Type.Literal("failed"),
+					Type.Literal("cancelled"),
+				]),
+			),
+		},
+		closed,
+	),
+	"health.contextWarning": Type.Object({ warning: Type.Union([Type.String({ maxLength: 256 }), Type.Null()]) }, closed),
+	"health.toolBudget": Type.Object(
+		{
+			tool: Type.String({ maxLength: 64 }),
+			callsThisTurn: count,
+			softBudget: count,
+			hardCeiling: count,
+			interrupted: Type.Boolean(),
+		},
+		closed,
+	),
+	"health.scopeNotice": Type.Object(
+		{ code: Type.String({ maxLength: 64 }), message: Type.String({ maxLength: 1024 }) },
+		closed,
+	),
+	"health.provider": Type.Object(
+		{
+			targetId: identifier,
+			status: Type.Union([
+				Type.Literal("healthy"),
+				Type.Literal("degraded"),
+				Type.Literal("unknown"),
+				Type.Literal("down"),
+			]),
+			available: Type.Boolean(),
+			latencyMs: count,
+		},
+		closed,
+	),
+};
+export const HealthFacts = {
+	"health.compacted": Type.Object(
+		{ type: Type.Literal("health.compacted"), payload: HealthPayloads["health.compacted"] },
+		closed,
+	),
+	"health.contextWarning": Type.Object(
+		{ type: Type.Literal("health.contextWarning"), payload: HealthPayloads["health.contextWarning"] },
+		closed,
+	),
+	"health.toolBudget": Type.Object(
+		{ type: Type.Literal("health.toolBudget"), payload: HealthPayloads["health.toolBudget"] },
+		closed,
+	),
+	"health.provider": Type.Object(
+		{ type: Type.Literal("health.provider"), payload: HealthPayloads["health.provider"] },
+		closed,
+	),
+	"health.scopeNotice": Type.Object(
+		{ type: Type.Literal("health.scopeNotice"), payload: HealthPayloads["health.scopeNotice"] },
+		closed,
+	),
+};
+export const HealthFact = Type.Union([
+	HealthFacts["health.compacted"],
+	HealthFacts["health.contextWarning"],
+	HealthFacts["health.toolBudget"],
+	HealthFacts["health.provider"],
+	HealthFacts["health.scopeNotice"],
+]);
+export const HealthItem = Type.Object(
+	{ id: Id, at: Type.String(), sourceSequence: Type.Integer({ minimum: 1 }), fact: HealthFact },
+	closed,
+);
+export type HealthItem = Static<typeof HealthItem>;
+export const HEALTH_EVENT_TYPES = [
+	"health.compacted",
+	"health.contextWarning",
+	"health.toolBudget",
+	"health.provider",
+	"health.scopeNotice",
+] as const;
+/**
+ * Every `_pancode/event` kind this app understands, mapped to the delta it
+ * becomes. Adding an engine kind here without also adding it to
+ * `ACP_EVENT_KINDS` in `sessions.ts` only means the server never opts in; the
+ * reverse leaves an opted-in kind with nowhere to go, which the reader logs and
+ * drops rather than treating as a broken peer.
+ */
+export const ACP_TO_WEB_EVENT = {
+	"safety.loop_blocked": "fleet.loopBlocked",
+	"run.enqueued": "fleet.enqueued",
+	"run.started": "fleet.started",
+	"run.progressed": "fleet.progress",
+	"run.completed": "fleet.completed",
+	"run.failed": "fleet.failed",
+	"evidence.assessed": "evidence.ready",
+	"compaction.ended": "health.compacted",
+	"context.warning_raised": "health.contextWarning",
+	"safety.tool_budget_exceeded": "health.toolBudget",
+	"provider.health_changed": "health.provider",
+	"run.scope_notice_raised": "health.scopeNotice",
+} as const;

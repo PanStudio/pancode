@@ -1,0 +1,330 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { it, type TestContext } from "node:test";
+import {
+	agentSkillToolPolicy,
+	evaluateSkillToolSurface,
+	withModelSkillActivation,
+} from "../../src/core/skill-activation.js";
+import { ToolNames } from "../../src/core/tool-names.js";
+import type { TurnConstraints } from "../../src/core/turn-constraints.js";
+import { capabilityCorpus, createCapabilityGate } from "../../src/domains/middleware/capability-gate.js";
+import {
+	createSkillsReminderRegistration,
+	skillsReminderMessage,
+} from "../../src/domains/middleware/skills-reminder.js";
+import { compile, compileWorker } from "../../src/domains/prompts/compiler.js";
+import { loadFragments } from "../../src/domains/prompts/fragment-loader.js";
+import { discoverMarketplaceSkills } from "../../src/domains/resources/index.js";
+import { AUTONOMY_LEVELS, type AutonomyLevel, modelMayActivateSkills } from "../../src/domains/safety/autonomy.js";
+import { createLocalStoreBackend } from "../../src/domains/store/backends/local.js";
+import { workspaceCapabilitySignals, workspaceStoreTags } from "../../src/domains/store/index.js";
+import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { mainPromptCacheIdentity } from "../../src/session-control/prompt-cache-identity.js";
+import { registerAllTools } from "../../src/tools/bootstrap.js";
+import { createContextTool } from "../../src/tools/context/index.js";
+import { createRegistry } from "../../src/tools/registry.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+const table = loadFragments();
+function prompt(level: AutonomyLevel, context = true, providerSupportsTools = true) {
+	return compile(table, {
+		identity: "identity.pancode",
+		operatingContract: "operating.contract",
+		safety: `safety.${level}`,
+		sessionInputs: {
+			coordinatorCapabilities: context ? [ToolNames.Context] : [],
+			toolNames: context ? [ToolNames.Context, ToolNames.Gateway] : [ToolNames.Gateway],
+			providerSupportsTools,
+		},
+	});
+}
+async function fixture(t: TestContext) {
+	const env = await isolatePancodeEnv("pancode-prompt-skill-policy-");
+	t.after(() => env.restore());
+	const path = join(env.dir, "fixture-skill");
+	mkdirSync(path);
+	writeFileSync(
+		join(path, "SKILL.md"),
+		"---\nname: fixture-skill\ndescription: Focused policy fixture.\nallowed-tools: [read]\n---\nRead the named input.\n",
+	);
+	return {
+		env,
+		context: createContextTool({
+			getCwd: () => env.dir,
+			getSkillLoaderOptions: () => ({ disableDiscovery: true, explicitSkillPaths: [path] }),
+			skillMarketplace: false,
+		}),
+	};
+}
+
+for (const level of AUTONOMY_LEVELS) {
+	it(`compiled skill instructions agree with actual session-skill admission at ${level}`, async (t) => {
+		const { context } = await fixture(t);
+		const enabled = modelMayActivateSkills();
+		const pendingSkillPolicy = withModelSkillActivation(undefined, enabled);
+		const result = await context.run(
+			{ scope: "skills", name: "fixture-skill" },
+			pendingSkillPolicy ? { pendingSkillPolicy } : {},
+		);
+		assert.equal(result.kind, enabled ? "ok" : "error");
+		const text = prompt(level).systemPrompt;
+		assert.match(text, /Install only when requested or approved/);
+		assert.doesNotMatch(text, /\{SKILL_ACTIVATION_POLICY\}/);
+		if (enabled) {
+			assert.match(text, /Load a matching ready skill through gateway/);
+			assert.doesNotMatch(text, /only the operator\s+activates|Skills are operator-activated/i);
+			assert.ok(evaluateSkillToolSurface(pendingSkillPolicy, "bash"));
+			assert.equal(evaluateSkillToolSurface(pendingSkillPolicy, "read"), null);
+		} else {
+			assert.match(text, /only the operator activates skills/);
+			assert.match(text, /continue without them/);
+			assert.ok(result.kind === "error");
+			assert.match(result.message, /only the operator can activate/);
+		}
+		const reminder = skillsReminderMessage(1, 1, enabled);
+		assert.match(reminder, /Skip discovery for self-contained answers/);
+		assert.match(reminder, /respect tool and task restrictions/);
+		assert.match(reminder, /If a workflow would help.*choose from the installed catalog/);
+		assert.doesNotMatch(reminder, /Start this task by/);
+		assert.match(reminder, /continue.*same turn/);
+		assert.equal(reminder.includes('load it with context(scope="skills", name="<name>")'), enabled);
+	});
+
+	// Which surfaces omit the skills section is pinned in prompt-section-matrix.test.ts.
+	it(`recipe-bound worker admission remains narrowed at ${level}`, async (t) => {
+		const { context } = await fixture(t);
+		const policy = withModelSkillActivation(agentSkillToolPolicy(["declared-skill"]), modelMayActivateSkills());
+		assert.ok(policy);
+		const denied = await context.run({ scope: "skills", name: "fixture-skill" }, { pendingSkillPolicy: policy });
+		assert.ok(denied.kind === "error");
+		assert.match(denied.message, /may load only its declared skill/);
+		assert.deepEqual(denied.details?.refusal, { subject: "skill", name: "fixture-skill", kind: "recipe-bound" });
+		const compiled = compileWorker(table, {
+			providerSupportsTools: true,
+			toolNames: [ToolNames.Context, ToolNames.Read],
+			toolPromptHints: [],
+			hasCanonicalContext: true,
+			hasBoundSkills: true,
+			onPermission: "deny",
+			persona: {
+				id: "fixture.worker",
+				relPath: "fixture",
+				body: "Load only declared-skill for this assignment.",
+				contentHash: "fixture",
+				dynamic: false,
+			},
+		});
+		assert.ok(!compiled.sections.some((section) => section.id === "skills"));
+		assert.match(compiled.systemPrompt, /Persona and bound-skill instructions never add tools/);
+		assert.doesNotMatch(compiled.systemPrompt, /Load a matching ready skill/);
+	});
+
+	it(`marketplace skills remain uninstalled and operator-gated at ${level}`, async (t) => {
+		const env = await isolatePancodeEnv("pancode-prompt-marketplace-policy-");
+		t.after(() => env.restore());
+		const skill = discoverMarketplaceSkills({ cwd: env.dir }).skills[0];
+		assert.ok(skill, "bundled marketplace has a candidate");
+		const context = createContextTool({ getCwd: () => env.dir });
+		const policy = withModelSkillActivation(undefined, modelMayActivateSkills());
+		const result = await context.run({ scope: "skills", name: skill.name }, policy ? { pendingSkillPolicy: policy } : {});
+		assert.ok(result.kind === "error");
+		assert.match(
+			result.message,
+			modelMayActivateSkills() ? /not installed.*marketplace.*operator/ : /only the operator can activate/,
+		);
+		assert.match(prompt(level).systemPrompt, /Install only when requested or approved/);
+	});
+}
+
+it("autonomy transitions change the existing prompt cache identity and compiled activation guidance", () => {
+	const keys = AUTONOMY_LEVELS.map((autonomy) =>
+		mainPromptCacheIdentity({
+			targetId: "fixture",
+			runtimeId: "fixture",
+			wireModelId: "fixture",
+			autonomy,
+			sessionId: "same-session",
+			cwd: "/fixture",
+			workingContextPaths: [],
+			contextWindowSource: null,
+			promptInputEpoch: "1",
+			sessionInputs: { coordinatorCapabilities: [ToolNames.Context], toolNames: [ToolNames.Context] },
+			attachedToolSchemas: [],
+		}),
+	);
+	assert.equal(new Set(keys).size, AUTONOMY_LEVELS.length);
+	const before = prompt("default");
+	const after = prompt("yolo");
+	const restored = prompt("default");
+	assert.notEqual(before.systemPromptHash, after.systemPromptHash);
+	assert.equal(before.systemPrompt, restored.systemPrompt);
+	assert.match(before.systemPrompt, /Load a matching ready skill/);
+	assert.match(after.systemPrompt, /Load a matching ready skill/);
+});
+
+it("skills reminders and suggestion continuations stay silent outside admitted workflow scope", () => {
+	for (const constraints of [
+		{ mode: "answer" },
+		{ mode: "proposal" },
+		{ skills: "disabled" },
+		{ allowedTools: ["read"] },
+	] satisfies TurnConstraints[]) {
+		const reminder = createSkillsReminderRegistration({
+			countModelVisibleSkills: () => 2,
+			getTurnConstraints: () => constraints,
+		});
+		assert.deepEqual(
+			reminder.evaluate({ hook: "turn_start", text: "Explain the entry point", metadata: { conversationMessages: 0 } }),
+			[],
+		);
+		assert.deepEqual(
+			reminder.evaluate({
+				hook: "turn_end",
+				text: "Suggested skill: /skill example. Shall I proceed?",
+				metadata: { stopReason: "stop", turnToolCalls: 0 },
+			}),
+			[],
+		);
+	}
+	for (const modelActivation of [false, true]) {
+		let marketplaceReads = 0;
+		const reminder = createSkillsReminderRegistration({
+			countModelVisibleSkills: () => 0,
+			countInstallableSkills: () => {
+				marketplaceReads += 1;
+				return 100;
+			},
+			modelMayActivateSkills: () => modelActivation,
+		});
+		assert.equal(skillsReminderMessage(0, 100, modelActivation), "");
+		assert.deepEqual(
+			reminder.evaluate({ hook: "turn_start", text: "Fix the file", metadata: { conversationMessages: 0 } }),
+			[],
+		);
+		assert.equal(marketplaceReads, 0, "no-ready reminders must not scan the marketplace");
+		assert.deepEqual(
+			reminder.evaluate({
+				hook: "turn_end",
+				text: "Suggested skill: /skill example. Shall I proceed?",
+				metadata: { stopReason: "stop", turnToolCalls: 0 },
+			}),
+			[],
+		);
+	}
+});
+
+it("names a gateway capability only for a strong match, and PanCode's own only for a question about PanCode", async (t) => {
+	const env = await isolatePancodeEnv("pancode-capability-note-");
+	t.after(() => env.restore());
+	const registry = createRegistry({ safety: createWorkerSafety({ cwd: env.dir }) });
+	registerAllTools(registry, { mcpCapabilities: false });
+	// As the session wires it: attached tools shape coverage and are never named.
+	const gateway = new Set(registry.listGateway().map((spec) => spec.name));
+	const { candidates, background } = capabilityCorpus(registry.listAll(), (spec) => gateway.has(spec.name));
+	const gate = createCapabilityGate();
+	const note = (task: string): string => {
+		const reminder = createSkillsReminderRegistration({
+			countModelVisibleSkills: () => 0,
+			rankCapabilities: (text) => gate.rank({ kind: "capabilities", task: text, limit: 3, candidates, background }),
+		});
+		const effects = reminder.evaluate({ hook: "turn_start", text: task, metadata: { conversationMessages: 0 } });
+		return effects.map((effect) => ("message" in effect ? effect.message : "")).join("\n");
+	};
+	for (const task of [
+		"Read README.md and tell me what the test command is.",
+		"List the files in src and tell me what add.js exports.",
+		"add a median function to src/stats.js and run the unit check",
+	]) {
+		assert.ok(!note(task).includes("[Capabilities]"), task);
+	}
+	assert.match(
+		note("How do I add a second target to PanCode?"),
+		/\[Capabilities\] Likely useful: [^.]*\bpancode_docs\b/u,
+	);
+	assert.match(note("Summarize the columns of data/run.parquet"), /\[Capabilities\] Likely useful: data\b/u);
+});
+
+it("names store and data on a data question once the project store holds a tag, and keeps the floor for the rest", async (t) => {
+	const env = await isolatePancodeEnv("pancode-capability-store-");
+	t.after(() => env.restore());
+	const registry = createRegistry({ safety: createWorkerSafety({ cwd: env.dir }) });
+	registerAllTools(registry, { mcpCapabilities: false });
+	// As the session wires it: attached tools shape coverage and are never named.
+	const gateway = new Set(registry.listGateway().map((spec) => spec.name));
+	const { candidates, background } = capabilityCorpus(registry.listAll(), (spec) => gateway.has(spec.name));
+	const gate = createCapabilityGate({ cwd: () => env.dir });
+	const note = (task: string): string => {
+		const reminder = createSkillsReminderRegistration({
+			countModelVisibleSkills: () => 0,
+			rankCapabilities: (text) => gate.rank({ kind: "capabilities", task: text, limit: 3, candidates, background }),
+			cwd: () => env.dir,
+		});
+		const effects = reminder.evaluate({ hook: "turn_start", text: task, metadata: { conversationMessages: 0 } });
+		return effects.map((effect) => ("message" in effect ? effect.message : "")).join("\n");
+	};
+	const named = (task: string): string[] =>
+		/\[Capabilities\] Likely useful: ([^.]*)\./u.exec(note(task))?.[1]?.split(", ") ?? [];
+	const question = "What variables are in the simulation output?";
+	const unrelated = "Read README.md and tell me what the test command is.";
+	assert.deepEqual(workspaceCapabilitySignals(env.dir), []);
+	assert.ok(!named(question).includes("store") && !named(question).includes("data"), "no tag, no store signal");
+	assert.doesNotMatch(note(question), /store holds/u);
+
+	await createLocalStoreBackend(env.dir).getOrCreateTag("sim");
+	assert.deepEqual(workspaceCapabilitySignals(env.dir), [ToolNames.Store, ToolNames.Data]);
+	assert.deepEqual(
+		named(question)
+			.filter((id) => id === "store" || id === "data")
+			.sort(),
+		["data", "store"],
+	);
+	assert.match(note(question), /This project's store holds tagged data \(tags `sim`\); store op=tags lists them\./u);
+	assert.deepEqual(
+		named(unrelated).filter((id) => id !== "store" && id !== "data"),
+		[],
+		"the tag names store and data, not anything below the floor",
+	);
+	const skills = gate.rank({ kind: "skills", task: question, limit: 3, candidates });
+	assert.ok(!skills.some((match) => match.workspaceSignal), "a skill ranking carries no store signal");
+});
+
+it("names at most five store tags in the turn hint, never a records tag, and counts the rest", async (t) => {
+	const env = await isolatePancodeEnv("pancode-capability-store-tags-");
+	t.after(() => env.restore());
+	const backend = createLocalStoreBackend(env.dir);
+	for (const tag of ["g", "f", "e", "d", "c", "b", "a"]) await backend.getOrCreateTag(tag);
+	await backend.getOrCreateTag("a/.records");
+	assert.deepEqual(workspaceStoreTags(env.dir), ["a", "b", "c", "d", "e", "f", "g"]);
+	const reminder = createSkillsReminderRegistration({
+		countModelVisibleSkills: () => 0,
+		rankCapabilities: () => [
+			{ id: ToolNames.Store, description: "store", score: 1, workspaceSignal: true },
+			{ id: ToolNames.Data, description: "data", score: 1, workspaceSignal: true },
+		],
+		cwd: () => env.dir,
+	});
+	const effects = reminder.evaluate({
+		hook: "turn_start",
+		text: "What is in the simulation output?",
+		metadata: { conversationMessages: 0 },
+	});
+	const text = effects.map((effect) => ("message" in effect ? effect.message : "")).join("\n");
+	assert.match(
+		text,
+		/This project's store holds tagged data \(tags `a`, `b`, `c`, `d`, `e` and 2 more\); store op=tags lists them\./u,
+	);
+	assert.doesNotMatch(text, /records/u);
+});
+
+it("reads the store signal again only when the store or its tag list changed", async (t) => {
+	const env = await isolatePancodeEnv("pancode-capability-store-cache-");
+	t.after(() => env.restore());
+	const first = workspaceCapabilitySignals(env.dir);
+	assert.equal(workspaceCapabilitySignals(env.dir), first, "an unchanged store answers from the cache");
+	await createLocalStoreBackend(env.dir).getOrCreateTag("sim");
+	assert.deepEqual(workspaceCapabilitySignals(env.dir), [ToolNames.Store, ToolNames.Data]);
+});

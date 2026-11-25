@@ -1,0 +1,437 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Decisions for the workbench shell, kept free of React so node:test can exercise every branch.
+//
+// The shell has two modes. Work mode shows tasks (conversations) grouped by project. Settings mode
+// holds everything an operator inspects or configures, so the first thing a new person sees is a
+// task list and a composer, not ten equally weighted destinations.
+
+import type { SessionOverviewItem } from "../../contracts/session-overview.js";
+import type { LiveElsewhere, SessionSnapshot, SessionSummary } from "../../contracts/sessions.js";
+import { isAwaitingAnswer } from "../chat/permission-state.js";
+
+export type TaskState =
+	| "starting"
+	| "working"
+	| "waiting"
+	| "approval"
+	| "question"
+	| "failed"
+	| "paused"
+	| "unknown"
+	| "idle";
+
+type TaskSession = SessionSnapshot | SessionOverviewItem;
+
+const OVERVIEW_TASK_STATE: Readonly<Record<SessionOverviewItem["activity"], TaskState>> = {
+	approval: "approval",
+	question: "question",
+	working: "working",
+	queued: "waiting",
+	ready: "idle",
+	parked: "paused",
+	closed: "idle",
+	failed: "failed",
+	unknown: "unknown",
+	starting: "starting",
+};
+
+export interface TaskRow {
+	readonly id: string;
+	readonly workspaceId: string;
+	readonly title: string;
+	/** Supervised by this server right now. A saved task is loaded into a fresh session on click. */
+	readonly open: boolean;
+	readonly state: TaskState;
+	/** ISO time of the latest activity, when one is known. */
+	readonly at: string | undefined;
+	/** A saved task another process holds open; opening it shows its history and a Take over choice. */
+	readonly liveElsewhere?: LiveElsewhere;
+}
+
+export const NEW_TASK_TITLE = "New task";
+
+/** What the sidebar and the top bar call a task: its reported label, else the first request. */
+export function taskTitle(
+	snapshot: Pick<SessionSnapshot, "label" | "turns" | "timeline"> | Pick<SessionOverviewItem, "title">,
+	saved?: Pick<SessionSummary, "name" | "firstMessagePreview">,
+): string {
+	if ("title" in snapshot) return snapshot.title.replace(/\s+/g, " ").trim() || NEW_TASK_TITLE;
+	if (snapshot.label?.trim()) return snapshot.label.trim();
+	const prompt =
+		snapshot.turns.find((turn) => turn.prompt.trim() !== "")?.prompt ??
+		snapshot.timeline.find((item) => item.kind === "user" && item.text.trim() !== "")?.text ??
+		saved?.name ??
+		saved?.firstMessagePreview;
+	return prompt?.replace(/\s+/g, " ").trim() || NEW_TASK_TITLE;
+}
+
+export function taskState(
+	session:
+		| Pick<SessionSnapshot, "state" | "turns" | "permissions" | "contextWork">
+		| Pick<SessionOverviewItem, "activity">,
+): TaskState {
+	if ("activity" in session) return OVERVIEW_TASK_STATE[session.activity];
+	if (session.state === "parked") return "paused";
+	if (session.permissions.some(isAwaitingAnswer)) return "approval";
+	if (session.state === "starting") return "starting";
+	if (session.state === "open" && session.contextWork?.active) return "working";
+	const last = session.turns.at(-1);
+	if (last?.status === "running") return last.queued ? "waiting" : "working";
+	if (last?.status === "failed") return "failed";
+	return "idle";
+}
+
+/** A task this server holds: its agent process is running, starting, or parked until a window shows it again. */
+export function isHeld(session: Pick<SessionSnapshot, "state">): boolean {
+	return session.state === "open" || session.state === "starting" || session.state === "parked";
+}
+
+/** True for an open session nobody has typed into. "New task" reuses one its own window made instead of spawning another child. */
+export function isUntouched(
+	session: Pick<SessionSnapshot, "state" | "turns" | "timeline" | "contextWork"> | SessionOverviewItem,
+): boolean {
+	if ("turnCount" in session)
+		return (
+			session.untouched &&
+			session.state === "open" &&
+			session.turnCount === 0 &&
+			session.activity === "ready" &&
+			session.updatedAt === null &&
+			session.currentTurnId === null &&
+			session.pendingApprovals === 0 &&
+			session.pendingQuestions === 0 &&
+			session.activeWorkers === 0 &&
+			session.queuedWorkers === 0 &&
+			session.workersComplete &&
+			session.activeJobs === 0 &&
+			!session.recoveredOrphan
+		);
+	return (
+		session.state === "open" &&
+		session.turns.length === 0 &&
+		session.timeline.length === 0 &&
+		!session.contextWork?.active &&
+		!session.contextWork?.latest
+	);
+}
+
+/** How many drafts a window remembers creating. A window rarely holds more than one or two at a time. */
+const OWN_DRAFT_LIMIT = 16;
+
+/**
+ * The untouched draft a window may reuse when it starts a task in a project. Only a draft this window
+ * created qualifies: one server serves every window, so reusing another window's draft would put two
+ * windows on one session and its steering queue (#420).
+ */
+export function reusableDraft<T extends TaskSession>(
+	sessions: readonly T[],
+	workspaceId: string,
+	ownDrafts: readonly string[],
+): T | undefined {
+	return sessions.find(
+		(session) => session.workspaceId === workspaceId && ownDrafts.includes(session.id) && isUntouched(session),
+	);
+}
+
+/** The window's draft list after it creates `id`, newest last and bounded so storage never grows. */
+export function withOwnDraft(ownDrafts: readonly string[], id: string): string[] {
+	return [...ownDrafts.filter((entry) => entry !== id), id].slice(-OWN_DRAFT_LIMIT);
+}
+
+function parsed(value: string | undefined): number {
+	const time = value ? Date.parse(value) : Number.NaN;
+	return Number.isFinite(time) ? time : 0;
+}
+
+/**
+ * One workspace's tasks, newest first. Supervised sessions win over their saved history row so a
+ * task never appears twice, and an untouched draft stays out of the list because the top of the
+ * sidebar already offers "New task".
+ */
+export function taskRows(
+	workspaceId: string,
+	sessions: readonly TaskSession[],
+	history: readonly SessionSummary[],
+): TaskRow[] {
+	const saved = new Map(history.map((row) => [row.id, row]));
+	const live = sessions.filter(
+		(session) => session.workspaceId === workspaceId && isHeld(session) && !isUntouched(session),
+	);
+	const liveIds = new Set(live.map((session) => session.id));
+	const rows: TaskRow[] = [
+		...live.map((session): TaskRow => {
+			const row = saved.get(session.id);
+			const activity =
+				"updatedAt" in session
+					? [session.updatedAt ?? undefined]
+					: [
+							session.contextWork?.active?.operation?.startedAt,
+							session.contextWork?.latest?.startedAt,
+							session.turns.at(-1)?.finishedAt ?? session.turns.at(-1)?.startedAt ?? undefined,
+						];
+			const at = [...activity, row?.lastActivityAt ?? row?.createdAt].reduce<string | undefined>(
+				(latest, value) => (parsed(value) > parsed(latest) ? value : latest),
+				undefined,
+			);
+			return {
+				id: session.id,
+				workspaceId,
+				title: taskTitle(session, row),
+				open: true,
+				state: taskState(session),
+				at,
+			};
+		}),
+		...history
+			.filter((row) => !liveIds.has(row.id))
+			.map(
+				(row): TaskRow => ({
+					id: row.id,
+					workspaceId,
+					title: row.name?.trim() || row.firstMessagePreview?.replace(/\s+/g, " ").trim() || "Saved task",
+					open: false,
+					state: "idle",
+					at: row.lastActivityAt ?? row.createdAt,
+					...(row.liveElsewhere ? { liveElsewhere: row.liveElsewhere } : {}),
+				}),
+			),
+	];
+	return rows.sort((a, b) => parsed(b.at) - parsed(a.at) || a.id.localeCompare(b.id));
+}
+
+/** Compact age for a sidebar row: "now", "5m", "3h", "2d", "6w". Empty when no time is known. */
+export function shortAge(iso: string | undefined, nowMs: number): string {
+	const then = parsed(iso);
+	if (then === 0) return "";
+	const seconds = Math.max(0, Math.round((nowMs - then) / 1000));
+	if (seconds < 45) return "now";
+	const minutes = Math.round(seconds / 60);
+	if (minutes < 60) return `${Math.max(1, minutes)}m`;
+	const hours = Math.round(minutes / 60);
+	if (hours < 24) return `${hours}h`;
+	const days = Math.round(hours / 24);
+	if (days < 14) return `${days}d`;
+	return `${Math.round(days / 7)}w`;
+}
+
+/** The one set of state words a task shows in the sidebar, on a project's page and on Sessions. */
+export const STATE_LABELS: Readonly<Record<TaskState, string>> = {
+	starting: "Starting",
+	working: "Working",
+	waiting: "Waiting for a slot",
+	approval: "Needs your approval",
+	question: "Needs your answer",
+	failed: "Last turn failed",
+	paused: "Paused",
+	unknown: "Needs recovery",
+	idle: "",
+};
+/** An open task with nothing running or waiting; the sidebar shows its age instead. */
+export const READY_LABEL = "Ready";
+
+/** Settings mode owns every route that is not a task. */
+const SETTINGS_SEGMENTS = new Set([
+	"settings",
+	"hub",
+	"toolchain",
+	"usage",
+	"metrics",
+	"system",
+	"traces",
+	"fleet",
+	"evidence",
+	"research",
+	"arena",
+	"docs",
+	"machines",
+	"skills",
+]);
+
+export function isSettingsPath(pathname: string): boolean {
+	const segment = pathname.split("/")[1];
+	return segment !== undefined && SETTINGS_SEGMENTS.has(segment);
+}
+
+/**
+ * Whether the sidebar shows the settings rail. PanHub and System are also linked from the work rail, and reached
+ * from there they keep it; `previous` is the rail the last route showed. A direct load or reload has no previous
+ * rail, so it opens on the settings rail that lists them (gui-verify 3).
+ */
+export function showsSettingsRail(pathname: string, previous: boolean | undefined): boolean {
+	if (!isSettingsPath(pathname)) return false;
+	const segment = pathname.split("/")[1];
+	return (segment !== "hub" && segment !== "system") || previous !== false;
+}
+
+export interface SettingsSection {
+	readonly id: string;
+	readonly label: string;
+	readonly path: string;
+	readonly icon:
+		| "gear"
+		| "models"
+		| "sliders"
+		| "skills"
+		| "toolchain"
+		| "usage"
+		| "traces"
+		| "fleet"
+		| "evidence"
+		| "system"
+		| "shield"
+		| "layers"
+		| "sessions"
+		| "research"
+		| "arena";
+	readonly group: SettingsGroup;
+	/** First path segments, or full-prefix matches, that keep this section highlighted. */
+	readonly owns: readonly string[];
+}
+
+/**
+ * The second rail lists three kinds of place, named for what the operator comes to do there: change
+ * how PanCode behaves, see and extend what PanCode can use, and read back what PanCode did. They were once
+ * "Settings" and "Advanced", which filed the spend report and the run history under a gear.
+ */
+export type SettingsGroup = "settings" | "capabilities" | "activity";
+export const SETTINGS_GROUPS: readonly { readonly id: SettingsGroup; readonly label: string }[] = [
+	{ id: "settings", label: "Settings" },
+	{ id: "capabilities", label: "Capabilities" },
+	{ id: "activity", label: "Activity" },
+];
+
+/**
+ * A few calm settings pages first, built from the runtime registry (General is the app's own), then
+ * every remaining setting with search and the raw views.
+ */
+export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
+	{
+		id: "general",
+		label: "General",
+		path: "/settings/general",
+		icon: "gear",
+		group: "settings",
+		owns: ["/settings/general"],
+	},
+	{
+		id: "models",
+		label: "Models",
+		path: "/settings/models",
+		icon: "models",
+		group: "settings",
+		owns: ["/settings/models", "/settings/targets", "/settings/routing"],
+	},
+	{
+		id: "safety",
+		label: "Safety",
+		path: "/settings/safety",
+		icon: "shield",
+		group: "settings",
+		owns: ["/settings/safety"],
+	},
+	{
+		id: "context",
+		label: "Context and memory",
+		path: "/settings/context",
+		icon: "layers",
+		group: "settings",
+		owns: ["/settings/context"],
+	},
+	{
+		id: "all",
+		label: "All settings",
+		path: "/settings/advanced",
+		icon: "sliders",
+		group: "settings",
+		owns: ["/settings", "/settings/advanced", "/settings/effective", "/settings/why"],
+	},
+	{ id: "hub", label: "PanHub", path: "/hub", icon: "skills", group: "capabilities", owns: ["/hub"] },
+	{
+		id: "toolchain",
+		label: "Toolchain",
+		path: "/toolchain",
+		icon: "toolchain",
+		group: "capabilities",
+		owns: ["/toolchain"],
+	},
+	{ id: "usage", label: "Usage", path: "/usage", icon: "usage", group: "activity", owns: ["/usage"] },
+	{
+		id: "metrics",
+		label: "Metrics & telemetry",
+		path: "/metrics",
+		icon: "usage",
+		group: "activity",
+		owns: ["/metrics"],
+	},
+	{ id: "traces", label: "Traces", path: "/traces", icon: "traces", group: "activity", owns: ["/traces"] },
+	{ id: "fleet", label: "Fleet", path: "/fleet", icon: "fleet", group: "activity", owns: ["/fleet"] },
+	{ id: "evidence", label: "Evidence", path: "/evidence", icon: "evidence", group: "activity", owns: ["/evidence"] },
+	{ id: "research", label: "Research", path: "/research", icon: "research", group: "activity", owns: ["/research"] },
+	{ id: "arena", label: "Arena", path: "/arena", icon: "arena", group: "activity", owns: ["/arena"] },
+	{ id: "system", label: "System", path: "/system", icon: "system", group: "capabilities", owns: ["/system"] },
+	{ id: "sessions", label: "Sessions", path: "/sessions", icon: "sessions", group: "activity", owns: ["/sessions"] },
+	{ id: "machines", label: "Machines", path: "/machines", icon: "system", group: "capabilities", owns: ["/machines"] },
+];
+
+export function settingsDestination(path: string, workspaceId: string | null | undefined): string {
+	return workspaceId ? `${path}?${new URLSearchParams({ workspace: workspaceId })}` : path;
+}
+
+/** The section a pathname belongs to. The longest matching prefix wins so `/settings/targets` is Models, not Harness. */
+export function settingsSectionFor(pathname: string): SettingsSection | undefined {
+	let best: { section: SettingsSection; length: number } | undefined;
+	for (const section of SETTINGS_SECTIONS)
+		for (const owned of section.owns) {
+			const hit = pathname === owned || pathname.startsWith(`${owned}/`);
+			if (hit && (best === undefined || owned.length > best.length)) best = { section, length: owned.length };
+		}
+	return best?.section;
+}
+
+/** `/sessions/:id` and nothing else. */
+export function sessionIdFromPath(pathname: string): string | null {
+	return /^\/sessions\/([^/]+)$/.exec(pathname)?.[1] ?? null;
+}
+
+/** Home's composer and a conversation: the pages that need a model to do anything. */
+export function isChatPath(pathname: string): boolean {
+	return pathname === "/" || sessionIdFromPath(pathname) !== null;
+}
+
+/**
+ * Which setup wizard covers the window, if any. `/setup` always opens it; a machine with no connection opens the
+ * first-run wizard on every page until the user chooses to explore, and on the chat pages even after that.
+ */
+export function wizardModeFor(input: {
+	pathname: string;
+	repairing: boolean;
+	firstRun: boolean;
+	exploring: boolean;
+}): "first" | "add" | "repair" | null {
+	if (input.pathname === "/setup") return input.repairing ? "repair" : "add";
+	if (!input.firstRun) return null;
+	return input.exploring && !isChatPath(input.pathname) ? null : "first";
+}
+
+/**
+ * Whether a task can be renamed yet. The engine saves a task to the project's history once PanCode has
+ * answered in it, and only a saved task takes a name, so an unanswered task offers the action disabled with
+ * that reason instead of offering it and failing.
+ */
+export const RENAME_AFTER_ANSWER = "Rename becomes available after Panos answers once.";
+
+/** The reason a task cannot be renamed yet, or null when it can. */
+export function renameBlocker({ saved, answered }: { saved: boolean; answered: number }): string | null {
+	return saved || answered > 0 ? null : RENAME_AFTER_ANSWER;
+}
+
+/** Turns of an open task that PanCode finished answering. */
+export function answeredTurns(turns: readonly { status: string }[]): number {
+	return turns.filter((turn) => turn.status === "succeeded").length;
+}
+
+/** The same count from a task's overview row, which knows its turns and the one still running. */
+export function answeredInOverview(item: { turnCount: number; currentTurnId: string | null }): number {
+	return Math.max(0, item.turnCount - (item.currentTurnId ? 1 : 0));
+}

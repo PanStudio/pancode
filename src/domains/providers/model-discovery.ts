@@ -1,0 +1,302 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { listedModelOffers, modelRouteGuarded } from "../../core/response-model-id.js";
+import type { TargetStatus } from "./contract.js";
+import { listKnownModelsForRuntime } from "./support.js";
+import type { CapabilityFlags } from "./types/capability-flags.js";
+import type { ContextWindowSlots } from "./types/context-window-slots.js";
+import type { ProbeContext, RuntimeDescriptor } from "./types/runtime-descriptor.js";
+import type { TargetDescriptor } from "./types/target-descriptor.js";
+
+export type ProviderModelSource = "configured" | "live" | "cache" | "catalog" | "default";
+
+export interface ProviderModelCandidate {
+	id: string;
+	label?: string;
+	createdAt?: string;
+	source: ProviderModelSource;
+	loadState?: string;
+	loadStateDetail?: string;
+}
+
+function uniqueModels(ids: ReadonlyArray<string | undefined>): string[] {
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const id of ids) {
+		const trimmed = id?.trim() ?? "";
+		if (trimmed.length === 0 || seen.has(trimmed)) continue;
+		seen.add(trimmed);
+		out.push(trimmed);
+	}
+	return out;
+}
+
+/** Whether the model is serving, waiting to serve, or not on the server at all. */
+export type ModelResidency = "resident" | "loading" | "absent" | "unknown";
+
+type DiscoveryStatus = Pick<TargetStatus, "discoveredModelStates">;
+
+/**
+ * The window discovery says this model is loaded at, or null when discovery has
+ * no such number. Ranked above every declared window: `max_context_length` is
+ * what the weights allow, this is what the backend will actually serve, and a
+ * run planned against the larger one overruns before compaction ever fires.
+ */
+export function loadedContextWindowForModel(
+	status: DiscoveryStatus | null | undefined,
+	modelId: string,
+): number | null {
+	const reported = status?.discoveredModelStates?.[modelId]?.contextLength;
+	return typeof reported === "number" && Number.isFinite(reported) && reported > 0 ? reported : null;
+}
+
+/** How the server splits its KV budget for this model, when the probe saw it split. */
+export function contextSlotsForModel(
+	status: DiscoveryStatus | null | undefined,
+	modelId: string,
+): ContextWindowSlots | null {
+	return status?.discoveredModelStates?.[modelId]?.contextSlots ?? null;
+}
+
+/**
+ * Residency as one view, so the planner and the "not resident" notice cannot
+ * disagree about the same model. A reported loaded window settles it whatever
+ * the state field says: a server does not hold a window open for a model it has
+ * not loaded.
+ */
+export function modelResidencyForStatus(status: DiscoveryStatus | null | undefined, modelId: string): ModelResidency {
+	if (loadedContextWindowForModel(status, modelId) !== null) return "resident";
+	switch (status?.discoveredModelStates?.[modelId]?.state) {
+		case "loaded":
+			return "resident";
+		case "loading":
+			return "loading";
+		case "unloaded":
+			return "absent";
+		default:
+			return "unknown";
+	}
+}
+
+export function hasLiveModelCatalog(status: TargetStatus): boolean {
+	return status.discoveredModelsSource === "probe";
+}
+
+/**
+ * Whether the runtime can ask its provider which models exist right now. When
+ * it can and the provider answers, that answer is the model list and the static
+ * catalog is only the fallback for when no answer comes. A runtime that cannot
+ * ask has only its catalog, and every surface labels it as one. Configure and
+ * the providers domain both decide by this, so no surface lists a catalog where
+ * another lists the live answer.
+ */
+export function runtimeListsModelsLive(
+	runtime: Pick<RuntimeDescriptor, "kind" | "probe" | "probeModels" | "externalAgentLoop">,
+): boolean {
+	if (runtime.externalAgentLoop?.modelCatalog === "live-authoritative") return true;
+	return (
+		(runtime.kind === "http" || runtime.kind === "sdk") &&
+		(typeof runtime.probe === "function" || typeof runtime.probeModels === "function")
+	);
+}
+
+export type UnverifiedModelListOrigin = "cache" | "catalog" | "configured";
+
+/**
+ * The words every surface puts beside a model list that is not the provider's
+ * live answer: what the list is, and why the live answer is missing. `reason`
+ * is the failed probe's diagnostic when there was one.
+ */
+export function unverifiedModelListNote(
+	origin: UnverifiedModelListOrigin,
+	input: { runtimeId: string; listsLive: boolean; reason?: string | null | undefined },
+): string {
+	const list = origin === "cache" ? "cached list" : origin === "catalog" ? "provider catalog" : "configured list";
+	if (!input.listsLive) return `${list}; ${input.runtimeId} does not list its models live`;
+	return input.reason ? `${list}, not verified live: ${input.reason}` : `${list}, not verified live`;
+}
+
+/** The note for the list `modelCandidatesForStatus` returns, or null when that list is the live answer. */
+export function modelListNoteForStatus(status: TargetStatus): string | null {
+	const candidates = modelCandidatesForStatus(status);
+	if (candidates.length === 0 || candidates.some((candidate) => candidate.source === "live")) return null;
+	const origin: UnverifiedModelListOrigin = candidates.some((candidate) => candidate.source === "cache")
+		? "cache"
+		: candidates.some((candidate) => candidate.source === "catalog")
+			? "catalog"
+			: "configured";
+	return unverifiedModelListNote(origin, {
+		runtimeId: status.runtime?.id ?? status.target.runtime,
+		listsLive: status.runtime !== null && runtimeListsModelsLive(status.runtime),
+		reason: status.health.lastError,
+	});
+}
+
+/**
+ * Enumerate selectable wire model ids for a target. Before a live catalog is
+ * known, PanCode keeps useful configured/default/catalog hints. Once the target
+ * returns a live catalog, it supplies the current selectable candidates. Cached
+ * catalogs remain useful hints alongside configured/default ids, never live proof.
+ */
+export function modelCandidatesForStatus(status: TargetStatus): ProviderModelCandidate[] {
+	const configured = uniqueModels(status.target.wireModels ?? []);
+	const discovered = uniqueModels(status.discoveredModels);
+	const defaultModel = status.target.defaultModel?.trim() ?? "";
+	const out: ProviderModelCandidate[] = [];
+	const seen = new Set<string>();
+	const add = (id: string, source: ProviderModelSource): void => {
+		const trimmed = id.trim();
+		if (trimmed.length === 0 || seen.has(trimmed)) return;
+		seen.add(trimmed);
+		const state = hasLiveModelCatalog(status) ? status.discoveredModelStates?.[trimmed] : undefined;
+		out.push({
+			id: trimmed,
+			...(status.discoveredModelLabels?.[trimmed] ? { label: status.discoveredModelLabels[trimmed] } : {}),
+			...(status.discoveredModelCreatedAt?.[trimmed] ? { createdAt: status.discoveredModelCreatedAt[trimmed] } : {}),
+			source,
+			...(state ? { loadState: state.state } : {}),
+			...(state?.detail ? { loadStateDetail: state.detail } : {}),
+		});
+	};
+
+	if (hasLiveModelCatalog(status) && discovered.length > 0) {
+		for (const id of discovered) add(id, "live");
+		return out;
+	}
+
+	// A cached catalog is still useful for selection, but it cannot exclude an
+	// explicitly configured model or claim that an instance is currently loaded.
+	if (status.discoveredModelsSource === "cache") {
+		for (const id of configured) add(id, "configured");
+		if (defaultModel) add(defaultModel, "default");
+		for (const id of discovered) add(id, "cache");
+		if (out.length > 0) return out;
+	}
+
+	if (configured.length > 0) {
+		for (const id of configured) add(id, "configured");
+		if (defaultModel) add(defaultModel, "default");
+		return out;
+	}
+
+	const knownModels = listKnownModelsForRuntime(status.runtime?.id ?? status.target.runtime);
+	if (knownModels.length > 0) {
+		const knownSet = new Set(knownModels);
+		for (const id of uniqueModels([defaultModel, ...knownModels])) {
+			add(id, knownSet.has(id) ? "catalog" : "default");
+		}
+		return out;
+	}
+
+	if (defaultModel) add(defaultModel, "default");
+	return out;
+}
+
+const NON_CHAT_MODEL_NAME = /embed|rerank/iu;
+
+/**
+ * Whether a chat-model picker should offer this id. Discovery metadata decides
+ * when it says anything (LiteLLM `mode`, LM Studio type labels); without it an
+ * id naming embed or rerank is taken for the non-chat model it almost always
+ * is. Pickers only: an operator who names such a model explicitly still gets it.
+ */
+export function offeredAsChatModel(id: string, caps?: Partial<CapabilityFlags> | null): boolean {
+	if (caps?.chat === false) return false;
+	if (caps?.chat === true) return true;
+	if (caps?.embeddings === true || caps?.rerank === true) return false;
+	return !NON_CHAT_MODEL_NAME.test(id);
+}
+
+/**
+ * The candidates a chat-model picker lists: `modelCandidatesForStatus` without
+ * embedding and rerank models, keeping the target's configured default even
+ * when it is one, because the operator chose it.
+ */
+export function chatModelCandidatesForStatus(status: TargetStatus): ProviderModelCandidate[] {
+	const kept = status.target.defaultModel?.trim();
+	return modelCandidatesForStatus(status).filter(
+		(candidate) =>
+			candidate.id === kept || offeredAsChatModel(candidate.id, status.probeModelCapabilities?.[candidate.id]),
+	);
+}
+
+export function modelIdsForStatus(status: TargetStatus): string[] {
+	return modelCandidatesForStatus(status).map((candidate) => candidate.id);
+}
+
+/** What a target's model list says about one requested id (row 384). */
+export type ModelOffer = { kind: "offered" } | { kind: "not-offered"; available: string[] } | { kind: "unknown" };
+
+/**
+ * Whether a target offers a model, judged on its live list only. A runtime that does not list live, a local engine or
+ * protocol gateway (whose ids are labels its operator configured), a cached list and an empty list all answer
+ * `unknown`, which never refuses. A listed id offers the requested one when it names the same model per
+ * `listedModelOffers`: a floating alias is offered by any snapshot of its model, a pinned snapshot only by itself.
+ */
+export function modelOfferForStatus(status: TargetStatus | null | undefined, modelId: string): ModelOffer {
+	if (!status?.runtime) return { kind: "unknown" };
+	return modelOfferForListing(status.runtime, hasLiveModelCatalog(status) ? status.discoveredModels : [], modelId);
+}
+
+function modelOfferForListing(
+	runtime: RuntimeDescriptor,
+	liveModels: ReadonlyArray<string | undefined>,
+	modelId: string,
+): ModelOffer {
+	if (!modelRouteGuarded(runtime) || !runtimeListsModelsLive(runtime)) return { kind: "unknown" };
+	const listed = uniqueModels(liveModels);
+	if (listed.length === 0) return { kind: "unknown" };
+	const requested = modelId.trim();
+	if (listed.some((id) => id === requested || listedModelOffers(id, requested))) return { kind: "offered" };
+	return { kind: "not-offered", available: listed };
+}
+
+/**
+ * The offer a target's provider makes when asked live now, for a caller that holds no status, such as a worker
+ * process (row 384). The runtime's own probe answers with `fresh`, so a cached listing is never the evidence; a probe
+ * that fails, throws or still answers from its cache is `unknown`.
+ */
+export async function probedModelOffer(
+	target: TargetDescriptor,
+	runtime: RuntimeDescriptor,
+	modelId: string,
+	ctx: Omit<ProbeContext, "fresh">,
+): Promise<ModelOffer> {
+	if (!modelRouteGuarded(runtime) || !runtimeListsModelsLive(runtime)) return { kind: "unknown" };
+	const probeCtx: ProbeContext = { ...ctx, fresh: true };
+	try {
+		const result = runtime.probe ? await runtime.probe(target, probeCtx) : null;
+		if (result !== null && !result.ok) return { kind: "unknown" };
+		if (result?.models)
+			return result.modelsSource === "cache" ? { kind: "unknown" } : modelOfferForListing(runtime, result.models, modelId);
+		return runtime.probeModels
+			? modelOfferForListing(runtime, await runtime.probeModels(target, probeCtx), modelId)
+			: { kind: "unknown" };
+	} catch {
+		// No answer is no evidence: the request goes as it would have.
+		return { kind: "unknown" };
+	}
+}
+
+export function canonicalizeWireModelId(status: TargetStatus, requested: string): string {
+	const trimmedRequested = requested.trim();
+	if (trimmedRequested.length === 0) return requested;
+	// Prefer live wire ids; otherwise retain configured ids and cached hints.
+	const candidates = uniqueModels(
+		hasLiveModelCatalog(status)
+			? status.discoveredModels
+			: [
+					...(status.target.wireModels ?? []),
+					status.target.defaultModel ?? "",
+					...(status.discoveredModelsSource === "cache" ? status.discoveredModels : []),
+				],
+	);
+	if (candidates.includes(trimmedRequested)) return trimmedRequested;
+
+	const separators = ["-", ":", ".", "/"];
+	const matches = candidates.filter((candidate) => {
+		if (candidate.toLowerCase() === trimmedRequested.toLowerCase()) return true;
+		return separators.some((separator) => candidate.startsWith(`${trimmedRequested}${separator}`));
+	});
+	return matches.length === 1 ? (matches[0] ?? requested) : requested;
+}

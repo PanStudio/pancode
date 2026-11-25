@@ -1,0 +1,149 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { publishPancodeCompileCache } from "../core/compile-cache.js";
+import type { PancodeSettings } from "../core/config.js";
+import { canonicalEndpointUrl } from "../core/endpoint-key.js";
+import { telemetryHub } from "../core/telemetry/hub.js";
+import { endpointCapacityUsage } from "../domains/dispatch/index.js";
+import { observeCacheDeployment } from "../domains/providers/cache-deployment.js";
+import { type EffectivePricing, resolveEffectivePricing } from "../domains/providers/catalog.js";
+import type { ProvidersContract, TargetStatus } from "../domains/providers/contract.js";
+import { canonicalEndpointKey, registerForegroundStream } from "../domains/providers/endpoint-capacity.js";
+import type { CallJournalOptions } from "../domains/telemetry/call-scope.js";
+import { type PrewarmRoundResult, runPrewarmRound } from "../engine/prewarm.js";
+
+interface StartupPreparation {
+	settings: Readonly<PancodeSettings>;
+	providers: ProvidersContract;
+	signal: AbortSignal;
+	isBusy: () => boolean;
+	/** The session journal that owns each warm's call facts, as a turn prewarm's does (#434). */
+	callJournal?: (
+		target: string,
+		runtime: string,
+		pricedBy: EffectivePricing["pricedBy"],
+	) => CallJournalOptions | undefined;
+	/** Test seams; production always uses the normal engine and deployment checks. */
+	observe?: typeof observeCacheDeployment;
+	warm?: typeof runPrewarmRound;
+}
+
+/** One tiny inference handshake, not a claim to cache a future worker's prompt. */
+async function warmWorkerTarget(input: StartupPreparation, status: TargetStatus, modelId: string): Promise<void> {
+	const { target, runtime } = status;
+	if (!runtime || target.cache?.warm?.startup !== true || target.cache.retention === "none") return;
+	if (target.pricing && target.pricing !== "free" && Object.values(target.pricing).some((rate) => rate > 0)) return;
+	const identity = JSON.stringify(target);
+	const signal = AbortSignal.any([
+		input.signal,
+		AbortSignal.timeout(Math.min(2000, target.cache.warm.maxDurationMs ?? 2000)),
+	]);
+	const auth = await input.providers.auth.resolveForTarget(target, runtime, { signal });
+	const deployment = await (input.observe ?? observeCacheDeployment)(target, modelId, {
+		signal,
+		...(auth.apiKey ? { gatewayApiKey: auth.apiKey } : {}),
+	});
+	if (
+		!deployment.endpoint ||
+		(deployment.warm !== "bounded" && !(deployment.backend === "lmstudio" && deployment.reason === "model-not-loaded"))
+	) {
+		telemetryHub().emit("prewarm.decided", {
+			round: "worker",
+			targetId: target.id,
+			model: modelId,
+			ran: false,
+			reason: deployment.reason,
+		});
+		return;
+	}
+	if (signal.aborted || input.isBusy() || JSON.stringify(input.providers.getTarget(target.id)) !== identity) return;
+	if ((endpointCapacityUsage()[deployment.endpoint] ?? 0) > 0) return;
+	const model = runtime.synthesizeModel(
+		target,
+		modelId,
+		input.providers.knowledgeBase?.lookup(modelId, runtime.id) ?? null,
+	);
+	const release = registerForegroundStream(deployment.endpoint);
+	const telemetry = input.callJournal?.(
+		target.id,
+		runtime.id,
+		resolveEffectivePricing(target, runtime, modelId).pricedBy,
+	);
+	let result: PrewarmRoundResult;
+	try {
+		result = await (input.warm ?? runPrewarmRound)({
+			...(telemetry ? { telemetry } : {}),
+			model,
+			state: { systemPrompt: "", messages: [], tools: [], thinkingLevel: "off" },
+			...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }),
+			signal,
+			maxInputTokens: Math.min(256, target.cache.warm.maxInputTokens ?? 256),
+			canSend: () =>
+				!signal.aborted && !input.isBusy() && JSON.stringify(input.providers.getTarget(target.id)) === identity,
+		});
+	} finally {
+		release();
+	}
+	telemetryHub().emit("prewarm.settled", {
+		round: "worker",
+		targetId: target.id,
+		model: modelId,
+		ttftMs: result.timing.ttftMs,
+		apiMs: result.timing.apiMs,
+		aborted: result.aborted,
+		failed: Boolean(result.errorMessage),
+	});
+}
+
+/** Post-paint, bounded work. No model requests unless the target explicitly opts in. */
+export async function prepareWorkerTargets(input: StartupPreparation): Promise<void> {
+	const { settings, providers, signal, isBusy } = input;
+	if (signal.aborted || isBusy()) return;
+	publishPancodeCompileCache();
+	const routes = [
+		settings.fleet.default,
+		...Object.values(settings.fleet.profiles),
+		...Object.values(settings.fleet.rosters).flatMap((roster) => roster.members),
+	];
+	const mainTarget = settings.chat.target ? providers.getTarget(settings.chat.target) : null;
+	const mainEndpoints = new Set([
+		mainTarget ? canonicalEndpointKey(mainTarget) : null,
+		canonicalEndpointUrl(mainTarget?.cache?.deployment?.controlUrl),
+	]);
+	const endpoints = new Set<string>();
+	let remaining = 4;
+	for (const route of routes) {
+		if (signal.aborted || isBusy()) return;
+		if (!route.target || route.target === settings.chat.target || ("node" in route && route.node)) continue;
+		const status = providers.list().find((entry) => entry.target.id === route.target);
+		if (!status?.available || !status.runtime || status.runtime.kind !== "http") continue;
+		if (
+			status.runtime.tier !== "local-native" &&
+			!(
+				status.runtime.id === "litellm" &&
+				status.target.cache?.deployment?.backend === "lmstudio" &&
+				status.target.cache.warm?.startup === true
+			)
+		)
+			continue;
+		const endpoint =
+			canonicalEndpointUrl(status.target.cache?.deployment?.controlUrl) ?? canonicalEndpointKey(status.target);
+		if (!endpoint || mainEndpoints.has(endpoint) || endpoints.has(endpoint)) continue;
+		endpoints.add(endpoint);
+		if (remaining-- <= 0) break;
+		try {
+			if (status.health.lastCheckAt === null) {
+				await providers.probeTarget(route.target, {
+					reasoning: false,
+					tools: false,
+					signal: AbortSignal.any([signal, AbortSignal.timeout(1500)]),
+				});
+			}
+			if (signal.aborted || isBusy()) return;
+			const model = route.model ?? status.target.defaultModel;
+			if (model) await warmWorkerTarget(input, status, model);
+		} catch {
+			// Foreground admission retries normally. An optional warm is never a notice.
+		}
+	}
+}

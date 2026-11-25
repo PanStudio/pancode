@@ -1,0 +1,48 @@
+{
+	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+	"name": "literature",
+	"version": "0.3.0",
+	"description": "Literature pack: verifies citations and resolves DOIs and arXiv IDs through the CiteNexus MCP server from the cite-nexus pack (key-free Crossref, DataCite, Europe PMC and arXiv), with an offline extractor for BibTeX and Markdown and a web_fetch fallback. Adds a hypothesis workflow: cited grounding, independent council proposals, a testability ranking and the smallest experiment per hypothesis, ending at the operator's own choice. Extends arxiv-literature. Needs network for every lookup.",
+	"license": "LicenseRef-PanCode-1.0",
+	"author": {
+		"name": "PanCode"
+	},
+	"repository": "https://github.com/akougkas/pancode",
+	"keywords": ["literature", "citations", "doi", "crossref", "arxiv", "bibtex", "hypotheses"],
+	"extensions": {
+		"dev.pancode": {
+			"manifestVersion": 1,
+			"compatibility": {
+				"pancode": ">=0.7.0-0"
+			},
+			"requires": ["skill:arxiv-literature"],
+			"resources": {
+				"skills": "skills"
+			},
+			"components": [
+				{
+					"kind": "script",
+					"id": "extract-citations",
+					"path": "assets/scripts/extract_citations.py"
+				},
+				{
+					"kind": "skill",
+					"id": "citation-check",
+					"path": "skills/citation-check/SKILL.md",
+					"requires": ["script:extract-citations"]
+				},
+				{
+					"kind": "script",
+					"id": "hypothesis-slate",
+					"path": "assets/scripts/hypothesis_slate.py"
+				},
+				{
+					"kind": "skill",
+					"id": "hypothesis-workflow",
+					"path": "skills/hypothesis-workflow/SKILL.md",
+					"requires": ["script:hypothesis-slate", "skill:citation-check"]
+				}
+			]
+		}
+	}
+}

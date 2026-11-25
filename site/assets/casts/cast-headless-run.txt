@@ -1,0 +1,43 @@
+An unattended PanCode run with JSON output
+Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+
+== answer
+
+~/projects/calibration-lab $ pancode run --output-format stream-json "Run the test check and report how many tests pass." > run.jsonl; echo "exit $?"
+exit 0
+~/projects/calibration-lab $ jq -r 'select(.type == "run_end").result.text' run.jsonl
+The test check ran: 6 tests passed and 1 failed. The failing test is “absolute zero” at `calibration.test.mjs:19`; `kelvinToCelsius(0)` threw a `RangeError`. The check exited with code 1.
+~/projects/calibration-lab $
+
+== run-end
+
+  "tools": {
+    "calls": 3,
+    "refused": 0,
+    "writes": 0
+  },
+  "safety": {
+    "decisions": {
+      "allowed": 3,
+      "blocked": 0,
+      "guardBlocked": 0,
+      "permissionRequested": 0
+    },
+    "blockedAttempts": []
+  },
+  "verify": {
+    "requested": 0,
+    "checks": []
+  },
+  "dispatch": {
+    "runs": [],
+    "live": [],
+    "undelivered": []
+  },
+  "timings": {
+    "sessionReadyMs": 1034,
+    "firstRequestMs": 2428,
+    "firstTokenMs": 7850
+  }
+}
+~/projects/calibration-lab $

@@ -1,0 +1,381 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { existsSync } from "node:fs";
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
+import { join } from "node:path";
+import { it, mock } from "node:test";
+import { setImmediate } from "node:timers/promises";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import type { DomainContext } from "../../src/core/domain-loader.js";
+import type { EventPayload } from "../../src/core/telemetry/events.js";
+import { settingsFingerprintCommitment } from "../../src/core/telemetry/host-schemas.js";
+import { createTelemetryHub, telemetryHub } from "../../src/core/telemetry/hub.js";
+import type { ConfigChangePayload } from "../../src/core/telemetry/live-events.js";
+import { unboundTelemetrySession } from "../../src/core/telemetry/producer.js";
+import { pancodeStateDir } from "../../src/core/xdg.js";
+import type { ConfigContract } from "../../src/domains/config/index.js";
+import { computeSettingsFingerprint } from "../../src/domains/dispatch/settings-fingerprint.js";
+import { observationEvent } from "../../src/domains/memory/observation-events.js";
+import { recordFiredRules } from "../../src/domains/middleware/fired-record.js";
+import { openCallJournalHealth, readCallJournal } from "../../src/domains/telemetry/call-journal.js";
+import { grantTelemetryConsent } from "../../src/domains/telemetry/consent.js";
+import { createTelemetryBundle } from "../../src/domains/telemetry/extension.js";
+import { readTelemetryObject } from "../../src/domains/telemetry/objects.js";
+import { telemetryProcessDirectory, telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
+import { telemetryProcessId } from "../../src/domains/telemetry/process-journal.js";
+import { JOURNAL_IDLE_CLOSE_MS } from "../../src/domains/telemetry/session-journals.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+import { telemetryCall } from "../harness/telemetry-view.js";
+
+it("a session writer opens with its settings and journals each change once, with both documents (#434)", async () => {
+	const env = await isolatePancodeEnv("pancode-config-records-");
+	const before = structuredClone(DEFAULT_SETTINGS);
+	before.targets = [
+		{
+			id: "proxy",
+			runtime: "litellm",
+			url: "http://127.0.0.1:4000",
+			auth: { headers: { Authorization: "Bearer leaked-proxy-token-0123456789" } },
+		},
+	];
+	const after = structuredClone(before);
+	after.safety.limits.sessionCostUsd = 42;
+	let current = before;
+	const listeners: Array<(payload: ConfigChangePayload) => void> = [];
+	const config = {
+		get: () => current,
+		onChange: (_kind: string, listener: (payload: ConfigChangePayload) => void) => {
+			listeners.push(listener);
+			return () => {};
+		},
+	} as unknown as ConfigContract;
+	const { contract, extension } = createTelemetryBundle({
+		bus: createTelemetryHub(),
+		getContract: (name: string) => (name === "config" ? config : undefined),
+	} as DomainContext);
+	const origin = { id: "config-session", cwdHash: "config-repo" };
+	const directory = telemetrySessionDirectory(pancodeStateDir(), origin.id);
+	try {
+		await extension.start();
+		const lease = await contract.acquireTelemetrySession?.(origin, { role: "main", id: origin.id });
+		ok(lease);
+		current = after;
+		const change: ConfigChangePayload = {
+			diff: { hotReload: ["safety.limits.sessionCostUsd"], nextTurn: [], restartRequired: [] },
+			settings: after,
+			previous: before,
+			source: "settings-ui",
+		};
+		// One change reaches a listener once per effect kind it touches.
+		for (const listener of listeners) listener(change);
+		await lease.release();
+		await extension.stop?.();
+		const records = (await readCallJournal(directory)).records.map(({ record }) => record);
+		const snapshots = records.flatMap((record) => (record.k === "config.snapshotted" ? [record.data] : []));
+		const changes = records.flatMap((record) => (record.k === "config.changed" ? [record.data] : []));
+		strictEqual(snapshots.length, 1);
+		// The digest a route decision carries, labelled as R7 asks.
+		deepStrictEqual(snapshots[0]?.settingsFingerprint, settingsFingerprintCommitment(computeSettingsFingerprint(before)));
+		const [opened] = snapshots as [EventPayload<"config.snapshotted">];
+		const stored = await readTelemetryObject(directory, opened.settings);
+		ok(stored.kind === "resolved");
+		const storedText = JSON.stringify(stored.value);
+		ok(!storedText.includes("leaked-proxy-token"), "a target header value never enters objects/");
+		ok(storedText.includes('"Authorization":"[redacted:headers]"'), "the header name stays as structure");
+		strictEqual(changes.length, 1, "a change is journaled once whatever kinds it touches");
+		const [changed] = changes as [EventPayload<"config.changed">];
+		strictEqual(changed.source, "settings-ui");
+		deepStrictEqual(changed.paths.hotReload, ["safety.limits.sessionCostUsd"]);
+		strictEqual(changed.settingsFingerprint.hash, computeSettingsFingerprint(after));
+		deepStrictEqual(changed.before, snapshots[0]?.settings);
+		const resolved = await readTelemetryObject(directory, changed.after);
+		ok(resolved.kind === "resolved");
+		strictEqual(
+			(resolved.value as typeof DEFAULT_SETTINGS).safety.limits.sessionCostUsd,
+			42,
+			"the after document resolves from objects/",
+		);
+	} finally {
+		env.restore();
+	}
+});
+
+it("a session's lifecycle events journal opening, resuming, parking and closing (#434)", async () => {
+	const env = await isolatePancodeEnv("pancode-lifecycle-records-");
+	const bus = createTelemetryHub();
+	const { extension } = createTelemetryBundle({ bus, getContract: () => undefined } as unknown as DomainContext);
+	const origin = { id: "lifecycle-session", cwdHash: "lifecycle-repo" };
+	try {
+		await extension.start();
+		bus.emit("session.created", { sessionId: origin.id, cwdHash: origin.cwdHash, at: Date.now() });
+		bus.emit(
+			"session.parked",
+			{ sessionId: origin.id, reason: "resume_other", cwdHash: origin.cwdHash, at: Date.now() },
+			{ sessionId: origin.id, agent: { role: "main", id: origin.id } },
+		);
+		bus.emit("session.reattached", {
+			sessionId: origin.id,
+			via: "resume",
+			cwdHash: origin.cwdHash,
+			at: Date.now(),
+		});
+		// A known session can journal its park from its explicit owner without a workspace hash (#434).
+		bus.emit(
+			"session.parked",
+			{ sessionId: origin.id, reason: "close", at: Date.now() },
+			{ sessionId: origin.id, agent: { role: "main", id: origin.id } },
+		);
+		// Shutdown stops this domain before the session domain parks the live session, so stop() journals its close.
+		const live = { id: "lifecycle-live", cwdHash: origin.cwdHash };
+		bus.emit("session.created", { sessionId: live.id, cwdHash: live.cwdHash, at: Date.now() });
+		// An edit for this session alone is journaled into its journal with the surface and scope that made it.
+		const sessionAfter = structuredClone(DEFAULT_SETTINGS);
+		sessionAfter.chat.thinkingLevel = "high";
+		bus.emit("config.session_changed", {
+			sessionId: live.id,
+			diff: { hotReload: [], nextTurn: ["chat.thinkingLevel"], restartRequired: [] },
+			settings: sessionAfter,
+			previous: DEFAULT_SETTINGS,
+			source: "slash-command",
+			scope: "session",
+		});
+		await extension.stop?.();
+		const records = (await readCallJournal(telemetrySessionDirectory(pancodeStateDir(), origin.id))).records.map(
+			({ record }) => record,
+		);
+		deepStrictEqual(records.flatMap((record) => (record.k.startsWith("session.") ? [record.k] : [])).sort(), [
+			"session.closed",
+			"session.opened",
+			"session.parked",
+			"session.parked",
+			"session.resumed",
+		]);
+		// The resume withdrew the close's seal and no later close came, so the session ends live and unsealed.
+		ok(records.every((record) => record.ctx.sessionId === origin.id));
+		const liveRecords = (await readCallJournal(telemetrySessionDirectory(pancodeStateDir(), live.id))).records;
+		deepStrictEqual(
+			liveRecords.flatMap(({ record }) => (record.k.startsWith("session.") ? [record.k] : [])),
+			["session.opened", "session.closed", "session.sealed"],
+		);
+		const sessionChange = liveRecords.find(({ record }) => record.k === "config.changed")?.record.data as
+			| EventPayload<"config.changed">
+			| undefined;
+		strictEqual(sessionChange?.source, "slash-command");
+		strictEqual(sessionChange?.scope, "session");
+		deepStrictEqual(sessionChange?.paths.nextTurn, ["chat.thinkingLevel"]);
+	} finally {
+		env.restore();
+	}
+});
+
+it("a session created after boot binds the live read model, which folds its calls (#434)", async () => {
+	const env = await isolatePancodeEnv("pancode-late-session-");
+	const bus = createTelemetryHub();
+	const { contract, extension } = createTelemetryBundle({
+		bus,
+		getContract: () => undefined,
+	} as unknown as DomainContext);
+	const origin = { id: "late-session", cwdHash: "late-repo" };
+	try {
+		await extension.start();
+		// A fresh TUI boots with no current session and creates one on the first submit.
+		contract.resetSession(null);
+		strictEqual(contract.read?.live(), null);
+		bus.emit("session.created", { sessionId: origin.id, cwdHash: origin.cwdHash, at: Date.now() });
+		const lease = await contract.acquireTelemetrySession?.(origin, { role: "main", id: origin.id });
+		ok(lease);
+		for (const record of telemetryCall(origin.id, { usd: 0.25 }))
+			telemetryHub().emit(record.k, record.data as never, record.ctx);
+		await lease.release();
+		strictEqual((await contract.settledSessionSpend()).usd, 0.25);
+		// Binding the session it is already bound to keeps what the live model folded.
+		contract.resetSession(origin.id);
+		const live = contract.read?.live();
+		ok(live);
+		strictEqual(live.sessionId, origin.id);
+		strictEqual(contract.sessionSpend().usd, 0.25);
+	} finally {
+		await extension.stop?.();
+		env.restore();
+	}
+});
+
+it("the live session's writer stays open while idle, and an unchanged reopen records no second snapshot (C-18)", async () => {
+	const env = await isolatePancodeEnv("pancode-live-writer-");
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	const config = { get: () => settings, onChange: () => () => {} } as unknown as ConfigContract;
+	const bus = createTelemetryHub();
+	const { contract, extension } = createTelemetryBundle({
+		bus,
+		getContract: (name: string) => (name === "config" ? config : undefined),
+	} as DomainContext);
+	const live = { id: "live-writer", cwdHash: "live-repo" };
+	const other = { id: "other-writer", cwdHash: "live-repo" };
+	const open = (id: string) => openCallJournalHealth().some(({ owner }) => owner === `session:${id}`);
+	mock.timers.enable({ apis: ["setTimeout"] });
+	try {
+		await extension.start();
+		bus.emit("session.created", { sessionId: live.id, cwdHash: live.cwdHash, at: Date.now() });
+		await contract.flush();
+		await (await contract.acquireTelemetrySession?.(other, { role: "main", id: other.id }))?.release();
+		mock.timers.tick(JOURNAL_IDLE_CLOSE_MS);
+		for (let turn = 0; turn < 50 && open(other.id); turn += 1) await setImmediate();
+		strictEqual(open(other.id), false, "a session no one works in still closes idle");
+		ok(open(live.id), "the live session keeps its writer between turns");
+		await (await contract.acquireTelemetrySession?.(other, { role: "main", id: other.id }))?.release();
+		await extension.stop?.();
+		const records = (await readCallJournal(telemetrySessionDirectory(pancodeStateDir(), other.id))).records;
+		strictEqual(
+			records.filter(({ record }) => record.k === "config.snapshotted").length,
+			1,
+			"a reopen under the settings already journaled snapshots nothing new",
+		);
+	} finally {
+		mock.timers.reset();
+		await extension.stop?.();
+		env.restore();
+	}
+});
+
+it("facts a fresh session's first turn emits before it binds are filed under it on bind (CLI-P47, FX-45)", async () => {
+	const turnStart = (turnId: string) =>
+		recordFiredRules(
+			{
+				hook: "turn_start",
+				input: { hook: "turn_start", turnId },
+				effects: [],
+				ruleIds: ["observer.local-clock"],
+				fired: [{ ruleId: "observer.local-clock", effects: ["inject_reminder"] }],
+			},
+			"sync",
+		);
+	const journal = async (directory: string) => (await readCallJournal(directory)).records.map(({ record }) => record);
+	let env = await isolatePancodeEnv("pancode-pre-bind-");
+	try {
+		const bus = createTelemetryHub();
+		const { extension } = createTelemetryBundle({ bus, getContract: () => undefined } as unknown as DomainContext);
+		const first = { id: "prebind-first", cwdHash: "prebind-repo" };
+		const second = { id: "prebind-second", cwdHash: "prebind-repo" };
+		await extension.start();
+		// A fresh TUI's first submit runs turn_start before its session exists.
+		turnStart("turn-one");
+		// MD5's session-start delivery check decides before the bind too, as the memory agent.
+		observationEvent("lesson-withheld", { id: "lesson-one", reason: "unverified" }, unboundTelemetrySession());
+		// Background memory work with no owner is the process's, never the session about to open.
+		observationEvent("lesson-judgment", { count: 1 });
+		// Back to back binds: the first fresh session alone takes the hold, whichever writer opens first.
+		bus.emit("session.created", { sessionId: first.id, cwdHash: first.cwdHash, at: Date.now() });
+		bus.emit("session.created", { sessionId: second.id, cwdHash: second.cwdHash, at: Date.now() });
+		await extension.stop?.();
+		const records = await journal(telemetrySessionDirectory(pancodeStateDir(), first.id));
+		const fired = records.find((record) => record.k === "middleware.fired");
+		strictEqual(fired?.ctx.sessionId, first.id, "the first turn's turn_start firing reaches its session");
+		strictEqual(fired?.ctx.turnId, "turn-one");
+		const observed = records.flatMap((record) =>
+			record.k === "memory.observation_recorded" ? [[record.data.event, record.ctx.agent.role]] : [],
+		);
+		deepStrictEqual(observed, [["lesson-withheld", "memory"]], "only the delivery decision joins, as memory");
+		const later = await journal(telemetrySessionDirectory(pancodeStateDir(), second.id));
+		ok(!later.some((record) => record.k === "middleware.fired"), "a later bind takes nothing held");
+	} finally {
+		env.restore();
+	}
+	// A resumed session is not the one the hold waited for; an overflowed hold still reports its gap.
+	env = await isolatePancodeEnv("pancode-pre-bind-resume-");
+	try {
+		const bus = createTelemetryHub();
+		const { extension } = createTelemetryBundle({ bus, getContract: () => undefined } as unknown as DomainContext);
+		const resumed = { id: "prebind-resumed", cwdHash: "prebind-repo" };
+		const fresh = { id: "prebind-fresh", cwdHash: "prebind-repo" };
+		await extension.start();
+		for (let n = 0; n <= 1024; n += 1) turnStart(`turn-${n}`);
+		bus.emit("session.reattached", { sessionId: resumed.id, via: "resume", at: Date.now() });
+		bus.emit("session.created", { sessionId: fresh.id, cwdHash: fresh.cwdHash, at: Date.now() });
+		await extension.stop?.();
+		for (const id of [resumed.id, fresh.id])
+			ok(
+				!(await journal(telemetrySessionDirectory(pancodeStateDir(), id))).some(
+					(record) => record.k === "middleware.fired",
+				),
+				`${id} takes nothing held`,
+			);
+		const processRecords = await journal(telemetryProcessDirectory(pancodeStateDir(), telemetryProcessId()));
+		strictEqual(processRecords.filter((record) => record.k === "middleware.fired").length, 1024);
+		ok(
+			processRecords.some(
+				(record) => record.k === "journal.gap" && record.data.reason === "writer-drop" && record.data.count === 1,
+			),
+			"the hold's overflow is a process gap when no session takes it",
+		);
+	} finally {
+		env.restore();
+	}
+});
+
+it("shutdown waits for a research trace still preparing its writer", async () => {
+	const env = await isolatePancodeEnv("pancode-trace-shutdown-");
+	const origin = { id: "pending-trace", cwdHash: "trace-workspace" };
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.telemetry.mode = "research";
+	settings.telemetry.research.content = true;
+	const config = { get: () => settings, onChange: () => () => {} } as unknown as ConfigContract;
+	const { contract, extension } = createTelemetryBundle({
+		bus: createTelemetryHub(),
+		getContract: (name: string) => (name === "config" ? config : undefined),
+	} as DomainContext);
+	const store = join(pancodeStateDir(), "sessions", origin.cwdHash, origin.id);
+	await fsPromises.mkdir(store, { recursive: true });
+	await fsPromises.writeFile(join(store, "meta.json"), JSON.stringify({ cwd: env.dir }));
+	grantTelemetryConsent(pancodeStateDir(), env.dir);
+	let markEntered!: () => void;
+	const entered = new Promise<void>((resolve) => {
+		markEntered = resolve;
+	});
+	let release!: () => void;
+	const blockedPreparation = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const original = fsPromises.readFile;
+	const blocked = mock.method(fsPromises, "readFile", async (...args: Parameters<typeof original>) => {
+		if (String(args[0]) === join(store, "meta.json")) {
+			markEntered();
+			await blockedPreparation;
+		}
+		return original(...args);
+	});
+	syncBuiltinESMExports();
+	try {
+		await extension.start();
+		contract.recordResearchTrace?.(
+			origin,
+			{ role: "memory", id: origin.id },
+			"memory.observed",
+			{ event: "prepared" },
+			{ event: "prepared", facts: { note: "shutdown fixture" } },
+		);
+		await entered;
+		let finished = false;
+		const stopped = Promise.resolve(extension.stop?.()).then(() => {
+			finished = true;
+		});
+		await setImmediate();
+		strictEqual(finished, false, "an admitted trace must keep shutdown pending while consent preparation waits");
+		release();
+		await stopped;
+		const directory = telemetrySessionDirectory(pancodeStateDir(), origin.id);
+		ok((await readCallJournal(directory)).records.some(({ record }) => record.k === "memory.observed"));
+		strictEqual(existsSync(join(directory, "journal.jsonl.lock")), false);
+		ok(openCallJournalHealth().every(({ owner }) => owner !== `session:${origin.id}`));
+	} finally {
+		release();
+		blocked.mock.restore();
+		syncBuiltinESMExports();
+		// Also drain the intentionally reproduced pre-fix late writer before restoring the environment.
+		const lease = await contract.acquireTelemetrySession?.(origin, { role: "memory", id: origin.id });
+		await lease?.release();
+		await extension.stop?.();
+		env.restore();
+	}
+});

@@ -1,0 +1,377 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, strictEqual } from "node:assert/strict";
+import { describe, it } from "node:test";
+import {
+	createTaskBoardStore,
+	foldSessionTaskHistory,
+	foldTaskBoard,
+	type TaskLedgerEntryFields,
+	toTaskLedgerEntryFields,
+	unverifiedTaskChecks,
+} from "../../src/domains/session/task-board.js";
+import { createTasksTool } from "../../src/tools/tasks.js";
+
+const observedAt = "2026-09-24T12:00:00.000Z";
+const now = new Date(observedAt);
+
+function ledgerEnvelope(entry: TaskLedgerEntryFields, turnId: string) {
+	return { ...entry, turnId, timestamp: observedAt };
+}
+
+describe("task board done", () => {
+	it("plans from weak-model object rows and teaches the plan action on create", async () => {
+		const board = createTaskBoardStore({ getSessionId: () => "s1", createBoardId: () => "b1" });
+		const tool = createTasksTool({ board });
+		ok(tool.prepareArguments);
+		for (const tasks of [
+			[{ id: "t1", title: "First task" }, "Second task"],
+			'[{"id":"t1","title":"First task"},"Second task"]',
+		]) {
+			const prepared = tool.prepareArguments({ action: "plan", title: "Repair", tasks });
+			deepStrictEqual(prepared.tasks, ["First task", "Second task"]);
+			strictEqual((await tool.run(prepared)).kind, "ok");
+			deepStrictEqual(
+				board.snapshot()?.tasks.map((task) => task.title),
+				["First task", "Second task"],
+			);
+		}
+		const result = await tool.run({ action: "build", title: "Repair", tasks: ["First task"] });
+		strictEqual(result.kind, "error");
+		if (result.kind === "error")
+			strictEqual(
+				result.message,
+				'tasks: unknown action \'build\'; to create a board use action="plan" with title="..." and tasks=["first task", "second task"]',
+			);
+	});
+
+	it("reads create with items as plan with tasks, and ids as one action per id (C-24)", async () => {
+		const board = createTaskBoardStore({ getSessionId: () => "s1", createBoardId: () => "b1" });
+		const tool = createTasksTool({ board });
+		const prepare = tool.prepareArguments;
+		ok(prepare);
+		const run = (args: Record<string, unknown>) => tool.run(prepare(args));
+		const statuses = () => board.snapshot()?.tasks.map((task) => task.status);
+		const planned = await run({ action: "create", title: "Repair", items: ["a", { title: "b" }, "c", "d"] });
+		ok(planned.kind === "ok", JSON.stringify(planned));
+		deepStrictEqual(
+			board.snapshot()?.tasks.map((task) => task.title),
+			["a", "b", "c", "d"],
+		);
+		const done = await run({ action: "done", ids: ["t1", 2], note: "observed both" });
+		ok(done.kind === "ok", JSON.stringify(done));
+		deepStrictEqual(statuses(), ["completed", "completed", "pending", "pending"]);
+		// A failure stops the sequence and names what already applied.
+		const partial = await run({ action: "drop", ids: ["t3", "t9", "t4"] });
+		ok(partial.kind === "error", JSON.stringify(partial));
+		match(partial.message, /t9.*\(t3 already applied; t4 not attempted\)/su);
+		deepStrictEqual(statuses(), ["completed", "completed", "cancelled", "pending"]);
+		for (const args of [
+			{ action: "start", ids: ["t4", "t3"] },
+			{ action: "block", id: "t4", ids: ["t4"] },
+		]) {
+			const refused = await run(args);
+			ok(refused.kind === "error", JSON.stringify(refused));
+		}
+		deepStrictEqual(statuses(), ["completed", "completed", "cancelled", "pending"]);
+	});
+
+	it("completes a pending task with evidence and records the implicit start", () => {
+		const store = createTaskBoardStore({ getSessionId: () => "s1", createBoardId: () => "b1" });
+		const planned = store.apply({ op: "plan", title: "issues", tasks: ["fix #12", "fix #15"] });
+		ok(planned.ok);
+		const done = store.apply({ op: "done", id: "t2", evidence: "node --test tests/compaction.test.ts: 4/4 pass" });
+		ok(done.ok, done.ok ? "" : done.message);
+		if (!done.ok) return;
+		strictEqual(done.board.tasks.find((task) => task.id === "t2")?.status, "completed");
+		ok(
+			done.notes.some((note) => note.includes("started t2 implicitly")),
+			done.notes.join("; "),
+		);
+	});
+
+	it("refuses done without a note and an unknown key, naming the key to use (bt-22)", async () => {
+		const board = createTaskBoardStore({ getSessionId: () => "s1", createBoardId: () => "b1" });
+		const tool = createTasksTool({ board });
+		await tool.run({ action: "plan", title: "issues", tasks: ["fix #12"] });
+		const errorOf = async (args: Record<string, unknown>) => {
+			const result = await tool.run(args);
+			return result.kind === "error" ? result.message : `unexpected ${result.kind}`;
+		};
+		strictEqual(
+			await errorOf({ action: "done", id: "t1", evidence: "fixed" }),
+			'tasks: unknown key "evidence"; use note',
+		);
+		strictEqual(await errorOf({ action: "start", task_id: "t1" }), 'tasks: unknown key "task_id"; use id');
+		match(await errorOf({ action: "done", id: "t1", note: "  " }), /^tasks: done requires note="<what was done/);
+		strictEqual(board.snapshot()?.tasks[0]?.status, "pending");
+	});
+
+	it("keeps a failed-check completion note without projecting passed validation", async () => {
+		const entries: ReturnType<typeof ledgerEnvelope>[] = [];
+		const store = createTaskBoardStore({
+			getSessionId: () => "s1",
+			createBoardId: () => "b1",
+			now: () => now,
+			readEntries: () => entries,
+			appendEntry: (entry) => entries.push(ledgerEnvelope(entry, `ledger-${entries.length}`)),
+		});
+		ok(store.apply({ op: "plan", title: "validation", tasks: ["run checks"] }).ok);
+		const note = "14/16 failed; rerun pending";
+		const done = store.apply({ op: "done", id: "t1", evidence: note });
+		ok(done.ok, done.ok ? "" : done.message);
+		if (!done.ok) return;
+		strictEqual(done.board.tasks[0]?.status, "completed");
+		strictEqual(done.board.tasks[0]?.evidence, note);
+		const written = entries.at(-1);
+		ok(written);
+		strictEqual(
+			written.requiredValidationEvidence.length,
+			0,
+			"a task note belongs to the completion claim, not a validation row",
+		);
+		strictEqual(foldTaskBoard(entries)?.tasks[0]?.evidence, note, "the note must remain durable and replayable");
+		store.invalidate();
+		strictEqual(store.snapshot()?.tasks[0]?.evidence, note);
+		const listed = await createTasksTool({ board: store }).run({ action: "list" });
+		strictEqual(listed.kind, "ok");
+		if (listed.kind === "ok") match(listed.output, /completion claim: 14\/16 failed; rerun pending/);
+	});
+
+	for (const id of ["t1.evidence", "t1"]) {
+		it(`keeps a failed observed check keyed ${id} as validation through replay`, async () => {
+			const check = {
+				id,
+				description: "unit check failed",
+				status: "failed" as const,
+				command: "unit",
+				observedAt,
+			};
+			const original = ledgerEnvelope(
+				{
+					kind: "taskLedger",
+					parentTurnId: null,
+					boardId: "b1",
+					goals: [{ id: "board", title: "validation", status: "completed" }],
+					subgoals: [{ id: "t1", title: "run unit check", status: "completed", parentGoalId: "board" }],
+					activeRunIds: [],
+					requiredValidationEvidence: [check],
+				},
+				"observed-ledger",
+			);
+			const entries = [original];
+			const store = createTaskBoardStore({
+				getSessionId: () => "s1",
+				readEntries: () => entries,
+				now: () => now,
+				appendEntry: (entry) => entries.push(ledgerEnvelope(entry, `replayed-ledger-${entries.length}`)),
+			});
+			const before = store.snapshot()?.tasks[0];
+			strictEqual(before?.status, "completed");
+			strictEqual(before?.evidence, undefined, "an observed failure must not become a completion claim");
+			deepStrictEqual(before?.requiredValidationEvidence, [check]);
+
+			const added = store.apply({ op: "add", tasks: ["follow-up"] });
+			ok(added.ok, added.ok ? "" : added.message);
+			const projected = entries.at(-1);
+			ok(projected);
+			deepStrictEqual(projected.requiredValidationEvidence, [check]);
+			strictEqual(projected.subgoals[0]?.description, undefined);
+			const after = foldTaskBoard(entries)?.tasks[0];
+			strictEqual(after?.evidence, undefined);
+			deepStrictEqual(after?.requiredValidationEvidence, [check]);
+			deepStrictEqual(original.requiredValidationEvidence, [check], "replay must not rewrite the original check");
+
+			const listed = await createTasksTool({ board: store }).run({ action: "list" });
+			strictEqual(listed.kind, "ok");
+			if (listed.kind === "ok") {
+				match(listed.output, /validation result: unit \(failed/);
+				doesNotMatch(listed.output, /acceptance(?: requirement)?: unit|completion claim: unit check failed/);
+			}
+		});
+	}
+
+	it("keeps operator declarations and observed checks separate from the done note", async () => {
+		const entries: TaskLedgerEntryFields[] = [];
+		const store = createTaskBoardStore({
+			getSessionId: () => "s1",
+			createBoardId: () => "b1",
+			now: () => now,
+			appendEntry: (entry) => entries.push(entry),
+		});
+		const picked = store.apply({
+			op: "pick",
+			title: "validate release",
+			userTaskId: "u1",
+			verification: [
+				{ check: "unit", timeoutMs: 30000 },
+				{ check: "integration", timeoutMs: 60000 },
+			],
+		});
+		ok(picked.ok, picked.ok ? "" : picked.message);
+		const note = "Implementation done; integration rerun pending";
+		const done = store.apply({ op: "done", id: "t1", evidence: note });
+		ok(done.ok, done.ok ? "" : done.message);
+		if (!done.ok) return;
+		const written = entries.at(-1);
+		ok(written);
+		deepStrictEqual(
+			written.requiredValidationEvidence
+				.filter((item) => item.id.startsWith("t1.acceptance."))
+				.map((item) => [item.command, item.status]),
+			[
+				["unit", "required"],
+				["integration", "required"],
+			],
+		);
+		strictEqual(
+			written.requiredValidationEvidence.some((item) => item.status === "passed"),
+			false,
+		);
+		strictEqual(
+			written.requiredValidationEvidence.some((item) => item.description === note),
+			false,
+			"operator requirements and the completion claim must occupy separate fields",
+		);
+		const replay = foldTaskBoard([ledgerEnvelope(written, "done-ledger")]);
+		strictEqual(replay?.tasks[0]?.evidence, note);
+		deepStrictEqual(
+			replay?.tasks[0]?.requiredValidationEvidence?.map((item) => [item.command, item.status]),
+			[
+				["unit", "required"],
+				["integration", "required"],
+			],
+		);
+		const listed = await createTasksTool({ board: store }).run({ action: "list" });
+		strictEqual(listed.kind, "ok");
+		if (listed.kind === "ok") {
+			match(listed.output, /completion claim: Implementation done; integration rerun pending/);
+			match(listed.output, /completion unverified \(required checks no recorded pass: unit, integration\)/);
+			match(listed.output, /acceptance requirement: unit .*declaration only/);
+		}
+
+		const verified = {
+			...done.board,
+			tasks: done.board.tasks.map((task) => ({
+				...task,
+				requiredValidationEvidence:
+					task.requiredValidationEvidence?.map((item) =>
+						item.command === "unit" ? { ...item, status: "passed" as const, observedAt } : item,
+					) ?? [],
+			})),
+		};
+		const withObservedCheck = toTaskLedgerEntryFields(verified, now);
+		deepStrictEqual(
+			withObservedCheck.requiredValidationEvidence
+				.filter((item) => item.id.startsWith("t1.acceptance."))
+				.map((item) => [item.command, item.status, item.observedAt]),
+			[
+				["unit", "passed", observedAt],
+				["integration", "required", undefined],
+			],
+		);
+		strictEqual(
+			withObservedCheck.requiredValidationEvidence.some((item) => item.status === "passed" && item.description === note),
+			false,
+			"only the observed check may be passed",
+		);
+		deepStrictEqual(
+			foldTaskBoard([ledgerEnvelope(withObservedCheck, "verified-ledger")])?.tasks[0]?.requiredValidationEvidence?.map(
+				(item) => item.status,
+			),
+			["passed", "required"],
+		);
+	});
+
+	it("qualifies failed and missing required checks, but not an observed pass", async () => {
+		const base = {
+			boardId: "b1",
+			title: "release",
+			activeRunIds: [],
+			tasks: [
+				{
+					id: "t1",
+					title: "ship release",
+					status: "completed" as const,
+					evidence: "Implementation delivered",
+					requiredValidationEvidence: [
+						{ id: "t1.acceptance.0", description: "unit", command: "unit", status: "failed" as const, observedAt },
+						{ id: "t1.acceptance.1", description: "integration", command: "integration", status: "missing" as const },
+					],
+				},
+			],
+		};
+		const task = base.tasks[0];
+		ok(task);
+		deepStrictEqual(unverifiedTaskChecks(task), { failed: ["unit"], noRecordedPass: ["integration"] });
+		const entries = [ledgerEnvelope(toTaskLedgerEntryFields(base, now), "failed-ledger")];
+		const store = createTaskBoardStore({ getSessionId: () => "s1", readEntries: () => entries });
+		const listed = await createTasksTool({ board: store }).run({ action: "list" });
+		strictEqual(listed.kind, "ok");
+		if (listed.kind === "ok")
+			match(listed.output, /completion unverified \(required checks failed: unit; no recorded pass: integration\)/);
+		const passed = {
+			...task,
+			requiredValidationEvidence: task.requiredValidationEvidence.map((item) => ({
+				...item,
+				status: "passed" as const,
+				observedAt,
+			})),
+		};
+		strictEqual(unverifiedTaskChecks(passed), null);
+		const unobserved = { id: "t1.acceptance.0", description: "unit", command: "unit", status: "passed" as const };
+		strictEqual(
+			unverifiedTaskChecks({
+				...passed,
+				requiredValidationEvidence: [unobserved],
+			})?.noRecordedPass[0],
+			"unit",
+		);
+	});
+
+	it("keeps the original claim beside an operator-linked repeat in history", () => {
+		const original = {
+			boardId: "original",
+			title: "first delivery",
+			activeRunIds: [],
+			tasks: [
+				{
+					id: "t3",
+					title: "headless API",
+					status: "completed" as const,
+					origin: "agent" as const,
+					evidence: "14/16 failed; repeat requested",
+					requiredValidationEvidence: [
+						{ id: "t3.acceptance.0", description: "headless", command: "headless", status: "failed" as const, observedAt },
+					],
+				},
+			],
+		};
+		const entries: ReturnType<typeof ledgerEnvelope>[] = [
+			ledgerEnvelope(toTaskLedgerEntryFields(original, now), "original-ledger"),
+		];
+		const store = createTaskBoardStore({
+			getSessionId: () => "s1",
+			readEntries: () => entries,
+			createBoardId: () => "repeat",
+			appendEntry: (entry) => entries.push(ledgerEnvelope(entry, `repeat-ledger-${entries.length}`)),
+		});
+		ok(
+			store.apply({
+				op: "pick",
+				title: "repeat headless API",
+				userTaskId: "u1",
+				verification: [{ check: "headless", timeoutMs: 30000 }],
+			}).ok,
+		);
+		ok(store.apply({ op: "done", id: "t4", evidence: "16/16 claimed" }).ok);
+		ok(store.apply({ op: "plan", title: "next board", tasks: ["new work"] }).ok);
+		const history = foldSessionTaskHistory(entries);
+		strictEqual(history.length, 2);
+		strictEqual(history[1]?.tasks.find((task) => task.userTaskId === "u1")?.evidence, "16/16 claimed");
+		const first = history[1]?.tasks.find((task) => task.id === "t3");
+		strictEqual(first?.evidence, "14/16 failed; repeat requested");
+		deepStrictEqual(first && unverifiedTaskChecks(first), { failed: ["headless"], noRecordedPass: [] });
+		deepStrictEqual(store.historySnapshot(), history);
+	});
+});

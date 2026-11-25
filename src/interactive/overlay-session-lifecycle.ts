@@ -1,0 +1,556 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { hostname } from "node:os";
+import { editTextExternally, resolveExternalEditor } from "../core/external-editor.js";
+import { pancodeStateDir } from "../core/xdg.js";
+import { resolveSessionCwd } from "../domains/session/cwd-fallback.js";
+import type { DecisionLedgerEntry } from "../domains/session/entries.js";
+import {
+	admitHandoff,
+	commitHandoff,
+	type HandoffDraft,
+	type HandoffServiceDeps,
+	prepareHandoff,
+} from "../domains/session/handoff-service.js";
+import type { SessionContract, SessionEntry } from "../domains/session/index.js";
+import { liveSessionOwner } from "../domains/session/live-owner.js";
+import { resolveSessionTarget } from "../domains/session/names.js";
+import type { TelemetryContract } from "../domains/telemetry/index.js";
+import type { TUI } from "../engine/tui.js";
+import type { ChatLoop } from "../session-control/chat-loop.js";
+import { replayCurrentSession, restoreSession } from "../session-control/index.js";
+import {
+	buildModelReplayAgentMessagesFromTurns,
+	withContinuityReplay,
+} from "../session-control/model-session-replay.js";
+import { outOfTurnRouteLabel } from "../session-control/side-question.js";
+import type { SlashCommandContext } from "../session-control/slash-command-types.js";
+import type { ChatPanel } from "./chat-panel.js";
+import { rehydrateChatPanelFromTurns } from "./chat-renderer.js";
+import { emitCommandNotice } from "./command-fallbacks.js";
+import type { InteractiveNoticeLevel } from "./interactive-subscriptions.js";
+import type { OverlayTransitions } from "./overlay-transitions.js";
+import { openCwdFallbackOverlay } from "./overlays/cwd-fallback.js";
+import { openHandoffReviewOverlay } from "./overlays/handoff-review.js";
+import { openMessagePickerOverlay } from "./overlays/message-picker.js";
+import { openSessionOverlay } from "./overlays/session-selector.js";
+import { openTreeOverlay } from "./overlays/tree-selector.js";
+import { lastTurnSummaryFromLedger } from "./session-last-turn.js";
+import { settleChatBeforeSessionSwitch } from "./session-switch-settlement.js";
+import type { TurnSummary } from "./status/index.js";
+
+export interface OverlaySessionLifecycleDeps {
+	tui: TUI;
+	transitions: OverlayTransitions;
+	session?: SessionContract;
+	chat: Pick<ChatLoop, "cancel" | "isStreaming" | "resetForSession" | "whenSettled" | "extractHandoff">;
+	chatPanel: ChatPanel;
+	/** The one transcript reset: the panel plus every view folded alongside it. */
+	resetTranscript(): void;
+	readStructuredEntries(sessionId: string): SessionEntry[];
+	getSlashNotice(): SlashCommandContext["notice"];
+	onResumeSession?(sessionId: string): void;
+	onForkSession?(parentTurnId: string): void;
+	/**
+	 * Mint a fresh session, the same hook `/new` uses. `/handoff` needs the one
+	 * session-creation path the orchestrator owns rather than a second one.
+	 */
+	onNewSession?(): void;
+	/** The session's settled decision board, which wins over extracted decisions. */
+	getDecisionBoard?(): ReadonlyArray<DecisionLedgerEntry>;
+	absorbFlow?: HandoffServiceDeps["absorbFlow"];
+	/** Stop and restart the terminal around an external editor child process. */
+	suspendTerminal?<T>(run: () => T): T;
+	resolveEditor?: typeof resolveExternalEditor;
+	editExternally?: typeof editTextExternally;
+	openHandoffReviewOverlay?: typeof openHandoffReviewOverlay;
+	announceTaskMemorySeedOffer(): void;
+	/**
+	 * The telemetry read model's session binding, moved whenever the session under it changes. Without this a resumed
+	 * session renders the previous session's numbers under the resumed session's id.
+	 */
+	sessionUsage?: Pick<TelemetryContract, "resetSession">;
+	/**
+	 * The footer's last-turn line, rescoped alongside those totals. Without it a
+	 * `/tree` switch left the line describing a turn on the branch the reader had
+	 * just left, beside a Σ total that had already moved.
+	 */
+	setLastTurnSummary?(summary: TurnSummary | null): void;
+	refreshFooter(): void;
+	requestRender(): void;
+	/** Live terminal width, so the handoff review box tracks the window. */
+	terminal?: { columns: number };
+	stderr(text: string): void;
+	notify(level: InteractiveNoticeLevel, text: string, key?: string): void;
+	openSessionOverlay?: typeof openSessionOverlay;
+	openTreeOverlay?: typeof openTreeOverlay;
+	openMessagePickerOverlay?: typeof openMessagePickerOverlay;
+	openCwdFallbackOverlay?: typeof openCwdFallbackOverlay;
+}
+
+export interface OverlaySessionLifecycle {
+	/** Resume `target` (an id, unique id prefix or exact name) directly, or open the picker. */
+	openResume(target?: string): void;
+	openTree(): void;
+	openMessagePicker(name?: string): void;
+	/** `/handoff <goal>`: extract, review, and seed a successor session. */
+	startHandoff(goal: string): void;
+}
+
+/**
+ * The target and model a session started under, so reseeded calls land in the
+ * same `/usage` bucket the live path writes to. Without it a single target read
+ * as two providers, one under the target id and one under the runtime name.
+ */
+function sessionUsageDefaults(session: SessionContract): {
+	target?: string | null;
+	model?: string | null;
+	sessionId?: string | null;
+	journalStateDir?: string;
+} {
+	const meta = session.current();
+	return {
+		target: meta?.target ?? null,
+		model: meta?.model ?? null,
+		sessionId: meta?.id ?? null,
+		...(meta ? { journalStateDir: pancodeStateDir() } : {}),
+	};
+}
+
+function restorePriorSessionOrReopen(
+	preResumeSessionId: string | null,
+	deps: { session: SessionContract; reopen: () => void; onWarning: (message: string) => void },
+): void {
+	const currentId = deps.session.current()?.id ?? null;
+	if (preResumeSessionId && preResumeSessionId !== currentId) {
+		try {
+			deps.session.switchBranch(preResumeSessionId);
+		} catch (error) {
+			deps.onWarning(
+				`[cwd-fallback] could not restore prior session: ${error instanceof Error ? error.message : String(error)}\n`,
+			);
+		}
+		return;
+	}
+	deps.reopen();
+}
+
+export function createOverlaySessionLifecycle(deps: OverlaySessionLifecycleDeps): OverlaySessionLifecycle {
+	/**
+	 * Point every running number the footer and `/usage` show at one branch. The
+	 * session total and the last-turn line are read off the same lineage in the
+	 * same call, so a switch cannot move one and leave the other behind.
+	 */
+	function rescopeToBranch(session: SessionContract, turns: SessionEntry[], leafTurnId: string | null): void {
+		const defaults = sessionUsageDefaults(session);
+		deps.sessionUsage?.resetSession(defaults.sessionId);
+		deps.setLastTurnSummary?.(lastTurnSummaryFromLedger(turns, defaults, leafTurnId));
+	}
+
+	const openResumeOverlay = deps.openSessionOverlay ?? openSessionOverlay;
+	const openTreeSelector = deps.openTreeOverlay ?? openTreeOverlay;
+	const openMessagePicker = deps.openMessagePickerOverlay ?? openMessagePickerOverlay;
+	const openCwdFallback = deps.openCwdFallbackOverlay ?? openCwdFallbackOverlay;
+
+	/**
+	 * One switch path for the picker and `/resume <id>`, so a direct resume
+	 * gets the same #93 identity check and #107 active-path replay.
+	 */
+	async function resumeSession(session: SessionContract, sessionId: string, preResumeSessionId: string | null) {
+		// Two processes appending to one ledger corrupt it. Refuse only a session whose
+		// owner is still running; a crashed one never ended and must stay resumable (#420).
+		const target = sessionId === preResumeSessionId ? undefined : session.history().find((meta) => meta.id === sessionId);
+		const owner = target ? liveSessionOwner(target) : null;
+		if (owner && owner.pid !== process.pid) {
+			emitCommandNotice(
+				deps.getSlashNotice(),
+				"warn",
+				"resume",
+				`session ${sessionId.slice(0, 13)} is open in another terminal (pid ${owner.pid}${owner.host === hostname() ? "" : ` on ${owner.host}`}); end it there first`,
+			);
+			deps.requestRender();
+			return;
+		}
+		const settlement = settleChatBeforeSessionSwitch(deps.chat);
+		if (settlement) await settlement;
+		try {
+			const replay = restoreSession(
+				{
+					session,
+					chat: deps.chat,
+					readEntries: deps.readStructuredEntries,
+					...(deps.onResumeSession ? { resume: deps.onResumeSession } : {}),
+				},
+				sessionId,
+			);
+			deps.resetTranscript();
+			rehydrateChatPanelFromTurns(deps.chatPanel, replay.entries, replay.replayOptions);
+			rescopeToBranch(session, [...replay.entries], replay.leafTurnId);
+		} catch (error) {
+			if (session.current()?.id !== sessionId) {
+				emitCommandNotice(
+					deps.getSlashNotice(),
+					"error",
+					"resume",
+					`could not switch to that session; staying on ${preResumeSessionId ?? "no session"}`,
+				);
+				deps.refreshFooter();
+				deps.requestRender();
+				return;
+			}
+			deps.stderr(`[/resume] transcript replay failed: ${error instanceof Error ? error.message : String(error)}\n`);
+		}
+		const resumedName = session.current()?.name;
+		deps.getSlashNotice()("info", `Resumed session ${sessionId}${resumedName ? ` named ${resumedName}` : ""}.`);
+		if (sessionId !== preResumeSessionId) {
+			deps.announceTaskMemorySeedOffer();
+		}
+		deps.refreshFooter();
+		deps.requestRender();
+	}
+
+	function probeResumedCwd(session: SessionContract, preResumeSessionId: string | null): void {
+		const current = session.current();
+		if (!current || current.id === preResumeSessionId) return;
+		const probe = resolveSessionCwd(current);
+		if (probe.ok) return;
+		openCwdFallbackState({
+			sessionCwd: typeof current.cwd === "string" ? current.cwd : "",
+			reason: probe.reason,
+			preResumeSessionId,
+		});
+	}
+
+	function openResume(target?: string): void {
+		if (deps.transitions.state !== "closed") return;
+		if (!deps.session) {
+			emitCommandNotice(deps.getSlashNotice(), "error", "resume", "session contract unavailable");
+			return;
+		}
+		const session = deps.session;
+		const preResumeSessionId = session.current()?.id ?? null;
+		if (target !== undefined) {
+			const match = resolveSessionTarget(session.history(), target);
+			if ("id" in match) {
+				void resumeSession(session, match.id, preResumeSessionId).then(() => probeResumedCwd(session, preResumeSessionId));
+				return;
+			}
+			emitCommandNotice(deps.getSlashNotice(), "warn", "resume", match.miss);
+		}
+		deps.transitions.state = "resume";
+		deps.transitions.handle = openResumeOverlay(deps.tui, {
+			session,
+			...(target !== undefined ? { initialQuery: target } : {}),
+			onResume: (sessionId) => void resumeSession(session, sessionId, preResumeSessionId),
+			onClose: () => {
+				deps.transitions.close();
+				queueMicrotask(() => probeResumedCwd(session, preResumeSessionId));
+			},
+		});
+		deps.requestRender();
+	}
+
+	function openTree(): void {
+		if (deps.transitions.state !== "closed") return;
+		if (!deps.session) {
+			deps.notify("error", "tree unavailable: session contract is not wired", "tree:unavailable");
+			return;
+		}
+		const session = deps.session;
+		deps.transitions.state = "tree";
+		deps.transitions.handle = openTreeSelector(deps.tui, {
+			session,
+			onSwitchTurn: async (turnId) => {
+				const settlement = settleChatBeforeSessionSwitch(deps.chat);
+				if (settlement) await settlement;
+				try {
+					session.switchTurn(turnId);
+					const sessionId = session.current()?.id ?? null;
+					if (!sessionId) throw new Error("no current session after turn switch");
+					const turns = deps.readStructuredEntries(sessionId);
+					deps.resetTranscript();
+					// `uptoTurnId` truncates the display at the selected turn. It is
+					// deliberately not a continuity `historical` flag: a live /tree
+					// selection is still this session's own branch, and treating every
+					// display truncation as a historical fork would surrender ownership
+					// of its own transactions for good.
+					const replayOptions = withContinuityReplay(turns, { uptoTurnId: turnId }, session);
+					rehydrateChatPanelFromTurns(deps.chatPanel, turns, replayOptions);
+					const replayMessages = buildModelReplayAgentMessagesFromTurns(turns, replayOptions);
+					deps.chat.resetForSession(turnId, replayMessages);
+					// The same branch the transcript above was just scoped to. Without the
+					// leaf, /usage, the footer Σ, and the last-turn line kept reporting the
+					// abandoned turns.
+					rescopeToBranch(session, turns, turnId);
+					// The transcript just shrank to the chosen turn; say why, and that nothing was lost.
+					const later = (session.tree()?.nodesById[turnId]?.children.length ?? 0) > 0;
+					deps.notify(
+						"info",
+						later
+							? "Continuing from the turn you picked. Your next message starts a new branch; the later turns stay in /tree."
+							: "Continuing from the turn you picked.",
+						"tree:switched",
+					);
+				} catch (error) {
+					deps.notify(
+						"error",
+						`tree switch failed: ${error instanceof Error ? error.message : String(error)}`,
+						"tree:switch-failed",
+					);
+				}
+				deps.refreshFooter();
+			},
+			onClose: deps.transitions.close,
+		});
+		deps.requestRender();
+	}
+
+	function openMessagePickerState(name?: string): void {
+		if (deps.transitions.state !== "closed") return;
+		if (!deps.session) {
+			emitCommandNotice(deps.getSlashNotice(), "error", "fork", "session contract unavailable");
+			return;
+		}
+		const session = deps.session;
+		const preForkSessionId = session.current()?.id ?? null;
+		if (preForkSessionId === null) {
+			emitCommandNotice(
+				deps.getSlashNotice(),
+				"warn",
+				"fork",
+				"no current session to fork from; start one with /new or /resume first",
+			);
+			return;
+		}
+		deps.transitions.state = "message-picker";
+		deps.transitions.handle = openMessagePicker(deps.tui, {
+			session,
+			onFork: async (parentTurnId) => {
+				const settlement = settleChatBeforeSessionSwitch(deps.chat);
+				if (settlement) await settlement;
+				forkSession(session, preForkSessionId, parentTurnId, name?.trim());
+			},
+			onClose: deps.transitions.close,
+		});
+		deps.requestRender();
+	}
+
+	function forkSession(session: SessionContract, preForkSessionId: string, parentTurnId: string, name?: string): void {
+		try {
+			if (deps.onForkSession) deps.onForkSession(parentTurnId);
+			else session.fork(parentTurnId);
+			const forkedSessionId = session.current()?.id ?? null;
+			// The host logs and swallows fork errors. A new identity is required
+			// before replay can replace the parent's transcript (#93, #444).
+			if (forkedSessionId === null || forkedSessionId === preForkSessionId) {
+				emitCommandNotice(deps.getSlashNotice(), "error", "fork", `fork failed; staying on ${preForkSessionId}`);
+				return;
+			}
+			deps.resetTranscript();
+			replayFork(forkedSessionId, parentTurnId, session);
+			if (name) {
+				try {
+					session.setName(name);
+				} catch (error) {
+					emitCommandNotice(
+						deps.getSlashNotice(),
+						"error",
+						"fork",
+						`Fork created, but its name could not be saved: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+			}
+			// A sentence of its own rather than a [/fork] tag: what happened, where the
+			// original went, and what did not change on disk.
+			deps.getSlashNotice()(
+				"info",
+				`Conversation forked into new session ${forkedSessionId}${name ? ` named ${name}` : ""}; the original ${preForkSessionId} is unchanged and /resume opens it. Workspace files were not rewound; existing edits remain.`,
+			);
+		} catch (error) {
+			emitCommandNotice(
+				deps.getSlashNotice(),
+				"error",
+				"fork",
+				`fork failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		} finally {
+			deps.refreshFooter();
+			deps.requestRender();
+		}
+	}
+
+	function replayFork(forkedSessionId: string, parentTurnId: string, session: SessionContract): void {
+		try {
+			const replay = replayCurrentSession(
+				{ session, chat: deps.chat, readEntries: deps.readStructuredEntries },
+				forkedSessionId,
+				"leaf",
+				undefined,
+				parentTurnId,
+			);
+			rehydrateChatPanelFromTurns(deps.chatPanel, replay.entries, replay.replayOptions);
+			rescopeToBranch(session, [...replay.entries], replay.leafTurnId);
+		} catch (error) {
+			deps.stderr(`[/fork] transcript replay failed: ${error instanceof Error ? error.message : String(error)}\n`);
+		}
+	}
+
+	function openCwdFallbackState(args: {
+		sessionCwd: string;
+		reason: "no-cwd" | "missing" | "not-a-directory";
+		preResumeSessionId: string | null;
+	}): void {
+		if (deps.transitions.state !== "closed" || !deps.session) return;
+		const session = deps.session;
+		deps.transitions.state = "cwd-fallback";
+		deps.transitions.handle = openCwdFallback(deps.tui, {
+			sessionCwd: args.sessionCwd,
+			currentCwd: process.cwd(),
+			reason: args.reason,
+			onContinue: deps.refreshFooter,
+			onCancel: () => {
+				restorePriorSessionOrReopen(args.preResumeSessionId, {
+					session,
+					reopen: () => queueMicrotask(openResume),
+					onWarning: deps.stderr,
+				});
+				deps.refreshFooter();
+			},
+			onClose: deps.transitions.close,
+		});
+		deps.requestRender();
+	}
+
+	/**
+	 * `/handoff <goal>`: carry this session's working state into a fresh one.
+	 *
+	 * The lifecycle itself, admission, extraction with one repair, the review
+	 * document and the seeded successor, is the shared session service
+	 * (`src/domains/session/handoff-service.ts`). This adapter owns what only a
+	 * terminal has: the review overlay, `$EDITOR`, and redrawing the transcript.
+	 */
+	function handoffDeps(): HandoffServiceDeps {
+		return {
+			...(deps.session ? { session: deps.session } : {}),
+			extract: (goal, options) => deps.chat.extractHandoff(goal, options ?? {}),
+			readEntries: (sessionId) => deps.readStructuredEntries(sessionId),
+			isTurnInFlight: () => deps.chat.isStreaming(),
+			...(deps.onNewSession ? { createSession: deps.onNewSession } : {}),
+			...(deps.getDecisionBoard ? { getDecisionBoard: deps.getDecisionBoard } : {}),
+			...(deps.absorbFlow ? { absorbFlow: deps.absorbFlow } : {}),
+		};
+	}
+
+	function startHandoff(goal: string): void {
+		if (deps.transitions.state !== "closed") return;
+		const admitted = admitHandoff(handoffDeps(), goal);
+		if (!admitted.ok) {
+			emitCommandNotice(deps.getSlashNotice(), admitted.level, "handoff", admitted.reason);
+			return;
+		}
+		void runHandoff(admitted.session, admitted.goal);
+	}
+
+	/**
+	 * The review box opens before the first model call, so the wait has an owner,
+	 * a clock and an Esc; the document then takes over the same box.
+	 */
+	async function runHandoff(session: SessionContract, goal: string): Promise<void> {
+		const controller = new AbortController();
+		let draft: HandoffDraft | null = null;
+		// Closing the box answers as a cancel, and a failed extraction is not one: its own row says what happened.
+		let failed = false;
+		const openReview = deps.openHandoffReviewOverlay ?? openHandoffReviewOverlay;
+		deps.transitions.state = "handoff-review";
+		const review = openReview(deps.tui, {
+			document: null,
+			goal,
+			columns: deps.terminal?.columns ?? 80,
+			onEdit: editHandoffDocument,
+			onAccept: (reviewed) => {
+				deps.transitions.close();
+				if (draft) seedHandoffSession(session, draft, reviewed);
+			},
+			// Esc. Nothing has been written yet, so cancel really is free. The
+			// overlay settles itself on cancel and answers no further key, so the
+			// transition has to close here or the review stays on screen inert.
+			onCancel: () => {
+				controller.abort();
+				deps.transitions.close();
+				if (!failed) deps.notify("info", "handoff cancelled; nothing was written", "handoff:cancelled");
+			},
+		});
+		deps.transitions.handle = review;
+		deps.requestRender();
+		const prepared = await prepareHandoff(
+			{
+				...handoffDeps(),
+				extract: (round, options) => {
+					review.setPreparation(options?.repair ? "repairing" : "reading");
+					return deps.chat.extractHandoff(round, {
+						...(options ?? {}),
+						signal: controller.signal,
+						onRoute: (route) => review.setRoute(outOfTurnRouteLabel(route)),
+					});
+				},
+			},
+			goal,
+		);
+		// The operator already left, and heard that nothing was written.
+		if (controller.signal.aborted) return;
+		if (!prepared.ok) {
+			failed = true;
+			deps.transitions.close();
+			const unwritten = /nothing was written/u.test(prepared.reason) ? "" : "; nothing was written";
+			emitCommandNotice(deps.getSlashNotice(), prepared.level, "handoff", `${prepared.reason}${unwritten}`);
+			deps.requestRender();
+			return;
+		}
+		draft = prepared.draft;
+		review.showDocument(prepared.draft.document);
+	}
+
+	/** Hand the document to `$EDITOR`, or say why it could not go. */
+	function editHandoffDocument(current: string): string | null {
+		const resolve = deps.resolveEditor ?? resolveExternalEditor;
+		const edit = deps.editExternally ?? editTextExternally;
+		const command = resolve();
+		if (!command) {
+			deps.notify("warning", "handoff: no external editor configured; set VISUAL or EDITOR", "handoff:no-editor");
+			return null;
+		}
+		const suspend = deps.suspendTerminal ?? (<T>(run: () => T): T => run());
+		const result = suspend(() => edit(current, command));
+		if (result.ok) return result.text ?? current;
+		if (result.error) deps.notify("warning", `handoff: ${result.error}`, "handoff:editor-failed");
+		return null;
+	}
+
+	/** Seed the successor through the shared service, then open it on screen. */
+	function seedHandoffSession(session: SessionContract, draft: HandoffDraft, reviewed: string): void {
+		const committed = commitHandoff(handoffDeps(), draft, reviewed);
+		if (!committed.ok) {
+			if (committed.code === "empty") deps.notify("warning", `handoff: ${committed.reason}`, "handoff:empty");
+			else emitCommandNotice(deps.getSlashNotice(), committed.level, "handoff", committed.reason);
+			return;
+		}
+		for (const warning of committed.warnings) deps.stderr(`[/handoff] ${warning}\n`);
+		const toSessionId = committed.toSessionId;
+		try {
+			const turns = deps.readStructuredEntries(toSessionId);
+			deps.resetTranscript();
+			const replayOptions = withContinuityReplay(turns, {}, session);
+			rehydrateChatPanelFromTurns(deps.chatPanel, turns, replayOptions);
+			deps.chat.resetForSession(null, buildModelReplayAgentMessagesFromTurns(turns, replayOptions));
+			rescopeToBranch(session, turns, null);
+		} catch (error) {
+			deps.stderr(`[/handoff] seeding replay failed: ${error instanceof Error ? error.message : String(error)}\n`);
+			deps.chat.resetForSession(null);
+		}
+		emitCommandNotice(deps.getSlashNotice(), "info", "handoff", `handed off to session ${toSessionId}`);
+		deps.refreshFooter();
+		deps.requestRender();
+	}
+
+	return { openResume, openTree, openMessagePicker: openMessagePickerState, startHandoff };
+}

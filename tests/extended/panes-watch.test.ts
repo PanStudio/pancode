@@ -1,0 +1,478 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, strictEqual } from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { it } from "node:test";
+import type { OutputStyle } from "../../src/core/defaults.js";
+import { colorDepth } from "../../src/core/terminal-preferences.js";
+import { createMuxRuntime, type MuxPaneOpenFailure } from "../../src/domains/mux/contract.js";
+import { createMuxClient, type MuxClient } from "../../src/domains/mux/socket-client.js";
+import { MuxError } from "../../src/domains/mux/types.js";
+import { watchViewerCommand } from "../../src/domains/mux/viewer-command.js";
+import { createWatchPaneController, workersDockHiddenNotice } from "../../src/interactive/watch-pane.js";
+
+function fixture() {
+	const calls: string[] = [];
+	const writes: string[] = [];
+	let width = 200;
+	let anchor = true;
+	let failure: Error | null = null;
+	const client = {
+		async snapshot() {
+			return { panes: [] };
+		},
+		async paneLayout() {
+			return {
+				tabId: "t1",
+				panes: anchor ? [{ paneId: "self", rect: { x: 0, y: 0, width, height: 60 } }] : [],
+				splits: [],
+			};
+		},
+		async paneSplit(request: { focus?: boolean }) {
+			calls.push(request.focus === true ? "split focused" : "split");
+			if (failure) throw failure;
+			return { paneId: "watch", tabId: "t1", workspaceId: "w1" };
+		},
+		async paneRename() {},
+		async paneReportMetadata() {},
+		async paneSendText() {
+			calls.push("send");
+		},
+		async paneClose() {
+			calls.push("close");
+		},
+		async paneFocus() {
+			calls.push("focus");
+		},
+	} as unknown as MuxClient;
+	const runtime = createMuxRuntime({
+		client,
+		detection: {
+			mode: "guest",
+			socketPath: null,
+			server: { version: "0.8.2", protocol: 21 },
+			self: { paneId: "self", tabId: "t1", workspaceId: "w1" },
+			candidates: [],
+			reason: "fixture",
+			refused: false,
+		},
+	});
+	const watch = (getOutputStyle: () => OutputStyle = () => "standard") =>
+		createWatchPaneController({
+			getOutputStyle,
+			mux: runtime.contract,
+			getCwd: () => "/repo",
+			selectionPath: "/fixture/watch-selection",
+			dirs: { config: "/fixture/config", data: "/fixture/data", state: "/fixture/state", cache: "/fixture/cache" },
+			command: () => ["viewer"],
+			writeFile: (_path, content) => {
+				writes.push(content);
+			},
+		});
+	return {
+		runtime,
+		client,
+		calls,
+		writes,
+		watch,
+		setWidth: (value: number) => {
+			width = value;
+		},
+		setAnchor: (value: boolean) => {
+			anchor = value;
+		},
+		setFailure: (value: Error | null) => {
+			failure = value;
+		},
+	};
+}
+
+it("updates the worker pane tier without retargeting the selected run", async () => {
+	const f = fixture();
+	let style: OutputStyle = "compact";
+	const controller = f.watch(() => style);
+	try {
+		await controller.watch("run-one");
+		const first = f.writes.at(-1) ?? "";
+		match(first, /^run-one\n/);
+		match(first, /outputDetail=compact\n/);
+		style = "detailed";
+		strictEqual(controller.refreshPresentation?.(), true);
+		const next = f.writes.at(-1) ?? "";
+		strictEqual(next, first.replace("outputDetail=compact", "outputDetail=detailed"));
+	} finally {
+		controller.dispose();
+	}
+});
+
+it("opens the workers dock from the key without taking the keyboard (bt-11 b)", async () => {
+	const f = fixture();
+	const controller = f.watch();
+	try {
+		strictEqual((await controller.toggle()).status, "opened");
+		deepStrictEqual(f.calls, ["split", "send"]);
+	} finally {
+		controller.dispose();
+	}
+});
+
+for (const stage of ["paneReportMetadata", "paneSendText"] as const) {
+	it(`rolls back a newly allocated dock when ${stage} fails and permits a retry`, async () => {
+		const f = fixture();
+		let reject = true;
+		f.client[stage] = async () => {
+			if (reject) throw new Error("initialization failed");
+			if (stage === "paneSendText") f.calls.push("send");
+		};
+		const controller = f.watch();
+		try {
+			strictEqual((await controller.watch("first")).status, "unavailable");
+			deepStrictEqual(f.runtime.contract.list(), []);
+			deepStrictEqual(f.runtime.contract.docks(), []);
+			deepStrictEqual(f.calls, ["split", "close"]);
+			reject = false;
+			strictEqual((await controller.watch("second")).status, "watching");
+			deepStrictEqual(f.calls, ["split", "close", "split", "send"]);
+		} finally {
+			controller.dispose();
+		}
+	});
+}
+
+it("retries a failed utility rollback before allocating another dock", async () => {
+	const f = fixture();
+	f.client.paneReportMetadata = async () => {
+		throw new Error("metadata failed");
+	};
+	f.client.paneClose = async () => {
+		f.calls.push("close-failed");
+		throw new Error("close failed");
+	};
+	const controller = f.watch();
+	try {
+		strictEqual((await controller.watch("first")).status, "unavailable");
+		deepStrictEqual(f.runtime.contract.list(), []);
+		deepStrictEqual(f.runtime.contract.docks(), []);
+		f.client.paneReportMetadata = async () => undefined;
+		f.client.paneClose = async () => {
+			f.calls.push("close");
+		};
+		strictEqual((await controller.watch("second")).status, "watching");
+		deepStrictEqual(f.calls, ["split", "close-failed", "close", "split", "send"]);
+	} finally {
+		controller.dispose();
+	}
+});
+
+for (const [name, error, reason] of [
+	[
+		"structured error",
+		{ code: "layout_capacity", message: "tab limit reached: 8 panes" },
+		"cannot open the watch pane (kind=unknown, code=layout_capacity, method=pane.split): tab limit reached: 8 panes",
+	],
+	[
+		"empty error",
+		{},
+		"cannot open the watch pane (kind=unknown, method=pane.split): no failure message was supplied by the pane host",
+	],
+	[
+		"code-only error",
+		{ code: "feature_disabled" },
+		"cannot open the watch pane (kind=feature_disabled, code=feature_disabled, method=pane.split): no failure message was supplied by the pane host",
+	],
+	[
+		"literal unknown message",
+		{ message: "unknown" },
+		"cannot open the watch pane (kind=unknown, method=pane.split): unknown",
+	],
+	[
+		"literal unknown code and message",
+		{ code: "unknown", message: "unknown" },
+		"cannot open the watch pane (kind=unknown, code=unknown, method=pane.split): unknown",
+	],
+] as const) {
+	it(`preserves ${name} through the real socket client, mux runtime, and watch result`, async () => {
+		const root = mkdtempSync(join(tmpdir(), "watch-host-"));
+		const socketPath = join(root, "host.sock");
+		const methods: string[] = [];
+		const server = createServer((socket) => {
+			let pending = "";
+			socket.on("data", (chunk) => {
+				pending += chunk.toString();
+				if (!pending.includes("\n")) return;
+				const request = JSON.parse(pending.trim());
+				methods.push(request.method);
+				socket.end(`${JSON.stringify({ id: request.id, error })}\n`);
+			});
+		});
+		await new Promise<void>((resolve, reject) => {
+			server.once("error", reject);
+			server.listen(socketPath, resolve);
+		});
+		const wire = createMuxClient({ socketPath });
+		const f = fixture();
+		f.client.paneSplit = wire.paneSplit;
+		const controller = f.watch();
+		try {
+			deepStrictEqual(await controller.watch("run-1"), {
+				status: "unavailable",
+				reason,
+			});
+			strictEqual(controller.isOpen(), false);
+			deepStrictEqual(methods, ["pane.split"]);
+			deepStrictEqual(f.calls, []);
+		} finally {
+			controller.dispose();
+			await wire.close();
+			await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+}
+
+it("keeps a structured refusal separate from a later independent successful watch", async () => {
+	const f = fixture();
+	f.setFailure(
+		new MuxError("feature_disabled", "splits disabled by operator", {
+			wireCode: "feature_disabled",
+			method: "pane.split",
+		}),
+	);
+	const controller = f.watch();
+	const refused = await controller.watch("first");
+	strictEqual(refused.status, "unavailable");
+	if (refused.status !== "unavailable") return;
+	match(refused.reason, /kind=feature_disabled, code=feature_disabled, method=pane.split/);
+	match(refused.reason, /splits disabled by operator/);
+	doesNotMatch(refused.reason, /capacity/);
+	deepStrictEqual(f.calls, ["split"]);
+	f.setFailure(null);
+	deepStrictEqual(await controller.watch("second"), {
+		status: "watching",
+		runId: "second",
+		paneId: "watch",
+		opened: true,
+	});
+	deepStrictEqual(await controller.watch("third"), {
+		status: "watching",
+		runId: "third",
+		paneId: "watch",
+		opened: false,
+	});
+	deepStrictEqual(f.calls, ["split", "split", "send"]);
+	controller.dispose();
+});
+
+for (const missing of [false, true]) {
+	it(`reports local ${missing ? "missing anchor" : "minimum size"} refusal before any split`, async () => {
+		const f = fixture();
+		if (missing) f.setAnchor(false);
+		else f.setWidth(72);
+		const controller = f.watch();
+		const result = await controller.watch("run");
+		strictEqual(result.status, "unavailable");
+		if (result.status !== "unavailable") return;
+		match(result.reason, /locally:/);
+		match(
+			result.reason,
+			missing
+				? /no anchor geometry for self; check the pane host layout/
+				: /needs 40 columns and at most half of 72 is available; enlarge the anchor pane/,
+		);
+		doesNotMatch(result.reason, /capacity|code=/);
+		deepStrictEqual(f.calls, []);
+		controller.dispose();
+	});
+}
+
+it("explicitly reports a reason-free null without retaining a prior failure", async () => {
+	const f = fixture();
+	const original = f.runtime.contract.openUtilityPane;
+	let first = true;
+	f.runtime.contract.openUtilityPane = async (request) => {
+		if (first) {
+			first = false;
+			return original(request);
+		}
+		return null;
+	};
+	f.setFailure(new MuxError("unknown", "old reason", { wireCode: "old_code" }));
+	const controller = f.watch();
+	await controller.watch("first");
+	const result = await controller.watch("second");
+	strictEqual(result.status, "unavailable");
+	if (result.status !== "unavailable") return;
+	strictEqual(
+		result.reason,
+		"cannot open the watch pane: no failure reason was supplied by the pane host; check /panes before trying again",
+	);
+	doesNotMatch(result.reason, /old reason|old_code|capacity/);
+	deepStrictEqual(f.calls, ["split"]);
+	controller.dispose();
+});
+
+it("hands ASCII mode to the dock in the pane's environment, since the glyph table loads before argv (FX-19)", async () => {
+	const saved = process.env.PANCODE_ASCII;
+	const envs: Array<Readonly<Record<string, string>> | undefined> = [];
+	const open = async (ascii: boolean) => {
+		const f = fixture();
+		const original = f.runtime.contract.openUtilityPane;
+		f.runtime.contract.openUtilityPane = async (request) => {
+			envs.push(request.env);
+			return original(request);
+		};
+		if (ascii) process.env.PANCODE_ASCII = "1";
+		else delete process.env.PANCODE_ASCII;
+		const controller = f.watch();
+		await controller.watch("run");
+		controller.dispose();
+	};
+	try {
+		await open(true);
+		await open(false);
+		deepStrictEqual(envs, [{ PANCODE_ASCII: "1" }, undefined]);
+	} finally {
+		if (saved === undefined) delete process.env.PANCODE_ASCII;
+		else process.env.PANCODE_ASCII = saved;
+	}
+});
+
+it("keeps concurrent diagnostics request-scoped and legacy callers best-effort", async () => {
+	const f = fixture();
+	f.client.paneSplit = async (request) => {
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		throw new MuxError("unknown", request.cwd ?? "", { wireCode: request.cwd ?? "", method: "pane.split" });
+	};
+	const failures: MuxPaneOpenFailure[][] = [[], []];
+	deepStrictEqual(
+		await Promise.all(
+			failures.map((sink, index) =>
+				f.runtime.contract.openUtilityPane({
+					argv: [],
+					cwd: `request-${index}`,
+					label: "test",
+					onFailure: (failure) => sink.push(failure),
+				}),
+			),
+		),
+		[null, null],
+	);
+	deepStrictEqual(
+		failures.map((sink) => sink[0]),
+		[0, 1].map((index) => ({
+			source: "mux",
+			kind: "unknown",
+			wireCode: `request-${index}`,
+			method: "pane.split",
+			message: `request-${index}`,
+		})),
+	);
+	strictEqual(await f.runtime.contract.openUtilityPane({ argv: [], cwd: "/repo", label: "legacy" }), null);
+	strictEqual(
+		await f.runtime.contract.openUtilityPane({
+			argv: [],
+			cwd: "/repo",
+			label: "throwing observer",
+			onFailure: () => {
+				throw new Error("observer");
+			},
+		}),
+		null,
+	);
+});
+
+it("retains structured fields even when the mux error message is empty", async () => {
+	const f = fixture();
+	f.setFailure(new MuxError("unknown", "", { wireCode: "unexplained_refusal", method: "pane.split" }));
+	const controller = f.watch();
+	deepStrictEqual(await controller.watch("run"), {
+		status: "unavailable",
+		reason:
+			"cannot open the watch pane (kind=unknown, code=unexplained_refusal, method=pane.split): no failure message was supplied by the pane host",
+	});
+	deepStrictEqual(f.calls, ["split"]);
+	controller.dispose();
+});
+
+it("backs off a subscription the server refuses instead of retrying at the initial delay", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "mux-sub-refused-"));
+	const sock = join(dir, "h.sock");
+	let subscribes = 0;
+	const server = createServer((conn) => {
+		conn.on("error", () => undefined);
+		conn.once("data", (chunk) => {
+			const req = JSON.parse(chunk.toString("utf8").split("\n")[0] ?? "{}") as { id: string; method: string };
+			if (req.method === "events.subscribe") subscribes += 1;
+			conn.end(`${JSON.stringify({ id: req.id, error: { code: "invalid_request", message: "no" } })}\n`);
+		});
+	});
+	await new Promise<void>((resolve) => server.listen(sock, resolve));
+	const client = createMuxClient({ socketPath: sock, backoff: { initialDelayMs: 20, maxDelayMs: 10_000, factor: 2 } });
+	try {
+		const sub = await client.subscribe(["pane.closed"], () => undefined);
+		// Doubling from 20 ms reaches 20+40+80+160+320 = 620 ms after five retries, so 700 ms fits
+		// at most seven connects; the flat 20 ms loop this replaces made about 35.
+		await new Promise((resolve) => setTimeout(resolve, 700));
+		sub.close();
+		strictEqual(subscribes <= 7, true, `subscribe connects in 700 ms: ${subscribes}`);
+	} finally {
+		await client.close();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+it("does not adopt a dock whose owning PanCode is still running", async () => {
+	const dock = (paneId: string, pid: number) => ({
+		paneId,
+		tabId: "t1",
+		workspaceId: "w1",
+		tokens: { pancode_owner: "pancode:mux", role: "watch", dock: "workers", pid: String(pid) },
+	});
+	const client = {
+		async snapshot() {
+			// process.ppid is a live process other than this one; 2**31 - 2 is not running.
+			return { panes: [dock("live-peer", process.ppid), dock("orphan", 2 ** 31 - 2)] };
+		},
+		async paneClose() {},
+	} as unknown as MuxClient;
+	const runtime = createMuxRuntime({
+		client,
+		detection: {
+			mode: "guest",
+			socketPath: null,
+			server: { version: "0.8.2", protocol: 21 },
+			self: { paneId: "self", tabId: "t1", workspaceId: "w1" },
+			candidates: [],
+			reason: "fixture",
+			refused: false,
+		},
+	});
+	const adopted = await runtime.contract.adoptPane({ purpose: "watch", label: "watch" });
+	strictEqual(adopted?.paneId, "orphan");
+});
+
+it("a hidden workers dock names the workers still running and none once they finished (bt-48-14)", () => {
+	strictEqual(workersDockHiddenNotice(0), "workers dock hidden; the key shows it again, twice quickly closes it");
+	match(workersDockHiddenNotice(1), /^workers dock hidden, 1 worker still running;/u);
+	match(workersDockHiddenNotice(2), /^workers dock hidden, 2 workers still running;/u);
+});
+
+it("pins the launching PanCode's color depth on the dock argv, since the pane inherits the host's env (FX-14)", () => {
+	const argv = (env: NodeJS.ProcessEnv) =>
+		watchViewerCommand("/state/watch-selection", {
+			entryPath: "/pancode/dist/cli/index.js",
+			execPath: "node",
+			colorDepth: colorDepth(env),
+			tapPath: "/state/watch-dock-taps",
+		}).join(" ");
+	strictEqual(
+		argv({ NO_COLOR: "1", COLORTERM: "truecolor" }),
+		"node /pancode/dist/cli/index.js fleet view --watch /state/watch-selection --color-depth none --dock-taps /state/watch-dock-taps",
+	);
+	match(argv({ TERM: "linux" }), / --color-depth 16 /u);
+	match(argv({ TERM: "xterm-256color", COLORTERM: "truecolor" }), / --color-depth truecolor /u);
+});

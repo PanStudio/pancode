@@ -1,0 +1,290 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Inception Mercury — diffusion LLMs (dLLMs). Mercury denoises whole blocks of
+ * tokens in parallel rather than emitting them left to right, which is why it
+ * is fast enough to sit in a latency-sensitive slot a frontier model cannot.
+ *
+ * Three surfaces are wired here:
+ *   - chat, at `/v1/chat/completions`, OpenAI-compatible with tools and
+ *     structured outputs, driven through the ordinary pi-ai transport.
+ *   - fill-in-the-middle, at `/v1/fim/completions`, exposed through the
+ *     existing `infill()` verb so callers reach it exactly as they reach
+ *     llama.cpp's.
+ *   - typed decisions, at `/v1/decisions`, through the System One verb.
+ *
+ * `/v1/edit/completions` (Mercury Edit 2's next-edit prediction) is deliberately
+ * not implemented: it needs a contract verb of its own and its context-tag
+ * request format is not covered by the published reference.
+ */
+
+import type { Api, Model } from "../../../../engine/types.js";
+
+import { synthesizeCatalogBackedModel } from "../../catalog.js";
+import { probeJson } from "../../probe/http.js";
+import type { CapabilityFlags } from "../../types/capability-flags.js";
+import type { CompletionChunk, DecideOptions, DecideResult, InfillOptions } from "../../types/inference.js";
+import type { KnowledgeBaseHit } from "../../types/knowledge-base.js";
+import type { ProbeContext, ProbeResult, RuntimeDescriptor } from "../../types/runtime-descriptor.js";
+import type { TargetDescriptor } from "../../types/target-descriptor.js";
+import { postTypedDecisions } from "../common/systemone-wire.js";
+
+const INCEPTION_BASE_URL = "https://api.inceptionlabs.ai/v1";
+const DECISION_MODEL = "mercury-decide";
+
+const defaultCapabilities: CapabilityFlags = {
+	chat: true,
+	tools: true,
+	toolCallFormat: "openai",
+	// Legacy Mercury reasoning is not observable over this API: above `instant`,
+	// the response carries `content: null` with `reasoning_summary: null`, and
+	// the streaming path leaks a raw `<|think_end|>` token into the text. Nothing can be shown to
+	// the operator, so the capability is declared false and the effort is
+	// pinned below.
+	reasoning: false,
+	structuredOutputs: "json-schema",
+	vision: false,
+	audio: false,
+	embeddings: false,
+	rerank: false,
+	fim: true,
+	// /v1/models, 2026-10-20: Mercury 3 has a catalog row; legacy models retain this fallback
+	// until the live probe supplies their individual serving limits.
+	contextWindow: 260000,
+	maxTokens: 65536,
+};
+
+interface InceptionModelsResponse {
+	data?: Array<{
+		id?: unknown;
+		name?: unknown;
+		context_length?: unknown;
+		max_output_length?: unknown;
+		supported_endpoints?: unknown;
+	}>;
+}
+
+function decisionsOnly(row: NonNullable<InceptionModelsResponse["data"]>[number]): boolean {
+	return (
+		row.id === DECISION_MODEL ||
+		(Array.isArray(row.supported_endpoints) &&
+			row.supported_endpoints.includes("decisions") &&
+			!row.supported_endpoints.includes("chat.completions"))
+	);
+}
+
+interface RawTextCompletionChunk {
+	choices?: Array<{ text?: unknown; finish_reason?: unknown }>;
+	usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
+}
+
+function trimTrailingSlash(value: string): string {
+	return value.endsWith("/") && value.length > 1 ? value.slice(0, -1) : value;
+}
+
+function targetBaseUrl(target: TargetDescriptor): string {
+	return trimTrailingSlash(target.url ?? INCEPTION_BASE_URL);
+}
+
+function resolveKey(target: TargetDescriptor, ctx: ProbeContext): string | undefined {
+	const envName = target.auth?.apiKeyEnvVar ?? "INCEPTION_API_KEY";
+	if (ctx.authToken) return ctx.authToken;
+	return ctx.credentialsPresent.has(envName) ? process.env[envName]?.trim() : undefined;
+}
+
+function authHeaders(target: TargetDescriptor, ctx: ProbeContext): Record<string, string> {
+	const headers: Record<string, string> = { ...(target.auth?.headers ?? {}) };
+	const key = resolveKey(target, ctx);
+	if (key) headers.authorization = `Bearer ${key}`;
+	return headers;
+}
+
+async function fetchModels(target: TargetDescriptor, ctx: ProbeContext, path: string): Promise<ProbeResult> {
+	const opts = {
+		url: `${targetBaseUrl(target)}${path}`,
+		timeoutMs: ctx.httpTimeoutMs,
+		headers: authHeaders(target, ctx),
+	} as const;
+	const result = await (ctx.signal
+		? probeJson<InceptionModelsResponse>({ ...opts, signal: ctx.signal })
+		: probeJson<InceptionModelsResponse>(opts));
+	if (!result.ok) return result;
+	const rows = result.data?.data ?? [];
+	const models = rows
+		.filter((row) => !decisionsOnly(row))
+		.map((row) => (typeof row?.id === "string" ? row.id : null))
+		.filter((id): id is string => id !== null);
+	const out: ProbeResult = { ok: true, models };
+	if (result.latencyMs !== undefined) out.latencyMs = result.latencyMs;
+
+	const modelLabels: Record<string, string> = {};
+	const modelCapabilities: Record<string, Partial<CapabilityFlags>> = {};
+	for (const row of rows) {
+		if (typeof row?.id !== "string") continue;
+		if (typeof row.name === "string") modelLabels[row.id] = row.name;
+		const caps: Partial<CapabilityFlags> = {};
+		if (typeof row.context_length === "number") caps.contextWindow = row.context_length;
+		if (typeof row.max_output_length === "number") caps.maxTokens = row.max_output_length;
+		if (decisionsOnly(row)) {
+			Object.assign(caps, {
+				chat: false,
+				tools: false,
+				fim: false,
+				reasoning: false,
+				structuredOutputs: "none",
+				decisions: true,
+				maxTokens: 0,
+			});
+		}
+		if (Object.keys(caps).length > 0) modelCapabilities[row.id] = caps;
+	}
+	if (Object.keys(modelLabels).length > 0) out.modelLabels = modelLabels;
+	if (Object.keys(modelCapabilities).length > 0) out.modelCapabilities = modelCapabilities;
+
+	const configured = target.defaultModel?.trim();
+	if (configured && rows.length > 0 && !rows.some((row) => row.id === configured)) {
+		out.ok = false;
+		out.error = `configured model '${configured}' was not returned by Inception`;
+	}
+	return out;
+}
+
+/** Parse OpenAI `text_completion` SSE frames into the shared chunk shape. */
+async function* streamTextCompletion(body: ReadableStream<Uint8Array>): AsyncGenerator<CompletionChunk> {
+	const reader = body.getReader();
+	const decoder = new TextDecoder("utf-8");
+	let buffered = "";
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buffered += decoder.decode(value, { stream: true });
+			let nl = buffered.indexOf("\n");
+			while (nl !== -1) {
+				const line = buffered.slice(0, nl).trimEnd();
+				buffered = buffered.slice(nl + 1);
+				nl = buffered.indexOf("\n");
+				if (line.length === 0 || !line.startsWith("data:")) continue;
+				const payload = line.slice(5).trim();
+				if (payload.length === 0) continue;
+				if (payload === "[DONE]") {
+					yield { content: "", stop: true, stop_type: "eos" };
+					return;
+				}
+				let parsed: RawTextCompletionChunk;
+				try {
+					parsed = JSON.parse(payload) as RawTextCompletionChunk;
+				} catch {
+					continue;
+				}
+				const choice = parsed.choices?.[0];
+				const content = typeof choice?.text === "string" ? choice.text : "";
+				const finish = choice?.finish_reason;
+				const stop = typeof finish === "string" && finish.length > 0;
+				const chunk: CompletionChunk = { content, stop };
+				if (stop) chunk.stop_type = finish === "length" ? "limit" : finish === "stop" ? "eos" : "none";
+				const predicted = parsed.usage?.completion_tokens;
+				const evaluated = parsed.usage?.prompt_tokens;
+				if (typeof predicted === "number") chunk.tokens_predicted = predicted;
+				if (typeof evaluated === "number") chunk.tokens_evaluated = evaluated;
+				yield chunk;
+				if (stop) return;
+			}
+		}
+	} finally {
+		reader.releaseLock();
+	}
+}
+
+const inceptionRuntime: RuntimeDescriptor = {
+	id: "inception",
+	displayName: "Inception (Mercury dLLM)",
+	kind: "http",
+	tier: "cloud",
+	apiFamily: "openai-completions",
+	auth: "api-key",
+	credentialsEnvVar: "INCEPTION_API_KEY",
+	knownModels: ["mercury-3", "mercury-2.5", "mercury-2", "mercury-edit-2"],
+	defaultModel: "mercury-3",
+	defaultCapabilities,
+	probe(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult> {
+		return fetchModels(target, ctx, "/models");
+	},
+	async probeModels(target: TargetDescriptor, ctx: ProbeContext): Promise<string[]> {
+		const result = await fetchModels(target, ctx, "/models");
+		return result.ok && result.models ? [...result.models] : [];
+	},
+	synthesizeModel(target: TargetDescriptor, wireModelId: string, kb: KnowledgeBaseHit | null): Model<Api> {
+		if (wireModelId === DECISION_MODEL) {
+			throw new Error("mercury-decide supports typed decisions only; use mercury-3 for chat");
+		}
+		return synthesizeCatalogBackedModel({
+			target,
+			wireModelId,
+			kb,
+			defaultCapabilities,
+			runtimeId: "inception",
+			api: "openai-completions",
+			provider: "inception",
+			defaultBaseUrl: INCEPTION_BASE_URL,
+			compat: {
+				// Inception accepts only assistant|function|system|tool|user, so a
+				// system prompt sent as `developer` is rejected outright.
+				supportsDeveloperRole: false,
+				supportsReasoningEffort: false,
+				maxTokensField: "max_tokens",
+			},
+			// /v1/chat/completions SSE probe, 2026-10-20: Mercury 3 answered "4" with stop
+			// at omitted, instant and medium effort (128-token cap), without a
+			// think_end token. Omitted effort reasons at the backend default, and the
+			// completions adapter strips that reasoning, so PanCode's only level, off,
+			// pins the minimum effort every chat model accepts.
+			samplingParams: { reasoning_effort: "instant" },
+		});
+	},
+	decide(target: TargetDescriptor, opts: DecideOptions, ctx: ProbeContext): Promise<DecideResult> {
+		const model = opts.model ?? target.defaultModel ?? DECISION_MODEL;
+		if (model !== DECISION_MODEL) throw new Error(`Inception model '${model}' does not support typed decisions`);
+		// Live POST /v1/decisions, 2026-10-20: {model,state,questions}
+		// accepts noul/choice/score unchanged and returns {model,answers,usage:
+		// {input_tokens,output_tokens}} (229 input tokens, 3 output tokens, 320 ms).
+		return postTypedDecisions(
+			{
+				baseUrl: targetBaseUrl(target),
+				headers: authHeaders(target, ctx),
+				model,
+				label: "Inception",
+				endpoint: "decisions",
+			},
+			opts,
+			ctx,
+		);
+	},
+	async *infill(target: TargetDescriptor, opts: InfillOptions, ctx: ProbeContext): AsyncIterable<CompletionChunk> {
+		// FIM is served by the edit-tuned model, which is not the chat default.
+		const model = target.defaultModel ?? "mercury-edit-2";
+		const body: Record<string, unknown> = {
+			model,
+			prompt: opts.input_prefix,
+			suffix: opts.input_suffix,
+			stream: true,
+		};
+		if (opts.n_predict !== undefined) body.max_tokens = opts.n_predict;
+		if (opts.stop && opts.stop.length > 0) body.stop = opts.stop;
+
+		const init: RequestInit = {
+			method: "POST",
+			headers: { ...authHeaders(target, ctx), "content-type": "application/json", accept: "text/event-stream" },
+			body: JSON.stringify(body),
+		};
+		const signal = opts.signal ?? ctx.signal;
+		if (signal) init.signal = signal;
+		const response = await fetch(`${targetBaseUrl(target)}/fim/completions`, init);
+		if (!response.ok || !response.body) {
+			throw new Error(`Inception FIM failed: HTTP ${response.status} ${response.statusText}`);
+		}
+		for await (const chunk of streamTextCompletion(response.body)) yield chunk;
+	},
+};
+
+export default inceptionRuntime;

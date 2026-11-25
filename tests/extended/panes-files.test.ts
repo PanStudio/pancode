@@ -1,0 +1,925 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
+import { hostname, tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it } from "node:test";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { installDiagnosticSink } from "../../src/core/diagnostics.js";
+import { relaunchScript } from "../../src/core/relaunch-script.js";
+import { sumFacts, sumPricing } from "../../src/core/telemetry/pricing.js";
+import { terminalBackground } from "../../src/core/terminal-background.js";
+import { roleHex } from "../../src/core/theme-roles.js";
+import { tokenHex } from "../../src/core/theme-token-hex.js";
+import { parseTomlDocument } from "../../src/core/toml.js";
+import { PANCODE_APP_KEYBINDINGS } from "../../src/domains/config/keybindings.js";
+import type { MuxContract, MuxOpenUtilityPaneRequest } from "../../src/domains/mux/contract.js";
+import {
+	PANES_PRESET_IDS,
+	PANES_PRESETS,
+	type PanesYaziController,
+	resolvePanesPresetId,
+} from "../../src/domains/mux/operations.js";
+import type { MuxPaneRecord } from "../../src/domains/mux/types.js";
+import { renderPosixShellShim } from "../../src/domains/mux/workspace/platform-posix.js";
+import { createYaziEventStream } from "../../src/domains/mux/yazi/event-stream.js";
+import { renderYaziKeymap } from "../../src/domains/mux/yazi/profile.js";
+import {
+	createYaziSession,
+	sweepStaleTransportFiles,
+	YAZI_STALE_TRANSPORT_MS,
+	type YaziSessionOptions,
+} from "../../src/domains/mux/yazi/session.js";
+import { renderHerdrThemeBlock, renderYaziTheme } from "../../src/domains/mux/yazi/theme.js";
+import { classify } from "../../src/domains/safety/action-classifier.js";
+import { GLOBAL_ACTION_ORDER } from "../../src/interactive/application-controller.js";
+import { createPanesRuntime } from "../../src/interactive/panes-runtime.js";
+import { createYaziBridge, runYaziTerminalChooser } from "../../src/interactive/yazi-bridge.js";
+import { BUILTIN_SLASH_COMMANDS, parseSlashCommand } from "../../src/session-control/slash-commands.js";
+import { createPanesTool } from "../../src/tools/panes.js";
+import { panesToolSurface } from "../../src/tools/panes-surface.js";
+
+const SNAPSHOT = {
+	generatedAt: "2026-09-02T00:00:00.000Z",
+	running: [],
+	retrying: [],
+	totals: { tokens: sumFacts([]), cost: sumPricing([]), runtimeSeconds: 0 },
+};
+
+/** A pane host stand-in that records what was asked of it. */
+function fakeMux(options: { available?: boolean; reason?: string } = {}) {
+	const calls: string[] = [];
+	const requests: MuxOpenUtilityPaneRequest[] = [];
+	const records: MuxPaneRecord[] = [];
+	let next = 0;
+	const mux = {
+		mode: options.available === false ? "none" : "guest",
+		available: () => options.available !== false,
+		detection: () => ({
+			mode: options.available === false ? "none" : "guest",
+			socketPath: null,
+			server: null,
+			self: { workspaceId: null, tabId: null, paneId: "self" },
+			candidates: [],
+			reason: options.reason ?? "HERDR_ENV is not 1, so PanCode is not running inside a pane host",
+			refused: false,
+		}),
+		list: () => records,
+		async openUtilityPane(request: MuxOpenUtilityPaneRequest) {
+			requests.push(request);
+			next += 1;
+			const ref = { paneId: `p${next}`, tabId: "t1", workspaceId: "w1" };
+			records.push({ ref, purpose: "utility", label: request.label, openedAt: next });
+			calls.push(`open:${request.label}`);
+			return ref;
+		},
+		async closePane(paneId: string) {
+			const at = records.findIndex((record) => record.ref.paneId === paneId);
+			if (at < 0) return false;
+			records.splice(at, 1);
+			calls.push(`close:${paneId}`);
+			return true;
+		},
+		async focusPane(paneId: string) {
+			calls.push(`focus:${paneId}`);
+			return true;
+		},
+		async focusSelf() {
+			calls.push("focus:self");
+			return true;
+		},
+		async unzoomSelf() {
+			calls.push("unzoom:self");
+			return false;
+		},
+		docks: () => [],
+	};
+	return {
+		mux: mux as unknown as MuxContract,
+		calls,
+		requests,
+		records,
+		drop: (paneId: string) => void mux.closePane(paneId),
+	};
+}
+
+const filesEnabled = {
+	...DEFAULT_SETTINGS,
+	interface: {
+		...DEFAULT_SETTINGS.interface,
+		panes: { ...DEFAULT_SETTINGS.interface.panes, files: { ...DEFAULT_SETTINGS.interface.panes.files, enabled: true } },
+	},
+};
+
+describe("contracts/panes files surface", () => {
+	it("names the preset files; yazi is the engine, not a preset name", () => {
+		deepStrictEqual([...PANES_PRESET_IDS], ["files", "logs", "shell"]);
+		strictEqual(PANES_PRESETS[0].binary, "yazi");
+		strictEqual(resolvePanesPresetId("yazi"), null);
+		strictEqual(resolvePanesPresetId("files"), "files");
+		strictEqual(resolvePanesPresetId("htop"), null);
+		// The model's enum carries the PanCode name, not the engine's.
+		const schema = panesToolSurface.parameters as unknown as {
+			properties: { preset: { enum?: string[]; anyOf?: Array<{ const: string }> } };
+		};
+		const enumValues = schema.properties.preset.enum ?? schema.properties.preset.anyOf?.map((entry) => entry.const) ?? [];
+		deepStrictEqual(enumValues, ["files", "logs", "shell"]);
+	});
+
+	it("parses /panes open files --once and /files [open|close|pick]", () => {
+		deepStrictEqual(parseSlashCommand("/panes open files --once"), { kind: "panes-open", preset: "files", once: true });
+		deepStrictEqual(parseSlashCommand("/files"), { kind: "files", action: "toggle" });
+		deepStrictEqual(parseSlashCommand("/files pick"), { kind: "files", action: "pick" });
+		deepStrictEqual(parseSlashCommand("/files close"), { kind: "files", action: "close" });
+		deepStrictEqual(parseSlashCommand("/files bogus"), {
+			kind: "usage-error",
+			command: "files",
+			reason: "Unexpected argument: bogus",
+		});
+		const entry = BUILTIN_SLASH_COMMANDS.find((candidate) => candidate.name === "files");
+		ok(entry, "the /files command must be registered");
+		ok(!/yazi/iu.test(entry.description), "the /files description must not name the engine");
+	});
+
+	it("binds the files toggle to Alt+E and routes it among the global actions", () => {
+		strictEqual(PANCODE_APP_KEYBINDINGS["pancode.files.toggle"].defaultKeys, "alt+e");
+		ok((GLOBAL_ACTION_ORDER as ReadonlyArray<string>).includes("pancode.files.toggle"));
+		// Alt+F is pi-tui's word-forward; the files key must not collide with it.
+		for (const [id, binding] of Object.entries(PANCODE_APP_KEYBINDINGS)) {
+			const keys: ReadonlyArray<string> = Array.isArray(binding.defaultKeys) ? binding.defaultKeys : [binding.defaultKeys];
+			if (id !== "pancode.files.toggle") ok(!keys.includes("alt+e"), `${id} also claims alt+e`);
+		}
+	});
+
+	it("says why the pane layer is missing and what starts it", async () => {
+		const { mux } = fakeMux({ available: false });
+		const panes = createPanesRuntime({
+			mux,
+			getSettings: () => filesEnabled,
+			getDispatchSnapshot: () => SNAPSHOT,
+			getCwd: () => "/w",
+		});
+		const result = await panes.open({ preset: "shell" });
+		strictEqual(result.status, "unavailable");
+		match(result.reason, /HERDR_ENV is not 1/u);
+		match(result.reason, /pancode --with-panes/u);
+	});
+
+	it("explains an empty logs preset by the run state directory it watched", async () => {
+		const { mux } = fakeMux();
+		const root = mkdtempSync(join(tmpdir(), "pancode-panes-feed-"));
+		try {
+			const panes = createPanesRuntime({
+				mux,
+				getSettings: () => filesEnabled,
+				getDispatchSnapshot: () => SNAPSHOT,
+				getCwd: () => "/w",
+				resolveBinaryPath: () => "/usr/bin/tail",
+				stateDir: () => root,
+				newestFeedRunId: () => null,
+			});
+			const result = await panes.open({ preset: "logs" });
+			strictEqual(result.status, "refused");
+			match(result.reason, new RegExp(`no dispatched run has written a display feed under ${root}/runs`, "u"));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("opens one pane per preset and focuses it on a second open", async () => {
+		const { mux, calls } = fakeMux();
+		const panes = createPanesRuntime({
+			mux,
+			getSettings: () => filesEnabled,
+			getDispatchSnapshot: () => SNAPSHOT,
+			getCwd: () => "/w",
+			resolveBinaryPath: () => "/bin/bash",
+		});
+		const first = await panes.open({ preset: "shell" });
+		deepStrictEqual(first, { status: "opened", label: "shell", paneId: "p1" });
+		const second = await panes.open({ preset: "shell" });
+		deepStrictEqual(second, { status: "opened", label: "shell", paneId: "p1", existing: true });
+		deepStrictEqual(calls, ["open:shell", "unzoom:self", "focus:p1"]);
+		strictEqual(mux.list().length, 1);
+	});
+
+	it("hands a fixed peer a brief and selected workspace without a managed receipt", async () => {
+		const { mux, requests } = fakeMux();
+		const root = mkdtempSync(join(tmpdir(), "pancode-peer-pane-"));
+		try {
+			const panes = createPanesRuntime({
+				mux,
+				getSettings: () => filesEnabled,
+				getDispatchSnapshot: () => SNAPSHOT,
+				getCwd: () => root,
+				resolveBinaryPath: (name) => (name === "codex" ? "/usr/bin/codex" : null),
+			});
+			deepStrictEqual(parseSlashCommand(`/panes peer --cwd ${root} codex Fix parser`), {
+				kind: "peer-pane",
+				peer: "codex",
+				cwd: root,
+				brief: "Fix parser",
+			});
+			const tool = createPanesTool({ panes });
+			const result = await tool.run({ action: "handoff", peer: "codex", brief: "Fix parser", cwd: root }, {});
+			strictEqual(result.kind, "ok");
+			match(result.output, /no managed run record/u);
+			deepStrictEqual(requests[0]?.argv, ["/usr/bin/codex"]);
+			strictEqual(requests[0]?.textArg, "Fix parser");
+			strictEqual(requests[0]?.cwd, root);
+			strictEqual(classify({ tool: "panes", args: { action: "handoff", peer: "codex" } }).actionClass, "dispatch");
+			strictEqual(classify({ tool: "panes", args: { action: "list" } }).actionClass, "read");
+			deepStrictEqual(await panes.handoff({ peer: "opencode" }), {
+				status: "missing-binary",
+				preset: "opencode",
+				binary: "opencode",
+				installHint: "install opencode",
+				detail: "opencode was not found",
+			});
+			strictEqual(requests.length, 1);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("opens a PanCode peer with this install's launcher, never the pancode on PATH (FX-14.9)", async () => {
+		const { mux, requests } = fakeMux();
+		const root = mkdtempSync(join(tmpdir(), "pancode-peer-self-"));
+		try {
+			const panes = createPanesRuntime({
+				mux,
+				getSettings: () => filesEnabled,
+				getDispatchSnapshot: () => SNAPSHOT,
+				getCwd: () => root,
+				resolveBinaryPath: (name) => (name === "pancode" ? "/other/install/bin/pancode" : null),
+			});
+			const script = process.argv[1] ?? "";
+			strictEqual((await panes.handoff({ peer: "pancode" })).status, "opened");
+			deepStrictEqual(requests[0]?.argv, [process.execPath, relaunchScript(script)]);
+			strictEqual(
+				panes.peers?.().find((entry) => entry.peer === "pancode")?.found,
+				true,
+				"the running PanCode is always there to open",
+			);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("routes /files through the shared controller: toggle opens, toggle closes, pick is one-shot", async () => {
+		const { mux } = fakeMux();
+		const panes = createPanesRuntime({
+			mux,
+			getSettings: () => filesEnabled,
+			getDispatchSnapshot: () => SNAPSHOT,
+			getCwd: () => "/w",
+		});
+		const log: string[] = [];
+		let where: "closed" | "visible" | "hidden" = "closed";
+		const controller: PanesYaziController = {
+			async open(options) {
+				log.push(options?.once ? "open:once" : "open");
+				where = "visible";
+				return { status: "opened", mode: "companion", paneId: "p9", existing: false };
+			},
+			async hide() {
+				log.push("hide");
+				where = "hidden";
+				return { status: "hidden" };
+			},
+			async close() {
+				log.push("close");
+				const was = where !== "closed";
+				where = "closed";
+				return was;
+			},
+			isOpen: () => where !== "closed",
+			visibility: () => where,
+			status: () => ({ mode: "closed", paneId: null, paneCwd: null, lastLineAt: null, droppedLines: 0 }),
+		};
+		panes.attachYazi(controller);
+		deepStrictEqual(await panes.files("toggle"), { status: "opened", paneId: "p9", existing: false });
+		// A visible pane is parked by the next tap, not ended; the tap after that brings it back.
+		deepStrictEqual(await panes.files("toggle"), { status: "hidden" });
+		deepStrictEqual(await panes.files("toggle"), { status: "opened", paneId: "p9", existing: false });
+		deepStrictEqual(await panes.files("pick"), { status: "opened", paneId: "p9", existing: false });
+		deepStrictEqual(await panes.files("close"), { status: "closed" });
+		deepStrictEqual(log, ["open", "hide", "open", "open:once", "close"]);
+		// The preset door reaches the same controller.
+		deepStrictEqual(await panes.open({ preset: "files" }), {
+			status: "opened",
+			label: "files",
+			paneId: "p9",
+			existing: false,
+		});
+	});
+
+	it("refuses the files pane by its settings key and names the engine only through the install command", async () => {
+		const { mux } = fakeMux();
+		const panes = createPanesRuntime({
+			mux,
+			getSettings: () => DEFAULT_SETTINGS,
+			getDispatchSnapshot: () => SNAPSHOT,
+			getCwd: () => "/w",
+		});
+		deepStrictEqual(await panes.files("toggle"), {
+			status: "refused",
+			reason: "the files pane is disabled by interface.panes.files.enabled",
+		});
+		const enabled = createPanesRuntime({
+			mux,
+			getSettings: () => filesEnabled,
+			getDispatchSnapshot: () => SNAPSHOT,
+			getCwd: () => "/w",
+		});
+		enabled.attachYazi({
+			async open() {
+				return {
+					status: "missing-binary",
+					binary: "yazi",
+					detail: "not found (install with `pancode tools install yazi`)",
+				};
+			},
+			async hide() {
+				return { status: "unavailable", reason: "the files pane is not open" };
+			},
+			async close() {
+				return false;
+			},
+			isOpen: () => false,
+			visibility: () => "closed",
+			status: () => ({ mode: "closed", paneId: null, paneCwd: null, lastLineAt: null, droppedLines: 0 }),
+		});
+		const missing = await enabled.files("open");
+		strictEqual(missing.status, "missing-binary");
+		strictEqual(
+			missing.detail,
+			"the files pane engine is not available: not found (install with `pancode tools install yazi`)",
+		);
+	});
+});
+
+describe("contracts/files pane bridge", () => {
+	function bridgeWith(host: ReturnType<typeof fakeMux>) {
+		const notices: string[] = [];
+		let draft = "";
+		let onEvent: YaziSessionOptions["onEvent"] | null = null;
+		let onStopped: YaziSessionOptions["onStopped"] | null = null;
+		let onChooser: YaziSessionOptions["onChooser"] | null = null;
+		const bridge = createYaziBridge({
+			mux: host.mux,
+			getDraft: () => draft,
+			setDraft: (text) => {
+				draft = text;
+			},
+			requestRender: () => undefined,
+			notice: (_level, text) => notices.push(text),
+			getCwd: () => "/w",
+			getSettings: () => ({ mode: "companion", profile: "managed", followCwd: false }),
+			pickToken: () => "tok",
+			statPath: () => "file",
+			livenessMs: 60_000,
+			async openSession(options) {
+				onEvent = options.onEvent;
+				onStopped = options.onStopped ?? null;
+				onChooser = options.onChooser;
+				const pane = await host.mux.openUtilityPane({ argv: ["yazi"], cwd: options.cwd, label: "files" });
+				if (!pane) return { status: "unavailable", reason: "refused" };
+				return {
+					status: "opened",
+					session: {
+						mode: options.mode,
+						pane,
+						token: options.pickToken ?? null,
+						profile: null,
+						snapshot: () => ({
+							mode: options.mode,
+							paneId: pane.paneId,
+							paneCwd: options.cwd,
+							instanceId: null,
+							lastLineAt: null,
+							streamPath: null,
+							chooserPath: null,
+						}),
+						pushCwd: async () => false,
+						visibility: () => "visible",
+						hide: async () => null,
+						show: async () => null,
+						close: async () => {
+							await host.mux.closePane(pane.paneId);
+						},
+					},
+				};
+			},
+		});
+		return {
+			bridge,
+			notices,
+			draft: () => draft,
+			pick: (token: string, path: string) =>
+				onEvent?.({ kind: "pancode-pick", sender: "1", receiver: "1", values: [token, path] }),
+			cd: (cwd: string) => onEvent?.({ kind: "cd", sender: "1", receiver: "1", tab: "0", cwd }),
+			choose: (paths: string[], cwd: string) => onChooser?.({ paths, cwd }),
+			gone: () => onStopped?.("pane-gone"),
+		};
+	}
+
+	it("focuses the pane on open, returns focus to the composer after a pick, and closes on toggle", async () => {
+		const host = fakeMux();
+		const wired = bridgeWith(host);
+		const opened = await wired.bridge.open();
+		strictEqual(opened.status, "opened");
+		ok(wired.bridge.isOpen());
+		deepStrictEqual(host.calls, ["unzoom:self", "open:files", "focus:p1"]);
+		// Only the session's own token is honored; a foreign line is dropped.
+		wired.pick("not-this-session", "/w/README.md");
+		strictEqual(wired.draft(), "");
+		strictEqual(wired.bridge.status().droppedLines, 1);
+		// Second open of an open pane is a focus request, not a split.
+		const again = await wired.bridge.open();
+		deepStrictEqual(again, { status: "opened", mode: "companion", paneId: "p1", existing: true });
+		strictEqual(host.records.length, 1);
+		ok(await wired.bridge.close());
+		strictEqual(host.calls.at(-1), "focus:self");
+		strictEqual(wired.bridge.isOpen(), false);
+		strictEqual(host.records.length, 0);
+	});
+
+	it("names a pick from a subdirectory relative to the workspace, not the pane's directory", async () => {
+		const host = fakeMux();
+		const wired = bridgeWith(host);
+		await wired.bridge.open();
+		wired.cd("/w/src");
+		wired.pick("tok", "/w/src/inner.txt");
+		strictEqual(wired.draft(), "@src/inner.txt");
+		wired.choose(["other.txt"], "/w/src");
+		strictEqual(wired.draft(), "@src/inner.txt @src/other.txt");
+	});
+
+	it("inserts a token-matched pick as an @ mention and hands the keyboard back", async () => {
+		const host = fakeMux();
+		let token = "";
+		const notices: string[] = [];
+		let draft = "";
+		const bridge = createYaziBridge({
+			mux: host.mux,
+			getDraft: () => draft,
+			setDraft: (text) => {
+				draft = text;
+			},
+			requestRender: () => undefined,
+			notice: (_level, text) => notices.push(text),
+			getCwd: () => "/w",
+			pickToken: () => "tok",
+			statPath: () => "file",
+			livenessMs: 60_000,
+			async openSession(options) {
+				token = options.pickToken ?? "";
+				const pane = await host.mux.openUtilityPane({ argv: ["yazi"], cwd: options.cwd, label: "files" });
+				if (!pane) return { status: "unavailable", reason: "refused" };
+				// The pick arrives after the open settled, as it does from a real pane.
+				setTimeout(
+					() => options.onEvent({ kind: "pancode-pick", sender: "1", receiver: "1", values: [token, "/w/src/a.ts"] }),
+					0,
+				);
+				return {
+					status: "opened",
+					session: {
+						mode: options.mode,
+						pane,
+						token,
+						profile: null,
+						snapshot: () => ({
+							mode: options.mode,
+							paneId: pane.paneId,
+							paneCwd: "/w",
+							instanceId: null,
+							lastLineAt: null,
+							streamPath: null,
+							chooserPath: null,
+						}),
+						pushCwd: async () => false,
+						visibility: () => "visible",
+						hide: async () => null,
+						show: async () => null,
+						close: async () => undefined,
+					},
+				};
+			},
+		});
+		await bridge.open();
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		strictEqual(draft, "@src/a.ts");
+		strictEqual(host.calls.at(-1), "focus:self");
+		ok(notices.some((text) => text === "1 path from the files pane added to the draft"));
+		ok(!notices.some((text) => /yazi/iu.test(text)), "composer notices must not name the engine");
+	});
+
+	it("treats a pane the host reports gone as closed", async () => {
+		const host = fakeMux();
+		const wired = bridgeWith(host);
+		await wired.bridge.open();
+		ok(wired.bridge.isOpen());
+		// The host dropped the pane (user closed it) and the registry no longer lists it.
+		host.drop("p1");
+		strictEqual(wired.bridge.isOpen(), false);
+		// A toggle now opens rather than "closing" a pane that is not there.
+		const reopened = await wired.bridge.open();
+		strictEqual(reopened.status, "opened");
+		strictEqual(reopened.status === "opened" && reopened.existing, false);
+		wired.gone();
+	});
+});
+
+describe("contracts/files pane session transport", () => {
+	it("keeps companion and picker DDS state and scratch inside the private host runtime", async (t) => {
+		const cacheDir = mkdtempSync(join(tmpdir(), "pancode-files-runtime-"));
+		const runtime = join(cacheDir, "0123456789ab");
+		t.after(() => {
+			rmSync(cacheDir, { recursive: true, force: true });
+		});
+		for (const mode of ["companion", "chooser"] as const) {
+			const host = fakeMux();
+			const mux = {
+				...host.mux,
+				detection: () => ({
+					...host.mux.detection(),
+					socketPath: join(cacheDir, "pancode-0123456789ab.sock"),
+				}),
+			};
+			const result = await createYaziSession({
+				mux,
+				mode,
+				profileMode: "user",
+				cwd: "/w",
+				cacheDir,
+				onEvent: () => undefined,
+				onChooser: () => undefined,
+				resolveBinaries: () => ({ yaziPath: "/bin/yazi", yaPath: "/bin/ya", missingYaziDetail: "" }),
+			});
+			strictEqual(result.status, "opened");
+			if (result.status !== "opened") return;
+			try {
+				strictEqual(host.requests[0]?.env?.XDG_RUNTIME_DIR, runtime);
+				strictEqual(host.requests[0]?.env?.XDG_STATE_HOME, runtime);
+				strictEqual(host.requests[0]?.env?.TMPDIR, runtime);
+				if (process.platform !== "win32") {
+					const shim = join(cacheDir, "pane-shell");
+					const fake = join(cacheDir, "fake-shell");
+					writeFileSync(shim, renderPosixShellShim("linux"));
+					writeFileSync(fake, '#!/bin/sh\nprintf "%s" "$XDG_STATE_HOME"\n', { mode: 0o755 });
+					const child = spawnSync("/bin/sh", [shim], {
+						encoding: "utf8",
+						env: {
+							...process.env,
+							SHELL: fake,
+							PANCODE_PANE_XDG_STATE_HOME: join(cacheDir, "operator-state"),
+							...host.requests[0]?.env,
+						},
+					});
+					strictEqual(child.status, 0, child.stderr);
+					strictEqual(child.stdout, runtime);
+				}
+			} finally {
+				await result.session.close();
+			}
+		}
+	});
+
+	it("labels the pane files and removes its transport files when the session ends", async () => {
+		const cacheDir = mkdtempSync(join(tmpdir(), "pancode-files-session-"));
+		try {
+			const host = fakeMux();
+			let label = "";
+			let title = "";
+			const mux = {
+				...host.mux,
+				async openUtilityPane(request: { label: string; title?: string }) {
+					label = request.label;
+					title = request.title ?? "";
+					return host.mux.openUtilityPane(request as never);
+				},
+			} as unknown as MuxContract;
+			const result = await createYaziSession({
+				mux,
+				mode: "companion",
+				profileMode: "user",
+				cwd: "/w",
+				cacheDir,
+				sessionId: "s1",
+				pollMs: 5,
+				onEvent: () => undefined,
+				onChooser: () => undefined,
+				resolveBinaries: () => ({ yaziPath: "/bin/yazi", yaPath: "/bin/ya", missingYaziDetail: "" }),
+			});
+			strictEqual(result.status, "opened");
+			if (result.status !== "opened") return;
+			strictEqual(label, "files");
+			strictEqual(title, "files");
+			const stream = join(cacheDir, "yazi", "sessions", "s1.stream");
+			ok(existsSync(stream));
+			await result.session.close();
+			strictEqual(existsSync(stream), false);
+		} finally {
+			rmSync(cacheDir, { recursive: true, force: true });
+		}
+	});
+
+	it("binds Enter to enter a directory or send the selection as Ctrl+Y does, never Yazi's open", () => {
+		const doc = parseTomlDocument(renderYaziKeymap("/opt/Jo's yazi/ya", "linux")) as {
+			mgr: { prepend_keymap: { on: string; run: string }[] };
+		};
+		const run = (on: string): string => doc.mgr.prepend_keymap.find((chord) => chord.on === on)?.run ?? "";
+		const enter = run("<Enter>");
+		ok(enter.startsWith("plugin pancode-enter -- '") && enter.endsWith("'"), enter);
+		const pick = enter.slice("plugin pancode-enter -- '".length, -1).replaceAll(`'\\''`, "'");
+		strictEqual(`shell -- ${pick}`, run("<C-y>"));
+		// A command typed at Yazi's ; or : prompt cannot write into the event stream on Yazi's stdout (f-r3-files-enter).
+		strictEqual(run(";"), "shell --interactive -- exec >/dev/null 2>&1;");
+		strictEqual(run(":"), "shell --block --interactive -- exec >/dev/tty 2>&1;");
+	});
+
+	it("keeps Yazi's open on Enter in the one-shot chooser, which carries no pick token, so a file reaches the chooser file", async () => {
+		const cacheDir = mkdtempSync(join(tmpdir(), "pancode-files-chooser-enter-"));
+		try {
+			const env: Record<string, Readonly<Record<string, string>> | undefined> = {};
+			for (const mode of ["companion", "chooser"] as const) {
+				const host = fakeMux();
+				const result = await createYaziSession({
+					mux: host.mux,
+					mode,
+					profileMode: "managed",
+					cwd: "/w",
+					cacheDir,
+					onEvent: () => undefined,
+					onChooser: () => undefined,
+					resolveBinaries: () => ({ yaziPath: "/bin/yazi", yaPath: "/bin/ya", missingYaziDetail: "" }),
+					ensureProfile: () => ({ dir: "/profile", stamp: {} as never }),
+				});
+				strictEqual(result.status, "opened");
+				if (result.status === "opened") await result.session.close();
+				env[mode] = host.requests[0]?.env;
+				strictEqual(host.requests[0]?.argv.includes("--chooser-file"), mode === "chooser");
+			}
+			strictEqual(env.chooser?.YAZI_CONFIG_HOME, "/profile");
+			strictEqual(env.chooser?.PANCODE_YAZI_PICK_TOKEN, undefined);
+			ok(env.companion?.PANCODE_YAZI_PICK_TOKEN);
+			const plugin = readFileSync(
+				new URL("../../src/domains/mux/yazi/assets/plugins/pancode-enter.yazi/main.lua", import.meta.url),
+				"utf8",
+			);
+			match(
+				plugin,
+				/elseif job\.args\[1\] and \(os\.getenv\("PANCODE_YAZI_PICK_TOKEN"\) or ""\) ~= "" then\s+ya\.emit\("shell", \{ job\.args\[1\] \}\)\s+else\s+ya\.emit\("open", \{\}\)/,
+			);
+		} finally {
+			rmSync(cacheDir, { recursive: true, force: true });
+		}
+	});
+
+	it("reads only event lines from the stream, past screen output a child process wrote there", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pancode-files-stream-"));
+		try {
+			const path = join(dir, "s.stream");
+			writeFileSync(
+				path,
+				[
+					'cd,1,1,{"tab":1,"url":"/w"}',
+					"\u001b[?1049h\u001b[22;0;0t\u001b[H\u001b[2J",
+					'" Netrw Directory Listing, sorted by name, then size, then time\r',
+					"Vim: Warning: Output is not to a terminal",
+					'pancode-pick,1,1,["tok","/w/a.txt"]',
+					"",
+				].join("\n"),
+			);
+			const events: string[] = [];
+			const stream = createYaziEventStream({
+				path,
+				autoStart: false,
+				isAlive: () => true,
+				onEvent: (event) =>
+					events.push(event.kind === "cd" ? `cd ${event.cwd}` : `${event.kind} ${event.values.join(" ")}`),
+			});
+			await stream.poll();
+			deepStrictEqual(events, ["cd /w", "pancode-pick tok /w/a.txt"]);
+			strictEqual(stream.stats().malformedLines, 0);
+			strictEqual(stream.stats().stopReason, null);
+			stream.stop();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("contracts/files pane session close", () => {
+	it("survives a stream file it cannot delete while the pane lives, and removes it once the pane is closed", async () => {
+		const cacheDir = mkdtempSync(join(tmpdir(), "pancode-files-locked-"));
+		const sessions = join(cacheDir, "yazi", "sessions");
+		try {
+			const host = fakeMux();
+			const mux = {
+				...host.mux,
+				async closePane(paneId: string) {
+					// Windows keeps a file open by the pane's process undeletable until the pane goes.
+					chmodSync(sessions, 0o700);
+					return host.mux.closePane(paneId);
+				},
+			} as unknown as MuxContract;
+			const result = await createYaziSession({
+				mux,
+				mode: "companion",
+				profileMode: "user",
+				cwd: "/w",
+				cacheDir,
+				sessionId: "s1",
+				pollMs: 5,
+				onEvent: () => undefined,
+				onChooser: () => undefined,
+				resolveBinaries: () => ({ yaziPath: "/bin/yazi", yaPath: "/bin/ya", missingYaziDetail: "" }),
+			});
+			strictEqual(result.status, "opened");
+			if (result.status !== "opened") return;
+			chmodSync(sessions, 0o500);
+			await result.session.close();
+			strictEqual(existsSync(join(sessions, "s1.stream")), false);
+		} finally {
+			chmodSync(sessions, 0o700);
+			rmSync(cacheDir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("contracts/files pane transport sweep", () => {
+	it("removes old dead-owner transports, but retains unowned and foreign-host files", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pancode-files-sweep-"));
+		try {
+			const old = join(dir, "old.stream");
+			const fresh = join(dir, "fresh.chooser");
+			const other = join(dir, "notes.txt");
+			const unowned = join(dir, "legacy.stream");
+			const foreign = join(dir, "foreign.stream");
+			for (const path of [old, fresh, other, unowned, foreign]) writeFileSync(path, "");
+			const dead = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], {
+				encoding: "utf8",
+			});
+			strictEqual(dead.status, 0, dead.stderr);
+			const owner = { version: 1, host: hostname(), pid: Number(dead.stdout), birthToken: null };
+			const ownerPath = join(dir, "old.owner.json");
+			const foreignOwner = join(dir, "foreign.owner.json");
+			writeFileSync(ownerPath, JSON.stringify(owner));
+			writeFileSync(foreignOwner, JSON.stringify({ ...owner, host: `${hostname()}-other` }));
+			const past = Date.now() - YAZI_STALE_TRANSPORT_MS - 60_000;
+			for (const path of [old, other, unowned, foreign, ownerPath, foreignOwner]) {
+				utimesSync(path, past / 1000, past / 1000);
+			}
+			strictEqual(sweepStaleTransportFiles(dir), 1);
+			strictEqual(existsSync(old), false);
+			strictEqual(existsSync(ownerPath), false);
+			ok(existsSync(fresh));
+			ok(existsSync(unowned));
+			ok(existsSync(foreign));
+			ok(existsSync(other), "only transport files are swept");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not expire an idle live companion's return channel", async (t) => {
+		const cacheDir = mkdtempSync(join(tmpdir(), "files-live-owner-"));
+		t.after(() => rmSync(cacheDir, { recursive: true, force: true }));
+		const host = fakeMux();
+		const result = await createYaziSession({
+			mux: host.mux,
+			mode: "companion",
+			profileMode: "user",
+			cwd: cacheDir,
+			cacheDir,
+			sessionId: "live",
+			onEvent: () => undefined,
+			onChooser: () => undefined,
+			resolveBinaries: () => ({ yaziPath: "/bin/yazi", yaPath: null, missingYaziDetail: "" }),
+		});
+		strictEqual(result.status, "opened");
+		if (result.status !== "opened") return;
+		try {
+			const dir = join(cacheDir, "yazi", "sessions");
+			const old = (Date.now() - YAZI_STALE_TRANSPORT_MS - 60_000) / 1000;
+			for (const name of readdirSync(dir)) utimesSync(join(dir, name), old, old);
+			strictEqual(sweepStaleTransportFiles(dir), 0);
+			ok(existsSync(join(dir, "live.stream")));
+		} finally {
+			await result.session.close();
+		}
+		deepStrictEqual(readdirSync(join(cacheDir, "yazi", "sessions")), []);
+	});
+});
+
+describe("plain-terminal files chooser cleanup", () => {
+	for (const outcome of ["chosen", "error"] as const) {
+		it(`reports failed cleanup without replacing the ${outcome} result`, async (t) => {
+			const cacheDir = mkdtempSync(join(tmpdir(), "files-cleanup-warning-"));
+			t.after(() => rmSync(cacheDir, { recursive: true, force: true }));
+			const diagnostics: Array<{ text: string; level: string }> = [];
+			t.after(installDiagnosticSink((text, level) => diagnostics.push({ text, level })));
+			let failedPath = "";
+			const result = await runYaziTerminalChooser({
+				cwd: cacheDir,
+				profileMode: "user",
+				cacheDir,
+				stopUi: () => undefined,
+				startUi: () => undefined,
+				requestRender: () => undefined,
+				resolveBinaries: () => ({ yaziPath: "/bin/yazi", yaPath: null, missingYaziDetail: "" }),
+				spawnYazi: (_file, args) => {
+					const cwdFile = args[4];
+					ok(cwdFile !== undefined);
+					failedPath = cwdFile;
+					rmSync(failedPath);
+					mkdirSync(failedPath);
+					writeFileSync(join(failedPath, "held"), "");
+					if (outcome === "error") return { error: new Error("launch failed") };
+					const chosenFile = args[2];
+					ok(chosenFile !== undefined);
+					writeFileSync(chosenFile, "selected.ts\n");
+					return {};
+				},
+			});
+			deepStrictEqual(
+				result,
+				outcome === "chosen"
+					? { status: "chosen", choice: { paths: ["selected.ts"], cwd: cacheDir } }
+					: { status: "unavailable", reason: "yazi chooser failed: launch failed" },
+			);
+			strictEqual(diagnostics.length, 1);
+			strictEqual(diagnostics[0]?.level, "warning");
+			ok(diagnostics[0]?.text.includes(failedPath));
+			match(diagnostics[0]?.text ?? "", /cleanup failed/);
+		});
+	}
+
+	for (const outcome of ["chosen", "cancelled", "error", "throw"] as const) {
+		it(`removes owned transport files after ${outcome}`, async (t) => {
+			const cacheDir = mkdtempSync(join(tmpdir(), "files-terminal-"));
+			t.after(() => rmSync(cacheDir, { recursive: true, force: true }));
+			const calls: string[] = [];
+			const result = await runYaziTerminalChooser({
+				cwd: cacheDir,
+				profileMode: "user",
+				cacheDir,
+				stopUi: () => calls.push("stop"),
+				startUi: () => calls.push("start"),
+				requestRender: () => calls.push("render"),
+				resolveBinaries: () => ({ yaziPath: "/bin/yazi", yaPath: null, missingYaziDetail: "" }),
+				spawnYazi: (_file, args) => {
+					if (outcome === "throw") throw new Error("failed");
+					if (outcome === "error") return { error: new Error("failed") };
+					if (outcome === "chosen") {
+						const [chosenFile, cwdFile] = [args[2], args[4]];
+						ok(chosenFile !== undefined && cwdFile !== undefined);
+						writeFileSync(chosenFile, "selected.ts\n");
+						writeFileSync(cwdFile, cacheDir);
+					}
+					return {};
+				},
+			});
+			strictEqual(result.status, outcome === "error" || outcome === "throw" ? "unavailable" : outcome);
+			if (result.status === "chosen") deepStrictEqual(result.choice, { paths: ["selected.ts"], cwd: cacheDir });
+			deepStrictEqual(calls, ["stop", "start", "render"]);
+			deepStrictEqual(readdirSync(join(cacheDir, "yazi", "sessions")), []);
+		});
+	}
+});
+
+describe("contracts/files pane theme", () => {
+	it("renders every color from PanCode's tokens as parseable TOML, for yazi and for herdr", () => {
+		const theme = renderYaziTheme();
+		const parsed = parseTomlDocument(theme);
+		ok(parsed, "the yazi theme must parse as TOML");
+		ok(theme.includes(`cwd = { fg = "${roleHex("workspacePath", terminalBackground())}" }`));
+		for (const section of ["mgr", "mode", "status", "which", "pick", "input", "notify"]) {
+			ok(theme.includes(`[${section}]`), `theme must cover [${section}]`);
+		}
+		const herdr = renderHerdrThemeBlock("dark");
+		ok(parseTomlDocument(herdr), "the herdr block must parse as TOML");
+		match(herdr, /\[theme\.custom\]/u);
+		ok(herdr.includes(`accent = "${tokenHex("accent", "dark")}"`));
+		match(renderHerdrThemeBlock("light"), new RegExp(`accent = "${tokenHex("accent", "light")}"`, "u"));
+		// Every literal color in both documents is one of PanCode's tokens.
+		const colors = new Set([...`${theme}${herdr}`.matchAll(/#[0-9a-f]{6}/gu)].map((m) => m[0]));
+		for (const color of colors) ok(theme.includes(color) || herdr.includes(color));
+		// Ten unknown-background tokens for yazi, four dark tokens and two row surfaces for herdr.
+		strictEqual(colors.size <= 16, true);
+	});
+});

@@ -1,0 +1,129 @@
+---
+name: context-prime
+description: Orients a fresh session in a repository by loading the last handoff, git state, the project constitution, and active-work signals before acting. Not for writing the handoff; use context-handoff.
+triggers:
+  - prime this repository
+  - catch me up
+  - where were we
+  - get up to speed
+  - resume repository work after a break
+version: 0.4.4
+license: LicenseRef-PanCode-1.0
+allowed-tools:
+  - read
+  - grep
+  - ls
+  - find
+  - git
+  - context
+  - code_nav
+  - ask_user
+pancode:
+  registry-id: akougkas/pancode
+  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/context/context-prime
+  audit: pass
+  model-size: any
+---
+
+# Context Prime
+
+Reconstruct the state a previous session left behind, in one bounded pass,
+before taking any non-trivial action. A fresh agent has the code but not the
+*intent*; this rebuilds the intent.
+
+This is the read-side bookend of `context-handoff`. It consumes what `context-handoff` wrote.
+It is not `/resume`, which restores an engine session's transcript; this
+reconstructs orientation a transcript alone doesn't carry.
+
+## When to use
+
+- The first substantive request of a new session.
+- Resuming a project after time away, or picking up another agent's work.
+- The user says "catch me up", "where were we", "prime", "get up to speed".
+
+Skip it for a one-line question in a repo you already have full context on.
+
+## Arguments
+
+```text
+/skill context-prime [<focus hint>]
+```
+
+- With a focus hint: treat it as a candidate for the orientation's `Next`
+  line, not as ground truth. Confirm or contradict it against the handoff
+  and git state, the same as any other suggested focus.
+- Without one: orient from the handoff, constitution, and git state alone.
+
+The six steps below are the plan; do not open a task list for them. `tasks`
+sits outside this skill's tool surface and any call to it is refused.
+
+## Procedure
+
+Work top to bottom; stop early once you have enough to state where things stand.
+
+1. **Constitution.** Read exactly one: the first of `PANCODE.md`,
+   `AGENTS.md`, `CLAUDE.md`, `README.md` that exists, in that order. Note
+   hard invariants and workflow rules, then stop. Do not also open the
+   others "for completeness"; a fallback file is read only when every
+   name ahead of it is absent.
+
+2. **Last handoff.** Read the newest `.pancode/handoffs/handoff-*.md`; if none,
+   fall back to `NEXT-SESSION.md` at the repo root. This is the previous
+   session's brief: focus, work-in-progress, blockers, suggested skills.
+
+3. **Git state.** `context(scope="workspace")` already carries a git
+   snapshot; read it first. Fill any gap with the `git` tool directly:
+   `op="status"` for branch and dirty files, `op="log"` (`limit: 10`) for
+   recent commits. `bash` is not in this skill's tool surface. There is no
+   shell fallback; "run `git status` yourself" is never the move here.
+   Reconcile against the handoff's "work in progress": flag anything that
+   drifted: work committed since the handoff, work reverted, a WIP item
+   that is now finished, or a "completed" claim the code plainly doesn't
+   back up.
+
+4. **Active signals.** Check `.pancode/state.json` and codewiki freshness if
+   present. Treat stale summaries as hints, never as authority over source.
+   A v1 or missing `.pancode/codewiki.json` may rebuild on demand through
+   codewiki tools, but source files remain authoritative.
+
+5. **Skills.** List installed skills with `context(scope="skills")` and note
+   any the handoff suggested for the next step; do not scan the filesystem
+   for them.
+
+6. **Orient and confirm.** Produce the short orientation (template below)
+   ending with the focus to confirm. `ask_user` is only registered in an
+   interactive session with an operator present; call it there, offering
+   the handoff's suggested focus as the first option. **A headless run without an `--answers` file has
+   no operator: `ask_user` is not registered, so any call is refused as an
+   unregistered tool rather than answered.** If it is not among your available tools, do not
+   attempt it and do not keep re-reading files hoping for more certainty
+   first. State the focus as the orientation's `Next` line, in plain
+   text, and stop; that written statement is the confirmation for this
+   run. If the handoff and git state disagree, surface the conflict rather
+   than picking silently.
+
+## Orientation template
+
+```markdown
+## Session orientation — [YYYY-MM-DD]
+
+- **Project**: [name] · branch `[branch]` · [N] uncommitted file(s)
+- **Last session focus**: [from handoff, or "no handoff found"]
+- **State**: [1–2 lines: what's done, what's mid-flight]
+- **Next**: [the focus to confirm]
+- **Blockers / open questions**: [if any]
+- **Suggested skills**: [from handoff, or omit]
+```
+
+## Boundaries
+
+- Bounded by design: summarize and reference by path; do not dump file trees or
+  copy long documents into context. Read only what the steps above name: the
+  one constitution file that wins the fallback order, the newest handoff, git
+  and context state, `.pancode/state.json`/codewiki freshness. A source
+  file, script, or doc none of those steps named stays unread; curiosity
+  reads work against the read-only design as surely as an edit would.
+- Read-only. context-prime orients; it does not start editing. The user confirms
+  the focus first.
+- Degrade gracefully: missing `PANCODE.md` → next constitution file; missing PanCode
+  tools → plain `git`; no handoff → say so and orient from git + constitution.

@@ -1,0 +1,672 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { performance } from "node:perf_hooks";
+import type { PancodeSettings } from "../core/config.js";
+import { loadDomains } from "../core/domain-loader.js";
+import { isResponseSchemaRejection, UnsupportedResponseSchemaError } from "../core/response-schema.js";
+import { isRecord } from "../core/type-guards.js";
+import { AgentsDomainModule } from "../domains/agents/index.js";
+import type { ConfigContract } from "../domains/config/contract.js";
+import { ConfigDomainModule } from "../domains/config/index.js";
+import { BOOTSTRAP_DEPTH_POLICY } from "../domains/context/bootstrap-evidence.js";
+import {
+	BOOTSTRAP_OUTPUT_JSON_SCHEMA,
+	buildBootstrapPrompt,
+	parseBootstrapModelOutput,
+} from "../domains/context/bootstrap-prompt.js";
+import type {
+	BootstrapFallbackMode,
+	BootstrapGenerate,
+	BootstrapGenerateInput,
+	BootstrapGenerationTelemetry,
+	BootstrapParserOutcome,
+	BootstrapRunTelemetry,
+	BootstrapStructuredOutput,
+} from "../domains/context/index.js";
+import { fallbackBootstrapOutput } from "../domains/context/index.js";
+import type { DispatchContract } from "../domains/dispatch/contract.js";
+import { createDispatchDomainModule } from "../domains/dispatch/index.js";
+import { declaredScopeIntent } from "../domains/dispatch/intent.js";
+import { newRunId } from "../domains/dispatch/state.js";
+import type { RunResult } from "../domains/dispatch/types.js";
+import { ExtensionsDomainModule } from "../domains/extensions/index.js";
+import { createPromptsDomainModule } from "../domains/prompts/index.js";
+import type { ThinkingLevel } from "../domains/providers/index.js";
+import { ProvidersDomainModule } from "../domains/providers/index.js";
+import { ResourcesDomainModule } from "../domains/resources/index.js";
+import { SafetyDomainModule } from "../domains/safety/index.js";
+import { SchedulingDomainModule } from "../domains/scheduling/index.js";
+import { SessionDomainModule } from "../domains/session/index.js";
+import { TelemetryDomainModule } from "../domains/telemetry/index.js";
+import { armInternalDispatchDeadline } from "./internal-dispatch.js";
+import { createCliWorkerHooks } from "./worker-extension-hooks.js";
+
+export const BOOTSTRAP_MAX_OUTPUT_BYTES = 256 * 1024;
+
+/**
+ * The internal agent that reads a repository and returns the handbook payload.
+ * It exists as its own recipe rather than as a prompt layered over Scout: a
+ * recipe's `resultContract` is enforced in the worker and sealed by the
+ * orchestrator, so a task prompt claiming to override it changes nothing a
+ * model is graded on. Scout obeying its own recipe was the bug.
+ */
+const CONTEXT_BOOTSTRAP_AGENT_ID = "context-bootstrap";
+
+/**
+ * Model-driven PANCODE.md generation. Dispatches PanCode's internal
+ * `context-bootstrap` agent with a prompt grounded in the codewiki structure,
+ * then validates the structured JSON the model returns. Shared by
+ * `pancode context init` and the interactive `/context init` command.
+ */
+
+export interface ModelBootstrapGenerateOptions {
+	dispatch?: DispatchContract;
+	route?: BootstrapRoute;
+	resolveRoute?: () => BootstrapRoute;
+	onFallback?: (err: Error, mode: BootstrapFallbackMode) => void;
+}
+
+export interface BootstrapRoute {
+	target: string;
+	model?: string;
+	thinkingLevel?: ThinkingLevel;
+}
+
+/**
+ * The bootstrap agent's route: an explicit profile binding first, then the main
+ * orchestrator's model, then `fleet.default`. The orchestrator is the model the
+ * operator already chose for this work, so an unbound install writes its handbook
+ * with it instead of a worker default nobody picked for the job. A dangling binding
+ * still throws, because naming a profile that does not resolve is an operator error.
+ *
+ * A `scout` binding is honored as the second choice. Operators bound Scout
+ * back when bootstrap ran through it, and an upgrade must not silently move
+ * their handbook generation onto a different model.
+ */
+export function resolveBootstrapRoute(settings: Readonly<PancodeSettings>): BootstrapRoute {
+	for (const agentId of [CONTEXT_BOOTSTRAP_AGENT_ID, "scout"]) {
+		const profileName = settings.fleet.agentProfiles[agentId];
+		if (!profileName) continue;
+		const profile = settings.fleet.profiles[profileName];
+		if (!profile) throw new Error(`bootstrap profile '${profileName}' is not configured (bound to '${agentId}')`);
+		if (!profile.target) throw new Error(`bootstrap profile '${profileName}' has no target (bound to '${agentId}')`);
+		return {
+			target: profile.target,
+			...(profile.model ? { model: profile.model } : {}),
+			...(profile.thinkingLevel ? { thinkingLevel: profile.thinkingLevel } : {}),
+		};
+	}
+	for (const fallback of [settings.chat, settings.fleet.default]) {
+		if (!fallback?.target) continue;
+		return {
+			target: fallback.target,
+			...(fallback.model ? { model: fallback.model } : {}),
+			...(fallback.thinkingLevel ? { thinkingLevel: fallback.thinkingLevel } : {}),
+		};
+	}
+	throw new Error(
+		`bootstrap has no route: fleet.agentProfiles.${CONTEXT_BOOTSTRAP_AGENT_ID} is unbound, chat has no target and ` +
+			`fleet.default has no target; bind a profile with ` +
+			`'pancode targets profile bind ${CONTEXT_BOOTSTRAP_AGENT_ID} <profile>' or set fleet.default.target or chat.target`,
+	);
+}
+
+/**
+ * The depth ceilings assume a model that reads without deliberating. A profile
+ * that asks for reasoning buys verified reads with latency: at xhigh, Sonnet 5.5
+ * made 17 calls where it made none at low, and gpt-6-luna spent the whole 240 s
+ * standard ceiling on 15 calls and fell back to the heuristic writer. Capping the
+ * level instead stopped both models exploring at all, so the ceiling scales.
+ */
+/** Share of the bootstrap ceiling reserved for the terminal handoff. */
+const BOOTSTRAP_SYNTHESIS_RESERVE = 0.25;
+
+function bootstrapTimeoutMs(baseMs: number, level: ThinkingLevel): number {
+	if (level === "medium" || level === "high") return baseMs * 2;
+	if (level === "xhigh" || level === "max") return baseMs * 3;
+	return baseMs;
+}
+
+function assistantTextFromMessage(message: unknown): string {
+	if (!isRecord(message) || message.role !== "assistant") return "";
+	const content = message.content;
+	if (typeof content === "string") return content.trim();
+	if (!Array.isArray(content)) return "";
+	return content
+		.map((block) => {
+			if (typeof block === "string") return block;
+			if (!isRecord(block)) return "";
+			return typeof block.text === "string" ? block.text : "";
+		})
+		.join("")
+		.trim();
+}
+
+function textDeltaFromEvent(event: unknown): string {
+	if (!isRecord(event) || event.type !== "text_delta") return "";
+	return typeof event.text === "string" ? event.text : "";
+}
+
+function toolNameFromEvent(event: unknown): string | null {
+	if (!isRecord(event)) return null;
+	const payload = event.payload;
+	if (!isRecord(payload)) return null;
+	return typeof payload.tool === "string" && payload.tool.length > 0 ? payload.tool : null;
+}
+
+function toolOutcomeFromEvent(event: unknown): string | null {
+	if (!isRecord(event)) return null;
+	const payload = event.payload;
+	if (!isRecord(payload)) return null;
+	return typeof payload.outcome === "string" && payload.outcome.length > 0 ? payload.outcome : null;
+}
+
+class BootstrapAttemptError extends Error {
+	readonly parserOutcome: Exclude<BootstrapParserOutcome, "parsed">;
+	readonly telemetry: BootstrapRunTelemetry;
+
+	constructor(error: Error, parserOutcome: Exclude<BootstrapParserOutcome, "parsed">, telemetry: BootstrapRunTelemetry) {
+		super(error.message);
+		this.name = "BootstrapAttemptError";
+		this.parserOutcome = parserOutcome;
+		this.telemetry = telemetry;
+	}
+}
+
+class BootstrapOutputLimitError extends Error {
+	constructor(readonly observedBytes: number) {
+		super(`bootstrap output exceeded ${BOOTSTRAP_MAX_OUTPUT_BYTES} UTF-8 bytes`);
+		this.name = "BootstrapOutputLimitError";
+	}
+}
+
+function durationFromReceipt(receipt: RunResult): number | undefined {
+	const startedAt = Date.parse(receipt.startedAt);
+	const endedAt = Date.parse(receipt.endedAt);
+	if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt)) return undefined;
+	return Math.max(0, endedAt - startedAt);
+}
+
+function bootstrapTelemetry(
+	prompt: string,
+	output: string,
+	startedAtClock: number,
+	structuredOutputMode: BootstrapRunTelemetry["structuredOutputMode"],
+	runId?: string,
+	receipt?: RunResult,
+	observedOutputBytes?: number,
+): BootstrapRunTelemetry {
+	const telemetry: BootstrapRunTelemetry = {
+		structuredOutputMode,
+		promptBytes: Buffer.byteLength(prompt, "utf8"),
+		outputBytes: observedOutputBytes ?? Buffer.byteLength(output, "utf8"),
+		durationMs: receipt
+			? (durationFromReceipt(receipt) ?? Math.round(performance.now() - startedAtClock))
+			: Math.round(performance.now() - startedAtClock),
+		...(runId ? { runId } : {}),
+	};
+	if (!receipt) return telemetry;
+	telemetry.runId = receipt.runId;
+	telemetry.targetId = receipt.targetId;
+	telemetry.wireModelId = receipt.wireModelId;
+	telemetry.runtimeId = receipt.runtimeId;
+	telemetry.runtimeKind = receipt.runtimeKind;
+	if (receipt.runtimeResolution?.effectiveThinkingLevel) {
+		telemetry.thinkingLevel = receipt.runtimeResolution.effectiveThinkingLevel;
+	}
+	telemetry.spend = receipt.spend;
+	telemetry.toolCalls = receipt.toolCalls;
+	telemetry.toolFailures = receipt.toolStats.reduce((total, stat) => total + stat.errors, 0);
+	telemetry.toolBlocked = receipt.toolStats.reduce((total, stat) => total + stat.blocked, 0);
+	return telemetry;
+}
+
+async function collectDispatchAssistantText(
+	events: AsyncIterable<unknown>,
+	input: BootstrapGenerateInput,
+): Promise<string> {
+	let streamedText = "";
+	let streamedBytes = 0;
+	let lastAssistantText = "";
+	for await (const event of events) {
+		if (isRecord(event) && event.type === "route_warning" && typeof event.message === "string") {
+			input.progress?.({
+				phase: "generate",
+				status: "running",
+				message: "bootstrap routing changed",
+				detail: event.message,
+			});
+		}
+		if (isRecord(event) && event.type === "agent_start") {
+			input.progress?.({
+				phase: "generate",
+				status: "running",
+				message: "bootstrap agent started repository exploration",
+			});
+		}
+		if (isRecord(event) && event.type === "pancode_tool_start") {
+			const tool = toolNameFromEvent(event);
+			if (tool) {
+				input.progress?.({
+					phase: "generate",
+					status: "running",
+					message: `bootstrap running ${tool}`,
+					detail: "read-only repository exploration",
+				});
+			}
+		}
+		if (isRecord(event) && event.type === "pancode_tool_finish") {
+			const tool = toolNameFromEvent(event);
+			const outcome = toolOutcomeFromEvent(event) ?? "done";
+			if (tool) {
+				input.progress?.({
+					phase: "generate",
+					status: "running",
+					message: `bootstrap ${tool} ${outcome}`,
+				});
+			}
+		}
+		const delta = textDeltaFromEvent(event);
+		if (delta.length > 0) {
+			streamedBytes += Buffer.byteLength(delta, "utf8");
+			if (streamedBytes > BOOTSTRAP_MAX_OUTPUT_BYTES) {
+				throw new BootstrapOutputLimitError(streamedBytes);
+			}
+			streamedText += delta;
+		}
+		if (isRecord(event) && event.type === "message_end") {
+			const text = assistantTextFromMessage(event.message);
+			if (text.length > 0) {
+				const bytes = Buffer.byteLength(text, "utf8");
+				if (bytes > BOOTSTRAP_MAX_OUTPUT_BYTES) throw new BootstrapOutputLimitError(bytes);
+				lastAssistantText = text;
+			}
+		}
+	}
+	return (lastAssistantText || streamedText).trim();
+}
+
+function receiptFailure(receipt: RunResult): string {
+	const detail = receipt.failureMessage ? `: ${receipt.failureMessage}` : "";
+	return `bootstrap agent failed with exit ${receipt.exitCode}${detail}`;
+}
+
+/**
+ * The reason to retry this attempt without the native response schema, or
+ * null to let the failure stand.
+ *
+ * Two shapes mean the same thing. Dispatch refuses the schema up front when
+ * the resolved runtime cannot enforce it, and llama-server refuses it one
+ * round trip later when the schema-derived grammar will not compile beside
+ * the tool grammar. Only an attempt that carried the schema can produce
+ * either, so the caller gates on that rather than this predicate widening.
+ */
+function responseSchemaRefusal(err: unknown): string | null {
+	if (err instanceof UnsupportedResponseSchemaError) return err.message;
+	if (err instanceof BootstrapAttemptError && isResponseSchemaRejection(err.message)) return err.message;
+	return null;
+}
+
+async function attemptBootstrapDispatch(
+	dispatch: DispatchContract,
+	input: BootstrapGenerateInput,
+	prompt: string,
+	startedAtClock: number,
+	structuredOutputMode: BootstrapRunTelemetry["structuredOutputMode"],
+	timeoutMs: number,
+	dispatchBootstrap: (nativeSchema: boolean) => ReturnType<DispatchContract["dispatch"]>,
+): Promise<BootstrapStructuredOutput> {
+	const nativeSchema = structuredOutputMode === "native-schema";
+	let handle: Awaited<ReturnType<DispatchContract["dispatch"]>>;
+	try {
+		handle = await dispatchBootstrap(nativeSchema);
+	} catch (err) {
+		// An admission refusal of the schema is the caller's to act on, so it
+		// travels untouched. Everything else is this attempt's failure.
+		if (nativeSchema && err instanceof UnsupportedResponseSchemaError) throw err;
+		const error = err instanceof Error ? err : new Error(String(err));
+		throw new BootstrapAttemptError(
+			error,
+			"not-run",
+			bootstrapTelemetry(prompt, "", startedAtClock, structuredOutputMode),
+		);
+	}
+	const remainingMs = Math.max(1, timeoutMs - (performance.now() - startedAtClock));
+	const deadline = armInternalDispatchDeadline(dispatch, handle.runId, "context bootstrap", remainingMs);
+	const startedAtMs = Date.now() - (performance.now() - startedAtClock);
+	const reportWorking = (): void =>
+		input.progress?.({
+			phase: "generate",
+			status: "running",
+			message: "bootstrap model is working",
+			detail: `run ${handle.runId}; ${Math.round((performance.now() - startedAtClock) / 1000)}s elapsed; ${timeoutMs / 1000}s ceiling`,
+			timing: { runId: handle.runId, startedAtMs, timeoutMs },
+		});
+	reportWorking();
+	const heartbeat = setInterval(reportWorking, 10_000);
+	heartbeat.unref();
+	let text = "";
+	let receipt: RunResult | undefined;
+	let parserAttempted = false;
+	try {
+		text = await collectDispatchAssistantText(handle.events, input);
+		receipt = await handle.finalPromise;
+		if (deadline.timedOut()) throw new Error(deadline.message());
+		// The receipt outranks the empty transcript. A run the server rejected
+		// produces no assistant text by construction, and reporting the silence
+		// instead of the rejection described a healthy target as a mute model.
+		if (receipt.exitCode !== 0) throw new Error(receiptFailure(receipt));
+		// The context-handbook result contract seals the handbook from a submit
+		// tool call, so the transcript may carry no text or only narration. The
+		// sealed output is the result the contract validated; prefer it.
+		if (receipt.output?.state === "final" && receipt.output.text.trim().length > 0) {
+			const sealedBytes = Buffer.byteLength(receipt.output.text, "utf8");
+			if (sealedBytes > BOOTSTRAP_MAX_OUTPUT_BYTES) throw new BootstrapOutputLimitError(sealedBytes);
+			text = receipt.output.text.trim();
+		}
+		if (text.length === 0) throw new Error("bootstrap agent did not return an assistant response");
+		parserAttempted = true;
+		const output = parseBootstrapModelOutput(text);
+		input.progress?.({
+			phase: "generate",
+			status: "running",
+			message: "bootstrap agent returned the handbook payload",
+			detail: `${Buffer.byteLength(text, "utf8")} bytes`,
+		});
+		input.reportGeneration?.({
+			mode: "model",
+			parserOutcome: "parsed",
+			run: bootstrapTelemetry(prompt, text, startedAtClock, structuredOutputMode, handle.runId, receipt),
+		});
+		return output;
+	} catch (err) {
+		if (!deadline.timedOut()) dispatch.abort(handle.runId);
+		receipt ??= await handle.finalPromise.catch(() => undefined);
+		const error = deadline.timedOut()
+			? new Error(deadline.message())
+			: err instanceof Error
+				? err
+				: new Error(String(err));
+		throw new BootstrapAttemptError(
+			error,
+			parserAttempted ? "rejected" : "not-run",
+			bootstrapTelemetry(
+				prompt,
+				text,
+				startedAtClock,
+				structuredOutputMode,
+				handle.runId,
+				receipt,
+				err instanceof BootstrapOutputLimitError ? err.observedBytes : undefined,
+			),
+		);
+	} finally {
+		clearInterval(heartbeat);
+		deadline.clear();
+	}
+}
+
+async function generateBootstrapWithModel(
+	dispatch: DispatchContract,
+	input: BootstrapGenerateInput,
+	route: BootstrapRoute | undefined,
+	runs: BootstrapRunTelemetry[],
+	generationStartedAt: number,
+): Promise<BootstrapStructuredOutput> {
+	let prompt = buildBootstrapPrompt(input);
+	// The draft's own dispatch; repair and section requests below never replace
+	// it, they only add their spend to `runs`.
+	let attemptTelemetry: BootstrapGenerationTelemetry | undefined;
+	let latestAttempt: BootstrapGenerationTelemetry | undefined;
+	const attemptInput: BootstrapGenerateInput = {
+		...input,
+		reportGeneration: (telemetry) => {
+			latestAttempt = telemetry;
+			if (telemetry.run) runs.push(telemetry.run);
+		},
+	};
+	const policy = BOOTSTRAP_DEPTH_POLICY[input.depth ?? "standard"];
+	// The internal researcher reads this repository and returns JSON. Authored
+	// handbook text is evidence, not a source of inferred filesystem authority.
+	const scope = declaredScopeIntent({ readRoots: ["."] });
+	if (!scope.ok) throw new Error(`${scope.reason}: ${scope.message}`);
+	const startedAtClock = performance.now();
+	input.progress?.({
+		phase: "generate",
+		status: "running",
+		message: "dispatching internal context-bootstrap agent",
+		detail: `${route?.target ?? "configured target"}/${route?.model ?? "configured model"}; ${input.depth ?? "standard"}; ${policy.toolCalls} exploration calls; ${input.evidence?.files.length ?? 0} evidence files`,
+	});
+	// Schema refusal happens before a worker starts, so parser fallback can reuse the same root identity.
+	let runIdHint = newRunId();
+	let toolCalls: number = policy.toolCalls;
+	const thinkingLevel = route?.thinkingLevel ?? "off";
+	const timeoutMs = bootstrapTimeoutMs(policy.timeoutMs, thinkingLevel);
+	const assignmentDeadlineAt = Date.now() + timeoutMs;
+	// The last quarter of the ceiling is held for the terminal round; Qwopus 3.8 needed
+	// about 35 s for a whole draft and was aborted mid-exploration without one.
+	const synthesisAt = assignmentDeadlineAt - Math.round(timeoutMs * BOOTSTRAP_SYNTHESIS_RESERVE);
+	const dispatchBootstrap = (nativeSchema: boolean) =>
+		dispatch.dispatch({
+			runIdHint,
+			intent: scope.intent,
+			agentId: CONTEXT_BOOTSTRAP_AGENT_ID,
+			executionRole: "explorer",
+			task: prompt,
+			cwd: input.cwd,
+			requestOrigin: "internal",
+			// Identical local bootstrap runs should not vary with the server's sampling defaults.
+			sampling: "deterministic",
+			assignmentDeadlineAt,
+			synthesisAt,
+			thinkingLevel,
+			budget: { toolCalls },
+			noSkills: true,
+			...(nativeSchema ? { responseSchema: BOOTSTRAP_OUTPUT_JSON_SCHEMA } : {}),
+			...(route ? { target: route.target } : {}),
+			...(route?.model ? { model: route.model } : {}),
+		});
+	const attempt = async (
+		attemptPrompt: string,
+		structuredOutputMode: BootstrapRunTelemetry["structuredOutputMode"],
+	): Promise<BootstrapStructuredOutput> => {
+		latestAttempt = undefined;
+		try {
+			return await attemptBootstrapDispatch(
+				dispatch,
+				attemptInput,
+				attemptPrompt,
+				startedAtClock,
+				structuredOutputMode,
+				timeoutMs,
+				dispatchBootstrap,
+			);
+		} catch (err) {
+			// A refused or failed dispatch still spent what its worker used.
+			if (err instanceof BootstrapAttemptError) runs.push(err.telemetry);
+			throw err;
+		}
+	};
+	let output: BootstrapStructuredOutput;
+	let mode: BootstrapRunTelemetry["structuredOutputMode"] = "native-schema";
+	try {
+		output = await attempt(prompt, "native-schema");
+	} catch (err) {
+		const refusal = responseSchemaRefusal(err);
+		if (refusal === null) throw err;
+		input.progress?.({
+			phase: "generate",
+			status: "running",
+			message: "native schema unavailable; using bounded output parser",
+			detail: refusal,
+		});
+		mode = "prompt-parser";
+		output = await attempt(prompt, "prompt-parser");
+	}
+	attemptTelemetry = latestAttempt;
+	const feedback = input.assessDraft?.(output);
+	// An identical deterministic retry reproduces the empty draft; change its task within the original deadline.
+	if (feedback && performance.now() - startedAtClock < timeoutMs) {
+		prompt += `\n\n<bootstrap-repair-feedback>\n${feedback}\nThis repair has at most 4 exploration calls and only the remaining time under the original deadline.\n</bootstrap-repair-feedback>`;
+		runIdHint = newRunId();
+		toolCalls = 4;
+		let producedHandbook = false;
+		input.progress?.({
+			phase: "generate",
+			status: "running",
+			message: "repairing ungrounded bootstrap draft",
+			detail: feedback,
+		});
+		try {
+			const repaired = await attempt(prompt, mode);
+			producedHandbook = input.assessDraft?.(repaired) === null;
+			if (producedHandbook) {
+				output = repaired;
+				attemptTelemetry = latestAttempt;
+			}
+		} catch {
+			// A failed repair retains the original empty draft for the existing heuristic fallback decision.
+		}
+		if (attemptTelemetry)
+			attemptTelemetry = { ...attemptTelemetry, repairRan: true, repairProducedHandbook: producedHandbook };
+	}
+	// A section the evidence supports is asked for once more, alone, rather than
+	// shipping a handbook that silently lacks it; stabilization grounds the reply.
+	const missing = input.missingSections?.(output) ?? [];
+	if (missing.length > 0 && performance.now() - startedAtClock < timeoutMs) {
+		const titles = missing.map((section) => `"${section.title}"`).join(" and ");
+		const request = [
+			"<bootstrap-section-request>",
+			`The draft has no ${missing.map((section) => `"${section.title}" section (${section.reason})`).join("; ")}.`,
+			`Return the handbook JSON with the same projectName and identity, empty invariants and conventions, and sections holding only ${titles}. Every bullet cites its files in backticks, and a change recipe names every file the same commit must touch.`,
+			"This request has at most 4 exploration calls and only the remaining time under the original deadline.",
+			"</bootstrap-section-request>",
+		].join("\n");
+		runIdHint = newRunId();
+		toolCalls = 4;
+		input.progress?.({
+			phase: "generate",
+			status: "running",
+			message: "requesting sections the draft omitted",
+			detail: missing.map((section) => section.title).join(", "),
+		});
+		try {
+			const extra = await attempt(`${prompt}\n\n${request}`, mode);
+			const present = new Set((output.sections ?? []).map((section) => section.title.toLowerCase()));
+			const added = (extra.sections ?? []).filter((section) => !present.has(section.title.toLowerCase()));
+			if (added.length > 0) output = { ...output, sections: [...(output.sections ?? []), ...added] };
+		} catch {
+			// The draft stands without the section; context init warns that it is missing.
+		}
+	}
+	if (attemptTelemetry)
+		input.reportGeneration?.({
+			...attemptTelemetry,
+			runs: [...runs],
+			durationMs: Math.round(performance.now() - generationStartedAt),
+		});
+	return output;
+}
+
+async function loadBootstrapDispatch(): Promise<{
+	dispatch: DispatchContract;
+	config: ConfigContract;
+	stop(): Promise<void>;
+}> {
+	const workerHooks = createCliWorkerHooks("context init");
+	const loaded = await loadDomains([
+		ConfigDomainModule,
+		ExtensionsDomainModule,
+		ResourcesDomainModule,
+		ProvidersDomainModule,
+		SafetyDomainModule,
+		createPromptsDomainModule({ noContextFiles: true }),
+		AgentsDomainModule,
+		workerHooks.middlewareModule,
+		SessionDomainModule,
+		TelemetryDomainModule,
+		SchedulingDomainModule,
+		createDispatchDomainModule({ workerHooks: workerHooks.workerHooks }),
+	]);
+	// The command's own extension host runs the bootstrap worker's tool hooks,
+	// as in fleet run; every exit from here disposes it.
+	const stop = async (): Promise<void> => {
+		try {
+			await workerHooks.drain();
+			await workerHooks.dispose();
+		} finally {
+			await loaded.stop();
+		}
+	};
+	const dispatch = loaded.getContract("dispatch");
+	const config = loaded.getContract("config");
+	if (!dispatch || !config) {
+		await stop();
+		throw new Error("bootstrap dispatch or configuration unavailable");
+	}
+	// A host that failed under a blocking hook refuses the worker, and init
+	// falls back as for any unavailable agent.
+	let refusal: string | null;
+	try {
+		refusal = await workerHooks.start(loaded);
+	} catch (err) {
+		await stop();
+		throw err;
+	}
+	if (refusal !== null) {
+		await stop();
+		throw new Error(`pancode context init: ${refusal}`);
+	}
+	return { dispatch, config, stop };
+}
+
+/**
+ * Wrap model-driven generation so any failure (no configured target, offline
+ * endpoint, malformed output) degrades cleanly. Existing valid PANCODE.md content
+ * is preserved when possible; otherwise the deterministic heuristic is used.
+ */
+export function modelBootstrapGenerate(options: ModelBootstrapGenerateOptions = {}): BootstrapGenerate {
+	return async (input) => {
+		let stop: (() => Promise<void>) | null = null;
+		const runs: BootstrapRunTelemetry[] = [];
+		// One monotonic span for the whole generation, reported by success and fallback alike.
+		const startedAtClock = performance.now();
+		try {
+			if (options.dispatch) {
+				const route = options.route ?? options.resolveRoute?.();
+				return await generateBootstrapWithModel(options.dispatch, input, route, runs, startedAtClock);
+			}
+			{
+				const lazy = await loadBootstrapDispatch();
+				stop = lazy.stop;
+				const route = options.route ?? resolveBootstrapRoute(lazy.config.get());
+				return await generateBootstrapWithModel(lazy.dispatch, input, route, runs, startedAtClock);
+			}
+		} catch (err) {
+			const error = err instanceof Error ? err : new Error(String(err));
+			const fallback = fallbackBootstrapOutput(input);
+			const generation: BootstrapGenerationTelemetry = {
+				mode: fallback.mode,
+				parserOutcome: err instanceof BootstrapAttemptError ? err.parserOutcome : "not-run",
+				fallbackReason: error.message,
+				...(err instanceof BootstrapAttemptError ? { run: err.telemetry } : {}),
+				...(runs.length > 0 ? { runs } : {}),
+				durationMs: Math.round(performance.now() - startedAtClock),
+			};
+			input.progress?.({
+				phase: "generate",
+				status: "running",
+				message:
+					fallback.mode === "existing"
+						? "bootstrap agent unavailable; preserving existing PANCODE.md"
+						: "bootstrap agent unavailable; using heuristic bootstrap",
+				detail: error.message,
+			});
+			input.reportGeneration?.(generation);
+			options.onFallback?.(error, fallback.mode);
+			return fallback.output;
+		} finally {
+			if (stop) await stop();
+		}
+	};
+}

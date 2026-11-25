@@ -1,0 +1,407 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, rejects, strictEqual } from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+
+import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { agentSkillToolPolicy } from "../../src/core/skill-activation.js";
+import { ToolNames } from "../../src/core/tool-names.js";
+import type { SpawnedWorker } from "../../src/domains/dispatch/worker-spawn.js";
+import claudeSdkRuntime from "../../src/domains/providers/runtimes/claude/claude-sdk.js";
+import { createPancodeToolBridge } from "../../src/engine/claude/pancode-tool-bridge.js";
+import { emitClaudeToolPermissionDecision, mapClaudeToolCall } from "../../src/engine/claude/tool-safety.js";
+import { attestedToolNames, attestedToolSignature, createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { toolSignatureOf } from "../../src/worker/protocol.js";
+import { type WorkerSpec, workerSpecToolNames } from "../../src/worker/spec-contract.js";
+import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
+import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
+
+/**
+ * Q11: a claude-sdk worker carries PanCode's context, artifact and verify tools
+ * through an in-process SDK MCP server, so the recipes that require them are
+ * admitted on that route, and a shadow refusal names `coder --read-only` only
+ * where that stand-in would itself be admitted.
+ */
+function claudeSdkSettings() {
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.targets = [{ id: "sdk-worker", runtime: "claude-sdk", defaultModel: "claude-sonnet-4-6" }];
+	settings.fleet.default.target = "sdk-worker";
+	settings.fleet.default.model = "claude-sonnet-4-6";
+	return settings;
+}
+
+function spawnOnClaudeSdk(
+	settings = claudeSdkSettings(),
+	extra: Partial<Parameters<typeof makeDispatchBundle>[1]> = {},
+	runtime: typeof claudeSdkRuntime | null = claudeSdkRuntime,
+) {
+	const specs: WorkerSpec[] = [];
+	const bundle = makeDispatchBundle(dispatchStubContext({ settings, ...(runtime !== null ? { runtime } : {}) }), {
+		...extra,
+		spawnWorker: (spec): SpawnedWorker => {
+			specs.push(spec);
+			return {
+				pid: null,
+				promise: Promise.resolve({ exitCode: 0, signal: null }),
+				heartbeatAt: { current: Date.now(), monotonic: 0 },
+				events: (async function* () {
+					yield { type: "message_end", message: { role: "assistant", stopReason: "stop", content: "done" } };
+				})(),
+				abort() {},
+			};
+		},
+	});
+	return { bundle, specs };
+}
+
+describe("claude-sdk: PanCode context, artifact and verify tools", () => {
+	beforeEach(async () => {
+		await isolateDispatchState();
+	});
+	afterEach(() => {
+		restoreDispatchState();
+	});
+
+	const cases = [
+		{ agentId: "architect", readOnly: false, carries: [ToolNames.Artifact, ToolNames.Context] },
+		{ agentId: "coder", readOnly: true, carries: [ToolNames.Context] },
+		{ agentId: "debugger", readOnly: false, carries: [ToolNames.Verify] },
+		{ agentId: "verifier", readOnly: false, carries: [ToolNames.Verify] },
+	] as const;
+
+	for (const { agentId, readOnly, carries } of cases) {
+		it(`admits ${agentId}${readOnly ? " --read-only" : ""} and attests the same surface the worker signs`, async () => {
+			const { bundle, specs } = spawnOnClaudeSdk();
+			await bundle.extension.start();
+			try {
+				const handle = await bundle.contract.dispatch({
+					agentId,
+					task: "Inspect src/parser.ts and report on the tokenizer.",
+					executionRole: "builder",
+					requestOrigin: "user",
+					...(readOnly ? { readOnly: true } : {}),
+				});
+				await handle.finalPromise.catch(() => undefined);
+				const spec = specs[0];
+				ok(spec, `${agentId} must reach worker creation on claude-sdk`);
+				strictEqual(spec.runtimeId, "claude-sdk");
+				for (const tool of carries) ok(workerSpecToolNames(spec).includes(tool), `${agentId} must carry ${tool}`);
+				// Read-only is enforced per call at the permission gate, not by trimming the surface.
+				strictEqual(spec.envelope.write.mode === "none", readOnly);
+				// #449: the worker's own projection must sign exactly what admission approved.
+				strictEqual(
+					attestedToolSignature({
+						allowedTools: workerSpecToolNames(spec),
+						toolsSupported: true,
+						agentId: spec.agentId,
+						task: spec.task,
+						runtime: spec.runtime,
+					}),
+					toolSignatureOf(workerSpecToolNames(spec)),
+				);
+			} finally {
+				await bundle.extension.stop?.();
+			}
+		});
+	}
+
+	// M7 acceptance: on both runtimes the worker attests, and its prompt's tool contract names, exactly the envelope.
+	const nativeSettings = () => {
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.targets = [{ id: "native-worker", runtime: "openai", defaultModel: "gpt-4o" }];
+		settings.fleet.default = { ...settings.fleet.default, target: "native-worker", model: "gpt-4o" };
+		return settings;
+	};
+	const runtimes = [
+		["native", () => spawnOnClaudeSdk(nativeSettings(), {}, null)],
+		["claude-sdk", () => spawnOnClaudeSdk()],
+	] as const;
+	const recipes = [
+		{ agentId: "architect", readOnly: false },
+		{ agentId: "coder", readOnly: true },
+		{ agentId: "debugger", readOnly: false },
+		{ agentId: "verifier", readOnly: false },
+		{ agentId: "documenter", readOnly: true },
+		{ agentId: "tester", readOnly: true },
+	] as const;
+	it("attests, and tells the prompt, exactly the envelope's tools for 6 recipes on native and claude-sdk (M7)", async () => {
+		for (const [runtimeName, spawn] of runtimes) {
+			for (const { agentId, readOnly } of recipes) {
+				const { bundle, specs } = spawn();
+				await bundle.extension.start();
+				try {
+					const handle = await bundle.contract.dispatch({
+						agentId,
+						task: "Inspect src/parser.ts and report on the tokenizer.",
+						executionRole: "builder",
+						requestOrigin: "user",
+						...(readOnly ? { readOnly: true } : {}),
+					});
+					await handle.finalPromise.catch(() => undefined);
+					const spec = specs[0];
+					const label = `${agentId} on ${runtimeName}`;
+					ok(spec, `${label} must reach worker creation`);
+					strictEqual(spec.runtimeId === "claude-sdk", runtimeName === "claude-sdk", label);
+					const envelopeTools = [...spec.envelope.tools.direct, ...spec.envelope.tools.gateway].sort();
+					ok(envelopeTools.length > 0, label);
+					const attested = attestedToolNames({
+						allowedTools: workerSpecToolNames(spec),
+						toolsSupported: true,
+						agentId: spec.agentId,
+						task: spec.task,
+						runtime: spec.runtime,
+					});
+					deepStrictEqual([...attested].sort(), envelopeTools, `${label}: attested tools`);
+					const contract = /^Admitted canonical tools: (.+)\. This is your complete tool authority/mu.exec(
+						spec.systemPrompt,
+					);
+					ok(contract, `${label}: the prompt renders a tool contract`);
+					const prompted = [...(contract[1] ?? "").matchAll(/`([^`]+)`/gu)].map((entry) => entry[1]).sort();
+					deepStrictEqual(prompted, envelopeTools, `${label}: prompt tool contract`);
+				} finally {
+					await bundle.extension.stop?.();
+				}
+			}
+		}
+	});
+
+	it("names coder --read-only in a shadow refusal only when the route admits it", async () => {
+		const { bundle, specs } = spawnOnClaudeSdk();
+		await bundle.extension.start();
+		try {
+			const scout = {
+				agentId: "scout",
+				task: "Map the parser module.",
+				executionRole: "builder",
+				requestOrigin: "user",
+			} as const;
+			await rejects(bundle.contract.dispatch(scout), (error: Error) => {
+				match(error.message, /reserved for PanCode internal orchestration; .*'coder' with --read-only$/);
+				return true;
+			});
+			// Denying context leaves coder short of a required tool on this route.
+			await rejects(bundle.contract.dispatch({ ...scout, denyTools: [ToolNames.Context] }), (error: Error) => {
+				match(error.message, /reserved for PanCode internal orchestration$/);
+				return true;
+			});
+			strictEqual(specs.length, 0);
+		} finally {
+			await bundle.extension.stop?.();
+		}
+	});
+
+	const refusedRoutes: Array<[string, () => ReturnType<typeof spawnOnClaudeSdk>]> = [
+		[
+			"the route's permission mode",
+			() => {
+				const settings = claudeSdkSettings();
+				settings.fleet.permissions.mode = "escalate";
+				return spawnOnClaudeSdk(settings);
+			},
+		],
+		[
+			"a blocking hook the runtime cannot carry",
+			() =>
+				spawnOnClaudeSdk(claudeSdkSettings(), {
+					workerHooks: {
+						declarations: () => [
+							{
+								id: "extension:desk_guard:before_tool:0",
+								point: "before_tool",
+								tools: [ToolNames.Read],
+								timeoutMs: 1000,
+								onTimeout: "pass",
+								onError: "block",
+							},
+						],
+						evaluate: async () => [],
+					},
+				}),
+		],
+	];
+	for (const [why, setup] of refusedRoutes) {
+		it(`names no stand-in when ${why} refuses it`, async () => {
+			const { bundle, specs } = setup();
+			await bundle.extension.start();
+			try {
+				await rejects(
+					bundle.contract.dispatch({
+						agentId: "scout",
+						task: "Map the parser module.",
+						executionRole: "builder",
+						requestOrigin: "user",
+					}),
+					(error: Error) => {
+						match(error.message, /reserved for PanCode internal orchestration$/);
+						return true;
+					},
+				);
+				strictEqual(specs.length, 0);
+			} finally {
+				await bundle.extension.stop?.();
+			}
+		});
+	}
+});
+
+describe("claude-sdk: the pancode tool bridge", () => {
+	beforeEach(async () => {
+		await isolateDispatchState();
+	});
+	afterEach(() => {
+		restoreDispatchState();
+	});
+
+	it("maps a bridged MCP call onto the PanCode tool and gates it read-only", () => {
+		deepStrictEqual(mapClaudeToolCall("mcp__pancode__verify", { check: "unit" }, process.cwd()), {
+			known: true,
+			bridged: true,
+			claudeToolName: "mcp__pancode__verify",
+			pancodeToolName: ToolNames.Verify,
+			args: { check: "unit" },
+		});
+		strictEqual(mapClaudeToolCall("mcp__other__verify", {}, process.cwd()).known, false);
+		const cwd = mkdtempSync(join(tmpdir(), "pancode-q11-gate-"));
+		try {
+			const safety = createWorkerSafety({ cwd });
+			const allowedTools = new Set<string>([ToolNames.Context, ToolNames.Artifact, ToolNames.Verify]);
+			const events: Array<{ type: string; payload?: { outcome?: string } }> = [];
+			const record = (event: unknown) => {
+				events.push(event as { type: string; payload?: { outcome?: string } });
+			};
+			const decide = (toolName: string, readOnly: boolean, surface = allowedTools) =>
+				emitClaudeToolPermissionDecision({
+					toolName,
+					input: {},
+					safety,
+					cwd,
+					readOnly,
+					allowedTools: surface,
+					emit: record,
+				}).kind;
+			strictEqual(decide("mcp__pancode__context", true), "allow");
+			// The bridge reports an allowed call's start and real outcome; the gate stays silent.
+			strictEqual(events.length, 0);
+			strictEqual(decide("mcp__pancode__artifact", true), "deny");
+			strictEqual(decide("mcp__pancode__verify", true), "deny");
+			strictEqual(decide("mcp__pancode__artifact", false, new Set<string>([ToolNames.Context])), "deny");
+			deepStrictEqual(
+				events.filter((event) => event.type === "pancode_tool_finish").map((event) => event.payload?.outcome),
+				["blocked", "blocked", "blocked"],
+			);
+			strictEqual(decide("mcp__pancode__artifact", false), "allow");
+			strictEqual(decide("Write", true, new Set<string>([ToolNames.Write])), "deny");
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("runs PanCode's own tool behind the SDK server and reports its real outcome under the SDK tool-use id", async () => {
+		const events: Array<Record<string, unknown>> = [];
+		const safety = createWorkerSafety();
+		const emit = (event: unknown) => {
+			events.push(event as Record<string, unknown>);
+		};
+		const skillPolicy = agentSkillToolPolicy(["fix-issue"]);
+		ok(skillPolicy);
+		strictEqual(createPancodeToolBridge(createSdkMcpServer, { allowedTools: new Set(["read"]), safety, emit }), null);
+		const server = createPancodeToolBridge(createSdkMcpServer, {
+			allowedTools: new Set([ToolNames.Read, ToolNames.Context, ToolNames.Verify]),
+			safety,
+			emit,
+			agentId: "coder",
+			// The recipe's bound skill path, which dispatch hands a worker in skillPaths.
+			skillLoaderOptions: { skillPaths: [join(process.cwd(), "hub/packs/skills/git/fix-issue/SKILL.md")] },
+			...(skillPolicy !== undefined ? { pendingSkillPolicy: skillPolicy } : {}),
+		});
+		ok(server);
+		strictEqual(server.name, "pancode");
+		const handlers = (
+			server.instance as unknown as {
+				server: { _requestHandlers: Map<string, (request: unknown, extra: unknown) => Promise<unknown>> };
+			}
+		).server._requestHandlers;
+		const call = async (name: string, args: Record<string, unknown>, toolUseId: string) =>
+			(await handlers.get("tools/call")?.(
+				{ method: "tools/call", params: { name, arguments: args, _meta: { "claudecode/toolUseId": toolUseId } } },
+				{
+					signal: new AbortController().signal,
+					requestId: 1,
+					sendNotification: async () => {},
+					_meta: { "claudecode/toolUseId": toolUseId },
+				},
+			)) as { content: Array<{ type: string; text?: string }>; isError?: boolean };
+		const listed = (await handlers.get("tools/list")?.(
+			{ method: "tools/list", params: {} },
+			{ signal: new AbortController().signal, requestId: 0, sendNotification: async () => {} },
+		)) as { tools: Array<{ name: string; inputSchema: { type?: string; properties?: Record<string, unknown> } }> };
+		deepStrictEqual(
+			listed.tools.map((tool) => tool.name),
+			["context", "verify"],
+		);
+		ok(listed.tools[0]?.inputSchema.properties?.scope, "the tool's own schema is advertised");
+
+		// A gateway-placed capability is carried under its own name: the SDK has no PanCode gateway.
+		const architect = createPancodeToolBridge(createSdkMcpServer, {
+			allowedTools: new Set([ToolNames.Artifact, ToolNames.Context, ToolNames.Gateway]),
+			safety,
+			emit,
+		});
+		const architectTools = (
+			architect?.instance as unknown as {
+				server: { _requestHandlers: Map<string, (request: unknown, extra: unknown) => Promise<unknown>> };
+			}
+		).server._requestHandlers;
+		const architectListed = (await architectTools.get("tools/list")?.(
+			{ method: "tools/list", params: {} },
+			{ signal: new AbortController().signal, requestId: 0, sendNotification: async () => {} },
+		)) as { tools: Array<{ name: string }> };
+		deepStrictEqual(
+			architectListed.tools.map((tool) => tool.name),
+			["artifact", "context"],
+		);
+
+		// A loaded skill's surface narrows preset tools at the gate, not only bridged ones.
+		const gate = (toolName: string) =>
+			emitClaudeToolPermissionDecision({
+				toolName,
+				input: {},
+				safety,
+				cwd: process.cwd(),
+				readOnly: true,
+				allowedTools: new Set<string>([ToolNames.Tasks, ToolNames.WebFetch]),
+				pendingSkillPolicy: skillPolicy,
+				emit: () => {},
+			});
+		strictEqual(gate("TodoWrite").kind, "allow");
+		const beforeLoad = gate("WebFetch");
+		ok(beforeLoad.kind !== "deny" || beforeLoad.reasonCode !== "admission:skill_surface");
+
+		// A bound skill loads through the bridged context, as on a native worker.
+		const skill = await call("context", { scope: "skills", name: "fix-issue" }, "toolu_skill");
+		ok(skill.isError !== true, JSON.stringify(skill.content));
+		strictEqual(gate("TodoWrite").kind, "allow");
+		const afterLoad = gate("WebFetch");
+		strictEqual(afterLoad.kind, "deny");
+		strictEqual(afterLoad.kind === "deny" ? afterLoad.reasonCode : undefined, "admission:skill_surface");
+
+		const failed = await call("verify", { check: "q11-no-such-check" }, "toolu_verify");
+		strictEqual(failed.isError, true);
+		const forCall = (id: string) =>
+			events.filter(
+				(event) => event.toolCallId === id || (event.payload as { toolCallId?: string } | undefined)?.toolCallId === id,
+			);
+		deepStrictEqual(
+			forCall("toolu_verify").map((event) => event.type),
+			["tool_execution_start", "pancode_tool_start", "pancode_tool_finish", "tool_execution_end"],
+		);
+		const finish = forCall("toolu_verify").find((event) => event.type === "pancode_tool_finish");
+		strictEqual((finish?.payload as { tool?: string }).tool, ToolNames.Verify);
+		ok((finish?.payload as { outcome?: string }).outcome !== "ok", "a failed check must not finish ok");
+		deepStrictEqual(forCall("toolu_verify")[0]?.args, { check: "q11-no-such-check" });
+	});
+});

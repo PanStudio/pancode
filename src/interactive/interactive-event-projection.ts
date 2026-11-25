@@ -1,0 +1,516 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { PancodeSettings } from "../core/config.js";
+import { readDispatchScopeNotice } from "../core/dispatch-scope-notice.js";
+import { GLYPH } from "../core/glyphs.js";
+import { routingChangeNotices } from "../core/session-routing.js";
+import type { TelemetryHub } from "../core/telemetry/hub.js";
+import type {
+	ConfigReloadFailedPayload,
+	LoopBlockedPayload,
+	RuntimeNoticePayload,
+	ToolBudgetExceededPayload,
+} from "../core/telemetry/live-events.js";
+import { ToolNames } from "../core/tool-names.js";
+import type { ChatCancelOptions, ChatLoopEvent, QueuedChatMessage } from "../session-control/chat-loop.js";
+import { COMPACTION_LINE_LEAD } from "../session-control/compaction-lines.js";
+import {
+	loopBlockedAuditReason,
+	loopBlockedStopReason,
+	toolBudgetAuditReason,
+	toolBudgetStopReason,
+} from "../session-control/loop-guard-interrupt.js";
+import type { NoticeSource } from "../session-control/notice-source.js";
+import { chainStepToolCallId, displayToolCall, gatewayChainSteps } from "../tools/gateway-display.js";
+import { effectiveToolCall, gatewayChainReceipts } from "../tools/surface.js";
+import {
+	budgetAlertNotice,
+	middlewareHookFailedSessionNotice,
+	restartRequiredNotice,
+	safetyBlockedNotice,
+} from "./bus-notices.js";
+import { classifyNoticeLevel } from "./footer/notifications.js";
+import type { AgentStatus, TurnSummary } from "./status/index.js";
+
+export type InteractiveProjectionNoticeLevel = "info" | "success" | "warning" | "error";
+export type InteractiveTranscriptNoticeLevel = "info" | "success" | "warn" | "error";
+
+export interface InteractiveEventProjectionDeps {
+	bus: TelemetryHub;
+	chat: {
+		onEvent(handler: (event: ChatLoopEvent) => void): () => void;
+		cancel(options?: ChatCancelOptions): void;
+	};
+	status: {
+		subscribe(listener: (status: AgentStatus) => void): () => void;
+	};
+	initialNotices?: ReadonlyArray<string>;
+	getSettings?: () => Readonly<PancodeSettings>;
+	isReloadReporting?: () => boolean;
+	getTerminalColumns: () => number;
+	now?: () => number;
+	/** Canonical synchronous ingress hook, before any projection branch consumes the event. */
+	onChatEventIngress?: (event: ChatLoopEvent) => void;
+	applyChatEvent: (event: ChatLoopEvent) => void;
+	setFollowUpMessages: (messages: QueuedChatMessage[]) => void;
+	/** The held-queue notice in this surface's words, naming its bound keys. */
+	heldQueueNotice?: (count: number) => string;
+	/** A session change took these messages unsent; give them back. */
+	restoreDroppedQueue?: (texts: string[]) => void;
+	isAskUserWaiting: () => boolean;
+	closeAskUserSession: () => void;
+	resetAskUserCancellation: () => void;
+	recordToolStart: (toolName: string, toolCallId: string) => void;
+	/** `settledAsSteps`: a chain whose steps are tallied next, so its own start tally comes back out. */
+	recordToolEnd: (
+		toolName: string,
+		toolCallId: string,
+		isError: boolean,
+		truncated: boolean,
+		settledAsSteps: boolean,
+	) => void;
+	/**
+	 * Publish the live turn's reasoning projection to the transcript. Optional so
+	 * a host without a chat panel still gets every other projection.
+	 */
+	setLastTurnSummary: (summary: TurnSummary) => void;
+	startTerminalProgress: () => void;
+	stopTerminalProgress: () => void;
+	/**
+	 * One model turn reached its end. Wired to the desktop notification; absent
+	 * on hosts that do not own a terminal to notify through.
+	 */
+	onTurnEnded?: () => void;
+	refreshLiveWorkspaceGit: (force: boolean) => void;
+	refreshFooter: () => void;
+	requestRender: () => void;
+	notify: (level: InteractiveProjectionNoticeLevel, text: string, key?: string, ttlMs?: number) => void;
+	dismissNotification: (key: string) => void;
+	/** A turn is later work: notices about earlier runs stop reading as current. */
+	supersedeWorkNotifications?: () => void;
+	appendTranscriptNotice: (level: InteractiveTranscriptNoticeLevel, text: string, source?: NoticeSource) => void;
+	refreshSettingsOverlay: () => void;
+	onConfigHotReload?: (settings: Readonly<PancodeSettings>) => void;
+}
+
+export interface InteractiveEventProjection {
+	/** Unsubscribe the primary chat and status projections before disposing the status controller. */
+	disposePrimary(): void;
+	/** Unsubscribe progress and bus projections after disposing the status controller. */
+	disposeRemaining(): void;
+	dispose(): void;
+}
+
+function recordObject(value: unknown): Record<string, unknown> | null {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+}
+
+function askUserInterviewClosedByToolResult(event: {
+	toolName?: unknown;
+	isError?: unknown;
+	result?: unknown;
+}): boolean {
+	if (event.isError === true) return false;
+	const toolName = typeof event.toolName === "string" ? event.toolName : "";
+	const result = recordObject(event.result);
+	// The coordinator runs ask_user through gateway op=call or as a chain step.
+	const results =
+		effectiveToolCall(toolName, undefined, result?.details).toolName === ToolNames.AskUser
+			? [result]
+			: gatewayChainReceipts(toolName, event.result)
+					.filter((child) => child.capability === ToolNames.AskUser && child.admission.outcome === "ok")
+					.map((child) => child.result);
+	return results.some((candidate) => {
+		const interview = recordObject(recordObject(candidate?.details)?.interview);
+		return interview?.status === "complete" || interview?.status === "cancelled";
+	});
+}
+
+/**
+ * Project chat, status, and operator-facing bus events onto interactive UI
+ * collaborators. Event delivery is synchronous, so handler statement order is
+ * the rendering contract and intentionally matches the former composition-root
+ * subscriptions.
+ */
+const CACHE_REUSE_NOTICE_KEY = "context.cache.reuse-uncertain";
+
+export function createInteractiveEventProjection(deps: InteractiveEventProjectionDeps): InteractiveEventProjection {
+	for (const notice of deps.initialNotices ?? []) {
+		const text = notice.trim();
+		if (text.length === 0) continue;
+		const key = text.toLowerCase().includes("keybinding notice") ? "startup:keybinding-notice" : text;
+		const level = classifyNoticeLevel(text);
+		// A boot warning names a condition that stays true, such as an ignored project layer; it holds until read.
+		deps.notify(level, text, key, ...(level === "info" ? [] : ([0] as const)));
+	}
+
+	let cacheEstimateOut = false;
+	const primaryUnsubscribers: Array<() => void> = [];
+	const remainingUnsubscribers: Array<() => void> = [];
+	primaryUnsubscribers.push(
+		deps.chat.onEvent((event) => {
+			deps.onChatEventIngress?.(event);
+			if (event.type === "notice") {
+				// Context stages already occupy the rail above the editor. Info status
+				// receipts belong in the footer; errors retain their transcript evidence.
+				// The compaction receipt follows them: the operation's result card
+				// carries the measured reduction in the transcript (p9/D3).
+				if (
+					event.level === "info" &&
+					(event.text.startsWith("[context engine] ") || event.text.startsWith(COMPACTION_LINE_LEAD))
+				) {
+					deps.notify("info", event.text, "compaction-notice");
+					return;
+				}
+				if (event.queueDropped !== undefined && deps.restoreDroppedQueue) {
+					deps.restoreDroppedQueue(event.queueDropped.texts);
+					return;
+				}
+				if (event.surface === "transcript") {
+					deps.applyChatEvent(
+						event.heldQueue !== undefined && deps.heldQueueNotice
+							? { ...event, text: deps.heldQueueNotice(event.heldQueue.count) }
+							: event,
+					);
+					// The footer names the armed skill surface; a change repaints it.
+					if (event.skillSurface !== undefined) deps.refreshFooter();
+					return;
+				}
+				// #423: the estimate already says the cache may be cold and carries the number, so a bare restatement must not
+				// take the slot from it while the call it is about is still out.
+				if (event.key === CACHE_REUSE_NOTICE_KEY) cacheEstimateOut = true;
+				else if (event.key === "context.cache.cold" && cacheEstimateOut) return;
+				deps.notify(event.level, event.text, event.key);
+				return;
+			}
+			if (event.type === "queue_update") {
+				deps.setFollowUpMessages(event.messages);
+				deps.requestRender();
+				return;
+			}
+			if (deps.isAskUserWaiting() && event.type === "message_update") {
+				const assistantEvent = event.assistantMessageEvent as { type?: unknown };
+				if (assistantEvent.type === "text_delta" || assistantEvent.type === "thinking_delta") {
+					deps.closeAskUserSession();
+				}
+			}
+			if (event.type === "agent_end") {
+				deps.closeAskUserSession();
+				deps.resetAskUserCancellation();
+			}
+			if (event.type === "tool_execution_start") {
+				// Footer tallies count the capability that ran, as a direct call of
+				// it counted in v056, not the gateway wrapper the coordinator used.
+				deps.recordToolStart(displayToolCall(event.toolName, event.args).toolName, event.toolCallId);
+				deps.refreshFooter();
+			} else if (event.type === "tool_execution_end") {
+				if (askUserInterviewClosedByToolResult(event)) {
+					deps.closeAskUserSession();
+					deps.resetAskUserCancellation();
+				}
+				const summary = (event as { resultSummary?: { truncated?: unknown } }).resultSummary;
+				const details = recordObject(recordObject(event.result)?.details);
+				// A chain counts as its settled steps, each as the capability it ran,
+				// with its own error and cut, as a headless run counts it; the
+				// wrapper's tally stays only when no step settled (a plan that never
+				// parsed), and so does its error.
+				const steps = gatewayChainSteps(event.toolName, event.result);
+				// A call the output limit cut off never ran: like a chain's wrapper it leaves the tallies, and it is no error (bt-39 a).
+				const notRun = (event as { notRun?: unknown }).notRun !== undefined;
+				deps.recordToolEnd(
+					displayToolCall(event.toolName, undefined, details).toolName,
+					event.toolCallId,
+					event.isError && steps.length === 0 && !notRun,
+					summary?.truncated === true,
+					steps.length > 0 || notRun,
+				);
+				for (const step of steps) {
+					const stepId = chainStepToolCallId(event.toolCallId, step.id);
+					const stepDetails = recordObject(step.result.details);
+					deps.recordToolStart(step.capability, stepId);
+					deps.recordToolEnd(
+						step.capability,
+						stepId,
+						step.isError,
+						recordObject(stepDetails?.resultSize)?.truncated === true ||
+							recordObject(stepDetails?.observation)?.truncated === true,
+						false,
+					);
+				}
+				deps.refreshFooter();
+			}
+			deps.applyChatEvent(event);
+		}),
+	);
+
+	primaryUnsubscribers.push(
+		deps.status.subscribe((status) => {
+			if (status.phase === "ended" && status.summary) deps.setLastTurnSummary(status.summary);
+			deps.refreshFooter();
+			deps.requestRender();
+		}),
+	);
+
+	remainingUnsubscribers.push(
+		deps.chat.onEvent((event) => {
+			const showProgress = deps.getSettings?.().interface.terminalProgress ?? false;
+			// A footer hint describes the turn that raised it. Warnings persist until
+			// dismissed, so without this the last turn's interruption or unverified
+			// notice outlived the successful turn that followed.
+			if (event.type === "agent_start") {
+				deps.dismissNotification("turn.interrupted");
+				deps.dismissNotification("finish.unverified");
+				deps.dismissNotification("finish.coverage-unverified");
+				deps.dismissNotification("finish.assessed");
+				deps.dismissNotification("safety:blocked");
+				deps.dismissNotification("nudge.continuation.spent");
+				deps.supersedeWorkNotifications?.();
+			}
+			if (event.type === "agent_start" && showProgress) deps.startTerminalProgress();
+			else if (event.type === "agent_end" && event.retryPending === undefined) {
+				deps.dismissNotification("keyboard:escape");
+				deps.stopTerminalProgress();
+				deps.onTurnEnded?.();
+			}
+		}),
+		deps.bus.subscribe("turn.aborted", () => {
+			deps.stopTerminalProgress();
+		}),
+		deps.chat.onEvent((event) => {
+			if (event.type !== "message_end" && event.type !== "agent_end") return;
+			// #423: the reuse estimate is about the next call. Once a call settles,
+			// its own cache figures answer it.
+			if (event.type === "agent_end" || event.message.role === "assistant") {
+				cacheEstimateOut = false;
+				deps.dismissNotification(CACHE_REUSE_NOTICE_KEY);
+			}
+			if (event.type === "agent_end") deps.refreshLiveWorkspaceGit(true);
+			deps.refreshFooter();
+			deps.requestRender();
+		}),
+		deps.bus.subscribe("context.pruned", () => {
+			// The compaction producer emits the canonical receipt once; this accounting
+			// event only refreshes the live context counters (flywheel r4/4).
+			deps.refreshFooter();
+			deps.requestRender();
+		}),
+		// The rail and a notice about the route both read the target's health, so a verdict repaints them on that frame.
+		deps.bus.subscribe("provider.health_changed", () => {
+			deps.refreshFooter();
+			deps.requestRender();
+		}),
+		deps.bus.subscribe("runtime.notice_raised", (payload) => {
+			const event = payload as RuntimeNoticePayload | null | undefined;
+			if (!event || typeof event !== "object" || typeof event.message !== "string" || typeof event.kind !== "string") {
+				return;
+			}
+			deps.notify(event.level, event.message, `runtime-notice:${event.kind}:${event.targetId}`);
+			deps.refreshFooter();
+			deps.requestRender();
+		}),
+	);
+
+	remainingUnsubscribers.push(
+		deps.bus.subscribe("session.eggs_changed", () => {
+			deps.refreshFooter();
+			deps.requestRender();
+		}),
+		deps.bus.subscribe("memory.guardian_changed", () => {
+			deps.refreshFooter();
+			deps.requestRender();
+		}),
+		// The first sight of a hook file changed since the operator's baseline:
+		// the next git command PanCode runs outside the sandbox asks the operator.
+		deps.bus.subscribe("safety.git_hooks_changed", (payload) => {
+			if (typeof payload?.message !== "string" || payload.message.length === 0) return;
+			deps.appendTranscriptNotice("warn", payload.message, "safety");
+			deps.requestRender();
+		}),
+		// Git PanCode ran itself with hooks off after drift, announced once per set
+		// of changes. At yolo it ran as configured, and only the exit summary
+		// records it.
+		deps.bus.subscribe("safety.internal_git_drifted", (payload) => {
+			if (payload?.hardened !== true || payload.announce !== true) return;
+			if (typeof payload.message !== "string" || payload.message.length === 0) return;
+			deps.appendTranscriptNotice("warn", payload.message, "safety");
+			deps.requestRender();
+		}),
+		deps.bus.subscribe("run.scope_notice_raised", (payload) => {
+			const notice = readDispatchScopeNotice(payload);
+			if (notice === null) return;
+			// Both scope notices are two sentences: what was replaced, then what it does not affect.
+			// A landed worker merge is the one info notice: the merge needed no card, so this row is how the operator sees it.
+			deps.appendTranscriptNotice(notice.level === "info" ? "info" : "warn", notice.message, "fleet");
+			deps.requestRender();
+		}),
+		deps.bus.subscribe("safety.loop_blocked", (payload) => {
+			const event = payload as LoopBlockedPayload | null | undefined;
+			if (!event || typeof event !== "object" || typeof event.tool !== "string" || typeof event.repeatCount !== "number") {
+				return;
+			}
+			if (event.disposition === "stop") {
+				deps.chat.cancel({
+					reason: loopBlockedStopReason(event),
+					source: "loop_guard",
+					auditReason: loopBlockedAuditReason(event),
+				});
+			} else if (event.disposition === "lockout") {
+				deps.appendTranscriptNotice(
+					"warn",
+					`[loop-guard] ${event.tool} looped ${event.repeatCount}x; tools disabled for the rest of this turn, so the model answers from what it gathered.`,
+				);
+			} else {
+				deps.appendTranscriptNotice(
+					"warn",
+					`[loop-guard] blocked ${event.tool}: identical call repeated ${event.repeatCount}x in window (block ${event.blocksThisTurn}/${event.budget} this turn).`,
+				);
+			}
+			deps.requestRender();
+		}),
+		deps.bus.subscribe("safety.tool_budget_exceeded", (payload) => {
+			const event = payload as ToolBudgetExceededPayload | null | undefined;
+			if (
+				!event ||
+				typeof event !== "object" ||
+				typeof event.tool !== "string" ||
+				typeof event.callsThisTurn !== "number"
+			) {
+				return;
+			}
+			if (event.interrupted) {
+				deps.chat.cancel({
+					reason: toolBudgetStopReason(event),
+					source: "loop_guard",
+					auditReason: toolBudgetAuditReason(event),
+				});
+			} else if (event.rolled === true) {
+				// A silent roll (XR-6): the turn's closing record is its one transcript notice.
+				return;
+			} else if (typeof event.stepTool === "string") {
+				deps.appendTranscriptNotice(
+					"info",
+					`[turn-policy] ${event.template ? `prompt template ${event.template}` : "this template"} runs one step per turn: ${event.stepTool} already ran its step, so the turn ends with a state summary.`,
+				);
+			} else {
+				deps.appendTranscriptNotice(
+					"warn",
+					`[loop-guard] tool-call budget reached: ${event.callsThisTurn} calls this turn (soft budget ${event.softBudget}${event.template ? ` from prompt template ${event.template}` : ""}); ${event.tool} blocked, model asked to re-plan.`,
+				);
+			}
+			deps.requestRender();
+		}),
+		deps.bus.subscribe("config.next_turn_scheduled", (payload) => {
+			const event = payload as { diff?: { nextTurn?: string[] }; settings?: Readonly<PancodeSettings> } | null | undefined;
+			const effective = deps.getSettings?.();
+			if (!effective || !event?.settings || !Array.isArray(event.diff?.nextTurn)) return;
+			for (const notice of deps.isReloadReporting?.()
+				? []
+				: routingChangeNotices(event.diff.nextTurn, event.settings, effective, { commandHints: true })) {
+				deps.notify(
+					notice.level,
+					notice.text,
+					notice.kind === "external-divergence" ? "config:routing-divergence" : "config:target-removed",
+					0,
+				);
+			}
+			deps.refreshSettingsOverlay();
+			deps.refreshFooter();
+			deps.requestRender();
+		}),
+		deps.bus.subscribe("config.hot_reloaded", (payload) => {
+			deps.onConfigHotReload?.(payload.settings);
+			deps.refreshSettingsOverlay();
+		}),
+		deps.bus.subscribe("config.reload_failed", (payload) => {
+			if (deps.isReloadReporting?.()) return;
+			const event = payload as ConfigReloadFailedPayload | null | undefined;
+			if (!event || typeof event !== "object" || !("message" in event)) return;
+			// The domain already folded this to one line with a remedy; the frame
+			// only ever sees a notice, never an error object or a stack. The footer
+			// clamps from the right in a narrow pane, so it leads with the failing
+			// key; the transcript keeps the whole line once per failure (M-25).
+			if (typeof event.message === "string" && event.message.length > 0) {
+				const failure = event as Extract<ConfigReloadFailedPayload, { message: string }>;
+				const headline = typeof failure.headline === "string" && failure.headline ? failure.headline : failure.message;
+				deps.notify("error", `${headline} ${GLYPH.sep} [config] settings reload rejected`, "config:reload-failed", 0);
+				// The line already names the keys and, for a settings failure, the file; a
+				// second mention of either only lengthened the notice (M-30).
+				const file = failure.message.includes(failure.file) ? "" : ` File: ${failure.file}.`;
+				deps.appendTranscriptNotice(
+					"error",
+					`[config] settings reload rejected; this session keeps its last good settings.${file} Error: ${failure.message}`,
+				);
+			} else if (event.message === null) {
+				deps.dismissNotification("config:reload-failed");
+				deps.appendTranscriptNotice("info", "[config] settings reload accepted; the earlier rejection is cleared.");
+			}
+			deps.refreshFooter();
+			deps.requestRender();
+		}),
+		deps.bus.subscribe("config.restart_required", (payload) => {
+			if (deps.isReloadReporting?.()) return;
+			const text = restartRequiredNotice(payload);
+			if (text === null) return;
+			deps.notify("warning", text, "config:restart-required", 0);
+			deps.refreshFooter();
+			deps.requestRender();
+		}),
+		deps.bus.subscribe("budget.alerted", (payload) => {
+			const notice = budgetAlertNotice(payload);
+			if (notice === null) return;
+			deps.appendTranscriptNotice(notice.level, notice.text, notice.source);
+			deps.requestRender();
+		}),
+		// The blocked call's row states the refusal and its body the rule that
+		// fired, live and on /resume; the policy source and scope pass through
+		// the footer's notice slot rather than a third, live-only transcript copy.
+		deps.bus.subscribe("safety.blocked", (payload) => {
+			const notice = safetyBlockedNotice(payload);
+			if (notice === null) return;
+			deps.notify("warning", notice.text, "safety:blocked");
+			deps.requestRender();
+		}),
+	);
+
+	const seenMiddlewareBudgetWarnings = new Set<string>();
+	remainingUnsubscribers.push(
+		deps.bus.subscribe("extension.load_failed", (payload) => {
+			if (typeof payload?.message !== "string" || payload.message.trim().length === 0) return;
+			deps.notify("warning", payload.message, `extension:${payload.message}`);
+			deps.requestRender();
+		}),
+		deps.bus.subscribe("middleware.hook_failed", (payload) => {
+			const notice = middlewareHookFailedSessionNotice(payload, seenMiddlewareBudgetWarnings);
+			if (notice === null) return;
+			deps.notify(
+				notice.level === "warn" ? "warning" : "error",
+				notice.text,
+				`middleware:${payload.registrationId}:${payload.hook}:${payload.kind}`,
+			);
+			deps.requestRender();
+		}),
+	);
+
+	let primaryDisposed = false;
+	let remainingDisposed = false;
+	const disposePrimary = (): void => {
+		if (primaryDisposed) return;
+		primaryDisposed = true;
+		for (const unsubscribe of primaryUnsubscribers) unsubscribe();
+	};
+	const disposeRemaining = (): void => {
+		if (remainingDisposed) return;
+		remainingDisposed = true;
+		for (const unsubscribe of remainingUnsubscribers) unsubscribe();
+	};
+	return {
+		disposePrimary,
+		disposeRemaining,
+		dispose(): void {
+			disposePrimary();
+			disposeRemaining();
+		},
+	};
+}

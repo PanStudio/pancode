@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * LM Studio-specific residency arithmetic, kept pure so the fit and duplicate
+ * rules are testable without a server connection.
+ *
+ * LM Studio's `/api/v1/models` response exposes no total or free GPU memory.
+ * A successful load can still offload work to CPU, so fit cannot be inferred
+ * from load success alone; the context ceiling is an empirical safeguard.
+ *
+ * The evidence rule: while another model is resident on the same server, a
+ * context PanCode chose is capped at {@link CO_RESIDENT_CONTEXT_CEILING} tokens.
+ * The KV cache of a long context is what actually overflows the card (measured
+ * on an RTX 5090: a 27B Q4 model loaded at its 262,144-token default beside a
+ * resident 26B model produced 25 tokens in 2m18s, and the same model at 131,072
+ * answered a 9,019-token prompt in 9.7s). A context the operator pinned for one
+ * model in `lmstudio.models[id].load.contextLength` is not one PanCode chose, so it
+ * is never capped; a value inherited from the target-level `lmstudio.load` is.
+ * The escape hatch for the inherited case is PANCODE_LMSTUDIO_CORESIDENT_CONTEXT.
+ * A target serving one model alone is never clamped.
+ */
+
+/**
+ * Largest automatic load context PanCode requests while another model is resident
+ * on the same LM Studio server.
+ */
+export const CO_RESIDENT_CONTEXT_CEILING = 131_072;
+
+/** Operator override for {@link CO_RESIDENT_CONTEXT_CEILING}; 0 or `off` disables clamping. */
+export function coResidentContextCeiling(env: NodeJS.ProcessEnv = process.env): number | undefined {
+	const raw = (env.PANCODE_LMSTUDIO_CORESIDENT_CONTEXT ?? "").trim().toLowerCase();
+	if (raw.length === 0) return CO_RESIDENT_CONTEXT_CEILING;
+	if (raw === "off" || raw === "0" || raw === "false") return undefined;
+	const parsed = Number.parseInt(raw, 10);
+	if (!Number.isFinite(parsed) || parsed <= 0) return CO_RESIDENT_CONTEXT_CEILING;
+	return parsed;
+}
+
+/** One loaded instance as LM Studio reports it: a model key plus its instance identity. */
+export interface LmStudioResidentInstance {
+	modelKey: string;
+	/** Per-instance identifier. Two instances of one model key differ here. */
+	identifier?: string;
+	sizeBytes?: number;
+}
+
+export interface ContextFitInput {
+	/** Context length the load would otherwise request. */
+	requested: number;
+	/** Instances already resident on the target, including the requested model. */
+	resident: ReadonlyArray<LmStudioResidentInstance>;
+	/** Requested model's wire id, so its own instances are not counted as neighbours. */
+	keepModelId: string;
+	ceiling?: number | undefined;
+	/** The operator pinned this context for this model, so the ceiling does not lower it. */
+	explicit?: boolean;
+}
+
+export interface ContextFitResult {
+	/** Context length to load with. */
+	contextLength: number;
+	/** Set when the ceiling lowered the request; carries the original value. */
+	clampedFrom?: number;
+	/** Set when an explicit context above the ceiling is kept beside a neighbour; carries the ceiling. */
+	aboveCeiling?: number;
+	/** Model keys resident alongside the requested model. */
+	neighbours: string[];
+}
+
+/**
+ * Clamp a just-in-time load's context length to what the target has evidence of
+ * holding. Only co-residency triggers the clamp: a server with nothing else
+ * loaded gets the full requested window.
+ */
+export function fitLoadContextLength(input: ContextFitInput): ContextFitResult {
+	const neighbours = [...new Set(input.resident.filter((e) => e.modelKey !== input.keepModelId).map((e) => e.modelKey))];
+	const ceiling = input.ceiling;
+	if (neighbours.length === 0 || ceiling === undefined || input.requested <= ceiling) {
+		return { contextLength: input.requested, neighbours };
+	}
+	if (input.explicit === true) return { contextLength: input.requested, aboveCeiling: ceiling, neighbours };
+	return { contextLength: ceiling, clampedFrom: input.requested, neighbours };
+}

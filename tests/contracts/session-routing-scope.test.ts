@@ -1,0 +1,393 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { type PancodeSettings, updateSettings } from "../../src/core/config.js";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { loadDomains } from "../../src/core/domain-loader.js";
+import {
+	commitRoutingPatch,
+	createRoutingGestures,
+	planResumedRouting,
+	type RoutingPatch,
+	routingPatchForId,
+	seedSessionRouting,
+} from "../../src/core/session-routing.js";
+import { ConfigDomainModule } from "../../src/domains/config/index.js";
+import { ensurePancodeState } from "../../src/domains/lifecycle/index.js";
+import { createProvidersDomainModule, type ProvidersContract } from "../../src/domains/providers/index.js";
+import { getRuntimeRegistry } from "../../src/domains/providers/registry.js";
+import type { SessionContract, SessionMeta } from "../../src/domains/session/contract.js";
+import type { SessionEntry } from "../../src/domains/session/entries.js";
+import { restoreResumedSessionRoute, resumedSessionRoute } from "../../src/domains/session/resumed-route.js";
+import { type CreateChatLoopDeps, createChatLoop } from "../../src/session-control/chat-loop.js";
+import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+function twoTargetSettings(): PancodeSettings {
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.targets = [
+		{ id: "alpha", runtime: "openai-compat", url: "http://127.0.0.1:1/v1", defaultModel: "alpha-default" },
+		{ id: "beta", runtime: "openai-compat", url: "http://127.0.0.1:2/v1", defaultModel: "beta-default" },
+	];
+	settings.chat.target = "alpha";
+	settings.chat.model = "alpha-default";
+	settings.chat.thinkingLevel = "off";
+	settings.context.memory.target = "alpha";
+	settings.context.memory.model = "alpha-default";
+	settings.fleet.default.target = "alpha";
+	settings.fleet.default.model = "alpha-default";
+	return settings;
+}
+
+function entry(fields: Record<string, unknown>): SessionEntry {
+	return { turnId: `t-${Math.random()}`, parentTurnId: null, timestamp: "2026-09-23T00:00:00.000Z", ...fields } as never;
+}
+
+test("a model-only settings save carries the target the model was picked on", () => {
+	const settings = twoTargetSettings();
+	settings.chat.target = "beta";
+	settings.chat.model = "beta-large";
+	settings.context.memory.target = "beta";
+	settings.context.memory.model = "beta-small";
+	settings.fleet.default.target = "beta";
+	settings.fleet.default.model = "beta-worker";
+	// A global save merges only the patched fields into settings.yaml, so a
+	// model without its target paired the file's target with a model it never had.
+	assert.deepEqual(routingPatchForId("chat.model", settings), {
+		orchestrator: { target: "beta", model: "beta-large" },
+	});
+	assert.deepEqual(routingPatchForId("context.memory.model", settings), {
+		background: { target: "beta", model: "beta-small" },
+	});
+	assert.deepEqual(routingPatchForId("fleet.default.model", settings), {
+		workersDefault: { target: "beta", model: "beta-worker" },
+	});
+	assert.deepEqual(
+		routingPatchForId("chat.thinkingLevel", { ...settings, chat: { ...settings.chat, thinkingLevel: "high" } }),
+		{
+			orchestrator: { thinkingLevel: "high" },
+		},
+	);
+});
+
+test("a global save that fails leaves the live route where it was", () => {
+	const routing = seedSessionRouting(twoTargetSettings());
+	const before = structuredClone(routing);
+	const changes: string[] = [];
+	const patch: RoutingPatch = { orchestrator: { target: "beta", model: "beta-default", thinkingLevel: "high" } };
+	assert.throws(
+		() =>
+			commitRoutingPatch(
+				routing,
+				patch,
+				() => {
+					changes.push(`persist:${routing.orchestrator.target}`);
+					throw new Error("a higher-precedence project setting prevents this settings update");
+				},
+				() => changes.push(`change:${routing.orchestrator.target}`),
+			),
+		/higher-precedence project setting/,
+	);
+	assert.deepEqual(routing, before);
+	// Consumers see the move and then the rollback, so a projection refreshed in
+	// between never keeps the route nothing saved.
+	assert.deepEqual(changes, ["change:beta", "persist:beta", "change:alpha"]);
+
+	commitRoutingPatch(
+		routing,
+		patch,
+		() => {},
+		() => {},
+	);
+	assert.equal(routing.orchestrator.target, "beta");
+	assert.equal(routing.orchestrator.thinkingLevel, "high");
+});
+
+test("keyboard routing gestures move only the session that pressed them", () => {
+	const applied: Array<{ patch: RoutingPatch; scope: string }> = [];
+	const gestures = createRoutingGestures({
+		nextThinkingLevel: () => "high",
+		nextScopedTarget: (direction) =>
+			direction === "forward" ? { target: "beta", model: "beta-default" } : { target: "alpha", model: null },
+		apply: (patch, scope) => applied.push({ patch, scope }),
+	});
+	gestures.cycleThinking();
+	assert.equal(gestures.cycleScopedModel("forward"), true);
+	assert.equal(gestures.cycleScopedModel("backward"), true);
+	assert.deepEqual(applied, [
+		{ patch: { orchestrator: { thinkingLevel: "high" } }, scope: "session" },
+		{ patch: { orchestrator: { target: "beta", model: "beta-default" } }, scope: "session" },
+		{ patch: { orchestrator: { target: "alpha", model: null } }, scope: "session" },
+	]);
+
+	const empty = createRoutingGestures({
+		nextThinkingLevel: () => "off",
+		nextScopedTarget: () => null,
+		apply: () => assert.fail("an empty scope list must not move the route"),
+	});
+	assert.equal(empty.cycleScopedModel("forward"), false);
+});
+
+test("a resumed session's route is the last one it recorded", () => {
+	const meta = { target: "alpha", model: "alpha-default" };
+	assert.deepEqual(resumedSessionRoute(meta, []), { target: "alpha", model: "alpha-default" });
+	assert.deepEqual(
+		resumedSessionRoute(meta, [
+			entry({ kind: "message", role: "user", payload: { text: "hi" } }),
+			entry({ kind: "modelChange", provider: "openai-compat", modelId: "alpha-large", target: "alpha" }),
+			entry({ kind: "thinkingLevelChange", thinkingLevel: "medium" }),
+			entry({ kind: "modelChange", provider: "openai-compat", modelId: "beta-default", target: "beta" }),
+			entry({ kind: "thinkingLevelChange", thinkingLevel: "high" }),
+		]),
+		{ target: "beta", model: "beta-default", thinkingLevel: "high" },
+	);
+	assert.deepEqual(resumedSessionRoute(meta, [entry({ kind: "thinkingLevelChange", thinkingLevel: "not-a-level" })]), {
+		target: "alpha",
+		model: "alpha-default",
+	});
+	assert.deepEqual(resumedSessionRoute({ target: null, model: null }, []), { target: null, model: null });
+});
+
+test("resume plans a session-only route change and names a target that is gone", () => {
+	const settings = twoTargetSettings();
+	assert.deepEqual(planResumedRouting({ target: "beta", model: "beta-default", thinkingLevel: "high" }, settings), {
+		patch: { orchestrator: { target: "beta", model: "beta-default", thinkingLevel: "high" } },
+		notice: null,
+	});
+	assert.deepEqual(planResumedRouting({ target: "alpha", model: "alpha-default" }, settings), {
+		patch: null,
+		notice: null,
+	});
+	assert.deepEqual(planResumedRouting({ target: null, model: null }, settings), { patch: null, notice: null });
+
+	// A first row the route clamped (bt-37) carries the selection; when the live selection is that one, the same
+	// route clamps it the same way, so nothing moves and the route keeps its saved source.
+	const clamped = resumedSessionRoute({ target: "alpha", model: "alpha-default" }, [
+		entry({ kind: "thinkingLevelChange", thinkingLevel: "off", requestedThinkingLevel: "low" }),
+	]);
+	assert.deepEqual(clamped, { target: "alpha", model: "alpha-default", thinkingLevel: "off", thinkingSelection: "low" });
+	const lowSettings = twoTargetSettings();
+	lowSettings.chat.thinkingLevel = "low";
+	assert.deepEqual(planResumedRouting(clamped, lowSettings), { patch: null, notice: null });
+	lowSettings.chat.thinkingLevel = "high";
+	assert.deepEqual(planResumedRouting(clamped, lowSettings), {
+		patch: { orchestrator: { thinkingLevel: "off" } },
+		notice: null,
+	});
+	// A later explicit row replaces the clamped one and its selection.
+	assert.deepEqual(
+		resumedSessionRoute({ target: "alpha", model: "alpha-default" }, [
+			entry({ kind: "thinkingLevelChange", thinkingLevel: "off", requestedThinkingLevel: "low" }),
+			entry({ kind: "thinkingLevelChange", thinkingLevel: "medium" }),
+		]),
+		{ target: "alpha", model: "alpha-default", thinkingLevel: "medium" },
+	);
+
+	const gone = planResumedRouting({ target: "gamma", model: "gamma-model", thinkingLevel: "low" }, settings);
+	assert.deepEqual(gone.patch, { orchestrator: { thinkingLevel: "low" } });
+	assert.match(gone.notice ?? "", /gamma\/gamma-model/);
+	assert.match(gone.notice ?? "", /alpha\/alpha-default/);
+
+	// Explicit CLI flags beat the recorded route, field by field.
+	assert.deepEqual(
+		planResumedRouting({ target: "beta", model: "beta-default", thinkingLevel: "high" }, settings, {
+			route: true,
+		}),
+		{ patch: { orchestrator: { thinkingLevel: "high" } }, notice: null },
+	);
+	assert.deepEqual(
+		planResumedRouting({ target: "beta", model: "beta-default", thinkingLevel: "high" }, settings, {
+			thinking: true,
+		}),
+		{ patch: { orchestrator: { target: "beta", model: "beta-default" } }, notice: null },
+	);
+});
+
+test("restoring a resumed route patches the session and records a route the session did not run on", () => {
+	const restore = (recorded: SessionEntry[], pinned?: { route?: boolean }) => {
+		const live = twoTargetSettings();
+		const appended: Array<Record<string, unknown>> = [];
+		let thinkingPersisted = 0;
+		const notice = restoreResumedSessionRoute(
+			{
+				session: {
+					current: () => ({ id: "s1", target: "alpha", model: "alpha-default" }) as SessionMeta,
+					readEntries: () => recorded,
+					leafId: () => "leaf-1",
+					appendEntry: (row) => {
+						appended.push(row as never);
+						return row as never;
+					},
+				},
+				currentSettings: () => live,
+				defaultThinkingLevel: () => "off",
+				applyPatch: (patch) => {
+					Object.assign(live.chat, patch.orchestrator);
+				},
+				persistThinkingLevel: () => {
+					thinkingPersisted += 1;
+				},
+			},
+			pinned,
+		);
+		return { notice, chat: live.chat, appended, thinkingPersisted };
+	};
+	const moved = restore([
+		entry({ kind: "modelChange", provider: "openai-compat", modelId: "beta-default", target: "beta" }),
+	]);
+	assert.equal(moved.notice, null);
+	assert.equal(moved.chat.target, "beta");
+	assert.deepEqual(moved.appended, []);
+	assert.equal(moved.thinkingPersisted, 1);
+
+	const gone = restore([
+		entry({ kind: "modelChange", provider: "openai-compat", modelId: "gamma-model", target: "gamma" }),
+	]);
+	assert.equal(
+		gone.notice,
+		"resumed session ran on gamma/gamma-model, which is no longer configured; continuing on alpha/alpha-default.",
+	);
+	assert.deepEqual(gone.appended, [
+		{ kind: "modelChange", parentTurnId: "leaf-1", provider: "openai-compat", modelId: "alpha-default", target: "alpha" },
+	]);
+
+	const pinned = restore(
+		[entry({ kind: "modelChange", provider: "openai-compat", modelId: "beta-default", target: "beta" })],
+		{
+			route: true,
+		},
+	);
+	assert.equal(pinned.chat.target, "alpha");
+	assert.equal(pinned.appended.length, 1);
+
+	assert.equal(
+		restoreResumedSessionRoute({
+			session: null,
+			currentSettings: twoTargetSettings,
+			defaultThinkingLevel: () => "off",
+			applyPatch: () => assert.fail("no session, no patch"),
+			persistThinkingLevel: () => assert.fail("no session, nothing persisted"),
+		}),
+		null,
+	);
+});
+
+test("a thinking change is recorded in the session it took effect in", async () => {
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.chat.prewarm = false;
+	const context = dispatchStubContext({ settings });
+	const target = settings.targets[0];
+	assert.ok(target);
+	settings.chat.target = target.id;
+	settings.chat.model = target.defaultModel ?? "gpt-4o";
+	// The default route supports only off, so the settings default is clamped before the first row (bt-37).
+	settings.chat.thinkingLevel = "low";
+	const appended: Array<Record<string, unknown>> = [];
+	let current: SessionMeta | null = null;
+	let turns = 0;
+	const session = {
+		current: () => current,
+		create: (input?: { cwd?: string; model?: string; target?: string }) => {
+			current = {
+				id: "session-thinking",
+				cwd: input?.cwd ?? process.cwd(),
+				cwdHash: "hash",
+				createdAt: "2026-09-23T00:00:00.000Z",
+				endedAt: null,
+				model: input?.model ?? null,
+				target: input?.target ?? null,
+			} as SessionMeta;
+			return current;
+		},
+		append: (turn: Record<string, unknown>) => ({ ...turn, id: `turn-${++turns}`, at: "2026-09-23T00:00:00.000Z" }),
+		readEntries: () => appended,
+		appendEntry: (entry: Record<string, unknown>) => {
+			appended.push(entry);
+			return entry;
+		},
+		checkpoint: async () => {},
+		flushAppends: () => {},
+		replaceEntries: () => {},
+		tree: () => ({ leafId: null, nodes: [] }),
+		leafId: () => null,
+	} as unknown as SessionContract;
+	const loop = createChatLoop({
+		getSettings: () => settings,
+		providers: context.getContract("providers") as ProvidersContract,
+		knownTargets: () => new Set([target.id]),
+		session,
+		createAgent: ((options: Parameters<NonNullable<CreateChatLoopDeps["createAgent"]>>[0]) => ({
+			agent: {
+				state: options?.initialState,
+				subscribe: () => () => {},
+				abort() {},
+				async prompt() {},
+			},
+		})) as unknown as NonNullable<CreateChatLoopDeps["createAgent"]>,
+	});
+	const thinkingRows = (): unknown[] =>
+		appended.filter((row) => row.kind === "thinkingLevelChange").map((row) => row.thinkingLevel);
+	try {
+		await loop.submit("first");
+		await loop.submit("again");
+		assert.deepEqual(thinkingRows(), ["off"]);
+		assert.equal(appended.find((row) => row.kind === "thinkingLevelChange")?.requestedThinkingLevel, "low");
+		settings.chat.thinkingLevel = "high";
+		await loop.submit("second");
+		assert.deepEqual(thinkingRows(), ["off", "high"]);
+		await loop.submit("third");
+		assert.deepEqual(thinkingRows(), ["off", "high"]);
+	} finally {
+		loop.dispose();
+		await loop.whenSettled();
+	}
+});
+
+test("a live probe exercises the session's chat model, not the one another session saved", async () => {
+	const env = await isolatePancodeEnv("pancode-probe-route-");
+	const registry = getRuntimeRegistry();
+	const previous = registry.list();
+	const probed: string[] = [];
+	try {
+		registry.register({
+			id: "route-probe-fixture",
+			displayName: "Route probe fixture",
+			kind: "http",
+			apiFamily: "openai-completions",
+			auth: "none",
+			defaultCapabilities: { chat: true },
+			probe: async () => ({ ok: true }),
+			probeReasoning: async (_target: unknown, modelId: string) => {
+				probed.push(modelId);
+				return { reasoning: false };
+			},
+			synthesizeModel: (_target: unknown, wireModelId: string) => ({ id: wireModelId }),
+		} as never);
+		ensurePancodeState();
+		updateSettings((settings) => {
+			settings.targets = [
+				{ id: "probe", runtime: "route-probe-fixture", url: "http://127.0.0.1:9/v1", defaultModel: "probe-default" },
+			];
+			settings.chat.target = "probe";
+			settings.chat.model = "saved-by-another-session";
+		});
+		let session: PancodeSettings | undefined;
+		const loaded = await loadDomains([ConfigDomainModule, createProvidersDomainModule({ getSettings: () => session })]);
+		try {
+			const providers = loaded.getContract("providers");
+			assert.ok(providers);
+			session = structuredClone(loaded.getContract("config")?.get());
+			assert.ok(session);
+			session.chat.model = "this-session-model";
+			await providers.probeTarget("probe", { reasoning: true });
+			assert.deepEqual(probed, ["this-session-model"]);
+		} finally {
+			await loaded.stop();
+		}
+	} finally {
+		registry.clear();
+		for (const descriptor of previous) registry.register(descriptor);
+		env.restore();
+	}
+});

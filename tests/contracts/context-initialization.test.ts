@@ -1,0 +1,407 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { it } from "node:test";
+import { runInitCommand } from "../../src/cli/init.js";
+import { createContextOperation } from "../../src/core/context-operation.js";
+import { presentationTier, setPresentationTier } from "../../src/core/presentation-tier.js";
+import { runCommandVector } from "../../src/core/safe-exec.js";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import { loadRecipesFromDir } from "../../src/domains/agents/registry.js";
+import { runBootstrap } from "../../src/domains/context/bootstrap.js";
+import {
+	BOOTSTRAP_INPUT_MAX_CHARS,
+	buildBootstrapPrompt,
+	parseBootstrapModelOutput,
+} from "../../src/domains/context/bootstrap-prompt.js";
+import { fitGeneratedHandbook, normalizeHandbookRule } from "../../src/domains/context/handbook-budget.js";
+import { parsePancodeMd, serializePancodeMd } from "../../src/domains/context/pancode-md.js";
+import { resolveToolBudgetEnvelope } from "../../src/domains/dispatch/budget-envelope.js";
+import { resolveDeliveryTools } from "../../src/engine/loop-guard.js";
+import { stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
+import { createContextActivityStore, formatContextActivityRailLines } from "../../src/interactive/context-activity.js";
+import { GLYPH } from "../../src/interactive/theme/index.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+it("warns when the generated handbook is ignored without changing its ignore rule", async () => {
+	const isolated = await isolatePancodeEnv("context-ignored-handbook-");
+	try {
+		const cwd = join(isolated.dir, "repo");
+		mkdirSync(cwd);
+		assert.equal((await runCommandVector("git", ["init", "--quiet"], { cwd, workspaceRoot: cwd })).exitCode, 0);
+		const ignore = "PANCODE.md\n";
+		writeFileSync(join(cwd, ".gitignore"), ignore);
+		writeFileSync(join(cwd, "index.js"), "export const value = 1;\n");
+		let output = "";
+		const result = await runBootstrap({
+			cwd,
+			io: {
+				stdout: (text) => {
+					output += text;
+				},
+				stderr: (text) => {
+					output += text;
+				},
+			},
+		});
+		assert.equal(result.summary.action, "wrote");
+		assert.match(output, /PANCODE.md was written but is ignored by Git/u);
+		assert.match(output, /!PANCODE.md/u);
+		assert.match(output, /project instructions: all \d+ lines loaded/u);
+		assert.doesNotMatch(output, /UTF-16|model tool support not checked/u);
+		assert.match(output, /matching handbook ignore rule was left unchanged/u);
+		assert.equal(readFileSync(join(cwd, ".gitignore"), "utf8"), ignore, "the project's own file is never edited");
+		assert.equal(
+			(await runCommandVector("git", ["status", "--porcelain", "--", ".pancode"], { cwd, workspaceRoot: cwd })).stdout,
+			"",
+			"generated files stay out of git status",
+		);
+		// The command's closing result labels the warning once, never `Warning: warning:` (R2-F10).
+		const previous = process.cwd();
+		process.chdir(cwd);
+		const cli = {
+			out: "",
+			stdout: (text: string) => {
+				cli.out += text;
+			},
+			stderr: () => {},
+		};
+		try {
+			assert.equal(await runInitCommand(["--heuristic", "--rewrite"], cli), 0);
+		} finally {
+			process.chdir(previous);
+		}
+		assert.match(cli.out, /^Warning: PANCODE.md was written but is ignored by Git/mu);
+		assert.doesNotMatch(cli.out, /Warning: warning:/u);
+	} finally {
+		await isolated.restore();
+	}
+});
+
+it("bounds the model input even when the enforcement inventory alone exceeds the input budget", () => {
+	const prompt = buildBootstrapPrompt({
+		cwd: ".",
+		projectType: "typescript",
+		expectedProjectName: "Fixture",
+		siblingFiles: [],
+		adoption: {
+			cwd: ".",
+			homeDir: ".",
+			includeGlobal: false,
+			sources: [],
+			rejected: [],
+			importedRules: [],
+			conflicts: [],
+			sourceHash: "",
+			sourceSnapshots: [],
+		},
+		enforcement: {
+			ciCommands: Array.from({ length: 60 }, () => "pnpm run check".repeat(100)),
+			scripts: Object.fromEntries(
+				Array.from({ length: 60 }, (_, index) => [`check:${index}`, "node scripts/check.js".repeat(100)]),
+			),
+			checkFiles: Array.from({ length: 24 }, (_, index) => ({
+				path: `scripts/check-${index}.ts`,
+				checks: ["checkRules"],
+				failures: Array.from({ length: 40 }, (_, code) => `R${code}: ${"remedy ".repeat(500)}`),
+			})),
+		},
+	});
+	const serialized = prompt.split("<bootstrap-input>\n")[1]?.split("\n</bootstrap-input>")[0];
+	assert.ok(serialized);
+	assert.ok(serialized.length <= BOOTSTRAP_INPUT_MAX_CHARS);
+	assert.equal(JSON.parse(serialized).expectedProjectName, "Fixture");
+});
+
+it("fits whole change recipes under 200 lines while retaining the verification gate", () => {
+	const result = fitGeneratedHandbook({
+		projectName: "Fixture",
+		identity: "A fixture.",
+		invariants: ["Preserve `src/index.ts`."],
+		conventions: [],
+		sections: [
+			{
+				title: "Change recipes",
+				body: Array.from(
+					{ length: 150 },
+					(_, index) =>
+						`- Change ${index} in \`src/index.ts\`.\n  - Update the matching test.\n  - Keep the documented remedy.`,
+				).join("\n"),
+			},
+			{ title: "Verification expectations", body: "Run `npm test`." },
+		],
+	});
+	const text = serializePancodeMd(result);
+	assert.ok(text.trimEnd().split("\n").length <= 200);
+	assert.ok(text.length <= 24_000);
+	assert.match(text, /Run `npm test`/);
+	assert.ok(parsePancodeMd(text).ok);
+	const recipe = result.sections?.find((section) => section.title === "Change recipes")?.body ?? "";
+	assert.ok(recipe.endsWith("Keep the documented remedy."), "the final retained recipe must contain all its steps");
+});
+
+it("keeps whole parser recipes and deduplicates prose without conflating code operators", () => {
+	const output = parseBootstrapModelOutput(
+		JSON.stringify({
+			projectName: "Fixture",
+			identity: "Fixture.",
+			invariants: [],
+			conventions: [],
+			sections: [
+				{ title: "Recipes", body: `- Keep \`src/a.ts\`.\n  - Keep its test.\n\n- ${"Oversized recipe ".repeat(500)}` },
+			],
+		}),
+	);
+	assert.equal(output.sections?.[0]?.body, "- Keep `src/a.ts`.\n  - Keep its test.");
+	assert.notEqual(normalizeHandbookRule("Use `x !== undefined`."), normalizeHandbookRule("Use `x === undefined`."));
+	assert.notEqual(normalizeHandbookRule("Read `src/*`."), normalizeHandbookRule("Read `src/**`."));
+	const fitted = fitGeneratedHandbook({
+		projectName: "Fixture",
+		identity: "Fixture.",
+		invariants: ["Only `src/engine/**` imports the SDK; keep the boundary."],
+		conventions: [],
+		sections: [
+			{
+				title: "Authored project rules",
+				body: "- Only `src/engine/**` imports the SDK. Keep the boundary. (source: CLAUDE.md)",
+			},
+		],
+	});
+	assert.equal(serializePancodeMd(fitted).match(/Only /g)?.length, 1);
+});
+
+it("stage completion stays active; only operation completion closes the dock progress", () => {
+	const bus = createTelemetryHub();
+	const store = createContextActivityStore(bus);
+	const operation = {
+		version: 1,
+		id: "init-1",
+		kind: "context-init",
+		sessionId: null,
+		cwd: process.cwd(),
+		origin: "automatic",
+		reason: "x",
+		startedAt: new Date(100).toISOString(),
+	} as const;
+	bus.emit("context.activity_changed", {
+		operation,
+		kind: "context-init",
+		phase: "scan",
+		status: "started",
+		message: "Scanning",
+		at: 100,
+	});
+	bus.emit("context.activity_changed", {
+		operation,
+		kind: "context-init",
+		phase: "codewiki",
+		status: "completed",
+		message: "Indexed",
+		at: 200,
+		current: 100,
+		total: 100,
+	});
+	assert.equal(store.current(201)?.completedAtMs, null);
+	assert.equal(store.active(10_000), true);
+	const activity = store.current(201);
+	assert.ok(activity);
+	bus.emit("context.activity_changed", { ...activity, at: 201, message: null } as never);
+	assert.equal(store.current(202)?.message, "Indexed", "malformed process events must not break rail rendering");
+	for (const width of [1, 8, 20, 60, 80, 120, 200]) {
+		const lines = formatContextActivityRailLines(activity, width, 201);
+		assert.equal(lines.length, 3);
+		assert.ok(
+			lines.every((line) => visibleWidth(line) <= width),
+			`${width} columns`,
+		);
+	}
+	bus.emit("context.activity_changed", {
+		operation,
+		kind: "context-init",
+		phase: "done",
+		status: "completed",
+		message: "Ready",
+		at: 300,
+	});
+	assert.equal(store.current(301)?.completedAtMs, 300);
+	assert.equal(store.active(10_000), false);
+	store.unsubscribe();
+});
+
+it("a settled /context reset leaves its card as the only receipt; the rail drops it at once", () => {
+	const bus = createTelemetryHub();
+	const store = createContextActivityStore(bus);
+	const emit = (event: Parameters<Parameters<typeof createContextOperation>[1]>[0]) =>
+		bus.emit("context.activity_changed", event);
+	const base = { cwd: process.cwd(), sessionId: null } as const;
+	const reset = createContextOperation({ ...base, kind: "context-clear", origin: "operator", reason: "x" }, emit);
+	reset.progress({ phase: "state", status: "started", message: "clearing" });
+	assert.equal(store.current()?.kind, "context-clear", "the rail shows the reset while it runs");
+	reset.finish("completed", "Context reset finished");
+	assert.equal(store.current(), null, "box, check line, bar and finish line were four receipts for one reset");
+	// Automatic maintenance earns no card, so the settled rail stays its receipt.
+	const refresh = createContextOperation({ ...base, kind: "context-refresh", origin: "automatic", reason: "x" }, emit);
+	refresh.finish("completed", "refreshed");
+	assert.equal(store.current()?.kind, "context-refresh");
+	store.unsubscribe();
+});
+
+it("a compaction that changed nothing settles without the done mark or a filled bar (CLI-P55)", () => {
+	const bus = createTelemetryHub();
+	const store = createContextActivityStore(bus);
+	const emit = (event: Parameters<Parameters<typeof createContextOperation>[1]>[0]) =>
+		bus.emit("context.activity_changed", event);
+	const compact = createContextOperation(
+		{ cwd: process.cwd(), sessionId: null, kind: "compaction", origin: "operator", reason: "x" },
+		emit,
+	);
+	compact.progress({ phase: "compact", status: "started", message: "preparing" });
+	compact.finish("unchanged", "nothing older than the protected recent window to summarize");
+	const activity = store.current();
+	assert.equal(activity?.outcome, "unchanged");
+	assert.ok(activity);
+	const [header = "", bar = ""] = formatContextActivityRailLines(activity, 60).map(stripTerminalSequences);
+	assert.match(header, /Context compact · no change/u);
+	assert.doesNotMatch(header, new RegExp(`^${GLYPH.ok} `, "u"));
+	assert.ok(!bar.includes(GLYPH.barFull), bar);
+	store.unsubscribe();
+});
+
+it("hides internal run id from context activity rail at standard tier and shows it at detailed", () => {
+	const previous = presentationTier();
+	const activity = {
+		kind: "context-init" as const,
+		phase: "generate" as const,
+		status: "running" as const,
+		message: "Bootstrap model is working",
+		startedAtMs: 1_000,
+		updatedAtMs: 2_000,
+		completedAtMs: null,
+		current: null,
+		total: null,
+		detail: null,
+		timing: { startedAtMs: 1_000, timeoutMs: 240_000, runId: "23kaqgqyffdl" },
+	};
+	try {
+		setPresentationTier("standard");
+		const standardDetail = stripTerminalSequences(formatContextActivityRailLines(activity, 96, 1_000)[2] ?? "");
+		assert.match(standardDetail, /Bootstrap model is working · 0s \/ 240s limit/u);
+		assert.doesNotMatch(standardDetail, /run 23kaqgqyffdl/u);
+
+		setPresentationTier("detailed");
+		const detailedDetail = stripTerminalSequences(formatContextActivityRailLines(activity, 96, 1_000)[2] ?? "");
+		assert.match(detailedDetail, /Bootstrap model is working · 0s \/ 240s limit · run 23kaqgqyffdl/u);
+	} finally {
+		setPresentationTier(previous);
+	}
+});
+
+it("bootstrap navigation cannot bypass the exploration budget as an orientation delivery tool", () => {
+	const recipe = loadRecipesFromDir({
+		source: "builtin",
+		dir: join(import.meta.dirname, "../../src/domains/agents/builtins"),
+	}).find((entry) => entry.id === "context-bootstrap");
+	assert.ok(recipe);
+	assert.deepEqual(resolveDeliveryTools(recipe.tools, recipe.product), []);
+});
+
+it("plans bootstrap with its own advisory estimate under the run ceiling", () => {
+	const envelope = resolveToolBudgetEnvelope({
+		recipeId: "context-bootstrap",
+		policy: { toolCalls: 40, synthesis: true },
+		request: { toolCalls: 8 },
+		hardCap: 150,
+		retry: false,
+		revision: false,
+	});
+	assert.equal(envelope.effective.mode, "advisory");
+	assert.equal(envelope.effective.toolCalls, 8);
+});
+
+it("retains an authored preservation rule omitted by the model and emits a terminal preview event", async () => {
+	const isolated = await isolatePancodeEnv("context-authored-");
+	try {
+		const cwd = join(isolated.dir, "repo");
+		mkdirSync(join(cwd, ".claude"), { recursive: true });
+		writeFileSync(join(cwd, "package.json"), '{"name":"harbor","scripts":{"test":"node --test"}}');
+		writeFileSync(
+			join(cwd, ".claude/CLAUDE.md"),
+			"# Harbor\n\nPreserve the original sample IDs. Never sort samples.\n\n" +
+				"## Change recipes\n\n- Removed settings key: record it in `package.json`. Do not just delete it.\n" +
+				"\n## Development sessions: default scope\n\n- Ask the user before running release commands. Wait for approval.\n",
+		);
+		const result = await runBootstrap({
+			cwd,
+			generate: async (input) => {
+				input.reportGeneration?.({ mode: "model", parserOutcome: "parsed" });
+				return {
+					projectName: "Harbor",
+					identity: "A harbor.",
+					invariants: [],
+					conventions: [],
+					sections: [{ title: "Tests", body: "Run `npm test` before changing `package.json`." }],
+				};
+			},
+		});
+		const text = readFileSync(result.pancodeMdPath, "utf8");
+		assert.match(text, /Preserve the original sample IDs/);
+		assert.match(text, /Never sort samples/);
+		assert.match(text, /Removed settings key: record it in `package.json`\. Do not just delete it\./);
+		assert.ok(!text.includes("- Do not just delete it."), "retain the subject with the prohibition");
+		assert.match(text, /## Operating instructions from project handbooks/);
+		assert.match(text, /Ask the user before running release commands\. Wait for approval\./);
+		const phases: string[] = [];
+		await runBootstrap({ cwd, preview: true, onProgress: (event) => phases.push(`${event.phase}:${event.status}`) });
+		assert.equal(phases.at(-1), "done:completed");
+	} finally {
+		await isolated.restore();
+	}
+});
+
+it("saves a proposal when a concurrent edit changes the handbook during generation", async () => {
+	const isolated = await isolatePancodeEnv("context-concurrent-handbook-");
+	try {
+		const cwd = join(isolated.dir, "repo");
+		mkdirSync(cwd);
+		const handbook = join(cwd, "PANCODE.md");
+		writeFileSync(handbook, "# Harbor\n\nOriginal instructions.\n");
+		const edited = "# Harbor\n\nA concurrent human edit.\n";
+		const result = await runBootstrap({
+			cwd,
+			applyPancodeMd: true,
+			generate: async () => {
+				writeFileSync(handbook, edited);
+				return { projectName: "Harbor", identity: "A draft.", invariants: [], conventions: [] };
+			},
+		});
+		assert.equal(result.summary.action, "proposed");
+		assert.equal(readFileSync(handbook, "utf8"), edited);
+		assert.ok(result.summary.proposalPath);
+	} finally {
+		await isolated.restore();
+	}
+});
+
+it("a failed rewrite preserves the exact authored handbook bytes", async () => {
+	const isolated = await isolatePancodeEnv("context-failed-rewrite-");
+	try {
+		const cwd = join(isolated.dir, "repo");
+		mkdirSync(cwd);
+		const text = "# Harbor\n\nA harbor.\n\n## Human policy\n\nKeep these   exact spaces.\n";
+		writeFileSync(join(cwd, "PANCODE.md"), text);
+		const result = await runBootstrap({
+			cwd,
+			rewritePancodeMd: true,
+			generate: async (input) => {
+				input.reportGeneration?.({ mode: "existing", parserOutcome: "not-run", fallbackReason: "offline" });
+				return { projectName: "Harbor", identity: "A harbor.", invariants: [], conventions: [], sections: [] };
+			},
+		});
+		assert.equal(result.summary.action, "preserved");
+		assert.equal(readFileSync(join(cwd, "PANCODE.md"), "utf8"), text);
+	} finally {
+		await isolated.restore();
+	}
+});

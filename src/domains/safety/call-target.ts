@@ -1,0 +1,646 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Operator-facing description of what a parked tool call will touch. Shared
+ * by the interactive approval overlay (main-agent asks, which hold the call
+ * in-process) and the worker runtime (escalations, which must carry the
+ * description across the NDJSON stdout seam because the args never leave the
+ * worker). Both sides sanitize here so a hostile command string cannot style
+ * or spoof the UI that approves it.
+ */
+
+import { normalizeGatewayArguments } from "../../core/gateway-envelope.js";
+import { GLYPH } from "../../core/glyphs.js";
+import { shellJoin } from "../../core/shell-quote.js";
+import { STORE_REPLACES_ARG, storeReplacedBlob } from "../../core/store-paths.js";
+import { ToolNames } from "../../core/tool-names.js";
+import {
+	characterClassSwitchRate,
+	createRedactionTally,
+	redactCommandOutputSecrets,
+	redactSecretsText,
+} from "../evidence/redact.js";
+import { isSecretArgKey, redactSecretString } from "./redaction.js";
+
+const ESC_CHAR = String.fromCharCode(27);
+const BEL_CHAR = String.fromCharCode(7);
+// Built through the constructor so no control character appears in a regex
+// literal. OSC sequences terminate on BEL, ST (ESC backslash), or end of
+// input; CSI sequences are parameter bytes then one final byte.
+const OSC_PATTERN = new RegExp(`${ESC_CHAR}\\][\\s\\S]*?(?:${BEL_CHAR}|${ESC_CHAR}\\\\|$)`, "g");
+const CSI_PATTERN = new RegExp(`${ESC_CHAR}\\[[0-9;?]*[0-9A-Za-z]`, "g");
+
+/**
+ * Format controls (bidirectional marks and overrides, zero-width characters,
+ * U+061C) and C1 controls (U+009B is a CSI) change how text renders without
+ * showing, so `rm -rf ‮gpj.txt` can read as another path on the surface that
+ * approves it. They are shown as `\u{202e}` text instead of reaching the terminal.
+ */
+const HIDDEN_CONTROL = /[\p{Cf}\u0080-\u009f]/u;
+
+function isBidiControl(code: number): boolean {
+	return HIDDEN_CONTROL.test(String.fromCodePoint(code));
+}
+
+const PICTOGRAPHIC = /\p{Extended_Pictographic}/u;
+const EMOJI_JOIN_SKIPPABLE = /[\u{fe0f}\u{1f3fb}-\u{1f3ff}]/u;
+
+/**
+ * A zero-width joiner between two pictographs builds one emoji (👩‍🔬), so it
+ * renders exactly what it shows and is kept. Anywhere else it stays escaped.
+ */
+function isEmojiJoiner(chars: ReadonlyArray<string>, index: number): boolean {
+	if (chars[index] !== "\u200d") return false;
+	let before = index - 1;
+	while (before >= 0 && EMOJI_JOIN_SKIPPABLE.test(chars[before] ?? "")) before -= 1;
+	return PICTOGRAPHIC.test(chars[before] ?? "") && PICTOGRAPHIC.test(chars[index + 1] ?? "");
+}
+
+function bidiEscape(code: number): string {
+	return `\\u{${code.toString(16)}}`;
+}
+
+/**
+ * `verbatim` keeps every character and shows each control byte as `\u{1b}`
+ * text instead of stripping escape sequences. Anything the operator approves
+ * renders this way: stripping an unterminated or crafted sequence can swallow
+ * text the shell still runs.
+ */
+function sanitizeForDisplay(value: string, preserveLines = false, verbatim = false): string {
+	const stripped = verbatim ? value : value.replace(OSC_PATTERN, "").replace(CSI_PATTERN, "");
+	const display = preserveLines ? stripped.replace(/\r\n|\n/g, " ⏎ ") : stripped;
+	let out = "";
+	const chars = Array.from(display);
+	for (const [index, ch] of chars.entries()) {
+		const code = ch.codePointAt(0) ?? 0;
+		if (isBidiControl(code) && !isEmojiJoiner(chars, index)) out += bidiEscape(code);
+		else if (code < 0x20 || code === 0x7f) out += verbatim && ch !== "\n" && ch !== "\t" ? bidiEscape(code) : " ";
+		else out += ch;
+	}
+	return out;
+}
+
+function oneLine(value: string): string {
+	return value.replace(/\s+/g, " ").trim();
+}
+
+/** Columns one tab occupies when a multi-line surface expands it. */
+const DISPLAY_TAB_WIDTH = 4;
+
+/** Stands in for a control byte that was neutralized, so the cut is visible. */
+const CONTROL_BYTE_PLACEHOLDER = "·";
+
+export interface SanitizedDisplayText {
+	text: string;
+	/** A control byte or escape sequence was neutralized. */
+	neutralized: boolean;
+	/** A tab was expanded, so column positions are display positions. */
+	tabsExpanded: boolean;
+}
+
+/**
+ * Neutralize escape sequences and control bytes while keeping line structure.
+ * {@link sanitizeCallTargetText} is the one-line form for a card; this is the
+ * form a multi-line operator surface needs, where the newlines are the content
+ * rather than whitespace to collapse. Tabs become spaces because a bordered
+ * frame measures visible width and a literal tab makes that measurement a lie.
+ * Every other C0 byte and DEL becomes a visible placeholder, so a payload
+ * cannot style, reposition, or spoof the surface that is approving it.
+ */
+export function sanitizeMultilineDisplayText(
+	value: string,
+	/** Keep every character; control bytes show as `\u{1b}` text. For text the operator approves. */
+	verbatim = false,
+): SanitizedDisplayText {
+	const escapesStripped = verbatim ? value : value.replace(OSC_PATTERN, "").replace(CSI_PATTERN, "");
+	let neutralized = escapesStripped.length !== value.length;
+	// CRLF is line structure, not an injection, so it normalizes rather than
+	// showing a placeholder at the end of every line of a Windows-authored file.
+	const stripped = escapesStripped.replace(/\r\n/g, "\n");
+	let tabsExpanded = false;
+	let out = "";
+	const chars = Array.from(stripped);
+	for (const [index, ch] of chars.entries()) {
+		if (ch === "\n") {
+			out += ch;
+			continue;
+		}
+		if (ch === "\t") {
+			out += " ".repeat(DISPLAY_TAB_WIDTH);
+			tabsExpanded = true;
+			continue;
+		}
+		const code = ch.codePointAt(0) ?? 0;
+		if (code < 0x20 || code === 0x7f) {
+			out += verbatim ? bidiEscape(code) : CONTROL_BYTE_PLACEHOLDER;
+			neutralized = true;
+			continue;
+		}
+		if (isBidiControl(code) && !isEmojiJoiner(chars, index)) {
+			out += bidiEscape(code);
+			neutralized = true;
+			continue;
+		}
+		out += ch;
+	}
+	return { text: out, neutralized, tabsExpanded };
+}
+
+/**
+ * Neutralize escape sequences and control bytes in a pre-composed target
+ * string and collapse it to one line. Used where a description crosses a
+ * trust boundary (worker stdout) before it reaches the overlay.
+ */
+export function sanitizeCallTargetText(value: string): string {
+	return oneLine(sanitizeForDisplay(value));
+}
+
+/**
+ * What a tool call is doing, in the bounded form that may cross the worker
+ * stdout seam. The verb comes from a fixed vocabulary and the object from a
+ * fixed allowlist of argument fields, so an argument the table does not name
+ * cannot reach an operator surface however it is spelled.
+ */
+export interface CallActionDescriptor {
+	/** One word from the vocabulary below naming what the call does. */
+	verb: string;
+	/** The redacted, bounded thing the call acts on. Absent when nothing safe is derivable. */
+	object?: string;
+	/** Whether the object was cut to {@link CALL_ACTION_OBJECT_MAX_CHARS}. */
+	truncated?: boolean;
+	/** The capability a gateway call reached, which is the tool the operator thinks of. */
+	capability?: string;
+}
+
+/**
+ * Characters of object text a descriptor carries. Bounded here rather than at
+ * the renderer: this string crosses a process boundary, so a hostile argument
+ * must be small before it is transported, not after.
+ */
+export const CALL_ACTION_OBJECT_MAX_CHARS = 64;
+
+/** Maximum characters carried by the approval overlay's one-line call target. */
+export const CALL_TARGET_MAX_CHARS = 120;
+
+/**
+ * The same line for a worker's ask. A main card opens the exact invocation with
+ * its inspect key; a worker's arguments stay in the worker, so this line is all
+ * the operator can read of the command they are approving.
+ */
+export const WORKER_CALL_TARGET_MAX_CHARS = 1000;
+
+/**
+ * The verb and object field for each tool PanCode ships, plus the ACP tool kinds
+ * a delegated peer reports. A tool absent from this table gets the neutral
+ * `calling` verb, never a verb guessed from its name.
+ */
+const CALL_ACTION_VOCABULARY: Readonly<Record<string, { verb: string; field: string }>> = {
+	read: { verb: "reading", field: "path" },
+	edit: { verb: "editing", field: "path" },
+	write: { verb: "writing", field: "path" },
+	ls: { verb: "listing", field: "path" },
+	bash: { verb: "running", field: "command" },
+	grep: { verb: "searching", field: "pattern" },
+	find: { verb: "finding", field: "pattern" },
+	web_read: { verb: "reading", field: "url" },
+	web_fetch: { verb: "fetching", field: "url" },
+	git: { verb: "git", field: "op" },
+	verify: { verb: "verifying", field: "check" },
+	run_script: { verb: "running", field: "script" },
+	code_nav: { verb: "navigating", field: "query" },
+	context: { verb: "context", field: "scope" },
+	pancode_docs: { verb: "searching", field: "query" },
+	pancode_hub: { verb: "searching", field: "query" },
+	data: { verb: "inspecting", field: "path" },
+	artifact: { verb: "writing", field: "kind" },
+	// Only an op this table cannot name lands here; describeGatewayCall reads the rest.
+	gateway: { verb: "calling", field: "capability" },
+	monitor: { verb: "monitoring", field: "run_id" },
+	steer: { verb: "steering", field: "run_id" },
+	tasks: { verb: "tasks", field: "action" },
+	dispatch: { verb: "dispatching", field: "agent" },
+	limitation: { verb: "recording", field: "scope" },
+	// ACP tool kinds. A peer names its own argument fields, so these rely on
+	// the shared allowlist below rather than on a field this side can predict.
+	execute: { verb: "running", field: "command" },
+	search: { verb: "searching", field: "query" },
+	fetch: { verb: "fetching", field: "url" },
+	delete: { verb: "deleting", field: "path" },
+	move: { verb: "moving", field: "path" },
+	think: { verb: "thinking", field: "" },
+};
+
+/**
+ * Argument fields any tool may surface as its object. A field outside this
+ * list is never read, so a tool that hides a credential in `body`, `headers`,
+ * or `env` cannot leak it through a descriptor.
+ */
+const CALL_ACTION_OBJECT_FIELDS = ["path", "file_path", "command", "pattern", "query", "url"] as const;
+
+/**
+ * Argument fields whose values may reach the approval overlay for each tool.
+ * Fields are ordered by decision value: the first present field is the plain
+ * target, and any later present fields are labeled facts. Everything outside
+ * the tool's list is described only by type and size.
+ */
+const CALL_TARGET_FIELDS: Readonly<Record<string, ReadonlyArray<string>>> = {
+	read: ["path", "offset", "limit", "tail"],
+	// The operator approves the continuation the restarted session will receive, so the card shows it.
+	restart_session: ["continuation", "reason"],
+	grep: ["pattern", "path", "mode", "glob", "ignore_case", "literal", "context", "limit", "include_ignored"],
+	find: ["pattern", "path", "order", "limit", "include_ignored"],
+	ls: ["path", "limit"],
+	code_nav: ["source", "mode", "query", "limit"],
+	context: ["scope", "query", "name", "limit", "ref", "include_tree"],
+	credential_present: ["name", "source", "file"],
+	write: ["path"],
+	edit: ["path"],
+	bash: ["command", "cwd", "timeout_ms", "output_policy"],
+	git: [
+		"op",
+		"mode",
+		"paths",
+		"message",
+		"path",
+		"cached",
+		"stat",
+		"name_only",
+		"limit",
+		"cwd",
+		"timeout_ms",
+		"max_output_bytes",
+	],
+	verify: ["check", "args", "path", "browser", "cwd", "timeout_ms", "max_output_bytes"],
+	dispatch: [
+		"list",
+		"mode",
+		"agent",
+		"target",
+		"model",
+		"node",
+		"autonomy",
+		"tool_profile",
+		"thinking_level",
+		"detach",
+		"timeout_ms",
+	],
+	monitor: ["run_id", "mode"],
+	steer: ["run_id", "action"],
+	tasks: ["action", "id"],
+	ledger: ["action", "kind", "path", "line", "target", "passed", "since"],
+	web_read: ["url", "timeout_ms", "max_bytes", "format"],
+	web_fetch: ["url", "method", "timeout_ms", "max_bytes", "format"],
+	run_script: ["interpreter", "script", "args", "interpreter_args", "cwd", "timeout_ms", "inputs", "outputs"],
+	pancode_docs: ["query", "limit"],
+	pancode_hub: ["query", "kind", "ref", "limit", "offset"],
+	data: ["op", "path", "format", "offset", "limit", "columns", "pointer", "sample_rows", "max_rows"],
+	ask_user: ["action", "mode", "max_rounds", "exposure"],
+	artifact: ["kind", "path", "title"],
+	gateway: ["op", "capability", "query"],
+	// ACP tool kinds use only fields whose meaning the protocol defines.
+	execute: ["command", "cwd"],
+	search: ["query", "path"],
+	fetch: ["url", "method"],
+	delete: ["path"],
+	move: ["path", "target"],
+};
+
+/** Sanitize, scrub, and bound one candidate object string. Null when nothing is left. */
+function boundActionObject(value: unknown): { object: string; truncated: boolean } | null {
+	if (typeof value !== "string") return null;
+	const clean = sanitizeCallTargetText(redactSecretString(value));
+	if (clean.length === 0) return null;
+	if (clean.length <= CALL_ACTION_OBJECT_MAX_CHARS) return { object: clean, truncated: false };
+	return { object: clean.slice(0, CALL_ACTION_OBJECT_MAX_CHARS), truncated: true };
+}
+
+/**
+ * A gateway call as what it does. Workers reach most capabilities through the
+ * gateway, so naming the wrapper put `gateway gateway run script shell bash` on
+ * the doing line for a run that was only looking a tool up.
+ */
+function describeGatewayCall(raw: Record<string, unknown> | undefined): CallActionDescriptor | null {
+	const args = raw === undefined ? undefined : normalizeGatewayArguments(raw);
+	const capability = boundActionObject(args?.capability);
+	if (args?.op === "call" && capability !== null && capability.object !== "gateway") {
+		const inner = args.args;
+		const described = describeCallAction(
+			capability.object,
+			typeof inner === "object" && inner !== null && !Array.isArray(inner)
+				? (inner as Record<string, unknown>)
+				: undefined,
+		);
+		return { ...(described ?? { verb: "calling" }), capability: capability.object };
+	}
+	if (args?.op === "find") {
+		const query = boundActionObject(typeof args.query === "string" ? `tools for ${args.query}` : undefined);
+		return { verb: "searching", ...(query === null ? { object: "tools" } : describedObject(query)) };
+	}
+	if (args?.op === "describe" && capability !== null) {
+		return { verb: "inspecting", ...describedObject({ ...capability, object: `tool ${capability.object}` }) };
+	}
+	if (args?.op === "chain" && Array.isArray(args.steps)) {
+		return { verb: "running", object: `a chain of ${args.steps.length} tools` };
+	}
+	return null;
+}
+
+function describedObject(bounded: { object: string; truncated: boolean }): { object: string; truncated?: boolean } {
+	return { object: bounded.object, ...(bounded.truncated ? { truncated: true } : {}) };
+}
+
+/**
+ * Compose the redacted action descriptor for one tool call. Called at the
+ * trusted seams that hold the arguments (the tool registry's admission path,
+ * the Claude tool mapper, and the ACP update mapper) so the descriptor, and
+ * never the arguments, is what crosses into an operator surface.
+ *
+ * Returns null when the tool is unknown and no allowlisted field is present:
+ * a bare `calling` with nothing after it says less than the tool name already
+ * on the row.
+ */
+export function describeCallAction(
+	tool: string,
+	args: Record<string, unknown> | undefined,
+): CallActionDescriptor | null {
+	if (tool === "gateway") {
+		const gateway = describeGatewayCall(args);
+		if (gateway !== null) return gateway;
+	}
+	// A limitation records why a check could not run and what it left unverified; the run's record keeps both.
+	if (tool === "limitation" && typeof args?.scope === "string") {
+		const reason = typeof args.reason === "string" && args.reason.trim().length > 0 ? `${args.reason.trim()}: ` : "";
+		const bounded = boundActionObject(`${reason}${args.scope}`);
+		if (bounded !== null) return { verb: "recording", ...describedObject(bounded) };
+	}
+	// A bare verify lists what can be checked; saying it verified something would claim a check that never ran.
+	if (tool === "verify" && args?.check === undefined && args?.path === undefined) {
+		return { verb: "listing", object: "checks" };
+	}
+	const known = CALL_ACTION_VOCABULARY[tool];
+	const candidates = known?.field ? [known.field, ...CALL_ACTION_OBJECT_FIELDS] : [...CALL_ACTION_OBJECT_FIELDS];
+	let bounded: { object: string; truncated: boolean } | null = null;
+	if (args) {
+		for (const field of candidates) {
+			if (isSecretArgKey(field)) continue;
+			bounded = boundActionObject(args[field]);
+			if (bounded !== null) break;
+		}
+	}
+	if (known === undefined && bounded === null) return null;
+	const verb = known?.verb ?? "calling";
+	if (bounded === null) return { verb };
+	return { verb, object: bounded.object, ...(bounded.truncated ? { truncated: true } : {}) };
+}
+
+const TARGET_LIST_ITEMS_SHOWN = 4;
+
+function renderAllowedTargetValue(value: unknown): string | null {
+	if (typeof value === "string") {
+		const rendered = oneLine(sanitizeForDisplay(redactSecretString(value), true, true));
+		return rendered.length > 0 ? rendered : null;
+	}
+	// A list of strings in an allowlisted field (`git add` paths) decides the
+	// call as much as a single path does; `<array 1 item>` hid what gets staged.
+	if (Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === "string")) {
+		const shown = value
+			.slice(0, TARGET_LIST_ITEMS_SHOWN)
+			.map((item) => renderAllowedTargetValue(item))
+			.filter((item): item is string => item !== null);
+		if (shown.length === 0) return null;
+		const more = value.length - TARGET_LIST_ITEMS_SHOWN;
+		return `${shown.join(", ")}${more > 0 ? ` (+${more} more)` : ""}`;
+	}
+	if (typeof value === "number" && Number.isFinite(value)) return String(value);
+	if (typeof value === "boolean") return String(value);
+	return null;
+}
+
+/**
+ * A command line as the card names it, masked as the refusal text masks a refused command (R2-F20): the card's own
+ * length cap is the only cut, so every argument the operator approves is on the line.
+ */
+function renderCommandLine(argv: ReadonlyArray<string> | string): string | null {
+	const line = typeof argv === "string" ? argv : shellJoin(argv);
+	const rendered = oneLine(sanitizeForDisplay(redactCommandOutputSecrets(redactSecretString(line)), true, true));
+	return rendered.length > 0 ? rendered : null;
+}
+
+function countLabel(count: number, singular: string, plural: string): string {
+	return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function isStringList(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+/** Describe an argument without copying any part of its value into display text. */
+function summarizeUnlistedTargetValue(value: unknown): string {
+	if (typeof value === "string") {
+		return `<string ${countLabel(Buffer.byteLength(value, "utf8"), "byte", "bytes")}>`;
+	}
+	if (Array.isArray(value)) return `<array ${countLabel(value.length, "item", "items")}>`;
+	if (value !== null && typeof value === "object") {
+		return `<object ${countLabel(Object.keys(value).length, "field", "fields")}>`;
+	}
+	if (value === null) return "<null 0 values>";
+	if (typeof value === "undefined") return "<undefined 0 values>";
+	return `<${typeof value} 1 value>`;
+}
+
+const DISPATCH_TASK_NAMES_SHOWN = 4;
+const DISPATCH_TASK_NAME_MAX_CHARS = 24;
+
+/** Recipe ids of a dispatch batch, the one array whose item identity informs the decision. */
+function dispatchTaskNames(value: ReadonlyArray<unknown>): string[] {
+	const names: string[] = [];
+	for (const item of value) {
+		const agent = typeof item === "object" && item !== null ? (item as { agent?: unknown }).agent : undefined;
+		if (typeof agent !== "string") continue;
+		const clean = sanitizeCallTargetText(redactSecretString(agent)).slice(0, DISPATCH_TASK_NAME_MAX_CHARS);
+		if (clean.length > 0) names.push(clean);
+	}
+	return names;
+}
+
+/** Longest string argument of an uncurated tool that the card shows whole. */
+const UNLISTED_STRING_MAX_CHARS = 96;
+
+/**
+ * Argument names whose short value is usually the decision itself (the script
+ * a scheduler runs, its partition, a job name), compared with case, `_` and
+ * `-` folded so `script_path`, `scriptPath` and `script-path` agree.
+ */
+const SHOWN_STRING_ARG_KEYS: ReadonlySet<string> = new Set([
+	"cwd",
+	"dir",
+	"directory",
+	"file",
+	"filename",
+	"jobname",
+	"module",
+	"name",
+	"partition",
+	"path",
+	"script",
+	"scriptpath",
+	"target",
+	"url",
+]);
+
+/** A plain identifier. A name holding a terminal control or any punctuation beyond `_` and `-` is never one. */
+const PLAIN_ARG_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+
+/**
+ * Letters, digits, `/ . _ - + : @ ,` and space. Nothing that opens an
+ * assignment, a quote, an escape, an expansion, a query or a fragment (`=`,
+ * quotes, backslash, backtick, `$`, `%`, `?`, `&`, `#`) and no control.
+ */
+const SHOWN_STRING_VALUE_RE = /^[A-Za-z0-9/._+:@, -]+$/;
+
+/** Userinfo in a URL (`//token@host`, `//u:p@host`) or without one (`u:p@host`). */
+const USERINFO_RE = /\/\/[^/\s]*@|:[^/\s]*@/;
+
+/**
+ * A run of 20 or more name characters between `/`, `.`, `:`, `@`, `,` or a space
+ * (a URL path segment, a bare value) that switches between upper case, lower case
+ * and digit this often is opaque: a webhook secret, an API key, a hash. No rule
+ * knows every service's token shape, so the card shows no such run.
+ */
+const OPAQUE_RUN_RE = /[A-Za-z0-9_+-]{20,}/g;
+const OPAQUE_RUN_SWITCH_RATE = 0.4;
+
+function holdsOpaqueRun(value: string): boolean {
+	for (const [run] of value.matchAll(OPAQUE_RUN_RE))
+		if (characterClassSwitchRate(run) >= OPAQUE_RUN_SWITCH_RATE) return true;
+	return false;
+}
+
+/** An HTTP auth scheme as a word, whose next word is the credential: `Basic dXNlcjpw` fits no token shape. */
+const AUTH_SCHEME_WORD_RE = /(?:^|[\s,:])(?:basic|bearer|digest|negotiate|ntlm)(?=[\s,:]|$)/iu;
+
+/**
+ * A short string of a tool with no curated field list (MCP and other dynamic
+ * tools) is shown only when both its name and its value are plainly safe:
+ * `slurm_submit` asked for approval of `script=<string 66 bytes>` where the
+ * operator needed the script path. This is an allowlist, not redaction: the
+ * name must be one of SHOWN_STRING_ARG_KEYS and the value one line of the
+ * conservative charset, free of userinfo, auth schemes, secret words and
+ * opaque runs, and left unchanged by every secret rule. Anything else,
+ * including a value a rule would only mask, stays summarized by size.
+ */
+function shownUnlistedString(tool: string, field: string, value: string): string | null {
+	if (CALL_TARGET_FIELDS[tool] !== undefined) return null;
+	if (!PLAIN_ARG_KEY_RE.test(field) || isSecretArgKey(field)) return null;
+	if (!SHOWN_STRING_ARG_KEYS.has(field.toLowerCase().replace(/[-_]/g, ""))) return null;
+	if (value.length > UNLISTED_STRING_MAX_CHARS || !SHOWN_STRING_VALUE_RE.test(value)) return null;
+	if (USERINFO_RE.test(value) || AUTH_SCHEME_WORD_RE.test(value) || holdsOpaqueRun(value)) return null;
+	// A value that names a secret (`token abc…`, `password hunter2`) is read as holding one.
+	if (isSecretArgKey(value) || redactSecretString(value) !== value) return null;
+	return redactSecretsText(value, createRedactionTally()) === value ? value : null;
+}
+
+/**
+ * A boolean or finite number cannot carry pasted content, so it renders as
+ * itself: `worktree=true` decides more than `<boolean 1 value>` did. A value
+ * under a secret-looking key stays summarized, a short string of an uncurated
+ * tool renders when its name and value are allowlisted (shownUnlistedString),
+ * and other strings and objects stay summarized by type and size.
+ */
+function summarizeUnlistedField(tool: string, field: string, value: unknown): string {
+	if (typeof value === "boolean") return String(value);
+	if (typeof value === "number" && Number.isFinite(value) && !isSecretArgKey(field)) return String(value);
+	if (typeof value === "string") {
+		const shown = shownUnlistedString(tool, field, value);
+		if (shown !== null) return shown;
+	}
+	if (tool === "dispatch" && field === "tasks" && Array.isArray(value)) {
+		const names = dispatchTaskNames(value);
+		if (names.length > 0) {
+			const shown = names.slice(0, DISPATCH_TASK_NAMES_SHOWN).join(", ");
+			return `${value.length} (${shown}${names.length > DISPATCH_TASK_NAMES_SHOWN ? ", …" : ""})`;
+		}
+	}
+	return summarizeUnlistedTargetValue(value);
+}
+
+/** Harness-injected argument keys (`__pancode_resolved_dispatch_plan`) carry no operator decision and stay off display text. */
+const HARNESS_ARG_PREFIX = "__pancode_";
+
+function targetFieldName(value: string): string {
+	return sanitizeCallTargetText(value).slice(0, 32) || "field";
+}
+
+/**
+ * Derive the operator-facing object of a call for the approval overlay. Only
+ * values in the named tool's allowlist may render, plus short allowlisted
+ * strings of a tool that has no field list (shownUnlistedString). Every other
+ * argument is summarized by its field name, type, and size, so an unexpected credential
+ * or pasted document still informs the decision without disclosing content.
+ * Returns an empty string when the call carries no arguments.
+ */
+export function describeCallTarget(
+	tool: string,
+	args: Record<string, unknown> | undefined,
+	/** The command a verify check resolved to; the card names it beside the check id. */
+	resolved?: { command: string },
+	maxChars: number = CALL_TARGET_MAX_CHARS,
+	/** Said after the clipped count, e.g. where the full text can be read. */
+	moreHint?: string,
+): string {
+	if (!args) return "";
+	const allowedFields = CALL_TARGET_FIELDS[tool] ?? [];
+	const allowed = new Set(allowedFields);
+	const parts: string[] = [];
+	// Admission's replace marker is PanCode's own fact: the line says what the put replaces, first so no cut drops it.
+	const replaced = tool === ToolNames.Store ? storeReplacedBlob(args) : null;
+	if (replaced !== null) {
+		const name = renderAllowedTargetValue(`${replaced.tag}:${replaced.blob}`);
+		if (name !== null) parts.push(`replaces ${name} (${replaced.bytes} bytes)`);
+	}
+	for (const field of allowedFields) {
+		if (!(field in args)) continue;
+		// The bash tool fills this default in on every call, so it says nothing about this one.
+		if (tool === "bash" && field === "output_policy" && args[field] === "bounded") continue;
+		if (isSecretArgKey(field)) {
+			parts.push(`${targetFieldName(field)}=${summarizeUnlistedTargetValue(args[field])}`);
+			continue;
+		}
+		const value = args[field];
+		if (tool === ToolNames.Verify && field === "args" && isStringList(value)) {
+			const argv = renderCommandLine(value);
+			// The resolved command already ends with the arguments it passes on.
+			if (argv !== null && !parts.some((part) => part.startsWith("runs ") && part.endsWith(argv))) {
+				parts.push(`args=${argv}`);
+			}
+			continue;
+		}
+		const rendered = renderAllowedTargetValue(value);
+		if (rendered === null) {
+			parts.push(`${targetFieldName(field)}=${summarizeUnlistedTargetValue(args[field])}`);
+			continue;
+		}
+		parts.push(parts.length === 0 ? rendered : `${targetFieldName(field)}=${rendered}`);
+		if (resolved !== undefined && parts.length === 1) {
+			const command = renderCommandLine(resolved.command);
+			if (command !== null) parts.push(`runs ${command}`);
+		}
+	}
+	for (const [field, value] of Object.entries(args)) {
+		if (allowed.has(field) || field.startsWith(HARNESS_ARG_PREFIX)) continue;
+		if (tool === ToolNames.Store && field === STORE_REPLACES_ARG) continue;
+		// An edit's replacements are the call itself, and the mutation row counts them too; `<array 1 item>` said neither.
+		if (tool === "edit" && field === "edits" && Array.isArray(value)) {
+			parts.push(countLabel(value.length, "replacement", "replacements"));
+			continue;
+		}
+		parts.push(`${targetFieldName(field)}=${summarizeUnlistedField(tool, field, value)}`);
+	}
+	const target = sanitizeCallTargetText(parts.join(` ${GLYPH.sep} `));
+	if (target.length <= maxChars) return target;
+	// The hint fits inside the cap, which bounds what crosses the worker seam.
+	const hint = (kept: number) =>
+		`${GLYPH.ellipsis} +${target.length - kept} more characters${moreHint === undefined ? "" : `, ${moreHint}`}`;
+	const kept = Math.max(0, maxChars - hint(0).length - 1);
+	return `${target.slice(0, kept)} ${hint(kept)}`;
+}

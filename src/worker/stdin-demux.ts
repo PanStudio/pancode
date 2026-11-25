@@ -1,0 +1,497 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import {
+	type AgentLedgerEntry,
+	parseAgentLedgerEntry,
+	parseWorkerHookResult,
+	WORKER_PERMISSION_HOLD_LIMIT_MS,
+	WORKER_PERMISSION_HOLD_VERSION,
+	WORKER_STDIN_FRAME_MAX_BYTES,
+	type WorkerHookResultFrame,
+	withinFrameBudget,
+} from "./protocol.js";
+import { parseWorkerSpec, type WorkerSpec } from "./spec-contract.js";
+
+export interface WorkerStdinDemux {
+	feed(chunk: string): void;
+	eof(): void;
+	readSpec(): Promise<WorkerSpec>;
+	/**
+	 * Register the handler for post-spec steer lines
+	 * (`{"type":"steer","text":"...","sequence":1}`). The sequence is assigned by
+	 * the parent and is what lets `pancode_steer_received` acknowledge one exact
+	 * receipt entry, so a line without a positive integer sequence is dropped
+	 * rather than delivered unattributed. Steers that arrive before registration
+	 * are buffered in order and flushed to the handler. Single handler; a second
+	 * registration replaces the first.
+	 */
+	onSteer(handler: (steer: WorkerSteerMessage) => void): void;
+	/**
+	 * Register the handler for post-spec permission-decision lines
+	 * (`{"type":"permission_decision","requestId":"...","decision":"approve"|"deny"}`).
+	 * Decisions that arrive before registration are buffered in order and
+	 * flushed. Single handler; a second registration replaces the first.
+	 */
+	onPermissionDecision(handler: (decision: WorkerPermissionDecision) => void): void;
+	/**
+	 * Register the handler for agent-ledger delta lines
+	 * (`{"type":"ledger_delta","entries":[...]}`). The orchestrator replays the
+	 * full board on subscription, which can land before the runtime wires its
+	 * handler, so batches that arrive early are buffered in order and flushed.
+	 * Single handler; a second registration replaces the first.
+	 */
+	onLedgerDelta(handler: (entries: ReadonlyArray<AgentLedgerEntry>) => void): void;
+	/**
+	 * Register the handler for extension hook answers
+	 * (`{"type":"hook_result","requestId":"...","effects":[...]}`). An answer
+	 * only follows a request the run sent after this was registered, so an
+	 * answer with no handler is dropped and counted.
+	 */
+	onHookResult(handler: (result: WorkerHookResultFrame) => void): void;
+	/**
+	 * Register the handler for hold renewals
+	 * (`{"type":"permission_hold","version":1,"requestId":"...","holdMs":N}`).
+	 * A hold only follows an ask the run opened after this was registered, so a
+	 * hold with no handler, another version, or a wait past the hold limit is
+	 * dropped and counted.
+	 */
+	onPermissionHold(handler: (hold: WorkerPermissionHold) => void): void;
+	/**
+	 * Resolve once the orchestrator's `admit` frame (`{"type":"admit","specDigest":"..."}`)
+	 * names `expectedDigest`. Rejects on a different or missing digest, on the
+	 * channel closing first, and after `timeoutMs`. Steers and permission
+	 * decisions that arrive while this waits stay buffered for their handlers.
+	 */
+	awaitAdmission(expectedDigest: string, timeoutMs: number): Promise<void>;
+	/** Post-spec lines that were not valid steer or permission-decision messages. */
+	droppedLineCount(): number;
+	/**
+	 * Register the handler for the control channel closing after the spec was
+	 * received (parent exit, SSH channel drop). Fires at most once; if the
+	 * channel already closed the handler is invoked immediately. The pre-spec
+	 * close case stays a readSpec() rejection, not a channel-close event.
+	 */
+	onChannelClose(handler: () => void): void;
+}
+
+/**
+ * What a live grant decision names (Phase D). The worker checks every field
+ * against its single parked call before it consumes the decision.
+ */
+export interface WorkerDecisionBinding {
+	attemptToken: string;
+	attempt: number;
+	argDigest: string;
+	issuer: "main" | "operator";
+	/** The host's run id for audit; the worker cannot check it. */
+	runId?: string;
+	/** Host broker request id, for the worker's own resolution events. */
+	grantId?: string;
+	/** Why the host decided, bounded; a denial quotes it to the worker model. */
+	reason?: string;
+}
+
+export interface WorkerPermissionDecision {
+	requestId: string;
+	decision: "approve" | "deny";
+	binding?: WorkerDecisionBinding;
+	/**
+	 * The parent's window for this ask ran out. Only a denial can carry it, and
+	 * the worker then applies its fallback exactly as its own timer would.
+	 */
+	cause?: "timeout";
+}
+
+/** The parent answers the named ask within `holdMs` from now. */
+export interface WorkerPermissionHold {
+	requestId: string;
+	holdMs: number;
+}
+
+function parsePermissionHold(value: Record<string, unknown>): WorkerPermissionHold | null {
+	if (value.version !== WORKER_PERMISSION_HOLD_VERSION) return null;
+	if (typeof value.requestId !== "string" || value.requestId.length === 0) return null;
+	const holdMs = value.holdMs;
+	if (!Number.isSafeInteger(holdMs) || Number(holdMs) <= 0 || Number(holdMs) > WORKER_PERMISSION_HOLD_LIMIT_MS) {
+		return null;
+	}
+	return { requestId: value.requestId, holdMs: Number(holdMs) };
+}
+
+function parseDecisionBinding(value: unknown): WorkerDecisionBinding | null {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+	const record = value as Record<string, unknown>;
+	if (typeof record.attemptToken !== "string" || record.attemptToken.length === 0) return null;
+	if (!Number.isSafeInteger(record.attempt)) return null;
+	if (typeof record.argDigest !== "string" || !/^[0-9a-f]{64}$/.test(record.argDigest)) return null;
+	if (record.issuer !== "main" && record.issuer !== "operator") return null;
+	return {
+		attemptToken: record.attemptToken,
+		attempt: Number(record.attempt),
+		argDigest: record.argDigest,
+		issuer: record.issuer,
+		...(typeof record.runId === "string" ? { runId: record.runId } : {}),
+		...(typeof record.grantId === "string" ? { grantId: record.grantId } : {}),
+		...(typeof record.reason === "string" && record.reason.length > 0 ? { reason: record.reason.slice(0, 300) } : {}),
+	};
+}
+
+export interface WorkerSteerMessage {
+	text: string;
+	/** Parent-assigned receipt-provenance sequence for exact acknowledgement. */
+	sequence: number;
+}
+
+/**
+ * Preserve stdin order while a runtime accepts guidance asynchronously.
+ * `pancode_steer_received` echoes the parent-assigned sequence, so an
+ * acknowledgement closes out one exact receipt entry. Ordering still matters
+ * for the runtime itself: a later steer must never reach it ahead of an earlier
+ * pending one, or the guidance arrives out of the order the operator sent it.
+ */
+export function createOrderedSteerHandler(
+	deliver: (text: string) => boolean | Promise<boolean>,
+	onAccepted: (steer: WorkerSteerMessage) => void,
+	onRejected: (reason: string) => void,
+): (steer: WorkerSteerMessage) => Promise<void> {
+	let tail = Promise.resolve();
+	return (steer: WorkerSteerMessage): Promise<void> => {
+		tail = tail.then(async () => {
+			let rejection: string | null = null;
+			try {
+				if (await deliver(steer.text)) onAccepted(steer);
+				else rejection = "runtime does not accept live guidance";
+			} catch (error) {
+				rejection = error instanceof Error ? error.message : String(error);
+			}
+			if (rejection !== null) {
+				try {
+					onRejected(rejection);
+				} catch {
+					// Diagnostics cannot be allowed to poison subsequent delivery.
+				}
+			}
+		});
+		return tail;
+	};
+}
+
+export function createWorkerStdinDemux(): WorkerStdinDemux {
+	let buffer = "";
+	let specResolve: ((spec: WorkerSpec) => void) | null = null;
+	let specReject: ((err: Error) => void) | null = null;
+	let specValue: WorkerSpec | null = null;
+	let specError: Error | null = null;
+	let specReceived = false;
+	let closed = false;
+	let steerHandler: ((steer: WorkerSteerMessage) => void) | null = null;
+	const pendingSteers: WorkerSteerMessage[] = [];
+	let permissionHandler: ((decision: WorkerPermissionDecision) => void) | null = null;
+	const pendingPermissionDecisions: WorkerPermissionDecision[] = [];
+	let ledgerDeltaHandler: ((entries: ReadonlyArray<AgentLedgerEntry>) => void) | null = null;
+	let hookResultHandler: ((result: WorkerHookResultFrame) => void) | null = null;
+	let holdHandler: ((hold: WorkerPermissionHold) => void) | null = null;
+	const pendingLedgerDeltas: Array<ReadonlyArray<AgentLedgerEntry>> = [];
+	let droppedLines = 0;
+	let channelCloseHandler: (() => void) | null = null;
+	let channelCloseDelivered = false;
+	let channelClosedAfterSpec = false;
+	// Undefined until an admit frame arrives; null when it carried no usable digest.
+	let admittedDigest: string | null | undefined;
+	let admission: {
+		expected: string;
+		resolve: () => void;
+		reject: (err: Error) => void;
+		timer: ReturnType<typeof setTimeout>;
+	} | null = null;
+
+	function admissionVerdict(expected: string): Error | null {
+		if (admittedDigest === null || admittedDigest === undefined) {
+			return new Error("the admit frame carried no spec digest");
+		}
+		if (admittedDigest !== expected) {
+			return new Error(
+				`the admit frame names spec digest ${admittedDigest.slice(0, 12)}, but this worker attested ${expected.slice(0, 12)}`,
+			);
+		}
+		return null;
+	}
+
+	function finishAdmission(error: Error | null): void {
+		const wait = admission;
+		if (wait === null) return;
+		admission = null;
+		clearTimeout(wait.timer);
+		if (error === null) wait.resolve();
+		else wait.reject(error);
+	}
+
+	function deliverChannelClose(): void {
+		if (channelCloseDelivered || channelCloseHandler === null) return;
+		channelCloseDelivered = true;
+		channelCloseHandler();
+	}
+
+	function resolveSpec(spec: WorkerSpec): void {
+		specValue = spec;
+		specResolve?.(spec);
+	}
+
+	function rejectSpec(err: Error): void {
+		specError = err;
+		specReject?.(err);
+	}
+
+	function deliverSteer(steer: WorkerSteerMessage): void {
+		if (steerHandler) {
+			steerHandler(steer);
+			return;
+		}
+		pendingSteers.push(steer);
+	}
+
+	function deliverPermissionDecision(entry: WorkerPermissionDecision): void {
+		if (permissionHandler) {
+			permissionHandler(entry);
+			return;
+		}
+		pendingPermissionDecisions.push(entry);
+	}
+
+	function deliverLedgerDelta(entries: ReadonlyArray<AgentLedgerEntry>): void {
+		if (ledgerDeltaHandler) {
+			ledgerDeltaHandler(entries);
+			return;
+		}
+		pendingLedgerDeltas.push(entries);
+	}
+
+	function processPostSpecLine(line: string): void {
+		let value: unknown;
+		try {
+			value = JSON.parse(line);
+		} catch {
+			droppedLines += 1;
+			return;
+		}
+		if (
+			typeof value === "object" &&
+			value !== null &&
+			(value as { type?: unknown }).type === "steer" &&
+			typeof (value as { text?: unknown }).text === "string" &&
+			(value as { text: string }).text.trim().length > 0 &&
+			Number.isSafeInteger((value as { sequence?: unknown }).sequence) &&
+			Number((value as { sequence: number }).sequence) > 0
+		) {
+			deliverSteer({
+				text: (value as { text: string }).text,
+				sequence: (value as { sequence: number }).sequence,
+			});
+			return;
+		}
+		if (
+			typeof value === "object" &&
+			value !== null &&
+			(value as { type?: unknown }).type === "permission_decision" &&
+			typeof (value as { requestId?: unknown }).requestId === "string" &&
+			(value as { requestId: string }).requestId.length > 0 &&
+			((value as { decision?: unknown }).decision === "approve" || (value as { decision?: unknown }).decision === "deny")
+		) {
+			// A malformed binding is delivered as no binding, which a grant-bound
+			// park treats as a mismatch and denies.
+			const binding = parseDecisionBinding((value as { binding?: unknown }).binding);
+			const decision = (value as { decision: "approve" | "deny" }).decision;
+			const timedOut = decision === "deny" && (value as { cause?: unknown }).cause === "timeout";
+			deliverPermissionDecision({
+				requestId: (value as { requestId: string }).requestId,
+				decision,
+				...(binding !== null ? { binding } : {}),
+				...(timedOut ? { cause: "timeout" as const } : {}),
+			});
+			return;
+		}
+		if (typeof value === "object" && value !== null && (value as { type?: unknown }).type === "ledger_delta") {
+			const raw = (value as { entries?: unknown }).entries;
+			if (!Array.isArray(raw)) {
+				droppedLines += 1;
+				return;
+			}
+			const entries: AgentLedgerEntry[] = [];
+			for (const candidate of raw) {
+				const entry = parseAgentLedgerEntry(candidate);
+				if (entry !== null) entries.push(entry);
+			}
+			if (entries.length === 0) {
+				droppedLines += 1;
+				return;
+			}
+			deliverLedgerDelta(entries);
+			return;
+		}
+		if (typeof value === "object" && value !== null && (value as { type?: unknown }).type === "hook_result") {
+			const result = parseWorkerHookResult(value);
+			if (result === null || hookResultHandler === null) {
+				droppedLines += 1;
+				return;
+			}
+			hookResultHandler(result);
+			return;
+		}
+		if (typeof value === "object" && value !== null && (value as { type?: unknown }).type === "permission_hold") {
+			const hold = parsePermissionHold(value as Record<string, unknown>);
+			if (hold === null || holdHandler === null) {
+				droppedLines += 1;
+				return;
+			}
+			holdHandler(hold);
+			return;
+		}
+		if (typeof value === "object" && value !== null && (value as { type?: unknown }).type === "admit") {
+			// Only the first verdict counts; a repeat cannot revoke or re-grant it.
+			if (admittedDigest !== undefined) {
+				droppedLines += 1;
+				return;
+			}
+			const digest = (value as { specDigest?: unknown }).specDigest;
+			admittedDigest = typeof digest === "string" && /^[0-9a-f]{64}$/.test(digest) ? digest : null;
+			if (admission !== null) finishAdmission(admissionVerdict(admission.expected));
+			return;
+		}
+		droppedLines += 1;
+	}
+
+	function processLine(line: string): void {
+		if (line.length === 0) return;
+		// The byte ceiling is checked before JSON.parse so an oversized or
+		// adversarial line costs a length comparison, not a parse and an
+		// allocation proportional to its size.
+		if (!withinFrameBudget(line, WORKER_STDIN_FRAME_MAX_BYTES)) {
+			if (!specReceived) {
+				specReceived = true;
+				rejectSpec(new Error(`WorkerSpec line exceeds the ${WORKER_STDIN_FRAME_MAX_BYTES} byte stdin frame limit`));
+				return;
+			}
+			droppedLines += 1;
+			return;
+		}
+		if (!specReceived) {
+			specReceived = true;
+			try {
+				resolveSpec(parseWorkerSpec(JSON.parse(line)));
+			} catch (err) {
+				rejectSpec(err instanceof Error ? err : new Error(String(err)));
+			}
+			return;
+		}
+		processPostSpecLine(line);
+	}
+
+	/**
+	 * Discard an unterminated run that already exceeds the frame ceiling. A peer
+	 * that never sends a newline cannot grow this buffer without bound; the
+	 * oversized remainder is dropped up to the next newline.
+	 */
+	let discardingOversizedLine = false;
+
+	return {
+		feed(chunk: string): void {
+			if (closed) return;
+			buffer += chunk;
+			let idx = buffer.indexOf("\n");
+			while (idx >= 0) {
+				const line = buffer.slice(0, idx);
+				buffer = buffer.slice(idx + 1);
+				if (discardingOversizedLine) {
+					discardingOversizedLine = false;
+					droppedLines += 1;
+				} else {
+					processLine(line);
+				}
+				idx = buffer.indexOf("\n");
+			}
+			if (!withinFrameBudget(buffer, WORKER_STDIN_FRAME_MAX_BYTES)) {
+				if (!specReceived) {
+					specReceived = true;
+					rejectSpec(new Error(`WorkerSpec line exceeds the ${WORKER_STDIN_FRAME_MAX_BYTES} byte stdin frame limit`));
+				}
+				buffer = "";
+				discardingOversizedLine = true;
+			}
+		},
+		eof(): void {
+			if (closed) return;
+			closed = true;
+			if (buffer.length > 0) {
+				processLine(buffer);
+				buffer = "";
+			}
+			if (!specReceived) {
+				rejectSpec(new Error("worker stdin closed before spec received"));
+				return;
+			}
+			channelClosedAfterSpec = true;
+			finishAdmission(new Error("the control channel closed before the orchestrator admitted this worker"));
+			deliverChannelClose();
+		},
+		readSpec(): Promise<WorkerSpec> {
+			if (specValue) return Promise.resolve(specValue);
+			if (specError) return Promise.reject(specError);
+			if (closed && !specReceived) return Promise.reject(new Error("worker stdin closed before spec received"));
+			return new Promise((resolve, reject) => {
+				specResolve = resolve;
+				specReject = reject;
+			});
+		},
+		onSteer(handler: (steer: WorkerSteerMessage) => void): void {
+			steerHandler = handler;
+			while (pendingSteers.length > 0) {
+				const steer = pendingSteers.shift();
+				if (steer !== undefined) handler(steer);
+			}
+		},
+		onPermissionDecision(handler: (decision: WorkerPermissionDecision) => void): void {
+			permissionHandler = handler;
+			while (pendingPermissionDecisions.length > 0) {
+				const entry = pendingPermissionDecisions.shift();
+				if (entry !== undefined) handler(entry);
+			}
+		},
+		onHookResult(handler: (result: WorkerHookResultFrame) => void): void {
+			hookResultHandler = handler;
+		},
+		onPermissionHold(handler: (hold: WorkerPermissionHold) => void): void {
+			holdHandler = handler;
+		},
+		onLedgerDelta(handler: (entries: ReadonlyArray<AgentLedgerEntry>) => void): void {
+			ledgerDeltaHandler = handler;
+			while (pendingLedgerDeltas.length > 0) {
+				const batch = pendingLedgerDeltas.shift();
+				if (batch !== undefined) handler(batch);
+			}
+		},
+		awaitAdmission(expectedDigest: string, timeoutMs: number): Promise<void> {
+			if (admission !== null) return Promise.reject(new Error("admission is already being awaited"));
+			if (admittedDigest !== undefined) {
+				const error = admissionVerdict(expectedDigest);
+				return error === null ? Promise.resolve() : Promise.reject(error);
+			}
+			if (closed) {
+				return Promise.reject(new Error("the control channel closed before the orchestrator admitted this worker"));
+			}
+			return new Promise<void>((resolve, reject) => {
+				const timer = setTimeout(
+					() => finishAdmission(new Error(`no admit frame arrived within ${timeoutMs} ms of the announce`)),
+					timeoutMs,
+				);
+				admission = { expected: expectedDigest, resolve, reject, timer };
+			});
+		},
+		droppedLineCount(): number {
+			return droppedLines;
+		},
+		onChannelClose(handler: () => void): void {
+			channelCloseHandler = handler;
+			if (channelClosedAfterSpec) deliverChannelClose();
+		},
+	};
+}

@@ -1,0 +1,354 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { WorkerRosters } from "../core/defaults.js";
+import type { TelemetryHub } from "../core/telemetry/hub.js";
+import type { getTerminationCoordinator } from "../core/termination.js";
+import { ToolNames } from "../core/tool-names.js";
+import type { AgentSpec } from "../domains/agents/spec.js";
+import type { WorkerContextSnapshot } from "../domains/context/worker/contract.js";
+import type { DispatchContract } from "../domains/dispatch/contract.js";
+import type { AgentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
+import { FLEET_PLACEMENT_HEADER, rememberSessionFleetNode } from "../domains/dispatch/fleet-placement-preference.js";
+import { DEFAULT_KILL_GRACE_MS, DEFAULT_TEARDOWN_BOUND_MS } from "../domains/gateway/mcp/index.js";
+import type { MusicOperations } from "../domains/mux/music-operations.js";
+import type { PanesOperations } from "../domains/mux/operations.js";
+import type { AutonomyLevel } from "../domains/safety/autonomy.js";
+import type { DecisionLedgerEntry } from "../domains/session/entries.js";
+import type { BrowserTool } from "./browser/index.js";
+import { browserToolSurface } from "./browser/surface.js";
+import { builtin, toolPromptHintsForNames } from "./builtin-tool-catalog.js";
+import type { CompeteMuxWorktrees } from "./compete-worktrees.js";
+import { createConfigurePancodeTool } from "./configure-pancode.js";
+import { assertRegisteredBuiltinTools, type CoreToolBootstrapDeps, registerCoreTools } from "./core-bootstrap.js";
+import { createDispatchRunEventRegistry, createDispatchTool } from "./dispatch.js";
+import type { DispatchBackgroundRegistry } from "./dispatch-background.js";
+import type { DispatchSchemaComposition } from "./dispatch-schema.js";
+import { COORDINATOR_DISPATCH_ARGUMENTS, coordinatorDispatchParameters } from "./dispatch-schema.js";
+import { finishTool } from "./finish.js";
+import { createMcpCapabilitySource, type McpCapabilitySource } from "./gateway/index.js";
+import { registerHarnessExtensionTools } from "./harness-extensions.js";
+import type { JobOperations } from "./job-types.js";
+import { lazyTool } from "./lazy-tool.js";
+import { createLedgerTool } from "./ledger.js";
+import { createMemoryNoteTool, type MemoryNoteDeps } from "./memory-note.js";
+import { createMemoryRecallTool, type MemoryRecallDeps } from "./memory-recall.js";
+import { monitorToolSurface } from "./monitor-surface.js";
+import { musicToolSurface } from "./music-surface.js";
+import { panesToolSurface } from "./panes-surface.js";
+import type { RegistryDeps, ToolRegistry } from "./registry-contract.js";
+import type { ReportToolDeps } from "./report.js";
+import { reportToolSurface } from "./report-surface.js";
+import { createSelfCompactTool, type RequestSelfCompact } from "./self-compact.js";
+import { steerToolSurface } from "./steer-surface.js";
+import { coordinatorToolPlacement } from "./surface.js";
+import type { ToolSpec } from "./tool-spec.js";
+
+export { toolPromptHintsForNames };
+
+export interface ToolBootstrapDeps extends Omit<CoreToolBootstrapDeps, "mcpCapabilities"> {
+	requestSelfCompact?: RequestSelfCompact;
+	/** The session's memory stores. Only the orchestrator owns a task bank, so workers never get the tool. */
+	memoryRecall?: MemoryRecallDeps;
+	/** Present only when the session starts with `context.memory.surfaces.lessons: agent`; workers never get it. */
+	memoryNote?: MemoryNoteDeps;
+	captureWorkerContext?: () => WorkerContextSnapshot | null;
+	dispatch?: DispatchContract;
+	jobTool?: ToolSpec;
+	jobs?: JobOperations;
+	bus?: TelemetryHub;
+	termination?: Pick<ReturnType<typeof getTerminationCoordinator>, "onTerminate">;
+	getAgentCatalog?: () => string;
+	getAgentSpecs?: () => ReadonlyArray<AgentSpec>;
+	getAgentRoleFacts?: AgentRoleFactsResolver;
+	getAutonomy?: () => AutonomyLevel;
+	/**
+	 * The level admission runs at, where contained yolo reads as default. The
+	 * main agent's grant of a worker ask follows it, so contained yolo never
+	 * grants a worker what default would not. Absent reads `getAutonomy`.
+	 * Dispatch, ask_user and configure_pancode keep the operator's level, so
+	 * either yolo runs a dispatch plan without the plan stop.
+	 */
+	getAdmissionAutonomy?: () => AutonomyLevel;
+	getCostCeilingUsd?: () => number;
+	getWorkerRosters?: () => WorkerRosters;
+	/** Which optional `dispatch` schema blocks this session advertises; absent means every block. */
+	getDispatchSchemaComposition?: () => DispatchSchemaComposition;
+	dispatchBackground?: DispatchBackgroundRegistry;
+	/** Live decision board snapshot; dispatch seals its active refs onto every request. */
+	getDecisionBoard?: () => ReadonlyArray<DecisionLedgerEntry>;
+	/** Optional herdr worktree lifecycle for compete candidates. */
+	competeMuxWorktrees?: CompeteMuxWorktrees;
+	/**
+	 * Pane operations. Present only when a pane host answered detection, which
+	 * is what keeps the `panes` tool out of the prompt on a machine with none.
+	 */
+	panes?: PanesOperations;
+	/**
+	 * The music pane. Present only when the operator set
+	 * integrations.music.agentControl and music could play at startup.
+	 */
+	music?: MusicOperations;
+	flow?: RegistryDeps["flow"];
+	/**
+	 * Local MCP servers for the gateway. Absent means one is built for the
+	 * session cwd; `false` registers none (a registry that must never launch a
+	 * child process, such as a test's).
+	 */
+	mcpCapabilities?: McpCapabilitySource | false;
+	/** The agent's PanCode report tool. Orchestrator-only: workers never draft or offer a report. */
+	report?: ReportToolDeps;
+}
+
+export interface ToolBootstrapHandle {
+	/** The MCP capability source the gateway launches servers through, when one was registered. */
+	mcpCapabilities: McpCapabilitySource | null;
+	/** Close every launched MCP client. Idempotent; also bound to session end and shutdown on the bus. */
+	close(): Promise<void>;
+}
+
+/**
+ * Registers the stable core surface first, then the orchestrator-only dispatch
+ * controls in their canonical order. Worker registries call registerCoreTools
+ * directly so their boot graph never evaluates dispatch implementations.
+ */
+export function registerAllTools(registry: ToolRegistry, deps: ToolBootstrapDeps = {}): ToolBootstrapHandle {
+	const askUser = deps.askUser;
+	const cwd = deps.session?.current()?.cwd ?? process.cwd();
+	const { mcpCapabilities: requestedMcp, ...coreDeps } = deps;
+	const mcpCapabilities =
+		requestedMcp === false
+			? null
+			: (requestedMcp ?? createMcpCapabilitySource({ cwd, registry, store: { writable: true } }));
+	const registration = registerCoreTools(registry, {
+		...coreDeps,
+		storeWritable: true,
+		...(askUser
+			? {
+					askUser: async (questions, options) => {
+						const result = await askUser(questions, options);
+						const sessionId = options?.sessionId ?? deps.session?.current()?.id;
+						if (sessionId && !result.cancelled) {
+							const question = questions.find((item) => item.header === FLEET_PLACEMENT_HEADER && !item.multi_select);
+							const answer = result.answers.find((item) => item.question === question?.question);
+							const selected =
+								answer?.value?.trim() || (answer?.options?.length === 1 ? answer.options[0] : answer?.answer.trim());
+							const known = deps.getSettings?.().fleet.nodes.some((node) => node.id === selected);
+							if (
+								question &&
+								selected &&
+								(selected === "local" || known) &&
+								question.options?.some((option) => option.label === selected)
+							)
+								rememberSessionFleetNode(sessionId, selected);
+						}
+						return result;
+					},
+				}
+			: {}),
+		...(mcpCapabilities ? { mcpCapabilities } : {}),
+	});
+	// A headless main session has no ask_user, but it still proposes settings:
+	// the tool previews the diff and hands the operator the steps (no apply).
+	if (!askUser)
+		registry.register(
+			builtin(
+				createConfigurePancodeTool({ interactive: false, ...(deps.getAutonomy ? { getAutonomy: deps.getAutonomy } : {}) }),
+				{ path: "src/tools/configure-pancode.ts", scope: "core" },
+			),
+		);
+	// The main agent's completion declaration is always attached, so the session schema set never varies (#423).
+	registry.register(builtin(finishTool, { path: "src/tools/finish.ts", scope: "core" }));
+	if (deps.requestSelfCompact)
+		registry.register(
+			builtin(createSelfCompactTool(deps.requestSelfCompact), { path: "src/tools/self-compact.ts", scope: "core" }),
+		);
+	if (deps.memoryRecall)
+		registry.register(
+			builtin(createMemoryRecallTool(deps.memoryRecall), { path: "src/tools/memory-recall.ts", scope: "core" }),
+		);
+	if (deps.memoryNote)
+		registry.register(
+			builtin(createMemoryNoteTool(deps.memoryNote), { path: "src/tools/memory-note.ts", scope: "core" }),
+		);
+	if (deps.jobTool) registry.register(builtin(deps.jobTool, { path: "src/tools/job.ts", scope: "core" }));
+	if (deps.jobs && !deps.dispatch) {
+		const jobs = deps.jobs;
+		registry.register(
+			builtin(
+				lazyTool(monitorToolSurface, async () => (await import("./monitor-jobs.js")).createJobMonitorTool(jobs)),
+				{ path: "src/tools/monitor-jobs.ts", scope: "core" },
+			),
+		);
+	}
+	if (deps.dispatch) {
+		const dispatch = deps.dispatch;
+		if (deps.agentLedger === undefined) {
+			registration.includeLedgerTools = true;
+			const ledger = builtin(
+				lazyTool(createLedgerTool({ resolveLedger: () => null }), async () =>
+					(await import("./ledger-session.js")).createSessionLedgerTool(dispatch, deps.flow),
+				),
+				{ path: "src/tools/ledger.ts", scope: "core" },
+			);
+			// A board matters after dispatch; gateway discovery exposes it without
+			// paying for its schema or map entry on every session's first request.
+			registry.register({
+				...ledger,
+				placement: "gateway",
+				...(ledger.metadata ? { metadata: { ...ledger.metadata, startupPrompt: false } } : {}),
+			});
+		}
+		const admissionAutonomy = deps.getAdmissionAutonomy ?? deps.getAutonomy;
+		// Display tail only. In a composed process the dispatch domain writes the
+		// durable journal off its own progress channel, which covers every run
+		// rather than only the ones the model dispatched through this tool, so a
+		// second sink here would transcribe a tool-path run twice.
+		const dispatchRunEvents = createDispatchRunEventRegistry({ journal: null });
+		const dispatchToolDeps = {
+			dispatch,
+			getWorkspaceRoot: () => deps.session?.current()?.cwd,
+			approveExternalRead: (
+				root: string,
+				options?: import("./registry-contract.js").ToolInvokeOptions,
+				task?: import("./registry-contract.js").DispatchReadRootTask,
+			) => registry.requestReadRootApproval?.(root, options, task) ?? Promise.resolve(null),
+			...(deps.captureWorkerContext ? { captureWorkerContext: deps.captureWorkerContext } : {}),
+			runEvents: dispatchRunEvents,
+			getAgentSpecs: deps.getAgentSpecs ?? (() => []),
+			...(deps.bus ? { bus: deps.bus } : {}),
+			...(deps.getAgentCatalog ? { getAgentCatalog: deps.getAgentCatalog } : {}),
+			...(deps.getAgentRoleFacts ? { getAgentRoleFacts: deps.getAgentRoleFacts } : {}),
+			...(deps.getAutonomy ? { getAutonomy: deps.getAutonomy } : {}),
+			...(deps.getCostCeilingUsd ? { getCostCeilingUsd: deps.getCostCeilingUsd } : {}),
+			...(deps.getWorkerRosters ? { getWorkerRosters: deps.getWorkerRosters } : {}),
+			...(deps.getDispatchSchemaComposition ? { getSchemaComposition: deps.getDispatchSchemaComposition } : {}),
+			...(deps.dispatchBackground ? { background: deps.dispatchBackground } : {}),
+			...(deps.getDecisionBoard ? { getDecisionBoard: deps.getDecisionBoard } : {}),
+			...(deps.competeMuxWorktrees ? { competeWorktrees: { mux: deps.competeMuxWorktrees } } : {}),
+		};
+		registry.register({
+			...builtin(createDispatchTool(dispatchToolDeps), {
+				path: "src/tools/dispatch.ts",
+				scope: "core",
+			}),
+		});
+		registry.register({
+			...builtin(
+				lazyTool(monitorToolSurface, async () =>
+					(await import("./monitor.js")).createMonitorTool({
+						dispatch,
+						runEvents: dispatchRunEvents,
+						...(deps.jobs ? { jobs: deps.jobs } : {}),
+					}),
+				),
+				{
+					path: "src/tools/monitor.ts",
+					scope: "core",
+				},
+			),
+		});
+		registry.register({
+			...builtin(
+				lazyTool(steerToolSurface, async () =>
+					(await import("./steer.js")).createSteerTool({
+						dispatch,
+						...(admissionAutonomy ? { getAutonomy: admissionAutonomy } : {}),
+						...(deps.getAutonomy ? { getOperatorAutonomy: deps.getAutonomy } : {}),
+					}),
+				),
+				{
+					path: "src/tools/steer.ts",
+					scope: "core",
+				},
+			),
+		});
+	}
+	if (deps.panes) {
+		const panes = deps.panes;
+		registry.register({
+			...builtin(
+				lazyTool(panesToolSurface, async () =>
+					(await import("./panes.js")).createPanesTool({ panes, ...(deps.flow !== undefined ? { flow: deps.flow } : {}) }),
+				),
+				{ path: "src/tools/panes.ts", scope: "core" },
+			),
+		});
+	}
+	if (deps.report) {
+		const report = deps.report;
+		registry.register({
+			...builtin(
+				lazyTool(reportToolSurface, async () => (await import("./report.js")).createReportTool(report)),
+				{ path: "src/tools/report.ts", scope: "core" },
+			),
+		});
+	}
+	if (deps.music) {
+		const music = deps.music;
+		registry.register({
+			...builtin(
+				lazyTool(musicToolSurface, async () => (await import("./music.js")).createMusicTool({ music })),
+				{ path: "src/tools/music.ts", scope: "core" },
+			),
+		});
+	}
+	// The browser is the main agent's alone; its session workers end with the session (below).
+	let browserTool: BrowserTool | undefined;
+	if (registration.includeNetworkTools) {
+		registry.register({
+			...builtin(
+				lazyTool(browserToolSurface, async () => {
+					browserTool = (await import("./browser/index.js")).createBrowserTool({
+						getWorkspaceRoot: () => deps.session?.current()?.cwd ?? cwd,
+					});
+					return browserTool;
+				}),
+				{ path: "src/tools/browser/index.ts", scope: "core" },
+			),
+		});
+	}
+	assertRegisteredBuiltinTools(registry, registration, Boolean(deps.dispatch), Boolean(deps.panes));
+	for (const diagnostic of registerHarnessExtensionTools(registry, cwd)) {
+		deps.bus?.emit("extension.load_failed", { message: diagnostic.message });
+	}
+	// Placement is presentation, not authority. Apply it to this registry only:
+	// worker registries still attach the execution tools their recipes admit.
+	for (const spec of registry.listAll()) {
+		registry.register({
+			...spec,
+			placement: coordinatorToolPlacement(spec.name),
+			...(spec.name === ToolNames.Dispatch
+				? { modelParameters: coordinatorDispatchParameters(), modelArguments: COORDINATOR_DISPATCH_ARGUMENTS }
+				: {}),
+		});
+	}
+	// Every MCP client the gateway launched closes with the session: a
+	// detached server must not outlive the process that trusted it.
+	let closePromise: Promise<void> | undefined;
+	const disposeCloseListeners: (() => void)[] = [];
+	let disposeTerminateHook: (() => void) | undefined;
+	const close = (): Promise<void> => {
+		if (closePromise === undefined) {
+			for (const dispose of disposeCloseListeners.splice(0)) dispose();
+			closePromise = Promise.all([mcpCapabilities?.close(), browserTool?.closeSessions()])
+				.then(() => undefined)
+				.finally(() => {
+					// PERF W3: early ShutdownRequested keeps the awaited hook until teardown settles.
+					disposeTerminateHook?.();
+					disposeTerminateHook = undefined;
+				});
+		}
+		return closePromise;
+	};
+	if (mcpCapabilities || registration.includeNetworkTools) {
+		const disposeTerminate = deps.termination?.onTerminate(close, {
+			timeoutMs: DEFAULT_KILL_GRACE_MS + DEFAULT_TEARDOWN_BOUND_MS + 1_000,
+		});
+		if (typeof disposeTerminate === "function") disposeTerminateHook = disposeTerminate;
+	}
+	if ((mcpCapabilities || registration.includeNetworkTools) && deps.bus) {
+		disposeCloseListeners.push(deps.bus.subscribe("session.ended", close));
+		disposeCloseListeners.push(deps.bus.subscribe("shutdown.requested", close));
+	}
+	return { mcpCapabilities, close };
+}

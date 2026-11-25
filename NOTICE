@@ -1,0 +1,148 @@
+PanCode
+Copyright 2026 Anthony Kougkas
+
+PanCode is licensed under the PanCode License 1.0 in the LICENSE file, which
+is the Apache License, Version 2.0 with Additional Conditions, including the
+Commons Clause License Condition v1.0 (Software: PanCode; License: Apache
+License, Version 2.0, with these Additional Conditions; Licensor: Anthony
+Kougkas).
+
+PanSDK, the source under packages/sdk/ and its build output, including the
+pancode/sdk/<subpath> entry points under dist/sdk/ in the npm package, is
+licensed under the Apache License, Version 2.0, without the Additional
+Conditions. The npm package carries one license file: the Apache License,
+Version 2.0 is the part of LICENSE headed "APACHE LICENSE, VERSION 2.0", and
+the source repository also keeps it alone in packages/sdk/LICENSE. PanStore,
+PanKit and the scientific-data readers (packages/store/, packages/kit/ and
+packages/scidata/), shipped in the same package, are under the PanCode
+License 1.0 with the rest of PanCode.
+
+--------------------------------------------------------------------
+Technology acknowledgements
+
+PanCode builds on Earendil Works' Pi framework and, for optional Claude
+workers, Anthropic's Claude Agent SDK. Its runtime and development tools
+include Node.js, TypeScript, node-pty, Tree-sitter, Ollama's JavaScript
+client, esbuild, tsup, and Biome. The bundled graphical application uses React, Hono, Vite,
+and community libraries for Markdown, diagrams, syntax highlighting,
+sanitization, images, and fonts.
+
+Thanks to these projects and their maintainers. Exact dependencies and
+versions are recorded in the package manifests and pnpm-lock.yaml;
+third-party components retain their upstream copyrights and licenses.
+THIRD-PARTY-NOTICES.md reproduces the license and NOTICE text of every
+third-party package the npm package includes in dist/.
+README.md also acknowledges the optional inference and tool integrations
+that operators can connect to PanCode.
+
+--------------------------------------------------------------------
+Pinned external tools
+
+PanCode does not bundle the programs below. `pancode tools install
+<id>` downloads a pinned upstream release on request, verifies it against
+the checksum recorded in src/domains/toolchain/registry.ts, and places the
+upstream license text beside the binary under the PanCode data directory. Each
+program remains under its own license and copyright; PanCode neither modifies
+nor redistributes it.
+
+herdr (https://herdr.dev, https://github.com/herdrdev/herdr)
+  Copyright the herdr authors.
+  Licensed under the Apache License, Version 2.0.
+  Used as the terminal multiplexer behind PanCode panes.
+
+yazi (https://yazi-rs.github.io, https://github.com/sxyazi/yazi)
+  Copyright the yazi authors.
+  Licensed under the MIT License.
+  Used as the terminal file manager behind the file-picker pane.
+
+croc (https://schollz.com/software/croc6, https://github.com/schollz/croc)
+  Copyright Zack Scholl and the croc authors.
+  Licensed under the MIT License.
+  Used as the relay file-transfer backend for machine-to-machine transfers.
+
+--------------------------------------------------------------------
+Scientific-data readers fetched on first use
+
+PanCode does not bundle the two readers below. The first time a tool reads
+one of their formats, PanCode downloads the pinned npm registry tarball,
+accepts it only when its sha256 matches the pin in
+packages/scidata/src/assets.ts, and keeps it in the host's cache directory.
+Each reader remains under its own license and copyright; PanCode neither
+modifies nor redistributes it. THIRD-PARTY-NOTICES.md reproduces the license
+file of each pinned tarball.
+
+h5wasm 0.10.3 (https://github.com/usnistgov/h5wasm)
+  Developed at the US National Institute of Standards and Technology (NIST).
+  Licensed under the NIST software notice in its LICENSE.txt.
+  Built with the HDF5 library, Copyright 2006 The HDF Group and Copyright
+  1998-2006 The Board of Trustees of the University of Illinois, under the
+  HDF5 license carried in the same file.
+  Used to read HDF5 and NetCDF-4 files.
+
+hyparquet 1.31.5 (https://github.com/hyparam/hyparquet)
+  Copyright the hyparquet authors (Hyperparam).
+  Licensed under the MIT License.
+  Used to read Parquet files.
+
+--------------------------------------------------------------------
+Vendored components
+
+git.yazi (https://github.com/yazi-rs/plugins/tree/main/git.yazi)
+  Copyright 2023 the yazi-rs authors.
+  Licensed under the MIT License.
+  Vendored as source with its LICENSE under the managed file-pane profile.
+
+Bundled terminal compatibility code
+----------------------------------
+PanCode bundles the JavaScript from the pinned @earendil-works/pi-tui with a
+local search/semantic-edit, wrapping and render-memo patch, plus marked,
+marked-cjk-friendly and get-east-asian-width.
+Their MIT notices are distributed in dist/assets/tui-notices/. The pinned
+pi-tui runtime package remains installed for its Darwin and Windows native
+helpers; PanCode does not modify consumer dependencies during installation.
+
+PanCode retains its own credential storage, OAuth provider registry and locked
+refresh lifecycle. Anthropic, OpenAI Codex and GitHub Copilot OAuth flows
+delegate to Pi; the ALCF OAuth integration remains PanCode-owned. Pi's
+CredentialStore and Models.getAuth are not used for stored OAuth.
+
+Copied Pi utility code
+----------------------
+The truncation, prompt-argument and message-replay utility blocks in
+src/engine/truncate.ts, src/engine/prompt-templates.ts and src/engine/messages.ts
+derive from the pi-coding-agent sources packages/coding-agent/src/core/tools/truncate.ts,
+packages/coding-agent/src/core/prompt-templates.ts and
+packages/coding-agent/src/core/messages.ts at tag v1.0.0
+(commit a13d35a742c6ef8462812a28fbe1d8c8b7431c32); the prompt-argument parser
+also carries the v1.3.0 empty-argument fix (commit 9fe3f371622cad9cc1a3cbf044288abd0252192f).
+Copyright (c) 2025 Mario Zechner. Licensed under the MIT License. The upstream
+MIT license is preserved in src/engine/notices/pi-tui-LICENSE, distributed in
+dist/assets/tui-notices/pi-tui-LICENSE, and reproduced here:
+
+  MIT License
+
+  Copyright (c) 2025 Mario Zechner
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+Bundled graphical application
+-----------------------------
+The browser client includes its dependency notices in
+dist/gui/client/THIRD_PARTY_LICENSES.md. Server dependency notices for
+Hono and @hono/node-server are distributed in dist/assets/gui-notices/.

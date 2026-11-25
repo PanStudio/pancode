@@ -1,0 +1,240 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { cpSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { it } from "node:test";
+import { skillActivationFromToolDetails, withModelSkillActivation } from "../../src/core/skill-activation.js";
+import { clearPluginSnapshots, pluginSnapshotFor, reloadPluginResources } from "../../src/domains/plugins/index.js";
+import { discoverHub } from "../../src/domains/resources/hub.js";
+import { applyHubLifecycle, type HubRefreshHost, planHubLifecycle } from "../../src/domains/resources/hub-actions.js";
+import { readHubInventory } from "../../src/domains/resources/hub-inventory.js";
+import { loadSkills, parsePendingSkillRequests } from "../../src/domains/resources/skills/loader.js";
+import { reloadPluginResourcesAndNotify } from "../../src/entry/plugin-reload.js";
+import { createPendingSkillToolPolicy } from "../../src/session-control/chat-loop-messages.js";
+import { createContextTool } from "../../src/tools/context/index.js";
+import { trustProjectPackages } from "../harness/project-trust.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+const findSkills = new URL("../../hub/packs/skills/meta/find-skills/", import.meta.url);
+
+function automaticPolicy() {
+	const policy = withModelSkillActivation(undefined, true);
+	ok(policy);
+	return policy;
+}
+
+it("activates every bundled skill from its native package in a workspace with peer skill copies", async () => {
+	const env = await isolatePancodeEnv("pancode-hub-all-skill-activation-");
+	try {
+		process.env.HOME = env.dir;
+		const cwd = path.join(env.dir, "project");
+		cpSync(new URL("../../hub/packs/skills/", import.meta.url), path.join(cwd, ".agents/skills/pancode"), {
+			recursive: true,
+		});
+		cpSync(new URL("../../hub/packs/plugins/hpc/skills/", import.meta.url), path.join(cwd, ".agents/skills/hpc"), {
+			recursive: true,
+		});
+		const catalog = discoverHub({ cwd }).entries;
+		// 44 = 39 local packages + 5 community rows (wtfp plugin and extension,
+		// zulipchat, autotldr, cite-nexus; be4807251), each pinned to a GitHub
+		// commit. Installing a community row fetches it over the network, which
+		// this offline test lane must not depend on, so those entries are
+		// excluded from the install loop below and their skills are not counted
+		// in the `skills.length` assertion.
+		strictEqual(catalog.length, 44);
+		const installableCatalog = catalog.filter((entry) => !/^(?:[a-z][a-z0-9+.-]*:\/\/|git@)/i.test(entry.sourceUrl));
+		strictEqual(installableCatalog.length, 39);
+		const refresh = (project: string) => reloadPluginResources(project);
+		refresh(cwd);
+		// Skills first: a pack such as hpc requires a bundled skill, and a plan without requirements refuses it.
+		const skillsFirst = [...installableCatalog].sort(
+			(left, right) => Number(left.kind !== "skill") - Number(right.kind !== "skill"),
+		);
+		for (const entry of skillsFirst) {
+			const result = applyHubLifecycle(
+				planHubLifecycle({ operation: "install", ref: `${entry.kind}:${entry.name}`, scope: "user", cwd }),
+			);
+			strictEqual(result.committed, 1, `${entry.name}: ${JSON.stringify(result)}`);
+		}
+		refresh(cwd);
+		const skills = loadSkills({ cwd }).items;
+		// 52 since hpc-sweep (4556475b1) and hypothesis-workflow (c461e6204) joined their packs
+		// and the hoare pack (#454) added hoare-verification; 53 since web-debug (9d0e7201b);
+		// 51 since slurm-jobs and hpc-sweep left PanHub; 43 since the materials plugin and the hoare pack left it.
+		strictEqual(skills.length, 43);
+		const context = createContextTool({ getCwd: () => cwd });
+		for (const skill of skills) {
+			strictEqual(skill.source, "plugin", skill.name);
+			strictEqual(skill.trusted, true, skill.name);
+			const automatic = automaticPolicy();
+			if (skill.disableModelInvocation) {
+				const denied = await context.run({ scope: "skills", name: skill.name }, { pendingSkillPolicy: automatic });
+				ok(denied.kind === "error");
+				match(denied.message, /explicit operator activation/);
+			}
+			const requests = parsePendingSkillRequests(`/skill ${skill.name}`, { items: skills, diagnostics: [] }, { cwd });
+			const pendingSkillPolicy = skill.disableModelInvocation
+				? createPendingSkillToolPolicy(requests.pendingSkillRequests)
+				: automatic;
+			ok(pendingSkillPolicy);
+			const result = await context.run({ scope: "skills", name: skill.name }, { pendingSkillPolicy });
+			ok(result.kind === "ok", `${skill.name}: ${JSON.stringify(result)}`);
+			strictEqual(skillActivationFromToolDetails(result.details, skill.name)?.filePath, skill.filePath);
+		}
+	} finally {
+		clearPluginSnapshots();
+		env.restore();
+	}
+});
+
+for (const scope of ["user", "project"] as const) {
+	it(`loads the native ${scope} PanHub skill after session refresh despite untrusted compatibility copies`, async () => {
+		const env = await isolatePancodeEnv("pancode-hub-skill-activation-");
+		try {
+			process.env.HOME = env.dir;
+			const cwd = path.join(env.dir, "project");
+			const foreign = path.join(cwd, ".claude/skills/find-skills");
+			cpSync(findSkills, foreign, { recursive: true });
+			const foreignFile = path.join(foreign, "SKILL.md");
+			const foreignBytes = readFileSync(foreignFile, "utf8");
+			const generations: number[] = [];
+			// The session host: reload with a notification, and report a change
+			// when the committed generation moved.
+			const refresh: HubRefreshHost = (project) => {
+				const before = pluginSnapshotFor(project).generation;
+				const next = reloadPluginResourcesAndNotify(project, (event) => generations.push(event.generation));
+				return { status: "refreshed", generation: next.generation, changed: before === 0 || next.generation !== before };
+			};
+			refresh(cwd); // The already-running session initially has no native installation.
+			const context = createContextTool({ getCwd: () => cwd });
+			const plan = planHubLifecycle({ operation: "install", ref: "skill:find-skills", scope, cwd });
+			const applied = applyHubLifecycle(plan, { refresh });
+			strictEqual(applied.committed, 1, JSON.stringify(applied));
+			strictEqual(applied.refresh.status, "refreshed");
+			strictEqual(generations.length, 2);
+			const installedRoot = plan.steps[0]?.destination;
+			ok(installedRoot);
+			const installedFile = path.join(installedRoot, "SKILL.md");
+
+			if (scope === "project") {
+				// A project package loads only after the operator approves the project's package state.
+				trustProjectPackages(cwd, "plugins");
+				refresh(cwd);
+				// The same physical file can also be visible through a peer-agent root.
+				const alias = path.join(cwd, ".agents/skills/find-skills");
+				mkdirSync(path.dirname(alias), { recursive: true });
+				symlinkSync(installedRoot, alias, "junction");
+			}
+			const listing = await context.run({ scope: "skills" });
+			ok(listing.kind === "ok");
+			match(listing.output, /find-skills \(source: plugin; scope: package\)/);
+			const activated = await context.run(
+				{ scope: "skills", name: "find-skills" },
+				{ pendingSkillPolicy: automaticPolicy() },
+			);
+			ok(activated.kind === "ok", JSON.stringify(activated));
+			strictEqual(skillActivationFromToolDetails(activated.details, "native-load")?.filePath, installedFile);
+			match(activated.output, /# Find Skills/);
+			const rows = readHubInventory({ cwd, kinds: ["skill"], query: "find-skills" }).resources;
+			ok(rows.some((row) => row.owner?.ref === "skill:find-skills" && row.availability === "available"));
+			ok(rows.some((row) => row.path === foreignFile && row.availability === "shadowed"));
+
+			// A slash request resolves to the same native owner as automatic activation.
+			const list = loadSkills({ cwd });
+			const pending = parsePendingSkillRequests("/skill find-skills find a skill for this task", list, { cwd });
+			const pendingSkillPolicy = createPendingSkillToolPolicy(pending.pendingSkillRequests);
+			ok(pendingSkillPolicy);
+			const explicit = await context.run({ scope: "skills", name: "find-skills" }, { pendingSkillPolicy });
+			ok(explicit.kind === "ok", JSON.stringify(explicit));
+			strictEqual(skillActivationFromToolDetails(explicit.details, "slash-load")?.filePath, installedFile);
+			strictEqual(readFileSync(foreignFile, "utf8"), foreignBytes);
+
+			// Trusting discovery roots alone does not import loose foreign skills.
+			const trusted = loadSkills({ cwd, trustProjectCompatRoots: true });
+			strictEqual(trusted.items.find((skill) => skill.name === "find-skills")?.scope, "package");
+			strictEqual(readFileSync(foreignFile, "utf8"), foreignBytes);
+		} finally {
+			clearPluginSnapshots();
+			env.restore();
+		}
+	});
+}
+
+it("says an undeclared member of an unapproved project plugin needs trust, not that it is unknown", async () => {
+	const env = await isolatePancodeEnv("pancode-untrusted-plugin-member-");
+	try {
+		process.env.HOME = env.dir;
+		const installedAt = path.join(env.dir, "installed");
+		const source = path.join(env.dir, "plug-one");
+		mkdirSync(path.join(source, "skills/member-folder"), { recursive: true });
+		mkdirSync(installedAt, { recursive: true });
+		writeFileSync(
+			path.join(source, "plugin.json"),
+			JSON.stringify({
+				$schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+				name: "plug-one",
+				version: "1.0.0",
+				description: "A plugin that does not declare its skills",
+			}),
+		);
+		writeFileSync(
+			path.join(source, "skills/member-folder/SKILL.md"),
+			"---\nname: member-one\ndescription: A member skill\n---\nPRIVATE MEMBER BODY\n",
+		);
+		const applied = applyHubLifecycle(
+			planHubLifecycle({ operation: "install", ref: source, scope: "project", cwd: installedAt }),
+		);
+		strictEqual(applied.committed, 1, JSON.stringify(applied));
+		// Installing approves the copy where it ran. The same state arriving with a clone is not approved.
+		const cwd = path.join(env.dir, "cloned");
+		cpSync(installedAt, cwd, { recursive: true });
+		clearPluginSnapshots();
+		const context = createContextTool({ getCwd: () => cwd });
+		const result = await context.run({ scope: "skills", name: "member-one" }, { pendingSkillPolicy: automaticPolicy() });
+		ok(result.kind === "error");
+		match(result.message, /requires trust/);
+		match(result.message, /config trust plugins/);
+		strictEqual((result.details?.refusal as { kind?: string } | undefined)?.kind, "not-ready");
+		ok(!result.message.includes("unknown skill") && !result.message.includes("PRIVATE MEMBER BODY"));
+	} finally {
+		clearPluginSnapshots();
+		env.restore();
+	}
+});
+
+it("explains a discovered but untrusted skill without claiming it is unknown or granting access", async () => {
+	const env = await isolatePancodeEnv("pancode-hub-skill-denial-");
+	try {
+		process.env.HOME = env.dir;
+		const cwd = path.join(env.dir, "project");
+		const foreign = path.join(cwd, ".claude/skills/foreign-only");
+		mkdirSync(foreign, { recursive: true });
+		writeFileSync(
+			path.join(foreign, "SKILL.md"),
+			"---\nname: foreign-only\ndescription: Foreign skill\n---\nPRIVATE FOREIGN BODY\n",
+		);
+		const context = createContextTool({ getCwd: () => cwd });
+		const result = await context.run(
+			{ scope: "skills", name: "foreign-only" },
+			{ pendingSkillPolicy: automaticPolicy() },
+		);
+		ok(result.kind === "error");
+		match(result.message, /not imported into PanCode/);
+		deepStrictEqual(result.details?.refusal, {
+			subject: "skill",
+			name: "foreign-only",
+			kind: "not-imported",
+			source: "claude",
+			scope: "project",
+		});
+		ok(!result.message.includes("unknown skill") && !result.message.includes("PRIVATE FOREIGN BODY"));
+		deepStrictEqual(
+			loadSkills({ cwd }).items.map((skill) => [skill.name, skill.trusted]),
+			[["foreign-only", false]],
+		);
+	} finally {
+		clearPluginSnapshots();
+		env.restore();
+	}
+});

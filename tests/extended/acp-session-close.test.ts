@@ -1,0 +1,137 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, notStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
+import { test } from "node:test";
+import { setImmediate } from "node:timers/promises";
+import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
+import { createStdioTransport } from "../../src/engine/acp/transport.js";
+import { makeScratchHome } from "../harness/scratch-env.js";
+
+test("ACP transport close waits for an admitted context command to settle", async () => {
+	const handlers = new Map<string, (params: unknown) => unknown>();
+	let close = () => {};
+	const transport: AcpJsonRpcPeerTransport = {
+		closed: false,
+		request: async () => ({}) as never,
+		notify: () => {},
+		onNotification: () => () => {},
+		onRequest: (method, handler) => {
+			handlers.set(method, handler);
+			return () => handlers.delete(method);
+		},
+		onClose: (handler) => {
+			close = handler;
+			return () => {};
+		},
+		close: () => close(),
+	};
+	let resolveCommand: (value: { level: "info"; lines: string[] }) => void = () => {};
+	const command = new Promise<{ level: "info"; lines: string[] }>((resolve) => {
+		resolveCommand = resolve;
+	});
+	let stopped = false;
+	const served = servePancodeAcpAgent({
+		transport,
+		cwd: process.cwd(),
+		chat: {
+			submit: async () => {},
+			cancel: () => {},
+			onEvent: () => () => {},
+			isStreaming: () => false,
+			getSessionId: () => null,
+		},
+		commands: {
+			catalog: () => ({ version: 1, commands: [] }),
+			invoke: () => command,
+			injectsUserTurn: () => false,
+			capability: {},
+		},
+	}).then(() => {
+		stopped = true;
+	});
+	await handlers.get("initialize")?.({ protocolVersion: 1 });
+	const { sessionId } = (await handlers.get("session/new")?.({ cwd: process.cwd(), mcpServers: [] })) as {
+		sessionId: string;
+	};
+	const pending = handlers.get("_pancode/commands/invoke")?.({ sessionId, command: "context", argv: ["refresh"] });
+	try {
+		await setImmediate();
+		close();
+		await setImmediate();
+		strictEqual(stopped, false);
+		resolveCommand({ level: "info", lines: [] });
+		await Promise.all([pending, served]);
+		strictEqual(stopped, true);
+	} finally {
+		resolveCommand({ level: "info", lines: [] });
+		close();
+		await Promise.all([pending, served]);
+	}
+});
+
+test("ACP child accepts a new session after closing its bound session", async () => {
+	const home = makeScratchHome("pancode-acp-session-close-");
+	const transport = createStdioTransport(
+		process.execPath,
+		[
+			"--import",
+			"tsx",
+			"--input-type=module",
+			"--eval",
+			`
+			import { servePancodeAcpAgent } from "./src/engine/acp/server.js";
+			import { createStdioServerTransport } from "./src/engine/acp/transport.js";
+			process.exitCode = await servePancodeAcpAgent({
+				transport: createStdioServerTransport(),
+				cwd: process.cwd(),
+				chat: {
+					submit: async () => {},
+					cancel: () => {},
+					onEvent: () => () => {},
+					isStreaming: () => false,
+					getSessionId: () => null,
+				},
+			});
+			`,
+		],
+		{
+			env: Object.fromEntries(
+				Object.entries(home.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+			),
+		},
+	);
+	try {
+		const pid = transport.pid;
+		ok(pid);
+		await transport.request("initialize", { protocolVersion: 1 });
+		const first = await transport.request<{ sessionId: string }>("session/new", {
+			cwd: process.cwd(),
+			mcpServers: [],
+		});
+		ok(first.sessionId);
+		for (const removed of ["read-only", "suggest", "auto-edit", "full-auto", "capable"]) {
+			await rejects(
+				transport.request("session/set_mode", { sessionId: first.sessionId, modeId: removed }),
+				/invalid autonomy level/u,
+				removed,
+			);
+		}
+		deepStrictEqual(await transport.request("session/set_mode", { sessionId: first.sessionId, modeId: "yolo" }), {});
+		deepStrictEqual(await transport.request("session/set_mode", { sessionId: first.sessionId, modeId: "default" }), {});
+		deepStrictEqual(await transport.request("session/close", { sessionId: first.sessionId }), {});
+		const second = await transport.request<{ sessionId: string }>("session/new", {
+			cwd: process.cwd(),
+			mcpServers: [],
+		});
+		ok(second.sessionId);
+		notStrictEqual(second.sessionId, first.sessionId);
+		strictEqual(transport.pid, pid);
+		deepStrictEqual(await transport.request("session/close", { sessionId: second.sessionId }), {});
+		transport.close();
+		ok(await transport.waitForExit(5_000));
+	} finally {
+		await transport.forceTerminate();
+		home.cleanup();
+	}
+});

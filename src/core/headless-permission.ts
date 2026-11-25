@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * What a headless run answers a tool call that needs an approval nobody can
+ * give. There is no operator on the other end of `pancode run`, so every
+ * approval ask is denied with this sentence. Only `default` asks; the
+ * operator's `yolo` never does (#407). The session prompt states the same fact up front
+ * (`HEADLESS_SESSION_APPROVAL_SEMANTICS` in src/domains/prompts/compiler.ts).
+ *
+ * It lives here rather than inline at the deny site because two surfaces read
+ * it: the orchestrator writes it, and the tool registry recognizes its stable
+ * clause to settle a parked call as a headless denial. A recognizer holding its
+ * own copy of the sentence would silently stop matching the day the wording
+ * changed.
+ */
+export const HEADLESS_PERMISSION_DENIED_REASON =
+	"pancode run cannot confirm permission requests; rerun interactively to approve this action.";
+
+/**
+ * The stable clause of that sentence, for matching against transcripts where
+ * the remedy half may have been truncated by a preview or elision budget.
+ * `HEADLESS_PERMISSION_DENIED_REASON` starts with it, which a contract test
+ * pins.
+ */
+export const HEADLESS_PERMISSION_DENIED_MARKER = "pancode run cannot confirm permission requests";

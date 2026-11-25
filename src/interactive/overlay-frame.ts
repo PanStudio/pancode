@@ -1,0 +1,1154 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { UNICODE_GLYPH } from "../core/glyphs.js";
+import type { RuntimeResolutionDiagnostic } from "../domains/providers/index.js";
+import {
+	Box,
+	type Component,
+	matchesKey,
+	type OverlayHandle,
+	type OverlayOptions,
+	type OverlayUnfocusOptions,
+	type SelectItem,
+	SelectList,
+	type SelectListTheme,
+	stripTerminalSequences,
+	type TUI,
+	truncateToWidth,
+	visibleWidth,
+	wrapTextWithAnsi,
+} from "../engine/tui.js";
+import { type DockTitleContext, dockBodyRows, dockMount, dockRaise, dockUnmount, dockViewportRows } from "./dock.js";
+import { keyboardOwner } from "./keyboard-owner.js";
+import { enterModal, type ModalMarkerSink } from "./modal-marker.js";
+import {
+	GLYPH,
+	type PancodeToken,
+	padAnsi,
+	pancodeTheme,
+	positionRow,
+	selectionRow,
+	selectListTheme,
+	withThemeContext,
+} from "./theme/index.js";
+import { keyName } from "./theme/labels.js";
+import { skinEpoch } from "./theme/tokens.js";
+
+export const DEFAULT_SELECT_THEME: SelectListTheme = selectListTheme(pancodeTheme());
+
+interface InputTarget {
+	handleInput?: (data: string) => void;
+}
+
+export interface FocusBoxOptions {
+	x?: number;
+	y?: number;
+	inputTarget?: InputTarget | null;
+	onInput?: (data: string) => void;
+}
+
+export class FocusBox extends Box {
+	private readonly inputTarget: InputTarget | null;
+	private readonly onInput: ((data: string) => void) | undefined;
+	private readonly padX: number;
+	private readonly padY: number;
+	private rows = 0;
+
+	constructor(children: Component | readonly Component[], options?: FocusBoxOptions) {
+		super(options?.x ?? 1, options?.y ?? 0);
+		this.padX = options?.x ?? 1;
+		this.padY = options?.y ?? 0;
+		const childList = Array.isArray(children) ? children : [children];
+		for (const child of childList) this.addChild(child);
+		this.inputTarget = options?.inputTarget === undefined ? (childList[0] ?? null) : options.inputTarget;
+		this.onInput = options?.onInput;
+	}
+
+	/**
+	 * When the rows run out, the text above the choices yields before the
+	 * choices do. The frame cuts a tall body from the bottom, and a chooser
+	 * whose explanation came first lost its choices at 40x15 while Enter still
+	 * committed the hidden selection. The explanation now keeps its first rows
+	 * and closes on an ellipsis; the choices, and anything under them, stay whole.
+	 */
+	override render(width: number): string[] {
+		const lines = super.render(width);
+		if (this.rows <= 0 || lines.length <= this.rows) return lines;
+		const index = this.inputTarget === null ? -1 : this.children.indexOf(this.inputTarget as Component);
+		if (index <= 0) return lines;
+		const contentWidth = Math.max(1, width - this.padX * 2);
+		let lead = this.padY;
+		for (const child of this.children.slice(0, index)) lead += child.render(contentWidth).length;
+		const room = this.rows - (lines.length - lead);
+		if (room >= lead) return lines;
+		if (room <= 0) return lines.slice(lead);
+		const kept = lines.slice(0, room);
+		const last = (kept[room - 1] ?? "").replace(/\s+$/u, "");
+		kept[room - 1] =
+			visibleWidth(last) + 1 + visibleWidth(GLYPH.ellipsis) <= width
+				? `${last} ${GLYPH.ellipsis}`
+				: truncateToWidth(last, width, GLYPH.ellipsis, false);
+		return [...kept, ...lines.slice(lead)];
+	}
+
+	get keyboardScope() {
+		return keyboardOwner(this.inputTarget).keyboardScope;
+	}
+	get ownsCtrlC() {
+		return keyboardOwner(this.inputTarget).ownsCtrlC;
+	}
+	undoInput(): boolean {
+		return keyboardOwner(this.inputTarget).undoInput?.() ?? false;
+	}
+
+	/**
+	 * The frame's row budget, handed to every child that lays itself out from
+	 * it. A body behind a focus box used to be cut by the frame instead of
+	 * windowing itself, because the box, not the body, was what the frame saw.
+	 */
+	setBodyRows(rows: number): void {
+		this.rows = Math.max(0, Math.floor(rows));
+		for (const child of this.children) {
+			if (isRowBudgeted(child)) child.setBodyRows(rows);
+		}
+	}
+
+	setRailRoom(cells: number): void {
+		for (const child of this.children) {
+			if (isRailAware(child)) child.setRailRoom(cells);
+		}
+	}
+
+	handleInput(data: string): void {
+		if (this.onInput) {
+			this.onInput(data);
+			return;
+		}
+		this.inputTarget?.handleInput?.(data);
+	}
+}
+
+/**
+ * The border and title token of a framed overlay.
+ *
+ * Every overlay used to draw the same teal frame, informational or not, so a
+ * prompt that had taken the keyboard and was waiting on a decision read as one
+ * more panel. A tone is the one signal that separates the two classes; the
+ * overlays that carry one say so, and everything else stays on the frame token.
+ */
+export type OverlayTone = PancodeToken | (() => PancodeToken | undefined);
+
+function resolveTone(tone: OverlayTone | undefined): PancodeToken | undefined {
+	return typeof tone === "function" ? tone() : tone;
+}
+
+function pancodeFrame(text: string, token: PancodeToken = "border"): string {
+	return pancodeTheme().fg(token, text);
+}
+
+function pancodeTitle(text: string, token?: PancodeToken): string {
+	return pancodeTheme().style(token ?? "sectionHeading", text, { bold: true });
+}
+
+export function pancodeError(text: string): string {
+	return pancodeTheme().fg("error", text);
+}
+
+/**
+ * The selection rule for a self-drawn list row: the focused row carries the
+ * cursor and its label in the selected role on the selection background, and
+ * nothing else changes color. Decisions, tasks and the tree marked the row but
+ * left the label plain while help, model and view highlighted it, so the same
+ * key press read as three different things.
+ */
+export function selectionMark(focused: boolean): string {
+	return focused ? pancodeTheme().style("selectedOption", GLYPH.cursor, { bg: "selectionBackground" }) : " ";
+}
+
+export function selectionLabel(focused: boolean, label: string): string {
+	return focused
+		? pancodeTheme().style("selectedOption", label, { bg: "selectionBackground" })
+		: pancodeTheme().fg("menuOption", label);
+}
+
+/**
+ * Fit one body row: unchanged when it fits, cut on the ellipsis when it does
+ * not. Six overlays each carried a private copy under a different name.
+ */
+export function fitRow(text: string, width: number): string {
+	const safeWidth = Math.max(1, Math.floor(width));
+	return visibleWidth(text) <= safeWidth ? text : truncateToWidth(text, safeWidth, GLYPH.ellipsis, true);
+}
+
+/**
+ * The last row a window keeps of a passage it cuts, closed with the ellipsis at a word boundary, so the cut never
+ * reads as the end of a sentence and never leaves half a word (`its answer was not in th`).
+ */
+export function cutRowWithEllipsis(line: string, width: number): string {
+	const room = Math.max(1, Math.floor(width) - 1 - visibleWidth(GLYPH.ellipsis));
+	const plain = stripTerminalSequences(line).trimEnd();
+	let keep = Math.min(room, visibleWidth(plain));
+	if (visibleWidth(plain) > room) {
+		const space = plain.slice(0, room + 1).lastIndexOf(" ");
+		// Only a boundary in the row's latter half is worth cutting back to; a long token is cut where the room ends.
+		if (space > room / 2) keep = visibleWidth(plain.slice(0, space));
+	}
+	return `${truncateToWidth(line, keep, "", false).trimEnd()} ${pancodeTheme().fg("annotation", GLYPH.ellipsis)}`;
+}
+
+/** At most `height` rows of `width` cells, without adding blank rows. */
+function fitContentRows(lines: ReadonlyArray<string>, width: number, height: number): string[] {
+	return lines.slice(0, Math.max(0, height)).map((line) => padAnsi(line, width, GLYPH.ellipsis));
+}
+
+/** Exactly `height` rows of `width` cells: fitted, then blank-filled. */
+export function fitRows(lines: ReadonlyArray<string>, width: number, height: number): string[] {
+	const out = fitContentRows(lines, width, height);
+	while (out.length < height) out.push(" ".repeat(Math.max(0, width)));
+	return out;
+}
+
+/**
+ * The `[start, end)` slice of `total` rows that keeps `selected` centered in a
+ * window of `height`, pinned at either end of the list.
+ */
+export function centeredWindow(total: number, selected: number, height: number): [number, number] {
+	if (height <= 0 || total <= height) return [0, total];
+	const clamped = Math.max(0, Math.min(selected, total - 1));
+	const start = Math.max(0, Math.min(clamped - Math.floor(height / 2), total - height));
+	return [start, Math.min(total, start + height)];
+}
+
+/**
+ * A scroll delta that means one page rather than a count of rows. A key router does not know how many rows the pane
+ * it scrolls shows, so it sends this and the pane turns it into its own window height with `pageStep`. A fixed row
+ * count went one past a 15-row window, and PageDown from 1-15 landed on 17-31.
+ */
+export const SCROLL_PAGE = 1_000_000;
+
+/** `delta` in rows for a pane that shows `pageRows` rows: a `SCROLL_PAGE` is one window, anything else is itself. */
+export function pageStep(delta: number, pageRows: number): number {
+	if (Math.abs(delta) !== SCROLL_PAGE) return delta;
+	return Math.sign(delta) * Math.max(1, Math.floor(pageRows));
+}
+
+/**
+ * The `[start, end)` window of `lines` that `scroll` selects for a body of
+ * `height` rows, clamped so the last page is full. `position` is the one-based
+ * range a `positionRow` names, or null when every line fits and no row is owed
+ * to the count. One windowing rule for every body that scrolls: the mutation
+ * preview, the plan, the handoff document and the terms all used to compute
+ * this by hand and disagreed about the last page.
+ */
+export function windowRows<T>(
+	lines: ReadonlyArray<T>,
+	scroll: number,
+	height: number,
+): { window: T[]; start: number; maxScroll: number; position: { start: number; end: number; total: number } | null } {
+	const visible = Math.max(1, Math.floor(height));
+	const maxScroll = Math.max(0, lines.length - visible);
+	const start = Math.max(0, Math.min(Math.floor(scroll), maxScroll));
+	const window = lines.slice(start, start + visible);
+	if (lines.length <= visible) return { window, start, maxScroll, position: null };
+	return { window, start, maxScroll, position: { start: start + 1, end: start + window.length, total: lines.length } };
+}
+
+/**
+ * A body whose rows are a pure function of its width, its row budget and a
+ * revision the owner bumps when its state changes.
+ *
+ * The frame's identity cache only helps a child that returns the same array
+ * for the same frame, and five dialog bodies rebuilt theirs per render: the
+ * plan approval re-wrapped every step, the handoff review re-wrapped the whole
+ * document, the decisions board re-read its ledger. This memoizes the rows on
+ * (width, rows, revision, skin) so an idle open dialog costs the frame nothing.
+ */
+export interface CachedBody extends Component, RowBudgetedBody {
+	/** The state the rows depend on changed; the next render rebuilds them. */
+	touch(): void;
+	/** Rows the frame last granted, or zero while unknown. */
+	bodyRows(): number;
+}
+
+export function createCachedBody(render: (width: number, rows: number) => string[]): CachedBody {
+	let revision = 0;
+	let rows = 0;
+	let memo: { key: string; lines: string[] } | null = null;
+	return {
+		render(width: number): string[] {
+			const key = `${width}|${rows}|${revision}|${skinEpoch()}`;
+			if (memo?.key === key) return memo.lines;
+			const lines = render(width, rows);
+			memo = { key, lines };
+			return lines;
+		},
+		setBodyRows(next: number): void {
+			rows = Math.max(0, Math.floor(next));
+		},
+		bodyRows: () => rows,
+		touch(): void {
+			revision += 1;
+		},
+		invalidate(): void {
+			memo = null;
+		},
+	};
+}
+
+/**
+ * A read-only body that scrolls. The lines are cached on the owner's revision
+ * and the width, so a repaint rebuilds nothing while the numbers hold; the
+ * window over them moves with the keys. `unbudgetedRows` is the page while the
+ * frame has not granted rows; absent shows every line.
+ */
+export class ScrollingBody implements Component, RowBudgetedBody {
+	private offset = 0;
+	private rows = 0;
+	private windowed = false;
+	private readonly lines: CachedBody;
+	private memo: { all: string[]; offset: number; rows: number; visible: string[] } | null = null;
+
+	constructor(
+		render: (width: number) => string[],
+		private readonly requestRender: () => void,
+		private readonly unbudgetedRows?: number,
+	) {
+		this.lines = createCachedBody((width) => render(width).flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width))));
+	}
+
+	/** The data behind the lines changed; the next render rebuilds them. */
+	touch(): void {
+		this.lines.touch();
+	}
+
+	/** Whether the last render had more than it could show, so the scroll keys move something. */
+	overflows(): boolean {
+		return this.windowed;
+	}
+
+	setBodyRows(rows: number): void {
+		this.rows = Math.max(0, Math.floor(rows));
+	}
+
+	private pageHeight(): number | null {
+		const rows = this.rows > 0 ? this.rows : this.unbudgetedRows;
+		// One row stays free for the position a scrolled page carries.
+		return rows === undefined ? null : Math.max(1, rows - 1);
+	}
+
+	handleInput(data: string): void {
+		const page = this.pageHeight() ?? 1;
+		let offset = this.offset;
+		if (matchesKey(data, "up")) offset--;
+		else if (matchesKey(data, "down")) offset++;
+		else if (matchesKey(data, "pageUp")) offset -= page;
+		else if (matchesKey(data, "pageDown")) offset += page;
+		else if (matchesKey(data, "home") || matchesKey(data, "ctrl+home")) offset = 0;
+		else if (matchesKey(data, "end") || matchesKey(data, "ctrl+end")) offset = Number.MAX_SAFE_INTEGER;
+		else return;
+		this.offset = Math.max(0, offset);
+		this.requestRender();
+	}
+
+	render(width: number): string[] {
+		const all = this.lines.render(width);
+		const page = this.pageHeight();
+		if (page === null || all.length <= page + 1) {
+			// Everything fits in the granted rows, so no row is owed to a position.
+			this.offset = 0;
+			this.windowed = false;
+			return all;
+		}
+		this.windowed = true;
+		const { window, start, position } = windowRows(all, this.offset, page);
+		this.offset = start;
+		const memo = this.memo;
+		if (memo && memo.all === all && memo.offset === start && memo.rows === this.rows) return memo.visible;
+		const visible = [...window];
+		// The position only: every owner names the scroll keys on its rail while the body overflows, and the row
+		// repeating them in another spelling said the same keys twice.
+		if (position) visible.push(positionRow(pancodeTheme(), position, width));
+		this.memo = { all, offset: start, rows: this.rows, visible };
+		return visible;
+	}
+
+	invalidate(): void {
+		this.lines.invalidate();
+		this.memo = null;
+	}
+}
+
+export interface ChoiceListItem {
+	value: string;
+	label: string;
+	/** What choosing this does, under the label on every row, so the decision reads whole. */
+	description?: string;
+}
+
+export interface ChoiceListOptions {
+	items: ReadonlyArray<ChoiceListItem>;
+	onSelect: (item: ChoiceListItem) => void;
+	onCancel: () => void;
+	/** Rows above the choices: the facts the decision rests on, built at the body's width. */
+	lead?: (width: number) => string[];
+	/** The row the cursor starts on. */
+	initialIndex?: number;
+}
+
+export interface ChoiceList extends Component, RowBudgetedBody {
+	/** The lead changed; the next render rebuilds it. */
+	touch(): void;
+	selected(): ChoiceListItem | null;
+}
+
+/**
+ * A few named choices with their consequences, the one way a small decision
+ * dialog is drawn. The engine's SelectList owns the keys (arrows, Enter, Esc)
+ * and this draws every row through `selectionRow`, label and description
+ * alike, so the context reset and the cwd fallback share one column layout
+ * that keeps a consequence at 72 columns. Rows are memoized on width, cursor
+ * and skin.
+ */
+export function createChoiceList(options: ChoiceListOptions): ChoiceList {
+	const byValue = new Map(options.items.map((item) => [item.value, item]));
+	const list = new SelectList(
+		options.items.map((item): SelectItem => ({ value: item.value, label: item.label })),
+		Math.max(1, options.items.length),
+		DEFAULT_SELECT_THEME,
+	);
+	if (options.initialIndex !== undefined) list.setSelectedIndex(options.initialIndex);
+	list.onSelect = (item: SelectItem): void => {
+		const chosen = byValue.get(item.value);
+		if (chosen !== undefined) options.onSelect(chosen);
+	};
+	list.onCancel = (): void => options.onCancel();
+	let revision = 0;
+	let rows = 0;
+	let memo: { key: string; lines: string[] } | null = null;
+	const selected = (): ChoiceListItem | null => {
+		const current = list.getSelectedItem();
+		return current === null ? null : (byValue.get(current.value) ?? null);
+	};
+	return {
+		render(width: number): string[] {
+			const focused = selected()?.value ?? "";
+			const key = `${width}|${rows}|${focused}|${revision}|${skinEpoch()}`;
+			if (memo?.key === key) return memo.lines;
+			const theme = pancodeTheme();
+			const lay = (describeAll: boolean): string[] => {
+				const lines = [...(options.lead?.(width) ?? [])];
+				if (lines.length > 0) lines.push("");
+				for (const item of options.items) {
+					const focusedRow = item.value === focused;
+					lines.push(
+						...selectionRow(theme, {
+							focused: focusedRow,
+							label: item.label,
+							...(item.description === undefined || !(describeAll || focusedRow) ? {} : { description: item.description }),
+							width,
+						}),
+					);
+				}
+				return lines;
+			};
+			// Short of rows, only the focused choice keeps its consequence under it, the way the settings scope card does.
+			let lines = lay(true);
+			if (rows > 0 && lines.length > rows) lines = lay(false);
+			memo = { key, lines };
+			return lines;
+		},
+		setBodyRows(budget: number): void {
+			rows = Math.max(0, Math.floor(budget));
+		},
+		handleInput: (data: string): void => list.handleInput(data),
+		invalidate(): void {
+			memo = null;
+			list.invalidate();
+		},
+		touch(): void {
+			revision += 1;
+		},
+		selected,
+	};
+}
+
+function brandedTopBorder(label: string, innerWidth: number, tone?: PancodeToken): string {
+	const frame = (text: string): string => pancodeFrame(text, tone ?? "border");
+	const clean = label.replace(/^[┌┐└┘├┤─│\s]+/, "").replace(/[┌┐└┘├┤─│\s]+$/, "");
+	const formatted = clean.length > 0 ? `${GLYPH.rule} ${clean} ` : GLYPH.rule;
+	const clipped =
+		visibleWidth(formatted) > innerWidth ? truncateToWidth(formatted, innerWidth, GLYPH.ellipsis, true) : formatted;
+	const fill = GLYPH.rule.repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
+	const cleanIndex = clipped.indexOf(clean);
+	if (cleanIndex !== -1) {
+		const prefix = clipped.slice(0, cleanIndex);
+		const suffix = clipped.slice(cleanIndex + clean.length);
+		return `${frame(GLYPH.topLeft)}${frame(prefix)}${pancodeTitle(clean, tone)}${frame(suffix)}${frame(fill)}${frame(GLYPH.topRight)}`;
+	}
+	return `${frame(GLYPH.topLeft)}${frame(clipped)}${frame(fill)}${frame(GLYPH.topRight)}`;
+}
+
+/**
+ * What Esc does from where the overlay is right now.
+ *
+ * This used to be derived from whether the overlay committed anything, which
+ * produced `cancel` on half the overlays and `close` on the other half while
+ * neither word described what the key would do. Worse, every list overlay
+ * clears a typed filter on the first Esc and closes on the second, and the
+ * footer said `close` through both. The caller states the action because the
+ * caller is the only thing that knows it.
+ *
+ * `back` is for a submode that returns to the surface that opened it: a
+ * settings submenu, the `/tree` label editor. `back, keeps draft` is the same
+ * move from a text field whose typed text survives it, so the operator knows
+ * leaving the field is not discarding what they wrote.
+ */
+export type OverlayEscVerb =
+	| "close"
+	| "cancel"
+	| "clear filter"
+	| "back"
+	| "back, keeps draft"
+	| "back to list"
+	| "back to edit"
+	| "back to models"
+	| "back to choices"
+	| "back to sections"
+	| "cancel filter"
+	| "close settings";
+
+export interface HintEntry {
+	key: string;
+	verb: string;
+	/**
+	 * A shorter spelling of the same action, tried before any entry is dropped.
+	 * `allow once` becomes `allow` rather than vanishing.
+	 */
+	short?: string;
+	/**
+	 * Overrides `isCriticalHintKey`. A critical entry survives every narrowing
+	 * pass except the last, so a surface can protect a key the default
+	 * classification does not know about, or release one it does.
+	 */
+	critical?: boolean;
+}
+
+/**
+ * The keys a footer may not silently drop.
+ *
+ * `elideHint` used to keep the first and last entry and splice out the middle,
+ * which is a statement about position rather than value: at 40 columns a list
+ * overlay kept `[↑↓] select`, which every terminal user already knows, and
+ * dropped `[Enter] use`, which is the only way to commit. The commit key and
+ * the way out are what a narrow footer is for.
+ */
+function isCriticalHintKey(key: string): boolean {
+	const canonical = canonicalizeKey(key);
+	// `type` joins the commit key and the way out because on a list of a hundred
+	// models, typing is how a reader reaches the row they want at all; the
+	// per-row verbs beside it (refresh, favorite) are conveniences.
+	return canonical === "Esc" || canonical === "Enter" || canonical === "Enter/Space" || canonical === "type";
+}
+
+function isCriticalEntry(entry: HintEntry): boolean {
+	return entry.critical ?? isCriticalHintKey(entry.key);
+}
+
+/** Every label short (`true`), every label full (`false`), or every label short but the Esc entry's (`"keep-esc"`). */
+type HintSpelling = boolean | "keep-esc";
+
+/** Between two `[key] verb` entries of a key rail; the rail is split on the same string it is joined with. */
+const HINT_SEP = ` ${GLYPH.sep} `;
+
+function renderHintEntries(entries: ReadonlyArray<HintEntry>, short: HintSpelling): string {
+	return entries
+		.map((entry) => {
+			const shortened = short === true || (short === "keep-esc" && canonicalizeKey(entry.key) !== "Esc");
+			return `[${canonicalizeKey(entry.key)}] ${shortened ? (entry.short ?? entry.verb) : entry.verb}`;
+		})
+		.join(HINT_SEP);
+}
+
+/**
+ * Fit a hint to `maxWidth` by, in order: using every full label; using every
+ * short label; then keeping what a narrow rail is for. The commit key leads, the
+ * way out follows it, and droppable entries take what room is left, the rightmost
+ * first because `buildHint` lists the guessable navigation keys on the left.
+ * Critical entries go only when they cannot fit together, left to right, so the
+ * way out is the last thing standing.
+ */
+export function fitHintEntries(entries: ReadonlyArray<HintEntry>, maxWidth: number): string {
+	if (entries.length === 0) return "";
+	const { kept, short } = fitHintEntryList(entries, maxWidth);
+	return renderHintEntries(kept, short);
+}
+
+/**
+ * The entries a rail of `maxWidth` keeps, in the order it draws them, and whether
+ * it keeps them in their short spelling. A body that must show every key the rail
+ * cannot draws the complement, so the rail and the body are fitted by the same
+ * rule and never disagree about which key went where.
+ */
+export function fitHintEntryList(
+	entries: ReadonlyArray<HintEntry>,
+	maxWidth: number,
+): { kept: HintEntry[]; short: HintSpelling } {
+	if (entries.length === 0) return { kept: [], short: false };
+	// Esc keeps its whole verb longest, because it is the key whose word says
+	// what backing out costs (`cancel interview`, `discard text`); the keys
+	// beside it give up their long spellings first.
+	for (const short of [false, "keep-esc", true] as const) {
+		if (visibleWidth(renderHintEntries(entries, short)) <= maxWidth) return { kept: [...entries], short };
+	}
+	const fits = (list: ReadonlyArray<HintEntry>): boolean => visibleWidth(renderHintEntries(list, true)) <= maxWidth;
+	const isEsc = (entry: HintEntry): boolean => canonicalizeKey(entry.key) === "Esc";
+	const critical = entries.filter(isCriticalEntry);
+	const required = [...critical.filter((entry) => !isEsc(entry)), ...critical.filter(isEsc)];
+	while (required.length > 1 && !fits(required)) required.shift();
+	const extras: HintEntry[] = [];
+	for (const entry of [...entries].reverse()) {
+		if (isCriticalEntry(entry)) continue;
+		// The first that does not fit ends it, so a short key listed earlier never outlives a later one (the terms key).
+		if (!fits([...required, entry, ...extras])) break;
+		extras.unshift(entry);
+	}
+	// The way out closes the row wherever it is read, so a kept extra never lands after it.
+	const kept = [...required.filter((entry) => !isEsc(entry)), ...extras, ...required.filter(isEsc)];
+	// One entry always survives, so a footer never renders empty.
+	return { kept: kept.length > 0 ? kept : [entries.at(-1) as HintEntry], short: true };
+}
+
+/**
+ * The one word for narrowing a list by typing. `/help` said `filter`, `/model`
+ * and `/resume` said `search`, and they are the same gesture, so a reader who
+ * learned one had to relearn it in the next overlay.
+ */
+export const FILTER_HINT: HintEntry = { key: "type", verb: "filter" };
+
+/** Every way the arrow pair is spelled, the glyph table's own included, reads as the one arrow-pair key. */
+function canonicalizeKey(key: string): string {
+	const trimmed = key.trim();
+	if (trimmed === "R") return "R";
+	const lower = trimmed.toLowerCase();
+	if (
+		lower === "up/down" ||
+		lower === "updown" ||
+		lower === `${UNICODE_GLYPH.up}/${UNICODE_GLYPH.down}` ||
+		lower === "up/down/j/k" ||
+		lower === UNICODE_GLYPH.upDown ||
+		trimmed === GLYPH.upDown
+	)
+		return GLYPH.upDown;
+	if (lower === "enter/space") return "Enter/Space";
+	if (lower === "enter") return "Enter";
+	if (lower === "esc" || lower === "escape") return "Esc";
+	if (lower === "space") return "Space";
+	if (lower === "tab") return "Tab";
+	if (lower === "r") return "r";
+	if (lower === "type") return "type";
+	return keyName(trimmed);
+}
+
+export function buildHint(entries: ReadonlyArray<HintEntry>, esc: OverlayEscVerb = "close"): string {
+	const finalEntries = [
+		...entries.map((e) => ({ key: canonicalizeKey(e.key), verb: e.verb })),
+		{ key: "Esc", verb: esc },
+	];
+	return finalEntries.map((e) => `[${e.key}] ${e.verb}`).join(HINT_SEP);
+}
+
+/**
+ * Build a hint that narrows itself, for `showPancodeOverlayFrame`'s `footerHint`.
+ *
+ * The returned function takes the box's inner width, which is what the frame
+ * hands a function hint, and subtracts the three columns the bottom border
+ * spends on `─ ` and the trailing space.
+ *
+ * An overlay whose stop key must outrank its close key states that here rather
+ * than hand-writing width tiers, which is what the permission overlay used to
+ * do because the positional elider would eat `[s] stop turn`.
+ */
+export function buildResponsiveHint(
+	entries: ReadonlyArray<HintEntry>,
+	esc: OverlayEscVerb | HintEntry | null = "close",
+): (innerWidth: number) => string {
+	const escEntry: HintEntry | null = esc === null ? null : typeof esc === "string" ? { key: "Esc", verb: esc } : esc;
+	const all = escEntry ? [...entries, escEntry] : [...entries];
+	return (innerWidth: number): string => fitHintEntries(all, innerWidth - 3);
+}
+
+/**
+ * Narrow an already-joined hint string, for the callers that pass `buildHint`'s
+ * output straight through. Parsing `[Key] verb` back out is lossy about `short`
+ * labels but recovers the key, which is all the critical-key classification
+ * needs, so a plain-string overlay gets the same protection as a structured one.
+ */
+function fitHint(hint: string, maxCleanWidth: number): string {
+	const parts = hint.split(HINT_SEP);
+	// Two entries narrow too: a fixed `[Enter] fork after this reply · [Esc] close`
+	// used to be cut at the edge with both keys inside the cut, so a 40-column
+	// rail named neither. Narrowed, the way out is what stands.
+	if (parts.length <= 1 || (parts.length === 2 && visibleWidth(hint) <= maxCleanWidth)) return hint;
+	const entries: HintEntry[] = parts.map((part) => {
+		const match = /^\[([^\]]+)\] ([\s\S]+)$/u.exec(part);
+		// A part that is not `[Key] verb` carries no key to classify, so it is
+		// droppable and rendered verbatim by giving it an empty key spelling.
+		if (!match) return { key: "", verb: part, critical: false };
+		return { key: match[1] ?? "", verb: match[2] ?? "" };
+	});
+	const rendered = fitHintEntries(entries, maxCleanWidth);
+	// `fitHintEntries` re-spells `[Key] verb`; an unparsed part would come back
+	// as `[] text`, so those are restored to the text they arrived as.
+	return rendered.replace(/\[\] /gu, "");
+}
+
+function brandedBottomBorder(innerWidth: number, hint?: string, tone?: PancodeToken): string {
+	const frame = (text: string): string => pancodeFrame(text, tone ?? "border");
+	if (!hint || hint.trim().length === 0) {
+		return `${frame(GLYPH.bottomLeft)}${frame(GLYPH.rule.repeat(innerWidth))}${frame(GLYPH.bottomRight)}`;
+	}
+	let clean = hint.trim();
+	const maxCleanWidth = innerWidth - 3;
+	if (clean.includes(HINT_SEP) && visibleWidth(`${GLYPH.rule} ${clean} `) > innerWidth) {
+		clean = fitHint(clean, maxCleanWidth);
+	}
+	const formatted = `${GLYPH.rule} ${clean} `;
+	const clipped =
+		visibleWidth(formatted) > innerWidth ? truncateToWidth(formatted, innerWidth, GLYPH.ellipsis, true) : formatted;
+	const fill = GLYPH.rule.repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
+	const cleanIndex = clipped.indexOf(clean);
+	if (cleanIndex !== -1) {
+		const prefix = clipped.slice(0, cleanIndex);
+		const suffix = clipped.slice(cleanIndex + clean.length);
+		return `${frame(GLYPH.bottomLeft)}${frame(prefix)}${pancodeTheme().fg("keyboardHint", clean)}${frame(suffix)}${frame(fill)}${frame(GLYPH.bottomRight)}`;
+	}
+	return `${frame(GLYPH.bottomLeft)}${frame(clipped)}${frame(fill)}${frame(GLYPH.bottomRight)}`;
+}
+
+export function formatRuntimeResolutionDiagnostic(diagnostic: RuntimeResolutionDiagnostic): string {
+	return `${diagnostic.severity}: ${diagnostic.code}: ${diagnostic.message}`;
+}
+
+/**
+ * Map a diagnostic's severity to its semantic token so a warning renders amber
+ * and only a true error renders red. Shared by the model overlay's detail rows
+ * and the targets hub's error rail so both surfaces color severity identically.
+ */
+export function diagnosticSeverityToken(severity: RuntimeResolutionDiagnostic["severity"]): PancodeToken {
+	return severity === "error" ? "error" : severity === "warning" ? "warning" : "body";
+}
+
+export type FrameAlign = "left" | "center" | "right";
+
+/**
+ * Trim a body to the rows the box has, keeping the count of what was dropped.
+ *
+ * A box taller than the terminal used to be cut off at the bottom by the
+ * engine, which takes the top of an overlay and discards the rest. At 40x12 the
+ * memory overlay is nineteen rows, so what went missing was the bottom border
+ * and the `[Esc] close` hint: the one row that tells an operator how to get out
+ * of a modal that has taken their keyboard. Losing body rows instead keeps the
+ * way out on screen.
+ */
+function fitBody(lines: ReadonlyArray<string>, rowBudget: number, contentWidth: number): ReadonlyArray<string> {
+	if (rowBudget <= 0) return lines;
+	const bodyBudget = Math.max(1, rowBudget - 2);
+	if (lines.length <= bodyBudget) return lines;
+	const kept = lines.slice(0, bodyBudget - 1);
+	const hidden = lines.length - kept.length;
+	// The marker takes the last kept row's place, so it always stands for two rows or more.
+	const marker = `${GLYPH.ellipsis} ${hidden} more rows`;
+	return [...kept, pancodeTheme().fg("positionCount", truncateToWidth(marker, contentWidth, "", true))];
+}
+
+/**
+ * A body that lays itself out for the rows the frame has. `fitBody` can only cut
+ * a body that is too tall, and a cut card has no key that reaches what it hid
+ * (BT-005), so a body that can scroll takes the budget and windows itself.
+ * Zero means the budget is not known yet.
+ */
+export interface RowBudgetedBody {
+	setBodyRows(rows: number): void;
+}
+
+export function isRowBudgeted(child: Component): child is Component & RowBudgetedBody {
+	return typeof (child as Partial<RowBudgetedBody>).setBodyRows === "function";
+}
+
+/**
+ * A body that is told how many cells the rail under it has for keys, so it can
+ * draw in its own rows every key the rail will drop. The rail at 60 columns
+ * holds four short entries; a row with six keys and a way out cannot be
+ * discovered from the rail alone.
+ */
+export interface RailAwareBody {
+	setRailRoom(cells: number): void;
+}
+
+function isRailAware(child: Component): child is Component & RailAwareBody {
+	return typeof (child as Partial<RailAwareBody>).setRailRoom === "function";
+}
+
+/**
+ * A body that can ask the dock for more than the shared height while the
+ * operator has asked it for more, such as an opened run detail. The dock then
+ * grants up to `dockGrowthRows` and returns to its shared height when it stops asking.
+ */
+export interface GrowableBody {
+	wantsGrowth(): boolean;
+}
+
+function isGrowable(child: Component): child is Component & GrowableBody {
+	return typeof (child as Partial<GrowableBody>).wantsGrowth === "function";
+}
+
+export class PancodeOverlayFrame implements Component {
+	/**
+	 * Rows the box may occupy, or zero while unknown.
+	 *
+	 * `Component.render` is handed a width and nothing else, so the frame learns
+	 * its height budget from the engine's `visible` predicate, which is called
+	 * with the live terminal size immediately before the render pass that
+	 * composites this overlay.
+	 */
+	private rowBudget = 0;
+	private renderedSkinEpoch = skinEpoch();
+	private syncSkin(): void {
+		if (this.renderedSkinEpoch === skinEpoch()) return;
+		this.renderedSkinEpoch = skinEpoch();
+		this.invalidate();
+	}
+
+	/**
+	 * Last rendered box, keyed by everything that shapes it. `childLines` is
+	 * compared by array identity: a child that rebuilds its rows returns a fresh
+	 * array and correctly misses, and one that serves a cache returns the same
+	 * array and correctly hits.
+	 */
+	private cachedRender:
+		| {
+				width: number;
+				rowBudget: number;
+				childLines: string[];
+				title: string;
+				hint: string | undefined;
+				tone: PancodeToken | undefined;
+				lines: string[];
+		  }
+		| undefined;
+
+	constructor(
+		private readonly child: Component,
+		private readonly title: string | ((context?: DockTitleContext) => string),
+		/**
+		 * A function hint is given the box's inner width so an overlay whose keys
+		 * matter can shorten its own labels rather than let `elideHint` drop the
+		 * middle entry, which is how the permission overlay lost `[s] stop turn`
+		 * at 40 columns while the key still worked.
+		 */
+		private readonly footerHint?: string | ((innerWidth: number) => string | undefined),
+		/** Box width in columns. Zero fills the row it is given. */
+		private readonly boxWidth = 0,
+		private readonly align: FrameAlign = "center",
+		/**
+		 * A function tone is re-read per frame, so one overlay can carry the
+		 * decision treatment only while it is actually holding a decision.
+		 */
+		private readonly tone?: OverlayTone,
+		private readonly fullscreen = false,
+		private readonly awaitingInput?: boolean | (() => boolean),
+	) {}
+
+	setRowBudget(rows: number): void {
+		this.rowBudget = Math.max(0, Math.floor(rows));
+	}
+
+	/** The composer says how many cells its rail has for this frame's keys, before the body is laid out. */
+	setRailRoom(cells: number): void {
+		if (isRailAware(this.child)) this.child.setRailRoom(Math.max(0, Math.floor(cells)));
+	}
+
+	render(width: number): string[] {
+		this.syncSkin();
+		const boxWidth = Math.max(5, Math.min(this.boxWidth > 0 ? this.boxWidth : width, width));
+		const contentWidth = Math.max(1, boxWidth - 4);
+		if (isRowBudgeted(this.child)) this.child.setBodyRows(this.rowBudget > 0 ? Math.max(1, this.rowBudget - 2) : 0);
+		const childLines = this.child.render(contentWidth);
+		const titleText = typeof this.title === "function" ? this.title() : this.title;
+		const hint = typeof this.footerHint === "function" ? this.footerHint(contentWidth + 2) : this.footerHint;
+		const tone = resolveTone(this.tone);
+		// pi-tui has no dirty-component model, so a modal re-derived both borders,
+		// re-fit the hint row, and re-padded every body row on every frame for as
+		// long as it stayed open: 0.4 ms at 12 rows, 1.3 ms at 40. A child that
+		// returns its cached array (Text and the queue panel both do) short-circuits
+		// the whole frame through the identity check.
+		const cached = this.cachedRender;
+		if (
+			cached !== undefined &&
+			cached.width === width &&
+			cached.rowBudget === this.rowBudget &&
+			cached.childLines === childLines &&
+			cached.title === titleText &&
+			cached.hint === hint &&
+			cached.tone === tone
+		) {
+			return cached.lines;
+		}
+		const side = pancodeFrame(GLYPH.rail, tone ?? "border");
+		const body = fitBody(childLines, this.rowBudget, contentWidth).map((line) => pancodeTheme().base("menuOption", line));
+		if (this.fullscreen) {
+			while (body.length < Math.max(0, this.rowBudget - 2)) body.push("");
+		}
+		const boxLines = this.fullscreen
+			? [
+					padAnsi(`  ${pancodeTitle(titleText, tone)}`, boxWidth),
+					...body.map((line) => `  ${padAnsi(line, contentWidth)}  `),
+					padAnsi(`  ${pancodeTheme().fg("keyboardHint", hint ?? "")}`, boxWidth),
+				]
+			: [
+					brandedTopBorder(titleText, contentWidth + 2, tone),
+					...body.map((line) => `${side} ${padAnsi(line, contentWidth)} ${side}`),
+					brandedBottomBorder(contentWidth + 2, hint, tone),
+				];
+		const slack = Math.max(0, width - boxWidth);
+		const lines = ((): string[] => {
+			if (slack === 0) return boxLines;
+			const leading = this.align === "left" ? 0 : this.align === "right" ? slack : Math.floor(slack / 2);
+			const lead = " ".repeat(leading);
+			const trail = " ".repeat(slack - leading);
+			return boxLines.map((line) => `${lead}${line}${trail}`);
+		})();
+		this.cachedRender = { width, rowBudget: this.rowBudget, childLines, title: titleText, hint, tone, lines };
+		return lines;
+	}
+
+	/**
+	 * The dock path: body rows only, fitted to `bodyRows` and padded to
+	 * `contentWidth`. The composer draws the title and the hint on its own rails,
+	 * so every command and submenu occupies the same viewport.
+	 */
+	private dockContext: string | undefined;
+	private cachedDock: { contentWidth: number; bodyRows: number; childLines: string[]; lines: string[] } | undefined;
+
+	renderDockBody(contentWidth: number, bodyRows: number): string[] {
+		this.syncSkin();
+		const context = pancodeTheme().context;
+		const key = `${context.surface}:${context.mode}`;
+		if (this.dockContext !== key) {
+			this.child.invalidate();
+			this.cachedDock = undefined;
+			this.dockContext = key;
+		}
+		const safeWidth = Math.max(1, contentWidth);
+		const rows = Math.max(1, bodyRows);
+		this.rowBudget = rows + 2;
+		if (isRowBudgeted(this.child)) this.child.setBodyRows(rows);
+		const childLines = withThemeContext({ surface: "composerDock", mode: pancodeTheme().context.mode }, () =>
+			this.child.render(safeWidth),
+		);
+		const cached = this.cachedDock;
+		if (
+			cached !== undefined &&
+			cached.contentWidth === safeWidth &&
+			cached.bodyRows === rows &&
+			cached.childLines === childLines
+		) {
+			return cached.lines;
+		}
+		const lines = fitRows(fitBody(childLines, rows + 2, safeWidth), safeWidth, rows);
+		this.cachedDock = { contentWidth: safeWidth, bodyRows: rows, childLines, lines };
+		return lines;
+	}
+
+	dockTitle(context?: DockTitleContext): string {
+		return typeof this.title === "function" ? this.title(context) : this.title;
+	}
+
+	/**
+	 * The hint fitted for a rail of `width`. A function hint narrows itself from
+	 * the inner width it is given; a plain string is narrowed here by the same
+	 * critical-key rule the box border used, so a narrow rail keeps Enter and
+	 * Esc and drops the conveniences.
+	 */
+	dockHint(width: number): string | undefined {
+		// The rail spends one space on each side of the hint and one cell on its tail.
+		const maxWidth = Math.max(1, width - 4);
+		const hint = typeof this.footerHint === "function" ? this.footerHint(maxWidth + 3) : this.footerHint;
+		if (hint === undefined || hint.trim().length === 0) return undefined;
+		const clean = hint.trim();
+		if (visibleWidth(clean) <= maxWidth) return clean;
+		const fitted = clean.includes(HINT_SEP) ? fitHint(clean, maxWidth) : clean;
+		return visibleWidth(fitted) <= maxWidth ? fitted : truncateToWidth(fitted, maxWidth, GLYPH.ellipsis, false);
+	}
+
+	dockTone(): PancodeToken | undefined {
+		return resolveTone(this.tone);
+	}
+
+	dockAwaitingInput(): boolean {
+		return typeof this.awaitingInput === "function" ? this.awaitingInput() : this.awaitingInput === true;
+	}
+
+	dockWantsGrowth(): boolean {
+		return isGrowable(this.child) && this.child.wantsGrowth();
+	}
+
+	get keyboardScope() {
+		return keyboardOwner(this.child).keyboardScope;
+	}
+	get ownsCtrlC() {
+		return keyboardOwner(this.child).ownsCtrlC;
+	}
+	undoInput(): boolean {
+		return keyboardOwner(this.child).undoInput?.() ?? false;
+	}
+
+	handleInput(data: string): void {
+		this.child.handleInput?.(data);
+	}
+
+	invalidate(): void {
+		this.cachedRender = undefined;
+		this.cachedDock = undefined;
+		this.child.invalidate?.();
+	}
+}
+
+/**
+ * Show a modal surface in the dock.
+ *
+ * The engine still gets an overlay, because its overlay stack is what owns
+ * focus, input routing and the nested-modal order, but that overlay renders no
+ * rows. The frame itself is registered with the dock and the composer draws
+ * it inline between its rails, so the transcript above keeps its rows, its
+ * scrollback and its mouse selection, and every modal opens in the one place
+ * the operator is already looking. Height is the dock's fixed budget; a body
+ * that can scroll takes it through `RowBudgetedBody` or the `visible`
+ * callback, and anything else is cut with a row count.
+ *
+ * This is also where the modal marker is claimed and released: the same call
+ * that takes the keyboard takes the marker, so the two cannot drift.
+ */
+export function showPancodeOverlayFrame(
+	tui: TUI,
+	child: Component,
+	options: OverlayOptions & {
+		title: string | ((context?: DockTitleContext) => string);
+		footerHint?: string | ((innerWidth: number) => string | undefined);
+		/** Border and title token; omitted leaves the informational frame. */
+		tone?: OverlayTone;
+		/**
+		 * Stable id for the modal marker, published on the terminal title while
+		 * this overlay owns the keys. Required, and deliberately not defaulted
+		 * from `title`: several titles carry a session id, a decision
+		 * classification, or the active tab, and an id that moves with the
+		 * content is not an identifier. Use `modalMarkerId(...)` where the title
+		 * really is fixed and surface-specific.
+		 */
+		markerId: string;
+		/** Formerly covered the viewport; the dock ignores it. */
+		fullscreen?: boolean;
+		/** Keep the composer's draft editable beneath the body (the permission card). */
+		keepComposer?: boolean;
+		/** An approval: the editor's rails take the attention tone while it is open. */
+		approval?: boolean;
+		/** Size the dock to the body between the compact floor and half the terminal (option-heavy lists). */
+		adaptiveHeight?: boolean;
+		/** Only unanswered decisions receive the small attention cue. */
+		awaitingInput?: boolean | (() => boolean);
+		/** The body states the run's lifecycle itself, so no live-work line joins it. */
+		ownsStatus?: boolean;
+	},
+): OverlayHandle {
+	const {
+		title,
+		footerHint,
+		tone,
+		visible,
+		markerId,
+		keepComposer,
+		adaptiveHeight,
+		awaitingInput,
+		approval,
+		ownsStatus,
+		...overlayOptions
+	} = options;
+	const frame = new PancodeOverlayFrame(child, title, footerHint, 0, "left", tone, false, awaitingInput);
+	const entry = dockMount(
+		tui,
+		frame,
+		keepComposer === true,
+		adaptiveHeight === true,
+		approval === true,
+		ownsStatus === true,
+		markerId,
+	);
+	// The engine keeps this overlay for focus and input routing only. It paints
+	// nothing: the composer draws the frame inline, in normal flow, so the
+	// transcript keeps its rows and its mouse selection.
+	const proxy: Component & { keyboardScope?: unknown; ownsCtrlC?: unknown; undoInput(): boolean } = {
+		render: () => [],
+		invalidate: () => frame.invalidate(),
+		handleInput: (data: string) => frame.handleInput(data),
+		get keyboardScope() {
+			return frame.keyboardScope;
+		},
+		get ownsCtrlC() {
+			return frame.ownsCtrlC;
+		},
+		undoInput: () => frame.undoInput(),
+	};
+	const handle = tui.showOverlay(proxy, {
+		...overlayOptions,
+		anchor: "bottom-left",
+		width: "100%",
+		margin: 0,
+		visible: (termWidth) => {
+			frame.setRowBudget(dockBodyRows(tui) + 2);
+			// A body that lays itself out from the terminal height gets the dock's
+			// height instead, so it windows itself to the rows it will actually get.
+			return visible ? visible(termWidth, dockViewportRows(tui)) : true;
+		},
+	});
+	const marker = enterModal(markerId, modalMarkerSink(tui));
+	return {
+		hide(): void {
+			marker.release();
+			dockUnmount(tui, entry);
+			handle.hide();
+		},
+		setHidden(hidden: boolean): void {
+			marker.setActive(!hidden);
+			entry.hidden = hidden;
+			if (!hidden) dockRaise(tui, entry);
+			handle.setHidden(hidden);
+		},
+		isHidden: (): boolean => handle.isHidden(),
+		focus(): void {
+			marker.raise();
+			dockRaise(tui, entry);
+			handle.focus();
+		},
+		// A pure passthrough on purpose. The engine hands focus to the next
+		// visible capturing overlay, which is another modal, so the stack is
+		// unchanged; the surface that gives the keyboard back to the composer
+		// does it by hiding, which `setHidden` already reports.
+		unfocus: (unfocusOptions?: OverlayUnfocusOptions): void =>
+			unfocusOptions ? handle.unfocus(unfocusOptions) : handle.unfocus(),
+		isFocused: (): boolean => handle.isFocused(),
+		getBounds: () => handle.getBounds(),
+	};
+}
+
+/**
+ * The title sink behind a TUI, or null when there is none.
+ *
+ * The engine's `Terminal` declares `setTitle`, but the stub TUIs the overlay
+ * tests mount against are structural casts that carry only what the overlay
+ * under test reads. Probing for the method keeps the marker inert on those
+ * rather than throwing inside a render path.
+ */
+function modalMarkerSink(tui: TUI): ModalMarkerSink | null {
+	const terminal: Partial<ModalMarkerSink> | undefined = tui.terminal;
+	return typeof terminal?.setTitle === "function" ? (terminal as ModalMarkerSink) : null;
+}

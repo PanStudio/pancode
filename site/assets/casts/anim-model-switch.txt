@@ -1,0 +1,167 @@
+Switching models in PanCode
+Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+
+== ready
+
+
+
+
+
+                           P  PanCode 0.9.0-dev · 765279a · Systems software for coding agents
+                          Ask Panos how to use or extend PanCode.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Ask Panos…
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  P  default · calibration-lab │ ✓ ready                                                 gpt-6-luna
+
+== models
+
+
+
+
+
+
+ P  PanCode 0.9.0-dev · 765279a
+
+
+
+
+
+
+━ Models ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  all · 26 of 26 models · 1 target · ✓ current copilot · gpt-6-luna
+      model                  ctx  caps  target   runtime
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+  ❯ ✓ gpt-6-luna            272k  TRV   copilot  GitHub Copilot
+      auto                     ?  T     copilot  GitHub Copilot
+      claude-sonnet-5.5     200k  TRV   copilot  GitHub Copilot
+      claude-sonnet-5       200k  TRV   copilot  GitHub Copilot
+      claude-opus-5.5       200k  TRV   copilot  GitHub Copilot
+      claude-opus-4.8-fast  200k  TRV   copilot  GitHub Copilot
+      claude-haiku-5.5      100k  TRV   copilot  GitHub Copilot
+      claude-haiku-4.5      136k  TV    copilot  GitHub Copilot
+      gpt-6.1-sol           272k  TRV   copilot  GitHub Copilot
+      gpt-6-sol             272k  TRV   copilot  GitHub Copilot
+  1–10 of 26 models · PgUp/PgDn page
+  ✓ copilot · gpt-6-luna · healthy · in use, its connection's default · no sign-in needed
+━━━━━━━━━━━━━━━━━ [type] filter · [Enter] use · [s] save · [Tab] focus/all · [*] fav · [Esc] close ━
+  P  default · calibration-lab · main │ ✓ ready                         ctx 272k · low · gpt-6-luna
+
+== sonnet
+
+
+
+
+
+
+
+
+
+
+
+
+
+ P  PanCode 0.9.0-dev · 765279a
+
+
+
+
+
+
+
+
+
+
+
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Ask Panos…  ? keys · / commands
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  P  default · calibration-lab · main │ ✓ ready              ctx 200k · low · claude-sonnet-5.5 · ?
+
+== gemini
+
+
+
+
+
+
+
+
+
+
+
+
+
+ P  PanCode 0.9.0-dev · 765279a
+
+
+
+
+
+
+
+
+
+
+
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Ask Panos…  ? keys · / commands
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  P  default · calibration-lab · main │ ✓ ready                 ctx 200k · low · gemini-4-argon · ?
+
+== back
+
+
+
+
+
+
+
+
+
+
+
+
+
+ P  PanCode 0.9.0-dev · 765279a
+
+
+
+
+
+
+
+
+
+
+
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Ask Panos…  ? keys · / commands
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  P  default · calibration-lab · main │ ✓ ready                     ctx 272k · low · gpt-6-luna · ?

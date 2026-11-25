@@ -1,0 +1,155 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { test } from "node:test";
+import { callSettlementFromMessage } from "../../src/domains/telemetry/call-facts.js";
+import { completeEngineText, streamSimple } from "../../src/engine/ai.js";
+import type { EngineModel } from "../../src/engine/types.js";
+import { sideQuestionUsage } from "../../src/session-control/side-question.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+for (const api of ["openai-responses", "anthropic-messages"] as const) {
+	test(`${api}: normalize on the wire once and preserve cache buckets through usage stores`, async () => {
+		const env = await isolatePancodeEnv("pancode-cache-usage-");
+		const server = createServer(async (request, response) => {
+			let body = "";
+			for await (const chunk of request) body += String(chunk);
+			// Astra r1-6: a Responses usage without input_tokens_details is an omitted count, not a cold read.
+			const omitCache = body.includes("Omit the cache count.");
+			const omitWrite = body.includes("Omit the write count.");
+			response.writeHead(200, { "content-type": "text/event-stream" });
+			const send = (value: { type: string; [key: string]: unknown }) =>
+				response.write(`event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`);
+			if (api === "openai-responses") {
+				send({
+					type: "response.completed",
+					response: {
+						id: "fixture",
+						model: "fixture",
+						status: "completed",
+						output: [],
+						usage: {
+							input_tokens: 10000,
+							output_tokens: 100,
+							total_tokens: 10100,
+							...(omitCache
+								? {}
+								: {
+										input_tokens_details: { cached_tokens: 6000, ...(omitWrite ? {} : { cache_write_tokens: 2000 }) },
+									}),
+						},
+					},
+				});
+			} else {
+				send({
+					type: "message_start",
+					message: {
+						id: "fixture",
+						model: "fixture",
+						role: "assistant",
+						type: "message",
+						content: [],
+						stop_reason: null,
+						usage: {
+							input_tokens: 2000,
+							output_tokens: 0,
+							cache_read_input_tokens: 6000,
+							cache_creation_input_tokens: 2000,
+							cache_creation: { ephemeral_5m_input_tokens: 1500, ephemeral_1h_input_tokens: 500 },
+						},
+					},
+				});
+				send({
+					type: "message_delta",
+					delta: { stop_reason: "end_turn", stop_sequence: null },
+					usage: { output_tokens: 100 },
+				});
+				send({ type: "message_stop" });
+			}
+			response.end();
+		});
+		server.listen(0, "127.0.0.1");
+		await once(server, "listening");
+		const address = server.address();
+		ok(address && typeof address !== "string");
+		const model: EngineModel = {
+			api,
+			provider: api === "anthropic-messages" ? "anthropic" : "openai",
+			id: "fixture",
+			name: "fixture",
+			baseUrl: `http://127.0.0.1:${address.port}`,
+			reasoning: false,
+			input: ["text"],
+			contextWindow: 32000,
+			maxTokens: 1000,
+			cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+		};
+		try {
+			const assistant = await streamSimple(
+				model,
+				{ systemPrompt: "Preserve authority.", messages: [{ role: "user", content: "Inspect fixture.", timestamp: 0 }] },
+				{ apiKey: "fixture", maxTokens: 100, cacheRetention: "long" },
+			).result();
+			strictEqual(assistant.stopReason, "stop", assistant.errorMessage);
+			const usage = assistant.usage;
+			deepStrictEqual(
+				[usage.input, usage.cacheRead, usage.cacheWrite, usage.output, usage.totalTokens],
+				[2000, 6000, 2000, 100, 10100],
+			);
+			// PV-8: Anthropic's cache_read_input_tokens is a sent count too, so a keepalive read of zero is a miss.
+			strictEqual(usage.cacheReadField, "sent");
+			if (api === "openai-responses") strictEqual(usage.cacheWriteField, "sent");
+			const long = api === "anthropic-messages" ? 500 : undefined;
+			strictEqual(usage.cacheWrite1h, long);
+			const expectedCost = (2000 * 3 + 6000 * 0.3 + (2000 - (long ?? 0)) * 3.75 + (long ?? 0) * 6 + 100 * 15) / 1e6;
+			ok(Math.abs(usage.cost.total - expectedCost) < 1e-12);
+			const completion = await completeEngineText({
+				model,
+				apiKey: "fixture",
+				systemPrompt: "Preserve authority.",
+				userPrompt: "Inspect fixture.",
+				thinkingLevel: "off",
+				maxTokens: 100,
+				signal: new AbortController().signal,
+				timeoutMs: 5000,
+			});
+			strictEqual(completion.usage.cacheWrite1h, long);
+			strictEqual(completion.usage.costUsd, usage.cost.total);
+			const side = sideQuestionUsage(usage);
+			ok(side);
+			strictEqual(side.cacheWrite1h, long);
+			strictEqual(side.totalTokens, 10100);
+			if (api === "openai-responses") {
+				const omitted = await streamSimple(
+					model,
+					{ messages: [{ role: "user", content: "Omit the cache count.", timestamp: 0 }] },
+					{ apiKey: "fixture", maxTokens: 100 },
+				).result();
+				deepStrictEqual([omitted.usage.cacheRead, omitted.usage.cacheReadField], [0, "omitted"]);
+				// Pi subtracts an omitted write count as 0, so the fresh input may still hold writes; the read and the
+				// provider's total stay measured.
+				const noWrite = await streamSimple(
+					model,
+					{ messages: [{ role: "user", content: "Omit the write count.", timestamp: 0 }] },
+					{ apiKey: "fixture", maxTokens: 100 },
+				).result();
+				const facts = callSettlementFromMessage(noWrite, "none").usage;
+				deepStrictEqual(
+					[facts?.input.kind, facts?.cacheWrite.kind, facts?.cacheRead, facts?.total],
+					[
+						"unknown",
+						"unknown",
+						{ kind: "measured", value: 6000, source: "provider" },
+						{ kind: "measured", value: 10100, source: "provider" },
+					],
+				);
+			}
+		} finally {
+			server.closeAllConnections();
+			await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+			env.restore();
+		}
+	});
+}

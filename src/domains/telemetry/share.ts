@@ -1,0 +1,1192 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { createHmac, randomBytes } from "node:crypto";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
+import type { Static } from "typebox";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import { canonicalJsonStrict } from "../../core/canonical-json.js";
+import { cwdHash } from "../../core/cwd-hash.js";
+import { sha256Hex } from "../../core/hash.js";
+import { safeResourceWrite, safeResourceWriteAsync } from "../../core/safe-resource-write.js";
+import type { ContentClass, Tier } from "../../core/telemetry/enums.js";
+import type { SegmentHeader, TelemetryRecord } from "../../core/telemetry/envelope.js";
+import { makeTelemetryRecord } from "../../core/telemetry/envelope.js";
+import { ShareProfileSchema } from "../../core/telemetry/host-schemas.js";
+import type { TelemetryChain } from "../../core/telemetry/segment.js";
+import {
+	chainTelemetryLine,
+	EMPTY_TELEMETRY_CHAIN,
+	encodeTelemetryLine,
+	scanTelemetrySegment,
+	telemetryChainHead,
+} from "../../core/telemetry/segment.js";
+import { createRedactionTally } from "../evidence/redact.js";
+import { CONTENT_SUBJECTS, collectRefs, redactTelemetryValue } from "./objects.js";
+import {
+	isTelemetryJournalFile,
+	TELEMETRY_BUNDLE_FILE,
+	TELEMETRY_INSTALL_ID,
+	TELEMETRY_JOURNAL_FILE,
+	telemetryImportedStateDir,
+	telemetryInstallPath,
+	telemetryProcessDirectory,
+	telemetryRunDirectory,
+	telemetryRunsDirectory,
+	telemetrySessionDirectory,
+	telemetrySessionsDirectory,
+} from "./paths.js";
+import type { ScopeBundleManifest, ScopeObjectEntry, SealVerdict, TelemetryScopeFiles } from "./seal.js";
+import {
+	describeSealMismatch,
+	readTelemetryScopeFiles,
+	readTelemetryScopeFilesSync,
+	SEAL_EVENTS,
+	SHARE_SEAL_EVENT,
+	scopeBundleManifest,
+	verifyTelemetryScope,
+	walkTelemetryChain,
+} from "./seal.js";
+import type { ShareArchiveEntry } from "./share-archive.js";
+import {
+	MAX_SHARE_ARCHIVE_BYTES,
+	packTelemetryArchive,
+	telemetryArchiveSize,
+	unpackTelemetryArchive,
+} from "./share-archive.js";
+import type { AnonKind, ProjectionTally, ReadableKind, ShareProjection } from "./share-projection.js";
+import {
+	conformingAnonymous,
+	createProjectionTally,
+	projectionFor,
+	projectSharedContext,
+	projectSharedObject,
+	projectSharedPayload,
+} from "./share-projection.js";
+
+/**
+ * `telemetry share` and `telemetry import` (#434). A share filters sealed scope bundles, or a live scope's validated
+ * snapshot, through a named profile, re-applies secret redaction to every record and object it keeps, reseals each
+ * filtered scope with `share.sealed` over exactly the bytes it carries, and packs them into one tar.gz with a manifest
+ * naming the profile, the source's random install id and the PanCode version. Nothing is uploaded. An import verifies
+ * every bundle and places it under `<stateDir>/telemetry/imported/<installId>/`, apart from the operator's own
+ * telemetry.
+ */
+
+export type ShareProfile = Static<typeof ShareProfileSchema>;
+export type ShareScopeKind = "session" | "run" | "process";
+
+export interface ShareProfileDefinition {
+	/** One line for the profile picker and the preview. */
+	summary: string;
+	tiers: ReadonlyArray<Tier>;
+	classes: ReadonlyArray<ContentClass>;
+	/** `structure` keeps objects whose subject holds no content; `all` also keeps content objects. */
+	objects: "none" | "structure" | "all";
+}
+
+/** The share presets, declared once. `research` applies only to scopes whose capture had consent (#434). */
+export const SHARE_PROFILES: Readonly<Record<ShareProfile, ShareProfileDefinition>> = {
+	"content-free": {
+		summary: "accountability and operational records with structural payloads; no objects, no content",
+		tiers: ["accountability", "operational"],
+		classes: ["content-free", "structural"],
+		objects: "none",
+	},
+	report: {
+		summary: "structural, with target ids anonymized too: for an archive linked from a public issue",
+		tiers: ["accountability", "operational"],
+		classes: ["content-free", "structural"],
+		objects: "structure",
+	},
+	structural: {
+		summary: "adds the objects that hold structure, such as prompt and tool-schema manifests",
+		tiers: ["accountability", "operational"],
+		classes: ["content-free", "structural"],
+		objects: "structure",
+	},
+	research: {
+		summary: "adds research records, content records and content objects, for scopes captured under consent",
+		tiers: ["accountability", "operational", "research"],
+		classes: ["content-free", "structural", "content-bearing"],
+		objects: "all",
+	},
+};
+export const SHARE_PROFILE_NAMES = Object.keys(SHARE_PROFILES) as ShareProfile[];
+/** Strictness order: a scope's profile may not rank above its archive's. */
+const PROFILE_RANK: Readonly<Record<ShareProfile, number>> = {
+	"content-free": 0,
+	report: 1,
+	structural: 2,
+	research: 3,
+};
+
+export function isShareProfile(value: string): value is ShareProfile {
+	return Object.hasOwn(SHARE_PROFILES, value);
+}
+
+const SCOPE_DIRECTORY: Readonly<Record<ShareScopeKind, string>> = {
+	session: "sessions",
+	run: "runs",
+	process: "process",
+};
+const SOURCE_SEALS: ReadonlySet<string> = new Set([...Object.values(SEAL_EVENTS), SHARE_SEAL_EVENT]);
+
+function scopeDirectory(stateDir: string, kind: ShareScopeKind, id: string): string {
+	if (kind === "process") return telemetryProcessDirectory(stateDir, id);
+	return kind === "session" ? telemetrySessionDirectory(stateDir, id) : telemetryRunDirectory(stateDir, id);
+}
+
+const InstallFileSchema = Type.Object(
+	{
+		format: Type.Literal("pancode.telemetry.install"),
+		version: Type.Literal(1),
+		installId: Type.String({ pattern: TELEMETRY_INSTALL_ID.source }),
+		/** Keys the anonymous ids a share gives run identity; never leaves this installation. */
+		anonymizationKey: Type.String({ pattern: "^[0-9a-f]{64}$" }),
+	},
+	{ additionalProperties: false },
+);
+
+/** Who a share comes from: the random install id it names, and the private key its anonymous ids are derived under. */
+export interface ShareSource {
+	installId: string;
+	anonymizationKey: string;
+}
+
+/**
+ * This installation's share identity, minted on first use. A share names its source by the random install id, never
+ * by host or path, and a host or user name becomes an id keyed by a secret the archive does not carry, so it is stable
+ * across this installation's shares and cannot be recovered by hashing guesses (#434).
+ */
+export function telemetryShareSource(stateDir: string): ShareSource {
+	const path = telemetryInstallPath(stateDir);
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+		if (Value.Check(InstallFileSchema, parsed))
+			return { installId: parsed.installId, anonymizationKey: parsed.anonymizationKey };
+		throw new Error(`${path} is not a version 1 install file`);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	const file: Static<typeof InstallFileSchema> = {
+		format: "pancode.telemetry.install",
+		version: 1,
+		installId: `inst_${randomBytes(16).toString("hex")}`,
+		anonymizationKey: randomBytes(32).toString("hex"),
+	};
+	safeResourceWrite(path, `${JSON.stringify(file, null, "\t")}\n`, { mode: 0o600 });
+	return { installId: file.installId, anonymizationKey: file.anonymizationKey };
+}
+
+/**
+ * A source minted for one archive and never written (R-16): a `report` share's ids are stable within its bundle and
+ * unlinkable to any other share, this installation's included.
+ */
+export function freshShareSource(): ShareSource {
+	return { installId: `inst_${randomBytes(16).toString("hex")}`, anonymizationKey: randomBytes(32).toString("hex") };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Selection
+
+export interface ShareSelection {
+	sessions: ReadonlyArray<string>;
+	runs: ReadonlyArray<string>;
+	/** A repository path: every session its workspace bucket holds. */
+	repo: string | null;
+	/** ISO bounds on a scope's seal time; they filter repository and time-range candidates, never named scopes. */
+	since: string | null;
+	until: string | null;
+	/** Process scopes by id; the running process's own journal is live, so it is reachable only by snapshot. */
+	processes?: ReadonlyArray<string>;
+	/**
+	 * What a named scope with no seal gets: `refuse` skips it, `snapshot` shares the validated chain prefix on disk
+	 * without writing to the scope. Repository and time-range candidates are never snapshotted. Default `refuse`.
+	 */
+	live?: "refuse" | "snapshot";
+}
+
+export interface ShareScopeSource {
+	kind: ShareScopeKind;
+	id: string;
+	/** The seal time, or for a snapshot the newest record's time. */
+	sealedAt: string;
+	files: TelemetryScopeFiles;
+	/** A live scope read as a validated prefix; the source holds no seal. */
+	snapshot?: true;
+}
+
+export interface ShareSkip {
+	kind: ShareScopeKind;
+	id: string;
+	reason: string;
+}
+
+/** A scope offered to an interactive share: sealed scopes only, newest seal first. */
+export interface ShareCandidate {
+	kind: ShareScopeKind;
+	id: string;
+	sealedAt: string;
+}
+
+function listIds(directory: string): string[] {
+	try {
+		return readdirSync(directory).sort();
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		throw error;
+	}
+}
+
+function sealedAtOf(directory: string): string | null {
+	try {
+		const parsed = JSON.parse(readFileSync(join(directory, TELEMETRY_BUNDLE_FILE), "utf8")) as { sealedAt?: unknown };
+		return typeof parsed.sealedAt === "string" ? parsed.sealedAt : null;
+	} catch {
+		// No or unreadable bundle.json: the scope is live or damaged and is not offered.
+		return null;
+	}
+}
+
+/** Every sealed session and run scope, newest seal first, for the interactive picker. Verification comes later. */
+export function listShareCandidates(stateDir: string): ShareCandidate[] {
+	const candidates: ShareCandidate[] = [];
+	for (const [kind, root] of [
+		["session", telemetrySessionsDirectory(stateDir)],
+		["run", telemetryRunsDirectory(stateDir)],
+	] as const)
+		for (const id of listIds(root)) {
+			const sealedAt = sealedAtOf(join(root, id));
+			if (sealedAt !== null) candidates.push({ kind, id, sealedAt });
+		}
+	return candidates.sort((a, b) => b.sealedAt.localeCompare(a.sealedAt));
+}
+
+function referencedRuns(files: TelemetryScopeFiles): string[] {
+	const runs = new Set<string>();
+	for (const segment of files.segments)
+		for (const row of scanTelemetrySegment(segment.bytes).rows)
+			if (row.kind === "record" && (row.record.k === "call.linked" || row.record.k === "run.linked"))
+				runs.add((row.record.data as { runId: string }).runId);
+	return [...runs].sort();
+}
+
+/**
+ * A live scope as the validated chain prefix on disk, read once and never written. The live segment ends at its last
+ * complete line: a torn final line is the writer mid-append, not damage. Any other break in the chain skips the scope.
+ */
+function snapshotScope(
+	kind: ShareScopeKind,
+	id: string,
+	files: TelemetryScopeFiles,
+): { files: TelemetryScopeFiles; sealedAt: string } | { reason: string } {
+	const segments = files.segments.map((segment, index) => {
+		if (index !== files.segments.length - 1 || segment.name !== TELEMETRY_JOURNAL_FILE) return segment;
+		const scan = scanTelemetrySegment(segment.bytes);
+		return scan.tornTailBytes > 0 ? { ...segment, bytes: segment.bytes.subarray(0, scan.validBytes) } : segment;
+	});
+	const walk = walkTelemetryChain(segments, { scope: { kind, id } });
+	if ("mismatch" in walk) return { reason: `live snapshot fails verification: ${describeSealMismatch(walk.mismatch)}` };
+	let newest: string | null = null;
+	for (const segment of segments)
+		for (const row of scanTelemetrySegment(segment.bytes).rows)
+			if (row.kind === "record" && (newest === null || row.record.t > newest)) newest = row.record.t;
+	if (newest === null) return { reason: "live snapshot holds no record" };
+	return { files: { ...files, segments }, sealedAt: newest };
+}
+
+/**
+ * The sealed, verified scopes a selection names, each once. A session brings the runs it references; a scope that is
+ * live, missing or fails verification is skipped with its reason, never shared. With `live: "snapshot"`, a named
+ * scope that is live is shared as a snapshot instead.
+ */
+export function resolveShareScopes(
+	stateDir: string,
+	selection: ShareSelection,
+): { scopes: ShareScopeSource[]; skipped: ShareSkip[] } {
+	const scopes: ShareScopeSource[] = [];
+	const skipped: ShareSkip[] = [];
+	const seen = new Set<string>();
+	const since = selection.since === null ? Number.NEGATIVE_INFINITY : Date.parse(selection.since);
+	const until = selection.until === null ? Number.POSITIVE_INFINITY : Date.parse(selection.until);
+	const queue: Array<{ kind: ShareScopeKind; id: string; windowed: boolean }> = [
+		...selection.sessions.map((id) => ({ kind: "session" as const, id, windowed: false })),
+		...selection.runs.map((id) => ({ kind: "run" as const, id, windowed: false })),
+		...(selection.processes ?? []).map((id) => ({ kind: "process" as const, id, windowed: false })),
+	];
+	if (selection.repo !== null)
+		for (const id of listIds(join(stateDir, "sessions", cwdHash(selection.repo))))
+			queue.push({ kind: "session", id, windowed: true });
+	else if (queue.length === 0 && (selection.since !== null || selection.until !== null)) {
+		for (const id of listIds(telemetrySessionsDirectory(stateDir))) queue.push({ kind: "session", id, windowed: true });
+		for (const id of listIds(telemetryRunsDirectory(stateDir))) queue.push({ kind: "run", id, windowed: true });
+	}
+	for (let index = 0; index < queue.length; index += 1) {
+		const { kind, id, windowed } = queue[index] as (typeof queue)[number];
+		const key = `${kind}:${id}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		let directory: string;
+		try {
+			directory = scopeDirectory(stateDir, kind, id);
+		} catch (error) {
+			skipped.push({ kind, id, reason: error instanceof Error ? error.message : String(error) });
+			continue;
+		}
+		if (!statSync(directory, { throwIfNoEntry: false })?.isDirectory()) {
+			// A repository bucket also lists sessions that never journaled; only named scopes are worth a note.
+			if (!windowed) skipped.push({ kind, id, reason: "no telemetry scope" });
+			continue;
+		}
+		let files: TelemetryScopeFiles;
+		try {
+			files = readTelemetryScopeFilesSync(directory);
+		} catch (error) {
+			skipped.push({ kind, id, reason: `unreadable: ${error instanceof Error ? error.message : String(error)}` });
+			continue;
+		}
+		if (files.manifest === null && !windowed && selection.live === "snapshot") {
+			const taken = snapshotScope(kind, id, files);
+			if ("reason" in taken) {
+				skipped.push({ kind, id, reason: taken.reason });
+				continue;
+			}
+			scopes.push({ kind, id, sealedAt: taken.sealedAt, files: taken.files, snapshot: true });
+			if (kind === "session")
+				for (const runId of referencedRuns(taken.files)) queue.push({ kind: "run", id: runId, windowed: false });
+			continue;
+		}
+		const verdict = verifyTelemetryScope(files);
+		if (verdict.status === "unsealed") {
+			skipped.push({ kind, id, reason: "not sealed (live or never sealed)" });
+			continue;
+		}
+		if (verdict.status === "failed") {
+			skipped.push({ kind, id, reason: `fails verification: ${describeSealMismatch(verdict.mismatch)}` });
+			continue;
+		}
+		const at = Date.parse(verdict.sealedAt);
+		if (windowed && !(at >= since && at <= until)) continue;
+		scopes.push({ kind, id, sealedAt: verdict.sealedAt, files });
+		if (kind === "session")
+			for (const runId of referencedRuns(files)) queue.push({ kind: "run", id: runId, windowed: false });
+	}
+	return { scopes, skipped };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Filtering and resealing
+
+export interface ShareDropped {
+	/** Records of a tier the profile leaves out. */
+	tier: number;
+	/** Records of a content class the profile leaves out. */
+	contentClass: number;
+	/** Lines this version cannot read; a share carries only what it understands. */
+	unreadable: number;
+	/** The source's own seals, which cover bytes the share no longer carries. */
+	seals: number;
+	/** Referenced objects the profile withholds. */
+	objects: number;
+	/** Referenced objects the scope does not hold. */
+	missingObjects: number;
+	/** Records of an event the profile's projection table does not admit. */
+	unlisted: number;
+	/** Kept records whose projection withheld prose, anonymized an identity or path, or dropped a field. */
+	projected: number;
+}
+
+export interface ShareScopePlan {
+	kind: ShareScopeKind;
+	id: string;
+	/** The profile this scope was filtered under: `structural` when `research` was asked of a scope without consent. */
+	profile: ShareProfile;
+	/** Set when the scope was live and shared as a snapshot: the newest record's time. */
+	snapshotAt?: string;
+	journal: Buffer;
+	bundle: Buffer;
+	objects: Array<{ id: string; bytes: Buffer }>;
+	head: string;
+	records: number;
+	byTier: Record<string, number>;
+	byEvent: Record<string, number>;
+	objectBytes: number;
+	redactions: number;
+	dropped: ShareDropped;
+}
+
+/**
+ * What a share's projection left readable, anonymized and withheld across every scope (R-16): the strings a reporter
+ * checks before an archive is linked in public. `anonymized` counts distinct values per kind.
+ */
+export interface ShareInventory {
+	readable: Record<ReadableKind, string[]>;
+	anonymized: Partial<Record<AnonKind, number>>;
+	withheld: number;
+}
+
+export interface SharePlan {
+	profile: ShareProfile;
+	installId: string;
+	pancodeVersion: string;
+	createdAt: string;
+	scopes: ShareScopePlan[];
+	skipped: ShareSkip[];
+	/** The archive's uncompressed tar size, within what an import accepts. */
+	archiveBytes: number;
+	/** Set when the plan was asked for one. */
+	inventory?: ShareInventory;
+}
+
+/**
+ * A header as a share carries it: the source host becomes the install id, the rotation chain head is gone, and the
+ * birth token, a local process identity that would link every share of one process, is cleared as on its records.
+ */
+function sharedHeader(header: SegmentHeader, installId: string): SegmentHeader {
+	const { chainHead: _chainHead, ...rest } = header;
+	return { ...rest, clockOrigin: { host: installId, ...UNLINKABLE_CLOCK } };
+}
+
+/**
+ * A shared header's process identity and clock epoch. The real pid and the process's wall-clock birth would link every
+ * share of one process, so a share carries the schema's least values instead; the local journal keeps the real ones.
+ */
+const UNLINKABLE_CLOCK = { pid: 1, birthToken: null, monoEpochWallMs: 0 } as const;
+
+/**
+ * A settings fingerprint as one share carries it: re-keyed with that share's own random key, so equal settings give
+ * equal values within one share and unrelated values across two shares of one install. Each form keeps its shape (a
+ * 64-hex commitment hash, a 64-hex digest, or an anonymous id), so the projection still holds as a fixed point.
+ */
+function rekeyFingerprint(value: unknown, shareKey: Buffer): unknown {
+	const mac = (text: string) => createHmac("sha256", shareKey).update(`settingsFingerprint\0${text}`).digest("hex");
+	if (typeof value === "string") return value.startsWith("anon_") ? `anon_${mac(value).slice(0, 16)}` : mac(value);
+	if (
+		value &&
+		typeof value === "object" &&
+		!Array.isArray(value) &&
+		typeof (value as { hash?: unknown }).hash === "string"
+	)
+		return { ...value, hash: mac((value as { hash: string }).hash) };
+	return value;
+}
+
+/** Every `settingsFingerprint` field in a record's payload, re-keyed for one share (see rekeyFingerprint). */
+function rekeySettingsFingerprints(value: unknown, shareKey: Buffer): unknown {
+	if (Array.isArray(value)) return value.map((item) => rekeySettingsFingerprints(item, shareKey));
+	if (!value || typeof value !== "object") return value;
+	return Object.fromEntries(
+		Object.entries(value).map(([key, item]) => [
+			key,
+			key === "settingsFingerprint" ? rekeyFingerprint(item, shareKey) : rekeySettingsFingerprints(item, shareKey),
+		]),
+	);
+}
+
+/** An identity or path as a share below research carries it: an id stable for this installation, not the value. */
+function anonymousId(source: ShareSource, kind: AnonKind, value: string): string {
+	return `anon_${createHmac("sha256", source.anonymizationKey).update(`${kind}\0${value}`).digest("hex").slice(0, 16)}`;
+}
+
+/**
+ * A retained, already redacted record as a profile carries it (#434). Below research its payload passes the
+ * allowlist in share-projection.ts: only the fields that table names survive, free text is withheld, and identities
+ * and paths become anonymous ids. Null when the table does not admit the event.
+ */
+function projectRecord(
+	record: TelemetryRecord,
+	profile: ShareProfile,
+	projection: ShareProjection,
+	anonymize: (kind: AnonKind, value: string) => string,
+	tally?: ProjectionTally,
+): TelemetryRecord | null {
+	if (profile === "research") return record;
+	const data = projectSharedPayload(record.k, record.data, anonymize, projection, tally);
+	if (data === null) return null;
+	return { ...record, data, ctx: projectSharedContext(record.ctx, anonymize, projection, tally) } as TelemetryRecord;
+}
+
+/** How a plan projects beyond its profile, and what it collects while it does (R-16). */
+interface ShareProjectionOptions {
+	models: "keep" | "anonymize";
+	tally?: ProjectionTally;
+	anonymized?: Map<AnonKind, Set<string>>;
+	/** This share's own random key; settings fingerprints are re-keyed with it so two shares cannot be linked. */
+	shareKey?: Buffer;
+}
+
+function admits(profile: ShareProfileDefinition, record: { tier: Tier; cc: ContentClass }): "tier" | "class" | null {
+	if (!profile.tiers.includes(record.tier)) return "tier";
+	if (!profile.classes.includes(record.cc)) return "class";
+	return null;
+}
+
+/**
+ * Close a shared scope's filtered lines and seal them as a bundle (#434): a closing header naming the install id, a
+ * `share.sealed` record whose chain covers exactly those lines and objects, and the bundle.json that names it.
+ */
+export function sealSharedScope(input: {
+	scope: { kind: ShareScopeKind; id: string };
+	lines: ReadonlyArray<SegmentHeader | TelemetryRecord>;
+	objects: ReadonlyArray<{ id: string; bytes: Buffer }>;
+	profile: ShareProfile;
+	installId: string;
+	writer: SegmentHeader["writer"];
+	/** The source's last header, whose schema set, mode and capture the closing header keeps. */
+	header: SegmentHeader;
+	ctx: TelemetryRecord["ctx"];
+	now: Date;
+}): { journal: Buffer; bundle: Buffer; head: string } {
+	const { header, installId, profile, writer, now } = input;
+	const closing: SegmentHeader = {
+		v: 1,
+		k: "segment.open",
+		schemaSet: header.schemaSet,
+		mode: header.mode,
+		capture: { ...header.capture, content: header.capture.content && profile === "research" },
+		clockOrigin: { host: installId, ...UNLINKABLE_CLOCK },
+		writer,
+	};
+	const lines = [...input.lines, closing].map(encodeTelemetryLine);
+	let chain: TelemetryChain = EMPTY_TELEMETRY_CHAIN;
+	for (const line of lines) chain = chainTelemetryLine(chain, line);
+	const prefix = Buffer.concat(lines);
+	const objectEntries: ScopeObjectEntry[] = input.objects.map(({ id, bytes }) => ({
+		id,
+		sha256: id.slice(4),
+		bytes: bytes.length,
+	}));
+	const seal = makeTelemetryRecord(
+		"share.sealed",
+		{
+			head: telemetryChainHead(chain) as string,
+			records: chain.lines,
+			segments: [{ name: TELEMETRY_JOURNAL_FILE, sha256: sha256Hex(prefix), bytes: prefix.length }],
+			objects: objectEntries,
+			profile,
+		},
+		input.ctx,
+		{ t: now.toISOString(), mono: 0 },
+	);
+	const sealLine = encodeTelemetryLine(seal);
+	const journal = Buffer.concat([prefix, sealLine]);
+	const head = telemetryChainHead(chainTelemetryLine(chain, sealLine)) as string;
+	const manifest = scopeBundleManifest({
+		scope: input.scope,
+		sealedAt: seal.t,
+		writer,
+		host: installId,
+		segments: [{ name: TELEMETRY_JOURNAL_FILE, sha256: sha256Hex(journal), bytes: journal.length }],
+		objects: objectEntries,
+		seal: { recordId: seal.id, head },
+		share: { profile },
+	});
+	return { journal, bundle: Buffer.from(`${JSON.stringify(manifest, null, "\t")}\n`, "utf8"), head };
+}
+
+function filterScope(
+	source: ShareScopeSource,
+	requested: ShareProfile,
+	shareSource: ShareSource,
+	writer: SegmentHeader["writer"],
+	now: Date,
+	options: ShareProjectionOptions = { models: "keep" },
+): ShareScopePlan {
+	const headers: SegmentHeader[] = [];
+	const rows: Array<{ kind: "header"; header: SegmentHeader } | { kind: "record"; record: TelemetryRecord }> = [];
+	const { installId } = shareSource;
+	const dropped: ShareDropped = {
+		tier: 0,
+		contentClass: 0,
+		unreadable: 0,
+		seals: 0,
+		objects: 0,
+		missingObjects: 0,
+		unlisted: 0,
+		projected: 0,
+	};
+	let sourceSeal: TelemetryRecord | undefined;
+	let lastRecord: TelemetryRecord | undefined;
+	for (const segment of source.files.segments)
+		for (const row of scanTelemetrySegment(segment.bytes).rows) {
+			if (row.kind === "header") headers.push(row.header);
+			if (row.kind === "record") lastRecord = row.record;
+			if (row.kind === "skipped" || row.kind === "damaged") dropped.unreadable += 1;
+			else if (row.kind === "header") rows.push(row);
+			else if (SOURCE_SEALS.has(row.record.k)) {
+				sourceSeal = row.record;
+				dropped.seals += 1;
+			} else rows.push(row);
+		}
+	const first = headers[0];
+	const last = headers.at(-1);
+	// A live snapshot has no seal of its own; its share seal names the scope as its last record does.
+	const ctx = sourceSeal?.ctx ?? (source.snapshot ? lastRecord?.ctx : undefined);
+	if (!ctx || !first || !last) throw new Error(`${source.kind} ${source.id} has no seal or header`);
+	// Consent at capture is what admitted content; a scope captured without it shares structure at most (#434, O6).
+	const consented = headers.some((header) => header.capture.content);
+	const profile: ShareProfile = requested === "research" && !consented ? "structural" : requested;
+	const definition = SHARE_PROFILES[profile];
+	const projection = projectionFor(profile, options.models);
+	const anonymize = (kind: AnonKind, value: string) => {
+		if (options.anonymized) {
+			const values = options.anonymized.get(kind) ?? new Set<string>();
+			values.add(value);
+			options.anonymized.set(kind, values);
+		}
+		return anonymousId(shareSource, kind, value);
+	};
+	const shareKey = options.shareKey ?? randomBytes(32);
+	const tally = createRedactionTally();
+	const kept: Array<SegmentHeader | TelemetryRecord> = [];
+	let previousHeader = "";
+	for (const row of rows) {
+		if (row.kind === "header") {
+			const header = sharedHeader(row.header, installId);
+			const json = JSON.stringify(header);
+			if (json !== previousHeader) kept.push(header);
+			previousHeader = json;
+			continue;
+		}
+		const refused = admits(definition, row.record);
+		if (refused === "tier") dropped.tier += 1;
+		else if (refused === "class") dropped.contentClass += 1;
+		else {
+			// A secret that reached a journal never leaves in an archive, whether a value pattern or only its property
+			// name gives it away (#434, A3). Redaction runs first so the projection's output is what the archive holds,
+			// and a verifier can recheck it as a fixed point.
+			// A birth token is a local process identity named like a credential. It means nothing off this machine, and
+			// redacting it would count a secret that was never there on every worker record.
+			const local = row.record.origin ? { ...row.record, origin: { ...row.record.origin, birthToken: null } } : row.record;
+			const redacted = redactTelemetryValue(local, tally, true);
+			const projected = projectRecord(redacted, profile, projection, anonymize, options.tally);
+			const record =
+				projected === null
+					? null
+					: ({
+							...projected,
+							data: rekeySettingsFingerprints(projected.data, shareKey),
+						} as TelemetryRecord);
+			if (record === null) {
+				dropped.unlisted += 1;
+				continue;
+			}
+			if (
+				projected &&
+				projected !== redacted &&
+				canonicalJsonStrict(projected.data) !== canonicalJsonStrict(redacted.data)
+			)
+				dropped.projected += 1;
+			kept.push(record.origin ? { ...record, origin: { ...record.origin, host: installId } } : record);
+		}
+	}
+	const refs = new Map<string, string>();
+	for (const line of kept) if (line.k !== "segment.open") collectRefs(line.data, refs);
+	const present = new Map(source.files.objects.map((object) => [object.name, object.bytes]));
+	const renamed = new Map<string, string>();
+	const shared = new Map<string, Buffer>();
+	for (const [id, subject] of [...refs].sort(([a], [b]) => a.localeCompare(b))) {
+		if (definition.objects === "none" || (definition.objects === "structure" && CONTENT_SUBJECTS.has(subject))) {
+			dropped.objects += 1;
+			continue;
+		}
+		const bytes = present.get(`${id}.json`);
+		if (bytes === undefined) {
+			dropped.missingObjects += 1;
+			continue;
+		}
+		const redacted = redactTelemetryValue(JSON.parse(bytes.toString("utf8")) as unknown, tally, subject === "config");
+		// Below research a structural object passes the same allowlist as a record before its id is computed, so no
+		// absolute path, username or prose reaches the archive through an object (#434).
+		const projected =
+			profile === "research" ? redacted : projectSharedObject(subject, redacted, anonymize, projection, options.tally);
+		if (projected === null) {
+			dropped.objects += 1;
+			continue;
+		}
+		// Objects are content-addressed: a redacted or projected preimage is a new object, and the records cite it
+		// instead. Two objects that differ only by what was removed become one, held once for both citations.
+		const canonical = Buffer.from(canonicalJsonStrict(projected), "utf8");
+		const preimage = canonical.equals(bytes) ? bytes : canonical;
+		const sharedId = `obj_${sha256Hex(preimage)}`;
+		if (sharedId !== id) renamed.set(id, sharedId);
+		shared.set(sharedId, preimage);
+	}
+	const objects = [...shared].map(([id, bytes]) => ({ id, bytes })).sort((a, b) => a.id.localeCompare(b.id));
+	const rewrite = (line: SegmentHeader | TelemetryRecord): SegmentHeader | TelemetryRecord =>
+		renamed.size === 0
+			? line
+			: (JSON.parse(JSON.stringify(line), (_key, value: unknown) =>
+					typeof value === "string" ? (renamed.get(value) ?? value) : value,
+				) as SegmentHeader | TelemetryRecord);
+	// The seal, archive path and manifest must all use the same id as the projected records and links.
+	const id = profile === "report" && source.kind === "run" ? anonymize("id", source.id) : source.id;
+	const { journal, bundle, head } = sealSharedScope({
+		scope: { kind: source.kind, id },
+		lines: kept.map(rewrite),
+		objects,
+		profile,
+		installId,
+		writer,
+		header: last,
+		ctx: profile === "research" ? ctx : projectSharedContext(ctx, anonymize, projection),
+		now,
+	});
+	const check = verifyTelemetryScope({
+		manifest: bundle,
+		segments: [{ name: TELEMETRY_JOURNAL_FILE, bytes: journal }],
+		objects: objects.map(({ id, bytes }) => ({ name: `${id}.json`, bytes })),
+	});
+	if (check.status !== "verified")
+		throw new Error(
+			`shared ${source.kind} ${source.id} does not verify: ${check.status === "failed" ? describeSealMismatch(check.mismatch) : check.reason}`,
+		);
+	// A projected or redacted payload that no longer reads would fail the archive's own verification after writing.
+	const violation = profileViolation(
+		{
+			manifest: bundle,
+			segments: [{ name: TELEMETRY_JOURNAL_FILE, bytes: journal }],
+			objects: objects.map(({ id, bytes }) => ({ name: `${id}.json`, bytes })),
+		},
+		profile,
+		installId,
+	);
+	if (violation !== null) throw new Error(`shared ${source.kind} ${source.id} ${violation}`);
+	const byTier: Record<string, number> = {};
+	const byEvent: Record<string, number> = {};
+	let records = 0;
+	for (const line of kept)
+		if (line.k !== "segment.open") {
+			records += 1;
+			byTier[line.tier] = (byTier[line.tier] ?? 0) + 1;
+			byEvent[line.k] = (byEvent[line.k] ?? 0) + 1;
+		}
+	return {
+		kind: source.kind,
+		id,
+		profile,
+		...(source.snapshot ? { snapshotAt: source.sealedAt } : {}),
+		journal,
+		bundle,
+		objects,
+		head,
+		records,
+		byTier,
+		byEvent,
+		objectBytes: objects.reduce((sum, object) => sum + object.bytes.length, 0),
+		redactions: tally.count,
+		dropped,
+	};
+}
+
+/** Filter, redact and reseal every selected scope in memory; nothing is written until {@link writeShare}. */
+export function planShare(input: {
+	scopes: ReadonlyArray<ShareScopeSource>;
+	skipped: ReadonlyArray<ShareSkip>;
+	profile: ShareProfile;
+	source: ShareSource;
+	writer: SegmentHeader["writer"];
+	now?: Date;
+	/** `anonymize` turns every model id into an anonymous id as well; only the `report` profile honours it (R-16). */
+	models?: "keep" | "anonymize";
+	/** Collect what the projection left readable, anonymized and withheld into `plan.inventory`. */
+	inventory?: true;
+}): SharePlan {
+	const now = input.now ?? new Date();
+	const options: ShareProjectionOptions = {
+		models: input.models ?? "keep",
+		shareKey: randomBytes(32),
+		...(input.inventory ? { tally: createProjectionTally(), anonymized: new Map<AnonKind, Set<string>>() } : {}),
+	};
+	const plan: SharePlan = {
+		profile: input.profile,
+		installId: input.source.installId,
+		pancodeVersion: input.writer.pancodeVersion,
+		createdAt: now.toISOString(),
+		scopes: input.scopes.map((scope) => filterScope(scope, input.profile, input.source, input.writer, now, options)),
+		skipped: [...input.skipped],
+		archiveBytes: 0,
+	};
+	if (options.tally && options.anonymized) {
+		const readable = (kind: ReadableKind) => [...(options.tally?.readable.get(kind) ?? [])].sort();
+		plan.inventory = {
+			readable: {
+				model: readable("model"),
+				runtime: readable("runtime"),
+				tool: readable("tool"),
+				token: readable("token"),
+			},
+			anonymized: Object.fromEntries([...options.anonymized].map(([kind, values]) => [kind, values.size])),
+			withheld: options.tally.withheld,
+		};
+	}
+	// Refuse at preview what `telemetry verify` and `telemetry import` would refuse to unpack (#434).
+	plan.archiveBytes = telemetryArchiveSize(shareArchiveEntries(plan));
+	if (plan.archiveBytes > MAX_SHARE_ARCHIVE_BYTES)
+		throw new Error(
+			`the selection packs to ${plan.archiveBytes} bytes, past the ${MAX_SHARE_ARCHIVE_BYTES}-byte archive limit; share fewer scopes or a smaller profile`,
+		);
+	return plan;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Archive
+
+export const SHARE_ARCHIVE_FORMAT = "pancode.telemetry.share";
+const SHARE_MANIFEST_FILE = "manifest.json";
+const ShareManifestSchema = Type.Object(
+	{
+		format: Type.Literal(SHARE_ARCHIVE_FORMAT),
+		version: Type.Literal(1),
+		profile: ShareProfileSchema,
+		installId: Type.String({ pattern: TELEMETRY_INSTALL_ID.source }),
+		pancodeVersion: Type.String(),
+		createdAt: Type.String(),
+		scopes: Type.Array(
+			Type.Object(
+				{
+					kind: Type.Union([Type.Literal("session"), Type.Literal("run"), Type.Literal("process")]),
+					id: Type.String(),
+					profile: ShareProfileSchema,
+					head: Type.String({ pattern: "^[0-9a-f]{64}$" }),
+				},
+				{ additionalProperties: false },
+			),
+		),
+	},
+	{ additionalProperties: false },
+);
+export type ShareManifest = Static<typeof ShareManifestSchema>;
+
+/** The archive members for a plan: the manifest first, then each scope's journal, bundle.json and objects. */
+function shareArchiveEntries(plan: SharePlan): ShareArchiveEntry[] {
+	const manifest: ShareManifest = {
+		format: SHARE_ARCHIVE_FORMAT,
+		version: 1,
+		profile: plan.profile,
+		installId: plan.installId,
+		pancodeVersion: plan.pancodeVersion,
+		createdAt: plan.createdAt,
+		scopes: plan.scopes.map(({ kind, id, profile, head }) => ({ kind, id, profile, head })),
+	};
+	const entries: ShareArchiveEntry[] = [
+		{ path: SHARE_MANIFEST_FILE, bytes: Buffer.from(`${JSON.stringify(manifest, null, "\t")}\n`) },
+	];
+	for (const scope of plan.scopes) {
+		const base = `${SCOPE_DIRECTORY[scope.kind]}/${scope.id}`;
+		entries.push({ path: `${base}/${TELEMETRY_JOURNAL_FILE}`, bytes: scope.journal });
+		entries.push({ path: `${base}/${TELEMETRY_BUNDLE_FILE}`, bytes: scope.bundle });
+		for (const object of scope.objects) entries.push({ path: `${base}/objects/${object.id}.json`, bytes: object.bytes });
+	}
+	return entries;
+}
+
+/** The plan's archive as bytes, exactly as {@link writeShare} writes it. */
+export function packShare(plan: SharePlan): Buffer {
+	return packTelemetryArchive(shareArchiveEntries(plan), Math.floor(Date.parse(plan.createdAt) / 1000));
+}
+
+/** Write the plan's archive to `out`, which must not exist. */
+export async function writeShare(plan: SharePlan, out: string): Promise<number> {
+	if (
+		await stat(out).then(
+			() => true,
+			(error: NodeJS.ErrnoException) => {
+				if (error.code === "ENOENT") return false;
+				throw error;
+			},
+		)
+	)
+		throw new Error(`refusing to overwrite ${out}`);
+	const bytes = packShare(plan);
+	await safeResourceWriteAsync(out, bytes, { mode: 0o600 });
+	return bytes.length;
+}
+
+export interface ShareArchiveScope {
+	kind: ShareScopeKind;
+	id: string;
+	files: TelemetryScopeFiles;
+	verdict: SealVerdict;
+}
+
+export interface ShareArchiveCheck {
+	manifest: ShareManifest | null;
+	scopes: ShareArchiveScope[];
+	/** Null when every bundle verifies and the archive is what its manifest says; else the first problem. */
+	failure: string | null;
+}
+
+const MEMBER = /^(sessions|runs|process)\/([^/]+)\/(.+)$/u;
+const MEMBER_KIND: Readonly<Record<string, ShareScopeKind>> = { sessions: "session", runs: "run", process: "process" };
+
+/**
+ * The profile a shared scope's records and objects must stay within, checked line by line (#434). Every header and
+ * record names the source by its install id. Below research, every record and object must be a fixed point of its
+ * projection: a field the table drops, prose it withholds or an identity it anonymizes that is still present fails.
+ */
+function profileViolation(files: TelemetryScopeFiles, profile: ShareProfile, installId: string): string | null {
+	const definition = SHARE_PROFILES[profile];
+	const projected = profile !== "research";
+	// The verifier cannot know whether model ids were anonymized; an anonymous id is a fixed point of `model-id` too.
+	const projection = projectionFor(profile);
+	const refs = new Map<string, string>();
+	for (const segment of files.segments)
+		for (const row of scanTelemetrySegment(segment.bytes).rows) {
+			if (row.kind === "skipped" && row.k !== undefined)
+				return `holds a ${row.k} record that fails its schema, a PanCode bug to report`;
+			if (row.kind === "skipped" || row.kind === "damaged") return "holds a line this version cannot read";
+			if (row.kind === "header") {
+				if (row.header.clockOrigin.host !== installId) return "holds a segment header naming another host";
+				continue;
+			}
+			const record = row.record;
+			if (record.origin !== undefined && record.origin.host !== installId) return `holds ${record.k} naming another host`;
+			if (
+				projected &&
+				canonicalJsonStrict(projectSharedContext(record.ctx, conformingAnonymous, projection)) !==
+					canonicalJsonStrict(record.ctx)
+			)
+				return `holds ${record.k} with a context beyond the ${profile} projection`;
+			if (record.k === SHARE_SEAL_EVENT) continue;
+			if (admits(definition, record) !== null)
+				return `holds ${record.k} (${record.tier}, ${record.cc}) above the ${profile} profile`;
+			if (projected) {
+				const expected = projectSharedPayload(record.k, record.data, conformingAnonymous, projection);
+				if (expected === null) return `holds ${record.k}, which the ${profile} projection does not admit`;
+				if (canonicalJsonStrict(expected) !== canonicalJsonStrict(record.data))
+					return `holds ${record.k} with fields beyond the ${profile} projection`;
+			}
+			collectRefs(record.data, refs);
+		}
+	for (const object of files.objects) {
+		const id = object.name.replace(/\.json$/u, "");
+		const subject = refs.get(id);
+		if (subject === undefined) return `holds ${object.name}, which no record cites`;
+		if (definition.objects === "none" || (definition.objects === "structure" && CONTENT_SUBJECTS.has(subject)))
+			return `holds ${subject} object ${object.name} above the ${profile} profile`;
+		if (!projected) continue;
+		let value: unknown;
+		try {
+			value = JSON.parse(object.bytes.toString("utf8"));
+		} catch {
+			return `holds ${object.name}, which is not JSON`;
+		}
+		const expected = projectSharedObject(subject, value, conformingAnonymous, projection);
+		if (expected === null)
+			return `holds ${subject} object ${object.name}, which the ${profile} projection does not admit`;
+		if (canonicalJsonStrict(expected) !== object.bytes.toString("utf8"))
+			return `holds ${subject} object ${object.name} with fields beyond the ${profile} projection`;
+	}
+	return null;
+}
+
+/**
+ * Verify a share archive with nothing but its own bytes: its manifest, that it holds exactly the scopes the manifest
+ * names, every bundle as `telemetry verify` checks a sealed scope, each bundle's share seal, source id and head against
+ * the manifest, and every record and object against the profile that bundle was filtered under.
+ */
+export function verifyShareArchive(archive: Buffer): ShareArchiveCheck {
+	const check: ShareArchiveCheck = { manifest: null, scopes: [], failure: null };
+	let entries: ReturnType<typeof unpackTelemetryArchive>;
+	try {
+		entries = unpackTelemetryArchive(archive);
+	} catch (error) {
+		check.failure = error instanceof Error ? error.message : String(error);
+		return check;
+	}
+	const groups = new Map<string, { kind: ShareScopeKind; id: string; files: TelemetryScopeFiles }>();
+	let manifestBytes: Buffer | null = null;
+	for (const entry of entries) {
+		if (entry.path === SHARE_MANIFEST_FILE) {
+			manifestBytes = entry.bytes;
+			continue;
+		}
+		const match = MEMBER.exec(entry.path);
+		const rest = match?.[3] ?? "";
+		const objectName = /^objects\/([^/]+)$/u.exec(rest)?.[1];
+		if (!match || (rest !== TELEMETRY_BUNDLE_FILE && !isTelemetryJournalFile(rest) && objectName === undefined)) {
+			check.failure = `unexpected archive member ${entry.path}`;
+			return check;
+		}
+		const kind = MEMBER_KIND[match[1] as string] as ShareScopeKind;
+		const id = match[2] as string;
+		const key = `${kind}:${id}`;
+		const group = groups.get(key) ?? { kind, id, files: { manifest: null, segments: [], objects: [] } };
+		groups.set(key, group);
+		if (rest === TELEMETRY_BUNDLE_FILE) group.files.manifest = entry.bytes;
+		else if (objectName !== undefined) group.files.objects.push({ name: objectName, bytes: entry.bytes });
+		else group.files.segments.push({ name: rest, bytes: entry.bytes });
+	}
+	if (manifestBytes === null) {
+		check.failure = `archive has no ${SHARE_MANIFEST_FILE}`;
+		return check;
+	}
+	try {
+		const parsed: unknown = JSON.parse(manifestBytes.toString("utf8"));
+		if (!Value.Check(ShareManifestSchema, parsed)) throw new Error("not a version 1 share manifest");
+		check.manifest = parsed;
+	} catch (error) {
+		check.failure = `${SHARE_MANIFEST_FILE}: ${error instanceof Error ? error.message : String(error)}`;
+		return check;
+	}
+	const manifest = check.manifest;
+	const named = new Set(manifest.scopes.map((scope) => `${scope.kind}:${scope.id}`));
+	if (named.size !== manifest.scopes.length) {
+		check.failure = `${SHARE_MANIFEST_FILE} names a scope twice`;
+		return check;
+	}
+	for (const key of groups.keys())
+		if (!named.has(key)) {
+			check.failure = `archive holds ${key.replace(":", " ")}, which the manifest does not name`;
+			return check;
+		}
+	for (const scope of manifest.scopes) {
+		const group = groups.get(`${scope.kind}:${scope.id}`);
+		if (!group) {
+			check.failure = `manifest names ${scope.kind} ${scope.id}, which the archive does not hold`;
+			return check;
+		}
+		const files: TelemetryScopeFiles = {
+			...group.files,
+			// Verification wants segments oldest first, the live one last, and objects by name.
+			segments: [...group.files.segments].sort((a, b) =>
+				a.name === TELEMETRY_JOURNAL_FILE ? 1 : b.name === TELEMETRY_JOURNAL_FILE ? -1 : a.name.localeCompare(b.name),
+			),
+			objects: [...group.files.objects].sort((a, b) => a.name.localeCompare(b.name)),
+		};
+		const verdict = verifyTelemetryScope(files);
+		check.scopes.push({ kind: scope.kind, id: scope.id, files, verdict });
+		const label = `${scope.kind} ${scope.id}`;
+		if (verdict.status !== "verified") {
+			check.failure = `${label}: ${verdict.status === "failed" ? describeSealMismatch(verdict.mismatch) : "has no bundle.json"}`;
+			return check;
+		}
+		const bundle = JSON.parse((files.manifest as Buffer).toString("utf8")) as ScopeBundleManifest;
+		if (verdict.scope.kind !== scope.kind || verdict.scope.id !== scope.id)
+			check.failure = `${label}: its bundle names ${verdict.scope.kind} ${verdict.scope.id}`;
+		else if (bundle.share?.profile !== scope.profile) check.failure = `${label}: not sealed by a ${scope.profile} share`;
+		else if (PROFILE_RANK[scope.profile] > PROFILE_RANK[manifest.profile])
+			check.failure = `${label}: its ${scope.profile} profile exceeds the archive's ${manifest.profile}`;
+		else if (bundle.host !== manifest.installId) check.failure = `${label}: sealed by another source`;
+		else if (verdict.seal.head !== scope.head) check.failure = `${label}: its head differs from the manifest`;
+		else {
+			const violation = profileViolation(files, scope.profile, manifest.installId);
+			if (violation !== null) check.failure = `${label}: ${violation}`;
+		}
+		if (check.failure !== null) return check;
+	}
+	return check;
+}
+
+export interface ShareImport {
+	installId: string;
+	manifest: ShareManifest;
+	placed: Array<{ kind: ShareScopeKind; id: string; directory: string }>;
+	/**
+	 * Scopes already imported; never overwritten. `identical` says the scope there verifies and its bundle matches the
+	 * archive's; `damaged` names why the scope there does not verify, null when it does.
+	 */
+	existing: Array<{ kind: ShareScopeKind; id: string; directory: string; identical: boolean; damaged: string | null }>;
+}
+
+/**
+ * Create `segments` under `root` one level at a time, refusing any level that is a symlink or not a directory, and
+ * confirm the result resolves inside `root`. A symlink planted at `imported/<installId>/telemetry` would otherwise
+ * carry a foreign scope into the operator's own telemetry and its totals (#434).
+ */
+async function containedDirectory(root: string, segments: ReadonlyArray<string>): Promise<string> {
+	// The state directory itself is the operator's own; only what lies below it comes from the walk.
+	await mkdir(root, { recursive: true, mode: 0o700 });
+	let directory = root;
+	for (const segment of segments) {
+		directory = join(directory, segment);
+		const found = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
+			if (error.code === "ENOENT") return null;
+			throw error;
+		});
+		if (found === null)
+			await mkdir(directory, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+				if (error.code !== "EEXIST") throw error;
+			});
+		const settled = await lstat(directory);
+		if (settled.isSymbolicLink() || !settled.isDirectory())
+			throw new Error(`refusing to import through ${directory}: not a plain directory`);
+	}
+	const resolved = relative(await realpath(root), await realpath(directory));
+	if (resolved !== join(...segments)) throw new Error(`refusing to import through ${directory}: it resolves elsewhere`);
+	return directory;
+}
+
+/**
+ * Verify an archive completely, then place each bundle under `<stateDir>/telemetry/imported/<installId>/` without
+ * overwriting a scope already there, and verify each placed scope again from disk.
+ */
+export async function importShareArchive(stateDir: string, archive: Buffer): Promise<ShareImport> {
+	const check = verifyShareArchive(archive);
+	if (check.failure !== null || check.manifest === null) throw new Error(check.failure ?? "archive does not verify");
+	const manifest = check.manifest;
+	const base = telemetryImportedStateDir(stateDir, manifest.installId);
+	const result: ShareImport = { installId: manifest.installId, manifest, placed: [], existing: [] };
+	// Every level below the state directory is checked; the imported install directory holds the scopes.
+	const levels = relative(stateDir, base).split(/[\\/]/u);
+	for (const scope of check.scopes) {
+		const directory = scopeDirectory(base, scope.kind, scope.id);
+		const levelsToParent = [...levels, ...relative(base, directory).split(/[\\/]/u).slice(0, -1)];
+		const parent = await containedDirectory(stateDir, levelsToParent);
+		if ((await lstat(directory).catch(() => null)) !== null) {
+			// No overwrite either way; a scope that no longer verifies is reported, never called already imported (#434).
+			let damaged: string | null;
+			try {
+				const verdict = verifyTelemetryScope(await readTelemetryScopeFiles(directory));
+				damaged =
+					verdict.status === "verified"
+						? null
+						: verdict.status === "failed"
+							? describeSealMismatch(verdict.mismatch)
+							: verdict.reason;
+			} catch (error) {
+				damaged = error instanceof Error ? error.message : String(error);
+			}
+			const current = damaged === null ? await readFile(join(directory, TELEMETRY_BUNDLE_FILE)).catch(() => null) : null;
+			result.existing.push({
+				kind: scope.kind,
+				id: scope.id,
+				directory,
+				identical: current !== null && scope.files.manifest !== null && current.equals(scope.files.manifest),
+				damaged,
+			});
+			continue;
+		}
+		const staging = join(parent, `${scope.id}.partial-${randomBytes(6).toString("hex")}`);
+		try {
+			await mkdir(join(staging, "objects"), { recursive: true, mode: 0o700 });
+			for (const segment of scope.files.segments)
+				await writeFile(join(staging, segment.name), segment.bytes, { mode: 0o600, flag: "wx" });
+			for (const object of scope.files.objects)
+				await writeFile(join(staging, "objects", object.name), object.bytes, { mode: 0o600, flag: "wx" });
+			await writeFile(join(staging, TELEMETRY_BUNDLE_FILE), scope.files.manifest as Buffer, {
+				mode: 0o600,
+				flag: "wx",
+			});
+			// A placed scope appears whole at once; a reader never sees one without its bundle.json. The parent is checked
+			// again so a symlink swapped in after staging cannot redirect the rename.
+			await containedDirectory(stateDir, levelsToParent);
+			await rename(staging, directory);
+		} catch (error) {
+			await rm(staging, { recursive: true, force: true });
+			throw error;
+		}
+		const placed = verifyTelemetryScope(await readTelemetryScopeFiles(directory));
+		if (placed.status !== "verified")
+			throw new Error(
+				`imported ${scope.kind} ${scope.id} does not verify on disk: ${placed.status === "failed" ? describeSealMismatch(placed.mismatch) : placed.reason}`,
+			);
+		result.placed.push({ kind: scope.kind, id: scope.id, directory });
+	}
+	return result;
+}

@@ -1,0 +1,85 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type {
+	MiddlewareRegistrationOwner,
+	PrepareRegistrationReplacementResult,
+	ReplaceRegistrationsReport,
+} from "./registrations.js";
+import type { MiddlewareDiagnosticSink, MiddlewareHookRegistration } from "./runtime.js";
+import type { MiddlewareEffect, MiddlewareHookInput, MiddlewareHookResult, MiddlewareSnapshot } from "./types.js";
+
+/**
+ * The query surface other domains and turn code receive: evaluate the hooks
+ * and read the declarative snapshot. It carries no way to add, replace or
+ * redirect a registration; that is `MiddlewareRegistrar`, a separate object
+ * the loader never publishes.
+ */
+export interface MiddlewareContract {
+	runHook(input: MiddlewareHookInput): MiddlewareHookResult;
+	/** Await the optional serialized phase after `runHook`; never used by tool admission. */
+	runAsyncHook?(
+		input: MiddlewareHookInput,
+		priorEffects?: ReadonlyArray<MiddlewareEffect>,
+	): Promise<MiddlewareHookResult>;
+	/** Synchronous: whether any awaited registration matches this point and, at a tool point, this tool. */
+	hasAwaitedHook?(hook: "before_tool" | "after_tool" | "turn_start", toolName?: string): boolean;
+	/** The awaited phase at tool points and turn_start: only registrations that set `awaited`. */
+	runAwaitedHook?(
+		input: MiddlewareHookInput,
+		priorEffects?: ReadonlyArray<MiddlewareEffect>,
+	): Promise<MiddlewareHookResult>;
+	snapshot(): MiddlewareSnapshot;
+}
+
+/**
+ * The registration capability. Only the code that constructs the middleware
+ * (the composition root through `createMiddlewareDomain` or
+ * `createMiddlewareBundle`, a worker through
+ * `createMiddlewareHostFromSnapshot`) holds it, so a consumer of the published
+ * contract cannot register, replace or silence a hook.
+ */
+export interface MiddlewareRegistrar {
+	/**
+	 * Append a coded hook registration after every existing rule and
+	 * registration. The composition root calls this for guards that need
+	 * runtime dependencies (bus, clocks) the domain loader cannot supply at
+	 * bundle construction. Ids share one namespace with rule ids; a colliding
+	 * registration is dropped, first entry wins, matching bundle semantics.
+	 */
+	registerHook(registration: MiddlewareHookRegistration): void;
+	/**
+	 * Replace the diagnostic sink for hook isolation/budget reports. Exists
+	 * for the same reason as registerHook: the domain loader constructs the
+	 * bundle before the composition root can supply the bus-emitting sink
+	 * (Q1, `middleware.hook_failed`). Until called, diagnostics go to the
+	 * stderr writer default.
+	 */
+	setDiagnosticSink(sink: MiddlewareDiagnosticSink): void;
+	/**
+	 * Validate an owner's replacement registration set against the current
+	 * builtin and host ids and build its evaluation list without publishing.
+	 * Rejected when `generation` is not strictly greater than the owner's
+	 * active generation. The returned replacement publishes with one reference
+	 * assignment that cannot refuse or call out, so a composition root can publish it
+	 * back-to-back with another domain's generation on the same stack.
+	 */
+	prepareRegistrationReplacement(
+		owner: MiddlewareRegistrationOwner,
+		generation: number,
+		registrations: ReadonlyArray<MiddlewareHookRegistration>,
+	): PrepareRegistrationReplacementResult;
+	/** Prepare, check currentness, publish, then emit any conflict diagnostics. */
+	replaceRegistrations(
+		owner: MiddlewareRegistrationOwner,
+		generation: number,
+		registrations: ReadonlyArray<MiddlewareHookRegistration>,
+	): ReplaceRegistrationsReport;
+	/** Active generation for an owner; 0 when nothing was ever applied. */
+	ownedGeneration(owner: MiddlewareRegistrationOwner): number;
+}
+
+/** Both halves over one registration table, as the constructing owner receives them. */
+export interface MiddlewareHost {
+	contract: MiddlewareContract;
+	registrar: MiddlewareRegistrar;
+}

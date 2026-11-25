@@ -1,0 +1,182 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, it } from "node:test";
+import {
+	evaluatePancodeCompatibility,
+	isValidSemVerRange,
+	satisfiesSemVerRange,
+} from "../../src/domains/extensions/compatibility.js";
+import { loadManifestFromRoot, parseExtensionManifest } from "../../src/domains/extensions/discovery.js";
+import { enableExtension, installExtension, listInstalledExtensions } from "../../src/domains/extensions/index.js";
+import { getVersionInfo } from "../../src/domains/lifecycle/version.js";
+import { trustProjectPackages } from "../harness/project-trust.js";
+
+const roots: string[] = [];
+
+function scratch(name: string): string {
+	const root = mkdtempSync(path.join(tmpdir(), `pancode-extension-${name}-`));
+	roots.push(root);
+	return root;
+}
+
+function manifest(id: string, range: string): string {
+	return [
+		`id: ${id}`,
+		`name: ${id}`,
+		"version: 1.0.0",
+		"description: Compatibility contract fixture.",
+		"compatibility:",
+		`  pancode: "${range}"`,
+		"",
+	].join("\n");
+}
+
+function writeManifest(root: string, id: string, range: string): void {
+	mkdirSync(root, { recursive: true });
+	writeFileSync(path.join(root, "pancode-extension.yaml"), manifest(id, range), "utf8");
+}
+
+describe("contracts/extension PanCode compatibility", () => {
+	afterEach(() => {
+		for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+	});
+
+	it("evaluates the ordinary semver range vocabulary and rejects malformed ranges", () => {
+		for (const range of [
+			">=0.3.8",
+			">=0.3.7 <0.4.0",
+			"^0.3.7",
+			"~0.3.8",
+			"0.3.x",
+			"0.3.7 - 0.3.9",
+			">=1.0.0 || >=0.3.8",
+		]) {
+			strictEqual(satisfiesSemVerRange("0.3.8", range), true, range);
+		}
+		for (const range of ["^0.4.0", "~0.3.9", "<0.3.8", ">0.3.8", "0.3.7"]) {
+			strictEqual(satisfiesSemVerRange("0.3.8", range), false, range);
+		}
+		for (const malformed of ["", "latest", ">= nope", "1.x.3", ">=0.3.8 ||", "0.3.08"]) {
+			strictEqual(isValidSemVerRange(malformed), false, malformed);
+		}
+	});
+
+	it("parses a satisfiable range and refuses malformed manifest ranges", () => {
+		const running = getVersionInfo().pancode;
+		const accepted = parseExtensionManifest(
+			{
+				id: "compatible",
+				name: "Compatible",
+				version: "1.0.0",
+				description: "Compatible extension.",
+				compatibility: { pancode: ">=0.0.0" },
+			},
+			"/fixture/pancode-extension.yaml",
+		);
+		deepStrictEqual(accepted.diagnostics, []);
+		strictEqual(accepted.manifest?.compatibility?.pancode, ">=0.0.0");
+		strictEqual(evaluatePancodeCompatibility(">=0.0.0").runningVersion, running);
+
+		for (const pancode of ["not-a-range", 42, ""]) {
+			const refused = parseExtensionManifest(
+				{
+					id: "malformed",
+					name: "Malformed",
+					version: "1.0.0",
+					description: "Malformed compatibility fixture.",
+					compatibility: { pancode },
+				},
+				"/fixture/pancode-extension.yaml",
+			);
+			strictEqual(refused.manifest, undefined);
+			ok(refused.diagnostics.some((diagnostic) => diagnostic.message.includes("compatibility.pancode")));
+		}
+	});
+
+	it("refuses an incompatible install before creating an extension root", () => {
+		const project = scratch("install-project");
+		const source = scratch("install-source");
+		writeManifest(source, "future-only", ">999999.0.0");
+
+		const result = installExtension(source, { cwd: project, scope: "project" });
+
+		strictEqual(result.extension, undefined);
+		strictEqual(result.diagnostics.length, 1);
+		const message = result.diagnostics[0]?.message ?? "";
+		match(message, /extension future-only requires PanCode '>999999\.0\.0'/u);
+		match(message, new RegExp(`running PanCode version is '${getVersionInfo().pancode.replaceAll(".", "\\.")}'`, "u"));
+		strictEqual(existsSync(path.join(project, ".pancode")), false);
+	});
+
+	it("installs a satisfiable range silently", () => {
+		const project = scratch("satisfied-project");
+		const source = scratch("satisfied-source");
+		writeManifest(source, "current-pancode", ">=0.0.0");
+
+		const result = installExtension(source, { cwd: project, scope: "project" });
+
+		ok(result.extension);
+		deepStrictEqual(result.diagnostics, []);
+		strictEqual(result.extension.compatible, true);
+		trustProjectPackages(project, "extensions");
+		const [listed] = listInstalledExtensions(project, { scope: "project", all: true });
+		strictEqual(listed?.compatible, true);
+		strictEqual(listed?.effective, true);
+	});
+
+	it("refuses an incompatible package at load while keeping its diagnostic visible", () => {
+		const project = scratch("load-project");
+		const installedRoot = path.join(project, ".pancode", "extensions", "future-load");
+		writeManifest(installedRoot, "future-load", ">999999.0.0");
+
+		const candidate = loadManifestFromRoot(installedRoot);
+		strictEqual(candidate.valid, false);
+		ok(candidate.manifest, "a syntactically valid incompatible manifest remains diagnosable");
+		const loaded = listInstalledExtensions(project);
+		strictEqual(loaded.length, 1);
+		strictEqual(loaded[0]?.compatible, false);
+		strictEqual(loaded[0]?.effective, false);
+		match(loaded[0]?.diagnostics[0]?.message ?? "", /future-load.*>999999\.0\.0.*running PanCode version/u);
+		strictEqual(loaded[0]?.loadable, false);
+	});
+
+	it("selects the effective package only from valid and compatible candidates", () => {
+		const project = scratch("valid-winner-project");
+		const userSource = scratch("valid-winner-user");
+		const projectSource = scratch("valid-winner-project-source");
+		const outside = scratch("valid-winner-outside");
+		writeManifest(userSource, "winner-contract", ">=0.0.0");
+		writeFileSync(path.join(userSource, "hooks.yaml"), "[]\n", "utf8");
+		ok(installExtension(userSource, { cwd: project, scope: "user" }).extension);
+
+		writeManifest(projectSource, "winner-contract", ">=0.0.0");
+		ok(installExtension(projectSource, { cwd: project, scope: "project" }).extension);
+		trustProjectPackages(project, "extensions");
+		const projectRoot = path.join(project, ".pancode", "extensions", "winner-contract");
+		mkdirSync(path.join(outside, "payload"));
+		symlinkSync(path.join(outside, "payload"), path.join(projectRoot, "payload"), "dir");
+
+		const loaded = listInstalledExtensions(project);
+		strictEqual(loaded.length, 2, "the invalid higher-precedence package remains visible");
+		const user = loaded.find((entry) => entry.scope === "user");
+		const projectEntry = loaded.find((entry) => entry.scope === "project");
+		strictEqual(user?.valid, true);
+		strictEqual(user?.effective, true);
+		strictEqual(user?.loadable, true);
+		strictEqual(projectEntry?.valid, false);
+		strictEqual(projectEntry?.effective, false);
+		strictEqual(projectEntry?.loadable, false);
+		ok(projectEntry?.diagnostics.some((diagnostic) => diagnostic.message.includes("symbolic link")));
+
+		const enabled = enableExtension("winner-contract", { cwd: project, scope: "project" });
+		trustProjectPackages(project, "extensions");
+		strictEqual(enabled.extension?.enabled, true);
+		const reenabled = listInstalledExtensions(project, { scope: "project" }).find((entry) => entry.scope === "project");
+		strictEqual(reenabled?.enabled, true);
+		strictEqual(reenabled?.loadable, false, "enabling cannot override package admission");
+	});
+});

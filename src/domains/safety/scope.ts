@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import path from "node:path";
+import { asDirectoryPathBoundary, resolvePathBoundary, writeRootsCover } from "../../core/path-boundary.js";
+import { storeProjectDirs } from "../../core/store-paths.js";
+import type { ActionClass } from "./action-classifier.js";
+
+/**
+ * Scope rules for worker-vs-orchestrator privilege checks. Dispatch admission
+ * consumes isSubset so a worker scope never escalates past the orchestrator.
+ */
+
+export interface ScopeSpec {
+	allowedActions: ReadonlySet<ActionClass>;
+	allowedWriteRoots: ReadonlyArray<string>;
+	allowNetwork: boolean;
+	allowDispatch: boolean;
+}
+
+function normalizeRoot(root: string): string {
+	return resolvePathBoundary(process.cwd(), root);
+}
+
+export function isSubset(worker: ScopeSpec, orchestrator: ScopeSpec): boolean {
+	for (const action of worker.allowedActions) {
+		if (!orchestrator.allowedActions.has(action)) return false;
+	}
+	for (const root of worker.allowedWriteRoots) {
+		const covered = writeRootsCover(orchestrator.allowedWriteRoots.map(normalizeRoot), normalizeRoot(root));
+		if (!covered) return false;
+	}
+	if (worker.allowNetwork && !orchestrator.allowNetwork) return false;
+	if (worker.allowDispatch && !orchestrator.allowDispatch) return false;
+	return true;
+}
+
+export const READONLY_SCOPE: ScopeSpec = {
+	allowedActions: new Set<ActionClass>(["read"]),
+	allowedWriteRoots: [],
+	allowNetwork: true,
+	allowDispatch: false,
+};
+
+/**
+ * Scopes rooted at the process working directory, read at each use. `run --cwd`
+ * and ACP `session/new` enter the selected workspace after this module is
+ * imported, so a root captured at import named the launch directory (#433).
+ * The root stays the process directory, the one the orchestrator's own tools
+ * and policy engine resolve against, so a resumed session recorded elsewhere
+ * fails closed instead of widening worker writes past the orchestrator.
+ */
+function processWorkspaceRoots(): string[] {
+	const workspace = asDirectoryPathBoundary(path.resolve(process.cwd()));
+	try {
+		// The main session already writes this project's store through the store
+		// tool, so stating its directory on each store root lets a worker's tag
+		// grant (M-31) pass isSubset wherever the tag is placed.
+		return [workspace, ...storeProjectDirs(process.cwd()).map(asDirectoryPathBoundary)];
+	} catch {
+		// An unresolvable PanCode home has no store, so no grant can name it.
+		return [workspace];
+	}
+}
+
+export const WORKSPACE_SCOPE: ScopeSpec = {
+	allowedActions: new Set<ActionClass>(["read", "write", "execute", "dispatch"]),
+	get allowedWriteRoots() {
+		return processWorkspaceRoots();
+	},
+	allowNetwork: true,
+	allowDispatch: true,
+};

@@ -1,0 +1,303 @@
+name: ci
+run-name: ${{ inputs.nonce || format('ci {0}', inputs.sha) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact commit to qualify (must be this branch head)
+        required: true
+        type: string
+      rehearse:
+        description: Rehearse publication without public writes (ci-scratch-* or rehearse/* only)
+        default: false
+        type: boolean
+      version_branch:
+        description: Version branch for the release plan (empty means the dispatched branch)
+        required: false
+        type: string
+      platforms:
+        description: Also boot the same package on Windows and macOS
+        default: false
+        type: boolean
+      windows:
+        description: With platforms, also boot on Windows (false boots macOS only)
+        default: true
+        type: boolean
+      browser:
+        description: Also run the GUI browser smoke, perf checks and API smoke (they run on every version-branch push and pull request; not a required check)
+        default: false
+        type: boolean
+      nonce:
+        description: Caller's unique run name, so the caller finds this run without comparing clocks
+        required: false
+        type: string
+      credits:
+        description: Reporter credits JSON from scripts/report-credits.mjs for the release notes (empty leaves them unchanged)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: qualify-${{ inputs.sha }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Use runner scratch for temporary files
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Require the exact candidate
+        env:
+          CANDIDATE_SHA: ${{ inputs.sha }}
+          REHEARSE: ${{ inputs.rehearse }}
+        run: |
+          test "$CANDIDATE_SHA" = "$GITHUB_SHA"
+          if test "$REHEARSE" = true; then
+            case "$GITHUB_REF_NAME" in ci-scratch-*|rehearse/*) ;; *) exit 1 ;; esac
+          fi
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: pnpm
+      # Before the install and the checks, so an unreachable download ends the run in seconds. The cache
+      # holds the verified binaries for later runs on this branch; a miss downloads the pinned archives.
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/search-tools
+          key: search-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/ci-tools.mjs') }}
+      - name: Pinned ripgrep and fd for the test jobs
+        run: node scripts/ci-tools.mjs "$RUNNER_TEMP/search-tools"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          # Named outside the *-<sha> pattern the rehearsal and release jobs merge into the candidate.
+          name: search-tools
+          path: ${{ runner.temp }}/search-tools/*
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - run: pnpm install --frozen-lockfile
+      - name: Check, build, pack once, and prepare the website
+        env:
+          CREDITS: ${{ inputs.credits }}
+        run: |
+          if test -n "$CREDITS"; then
+            printf '%s' "$CREDITS" > "$RUNNER_TEMP/credits.json"
+            node scripts/release-candidate.mjs prepare --directory "$RUNNER_TEMP/candidate" --credits "$RUNNER_TEMP/credits.json"
+          else
+            node scripts/release-candidate.mjs prepare --directory "$RUNNER_TEMP/candidate"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: candidate-${{ inputs.sha }}
+          path: ${{ runner.temp }}/candidate/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  ci:
+    name: ci (22)
+    needs: prepare
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Use runner scratch for temporary files
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Require successful preparation
+        env:
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+        run: test "$PREPARE_RESULT" = success
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The rg and fd that prepare fetched and checked against scripts/ci-tools.mjs. The test step verifies
+      # their SHA-256 again and marks them executable, so no package mirror is on the test path.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: search-tools
+          path: ${{ runner.temp }}/search-tools
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: candidate-${{ inputs.sha }}
+          path: ${{ runner.temp }}/candidate
+      # The state-file-lock pid-namespace contracts skip unless `unshare -Urpf` works; Ubuntu 24.04 blocks it through
+      # AppArmor. Each key is set only where the kernel has it, and the probe fails this step instead of a silent skip.
+      - name: Allow unprivileged user namespaces
+        run: |
+          for setting in kernel.unprivileged_userns_clone=1 kernel.apparmor_restrict_unprivileged_userns=0; do
+            key="${setting%%=*}"
+            if test -e "/proc/sys/${key//.//}"; then sudo sysctl -w "$setting"; fi
+          done
+          unshare -Urpf --kill-child --mount-proc true
+      - name: Selected contracts, GUI behavior, and installed package
+        env:
+          CANDIDATE_SHA: ${{ inputs.sha }}
+        run: node scripts/release-candidate.mjs test --directory "$RUNNER_TEMP/candidate" --sha "$CANDIDATE_SHA"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: results-${{ inputs.sha }}
+          path: ${{ runner.temp }}/candidate/test-results.json
+          if-no-files-found: error
+          retention-days: 30
+
+  runtime-compatibility:
+    name: ci (24)
+    needs: prepare
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Use runner scratch for temporary files
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Require successful preparation
+        env:
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+        run: test "$PREPARE_RESULT" = success
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The rg and fd that prepare fetched and checked against scripts/ci-tools.mjs. The test step verifies
+      # their SHA-256 again and marks them executable, so no package mirror is on the test path.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: search-tools
+          path: ${{ runner.temp }}/search-tools
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: candidate-${{ inputs.sha }}
+          path: ${{ runner.temp }}/candidate
+      # The same tests as ci (22): 0.7.0 passed a Node 24-only check and failed on Node 22.
+      - name: Selected contracts, GUI behavior, and installed package on Node 24
+        env:
+          CANDIDATE_SHA: ${{ inputs.sha }}
+        run: node scripts/release-candidate.mjs test --directory "$RUNNER_TEMP/candidate" --sha "$CANDIDATE_SHA" --results test-results-24.json
+      - name: Boot the qualified package on Node 24
+        env:
+          CANDIDATE_SHA: ${{ inputs.sha }}
+        run: node scripts/release-candidate.mjs smoke --directory "$RUNNER_TEMP/candidate" --sha "$CANDIDATE_SHA"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: results24-${{ inputs.sha }}
+          path: ${{ runner.temp }}/candidate/test-results-24.json
+          if-no-files-found: error
+          retention-days: 30
+
+  platform:
+    name: boot (${{ matrix.os }})
+    if: ${{ inputs.platforms }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 6
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.windows && '["windows-latest","macos-latest"]' || '["macos-latest"]') }}
+    steps:
+      - name: Use runner scratch for temporary files
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Preserve committed bytes on Windows
+        if: ${{ runner.os == 'Windows' }}
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: candidate-${{ inputs.sha }}
+          path: ${{ runner.temp }}/candidate
+      - name: Boot the qualified package
+        env:
+          CANDIDATE_SHA: ${{ inputs.sha }}
+          CANDIDATE_DIRECTORY: ${{ runner.temp }}/candidate
+        run: node scripts/release-candidate.mjs smoke --directory "$CANDIDATE_DIRECTORY" --sha "$CANDIDATE_SHA"
+
+  browser-smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.browser }}
+    needs: prepare
+    permissions:
+      contents: read
+    uses: ./.github/workflows/browser-smoke.yml
+
+  rehearsal-preflight:
+    if: ${{ inputs.rehearse }}
+    needs: [ci, runtime-compatibility]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Use runner scratch for temporary files
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: '*-${{ inputs.sha }}'
+          merge-multiple: true
+          path: ${{ runner.temp }}/candidate
+      - name: Verify the staged publication receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.sha }}
+          VERSION_BRANCH: ${{ inputs.version_branch || github.ref_name }}
+        run: node scripts/release-publish.mjs rehearse-preflight --directory "$RUNNER_TEMP/candidate" --sha "$CANDIDATE_SHA" --run "$GITHUB_RUN_ID" --branch "$VERSION_BRANCH"
+
+  rehearsal:
+    if: ${{ inputs.rehearse }}
+    needs: rehearsal-preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Use runner scratch for temporary files
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: '*-${{ inputs.sha }}'
+          merge-multiple: true
+          path: ${{ runner.temp }}/candidate
+      - name: Rehearse publication using the tested bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.sha }}
+          VERSION_BRANCH: ${{ inputs.version_branch || github.ref_name }}
+        run: node scripts/release-publish.mjs rehearse --directory "$RUNNER_TEMP/candidate" --sha "$CANDIDATE_SHA" --run "$GITHUB_RUN_ID" --branch "$VERSION_BRANCH"

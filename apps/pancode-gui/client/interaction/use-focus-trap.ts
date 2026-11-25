@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Tab containment and focus restoration for dialogs, drawers and inline panels that are not a
+// native `<dialog>`. The containment branch handles the case hand-rolled traps get wrong: focus that
+// has escaped the container entirely is pulled back to the end Tab was heading toward.
+
+import { type RefObject, useEffect, useRef } from "react";
+
+export const FOCUSABLE_SELECTOR =
+	'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+
+export function focusableWithin(container: HTMLElement): HTMLElement[] {
+	return [...container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter(
+		(element) => !element.hidden && element.getAttribute("aria-hidden") !== "true",
+	);
+}
+
+/**
+ * Keep Tab inside `container`. An empty container swallows Tab and focuses itself, which is why the
+ * container must carry `tabIndex={-1}`.
+ */
+export function containTabKey(event: KeyboardEvent, container: HTMLElement): void {
+	if (event.key !== "Tab") return;
+	const focusable = focusableWithin(container);
+	if (focusable.length === 0) {
+		event.preventDefault();
+		container.focus();
+		return;
+	}
+	const first = focusable[0];
+	const last = focusable.at(-1);
+	if (!first || !last) return;
+	const outside = !container.contains(document.activeElement);
+	if (event.shiftKey && (document.activeElement === first || outside)) {
+		event.preventDefault();
+		last.focus();
+	} else if (!event.shiftKey && (document.activeElement === last || outside)) {
+		event.preventDefault();
+		first.focus();
+	}
+}
+
+/**
+ * Move focus into `container` on open, contain Tab while open, and return focus to whatever held it
+ * when the trap closes. The restore is guarded on `isConnected` because the element that opened the
+ * layer is often unmounted by the action that closed it. Pass `initial` to land somewhere other than
+ * the first focusable control, which a destructive dialog should do. `returnTo` names the opener
+ * when the caller knows it (a click that did not focus its button, a child that took focus on
+ * mount). `owns` reports whether this trap is the innermost layer; a covered trap leaves Tab alone.
+ */
+export function useFocusTrap(
+	container: RefObject<HTMLElement | null>,
+	active: boolean,
+	initial?: RefObject<HTMLElement | null>,
+	options: { readonly returnTo?: HTMLElement | null | undefined; readonly owns?: () => boolean } = {},
+): void {
+	const latest = useRef(options);
+	latest.current = options;
+	useEffect(() => {
+		if (!active) return;
+		const opener = latest.current.returnTo ?? document.activeElement;
+		const previouslyFocused = opener instanceof HTMLElement ? opener : null;
+		const landing = initial?.current ?? container.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR) ?? null;
+		(landing ?? container.current)?.focus();
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (latest.current.owns && !latest.current.owns()) return;
+			if (container.current) containTabKey(event, container.current);
+		};
+		document.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("keydown", onKeyDown);
+			// The shell marks the page behind a layer `inert`, and it drops that attribute only on the
+			// render after this cleanup runs. Calling `focus()` inside a still-inert subtree does
+			// nothing and leaves focus on `<body>`, so the restore waits a frame for inert to clear and
+			// tries once more if it has not. A layer opened from nothing (a global chord with no focus)
+			// returns to the message box or the main region rather than leaving focus on `<body>`. Focus
+			// that something else already took, such as a menu a command opened, is left where it is.
+			const restore = (tries: number) =>
+				requestAnimationFrame(() => {
+					const active = document.activeElement;
+					if (active && active !== document.body) return;
+					const target =
+						previouslyFocused?.isConnected && previouslyFocused !== document.body
+							? previouslyFocused
+							: (document.querySelector<HTMLElement>(".composer__field:not(:disabled)") ?? document.getElementById("main"));
+					target?.focus();
+					if (tries > 0 && document.activeElement !== target) restore(tries - 1);
+				});
+			restore(3);
+		};
+	}, [container, active, initial]);
+}

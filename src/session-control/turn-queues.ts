@@ -1,0 +1,672 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * The steering queue PanCode owns, and its hand-over to the engine.
+ *
+ * A message submitted while a run is active waits here, in enqueue order,
+ * where the operator can still reorder, relabel or remove it. The engine's own
+ * queues receive a message only at a steering slot: the top of `finishTurn`
+ * (after a tool batch, before the next model call), the end of
+ * `prepareNextTurn` (so a message typed during compaction rides Pi's second
+ * poll), or just before a fresh prompt when the queue is flushed. Pi drains
+ * everything it was handed in one poll (`steeringMode = "all"`), so N messages
+ * land as N user messages before one model call. The transcript renders a
+ * message when Pi injects it (message_end), never at enqueue, so the chat
+ * order matches what the model saw.
+ */
+
+import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
+import type { TurnConstraints } from "../core/turn-constraints.js";
+import type { HostInsertSource } from "../domains/session/entries.js";
+import type { createEngineAgent } from "../engine/agent.js";
+import type { AgentMessage } from "../engine/types.js";
+import type { TurnQueuesState } from "./turn-state.js";
+
+type EngineAgent = ReturnType<typeof createEngineAgent>["agent"];
+
+/** Which engine queue a queued message rides: the steering queue or the follow-up queue. */
+export type QueuedMessageKind = "steer" | "follow-up";
+
+/**
+ * Operator-chosen delivery point for a message submitted while a run is
+ * active. `next-slot` rides the steering queue and lands between tool batches,
+ * mid-run. `end-of-turn` rides the follow-up queue and lands when the whole run
+ * settles and the agent would hand control back. `interrupt` cancels the
+ * in-flight work and delivers now; it never enters a queue.
+ */
+export type SteeringMode = "interrupt" | "next-slot" | "end-of-turn";
+
+export const DEFAULT_STEERING_MODE: SteeringMode = "next-slot";
+
+export interface QueuedChatMessage {
+	/** Session-local id; the navigator and the producers address an entry by it. */
+	id: string;
+	display?: { text: string; note?: string };
+	text: string;
+	kind: QueuedMessageKind;
+	/** Epoch milliseconds the operator submitted it. */
+	enqueuedAt: number;
+	/** Advisory labels a steering producer attached (`relation`, `urgency`, `producer`). */
+	labels?: Readonly<Record<string, string>>;
+	/** True once the operator set the kind by hand; a producer never relabels a pinned entry. */
+	pinned?: boolean;
+	/**
+	 * Who submitted this entry when it was not the operator, in words for the
+	 * transcript (a peer PanCode's pane). It is persisted on the user turn, so a
+	 * replay still says the prompt was not typed here. An entry with an origin
+	 * is pinned: no producer may turn its follow-up into a steer or an
+	 * interrupt.
+	 */
+	origin?: string;
+	/**
+	 * Paths whose content the expansion inlined into `text`. Their information-flow
+	 * labels are absorbed when the entry is queued, since the text reaches the
+	 * model at the next slot without passing the fresh-prompt path again.
+	 */
+	referencedPaths?: ReadonlyArray<string>;
+	/**
+	 * A prompt template's tool limits. Such an entry is never handed to the
+	 * running turn, since those limits bind a whole turn: it waits as a
+	 * follow-up and the settle starts it as its own turn. Before, Enter on a
+	 * template during a run was refused and the line put back in the editor,
+	 * where a driver's next keystrokes appended to it (WTF-P, 2026-11-15).
+	 */
+	constraints?: TurnConstraints;
+}
+
+/** Why an entry left the queue without being delivered by the engine. */
+export type QueueRemovalReason = "removed" | "sent-now" | "to-editor" | "restored" | "cancelled" | "resubmitted";
+
+/** Where a delivered entry was handed to the engine. */
+export type QueueDeliveryPoint = "finish-turn" | "prepare-next-turn" | "prompt";
+
+/**
+ * What became of a queued entry, for the dataset that joins it to the steer
+ * site's reading by the entry id. `waitedMs` is the time it spent queued.
+ */
+export type QueueEvent =
+	| { type: "queued"; entry: QueuedChatMessage }
+	| { type: "delivered"; entry: QueuedChatMessage; point: QueueDeliveryPoint; waitedMs: number }
+	| { type: "removed"; entry: QueuedChatMessage; reason: QueueRemovalReason; waitedMs: number }
+	| { type: "relabeled"; entry: QueuedChatMessage; by: "operator" | "producer" }
+	| { type: "held"; entry: QueuedChatMessage; why: QueueHoldReason }
+	| { type: "released"; entry: QueuedChatMessage }
+	/** Handed to the engine and never injected: it is back in PanCode's queue. */
+	| { type: "returned"; entry: QueuedChatMessage; why: QueueReturnReason }
+	/** The engine put it in the run's messages, so the next request carries it. */
+	| { type: "injected"; entry: QueuedChatMessage };
+
+/** What put a queue on hold. */
+export type QueueHoldReason = "operator-stop" | "interrupt" | "prompt-not-started" | "session-move";
+/** What brought an entry back after a hand-over. */
+export type QueueReturnReason = "run-cancelled" | "prompt-not-started" | "session-move";
+
+export interface QueueEnqueueOptions {
+	front?: boolean;
+	/** Machine provenance; see {@link QueuedChatMessage.origin}. */
+	origin?: string;
+	referencedPaths?: ReadonlyArray<string>;
+	/** This entry is a message already taken off the queue, such as a send-now the run refused: it keeps its identity. */
+	continues?: Pick<QueuedChatMessage, "id" | "enqueuedAt">;
+	/** See {@link QueuedChatMessage.constraints}. */
+	constraints?: TurnConstraints;
+}
+
+export interface QueuedMessagesSnapshot {
+	steer: ReadonlyArray<string>;
+	followUp: ReadonlyArray<string>;
+}
+
+/** The surface-neutral wording; the TUI replaces it with one naming its bound keys. */
+export function heldQueueNotice(count: number): string {
+	const subject = count === 1 ? "1 queued message is" : `${count} queued messages are`;
+	return `[PanCode] ${subject} held and nothing was sent. A new prompt takes the queue at its first slot; clearing the queue returns it.`;
+}
+
+export interface TurnQueuesDeps {
+	state: TurnQueuesState;
+	emitQueueUpdateEvent: (messages: QueuedChatMessage[]) => void;
+	/** An operator stop or an unstarted prompt left this many entries held. Falls back to a plain notice. */
+	emitQueueHeld?: (count: number) => void;
+	/** A session change took these operator entries unsent. Falls back to a plain notice. */
+	emitQueueDropped?: (texts: string[]) => void;
+	/**
+	 * Fired at injection time, when the engine drains a handed-over message into
+	 * the run (or the stranded fallback resubmits it). The transcript renders
+	 * the user turn from this event; enqueue time shows the text only in the
+	 * queue panel, so the chat order matches what the model actually saw.
+	 */
+	emitQueuedUserTurn: (entry: QueuedChatMessage) => void;
+	emitNotice: (text: string) => void;
+	/** What became of an entry; recording only, never consulted. */
+	onEvent?: (event: QueueEvent) => void;
+	/** Late-bound `ChatLoop.submit`; wired by the loop after API construction. */
+	submit: (
+		text: string,
+		options?: {
+			requestContinuation?: boolean;
+			workingContextPaths?: ReadonlyArray<string>;
+			origin?: string;
+			queued?: QueuedChatMessage;
+			display?: NonNullable<QueuedChatMessage["display"]>;
+			constraints?: TurnConstraints;
+		},
+	) => Promise<void>;
+	now?: () => number;
+}
+
+/** A host message waiting for the next tool-batch boundary (X6), with the rule that emitted it. */
+export interface QueuedHostMessage {
+	text: string;
+	source: HostInsertSource;
+	rule?: string;
+}
+
+export interface TurnQueues {
+	/** `front` puts the entry at the head of the queue: a send-now the operator chose to wait with. Null when nothing is running. */
+	steer(text: string, display?: QueuedChatMessage["display"], options?: QueueEnqueueOptions): QueuedChatMessage | null;
+	queueFollowUp(
+		text: string,
+		display?: QueuedChatMessage["display"],
+		options?: QueueEnqueueOptions,
+	): QueuedChatMessage | null;
+	queuedMessages(): QueuedMessagesSnapshot;
+	/**
+	 * A host-framed message for the running turn (X6): it waits for the next tool-batch boundary that carries the run
+	 * on, where the turn runtime takes it ({@link takeHostMessages}) and appends it as a host insert, and is dropped
+	 * when the run ends first. It never reaches the engine's steering queue, is never shown in the queue panel, never
+	 * counts as a pending steer (so it never interrupts a running tool) and never starts a user turn. False when
+	 * nothing is running or the same text already waits.
+	 */
+	queueHostMessage(text: string, source: HostInsertSource, rule?: string): boolean;
+	/** The host messages waiting for this boundary, in queue order; taking them empties the lane. */
+	takeHostMessages(): QueuedHostMessage[];
+	/** Copies of the entries still in PanCode's hands, in delivery order. */
+	entries(): QueuedChatMessage[];
+	/** True while a next-slot message is queued or handed over but not yet injected. */
+	hasPendingSteer(): boolean;
+	removeEntry(id: string, reason?: QueueRemovalReason): QueuedChatMessage | null;
+	/** Move one entry up (-1) or down (+1); false when it cannot move. */
+	moveEntry(id: string, delta: -1 | 1): boolean;
+	/** The operator's own choice of slot; pins the entry against producers. */
+	setEntryKind(id: string, kind: QueuedMessageKind): boolean;
+	/** A producer's advisory labels, and a new kind unless the operator pinned the entry. */
+	relabel(id: string, labels: Readonly<Record<string, string>>, kind?: QueuedMessageKind): boolean;
+	/**
+	 * Drain PanCode's queue, the in-flight list and both engine queues. Returns the
+	 * operator's entries for the caller to restore; machine-origin entries are
+	 * retired with a notice and never returned.
+	 */
+	clearQueuedMirror(): QueuedChatMessage[];
+	/**
+	 * Copies of exactly the entries {@link clearQueuedMirror} would return right now, in-flight ones included, without
+	 * draining anything, so a caller can refuse a clear it could not hand back whole.
+	 */
+	restorableQueued(): QueuedChatMessage[];
+	/**
+	 * Hand next-slot entries to the engine after a tool batch, before Pi polls.
+	 * At the run's final turn with nothing left to steer, end-of-turn entries
+	 * go to the follow-up queue instead, so Pi carries the run on with them.
+	 */
+	handOverAtFinishTurn(final: boolean): void;
+	/** Hand next-slot entries typed during a long preparation to Pi's second poll. */
+	handOverAfterPrepareNextTurn(): void;
+	/**
+	 * Just before `agent.prompt`: a flush hands everything over so it lands with
+	 * the first model call. `keepOperatorHold` is for a prompt the operator did
+	 * not type (a job, a peer, a continuation), which must not deliver what an
+	 * operator stop told them was held.
+	 */
+	handOverBeforePrompt(agent: EngineAgent, options?: { keepOperatorHold?: boolean }): void;
+	/** Arm the next prompt to carry the whole queue (Alt+S with an empty draft; the stranded fallback). */
+	flushOnNextPrompt(): void;
+	/**
+	 * The run was cancelled. Messages the engine was handed but never injected
+	 * come back to the head of the queue. An interrupt holds the queue for the
+	 * prompt that follows. A job cancellation preserves every entry for the
+	 * settle path (#411). `settle` (a loop-guard or tool-budget stop) does the
+	 * same for the operator's entries and retires machine-origin ones. Any other
+	 * cancel is an operator stop: it sends nothing, retires machine-origin
+	 * entries and holds the operator's until they act (#447).
+	 */
+	onRunCancelled(options: { hold: boolean; preserve?: boolean; settle?: boolean }): void;
+	/** A prompt carrying this entry never started: the entry returns to the head of the queue. */
+	requeueUnstarted(entry: QueuedChatMessage): void;
+	/** Say what a session change took unsent, for an entry no longer in the queue. */
+	reportDropped(entries: ReadonlyArray<QueuedChatMessage>): void;
+	/**
+	 * The submit that owned the session ended. A prompt that never started
+	 * leaves any queue held, and a held queue is announced here, after the stream
+	 * closed, so the notice cannot split the aborted assistant entry (#425).
+	 */
+	settleSubmit(promptStarted: boolean): void;
+	/** True (and consumed) when the loop already persisted this exact user text. */
+	consumePersistedEcho(text: string): boolean;
+	markPersistedUserEcho(text: string, prompt: () => Promise<void>): Promise<void>;
+	/** The engine injected this text: it leaves the queue panel and enters the transcript. Returns the entry it was. */
+	acknowledgeInjected(text: string): QueuedChatMessage | null;
+	/** Resubmit entries the run never took as a fresh prompt; true when one was sent. */
+	resubmitStranded(): Promise<boolean>;
+	resubmitRequestContinuation(): Promise<void>;
+	/** `keepOperator`: the session did not change (a local shell line, a /tree move), so the operator's entries stay held. */
+	reset(options?: { keepOperator?: boolean }): void;
+}
+
+export function createTurnQueues(deps: TurnQueuesDeps): TurnQueues {
+	const { state } = deps;
+	const now = deps.now ?? (() => Date.now());
+	const queuedAt = new WeakMap<QueuedChatMessage, number>();
+	// Entries still in PanCode's hands, in delivery order.
+	const queue: QueuedChatMessage[] = [];
+	// Entries handed to the engine and not yet injected. Pi polls right after
+	// each hand-over, so this is normally empty between slots; a cancel between
+	// the two puts them back.
+	const inFlight: QueuedChatMessage[] = [];
+	const persistedUserEchoes: string[] = [];
+	let sequence = 0;
+	// The queue waits instead of being resubmitted by the cancelled run's settle:
+	// for the fresh prompt an interrupt is about to send, or for the operator to
+	// act after a stop.
+	let heldFor: "interrupt" | "operator" | null = null;
+	// Typed after the operator stop, while the run was still dying. It answers the
+	// stop instead of preceding it, so the settle sends it (#447).
+	let typedAfterStop = new WeakSet<QueuedChatMessage>();
+	// Entries a hold was already reported for, so a second Esc reports nothing new and a release knows what it frees.
+	let reportedHeld = new WeakSet<QueuedChatMessage>();
+	let announcedHeld = 0;
+	let flushNext = false;
+	// Host messages waiting for the next tool-batch boundary.
+	const hostQueue: QueuedHostMessage[] = [];
+	const dropHost = (): void => {
+		hostQueue.length = 0;
+	};
+
+	const emitQueueUpdate = (): void => {
+		deps.emitQueueUpdateEvent(queue.map((entry) => ({ ...entry })));
+	};
+
+	const toAgentMessage = (entry: QueuedChatMessage): AgentMessage =>
+		({ role: "user", content: entry.text, timestamp: now() }) as AgentMessage;
+
+	// Enqueue is silent in the transcript: the queue panel is the one signal
+	// that a message is pending, exactly as pi-coding-agent's pending container
+	// works. The former per-steer transcript notice duplicated the panel and
+	// left a permanent line for a transient state.
+	const enqueue = (
+		text: string,
+		kind: QueuedMessageKind,
+		display?: QueuedChatMessage["display"],
+		options?: QueueEnqueueOptions,
+	): QueuedChatMessage | null => {
+		// The payload crosses to the model exactly as it was submitted; only the
+		// emptiness test reads a trimmed copy. A queued turn that shortened its own
+		// text here would land in the ledger disagreeing with the expansion that
+		// produced it, which is the same defect the persisted echo had (issue #244).
+		if (text.trim().length === 0 || !state.streaming || !state.runtime) return null;
+		sequence += 1;
+		const paths = options?.referencedPaths ?? [];
+		// Unique across sessions: the id is the join key between the steer site's
+		// reading of this entry and the outcome rows written when it leaves.
+		const entry: QueuedChatMessage = {
+			id: options?.continues?.id ?? `steer_${randomUUID().slice(0, 8)}_${sequence}`,
+			text,
+			kind,
+			enqueuedAt: options?.continues?.enqueuedAt ?? now(),
+			...(display ? { display } : {}),
+			...(paths.length > 0 ? { referencedPaths: [...paths] } : {}),
+			...(options?.origin !== undefined ? { origin: options.origin, pinned: true } : {}),
+			...(options?.constraints !== undefined ? { constraints: options.constraints, pinned: true } : {}),
+		};
+		queuedAt.set(entry, performance.now());
+		if (heldFor === "operator" && options?.origin === undefined) typedAfterStop.add(entry);
+		if (options?.front === true) queue.unshift(entry);
+		else queue.push(entry);
+		emitQueueUpdate();
+		report({ type: "queued", entry: { ...entry } });
+		return { ...entry };
+	};
+
+	const report = (event: QueueEvent): void => {
+		try {
+			deps.onEvent?.(event);
+		} catch {
+			// Recording never costs the queue operation it describes.
+		}
+	};
+	const waited = (entry: QueuedChatMessage): number => performance.now() - (queuedAt.get(entry) as number);
+	const removed = (entries: ReadonlyArray<QueuedChatMessage>, reason: QueueRemovalReason): void => {
+		for (const entry of entries) report({ type: "removed", entry: { ...entry }, reason, waitedMs: waited(entry) });
+	};
+
+	/**
+	 * A machine-origin entry that leaves the queue unrun is retired, never
+	 * restored: its sender was told it was accepted, and its text is not the
+	 * operator's to find in the composer and send as their own. The transcript
+	 * says what was dropped and why, which is the only place the sender can
+	 * still read it.
+	 */
+	const retire = (entries: ReadonlyArray<QueuedChatMessage>, why: string): void => {
+		removed(entries, "cancelled");
+		for (const entry of entries) {
+			deps.emitNotice(`[PanCode] ${entry.origin} was accepted into the queue and dropped unrun: ${why}.`);
+		}
+	};
+	const fromMachine = (entry: QueuedChatMessage): boolean => entry.origin !== undefined;
+
+	const reportDropped = (entries: ReadonlyArray<QueuedChatMessage>): void => {
+		if (entries.length === 0) return;
+		removed(entries, "cancelled");
+		const texts = entries.map((entry) => entry.text);
+		if (deps.emitQueueDropped) deps.emitQueueDropped(texts);
+		else deps.emitNotice(`[PanCode] the session changed; not sent: ${texts.join(" | ")}`);
+	};
+
+	const reportHeld = (why: QueueHoldReason): void => {
+		for (const entry of queue) {
+			if (reportedHeld.has(entry)) continue;
+			reportedHeld.add(entry);
+			report({ type: "held", entry: { ...entry }, why });
+		}
+	};
+	const reportReleased = (): void => {
+		for (const entry of queue) if (reportedHeld.has(entry)) report({ type: "released", entry: { ...entry } });
+		reportedHeld = new WeakSet();
+	};
+	const reportReturned = (entries: ReadonlyArray<QueuedChatMessage>, why: QueueReturnReason): void => {
+		for (const entry of entries) report({ type: "returned", entry: { ...entry }, why });
+	};
+
+	const find = (id: string): number => queue.findIndex((entry) => entry.id === id);
+
+	/** Hand every entry of `kind` to the engine; returns how many went. */
+	const handOver = (agent: EngineAgent, kind: QueuedMessageKind, point: QueueDeliveryPoint): number => {
+		const due = queue.filter((entry) => entry.kind === kind && entry.constraints === undefined);
+		if (due.length === 0) return 0;
+		for (const entry of due) {
+			queue.splice(queue.indexOf(entry), 1);
+			inFlight.push(entry);
+			if (kind === "steer") agent.steer(toAgentMessage(entry));
+			else agent.followUp(toAgentMessage(entry));
+			report({ type: "delivered", entry: { ...entry }, point, waitedMs: waited(entry) });
+		}
+		emitQueueUpdate();
+		return due.length;
+	};
+
+	return {
+		steer: (text, display, options) => enqueue(text, "steer", display, options),
+		queueFollowUp: (text, display, options) => enqueue(text, "follow-up", display, options),
+		queueHostMessage(text, source, rule) {
+			if (text.trim().length === 0 || !state.streaming || !state.runtime) return false;
+			if (hostQueue.some((entry) => entry.text === text)) return false;
+			hostQueue.push({ text, source, ...(rule !== undefined ? { rule } : {}) });
+			return true;
+		},
+		takeHostMessages: () => hostQueue.splice(0, hostQueue.length),
+		queuedMessages(): QueuedMessagesSnapshot {
+			return {
+				steer: queue.filter((entry) => entry.kind === "steer").map((entry) => entry.text),
+				followUp: queue.filter((entry) => entry.kind === "follow-up").map((entry) => entry.text),
+			};
+		},
+		entries: () => queue.map((entry) => ({ ...entry })),
+		hasPendingSteer: () =>
+			queue.some((entry) => entry.kind === "steer") || inFlight.some((entry) => entry.kind === "steer"),
+		removeEntry(id, reason = "removed") {
+			const idx = find(id);
+			if (idx < 0) return null;
+			// Moving an entry to the editor or sending it now makes its text the
+			// operator's own submission; a machine prompt can only be deleted.
+			if (queue[idx]?.origin !== undefined && (reason === "to-editor" || reason === "sent-now")) return null;
+			const [entry] = queue.splice(idx, 1);
+			emitQueueUpdate();
+			if (entry && fromMachine(entry)) retire([entry], "the operator removed it");
+			else if (entry) removed([entry], reason);
+			return entry ?? null;
+		},
+		moveEntry(id, delta) {
+			const idx = find(id);
+			const target = idx + delta;
+			if (idx < 0 || target < 0 || target >= queue.length) return false;
+			const [entry] = queue.splice(idx, 1);
+			if (!entry) return false;
+			queue.splice(target, 0, entry);
+			emitQueueUpdate();
+			return true;
+		},
+		setEntryKind(id, kind) {
+			const entry = queue[find(id)];
+			// A machine prompt stays a follow-up: it is never a steer, whoever asks. A
+			// template's turn stays one too: its limits cannot bind a steer.
+			if (!entry || fromMachine(entry) || entry.constraints !== undefined) return false;
+			entry.kind = kind;
+			entry.pinned = true;
+			emitQueueUpdate();
+			report({ type: "relabeled", entry: { ...entry }, by: "operator" });
+			return true;
+		},
+		relabel(id, labels, kind) {
+			const entry = queue[find(id)];
+			if (!entry) return false;
+			// Replaced, not merged: a later label verdict must not inherit the confidence an earlier round recorded.
+			entry.labels = { ...labels };
+			if (kind !== undefined && entry.pinned !== true) entry.kind = kind;
+			emitQueueUpdate();
+			report({ type: "relabeled", entry: { ...entry }, by: "producer" });
+			return true;
+		},
+		clearQueuedMirror(): QueuedChatMessage[] {
+			const drained = [...inFlight.splice(0, inFlight.length), ...queue.splice(0, queue.length)];
+			dropHost();
+			heldFor = null;
+			announcedHeld = 0;
+			flushNext = false;
+			if (state.runtime) {
+				state.runtime.agent.clearAllQueues();
+			}
+			if (drained.length > 0) emitQueueUpdate();
+			const restored = drained.filter((entry) => !fromMachine(entry));
+			removed(restored, "restored");
+			retire(drained.filter(fromMachine), "the queue was cleared");
+			return restored;
+		},
+		restorableQueued(): QueuedChatMessage[] {
+			return [...inFlight, ...queue].filter((entry) => !fromMachine(entry)).map((entry) => ({ ...entry }));
+		},
+		handOverAtFinishTurn(final) {
+			// A host message rides only a boundary the run continues past; at its final turn it would carry a finished run on.
+			if (final) dropHost();
+			const agent = state.runtime?.agent;
+			if (!agent || heldFor !== null) return;
+			const steered = handOver(agent, "steer", "finish-turn");
+			if (final && steered === 0) handOver(agent, "follow-up", "finish-turn");
+		},
+		handOverAfterPrepareNextTurn() {
+			const agent = state.runtime?.agent;
+			if (!agent || heldFor !== null) return;
+			handOver(agent, "steer", "prepare-next-turn");
+		},
+		handOverBeforePrompt(agent, options) {
+			// A host message belongs to the run that queued it; a new prompt starts past it.
+			dropHost();
+			if (heldFor !== "operator" || options?.keepOperatorHold !== true) {
+				if (heldFor !== null) reportReleased();
+				heldFor = null;
+				announcedHeld = 0;
+			}
+			if (!flushNext) return;
+			flushNext = false;
+			handOver(agent, "steer", "prompt");
+			handOver(agent, "follow-up", "prompt");
+		},
+		flushOnNextPrompt() {
+			flushNext = true;
+		},
+		onRunCancelled({ hold, preserve = false, settle = false }) {
+			dropHost();
+			const changed = inFlight.length > 0 || queue.length > 0;
+			reportReturned(inFlight, "run-cancelled");
+			queue.unshift(...inFlight.splice(0, inFlight.length));
+			if (!hold && !preserve) {
+				const machine = queue.filter(fromMachine);
+				for (const entry of machine) queue.splice(queue.indexOf(entry), 1);
+				retire(machine, "the run was cancelled");
+			}
+			// Preservation must not clear an interrupt or a stop that already owns the queue (#411).
+			if (hold) {
+				heldFor = queue.length > 0 ? "interrupt" : null;
+				reportHeld("interrupt");
+			} else if (!preserve && !settle) {
+				// Armed even with an empty queue: what arrives while the run dies must not
+				// reach a hand-over, and the settle clears an arm that caught nothing.
+				heldFor = queue.length > 0 || state.streaming ? "operator" : null;
+				typedAfterStop = new WeakSet();
+				reportHeld("operator-stop");
+			}
+			state.runtime?.agent.clearAllQueues();
+			if (changed) emitQueueUpdate();
+		},
+		requeueUnstarted(entry) {
+			queue.unshift(entry);
+			flushNext = false;
+			emitQueueUpdate();
+			reportReturned([entry], "prompt-not-started");
+		},
+		reportDropped,
+		settleSubmit(promptStarted) {
+			if (!promptStarted && queue.length > 0) {
+				heldFor = "operator";
+				// Whatever was said before, this attempt failed: say where the queue stands again.
+				announcedHeld = 0;
+				reportHeld("prompt-not-started");
+			}
+			if (queue.length === 0) {
+				if (heldFor === "operator") heldFor = null;
+				announcedHeld = 0;
+				return;
+			}
+			// A message typed behind a stop that stayed held was not in the queue when the stop was reported.
+			if (heldFor === "operator") reportHeld("operator-stop");
+			// A count already announced stays quiet: a second Esc or a job's settle adds nothing.
+			if (heldFor !== "operator" || announcedHeld === queue.length) return;
+			announcedHeld = queue.length;
+			if (deps.emitQueueHeld) deps.emitQueueHeld(queue.length);
+			else deps.emitNotice(heldQueueNotice(queue.length));
+		},
+		consumePersistedEcho(text: string): boolean {
+			const idx = persistedUserEchoes.indexOf(text);
+			if (idx < 0) return false;
+			persistedUserEchoes.splice(idx, 1);
+			return true;
+		},
+		async markPersistedUserEcho(text: string, prompt: () => Promise<void>): Promise<void> {
+			persistedUserEchoes.push(text);
+			try {
+				await prompt();
+			} finally {
+				const idx = persistedUserEchoes.indexOf(text);
+				if (idx >= 0) persistedUserEchoes.splice(idx, 1);
+			}
+		},
+		acknowledgeInjected(text: string): QueuedChatMessage | null {
+			let idx = inFlight.findIndex((entry) => entry.text === text);
+			let entry: QueuedChatMessage | undefined;
+			if (idx >= 0) {
+				[entry] = inFlight.splice(idx, 1);
+			} else {
+				// Defensive: a text the engine produced from the queue without a
+				// hand-over this module saw still leaves the panel.
+				idx = queue.findIndex((candidate) => candidate.text === text);
+				if (idx < 0) return null;
+				[entry] = queue.splice(idx, 1);
+				emitQueueUpdate();
+			}
+			// The engine just injected this message into the run: this is the
+			// moment it moves from the queue panel into the transcript.
+			if (entry) {
+				deps.emitQueuedUserTurn({ ...entry });
+				report({ type: "injected", entry: { ...entry } });
+			}
+			return entry ?? null;
+		},
+		/**
+		 * Stranded fallback. Hand-over happens at `finishTurn`, so a message can
+		 * still be left behind only when it arrived after the run's final turn
+		 * settled or when that turn ended in an error or an abort, where nothing
+		 * is handed over. The entries become one fresh prompt: the first is the
+		 * prompt text, the rest are handed to the engine just before it starts,
+		 * so Pi's opening poll lands them with the same first model call, each as
+		 * its own user message. A held queue (an interrupt is about to prompt, or
+		 * the operator stopped the run) waits instead, except for a message typed
+		 * after that stop: it goes out as the prompt it would have been had the
+		 * tool died sooner, and the held entries take that prompt's first slot.
+		 */
+		async resubmitStranded(): Promise<boolean> {
+			const nextIndex = heldFor === null ? 0 : queue.findIndex((entry) => typedAfterStop.has(entry));
+			if (heldFor === "interrupt" || nextIndex < 0 || nextIndex >= queue.length) return false;
+			const afterStop = heldFor === "operator";
+			const [first] = queue.splice(nextIndex, 1);
+			if (!first) return false;
+			state.continuation.dropRequest();
+			state.runtime?.agent.clearAllQueues();
+			// A queued template turn is never flushed into another prompt; it waits for its own settle.
+			const riding = queue.filter((entry) => entry.constraints === undefined).length;
+			flushNext = !afterStop && riding > 0;
+			emitQueueUpdate();
+			deps.emitNotice(
+				afterStop
+					? `[PanCode] the run has stopped; sending the message typed after the stop as a new prompt.${riding > 0 ? ` ${riding} held ${riding === 1 ? "message lands" : "messages land"} at its first slot.` : ""}`
+					: first.constraints !== undefined
+						? `[PanCode] the run ended; starting the queued ${first.display?.text.split(/\s+/u)[0] ?? "prompt template"} as its own turn.`
+						: "[PanCode] steering arrived as the run ended; resubmitting as a fresh prompt.",
+			);
+			// The resubmit's own user echo is suppressed (markPersistedUserEcho), so
+			// this is the only place the first text can enter the transcript; the
+			// rest arrive through message_end like any handed-over message.
+			deps.emitQueuedUserTurn({ ...first });
+			removed([first], "resubmitted");
+			await deps.submit(first.text, {
+				...(first.referencedPaths && first.referencedPaths.length > 0
+					? { workingContextPaths: first.referencedPaths }
+					: {}),
+				...(first.origin !== undefined ? { origin: first.origin } : {}),
+				// A template's turn starts as the operator typed it, so prompt_submit
+				// hooks read the invocation and its limits bound the turn.
+				...(first.constraints !== undefined
+					? { constraints: first.constraints, ...(first.display ? { display: first.display } : {}) }
+					: {}),
+				queued: first,
+			});
+			return true;
+		},
+		async resubmitRequestContinuation(): Promise<void> {
+			if (!state.continuation.takeRequest()) return;
+			await deps.submit("", { requestContinuation: true });
+		},
+		reset(options): void {
+			const unsent = [...inFlight, ...queue];
+			retire(unsent.filter(fromMachine), "the session was reset");
+			const operator = unsent.filter((entry) => !fromMachine(entry));
+			if (options?.keepOperator !== true) reportDropped(operator);
+			else
+				reportReturned(
+					inFlight.filter((entry) => !fromMachine(entry)),
+					"session-move",
+				);
+			queue.length = 0;
+			inFlight.length = 0;
+			dropHost();
+			persistedUserEchoes.length = 0;
+			heldFor = null;
+			if (options?.keepOperator === true && operator.length > 0) {
+				queue.push(...operator);
+				heldFor = "operator";
+				typedAfterStop = new WeakSet();
+				reportHeld("session-move");
+			} else announcedHeld = 0;
+			flushNext = false;
+			emitQueueUpdate();
+		},
+	};
+}

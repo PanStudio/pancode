@@ -1,0 +1,388 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { performance } from "node:perf_hooks";
+import { setTimeout as sleep } from "node:timers/promises";
+import type { ModelAdmissionReporter } from "../../core/model-admission.js";
+import { residencyTargetKey } from "../../core/residency-target-key.js";
+import { isRecord } from "../../core/type-guards.js";
+import {
+	type ResidencyAdapter,
+	ResidencyPreconditionError,
+	reconcileResidency,
+	residentTagProtected,
+} from "./residency.js";
+import type { ResidentModelInfo } from "./resident-models.js";
+
+/**
+ * llama.cpp router adapter for the shared residency reconciler
+ * (residency.ts). The router is a multi-model server: `/v1/models` reports
+ * per-model load state and tags, `/props` advertises `max_instances`, and
+ * models load/unload through explicit POSTs. This module maps that surface
+ * onto the reconciler's "router" strategy so co-residency, capacity math,
+ * protection tiers, opt-outs, TTL dedupe, and the cross-process lock all come
+ * from the one shared policy. Plain llama-server builds without router load
+ * states are never managed.
+ */
+
+export interface LlamaCppResidencyInput {
+	/** OpenAI-compatible base URL, e.g. http://host:8080/v1. */
+	baseUrl: string;
+	targetId: string;
+	runtimeId: string;
+	keepModelId: string;
+	/**
+	 * Target lifecycle verdict from the caller (residencyManagedFor). Defaults
+	 * to managed for direct adapter callers.
+	 */
+	managed?: boolean;
+	signal?: AbortSignal;
+	headers?: Record<string, string>;
+	fetchImpl?: typeof fetch;
+	now?: () => number;
+	ttlMs?: number;
+	/** Probe timeout; a residency probe must never stall a turn. */
+	timeoutMs?: number;
+	/** Test-only override for the cross-process mutation lock. */
+	withLock?<T>(targetKey: string, fn: () => Promise<T>): Promise<T>;
+	/** The request's own reporter for what this residency step is doing. */
+	onAdmission?: ModelAdmissionReporter | undefined;
+}
+
+const LOAD_TIMEOUT_MS = 120_000;
+const POLL_INTERVAL_MS = 500;
+
+function routerFetch(input: Pick<LlamaCppResidencyInput, "fetchImpl" | "headers" | "signal">): typeof fetch {
+	return (url, init) => {
+		const headers = new Headers(input.headers);
+		new Headers(init?.headers).forEach((value, name) => {
+			headers.set(name, value);
+		});
+		const signal = input.signal ? AbortSignal.any([input.signal, ...(init?.signal ? [init.signal] : [])]) : init?.signal;
+		return (input.fetchImpl ?? fetch)(url, { ...init, headers, ...(signal ? { signal } : {}) });
+	};
+}
+
+/**
+ * `sleeping` is a resident state, not an unloaded one. A router started with
+ * `--sleep-idle-seconds` parks an idle model's compute while it keeps the slot
+ * and its weights, and wakes it on the next inference request. Reading it as
+ * anything else costs twice: the model drops out of the resident set, so
+ * capacity math sees a free slot that does not exist, and the load path stops
+ * short-circuiting and re-requests a model the router is already running.
+ */
+type LlamaCppModelState = "loaded" | "loading" | "sleeping" | "unloaded" | "failed" | "unknown";
+
+/** Router states that hold the model's slot on the server. */
+function isResidentState(state: LlamaCppModelState): boolean {
+	return state === "loaded" || state === "loading" || state === "sleeping";
+}
+
+interface LlamaCppResidentModel {
+	id: string;
+	tags: string[];
+}
+
+interface LlamaCppRouterModel extends LlamaCppResidentModel {
+	state: LlamaCppModelState;
+}
+
+interface LlamaCppRouterProps {
+	maxInstances?: number;
+}
+
+function routerModelState(entry: Record<string, unknown>): LlamaCppModelState {
+	const status = entry.status;
+	const state = isRecord(status) ? status.value : status;
+	if (state === "loaded" || state === "loading" || state === "sleeping" || state === "unloaded" || state === "failed") {
+		return state;
+	}
+	return "unknown";
+}
+
+function parseRouterModels(payload: unknown): LlamaCppRouterModel[] {
+	if (!isRecord(payload)) return [];
+	const data = payload.data;
+	if (!Array.isArray(data)) return [];
+	const models: LlamaCppRouterModel[] = [];
+	for (const entry of data) {
+		if (!isRecord(entry) || typeof entry.id !== "string") continue;
+		const tags = Array.isArray(entry.tags) ? entry.tags.filter((tag): tag is string => typeof tag === "string") : [];
+		models.push({ id: entry.id, state: routerModelState(entry), tags });
+	}
+	return models;
+}
+
+function residentModel(model: LlamaCppRouterModel): boolean {
+	return isResidentState(model.state);
+}
+
+function parseLlamaCppRouterProps(payload: unknown): LlamaCppRouterProps {
+	if (!isRecord(payload)) return {};
+	const maxInstances = payload.max_instances;
+	return typeof maxInstances === "number" && Number.isFinite(maxInstances) && maxInstances > 0
+		? { maxInstances: Math.floor(maxInstances) }
+		: {};
+}
+
+function rootUrl(baseUrl: string): string {
+	return baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+}
+
+function modelsUrl(baseUrl: string): string {
+	return `${baseUrl.replace(/\/+$/, "")}/models`;
+}
+
+function propsUrl(baseUrl: string): string {
+	return `${rootUrl(baseUrl)}/props`;
+}
+
+function loadUrl(baseUrl: string): string {
+	return `${rootUrl(baseUrl)}/models/load`;
+}
+
+function unloadUrl(baseUrl: string): string {
+	return `${rootUrl(baseUrl)}/models/unload`;
+}
+
+async function fetchRouterProps(input: LlamaCppResidencyInput, fetchImpl: typeof fetch): Promise<LlamaCppRouterProps> {
+	try {
+		const response = await fetchImpl(propsUrl(input.baseUrl), {
+			signal: AbortSignal.timeout(input.timeoutMs ?? 1500),
+		});
+		if (!response.ok) return {};
+		return parseLlamaCppRouterProps(await response.json());
+	} catch {
+		input.signal?.throwIfAborted();
+		return {};
+	}
+}
+
+async function fetchRouterModels(
+	input: Pick<LlamaCppResidencyInput, "baseUrl" | "timeoutMs">,
+	fetchImpl: typeof fetch,
+): Promise<LlamaCppRouterModel[]> {
+	const response = await fetchImpl(modelsUrl(input.baseUrl), {
+		signal: AbortSignal.timeout(input.timeoutMs ?? 1500),
+	});
+	if (!response.ok) throw new Error(`HTTP ${response.status}`);
+	return parseRouterModels(await response.json());
+}
+
+class RouterModelPostError extends Error {
+	constructor(
+		readonly url: string,
+		readonly status: number,
+		readonly responseBody: string,
+	) {
+		super(`llama.cpp router rejected ${url}: HTTP ${status}; response: ${responseBody}`);
+		this.name = "RouterModelPostError";
+	}
+}
+
+async function routerErrorBody(response: Response): Promise<string> {
+	try {
+		const body = (await response.text()).trim();
+		return body.length > 0 ? body : "<empty body>";
+	} catch (error) {
+		return `<unreadable body: ${error instanceof Error ? error.message : String(error)}>`;
+	}
+}
+
+async function postRouterModel(fetchImpl: typeof fetch, url: string, modelId: string): Promise<void> {
+	const response = await fetchImpl(url, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ model: modelId }),
+		signal: AbortSignal.timeout(LOAD_TIMEOUT_MS),
+	});
+	if (response.ok) return;
+	throw new RouterModelPostError(url, response.status, await routerErrorBody(response));
+}
+
+function alreadyRunningResponse(body: string): boolean {
+	return body.toLowerCase().includes("already running");
+}
+
+/**
+ * A router wake and PanCode's explicit load can cross between the listing and the
+ * POST. In that race the router rejects the duplicate request even though the
+ * requested model now owns a resident slot. Re-read the authoritative listing
+ * before treating a non-2xx as a load failure; only a definitively absent,
+ * unloaded, or failed model preserves the rejection.
+ */
+async function postRouterLoad(input: LlamaCppResidencyInput, fetchImpl: typeof fetch, modelId: string): Promise<void> {
+	try {
+		await postRouterModel(fetchImpl, loadUrl(input.baseUrl), modelId);
+	} catch (error) {
+		if (!(error instanceof RouterModelPostError)) throw error;
+		let model: LlamaCppRouterModel | undefined;
+		try {
+			model = (await fetchRouterModels(input, fetchImpl)).find((entry) => entry.id === modelId);
+		} catch {
+			// The router's explicit "already running" answer is sufficient even if
+			// the confirming snapshot itself races or is temporarily unavailable.
+			if (alreadyRunningResponse(error.responseBody)) return;
+			throw error;
+		}
+		if (alreadyRunningResponse(error.responseBody)) return;
+		if (model !== undefined && model.state !== "unloaded" && model.state !== "failed") return;
+		throw error;
+	}
+}
+
+async function waitForLoaded(
+	input: LlamaCppResidencyInput,
+	fetchImpl: typeof fetch,
+	modelId: string,
+	report?: ModelAdmissionReporter,
+): Promise<void> {
+	const started = performance.now();
+	while (performance.now() - started < LOAD_TIMEOUT_MS) {
+		const models = await fetchRouterModels(input, fetchImpl);
+		const model = models.find((entry) => entry.id === modelId);
+		if (model?.state === "loading") report?.({ stage: "loading", model: modelId, evidence: "reported" });
+		// A model that goes straight back to sleep between polls is resident and
+		// serves the next request; waiting for it to read `loaded` would spin out
+		// the whole load timeout on an idle router.
+		if (model?.state === "loaded" || model?.state === "sleeping") return;
+		if (model?.state === "failed") throw new Error(`llama.cpp router reports '${modelId}' failed to load`);
+		await sleep(POLL_INTERVAL_MS, undefined, input.signal ? { signal: input.signal } : {});
+	}
+	throw new Error(`timed out waiting for '${modelId}' to load`);
+}
+
+async function ensureModelLoaded(
+	input: LlamaCppResidencyInput,
+	fetchImpl: typeof fetch,
+	modelId: string,
+	knownState: LlamaCppModelState | undefined,
+	report?: ModelAdmissionReporter,
+): Promise<void> {
+	// A sleeping model is already running and the router wakes it on the next
+	// inference request. Posting a load for it is not merely redundant: the
+	// router answers `400 model is already running`, which fails the turn before
+	// it reaches the model.
+	if (knownState === "loaded" || knownState === "sleeping") return;
+	if (knownState === "loading") {
+		report?.({ stage: "loading", model: modelId, evidence: "reported", startedElsewhere: true });
+	} else {
+		report?.({ stage: "loading", model: modelId, evidence: "requested" });
+		await postRouterLoad(input, fetchImpl, modelId);
+	}
+	await waitForLoaded(input, fetchImpl, modelId, report);
+}
+
+/**
+ * A router whose capacity PanCode could not read may satisfy a load by
+ * displacing an LRU resident. Reload any tag-pinned resident the load
+ * displaced (one bounded pass), then verify the restore did not displace the
+ * keep model in turn.
+ */
+async function restoreDisplacedPinned(
+	input: LlamaCppResidencyInput,
+	fetchImpl: typeof fetch,
+	before: ReadonlyArray<LlamaCppRouterModel>,
+): Promise<void> {
+	const pinned = before.filter(
+		(entry) => residentModel(entry) && entry.id !== input.keepModelId && residentTagProtected(entry.tags),
+	);
+	if (pinned.length === 0) return;
+	const current = await fetchRouterModels(input, fetchImpl);
+	let changed = false;
+	for (const model of pinned) {
+		const state = current.find((entry) => entry.id === model.id)?.state;
+		if (state !== undefined && isResidentState(state)) continue;
+		changed = true;
+		input.onAdmission?.({ stage: "restoring", model: model.id });
+		await ensureModelLoaded(input, fetchImpl, model.id, state);
+	}
+	if (!changed) return;
+	const finalModels = await fetchRouterModels(input, fetchImpl);
+	const keep = finalModels.find((entry) => entry.id === input.keepModelId);
+	if (keep === undefined || !isResidentState(keep.state)) {
+		throw new Error(`pinned-resident restore displaced '${input.keepModelId}'`);
+	}
+}
+
+/** Ensure the selected llama.cpp router model is resident before inference. */
+/**
+ * Models resident on a llama.cpp server now. A router reports per-model load
+ * states and only the resident ones are returned; a single-model server
+ * reports no states, so every model it lists is the one it serves. The
+ * degraded-inference watchdog calls this when a turn slows down.
+ */
+export async function listLlamaCppResidentModels(
+	baseUrl: string,
+	fetchImpl: typeof fetch = fetch,
+	options: Pick<LlamaCppResidencyInput, "headers" | "signal"> = {},
+): Promise<ResidentModelInfo[]> {
+	const models = await fetchRouterModels({ baseUrl }, routerFetch({ ...options, fetchImpl }));
+	const router = models.some((entry) => entry.state !== "unknown");
+	return models
+		.filter((entry) => !router || residentModel(entry))
+		.map((entry) => ({ modelId: entry.id, tags: entry.tags }));
+}
+
+export async function ensureLlamaCppResidency(input: LlamaCppResidencyInput): Promise<void> {
+	input.signal?.throwIfAborted();
+	if (input.managed === false) return;
+	const fetchImpl = routerFetch(input);
+	let snapshot: LlamaCppRouterModel[] = [];
+	const adapter: ResidencyAdapter = {
+		targetKey: residencyTargetKey("llamacpp", input.baseUrl),
+		targetId: input.targetId,
+		runtimeId: input.runtimeId,
+		keepModelId: input.keepModelId,
+		managed: input.managed ?? true,
+		strategy: "router",
+		...(input.signal ? { signal: input.signal } : {}),
+		onAdmission: input.onAdmission,
+		listResident: async () => {
+			const models = await fetchRouterModels(input, fetchImpl);
+			if (!models.some((entry) => entry.state !== "unknown")) {
+				throw new Error("not a llama.cpp router: /v1/models reports no load states");
+			}
+			snapshot = models;
+			return models.filter(residentModel).map((entry) => ({ modelId: entry.id, tags: entry.tags }));
+		},
+		// The router enumerates every configured preset, resident or not, so a keep
+		// model missing from that listing is one this server cannot load at all.
+		// Reported from the snapshot listResident already fetched, so the check
+		// costs no extra round trip.
+		assertLoadable: async () => {
+			if (snapshot.some((entry) => entry.id === input.keepModelId)) return;
+			throw new ResidencyPreconditionError(
+				`llama.cpp router on '${input.targetId}' does not serve '${input.keepModelId}'; it lists ${snapshot.length} model(s). Residency left the target untouched. Fix the wire model id in settings, or add the preset to the server.`,
+			);
+		},
+		capacity: async () => (await fetchRouterProps(input, fetchImpl)).maxInstances,
+		keepModelTags: async () => snapshot.find((entry) => entry.id === input.keepModelId)?.tags,
+		unload: (modelId) => postRouterModel(fetchImpl, unloadUrl(input.baseUrl), modelId),
+		load: async (modelId) => {
+			const state = snapshot.find((entry) => entry.id === modelId)?.state;
+			// A sleeping model is resident and the next inference request wakes it, which that request pays for.
+			if (state === "sleeping") input.onAdmission?.({ stage: "cold", state: "sleeping" });
+			if (state !== undefined && isResidentState(state) && state !== "loading") return;
+			await ensureModelLoaded(input, fetchImpl, modelId, state, input.onAdmission);
+			await restoreDisplacedPinned(input, fetchImpl, snapshot);
+		},
+		// `snapshot` predates the eviction and still calls this model resident, so
+		// the state is deliberately not read here: the reload has to be forced.
+		reloadEvicted: async (modelId) => {
+			// Recovery must survive request cancellation, but has its own total deadline.
+			const { onAdmission: _admission, ...unreported } = input;
+			const recovery = { ...unreported, signal: AbortSignal.timeout(LOAD_TIMEOUT_MS) };
+			await ensureModelLoaded(recovery, routerFetch(recovery), modelId, undefined);
+		},
+	};
+	if (input.withLock) adapter.withLock = input.withLock;
+	if (input.now) adapter.now = input.now;
+	if (input.ttlMs !== undefined) adapter.ttlMs = input.ttlMs;
+	const plan = await reconcileResidency(adapter);
+	if (plan.decision === "decline") {
+		throw new ResidencyPreconditionError(
+			plan.notices.find((notice) => notice.level === "error")?.message ??
+				`llama.cpp residency declined loading '${input.keepModelId}' on '${input.targetId}'`,
+		);
+	}
+}

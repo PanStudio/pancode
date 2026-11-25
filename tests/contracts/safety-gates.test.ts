@@ -1,0 +1,1852 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, strictEqual } from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, before, beforeEach, describe, it } from "node:test";
+import { runBashCommand } from "../../src/core/bash-exec.js";
+import { ToolNames } from "../../src/core/tool-names.js";
+import { pancodeConfigDir } from "../../src/core/xdg.js";
+import { classify } from "../../src/domains/safety/action-classifier.js";
+import { evaluateAdmission } from "../../src/domains/safety/admission.js";
+import { mapAutonomy } from "../../src/domains/safety/autonomy.js";
+import { describeCallTarget } from "../../src/domains/safety/call-target.js";
+import {
+	extractCommandDeleteTargets,
+	extractCommandWriteTargets,
+} from "../../src/domains/safety/command-path-walks.js";
+import type { SafetyContract, SafetyDecision } from "../../src/domains/safety/contract.js";
+import { EMPTY_INFORMATION_FLOW_INPUT } from "../../src/domains/safety/information-flow.js";
+import { createSafetyPolicyEngine, type SafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
+import { loadProjectSafetyPolicy } from "../../src/domains/safety/project-policy.js";
+import { protectedArtifactMutationBlockReason } from "../../src/domains/safety/protected-artifacts.js";
+import { redactSecretString } from "../../src/domains/safety/redaction.js";
+import { createRunEffectsRecorder } from "../../src/domains/safety/run-effects.js";
+import { scanShellLike } from "../../src/domains/safety/shell-scan.js";
+import { AcpToolMediator } from "../../src/engine/acp/tool-mediator.js";
+import { emitClaudeToolPermissionDecision } from "../../src/engine/claude/tool-safety.js";
+import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { bashTool } from "../../src/tools/bash.js";
+import { readTool } from "../../src/tools/read.js";
+import { createRegistry } from "../../src/tools/registry.js";
+import type { PermissionRequiredMeta } from "../../src/tools/registry-contract.js";
+import { writeTool } from "../../src/tools/write.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
+
+// The login capture runs once per process, so each case judges its first rg in a fresh process whose login profile
+// exports the ripgrep config variable or leaves it unset.
+describe("rg recognition before the login environment is captured", () => {
+	for (const exported of [true, false]) {
+		it(`is not recognized while the capture is pending, then follows a profile that ${exported ? "sets" : "leaves unset"} RIPGREP_CONFIG_PATH`, {
+			skip: process.platform === "win32" ? "the login capture does not run on win32" : false,
+		}, () => {
+			const dir = mkdtempSync(join(tmpdir(), "pancode-safety-pending-"));
+			try {
+				const home = join(dir, "home");
+				const cwd = join(dir, "cwd");
+				mkdirSync(home);
+				mkdirSync(cwd);
+				writeFileSync(join(cwd, "a.txt"), "x\n");
+				writeFileSync(
+					join(home, ".bash_profile"),
+					exported ? `export RIPGREP_CONFIG_PATH=${join(home, "rgrc")}\n` : "true\n",
+				);
+				const root = process.cwd();
+				const source = (module: string) => JSON.stringify(join(root, module));
+				const probe = join(dir, "probe.mts");
+				writeFileSync(
+					probe,
+					[
+						`import { runBashCommand } from ${source("src/core/bash-exec.ts")};`,
+						`import { createSafetyPolicyEngine } from ${source("src/domains/safety/policy-engine.ts")};`,
+						`import { loadProjectSafetyPolicy } from ${source("src/domains/safety/project-policy.ts")};`,
+						`const cwd = ${JSON.stringify(cwd)};`,
+						"const engine = createSafetyPolicyEngine({ cwd, projectPolicy: loadProjectSafetyPolicy(cwd) });",
+						"const judge = () => {",
+						'\tconst decision = engine.evaluate({ tool: "bash", args: { command: "rg x a.txt" } });',
+						"\tconst says = (text) => decision.reasons.some((reason) => reason.includes(text));",
+						'\treturn [decision.execRecognition, says("still being captured"), says("with it set")];',
+						"};",
+						"const first = judge();",
+						"await runBashCommand('true', { cwd });",
+						"process.stdout.write(JSON.stringify([first, judge()]));",
+					].join("\n"),
+				);
+				const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+				delete env.RIPGREP_CONFIG_PATH;
+				const run = spawnSync(process.execPath, ["--import", "tsx", probe], { cwd: root, env, encoding: "utf8" });
+				strictEqual(run.status, 0, run.stderr);
+				deepStrictEqual(JSON.parse(run.stdout), [
+					["unrecognized", true, false],
+					exported ? ["unrecognized", false, true] : ["recognized", false, false],
+				]);
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
+	}
+});
+
+describe("safety gate boundary", () => {
+	before(async () => {
+		await runBashCommand("true");
+	});
+
+	let originalCwd: string;
+	let scratch: string;
+	let isolated: IsolatedPancodeEnv;
+
+	beforeEach(async () => {
+		isolated = await isolatePancodeEnv("pancode-skill-authority-");
+		originalCwd = process.cwd();
+		scratch = mkdtempSync(join(tmpdir(), "pancode-safety-contract-"));
+		mkdirSync(join(scratch, ".pancode"), { recursive: true });
+		mkdirSync(join(scratch, "pkg"), { recursive: true });
+		process.chdir(scratch);
+	});
+
+	afterEach(() => {
+		process.chdir(originalCwd);
+		rmSync(scratch, { recursive: true, force: true });
+		isolated.restore();
+	});
+
+	function engine(): SafetyPolicyEngine {
+		return createSafetyPolicyEngine({ cwd: scratch, projectPolicy: loadProjectSafetyPolicy(scratch) });
+	}
+
+	function executionDisposition(
+		policy: SafetyPolicyEngine,
+		tool: string,
+		args: Record<string, unknown>,
+		level: "default" | "yolo",
+	): string {
+		const decision = policy.evaluate({ tool, args });
+		return decision.kind === "allow"
+			? mapAutonomy(level, decision.actionClass, { executeRecognized: decision.execRecognition !== "unrecognized" })
+			: decision.kind;
+	}
+
+	it("hard-blocks zero-access paths before confirmation or ordinary ask rails", () => {
+		const policy = engine();
+		// Truncating an existing secret is refused; creating a new one is not (see below).
+		writeFileSync(join(scratch, ".env"), "API_KEY=x\n");
+		for (const call of [
+			{ tool: ToolNames.Read, args: { path: ".env" } },
+			{ tool: ToolNames.Write, args: { path: "credentials.yaml", content: "secret" } },
+			{ tool: ToolNames.Bash, args: { command: ": > .env" } },
+			{ tool: ToolNames.Bash, args: { command: "cat $'\\x2eenv'" } },
+			{ tool: ToolNames.Bash, args: { command: "cat $'.env'" } },
+			{ tool: ToolNames.Bash, args: { command: 'cat $".env"' } },
+			{ tool: ToolNames.Bash, args: { command: "bash -c \"cat $'\\x2eenv'\"" } },
+			{ tool: ToolNames.Bash, args: { command: "bash -o pipefail -c 'cat .env'" } },
+			{ tool: ToolNames.Bash, args: { command: "echo ok && bash --norc -c 'cat .env'" } },
+			{ tool: ToolNames.Bash, args: { command: "dash +o errexit -c 'cat .env'" } },
+			{ tool: ToolNames.Bash, args: { command: "zsh -x -ec 'cat .env'" } },
+		]) {
+			strictEqual(policy.evaluate(call).kind, "block");
+			strictEqual(policy.evaluate(call, "confirmed").kind, "block");
+		}
+		const secretRead = policy.evaluate({ tool: ToolNames.Bash, args: { command: "cat ~/.ssh/id_rsa" } });
+		strictEqual(secretRead.kind, "block");
+		strictEqual(secretRead.reasonCode, "secret_path_bash");
+	});
+
+	it("judges bash copy and redirect destinations as writes, not reads", () => {
+		const policy = engine();
+		writeFileSync(join(scratch, ".env.example"), "API_KEY=\n");
+		writeFileSync(join(scratch, ".env"), "API_KEY=secret\n");
+		const kind = (command: string) => policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind;
+		strictEqual(kind("cp .env.example .env.local"), "allow", "a new file under a zero-access name exposes nothing");
+		strictEqual(kind("cp -t pkg .env.example"), "allow");
+		strictEqual(kind("cp .env backup"), "block", "the source operand is still a read");
+		strictEqual(kind("cat .env.example > .env"), "block", "overwriting an existing secret stays refused");
+		strictEqual(kind("echo X=1 >> .env"), "block");
+		writeFileSync(join(scratch, ".env.local"), "API_KEY=other\n");
+		strictEqual(kind("cp .env.example .env.local"), "block", "replacing an existing secret stays refused");
+		strictEqual(kind('grep -sq "^API_KEY=" .env'), "allow", "the presence check keeps working");
+		strictEqual(kind('grep -sq "^API_KEY=" .env && echo set || echo missing'), "allow", "the hinted form chained");
+		strictEqual(kind("grep -qs '^API_KEY=' .env || echo missing"), "allow");
+		strictEqual(kind('grep -sq "^API_KEY=" .env && cat .env'), "block", "a chained read stays refused");
+		strictEqual(kind('grep -sq "^API_KEY=" .env | cat'), "block", "a pipe is not a presence check");
+	});
+
+	it("refuses a recursive search whose walk reaches a zero-access file unless it excludes it", () => {
+		const policy = engine();
+		mkdirSync(join(scratch, "src"), { recursive: true });
+		writeFileSync(join(scratch, "src", "x.ts"), "const SECRET = 1;\n");
+		writeFileSync(join(scratch, ".env"), "SECRET=value\n");
+		const evaluate = (command: string) => policy.evaluate({ tool: ToolNames.Bash, args: { command } });
+		const grep = evaluate("grep -rn SECRET .");
+		strictEqual(grep.kind, "block");
+		strictEqual(grep.reasonCode, "secret_path_bash");
+		strictEqual(
+			grep.reasons?.some((reason) => reason.includes("--exclude=.env")),
+			true,
+		);
+		strictEqual(evaluate("grep -rn --exclude=.env SECRET .").kind === "block", false);
+		const rg = evaluate("rg SECRET");
+		strictEqual(rg.kind, "block");
+		strictEqual(
+			rg.reasons?.some((reason) => reason.includes("-g '!.env'")),
+			true,
+		);
+		strictEqual(evaluate("rg -g '!.env' SECRET .").kind === "block", false);
+		strictEqual(
+			evaluate("ag SECRET").reasons?.some((reason) => reason.includes("--ignore=.env")),
+			true,
+		);
+		strictEqual(evaluate("grep -rn SECRET src").kind === "block", false, "a tree with no protected file is untouched");
+		strictEqual(evaluate("grep -n SECRET src/x.ts").kind === "block", false);
+	});
+
+	it("judges a git grep without running the fsmonitor program of a repository a contained command made", (t) => {
+		if (spawnSync("git", ["--version"]).status !== 0) {
+			t.skip("git is not installed");
+			return;
+		}
+		// The operator's git environment must not be what turns fsmonitor off.
+		const saved = Object.entries(process.env).filter(([name]) => /^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/u.test(name));
+		for (const [name] of saved) Reflect.deleteProperty(process.env, name);
+		t.after(() => {
+			for (const [name, value] of saved) process.env[name] = value;
+		});
+		const sub = join(scratch, "sub");
+		mkdirSync(sub, { recursive: true });
+		strictEqual(spawnSync("git", ["init", "-q"], { cwd: sub }).status, 0);
+		const marker = join(scratch, "fsmonitor-ran");
+		const program = join(sub, "fsmonitor.sh");
+		writeFileSync(program, `#!/bin/sh\ntouch '${marker}'\n`, { mode: 0o755 });
+		strictEqual(spawnSync("git", ["config", "core.fsmonitor", program], { cwd: sub }).status, 0);
+		writeFileSync(join(sub, ".env"), "SECRET=value\n");
+		writeFileSync(join(sub, "a.txt"), "SECRET\n");
+		const decision = engine().evaluate({ tool: ToolNames.Bash, args: { command: "git grep SECRET", cwd: "sub" } });
+		strictEqual(
+			existsSync(marker),
+			false,
+			"the repository's fsmonitor program ran on the host while the command was judged",
+		);
+		strictEqual(decision.kind === "block", false, "an untracked .env is outside git grep's walk");
+	});
+
+	it("does not judge a search pattern as a path", () => {
+		const policy = engine();
+		mkdirSync(join(scratch, "src"), { recursive: true });
+		writeFileSync(join(scratch, "src", "x.ts"), "foo\n");
+		const kind = (command: string) => policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind;
+		strictEqual(kind('grep -n "foo\\|\\.env" src/x.ts') === "block", false);
+		strictEqual(kind("rg -n .env src/x.ts") === "block", false);
+		strictEqual(kind("grep -n foo .env"), "block", "a file operand is still a read");
+		strictEqual(kind("grep -e foo .env"), "block", "with -e every positional is a file");
+	});
+
+	it("admits only standalone git diff whitespace checks in default mode", () => {
+		const policy = engine();
+		for (const command of ["git diff --check", "git diff --cached --check"]) {
+			const args = { command };
+			const decision = policy.evaluate({ tool: ToolNames.Bash, args });
+			strictEqual(decision.kind, "allow", command);
+			strictEqual(decision.ruleId, "builtin:git-diff-check", command);
+			strictEqual(decision.execRecognition, "recognized", command);
+			strictEqual(executionDisposition(policy, ToolNames.Bash, args, "default"), "allow", command);
+			strictEqual(executionDisposition(policy, ToolNames.Bash, args, "yolo"), "allow", command);
+		}
+		for (const command of [
+			"git diff --check --ext-diff",
+			"git diff --output=report.txt --check",
+			"git diff --check --cached",
+			"git diff --check | cat",
+			"git diff --check && git status",
+		]) {
+			const decision = policy.evaluate({ tool: ToolNames.Bash, args: { command } });
+			strictEqual(decision.execRecognition, "unrecognized", command);
+			strictEqual(executionDisposition(policy, ToolNames.Bash, { command }, "default"), "ask", command);
+		}
+		for (const command of ["git diff --check $(cat args)", "git diff --check `cat args`"]) {
+			strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind, "ask", command);
+		}
+		writeFileSync(join(scratch, ".env"), "API_KEY=x\n");
+		for (const command of ["git diff --check > .env", "git diff --check && cat ~/.ssh/id_rsa"]) {
+			strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind, "block", command);
+		}
+		strictEqual(executionDisposition(policy, ToolNames.Bash, { command: "npm run build" }, "default"), "ask");
+	});
+
+	it("recognizes only exact toolchain version probes", () => {
+		const policy = engine();
+		for (const command of ["node --version", "go version", "python3 -V"]) {
+			const decision = policy.evaluate({ tool: ToolNames.Bash, args: { command } });
+			strictEqual(decision.kind, "allow", command);
+			strictEqual(decision.ruleId, "builtin:version-probe", command);
+			strictEqual(decision.execRecognition, "recognized", command);
+		}
+		for (const command of [
+			"node --version | cat",
+			"./node --version",
+			"npx tsc --version",
+			"node --version extra",
+			"node version",
+			"node --version && git status",
+		]) {
+			strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).execRecognition, "unrecognized", command);
+			strictEqual(executionDisposition(policy, ToolNames.Bash, { command }, "default"), "ask", command);
+		}
+	});
+
+	it("recognizes only safe complete command chains inside the workspace", () => {
+		const policy = engine();
+		const admitted = policy.evaluate({
+			tool: ToolNames.Bash,
+			args: { command: "cd pkg && npm run build && git status" },
+		});
+		strictEqual(admitted.kind, "allow");
+		strictEqual(
+			policy.evaluate({ tool: ToolNames.Bash, args: { command: "cd pkg && npm run build && git status" } }, "confirmed")
+				.kind,
+			"allow",
+		);
+		strictEqual(admitted.execRecognition, "unrecognized");
+		strictEqual(
+			executionDisposition(policy, ToolNames.Bash, { command: "cd pkg && npm run build && git status" }, "default"),
+			"ask",
+		);
+		strictEqual(
+			executionDisposition(policy, ToolNames.Bash, { command: "cd pkg && npm run build && git status" }, "yolo"),
+			"allow",
+		);
+		// A test runner is recognized without confirmation (#377), so the same chain runs.
+		const testChain = policy.evaluate({ tool: ToolNames.Bash, args: { command: "cd pkg && npm test && git status" } });
+		strictEqual(testChain.kind, "allow");
+		strictEqual(testChain.execRecognition, "recognized");
+
+		for (const command of [
+			"cd pkg && npm test && curl http://example.com",
+			"npm test | tee output.txt",
+			"cd pkg && npm test $(cat args)",
+			"npm test '&&' git status",
+		]) {
+			strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).execRecognition, "unrecognized");
+		}
+		strictEqual(
+			policy.evaluate({ tool: ToolNames.Bash, args: { command: "cd /etc && ls" } }).actionClass,
+			"system_modify",
+		);
+		for (const command of ["npm run build 2>&1 | tail -30", "npm run lint > output.txt"]) {
+			strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind, "allow", command);
+			strictEqual(executionDisposition(policy, ToolNames.Bash, { command }, "default"), "ask", command);
+			strictEqual(executionDisposition(policy, ToolNames.Bash, { command }, "yolo"), "allow", command);
+		}
+		// A recognized runner piped into read-only inspection stays recognized.
+		strictEqual(
+			policy.evaluate({ tool: ToolNames.Bash, args: { command: "npm test 2>&1 | tail -30" } }).execRecognition,
+			"recognized",
+		);
+	});
+
+	it("tracks chain directories for scoped command admission and approval previews", () => {
+		mkdirSync(join(scratch, "other/nested"), { recursive: true });
+		mkdirSync(join(scratch, "pkg/nested"));
+		writeFileSync(
+			join(scratch, ".pancode/safety.yaml"),
+			"version: 1\ncommands:\n  - id: pkg-check\n    command: custom-check\n    cwd: pkg\n    actionClass: execute\n",
+		);
+		writeFileSync(join(scratch, "package.json"), JSON.stringify({ scripts: { build: "root-build" } }));
+		writeFileSync(join(scratch, "pkg/package.json"), JSON.stringify({ scripts: { build: "pkg-build" } }));
+		const policy = engine();
+		for (const [command, cwd, recognition] of [
+			["cd pkg && custom-check", ".", "recognized"],
+			["cd ../other && custom-check", "pkg", "unrecognized"],
+			["cd other && cd nested && custom-check", ".", "unrecognized"],
+			["cd pkg && cd nested && custom-check", ".", "recognized"],
+		] as const) {
+			const decision = policy.evaluate({ tool: ToolNames.Bash, args: { command, cwd } });
+			strictEqual(decision.execRecognition, recognition, command);
+			strictEqual(
+				mapAutonomy("default", decision.actionClass, { executeRecognized: recognition === "recognized" }),
+				recognition === "recognized" ? "allow" : "ask",
+			);
+		}
+		const preview = policy.evaluate({ tool: ToolNames.Bash, args: { command: "cd pkg && npm run build" } });
+		strictEqual(preview.kind, "allow");
+		strictEqual(
+			preview.reasons.some((reason) => reason.includes("build: pkg-build")),
+			true,
+		);
+		strictEqual(
+			preview.reasons.some((reason) => reason.includes("build: root-build")),
+			false,
+		);
+	});
+
+	it("admits destructive command quotations in task prose while blocking bash execution", () => {
+		const policy = engine();
+		const command = "rm -rf /";
+		const prose = `Explain why ${command} is dangerous.`;
+		for (const args of [
+			{ task: prose },
+			{ task: "Review safety", briefing: prose, persona: prose, intent: { goal: prose } },
+			{ mode: "parallel", tasks: [{ task: prose, briefing: prose }] },
+		]) {
+			const decision = policy.evaluate({ tool: ToolNames.Dispatch, args });
+			strictEqual(decision.kind, "allow");
+			strictEqual(decision.actionClass, "dispatch");
+		}
+		for (const args of [
+			{ action: "plan", title: prose, tasks: [prose] },
+			{ action: "done", id: "t1", note: prose },
+		]) {
+			strictEqual(policy.evaluate({ tool: ToolNames.Tasks, args }).kind, "allow");
+		}
+		const destructive = policy.evaluate({ tool: ToolNames.Bash, args: { command } });
+		strictEqual(destructive.kind, "block");
+		strictEqual(destructive.reasonCode, "damage-control:rm-rf-root");
+	});
+
+	it("protects verifier authority and scans catalog argv before execution", () => {
+		const catalogPath = join(scratch, ".pancode", "verifiers.yaml");
+		const policyPath = join(scratch, ".pancode", "safety.yaml");
+		for (const path of [catalogPath, policyPath]) {
+			const decision = engine().evaluate({ tool: ToolNames.Write, args: { path, content: "version: 1\n" } });
+			strictEqual(decision.kind, "block");
+			strictEqual(decision.reasonCode, "path-policy:readOnlyPaths");
+		}
+
+		writeFileSync(
+			catalogPath,
+			"version: 1\nchecks:\n  - id: wipe\n    description: unsafe\n    command: [rm, -rf, /]\n    cwd: .\n    timeoutMs: 10000\n    tags: [test]\n",
+		);
+		const destructive = engine().evaluate({ tool: ToolNames.Verify, args: { check: "wipe" } });
+		strictEqual(destructive.kind, "block");
+		strictEqual(destructive.reasonCode.startsWith("damage-control:"), true);
+	});
+
+	it("admits typed package verification in yolo after the command safety scan", () => {
+		writeFileSync(
+			join(scratch, "package.json"),
+			JSON.stringify({ scripts: { typecheck: "tsc --noEmit", lint: "biome check .", build: "tsup" } }),
+		);
+		const policy = engine();
+		for (const check of ["typecheck", "lint", "build"]) {
+			const args = { check };
+			const decision = policy.evaluate({ tool: ToolNames.Verify, args });
+			strictEqual(decision.kind, "allow", check);
+			strictEqual(decision.execRecognition, "unrecognized", check);
+			strictEqual(executionDisposition(policy, ToolNames.Verify, args, "default"), "ask", check);
+			strictEqual(executionDisposition(policy, ToolNames.Verify, args, "yolo"), "allow", check);
+		}
+	});
+
+	it("asks for a policy-recognized outward command on native, Claude SDK and ACP admission (F4)", async () => {
+		const command = "git push origin main";
+		// In-memory project policy; the named safety.yaml is never written.
+		const policy = createSafetyPolicyEngine({
+			cwd: scratch,
+			projectPolicy: {
+				trustVerdict: "trusted",
+				path: join(scratch, ".pancode", "safety.yaml"),
+				hash: null,
+				valid: true,
+				errors: [],
+				commands: [
+					{
+						id: "push-main",
+						command,
+						actionClass: "execute",
+						shellOperators: "deny",
+						env: { mode: "none", allow: [] },
+						requireConfirmation: false,
+					},
+				],
+				pathPolicy: {},
+				disableDefaultPathPolicy: false,
+				informationFlow: EMPTY_INFORMATION_FLOW_INPUT,
+			},
+		});
+		const safety: SafetyContract = {
+			...createWorkerSafety({ cwd: scratch }),
+			evaluate(call, posture): SafetyDecision {
+				const decision = policy.evaluate(call, posture);
+				strictEqual(decision.kind, "allow", call.tool);
+				return { kind: "allow", classification: decision.classification, policy: decision };
+			},
+		};
+		const net = safety.evaluate({ tool: ToolNames.Bash, args: { command } });
+		strictEqual(net.classification.exposure, "outward");
+		strictEqual(net.policy?.execRecognition, "recognized");
+
+		const registry = createRegistry({ safety, autonomy: () => "default" });
+		registry.register(bashTool);
+		let nativeAsked = false;
+		registry.onPermissionRequired((_call, _decision, meta) => {
+			nativeAsked = true;
+			registry.cancelParkedCall(meta.requestId, "contract: denied");
+		});
+		await registry.invoke({ tool: ToolNames.Bash, args: { command } });
+		strictEqual(nativeAsked, true);
+
+		const sdk = emitClaudeToolPermissionDecision({
+			toolName: "Bash",
+			input: { command },
+			safety,
+			cwd: scratch,
+			emit: () => {},
+		});
+		strictEqual(sdk.kind, "deny");
+		strictEqual(sdk.kind === "deny" && sdk.permissionRequired, true);
+
+		const mediator = new AcpToolMediator({ safety, cwd: scratch, toolGovernance: "pancode-policy" });
+		await mediator.handle({
+			toolCall: { kind: "execute", rawInput: { command } },
+			options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+		});
+		const [entry] = mediator.snapshot().toolCallLog;
+		strictEqual(entry?.decision, "denied");
+		strictEqual(entry?.reason?.startsWith("permission_required: autonomy default"), true, entry?.reason);
+	});
+
+	it("gives native, Claude SDK and ACP workers one disposition per call through the shared admission evaluator", async () => {
+		const outside = mkdtempSync(join(tmpdir(), "pancode-parity-outside-"));
+		try {
+			writeFileSync(join(outside, "notes.txt"), "outside\n");
+			const outsidePath = join(outside, "notes.txt");
+			// In-memory project policy recognizing an outward push; nothing is written or run.
+			const outwardPolicy = createSafetyPolicyEngine({
+				cwd: scratch,
+				projectPolicy: {
+					trustVerdict: "trusted",
+					path: join(scratch, ".pancode", "safety.yaml"),
+					hash: null,
+					valid: true,
+					errors: [],
+					commands: [
+						{
+							id: "push-main",
+							command: "git push origin main",
+							actionClass: "execute",
+							shellOperators: "deny",
+							env: { mode: "none", allow: [] },
+							requireConfirmation: false,
+						},
+					],
+					pathPolicy: {},
+					disableDefaultPathPolicy: false,
+					informationFlow: EMPTY_INFORMATION_FLOW_INPUT,
+				},
+			});
+			const outwardSafety: SafetyContract = {
+				...createWorkerSafety({ cwd: scratch }),
+				evaluate(call, posture): SafetyDecision {
+					const decision = outwardPolicy.evaluate(call, posture);
+					if (decision.kind === "allow") return { kind: "allow", classification: decision.classification, policy: decision };
+					const rejection = decision.rejection ?? { short: decision.reasonCode, detail: decision.reasonCode, hints: [] };
+					return { kind: decision.kind, classification: decision.classification, rejection, policy: decision };
+				},
+			};
+			type Disposition = "allow" | "ask" | "deny";
+			interface ParityCase {
+				name: string;
+				safety: SafetyContract;
+				allowedTools?: ReadonlyArray<string>;
+				native: { tool: string; args: Record<string, unknown> };
+				sdk: { toolName: string; input: Record<string, unknown> };
+				acp: { kind: string; rawInput: Record<string, unknown> };
+				expected: Disposition;
+			}
+			const rooted = createWorkerSafety({ cwd: scratch, writeRoots: [join(scratch, "pkg/")] });
+			const cases: ParityCase[] = [
+				{
+					name: "read outside the workspace",
+					safety: createWorkerSafety({ cwd: scratch }),
+					native: { tool: ToolNames.Read, args: { path: outsidePath } },
+					sdk: { toolName: "Read", input: { file_path: outsidePath } },
+					acp: { kind: "read", rawInput: { path: outsidePath } },
+					expected: "ask",
+				},
+				{
+					name: "policy-recognized outward command",
+					safety: outwardSafety,
+					native: { tool: ToolNames.Bash, args: { command: "git push origin main" } },
+					sdk: { toolName: "Bash", input: { command: "git push origin main" } },
+					acp: { kind: "execute", rawInput: { command: "git push origin main" } },
+					expected: "ask",
+				},
+				{
+					name: "write-root escape",
+					safety: rooted,
+					native: { tool: ToolNames.Write, args: { path: join(scratch, "escape.txt"), content: "x" } },
+					sdk: { toolName: "Write", input: { file_path: join(scratch, "escape.txt"), content: "x" } },
+					acp: { kind: "edit", rawInput: { path: join(scratch, "escape.txt"), content: "x" } },
+					expected: "deny",
+				},
+				{
+					name: "tool outside the admitted surface",
+					safety: createWorkerSafety({ cwd: scratch }),
+					allowedTools: [ToolNames.Read],
+					native: { tool: ToolNames.Bash, args: { command: "ls" } },
+					sdk: { toolName: "Bash", input: { command: "ls" } },
+					acp: { kind: "execute", rawInput: { command: "ls" } },
+					expected: "deny",
+				},
+				{
+					name: "damage-control operator rail",
+					safety: createWorkerSafety({ cwd: scratch }),
+					native: { tool: ToolNames.Bash, args: { command: "gcloud iam policies list" } },
+					sdk: { toolName: "Bash", input: { command: "gcloud iam policies list" } },
+					acp: { kind: "execute", rawInput: { command: "gcloud iam policies list" } },
+					expected: "ask",
+				},
+			];
+			for (const entry of cases) {
+				const registry = createRegistry({ safety: entry.safety, principal: "worker", autonomy: () => "default" });
+				for (const spec of [readTool, writeTool, bashTool]) {
+					registry.register({ ...spec, run: async () => ({ kind: "ok", output: "stub" }) });
+				}
+				let parked = false;
+				registry.onPermissionRequired((_call, _decision, meta) => {
+					parked = true;
+					registry.cancelParkedCall(meta.requestId, "contract: denied");
+				});
+				const verdict = await registry.invoke(
+					entry.native,
+					entry.allowedTools !== undefined ? { allowedTools: entry.allowedTools as never } : undefined,
+				);
+				const native: Disposition = parked ? "ask" : verdict.kind === "ok" ? "allow" : "deny";
+
+				const sdkDecision = emitClaudeToolPermissionDecision({
+					...entry.sdk,
+					safety: entry.safety,
+					cwd: scratch,
+					emit: () => {},
+					...(entry.allowedTools !== undefined ? { allowedTools: new Set(entry.allowedTools) } : {}),
+				});
+				const sdk: Disposition = sdkDecision.kind === "allow" ? "allow" : sdkDecision.permissionRequired ? "ask" : "deny";
+
+				const mediator = new AcpToolMediator({
+					safety: entry.safety,
+					cwd: scratch,
+					toolGovernance: "pancode-policy",
+					...(entry.allowedTools !== undefined ? { allowedTools: entry.allowedTools } : {}),
+				});
+				await mediator.handle({
+					toolCall: entry.acp,
+					options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+				});
+				const [logged] = mediator.snapshot().toolCallLog;
+				const acp: Disposition =
+					logged?.decision === "approved"
+						? "allow"
+						: logged?.reason?.startsWith("permission_required:") === true
+							? "ask"
+							: "deny";
+				deepStrictEqual(
+					{ native, sdk, acp },
+					{ native: entry.expected, sdk: entry.expected, acp: entry.expected },
+					entry.name,
+				);
+			}
+		} finally {
+			rmSync(outside, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps a safety-net confirmation rail operator-only so a main-issued grant cannot clear it", async () => {
+		const safety = createWorkerSafety({ cwd: scratch });
+		const registry = createRegistry({ safety, principal: "worker", autonomy: () => "default" });
+		let executed = 0;
+		registry.register({
+			...bashTool,
+			run: async () => {
+				executed += 1;
+				return { kind: "ok", output: "stub" };
+			},
+		});
+		const parks: Array<{ decision: SafetyDecision; meta: PermissionRequiredMeta }> = [];
+		registry.onPermissionRequired((_call, decision, meta) => {
+			parks.push({ decision, meta });
+		});
+		// Evaluated as data by a stub body; the command never runs.
+		const rail = { tool: ToolNames.Bash, args: { command: "gcloud iam policies list" } };
+		const pending = registry.invoke(rail);
+		const [park] = parks;
+		strictEqual(park?.meta.approvalAuthority, "operator");
+		const actionClass = park.decision.classification.actionClass;
+		await registry.resumeParkedCalls({
+			actionClass,
+			requestId: park.meta.requestId,
+			requestedBy: "grant:main:contract",
+			issuer: "main",
+		});
+		strictEqual(registry.parkedCount(), 1);
+		strictEqual(executed, 0);
+		const underMainGrant = evaluateAdmission({
+			principal: "worker",
+			effects: [rail],
+			safety,
+			authorization: { issuer: "main", actionClass },
+		});
+		strictEqual(underMainGrant.kind, "ask");
+		strictEqual(underMainGrant.kind === "ask" && underMainGrant.approvalAuthority, "operator");
+
+		// An ordinary worker autonomy ask is the only one a main grant discharges.
+		const ordinary = { tool: ToolNames.Bash, args: { command: "frobnicate --all" } };
+		const workerAsk = evaluateAdmission({ principal: "worker", effects: [ordinary], safety });
+		strictEqual(workerAsk.kind === "ask" && `${workerAsk.source}:${workerAsk.approvalAuthority}`, "autonomy:main");
+		const granted = evaluateAdmission({
+			principal: "worker",
+			effects: [ordinary],
+			safety,
+			authorization: { issuer: "main", actionClass: "execute" },
+		});
+		strictEqual(granted.kind, "allow");
+		const mainAsk = evaluateAdmission({ principal: "main", effects: [ordinary], safety });
+		strictEqual(mainAsk.kind === "ask" && mainAsk.approvalAuthority, "operator");
+
+		await registry.resumeParkedCalls({ actionClass, requestId: park.meta.requestId, requestedBy: "tool:one_shot" });
+		strictEqual((await pending).kind, "ok");
+		strictEqual(executed, 1);
+	});
+
+	it("yolo clears ordinary confirmation rails while damage control still decides", () => {
+		writeFileSync(
+			join(scratch, ".pancode", "safety.yaml"),
+			"version: 1\ncommands:\n  - id: approved-build\n    command: npm run build\n    actionClass: execute\n    requireConfirmation: true\n",
+		);
+		const policy = engine();
+		const confirmed = policy.evaluate({ tool: ToolNames.Bash, args: { command: "npm run build" } });
+		strictEqual(confirmed.kind, "ask");
+		strictEqual(confirmed.reasonCode, "project-policy:approved-build");
+		strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command: "npm run build" } }, "confirmed").kind, "allow");
+		strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command: "npm run build" } }, "yolo").kind, "allow");
+		for (const [command, kind] of [
+			["npm run build $(cat args)", "allow"],
+			["npm run build && sudo apt update", "allow"],
+			["npm run build && rm -rf /", "block"],
+			[`rm -rf a${"--token".repeat(3000)}`, "block"],
+			["rm -rf $'/'", "block"],
+			["rm -rf $'\\x2f'", "block"],
+			["rm -rf $'\\u002f'", "block"],
+			["rm -rf $'\\057'", "block"],
+			["rm -rf $'\\U0000002f'", "block"],
+			["IFS=$'\\n'", "allow"],
+			["printf $'a\\tb\\n'", "allow"],
+			["echo $'x\\ny'", "allow"],
+			["read -r -d $'\\0' line", "ask"],
+			["echo $'\\x'", "ask"],
+			['echo $"hello"', "ask"],
+			['rm -rf $"/"', "block"],
+			["rm -rf $'~'", "block"],
+			["bash -o pipefail -c 'rm -rf /'", "block"],
+			["bash -o pipefail -c 'echo x > /etc/passwd'", "block"],
+			["bash --norc -c 'echo x > /etc/passwd'", "block"],
+			["sh -e -c 'rm -rf /'", "block"],
+			["bash --norc -c 'rm -rf /'", "block"],
+			["bash --unknown -c 'echo ok'", "ask"],
+			["bash -o", "ask"],
+			["bash -c", "ask"],
+			["npm run build && cat ~/.ssh/id_rsa", "block"],
+			["npm run build && pancode hub install skill:example --yes", "allow"],
+			["gcloud iam policies", "ask"],
+		] as const) {
+			strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }, "yolo").kind, kind, command);
+			if (command === "printf $'a\\tb\\n'" || command === "echo $'x\\ny'") {
+				strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).execRecognition, "recognized", command);
+				deepStrictEqual(
+					scanShellLike(command).map((token) => token.value),
+					command.startsWith("printf") ? ["printf", "a\tb\n"] : ["echo", "x\ny"],
+				);
+			}
+			if (command === "IFS=$'\\n'")
+				deepStrictEqual(
+					scanShellLike(command).map((token) => token.value),
+					["IFS=\n"],
+				);
+			if (command.startsWith("rm -rf $'") && command !== "rm -rf $'~'") {
+				strictEqual(
+					policy.evaluate({ tool: ToolNames.Bash, args: { command } }).reasonCode,
+					policy.evaluate({ tool: ToolNames.Bash, args: { command: "rm -rf /" } }).reasonCode,
+					command,
+				);
+			}
+			if (command.length > 20_000) {
+				strictEqual(redactSecretString(command), command);
+				const cut = describeCallTarget(ToolNames.Bash, { command });
+				strictEqual(cut.length <= 120 && cut.endsWith(` more characters`), true);
+			}
+		}
+	});
+
+	it("yolo admits temporary Python analysis without parking while preserving safety rails (#407)", async () => {
+		// A sibling of the workspace models /tmp analysis, including under the
+		// isolated test harness. Stub execution: this contract tests admission,
+		// not Python availability or a live model's ability to finish the task.
+		const script = join(tmpdir(), "analysis.py");
+		const calls = [
+			{ tool: ToolNames.Write, args: { path: script, content: "print(1)\n" } },
+			{ tool: ToolNames.Bash, args: { command: `python3 '${script}'`, cwd: scratch } },
+			{ tool: ToolNames.Bash, args: { command: "python3 - <<'PY'\nprint(1)\nPY", cwd: scratch } },
+			{ tool: ToolNames.Bash, args: { command: `cat > '${script}' <<'PY'\nprint(1)\nPY`, cwd: scratch } },
+		];
+		for (const level of ["default", "yolo"] as const) {
+			const registry = createRegistry({ safety: createWorkerSafety({ cwd: scratch }), autonomy: () => level });
+			let executed = 0;
+			let approvals = 0;
+			for (const spec of [writeTool, bashTool]) {
+				registry.register({
+					...spec,
+					async run() {
+						executed++;
+						return { kind: "ok", output: "admitted" };
+					},
+				});
+			}
+			registry.onPermissionRequired((_call, _decision, meta) => {
+				approvals++;
+				registry.cancelParkedCall(meta.requestId, "No operator approval in this contract");
+			});
+			for (const call of calls) {
+				strictEqual((await registry.invoke(call)).kind, level === "yolo" ? "ok" : "blocked", JSON.stringify(call));
+			}
+			strictEqual(executed, level === "yolo" ? calls.length : 0);
+			strictEqual(approvals, level === "yolo" ? 0 : calls.length);
+
+			const confirmation = await registry.invoke({
+				tool: ToolNames.Bash,
+				args: { command: "git restore .", cwd: scratch },
+			});
+			strictEqual(confirmation.kind, "blocked");
+			strictEqual(approvals, level === "yolo" ? 1 : calls.length + 1);
+			const blocked = await registry.invoke({
+				tool: ToolNames.Bash,
+				args: { command: "git reset --hard", cwd: scratch },
+			});
+			strictEqual(blocked.kind, "blocked");
+			strictEqual(executed, level === "yolo" ? calls.length : 0);
+			strictEqual(approvals, level === "yolo" ? 1 : calls.length + 1, "a hard block cannot become an approval");
+			strictEqual(registry.hasParkedCalls(), false);
+		}
+	});
+
+	it("a worker's interpreter readback and unrecognized commands run inside its write-confined sandbox as main bash's contained call does; without that sandbox they ask (row 371, M-49)", async () => {
+		const readback = {
+			tool: ToolNames.Bash,
+			args: {
+				command: `python3 -B -c 'from pathlib import Path; assert Path("a.txt").read_bytes() == b"aaaa"'`,
+				cwd: scratch,
+			},
+		};
+		const plain = { tool: ToolNames.Bash, args: { command: "python3 analysis.py", cwd: scratch } };
+		const outward = { tool: ToolNames.Bash, args: { command: "curl -X POST -d x https://example.com", cwd: scratch } };
+		for (const confined of [false, true]) {
+			const safety = createWorkerSafety({ cwd: scratch, ...(confined ? { sandboxConfinesWrites: true } : {}) });
+			const registry = createRegistry({ safety, autonomy: () => "default" });
+			let executed = 0;
+			registry.register({
+				...bashTool,
+				async run() {
+					executed++;
+					return { kind: "ok", output: "admitted" };
+				},
+			});
+			registry.onPermissionRequired((_call, _decision, meta) => {
+				registry.cancelParkedCall(meta.requestId, "workers run non-interactively");
+			});
+			strictEqual((await registry.invoke(readback)).kind, confined ? "ok" : "blocked");
+			if (!confined) strictEqual(safety.evaluate(readback).policy?.ruleId, "bash-hidden-content");
+			// An unrecognized command takes the same contained verdict there (M-49); an outward one, which main bash's
+			// sandbox does not contain, and every rail and the floor stand.
+			strictEqual((await registry.invoke(plain)).kind, confined ? "ok" : "blocked");
+			if (confined) strictEqual(safety.evaluate(plain).policy?.ruleId, "worker-sandbox-contained");
+			strictEqual((await registry.invoke(outward)).kind, "blocked");
+			const escaped = safety.evaluate({ ...readback, args: { ...readback.args, cwd: tmpdir() } });
+			strictEqual(escaped.kind, confined ? "block" : "ask");
+			if (confined) strictEqual(escaped.policy?.ruleId, "bash-cwd-escape");
+			strictEqual(safety.evaluate({ tool: ToolNames.Bash, args: { command: "git reset --hard" } }).kind, "block");
+			strictEqual(executed, confined ? 2 : 0);
+		}
+	});
+
+	it("blocks project and user skill writes and redirects in worker and orchestrator admissions", () => {
+		const main = engine();
+		const worker = createWorkerSafety({ cwd: scratch });
+		for (const skill of [".pancode/skills/x/SKILL.md", join(pancodeConfigDir(), "skills", "x", "SKILL.md")]) {
+			for (const policy of [main, worker]) {
+				for (const call of [
+					{ tool: ToolNames.Write, args: { path: skill, content: "Model instructions." } },
+					{ tool: ToolNames.Bash, args: { command: `echo instructions > '${skill}'` } },
+				]) {
+					strictEqual(policy.evaluate(call).kind, "block", JSON.stringify(call));
+					strictEqual(policy.evaluate(call, "confirmed").kind, "block", JSON.stringify(call));
+				}
+			}
+		}
+	});
+
+	it("protects active project and resolved user skills in main and worker admissions even without path defaults", () => {
+		writeFileSync(join(scratch, ".pancode", "safety.yaml"), "version: 1\ndisableDefaultPathPolicy: true\n");
+		const main = engine();
+		const worker = createWorkerSafety({ cwd: scratch });
+		for (const root of [join(scratch, ".pancode", "skills"), join(pancodeConfigDir(), "skills")]) {
+			const skill = join(root, "example", "SKILL.md");
+			for (const policy of [main, worker]) {
+				for (const call of [
+					{ tool: ToolNames.Write, args: { path: skill, content: "changed" } },
+					{ tool: ToolNames.Edit, args: { path: skill, oldText: "old", newText: "new" } },
+					{ tool: ToolNames.Artifact, args: { path: skill, content: "changed", kind: "markdown" } },
+					{ tool: ToolNames.Bash, args: { command: `rm -r '${root}'` } },
+					{ tool: ToolNames.Bash, args: { command: `mv '${root}' draft` } },
+					{ tool: ToolNames.Bash, args: { command: `cp draft '${skill}'` } },
+				]) {
+					strictEqual(policy.evaluate(call).kind, "block", JSON.stringify(call));
+					strictEqual(policy.evaluate(call, "confirmed").kind, "block", JSON.stringify(call));
+				}
+				strictEqual(policy.evaluate({ tool: ToolNames.Read, args: { path: skill } }).kind, "allow");
+				strictEqual(
+					policy.evaluate({ tool: ToolNames.Write, args: { path: "draft-skills/example/SKILL.md" } }).kind,
+					"allow",
+				);
+			}
+		}
+	});
+
+	it("refuses a yolo registry write without touching active bytes while allowing a draft", async () => {
+		const target = join(scratch, ".pancode", "skills", "example", "SKILL.md");
+		mkdirSync(join(scratch, ".pancode", "skills", "example"), { recursive: true });
+		writeFileSync(target, "Operator instructions.\n");
+		const registry = createRegistry({ safety: createWorkerSafety({ cwd: scratch }), autonomy: () => "yolo" });
+		registry.register(writeTool);
+		const denied = await registry.invoke({
+			tool: ToolNames.Write,
+			args: { path: target, content: "Model replacement." },
+		});
+		strictEqual(denied.kind, "blocked");
+		strictEqual(readFileSync(target, "utf8"), "Operator instructions.\n");
+		const draft = join(scratch, "draft-skills", "example", "SKILL.md");
+		strictEqual(existsSync(draft), false);
+		const written = await registry.invoke({
+			tool: ToolNames.Write,
+			args: { path: draft, content: "Proposed instructions.\n" },
+		});
+		strictEqual(written.kind, "ok");
+		strictEqual(readFileSync(draft, "utf8"), "Proposed instructions.\n");
+	});
+
+	it("protects aliases, missing descendants, late symlinks, parent deletion and shell cwd changes", () => {
+		const skills = join(scratch, ".pancode", "skills");
+		const outside = join(scratch, "outside");
+		mkdirSync(outside);
+		const policy = engine();
+		// The active root becomes a symlink after the policy was constructed.
+		symlinkSync(outside, skills);
+		symlinkSync(skills, join(scratch, "alias"));
+		for (const target of [
+			"alias/new/SKILL.md",
+			"outside/new/SKILL.md",
+			".pancode/skills/new/SKILL.md",
+			".pancode/skills/..draft/SKILL.md",
+		]) {
+			strictEqual(policy.evaluate({ tool: ToolNames.Write, args: { path: target } }).kind, "block", target);
+		}
+		for (const command of [
+			"rm -r .pancode",
+			"echo x > $'.pancode/skills/new/SKILL.md'",
+			'echo x > $".pancode/skills/new/SKILL.md"',
+			"echo x > $'\\x2epancode/skills/new/SKILL.md'",
+			"mv .pancode saved",
+			"cd .pancode && rm -r skills",
+			"sh -c 'cd .pancode && printf changed > skills/new/SKILL.md'",
+			"bash -o pipefail -c 'echo x > .pancode/skills/new/SKILL.md'",
+			"bash --norc -c 'echo x > .pancode/skills/new/SKILL.md'",
+		])
+			strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind, "block", command);
+	});
+
+	it("blocks model shell skill installation and updates while preserving inventory and draft validation", () => {
+		const policy = engine();
+		for (const command of [
+			"pancode skills install ./draft-skills/example",
+			"pancode --no-skills skills install example",
+			"env PANCODE_CONFIG_DIR=/tmp/elsewhere pancode skills update --all --force",
+			"command pancode hub install skill:example --yes",
+			"sh -lc 'pancode skills install example --user'",
+			"node /opt/pancode/dist/cli/index.js skills install example",
+			"npx pancode skills install example",
+			"npm exec -- pancode skills update example",
+			"pancode plugins install ./draft-plugin --project",
+			"pancode plugins update demo-pack --force",
+			"pancode plugins enable example",
+			"pancode plugins pin example",
+			"pancode extensions install ./draft-extension --user",
+			"pancode hub update plugin:example",
+			"pancode hub remove plugin:example",
+			"pancode hub pin plugin:example",
+		]) {
+			const decision = policy.evaluate({ tool: ToolNames.Bash, args: { command } });
+			strictEqual(decision.kind, command.includes(" hub ") ? "ask" : "block", command);
+			strictEqual(decision.reasonCode, command.includes(" hub ") ? "hub-confirm" : "skill-authority", command);
+			if (command.includes(" hub "))
+				strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }, "confirmed").kind, "allow");
+		}
+		for (const command of [
+			"pancode skills list",
+			"pancode skills install --help",
+			"pancode skills inspect example",
+			"pancode skills validate draft-skills/example/SKILL.md",
+			"pancode hub list",
+			"pancode plugins list --json",
+			"pancode plugins inspect ./draft-plugin",
+			"pancode plugins drift example",
+			"pancode plugins install --help",
+			"printf 'pancode skills install example'",
+			"node script.js skills install example",
+		])
+			strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind, "allow", command);
+	});
+
+	it("guards canonical PanHub mutations and approved interop adoption through wrappers", () => {
+		for (const policy of [engine(), createWorkerSafety({ cwd: scratch })]) {
+			for (const wrapper of [
+				"pancode",
+				"env X=1 pancode",
+				"command pancode",
+				"node /opt/pancode/dist/cli/index.js",
+				"npx --yes pancode",
+				"npm exec -- pancode",
+			]) {
+				for (const args of [
+					"hub install plugin:example",
+					"hub --kind skill install example --force",
+					"hub enable example",
+					"hub update example",
+					"hub register ./package",
+					"interop adopt claude-code --yes",
+					"interop adopt claude-code --kind prompt --yes",
+				]) {
+					strictEqual(
+						policy.evaluate({ tool: ToolNames.Bash, args: { command: `${wrapper} ${args}` } }).kind,
+						args.startsWith("hub ") ? "ask" : "block",
+						`${wrapper} ${args}`,
+					);
+				}
+				for (const args of [
+					"hub install example --dry-run",
+					"hub update example --dry-run",
+					"hub disable example --dry-run",
+					"hub inspect example",
+					"hub drift example",
+					"hub install --help",
+					"interop inspect claude-code",
+					"interop adopt claude-code",
+					"interop adopt claude-code --yes --dry-run",
+				]) {
+					strictEqual(
+						policy.evaluate({ tool: ToolNames.Bash, args: { command: `${wrapper} ${args}` } }).kind,
+						"allow",
+						`${wrapper} ${args}`,
+					);
+				}
+			}
+		}
+	});
+
+	it("protects installed plugin and harness-extension content in main and worker tools", () => {
+		for (const policy of [engine(), createWorkerSafety({ cwd: scratch })]) {
+			for (const kind of ["plugins", "extensions"]) {
+				for (const root of [join(scratch, ".pancode", kind), join(pancodeConfigDir(), kind)]) {
+					strictEqual(
+						policy.evaluate({ tool: ToolNames.Write, args: { path: join(root, "example", "tool.py"), content: "changed" } })
+							.kind,
+						"block",
+					);
+					strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command: `rm -rf '${root}'` } }).kind, "block");
+				}
+			}
+		}
+	});
+
+	it("blocks every installed-skill update spelling with subcommand flags in main and worker admissions", () => {
+		for (const policy of [engine(), createWorkerSafety({ cwd: scratch })]) {
+			for (const command of [
+				"pancode skills sync --force",
+				"pancode skills --force sync",
+				"pancode skills --user --name renamed install ./draft-skills/example",
+				"pancode skills --all update --force",
+				"pancode --all --help skills sync --force",
+				"env PANCODE_CONFIG_DIR=/tmp/elsewhere pancode skills sync --force",
+				"command pancode skills sync",
+				"sh -lc 'pancode skills sync --force'",
+				"node /opt/pancode/dist/cli/index.js skills sync --force",
+				"tsx /opt/pancode/src/cli/index.ts skills sync --force",
+				"npx --yes pancode skills sync --force",
+				"npm exec -- pancode skills sync --force",
+			]) {
+				const call = { tool: ToolNames.Bash, args: { command } };
+				const decision = policy.evaluate(call);
+				strictEqual(decision.kind, command.includes(" hub ") ? "ask" : "block", command);
+				strictEqual(
+					"reasonCode" in decision ? decision.reasonCode : decision.policy?.reasonCode,
+					command.includes(" hub ") ? "hub-confirm" : "skill-authority",
+					command,
+				);
+				strictEqual(policy.evaluate(call, "confirmed").kind, command.includes(" hub ") ? "allow" : "block", command);
+			}
+		}
+	});
+
+	it("requires approval for PanHub installs and their dependencies, then accepts confirmation", () => {
+		for (const policy of [engine(), createWorkerSafety({ cwd: scratch })]) {
+			for (const command of [
+				"pancode hub install skill:example --yes",
+				"pancode hub --yes install skill:example",
+				"pancode hub --from ./catalog.json --yes install example",
+				"pancode hub install agent:example --with-requirements --yes",
+				"pancode hub --with-requirements install fleet:example --yes",
+				"pancode hub install prompt:example --yes --with-requirements",
+				"pancode hub install skill:example --from --help --yes",
+				"env PANCODE_CONFIG_DIR=/tmp/elsewhere pancode hub install skill:example --yes",
+				"command pancode hub install skill:example --yes",
+				"sh -lc 'pancode hub install skill:example --yes'",
+				"node /opt/pancode/dist/cli/index.js hub install skill:example --yes",
+				"npx --yes pancode hub install skill:example --yes",
+				"npm exec -- pancode hub install skill:example --yes",
+			]) {
+				const call = { tool: ToolNames.Bash, args: { command } };
+				const decision = policy.evaluate(call);
+				strictEqual(decision.kind, command.includes(" hub ") ? "ask" : "block", command);
+				strictEqual(
+					"reasonCode" in decision ? decision.reasonCode : decision.policy?.reasonCode,
+					command.includes(" hub ") ? "hub-confirm" : "skill-authority",
+					command,
+				);
+				strictEqual(policy.evaluate(call, "confirmed").kind, command.includes(" hub ") ? "allow" : "block", command);
+			}
+		}
+	});
+
+	it("asks before a share import or package code runs, and keeps an extension install blocked", () => {
+		const policy = engine();
+		for (const command of [
+			"pancode share import ./archive.json",
+			"pancode dev share import ./archive.json",
+			"pancode extensions test ./draft-extension",
+			"pancode extensions validate ./draft-extension",
+		]) {
+			const call = { tool: ToolNames.Bash, args: { command } };
+			const decision = policy.evaluate(call);
+			strictEqual(decision.kind, "ask", command);
+			strictEqual(decision.reasonCode, "hub-confirm", command);
+			strictEqual(policy.evaluate(call, "confirmed").kind, "allow", command);
+		}
+		strictEqual(
+			policy.evaluate({ tool: ToolNames.Bash, args: { command: "pancode share import ./archive.json --dry-run" } }).kind,
+			"allow",
+		);
+		strictEqual(
+			policy.evaluate({ tool: ToolNames.Bash, args: { command: "pancode extensions install ./draft-extension" } }).kind,
+			"block",
+		);
+		strictEqual(
+			policy.evaluate({ tool: ToolNames.Bash, args: { command: "pancode hub install plugin:example" } }).kind,
+			"ask",
+		);
+	});
+
+	it("never lets a hub command bypass direct instruction or credential protections", () => {
+		const policy = engine();
+		for (const command of [
+			"pancode hub install skill:example && rm -r .pancode/skills",
+			"pancode hub install skill:example && cat ~/.ssh/id_rsa",
+			"pancode hub install skill:example && pancode skills sync --force",
+		]) {
+			const call = { tool: ToolNames.Bash, args: { command } };
+			strictEqual(policy.evaluate(call).kind, "block");
+			strictEqual(policy.evaluate(call, "confirmed").kind, "block");
+		}
+	});
+
+	it("preserves PanHub discovery and dry-run plans through the same CLI wrappers", () => {
+		const policy = engine();
+		for (const command of [
+			"pancode --help skills sync --force",
+			"pancode --no-skills --help skills sync --force",
+			"pancode skills sync -v",
+			"pancode skills sync --help",
+			"pancode skills --json inventory",
+			"pancode hub search example --kind skill --json",
+			"pancode hub use skill example",
+			"pancode hub install --dry-run skill:example --json",
+			"pancode hub --from ./catalog.json install --dry-run skill:example --with-requirements",
+			"pancode hub install --dry-run agent:example --with-requirements",
+			"pancode hub install --dry-run skill:example --from --yes",
+			"pancode hub install --dry-run skill:example --yes --help",
+			"env PANCODE_CONFIG_DIR=/tmp/elsewhere pancode hub list",
+			"command pancode hub install --dry-run skill:example",
+			"sh -lc 'pancode hub install --dry-run skill:example --with-requirements'",
+			"node /opt/pancode/dist/cli/index.js hub install --dry-run skill:example --json",
+			"npx --yes pancode hub install --dry-run skill:example",
+			"npm exec -- pancode hub search example",
+		])
+			strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind, "allow", command);
+	});
+
+	function shellArgv(command: string, program: "pancode" | "rm" | "cp" | "sed" | "grep" = "pancode"): string[] {
+		// Capture literal Bash argv on a separate descriptor even when the tested
+		// command redirects stdout. This function never runs the actual CLI.
+		const result = spawnSync(
+			"bash",
+			["--noprofile", "--norc", "-c", `${program}() { printf '%s\\0' "$@" >&3; }\n${command}`],
+			{
+				cwd: scratch,
+				env: { PATH: process.env.PATH, TMPDIR: tmpdir() },
+				stdio: ["ignore", "pipe", "pipe", "pipe"],
+			},
+		);
+		strictEqual(result.status, 0, result.stderr?.toString());
+		return result.output[3]?.toString().split("\0").slice(0, -1) ?? [];
+	}
+
+	it("ignores commented help and version text without losing later literal skill mutations", () => {
+		const main = engine();
+		const worker = createWorkerSafety({ cwd: scratch });
+		for (const [command, argv] of [
+			["pancode skills sync --force # --help", ["skills", "sync", "--force"]],
+			["pancode skills sync --force # -v", ["skills", "sync", "--force"]],
+			["pancode hub install skill:example --yes # --help", ["hub", "install", "skill:example", "--yes"]],
+			["pancode hub install skill:example --yes # --version", ["hub", "install", "skill:example", "--yes"]],
+			["# --help\npancode skills sync --force # -v", ["skills", "sync", "--force"]],
+			["pancode skills --help # comment\npancode skills sync", ["skills", "--help", "skills", "sync"]],
+			["pancode hub install 'skill:example#suffix' --yes # --help", ["hub", "install", "skill:example#suffix", "--yes"]],
+		] as const) {
+			deepStrictEqual(shellArgv(command), argv, command);
+			for (const policy of [main, worker]) {
+				const call = { tool: ToolNames.Bash, args: { command } };
+				const decision = policy.evaluate(call);
+				strictEqual(decision.kind, command.includes(" hub ") ? "ask" : "block", command);
+				strictEqual(
+					"reasonCode" in decision ? decision.reasonCode : decision.policy?.reasonCode,
+					command.includes(" hub ") ? "hub-confirm" : "skill-authority",
+					command,
+				);
+				strictEqual(policy.evaluate(call, "confirmed").kind, command.includes(" hub ") ? "allow" : "block", command);
+			}
+		}
+	});
+
+	it("reads help from CLI words rather than redirections or another shell command", () => {
+		const main = engine();
+		const worker = createWorkerSafety({ cwd: scratch });
+		for (const [command, argv] of [
+			["pancode skills sync --force > --help", ["skills", "sync", "--force"]],
+			["pancode hub > --version install skill:example --yes", ["hub", "install", "skill:example", "--yes"]],
+			["2> --help pancode skills sync --force", ["skills", "sync", "--force"]],
+			["pancode skills sy\\\nnc --force", ["skills", "sync", "--force"]],
+			["pancode skills sync & pancode --help; wait", null],
+		] as const) {
+			const actual = shellArgv(command);
+			if (argv !== null) deepStrictEqual(actual, argv, command);
+			else strictEqual(actual.includes("sync"), true, command);
+			for (const policy of [main, worker]) {
+				const call = { tool: ToolNames.Bash, args: { command } };
+				const decision = policy.evaluate(call);
+				strictEqual(decision.kind, command.includes(" hub ") ? "ask" : "block", command);
+				strictEqual(
+					"reasonCode" in decision ? decision.reasonCode : decision.policy?.reasonCode,
+					command.includes(" hub ") ? "hub-confirm" : "skill-authority",
+					command,
+				);
+				strictEqual(policy.evaluate(call, "confirmed").kind, command.includes(" hub ") ? "allow" : "block", command);
+			}
+		}
+	});
+
+	it("preserves real help arguments following quoted, escaped and embedded hash words", () => {
+		const policy = engine();
+		for (const command of [
+			"pancode skills sync '#' --help",
+			"pancode skills sync \\# --help",
+			"pancode skills sync ''#suffix --help",
+			"pancode skills sync x#suffix --help",
+			"pancode skills sync '|' --help",
+			"pancode skills sync ';' --help",
+			"pancode skills sync '>' --help",
+			"pancode skills sync --help # harmless comment",
+		]) {
+			strictEqual(shellArgv(command).includes("--help"), true, command);
+			strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind, "allow", command);
+		}
+		const command = 'pancode "" \'\' "\\#" "--he\\lp" \\# word#suffix # dropped\n';
+		deepStrictEqual(
+			scanShellLike(command).map((token) => token.value),
+			["pancode", ...shellArgv(command), ";"],
+		);
+	});
+
+	it("keeps compound redirects to active skills blocked while allowing descriptor duplication on reads", () => {
+		for (const policy of [engine(), createWorkerSafety({ cwd: scratch })]) {
+			for (const operator of ["&>", "&>>", ">|", "<>", ">&"]) {
+				const command = `printf changed ${operator} .pancode/skills/example/SKILL.md`;
+				strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind, "block", command);
+			}
+			const command = "cd .pancode/skills && cat example/SKILL.md 2>&1";
+			strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind, "allow", command);
+		}
+	});
+
+	it("keeps quoted shell syntax as path operands before protected rm, cp and sed destinations", () => {
+		const target = ".pancode/skills/example/SKILL.md";
+		const main = engine();
+		const worker = createWorkerSafety({ cwd: scratch });
+		for (const literal of ["&", "&&", "||", "|", ";", ">", ">>", "&>", ">&"]) {
+			for (const quoted of [`'${literal}'`, literal.replace(/[&|;<>]/gu, "\\$&")]) {
+				for (const [program, command, expected] of [
+					["rm", `rm ${quoted} ${target}`, [literal, target]],
+					["cp", `cp ${quoted} ${target}`, [literal, target]],
+					["sed", `sed -i -e 's/old/new/' ${quoted} ${target}`, ["-i", "-e", "s/old/new/", literal, target]],
+				] as const) {
+					deepStrictEqual(shellArgv(command, program), expected, command);
+					const targets = program === "rm" ? extractCommandDeleteTargets(command) : extractCommandWriteTargets(command);
+					strictEqual(targets.includes(target), true, command);
+					for (const policy of [main, worker]) {
+						const call = { tool: ToolNames.Bash, args: { command } };
+						strictEqual(policy.evaluate(call).kind, "block", command);
+						strictEqual(policy.evaluate(call, "confirmed").kind, command.includes(" hub ") ? "allow" : "block", command);
+					}
+				}
+			}
+		}
+	});
+
+	it("allows quoted and escaped grep patterns that are not actual redirect operators", () => {
+		const target = ".pancode/skills/example/SKILL.md";
+		const main = engine();
+		const worker = createWorkerSafety({ cwd: scratch });
+		const protectedWorker = createWorkerSafety({
+			cwd: scratch,
+			protectedArtifactState: {
+				artifacts: [{ path: target, protectedAt: "2026-09-05T00:00:00Z", reason: "fixture", source: "user" }],
+			},
+		});
+		for (const literal of ["&", "&&", "||", "|", ";", ">", ">>", "&>", ">&", "<>"]) {
+			for (const quoted of [`'${literal}'`, literal.replace(/[&|;<>]/gu, "\\$&")]) {
+				const command = `grep -F ${quoted} ${target}`;
+				deepStrictEqual(shellArgv(command, "grep"), ["-F", literal, target], command);
+				deepStrictEqual(extractCommandWriteTargets(command), [], command);
+				for (const policy of [main, worker, protectedWorker])
+					strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind, "allow", command);
+			}
+		}
+	});
+
+	it("reads a here-document the parsed call proves is data as content, and keeps judging the file it writes (C-7)", () => {
+		const artifacts = {
+			artifacts: [
+				{
+					path: join(scratch, [".plan", "ning/interactions"].join("")),
+					protectedAt: "2026-11-21T00:00:00Z",
+					reason: "fixture",
+					source: "user" as const,
+				},
+			],
+		};
+		const body =
+			"export const f = (a: number[]) => a.length > [5]).map((x) => x > 0);\nif (n >= 2) out = n > m ? 1 : 0;\n";
+		const reason = (command: string) => protectedArtifactMutationBlockReason(artifacts, ToolNames.Bash, { command });
+		for (const command of [
+			`cat > src/probe.ts <<'EOF'\n${body}EOF`,
+			`cat >> tests/probe.test.ts <<'EOF'\n${body}EOF\nnode --version`,
+			`tee src/probe.ts > /dev/null <<'EOF'\n${body}EOF`,
+			"git add -A && git commit -q -F - <<'EOF'\nfix: map a > [5]) to b\nEOF",
+			// FX-1: a quoted body an interpreter reads is its program, not shell text, so `>` in it redirects nothing.
+			"python3 - <<'EOF'\nprint([1] > [5])\nEOF",
+		])
+			strictEqual(reason(command), null, command);
+		// Row 287: a body some step may run, an unquoted body, a copy git may run as a hook or config, and a recipient the
+		// call may redefine all stay read as commands.
+		const gone = `rm -rf ${[".plan", "ning"].join("")}`;
+		for (const command of [
+			`cat > ${[".plan", "ning"].join("")}/interactions/x <<'EOF'\nhello\nEOF`,
+			`cat > src/probe.ts <<EOF\n${body}EOF`,
+			`cat > run.sh <<'EOF'\n${gone}\nEOF\nbash run.sh`,
+			`cat > a.txt <<'EOF'\n${gone}\nEOF\nbash a.t*`,
+			`cat > a.txt <<'EOF'\n${gone}\nEOF\nnpm test`,
+			`cat > .husky/pre-commit <<'EOF'\n${gone}\nEOF\ngit commit -m x`,
+			`cat > node <<'EOF'\n${gone}\nEOF\nPATH=.:$PATH node --version`,
+			`tee a.sh <<'EOF' | sh\n${gone}\nEOF`,
+			`alias cat=sh; cat > a.txt <<'EOF'\n${gone}\nEOF`,
+			// Red-team round: a delimiter a line continuation or `$'...'` spells, and a copy through a duplicated descriptor.
+			`cat <<E\\\nOF > /dev/null\n$(${gone})\nEOF`,
+			`cat <<$'EOF' > /dev/null\nhello\n$EOF\n${gone}\nEOF`,
+			`cat 3>.git/config 1>&3 <<'EOF'\n${gone}\nEOF\ngit status`,
+			// Neon round: a locale-quoted command name bash may translate to any program.
+			`$"cat" <<'EOF'\n${gone}; cat .env\nEOF`,
+			// Neon round: a later plain copy into a name the call runs.
+			`cat <<'EOF' > tmpfile && cat tmpfile > ls && ls\n#!/bin/sh\n${gone}\nEOF`,
+		])
+			strictEqual(reason(command) !== null, true, command);
+	});
+
+	it("refuses a hard reset only where it rewrites a tracked protected path, and clean -x/-X wherever it reaches one (M-27)", (t) => {
+		if (spawnSync("git", ["--version"]).status !== 0) {
+			t.skip("git is not installed");
+			return;
+		}
+		const repo = join(scratch, "repo");
+		mkdirSync(join(repo, "desk"), { recursive: true });
+		const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
+		const git = (...args: string[]) =>
+			strictEqual(spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, env }).status, 0);
+		git("init", "-q");
+		writeFileSync(join(repo, ".gitignore"), "records/\n");
+		writeFileSync(join(repo, "desk", "keep.txt"), "k");
+		git("add", ".");
+		git("commit", "-qm", "one");
+		writeFileSync(join(repo, "desk", "new.json"), "{}");
+		git("add", ".");
+		git("commit", "-qm", "two");
+		mkdirSync(join(repo, "records", "log"), { recursive: true });
+		writeFileSync(join(repo, "records", "log", "r.json"), "{}");
+		process.chdir(repo);
+		const at = (path: string) => ({
+			artifacts: [
+				{ path: join(repo, path), protectedAt: "2026-11-21T00:00:00Z", reason: "desk", source: "user" as const },
+			],
+		});
+		const refused = (path: string, command: string) =>
+			protectedArtifactMutationBlockReason(at(path), ToolNames.Bash, { command }) !== null;
+		// Ignored, untracked records: reset --hard never touches them, after plain reads too.
+		for (const command of [
+			"git reset --hard HEAD~1",
+			"git reset --hard",
+			"git -C . reset -q --hard HEAD~1",
+			"git log -1 | head -1; git diff --binary > $TMPDIR/x.patch && git reset --hard HEAD~1",
+			"git clean -ndx",
+			"git clean -fd",
+			"git clean -fdx build",
+		])
+			strictEqual(refused("records/log", command), false, command);
+		// What the reading cannot vouch for, and every clean that deletes ignored files there, still refuses.
+		for (const command of [
+			"git add -A && git reset --hard HEAD~1",
+			"git reset --hard HEAD~1 & true",
+			"git reset --hard HEAD~1 | git add -A",
+			"GIT_INDEX_FILE=x git reset --hard",
+			"git --work-tree=. reset --hard",
+			"git reset --hard no-such-rev",
+			"git reset --hard $(echo HEAD~1)",
+			"git clean -fdx",
+			"git clean -fdX",
+			"git clean -fdx ':!src'",
+			"git clean -fdx :/",
+			"git clean -xfd records",
+			"git -C . clean -fdx",
+			"cd build && git clean -fdx .",
+		])
+			strictEqual(refused("records/log", command), true, command);
+		// The call's own cwd moves a relative pathspec as a cd does: `records` from .pancode is .pancode/records.
+		const inCwd = (cwd: string, command: string) =>
+			protectedArtifactMutationBlockReason(at(".pancode/records"), ToolNames.Bash, { command, cwd }) !== null;
+		strictEqual(inCwd(".pancode", "git clean -fdx records"), true);
+		strictEqual(inCwd(".", "git clean -fdx records"), false);
+		// A tracked record the target deletes, an uncommitted edit, and a staged record the reset drops all refuse.
+		strictEqual(refused("desk", "git reset --hard HEAD~1"), true);
+		strictEqual(refused("desk", "git reset --hard"), false);
+		writeFileSync(join(repo, "desk", "keep.txt"), "edited");
+		strictEqual(refused("desk", "git reset --hard"), true);
+		git("checkout", "--", "desk/keep.txt");
+		writeFileSync(join(repo, "desk", "staged.json"), "{}");
+		git("add", "desk/staged.json");
+		strictEqual(refused("desk", "git reset --hard"), true);
+	});
+
+	it("keeps a child whose name starts with .. inside its parent", () => {
+		const artifact = (path: string) => ({
+			path,
+			protectedAt: "2026-11-17T00:00:00Z",
+			reason: "fixture",
+			source: "user" as const,
+		});
+		const results = { artifacts: [artifact(join(scratch, "results"))] };
+		for (const [tool, args] of [
+			[ToolNames.Write, { path: "results/..x/a" }],
+			[ToolNames.Bash, { command: "rm -rf results/..x" }],
+		] as const)
+			strictEqual(protectedArtifactMutationBlockReason(results, tool, args) !== null, true, JSON.stringify(args));
+		const data = { artifacts: [artifact(join(scratch, "..data/out.nc"))] };
+		for (const command of [`rm -rf ${scratch}`, "rm -rf ./"])
+			strictEqual(protectedArtifactMutationBlockReason(data, ToolNames.Bash, { command }) !== null, true, command);
+		mkdirSync(join(scratch, "..cache"));
+		const worker = createWorkerSafety({ cwd: scratch });
+		const write = worker.evaluate({ tool: ToolNames.Write, args: { path: "..cache/g", content: "x" } }, "default");
+		strictEqual(write.classification.actionClass, "write");
+		const bash = { tool: ToolNames.Bash, args: { command: "ls", cwd: join(scratch, "..cache") } };
+		strictEqual(worker.evaluate(bash, "default").kind, "allow");
+	});
+
+	it("protects literal ampersand filenames under a shell cwd without treating them as descriptors", () => {
+		mkdirSync(join(scratch, ".pancode", "skills"));
+		const command = "cd .pancode/skills && rm '&'";
+		deepStrictEqual(shellArgv(command, "rm"), ["&"]);
+		deepStrictEqual(extractCommandDeleteTargets(command), ["&"]);
+		for (const policy of [engine(), createWorkerSafety({ cwd: scratch })])
+			strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind, "block", command);
+	});
+
+	it("retains literal Git path operands and actual redirects in observed run effects", () => {
+		const recorder = createRunEffectsRecorder(scratch);
+		recorder.start("quoted-git-paths", ToolNames.Bash, {
+			command: "git rm '|' kept.txt > output.log && git rm '>&' second.txt",
+		});
+		recorder.finish("quoted-git-paths", false);
+		const effects = recorder.snapshot();
+		deepStrictEqual(
+			[...effects.mutatedPaths].sort(),
+			["|", "kept.txt", "output.log", ">&", "second.txt"].map((name) => join(scratch, name)).sort(),
+		);
+		strictEqual(effects.writeRecordComplete, false);
+	});
+
+	it("keeps destructive transitions blocked while allowing explicit one-shot rails once", () => {
+		const policy = engine();
+		for (const command of ["git push --force origin main", "find . -name '*.log' -delete", "shred -u key.txt"]) {
+			const call = { tool: ToolNames.Bash, args: { command } };
+			strictEqual(policy.evaluate(call).kind, "block", command);
+			strictEqual(policy.evaluate(call, "confirmed").kind, command.includes(" hub ") ? "allow" : "block", command);
+		}
+		for (const command of [
+			"git stash drop",
+			"truncate -s 0 server.log",
+			"read -r -d $'\\0' line",
+			"echo $'\\x'",
+			"echo $'\\uD800'",
+			"echo $'\\U00110000'",
+			"echo $'\\q'",
+			'echo $"hello"',
+		]) {
+			const call = { tool: ToolNames.Bash, args: { command } };
+			strictEqual(policy.evaluate(call).kind, "ask", command);
+			strictEqual(policy.evaluate(call, "confirmed").kind, "allow", command);
+			if (command.includes("$")) {
+				strictEqual(policy.evaluate(call, "yolo").kind, "ask", command);
+				strictEqual(policy.evaluate(call, "yolo").reasonCode, "bash-hidden-quoting", command);
+				const safety = createWorkerSafety({ cwd: scratch });
+				const admission = evaluateAdmission({ principal: "main", effects: [call], safety, autonomy: "yolo" });
+				strictEqual(
+					admission.kind === "ask" && `${admission.source}:${admission.approvalAuthority}`,
+					"safety-net:operator",
+				);
+				strictEqual(
+					evaluateAdmission({
+						principal: "main",
+						effects: [call],
+						safety,
+						autonomy: "yolo",
+						authorization: { issuer: "operator", actionClass: policy.evaluate(call).actionClass },
+					}).kind,
+					"allow",
+					command,
+				);
+			}
+		}
+		strictEqual(mapAutonomy("yolo", "git_destructive"), "deny");
+		strictEqual(mapAutonomy("default", "unknown"), "ask");
+		strictEqual(mapAutonomy("yolo", "unknown"), "allow");
+		strictEqual(mapAutonomy("default", "system_modify"), "ask");
+		strictEqual(mapAutonomy("yolo", "system_modify"), "allow");
+	});
+
+	it("fails execution closed under an invalid project policy without blocking normal reads", () => {
+		writeFileSync(join(scratch, ".pancode", "safety.yaml"), "version: 1\nzeroAccessPaths:\n  - /etc\n");
+		const policy = engine();
+		strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command: "npm test" } }).kind, "block");
+		strictEqual(policy.evaluate({ tool: ToolNames.Read, args: { path: ".env" } }).kind, "block");
+		strictEqual(policy.evaluate({ tool: ToolNames.Read, args: { path: "notes.txt" } }).kind, "allow");
+	});
+
+	function writeInspectionFixture(): void {
+		mkdirSync(join(scratch, "src"), { recursive: true });
+		for (const file of ["package.json", "README.md", "a.txt", "src/a.js", "src/duration.js"]) {
+			writeFileSync(join(scratch, file), "// TODO\n");
+		}
+	}
+
+	it("never recognizes read-only shell forms that expand, execute, recurse or follow links", () => {
+		writeInspectionFixture();
+		const policy = engine();
+		for (const command of [
+			"cat ~akougkas/.ssh/id_rsa",
+			"cat {~,x}/.aws/credentials",
+			"cat $'\\x2fetc/passwd'",
+			"cat .e*",
+			"cat .e*''",
+			"cat .[e]nv",
+			"cat .e{n,n}v",
+			"cat <(touch pwn)",
+			"echo hi | cat >(touch x)",
+			"cat **/*.js",
+			"grep -Rn x src",
+			"grep -d recurse API_KEY .",
+			"grep --directories=recurse x .",
+			"sort --out=o.txt a.txt",
+			"tail --fo a.txt",
+			"file --compil",
+			"find -L . -name x",
+			"tree -l",
+			"du -L .",
+			"ls --dereference",
+			"ls -L && cat a.txt",
+			"rg x",
+			"rg --files ..",
+			"rg --files -e x",
+			"cat a.txt | rg -f p",
+			"sh -c 'cat .env'",
+			"sh -c 'cat a.txt && cat key.pem'",
+			"cd li? && cat passwd",
+			"sort --files0-from=list",
+			"wc --files0-from=list",
+			"wc --files0=list",
+			"du --files0-from=list",
+			"file -f.env",
+			"grep -f.env a.txt",
+			"grep -nf.env a.txt",
+			"rg -f.env a.txt",
+			"diff -rN sub .",
+			"jq -n env",
+			"ls /etc",
+			"ls ..",
+			"ls -R",
+			"ls --recursive",
+			"git grep --open-f=x x",
+			"git grep SECRET",
+			"git blame -S /proc/self/environ a.txt",
+			"git blame --ignore-revs-file=/proc/self/environ a.txt",
+			"git blame --cont /etc/hosts a.txt",
+			"git cat-file --batch-all-objects --batch",
+			"git diff --outp=o.txt",
+			"git ls-files -X /etc/passwd",
+			"git ls-files --exclude-f=/etc/passwd",
+			"git log -- /etc/passwd",
+			"git -C .. log",
+			"git -C /etc log",
+			"git -C ~ log",
+			'git -C "$HOME" log',
+			"git -C s* log",
+			"git -C src grep x",
+			"git -C src blame a.js",
+			"git -C src cat-file -p HEAD",
+			"git -C . -c core.pager=x log",
+			"git -c core.pager=x -C . log",
+			"git -C . --git-dir=/etc log",
+			"git --git-dir=.git log",
+			"git --work-tree=. status",
+			"git -C . log -- /etc/passwd",
+			'cat "a b/../.env"',
+			"cat a\\ b/../.env",
+			'sed -n 1p "a b/../.env"',
+			"printf -v PATH bin && cat a.txt",
+			"printf -nv PATH bin && cat a.txt",
+			"date -s 2026-01-01",
+			"date --se=2026-01-01",
+			"date -us now",
+			"date 110610002026",
+			"date -f dates.txt",
+			// M-49: the byte inspectors stay read-only: no second xxd operand (its output file), no revert, no list or magic
+			// file, no compiled magic, no decompressor, no link following, and every operand in the workspace.
+			"xxd a.txt b.txt",
+			"xxd -r a.txt",
+			"xxd -revert a.txt",
+			"od -An -tx1 ../a.txt",
+			"cmp a.txt /etc/hosts",
+			"hexdump -f fmt a.txt",
+			"sha256sum -c sums.txt",
+			"md5sum --check sums.txt",
+			"file -C -m magic",
+			"file -z a.txt",
+			"file -L a.txt",
+			"od -tx1 a.txt > out.txt",
+		]) {
+			const decision = policy.evaluate({ tool: ToolNames.Bash, args: { command } });
+			strictEqual(decision.execRecognition !== "recognized", true, command);
+		}
+	});
+
+	it("keeps everyday read-only openers recognized", () => {
+		writeInspectionFixture();
+		const policy = engine();
+		for (const command of [
+			"ls src/ && cat package.json",
+			'find . -name "*.test.js" -o -name "*.spec.js" | head -5',
+			"ls -la && find src test | head",
+			"ls; cat README.md; git log --oneline -3",
+			"cat package.json 2>/dev/null",
+			"npm test 2>&1 | tail -30",
+			"grep -n TODO src/duration.js | wc -l",
+			"sed -n '1,20p' src/duration.js",
+			"git log --oneline | head -3",
+			'cd pkg && git branch -a && echo "---X---" && git status && cat ../src/a.js',
+			"git log | rg foo",
+			"rg -n TODO src/a.js",
+			"rg x src/",
+			"rg -e x .",
+			"rg --files",
+			"rg --files src",
+			"git -C . status",
+			`git -C ${scratch} log --oneline -5`,
+			"git -C src log --oneline -5",
+			"git -C pkg -C .. status",
+			"git -C src diff -- a.js",
+			"cd pkg && git -C .. log --oneline -3",
+			"date",
+			"date -u -Iseconds && date +%Y-%m-%d",
+			"date -d yesterday +%s",
+			"date -r package.json",
+			// M-49: byte and checksum inspection of workspace files, for main and workers alike.
+			"od -An -tx1 -v a.txt",
+			"xxd a.txt",
+			"xxd -p -l 4 a.txt",
+			"hexdump -C a.txt",
+			"cmp a.txt README.md",
+			"wc -c a.txt",
+			"sha256sum a.txt src/a.js",
+			"md5sum a.txt",
+			"file a.txt",
+			"cat a.txt && od -c a.txt | head -2",
+		]) {
+			const decision = policy.evaluate({ tool: ToolNames.Bash, args: { command } });
+			strictEqual(decision.execRecognition, "recognized", command);
+		}
+	});
+
+	it("recognizes an rg directory search only when its walk reaches no zero-access file", () => {
+		writeInspectionFixture();
+		mkdirSync(join(scratch, "certs", "deep"), { recursive: true });
+		writeFileSync(join(scratch, "certs", "deep", "server.pem"), "key\n");
+		const policy = engine();
+		const recognition = (command: string) => {
+			const decision = policy.evaluate({ tool: ToolNames.Bash, args: { command } });
+			// A walk that reaches a zero-access file is now refused outright.
+			return decision.kind === "block" ? "block" : decision.execRecognition;
+		};
+		strictEqual(recognition("rg x src"), "recognized");
+		strictEqual(recognition("rg x certs"), "block", "a nested *.pem is a zero-access file");
+		strictEqual(recognition("rg x ."), "block", "the walk from the root reaches certs/deep/server.pem");
+		// grep -r walks the same way and takes the same proof.
+		strictEqual(recognition("grep -rn x src"), "recognized");
+		strictEqual(recognition("grep -rn x certs"), "block");
+		strictEqual(recognition("grep -r API_KEY ."), "block");
+		strictEqual(recognition("grep -r API_KEY"), "block", "no operand searches the working directory");
+		// The bare kubeconfig entry protects the workspace root's own file.
+		rmSync(join(scratch, "certs"), { recursive: true });
+		strictEqual(recognition("rg x ."), "recognized");
+		strictEqual(recognition("grep -rn API_KEY ."), "recognized");
+		writeFileSync(join(scratch, "kubeconfig"), "k\n");
+		strictEqual(recognition("rg x ."), "block", "the root kubeconfig is zero-access");
+	});
+
+	it("recognizes a * or ? glob only when every match passes the operand checks", () => {
+		writeInspectionFixture();
+		const policy = engine();
+		const recognition = (command: string) => policy.evaluate({ tool: ToolNames.Bash, args: { command } }).execRecognition;
+		strictEqual(recognition("cat src/*.js"), "recognized");
+		strictEqual(recognition("ls src && grep -n TODO s?c/*.js"), "recognized");
+		writeFileSync(join(scratch, ".env"), "SECRET=1\n");
+		strictEqual(recognition("cat *"), "unrecognized", "an inherited dotglob would pass .env");
+		rmSync(join(scratch, ".env"));
+		symlinkSync("/etc/hostname", join(scratch, "src", "host.js"));
+		strictEqual(recognition("cat src/*.js"), "unrecognized", "a match links out of the workspace");
+		rmSync(join(scratch, "src", "host.js"));
+		writeFileSync(join(scratch, "-ordinary.txt"), "x\n");
+		strictEqual(recognition("cat -- -*"), "recognized", "ordinary option-looking names stay readable");
+		rmSync(join(scratch, "-ordinary.txt"));
+		symlinkSync("/etc/hostname", join(scratch, "-outside"));
+		strictEqual(recognition("cat -- -*"), "unrecognized", "every match needs a workspace check before option parsing");
+		rmSync(join(scratch, "-outside"));
+		writeFileSync(join(scratch, "--files0-from=a.txt"), "");
+		strictEqual(recognition("wc *"), "unrecognized", "a matched file name is judged as the option it becomes");
+	});
+
+	it("asks for rg while the tool environment names a ripgrep config", () => {
+		// The config file can add --follow, --pre and -z, which the recognizer refuses on the command line.
+		writeInspectionFixture();
+		const policy = engine();
+		const evaluate = (command: string) => policy.evaluate({ tool: ToolNames.Bash, args: { command } });
+		const saved = process.env.RIPGREP_CONFIG_PATH;
+		try {
+			process.env.RIPGREP_CONFIG_PATH = join(scratch, "ripgreprc");
+			for (const command of ["rg x src", "rg -n TODO src/a.js", "rg --files", "git log | rg foo"]) {
+				const decision = evaluate(command);
+				strictEqual(decision.execRecognition !== "recognized", true, command);
+				strictEqual(
+					decision.reasons?.some((reason) => reason.includes("RIPGREP_CONFIG_PATH")),
+					true,
+					command,
+				);
+			}
+			strictEqual(evaluate("cat a.txt").execRecognition, "recognized", "only rg depends on the variable");
+			// An empty value is ignored by ripgrep.
+			process.env.RIPGREP_CONFIG_PATH = "";
+			strictEqual(evaluate("rg x src").execRecognition, "recognized");
+		} finally {
+			if (saved === undefined) delete process.env.RIPGREP_CONFIG_PATH;
+			else process.env.RIPGREP_CONFIG_PATH = saved;
+		}
+	});
+
+	it("holds git -C to the workspace even where an exempt read root is readable", () => {
+		// A repository under an exempt root carries a .git/config the operator never
+		// vetted, and Git runs its core.fsmonitor and core.pager on inspection.
+		const exempt = mkdtempSync(join(tmpdir(), "pancode-safety-exempt-"));
+		try {
+			writeFileSync(join(exempt, "dep.js"), "// dep\n");
+			const policy = createSafetyPolicyEngine({
+				cwd: scratch,
+				projectPolicy: loadProjectSafetyPolicy(scratch),
+				readExemptRoots: [exempt],
+			});
+			strictEqual(
+				policy.evaluate({ tool: ToolNames.Bash, args: { command: `cat ${exempt}/dep.js` } }).execRecognition,
+				"recognized",
+				"the exempt root is readable",
+			);
+			for (const command of [`git -C ${exempt} log`, `git -C ${exempt} status`]) {
+				const decision = policy.evaluate({ tool: ToolNames.Bash, args: { command } });
+				strictEqual(decision.execRecognition !== "recognized", true, command);
+			}
+		} finally {
+			rmSync(exempt, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps /etc and /var system roots where macOS lands them, under /private", () => {
+		// A write is classified where it lands, and on macOS /etc and /var are
+		// links into /private, so a workspace opened in /etc there is /private/etc.
+		process.chdir("/etc");
+		deepStrictEqual(classify({ tool: ToolNames.Write, args: { path: "pancode.conf" } }), {
+			actionClass: "system_modify",
+			reasons: [`write-path-system-root: ${realpathSync("/etc")}`],
+		});
+		for (const [target, root] of [
+			["/private/etc/hosts", "/private/etc"],
+			["/private/var/log/pancode.log", "/private/var"],
+		]) {
+			deepStrictEqual(classify({ tool: ToolNames.Write, args: { path: target } }).reasons, [
+				`write-path-system-root: ${root}`,
+			]);
+		}
+		// The scratch trees stay carved out under their canonical names too.
+		for (const target of ["/private/var/folders/ab/T/pancode/x.txt", "/private/var/tmp/pancode/x.txt"]) {
+			deepStrictEqual(classify({ tool: ToolNames.Write, args: { path: target } }).reasons, [
+				`write-path-outside-cwd: ${target}`,
+			]);
+		}
+	});
+});

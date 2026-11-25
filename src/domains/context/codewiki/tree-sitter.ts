@@ -1,0 +1,972 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import TreeSitter, {
+	type Parser as ParserInstance,
+	type Node as SyntaxNode,
+	type Tree,
+} from "@vscode/tree-sitter-wasm";
+import { classifyCHeaderLanguage, isAmbiguousHeaderPath } from "../../../core/c-header-language.js";
+import { resolvePackageRoot } from "../../../core/package-root.js";
+import { loadPinnedAsset } from "../../../core/pinned-asset.js";
+import {
+	fetchedGrammarAsset,
+	fetchedGrammarForFile,
+	GRAMMAR_FETCH_RETRY_MS,
+	GRAMMAR_FETCH_TIMEOUT_MS,
+} from "./fetched-grammars.js";
+import { GRAMMAR_ASSETS, TREE_SITTER_RUNTIME_WASM } from "./grammar-assets.js";
+import {
+	type CodewikiLanguage,
+	type CodewikiSymbolKind,
+	type ExtractedSymbol,
+	GrammarUnavailableError,
+	type LanguageExtraction,
+	type LanguageExtractor,
+} from "./schema.js";
+
+const { Language, Parser } = TreeSitter;
+
+/**
+ * Every vendored wasm file lives in the package's own dist/assets/grammars/,
+ * copied there at build from the list in grammar-assets.ts. An installed
+ * package resolves only from there: the grammar packages are devDependencies
+ * and are not installed with it. A source checkout that was never built
+ * (`pnpm run test`, `pnpm run dev` on a fresh clone) still has those
+ * devDependencies, so it loads the same files from where the build copies them.
+ */
+function grammarAssetPath(file: string): string {
+	const root = resolvePackageRoot();
+	const built = join(root, "dist", "assets", "grammars", file);
+	if (existsSync(built)) return built;
+	const asset = GRAMMAR_ASSETS.find((candidate) => candidate.file === file);
+	if (!asset) return built;
+	try {
+		const requireFromRoot = createRequire(join(root, "package.json"));
+		const dir =
+			asset.from === "tree-sitter-wasms"
+				? join(dirname(requireFromRoot.resolve("tree-sitter-wasms/package.json")), "out")
+				: dirname(requireFromRoot.resolve("@vscode/tree-sitter-wasm"));
+		const source = join(dir, file);
+		if (existsSync(source)) return source;
+	} catch {
+		// No devDependencies (an installed package): keep the dist path so the load error names it.
+	}
+	return built;
+}
+
+type GrammarName =
+	| "typescript"
+	| "tsx"
+	| "javascript"
+	| "python"
+	| "go"
+	| "rust"
+	| "c"
+	| "cpp"
+	| "java"
+	| "ruby"
+	| "c_sharp";
+
+const WASM_BY_GRAMMAR: Record<GrammarName, string> = {
+	typescript: "tree-sitter-typescript.wasm",
+	tsx: "tree-sitter-tsx.wasm",
+	javascript: "tree-sitter-javascript.wasm",
+	python: "tree-sitter-python.wasm",
+	go: "tree-sitter-go.wasm",
+	rust: "tree-sitter-rust.wasm",
+	c: "tree-sitter-c.wasm",
+	cpp: "tree-sitter-cpp.wasm",
+	java: "tree-sitter-java.wasm",
+	ruby: "tree-sitter-ruby.wasm",
+	c_sharp: "tree-sitter-c-sharp.wasm",
+};
+
+const NAME_NODE_TYPES = new Set([
+	"identifier",
+	"type_identifier",
+	"property_identifier",
+	"field_identifier",
+	"constant",
+	"constant_identifier",
+]);
+
+const FUNCTION_LIKE_NODE_TYPES = new Set([
+	"function_declaration",
+	"function_expression",
+	"generator_function",
+	"generator_function_declaration",
+	"generator_function_expression",
+	"arrow_function",
+	"method_definition",
+	"function_definition",
+	"function_item",
+	"lambda",
+	"lambda_expression",
+	"func_literal",
+	"method",
+	"singleton_method",
+	"do_block",
+	"method_declaration",
+	"constructor_declaration",
+	"local_function_statement",
+]);
+
+const PY_SCOPE_NODE_TYPES = new Set(["function_definition", "class_definition"]);
+
+/**
+ * The grammar's wasm: vendored ones load from the package by path, fetched ones
+ * from the verified cache bytes. Null means the grammar is unavailable now and
+ * its files take the regex fallback; code_nav says so (fetched-grammars.ts).
+ */
+async function grammarSource(file: string): Promise<string | Uint8Array | null> {
+	const fetched = fetchedGrammarForFile(file);
+	if (!fetched) return grammarAssetPath(file);
+	try {
+		return await loadPinnedAsset(fetchedGrammarAsset(fetched), {
+			timeoutMs: GRAMMAR_FETCH_TIMEOUT_MS,
+			retryAfterMs: GRAMMAR_FETCH_RETRY_MS,
+		});
+	} catch {
+		// Offline or blocked: the regex extractor indexes these files instead, and
+		// code_nav reports the missing grammar with the recorded reason.
+		return null;
+	}
+}
+
+let parserInit: Promise<void> | null = null;
+
+function ensureParserInit(): Promise<void> {
+	parserInit ??= Parser.init({
+		locateFile() {
+			return grammarAssetPath(TREE_SITTER_RUNTIME_WASM);
+		},
+	});
+	return parserInit;
+}
+
+function grammarForPath(path: string, lang: CodewikiLanguage): GrammarName | null {
+	if (lang === "typescript") return path.endsWith(".tsx") ? "tsx" : "typescript";
+	if (lang === "javascript") return "javascript";
+	if (lang === "python") return "python";
+	if (lang === "go") return "go";
+	if (lang === "rust") return "rust";
+	if (lang === "c") return "c";
+	if (lang === "c++") return "cpp";
+	if (lang === "java") return "java";
+	if (lang === "ruby") return "ruby";
+	if (lang === "c#") return "c_sharp";
+	return null;
+}
+
+function line(node: SyntaxNode): number {
+	return node.startPosition.row + 1;
+}
+
+function sig(node: SyntaxNode): string {
+	return node.text.split(/\r?\n/, 1)[0]?.trim().slice(0, 240) ?? "";
+}
+
+function namedChildren(node: SyntaxNode): SyntaxNode[] {
+	return node.namedChildren.filter((child): child is SyntaxNode => child !== null);
+}
+
+function firstNamedDescendant(node: SyntaxNode, types: ReadonlySet<string> = NAME_NODE_TYPES): SyntaxNode | null {
+	if (types.has(node.type)) return node;
+	for (const child of namedChildren(node)) {
+		const found = firstNamedDescendant(child, types);
+		if (found) return found;
+	}
+	return null;
+}
+
+function nameFromNode(node: SyntaxNode): string | null {
+	const direct = node.childForFieldName("name");
+	if (direct) return firstNamedDescendant(direct)?.text ?? direct.text;
+	for (const child of namedChildren(node)) {
+		if (NAME_NODE_TYPES.has(child.type)) return child.text;
+	}
+	return firstNamedDescendant(node)?.text ?? null;
+}
+
+function hasAncestor(node: SyntaxNode, type: string): boolean {
+	let current = node.parent;
+	while (current) {
+		if (current.type === type) return true;
+		current = current.parent;
+	}
+	return false;
+}
+
+function hasFunctionLikeAncestor(node: SyntaxNode): boolean {
+	let current = node.parent;
+	while (current) {
+		if (FUNCTION_LIKE_NODE_TYPES.has(current.type)) return true;
+		current = current.parent;
+	}
+	return false;
+}
+
+function nearestAncestorType(node: SyntaxNode, types: ReadonlySet<string>): string | null {
+	let current = node.parent;
+	while (current) {
+		if (types.has(current.type)) return current.type;
+		current = current.parent;
+	}
+	return null;
+}
+
+function addSymbol(
+	target: ExtractedSymbol[],
+	node: SyntaxNode,
+	kind: CodewikiSymbolKind,
+	name = nameFromNode(node),
+	exported?: boolean,
+): void {
+	if (!name) return;
+	const clean = name.trim();
+	if (clean.length === 0) return;
+	target.push({ name: clean, kind, line: line(node), sig: sig(node), ...(exported !== undefined ? { exported } : {}) });
+}
+
+function descendants(root: SyntaxNode, types: string | string[]): SyntaxNode[] {
+	return root.descendantsOfType(types).filter((node): node is SyntaxNode => node !== null);
+}
+
+function compareStrings(a: string, b: string): number {
+	return a.localeCompare(b);
+}
+
+function uniqueSorted(values: Iterable<string>): string[] {
+	return [...new Set([...values].filter((value) => value.trim().length > 0))].sort(compareStrings);
+}
+
+function cleanStringLiteral(value: string): string {
+	const trimmed = value.trim();
+	if (
+		(trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+		(trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+		(trimmed.startsWith("`") && trimmed.endsWith("`")) ||
+		(trimmed.startsWith("<") && trimmed.endsWith(">"))
+	) {
+		return trimmed.slice(1, -1);
+	}
+	return trimmed;
+}
+
+function stringValue(node: SyntaxNode | null | undefined): string | null {
+	if (!node) return null;
+	const value = cleanStringLiteral(node.text);
+	return value.length > 0 ? value : null;
+}
+
+function firstStringDescendant(node: SyntaxNode | null | undefined): SyntaxNode | null {
+	if (!node) return null;
+	if (
+		node.type === "string" ||
+		node.type === "string_literal" ||
+		node.type === "interpreted_string_literal" ||
+		node.type === "raw_string_literal" ||
+		node.type === "system_lib_string"
+	) {
+		return node;
+	}
+	for (const child of namedChildren(node)) {
+		const found = firstStringDescendant(child);
+		if (found) return found;
+	}
+	return null;
+}
+
+function firstStringValue(node: SyntaxNode | null | undefined): string | null {
+	return stringValue(firstStringDescendant(node));
+}
+
+function tsJsExported(node: SyntaxNode, exports: ReadonlySet<string>): boolean | undefined {
+	const declaration = node.type === "variable_declarator" ? node.parent : node;
+	const parent = declaration?.parent;
+	if (parent?.type === "export_statement" && parent.parent?.type === "program") return true;
+	if (parent?.type === "program") return exports.has(nameFromNode(node) ?? "");
+	return undefined;
+}
+
+function extractTsJs(root: SyntaxNode): ExtractedSymbol[] {
+	const exports = new Set<string>();
+	for (const node of namedChildren(root)) {
+		if (node.type !== "export_statement" || node.childForFieldName("source")) continue;
+		const clause = namedChildren(node).find((child) => child.type === "export_clause");
+		if (clause) {
+			for (const specifier of namedChildren(clause)) {
+				const name = specifier.childForFieldName("name");
+				if (name?.type === "identifier") exports.add(name.text);
+			}
+		}
+		const value = node.childForFieldName("value");
+		if (value?.type === "identifier") exports.add(value.text);
+	}
+	const symbols: ExtractedSymbol[] = [];
+	for (const node of descendants(root, ["function_declaration", "generator_function_declaration"])) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		addSymbol(symbols, node, "func", nameFromNode(node), tsJsExported(node, exports));
+	}
+	for (const node of descendants(root, "class_declaration")) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		addSymbol(symbols, node, "class", nameFromNode(node), tsJsExported(node, exports));
+	}
+	for (const node of descendants(root, "interface_declaration")) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		addSymbol(symbols, node, "iface", nameFromNode(node), tsJsExported(node, exports));
+	}
+	for (const node of descendants(root, ["type_alias_declaration", "enum_declaration"])) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		addSymbol(symbols, node, "type", nameFromNode(node), tsJsExported(node, exports));
+	}
+	for (const node of descendants(root, "method_definition")) {
+		// method_definition covers both class methods (parent class_body) and
+		// object-literal method shorthand (parent object). Only real class
+		// methods on a top-level class belong in the index.
+		if (node.parent?.type !== "class_body") continue;
+		if (hasFunctionLikeAncestor(node)) continue;
+		addSymbol(symbols, node, "method");
+	}
+	for (const node of descendants(root, "variable_declarator")) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		const parentText = node.parent?.text ?? "";
+		addSymbol(
+			symbols,
+			node,
+			parentText.trimStart().startsWith("const") ? "const" : "var",
+			nameFromNode(node),
+			tsJsExported(node, exports),
+		);
+	}
+	return symbols;
+}
+
+function extractPython(root: SyntaxNode): ExtractedSymbol[] {
+	const symbols: ExtractedSymbol[] = [];
+	for (const node of descendants(root, "function_definition")) {
+		// The nearest enclosing scope decides the kind: a class body makes it a
+		// method, module level makes it a func, and a function body makes it a
+		// local definition that never enters the index.
+		const scope = nearestAncestorType(node, PY_SCOPE_NODE_TYPES);
+		if (scope === "function_definition") continue;
+		addSymbol(symbols, node, scope === "class_definition" ? "method" : "func");
+	}
+	for (const node of descendants(root, "class_definition")) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		addSymbol(symbols, node, "class");
+	}
+	for (const node of descendants(root, "assignment")) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		const left = node.childForFieldName("left") ?? node.namedChild(0);
+		if (!left) continue;
+		const name = firstNamedDescendant(left)?.text;
+		if (name) addSymbol(symbols, node, /^[A-Z][A-Z0-9_]*$/.test(name) ? "const" : "var", name);
+	}
+	return symbols;
+}
+
+function extractGo(root: SyntaxNode): ExtractedSymbol[] {
+	const symbols: ExtractedSymbol[] = [];
+	const exported = (node: SyntaxNode): boolean | undefined =>
+		hasFunctionLikeAncestor(node) ? undefined : /^\p{Lu}/u.test(nameFromNode(node) ?? "");
+	for (const node of descendants(root, "function_declaration"))
+		addSymbol(symbols, node, "func", nameFromNode(node), exported(node));
+	for (const node of descendants(root, "method_declaration"))
+		addSymbol(symbols, node, "method", nameFromNode(node), exported(node));
+	for (const node of descendants(root, "type_spec")) {
+		addSymbol(symbols, node, node.text.includes("interface") ? "iface" : "type", nameFromNode(node), exported(node));
+	}
+	for (const node of descendants(root, "const_spec")) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		addSymbol(symbols, node, "const", nameFromNode(node), exported(node));
+	}
+	for (const node of descendants(root, "var_spec")) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		addSymbol(symbols, node, "var", nameFromNode(node), exported(node));
+	}
+	return symbols;
+}
+
+function extractRust(root: SyntaxNode): ExtractedSymbol[] {
+	const symbols: ExtractedSymbol[] = [];
+	const exported = (node: SyntaxNode): true | undefined =>
+		!hasFunctionLikeAncestor(node) &&
+		namedChildren(node).some((child) => child.type === "visibility_modifier" && child.text === "pub")
+			? true
+			: undefined;
+	for (const node of descendants(root, "function_item")) {
+		// Function items nested inside another fn body are locals; impl/trait
+		// members are methods; everything else is a free function.
+		if (hasFunctionLikeAncestor(node)) continue;
+		const isMethod = hasAncestor(node, "impl_item") || hasAncestor(node, "trait_item");
+		addSymbol(symbols, node, isMethod ? "method" : "func", nameFromNode(node), exported(node));
+	}
+	for (const node of descendants(root, ["struct_item", "enum_item", "type_item"]))
+		addSymbol(symbols, node, "type", nameFromNode(node), exported(node));
+	for (const node of descendants(root, "trait_item"))
+		addSymbol(symbols, node, "trait", nameFromNode(node), exported(node));
+	for (const node of descendants(root, "const_item"))
+		addSymbol(symbols, node, "const", nameFromNode(node), exported(node));
+	for (const node of descendants(root, "static_item"))
+		addSymbol(symbols, node, "var", nameFromNode(node), exported(node));
+	return symbols;
+}
+
+const C_FAMILY_CLASS_SCOPES = new Set(["class_specifier", "struct_specifier", "union_specifier"]);
+
+function cFamilyDeclaredTypeName(node: SyntaxNode): string | null {
+	// Aggregate bodies contain field/type identifiers of their own. A missing
+	// name field means the aggregate is anonymous; never fall through into its
+	// body looking for a plausible identifier.
+	const name = node.childForFieldName("name");
+	return name ? name.text.trim() || null : null;
+}
+
+function cFamilyDeclaratorName(node: SyntaxNode): string | null {
+	if (NAME_NODE_TYPES.has(node.type)) return node.text.trim() || null;
+
+	// Pointer, array, parenthesized, and function declarators all wrap the
+	// declared identifier in their `declarator` field. Following only that
+	// chain avoids mistaking a function-pointer parameter for the typedef name.
+	const declarator = node.childForFieldName("declarator") ?? node.childForFieldName("name");
+	if (declarator) return cFamilyDeclaratorName(declarator);
+
+	// Some grammar versions omit the field on transparent parentheses. Those
+	// nodes have one declarator-shaped named child, so a narrow fallback remains
+	// safe without searching arbitrary aggregate bodies or parameter lists.
+	if (
+		node.type === "parenthesized_declarator" ||
+		node.type === "abstract_parenthesized_declarator" ||
+		node.type === "attributed_declarator"
+	) {
+		for (const child of namedChildren(node)) {
+			const name = cFamilyDeclaratorName(child);
+			if (name) return name;
+		}
+	}
+	return null;
+}
+
+function cFamilyDeclarators(node: SyntaxNode): SyntaxNode[] {
+	return node.childrenForFieldName("declarator").filter((child): child is SyntaxNode => child !== null);
+}
+
+function uniqueCFamilySymbols(symbols: ReadonlyArray<ExtractedSymbol>): ExtractedSymbol[] {
+	const unique = new Map<string, ExtractedSymbol>();
+	for (const symbol of symbols) {
+		const key = `${symbol.name}\0${symbol.kind}\0${symbol.line}`;
+		if (!unique.has(key)) unique.set(key, symbol);
+	}
+	return [...unique.values()];
+}
+
+function cFamilyFunctionDeclarator(node: SyntaxNode): SyntaxNode | null {
+	// The symbol name lives in the declarator, never in the return type; a
+	// pointer or reference declarator can wrap the function_declarator. Walk
+	// deepest-first so a function returning a function pointer resolves the
+	// inner callable while a plain function-pointer variable is rejected.
+	const declarator = node.childForFieldName("declarator");
+	if (!declarator) return null;
+	const candidates = [
+		...(declarator.type === "function_declarator" ? [declarator] : []),
+		...declarator.descendantsOfType("function_declarator"),
+	];
+	for (let index = candidates.length - 1; index >= 0; index -= 1) {
+		const candidate = candidates[index];
+		const inner = candidate?.childForFieldName("declarator");
+		if (inner && inner.type !== "parenthesized_declarator") return candidate ?? null;
+	}
+	return null;
+}
+
+function cFamilyFunctionName(node: SyntaxNode): string | null {
+	const fnDeclarator = cFamilyFunctionDeclarator(node);
+	const inner = fnDeclarator?.childForFieldName("declarator");
+	if (!inner) return null;
+	let name: SyntaxNode = inner;
+	while (name.type === "qualified_identifier") {
+		const unqualified = name.childForFieldName("name");
+		if (!unqualified) break;
+		name = unqualified;
+	}
+	if (name.type === "template_function") name = name.childForFieldName("name") ?? name;
+	return name.text;
+}
+
+function cFamilyFunctionQualifier(node: SyntaxNode): string | null {
+	const inner = cFamilyFunctionDeclarator(node)?.childForFieldName("declarator");
+	if (inner?.type !== "qualified_identifier") return null;
+	const parts = inner.text.split("::");
+	parts.pop();
+	return parts.join("::") || null;
+}
+
+function cFamilyQualifiedMethod(
+	node: SyntaxNode,
+	classNames: ReadonlySet<string>,
+	namespaceNames: ReadonlySet<string>,
+): boolean {
+	const qualifier = cFamilyFunctionQualifier(node);
+	if (!qualifier) return false;
+	const last = qualifier.split("::").at(-1) ?? qualifier;
+	if (classNames.has(last)) return true;
+	if (namespaceNames.has(last) || namespaceNames.has(qualifier)) return false;
+	// Tree-sitter represents namespace and class qualification identically when
+	// the declaration lives in an included header. Scientific C++ conventionally
+	// uses type-like capitalization for classes and lowercase namespaces.
+	return /^[A-Z_]/.test(last);
+}
+
+function extractCFamily(root: SyntaxNode): ExtractedSymbol[] {
+	const symbols: ExtractedSymbol[] = [];
+	const classNames = new Set(
+		descendants(root, ["class_specifier", "struct_specifier", "union_specifier"])
+			.map((node) => cFamilyDeclaredTypeName(node))
+			.filter((name): name is string => name !== null),
+	);
+	const namespaceNames = new Set(
+		descendants(root, "namespace_definition")
+			.map((node) => nameFromNode(node))
+			.filter((name): name is string => name !== null),
+	);
+	for (const node of descendants(root, "function_definition")) {
+		const kind =
+			nearestAncestorType(node, C_FAMILY_CLASS_SCOPES) || cFamilyQualifiedMethod(node, classNames, namespaceNames)
+				? "method"
+				: "func";
+		addSymbol(symbols, node, kind, cFamilyFunctionName(node) ?? nameFromNode(node));
+	}
+	for (const node of descendants(root, ["declaration", "field_declaration"])) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		const name = cFamilyFunctionName(node);
+		if (!name) continue;
+		const isTypedef = namedChildren(node).some(
+			(child) => child.type === "storage_class_specifier" && child.text === "typedef",
+		);
+		const kind = isTypedef
+			? "type"
+			: nearestAncestorType(node, C_FAMILY_CLASS_SCOPES) || cFamilyQualifiedMethod(node, classNames, namespaceNames)
+				? "method"
+				: "func";
+		addSymbol(symbols, node, kind, name);
+	}
+	for (const node of descendants(root, ["class_specifier", "struct_specifier", "union_specifier", "enum_specifier"])) {
+		const name = cFamilyDeclaredTypeName(node);
+		if (name) addSymbol(symbols, node, node.type === "class_specifier" ? "class" : "type", name);
+	}
+	for (const node of descendants(root, "type_definition")) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		for (const declarator of cFamilyDeclarators(node)) {
+			const name = cFamilyDeclaratorName(declarator);
+			if (name) addSymbol(symbols, node, "type", name);
+		}
+	}
+	for (const node of descendants(root, "alias_declaration")) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		const name = node.childForFieldName("name")?.text.trim();
+		if (name) addSymbol(symbols, node, "type", name);
+	}
+	return uniqueCFamilySymbols(symbols);
+}
+
+function extractJava(root: SyntaxNode): ExtractedSymbol[] {
+	const symbols: ExtractedSymbol[] = [];
+	for (const node of descendants(root, "class_declaration")) addSymbol(symbols, node, "class");
+	for (const node of descendants(root, "interface_declaration")) addSymbol(symbols, node, "iface");
+	for (const node of descendants(root, "enum_declaration")) addSymbol(symbols, node, "type");
+	for (const node of descendants(root, "method_declaration")) addSymbol(symbols, node, "method");
+	for (const node of descendants(root, "field_declaration")) {
+		// A field_declaration is `modifiers? type declarator (',' declarator)*`.
+		// Record each declarator name, never the shared type identifier. Static
+		// final fields and SCREAMING_CASE names classify as const.
+		const modifiers = namedChildren(node).find((child) => child.type === "modifiers")?.text ?? "";
+		const staticFinal = /\bstatic\b/.test(modifiers) && /\bfinal\b/.test(modifiers);
+		for (const declarator of namedChildren(node)) {
+			if (declarator.type !== "variable_declarator") continue;
+			const name =
+				declarator.childForFieldName("name")?.text ??
+				namedChildren(declarator).find((child) => child.type === "identifier")?.text;
+			if (!name) continue;
+			const isConst = staticFinal || /^[A-Z][A-Z0-9_]*$/.test(name);
+			addSymbol(symbols, declarator, isConst ? "const" : "var", name);
+		}
+	}
+	return symbols;
+}
+
+function extractRuby(root: SyntaxNode): ExtractedSymbol[] {
+	const symbols: ExtractedSymbol[] = [];
+	for (const node of descendants(root, ["method", "singleton_method"])) addSymbol(symbols, node, "func");
+	for (const node of descendants(root, "class")) addSymbol(symbols, node, "class");
+	for (const node of descendants(root, "module")) addSymbol(symbols, node, "type");
+	for (const node of descendants(root, "assignment")) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		const name = nameFromNode(node);
+		if (name) addSymbol(symbols, node, /^[A-Z]/.test(name) ? "const" : "var", name);
+	}
+	return symbols;
+}
+
+function extractCSharp(root: SyntaxNode): ExtractedSymbol[] {
+	const symbols: ExtractedSymbol[] = [];
+	for (const node of descendants(root, "class_declaration")) {
+		if (!hasFunctionLikeAncestor(node)) addSymbol(symbols, node, "class");
+	}
+	for (const node of descendants(root, "interface_declaration")) {
+		if (!hasFunctionLikeAncestor(node)) addSymbol(symbols, node, "iface");
+	}
+	for (const node of descendants(root, ["enum_declaration", "struct_declaration", "record_declaration"])) {
+		if (!hasFunctionLikeAncestor(node)) addSymbol(symbols, node, "type");
+	}
+	for (const node of descendants(root, ["method_declaration", "constructor_declaration"]))
+		addSymbol(symbols, node, "method");
+	for (const node of descendants(root, "property_declaration")) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		addSymbol(symbols, node, "var");
+	}
+	for (const node of descendants(root, "field_declaration")) {
+		if (hasFunctionLikeAncestor(node)) continue;
+		const text = node.text;
+		const isConst = /\bconst\b/.test(text) || (/\bstatic\b/.test(text) && /\breadonly\b/.test(text));
+		addSymbol(symbols, node, isConst ? "const" : "var");
+	}
+	return symbols;
+}
+
+function extractSymbolsByGrammar(grammar: GrammarName, root: SyntaxNode): ExtractedSymbol[] {
+	if (grammar === "typescript" || grammar === "tsx" || grammar === "javascript") return extractTsJs(root);
+	if (grammar === "python") return extractPython(root);
+	if (grammar === "go") return extractGo(root);
+	if (grammar === "rust") return extractRust(root);
+	if (grammar === "c" || grammar === "cpp") return extractCFamily(root);
+	if (grammar === "java") return extractJava(root);
+	if (grammar === "ruby") return extractRuby(root);
+	if (grammar === "c_sharp") return extractCSharp(root);
+	return [];
+}
+
+function extractTsJsImports(root: SyntaxNode): string[] {
+	const imports: string[] = [];
+	for (const node of descendants(root, "import_statement")) {
+		const source = stringValue(node.childForFieldName("source")) ?? firstStringValue(node);
+		if (source) imports.push(source);
+	}
+	for (const node of descendants(root, "export_statement")) {
+		const source = stringValue(node.childForFieldName("source"));
+		if (source) imports.push(source);
+	}
+	for (const node of descendants(root, "call_expression")) {
+		const callee = node.childForFieldName("function");
+		if (!callee || (callee.text !== "require" && callee.text !== "import" && callee.type !== "import")) continue;
+		const source = firstStringValue(node.childForFieldName("arguments"));
+		if (source) imports.push(source);
+	}
+	return uniqueSorted(imports);
+}
+
+function extractPythonImports(root: SyntaxNode): string[] {
+	const imports: string[] = [];
+	for (const node of descendants(root, "import_statement")) {
+		for (const child of namedChildren(node)) {
+			if (child.type === "dotted_name") imports.push(child.text);
+			if (child.type === "aliased_import") {
+				const name = child.childForFieldName("name") ?? child.namedChild(0);
+				if (name) imports.push(name.text);
+			}
+		}
+	}
+	for (const node of descendants(root, "import_from_statement")) {
+		const moduleName =
+			node.childForFieldName("module_name") ??
+			namedChildren(node).find((child) => child.type === "relative_import" || child.type === "dotted_name");
+		if (moduleName) imports.push(moduleName.text);
+	}
+	return uniqueSorted(imports);
+}
+
+function extractGoImports(root: SyntaxNode): string[] {
+	const imports: string[] = [];
+	for (const node of descendants(root, "import_spec")) {
+		const source = stringValue(node.childForFieldName("path"));
+		if (source) imports.push(source);
+	}
+	return uniqueSorted(imports);
+}
+
+function extractRustImports(root: SyntaxNode): string[] {
+	const imports: string[] = [];
+	for (const node of descendants(root, "use_declaration")) {
+		const argument = node.childForFieldName("argument") ?? node.namedChild(0);
+		if (argument) imports.push(argument.text.trim());
+	}
+	for (const node of descendants(root, "extern_crate_declaration")) {
+		const name = node.childForFieldName("name") ?? namedChildren(node).find((child) => child.type === "identifier");
+		if (name) imports.push(name.text.trim());
+	}
+	return uniqueSorted(imports);
+}
+
+function extractCFamilyImports(root: SyntaxNode): string[] {
+	const imports: string[] = [];
+	for (const node of descendants(root, "preproc_include")) {
+		const sourceNode = node.childForFieldName("path") ?? firstStringDescendant(node);
+		const source = stringValue(sourceNode);
+		if (!source) continue;
+		const quoted = sourceNode?.text.trim().startsWith('"') === true;
+		imports.push(quoted && !source.startsWith(".") && !source.startsWith("/") ? `./${source}` : source);
+	}
+	return uniqueSorted(imports);
+}
+
+function extractJavaImports(root: SyntaxNode): string[] {
+	const imports: string[] = [];
+	for (const node of descendants(root, "import_declaration")) {
+		const source = node.text
+			.replace(/^import\s+/, "")
+			.replace(/^static\s+/, "")
+			.replace(/;$/, "")
+			.trim();
+		if (source) imports.push(source);
+	}
+	return uniqueSorted(imports);
+}
+
+function extractRubyImports(root: SyntaxNode): string[] {
+	return uniqueSorted([
+		...Array.from(root.text.matchAll(/^\s*require\s+["']([^"']+)["']/gm), (match) => match[1] ?? ""),
+		...Array.from(root.text.matchAll(/^\s*require_relative\s+["']([^"']+)["']/gm), (match) => `./${match[1] ?? ""}`),
+	]);
+}
+
+function extractCSharpImports(root: SyntaxNode): string[] {
+	const imports: string[] = [];
+	for (const node of descendants(root, "using_directive")) {
+		let source = node.text
+			.replace(/^using\s+/, "")
+			.replace(/;$/, "")
+			.trim();
+		if (source.startsWith("static ")) source = source.slice("static ".length).trim();
+		const aliasIndex = source.indexOf("=");
+		if (aliasIndex !== -1) source = source.slice(aliasIndex + 1).trim();
+		if (source) imports.push(source);
+	}
+	return uniqueSorted(imports);
+}
+
+function extractImportsByGrammar(grammar: GrammarName, root: SyntaxNode): string[] {
+	if (grammar === "typescript" || grammar === "tsx" || grammar === "javascript") return extractTsJsImports(root);
+	if (grammar === "python") return extractPythonImports(root);
+	if (grammar === "go") return extractGoImports(root);
+	if (grammar === "rust") return extractRustImports(root);
+	if (grammar === "c" || grammar === "cpp") return extractCFamilyImports(root);
+	if (grammar === "java") return extractJavaImports(root);
+	if (grammar === "ruby") return extractRubyImports(root);
+	if (grammar === "c_sharp") return extractCSharpImports(root);
+	return [];
+}
+
+function sortSymbols(symbols: ExtractedSymbol[]): ExtractedSymbol[] {
+	return symbols.sort((a, b) => a.line - b.line || a.name.localeCompare(b.name) || a.kind.localeCompare(b.kind));
+}
+
+function grammarForSourceFile(path: string, text: string): GrammarName | null {
+	if (isAmbiguousHeaderPath(path)) return classifyCHeaderLanguage(text) === "c++" ? "cpp" : "c";
+	return grammarForPath(path, languageFromPath(path));
+}
+
+function grammarCandidatesForSourceFile(path: string): GrammarName[] {
+	// Ambiguous headers resolve to C or C++ from content at extraction time,
+	// so preloading must cover both grammars a header can select.
+	if (isAmbiguousHeaderPath(path)) return ["c", "cpp"];
+	const grammar = grammarForPath(path, languageFromPath(path));
+	return grammar ? [grammar] : [];
+}
+
+export interface TreeSitterExtractor extends LanguageExtractor {
+	ensureGrammarsForPaths(paths: ReadonlyArray<string>): Promise<void>;
+}
+
+/**
+ * Per-file parse budget. Pathological input (an unterminated doc comment
+ * repeated thousands of times) makes the grammar's error recovery quadratic;
+ * past the budget the file falls back to the regex extractor instead of
+ * stalling the whole build.
+ */
+const TREE_SITTER_PARSE_BUDGET_MS = 1_000;
+
+export async function createTreeSitterExtractor(): Promise<TreeSitterExtractor> {
+	await ensureParserInit();
+	const parsers = new Map<GrammarName, ParserInstance>();
+	const loading = new Map<GrammarName, Promise<void>>();
+	const loadGrammar = (grammar: GrammarName): Promise<void> => {
+		if (parsers.has(grammar)) return Promise.resolve();
+		let pending = loading.get(grammar);
+		if (!pending) {
+			pending = grammarSource(WASM_BY_GRAMMAR[grammar])
+				.then(async (source) => {
+					if (source === null) return;
+					const parser = new Parser();
+					parser.setLanguage(await Language.load(source));
+					parsers.set(grammar, parser);
+				})
+				.finally(() => {
+					loading.delete(grammar);
+				});
+			loading.set(grammar, pending);
+		}
+		return pending;
+	};
+	return {
+		langs: ["typescript", "javascript", "python", "go", "rust", "c", "c++", "java", "ruby", "c#"],
+		async ensureGrammarsForPaths(paths: ReadonlyArray<string>): Promise<void> {
+			const needed = new Set<GrammarName>();
+			for (const path of paths) {
+				for (const grammar of grammarCandidatesForSourceFile(path)) needed.add(grammar);
+			}
+			await Promise.all([...needed].map(loadGrammar));
+		},
+		extract(path: string, text: string): LanguageExtraction {
+			const grammar = grammarForSourceFile(path, text);
+			if (!grammar || text.trim().length === 0) return { symbols: [], imports: [] };
+			const parser = parsers.get(grammar);
+			// A missing parser means the grammar could not be loaded, or the caller
+			// skipped ensureGrammarsForPaths for this path; throwing routes the file to
+			// the regex fallback, which the file then records, instead of silently
+			// indexing it with zero symbols.
+			if (!parser) throw new GrammarUnavailableError(`tree-sitter grammar not loaded for ${path}`);
+			let tree: Tree | null = null;
+			try {
+				const deadline = performance.now() + TREE_SITTER_PARSE_BUDGET_MS;
+				const parsed = parser.parse(text, null, { progressCallback: () => performance.now() > deadline });
+				if (!parsed) {
+					// A cancelled parse resumes on the next call unless reset.
+					parser.reset();
+					throw new Error(`tree-sitter returned no tree for ${path}`);
+				}
+				tree = parsed;
+				const symbols = sortSymbols(extractSymbolsByGrammar(grammar, parsed.rootNode));
+				return {
+					symbols,
+					imports: extractImportsByGrammar(grammar, parsed.rootNode),
+				};
+			} catch {
+				throw new Error(`tree-sitter parse failed for ${path}`);
+			} finally {
+				tree?.delete();
+			}
+		},
+	};
+}
+
+/**
+ * Parsers for code skeletons, one per vendored grammar, loaded once. A fetched grammar (Ruby, C#) would cost a network
+ * fetch on the compaction path, so its files keep the plain clip; null means the grammar cannot load here.
+ */
+const skeletonParsers = new Map<GrammarName, Promise<ParserInstance | null>>();
+
+function skeletonParser(grammar: GrammarName): Promise<ParserInstance | null> {
+	let pending = skeletonParsers.get(grammar);
+	if (!pending) {
+		const file = WASM_BY_GRAMMAR[grammar];
+		pending = fetchedGrammarForFile(file)
+			? Promise.resolve(null)
+			: ensureParserInit()
+					.then(async () => {
+						const parser = new Parser();
+						parser.setLanguage(await Language.load(grammarAssetPath(file)));
+						return parser;
+					})
+					.catch(() => null);
+		skeletonParsers.set(grammar, pending);
+	}
+	return pending;
+}
+
+/** A read's `N | ` line-number prefix; a numbered read parses with the prefixes taken off. */
+const NUMBERED_LINE = /^ *\d+ \| /u;
+
+/**
+ * The source with every function body reduced to one marker line, so each signature, type, class and import stays in
+ * place (CTX-17). Line based: a brace body keeps its opening and closing lines, an indented body (Python) is replaced
+ * whole, and a body nested in an omitted one goes with it. The text may be a partial read, numbered or not; null when
+ * the file's language has no vendored grammar, the parse fails or runs past its budget, or nothing would be omitted.
+ */
+export async function codeSkeleton(path: string, text: string): Promise<{ text: string; bodies: number } | null> {
+	const grammar = grammarForSourceFile(path, text);
+	if (!grammar || text.trim().length === 0) return null;
+	const parser = await skeletonParser(grammar);
+	if (!parser) return null;
+	const lines = text.split("\n");
+	const numbered = lines.some((row) => NUMBERED_LINE.test(row));
+	const source = numbered ? lines.map((row) => row.replace(NUMBERED_LINE, "")).join("\n") : text;
+	let tree: Tree | null = null;
+	try {
+		const deadline = performance.now() + TREE_SITTER_PARSE_BUDGET_MS;
+		tree = parser.parse(source, null, { progressCallback: () => performance.now() > deadline });
+		if (!tree) {
+			parser.reset();
+			return null;
+		}
+		const omitted: Array<{ from: number; to: number; indented: boolean }> = [];
+		for (const node of descendants(tree.rootNode, [...FUNCTION_LIKE_NODE_TYPES])) {
+			const body = node.childForFieldName("body");
+			if (!body) continue;
+			const start = body.startPosition.row;
+			const end = body.endPosition.row;
+			if (body.text.startsWith("{")) {
+				if (end - start >= 2) omitted.push({ from: start + 1, to: end - 1, indented: false });
+			} else if (start > node.startPosition.row) {
+				omitted.push({ from: start, to: end, indented: true });
+			}
+		}
+		omitted.sort((a, b) => a.from - b.from || b.to - a.to);
+		const kept: typeof omitted = [];
+		for (const range of omitted) {
+			const last = kept[kept.length - 1];
+			if (last && range.from <= last.to) continue;
+			kept.push(range);
+		}
+		if (kept.length === 0) return null;
+		const out: string[] = [];
+		let row = 0;
+		let bodies = 0;
+		for (const range of kept) {
+			const first = lines[range.from] ?? "";
+			const indent = /^(?: *\d+ \| )?([ \t]*)/u.exec(first)?.[1] ?? "";
+			const count = range.to - range.from + 1;
+			const note = `${count} line${count === 1 ? "" : "s"} of body omitted`;
+			const marker = range.indented ? `${indent}...  # ${note}` : `${indent}/* ${note} */`;
+			// A body shorter than its marker stays as written.
+			if (lines.slice(range.from, range.to + 1).join("\n").length <= marker.length) continue;
+			out.push(...lines.slice(row, range.from), marker);
+			row = range.to + 1;
+			bodies += 1;
+		}
+		if (bodies === 0) return null;
+		out.push(...lines.slice(row));
+		const skeleton = out.join("\n");
+		return skeleton.length < text.length ? { text: skeleton, bodies } : null;
+	} catch {
+		return null;
+	} finally {
+		tree?.delete();
+	}
+}
+
+function languageFromPath(path: string): CodewikiLanguage {
+	if (/\.[cm]?tsx?$/.test(path)) return "typescript";
+	if (/\.[cm]?jsx?$/.test(path)) return "javascript";
+	if (path.endsWith(".py") || path.endsWith(".pyw")) return "python";
+	if (path.endsWith(".go")) return "go";
+	if (path.endsWith(".rs")) return "rust";
+	if (/\.(cc|cpp|cxx|hpp|hh|hxx|cu|cuh)$/.test(path)) return "c++";
+	if (/\.(c|h)$/.test(path)) return "c";
+	if (path.endsWith(".java")) return "java";
+	if (path.endsWith(".rb")) return "ruby";
+	if (path.endsWith(".cs")) return "c#";
+	return "config";
+}

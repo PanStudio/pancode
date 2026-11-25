@@ -1,0 +1,241 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, equal, match, ok, throws } from "node:assert/strict";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { test } from "node:test";
+import { parse, stringify } from "yaml";
+import { parseRunCliArgs } from "../../src/cli/args.js";
+import { runPancodeRun } from "../../src/cli/run.js";
+import claudeCodeRuntime from "../../src/domains/providers/runtimes/claude/claude-code.js";
+import { codexSubprocessPermissionConfig } from "../../src/domains/providers/runtimes/external-cli-policy.js";
+import { buildAgyArgs } from "../../src/engine/antigravity/subprocess-runtime.js";
+import { buildClaudeCodeArgs } from "../../src/engine/claude/subprocess-runtime.js";
+import { buildCodexExecArgs } from "../../src/engine/codex/subprocess-runtime.js";
+import { buildOpenCodeCliArgs } from "../../src/engine/external-cli/opencode.js";
+import { buildPiCliArgs } from "../../src/engine/external-cli/pi.js";
+import type { WorkerRunInput } from "../../src/engine/worker-run-types.js";
+import type { SlashCommandContext } from "../../src/session-control/slash-command-types.js";
+import { parseSlashCommand } from "../../src/session-control/slash-commands.js";
+import { dispatchSlashCommand } from "../../src/session-control/slash-dispatch.js";
+import { handleRun } from "../../src/session-control/slash-handlers/run.js";
+import { headlessScratch, runCli, sealedReceipt } from "../harness/headless-run.js";
+
+function input(readOnly: boolean): WorkerRunInput {
+	return {
+		agentId: "builder",
+		task: "Inspect the change",
+		systemPrompt: "",
+		dynamicPromptMessages: [],
+		target: { id: "peer", runtime: "codex-cli" },
+		runtime: { id: "codex-cli" } as WorkerRunInput["runtime"],
+		wireModelId: "",
+		allowedTools: [],
+		budget: { mode: "advisory", toolCalls: 10, synthesis: true, hardCap: 20 },
+		autonomy: "yolo",
+		readOnly,
+		cwd: process.cwd(),
+	};
+}
+
+test("peer launch arguments depend only on the read-only restriction", () => {
+	const previous = process.env.PANCODE_ALLOW_EXTERNAL_FULL_ACCESS;
+	try {
+		process.env.PANCODE_ALLOW_EXTERNAL_FULL_ACCESS = "1";
+		for (const readOnly of [true, false]) {
+			const run = input(readOnly);
+			const codex = buildCodexExecArgs(run);
+			deepStrictEqual(codex.slice(0, 6), [
+				"exec",
+				"--json",
+				"--ephemeral",
+				"--skip-git-repo-check",
+				"--sandbox",
+				readOnly ? "read-only" : "workspace-write",
+			]);
+			deepStrictEqual(codexSubprocessPermissionConfig(readOnly), {
+				sandbox: readOnly ? "read-only" : "workspace-write",
+			});
+			const claude = buildClaudeCodeArgs(run);
+			const mode = claude.indexOf("--permission-mode");
+			deepStrictEqual(
+				claude.slice(mode, mode + (readOnly ? 3 : 2)),
+				readOnly ? ["--permission-mode", "plan", "--tools"] : ["--permission-mode", "acceptEdits"],
+			);
+			if (readOnly) equal(claude[mode + 3], "Read,Grep,Glob,LS,WebFetch,WebSearch");
+			const agy = buildAgyArgs(run);
+			deepStrictEqual(
+				agy.slice(0, readOnly ? 3 : 2),
+				readOnly ? ["--mode", "plan", "--sandbox"] : ["--mode", "accept-edits"],
+			);
+			const pi = buildPiCliArgs(run);
+			equal(pi.includes("read,grep,find,ls"), readOnly);
+			if (readOnly) throws(() => buildOpenCodeCliArgs(run), /cannot enforce a read-only run/);
+			else deepStrictEqual(buildOpenCodeCliArgs(run).slice(0, 3), ["run", "--format", "json"]);
+		}
+	} finally {
+		if (previous === undefined) delete process.env.PANCODE_ALLOW_EXTERNAL_FULL_ACCESS;
+		else process.env.PANCODE_ALLOW_EXTERNAL_FULL_ACCESS = previous;
+	}
+});
+
+test("a single-source run turns off each harness's own repository instructions", () => {
+	const run = { ...input(true), skipRepositoryInstructions: true };
+	const codex = buildCodexExecArgs(run);
+	deepStrictEqual(codex.slice(-3), ["-c", "project_doc_max_bytes=0", "-"]);
+	// Claude Code has no switch that skips CLAUDE.md alone: `--setting-sources user` also drops the project's
+	// permission rules and hooks, so it reads its files beside the compiled rules.
+	ok(!buildClaudeCodeArgs(run).includes("--setting-sources"));
+	equal(claudeCodeRuntime.repositoryInstructions?.delivery, "coexist");
+	ok(buildPiCliArgs(run).includes("--no-context-files"));
+	const plain = input(true);
+	ok(!buildCodexExecArgs(plain).includes("project_doc_max_bytes=0"));
+	ok(!buildClaudeCodeArgs(plain).includes("--setting-sources"));
+	ok(!buildPiCliArgs(plain).includes("--no-context-files"));
+});
+
+test("read-only is available on each operator dispatch command", () => {
+	const run = parseSlashCommand("/run --read-only builder Inspect");
+	equal(run.kind, "run");
+	if (run.kind === "run") equal(run.options.readOnly, true);
+	const headless = parseRunCliArgs(["--agent", "builder", "--read-only", "Inspect"]);
+	equal(headless.readOnly, true);
+	const invalid = parseRunCliArgs(["--agent", "builder", "--autonomy", "yolo", "Inspect"]);
+	match(invalid.diagnostics.map((entry) => entry.message).join(" "), /--autonomy.*main agent.*--read-only/);
+	equal(invalid.diagnostics.at(-1)?.type, "error");
+});
+
+test("operator slash flags reach dispatch requests", async () => {
+	let runRequest: Record<string, unknown> | undefined;
+	const dispatch = {
+		async dispatch(request: Record<string, unknown>) {
+			runRequest = request;
+			return {
+				runId: "peer",
+				events: (async function* () {})(),
+				finalPromise: Promise.resolve({ outcome: "succeeded", exitCode: 0 }),
+			};
+		},
+	};
+	const parsed = parseSlashCommand("/run --read-only builder Inspect");
+	if (parsed.kind !== "run") throw new Error("expected run command");
+	await handleRun(
+		parsed.agentId,
+		parsed.task,
+		{ dispatch, notice: () => {}, io: {} } as unknown as Parameters<typeof handleRun>[2],
+		parsed.options,
+	);
+	equal(runRequest?.readOnly, true);
+	const delegated = parseSlashCommand("/run --read-only acp:peer Inspect");
+	if (delegated.kind !== "run") throw new Error("expected run command");
+	let resolveRequest!: (request: Record<string, unknown>) => void;
+	const requested = new Promise<Record<string, unknown>>((resolve) => {
+		resolveRequest = resolve;
+	});
+	const context = {
+		dispatch: {
+			async dispatch(request: Record<string, unknown>) {
+				resolveRequest(request);
+				return {
+					runId: "peer",
+					events: (async function* () {})(),
+					finalPromise: Promise.resolve({ outcome: "succeeded", exitCode: 0 }),
+				};
+			},
+		},
+		io: {},
+		notice: () => {},
+		render: () => {},
+	} as unknown as SlashCommandContext;
+	equal(dispatchSlashCommand(delegated, context), "accepted");
+	const delegateRequest = await requested;
+	equal(delegateRequest.delegationAgentId, "peer");
+	equal(delegateRequest.readOnly, true);
+});
+
+test("/run hands a configured external agent the task and refuses fleet-only flags", async () => {
+	let resolveRequest!: (request: Record<string, unknown>) => void;
+	const requested = new Promise<Record<string, unknown>>((resolve) => {
+		resolveRequest = resolve;
+	});
+	const notices: string[] = [];
+	const context = {
+		dispatch: {
+			async dispatch(request: Record<string, unknown>) {
+				resolveRequest(request);
+				return {
+					runId: "peer",
+					events: (async function* () {})(),
+					finalPromise: Promise.resolve({ outcome: "succeeded", exitCode: 0 }),
+				};
+			},
+		},
+		io: {},
+		notice: (_level: string, text: string) => notices.push(text),
+		render: () => {},
+		listAgents: () => [],
+		isExternalAgent: (id: string) => id === "peer",
+	} as unknown as SlashCommandContext;
+	equal(dispatchSlashCommand(parseSlashCommand("/run --model m peer Inspect"), context), "rejected");
+	match(notices.join("\n"), /peer is an external agent, which ignores --model/);
+	// `acp:` is decided at parse time, so the editor keeps the draft like any usage error.
+	equal(parseSlashCommand("/run --model m acp:peer Inspect").kind, "usage-error");
+	equal(dispatchSlashCommand(parseSlashCommand("/run --read-only peer Inspect"), context), "accepted");
+	const request = await requested;
+	equal(request.delegationAgentId, "peer");
+	equal(request.readOnly, true);
+});
+
+test("headless --agent rejects main-agent autonomy before boot", async () => {
+	equal(await runPancodeRun(["--agent", "builder", "--autonomy", "yolo", "Inspect"]), 2);
+});
+
+test("headless read-only reaches the peer sandbox through dispatch", { timeout: 30_000 }, async () => {
+	const scratch = headlessScratch("pancode-peer-readonly-");
+	try {
+		const bin = join(scratch.root, "bin");
+		mkdirSync(bin);
+		const executable = join(bin, "codex");
+		writeFileSync(
+			executable,
+			`#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+for await (const chunk of process.stdin) {}
+writeFileSync(join(process.cwd(), "peer-argv.json"), JSON.stringify(process.argv.slice(2)));
+for (const event of [
+  { type: "thread.started", thread_id: "fixture-thread" },
+  { type: "turn.started" },
+  { type: "item.completed", item: { type: "agent_message", text: JSON.stringify({ completion: { state: "done", limitations: [], unverified: [] }, mutatedPaths: [], validations: [{ name: "read fixture", passed: true, evidence: "PONG" }], summary: "PONG" }) } },
+  { type: "turn.completed", usage: { input_tokens: 2, output_tokens: 1 } }
+]) process.stdout.write(JSON.stringify(event) + "\\n");
+`,
+		);
+		chmodSync(executable, 0o755);
+		const settingsPath = join(scratch.configDir, "settings.yaml");
+		const settings = parse(readFileSync(settingsPath, "utf8"));
+		settings.targets = [
+			...(settings.targets ?? []),
+			{ id: "peer", runtime: "codex-cli", defaultModel: "codex-cli-default" },
+		];
+		settings.fleet = {
+			...settings.fleet,
+			default: { ...settings.fleet?.default, target: "peer", model: "codex-cli-default" },
+			retry: { ...settings.fleet?.retry, maxRetries: 0 },
+		};
+		writeFileSync(settingsPath, stringify(settings));
+		const result = await runCli(["run", "--agent", "coder", "--read-only", "--target", "peer", "Inspect the workspace"], {
+			cwd: scratch.root,
+			env: { ...scratch.env, PATH: `${bin}:${scratch.env.PATH ?? ""}` },
+		});
+		equal(result.code, 0, `${result.stderr}\n${result.stdout}`);
+		const argv = JSON.parse(readFileSync(join(scratch.root, "peer-argv.json"), "utf8")) as string[];
+		ok(argv.includes("--sandbox"));
+		equal(argv[argv.indexOf("--sandbox") + 1], "read-only");
+		const { receipt } = sealedReceipt(scratch.stateDir);
+		equal(receipt.seal?.status, "verified");
+		ok(!Object.hasOwn(receipt, "autonomyEnforcement"));
+	} finally {
+		scratch.cleanup();
+	}
+});

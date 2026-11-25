@@ -1,0 +1,211 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { writeDiagnostic } from "../../../../core/diagnostics.js";
+import type { Api, Model } from "../../../../engine/types.js";
+
+import { probeHttp } from "../../probe/http.js";
+import type { CapabilityFlags } from "../../types/capability-flags.js";
+import type { CompleteOptions, CompletionChunk, InfillOptions } from "../../types/inference.js";
+import type { KnowledgeBaseHit } from "../../types/knowledge-base.js";
+import type { ProbeContext, ProbeResult, RuntimeDescriptor } from "../../types/runtime-descriptor.js";
+import type { TargetDescriptor } from "../../types/target-descriptor.js";
+import { synthLocalModel, targetRootUrl, withV1 } from "../common/local-synth.js";
+import {
+	detectModelMismatch,
+	probeLlamaCppModelStatus,
+	probeLlamaCppProps,
+	probeOpenAIModels,
+} from "../common/probe-helpers.js";
+
+const defaultCapabilities: CapabilityFlags = {
+	chat: false,
+	tools: false,
+	reasoning: false,
+	vision: false,
+	audio: false,
+	embeddings: false,
+	rerank: false,
+	fim: true,
+	structuredOutputs: "gbnf",
+	contextWindow: 8192,
+	maxTokens: 4096,
+};
+
+function targetUrl(target: TargetDescriptor): string | null {
+	return targetRootUrl(target);
+}
+
+interface RawCompletionChunk {
+	content?: unknown;
+	stop?: unknown;
+	stop_type?: unknown;
+	tokens_predicted?: unknown;
+	tokens_evaluated?: unknown;
+}
+
+function parseChunk(raw: RawCompletionChunk): CompletionChunk {
+	const chunk: CompletionChunk = {
+		content: typeof raw.content === "string" ? raw.content : "",
+		stop: raw.stop === true,
+	};
+	if (raw.stop_type === "eos" || raw.stop_type === "limit" || raw.stop_type === "word" || raw.stop_type === "none") {
+		chunk.stop_type = raw.stop_type;
+	}
+	if (typeof raw.tokens_predicted === "number") chunk.tokens_predicted = raw.tokens_predicted;
+	if (typeof raw.tokens_evaluated === "number") chunk.tokens_evaluated = raw.tokens_evaluated;
+	return chunk;
+}
+
+async function* streamSse(body: ReadableStream<Uint8Array>): AsyncGenerator<CompletionChunk> {
+	const reader = body.getReader();
+	const decoder = new TextDecoder("utf-8");
+	let buffered = "";
+	// Malformed frames are skipped so one bad chunk cannot kill a stream, but
+	// silent drops used to make mid-stream token loss look like a truncated
+	// model response; count them and leave one diagnostic per stream.
+	let droppedFrames = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buffered += decoder.decode(value, { stream: true });
+			// SSE events are separated by blank lines; individual `data:` lines may arrive
+			// alone on streamed JSON emitted by llama.cpp.
+			let nl = buffered.indexOf("\n");
+			while (nl !== -1) {
+				const line = buffered.slice(0, nl).trimEnd();
+				buffered = buffered.slice(nl + 1);
+				nl = buffered.indexOf("\n");
+				if (line.length === 0) continue;
+				const payload = line.startsWith("data:") ? line.slice(5).trim() : line;
+				if (payload.length === 0 || payload === "[DONE]") continue;
+				try {
+					const parsed = JSON.parse(payload) as RawCompletionChunk;
+					const chunk = parseChunk(parsed);
+					yield chunk;
+					if (chunk.stop) return;
+				} catch {
+					droppedFrames += 1;
+				}
+			}
+		}
+		const tail = buffered.trim();
+		if (tail.length > 0) {
+			const payload = tail.startsWith("data:") ? tail.slice(5).trim() : tail;
+			if (payload !== "[DONE]") {
+				try {
+					const parsed = JSON.parse(payload) as RawCompletionChunk;
+					yield parseChunk(parsed);
+				} catch {
+					droppedFrames += 1;
+				}
+			}
+		}
+	} finally {
+		if (droppedFrames > 0) {
+			writeDiagnostic(`[pancode:llamacpp] dropped ${droppedFrames} malformed stream frame(s)\n`);
+		}
+		reader.releaseLock();
+	}
+}
+
+async function postStream(
+	url: string,
+	body: unknown,
+	signal: AbortSignal | undefined,
+): Promise<ReadableStream<Uint8Array>> {
+	const init: RequestInit = {
+		method: "POST",
+		headers: { "content-type": "application/json", accept: "text/event-stream" },
+		body: JSON.stringify(body),
+	};
+	if (signal) init.signal = signal;
+	const response = await fetch(url, init);
+	if (!response.ok || !response.body) {
+		throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+	}
+	return response.body;
+}
+
+function buildCompleteBody(opts: CompleteOptions): Record<string, unknown> {
+	const body: Record<string, unknown> = { prompt: opts.prompt, stream: true };
+	if (opts.n_predict !== undefined) body.n_predict = opts.n_predict;
+	if (opts.stop && opts.stop.length > 0) body.stop = opts.stop;
+	if (opts.grammar) body.grammar = opts.grammar;
+	if (opts.json_schema) body.json_schema = opts.json_schema;
+	if (opts.cache_prompt !== undefined) body.cache_prompt = opts.cache_prompt;
+	return body;
+}
+
+function buildInfillBody(opts: InfillOptions): Record<string, unknown> {
+	const body = buildCompleteBody(opts);
+	body.input_prefix = opts.input_prefix;
+	body.input_suffix = opts.input_suffix;
+	if (opts.input_extra) body.input_extra = opts.input_extra;
+	return body;
+}
+
+const llamacppCompletionRuntime: RuntimeDescriptor = {
+	id: "llamacpp-completion",
+	displayName: "llama.cpp (completion / infill)",
+	kind: "http",
+	tier: "local-native",
+	apiFamily: "openai-completions",
+	auth: "api-key",
+	defaultCapabilities,
+	hidden: true,
+	async probe(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult> {
+		const base = targetUrl(target);
+		if (!base) return { ok: false, error: "target has no url" };
+		const healthOpts = { url: `${base}/health`, timeoutMs: ctx.httpTimeoutMs } as const;
+		const health = await (ctx.signal ? probeHttp({ ...healthOpts, signal: ctx.signal }) : probeHttp(healthOpts));
+		if (!health.ok) return health;
+		const props = await probeLlamaCppProps(base, ctx, target.defaultModel);
+		const status = await probeLlamaCppModelStatus(base, target, ctx);
+		const enriched: ProbeResult = { ...health };
+		const discoveredCapabilities = {
+			...(props.discoveredCapabilities ?? {}),
+			...(status.discoveredCapabilities ?? {}),
+		};
+		if (Object.keys(discoveredCapabilities).length > 0) {
+			enriched.discoveredCapabilities = discoveredCapabilities;
+			if (status.modelId) enriched.capabilityModelId = status.modelId;
+		}
+		if (props.serverVersion) enriched.serverVersion = props.serverVersion;
+		const note = await detectModelMismatch(base, target, ctx);
+		const notes = [...(status.notes ?? []), ...(note ? [note] : [])];
+		if (notes.length > 0) enriched.notes = notes;
+		if (status.cacheAdvisories && status.cacheAdvisories.length > 0) enriched.cacheAdvisories = status.cacheAdvisories;
+		return enriched;
+	},
+	async probeModels(target: TargetDescriptor, ctx: ProbeContext): Promise<string[]> {
+		const base = targetUrl(target);
+		if (!base) return [];
+		return probeOpenAIModels(base, ctx);
+	},
+	synthesizeModel(target: TargetDescriptor, wireModelId: string, kb: KnowledgeBaseHit | null): Model<Api> {
+		return synthLocalModel({
+			target,
+			wireModelId,
+			kb,
+			defaultCapabilities,
+			apiFamily: "openai-completions",
+			provider: "llamacpp",
+			baseUrlForTarget: withV1,
+		});
+	},
+	async *complete(target: TargetDescriptor, opts: CompleteOptions): AsyncIterable<CompletionChunk> {
+		const base = targetUrl(target);
+		if (!base) throw new Error("target has no url");
+		const body = await postStream(`${base}/completion`, buildCompleteBody(opts), opts.signal);
+		for await (const chunk of streamSse(body)) yield chunk;
+	},
+	async *infill(target: TargetDescriptor, opts: InfillOptions): AsyncIterable<CompletionChunk> {
+		const base = targetUrl(target);
+		if (!base) throw new Error("target has no url");
+		const body = await postStream(`${base}/infill`, buildInfillBody(opts), opts.signal);
+		for await (const chunk of streamSse(body)) yield chunk;
+	},
+};
+
+export default llamacppCompletionRuntime;

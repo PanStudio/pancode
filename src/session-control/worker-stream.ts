@@ -1,0 +1,510 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Worker transcript state machine: one entry per assignment, folded from the
+ * dispatch lifecycle events. DispatchStarted opens it, DispatchProgress streams
+ * into it, DispatchCompleted/DispatchFailed seal it, and RunAborted marks a
+ * cancel no terminal event followed. A pure fold: no disk, bus, or rendering.
+ *
+ * What a worker is saying and doing comes from the {@link WorkerProgressSnapshot}
+ * projection in `src/domains/telemetry/worker-progress.ts`, which the Fleet Runs
+ * board reads from the same events, so the two cannot drift. This module owns
+ * which assignment an event belongs to, which attempt is current, and what the
+ * result sealed.
+ *
+ * - Tool names come only from the `pancode_*` telemetry events, never from
+ *   `tool_execution_start`, whose `args` carry a worker's literal arguments,
+ *   which must not reach the operator's transcript.
+ * - A failover publishes a second DispatchStarted under the same
+ *   `assignmentId`; it appends an attempt to the open block. The retry is
+ *   admitted as internal-origin, so the block carries the first attempt's origin.
+ * - Only the current attempt moves the block: a late event for a superseded
+ *   attempt is dropped, and a settled block takes no more progress.
+ */
+
+import type {
+	DispatchCompletedPayload,
+	DispatchFailedPayload,
+	DispatchProgressPayload,
+	DispatchStartedPayload,
+	RunAbortedPayload,
+} from "../core/telemetry/live-events.js";
+import type { AgentTrait } from "../domains/agents/spec.js";
+import type {
+	RunPresentedResultContract,
+	RunResultContract,
+	RunResultSummary,
+} from "../domains/dispatch/run-result-facts.js";
+import type { RunKind } from "../domains/dispatch/types.js";
+import type { WorkerRunOrigin, WorkerRunRuntime, WorkerRunRuntimeKind } from "../domains/session/index.js";
+import {
+	createWorkerProgressFold,
+	type WorkerAction,
+	type WorkerProgressFold,
+	type WorkerProgressSnapshot,
+} from "../domains/telemetry/worker-progress.js";
+
+export {
+	boundSettledText,
+	WORKER_LIVE_TAIL_LINES,
+	WORKER_TOOL_NAME_LIMIT,
+} from "../domains/telemetry/worker-progress.js";
+export type { WorkerProgressSnapshot };
+
+export interface WorkerAttempt {
+	runId: string;
+	targetLabel: string;
+	/** Why the attempt left the route before it, including the alternates it skipped. */
+	moveReason?: string;
+	outcome?: string;
+}
+
+export type WorkerResultContract = RunResultContract;
+export type WorkerPresentedResultContract = RunPresentedResultContract;
+
+/**
+ * Terminal facts a worker block reports, read from the sealed run scope when
+ * available and carried by the terminal event otherwise (#434). The result-derived fields
+ * come from the dispatch domain; the two below are this transcript's own.
+ */
+export interface WorkerRunResultSummary extends RunResultSummary {
+	/** From an abort marker rather than a sealed terminal event; a later DispatchCompleted/DispatchFailed replaces it. */
+	provisional?: boolean;
+	/** The run is over, but no result could be read for it, and the ledger row could not explain why either. */
+	resultUnavailable?: boolean;
+}
+
+/** A result's projection: the summary plus the answer it sealed. */
+export interface WorkerRunResultFacts extends WorkerRunResultSummary {
+	text?: string;
+	toolCounts?: ReadonlyArray<{ tool: string; count: number }>;
+	changedPaths?: ReadonlyArray<string>;
+}
+
+/** Reads the run's sealed record and projects it; null when it is absent or unreadable. */
+export type WorkerRunResultReader = (runId: string) => WorkerRunResultFacts | null;
+
+/** Presentation follows the admitted audience, never a recipe name. */
+export function isHelperRun(run: { agentAudience?: DispatchStartedPayload["agentAudience"] }): boolean {
+	return run.agentAudience === "shadow" || run.agentAudience === "internal";
+}
+
+/** A run's recipe traits by agent id; empty when the recipe is unknown. */
+export type AgentTraitLookup = (agentId: string) => ReadonlyArray<AgentTrait>;
+
+/**
+ * Internal runs of a `context-generator` recipe report through the context rail; their full task is a prompt
+ * payload.
+ */
+export function isContextOperationRun(
+	run: { agentId: string; requestOrigin?: string | undefined },
+	agentTraits: AgentTraitLookup | undefined,
+): boolean {
+	return run.requestOrigin === "internal" && agentTraits?.(run.agentId).includes("context-generator") === true;
+}
+
+export interface WorkerEntryState {
+	/** Local presentation clock; never restored as a live timer from a result. */
+	startedAtMs?: number;
+	/** Admitted tool-call ceiling for the current attempt; absent on replay and for runs without an admitted budget. */
+	toolCallLimit?: number;
+	/** Compact agent-to-agent presentation, selected from the admitted audience. */
+	helper?: true;
+	task?: string;
+	assignmentId: string;
+	/** Current attempt's run id. */
+	runId: string;
+	/** The assignment's origin. Internal runs never open an entry, so it is never "internal". */
+	origin: WorkerRunOrigin;
+	agentId: string;
+	/** Runtime family plus route, as the session entry records it; the header names it. */
+	runtime: WorkerRunRuntime;
+	/** Bounded worker prose: the live tail while running, the sealed answer once settled. */
+	text: string;
+	/** Lines the bound dropped from `text`; renders the `/view dispatch:` tail. */
+	droppedLines: number;
+	/** Distinct tool names in first-use order, bounded. */
+	tools: string[];
+	/** Canonical live projection. Absent only on result-based session replay. */
+	progress?: WorkerProgressSnapshot;
+	/**
+	 * The context the run's last model call occupied, as the session recorded it
+	 * when the run settled. Replay only: a live block reads it from `progress`,
+	 * and the sealed result carries no per-call usage.
+	 */
+	contextTokens?: number;
+	/**
+	 * The calls the run finished last, newest first, as the session recorded them
+	 * when it settled. Replay only, like `contextTokens`: a live block reads them
+	 * from `progress`, and the result seals a count rather than a list.
+	 */
+	recentActions?: ReadonlyArray<WorkerAction>;
+	/** Every attempt of this assignment, oldest first. */
+	attempts: WorkerAttempt[];
+	pending: boolean;
+	/**
+	 * Council provenance, present only on a run of a council group. `/share`
+	 * reads it so a member's answer reaches the main agent under the roster label
+	 * the operator watched it under, rather than as one unattributed voice.
+	 */
+	council?: { group: string; label: string; color?: string; round: number };
+	/** The plan step this run executes, so sibling steps sharing one agent and one task read apart. */
+	planStep?: string;
+	result?: WorkerRunResultSummary;
+	/** Agent origin: the tool call whose execution spawned this run. */
+	parentToolCallId?: string;
+	/** A run of a call the operator typed (`/council`, `/poll`), recorded as `rootRequestOrigin: "user"`. */
+	operatorStarted?: true;
+}
+
+/**
+ * Whether the model asked for this run. The parent tool call is the ground
+ * truth: a scout successor an operator approved is admitted as user origin but
+ * spawned by a dispatch call, and a compete judge carries no origin at all, so
+ * origin alone would draw both as the operator's own work and let bare /share
+ * hand the model a run it already has. Any run under a tool call is the
+ * model's unless the operator typed that call; the origin label decides only
+ * for a run with none.
+ */
+export function workerAskedByModel(
+	state: Pick<WorkerEntryState, "origin" | "parentToolCallId" | "operatorStarted">,
+): boolean {
+	if (state.operatorStarted === true) return false;
+	return state.parentToolCallId !== undefined || state.origin === "agent";
+}
+
+export type WorkerStreamChange =
+	| { kind: "created"; entry: WorkerEntryState }
+	| { kind: "updated"; entry: WorkerEntryState };
+
+export interface WorkerStreamOptions {
+	/**
+	 * Sealed terminal facts for a finished run. The result is the terminal
+	 * truth; the bus payload is only the fallback for when it cannot be read.
+	 */
+	readResult?: WorkerRunResultReader;
+	/** Recipe traits, which mark the context-generator runs this stream leaves to the context rail. */
+	agentTraits?: AgentTraitLookup;
+}
+
+export interface WorkerStream {
+	started(payload: DispatchStartedPayload): WorkerStreamChange | null;
+	/**
+	 * Name the plan step a run executes. The plan announces a step's run around the time the run starts, in either
+	 * order, so a step named before its run is held until the run arrives.
+	 */
+	tagPlanStep(runId: string, stepId: string): WorkerStreamChange | null;
+	progress(payload: DispatchProgressPayload): WorkerStreamChange | null;
+	completed(payload: DispatchCompletedPayload): WorkerStreamChange | null;
+	failed(payload: DispatchFailedPayload): WorkerStreamChange | null;
+	aborted(payload: RunAbortedPayload): WorkerStreamChange | null;
+	get(assignmentId: string): WorkerEntryState | undefined;
+	/**
+	 * Forget every assignment. Called with the transcript's own reset, so a
+	 * session change clears the routing table and the visible blocks together:
+	 * a late event for a run of the old session then finds no entry, rather than
+	 * repainting an old block into the new transcript. A run still underway is
+	 * set aside until it settles, in case the new transcript replays its card.
+	 */
+	reset(): void;
+	/**
+	 * Route a run set aside by `reset` to the card the new transcript replays for it, so a fork or resume taken while a
+	 * worker runs keeps streaming into that card and settles it. Undefined when this stream holds no such run.
+	 */
+	adopt(runId: string): WorkerEntryState | undefined;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function workerRuntimeKind(runtimeKind: RunKind | undefined, runtimeId: string | undefined): WorkerRunRuntimeKind {
+	if (runtimeKind === "acp-delegation") return "acp";
+	if (runtimeId === "claude-code") return "claude-code";
+	if (runtimeId === "claude-sdk") return "claude-sdk";
+	return "pancode";
+}
+
+function runtimeIdentity(payload: DispatchStartedPayload): WorkerRunRuntime {
+	const kind = workerRuntimeKind(payload.runtimeKind, payload.runtimeId);
+	if (kind === "acp") {
+		const peerId = nonEmptyString(payload.agentId);
+		return { kind, ...(peerId !== undefined ? { peerId } : {}) };
+	}
+	const targetId = nonEmptyString(payload.targetId);
+	const wireModelId = nonEmptyString(payload.wireModelId);
+	return {
+		kind,
+		...(targetId !== undefined ? { targetId } : {}),
+		...(wireModelId !== undefined ? { wireModelId } : {}),
+	};
+}
+
+/** Short route label for an attempt line: the model that ran it, or the peer that did. */
+export function workerTargetLabel(runtime: WorkerRunRuntime): string {
+	if (runtime.kind === "acp") return runtime.peerId ?? "acp";
+	if (runtime.targetId !== undefined && runtime.wireModelId !== undefined) {
+		return `${runtime.targetId}/${runtime.wireModelId}`;
+	}
+	return runtime.targetId ?? runtime.wireModelId ?? "unknown";
+}
+
+/**
+ * Terminal facts a lifecycle payload can supply on its own. Used only when the
+ * sealed result is unreadable, so the block still reports an honest outcome
+ * instead of hanging on a spinner.
+ */
+function terminalFacts(payload: DispatchCompletedPayload | DispatchFailedPayload): WorkerRunResultFacts {
+	const detail = nonEmptyString(payload.outcomeDetail);
+	const total = payload.spend?.totalTokens;
+	const tokenCount = total?.kind === "measured" || total?.kind === "estimated" ? finiteNumber(total.value) : undefined;
+	const durationMs = finiteNumber(payload.durationMs);
+	const exitCode = finiteNumber(payload.exitCode);
+	return {
+		outcome: payload.outcome,
+		...(payload.outcomeCode !== null && payload.outcomeCode !== undefined ? { outcomeCode: payload.outcomeCode } : {}),
+		...(detail !== undefined ? { failureMessage: detail } : {}),
+		...(exitCode !== undefined ? { exitCode } : {}),
+		...(tokenCount !== undefined ? { tokenCount } : {}),
+		...(total ? { tokens: total } : {}),
+		...(durationMs !== undefined ? { durationMs } : {}),
+		...(payload.toolActivity ? { toolCalls: payload.toolActivity.calls } : {}),
+	};
+}
+
+/**
+ * The one projection from result facts to the summary a block's footer
+ * reports, shared by live settlement and by replay so both draw the same
+ * numbers from the same bytes. Null is a run whose result is gone (an expired
+ * state dir, a session copied without its run scopes): the run is over and the
+ * transcript says so, even when it cannot say how.
+ */
+export function workerRunResultSummary(facts: WorkerRunResultFacts | null): WorkerRunResultSummary {
+	if (facts === null) return { outcome: "unknown", resultUnavailable: true };
+	const { text: _text, ...summary } = facts;
+	return summary;
+}
+
+export function createWorkerStream(options: WorkerStreamOptions = {}): WorkerStream {
+	const byAssignment = new Map<string, WorkerEntryState>();
+	/** Highest attempt number seen per assignment; a DispatchStarted at or below it is a duplicate or a straggler. */
+	const attemptByAssignment = new Map<string, number>();
+	/** Every attempt run id to its assignment, so progress and terminal events find their entry. */
+	const assignmentByRun = new Map<string, string>();
+	/**
+	 * The canonical progress projection per assignment. One fold spans every
+	 * attempt of an assignment, because a failover keeps streaming into the block
+	 * the operator is already reading.
+	 */
+	const progressByAssignment = new Map<string, WorkerProgressFold>();
+	/** Plan steps named before their run started. */
+	const pendingPlanSteps = new Map<string, string>();
+	/** Runs still underway when the transcript reset, by current run id, until a replay adopts or a terminal event drops them. */
+	const parked = new Map<string, { entry: WorkerEntryState; fold: WorkerProgressFold | undefined; attempt: number }>();
+
+	/** Copy the canonical projection onto the entry fields the block renders. */
+	const applyProgress = (entry: WorkerEntryState, fold: WorkerProgressFold): void => {
+		const snapshot = fold.snapshot();
+		entry.text = snapshot.tailText;
+		entry.droppedLines = snapshot.droppedLines;
+		entry.tools = [...snapshot.toolNames];
+		entry.progress = snapshot;
+	};
+
+	/** The entry a run id addresses, and only while that run is the entry's current attempt. */
+	const currentEntryForRun = (runId: unknown): WorkerEntryState | undefined => {
+		const id = nonEmptyString(runId);
+		if (id === undefined) return undefined;
+		const assignmentId = assignmentByRun.get(id);
+		const entry = assignmentId === undefined ? undefined : byAssignment.get(assignmentId);
+		return entry?.runId === id ? entry : undefined;
+	};
+
+	const settle = (entry: WorkerEntryState, payloadFacts: WorkerRunResultFacts): WorkerStreamChange => {
+		const facts = options.readResult?.(entry.runId) ?? { ...payloadFacts, resultUnavailable: true };
+		entry.result = workerRunResultSummary(facts);
+		entry.pending = false;
+		const attempt = entry.attempts[entry.attempts.length - 1];
+		if (attempt !== undefined) attempt.outcome = facts.outcome;
+		// Terminal truth is the sealed answer. A run whose result could not be
+		// read keeps whatever durable text its own stream produced, and a run that
+		// produced none keeps the live tail rather than blanking the block.
+		const fold = progressByAssignment.get(entry.assignmentId);
+		if (fold !== undefined) {
+			fold.settle(nonEmptyString(facts.text), facts.outcome === "succeeded");
+			applyProgress(entry, fold);
+		}
+		return { kind: "updated", entry };
+	};
+
+	return {
+		started(payload): WorkerStreamChange | null {
+			if (isContextOperationRun(payload, options.agentTraits)) return null;
+			const runId = nonEmptyString(payload.runId);
+			const sharedId = nonEmptyString(payload.assignmentId) ?? runId;
+			if (runId === undefined || sharedId === undefined) return null;
+			if (assignmentByRun.has(runId)) return null;
+			// The steps of one plan dispatch under the plan's root as siblings, all at attempt 0. A run this stream has not
+			// seen, at an attempt it has, is such a sibling rather than a retry, so it is its own work item and its own card.
+			// A loop repair enters at its cycle number (attempt 1, 2) under that same root, so a higher attempt alone is no
+			// retry: one follows only a failed attempt, never one that succeeded. Folding the repair into the build's card
+			// replaced the build on screen and labelled the repair "failed over → attempt 2".
+			const existingShared = byAssignment.get(sharedId);
+			const sibling =
+				existingShared !== undefined &&
+				(payload.attempt <= (attemptByAssignment.get(sharedId) ?? -1) || existingShared.result?.outcome === "succeeded");
+			const assignmentId = sibling ? runId : sharedId;
+			const runtime = runtimeIdentity(payload);
+			const existing = sibling ? undefined : byAssignment.get(assignmentId);
+			if (existing !== undefined) {
+				// A later attempt of work the operator is already watching. The block
+				// keeps its identity, gains a rail line, and streams again. Its origin
+				// is the assignment's, not the retry request's.
+				attemptByAssignment.set(assignmentId, payload.attempt);
+				existing.runId = runId;
+				existing.runtime = runtime;
+				existing.pending = true;
+				existing.startedAtMs = Date.now();
+				const toolCallLimit = finiteNumber(payload.budget?.effective.ceiling ?? payload.budget?.effective.toolCalls);
+				if (toolCallLimit === undefined) delete existing.toolCallLimit;
+				else existing.toolCallLimit = toolCallLimit;
+				delete existing.result;
+				existing.attempts.push({
+					runId,
+					targetLabel: workerTargetLabel(runtime),
+					...(payload.routeMove !== undefined ? { moveReason: payload.routeMove.reason } : {}),
+				});
+				assignmentByRun.set(runId, assignmentId);
+				const progress = progressByAssignment.get(assignmentId);
+				if (progress !== undefined) {
+					progress.restart();
+					applyProgress(existing, progress);
+				}
+				return { kind: "updated", entry: existing };
+			}
+			const helper = isHelperRun(payload);
+			if (!helper && payload.requestOrigin !== "user" && payload.requestOrigin !== "agent") return null;
+			attemptByAssignment.set(assignmentId, payload.attempt);
+			const progress = createWorkerProgressFold();
+			const entry: WorkerEntryState = {
+				assignmentId,
+				runId,
+				origin: payload.requestOrigin === "user" || payload.rootRequestOrigin === "user" ? "user" : "agent",
+				...(helper ? { helper: true as const } : {}),
+				...(payload.task ? { task: payload.task } : {}),
+				agentId: payload.agentId,
+				runtime,
+				text: "",
+				droppedLines: 0,
+				tools: [],
+				progress: progress.snapshot(),
+				startedAtMs: Date.now(),
+				...(payload.budget === undefined
+					? {}
+					: { toolCallLimit: payload.budget.effective.ceiling ?? payload.budget.effective.toolCalls }),
+				attempts: [{ runId, targetLabel: workerTargetLabel(runtime) }],
+				pending: true,
+				...(payload.council !== undefined ? { council: { ...payload.council } } : {}),
+				...(payload.parentToolCallId !== undefined ? { parentToolCallId: payload.parentToolCallId } : {}),
+				// An operator-typed council seats its members under the model's admission; display reads who asked.
+				...(payload.rootRequestOrigin === "user" ? { operatorStarted: true as const } : {}),
+				...(pendingPlanSteps.has(runId) ? { planStep: pendingPlanSteps.get(runId) as string } : {}),
+			};
+			pendingPlanSteps.delete(runId);
+			byAssignment.set(assignmentId, entry);
+			assignmentByRun.set(runId, assignmentId);
+			progressByAssignment.set(assignmentId, progress);
+			return { kind: "created", entry };
+		},
+
+		tagPlanStep(runId, stepId): WorkerStreamChange | null {
+			const entry = currentEntryForRun(runId);
+			if (entry === undefined) {
+				pendingPlanSteps.set(runId, stepId);
+				return null;
+			}
+			if (entry.planStep === stepId) return null;
+			entry.planStep = stepId;
+			return { kind: "updated", entry };
+		},
+
+		progress(payload): WorkerStreamChange | null {
+			const entry = currentEntryForRun(payload.runId);
+			if (entry === undefined || !entry.pending) return null;
+			const fold = progressByAssignment.get(entry.assignmentId);
+			// Everything the block shows about the stream comes from the canonical
+			// projection, so an event that moved nothing visible repaints nothing.
+			if (fold === undefined || !fold.observe(payload.event)) return null;
+			applyProgress(entry, fold);
+			return { kind: "updated", entry };
+		},
+
+		completed(payload): WorkerStreamChange | null {
+			parked.delete(payload.runId);
+			const entry = currentEntryForRun(payload.runId);
+			if (entry === undefined) return null;
+			return settle(entry, terminalFacts(payload));
+		},
+
+		failed(payload): WorkerStreamChange | null {
+			parked.delete(payload.runId);
+			const entry = currentEntryForRun(payload.runId);
+			if (entry === undefined) return null;
+			return settle(entry, terminalFacts(payload));
+		},
+
+		aborted(payload): WorkerStreamChange | null {
+			parked.delete(payload.runId);
+			const entry = currentEntryForRun(payload.runId);
+			// A cancelled stream or a loop-guard stop names no dispatched run; only
+			// an abort that hits a live worker of ours settles anything.
+			if (entry === undefined || !entry.pending) return null;
+			const durationMs = finiteNumber(payload.elapsedMs);
+			const failureMessage = nonEmptyString(payload.reason);
+			entry.pending = false;
+			entry.result = {
+				outcome: "canceled",
+				...(durationMs !== undefined ? { durationMs } : {}),
+				...(failureMessage !== undefined ? { failureMessage } : {}),
+				provisional: true,
+			};
+			const attempt = entry.attempts[entry.attempts.length - 1];
+			if (attempt !== undefined) attempt.outcome = "canceled";
+			return { kind: "updated", entry };
+		},
+
+		get(assignmentId): WorkerEntryState | undefined {
+			return byAssignment.get(assignmentId);
+		},
+
+		reset(): void {
+			parked.clear();
+			for (const [assignmentId, entry] of byAssignment) {
+				if (!entry.pending) continue;
+				const fold = progressByAssignment.get(assignmentId);
+				parked.set(entry.runId, { entry, fold, attempt: attemptByAssignment.get(assignmentId) ?? 0 });
+			}
+			byAssignment.clear();
+			attemptByAssignment.clear();
+			assignmentByRun.clear();
+			progressByAssignment.clear();
+			pendingPlanSteps.clear();
+		},
+
+		adopt(runId): WorkerEntryState | undefined {
+			const held = parked.get(runId);
+			if (held === undefined) return undefined;
+			parked.delete(runId);
+			const { entry, fold, attempt } = held;
+			byAssignment.set(entry.assignmentId, entry);
+			attemptByAssignment.set(entry.assignmentId, attempt);
+			for (const step of entry.attempts) assignmentByRun.set(step.runId, entry.assignmentId);
+			if (fold !== undefined) progressByAssignment.set(entry.assignmentId, fold);
+			return entry;
+		},
+	};
+}

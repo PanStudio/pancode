@@ -1,0 +1,24 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.1/schema.json",
+	"root": false,
+	"extends": ["../biome.json"],
+	"files": {
+		"includes": [
+			"!vendor",
+			"!content",
+			"!public",
+			"!.preview*",
+			"!assets",
+			"!css/brand.css",
+			"!image-variants.json",
+			"!**/*.html"
+		]
+	},
+	"linter": {
+		"rules": {
+			"style": {
+				"noDescendingSpecificity": "off"
+			}
+		}
+	}
+}

@@ -1,0 +1,207 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Turn a policy's selection into something the session can append.
+ *
+ * `planEviction` is the whole decision: it asks the policy what should leave,
+ * materializes each candidate into an `EvictedItem` (marker rendered, tokens
+ * measured), and prices the result against the projection the model will
+ * actually receive. It writes nothing and calls no model, so the live engine
+ * and the replay-lite runner drive it identically.
+ *
+ * `buildEvictionFields` is the boring half: the plan plus the trigger facts,
+ * shaped as the ledger entry minus the three fields the session owns
+ * (`turnId`, `parentTurnId`, `timestamp`).
+ */
+
+import { sha256Hex } from "../../../core/hash.js";
+import type { EvictedItem, SessionEntry } from "../../session/entries.js";
+import type {
+	ContextEvictionFields,
+	EvictedState,
+	EvictionCandidate,
+	EvictionPlan,
+	EvictionTrigger,
+	PolicyInput,
+	WorkingSetPolicy,
+	WorkingSetView,
+} from "./contract.js";
+import { refKey } from "./fold.js";
+import { renderMarker } from "./marker.js";
+import { callPathsByToolCallId } from "./path-index.js";
+import { hasThinking, offloadPathOf, primaryPathOf, toolResultPayload, toolResultText } from "./payload.js";
+import { projectWorkingSet } from "./project.js";
+
+/** Paths of the tool calls whose results may be evicted: `callPathsByToolCallId` over the policy input. */
+export type CallPaths = ReadonlyMap<string, string>;
+const NO_CALL_PATHS: CallPaths = new Map();
+
+/**
+ * The event has no turnId until `session.appendEntry` gives it one, and the
+ * projection reads only `reason` and `marker`, so plan-time states carry this
+ * placeholder rather than a fabricated id.
+ */
+const PENDING_EVENT_TURN_ID = "";
+
+/**
+ * The stub that replaces this unit's body, or null when there is nothing to
+ * evict. Thinking eviction renders no marker at all: the reasoning simply
+ * stops being replayed.
+ */
+function markerFor(
+	entry: SessionEntry,
+	candidate: EvictionCandidate,
+	callPaths: CallPaths,
+	alias?: string,
+): string | null {
+	if (entry.kind !== "message") return null;
+	if (entry.role === "assistant") return hasThinking(entry.payload) ? "" : null;
+	if (entry.role !== "tool_result") return null;
+	const payload = toolResultPayload(entry.payload);
+	const toolCallId = typeof payload.obj.toolCallId === "string" ? payload.obj.toolCallId : undefined;
+	return renderMarker({
+		ref: candidate.ref,
+		...(alias === undefined ? {} : { alias }),
+		reason: candidate.reason,
+		by: candidate.by,
+		toolName: payload.toolName,
+		text: toolResultText(payload.result),
+		offloadPath: offloadPathOf(payload),
+		path: primaryPathOf(payload) ?? (toolCallId === undefined ? undefined : callPaths.get(toolCallId)),
+	});
+}
+
+function pendingState(candidate: EvictionCandidate, marker: string, policyId: string): EvictedState {
+	return {
+		reason: candidate.reason,
+		marker,
+		...(candidate.by === undefined ? {} : { by: candidate.by }),
+		tokensFreed: 0,
+		evictedAtTurnId: PENDING_EVENT_TURN_ID,
+		policyId,
+	};
+}
+
+/** A view holding exactly one item, for pricing that item on its own. */
+function soloView(key: string, state: EvictedState): WorkingSetView {
+	return {
+		evicted: new Map([[key, state]]),
+		// Zero events: pricing one body must not also stamp usage invalidation,
+		// which would put the cost of a different mechanism in this item's total.
+		evictionEvents: 0,
+		itemsEvicted: 1,
+		recalls: 0,
+		recallsByRef: new Map(),
+		lastPolicyId: null,
+		lastEvictionTurnId: null,
+		lastEvictionTokensAfter: null,
+	};
+}
+
+/**
+ * What one candidate takes out of the working set: the entry as it stands now
+ * minus the entry as the projection would render it. Zero when the candidate
+ * does not apply to the entry, and never negative, because a marker longer than
+ * the body it replaces is a bad trade, not a negative saving.
+ *
+ * Exported so a policy can do headroom arithmetic (`structural-v1` rung 7 needs
+ * to know when to stop) against the same numbers `planEviction` will record.
+ * A policy that priced evictions its own way would report headroom the ledger
+ * then contradicts. Pass the same `callPaths` the plan will use, or the marker
+ * priced here is a few bytes shorter than the one recorded.
+ */
+export function tokensFreedByEviction(
+	input: Pick<PolicyInput, "estimateTokens">,
+	entry: SessionEntry,
+	candidate: EvictionCandidate,
+	callPaths: CallPaths = NO_CALL_PATHS,
+	alias?: string,
+): number {
+	const marker = markerFor(entry, candidate, callPaths, alias);
+	if (marker === null) return 0;
+	const key = refKey(candidate.ref);
+	const projected = projectWorkingSet([entry], soloView(key, pendingState(candidate, marker, "")))[0] ?? entry;
+	return Math.max(0, input.estimateTokens(entry) - input.estimateTokens(projected));
+}
+
+/** sha256Hex of a tool result's body text, the same text `createReadTool` hashes for its `contentHash`. */
+function bodyHash(entry: SessionEntry): string | undefined {
+	if (entry.kind !== "message") return undefined;
+	const text = toolResultText(toolResultPayload(entry.payload).result);
+	return sha256Hex(text);
+}
+
+export function planEviction(policy: WorkingSetPolicy, input: PolicyInput): EvictionPlan | null {
+	const candidates = policy.select(input);
+	if (candidates.length === 0) return null;
+
+	const byTurnId = new Map<string, SessionEntry>();
+	for (const entry of input.entries) byTurnId.set(entry.turnId, entry);
+	const callPaths = callPathsByToolCallId(input.entries);
+
+	const items: EvictedItem[] = [];
+	const claimed = new Set<string>();
+	let aliasSequence =
+		input.view.recallAliasSequence ??
+		[...input.view.evicted.values()].reduce((max, state) => Math.max(max, Number(state.alias?.slice(1)) || 0), 0);
+	for (const candidate of candidates) {
+		const key = refKey(candidate.ref);
+		// A policy is contractually forbidden from returning a unit that is
+		// already out, and a duplicate inside one selection would double-count
+		// the tokens it frees. Both are cheap to refuse here.
+		if (input.view.evicted.has(key) || claimed.has(key)) continue;
+		const entry = byTurnId.get(key);
+		if (entry === undefined) continue;
+		const alias = entry.kind === "message" && entry.role === "tool_result" ? `r${aliasSequence + 1}` : undefined;
+		const marker = markerFor(entry, candidate, callPaths, alias);
+		if (marker === null) continue;
+		// A marker at least as long as the body it replaces is a cold turn bought
+		// for nothing, whatever the policy's reason. Refused here so no policy can
+		// record an eviction that freed nothing.
+		const tokensFreed = tokensFreedByEviction(input, entry, candidate, callPaths, alias);
+		if (tokensFreed <= 0) continue;
+		claimed.add(key);
+		if (alias !== undefined) aliasSequence += 1;
+		// The hash is over the body text as the ledger holds it, which is what
+		// the read tool hashes on a fresh read of the same path (`createReadTool`):
+		// a match there is a reread of unchanged content. Thinking units carry
+		// no marker and no hash.
+		const contentHash = alias === undefined ? undefined : bodyHash(entry);
+		items.push({
+			...(alias === undefined ? {} : { alias }),
+			ref: candidate.ref,
+			reason: candidate.reason,
+			tokensFreed,
+			marker,
+			...(candidate.by === undefined ? {} : { by: candidate.by }),
+			...(contentHash === undefined ? {} : { contentHash }),
+		});
+	}
+	if (items.length === 0) return null;
+
+	return {
+		policyId: policy.id,
+		items,
+		// Keep the complete request anchor, including system and tools. Only the
+		// removable bodies change; ledger totals cannot replace this basis (#422).
+		tokensBefore: input.pressure.tokens,
+		tokensAfter: Math.max(0, input.pressure.tokens - items.reduce((sum, item) => sum + item.tokensFreed, 0)),
+	};
+}
+
+export function buildEvictionFields(
+	plan: EvictionPlan,
+	meta: { trigger: EvictionTrigger; pressureBefore: number | null; snapshotIdBefore: string | null },
+): ContextEvictionFields {
+	return {
+		kind: "contextEviction",
+		basis: "request-context",
+		policyId: plan.policyId,
+		trigger: meta.trigger,
+		evicted: plan.items,
+		tokensBefore: plan.tokensBefore,
+		tokensAfter: plan.tokensAfter,
+		pressureBefore: meta.pressureBefore,
+		snapshotIdBefore: meta.snapshotIdBefore,
+	};
+}

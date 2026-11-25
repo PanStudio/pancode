@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { useId, useState } from "react";
+import { originFromLaunchInput, ticketFromLaunchInput } from "../api/auth-state.js";
+import { adoptLaunchSecret, refusalReason } from "../api/token.js";
+
+/**
+ * Shown when this browser has no launch link or the server refused the one it had. A refused link
+ * never starts working again, so this names the command that prints a fresh link and accepts one.
+ */
+export function Reconnect({ refused }: { refused: boolean }) {
+	const field = useId();
+	const [text, setText] = useState("");
+	const ticket = ticketFromLaunchInput(text);
+	const secret = ticket !== null ? { ticket } : null;
+	const reason = refused ? (refusalReason() ?? "credential") : null;
+	return (
+		<div className="reconnect" role="alert">
+			<h1>{refused ? "This browser is no longer connected" : "Open your launch link"}</h1>
+			<p>
+				{reason === "ticket" ? (
+					<>
+						This launch link was already used or has expired. A link works once, within a minute of being printed. Run{" "}
+						<code className="reconnect__command">pancode gui</code> for a fresh one.
+					</>
+				) : reason === "credential" ? (
+					"The server refused this browser's launch link. That happens after the PanCode server restarts or PanCode is reinstalled. Nothing is wrong with your data, and the old credential has been removed from this browser."
+				) : (
+					"This browser has no launch link yet."
+				)}
+			</p>
+			<p>
+				Run <code className="reconnect__command">pancode gui</code> in a terminal. It reopens the background app when one is
+				installed, or starts a new server, and opens a fresh link. You can also paste the printed link here.
+			</p>
+			<form
+				onSubmit={(event) => {
+					event.preventDefault();
+					if (secret) adoptLaunchSecret(secret, originFromLaunchInput(text) ?? location.origin);
+				}}
+			>
+				<label htmlFor={field}>Launch link</label>
+				<input
+					id={field}
+					value={text}
+					autoComplete="off"
+					spellCheck={false}
+					placeholder={`${location.origin}/#ticket=…`}
+					onChange={(event) => setText(event.target.value)}
+				/>
+				{text.trim() !== "" && !secret && <p className="reconnect__problem">That text is not a launch link.</p>}
+				<div className="actions">
+					<button type="submit" className="primary" disabled={!secret}>
+						Connect this browser
+					</button>
+				</div>
+			</form>
+		</div>
+	);
+}

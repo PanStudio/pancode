@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { DomainContract } from "../../core/domain-loader.js";
+import type { AcceptProposalResult } from "./bootstrap-proposals.js";
+import type { RunBootstrapInput, RunBootstrapResult } from "./bootstrap-types.js";
+import type { RunContextClearInput, RunContextClearResult } from "./clear.js";
+import type { ParsedPancodeMd } from "./pancode-md.js";
+import type { RunContextRefreshInput, RunContextRefreshResult } from "./refresh.js";
+
+export interface ProjectPromptContext {
+	text: string;
+	pancodeMd: ParsedPancodeMd | null;
+	warnings: string[];
+	/**
+	 * Absolute paths of the effective project handbooks, ancestor to nearest.
+	 * An override resets the inherited chain, so this names exactly the files
+	 * whose content is in `text`; empty when no selected handbook loaded.
+	 */
+	handbookFiles: string[];
+	/**
+	 * Captured handbook bytes from the same load as text, ancestor to nearest.
+	 * With no handbook file, the compiled handbook when there is one.
+	 */
+	handbookSources: ReadonlyArray<{ path: string; source: string }>;
+	/** Set when `handbookSources` is the handbook compiled from the tree, not a written file. */
+	compiledHandbook?: { path: string; sources: string[]; rules: number };
+	/** Trusted renderer products, kept separate from authored Markdown. */
+	supportFragments: readonly string[];
+	/** When the rendered `<project-orientation>` snapshot was recorded; absent when none rendered. */
+	orientationObservedAt?: string;
+}
+
+/**
+ * Structured fields from the effective layered project handbook for bounded injection into worker prompts.
+ * Deliberately excludes the identity paragraph and any raw handbook prose.
+ */
+export interface ProjectStructuredContext {
+	projectName: string;
+	conventions: ReadonlyArray<string>;
+	invariants: ReadonlyArray<string>;
+	/**
+	 * Bodies of effective handbook H2 sections titled exactly "Verification expectations"
+	 * (case-insensitive). The only custom section ever projected to workers;
+	 * dispatch includes it for verification-class runs only. Absent when the
+	 * handbook has no such section.
+	 */
+	verificationExpectations?: string;
+}
+
+export interface ContextState {
+	pancodeMd: "ok" | "stale" | "none" | "malformed";
+	memoryCount: number;
+}
+
+/** A session-start note about this project's context, worded for the host that shows it. */
+export interface StartupHint {
+	level: "info" | "warning";
+	text: string;
+}
+
+export interface ContextContract extends DomainContract {
+	/** Cancel only the active operation owned by this session and workspace. */
+	cancelOperation?(sessionId: string, cwd: string, operationId?: string): boolean;
+	runBootstrap(input?: RunBootstrapInput): Promise<RunBootstrapResult>;
+	runContextClear(input?: RunContextClearInput): Promise<RunContextClearResult>;
+	/** Write a reviewed handbook proposal (`context init --accept`), reported as a context-init operation. */
+	acceptProposal?(input?: { cwd?: string; ref?: string }): AcceptProposalResult;
+	/**
+	 * Rebuild the codemap index and `.pancode` state without touching project handbooks.
+	 * Markdown wiki updates require the explicit refresh input flag.
+	 * Backs `/context refresh` and `pancode context refresh`.
+	 */
+	runContextRefresh(input?: RunContextRefreshInput): Promise<RunContextRefreshResult>;
+	renderPromptContext(cwd: string): ProjectPromptContext;
+	contextState(cwd?: string): ContextState;
+	startupHints(): StartupHint[];
+	/**
+	 * Incrementally refresh the codemap for files changed during the session
+	 * (e.g. after an edit or write). No-op when the project was never indexed;
+	 * full reconciliation happens at session start and on demand; stop only drains pending writes. Best-effort:
+	 * failures are swallowed so a tool call is never blocked by indexing.
+	 */
+	noteFileChanges(paths: ReadonlyArray<string>, cwd?: string): void;
+}

@@ -1,0 +1,358 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+(() => {
+	const root = document.documentElement;
+	const system = matchMedia("(prefers-color-scheme: light)");
+	system.addEventListener("change", () => {
+		let saved;
+		try {
+			saved = localStorage.getItem("pancode-theme");
+		} catch {
+			/* Storage is optional. */
+		}
+		const requested = new URLSearchParams(location.search).get("theme");
+		if (
+			document.querySelector('meta[name="pancode-default-theme"]')?.content === "system" &&
+			!["light", "dark"].includes(saved) &&
+			!["light", "dark"].includes(requested)
+		)
+			applyTheme(system.matches ? "light" : "dark", false);
+	});
+	const announcement = document.createElement("p");
+	announcement.className = "sr-only";
+	announcement.setAttribute("role", "status");
+	document.body.append(announcement);
+
+	function applyTheme(theme, persist = true) {
+		root.dataset.theme = theme;
+		try {
+			if (persist) localStorage.setItem("pancode-theme", theme);
+		} catch {
+			// The palette works even when storage is unavailable.
+		}
+		const paper = getComputedStyle(root).getPropertyValue("--paper").trim();
+		for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
+		for (const button of document.querySelectorAll("[data-theme-toggle]")) {
+			button.setAttribute("aria-label", theme === "light" ? "Switch to dark theme" : "Switch to light theme");
+			if (!button.querySelector("span")) button.innerHTML = '<span aria-hidden="true">◐</span>';
+		}
+	}
+	applyTheme(root.dataset.theme || "dark", false);
+	for (const button of document.querySelectorAll("[data-theme-toggle]")) {
+		button.addEventListener("click", () => applyTheme(root.dataset.theme === "light" ? "dark" : "light"));
+	}
+
+	const menus = [...document.querySelectorAll(".nav-more")];
+	for (const menu of menus) {
+		menu.addEventListener("focusout", () =>
+			requestAnimationFrame(() => {
+				if (!menu.contains(document.activeElement)) menu.open = false;
+			}),
+		);
+		menu.addEventListener("toggle", () => {
+			if (menu.open) for (const other of menus) if (other !== menu) other.open = false;
+		});
+	}
+	document.addEventListener("click", (event) => {
+		for (const menu of menus) if (!menu.contains(event.target)) menu.open = false;
+	});
+	document.addEventListener("keydown", (event) => {
+		if (event.key !== "Escape") return;
+		for (const menu of menus) {
+			if (!menu.open) continue;
+			menu.open = false;
+			menu.querySelector("summary").focus();
+		}
+	});
+
+	for (const pre of document.querySelectorAll("pre")) {
+		if (!pre.querySelector("code") || pre.classList.contains("no-copy")) continue;
+		const button = document.createElement("button");
+		button.type = "button";
+		button.className = "copy code-copy";
+		button.textContent = "Copy";
+		button.setAttribute("aria-label", "Copy code example");
+		button.dataset.copy = pre.textContent.trim();
+		let block = pre.closest(".code-block");
+		if (!block) {
+			block = document.createElement("div");
+			block.className = "code-block";
+			pre.before(block);
+			block.append(pre);
+		}
+		block.append(button);
+	}
+	for (const button of document.querySelectorAll("[data-copy-from]")) {
+		const source = document.querySelector(button.dataset.copyFrom);
+		if (source) button.dataset.copy = source.textContent.trim();
+	}
+	const copyTimers = new WeakMap();
+	const feedback = parseFloat(getComputedStyle(root).getPropertyValue("--motion-feedback")) || 1800;
+	for (const button of document.querySelectorAll("[data-copy]")) {
+		button.hidden = false;
+		button.addEventListener("click", async () => {
+			// Icon buttons keep their glyphs; CSS swaps them by copy state, and the
+			// tooltip and live region carry the words.
+			const icon = button.hasAttribute("data-copy-icon");
+			const previous = button.dataset.copyLabel ?? (icon ? button.title : button.textContent);
+			button.dataset.copyLabel = previous;
+			const label = (text) => {
+				if (icon) button.title = text;
+				else button.textContent = text;
+			};
+			clearTimeout(copyTimers.get(button));
+			try {
+				await navigator.clipboard.writeText(button.dataset.copy || "");
+				label("Copied");
+				button.dataset.copyState = "success";
+				announcement.textContent = "Copied to clipboard.";
+			} catch {
+				label("Copy failed");
+				button.dataset.copyState = "error";
+				announcement.textContent = "Copy failed. Select and copy the command text.";
+			}
+			copyTimers.set(
+				button,
+				window.setTimeout(() => {
+					label(previous);
+					delete button.dataset.copyState;
+				}, feedback),
+			);
+		});
+	}
+	// Asset links carry a ?v= cache key, so match the path rather than the raw attribute.
+	const captures = [...document.querySelectorAll('a[href^="/assets/"]')].filter(
+		(link) => new URL(link.href).pathname.endsWith(".png") && link.querySelector("img"),
+	);
+	if (captures.length && "HTMLDialogElement" in window && "showModal" in HTMLDialogElement.prototype) {
+		const viewer = document.createElement("dialog");
+		viewer.className = "media-dialog";
+		viewer.setAttribute("aria-labelledby", "media-title");
+		viewer.setAttribute("aria-describedby", "media-caption");
+		viewer.innerHTML = `<div class="media-header"><h2 id="media-title">PanCode</h2><button class="media-close" type="button" aria-label="Close screenshot">Close <span aria-hidden="true">×</span></button></div><div class="image-view"><img alt="" decoding="async"></div><div class="media-footer"><p class="caption" id="media-caption"></p><div class="media-controls"><button type="button" data-media="previous" aria-label="Previous screenshot">←</button><button type="button" data-media="next" aria-label="Next screenshot">→</button><button type="button" data-media="zoom" aria-pressed="false">Actual size</button><a class="text-link" data-media="original" target="_blank" rel="noopener">Open original <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>`;
+		// Crawlers that render the page see this link before any capture opens.
+		viewer.querySelector('[data-media="original"]').href = captures[0].href;
+		document.body.append(viewer);
+		const image = viewer.querySelector("img");
+		const viewport = viewer.querySelector(".image-view");
+		const zoom = viewer.querySelector('[data-media="zoom"]');
+		let current = 0;
+		let opener;
+		const fit = () => {
+			delete viewport.dataset.zoom;
+			zoom.setAttribute("aria-pressed", "false");
+			zoom.textContent = "Actual size";
+			viewport.scrollTo(0, 0);
+		};
+		const show = (position) => {
+			current = (position + captures.length) % captures.length;
+			const link = captures[current];
+			const source = link.querySelector("img");
+			// Load the full WebP only when a reader opens the viewer; keep the original PNG available.
+			image.src = source.getAttribute("src");
+			image.alt = source.alt;
+			image.width = Number(source.getAttribute("width"));
+			image.height = Number(source.getAttribute("height"));
+			viewer.querySelector("#media-caption").textContent = source.alt;
+			viewer.querySelector('[data-media="original"]').href = link.href;
+			fit();
+		};
+		for (const [position, link] of captures.entries())
+			link.addEventListener("click", (event) => {
+				if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+				event.preventDefault();
+				opener = link;
+				show(position);
+				viewer.showModal();
+				viewer.querySelector(".media-close").focus();
+			});
+		viewer.querySelector(".media-close").addEventListener("click", () => viewer.close());
+		viewer.querySelector('[data-media="previous"]').addEventListener("click", () => show(current - 1));
+		viewer.querySelector('[data-media="next"]').addEventListener("click", () => show(current + 1));
+		for (const control of viewer.querySelectorAll('[data-media="previous"], [data-media="next"]'))
+			control.hidden = captures.length < 2;
+		zoom.addEventListener("click", () => {
+			if (viewport.dataset.zoom) fit();
+			else {
+				viewport.dataset.zoom = "actual";
+				zoom.setAttribute("aria-pressed", "true");
+				zoom.textContent = "Fit view";
+			}
+		});
+		viewer.addEventListener("keydown", (event) => {
+			if (!viewport.dataset.zoom && ["ArrowLeft", "ArrowRight"].includes(event.key)) {
+				event.preventDefault();
+				show(current + (event.key === "ArrowRight" ? 1 : -1));
+			}
+		});
+		viewer.addEventListener("click", (event) => {
+			if (event.target !== viewer) return;
+			const box = viewer.getBoundingClientRect();
+			if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom)
+				viewer.close();
+		});
+		viewer.addEventListener("close", () => opener?.focus({ preventScroll: true }));
+	}
+	// Capture sequences: one frame at a time behind a tab list. The frames share
+	// one grid cell, so switching never moves the page. Without script every
+	// frame stays visible in order.
+	for (const [number, sequence] of [...document.querySelectorAll("[data-sequence]")].entries()) {
+		const frames = [...sequence.querySelectorAll(".guide-frame")];
+		const tabs = document.createElement("div");
+		tabs.className = "guide-tabs";
+		tabs.setAttribute("role", "tablist");
+		tabs.setAttribute("aria-label", sequence.querySelector("figcaption")?.textContent.trim() || "Screens");
+		const buttons = frames.map((frame, index) => {
+			const button = document.createElement("button");
+			button.type = "button";
+			button.id = `sequence-${number}-tab-${index}`;
+			button.setAttribute("role", "tab");
+			button.setAttribute("aria-controls", frame.id);
+			button.innerHTML = `<span class="step-number">${String(index + 1).padStart(2, "0")}</span> `;
+			button.append(frame.dataset.label);
+			frame.setAttribute("role", "tabpanel");
+			frame.setAttribute("aria-labelledby", button.id);
+			tabs.append(button);
+			return button;
+		});
+		const select = (index, focus = false) => {
+			for (const [position, button] of buttons.entries()) {
+				const active = position === index;
+				button.setAttribute("aria-selected", String(active));
+				button.tabIndex = active ? 0 : -1;
+				frames[position].dataset.active = String(active);
+				frames[position].inert = !active;
+			}
+			if (focus) buttons[index].focus();
+		};
+		tabs.addEventListener("click", (event) => {
+			const button = event.target.closest("[role=tab]");
+			if (button) select(buttons.indexOf(button));
+		});
+		tabs.addEventListener("keydown", (event) => {
+			const current = buttons.indexOf(document.activeElement);
+			const next = { ArrowRight: current + 1, ArrowLeft: current - 1, Home: 0, End: buttons.length - 1 }[event.key];
+			if (current < 0 || next === undefined) return;
+			event.preventDefault();
+			select((next + buttons.length) % buttons.length, true);
+		});
+		// The frames become tab panels, so the list stops being a list.
+		sequence.querySelector(".guide-frames")?.setAttribute("role", "none");
+		sequence.prepend(tabs);
+		sequence.dataset.sequence = "ready";
+		select(0);
+	}
+	// Tab sets: install commands per method or shell. Panels are the children
+	// marked data-tab; without script every panel stays visible under its own
+	// label. Windows visitors start on the Windows panel, whose text says what
+	// works there today. A link to a heading inside a panel opens that panel.
+	const windows = /Windows/i.test(navigator.userAgentData?.platform ?? navigator.userAgent);
+	for (const [number, set] of [...document.querySelectorAll("[data-tabs]")].entries()) {
+		const panels = [...set.children].filter((child) => child.hasAttribute("data-tab"));
+		if (panels.length < 2) continue;
+		const list = document.createElement("div");
+		list.className = "tab-list";
+		list.setAttribute("role", "tablist");
+		list.setAttribute("aria-label", set.dataset.tabs);
+		const buttons = panels.map((panel, index) => {
+			panel.id ||= `tabs-${number}-panel-${index}`;
+			const button = document.createElement("button");
+			button.type = "button";
+			button.id = `${panel.id}-tab`;
+			button.setAttribute("role", "tab");
+			button.setAttribute("aria-controls", panel.id);
+			button.textContent = panel.dataset.tab;
+			if (panel.dataset.tabTag) {
+				const tag = document.createElement("span");
+				tag.className = "tag";
+				tag.textContent = panel.dataset.tabTag;
+				button.append(" ", tag);
+			}
+			panel.setAttribute("role", "tabpanel");
+			panel.setAttribute("aria-labelledby", button.id);
+			list.append(button);
+			return button;
+		});
+		const select = (index, focus = false) => {
+			for (const [position, button] of buttons.entries()) {
+				const active = position === index;
+				button.setAttribute("aria-selected", String(active));
+				button.tabIndex = active ? 0 : -1;
+				panels[position].hidden = !active;
+			}
+			if (focus) buttons[index].focus();
+		};
+		list.addEventListener("click", (event) => {
+			const button = event.target.closest("[role=tab]");
+			if (button) select(buttons.indexOf(button));
+		});
+		list.addEventListener("keydown", (event) => {
+			const current = buttons.indexOf(document.activeElement);
+			const next = { ArrowRight: current + 1, ArrowLeft: current - 1, Home: 0, End: buttons.length - 1 }[event.key];
+			if (current < 0 || next === undefined) return;
+			event.preventDefault();
+			select((next + buttons.length) % buttons.length, true);
+		});
+		const linked = () => {
+			const target = location.hash.length > 1 && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+			return target ? panels.findIndex((panel) => panel.contains(target)) : -1;
+		};
+		addEventListener("hashchange", () => {
+			const index = linked();
+			if (index >= 0) select(index);
+		});
+		panels[0].before(list);
+		set.dataset.tabsReady = "";
+		const platform = windows ? panels.findIndex((panel) => panel.dataset.tabPlatform === "windows") : -1;
+		select([linked(), platform, 0].find((index) => index >= 0));
+	}
+	const wideNav = matchMedia("(min-width: 601px)");
+	wideNav.addEventListener("change", () => {
+		if (wideNav.matches)
+			for (const menu of menus) {
+				if (menu.contains(document.activeElement)) document.querySelector(".nav a[aria-current], .brand").focus();
+				menu.open = false;
+			}
+	});
+	const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+	let reveals;
+	function finishReveals() {
+		reveals?.disconnect();
+		for (const el of document.querySelectorAll("[data-reveal]")) el.dataset.reveal = "visible";
+	}
+	if (!reduced.matches && "IntersectionObserver" in window) {
+		// The observer's first report classifies each element from layout the browser
+		// already computed: anything that starts above the fold is left alone, the rest
+		// waits hidden until it scrolls in. Measuring here would force a reflow.
+		const seen = new WeakSet();
+		reveals = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					const el = entry.target;
+					const first = !seen.has(el);
+					seen.add(el);
+					if (first && entry.boundingClientRect.top < entry.rootBounds.bottom) reveals.unobserve(el);
+					else if (entry.isIntersecting) {
+						el.dataset.reveal = "visible";
+						reveals.unobserve(el);
+					} else if (first) el.dataset.reveal = "pending";
+				}
+			},
+			{ threshold: 0.08, rootMargin: "0px 0px -32px 0px" },
+		);
+		for (const el of document.querySelectorAll(
+			".section-heading, .interface-grid, .model-routes, .workflow-grid, .tutorial-card, .project-section, .guide-step, .guide-capture, .guide-sequence, .guide-diagram, .guide-result",
+		))
+			reveals.observe(el);
+	}
+	reduced.addEventListener("change", () => {
+		if (reduced.matches) finishReveals();
+	});
+	document.addEventListener("focusin", (event) => {
+		const el = event.target.closest('[data-reveal="pending"]');
+		if (el) {
+			el.dataset.reveal = "visible";
+			reveals?.unobserve(el);
+		}
+	});
+})();

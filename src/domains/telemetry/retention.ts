@@ -1,0 +1,631 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { existsSync, lstatSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { lstat, readdir, readFile, rmdir } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
+import { unlinkedStateDirectory } from "../../core/state-boundary.js";
+import { clearAbandonedStateLock, stateLockIsAbandoned, tryWithStateFileLockSync } from "../../core/state-file-lock.js";
+import { scanTelemetrySegment } from "../../core/telemetry/segment.js";
+import { pruneWorkerObservations } from "../context/worker/observation-retention.js";
+import { pruneWorkerContextSeeds } from "../context/worker/store.js";
+import { readContextSeedEnds, readRunEnds } from "../dispatch/state.js";
+import { pruneOrphanedObservations } from "../memory/observation-store.js";
+import { liveSessionOwner } from "../session/live-owner.js";
+import { CONTENT_SUBJECTS, collectRefs } from "./objects.js";
+import {
+	TELEMETRY_BUNDLE_FILE,
+	TELEMETRY_JOURNAL_FILE,
+	telemetryBundlePath,
+	telemetryJournalFiles,
+	telemetryObjectsDirectory,
+	telemetryProcessesDirectory,
+	telemetryRoot,
+	telemetryRunsDirectory,
+	telemetrySealMarkerPath,
+	telemetrySessionsDirectory,
+} from "./paths.js";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const GIB = 1024 * 1024 * 1024;
+const SAFE_ID = /^[a-zA-Z0-9_-]+$/;
+const OBJECT_FILE = /^obj_[0-9a-f]{64}\.json$/;
+
+/** O5 (#434): standard journals 90 days or 1 GiB, research content 30 days or 4 GiB, oldest first. */
+export interface PrunePolicy {
+	days: number;
+	maxBytes: number;
+	researchDays: number;
+	researchMaxBytes: number;
+}
+export const DEFAULT_PRUNE_POLICY: PrunePolicy = {
+	days: 90,
+	maxBytes: GIB,
+	researchDays: 30,
+	researchMaxBytes: 4 * GIB,
+};
+
+export type PruneReason = "expired" | "over-size" | "research-expired" | "research-over-size" | "unreferenced-object";
+type JournalStamp = Readonly<Record<string, string>>;
+
+export interface PruneAction {
+	path: string;
+	bytes: number;
+	mtimeMs: number;
+	reason: PruneReason;
+	/** The session, run or process whose ownership is re-checked immediately before the delete. */
+	owner:
+		| { kind: "session"; directory: string; meta: string | null; journalStamp: JournalStamp }
+		| { kind: "run"; directory: string }
+		| { kind: "process"; directory: string };
+}
+
+export interface PruneHold {
+	path: string;
+	reason: "live" | "unknown-owner" | "fork-parent" | "referenced-run" | "sealed" | "unreadable" | "symlink";
+}
+
+export interface PrunePlan {
+	stateDir: string;
+	remove: PruneAction[];
+	held: PruneHold[];
+	standardBytes: number;
+	researchBytes: number;
+}
+
+interface FileInfo {
+	path: string;
+	bytes: number;
+	mtimeMs: number;
+}
+
+interface SessionTelemetry {
+	directory: string;
+	sessionId: string;
+	/** The session's `meta.json` in its store, which says whether its owner is alive; null when no store holds it. */
+	meta: string | null;
+	bundle: FileInfo | null;
+	/** `sealed.json`, removed first with the session so a partial prune never leaves it vouching for less (RL-7). */
+	marker: FileInfo | null;
+	sealed: boolean;
+	journalStamp: JournalStamp | null;
+	segments: FileInfo[];
+	objects: Map<string, FileInfo>;
+	lastWriteMs: number;
+	bytes: number;
+	refs: Map<string, string>;
+	runs: Set<string>;
+	parent: string | null;
+	hold: PruneHold["reason"] | null;
+	/** A record this version cannot read may cite an object, so nothing in the session is collected or expired by reference. */
+	partial: boolean;
+}
+
+/** A run or process scope: its journal, sealed bundle and objects, kept or removed whole. */
+interface ScopeTelemetry {
+	id: string;
+	directory: string;
+	files: FileInfo[];
+	lastWriteMs: number;
+	bytes: number;
+	hold: PruneHold["reason"] | null;
+}
+
+async function info(path: string): Promise<FileInfo | null> {
+	try {
+		const stat = await lstat(path);
+		return stat.isFile() ? { path, bytes: stat.size, mtimeMs: stat.mtimeMs } : null;
+	} catch {
+		return null;
+	}
+}
+
+/** A session plan is valid only while the journal and bundle that established its eligibility are unchanged. */
+function sessionJournalStamp(directory: string): JournalStamp | null {
+	try {
+		const entries = readdirSync(directory);
+		const names = [
+			...telemetryJournalFiles(entries),
+			...(entries.includes(TELEMETRY_BUNDLE_FILE) ? [TELEMETRY_BUNDLE_FILE] : []),
+		];
+		return Object.fromEntries(
+			names.sort().map((name) => {
+				const stat = lstatSync(join(directory, name));
+				if (!stat.isFile()) throw new Error("nonregular telemetry scope file");
+				return [name, `${stat.dev}:${stat.ino}:${stat.ctimeMs}:${stat.mtimeMs}:${stat.size}`];
+			}),
+		);
+	} catch {
+		return null;
+	}
+}
+
+function sameJournalStamp(expected: JournalStamp, current: JournalStamp | null): boolean {
+	return (
+		current !== null &&
+		Object.keys(expected).length === Object.keys(current).length &&
+		Object.entries(expected).every(([name, stamp]) => current[name] === stamp)
+	);
+}
+
+async function names(directory: string): Promise<string[]> {
+	try {
+		return await readdir(directory);
+	} catch {
+		return [];
+	}
+}
+
+/** Every path prune removes stays under the state root: a directory reached through a symlink is never entered. */
+async function realDirectory(path: string): Promise<boolean> {
+	try {
+		const stat = await lstat(path);
+		return stat.isDirectory() && !stat.isSymbolicLink();
+	} catch {
+		return false;
+	}
+}
+
+function journalLock(directory: string): string {
+	return join(directory, `${TELEMETRY_JOURNAL_FILE}.lock`);
+}
+
+/** A writer holds `<journal>.lock` for its whole life; only a lock whose owner is provably gone keeps nothing. */
+function locked(directory: string): boolean {
+	const lock = journalLock(directory);
+	return existsSync(lock) && !stateLockIsAbandoned(lock);
+}
+
+/** Whether the session's owner may be alive; an unreadable or missing meta cannot rule it out. */
+async function sessionOwnerLive(meta: string | null): Promise<boolean> {
+	if (meta === null) return true;
+	try {
+		return liveSessionOwner(JSON.parse(await readFile(meta, "utf8")) as Parameters<typeof liveSessionOwner>[0]) !== null;
+	} catch {
+		return true;
+	}
+}
+
+/** Each session's `meta.json`, by id, across the session store's workspace buckets; the first bucket wins. */
+async function sessionMetas(stateDir: string): Promise<Map<string, string>> {
+	const metas = new Map<string, string>();
+	const root = join(stateDir, "sessions");
+	for (const bucket of (await names(root)).sort()) {
+		if (!SAFE_ID.test(bucket) || !(await realDirectory(join(root, bucket)))) continue;
+		for (const sessionId of await names(join(root, bucket)))
+			if (SAFE_ID.test(sessionId) && !metas.has(sessionId))
+				metas.set(sessionId, join(root, bucket, sessionId, "meta.json"));
+	}
+	return metas;
+}
+
+/** The daily sweep's plan ran out of its budget; it gives up until the next day. */
+class PlanStopped extends Error {}
+
+async function readSessionTelemetry(
+	directory: string,
+	sessionId: string,
+	meta: string | null,
+	stopped?: () => boolean,
+): Promise<SessionTelemetry | null> {
+	const journalStamp = sessionJournalStamp(directory);
+	const entries = await names(directory);
+	const segmentNames = telemetryJournalFiles(entries);
+	const bundle = await info(telemetryBundlePath(directory));
+	const marker = await info(telemetrySealMarkerPath(directory));
+	const objectsDirectory = telemetryObjectsDirectory(directory);
+	const objectNames = (await realDirectory(objectsDirectory))
+		? (await names(objectsDirectory)).filter((name) => OBJECT_FILE.test(name))
+		: [];
+	if (segmentNames.length === 0 && objectNames.length === 0 && bundle === null && marker === null) return null;
+	const session: SessionTelemetry = {
+		directory,
+		sessionId,
+		meta,
+		bundle,
+		marker,
+		sealed: bundle !== null,
+		journalStamp,
+		segments: [],
+		objects: new Map(),
+		lastWriteMs: bundle?.mtimeMs ?? 0,
+		bytes: (bundle?.bytes ?? 0) + (marker?.bytes ?? 0),
+		refs: new Map(),
+		runs: new Set(),
+		parent: null,
+		hold: journalStamp === null ? "unreadable" : null,
+		partial: journalStamp === null,
+	};
+	for (const name of segmentNames) {
+		if (stopped) {
+			// Each segment scan is synchronous, so the sweep yields between them to keep the host responsive.
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			if (stopped()) throw new PlanStopped();
+		}
+		const file = await info(join(directory, name));
+		if (!file) continue;
+		session.segments.push(file);
+		session.lastWriteMs = Math.max(session.lastWriteMs, file.mtimeMs);
+		session.bytes += file.bytes;
+		let bytes: Buffer;
+		try {
+			bytes = await readFile(file.path);
+		} catch {
+			session.partial = true;
+			continue;
+		}
+		const scan = scanTelemetrySegment(bytes);
+		// Interior damage or a record this version cannot read may hide a reference (R12).
+		if (scan.corruptOffset !== null) session.partial = true;
+		for (const row of scan.rows) {
+			if (row.kind === "skipped") {
+				session.partial = true;
+				continue;
+			}
+			if (row.kind !== "record") continue;
+			const record = row.record;
+			if (record.k === "session.sealed" || record.k === "share.sealed") session.sealed = true;
+			collectRefs(record.data, session.refs);
+			if (record.k === "call.linked" || record.k === "run.linked") session.runs.add(record.data.runId);
+			if (record.k === "session.forked") session.parent = record.data.parentSessionId;
+		}
+	}
+	for (const name of objectNames) {
+		const file = await info(join(objectsDirectory, name));
+		if (file) session.objects.set(name.slice(0, -".json".length), file);
+	}
+	if (session.lastWriteMs === 0)
+		session.lastWriteMs = Math.max(0, ...[...session.objects.values()].map((file) => file.mtimeMs));
+	if (locked(directory)) session.hold = "live";
+	else {
+		try {
+			if (meta === null) throw new Error("no session store holds this session");
+			const owner = JSON.parse(await readFile(meta, "utf8")) as Parameters<typeof liveSessionOwner>[0];
+			if (liveSessionOwner(owner) !== null) session.hold = "live";
+		} catch {
+			// Without its meta the session's owner cannot be ruled out.
+			session.hold ??= "unknown-owner";
+		}
+	}
+	return session;
+}
+
+async function readScopeTelemetry(directory: string, id: string): Promise<ScopeTelemetry | null> {
+	const segmentNames = telemetryJournalFiles(await names(directory));
+	const objectsDirectory = telemetryObjectsDirectory(directory);
+	const objectNames = (await realDirectory(objectsDirectory))
+		? (await names(objectsDirectory)).filter((name) => OBJECT_FILE.test(name))
+		: [];
+	// The seal marker goes first, so a prune cut short never leaves it naming a seal whose files are gone (RL-7).
+	const paths = [
+		telemetrySealMarkerPath(directory),
+		...segmentNames.map((name) => join(directory, name)),
+		telemetryBundlePath(directory),
+		...objectNames.map((name) => join(objectsDirectory, name)),
+	];
+	const scope: ScopeTelemetry = { id, directory, files: [], lastWriteMs: 0, bytes: 0, hold: null };
+	for (const path of paths) {
+		const file = await info(path);
+		if (!file) continue;
+		scope.files.push(file);
+		scope.lastWriteMs = Math.max(scope.lastWriteMs, file.mtimeMs);
+		scope.bytes += file.bytes;
+	}
+	if (scope.files.length === 0) return null;
+	if (locked(directory)) scope.hold = "live";
+	return scope;
+}
+
+/**
+ * Read-only: what a prune under `policy` would remove and what it must keep (#434). A live or
+ * unreadable session keeps every file; a fork parent with a kept child, a run a kept journal
+ * references, and an object a kept record cites are never collected. Research retention is
+ * the exception for scopes never sealed: content preimages expire after their research window while the
+ * records citing them stay. A historical seal protects all individual objects until whole-scope retirement.
+ */
+export async function planTelemetryPrune(
+	stateDir: string,
+	policy: PrunePolicy,
+	nowMs = Date.now(),
+	options: { stopped?: () => boolean } = {},
+): Promise<PrunePlan> {
+	const plan: PrunePlan = { stateDir: resolve(stateDir), remove: [], held: [], standardBytes: 0, researchBytes: 0 };
+	const sessions: SessionTelemetry[] = [];
+	const sessionsRoot = telemetrySessionsDirectory(stateDir);
+	const metas = await sessionMetas(stateDir);
+	for (const sessionId of unlinkedStateDirectory(stateDir, sessionsRoot) ? await names(sessionsRoot) : []) {
+		if (!SAFE_ID.test(sessionId)) continue;
+		const directory = join(sessionsRoot, sessionId);
+		if (!(await realDirectory(directory))) {
+			plan.held.push({ path: directory, reason: "symlink" });
+			continue;
+		}
+		const session = await readSessionTelemetry(directory, sessionId, metas.get(sessionId) ?? null, options.stopped);
+		if (session) sessions.push(session);
+	}
+	const scopes = async (root: string): Promise<ScopeTelemetry[]> => {
+		const found: ScopeTelemetry[] = [];
+		if (!unlinkedStateDirectory(stateDir, root)) {
+			if (existsSync(root)) plan.held.push({ path: root, reason: "symlink" });
+			return found;
+		}
+		for (const id of await names(root)) {
+			if (!SAFE_ID.test(id)) continue;
+			if (!(await realDirectory(join(root, id)))) {
+				plan.held.push({ path: join(root, id), reason: "symlink" });
+				continue;
+			}
+			const scope = await readScopeTelemetry(join(root, id), id);
+			if (scope) found.push(scope);
+		}
+		return found;
+	};
+	const runs = await scopes(telemetryRunsDirectory(stateDir));
+	// Every process opens its own journal, so they accumulate one per process like runs do (#434).
+	const processes = await scopes(telemetryProcessesDirectory(stateDir));
+	// Session content preimages count toward research; sealed runs and processes stay whole in the standard budget.
+	const sessionBytes = (session: SessionTelemetry) =>
+		[...session.objects].reduce(
+			(sum, [id, file]) => sum + (CONTENT_SUBJECTS.has(session.refs.get(id) ?? "") ? 0 : file.bytes),
+			session.bytes,
+		);
+	plan.standardBytes =
+		sessions.reduce((sum, session) => sum + sessionBytes(session), 0) +
+		[...runs, ...processes].reduce((sum, scope) => sum + scope.bytes, 0);
+
+	// Standard retention: whole session journals, oldest first; age first, then size.
+	const doomed = new Set<SessionTelemetry>();
+	const cutoff = nowMs - policy.days * DAY_MS;
+	let standing = plan.standardBytes;
+	const candidates = sessions.filter((session) => session.hold === null).sort((a, b) => a.lastWriteMs - b.lastWriteMs);
+	for (const session of candidates) {
+		if (session.lastWriteMs >= cutoff && standing <= policy.maxBytes) break;
+		doomed.add(session);
+		standing -= sessionBytes(session);
+	}
+	// A kept child resolves its inherited prefix from its parent's journal (#434), so the parent stays.
+	for (let changed = true; changed; ) {
+		changed = false;
+		const keptParents = new Set(
+			sessions.filter((session) => !doomed.has(session)).flatMap((session) => session.parent ?? []),
+		);
+		for (const session of doomed) {
+			if (!keptParents.has(session.sessionId)) continue;
+			doomed.delete(session);
+			plan.held.push({ path: session.directory, reason: "fork-parent" });
+			changed = true;
+		}
+	}
+	standing = plan.standardBytes - [...doomed].reduce((sum, session) => sum + sessionBytes(session), 0);
+	for (const session of sessions) if (session.hold) plan.held.push({ path: session.directory, reason: session.hold });
+	for (const session of [...doomed].sort((a, b) => a.lastWriteMs - b.lastWriteMs)) {
+		if (session.journalStamp === null) continue;
+		const reason: PruneReason = session.lastWriteMs < cutoff ? "expired" : "over-size";
+		const owner = {
+			kind: "session" as const,
+			directory: session.directory,
+			meta: session.meta,
+			journalStamp: session.journalStamp,
+		};
+		for (const file of [
+			...(session.marker ? [session.marker] : []),
+			...(session.bundle ? [session.bundle] : []),
+			...session.segments,
+			...session.objects.values(),
+		])
+			plan.remove.push({ ...file, reason, owner });
+	}
+
+	// A run's sealed bundle and objects expire with its journal so retained evidence stays complete (#434).
+	// Process journals expire and yield to the size budget the same way; a live process holds its lock (#434).
+	const cited = new Set(sessions.filter((session) => !doomed.has(session)).flatMap((session) => [...session.runs]));
+	const sealedScopes = [
+		...runs.map((scope) => ({ scope, kind: "run" as const })),
+		...processes.map((scope) => ({ scope, kind: "process" as const })),
+	];
+	for (const { scope, kind } of sealedScopes.sort((a, b) => a.scope.lastWriteMs - b.scope.lastWriteMs)) {
+		const hold = scope.hold ?? (kind === "run" && cited.has(scope.id) ? "referenced-run" : null);
+		if (hold) {
+			plan.held.push({ path: scope.directory, reason: hold });
+			continue;
+		}
+		if (scope.lastWriteMs >= cutoff && standing <= policy.maxBytes) continue;
+		standing -= scope.bytes;
+		const reason: PruneReason = scope.lastWriteMs < cutoff ? "expired" : "over-size";
+		for (const file of scope.files) plan.remove.push({ ...file, reason, owner: { kind, directory: scope.directory } });
+	}
+
+	// Kept, readable, idle sessions: research content past its window, then objects no record cites.
+	const researchCutoff = nowMs - policy.researchDays * DAY_MS;
+	const research: Array<{ file: FileInfo; owner: PruneAction["owner"] }> = [];
+	for (const session of sessions) {
+		if (doomed.has(session)) continue;
+		// Held content remains visible in the budget even when a seal prevents meeting the research cap.
+		for (const [id, file] of session.objects)
+			if (CONTENT_SUBJECTS.has(session.refs.get(id) ?? "")) plan.researchBytes += file.bytes;
+		if (session.hold !== null) continue;
+		if (session.partial || session.journalStamp === null) {
+			plan.held.push({ path: session.directory, reason: "unreadable" });
+			continue;
+		}
+		if (session.sealed) {
+			if (session.objects.size > 0) plan.held.push({ path: session.directory, reason: "sealed" });
+			continue;
+		}
+		const owner = {
+			kind: "session" as const,
+			directory: session.directory,
+			meta: session.meta,
+			journalStamp: session.journalStamp,
+		};
+		for (const [id, file] of session.objects) {
+			const subject = session.refs.get(id);
+			if (subject === undefined) plan.remove.push({ ...file, reason: "unreferenced-object", owner });
+			else if (CONTENT_SUBJECTS.has(subject)) research.push({ file, owner });
+		}
+	}
+	let researchStanding = plan.researchBytes;
+	for (const item of research.sort((a, b) => a.file.mtimeMs - b.file.mtimeMs)) {
+		if (item.file.mtimeMs >= researchCutoff && researchStanding <= policy.researchMaxBytes) break;
+		researchStanding -= item.file.bytes;
+		plan.remove.push({
+			...item.file,
+			reason: item.file.mtimeMs < researchCutoff ? "research-expired" : "research-over-size",
+			owner: item.owner,
+		});
+	}
+	return plan;
+}
+
+export interface PruneResult {
+	removed: PruneAction[];
+	skipped: Array<{ path: string; reason: string }>;
+}
+
+/**
+ * Ownership is re-checked per session, run or process immediately before its files go, and the journal's lock file again
+ * before every unlink, so a session that starts between the plan and its turn is skipped whole. Prune never takes
+ * the journal lock itself: a writer that found it held would fail its open and lose the session's journal (#434).
+ */
+export async function applyTelemetryPrune(
+	plan: PrunePlan,
+	options: { stopped?: () => boolean } = {},
+): Promise<PruneResult> {
+	const result: PruneResult = { removed: [], skipped: [] };
+	const live = async (owner: PruneAction["owner"]): Promise<boolean> => {
+		if (locked(owner.directory)) return true;
+		return owner.kind === "session" && (await sessionOwnerLive(owner.meta));
+	};
+	// One owner's files go together, so the liveness check stays fresh for every file it covers.
+	const batches = new Map<string, PruneAction[]>();
+	for (const action of plan.remove) {
+		const key = `${action.owner.kind}:${action.owner.directory}`;
+		batches.set(key, [...(batches.get(key) ?? []), action]);
+	}
+	for (const batch of batches.values()) {
+		// A budgeted sweep leaves the rest for its next run; nothing half of one owner is ever left behind by choice.
+		if (options.stopped?.()) break;
+		const owner = (batch[0] as PruneAction).owner;
+		const expectedJournal = owner.kind === "session" ? { ...owner.journalStamp } : null;
+		if (await live(owner)) {
+			for (const action of batch) result.skipped.push({ path: action.path, reason: "became live" });
+			continue;
+		}
+		for (const action of batch) {
+			const current = await info(action.path);
+			// Containment is proven after the last await, and nothing yields before the unlink: a directory swapped for a
+			// link during that read must not redirect the delete. Node has no unlinkat to pin the directory itself.
+			if (!unlinkedStateDirectory(plan.stateDir, dirname(action.path))) {
+				result.skipped.push({ path: action.path, reason: "directory is no longer contained" });
+				continue;
+			}
+			if (expectedJournal !== null && !sameJournalStamp(expectedJournal, sessionJournalStamp(owner.directory))) {
+				result.skipped.push({ path: action.path, reason: "journal changed since planning" });
+				continue;
+			}
+			if (!current || current.bytes !== action.bytes || current.mtimeMs !== action.mtimeMs) {
+				result.skipped.push({ path: action.path, reason: current ? "changed since planning" : "already gone" });
+				continue;
+			}
+			// A writer creates its lock before it opens the journal, so a lock seen here means a session just started.
+			if (locked(owner.directory)) {
+				result.skipped.push({ path: action.path, reason: "became live" });
+				continue;
+			}
+			try {
+				unlinkSync(action.path);
+				result.removed.push(action);
+				// Only our successful deletions advance this snapshot; never adopt a concurrent writer's changes.
+				if (expectedJournal !== null && dirname(action.path) === owner.directory)
+					delete expectedJournal[basename(action.path)];
+			} catch (error) {
+				result.skipped.push({ path: action.path, reason: error instanceof Error ? error.message : String(error) });
+			}
+		}
+	}
+	for (const scope of new Set(result.removed.map((action) => action.owner.directory))) {
+		// Only emptied directories go; rmdir refuses one that still holds a file. A dead writer's lock is not a file
+		// worth keeping a scope for, so it goes with them.
+		const objects = telemetryObjectsDirectory(scope);
+		if (unlinkedStateDirectory(plan.stateDir, objects)) await rmdir(objects).catch(() => {});
+		if (!unlinkedStateDirectory(plan.stateDir, scope)) continue;
+		if ((await names(scope)).length === 1) clearAbandonedStateLock(journalLock(scope));
+		await rmdir(scope).catch(() => {});
+	}
+	return result;
+}
+
+const SWEEP_INTERVAL_MS = DAY_MS;
+const SWEEP_BUDGET_MS = 2_000;
+
+/**
+ * The automatic retention sweep: at most once a day per state root, claimed by a stamp under a non-waiting lock so
+ * concurrent processes do not all sweep. The time budget starts after planning and bounds removal only; removal
+ * stops when it ends and the rest goes on a later day. Null when the sweep was not due, another process holds the
+ * claim, or the host stopped it while planning.
+ */
+export async function sweepTelemetryDaily(
+	stateDir: string,
+	options: { nowMs?: number; budgetMs?: number; stopped?: () => boolean } = {},
+): Promise<PruneResult | null> {
+	const nowMs = options.nowMs ?? Date.now();
+	const root = telemetryRoot(stateDir);
+	if (!unlinkedStateDirectory(stateDir, root)) return null;
+	const stamp = join(root, "prune.stamp");
+	const claim = tryWithStateFileLockSync(stamp, () => {
+		let last = Number.NaN;
+		try {
+			last = Number(readFileSync(stamp, "utf8").trim());
+		} catch {
+			// Never swept here.
+		}
+		if (Number.isFinite(last) && last <= nowMs && nowMs - last < SWEEP_INTERVAL_MS) return false;
+		writeFileSync(stamp, `${nowMs}\n`);
+		return true;
+	});
+	if (!claim.held || !claim.value) return null;
+	// Planning rescans the whole home each day, so it runs without the budget (only host shutdown stops it) and
+	// still yields per segment; a shared budget let a large home plan forever and never prune.
+	const hostStopped = () => options.stopped?.() === true;
+	let plan: PrunePlan;
+	try {
+		plan = await planTelemetryPrune(stateDir, DEFAULT_PRUNE_POLICY, nowMs, { stopped: hostStopped });
+	} catch (error) {
+		if (error instanceof PlanStopped) return null;
+		throw error;
+	}
+	const deadline = performance.now() + (options.budgetMs ?? SWEEP_BUDGET_MS);
+	const result = await applyTelemetryPrune(plan, { stopped: () => performance.now() > deadline || hostStopped() });
+	await pruneWorkerObservationsWithRuns(stateDir, nowMs, options.budgetMs ?? SWEEP_BUDGET_MS, hostStopped);
+	// A deleted session's memory observations are orphans no session can read (C-35, orphans only). They share the
+	// removal budget: what is left after the journals goes on a later day.
+	await pruneOrphanedObservations(stateDir, () => performance.now() > deadline || hostStopped()).catch(() => 0);
+	return result;
+}
+
+/**
+ * Evicted worker observations age out with the run journals, keyed on the run that wrote them (D1-5), and worker
+ * context seeds with them, keyed on the runs that used them (FL-8). A ledger that cannot be read says nothing about
+ * which runs are still live, so nothing is removed that day.
+ */
+async function pruneWorkerObservationsWithRuns(
+	stateDir: string,
+	nowMs: number,
+	budgetMs: number,
+	hostStopped: () => boolean,
+): Promise<void> {
+	let runEnds: ReadonlyMap<string, number | null>;
+	let seedEnds: ReadonlyMap<string, number | null>;
+	try {
+		runEnds = readRunEnds(stateDir);
+		seedEnds = readContextSeedEnds(stateDir);
+	} catch {
+		return;
+	}
+	const deadline = performance.now() + budgetMs;
+	const stopped = () => performance.now() > deadline || hostStopped();
+	const retentionMs = DEFAULT_PRUNE_POLICY.days * DAY_MS;
+	await pruneWorkerObservations(stateDir, { nowMs, retentionMs, runEnds, stopped }).catch(() => {
+		// A failed pass removes nothing it could not prove safe; the next day tries again.
+	});
+	await pruneWorkerContextSeeds(stateDir, { nowMs, retentionMs, seedEnds, stopped }).catch(() => {});
+}

@@ -1,0 +1,839 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Link, Navigate, useNavigate, useOutletContext, useParams } from "react-router";
+import { routes } from "../../contracts/runtime-routes.js";
+import type { SessionSummary } from "../../contracts/sessions.js";
+import type { Client } from "../api/client.js";
+import { ApiProblem, emptyInput } from "../api/client.js";
+import { clock, formatDuration } from "../api/clock.js";
+import type { ConnectionState } from "../api/events.js";
+import { SWITCH_FRESHNESS } from "../api/queries.js";
+import { sessionQuery } from "../api/session-query.js";
+import { advanceSessionReadScope, SESSION_CACHES, sessionBuffer } from "../api/sessions.js";
+import { pendingPermission } from "../chat/approval-gate.js";
+import { ApprovalBanner } from "../chat/approval-lazy.js";
+import { BudgetBanner } from "../chat/BudgetBanner.js";
+import { ChatTurnView } from "../chat/ChatTurn.js";
+import { Composer } from "../chat/Composer.js";
+import { ContextWorkCard } from "../chat/ContextWorkCard.js";
+import { ControlBanner } from "../chat/ControlBanner.js";
+import { ConversationOutline } from "../chat/ConversationOutline.js";
+import { compactionsByTurn, STARTER_PROMPTS, TRUNCATION_NOTE } from "../chat/chat-turn.js";
+import { fillComposer, focusComposer, openComposerAction, openComposerForm } from "../chat/composer-registry.js";
+import { useContextOperationRef, useStopContext } from "../chat/context-command.js";
+import { contextWorkView } from "../chat/context-work-model.js";
+import { LiveWorkers, workerCount } from "../chat/FleetStrip.js";
+import { foldFleetRuns, isLiveRun } from "../chat/fleet-facts.js";
+import type { HealthRow } from "../chat/health.js";
+import { compactionRows, summarizeHealth } from "../chat/health.js";
+import { LiveJobs } from "../chat/JobStrip.js";
+import { LiveElsewhereTask } from "../chat/LiveElsewhereTask.js";
+import { MemoryCaptureChip } from "../chat/MemoryCaptureChip.js";
+import { OutputDetailPicker } from "../chat/OutputDetailPicker.js";
+import { FilePreviewDialog } from "../chat/on-demand-panels.js";
+import { PaneContext, type PaneTarget } from "../chat/pane-context.js";
+import { type PaneView, ROOT_VIEW } from "../chat/pane-model.js";
+import { usePaneState } from "../chat/pane-state.js";
+import { ReadoutStrip } from "../chat/ReadoutStrip.js";
+import { routeFacts } from "../chat/route.js";
+import { PaneToggles, SessionPane } from "../chat/SessionPane.js";
+import { ConversationBanner, TaskSkeleton, TaskUnavailable } from "../chat/SessionStates.js";
+import { MENU_FORMS, menuActions, type SlashAction } from "../chat/slash-actions.js";
+import { TelemetryChips } from "../chat/TelemetryChips.js";
+import { memoryGuardianMark } from "../chat/telemetry-model.js";
+import { TRANSCRIPT_PAGE_SIZE } from "../chat/transcript-view-model.js";
+import { type ChatTurn, groupTurns, turnStatuses } from "../chat/turns.js";
+import { useOutputDetail } from "../chat/use-output-detail.js";
+import { useShown } from "../chat/use-shown.js";
+import { useTranscriptView } from "../chat/use-transcript-view.js";
+import { Icon, type IconName } from "../design/icons.js";
+import { StatusMark } from "../design/status.js";
+import { setPageTitle } from "../interaction/announcer.js";
+import { liveStopTarget } from "../interaction/commands.js";
+import { useShortcut } from "../interaction/use-shortcut.js";
+import { JumpToLatest } from "../render/FollowLatest.js";
+import { useFollowLatest } from "../render/follow-latest.js";
+import { PathOpenerContext, type PathTarget } from "../render/Markdown.js";
+import { countRender } from "../render/render-probe.js";
+import { Menu, MenuItem } from "../shell/Menu.js";
+import { PancodeLogo, PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
+import { useSessionCommands } from "../shell/SessionControls.js";
+import { answeredTurns, renameBlocker, taskTitle } from "../shell/shell-model.js";
+import { TopBar } from "../shell/TopBar.js";
+import { rememberedWorkspace, useRenameTask, useSessionWorkers } from "../shell/tasks.js";
+import { openAppWindow } from "../shell/windows.js";
+import { settleStarted, startedRequest } from "./started-request.js";
+import "../chat/chat-turn.css";
+import "../chat/conversation.css";
+
+// The rewind dialog and transcript downloads open only from `?rewind=1` and `?download=`, so their code waits for the task page.
+const RewindHost = lazy(() => import("../chat/RewindDialog.js").then((module) => ({ default: module.RewindHost })));
+const Interview = lazy(() => import("../chat/Interview.js").then((module) => ({ default: module.Interview })));
+
+/** The old projects page. Choosing and opening projects now lives in the rail and the Open workspace dialog. */
+export function Workspaces() {
+	return <Navigate to="/" replace />;
+}
+
+export function Session({ client }: { client: Client }) {
+	const { id = "" } = useParams();
+	return <SessionView key={id} client={client} id={id} />;
+}
+
+export interface LocatedTask {
+	/** The project whose ledger holds the task, or null when none of the projects read has it. */
+	workspace: { id: string; name: string } | null;
+	/** Projects whose ledger could not be read, so "not found" is not a fact about them. */
+	unread: number;
+	/** The saved row the project's ledger holds for the task, when one was found. */
+	row?: SessionSummary;
+}
+
+/**
+ * Find the project a task is saved in, for a link to a task this server has not opened.
+ *
+ * The link carries only the task id, and resuming needs the project. The projects are read one at a
+ * time, the last one used first, and the search stops at the first ledger that has the task. Leaving
+ * the page cancels the read in flight and reads no further project.
+ */
+export async function locateTask(
+	client: Pick<Client, "call">,
+	id: string,
+	signal: AbortSignal,
+	preferred: string | null = rememberedWorkspace(),
+): Promise<LocatedTask> {
+	const all = await client.call(routes.workspaces, emptyInput, undefined, signal);
+	const projects = [...all.filter((row) => row.id === preferred), ...all.filter((row) => row.id !== preferred)];
+	let unread = 0;
+	for (const project of projects) {
+		signal.throwIfAborted();
+		try {
+			const history = await client.call(
+				routes.sessionHistory,
+				{ params: { id: project.id }, query: {}, body: {} },
+				undefined,
+				signal,
+			);
+			const row = history.find((entry) => entry.id === id);
+			if (row) return { workspace: { id: project.id, name: project.name }, unread, row };
+		} catch {
+			// A cancelled read is the page being left, not an unreadable project.
+			signal.throwIfAborted();
+			// One unreadable project must not hide the task in the next one; it is counted and reported.
+			unread += 1;
+		}
+	}
+	return { workspace: null, unread };
+}
+
+/**
+ * One shared second for the whole conversation. It ticks only while something is live, and it reads
+ * the server-adopted clock rather than `Date.now()`, so an elapsed figure cannot disagree with the
+ * server by the connection's clock offset.
+ */
+/** The Task actions menu's glyph for each session dialog it opens. */
+const ACTION_ICONS: Readonly<Record<SlashAction, IconName>> = {
+	tree: "branch",
+	fork: "branch",
+	handoff: "external",
+	btw: "sessions",
+	draft: "compose",
+	extensions: "toolchain",
+	"fleet-run": "play",
+	report: "warn",
+};
+
+function useSecond(active: boolean): number {
+	const [now, setNow] = useState(() => clock.now());
+	const [wasActive, setWasActive] = useState(active);
+	// The second held from the last live stretch is stale the moment a new one starts. Taking a fresh one during this
+	// render keeps a row that first appears now from recording that old second as its start.
+	if (active !== wasActive) {
+		setWasActive(active);
+		if (active) setNow(clock.now());
+	}
+	useEffect(() => {
+		if (!active) return;
+		setNow(clock.now());
+		const timer = setInterval(() => setNow(clock.now()), 1000);
+		return () => clearInterval(timer);
+	}, [active]);
+	return active ? now : 0;
+}
+
+const NO_ROWS: readonly HealthRow[] = [];
+
+function EmptyTranscript({ sessionId }: { sessionId: string }) {
+	return (
+		<div className="chat-empty">
+			<PancodeLogo size={40} />
+			<h2>
+				What are we <em>working on</em>?
+			</h2>
+			<ul className="chat-empty__starters" aria-label="Ways to start">
+				{STARTER_PROMPTS.map((prompt) => (
+					<li key={prompt}>
+						<button type="button" onClick={() => fillComposer(sessionId, prompt)}>
+							{prompt}
+						</button>
+					</li>
+				))}
+			</ul>
+		</div>
+	);
+}
+
+function SessionView({ client, id }: { client: Client; id: string }) {
+	countRender("session-view");
+	const navigate = useNavigate();
+	// Home is gone once this screen has committed, so clearing its draft can no longer blank the request.
+	useEffect(() => settleStarted(id), [id]);
+	const ids = { changes: useId(), pane: useId(), transcript: useId() };
+	const pane = usePaneState(ids.pane);
+	const paneActions = useMemo(
+		() => ({ show: (target: PaneTarget) => pane.show(target, ids.pane) }),
+		[pane.show, ids.pane],
+	);
+	const [previewing, setPreviewing] = useState<PathTarget | null>(null);
+	useShortcut("sessionPanel", () => (pane.open ? pane.close() : pane.show(pane.view, ids.pane)));
+	useShortcut("focusComposer", () => document.querySelector<HTMLTextAreaElement>(".composer__field")?.focus());
+	useShortcut("agents", () => pane.show("agents", ids.pane));
+	// The terminal's Alt+U dashboard and Alt+W workers dock: a second press closes what the first opened.
+	const togglePane = (view: PaneView) => (pane.open && pane.view === view ? pane.close() : pane.show(view, ids.pane));
+	useShortcut("overview", () => togglePane(ROOT_VIEW));
+	useShortcut("workers", () => togglePane("agents"));
+	const connection = useOutletContext<ConnectionState>();
+	const queries = useQueryClient();
+	const { controls, requestClose } = useSessionCommands();
+	const controlling = controls.records.some((row) => row.sessionId === id && row.stage !== "complete");
+	const input = { params: { id }, query: {}, body: {} };
+	const session = useQuery(sessionQuery(client, id));
+	// Ctrl+. takes the Stop button's path, naming the turn running when the key is pressed.
+	const stopRunningTurn = () => {
+		const target = liveStopTarget(id, queries.getQueryData(sessionQuery(client, id).queryKey));
+		if (target) controls.start(target, "stop");
+	};
+	const turnRunning = session.data?.state === "open" && session.data.turns.at(-1)?.status === "running";
+	useShortcut("cancelTurn", stopRunningTurn, { enabled: turnRunning });
+	// A saved task this server has not opened answers not_found. Only that answer starts the search for
+	// its project; a task that loads, and a server that cannot be reached, never do.
+	const notOpen =
+		session.data === undefined && session.error instanceof ApiProblem && session.error.problem.code === "not_found";
+	const located = useQuery({
+		queryKey: ["session-locate", id],
+		queryFn: ({ signal }) => locateTask(client, id, signal),
+		enabled: notOpen,
+		retry: false,
+		staleTime: Number.POSITIVE_INFINITY,
+	});
+	const workspaceId = session.data?.workspaceId ?? "";
+	const workspace = useQuery({
+		queryKey: ["workspace", workspaceId],
+		queryFn: () => client.call(routes.workspace, { params: { id: workspaceId }, query: {}, body: {} }),
+		enabled: workspaceId !== "",
+		...SWITCH_FRESHNESS,
+	});
+
+	const capabilities = useQuery({
+		queryKey: ["session-capabilities", id],
+		queryFn: () => client.call(routes.sessionCapabilities, input),
+		enabled: session.data?.state === "open",
+		staleTime: Number.POSITIVE_INFINITY,
+	});
+	const sessionSettings = useQuery({
+		queryKey: ["session-settings", id],
+		queryFn: () => client.call(routes.sessionSettings, input),
+		enabled: session.data?.state === "open" && capabilities.data?.settings?.get_safe === true,
+		...SWITCH_FRESHNESS,
+	});
+	const resume = useMutation({
+		mutationFn: (workspaceId: string) =>
+			client.call(routes.loadSession, { params: { id }, query: {}, body: { workspaceId } }),
+		onSuccess: (snapshot) => {
+			for (const key of SESSION_CACHES) queries.removeQueries({ queryKey: [key, id] });
+			advanceSessionReadScope(id);
+			queries.setQueryData(["session", id], sessionBuffer(id).snapshot(snapshot) ?? snapshot);
+			void queries.invalidateQueries({ queryKey: ["sessions"] });
+			void queries.invalidateQueries({ queryKey: ["session-history", snapshot.workspaceId] });
+		},
+	});
+	const renameTask = useRenameTask(client);
+	const [renaming, setRenaming] = useState(false);
+	const [outline, setOutline] = useState(false);
+	const pendingJump = useRef<string | null>(null);
+	const [dismissedContext, setDismissedContext] = useState<string | null>(null);
+	const stopContext = useStopContext(client, id);
+	const scroll = useRef<HTMLDivElement | null>(null);
+	const [outputDetail, setOutputDetail] = useOutputDetail();
+	const previousTurns = useRef<readonly ChatTurn[]>([]);
+	const snapshot = session.data;
+	useShown(client, id, snapshot?.state);
+	// The tab names the task, so several open tabs can be told apart.
+	const pageTitle = snapshot ? taskTitle(snapshot) : null;
+	useEffect(() => {
+		setPageTitle(pageTitle);
+		return () => setPageTitle(null);
+	}, [pageTitle]);
+	const statuses = useMemo(() => turnStatuses(snapshot?.turns ?? []), [snapshot?.turns]);
+	const turnRows = useMemo(
+		() => new Map((snapshot?.turns ?? []).map((row) => [row.id, row] as const)),
+		[snapshot?.turns],
+	);
+	const turns = useMemo(() => {
+		const next = groupTurns(snapshot?.timeline ?? [], statuses, previousTurns.current);
+		previousTurns.current = next;
+		return next;
+	}, [snapshot?.timeline, statuses]);
+	const fleet = snapshot?.fleet;
+	// The server's count outlives the feed's bound; the feed counts only while the overview does not list this task.
+	const serverWorkers = useSessionWorkers(client, id)?.count;
+	const foldedWorkers = useMemo(
+		() => (fleet === undefined ? 0 : foldFleetRuns(fleet).filter(isLiveRun).length),
+		[fleet],
+	);
+	const liveWorkers = serverWorkers ?? foldedWorkers;
+	const health = useMemo(() => summarizeHealth(snapshot?.health ?? []), [snapshot?.health]);
+	const compactions = useMemo(
+		() => compactionsByTurn(compactionRows(snapshot?.health ?? []), snapshot?.turns ?? []),
+		[snapshot?.health, snapshot?.turns],
+	);
+
+	const running = snapshot?.turns.at(-1)?.status === "running";
+	const contextActivity = snapshot?.contextWork?.active;
+	const contextRunning = snapshot?.state === "open" && !!contextActivity;
+	const contextOperationRef = useContextOperationRef(snapshot?.contextWork);
+	const now = useSecond(
+		running || contextRunning || (snapshot?.permissions.some((item) => item.status === "pending") ?? false),
+	);
+	// A deep link starts without a cached snapshot. Attach the observer only once
+	// the transcript element exists; a ref becoming non-null does not rerun an effect.
+	const follow = useFollowLatest(scroll, snapshot !== undefined, snapshot?.timeline, running);
+	const transcript = useTranscriptView(client, id, turns, snapshot !== undefined, scroll, follow);
+	const restoreScroll = follow.restore;
+	useEffect(() => {
+		if (outline || !pendingJump.current) return;
+		const turnId = pendingJump.current;
+		pendingJump.current = null;
+		let landing = 0;
+		const frame = requestAnimationFrame(() => {
+			landing = requestAnimationFrame(() => {
+				const container = scroll.current;
+				const target = [...(container?.querySelectorAll<HTMLElement>("[data-turn-id]") ?? [])].find(
+					(element) => element.dataset.turnId === turnId,
+				);
+				if (!container || !target) return;
+				// A deliberate jump leaves follow mode. Later output must not pull the reader away.
+				restoreScroll({
+					top: Math.max(
+						0,
+						container.scrollTop + target.getBoundingClientRect().top - container.getBoundingClientRect().top - 24,
+					),
+					following: false,
+				});
+				target.focus({ preventScroll: true });
+			});
+		});
+		return () => {
+			cancelAnimationFrame(frame);
+			cancelAnimationFrame(landing);
+		};
+	}, [outline, restoreScroll]);
+	// One object per change of reported settings or health, so a streamed delta leaves the composer alone.
+	const settings = snapshot?.state === "open" ? sessionSettings.data?.settings.chat : undefined;
+	const config = snapshot?.state === "open" ? snapshot.config : undefined;
+	const route = useMemo(
+		() =>
+			routeFacts(
+				settings
+					? { target: settings.target ?? null, model: settings.model ?? null, thinking: settings.thinkingLevel }
+					: undefined,
+				health,
+				config,
+			),
+		[settings, health, config],
+	);
+	if (notOpen && !snapshot && !located.error) {
+		const found = located.data?.workspace ?? null;
+		const unread = located.data?.unread ?? 0;
+		const live = located.data?.row?.liveElsewhere;
+		if (found && live)
+			return (
+				<>
+					<TopBar />
+					<LiveElsewhereTask
+						client={client}
+						sessionId={id}
+						workspaceId={found.id}
+						live={live}
+						resuming={resume.isPending}
+						resumeError={resume.error}
+						onReleased={() => resume.mutate(found.id)}
+						onRecheck={() => void located.refetch()}
+					/>
+				</>
+			);
+		return (
+			<>
+				<TopBar />
+				<div className="task-state" role={located.data ? "alert" : "status"}>
+					<Icon name="warn" />
+					<h1>This task is not open</h1>
+					{located.data === undefined ? (
+						<p>Looking for it in your projects…</p>
+					) : found ? (
+						<p>It is saved in {found.name}. Resuming starts PanCode for it and continues the conversation.</p>
+					) : (
+						<p>
+							None of your projects has a saved task with this link.
+							{unread > 0 ? ` ${unread} ${unread === 1 ? "project" : "projects"} could not be read.` : ""}
+						</p>
+					)}
+					{resume.error ? <p>Could not resume this task. {resume.error.message}</p> : null}
+					<div className="task-state__actions">
+						{found ? (
+							<button
+								type="button"
+								className="primary"
+								disabled={resume.isPending || controlling}
+								onClick={() => resume.mutate(found.id)}
+							>
+								{resume.isPending ? "Resuming…" : "Resume task"}
+							</button>
+						) : located.data ? (
+							<button type="button" className="primary" disabled={located.isFetching} onClick={() => void located.refetch()}>
+								{located.isFetching ? "Looking again…" : "Look again"}
+							</button>
+						) : null}
+						<Link to="/">Back to a new task</Link>
+					</div>
+				</div>
+			</>
+		);
+	}
+	// The project list itself could not be read: that failure is the one to show and to retry.
+	if (notOpen && !snapshot && located.error)
+		return (
+			<TaskUnavailable
+				message={located.error.message}
+				retrying={located.isFetching}
+				onRetry={() => void located.refetch()}
+			/>
+		);
+	if (session.error && !snapshot)
+		return (
+			<TaskUnavailable
+				message={session.error.message}
+				retrying={session.isFetching}
+				onRetry={() => void session.refetch()}
+			/>
+		);
+	if (!snapshot) return <TaskSkeleton request={startedRequest(id)} />;
+	const turn = snapshot.turns.at(-1);
+	const pending = pendingPermission(snapshot) ?? null;
+	const workspaceRoot = workspace.data?.path;
+	const title = taskTitle(snapshot);
+	const workspaceName = workspace.data?.name ?? "Project";
+	const elapsedMs = running && turn?.startedAt && now > 0 ? Math.max(0, now - Date.parse(turn.startedAt)) : 0;
+	// Sub-second figures ("0ms") say nothing; the chip shows time once it is a whole second.
+	const elapsed = elapsedMs >= 1000 ? formatDuration(elapsedMs) : null;
+	const canClose = snapshot.state === "open" && !running && !contextRunning;
+	const contextOperation = contextActivity?.operation ?? snapshot.contextWork?.latest;
+	const contextView = contextOperation
+		? contextWorkView(contextOperation, contextActivity ?? undefined, now, snapshot.state === "open")
+		: null;
+	const paneOpen = pane.open;
+	const chip: { tone: "working" | "approval" | "failed" | "quiet"; label: string } | null = pending
+		? { tone: "approval", label: "Needs your approval" }
+		: contextRunning && contextView
+			? { tone: "working", label: contextView.title }
+			: running && snapshot.state === "open"
+				? turn?.queued
+					? { tone: "quiet", label: "Waiting for a slot" }
+					: {
+							tone: "working",
+							label: [
+								liveWorkers > 0 ? `Waiting on ${workerCount(liveWorkers)}` : turn?.startedAt ? "Working" : "Starting",
+								elapsed ?? null,
+							]
+								.filter(Boolean)
+								.join(" · "),
+						}
+				: snapshot.state === "starting"
+					? { tone: "working", label: "Starting" }
+					: snapshot.state === "parked"
+						? { tone: "quiet", label: "Paused" }
+						: snapshot.state === "closed"
+							? { tone: "quiet", label: "Closed" }
+							: snapshot.state === "unknown" || snapshot.state === "failed"
+								? { tone: "failed", label: "Unavailable" }
+								: turn?.status === "failed"
+									? { tone: "failed", label: "Last turn failed" }
+									: null;
+	// Only a saved task takes a name, and the engine saves it once PanCode has answered in it.
+	const renameBlocked = renameBlocker({ saved: snapshot.label !== null, answered: answeredTurns(snapshot.turns) });
+	const memoryMark = memoryGuardianMark(
+		snapshot.telemetry?.memory,
+		snapshot.state !== "parked" &&
+			snapshot.state !== "closed" &&
+			snapshot.state !== "unknown" &&
+			snapshot.state !== "failed",
+	);
+	return (
+		<PaneContext.Provider value={paneActions}>
+			<PathOpenerContext.Provider value={setPreviewing}>
+				<section className="conversation" data-pane={paneOpen ? "open" : "closed"}>
+					<div className="conversation__main">
+						<TopBar
+							title={title}
+							titleLabel={title}
+							{...(renameBlocked
+								? {}
+								: {
+										rename: {
+											active: renaming,
+											onStart: () => setRenaming(true),
+											onCancel: () => setRenaming(false),
+											onSave: (label: string) => {
+												setRenaming(false);
+												renameTask.mutate({ sessionId: snapshot.id, workspaceId: snapshot.workspaceId, label });
+											},
+										},
+									})}
+						>
+							{snapshot.telemetry?.eggs?.includes("duck") ? (
+								<span
+									className="conversation__duck"
+									role="img"
+									aria-label="Rubber duck badge active for this conversation"
+									title="Rubber duck · /eggs off to let her sleep"
+								>
+									🦆
+								</span>
+							) : null}
+							{memoryMark ? (
+								<StatusMark tone={memoryMark.tone} label={memoryMark.label} title={memoryMark.title} live={memoryMark.live} />
+							) : null}
+							{/* The task's own actions sit with its name, not with the view controls at the far end. */}
+							<Menu label="Task actions">
+								<MenuItem icon="search" onClick={() => setOutline(true)}>
+									Find in conversation
+								</MenuItem>
+								<MenuItem icon="pencil" disabled={renameBlocked !== null} onClick={() => setRenaming(true)}>
+									{renameBlocked ? "Rename task · after the first answer" : "Rename task"}
+								</MenuItem>
+								<MenuItem icon="external" onClick={() => openAppWindow(`/sessions/${snapshot.id}`)}>
+									Open in new window
+								</MenuItem>
+								<MenuItem icon="sliders" onClick={() => void navigate(`/settings/advanced?workspace=${snapshot.workspaceId}`)}>
+									Project settings
+								</MenuItem>
+								<MenuItem icon="folder" onClick={() => void navigate(`/workspaces/${snapshot.workspaceId}/sessions`)}>
+									All tasks in {workspaceName}
+								</MenuItem>
+								{snapshot.state === "open"
+									? menuActions(capabilities.data).map((spec) => (
+											<MenuItem
+												key={spec.action}
+												icon={ACTION_ICONS[spec.action]}
+												disabled={!!controlling}
+												onClick={() => openComposerAction(snapshot.id, spec.action)}
+											>
+												{spec.title}…
+											</MenuItem>
+										))
+									: null}
+								{snapshot.state === "open" && capabilities.data?.commands
+									? MENU_FORMS.map((form) => (
+											<MenuItem
+												key={form.name}
+												icon="bolt"
+												disabled={!!controlling}
+												onClick={() => openComposerForm(snapshot.id, form.name)}
+											>
+												{form.title}…
+											</MenuItem>
+										))
+									: null}
+								<MenuItem icon="clock" disabled={snapshot.state !== "open"} onClick={() => void navigate("?rewind=1")}>
+									Restore files…
+								</MenuItem>
+								<MenuItem icon="arrowDown" disabled={snapshot.state !== "open"} onClick={() => void navigate("?download=html")}>
+									Download transcript as HTML
+								</MenuItem>
+								<MenuItem
+									icon="arrowDown"
+									disabled={snapshot.state !== "open"}
+									onClick={() => void navigate("?download=markdown")}
+								>
+									Download transcript as Markdown
+								</MenuItem>
+								<MenuItem
+									icon="close"
+									tone="danger"
+									disabled={!canClose || controlling}
+									onClick={() => requestClose({ id, workspaceId: snapshot.workspaceId, title, currentTurnId: null })}
+								>
+									Close task
+								</MenuItem>
+							</Menu>
+							<Suspense fallback={null}>
+								<RewindHost client={client} snapshot={snapshot} onTurn={transcript.revealTurn} />
+							</Suspense>
+							<Link
+								className="wb-chip wb-chip--place"
+								to={`/workspaces/${snapshot.workspaceId}/sessions`}
+								title={workspaceRoot ? `All tasks in ${workspaceRoot}` : "All tasks in this project"}
+							>
+								<Icon name="folder" />
+								<span>{workspaceName}</span>
+							</Link>
+							{chip ? (
+								<span className="wb-chip wb-chip--status" data-tone={chip.tone} role="status">
+									{chip.tone === "working" ? <PancodePulse size={PULSE_SIZE.inline} /> : null}
+									<span>{chip.label}</span>
+									{snapshot.recoveredOrphan ? <span>· recovered after a server interruption</span> : null}
+								</span>
+							) : null}
+							<div className="wb-bar__readings">
+								<TelemetryChips
+									client={client}
+									sessionId={snapshot.id}
+									state={snapshot.state}
+									turns={snapshot.turns}
+									onOpen={pane.show}
+								/>
+								<ReadoutStrip client={client} sessionId={snapshot.id} turnRunning={running} />
+							</div>
+							<div className="wb-bar__end">
+								<OutputDetailPicker value={outputDetail} onChange={setOutputDetail} />
+								<button
+									type="button"
+									className="wb-chip conversation__find"
+									aria-label="Find in conversation"
+									title="Find a request or response in this conversation"
+									onClick={() => setOutline(true)}
+								>
+									<Icon name="search" /> <span>Find</span>
+								</button>
+								<PaneToggles
+									client={client}
+									sessionId={snapshot.id}
+									workspaceRoot={workspaceRoot}
+									open={pane.open}
+									view={pane.view}
+									ids={ids}
+									onToggle={pane.toggle}
+								/>
+							</div>
+						</TopBar>
+						<div className="conversation__approval">
+							{connection === "Reconnecting…" || connection === "Not connected" || session.error ? (
+								<ConversationBanner
+									tone="warn"
+									title={session.error ? "Could not refresh this task." : "Live updates are reconnecting."}
+									action={
+										<button type="button" disabled={session.isFetching} onClick={() => void session.refetch()}>
+											{session.isFetching ? "Refreshing…" : "Refresh"}
+										</button>
+									}
+								>
+									{session.error
+										? session.error.message
+										: "What you see is the last state received. New activity appears when the connection returns."}
+								</ConversationBanner>
+							) : null}
+							{snapshot.state === "unknown" || snapshot.state === "failed" || snapshot.state === "closed" ? (
+								<ConversationBanner
+									tone="quiet"
+									title={
+										snapshot.state === "closed"
+											? "This task is closed."
+											: snapshot.state === "unknown"
+												? "PanCode is no longer connected to this task."
+												: "This task could not continue."
+									}
+									action={<Link to={`/workspaces/${snapshot.workspaceId}/sessions`}>Reopen from the task list</Link>}
+								>
+									The recorded conversation is still available below.
+								</ConversationBanner>
+							) : null}
+							{snapshot.state === "parked" ? (
+								<ConversationBanner
+									tone="quiet"
+									title="Paused. You can read the conversation below."
+									action={
+										<button
+											type="button"
+											disabled={resume.isPending || controlling}
+											onClick={() => resume.mutate(snapshot.workspaceId)}
+										>
+											{resume.isPending ? "Resuming…" : "Resume task"}
+										</button>
+									}
+								>
+									Resume when you want to continue. New requests wait for a slot when other work is running.
+								</ConversationBanner>
+							) : null}
+							{resume.error ? (
+								<ConversationBanner tone="warn" title="Could not resume this task.">
+									{resume.error.message}
+								</ConversationBanner>
+							) : null}
+							<ControlBanner client={client} session={snapshot} />
+							<BudgetBanner client={client} session={snapshot} />
+							<MemoryCaptureChip client={client} session={snapshot} />
+							<Suspense fallback={null}>
+								<ApprovalBanner client={client} session={snapshot} />
+							</Suspense>
+						</div>
+						<div
+							className="chat-transcript"
+							data-detail={outputDetail}
+							id={ids.transcript}
+							ref={scroll}
+							onClickCapture={(event) => {
+								// Opening a detail is reading intent. Freeze before its height changes, so the live
+								// edge observer cannot carry an expanded request or tool result out of view.
+								if (event.target instanceof Element && event.target.closest("summary")) {
+									follow.restore({ ...follow.snapshot(), following: false });
+								}
+							}}
+						>
+							<div className="chat-transcript__content">
+								{snapshot.timelineTruncated ? <p className="trace-warning">{TRUNCATION_NOTE}</p> : null}
+								{transcript.start > 0 ? (
+									<div className="transcript-history">
+										<p>{transcript.start} earlier turns in this conversation</p>
+										<div>
+											<button type="button" onClick={transcript.earlier} aria-controls={ids.transcript}>
+												<Icon name="arrowUp" />
+												Show {Math.min(TRANSCRIPT_PAGE_SIZE, transcript.start)} earlier turns
+											</button>
+											<button type="button" onClick={() => setOutline(true)}>
+												<Icon name="search" />
+												Find in full conversation
+											</button>
+										</div>
+									</div>
+								) : null}
+
+								{transcript.turns.map((item) => (
+									<ChatTurnView
+										key={item.turnId}
+										turn={item}
+										row={turnRows.get(item.turnId)}
+										client={client}
+										session={snapshot}
+										pending={pending}
+										pendingPermissionId={pending?.id ?? null}
+										nowMs={item.settled ? 0 : now}
+										stopping={false}
+										notices={NO_ROWS}
+										compactions={compactions.get(item.turnId) ?? 0}
+										workspaceRoot={workspaceRoot}
+										liveWorkers={item.settled ? 0 : liveWorkers}
+									/>
+								))}
+								<LiveWorkers
+									client={client}
+									sessionId={snapshot.id}
+									sessionOpen={snapshot.state === "open"}
+									fleet={snapshot.fleet}
+								/>
+								<LiveJobs
+									client={client}
+									sessionId={snapshot.id}
+									sessionOpen={snapshot.state === "open"}
+									jobs={snapshot.jobs}
+								/>
+								{turns.length === 0 ? <EmptyTranscript sessionId={snapshot.id} /> : null}
+							</div>
+						</div>
+						{/* `.jump-anchor` is the positioned, zero-height parent the pill is laid out against. Without
+				    it the pill resolves against the viewport and pushes the document sideways. */}
+						<div className="jump-anchor">
+							<JumpToLatest follow={follow} />
+						</div>
+						<div className="conversation__dock">
+							{contextView && (contextView.live || contextView.id !== dismissedContext) ? (
+								<ContextWorkCard
+									key={contextView.id}
+									view={contextView}
+									compact
+									cancelling={stopContext.stopping === contextView.id}
+									cancelLabel={running ? "Stop task and context work" : "Stop context work"}
+									{...(contextView.live
+										? { onCancel: () => stopContext.stop(contextView.id) }
+										: {
+												onDismiss: (keyboard: boolean) => {
+													setDismissedContext(contextView.id);
+													// The card holding focus is leaving; the composer is where the keyboard goes next.
+													if (keyboard) focusComposer(snapshot.id);
+												},
+											})}
+								/>
+							) : null}
+							{stopContext.error ? <p role="alert">{stopContext.error.message}</p> : null}
+							<Composer
+								client={client}
+								sessionId={snapshot.id}
+								workspaceId={snapshot.workspaceId}
+								sessionState={snapshot.state}
+								initialFocus={snapshot.timeline.length === 0}
+								runningTurnId={turn?.status === "running" ? turn.id : null}
+								contextRunning={contextRunning}
+								contextOperation={contextOperationRef}
+								route={route}
+							/>
+						</div>
+						<Suspense fallback={null}>
+							<Interview
+								client={client}
+								sessionId={snapshot.id}
+								sessionOpen={snapshot.state === "open"}
+								capabilities={capabilities.data}
+							/>
+						</Suspense>
+					</div>
+					<SessionPane
+						open={pane.open}
+						onClose={pane.close}
+						client={client}
+						sessionId={snapshot.id}
+						title={title}
+						workspaceRoot={workspaceRoot}
+						nowMs={now}
+						view={pane.view}
+						onViewChange={pane.setView}
+						route={route}
+					/>
+					{outline ? (
+						<ConversationOutline
+							turns={turns}
+							rows={turnRows}
+							truncated={snapshot.timelineTruncated === true}
+							onClose={() => setOutline(false)}
+							onSelect={(turnId) => {
+								transcript.revealTurn(turnId);
+								pendingJump.current = turnId;
+								setOutline(false);
+							}}
+						/>
+					) : null}
+					{previewing ? (
+						<Suspense fallback={null}>
+							<FilePreviewDialog
+								client={client}
+								workspaceId={snapshot.workspaceId}
+								target={previewing}
+								onClose={() => setPreviewing(null)}
+							/>
+						</Suspense>
+					) : null}
+				</section>
+			</PathOpenerContext.Provider>
+		</PaneContext.Provider>
+	);
+}

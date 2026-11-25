@@ -1,0 +1,62 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "urn:pancode:schema:run-events:3",
+	"title": "pancode run event line (schema v3)",
+	"description": "One line of `run --output-format stream-json`: NDJSON, one compact object per line, each with a `type`. The first line is `session` for a main run, `steer` acknowledges a steer-channel line, and the last line is always `run_end` (schema run-result). Agent event frames between them keep their engine shape and are open objects.",
+	"type": "object",
+	"required": ["type"],
+	"properties": {
+		"type": { "type": "string" }
+	},
+	"oneOf": [
+		{ "$ref": "#/$defs/session" },
+		{ "$ref": "#/$defs/steer" },
+		{ "$ref": "#/$defs/runEnd" },
+		{ "$ref": "#/$defs/event" }
+	],
+	"$defs": {
+		"session": {
+			"type": "object",
+			"required": ["type"],
+			"properties": {
+				"type": { "const": "session" },
+				"schemaVersion": { "const": 3 }
+			}
+		},
+		"steer": {
+			"type": "object",
+			"required": ["type", "line", "status"],
+			"properties": {
+				"type": { "const": "steer" },
+				"line": { "type": "integer", "minimum": 1, "description": "1-based line index in the steer channel." },
+				"status": { "enum": ["accepted", "queued", "refused"] },
+				"reason": { "type": "string" }
+			}
+		},
+		"runEnd": {
+			"type": "object",
+			"required": ["type", "schemaVersion"],
+			"description": "The closing document; its full shape is `pancode schema run-result`.",
+			"properties": {
+				"type": { "const": "run_end" },
+				"schemaVersion": { "const": 3 }
+			}
+		},
+		"event": {
+			"type": "object",
+			"required": ["type"],
+			"description": "An engine event frame. A field that names a tool call (`toolCallId` on tool_execution_* and tool_approval_state frames and on a toolResult message, `parentToolCallId` on a gateway chain step) holds PanCode's id `tc_<turn>_<n>`: the n-th call (1-based) the model's message lists in the run's turn-th agent turn (1-based, counted from turn_start). A chain step's id is `<parent's PanCode id>:<step id>`. The provider's id rides beside it as `providerToolCallId`; for a chain step, the provider's id of the call that ran the chain. A toolCall block inside a message keeps the provider's `id`.",
+			"properties": {
+				"type": { "not": { "enum": ["session", "steer", "run_end"] } },
+				"toolCallId": { "$ref": "#/$defs/toolCallId" },
+				"parentToolCallId": { "$ref": "#/$defs/toolCallId" },
+				"providerToolCallId": { "type": "string" }
+			},
+			"dependentRequired": { "toolCallId": ["providerToolCallId"] }
+		},
+		"toolCallId": {
+			"type": "string",
+			"pattern": "^tc_[0-9]+_[0-9]+(:.+)?$"
+		}
+	}
+}

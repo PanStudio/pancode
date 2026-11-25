@@ -1,0 +1,372 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+.usage-page {
+	max-width: 1480px;
+	margin-inline: auto;
+}
+.usage-page .panel-heading h1 {
+	font-size: var(--text-display);
+	letter-spacing: -0.035em;
+}
+.usage-window {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	font-size: var(--text-instrument);
+	color: var(--ink-muted);
+}
+.usage-window {
+	border: 1px solid var(--line-strong);
+	padding: var(--space-2) var(--space-3);
+	border-radius: var(--radius-sm);
+	white-space: nowrap;
+}
+.usage-scope {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: var(--space-3) var(--space-5);
+	margin-top: var(--space-5);
+}
+.usage-scope > span {
+	font-family: var(--font-mono);
+	font-size: var(--text-instrument);
+	color: var(--ink-muted);
+}
+.usage-introduction {
+	font-size: var(--text-reading);
+	margin: var(--space-5) 0 var(--space-6);
+	color: var(--ink-muted);
+}
+.usage-totals {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	border-block: 1px solid var(--line-strong);
+	background: var(--surface);
+	margin-bottom: var(--space-6);
+}
+.usage-totals > article {
+	padding: var(--space-5);
+	min-width: 0;
+	border-right: 1px solid var(--line);
+}
+.usage-totals > article:first-child {
+	border-top: 3px solid var(--accent);
+	padding-top: calc(var(--space-5) - 3px);
+}
+.usage-totals > article:last-child {
+	border-right: 0;
+}
+.usage-total-label {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	margin: 0;
+	font-size: var(--text-instrument);
+	color: var(--ink-muted);
+}
+.usage-total-value {
+	font: 500 var(--text-h1) / 1.2 var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	margin: var(--space-3) 0 var(--space-2);
+	overflow-wrap: anywhere;
+}
+.usage-totals small {
+	display: block;
+	font-size: var(--text-instrument);
+	color: var(--ink-muted);
+}
+.usage-coverage-note {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	padding: var(--space-3) var(--space-4);
+	border-left: 2px solid var(--status-unverified-line);
+	background: var(--status-unverified-tint);
+	color: var(--status-unverified-fg);
+	font-size: var(--text-exact);
+	line-height: 1.6;
+}
+.usage-coverage-note .icon {
+	flex-shrink: 0;
+	align-self: flex-start;
+	margin-top: 3px;
+}
+.usage-page .usage-kicker {
+	font-family: var(--font-mono);
+	font-size: var(--text-instrument);
+	text-transform: uppercase;
+	letter-spacing: var(--tracking-instrument);
+	color: var(--ink-muted);
+	margin: 0 0 var(--space-2);
+}
+.usage-secondary h2 {
+	font-family: var(--font-editorial);
+	font-size: var(--text-h2);
+	font-weight: 700;
+	letter-spacing: -0.025em;
+	margin: 0;
+}
+.usage-chart-footnote {
+	font-size: var(--text-instrument);
+	color: var(--ink-muted);
+	line-height: 1.65;
+}
+.usage-chart-footnote {
+	margin: var(--space-4) 0 0;
+}
+.usage-source-fact {
+	border-top: 1px solid var(--line);
+	margin-top: var(--space-4);
+	padding-top: var(--space-3);
+}
+.usage-source-fact h4 {
+	font-size: var(--text-instrument);
+}
+.usage-cache-evidence {
+	margin-block: var(--space-5);
+	padding-block: var(--space-4);
+	border-top: 1px solid var(--line);
+}
+.usage-cache-evidence h2 {
+	font-family: var(--font-editorial);
+	font-weight: 700;
+}
+.usage-cache-scroll {
+	overflow-x: auto;
+}
+.usage-cache-scroll:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+.usage-cache-table {
+	width: 100%;
+	border-collapse: collapse;
+	text-align: left;
+	font-size: var(--text-meta);
+}
+.usage-cache-table th,
+.usage-cache-table td {
+	padding: var(--space-3);
+	border-bottom: 1px solid var(--line);
+	vertical-align: top;
+	overflow-wrap: anywhere;
+}
+.usage-cache-table th {
+	font-weight: 500;
+}
+.usage-cache-table td {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+}
+.usage-secondary {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	margin-top: var(--space-8);
+	border-top: 1px solid var(--line-strong);
+}
+.usage-secondary > section {
+	min-width: 0;
+	padding: var(--space-6) var(--space-6) var(--space-6) 0;
+}
+.usage-secondary > section + section {
+	border-left: 1px solid var(--line);
+	padding-left: var(--space-6);
+}
+.usage-bars {
+	list-style: none;
+	padding: 0;
+	margin: var(--space-5) 0 0;
+	display: grid;
+	gap: var(--space-3);
+}
+.usage-bars li {
+	display: grid;
+	grid-template-columns: 7rem minmax(0, 1fr) minmax(4rem, auto);
+	align-items: center;
+	gap: var(--space-3);
+	font-size: var(--text-exact);
+}
+.usage-bar__label {
+	color: var(--ink-muted);
+}
+.usage-bar__track {
+	display: block;
+	height: 7px;
+	background: var(--surface);
+	border: 1px solid var(--line);
+}
+/* Each token field is its own category, so the bars take the canonical series in list order. */
+.usage-bar__track > i {
+	display: block;
+	height: 100%;
+	background: var(--series, var(--viz-1));
+}
+.usage-bars > li:nth-child(8n + 2) {
+	--series: var(--viz-2);
+}
+.usage-bars > li:nth-child(8n + 3) {
+	--series: var(--viz-3);
+}
+.usage-bars > li:nth-child(8n + 4) {
+	--series: var(--viz-4);
+}
+.usage-bars > li:nth-child(8n + 5) {
+	--series: var(--viz-5);
+}
+.usage-bars > li:nth-child(8n + 6) {
+	--series: var(--viz-6);
+}
+.usage-bars > li:nth-child(8n + 7) {
+	--series: var(--viz-7);
+}
+.usage-bars > li:nth-child(8n) {
+	--series: var(--viz-8);
+}
+.usage-bar__value {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+.usage-origins {
+	margin: var(--space-5) 0 0;
+}
+.usage-origins > div {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: var(--space-4);
+	padding: var(--space-2) 0;
+	border-top: 1px solid var(--line);
+	font-size: var(--text-exact);
+}
+.usage-origins dt {
+	color: var(--ink-muted);
+}
+.usage-origins dd {
+	margin: 0;
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+}
+.usage-records {
+	border-top: 1px solid var(--line);
+	padding: var(--space-4) 0;
+}
+.usage-records > summary {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	cursor: pointer;
+	font-size: var(--text-meta);
+	list-style: none;
+}
+.usage-records > summary::-webkit-details-marker {
+	display: none;
+}
+.usage-records > summary > .icon:last-child {
+	margin-left: auto;
+	transition: transform var(--motion-fast);
+}
+.usage-records[open] > summary > .icon:last-child {
+	transform: rotate(180deg);
+}
+.usage-records > summary small {
+	display: block;
+	font-size: var(--text-instrument);
+	color: var(--ink-muted);
+}
+.usage-fact-list {
+	display: grid;
+	gap: var(--space-2);
+	margin-top: var(--space-5);
+}
+.usage-fact-list > details {
+	padding: var(--space-3) var(--space-4);
+	background: var(--surface);
+	border: 1px solid var(--line);
+	min-width: 0;
+}
+.usage-fact-list summary {
+	cursor: pointer;
+	font-size: var(--text-exact);
+	overflow-wrap: anywhere;
+}
+.usage-fact-list summary small {
+	color: var(--ink-muted);
+	font: var(--text-instrument) var(--font-mono);
+	margin-left: var(--space-3);
+}
+.usage-raw {
+	margin-top: var(--space-4);
+}
+.usage-raw pre {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	font-size: var(--text-instrument);
+	padding: var(--space-3);
+	background: var(--code-paper);
+	color: var(--code-ink);
+	border: 1px solid var(--code-line);
+}
+.usage-page button:focus-visible,
+.usage-page summary:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+@media (max-width: 900px) {
+	.usage-secondary {
+		grid-template-columns: 1fr;
+	}
+	.usage-secondary > section + section {
+		border-left: 0;
+		border-top: 1px solid var(--line);
+		padding-left: 0;
+	}
+	.usage-totals {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+	.usage-totals > article:nth-child(2) {
+		border-right: 0;
+	}
+	.usage-totals > article:nth-child(n + 3) {
+		border-top: 1px solid var(--line);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.usage-records > summary > .icon:last-child {
+		transition: none;
+	}
+}
+
+.usage-explore-controls {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: end;
+	gap: var(--space-3);
+	margin-top: var(--space-5);
+}
+.usage-explore-controls label {
+	display: grid;
+	gap: var(--space-2);
+	min-width: 0;
+	color: var(--ink-muted);
+	font-size: var(--text-instrument);
+}
+.usage-explore-controls label:first-child {
+	flex: 1;
+}
+.usage-explore-controls :is(input, select) {
+	width: 100%;
+	min-width: 0;
+	font-size: var(--text-exact);
+}
+
+/* An unknown or unsummed economic figure reads neutral, never as an amount (token economy S13). */
+.usage-economy [data-tone="unknown"] {
+	color: var(--ink-muted);
+}
+.usage-economy-list {
+	margin: 0.5rem 0;
+	padding-left: 1.25rem;
+	color: var(--ink-muted);
+}

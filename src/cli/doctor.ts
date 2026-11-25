@@ -1,0 +1,649 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import path from "node:path";
+import { readSettings } from "../core/config.js";
+import { canonicalizePath } from "../core/path-canonical.js";
+import { proxyEnvSummary } from "../core/proxy-env.js";
+import { sandboxAvailability } from "../core/sandbox/availability.js";
+import {
+	mainSandboxLine,
+	mainSandboxPolicy,
+	mainShellContained,
+	yoloScriptSandboxState,
+	yoloShellState,
+} from "../core/sandbox/main-session.js";
+import { discoverSecretMasks } from "../core/sandbox/secret-files.js";
+import type { SandboxMode, UnixSocketMode } from "../core/sandbox/types.js";
+import { unixSocketHostState } from "../core/sandbox/unix-sockets.js";
+import { type LayeredSettings, readLayeredSettings, settingsSourceFor } from "../core/settings-layers.js";
+import { resolveOnPath } from "../domains/interop/detect.js";
+import {
+	type DoctorFinding,
+	formatDoctorReport,
+	isUninitializedHome,
+	runDoctor,
+	runDoctorFleetChecks,
+	runDoctorHarnessChecks,
+	runDoctorInteropChecks,
+	runDoctorModelChecks,
+	runDoctorRuntimeChecks,
+	withDoctorCommand,
+} from "../domains/lifecycle/doctor.js";
+import { describeMissing } from "../domains/lifecycle/setup-status.js";
+import { reportInvalidInstallRecordsAsRows } from "../domains/plugins/index.js";
+import type { ProvidersContract } from "../domains/providers/contract.js";
+import { copilotContextTierLabel } from "../domains/providers/types/target-descriptor.js";
+import { withFrontmatterCacheReadOnly } from "../domains/resources/skills/frontmatter-cache.js";
+import {
+	type AutonomyLevel,
+	DEFAULT_AUTONOMY_LEVEL,
+	effectiveYoloConfinement,
+	type YoloConfinement,
+} from "../domains/safety/autonomy.js";
+import { SCHEDULER_CLIS } from "../domains/safety/containment.js";
+import { droppedScratchRoots, effectiveScratchRoots } from "../domains/safety/scratch-roots.js";
+import {
+	describeHostCapacity,
+	observeHostCapacityFacts,
+	resolveLocalConcurrency,
+} from "../domains/scheduling/local-capacity.js";
+import { workspaceSnapshotRepositoryPresent } from "../domains/workspace-snapshots/store.js";
+import { classifyDefaultTarget, describeVerdict, firstMissing } from "./default-target.js";
+import { copilotSignInReport } from "./doctor-copilot.js";
+import { dispatchAdmissionFindings } from "./doctor-dispatch-admission.js";
+import { hpcToolchainFindings, pankitFindings } from "./doctor-hpc.js";
+import { installRecordFindings } from "./doctor-install-records.js";
+import { installationFindings } from "./doctor-installation.js";
+import { panesFindings } from "./doctor-panes.js";
+import {
+	homeStorageFinding,
+	installRootFinding,
+	sandboxCacheFinding,
+	stateStorageFinding,
+} from "./doctor-state-size.js";
+import { storeFindings } from "./doctor-store.js";
+import { taskWorktreeFindings } from "./doctor-task-worktrees.js";
+import { pdfAttachmentFinding, toolchainFindings } from "./doctor-toolchain.js";
+import { validationContractFinding } from "./doctor-validation-contract.js";
+import { writeCliFailure } from "./kit/json-out.js";
+import { createLifecyclePresenter } from "./lifecycle-presenter.js";
+
+const HELP = `pancode doctor [--fix [--yes]] [--json] [--verbose] [--deep [--tools-timeout <seconds>]]
+
+Diagnose PanCode state without creating files. The first row says whether
+chat can run and what to run when it cannot. On a home PanCode has never
+written to, or one with no chat target, doctor says so and exits 0; a chat
+target its route cannot reach exits 1. Use --fix to repair structure:
+missing directories, missing template files, and credential permissions.
+--fix also repairs YAML 1.1 on/off booleans, preserving comments and
+formatting. It repairs GUI ownership
+and launchers, and rebuilds incomplete source checkouts. Model IDs are corrected
+only after confirmation: a terminal asks, and --fix --yes applies them without
+asking; sign-ins still require the operator.
+Plain doctor reports the proposed repairs and running builds that need a restart.
+--fix also records the fleet preflight, which is what admits an SSH node to
+dispatch for the current project root; plain doctor only reports it.
+--fix also prunes the sandbox cache to safety.sandboxCacheMaxGiB, least recently
+used tool directory first, unless a running session may use it.
+--fix also drops plugin and extension install records this build does not
+accept, with their files when those match the record; reinstall each with
+pancode hub install <kind>:<id>.
+Settings are validated directly against the current schema.
+Pass --json to emit a machine-readable report on stdout.
+The text report shows the chat row, the version and every row that needs
+attention, then counts the rest; --verbose prints every row.
+--deep adds a live tool-call probe on every configured target, which can load
+a cold local model and releases it afterwards, and a dry run of the workspace
+validation contract that resolves each validator command and reports whether
+it would run without an approval ask at the configured autonomy. The dry run
+executes nothing. --tools-timeout bounds each tool probe (default 120).
+`;
+
+export interface DoctorDeepOptions {
+	/** The providers contract to probe with; the CLI loads its own when absent. */
+	providers?: ProvidersContract;
+	/** Tool-probe generation timeout in ms. */
+	toolsTimeoutMs?: number;
+	/** Autonomy the dry run judges against; the configured level when absent. */
+	autonomy?: AutonomyLevel;
+}
+
+export interface DoctorCollectOptions {
+	fix?: boolean;
+	confirm?: (question: string) => Promise<boolean>;
+	/** Run the deep checks as well. */
+	deep?: DoctorDeepOptions | false;
+	workspaceRoot?: string;
+}
+
+function configuredAutonomy(): AutonomyLevel {
+	try {
+		return readSettings().safety.autonomy;
+	} catch {
+		return DEFAULT_AUTONOMY_LEVEL;
+	}
+}
+
+/**
+ * One info row per copilot-sdk target that opted into the long-context tier, so the larger prompt budget and
+ * its prices are visible. The default tier, the common case, adds no row.
+ */
+function copilotTierFindings(): DoctorFinding[] {
+	let targets: ReadonlyArray<{ id: string; runtime: string; contextTier?: "default" | "long_context" }>;
+	try {
+		targets = readSettings().targets;
+	} catch {
+		// An unreadable settings file has its own doctor row.
+		return [];
+	}
+	return targets.flatMap((target) => {
+		const label = copilotContextTierLabel(target);
+		return label
+			? [
+					{
+						ok: true,
+						level: "info" as const,
+						name: `copilot tier ${target.id}`,
+						detail: `${label} (contextTier: long_context): the model's long-context prompt budget and prices apply`,
+					},
+				]
+			: [];
+	});
+}
+
+/**
+ * Configured scratch roots the operator's yolo leaves out in this workspace:
+ * one that contains the workspace, or resolves through a link to a place that
+ * cannot be one. Validation rejects the rest; these depend on where the
+ * session runs, so doctor names them instead of letting them drop silently (#419).
+ */
+export function scratchRootFindings(workspaceRoot: string): DoctorFinding[] {
+	let configured: ReadonlyArray<string>;
+	try {
+		configured = readSettings().safety.scratchRoots;
+	} catch {
+		// An unreadable settings file has its own doctor row.
+		return [];
+	}
+	return droppedScratchRoots(configured, workspaceRoot).map(({ root, reason }) => ({
+		ok: true,
+		name: "safety.scratchRoots",
+		level: "warn",
+		detail: `${root} is not a scratch root in this workspace: it ${reason}`,
+	}));
+}
+
+/**
+ * How the main session's shell calls run on this host: contained in the
+ * main-session sandbox at autonomy default when a backend exists, and where a
+ * contained call may write; and whether yolo sandboxes its commands (#419).
+ */
+export function shellSandboxFinding(workspaceRoot: string): DoctorFinding {
+	const availability = sandboxAvailability();
+	const mode = configuredSandboxMode();
+	const confinement = configuredYoloConfinement();
+	const workspace = canonicalizePath(workspaceRoot) ?? workspaceRoot;
+	const scratchRoots = effectiveScratchRoots(configuredScratchRoots(), workspaceRoot);
+	const roots = mainSandboxPolicy({ workspace, scratchRoots }).writableRoots;
+	const uncontained = !mainShellContained(mode, availability);
+	const secrets = uncontained ? null : discoverSecretMasks({ workspaceRoots: [workspace], scratchRoots });
+	const unixSockets = configuredUnixSockets();
+	// Masks stand in for a filter bubblewrap could not load, and abstract sockets stay reachable.
+	const socketFallback = !uncontained && unixSocketHostState(unixSockets, availability).kind === "masks";
+	return {
+		ok: true,
+		name: "shell sandbox",
+		level:
+			uncontained ||
+			secrets?.capped === true ||
+			socketFallback ||
+			yoloShellState(confinement, mode, availability) === "refused"
+				? "warn"
+				: "ok",
+		detail: mainSandboxLine(
+			mode,
+			availability,
+			roots,
+			confinement,
+			secrets === null
+				? undefined
+				: { count: secrets.masks.length, capped: secrets.capped, cappedRoots: secrets.cappedRoots, workspace },
+			unixSockets,
+		),
+	};
+}
+
+/** Scheduler clients need a daemon socket the sandbox blocks, so they leave it with approval. */
+function schedulerClientFindings(): DoctorFinding[] {
+	if (!mainShellContained(configuredSandboxMode(), sandboxAvailability())) return [];
+	const found = resolveOnPath([...SCHEDULER_CLIS]).binary;
+	if (found === undefined) return [];
+	return [
+		{
+			ok: true,
+			name: "scheduler commands",
+			level: "info",
+			detail: `${path.basename(found)} is on PATH: scheduler commands run outside the shell sandbox with approval`,
+		},
+	];
+}
+
+function configuredUnixSockets(): UnixSocketMode {
+	try {
+		return readSettings().safety.sandboxUnixSockets;
+	} catch {
+		// An unreadable settings file has its own doctor row; judge with the default.
+		return "block";
+	}
+}
+
+/** The confinement a yolo run here resolves to, through the same reader the runtime uses. */
+function configuredYoloConfinement(): YoloConfinement {
+	try {
+		return effectiveYoloConfinement(readSettings().safety);
+	} catch {
+		// An unreadable settings file has its own doctor row; the pin and the default still apply.
+		return effectiveYoloConfinement(undefined);
+	}
+}
+
+function configuredSandboxMode(): SandboxMode {
+	try {
+		return readSettings().safety.sandbox;
+	} catch {
+		// An unreadable settings file has its own doctor row; judge with the default.
+		return "auto";
+	}
+}
+
+function configuredSnapshotsOn(): boolean {
+	try {
+		return readSettings().safety.snapshots !== "off";
+	} catch {
+		// An unreadable settings file has its own doctor row; judge with the default.
+		return true;
+	}
+}
+
+function configuredScratchRoots(): ReadonlyArray<string> {
+	try {
+		return readSettings().safety.scratchRoots;
+	} catch {
+		// An unreadable settings file has its own doctor row; judge with the temp roots alone.
+		return [];
+	}
+}
+
+async function deepFindings(
+	untouched: boolean,
+	workspaceRoot: string,
+	deep: DoctorDeepOptions,
+): Promise<DoctorFinding[]> {
+	// Loaded on demand, as the model sweep loads the runtimes: plain doctor
+	// never pays for the providers domain or the policy engine.
+	const { contractDryRunFindings, deepToolProbeFindings } = await import("./doctor-deep.js");
+	const probeOptions = deep.toolsTimeoutMs !== undefined ? { toolsTimeoutMs: deep.toolsTimeoutMs } : {};
+	let toolRows: DoctorFinding[] = [];
+	if (deep.providers) {
+		toolRows = await deepToolProbeFindings(deep.providers, probeOptions);
+	} else if (!untouched) {
+		// The providers domain is loaded only when there is a target to probe:
+		// loading it on a home with no targets would cost a domain boot for
+		// nothing, and on an untouched home there are no settings to read.
+		let targetCount = 0;
+		try {
+			targetCount = readLayeredSettings(process.cwd()).settings.targets.length;
+		} catch {
+			// The settings row already reports an unreadable document.
+		}
+		if (targetCount > 0) {
+			const [{ loadDomains }, { ConfigDomainModule }, { ProvidersDomainModule }] = await Promise.all([
+				import("../core/domain-loader.js"),
+				import("../domains/config/index.js"),
+				import("../domains/providers/index.js"),
+			]);
+			const loaded = await loadDomains([ConfigDomainModule, ProvidersDomainModule]);
+			try {
+				const providers = loaded.getContract("providers");
+				if (providers) toolRows = await deepToolProbeFindings(providers, probeOptions);
+			} finally {
+				await loaded.stop();
+			}
+		}
+	}
+	const contractRows = contractDryRunFindings({
+		workspaceRoot,
+		autonomy: deep.autonomy ?? configuredAutonomy(),
+		scratchRoots: configuredScratchRoots(),
+		scriptSandbox: yoloScriptSandboxState(configuredSandboxMode(), sandboxAvailability()),
+		containment: {
+			sandbox: mainShellContained(configuredSandboxMode(), sandboxAvailability()),
+			snapshots: configuredSnapshotsOn() && workspaceSnapshotRepositoryPresent(workspaceRoot),
+		},
+	});
+	return [...toolRows, ...contractRows];
+}
+
+const SETUP_COMMAND = "run `pancode configure` to choose one";
+const UNCONFIGURED = `cannot run yet: no model target is configured; ${SETUP_COMMAND}`;
+
+/**
+ * Whether chat can run: a target, a model, and a credential where one is
+ * needed. It leads the report because a fresh home read healthy from top to
+ * bottom while `pancode run` could not answer; no row named the missing
+ * target. The verdict is the one the bare launch acts on (default-target.ts),
+ * so doctor and startup never disagree about what is missing. An unconfigured
+ * home gets a WARN, because it is not a broken one and `doctor --fix` on a fresh
+ * home still exits 0. A home that names a chat target its route cannot reach
+ * gets an error, so a script sees exit 1.
+ */
+export function chatReadinessFinding(untouched: boolean, connectionRows: ReadonlyArray<DoctorFinding>): DoctorFinding {
+	const warn = (detail: string): DoctorFinding => ({ ok: true, level: "warn", name: "chat", detail });
+	const broken = (detail: string): DoctorFinding => ({ ok: false, level: "error", name: "chat", detail });
+	// No settings to read, and reading them through the ensuring accessors
+	// would create the home doctor promised to leave alone.
+	if (untouched) return warn(UNCONFIGURED);
+	let layered: LayeredSettings;
+	try {
+		// The chat route a session here runs: a trusted project's route and targets count, an untrusted one's do not.
+		layered = readLayeredSettings(process.cwd());
+	} catch {
+		return warn("cannot run until settings.yaml loads; the settings.yaml row says why");
+	}
+	const settings = layered.settings;
+	const verdict = classifyDefaultTarget(settings);
+	if (verdict.kind === "no-target") return warn(UNCONFIGURED);
+	if (verdict.kind === "ineligible-runtime") {
+		return broken(`cannot run: ${describeVerdict(verdict)} Run \`pancode configure\` to choose a chat target.`);
+	}
+	const targetId = settings.chat.target ?? "";
+	const model = settings.chat.model?.trim();
+	if (!model) return broken(`cannot run yet: ${describeMissing({ kind: "model", target: targetId }).sentence}`);
+	const route = `target '${targetId}', model '${model}'`;
+	if (verdict.kind === "missing-credential") {
+		const missing = firstMissing(settings) ?? { kind: "credential", target: targetId, provider: verdict.store };
+		// A key variable a project target names is fixed in the shell or in that project file, never by configure.
+		const targetsOrigin = settingsSourceFor(layered.sources, "targets");
+		const projectFile =
+			missing.kind === "env" && (targetsOrigin === "project" || targetsOrigin === "project.local")
+				? layered.layers.find((layer) => layer.origin === targetsOrigin)?.path
+				: undefined;
+		return broken(
+			`${route}; ${describeMissing(missing.kind === "env" && projectFile !== undefined ? { ...missing, projectFile } : missing).sentence}`,
+		);
+	}
+	const failing = connectionRows.filter(
+		(row) =>
+			(row.name === `connection ${targetId}` || row.name === `model ${targetId}`) && (!row.ok || row.level === "warn"),
+	);
+	const url = settings.targets.find((entry) => entry.id === targetId)?.url;
+	const unanswered = failing
+		.map((row) => (row.name === `connection ${targetId}` ? /was not verified: (.+?)\. /u.exec(row.detail)?.[1] : null))
+		.find((detail) => detail != null && !/\b40[13]\b|auth|credential|key/iu.test(detail));
+	if (url !== undefined && unanswered != null) {
+		return broken(
+			`${route}; ${describeMissing({ kind: "unreachable", target: targetId, url, detail: unanswered }).sentence}`,
+		);
+	}
+	if (failing.length > 0) {
+		const checks = failing.map((row) => `\`${row.name}\``).join(" and ");
+		const detail = `${route}; configured, but ${checks} below did not pass`;
+		return failing.some((row) => !row.ok) ? broken(detail) : warn(detail);
+	}
+	const connection = connectionRows.find((row) => row.name === `connection ${targetId}`);
+	const reachable = connection !== undefined && (connection.level === undefined || connection.level === "ok");
+	return {
+		ok: true,
+		name: "chat",
+		detail: reachable ? `${route}; endpoint reachable` : `${route}; reachability is checked on the first request`,
+	};
+}
+
+/**
+ * The plain text report: the chat verdict, the version, and every row that needs attention, then one line counting
+ * the rest. A configured home printed 60 rows, most of them compilers, PanKit probes and state plumbing a reader had
+ * no reason to read; `--verbose` and `--json` keep every row.
+ */
+function attentionReport(findings: ReadonlyArray<DoctorFinding>): string {
+	const attention = (row: DoctorFinding) => !row.ok || row.level === "warn" || row.level === "error";
+	const shown = findings.filter((row) => row.name === "chat" || row.name === "PanCode version" || attention(row));
+	const passed = findings.filter((row) => row.ok && (row.level === undefined || row.level === "ok")).length;
+	const notes = findings.filter((row) => row.ok && row.level === "info").length;
+	const needs = shown.filter(attention).length;
+	const summary = [
+		needs === 0 ? "nothing needs attention" : `${needs} ${needs === 1 ? "row needs" : "rows need"} attention`,
+		`${passed} ${passed === 1 ? "check" : "checks"} passed`,
+		...(notes > 0 ? [`${notes} ${notes === 1 ? "note" : "notes"}`] : []),
+	].join(", ");
+	const setup = findings.some((row) => row.name === "chat" && row.detail === UNCONFIGURED)
+		? "chat is not set up: run `pancode configure`\n"
+		: "";
+	return `${formatDoctorReport([...shown])}\n${setup}${summary}; \`pancode doctor --verbose\` prints every row\n`;
+}
+
+/**
+ * Every doctor check in report order. The CLI prints these; the TUI's
+ * `/doctor` renders the same list in-session and passes its own providers
+ * contract so the deep probe runs against the session's targets.
+ */
+export async function collectDoctorFindings(options: DoctorCollectOptions = {}): Promise<DoctorFinding[]> {
+	if (options.fix === true) return collectFindings(options);
+	return withFrontmatterCacheReadOnly(() => collectFindings(options));
+}
+
+async function collectFindings(options: DoctorCollectOptions): Promise<DoctorFinding[]> {
+	const fix = options.fix === true;
+	const workspaceRoot = options.workspaceRoot ?? process.cwd();
+	reportInvalidInstallRecordsAsRows();
+	// Decided before runDoctor so a --fix run, which initializes the home, still
+	// gets every check on the home it just built.
+	const untouched = !fix && isUninitializedHome();
+	const findings = runDoctor({ fix });
+	const hostFacts = observeHostCapacityFacts();
+	const localCapacity: DoctorFinding = {
+		ok: true,
+		name: "local worker capacity",
+		detail: describeHostCapacity(hostFacts, resolveLocalConcurrency("auto", hostFacts)),
+	};
+	let filesEnabled = false;
+	try {
+		filesEnabled = readSettings().interface.panes.files.enabled;
+	} catch {
+		// The settings finding already reports an unreadable document. Optional
+		// integrations stay inactive rather than adding secondary warnings.
+	}
+	const proxy = proxyEnvSummary();
+	const proxyChecks: DoctorFinding[] = proxy === null ? [] : [{ ok: true, level: "info", name: "proxy", detail: proxy }];
+	const installRoot = installRootFinding();
+	const storageChecks = untouched
+		? []
+		: [
+				stateStorageFinding(),
+				homeStorageFinding(),
+				...(installRoot === null ? [] : [installRoot]),
+				await sandboxCacheFinding({ fix }),
+			];
+	const runtimeChecks = await runDoctorRuntimeChecks();
+	// Every model pointer is checked against what its target advertises, so a
+	// placeholder id saved by configure is reported here and not on the first turn.
+	// A copilot-sdk target's login lives in the official runtime, so only that runtime can say which one it sees.
+	// It runs first: a login only the keychain holds turns the Copilot connection row into the same warning.
+	const copilot = untouched ? null : await copilotSignInReport();
+	const modelChecks = await runDoctorModelChecks({
+		fix,
+		...(options.confirm ? { confirm: options.confirm } : {}),
+		...(copilot?.check.kind === "keychain-only" ? { copilotKeychainLogin: copilot.check.login } : {}),
+	});
+	const copilotChecks: DoctorFinding[] = copilot ? [copilot.finding, ...copilotTierFindings()] : [];
+	// The interop and fleet sweeps read the state and config roots through
+	// accessors that create them, and there is no fleet or interop
+	// state to inspect before PanCode has ever written anything. On a home PanCode has
+	// never touched, doctor keeps its promise to create nothing.
+	const interopChecks = untouched ? [] : await runDoctorInteropChecks();
+	// Fleet preflight probes each configured node over SSH and persists the
+	// per-node eligibility verdicts dispatch placement enforces.
+	const fleetChecks = untouched ? [] : await runDoctorFleetChecks(workspaceRoot, { fix });
+	// The harness sweep reads the workspace's recipes, skills and local settings
+	// and the catalog they bind against; it creates nothing, but discovery
+	// resolves the config root, so it waits for a home PanCode has written.
+	const harnessChecks = untouched ? [] : runDoctorHarnessChecks(workspaceRoot);
+	// Resolution reads PATH and the vendor root and creates nothing, but on an
+	// untouched home there is no vendor root to look at and the answer would be
+	// "none" for every row regardless, so the sweep stays with the others.
+	// The PDF row reads PATH only, so it runs on an untouched home too.
+	const toolChecks = [...(untouched ? [] : toolchainFindings({ filesEnabled, fix })), await pdfAttachmentFinding()];
+	// Compilers, MPI, build systems, and the scheduler. Each probe resolves PATH
+	// and runs a bounded `--version` in a scratch directory, so it creates
+	// nothing and runs on an untouched home too. Beside them, the builtin PanKit
+	// servers: one bounded `pankit doctor --json` with the launch environment,
+	// whose probes look programs up and run none, so it creates nothing and runs
+	// on an untouched home too.
+	const [hpcChecks, pankitChecks] = await Promise.all([
+		hpcToolchainFindings({ workspaceRoot }),
+		pankitFindings({ workspaceRoot }),
+	]);
+	// The store roots and their free space, and tags placed on a root no longer
+	// configured. It reads statfs and placement.json and creates nothing, so it
+	// runs on an untouched home too.
+	const storeChecks = storeFindings(workspaceRoot);
+	// The pane sweep pings a socket and reads PATH; it creates nothing except the
+	// journal directory it is asked about, which is inside the state root doctor
+	// has already agreed not to build on an untouched home.
+	const paneChecks = untouched ? [] : await panesFindings();
+	// The validation contract lives in the workspace, not the home, so it is
+	// checked on every run: a broken contract is why rigor stayed normal.
+	const contractChecks = [validationContractFinding(workspaceRoot)];
+	const scratchChecks = untouched
+		? []
+		: [...scratchRootFindings(workspaceRoot), shellSandboxFinding(workspaceRoot), ...schedulerClientFindings()];
+	// Task worktrees live in the workspace too. The sweep reads claims and asks
+	// git; it removes nothing.
+	const worktreeChecks = taskWorktreeFindings(workspaceRoot, { fix });
+	// The admission store reads one state file; --fix drops records no reader accepts.
+	const admissionChecks = untouched ? [] : dispatchAdmissionFindings({ fix });
+	// Plugin and extension state files: --fix drops install records this build does not accept.
+	const installRecordChecks = installRecordFindings({ fix });
+	const deepChecks = options.deep ? await deepFindings(untouched, workspaceRoot, options.deep) : [];
+	// A checkout repair replaces lazy chunks. Finish every other dynamic check before rebuilding disk.
+	const installChecks = await installationFindings(fix);
+	return [
+		chatReadinessFinding(untouched, modelChecks),
+		...findings,
+		...installChecks,
+		localCapacity,
+		...proxyChecks,
+		...storageChecks,
+		...runtimeChecks,
+		...modelChecks,
+		...copilotChecks,
+		...interopChecks,
+		...fleetChecks,
+		...harnessChecks,
+		...toolChecks,
+		...hpcChecks,
+		...pankitChecks,
+		...storeChecks,
+		...paneChecks,
+		...contractChecks,
+		...scratchChecks,
+		...worktreeChecks,
+		...admissionChecks,
+		...installRecordChecks,
+		...deepChecks,
+	].map(withDoctorCommand);
+}
+
+/**
+ * In-session diagnostics: structured findings for the TUI card, plus the plain
+ * report for hosts without a card renderer, at the level of the worst row.
+ */
+export function doctorNotice(findings: ReadonlyArray<DoctorFinding>): {
+	level: "success" | "warn" | "error";
+	text: string;
+	findings: ReadonlyArray<DoctorFinding>;
+} {
+	const errors = findings.filter((f) => !f.ok).length;
+	const warnings = findings.filter((f) => f.ok && f.level === "warn").length;
+	const level = errors > 0 ? "error" : warnings > 0 ? "warn" : "success";
+	const head = `doctor: ${findings.length} checks, ${errors} error(s), ${warnings} warning(s)`;
+	return { level, text: `${head}\n${formatDoctorReport([...findings])}`, findings };
+}
+
+interface DoctorArgs {
+	fix: boolean;
+	yes: boolean;
+	json: boolean;
+	verbose: boolean;
+	deep: boolean;
+	toolsTimeoutMs?: number;
+}
+
+function parseDoctorArgs(args: ReadonlyArray<string>): DoctorArgs {
+	const parsed: DoctorArgs = { fix: false, yes: false, json: false, verbose: false, deep: false };
+	for (let i = 0; i < args.length; i += 1) {
+		const arg = args[i];
+		if (arg === "--fix") parsed.fix = true;
+		else if (arg === "--yes" || arg === "-y") parsed.yes = true;
+		else if (arg === "--json") parsed.json = true;
+		else if (arg === "--verbose") parsed.verbose = true;
+		else if (arg === "--deep") parsed.deep = true;
+		else if (arg === "--tools-timeout") {
+			const value = args[i + 1];
+			const seconds = value === undefined ? Number.NaN : Number(value);
+			if (!Number.isFinite(seconds) || seconds <= 0)
+				throw new Error("--tools-timeout requires a positive number of seconds");
+			parsed.toolsTimeoutMs = Math.round(seconds * 1000);
+			i += 1;
+		} else throw new Error(`unknown flag: ${arg}`);
+	}
+	if (parsed.toolsTimeoutMs !== undefined && !parsed.deep) throw new Error("--tools-timeout requires --deep");
+	if (parsed.yes && !parsed.fix) throw new Error("--yes confirms --fix repairs; pass --fix with it");
+	return parsed;
+}
+
+export async function runDoctorCommand(args: ReadonlyArray<string> = []): Promise<number> {
+	if (args.includes("--help") || args.includes("-h")) {
+		process.stdout.write(HELP);
+		return 0;
+	}
+	let parsed: DoctorArgs;
+	try {
+		parsed = parseDoctorArgs(args);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		writeCliFailure({
+			path: ["doctor"],
+			slug: message.startsWith("unknown flag") ? "unknown_flag" : "usage",
+			message,
+			json: args.includes("--json"),
+		});
+		return 2;
+	}
+	const { fix, json } = parsed;
+	// --yes applies the repairs that need a confirmation (model-id corrections)
+	// without asking (C8). A terminal run asks; under --json the question goes to
+	// stderr, because --json never changes whether a command acts. Without a
+	// terminal and without --yes those repairs are still reported and skipped,
+	// with exit codes as before (v1 kept).
+	const confirm: ((question: string) => Promise<boolean>) | undefined = parsed.yes
+		? async () => true
+		: fix && process.stdin.isTTY
+			? (question: string) => createLifecyclePresenter({ json }).confirm(question)
+			: undefined;
+	const all = await collectDoctorFindings({
+		fix,
+		...(confirm !== undefined ? { confirm } : {}),
+		deep: parsed.deep ? (parsed.toolsTimeoutMs !== undefined ? { toolsTimeoutMs: parsed.toolsTimeoutMs } : {}) : false,
+	});
+	const ok = all.every((f) => f.ok);
+	if (json) {
+		process.stdout.write(`${JSON.stringify({ ok, fix, deep: parsed.deep, findings: all }, null, 2)}\n`);
+	} else if (parsed.verbose) {
+		process.stdout.write(`${formatDoctorReport(all)}\n`);
+	} else {
+		// One write: a reader such as `| head` that closes the pipe after the
+		// first rows would turn a second write into an EPIPE crash.
+		process.stdout.write(attentionReport(all));
+	}
+	return ok ? 0 : 1;
+}

@@ -1,0 +1,930 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * The one agent-tool adapter, owned by the tool registry.
+ *
+ * Converts PanCode `ToolSpec` registrations into engine `AgentTool` instances the
+ * agent can execute. Every wrapper routes through a `ToolRegistry.invoke(...)`
+ * call so the orchestrator's chat loop and worker subprocesses share the same
+ * safety + confirmation admission path instead of calling `spec.run(...)`
+ * directly. Both surfaces resolve their tools here, so they cannot drift. The
+ * main session narrows its registry with `effectiveToolNames`; a worker takes
+ * its sealed envelope's names through `envelopeSurfaceNames`, which narrows
+ * nothing, so its executable surface and its attested signature are the
+ * envelope's (fleet M7).
+ *
+ * The engine validates attached schemas. A projected schema is then checked
+ * against the canonical schema before admission. Inside the agent loop pi-ai's
+ * `validateToolArguments` (called by pi-agent-core's `prepareToolCall`)
+ * coerces and schema-checks args before they reach `AgentTool.execute`. For
+ * direct callers (tests, scripts, future RPC paths) `invokeRegisteredTool`
+ * validates first and then funnels into the same shared executor as the loop.
+ */
+
+import { performance } from "node:perf_hooks";
+import type { TSchema } from "typebox";
+import { normalizeGatewayArguments } from "../core/gateway-envelope.js";
+import { runtimeModelField } from "../core/model-tier.js";
+import { STEER_ABORT_MARK } from "../core/reminder-framing.js";
+import { type SkillActivation, skillActivationFromToolDetails } from "../core/skill-activation.js";
+import type { TelemetryContext } from "../core/telemetry/context.js";
+import { telemetryContext, withToolTelemetryContext } from "../core/telemetry/context.js";
+import { toolFileKind } from "../core/telemetry/file-kind.js";
+import { telemetryHub } from "../core/telemetry/hub.js";
+import type { ToolSettled } from "../core/telemetry/tool-schemas.js";
+import type { ToolName } from "../core/tool-names.js";
+import { isMcpToolName, ToolNames } from "../core/tool-names.js";
+import { type TurnConstraints, turnAllowsTool } from "../core/turn-constraints.js";
+import { isRecord } from "../core/type-guards.js";
+import { acceptsImageInput } from "../domains/providers/image-input.js";
+import type { ResolvedRuntimeTarget } from "../domains/providers/index.js";
+import {
+	type CallActionDescriptor,
+	describeCallAction,
+	sanitizeCallTargetText,
+} from "../domains/safety/call-target.js";
+import type { SafetyDecision } from "../domains/safety/contract.js";
+import { denialLines, type ToolDenial } from "../domains/safety/denial.js";
+import { YOLO_ADMITTED_REASON_PREFIX } from "../domains/safety/policy-floor-scripts.js";
+import { redactSecretString } from "../domains/safety/redaction.js";
+import { formatModelRejection } from "../domains/safety/rejection-feedback.js";
+import { validateEngineToolArguments } from "../engine/ai.js";
+import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "../engine/types.js";
+import { OBSERVATION_BUDGET_NOT_EXECUTED } from "./observation.js";
+import { applyToolProfile, type ToolProfileName } from "./profiles.js";
+import { prepareToolArgs } from "./registry-call-prep.js";
+import type { ToolInvokeOptions, ToolRegistry } from "./registry-contract.js";
+import {
+	isDispositionedToolResultError,
+	isRefusalToolResultError,
+	toolResultContextText,
+} from "./result-disposition.js";
+import { surfaceSpecPlacement, withGatewayForCapabilities } from "./surface.js";
+import type { ToolResult, ToolSpec } from "./tool-spec.js";
+import { truncateUtf8 } from "./truncate-utf8.js";
+
+/**
+ * Lightweight per-call observability hook. Default no-op so unused
+ * telemetry costs nothing. Both the agent loop path and `invokeWorkerTool`
+ * emit identical events, which lets receipts/profiling consume one stream
+ * regardless of how the tool was reached.
+ */
+export interface ToolTelemetry {
+	onStart?(event: ToolStartEvent): void;
+	onFinish?(event: ToolFinishEvent): void;
+}
+
+export type ToolOutcome = "ok" | "error" | "blocked";
+
+export interface ToolCallFacts {
+	target: string;
+	targetTruncated?: true;
+	offset?: number;
+	limit?: number;
+	tail?: number;
+	startLine?: number | null;
+	endLine?: number | null;
+	rangeUnit?: "physical-lines" | "rendered-lines";
+	partialLine?: boolean;
+	returnedBytes?: number;
+	observationBytes?: number;
+	truncated?: boolean;
+	poolLimitBytes?: number;
+	poolUsedBeforeBytes?: number;
+	poolExhausted?: boolean;
+}
+
+export function toolCallFacts(tool: string, args: Record<string, unknown>, result?: ToolResult): ToolCallFacts | null {
+	if (![ToolNames.Read, ToolNames.Edit, ToolNames.Write].some((name) => name === tool) || typeof args.path !== "string")
+		return null;
+	const target = sanitizeCallTargetText(redactSecretString(args.path));
+	const callFacts: ToolCallFacts = {
+		target: truncateUtf8(target, 4096, "…"),
+		...(Buffer.byteLength(target) > 4096 ? { targetTruncated: true } : {}),
+	};
+	for (const key of ["offset", "limit", "tail"] as const) {
+		const value = args[key];
+		if (tool === ToolNames.Read && typeof value === "number" && Number.isFinite(value) && value >= 0)
+			callFacts[key] = value;
+	}
+	if (!result) return callFacts;
+	callFacts.returnedBytes =
+		Buffer.byteLength(toolResultContextText(result)) +
+		(result.kind === "ok" ? (result.images ?? []).reduce((bytes, image) => bytes + Buffer.byteLength(image.data), 0) : 0);
+	const details = result.details;
+	const observation = details?.observation;
+	if (isRecord(observation)) {
+		if (typeof observation.shownBytes === "number") callFacts.observationBytes = observation.shownBytes;
+		if (typeof observation.truncated === "boolean") callFacts.truncated = observation.truncated;
+		const pool = observation.budget;
+		if (isRecord(pool)) {
+			if (typeof pool.limitBytes === "number") callFacts.poolLimitBytes = pool.limitBytes;
+			if (typeof pool.usedBeforeBytes === "number") callFacts.poolUsedBeforeBytes = pool.usedBeforeBytes;
+			if (typeof pool.exhausted === "boolean") callFacts.poolExhausted = pool.exhausted;
+		}
+	}
+	const range = details?.readRange;
+	if (isRecord(range)) {
+		if (typeof range.startLine === "number" || range.startLine === null) callFacts.startLine = range.startLine;
+		if (typeof range.endLine === "number" || range.endLine === null) callFacts.endLine = range.endLine;
+		if (range.unit === "physical-lines" || range.unit === "rendered-lines") callFacts.rangeUnit = range.unit;
+		if (typeof range.partialLine === "boolean") callFacts.partialLine = range.partialLine;
+	}
+	const shaped = details?.resultSize;
+	if (isRecord(shaped) && shaped.truncated === true) {
+		callFacts.truncated = true;
+		callFacts.startLine = null;
+		callFacts.endLine = null;
+	}
+	return callFacts;
+}
+
+export interface ToolStartEvent {
+	tool: string;
+	callFacts?: ToolCallFacts;
+	/**
+	 * The engine's id for this call, when the producer has one. New producers
+	 * put the same id on start and finish so concurrent calls of one tool remain
+	 * independently attributable. Optional for direct callers and old streams.
+	 */
+	toolCallId?: string;
+	posture: "operating";
+	/**
+	 * Wall-clock anchor for the instant the call began, for a human correlating
+	 * it against other records. It is stamped by whichever process ran the tool,
+	 * so it is never an endpoint for a span: `durationMs` on the matching finish
+	 * event is measured on that process's monotonic clock instead.
+	 */
+	startedAt: number;
+	/**
+	 * What this call is doing, as a bounded redacted descriptor composed here
+	 * where the arguments are trusted. Structured path call facts travel separately; raw arguments never cross
+	 * this telemetry seam.
+	 */
+	action?: CallActionDescriptor;
+}
+
+export interface ToolFinishEvent {
+	tool: string;
+	callFacts?: ToolCallFacts;
+	/**
+	 * The engine's id for this call, when the caller supplied one through
+	 * `invokeOptions`. Consumers that correlate this authoritative outcome back
+	 * to an engine `tool_execution_end` event key on it: the engine event
+	 * carries only `isError` plus result text, which cannot distinguish a
+	 * permission block from a command that ran and exited nonzero.
+	 */
+	toolCallId?: string;
+	posture: "operating";
+	durationMs: number;
+	outcome: ToolOutcome;
+	terminate?: boolean;
+	reason?: string;
+	actionClass?: string;
+	decision?: "allowed" | "blocked" | "permission_requested";
+	/**
+	 * The blocked call had parked for approval and the park was answered without
+	 * one (`RegistryVerdict.deniedPark`). `decision` still says `blocked` for it,
+	 * as it always has; this says the block was a refused ask.
+	 */
+	deniedPark?: true;
+	/** The guard withheld a duplicate of a call that already succeeded (`RegistryVerdict.redundantRepeat`). */
+	redundantRepeat?: true;
+	/**
+	 * The call errored before doing any work because its arguments named nothing the tool could resolve, such as a
+	 * `verify` check that is not declared. A validation it never ran is not a failed validation (J2-F01).
+	 */
+	unresolved?: true;
+	/**
+	 * An `ok` result for a call that did no work: the spent per-turn observation pool stopped it (C-17,
+	 * `OBSERVATION_BUDGET_NOT_EXECUTED`). Tool stats count it withheld, not ok.
+	 */
+	notExecuted?: "observation_budget";
+	ruleId?: string;
+	reasonCode?: string;
+	policySource?: string;
+	/** A risky call actually ran under YOLO, rather than an operator's one-shot grant. */
+	autoApproved?: "yolo";
+	/** Who refused a blocked call and what would allow it; see `src/domains/safety/denial.ts`. */
+	denial?: ToolDenial;
+	skillActivation?: SkillActivation;
+}
+
+export interface ResolveAgentToolsInput {
+	registry: ToolRegistry;
+	turnConstraints?: TurnConstraints;
+	/** Session schema projection must not replace live turn admission (#423). */
+	schemaCeiling?: TurnConstraints;
+	allowedTools?: ReadonlyArray<ToolName>;
+	toolProfile?: ToolProfileName;
+	agentId?: string;
+	telemetry?: ToolTelemetry;
+	invokeOptions?: (toolCallId?: string) => Partial<ToolInvokeOptions>;
+	includeInteractiveTools?: boolean;
+	/**
+	 * Attach every admitted capability under its own name and never `gateway`.
+	 * For an external tool loop that carries PanCode tools without PanCode's gateway
+	 * (the Claude SDK bridge), so a gateway-placed capability stays callable.
+	 */
+	attachCapabilitiesDirectly?: boolean;
+	/**
+	 * A worker's sealed envelope names (fleet M7). When present they are the whole surface: the envelope already
+	 * applied role, profile, deny list, runtime and host, so no profile, turn or allow-list narrowing runs again, and
+	 * the execution ceiling is the same list.
+	 */
+	envelopeTools?: ReadonlyArray<string>;
+}
+
+export interface InvokeWorkerToolOptions {
+	signal?: AbortSignal;
+	telemetry?: ToolTelemetry;
+}
+
+type WorkerAgentToolResult = AgentToolResult<{ kind: "ok" } | { kind: "error" }>;
+type WorkerToolOkDetails = { kind: "ok" } & Record<string, unknown>;
+
+function projectToolResult(result: ToolResult): WorkerAgentToolResult {
+	const details = { ...(result.details ?? {}), kind: result.kind } as { kind: "ok" } | { kind: "error" };
+	if (result.kind === "error") {
+		return { content: [{ type: "text", text: toolResultContextText(result) }], details, isError: true };
+	}
+	return {
+		content: [{ type: "text", text: toolResultContextText(result) }, ...(result.images ?? [])],
+		details,
+		...(result.terminate === true ? { terminate: true } : {}),
+	};
+}
+
+interface RunValidatedToolCallInput {
+	spec: ToolSpec;
+	args: Record<string, unknown>;
+	registry: ToolRegistry;
+	signal?: AbortSignal;
+	telemetry?: ToolTelemetry;
+	invokeOptions?: Partial<ToolInvokeOptions>;
+	/** Agent loops can preserve canonical failure envelopes and classify them after execution. */
+	returnDispositionedErrors?: boolean;
+}
+
+async function runValidatedToolCall(input: RunValidatedToolCallInput): Promise<WorkerAgentToolResult> {
+	const { spec, args, registry, signal, telemetry } = input;
+	// Wall read anchors the instant the start event carries; the monotonic twin
+	// spans the call, so `durationMs` survives a clock correction mid-tool.
+	const startedAt = Date.now();
+	const startedAtClock = performance.now();
+	// Stamped onto both lifecycle events so a concurrent finish resolves only
+	// the start for its own engine call. Direct callers may legitimately omit it.
+	const callId = input.invokeOptions?.toolCallId;
+	const callFacts = toolCallFacts(spec.name, args);
+	const withCallId = { ...(callId === undefined ? {} : { toolCallId: callId }), ...(callFacts ? { callFacts } : {}) };
+	// The one seam that holds validated arguments and publishes telemetry, so it
+	// is where the redacted descriptor is composed. Everything downstream of here
+	// sees the descriptor and never the arguments.
+	const action = describeCallAction(spec.name, args);
+	telemetry?.onStart?.({
+		tool: spec.name,
+		...withCallId,
+		posture: "operating",
+		startedAt,
+		...(action !== null ? { action } : {}),
+	});
+	const invokeOpts: ToolInvokeOptions = {};
+	if (input.invokeOptions) Object.assign(invokeOpts, input.invokeOptions);
+	if (signal) invokeOpts.signal = signal;
+	// One token per model tool call: a gateway chain spreads it into its steps (C-17, `observationCall`).
+	if (invokeOpts.observationCall === undefined) invokeOpts.observationCall = {};
+	// The registry parks a call that needs an operator decision inside this
+	// invocation, so the span below covers the operator as well as the tool.
+	// Subtracting the park keeps `durationMs` a measurement of the tool: an
+	// approved `npm test` was rendered as a 56s test run and sealed into the
+	// receipt and toolStats that way, when the command itself took a fraction
+	// of a second.
+	let parkedMs = 0;
+	const callerOnParked = invokeOpts.onParked;
+	invokeOpts.onParked = (ms) => {
+		parkedMs += ms;
+		callerOnParked?.(ms);
+	};
+	// Middleware hooks run inside the invocation too (a command hook blocks the event loop), so their time is
+	// reported apart and kept out of the tool's own.
+	let hookMs = 0;
+	const callerOnHookTime = invokeOpts.onHookTime;
+	invokeOpts.onHookTime = (ms) => {
+		hookMs += ms;
+		callerOnHookTime?.(ms);
+	};
+	const executedMs = (): number =>
+		Math.max(0, Math.round(performance.now() - startedAtClock) - parkedMs - Math.round(hookMs));
+	// The registry scopes its own work the same way, so the record joins its session, turn, tool call and the model
+	// call that asked for it (#434).
+	const telemetryCtx = withToolTelemetryContext(invokeOpts, telemetryContext);
+	const finish = (outcome: ToolOutcome, extra: Parameters<typeof emitFinish>[4], result?: ToolResult): void => {
+		emitFinish(telemetry, spec.name, executedMs, outcome, extra);
+		recordToolSettled(
+			telemetryCtx,
+			spec.name,
+			outcome,
+			executedMs(),
+			parkedMs,
+			Math.round(hookMs),
+			extra,
+			result,
+			toolSettledFacets(spec.name, args, result, extra?.skillActivation),
+		);
+	};
+	const hasInvokeOpts = Object.keys(invokeOpts).length > 0;
+	let verdictPromise: ReturnType<typeof registry.invoke>;
+	try {
+		verdictPromise = registry.invoke({ tool: spec.name, args }, hasInvokeOpts ? invokeOpts : undefined);
+	} catch (err) {
+		finish("error", { ...withCallId, reason: errorMessage(err) });
+		throw err;
+	}
+	let verdict: Awaited<typeof verdictPromise>;
+	try {
+		verdict = await verdictPromise;
+	} catch (err) {
+		finish("error", { ...withCallId, reason: errorMessage(err) });
+		throw err;
+	}
+	if (verdict.kind !== "ok") {
+		finish("blocked", {
+			...withCallId,
+			reason: verdict.reason,
+			...(verdict.kind === "blocked" ? { decision: verdict.decision } : {}),
+			...(verdict.kind === "blocked" && verdict.deniedPark === true ? { deniedPark: true } : {}),
+			...(verdict.kind === "blocked" && verdict.redundantRepeat === true ? { redundantRepeat: true } : {}),
+			...(verdict.kind === "blocked" && verdict.denial !== undefined ? { denial: verdict.denial } : {}),
+			...(verdict.kind === "blocked" && verdict.executionStarted === true ? { executionStarted: true as const } : {}),
+			...(verdict.kind === "blocked" && verdict.executionDecisions !== undefined
+				? { executionDecisions: verdict.executionDecisions }
+				: {}),
+		});
+		// The model sees only this thrown message. The short verdict reason
+		// starves the next turn of the policy's why and how-to-recover, so
+		// compose the rejection detail and hints into the tool error; the
+		// telemetry event above keeps the terse reason for receipts and UI.
+		const rejection =
+			verdict.kind === "blocked" && "rejection" in verdict.decision ? verdict.decision.rejection : undefined;
+		const denial = verdict.kind === "blocked" ? verdict.denial : undefined;
+		throw new Error(
+			formatModelRejection(verdict.reason, rejection, denial !== undefined ? denialLines(denial) : undefined),
+		);
+	}
+	const resultFacts = toolCallFacts(spec.name, args, verdict.result);
+	const withResultFacts = {
+		...withCallId,
+		...(resultFacts ? { callFacts: resultFacts } : {}),
+		...(verdict.executionStarted === true ? { executionStarted: true as const } : {}),
+		...(verdict.executionDecisions !== undefined ? { executionDecisions: verdict.executionDecisions } : {}),
+		...(verdict.result.kind === "ok" && verdict.result.details?.notExecuted === OBSERVATION_BUDGET_NOT_EXECUTED
+			? { notExecuted: OBSERVATION_BUDGET_NOT_EXECUTED }
+			: {}),
+	};
+	if (verdict.result.kind === "error") {
+		finish(
+			"error",
+			{
+				...withResultFacts,
+				reason: verdict.result.message,
+				decision: verdict.decision,
+				...(verdict.result.details?.unresolved === true ? { unresolved: true as const } : {}),
+			},
+			verdict.result,
+		);
+		if (
+			input.returnDispositionedErrors === true &&
+			(isDispositionedToolResultError(verdict.result) ||
+				isRefusalToolResultError(verdict.result) ||
+				// DF-10: throwing discards the unavailable judgement from worker events and receipts.
+				(spec.name === ToolNames.Verify &&
+					isRecord(verdict.result.details?.judgement) &&
+					verdict.result.details.judgement.execution === "unavailable") ||
+				(spec.name === ToolNames.Gateway && verdict.result.details?.op === "chain") ||
+				// A batch with a failed run keeps its run tally, so the row counts its runs instead of `✗ failed` alone.
+				(spec.name === ToolNames.Dispatch && typeof verdict.result.details?.runCount === "number") ||
+				// A cancelled extension interview keeps the checkpoints it put to the author on the ledger.
+				isRecord(verdict.result.details?.interview))
+		) {
+			return projectToolResult(verdict.result);
+		}
+		throw new Error(toolResultContextText(verdict.result));
+	}
+	const toolDetails = isRecord(verdict.result.details) ? verdict.result.details : {};
+	const skillActivation =
+		spec.name === ToolNames.Context || toolDetails.capability === ToolNames.Context
+			? skillActivationFromToolDetails(toolDetails, input.invokeOptions?.turnId)
+			: null;
+	const result: AgentToolResult<WorkerToolOkDetails> = {
+		content: [{ type: "text", text: toolResultContextText(verdict.result) }, ...(verdict.result.images ?? [])],
+		details: { ...toolDetails, kind: "ok" },
+	};
+	if (verdict.result.terminate === true) {
+		result.terminate = true;
+		finish(
+			"ok",
+			{
+				...withResultFacts,
+				terminate: true,
+				decision: verdict.decision,
+				...(skillActivation ? { skillActivation } : {}),
+			},
+			verdict.result,
+		);
+	} else {
+		finish(
+			"ok",
+			{
+				...withResultFacts,
+				decision: verdict.decision,
+				...(skillActivation ? { skillActivation } : {}),
+			},
+			verdict.result,
+		);
+	}
+	return result;
+}
+
+const CHECK_KINDS: ReadonlySet<string> = new Set(["command", "numeric-compare", "perf-budget", "reproduce", "browser"]);
+
+type ToolSettledFacets = Pick<ToolSettled, "fileExt" | "checkKind" | "skill" | "capabilities">;
+
+/**
+ * What kind of work a call did, as closed words and names only, so `telemetry insights` classifies a session without
+ * reading a path, an argument or a result. A write or edit keeps only its file's kind by extension, a verify call the
+ * check kind it ran, a context call the skill it loaded, and a gateway call the capabilities it invoked.
+ */
+function toolSettledFacets(
+	tool: string,
+	args: Record<string, unknown>,
+	result: ToolResult | undefined,
+	skillActivation: SkillActivation | undefined,
+): ToolSettledFacets {
+	const facets: ToolSettledFacets = {};
+	if ((tool === ToolNames.Write || tool === ToolNames.Edit) && typeof args.path === "string")
+		facets.fileExt = toolFileKind(args.path);
+	const details = result && isRecord(result.details) ? result.details : undefined;
+	if (tool === ToolNames.Verify && typeof details?.checkKind === "string" && CHECK_KINDS.has(details.checkKind))
+		facets.checkKind = details.checkKind as NonNullable<ToolSettledFacets["checkKind"]>;
+	if (skillActivation !== undefined && skillActivation.name.length <= 512) facets.skill = skillActivation.name;
+	if (tool === ToolNames.Gateway) {
+		const envelope = normalizeGatewayArguments(args);
+		const named =
+			envelope.op === "call"
+				? [envelope.capability]
+				: envelope.op === "chain" && Array.isArray(envelope.steps)
+					? envelope.steps.map((step) => (isRecord(step) ? step.capability : undefined))
+					: [];
+		const capabilities = [
+			...new Set(
+				named.flatMap((name) =>
+					typeof name === "string" && name.trim().length > 0 && name.trim().length <= 512 ? [name.trim()] : [],
+				),
+			),
+		]
+			.sort()
+			.slice(0, 32);
+		if (capabilities.length > 0) facets.capabilities = capabilities;
+	}
+	return facets;
+}
+
+/** One tool.settled per settled call; tool.decided keeps the safety decision itself (#434). */
+function recordToolSettled(
+	ctx: TelemetryContext | undefined,
+	tool: string,
+	outcome: ToolOutcome,
+	durationMs: number,
+	parkedMs: number,
+	hookMs: number,
+	extra: Parameters<typeof emitFinish>[4],
+	result: ToolResult | undefined,
+	facets: ToolSettledFacets,
+): void {
+	if (!ctx) return;
+	const images = result?.kind === "ok" ? (result.images?.length ?? 0) : 0;
+	telemetryHub().emit(
+		"tool.settled",
+		{
+			tool,
+			outcome,
+			durationMs,
+			...(parkedMs > 0 ? { parkedMs } : {}),
+			...(hookMs > 0 ? { hookMs } : {}),
+			...(outcome !== "blocked" && result ? { resultBytes: Buffer.byteLength(toolResultContextText(result)) } : {}),
+			...(images > 0 ? { images } : {}),
+			...(extra?.terminate === true ? { terminate: true as const } : {}),
+			...(outcome === "ok" && extra?.notExecuted !== undefined ? { notExecuted: extra.notExecuted } : {}),
+			...(outcome === "blocked"
+				? {
+						blocked: extra?.deniedPark
+							? ("denied-park" as const)
+							: extra?.redundantRepeat
+								? ("redundant-repeat" as const)
+								: ("refused" as const),
+					}
+				: {}),
+			...facets,
+		},
+		ctx,
+	);
+}
+
+function emitFinish(
+	telemetry: ToolTelemetry | undefined,
+	tool: string,
+	executedMs: () => number,
+	outcome: ToolOutcome,
+	extra?: {
+		reason?: string;
+		callFacts?: ToolCallFacts;
+		terminate?: boolean;
+		decision?: SafetyDecision;
+		deniedPark?: true;
+		redundantRepeat?: true;
+		unresolved?: true;
+		notExecuted?: "observation_budget";
+		denial?: ToolDenial;
+		skillActivation?: SkillActivation;
+		toolCallId?: string;
+		executionStarted?: true;
+		executionDecisions?: ReadonlyArray<SafetyDecision>;
+	},
+): void {
+	if (!telemetry?.onFinish) return;
+	const event: ToolFinishEvent = {
+		tool,
+		posture: "operating",
+		durationMs: executedMs(),
+		outcome,
+	};
+	if (extra?.toolCallId !== undefined) event.toolCallId = extra.toolCallId;
+	// A refusal limit names every refused command, so a blocked call keeps more of its reason (fleet finding 6).
+	if (extra?.reason !== undefined)
+		event.reason = sanitizeCallTargetText(redactSecretString(extra.reason)).slice(0, outcome === "blocked" ? 2048 : 350);
+	if (extra?.callFacts !== undefined) event.callFacts = extra.callFacts;
+	if (extra?.terminate === true) event.terminate = true;
+	if (extra?.deniedPark === true) event.deniedPark = true;
+	if (extra?.redundantRepeat === true) event.redundantRepeat = true;
+	if (extra?.unresolved === true) event.unresolved = true;
+	if (extra?.notExecuted !== undefined) event.notExecuted = extra.notExecuted;
+	if (extra?.denial !== undefined) event.denial = extra.denial;
+	if (extra?.decision !== undefined) {
+		event.actionClass = extra.decision.classification.actionClass;
+		const permissionWasRequired =
+			outcome === "blocked" &&
+			(extra.decision.kind === "ask" ||
+				(extra.decision.kind === "allow" && extra.decision.classification.actionClass === "system_modify"));
+		event.decision = permissionWasRequired
+			? "permission_requested"
+			: extra.decision.kind === "allow"
+				? "allowed"
+				: extra.decision.kind === "ask"
+					? "permission_requested"
+					: "blocked";
+		if (extra.decision.policy?.ruleId !== undefined) event.ruleId = extra.decision.policy.ruleId;
+		if (extra.decision.policy?.reasonCode !== undefined) event.reasonCode = extra.decision.policy.reasonCode;
+		if (extra.decision.policy?.policySource !== undefined) event.policySource = extra.decision.policy.policySource;
+		if (
+			extra.executionStarted === true &&
+			(extra.executionDecisions ?? [extra.decision]).some(
+				(decision) =>
+					decision.policy?.posture === "yolo" &&
+					(decision.classification.actionClass !== "read" ||
+						decision.classification.exposure === "outward" ||
+						isMcpToolName(decision.policy.tool) ||
+						decision.policy.reasonCode.startsWith(YOLO_ADMITTED_REASON_PREFIX)),
+			)
+		)
+			event.autoApproved = "yolo";
+	} else if (outcome === "blocked") {
+		// A blocked verdict that carries no admission decision (not_visible) is
+		// still a safety block. Receipts count safety.decisions from this field,
+		// so a blocked attempt must never land without a blocked decision.
+		event.decision = "blocked";
+	}
+	if (extra?.skillActivation !== undefined) {
+		event.skillActivation = extra.skillActivation;
+	}
+	telemetry.onFinish(event);
+}
+
+function errorMessage(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The parameter schema as the provider should see it.
+ *
+ * TypeBox 1.x annotates every schema it builds with string-keyed markers
+ * (`~unsafe` on `Type.Unsafe`, `~optional` on `Type.Optional`, and so on).
+ * Unlike the older symbol keys they survive `JSON.stringify`, so each enum
+ * field reached the model as `{"~unsafe": null, "~optional": true, ...}`:
+ * 44 junk keys on the default surface, and a small model has no way to know
+ * that `"~unsafe": null` means nothing. Validation does not need them
+ * (`Value.Check` answers identically with and without), so the copy handed
+ * to the agent loop drops every `~`-prefixed key. Symbol keys are copied
+ * through untouched because pi-ai picks its coercion path by the TypeBox
+ * kind symbol on the root schema. Exported for the gateway's describe, which
+ * hands a capability's schema to the model through a result the same way.
+ */
+export function wireParameterSchema<T>(schema: T): T {
+	if (Array.isArray(schema)) return schema.map((entry) => wireParameterSchema(entry)) as T;
+	if (typeof schema !== "object" || schema === null) return schema;
+	const source = schema as Record<PropertyKey, unknown>;
+	const out: Record<PropertyKey, unknown> = {};
+	for (const key of Object.keys(source)) {
+		if (key.startsWith("~")) continue;
+		out[key] = wireParameterSchema(source[key]);
+	}
+	for (const symbol of Object.getOwnPropertySymbols(source)) {
+		out[symbol] = source[symbol];
+	}
+	return out as T;
+}
+
+/** A gateway call takes the flag of the capability it calls; a chain or describe is never interrupted. */
+function steerInterruptible(spec: ToolSpec, params: unknown, registry: ToolRegistry): boolean {
+	if (spec.steerInterruptible === true) return true;
+	if (spec.name !== ToolNames.Gateway || !isRecord(params)) return false;
+	const envelope = normalizeGatewayArguments(params);
+	return (
+		envelope.op === "call" &&
+		typeof envelope.capability === "string" &&
+		registry.get(envelope.capability as ToolName)?.steerInterruptible === true
+	);
+}
+
+const STEER_ABORT_NOTE = `\n\n[PanCode] ${STEER_ABORT_MARK}: the operator queued a steer while this call ran, so the host ended it; any output above is partial. The run goes on, and the steer follows as the next message.`;
+
+/**
+ * A tool that settled on its own after the steer's abort still says so, unless its own result already did. That is
+ * judged on the host-owned `details.abortedBy`, never on result text, which may quote the mark from untrusted output.
+ */
+function markSteerAborted(result: WorkerAgentToolResult): WorkerAgentToolResult {
+	const details = result.details as unknown;
+	if (isRecord(details) && details.abortedBy === "steer") return result;
+	const [first, ...rest] = result.content;
+	const text = first?.type === "text" ? `${first.text}${STEER_ABORT_NOTE}` : STEER_ABORT_NOTE.trimStart();
+	return {
+		...result,
+		content: [{ type: "text", text }, ...(first?.type === "text" ? rest : result.content)],
+		details: { ...result.details, abortedBy: "steer" } as unknown as WorkerAgentToolResult["details"],
+	};
+}
+
+function toAgentTool(
+	spec: ToolSpec,
+	registry: ToolRegistry,
+	telemetry: ToolTelemetry | undefined,
+	invokeOptions: ((toolCallId?: string) => Partial<ToolInvokeOptions>) | undefined,
+): AgentTool<TSchema> {
+	const tool: AgentTool<TSchema> = {
+		name: spec.name,
+		description: spec.description,
+		parameters: wireParameterSchema(spec.modelParameters ?? spec.parameters),
+		label: spec.metadata?.uiLabel ?? spec.name,
+		async execute(
+			toolCallId: string,
+			params: unknown,
+			signal?: AbortSignal,
+			onUpdate?: AgentToolUpdateCallback,
+		): Promise<WorkerAgentToolResult> {
+			const options = invokeOptions?.(toolCallId) ?? {};
+			if (toolCallId.length > 0) options.toolCallId = toolCallId;
+			if (onUpdate !== undefined) {
+				options.onUpdate = (partialResult) => onUpdate(projectToolResult(partialResult));
+			}
+			const steerHost = options.steerInterrupt;
+			delete options.steerInterrupt;
+			const interrupt =
+				steerHost !== undefined && steerInterruptible(spec, params, registry) ? steerHost.begin(spec.name) : undefined;
+			const runSignal = signal;
+			// The stop cause is decided once, when the call settles: a run cancellation wins over a steer, so only an abort
+			// the steer caused alone reads as aborted-by-steer. The first read latches the answer, so a cancel landing after
+			// the tool settled cannot make this seam disagree with the tool's own result.
+			let steerCause: boolean | undefined;
+			const steered = (): boolean => {
+				steerCause ??= interrupt?.fired() === true && runSignal?.aborted !== true;
+				return steerCause;
+			};
+			if (interrupt !== undefined) {
+				options.steerInterrupted = steered;
+				signal = runSignal === undefined ? interrupt.signal : AbortSignal.any([runSignal, interrupt.signal]);
+			}
+			const callInput: RunValidatedToolCallInput = {
+				spec,
+				args: spec.modelParameters
+					? (validateEngineToolArguments(
+							{ name: spec.name, description: spec.description, parameters: spec.parameters },
+							{
+								type: "toolCall",
+								id: toolCallId,
+								name: spec.name,
+								arguments: spec.modelArguments
+									? spec.modelArguments.restore(params as Record<string, unknown>)
+									: (params as Record<string, unknown>),
+							},
+						) as Record<string, unknown>)
+					: (params as Record<string, unknown>),
+				registry,
+				returnDispositionedErrors: true,
+			};
+			if (signal) callInput.signal = signal;
+			if (telemetry) callInput.telemetry = telemetry;
+			if (Object.keys(options).length > 0) callInput.invokeOptions = options;
+			if (interrupt === undefined) return runValidatedToolCall(callInput);
+			try {
+				const result = await runValidatedToolCall(callInput);
+				return steered() ? markSteerAborted(result) : result;
+			} catch (err) {
+				if (!steered()) throw err;
+				// A thrown error carries no host metadata, so the host note is always added here.
+				throw new Error(`${errorMessage(err)}${STEER_ABORT_NOTE}`);
+			} finally {
+				interrupt.end();
+			}
+		},
+	};
+	if (spec.executionMode) tool.executionMode = spec.executionMode;
+	// Pi validates the wire schema before execute, so without this hook the
+	// weak-model normalizers (gateway with no op or a JSON-string args, edit's
+	// top-level fields) would never run on a direct call: the call would fail
+	// validation first. Dispatch's normalizer reserves capacity keyed by argument
+	// identity, which Pi's clone would orphan, so it stays on the registry path.
+	const { modelArguments } = spec;
+	if (modelArguments) {
+		tool.prepareArguments = (args: unknown) =>
+			(args !== null && typeof args === "object" && !Array.isArray(args)
+				? modelArguments.prepare(args as Record<string, unknown>)
+				: args) as Record<string, unknown>;
+	}
+	if (spec.prepareArguments && !spec.prepareAdmissionArguments) {
+		tool.prepareArguments = (args: unknown) =>
+			(args !== null && typeof args === "object" && !Array.isArray(args)
+				? prepareToolArgs(spec, args as Record<string, unknown>)
+				: args) as never;
+	}
+	return tool;
+}
+
+/**
+ * Build the AgentTool array the agent should expose. Caller supplies the
+ * registered tool set plus:
+ *
+ *   1. the explicit `allowedTools` list (typically from the agent recipe)
+ *   2. an optional `telemetry` sink for `onStart`/`onFinish` events
+ *
+ * The returned tool set is the intersection of:
+ *   1. tools registered on the supplied registry
+ *   2. tools whose id appears in `allowedTools`
+ *
+ * projected onto the direct surface: a gateway-placed capability on the
+ * effective list is reachable through the attached `gateway` tool, never as
+ * a schema of its own. When `allowedTools` is undefined, step 2 is skipped.
+ */
+export function resolveAgentTools(input: ResolveAgentToolsInput): AgentTool[] {
+	const specs: ToolSpec[] = [];
+	const names =
+		input.envelopeTools !== undefined
+			? envelopeSurfaceNames(input.registry, input.envelopeTools)
+			: effectiveToolNames(input);
+	const ceiling = input.envelopeTools !== undefined ? names : input.allowedTools;
+	const surface = new Set<string>(names);
+	for (const name of names) {
+		const spec = input.registry.get(name);
+		if (spec === undefined) continue;
+		const direct =
+			input.attachCapabilitiesDirectly === true
+				? spec.name !== ToolNames.Gateway
+				: surfaceSpecPlacement(spec, surface) === "direct";
+		if (direct) specs.push(spec);
+	}
+	specs.sort((a, b) => a.name.localeCompare(b.name));
+	// Bind the same immutable ceiling to execution as to schema selection.
+	// Hiding a schema alone does not protect a retained tool handle or nested call.
+	const invokeOptions = (toolCallId?: string) => ({
+		...input.invokeOptions?.(toolCallId),
+		...(input.turnConstraints ? { turnConstraints: input.turnConstraints } : {}),
+		...(ceiling ? { allowedTools: ceiling } : {}),
+	});
+	return specs.map((spec) => toAgentTool(spec, input.registry, input.telemetry, invokeOptions));
+}
+
+/**
+ * A worker's capability surface: its envelope's names this registry can serve (fleet M7). Nothing is narrowed here;
+ * a name this build does not register drops out, so the signature the worker attests shows the drift to the host.
+ * An MCP capability registers only once its server connects, on its first call, so an admitted MCP name counts as
+ * served wherever the gateway that reaches it is registered.
+ */
+export function envelopeSurfaceNames(registry: ToolRegistry, names: ReadonlyArray<string>): ToolName[] {
+	const served = new Set<string>([...registry.listRegistered(), ...registry.listGateway().map((spec) => spec.name)]);
+	const gateway = registry.get(ToolNames.Gateway) !== undefined;
+	return [...new Set(names)].filter((name) => served.has(name) || (gateway && isMcpToolName(name))) as ToolName[];
+}
+
+/**
+ * The effective capability surface for one run, as names. This is the single
+ * narrowing used both to build the executable tool set and to compute the
+ * signature the worker attests, so an attested identity can never describe a
+ * different surface than the one the agent actually gets.
+ *
+ * The list names capabilities, whatever their placement: a recipe that admits
+ * `git` keeps `git` here, and because `git` sits behind the gateway the list
+ * gains `gateway` as well (the same rule dispatch admission applies to the
+ * list it approves, so the two signatures agree). `resolveAgentTools` then
+ * attaches only the direct-placed names, and the gateway enforces this list
+ * on every call it makes on the run's behalf.
+ */
+export function effectiveToolNames(input: Omit<ResolveAgentToolsInput, "telemetry" | "invokeOptions">): ToolName[] {
+	const gatewayNames = input.registry.listGateway().map((spec) => spec.name);
+	// An MCP capability registers only once its server connects, which a worker
+	// does on its first call. Its admitted name still belongs to the surface the
+	// signature attests, and resolving tools must never launch a server for it.
+	const admittedMcp =
+		input.registry.get(ToolNames.Gateway) === undefined ? [] : (input.allowedTools?.filter(isMcpToolName) ?? []);
+	const registered = [...input.registry.listRegistered(), ...gatewayNames, ...admittedMcp];
+	const toolIds = applyToolProfile(registered, input.toolProfile);
+	const allowed = input.allowedTools ? new Set<string>(input.allowedTools) : null;
+	const includeInteractiveTools = input.includeInteractiveTools !== false;
+	const names: ToolName[] = [];
+	for (const name of new Set(toolIds)) {
+		if (!turnAllowsTool(input.turnConstraints, name) || !turnAllowsTool(input.schemaCeiling, name)) continue;
+		// Orchestrator-only tools. Workers resolve their full surface once at
+		// admission, so neither operator interviews nor self-activation apply.
+		if (!includeInteractiveTools && name === ToolNames.AskUser) continue;
+		if (allowed && !allowed.has(name)) continue;
+		names.push(name);
+	}
+	if (input.registry.get(ToolNames.Gateway) === undefined) return names;
+	return withGatewayForCapabilities(
+		names.some((name) => gatewayNames.includes(name)) && !names.includes(ToolNames.Gateway)
+			? [...names, ToolNames.Gateway]
+			: names,
+	);
+}
+
+/**
+ * Direct invocation entry point. Use this when calling a registered tool
+ * from outside the agent loop (tests, scripts, RPC). Validates and coerces
+ * `rawArgs` once via pi-ai's `validateToolArguments`, then runs the same
+ * shared executor that `AgentTool.execute` uses inside the loop.
+ *
+ * The result mirrors the AgentToolResult an agent would observe; thrown
+ * errors mirror the loop's behavior on a blocked or errored verdict.
+ */
+export async function invokeRegisteredTool(
+	registry: ToolRegistry,
+	toolName: ToolName,
+	rawArgs: unknown,
+	opts?: InvokeWorkerToolOptions,
+): Promise<WorkerAgentToolResult> {
+	const spec = registry.get(toolName);
+	if (!spec) throw new Error(`tool ${toolName} not registered`);
+	const validated = validateEngineToolArguments(
+		{ name: spec.name, description: spec.description, parameters: spec.parameters },
+		{ type: "toolCall", id: "", name: spec.name, arguments: rawArgs as Record<string, unknown> },
+	) as Record<string, unknown>;
+	const callInput: RunValidatedToolCallInput = {
+		spec,
+		args: validated,
+		registry,
+	};
+	if (opts?.signal) callInput.signal = opts.signal;
+	if (opts?.telemetry) callInput.telemetry = opts.telemetry;
+	return runValidatedToolCall(callInput);
+}
+
+/**
+ * The orchestrator's session tool surface, narrowed only by its bound schema
+ * ceiling when the runtime supports tools. Turn constraints stay in invocation
+ * admission so templates and ACP prompt ceilings preserve the provider prefix
+ * and agree with prewarm (#423).
+ */
+export function resolveSessionTools(
+	runtime: { runtimeResolution: ResolvedRuntimeTarget },
+	toolRegistry: ToolRegistry | undefined,
+	invokeOptions?: (toolCallId?: string) => Partial<ToolInvokeOptions>,
+	telemetry?: ToolTelemetry,
+	schemaCeiling?: TurnConstraints,
+): AgentTool[] {
+	if (!toolRegistry || runtime.runtimeResolution.capabilityDecisions.tools !== true) return [];
+	const input: ResolveAgentToolsInput = { registry: toolRegistry };
+	if (schemaCeiling) input.schemaCeiling = schemaCeiling;
+	input.invokeOptions = (toolCallId?: string) => {
+		const contextWindow = runtime.runtimeResolution.contextWindowDetails?.effectiveContextWindow;
+		return {
+			...invokeOptions?.(toolCallId),
+			supportsImages: acceptsImageInput({
+				runtimeId: runtime.runtimeResolution.runtime.id,
+				vision: runtime.runtimeResolution.capabilityDecisions.vision,
+			}),
+			...(contextWindow !== undefined ? { contextWindow } : {}),
+			...runtimeModelField(runtime.runtimeResolution),
+		};
+	};
+	if (telemetry) input.telemetry = telemetry;
+	return resolveAgentTools(input).filter(
+		(tool) => tool.name !== ToolNames.SelfCompact || !runtime.runtimeResolution.runtime.externalAgentLoop,
+	);
+}

@@ -1,0 +1,141 @@
+@import url("brand.css");
+* {
+	box-sizing: border-box;
+}
+html,
+body {
+	margin: 0;
+	overflow: hidden;
+}
+body {
+	width: 1200px;
+	height: 630px;
+	background: var(--paper);
+	color: var(--ink);
+	font-family: var(--font-ui);
+	display: grid;
+	grid-template-columns: 1.5fr 1fr;
+	grid-template-rows: minmax(0, 1fr);
+	gap: 50px;
+	padding: 52px 60px;
+}
+main {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+.brand {
+	display: flex;
+	align-items: center;
+	min-height: 46px;
+}
+:where(.brand) span {
+	font: 700 40px / 1 var(--font-display);
+	letter-spacing: -0.04em;
+}
+.brand .pan {
+	color: var(--accent);
+}
+.brand .code {
+	color: var(--secondary);
+}
+.kicker {
+	color: var(--secondary);
+	font: 500 12px var(--font-mono);
+	letter-spacing: 0.1em;
+	margin: 58px 0 20px;
+}
+h1 {
+	font-family: var(--font-display);
+	font-size: 68px;
+	line-height: 1.02;
+	font-weight: 700;
+	letter-spacing: -0.04em;
+	margin: 0;
+}
+h1 em {
+	font-style: normal;
+	color: var(--accent);
+}
+.promise {
+	color: var(--ink-soft);
+	font-size: 22px;
+	line-height: 1.6;
+	margin: 24px 0 0;
+}
+footer {
+	margin-top: auto;
+	color: var(--muted);
+	display: flex;
+	justify-content: space-between;
+	gap: 20px;
+	font: 11px var(--font-mono);
+}
+aside {
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-lg);
+	background: var(--paper-raised);
+	padding: 30px;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	margin-top: 20px;
+}
+aside header {
+	font-size: 17px;
+	font-weight: 600;
+	border-bottom: 1px solid var(--line);
+	padding-bottom: 16px;
+}
+ol {
+	padding: 0;
+	margin: 0;
+	list-style: none;
+}
+li {
+	padding: 18px 0;
+	font-size: 21px;
+	border-bottom: 1px solid var(--line);
+}
+li small {
+	display: block;
+	font: 10px var(--font-mono);
+	margin-bottom: 12px;
+	letter-spacing: 0.1em;
+	color: var(--secondary);
+}
+aside p {
+	margin: auto 0 0;
+	padding-top: 24px;
+	color: var(--muted);
+	font: 11px var(--font-mono);
+}
+body.square {
+	width: 1080px;
+	height: 1080px;
+	grid-template-columns: 1fr;
+	grid-template-rows: 580px 1fr;
+	gap: 30px;
+	padding: 60px;
+}
+.square h1 {
+	font-size: 84px;
+	max-width: 900px;
+}
+.square .kicker {
+	margin-top: 48px;
+}
+.square .promise {
+	font-size: 26px;
+}
+.square aside {
+	margin-top: 0;
+}
+.square ol {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	column-gap: 32px;
+}
+.square aside p {
+	padding-top: 16px;
+}

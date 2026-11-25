@@ -1,0 +1,322 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { userInfo } from "node:os";
+import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
+import { stripTerminalSequences, truncateToWidth, visibleWidth } from "../../engine/tui.js";
+import { GLYPH } from "./glyphs.js";
+
+/** The quantity formatters live in core so the pane process prints them the same way; the TUI reaches them here. */
+export type { FillSource } from "../../core/format-time.js";
+export {
+	formatCount,
+	formatCountdown,
+	formatElapsed,
+	formatFill,
+	formatLimit,
+	formatWaitClock,
+} from "../../core/format-time.js";
+
+const identitySegments = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Keep both placement and the distinguishing suffix when an identity must fit. */
+export function fitIdentityLabel(value: string, width: number): string {
+	value = sanitizeCallTargetText(value);
+	const room = Math.max(0, Math.floor(width));
+	if (visibleWidth(value) <= room) return value;
+	const mark = visibleWidth(GLYPH.ellipsis);
+	if (room <= mark) return GLYPH.ellipsis.slice(0, room);
+	const tailBudget = Math.ceil((room - mark) / 2);
+	let tail = "";
+	for (const { segment } of [...identitySegments.segment(value)].reverse()) {
+		if (visibleWidth(segment + tail) > tailBudget) break;
+		tail = segment + tail;
+	}
+	const headBudget = room - mark - visibleWidth(tail);
+	let head = "";
+	for (const { segment } of identitySegments.segment(value)) {
+		if (visibleWidth(head + segment) > headBudget) break;
+		head += segment;
+	}
+	return `${head}${GLYPH.ellipsis}${tail}`;
+}
+
+/**
+ * A path in at most `width` cells, cut at directory boundaries: `~/…/tui-truth-069/project`, then `…/project`. A path
+ * cut inside a name (`~/cli…roject`) named no directory at all (F2). Only a last segment wider than the room alone is
+ * cut, and then through the identity fitter.
+ */
+export function fitPathLabel(value: string, width: number): string {
+	const clean = sanitizeCallTargetText(value);
+	const room = Math.max(0, Math.floor(width));
+	if (visibleWidth(clean) <= room) return clean;
+	const parts = clean.split("/");
+	const root = parts[0] === "~" ? "~/" : parts[0] === "" ? "/" : "";
+	const segments = parts.slice(root === "" ? 0 : 1).filter((part) => part.length > 0);
+	for (let kept = segments.length - 1; kept >= 1; kept -= 1) {
+		const tail = segments.slice(segments.length - kept).join("/");
+		for (const lead of [`${root}${GLYPH.ellipsis}/`, `${GLYPH.ellipsis}/`]) {
+			const candidate = `${lead}${tail}`;
+			if (visibleWidth(candidate) <= room) return candidate;
+		}
+	}
+	return fitIdentityLabel(segments.at(-1) ?? clean, room);
+}
+
+/**
+ * A space a wrap never breaks at. It holds a short fact together (`18 lines`,
+ * `context 3.2k`, `reasoning 138`), so a row of facts wraps between them, never
+ * inside one; {@link releaseSpaces} turns it back into an ordinary space once
+ * the row is wrapped.
+ */
+const HELD_SPACE = "\u00a0";
+
+/**
+ * A fact longer than this reads as a phrase and may wrap at its spaces
+ * (`lines 1-40` then `of 120`), rather than cost the row a line of its own.
+ */
+const HELD_FACT_MAX = 16;
+
+/** The spaces of one short fact, held so a wrap cannot split it. */
+export function holdFact(fact: string): string {
+	return fact.length <= HELD_FACT_MAX ? fact.replaceAll(" ", HELD_SPACE) : fact;
+}
+
+/**
+ * Facts joined by ` · ` so a narrow row wraps between facts, never inside a
+ * short one. `style` paints the separator (a dim dot among colored facts).
+ */
+export function joinFacts(facts: ReadonlyArray<string>, style: (separator: string) => string = (dot) => dot): string {
+	return facts.map(holdFact).join(` ${style(GLYPH.dot)} `);
+}
+
+/**
+ * Every space of `text` held, for a unit that must never break (a key and its verb, a tab's number and its name).
+ * The held space is a wrap marker, not a glyph: whoever wraps the row hands it to {@link releaseSpaces} before it is
+ * painted, so ASCII mode never prints it.
+ */
+export function holdSpaces(text: string): string {
+	return text.replaceAll(" ", HELD_SPACE);
+}
+
+/** A wrapped row as the terminal shows it: its held spaces back to ordinary ones. */
+export function releaseSpaces(row: string): string {
+	return row.replaceAll(HELD_SPACE, " ");
+}
+
+/**
+ * Cells an abbreviated wire id may use. Gateway routes carry their quant as a
+ * suffix (`mini/nemotron3-30b-moe-omni-udq4km`, 34 cells), and at 24 cells
+ * `mini/qwopus3.6-27b-dense-q4km` and `mini/qwopus3.8-27b-dense-q4km` read as the
+ * same model. 34 keeps every mini route whole and no two blade routes alike.
+ */
+export const MODEL_ID_LABEL_WIDTH = 34;
+
+/** Compact wire identity with explicit omission and its version/quantization suffix. */
+export function abbreviateModelId(modelId: string | null | undefined): string {
+	const value = sanitizeCallTargetText(modelId ?? "");
+	if (value.length === 0) return "model";
+	if (visibleWidth(value) <= MODEL_ID_LABEL_WIDTH) return value;
+	const slash = value.lastIndexOf("/");
+	if (slash < 0) return fitIdentityLabel(value, MODEL_ID_LABEL_WIDTH);
+	const placement = value.slice(0, slash);
+	const model = value.slice(slash + 1);
+	const modelBudget = Math.min(MODEL_ID_LABEL_WIDTH - 6, visibleWidth(model));
+	return `${fitIdentityPrefix(placement, MODEL_ID_LABEL_WIDTH - 1 - modelBudget)}/${fitIdentityLabel(model, modelBudget)}`;
+}
+
+/** Raw route fields stay separate until the surface knows its terminal-cell budget. */
+export interface TargetIdentity {
+	targetId: string | null | undefined;
+	modelId: string | null | undefined;
+}
+
+/** The effective route in the spelling the header and dashboards use, or null while either half is unknown. */
+export function exactRouteLabel(route: TargetIdentity | string): string | null {
+	if (typeof route === "string") return sanitizeCallTargetText(route) || null;
+	const target = sanitizeCallTargetText(route.targetId ?? "");
+	if (!target || !route.modelId) return null;
+	return `${fitIdentityLabel(target, MODEL_ID_LABEL_WIDTH)} ${GLYPH.dot} ${abbreviateModelId(route.modelId)}`;
+}
+
+/** The activity rail names the model family/version; inspection retains the wire id. */
+export function modelNickname(modelId: string | null | undefined): string {
+	const raw = sanitizeCallTargetText(modelId ?? "");
+	if (!raw) return "No model";
+	const leaf = raw.slice(raw.lastIndexOf("/") + 1).split("@")[0] ?? "";
+	const name = leaf
+		.replace(/[-_]\d+(?:\.\d+)?[bm](?:[-_].*)?$/iu, "")
+		.replace(/[-_](?:ud)?(?:i?q\d[a-z\d_-]*|fp\d+|bf\d+|gguf)$/iu, "")
+		.replaceAll("_", "-")
+		// Publisher names in a wire id are redundant in the narrow activity rail.
+		.replace(/^(?:nvidia|openai|google|meta)-/iu, "");
+	const ornith = /^ornith-?(\d+(?:\.\d+)*)$/iu.exec(name);
+	if (ornith) return `Ornith-${ornith[1]}`;
+	if (/^gpt(?:-|\d)/iu.test(name)) return name.replace(/^gpt/iu, "GPT");
+	if (name !== leaf && /^[a-z]+-\d+(?:\.\d+)?(?:-[a-z]+)+$/iu.test(name))
+		return name
+			.replaceAll("-", " ")
+			.replace(/(^| )([a-z])/gu, (_match, gap: string, first: string) => gap + first.toUpperCase());
+	return name ? name.charAt(0).toUpperCase() + name.slice(1) : "No model";
+}
+
+function fitIdentityPrefix(value: string, width: number): string {
+	return stripTerminalSequences(truncateToWidth(value, Math.max(0, width), GLYPH.ellipsis, false));
+}
+
+/** Preserve a complete model suffix by eliding only at a wire-id separator. */
+function fitModelTokenSuffix(value: string, width: number): string {
+	if (visibleWidth(value) <= width) return value;
+	if (width <= 0) return "";
+	let best = GLYPH.ellipsis.slice(0, width);
+	for (let index = 0; index < value.length; index += 1) {
+		if (!"/@-._".includes(value[index] ?? "")) continue;
+		const candidate = `${GLYPH.ellipsis}${value.slice(index)}`;
+		if (visibleWidth(candidate) <= width && candidate.length > best.length) best = candidate;
+	}
+	return best;
+}
+
+export interface TargetLabelOptions {
+	/** Separator between the target id and the model. The narrow rail omits the spaces. */
+	separator?: string;
+	/** Off for surfaces with room for the whole wire id. */
+	abbreviate?: boolean;
+	/** Fit raw target/model fields once, preserving family and suffix before placement. */
+	width?: number;
+}
+
+/**
+ * The chat target as one label, with one spelling for the state where there
+ * isn't one.
+ *
+ * Five surfaces answered the same question five different ways: the banner read
+ * `not configured/not configured`, the editor rail `no model`, the footer
+ * `none · none`, the settings overlay `(unset)`, and the providers overlay
+ * `(no model)`. A user comparing them is checking whether PanCode knows what it is
+ * talking to, and four spellings read as four states.
+ *
+ * A target with no model and a model with no target are distinct from having
+ * neither, so each says which half is missing rather than collapsing to the
+ * same phrase. The settings overlay keeps `(unset)`, which labels an empty
+ * editable field rather than reporting status.
+ */
+export function formatTargetLabel(
+	targetId: string | null | undefined,
+	modelId: string | null | undefined,
+	options: TargetLabelOptions = {},
+): string {
+	const target = sanitizeCallTargetText(targetId ?? "");
+	const model = sanitizeCallTargetText(modelId ?? "");
+	const fit = (label: string): string => (options.width === undefined ? label : fitIdentityLabel(label, options.width));
+	if (target.length === 0 && model.length === 0) return fit("not configured");
+	if (options.width !== undefined && target.length > 0 && model.length > 0) {
+		const width = Math.max(0, Math.floor(options.width));
+		const separator = options.separator ?? ` ${GLYPH.dot} `;
+		const full = `${target}${separator}${model}`;
+		if (visibleWidth(full) <= width) return full;
+		const leaf = model.slice(model.lastIndexOf("/") + 1);
+		const withoutPlacement = `${target}${separator}${leaf}`;
+		if (visibleWidth(withoutPlacement) <= width) return withoutPlacement;
+		const leafRoom = width - visibleWidth(target) - visibleWidth(separator);
+		if (leafRoom >= 8) return `${target}${separator}${fitModelTokenSuffix(leaf, leafRoom)}`;
+		return fitModelTokenSuffix(leaf, width);
+	}
+	const shown = options.abbreviate === false ? model : abbreviateModelId(model);
+	if (target.length === 0) return fit(`no target ${GLYPH.dot} ${shown}`);
+	if (model.length === 0) return fit(`${target} ${GLYPH.dot} no model`);
+	return `${target}${options.separator ?? ` ${GLYPH.dot} `}${shown}`;
+}
+
+/**
+ * Context-window fill percentage with one shared unknown grammar. A window
+ * that has not been measured yet renders `?%` everywhere (compact footer,
+ * expanded quadrant, segmented bar, /context-view overlay): a placeholder for
+ * a number that has not arrived, never a value.
+ */
+export function formatContextPercent(percent: number | null | undefined): string {
+	return typeof percent === "number" && Number.isFinite(percent) ? `${percent.toFixed(1)}%` : "?%";
+}
+
+/**
+ * Display only. Collapses against `$HOME` and the account's own home: test and
+ * race runs isolate `$HOME`, which left the operator's real home spelled out in
+ * the banner and footer (race-path).
+ */
+export function collapseHomePath(path: string): string {
+	for (const home of [process.env.HOME, accountHome()]) {
+		if (!home || home.length <= 1) continue;
+		if (path === home) return "~";
+		if (path.startsWith(`${home}/`)) return `~/${path.slice(home.length + 1)}`;
+	}
+	return path;
+}
+
+let cachedAccountHome: string | null | undefined;
+function accountHome(): string | null {
+	if (cachedAccountHome === undefined) {
+		try {
+			cachedAccountHome = userInfo().homedir;
+		} catch {
+			// No passwd entry (some containers); $HOME alone still applies.
+			cachedAccountHome = null;
+		}
+	}
+	return cachedAccountHome;
+}
+
+const KEY_WORDS: Readonly<Record<string, string>> = {
+	ctrl: "Ctrl",
+	control: "Ctrl",
+	alt: "Alt",
+	option: "Alt",
+	shift: "Shift",
+	super: "Super",
+	meta: "Meta",
+	esc: "Esc",
+	escape: "Esc",
+	enter: "Enter",
+	return: "Enter",
+	tab: "Tab",
+	space: "Space",
+	backspace: "Backspace",
+	delete: "Delete",
+	insert: "Insert",
+	home: "Home",
+	end: "End",
+	pageup: "PgUp",
+	pagedown: "PgDn",
+	up: "Up",
+	down: "Down",
+	left: "Left",
+	right: "Right",
+};
+const MODIFIER_ORDER = ["Ctrl", "Alt", "Shift", "Super", "Meta"];
+
+function keyWord(segment: string, chorded: boolean): string {
+	const word = KEY_WORDS[segment.toLowerCase()];
+	if (word !== undefined) return word;
+	if (/^f\d{1,2}$/iu.test(segment)) return segment.toUpperCase();
+	// A bare letter is an overlay's own key and keeps its case (`[r] retry`, `[R] reload`); in a chord it is a cap.
+	return chorded && segment.length === 1 ? segment.toUpperCase() : segment;
+}
+
+/**
+ * The one spelling of a key everywhere PanCode names one: `Ctrl+C`, `Alt+T`, `Shift+Tab`, `Esc`, `PgUp`. Accepts a KeyId
+ * (`alt+t`, `shift+ctrl+p`) or several joined by ` / `, and puts modifiers in the order Ctrl, Alt, Shift.
+ */
+export function keyName(id: string): string {
+	const trimmed = id.trim();
+	if (trimmed.includes(" / ")) return trimmed.split(" / ").map(keyName).join(" / ");
+	// The last `+` of `ctrl++` is the key itself, not a separator.
+	const parts = trimmed.length <= 1 ? [trimmed] : trimmed.split(/\+(?!$)/u);
+	if (parts.length === 1) return keyWord(trimmed, false);
+	const key = keyWord(parts.pop() ?? "", true);
+	const modifiers = parts
+		.map((part) => keyWord(part, true))
+		.sort((a, b) => {
+			const left = MODIFIER_ORDER.indexOf(a);
+			const right = MODIFIER_ORDER.indexOf(b);
+			return (left < 0 ? MODIFIER_ORDER.length : left) - (right < 0 ? MODIFIER_ORDER.length : right);
+		});
+	return [...modifiers, key].join("+");
+}

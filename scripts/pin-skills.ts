@@ -1,0 +1,500 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Regenerate hub/packs/skills/registry.yaml: the local pinned manifest of marketplace
+ * skill content hashes (install-metadata-stripped, so installed copies stamped with
+ * install-lifecycle frontmatter still compare equal to their audited source).
+ * Run with `pnpm run skills:pin` after editing any hub/packs/skills/<name>/SKILL.md.
+ *
+ * The same run publishes `skill-marketplace.json` for skill authoring and
+ * content review. Runtime package discovery and installation use the
+ * shared `hub/index.yaml`; this is not a second installation authority.
+ *
+ * Modes:
+ *   default          rewrite the manifest and the published index from the catalog
+ *   --check          verify both files match the catalog; exit 1 on drift
+ *   --dir <path>     operate on a different catalog directory (tests)
+ *
+ * Malformed frontmatter is a hard failure in both modes: a skill file whose
+ * YAML cannot be parsed must never be silently pinned under its folder name.
+ * The catalog publishing contract (hub/packs/skills/README.md) is enforced here too:
+ * every catalog skill must carry the required publication frontmatter with
+ * `audit: pass`.
+ */
+
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import yaml from "yaml";
+import { ALL_TOOL_NAMES, isMcpToolName } from "../src/core/tool-names.js";
+import { splitToolList } from "../src/domains/resources/common-loader.js";
+import { SKILL_BODY_LINE_BUDGET } from "../src/domains/resources/skills/authoring-check.js";
+import { normalizedSkillHash } from "../src/domains/resources/skills/content-hash.js";
+
+/** Top-level frontmatter every published catalog skill must carry (hub/packs/skills/README.md). */
+const REQUIRED_CORE_KEYS = ["name", "description", "version", "license"] as const;
+/** Keys required inside the reserved nested `pancode:` block (hub/packs/skills/README.md). */
+const REQUIRED_PANCODE_KEYS = ["registry-id", "source-url"] as const;
+/** Tool-surface keys whose values must name PanCode tools in canonical spelling. */
+const TOOL_SURFACE_KEYS = ["allowed-tools", "disallowed-tools"] as const;
+const PANCODE_TOOL_NAMES = new Set<string>(ALL_TOOL_NAMES);
+
+export interface PinSkillsOptions {
+	catalogDir?: string;
+	check?: boolean;
+}
+
+export interface PinSkillsResult {
+	ok: boolean;
+	entries: CatalogEntry[];
+	errors: string[];
+	manifestPath: string;
+	indexPath: string;
+	manifest: string;
+	index: string;
+	manifestDrift: boolean;
+	indexDrift: boolean;
+	manifestDriftLines: string[];
+}
+
+interface PinEntry {
+	name: string;
+	/** Catalog-relative package path, e.g. "git/create-pr" (or just the folder name in a flat catalog). */
+	path: string;
+	version: string | null;
+	sha256: string;
+}
+
+/** A pin entry plus the fields the published marketplace index carries. */
+interface CatalogEntry extends PinEntry {
+	description: string;
+	/** `pancode.source-url`: the maintained source for this skill's publication record. */
+	sourceUrl: string;
+	audit: string;
+	/** Catalog category folder, or null in a flat catalog. */
+	category: string | null;
+	/** Trigger phrases from frontmatter `triggers`, published for promotion matching. */
+	triggers: string[] | null;
+}
+
+/**
+ * Skill package directories, recursively: a directory carrying its own
+ * SKILL.md is a package (its subfolders such as references/ belong to it); a
+ * directory without one is a category folder to descend into. Flat catalogs
+ * are the depth-1 case of the same rule.
+ */
+function collectPackageDirs(dir: string, rel: string): string[] {
+	const found: string[] = [];
+	for (const dirent of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+		if (!dirent.isDirectory() || dirent.name.startsWith(".") || dirent.name === "node_modules") continue;
+		const childRel = rel.length > 0 ? `${rel}/${dirent.name}` : dirent.name;
+		const child = path.join(dir, dirent.name);
+		if (existsSync(path.join(child, "SKILL.md"))) found.push(childRel);
+		else found.push(...collectPackageDirs(child, childRel));
+	}
+	return found;
+}
+
+/**
+ * Frontmatter tool-surface entries, in either spelling the loader accepts.
+ * Returns null when the key is absent, so "declared nothing" and "declared an
+ * empty list" stay distinguishable.
+ */
+function toolSurfaceEntries(value: unknown): string[] | null {
+	if (typeof value === "string") {
+		return splitToolList(value);
+	}
+	if (Array.isArray(value)) {
+		return value.map((entry) => (typeof entry === "string" ? entry.trim() : String(entry)));
+	}
+	return null;
+}
+
+/**
+ * Catalog `allowed-tools` must name PanCode tools in canonical lowercase spelling.
+ *
+ * Not style enforcement. Claude Code reads the same key with the opposite
+ * meaning: it merges the listed names into `alwaysAllowRules.command`, so a
+ * declaration there *grants* pre-approval instead of narrowing, and its rule
+ * matching is exact string equality with no case folding. PanCode's lowercase
+ * names therefore match no Claude tool and stay inert when a catalog skill is
+ * dropped into `.claude/skills`. Spelling one of them `Bash` would silently
+ * auto-approve Bash in Claude Code for anyone who installed the skill. See
+ * hub/packs/skills/README.md, "Claude Code interop".
+ */
+function toolSurfaceErrors(skillPath: string, fm: Record<string, unknown>): string[] {
+	const errors: string[] = [];
+	for (const key of TOOL_SURFACE_KEYS) {
+		const declared = toolSurfaceEntries(fm[key]);
+		if (declared === null) continue;
+		for (const entry of declared) {
+			// A full MCP capability name (`mcp_<id>__<tool>`) is PanCode's own spelling;
+			// Claude Code names MCP tools `mcp__<server>__<tool>`, so it stays inert there.
+			if (PANCODE_TOOL_NAMES.has(entry) || isMcpToolName(entry)) continue;
+			const canonical = ALL_TOOL_NAMES.find((tool) => tool === entry.toLowerCase());
+			errors.push(
+				canonical
+					? `${skillPath}: ${key} entry "${entry}" must be spelled "${canonical}"; a capitalized name grants tool approval in Claude Code instead of narrowing`
+					: `${skillPath}: ${key} entry "${entry}" is not a PanCode tool name`,
+			);
+		}
+	}
+	return errors;
+}
+
+function collectEntries(catalogDir: string): { entries: CatalogEntry[]; errors: string[] } {
+	const entries: CatalogEntry[] = [];
+	const errors: string[] = [];
+	for (const relPath of collectPackageDirs(catalogDir, "")) {
+		const skillPath = path.join(catalogDir, relPath, "SKILL.md");
+		const raw = readFileSync(skillPath, "utf8");
+		const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+		if (!fmMatch?.[1]) {
+			errors.push(`${skillPath}: missing YAML frontmatter`);
+			continue;
+		}
+		let fm: Record<string, unknown> | null;
+		try {
+			const parsed = yaml.parse(fmMatch[1]) as unknown;
+			if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+				errors.push(`${skillPath}: frontmatter must be a YAML object`);
+				continue;
+			}
+			fm = parsed as Record<string, unknown>;
+		} catch (err) {
+			errors.push(`${skillPath}: invalid YAML frontmatter: ${err instanceof Error ? err.message : String(err)}`);
+			continue;
+		}
+		let name = path.basename(relPath);
+		let version: string | null = null;
+		if (typeof fm.name === "string" && fm.name.trim().length > 0) {
+			name = fm.name.trim();
+		}
+		const fmVersion = fm.version ?? (fm.metadata as Record<string, unknown> | undefined)?.version;
+		if (typeof fmVersion === "string" && fmVersion.trim().length > 0) {
+			version = fmVersion.trim();
+		}
+		for (const key of REQUIRED_CORE_KEYS) {
+			const value = fm[key];
+			if (typeof value !== "string" || value.trim().length === 0) {
+				errors.push(`${skillPath}: missing required catalog frontmatter "${key}"`);
+			}
+		}
+		const pancode =
+			fm.pancode !== null && typeof fm.pancode === "object" && !Array.isArray(fm.pancode)
+				? (fm.pancode as Record<string, unknown>)
+				: null;
+		let sourceUrl = "";
+		if (!pancode) {
+			errors.push(`${skillPath}: missing the required nested "pancode:" frontmatter block`);
+		} else {
+			for (const key of REQUIRED_PANCODE_KEYS) {
+				const value = pancode[key];
+				if (typeof value !== "string" || value.trim().length === 0) {
+					errors.push(`${skillPath}: missing required catalog frontmatter "pancode.${key}"`);
+				}
+			}
+			if (pancode.audit !== "pass") {
+				errors.push(
+					`${skillPath}: catalog skills must carry "audit: pass" under pancode: (found ${JSON.stringify(pancode.audit ?? null)})`,
+				);
+			}
+			if (typeof pancode["source-url"] === "string") {
+				sourceUrl = pancode["source-url"].trim();
+			}
+			// The published index installs from this URL, so a skill that moved
+			// between categories without its source-url following would publish a
+			// pointer at its old location: `pancode skills install <name>` would then
+			// fetch a path the repository no longer has.
+			if (sourceUrl.length > 0 && !sourceUrl.replace(/\/+$/, "").endsWith(`/${relPath}`)) {
+				errors.push(`${skillPath}: pancode.source-url does not end with the catalog path "${relPath}": ${sourceUrl}`);
+			}
+		}
+		// An unquoted description containing " #" is silently cut at the # by the
+		// YAML parser (a plain-scalar comment), so the published index and the
+		// model's trigger surface see a fraction of the text. Require quoting.
+		const descriptionLine = fmMatch[1].split(/\r?\n/).find((line) => /^description:\s*\S/.test(line));
+		const descriptionValue = descriptionLine?.replace(/^description:\s*/, "") ?? "";
+		if (descriptionValue.length > 0 && !/^['"]/.test(descriptionValue) && descriptionValue.includes(" #")) {
+			errors.push(`${skillPath}: unquoted description contains " #", which YAML truncates as a comment; quote it`);
+		}
+		let triggers: string[] | null = null;
+		if (fm.triggers !== undefined) {
+			if (
+				!Array.isArray(fm.triggers) ||
+				fm.triggers.length === 0 ||
+				fm.triggers.some((trigger) => typeof trigger !== "string" || trigger.trim().length === 0)
+			) {
+				errors.push(`${skillPath}: optional frontmatter "triggers" must be a non-empty list of non-empty strings`);
+			} else {
+				triggers = fm.triggers.map((trigger) => (trigger as string).trim());
+			}
+		}
+		errors.push(...toolSurfaceErrors(skillPath, fm));
+		// The manifest version is what an installed copy compares; a SKILL.md that
+		// disagrees would tell the model and the published index something else.
+		const manifestPath = path.join(catalogDir, relPath, "plugin.json");
+		if (existsSync(manifestPath)) {
+			const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { version?: unknown };
+			if (manifest.version !== version) {
+				errors.push(
+					`${skillPath}: frontmatter version ${JSON.stringify(version)} differs from plugin.json version ${JSON.stringify(manifest.version)}`,
+				);
+			}
+		}
+		// skill-authoring's sprawl rule, held here because a rule the catalog only
+		// states is one 13 of its 34 skills had quietly outgrown.
+		const bodyLines = raw.slice(fmMatch[0].length).trim().split(/\r?\n/).length;
+		if (bodyLines > SKILL_BODY_LINE_BUDGET) {
+			errors.push(
+				`${skillPath}: body is ${bodyLines} lines, over the catalog's ${SKILL_BODY_LINE_BUDGET}; move reference material into references/ behind a conditional pointer`,
+			);
+		}
+		const category = path.dirname(relPath);
+		entries.push({
+			name,
+			path: relPath,
+			version,
+			sha256: normalizedSkillHash(raw),
+			description: typeof fm.description === "string" ? fm.description.trim() : "",
+			sourceUrl,
+			audit: typeof pancode?.audit === "string" ? pancode.audit : "unknown",
+			category: category === "." ? null : category,
+			triggers,
+		});
+	}
+	return { entries, errors };
+}
+
+/**
+ * Render the manifest grouped by catalog category (the directory a package
+ * lives under), with a comment heading per group so the file reads as the
+ * catalog's table of contents. Still one YAML document with a single
+ * `skills:` list; comments are invisible to the parser.
+ */
+function catalogOrder(entries: ReadonlyArray<CatalogEntry>): CatalogEntry[] {
+	return [...entries].sort((a, b) => {
+		const categoryOrder = path.dirname(a.path).localeCompare(path.dirname(b.path));
+		return categoryOrder !== 0 ? categoryOrder : a.name.localeCompare(b.name);
+	});
+}
+
+function renderManifest(entries: ReadonlyArray<CatalogEntry>): string {
+	const lines: string[] = ["skills:"];
+	let currentCategory: string | null = null;
+	for (const entry of catalogOrder(entries)) {
+		const category = path.dirname(entry.path);
+		if (category !== currentCategory) {
+			currentCategory = category;
+			lines.push(`  # ── ${category === "." ? "(catalog root)" : category} ──`);
+		}
+		const pin: PinEntry = {
+			name: entry.name,
+			path: entry.path,
+			version: entry.version,
+			sha256: entry.sha256,
+		};
+		const rendered = yaml.stringify([pin]).trimEnd();
+		lines.push(...rendered.split("\n").map((line) => `  ${line}`));
+	}
+	return [
+		"# Pinned marketplace skill content hashes (install-metadata-stripped sha256).",
+		"# Generated by `pnpm run skills:pin`. At activation, an installed skill",
+		"# carrying a registry-id is compared against its pinned hash;",
+		"# a mismatch surfaces a drift warning.",
+		`${lines.join("\n")}\n`,
+	].join("\n");
+}
+
+/**
+ * The published marketplace index: what a PanCode install outside this repo reads
+ * when `PANCODE_SKILL_MARKETPLACE_INDEX` points at the file this catalog serves.
+ *
+ * `sourceUrl` is each skill's own `pancode.source-url`, so a bare-name install
+ * resolves to the same GitHub tree the audit and the pinned hash describe.
+ * No hashes here: drift is measured against registry.yaml, which is the file
+ * the audit signs, and duplicating hashes into a second published artifact
+ * only creates a way for the two to disagree.
+ */
+function renderIndex(entries: ReadonlyArray<CatalogEntry>): string {
+	const skills = catalogOrder(entries).map((entry) => ({
+		name: entry.name,
+		description: entry.description,
+		...(entry.triggers ? { triggers: entry.triggers } : {}),
+		sourceUrl: entry.sourceUrl,
+		...(entry.version ? { version: entry.version } : {}),
+		audit: entry.audit,
+		...(entry.category ? { category: entry.category } : {}),
+	}));
+	return `${collapseShortArrays(JSON.stringify({ generatedBy: "pnpm run skills:pin", skills }, null, "\t"))}\n`;
+}
+
+/** biome's configured line width, which decides whether a JSON array stays on one line. */
+const BIOME_FORMAT = (() => {
+	try {
+		const config = JSON.parse(readFileSync(path.resolve(import.meta.dirname, "../biome.json"), "utf8")) as {
+			formatter?: { lineWidth?: number; indentWidth?: number };
+		};
+		return { lineWidth: config.formatter?.lineWidth ?? 80, indentWidth: config.formatter?.indentWidth ?? 2 };
+	} catch {
+		return { lineWidth: 80, indentWidth: 2 };
+	}
+})();
+
+/**
+ * Print string arrays that fit the line width on one line, the way biome
+ * formats them, so `skills:check` compares against exactly what `lint` accepts.
+ * A tab counts as biome's configured indent width toward the line width.
+ */
+function collapseShortArrays(json: string): string {
+	return json.replace(
+		/^(\t*)("[^"\n]*": )\[\n((?:\t+"[^"\n]*",?\n)+)\1\]/gm,
+		(whole, indent: string, key: string, body: string) => {
+			const items = body
+				.split("\n")
+				.map((line) => line.trim().replace(/,$/, ""))
+				.filter((line) => line.length > 0);
+			const inline = `${indent}${key}[${items.join(", ")}]`;
+			const width = inline.length - indent.length + indent.length * BIOME_FORMAT.indentWidth;
+			// The trailing comma or closing brace after the array shares the line.
+			return width + 1 <= BIOME_FORMAT.lineWidth ? inline : whole;
+		},
+	);
+}
+
+/** Human drift summary: which pins are missing, stale, or orphaned. */
+function describeDrift(current: string, expected: ReadonlyArray<PinEntry>): string[] {
+	const lines: string[] = [];
+	let pinned: PinEntry[] = [];
+	try {
+		const parsed = yaml.parse(current) as { skills?: PinEntry[] } | null;
+		pinned = Array.isArray(parsed?.skills) ? parsed.skills : [];
+	} catch {
+		return ["registry.yaml is not parseable YAML"];
+	}
+	const pinnedByName = new Map(pinned.map((entry) => [entry.name, entry]));
+	const expectedByName = new Map(expected.map((entry) => [entry.name, entry]));
+	for (const entry of expected) {
+		const pin = pinnedByName.get(entry.name);
+		if (!pin) lines.push(`${entry.name}: in catalog but not pinned`);
+		else if (pin.sha256 !== entry.sha256 || pin.version !== entry.version) {
+			lines.push(`${entry.name}: pin is stale`);
+		}
+	}
+	for (const pin of pinned) {
+		if (!expectedByName.has(pin.name)) {
+			lines.push(`${pin.name}: pinned but not in catalog`);
+		}
+	}
+	return lines;
+}
+
+function readOrNull(file: string): string | null {
+	try {
+		return readFileSync(file, "utf8");
+	} catch {
+		return null;
+	}
+}
+
+export function pinSkillsCatalog(options: PinSkillsOptions = {}): PinSkillsResult {
+	const repoRoot = path.resolve(import.meta.dirname, "..");
+	const catalogDir = options.catalogDir
+		? path.resolve(options.catalogDir)
+		: path.join(repoRoot, "hub", "packs", "skills");
+	const manifestPath = path.join(catalogDir, "registry.yaml");
+	const indexPath = path.join(catalogDir, "skill-marketplace.json");
+	const checkMode = options.check === true;
+
+	const { entries, errors } = collectEntries(catalogDir);
+	const manifest = renderManifest(entries);
+	const index = renderIndex(entries);
+
+	let manifestDrift = false;
+	let indexDrift = false;
+	let manifestDriftLines: string[] = [];
+	let ok = errors.length === 0;
+
+	if (errors.length > 0) {
+		return {
+			ok: false,
+			entries,
+			errors,
+			manifestPath,
+			indexPath,
+			manifest,
+			index,
+			manifestDrift: false,
+			indexDrift: false,
+			manifestDriftLines: [],
+		};
+	}
+
+	if (checkMode) {
+		const currentManifest = readOrNull(manifestPath);
+		const currentIndex = readOrNull(indexPath);
+		if (currentManifest !== manifest) {
+			manifestDrift = true;
+			ok = false;
+			manifestDriftLines = describeDrift(currentManifest ?? "", entries);
+		}
+		if (currentIndex !== index) {
+			indexDrift = true;
+			ok = false;
+		}
+	} else {
+		writeFileSync(manifestPath, manifest, "utf8");
+		writeFileSync(indexPath, index, "utf8");
+	}
+
+	return {
+		ok,
+		entries,
+		errors,
+		manifestPath,
+		indexPath,
+		manifest,
+		index,
+		manifestDrift,
+		indexDrift,
+		manifestDriftLines,
+	};
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+	const argv = process.argv.slice(2);
+	const checkMode = argv.includes("--check");
+	const dirFlagIndex = argv.indexOf("--dir");
+	const dir = dirFlagIndex >= 0 && argv[dirFlagIndex + 1] ? (argv[dirFlagIndex + 1] as string) : undefined;
+	const result = pinSkillsCatalog({ ...(dir ? { catalogDir: dir } : {}), check: checkMode });
+
+	if (result.errors.length > 0) {
+		for (const error of result.errors) process.stderr.write(`pin-skills: ${error}\n`);
+		process.stderr.write(
+			`pin-skills: ${result.errors.length} catalog contract violation(s); nothing was ${checkMode ? "checked" : "pinned"}\n`,
+		);
+		process.exit(1);
+	}
+
+	if (checkMode) {
+		if (result.ok) {
+			process.stdout.write(`registry pin check ok (${result.entries.length} skills)\n`);
+			process.exit(0);
+		}
+		if (result.manifestDrift) {
+			process.stderr.write(`pin-skills: ${result.manifestPath} does not match the catalog content hashes\n`);
+			for (const line of result.manifestDriftLines) {
+				process.stderr.write(`pin-skills:   ${line}\n`);
+			}
+		}
+		if (result.indexDrift) {
+			process.stderr.write(`pin-skills: ${result.indexPath} does not match the catalog\n`);
+		}
+		process.stderr.write("pin-skills: run `pnpm run skills:pin` and commit the result\n");
+		process.exit(1);
+	}
+
+	process.stdout.write(
+		`pinned ${result.entries.length} skills -> ${result.manifestPath}\npublished index -> ${result.indexPath}\n`,
+	);
+}

@@ -1,0 +1,230 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, strictEqual, throws } from "node:assert/strict";
+import { describe, it } from "node:test";
+import { ToolNames } from "../../src/core/tool-names.js";
+import { parseAgentRecipeSchema } from "../../src/domains/agents/recipe-schema.js";
+import { effectiveWorkerPermissionMode } from "../../src/domains/dispatch/grant-authority.js";
+import {
+	mainGrantsUnavailable,
+	parseWorkerPermissionDeclaration,
+	resolveWorkerPermit,
+	type WorkerPermitInput,
+	workerPermissionModeForPermit,
+} from "../../src/domains/safety/worker-permit.js";
+
+function frontmatter(extra: Record<string, unknown>, capabilityClass = "workspace-edit"): Record<string, unknown> {
+	return {
+		version: 1,
+		name: "Permit fixture",
+		description: "Permit fixture recipe.",
+		tools: { required: [ToolNames.Read, ToolNames.Write], optional: [] },
+		skills: [],
+		audience: "custom",
+		category: "implement",
+		capabilityClass,
+		latencyClass: "balanced",
+		projectContextTier: "none",
+		budget: { toolCalls: 10, synthesis: false },
+		resultContract: { kind: "mutation-report" },
+		tags: [],
+		...extra,
+	};
+}
+
+function parse(extra: Record<string, unknown>, capabilityClass?: string) {
+	return parseAgentRecipeSchema({
+		id: "permit-fixture",
+		source: "project",
+		filepath: "permit-fixture.md",
+		body: "Persona.",
+		frontmatter: frontmatter(extra, capabilityClass),
+	});
+}
+
+function input(overrides: Partial<WorkerPermitInput> = {}): WorkerPermitInput {
+	return {
+		agentId: "coder",
+		capabilityClass: "workspace-edit",
+		tools: [ToolNames.Read, ToolNames.Write, ToolNames.Bash],
+		readOnly: false,
+		writeRoots: [],
+		mode: "deny",
+		runtime: {
+			id: "native-fixture",
+			targetId: "native-fixture",
+			enforcement: {
+				perCallMediation: true,
+				toolNarrowing: "exact",
+				scopeEnforcement: true,
+				grantPauseResume: true,
+				cancellation: true,
+			},
+			trustedUnmediated: false,
+		},
+		...overrides,
+	};
+}
+
+describe("worker permit", () => {
+	it("refuses read-only work on an unmediated runtime unless it confines itself in an OS read-only sandbox", () => {
+		const unmediated = {
+			perCallMediation: false,
+			toolNarrowing: "none" as const,
+			scopeEnforcement: false,
+			grantPauseResume: false,
+			cancellation: true,
+		};
+		const runtime = (id: string, extra: Partial<WorkerPermitInput["runtime"]> = {}): WorkerPermitInput["runtime"] => ({
+			id,
+			targetId: `${id}-target`,
+			enforcement: unmediated,
+			trustedUnmediated: false,
+			...extra,
+		});
+		for (const id of ["claude-code", "pi-cli", "opencode-cli"]) {
+			throws(
+				() => resolveWorkerPermit(input({ readOnly: true, runtime: runtime(id) })),
+				new RegExp(`runtime '${id}' cannot run read-only work`, "u"),
+			);
+			// Trust admits an unmediated runtime's writes, not a read-only claim it cannot keep.
+			throws(
+				() => resolveWorkerPermit(input({ readOnly: true, runtime: runtime(id, { trustedUnmediated: true }) })),
+				/trustedUnmediated does not change this/u,
+			);
+		}
+		const codex = resolveWorkerPermit(
+			input({ readOnly: true, runtime: runtime("codex-cli", { readOnlySandbox: true }) }),
+		);
+		strictEqual(codex.ceiling.readOnly, true);
+		strictEqual(resolveWorkerPermit(input({ readOnly: true })).ceiling.readOnly, true);
+	});
+
+	it("parses recipe permissions strictly, rejecting unknown keys, unknown values and a misplaced worktree allowance", () => {
+		deepStrictEqual(parse({ permissions: { git: "worktree", asks: "main" } }).permissions, {
+			git: "worktree",
+			asks: "main",
+		});
+		strictEqual(parse({}).permissions, undefined);
+		throws(() => parse({ permissions: { git: "inspect", network: "on" } }), /permissions\.network is unknown/u);
+		throws(() => parse({ permissions: { asks: "yolo" } }), /permissions\.asks must be one of deny, fail, main/u);
+		throws(() => parse({ permissions: "main" }), /permissions must be a map/u);
+		throws(
+			() => parse({ permissions: { git: "worktree" } }, "verification"),
+			/git worktree requires capabilityClass workspace-edit/u,
+		);
+		throws(() => parseWorkerPermissionDeclaration({ git: "all" }, "narrowing"), /narrowing\.git must be one of/u);
+	});
+
+	it("keeps today's behavior when nothing is declared and maps legacy escalate to operator-decided main routing", () => {
+		const plain = resolveWorkerPermit(input());
+		deepStrictEqual(plain.allowance, { git: "inspect", asks: "deny", approvalAuthority: "operator" });
+		strictEqual(workerPermissionModeForPermit(plain.allowance), "deny");
+		const escalate = resolveWorkerPermit(input({ mode: "escalate" }));
+		deepStrictEqual(escalate.allowance, { git: "inspect", asks: "main", approvalAuthority: "operator" });
+		strictEqual(workerPermissionModeForPermit(escalate.allowance), "escalate");
+		strictEqual(resolveWorkerPermit(input({ mode: "fail" })).allowance.asks, "fail");
+	});
+
+	it("records the explicit main opt-in with main authority and parks its asks for the grant broker", () => {
+		const main = resolveWorkerPermit(input({ mode: "main" }));
+		deepStrictEqual(main.allowance, { git: "inspect", asks: "main", approvalAuthority: "main" });
+		strictEqual(workerPermissionModeForPermit(main.allowance), "escalate");
+		strictEqual(mainGrantsUnavailable(main.allowance), true);
+		// The mode is a ceiling: a recipe routing asks to main under deny or fail is
+		// capped to the operator's route, not turned into an approval card.
+		for (const mode of ["deny", "fail"] as const) {
+			const capped = resolveWorkerPermit(input({ mode, declared: { asks: "main" } }));
+			deepStrictEqual(capped.allowance, { git: "inspect", asks: mode, approvalAuthority: "operator" }, mode);
+			strictEqual(workerPermissionModeForPermit(capped.allowance), mode);
+		}
+		// Under a mode that already routes to main, the recipe keeps that route and
+		// never raises who decides it.
+		const underMain = resolveWorkerPermit(input({ mode: "main", declared: { asks: "main" } }));
+		deepStrictEqual(underMain.allowance, { git: "inspect", asks: "main", approvalAuthority: "main" });
+		strictEqual(workerPermissionModeForPermit(underMain.allowance), "escalate");
+		const underEscalate = resolveWorkerPermit(input({ mode: "escalate", declared: { asks: "main" } }));
+		deepStrictEqual(underEscalate.allowance, { git: "inspect", asks: "main", approvalAuthority: "operator" });
+		// A recipe still narrows a main route to deny.
+		strictEqual(resolveWorkerPermit(input({ mode: "main", declared: { asks: "deny" } })).allowance.asks, "deny");
+		// A retry of an operator-decided attempt stays operator-decided after the setting changes.
+		const retried = resolveWorkerPermit(
+			input({ mode: "main", inherited: { git: "inspect", asks: "main", approvalAuthority: "operator" } }),
+		);
+		strictEqual(retried.allowance.approvalAuthority, "operator");
+	});
+
+	it("routes judge with main authority and runs it as deny wherever no judge answers", () => {
+		const judge = resolveWorkerPermit(input({ mode: "judge" }));
+		deepStrictEqual(judge.allowance, { git: "inspect", asks: "main", approvalAuthority: "main" });
+		strictEqual(workerPermissionModeForPermit(judge.allowance), "escalate");
+
+		const answered = { autonomy: "default", judgeEnabled: true, judgeSeated: true, boundGrants: true } as const;
+		strictEqual(effectiveWorkerPermissionMode({ mode: "judge", ...answered }), "judge");
+		for (const unanswered of [
+			{ autonomy: "yolo" as const },
+			{ judgeEnabled: false },
+			{ judgeSeated: false },
+			{ boundGrants: false },
+		]) {
+			strictEqual(
+				effectiveWorkerPermissionMode({ mode: "judge", ...answered, ...unanswered }),
+				"deny",
+				JSON.stringify(unanswered),
+			);
+		}
+		// Explicit modes keep their meaning whatever the judge's state.
+		for (const mode of ["deny", "fail", "escalate", "main"] as const) {
+			strictEqual(effectiveWorkerPermissionMode({ mode, ...answered }), mode);
+			strictEqual(effectiveWorkerPermissionMode({ mode, ...answered, judgeEnabled: false }), mode);
+		}
+	});
+
+	it("narrows per task and refuses a widening request instead of ignoring it", () => {
+		const declared = { git: "worktree", asks: "main" } as const;
+		const narrowed = resolveWorkerPermit(
+			input({ mode: "escalate", declared, narrowing: { git: "inspect", asks: "fail" } }),
+		);
+		deepStrictEqual(narrowed.allowance, { git: "inspect", asks: "fail", approvalAuthority: "operator" });
+		throws(() => resolveWorkerPermit(input({ narrowing: { git: "worktree" } })), /cannot be widened to worktree/u);
+		throws(() => resolveWorkerPermit(input({ narrowing: { asks: "main" } })), /cannot be widened to main/u);
+		// A retry's inherited allowance caps without refusing, and a read-only
+		// ceiling leaves no Git mutation to allow.
+		const capped = resolveWorkerPermit(
+			input({ mode: "escalate", declared, inherited: { git: "inspect", asks: "deny", approvalAuthority: "operator" } }),
+		);
+		deepStrictEqual(capped.allowance, { git: "inspect", asks: "deny", approvalAuthority: "operator" });
+		strictEqual(resolveWorkerPermit(input({ declared, readOnly: true })).allowance.git, "inspect");
+		strictEqual(Object.isFrozen(narrowed.allowance), true);
+		strictEqual(narrowed.digest === resolveWorkerPermit(input()).digest, false);
+	});
+
+	it("enforces class ceilings and fails closed for orchestration and unspecified internal workers", () => {
+		throws(
+			() => resolveWorkerPermit(input({ capabilityClass: "read-only", tools: [ToolNames.Read, ToolNames.Write] })),
+			/read-only ceiling excludes write tool write/u,
+		);
+		throws(
+			() => resolveWorkerPermit(input({ capabilityClass: "verification", tools: [ToolNames.Verify, ToolNames.Bash] })),
+			/verification ceiling excludes bash/u,
+		);
+		throws(
+			() => resolveWorkerPermit(input({ capabilityClass: "artifact-write", tools: [ToolNames.Artifact, ToolNames.Edit] })),
+			/artifact-write ceiling allows only the artifact write/u,
+		);
+		throws(() => resolveWorkerPermit(input({ capabilityClass: "orchestration" })), /orchestration agent/u);
+		throws(() => resolveWorkerPermit(input({ capabilityClass: "internal", tools: [ToolNames.Read] })), /internal/u);
+		strictEqual(
+			resolveWorkerPermit(input({ capabilityClass: "internal", tools: [ToolNames.Read], hostHelper: true })).ceiling
+				.capabilityClass,
+			"internal",
+		);
+		// The delegation ceiling is delegatedTools ?? allowedTools, never an intersection of both.
+		const delegated = resolveWorkerPermit(
+			input({
+				turnConstraints: { allowedTools: [ToolNames.Dispatch], delegatedTools: [ToolNames.Read, ToolNames.Write] },
+			}),
+		);
+		deepStrictEqual(delegated.ceiling.tools, [ToolNames.Read, ToolNames.Write]);
+	});
+});

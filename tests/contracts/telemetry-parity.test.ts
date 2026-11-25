@@ -1,0 +1,316 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Cross-surface parity (#434 §13.2, R11): one fixture on disk, read live the way the TUI and ACP read it and cold the
+ * way the CLI's `--json` and the GUI's routes read it, shows one value and one provenance for each fact on every
+ * surface. The footer, /usage, /context, the exit card, the dispatch board, ACP's v1 usage, its prompt usage block,
+ * its live totals and its telemetry methods each take the live view; the CLI and the GUI serve the cold DTOs, which
+ * the GUI's own route test compares with what it serves, and its live usage test with the frame ACP pushes. The usage
+ * report folds the window the fixture fills, and the CLI fleet board folds the run journal itself. Every DTO the
+ * surfaces read passes the §13.1 lie detectors.
+ */
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, before, test } from "node:test";
+import { setPresentationTier } from "../../src/core/presentation-tier.js";
+import type { Quantity } from "../../src/core/telemetry/dto.js";
+import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
+import { renderCompactCount } from "../../src/core/telemetry/render.js";
+import { usageFigure, usageLineFigure } from "../../src/core/views/usage-words.js";
+import { pancodeStateDir } from "../../src/core/xdg.js";
+import { buildContextLedger } from "../../src/domains/session/context-ledger.js";
+import { loadRepoTelemetrySources } from "../../src/domains/session/telemetry-source.js";
+import type { TelemetryView } from "../../src/domains/telemetry/contract.js";
+import type { TelemetryContract } from "../../src/domains/telemetry/index.js";
+import { repoCostReport, repoTokenQuantities } from "../../src/domains/telemetry/read-model-cost.js";
+import { repoOwner } from "../../src/domains/telemetry/read-model-sources.js";
+import type { LiveTelemetryModel } from "../../src/domains/telemetry/telemetry-live.js";
+import { createLiveTelemetryModel } from "../../src/domains/telemetry/telemetry-live.js";
+import { sessionUsageTotals, turnUsageMeta } from "../../src/engine/acp/live-telemetry.js";
+import { telemetryRequestHandlers } from "../../src/engine/acp/telemetry-methods.js";
+import { ACP_TELEMETRY_METHODS } from "../../src/engine/acp/types.js";
+import type { TUI } from "../../src/engine/tui.js";
+import { stripTerminalSequences } from "../../src/engine/tui.js";
+import { openContextOverlay } from "../../src/interactive/context-overlay.js";
+import { dispatchRunUsage } from "../../src/interactive/dispatch-board-store.js";
+import { dockTop } from "../../src/interactive/dock.js";
+import { exitSpend } from "../../src/interactive/exit-summary-collector.js";
+import { footerTelemetry } from "../../src/interactive/footer/spend.js";
+import { openUsageOverlay } from "../../src/interactive/usage-overlay.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+import { dtoLies } from "../harness/telemetry-lies.js";
+import {
+	coldParityDtos,
+	PARITY_RUN,
+	PARITY_SESSION,
+	seedParitySession,
+	telemetryCall,
+	telemetryViewOf,
+} from "../harness/telemetry-view.js";
+
+let stateDir = "";
+let model: LiveTelemetryModel;
+let view: TelemetryView;
+let cold: ReturnType<typeof coldParityDtos>;
+
+before(async () => {
+	stateDir = mkdtempSync(join(tmpdir(), "pancode-telemetry-parity-"));
+	await seedParitySession(stateDir);
+	cold = coldParityDtos(stateDir);
+	model = createLiveTelemetryModel({ stateDir: () => stateDir });
+	model.bind(PARITY_SESSION);
+	const seeded = new Promise<void>((resolve) =>
+		model.subscribe("session", () => {
+			if (model.live()?.seeding === false) resolve();
+		}),
+	);
+	model.live();
+	await seeded;
+	const live = model.live();
+	ok(live);
+	view = live;
+});
+
+after(() => {
+	model?.stop();
+	if (stateDir) rmSync(stateDir, { recursive: true, force: true });
+});
+
+const timeless = (dto: unknown) =>
+	JSON.parse(JSON.stringify(dto, (key, value: unknown) => (key === "generatedAt" ? undefined : value))) as unknown;
+const estimated = (quantity: Quantity) =>
+	"kind" in quantity.fact ? quantity.fact.kind === "estimated" : quantity.fact.coverage.estimated > 0;
+const partial = (quantity: Quantity) =>
+	"kind" in quantity.fact ? quantity.fact.kind === "unknown" : quantity.fact.unknownCount > 0;
+
+test("the fixture carries every provenance a surface must keep: measured, estimated, unknown and a lower bound", () => {
+	const { tokens, usd } = cold.session.totals;
+	ok(estimated(usd) && partial(usd), usd.display);
+	ok(partial(tokens), tokens.display);
+	ok(/~/.test(usd.display) && /\+\?|≥/.test(usd.display), usd.display);
+	ok(cold.runs.some((row) => row.runId === PARITY_RUN));
+});
+
+test("the CLI's --json and the GUI's DTOs are the live view's DTOs, byte for byte in value", () => {
+	deepStrictEqual(timeless(view.session()), timeless(cold.session));
+	deepStrictEqual(timeless(view.cost("model")), timeless(cold.costByModel));
+	deepStrictEqual(timeless(view.calls()), timeless(cold.calls));
+	deepStrictEqual(timeless(view.runs()), timeless(cold.runs));
+	deepStrictEqual(JSON.parse(JSON.stringify(cold.session)), cold.session, "the JSON a surface serves loses nothing");
+	// The session total and the cost report's total are one fact under one reference.
+	deepStrictEqual(cold.costByModel.total.usd, cold.session.totals.usd);
+	deepStrictEqual(cold.costByRole.total.usd, cold.session.totals.usd);
+	deepStrictEqual(cold.costByModel.total.tokens, cold.session.totals.tokens);
+});
+
+test("the footer and the exit card show the session's tokens and cost as the read model words them", () => {
+	const { tokens, usd } = cold.session.totals;
+	const footer = footerTelemetry(view);
+	ok(footer.kind === "ready");
+	strictEqual(footer.tokens, renderCompactCount(tokens.fact));
+	strictEqual(footer.cost, usd.display);
+	const card = exitSpend(view, "1970-01-01T00:00:00.000Z");
+	ok(card.kind === "ready");
+	// The figure is the read model's own; the line states its coverage once, after it (F4).
+	ok(card.tokens.startsWith(`${usageLineFigure(tokens)} · `), card.tokens);
+	strictEqual(card.tokens.split("no usage data").length, 2, card.tokens);
+	strictEqual(card.cost, usd.display);
+	deepStrictEqual(
+		card.models.map((row) => [row.key, row.calls, row.cost]),
+		cold.costByModel.groups.map((group) => [group.key, group.calls.display, group.usd.display]),
+	);
+});
+
+test("/usage shows the session's tokens and cost, and /context the newest main call's cache facts, as the CLI reads them", () => {
+	const tui = {
+		terminal: { rows: 40 },
+		requestRender() {},
+		showOverlay() {
+			return { hide() {} };
+		},
+	} as unknown as TUI;
+	const telemetry = { live: () => view, quota: () => ({ providers: [] }), subscribe: () => () => {} };
+	const usage = openUsageOverlay(tui, { subscribe: () => () => {}, read: telemetry } as unknown as TelemetryContract);
+	try {
+		const text = stripTerminalSequences(dockTop(tui)?.frame.renderDockBody(200, 30).join("\n") ?? "");
+		ok(text.includes(cold.session.totals.usd.display), text);
+		ok(text.includes(usageFigure(cold.session.totals.tokens)), text);
+	} finally {
+		usage.hide();
+	}
+	// Standard's rows sum to `processed`: the cache write it counts has a row of its own, as on the exit card (bt-11 i22-cw).
+	const written = telemetryViewOf(
+		"cache-write",
+		telemetryCall("cache-write", { usage: { input: 10, output: 5, cacheRead: 100, cacheWrite: 40 } }),
+	);
+	const writtenUsage = openUsageOverlay(tui, {
+		subscribe: () => () => {},
+		read: { ...telemetry, live: () => written },
+	} as unknown as TelemetryContract);
+	try {
+		const frame = dockTop(tui)?.frame;
+		(frame as unknown as { handleInput?: (data: string) => void } | undefined)?.handleInput?.("3");
+		const text = stripTerminalSequences(frame?.renderDockBody(200, 30).join("\n") ?? "");
+		ok(/cache read\s+100\s*\n.*cache write\s+40\s*\n.*processed\s+155\s+tokens/u.test(text), text);
+	} finally {
+		writtenUsage.hide();
+	}
+	const ledger = () =>
+		buildContextLedger({
+			provider: "fixture",
+			model: "fixture",
+			contextWindow: 32768,
+			systemPromptTokens: 1200,
+			toolSchemaTokens: 800,
+			messageTokens: 1000,
+			compactionThreshold: 0.9,
+			compactionAuto: true,
+		});
+	// Prompt cache rows are provenance: `/context` shows them at detailed only.
+	setPresentationTier("detailed");
+	const context = openContextOverlay(tui, ledger, { telemetry });
+	try {
+		const text = stripTerminalSequences(dockTop(tui)?.frame.renderDockBody(200, 60).join("\n") ?? "");
+		const [newest] = cold.calls.calls.filter((call) => call.agent.role === "main").slice(-1);
+		ok(newest?.usage, "the newest main call settled with usage");
+		ok(text.includes(`cache read ${newest.usage.cacheRead.display}`), text);
+		ok(text.includes(`uncached prefill ${newest.cache.uncachedPrefill.display}`), text);
+	} finally {
+		context.hide();
+		setPresentationTier("standard");
+	}
+});
+
+test("the dispatch board shows a run's tokens and cost as the same quantities the run report holds", () => {
+	const usage = dispatchRunUsage(view, PARITY_RUN);
+	ok(usage.kind === "ready");
+	const row = cold.runs.find((run) => run.runId === PARITY_RUN);
+	ok(row);
+	deepStrictEqual(usage.total, row.tokens);
+	deepStrictEqual(usage.usd, row.usd);
+	ok(partial(usage.total), "the unpriced worker call keeps the run's tokens a lower bound");
+});
+
+test("ACP's live totals and its telemetry methods carry the same value and provenance", async () => {
+	const live = sessionUsageTotals(view);
+	deepStrictEqual(live.quantities.usd.fact, cold.session.totals.usd.fact);
+	strictEqual(live.quantities.usd.display, cold.session.totals.usd.display);
+	deepStrictEqual(live.quantities.total.fact, cold.session.totals.tokens.fact);
+	const handlers = telemetryRequestHandlers({
+		model,
+		params: (params) => params as Record<string, unknown>,
+		session: (request) => ({ id: request.sessionId as string }),
+	});
+	const served = async (method: string, params: Record<string, unknown> = {}) =>
+		timeless(await handlers[method]?.({ sessionId: PARITY_SESSION, ...params }));
+	deepStrictEqual(await served(ACP_TELEMETRY_METHODS.session), timeless(cold.session));
+	deepStrictEqual(await served(ACP_TELEMETRY_METHODS.cost, { groupBy: "model" }), timeless(cold.costByModel));
+});
+
+test("the CLI's telemetry runs, quota and health print the DTOs ACP's request/reply methods return", async () => {
+	const env = await isolatePancodeEnv("pancode-telemetry-snapshot-");
+	let acp: LiveTelemetryModel | undefined;
+	try {
+		// Taken once, so an ACP seed landing after restore cannot resolve the real state directory.
+		const scratch = pancodeStateDir();
+		acp = createLiveTelemetryModel({ stateDir: () => scratch });
+		await seedParitySession(scratch);
+		const handlers = telemetryRequestHandlers({
+			model: acp,
+			params: (params) => params as Record<string, unknown>,
+			session: (request) => ({ id: request.sessionId as string }),
+		});
+		// A child process with the isolated environment, so no stream is swapped across an await.
+		const module = JSON.stringify(new URL("../../src/cli/telemetry.ts", import.meta.url).href);
+		const cli = async (argv: string[]) => {
+			const script = `const { runTelemetryCommand } = await import(${module}); process.exitCode = await runTelemetryCommand(${JSON.stringify(argv)});`;
+			const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+				encoding: "utf8",
+				env: process.env,
+			});
+			strictEqual(result.status, 0, `${argv.join(" ")}: ${result.stderr}`);
+			return timeless(JSON.parse(result.stdout));
+		};
+		const runs = await cli(["runs", PARITY_SESSION, "--json"]);
+		ok(Array.isArray(runs) && runs.some((row: { runId: string }) => row.runId === PARITY_RUN));
+		deepStrictEqual(runs, timeless(await handlers[ACP_TELEMETRY_METHODS.runs]?.({ sessionId: PARITY_SESSION })));
+		deepStrictEqual(await cli(["quota", "--json"]), timeless(await handlers[ACP_TELEMETRY_METHODS.quota]?.({})));
+		deepStrictEqual(await cli(["health", "--json"]), timeless(await handlers[ACP_TELEMETRY_METHODS.health]?.({})));
+	} finally {
+		acp?.stop();
+		env.restore();
+	}
+});
+
+test("ACP's prompt usage block words the prompt's operator turn as the read model's turn report does", () => {
+	const turn = cold.costByTurn.groups.find((group) => group.key === "turn-parity");
+	ok(turn);
+	const usage = turnUsageMeta(view, { turnIds: new Set(["turn-parity"]), attemptIds: new Set() });
+	ok(usage.quantities, "a bound view words the prompt's turn");
+	strictEqual(usage.quantities.usd.display, turn.usd.display);
+	deepStrictEqual(usage.quantities.usd.fact, turn.usd.fact);
+	deepStrictEqual(usage.quantities.calls.fact, turn.calls.fact);
+	deepStrictEqual(usage.quantities.total.fact, turn.tokens.fact);
+	ok(partial(turn.tokens), "the turn's unreported calls keep its tokens a lower bound");
+	const records: TelemetryRecord[] = [100, 900].flatMap((ttft, index) =>
+		telemetryCall(PARITY_SESSION, { turnId: "first-token", at: `2026-10-30T00:00:0${index}.000Z` }).map((record) =>
+			record.k === "call.settled"
+				? {
+						...record,
+						data: { ...record.data, stages: { send: { start: 0, end: 20 }, firstToken: 20 + ttft, settle: 2000 } },
+					}
+				: record,
+		),
+	);
+	records.push(...telemetryCall(PARITY_SESSION, { role: "worker", turnId: "first-token" }));
+	const promptView = telemetryViewOf(PARITY_SESSION, records);
+	const prompt = turnUsageMeta(promptView, { turnIds: new Set(["first-token"]), attemptIds: new Set() });
+	ok("quantities" in prompt && prompt.quantities);
+	const firstToken = prompt.quantities.firstToken;
+	ok(firstToken);
+	deepStrictEqual(firstToken.fact, { kind: "measured", value: 100, source: "local-clock" });
+	deepStrictEqual(promptView.explain(firstToken.ref)?.value, firstToken);
+	strictEqual(promptView.explain(firstToken.ref)?.from.attemptIds.length, 1);
+});
+
+test("the usage report folds a window the fixture fills to the session's own totals and groups", () => {
+	const days = 36_500;
+	const repo = {
+		owner: repoOwner(null, days),
+		...loadRepoTelemetrySources(stateDir, { cwdHash: null, from: 0, to: Date.now() + 86_400_000, standaloneRuns: "all" }),
+	};
+	// The window and the session own different references, so the two agree on each value and its words.
+	const said = (quantity: Quantity) => ({ fact: quantity.fact, display: quantity.display });
+	for (const [groupBy, session] of [
+		["model", cold.costByModel],
+		["role", cold.costByRole],
+	] as const) {
+		const report = repoCostReport(repo, { repo: "all", days }, groupBy);
+		deepStrictEqual(said(report.total.usd), said(session.total.usd), groupBy);
+		deepStrictEqual(said(report.total.tokens), said(session.total.tokens), groupBy);
+		deepStrictEqual(
+			report.groups.map((group) => [group.key, said(group.calls), said(group.tokens), said(group.usd)]),
+			session.groups.map((group) => [group.key, said(group.calls), said(group.tokens), said(group.usd)]),
+			groupBy,
+		);
+	}
+	deepStrictEqual(said(repoTokenQuantities(repo).total), said(cold.session.totals.tokens));
+});
+
+test("no DTO the surfaces read tells a lie the detectors know (§13.1)", () => {
+	for (const [name, dto] of Object.entries({
+		session: view.session(),
+		calls: view.calls(),
+		costByModel: view.cost("model"),
+		costByRole: view.cost("role"),
+		costByTurn: view.cost("turn"),
+		cache: view.cache(),
+		timeline: view.timeline(),
+		whyStopped: view.whyStopped(),
+		runs: view.runs(),
+	}))
+		deepStrictEqual(dtoLies(dto), [], name);
+});

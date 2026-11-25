@@ -1,0 +1,275 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { Fact, FactSum } from "./fact.js";
+import type { FreeRule, PricedBy, Pricing, RunSpendSums, RunUsageFacts } from "./schemas.js";
+
+export type { FreeRule, PricedBy, Pricing, RunSpendSums };
+
+const notObserved: Fact<number> = { kind: "unknown", reason: "not-observed" };
+
+/**
+ * A USD amount as the Pricing it carries (#434). A provider's own cost and declared target rates are measured, a free
+ * target is a measured local zero, a catalog rate is a guess at someone else's price list and stays estimated, and
+ * an amount nobody priced is unknown, never zero.
+ */
+export function pricedUsd(pricedBy: PricedBy, usd: number | null, freeRule?: FreeRule): Pricing {
+	if (pricedBy === "free")
+		return {
+			usd: { kind: "measured", value: 0, source: "local-count" },
+			pricedBy,
+			...(freeRule !== undefined ? { freeRule } : {}),
+		};
+	if (pricedBy === "none" || usd === null || !Number.isFinite(usd) || usd < 0)
+		return { usd: notObserved, pricedBy: "none" };
+	if (pricedBy === "catalog") return { usd: { kind: "estimated", value: usd, method: "catalog" }, pricedBy };
+	return {
+		usd: { kind: "measured", value: usd, source: pricedBy === "provider" ? "provider" : "local-count" },
+		pricedBy,
+	};
+}
+
+/** Who priced a route and, when free, by which rule: what a call's settlement needs to price it (#434). */
+export interface PricingBasis {
+	pricedBy: Exclude<PricedBy, "provider">;
+	freeRule?: FreeRule;
+}
+
+const FREE_RULES: ReadonlySet<string> = new Set<FreeRule>(["declared", "zero-rates", "local-native"]);
+
+/** True for a free rule a persisted record may carry; anything else reads as no rule. */
+export function isFreeRule(value: unknown): value is FreeRule {
+	return typeof value === "string" && FREE_RULES.has(value);
+}
+
+/** A route or resolution that carries a basis among its other fields; its free rule may be explicitly absent. */
+export interface PricingBasisSource {
+	pricedBy: PricingBasis["pricedBy"];
+	freeRule?: FreeRule | undefined;
+}
+
+/** A basis from a bare `pricedBy` or a source that carries one, keeping a free rule only beside `free`. */
+export function pricingBasis(value: PricingBasis["pricedBy"] | PricingBasisSource): PricingBasis {
+	return pricingBasisFields(typeof value === "string" ? { pricedBy: value } : value);
+}
+
+/** The basis fields of a resolved pricing without its rates, for a record that carries who priced it. */
+export function pricingBasisFields(pricing: PricingBasisSource): PricingBasis {
+	return pricing.freeRule !== undefined && pricing.pricedBy === "free"
+		? { pricedBy: pricing.pricedBy, freeRule: pricing.freeRule }
+		: { pricedBy: pricing.pricedBy };
+}
+
+/** True when a target's rates put a number on a call, so its spend can be projected before it runs. */
+export function pricesCalls(pricedBy: PricedBy): boolean {
+	return pricedBy === "target-rates" || pricedBy === "catalog" || pricedBy === "provider";
+}
+
+/** Each fact one contribution; unknown and absent facts are counted, never summed as zero (#434). */
+export function sumFacts(facts: Iterable<Fact<number>>): FactSum {
+	const sum: FactSum = {
+		measured: 0,
+		estimated: 0,
+		unknownCount: 0,
+		absentCount: 0,
+		coverage: { measured: 0, estimated: 0, unknown: 0 },
+	};
+	for (const fact of facts) {
+		if (fact.kind === "measured") {
+			sum.measured += fact.value;
+			sum.coverage.measured += 1;
+		} else if (fact.kind === "estimated") {
+			sum.estimated += fact.value;
+			sum.coverage.estimated += 1;
+		} else if (fact.kind === "unknown") {
+			sum.unknownCount += 1;
+			sum.coverage.unknown += 1;
+		} else sum.absentCount += 1;
+	}
+	return sum;
+}
+
+/**
+ * Several priced amounts as one sum; `free` holds only when every amount was a free target's measured zero,
+ * `freeRule` names the rule only when every one of them states the same one, and `freeRuleMixed` holds only when the
+ * parts carry two or more different recorded rules.
+ */
+export interface PricingSum {
+	usd: FactSum;
+	free: boolean;
+	freeRule?: FreeRule;
+	freeRuleMixed?: boolean;
+}
+
+/**
+ * Agreement across free parts' recorded rules: `rule` when every part is free and states the same recorded rule;
+ * `mixed: true` only when two or more different recorded rules appear; `mixed: false` with no `rule` when no rule was
+ * recorded or only one rule appeared beside rule-less parts.
+ */
+export interface FreeRuleAgreement {
+	rule?: FreeRule;
+	mixed: boolean;
+}
+
+export function freeRuleAgreement(
+	parts: Iterable<Pick<Pricing, "pricedBy" | "freeRule"> | undefined>,
+): FreeRuleAgreement {
+	let seen: FreeRule | undefined;
+	let sawMissing = false;
+	let sawDifferent = false;
+	for (const part of parts) {
+		if (part?.pricedBy !== "free") return { mixed: false };
+		if (part.freeRule === undefined) {
+			sawMissing = true;
+			continue;
+		}
+		if (seen !== undefined && seen !== part.freeRule) {
+			sawDifferent = true;
+			continue;
+		}
+		seen = part.freeRule;
+	}
+	if (sawDifferent) return { mixed: true };
+	if (!sawMissing && seen !== undefined) return { rule: seen, mixed: false };
+	return { mixed: false };
+}
+
+/** A free sum's claim: `free`, plus the agreed rule when every part states one, or `freeRuleMixed` when recorded rules disagree. */
+export function freeClaim(
+	free: boolean,
+	agreement: FreeRule | FreeRuleAgreement | undefined,
+): Pick<PricingSum, "free" | "freeRule" | "freeRuleMixed"> {
+	if (!free) return { free };
+	if (typeof agreement === "string") return { free, freeRule: agreement };
+	if (agreement?.mixed) return { free, freeRuleMixed: true };
+	if (agreement?.rule !== undefined) return { free, freeRule: agreement.rule };
+	return { free };
+}
+
+export function sumPricing(pricings: Iterable<Pricing>): PricingSum {
+	const list = [...pricings];
+	return {
+		usd: sumFacts(list.map((pricing) => pricing.usd)),
+		...freeClaim(list.length > 0 && list.every((pricing) => pricing.pricedBy === "free"), freeRuleAgreement(list)),
+	};
+}
+
+/** The sums of a run with no call fold behind it: each settled fact is the run's one contribution. */
+export function spendSumsOf(facts: RunUsageFacts): RunSpendSums {
+	const usage = facts.usage;
+	return {
+		usage: {
+			input: sumFacts([usage.input]),
+			cacheRead: sumFacts([usage.cacheRead]),
+			cacheWrite: sumFacts([usage.cacheWrite]),
+			cacheWrite1h: sumFacts([usage.cacheWrite1h]),
+			output: sumFacts([usage.output]),
+			reasoning: sumFacts([usage.reasoning]),
+		},
+		totalTokens: sumFacts([facts.totalTokens]),
+		apiCalls: sumFacts([facts.apiCalls]),
+		usd: sumFacts([facts.pricing.usd]),
+	};
+}
+
+/** Several runs' spend as one priced sum; free holds only when every run was priced free. */
+export function sumRunSpend(runs: Iterable<{ spend: RunUsageFacts; spendSums: RunSpendSums }>): PricingSum {
+	const list = [...runs];
+	return {
+		usd: sumFactSums(list.map((run) => run.spendSums.usd)),
+		...freeClaim(
+			list.length > 0 && list.every((run) => run.spend.pricing.pricedBy === "free"),
+			freeRuleAgreement(list.map((run) => run.spend.pricing)),
+		),
+	};
+}
+
+/** Several runs' calls and tokens as sums, each run's sums one contribution, so an unreported run keeps its gap. */
+export function sumRunTokens(runs: Iterable<{ spendSums: RunSpendSums }>): {
+	apiCalls: FactSum;
+	input: FactSum;
+	cacheRead: FactSum;
+	cacheWrite: FactSum;
+	output: FactSum;
+	total: FactSum;
+} {
+	const list = [...runs].map((run) => run.spendSums);
+	return {
+		apiCalls: sumFactSums(list.map((sums) => sums.apiCalls)),
+		input: sumFactSums(list.map((sums) => sums.usage.input)),
+		cacheRead: sumFactSums(list.map((sums) => sums.usage.cacheRead)),
+		cacheWrite: sumFactSums(list.map((sums) => sums.usage.cacheWrite)),
+		output: sumFactSums(list.map((sums) => sums.usage.output)),
+		total: sumFactSums(list.map((sums) => sums.totalTokens)),
+	};
+}
+
+/** A fold's prompt tokens: uncached input, cache reads and cache writes (the 1h writes are a part of the writes). */
+export function promptTokenSum(usage: RunSpendSums["usage"]): FactSum {
+	return sumFactSums([usage.input, usage.cacheRead, usage.cacheWrite]);
+}
+
+/** Sums added as they are; each keeps its known subtotal and its unknown contributions (#434). */
+export function sumFactSums(sums: Iterable<FactSum>): FactSum {
+	const result: FactSum = {
+		measured: 0,
+		estimated: 0,
+		unknownCount: 0,
+		absentCount: 0,
+		coverage: { measured: 0, estimated: 0, unknown: 0 },
+	};
+	for (const sum of sums) {
+		result.measured += sum.measured;
+		result.estimated += sum.estimated;
+		result.unknownCount += sum.unknownCount;
+		result.absentCount += sum.absentCount;
+		for (const kind of ["measured", "estimated", "unknown"] as const) result.coverage[kind] += sum.coverage[kind];
+	}
+	return result;
+}
+
+/** A run with no call telemetry: every quantity unknown, never zero (R1, #434). */
+export function unobservedRunUsageFacts(): RunUsageFacts {
+	return {
+		usage: {
+			input: notObserved,
+			cacheRead: notObserved,
+			cacheWrite: notObserved,
+			cacheWrite1h: notObserved,
+			output: notObserved,
+			reasoning: notObserved,
+		},
+		totalTokens: notObserved,
+		apiCalls: notObserved,
+		pricing: { usd: notObserved, pricedBy: "none" },
+	};
+}
+
+/** A run PanCode settled without a model call, such as a host-authored synthesis: no call to count or price (#434). */
+export function noCallRunUsageFacts(): RunUsageFacts {
+	const notApplicable: Fact<number> = { kind: "absent", reason: "not-applicable" };
+	return {
+		usage: {
+			input: notApplicable,
+			cacheRead: notApplicable,
+			cacheWrite: notApplicable,
+			cacheWrite1h: notApplicable,
+			output: notApplicable,
+			reasoning: notApplicable,
+		},
+		totalTokens: notApplicable,
+		apiCalls: { kind: "measured", value: 0, source: "local-count" },
+		pricing: { usd: notApplicable, pricedBy: "none" },
+	};
+}
+
+/** What a capped route's calls that report no usage are charged by: their request-size estimate at its rates. */
+const UNREPORTED_USAGE_SPEND = "reported no token usage; its spend is estimated from request size";
+
+export function unreportedUsageNotice(targetId: string): string {
+	return `${targetId} ${UNREPORTED_USAGE_SPEND}`;
+}
+
+/** Whether a notice is the one `unreportedUsageNotice` wrote. */
+export function isUnreportedUsageNotice(text: string): boolean {
+	return text.endsWith(` ${UNREPORTED_USAGE_SPEND}`);
+}

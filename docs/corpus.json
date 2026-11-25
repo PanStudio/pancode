@@ -1,0 +1,9 @@
+{
+	"schema": 1,
+	"role": "Maintainer documentation-policy metadata; not an executable or runtime manifest",
+	"product": {
+		"label": "Authored product, operator, and current architecture documentation",
+		"roots": ["README.md", "architecture/", "guide/"],
+		"supporting": ["../README.md", "../CHANGELOG.md"]
+	}
+}

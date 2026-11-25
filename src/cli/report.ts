@@ -1,0 +1,976 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { readFileSync } from "node:fs";
+import { startedUnderPancodeAgent } from "../core/agent-environment.js";
+import { editTextExternally, resolveExternalEditor } from "../core/external-editor.js";
+import { canOpenBrowser, openBrowser } from "../core/open-browser.js";
+import { pancodeStateDir } from "../core/xdg.js";
+import {
+	applyReportEdit,
+	type BuiltBundle,
+	checkLastAttempt,
+	composeReportDraft,
+	type DuplicateChoice,
+	detectTransport,
+	forgetReport,
+	type IdentitySettings,
+	type LocalIdentity,
+	localIdentity,
+	observeSession,
+	outboxEntry,
+	planHeadline,
+	planReport,
+	REPORT_ID,
+	REPORT_SHARING_OFF,
+	REPORT_THANKS,
+	type ReportCommandRunner,
+	type ReportDraft,
+	type ReportKind,
+	type ReportPlan,
+	type ReportPlanTransport,
+	type ReportTransport,
+	readReportDraft,
+	refreshReportStatus,
+	relatedLine,
+	rememberIdentity,
+	reportBundlePath,
+	reportDraftsDirectory,
+	reportEditTemplate,
+	reportMarkdownPath,
+	reportRows,
+	routeFor,
+	runReportSend,
+	saveBuiltBundle,
+	saveReportDraft,
+	sentLine,
+	sweepReportBundles,
+	updateOutbox,
+} from "../domains/report/index.js";
+import { parseCommandFlags } from "./kit/flags.js";
+import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
+import {
+	attachBundle,
+	type BundleRequest,
+	bundleRequest,
+	consentSentences,
+	formatBundleSummary,
+	printReportBundle,
+	type ReportBundleIo,
+	runReportSelftest,
+} from "./report-bundle.js";
+import { canSelect, promptSelect } from "./select.js";
+
+export const REPORT_HELP = `pancode report [bug|feature|question] [--title <t>] [--body-file <f> | -] [--session <id> | --last]
+                  [--bundle none|mechanics [--consent debug|dataset] [--transcript [N]] [--with-tool-output]
+                  [--anonymize-models]] [--credit] [--dry-run] [--yes] [--json]
+                  [--on-duplicate comment|new|stop]
+                  [--reply-check]
+pancode report status [--refresh] [--json]
+pancode report show <id> [--bundle]
+pancode report send <id> [--yes] [--reply-check]
+pancode report forget <id>
+pancode report sweep [--json]
+pancode report selftest [--session <id>] [--transcript [N]] [--with-tool-output] [--anonymize-models]
+pancode report security
+
+report files a bug, a feature request or a question with PanCode's
+maintainers at github.com/akougkas/pancode. It always prints the exact title
+and body first, with what PanCode masked, and the numbered list of what
+sending will do. Nothing is sent until you choose send in a terminal or
+pass --yes.
+--body-file (or - for stdin) supplies "What happened"; in a terminal without it,
+$EDITOR opens a template. --last uses the newest session in this directory and
+--session a named one, to add what PanCode observed. --dry-run stops after
+the preview and makes no network call. When the search finds an open report of
+the same problem, or a fixed one this would be a regression of, a terminal asks;
+with --yes, --on-duplicate decides (default stop: an unattended script never
+comments on someone's issue or files a regression). --reply-check lets an
+attended session check the filed issue once a day for a maintainer's reply (off
+unless asked).
+status prints what this machine stored about each report and asks GitHub nothing;
+status --refresh asks GitHub, through your gh, where each open report stands.
+status and show never touch GitHub or delete anything.
+Security problems go to a private advisory: pancode report security.
+--bundle mechanics builds a diagnostic bundle of the session's telemetry and needs
+--consent: debug lets the maintainers read it to fix this report; dataset also lets
+its mechanics go into public datasets. The consent text prints with the bundle, and
+the bundle is kept only once you send or save the report.
+--transcript adds the last N turns (3, at most 10) scrubbed and without thinking;
+tool arguments and output stay out unless --with-tool-output. The bundle stays on
+this machine: show <id> --bundle prints every byte of it and forget deletes it,
+also after the report was sent.
+Report sharing is turned off in this build: --share prints so and exits 2, and no
+bundle is uploaded. sweep deletes every expired bundle now and names them (--json:
+one object).
+selftest builds that bundle for the newest session here, writes nothing, and
+says whether any of this machine's identifiers survived into it.
+Exit codes: 0 sent, opened, written or previewed; 1 on a send failure or a refused
+bundle; 2 on a usage error or a call outside a terminal without --yes; 3 when a
+likely duplicate or a newer release stopped it and the draft was saved.
+`;
+
+/** Everything that reaches outside the process, injectable so a test never runs `gh` or opens a browser. */
+export interface ReportCliDeps {
+	run?: ReportCommandRunner;
+	findGh?: () => string | null;
+	browserAvailable?: (env: NodeJS.ProcessEnv) => boolean;
+	open?: (url: string) => boolean;
+	env?: NodeJS.ProcessEnv;
+	interactive?: boolean;
+	stdout?: (text: string) => void;
+	stderr?: (text: string) => void;
+	readStdin?: () => string;
+	cwd?: string;
+	stateDir?: string;
+	identitySettings?: IdentitySettings;
+	changelog?: string | null;
+	now?: () => Date;
+}
+
+interface ComposeArgs {
+	verb: "compose";
+	kind: ReportKind;
+	title: string | null;
+	bodyFile: string | null;
+	session: string | null;
+	last: boolean;
+	credit: boolean;
+	dryRun: boolean;
+	yes: boolean;
+	json: boolean;
+	onDuplicate: DuplicateChoice | null;
+	bundle: BundleRequest | null;
+	share: boolean;
+	replyCheck: boolean;
+}
+
+type ReportArgs =
+	| ComposeArgs
+	| { verb: "status"; json: boolean; refresh: boolean }
+	| { verb: "show"; id: string; bundle: boolean }
+	| {
+			verb: "send";
+			id: string;
+			share: boolean;
+			yes: boolean;
+			dryRun: boolean;
+			json: boolean;
+			onDuplicate: DuplicateChoice | null;
+			replyCheck: boolean;
+	  }
+	| { verb: "forget"; id: string }
+	| { verb: "selftest"; session: string | null; request: BundleRequest }
+	| { verb: "security" }
+	| { verb: "help" };
+
+const KINDS: ReadonlyArray<ReportKind> = ["bug", "feature", "question"];
+const DUPLICATE_CHOICES: ReadonlyArray<DuplicateChoice> = ["comment", "new", "stop"];
+const VALUE_FLAGS = new Set(["--title", "--body-file", "--session", "--bundle", "--consent", "--on-duplicate"]);
+/** Flags whose value may be left out: `show <id> --bundle` and a bare `--transcript` (3 turns). */
+const OPTIONAL_VALUE = new Map([
+	["--bundle", (next: string) => !next.startsWith("-")],
+	["--transcript", (next: string) => /^[0-9]+$/u.test(next)],
+]);
+const BOOLEAN_FLAGS = [
+	"--last",
+	"--credit",
+	"--dry-run",
+	"--yes",
+	"--json",
+	"--with-tool-output",
+	"--anonymize-models",
+	"--reply-check",
+	"--share",
+	"--refresh",
+];
+
+function parseReport(argv: ReadonlyArray<string>): ReportArgs | string {
+	if (argv.includes("--help") || argv.includes("-h")) return { verb: "help" };
+	const positionals: string[] = [];
+	const values = new Map<string, string>();
+	const flags = new Set<string>();
+	for (let i = 0; i < argv.length; i += 1) {
+		const arg = argv[i] ?? "";
+		if (arg === "-") {
+			if (values.has("--body-file")) return "--body-file was given twice";
+			values.set("--body-file", "-");
+		} else if (arg.startsWith("--")) {
+			const eq = arg.indexOf("=");
+			const name = eq > 0 ? arg.slice(0, eq) : arg;
+			const optional = OPTIONAL_VALUE.get(name);
+			if (optional !== undefined && eq < 0) {
+				const next = argv[i + 1];
+				if (values.has(name)) return `${name} was given twice`;
+				values.set(name, next !== undefined && optional(next) ? (argv[++i] ?? "") : "");
+			} else if (VALUE_FLAGS.has(name) || optional !== undefined) {
+				const value = eq > 0 ? arg.slice(eq + 1) : argv[++i];
+				if (value === undefined || value === "") return `${name} needs a value`;
+				if (values.has(name)) return `${name} was given twice`;
+				values.set(name, value);
+			} else if (BOOLEAN_FLAGS.includes(name) && eq < 0) flags.add(name);
+			else return `unknown option ${arg}`;
+		} else positionals.push(arg);
+	}
+	const bundle = values.get("--bundle");
+	// selftest writes nothing and keeps no consent, so only a kept bundle needs --consent named.
+	const request = (bundleFlag: string | undefined, requireConsent = bundleFlag !== undefined) =>
+		bundleRequest({
+			bundle: bundleFlag,
+			consent: values.get("--consent"),
+			transcript: values.get("--transcript"),
+			withToolOutput: flags.has("--with-tool-output"),
+			anonymizeModels: flags.has("--anonymize-models"),
+			requireConsent,
+		});
+	const onDuplicateValue = values.get("--on-duplicate");
+	if (onDuplicateValue !== undefined && !(DUPLICATE_CHOICES as ReadonlyArray<string>).includes(onDuplicateValue))
+		return `--on-duplicate takes comment, new or stop, not ${onDuplicateValue}`;
+	const onDuplicate = (onDuplicateValue ?? null) as DuplicateChoice | null;
+
+	const [verb, ...rest] = positionals;
+	const allow = (verbName: string, allowed: ReadonlyArray<string>): string | null => {
+		const used = [...flags, ...values.keys()].filter((flag) => !allowed.includes(flag) && flag !== "--bundle");
+		return used.length > 0 ? `${used[0]} does not apply to report ${verbName}` : null;
+	};
+	const idOf = (verbName: string): string | { error: string } => {
+		const id = rest[0];
+		if (id === undefined || rest.length > 1) return { error: `usage: pancode report ${verbName} <id>` };
+		if (!REPORT_ID.test(id)) return { error: `not a report id: ${id} (they look like rpt_ and 26 letters and digits)` };
+		return id;
+	};
+	switch (verb) {
+		case "status":
+			if (rest.length > 0) return "usage: pancode report status [--refresh] [--json]";
+			return (
+				allow("status", ["--json", "--refresh"]) ?? {
+					verb: "status",
+					json: flags.has("--json"),
+					refresh: flags.has("--refresh"),
+				}
+			);
+		case "show": {
+			const id = idOf("show");
+			if (typeof id !== "string") return id.error;
+			if (bundle !== undefined && bundle !== "") return "report show takes a bare --bundle";
+			return allow("show", []) ?? { verb: "show", id, bundle: bundle !== undefined };
+		}
+		case "send": {
+			const id = idOf("send");
+			if (typeof id !== "string") return id.error;
+			return (
+				allow("send", ["--share", "--yes", "--dry-run", "--json", "--on-duplicate", "--reply-check"]) ?? {
+					verb: "send",
+					id,
+					share: flags.has("--share"),
+					yes: flags.has("--yes"),
+					dryRun: flags.has("--dry-run"),
+					json: flags.has("--json"),
+					onDuplicate,
+					replyCheck: flags.has("--reply-check"),
+				}
+			);
+		}
+		case "forget": {
+			const id = idOf("forget");
+			if (typeof id !== "string") return id.error;
+			return allow("forget", []) ?? { verb: "forget", id };
+		}
+		case "selftest": {
+			if (rest.length > 0) return "usage: pancode report selftest [--session <id>]";
+			if (bundle !== undefined) return "--bundle does not apply to report selftest; it always builds one";
+			const used = allow("selftest", [
+				"--session",
+				"--consent",
+				"--transcript",
+				"--with-tool-output",
+				"--anonymize-models",
+			]);
+			if (used !== null) return used;
+			const selftest = request("mechanics", false);
+			if (typeof selftest === "string") return selftest;
+			return { verb: "selftest", session: values.get("--session") ?? null, request: selftest as BundleRequest };
+		}
+		case "security":
+			if (rest.length > 0) return "usage: pancode report security";
+			return allow("security", []) ?? { verb: "security" };
+	}
+	if (verb !== undefined && !(KINDS as ReadonlyArray<string>).includes(verb))
+		return `unknown report kind or verb: ${verb}`;
+	if (rest.length > 0) return `unexpected argument: ${rest[0]} (quote the title and pass it with --title)`;
+	if (flags.has("--refresh")) return "--refresh applies only to report status";
+	if (values.has("--session") && flags.has("--last")) return "--session and --last cannot be combined";
+	const attach = request(bundle);
+	if (typeof attach === "string") return attach;
+	if (attach !== null && !values.has("--session") && !flags.has("--last"))
+		return "--bundle mechanics bundles a session: pass --last or --session <id>";
+	return {
+		verb: "compose",
+		kind: (verb ?? "bug") as ReportKind,
+		title: values.get("--title") ?? null,
+		bodyFile: values.get("--body-file") ?? null,
+		session: values.get("--session") ?? null,
+		last: flags.has("--last"),
+		credit: flags.has("--credit"),
+		dryRun: flags.has("--dry-run"),
+		yes: flags.has("--yes"),
+		json: flags.has("--json"),
+		onDuplicate,
+		bundle: attach,
+		share: flags.has("--share"),
+		replyCheck: flags.has("--reply-check"),
+	};
+}
+
+interface Io {
+	out: (text: string) => void;
+	err: (text: string) => void;
+	interactive: boolean;
+	env: NodeJS.ProcessEnv;
+	stateDir: string;
+	cwd: string;
+	deps: ReportCliDeps;
+}
+
+/** An Enter typed while gh was being asked must not send: the prompt ignores keys for this long after it appears. */
+const REPORT_PROMPT_SETTLE_MS = 400;
+
+function fail(io: Io, message: string): void {
+	io.err(`error: ${message}\n`);
+}
+
+const RULE = (label: string) => `----- ${label} -----\n`;
+
+/** The plain preview: destination, title, the body byte for byte between two rules, masks, actions and gates. */
+function formatReportPreview(plan: ReportPlan, bundled: boolean): string {
+	const lines = [
+		`${planHeadline(plan)}; nothing sent yet`,
+		"",
+		RULE("title"),
+		`${plan.rendered.title}\n`,
+		RULE("body, exactly as it will be sent"),
+	];
+	const after = [
+		RULE("end of body"),
+		plan.maskSummary,
+		bundled
+			? "The diagnostic bundle stays on this machine; sending does not upload it."
+			: "No diagnostic bundle is attached.",
+		...(plan.credit ? ["Credit: the report block asks for credit in the release notes (credit: yes)."] : []),
+		"",
+		"Sending will, in this order:",
+		...plan.actions.map((action, index) => `  ${index + 1}. ${action}`),
+		...(plan.rateWarning !== null ? ["", plan.rateWarning] : []),
+		...(plan.gates.length > 0 ? ["", "Cannot send yet:", ...plan.gates.map((gate) => `  - ${gate}`)] : []),
+	];
+	return `${lines.join("\n")}${plan.rendered.body}${after.join("\n")}\n`;
+}
+
+/** The transport a dry run names without asking GitHub anything: a `gh` on PATH, else a browser, else a file. */
+function offlineTransport(io: Io, findGh: () => string | null): ReportPlanTransport {
+	if (findGh() !== null) return { kind: "gh", login: null };
+	return (io.deps.browserAvailable ?? canOpenBrowser)(io.env) ? { kind: "browser" } : { kind: "file" };
+}
+
+async function loadFindGh(deps: ReportCliDeps): Promise<() => string | null> {
+	if (deps.findGh !== undefined) return deps.findGh;
+	const { resolveToolBinary } = await import("../domains/toolchain/index.js");
+	return () => resolveToolBinary("gh").binaryPath;
+}
+
+async function identityFor(io: Io): Promise<LocalIdentity> {
+	let settings = io.deps.identitySettings;
+	if (settings === undefined) {
+		try {
+			const { readSettings } = await import("../core/config.js");
+			settings = { targets: readSettings().targets };
+		} catch {
+			// Unreadable settings mask no target names; every other identity value still applies.
+			settings = {};
+		}
+	}
+	return localIdentity(io.cwd, settings, {
+		...(io.deps.run !== undefined ? { run: io.deps.run } : {}),
+		env: io.env,
+	});
+}
+
+function readBody(io: Io, path: string): string {
+	if (path === "-") return io.deps.readStdin !== undefined ? io.deps.readStdin() : readFileSync(0, "utf8");
+	return readFileSync(path, "utf8");
+}
+
+/** A `--session` selector (an exact id, a unique id prefix or a session name) resolved to one session id. */
+async function resolveSession(io: Io, target: string): Promise<{ id: string } | { miss: string }> {
+	const { resolveSessionSelector } = await import("./telemetry-target.js");
+	return resolveSessionSelector(io.stateDir, target, io.cwd);
+}
+
+async function sessionFor(
+	args: ComposeArgs,
+	io: Io,
+): Promise<{ id: string; observations: ReturnType<typeof observeSession>; facts: { model?: string } } | null | string> {
+	if (!args.last && args.session === null) return null;
+	const { listSessionsForCwd } = await import("../domains/session/history.js");
+	const metas = listSessionsForCwd(io.cwd);
+	let id: string | undefined;
+	if (args.last) id = metas[0]?.id;
+	else if (args.session !== null) {
+		const resolved = await resolveSession(io, args.session);
+		if ("miss" in resolved) return resolved.miss;
+		id = resolved.id;
+	}
+	if (id === undefined) return "no session in this directory; start one or pass --session <id>";
+	const meta = metas.find((candidate) => candidate.id === id);
+	const observations = observeSession(io.stateDir, id);
+	if (observations.length === 0 && meta === undefined) return `no session ${id} in this directory`;
+	return { id, observations, facts: meta?.model ? { model: meta.model } : {} };
+}
+
+function editDraft(draft: ReportDraft, io: Io): ReportDraft | string {
+	const edited = editTextExternally(
+		reportEditTemplate(draft),
+		resolveExternalEditor(io.env),
+		".md",
+		reportDraftsDirectory(io.stateDir),
+	);
+	if (!edited.ok || edited.text === undefined) return edited.error ?? "the editor did not return the text";
+	return applyReportEdit(draft, edited.text);
+}
+
+function saveDraft(io: Io, draft: ReportDraft, title: string): void {
+	saveReportDraft(io.stateDir, draft);
+	// A `sending` entry stays so: its last create may have filed, and the next send checks for it first.
+	const state = outboxEntry(io.stateDir, draft.id)?.state === "sending" ? "sending" : "draft";
+	updateOutbox(io.stateDir, draft.id, { kind: draft.kind, title, state });
+}
+
+async function confirmAndSend(
+	initial: ReportDraft,
+	io: Io,
+	options: {
+		dryRun: boolean;
+		yes: boolean;
+		json: boolean;
+		onDuplicate: DuplicateChoice | null;
+		replyCheck: boolean;
+		/** A bundle built for this report and not yet kept. */
+		bundle?: BuiltBundle | null;
+	},
+): Promise<number> {
+	// R-12 promises the agent drafts but never sends: a bash call has no terminal, and --yes skips the review the
+	// footer claims, so an agent's draft goes only through the interactive review. Refused before gh is asked anything.
+	// A command a PanCode session's bash ran is the agent's at yolo too, where no autonomy ceiling marks it.
+	const fromSession = startedUnderPancodeAgent(io.env);
+	if (
+		!options.dryRun &&
+		(initial.origin === "agent" || fromSession) &&
+		(options.yes || !io.interactive || options.json)
+	) {
+		// Kept as the agent's, so the operator's own send of it opens the review.
+		if (fromSession && readReportDraft(io.stateDir, initial.id) === null)
+			saveDraft(io, { ...initial, origin: "agent" }, initial.title);
+		io.err(
+			`nothing sent: an agent's draft is reviewed in a terminal: run \`pancode report send ${initial.id}\` yourself\n`,
+		);
+		return 2;
+	}
+	// Set only in a command a PanCode session's bash started below yolo; --yes there would send text nobody reviewed.
+	const ceiling = io.env.PANCODE_AUTONOMY_CEILING;
+	if (!options.dryRun && options.yes && ceiling !== undefined && ceiling !== "") {
+		io.err("nothing sent: --yes is refused in a command a PanCode session started; send it from your own terminal\n");
+		return 2;
+	}
+	const pending = options.bundle ?? null;
+	const keepBundle = () => {
+		if (pending !== null) saveBuiltBundle(io.stateDir, draft, pending, io.deps.now?.() ?? new Date());
+	};
+	const identity = await identityFor(io);
+	let transport: ReportTransport | null = null;
+	const findGh = await loadFindGh(io.deps);
+	// gh is asked nothing until the reporter consents: --yes is that consent up front, the prompt's send is it later.
+	const detect = async (): Promise<ReportTransport> =>
+		detectTransport(io.env, {
+			findGh,
+			...(io.deps.run !== undefined ? { run: io.deps.run } : {}),
+			...(io.deps.browserAvailable !== undefined ? { browserAvailable: io.deps.browserAvailable } : {}),
+		});
+	/** For a report left `sending`, settles its last attempt; a number is the exit code to return now. */
+	const settleLastAttempt = async (found: ReportTransport): Promise<number | null> => {
+		if (found.kind !== "gh" || outboxEntry(io.stateDir, initial.id)?.state !== "sending") return null;
+		const last = await checkLastAttempt(initial.id, found, {
+			stateDir: io.stateDir,
+			env: io.env,
+			...(io.deps.run !== undefined ? { run: io.deps.run } : {}),
+			...(io.deps.now !== undefined ? { now: io.deps.now } : {}),
+		});
+		if (last.status === "unknown") {
+			fail(io, `nothing sent: ${last.reason}`);
+			return 1;
+		}
+		if (last.status === "filed") {
+			if (options.json)
+				io.out(
+					`${JSON.stringify({ result: { status: "sent", url: last.url, number: last.number, adopted: true } }, null, 2)}\n`,
+				);
+			else io.out(`${initial.id} was filed by its last attempt: ${last.url}\n`);
+			return 0;
+		}
+		if (!options.json) io.out(`GitHub has nothing from the last attempt to send ${initial.id}; it is a draft again.\n`);
+		return null;
+	};
+	let planTransport: ReportPlanTransport;
+	if (!options.dryRun && options.yes) {
+		transport = await detect();
+		const settled = await settleLastAttempt(transport);
+		if (settled !== null) return settled;
+		planTransport = transport;
+	} else planTransport = offlineTransport(io, findGh);
+	const interactive = io.interactive && !options.json;
+	let draft = rememberIdentity(initial, identity);
+	// Only the prompt below is a review; --yes sends what the preview printed without one.
+	const reviewed = !options.yes;
+	let plan = planReport(draft, { identity, transport: planTransport, stateDir: io.stateDir, reviewed });
+	const emit = (result?: unknown) =>
+		io.out(
+			`${JSON.stringify(
+				{
+					draft,
+					rendered: plan.rendered,
+					transport: planTransport,
+					plan,
+					...(pending !== null ? { bundle: bundleJson(pending) } : {}),
+					...(result !== undefined ? { result } : {}),
+				},
+				null,
+				2,
+			)}\n`,
+		);
+	const bundled = pending !== null || Boolean(outboxEntry(io.stateDir, draft.id)?.bundle);
+	if (!options.json) io.out(formatReportPreview(plan, bundled));
+	if (options.dryRun) {
+		if (options.json) emit();
+		else io.out("dry run: nothing sent\n");
+		return 0;
+	}
+	if (!options.yes && !interactive) {
+		if (options.json) emit();
+		io.err("nothing sent: add --yes to send this report\n");
+		return 2;
+	}
+	if (plan.gates.length > 0 && (options.yes || !interactive)) {
+		if (options.json) emit();
+		io.err('nothing sent: fix what the preview lists under "Cannot send yet"\n');
+		return 2;
+	}
+	if (!options.yes) {
+		for (;;) {
+			const sendable = plan.gates.length === 0;
+			const choice = await promptSelect<"send" | "edit" | "save" | "cancel">({
+				heading: sendable ? "Send this report?" : "This report cannot be sent yet",
+				choices: [
+					...(sendable ? [{ value: "send" as const, label: "send", hint: plan.actions.join("; ") }] : []),
+					{ value: "edit", label: "edit", hint: "open the text in $EDITOR" },
+					{ value: "save", label: "save as draft", hint: "keep it; pancode report send <id> later" },
+					{ value: "cancel", label: "cancel", hint: "keep the draft, send nothing" },
+				],
+				backLabel: "cancel",
+				clearOnExit: true,
+				settleMs: REPORT_PROMPT_SETTLE_MS,
+			});
+			const picked = choice.kind === "selected" ? choice.value : "cancel";
+			if (picked === "send") {
+				// Consent given: only now is gh asked who is signed in, and about a last attempt left sending.
+				const planned = planTransport.kind;
+				transport = await detect();
+				const settled = await settleLastAttempt(transport);
+				if (settled !== null) return settled;
+				planTransport = transport;
+				plan = planReport(draft, { identity, transport, stateDir: io.stateDir, reviewed });
+				if (transport.kind === planned && plan.gates.length === 0) break;
+				// gh is not signed in, so the report would go another way than the preview said: review it again.
+				io.out(formatReportPreview(plan, bundled));
+				continue;
+			}
+			if (picked === "edit") {
+				const edited = editDraft(draft, io);
+				if (typeof edited === "string") io.err(`${edited}\n`);
+				else {
+					const before = plan.masks.reduce((sum, mask) => sum + mask.count, 0);
+					draft = edited;
+					plan = planReport(draft, { identity, transport: planTransport, stateDir: io.stateDir, reviewed });
+					io.out(formatReportPreview(plan, bundled));
+					const added = plan.masks.reduce((sum, mask) => sum + mask.count, 0) - before;
+					if (added > 0) io.out(`PanCode masked ${added} more value${added === 1 ? "" : "s"} in your edit.\n`);
+				}
+				continue;
+			}
+			keepBundle();
+			saveDraft(io, draft, plan.rendered.title);
+			io.out(`nothing sent; saved as draft ${draft.id}. pancode report send ${draft.id} sends it later.\n`);
+			return 0;
+		}
+	}
+	if (transport === null) return 2;
+	keepBundle();
+	if (plan.rateWarning !== null && !options.json) io.err(`${plan.rateWarning}\n`);
+	const outcome = await runReportSend(draft, plan.rendered, {
+		stateDir: io.stateDir,
+		identity,
+		transport,
+		...(io.deps.run !== undefined ? { run: io.deps.run } : {}),
+		env: io.env,
+		...(io.deps.open !== undefined ? { open: io.deps.open } : {}),
+		...(io.deps.now !== undefined ? { now: io.deps.now } : {}),
+		replyCheck: options.replyCheck,
+		reviewed,
+		related: {
+			...(io.deps.changelog !== undefined ? { changelog: io.deps.changelog } : {}),
+			...(io.deps.now !== undefined ? { now: io.deps.now } : {}),
+		},
+		chooseDuplicate: async (verdict, choices) => {
+			if (!options.json) {
+				io.out(`\nThis may already be reported:\n  ${"issue" in verdict ? relatedLine(verdict.issue) : ""}\n`);
+				if (verdict.kind === "upgrade")
+					io.out(`  You are on ${verdict.installed}; the latest is ${verdict.latest}. pancode upgrade first may fix it.\n`);
+			}
+			const allowed = choices.map((choice) => choice.value);
+			if (options.yes && options.onDuplicate !== null)
+				return allowed.includes(options.onDuplicate) ? options.onDuplicate : "stop";
+			if (!interactive) return "stop";
+			const picked = await promptSelect<DuplicateChoice>({
+				heading: "What should PanCode do?",
+				choices: choices.map((choice) => ({ value: choice.value, label: choice.label })),
+				backLabel: "cancel",
+				clearOnExit: true,
+				settleMs: REPORT_PROMPT_SETTLE_MS,
+			});
+			return picked.kind === "selected" ? picked.value : "stop";
+		},
+	});
+	if (outcome.kind === "stopped") {
+		if (options.json) emit({ status: "stopped", verdict: outcome.verdict });
+		else
+			io.out(
+				`nothing sent; saved as draft ${outcome.draft.id}. Pass --on-duplicate comment or new with --yes, or run pancode report send ${outcome.draft.id} in a terminal.\n`,
+			);
+		return 3;
+	}
+	// Only new links are news.
+	const relinked = outcome.draft.links.join() !== draft.links.join();
+	draft = outcome.draft;
+	if (relinked && !options.json)
+		io.out(`The report now links #${outcome.draft.links.join(", #")}; its title is: ${outcome.rendered.title}\n`);
+	if (options.json) {
+		plan = { ...plan, rendered: outcome.rendered };
+		emit(outcome.result);
+	} else {
+		io.out(`${sentLine(outcome.result)}\n`);
+		if (outcome.result.status !== "failed")
+			io.out(`${REPORT_THANKS}\npancode report status shows it; nothing more is sent without you.\n`);
+	}
+	if (outcome.result.status === "failed") {
+		if (!options.json) fail(io, outcome.result.reason);
+		return 1;
+	}
+	return 0;
+}
+
+async function compose(args: ComposeArgs, io: Io): Promise<number> {
+	const session = await sessionFor(args, io);
+	if (typeof session === "string") {
+		fail(io, session);
+		return 1;
+	}
+	let happened = "";
+	let openEditor = false;
+	if (args.bodyFile !== null) {
+		try {
+			happened = readBody(io, args.bodyFile);
+		} catch (error) {
+			fail(io, `cannot read ${args.bodyFile}: ${error instanceof Error ? error.message : String(error)}`);
+			return 2;
+		}
+	} else openEditor = io.interactive && !args.json && !args.dryRun;
+	let draft = composeReportDraft({
+		kind: args.kind,
+		surface: "headless",
+		...(args.title !== null ? { title: args.title } : {}),
+		happened,
+		session,
+	});
+	if (args.credit) draft = { ...draft, credit: true };
+	if (openEditor) {
+		const edited = editDraft(draft, io);
+		if (typeof edited === "string") {
+			fail(io, `${edited}; pass --body-file <file> instead`);
+			return 2;
+		}
+		draft = edited;
+	}
+	let bundle: BuiltBundle | null = null;
+	if (args.bundle !== null) {
+		// Built in memory: it is written, and its consent recorded, only once the reporter sends or saves the report.
+		const built = await attachBundle(bundleIo(io), draft, args.bundle, { write: false });
+		if (typeof built === "string") {
+			fail(io, `no bundle was built: ${built}`);
+			return 1;
+		}
+		(args.json ? io.err : io.out)(
+			`${formatBundleSummary(built, args.dryRun ? null : reportBundlePath(io.stateDir, draft.id))}\n`,
+		);
+		bundle = built;
+	}
+	return confirmAndSend(draft, io, { ...args, bundle });
+}
+
+/** The bundle in `--json`: what it holds and the consent text the reporter agreed to, sentence by sentence. */
+function bundleJson(built: BuiltBundle) {
+	return {
+		sha256: built.sha256,
+		bytes: built.summary.bytes,
+		scopes: built.summary.scopesGranted,
+		content: built.summary.content,
+		consent: { textVersion: built.envelope.consent.textVersion, sentences: consentSentences(built) },
+	};
+}
+
+function bundleIo(io: Io): ReportBundleIo {
+	return {
+		out: io.out,
+		err: io.err,
+		stateDir: io.stateDir,
+		cwd: io.cwd,
+		identity: () => identityFor(io),
+		...(io.deps.now !== undefined ? { now: io.deps.now } : {}),
+	};
+}
+
+/** `report status`: the state stored on this machine; only `--refresh` asks GitHub first, through gh. */
+async function status(io: Io, json: boolean, refresh: boolean): Promise<number> {
+	const gh = refresh
+		? await refreshReportStatus(io.stateDir, {
+				findGh: await loadFindGh(io.deps),
+				...(io.deps.run !== undefined ? { run: io.deps.run } : {}),
+				env: io.env,
+				...(io.deps.now !== undefined ? { now: io.deps.now } : {}),
+			})
+		: null;
+	const rows = reportRows(io.stateDir);
+	if (json) {
+		io.out(`${JSON.stringify({ reports: rows }, null, 2)}\n`);
+		return 0;
+	}
+	if (rows.length === 0) {
+		io.out("no reports yet; pancode report bug starts one\n");
+		return 0;
+	}
+	for (const row of rows) {
+		io.out(`${row.id}  ${row.state.padEnd(9)}  ${row.kind.padEnd(8)}  ${row.title}${row.url ? `  ${row.url}` : ""}\n`);
+		const facts = [
+			row.bundle ? `bundle, consent ${row.consent}` : "no bundle",
+			`credit ${row.credit ? "yes" : "no"}`,
+			...(row.state === "sent" ? [`reply check ${row.replyCheck ? "on" : "off"}`] : []),
+			...(row.lastSeen !== null ? [`GitHub: ${row.lastSeen}`] : []),
+		];
+		io.out(`    ${facts.join(" · ")}\n`);
+	}
+	if (gh === false && rows.some((row) => row.state === "sent"))
+		io.out("gh is not on this machine, so this is the state stored when each report was sent.\n");
+	else if (gh === null && rows.some((row) => row.state === "sent"))
+		io.out("this is the state stored on this machine; pancode report status --refresh asks GitHub through gh.\n");
+	return 0;
+}
+
+/** The body file written when the report went out; null when it is gone. */
+function readSentBody(stateDir: string, id: string): string | null {
+	try {
+		return readFileSync(reportMarkdownPath(stateDir, id), "utf8");
+	} catch {
+		// Without the file, show renders the draft and does not call it the body as sent.
+		return null;
+	}
+}
+
+async function show(io: Io, id: string, bundle: boolean): Promise<number> {
+	const entry = outboxEntry(io.stateDir, id);
+	const draft = readReportDraft(io.stateDir, id);
+	if (entry === null && draft === null) {
+		fail(io, `no report ${id}; pancode report status lists them`);
+		return 1;
+	}
+	if (entry !== null) io.out(`${id}  ${entry.state}${entry.url !== null ? `  ${entry.url}` : ""}\n`);
+	if (bundle) return printReportBundle(bundleIo(io), id);
+	const sentBody = entry !== null && entry.state === "sent" ? readSentBody(io.stateDir, id) : null;
+	if (entry !== null && sentBody !== null) {
+		io.out(`${RULE("title")}${entry.title}\n${RULE("body as sent")}${sentBody}${RULE("end of body")}`);
+		return 0;
+	}
+	if (draft !== null) {
+		const rendered = planReport(draft, { identity: await identityFor(io), transport: { kind: "file" } }).rendered;
+		io.out(`${RULE("title")}${rendered.title}\n${RULE("body")}${rendered.body}${RULE("end of body")}`);
+	}
+	return 0;
+}
+
+async function sendSaved(
+	io: Io,
+	args: {
+		id: string;
+		share: boolean;
+		yes: boolean;
+		dryRun: boolean;
+		json: boolean;
+		onDuplicate: DuplicateChoice | null;
+		replyCheck: boolean;
+	},
+): Promise<number> {
+	const entry = outboxEntry(io.stateDir, args.id);
+	if (entry !== null && (entry.state === "sent" || entry.state === "withdrawn")) {
+		io.out(`${args.id} is already ${entry.state}${entry.url !== null ? `: ${entry.url}` : ""}\n`);
+		return 0;
+	}
+	const draft = readReportDraft(io.stateDir, args.id);
+	if (draft === null) {
+		fail(io, `no saved draft ${args.id}; pancode report status lists them`);
+		return 1;
+	}
+	return confirmAndSend(draft, io, args);
+}
+
+function forget(io: Io, id: string): number {
+	const result = forgetReport(io.stateDir, id);
+	if (!result.ok) {
+		fail(io, `${result.reason}${result.reason.startsWith("no report") ? "; pancode report status lists them" : ""}`);
+		return 1;
+	}
+	io.out(`${result.message}\n`);
+	return 0;
+}
+
+function security(io: Io): number {
+	const route = routeFor("security");
+	const url = route.name === "security" ? route.url : "";
+	io.out(`Security problems go to a private advisory, not a public issue. Only the maintainers see it:\n${url}\n`);
+	const open = io.deps.open ?? ((link: string) => openBrowser(link, io.env));
+	if (io.interactive && (io.deps.browserAvailable ?? canOpenBrowser)(io.env) && open(url))
+		io.out("opened it in your browser\n");
+	return 0;
+}
+
+/** `report sweep [--json]`: run the bundle expiry sweep now and name what it deleted. */
+function sweep(io: Io, json: boolean): number {
+	const bundles = sweepReportBundles(io.stateDir, io.deps.now?.() ?? new Date());
+	if (json) {
+		io.out(`${JSON.stringify(jsonDocument({ bundles }))}\n`);
+		return 0;
+	}
+	if (bundles.length === 0) {
+		io.out("nothing deleted: no bundle has expired\n");
+		return 0;
+	}
+	for (const id of bundles) io.out(`deleted the diagnostic bundle of ${id}\n`);
+	return 0;
+}
+
+/** `report sweep` parses its own flags: an unknown one is a usage error on the C3 lines, exit 2. */
+async function runSweepVerb(argv: ReadonlyArray<string>, deps: ReportCliDeps): Promise<number> {
+	const out = deps.stdout ?? ((text: string) => void process.stdout.write(text));
+	const err = deps.stderr ?? ((text: string) => void process.stderr.write(text));
+	const parsed = parseCommandFlags(argv, { json: { kind: "boolean" }, help: { kind: "boolean", short: "h" } });
+	const failure = parsed.ok
+		? parsed.positional.length > 0
+			? { slug: "usage" as const, message: `unexpected argument: ${parsed.positional[0]}` }
+			: null
+		: { slug: parsed.slug, message: parsed.message };
+	if (failure !== null) {
+		writeCliFailure(
+			{ path: ["report", "sweep"], ...failure, json: argv.includes("--json") },
+			{ stdout: { write: out }, stderr: { write: err } },
+		);
+		return 2;
+	}
+	if (!parsed.ok) return 2;
+	if (parsed.flags.help === true) {
+		out(REPORT_HELP);
+		return 0;
+	}
+	const io: Io = {
+		out,
+		err,
+		interactive: false,
+		env: deps.env ?? process.env,
+		stateDir: deps.stateDir ?? pancodeStateDir(),
+		cwd: deps.cwd ?? process.cwd(),
+		deps,
+	};
+	try {
+		return sweep(io, parsed.flags.json === true);
+	} catch (error) {
+		err(`error: report sweep: ${error instanceof Error ? error.message : String(error)}\n`);
+		return 1;
+	}
+}
+
+/**
+ * `pancode report`: exit 0 sent, opened, written or previewed; 1 on a send failure; 2 on usage or without --yes;
+ * 3 when a likely duplicate stopped it.
+ */
+export async function runReport(argv: ReadonlyArray<string>, deps: ReportCliDeps = {}): Promise<number> {
+	if (argv[0] === "sweep") return runSweepVerb(argv.slice(1), deps);
+	const out = deps.stdout ?? ((text: string) => void process.stdout.write(text));
+	const err = deps.stderr ?? ((text: string) => void process.stderr.write(text));
+	const args = parseReport(argv);
+	if (typeof args === "string") {
+		err(`error: ${args}\n`);
+		err(REPORT_HELP);
+		return 2;
+	}
+	if (args.verb === "help") {
+		out(REPORT_HELP);
+		return 0;
+	}
+	if ((args.verb === "compose" || args.verb === "send") && args.share) {
+		err(`${REPORT_SHARING_OFF}\n`);
+		return 2;
+	}
+	const io: Io = {
+		out,
+		err,
+		interactive: deps.interactive ?? canSelect(),
+		env: deps.env ?? process.env,
+		stateDir: deps.stateDir ?? pancodeStateDir(),
+		cwd: deps.cwd ?? process.cwd(),
+		deps,
+	};
+	try {
+		// The expiry sweep runs first on the verbs that compose, send or forget, as the consent text says (C15).
+		if (args.verb === "compose" || args.verb === "send" || args.verb === "forget")
+			sweepReportBundles(io.stateDir, io.deps.now?.() ?? new Date());
+		switch (args.verb) {
+			case "compose":
+				return await compose(args, io);
+			case "status":
+				return await status(io, args.json, args.refresh);
+			case "show":
+				return await show(io, args.id, args.bundle);
+			case "send":
+				return await sendSaved(io, args);
+			case "forget":
+				return forget(io, args.id);
+			case "selftest": {
+				if (args.session === null) return await runReportSelftest(bundleIo(io), args);
+				const resolved = await resolveSession(io, args.session);
+				if ("miss" in resolved) {
+					fail(io, resolved.miss);
+					return 1;
+				}
+				return await runReportSelftest(bundleIo(io), { ...args, session: resolved.id });
+			}
+			case "security":
+				return security(io);
+		}
+	} catch (error) {
+		err(`error: report: ${error instanceof Error ? error.message : String(error)}\n`);
+		return 1;
+	}
+}

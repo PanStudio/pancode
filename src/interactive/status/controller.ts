@@ -1,0 +1,298 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { PancodeSettings } from "../../core/config.js";
+import { ownerTelemetryContext } from "../../core/telemetry/context.js";
+import type { TelemetryHub } from "../../core/telemetry/hub.js";
+import type { ProvidersContract } from "../../domains/providers/index.js";
+import type { ChatLoop, ChatLoopEvent } from "../../session-control/chat-loop.js";
+import {
+	type AgentStatus,
+	type AgentStatusChangedPayload,
+	INITIAL_STATUS,
+} from "../../session-control/status-types.js";
+import { reduceStatus, type StatusInputEvent } from "./state-machine.js";
+import { TIER_THRESHOLDS_MS } from "./watchdog.js";
+
+export interface StatusControllerDeps {
+	chat: ChatLoop;
+	providers: ProvidersContract;
+	bus?: TelemetryHub;
+	getSettings?: () => Readonly<PancodeSettings>;
+	now?: () => number;
+	setInterval?: (listener: () => void, ms: number) => unknown;
+	clearInterval?: (handle: unknown) => void;
+	setTimeout?: (listener: () => void, ms: number) => unknown;
+	clearTimeout?: (handle: unknown) => void;
+}
+
+export interface StatusController {
+	current(): AgentStatus;
+	subscribe(listener: (status: AgentStatus) => void): () => void;
+	/**
+	 * Drop the status the previous session ended on. An ended turn only settles
+	 * back to idle five seconds later, so a session started inside that window
+	 * would otherwise open reporting work it never did.
+	 */
+	reset(): void;
+	/** An allowed call has left its approval card, so its clock starts now. */
+	noteToolResumed(toolCallId: string): void;
+	/** The safety judge holds this started call; it runs only once admitted. */
+	noteToolJudging(toolCallId: string): void;
+	dispose(): void;
+}
+
+const TICK_INTERVAL_MS = 1000;
+const SETTLE_MS = 5000;
+const STATUS_EMIT_THROTTLE_MS = 100;
+/**
+ * A streaming worker publishes thousands of progress events per dispatch, and
+ * the watchdog only needs a signal coarser than its ten-second first tier, so
+ * one refresh per tick is enough. Coalescing keeps the reducer (and the
+ * provider lookup behind every apply) off the worker's stream rate.
+ */
+const DISPATCH_PROGRESS_COALESCE_MS = TICK_INTERVAL_MS;
+
+/**
+ * Worker/ACP stream evidence, as opposed to the heartbeats that ride the same
+ * channel: a worker keepalive, or the watchdog's own observation that one went
+ * stale, says nothing about whether the worker produced anything. The event
+ * crosses a process boundary untyped, so read it defensively.
+ */
+const HEARTBEAT_EVENT_TYPES = new Set(["heartbeat", "heartbeat_status"]);
+
+function isWorkerStreamEvidence(raw: unknown): boolean {
+	const event = (raw as { event?: unknown } | null | undefined)?.event;
+	if (typeof event !== "object" || event === null) return false;
+	const type = (event as { type?: unknown }).type;
+	return typeof type === "string" && type.length > 0 && !HEARTBEAT_EVENT_TYPES.has(type);
+}
+
+function statusMetadata(status: AgentStatus): AgentStatusChangedPayload["metadata"] {
+	if (status.tool) return { toolName: status.tool.toolName };
+	if (status.retry) return { attempt: status.retry.attempt };
+	if (status.dispatch) return { agentName: status.dispatch.agentName };
+	if (status.phase === "ended" && status.summary) return { reason: status.summary.stopReason };
+	return undefined;
+}
+
+export function createStatusController(deps: StatusControllerDeps): StatusController {
+	const now = deps.now ?? Date.now;
+	const setIntervalFn = deps.setInterval ?? ((listener, ms) => setInterval(listener, ms));
+	const clearIntervalFn =
+		deps.clearInterval ??
+		((handle) => {
+			clearInterval(handle as ReturnType<typeof setInterval>);
+		});
+	const setTimeoutFn = deps.setTimeout ?? ((listener, ms) => setTimeout(listener, ms));
+	const clearTimeoutFn =
+		deps.clearTimeout ??
+		((handle) => {
+			clearTimeout(handle as ReturnType<typeof setTimeout>);
+		});
+
+	let status: AgentStatus = { ...INITIAL_STATUS };
+	let disposed = false;
+	let lastNotifyAt = 0;
+	let lastDispatchProgressAt = Number.NEGATIVE_INFINITY;
+	let settleTimer: unknown = null;
+	let abortCeilingTimer: unknown = null;
+	const listeners = new Set<(status: AgentStatus) => void>();
+	const unsubscribes: Array<() => void> = [];
+
+	const currentTarget = (): { targetId: string; modelId: string } => {
+		const settings = deps.getSettings?.();
+		return {
+			targetId: settings?.chat?.target ?? "",
+			modelId: settings?.chat?.model ?? "",
+		};
+	};
+
+	const isLocalRuntime = (): boolean => {
+		const targetId = currentTarget().targetId;
+		if (!targetId) return false;
+		const entry = deps.providers.list().find((candidate) => candidate.target.id === targetId);
+		return entry?.runtime?.tier === "local-native";
+	};
+
+	const clearSettle = (): void => {
+		if (settleTimer === null) return;
+		clearTimeoutFn(settleTimer);
+		settleTimer = null;
+	};
+
+	const clearAbortCeiling = (): void => {
+		if (abortCeilingTimer === null) return;
+		clearTimeoutFn(abortCeilingTimer);
+		abortCeilingTimer = null;
+	};
+
+	const emitPhaseTransition = (prev: AgentStatus, next: AgentStatus, at: number): void => {
+		if (prev.phase === next.phase) return;
+		const payload: AgentStatusChangedPayload = {
+			runId: next.runId ?? deps.chat.getSessionId() ?? null,
+			phase: next.phase,
+			prevPhase: prev.phase,
+			at,
+			elapsedFromStart: next.since > 0 ? Math.max(0, at - next.since) : 0,
+			watchdogTier: next.watchdogTier,
+			metadata: statusMetadata(next),
+		};
+		// Phase changes follow chat events outside the turn's async context; the session names the scope (#434).
+		deps.bus?.emit("agent.status_changed", payload, ownerTelemetryContext({ sessionId: deps.chat.getSessionId() }));
+	};
+
+	const notify = (prev: AgentStatus, next: AgentStatus, force = false): void => {
+		const at = now();
+		emitPhaseTransition(prev, next, at);
+		const phaseChanged = prev.phase !== next.phase;
+		if (!force && !phaseChanged && at - lastNotifyAt < STATUS_EMIT_THROTTLE_MS) return;
+		lastNotifyAt = at;
+		for (const listener of listeners) listener(next);
+	};
+
+	const scheduleSettle = (): void => {
+		clearSettle();
+		settleTimer = setTimeoutFn(() => {
+			if (disposed || status.phase !== "ended") return;
+			const prev = status;
+			status = { ...INITIAL_STATUS, localRuntime: isLocalRuntime() };
+			notify(prev, status, true);
+		}, SETTLE_MS);
+	};
+
+	const scheduleAbortCeiling = (): void => {
+		clearAbortCeiling();
+		abortCeilingTimer = setTimeoutFn(() => {
+			if (disposed || status.phase === "idle" || status.phase === "ended") return;
+			apply({ type: "force_cancelled", reason: "watchdog-forced" }, true);
+		}, TIER_THRESHOLDS_MS.postAbortCeiling);
+	};
+
+	/** The submit returning is the observation that a cancelled turn has stopped, whatever else it left unsaid. */
+	const settleCancelWhenStopped = (): void => {
+		void Promise.resolve(deps.chat.whenSettled?.()).then(() => {
+			if (!disposed) apply({ type: "cancel_settled" }, true);
+		});
+	};
+
+	const apply = (event: StatusInputEvent, force = false): void => {
+		const at = now();
+		const target = currentTarget();
+		const prev = status;
+		const next = reduceStatus(prev, event, {
+			now: at,
+			localRuntime: isLocalRuntime(),
+			modelId: target.modelId,
+			targetId: target.targetId,
+			runId: deps.chat.getSessionId(),
+			modelRequest: deps.chat.modelRequest?.() ?? null,
+		});
+		if (next === prev) return;
+		status = next;
+		if (event.type === "agent_start") clearSettle();
+		if (status.phase === "ended") {
+			clearAbortCeiling();
+			scheduleSettle();
+		}
+		notify(prev, status, force);
+	};
+
+	// The window between the editor and the stream. `preparing` and `idle`
+	// bracket it; `compacting` inside it is already carried by the compaction
+	// bus overlay, which now lands because `preparing` is an active phase.
+	if (deps.chat.onTurnPreparation) {
+		unsubscribes.push(
+			deps.chat.onTurnPreparation((phase) => {
+				// Admission closes the window with the run already live; a refusal or a compaction-only submit closes it idle.
+				if (phase === "idle") apply({ type: "submit_settled", admitted: deps.chat.isStreaming() }, true);
+				else apply({ type: "submit_accepted" }, true);
+			}),
+		);
+	}
+
+	unsubscribes.push(
+		deps.chat.onEvent((event: ChatLoopEvent) => {
+			if (event.type === "agent_status") return;
+			// RunAborted publishes a provisional ended summary immediately. The
+			// terminal agent_end commonly follows inside the ordinary notification
+			// throttle, but its reconciled usage must still replace that provisional
+			// footer receipt.
+			apply(event, event.type === "agent_end");
+		}),
+	);
+
+	if (deps.bus) {
+		unsubscribes.push(
+			// A worker ask with the safety judge or the main agent is not waiting on the person yet.
+			deps.bus.subscribe("approval.requested", (payload) => {
+				if (payload.escalation !== false) apply({ type: "overlay_push", overlay: "tool_blocked" }, true);
+			}),
+			deps.bus.subscribe("approval.resolved", () => apply({ type: "overlay_pop", overlay: "tool_blocked" }, true)),
+			deps.bus.subscribe("context.activity_changed", (event) => {
+				if (event.kind !== "compaction" || !event.operation) return;
+				if (event.operation.sessionId !== deps.chat.getSessionId() || event.operation.cwd !== process.cwd()) return;
+				apply({ type: event.operation.outcome ? "overlay_pop" : "overlay_push", overlay: "compacting" }, true);
+			}),
+			deps.bus.subscribe("compaction.started", () => apply({ type: "overlay_push", overlay: "compacting" }, true)),
+			deps.bus.subscribe("compaction.ended", () => apply({ type: "overlay_pop", overlay: "compacting" }, true)),
+			deps.bus.subscribe("run.progressed", (payload) => {
+				if (!isWorkerStreamEvidence(payload)) return;
+				const at = now();
+				if (at - lastDispatchProgressAt < DISPATCH_PROGRESS_COALESCE_MS) return;
+				lastDispatchProgressAt = at;
+				apply({ type: "dispatch_progress" });
+			}),
+			// `run.aborted` names a worker run, and only dispatch publishes it. Reading it here turned the
+			// operator's cancel of one worker into `PanCode is cancelling · stop requested` over a main turn
+			// that was still streaming, with Esc still bound to stop it. The main turn's own abort is `turn.aborted`.
+			deps.bus.subscribe("turn.aborted", (payload) => {
+				scheduleAbortCeiling();
+				settleCancelWhenStopped();
+				apply(
+					{
+						type: "run_aborted",
+						source: payload.source,
+						...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+					},
+					true,
+				);
+			}),
+		);
+	}
+
+	const interval = setIntervalFn(() => apply({ type: "watchdog_tick" }), TICK_INTERVAL_MS);
+
+	return {
+		current: () => status,
+		subscribe(listener) {
+			listeners.add(listener);
+			listener(status);
+			return () => {
+				listeners.delete(listener);
+			};
+		},
+		noteToolResumed(toolCallId) {
+			apply({ type: "tool_resumed", toolCallId });
+		},
+		noteToolJudging(toolCallId) {
+			apply({ type: "tool_judging", toolCallId }, true);
+		},
+		reset() {
+			if (disposed) return;
+			clearSettle();
+			clearAbortCeiling();
+			const prev = status;
+			status = { ...INITIAL_STATUS, localRuntime: isLocalRuntime() };
+			notify(prev, status, true);
+		},
+		dispose() {
+			disposed = true;
+			clearSettle();
+			clearAbortCeiling();
+			clearIntervalFn(interval);
+			for (const unsubscribe of unsubscribes) unsubscribe();
+			unsubscribes.length = 0;
+			listeners.clear();
+		},
+	};
+}

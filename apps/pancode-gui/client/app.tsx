@@ -1,0 +1,696 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Outlet, useLocation, useNavigate, useSearchParams } from "react-router";
+import type { AgentCapabilities } from "../contracts/capabilities.js";
+import { API_VERSION } from "../contracts/runtime.js";
+import { routes } from "../contracts/runtime-routes.js";
+import type { SessionSummary } from "../contracts/sessions.js";
+import { useTokenRejected } from "./api/auth-state.js";
+import { BUNDLE_VERSION } from "./api/bundle-version.js";
+import { type Client, emptyInput } from "./api/client.js";
+import { type ConnectionState, subscribe } from "./api/events.js";
+import { sessionQuery } from "./api/session-query.js";
+import { lastTokenWasRefused } from "./api/token.js";
+import { Icon } from "./design/icons.js";
+import { RouteFocus, SIDEBAR_ID, useSidebarCollapsed } from "./design/navigation.js";
+import { dismissAll, LiveRegions, NoticeToasts, notify, useNotices } from "./design/notifications.js";
+import { PwaBoot } from "./design/pwa.js";
+import { Reconnect } from "./design/reconnect.js";
+import { LEFT_SIDEBAR, RIGHT_SIDEBAR, Splitter } from "./design/Splitter.js";
+import { appCommands, liveStopTarget, type PaletteTask } from "./interaction/commands.js";
+import { focusComposerSoon } from "./interaction/focus-return.js";
+import { HelpFrame, PaletteFrame, preloadDialogs } from "./interaction/LazyDialogs.js";
+import { useLayersActive, useShortcut } from "./interaction/use-shortcut.js";
+import { useSetupStatus } from "./pages/target-onboarding.js";
+import { onReportRequest, type ReportRequest } from "./report/report-events.js";
+import { offerNotice } from "./report/report-model.js";
+import { ASIDE_DOCK_QUERY, toggleAside, useAsideExpanded } from "./shell/aside-state.js";
+import { OpenWorkspaceDialog } from "./shell/OpenWorkspaceDialog.js";
+import { SessionControlNotice, SessionControlsProvider, useSessionCommands } from "./shell/SessionControls.js";
+import { type ShellApi, ShellContext } from "./shell/shell-context.js";
+import {
+	isChatPath,
+	isHeld,
+	isSettingsPath,
+	sessionIdFromPath,
+	taskRows,
+	taskTitle,
+	wizardModeFor,
+} from "./shell/shell-model.js";
+import { staleBundle } from "./shell/stale-bundle-model.js";
+import { TaskSidebar } from "./shell/TaskSidebar.js";
+import { rememberedWorkspace, rememberWorkspace, useSessionOverview, useTaskActions } from "./shell/tasks.js";
+import { useApplyTheme } from "./shell/theme.js";
+import { WindowTitlebar } from "./shell/WindowTitlebar.js";
+import { launchedPath, openAppWindow, whenFocused } from "./shell/windows.js";
+import type { WizardExit } from "./wizard/Wizard.js";
+import type { WizardMode } from "./wizard/wizard-model.js";
+import "./shell/shell.css";
+
+// The setup wizard, its films and its styles load only when it opens.
+const Wizard = lazy(() => import("./wizard/Wizard.js"));
+const ReportDialog = lazy(() =>
+	import("./report/ReportDialog.js").then((module) => ({ default: module.ReportDialog })),
+);
+
+const PHONE = "(max-width: 760px)";
+
+function usePhone(): boolean {
+	const [phone, setPhone] = useState(() => typeof matchMedia === "function" && matchMedia(PHONE).matches);
+	useEffect(() => {
+		const query = matchMedia(PHONE);
+		const change = () => setPhone(query.matches);
+		query.addEventListener("change", change);
+		change();
+		return () => query.removeEventListener("change", change);
+	}, []);
+	return phone;
+}
+
+function useDocked(): boolean {
+	const [docked, setDocked] = useState(() => typeof matchMedia === "function" && matchMedia(ASIDE_DOCK_QUERY).matches);
+	useEffect(() => {
+		const query = matchMedia(ASIDE_DOCK_QUERY);
+		const change = () => setDocked(query.matches);
+		query.addEventListener("change", change);
+		change();
+		return () => query.removeEventListener("change", change);
+	}, []);
+	return docked;
+}
+
+export function App({ client, local }: { client: Client; local: Client }) {
+	return (
+		<div className="app-layout">
+			<SessionControlsProvider client={client}>
+				<Workbench client={client} local={local} />
+			</SessionControlsProvider>
+			<NoticeToasts />
+		</div>
+	);
+}
+
+function Workbench({ client, local }: { client: Client; local: Client }) {
+	useApplyTheme();
+	const queries = useQueryClient();
+	const { controls, requestClose } = useSessionCommands();
+	const navigate = useNavigate();
+	const location = useLocation();
+	const phone = usePhone();
+	const docked = useDocked();
+	const asideExpanded = useAsideExpanded();
+	const [asideSlot, setAsideSlot] = useState<HTMLElement | null>(null);
+	const [connection, setConnection] = useState<ConnectionState>(client.signedIn ? "Connecting…" : "Not connected");
+	const [paletteOpen, setPaletteOpen] = useState(false);
+	const [helpOpen, setHelpOpen] = useState(false);
+	// The control each dialog returns focus to on Esc. Recorded at open, since a click that does not
+	// focus its button (Safari) or a command run from the palette leaves `document.activeElement` wrong.
+	const [paletteFrom, setPaletteFrom] = useState<HTMLElement | null>(null);
+	const [helpFrom, setHelpFrom] = useState<HTMLElement | null>(null);
+	const paletteFromRef = useRef<HTMLElement | null>(null);
+	useEffect(() => preloadDialogs(), []);
+	const [reportRequest, setReportRequest] = useState<ReportRequest | null>(null);
+	useEffect(() => onReportRequest((request) => setReportRequest(request)), []);
+	useEffect(() => {
+		// Help offers "Report a problem": warm its chunk so the dialog's first frame is the dialog.
+		if (helpOpen) void import("./report/ReportDialog.js");
+	}, [helpOpen]);
+	const openReport = useCallback(() => setReportRequest({}), []);
+	const [workspaceOpen, setWorkspaceOpen] = useState(false);
+	const [drawer, setDrawer] = useState(false);
+	const [sidebarCollapsed, toggleSidebar] = useSidebarCollapsed();
+	const notices = useNotices();
+	const [search] = useSearchParams();
+	const [firstRun, setFirstRun] = useState(false);
+	// The first-run wizard's "Explore without a model": every page but the chat ones opens without a connection.
+	const [exploring, setExploring] = useState(false);
+	// A dialog or the palette claims a keyboard layer. While one is claimed, the page behind it must
+	// not be reachable by Tab either, or the focus order silently leaves the thing that has focus.
+	const layered = useLayersActive();
+	const refused = useTokenRejected() || (!client.signedIn && lastTokenWasRefused());
+	const meta = useQuery({
+		queryKey: ["meta"],
+		queryFn: () => client.call(routes.meta, emptyInput),
+		staleTime: Number.POSITIVE_INFINITY,
+		refetchOnWindowFocus: "always",
+		enabled: client.signedIn,
+	});
+	// The launcher brought one window forward and named a page; only that window goes there.
+	const launched = useRef<(path: string) => void>(() => {});
+	// A launch names a page of this machine's app; a window showing a node stays where it is.
+	launched.current = (path) =>
+		whenFocused(() => {
+			if (client.prefix === "" && path !== window.location.pathname) void navigate(path);
+		});
+	useEffect(() => {
+		if (client.signedIn)
+			return subscribe(
+				client,
+				queries,
+				setConnection,
+				(path) => launched.current(path),
+				(notice) => notify({ tone: "warning", ...notice }),
+			);
+	}, [client, queries]);
+	const setup = useSetupStatus(client, client.signedIn && !refused);
+	const overview = useSessionOverview(client, client.signedIn && !refused);
+	// A machine with no connection at all opens the wizard, full window. It stays until the wizard
+	// itself finishes, because saving the connection makes the status "ready" before the last step;
+	// exploring without a model only lifts it off the pages that need none.
+	useEffect(() => {
+		if (setup.data?.state === "unconfigured") setFirstRun(true);
+	}, [setup.data?.state]);
+	const wizardMode: WizardMode | null = wizardModeFor({
+		pathname: location.pathname,
+		repairing: !!search.get("target"),
+		firstRun,
+		exploring,
+	});
+	const leaveWizard = useCallback(
+		(to: WizardExit) => {
+			if (to === "explore") {
+				setExploring(true);
+				if (isChatPath(location.pathname)) void navigate("/system", { replace: true });
+				return;
+			}
+			setFirstRun(false);
+			const from = (location.state as { from?: unknown } | null)?.from;
+			void navigate(to === "home" ? "/" : typeof from === "string" ? from : "/settings/targets", { replace: true });
+		},
+		[navigate, location.state, location.pathname],
+	);
+
+	const sessionId = sessionIdFromPath(location.pathname);
+	const mode = isSettingsPath(location.pathname) ? "settings" : "work";
+	const pageAside = mode === "work" && location.pathname !== "/sessions";
+	// `enabled: false` reads the cache the conversation already filled and re-renders when it
+	// changes, without this component ever fetching a session of its own. The options are the
+	// conversation's own: an observer's query function replaces the shared query's, so a different one
+	// here would make the next refetch skip the session buffer and fold an out-of-order snapshot.
+	const session = useQuery({
+		...sessionQuery(client, sessionId ?? ""),
+		select: (value) => ({
+			workspaceId: value.workspaceId,
+			title: taskTitle(value),
+			state: value.state,
+			runningTurnId: value.turns.at(-1)?.status === "running" ? (value.turns.at(-1)?.id ?? null) : null,
+			failedTurnId: value.turns.at(-1)?.status === "failed" ? (value.turns.at(-1)?.id ?? null) : null,
+		}),
+		enabled: false,
+	});
+	const snapshot = sessionId === null ? undefined : session.data;
+	const runningTurnId = snapshot?.runningTurnId ?? null;
+
+	const workspaces = useQuery({
+		queryKey: ["workspaces"],
+		queryFn: () => client.call(routes.workspaces, emptyInput),
+		enabled: client.signedIn,
+	});
+	const routeWorkspace = /^\/workspaces\/([^/]+)/.exec(location.pathname)?.[1];
+	const [remembered] = useState(rememberedWorkspace);
+	const activeWorkspaceId = useMemo(() => {
+		const known = new Set(workspaces.data?.map((workspace) => workspace.id));
+		for (const candidate of [snapshot?.workspaceId, routeWorkspace, remembered])
+			if (candidate && known.has(candidate)) return candidate;
+		return [...(workspaces.data ?? [])].sort((a, b) => b.openedAt.localeCompare(a.openedAt))[0]?.id ?? null;
+	}, [snapshot?.workspaceId, routeWorkspace, remembered, workspaces.data]);
+	useEffect(() => {
+		if (snapshot?.workspaceId) rememberWorkspace(snapshot.workspaceId);
+	}, [snapshot?.workspaceId]);
+
+	const closeDrawer = useCallback(() => setDrawer(false), []);
+	// The phone drawer is modal: the page behind it goes inert, so focus has to move into it on open
+	// or Escape has nowhere to land, and it returns to the control that opened it on close.
+	const drawerOpener = useRef<HTMLElement | null>(null);
+	useEffect(() => {
+		if (!phone) return;
+		if (drawer) {
+			const active = document.activeElement;
+			drawerOpener.current = active instanceof HTMLElement && active !== document.body ? active : null;
+			requestAnimationFrame(() =>
+				document
+					.getElementById(SIDEBAR_ID)
+					?.querySelector<HTMLElement>("a[href], button:not([disabled]), [tabindex]:not([tabindex='-1'])")
+					?.focus(),
+			);
+			const dismiss = (event: KeyboardEvent) => {
+				if (event.key === "Escape") setDrawer(false);
+			};
+			document.addEventListener("keydown", dismiss);
+			return () => document.removeEventListener("keydown", dismiss);
+		}
+		const opener = drawerOpener.current;
+		drawerOpener.current = null;
+		// A navigation from the drawer hands focus to the new page; only a plain dismissal returns it.
+		requestAnimationFrame(() => {
+			const active = document.activeElement;
+			const stranded = active === null || active === document.body || !!active.closest(`#${SIDEBAR_ID}`);
+			if (stranded && opener?.isConnected) opener.focus();
+		});
+	}, [drawer, phone]);
+	const actions = useTaskActions(client, closeDrawer);
+	const previousPath = useRef(location.pathname);
+	useEffect(() => {
+		if (previousPath.current !== location.pathname) {
+			setDrawer(false);
+			setWorkspaceOpen(false);
+		}
+		previousPath.current = location.pathname;
+	}, [location.pathname]);
+
+	const revealSidebar = useCallback(() => {
+		if (phone) setDrawer((open) => !open);
+		else toggleSidebar();
+	}, [phone, toggleSidebar]);
+	const startTask = useCallback(() => {
+		if (activeWorkspaceId) {
+			actions.newTask(activeWorkspaceId);
+			focusComposerSoon();
+		} else setWorkspaceOpen(true);
+	}, [activeWorkspaceId, actions.newTask]);
+	const openWorkspace = useCallback(() => setWorkspaceOpen(true), []);
+	const opener = useCallback((): HTMLElement | null => {
+		const active = document.activeElement;
+		if (!(active instanceof HTMLElement) || active === document.body) return null;
+		// A command run from the palette opens its dialog as the palette closes: return where the palette would.
+		return active.closest(".dialog--palette") ? paletteFromRef.current : active;
+	}, []);
+	const openPalette = useCallback(
+		(from?: HTMLElement) => {
+			const target = from ?? opener();
+			paletteFromRef.current = target;
+			setPaletteFrom(target);
+			setPaletteOpen(true);
+		},
+		[opener],
+	);
+	const openHelp = useCallback(() => {
+		setHelpFrom(opener());
+		setHelpOpen(true);
+	}, [opener]);
+	const openWindow = useCallback(
+		() => openAppWindow(`${client.prefix}${sessionId ? `/sessions/${sessionId}` : "/"}`),
+		[sessionId, client.prefix],
+	);
+	// Launching the installed app again focuses this window (`launch_handler` in the manifest) and
+	// hands the launch here, so a launch that named a page still arrives at it.
+	useEffect(() => {
+		const queue = (window as { launchQueue?: { setConsumer(consumer: (launch: { targetURL?: string }) => void): void } })
+			.launchQueue;
+		queue?.setConsumer((launch) => {
+			if (client.prefix !== "") return;
+			const path = launchedPath(launch.targetURL, window.location.origin, window.location.pathname);
+			if (path !== null) void navigate(path);
+		});
+	}, [navigate, client.prefix]);
+
+	useShortcut("palette", () => openPalette());
+	useShortcut("newWindow", openWindow);
+	useShortcut("help", openHelp);
+	useShortcut("sidebar", revealSidebar);
+	useShortcut("newTask", startTask);
+	useShortcut("openWorkspace", openWorkspace);
+	useShortcut("hub", () => void navigate("/hub"));
+
+	// The rail only loads the projects that are expanded, so opening the palette lists what is cached,
+	// then fills in the other projects' saved tasks once (fresh results are reused for 30 seconds).
+	const [paletteTasks, setPaletteTasks] = useState<readonly PaletteTask[]>([]);
+	useEffect(() => {
+		if (!paletteOpen) return;
+		const collect = () => {
+			const sessions = overview.data?.sessions ?? [];
+			return (workspaces.data ?? []).flatMap((workspace) =>
+				taskRows(
+					workspace.id,
+					sessions,
+					queries.getQueryData<SessionSummary[]>(["session-history", workspace.id]) ?? [],
+				).map((row) => ({ id: row.id, title: row.title, project: workspace.name, open: row.open })),
+			);
+		};
+		let current = true;
+		setPaletteTasks(collect());
+		void Promise.allSettled(
+			(workspaces.data ?? []).map((workspace) =>
+				queries.prefetchQuery({
+					queryKey: ["session-history", workspace.id],
+					queryFn: () => client.call(routes.sessionHistory, { params: { id: workspace.id }, query: {}, body: {} }),
+					staleTime: 30_000,
+				}),
+			),
+		).then(() => {
+			if (current) setPaletteTasks(collect());
+		});
+		return () => {
+			current = false;
+		};
+	}, [paletteOpen, workspaces.data, overview.data, queries, client]);
+	// The open task's commands, read with the composer's own query and only while the palette is open.
+	const taskCatalog = useQuery({
+		queryKey: ["session-commands", sessionId ?? ""],
+		queryFn: () => client.call(routes.sessionCommands, { params: { id: sessionId ?? "" }, query: {}, body: {} }),
+		enabled:
+			paletteOpen &&
+			sessionId !== null &&
+			snapshot?.state === "open" &&
+			!!queries.getQueryData<AgentCapabilities>(["session-capabilities", sessionId])?.commands,
+		staleTime: 30_000,
+		retry: false,
+	});
+	const openTask = useCallback(
+		(id: string) => {
+			const sessions = overview.data?.sessions ?? [];
+			if (sessions.some((session) => session.id === id && isHeld(session))) void navigate(`/sessions/${id}`);
+			else {
+				const workspace = (workspaces.data ?? []).find((candidate) =>
+					queries.getQueryData<SessionSummary[]>(["session-history", candidate.id])?.some((row) => row.id === id),
+				);
+				if (workspace) actions.resume(id, workspace.id);
+			}
+		},
+		[queries, navigate, workspaces.data, overview.data, actions.resume],
+	);
+	const commands = useMemo(
+		() =>
+			appCommands(
+				{
+					sessionId,
+					runningTurnId,
+					sessionOpen: snapshot?.state === "open",
+					hasNotices: notices.length > 0,
+					tasks: paletteTasks,
+					catalog: snapshot?.state === "open" ? taskCatalog.data : undefined,
+					capabilities:
+						sessionId === null ? undefined : queries.getQueryData<AgentCapabilities>(["session-capabilities", sessionId]),
+				},
+				{
+					navigate: (path) => void navigate(path),
+					openHelp,
+					openReport,
+					toggleSidebar: revealSidebar,
+					dismissNotices: dismissAll,
+					newTask: startTask,
+					openWorkspace,
+					openTask,
+					openWindow,
+					// The row's turn id was read when the palette rendered; the stop names the turn running now.
+					cancelTurn: () => {
+						if (sessionId === null) return;
+						const target = liveStopTarget(sessionId, queries.getQueryData(sessionQuery(client, sessionId).queryKey));
+						if (target) controls.start(target, "stop");
+					},
+					runTaskCommand: (name) => {
+						if (sessionId === null) return;
+						void import("./chat/composer-registry.js").then((module) => {
+							if (!module.runComposerCommand(sessionId, name))
+								requestAnimationFrame(() => requestAnimationFrame(() => module.fillComposer(sessionId, `/${name}`)));
+						});
+					},
+					fillTaskCommand: (name) => {
+						if (sessionId === null) return;
+						// The palette hands focus back a frame after it closes; the composer takes it after that.
+						void import("./chat/composer-registry.js").then((module) =>
+							requestAnimationFrame(() => requestAnimationFrame(() => module.fillComposer(sessionId, `/${name} `))),
+						);
+					},
+					openSessionAction: (action) => {
+						if (sessionId === null) return;
+						// The palette hands focus back a frame after it closes; the dialog takes it after that.
+						void import("./chat/composer-registry.js").then((module) =>
+							requestAnimationFrame(() => requestAnimationFrame(() => module.openComposerAction(sessionId, action))),
+						);
+					},
+					closeSession: () => {
+						if (sessionId === null || !snapshot) return;
+						requestClose({ id: sessionId, ...snapshot, currentTurnId: runningTurnId });
+					},
+				},
+			),
+		[
+			navigate,
+			notices.length,
+			runningTurnId,
+			sessionId,
+			snapshot,
+			controls,
+			requestClose,
+			revealSidebar,
+			startTask,
+			openWorkspace,
+			openHelp,
+			openReport,
+			paletteTasks,
+			openTask,
+			openWindow,
+			queries,
+			client,
+			taskCatalog.data,
+		],
+	);
+	const shell = useMemo<ShellApi>(
+		() => ({
+			sidebarCollapsed,
+			revealSidebar,
+			startTask,
+			openWorkspace,
+			openHelp,
+			activeWorkspaceId,
+			starting: actions.launch.busy,
+			asideSlot: docked && pageAside ? asideSlot : null,
+		}),
+		[
+			sidebarCollapsed,
+			revealSidebar,
+			startTask,
+			openWorkspace,
+			openHelp,
+			activeWorkspaceId,
+			actions.launch.busy,
+			docked,
+			pageAside,
+			asideSlot,
+		],
+	);
+
+	const pendingNotice = meta.data?.pendingVersion ? (
+		<div className="app-update-notice" role="status">
+			<strong>
+				{meta.data.pendingVersion === meta.data.pancode
+					? `A different build of PanCode ${meta.data.pancode} is installed. PanCode on the desktop is still running the previous build.`
+					: `PanCode ${meta.data.pendingVersion} is installed. PanCode on the desktop is still running ${meta.data.pancode}.`}
+			</strong>
+			<p>
+				Finish active work, then run <code>pancode gui background restart --if-idle</code> and reload this window.
+			</p>
+		</div>
+	) : null;
+	const stale = staleBundle(BUNDLE_VERSION, meta.data?.pancode);
+	const staleNotice = stale ? (
+		<div className="app-update-notice" role="status">
+			<strong>{stale.title}</strong>
+			<p>
+				{stale.detail}{" "}
+				<button type="button" onClick={() => window.location.reload()}>
+					Reload this window
+				</button>
+			</p>
+		</div>
+	) : null;
+	const collapsed = sidebarCollapsed && !phone;
+	// The report domain decides whether a failure may be offered (its rules, its ledger and `report.offers`); the
+	// app asks once per failed turn and shows the answer as an ordinary inline notice that never takes focus.
+	const failedTurnId = snapshot?.failedTurnId ?? null;
+	const offer = useQuery({
+		queryKey: ["report-offer", activeWorkspaceId ?? "", sessionId ?? "", failedTurnId ?? ""],
+		queryFn: () =>
+			client.call(
+				routes.problemReportOffer,
+				{ params: { id: activeWorkspaceId ?? "" }, query: {}, body: { sessionId: sessionId ?? "" } },
+				crypto.randomUUID(),
+			),
+		enabled: activeWorkspaceId !== null && sessionId !== null && failedTurnId !== null,
+		staleTime: Number.POSITIVE_INFINITY,
+		retry: false,
+	});
+	const [dismissedOffers, setDismissedOffers] = useState<ReadonlySet<string>>(() => new Set());
+	const shownOffer = offerNotice(offer.data, dismissedOffers);
+	const offerNoticeView = shownOffer ? (
+		<div className="app-update-notice" role="status">
+			<p>
+				{shownOffer.text}{" "}
+				<button type="button" onClick={() => setReportRequest(sessionId !== null ? { sessionId } : {})}>
+					{shownOffer.link}
+				</button>{" "}
+				<button
+					type="button"
+					className="secondary"
+					onClick={() => setDismissedOffers((previous) => new Set(previous).add(shownOffer.fingerprint))}
+				>
+					Dismiss
+				</button>
+			</p>
+		</div>
+	) : null;
+	const authed = client.signedIn && !refused;
+	if (wizardMode !== null && authed && meta.data?.apiVersion === API_VERSION)
+		return (
+			<div className="app-setup">
+				<WindowTitlebar />
+				{staleNotice}
+				{pendingNotice}
+				<Suspense
+					fallback={
+						<p className="route-error" role="status">
+							Opening setup…
+						</p>
+					}
+				>
+					<Wizard
+						key={wizardMode}
+						client={client}
+						mode={wizardMode}
+						targetId={search.get("target") ?? undefined}
+						onExit={leaveWizard}
+					/>
+				</Suspense>
+				<LiveRegions />
+			</div>
+		);
+	return (
+		<div
+			className="wb"
+			data-sidebar={collapsed ? "collapsed" : "expanded"}
+			data-drawer={drawer ? "open" : "closed"}
+			data-aside={docked && pageAside && authed && asideExpanded ? "expanded" : "collapsed"}
+			data-mode={mode}
+		>
+			<WindowTitlebar />
+			<RouteFocus connected={authed} />
+			<PwaBoot enabled={meta.data?.pwa ?? false} />
+			<a className="skip-link" href="#main">
+				Skip to content
+			</a>
+			{sessionId !== null ? (
+				// biome-ignore lint/a11y/useValidAnchor: a skip link is an anchor by convention; the composer field has no id this block can point at, so the click moves focus itself.
+				<a
+					className="skip-link"
+					href="#composer"
+					onClick={(event) => {
+						const field = document.querySelector<HTMLTextAreaElement>(".composer__field");
+						if (!field) return;
+						event.preventDefault();
+						field.focus();
+					}}
+				>
+					Skip to message box
+				</a>
+			) : null}
+			<aside
+				className="wb-sidebar"
+				id={SIDEBAR_ID}
+				aria-label="PanCode navigation and settings"
+				inert={layered || (phone && !drawer)}
+				onKeyDown={(event) => {
+					if (event.key === "Escape" && drawer) setDrawer(false);
+				}}
+			>
+				{authed ? (
+					<TaskSidebar
+						client={client}
+						local={local}
+						remoteHost={meta.data?.host}
+						version={meta.data?.pancode}
+						platform={meta.data?.platform}
+						actions={actions}
+						connection={connection}
+						activeWorkspaceId={activeWorkspaceId}
+						onOpenWorkspace={openWorkspace}
+						onSearch={openPalette}
+						onToggle={revealSidebar}
+						onNavigate={closeDrawer}
+						onHelp={openHelp}
+					/>
+				) : null}
+				{authed && !phone && !collapsed ? (
+					<Splitter spec={LEFT_SIDEBAR} edge="end" label="Resize sidebar" host=".wb" onCollapse={toggleSidebar} />
+				) : null}
+			</aside>
+			<button type="button" className="wb-scrim" aria-label="Close sidebar" tabIndex={-1} onClick={closeDrawer} />
+			<div className="wb-stage" data-mode={mode} inert={layered || (phone && drawer)}>
+				<div className="wb-float">
+					<button
+						type="button"
+						className="wb-icon"
+						aria-label="Show sidebar"
+						aria-controls={SIDEBAR_ID}
+						onClick={revealSidebar}
+					>
+						<Icon name="sidebar" />
+					</button>
+				</div>
+				<main id="main" className="wb-main" data-mode={mode} tabIndex={-1}>
+					{staleNotice}
+					{pendingNotice}
+					{offerNoticeView}
+					{authed ? <SessionControlNotice connected={connection === "Connected"} /> : null}
+					{!client.signedIn || refused ? (
+						<Reconnect refused={refused} />
+					) : meta.error ? (
+						<div role="alert">
+							<h1>Connection unavailable</h1>
+							<p>{meta.error.message}</p>
+							<button type="button" disabled={meta.isFetching} onClick={() => void meta.refetch()}>
+								Try again
+							</button>
+						</div>
+					) : meta.isPending ? (
+						<p>Connecting to your installation…</p>
+					) : meta.data.apiVersion !== API_VERSION ? (
+						<div role="alert">
+							This page and the PanCode server are different versions. Reload this window to load the matching page.
+						</div>
+					) : (
+						<ShellContext.Provider value={shell}>
+							<Outlet context={connection} />
+						</ShellContext.Provider>
+					)}
+				</main>
+			</div>
+
+			{workspaceOpen ? (
+				<OpenWorkspaceDialog client={client} launch={actions.launch} onClose={() => setWorkspaceOpen(false)} />
+			) : null}
+			{paletteOpen ? (
+				<PaletteFrame commands={commands} returnFocus={paletteFrom} onClose={() => setPaletteOpen(false)} />
+			) : null}
+			{/* Report opens on top of Help: Esc closes Report alone and returns to Help's button. */}
+			{helpOpen ? (
+				<HelpFrame
+					returnFocus={helpFrom}
+					onClose={() => setHelpOpen(false)}
+					bundledDocsPath={meta.data?.bundledDocsPath}
+					onReport={openReport}
+				/>
+			) : null}
+			<Suspense fallback={null}>
+				{reportRequest && activeWorkspaceId ? (
+					<ReportDialog
+						client={client}
+						workspaceId={activeWorkspaceId}
+						request={reportRequest}
+						onClose={() => setReportRequest(null)}
+					/>
+				) : null}
+			</Suspense>
+			{/* The right sidebar, the left rail's mirror in the same chrome. Pages portal into its body. */}
+			{docked && pageAside && authed ? (
+				<aside className="wb-aside" aria-label="This task and project" inert={layered} hidden={!asideExpanded}>
+					<Splitter spec={RIGHT_SIDEBAR} edge="start" label="Resize right sidebar" host=".wb" onCollapse={toggleAside} />
+					<div className="wb-aside__slot" ref={setAsideSlot} />
+				</aside>
+			) : null}
+			<LiveRegions />
+		</div>
+	);
+}

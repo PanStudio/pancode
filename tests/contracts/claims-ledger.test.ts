@@ -1,0 +1,1396 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { strict as assert, match } from "node:assert";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, it } from "node:test";
+import { Value } from "typebox/value";
+import { runClaimsCommand } from "../../src/cli/claims.js";
+import { runCommandVector } from "../../src/core/safe-exec.js";
+import { withStateFileLock } from "../../src/core/state-file-lock.js";
+import { RunResultObjectSchema } from "../../src/core/telemetry/run-schemas.js";
+import { UNTRUSTED_CONTENT_BANNER } from "../../src/core/untrusted-content.js";
+import { pancodeDataDir, pancodeStateDir } from "../../src/core/xdg.js";
+import { claimLogRecordId } from "../../src/domains/claims/edges.js";
+import { hypothesisSubject } from "../../src/domains/claims/hypotheses.js";
+import {
+	appendClaims,
+	bindHostVerificationHypotheses,
+	CLAIMS_LOG_MAX_CLAIMS,
+	type ClaimRecord,
+	claimCheckLabel,
+	claimFromVerifyResult,
+	claimRecordId,
+	claimSealReader,
+	claimStatuses,
+	claimsDeliveryMessage,
+	claimsEvicted,
+	claimsLogPath,
+	claimsProjectRoot,
+	contradictionConditions,
+	createClaimCaptureRegistration,
+	createClaimsDeliveryRegistrations,
+	createHypothesisCaptureRegistration,
+	deriveClaimEdges,
+	hypothesisStatuses,
+	overturnedAgreements,
+	readClaims,
+	recordAcceptedWorkerSlates,
+	recordClaims,
+	recordHostVerificationClaims,
+	snapshotAcceptedWorkerSlates,
+} from "../../src/domains/claims/index.js";
+import { runHostVerification } from "../../src/domains/dispatch/host-verification.js";
+import { finishRunResult } from "../../src/domains/dispatch/run-settlement.js";
+import {
+	approveMemoryRecord,
+	loadMemoryRecords,
+	type MemoryRecord,
+	proposeMemoryFromClaim,
+	readClearedMemoryRegressions,
+} from "../../src/domains/memory/index.js";
+import { memoryRecordEligible } from "../../src/domains/memory/operations.js";
+import { insertMemoryRecordIfAbsent } from "../../src/domains/memory/store.js";
+import { runGateIn } from "../../src/domains/research/measure.js";
+import { finishIterationRecord } from "../../src/domains/research/record.js";
+import type { ResearchCampaign } from "../../src/domains/research/types.js";
+import { readVerifiedRun } from "../../src/domains/telemetry/run-record.js";
+import type { DeclaredReproduce } from "../../src/tools/verify/reproduce.js";
+import { runProjectCheck } from "../../src/tools/verify/scripts.js";
+import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+import { writeSettledRun } from "../harness/settled-run.js";
+
+const source = { channel: "verify", sessionId: "s1", toolCallId: "t1", requestedBy: "model" } as const;
+
+function slateText(
+	hypotheses: ReadonlyArray<{ id: string; check: string; statement?: string; status?: string }>,
+): string {
+	return JSON.stringify({
+		schema: "pancode.hypothesis-slate.v1",
+		question: { text: "q" },
+		hypotheses: hypotheses.map((entry) => ({
+			id: entry.id,
+			status: entry.status ?? "proposed",
+			statement: entry.statement ?? `${entry.id} holds`,
+			prediction: "matches the reference",
+			experiment: { successCriterion: { kind: "numeric-compare", verifyId: entry.check } },
+		})),
+	});
+}
+
+/** A main-thread verify call as the tool registry runs it: before_tool when the check starts, after_tool with its result. */
+function verifyCall(registration: ReturnType<typeof createClaimCaptureRegistration>) {
+	let calls = 0;
+	const start = (check = "stats") => {
+		const toolCallId = `c${++calls}`;
+		const started = registration.evaluateAsync?.({
+			hook: "before_tool",
+			toolName: "verify",
+			sessionId: "s1",
+			toolCallId,
+			toolArgs: { check },
+		});
+		return {
+			started,
+			finish: (details: Record<string, unknown>) =>
+				registration.evaluateAsync?.({
+					hook: "after_tool",
+					toolName: "verify",
+					sessionId: "s1",
+					toolCallId,
+					toolResultDetails: details,
+				}),
+		};
+	};
+	return {
+		start,
+		run: async (details: Record<string, unknown>) => {
+			const call = start();
+			await call.started;
+			await call.finish(details);
+		},
+	};
+}
+
+function numericDetails(passed: boolean, validation: string, execution = "succeeded"): Record<string, unknown> {
+	return {
+		check: "stats",
+		declaredCommand: ["python3", "stats.py"],
+		judgement: { execution, validation },
+		report: {
+			kind: "numeric-compare",
+			passed,
+			tolerance: { relative: 1e-9 },
+			combine: "all",
+			nonFinite: "fail",
+			rule: "relative<=1e-9 must hold",
+			keys: [{ key: "std", passed, failed: passed ? [] : ["relative"], held: [], violated: [], detail: "" }],
+			failedKeys: passed ? [] : ["std"],
+			summary: "",
+			reference: { source: "ref", path: "ref/stats.json", sha256: "a".repeat(64), bytes: 10 },
+			actual: { sha256: "b".repeat(64), bytes: 10 },
+		},
+	};
+}
+
+describe("claims ledger (#406)", () => {
+	it("records a failed judgement as disagreement and a check that never judged as nothing", () => {
+		const at = "2026-11-06T00:00:00.000Z";
+		const failed = claimFromVerifyResult({ details: numericDetails(false, "failed"), project: "/p", at, source });
+		assert.equal(failed?.verdict, "disagrees");
+		assert.equal(
+			claimFromVerifyResult({ details: numericDetails(false, "not-run", "failed"), project: "/p", at, source }),
+			null,
+		);
+		// A judgement word that contradicts the report is not trusted into a claim.
+		assert.equal(claimFromVerifyResult({ details: numericDetails(false, "passed"), project: "/p", at, source }), null);
+		// D3-4: a comparison that compared nothing (empty arrays, an empty reference) is no disagreement.
+		const unjudged = (keys: Array<{ key: string; passed: boolean; failed: string[] }>) => {
+			const details = numericDetails(false, "failed");
+			const report = { ...(details.report as Record<string, unknown>), keys, failedKeys: keys.map((key) => key.key) };
+			return claimFromVerifyResult({ details: { ...details, report }, project: "/p", at, source });
+		};
+		assert.equal(unjudged([{ key: "std", passed: false, failed: ["unjudgeable"] }]), null);
+		assert.equal(unjudged([{ key: "std", passed: false, failed: ["missing-reference"] }]), null);
+		assert.equal(unjudged([]), null);
+		assert.equal(
+			unjudged([
+				{ key: "mean", passed: true, failed: [] },
+				{ key: "std", passed: false, failed: ["missing-reference"] },
+			])?.verdict,
+			"disagrees",
+		);
+	});
+
+	it("derives contradicts under equal pinned conditions and supersedes under a new commit", () => {
+		const claim = (passed: boolean, commit: string, clean: boolean, at: string) => {
+			const details = {
+				...numericDetails(passed, passed ? "passed" : "failed"),
+				checkout: { commit, trackedTreeClean: clean },
+			};
+			const built = claimFromVerifyResult({ details, project: "/p", at, source });
+			assert.ok(built);
+			return built;
+		};
+		const agreed = claim(true, "c".repeat(40), true, "2026-11-06T00:00:01.000Z");
+		// An uncommitted edit at the same HEAD changes what ran, not the pinned conditions.
+		const disagreed = claim(false, "c".repeat(40), false, "2026-11-06T00:00:02.000Z");
+		const afterCommit = claim(true, "d".repeat(40), true, "2026-11-06T00:00:03.000Z");
+		const first = deriveClaimEdges({ claims: [agreed], edges: [] }, [disagreed]);
+		assert.deepEqual(
+			first.map((edge) => [edge.kind, edge.from, edge.to]),
+			[["contradicts", disagreed.id, agreed.id]],
+		);
+		// The edge names the tree difference rather than calling the conditions the same.
+		match(
+			contradictionConditions(disagreed, agreed),
+			/with uncommitted changes to tracked files where claim \w+ ran on a clean tree$/u,
+		);
+		const [contradiction] = first;
+		assert.ok(contradiction);
+		assert.deepEqual(
+			overturnedAgreements(contradiction, [agreed, disagreed], first).map((item) => item.id),
+			[agreed.id],
+		);
+		// The pass the failure overturned is retired; the failure stays contested (#406).
+		assert.deepEqual(claimStatuses([agreed, disagreed], first).get(agreed.id), "retired");
+		assert.deepEqual(claimStatuses([agreed, disagreed], first).get(disagreed.id), "contested");
+		const second = deriveClaimEdges({ claims: [agreed, disagreed], edges: first }, [afterCommit]);
+		assert.deepEqual(
+			second.map((edge) => [edge.kind, edge.to]),
+			[
+				["supersedes", agreed.id],
+				["supersedes", disagreed.id],
+			],
+		);
+		const statuses = claimStatuses([agreed, disagreed, afterCommit], [...first, ...second]);
+		assert.deepEqual(
+			[agreed, disagreed, afterCommit].map((item) => statuses.get(item.id)),
+			["superseded", "superseded", "standing"],
+		);
+	});
+
+	it("keeps sibling runs of one sweep check standing; a rerun of one run supersedes only that run (Q7)", () => {
+		const runClaim = (run: string, passed: boolean, commit: string, at: string) => {
+			const base = numericDetails(passed, passed ? "passed" : "failed");
+			const details = {
+				...base,
+				check: "decay-error",
+				run: `sweeps/decay/runs/${run}`,
+				declaredCommand: ["python3", "checks/decay_error.py", `sweeps/decay/runs/${run}`],
+				checkout: { commit, trackedTreeClean: true },
+			};
+			const built = claimFromVerifyResult({ details, project: "/p", at, source });
+			assert.ok(built);
+			return built;
+		};
+		const siblings = ["0", "1", "2", "3"].map((run, index) =>
+			runClaim(run, run !== "3", "c".repeat(40), `2026-11-06T00:00:0${index}.000Z`),
+		);
+		const sweepEdges = deriveClaimEdges({ claims: [], edges: [] }, siblings);
+		assert.deepEqual(sweepEdges, []);
+		assert.deepEqual(
+			siblings.map((claim) => claimCheckLabel(claim)),
+			["decay-error/0", "decay-error/1", "decay-error/2", "decay-error/3"],
+		);
+		assert.equal(claimsDeliveryMessage("decay-error", { records: siblings, edges: sweepEdges }), null);
+		const rerun = runClaim("3", true, "d".repeat(40), "2026-11-06T00:00:09.000Z");
+		const rerunEdges = deriveClaimEdges({ claims: siblings, edges: sweepEdges }, [rerun]);
+		assert.deepEqual(
+			rerunEdges.map((edge) => [edge.kind, edge.from, edge.to]),
+			[["supersedes", rerun.id, siblings[3]?.id]],
+		);
+		const statuses = claimStatuses([...siblings, rerun], rerunEdges);
+		assert.deepEqual(
+			[...siblings, rerun].map((claim) => statuses.get(claim.id)),
+			["standing", "standing", "standing", "superseded", "standing"],
+		);
+		match(
+			claimsDeliveryMessage("decay-error", { records: [...siblings, rerun], edges: rerunEdges }) ?? "",
+			/1 earlier claim was superseded/u,
+		);
+	});
+
+	it("relates a sweep claim recorded before runs were keyed to later claims of its own run only", () => {
+		const sweepClaim = (command: string[], run: string | undefined, passed: boolean, at: string) => {
+			const details = {
+				...numericDetails(passed, passed ? "passed" : "failed"),
+				check: "decay-error",
+				...(run !== undefined ? { run } : {}),
+				declaredCommand: command,
+				checkout: { commit: "c".repeat(40), trackedTreeClean: true },
+			};
+			const built = claimFromVerifyResult({ details, project: "/p", at, source });
+			assert.ok(built);
+			return built;
+		};
+		const argv = (...runs: string[]) => [
+			"python3",
+			"checks/decay_error.py",
+			...runs.map((r) => `sweeps/decay/runs/${r}`),
+		];
+		const old = sweepClaim(argv("0"), undefined, true, "2026-11-06T00:00:00.000Z");
+		assert.equal(old.keys.run, undefined, "the stored claim keeps its pre-upgrade keys and id");
+		const history = { claims: [old], edges: [] };
+		const sibling = sweepClaim(argv("1"), "sweeps/decay/runs/1", false, "2026-11-06T00:00:02.000Z");
+		const rerun = sweepClaim(argv("0"), "sweeps/decay/runs/0", false, "2026-11-06T00:00:03.000Z");
+		const edges = deriveClaimEdges(history, [sibling, rerun]);
+		assert.deepEqual(
+			edges.map((edge) => [edge.kind, edge.from, edge.to]),
+			[["contradicts", rerun.id, old.id]],
+		);
+		const all = [old, sibling, rerun];
+		const contradiction = edges[0];
+		assert.ok(contradiction);
+		assert.deepEqual(
+			overturnedAgreements(contradiction, all, edges).map((claim) => claim.id),
+			[old.id],
+		);
+		const statuses = claimStatuses(all, edges);
+		assert.deepEqual(
+			all.map((claim) => statuses.get(claim.id)),
+			["retired", "standing", "contested"],
+		);
+		const ambiguous = sweepClaim(argv("0", "1"), undefined, true, "2026-11-06T00:00:00.000Z");
+		assert.deepEqual(
+			deriveClaimEdges({ claims: [ambiguous], edges: [] }, [rerun]),
+			[],
+			"an old command naming two runs keeps its check-only identity",
+		);
+	});
+
+	it("keys the log by the repository root and drops a line edited after capture", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			mkdirSync(join(repo, "notebooks"), { recursive: true });
+			const project = claimsProjectRoot(join(repo, "notebooks"));
+			assert.equal(project, realpathSync(repo));
+			const claim = claimFromVerifyResult({
+				details: numericDetails(true, "passed"),
+				project,
+				at: "2026-11-06T00:00:00.000Z",
+				source,
+			});
+			assert.ok(claim);
+			await appendClaims([claim]);
+			appendFileSync(claimsLogPath(project), `${JSON.stringify({ ...claim, verdict: "disagrees" })}\n`);
+			const read = readClaims(claimsProjectRoot(repo));
+			assert.deepEqual(
+				read.records.map((record) => [record.id, record.verdict]),
+				[[claim.id, "agrees"]],
+			);
+			assert.equal(read.mismatched, 1);
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("never writes a line over the bound and reads one as unreadable without parsing it", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			const claim = claimFromVerifyResult({
+				details: numericDetails(true, "passed"),
+				project,
+				at: "2026-11-06T00:00:00.000Z",
+				source,
+			});
+			assert.ok(claim);
+			await appendClaims([claim]);
+			const logPath = claimsLogPath(project);
+			const before = readFileSync(logPath, "utf8");
+			const { id: _id, ...rest } = { ...claim, text: "x".repeat(70 * 1024) };
+			const huge = { ...rest, id: claimRecordId(rest) };
+			await appendClaims([huge]);
+			assert.equal(readFileSync(logPath, "utf8"), before, "an oversize claim is not appended and derives no edge");
+			appendFileSync(logPath, `${JSON.stringify(huge)}\n`);
+			const read = readClaims(project);
+			assert.deepEqual(
+				read.records.map((record) => record.id),
+				[claim.id],
+			);
+			assert.equal(read.unreadable, 1);
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("evicts the oldest superseded claims nothing names or memory cites once recording crosses the count cap (MEM-3)", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			const claimAt = (index: number, passed: boolean, commit: number) => {
+				const built = claimFromVerifyResult({
+					details: {
+						...numericDetails(passed, passed ? "passed" : "failed"),
+						checkout: { commit: commit.toString(16).padStart(40, "0"), trackedTreeClean: true },
+					},
+					project,
+					at: new Date(Date.UTC(2026, 10, 1) + index * 1000).toISOString(),
+					source,
+				});
+				assert.ok(built);
+				return built;
+			};
+			// The first two disagree at one commit, so a contradiction names both; each later commit supersedes the last.
+			const history = [claimAt(0, true, 0), claimAt(1, false, 0)];
+			for (let index = 2; index < CLAIMS_LOG_MAX_CLAIMS; index++) history.push(claimAt(index, true, index));
+			const edges = deriveClaimEdges({ claims: [], edges: [] }, history);
+			mkdirSync(join(pancodeStateDir(), "claims"), { recursive: true });
+			writeFileSync(
+				claimsLogPath(project),
+				`${[...history, ...edges].map((record) => JSON.stringify(record)).join("\n")}\n`,
+			);
+			const newest = claimAt(CLAIMS_LOG_MAX_CLAIMS, true, CLAIMS_LOG_MAX_CLAIMS);
+			// A memory record cites the oldest superseded claim, so it stays as the manual prune keeps it.
+			const citedClaim = history[2];
+			assert.ok(citedClaim);
+			await proposeMemoryFromClaim(pancodeDataDir(), {
+				claimId: citedClaim.id,
+				text: citedClaim.text,
+				check: "stats",
+				project,
+				at: citedClaim.at,
+			});
+			await recordClaims([newest], new Date("2026-11-19T00:00:00.000Z"));
+			const read = readClaims(project);
+			const ids = new Set(read.records.map((record) => record.id));
+			assert.equal(read.records.length, 3072);
+			assert.ok(ids.has(newest.id) && ids.has(history[0]?.id ?? "") && ids.has(history[1]?.id ?? ""));
+			assert.ok(ids.has(citedClaim.id), "a superseded claim a memory record cites is never evicted");
+			assert.equal(ids.has(history[3]?.id ?? ""), false, "the oldest superseded claim nothing names is evicted");
+			assert.ok(
+				read.edges.every((edge) => ids.has(edge.to)),
+				"an edge leaves with the claim it points at",
+			);
+			const statuses = claimStatuses(read.records, read.edges);
+			assert.equal(statuses.get(citedClaim.id), "superseded", "a kept claim stays superseded after its superseder goes");
+			assert.equal(statuses.get(history[1]?.id ?? ""), "superseded");
+			const evicted = claimsEvicted(project);
+			assert.equal(evicted?.claims, CLAIMS_LOG_MAX_CLAIMS + 1 - 3072);
+			const evictedText = readFileSync(evicted?.path ?? "", "utf8");
+			match(evictedText, new RegExp(history[3]?.id ?? "missing"));
+			assert.equal(evictedText.includes(citedClaim.id), false);
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("reads a repeated claim, edge or regression line once", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			const claim = (passed: boolean, at: string) => {
+				const details = {
+					...numericDetails(passed, passed ? "passed" : "failed"),
+					checkout: { commit: "c".repeat(40), trackedTreeClean: true },
+				};
+				const built = claimFromVerifyResult({ details, project, at, source });
+				assert.ok(built);
+				return built;
+			};
+			const agreed = claim(true, "2026-11-06T00:00:01.000Z");
+			const disagreed = claim(false, "2026-11-06T00:00:02.000Z");
+			await appendClaims([agreed]);
+			const edges = await appendClaims([disagreed]);
+			assert.equal(edges.length, 1);
+			const log = claimsLogPath(project);
+			const regressionBody = {
+				v: agreed.v,
+				type: "regression",
+				at: "2026-11-06T00:00:03.000Z",
+				project,
+				edge: edges[0]?.id,
+				from: agreed.id,
+				backing: [],
+				memory: [],
+			};
+			appendFileSync(log, `${JSON.stringify({ ...regressionBody, id: claimLogRecordId(regressionBody) })}\n`);
+			// Every line appended a second time, as a retried append whose first write did land leaves it.
+			appendFileSync(log, readFileSync(log, "utf8"));
+			const read = readClaims(project);
+			assert.deepEqual(
+				read.records.map((record) => record.id),
+				[agreed.id, disagreed.id],
+			);
+			assert.equal(read.edges.length, 1);
+			assert.equal(read.regressions.length, 1);
+			assert.equal(read.duplicates, 4);
+			assert.equal(read.mismatched, 0);
+			assert.equal(claimStatuses(read.records, read.edges).get(agreed.id), "retired");
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("offers a contested check once per session, and nothing to a task that does not touch it", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			const claim = (passed: boolean, clean: boolean, at: string) => {
+				const details = {
+					...numericDetails(passed, passed ? "passed" : "failed"),
+					checkout: { commit: "c".repeat(40), trackedTreeClean: clean },
+				};
+				const built = claimFromVerifyResult({ details, project, at, source });
+				assert.ok(built);
+				return built;
+			};
+			await appendClaims([claim(true, true, "2026-11-06T00:00:01.000Z"), claim(false, false, "2026-11-06T00:00:02.000Z")]);
+			const [delivery] = createClaimsDeliveryRegistrations({ cwd: () => repo });
+			assert.ok(delivery);
+			const turn = (text: string) => delivery.evaluate({ hook: "turn_start", sessionId: "s1", text });
+			assert.equal(turn("summarize the README").length, 0);
+			const first = turn("why does the stats check fail?");
+			assert.equal(first.length, 1);
+			match(first[0]?.kind === "inject_reminder" ? first[0].message : "", /^\[Claims\] Check 'stats'.*Contested/u);
+			// Check ids and paths come from the project's catalog, so the note marks itself as data.
+			assert.ok(first[0]?.kind === "inject_reminder" && first[0].message.includes(UNTRUSTED_CONTENT_BANNER));
+			// The same state is not offered again in the session.
+			assert.equal(turn("rerun stats please").length, 0);
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("moves a slate hypothesis from proposed only on its named check: tested, supported, refuted", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			mkdirSync(join(repo, "research"), { recursive: true });
+			writeFileSync(join(repo, "research", "h.json"), slateText([{ id: "H1", check: "stats" }]));
+			const capture = createHypothesisCaptureRegistration({ cwd: () => repo });
+			const wrote = { hook: "after_tool", toolName: "write", toolArgs: { path: "research/h.json" } } as const;
+			await capture.evaluateAsync?.(wrote);
+			// The same slate written again records nothing new.
+			await capture.evaluateAsync?.(wrote);
+			const status = () => {
+				const read = readClaims(project);
+				assert.equal(read.hypotheses.length, 1);
+				const [hypothesis] = read.hypotheses;
+				return hypothesisStatuses(read.hypotheses, read.hypothesisTests).get(hypothesis?.id ?? "")?.status;
+			};
+			assert.equal(status(), "proposed");
+			const ran = verifyCall(createClaimCaptureRegistration({ cwd: () => repo })).run;
+			await ran(numericDetails(false, "not-run", "timed-out"));
+			assert.equal(status(), "tested");
+			await ran({ ...numericDetails(true, "passed"), checkout: { commit: "c".repeat(40), trackedTreeClean: true } });
+			assert.equal(status(), "supported");
+			await ran({ ...numericDetails(false, "failed"), checkout: { commit: "c".repeat(40), trackedTreeClean: false } });
+			assert.equal(status(), "refuted");
+			// A test record that says supported without a claim behind it is not this ledger's and is not read.
+			const [test] = readClaims(project).hypothesisTests;
+			assert.ok(test);
+			const { claim: _claim, ...unbacked } = { ...test, outcome: "supported" as const };
+			appendFileSync(claimsLogPath(project), `${JSON.stringify(unbacked)}\n`);
+			assert.equal(readClaims(project).hypothesisTests.length, 3);
+			assert.equal(status(), "refuted");
+			// A forged test with a correct id does not follow from the log either: it cites the disagreeing claim as
+			// support, or a claim the log never held, so neither is admitted and the reader counts both.
+			const disagreeing = readClaims(project).records.find((claim) => claim.verdict === "disagrees");
+			assert.ok(disagreeing);
+			const rehash = (body: Record<string, unknown>) => {
+				const { id: _id, ...rest } = body;
+				return JSON.stringify({ ...rest, id: claimLogRecordId(rest) });
+			};
+			const forged = { ...test, outcome: "supported", claim: disagreeing.id, at: "2099-01-01T00:00:00.000Z" };
+			const invented = { ...forged, claim: "f".repeat(64), at: "2099-01-01T00:00:01.000Z" };
+			appendFileSync(claimsLogPath(project), `${rehash(forged)}\n${rehash(invented)}\n`);
+			const after = readClaims(project);
+			assert.equal(after.mismatched, 0);
+			assert.equal(after.unlinked, 2);
+			assert.equal(after.hypothesisTests.length, 3);
+			assert.equal(status(), "refuted");
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("binds a check's hypotheses when it starts, and rejects replayed or forked revisions", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			const capture = createHypothesisCaptureRegistration({ cwd: () => repo });
+			const write = async (text: string) => {
+				writeFileSync(join(repo, "h.json"), text);
+				await capture.evaluateAsync?.({ hook: "after_tool", toolName: "write", toolArgs: { path: "h.json" } });
+			};
+			const verify = verifyCall(createClaimCaptureRegistration({ cwd: () => repo }));
+			const statusOf = (entry: string) => {
+				const read = readClaims(project);
+				const current = read.hypotheses.filter((record) => record.hypothesis === entry).at(-1);
+				return hypothesisStatuses(read.hypotheses, read.hypothesisTests).get(current?.id ?? "")?.status;
+			};
+			// A check already running when the hypothesis is proposed is not its test.
+			const early = verify.start();
+			await early.started;
+			await write(slateText([{ id: "H1", check: "stats" }]));
+			await early.finish({
+				...numericDetails(true, "passed"),
+				checkout: { commit: "c".repeat(40), trackedTreeClean: true },
+			});
+			assert.equal(statusOf("H1"), "proposed");
+			// Nor is a check that started before the hypothesis was revised: the binding names the old revision.
+			const stale = verify.start();
+			await stale.started;
+			await write(slateText([{ id: "H1", check: "stats", statement: "H1 holds, revised" }]));
+			await stale.finish({
+				...numericDetails(true, "passed"),
+				checkout: { commit: "c".repeat(40), trackedTreeClean: true },
+			});
+			assert.equal(statusOf("H1"), "proposed");
+			const [first, revised] = readClaims(project).hypotheses;
+			assert.ok(first && revised);
+			assert.equal(revised.revises, first.id);
+			// A replay of the first revision and a second revision of it both fail admission.
+			const log = claimsLogPath(project);
+			appendFileSync(log, `${JSON.stringify(first)}\n`);
+			const forkBody = { ...first, statement: "H1 forked", revises: first.id, at: "2099-01-01T00:00:00.000Z" };
+			const { id: _forkId, ...forkRest } = { ...forkBody, subject: hypothesisSubject(forkBody) };
+			appendFileSync(log, `${JSON.stringify({ ...forkRest, id: claimLogRecordId(forkRest) })}\n`);
+			const read = readClaims(project);
+			assert.deepEqual(
+				read.hypotheses.map((record) => record.id),
+				[first.id, revised.id],
+			);
+			assert.equal(read.unlinked, 2);
+			assert.equal(read.mismatched, 0);
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("credits a check run only to the revisions its persisted start lists", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			const capture = createHypothesisCaptureRegistration({ cwd: () => repo });
+			const write = async (statement: string) => {
+				writeFileSync(join(repo, "h.json"), slateText([{ id: "H1", check: "stats", statement }]));
+				await capture.evaluateAsync?.({ hook: "after_tool", toolName: "write", toolArgs: { path: "h.json" } });
+			};
+			await write("H1 holds");
+			const call = verifyCall(createClaimCaptureRegistration({ cwd: () => repo })).start();
+			await call.started;
+			await write("H1 holds, revised while the check ran");
+			await call.finish({
+				...numericDetails(true, "passed"),
+				checkout: { commit: "c".repeat(40), trackedTreeClean: true },
+			});
+			const before = readClaims(project);
+			const [start] = before.checkStarts;
+			const [bound, revised] = before.hypotheses;
+			const [test] = before.hypothesisTests;
+			assert.ok(start && bound && revised && test);
+			assert.deepEqual(start.hypotheses, [bound.id]);
+			assert.equal(test.hypothesis, bound.id);
+			// The revision appended while the check ran is credited with its judgement neither by a test naming it nor by
+			// a second start of the same run listing it, however correctly each is rehashed.
+			const rehash = (body: Record<string, unknown>) => {
+				const { id: _id, ...rest } = body;
+				return `${JSON.stringify({ ...rest, id: claimLogRecordId(rest) })}\n`;
+			};
+			appendFileSync(
+				claimsLogPath(project),
+				rehash({ ...test, hypothesis: revised.id, at: "2099-01-01T00:00:00.000Z" }) +
+					rehash({ ...start, hypotheses: [revised.id], at: "2099-01-01T00:00:01.000Z" }) +
+					rehash({ ...test, hypothesis: revised.id, at: "2099-01-01T00:00:02.000Z" }),
+			);
+			const after = readClaims(project);
+			assert.equal(after.unlinked, 3);
+			assert.deepEqual(
+				after.checkStarts.map((record) => record.id),
+				[start.id],
+			);
+			assert.deepEqual(
+				after.hypothesisTests.map((record) => record.id),
+				[test.id],
+			);
+			const statuses = hypothesisStatuses(after.hypotheses, after.hypothesisTests);
+			assert.equal(statuses.get(bound.id)?.status, "supported");
+			assert.equal(statuses.get(revised.id)?.status, "proposed");
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("takes a check run's identity at start even when no hypothesis names its check yet", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			const log = claimsLogPath(project);
+			const rehash = (body: Record<string, unknown>) => {
+				const { id: _id, ...rest } = body;
+				return `${JSON.stringify({ ...rest, id: claimLogRecordId(rest) })}\n`;
+			};
+			const call = verifyCall(createClaimCaptureRegistration({ cwd: () => repo })).start();
+			await call.started;
+			// While the genuine call runs, a hypothesis naming its check lands, and a start of that running call listing
+			// it is forged; once the genuine judgement is on disk a test citing it is forged too.
+			writeFileSync(join(repo, "h.json"), slateText([{ id: "H1", check: "stats" }]));
+			await createHypothesisCaptureRegistration({ cwd: () => repo }).evaluateAsync?.({
+				hook: "after_tool",
+				toolName: "write",
+				toolArgs: { path: "h.json" },
+			});
+			const [hypothesis] = readClaims(project).hypotheses;
+			assert.ok(hypothesis);
+			const run = { channel: "verify", sessionId: "s1", toolCallId: "c1" };
+			appendFileSync(
+				log,
+				rehash({
+					v: hypothesis.v,
+					type: "check-start",
+					at: "2099-01-01T00:00:00.000Z",
+					project,
+					check: "stats",
+					run,
+					hypotheses: [hypothesis.id],
+				}),
+			);
+			await call.finish({
+				...numericDetails(true, "passed"),
+				checkout: { commit: "c".repeat(40), trackedTreeClean: true },
+			});
+			const [claim] = readClaims(project).records;
+			assert.ok(claim);
+			appendFileSync(
+				log,
+				rehash({
+					v: hypothesis.v,
+					type: "hypothesis-test",
+					at: "2099-01-01T00:00:01.000Z",
+					project,
+					hypothesis: hypothesis.id,
+					check: "stats",
+					outcome: "supported",
+					claim: claim.id,
+					execution: "succeeded",
+					source: claim.source,
+				}),
+			);
+			const read = readClaims(project);
+			assert.deepEqual(
+				read.checkStarts.map((start) => [start.run, start.hypotheses]),
+				[[run, []]],
+			);
+			assert.deepEqual(read.hypothesisTests, []);
+			assert.equal(read.unlinked, 2);
+			assert.equal(hypothesisStatuses(read.hypotheses, read.hypothesisTests).get(hypothesis.id)?.status, "proposed");
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("records a slate's digest from its bytes as read, even when they are not valid UTF-8", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			// A lone 0xff inside a JSON string decodes to U+FFFD and still parses, so the decoded text hashes differently.
+			const [head = "", tail = ""] = slateText([{ id: "H1", check: "stats", statement: "H1 holds MARK" }]).split("MARK");
+			const bytes = Buffer.concat([Buffer.from(head), Buffer.from([0xff]), Buffer.from(tail)]);
+			const digest = createHash("sha256").update(bytes).digest("hex");
+			writeFileSync(join(repo, "h.json"), bytes);
+			writeFileSync(join(repo, "w.json"), bytes);
+			await createHypothesisCaptureRegistration({ cwd: () => repo }).evaluateAsync?.({
+				hook: "after_tool",
+				toolName: "write",
+				toolArgs: { path: "h.json" },
+			});
+			await recordAcceptedWorkerSlates({
+				runId: "run1",
+				receiptDigest: "e".repeat(64),
+				projectCwd: repo,
+				slates: snapshotAcceptedWorkerSlates({ projectCwd: repo, paths: [join(repo, "w.json")] }),
+			});
+			const read = readClaims(project);
+			assert.deepEqual(
+				read.hypotheses.map((record) => [record.source.channel, record.source.slateSha256]),
+				[
+					["slate", digest],
+					["worker-slate", digest],
+				],
+			);
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("refuses a slate capture whose file changed before it held the log's lock", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			const slate = join(repo, "h.json");
+			const capture = createHypothesisCaptureRegistration({ cwd: () => repo });
+			const wrote = { hook: "after_tool", toolName: "write", toolArgs: { path: "h.json" } } as const;
+			const older = slateText([{ id: "H1", check: "stats", statement: "H1 holds, first" }]);
+			const newer = slateText([{ id: "H1", check: "stats", statement: "H1 holds, second" }]);
+			writeFileSync(slate, older);
+			await capture.evaluateAsync?.(wrote);
+			writeFileSync(slate, newer);
+			await capture.evaluateAsync?.(wrote);
+			// A capture of the older bytes that waited on the log's lock while the newer bytes landed again records
+			// nothing, so the chain never revises back to a slate the file no longer holds.
+			let late: Promise<unknown> | undefined;
+			await withStateFileLock(claimsLogPath(project), () => {
+				writeFileSync(slate, older);
+				late = capture.evaluateAsync?.(wrote);
+				writeFileSync(slate, newer);
+			});
+			await late;
+			const read = readClaims(project);
+			assert.deepEqual(
+				read.hypotheses.map((record) => record.statement),
+				["H1 holds, first", "H1 holds, second"],
+			);
+			assert.equal(read.hypotheses.at(-1)?.source.slateSha256, createHash("sha256").update(newer).digest("hex"));
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("tests hypotheses on host checks bound at start, skips checks that never started, and reads accepted worker slates", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			// The worker's slate claims H2 is already supported; the host reads it as proposed, and an entry it marked
+			// supported is not taken at its word.
+			const workerSlate = slateText([
+				{ id: "H2", check: "stats" },
+				{ id: "H3", check: "stats", status: "supported" },
+			]);
+			writeFileSync(join(repo, "w.json"), workerSlate);
+			writeFileSync(join(repo, "notes.json"), JSON.stringify({ not: "a slate" }));
+			const outside = join(env.dir, "outside.json");
+			writeFileSync(outside, slateText([{ id: "H9", check: "stats" }]));
+			const accept = () =>
+				snapshotAcceptedWorkerSlates({
+					projectCwd: repo,
+					paths: [join(repo, "w.json"), "w.json", join(repo, "notes.json"), outside],
+				});
+			// Bytes that replace an accepted slate after the host accepted the run are not the run's: nothing is recorded
+			// and the drift is named.
+			const replaced = accept();
+			assert.equal(replaced.length, 1);
+			writeFileSync(join(repo, "w.json"), slateText([{ id: "H4", check: "stats" }]));
+			assert.deepEqual(
+				await recordAcceptedWorkerSlates({
+					runId: "run0",
+					receiptDigest: "c".repeat(64),
+					projectCwd: repo,
+					slates: replaced,
+				}),
+				{ recorded: 0, drifted: [realpathSync(join(repo, "w.json"))] },
+			);
+			assert.equal(readClaims(project).hypotheses.length, 0);
+			writeFileSync(join(repo, "w.json"), workerSlate);
+			const recorded = await recordAcceptedWorkerSlates({
+				runId: "run1",
+				receiptDigest: "d".repeat(64),
+				projectCwd: repo,
+				slates: accept(),
+			});
+			assert.deepEqual(recorded, { recorded: 1, drifted: [] });
+			const [h2] = readClaims(project).hypotheses;
+			assert.equal(h2?.hypothesis, "H2");
+			assert.equal(h2?.source.channel, "worker-slate");
+			const statusOfH2 = () => {
+				const read = readClaims(project);
+				return hypothesisStatuses(read.hypotheses, read.hypothesisTests).get(h2?.id ?? "")?.status;
+			};
+			const report = numericDetails(false, "failed").report as { kind: string; passed: boolean };
+			const check = { check: "stats", argv: ["python3", "stats.py"], memo: false, exitCode: 1 };
+			// A check that could not be started judged nothing and tests nothing.
+			await recordHostVerificationClaims({
+				runId: "run2",
+				receiptDigest: "e".repeat(64),
+				checks: [{ ...check, notRun: "spawn-failed" }],
+				projectCwd: repo,
+				hypotheses: await bindHostVerificationHypotheses(repo, "run2", ["stats"]),
+			});
+			assert.equal(statusOfH2(), "proposed");
+			// Unbound, a judged check tests nothing either.
+			await recordHostVerificationClaims({
+				runId: "run3",
+				receiptDigest: "f".repeat(64),
+				checks: [{ ...check, report }],
+				projectCwd: repo,
+			});
+			assert.equal(statusOfH2(), "proposed");
+			const bound = await bindHostVerificationHypotheses(repo, "run4", ["stats", "unnamed"]);
+			// A check no hypothesis names is started too, bound to nothing.
+			assert.deepEqual(
+				[...bound],
+				[
+					["stats", [h2?.id]],
+					["unnamed", []],
+				],
+			);
+			await recordHostVerificationClaims({
+				runId: "run4",
+				receiptDigest: "a".repeat(64),
+				checks: [{ ...check, report }],
+				projectCwd: repo,
+				hypotheses: bound,
+			});
+			assert.equal(statusOfH2(), "refuted");
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("decides a hypothesis only on a grounded claim from a valid source of the test's own channel", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			writeFileSync(join(repo, "h.json"), slateText([{ id: "H1", check: "stats" }]));
+			await createHypothesisCaptureRegistration({ cwd: () => repo }).evaluateAsync?.({
+				hook: "after_tool",
+				toolName: "write",
+				toolArgs: { path: "h.json" },
+			});
+			const [hypothesis] = readClaims(project).hypotheses;
+			assert.ok(hypothesis);
+			// Both runs the forgeries name started bound to the hypothesis, so only the claim can refuse them.
+			await createClaimCaptureRegistration({ cwd: () => repo }).evaluateAsync?.({
+				hook: "before_tool",
+				toolName: "verify",
+				sessionId: "s1",
+				toolCallId: "t1",
+				toolArgs: { check: "stats" },
+			});
+			await bindHostVerificationHypotheses(repo, "s1", ["stats"]);
+			assert.equal(readClaims(project).checkStarts.length, 2);
+			const genuine = claimFromVerifyResult({
+				details: { ...numericDetails(true, "passed"), checkout: { commit: "c".repeat(40), trackedTreeClean: true } },
+				project,
+				at: "2099-01-01T00:00:00.000Z",
+				source,
+			});
+			assert.ok(genuine);
+			// Each forgery rehashes correctly and follows the hypothesis, cites its own check and agrees, so only the
+			// claim's evidence or source can refuse it: a proposed claim, a claim from an invented channel cited by a verify
+			// test with the same identity fields, and a genuine verify claim cited by a test that says a host run made it.
+			const forge = (claim: Record<string, unknown>, testSource: Record<string, unknown>, at: string) => {
+				const { id: _claimId, ...claimRest }: Record<string, unknown> = { ...claim, at };
+				const forgedClaim = { ...claimRest, id: claimRecordId(claimRest as never) };
+				const testRest = {
+					v: 1,
+					type: "hypothesis-test",
+					at,
+					project,
+					hypothesis: hypothesis.id,
+					check: "stats",
+					outcome: "supported",
+					claim: forgedClaim.id,
+					execution: "succeeded",
+					source: testSource,
+				};
+				return `${JSON.stringify(forgedClaim)}\n${JSON.stringify({ ...testRest, id: claimLogRecordId(testRest) })}\n`;
+			};
+			const invented = { channel: "notebook", sessionId: "s1", toolCallId: "t1", requestedBy: "model" };
+			const host = { channel: "host-verification", runId: "s1", receiptDigest: "t1", sessionId: "s1", toolCallId: "t1" };
+			appendFileSync(
+				claimsLogPath(project),
+				forge({ ...genuine, evidence: "proposed" }, source, "2099-01-01T00:00:01.000Z") +
+					forge({ ...genuine, source: invented }, source, "2099-01-01T00:00:02.000Z") +
+					forge(genuine as unknown as Record<string, unknown>, host, "2099-01-01T00:00:03.000Z"),
+			);
+			const read = readClaims(project);
+			// Only the last forgery's claim, the genuine one, is read as a claim; no test is admitted.
+			assert.equal(read.records.length, 1);
+			assert.equal(read.mismatched, 2);
+			assert.equal(read.unlinked, 3);
+			assert.equal(read.hypothesisTests.length, 0);
+			assert.equal(hypothesisStatuses(read.hypotheses, read.hypothesisTests).get(hypothesis.id)?.status, "proposed");
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("reads a host-verification claim as verified only against the sealed check of the run it cites (D3-4)", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			const checks = [
+				{
+					check: "stats",
+					argv: ["python3", "stats.py"],
+					cwd: repo,
+					exitCode: 0,
+					durationMs: 1,
+					memo: false,
+					outputTail: "",
+					report: numericDetails(true, "passed").report as never,
+					tree: { root: repo, head: "c".repeat(40), fingerprint: "f".repeat(64) },
+				},
+			];
+			await writeSettledRun(pancodeStateDir(), {
+				...fixtureReceiptDraft(fixtureEnvelope("run1")),
+				hostVerification: { status: "verified", checks },
+			});
+			const digest = readVerifiedRun(pancodeStateDir(), "run1")?.settled.digest;
+			assert.ok(digest);
+			await recordHostVerificationClaims({ runId: "run1", receiptDigest: digest, checks, projectCwd: repo });
+			const [genuine] = readClaims(project).records;
+			assert.ok(genuine);
+			// Each forgery rehashes, so the log accepts it as a claim; only the sealed run it cites can refuse it.
+			const forge = (changes: Partial<ClaimRecord>): ClaimRecord => {
+				const { id: _id, ...rest } = { ...genuine, ...changes };
+				return { ...rest, id: claimRecordId(rest as never) };
+			};
+			const flipped = forge({ verdict: "disagrees", at: "2099-01-01T00:00:01.000Z" });
+			const ghost = forge({
+				source: { channel: "host-verification", runId: "ghost", receiptDigest: digest },
+				at: "2099-01-01T00:00:02.000Z",
+			});
+			const resettled = forge({
+				source: { channel: "host-verification", runId: "run1", receiptDigest: "0".repeat(64) },
+				at: "2099-01-01T00:00:03.000Z",
+			});
+			appendFileSync(
+				claimsLogPath(project),
+				[flipped, ghost, resettled].map((claim) => `${JSON.stringify(claim)}\n`).join(""),
+			);
+			const read = readClaims(project);
+			assert.equal(read.mismatched, 0);
+			const seal = claimSealReader();
+			assert.deepEqual(
+				read.records.map((claim) => [claim.id, seal(claim).state]),
+				[
+					[genuine.id, "verified"],
+					[flipped.id, "unverified"],
+					[ghost.id, "unverified"],
+					[resettled.id, "unverified"],
+				],
+			);
+			const verifyClaim = claimFromVerifyResult({
+				details: numericDetails(true, "passed"),
+				project,
+				at: "2099-01-01T00:00:04.000Z",
+				source,
+			});
+			assert.ok(verifyClaim);
+			assert.equal(seal(verifyClaim).state, "unbound");
+			// A forged disagreement offered to the agent names that its run never sealed it.
+			const edge = { kind: "contradicts", id: "e".repeat(64), from: flipped.id, to: genuine.id, check: "stats" };
+			const message = claimsDeliveryMessage("stats", { records: [genuine, flipped], edges: [edge as never] }) ?? "";
+			match(
+				message,
+				new RegExp(`claim ${flipped.id.slice(0, 12)} disagrees \\[unverified: the run sealed the opposite verdict`, "u"),
+			);
+			assert.ok(!message.includes(`claim ${genuine.id.slice(0, 12)} agrees [unverified`));
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("never counts a reproduce check whose executable did not launch as a test", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			writeFileSync(join(repo, "h.json"), slateText([{ id: "H1", check: "repro" }]));
+			await createHypothesisCaptureRegistration({ cwd: () => repo }).evaluateAsync?.({
+				hook: "after_tool",
+				toolName: "write",
+				toolArgs: { path: "h.json" },
+			});
+			const missing = "pancode-no-such-executable-406";
+			// The runner resolves rather than throws on ENOENT; the launched fact is what says nothing ran.
+			const spawned = await runCommandVector(missing, [], { cwd: repo, workspaceRoot: repo });
+			assert.equal(spawned.launched, false);
+			const hypotheses = await bindHostVerificationHypotheses(repo, "run1", ["repro"]);
+			assert.equal(hypotheses.get("repro")?.length, 1);
+			const verification = await runHostVerification({
+				runId: "run1",
+				workerSuccessful: true,
+				stateDir: join(env.dir, "host-state"),
+				request: {
+					resolvedVerification: [
+						{
+							check: "repro",
+							argv: [missing, "metrics.json"],
+							cwd: repo,
+							timeoutMs: 10_000,
+							kind: "reproduce",
+							reproduce: {
+								declaredCwd: ".",
+								spec: { inputs: [], environment: "copy", compare: { mode: "twice" }, tolerance: { absolute: 0 } },
+							},
+						},
+					],
+				},
+			});
+			const [check] = verification?.checks ?? [];
+			assert.equal(check?.notRun, "spawn-failed");
+			assert.ok(check && verification);
+			// The persisted run-result object the receipt digest seals keeps the fact, and the object store accepts it.
+			const envelope = fixtureEnvelope("run1");
+			const sealed = finishRunResult({ ...fixtureReceiptDraft(envelope), hostVerification: verification }, envelope, {
+				terminal: { terminalReason: "completed" },
+				processExitCode: 0,
+				frameType: null,
+				usage: undefined,
+			}).settlement.result;
+			assert.equal(sealed.hostVerification?.checks[0]?.notRun, "spawn-failed");
+			assert.ok(Value.Check(RunResultObjectSchema, sealed));
+			await recordHostVerificationClaims({
+				runId: "run1",
+				receiptDigest: "d".repeat(64),
+				checks: [check],
+				projectCwd: repo,
+				hypotheses,
+			});
+			const read = readClaims(project);
+			assert.equal(read.hypothesisTests.length, 0);
+			assert.equal(
+				hypothesisStatuses(read.hypotheses, read.hypothesisTests).get(read.hypotheses[0]?.id ?? "")?.status,
+				"proposed",
+			);
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("counts a reproduce check whose second run could not start as tested, on both channels", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		const previousCwd = process.cwd();
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			writeFileSync(join(repo, "h.json"), slateText([{ id: "H1", check: "repro" }]));
+			await createHypothesisCaptureRegistration({ cwd: () => repo }).evaluateAsync?.({
+				hook: "after_tool",
+				toolName: "write",
+				toolArgs: { path: "h.json" },
+			});
+			// The first run launches, prints its payload and removes its own executable, so the second cannot start.
+			const once = join(env.dir, "bin", "once");
+			const arm = () => {
+				mkdirSync(join(env.dir, "bin"), { recursive: true });
+				writeFileSync(once, `#!/bin/sh\nrm -f -- "$0"\necho '{"x": 1}'\n`, { mode: 0o755 });
+			};
+			const spec = {
+				inputs: [],
+				environment: "copy",
+				compare: { mode: "twice" },
+				tolerance: { absolute: 0 },
+			} satisfies DeclaredReproduce;
+			const statusOfH1 = () => {
+				const read = readClaims(project);
+				return hypothesisStatuses(read.hypotheses, read.hypothesisTests).get(read.hypotheses[0]?.id ?? "")?.status;
+			};
+
+			arm();
+			const hypotheses = await bindHostVerificationHypotheses(repo, "run1", ["repro"]);
+			const verification = await runHostVerification({
+				runId: "run1",
+				workerSuccessful: true,
+				stateDir: join(env.dir, "host-state"),
+				request: {
+					resolvedVerification: [
+						{
+							check: "repro",
+							argv: [once],
+							cwd: repo,
+							timeoutMs: 10_000,
+							kind: "reproduce",
+							reproduce: { declaredCwd: ".", spec },
+						},
+					],
+				},
+			});
+			const [check] = verification?.checks ?? [];
+			assert.ok(check);
+			match(check.outputTail, /run 2 could not start/);
+			assert.equal(check.notRun, undefined);
+			await recordHostVerificationClaims({
+				runId: "run1",
+				receiptDigest: "d".repeat(64),
+				checks: [check],
+				projectCwd: repo,
+				hypotheses,
+			});
+			assert.equal(statusOfH1(), "tested");
+
+			// The main thread's verify reads the same outcome as a failed run, not an unavailable runner.
+			arm();
+			process.chdir(repo);
+			const call = verifyCall(createClaimCaptureRegistration({ cwd: () => repo })).start("repro");
+			await call.started;
+			const result = await runProjectCheck({
+				id: "repro",
+				description: "reproduce twice",
+				command: [once],
+				cwd: ".",
+				timeoutMs: 10_000,
+				tags: [],
+				source: { kind: "project-catalog", path: ".pancode/verifiers.json" },
+				kind: "reproduce",
+				reproduce: spec,
+			});
+			match(result.kind === "error" ? result.message : "", /run 2 could not start/);
+			assert.equal((result.details?.judgement as { execution?: string } | undefined)?.execution, "failed");
+			await call.finish(result.details ?? {});
+			const tests = readClaims(project).hypothesisTests;
+			assert.deepEqual(
+				tests.map((test) => [test.source.channel, test.outcome, test.execution]),
+				[
+					["host-verification", "tested", "failed"],
+					["verify", "tested", "failed"],
+				],
+			);
+		} finally {
+			process.chdir(previousCwd);
+			env.restore();
+		}
+	});
+
+	it("regresses memory on the research iteration that records a contradiction, not on a later append", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			const project = claimsProjectRoot(repo);
+			const details = (passed: boolean) => ({
+				...numericDetails(passed, passed ? "passed" : "failed"),
+				checkout: { commit: "c".repeat(40), trackedTreeClean: true },
+			});
+			const agreed = claimFromVerifyResult({ details: details(true), project, at: "2026-11-06T00:00:01.000Z", source });
+			assert.ok(agreed);
+			await appendClaims([agreed]);
+			const memory: MemoryRecord = {
+				id: "mem-0123456789abcdef",
+				scope: "global",
+				key: "stats-agree",
+				lesson: "stats agrees with its reference",
+				evidenceRefs: [`claim:${agreed.id}`],
+				appliesWhen: [],
+				avoidWhen: [],
+				confidence: 0.9,
+				createdAt: "2026-11-06T00:00:00.000Z",
+				approved: true,
+				approval: { by: "operator", at: "2026-01-01T00:00:00.000Z" },
+			};
+			await insertMemoryRecordIfAbsent(pancodeDataDir(), memory);
+			assert.equal((await loadMemoryRecords(pancodeDataDir())).length, 1);
+			const campaign = { id: "r1", project } as unknown as ResearchCampaign;
+			const iterate = (iteration: number, passed: boolean, at: string) =>
+				finishIterationRecord({
+					campaign,
+					iteration,
+					at,
+					bindings: new Map(),
+					outcomes: [
+						{ check: "stats", execution: "succeeded", result: { kind: "ok", output: "", details: details(passed) } },
+					],
+				});
+			await iterate(1, false, "2026-11-06T00:00:02.000Z");
+			// The iteration itself carried the contradiction into memory; nothing else was appended.
+			const [regressed] = await loadMemoryRecords(pancodeDataDir());
+			assert.equal(regressed?.regressions?.length, 1);
+			assert.equal(regressed !== undefined && memoryRecordEligible(regressed), false);
+			assert.equal(readClaims(project).regressions.length, 1);
+			// A flip back to agreement adds a contradicts edge but withdraws nothing and grants nothing.
+			await iterate(2, true, "2026-11-06T00:00:03.000Z");
+			const log = readClaims(project);
+			assert.equal(log.edges.filter((edge) => edge.kind === "contradicts").length, 2);
+			assert.equal(log.regressions.length, 1);
+			const [after] = await loadMemoryRecords(pancodeDataDir());
+			assert.equal(after?.regressions?.length, 1);
+			assert.equal(after !== undefined && memoryRecordEligible(after), false);
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("keeps the regressions an operator re-approval clears, and only operator approval clears them", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const note = "check 'stats': claim x disagrees with claim y";
+			await insertMemoryRecordIfAbsent(pancodeDataDir(), {
+				id: "mem-fedcba9876543210",
+				scope: "global",
+				key: "k",
+				lesson: "l",
+				evidenceRefs: ["claim:y"],
+				appliesWhen: [],
+				avoidWhen: [],
+				confidence: 0.5,
+				createdAt: "2026-11-06T00:00:00.000Z",
+				approved: true,
+				approval: { by: "operator", at: "2026-01-01T00:00:00.000Z" },
+				regressions: [note],
+			});
+			const now = new Date("2026-11-07T00:00:00.000Z");
+			const approved = await approveMemoryRecord(pancodeDataDir(), "mem-fedcba9876543210", now);
+			assert.equal(approved.regressions, undefined);
+			assert.ok(memoryRecordEligible(approved));
+			assert.deepEqual(readClearedMemoryRegressions(pancodeDataDir(), approved.id), [
+				{ id: approved.id, at: now.toISOString(), by: "operator", regressions: [note] },
+			]);
+			// Approving a record with nothing to clear records nothing.
+			await approveMemoryRecord(pancodeDataDir(), approved.id);
+			assert.equal(readClearedMemoryRegressions(pancodeDataDir()).length, 1);
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("runs a research gate in its worktree without changing the process working directory", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		try {
+			const worktree = join(env.dir, "worktree");
+			mkdirSync(worktree, { recursive: true });
+			const before = process.cwd();
+			const pending = runGateIn(worktree, {
+				id: "where",
+				description: "print the cwd",
+				command: [process.execPath, "-e", "process.stdout.write(process.cwd())"],
+				cwd: ".",
+				timeoutMs: 10_000,
+				tags: [],
+				source: { kind: "project-catalog", path: ".pancode/verifiers.json" },
+				kind: "command",
+			});
+			// Claim capture keys on process.cwd(); it must never observe the worktree while the gate runs.
+			assert.equal(process.cwd(), before);
+			const result = await pending;
+			assert.equal(process.cwd(), before);
+			assert.equal(result.kind, "ok", result.kind === "error" ? result.message : "");
+			match(
+				result.kind === "ok" ? result.output : "",
+				new RegExp(realpathSync(worktree).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")),
+			);
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("lists a claim recorded at a commit HEAD has moved past as stale, and one at HEAD as not", async () => {
+		const env = await isolatePancodeEnv("pancode-claims-");
+		const previousCwd = process.cwd();
+		const log = console.log;
+		try {
+			const repo = join(env.dir, "repo");
+			mkdirSync(repo, { recursive: true });
+			const git = (...args: string[]) =>
+				execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], {
+					cwd: repo,
+					encoding: "utf8",
+				}).trim();
+			git("init", "-q");
+			git("commit", "-q", "--allow-empty", "-m", "one");
+			const first = git("rev-parse", "HEAD");
+			const project = claimsProjectRoot(repo);
+			const claim = (commit: string, at: string) => {
+				const built = claimFromVerifyResult({
+					details: { ...numericDetails(true, "passed"), checkout: { commit, trackedTreeClean: true } },
+					project,
+					at,
+					source,
+				});
+				assert.ok(built);
+				return built;
+			};
+			const old = claim(first, "2026-11-06T00:00:01.000Z");
+			await appendClaims([old]);
+			git("commit", "-q", "--allow-empty", "-m", "two");
+			const current = claim(git("rev-parse", "HEAD"), "2026-11-06T00:00:02.000Z");
+			await appendClaims([current]);
+			process.chdir(repo);
+			const printed: string[] = [];
+			console.log = (text: string) => printed.push(text);
+			assert.equal(await runClaimsCommand(["--json"]), 0);
+			const listed = (JSON.parse(printed.join("\n")) as { claims: Array<{ id: string; stale: boolean }> }).claims;
+			assert.deepEqual(
+				listed.map((item) => [item.id, item.stale]),
+				[
+					[old.id, true],
+					[current.id, false],
+				],
+			);
+			printed.length = 0;
+			assert.equal(await runClaimsCommand([]), 0);
+			match(printed.join("\n"), new RegExp(`stale: recorded at commit ${first.slice(0, 12)}; HEAD is now`, "u"));
+		} finally {
+			console.log = log;
+			process.chdir(previousCwd);
+			env.restore();
+		}
+	});
+});

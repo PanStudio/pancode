@@ -1,0 +1,905 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { SETTINGS_AREAS } from "../core/settings-areas.js";
+import { lettersInOrder, listedPrompts, promptRowWords, renderArgsSpec } from "../core/views/slash-words.js";
+import { type ExtensionCommandRow, resolveExtensionCommands } from "../domains/extensions/operator-commands.js";
+import {
+	type AutocompleteItem,
+	type AutocompleteProvider,
+	type AutocompleteSuggestions,
+	CombinedAutocompleteProvider,
+	type SlashCommand,
+	truncateToWidth,
+	visibleWidth,
+} from "../engine/tui.js";
+import { SETTINGS_AREA_IDS } from "../session-control/slash-handlers/model.js";
+import {
+	COMMANDS_REFUSED_DURING_TURN,
+	SUBCOMMANDS_REFUSED_DURING_TURN,
+} from "../session-control/slash-handlers/run.js";
+import {
+	type CommandMatch,
+	commandReference,
+	lineRunsBare,
+	matchCommandReference,
+} from "../session-control/slash-reference.js";
+import {
+	type ArgCompletion,
+	COMPLETION_SLOT_NAMES,
+	type CommandArgsSpec,
+	type CompletionSlotName,
+	completeArgs,
+	usageLine,
+} from "../session-control/slash-spec.js";
+import { resolveFdBinary } from "../tools/executables.js";
+import {
+	createFileReferenceCompletionSource,
+	type FileReferenceCompletionSource,
+} from "./file-reference-completion.js";
+import { GLYPH } from "./theme/glyphs.js";
+
+export type SlashAutocompleteCommand = SlashCommand;
+
+const ARGUMENT_HINT_BUDGET = 44;
+/** A purpose is one line; the detail panel carries the full sentence, so this only guards runaway copy. */
+const COMPLETION_DESCRIPTION_BUDGET = 96;
+/** The list's name column is 32 cells with a 2-cell gap; the label must fit before the list cuts it silently. */
+const ROW_LABEL_BUDGET = 30;
+const PARENT_MARK = GLYPH.submenu;
+/** pancode-editor.ts splits the breadcrumb on this same glyph, so the join and the split cannot drift apart. */
+const PATH_SEPARATOR = GLYPH.crumb;
+
+export interface CompletionValue {
+	/** Stable identity; distinct from the inserted spelling when aliases are displayed. */
+	id: string;
+	value: string;
+	label: string;
+	description: string;
+	disabledReason?: string;
+	sensitive?: boolean;
+}
+
+export interface CompletionSourceRequest {
+	slot: CompletionSlotName;
+	prefix: string;
+	command: string;
+	subcommand?: string;
+	line: string;
+	cursor: number;
+	generation: number;
+	signal: AbortSignal;
+}
+
+export type CompletionSource = (request: CompletionSourceRequest) => Promise<ReadonlyArray<CompletionValue>>;
+/** Every declared slot needs a source, so a slot added without one fails typecheck. */
+export type CompletionSources = Record<CompletionSlotName, CompletionSource>;
+
+export interface SlashCompletionItem extends AutocompleteItem {
+	id: string;
+	kind: "command" | "flag" | "value" | "submenu" | "open-submenu";
+	replacement: { start: number; end: number };
+	appendSpace: boolean;
+	disabledReason?: string;
+	completionSlot?: CompletionSlotName;
+	quote?: '"' | "'";
+	remainingGrammar?: string;
+	effectDescription?: string;
+	/** Breadcrumb shown in the detail panel, e.g. `/fleet › run`. Absent on file and path rows. */
+	path?: string;
+	/** Why a refused row does nothing, as a full sentence. */
+	nextAction?: string;
+	/** The command's group (`session`), a supporting word at the row end where room allows; never in the description. */
+	group?: string;
+	/** The usage line the detail rows add at the detailed tier, e.g. `/fleet run <playbook>`. */
+	usage?: string;
+	/** An argument row the parser demands. An auto-opened list of rows that are all optional opens unselected. */
+	required?: boolean;
+	/** A command row whose bare invocation does something, so Enter on it runs it. */
+	runsBare?: boolean;
+	/**
+	 * A command row found only by a word in its description: the operator typed no part of its name. A list of
+	 * these opens unselected, so Enter sends `/tools` as typed instead of turning it into `/skill`.
+	 */
+	describedOnly?: boolean;
+	/**
+	 * A value row that does not start with what the operator typed, found only by its letters in order. A list of
+	 * these opens unselected, so Enter sends `/thinking high` as typed instead of turning it into `/thinking xhigh`.
+	 */
+	lettersOnly?: boolean;
+	submenu?: { parent: string; back: true };
+	/** Cursor adjustment after insertion; quoted directories keep it before the closing quote. */
+	cursorOffset?: number;
+}
+
+/** The slice of a loaded prompt template that the composer needs to offer it as a slash command. */
+export interface PromptCommandTemplate {
+	name: string;
+	description: string;
+	argumentHint?: string;
+	unavailable?: string;
+	/** Rendered for the operator on submit; the model never sees it. */
+	displayOnly?: boolean;
+}
+
+export interface SlashAutocompleteOptions {
+	extensionCommands?: () => ReadonlyArray<ExtensionCommandRow>;
+	basePath?: string;
+	fdPath?: string | null;
+	/**
+	 * Live view of the prompt templates discovered for the current workspace
+	 * (user, project, and installed plugin roots). Read on every completion so a
+	 * plugin reload or install shows up without rebuilding the provider.
+	 */
+	promptTemplates?: () => ReadonlyArray<PromptCommandTemplate>;
+	/** Read-only runtime values for the named grammar slots. */
+	completionSources?: CompletionSources;
+	/** Replace the default workspace-aware `@` source without adding a second composer provider. */
+	fileReferenceSource?: FileReferenceCompletionSource;
+	/** True while a turn streams, when some commands refuse; their rows say why before Enter does. */
+	isTurnInFlight?: () => boolean;
+	/**
+	 * The operator's per-feature use counts (`"/model": 3`). A bare `/` lists the
+	 * five most-used commands first; without counts the rank order alone applies.
+	 */
+	commandCounts?: () => Readonly<Record<string, number>>;
+	/** Why this session cannot use a built-in command; its rows dim with the reason and sort last in their class. */
+	unavailable?: (command: string) => string | undefined;
+	/** Built-in commands this session leaves out of the palette; typed in full they still answer. */
+	hidden?: (command: string) => boolean;
+}
+
+/** How many of the operator's most-used commands lead a bare `/`. */
+const PERSONAL_TOP = 5;
+
+/** A bare `/`: the operator's most-used commands, then the rest in rank order. */
+function personalOrder(
+	matches: ReadonlyArray<CommandMatch>,
+	counts: Readonly<Record<string, number>>,
+): ReadonlyArray<CommandMatch> {
+	const used = matches
+		.filter((match) => (counts[`/${match.ref.name}`] ?? 0) > 0)
+		.sort((a, b) => (counts[`/${b.ref.name}`] ?? 0) - (counts[`/${a.ref.name}`] ?? 0))
+		.slice(0, PERSONAL_TOP);
+	return [...used, ...matches.filter((match) => !used.includes(match))];
+}
+
+const REFUSED_DURING_TURN_REASON = `a turn is running ${GLYPH.sep} Esc stops it first`;
+
+/** No dynamic values for any slot; the default when a caller supplies no sources. */
+export function emptyCompletionSources(): CompletionSources {
+	const sources = {} as Record<CompletionSlotName, CompletionSource>;
+	for (const slot of COMPLETION_SLOT_NAMES) sources[slot] = async () => [];
+	return sources;
+}
+
+/**
+ * The one rule for shortening a command's argument grammar: flags go first,
+ * left to right, and positionals stay. The composer popup and the help list
+ * share it, so a command reads the same in both places.
+ */
+export function compactArgumentHint(args: CommandArgsSpec | undefined): string | undefined {
+	if (!args) return undefined;
+	if (args.subcommands) {
+		const rootStr = renderArgsSpec({
+			...(args.flags ? { flags: args.flags } : {}),
+			...(args.positionals ? { positionals: args.positionals } : {}),
+		});
+		const parts = [...(rootStr ? [rootStr] : []), ...Object.keys(args.subcommands)];
+		return parts.join(" | ") || undefined;
+	}
+	const positionalTail = renderArgsSpec({ ...(args.positionals ? { positionals: args.positionals } : {}) });
+	const tail = positionalTail ? ` ${positionalTail}` : "";
+	const flagParts = (args.flags ?? []).map((flag) => renderArgsSpec({ flags: [flag] }));
+	const kept: string[] = [];
+	for (const part of flagParts) {
+		if (`${[...kept, part].join(" ")} ${GLYPH.ellipsis}${tail}`.length > ARGUMENT_HINT_BUDGET) break;
+		kept.push(part);
+	}
+	let flags = kept.join(" ");
+	if (kept.length < flagParts.length) flags = flags ? `${flags} ${GLYPH.ellipsis}` : GLYPH.ellipsis;
+	const hint = `${flags}${flags ? tail : positionalTail}`.trim();
+	return hint || undefined;
+}
+
+/** Explicit attachment manifest: grammar owns positions, providers only own values. */
+export const COMPLETION_SLOT_MANIFEST: Readonly<Record<string, CompletionSlotName>> = {
+	"run:pos:agent": "agents",
+	"run:flag:--agent-profile": "agent-profiles",
+	"run:flag:--target": "targets",
+	"run:flag:--model": "models",
+	"council:flag:--roster": "rosters",
+	"skill:pos:name": "skills",
+	"fleet/share:pos:run-id": "shareable-runs",
+	"fleet/run:pos:playbook": "playbooks",
+	"tasks/hand:pos:id": "tasks",
+	"tasks/done:pos:id": "tasks",
+	"tasks/drop:pos:id": "tasks",
+	"view/verify:pos:runId": "runs",
+	"panes/open:pos:preset-or-argv": "pane-presets",
+	"model:pos:pattern": "models",
+	"thinking:pos:level": "thinking-levels",
+	"archive/export:pos:path": "paths",
+	"archive/import:pos:path": "paths",
+	"export:pos:path": "paths",
+};
+
+function completionGrammar(command: string, args: CommandArgsSpec): CommandArgsSpec {
+	const clone = (spec: CommandArgsSpec, path: string): CommandArgsSpec => ({
+		...spec,
+		...(spec.flags
+			? {
+					flags: spec.flags.map((flag) => {
+						const completionSlot = COMPLETION_SLOT_MANIFEST[`${path}:flag:${flag.name}`];
+						return { ...flag, ...(completionSlot ? { completionSlot } : {}) };
+					}),
+				}
+			: {}),
+		...(spec.positionals
+			? {
+					positionals: spec.positionals.map((pos) => {
+						const completionSlot = COMPLETION_SLOT_MANIFEST[`${path}:pos:${pos.name}`];
+						const values = command === "settings" && pos.name === "area" ? SETTINGS_AREA_IDS : undefined;
+						return { ...pos, ...(completionSlot ? { completionSlot } : {}), ...(values ? { values } : {}) };
+					}),
+				}
+			: {}),
+		...(spec.subcommands
+			? {
+					subcommands: Object.fromEntries(
+						Object.entries(spec.subcommands).map(([name, child]) => [name, clone(child, `${path}/${name}`)]),
+					),
+				}
+			: {}),
+	});
+	return clone(args, command);
+}
+
+/**
+ * The list's name cell: the name and as much of its grammar as fits. A cut
+ * lands on the grammar with an ellipsis, never on the purpose beside it.
+ */
+function rowLabel(name: string, tail: string | undefined): string {
+	if (!tail) return name;
+	const whole = `${name} ${tail}`;
+	if (visibleWidth(whole) <= ROW_LABEL_BUDGET) return whole;
+	const room = ROW_LABEL_BUDGET - visibleWidth(name) - 1 - visibleWidth(GLYPH.ellipsis);
+	if (room < 3) return name;
+	return `${name} ${truncateToWidth(tail, room, "", false).trimEnd()}${GLYPH.ellipsis}`;
+}
+
+/**
+ * The grammar a name cell can afford: positionals, or a plain `[options]` for a
+ * flag-only command. Flags lead the full usage but bury the arguments the
+ * operator must supply, so they wait for the detail panel and the `--` menu.
+ */
+function labelGrammar(spec: CommandArgsSpec | undefined): string | undefined {
+	if (!spec) return undefined;
+	const positionals = renderArgsSpec({ ...(spec.positionals ? { positionals: spec.positionals } : {}) });
+	if (positionals) return positionals;
+	return (spec.flags ?? []).length > 0 ? "[options]" : undefined;
+}
+
+const bareRunCache = new Map<string, boolean>();
+
+/** Whether the command does something useful with no arguments, judged by the real parser. */
+function runsBare(name: string): boolean {
+	let known = bareRunCache.get(name);
+	if (known === undefined) {
+		known =
+			commandReference({ includeHidden: true }).find((ref) => ref.name === name)?.runsBare ?? lineRunsBare(`/${name}`);
+		bareRunCache.set(name, known);
+	}
+	return known;
+}
+
+function compactDescription(description: string | undefined): string | undefined {
+	if (!description || visibleWidth(description) <= COMPLETION_DESCRIPTION_BUDGET) return description;
+	return `${truncateToWidth(description, COMPLETION_DESCRIPTION_BUDGET - visibleWidth(GLYPH.ellipsis), "", false).trimEnd()}${GLYPH.ellipsis}`;
+}
+
+/** The usage line of a command or one of its subcommands, without its `usage:` lead. */
+function usageText(ref: { name: string; args?: CommandArgsSpec }, subcommand?: string): string {
+	return usageLine(ref, subcommand)
+		.replace(/^\nusage:\s*/u, "")
+		.replace(/\n$/u, "");
+}
+
+const BARE_VALID_PARENTS = new Set(["context", "memory", "panes"]);
+
+interface SlashContext {
+	line: string;
+	command: string;
+	commandStart: number;
+	commandEnd: number;
+	argsStart: number;
+}
+
+interface FileReferenceContext {
+	query: string;
+	prefix: string;
+	replacement: { start: number; end: number };
+}
+
+function slashContext(lines: string[], cursorLine: number, cursorCol: number): SlashContext | null {
+	if (cursorLine !== 0) return null;
+	const line = lines[0] ?? "";
+	const first = line.search(/\S/);
+	if (first < 0 || line[first] !== "/" || cursorCol < first + 1) return null;
+	let commandEnd = first + 1;
+	while (commandEnd < line.length && !/\s/.test(line[commandEnd] ?? "")) commandEnd++;
+	const argsStart = commandEnd < line.length ? commandEnd + 1 : commandEnd;
+	// The cursor may be in the command or any argument token, but never in a later editor line.
+	return { line, command: line.slice(first + 1, commandEnd), commandStart: first + 1, commandEnd, argsStart };
+}
+
+function genericTokenRange(line: string, cursor: number): { start: number; end: number } {
+	let start = Math.max(0, Math.min(cursor, line.length));
+	let quote: '"' | "'" | undefined;
+	while (start > 0) {
+		const previous = line[start - 1] ?? "";
+		if (!quote && /\s/.test(previous)) break;
+		if (previous === '"' || previous === "'") quote = quote === previous ? undefined : previous;
+		start--;
+	}
+	let end = Math.max(start, Math.min(cursor, line.length));
+	quote = undefined;
+	while (end < line.length) {
+		const char = line[end] ?? "";
+		if (!quote && /\s/.test(char)) break;
+		if (char === '"' || char === "'") quote = quote === char ? undefined : char;
+		end++;
+	}
+	return { start, end };
+}
+
+function quotedReferenceText(raw: string, quote: '"' | "'"): string {
+	const body = raw.startsWith(quote) ? raw.slice(1) : raw;
+	const withoutClose = body.endsWith(quote) ? body.slice(0, -1) : body;
+	let decoded = "";
+	let escaped = false;
+	for (const character of withoutClose) {
+		if (escaped) {
+			decoded += character;
+			escaped = false;
+			continue;
+		}
+		if (character === "\\") {
+			escaped = true;
+			continue;
+		}
+		decoded += character;
+	}
+	if (escaped) decoded += "\\";
+	return decoded;
+}
+
+function fileReferenceContext(lines: string[], cursorLine: number, cursorCol: number): FileReferenceContext | null {
+	const line = lines[cursorLine] ?? "";
+	const cursor = Math.max(0, Math.min(cursorCol, line.length));
+	for (let start = cursor - 1; start >= 0; start -= 1) {
+		if (line[start] !== "@" || (start > 0 && !/\s/u.test(line[start - 1] ?? ""))) continue;
+		const quote = line[start + 1] === '"' || line[start + 1] === "'" ? (line[start + 1] as '"' | "'") : null;
+		let end = start + 1;
+		let escaped = false;
+		if (quote) {
+			end += 1;
+			while (end < line.length) {
+				const character = line[end] ?? "";
+				end += 1;
+				if (escaped) {
+					escaped = false;
+					continue;
+				}
+				if (character === "\\") {
+					escaped = true;
+					continue;
+				}
+				if (character === quote) break;
+			}
+		} else {
+			while (end < line.length && !/\s/u.test(line[end] ?? "")) end += 1;
+		}
+		if (cursor < start + 1 || cursor > end) continue;
+		const rawQuery = line.slice(start + 1, cursor);
+		return {
+			query: quote ? quotedReferenceText(rawQuery, quote) : rawQuery,
+			prefix: line.slice(start, cursor),
+			replacement: { start, end },
+		};
+	}
+	return null;
+}
+
+/** Values the typed text names: prefix matches, then (two or more letters) its letters in order. */
+function sourceRows(
+	values: ReadonlyArray<CompletionValue>,
+	prefix: string,
+): Array<CompletionValue & { lettersOnly?: true }> {
+	const lower = prefix.toLowerCase();
+	const visible = values.filter((value) => !value.sensitive);
+	// The value typed in full leads, so the selected row never swaps it for a longer sibling.
+	const byPrefix = visible
+		.filter((value) => value.value.toLowerCase().startsWith(lower))
+		.sort((a, b) => Number(b.value.toLowerCase() === lower) - Number(a.value.toLowerCase() === lower));
+	if (lower.length < 2) return byPrefix;
+	const byLetters = visible
+		.filter((value) => !byPrefix.includes(value) && lettersInOrder(lower, value.value.toLowerCase()))
+		.map((value) => ({ ...value, lettersOnly: true as const }));
+	return [...byPrefix, ...byLetters];
+}
+
+class PancodeAutocompleteProvider implements AutocompleteProvider {
+	readonly triggerCharacters = ["/", "@"];
+	private readonly files: CombinedAutocompleteProvider;
+	private readonly fileReferences: FileReferenceCompletionSource;
+	private readonly sourceBySlot: Record<CompletionSlotName, CompletionSource>;
+	private readonly promptTemplates: () => ReadonlyArray<PromptCommandTemplate>;
+	private generation = 0;
+
+	constructor(
+		basePath: string,
+		fdPath: string | null,
+		sources: CompletionSources,
+		fileReferenceSource?: FileReferenceCompletionSource,
+		promptTemplates?: () => ReadonlyArray<PromptCommandTemplate>,
+		private extensionCommands: () => ReadonlyArray<ExtensionCommandRow> = () => [],
+		private isTurnInFlight: () => boolean = () => false,
+		private commandCounts: () => Readonly<Record<string, number>> = () => ({}),
+		private unavailable: (command: string) => string | undefined = () => undefined,
+		private hidden: (command: string) => boolean = () => false,
+	) {
+		this.files = new CombinedAutocompleteProvider([], basePath, fdPath);
+		this.fileReferences = fileReferenceSource ?? createFileReferenceCompletionSource({ basePath });
+		this.sourceBySlot = sources;
+		const templates = promptTemplates ?? (() => []);
+		// Templates come from the disk; a listing that fails (a workspace removed under the
+		// session) leaves the built-in commands, never the keystroke's crash.
+		this.promptTemplates = () => {
+			try {
+				return templates();
+			} catch {
+				return [];
+			}
+		};
+	}
+
+	/**
+	 * Prompt templates as slash commands, after the built-in reference so a
+	 * template can never shadow a built-in spelling in the menu. Namespaced
+	 * plugin prompts (`wtfp:help`, `demo-pack:status`) sort with their package.
+	 */
+	private promptCommandItems(
+		templates: ReadonlyArray<PromptCommandTemplate>,
+		prefix: string,
+		builtinNames: ReadonlySet<string>,
+		range: { start: number; end: number },
+	): SlashCompletionItem[] {
+		const items: SlashCompletionItem[] = [];
+		for (const template of listedPrompts(templates, prefix, builtinNames)) {
+			const name = template.name;
+			const { summary, does, hint } = promptRowWords(template, GLYPH.sep);
+			const description = compactDescription(summary);
+			const item: SlashCompletionItem = {
+				id: `prompt:${name}`,
+				kind: "command",
+				value: name,
+				label: rowLabel(name, hint),
+				effectDescription: template.unavailable
+					? `Prompt template unavailable: ${template.unavailable}`
+					: template.displayOnly
+						? `Reference card shown to you; nothing is sent to the model: ${does}`
+						: `Prompt template: ${summary}`,
+				path: `/${name}`,
+				usage: hint ? `/${name} ${hint}` : `/${name}`,
+				...(template.unavailable ? { nextAction: "Unavailable until the package reference resolves." } : {}),
+				replacement: range,
+				appendSpace: Boolean(hint),
+				runsBare: !hint,
+			};
+			if (description) item.description = description;
+			if (hint) item.remainingGrammar = truncateToWidth(hint, ARGUMENT_HINT_BUDGET);
+			if (template.unavailable) item.disabledReason = template.unavailable;
+			items.push(item);
+		}
+		return items;
+	}
+
+	async getSuggestions(
+		lines: string[],
+		cursorLine: number,
+		cursorCol: number,
+		options: { signal: AbortSignal; force?: boolean },
+	): Promise<AutocompleteSuggestions | null> {
+		const generation = ++this.generation;
+		const context = slashContext(lines, cursorLine, cursorCol);
+		if (!context) {
+			const reference = fileReferenceContext(lines, cursorLine, cursorCol);
+			if (reference) {
+				const values = await this.fileReferences({ query: reference.query, signal: options.signal });
+				if (generation !== this.generation || options.signal.aborted || values.length === 0) return null;
+				return {
+					prefix: reference.prefix,
+					items: values.map((value): SlashCompletionItem => {
+						const quotedDirectory = value.isDirectory && value.value.endsWith('"');
+						return {
+							id: value.id,
+							kind: value.isDirectory ? "open-submenu" : "value",
+							value: value.value,
+							label: value.label,
+							description: value.description,
+							effectDescription: value.description,
+							replacement: reference.replacement,
+							appendSpace: !value.isDirectory,
+							...(quotedDirectory ? { cursorOffset: -1 } : {}),
+							...(value.isDirectory ? { submenu: { parent: `@${value.path}`, back: true } } : {}),
+						};
+					}),
+				};
+			}
+			const suggestions = await this.files.getSuggestions(lines, cursorLine, cursorCol, options);
+			if (!suggestions || generation !== this.generation || options.signal.aborted) return null;
+			const range = genericTokenRange(lines[cursorLine] ?? "", cursorCol);
+			return {
+				prefix: suggestions.prefix,
+				items: suggestions.items.map((item, index) => ({
+					...item,
+					id: `file:${index}:${item.value}`,
+					kind: "value" as const,
+					replacement: range,
+					appendSpace: false,
+					...(item.description ? { effectDescription: item.description } : {}),
+				})),
+			};
+		}
+		const refs = commandReference();
+		const exactRef = refs.find((candidate) => candidate.name.toLowerCase() === context.command.toLowerCase());
+		if (cursorCol === context.commandEnd && options.force && exactRef && BARE_VALID_PARENTS.has(exactRef.name)) {
+			const item: SlashCompletionItem = {
+				id: `open:${exactRef.name}`,
+				kind: "open-submenu",
+				value: "",
+				label: `Open ${GLYPH.ellipsis}`,
+				description: `Open /${exactRef.name} actions`,
+				effectDescription: `Open /${exactRef.name} actions`,
+				replacement: { start: context.commandEnd, end: context.commandEnd },
+				appendSpace: true,
+				submenu: { parent: exactRef.name, back: true },
+			};
+			return { items: [item], prefix: "" };
+		}
+		if (cursorCol === context.commandEnd && options.force && exactRef?.args) {
+			const item: SlashCompletionItem = {
+				id: `advance:${exactRef.name}`,
+				kind: "command",
+				value: exactRef.name,
+				label: exactRef.name,
+				description: exactRef.description,
+				effectDescription: exactRef.description,
+				replacement: { start: context.commandStart, end: context.commandEnd },
+				appendSpace: true,
+			};
+			return { items: [item], prefix: context.command };
+		}
+		if (cursorCol <= context.commandEnd) {
+			const prefix = context.line.slice(context.commandStart, cursorCol);
+			// A complete built-in name wins: Enter runs it instead of a longer sibling (`/skill`, not `/skills`).
+			// An alias or a prompt template typed in full is the same: `/status` opens Usage and
+			// `/review` runs its template instead of a fuzzy row (`status-report`, `/hub`).
+			// One listing serves the exact-name guard, the template rows and the extension-command
+			// shadowing check; each listing of plugin prompts costs a plugin walk.
+			const templates = this.promptTemplates();
+			if (
+				refs.some((ref) => ref.name === prefix || ref.aliases?.some((alias) => alias.name === prefix)) ||
+				templates.some((template) => template.name === prefix)
+			)
+				return null;
+			let matches: ReadonlyArray<CommandMatch> = matchCommandReference(prefix, refs).filter(
+				(match) => !this.hidden(match.ref.name),
+			);
+			if (prefix.length === 0) matches = personalOrder(matches, this.commandCounts());
+			matches = this.usableFirst(matches);
+			const commandItems: SlashCompletionItem[] = matches.map((match) => this.commandItem(match, context));
+			const nameClass = commandItems.filter((_, index) => {
+				const kind = matches[index]?.class;
+				return kind === "exact" || kind === "name";
+			});
+			const items: SlashCompletionItem[] = [...nameClass];
+			const promptNames = templates.map((prompt) => prompt.name);
+			const extensionRows = resolveExtensionCommands(this.extensionCommands(), promptNames);
+			const replacements = new Set(
+				extensionRows
+					.filter((row) => row.replaces === "prompt" && row.available)
+					.map((row) => row.invocation.toLowerCase()),
+			);
+			items.push(
+				...this.promptCommandItems(
+					templates.filter((template) => !replacements.has(template.name.toLowerCase())),
+					prefix,
+					new Set(refs.map((ref) => ref.name.toLowerCase())),
+					{
+						start: context.commandStart,
+						end: context.commandEnd,
+					},
+				),
+			);
+			for (const row of extensionRows) {
+				if (
+					!row.invocation.toLowerCase().startsWith(prefix.toLowerCase()) ||
+					(row.replaces === "prompt" && !row.available) ||
+					(row.replaces !== "prompt" && promptNames.some((name) => name.toLowerCase() === row.invocation.toLowerCase()))
+				)
+					continue;
+				items.push({
+					id: `extension:${row.invocation}`,
+					kind: "command",
+					value: row.invocation,
+					label: row.invocation,
+					description: compactDescription(`extension (${row.scope}): ${row.description}`) ?? row.description,
+					effectDescription: `${row.description.replace(/[.\s]+$/u, "")}. Runs installed operator extension code; output is local to you.`,
+					path: `/${row.invocation}`,
+					usage: `/${row.invocation}`,
+					...(!row.available ? { nextAction: `Unavailable: ${row.reason ?? "runtime unavailable"}.` } : {}),
+					replacement: { start: context.commandStart, end: context.commandEnd },
+					appendSpace: true,
+					...(!row.available ? { disabledReason: row.reason ?? "runtime unavailable" } : {}),
+				});
+			}
+			items.push(...commandItems.slice(nameClass.length));
+			return items.length ? { items, prefix } : null;
+		}
+
+		// A hidden command typed in full (`/archive`) still completes its arguments.
+		const ref = commandReference({ includeHidden: true }).find(
+			(candidate) => candidate.name.toLowerCase() === context.command.toLowerCase(),
+		);
+		if (!ref?.args) return null;
+		const argumentText = context.line.slice(context.argsStart);
+		const argumentCursor = Math.max(0, cursorCol - context.argsStart);
+		const grammar = completionGrammar(ref.name, ref.args);
+		const result = completeArgs(grammar, argumentText, argumentCursor);
+		if (!result) return null;
+		const beforeCursor = argumentText.slice(result.tokenStart, argumentCursor);
+		const selectedSubcommand = Object.keys(ref.args.subcommands ?? {}).find(
+			(name) => argumentText.trimStart().split(/\s+/, 1)[0] === name,
+		);
+		const parentUsage = usageText(ref, selectedSubcommand);
+		const items: SlashCompletionItem[] = [];
+		for (const completion of result.completions) {
+			if (completion.completionSlot) {
+				const values = await this.sourceBySlot[completion.completionSlot]({
+					slot: completion.completionSlot,
+					prefix: beforeCursor,
+					command: ref.name,
+					...(selectedSubcommand ? { subcommand: selectedSubcommand } : {}),
+					line: context.line,
+					cursor: cursorCol,
+					generation,
+					signal: options.signal,
+				});
+				if (generation !== this.generation || options.signal.aborted) return null;
+				for (const value of sourceRows(values, beforeCursor)) {
+					items.push(
+						this.itemFromValue(
+							value,
+							completion,
+							context.argsStart + result.tokenStart,
+							context.argsStart + result.tokenEnd,
+							[`/${ref.name}`, ...(selectedSubcommand ? [selectedSubcommand] : [])].join(` ${PATH_SEPARATOR} `),
+							parentUsage,
+							result.quote,
+						),
+					);
+				}
+				continue;
+			}
+			if (completion.token === beforeCursor && options.force !== true) continue;
+			const effectDescription =
+				completion.description ??
+				ref.subcommandDescriptions?.[completion.token] ??
+				(ref.name === "settings" ? SETTINGS_AREAS.find((area) => area.id === completion.token)?.label : undefined);
+			const isFlag = completion.token.startsWith("--");
+			const trail = [`/${ref.name}`, ...(selectedSubcommand ? [selectedSubcommand] : [])];
+			const subSpec = result.submenu ? ref.args.subcommands?.[completion.token] : undefined;
+			const item: SlashCompletionItem = {
+				id: `${ref.name}:${completion.token}`,
+				kind: result.submenu ? "submenu" : isFlag ? "flag" : "value",
+				value: completion.token,
+				// The grammar rides in the name cell; the purpose owns the description cell.
+				label: rowLabel(completion.token, result.submenu ? labelGrammar(subSpec) : completion.hint),
+				path: [...trail, ...(result.submenu || isFlag ? [completion.token] : [])].join(` ${PATH_SEPARATOR} `),
+				usage: result.submenu && subSpec ? usageText(ref, completion.token) : parentUsage,
+				replacement: { start: context.argsStart + result.tokenStart, end: context.argsStart + result.tokenEnd },
+				appendSpace: completion.hasNextSlot,
+				// A verb is required exactly when the bare command does nothing on its own.
+				required: result.submenu ? !runsBare(ref.name) : completion.required,
+			};
+			const description = compactDescription(effectDescription);
+			if (description) item.description = description;
+			if (completion.hint) item.remainingGrammar = completion.hint;
+			if (effectDescription) item.effectDescription = effectDescription;
+			if (result.submenu) item.submenu = { parent: ref.name, back: true };
+			if (result.quote) item.quote = result.quote;
+			if (
+				this.isTurnInFlight() &&
+				result.submenu &&
+				SUBCOMMANDS_REFUSED_DURING_TURN.has(`${ref.name} ${completion.token}`)
+			) {
+				item.disabledReason = REFUSED_DURING_TURN_REASON;
+				item.description = REFUSED_DURING_TURN_REASON;
+				item.nextAction = `Unavailable: ${REFUSED_DURING_TURN_REASON}.`;
+			}
+			items.push(item);
+		}
+		return items.length ? { items, prefix: beforeCursor } : null;
+	}
+
+	/** Within each run of one match class, rows this session cannot use follow the usable ones. */
+	private usableFirst(matches: ReadonlyArray<CommandMatch>): ReadonlyArray<CommandMatch> {
+		const out: CommandMatch[] = [];
+		let start = 0;
+		while (start < matches.length) {
+			let end = start;
+			while (end < matches.length && matches[end]?.class === matches[start]?.class) end++;
+			const run = matches.slice(start, end);
+			const blocked = run.filter((match) => this.unavailable(match.ref.name) !== undefined);
+			out.push(...run.filter((match) => !blocked.includes(match)), ...blocked);
+			start = end;
+		}
+		return out;
+	}
+
+	/** One built-in command row; alias and verb rows insert the full command they stand for. */
+	private commandItem(match: CommandMatch, context: SlashContext): SlashCompletionItem {
+		const { ref } = match;
+		const replacement = { start: context.commandStart, end: context.commandEnd };
+		const group = ref.group.toLowerCase();
+		let item: SlashCompletionItem;
+		if (match.alias || match.verb) {
+			const line = match.alias
+				? match.alias.args
+					? `${ref.name} ${match.alias.args}`
+					: ref.name
+				: `${ref.name} ${match.verb}`;
+			const spec = match.verb ? ref.args?.subcommands?.[match.verb] : match.alias?.args ? undefined : ref.args;
+			const effect = (match.verb ? ref.subcommandDescriptions?.[match.verb] : undefined) ?? ref.description;
+			item = {
+				id: match.alias ? `alias:${match.alias.name}` : `verb:${ref.name}:${match.verb}`,
+				kind: "command",
+				value: line,
+				label: match.alias ? `${match.alias.name} ${GLYPH.next} /${line}` : rowLabel(line, labelGrammar(spec)),
+				effectDescription: effect,
+				path: `/${line.replace(" ", ` ${PATH_SEPARATOR} `)}`,
+				group,
+				usage: match.verb ? usageText(ref, match.verb) : match.alias?.args ? `/${line}` : ref.usage,
+				replacement,
+				appendSpace: line.includes(" ") || Boolean(spec && (spec.positionals || spec.flags || spec.subcommands)),
+				// An alias runs what it stands for (`/clear` Enter starts `/new`); a verb row only completes.
+				runsBare: match.alias !== undefined && runsBare(line),
+			};
+			const description = compactDescription(effect);
+			if (description) item.description = description;
+		} else {
+			const remainingGrammar = compactArgumentHint(ref.args);
+			const subcommands = Object.keys(ref.args?.subcommands ?? {});
+			const description = compactDescription(ref.description);
+			item = {
+				id: `command:${ref.name}`,
+				kind: "command",
+				value: ref.name,
+				label:
+					subcommands.length > 0
+						? rowLabel(ref.name, `${PARENT_MARK} ${subcommands.join("|")}`)
+						: rowLabel(ref.name, labelGrammar(ref.args)),
+				effectDescription: ref.description,
+				path: `/${ref.name}`,
+				group,
+				usage: ref.usage,
+				replacement,
+				appendSpace: Boolean(ref.args && (ref.args.positionals || ref.args.flags || ref.args.subcommands)),
+				// Only a row whose name the operator typed runs on Enter; a letters or description
+				// match (`/session` finding compact) completes and waits.
+				runsBare: (match.class === "exact" || match.class === "name") && runsBare(ref.name),
+			};
+			if (description) item.description = description;
+			if (remainingGrammar) item.remainingGrammar = remainingGrammar;
+			if (match.class === "description") item.describedOnly = true;
+		}
+		const unavailable = this.unavailable(ref.name);
+		if (unavailable) {
+			item.disabledReason = unavailable;
+			item.description = unavailable;
+			item.nextAction = `Unavailable: ${unavailable}.`;
+		} else if (this.isTurnInFlight() && COMMANDS_REFUSED_DURING_TURN.has(ref.name)) {
+			item.disabledReason = REFUSED_DURING_TURN_REASON;
+			item.description = REFUSED_DURING_TURN_REASON;
+			item.nextAction = `Unavailable: ${REFUSED_DURING_TURN_REASON}.`;
+		}
+		return item;
+	}
+
+	private itemFromValue(
+		value: CompletionValue & { lettersOnly?: true },
+		grammar: ArgCompletion,
+		start: number,
+		end: number,
+		parentPath: string,
+		usage: string,
+		quote?: '"' | "'",
+	): SlashCompletionItem {
+		return {
+			id: value.id,
+			kind: "value",
+			value: value.value,
+			label: value.label,
+			description: value.disabledReason ?? value.description,
+			replacement: { start, end },
+			appendSpace: grammar.hasNextSlot,
+			effectDescription: value.description,
+			path: parentPath,
+			usage,
+			required: grammar.required,
+			...(value.disabledReason ? { nextAction: `Unavailable: ${value.disabledReason}.` } : {}),
+			...(grammar.completionSlot ? { completionSlot: grammar.completionSlot } : {}),
+			...(quote ? { quote } : {}),
+			...(value.disabledReason ? { disabledReason: value.disabledReason } : {}),
+			...(value.lettersOnly ? { lettersOnly: true } : {}),
+		};
+	}
+
+	applyCompletion(
+		lines: string[],
+		cursorLine: number,
+		_cursorCol: number,
+		item: AutocompleteItem,
+		_prefix: string,
+	): { lines: string[]; cursorLine: number; cursorCol: number } {
+		const completion = item as SlashCompletionItem;
+		if (!completion.replacement || completion.disabledReason) {
+			return { lines, cursorLine, cursorCol: _cursorCol };
+		}
+		const current = lines[cursorLine] ?? "";
+		if (completion.appendSpace && completion.quote && current[completion.replacement.end] === completion.quote) {
+			const needsSpace = !/\s/.test(current[completion.replacement.end + 1] ?? "");
+			const inserted = `${completion.value}${completion.quote}${needsSpace ? " " : ""}`;
+			const next = [...lines];
+			next[cursorLine] =
+				`${current.slice(0, completion.replacement.start)}${inserted}${current.slice(completion.replacement.end + 1)}`;
+			return {
+				lines: next,
+				cursorLine,
+				cursorCol: completion.replacement.start + inserted.length + (completion.cursorOffset ?? 0),
+			};
+		}
+		const needsSpace = completion.appendSpace && !/\s/.test(current[completion.replacement.end] ?? "");
+		const inserted = `${completion.value}${needsSpace ? " " : ""}`;
+		const next = [...lines];
+		next[cursorLine] =
+			`${current.slice(0, completion.replacement.start)}${inserted}${current.slice(completion.replacement.end)}`;
+		return {
+			lines: next,
+			cursorLine,
+			cursorCol: completion.replacement.start + inserted.length + (completion.cursorOffset ?? 0),
+		};
+	}
+
+	shouldTriggerFileCompletion(lines: string[], cursorLine: number, cursorCol: number): boolean {
+		if (slashContext(lines, cursorLine, cursorCol) !== null) return false;
+		if (fileReferenceContext(lines, cursorLine, cursorCol) !== null) return true;
+		return this.files.shouldTriggerFileCompletion(lines, cursorLine, cursorCol);
+	}
+}
+
+export function createSlashCommandAutocompleteProvider(options: SlashAutocompleteOptions = {}): AutocompleteProvider {
+	return new PancodeAutocompleteProvider(
+		options.basePath ?? process.cwd(),
+		options.fdPath === undefined ? resolveFdBinary() : options.fdPath,
+		options.completionSources ?? emptyCompletionSources(),
+		options.fileReferenceSource,
+		options.promptTemplates,
+		options.extensionCommands,
+		options.isTurnInFlight,
+		options.commandCounts,
+		options.unavailable,
+		options.hidden,
+	);
+}

@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import path from "node:path";
+import { resolvePackageRoot } from "../../core/package-root.js";
+import { canonicalizePath, canonicalizeRawPath, type PathWalkMemo } from "../../core/path-canonical.js";
+import { isSameOrDescendant } from "../../core/path-containment.js";
+import { storeReadRoots } from "../../core/store-paths.js";
+import { ToolNames } from "../../core/tool-names.js";
+import { pancodeConfigDir, pancodeStateDir } from "../../core/xdg.js";
+import { expandPath, readPathVariants } from "../../tools/path-utils.js";
+import { INTEROP_AGENT_KINDS, interopUserRoot } from "../interop/registry.js";
+import { telemetryRunsDirectory } from "../telemetry/paths.js";
+
+/**
+ * The read-class tools that take a path from the model. Each opens whatever
+ * the path resolves to, so each is held to the workspace the same way. data
+ * opens its file as directly as read does, so it meets the same escape gate,
+ * and so does the store's put, whose path is the workspace file it copies.
+ */
+const READ_SCOPE_TOOLS: ReadonlySet<string> = new Set([
+	ToolNames.Read,
+	ToolNames.Ls,
+	ToolNames.Count,
+	ToolNames.Grep,
+	ToolNames.Find,
+	ToolNames.Data,
+	ToolNames.Store,
+]);
+
+export function isReadScopeTool(tool: string): boolean {
+	return READ_SCOPE_TOOLS.has(tool);
+}
+
+export interface ReadScopeExemptRoot {
+	path: string;
+	/** True for a tree tools can never write (skill authority, foreign agent dirs). */
+	operatorOwned: boolean;
+}
+
+/**
+ * Trees outside the workspace that PanCode itself points the model at: installed
+ * skills, plugins, and extensions (a loaded SKILL.md names sibling files), the
+ * user skill roots of the agents PanCode interoperates with, the offload scratch
+ * a truncation stub names, dispatch run scopes whose result objects a judge reads, this project's store directory
+ * whose blob paths `store get` hands back (a worker in a task worktree keys the same project), and the installed package's own
+ * documentation and source, which the system prompt names for questions about
+ * PanCode itself. They are operator-owned, shipped with the package, or
+ * PanCode-written, the model cannot author them, and zero-access entries still
+ * apply inside them. Lexical on purpose: they are resolved again at every
+ * admission, because an operator may replace a link after the session starts.
+ */
+export function readScopeExemptRoots(cwd: string = process.cwd()): ReadScopeExemptRoot[] {
+	const roots: ReadScopeExemptRoot[] = [];
+	try {
+		const config = pancodeConfigDir();
+		for (const kind of ["skills", "plugins", "extensions"]) {
+			roots.push({ path: path.join(config, kind), operatorOwned: true });
+		}
+		const state = pancodeStateDir();
+		roots.push({ path: path.join(state, "scratch"), operatorOwned: false });
+		roots.push({ path: telemetryRunsDirectory(state), operatorOwned: false });
+		for (const root of storeReadRoots(cwd)) roots.push({ path: root, operatorOwned: false });
+	} catch {
+		// An unresolvable PanCode home exempts nothing.
+	}
+	try {
+		// Only what the docs corpus and the source path name. package.json,
+		// dist and node_modules stay outside: nothing points the model there.
+		const pkg = resolvePackageRoot();
+		for (const entry of ["docs", "src", "README.md", "CHANGELOG.md"]) {
+			roots.push({ path: path.join(pkg, entry), operatorOwned: false });
+		}
+	} catch {
+		// A package root that cannot be found exempts nothing.
+	}
+	// Exactly the user skill roots the loader discovers, so none under PANCODE_INTEROP_HOME=none (interopUserRoot).
+	for (const kind of INTEROP_AGENT_KINDS) {
+		const root = kind.userSkillRoot === undefined ? null : interopUserRoot(kind, kind.userSkillRoot);
+		if (root !== null) roots.push({ path: root.path, operatorOwned: true });
+	}
+	return roots;
+}
+
+/**
+ * Every spelling a read tool can open for one path argument, already expanded
+ * the way the tool expands it and never to be expanded again (a fallback
+ * carries the narrow no-break space that expansion folds away): the path as
+ * given, then the fallbacks resolveReadPath tries on the resolved path when it
+ * does not exist. A fallback can name a link the plain spelling does not, so
+ * the path policy and the scope check judge each of them.
+ */
+export function readScopeSpellings(rawPath: string, callCwd: string): string[] {
+	const expanded = expandPath(rawPath);
+	const resolved = canonicalizeRawPath(expanded, callCwd) ?? path.resolve(callCwd, expanded);
+	return [expanded, ...readPathVariants(resolved)];
+}
+
+function hasParentSegment(rawPath: string): boolean {
+	return rawPath.split(/[\\/]/u).includes("..");
+}
+
+/**
+ * Where a read-class path call lands when that is outside the workspace, or
+ * null when it stays inside or inside an exempt root. The target is resolved
+ * the way the read tools resolve it (resolveReadPath: physical, `link/..`
+ * steps up from the link's target). A path that cannot be canonicalized is
+ * outside: nothing proves where a read through it lands.
+ *
+ * An exempt root admits a target whose real path sits under the root's real
+ * path. An operator-owned root also admits a path that, as written, has no
+ * `..` and sits under the root as written: an operator may install one skill
+ * as a link into a dotfiles tree, and what a tree no tool can write links to
+ * is the operator's choice.
+ */
+export function readScopeEscape(
+	rawPath: string,
+	callCwd: string,
+	workspace: string,
+	exemptRoots: ReadonlyArray<ReadScopeExemptRoot>,
+	memo: PathWalkMemo,
+): string | null {
+	for (const spelling of readScopeSpellings(rawPath, callCwd)) {
+		const escaped = spellingEscape(spelling, callCwd, workspace, exemptRoots, memo);
+		if (escaped !== null) return escaped;
+	}
+	return null;
+}
+
+function spellingEscape(
+	expanded: string,
+	callCwd: string,
+	workspace: string,
+	exemptRoots: ReadonlyArray<ReadScopeExemptRoot>,
+	memo: PathWalkMemo,
+): string | null {
+	const physical = canonicalizeRawPath(expanded, callCwd, memo);
+	if (physical !== null && isSameOrDescendant(physical, workspace)) return null;
+	const lexical = path.resolve(callCwd, expanded);
+	const lexicalEligible = !hasParentSegment(expanded);
+	for (const root of exemptRoots) {
+		if (root.operatorOwned && lexicalEligible && isSameOrDescendant(lexical, root.path)) return null;
+		if (physical === null) continue;
+		const realRoot = canonicalizePath(root.path, memo);
+		if (realRoot !== null && isSameOrDescendant(physical, realRoot)) return null;
+	}
+	return physical ?? lexical;
+}

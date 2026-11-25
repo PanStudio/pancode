@@ -1,0 +1,80 @@
+name: hub index
+
+# Signs and publishes the PanHub index after a change to hub/ lands on the version branch or main. The signing key
+# exists only as the HUB_SIGNING_KEY secret of the protected hub-signing environment, which the maintainer creates.
+# The checked-out tree is data: this job runs the index check and scripts/hub-sign.mjs, never a script from hub/.
+on:
+  push:
+    branches: ['v[0-9][0-9][0-9]*', main]
+    # Markdown under hub/ changes no signed bytes, so editing it signs nothing.
+    paths: ['hub/**', '!hub/**/*.md']
+
+permissions:
+  contents: read
+
+# One queue for every branch, since all of them publish to the same release; the newest pending run wins.
+concurrency:
+  group: hub-index
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    name: sign hub index
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Off until the repository variable HUB_SIGNING is 'on': 0.9.0 compiles no PanHub root key, so no client could
+    # verify a signed index, and the hub-signing environment and its key do not exist yet.
+    if: vars.HUB_SIGNING == 'on'
+    environment: hub-signing
+    # Uploads release assets; pushes no commit and opens no pull request.
+    permissions:
+      contents: write
+    steps:
+      - name: Use runner scratch for temporary files
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      # Before the key exists on disk: the index must match the pinned pack trees it describes.
+      - name: Check the index
+        run: pnpm run hub:check
+      - name: Write the signing key to runner scratch
+        env:
+          HUB_SIGNING_KEY: ${{ secrets.HUB_SIGNING_KEY }}
+        run: |
+          umask 077
+          test -n "$HUB_SIGNING_KEY"
+          printf '%s\n' "$HUB_SIGNING_KEY" > "$RUNNER_TEMP/hub-signing.key.pem"
+          chmod 600 "$RUNNER_TEMP/hub-signing.key.pem"
+      - name: Sign the index
+        run: >-
+          node scripts/hub-sign.mjs sign
+          --key-file "$RUNNER_TEMP/hub-signing.key.pem"
+          --index hub/index.yaml
+          --commit "$GITHUB_SHA"
+          --sequence ${{ github.run_number }}
+          --expires-days 30
+          --out "$RUNNER_TEMP/hub-index"
+      # Against the tracked certificate and the root keys compiled into PanCode, through the verification PanCode runs.
+      - name: Verify the signed index
+        run: >-
+          node scripts/hub-sign.mjs verify
+          --envelope "$RUNNER_TEMP/hub-index/index.envelope.json"
+          --index hub/index.yaml
+          --certificate hub/keys/signing.json
+      # The certificate first and the envelope last, so a client reading mid-upload sees a hash mismatch and refuses.
+      - name: Publish to the hub-index release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for asset in hub/keys/signing.json hub/index.yaml "$RUNNER_TEMP/hub-index/index.envelope.json"; do
+            gh release upload hub-index "$asset" --clobber --repo "$GITHUB_REPOSITORY"
+          done
+      - name: Delete the signing key
+        if: ${{ always() }}
+        run: rm -f "$RUNNER_TEMP/hub-signing.key.pem"

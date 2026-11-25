@@ -1,0 +1,2576 @@
+# Fleet Dispatch
+
+PanCode can hand a bounded piece of work to a worker agent, run several workers
+side by side, and run a saved playbook of steps as a fleet. Workers run on this
+machine or on SSH nodes you have verified. This guide covers how to dispatch
+workers, how to write and run playbooks, and how to inspect, cancel and land
+what they produce.
+
+Registering a remote node keeps unpinned work local. An explicit pin, session
+choice or standing preference selects remote execution through the same
+admission, worker authority, verification and run record paths.
+
+Source of truth: `src/domains/dispatch/`, [cluster.ts](../../src/domains/scheduling/cluster.ts),
+[dispatch.ts](../../src/tools/dispatch.ts), [dispatch-schema.ts](../../src/tools/dispatch-schema.ts),
+[monitor.ts](../../src/tools/monitor.ts), [fleet.ts](../../src/cli/fleet.ts), and the contract tests under
+`tests/contracts/`.
+
+## Quick start
+
+A worker is a separate agent that does one bounded task on this machine and
+returns a result with a sealed run record. No fleet setup is needed.
+
+1. `pancode agents` lists the workers: `coder` edits code, `tester` adds
+   tests, `debugger` and `verifier` only check.
+2. In a session, run `/run verifier Run the test and lint checks and report
+   each result.` Add `--worktree` to give an editing worker its own branch,
+   or `--read-only` to keep it from changing anything.
+3. Alt+W shows it running. `/fleet share` brings its answer into the
+   conversation; `pancode fleet status` and `fleet view <runId>` show it
+   from another terminal.
+
+Workers use `fleet.default`, the Workers area of `/settings`; each runs in its
+own sandbox ([Workers at each level](../architecture/safety-model.md#workers-at-each-level)).
+To run them on another machine, see [Node setup](#node-setup).
+
+## Start here
+
+| If you want to | Go to |
+| --- | --- |
+| Add machines to the fleet | [Node setup](#node-setup), then [Doctor preflight](#doctor-preflight) |
+| Understand how work is placed and admitted | [Placement and process-safe admission](#placement-and-process-safe-admission) |
+| Choose which target and model a worker uses | [Worker routing](#worker-routing-profiles-agent-bindings-and-per-call-pins) |
+| Choose a review, compete, or council shape | [Topologies](#topologies) |
+| Write or run a repo-owned playbook | [Shipped playbooks and playbook versions](#shipped-playbooks-and-playbook-versions), [Playbook authoring](#playbook-authoring) |
+| Know what happens when a route fails | [Failure semantics](#failure-semantics), [Assignments, attempts, and failover](#assignments-attempts-and-failover) |
+| Watch, cancel, or inspect running work | [Operator visibility](#operator-visibility), [Workers dock and dashboard](#workers-dock-and-dashboard), [Inspect fleet runs from the CLI](#inspect-fleet-runs-from-the-cli) |
+| Read what a run proved | [Run records](#run-records) |
+
+## Architecture
+
+The orchestrator writes one WorkerSpec JSON line to a worker's stdin and reads
+NDJSON events from its stdout. A remote worker is the same protocol tunneled
+through `ssh -T`, so prompts, safety, run records and telemetry do not change with
+distance. The `local` and `ssh` transports implement one `WorkerTransport`
+interface ([transport.ts](../../src/domains/dispatch/transport.ts)). The frames, the announce and
+attestation handshake, drift handling and worker exit codes are specified in
+[worker-dispatch-mechanics.md](../architecture/worker-dispatch-mechanics.md). Attestation is strict protocol
+evidence, not proof against a malicious child that controls its own process.
+SSH aborts escalate against the attested remote process group.
+
+Scout routing is advisory. After nine or more read-only exploration calls in
+one model round with no successful Scout dispatch in the user turn, middleware
+adds one model-only reminder at the end of the turn, at most once per user turn
+([dispatch-nudge.ts](../../src/domains/middleware/dispatch-nudge.ts)). The reminder costs no extra model round and the operator
+does not see it. Direct reads remain allowed, and PanCode does not rewrite a broad
+request into a Scout run. A second rail adds one advisory transcript line when a
+final reply claims a worker or Scout result and no dispatch ran in the turn.
+
+Design decisions that shape everything else:
+
+- Per-node inference targets, no central proxy. Target URLs resolve on the
+  node the worker runs on, so `localhost` in a worker's target means that
+  node's own inference server. The orchestrator-resolved API key rides the
+  WorkerSpec.
+- Verified project files. The project uses the same absolute path on every
+  node. PanCode proves shared storage through a file challenge, or verifies
+  independent clean Git checkouts with the same HEAD and root history.
+  Independent-checkout edits return through isolated task branches over SSH.
+  There is no arbitrary repository sync, dataset staging or path mapping.
+- Deterministic placement and measured routing. Exact pins remain exact.
+  Unpinned placement stays local until an operator preference selects a node;
+  the cross-process lease state is the final capacity authority. Route quality
+  can be activated only for named roles and postures after exact-tuple readiness,
+  and hard constraints always eliminate before any score.
+- Environment whitelist. The SSH command carries an explicit environment
+  (`AI_AGENT=pancode`, `PANCODE_WORKER_PGID=$$`, and any configured `PANCODE_WORKER_LABELS`);
+  the orchestrator's `process.env` never crosses the wire. Node residency is
+  projected into the target lifecycle carried by the WorkerSpec.
+  `PANCODE_WORKER_PGID` names the remote process group so an abort escalates
+  against the whole group rather than one process.
+
+## Worker prompt and budget admission
+
+Dispatch resolves the recipe, target, read-only restriction and final canonical
+toolkit, then compiles one stable worker harness; its layers are described in
+[prompt-envelope-and-tools.md](../architecture/prompt-envelope-and-tools.md). Project context, memory, the bounded briefing,
+pipeline input, task text and run posture stay dynamic messages, so they do not
+churn stable prompt hashes.
+
+One run has a first-class singular shape: `task` is the worker assignment and
+`briefing` is separate bounded context, at most 12,000 UTF-8 bytes. A briefing
+is untrusted task data. It carries no conversation or session history, never
+replaces `task`, never gets copied into the run's task, and arrives as a
+separately delimited dynamic prompt message. `tasks` is the batch form. A shared
+top-level briefing applies to string tasks and to task objects without their own;
+an object-level briefing wins. Supplying both `task` and `tasks` fails instead of
+choosing one. After approval, execution consumes only the registry-owned resolved
+plan, so later mutation of raw arguments cannot change either field. What a
+worker inherits of the parent session is a separate choice, the `context`
+argument (`isolated` by default, `fork` for native workers, or `splice`); see
+[worker-context.md](../architecture/worker-context.md). A dispatched worker never
+receives tools an extension promoted into the main session or pinned context
+blocks; those stay with the main session. The builtin `count` tool reaches a
+worker only through a prompt template's `delegated-tools` list
+([extensions-and-sharing.md](extensions-and-sharing.md#prompt-template-tool-ceilings)).
+
+A native worker reserves room for its reply the same way main-session admission
+does, so a `fork` worker on the same model and context window as a parent turn
+that fitted is admitted instead of failing with `worker_context_exhausted`.
+
+Recipes declare a default `budget: {toolCalls, synthesis}` and may
+add `maximum: {toolCalls}` inside it. A dispatch call may send
+`budget: {toolCalls, retryRevision?}`. Every phase needs a positive
+integer `toolCalls`. `retryRevision` has the same field and states the estimate that a later automatic retry or review revision may use; it may not be smaller
+than the requested phase. Admission never refuses a
+request for exceeding the recipe maximum or the operator cap. It resolves one
+immutable envelope from the recipe policy, the request, the effective worker
+budget and every clamp or escalation reason, then records the envelope on the
+run ledger row and in the run's `run.settled`. `monitor`, `fleet status` and the live fleet card print the
+recipe policy, the requested envelope, the effective envelope and the clamp or
+escalation reason ([budget-envelope.ts](../../src/domains/dispatch/budget-envelope.ts)).
+
+The envelope is advisory for every recipe; [built-in-agents.md](built-in-agents.md) describes the recipe side.
+`toolCalls` is an estimate. At that count the worker gets
+one reminder that tools stay available until a hard ceiling. The ceiling is the recipe's
+`maximum.toolCalls` when it declares one, else `fleet.limits.toolCallsPerRun` (default 300),
+and never above `fleet.limits.toolCallsPerRun`; it is raised to the phase's admitted estimate when that is larger. That estimate is
+`toolCalls` on the first phase and the `retryRevision` estimate only on a retry or review revision. Admission holds an estimate above
+`fleet.limits.toolCallsPerRun` at that cap and records a `global-cap-clamp` reason, so a
+larger `budget.toolCalls` can lift the ceiling above a recipe's maximum but never above the
+cap. Native workers stop at the ceiling. The Claude SDK
+runtime mediates each call and, once the ceiling is reached, denies every further tool
+call ([sdk-runtime.ts](../../src/engine/claude/sdk-runtime.ts)).
+
+Reaching the advisory ceiling ends tool use on a native worker. A worker with delivery
+tools (`write` and `edit`) fails with `worker_tool_call_cap_exhausted`; a reporting
+worker seals its synthesis (see [Failure semantics](#failure-semantics)). Subprocess
+runtimes (Claude Code, Antigravity and the Codex, OpenCode and Pi CLIs) and ACP delegation peers run an opaque loop, so
+their envelope is classified `external-one-shot`: PanCode enforces one launch, the
+deadline, an output cap, cancellation and result-contract validation, and records the
+per-tool numbers as unobserved and not enforced.
+
+## MCP tools in native workers
+
+A recipe can request exact `mcp_<serverId>__<tool>` capability names in its tool
+lists. Native dispatch resolves each declaration and action class before launch,
+refuses an untrusted or stale server by name, and seals the server digest and
+tool names in the worker permit. The worker launches only the matching declared
+server, under its sandbox and at the task worktree root for a project server.
+Its `RunResult` permit records the attested MCP tools. CLI runtimes and ACP peers do not
+gain PanCode's MCP gateway through this mechanism.
+
+Before each initial or recovery launch, the gateway rechecks the current trust
+and bound entry files against the session's admitted declaration. Changed bytes,
+classes or grants require a new session; refresh does not silently adopt them.
+This closes stale session snapshots, not the filesystem race between hashing a
+file and executing it.
+
+Grant worker-server networking with `network: true` in an operator-owned user
+declaration, or `pancode mcp trust <id> --network` for a project or plugin
+server. The default is no per-server grant. A grant affects that server's
+process; worker shells and other servers keep the run's network policy. On
+Linux it opens the host network namespace, including internet, localhost and
+abstract Unix sockets. Credential masking covers known paths, so other readable
+home secrets can leave through a granted server.
+
+The grant is withheld when a worker write root overlaps the server's launch
+cwd, an entry file's directory, or a project server's project root. Read-only
+workers retain it. Admission and the dispatch result name each withheld grant
+and its reason. See [MCP trust](configuration-reference.md#local-stdio-mcp-configuration-and-trust),
+`src/domains/dispatch/worker-mcp.ts` and `src/domains/safety/worker-permit.ts`.
+
+## Worker routing: profiles, agent bindings, and per-call pins
+
+A worker's target, model and thinking level resolve in this order
+([target-resolution.ts](../../src/domains/dispatch/target-resolution.ts), `resolveDispatchTarget`):
+
+1. The call's `target`. This is the `target` field of the dispatch tool and the
+   `--target` flag of `/run` and `pancode run`.
+2. A named profile from `--agent-profile <name>` on `/run` or `pancode run`.
+3. The agent's binding in `fleet.agentProfiles`.
+4. When the call lists `requiredCapabilities` (`--require`) or a runtime
+   (`--agent-runtime` on `pancode run`, `--runtime` on `/run`), the first of
+   `fleet.default` and then `fleet.profiles` whose target supports them.
+5. `fleet.default`.
+6. When the selected route is unusable, the best available dispatch target, with
+   a warning that names why the first choice failed. An unusable `target` from
+   step 1 fails the call instead, and so does a profile from step 2 or 3 that
+   `fleet.profiles` does not define or that has no target: the call is refused
+   as a route admission refusal (`pancode run` exits 2) rather than run on a
+   target nobody chose. `pancode agents validate` reports such a binding, and
+   `playbook validate` and `fleet run` refuse a playbook whose step agent uses one.
+
+The call's `model` replaces the selected route's model, and `thinking_level`
+replaces its thinking level. Without them the model comes from the selected
+profile, then from `fleet.default` when it names the same target, then from the
+target's `defaultModel`.
+
+```yaml
+fleet:
+  default:                       # route used when nothing more specific applies
+    target: local-qwen
+    model: qwen3-coder
+    thinkingLevel: off
+  profiles:                      # named routes; a profile without a valid target is dropped
+    review:
+      target: big-box
+      model: qwen3-coder-next
+      thinkingLevel: high
+      node: node-a               # optional placement pin, `local` or a fleet.nodes id
+  agentProfiles:                 # agent id to profile name; `auto` is reserved
+    verifier: review
+  rosters:                       # council rosters, 2 to 5 members each
+    default:
+      members:
+        - {label: fast, target: local-qwen}
+        - {label: deep, target: big-box, model: qwen3-coder-next, thinkingLevel: high, color: accent}
+```
+
+A roster member needs a unique `label` matching `[a-z][a-z0-9_-]{0,31}` and an
+existing `target`. `model`, `thinkingLevel` and `color` are optional, and `color`
+is a theme color name or a six-digit hex value. A roster that fails validation is
+dropped as a whole. A member's optional `agent` must name a loaded recipe; a
+council refuses an unknown one, and `pancode agents validate` reports it. ACP
+delegation agents ignore native routing, so `fleet.agentProfiles` cannot bind
+them, and a dispatch to one that carries an agent profile or agent runtime is
+refused rather than dropped. `pancode targets profile` lists, sets,
+removes, renames, binds and unbinds profiles from the shell
+([targets.ts](../../src/cli/targets.ts)); [configuration-and-targets.md](configuration-and-targets.md) owns the
+settings layers.
+
+Saved fleet routing is operator-owned. `fleet.default`, `fleet.profiles`,
+`fleet.agentProfiles`, `fleet.rosters` and `fleet.adaptiveRouting` live in the
+user settings or in a project layer. The project files `.pancode/settings.yaml`
+and `.pancode/settings.local.yaml` apply only while the project `settings`
+surface is trusted (`pancode config trust settings`); an untrusted or changed
+surface is ignored with a notice. A project save from `/settings` writes
+`.pancode/settings.local.yaml` and needs that trust; rosters are edited there as a raw
+collection (Advanced, Raw collections), while profiles and agent routes have guided rows. An agent write to either file asks the operator
+at every autonomy level. `configure_pancode` supports `fleet.default`,
+`fleet.profiles`, `fleet.agentProfiles` and `fleet.rosters` and asks before saving
+those routes; headless and at `yolo` it only proposes them. It does not accept
+`fleet.adaptiveRouting` ([routing-settings.ts](../../src/domains/safety/routing-settings.ts)).
+
+A one-off target or model is never a settings edit. The coordinator pins it with
+the compact dispatch schema's `target` and `model` fields, and may add `node`
+([dispatch-schema.ts](../../src/tools/dispatch-schema.ts)); the rule is prompt guidance in
+[coordinator.md](../../src/domains/prompts/fragments/operating/coordinator.md), and the confirmation rails above are what enforce
+the settings side. Any target, model or node pin makes the call's routing posture
+`manual` and its failover `none` (see
+[Assignments, attempts, and failover](#assignments-attempts-and-failover)).
+
+## Node setup
+
+A fleet node is a machine where a worker process runs. It is separate from an
+inference target: a local worker using a remote model still records `node: local`.
+The implicit `local` node always exists and is never declared in `fleet.nodes`.
+
+Start from the project root with noninteractive SSH access. One command adds
+the node, installs this exact client build when the node lacks it, and records
+the preflight that admits it:
+
+```sh
+pancode fleet nodes setup node-a --host node-a      # add, probe, preview any install
+pancode fleet nodes setup node-a --yes              # install if needed, then record
+pancode fleet nodes setup --all --yes               # every registered node, after a rebuild
+```
+
+Setup accepts the `add` flags below when it adds a node. Without `--yes` it
+stops at the installation preview, so it writes nothing on the node. A node
+that already runs this build is only probed and re-recorded. An unreachable node
+gets guidance: setup needs key-based SSH and a host key already in
+`known_hosts`. Setup installs only when the worker entry is the default
+`pancode worker` or an install setup made; a custom entry is reported and
+left alone. To register a node without probing it:
+
+```sh
+pancode fleet nodes add node-a --host node-a --max-workers 1
+pancode fleet nodes list
+```
+
+`--host` accepts an existing SSH alias, hostname or address. A host may not
+start with `-` or contain whitespace. User, port and identity default to your SSH
+configuration; `--user`, `--port` (1 to 65535) and `--identity-file` override
+them. `--labels cpu,build` supplies declared labels, not observed hardware.
+`--max-workers` takes a positive integer. A node id starts with a letter or
+number, continues with letters, numbers, underscores or hyphens, and holds at
+most 64 characters; `local` is reserved. Registration starts at **not checked**
+and does not change placement. `--test` probes the node right after adding it, and
+`--record` also records that check. CLI and Settings additions default to one slot
+and `residency: observe`. A hand-written `fleet.nodes` entry that omits
+`maxWorkers` gets two slots.
+
+The equivalent user settings are:
+
+```yaml
+fleet:
+  defaultNode: null             # no standing preference; unpinned work stays local
+  nodes:
+    - id: node-a
+      host: node-a              # existing SSH alias, hostname or address
+      user: me                  # optional; defaults to SSH config
+      port: 22                  # optional
+      identityFile: ~/.ssh/id_fleet   # optional
+      labels: [cpu, build]      # declarations, distinct from resource observations
+      maxWorkers: 1             # per-node cap; a YAML entry that omits it gets 2
+      residency: observe        # default; manage requires an explicit opt-in
+```
+
+`/settings workers` opens **Settings → Workers**; the slash command `/fleet` opens the
+Fleet Runs board instead. **Add SSH node** asks for a name and host, then offers a
+test or installation preview. **Discover with Tailscale** offers peer endpoints.
+Each SSH row opens check evidence and timestamps plus **Test**, **Preview exact
+client installation** and **Remove this node**. Tests record project readiness;
+installs show the remote changes before confirmation. The screen manages nodes
+saved in the global settings only. Removal affects saved configuration and leaves
+remote files in place. `pancode fleet nodes remove node-a` does the same;
+profile pins or a standing preference must be cleared first.
+
+The desktop app ([gui.md](gui.md#switching-machines)) lists the same SSH nodes on its **Machines** page
+and in a sidebar machine switcher. Opening a node starts that node's own desktop app over
+SSH (`pancode gui --foreground --port 0 --no-open --idle-exit <ms> --token-stdin`,
+with a fresh token on stdin), forwards a loopback port to it, and serves it under
+`/m/<id>/` in the same window, so the app on this machine stays the one the browser
+talks to. The node must run the same PanCode version as the app, and the same build when
+both sides report one; a mismatch names `pancode fleet nodes install <id> --yes`. The node's app exits
+after 10 idle minutes. A broken channel reconnects with backoff up to five times, and when the sixth
+consecutive connection fails the attachment stays failed until the node is opened
+again. Stopping the app stops every channel
+([machine-attach.ts](https://github.com/akougkas/pancode/blob/main/apps/pancode-gui/server/services/machine-attach.ts),
+[ssh-model.ts](https://github.com/akougkas/pancode/blob/main/apps/pancode-gui/server/ssh-model.ts)).
+
+### Exact client installation
+
+The node needs Node.js >=22.19 and npm on its noninteractive SSH PATH. PanCode can
+install the exact package this client runs at user level:
+
+```sh
+pancode fleet nodes install node-a          # preview only
+pancode fleet nodes install node-a --yes    # execute the reviewed operation
+```
+
+The preview names the version, SHA-256, transfer size and private destination
+under `~/.local/share/pancode/workers/<digest>/`. Execution packs the actual
+client package, transfers it over SSH, checks the digest, installs npm
+dependencies without optional SDKs, verifies the PanCode version, then saves the
+worker entry. It uses no sudo, system packages, service changes or shell profile
+edits. Build a source checkout before packing it. Installation changes the
+connection identity, so record preflight again afterwards; `fleet nodes setup`
+does both. After saving the new entry, installation removes earlier install
+directories that are a week old and not among the newest three, because every
+rebuild of a `-dev` client installs a new one.
+
+The optional SDK components are installed separately. A run placed on a node
+that lacks the SDK its runtime needs fails once, without a retry, and names the
+command that adds it from this client:
+
+```sh
+pancode fleet nodes tools install node-a claude-sdk         # preview only
+pancode fleet nodes tools install node-a copilot-sdk --yes  # execute
+```
+
+The node's own PanCode installs the SDK version it pins, at user level. The same
+command accepts `asciinema`.
+
+For an independently managed install, the default invocation is
+`pancode worker`. A custom `pancodeEntry` that ends in ` worker` is version
+checked through `<base> --version`. Any other custom entry needs an explicit
+`pancodeVersionCommand`, because silence never proves compatibility. For example:
+
+```sh
+pancode fleet nodes add custom --host custom-host \
+  --entry '/home/me/.local/bin/pancode worker' \
+  --version-command '/home/me/.local/bin/pancode --version'
+```
+
+The probe must report exactly the client's PanCode version. A `-dev` version
+names a moving tree, so the node must also run the same build: the same clean
+commit, or the same `dist/build.json` id for a build from a dirty tree. The
+node reports its id through `pancode version --build`. A node too old to
+report one is compared by the commit in its version label. Project compilers,
+dependencies and datasets remain the operator's responsibility.
+
+### LAN endpoints and optional Tailscale discovery
+
+Prefer a verified LAN endpoint when the client and node share a network. Use
+Tailscale when it provides the reachable route, with an IP address or MagicDNS
+name as the configured SSH host. PanCode does not automatically switch endpoints.
+
+Throughput differs by route, so check each candidate endpoint with your SSH
+configuration and record its preflight before relying on it.
+
+```sh
+pancode fleet nodes discover [--json]
+pancode fleet nodes setup node-b --host node-b.example-tailnet.ts.net
+```
+
+Discovery explicitly reads `tailscale status --json`; Tailscale is optional.
+It requires the daemon to report `Running`, and it shows MagicDNS names, IP
+addresses and reported peer state for at most 128 peers with four addresses each. The CLI lists
+candidates for you to select with `nodes setup` and marks a peer whose name,
+MagicDNS name or address is already a node's host as registered; the TUI
+provides an endpoint picker. Discovery grants no SSH access, runtime compatibility or eligibility.
+An unavailable CLI or daemon produces guidance to sign in or add a host directly.
+
+### Project arrangement
+
+Every node needs the project at the same absolute path as the client. Recorded
+verification distinguishes:
+
+- **Shared storage:** a transient file written on the client is read from the
+  node. The node probe only reads it. This can support non-Git projects and
+  shared edits.
+- **Independent checkout:** both trees are clean, have identical Git HEAD and
+  the same sorted root commits. Read-only work runs there; editing work requires
+  `worktree: true` and the [SSH return path](#return-edits-from-an-independent-checkout).
+- **Unverified:** admission refuses the project with a reason. Matching directory
+  names alone establish no shared data or repository identity.
+
+There is no automatic initial clone, path mapping or dataset staging. A shared
+mount with different paths is unsupported. After applying a returned change
+locally, deliberately update the node's original checkout to the next clean
+baseline before dispatching against it again.
+
+Read-only dispatch does not write a fresh shared-storage challenge. If matching
+clean Git trees cannot be verified without one, launch is refused. Remote Git
+verification disables fsmonitor and optional index writes, and refuses configured
+clean/process filters in the checkout or initialized submodules rather than
+executing them. Inspect the remote Git configuration when this refusal appears.
+
+## Doctor preflight
+
+A remote node needs a passing recorded check for the current project before
+admission. The connection probes observe batch-mode SSH, the exact PanCode version,
+the project path and writable state storage (or a writable existing ancestor).
+The probe reads the remote state directory from `XDG_STATE_HOME`, so per-node
+`PANCODE_*` directory overrides are unsupported. Project verification then
+proves shared storage or a matching clean checkout.
+
+```sh
+pancode fleet nodes test node-a                 # observation only; exit 1 when a check fails
+pancode fleet nodes test node-a --record        # record this node for this project
+pancode fleet nodes list [--json]               # readiness and check age
+pancode doctor                                 # inspect all setup
+pancode doctor --fix                           # local repairs and recorded node checks
+```
+
+Plain `doctor` and plain node tests do not create remote directories or update
+local eligibility. Recording permits a transient client-side shared-storage
+challenge and stores the results in `fleet-preflight.json`. `doctor --fix` also
+performs its broader local repairs; run plain doctor first to review those.
+A failed recorded test revokes prior eligibility.
+
+`FLEET_PREFLIGHT_MAX_AGE_MS` is one day: connection and resource observations
+need periodic rechecking. Records bind the complete connection configuration
+(host, user, port, identity file, worker entry and version probe), the project
+root and client version, and for a `-dev` client the client build. Any
+connection change, different project, upgrade, rebuild or expired record
+requires a new passing recorded check.
+
+The probe also reads the node's machine id (`/etc/machine-id`, the dbus copy,
+or the macOS platform UUID) and stores only a salted hash. A recorded check
+fails for a node whose machine another registered node already holds with a
+passing record, because two entries for one machine double its worker capacity.
+`fleet nodes setup` does not keep an entry it added for such a machine.
+A node that is the client's own machine passes with a note. Dispatch additionally
+rechecks project authority at launch. Failed nodes can remain doctor warnings
+while local work stays usable.
+
+Target facts stay separate: network reachability, access to a supported model
+listing, presence of the configured model and runtime support. Listing success
+proves access to that listing only; it does not prove a chat request, a resident
+model or general runtime compatibility. Unsupported probes retain **unknown**.
+Only targets pinned to the node are probed with credentials: the targets of
+profiles whose `node` names it, and the `fleet.default` target when
+`fleet.defaultNode` names it. Other targets get an anonymous probe, which records
+listing access as `true` on a 2xx answer, `false` on 401 or 403, and **unknown**
+otherwise. Credentials travel through stdin for probes and are not stored in
+observation facts. Diagnostics read stored keys without refreshing OAuth. Resource
+facts are observations; declared labels never substitute for GPU or memory evidence.
+
+Fleet settings shows **not checked**, **ready for this project**,
+**needs attention**, or **offline** alongside live capacity. Opening a node
+shows its recorded check time and age, project kind, version, resource facts,
+target observations and any refusal reason. An offline channel and a failed or
+expired recorded check are distinct facts.
+
+## Placement and process-safe admission
+
+Placement and admission are separate, deterministic authorities:
+
+1. Placement honors an explicit request node, then a profile pin, then the
+   session choice, then `fleet.defaultNode`, then local. Unknown, offline,
+   stale-preflight or incompatible choices fail closed; they never silently
+   fall back. Existing approved route envelopes remain authoritative.
+2. Registration alone never moves unpinned work. When a verified node suits
+   substantial authorized work and no preference or pin exists, PanCode asks once
+   with `ask_user`, offering local and suitable exact node ids with reasons.
+   PanCode remembers the selection for that session. Headless runs never
+   ask and use explicit pins or configured preferences.
+3. The capacity lease store decides under one cross-process state lock.
+   A stale placement preference cannot over-admit a node.
+4. If a pinned or selected node is momentarily full, the admission queue holds
+   the request in priority, then plan, then arrival order instead of silently
+   selecting another node. The queue holds at most 256 requests. A request with
+   no deadline waits until capacity frees or it is canceled; `routing.deadlineMs`
+   or an assignment deadline gives it one.
+
+The durable admission state file (`dispatch-admission.json` under the state
+directory) owns global and per-node leases, heartbeats, reservation transfer, retry
+rebinding and the operator drain. A plan reserves its peak wave, and a retry
+rebinds the same assignment member to its actual node and cost bound, so a retry
+never queues behind or outspends its own plan slot. Admission checks the global
+pool, the node and the target's inference endpoint independently; a target's
+`maxConcurrentRequests` overrides the endpoint slot count PanCode discovers, and the
+orchestrator's own streaming turn holds one endpoint slot. Admission also refuses a route
+whose quota pool the provider has explicitly denied, with reason `provider-quota-denied`
+naming the provider, the window, its reset and the age of the evidence
+([admission.ts](../../src/domains/dispatch/admission.ts)). It reads the shared quota cache
+without a network call, and only a fresh denial for the credential the route spends binds:
+a window at 100% that the provider did not deny, or a stale or failed reading, admits. The
+refused route is not moved to another. The schema, locking protocol,
+lease and drain lifetimes, and owner-liveness rules are specified in
+[capacity-and-scheduling.md](../architecture/capacity-and-scheduling.md).
+
+When `fleet.nodes` is non-empty and dispatch is available, the operating prompt
+carries a bounded fleet inventory: the placement preference, the configured local
+capacity, and up to eight SSH nodes with readiness, the `checkedAt` time, `maxWorkers`,
+declared labels, observed CPU, memory and GPU facts, the project kind, and up to two
+target observations, with unknown observations kept unknown. It holds no free-slot
+counts or ticking ages, so worker activity does not change the cached prompt.
+Delegated peers are listed separately; their presence does not verify SSH
+hardware or project access. Inference routing remains a separate choice
+([fleet-inventory.ts](../../src/domains/prompts/fleet-inventory.ts)).
+
+Set a standing preference through **Settings → Workers → Standing worker node
+preference** (`/settings workers`), or set `fleet.defaultNode` to `local` or a
+configured node id. Leave it `null` to permit a once-per-session question when
+useful. Profile pins live at `fleet.profiles.<name>.node`, and an agent bound to
+that profile through `fleet.agentProfiles` inherits the pin. The compact dispatch
+surface accepts `node` on a singular request or an individual task. The placement
+question does not replace the dispatch plan approval. `fleet.default.node`
+is accepted by the settings validator and shown as **Default worker location**, but
+placement does not read it; use `fleet.defaultNode` or a profile pin.
+
+### Worker limits and `fleet.concurrency: auto`
+
+Each native worker response has a host deadline of `safety.limits.workerResponseSeconds` (default 600 seconds), starting after local residency waits and model loading complete. After tools lock or during synthesis, a round keeps that deadline and the same output budget as any other round: the model's own output limit, bounded by the remaining context window and any tighter budget the request sets. Those rounds also request thinking off wherever the model and runtime support it, except on Codex, where the reasoning level leads the cached prompt and a locked round keeps the run's level. Reaching a response deadline, or a locked round stopping on its output limit, fails the run with `worker_turn_timeout` or `worker_output_cap_exhausted` and keeps unfinished output partial. The `worker_output_cap_exhausted` detail names the limit and where it came from. Both codes are sealed in the run record and suppress automatic dispatch retry and failover without penalizing the target breaker; the fleet step settles as failed and follows its `onFailure` policy. Unlocked output truncation retains the normal provider and tool-call recovery behavior. Usage is retained only when the provider reported it; otherwise the interrupted call records usage as unknown (`observed: false`), since compatible providers may send usage only in their final chunk.
+
+Each dispatched run also has a wall clock, `fleet.limits.runTimeoutMs` (default 1,800,000 ms, 30 minutes). At 85% of it the worker's next round is its handback round (`WALL_HANDBACK_SHARE` in [handback.ts](../../src/domains/dispatch/handback.ts)). A run that reaches the limit is stopped by the host and seals `timed_out` with outcome code `worker_run_timeout`, which never retries; a stopped builder's result names the paths it changed. A recipe's `budget.timeoutMs` or the call's `timeout_ms` can only lower the wall clock, and the time a writer spends queued for the writer set counts against it ([Writer set](#writer-set)).
+
+`fleet.concurrency` sets the global worker pool and the implicit local node's
+limit. SSH nodes always use their own `maxWorkers`. A number means exactly that
+many workers for both. The default is `auto`. An explicit value in
+`settings.yaml`, a number or `auto`, is kept as written.
+
+`auto` sizes the local node from the host it runs on. The limit is the smallest
+of four inputs:
+
+| Input | Rule |
+| --- | --- |
+| cpu | usable CPUs from `os.availableParallelism()`, which honors affinity masks such as a Slurm cpuset, capped by a cgroup v2 CPU quota: the tightest `cpu.max` quota divided by its period, rounded up, in this process's cgroup or any parent, so a container granted four CPUs on a 16-CPU host counts four |
+| memory | (available memory minus a 2 GiB reserve) divided by 1 GiB per worker |
+| cgroup | when a cgroup memory limit is set: (the headroom minus a 512 MiB reserve) divided by 1 GiB per worker. The headroom is `memory.max` minus the working set, `anon` plus `shmem` (plus `kernel` where reported) from `memory.stat`, so file pages the kernel can reclaim do not count; without `memory.stat` it is Node's `process.availableMemory()`. The reserve is smaller than the host's because the host kernel is not charged to the cgroup |
+| cap | 8 |
+
+The 1 GiB per-worker estimate covers workers that run compilers, type checkers
+and test suites. The result never falls below one worker. Under `auto` the global
+pool is the cap, so a small orchestrator host never shrinks work placed on SSH
+nodes. Host facts are sampled at most every 30
+seconds. Each sample records the host facts and active local worker count together.
+The sampler adds back the estimated memory of those workers, avoiding a capacity
+reduction caused solely by PanCode's own workers while still observing changes in
+host pressure. Calls inside the sampling interval reuse that same paired sample.
+
+When a plan asks for more local workers than `auto` allows, the refusal names the
+binding input and how to pin it, for example `reservation denied: node 'local'
+capacity exceeded (3/1): memory-bound at 1 from cgroup headroom; set
+fleet.concurrency to pin it`. A numeric setting or the cap adds no such note.
+
+When a host input binds the limit, the `/settings` fleet row for `local` shows
+it after the busy count (`ready · 1/2 busy · memory-bound at 2`), and the
+Details page's workers line ends with `cap 2 · memory` (`cap 8 · built-in max`
+when only the built-in maximum binds). The footer chip shows
+only the live worker count. `pancode configure` shows what `auto` resolves to on
+the current host, and `pancode doctor` reports it as the local worker capacity.
+
+Use `pancode fleet admission drain [--json]` before maintenance to close that shared
+admission authority. Existing workers continue, but new plans and every new
+execution start fail closed, including a retry or a previously reserved member.
+A new fleet run (`fleet run`, `--detach`, TUI or ACP) is refused before it mints a
+root, opens a task worktree or writes a record, so a drained start leaves no root
+in `fleet list`; the CLI prints `dispatch: fleet run denied: capacity is draining`
+and exits 2. The drain expires after one hour so an abandoned operator process cannot wedge
+future dispatch; repeating the command renews the deadline. `pancode fleet
+admission [--json]` and `pancode fleet status [--json]` report the active
+deadline, requesting PID, and request time.
+Use `pancode fleet admission open [--json]` to reopen admission early. Detailed drain mechanics are documented in [capacity-and-scheduling.md](../architecture/capacity-and-scheduling.md).
+
+With no fleet configured and nothing requested, placement resolves to the
+implicit local path and optional fleet-node provenance may remain absent.
+
+## Failure semantics
+
+- Channel failures (a stalled heartbeat, a spawn failure, SSH exit 255) count
+  against the node; completing the protocol counts for it; operator cancels
+  are neutral.
+- Two consecutive channel failures classify the node offline in the
+  process-local registry, and a placement that names it fails closed until a run
+  completes over its channel again. Every other in-flight run on that node is reaped through the stall
+  path and finalizes as `stalled` (retryable). Its bounded retry re-enters
+  placement with the failed node excluded, then follows the usual order: the
+  session choice or standing preference when that names another node, otherwise
+  local. When no eligible node remains the retry fails closed.
+- Every failover hop is recorded as a reroute (`fromNode`, `toNode`, reason)
+  on the ledger row and the run's `RunResult`, so the placement lineage of a
+  run is reconstructable from evidence alone.
+- An idle node is never auto-offlined by staleness; only consecutive channel
+  failures change the registry health to `offline`. Doctor preflight is a separate
+  durable eligibility gate: a failed or stale record blocks placement without
+  pretending it changed channel health.
+- A result-contract repair round is a synthetic tool exchange whose assistant half
+  carries explicit zero usage, so request sizing keeps anchoring on the model's
+  last real usage.
+
+A file-scoped edit worker whose reply ends with no tool call gets one more repair round
+before the run settles. It is told that nothing was done and which edit tools it was
+admitted. The round applies to a mutation-report contract on a run that is not
+read-only, has an advisory budget, admits `edit` or `write`, and is not already in its
+synthesis lock. A second reply with no tool call leaves the builder obligation unmet and the grader settles the run as `obligation_unmet` ([grading.ts](../../src/domains/dispatch/grading.ts)).
+
+### Worker capability envelope
+
+Each dispatched run gets one sealed capability envelope that decides what it may touch: its tools (direct and behind the gateway), bound skills, read and write scope, shell and check reach, network, approval route and sandbox facts ([envelope.ts](../../src/domains/dispatch/envelope.ts)). Admission, the plan card, the worker spec, the worker's prompt and the receipt all read that one envelope, and the worker refuses a spec whose envelope wraps a permit with another digest. Layers only subtract, in a fixed order: the run's role in the work graph (not its recipe id), which also adds the tools every run in that role holds, such as `code_nav`; the request's tool profile and deny list; what the selected runtime offers; and the host facts of the placement (network, shell, write confinement). A tool beyond the dispatching turn's own ceiling is not subtracted: dispatch refuses the request and names the recipes that fit.
+
+The write mode is `none`, `roots` (writes only under its write roots), `worktree` (its own task worktree, merging back only its roots when it has any) or `workspace`. Each capability a layer took away that the caller could act on is a `withheld` entry with its reason (`role`, `tool-profile`, `denied`, `runtime`, `no-network`, `no-shell`, `write-roots-unconfined`, `judge-unseated` or `main-route-unavailable`) and, where one exists, a remedy; the plan card prints one `withheld:` line per entry and the receipt keeps them. Orchestrator-only tools such as `ask_user` and `consult` never reach a worker and get no entry. `pancode run` reports each run's sealed envelope at `run_end.dispatch.runs[].safety.envelope`.
+
+### Worker permission refusals
+
+A worker has no operator by default, so `fleet.permissions.mode` (`/settings safety`, Worker
+approvals; `judge` by default, `deny`, `fail`, `escalate` or `main`) decides what happens to a call that needs an
+approval; [built-in-agents.md](built-in-agents.md) describes each posture. Under `judge`, while
+the main session runs at autonomy `default`, the main session's safety judge reviews a native
+local worker's ordinary ask against the operator's messages: an allow runs the call once inside
+the worker's permit and sandbox, and anything else denies it. Elsewhere `judge` behaves as `deny`.
+When a dispatch would run under `judge` with no judge to answer, because the process seats
+none (`run --agent` and the fleet CLI have no main session) or `safety.judge.enabled` is off,
+the first such dispatch in the process raises a `worker_judge_withheld` warning naming the
+cause: those workers run with the deny permit and each ask they raise is denied. In
+`deny` mode, and for a denied execute ask under `judge` or `main`, a refused execute call returns to the worker model as a tool result and
+the third one ends the run with exit 3, outcome `permission_required`, and a
+reason that names every refused command. Refusals of other action classes never
+count, and `fail` ends at the first refusal. The Claude SDK worker runtime counts its
+`deny` mode execute refusals against the same limit and ends at the first refusal under
+`fail` ([tool-safety.ts](../../src/engine/claude/tool-safety.ts)). In this release the Claude
+SDK worker paths were exercised against a fake SDK only, not a live Claude Agent SDK
+session. Each denial reads as the tool, the command clipped to
+200 characters with secrets redacted, and the rule that refused it
+([worker-refusals.ts](../../src/engine/worker-refusals.ts)). The protocol is specified in
+[worker-dispatch-mechanics.md](../architecture/worker-dispatch-mechanics.md).
+
+### Failure classification and retries
+
+#### Provider 401, 403, 408 and 429 errors and retries
+
+When a dispatched worker's provider returns 429, PanCode retries on another target after at least one second if the attempt is eligible for retry. A 401 or 403 also retries on another target; a 408 is transient. This is worker retry policy, and an attempt that changed state or cannot prove the checkout unchanged does not retry automatically.
+
+`classifyFailure` ([failure-classification.ts](../../src/domains/dispatch/failure-classification.ts)) sorts every terminal failure into a class that
+decides whether the assignment retries and which route part the retry excludes.
+The native worker reports the last provider HTTP status on stderr, and a provider
+4xx other than 401, 403, 408 and 429 is deterministic, so it is never resent. A 401
+or 403 retries on another target. A 429 retries on another target after at least
+one second. A 408 is not deterministic and retries. Cancellation, policy denials,
+permission failures and the deterministic outcome codes (`worker_tool_call_cap_exhausted`,
+`obligation_unmet`, `worker_not_done`, `worker_partial_work`, `assurance_compromised`, `worker_run_timeout`, `merge_withheld`, `result_contract_exhausted` and the others in
+`isDeterministicOutcomeCode`) never retry, unless the attempt left its [evidence obligation](#evidence-obligations-and-the-one-retry) unmet. `result_contract_invalid` is the exception: the host's validator found an otherwise successful worker's final result nonconforming, so the failure is classed `model-quality` and the retry avoids that agent and model without penalizing the target. No automatic retry follows a failed attempt
+that ran a state-changing call or whose tool telemetry cannot prove the checkout
+unchanged. Backoff starts at 500 ms, doubles per attempt and stops at 60 seconds.
+The full class table is in
+[worker-dispatch-mechanics.md](../architecture/worker-dispatch-mechanics.md).
+
+#### Evidence obligations and the one retry
+
+Every run owes its result some evidence, resolved once from its role in the work graph and not from its recipe id ([obligation.ts](../../src/domains/dispatch/obligation.ts)). A gate position decides first (reviewer, judge, council seat), then a recipe of the checker capability class (the verifier and the debugger) is a checker, then a run that may write is a builder, and any other run is an explorer (`resolveRunRole`).
+
+| Role | Obligation |
+| --- | --- |
+| Explorer | `answer`; `observed-evidence` when its report kind is `scout-report`, `provenance-report`, `research-report` or `context-handbook`, or the task declares `read_roots` |
+| Builder | `change-or-declared` |
+| Checker | `executed-checks`; also `cited-evidence` when its contract is `review-verdict` (a standalone reviewer) |
+| Reviewer, judge | `cited-evidence` |
+| Council seat | `answer` |
+
+A gate's read roots are what it may read, not what it was asked to read, so they never make a reviewer or judge owe `observed-evidence`; a compete judge that ranks from the evidence in its task without a tool call settles normally. In this release these obligations are checked at settlement:
+
+- A run that owes `observed-evidence` and executed no tool settles `failed`, with the detail `obligation observed-evidence unmet: no tools executed, so the worker reported without reading anything and its findings are unaudited`.
+- A builder leaves `change-or-declared` unmet, settling `obligation_unmet`, when it executed no tools, when policy refused or denied its state-changing calls and nothing changed, or when a permission ask went unanswered or denied and nothing changed. A builder that declares its assignment `partly_done` or `not_done` and changed nothing, or recorded a limitation and changed nothing, or asked for wider write roots, settles `worker_not_done`; one that declared it partly done after changing files settles `worker_partial_work`. A builder whose assurance is compromised settles `assurance_compromised`. One rule table in `src/domains/dispatch/grading.ts` decides these, and the verdict is sealed on the receipt. Unanswered asks, and unmet observed-evidence, executed-checks or cited-evidence obligations, are `obligation_unmet` too. `worker_not_done`, `worker_partial_work` and `assurance_compromised` are deterministic and never retry; an unmet obligation retries once as described below.
+- In a read-only run, a `verifier-report` check that names no command (`README.md line count`, `claim evidence`) reports what the run read, as a reviewer's inspection claims do, so it never leaves `executed-checks` unmet or reads as a check claimed and never run. When such a run executed no checking call, its passing verdict seals quality `unmeasured` with the note `no command ran: a read-only check reports what it read`, and the run succeeds unverified. A check that names a command it never ran (`npm test`) is still unmet.
+- A check name that only mentions a check claims no run: a reviewer's `test coverage` or `spec compliance` reports what it read. A name claims a run when a check heads it (`unit tests`, `typecheck`), states how a check ended (`tests pass`, `lint clean`), or says one ran (`tested`).
+
+An unmet obligation is the model's failure, classed `model-quality` even under a deterministic code, and it is retried once, only on another model, within `fleet.retry.maxRetries`. A route the caller pinned is not retried, and the run settles with `obligation <name> unmet, not retried because the route is explicitly pinned to <target>/<model>`. Under `approved` failover the retry moves only to an envelope candidate with another model; otherwise it takes the first eligible route with another wire model on any target. When no such route exists the run settles failed and the detail names why. A builder in a task worktree keeps that worktree for its retry, and it is discarded only when no retry follows.
+
+### Reporting workers at their tool cap
+
+A reporting worker is a recipe with `synthesis: true` and no delivery tool: no `write`
+or `edit`, and no `code_nav` for an orientation recipe. At its tool cap it does not fail: tools are disabled, the model
+writes its final report from what it gathered, and that sealed synthesis is the
+result. A worker with a delivery tool keeps the `worker_tool_call_cap_exhausted`
+outcome. The mechanics are in [worker-dispatch-mechanics.md](../architecture/worker-dispatch-mechanics.md).
+
+## Topologies
+
+All topologies go through the dispatch tool, the same admission chain, and
+the autonomy matrix. Workers inherit the main session's autonomy through their own
+permit and keep their own OS sandbox. At `default` a worker meets the deterministic safety net and its
+asks follow `fleet.permissions.mode`. A `yolo` session adds `executeAutonomy: yolo` for a
+mediated, non-read-only worker whose recipe and task do not declare `asks: deny` or
+`asks: fail`, and that worker runs every action class the yolo way: only the yolo floor,
+operator rules in an approved `.pancode/safety.yaml` and its dispatch scope refuse a call
+(see [safety-model.md](../architecture/safety-model.md#workers-at-each-level)).
+A `readOnly` dispatch restriction denies mutation and outside reads; reviewers and judges use it.
+Every worker of a [read-only run](../architecture/safety-model.md#read-only-runs) is read-only too,
+and its own dispatches inherit the restriction. Only native workers, `claude-sdk` and `codex-cli`
+(under `--sandbox read-only`) are admitted for read-only work; other CLI runtimes, non-HTTP plugin
+runtimes that declare neither per-call mediation nor an OS read-only sandbox, and every ACP peer
+are refused. A read-only run cannot create a
+task worktree (`worktree: true`) or run host verification checks (`intent.verification`).
+
+| Topology | Invocation | Semantics |
+| --- | --- | --- |
+| Singular | `task: "..."` | One assignment, with optional separate `briefing`. |
+| Parallel (default) | `tasks: [...]` | Fan out, wait for all, one summary. Writers sharing a checkout need disjoint `write_roots`, `worktree: true` or `writers: 1`; overlapping roots are refused as `writer_set_conflict`, and in a batch of two or more a builder that declares no write roots, no expected outputs and no checks runs read-only instead ([The normalize stage](#the-normalize-stage)). Worktree tasks whose `intent.write_roots` overlap (equal, or one inside the other) still start, with one `write_roots_overlap` warning per call naming each pair and the roots they share; their merges may collide. |
+| Sequential | `mode: "sequential"` | One at a time in request order. A timeout or abort stops the remaining tasks and reports `stopped after N/M task(s)`. |
+| Pipeline | `mode: "pipeline"` | Each step receives the previous step's output as data. The chain halts at the first failed step, or at a step whose conforming report records `quality=fail`, and reports how many later steps were skipped. |
+| Detached | `detach: true` | Parallel mode only. Return logical assignment ids and a batch id immediately; collect later. |
+| Review gate | `review: true` or `review: {reviewer?, max_cycles?, node?, target?, model?}` | Builder, read-only reviewer verdict, bounded revise loop. The reviewer defaults to the builtin `reviewer`. |
+| Compete | `mode: "compete", candidates: 2..4` | N candidates in scratch worktrees, read-only judge, winner applied or preserved. |
+| Council | `mode: "council", roster: "design"` | Two to five read-only members answer the same task, with optional vote or judge synthesis. An operator starts one with `/council [--roster <name>] [--rounds <n>] [--synthesis judge\|vote\|none] [--agent <id>] [--deadline <N\|Ns\|Nm>] <task>`; without `--roster` the roster named `default` is used. |
+| Agent automation | `agent: "auto"` or no `agent` | Classifies the task into a row of the [job table](#job-table-and-the-reviewer-recipe) and runs that row's recipe. That baseline is the agent that runs; the router's alternative stays shadow-only unless `fleet.adaptiveRouting.agentRoles` activates the pair. |
+| Scout split | `from_scout: {run_id, run_digest}` | Second call of the Scout continuation. A terminal Scout run either settles with findings or proposes at most four typed subtasks; this call compiles the proposal into one approval-gated dependency plan. Pass no other argument. |
+
+Native workers of one batch that share a prompt prefix do not all start at once. The
+first one starts, and the others start when it streams its first token, when it settles
+or after 15 seconds, whichever comes first, so they read the prompt cache it wrote. Every
+handle of the batch still returns at once. `fleet.staggerSharedPrefix: false` turns the
+wait off ([configuration-and-targets.md](configuration-and-targets.md)).
+
+### Job table and the reviewer recipe
+
+One table says which recipe does which job ([dispatch-jobs.ts](../../src/domains/agents/dispatch-jobs.ts)). The dispatch tool's description and the `dispatch(list: true)` text both open with it, as one line that starts `Job table (omitted agent: the job's recipe):`.
+
+| Job | Recipe | Writes |
+| --- | --- | --- |
+| inspect | `scout` | no |
+| review a diff | `reviewer` | no |
+| run checks | `verifier` | no |
+| diagnose a failure | `debugger` | no |
+| add tests | `tester` | yes |
+| implement | `coder` | yes |
+| docs | `documenter` | yes |
+| supplied sources | `researcher` | no |
+| open-world survey | `world-knowledge` | no |
+| run records | `provenance` | no |
+
+There is no default recipe. A dispatch with no `agent`, or `agent: "auto"`, classifies the task text into a job and runs that row's recipe. A test task is a check and a debug task a diagnosis unless the task asks for a change, which it does when a verb such as fix, add or write opens a clause; "do not edit files" and "change nothing" ask for none. Arguments that declare writes (non-empty `write_roots` or `expected_outputs`, a `review` gate, or compete) turn a read job into `implement`, and `write_roots: []` with no expected outputs turns a writing job into `inspect`. When the row's recipe is not installed, `scout` runs. A capability mismatch is judged on whether the job writes: a recipe that cannot write, pinned to a writing job, is a mismatch whose suggestion is the job's recipe or else `coder`, while a pinned `debugger` diagnosing a crash is not one.
+
+The builtin `reviewer` judges one subject (a diff, a run's result, or a change in the tree) against its acceptance criteria and never edits. It is a verification-class recipe: `verify` required; `read`, `grep`, `find`, `ls`, `git` and `code_nav` optional; no shell; a budget of 20 tool calls with 3 in reserve. Its `review-verdict` contract is the review gate's own shape, one JSON object `{"verdict":"pass|fail","checks":[{"name","passed","evidence"}]}` with no `assurance` field, and a check it could not run reports `passed: false` with evidence that starts `unverified:`. A completed review whose conforming verdict is `fail` found issues; it did not fail as a run. The worker card, the Fleet band and the board read `done` with `review found N issues` instead of a failed run. Each failed check becomes an `independent-review` evidence finding (`review found: <check>: <evidence>`), and the band stops pinning a failure once `/fleet` or the workers dock has shown it. It is the default decider of a [review gate](#review-gate); a compete judge still defaults to `verifier`.
+
+### The normalize stage
+
+Some shapes a model sends name admissible work in a non-canonical form. Before the writer-conflict check, preview and the execution snapshot read a request, one stage rewrites those shapes instead of refusing them ([dispatch-normalize.ts](../../src/tools/dispatch-normalize.ts)). Preview and the run read the same rewritten requests. Each rewrite puts one line in front of the result text, such as `[dispatch normalize] task 2 (coder) runs read-only: its intent.write_roots: [] declares no writes, ...`, so the model learns the canonical form.
+
+| Shape sent | What runs |
+| --- | --- |
+| No typed `intent`, and the task or briefing names an absolute path equal to or under the run's `cwd`, or a leading-slash workspace path | The path is read workspace-relative. Only a path outside the workspace is still refused as `scope_path_absolute`, and a closed quoted token is read literally. |
+| `intent.write_roots: []` | The task declares no writes, so it runs on the read-only surface and changes no files; `verification: []` beside it asks for no checks. A batch-level `write_roots: []` is a no-write ceiling: members inheriting it run read-only, and a member that declares write roots is refused as `intent_scope_widening`. |
+| A builder recipe in a parallel batch of two or more, without `writers: 1`, that declares no write roots (`.` counts as one), no expected outputs and no checks | It runs read-only as an explorer instead of meeting `writer_set_conflict`. |
+| `detach: true` with an outside read root | The root's approval is asked before the batch detaches, and the run starts detached once approved. A detach that cannot run (not parallel, a review gate, or `timeout_ms`) is refused before any approval is asked. |
+| `gateway(op="call", capability="dispatch")` | The gateway forwards the call to the direct `dispatch` tool and adds its own notice line. |
+
+A rewrite to read-only never applies to a request with `worktree: true`, store tags, an outside read root, an `artifact-write` recipe or checks it declared. When the operator named a check in the turn, the request stays as parsed and admission decides with the check in place.
+
+### Single-writer token
+
+A parallel dispatch may declare `writers: 1`. One is the only accepted value, the
+mode must be parallel, and omission retains ordinary parallel admission. Through the
+dispatch tool every recipe that is not read-only counts as a writer: writers start
+one at a time in request order while read-only recipes run concurrently. A
+playbook declares the same token as `writers: 1` (version 5). There the scheduler
+admits at most one write-scope step at a time: an agent step with a nonempty
+`writes` allowlist is a writer, as is a workspace-scope step that may mutate
+the checkout. Read-scope steps and agent steps with `writes: []` remain
+concurrent. Waiting writers follow the plan's declared step order and then the
+request order. Agent ledger claims remain advisory and do not enforce the
+token.
+
+### Writer set
+
+A checkout has one writer set at a time. A `workspace-edit` recipe in a Git checkout joins it before
+it runs, and a fleet run joins it for its whole run; its own steps never wait on it. The set's cross-process record
+is process-owned and lives under the PanCode state directory. Its key is the canonical checkout path (the source checkout
+for a `worktree: true` writer), and its record contains the
+owner host, pid, process birth token, acquisition time, and the `heartbeatAt` and `expiresAt` the holder
+renews every 10 seconds for 30. A writer from a live sibling process, or one
+whose roots overlap a live writer from another dispatch call in this process, queues: it starts as soon as the set
+empties, and fails with `writer_set_busy`, naming what it waited on, only when its run's deadline passes first
+(the run wall clock, `fleet.limits.runTimeoutMs`, counts the queue time).
+A dead owner is reclaimed, and so is a pid that now names a different process
+(its start time differs from the recorded one; where no start time can be read,
+the lapsed lease decides, so on macOS and Windows a holder whose process
+stalls for 30 seconds without beating loses the lease). A lease from another host
+sharing the state directory is never judged by a local pid check: it is honored
+until this host's clock is 60 seconds past its `expiresAt`, the tolerance for
+host clocks that disagree. A record
+that lacks these fields is refused as unreadable, with its path; remove it once no PanCode process writes in
+that checkout. The lease remains held until the last
+writer settles, including writers collected from detached batches. Read-only
+runs never acquire it.
+
+### Declared step scope
+
+In a version 4 or newer playbook, a step's `writes:` declaration is enforced
+afterwards by the write-boundary enforcer (see
+[Per-step write boundaries](#per-step-write-boundaries-playbook-v4)); declared commands run on the host
+outside the worker sandbox, so nothing confines them ahead of the check. The same
+declaration also compiles into the step's typed dispatch intent as
+`relevant_paths`, never as `write_roots`. A playbook older than version 4 and every
+readonly step declare no scope. The producer table and the refusal
+reason codes are in [dispatch-typed-intent.md](../architecture/dispatch-typed-intent.md).
+
+### Worktree per task
+
+A singular writer or an item in `tasks` may declare `worktree: true` and
+`apply: "merge" | "preserve"`. The default is `merge`. PanCode creates
+`.pancode/worktrees/<runId>/` on `pancode/task/<runId>`, maps the worker cwd and
+protected artifacts into that checkout, and runs declared host verification
+there. The approved execution snapshot renders both fields and freezes the
+parent checkout as the merge destination. The host commits the task worktree
+when the worker finishes. A worker in an attested task worktree can also use
+typed `git add` and `git commit` on its task branch when its permit admits those
+operations.
+
+A sandboxed worker in a task worktree cannot read the secret files of the checkout
+the worktree was cut from. Its sandbox masks the secret files of the worktree, of
+that source checkout and of every other worktree linked to the same repository,
+whatever the repository layout: a plain checkout, a bare repository with
+worktrees, or a submodule
+([safety-model.md](../architecture/safety-model.md) lists the names that count as secret files).
+
+The host commit takes changes to tracked files, whatever the worker staged, and the
+new files the run's own edit and write calls made. Any other new file, such as bytecode
+or a file a shell command generated, stays out, and the dispatch result reports it as
+`left_uncommitted` with a count and the first paths. When the host holds no complete
+write record for a run, the commit takes every new file. The dispatch result also states
+where the work landed: the merge, or the branch and worktree that hold it. A merged run's
+worktree is removed along with its left-out files. A new file the worker authored that
+`.gitignore` matches, such as a local config file, is never committed or merged and is not
+deleted: the result lists it in `left_uncommitted`, the detail says
+`N authored files are ignored by .gitignore and stay in the worktree`, and the worktree is
+kept, also when `pancode fleet land` applies the branch later. A file that arrives or changes after
+the commit keeps the worktree and its branch, and the result names it as
+`changed_after_commit`.
+
+`expected_outputs` must be
+repository-relative file paths, so `.` is refused at admission, as is an action such as `commit` that lies outside the declared `write_roots`.
+Admission also refuses a non-git checkout, a repository with no commits
+(`worktree_unborn_head`), a read-only agent, compete mode, and an explicit cwd
+outside the parent checkout, each with a named reason.
+
+After a successful worker and successful host verification, merge application
+commits the task branch, rechecks protected paths, and uses the same guarded
+merge path as compete. A conflict fails closed with
+`worktree_merge_conflict` and preserves the branch and worktree. Preserve
+application never merges and reports the branch. An in-progress Git operation
+detected by the merge guard yields `worktree_destination_busy` and leaves that
+operation, the index, and working-tree edits untouched. The guard recognizes
+merges, cherry-picks, reverts, rebases, and cherry-pick/revert sequences.
+A detached task applies when its
+run finalizes, so `monitor(mode="collect")` returns the settled application result.
+
+A merge that lands a commit is announced to the operator, since no card asks first. When
+the run settles, attached or detached, PanCode raises a `worker_merged` notice reading
+`<agent> <run id> merged <sha> onto <branch>`: the TUI shows it as a Fleet row in the
+transcript, headless `run` prints it to stderr as `pancode run: ...`, `run --output-format stream-json` writes a
+`dispatch_scope_notice` frame with level `info`, and ACP forwards it as
+`run.scope_notice_raised`. The worker card also keeps its `merged <sha> onto <branch>` line. A
+preserved, conflicted, withheld or refused application, and a merge whose branch held no
+change, produce no notice.
+
+Five cases withhold the merge: a worker whose own report lists a failing validation (a check whose latest `verify` receipt says it could not run is not one),
+a worker whose task requested validation but which executed no check, a worker that
+names a check it did not run (`declaredChecks`) with no validation that passed, a task
+that names its check as an exact command the worker never ran to a clean exit, through the
+shell or a passing `verify` check, even when other calls succeeded, and a diff that removes
+existing test cases or deletes a test file. Only three spellings name a command: a backticked
+command after "by running" ("verify by running `make check`"), the colon form "by running:
+<cmd>", and "run `<cmd>` to verify" (or validate, check, test). Plain "by running the tests"
+names nothing and falls under the requested-validation case. `npm test`, `pnpm test`,
+`yarn test` and `npm run test` name the same package script. The gate reads the dispatched
+worker's task, so a check named only in your prompt to the main agent counts only when the
+coordinator passes it on. The first four yield to passing host verification.
+The fifth does not, because a passing suite says nothing
+about a test that is gone. A test that moves to another file or is only reformatted is
+not counted as removed. A run without a task worktree has no merge to withhold, so the same
+removal fails it as `worker_removed_tests` and leaves the edits in the checkout. In both
+places a clause of the task that asks for tests to be removed exempts the removal. A task
+clause that tells the worker not to validate (for example "do not run the tests") means an
+unrun check does not withhold. A withheld merge ends the run `failed` with outcome code
+`merge_withheld`, which suppresses automatic retry; its work stays committed on the preserved
+branch, and the detail names the `pancode fleet land` command that applies it. In an
+attended session the held-merge card also offers Land, and `dispatch` with `land` set to the
+kept branch's run id reopens that card. PanCode then lands the branch on the host as the
+operator's action, with the checks `fleet land` runs, so a sandboxed session lands approved
+work without a sandbox escape ([task-land.ts](../../src/tools/task-land.ts)). Land is bound to
+the branch tip and the destination the card showed, and it refuses uncommitted work that no
+commit accounts for and protected paths.
+
+When a worker claimed passing checks but executed no command and no host verification ran,
+the dispatch result names the parent's next step. For a run that can change code, under a
+`mutation-report` or `verifier-report` contract or none, it names the declared `verify` checks
+to run in the host workspace, or says to inspect the diff and pick an applicable host check. For
+a read-only run, or a contract whose passing checks are review judgments, it says to use the
+sealed findings and spot-check consequential claims instead.
+
+A merge-mode run whose host verification rejected the tree fails with
+`host_verification_rejected` and keeps its branch with the work committed. The detail
+names the `pancode fleet land` command that applies it. That detail, the run's evidence line for the
+check, and the merge card all say whether PanCode ran the failing check on the task base.
+A failing whole-repo command check is replayed once, inside a bubblewrap sandbox over a
+throwaway archive of the base commit, under the check's own declared timeout. The replay
+sandbox hides credentials, PanCode's settings file and its backups, and the secret files of the
+task worktree and of the checkout it was cut from; when the host's mount table cannot be read
+the check is not run on the base and is reported as not compared. The result is
+kept per base commit under the state root (`dispatch-verification-base/`, the newest 64), so
+tasks cut from one base, in this session or another on the machine, pay for the replay once.
+How long the check took on the task does not matter. A failing check fails the same way on the
+base when the base run fails too and the task's output adds no line the base's output lacks;
+lines are compared with the checkout path, digits (line numbers, counts, durations), escape
+codes and passing-test lines set aside. A new error in a check the base already fails is a
+failure the base does not have: the note quotes the first such line and the run is rejected.
+When every failing check fails the same way on the base, the failures predate the task: host
+verification is recorded as `not_implicated` with reason `failures_present_on_base` and the
+run is not rejected.
+When the task worktree has `node_modules` and its `package.json` and lockfiles match the base,
+the replay links them in; otherwise the note says base dependencies were not provisioned.
+Judged checks, commands that name the worker checkout, and lint or format checks scoped to the
+task's files are not replayed. The note says the
+check also fails on the base, passes there, or was not compared and why.
+
+A task with a task worktree runs its lint and format checks on the files it changed, not the
+whole repository. A declared command check counts as lint or format when it runs biome, eslint,
+prettier, ruff, black or stylelint, directly or through `npx`, `bunx` or `pnpm|npm|yarn exec`,
+or when it is exactly `pnpm run <script>` or `npm run <script>` and that package.json script is
+one such command with no shell operators, quotes or globs (`biome check .` qualifies). A
+script of `&&`-joined commands also qualifies when its first command is such a linter or
+formatter and no command has shell operators, quotes or globs: only that first command is
+scoped to the task's files, and each later command (for example
+`node --import tsx scripts/check-hygiene.ts`) runs as its own whole-repo check named
+`<check>: <command>`, compared with the base like any whole-repo check. The declared id is
+not consulted. The changed files are the
+task worktree's diff against its base plus untracked files, deleted files excluded, limited to
+the check's directory: bare `.` arguments are dropped, each file is appended as `./<path>`,
+and biome also gets `--no-errors-on-unmatched`. A task that changed no such file passes the
+check without running it. Typecheck, tests and every other check run whole-repo as declared.
+PanCode does not rerun the whole-repo lint when a task branch merges; leave that to the
+project's own gate before the work lands (`pnpm run check`, CI).
+
+Host verification runs one check at a time per machine. Every check that runs a command,
+and every base replay, first takes the verification slot, the lock file
+`dispatch-verification-slot.lock` in `PANCODE_VERIFICATION_SLOT_DIR` when that is an
+absolute path, else in `$XDG_RUNTIME_DIR/pancode`, else in `pancode-<uid>` in the OS temp
+dir ([verification-slot.ts](../../src/domains/dispatch/verification-slot.ts)); a lint or format
+check scoped to the task's files and a check answered from the memo skip it. The slot is shared
+by every PanCode session on the machine, whatever its home, so parallel batches and parallel
+sessions queue their typechecks and test suites instead of running them all at once. The
+directory must be a real directory of your own with mode 0700 (it is created so); otherwise
+checks run without the slot and a dispatch diagnostic says why. While a run's check waits,
+the run's feed, its card in the workers dashboard, its worker card in the transcript and its
+Fleet Runs row say `waiting for a verification slot`, then `running host checks` once it holds
+the slot. A slot whose holder died is taken over; a
+check that waits 30 minutes runs without the slot rather than failing the run.
+
+#### Merge task branch card
+
+When the gate withholds a merge, an attached operator is asked first with a `Land task
+branch?` card. A headless run and any interface without an operator always withhold. An ACP
+session gets the card only when its client advertised the `pancode/interviews` capability.
+The card shows the task branch, the dispatch checkout's destination branch, the changed
+paths, and the failing or unrun check. Worker-reported failures are named; when no matching
+host failure was compared on the task base, the card says whether the failure predates the
+worker is unknown.
+
+- The card opens on `Keep branch` and ignores keys other than Esc for a moment after it
+  appears, so an Enter typed into the composer cannot answer it.
+- `Land` lands exactly the commit the card showed on the host, with the checks
+  `pancode fleet land` runs and protected paths read again at that moment, and the run
+  succeeds. Land is refused if the dispatch checkout has since moved to another branch, or
+  the destination or the task branch moved after the card showed it. `Land` is not offered
+  when the branch changes protected paths; the card names them. A refused or failed Land
+  fails the run with `merge_withheld` and keeps the branch.
+- If the branch or its worktree changed after the preview, `Land` and `Discard` are
+  refused: the run fails with `merge_withheld`, the branch is kept, and the detail says to
+  inspect it before landing or discarding.
+- `Keep branch` withholds: the run fails with `merge_withheld`, its work is committed on
+  the preserved branch, and the detail names the `pancode fleet land` command that applies it.
+- `Discard` asks `Delete branch <b> and its worktree? This cannot be undone.` (opening on
+  `Back`) and, on `Delete`, removes the worktree and branch; `Back` or Esc returns to the
+  card. If the worktree is removed but the branch cannot be deleted, the run's worktree detail says so and
+  the branch remains.
+- Esc on the card, an answer that is not one of its options, and a canceled run all keep
+  the branch. An attended card has no timeout. `fleet.permissions.escalation.timeoutMs`
+  governs worker permission asks only.
+
+A card behind another overlay posts a notice, and an idle model interview yields the screen
+to it and resumes afterwards. While it waits, the run shows as running, `fleet cancel`
+settles it as Keep, and a lone dispatch keeps its capacity slot free for other work. Cards
+for a batch appear one at a time, and members that pass the gate merge without waiting. The
+`worktree.detail` in the run's `run-result` object records the decision: a landed branch reads `merged <sha> onto
+<branch>; operator land accepted after the gate held it because ...`, a refused or failed Land begins
+`operator land refused:`, and a keep or
+discard begins `operator keep:` or `operator discard:` (with `worktree.reason`
+`operator_discarded` after a full discard).
+
+#### Landing a kept branch later
+
+`pancode fleet land` lists the task branches finished runs kept: settled, abandoned by
+a crash, or left without a claim. `pancode fleet land <run id>` (or the
+`pancode/task/<run id>` branch) previews the landing: the branch's commits, the
+changes, the destination, whether it fast-forwards, and any conflict. The preview changes
+nothing. Conflicts come from `git merge-tree --write-tree`, so Git 2.38 or newer is required.
+
+```sh
+pancode fleet land                              # what is left to land
+pancode fleet land <run id>                     # preview, with a plan id
+pancode fleet land <run id> --yes --plan <id>   # land exactly that preview
+pancode fleet land <run id> --yes --squash      # one commit instead of the history
+pancode fleet land <run id> --discard           # preview dropping it unlanded
+```
+
+The run lands on the branch it was dispatched from, which must be checked out and still
+contain the task base; an operation in progress (merge, rebase, cherry-pick) refuses it.
+The landing commit is built with `commit-tree`: a merge commit, a fast-forward when the
+destination has not moved, or with `--squash` one commit that keeps a single commit's
+message and author, or lists several. `--message` replaces the message. The only step
+that touches the checkout is `git merge --ff-only`, which Git refuses when it would
+overwrite a local change; unrelated local edits are carried. Uncommitted work in a kept
+worktree, common after a crash, is counted in the preview and committed onto the task
+branch only when landing. Files the run's own commit left out stay out if they have not
+changed since: the preview counts them, `--json` lists them as `leftOut`, and they go with
+the worktree when it is removed. A file that arrived or changed after that commit lands. A
+run that never reached its commit, such as one that crashed or failed, recorded nothing to
+leave out, so every untracked file lands. With `--json`, stdout holds only the plan and
+the landing's notes go to stderr. `--plan` refuses a landing whose branch tip, worktree,
+destination or mode changed since that preview. After landing, the branch, its worktree
+and its claim are removed; `--keep` keeps them. A branch already on the destination is
+only cleaned up. Each task branch also records its base and source branch in Git config
+(`branch.<branch>.pancode-base` and `pancode-source`), so a branch whose claim was
+released still lands on the right branch. The `Keep branch` choice on the merge card
+names this command.
+
+`--discard` drops a run you do not want, such as one whose review failed: its preview
+lists the branch's commits and the worktree with any uncommitted work, and
+`--discard --yes` deletes the worktree, the branch and the claim without touching the
+destination. `--plan` refuses a discard whose branch or worktree changed since that preview.
+
+`fleet.worktrees.root` (`/settings workspace`, Task copies) chooses where the working tree is created:
+
+| Value | Location |
+| --- | --- |
+| `disk` (default) | The location above, under the project root. |
+| `tmpfs` | A per-user, per-checkout directory, mode 0700, under `/dev/shm` when that is a tmpfs mount and under `$XDG_RUNTIME_DIR` otherwise. `/dev/shm` comes first because the worker sandbox masks the session runtime directory. |
+| `auto` | The `tmpfs` behavior when such a mount exists, quietly falling back to disk when none does. |
+| An absolute path | A per-checkout subdirectory of that path, which must be a plain directory owned by the user and not writable by group or others. |
+
+Before creating a worktree off disk, PanCode compares the mount's free space with
+twice the size of the tracked tree plus 256 MiB. When the space is short, when no usable
+tmpfs exists for `tmpfs`, or when the directory cannot be trusted, the worktree falls back to
+disk with a `[pancode:dispatch] task worktree root` notice. A tmpfs is
+RAM: what a worker builds inside its worktree counts against it, and uncommitted
+files there do not survive a reboot.
+
+Only the working tree moves. Git objects, the index, the branch, and the
+ownership claim stay with the repository. The setting applies to local placement
+only: when `fleet.nodes` is non-empty a run may be placed on another host, which
+reaches the worktree by the project-root path, so task worktrees stay on disk.
+Compete candidates always stay under the project root.
+
+A task worktree outside the project root starts with no installed dependencies, so PanCode links the
+project's own: the root `node_modules` and `.venv`, and the `node_modules` of each workspace
+package that `pnpm-workspace.yaml` `packages` or `package.json` `workspaces` names (for example
+`apps/*`). Each one is linked only when its manifest and lockfile inputs match the project's,
+Git ignores the path, and the worktree has no such directory yet; the worktree gets a real
+ignored directory holding one link per entry, and the worker's sandbox keeps the project
+checkout read-only. Source: `shareTaskWorktreeDependencies` in `src/tools/task-worktree-dependencies.ts`.
+
+Each task worktree is claimed by `.pancode/worktrees/<runId>.task-owner.json`,
+which always stays under the project root and records the working tree's path,
+the branch, the base commit, the apply mode, and a lease on the PanCode process
+that created it (host, PID, and a PID-reuse-resistant start identity). A run that
+ends and keeps its worktree marks the claim `settled`.
+
+`pancode doctor` reports where the next task worktree would be created, with its
+filesystem and free space, and lists every task worktree that outlived its run with its
+branch, age, whether it is held in RAM, and the git commands to inspect or drop it. A
+claim whose branch and worktree are both gone is reported as stale, and `doctor --fix`
+removes it.
+
+<details>
+<summary>What crash recovery removes, preserves, and refuses to touch</summary>
+
+At the next start in the same checkout, a claim that is still `active` while its
+owner is gone is a crash. An instruction file the run had overlaid for a
+delegated harness, which its claim names, is first put back to its base content
+and seen by git again. Recovery runs once the first frame is up, and no
+dispatch is admitted until it has finished.
+
+A worktree with no commit beyond its base and no modified, staged, or untracked
+file is removed with its branch, and so is one whose tmpfs working tree a reboot
+took, after its stale git metadata is pruned. Its commits, if any, keep it.
+
+One that holds work is kept, marked `abandoned`, and named once on stderr as
+`[dispatch] task worktree recovery preserved <runId>: ...`. A worktree git cannot
+inspect counts as holding work and is kept the same way. It is never merged
+and never deleted.
+
+A live owner, an owner on another host, and a claim that records no owner lease
+are left alone.
+
+</details>
+
+### Return edits from an independent checkout
+
+An editing native SSH dispatch on an independent checkout requires
+`worktree: true`. The coordinator prepares the node's isolated
+`.pancode/worktrees/<runId>/` and `pancode/task/<runId>` branch at the
+approved base commit, claimed by `.pancode/worktrees/<runId>.remote-owner.json`
+and excluded through the checkout's `info/exclude`. The worker edits there; after
+exit, PanCode commits the worker's changes on that branch. The source checkout on the node is
+left at its base. Git hooks are disabled (`core.hooksPath=/dev/null`) for these
+branch operations on the node and for the local import.
+
+The coordinator fetches the branch through the configured SSH host, user, port
+and identity into the private local ref `refs/pancode/remote/<runId>`. Before importing, the coordinator checks that the
+fetched commit is exactly the returned commit, descends from the approved
+baseline without merge commits, touches only permitted paths and changes no
+protected artifacts. The owned local task tree must still be clean on its
+original branch and baseline. Only that task worktree is fast-forwarded.
+Host result validation, declared verification and the existing guarded apply
+flow then run locally. The operator checkout changes only through that flow.
+`apply: "preserve"` keeps the result instead of applying it.
+
+Transfer, path, validation and application failures preserve the node branch
+and worktree. The run result's worktree detail names the node, branch, path and
+imported commit when available. Inspect the preserved branch and any uncommitted
+files on the node before retrying, merging or deleting them. A local imported
+branch is also recoverable through the existing task-worktree guidance. Remote
+cleanup runs only after successful guarded application and checks ownership,
+commit identity and a clean tree again; a changed remote tree is preserved.
+There is no automatic remote branch recovery or deletion after a crash.
+
+The initial source checkouts must match at a clean baseline. This return path
+transfers commits from an admitted task; it does not synchronize arbitrary
+repositories. After a successful local merge, update the node's original
+checkout deliberately before the next dispatch that needs the new baseline.
+
+### Typed intent and host-run verification
+
+The singular request and every object in `tasks` accept an optional `intent`:
+
+```json
+{
+  "read_roots": ["src/domains/dispatch"],
+  "write_roots": ["src/tools"],
+  "relevant_paths": ["docs/guide/fleet-dispatch.md"],
+  "expected_outputs": ["dist/cli.js"],
+  "verification": [{ "check": "test", "timeout_ms": 600000 }]
+}
+```
+
+A top-level intent is the ceiling for the items of a batch. An item's fields
+override the top-level fields key by key, and an item may narrow `read_roots`,
+`write_roots` and `relevant_paths` but never reach outside them
+(`intent_scope_widening`). `gate: "test"` is exact shorthand for
+`intent.verification: [{check: "test"}]`; supplying both spellings is refused as
+`gate_and_intent_verification_conflict`. Path normalization, the caps (32 entries
+per list, 8 verification entries) and every refusal reason code, including
+`intent_write_roots_contradiction`, are specified in
+[dispatch-typed-intent.md](../architecture/dispatch-typed-intent.md).
+
+Paths in an intent are repository-relative, with one exception. A task that works
+in its own workspace may list absolute directories outside it in
+`intent.read_roots`, and its native worker may read them and never write them. A
+missing directory, the filesystem root, a system tree, the home directory, an
+ancestor of the workspace, a credential store or a directory holding one is
+refused as `external_read_root_invalid`, and an absolute path inside the workspace
+as `intent_path_absolute`.
+
+A task works in one repository. When its `cwd` and declared paths fall in two,
+such as a nested checkout and its parent, it is refused as
+`task_spans_repositories`; dispatch one task per repository with that repository
+as `cwd`, and each worker gets that repository's rules
+([Sister repositories](../architecture/worker-context.md#sister-repositories)).
+
+Narrow write roots confine a native worker one of two ways. When the OS sandbox
+covers the run (`safety.sandbox` is `auto` or `required`, a local bubblewrap backend
+is usable, and the worker runs on a local HTTP runtime placed on this host), the worker keeps `bash`, `verify` and `run_script`, and their commands can write only
+inside the roots. A worker placed on a fleet node, or whose placement the preview cannot settle, is not covered. A `dispatch` from that worker is still blocked. Otherwise
+the worker loses `bash`, `verify`, `run_script` and `dispatch` for the run, cannot run
+checks itself, and a `write_roots_checks_withheld` scope notice says so. Declared host
+verification still runs on the host in both cases. A write root of `.` sets no boundary,
+keeps every tool, and raises `write_root_dot_unconfined` instead. The seatbelt backend
+on macOS does not count as covering the run for this purpose
+([safety-model.md](../architecture/safety-model.md) owns the sandbox).
+
+#### Asking for wider write roots
+
+A write worker whose change needs a path outside its write roots stops before editing
+and calls `limitation` with reason `write-root`, the paths it needs (relative to the
+run's working directory) and a scope. That attempt ends `worker_not_done`, and its detail
+names the paths. When the dispatch came from a main session that answers worker
+requests, the assignment stays open on a main-authority request whose `tool` is
+`write_roots`. The request is pushed like any worker ask (the `approval.requested` event
+and the `grants.onPending` listeners), the dispatch call yields with the exact `steer`
+line, and `monitor` lists it. In a detached batch in the interactive terminal, the
+request wakes an idle main agent once, like a permission request (see below). At
+autonomy `yolo` the main agent's `steer(action="approve", request_id=...)` stands; below
+`yolo` the request goes to the operator's approval card, and with nobody to ask it is
+denied. An approval starts a new attempt of the same assignment with the paths added to
+`intent.write_roots` and the run's write roots, plus a briefing note naming the attempt
+that asked. The attempt goes through admission exactly like a new dispatch, so anything
+admission refuses settles the assignment with that refusal named. A denial, the request
+expiring (`fleet.limits.internalRunTimeoutMs`), cancelling the assignment, or the
+session shutting down settles it as not done and says which. The request is refused at
+once, with the reason in the detail, when a path lies outside the working directory, the
+roots already cover every path, the assignment declared no write roots, or the widened
+list would pass 32 entries. A dispatch that cannot pause for a decision settles with a
+detail naming the re-dispatch, with `intent.write_roots` including the paths.
+
+Each scope notice reaches every operator interface: the terminal transcript, headless
+stderr in text mode and a `dispatch_scope_notice` event in `--output-format stream-json`, the ACP
+`run.scope_notice_raised` event for a client that opted into events, and the desktop app's
+**Dispatch scope** row. The open session also records it as a `pancode.scope-notice`
+entry under the turn it followed, so `/fork` and `/tree` keep it on that branch. The transcript row for a dispatch summarizes `intent` on one line,
+such as `write: src/a.ts; checks: test`, with up to three entries per list and `(+N)` for
+the rest. A read root that is only the workspace is the default and is left out.
+
+### Store tag grants
+
+A worker's `store` is read-only unless the dispatch grants it tags: `tags: ["results"]`
+on the request or on one item of `tasks` (an item's value overrides the default) lets that
+worker `put` and `note` into those existing tags only. The field is not on the compact
+`dispatch` schema attached to the model; `gateway describe dispatch` teaches it. Admission
+refuses a grant to a read-only run, to a tag that does not exist yet (create it with
+`store create` first), to an ACP delegation target, and to an SSH node unless the project's
+tracked `.pancode/settings.yaml` sets `store.projectId`: the worker there opens its node's own
+store, which is this project's only when both hosts mount its roots. With the id, a root on a
+file system local to this host is refused, and the node checks the project key, root ids and
+tag directories before it runs ([Sharing a store across hosts](panstore.md#sharing-a-store-across-hosts)). A run that declares write roots gets each granted tag's
+directory and its records directory added to them.
+In a parallel batch, a writer that holds a grant and
+declares no write roots is confined to its granted store directories, so several such
+writers can run side by side without `writer_set_conflict`; declare
+`intent.write_roots` if that worker must also edit the workspace.
+
+Verification values are declared check ids, never shell commands. Admission
+resolves each id from a package script, `.pancode/verifiers.yaml`, or a check
+`verify` derives from the toolchain files (such as `python-unittest`)
+([quality-policy.md](quality-policy.md) covers declared checks, including the judged
+`numeric-compare`, `perf-budget` and `reproduce` kinds), clamps
+the requested timeout to the declaration, and freezes the exact argv, cwd,
+timeout, and normalized intent into the execution snapshot and plan hash. A
+later catalog edit cannot change the approved command. Undeclared ids fail
+before approval with `verification_check_undeclared` and declaration guidance.
+
+The host also attaches the checks the operator named in the turn that issued the
+dispatch, so the merge gate enforces a "verify by running X" even when the
+coordinator does not pass it on. Admission reads the operator's latest message
+and takes every declared check id it names as `pnpm run <id>` (or another
+package manager's script run), a backticked `` `<id>` ``, or
+`verify(check="<id>")`, and appends each to the `intent.verification` of every
+task from that turn, after the coordinator's own entries and without
+duplicates, up to the 8-entry cap. Names the project does not declare are
+ignored, never invented. A script run followed by `--` arguments (such as
+`pnpm run test:file -- <path>`) is not attached, because a verification entry
+seals the declared argv and cannot carry the arguments; sweep checks and
+external or read-only Scouts are skipped
+([operator-checks.ts](../../src/domains/dispatch/operator-checks.ts)).
+
+After a successful worker attempt, the orchestrator runs the frozen checks with
+no shell, a fixed cwd, and the code-step environment allowlist. The worker may
+have written the tests and helpers a check runs, so each check, a sealed
+`reproduce` run included, runs inside the main-session sandbox rooted at the
+run's workspace, as the operator's own `bash` would at `default`: writes stay in
+the workspace, scratch roots and package caches, PanCode's directories stay
+read-only, and credentials and secret files are hidden, including the secret
+files of the checkout a task worktree was cut from. `safety.sandbox: off`
+runs the checks bare, as does `auto` on a host with no backend; `required`
+without a backend records each check as `spawn-failed`. Logs are written
+under the run artifact directory. A successful command check is memoized by the
+workspace fingerprint, resolved argv, cwd, and allowed environment values. A
+memo hit counts only when the run it names sealed a passing execution of that
+check on the same tree; it names that run, and a changed tree, a forged entry or
+an unsealed run is a miss. Judged `numeric-compare` and `perf-budget` checks and
+sealed `reproduce` runs are never memoized, so their verdict is always judged
+afresh. Admission seals the SHA-256 of a numeric reference or perf baseline,
+and a check fails with `reference '<path>' changed since admission` (or
+`baseline ...`) when that file changed before it was judged. A lint or format
+check under whose cwd the task changed no file is not run and records
+`notRun: "nothing-changed"` with the tail `not run: nothing changed under it`.
+An unsuccessful worker records `hostVerification.status="skipped"` with
+`reason="worker_not_successful"`; a failed host check records `rejected` with
+its exit code, bounded output tail, and artifact path. A check whose process never
+started also records `notRun`: `refused` when a reproduce check's precondition refused
+it before launch, `unconfigured` when a sealed check carries no parameters, or
+`spawn-failed` when no process could be created. The sealed run-result object keeps that fact, so a check
+that never ran does not read as a plain failing exit. Each sealed check also
+keeps the tree head and fingerprint it judged and, for a judged check, a bounded
+report: the rule, tolerance, reference or baseline digest, payload digest, key
+counts, up to 64 failed key names and 64 keys with their worst deviation
+(failing keys first), or the measured and
+budget milliseconds for `perf-budget`. A `verified` status validates the run's
+trust only when every check executed for it: any reused memo pass leaves the run
+`unknown` under `host-verification-reused`, a run whose every check was skipped
+under `host-verification-skipped`, and a `nothing-changed` skip beside executed
+passes neither validates nor blocks
+([host-verification.ts](../../src/domains/dispatch/host-verification.ts),
+[types.ts](../../src/domains/dispatch/types.ts)). Worker-reported command
+success never populates this status. In a parallel batch each distinct check runs
+once per wave, on the settled tree after every live member has finished
+(`strategy: "batch-settled"`), and a failure is charged to the members whose write
+roots cover the paths it names. A member to which the failure is not charged records
+`not_implicated`.
+
+Host checks are supported for singular, parallel, sequential, pipeline, compete, and
+detached native runs; compete runs each candidate's checks in that candidate's worktree before the judge ranks them. A candidate that deleted a path its check needs (the check's working directory or a numeric comparison input), or replaced it with another type, is rejected without running that check. Council refuses
+verification entries with `council_verification_unsupported` and still accepts intent paths and outputs.
+Claude Code subprocess routes refuse them with
+`verification_unsupported_runtime`.
+
+### Agent ledger
+
+Every dispatch whose workers can run at the same time opens an agent ledger, the
+bounded coordination board those workers share while they run: a parallel fan-out
+of two or more, a `writers: 1` batch, a detached batch of two or more, a compete
+group, and a fleet plan that has two agent steps neither of which depends on the
+other when `maxWorkers` is at least 2 ([dispatch-modes.ts](../../src/tools/dispatch-modes.ts),
+[execution-scheduler.ts](../../src/domains/dispatch/execution-scheduler.ts)). A single-run dispatch,
+a council and a strictly ordered plan open none. A native HTTP worker reaches the board through the
+`ledger` tool and posts one of four typed entries. A `claim` stakes path prefixes so peers stop
+colliding, a `finding` reports one observation with the path and line that ground it, a `review`
+judges another entry by its id, and a `message` sends text of at most 1,000 characters to a run id,
+`main` or `all`, with an optional `replyTo`. Nothing untyped is postable. A run gets 20 posts and a
+ledger holds 200 entries; further posts are refused. Workers on other runtimes (Claude SDK and CLI
+peers) see the board as it stood at spawn, and the host posts a bounded final-report `message` for
+them when they settle. Claims block nothing (the scheduler's write-boundary refusal does), so the
+worker's ledger hint asks for a claim only before writing a path a peer may also write, and for a
+`finding` only when a peer needs it before the run ends. The dispatch and collect results print each
+run's answer, so their board section leaves out that run's sealed findings and any ledger finding that
+restates one; `fleet view` and peers still see the run-record findings.
+
+The orchestrator is the sole writer. A post travels up the control lane as a
+body and nothing else, and every attribution field is stamped from the
+orchestrator's own admission record, so no worker-supplied value can reach a
+field a peer or a run record reads as identity. Admitted entries are pushed back
+down to each worker's local mirror, so a read answers with a watermark instead of
+blocking on a round trip, and a worker that spawns late receives the whole board.
+Entries that carry information-flow restrictions are withheld from a worker whose
+flow policy refuses the destination. The frame-level protocol is specified in
+[worker-dispatch-mechanics.md](../architecture/worker-dispatch-mechanics.md).
+
+The reducers never merge. Citations are compared in workspace-relative form, so
+`./src/a.ts` and the absolute path of that file are one path. A path cited by
+two or more runs is corroborated, a path cited by one is uncorroborated and still rendered standing on its own, a
+finding with no citation is an ungrounded lead, and an entry a review failed is
+marked disputed where it stands. Overlapping claims from different runs carry
+the ids they overlap, which is advisory; the per-wave write boundary is what
+actually stops two writers.
+
+When the board closes depends on where the batch settles. An attached parallel
+fan-out closes it when the tool call returns, and compete closes it once every
+candidate and the judge have settled. A detached batch, and a parallel batch the
+operator moved to the background, carry the ledger id on the durable batch
+record and close it on the first `monitor(mode="collect")`, because their peers
+stay concurrent past the call that started them. After the close, appends are
+refused and counted.
+
+The main model reads the board too. Through the `ledger` tool it can read a
+live board and post to it, attributed as `main:<session>`, selecting a run with
+`runId` when more than one board is open. After the workers settle, the parallel
+dispatch result, the compete result, and `monitor(mode="collect")` for a detached
+batch each carry one `agent ledger (<n> entries, sequence <w>)` section after the
+per-run lines. It holds the same bounded render a worker sees, with the same
+attribution and the same corroboration and dispute marks, and no count, score, or
+consensus line. The section also lists the batch's assignments and, for Scout
+reports, the findings taken from their run records. The same text is on the result's
+`details.agentLedgerBoard`. A batch nobody posted to still shows
+`agent ledger (0 entries, sequence 0)`.
+
+Run records do not record ledger contributions.
+
+### Detached fan-out, backgrounding, and collect
+
+`detach: true` validates, admits, and spawns every task, then returns. It applies to
+parallel mode only and is refused together with a review gate or `timeout_ms`. The
+reported id is the logical assignment id (also the first attempt's run id).
+For an in-flight attached dispatch, `Ctrl+G`, then `d`, converts
+the running attached dispatch into a detached batch. A sequential call moved to the
+background leaves the finished and undispatched steps out of the batch and says so.
+Backgrounding checks against a refusal table: it refuses Scout dependency plans driving
+stages from the turn, compete judge gates, council rounds, review cycle gates, multi-step
+pipelines, dispatches with explicit `timeout_ms`, or missing detached records. A worker
+permission ask that the main agent must answer can also yield an attached call into a
+detached batch, so the main agent can reach `steer`.
+
+Attempts keep streaming into the board and immutable run ledger. The batch and
+assignment index are durable (`batches.json` and `assignments.json` under the
+state dir), so collection survives session exit; `monitor` `list` and `collect` show only the batches and
+runs this session dispatched, and the single-run modes also read runs of the same project. Gather results with the monitor tool: `mode="wait"`
+observes one assignment for a bounded time (60 seconds by default, at most 10 minutes). It
+never cancels the assignment; `steer` with `action="cancel"` cancels its current attempt
+and suppresses later attempts. `mode="collect"` is the barrier over a batch id
+or assignment-id list. It blocks while assignments are in flight, polling every
+second for 30 seconds by default (at most 10 minutes), and then returns each assignment's
+terminal attempt plus `attemptRunIds` history, each answer in the compact form
+described in [Bounded result delivery](#bounded-result-delivery). When the wait runs out it returns the
+pending snapshot and says the runs keep running. A `wait` or `collect` that ran out its time is not a success, so its transcript row ends with
+`timed out !` rather than `✓`. Collect also stops early when a worker in
+the batch waits for a main-agent permission decision, and it returns that request.
+Collecting marks the batch so the turn-end nudge stops firing. `wait` observes
+without collecting; `collect` is the authoritative terminal batch operation.
+Collect every detached batch before final synthesis.
+
+The main agent does not have to poll for a batch. In the interactive terminal, a
+detached batch that settles after the turn that dispatched it has ended wakes the agent
+with a turn of its own. The same happens when a worker in a running batch stops for a
+permission decision the main agent must make, or asks for wider write roots. The wake
+turn appears in the transcript as a prompt marked `detached batch update`. It names the
+settled batches or the waiting requests and how to answer them. The turn controller
+collects the settled batches into it before the model call, as it does at the start of
+any turn. The turn starts at once when the session is idle. It waits while a turn is
+running, a message is queued, a dialog is open or the composer holds a draft, and starts
+within about two seconds of those clearing
+([detached-batch-wake.ts](../../src/interactive/detached-batch-wake.ts)). It is an
+ordinary turn under the session's permissions, budgets, cost caps and yolo pause. Each
+batch and each request wakes the agent at most once, and only a batch the session saw
+while it was still running can wake it. A batch that settles while its turn is still
+running is handled by the turn-end nudge instead. ACP sessions and headless `run` do not
+wake: the client or the next prompt collects there.
+
+### Review gate
+
+The builder runs the task. A reviewer then inspects the workspace against the
+task. The reviewer defaults to the builtin `reviewer` recipe, the job table's
+recipe for reviewing a diff, or to `verifier` when this install has no `reviewer`
+(`reviewDeciderAgentId` in [execution-role.ts](../../src/domains/dispatch/execution-role.ts)), and never falls back to the builder's own
+agent; it is given a read-only dispatch restriction and is routable to a different node,
+model, or target through `review.node`, `review.model` and `review.target`. The
+`review.reviewer` field names another recipe.
+
+The reviewer answers the gate's typed `{verdict, checks}` shape rather than trailing
+prose (the `review-verdict` contract on `reviewer`, `verifier-report` on `verifier`):
+
+```json
+{"verdict":"pass","checks":[{"name":"npm run typecheck","passed":true,"evidence":"exit 0"}]}
+```
+
+The host gives the reviewer an evidence packet inline
+([evidence-packet.ts](../../src/domains/dispatch/evidence-packet.ts)): the
+builder's handback (the first 8 KiB, with the run result path for the rest),
+the diff the host measured for the change (from the task worktree, the observed
+delta or the paths the builder's write record names, never the whole checkout;
+24,000 bytes shared across subjects) and the host's own run of each declared
+check, each under an id such as `s1.diff`. Every check in the verdict lists in
+`cites` the packet ids it rests on. A verdict whose checks cite none of them
+gets one repair round and then settles `exhausted` for the operator to decide.
+A compete judge receives the same packet for every candidate.
+
+`revise` is not a verdict a model authors. The reviewer answers `pass` or
+`fail`, and `decideReviewGate` in
+[gate-decisions.ts](../../src/domains/dispatch/gate-decisions.ts) owns the continuation policy: a
+non-passing verdict below the terminal cycle becomes `revise` and re-runs the
+builder with only the failed checks threaded as input data, bounded by
+`max_cycles` (default 2, max 4). On the terminal cycle the verdict settles as
+reported. A reviewer that produces no structured result settles as `exhausted`
+and surfaces as an explicit operator decision, never a silent failure.
+
+### Compete
+
+N candidate builders (2 to 4, default 2) run the same task, each in its own scratch git
+worktree under `.pancode/worktrees/<group>/` on its own
+`pancode/compete/<group>/<n>` branch. Candidate N receives a one-line stance in its
+prompt, assigned in order: `minimal-diff`, `test-first`, `refactor-tolerant`, `spec-literal`.
+`candidates` is either the count or a list of 2 to 4 `{target, model}` entries, one per
+candidate in order; an entry's `target` and `model` replace the call's for that candidate,
+and an empty entry keeps the call's route. The plan preview and the run pin the same route
+for each candidate. The judge counts as independent only when no candidate shares its agent
+or model family.
+Each candidate's work is committed on its
+branch; a read-only judge inspects the branches and answers a JSON object with the winning
+candidate number and typed checks (`{"winner": <n>, "checks": [...]}`). The judge defaults to `verifier` and is set through `judge.agent`,
+`judge.model`, `judge.target` and `judge.node`. In `yolo` the winning branch is merged. In `default`
+the winner's branch and worktree are preserved and the operator
+confirms through `apply_winner`, whose approval prompt is the winner
+confirmation. A judge-picked candidate whose builder failed, or whose branch changes
+protected artifacts, is not applied and becomes an operator decision. Losers are cleaned on every path,
+including abort, and every removed candidate is first archived under a recovery ref
+`refs/pancode/compete/<sha256>` in the repository.
+
+The compete group is a durable transaction owner. Its manifest records the
+coordinator identity and every admitted worker process before the dispatch
+handle is returned. When the orchestrator restarts, PanCode uses process birth tokens
+to distinguish the leased process from PID reuse, terminates an abandoned
+worker or ACP process group, and then removes the group's registered
+worktrees and branches. This recovery starts once the first frame is up (at
+session start for a headless or ACP run), so its termination grace never holds
+the screen or input; the first dispatch waits for it to finish before it is
+admitted. Quitting while it runs waits for it within the shutdown budget each
+domain gets; past that budget the leftovers stay for the next start. If a judge output is waiting in the decision journal,
+the workers are quiesced but the candidates remain until that output is bound
+to a judge run whose seal verifies; a recovered winner is preserved for
+operator inspection rather than silently auto-applied after restart.
+
+### Council
+
+Council is the read-only sibling of compete. Two to five members run the same
+singular task concurrently on the local node. A request selects
+exactly one configured `fleet.rosters` entry or supplies inline `members`. The council fields (`roster`, `members`, `synthesis`, `rounds`) are advertised to the model only when at least one `fleet.rosters` entry exists; admission still honors them when sent.
+Admission gives every member a read-only dispatch restriction and the
+`council-read-only` tool surface: `read`, `grep`, `find`, `ls`, `git`, `code_nav`, and `context`.
+A council may seat any agent: a roster member's optional `agent` (or an inline member's `agent`) names the recipe it runs
+as, and a member without one runs as the call's `agent`. Every member keeps its own target, model and thinking level. The
+read-only profile stays the ceiling whatever the recipe: a required recipe tool the profile removes is waived rather than
+refused, and the recipe's own result contract does not apply to the member slot (a `vote` council still asks for a ballot),
+so a `coder` or `architect` member reads and argues but never writes. An unknown member agent is refused before approval
+(`council_member_agent_unknown`).
+Members default to the `scout` recipe, which keeps `grep`, `find`, `ls` and `code_nav` under the council profile. An operator starts a council with
+`/council [--roster <name>] [--rounds <n>] [--synthesis judge|vote|none] [--agent <id>] [--deadline <N|Ns|Nm>] <task>`, where `--agent` seats
+members that name no agent of their own and `--deadline` (dispatch arg `member_deadline_ms`; a bare number is seconds)
+bounds each member's run: a member still running at the deadline is stopped, the council returns the other members'
+answers, and the report marks itself partial and names who timed out. A seat whose target is down when its run is admitted does not refuse the council: the report lists it as `seat not run (target unavailable)` and the live seats deliberate. When fewer than two seats are live in the first round, the council is refused with `council_too_few_live_seats`. While members run, each board column shows its
+elapsed time and an estimate of the output it has streamed (`~N tok out`), then the measured output once it settles. Without
+`--roster` the roster named `default` is used. `/poll [--options <a|b|c>] [--models <target[/model]>,...] [--rationale] [--deadline <N|Ns|Nm>] <n> <question>`
+asks 2 to 5 participants the same question as a one-round vote council and shows the vote distribution
+([commands-and-modes.md](commands-and-modes.md#interactive-slash-commands)). With no `--roster` and no `default` roster, `/council` prints
+`/council needs a roster. Declare one under fleet.rosters in settings.yaml, ...`, and a `--roster` name that is not
+configured is refused with `no roster named "<name>" in fleet.rosters (<configured rosters>)`. A member whose route resolves to
+an SSH fleet node is refused before approval (`council_member_remote_node`), as is a runtime
+that cannot enforce the read-only tool profile, such as an ACP delegation peer. Council never
+creates a worktree and never mutates the workspace.
+
+Council supports one to three rounds. The first round gives every member the
+same task and briefing. A later round gives each member the other members'
+prior answers as labelled, untrusted briefing data. The member never receives
+its own prior answer. Each briefing is limited to 8 KiB and carries an explicit
+truncation marker when necessary. A failed peer contributes a labelled failure
+marker and no answer text.
+
+Three synthesis modes are available:
+
+| `synthesis` | What it does | Model call |
+| --- | --- | --- |
+| `none` | Returns the final member answers directly. | No |
+| `vote` | Deterministic majority tally over structured `verdict` fields. | No |
+| `judge` | Runs one additional read-only judge against all final answers. The judge defaults to `oracle`, or to `researcher` when the call's own agent is `oracle`, so by default the judge is never the call's own recipe. Set `judge.agent` to choose another. | Yes, one |
+
+Every member run settles and seals its own run record, a judge run points
+backward to every final member run's digest through gate provenance, and the
+approval artifact names each
+member's label, target, model, node, color, round count, and
+synthesis mode, so the plan hash binds the whole council contract.
+
+<details>
+<summary>How a vote council collects ballots and what it reports without a majority</summary>
+
+A vote council asks each member for that verdict: the member's task carries the
+ballot directive and the member's run seals a `council-ballot` postcondition,
+`{"verdict":"...","text":"..."}`, in place of the seated recipe's own result
+contract. The seated agent, its persona, and its read-only tool profile are
+unchanged, so any recipe can be voted with.
+
+The verdict is a single line of at most 64 bytes and is lower-cased before the
+tally, so members that reach the same conclusion land on the same key. The
+reasoning belongs in `text`, which is what the council report shows as the
+member's answer.
+
+When the task lists its answers, as `/poll --options a|b|c` does, the ballot
+names only them: the directive asks for one of the listed options verbatim, the
+example shape reads `{"verdict":"<one of: a|b|c>",...}`, and the
+`council-ballot` postcondition accepts only a listed option, matched without
+regard to case. A member that copies an example token such as `yes` gets a
+repair round that quotes the options, rather than casting a spoiled vote.
+`/poll` refuses a choice it could not bind that way: one holding `, ` (the
+separator the task lists the choices with) or one longer than 64 bytes.
+
+A member that seals no conforming ballot fails its own run and is reported as a
+failed member rather than dropping silently out of the count. A vote whose top
+tally does not exceed half of the members that answered reports `no_majority`, and a vote in
+which no answering member carried a verdict reports `no_verdict_field`.
+The council's own row on its card and its synthesis in `/fleet` read the sealed tally, as
+`vote: integer-cents 2–0` when the verdict won or every count otherwise, and the card's row
+names the synthesis run that `/fleet share` takes.
+
+</details>
+
+### ExecutionPlan and plan approval
+
+Every orchestration shape compiles to one strict ExecutionPlan v4 DAG with
+stable task ids, explicit dependencies, requested and approved authority,
+capacity-bounded waves, stop/continue semantics, and structured
+handoffs bound to run digests. The scheduler performs whole-plan preflight and reservation before
+the first worker spawns. A missing authority grant is an admission failure.
+
+A plan-scale dispatch call maps to an approval ask at the `default` autonomy
+level, which only the operator answers (the safety judge never reviews a plan, and a headless run denies it), and runs without the stop at `yolo`, contained or unconfined. One kind of plan does not stop at `default` either: a parallel, sequential or pipeline plan that admission sealed and in which every task is a read-only run on this machine. Each task must resolve to the `explorer` role, which comes from the recipe's capability class or a read-only request and never from the task text, with no write roots, expected outputs, verification, worktree, approved failover, agent selection or authority grant, and the plan must have no Scout source, confirmation or `apply_winner` ([dispatch-plan.ts](../../src/tools/dispatch-plan.ts)). Such a plan runs the route it showed, so a headless run at `default` can fan out read-only scouts, and its run records carry `approval: "read-only"`. Any writer task, gate, remote node or other condition above keeps the ask. A `/council` or `/poll` typed in the composer is admitted the same way, so it shows that card at `default` too. A call is plan-scale when it fans out more than one task, continues a
+Scout split, runs compete or council, places work on a remote node, carries a task
+with approved failover, or applies a compete winner with `apply_winner`
+([dispatch-plan.ts](../../src/tools/dispatch-plan.ts)). Before asking, PanCode resolves the effective agent, target,
+model, node, bounded review cycles/candidates/judge, and scheduling cost
+ceiling, then reserves the plan's capacity as a unit. The scheduling cost
+ceiling is `safety.limits.sessionCostUsd`. When that is `0` there is no session
+ceiling: the plan carries a ceiling of 0, renders its advisory baseline as
+`no ceiling`, and neither admission nor a Scout continuation fails on it. The parked
+call shows that sanitized artifact, including the approved fallback candidates
+in preference order, and one approval covers the whole plan. Declining the plan
+rolls the whole reservation back.
+
+A reservation holds the global, per-node and per-inference-endpoint slot count of
+its widest wave, so a three-step sequential plan holds one slot rather than three.
+Cost upper bounds are recorded on the reservation as advisory accounting and never
+deny the plan. It never pins route identity. A retry that lands on a different node
+or endpoint rebinds its member atomically and fails closed when the new node or
+endpoint has no free slot; the new estimate is recorded without a ceiling check. Reservations owned by a dead process
+are reclaimed at startup. The reservation and lease lifecycle is specified in
+[capacity-and-scheduling.md](../architecture/capacity-and-scheduling.md).
+
+Execution consumes the same pins, including each expanded builder/reviewer/candidate/judge role and
+the SSH node's transport kind and host. A placement, host, or capability
+change fails before launch rather than silently choosing an
+unapproved alternative. Yolo skips the stop and seals the
+same plan hash into every run's plan provenance instead
+(`plan.approval: "yolo"` is the stable value).
+
+The registry boundary is resolved dispatch plan v3. `deadlineMs` is required:
+a fleet plan carries a positive integer or `null` and a non-fleet plan carries
+explicit `null`. Other versions and missing fields are rejected.
+
+#### Route and cost on the plan card
+
+Each task on the plan card carries a `route:` line naming the setting that chose its route: `fleet default`, `fleet profile <name> named in the call`, `fleet profile <name> bound to agent <id>`, `fleet target matching the required capabilities`, `target named in the call`, or `best-available target; <selection> unavailable (<reason>)`. The TUI approval card shows it as one `route` row when every task shares it and otherwise as `route <n>` rows below the plan. Except for a target named in the call, the row adds `workers follow fleet routing, not the session's /model (set it in /settings)`. The card's cost row says whether the plan counts against this session's cost limit. A plan whose every route is unpriced has no cost row, because the session cost limit never holds an unpriced route.
+
+#### Limits on the plan card
+
+Each task on the plan card carries a `limits:` line with the bounds that stop that run, and the TUI approval card shows it among the Plan rows, once when every worker shares it and otherwise under each worker ([run-limits.ts](../../src/domains/dispatch/run-limits.ts)).
+
+- A priced route names its estimate: `cost <estimate> per model call at a <N>-token output bound`. The estimate prices output at the route's output bound, which is `chat.maxOutputTokens` when set, else the model's output cap, never above the model's cap or window.
+- An unpriced route has no cost bound, so the line names what does stop it. A native worker's line starts `unpriced route: each response stops at <S> s` from `safety.limits.workerResponseSeconds`, then says `the run has no wall-clock bound unless timeout_ms is set`, or, when the call sets `timeout_ms`, `the call's timeout_ms stops the run within <ms> ms`.
+- Both end with the tool bound, such as `PanCode stops it at 300 tool calls` or `planned for about 40 tool calls; PanCode stops it at 300`, with `lowered to PanCode's overall limit` added when admission held the estimate at `fleet.limits.toolCallsPerRun`. An external one-shot worker, whose calls PanCode cannot count, is promised no tool ceiling: `one launch whose tool calls PanCode cannot count, so no tool ceiling applies`.
+
+### Shipped playbooks and playbook versions
+
+The fleet is the coordinator and its workers; a playbook is what the fleet runs. Playbooks load from four sources, lowest precedence first: the builtin playbooks shipped in the package (`build-test`, `build-review`, `sdlc`, `seat-stretch`), playbooks shipped by enabled plugins under their `playbooks/` directory, `<configDir>/playbooks/<name>.md` for the user, and `.pancode/playbooks/<name>.md` for the project. A file in a later source shadows a file of the same name in an earlier one, and `pancode playbook list` shows each playbook's source. An interactive session that starts in a project whose playbook shadows a built-in, plugin or user one says so once after it starts, and `pancode doctor` names both files. The four builtins are version 3 playbooks. `build-test` needs the registry command `test`, `sdlc` needs `test` and `commit`, and `build-review` and `seat-stretch` need none. `seat-stretch` is an example quota policy for a subscription seat, described in [Stretching a subscription seat](seat-stretch.md). A repository that has not yet declared the commands sees those playbooks as `setup` in `playbook list` and cannot run them.
+
+A playbook is a Markdown file. Its YAML front matter holds these keys. Its body is a template: every `{{name}}` must resolve from a `--var name=value`, and an unresolved name fails the run. The shipped playbooks use `{{task}}`, so a run passes the task as the argument after the playbook name (`pancode fleet run build-review "Fix the pager"`) or as `--var task="..."`. An unresolved variable error names each missing one as `--var <name>="..."`.
+
+| Key | Meaning |
+| --- | --- |
+| `version` | Schema version, 1 through 5. |
+| `name` | Playbook name; `playbook new` rewrites it to the new file stem. |
+| `description` | Optional text shown by `playbook list`. |
+| `steps` | Non-empty list of steps. |
+| `maxWorkers` | Integer of at least 1: how many agent steps of this plan may run at once. |
+| `budgetUsd` | Optional positive number. `fleet run` refuses a playbook whose budget exceeds the remaining session budget. With `safety.limits.sessionCostUsd: 0` there is no session ceiling, so the check is skipped. |
+| `onFailure` | `stop` cancels the remaining steps after a failure; `continue` lets independent steps finish. |
+| `writers` | Version 5 only. The literal `1` serializes write steps (see [Single-writer token](#single-writer-token)). |
+
+Playbooks support schema versions 1 through 5:
+- Version 1: Supports agent steps only.
+- Version 2: Introduces deterministic code steps.
+- Version 3: Adds bounded check/repair loops and commit steps with `commitFrom` message sources.
+- Version 4 (`PLAYBOOK_WRITE_BOUNDARY_VERSION = 4`): Introduces per-step declared write boundaries (`writes`) and orchestrator post-step enforcement.
+- Version 5 (`PLAYBOOK_DYNAMIC_STEP_VERSION = 5`): Adds plan steps, executable gate steps, per-step target or worker-profile defaults, and the optional single-writer declaration.
+
+#### Playbook v5: plan, gate, and per-step target
+
+A version 5 agent step, including an agent loop check or repair, may declare either `target: <targetId>` or `profile: <fleet.profiles key>`. It may never declare both. Playbook preflight resolves these values through the same worker routing used by `/run --target` and `/run --agent-profile`. An unknown value refuses before approval and names the target or profile. Versions 1 through 4 continue to refuse both fields.
+
+A `kind: gate` step asks its validator agent to write exactly one repository-relative `path`. The playbook derives the step's write boundary from that path, so a separate `writes` property is refused. Its `run` property names a command whose argv contains one whole-token `{{path}}` placeholder. After the agent writes the executable acceptance check, the coordinator runs it without a shell against the otherwise untouched tree. A red result admits the gate. A green result refuses the run as `gate_not_discriminating`. The fleet ledger records `gatePathHash`, the SHA-256 of the gate file's content. A loop may use `check: {kind: gate, gate: <stepId>}`. Only the bounded output lines beginning with `FAIL` cross that failed check edge into the repair agent.
+
+A `kind: plan` step defaults to the builtin `architect`. It declares `roster` (1 to 16 agents), `maxTasks` from 1 through 16, an optional `proposals: true`, its own scope and write boundary, and an optional target or profile default. The architect returns a `delegation-plan` object whose tasks contain `id`, `agent`, `description`, `depends_on`, `writes`, and an optional `mode` of `sequential` or `parallel`. The coordinator admits only roster agents, unique and acyclic task ids, resolvable dependencies, at most the declared task count, and task writes contained by the plan step boundary. Successful tasks carry lineage to the plan step and inherit its target or profile. A playbook with `writers: 1` serializes write tasks through the existing single-writer token.
+
+When `proposals: true`, every roster member first runs with a read-only dispatch restriction against the same task. Their answers reach the architect as labelled, bounded briefing data. Proposal runs are reserved with the rest of the plan and run in parallel, up to the lower of the playbook's `maxWorkers` and the configured worker capacity. Proposal agents do not choose targets for generated work. The plan step's playbook default remains authoritative for every admitted task. A plan step is never replayed by `--resume`, because the tasks it generates splice into the plan at run time.
+
+### Playbook authoring
+
+`pancode playbook` authors and checks playbooks and `pancode fleet run` runs them. Usage errors exit 2, as do an invalid playbook, a failed preflight and an authoring command that finds its destination already present. A refused resume and a run that does not end clean exit 1.
+
+- `pancode playbook list [--json]` lists every playbook with its source, a state of `valid`, `setup` or `invalid`, and the rendered steps. `--json` prints the same listing as JSON. `setup` means the playbook needs registry commands this repository has not declared, and the line carries the remedy.
+- `pancode playbook new <name> --from <builtin> [--json]` copies one of `build-review`, `build-test`, `sdlc`, or `seat-stretch` into `.pancode/playbooks/<name>.md`. The command requires a safe file stem (lowercase letters, digits, `.`, `_` and `-`, starting and ending with a letter or digit) and refuses to replace an existing playbook.
+- `pancode playbook validate <name> [--var key=value ...] [--json]` parses the playbook, validates its graph and command bindings, resolves every agent, target and profile, compiles the execution plan, and checks the declared write boundaries against `.gitignore`. It prints one line per check (`parse`, `graph`, `commands`, `agents`, `plan`), exits 2 with the diagnostics when the playbook is invalid, and creates no state directory, ledger row, reservation, worker, or run record. `--json` emits `{valid, playbook, checks, planHash}` or `{valid: false, playbook, diagnostics}`.
+- `pancode playbook graph <name> [--var key=value ...] [--json]` renders the compiled waves with each step kind, agent or command, target or profile, scope, and write boundary. Gate and plan steps show their path, command, roster and task limit. Bounded loops also show their check and repair nodes beneath the loop identifier. `--json` emits `{playbook, planHash, waves, loops}`, plus `isolation: "worktree"` for a playbook whose steps all run in one task worktree.
+- `pancode playbook commands init [--json]` discovers declared package scripts, just recipes, Makefile targets, and supported `pyproject.toml` script and tool entries. It writes a fully commented `.pancode/playbooks/commands.yaml` draft. Uncommenting an entry confirms its exact argument vector, and an existing registry is never replaced.
+- `pancode fleet run <name> [task] [--var key=value ...] [--resume <runId>] [--output-format text|json|stream-json] [--cwd <dir>] [--timeout <duration>] [--max-cost-usd <usd>] [--detach]` runs a playbook ([fleet.ts](../../src/cli/fleet.ts)). One positional argument after the name fills the playbook's `{{task}}`; quote a task with spaces, since a second positional is refused. Giving the task both ways (`--var task=...` too) is a usage error, and so is a task for a playbook whose prompt has no `{{task}}`. Preflight resolves every agent, target and profile, requires each step scope to fit inside the orchestrator scope, checks that the session budget is open and can hold `budgetUsd` (a session ceiling of `0` is always open and holds any `budgetUsd`), binds routes, and checks the write boundaries; a preflight failure exits 2 before anything dispatches. The run prints `fleet <name>: root=fleet-<hex> plan=<hash> steps=<n> loops=<m>` on stderr, one line per settled step on stdout, and a summary on stdout with each loop's terminal reason, staleness re-runs, steps that need an operator decision, and write-boundary violations. Exit code 0 means every required step succeeded, no step was skipped, and every loop resolved; any other finished run exits 1, and an error thrown by the scheduler exits 2 like a preflight failure. `fleet view <fleetRootId>` lists the steps and the run id of each.
+
+`--output-format json` prints one `fleet_end` result document on stdout and nothing else there. `--output-format stream-json` prints one JSON line per event (`fleet_started`, `step_dispatched`, `step_settled`) and ends with the same `fleet_end` line. The document carries `schemaVersion: 1`, `rootId`, `playbook`, `planHash`, `exitCode`, `completion` (`state` of `completed`, `stopped` or `refused`, with a `stopReason`), `verdict` (an `aggregate` of `pass`, `partial` or `fail` and each step's outcome), `usage`, `cost`, typed `causes[]` and the `limits` in force; a run that kept a task worktree adds `worktree` (`path`, `branch`, `commit`, the `preview` command and the `land` command), absent when the run used no task worktree or changed nothing in it. `pancode schema fleet-result` prints its JSON Schema. With `--output-format`, a reader that closes stdout turns the exit code into 141 once the fleet has sealed, and the fleet is never canceled for that.
+
+`--cwd <dir>` runs the playbook as if started in that directory. `--timeout <duration>` (`90s`, `15m`; a bare number is seconds) counts from process start, stops the fleet at the deadline and exits 124. `--max-cost-usd <usd>` stops the fleet once its settled steps have spent that much and exits 4; the cap in force is the lower of the flag and the playbook's `budgetUsd`, and a step already in flight finishes its spend before the stop lands. A playbook `budgetUsd` without the flag stays a preflight check.
+
+`--detach` starts the fleet in a background process and returns once the fleet root is recorded. It prints `fleet <name>: accepted root=fleet-<hex> pid=<pid> log=<path>` in text, or one `fleet_accepted` line under `--output-format json` or `stream-json`, and the background process writes its output to that log. A start refused before the root exists answers as the foreground command would. `pancode fleet wait <fleetRootId> [--timeout <duration>] [--json]` waits for the root to seal, prints its fleet result (one summary line, or the `fleet_end` document with `--json`) and exits with the root's own exit code. It exits 1 when the owning process died before sealing and 75 when `--timeout` expires with the fleet still live. `pancode fleet list [--all-projects] [--limit N] [--json]` lists this project's fleet roots, newest first, each with its state (`sealed`, `seal-failed`, `ended`, `running` or `orphaned`) and its sealed outcome.
+
+Run resumption is separate from `pancode fleet admission open`, which reopens dispatch admission after an operator drain. A resumable fleet run records its playbook name, rendered plan hash, ordered step identifiers, variables, and terminal run references (run id and run digest) in the durable fleet ledger under the state directory. Runs started from the TUI through `/fleet run` use the same durable record and can be resumed with `fleet run --resume`. `--resume` starts a new fleet run after replaying the longest successful, integrity-valid prefix of the named prior run, in declared step order. The new run records the prior fleet run as its resume parent. Replayed steps are reported as `replayed`, retain their original run or code-report references, and do not create new runs. Replayed steps are announced after the run starts, so `stream-json` output reads `fleet_started` before the replayed `step_dispatched` and `step_settled` lines.
+
+The current playbook must compile to the same plan hash. A mismatch refuses before execution and names each changed step and the fields that changed, for example `step 2 b: commandId changed` followed by the prior and current value of each field (a long prompt prints as its digest). An added or removed step reads `added` or `removed`. When every step matches, the change is plan-level (the task, `maxWorkers`, `writers`, isolation, `onFailure` or loops) and the refusal says so. The plan hash covers each code step's command id, not the command's argv in `commands.yaml`. The prior run must belong to the same playbook name, and the variables must exactly match the original run. A different value, an added value, or an omitted value is refused even when the resulting task text would otherwise be similar. An unknown run id is refused as not found in the durable fleet ledger.
+
+### Resume a fleet from the TUI, ACP or desktop
+
+Use `/fleet run --resume <rootId> [--var key=value] <playbook>` in the TUI.
+ACP and the desktop fleet preview also accept a resume root. Every interface
+validates the prior root against the current plan and shows replayed steps in
+the preview. The prior workspace, playbook and variable values must match;
+an active prior run cannot be resumed. Source: `src/domains/dispatch/fleet-run-preview.ts`
+and `src/domains/dispatch/fleet-resume.ts`.
+
+### Follow a fleet event journal
+
+`pancode fleet events <rootId> [--follow] [--json] [--all]` reads a fleet's
+hash-chained journal. Without `--follow`, it prints the records available now.
+`--json` writes the stored NDJSON lines verbatim; `--follow` reads appended
+records until `fleet_sealed`. Other-project roots require `--all`, and a unique
+root-id prefix resolves as it does for `fleet view`. Each settled
+step writes a verifiable manifest checkpoint. Lines are hash-chained, not
+signed: the chain detects a line that does not extend the ones before it, not a
+rewrite by someone who can write the file. The command exits 0 when the journal
+is sealed and intact, 1 on an integrity break or read error, 2 on a usage
+error, 3 when the journal read so far is intact but not sealed and `--follow`
+was not given, and 4 when `--follow` stopped because the fleet can no longer
+seal its journal (its root record is gone, it ended without a seal, or the
+process running it is gone). This journal belongs to the
+whole fleet; individual worker transcripts use `fleet view`. Source:
+`src/cli/fleet-events.ts` and `src/domains/dispatch/fleet-event-journal.ts`.
+
+### Why a second fleet run waits
+
+Every fleet executor joins its Git checkout's writer set before dispatching.
+Subdirectories share the checkout's set; linked worktrees have their own. A
+second fleet, in this process or another, queues behind it with a `queued behind`
+notice and starts when the first settles; it fails with `writer_set_busy` (the
+CLI exits 1) only when `fleet.limits.runTimeoutMs` passes first. Dead local
+owners are taken over. A record from another host is taken over once this host's
+clock is 60 seconds past its expiry; owners renew every 10 seconds for 30. The set is scoped
+to one user's state directory. Source: `src/domains/dispatch/writer-set.ts`.
+
+### Per-step write boundaries (Playbook v4)
+
+Playbook v4 gives every step a write boundary through the `writes` allowlist property. A `workspace` step must declare a non-empty allowlist. A `readonly` step is the empty allowlist and is refused if it declares `writes`.
+
+The grammar for declared write boundary entries requires repository-relative POSIX paths:
+- Trailing `/` indicates a directory subtree allowlist.
+- Exact relative paths without a trailing `/` permit changes to that single file. An exact entry that names an existing directory is refused before any step runs, by `fleet run` preflight and again when a window begins, because git reports changed files and never a directory, so the entry would roll back every edit under it: `write boundary: 'src/ledger' names a directory, and an entry without a trailing '/' covers exactly one file. Declare 'src/ledger/' to allow the directory and everything under it.` An exact entry for a path that does not exist yet stays a file the step may create.
+- Declarations must not contain glob characters (`*`, `?`, `[`, `]`, `{`, `}`), `..` or `.` segments, backslashes, or absolute paths.
+- Each step declaration is capped at a maximum of 32 entries (`PATH_BOUNDARY_MAX_ENTRIES = 32` in [path-boundary.ts](../../src/core/path-boundary.ts)).
+
+Write boundary enforcement is detect-and-rollback, never OS or filesystem sandboxing. A step runs with whatever filesystem permissions its underlying execution environment possesses. Upon step completion, the orchestrator inspects the working tree to verify compliance:
+1. Snapshot baseline: Before a step executes, the orchestrator captures a snapshot (`captureWorkspaceSnapshot`) recording the baseline git HEAD commit and existing dirty path content tokens.
+2. Workspace diffing: After step completion, the orchestrator runs git status inspection (`diffWorkspace`) to identify changed paths relative to the snapshot baseline commit.
+3. Authorship attribution: A changed path outside the allowlist is blamed on the window only when it intersects what the window's own runs recorded writing. That record is the run's tool-call stream, folded by the same recorder that grounds a sealed mutation report and read back through `DispatchContract.observedRunWriteAttribution`. A change that no run in the window recorded is an unattributed concurrent change: it is listed under `unattributed` in the verdict and reported to the operator, and it is never rolled back. This is what keeps a file an operator edited while a fleet ran from being overwritten with its committed version.
+4. Open records: A run's recorded write set is read as a closed list only when the run could not have written outside it. A window whose steps do not all offer a closed record falls back to blaming every change outside the allowlist. Three things open a record: a `kind: code` step, whose registered command publishes no tool events; a run whose tool telemetry coverage is not `complete`, such as one on a subprocess runtime; and a run that made a successful call to a tool able to mutate a path its own arguments do not name. That last set is derived from the tool surface rather than authored, as every registered tool outside the `read` and `write` action classes, which today is `bash`, `verify`, `dispatch`, and `steer`, plus any dynamic or MCP tool whose schema this process cannot read. The `git` tool is a closed status, diff, and log surface and stays enumerable. When a successful opaque call opens the record, the live Alt+W card immediately names the tool and says that its arguments cannot enumerate every path it may write. The durable verdict records `attributionComplete: false` and an `attributionDowngrades` entry with the reason, tool name, tool call id, run id, and step id. The after-the-fact write-boundary message repeats that cause before explaining why the whole outside diff was blamed on the window.
+5. Rollback execution: Attributed unauthorized changes are automatically rolled back (`rollbackPath`). When rollback removes a file the step created, it also removes the parent directories the step created and the removal left empty, nearest first. The snapshot records untracked directories, empty ones included, so a directory that existed before the step is never touched. The verdict lists each removed directory, and the failure message names them.
+6. Content source: Rollback restores content strictly from what git already has in the pinned baseline commit (`snapshot.head`). If a path was already dirty when the step snapshot was captured, its prior content is not stored in git, so in-place restoration cannot be guaranteed. The working tree is left as the step made it, and the status settles as `rollback-incomplete`.
+7. Violation handling: Any attributed unauthorized change fails the step with the typed reason `writes_boundary_violation`.
+8. Window attribution: Enforcement evaluates scheduling windows (`wave-<n>` or `revalidate-<stepId>-<n>`). A wave window cannot combine steps with overlapping declared boundaries or multiple concurrent step writers, ensuring single-step attribution.
+9. Ignored paths and state subtraction: Enforcement evaluates paths reported by git status, which never lists a git-ignored path. A declared `writes` entry the repository ignores is therefore refused before anything runs, by `playbook validate`, by `fleet run` preflight, and by the `/fleet run` preview, with a diagnostic naming the entry and the ignoring rule (for example `'work/' is ignored by .gitignore:1:work/`). Silently certifying such a window as clean is not an option, because nothing about it was observed. The PanCode state directory (`.pancode/` or `pancodeStateDir()`) is subtracted from status checks so run state, code step log artifacts, and boundary verdicts do not trigger false violations.
+10. Durable records: Verdicts are serialized as JSON records at `write-boundaries/<rootId>/<window>.json` under the PanCode state directory, carrying the baseline HEAD commit, checked paths, violations, unattributed concurrent changes, the attribution completeness flag and downgrade causes, rollback actions, status, and SHA-256 digest.
+
+### Bounded check/repair loops
+
+Playbook versions 3 through 5 support declared check/repair loops (`kind: loop`). A loop declares `id`, `maxAttempts` (an integer between 1 and `PLAYBOOK_LOOP_MAX_ATTEMPTS = 5`), `check` (a code command or agent reviewer), and `repair` (an agent coder).
+
+At plan compilation, the orchestrator unrolls each loop statically into a deterministic hashed DAG containing `maxAttempts` verification check steps (`<loopId>.check.<n>`) and `maxAttempts - 1` repair steps (`<loopId>.repair.<n>`).
+- Run record per attempt: Every attempt in an unrolled loop executes as an independent plan node and produces its own run record.
+- Recovery role: Repair attempts following the first check are assigned the `recovery` execution role.
+- Spent bounds: Reaching `maxAttempts` without a passing check settles the loop with the terminal reason `loop_bound_exhausted`.
+- Five terminal reasons: A loop concludes with one of five reasons: `resolved` (verification passed), `loop_bound_exhausted` (attempt ceiling spent), `loop_step_failed` (underlying step errored or was denied), `loop_not_reached` (prior plan dependencies failed), or `loop_canceled` (a running check or repair was interrupted). A check that finished and passed before a sibling was interrupted still resolves its loop.
+- Node counting: Unneeded nodes (verifications or repairs remaining after a loop resolves) are counted separately from skipped nodes.
+- Verification staleness: The scheduler enforces verification staleness by re-running a green code check step (at most 3 times per step) if a workspace-editing step finishes after it and before a dependent runs.
+- Cycle checkpoint: After each check step settles, PanCode captures the workspace as an immutable ref `refs/pancode/loop/<sha256>` in the repository, without touching HEAD or the index, and prints `loop <id> cycle <n> checkpoint=<ref>`.
+- Review verdict line: An agent reviewer's cycle prints `loop <id> cycle <n>: <outcome> (<facts>) decision=<path>`, followed by one `failed check <name>: <evidence>` line for each check the reviewer failed, so a `revise` or `fail` says why without `pancode fleet view`.
+- Repair input: A repair step depends on its check and on the check's own dependencies, so it receives the check's verdict together with the report of the work under repair (the builder's or the previous repair's mutation report).
+- Changed-test gate: A code check step that is not a `gate` check also runs the test files that its workspace ancestors changed (see [Changed tests in a loop check](#changed-tests-in-a-loop-check)).
+
+#### Changed tests in a loop check
+
+When a loop's check is a code step and not a version 5 `gate` check, the registered command is not the only thing it runs. The check collects the paths that its workspace ancestors changed: each ancestor's mutation-report `mutatedPaths` plus the changed paths its task worktree or checkout recorded, for ancestors whose run records' seals verified ([fleet-run.ts](../../src/domains/dispatch/fleet-run.ts), [code-step.ts](../../src/domains/dispatch/code-step.ts)). It keeps the paths that look like test files, resolves a runner for each through the project's own declarations ([test-files.ts](../../src/tools/verify/test-files.ts)), and runs those after the registered command. A failure of any of them fails the check and feeds the repair loop, so a reproduction test the builder adds gates the result even when the registered command names only existing test files. Each extra command appears as a `changed tests (<check id>)` entry on the step's report, with its own exit code and duration.
+
+The recognized runners are `node --test`, `tsx --test`, jest, vitest, pytest, unittest, `go test` and `cargo test`. A changed test with no recognizable runner yields a note on the report, and only the registered command runs for it. A loop whose check is a version 5 `gate` step runs only that acceptance command, and a code step outside a loop check runs its registered command alone. The `build-test` playbook and the check note tell the builder the exact argument vector the check step runs.
+
+#### Step handoffs and retries
+
+A step receives its predecessors' final outputs as labelled data, never as instructions: at most 16 predecessors and 12,000 bytes in total ([execution-handoff.ts](../../src/domains/dispatch/execution-handoff.ts)). The budget is shared max-min fairly, so short outputs keep every byte. An output over its share keeps its head and tail around a marker `[pancode: N of M bytes omitted ...]` that names the run whose full output the coordinator retains, and the worker is told the output is an excerpt. A loop repair receives the check's findings in place of the raw check transcript. Plan compilation refuses a step with more than 16 predecessors, so `playbook validate` reports it.
+
+A fleet step settles on the final attempt of its retry chain: a step that fails and then recovers on a retry counts as succeeded, its dependents run, and every attempt's cost counts once in the run total. Each step, including each loop repair, has its own retry allowance under `fleet.retry.maxRetries`.
+
+### Deterministic code steps
+
+Deterministic code steps (`kind: code`) execute known commands directly as subprocesses rather than calling an agent model.
+- Registry binding: The `command` property must reference a command ID declared in `.pancode/playbooks/commands.yaml`. Invocation strings are never generated from model output. Only a playbook that runs a registered command reads the registry, so a registry that does not parse fails those playbooks and no others.
+- Execution environment: Code steps run unattended with arguments bound from the command registry, fixed working directory, closed environment allowlist (`PLAYBOOK_COMMAND_BASE_ENV` plus declared command env), bounded timeout (`timeoutMs`), byte-capped output capture (`CODE_STEP_CAPTURE_MAX_BYTES` = 1 MiB log artifact, `CODE_STEP_EXCERPT_MAX_BYTES` = 8,000-byte excerpt), no stdin pipe and no shell interpreter. Host checks still pass through the session test-runner consent gate when an attended session has not approved test runners.
+- Sandbox: A loop check, a gate check and a gate's baseline run execute what the workers before them wrote, so they run inside the main-session sandbox rooted at the run's workspace, as host verification's checks do: credentials and secret files are hidden and writes stay in the workspace, scratch roots and package caches. `safety.sandbox: off` runs them bare, as does `auto` on a host with no backend; `required` without a backend records the step as a spawn failure. Known limit: commit steps and plain action code steps run the operator's command bare on the host, so one that executes files a worker changed (a build script, a package script) runs that code as the operator.
+- Missing registry diagnostic: If a playbook declares code steps but `.pancode/playbooks/commands.yaml` is missing in the repository, or a builtin playbook runs ids the registry does not declare (a registry with only `test` leaves `sdlc` short of `commit`), `pancode playbook list` reports the playbook state as `setup` and prints `needs .pancode/playbooks/commands.yaml declaring <id>` with the remedy on the next line: ``declare each id under `commands:` in .pancode/playbooks/commands.yaml with an `argv` list; `pancode playbook commands init` drafts the file from the project's scripts when it does not exist yet``. A builtin is named in these messages, never by its path inside the install. A project playbook naming an id its registry lacks is `invalid`.
+- Commit message sources: A code step with `commitFrom` populates its `commitMessage` placeholder from the output of preceding agent steps. A commit step stages everything git reports as changed since the last commit point.
+- `Tested-by` trailer: With `integrations.git.commitAttribution` on, a commit step's `Tested-by:` trailer needs a passing loop check that proves something. A check whose command cannot fail (`true`, `:`, or a shell that runs only that) earns none. Neither does a check whose own files a worker step of the run changed: a package manifest or package-manager config, a runner or build config, a file the command names, a file named by the package script it runs, or a test its runner picks up (for example `pnpm test` running `node --test`). The runner is recognized behind `NAME=value` prefixes, `uv run`, `poetry run` and `sh -c`. Such a check still counts as passed, and the run prints `step <id>: check passed without Tested-by:` with the worker steps and the files they changed.
+- Cost and route: Code steps run no model, so they record no tokens, cost or route. Each step settles as a `code_step.settled` record in the fleet root's run journal, which `pancode fleet code-steps <rootId>` lists, rather than a run record, route decision, or quality label. Captured output stays in the step's log under `<stateDir>/code-steps/<rootId>/`, and the argv and cwd of each command the step executed in `<stepId>.commands.json` beside it.
+
+#### Command Registry Schema (`.pancode/playbooks/commands.yaml`)
+
+The repository command registry binds command IDs to exact argument vectors:
+
+```yaml
+version: 1
+commands:
+  test:
+    argv: ["npm", "test"]
+    timeoutMs: 600000
+    description: "Run repository test suite"
+  lint:
+    argv: ["npm", "run", "lint"]
+    timeoutMs: 300000
+  build:
+    argv: ["npm", "run", "build"]
+    timeoutMs: 600000
+  commit:
+    argv: ["git", "commit", "-m", "{{commitMessage}}"]
+    timeoutMs: 60000
+  acceptance:
+    argv: ["node", "{{path}}"]
+    timeoutMs: 60000
+```
+
+The `commands` map needs at least one entry. A command id matches `[a-z0-9][a-z0-9._-]{0,63}`. Each command entry supports:
+- `argv` (required): Array of command arguments starting with the binary name (no shell strings).
+- `argumentSlots` (optional): Operator-declared positional data slots, each with a unique `name` (letters, digits, `_` and `-`, starting with a letter, at most 64 characters) and required `maxLength` (1 to 8192). At most 64 slots. Omission forbids appended playbook arguments; declared slots are all required.
+- `cwd` (optional): Repository-relative working directory (defaults to repository root).
+- `timeoutMs` (optional): Per-step execution timeout in milliseconds (defaults to 600,000 ms; bounds: 1,000 to 3,600,000 ms).
+- `env` (optional): Array of extra environment variable names (uppercase letters, digits and `_`) to pass through on top of `PLAYBOOK_COMMAND_BASE_ENV` (`PATH`, `HOME`, `LANG`, `LC_ALL`, `TZ`, `TMPDIR`).
+- `description` (optional): Human-readable description.
+
+The whole-token `{{commitMessage}}` substitution is available to commit steps. The whole-token `{{path}}` substitution is available to version 5 gate commands. Each substitution becomes exactly one argv element and never passes through a shell.
+
+A playbook may supply per-task data only when the operator explicitly declares slots in the repository registry. Keep the executable, script path, and fixed flags in `argv`; the playbook cannot replace them. Use a fixed `--` separator where the registered program supports it. For example:
+
+```yaml
+# .pancode/playbooks/commands.yaml, owned by the operator
+version: 1
+commands:
+  check-materials-task:
+    argv: ["python3", "checks/check_materials_task.py"]
+    argumentSlots:
+      - name: taskDirectory
+        maxLength: 256
+```
+
+```yaml
+# One code step in a version 2 or newer playbook
+kind: code
+id: check-task
+command: check-materials-task
+args: ["{{taskDir}}"]
+scope: readonly
+dependencies: []
+```
+
+Run with `--var taskDir=.research/tasks/task-01`. A slot receives exactly one literal argument. Values must be nonempty, fit the slot's length limit, contain no NUL, and not start with `-`; fixed flags belong in the operator's registry. A whole-token `{{variable}}` binds before admission and participates in the plan hash. Missing variables, undeclared or excess slots, embedded placeholders, and flag-like values fail before execution. The code runner repeats slot validation for direct or in-memory plans. Spaces and shell metacharacters remain data without another expansion pass. Existing fixed commands accept no extra args.
+
+## Measured route selection and agent automation
+
+The joint resolver treats agent, target, model, runtime, and node as one
+bounded tuple. Manual pins, the approved plan envelope, authority, audience,
+required tools and skills, result contract, response-schema support, locality,
+authentication, network policy, endpoint reachability, context, resource fit,
+capacity, budget, deadline, and cooldown are hard filters. Every enumerated
+tuple is estimated from conservative quality, reliability, completed cost and
+latency, queue wait, and cache affinity. Admissible tuples must clear the posture's
+quality and reliability floors, are ranked by a posture-weighted score, and are
+flagged when another tuple dominates them. The complete bounded candidate/rejection
+set is sealed; at most three fallbacks are projected.
+
+Shadow is the default and never changes the explicit route. Active route
+selection requires both the execution role and posture to be named, a call that sends
+`routing.failover: "approved"`, and an agent whose capability class is `read-only` or
+`verification`:
+
+```yaml
+version: 2
+fleet:
+  adaptiveRouting:
+    roles: [explorer, seat, checker, reviewer, judge]
+    postures: [quality, balanced]
+    agentRoles: []
+```
+
+For every exact tuple, `evaluateRouteReadiness` requires consistent hard-
+constraint evaluation, no integrity failures, at least six role-specific
+quality labels, conservative quality and reliability floors (and the request's own
+`minimumQuality`), known cost, fresh node/endpoint/resource/capacity/settings facts, and
+a decision p95 of at most 10 ms. If no tuple is ready, active mode refuses the assignment. It never
+falls back to the fixed route, and manual or `failover: none` intent never
+drifts.
+
+`roles` takes `explorer`, `seat`, `checker`, `reviewer` and `judge`. `postures` takes
+`quality`, `balanced`, `latency` and `economy`; `manual` is exact by definition and is
+never an activated posture. `agentRoles` takes `{agentId, executionRole}` pairs, with
+`builder` also allowed as an execution role, and rejects `agentId: auto`. All three lists
+default to empty.
+
+`agent: "auto"` first filters recipe audience, authority and governance. Bounded task
+features affect cold priors only; one truthful role-quality label retires the task prior.
+Agent automation has its own readiness report per agent/spec/role and stays shadow
+unless the call's posture is activated, the call sends `routing.failover: "approved"`, and
+the operator names an exact agent/role pair in `agentRoles`. A read-only Scout can
+settle reconnaissance directly or return at most four typed subtasks. The
+coordinator validates ids, dependencies, expected result contracts, and
+requested authority and rejects embedded agents, routes, deadlines, costs, or
+other control fields. Escalation to workspace editing requires authenticated
+plan approval or existing yolo authority.
+
+### Route history and settled labels
+
+Route history is a fold over this host's settled runs, not a file ([route-history.ts](../../src/domains/telemetry/route-history.ts)). Every run whose `run.settled` names a route decision contributes one entry, read from its sealed scope under `<stateDir>/telemetry/runs/` and re-read only when that scope's files change. An entry holds the run digest, whether the run's seal verifies, the executed route identity and execution role, the decision hash and mode, `reliability` (`success`, `failure`, or `neutral` for operator cancels, policy denials and permission refusals), `firstPass`, the priced cost as a fact, cache use, phase timing and `settledAt`. Only a run whose seal verifies contributes quality, cost or timing. The route observer projects each entry to a `qualityLabel` (`pass`, `fail` or `unmeasured`, from independent evidence only) and refines it when later gate evidence verifies.
+
+Independent quality evidence arrives late or never, so every entry also carries `settled`, the run's own verdict from `routeSettledLabel`:
+
+| `settled` | Meaning for the operator |
+| --- | --- |
+| `success` | The run's outcome is `succeeded`. |
+| An outcome code | The run's `outcomeCode`, the most specific failure class: `worker_tool_call_cap_exhausted`, `worker_context_exhausted`, `worker_turn_timeout`, `worker_output_cap_exhausted`, `loop_guard_tools_disabled_exhausted`, `result_contract_exhausted`, `result_contract_invalid`, `worker_final_output_missing`, `host_verification_rejected`, `obligation_unmet`, `worker_not_done`, `worker_partial_work`, `assurance_compromised`, `worker_run_timeout`, `exploration_stalled`, `worker_mutation_blocked`, `merge_withheld`, `worker_removed_tests`, `information_flow_blocked` or `vram_capacity_fit_failure`. |
+| `permission_required` | No outcome code, and the outcome detail opens with `permission_required`: the worker ended on its refusal limit or the `fail` posture. |
+| `failure` | The outcome is `failed` with neither of the above. |
+| An outcome | Any other run outcome, unchanged: `timed_out`, `stalled`, `canceled`, `denied_by_policy` or `spawn_failed`. |
+
+The label is computed from `run.settled` on every read, so every entry has one. The label is a lowercase token. `pancode fleet view <runId>` prints it on a `settled` line once the run's seal verifies ([Model, cost and settled label in `fleet view`](#model-cost-and-settled-label-in-fleet-view)). The run's `outcome`, `outcomeDetail` and `outcomeCode` in `run.settled` are the per-run source it is derived from. No `evidence` command prints it. Adaptive routing does not read `settled`: route estimates and readiness use `qualityLabel` and `reliability`, so the label cannot change a route choice. Routing on it needs a recorded decision first.
+
+## Assignments, attempts, and failover
+
+A dispatch is a logical assignment containing one or more immutable run
+attempts. The assignment id and terminal run ids are distinct identities.
+Public `finalPromise` handles resolve only when the assignment succeeds,
+is canceled, or exhausts its retry policy; the returned `RunResult` is the
+terminal attempt's own. Earlier attempts stay independently addressable, and
+each keeps its own sealed run record. The assignment also owns the event stream,
+which carries every attempt's frames in order, separated by a synthetic
+`attempt_start` frame; [worker-dispatch-mechanics.md](../architecture/worker-dispatch-mechanics.md) specifies it.
+
+Manual `target`, `model`, or `node` pins default to exact failover (`none`): a
+retry may repeat the tuple but cannot silently move away from it. `approved`
+failover moves only within the ordered `allowedCandidates` envelope of exact
+agent/target/model/node tuples that the approved plan lists; PanCode enumerates the
+envelope and a model cannot send one. `automatic`
+failover lets typed infrastructure failures exclude only the failed route
+part. For example, an SSH channel failure can move the node while retaining the
+agent, target, and model. Cancellation, policy rejection, and permission
+refusal neither retry nor penalize infrastructure. A worker information-flow refusal ends the run with deterministic `outcomeCode: "information_flow_blocked"`; it is never retried or failed over.
+
+A worker's `RunResult` records the mode that governed its retries as
+`effectiveFailover`. That is a different fact from `routingIntent.failover`,
+which carries the two-valued policy the request asked for and reads `none`
+whenever nothing was requested, so only `effectiveFailover` tells a sealed tuple
+apart from an unpinned run that was free to move. A `RunResult` omits it when
+no dispatch failover governed the run, as for a main-agent or print-mode run.
+
+When a lower-level request omits the failover field, retry policy defaults to
+`none` for a target or node pin and `automatic` otherwise. Normal tool
+admission resolves `routing.failover` explicitly; a manual target, model, or
+node pin requires `none`.
+
+A plan-approved task is never `automatic`. An explicitly pinned task seals its
+exact tuple with `failover: "none"`, and so does a planned task that did not send
+`routing.failover: "approved"` or has no candidate. A task that did send it seals
+`failover: "approved"` with a bounded candidate list of at most three routes, built by the
+route resolver and rendered into the plan text the operator approves.
+Validation rejects `automatic` on a request carrying plan provenance, so an
+approved dispatch can only reroute to a tuple the approval actually showed.
+
+The retry count is bounded by `fleet.retry.maxRetries` (default 2), or by the approved
+route's attempt limit minus one when a route approval is active, and the timing follows
+backoff: 500 ms at the start, doubling per attempt, stopping at 60 seconds, with a 429
+answer raising the delay to at least one second. Whether a failure retries at all
+depends on its class, the failover mode, and the safety suppressions listed in
+[Failure classification and retries](#failure-classification-and-retries). A target cooldown protects new work from a known-bad target; it does not gate
+an assignment already in flight, because that assignment's own retry budget is
+the correct and sufficient bound. A retry denied at admission settles the
+assignment failed, reports the reason on stderr, and records it in the
+assignment's `outcomeDetail`.
+
+A retry that excludes the target, which a target-attributed failure does under
+`automatic` failover, moves to the first configured route on another target
+that can serve the request. The route must resolve to that target, carry every
+capability in the request's `requiredCapabilities`, and have a breaker that is
+neither open nor probing. When no other route qualifies, placement chooses
+again, which usually lands on the failed route after backoff; the admission
+capability gate still applies to whatever it picks.
+
+The cooldown is a per-route circuit breaker, keyed by target, runtime, and wire
+model, held in memory by the running process. It moves through three states:
+
+| State | How it is entered | What dispatches see |
+| --- | --- | --- |
+| Closed | Start, or a success resets the consecutive-failure count. | Normal admission. |
+| Open | Consecutive target-attributed failures reach `fleet.retry.breakerThreshold` (default `1`, so the first failure trips it). Lasts `fleet.retry.routeCooldownMs` (default 15000 ms). | Reroute when the failover mode allows it, refusal otherwise. |
+| Half-open | The cooldown expired. | The next new dispatch is admitted as the only probe; every other dispatch still sees the route as cooling until that probe finishes. |
+
+The failures that count are `target-auth`, `target-rate-limit`,
+`target-transient`, and `worker-runtime`. A probe success closes the route and
+resets the backoff. A probe failure reopens it with the cooldown doubled, up to
+five minutes, or the configured cooldown if that is longer. A probe that ends
+for a reason that says nothing about the target, or never starts, frees the slot
+for the next dispatch to probe.
+
+The breaker is not persisted. `pancode targets` and `pancode doctor` run in
+their own processes and cannot see it, so the session's `/settings` targets rows
+are where an open, half-open, or probing route shows with its remaining cooldown.
+
+<details>
+<summary>Why context overflow and rejected schemas do not trip the breaker</summary>
+
+A provider's context-overflow error and a response schema the server rejects are
+verdicts on the request, not on the route, so they never count against it.
+
+A rejected schema ends the attempt without a retry.
+
+A context overflow is retried once, and only onto a route whose effective context
+window is strictly larger than the failed route's. The route is chosen like a
+target-excluding retry, except that another model on the same target also
+qualifies, and under `approved` failover it must be in the approved envelope. The
+retry counts against `fleet.retry.maxRetries`, and the attempt's retry reason in
+the assignment lineage reads `context-overflow: 8192 -> 32768 on big/qwen`.
+
+An overflow is not retried under `none` failover, when the failed attempt was
+itself an overflow retry, or when no eligible route has a larger window. The
+assignment then settles failed with an `outcomeDetail` that names the reason.
+
+</details>
+
+Assignment status, attempt ids, and terminal run id are stored separately in
+`assignments.json` while each attempt keeps its own sealed run record.
+Pipelines and batches await assignment terminals, so downstream stages consume
+the successful fallback output rather than an earlier failed attempt.
+
+A fleet run is the exception to "the attempts settle the record". Every step of
+a fleet dispatches under the fleet root id as its lineage root, so all of them
+share one row, and no single step is the run's verdict. The run claims the row
+by writing `verdictOwner: "fleet"` when it opens, files every settled step's
+attempt run ids in `attempts` (an agent step's run id, or a code step's
+`code-*` run id, whose `code_step.settled` record is in the fleet root's run
+journal), and
+writes `status` once at the end from the whole-run outcome. Until then the row
+stays `running`, and a step settling under it records its attempt without
+touching the status. The row is `succeeded` only when every required step
+succeeded, no step was skipped and every loop resolved; any other end, including an
+unhandled error, is `failed`. A run abandoned by a crashed process is
+reconciled to `failed` at the next startup rather than inheriting a green
+step's success.
+
+## Run records
+
+### Inspect worker runs
+
+Inspect a worker run with `pancode fleet view <runId> --json`, or open the dispatch runs in `/view` ([/view](../architecture/observability.md)). A run's record states the worker's outcome, route, usage, cost and evidence; `/view verify <runId>` and `pancode fleet verify <runId> --json` check its seal. The [fleet CLI viewer](#inspect-fleet-runs-from-the-cli) also shows the run's ledger row and available transcript. Headless `pancode run --agent` reads the sealed result's own typed fields: a `Failed checks:` block lists the checks a verifier or code step ran that failed, a `Not verified:` block lists declared checks that never ran and other stated limits, and the command prints the sealed result itself when the worker wrote no prose; [exit-codes-and-output.md](exit-codes-and-output.md) describes that output ([run-output.ts](../../src/cli/run-output.ts)).
+
+A headless main-agent `pancode run` that asked for a change and delegated it reads the
+dispatch the same way. When a dispatch failed or never started a worker, no later read,
+command, write or dispatch succeeded, and nothing changed the workspace, the run exits 1 as a no-op (outcome `failed`, detail `noop`) with
+`pancode run: no-op: the delegated task failed (<reason>) and no write succeeded`, or
+`never started` in place of `failed`. For a batch the reason is the first failed run's line
+with its outcome, not the batch header. A task worktree that merged counts as a change, and
+a run under `--turn-mode answer` or `proposal` asked for none
+([headless-run-verdict.ts](../../src/cli/modes/headless-run-verdict.ts)).
+
+### Run record integrity and fields
+
+A finished run's record is its own telemetry scope at `<stateDir>/telemetry/runs/<runId>/`. Settlement appends `run.settled` (version 1), which names the redacted `run-result` object holding the run's output, failure text, worktree and host check commands. The evidence assessment follows as `evidence.assessed`, and `run.sealed` closes the scope over the journal's hash chain head, so the seal covers the settled facts, the assessment and every object. A sealed run directory verifies with only its own files ([seals and bundles](../architecture/telemetry.md#seals-and-bundles)). The run's identity is the SHA-256 of its `run.settled` payload, and gate subjects, Scout sources and plan sources cite that digest. In memory, dispatch hands its caller the run's `RunResult`; readers use the read model's run DTO ([read model](../architecture/telemetry.md#read-model)). The fleet provenance facts `run.settled` carries include:
+
+- `node`: the fleet node the worker ran on (`id`, `kind`). The `node.id` explicitly identifies the worker process host executing the task, not the model host (which is represented by the `route.targetId`).
+- `budget`: the admitted budget envelope (recipe policy, request, effective phase and clamp reasons).
+- `context`: the briefing byte count and the worker and project context sizes. Their SHA-256 hashes are in `hashes`; briefing prose is not retained and is distinct from bounded project context.
+- `verification`: the evidence state and basis observed from worker
+  tool execution.
+- `hostVerification`: host-run status, strategy and check counts. The resolved check evidence (argv, cwd, exit code, duration, memo provenance, bounded output tail and base comparison) is in the `run-result` object.
+- `worktree`: the requested application and the applied status. The task worktree path, branch, diff hash and any failure reason are in the `run-result` object.
+- `outcomeCode`: the stable terminal classifier. The codes are
+  `vram_capacity_fit_failure`, `worker_tool_call_cap_exhausted`,
+  `worker_context_exhausted`, `worker_turn_timeout`, `worker_output_cap_exhausted`,
+  `loop_guard_tools_disabled_exhausted`, `result_contract_exhausted`,
+  `result_contract_invalid` (the host's validator found an otherwise successful
+  worker's final result nonconforming, which a worker cannot assert itself),
+  `worker_final_output_missing` (an otherwise
+  successful worker exited without a nonempty final answer),
+  `host_verification_rejected` (a declared host check rejected the settled tree),
+  `obligation_unmet` (the run left its evidence obligation unmet),
+  `worker_not_done` (an edit worker declared it did not finish and changed nothing),
+  `worker_partial_work` (an edit worker changed files but declared its assignment
+  partly done or not done),
+  `assurance_compromised` (a builder's own validation failed or a check it claimed never ran),
+  `worker_mutation_blocked`, `merge_withheld` (a task worktree was preserved instead
+  of merged because of one of the five gate cases above), `worker_removed_tests` (a
+  run in the current checkout removed existing test cases that the task did not ask to
+  remove) and `information_flow_blocked`. Every code except `result_contract_invalid` and `worker_final_output_missing` suppresses automatic retry. `result_contract_invalid` is retried on another agent or model. `worker_final_output_missing` has no retry class of its own, so the run's other evidence classifies it, usually as a worker runtime failure that is retried on another runtime.
+- `routingIntent`, `routeDecision`, and `quality`: the normalized hard bounds,
+  the executed route decision with its whole route identity, and the
+  quality sources with their validator digests.
+- `resultContract`: inside `quality`, the admitted contract identity and its `pass`, `fail`, or
+  `not-reached` conformance state. Only a due correctness-bearing contract can
+  label route quality.
+- `validationGrounding`: claimed versus grounded validations checked against canonical executed commands.
+- `capabilityMismatch`: the recipe's capability class against the task shape (`agentId`, `capabilityClass`, `taskType`, `suggestedAgentId`). A confident mismatch is refused at admission and never becomes a run, so a run record carries only a flagged one.
+- `usage`, `totalTokens`, `apiCalls` and `pricing`: each value is a fact that is measured, estimated, unknown or absent, never a bare number ([honest values](../architecture/telemetry.md#honest-values)).
+
+Reroutes, gate provenance (role, group, cycle, subject run ids with their run
+digests, and the verdict that caused a revise builder), plan-approval
+provenance, steering provenance and the briefing provenance live on the run's
+ledger row and its `RunResult`. The admitted typed `intent` and the
+`effectiveFailover` mode are `RunResult` facts. The worker's attestation is
+verified at spawn and a drifting peer never runs, but the attested identity is
+not copied into the run record, and the run record holds no ledger
+contributions.
+
+Process exit zero is not a delegated deliverable. Native and ACP runs succeed
+only when the drained event stream yields a nonempty run output with
+`state: "final"`. A missing final answer fails with
+`outcomeCode: "worker_final_output_missing"`; any captured unfinished text is
+retained only as `state: "partial"` diagnostics and automatic retry is
+suppressed. Dispatch, monitor, ledger, run record, terminal bus event, and retry
+policy all consume that same final classification.
+
+Run integrity, host verification, and evidence verification are separate axes. Integrity says
+that the run's sealed scope verifies; evidence verification
+reports whether PanCode observed a check run through the `verify` tool (or marks the
+basis unknown/not applicable). A read-only Scout can therefore report `run_integrity=verified/seal` alongside
+`evidence_verification=not_applicable/read-only-agent`. Host verification is
+rendered independently as `host_verification=verified|rejected|skipped|not_implicated|not_requested`.
+A host-executed successful check projects onto canonical validation grounding as
+host-observed validator evidence. Briefing provenance and
+bounded `project_context` provenance are also rendered independently; neither
+hash substitutes for the other.
+
+A worker that runs `verify` more than once is judged by the latest run of each
+check on its final tree: a run followed by a workspace edit settles nothing. A check is the call's `check`, `path`, `cwd`, `browser` and `args` taken
+together. Re-running `verify(check="test")` after a fix clears the earlier
+failure, and a later failure of a check that passed settles as failed. A narrower
+`verify(check="test", args=[...])` is a different check, so its pass clears
+nothing, and a blocked call never ran its check, so it changes nothing. The
+run's `quality.typedValidations` carries one `tool:verify` fact per check,
+and evidence verification agrees with those facts. A check whose only calls
+were blocked settles no typed validation fact because it never ran. Workers leave
+denied checks out of mutation-report validations and place source reads and
+citations in summary. When no files changed and no check ran, validations may be empty and quality
+remains unmeasured. Editing reports may use empty validations when every attempted check was blocked; otherwise they require a concrete executed check. For read-only runs (`safety.readOnly: true` on the `RunResult`), mutation-report read claims
+do not require command evidence; verifier verdicts and executable path claims
+retain command grounding; executable validation claims still do.
+
+The canonical terminology for these facts is the five-axis trust status in
+[`evidence-and-memory.md`](../architecture/evidence-and-memory.md).
+Run integrity projects onto artifact integrity; evidence verification,
+typed quality, and validation grounding project onto validation grounding;
+gate decisions project onto independent review; briefing and project context
+project onto context provenance. A run record does not contain independent-review or
+completion-evidence outcomes merely because it is sealed. Those axes remain
+`absent` until a verified gate artifact or finish assessment is composed.
+Integrity checks the recorded artifact against its digest; provenance identifies its
+sources. Validation, review, and authorship are represented by their respective
+observations and recorded identities.
+
+Gate references point backward: a reviewer references the builder it reviewed, a
+revise builder references the reviewer whose findings it received, and a judge
+references every candidate.
+
+Because a worker run settles before the coordinator parses its final verdict,
+terminal pass/fail, exhaustion, winner, and confirmation outcomes are append-only
+integrity-covered gate-decision artifacts under `<stateDir>/gate-decisions/`.
+The run's `evidence.assessed` record carries the gate verdicts linked to it
+([evidence](../architecture/telemetry.md#evidence)).
+
+Reviewer and judge terminal output first crosses an integrity-covered
+write-ahead boundary under `state/gate-decisions/pending/`, before the caller
+waits for the final run result. Restart recovery verifies the run's seal, applies the
+same verdict/winner parser, materializes the final artifact idempotently, and
+only then clears the pending record. Missing run records, tampering, or a
+conflicting artifact fail closed and leave the journal and any compete worktrees
+available for inspection.
+
+Protected-artifact hard blocks follow compete work into candidate worktrees:
+PanCode mirrors every applicable parent-checkout path into each admitted worker
+spec and independently rejects a winner branch whose diff touches a protected
+parent path. The merge/apply coordinator rechecks the live protection state,
+so neither yolo nor a later supervised winner approval can override that
+hard block.
+
+## Operator visibility
+
+- Every run carries the origin that asked for it. The board and the transcript
+  worker block mark it with a glyph: `◇` for a run the operator started with `/run`
+  to a PanCode recipe or an external agent, `◆` for one the model started by calling a dispatch tool, and
+  a quiet `·` on the board for internal helper runs (transcript helper
+  rows use `↳`). A running `◇` on the board is therefore the operator's own work.
+  The footer shows the live worker count (`N workers`) and the Activity page's
+  Workers rule a summary such as `2 active · 1 done`; neither splits by origin.
+- A `/run` reports its admission once. A run that never started, such as
+  one naming an unknown agent or an unusable target, reads as `<command> refused: <reason>`
+  with no run to inspect, and a failure after the run began reads as that run's failure
+  with its `/view dispatch:<runId>` link. A run still waiting for a worker slot after a
+  short delay gets a queued notice. Over ACP the command's reply waits for admission, so
+  it says started or queued only for an admitted run and otherwise carries the refusal and
+  its reason at error level ([work.ts](../../src/session-control/slash-handlers/work.ts),
+  [commands.ts](../../src/engine/acp/commands.ts)).
+- User-origin and agent-origin runs stream into the chat transcript as an
+  attributed worker block. The typed command is echoed dim above the block.
+  Header units display `<agentId>` (a council member shows its roster label)
+  then `<targetId>/<wireModelId>` then `run <runId>`, plus `attempt <n>` after a
+  failover, for fleet workers (such as `◇ coder · node-a/example-coder-model · run 2mkas6s`),
+  or `<id> (acp) · run <runId>` with no route for ACP delegation peers. The header
+  ends with the execution outcome (`✓ execution ok`, `✗` with the outcome code,
+  `○ ran no tools`, or canceled) and the duration. The block body renders the worker
+  prose down a rail, a rail line with tokens processed, context and tool calls (detailed
+  output only), and a `quality` line that keeps validation quality separate
+  from execution status. A failure reason prints on the rail. A council synthesis
+  that succeeded while some members gave no answer is headed `! partial` instead of a
+  plain success.
+- Model-launched workers use `◆`; operator-launched workers use `◇`. Both follow the current output detail. Compact shows outcomes: a `/run` card is its one run row, with the changes and checks of a settled run in place of the task, and a worker row under a dispatch header appears only when it failed, carries a warning or waits on you. Standard adds the bounded evidence: a facts row and up to 3 answer rows. Detailed adds provenance and telemetry: the telemetry row, the tool trail (up to 3 rows), up to 8 answer rows and the run's `/view dispatch:<runId>` reference. A run that stopped to ask you something shows its question, up to 16 rows, at every tier. `Alt+O` cycles the tiers for the session. `/view transcript` and `/view dispatch:<runId>` expose full available details. Execution success and validation quality remain separate facts.
+- Sharing: nothing an operator-started run (`/run`) produced enters
+  the main model's context unless `--share` was passed or the operator runs
+  `/fleet share [runId]`; runs the model started return through the dispatch tool result as
+  usual. What enters is a bounded note of the shape
+  `[worker result] <agent> · run <id> · <outcome> · shared by the operator`
+  followed by the bounded answer text, capped at 8,192 bytes, traveling the ordinary
+  user-turn path. The coordinator prompt tells the main agent that such notes are
+  steering and that it should verify relevant claims as it would any other evidence.
+  `/fleet share` on a council synthesis run shares every labelled member answer with the synthesis.
+  Bare `/fleet share` picks the newest finished run the operator started themselves
+  (never a model-asked `◆` run), and the members and synthesis of a `/council` or `/poll`
+  the operator typed count as operator-started; `/fleet share <runId>` may name a model-asked run
+  explicitly. `/new`, `/resume`, `/tree`, `/fork` and `/handoff` reset the pool bare `/fleet share`
+  draws from, so a run from another session cannot be shared into the current one.
+- Replay: `/resume` replays worker blocks from their sealed run records; the session file's
+  `workerRun` entries carry ids, origin, runtime and task without worker prose; the
+  replayed answer is bounded from the run record exactly like the live one. A
+  run with no readable record renders `result unavailable`.
+- Internal `context-bootstrap` and `wiki-writer` runs report through the context rail
+  and never open a transcript block. Other shadow and internal helper runs open a
+  compact `↳` row.
+- The Fleet Runs board, the overlay that `/fleet` opens, shows a run table that windows around the cursor and drops
+  columns by priority, with the selected run's facts under a rule: the node id (absent placement
+  renders `local`), gate badges (`gate reviewer c2`), reroute badges, live
+  tool activity (the current or last call as a redacted verb and object; raw
+  arguments never cross the worker stdout seam), and the worker's context figure.
+  It also lists finished runs. After a restart, the board also shows up to 12 of this
+  project's newest settled worker runs from the run ledger, leaving out internal helper
+  runs. They load one run per loop turn after the session first paints, so neither keys nor
+  a prompt submitted at launch wait for those reads, and the board shows them as they arrive
+  ([fleet-run-history.ts](../../src/interactive/fleet-run-history.ts)). `Up` and `Down` (or `k` and `j`) move the cursor, `s`
+  steers the selected run, and `x` cancels it.
+- `w` on a live run takes the [workers dock](#workers-dock-and-dashboard)
+  over for that run when a pane host is present, and the board names the key as `watch in a pane`
+  only then. It opens the dock or shows a parked one,
+  and leaves the keyboard in PanCode. Moving the cursor retargets an existing dock to the
+  selected live run and never opens one. `Enter` and `d` toggle the inline worker detail on
+  every run, with or without a pane host, `PgUp` and `PgDn` page an open detail, and `Esc` folds an open detail before it closes the
+  board ([overlay-key-routing.ts](../../src/interactive/overlay-key-routing.ts)). The detail shows the phase, the running call
+  with a redacted action descriptor (`bash running npm test`), the bounded tail of the
+  worker's own prose, and the full task, route and budget lines. The default list
+  stays compact, so a fan-out of scouts costs one row each until an operator
+  opens one. A council row shows its member grid when selected and has no further detail.
+- The board and the transcript worker block read one projection
+  ([worker-progress.ts](../../src/domains/telemetry/worker-progress.ts)), so they cannot disagree about what a
+  worker is saying or touching. Progress settles on `agent_end`, with the live phase shown as `finishing` until the terminal run event arrives, or as `waiting for a verification slot` and then `running host checks` while host verification checks the worker's work. It keeps 40 lines and 4096 bytes of tail, 8
+  distinct tool names, 4 recent actions, and accepts 16 KB of delta bytes per
+  250 ms; what the bounds refuse is counted and named on the card beside the
+  `/view dispatch:<runId>` deep link.
+- Action descriptors are composed where the arguments are trusted: the tool
+  registry's admission path, the Claude tool mapper, and the ACP update
+  mapper. Each reads a fixed verb vocabulary and a fixed argument-field
+  allowlist, scrubs credentials, strips escape sequences, and bounds the
+  object to 64 characters before it crosses the worker stdout seam. Raw
+  argument objects never cross at all.
+- Reasoning content is never displayed. The detail may name a `thinking`
+  phase and the usage facts the card already carries, never the text.
+- Settlement replaces the provisional tail with the settled run's answer;
+  a run whose record cannot be read keeps its own last durable message.
+- The context meter renders the worker's last-message context occupancy
+  against the model's context window: healthy below 80 percent, warn from 80,
+  critical from 95.
+- `/fleet` opens the Fleet Runs board: running, retrying and finished runs with their
+  actual node. `←` on an empty composer opens the same overlay, and so does `Alt+W` in a
+  session without a pane host. In a `--with-panes` session `Alt+W` drives the
+  [workers dock](#workers-dock-and-dashboard) instead. Settings → Workers (`/settings workers`) holds
+  the default worker, profiles and node pins, the standing placement preference, guided
+  SSH add and optional Tailscale discovery, and node rows with readiness and capacity.
+  Open an SSH row for evidence, timestamps, a recorded test, installation preview or
+  removal. Agent bindings are the **Agent routes** in `/settings workers`.
+- `/fleet run <playbook> [--var k=v ...]` compiles the playbook's plan and opens
+  the approval overlay before anything dispatches. The overlay lists the steps
+  grouped by wave, as a table per wave from 100 columns and as fact blocks below that, and for each step its kind, its agent and resolved target
+  (or its command id and the exact argv from `commands.yaml` for a code step),
+  its scope, and its declared write boundary, followed by the budget: a meter of spend against the
+  session ceiling, or `admitted under no session ceiling`
+  when `safety.limits.sessionCostUsd` is `0`, with the playbook's own ceiling beneath. Enter dispatches the plan through the same
+  path `pancode fleet run` uses, so admission, autonomy, run records, and the
+  durable ledger are identical. Esc cancels with nothing dispatched and nothing
+  written. A playbook that fails preflight opens the same overlay with its
+  diagnostics and no accept key. A turn in flight refuses the command with a
+  notice rather than queueing it: an approved plan describes the workspace as
+  it stands.
+- A council is one question asked of several members, so its rows render as one
+  card rather than as two to five unrelated neighbours. On the Fleet Runs board the
+  members sit side by side, one column each, as long as every column keeps at
+  least 34 cells and a 2-cell gutter separates columns; below that the whole group
+  stacks one member under another rather than squeezing some columns and not others.
+  The overlay is at most 96 columns wide, so only a two-member council fits in
+  columns and larger ones stack. Each column carries the
+  member label in its roster color (a member with no color takes the accent), the
+  target and model, the round, the status, and a bounded answer tail of at most four rows. The synthesis run takes the full width under the
+  members, because it is the council's answer rather than one voice in it. In the
+  transcript the council's sealed report reads `council of N` and names no route,
+  since it runs no model; a judge's route is on the judge's own card. A
+  council that ran several rounds still shows one column per member: each label
+  keeps its newest round, so the card describes the council rather than its
+  history.
+- The compact Fleet Runs island shows a council as one card naming the group, how
+  many members are seated, and which round they are on. The grid belongs to the
+  board, where there is width to read an answer in. `/fleet share` is what moves a
+  council answer into the main agent's context; the card moves nothing.
+- Board rows a fleet plan dispatched carry a phase column naming the step's
+  wave index and step id (`w2 build`). A run that is not a fleet step renders
+  the column empty. The compact Fleet Runs island keeps its fixed width, so it
+  shows the column only when the row can still hold a readable agent label;
+  otherwise the phase appears on the expanded card.
+- The monitor tool reports the node and reroute lineage on `status`, `list`,
+  and `collect`.
+- `pancode fleet status [--json]` shows the durable ledger view cross-process;
+  [Inspect fleet runs from the CLI](#inspect-fleet-runs-from-the-cli) lists every inspection command.
+- A worker permission ask opens a `Worker needs approval` card (tier `Worker escalation`) that names the worker agent and run. The worker is parked while the card is open. Approval covers that call and identical calls under the same permission conditions for that run only. It leaves the autonomy level unchanged, and each call still passes the safety net.
+- The process that dispatched the worker owns that ask's window and answers it with the worker's own timeout decision, so the `deny` and `fail` fallbacks apply when the window closes ([worker-approval-window.ts](../../src/domains/dispatch/worker-approval-window.ts)). The window starts when the ask reaches your card, and asks queued behind the card start theirs again while you read it. Any key on the card holds the window until its ceiling: 15 minutes from when the ask opened, or `fleet.permissions.escalation.timeoutMs` when that is longer. A person still at the card renews the hold with another key, each time for 15 minutes from that key, up to one hour after the ask opened. A held card reads `extended · no answer in <time>`, and when the hold runs out the fallback applies. The worker keeps its own timer one minute past the ceiling, and a parent that is gone closes the worker's input, which ends the ask at once.
+
+### Workers dock and dashboard
+
+A `--with-panes` session ([Panes and the Files Pane](panes-and-files.md)) can keep a workers dock beside PanCode's own pane. The dock runs the workers dashboard: a board of this session's workers and a live takeover of one. The operator opens it. A dispatch starting, detaching or failing never opens a pane ([pane-policy.ts](../../src/interactive/pane-policy.ts)). `interface.panes.layout` set to `workers` or `cockpit` opens the dock at boot, on the board.
+
+#### Workers key
+
+`Alt+W` (action `pancode.dispatchBoard.toggle`, leader suffix `w`) is the workers key. With a pane host its single tap settles to one of these:
+
+| State | Single tap |
+| --- | --- |
+| No dock | Opens the dock on the board. The keyboard stays in PanCode. When the dock cannot open (a pane narrower than 80 columns, a host that refuses the split), opens the Fleet Runs board instead and says why. |
+| Dock parked | Shows it at its remembered share, on whatever it was showing. The keyboard stays in PanCode. |
+| Dock visible | Parks it. The dashboard keeps running with its state. |
+| No pane host | Opens or closes the Fleet Runs board overlay. |
+
+A second tap within 400 ms of the first closes the dock and ends the dashboard process. A single tap has no added delay. Pressed inside the dock, `Alt+W` reaches PanCode through the tap file, so the same key parks the dock, returns the keyboard to PanCode and counts toward the double tap. `q` inside the dock also parks it and returns the keyboard, without arming the double tap. While the Fleet Runs board is open, `Alt+W` closes it.
+
+The dock splits to the right of PanCode's pane and takes `interface.panes.workers.ratio` of the width (default `0.34`, range `0.05` to `0.5`) but never fewer than 40 columns, which is half of an 80-column terminal. A session pane too narrow for 40 columns at half its width refuses the dock with `the workers dock needs 40 cells and at most half of <n> is available`.
+
+#### Process and request files
+
+The pane runs this install's own CLI: `pancode fleet view --watch <state>/watch-selection --dock-taps <state>/watch-dock-taps`, with the config, data, state and cache directories pinned on argv. The dashboard reads durable state only: the run ledger (`runs.json`), each run's [display feed](../architecture/worker-dispatch-mechanics.md#run-event-journal) (`<state>/runs/<runId>/feed.jsonl`), the run's sealed record through the read model and, for a fleet step, the fleet run record. It shares nothing with the orchestrator's memory, runs over SSH, and works from a second terminal. It polls every 250 ms.
+
+Two small files carry everything between PanCode and the dashboard, one pair per state root:
+
+| File | Direction | Content |
+| --- | --- | --- |
+| `<state>/watch-selection` | PanCode to dashboard | Replaced atomically. Line 1 is the run id a takeover is requested for (blank asks for the board), followed by `seq=`, `session=`, `since=` and `outputDetail=` lines. `seq` changes on every request, so asking for the same run twice still takes the dock over. `session` and `since` scope the board to this session. `outputDetail` carries the session's output detail (`compact`, `standard` or `detailed`), and PanCode rewrites the file when it changes. |
+| `<state>/watch-dock-taps` | Dashboard to PanCode | One word per appended line: `hide` for `q`, `key` for `Alt+W`. PanCode empties it when a session starts. |
+
+Run by hand without `--dock-taps`, `q` quits the dashboard. Without a TTY, `fleet view --watch` prints the selected run's snapshot, or a note that no worker is selected, and exits 0.
+
+#### Board
+
+The board has one card per worker of this PanCode session: runs stamped with the session's id, plus runs with no session stamp that started after this PanCode booted. Started by hand with no request, it lists every run in the inspection scope (this project, or all projects with `--all`). A failed attempt that a retry or failover attempt replaced gives way to the replacement's card, which carries `↻<n>`. Live runs (queued, running, stale) come first, newest start first. A `finished` group follows with up to 24 runs, newest end first.
+
+The board's header counts running, done, cancelled and failed runs, with cancelled runs kept apart from failures. A board taller than the dock keeps the selected card whole and shows its position as `<first>-<last> / <total> rows`.
+
+A second PanCode process on the same state directory also shows the live workers another process owns in this project, read from their run feeds, and draws their held approval asks as its own permission cards. An answer given there is written to the run's directory, bound to the ask's attempt and arguments, and the owning process applies it and records which process answered; the owner's open card closes. A run whose owning process is gone ends as dead and its asks are withdrawn. Cancelling a followed run records a durable cancel request, which its owner takes and seals as `canceled`. Nothing about another process's runs is journaled by the viewer ([cross-process-fleet.ts](../../src/domains/dispatch/cross-process-fleet.ts)).
+
+A card follows the session's output detail: one row at compact, two at standard and three at detailed. The rows are:
+
+1. The run row: the state glyph, the agent id, the elapsed clock and the task. At compact this one row carries every fact of the run, so a failure's reason starts on it; at standard and detailed it keeps the state word whole.
+2. A failure's reason, the approval words of a run waiting on you, or a live run's phase followed by the task.
+3. Telemetry: the route, the call count, tokens, `last: <call>`, `record: <verdict>` and a reference to the run.
+
+A narrow dock sheds the task first, then the model, then cost and route. The state glyph and the clock always stay. Every worker-adjacent string is redacted and stripped of control bytes where it is drawn.
+
+| Board key | Action |
+| --- | --- |
+| `↑` `↓`, `k` `j` | Select the previous or next card. |
+| `g`, `G` | First or last card. |
+| `Enter`, `l`, `→` | Take the dock over for the selected card. |
+| `q` | Park the dock and return the keyboard to PanCode. |
+| `Alt+W` | The workers key: park the dock, or close it on a double tap. |
+| `Ctrl+C` | End the dashboard and its pane. |
+
+#### Takeover
+
+A takeover pins a header over the worker's live stream. The header holds the back hint, state glyph, agent id, state and elapsed clock with `run <runId>` at the right, the task (up to two lines), the route, tool-budget meter, tokens and cost, and for a step of a fleet run a line `⇲ fleet <name> · <settled>/<planned> steps settled · following`. Below it the stream shows, each row with its offset from the run's start:
+
+- Tool calls by tool name with their redacted call target, `…` while pending, then `✓` with the duration, `✗ failed` or `⊘ blocked`.
+- The worker's prose as it streams, coalesced into paragraphs, with secrets redacted.
+- A `thinking` marker where a reasoning block opened. Reasoning content is never written to the feed, so it is never shown.
+- Approvals asked, and each decision's outcome.
+- The run outcome, steering received, and a note when the feed reached its size cap.
+
+When the feed is missing, the stream says no display feed exists (`fleet.history.journal` may be off). When the head was dropped it says earlier events are not shown. A requested run that is not in the ledger yet shows `waiting for this run to reach the ledger`.
+
+A finished worker adds a run record section under the stream: the verdict row, a spend row (tool calls, tokens, cost, duration), the seal, trust and validation clause, the first line of a failure message, the changed paths, and the first 12 lines of the sealed answer. A longer answer ends with the count of the rest and `pancode fleet view <runId>`.
+
+| Takeover key | Action |
+| --- | --- |
+| `Esc`, `←`, `h`, `Backspace` | Back to the board at the same card. |
+| `↑` `↓`, `k` `j` | Scroll one line. |
+| `Ctrl+U`, `Ctrl+D` | Scroll half a page up or down. |
+| `g` | Jump to the top. |
+| `G` | Follow the newest line. Scrolling to the bottom does the same. |
+| `q`, `Alt+W`, `Ctrl+C` | As on the board. |
+
+A takeover follows work forward. When the run it shows finishes and a retry of it, or the next step of the same fleet run, starts, the takeover moves to that run (a live one first, otherwise the newest started). A takeover PanCode requested by name follows even when the run had already finished. A finished card opened with `Enter` is inspected and stays. While a followed run has finished and its fleet is still running, the stream ends with `waiting for the fleet's next step`.
+
+#### Dock requests
+
+`/panes show <agent|run>`, the `panes` tool's `show` action and `w` on a live run in the Fleet Runs board write a request and take the dock over for that run. They open the dock or show a parked one, and they never move the keyboard, because the caller may be the model. `show` matches live (running or retrying) runs only: an agent id substring first, then a run id prefix, newest first. A target that matches no live run reports `no live run matches <target>` and lists the live agents, so a finished run is inspected with `pancode fleet view <runId>` or from the dashboard's board. The Fleet Runs board stays reachable through `/fleet` and `←` on an empty composer.
+
+## Inspect fleet runs from the CLI
+
+Every inspection command reads durable state only, so it works from a second terminal or over SSH. Inspection defaults to the current project, and `--all` widens it to machine-wide state ([fleet-project-scope.ts](../../src/cli/fleet-project-scope.ts)). An unknown flag exits 2. Inspection commands read a running worker's spend from its run journal, which the owning process appends and syncs as each model call is recorded; the run ledger takes spend only at lifecycle changes and settlement. The owner's budget gates read its in-memory meters and do not lag.
+
+| Command | What it reports |
+| --- | --- |
+| `pancode fleet status [--json] [--all]` | The admission state (`open`, or `draining` with the deadline, requesting PID and request time), each running or stale row with its node, heartbeat (`alive`, `stale` or `dead`, from the recorded worker PID), attempt, depth, elapsed time and cost, the budget envelope lines, each code step a running fleet root has dispatched and not settled (it runs no worker, so it has no ledger row; it shows under `running` as `code step <stepId>` with its command, root and elapsed time), a `fleet roots running` section naming each live root, its settled step count and its steps in flight (`roots` in `--json`, read from the root's event journal), and totals for tokens, cost and runtime. Tokens, cost and runtime come from the read model's fold over each run's telemetry journal, so a run whose usage is only partly measured makes the token totals a lower bound, marked `≥` with the count of unknown values. The retry queue lives in the owning process, so `retrying` is always empty here. |
+| `pancode fleet decisions --json [--all]` | The newest 8 sealed review and compete gate decisions, each with at most 6 subject runs, the decider run and a closed-set reason. It reports `available: false` when no gate has ever run, plus `truncated` and an `unverifiable` count. `--json` is required. |
+| `pancode fleet view <runId> [--follow] [--json] [--all]` | One run's ledger entry, display feed transcript and sealed run record, with the run's seal verified before any settled field is shown. A unique id prefix resolves. Once the seal verifies, the snapshot adds `model`, `cost` and `settled` lines ([below](#model-cost-and-settled-label-in-fleet-view)). `--follow` (or `-f`) tails the feed in an alternate screen until the terminal line and stays open until `q`; without a TTY it prints a snapshot. `--json` prints the snapshot as JSON, including the verified run record. |
+| `pancode fleet view --watch <selection-file> [--dock-taps <file>] [--all]` | The workers dashboard that the workers dock runs ([Workers dock and dashboard](#workers-dock-and-dashboard)). `--watch` does not take a run id or `--follow`, and `--dock-taps` is valid only with `--watch`. |
+| `pancode fleet view <fleetRootId> [--all]` | The step index of a fleet run: one line per step with its run id and outcome. Pass one of those run ids back to see that step. |
+| `pancode fleet list [--all-projects] [--limit N] [--json]` | This project's fleet roots, newest first (20 by default, at most 64): playbook, step counts, start and end times, state (`sealed`, `seal-failed`, `ended`, `running` or `orphaned`) and the sealed outcome. `--all` is accepted for `--all-projects`. |
+| `pancode fleet wait <fleetRootId> [--timeout <duration>] [--json]` | Waits for a fleet root to seal, prints its fleet result and exits with the root's exit code ([Playbook authoring](#playbook-authoring)). |
+| `pancode fleet verify <runId\|fleetRootId> [--json] [--exit-code]` | Re-verifies one run's sealed scope right now and prints `run <runId>: <state>` with a closed-set reason when it did not verify, then one line per trust axis. `state` is `pending`, `verified`, `failed` or `unavailable`. `--json` prints the same facts as a document. Every answered state exits 0 unless `--exit-code` is passed, which exits 0 for verified, 1 for failed or unavailable and 75 for pending. Given a `fleet-<hex>` root id it prints `fleet root <rootId> (<playbook>): <state>`, the failed check, the sealed outcome and one line per step: the root verifies when its event journal chain is intact, the record on disk is the one `fleet_sealed` names, the root's telemetry seal verifies and every agent step run verifies (a code step's record is in the root's scope). Exit 1 for an unknown run. |
+| `pancode fleet cancel <runId> [--json] [--reason <text>]` | Cancels one running run from any terminal. |
+| `pancode fleet cancel <fleetRootId> [--json] [--reason <text>]` | Stops a whole fleet root: no further step starts and its running steps are canceled. A root that already sealed exits 0 with its recorded outcome. |
+| `pancode fleet events <fleetRootId> [--follow] [--json] [--all]` | A fleet run's hash-chained event journal, with exit codes for a sealed, broken or unsealed journal ([Follow a fleet event journal](#follow-a-fleet-event-journal)). |
+| `pancode fleet code-steps <fleetRootId> [--json]` | Every code step the fleet root settled, oldest first, from its `code_step.settled` records: exit code (or `timeout`, or `sig:<signal>`), duration, start time, step, command and run; `--json` gives each record's `commands` with the argv, cwd, exit code and duration of every command the step executed. It reads the root by id and takes no `--all`. Exit 1 when the journal cannot be read. |
+| `pancode fleet admission [status\|drain\|open] [--json]` | Show, close or reopen durable dispatch admission (see [Placement and process-safe admission](#placement-and-process-safe-admission)). |
+
+For the dispatch state as a document, use `pancode fleet status --json`; for one run's telemetry, use `pancode telemetry inspect --run <runId> --json`.
+
+The `view` transcript comes from the run's display feed, `<state>/runs/<runId>/feed.jsonl`, which the orchestrator writes while `fleet.history.journal` is on (the default). The feed is run state: it is redacted, never shared, and removed with the run's ledger row, while the run's telemetry journal keeps only its structural projection. The format is in [Run event journal](../architecture/worker-dispatch-mechanics.md#run-event-journal). A run dispatched with the feed off shows its ledger and run record but no transcript, and the viewer says whether the feed is disabled or missing. The transcript renders each feed row in words: prose as `assistant` with its text, a tool call as `<tool> started` and `<tool> ok|error|blocked in <n>ms` with its call target, a terminal result the host refused as `result rejected: <reason>` followed by the start of what was submitted, other events by their type, and the lifecycle rows as `run opened (<agent>)`, `result (<outcome>, exit <code>)` and `terminal (<outcome>)`. `fleet view` exits 0 after it prints a snapshot or index, or after `--follow` ends. An unknown or ambiguous id, an unknown flag, and an invalid combination (`--json` with `--follow`, `--watch` or a fleet root id) exit 2.
+
+Given a `fleet-<hex>` root id, `fleet cancel` stops the whole fleet: its owner starts no further step and cancels the steps it is running, and the root's fleet result records the stop as an interruption by `fleet_cancel`. Given a run id, `fleet cancel` acts according to who owns the run. When the owning process is alive, the command leaves a cancel request that the owner's reconciler tick turns into its own abort, so the run settles and seals `canceled` with a full run record. The command waits up to 15 seconds for the seal and exits 0 when it lands. It exits 75 while the request is still pending; the request stays queued and is applied on the owner's next tick. When no live owner is recorded, the command leaves the request, waits the same 15 seconds and reports a note in the `--json` output, because only a process still holding the run can apply it; it never kills a process it cannot confirm. When the owning process is gone, the command terminates the orphaned worker's process group (SIGTERM, then SIGKILL after 3 seconds) once it has confirmed the PID is the run's worker, and refuses to guess when it cannot. It then settles the ledger row from the run's `run.settled` if the owner wrote one, and otherwise settles the row `canceled` without minting a run record. It reports a run that is already terminal with its recorded outcome and exits 0, refuses a run recorded on another host (exit 1), and refuses an invalid run id as a usage error (exit 2).
+
+### Model, cost and settled label in `fleet view`
+
+When the run's seal verifies, the snapshot adds three lines after `evidence`:
+
+| Line | Content |
+| --- | --- |
+| `model` | `requested <wireModelId>` from `run.settled`, then `provider` and the run's `upstream.responseModelIds`, which names each distinct model the providers reported on the run's calls once. A run with no provider report prints `no provider response recorded`. |
+| `cost` | The run's priced cost as the read model words it from its `Pricing` fact ([honest values](../architecture/telemetry.md#honest-values)), or `not available`. |
+| `settled` | The run's label from `routeSettledLabel`, the value route history folds ([Route history and settled labels](#route-history-and-settled-labels)). |
+
+A run whose seal fails prints `RUN SEAL FAILED` and its reason on the `evidence` line, and an unsealed run prints `run record unsealed`; neither prints these three lines. The route a run was dispatched on is configuration. Only the provider's report says which model answered, so `not observed` means PanCode captured no report for that call. It never means the requested model served it.
+
+Calls over the `openai-codex-responses` and `openai-responses` APIs read `response.model` from the provider's lifecycle events ([responses-model-id.ts](../../src/engine/apis/responses-model-id.ts)). A response that names a model records `responseModelIdObservation: reported` with that id, a response object without one records `not-reported`, and a call that produced no response object records `not-observed`. The observation is journaled as `target.reportedModel` on each call's `call.settled`, and the run's `run.settled` lists the distinct reports in `upstream.responseModelIds`.
+
+`fleet view <runId> --json` prints one JSON object: `runId`, `agentId`, `model`, `target`, `node`, `phase`, `startedAt`, `task`, the read model's `telemetry` for the run, the bounded `transcript` and `transcriptTruncated`, `journalPresent` and `journalPath` (the feed's presence and path), `evidence`, `outcome`, `outcomeDetail`, `terminal`, `journalUnavailableReason` and `agentLedgerBoard` when they apply, and the settled `record` only when its seal verified. The snapshot has no `settled` field. The label derives from the record's outcome fields.
+
+### Provider call counts and stop reasons
+
+A dispatched run's `apiCalls` in `run.settled` counts provider calls as a fact, excluding synthetic assistant steering entries. The run's `RunResult` carries `upstreamResponses`, its per-call observations. When the runtime reports them, `stopReason` is `stop`, `length`, `toolUse`, `error` or `aborted`, and `errorMessage` preserves the engine error for `error` or `aborted`, clipped to 512 characters. Runtimes without those observations omit the fields. A Claude SDK aggregate usage row is not an extra provider call when per-call rows exist. See [types.ts](../../src/domains/dispatch/types.ts).
+
+## Route observer
+
+The route observer records what the joint route resolver decided against what happened for every dispatch. It never selects a route, because selection belongs to the resolver. It journals each decision as `route.decided` in the journal of the session or run that asked, with the selected and executed routes, the scored candidates, the reasons and whether the policy would have run another route. The outcome's durable record is the run's own `run.settled`, which route history folds ([Route history and settled labels](#route-history-and-settled-labels)). There is no separate observation file. The records measure route regret, constraint validity, prediction calibration, and outcome. They do not measure whether PanCode dispatched the agent the caller asked for, because that is true by construction.
+
+## Residency
+
+Remote workers default to residency observe. The SSH transport projects that
+posture as `lifecycle: user-managed` in the worker's target, so a worker on a
+node that serves resident models (for example a GPU box running the operator's
+inference server) never evicts them. A node opts into management explicitly
+with `residency: manage` in its fleet entry. An explicit target
+`lifecycle: user-managed` remains authoritative even on a managing node.
+
+A model the router tags as pinned (`pinned:true` or `role:scout`) is never
+evicted once resident, so PanCode refuses to load it by evicting a resident that
+settings still reference by role; on a one-slot router such an override
+declines with a `will-not-fit` notice instead of stranding the configured model.
+
+## Manual fleet verification
+
+Use `pancode playbook validate <name>` and `pancode playbook graph <name>` for
+model-free playbook checks. An operator with configured targets can then run
+the playbook explicitly with `pancode fleet run <name>` and retain its
+run records; `pancode fleet verify <runId> --json` re-verifies a run's seal
+afterwards. [Topologies](#topologies) explains reviewer gates and verification
+commands. Live fleet execution requires an operator.
+
+## Bounded result delivery
+
+Recipes whose result contract is `mutation-report` (`coder`, `documenter`, `tester` and `git-master`) return a structured report. Explicit recipe
+selections remain in force. For a read-only explanation, its `summary` carries
+the requested explanation and citations, with `mutatedPaths` empty.
+
+| Field | Bound |
+| --- | --- |
+| Inline `summary` | 16,384 UTF-8 bytes by default, set between 1 and 32,768 by recipe `maxSummaryBytes` or dispatch `result_summary_max_bytes`. |
+| Internal helper results | 32,768 bytes (`STRUCTURED_HELPER_RESULT_MAX_BYTES`), the same acceptance and `run-result` capture ceiling. |
+| Authored `commitMessage` and `architect-plan` authorship | 1,000 UTF-8 bytes. |
+
+In batch
+dispatches, a top-level `result_summary_max_bytes` default is inherited by
+mutation-report tasks and ignored by other steps; an explicit per-task
+`result_summary_max_bytes` on a step without a mutation report fails validation before model
+dispatch. A one-task batch counts its top-level value as that task's own. `max_output_bytes`
+separately limits the returned result, not the stored summary.
+
+The result a dispatch call or `monitor(mode="collect")` returns to the model is compact by
+default. Each run keeps its key facts, its trust or verdict line and its evidence notices,
+without the diagnostic route and context labels, and its answer up to the run's answer budget:
+12,000 bytes shared equally across the batch, at least 2,000 bytes each, fixed at dispatch and told to the worker, cut at a line boundary when one falls in its second half. A cut answer ends
+with `[answer excerpt: <kept> of <total> bytes; the whole answer is in monitor(mode="answer", run_id="<runId>")]`,
+and the record mode leads with the answer cut at the same budget. Setting `max_output_bytes` on a dispatch call
+returns the full form instead: each run's whole answer up to its share of that many bytes in
+total, plus its route decision hash and mode.
+`monitor(mode="collect")` always returns the compact form
+([worker-evidence.ts](../../src/tools/worker-evidence.ts),
+[dispatch-output.ts](../../src/tools/dispatch-output.ts)).
+
+### Handback and answer budgets
+
+A native worker with a role hands back before its context fills ([handback.ts](../../src/domains/dispatch/handback.ts)). Before each request it compares the request's input with its role's share of the usable window, which is the model's window less the output reserve: 70 percent for an explorer, checker, reviewer, judge or council seat, and 85 percent for a builder. When a request reaches that share, tools lock and the round is the handback round, in which the worker writes its result from what it already holds instead of reading on until the window is full. A builder that has changed nothing is told once, at 70 percent, to write the change now or return a partial report that names what is done and what is left. The share depends on the role alone, not on the run's tools. The worker writes `[worker] handback: context reached the <role>'s share; the next round reports` to stderr, and the run journal records a `middleware.fired` event with rule `worker.handback` and evidence `bound:context@worker`.
+
+The parent's view of each answer is fixed when dispatch admits the call. The batch shares 12,000 bytes equally, at least 2,000 bytes per run, and a lone run gets all 12,000. The worker's prompt states its number (`Answer budget: the dispatching agent sees the first <N> bytes of your final answer; ...`), so it leads with what matters. The receipt and `run.settled` seal the number as `answerBudgetBytes`, and the dispatch result, `collect` and `monitor(mode="record")` all cut the answer at it. `monitor(mode="answer", run_id=...)` returns the whole sealed answer alone, up to 14 KiB. A record that seals no `answerBudgetBytes` reads as 12,000 bytes.
+
+If worker output exceeds the sealed output bound, capture fails and names the
+bound rather than reporting an ambiguous JSON syntax error. If the requested
+answer cannot fit within the summary allowance or cannot be grounded, the summary
+must state the specific limitation. A longer artifact requires authorization to
+write it; a shortened answer or validation log does not satisfy an unmet length
+requirement.
+
+Documenter exposes no arbitrary shell commands; it relies on declared verifier checks or grounded source reads. In validation reporting, unexecuted checks must never be recorded as failures (`passed: false` applies only to checks that actually ran and failed). Unexecuted checks or execution limitations belong in the `summary` deliverable as stated limitations.
+
+Eligible native HTTP workers with tool support finish through the worker-local `pancode_submit_result` tool. This covers internal helper results and coder `mutation-report` results. Its arguments are the contract payload itself, not a second model-authored envelope. The host validates the payload and grounding, seals `output.structured = {version: 1, kind, data}`, and retains canonical JSON in `output.text` for consumers that read text. A valid handoff ends generation without another narration round. During synthesis or repair only the terminal handoff remains available; mixed work/handoff batches are rejected and repairs remain bounded. A mutation report's schema reaches the model only at the synthesis lock or a terminal-format repair, so working requests carry no extra bytes, and a valid plain JSON answer still seals without the tool. A submission is not work activity and gains no authority: the mutation validator checks the report against the run's observed effects in the worker and again at parent capture. Strict JSON text fallback is validated through the same contract. A submission the host refuses, by its schema, the batch rule or the contract, is still kept: the run's [display feed](../architecture/worker-dispatch-mechanics.md#record-format) records the reason and the submitted payload, secret-redacted and cut to 4 KiB, so a run that ends in `result_contract_exhausted` shows what the model actually returned in each round. Other transports keep their own output path, and Wiki Writer keeps its scoped artifact workflow.
+
+Dispatch and `monitor(mode="collect")` expose successful sealed payloads in `details.runs[].helperResult`, with compact text and a run lookup. Failed integrity, failed runs, partial/truncated output, or failed contract conformance do not become consumable typed results. `quality=unmeasured` remains unmeasured. Typed data never grants write authority or authorizes Scout split continuation by itself.
+
+For an independent helper task, use `detach:true` and continue useful work; collect the batch when its result is needed. This uses the durable detached-run mechanism. The TUI announces helper start and settlement in its notice area even for internal invocations without a transcript island.
+
+The Scout recipe instructs the model to return structured findings with source paths and exact lines checked against live reads. A search hit alone does not establish a citation. Grounding counts the spans a read returned and the lines a grep result showed, whether the call was direct or a settled step of a gateway chain; a pending, failed or refused step grounds nothing, and a chain step cut to its share of the aggregate grounds only the lines that survived the cut. On repair, unsupported findings should be removed rather than moved to convenient range endpoints. Inline delivery and schema conformance do not establish semantic citation accuracy.
+
+Planning time estimates and the dispatch `budget` are advisory during execution rather than automatic aborts. Enforced bounds are explicit caller deadlines (`timeout_ms`), operator cancellation, contract output bounds, capacity rules, the session cost ceiling `safety.limits.sessionCostUsd` (default $5, `0` turns it off), which stops every running worker on a priced route in every mode once settled and in-flight session spend reaches it, so spend passes it only by calls already in flight (workers on unpriced or zero-rate routes and ACP delegations keep running), and, for native and Claude SDK workers, the hard tool-call ceiling described in [Worker prompt and budget admission](#worker-prompt-and-budget-admission). Subprocess runtimes and ACP peers do not enforce per-tool counts. In advisory dispatch `fleet.limits.toolCallsPerRun` lowers that ceiling for recipes with a larger maximum but never below the admitted estimate. The built-in coder recipe estimates 150 tool calls and the tester 100; neither declares a maximum, so each runs up to `fleet.limits.toolCallsPerRun`, and a larger estimate lifts the ceiling. A native worker stopped at its ceiling (`worker_tool_call_cap_exhausted`) in a task worktree has its changes committed on the preserved task branch as a partial result: the run still fails and nothing is merged, and the failure detail names the branch so the dispatcher can review it, continue it, or land it with `pancode fleet land <branch>`. An edit worker that changed files but whose report opens by saying it could not finish (`Could not finish everything`, `Partially done`, `Unable to complete ...`) gets the same treatment under `worker_partial_work`. A report that only could not check its work (`Unable to run the tests here; implemented ...`) is a finish, not a partial result. A partial result's commit subject is `partial: <task>`, never the worker's own commit message or summary, so landing it later does not read as a finished change. Repetition guards still apply. The `fleet.limits.internalRunTimeoutMs` setting (default 2700000 ms, 45 minutes) bounds internal CLI dispatch such as the wiki documenter and the bootstrap scout; it does not impose a wall-clock deadline on ordinary TUI dispatch workers.
+
+A pipeline stops before admitting a dependent when a completed step reports failed quality. Execution success, result conformance, and deliverable quality remain separate facts. An independent recovery has its own run record and does not replace the failed pipeline result. When delivery is missing or incomplete, report the terminal result and limitation; a successful process exit alone does not establish the requested deliverable.
+
+An editing mutation report may omit all validations when every checking call it attempted has an observed blocked outcome. It conforms with unmeasured quality. No attempts, unknown outcomes, or any executed check retain the concrete validation requirement.
+
+Every `passed: false` entry in a mutation report states a boolean `baseline`. `"baseline": true` marks a deliberate run before the change, such as a red test-first run, which quality does not judge. `"baseline": false` marks a failure on the changed tree, which fails quality. The run after the change is its own entry. A report that omits `baseline` on a failing entry, or sends a value that is not a JSON boolean, is refused as unmeasured with a reason showing both forms, and the bounded repair asks the worker again. A baseline whose host check is still red on the final tree still fails quality. Verifier and reviewer reports carry no `baseline`, because their `passed: false` is the verdict itself.
+
+Validation grounding treats `npm test`, `pnpm test`, and `yarn test` as aliases of the canonical `npm run test` command across all three managers. The test aliases also match the package-manager-neutral `verify(check="test")` summary recorded as `npm run test`. Other script names remain distinct; `npm run test:unit` does not ground a claim of `npm test`.
+
+A terminal colon in a validation claim, such as `npm test:`, is punctuation and grounds against `npm run test`. Script suffixes such as `test:unit` remain distinct.
+
+A typed-scope replacement produces one stderr diagnostic per root run, on the first attempt of an `internal` or `harness` dispatch, and none for `context-bootstrap` or `wiki-writer`. Retries are quiet, and each run's `RunResult` keeps the admitted intent. The notice changes no working-context path, rule selection, or worker authority.

@@ -1,0 +1,626 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import path from "node:path";
+import { isModelTier, type ModelTier } from "../../../core/model-tier.js";
+import { isStrictDescendant, relativePathEscapes } from "../../../core/path-containment.js";
+import { parseCommandArgs, substituteArgs } from "../../../engine/prompt-templates.js";
+import { INTEROP_AGENT_KINDS, interopUserRoot } from "../../interop/registry.js";
+import {
+	type ResourceCandidate,
+	type ResourceDiagnostic,
+	type ResourceScope,
+	type ResourceSourceInfo,
+	resolveResourceCollisions,
+} from "../collision.js";
+import {
+	COMPAT_RESOURCE_PRECEDENCE,
+	defaultScopedResourceRoots,
+	sourceInfoForRoot,
+	splitYamlFrontmatter,
+	stringField,
+} from "../common-loader.js";
+import { resolvePackageReferences } from "../package-references.js";
+import { importedToolSurface, projectCompatTrusted, templateToolSurface } from "../skills/loader.js";
+import { type TemplateTurnBounds, templateTurnBounds } from "./turn-bounds.js";
+
+export interface PromptTemplate {
+	name: string;
+	description: string;
+	content: string;
+	filePath: string;
+	sourceInfo: ResourceSourceInfo;
+	/** False for loose compatibility roots and untrusted imported packages; expansion is refused. */
+	trusted: boolean;
+	/**
+	 * Why this template cannot be expanded, when a load-time failure left it
+	 * with no usable body. It is loaded anyway, so the namespaced command is
+	 * recognized and invoking it reports this reason instead of "not a command"
+	 * (issue #245). `content` is empty on such a template and nothing may send
+	 * it to a model.
+	 */
+	unavailable?: string;
+	argumentHint?: string;
+	/**
+	 * Frontmatter `display-only: true`. The body is written for the operator,
+	 * not the model: invoking the command renders it locally and sends nothing,
+	 * records nothing in model-facing session context, and spends no tokens.
+	 */
+	displayOnly: boolean;
+	/**
+	 * Frontmatter `allowed-tools`: core names canonicalized, MCP and extension
+	 * names kept as written (`templateToolSurface`). Every surface
+	 * submits an expanded turn with these as its turn constraint, which only
+	 * intersects the session's limits, so a template narrows and never widens.
+	 */
+	allowedTools?: readonly string[];
+	/** The installed plugin package that declares this template; absent for every other root. */
+	packageRoot?: string;
+	/**
+	 * Frontmatter `delegated-tools`, parsed like `allowed-tools`: the turn's
+	 * delegation ceiling for dispatched workers. Absent, the turn's own
+	 * `allowedTools` is the ceiling. It only narrows the session's ceiling.
+	 */
+	delegatedTools?: readonly string[];
+	/** Frontmatter `budget`: lowers the started turn's tool-call and observation limits (`turn-bounds.ts`). */
+	budget?: NonNullable<TemplateTurnBounds["budget"]>;
+	/** Frontmatter `turnPolicy`: one step of its step tool per started turn (`turn-bounds.ts`). */
+	turnPolicy?: NonNullable<TemplateTurnBounds["turnPolicy"]>;
+	/**
+	 * Frontmatter `variants`: a body per model tier, each an inline string or
+	 * `{file: <path>}` relative to the template's directory. Expansion picks
+	 * the running model's tier, then `standard`, then the main body
+	 * (WTF-P 0.8.3 C1).
+	 */
+	variants?: Readonly<Partial<Record<ModelTier, string>>>;
+}
+
+export interface PromptTemplateRoot {
+	owner?: import("../../../core/package-identity.js").PackageIdentity;
+	plugin?: boolean;
+	path: string;
+	/** Present only for an installed plugin resource root. */
+	rootPath?: string;
+	scope: ResourceScope;
+	source?: string;
+	precedence?: number;
+	trusted?: boolean;
+	/** See `ResourceRoot.foreign`; its `allowed-tools` resolve through `importedToolSurface`. */
+	foreign?: boolean;
+}
+
+export interface PromptTemplateList {
+	items: PromptTemplate[];
+	diagnostics: ResourceDiagnostic[];
+}
+
+export interface LoadPromptTemplatesInput {
+	cwd?: string;
+	roots?: ReadonlyArray<PromptTemplateRoot>;
+	/** Override the user home dir used for shared compatibility roots (testing). */
+	home?: string;
+	/** Opt in to model-visible project compatibility roots (.claude/commands, .codex/prompts). */
+	trustProjectCompatRoots?: boolean;
+	/** Names owned by another command registry and unavailable to templates. */
+	reservedNames?: ReadonlySet<string>;
+	/**
+	 * False lists plugin prompts from the committed plugin snapshot without
+	 * re-verifying trees, for display such as completion. Expansion never
+	 * passes it, so a drifted or revoked template can show but never runs.
+	 */
+	verifyPluginTrees?: boolean;
+}
+
+export type PromptTemplateExpansion =
+	| {
+			expanded: false;
+			text: string;
+			args: string[];
+			diagnostics: ResourceDiagnostic[];
+			/**
+			 * Set when the input named a template that exists and refused to expand.
+			 * A caller that would otherwise pass the text through says this instead:
+			 * the operator asked for a template, not for a message beginning with a
+			 * slash, so sending the literal `/name` to the model answers nothing.
+			 */
+			refusal?: { template: PromptTemplate; message: string };
+			/**
+			 * Set when the input named a display-only template. `text` is what the
+			 * operator reads; it is never model text, which is why this rides the
+			 * not-expanded shape: a caller that only checks `expanded` cannot send
+			 * it anywhere by accident.
+			 */
+			display?: { template: PromptTemplate; text: string };
+	  }
+	| {
+			expanded: true;
+			text: string;
+			args: string[];
+			template: PromptTemplate;
+			diagnostics: ResourceDiagnostic[];
+			/** The variant whose body was sent; absent when the main body was. */
+			variant?: ModelTier;
+	  };
+
+export interface PromptTemplateExpansionOptions {
+	/** The tier of the model that will run the expanded turn; absent reads as `standard`. */
+	tier?: ModelTier;
+}
+
+/**
+ * PanCode's own prompt roots plus the command and prompt directories the other
+ * agents on the machine own. A foreign prompt is text substituted into a
+ * message the operator typed. Loose foreign roots remain discovery-only;
+ * explicitly imported foreign packages share the skills trust gate.
+ */
+function defaultPromptTemplateRoots(input: LoadPromptTemplatesInput = {}): PromptTemplateRoot[] {
+	const cwd = input.cwd ?? process.cwd();
+	const trustProject = projectCompatTrusted(input.trustProjectCompatRoots);
+	const compat: PromptTemplateRoot[] = [];
+	for (const kind of INTEROP_AGENT_KINDS) {
+		// Null under PANCODE_INTEROP_HOME=none; CLAUDE_CONFIG_DIR and its peers move the root (interopUserRoot).
+		const userRoot = kind.userPromptRoot === undefined ? null : interopUserRoot(kind, kind.userPromptRoot, input.home);
+		if (userRoot !== null) {
+			compat.push({
+				path: userRoot.path,
+				scope: "user",
+				source: `${kind.id}-user`,
+				precedence: COMPAT_RESOURCE_PRECEDENCE.userCompat,
+				trusted: false,
+				foreign: true,
+			});
+		}
+		if (kind.projectPromptRoot !== undefined) {
+			compat.push({
+				path: path.join(cwd, kind.projectPromptRoot),
+				scope: "project",
+				source: `${kind.id}-project`,
+				precedence: COMPAT_RESOURCE_PRECEDENCE.projectCompat,
+				trusted: false,
+				foreign: true,
+			});
+		}
+	}
+	return [
+		...defaultScopedResourceRoots(
+			"prompts",
+			cwd,
+			input.verifyPluginTrees === false ? { verifyPluginTrees: false } : {},
+		).map((root) => ({
+			...root,
+			trusted: root.trusted !== false || trustProject,
+		})),
+		...compat,
+	];
+}
+
+function splitOptionalFrontmatter(
+	raw: string,
+	filePath: string,
+	diagnostics: ResourceDiagnostic[],
+): { frontmatter: Record<string, unknown>; body: string } {
+	const split = splitYamlFrontmatter(raw);
+	if (split.ok) return split;
+	if (split.reason === "missing") return { frontmatter: {}, body: raw };
+	const message =
+		split.reason === "missing closing delimiter"
+			? "prompt template frontmatter is missing a closing delimiter; treating the file as plain markdown"
+			: split.reason === "must be a YAML object"
+				? "prompt template frontmatter must be a YAML object"
+				: `prompt template frontmatter is ${split.reason}`;
+	diagnostics.push({ type: "warning", message, path: filePath });
+	return { frontmatter: {}, body: split.body };
+}
+
+function fallbackDescription(body: string): string {
+	const line = body
+		.split(/\r?\n/)
+		.map((entry) => entry.trim())
+		.find((entry) => entry.length > 0);
+	if (!line) return "Prompt template";
+	const normalized = line.replace(/^#{1,6}\s+/, "");
+	return normalized.length > 60 ? `${normalized.slice(0, 57)}...` : normalized;
+}
+
+/**
+ * The outcome of a step that may leave the template with no usable body.
+ * `reason` is the one sentence that becomes both the diagnostic the `/prompts`
+ * overlay renders and the refusal the operator gets when they invoke the
+ * command, so the two can never disagree.
+ */
+type BodyResolution = { body: string } | { reason: string };
+
+/**
+ * Resolve only existing paths contained by the declaring plugin package.
+ *
+ * A missing or escaping reference never expands and never reads outside the
+ * package; the failure is returned as a reason so the caller keeps the template.
+ */
+function resolvePackageRootReferences(body: string, root: PromptTemplateRoot): BodyResolution {
+	if (!root.plugin) return { body };
+	try {
+		return { body: resolvePackageReferences(body, root) };
+	} catch (error) {
+		return { reason: `prompt template: ${error instanceof Error ? error.message : String(error)}` };
+	}
+}
+
+/**
+ * A template that exists and cannot run.
+ *
+ * Dropping it made the operator's namespaced command answer "not a command",
+ * so a plugin author's single bad `${pluginRoot}` path read to their users as
+ * "the prompt was never installed" (issue #245). The template is
+ * loaded with an empty body and the reason attached instead, which is the same
+ * shape an untrusted project template already had, so the existing refusal
+ * path carries it to the operator with no new machinery.
+ */
+function unavailableTemplate(
+	name: string,
+	filePath: string,
+	root: PromptTemplateRoot,
+	reason: string,
+	diagnostics: ResourceDiagnostic[],
+	description?: string,
+): ResourceCandidate<PromptTemplate> {
+	diagnostics.push({ type: "warning", message: reason, path: filePath });
+	const sourceInfo: ResourceSourceInfo = sourceInfoForRoot(root, filePath);
+	return {
+		name,
+		value: {
+			name,
+			description: description ?? "Prompt template (unavailable)",
+			content: "",
+			filePath,
+			sourceInfo,
+			trusted: root.trusted !== false,
+			unavailable: `${reason} (${filePath})`,
+			displayOnly: false,
+		},
+		source: sourceInfo,
+	};
+}
+
+/** A frontmatter flag is only ever the YAML boolean; any other value reads as unset. */
+function booleanField(frontmatter: Record<string, unknown>, key: string): boolean | null {
+	const value = frontmatter[key];
+	return typeof value === "boolean" ? value : null;
+}
+
+/**
+ * What a display-only template shows: the first fenced code block when the
+ * body has one, otherwise the whole body. Authors write these as "display this
+ * block" with the block fenced, so the fence is the reference and the prose
+ * around it was instructions for a model that is no longer in the loop.
+ */
+export function promptTemplateDisplayText(template: Pick<PromptTemplate, "content">): string {
+	const content = template.content.replace(/\r\n?/g, "\n");
+	const lines = content.split("\n");
+	for (let start = 0; start < lines.length; start++) {
+		const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(lines[start] ?? "");
+		const fence = opening?.[1];
+		if (!fence || (fence[0] === "`" && opening?.[2]?.includes("`"))) continue;
+		for (let end = start + 1; end < lines.length; end++) {
+			const closing = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(lines[end] ?? "")?.[1];
+			if (closing && closing[0] === fence[0] && closing.length >= fence.length)
+				return lines
+					.slice(start + 1, end)
+					.join("\n")
+					.trimEnd();
+		}
+		break;
+	}
+	return content.trimEnd();
+}
+
+/** A variant `file` must stay inside the package that declares it, or the discovery root outside a package. */
+function readVariantFile(
+	reference: string,
+	filePath: string,
+	root: PromptTemplateRoot,
+): { body: string } | { reason: string } {
+	const boundary = root.plugin === true && root.rootPath !== undefined ? root.rootPath : root.path;
+	const target = path.resolve(path.dirname(filePath), reference);
+	try {
+		const outside = { reason: `prompt template variant file ${reference} is outside ${boundary}` };
+		if (!isStrictDescendant(target, boundary)) return outside;
+		const realBoundary = realpathSync(boundary);
+		if (!isStrictDescendant(realpathSync(target), realBoundary)) return outside;
+		if (!lstatSync(target).isFile()) return { reason: `prompt template variant file ${reference} is not a file` };
+		const raw = readFileSync(target, "utf8");
+		const split = splitYamlFrontmatter(raw);
+		return { body: split.ok ? split.body : raw };
+	} catch (error) {
+		return {
+			reason: `prompt template variant file ${reference} could not be read: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+}
+
+/**
+ * Frontmatter `variants`, self-contained so other frontmatter keys merge
+ * beside it. A malformed entry is a warning and is skipped, so the template
+ * falls back to its other bodies; a declared file that cannot be read makes
+ * the template unavailable, as a bad `${pluginRoot}` reference does.
+ */
+function templateVariants(
+	frontmatter: Record<string, unknown>,
+	filePath: string,
+	root: PromptTemplateRoot,
+	diagnostics: ResourceDiagnostic[],
+): { variants?: Partial<Record<ModelTier, string>> } | { reason: string } {
+	const raw = frontmatter.variants;
+	if (raw === undefined) return {};
+	const warn = (message: string): void => {
+		diagnostics.push({ type: "warning", message, path: filePath });
+	};
+	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+		warn("prompt template variants must be a map of small, standard and frontier; ignored");
+		return {};
+	}
+	const variants: Partial<Record<ModelTier, string>> = {};
+	for (const [tier, value] of Object.entries(raw)) {
+		if (!isModelTier(tier)) {
+			warn(`prompt template variant ${tier} is not a tier (small, standard, frontier); ignored`);
+			continue;
+		}
+		let body: string;
+		if (typeof value === "string") body = value;
+		else if (
+			typeof value === "object" &&
+			value !== null &&
+			!Array.isArray(value) &&
+			Object.keys(value).length === 1 &&
+			typeof (value as { file?: unknown }).file === "string"
+		) {
+			const read = readVariantFile((value as { file: string }).file, filePath, root);
+			if ("reason" in read) return read;
+			body = read.body;
+		} else {
+			warn(`prompt template variant ${tier} must be a body string or {file: <path>}; ignored`);
+			continue;
+		}
+		const resolution = resolvePackageRootReferences(body, root);
+		if ("reason" in resolution) return resolution;
+		const trimmed = resolution.body.trim();
+		if (trimmed.length === 0) {
+			warn(`prompt template variant ${tier} is empty; ignored`);
+			continue;
+		}
+		variants[tier] = trimmed;
+	}
+	return Object.keys(variants).length > 0 ? { variants } : {};
+}
+
+/**
+ * The body a template sends for a model of `tier`: that tier's variant, else
+ * the `standard` variant, else the main body. The tier settles once per
+ * session model, so a template sends the same body on every turn of it.
+ */
+export function promptTemplateBody(
+	template: Pick<PromptTemplate, "content" | "variants">,
+	tier: ModelTier = "standard",
+): { body: string; variant?: ModelTier } {
+	for (const candidate of [tier, "standard"] as const) {
+		const body = template.variants?.[candidate];
+		if (body !== undefined) return { body, variant: candidate };
+	}
+	return { body: template.content };
+}
+
+function loadPromptFile(
+	filePath: string,
+	root: PromptTemplateRoot,
+	diagnostics: ResourceDiagnostic[],
+): ResourceCandidate<PromptTemplate> | null {
+	const ext = path.extname(filePath).toLowerCase();
+	if (ext !== ".md") return null;
+
+	// The name comes before the read, so a file that exists but cannot be read
+	// still has a command the operator can invoke and be told why.
+	const relativePath = path.relative(root.path, filePath);
+	if (relativePath === "" || relativePathEscapes(relativePath)) {
+		// The one failure that stays a drop: the path is outside the discovery
+		// root, so there is no name here to offer a command under.
+		diagnostics.push({ type: "warning", message: "prompt template escaped its discovery root", path: filePath });
+		return null;
+	}
+	const name = relativePath.slice(0, -ext.length).split(path.sep).join(":");
+	if (name.trim().length === 0) return null;
+
+	let raw: string;
+	try {
+		raw = readFileSync(filePath, "utf8");
+	} catch (err) {
+		const reason = err instanceof Error ? err.message : String(err);
+		return unavailableTemplate(name, filePath, root, `prompt template could not be read: ${reason}`, diagnostics);
+	}
+
+	const { frontmatter, body } = splitOptionalFrontmatter(raw, filePath, diagnostics);
+	const declaredDescription = stringField(frontmatter, "description");
+	const resolution = resolvePackageRootReferences(body, root);
+	if ("reason" in resolution) {
+		return unavailableTemplate(name, filePath, root, resolution.reason, diagnostics, declaredDescription ?? undefined);
+	}
+	const description = declaredDescription ?? fallbackDescription(resolution.body);
+	const argumentHint = stringField(frontmatter, "argument-hint") ?? stringField(frontmatter, "argumentHint");
+	const sourceInfo: ResourceSourceInfo = sourceInfoForRoot(root, filePath);
+	const template: PromptTemplate = {
+		name,
+		description,
+		content: resolution.body.trim(),
+		filePath,
+		sourceInfo,
+		trusted: root.trusted !== false,
+		displayOnly: booleanField(frontmatter, "display-only") ?? booleanField(frontmatter, "displayOnly") ?? false,
+		...(root.plugin === true && root.rootPath !== undefined ? { packageRoot: root.rootPath } : {}),
+	};
+	if (argumentHint) template.argumentHint = argumentHint;
+	const allowedTools = root.foreign
+		? importedToolSurface(frontmatter, `prompt template ${name}`, filePath, diagnostics)
+		: templateToolSurface(frontmatter, "allowed-tools", filePath, diagnostics);
+	if (allowedTools) template.allowedTools = allowedTools;
+	const delegatedTools = root.foreign
+		? importedToolSurface(frontmatter, `prompt template ${name}`, filePath, diagnostics, "delegated-tools")
+		: templateToolSurface(frontmatter, "delegated-tools", filePath, diagnostics);
+	if (delegatedTools) template.delegatedTools = delegatedTools;
+	const bounds = templateTurnBounds(frontmatter, allowedTools);
+	if ("error" in bounds)
+		return unavailableTemplate(name, filePath, root, bounds.error, diagnostics, declaredDescription ?? undefined);
+	if (bounds.budget) template.budget = bounds.budget;
+	if (bounds.turnPolicy) template.turnPolicy = bounds.turnPolicy;
+	const variants = templateVariants(frontmatter, filePath, root, diagnostics);
+	if ("reason" in variants)
+		return unavailableTemplate(name, filePath, root, variants.reason, diagnostics, declaredDescription ?? undefined);
+	if (variants.variants) template.variants = variants.variants;
+	return { name, value: template, source: sourceInfo };
+}
+
+function loadPromptRoot(
+	root: PromptTemplateRoot,
+	diagnostics: ResourceDiagnostic[],
+): ResourceCandidate<PromptTemplate>[] {
+	const candidates: ResourceCandidate<PromptTemplate>[] = [];
+	const pending = [root.path];
+	while (pending.length > 0) {
+		const directory = pending.pop();
+		if (!directory) continue;
+		let entries: import("node:fs").Dirent[];
+		try {
+			const stat = lstatSync(directory);
+			if (stat.isSymbolicLink() || !stat.isDirectory()) {
+				diagnostics.push({
+					type: "warning",
+					message: "prompt template root contains a non-directory or symbolic link",
+					path: directory,
+				});
+				continue;
+			}
+			entries = readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+			diagnostics.push({
+				type: "warning",
+				message: `prompt template directory could not be read: ${error instanceof Error ? error.message : String(error)}`,
+				path: directory,
+			});
+			continue;
+		}
+		for (const entry of [...entries].reverse()) {
+			const filePath = path.join(directory, entry.name);
+			if (entry.isSymbolicLink()) {
+				diagnostics.push({ type: "warning", message: "prompt template symbolic link was ignored", path: filePath });
+			} else if (entry.isDirectory()) {
+				pending.push(filePath);
+			} else if (entry.isFile()) {
+				const candidate = loadPromptFile(filePath, root, diagnostics);
+				if (candidate) candidates.push(candidate);
+			}
+		}
+	}
+	return candidates;
+}
+
+export function loadPromptTemplates(input: LoadPromptTemplatesInput = {}): PromptTemplateList {
+	const roots = input.roots ?? defaultPromptTemplateRoots(input);
+	const diagnostics: ResourceDiagnostic[] = [];
+	const candidates = roots.flatMap((root) => loadPromptRoot(root, diagnostics));
+	// Discovery-only foreign files cannot shadow an admitted PanCode prompt.
+	const resolved = resolveResourceCollisions(
+		candidates,
+		(template) =>
+			Number(template.trusted) * 2 +
+			Number(
+				template.sourceInfo.scope === "package" ||
+					template.sourceInfo.source === "config" ||
+					template.sourceInfo.source === "project",
+			),
+	);
+	const items: PromptTemplate[] = [];
+	for (const template of resolved.winners) {
+		if (input.reservedNames?.has(template.name) === true) {
+			diagnostics.push({
+				type: "collision",
+				message: `prompt template /${template.name} conflicts with the built-in slash command /${template.name} and was ignored`,
+				path: template.filePath,
+			});
+			continue;
+		}
+		items.push(template);
+	}
+	return {
+		items: items.sort((a, b) => a.name.localeCompare(b.name)),
+		diagnostics: [...diagnostics, ...resolved.diagnostics],
+	};
+}
+
+export function parsePromptCommand(input: string): { name: string; rest: string } | null {
+	const framed = input.trimStart();
+	if (!framed.startsWith("/")) return null;
+	const withoutSlash = framed.slice(1);
+	const separator = withoutSlash.search(/\s/);
+	const name = separator === -1 ? withoutSlash : withoutSlash.slice(0, separator);
+	if (name.length === 0 || name.includes("/")) return null;
+	// Leading whitespace before `/` and the first whitespace after the command
+	// are framing. A CRLF pair is one delimiter. Every subsequent byte belongs
+	// to the argument payload, including indentation, blank lines, and trailing
+	// whitespace, so raw `$ARGUMENTS` substitution can be exact at its boundary.
+	const delimiterWidth = separator !== -1 && withoutSlash.slice(separator, separator + 2) === "\r\n" ? 2 : 1;
+	const rest = separator === -1 ? "" : withoutSlash.slice(separator + delimiterWidth);
+	return { name, rest };
+}
+
+export function expandPromptTemplateInput(
+	input: string,
+	templates: PromptTemplateList,
+	options: PromptTemplateExpansionOptions = {},
+): PromptTemplateExpansion {
+	const command = parsePromptCommand(input);
+	if (!command) return { expanded: false, text: input, args: [], diagnostics: templates.diagnostics };
+	const template = templates.items.find((entry) => entry.name === command.name);
+	if (!template) return { expanded: false, text: input, args: [], diagnostics: templates.diagnostics };
+	// A load-time failure refuses before anything else, and before the trust
+	// check, because there is no body here to be trusted or untrusted.
+	if (template.unavailable !== undefined) {
+		const message = `prompt template /${template.name} cannot run: ${template.unavailable}`;
+		return {
+			expanded: false,
+			text: input,
+			args: [],
+			diagnostics: templates.diagnostics,
+			refusal: { template, message },
+		};
+	}
+	if (!template.trusted) {
+		const message =
+			template.sourceInfo.scope === "package"
+				? `prompt template ${template.name} is imported but untrusted; review it and enable integrations.projectResources.trustProjectImports to use it`
+				: `prompt template ${template.name} is discovered from another agent; explicitly import it into PanCode with interop adopt or hub import before use. The trust setting does not import loose files`;
+		return {
+			expanded: false,
+			text: input,
+			args: [],
+			diagnostics: [...templates.diagnostics, { type: "warning", message, path: template.filePath }],
+			refusal: { template, message },
+		};
+	}
+	const args = parseCommandArgs(command.rest);
+	if (template.displayOnly) {
+		return {
+			expanded: false,
+			text: input,
+			args,
+			diagnostics: templates.diagnostics,
+			display: { template, text: promptTemplateDisplayText(template) },
+		};
+	}
+	const selected = promptTemplateBody(template, options.tier);
+	return {
+		expanded: true,
+		text: substituteArgs(selected.body, args, command.rest),
+		args,
+		template,
+		diagnostics: templates.diagnostics,
+		...(selected.variant !== undefined ? { variant: selected.variant } : {}),
+	};
+}

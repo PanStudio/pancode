@@ -1,0 +1,287 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { SHARED_SETTINGS_AREAS, settingsPlacementForPath } from "../../../../../src/core/settings-areas.js";
+import {
+	applyControlValue,
+	orderedAreaControls,
+	type SettingControl as RootControl,
+	SETTINGS_LABELS_BY_ID,
+	SETTINGS_VALUE_HELP_BY_ID,
+	settingsPathForRow,
+} from "../../../../../src/core/settings-controls.js";
+import { SettingsValidationError } from "../../../../../src/core/settings-issues.js";
+import { readLayeredSettings, updateLayeredSettings } from "../../../../../src/core/settings-layers.js";
+import { validateSettings } from "../../../../../src/core/settings-validate.js";
+import { settingsChangeKind } from "../../../../../src/domains/config/classify.js";
+import { getRuntimeRegistry } from "../../../../../src/domains/providers/registry.js";
+import { registerBuiltinRuntimes } from "../../../../../src/domains/providers/runtimes/builtins.js";
+import type {
+	SettingControl,
+	SettingsControls,
+	SettingWrite,
+	SettingWritten,
+} from "../../../contracts/settings-controls.js";
+import { STRUCTURED_SETTINGS } from "../../../contracts/structured-settings.js";
+import { AppProblem } from "../../services/problem.js";
+
+/**
+ * The policy overlay on the engine's generated registry. Paths come from SETTING_CONTROLS, never from
+ * this file, so a leaf added to the schema appears here on its own. This file only says which leaves
+ * a browser must not show, must not edit, or may edit only after a named confirmation.
+ */
+const HIDDEN = [
+	"interface.smoothStreaming",
+	"interface.mode",
+	"interface.fullscreenScrollbar",
+	"interface.terminalProgress",
+	"interface.panes.workers.ratio",
+	"interface.panes.files.ratio",
+	"interface.keybindings",
+	// Consent records the terminal's one-time yolo warning card writes; a switch here would skip the card.
+	"safety.yoloAccepted",
+	"safety.yoloUnconfinedAccepted",
+];
+const READ_ONLY: Array<[prefix: string, reason: string]> = [
+	[
+		"integrations.hub.confirmedRemote",
+		"Recorded only by the confirmation flow. Run pancode hub remote confirm <url> in a terminal.",
+	],
+	[
+		"interface.desktopNotifications",
+		"This is the terminal's notification setting. PanCode on the desktop does not send notifications.",
+	],
+	[
+		"interface.panes",
+		"Terminal panes belong to the terminal session. PanCode on the desktop shows the value and cannot observe the pane host.",
+	],
+];
+const NOTES: Record<string, string> = {
+	"context.compaction.systemPrompt":
+		"PanCode reads this file when compacting context. Enter the path as you would in terminal settings.",
+	"integrations.hub.catalog":
+		"PanCode reads this catalog path when resolving PanHub packs. Saving the path does not install a pack.",
+	"safety.review.enabled":
+		"Conversations in PanCode on the desktop run over ACP, and headless and ACP runs never fire the review. This setting changes terminal sessions only.",
+	"safety.review.target": "Used by terminal sessions only; ACP runs never fire the review.",
+	"safety.review.cadenceToolCalls": "Used by terminal sessions only; ACP runs never fire the review.",
+	"safety.autonomy":
+		"This is the default for new sessions. A conversation that is already open keeps the autonomy it was bound to.",
+	"safety.limits.sessionCostUsd":
+		"Reaching it pauses paid requests until it is raised. A raise reaches a waiting request within a second; 0 means no ceiling.",
+	"fleet.history.journal": "Turning this off blinds the run journal views in PanCode on the desktop.",
+	"chat.prewarm": "Applies to local native connections and interactive sessions only.",
+	"integrations.hub.remote": "Setting a remote does not enable sync. The remote must also be confirmed in a terminal.",
+	"integrations.hub.sync": "While this is off, hub sync and push refuse before touching the network.",
+};
+const CONFIRM: Record<string, string> = {
+	"fleet.history.maxRuns":
+		"Runs that leave the history ring also lose their event journal directory. Lowering this deletes journals that PanCode on the desktop shows.",
+	"integrations.projectResources.trustProjectImports":
+		"Enabling this exposes this project's .claude/skills, .codex/skills and .github resource roots to the model.",
+	"integrations.runtimePlugins":
+		"These package names are loaded as code when the next session starts. Only name packages you trust.",
+};
+/** A confirmation that applies only to writes of one value; other values save without it. */
+const CONFIRM_VALUE: Record<string, { value: string; text: string }> = {
+	"safety.yoloConfinement": {
+		value: "unconfined",
+		text:
+			"Unconfined yolo runs commands outside the OS sandbox and without the safety judge's refusal. It takes effect only after the one-time acceptance in a terminal session. Only choose it on a machine you can afford to lose.",
+	},
+};
+/** ACP runs never fire the review, so the engine's timing for these rows describes terminal sessions only. */
+const TERMINAL_ONLY_TIMING = "Terminal sessions only";
+const STRUCTURED_REASON =
+	"A structured collection. PanCode on the desktop has no editor for it; edit it with /settings in a terminal session.";
+
+const hidden = (path: string) => HIDDEN.includes(path);
+const readOnlyReason = (control: RootControl): string | undefined => {
+	if (control.kind === "json" && !Object.hasOwn(STRUCTURED_SETTINGS, control.path)) return STRUCTURED_REASON;
+	return READ_ONLY.find(([prefix]) => control.path === prefix || control.path.startsWith(`${prefix}.`))?.[1];
+};
+const VALUE_HELP = new Map(
+	Object.keys(SETTINGS_LABELS_BY_ID).map((id) => [settingsPathForRow(id), SETTINGS_VALUE_HELP_BY_ID[id] ?? {}]),
+);
+
+function at(root: unknown, path: string): unknown {
+	let cursor = root;
+	for (const part of path.split(".")) {
+		if (!cursor || typeof cursor !== "object") return undefined;
+		cursor = (cursor as Record<string, unknown>)[part];
+	}
+	return cursor;
+}
+/** The text form the engine parses. Only collections with a guided editor cross as content. Others cross as a size. */
+function text(control: RootControl, value: unknown): string {
+	if (value === undefined || value === null) return "";
+	if (control.kind === "json" && Object.hasOwn(STRUCTURED_SETTINGS, control.path)) return JSON.stringify(value);
+	if (control.kind === "json") {
+		const size = Array.isArray(value) ? value.length : Object.keys(value as object).length;
+		return `${size} ${size === 1 ? "entry" : "entries"}`;
+	}
+	if (Array.isArray(value)) return value.map(String).join(", ");
+	return String(value);
+}
+function runtimes() {
+	const registry = getRuntimeRegistry();
+	if (registry.list().length === 0) registerBuiltinRuntimes(registry);
+}
+
+type Bounds = Pick<SettingControl, "minimum" | "exclusiveMinimum" | "maximum" | "exclusiveMaximum" | "integer">;
+const BOUNDS = new Map<string, Bounds>();
+const FIGURE = String.raw`(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)`;
+const LOWER = new RegExp(`expected an? (?:integer|number) (>=|>) ${FIGURE}`);
+const UPPER = new RegExp(`(?:expected an? (?:integer|number) |and )(<=|<) ${FIGURE}`);
+
+/** What the engine's validation says about one value at `path`, or undefined when it accepts it. */
+function verdict(path: string, value: number): string | undefined {
+	const raw: Record<string, unknown> = { version: 2 };
+	const parts = path.split(".");
+	let cursor = raw;
+	for (const part of parts.slice(0, -1)) {
+		const next: Record<string, unknown> = {};
+		cursor[part] = next;
+		cursor = next;
+	}
+	cursor[parts.at(-1) ?? path] = value;
+	return validateSettings(raw).issues.find((issue) => issue.path === path)?.message;
+}
+
+/**
+ * A number control's bounds, learned once by asking the engine's validation about values far outside any range.
+ * The page then checks a draft against the very bounds the save enforces, and states them in its own words.
+ */
+function boundsOf(path: string): Bounds {
+	const known = BOUNDS.get(path);
+	if (known) return known;
+	const low = LOWER.exec(verdict(path, -1e15) ?? "");
+	const high = UPPER.exec(verdict(path, 1e15) ?? "");
+	const bounds: Bounds = {
+		...(low?.[2] ? { [low[1] === ">" ? "exclusiveMinimum" : "minimum"]: Number(low[2]) } : {}),
+		...(high?.[2] ? { [high[1] === "<" ? "exclusiveMaximum" : "maximum"]: Number(high[2]) } : {}),
+		...(/^expected an integer/.test(verdict(path, 0.5) ?? "") ? { integer: true } : {}),
+	};
+	BOUNDS.set(path, bounds);
+	return bounds;
+}
+
+const KIND_WORDS: Record<string, string> = { integer: "a whole number", number: "a number" };
+
+/** One engine issue in the page's words: the control's label, what it accepts and what was entered. */
+function plainIssue(label: string, message: string): string {
+	const shape = /^expected (an? (integer|number)|.+?)(?: ((?:>=|>|<=|<) .+?))?, got (.+)$/.exec(message);
+	if (!shape) return `${label} was not saved: ${message}.`;
+	const what = shape[2] ? KIND_WORDS[shape[2]] : shape[1];
+	const range = (shape[3] ?? "")
+		.replace(/>= /g, "at least ")
+		.replace(/<= /g, "at most ")
+		.replace(/> /g, "above ")
+		.replace(/< /g, "below ");
+	return `${label} must be ${what}${range ? `${range.startsWith("at ") ? " of" : ""} ${range}` : ""}; ${shape[4]} was entered.`;
+}
+
+/** A null `cwd` is the user layer alone: no workspace is open, so no project layer applies. */
+export function readSettingsControls(cwd: string | null): SettingsControls {
+	const layered = readLayeredSettings(cwd);
+	const targets = layered.settings.targets.map((target) => target.id);
+	const controls = SHARED_SETTINGS_AREAS.flatMap((area) => orderedAreaControls(area.id).map((entry) => entry.control))
+		.filter((control) => !hidden(control.path))
+		.map((control): SettingControl => {
+			// Exact leaf only: a parent object is also recorded as a source, and it does not set absent children.
+			const source = layered.sources[control.path] ?? "built-in";
+			// The write lands in the user layer, which a project or command-line value would silently override.
+			const overridden =
+				source === "project" || source === "project.local" || source === "cli"
+					? `Set by the ${source} layer, which outranks your user settings. Change it there.`
+					: undefined;
+			const fullValue = text(control, at(layered.settings, control.path));
+			const oversized =
+				fullValue.length > 65536
+					? "This value exceeds the desktop editor's 64 KiB limit. Edit it in your user settings file."
+					: undefined;
+			const reason = readOnlyReason(control) ?? overridden ?? oversized;
+			const valueConfirm = CONFIRM_VALUE[control.path];
+			const suggestions =
+				control.path.endsWith(".target") || ["fleet.profiles", "fleet.rosters"].includes(control.path)
+					? targets
+					: control.path === "fleet.default.node"
+						? ["local", ...layered.settings.fleet.nodes.map((node) => node.id)]
+						: undefined;
+			const placement = settingsPlacementForPath(control.path);
+			return {
+				path: control.path,
+				section: placement.area,
+				group: placement.group,
+				label: control.label,
+				description: control.description,
+				...(control.help ? { help: control.help } : {}),
+				valueHelp: VALUE_HELP.get(control.path) ?? {},
+				kind: control.kind,
+				...(control.choices ? { choices: [...control.choices] } : {}),
+				...(suggestions ? { suggestions } : {}),
+				optional: control.optional,
+				timing: settingsChangeKind(control.path),
+				value: oversized ? `${fullValue.slice(0, 4096)}\n… (${fullValue.length} characters; preview shortened)` : fullValue,
+				source,
+				access: reason ? "read-only" : "writable",
+				...(reason ? { reason } : {}),
+				...(NOTES[control.path] ? { note: NOTES[control.path] } : {}),
+				...(control.path.startsWith("safety.review.") ? { timingNote: TERMINAL_ONLY_TIMING } : {}),
+				...(CONFIRM[control.path] && !reason ? { confirm: CONFIRM[control.path] } : {}),
+				...(valueConfirm && !reason ? { confirm: valueConfirm.text, confirmValue: valueConfirm.value } : {}),
+				...(control.kind === "number" ? boundsOf(control.path) : {}),
+			};
+		});
+	return {
+		sections: SHARED_SETTINGS_AREAS.map(({ id, label, description }) => ({ id, label, description })),
+		controls,
+		userFile: layered.layers.find((layer) => layer.origin === "user")?.path ?? "",
+	};
+}
+
+export function writeSettingControl(cwd: string | null, write: SettingWrite): SettingWritten {
+	runtimes();
+	const before = readSettingsControls(cwd);
+	const control = before.controls.find((candidate) => candidate.path === write.path);
+	if (!control) throw new AppProblem("not_found", "This setting is not available in PanCode on the desktop.");
+	if (control.access === "read-only")
+		throw new AppProblem("unsupported", control.reason ?? "This setting is read-only here.");
+	if (write.expectedValue !== undefined && write.expectedValue !== control.value)
+		throw new AppProblem(
+			"conflict",
+			"This setting changed while you were editing. Refresh it and review your draft before saving again.",
+		);
+	if (
+		control.confirm &&
+		(control.confirmValue === undefined || write.value === control.confirmValue) &&
+		write.confirmed !== true
+	)
+		throw new AppProblem("validation", `This change needs confirmation. ${control.confirm}`);
+	try {
+		updateLayeredSettings(cwd, (settings) => applyControlValue(settings, write.path, write.value));
+	} catch (error) {
+		if (error instanceof SettingsValidationError)
+			throw new AppProblem(
+				"validation",
+				error.issues
+					.slice(0, 4)
+					.map((issue) =>
+						plainIssue(
+							before.controls.find((candidate) => candidate.path === issue.path)?.label ?? control.label,
+							issue.message,
+						),
+					)
+					.join(" "),
+			);
+		const detail = error instanceof Error ? error.message : String(error);
+		throw new AppProblem(/higher-precedence/.test(detail) ? "conflict" : "validation", detail.slice(0, 600));
+	}
+	const after = readSettingsControls(cwd);
+	const previous = new Map(before.controls.map((candidate) => [candidate.path, candidate.value]));
+	const changed = after.controls
+		.filter((candidate) => previous.get(candidate.path) !== candidate.value)
+		.map(({ path, value }) => ({ path, value }))
+		.sort((a, b) => Number(b.path === write.path) - Number(a.path === write.path));
+	return { changed, timing: control.timing, controls: after };
+}

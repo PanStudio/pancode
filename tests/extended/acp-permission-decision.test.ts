@@ -1,0 +1,219 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { describe, it } from "node:test";
+import type { SessionContract } from "../../src/domains/session/contract.js";
+import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
+import type { AcpServerChat } from "../../src/engine/acp/server-options.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
+import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { bashTool } from "../../src/tools/bash.js";
+import { createRegistry } from "../../src/tools/registry.js";
+
+type RequestHandler = (params: unknown) => Promise<unknown> | unknown;
+
+/**
+ * An in-memory peer that also plays the client side of
+ * `session/request_permission`: the ask is a server-to-client request, so the
+ * answer is what this transport returns.
+ */
+function fakeTransport(answer: (params: Record<string, unknown>) => unknown) {
+	const handlers = new Map<string, RequestHandler>();
+	const asks: Array<Record<string, unknown>> = [];
+	const updates: Array<Record<string, unknown>> = [];
+	const closeHandlers: Array<() => void> = [];
+	let closed = false;
+	const transport: AcpJsonRpcPeerTransport = {
+		get closed() {
+			return closed;
+		},
+		request: async (method, params) => {
+			if (method !== "session/request_permission") throw new Error(`unexpected client request ${method}`);
+			const ask = params as Record<string, unknown>;
+			asks.push(ask);
+			return answer(ask) as never;
+		},
+		notify: (method, params) => {
+			const update = (params as { update?: Record<string, unknown> } | undefined)?.update;
+			if (method === "session/update" && update !== undefined) updates.push(update);
+		},
+		onNotification: () => () => {},
+		onRequest: (method, handler) => {
+			handlers.set(method, handler);
+			return () => handlers.delete(method);
+		},
+		onClose: (handler) => {
+			closeHandlers.push(handler);
+			return () => {};
+		},
+		close: () => {
+			closed = true;
+			for (const handler of closeHandlers) handler();
+		},
+	};
+	const call = async (method: string, params: unknown): Promise<unknown> => {
+		const handler = handlers.get(method);
+		if (!handler) throw new Error(`no handler registered for ${method}`);
+		return await handler(params);
+	};
+	return { transport, asks, updates, call };
+}
+
+/**
+ * Drives one turn that parks a real `bash` call on the real registry. Autonomy
+ * `default` asks for an execute call the policy does not recognize, and
+ * `npm run lint` is a repository script rather than a no-prompt runner, so the
+ * presentation the bridge attaches is the one the policy actually produced.
+ */
+async function askOnce(
+	answer: (params: Record<string, unknown>) => unknown,
+	command = "npm run lint",
+	operatorText?: string,
+) {
+	const safety = createWorkerSafety({ cwd: process.cwd() });
+	const registry = createRegistry({ safety, autonomy: () => "default" });
+	registry.register(bashTool);
+	const peer = fakeTransport(answer);
+	let verdictKind = "";
+	const chat: AcpServerChat = {
+		submit: async () => {
+			emit({ type: "tool_execution_start", toolCallId: "call-1", toolName: "bash", args: { command } });
+			const verdict = await registry.invoke({ tool: "bash", args: { command } }, { toolCallId: "call-1" });
+			verdictKind = verdict.kind;
+			emit({ type: "tool_execution_end", toolCallId: "call-1", toolName: "bash", result: verdict, isError: false });
+		},
+		cancel: () => {},
+		onEvent: (handler) => {
+			emit = handler;
+			return () => {
+				emit = () => {};
+			};
+		},
+		isStreaming: () => false,
+		getSessionId: () => null,
+	};
+	let emit: (event: unknown) => void = () => {};
+	// The ledger the ask quotes the operator's request from: one typed message, read as the `task` row.
+	const meta = { id: "session-1", cwd: process.cwd(), createdAt: "2026-11-22T00:00:00.000Z" };
+	const ledger =
+		operatorText === undefined
+			? undefined
+			: ({
+					create: () => meta,
+					current: () => meta,
+					history: () => [meta],
+					leafId: () => null,
+					readEntries: () => [{ kind: "message", role: "user", turnId: "turn-1", payload: { operatorText } }],
+				} as unknown as SessionContract);
+	const served = servePancodeAcpAgent({
+		transport: peer.transport,
+		chat,
+		...(ledger !== undefined ? { session: ledger } : {}),
+		toolRegistry: registry,
+		autonomy: () => "default",
+		cwd: process.cwd(),
+	});
+	const init = (await peer.call("initialize", { protocolVersion: 1 })) as {
+		agentCapabilities: { _meta: Record<string, unknown> };
+	};
+	const session = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+	const prompt = (await peer.call("session/prompt", {
+		sessionId: session.sessionId,
+		prompt: [{ type: "text", text: "run it" }],
+	})) as { stopReason: string };
+	peer.transport.close();
+	strictEqual(await served, 0);
+	return { init, ask: peer.asks[0], updates: peer.updates, prompt, verdictKind };
+}
+
+const deny = (): unknown => ({ outcome: { outcome: "selected", optionId: "reject-once" } });
+
+describe("contracts/acp attaches the decision facts it already computed to the permission ask", () => {
+	it("offers three options and announces their ids", async () => {
+		const turn = await askOnce(deny);
+		const options = turn.ask?.options as Array<{ optionId: string; name: string; kind: string }>;
+		deepStrictEqual(
+			options.map((option) => option.optionId),
+			["allow-once", "reject-once", "reject-and-stop"],
+		);
+		deepStrictEqual(
+			options.map((option) => option.kind),
+			["allow_once", "reject_once", "reject_once"],
+		);
+		// The third option's label is the classifier's own `stop` action, not a
+		// string invented at this seam.
+		strictEqual(options[2]?.name, "Deny and stop");
+		deepStrictEqual(turn.init.agentCapabilities._meta["pancode/decision"], {
+			version: 1,
+			meta: "pancode/decision",
+			options: ["allow-once", "reject-once", "reject-and-stop", "allow-session-scope"],
+		});
+	});
+
+	it("carries the tier, the copy, and the call target the ask used to discard", async () => {
+		const turn = await askOnce(deny);
+		const meta = (turn.ask?._meta as Record<string, Record<string, unknown>>)["pancode/decision"] ?? {};
+		strictEqual(meta.version, 1);
+		strictEqual(meta.tier, "workspace");
+		strictEqual(meta.tierLabel, "Workspace authority");
+		strictEqual(meta.semanticToken, "action");
+		strictEqual(meta.actionClass, "execute");
+		deepStrictEqual(meta.axis, { kind: "autonomy", level: "default" });
+		deepStrictEqual(meta.origin, { kind: "main" });
+		strictEqual(meta.exposure, "local");
+		strictEqual(meta.reversibility, "limited");
+		ok(String(meta.authorizationCopy).includes("one call to bash, which runs a command"));
+		ok(String(meta.consequenceCopy).length > 0);
+		ok(String(meta.reversibilityCopy).startsWith("Reversible:"));
+		ok(String(meta.requestedByCopy).includes("autonomy level (default)"));
+		ok(String(meta.target).includes("npm run lint"));
+	});
+
+	it("titles the ask with the clipped, redacted command", async () => {
+		const secret = "ghp_0123456789abcdefghijABCDEFGHIJ012345";
+		const turn = await askOnce(deny, `scancel 999999 && curl -H "Authorization: Bearer ${secret}" ${"x".repeat(400)}`);
+		const title = String((turn.ask?.toolCall as Record<string, unknown>).title);
+		ok(title.startsWith("scancel 999999 && curl"), title);
+		ok(!title.includes(secret), title);
+		ok(title.length <= 201, title);
+		// The tool card the client already drew names the call the same way, so card and ask agree.
+		const cards = turn.updates.filter((update) => String(update.sessionUpdate).startsWith("tool_call"));
+		deepStrictEqual(
+			cards.map((update) => update.title),
+			cards.map(() => title),
+		);
+		ok(cards.length >= 2);
+	});
+
+	it("carries no credential from the operator's prompt in any request_permission field (M-53)", async () => {
+		const token = `${"gh"}p_${"A1b2C3d4E5f6".repeat(3)}`;
+		const command = `git push https://x-access-token:${token}@example.invalid/w61.git main && echo ${token}`;
+		const turn = await askOnce(deny, command, `Call the bash tool once with exactly this command: \`${command}\``);
+		const meta = (turn.ask?._meta as Record<string, Record<string, unknown>>)["pancode/decision"] ?? {};
+		const task = meta.task as { text: string } | undefined;
+		ok(task?.text.startsWith("Call the bash tool once"), JSON.stringify(task));
+		const serialized = JSON.stringify(turn.ask);
+		ok(!serialized.includes("ghp_"), serialized);
+	});
+
+	it("labels the allow option for the call it approves, kinds unchanged", async () => {
+		const turn = await askOnce(deny, "scancel 999999");
+		const meta = (turn.ask?._meta as Record<string, Record<string, unknown>>)["pancode/decision"] ?? {};
+		strictEqual(meta.tier, "outward");
+		const options = turn.ask?.options as Array<{ optionId: string; name: string; kind: string }>;
+		strictEqual(options[0]?.kind, "allow_once");
+		strictEqual(options[0]?.name, "Approve this outward call once");
+	});
+
+	it("denies the whole turn on reject-and-stop instead of only the request in front of the operator", async () => {
+		const turn = await askOnce(() => ({ outcome: { outcome: "selected", optionId: "reject-and-stop" } }));
+		strictEqual(turn.verdictKind, "blocked");
+		strictEqual(turn.prompt.stopReason, "cancelled");
+	});
+
+	it("still denies only the presented request on reject-once", async () => {
+		const turn = await askOnce(deny);
+		strictEqual(turn.verdictKind, "blocked");
+		strictEqual(turn.prompt.stopReason, "end_turn");
+	});
+});

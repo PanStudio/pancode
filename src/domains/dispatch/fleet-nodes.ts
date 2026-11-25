@@ -1,0 +1,202 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { resolve } from "node:path";
+import { readSettings, updateSettings } from "../../core/config.js";
+import type { FleetNodeSettings } from "../../core/defaults.js";
+import { openAuthStorage, resolveAuthTarget, targetRequiresAuth } from "../providers/auth/index.js";
+import { getRuntimeRegistry } from "../providers/registry.js";
+import { registerBuiltinRuntimes } from "../providers/runtimes/builtins.js";
+import {
+	type FleetPreflightRecord,
+	type FleetPreflightRunOptions,
+	type FleetPreflightTarget,
+	fleetPreflightVerdict,
+	readFleetPreflightRecords,
+	recordFleetPreflight,
+	runFleetNodePreflight,
+} from "./fleet-preflight.js";
+import { verifyFleetProject } from "./fleet-project-verification.js";
+
+export type FleetNodeReadiness = "not checked" | "ready for this project" | "needs attention" | "offline";
+
+export interface FleetNodeInspection {
+	node: FleetNodeSettings;
+	readiness: FleetNodeReadiness;
+	reason: string | null;
+	checkedAt: string | null;
+	ageMs: number | null;
+	record: FleetPreflightRecord | null;
+}
+
+export function inspectFleetNodes(projectRoot = process.cwd()): FleetNodeInspection[] {
+	const records = readFleetPreflightRecords();
+	return readSettings().fleet.nodes.map((node) => {
+		const record = records.find((item) => item.nodeId === node.id && item.projectRoot === resolve(projectRoot)) ?? null;
+		const verdict = fleetPreflightVerdict(node, resolve(projectRoot), records);
+		const age = record ? Date.now() - Date.parse(record.checkedAt) : null;
+		return {
+			node,
+			record,
+			reason: verdict.reason,
+			checkedAt: record?.checkedAt ?? null,
+			ageMs: age !== null && Number.isFinite(age) ? Math.max(0, age) : null,
+			readiness: verdict.ok ? "ready for this project" : record === null ? "not checked" : "needs attention",
+		};
+	});
+}
+
+export function fleetNode(id: string): FleetNodeSettings {
+	const node = readSettings().fleet.nodes.find((item) => item.id === id);
+	if (!node) throw new Error(`unknown fleet node '${id}'; use 'pancode fleet nodes list'`);
+	return node;
+}
+
+export function addFleetNode(node: FleetNodeSettings): void {
+	if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(node.id) || node.id === "local") {
+		throw new Error("node id must use letters, numbers, underscores or hyphens; 'local' is reserved");
+	}
+	if (
+		!node.host.trim() ||
+		node.host.startsWith("-") ||
+		/\s/u.test(node.host) ||
+		[...node.host].some((char) => char.charCodeAt(0) < 32)
+	) {
+		throw new Error("host must be an SSH alias, hostname or address; use --user for the SSH user");
+	}
+	if (node.port !== undefined && (node.port < 1 || node.port > 65535)) throw new Error("port must be 1 through 65535");
+	updateSettings((settings) => {
+		if (settings.fleet.nodes.some((item) => item.id === node.id))
+			throw new Error(`fleet node '${node.id}' already exists`);
+		settings.fleet.nodes.push(node);
+	});
+}
+
+export function removeFleetNode(id: string): void {
+	updateSettings((settings) => {
+		if (!settings.fleet.nodes.some((node) => node.id === id)) throw new Error(`unknown fleet node '${id}'`);
+		if (settings.fleet.defaultNode === id)
+			throw new Error(`node '${id}' is the standing fleet.defaultNode preference; clear that preference first`);
+		const pins = Object.entries(settings.fleet.profiles)
+			.filter(([, profile]) => profile.node === id)
+			.map(([name]) => name);
+		if (pins.length) throw new Error(`node '${id}' is pinned by profiles ${pins.join(", ")}; remove those pins first`);
+		settings.fleet.nodes = settings.fleet.nodes.filter((node) => node.id !== id);
+	});
+}
+
+/**
+ * Resolve each pinned target's credential the way a dispatch does (same order, same project-URL refusal, no stored
+ * fallback), but never refresh an OAuth login or write credential state during diagnostics. Only targets this node is
+ * pinned to carry credentials; a dispatch sends one target's key, and a check must not send every key the operator
+ * holds. Other targets, and targets that need no credential, get an anonymous probe.
+ */
+async function fleetPreflightTargets(nodeId: string): Promise<FleetPreflightTarget[]> {
+	const registry = getRuntimeRegistry();
+	registerBuiltinRuntimes(registry);
+	const auth = openAuthStorage();
+	const settings = readSettings();
+	const pinned = new Set(
+		Object.values(settings.fleet.profiles)
+			.filter((profile) => profile.node === nodeId)
+			.map((profile) => profile.target),
+	);
+	if (settings.fleet.defaultNode === nodeId) pinned.add(settings.fleet.default.target);
+	const targets: FleetPreflightTarget[] = [];
+	for (const target of settings.targets) {
+		const runtime = registry.get(target.runtime);
+		const credentialed = pinned.has(target.id);
+		const headers: Record<string, string> = credentialed ? { ...target.auth?.headers } : {};
+		if (runtime && credentialed && targetRequiresAuth(target, runtime)) {
+			const resolution = await auth.resolveForTarget(resolveAuthTarget(target, runtime), {
+				includeFallback: false,
+				refresh: false,
+			});
+			const token = resolution.available ? resolution.apiKey : undefined;
+			if (token && !headers.authorization) headers.authorization = `Bearer ${token}`;
+		}
+		const family = runtime?.apiFamily;
+		const listing =
+			family === "ollama-native"
+				? "ollama"
+				: family === "openai-completions" || family === "openai-responses"
+					? "openai"
+					: undefined;
+		targets.push({
+			id: target.id,
+			runtimeId: target.runtime,
+			headers,
+			...(target.url !== undefined ? { url: target.url } : {}),
+			...(target.defaultModel !== undefined ? { wireModelId: target.defaultModel } : {}),
+			...(listing !== undefined ? { listing } : {}),
+		});
+	}
+	return targets;
+}
+
+export async function testFleetNode(
+	id: string,
+	projectRoot = process.cwd(),
+	options: FleetPreflightRunOptions & { record?: boolean; verifyProject?: boolean; sharedProbe?: boolean } = {},
+): Promise<FleetPreflightRecord> {
+	const node = fleetNode(id);
+	const result = await runFleetNodePreflight(node, resolve(projectRoot), {
+		...options,
+		targets: options.targets ?? (await fleetPreflightTargets(id)),
+	});
+	if (result.ok && options.verifyProject !== false) {
+		result.project = await verifyFleetProject(
+			node,
+			resolve(projectRoot),
+			options.record === true || options.sharedProbe === true,
+		);
+		if (result.project.kind === "unverified") {
+			result.ok = false;
+			result.detail = result.project.reason;
+		}
+	}
+	rejectSameMachineNodes([result]);
+	if (options.record) recordFleetPreflight([result]);
+	return result;
+}
+
+function machineHolders(excluded: ReadonlySet<string>): FleetPreflightRecord[] {
+	const registered = new Set(readSettings().fleet.nodes.map((node) => node.id));
+	return readFleetPreflightRecords().filter(
+		(record) => record.ok && record.machine && registered.has(record.nodeId) && !excluded.has(record.nodeId),
+	);
+}
+
+function sameMachineDetail(id: string, twin: string): string {
+	return `node '${id}' is the same machine as node '${twin}', and two entries for one machine double its worker capacity; remove one of them`;
+}
+
+/** The other registered node with a passing record that already holds this machine, or null. */
+export function sameMachineHolder(id: string, machine: string | null | undefined): string | null {
+	if (!machine) return null;
+	return machineHolders(new Set([id])).find((record) => record.machine === machine)?.nodeId ?? null;
+}
+
+/** Why another registered node with a passing record already holds this machine, or null. */
+export function sameMachineConflict(id: string, machine: string | null | undefined): string | null {
+	const twin = sameMachineHolder(id, machine);
+	return twin === null ? null : sameMachineDetail(id, twin);
+}
+
+/**
+ * Fails a passing check for a node whose machine another registered node already holds, because
+ * two entries for one machine double its worker capacity. A node recorded earlier keeps the
+ * machine; within one batch, such as a doctor sweep, the first node listed keeps it.
+ */
+export function rejectSameMachineNodes(records: FleetPreflightRecord[]): void {
+	const holders = machineHolders(new Set(records.map((record) => record.nodeId)));
+	for (const result of records) {
+		if (!result.ok || !result.machine) continue;
+		const twin = holders.find((record) => record.nodeId !== result.nodeId && record.machine === result.machine);
+		if (twin === undefined) {
+			holders.push(result);
+			continue;
+		}
+		result.ok = false;
+		result.detail = sameMachineDetail(result.nodeId, twin.nodeId);
+	}
+}

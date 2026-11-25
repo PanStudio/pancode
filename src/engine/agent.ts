@@ -1,0 +1,640 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { AssistantMessage, Context, Message, Usage } from "@earendil-works/pi-ai";
+import {
+	createAssistantMessageEventStream,
+	createInitialSystemMessage,
+	getSystemMessageText,
+	toToolDeclaration,
+} from "@earendil-works/pi-ai";
+import { estimateMessageTokens } from "@earendil-works/pi-ai/utils/estimate";
+import { createHostPolicyMessage, isHostPolicyMessage } from "../core/host-policy-message.js";
+import { ProviderCompactionError, providerCheckpointFromMessage } from "../core/provider-checkpoint-handle.js";
+import type { ModelRouteRefusal } from "../core/response-model-id.js";
+import { modelRouteRefusalMessage, servedModelMismatch } from "../core/response-model-id.js";
+import { acceptsImageInput } from "../domains/providers/image-input.js";
+import { compactOpenAI, providerCheckpointCompatibility } from "./apis/openai-compaction.js";
+import { normalizeContext, resolvedRequestContext } from "./context.js";
+import { omitImageBlocks } from "./image-context.js";
+import { withLiveToolDeclarations } from "./live-declarations.js";
+import type { CodexConfiguration, ProviderCheckpointHandle } from "./types.js";
+
+/**
+ * Thin wrapper over PanCode's engine Agent class.
+ *
+ * The engine Agent owns its own state (exposed via `agent.state`). There is no
+ * separate state factory. AgentOptions drives the construction; the state is derived
+ * from options.initialState on instantiation.
+ *
+ * pi-agent-core 0.84 requires an explicit stream function on every agent.
+ * PanCode's default dispatcher preserves Pi's transcript. Production adapters can
+ * wrap that path with transcriptStreamFn; custom and test delegates receive
+ * Pi's resolved prompt/tool request view through streamFn.
+ */
+
+import type { AgentMessage, AgentOptions, BeforeToolCallContext, StreamFn } from "@earendil-works/pi-agent-core";
+import { Agent } from "@earendil-works/pi-agent-core";
+
+export {
+	bindCodexUserTurn as setEngineCodexUserTurn,
+	codexUserTurn as engineCodexUserTurn,
+} from "./apis/codex-configuration.js";
+
+import { engineMainStreamSimple, engineStreamSimple } from "./api-registry.js";
+import type { PinnedPromptPrefix } from "./apis/anthropic-system-split.js";
+import { filterAssistantProseStream } from "./assistant-prose-stream.js";
+import { pancodeClientIdentity } from "./client-identity.js";
+import { guardToolArgumentStream } from "./tool-argument-stream.js";
+import { routeUnattachedToolCalls } from "./unattached-tool-call.js";
+
+export type EngineStreamFn = (...args: Parameters<typeof engineStreamSimple>) => ReturnType<StreamFn>;
+
+/** Pi's settled-turn port, after all awaited result listeners. Replace context, not operator messages. */
+export type EnginePrepareNextTurnContext = Parameters<NonNullable<AgentOptions["prepareNextTurnWithContext"]>>[0];
+export type EnginePrepareNextTurnUpdate = Awaited<ReturnType<NonNullable<AgentOptions["prepareNextTurnWithContext"]>>>;
+export type EngineToolBatchContext = Pick<BeforeToolCallContext, "assistantMessage" | "context">;
+export interface EngineToolBatchRejection {
+	reason: string;
+}
+export interface EngineStreamRequest {
+	model: Parameters<StreamFn>[0];
+	/** Actual normalized transcript, after conversion and the final steering drain. Inspect only. */
+	context: Parameters<StreamFn>[1];
+	options: Parameters<StreamFn>[2];
+}
+export type EngineStreamAdmission =
+	| { block: true; reason: string; modelRouteRefusal?: ModelRouteRefusal }
+	| { block: false; correlationId?: string };
+
+export type EngineAgentOptions = Omit<AgentOptions, "streamFn"> & {
+	/** Custom request view. Explicit overrides also replace the native hook in tests. */
+	streamFn?: EngineStreamFn;
+	/** Native Pi transcript hook for production request adapters. */
+	transcriptStreamFn?: StreamFn;
+	/**
+	 * The delegate rewrites the transcript and sends through the engine registry, whose guard bounds tool arguments
+	 * against the request it actually sends. An agent-level guard would price the transcript before that rewrite: a
+	 * worker past its window before eviction got a 32-byte ceiling and lost its next tool call (cf1h-D3).
+	 */
+	delegateGuardsToolArguments?: boolean;
+	/** Called immediately before each native stream delegate invocation. */
+	onStreamInvocation?: () => void;
+	/** One fail-closed decision per assistant batch, before any valid sibling's per-call guard. */
+	beforeToolBatch?: (
+		context: EngineToolBatchContext,
+		signal?: AbortSignal,
+	) => EngineToolBatchRejection | undefined | Promise<EngineToolBatchRejection | undefined>;
+	/** Final admission before invoking the model; an interactive budget gate may wait for the operator. */
+	beforeStreamRequest?: (request: EngineStreamRequest) => EngineStreamAdmission | Promise<EngineStreamAdmission>;
+	/** `getApiKey` resolves through PanCode's own auth (env included), so the engine adds no env key of its own. */
+	authResolvedByHost?: boolean;
+	/**
+	 * Whether this route's provider-reported served model id is held against the requested one (row 384). True turns a
+	 * response whose served id names another model into an error before any of its tool calls run.
+	 */
+	refuseServedModelMismatch?: (model: Parameters<StreamFn>[0]) => boolean;
+};
+
+export interface EngineAgentHandle {
+	agent: Agent;
+	state(): Agent["state"];
+	/** Exact emitted assistant object only. In-memory attribution, never proof of success or durability. */
+	requestCorrelationId(message: AgentMessage): string | undefined;
+}
+
+function batchAwareBeforeToolCall(
+	batch: NonNullable<EngineAgentOptions["beforeToolBatch"]>,
+	delegate: AgentOptions["beforeToolCall"],
+): NonNullable<AgentOptions["beforeToolCall"]> {
+	const decisions = new WeakMap<AssistantMessage, Promise<EngineToolBatchRejection | undefined>>();
+	return async (context, signal) => {
+		let decision = decisions.get(context.assistantMessage);
+		if (!decision) {
+			decision = Promise.resolve()
+				.then(() => batch({ assistantMessage: context.assistantMessage, context: context.context }, signal))
+				.catch(() => ({ reason: "Tool batch admission failed" }));
+			decisions.set(context.assistantMessage, decision);
+		}
+		const rejection = await decision;
+		if (rejection) return { block: true, reason: rejection.reason.slice(0, 1024) || "Tool batch rejected" };
+		return delegate?.(context, signal);
+	};
+}
+
+function refusedStream(
+	request: EngineStreamRequest,
+	reason: string,
+	aborted = false,
+	modelRouteRefusal?: ModelRouteRefusal,
+): ReturnType<StreamFn> {
+	const stream = createAssistantMessageEventStream();
+	const message: AssistantMessage = {
+		role: "assistant",
+		content: [],
+		api: request.model.api,
+		provider: request.model.provider,
+		model: request.model.id,
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: aborted ? "aborted" : "error",
+		errorMessage: reason.slice(0, 1024) || "Request admission refused",
+		timestamp: Date.now(),
+	};
+	if (modelRouteRefusal !== undefined) Object.assign(message, { modelRouteRefusal });
+	stream.push({ type: "error", reason: aborted ? "aborted" : "error", error: message });
+	return stream;
+}
+
+const codexConfigurations = new WeakMap<Agent, CodexConfiguration>();
+const providerCompactionPolicies = new WeakMap<Agent, () => boolean>();
+const providerReplayFallbacks = new WeakMap<Agent, (reason: string) => Promise<void>>();
+
+/** A rejected replay is resolved through the owning turn path before one fresh invocation (#423). */
+export function setEngineProviderReplayFallback(agent: Agent, resolve: (reason: string) => Promise<void>): void {
+	providerReplayFallbacks.set(agent, resolve);
+}
+
+function portableReplayReason(error: string): string | null {
+	if (error.includes("native-setting-or-route-disabled")) return "setting-off";
+	if (error.includes("provider checkpoint requires portable replay")) return "non-codex-route";
+	return (
+		error.match(
+			/native-replay-(?:checkpoint-unreadable|provider-or-model-changed|account-changed-or-unknown|non-codex-route)/u,
+		)?.[0] ?? null
+	);
+}
+const providerCheckpointObservers = new WeakMap<
+	Agent,
+	(handle: ProviderCheckpointHandle, inputTokens: number) => void
+>();
+
+export function setEngineProviderCheckpointObserver(
+	agent: Agent,
+	observer: (handle: ProviderCheckpointHandle, inputTokens: number) => void,
+): void {
+	providerCheckpointObservers.set(agent, observer);
+}
+
+/** Read the live setting at payload time, including config reloads during preparation (#423). */
+export function setEngineProviderCompactionPolicy(agent: Agent, enabled: () => boolean): void {
+	providerCompactionPolicies.set(agent, enabled);
+}
+
+/** Snapshot public Pi transforms and the live transcript without running the agent loop (#423). */
+export async function compactEngineCodex(
+	agent: Agent,
+	options: {
+		signal?: AbortSignal;
+		sessionId?: string;
+		onUsage?: Parameters<typeof compactOpenAI>[0]["onUsage"];
+		callTelemetry?: Parameters<typeof compactOpenAI>[0]["callTelemetry"];
+	},
+) {
+	let messages = structuredClone(agent.state.messages);
+	if (agent.transformContext) messages = await agent.transformContext(messages, options.signal);
+	const converted = await agent.convertToLlm(messages);
+	// Cutting an in-flight tool batch would orphan its eventual results (#423).
+	const pending = new Set<string>();
+	for (const message of converted) {
+		if (message.role === "assistant") {
+			for (const block of message.content) if (block.type === "toolCall") pending.add(block.id);
+		} else if (message.role === "toolResult") pending.delete(message.toolCallId);
+	}
+	if (pending.size > 0) throw new ProviderCompactionError("native-pending-tools");
+	const apiKey = await agent.getApiKey?.(agent.state.model.provider);
+	options.signal?.throwIfAborted();
+	const configuration = codexConfigurations.get(agent);
+	// Native compaction reads the turns' prompt prefix from cache, so it splits the prompt as they do (#423).
+	const pinned = pinnedPrefixes.get(agent);
+	return compactOpenAI({
+		...(options.callTelemetry ? { callTelemetry: options.callTelemetry } : {}),
+		stream: engineMainStreamSimple,
+		model: agent.state.model,
+		context: { messages: converted },
+		options: {
+			pancodeProviderCompaction: () => providerCompactionPolicies.get(agent)?.() === true,
+			pancodeProviderCheckpointObserved: (handle, tokens) => providerCheckpointObservers.get(agent)?.(handle, tokens),
+			...(agent.onProviderStreamEvent ? { onProviderStreamEvent: agent.onProviderStreamEvent } : {}),
+			...(apiKey === undefined ? {} : { apiKey }),
+			...(options.signal === undefined ? {} : { signal: options.signal }),
+			...(configuration ? { codexConfiguration: configuration } : {}),
+			...(pinned ? { pancodePinnedPrefix: pinned } : {}),
+			...(agent.state.thinkingLevel === "off" ? {} : { reasoning: agent.state.thinkingLevel }),
+			...((options.sessionId ?? agent.sessionId) === undefined ? {} : { sessionId: options.sessionId ?? agent.sessionId }),
+			...(agent.transport === undefined ? {} : { transport: agent.transport }),
+			...(agent.onPayload === undefined ? {} : { onPayload: agent.onPayload }),
+			...(agent.onResponse === undefined ? {} : { onResponse: agent.onResponse }),
+		},
+		...(options.onUsage ? { onUsage: options.onUsage } : {}),
+	});
+}
+
+/** Session-control owns durable effort history; the engine only serializes it (#423). */
+export function setEngineCodexConfiguration(agent: Agent, configuration: CodexConfiguration | undefined): void {
+	if (configuration) codexConfigurations.set(agent, configuration);
+	else codexConfigurations.delete(agent);
+}
+
+export function engineCodexConfiguration(agent: Agent): CodexConfiguration | undefined {
+	return codexConfigurations.get(agent);
+}
+
+export function createEngineAgent(options: EngineAgentOptions = {}): EngineAgentHandle {
+	const {
+		streamFn,
+		transcriptStreamFn = engineStreamSimple,
+		delegateGuardsToolArguments = false,
+		onStreamInvocation,
+		beforeToolBatch,
+		beforeStreamRequest,
+		authResolvedByHost,
+		refuseServedModelMismatch,
+		...agentOptions
+	} = options;
+	const correlations = new WeakMap<AgentMessage, string>();
+	let activeCorrelationId: string | undefined;
+	const invoke: StreamFn = async (model, context, streamOptions) => {
+		onStreamInvocation?.();
+		streamOptions = {
+			...streamOptions,
+			pancodeProviderCheckpointObserved: (handle: ProviderCheckpointHandle, tokens: number) =>
+				providerCheckpointObservers.get(agent)?.(handle, tokens),
+			pancodeProviderCompaction: () => providerCompactionPolicies.get(agent)?.() === true,
+			...(authResolvedByHost ? { pancodeAuthResolved: true } : {}),
+		} as typeof streamOptions;
+		const configuration = codexConfigurations.get(agent);
+		if (configuration) streamOptions = { ...streamOptions, codexConfiguration: configuration } as typeof streamOptions;
+		const delegate = (guarded: typeof streamOptions) =>
+			streamFn ? streamFn(model, resolvedRequestContext(context), guarded) : transcriptStreamFn(model, context, guarded);
+		const open = async () =>
+			refuseOnServedModelMismatch(
+				routeUnattachedToolCalls(
+					filterAssistantProseStream(
+						await ((streamFn || transcriptStreamFn !== engineStreamSimple) && !delegateGuardsToolArguments
+							? guardToolArgumentStream(model, context, streamOptions, delegate)
+							: delegate(streamOptions)),
+						model,
+					),
+					resolvedRequestContext(context).tools,
+					model,
+				),
+				model.id,
+				refuseServedModelMismatch?.(model) === true,
+			);
+		const marker = normalizeContext(context)
+			.messages.map(providerCheckpointFromMessage)
+			.find((handle) => handle !== undefined);
+		const resolve = providerReplayFallbacks.get(agent);
+		if (!marker || !resolve) return open();
+		const rebuild = async (reason: string): Promise<void> => {
+			await resolve(reason);
+			streamOptions?.signal?.throwIfAborted();
+			let messages = structuredClone(agent.state.messages);
+			if (agent.transformContext) messages = await agent.transformContext(messages, streamOptions?.signal);
+			context = normalizeContext({ messages: await agent.convertToLlm(messages) });
+			const { codexConfiguration: _old, ...portableOptions } = (streamOptions ?? {}) as NonNullable<
+				typeof streamOptions
+			> & { codexConfiguration?: CodexConfiguration };
+			const fresh = codexConfigurations.get(agent);
+			// The attempt's receipt names the fallback; its cursor must cover the record the resolver just wrote (F14).
+			streamOptions = {
+				...portableOptions,
+				...(fresh ? { codexConfiguration: fresh } : {}),
+				[PROVIDER_FALLBACK]: reason,
+			} as typeof streamOptions;
+		};
+		const preflight =
+			providerCompactionPolicies.get(agent)?.() === true
+				? providerCheckpointCompatibility(marker, model, streamOptions?.apiKey)
+				: "setting-off";
+		if (preflight !== null) await rebuild(preflight);
+		const output = createAssistantMessageEventStream();
+		void (async () => {
+			let retried = preflight !== null;
+			try {
+				for (;;) {
+					let retryReason: string | null = null;
+					let start:
+						| Extract<Awaited<ReturnType<typeof open>> extends AsyncIterable<infer E> ? E : never, { type: "start" }>
+						| undefined;
+					try {
+						const source = await open();
+						for await (const event of source) {
+							if (event.type === "start") {
+								start = event;
+								continue;
+							}
+							if (!retried && event.type === "error") retryReason = portableReplayReason(event.error.errorMessage ?? "");
+							if (retryReason !== null) break;
+							if (start) {
+								output.push(start);
+								start = undefined;
+							}
+							output.push(event);
+						}
+					} catch (error) {
+						retryReason = !retried ? portableReplayReason(error instanceof Error ? error.message : String(error)) : null;
+						if (retryReason === null) throw error;
+					}
+					if (retryReason === null) break;
+					retried = true;
+					await rebuild(retryReason);
+				}
+				output.end();
+			} catch (error) {
+				const failure = await refusedStream(
+					{ model, context, options: streamOptions },
+					error instanceof Error ? error.message : String(error),
+					streamOptions?.signal?.aborted,
+				);
+				for await (const event of failure) output.push(event);
+				output.end();
+			}
+		})();
+		return output;
+	};
+	const admit: StreamFn = (model, context, streamOptions) => {
+		if (!beforeStreamRequest) return invoke(model, context, streamOptions);
+		activeCorrelationId = undefined;
+		const request: EngineStreamRequest = { model, context, options: streamOptions };
+		const complete = (admission: EngineStreamAdmission): ReturnType<StreamFn> => {
+			if (streamOptions?.signal?.aborted) return refusedStream(request, "Request aborted before invocation", true);
+			if (admission.block) return refusedStream(request, admission.reason, false, admission.modelRouteRefusal);
+			activeCorrelationId = admission.correlationId;
+			return invoke(model, context, streamOptions);
+		};
+		try {
+			const admission = beforeStreamRequest(request);
+			return admission instanceof Promise
+				? admission.then(complete, () => refusedStream(request, "Request admission failed", streamOptions?.signal?.aborted))
+				: complete(admission);
+		} catch {
+			return refusedStream(request, "Request admission failed", streamOptions?.signal?.aborted);
+		}
+	};
+	const agent = new Agent({
+		// Pi 1.4's Agent attributes requests to pi unless the host names its own identity.
+		identity: pancodeClientIdentity(),
+		...agentOptions,
+		streamFn: beforeStreamRequest ? admit : invoke,
+		...(beforeToolBatch ? { beforeToolCall: batchAwareBeforeToolCall(beforeToolBatch, options.beforeToolCall) } : {}),
+	});
+	if (beforeStreamRequest) {
+		agent.subscribe((event) => {
+			if (event.type === "message_end" && event.message.role === "assistant" && activeCorrelationId !== undefined) {
+				correlations.set(event.message, activeCorrelationId);
+			}
+			if (event.type === "agent_start" || event.type === "turn_end" || event.type === "agent_end") {
+				activeCorrelationId = undefined;
+			}
+		});
+	}
+	// Pi correctly drops aborted assistants at the provider boundary: partial
+	// reasoning and tool calls are not valid provider history. Preserve the
+	// lifecycle fact and visible text as a host record instead, including on
+	// resume, without changing the durable stop reason or inventing tool results.
+	const convertToLlm = agent.convertToLlm.bind(agent);
+	agent.convertToLlm = async (messages) =>
+		providerHistory(await convertToLlm(messages), acceptsImageInput({ modelInput: agent.state.model.input }));
+	return {
+		agent,
+		state: () => agent.state,
+		requestCorrelationId: (message) => correlations.get(message),
+	};
+}
+
+const PROVIDER_FALLBACK = "pancodeProviderFallback";
+
+/**
+ * The served-model backstop (row 384): a terminal response whose provider-reported model id names another model than
+ * the one requested ends as an error carrying the typed refusal, with its tool calls removed, so Pi runs none of them
+ * and no surface grades the turn done. Ids are compared after `sameServedModel`'s canonicalization; a response that
+ * reports no id passes unchanged.
+ */
+function refuseOnServedModelMismatch(
+	source: ReturnType<typeof createAssistantMessageEventStream>,
+	requestedModelId: string,
+	guarded: boolean,
+): ReturnType<typeof createAssistantMessageEventStream> {
+	if (!guarded) return source;
+	const output = createAssistantMessageEventStream();
+	void (async () => {
+		// The upstream stream turns its own failures into an error event (`routeUnattachedToolCalls`), so iteration ends.
+		for await (const event of source) {
+			const served =
+				event.type === "done"
+					? servedModelMismatch(
+							requestedModelId,
+							(event.message as { responseModelIdObservation?: unknown }).responseModelIdObservation,
+						)
+					: null;
+			if (event.type !== "done" || served === null) {
+				output.push(event);
+				continue;
+			}
+			const refusal: ModelRouteRefusal = { code: "served_model_mismatch", requested: requestedModelId, served };
+			const error = {
+				...event.message,
+				content: event.message.content.filter((block) => block.type !== "toolCall"),
+				stopReason: "error" as const,
+				errorMessage: modelRouteRefusalMessage(refusal),
+				modelRouteRefusal: refusal,
+				// The call itself completed: its settlement records this stop and the usage kept above, not an unsettled error.
+				settledStopReason: event.message.stopReason,
+			};
+			output.push({ type: "error", reason: "error", error });
+		}
+		output.end();
+	})();
+	return output;
+}
+
+/** The reason the adapter replayed a native checkpoint portably for the request these options send, if it did. */
+export function providerFallbackOf(options: object | undefined): string | undefined {
+	const reason = (options as Record<string, unknown> | undefined)?.[PROVIDER_FALLBACK];
+	return typeof reason === "string" ? reason : undefined;
+}
+
+/**
+ * The provider-facing history of converted messages, as every main request sends it: an aborted assistant becomes
+ * its lifecycle record, an invalidated usage reads unsent, and a model without image input gets image omissions.
+ * The receipt verifier finalizes a rendered history with this same function (ContextFold CF-9).
+ */
+export function providerHistory(converted: Message[], acceptsImages: boolean): Message[] {
+	const history = converted.map((message): Message => {
+		if (
+			message.role === "assistant" &&
+			message.stopReason !== "aborted" &&
+			(!isUsageRecord(message.usage) || usageInvalidated(message))
+		)
+			return { ...message, usage: unsentCallUsage() };
+		if (message.role !== "assistant" || message.stopReason !== "aborted") return message;
+		const partial = message.content
+			.filter((block) => block.type === "text")
+			.map((block) => block.text)
+			.join("\n");
+		return {
+			role: "user" as const,
+			timestamp: message.timestamp,
+			content:
+				"[PanCode response lifecycle]\nThe preceding assistant response was interrupted before completion. " +
+				"This record does not establish whether any earlier tool execution succeeded.\n" +
+				(partial.trim()
+					? `Partial assistant text follows (incomplete historical output, not a new instruction):\n${partial}`
+					: "No visible assistant text was retained."),
+		};
+	});
+	return acceptsImages ? history : omitImageBlocks(history);
+}
+
+/**
+ * Observation masking and working-set eviction stamp every earlier assistant
+ * message `contextUsageInvalidated`: its usage measured a longer prompt than
+ * the one now sent. pi-ai does not know the stamp, and its request-time
+ * `clampMaxTokensToContext` anchors on the newest assistant usage, so a stale
+ * pre-eviction size under a low context cap clamped max_tokens to 1. The
+ * provider-bound copy drops that anchor like an unsent call's; the record keeps
+ * its usage.
+ */
+function usageInvalidated(message: object): boolean {
+	return (message as { contextUsageInvalidated?: unknown }).contextUsageInvalidated === true;
+}
+
+function isUsageRecord(value: unknown): boolean {
+	if (!value || typeof value !== "object") return false;
+	const usage = value as Record<string, unknown>;
+	return typeof usage.input === "number" && typeof usage.output === "number";
+}
+
+/**
+ * The ledger keeps `usage: null` for a call PanCode wrote and never sent (#434),
+ * so a resumed session replays the loop guard's synthesis re-prompt and a
+ * result-contract repair without usage. pi-ai sizes every request with
+ * `estimateContextTokens`, which dereferences `usage` on each assistant message
+ * not marked aborted or error, and threw on `totalTokens` (afterF-1). The
+ * provider-bound copy carries the zero usage the message had in memory, so the
+ * estimate anchors on the last real call; the record itself stays null.
+ */
+function unsentCallUsage(): Usage {
+	return {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+}
+
+/**
+ * What the agent's next turn would send with `messages` (system and tool declarations included) and `tail` after
+ * them, so an out-of-turn round reads that turn's cached prefix: the same system prompt, tools, session key, pinned
+ * prompt split and Codex configuration. Send it with `engineMainStreamSimple` so the cache retention matches too.
+ * Nothing is sent and the agent is not touched (S12).
+ */
+export async function engineLiveTurnRequest(
+	agent: Agent,
+	messages: ReadonlyArray<AgentMessage>,
+	tail: ReadonlyArray<AgentMessage>,
+	signal?: AbortSignal,
+): Promise<{ context: Context; options: Record<string, unknown> }> {
+	let current = [
+		...withLiveToolDeclarations(structuredClone([...messages]), agent.state.systemPrompt, agent.state.tools),
+		...tail,
+	];
+	if (agent.transformContext) current = await agent.transformContext(current, signal);
+	const context = normalizeContext({ messages: await agent.convertToLlm(current) });
+	const pinned = pinnedPrefixes.get(agent);
+	const codex = codexConfigurations.get(agent);
+	return {
+		context,
+		options: {
+			...(agent.sessionId !== undefined ? { sessionId: agent.sessionId } : {}),
+			...(pinned ? { pancodePinnedPrefix: pinned } : {}),
+			...(codex ? { codexConfiguration: codex } : {}),
+			...(agent.thinkingBudgets !== undefined ? { thinkingBudgets: agent.thinkingBudgets } : {}),
+			...(agent.transport !== undefined ? { transport: agent.transport } : {}),
+		},
+	};
+}
+
+/** PanCode persists conversation and compiled prompt separately; Pi receives one complete transcript. */
+export function engineInitialSystemPrompt(agent: Agent): string {
+	const initial = agent.state.messages[0];
+	// Pi's state.systemPrompt folds later policies into its text. Reusing that
+	// projection as the baseline would duplicate updates and rewrite the prefix (#423).
+	return initial?.role === "system"
+		? isHostPolicyMessage(initial)
+			? ""
+			: getSystemMessageText(initial)
+		: agent.state.systemPrompt;
+}
+
+const PI_REQUEST_ROLES: ReadonlySet<string> = new Set(["system", "user", "assistant", "toolResult"]);
+
+/**
+ * Pi's own count of the request these messages make when no usage anchors it:
+ * the initial system message with its tool declarations, then every message the
+ * provider receives, at Pi's chars/3.5. The overflow fit takes the larger of
+ * this and PanCode's chars/4 count (A4), so a fold that fits leaves Pi's clamp the
+ * output floor too.
+ */
+export function estimateEngineRequestTokens(agent: Agent, messages: ReadonlyArray<AgentMessage>): number {
+	const initial = createInitialSystemMessage(engineInitialSystemPrompt(agent), agent.state.tools.map(toToolDeclaration));
+	let tokens = initial ? estimateMessageTokens(initial) : 0;
+	for (const message of messages)
+		if (PI_REQUEST_ROLES.has(message.role)) tokens += estimateMessageTokens(message as Message);
+	return tokens;
+}
+
+export function replaceEngineMessages(
+	agent: Agent,
+	messages: Agent["state"]["messages"],
+	systemPrompt = engineInitialSystemPrompt(agent),
+): void {
+	const initial = createInitialSystemMessage(systemPrompt, agent.state.tools.map(toToolDeclaration));
+	agent.state.messages = [
+		...(initial ? [initial] : []),
+		...messages.filter((message) => message.role !== "system" || isHostPolicyMessage(message)),
+	];
+}
+
+export function appendEnginePolicyMessage(agent: Agent, id: string, content: string, timestamp: number): void {
+	if (
+		agent.state.messages.some(
+			(message) =>
+				isHostPolicyMessage(message) &&
+				(message as AgentMessage & { pancode_policy: { id: string } }).pancode_policy.id === id,
+		)
+	)
+		return;
+	agent.state.messages = [...agent.state.messages, createHostPolicyMessage(id, content, timestamp)];
+}
+
+const pinnedPrefixes = new WeakMap<Agent, PinnedPromptPrefix>();
+
+export function enginePinnedPrefix(agent: Agent): PinnedPromptPrefix | undefined {
+	return pinnedPrefixes.get(agent);
+}
+
+export function setEngineSystemPrompt(agent: Agent, systemPrompt: string, pinnedPrefix?: PinnedPromptPrefix): void {
+	if (pinnedPrefix) pinnedPrefixes.set(agent, pinnedPrefix);
+	else pinnedPrefixes.delete(agent);
+	if (engineInitialSystemPrompt(agent) !== systemPrompt)
+		replaceEngineMessages(agent, agent.state.messages, systemPrompt);
+}
+
+/** Explicit host recovery can follow a terminal assistant. Empty input starts
+ * the native loop on the installed transcript without emitting a user message.
+ * Agent.continue() rejects that tail even when durable operator control already
+ * authorized another invocation. Normal tool continuation stays inside Pi.
+ */
+export function continueEngineWithoutInput(agent: Agent): Promise<void> {
+	return agent.prompt([]);
+}

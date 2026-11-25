@@ -1,0 +1,488 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { type Dirent, readdirSync } from "node:fs";
+import { join } from "node:path";
+
+import { initializePancodeHome } from "../core/init.js";
+import {
+	pancodeDirLayoutProblems,
+	removablePancodeRootProblem,
+	resetXdgCache,
+	resolvePancodeDirs,
+} from "../core/xdg.js";
+import { GUI_UNINSTALL_ADVICE, prepareGuiUninstall } from "./gui.js";
+import { writeCliFailure } from "./kit/json-out.js";
+import { CliUsageError } from "./kit/usage-error.js";
+import { createLifecyclePresenter, type LifecycleItem, measurePath } from "./lifecycle-presenter.js";
+import { type RemovalFailure, refuseForOpenSessions, removePath, reportRemovalFailures } from "./removal.js";
+
+const HELP = `pancode reset --state|--data|--cache|--auth|--settings|--all [--dry-run] [--yes] [--json]
+
+Recover or wipe PanCode state while keeping the pancode launcher installed.
+Each level clears exactly the root (or file) it names and nothing else, then the
+empty roots are recreated so the next run has somewhere to write.
+
+Levels (name at least one; combinable except --all):
+  --state       state root only. Holds every session transcript, so a
+                reset is the end of resume, /view, and the telemetry behind them.
+                Owned background services are stopped and removed first.
+  --data        data root only: memory, the project store and vendored tools
+                (durable products)
+  --cache       cache root only
+  --auth        credentials.yaml only
+  --settings    settings.yaml only
+  --all         all four roots whole: config (settings, credentials, and anything
+                else under it), data, state, and cache
+
+Safety:
+  --state, --data and --all stop while a session is still open.
+  --yes, -y     skip the confirmation; without a terminal, reset needs it
+                (exit 2, confirmation_required).
+  --dry-run     print what would be reset without changing anything
+  --json        emit machine-readable JSON output; a terminal run still asks,
+                on stderr
+  --help, -h    show this message
+`;
+
+const ROOT_NOTES = {
+	state: "State holds every session transcript and telemetry journal; resume and /view lose their history.",
+	data:
+		"Data holds memory, the project store and vendored tools; stored blobs and records are not recoverable, and the tools have to be downloaded again.",
+	settings: "Settings return to their defaults.",
+	auth: "Saved API keys are gone; each target has to be authenticated again.",
+	cache: "Cache is disposable and rebuilds itself.",
+	all: "Everything goes: settings, credentials, memory, the project store, transcripts, and caches. A clean install remains.",
+} as const;
+
+interface ParsedResetArgs {
+	state: boolean;
+	data: boolean;
+	cache: boolean;
+	auth: boolean;
+	settings: boolean;
+	all: boolean;
+	yes: boolean;
+	dryRun: boolean;
+	json: boolean;
+	help: boolean;
+}
+
+const RESET_PATH = ["reset"] as const;
+
+function parseResetArgs(argv: ReadonlyArray<string>): ParsedResetArgs {
+	const parsed: ParsedResetArgs = {
+		state: false,
+		data: false,
+		cache: false,
+		auth: false,
+		settings: false,
+		all: false,
+		yes: false,
+		dryRun: false,
+		json: false,
+		help: false,
+	};
+	for (const arg of argv) {
+		switch (arg) {
+			case "--state":
+				parsed.state = true;
+				break;
+			case "--data":
+				parsed.data = true;
+				break;
+			case "--cache":
+				parsed.cache = true;
+				break;
+			case "--auth":
+				parsed.auth = true;
+				break;
+			case "--settings":
+				parsed.settings = true;
+				break;
+			case "--all":
+				parsed.all = true;
+				break;
+			case "--yes":
+			case "-y":
+				parsed.yes = true;
+				break;
+			case "--dry-run":
+				parsed.dryRun = true;
+				break;
+			case "--json":
+				parsed.json = true;
+				break;
+			case "--help":
+			case "-h":
+				parsed.help = true;
+				break;
+			default:
+				throw new CliUsageError(
+					RESET_PATH,
+					arg.startsWith("-") ? "unknown_flag" : "usage",
+					arg.startsWith("-") ? `unknown flag: ${arg}` : `unexpected argument: ${arg}`,
+				);
+		}
+	}
+	const levels = [parsed.state, parsed.data, parsed.cache, parsed.auth, parsed.settings];
+	if (!parsed.help && parsed.all && levels.some(Boolean)) {
+		throw new CliUsageError(
+			RESET_PATH,
+			"flag_conflict",
+			"--all cannot be combined with --state, --data, --cache, --auth, or --settings",
+		);
+	}
+	// A bare reset used to mean --state, which deletes every transcript. Destruction is always named.
+	if (!parsed.help && !parsed.all && !levels.some(Boolean)) {
+		throw new CliUsageError(
+			RESET_PATH,
+			"usage",
+			"name what to reset: --state, --data, --cache, --auth, --settings, or --all",
+		);
+	}
+	return parsed;
+}
+
+/**
+ * What sits directly under a root, named so the operator recognizes what the
+ * reset takes. Directories keep their trailing slash; the list is capped so one
+ * crowded root cannot push the decision off the screen.
+ */
+function rootContents(path: string, limit = 4): string | undefined {
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(path, { withFileTypes: true });
+	} catch {
+		return undefined;
+	}
+	if (entries.length === 0) return undefined;
+	const names = entries
+		.map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
+		.sort((left, right) => left.localeCompare(right));
+	const shown = names.slice(0, limit).join(", ");
+	return names.length > limit ? `${shown}, +${names.length - limit} more` : shown;
+}
+
+function resetInvocation(args: ParsedResetArgs): string {
+	const levels = (
+		[
+			["all", args.all],
+			["settings", args.settings],
+			["auth", args.auth],
+			["data", args.data],
+			["state", args.state],
+			["cache", args.cache],
+		] as const
+	)
+		.filter(([, on]) => on)
+		.map(([name]) => `--${name}`);
+	return `pancode reset ${levels.join(" ")} --yes`;
+}
+
+export async function runResetCommand(argv: ReadonlyArray<string>): Promise<number> {
+	let args: ParsedResetArgs;
+	try {
+		args = parseResetArgs(argv);
+	} catch (error) {
+		// One diagnostic and a pointer at the help (C3), never the help itself;
+		// under --json the failure document is the one thing on stdout (C6).
+		const usage = error instanceof CliUsageError ? error : new CliUsageError(RESET_PATH, "usage", String(error));
+		writeCliFailure({ path: RESET_PATH, slug: usage.slug, message: usage.message, json: argv.includes("--json") });
+		return 2;
+	}
+	if (args.help) {
+		process.stdout.write(HELP);
+		return 0;
+	}
+
+	// One sentence on stderr, and nothing on stdout but the --json failure
+	// document: a caller that piped this run is parsing stdout.
+	const isInteractive = Boolean(process.stdin.isTTY);
+	if (!args.dryRun && !args.yes && !isInteractive) {
+		writeCliFailure({
+			path: RESET_PATH,
+			slug: "confirmation_required",
+			message: "needs a terminal to confirm; pass --yes to skip the prompt",
+			json: args.json,
+		});
+		return 2;
+	}
+
+	const dirs = resolvePancodeDirs();
+	const layoutProblems = pancodeDirLayoutProblems(dirs);
+	if (layoutProblems.length > 0) {
+		writeCliFailure({
+			path: RESET_PATH,
+			slug: "not_configured",
+			message:
+				`refused an unsafe directory layout: ${layoutProblems.join("; ")}. ` +
+				"Run `pancode doctor` after setting four absolute, distinct, non-nesting roots.",
+			json: args.json,
+		});
+		return 2;
+	}
+	const settingsPath = join(dirs.config, "settings.yaml");
+	const credentialsPath = join(dirs.config, "credentials.yaml");
+	const presenter = createLifecyclePresenter({ json: args.json, dryRun: args.dryRun });
+
+	presenter.header("Reset PanCode", "reset");
+
+	// Determine scopes to clear
+	const resetData = args.all || args.data;
+	const resetState = args.all || args.state;
+	const resetCache = args.all || args.cache;
+	let web: Awaited<ReturnType<typeof prepareGuiUninstall>> | null = null;
+	if (resetState) {
+		try {
+			web = await prepareGuiUninstall({ stateDir: dirs.state, desktopPrefix: dirs.data, backgroundOnly: true });
+		} catch (error) {
+			presenter.fail(error instanceof Error ? error.message : "Background service ownership could not be checked.");
+			presenter.finish();
+			return 1;
+		}
+	}
+
+	const configSize = measurePath(dirs.config);
+	const dataSize = measurePath(dirs.data);
+	const stateSize = measurePath(dirs.state);
+	const cacheSize = measurePath(dirs.cache);
+
+	const items: LifecycleItem[] = [];
+
+	// State
+	if (resetState) {
+		items.push({
+			label: "State",
+			path: dirs.state,
+			bytes: stateSize.bytes,
+			status: stateSize.exists ? "remove" : "absent",
+			detail: rootContents(dirs.state),
+		});
+	} else {
+		items.push({
+			label: "State",
+			path: dirs.state,
+			bytes: stateSize.bytes,
+			status: stateSize.exists ? "keep" : "absent",
+			detail: stateSize.exists ? "survives" : undefined,
+		});
+	}
+
+	// Data
+	if (resetData) {
+		items.push({
+			label: "Data",
+			path: dirs.data,
+			bytes: dataSize.bytes,
+			status: dataSize.exists ? "remove" : "absent",
+		});
+	} else {
+		items.push({
+			label: "Data",
+			path: dirs.data,
+			bytes: dataSize.bytes,
+			status: dataSize.exists ? "keep" : "absent",
+			detail: dataSize.exists ? "survives" : undefined,
+		});
+	}
+
+	// Config / settings / auth
+	if (args.all) {
+		items.push({
+			label: "Config",
+			path: dirs.config,
+			bytes: configSize.bytes,
+			status: configSize.exists ? "remove" : "absent",
+		});
+	} else {
+		const stSettings = measurePath(settingsPath);
+		if (args.settings) {
+			items.push({
+				label: "Settings",
+				path: settingsPath,
+				bytes: stSettings.bytes,
+				status: stSettings.exists ? "remove" : "absent",
+			});
+		} else {
+			items.push({
+				label: "Settings",
+				path: settingsPath,
+				bytes: stSettings.bytes,
+				status: stSettings.exists ? "keep" : "absent",
+				detail: stSettings.exists ? "survives" : undefined,
+			});
+		}
+
+		const stCreds = measurePath(credentialsPath);
+		if (args.auth) {
+			items.push({
+				label: "Credentials",
+				path: credentialsPath,
+				bytes: stCreds.bytes,
+				status: stCreds.exists ? "remove" : "absent",
+			});
+		} else {
+			items.push({
+				label: "Credentials",
+				path: credentialsPath,
+				bytes: stCreds.bytes,
+				status: stCreds.exists ? "keep" : "absent",
+				detail: stCreds.exists ? "survives" : undefined,
+			});
+		}
+	}
+
+	// Cache
+	if (resetCache) {
+		items.push({
+			label: "Cache",
+			path: dirs.cache,
+			bytes: cacheSize.bytes,
+			status: cacheSize.exists ? "remove" : "absent",
+		});
+	} else {
+		items.push({
+			label: "Cache",
+			path: dirs.cache,
+			bytes: cacheSize.bytes,
+			status: cacheSize.exists ? "keep" : "absent",
+			detail: cacheSize.exists ? "survives" : undefined,
+		});
+	}
+
+	// The launcher is not listed. Reset never touches it, and a row for a path a
+	// command cannot act on is one more line between the operator and the four
+	// that decide whether to go ahead.
+	presenter.listItems("The following will be cleared", items);
+	if (web?.items.length)
+		presenter.note("The owned background app will be stopped and uninstalled before its state is cleared.");
+	if (web?.unmanaged.length) {
+		presenter.warn("Background service state cannot be safely reset by this build.");
+		presenter.commandAdvice(GUI_UNINSTALL_ADVICE.lead, GUI_UNINSTALL_ADVICE.command);
+		if (!args.dryRun) {
+			presenter.fail("Reset stopped; PanCode state was preserved.");
+			presenter.finish();
+			return 1;
+		}
+	}
+
+	// One consequence line, not one per scope. `--all` states the whole outcome,
+	// so the per-root notes underneath it would only repeat it.
+	const notes: string[] = args.all
+		? [ROOT_NOTES.all]
+		: [
+				resetState ? ROOT_NOTES.state : null,
+				resetData ? ROOT_NOTES.data : null,
+				args.settings ? ROOT_NOTES.settings : null,
+				args.auth ? ROOT_NOTES.auth : null,
+			].filter((note): note is NonNullable<typeof note> => note !== null);
+	for (const note of notes) presenter.note(note);
+
+	// Only when something actually survives. On `--all` the note above already
+	// says nothing does, and on a scoped reset over an empty home every row is
+	// absent, which is not the same claim as "it was there and it is going".
+	const surviving = items.filter((item) => item.status === "keep").map((item) => item.label);
+	if (surviving.length > 0) presenter.note(`Survives: ${surviving.join(", ")}`);
+
+	if ((resetState || resetData) && refuseForOpenSessions(dirs.state, presenter, args.dryRun)) {
+		presenter.finish();
+		return 1;
+	}
+
+	if (args.dryRun) {
+		presenter.warn("Dry run: no changes made");
+		presenter.done("Done");
+		return 0;
+	}
+
+	if (!args.yes) {
+		const confirmed = await presenter.confirm("Are you sure you want to reset the selected state?", false);
+		if (!confirmed) {
+			// Exit 0 is the v1 contract for a declined prompt; convention C8's exit 1
+			// waits for a versioned opt-in because it changes an exit code.
+			presenter.warn("Reset cancelled");
+			presenter.done("Cancelled");
+			return 0;
+		}
+	}
+
+	if (resetState) {
+		try {
+			await web?.remove();
+			for (const item of web?.items ?? []) presenter.completedStep(`Removed ${item.label}`);
+		} catch (error) {
+			presenter.fail(
+				error instanceof Error ? error.message : "Could not stop background services; PanCode state was preserved.",
+			);
+			presenter.finish();
+			return 1;
+		}
+	}
+	const toRemove: Array<{ label: string; path: string; role?: "config" | "data" | "state" | "cache" }> = [];
+	if (args.all) {
+		toRemove.push(
+			{ label: "Config", path: dirs.config, role: "config" },
+			{ label: "Data", path: dirs.data, role: "data" },
+			{ label: "State", path: dirs.state, role: "state" },
+			{ label: "Cache", path: dirs.cache, role: "cache" },
+		);
+	} else {
+		if (args.settings) toRemove.push({ label: "Settings", path: settingsPath });
+		if (args.auth) toRemove.push({ label: "Credentials", path: credentialsPath });
+		if (args.data) toRemove.push({ label: "Data", path: dirs.data, role: "data" });
+		if (args.state) toRemove.push({ label: "State", path: dirs.state, role: "state" });
+		if (args.cache) toRemove.push({ label: "Cache", path: dirs.cache, role: "cache" });
+	}
+
+	// `removePath` returns null both for a path it deleted and for one that was
+	// never there, so presence is asked here. Announcing "Reset Cache" over an
+	// absent cache is the one result line an operator cannot check.
+	const failures: RemovalFailure[] = [];
+	let cleared = 0;
+	for (const entry of toRemove) {
+		const existed = measurePath(entry.path).exists;
+		const notPancode = existed && entry.role ? removablePancodeRootProblem(entry.role, entry.path) : null;
+		if (notPancode) {
+			failures.push({
+				label: entry.label,
+				path: entry.path,
+				reason: `kept: not a PanCode-only directory (${notPancode}); remove PanCode's files inside it by hand`,
+			});
+			continue;
+		}
+		const failure = removePath(entry.label, entry.path, false);
+		if (failure) failures.push(failure);
+		else if (existed) {
+			presenter.completedStep(`Cleared ${entry.label}`);
+			cleared += 1;
+		}
+	}
+	if (failures.length === 0 && cleared === 0)
+		presenter.completedStep("Nothing to clear; every selected root was already empty");
+
+	resetXdgCache();
+	if (cleared > 0) {
+		try {
+			initializePancodeHome();
+			presenter.completedStep("Recreated the empty roots");
+		} catch (error) {
+			failures.push({
+				label: "Initialize",
+				path: dirs.state,
+				reason: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
+	if (failures.length > 0) {
+		presenter.fail("reset did not clear everything");
+		reportRemovalFailures(resetInvocation(args), failures);
+		presenter.finish();
+		return 1;
+	}
+	if (args.settings || args.all) presenter.commandAdvice("Set up a model again:", "pancode configure");
+	else if (args.auth) presenter.commandAdvice("Reconnect your providers:", "pancode configure --section models");
+
+	presenter.done("Done");
+	return 0;
+}

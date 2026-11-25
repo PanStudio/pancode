@@ -1,0 +1,195 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { type Dirent, existsSync, readdirSync, statSync } from "node:fs";
+import path from "node:path";
+import { parse as parseYaml } from "yaml";
+import { pancodeProjectRoot } from "../../core/project-root.js";
+import { pancodeConfigDir } from "../../core/xdg.js";
+import { committedPluginResourceRoots, enabledPluginResourceRoots, type PluginResourceKind } from "../plugins/index.js";
+import type { ResourceDiagnostic, ResourceScope, ResourceSourceInfo } from "./collision.js";
+
+export interface ResourceRoot {
+	owner?: import("../../core/package-identity.js").PackageIdentity;
+	path: string;
+	/** Package root for safely resolving package-relative prompt references. */
+	rootPath?: string;
+	plugin?: boolean;
+	scope: ResourceScope;
+	source?: string;
+	/** Collision rank, higher wins. See {@link ResourceSourceInfo.precedence}. */
+	precedence?: number;
+	/** Whether the resource is usable without an explicit trust opt-in. Defaults to true. */
+	trusted?: boolean;
+	/**
+	 * Written for another harness: an interop or hub import, or a loose
+	 * compatibility root. Its frontmatter speaks that harness's tool names.
+	 */
+	foreign?: boolean;
+}
+
+/**
+ * Collision tiers shared by every compatibility-aware resource kind. They match
+ * the skill precedence table so a foreign prompt root ranks against PanCode's own
+ * roots exactly the way a foreign skill root does.
+ */
+export const COMPAT_RESOURCE_PRECEDENCE = {
+	package: 10,
+	userCompat: 20,
+	user: 30,
+	projectCompat: 40,
+	project: 50,
+} as const;
+
+/**
+ * One scalar tool list in either spelling a skill carries: the space-delimited
+ * form the Agent Skills specification defines, or the comma-separated form
+ * older harness files use. Separators inside parentheses belong to the entry,
+ * so `Bash(git add:*)` stays one tool.
+ */
+export function splitToolList(value: string): string[] {
+	const entries: string[] = [];
+	let current = "";
+	let depth = 0;
+	for (const char of value) {
+		if (char === "(") depth += 1;
+		else if (char === ")" && depth > 0) depth -= 1;
+		if (depth === 0 && (char === "," || /\s/u.test(char))) {
+			if (current.length > 0) entries.push(current);
+			current = "";
+			continue;
+		}
+		current += char;
+	}
+	if (current.length > 0) entries.push(current);
+	return entries;
+}
+
+export type FrontmatterSplitResult =
+	| {
+			ok: true;
+			frontmatter: Record<string, unknown>;
+			body: string;
+	  }
+	| {
+			ok: false;
+			reason: string;
+			body: string;
+	  };
+
+/**
+ * `verifyPluginTrees: false` takes package roots from the committed plugin
+ * snapshot without re-verifying each tree. Only display listings may pass it.
+ */
+export function defaultScopedResourceRoots(
+	kind: PluginResourceKind,
+	cwd: string,
+	options: { verifyPluginTrees?: boolean } = {},
+): ResourceRoot[] {
+	const pluginRoots =
+		options.verifyPluginTrees === false ? committedPluginResourceRoots(kind, cwd) : enabledPluginResourceRoots(kind, cwd);
+	return [
+		...pluginRoots.map((root) => ({
+			path: root.path,
+			rootPath: root.rootPath,
+			plugin: true,
+			scope: "package" as const,
+			source: root.source,
+			precedence: COMPAT_RESOURCE_PRECEDENCE.package,
+			trusted: root.trust !== "foreign",
+			...(root.trust === "foreign" ? { foreign: true } : {}),
+			...(root.owner ? { owner: root.owner } : {}),
+		})),
+		{
+			path: path.join(pancodeConfigDir(), kind),
+			scope: "user" as const,
+			source: "config",
+			precedence: COMPAT_RESOURCE_PRECEDENCE.user,
+		},
+		{
+			path: path.join(pancodeProjectRoot(cwd, kind), ".pancode", kind),
+			scope: "project" as const,
+			source: "project",
+			precedence: COMPAT_RESOURCE_PRECEDENCE.project,
+		},
+	];
+}
+
+export function sourceInfoForRoot(root: ResourceRoot, filePath: string): ResourceSourceInfo {
+	return {
+		path: filePath,
+		scope: root.scope,
+		...(root.source ? { source: root.source } : {}),
+		...(root.owner ? { owner: root.owner } : {}),
+		...(root.precedence !== undefined ? { precedence: root.precedence } : {}),
+	};
+}
+
+export function readRootEntries(
+	root: ResourceRoot,
+	label: string,
+	diagnostics: ResourceDiagnostic[],
+): Dirent<string>[] {
+	if (!existsSync(root.path)) return [];
+	let stat: ReturnType<typeof statSync>;
+	try {
+		stat = statSync(root.path);
+	} catch (err) {
+		const reason = err instanceof Error ? err.message : String(err);
+		diagnostics.push({
+			type: "warning",
+			message: `${label} root could not be stat'ed: ${reason}`,
+			path: root.path,
+		});
+		return [];
+	}
+	if (!stat.isDirectory()) {
+		diagnostics.push({ type: "warning", message: `${label} root is not a directory`, path: root.path });
+		return [];
+	}
+
+	try {
+		return readdirSync(root.path, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+	} catch (err) {
+		const reason = err instanceof Error ? err.message : String(err);
+		diagnostics.push({ type: "warning", message: `${label} root could not be read: ${reason}`, path: root.path });
+		return [];
+	}
+}
+
+export function splitYamlFrontmatter(
+	raw: string,
+	parseFrontmatterText: (text: string) => unknown = parseYaml,
+): FrontmatterSplitResult {
+	const opening = raw.match(/^---\r?\n/);
+	if (!opening) return { ok: false, reason: "missing", body: raw };
+
+	const closeRegex = /\r?\n---(?:\r?\n|$)/g;
+	closeRegex.lastIndex = opening[0].length;
+	const closing = closeRegex.exec(raw);
+	if (!closing) return { ok: false, reason: "missing closing delimiter", body: raw };
+
+	const body = raw.slice(closing.index + closing[0].length);
+	const frontmatterText = raw.slice(opening[0].length, closing.index);
+	let parsed: unknown;
+	try {
+		parsed = parseFrontmatterText(frontmatterText);
+	} catch (err) {
+		const reason = err instanceof Error ? err.message : String(err);
+		return { ok: false, reason: `invalid YAML: ${reason}`, body };
+	}
+
+	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+		return { ok: false, reason: "must be a YAML object", body };
+	}
+
+	return {
+		ok: true,
+		frontmatter: parsed as Record<string, unknown>,
+		body,
+	};
+}
+
+export function stringField(frontmatter: Record<string, unknown>, key: string): string | null {
+	const value = frontmatter[key];
+	return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}

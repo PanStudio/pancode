@@ -1,0 +1,1064 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import { currentSecond, subscribeSecond } from "../client/api/second-clock.js";
+import {
+	accessSentence,
+	answeredPermissionIds,
+	approvalActions,
+	approvalAnnouncement,
+	BUDGET_SECONDS,
+	bannerEyebrow,
+	CARD_EYEBROW,
+	callDecisions,
+	clampText,
+	decisionChips,
+	decisionRecord,
+	decisionRows,
+	decisionTone,
+	deriveApprovalTimings,
+	ESCALATION_SECONDS,
+	formatLocations,
+	gatedPreview,
+	isAwaitingAnswer,
+	PREVIEW_MAX_LINES,
+	RESOLUTION_SUMMARY,
+	resolutionSummary,
+	SAFETY_POSTURE,
+	safetyFacts,
+	waitedSentence,
+	workerAskRows,
+} from "../client/chat/approval-model.js";
+import { dispatchOutcome } from "../client/chat/dispatch-outcome-model.js";
+import {
+	FLEET_RUN_CAP,
+	FLEET_STATE_LABELS,
+	type FleetItemLike,
+	fleetNotices,
+	fleetRunDetail,
+	fleetRunTitle,
+	fleetSummaryLabel,
+	foldFleetRuns,
+	guidanceReady,
+	isLiveRun,
+	presentFleetFact,
+	reconcileRuns,
+	STEER_REFUSALS,
+	steerOutcome,
+} from "../client/chat/fleet-facts.js";
+import type { Permission } from "../contracts/permissions.js";
+import { Permissions } from "../server/acp/permissions.js";
+import { harness } from "./harness/app.js";
+
+const REQUESTED = Date.parse("2026-09-20T10:00:00.000Z");
+
+function permission(overrides: Partial<Permission> = {}): Permission {
+	return {
+		id: "perm-1",
+		turnId: "turn-1",
+		toolCallId: "call-1",
+		title: "edit",
+		kind: "edit",
+		requestedAt: new Date(REQUESTED).toISOString(),
+		escalateAt: new Date(REQUESTED + ESCALATION_SECONDS * 1000).toISOString(),
+		expiresAt: new Date(REQUESTED + BUDGET_SECONDS * 1000).toISOString(),
+		status: "pending",
+		canStopTurn: false,
+		...overrides,
+	};
+}
+
+// ---- escalation and the countdown ------------------------------------------------------------
+
+test("escalation is derived from the clock, not from the delta, and the declared window is the promised one", () => {
+	const value = permission();
+	const early = deriveApprovalTimings(value, REQUESTED + 10_000);
+	assert.equal(early.escalated, false);
+	assert.equal(early.waitedSeconds, 10);
+	assert.equal(early.remainingSeconds, BUDGET_SECONDS - 10);
+	assert.equal(early.declaredEscalationSeconds, ESCALATION_SECONDS);
+	assert.equal(early.expired, false);
+	assert.equal(early.budgetKnown, true);
+
+	// One millisecond past the declared window, with no `permission.escalated` delta in sight.
+	const late = deriveApprovalTimings(value, REQUESTED + ESCALATION_SECONDS * 1000 + 1);
+	assert.equal(late.escalated, true);
+	assert.equal(bannerEyebrow(late.escalated), "APPROVAL WAITING · ESCALATED");
+	assert.equal(bannerEyebrow(early.escalated), "APPROVAL NEEDED");
+});
+
+test("a server that already said escalated wins even when this clock disagrees", () => {
+	const timings = deriveApprovalTimings(permission({ status: "escalated" }), REQUESTED + 1_000);
+	assert.equal(timings.escalated, true);
+});
+
+test("the budget expires exactly at expiresAt and the remaining countdown never goes negative", () => {
+	const value = permission();
+	assert.equal(deriveApprovalTimings(value, REQUESTED + BUDGET_SECONDS * 1000 - 1).expired, false);
+	const over = deriveApprovalTimings(value, REQUESTED + BUDGET_SECONDS * 1000 + 60_000);
+	assert.equal(over.expired, true);
+	assert.equal(over.remainingMs, 0);
+	assert.equal(over.remainingSeconds, 0);
+});
+
+test("an unparsable stamp degrades rather than printing NaN", () => {
+	const timings = deriveApprovalTimings(
+		permission({ requestedAt: "not a time", escalateAt: "not a time", expiresAt: "not a time" }),
+		REQUESTED,
+	);
+	assert.equal(timings.budgetKnown, false);
+	assert.equal(timings.waitedMs, 0);
+	assert.equal(timings.declaredEscalationSeconds, ESCALATION_SECONDS);
+	const facts = safetyFacts(permission({ expiresAt: "not a time" }), undefined, timings);
+	assert.ok(facts.every((fact) => !fact.includes("NaN")));
+	assert.equal(facts[1], "No answer in PanCode's approval budget stops this turn; the call does not run.");
+});
+
+test("the safety facts carry access, countdown, posture and wait, in that order and verbatim", () => {
+	const value = permission();
+	const timings = deriveApprovalTimings(value, REQUESTED + 30_000);
+	const facts = safetyFacts(value, [{ path: "src/core/config.ts", line: 11 }], timings);
+	assert.equal(facts.length, 4);
+	assert.equal(facts[0], "Edits src/core/config.ts:12.");
+	assert.match(facts[1] ?? "", /^No answer in .+ \(at .+\) stops this turn; the call does not run\.$/);
+	assert.equal(facts[2], SAFETY_POSTURE);
+	assert.equal(facts[2], "Nothing runs until you answer. PanCode never answers for you.");
+	assert.equal(facts[3], "Waiting 30s.");
+});
+
+test("a permission with no locations says so rather than naming nothing", () => {
+	assert.equal(accessSentence({ kind: "bash" }, undefined), "Acts on this turn.");
+	assert.equal(accessSentence({ kind: "bash" }, []), "Acts on this turn.");
+});
+
+test("locations are one-based for display and the fourth onward is counted, never dropped", () => {
+	assert.deepEqual(formatLocations([{ path: "a.ts", line: 0 }]), ["a.ts:1"]);
+	assert.deepEqual(formatLocations([{ path: "a.ts" }, { path: "b.ts", line: null }]), ["a.ts", "b.ts"]);
+	assert.deepEqual(formatLocations([1, 2, 3, 4, 5].map((n) => ({ path: `f${n}.ts` }))), [
+		"f1.ts",
+		"f2.ts",
+		"f3.ts",
+		"+2 more",
+	]);
+});
+
+test("only a pending or escalated permission is still awaiting an answer", () => {
+	for (const status of ["pending", "escalated"] as const) assert.ok(isAwaitingAnswer({ status }));
+	for (const status of ["allowed", "rejected", "expired", "cancelled"] as const)
+		assert.ok(!isAwaitingAnswer({ status }));
+});
+
+// ---- the answers -----------------------------------------------------------------------------
+
+test("the third answer is drawn only when the agent announced it, and the affirmative is always last", () => {
+	const two = approvalActions({ canStopTurn: false });
+	assert.deepEqual(
+		two.map((action) => action.decision),
+		["reject", "allow-once"],
+	);
+	const three = approvalActions({ canStopTurn: true });
+	assert.deepEqual(
+		three.map((action) => action.decision),
+		["reject", "reject-and-stop", "allow-once"],
+	);
+	assert.equal(three.at(-1)?.variant, "primary");
+	assert.ok(three.slice(0, -1).every((action) => action.variant === "quiet"));
+	assert.deepEqual(
+		three.map((action) => action.keybinding),
+		["reject", null, "allowOnce"],
+	);
+	assert.equal(CARD_EYEBROW, "Approval needed · one use");
+});
+
+test("resolution wording keeps the difference between told no and not told no", () => {
+	assert.match(RESOLUTION_SUMMARY.rejected ?? "", /was told no/);
+	assert.match(RESOLUTION_SUMMARY.expired ?? "", /was not told no/);
+	assert.match(RESOLUTION_SUMMARY.cancelled ?? "", /was not told no/);
+	assert.equal(resolutionSummary("allowed"), "Allowed once by the operator.");
+	assert.equal(resolutionSummary("something-new"), "PanCode recorded an outcome this window does not classify.");
+});
+
+// ---- the agent's own classification ----------------------------------------------------------
+
+const DECISION = {
+	tier: "workspace",
+	tierLabel: "Workspace",
+	title: "Edit a project file",
+	semanticToken: "action",
+	authorizationCopy: "You are authorizing one edit to a file in this workspace.",
+	consequenceCopy: "The file changes on disk.",
+	reversibilityCopy: "",
+	requestedByCopy: "PanCode asked for it.",
+	actionClass: "write",
+	affectedScope: "workspace",
+	reversibility: "limited",
+} as const;
+
+test("the classification is labelled from the agent's own facts and never re-derived from the tool name", () => {
+	assert.deepEqual(decisionChips(DECISION), ["Workspace", "writes files", "reaches this workspace"]);
+	assert.equal(decisionTone(DECISION), "warn");
+	assert.equal(decisionTone({ ...DECISION, semanticToken: "accent" }), "neutral");
+	assert.equal(decisionTone({ ...DECISION, semanticToken: "warning" }), "fail");
+	const rows = decisionRows(DECISION);
+	assert.deepEqual(
+		rows.map((row) => row.term),
+		["Authorization", "Consequence", "Reversibility", "Requested by"],
+	);
+	// An empty copy field falls back to the enum's label rather than to a blank row.
+	assert.equal(rows[2]?.value, "not guaranteed");
+});
+
+test("the sentences the agent wrote from the whole command sit under the generic consequence", () => {
+	const lines = ["Deletes 3 files under build/.", "Overwrites notes.txt, which already exists."];
+	const rows = decisionRows({ ...DECISION, consequenceLines: lines });
+	assert.deepEqual(
+		rows.map((row) => row.term),
+		["Authorization", "Consequence", "Effect", "Reversibility", "Requested by"],
+	);
+	assert.deepEqual(rows[2]?.lines, lines);
+	// A request that carries none keeps the rows it had.
+	assert.equal(
+		decisionRows({ ...DECISION, consequenceLines: [] }).some((row) => row.term === "Effect"),
+		false,
+	);
+});
+
+test("the card names the rule that asked, the parked write's digest and the recorded task", () => {
+	const rows = decisionRows({
+		...DECISION,
+		axis: { kind: "safety-net", ruleId: "outward-write" },
+		exposure: "local",
+		mutation: { kind: "write", bytes: 482, replacements: 1, digest: "3f9a1c22ee04b7d1" },
+		task: { text: "fix the parser", via: "acp" },
+	});
+	assert.deepEqual(
+		rows.map((row) => [row.term, row.value]),
+		[
+			["Authorization", DECISION.authorizationCopy],
+			["Consequence", DECISION.consequenceCopy],
+			["Reversibility", "not guaranteed"],
+			["Asked because", "safety net: outward write"],
+			["Mutation", "write 482 B · sha256 3f9a1c22ee04b7d1"],
+			["Task", '"fix the parser" · you · via acp'],
+			["Requested by", DECISION.requestedByCopy],
+		],
+	);
+	const autonomy = decisionRows({
+		...DECISION,
+		axis: { kind: "autonomy", level: "default" },
+		mutation: { kind: "edit", bytes: 12, replacements: 2, digest: "00ff00ff00ff00ff" },
+		task: { text: "go" },
+	});
+	assert.equal(
+		autonomy.find((row) => row.term === "Asked because")?.value,
+		"default autonomy asks before a call that writes files",
+	);
+	assert.equal(
+		autonomy.find((row) => row.term === "Mutation")?.value,
+		"edit 2 replacements · 12 B · sha256 00ff00ff00ff00ff",
+	);
+	assert.equal(autonomy.find((row) => row.term === "Task")?.value, '"go" · you');
+	// An answer axis and a record from an older engine add no row.
+	for (const record of [{ ...DECISION, axis: { kind: "answer" } as const }, DECISION]) {
+		const terms = decisionRows(record).map((row) => row.term);
+		assert.deepEqual(terms, ["Authorization", "Consequence", "Reversibility", "Requested by"]);
+	}
+});
+
+test("an engine that announced no decision facts still yields a usable card", () => {
+	assert.deepEqual(decisionChips(undefined), []);
+	assert.deepEqual(decisionRows(undefined), []);
+	assert.equal(decisionTone(undefined), "warn");
+	// An unclassified enum value prints itself rather than vanishing.
+	assert.deepEqual(decisionChips({ ...DECISION, actionClass: "quantum_tunnel", affectedScope: "elsewhere" }), [
+		"Workspace",
+		"quantum tunnel",
+		"elsewhere",
+	]);
+});
+
+// ---- the concrete thing being approved ---------------------------------------------------------
+
+test("a shell call shows its command", () => {
+	const preview = gatedPreview({ title: "bash", rawInput: { command: "rm -rf build && pnpm run build" } });
+	assert.equal(preview.kind, "command");
+	assert.equal(preview.kind === "command" && preview.command, "rm -rf build && pnpm run build");
+});
+
+test("a shell call titled with its command still previews as a command (bt2-5)", () => {
+	const preview = gatedPreview({ toolName: "bash", title: "ls -la", rawInput: { command: "ls -la" } });
+	assert.equal(preview.kind === "command" && preview.command, "ls -la");
+});
+
+test("an edit shows the proposed replacements, a write shows the proposed contents", () => {
+	const edit = gatedPreview({
+		title: "edit",
+		rawInput: { path: "src/a.ts", edits: [{ oldText: "one", newText: "two" }, { oldText: "three" }] },
+	});
+	assert.equal(edit.kind, "edits");
+	if (edit.kind === "edits") {
+		assert.equal(edit.path, "src/a.ts");
+		assert.deepEqual(edit.edits, [
+			{ oldText: "one", newText: "two" },
+			{ oldText: "three", newText: "" },
+		]);
+		assert.match(edit.label, /not yet applied/);
+	}
+	const write = gatedPreview({ title: "write", rawInput: { path: "src/b.ts", content: "export const x = 1;\n" } });
+	assert.equal(write.kind, "contents");
+	assert.equal(write.kind === "contents" && write.contents, "export const x = 1;\n");
+});
+
+test("a write shows the path and a fetch shows the host, never a query string", () => {
+	const fetched = gatedPreview({ title: "web_fetch", rawInput: { url: "https://example.test/docs?token=secret" } });
+	assert.equal(fetched.kind, "host");
+	if (fetched.kind === "host") {
+		assert.equal(fetched.host, "example.test");
+		assert.equal(fetched.url, "example.test/docs");
+		assert.ok(!fetched.url.includes("secret"));
+	}
+	const broken = gatedPreview({ title: "web_fetch", rawInput: { url: "not a url" } });
+	assert.equal(broken.kind === "host" && broken.host, "not a url");
+});
+
+test("a tool this build has never seen degrades to a readable row, never to an empty body", () => {
+	const unknown = gatedPreview({ title: "teleport", rawInput: { destination: "mars" } });
+	assert.equal(unknown.kind, "none");
+	assert.equal(unknown.kind === "none" && unknown.note, "PanCode reported no reviewable input for teleport.");
+	// An unrecognised tool that still reported locations shows them rather than nothing.
+	const located = gatedPreview({ title: "teleport", locations: [{ path: "src/a.ts", line: 4 }] });
+	assert.equal(located.kind === "path" && located.path, "src/a.ts:5");
+	// And a permission with no anchored call at all says exactly that.
+	const unanchored = gatedPreview(undefined);
+	assert.equal(unanchored.kind, "none");
+	assert.match(unanchored.kind === "none" ? unanchored.note : "", /not linked to a call/);
+});
+
+test("preview text is control-stripped and bounded so a hostile argument cannot blow up the card", () => {
+	const noisy = gatedPreview({ title: "bash", rawInput: { command: "echo \u0007hi\u0000 there" } });
+	assert.equal(noisy.kind === "command" && noisy.command, "echo hi there");
+	const long = gatedPreview({
+		title: "write",
+		rawInput: { path: "a.ts", content: "x\n".repeat(PREVIEW_MAX_LINES + 50) },
+	});
+	assert.equal(long.kind === "contents" && long.truncated, true);
+	assert.ok(long.kind === "contents" && long.contents.split("\n").length <= PREVIEW_MAX_LINES);
+	const clamped = clampText("a\nb\nc", 2, 100);
+	assert.deepEqual(clamped, { text: "a\nb", truncated: true });
+	// Tabs and newlines survive: a command and a file body are both multi-line by nature.
+	assert.deepEqual(clampText("a\n\tb", 10, 100), { text: "a\n\tb", truncated: false });
+});
+
+// ---- the fleet strip ---------------------------------------------------------------------------
+
+let sequence = 0;
+function fact(type: string, payload: Record<string, unknown>, at = "2026-09-20T10:00:00.000Z"): FleetItemLike {
+	sequence += 1;
+	return { id: `f${sequence}`, at, sourceSequence: sequence, fact: { type, payload } };
+}
+
+test("five events about one run fold into one row that carries every reported value", () => {
+	const runs = foldFleetRuns([
+		fact("fleet.enqueued", {
+			runId: "r1",
+			agentId: "reviewer",
+			taskPreview: "Check the diff",
+			node: "blade",
+			attempt: 1,
+		}),
+		fact("fleet.started", { runId: "r1", agentId: "reviewer" }),
+		fact("fleet.progress", { runId: "r1", agentId: "reviewer", progressCount: 7, truncated: true }),
+		fact("fleet.completed", {
+			runId: "r1",
+			agentId: "reviewer",
+			outcome: "succeeded",
+			durationMs: 4200,
+			tokenCount: 910,
+			tokenDisplay: "910",
+			apiCalls: { kind: "measured", value: 3 },
+		}),
+	]);
+	assert.equal(runs.length, 1);
+	const run = runs[0];
+	assert.ok(run);
+	assert.equal(run.state, "done");
+	assert.equal(run.agentId, "reviewer");
+	assert.equal(run.taskPreview, "Check the diff");
+	assert.equal(run.node, "blade");
+	assert.equal(run.attempt, 1);
+	assert.equal(run.progressCount, 7);
+	assert.equal(run.progressTruncated, true);
+	assert.equal(run.tokens, "910", "the server's display, never a count the browser words");
+	assert.equal(run.modelCalls, 3);
+	assert.equal(fleetRunDetail(run), "Done · succeeded · 3 model calls · 4.2s");
+	assert.equal(fleetRunDetail({ ...run, modelCalls: null }), "Done · succeeded · 4.2s");
+	assert.equal(
+		fleetRunDetail({
+			...run,
+			state: "progress",
+			outcome: null,
+			modelCalls: null,
+			progressCount: 1,
+			progressTruncated: false,
+			durationMs: null,
+		}),
+		"Working · 1 update",
+	);
+	assert.equal(isLiveRun(run), false);
+});
+
+test("progress is a working run, not a phase of its own, and a failure carries its reason", () => {
+	const runs = foldFleetRuns([
+		fact("fleet.started", { runId: "r1", agentId: "builder" }),
+		fact("fleet.progress", { runId: "r1", agentId: "builder", progressCount: 2, truncated: false }),
+		fact("fleet.enqueued", { runId: "r2", agentId: "judge", taskPreview: null, node: null, attempt: null }),
+		fact("fleet.failed", { runId: "r3", agentId: "worker", outcome: null, reason: "spawn refused", durationMs: 12 }),
+	]);
+	assert.deepEqual(
+		runs.map((run) => run.state),
+		["progress", "queued", "failed"],
+	);
+	assert.equal(FLEET_STATE_LABELS.progress, "Working");
+	const [working, queued, failed] = runs;
+	assert.ok(working && queued && failed);
+	assert.ok(isLiveRun(working) && isLiveRun(queued) && !isLiveRun(failed));
+	assert.equal(failed.outcome, "spawn refused");
+	assert.equal(fleetRunTitle(queued), "No task preview was reported.");
+	assert.equal(fleetSummaryLabel(runs), "Fleet · 2 running of 3");
+});
+
+test("a stopped worker reads as stopped, never as a failure (inspection F10)", () => {
+	const runs = foldFleetRuns([
+		fact("fleet.started", { runId: "r1", agentId: "builder" }),
+		fact("fleet.failed", {
+			runId: "r1",
+			agentId: "builder",
+			outcome: "canceled",
+			reason: "canceled",
+			outcomeDetail: "operator abort",
+			durationMs: 2500,
+		}),
+		fact("fleet.failed", { runId: "r2", agentId: "judge", outcome: "failed", reason: "failed", durationMs: 12 }),
+	]);
+	const [stopped, failed] = runs;
+	assert.ok(stopped && failed);
+	assert.equal(stopped.state, "stopped");
+	assert.ok(!isLiveRun(stopped));
+	assert.equal(fleetRunDetail(stopped), "Stopped · operator abort · 2.5s");
+	assert.equal(failed.state, "failed");
+	const presented = presentFleetFact({
+		type: "fleet.failed",
+		payload: { outcome: "cancelled", reason: "operator_cancel" },
+	});
+	assert.deepEqual([presented.label, presented.tone], ["Run stopped", "neutral"]);
+	assert.equal(presentFleetFact({ type: "fleet.failed", payload: { outcome: "failed" } }).label, "Run failed");
+});
+
+test("events arriving out of order are folded in reported sequence, not in array order", () => {
+	const started = fact("fleet.started", { runId: "r1", agentId: "a" });
+	const completed = fact("fleet.completed", {
+		runId: "r1",
+		agentId: "a",
+		outcome: "succeeded",
+		durationMs: 5,
+		tokenCount: 1,
+	});
+	assert.equal(foldFleetRuns([completed, started])[0]?.state, "done");
+});
+
+test("a late progress or start frame does not bring a settled run back to life", () => {
+	const runs = foldFleetRuns([
+		fact("fleet.started", { runId: "r1", agentId: "a" }),
+		fact("fleet.completed", { runId: "r1", agentId: "a", outcome: "succeeded", durationMs: 5, tokenDisplay: "12" }),
+		fact("fleet.progress", { runId: "r1", agentId: "a", progressCount: 3, truncated: false }),
+	]);
+	assert.equal(runs[0]?.state, "done");
+	assert.ok(runs[0] && !isLiveRun(runs[0]));
+});
+
+test("the feed is checked against the server's live runs without inventing what neither reported", () => {
+	const at = "2026-09-20T10:00:00.000Z";
+	const folded = foldFleetRuns([
+		fact("fleet.started", { runId: "both", agentId: "builder" }, at),
+		fact("fleet.started", { runId: "feed-only", agentId: "judge" }, at),
+		fact("fleet.started", { runId: "done", agentId: "a" }, at),
+		fact("fleet.completed", { runId: "done", agentId: "a", outcome: "succeeded", durationMs: 1, tokenDisplay: "1" }, at),
+	]);
+	const later = "2026-09-20T10:00:05.000Z";
+	const runs = reconcileRuns(
+		folded,
+		[
+			{ runId: "both", agentId: "builder", state: "active", node: null },
+			{ runId: "server-only", agentId: "scout", state: "queued", node: "blade" },
+		],
+		later,
+	);
+	const byId = new Map(runs.map((run) => [run.runId, run]));
+	assert.equal(
+		byId.get("both"),
+		folded.find((run) => run.runId === "both"),
+		"the feed's row stands unchanged",
+	);
+	const lost = byId.get("server-only");
+	assert.ok(lost && isLiveRun(lost));
+	assert.equal(lost.state, "queued");
+	assert.equal(lost.agentId, "scout");
+	assert.equal(lost.node, "blade");
+	assert.equal(lost.taskPreview, null);
+	const ended = byId.get("feed-only");
+	assert.ok(ended && !isLiveRun(ended));
+	assert.match(fleetRunDetail(ended), /^Ended \(final event not received\)/);
+	assert.equal(byId.get("done")?.state, "done", "a settled run is never re-read");
+
+	assert.equal(reconcileRuns(folded, undefined), folded, "without a server list the feed stands");
+	const early = reconcileRuns(folded, [], "2026-09-20T09:59:59.000Z");
+	assert.equal(
+		early.find((run) => run.runId === "feed-only")?.state,
+		"running",
+		"a run newer than the list may simply not be in it yet",
+	);
+});
+
+test("the cap drops the oldest settled run first and never a live one", () => {
+	const items: FleetItemLike[] = [];
+	for (let index = 0; index < FLEET_RUN_CAP + 4; index += 1) {
+		const runId = `r${index}`;
+		items.push(fact("fleet.enqueued", { runId, agentId: "a", taskPreview: null, node: null, attempt: null }));
+		// The first six settle; everything after stays live.
+		if (index < 6)
+			items.push(fact("fleet.completed", { runId, agentId: "a", outcome: "succeeded", durationMs: 1, tokenCount: 1 }));
+	}
+	const runs = foldFleetRuns(items);
+	assert.equal(runs.length, FLEET_RUN_CAP);
+	assert.deepEqual(
+		runs.filter((run) => !isLiveRun(run)).map((run) => run.runId),
+		["r4", "r5"],
+	);
+	assert.equal(runs.filter(isLiveRun).length, FLEET_RUN_CAP - 2);
+});
+
+test("a run fact with no runId is skipped rather than folded into a nameless row", () => {
+	assert.deepEqual(foldFleetRuns([fact("fleet.started", { agentId: "a" })]), []);
+	assert.deepEqual(foldFleetRuns([{ id: "x", at: "now", sourceSequence: 1, fact: { type: "fleet.started" } }]), []);
+});
+
+test("every fact type has a label, a tone and a sentence, and an unknown one degrades readably", () => {
+	for (const type of [
+		"fleet.enqueued",
+		"fleet.started",
+		"fleet.progress",
+		"fleet.completed",
+		"fleet.failed",
+		"fleet.loopBlocked",
+		"evidence.ready",
+	]) {
+		const presented = presentFleetFact({ type, payload: {} });
+		assert.equal(presented.known, true, type);
+		assert.ok(presented.label.length > 0 && presented.summary.length > 0, type);
+		assert.ok(!presented.summary.includes("undefined") && !presented.summary.includes("[object"), type);
+	}
+	const unknown = presentFleetFact({ type: "fleet.teleported", payload: { anything: 1 } });
+	assert.equal(unknown.known, false);
+	assert.equal(unknown.label, "fleet.teleported");
+	assert.equal(unknown.summary, "PanCode reported a fact this build does not classify.");
+	// A payload of the wrong shape entirely still produces a row rather than throwing.
+	assert.equal(presentFleetFact({ type: "fleet.failed", payload: "not an object" }).known, true);
+	assert.equal(presentFleetFact({ type: "fleet.failed" }).summary, "PanCode reported no reason.");
+});
+
+test("the loop guard and evidence facts are reported as notices rather than dropped in silence", () => {
+	const items = [
+		fact("fleet.started", { runId: "r1", agentId: "a" }),
+		fact("fleet.loopBlocked", { tool: "read", repeatCount: 9, budget: 4, disposition: "lockout", interrupted: false }),
+		fact("evidence.ready", { runId: "r1", firstPassSuccess: true, findingCount: 3, tags: [] }),
+	];
+	assert.equal(foldFleetRuns(items).length, 1);
+	const notices = fleetNotices(items);
+	assert.deepEqual(
+		notices.map((notice) => notice.presentation.label),
+		["Loop guard", "Evidence ready"],
+	);
+	assert.match(notices[0]?.presentation.summary ?? "", /locked the tool out/);
+	assert.equal(notices[1]?.presentation.tone, "success");
+	assert.equal(notices[1]?.presentation.summary, "3 findings recorded on the first pass.");
+	const one = presentFleetFact({ type: "evidence.ready", payload: { firstPassSuccess: true, findingCount: 1 } });
+	assert.equal(one.summary, "1 finding recorded on the first pass.", "gui-verify 10");
+});
+
+test("a failed run's reason names its code once when the detail already says it in words (gui-verify 10)", () => {
+	const failed = (outcomeCode: string, outcomeDetail: string) =>
+		foldFleetRuns([
+			fact("fleet.started", { runId: "r1", agentId: "a" }),
+			fact("fleet.failed", { runId: "r1", outcomeCode, outcomeDetail }),
+		])[0]?.outcome;
+	assert.equal(
+		failed("assurance_compromised", "assurance compromised: the worker's own report lists a failing validation"),
+		"assurance compromised: the worker's own report lists a failing validation",
+	);
+	assert.equal(failed("tool_error", "bash exited 2"), "tool_error: bash exited 2");
+});
+
+// `accepted` means the engine queued the request on the worker's stdin. Neither sentence may
+// claim the worker read it or that the run has already stopped.
+test("an accepted steer says queued or requested, never delivered or stopped", () => {
+	const guide = steerOutcome("guide", { accepted: true });
+	assert.equal(guide.tone, "success");
+	assert.match(guide.message, /queued/i);
+	assert.doesNotMatch(guide.message, /delivered|received/i);
+	const cancel = steerOutcome("cancel", { accepted: true });
+	assert.match(cancel.message, /requested/i);
+	assert.doesNotMatch(cancel.message, /\bstopped\b/i);
+});
+
+// The reason vocabulary is the engine's (`dispatchSteerReason` in src/engine/acp/server-session-input.ts).
+test("every engine refusal reason reads as a sentence, and an unknown one is printed as reported", () => {
+	for (const reason of [
+		"dispatch-unavailable",
+		"fleet-unavailable",
+		"run-not-active",
+		"cancel-failed",
+		"empty-message",
+		"steering-unsupported",
+		"no-input-channel",
+		"input-closed",
+		"run-terminating",
+		"steer-failed",
+	]) {
+		const outcome = steerOutcome("guide", { accepted: false, reason });
+		assert.equal(outcome.tone, "warn");
+		assert.equal(outcome.message, STEER_REFUSALS[reason]);
+		assert.match(outcome.message, /\.$/);
+	}
+	assert.match(steerOutcome("guide", { accepted: false, reason: "quota-exceeded" }).message, /quota-exceeded/);
+	assert.equal(steerOutcome("cancel", { accepted: false }).message, STEER_REFUSALS["steer-failed"]);
+});
+
+test("whitespace is not guidance", () => {
+	assert.equal(guidanceReady("  \n\t"), false);
+	assert.equal(guidanceReady(" read the README "), true);
+});
+
+test("the first second of a wait says the request just arrived instead of printing 0ms", () => {
+	const at = (waitedMs: number) =>
+		waitedSentence({
+			escalated: false,
+			waitedMs,
+			waitedSeconds: Math.floor(waitedMs / 1000),
+			remainingMs: 0,
+			remainingSeconds: 0,
+			expired: false,
+			budgetKnown: false,
+			declaredEscalationSeconds: 45,
+		});
+	assert.equal(at(0), "Asked just now.");
+	assert.equal(at(999), "Asked just now.");
+	assert.match(at(30_000), /^Waiting 30s\.$/);
+});
+
+const PLAN_FACTS = {
+	topology: "parallel",
+	taskCount: 3,
+	planScale: true,
+	hash: "3f2a9c1e04b7d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e",
+	costCeilingUsd: 2.5,
+	costCeilingDisplay: "$2.50",
+	tasks: [
+		{ agent: "scout", task: "Survey the samples", target: "mini", model: "gemma", dependencies: [] },
+		{
+			agent: "builder",
+			task: "Write the report",
+			role: "builder",
+			node: "lab-box",
+			nodeKind: "ssh" as const,
+			worktree: true as const,
+			apply: "merge" as const,
+			dependencies: ["survey"],
+		},
+	],
+	truncated: true,
+};
+
+test("an admitted dispatch plan names every run, its placement and the hash its runs seal", () => {
+	const preview = gatedPreview(
+		{ title: "dispatch", toolKind: "other", rawInput: { agent: "ignored", task: "x" } },
+		PLAN_FACTS,
+	);
+	assert.equal(preview.kind, "plan");
+	if (preview.kind !== "plan") return;
+	assert.equal(preview.label, "Dispatch plan");
+	assert.equal(preview.heading, "3 runs · in parallel");
+	// One approval starts every run, so the classification counts them as the terminal card does.
+	const dispatch = { ...DECISION, actionClass: "dispatch", axis: { kind: "autonomy" as const, level: "default" } };
+	assert.equal(decisionChips(dispatch, PLAN_FACTS)[1], "starts 3 workers");
+	assert.equal(
+		decisionRows(dispatch, PLAN_FACTS).find((row) => row.term === "Asked because")?.value,
+		"default autonomy asks before a call that starts 3 workers",
+	);
+	assert.match(preview.scope, /One approval starts every run/);
+	assert.deepEqual(
+		preview.rows.map((row) => [row.agent, row.task, row.placement, row.notes]),
+		[
+			["scout", "Survey the samples", "mini · gemma", []],
+			[
+				"builder",
+				"Write the report",
+				"on lab-box over SSH",
+				["Builder", "In its own worktree, merged back when it passes", "After survey"],
+			],
+		],
+	);
+	assert.equal(preview.more, 1, "a run the agent did not send is counted");
+	assert.deepEqual(preview.hash, { short: "3f2a9c1e04b7", full: PLAN_FACTS.hash });
+	assert.equal(preview.ceiling, "Scheduling stops at a cost of $2.50.");
+});
+
+test("a single-run dispatch says one approval starts one run, and an older agent still gets the argument summary", () => {
+	const single = gatedPreview(
+		{ title: "dispatch", toolKind: "other", rawInput: {} },
+		{
+			...PLAN_FACTS,
+			taskCount: 1,
+			planScale: false,
+			tasks: [PLAN_FACTS.tasks[0] as (typeof PLAN_FACTS.tasks)[0]],
+			truncated: false,
+		},
+	);
+	assert.equal(single.kind === "plan" && single.scope, "This approval starts one run.");
+	assert.equal(single.kind === "plan" && single.more, 0);
+	const legacy = gatedPreview({ title: "dispatch", toolKind: "other", rawInput: { agent: "scout", task: "Survey" } });
+	assert.deepEqual(legacy, { kind: "summary", label: "Dispatch", summary: "scout · Survey" });
+});
+
+test("a dispatch with no admitted plan previews every run its arguments name, titled as the ask words it", () => {
+	const preview = gatedPreview({
+		title: "dispatch: parallel · tasks=2 (coder, coder)",
+		toolKind: "other",
+		rawInput: {
+			mode: "parallel",
+			tasks: [
+				{ agent: "coder", task: "Add subtract to src/math.js", intent: { write_roots: ["src"] } },
+				{ agent: "coder", task: "Test subtract", intent: { write_roots: ["tests"] } },
+			],
+		},
+	});
+	assert.equal(preview.kind, "plan");
+	if (preview.kind !== "plan") return;
+	assert.equal(preview.heading, "2 runs · in parallel");
+	assert.equal(preview.scope, "This approval starts all 2 runs.");
+	assert.deepEqual(
+		preview.rows.map((row) => [row.agent, row.task, row.placement, row.notes]),
+		[
+			["coder", "Add subtract to src/math.js", null, ["Writes src"]],
+			["coder", "Test subtract", null, ["Writes tests"]],
+		],
+	);
+	assert.equal(preview.hash, null, "no plan was admitted, so there is no hash to seal");
+	assert.equal(preview.more, 0);
+});
+
+test("an answer the server refused as a conflict counts as given, so the card submits exactly once", () => {
+	const answered = answeredPermissionIds([
+		{ id: "p1", status: "success", problemCode: undefined },
+		{ id: "p1", status: "error", problemCode: "conflict" },
+		{ id: "p2", status: "error", problemCode: "conflict" },
+		{ id: "p3", status: "error", problemCode: "internal" },
+		{ id: "p4", status: "pending", problemCode: undefined },
+		{ id: undefined, status: "success", problemCode: undefined },
+	]);
+	assert.deepEqual([...answered].sort(), ["p1", "p2"]);
+	assert.equal(answered.has("p3"), false, "a failed answer can be sent again");
+});
+
+// ---- a dispatched worker's ask, forwarded by the agent -----------------------------------------
+
+const WORKER = {
+	requestId: "req-1",
+	requestedBy: "run-7",
+	agentId: "scout",
+	approvalAuthority: "operator",
+	forwardedByMain: false,
+	fallback: "deny",
+	timeoutMs: 60_000,
+} as const;
+
+test("a forwarded worker ask names the worker, who may discharge it, and what happens unanswered", () => {
+	const rows = workerAskRows(WORKER);
+	assert.deepEqual(
+		rows.map((row) => row.term),
+		["Worker", "Authority", "If unanswered"],
+	);
+	assert.equal(rows[0]?.value, "scout (run run-7)");
+	assert.match(rows[1]?.value ?? "", /^Operator only\./);
+	assert.equal(rows[2]?.value, "No answer in 60 seconds denies this call; the worker carries on without it.");
+	const forwarded = workerAskRows({ ...WORKER, approvalAuthority: "main", forwardedByMain: true, fallback: "fail" });
+	assert.match(forwarded[1]?.value ?? "", /^The main agent approved this worker request/);
+	assert.equal(forwarded[2]?.value, "No answer in 60 seconds denies this call and fails the worker run.");
+	// No grant means worker approvals are set to Ask me; the terminal card says so and now the GUI does too.
+	const { approvalAuthority: _, ...askMe } = WORKER;
+	assert.match(workerAskRows(askMe)[1]?.value ?? "", /^Yours alone\. Worker approvals are set to Ask me/);
+	assert.deepEqual(workerAskRows(undefined), []);
+});
+
+test("a worker ask is read from the agent's meta, answered once, and withdrawn without a decision", async () => {
+	const published: Array<[string, Permission]> = [];
+	const permissions = new Permissions(
+		(type, permission) => published.push([type, permission]),
+		async () => {},
+	);
+	const call = { toolCallId: "dispatch-1", title: "dispatch", kind: "other", rawInput: { agent: "scout" } };
+	const timeline = [
+		{
+			turnId: "turn-1",
+			toolCallId: "dispatch-1",
+			status: "in_progress",
+			title: "dispatch",
+			toolKind: "other",
+			rawInput: call.rawInput,
+		},
+	] as never;
+	const ask = {
+		sessionId: "s-1",
+		toolCall: { ...call, status: "in_progress" },
+		options: [
+			{ optionId: "allow-once", kind: "allow_once", name: "Approve once" },
+			{ optionId: "reject-once", kind: "reject_once", name: "Deny" },
+		],
+		_meta: { "pancode/workerAsk": { version: 1, ...WORKER, unknownFutureField: "ignored" } },
+	};
+	const response = permissions.request("s-1", "turn-1", ask, timeline);
+	assert.deepEqual(published[0]?.[1].worker, WORKER);
+	// A second ask while one waits is the jam a stale card would cause; withdrawing the first clears it.
+	permissions.withdraw("some-other-request");
+	assert.equal(published.length, 1);
+	permissions.withdraw("req-1");
+	assert.deepEqual(await response, { outcome: { outcome: "cancelled" } });
+	assert.equal(published.at(-1)?.[1].status, "cancelled");
+	const next = permissions.request("s-1", "turn-1", { ...ask, _meta: {} }, timeline);
+	permissions.decide(published.at(-1)?.[1].id ?? "", "allow-once");
+	assert.deepEqual(await next, { outcome: { outcome: "selected", optionId: "allow-once" } });
+});
+
+// ---- asks the app shows, and asks it declines without ending the session ------------------------
+
+const CHOICES = [
+	{ optionId: "allow-once", kind: "allow_once", name: "Approve once" },
+	{ optionId: "reject-once", kind: "reject_once", name: "Deny" },
+];
+const ROW = [
+	{ turnId: "turn-1", toolCallId: "dispatch-1", status: "in_progress", title: "dispatch", toolKind: "other" },
+] as never;
+function bridge(timing?: { escalateMs: number; budgetMs: number }) {
+	const published: Array<[string, Permission]> = [];
+	const declined: string[] = [];
+	let cancelled = 0;
+	const permissions = new Permissions(
+		(type, permission) => published.push([type, permission]),
+		async () => {
+			cancelled += 1;
+		},
+		timing,
+		(reason) => declined.push(reason),
+	);
+	return { permissions, published, declined, cancels: () => cancelled };
+}
+
+test("an ask titled differently from its tool row is shown with the ask's own title", async () => {
+	const { permissions, published } = bridge();
+	const ask = {
+		sessionId: "s-1",
+		toolCall: { toolCallId: "dispatch-1", title: "Scout read-only root: /data", kind: "read", rawInput: { other: 1 } },
+		options: CHOICES,
+	};
+	const response = permissions.request("s-1", "turn-1", ask, ROW);
+	assert.equal(published[0]?.[0], "permission.requested");
+	assert.equal(published[0]?.[1].title, "Scout read-only root: /data");
+	assert.equal(published[0]?.[1].toolCallId, "dispatch-1");
+	assert.equal(published[0]?.[1].kind, "read");
+	permissions.decide(published[0]?.[1].id ?? "", "reject");
+	assert.deepEqual(await response, { outcome: { outcome: "selected", optionId: "reject-once" } });
+});
+
+test("an ask with no tool row, like the report-bundle consent, still raises a card that Allow answers", async () => {
+	const { permissions, published } = bridge();
+	const ask = { sessionId: "s-1", toolCall: { toolCallId: "report-bundle-1" }, options: CHOICES };
+	const response = permissions.request("s-1", "turn-1", ask, ROW);
+	assert.equal(published[0]?.[0], "permission.requested");
+	assert.equal(published[0]?.[1].toolCallId, "report-bundle-1");
+	assert.equal(published[0]?.[1].title, "Approval needed");
+	assert.equal(published[0]?.[1].kind, "other");
+	permissions.decide(published[0]?.[1].id ?? "", "allow-once");
+	assert.deepEqual(await response, { outcome: { outcome: "selected", optionId: "allow-once" } });
+});
+
+test("an ask the app cannot present is declined as cancelled and says why", async () => {
+	const { permissions, published, declined } = bridge();
+	const call = { toolCallId: "dispatch-1", title: "dispatch" };
+	const allowOnly = [CHOICES[0]];
+	const cancelled = { outcome: { outcome: "cancelled" } };
+	assert.deepEqual(
+		await permissions.request("s-1", "turn-1", { sessionId: "s-1", toolCall: call, options: allowOnly }, ROW),
+		cancelled,
+	);
+	assert.deepEqual(
+		await permissions.request("s-1", "turn-1", { sessionId: "s-2", toolCall: call, options: CHOICES }, ROW),
+		cancelled,
+	);
+	assert.deepEqual(
+		await permissions.request("s-1", null, { sessionId: "s-1", toolCall: call, options: CHOICES }, ROW),
+		cancelled,
+	);
+	assert.deepEqual(published, []);
+	assert.deepEqual(declined, ["no one-time allow or reject choice", "foreign session", "no active turn"]);
+	// A second ask while one waits is declined; the first keeps its card.
+	const first = permissions.request("s-1", "turn-1", { sessionId: "s-1", toolCall: call, options: CHOICES }, ROW);
+	assert.deepEqual(
+		await permissions.request("s-1", "turn-1", { sessionId: "s-1", toolCall: call, options: CHOICES }, ROW),
+		cancelled,
+	);
+	assert.equal(declined.at(-1), "another approval is waiting");
+	assert.equal(published.length, 1);
+	permissions.cancel();
+	assert.deepEqual(await first, cancelled);
+});
+
+test("a worker ask expires on the worker's own window and leaves the turn running", async () => {
+	const { permissions, published, cancels } = bridge({ escalateMs: 10, budgetMs: 1000 });
+	const ask = {
+		sessionId: "s-1",
+		toolCall: { toolCallId: "dispatch-1", title: "dispatch" },
+		options: CHOICES,
+		_meta: { "pancode/workerAsk": { version: 1, ...WORKER, timeoutMs: 50 } },
+	};
+	const response = permissions.request("s-1", "turn-1", ask, ROW);
+	const requested = published[0]?.[1];
+	assert.equal(Date.parse(requested?.expiresAt ?? "") - Date.parse(requested?.requestedAt ?? ""), 50);
+	assert.deepEqual(await response, { outcome: { outcome: "cancelled" } });
+	assert.equal(published.at(-1)?.[0], "permission.expired");
+	assert.equal(cancels(), 0);
+});
+
+test("a session declines an unpresentable ask, stays open, and refuses a decision it has no bridge for", {
+	timeout: 20000,
+}, async (t) => {
+	const h = await harness({}, { scenario: "permission-no-reject", lanes: false });
+	t.after(h.close);
+	const workspace = await h.workspaces.open(h.home.path),
+		session = await h.supervisor.open(workspace.id);
+	h.supervisor.startTurn(session.id, "Write");
+	for (let index = 0; index < 1000 && h.supervisor.get(session.id).turns.at(-1)?.status === "running"; index += 1)
+		await delay(20);
+	const snapshot = h.supervisor.get(session.id);
+	assert.equal(snapshot.state, "open");
+	assert.equal(snapshot.turns.at(-1)?.status, "succeeded");
+	assert.deepEqual(snapshot.permissions, []);
+	assert.equal(
+		snapshot.telemetry?.notices?.filter((notice) => notice.startsWith("PanCode asked for an approval")).length,
+		1,
+	);
+	// No session runs without a bridge, so take it away to reach the guard.
+	const entries = (h.supervisor as unknown as { entries: Map<string, { permissions?: unknown }> }).entries;
+	const entry = entries.get(session.id);
+	if (entry) delete entry.permissions;
+	assert.throws(
+		() => h.supervisor.decide(session.id, "any", "allow-once"),
+		(error: unknown) => (error as { problem?: { code?: string } }).problem?.code === "conflict",
+	);
+});
+
+test("fleet failures show their outcome code and recovery detail in the row and fact", () => {
+	const payload = {
+		runId: "held",
+		agentId: "coder",
+		outcome: "failed",
+		reason: "failed",
+		outcomeCode: "merge_withheld",
+		outcomeDetail: "Host check also fails on base abc; branch preserved; git merge task/held",
+		durationMs: 1,
+	};
+	const runs = foldFleetRuns([fact("fleet.failed", payload)]);
+	assert.match(
+		fleetRunDetail(runs[0] as NonNullable<(typeof runs)[0]>),
+		/merge_withheld: Host check also fails on base abc; branch preserved; git merge task\/held/,
+	);
+	assert.match(
+		presentFleetFact({ type: "fleet.failed", payload }).summary,
+		/merge_withheld: Host check also fails on base abc/,
+	);
+});
+
+// ---- inspection round 1: one vocabulary, one record, one second ------------------------------------
+
+test("the access sentence is a verb phrase, never a raw ACP kind", () => {
+	const at = [{ path: "fixture.txt" }];
+	assert.equal(accessSentence({ kind: "edit" }, at), "Edits fixture.txt.");
+	assert.equal(accessSentence({ kind: "execute" }, undefined), "Runs a command in this turn.");
+	assert.equal(accessSentence({ kind: "other" }, undefined), "Acts on this turn.");
+	assert.equal(accessSentence({ kind: "switch_mode" }, at), "Acts on fixture.txt.");
+	const spoken = approvalAnnouncement({ title: "write", kind: "edit" }, at);
+	assert.equal(spoken, "Approval needed: write. Edits fixture.txt. Nothing runs until you answer.");
+	assert.doesNotMatch(spoken, /access/);
+});
+
+test("an answered call keeps a record of its newest settled request, and waiting ones keep none", () => {
+	assert.equal(decisionRecord([permission()], "call-1"), null, "an awaiting request is the card, not a record");
+	const permissions = [
+		permission({ id: "p1", status: "rejected" }),
+		permission({ id: "p2", status: "allowed" }),
+		permission({ id: "p3", toolCallId: "call-2", status: "pending" }),
+	];
+	assert.deepEqual(decisionRecord(permissions, "call-1"), {
+		status: "allowed",
+		summary: resolutionSummary("allowed"),
+	});
+	assert.equal(decisionRecord(permissions, "call-2"), null);
+	assert.equal(decisionRecord(permissions, "call-9"), null);
+	const decisions = callDecisions(permissions);
+	assert.equal(decisions.get("call-1"), "allowed", "the newest request for a call wins");
+	assert.equal(decisions.get("call-2"), "pending");
+});
+
+test("every subscriber reads the same second, and the interval stops with the last one", (t) => {
+	t.mock.timers.enable({ apis: ["setInterval"] });
+	let calls = 0;
+	const first = subscribeSecond(() => (calls += 1));
+	const second = subscribeSecond(() => (calls += 1));
+	const start = currentSecond();
+	t.mock.timers.tick(1000);
+	assert.equal(calls, 2, "one tick notifies every subscriber");
+	assert.ok(currentSecond() >= start);
+	assert.equal(currentSecond(), currentSecond(), "the snapshot is cached between ticks");
+	first();
+	second();
+	t.mock.timers.tick(3000);
+	assert.equal(calls, 2, "no subscriber, no interval");
+});
+
+test("a dispatch row follows its runs to their end, and claims nothing about runs the feed does not hold", () => {
+	const enqueued = (runId: string) => fact("fleet.enqueued", { runId, agentId: "scout" });
+	const live = foldFleetRuns([
+		enqueued("p1"),
+		enqueued("p2"),
+		fact("fleet.completed", { runId: "p1", agentId: "scout" }),
+	]);
+	assert.deepEqual(dispatchOutcome(["p1", "p2"], live), { text: "1 of 2 runs still running", tone: "running" });
+	const done = foldFleetRuns([
+		enqueued("p1"),
+		enqueued("p2"),
+		fact("fleet.completed", { runId: "p1", agentId: "scout" }),
+		fact("fleet.completed", { runId: "p2", agentId: "scout" }),
+	]);
+	assert.deepEqual(dispatchOutcome(["p1", "p2"], done), { text: "2 runs finished: 2 done", tone: "success" });
+	const mixed = foldFleetRuns([
+		enqueued("p1"),
+		enqueued("p2"),
+		fact("fleet.completed", { runId: "p1", agentId: "scout" }),
+		fact("fleet.failed", { runId: "p2", agentId: "scout" }),
+	]);
+	assert.deepEqual(dispatchOutcome(["p1", "p2", "p3"], mixed), {
+		text: "3 runs finished: 1 done · 1 failed · 1 not reported",
+		tone: "fail",
+	});
+	assert.equal(dispatchOutcome(["elsewhere"], done), null);
+});

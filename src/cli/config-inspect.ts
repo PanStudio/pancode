@@ -1,0 +1,455 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * The effective-customization graph behind `pancode config inspect`. This is the
+ * "why is PanCode behaving this way" surface: it answers what settings, context
+ * files, rules, skills, prompts, agents, playbooks, extensions, safety, memory, hooks, and
+ * the operator profile loaded, from where, with what precedence, and what each
+ * costs in context.
+ *
+ * Every surface is read through its own loader, best-effort: a surface that
+ * fails to load contributes an issue rather than aborting the inspection. The
+ * graph uses one shared source-attribution model ({@link CustomizationEntry}) so
+ * everything reports the same columns.
+ */
+
+import { existsSync } from "node:fs";
+import { basename, join } from "node:path";
+import { cwdHash } from "../core/cwd-hash.js";
+import { DEFAULT_SETTINGS } from "../core/defaults.js";
+import { resolvePackageRoot } from "../core/package-root.js";
+import { formatSettingsLayerIssue } from "../core/settings-layer-diagnostics.js";
+import type { SettingsOrigin } from "../core/settings-layers.js";
+import { readLayeredSettings, settingsSourceFor, settingsValueFor } from "../core/settings-layers.js";
+import { pancodeDataDir, pancodeStateDir } from "../core/xdg.js";
+import { renderEffectivePromptContext } from "../domains/context/compiled-handbook.js";
+import { loadOperatorProfile, renderOperatorProfile } from "../domains/context/operator-profile.js";
+// C-3: domain barrels also load execution and indexing code. Keep inspection
+// on the readers so source clients do not wait for that unrelated module graph.
+import { loadProjectPancodeMd } from "../domains/context/pancode-md.js";
+import { loadProjectRules } from "../domains/context/project-rules.js";
+import { extensionSnapshotFor } from "../domains/extensions/snapshot-access.js";
+import { listInstalledExtensions } from "../domains/extensions/state.js";
+import { loadMemoryRecordsSync, memoryStorePath } from "../domains/memory/store.js";
+import { loadUserHooks } from "../domains/middleware/hooks.js";
+import { readHookSources } from "../domains/middleware/hooks-io.js";
+import { selectProjectPreload } from "../domains/prompts/preload.js";
+import { defaultScopedResourceRoots } from "../domains/resources/common-loader.js";
+import { createSafetyPolicyEngine } from "../domains/safety/policy-engine.js";
+import { ceilChars } from "../domains/session/context-accounting.js";
+import { HOOK_RUN_WINDOW_DAYS, workspaceHookRuns } from "../domains/telemetry/hook-runs.js";
+import { telemetryRoot } from "../domains/telemetry/paths.js";
+import { capturedHookSourcesFor } from "../entry/extension-hook-sources.js";
+
+export type CustomizationCategory =
+	| "settings"
+	| "pancode-md"
+	| "rule"
+	| "operator-profile"
+	| "hook"
+	| "extension"
+	| "skill-root"
+	| "prompt-root"
+	| "agent-root"
+	| "playbook-root"
+	| "safety"
+	| "memory";
+
+/** `reload` means an explicit `/reload extensions` (or a restart) publishes the change; `restart` means the next session. */
+export type ReloadClass = "hot" | "next-turn" | "reload" | "restart" | "n/a";
+
+export interface CustomizationEntry {
+	category: CustomizationCategory;
+	id: string;
+	scope: string;
+	sourcePath?: string;
+	hash?: string;
+	trust?: "trusted" | "untrusted" | "n/a";
+	precedence?: "winner" | "loser" | "single" | "layer";
+	reloadClass: ReloadClass;
+	/** Token cost where the item enters the prompt; absent when it does not. */
+	contextCostTokens?: number;
+	detail?: Record<string, unknown>;
+}
+
+export interface SettingsKeyReport {
+	key: string;
+	value: unknown;
+	source: SettingsOrigin;
+	/** What the value does when that is not evident from the key, such as a level some routes cannot run. */
+	note?: string;
+}
+
+export interface CustomizationGraph {
+	cwd: string;
+	settings: SettingsKeyReport[];
+	entries: CustomizationEntry[];
+	issues: string[];
+}
+
+function shortHash(text: string): string {
+	let hash = 0;
+	for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) | 0;
+	return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function inspectSettings(cwd: string, graph: CustomizationGraph): void {
+	try {
+		const layered = readLayeredSettings(cwd);
+		for (const issue of layered.issues)
+			graph.issues.push(`settings ${issue.origin}: ${formatSettingsLayerIssue(layered, issue)}`);
+		// AUD-2 finding 4: include the defaults restored after a rejected setting.
+		const keys = Object.keys(layered.sources).sort();
+		for (const key of keys) {
+			const value = settingsValueFor(layered.settings, key);
+			const note = settingNote(key, value);
+			graph.settings.push({
+				key,
+				value,
+				source: settingsSourceFor(layered.sources, key),
+				...(note !== undefined ? { note } : {}),
+			});
+		}
+	} catch (err) {
+		graph.issues.push(`settings: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
+/**
+ * Setup seeds settings.yaml with the defaults, so a worker thinking level of off reads as the operator's own choice
+ * while a route that cannot turn thinking off, such as copilot-sdk, runs workers at another level (bt-20).
+ */
+function settingNote(key: string, value: unknown): string | undefined {
+	if (key !== "fleet.default.thinkingLevel" || value !== "off") return undefined;
+	const seeded =
+		value === DEFAULT_SETTINGS.fleet.default.thinkingLevel
+			? " off is the built-in default, which setup writes into settings.yaml."
+			: "";
+	return `workers run without thinking where their route allows it; a route that cannot turn thinking off runs at its default or lowest level, and the dispatch result names it in a route_warning.${seeded}`;
+}
+
+function inspectPancodeMd(cwd: string, graph: CustomizationGraph): void {
+	const loaded = loadProjectPancodeMd(cwd);
+	for (const issue of loaded.errors) graph.issues.push(`pancode-md ${issue.path}: ${issue.error}`);
+	if (loaded.errors.length > 0 && loaded.files.length === 0) return;
+	try {
+		// Without PANCODE.md the one layer is the compiled handbook sessions run on, when its cache holds one.
+		const promptContext = renderEffectivePromptContext(cwd);
+		const compiled = promptContext.compiledHandbook;
+		const preload = selectProjectPreload(promptContext, null).classification;
+		for (const [index, file] of promptContext.handbookSources.entries()) {
+			const text = file.source;
+			graph.entries.push({
+				category: "pancode-md",
+				id: basename(file.path),
+				scope: "project",
+				sourcePath: file.path,
+				hash: shortHash(text),
+				trust: "trusted",
+				precedence: promptContext.handbookSources.length === 1 ? "single" : "layer",
+				// The main prompt takes a compiled handbook in when the session starts, and a new compile from the next one.
+				reloadClass: compiled ? "restart" : "next-turn",
+				contextCostTokens: ceilChars(text.length),
+				detail: {
+					layer: index + 1,
+					layers: promptContext.handbookSources.length,
+					preload: preload.label,
+					preloadChars: preload.chars,
+					preloadLines: preload.lines,
+					preloadIncludedChars: preload.includedChars ?? 0,
+					preloadIncludedLines: preload.includedLines ?? 0,
+					preloadSourceIncludedChars: preload.sources?.[index]?.includedChars ?? 0,
+					preloadSourceHash: preload.sources?.[index]?.contentHash ?? "",
+					...(preload.nearLimit ? { preloadNearLimit: true } : {}),
+					...(compiled ? { compiledFrom: compiled.sources, compiledRules: compiled.rules } : {}),
+				},
+			});
+		}
+	} catch (err) {
+		graph.issues.push(`pancode-md: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
+function inspectRules(cwd: string, graph: CustomizationGraph): void {
+	try {
+		const loaded = loadProjectRules(cwd);
+		for (const issue of loaded.issues) graph.issues.push(`rule: ${issue}`);
+		for (const rule of loaded.rules) {
+			graph.entries.push({
+				category: "rule",
+				id: rule.id,
+				scope: "project",
+				sourcePath: rule.sourcePath,
+				hash: rule.hash,
+				trust: "trusted",
+				precedence: "single",
+				reloadClass: "next-turn",
+				contextCostTokens: rule.tokenEstimate,
+				detail: {
+					enabled: rule.enabled,
+					conditional: rule.paths !== undefined,
+					...(rule.paths ? { paths: rule.paths } : {}),
+				},
+			});
+		}
+		if (loaded.excludes.length > 0) {
+			graph.entries.push({
+				category: "rule",
+				id: "context.excludes",
+				scope: "project",
+				reloadClass: "next-turn",
+				detail: { excludes: loaded.excludes },
+			});
+		}
+	} catch (err) {
+		graph.issues.push(`rules: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
+function inspectOperatorProfile(cwd: string, graph: CustomizationGraph): void {
+	try {
+		const loaded = loadOperatorProfile(cwd);
+		for (const issue of loaded.issues) graph.issues.push(`operator-profile: ${issue}`);
+		if (loaded.origin === "none") return;
+		const rendered = renderOperatorProfile(loaded.profile);
+		const entry: CustomizationEntry = {
+			category: "operator-profile",
+			id: "operator-profile",
+			scope: loaded.origin,
+			trust: "trusted",
+			precedence: "single",
+			reloadClass: "next-turn",
+			contextCostTokens: rendered.tokenEstimate,
+			detail: { fields: Object.keys(loaded.profile) },
+		};
+		if (loaded.sourcePath !== undefined) entry.sourcePath = loaded.sourcePath;
+		if (loaded.hash !== undefined) entry.hash = loaded.hash;
+		graph.entries.push(entry);
+	} catch (err) {
+		graph.issues.push(`operator-profile: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
+function inspectHooks(cwd: string, graph: CustomizationGraph): void {
+	try {
+		// Extension declarations come from the same captured bytes a booted
+		// session admits; an inspecting process without a bound store builds an
+		// ephemeral generation-0 projection.
+		const { batches, fileIssues } = readHookSources({
+			cwd,
+			capturedSources: capturedHookSourcesFor(extensionSnapshotFor(cwd)),
+		});
+		for (const issue of fileIssues) graph.issues.push(`hook ${issue.source.origin}: ${issue.message}`);
+		const loaded = loadUserHooks(batches, { workspaceRoot: cwd });
+		for (const issue of loaded.issues) {
+			graph.issues.push(`hook ${issue.source.sourcePath}#${issue.index}: ${issue.issues.join("; ")}`);
+		}
+		// Every loaded hook already passed its trust gate: project hooks need an
+		// approved hooks surface, and extension hooks come only from loadable
+		// packages, which a trust-blocked project copy never is (snapshot.ts).
+		for (const hook of loaded.hooks) {
+			graph.entries.push({
+				category: "hook",
+				id: hook.id,
+				scope: hook.source.origin,
+				sourcePath: hook.source.sourcePath,
+				hash: hook.hash,
+				trust: "trusted",
+				precedence: "winner",
+				reloadClass: "reload",
+				detail: { on: hook.on, kind: hook.spec.kind, enabled: hook.enabled, ...(hook.tools ? { tools: hook.tools } : {}) },
+			});
+		}
+		for (const { loser } of loaded.overridden) {
+			graph.entries.push({
+				category: "hook",
+				id: loser.id,
+				scope: loser.source.origin,
+				sourcePath: loser.source.sourcePath,
+				hash: loser.hash,
+				trust: "trusted",
+				precedence: "loser",
+				reloadClass: "reload",
+				detail: { on: loser.on, kind: loser.spec.kind },
+			});
+		}
+	} catch (err) {
+		graph.issues.push(`hooks: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
+/**
+ * Rolls up the workspace's `hook.ran` journal records over the last few days into one entry. One entry rather than
+ * one per run: this graph explains configuration provenance, and execution rows would swamp that (#434).
+ */
+function inspectHookRuns(cwd: string, graph: CustomizationGraph): void {
+	try {
+		const runs = workspaceHookRuns(pancodeStateDir(), cwdHash(cwd));
+		graph.entries.push({
+			category: "hook",
+			id: "hook-runs",
+			scope: "user",
+			sourcePath: telemetryRoot(pancodeStateDir()),
+			reloadClass: "n/a",
+			trust: "n/a",
+			precedence: "single",
+			detail: {
+				count: runs.count,
+				windowDays: HOOK_RUN_WINDOW_DAYS,
+				outcomes: runs.outcomes,
+				...(runs.mostRecent === null ? {} : { mostRecent: runs.mostRecent }),
+			},
+		});
+	} catch (err) {
+		graph.issues.push(`hook-runs: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
+function inspectExtensions(cwd: string, graph: CustomizationGraph): void {
+	try {
+		for (const ext of listInstalledExtensions(cwd, { all: true })) {
+			graph.entries.push({
+				category: "extension",
+				id: ext.id,
+				scope: ext.scope,
+				sourcePath: ext.rootPath,
+				hash: shortHash(`${ext.id}@${ext.version}`),
+				// User installs carry the operator's consent; a project copy is
+				// trust-blocked until `config trust extensions` approves its state.
+				trust: ext.trustBlocked ? "untrusted" : "trusted",
+				precedence: ext.effective ? "winner" : "loser",
+				reloadClass: "reload",
+				detail: {
+					version: ext.version,
+					enabled: ext.enabled,
+					valid: ext.valid,
+					effective: ext.effective,
+					loadable: ext.loadable,
+				},
+			});
+		}
+	} catch (err) {
+		graph.issues.push(`extensions: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
+function inspectResourceRoots(cwd: string, graph: CustomizationGraph): void {
+	for (const [kind, category] of [
+		["skills", "skill-root"],
+		["prompts", "prompt-root"],
+		["agents", "agent-root"],
+		["playbooks", "playbook-root"],
+	] as const) {
+		try {
+			if (kind === "agents" || kind === "playbooks") {
+				const builtinPath = join(
+					resolvePackageRoot(),
+					"src",
+					"domains",
+					"agents",
+					kind === "agents" ? "builtins" : "playbooks",
+				);
+				graph.entries.push({
+					category,
+					id: `${kind}:builtin`,
+					scope: "builtin",
+					sourcePath: builtinPath,
+					trust: "trusted",
+					precedence: "layer",
+					reloadClass: "next-turn",
+					detail: { present: existsSync(builtinPath), source: "builtin", resourcePrecedence: 0 },
+				});
+			}
+			for (const root of defaultScopedResourceRoots(kind, cwd)) {
+				graph.entries.push({
+					category,
+					id: `${kind}:${root.scope}`,
+					scope: root.scope === "package" ? "extension" : root.scope,
+					sourcePath: root.path,
+					trust: root.scope === "package" ? "untrusted" : "trusted",
+					precedence: "layer",
+					reloadClass: "next-turn",
+					detail: {
+						present: existsSync(root.path),
+						source: root.source,
+						...(root.precedence === undefined ? {} : { resourcePrecedence: root.precedence }),
+					},
+				});
+			}
+		} catch (err) {
+			graph.issues.push(`${kind}: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+}
+
+function inspectSafetyAndMemory(cwd: string, graph: CustomizationGraph): void {
+	try {
+		const layered = readLayeredSettings(cwd);
+		const metadata = createSafetyPolicyEngine({ cwd }).metadata();
+		graph.entries.push({
+			category: "safety",
+			id: "safety.policy",
+			scope: "effective",
+			reloadClass: "next-turn",
+			trust: metadata.workspaceTrustVerdict === "trusted" ? "trusted" : "untrusted",
+			precedence: "single",
+			...(metadata.projectPolicyPath === null ? {} : { sourcePath: metadata.projectPolicyPath }),
+			detail: { ...metadata },
+		});
+
+		graph.entries.push({
+			category: "safety",
+			id: "safety.autonomy",
+			scope: settingsSourceFor(layered.sources, "safety.autonomy"),
+			reloadClass: "hot",
+			trust: "n/a",
+			precedence: "single",
+			detail: { autonomy: layered.settings.safety.autonomy ?? "default" },
+		});
+		graph.entries.push({
+			category: "safety",
+			id: "safety.limits",
+			scope: "effective",
+			reloadClass: "next-turn",
+			trust: "n/a",
+			precedence: "single",
+			detail: { ...layered.settings.safety.limits },
+		});
+	} catch (err) {
+		graph.issues.push(`safety: ${err instanceof Error ? err.message : String(err)}`);
+	}
+	try {
+		const path = memoryStorePath(pancodeDataDir());
+		const records = existsSync(path) ? loadMemoryRecordsSync(pancodeDataDir()) : [];
+		graph.entries.push({
+			category: "memory",
+			id: "memory-store",
+			scope: "user",
+			sourcePath: path,
+			reloadClass: "hot",
+			trust: "trusted",
+			precedence: "single",
+			detail: { present: existsSync(path), records: records.length },
+		});
+	} catch (err) {
+		graph.issues.push(`memory: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
+/**
+ * Build the effective-customization graph for `cwd`. Never throws; every surface
+ * is best-effort and failures land in `issues`.
+ */
+export function buildCustomizationGraph(cwd: string): CustomizationGraph {
+	const graph: CustomizationGraph = { cwd, settings: [], entries: [], issues: [] };
+	inspectSettings(cwd, graph);
+	inspectPancodeMd(cwd, graph);
+	inspectRules(cwd, graph);
+	inspectOperatorProfile(cwd, graph);
+	inspectHooks(cwd, graph);
+	inspectHookRuns(cwd, graph);
+	inspectExtensions(cwd, graph);
+	inspectResourceRoots(cwd, graph);
+	inspectSafetyAndMemory(cwd, graph);
+	return graph;
+}

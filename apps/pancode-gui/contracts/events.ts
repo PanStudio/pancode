@@ -1,0 +1,120 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { type Static, Type } from "typebox";
+import { ClientIdentity } from "./auth.js";
+import { Id } from "./common.js";
+import { InterviewRound } from "./interviews.js";
+import { MachineAttachment } from "./machines.js";
+import { Operation, Progress } from "./operations.js";
+import { SessionDeltas } from "./sessions.js";
+import { QUEUE_MAX_ENTRIES, QueueEntry } from "./steering.js";
+import { TelemetryUpdate } from "./telemetry.js";
+
+const base = { v: Type.Literal(1), epoch: Id, seq: Type.Integer({ minimum: 0 }), at: Type.String() };
+const cursor = { epoch: Id, seq: Type.Integer({ minimum: 0 }) };
+const resource = { resource: Id, revision: Type.Integer({ minimum: 1 }) };
+export const Event = Type.Union([
+	Type.Object({ ...base, type: Type.Literal("context.activity"), payload: SessionDeltas["context.activity"] }),
+	Type.Object({ ...base, type: Type.Literal("context.status"), payload: SessionDeltas["context.status"] }),
+	Type.Object({ ...base, type: Type.Literal("session.telemetry"), payload: SessionDeltas["session.telemetry"] }),
+	Type.Object({
+		...base,
+		type: Type.Literal("interview.changed"),
+		payload: Type.Object({ resource: Id, round: Type.Union([InterviewRound, Type.Null()]) }),
+	}),
+	Type.Object({
+		...base,
+		type: Type.Literal("queue.changed"),
+		payload: Type.Object({ resource: Id, entries: Type.Array(QueueEntry, { maxItems: QUEUE_MAX_ENTRIES }) }),
+	}),
+	Type.Object({ ...base, type: Type.Literal("turn.started"), payload: SessionDeltas["turn.started"] }),
+	Type.Object({ ...base, type: Type.Literal("turn.admitted"), payload: SessionDeltas["turn.admitted"] }),
+	Type.Object({ ...base, type: Type.Literal("turn.text"), payload: SessionDeltas["turn.text"] }),
+	Type.Object({ ...base, type: Type.Literal("turn.thought"), payload: SessionDeltas["turn.thought"] }),
+	Type.Object({ ...base, type: Type.Literal("turn.user"), payload: SessionDeltas["turn.user"] }),
+	Type.Object({ ...base, type: Type.Literal("turn.tool"), payload: SessionDeltas["turn.tool"] }),
+	Type.Object({ ...base, type: Type.Literal("turn.finished"), payload: SessionDeltas["turn.finished"] }),
+	Type.Object({ ...base, type: Type.Literal("permission.requested"), payload: SessionDeltas["permission.requested"] }),
+	Type.Object({ ...base, type: Type.Literal("permission.escalated"), payload: SessionDeltas["permission.escalated"] }),
+	Type.Object({ ...base, type: Type.Literal("permission.resolved"), payload: SessionDeltas["permission.resolved"] }),
+	Type.Object({ ...base, type: Type.Literal("permission.expired"), payload: SessionDeltas["permission.expired"] }),
+	Type.Object({ ...base, type: Type.Literal("session.labelled"), payload: SessionDeltas["session.labelled"] }),
+	Type.Object({ ...base, type: Type.Literal("session.configured"), payload: SessionDeltas["session.configured"] }),
+	Type.Object({ ...base, type: Type.Literal("fleet.loopBlocked"), payload: SessionDeltas["fleet.loopBlocked"] }),
+	Type.Object({ ...base, type: Type.Literal("fleet.enqueued"), payload: SessionDeltas["fleet.enqueued"] }),
+	Type.Object({ ...base, type: Type.Literal("fleet.started"), payload: SessionDeltas["fleet.started"] }),
+	Type.Object({ ...base, type: Type.Literal("fleet.progress"), payload: SessionDeltas["fleet.progress"] }),
+	Type.Object({ ...base, type: Type.Literal("fleet.completed"), payload: SessionDeltas["fleet.completed"] }),
+	Type.Object({ ...base, type: Type.Literal("fleet.failed"), payload: SessionDeltas["fleet.failed"] }),
+	Type.Object({ ...base, type: Type.Literal("evidence.ready"), payload: SessionDeltas["evidence.ready"] }),
+	Type.Object({ ...base, type: Type.Literal("health.compacted"), payload: SessionDeltas["health.compacted"] }),
+	Type.Object({
+		...base,
+		type: Type.Literal("health.contextWarning"),
+		payload: SessionDeltas["health.contextWarning"],
+	}),
+	Type.Object({ ...base, type: Type.Literal("health.toolBudget"), payload: SessionDeltas["health.toolBudget"] }),
+	Type.Object({ ...base, type: Type.Literal("health.provider"), payload: SessionDeltas["health.provider"] }),
+	Type.Object({ ...base, type: Type.Literal("health.scopeNotice"), payload: SessionDeltas["health.scopeNotice"] }),
+	Type.Object({ ...base, type: Type.Literal("job.changed"), payload: SessionDeltas["job.changed"] }),
+	Type.Object({ ...base, type: Type.Literal("job.listed"), payload: SessionDeltas["job.listed"] }),
+	Type.Object({ ...base, type: Type.Literal("session.changed"), payload: SessionDeltas["session.changed"] }),
+	Type.Object({ ...base, type: Type.Literal("session.reset"), payload: SessionDeltas["session.reset"] }),
+
+	Type.Object({ ...base, type: Type.Literal("hello"), payload: Type.Object(cursor) }),
+	Type.Object({
+		...base,
+		type: Type.Literal("resync"),
+		payload: Type.Object({ ...cursor, reason: Type.Union([Type.Literal("epoch"), Type.Literal("evicted")]) }),
+	}),
+	Type.Object({
+		...base,
+		type: Type.Literal("operation.progress"),
+		payload: Type.Object({ ...resource, progress: Progress }),
+	}),
+	Type.Object({
+		...base,
+		type: Type.Literal("operation.finished"),
+		payload: Type.Object({ ...resource, kind: Type.String(), operation: Type.Optional(Operation) }),
+	}),
+	Type.Object({ ...base, type: Type.Literal("toolchain.changed"), payload: Type.Object({ id: Id }) }),
+	/**
+	 * The agent's coalesced telemetry_update for a session this host holds (at most 10 Hz, never per token): an
+	 * invalidation only, naming the topics whose reads moved; the client re-reads and folds nothing (#434).
+	 */
+	Type.Object({
+		...base,
+		type: Type.Literal("telemetry.updated"),
+		payload: Type.Object({ resource: Id, update: TelemetryUpdate }, { additionalProperties: false }),
+	}),
+	/**
+	 * Control of a session moved. `previous` names the client that lost it to a take-over, so that window
+	 * can say so; a null controller means nobody holds it.
+	 */
+	Type.Object({
+		...base,
+		type: Type.Literal("session.control"),
+		payload: Type.Object(
+			{
+				resource: Id,
+				controller: Type.Union([ClientIdentity, Type.Null()]),
+				previous: Type.Union([ClientIdentity, Type.Null()]),
+			},
+			{ additionalProperties: false },
+		),
+	}),
+	/** This app's attachment to a node's own GUI changed state. */
+	Type.Object({ ...base, type: Type.Literal("machine.attach"), payload: MachineAttachment }),
+	/** A launch found the app window open and asks it to show a page. The window the launcher focused takes it. */
+	Type.Object({
+		...base,
+		type: Type.Literal("app.launch"),
+		payload: Type.Object({ path: Type.String({ maxLength: 512 }) }, { additionalProperties: false }),
+	}),
+]);
+export type Event = Static<typeof Event>;
+export type DomainEvent = Exclude<Event, { type: "hello" | "resync" }>;
+export type EventInput = {
+	[K in DomainEvent["type"]]: Pick<Extract<DomainEvent, { type: K }>, "type" | "payload">;
+}[DomainEvent["type"]];
+export const EventCursor = Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}:[0-9]{1,16}$", maxLength: 145 });

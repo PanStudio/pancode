@@ -1,0 +1,195 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { DomainBundle, DomainModule } from "../../core/domain-loader.js";
+import {
+	createHookBudgetTracker,
+	type HookBudgetTracker,
+	resolveHookBudgetsFromEnv,
+	resolveHookBudgetTunablesFromEnv,
+} from "./budget.js";
+import type { MiddlewareContract, MiddlewareRegistrar } from "./contract.js";
+import { recordFiredRules } from "./fired-record.js";
+import { MiddlewareManifest } from "./manifest.js";
+import { createMiddlewareRegistrationTable } from "./registrations.js";
+import { listMiddlewareRuleDefinitions } from "./rules.js";
+import {
+	type MiddlewareDiagnosticSink,
+	type MiddlewareHookRegistration,
+	type MiddlewareRuleDefinition,
+	registrationFromRuleDefinition,
+	registrationMatchesTool,
+	runMiddlewareAsyncRegistrations,
+	runMiddlewareRegistrations,
+	writeMiddlewareDiagnosticToStderr,
+} from "./runtime.js";
+import { createSisterRepositoryReminderRegistration } from "./sister-repository-reminder.js";
+import { createMiddlewareSnapshot } from "./snapshot.js";
+
+/**
+ * One session-scoped budget tracker per contract, seeded from the environment so
+ * an operator can loosen budgets (`PANCODE_HOOK_BUDGET_*`) without a rebuild. The
+ * persistent instance is what makes warmup grace and the steady-state rolling
+ * window meaningful: state accumulates across every hook occurrence in the run.
+ */
+function createEnvHookBudgetTracker(env: NodeJS.ProcessEnv = process.env): HookBudgetTracker {
+	return createHookBudgetTracker({ budgets: resolveHookBudgetsFromEnv(env), ...resolveHookBudgetTunablesFromEnv(env) });
+}
+
+export interface MiddlewareBundleOptions {
+	/**
+	 * In-process rule definitions registered by the composition root, appended
+	 * after the builtin definitions. A definition whose rule id collides with
+	 * an earlier one is dropped so `ruleIds` stays unambiguous.
+	 */
+	ruleDefinitions?: ReadonlyArray<MiddlewareRuleDefinition>;
+	/**
+	 * Coded hook registrations, evaluated after every declarative rule, in
+	 * array order. Ids share one namespace with rule ids; a registration whose
+	 * id collides with an earlier rule or registration is dropped.
+	 */
+	registrations?: ReadonlyArray<MiddlewareHookRegistration>;
+	/**
+	 * Receives isolation and budget diagnostics from hook evaluation. Defaults
+	 * to the stderr writer in runtime.ts.
+	 */
+	onDiagnostic?: MiddlewareDiagnosticSink;
+	/**
+	 * Budget tracker override. Defaults to an env-seeded session-scoped tracker;
+	 * tests inject a deterministic one to drive warmup/rolling-window behaviour.
+	 */
+	budgetTracker?: HookBudgetTracker;
+}
+
+/**
+ * The loader publishes `contract` alone; `registrar` stays with the caller that
+ * built the bundle, which is how the composition root keeps the right to add
+ * and replace hooks to itself.
+ */
+export type MiddlewareBundle = DomainBundle<MiddlewareContract> & { registrar: MiddlewareRegistrar };
+
+export function createMiddlewareBundle(options: MiddlewareBundleOptions = {}): MiddlewareBundle {
+	const ruleDefinitions = combineRuleDefinitions(listMiddlewareRuleDefinitions(), options.ruleDefinitions ?? []);
+	let diagnosticSink = options.onDiagnostic;
+	// Declarative rules are the fixed tier; construction-time coded
+	// registrations are the first host entries, deduplicated first-wins across
+	// the shared id namespace exactly as before.
+	const table = createMiddlewareRegistrationTable({
+		fixed: ruleDefinitions.map(registrationFromRuleDefinition),
+		diagnosticSink: () => diagnosticSink ?? writeMiddlewareDiagnosticToStderr,
+	});
+	for (const registration of options.registrations ?? []) table.registerHook(registration);
+	// Built in, after the caller's entries so a caller can replace it by id.
+	table.registerHook(createSisterRepositoryReminderRegistration());
+	const budgetTracker = options.budgetTracker ?? createEnvHookBudgetTracker();
+	const contract: MiddlewareContract = {
+		runHook(input) {
+			// Capture the list once; a replacement published mid-evaluation
+			// takes effect for the next evaluation, never this one.
+			const registrations = table.list();
+			return recordFiredRules(
+				runMiddlewareRegistrations(input, registrations, {
+					budgetTracker,
+					...(diagnosticSink !== undefined ? { onDiagnostic: diagnosticSink } : {}),
+				}),
+				"sync",
+			);
+		},
+		async runAsyncHook(input, priorEffects = []) {
+			const registrations = table.list();
+			return recordFiredRules(
+				await runMiddlewareAsyncRegistrations(input, registrations, priorEffects, {
+					...(diagnosticSink !== undefined ? { onDiagnostic: diagnosticSink } : {}),
+				}),
+				"async",
+			);
+		},
+		hasAwaitedHook(hook, toolName) {
+			return table
+				.list()
+				.some(
+					(registration) =>
+						registration.awaited === true &&
+						registration.hooks.includes(hook) &&
+						registrationMatchesTool(registration, toolName),
+				);
+		},
+		async runAwaitedHook(input, priorEffects = []) {
+			return recordFiredRules(
+				await runMiddlewareAsyncRegistrations(input, table.list(), priorEffects, {
+					include: (registration) => registration.awaited === true,
+					...(diagnosticSink !== undefined ? { onDiagnostic: diagnosticSink } : {}),
+				}),
+				"awaited",
+			);
+		},
+		snapshot() {
+			return createMiddlewareSnapshot(ruleDefinitions.map((definition) => definition.rule));
+		},
+	};
+	const registrar: MiddlewareRegistrar = {
+		registerHook(registration) {
+			table.registerHook(registration);
+		},
+		setDiagnosticSink(sink) {
+			diagnosticSink = sink;
+		},
+		prepareRegistrationReplacement(owner, generation, registrations) {
+			return table.prepareReplacement(owner, generation, registrations);
+		},
+		replaceRegistrations(owner, generation, registrations) {
+			return table.replaceRegistrations(owner, generation, registrations);
+		},
+		ownedGeneration(owner) {
+			return table.ownedGeneration(owner);
+		},
+	};
+	return {
+		extension: {
+			start() {
+				return undefined;
+			},
+		},
+		contract: Object.freeze(contract),
+		registrar,
+	};
+}
+
+/** A middleware domain module plus the registration capability of the instance it creates. */
+export interface MiddlewareDomain {
+	readonly module: DomainModule<"middleware">;
+	/** Undefined until the loader has created the domain. */
+	registrar(): MiddlewareRegistrar | undefined;
+}
+
+/**
+ * For a composition root: list `module` in `loadDomains` and keep the handle,
+ * because the loader publishes only the query contract.
+ */
+export function createMiddlewareDomain(options: MiddlewareBundleOptions = {}): MiddlewareDomain {
+	let registrar: MiddlewareRegistrar | undefined;
+	return {
+		module: {
+			manifest: MiddlewareManifest,
+			createExtension: () => {
+				const bundle = createMiddlewareBundle(options);
+				registrar = bundle.registrar;
+				return { extension: bundle.extension, contract: bundle.contract };
+			},
+		},
+		registrar: () => registrar,
+	};
+}
+
+function combineRuleDefinitions(
+	builtin: ReadonlyArray<MiddlewareRuleDefinition>,
+	registered: ReadonlyArray<MiddlewareRuleDefinition>,
+): MiddlewareRuleDefinition[] {
+	const seen = new Set<string>();
+	const combined: MiddlewareRuleDefinition[] = [];
+	for (const definition of [...builtin, ...registered]) {
+		if (seen.has(definition.rule.id)) continue;
+		seen.add(definition.rule.id);
+		combined.push(definition);
+	}
+	return combined;
+}

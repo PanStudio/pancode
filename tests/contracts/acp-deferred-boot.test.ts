@@ -1,0 +1,339 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PassThrough } from "node:stream";
+import { test } from "node:test";
+import { serveDeferredAcp } from "../../src/engine/acp/deferred-boot.js";
+import { createAcpHandshake } from "../../src/engine/acp/server-handshake.js";
+import { createStdioServerTransport, createStdioTransport } from "../../src/engine/acp/transport.js";
+import { makeScratchHome } from "../harness/scratch-env.js";
+
+test("ACP binds the first session cwd before boot and refuses a different later cwd", async () => {
+	const launch = process.cwd();
+	const root = mkdtempSync(join(tmpdir(), "acp-deferred-root-"));
+	const other = mkdtempSync(join(tmpdir(), "acp-deferred-other-"));
+	const input = new PassThrough();
+	const output = new PassThrough();
+	const responses = new Map<number, Record<string, unknown>>();
+	let buffer = "";
+	output.setEncoding("utf8");
+	output.on("data", (chunk: string) => {
+		buffer += chunk;
+		for (;;) {
+			const newline = buffer.indexOf("\n");
+			if (newline < 0) break;
+			const row = JSON.parse(buffer.slice(0, newline)) as Record<string, unknown>;
+			buffer = buffer.slice(newline + 1);
+			if (typeof row.id === "number") responses.set(row.id, row);
+		}
+	});
+	const transport = createStdioServerTransport({ input, output });
+	const handshake = createAcpHandshake({
+		version: "test",
+		session: true,
+		loadSession: true,
+		settings: true,
+		providers: true,
+		steer: true,
+		dispatch: true,
+		toolRegistry: true,
+		bus: true,
+	});
+	const seen: string[] = [];
+	let markStarted!: () => void;
+	let release!: () => void;
+	const started = new Promise<void>((resolve) => {
+		markStarted = resolve;
+	});
+	const released = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const done = serveDeferredAcp({
+		transport,
+		handshake,
+		launchCwd: launch,
+		boot: async (cwd, ready) => {
+			seen.push(cwd);
+			strictEqual(process.cwd(), realpathSync(root));
+			markStarted();
+			await released;
+			transport.onRequest("session/new", () => ({ sessionId: "bound" }));
+			transport.onRequest("session/list", () => ({ sessions: [] }));
+			ready();
+			return 0;
+		},
+	});
+	const send = (id: number, method: string, params: unknown) => {
+		input.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+	};
+	const response = async (id: number): Promise<Record<string, unknown>> => {
+		for (let tries = 0; tries < 300; tries += 1) {
+			const value = responses.get(id);
+			if (value) return value;
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		throw new Error(`missing ACP response ${id}`);
+	};
+	try {
+		send(1, "initialize", { protocolVersion: 1 });
+		const initialized = await response(1);
+		strictEqual((initialized.result as { protocolVersion: number }).protocolVersion, 1);
+		deepStrictEqual(seen, []);
+		send(5, "session/new", { cwd: "./", mcpServers: [] });
+		strictEqual(((await response(5)).error as { code: number }).code, -32602);
+		deepStrictEqual(seen, []);
+		send(2, "session/new", { cwd: root, mcpServers: [] });
+		send(3, "session/list", {});
+		await started;
+		ok(!responses.has(2));
+		ok(!responses.has(3));
+		release();
+		strictEqual((await response(2)).result && ((await response(2)).result as { sessionId: string }).sessionId, "bound");
+		deepStrictEqual((await response(3)).result, { sessions: [] });
+		deepStrictEqual(seen, [realpathSync(root)]);
+		send(4, "session/new", { cwd: other, mcpServers: [] });
+		const mismatch = await response(4);
+		strictEqual((mismatch.error as { code: number }).code, -32602);
+		strictEqual((mismatch.error as { message: string }).message.includes(realpathSync(root)), true);
+	} finally {
+		release();
+		transport.close();
+		await done;
+		process.chdir(launch);
+		rmSync(root, { recursive: true, force: true });
+		rmSync(other, { recursive: true, force: true });
+	}
+});
+
+// Every request below waits for its answer with no clock of its own. A cold tsx
+// boot answered initialize in 3.3s idle and 49s at a thirteenth of one core, and
+// stdin stays paused until the handlers exist, so a slow answer is never a lost
+// frame. The test timeout bounds a real hang: its abort kills both children, the
+// close rejects whatever is pending, and `finally` still runs.
+test("ACP CLI boots the workspace named by its first session", { timeout: 300_000 }, async (t) => {
+	const scratch = makeScratchHome("acp-deferred-cli-");
+	const launch = join(scratch.dir, "launch");
+	const project = join(scratch.dir, "project");
+	mkdirSync(launch);
+	mkdirSync(project);
+	const cli = join(new URL("../..", import.meta.url).pathname, "dist", "cli", "index.js");
+	const child = createStdioTransport(process.execPath, [cli, "--no-context-files", "--no-skills", "acp"], {
+		cwd: launch,
+		env: Object.fromEntries(
+			Object.entries({ ...process.env, ...scratch.env, NODE_ENV: "test" }).filter(
+				(entry): entry is [string, string] => entry[1] !== undefined,
+			),
+		),
+	});
+	t.signal.addEventListener("abort", () => void child.forceTerminate(), { once: true });
+	try {
+		const init = await child.request<{ protocolVersion: number; agentCapabilities: Record<string, unknown> }>(
+			"initialize",
+			{ protocolVersion: 1 },
+		);
+		strictEqual(init.protocolVersion, 1);
+		const eager = createStdioTransport(
+			process.execPath,
+			[cli, "--no-context-files", "--no-skills", "acp", "--cwd", project],
+			{
+				cwd: launch,
+				env: Object.fromEntries(
+					Object.entries({ ...process.env, ...scratch.env, NODE_ENV: "test" }).filter(
+						(entry): entry is [string, string] => entry[1] !== undefined,
+					),
+				),
+			},
+		);
+		t.signal.addEventListener("abort", () => void eager.forceTerminate(), { once: true });
+		try {
+			const eagerInit = await eager.request<{ agentCapabilities: Record<string, unknown> }>("initialize", {
+				protocolVersion: 1,
+			});
+			const normalized = (capabilities: Record<string, unknown>) => {
+				const copy = structuredClone(capabilities);
+				const metadata = copy._meta as Record<string, unknown>;
+				const events = metadata["pancode/events"] as Record<string, unknown>;
+				delete events.workspaceInstanceId;
+				return copy;
+			};
+			deepStrictEqual(normalized(init.agentCapabilities), normalized(eagerInit.agentCapabilities));
+			for (const params of [{ mcpServers: [] }, { cwd: launch, mcpServers: [] }]) {
+				await rejects(eager.request("session/new", params));
+			}
+		} finally {
+			await eager.forceTerminate();
+		}
+		const created = await child.request<{ sessionId: string }>("session/new", { cwd: project, mcpServers: [] });
+		ok(created.sessionId);
+		const listed = await child.request<{ sessions: Array<{ sessionId: string; cwd: string }> }>("session/list", {});
+		// A session with no model turn is not offered for resume (293d79610), so the
+		// fresh one is absent. The refusal below is what proves the boot bound `project`.
+		strictEqual(
+			listed.sessions.some((row) => row.sessionId === created.sessionId),
+			false,
+		);
+		await rejects(
+			child.request("session/new", { cwd: launch, mcpServers: [] }),
+			(error: unknown) => error instanceof Error && error.message.includes(project),
+		);
+		await child.request("session/close", { sessionId: created.sessionId });
+	} finally {
+		await child.forceTerminate();
+		scratch.cleanup();
+	}
+});
+
+test("ACP first unfiltered session list binds the launch directory", async () => {
+	const launch = process.cwd();
+	const input = new PassThrough();
+	const output = new PassThrough();
+	let observed = "";
+	output.setEncoding("utf8");
+	output.on("data", (chunk: string) => {
+		observed += chunk;
+	});
+	const transport = createStdioServerTransport({ input, output });
+	const handshake = createAcpHandshake({
+		session: true,
+		loadSession: true,
+		settings: true,
+		providers: true,
+		steer: true,
+		dispatch: true,
+		toolRegistry: true,
+		bus: true,
+	});
+	let bootRoot: string | null = null;
+	const done = serveDeferredAcp({
+		transport,
+		handshake,
+		launchCwd: launch,
+		boot: async (cwd, ready) => {
+			bootRoot = cwd;
+			transport.onRequest("session/list", () => ({ sessions: [] }));
+			ready();
+			return 0;
+		},
+	});
+	try {
+		input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } })}\n`);
+		input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "session/list", params: {} })}\n`);
+		for (let tries = 0; tries < 300 && !observed.includes('"id":2'); tries += 1) {
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		strictEqual(bootRoot, realpathSync(launch));
+		ok(observed.includes('"sessions":[]'), observed);
+	} finally {
+		transport.close();
+		await done;
+	}
+});
+
+test("ACP preboot logout keeps the workspace unbound", async () => {
+	const input = new PassThrough();
+	const output = new PassThrough();
+	let observed = "";
+	output.setEncoding("utf8");
+	output.on("data", (chunk: string) => {
+		observed += chunk;
+	});
+	const transport = createStdioServerTransport({ input, output });
+	const handshake = createAcpHandshake({
+		session: true,
+		loadSession: true,
+		settings: true,
+		providers: true,
+		steer: true,
+		dispatch: true,
+		toolRegistry: true,
+		bus: true,
+	});
+	let booted = false;
+	const done = serveDeferredAcp({
+		transport,
+		handshake,
+		launchCwd: process.cwd(),
+		boot: async (_cwd, ready) => {
+			booted = true;
+			ready();
+			return 0;
+		},
+	});
+	try {
+		for (const [id, method, params] of [
+			[1, "initialize", { protocolVersion: 1 }],
+			[2, "authenticate", { methodId: "unknown" }],
+			[3, "logout", {}],
+		] as const) {
+			input.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+		}
+		for (let tries = 0; tries < 300 && !observed.includes('"id":3'); tries += 1) {
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		const rows = observed
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { id: number; error?: { code: number } });
+		strictEqual(rows.find((row) => row.id === 2)?.error?.code, -32602);
+		// PanCode advertises no logout capability, so a preboot logout is an unknown method.
+		strictEqual(rows.find((row) => row.id === 3)?.error?.code, -32601);
+		strictEqual(booted, false);
+	} finally {
+		transport.close();
+		await done;
+	}
+});
+
+test("ACP failed deferred boot answers the first and subsequent workspace requests", async () => {
+	for (const throws of [false, true]) {
+		const input = new PassThrough();
+		const output = new PassThrough();
+		const rows: Array<{ id: number; error?: { code: number } }> = [];
+		output.setEncoding("utf8");
+		output.on("data", (line: string) => rows.push(JSON.parse(line)));
+		const transport = createStdioServerTransport({ input, output });
+		let boots = 0;
+		const done = serveDeferredAcp({
+			transport,
+			handshake: createAcpHandshake({
+				session: true,
+				loadSession: false,
+				settings: false,
+				providers: false,
+				steer: false,
+				dispatch: false,
+				toolRegistry: false,
+				bus: false,
+			}),
+			launchCwd: process.cwd(),
+			pinned: true,
+			boot: async () => {
+				boots += 1;
+				if (throws) throw new Error("boot failed");
+				return 1;
+			},
+		});
+		const settled = done.catch(() => 1);
+		try {
+			for (const [id, method, params] of [
+				[1, "initialize", { protocolVersion: 1 }],
+				[2, "session/new", { cwd: process.cwd(), mcpServers: [] }],
+				[3, "session/new", { cwd: process.cwd(), mcpServers: [] }],
+			] as const) {
+				input.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+				for (let tries = 0; tries < 100 && !rows.some((row) => row.id === id); tries += 1) {
+					await new Promise((resolve) => setTimeout(resolve, 10));
+				}
+			}
+			strictEqual(rows.find((row) => row.id === 2)?.error?.code, -32603);
+			strictEqual(rows.find((row) => row.id === 3)?.error?.code, -32603);
+			strictEqual(boots, 1);
+		} finally {
+			transport.close();
+			await settled;
+		}
+	}
+});

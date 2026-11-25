@@ -1,0 +1,382 @@
+# PanCode TUI Design System
+
+`PancodeEditor` in [pancode-editor.ts](../../src/interactive/pancode-editor.ts) owns composer editing. The [commands and modes guide](../guide/commands-and-modes.md) lists operator controls.
+
+Boot sequence, presentation modes and the traces that measure them are in [TUI boot presentation and measurement](tui-boot-performance.md).
+
+This document is the reference specification for the PanCode TUI visual layout, styling, and behavior across [src/interactive/](../../src/interactive/interactive-shell.ts).
+
+The governing architectural principle: **the user reads state from color, structure from frames, and identity from brand marks.** Everything that is not state or structure remains visually quiet.
+
+---
+
+## Output Styles
+
+Toggle tiers with **Alt+O** (`compact` → `standard` → `detailed` → `compact`). Standard is the startup tier (`interface.outputDetail: standard`). The persisted values are `compact`, `standard` and `detailed`, and `/settings chat` labels them Compact, Standard and Detailed. The control is **Output detail** in `/settings chat` or `pancode configure --section chat`. The row budgets below are the `SLICES` in [transcript-detail.ts](../../src/interactive/transcript-detail.ts), drawn from the tier table in [presentation-tier.ts](../../src/core/presentation-tier.ts).
+
+| Content | Compact | Standard | Detailed |
+| :--- | :--- | :--- | :--- |
+| **Answers & Prompts** | Complete | Complete | Complete |
+| **Supplied Reasoning** | Single fold marker per run | 3 rows before words, 1 row before action | 12 preview rows |
+| **Reads & Searches** | Class fold (`▸ explored N files`) | Action and outcome | 8 result rows |
+| **Knowledge Lookups** | Class fold (`§ consulted N`) | Action and outcome | 8 result rows |
+| **File Mutations** | Class fold (`± edited N files`) | 8 diff rows | 20 diff rows |
+| **User Questions** | Question and answer on 1 row | Question and answer on 1 row | Question and answer on 1 row |
+| **Agent Shell Commands** | Command and outcome | Command, outcome and 3 output rows | Command, outcome and 12 output rows |
+| **Live Tool Output (while running)** | None | 6 rows | 16 rows |
+| **Operator Shell (`!`/`!!`)**| 3 output rows | 6 output rows | 12 output rows |
+| **Dispatched Workers** | Identity, execution and validation outcome | Facts line (tokens processed, context, tool calls) + 3 summary rows | Facts line + 8 summary rows + call trail |
+| **Helper / Shadow Work** | 1 row (`↳ role · task ✓`) | 1 row (`↳ role · task ✓`), plus the current action while running | Full worker card |
+| **Failures & Refusals** | Up to 4 rows actionable reason | Up to 4 rows actionable reason | Up to 12 rows with context |
+| **Notices & Retries** | Level mark + bounded message | Level mark + bounded message | Diagnostic detail |
+| **Reports** (Doctor, multiline notices, command stdout/stderr, extension results) | Title and counters on 1 row | Counters + up to 8 rows (Doctor lists errors first), then `… N more · Detailed or /view for all` | Every row and detail |
+| **Turn Receipt** | One row: outcome glyph + duration + local end time | Outcome, duration, then calls, tokens and cache as width allows, and local end time | Outcome, duration, calls, tokens, cache, reasoning, cost, coverage and local end time |
+| **Approval & Question Cards** | Every decision input | Every decision input | Every decision input |
+
+- **Preview Budgets**: Counted *after terminal wrapping*, including the `… N rows · /view` overflow hint. Short terminals scale a budget down to `max(2, floor((terminal rows - 8) / 2))` when that is smaller than the style's own limit (`previewBudget` in [preview.ts](../../src/interactive/renderers/preview.ts)).
+- **Worker Inspection**: Retained transcript and output artifacts are inspectable through `/view`; per-artifact readers apply their own bounds.
+- **Idle Pre-rendering**: Settled entries are pre-rendered into the two alternative styles during idle time, eliminating delay on Alt+O switching.
+- **Background Surfaces**: The tier also bounds surfaces outside the transcript, and a change applies without reopening them. The Fleet runs dock follows [3.5](#35-pinned-islands-and-the-dynamic-transcript). In Compact the Fleet Runs board drops its token, cost, node and account columns and shortens the selected run's facts; an expanded run detail shows every fact at every tier and pages with `PgUp`/`PgDn`. A settled fleet plan card shows no step rows in Compact, 4 in Standard and 12 in Detailed, keeps the first failed step in view, and counts the rest beside `/fleet for detail`. The workers dock gives each card 1 row in Compact, 2 in Standard and 3 in Detailed, and its header counts cancelled runs apart from failed ones. A settled Detailed worker card keeps its answer and failure. `/doctor` lists errors and warnings at every tier and folds passed and informational checks into one `N routine checks folded` line outside Detailed, and Standard also names the passed checks on one `OK` row. `/usage` omits the activity heatmap in Compact, and in Standard when the workspace has no sessions. The `/usage` Health tab in Compact omits the journal and responsiveness sections and shows the connection only when it reports a failure, an SSE pin or fallback, or a recovery ([background-surfaces.test.ts](https://github.com/akougkas/pancode/blob/main/tests/contracts/background-surfaces.test.ts)).
+
+---
+
+## 1. Color System
+
+Token resolution lives in [src/interactive/theme/tokens.ts](../../src/interactive/theme/tokens.ts); canonical hex values in [src/core/theme-token-hex.ts](../../src/core/theme-token-hex.ts). Raw ANSI SGR escapes, SGR color fragments and hex colors are forbidden in `src/interactive/` outside its `theme/` directory; the `theme-discipline` check in `scripts/check-hygiene.ts` fails on them.
+
+### 1.1 Color Tokens
+
+Renderers ask for semantic roles (`TEXT_ROLES`, `STRUCTURAL_ROLES` and `FUNCTION_ROLES` in [theme-roles.ts](../../src/core/theme-roles.ts)), where text intensity (`subdued`, `supporting`, `reading`, `focal`, `strong`) and accent intent (`neutral`, `ivory`, `cyan`, `turquoise`, `action`, `success`, `warning`, `error`) are independent. The token names below are the compatibility vocabulary for external profiles and configured roster colors; a council roster member's `color` accepts the names in `THEME_NAMED_COLORS` ([defaults.ts](../../src/core/defaults.ts)) or a literal `#rrggbb`. Each token maps to one palette entry in `TERMINAL_PALETTE`.
+
+| Token | Hex (unknown background) and palette entry | Role |
+| :--- | :--- | :--- |
+| `editor` | `#02874a` (`cyanFocal`) | Compatibility name. The composer rails paint the `composerRail` role, which resolves to the same palette entry. |
+| `editorDanger` | `#c15149` (`error`) | Compatibility name; no renderer paints it. |
+| `editorAction` | `#1178c8` (`orangeFocal`) | Compatibility name; no renderer paints it. |
+| `editorYoloBackground` | `#201300` (`yoloSurface`) | Compatibility name. The `yolo` composer surface paints the `composerSurface` role, which resolves to the same palette entry. |
+| `editorYoloText` | `#767572` (`ivoryFocal`) | Compatibility name; `yolo` composer text resolves through the role matrix. |
+| `accent` | `#02874a` (`cyanFocal`) | Selections, prompts, the expanded footer's `Details` title, voice glyph (`■`), active phases. |
+| `accentDeep` | `#03864a` (`cyanReading`) | Bold CAPS section headers and structural tags. |
+| `action` | `#1178c8` (`orangeFocal`) | Active operations: dispatch pills, running fleet badges, steering queue markers. |
+| `emphasis` | `#767572` (`neutralFocal`) | Emphasized neutral text. |
+| `tool` | `#76746f` (`neutralReading`) | Action-row verbs in the tool ledger. |
+| `agent` | `#54789c` (`turquoise`) | Dispatch verbs and active worker counts. |
+| `success` | `#1f836f` (`success`) | Positive outcomes (`✓`), clean git state, added diff lines (`+`). |
+| `warning` | `#966e04` (`warning`) | Warnings, dirty git trees, retry attempts, blocked tools. |
+| `error` | `#c15149` (`error`) | Failures (`✗`), error rails, removed diff lines (`-`). |
+| `info` | `#54789c` (`turquoise`) | Informational notices and links. |
+| `reason` | `#76746f` (`neutralSupporting`) | Reasoning indicators. |
+| `dim` | `#76746f` (`neutralSupporting`) | Scaffolding: separators, shortcuts, durations, timestamps. |
+| `muted` | `#76746f` (`neutralReading`) | Secondary text: paths, previews, telemetry counts. |
+| `title` | `#767572` (`neutralStrong`) | Overlay and frame headers. |
+| `frame` | `#76756f` (`border`) | Borders, dividers, unused context meter space. |
+| `frameStrong` | `#03864a` (`cyanReading`) | Compatibility name; the transcript scrollbar thumb paints the `scrollMarker` role, which resolves to the same palette entry. |
+
+The palette keeps neutral stone and ivory tones for text, with the brand green and a secondary azure as accents. The palette entry names are historical: the `cyan*` entries and the `cyan` intent carry the brand green, and the `orange*` entries and the `action` intent carry the azure. Near-white is reserved for answers and entered text.
+
+The wordmark uses two roles: `wordmark` (focal, `cyan` intent, bold) for Pan and `wordmarkCode` (focal, `action` intent, bold) for Code. `wordmarkName` in [segments.ts](../../src/interactive/theme/segments.ts) sets the name as live text in those two roles, and the block wordmark ([welcome-art.ts](../../src/interactive/welcome-art.ts)) runs one green-to-azure ramp from `wordmark` to `wordmarkCode`; below truecolor the two words are two flat tones.
+
+Each palette entry has three projections in [theme-token-hex.ts](../../src/core/theme-token-hex.ts), one per terminal background, each with a truecolor hex and an indexed xterm color. Background resolution ([terminal-background.ts](../../src/core/terminal-background.ts)) takes `PANCODE_THEME` first (`dark`, `light`, or `neutral` for the unknown column), then the answer to the startup OSC 11 query, then `COLORFGBG`, then unknown. The startup query is followed by DA1 so that a terminal which ignores OSC 11 costs one round trip, with a 200 ms cap. A dark terminal gets the brighter projection, a light terminal gets deeper tones, and an unknown background uses the mid-luminance column. Truecolor is used when `COLORTERM` or `TERM` names `truecolor` or `24bit`; otherwise the indexed color applies. `NO_COLOR` set to a nonempty value, `TERM=dumb` and `TERM=unknown` disable color. State is also spelled by labels, meter fill, and motion, so a monochrome terminal does not have to infer it from hue.
+
+### 1.2 Placement Invariants
+
+- **State Indication**: Color is strictly functional. Telemetry and neutral numbers use `muted` or `dim`.
+- **Action Scarcity**: The azure `action` accent marks live work and a pending operator decision. Settled rows and idle borders stay green or neutral.
+- **Budgeting**: Max one non-neutral token per chip; max one status token per framed card.
+- **Status Colors Mean Status**: `success`, `warning` and `error` mark outcomes and conditions only. Categorical color, such as context meter categories, shell flags and code ink, uses brand, `tool`, `info`, `reason` or `agent`, so a healthy screen never shows amber or red.
+- **Yolo Surface**: Under `yolo` autonomy only the composer and its docked menus change. They paint on the `yoloSurface` background with ivory input text and azure command hints, and the top rail carries a `━ YOLO` label. Errors, warnings and selection keep their normal colors ([yolo-surface.ts](../../src/interactive/theme/yolo-surface.ts)).
+
+### 1.3 Composer Rails
+
+The composer is framed by a top and a bottom rail. Both are drawn with bold `━` in the `composerRail` role (`cyanFocal`). The rails never animate: `PancodeEditor` always renders them static, so working, steering and permission states are carried by the labels below, not by motion or hue.
+
+| Rail | Content |
+| :--- | :--- |
+| Top, left | `━ YOLO` under `yolo` autonomy. |
+| Top, label | A phase mark, the model nickname, and the activity wording (see [4.4](#44-composer-phases)). |
+| Top, right | Hidden-line count (`↑N`) when the draft scrolls, and `STEER` or `FOLLOW-UP` while a run is live and a draft is typed. |
+| Bottom, right | Hidden-line count (`↓N`), permission or menu key hints, the thinking hint and the context occupancy bar. The keys take room first, then the thinking hint, and the context bar is dropped when it does not fit. |
+
+The bottom rail's context bar is 6 cells wide, 10 cells from 100 columns. The thinking hint is four static marks: `off` fills none, `minimal` and `low` fill one, `medium` two, `high` three, and `xhigh`, `max` four, with `max` in attention ink. Marks are `●` and `○`, or the Nerd Font brain glyph when `PANCODE_NERD_FONT=1`. The hint falls back to text (`think <level>`) for binary or forced thinking capabilities, an unsupported level, a rail too narrow for four marks, screen-reader mode and color-disabled terminals. Thinking is absent from the footer.
+
+---
+
+## 2. Glyph Vocabulary
+
+All symbols are defined in the `GLYPH` object in [src/core/glyphs.ts](../../src/core/glyphs.ts), which the pane process shares and [theme/glyphs.ts](../../src/interactive/theme/glyphs.ts) re-exports beside the spinner. A glyph means one thing everywhere; a surface that needs a new meaning asks for a new constant rather than borrowing a shape. `PANCODE_ASCII=1`, `TERM=dumb` and `TERM=unknown` select a parallel ASCII table (`ASCII_GLYPHS`) with the same keys and meanings. `UNICODE_GLYPH` is the Unicode table in every mode, for reading text a mode-blind producer wrote, never for drawing. `MARKER` holds in-band code points PanCode writes for its own parsers (code-block spacing and line tags, export fences, the pasted-`!` guard), which keep one value in every mode. Lint's `glyph-discipline` check requires every `ASCII_GLYPHS` value to be an ASCII literal.
+
+| Glyph | `GLYPH` key | Token | Meaning | Used by |
+| :--- | :--- | :--- | :--- | :--- |
+| `▐P▌` | `brand` | `accent`, `title` | Brand wordmark | Launchpad, session header and expanded footer title. |
+| `■` | `agent` | `accent` | Agent voice | First row of agent prose; `error` on a failed turn. |
+| `▌` | `userBar` | `accent` | Operator input | Gutter of every prompt row. |
+| `›` | `user` | `action` | Quoted operator text | Steering queue entries, `/btw` and `/draft` request echoes, command reference cards. |
+| `❯` | `cursor` | `accent` | Focus | Selected row in lists, menus and overlays; Pi SelectList renders it through the public `selectedText` theme hook. |
+| `▸` | `toolHeader` | `tool` | Observe or search | Reads, listings, searches. |
+| `§` | `classKnowledge` | `tool` | Knowledge or skill | Context, docs, PanHub, evidence, skills. |
+| `±` | `classMutate` | `tool` | Mutate | Writes, patches, edits. |
+| `$` | `classExecute` | `tool` | Execute | Shell commands, checks, git. |
+| `↗` | `classNetwork` | `tool` | Network | Web fetches. |
+| `?` | `classInteraction` | `warning` | Operator question | Approvals and `ask_user`. |
+| `⇢` | `classExternal` | `tool` | External call | MCP tools and gateways. |
+| `◇` | `workerHuman` | `accent` | Run the operator started | Worker block, board origin column, footer count. |
+| `◆` | `workerAgent` | `agent` | Run the model started | Same surfaces as `◇`. |
+| `·` | `workerInternal` | by audience | Internal run | Board origin column only; elsewhere `·` is the unit separator. |
+| `↳` | `subProcess` | by audience | Helper or shadow run | One-row helper lines. |
+| `●` | `running` | `accent` | Running | Status marks, island rows. |
+| `◌` | `queued` | `dim` | Queued or pending | Status marks, task island, held boot submissions. |
+| `⚙` | `phaseTool` | `muted` | Live tool activity | Running tool rows. |
+| `✓` | `ok` | `success` | Done | Outcomes, reviewed trust verdicts. |
+| `✗` | `error` | `error` | Failed | Outcomes, compromised trust verdicts. |
+| `⊘` | `cancelled` | `dim` | Cancelled | Aborted turns and runs. |
+| `↻` | `phaseRetry` | `warning` | Retry | Provider retries and failover. |
+| `i` | `info` | `info` | Notice | Info notices. |
+| `!` | `warn` | `warning` | Warning | Warning notices, quota limits, stale state. |
+| `│` | `rail` | `frame` | Rail | Island sides, column separators. |
+| `╌` | `innerDivider` | `frame` | Inner divider | Rows inside an island. |
+| `…` | `ellipsis` | inherits | Cut | Every truncation. |
+| `↺` | `recent` | `dim` | Recently used | Model picker mark column. |
+| `━` `─` | `meterFull` `meterEmpty` | by meter | Meter cells | Quota and resource bars. |
+| `→` | `next` | inherits | Next step | Key chords, the expanded footer's close hint. |
+| `•` | `bullet` | inherits | List item lead | List items; the mask over each typed character of a secret. |
+| `−` | `minus` | inherits | Decrease | Beside a `+`, as wide as it. |
+| `╭` `╮` `╰` `╯` | `roundTopLeft` `roundTopRight` `roundBottomLeft` `roundBottomRight` | `border` | Round corners | A box a view asks to draw round. |
+
+Trust verdicts on a dispatch card print `✓` for reviewed (`success`) and `✗` for compromised (`error`). Grounded (`info`) and unverified (`body`) print the verdict word alone, because a diamond on that line would read as an origin.
+
+---
+
+## 3. Structural Layouts
+
+### 3.1 The Island (Framed Block)
+Every framed block is built by `frame()` and `innerDivider()` in [rules.ts](../../src/interactive/theme/rules.ts): the launchpad, the task island, the live Fleet runs island, notices, the steering queue and the exit summary. The Fleet Runs board is a docked overlay and draws a run table instead. No surface draws its own corners, tees or rounded frame.
+- **Header**: Embedded in the top border in bold `heading`: `┌─ Title ─────────── meta ─┐`. Optional right metadata is `annotation`. A title wider than the island is clipped with `…` before the corner.
+- **Body**: `│ ` + content padded to the inner width + ` │`. Sections inside one island are separated by a full-width `╌` row, never by a `├┤` tee.
+- **Width**: Every row is exactly the island width in visible cells (minimum 4). Content is truncated with `…`, never wrapped past the rail.
+- **Color**: Corners and fills use the `border` role; the inner divider uses `divider`.
+
+### 3.2 Docked Surfaces and Overlays
+Every modal surface (`/settings`, pickers, `/view`, `/tasks`, `/usage`, permission cards, interviews) lives in the dock ([dock.ts](../../src/interactive/dock.ts)), the composer's own slot, instead of floating over the transcript. The engine keeps one overlay per frame so focus and input routing stay unchanged, but that overlay paints nothing: the frame registers with the dock and the composer draws it in normal flow between its rails, the way slash autocomplete is drawn. The transcript keeps its position and its scrollback and stays selectable by the terminal. A docked body is at most 16 rows (`DOCK_BODY_ROWS_MAX`) and shrinks to leave two rails, the footer and a sliver of transcript, with a floor of 3 rows. A permission card keeps the composer's draft visible beneath its body, because a steer typed while a call is parked is what the `CONFIRM` label is for.
+- Header: Centered or left-aligned title with category tabs.
+- Navigation: `↑`/`↓` for items, `Tab` for sections, `Enter` to select, `Esc` to close.
+- **Selection**: A focused row carries `❯`. Self-drawn lists use `selectionMark` and `selectionLabel` in [overlay-frame.ts](../../src/interactive/overlay-frame.ts) for an `accent` marker and bold `accent` label. Rows built from the design primitives use `selectionRow` in [primitives.ts](../../src/interactive/theme/primitives.ts). Pi SelectList uses the public `selectedText` hook to replace its leading arrow with `❯` and style the selected row in bold `selectedOption`, including its description. No subclass or dependency patch is used.
+- **Permission card**: From the top, an identity row with the tool in its transcript glyph and color, the action class in a risk tone and the rule that fired; the target in a gutter block that folds and is never clipped; a fact table (`why`, `effect`, `mutation`, `asked by`, `authority`, `advisory`); the unattended countdown; and allow, deny and stop as choice rows with their consequences ([permission-overlay.ts](../../src/interactive/permission-overlay.ts), [permission-card-rows.ts](../../src/interactive/permission-card-rows.ts)). A short dock folds the choices to one wrapped row, then pins the identity and choices around a scrolling window, and on the shortest cards the choices join the window. The rail carries only the keys the card's rows do not name, and takes allow, deny and stop back whenever those rows are off screen. Opening the terms brings the window to the choices, with the terms below them.
+- **Floating exception**: The task island is the one surface that still floats: a non-capturing overlay at the top right. The `?` key card is a non-capturing docked frame.
+- **Pane-host docks are a different mechanism**: The files, music and workers docks are Herdr panes beside PanCode's own pane, not composer dock frames, and they never draw into the transcript or the composer. They have three states (visible, hidden, closed), a first-tap show or hide on `Alt+E`, `Alt+A` and `Alt+W`, and a double tap within 400 ms that closes them. `Alt+W` opens or shows the workers dock and leaves the keyboard in PanCode's composer; when the dock cannot open, because the pane is too narrow or the host refuses the split, the key opens the Fleet Runs board instead and the notice says why. In a session without a pane host the workers key opens the Fleet Runs board. Launch prints nothing when the pane host is not installed; `/panes`, `/files` and `Alt+E` then name `pancode panes install`, and `/doctor` warns. [Panes and the Files Pane](../guide/panes-and-files.md#showing-hiding-and-closing-docks) specifies them.
+
+### 3.3 Dispatch Status Marks
+A run's status is a glyph and a word from `dispatchStatusPresentation` in [dispatch-row-model.ts](../../src/interactive/dispatch-row-model.ts):
+
+| Status | Mark | Token |
+| :--- | :--- | :--- |
+| running | `●` | glyph `activity`, word `dispatchAction` |
+| queued | `◌` | `body` |
+| retrying | `↻` | `warning` |
+| cancelling | `⊘` | `warning` |
+| stale | `!` | `warning` |
+| completed (`done` when compact) | `✓` | `success` |
+| failed (`fail` when compact), dead | `✗` | `error` |
+| aborted (`abort` when compact) | `⊘` | `annotation` |
+
+Live work may animate through `activityCue`; waits on the operator hold a static mark. Nothing animates under `PANCODE_REDUCE_MOTION=1`, screen-reader mode, `NO_COLOR` or the ASCII glyph set. Demo guidance does not control motion.
+
+### 3.4 Width Degradation
+
+No row exceeds the terminal width in visible cells at any width. `tests/contracts/tui-island-frames.test.ts` and `tests/contracts/transcript-retry-prefix.test.ts` render at 60, 80, 120 and 200 columns, and `tests/extended/rendering-invariants.test.ts` also renders at 40. The thresholds below are constants in the named modules.
+
+| Surface | Rule |
+| :--- | :--- |
+| Launchpad | Under 76 columns the compact wordmark sits on one band above the details, and under 57 columns the brand moves into the frame title. From 76 the stacked compact wordmark sits beside the details, from 100 the wide wordmark, and from 160 a rotating hint column is added. |
+| Session header | One row. Under pressure the branch drops first, then the path, then the name and version, and the route is protected. |
+| Fleet runs | Docked above the composer while a run is live, at every width. |
+| Task island | 48 cells wide at the top right. Shown from 80 columns and 18 rows, hidden when an overlay is open, the footer is expanded, a non-helper run is live or no task is open. |
+| Context progress | A full-width three-row rail directly above the composer, shown while a compaction, init, refresh or reset runs and for 6 seconds after it ends. |
+| Council card | Side-by-side columns while every column is at least 34 cells wide after 2-cell gutters, otherwise stacked. |
+| Compact footer | Two rows. Line 1 reserves a stats column at least 28 cells wide once a figure shows, capped at 40% of the width, so changing numbers do not move the path. At 60 columns or fewer, line 2 is omitted when it has nothing to say, and key hints drop the learning hint beside pinned keys. |
+| Expanded footer | One page. Its height follows the terminal: a third of the rows, never fewer than 6 or more than 8. What does not fit scrolls with `Alt+PgUp` and `Alt+PgDn`. |
+| Transcript | Prompt and prose rows wrap. Tables, code and diagrams are fitted to the width (see [5.1](#51-assistant-text-rendering)). Fullscreen reserves the last column for the scrollbar. |
+
+Gutters stay 2 columns with hanging indents.
+
+### 3.5 Pinned Islands and the Dynamic Transcript
+
+The viewport has two kinds of content.
+
+- **Pinned**: the dock below the transcript in [layout.ts](../../src/interactive/layout.ts), from top to bottom: the steering queue (`Steering Queue` island), the context progress rail, the composer, the transient Fleet & Loop band ([fleet-band.ts](../../src/interactive/footer/fleet-band.ts)), and the footer status line. While runs or loops are live at `standard` and `detailed`, the transient Fleet & Loop band renders directly above the status line (up to three per-worker rows sorted worst-first plus an overflow summary, collapsing to one summary rule when the Herdr Watch pane is open and folding to zero rows when idle or when `/fleet` is open). At `compact`, worker and loop counts stay on the two-row status ceiling. A one-second ticker reconciles the board and repaints elapsed times only while a run, context progress or the task row is live; idle, it stops, and the next run event or context change starts it again ([interactive-tickers.ts](../../src/interactive/interactive-tickers.ts)). The task island is a non-capturing top-right summary owned by `src/interactive/interactive-tickers.ts`, and it hides while an overlay is open or the footer is expanded. The decision board stays a capturing docked surface (`/decisions`), because a decision needs the keyboard and an island may not hold it.
+- **Dynamic**: everything in the transcript. Dispatch, council and worker state render as transcript blocks that update in place; the islands summarize them and never become a second history.
+
+**Hydration.** The instant shell paints `createBootWelcome` with the settings already read, at the same geometry as the hydrated launchpad. A resumed session replays its turns through the same panel operations a live turn uses (`rehydrateChatPanelFromTurns` in `src/interactive/chat-renderer.ts`), and the settled entries are pre-rendered in the other output styles while idle.
+
+**Stream ticks.** The chat panel returns a frame as `ChatPanelRegions`: a frozen `prefix` of the contiguous settled entries from the top of the transcript, and a `tail`. The prefix array keeps its identity across stream ticks, and the regular-mode root skips rewriting it while it sits at the same row. A settled entry is a committed prompt, a non-live replay block, a finished worker, a retry row, or an assistant entry with no pending message and no running tool. A stream tick renders the live entry and reuses every cached one, so `ChatPanelRenderMetrics.entriesRendered` is 1 per tick while one entry streams. Inside that entry, a running turn's settled head also joins the freeze. The head is its segments up to its last finalized text, with every call before that text finished, and it is joined once. A tick then walks only the segments after the head (`segmentsRendered`), so a turn that streams thousands of messages copies only its live rows. A head segment that changes, through its text or a settled call's revision, drops the head and the head's part of the freeze. A live worker card is cached too: its own state changes drop its render, and while it has a running tool the render key also carries the panel's 100 ms clock tick, so only elapsed time re-renders it. An entry that changes after it settles, such as a retry row for the same attempt, drops its cached render and the freeze behind it.
+
+**Prose reuse.** Inside an entry, each assistant text segment and each reasoning stretch keeps its wrapped rows for up to three layouts (width and fence mode, plus the preview budget for reasoning), keyed by its source text, whether it is finalized and the skin epoch. Another entry streaming or a running tool's clock therefore never re-wraps earlier prose. A worker card projects its answer preview and redaction incrementally over appended deltas, and caches each redacted display field by its source text ([worker-entry.ts](../../src/interactive/renderers/worker-entry.ts)).
+
+**Streaming reasoning.** An open reasoning rail with a row budget keeps the reasoning up to its last certified line break wrapped once and holds only that part's last rows, so a delta redacts and wraps only the text after the break and its cost does not grow with the length of the reasoning ([chat-thinking-rail.ts](../../src/interactive/chat-thinking-rail.ts)). A break is certified only where no redaction pattern can cross it: not after a line whose last token leads into a value (a flag, a credential word, `:`, `=` or a quote) or a `curl` or `docker` line, and not before a token that holds `:`, `=` or a quote. The text on each side then redacts as the whole text would. The rail looks for a new break once at least 2,048 characters have accumulated past the last one.
+
+**Streaming reply.** While an answer streams, a frame's work stays off the rows it did not change. Text segments change only by append or replace, and an append feeds the prose and redaction projections only the new text ([assistant-prose.ts](../../src/core/assistant-prose.ts), [redaction.ts](../../src/domains/safety/redaction.ts)), so a frame neither flattens nor compares the whole reply. The gutter rows of unchanged leading rows are reused, and the suggestion and stray-mark checks follow the appended text instead of scanning the reply ([chat-panel.ts](../../src/interactive/chat-panel.ts), [chat-entry-rows.ts](../../src/interactive/chat-entry-rows.ts)). Markdown itself re-lexes only the open tail ([5.1](#51-assistant-text-rendering)). In the regular screen, the pi-tui patch runs the OSC 133 prompt-marker strip only on rows that start with the marker, where stock pi-tui runs it on every row of every frame ([patch notes](https://github.com/akougkas/pancode/blob/main/patches/README.md)). The rendered rows are the same either way.
+
+**Finished work.** A running turn's assistant entry keeps the rows of its finished calls, and a late result or an attached worker card drops them; a Compact fold re-renders only when it grows. A worker card compares the telemetry values it prints, so a batch that moved none of them keeps its rows and the run of settled rows around it. Fullscreen composes its document only when the header or transcript changes, and a streamed token writes the header and the changed row pieces into a pooled array that already holds the settled runs.
+
+**Pacing.** While pacing is active, a delta landing on an empty queue is released at once, and only a burst's excess is spread out, over a window of at most 250 ms that follows the provider's cadence ([stream-pacer.ts](../../src/interactive/stream-pacer.ts)). Past 20 KiB of open reply, answer text is applied no more often than keeps its Markdown layout under 30 percent of the main thread, at most 2 seconds apart, so a keystroke's frame reuses the last layout. Every ordered boundary releases the held text first ([chat-renderer.ts](../../src/interactive/chat-renderer.ts)).
+
+**Measuring.** `src/interactive/render-trace.ts` records frames, panel `entriesRendered`, `segmentsRendered` and `cacheHit`, a chat submit's phases from Enter to admission, bytes written per commit, and `rowsChanged`: the number of root rows that differ from the previous frame at the same index. Set `PANCODE_RENDER_TRACE` to a file path to arm the trace. `rowsChanged` is computed only while a trace file is armed and is an estimate of pi-tui's differential write, since a viewport move, a resize or an overlay can make pi-tui repaint more rows. `scripts/bench-tui.ts` drives provider-free render workloads, and `scripts/bench-tui-feedback.ts` measures feedback latency through a real PTY against a fake provider; neither includes terminal painting. Tests never assert wall-clock time.
+
+### 3.6 Screen Modes
+
+`interface.mode` selects the renderer: `regular` (default) preserves terminal scrollback and appends the dock after the transcript, and `fullscreen` uses the alternate screen with a scrolling transcript view above a pinned dock. In fullscreen the transcript view follows the end until the operator scrolls, `interface.fullscreenScrollbar` (`hidden`, `auto` default, `always`) controls the scrollbar, and a submission returns the view to the live edge. The scrollbar column is reserved whenever a scrollbar can appear, so it never reflows rows. While the view is scrolled away from the live edge, a `↓ latest` marker sits on the transcript's last row, and a left click on it returns to the live edge ([interactive-shell.ts](../../src/interactive/interactive-shell.ts)). A width change re-wraps the rows above a scrolled-up reader, so the view's top moves by the same share of the content height and the reader stays near their place; a view that follows the end keeps following, and a height-only change keeps its row ([layout.ts](../../src/interactive/layout.ts)). Paging, search and mouse scrolling exist only in fullscreen; regular mode relies on the terminal's own scrollback and Find. Search matches and the search box's buttons take the theme's colors (`transcriptSearchTheme` in [components.ts](../../src/interactive/theme/components.ts)).
+
+### 3.7 Overlay Input and the Mouse Wheel
+
+One application input gate registers on the TUI before any other listener ([application-input-tui.ts](../../src/engine/application-input-tui.ts)), so PanCode's policy sees every key before Pi's viewport shortcuts and the focused widget. Key-release events are dropped there, and bracketed paste reaches the policy as literal data.
+
+In fullscreen with any overlay visible, the mouse wheel scrolls the transcript and never moves list choices. Pi would offer the wheel to the overlay under the pointer, where its select and settings lists turn it into selection moves; the gate instead scrolls the transcript and consumes the event. The step follows the wheel's speed, as it does with no overlay open: one row for an isolated notch and up to six rows per report on a fast spin, and five times that with Alt. A local macOS terminal already accelerates the wheel, so each report moves one row there. A selection is dropped when the transcript scrolls under an overlay, because its cells would then show other text. Choices move only on keys.
+
+Pointer and focus reports are not keys ([terminal-reports.ts](../../src/interactive/terminal-reports.ts)). Fullscreen turns on mouse tracking and focus reporting, and the router classifies those reports before any key handling: they never disarm the `Ctrl+C` exit, close the key card or the action menu, or reach a focused overlay. With no overlay open, and while transcript search is focused, a pointer report goes on to Pi's viewport, which drives selection and the search box's buttons. While a modal overlay owns the keyboard, the report runs through Pi's text selection alone (`selectPastOverlay`), so a drag selects and copies but never moves or confirms a choice, and a left press on the `↓ latest` marker still returns to the live edge. Inside tmux, zellij, screen and Herdr, fullscreen asks only for button-motion tracking (DECSET 1002, not 1003), so a pointer moving with no button held sends no reports.
+
+Ctrl+Z suspends PanCode from every modal owner: the suspend action is checked before transcript search, the side question, the context view, a permission card or the dispatch board can consume the key ([application-controller.ts](../../src/interactive/application-controller.ts)).
+
+In fullscreen, a mouse selection in the transcript copies the text as it was written, not the painted rows ([selection-text.ts](../../src/engine/selection-text.ts)). The chat panel prefixes each prose, code, prompt and action row with a zero-width copy mark that says whether the row starts a line or continues the row above and how many decoration cells follow. The renderer strips the marks before a row is painted or diffed, and rebuilds the copied text from them through the patched `selectionText` hook. A wrapped paragraph, list item or prompt line copies as one line; a wrapped code line copies as its source line without the block indent or the `↪` wrap mark; and the turn glyph, the 2-cell gutter, the prompt bar and an action row's glyph are left out. Table rows copy as drawn, without the gutter, and a tab copies as the three spaces Markdown expands it to. Where a wrap sits beside a Chinese, Japanese or Korean letter, the mark is read from the source text, so no space is added at the wrap and a space between Korean words is kept; Korean wrapped within a few characters of bold or code markup can still gain a space inside a word. The same holds for a transcript selection beside the search box, the key card or a modal card, while a press that lands on an overlay's own cells selects screen rows. A selection is dropped on the first frame at a new width, because every row re-wraps; a height-only change keeps it. Regular mode and `/export` carry no marks, and the terminal owns selection there.
+
+The copy goes through the system clipboard and the flash reports the outcome ([clipboard.ts](../../src/engine/clipboard.ts)). Pi's own copy writes only an OSC 52 sequence and says `Copied!`, which many terminals ignore. PanCode tries tools whose exit status confirms delivery: Pi's native clipboard on macOS and Windows, `clip.exe` (single-line ASCII only) and `powershell.exe` on Windows and WSL, `pbcopy` on macOS, and `wl-copy`, `xclip` or `xsel` on Linux when a Wayland or X display is set. Over SSH only a forwarded X11 display is tried, because a local tool would fill the remote machine's clipboard; without one, OSC 52 is the only path and the flash reads `Sent to terminal clipboard (OSC 52)`. When no tool confirms, the OSC 52 sequence still goes out and the flash reads `Copy unconfirmed: <reasons>; OSC 52 sent`. A newer selection supersedes a slower older copy instead of racing it, and a flash repeated while the same message still shows renews that one row's timer instead of stacking a second row.
+
+A native `ask_user` interview holds a terminal-selection lease (`useTerminalSelection` in [instrumented-tui.ts](../../src/engine/instrumented-tui.ts)) for as long as it is open. The lease turns off mouse tracking (DECSET 1000, 1002, 1003 and 1006) so the terminal can select text on the stable interview screen, and it turns off alternate-scroll mode 1007. On the alternate screen without mouse tracking, mode 1007 makes a terminal send the wheel as arrow keys that arrive identical to real ones and would move the interview's choice. When the last lease releases, tracking comes back (1003 is skipped under tmux, zellij, screen and Herdr) together with 1007, the common terminal default.
+
+---
+
+## 4. Screen Surfaces & State Choreography
+
+The visual hierarchy coordinates four primary screen surfaces: Header, Transcript, Composer, and Footer.
+
+### 4.1 Welcome Launchpad & Session Header
+
+The header operates in two distinct modes:
+- **Launchpad (before the first prompt)**: Standard shows a seven-row titled panel with model, autonomy, awareness and one next action, plus an `Instructions` row when a project preload exists. Under 48 columns or 20 rows it keeps only the route and the next action. Detailed adds artwork, project facts, two reserved account-usage rows and a process-local tagline; below 48 columns or 30 rows it falls back to the Standard panel. The next action names what blocks work (`/model` for an unset route, `/settings models` for an unavailable or degraded one, then `/context init`, `/context refresh` or `/context` by awareness). Welcome-only reads happen off the render path. Compact, demo-off, the ASCII glyph set (`PANCODE_ASCII=1`, `TERM=dumb` or `TERM=unknown`) and screen-reader mode skip the launchpad and print a one-row identity header ([welcome-dashboard.ts](../../src/interactive/welcome-dashboard.ts)).
+- **Session Header (after prompt admission)**: One live line with brand, version and active route. Workspace and Git facts stay in the footer instead of repeating above the transcript. `/new` restores the tier-appropriate welcome.
+
+### 4.2 Composer (PancodeEditor)
+
+The input surface (`PancodeEditor`) frames the operator's prompt:
+- **Rails**: Framed by the static top and bottom rails of [1.3](#13-composer-rails). The empty composer reads `Ask PanCode…`. At compact output with demo guidance on, it adds `? keys · / commands` until the operator presses `?`, for at most three sessions. Its prompt changes while a parked call, a preparing turn or a compaction owns the composer (see [4.4](#44-composer-phases)).
+- **Steering Affordance**: Messages queued for a live run show in a `Steering Queue` island above the composer, which previews at most three of them and leads its key row with `+N more` when more wait, with its action hints: the queue key to review them (`a` in the navigator restores all to the composer) and the send-now key ([follow-up-queue-panel.ts](../../src/interactive/follow-up-queue-panel.ts)).
+- **New lines**: `Shift+Enter`, `Ctrl+J` and `Alt+Enter` insert a newline. `Alt+Enter` is bound explicitly so it also works under the kitty keyboard protocol, which reports it as its own key ([keybindings.ts](../../src/domains/config/keybindings.ts)).
+- **Slow attachments**: While a submitted `@file` PDF is being read, the footer shows `reading <path> · Esc cancels and keeps your message`. `Esc` or `Ctrl+C` aborts the read, sends nothing, prints no error and returns the line to the editor; a chat line enters history only after its expansion finishes.
+
+### 4.3 Progressively Disclosed Footer
+
+The compact footer uses one row when quiet and adds rows only for useful controls, facts or notices:
+- **Line 1 (Workspace & Metrics)**: Effective autonomy first, then working directory and Git branch with a `*` when dirty, and right-hand context occupancy. Standard and Detailed may add throughput; Compact leaves it to inspection. Branch and context figures stay blank until known. Once metrics appear, the footer reserves their column and the dirty marker's space so changing numbers do not shift the path's cut point. A narrow row drops the percent, then states it as `ctx N%`.
+- **Line 2 (Notices & Hints)**: One message, in this order of precedence: an armed quit or leader key, the top notice, setting feedback, a footer tip, then key hints. Beside it, when space permits, the tail shows active worker count, armed skill names and the selected model's weekly quota headroom. Key hints pin the keys that answer the moment and describe what the composer holds now ([key-hints.ts](../../src/interactive/footer/key-hints.ts)). While the composer is empty, one learning hint may sit beside them. It holds until the operator presses its key and then gives way to the next key not yet pressed (`harness-profile.json`); a draft, a narrow footer that already pins keys, Compact output or `interface.demo` off drops it. A hint is shown whole or not at all, and a key whose target does not exist right now is never offered.
+- **Notice Slot**: Line 2 has room for one notice. It shows the head of the notice center's order, most severe first and newest within a level, with the level's glyph and token. A notice that is multi-line or wider than its room is cut and ends in `Alt+U more` (`Alt+U +<n> more` when other notices wait), and a dismissable notice adds `Ctrl+G X dismiss`; the Details page wraps it in full.
+- **Narrow Terminals**: Secondary hints yield space to the context percentage and phase without wrapping; optional counts drop before a number is cut.
+
+The expanded footer is one page, titled Details, which `Alt+U` opens and the next press folds ([pages.ts](../../src/interactive/footer/pages.ts)). It leads with the harness phase and live figures, then one context line, one spend line with the session ceiling, the workers and live notices. Its last row names `/context`, `/usage` and `/fleet` for detail. The machine counters are on the Health tab of `/usage` and are sampled only while that tab is visible. Worker counts in both footers include running, queued, cancelling, retrying and stale runs.
+
+### 4.4 Composer Phases
+
+The live phase is named on the composer's top rail, after the model nickname. It is not in the footer.
+
+| Phase | Top-rail wording |
+| :--- | :--- |
+| Preparing a consumed prompt | `is preparing` |
+| Waiting for the model | `is waiting for a response` |
+| Thinking | `is thinking` |
+| Writing | `is writing`, or `is preparing a tool` while a tool call forms |
+| Tool running | Tool-specific wording, or `is running <tool>` |
+| Dispatch in flight | `is waiting for a worker` |
+| Approval required | `needs approval`, with the keys the card's rows do not name on the bottom rail |
+| Retrying | `is retrying <attempt>/<max>` |
+| Compacting | `is compacting context` |
+| No output | `has no output · <seconds>s` |
+| Ended | `finished`, `failed`, `was cancelled`, `reached the output limit`, or `stopped generating tool arguments` |
+
+While the composer is empty its placeholder follows the mode: `A parked call is waiting for your decision`, `PanCode has your prompt and is preparing the turn`, or `PanCode is compacting the session context`. The expanded footer's first row leads with the footer phase; when idle it leads with the last turn, or `no turn yet`.
+
+### 4.5 Exit Summary
+
+A clean interactive exit prints a branded session summary in the island frame when `interface.exitSummary` is `on` (the default); `off` prints only the command that resumes the session. Output detail caps the summary at 5 rows in compact, 12 in standard and 24 in detailed, never taller than the terminal allows. A settings file that holds `auto`, `brief`, `standard`, `report` or `full` is refused. In regular mode the last frame stays in scrollback, so the exit frame drops the dock, the composer with its rails and the footer included, and the summary follows the transcript ([layout.ts](../../src/interactive/layout.ts)). Contents, timing and suppression are in [Exit summary](../guide/commands-and-modes.md#exit-summary).
+
+---
+
+## 5. Transcript & Gutter Grammar
+
+Every transcript row follows a rigid 2-column gutter format:
+```text
+<gutter:2> <content>
+```
+- **Prose Head**: `■ ` followed by text in standard color.
+- **Prose Continuation**: `  ` indented 2 spaces.
+- **Tool Action Row**: Class glyph (`▸`, `§`, `±`, `$`, `↗`, `?`, `⇢`) + verb + scalar target + outcome (`✓ Done · 12ms`).
+- **Operator Grant**: A call that ran because the operator allowed it at a permission card keeps a rail row under its action row, `? allowed by you · safety-net rail <rule>` or `· autonomy level <level>`, with `?` in `warning`. Compact never folds such a call into its neighbors. The row is live only, because the approval facts never reach the session ledger.
+- **YOLO Receipt**: A risky call that actually started under `yolo` keeps `YOLO auto-approved · no prompt` under its action row, and a chain keeps it above its step rows. Compact never folds it away. A local read, a call at `default`, a one-shot grant and a call refused before it started carry none. Unlike an operator grant, the mark is stored with the call, so it returns on replay and on resume after switching to `default`, and calls inside delegated runs and chains keep it.
+- **Edit Preview**: An `edit` call shows its diff as soon as its arguments close, before it runs, in Standard and Detailed. Compact keeps the row alone. Long-running write, edit and command output streams in the fixed-height live windows of the output-style table.
+- **Tool Images**: On a terminal that speaks the Kitty or iTerm2 graphics protocol, a settled tool card in Standard and Detailed draws its result's images under the body: the image blocks the model saw or, on a text-only route, the screenshot files the tool named (at most 4 per card, each at most 18 rows by 100 columns; a screenshot file over 8 MiB is skipped). Compact keeps its one row, an export writes no image escapes, and other terminals keep the path and `[image ...]` lines.
+- **Worker Rows**: The origin mark (`◆` model, `◇` operator) heads the worker block; a running tool inside it shows `⚙`.
+- **Turn Settlement**: The final outcome closes the block with its mark in the gutter. Every tier closes the receipt with the turn's local end time, with the date when the turn ended on another day; a replayed or resumed session shows each turn's recorded end time. Compact ends with one dim row of the outcome glyph, duration and end time (`✓ 900ms · 18:42`), keeping the outcome word for anything but Done. Standard prints the outcome and duration, then, as the width allows, the call, retry and move counts, a coverage note, tokens and the cached amount (`✓ Done · 1m4s · 3 calls · 18:42`). A turn that ends while workers it or the operator started still run is not Done: it closes with the dispatch mark as `⇲ Turn ended · 2 workers running · 14s · 18:42`, and the workers' own cards report when they settle. A turn whose last reply the repetition guard stopped reads `Generation stopped`, not `Cancelled`, in the footer, the receipt and replay. Detailed adds the call count when more than one, input and output tokens, cache read and write, reasoning (`≈` when estimated), cost, why a cold cache was expected, how many calls reported no usage, and the end time (`✓ Done · 14s · 3 calls · in 100k · out 380 · 18:42`).
+- **Context Progress**: Known stage counts fill the bar; unknown work advances an unfilled marker monotonically within the stage without claiming a percentage. Helper timing stays live, showing elapsed seconds, the limit and the run id.
+
+### 5.1 Assistant Text Rendering
+
+Assistant text renders through stock pi-tui `Markdown` ([chat-markdown.ts](../../src/interactive/chat-markdown.ts)): one component per finished text segment, and while a segment streams, a settled head of whole blocks rendered once per width plus the open tail, which is all a delta lexes again. A turn is a sequence of text and tool segments in event order, so a reply interleaved with tool calls has several segments. The head grows only at cuts [markdown-blocks.ts](../../src/interactive/renderers/markdown-blocks.ts) proves render the same apart as within the whole: after a blank-line run, or between two blocks with no blank line where a heading, fence or rule closes the block above (the head then adds the spacing row Pi draws there), whose next line is complete, with no reference definition in the text, no display-math block or inline-math fence open across it, and no `$$` or `\[` line above it that Pi still reads as text, since a closing line arriving later makes one math block from there on. A tail that is one top-level fence still open draws its complete lines once per width and style, each inked from the lexer state the lines above leave, so a delta draws only the line still open. A piece never ends on a line Pi would trim there as a closing fence still being typed, such as a template literal's lone backtick, and a fence that a carriage return, a closing line marked reads (extra marker characters, a tab indent) or inline math set differently in a piece could change renders whole. Markdown renders each top-level block independently and caches by text and width, which keeps the rows above the open block byte-stable while text arrives and lets a finished answer restyle at most the block that was still open. PanCode adds no second renderer or post-processor; the changes reach Markdown through its theme and transform hooks.
+
+- **Code fences**: Ink comes through the theme's `highlightCode` hook, keyed on the first word of the info string, which is the only part used (`ts title="a.ts"` is read as `ts`). The chat panel draws no fence rows for a top-level block: the block opens with its language word as a quiet label, `code` in the live transcript when the fence names none, and its closing fence draws nothing. A code line longer than the row wraps under the block's indent behind a `↪` mark in the live transcript.
+- **Tables**: A pipe table is kept for Pi to draw while the width allows 15 cells per column plus one. Narrower than that, it becomes one block per row of `header: value` lines separated by rules.
+- **Math**: `renderLatex` is on.
+- **Mermaid**: A top-level fence whose language word is `mermaid` is drawn as a diagram with box-drawing rows ([mermaid.ts](../../src/interactive/renderers/mermaid.ts)). A flowchart or graph declared `LR` that is wider than the terminal is retried as `TD`. The fence falls back to its source only when the diagram cannot be drawn, is still wider than the terminal after the retry, or is taller than 120 rows. Once the fence is closed, the source is followed by `Mermaid diagram shown as source: it <reason>.`, with the reason stated as `could not be drawn`, `is N columns wide and the terminal fits M`, or `is N rows tall, over the 120-row limit`. A fence still streaming shows no note. Fences nested in lists or quotes are not drawn as diagrams.
+- **Reasoning**: Supplied reasoning is a separate italic excerpt rail. Inline emphasis markers are dropped from it and its length follows the output style.
+
+PanCode cannot inspect how its replies render on the operator's screen. The surface lays out the generated text using the terminal width and the settings above; the drawn rows are not returned to the model. A report of an incorrect display therefore describes rendering that the model cannot inspect. Guidance for this limitation, including keeping diagrams top-to-bottom with short labels, is in the attended-only `identity.pancode-attended` fragment, so headless runs and workers do not receive it.
+
+### 5.2 Cards
+
+A card is the block the TUI draws about one piece of work: a tool call, an approval, a question, a diff or a notice. Inline cards share one geometry from [card.ts](../../src/interactive/card.ts):
+
+```text
+$ ran `npm test` · exit 1 ✗ · 4.1s       head: hanging wrap, status tail never split
+  │ not ok 3 - retries once               body: rail, budgeted by output style
+  │ … 12 earlier lines · /view            what was cut, and where to read it
+```
+
+- **Head**: Wraps with a hanging indent in the content column. The status tail (glyph, duration) joins the last row when it fits and otherwise takes a row of its own, whole (`cardHead`).
+- **Body**: Rows sit behind a `│` rail in `gutter`, or in `error` on a failed card so the whole block reads as the failure (`cardRail`, `cardRows`).
+- **Callouts**: A framed notice is indented by the gutter and stops growing at 88 columns. Docked approval and question cards follow the same limit, so their sentences do not stretch across a wide dock; the approval's inspection keeps the dock's full width, because the column a character sits in is what it shows.
+- **Foreground cards**: Approval and question cards wait on the operator. They show every decision input at every output style: the target, the reason, the effect, the mutation, the safety judge's advisory, the timer and the choices. Output style budgets apply to background cards only.
+- **Nothing twice**: While an approval card is docked, its call's transcript row keeps only its head (`⏸ awaiting approval`). The reason and target return to the row if the card leaves unanswered or cannot mount. A single question has no `Question 1 of 1` row. A shell row names the model that asked for it only when the turn had more than one model, because `Reply from` already names it. A failed command that printed nothing shows `exit N ✗` with no body and no size.
+- **Inspection**: `/view` and the inspect toggle show a card in full without changing the output style.
+
+---
+
+## 6. Overlays & Inspection
+
+- **`/settings`**: The settings center is one docked surface over `SETTINGS_AREAS` in [settings-areas.ts](../../src/core/settings-areas.ts): Recent & Pinned, Models, Chat and display, Workers, Context and memory, Safety and limits, Workspace, Advanced. Control names and explanations come from the shared core catalog; live profile and node entries and guided actions stay beside their owning controls. The Connections group in Models offers **Add a target**, **Connect by URL** and an Edit action for URL, runtime and default model; the docked target wizard drives them through `src/cli/configure-host.ts`, loaded only when setup starts. Save writes global target settings; Esc goes back, and Ctrl+C cancels setup without quitting PanCode. Browser sign-in stores credentials immediately. Existing explicit routing defaults remain in place. Route model pickers offer **Use connection default**; proactive memory offers **Chat route (no memory model set)**. The [settings walkthrough](../guide/configuration-and-targets.md) explains navigation and the TUI's session/project/global save scopes.
+- **`/config`**: An alias for `/settings models`, as `/login` is. It opens the settings center on Models with the connections first, works during a turn and never leaves the TUI. The full-screen wizard is `pancode configure` in a terminal.
+- **`/view transcript`**: Inspect retained transcript entries and tool results through the artifact providers.
+- **`/usage`**: 6 tabs (Activity, Accounts, Session, Models, Workers, Health) with consumption vs budget percentages. Activity opens first. In Detailed, and in Standard once the workspace has a session, it leads with a Monday-first workspace session heatmap of up to 182 days (fewer weeks on small terminals); Activity also shows working-tree changes loaded asynchronously, session consumption and the first reported plan window. Session also counts verified outcomes and the tokens and cost per outcome, the figures the exit summary's `Session verified` row prints ([usage-words.ts](../../src/interactive/usage-words.ts)). Every tab scrolls within the dock.
+- **`/tasks`**: Session task board showing goals and subgoals, status, blockers, evidence and linked worker runs; the project operator inbox remains a separate store ([task-board.ts](../../src/domains/session/task-board.ts)).
+- **`/doctor`**: In-session diagnostic reports with severity-ordered findings.
+- **Key card**: On an empty composer, `?` opens a docked key card, `←` opens the workers dock in a pane-host session and Fleet Runs otherwise, as `Alt+W` does, and `↓` opens Tasks. The card is not modal, and the next key dismisses it and is consumed. With a draft, these keys keep their editing meaning.
+
+---
+
+## 7. Source Implementation Map
+
+| Subsystem | Source Location | Key Exports |
+| :--- | :--- | :--- |
+| Theme & Tokens | [tokens.ts](../../src/interactive/theme/tokens.ts) | `PancodeToken`, `createPancodeTheme`, `withThemeContext` |
+| Glyph Constants | [core/glyphs.ts](../../src/core/glyphs.ts), [theme/glyphs.ts](../../src/interactive/theme/glyphs.ts) | `GLYPH`, `UNICODE_GLYPH`, `MARKER`; `SPINNER_FRAMES` |
+| Frames and rules | [rules.ts](../../src/interactive/theme/rules.ts) | `frame`, `innerDivider`, `rule` |
+| Output style budgets | [transcript-detail.ts](../../src/interactive/transcript-detail.ts) | `transcriptDetail` |
+| Cards | [card.ts](../../src/interactive/card.ts) | `cardHead`, `cardRail`, `cardRows` |
+| Layout | [layout.ts](../../src/interactive/layout.ts) | `buildLayout` |
+| Dock | [dock.ts](../../src/interactive/dock.ts) | `dockMount`, `DOCK_BODY_ROWS_MAX` |
+| Welcome Dashboard | [welcome-dashboard.ts](../../src/interactive/welcome-dashboard.ts) | `buildWelcomeDashboardLines`, `createBootWelcome` |
+| Composer | [pancode-editor.ts](../../src/interactive/pancode-editor.ts) | `PancodeEditor` |
+| Footer | [dashboard.ts](../../src/interactive/footer/dashboard.ts) | `buildFooterDashboard` |
+| Session transcript | [session-transcript.ts](../../src/interactive/session-transcript.ts) | `createSessionTranscript` |
+| Assistant text | [chat-panel.ts](../../src/interactive/chat-panel.ts) | `createChatPanel` |
+| Mermaid | [mermaid.ts](../../src/interactive/renderers/mermaid.ts) | `createMermaidMarkdownTransform` |
+| Permission overlay | [permission-overlay.ts](../../src/interactive/permission-overlay.ts) | Permission presentation |
+| Terminal lease | [terminal-lease.ts](../../src/interactive/terminal-lease.ts) | `createProcessTerminalLease` |
+| Input gate and wheel | [application-input-tui.ts](../../src/engine/application-input-tui.ts) | `ApplicationInputTuiAltScreen` |
+| Interview selection lease | [instrumented-tui.ts](../../src/engine/instrumented-tui.ts) | `InstrumentedTuiAltScreen.useTerminalSelection` |
+| Exit summary | [exit-summary.ts](../../src/interactive/exit-summary.ts) | `renderExitSummary` |
+| Shared view words | `src/core/views/` | Approval, count, diff-row, hub, slash, tool and usage words the GUI renders too, such as `actionClassWords`, `countNoun`, `hubCopyStateWords`, `renderArgsSpec`, `toolSubject` and `usageFigure` |

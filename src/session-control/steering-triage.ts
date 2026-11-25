@@ -1,0 +1,296 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Triage: one round over the queued steering messages, typed picks from a bound
+ * System One route or else one side-model round.
+ *
+ * The queue delivers every pending message at the next slot in the order the
+ * operator typed them. Triage reads the whole queue once it has settled and
+ * says, per entry, how it relates to the work in progress and how soon it
+ * should land. A `newTask` moves to the end of the turn unless the operator
+ * pinned the entry; a confident `stop` may interrupt the run when the operator
+ * allowed that; everything else keeps its slot and gains advisory marks the
+ * panel shows. Nothing here runs on the critical path: the round is detached,
+ * a verdict that lands after the queue changed is dropped, and a failed round
+ * leaves the queue exactly as the operator left it.
+ *
+ * The relation and urgency vocabularies live in `core/steering-vocabulary.ts`,
+ * so the typed picks and the side-model round read the same labels.
+ */
+
+import type { SteeringTriageSettings, ThinkingLevel } from "../core/defaults.js";
+import type { SteerRelation, SteerUrgency } from "../core/steering-vocabulary.js";
+import { STEER_RELATIONS, STEER_URGENCIES } from "../core/steering-vocabulary.js";
+import type { SystemOne } from "../domains/system-one/index.js";
+import type { TriagePick } from "../domains/system-one/points/index.js";
+import { triagePoint } from "../domains/system-one/points/index.js";
+import type { QueuedChatMessage, QueuedMessageKind } from "./turn-queues.js";
+
+/** What a round reads of System One. */
+export type TriageSystemOne = Pick<SystemOne, "bound" | "ask">;
+
+export const TRIAGE_SCHEMA_NAME = "pancode_steering_triage";
+/** Output tokens the verdict JSON itself needs. */
+const TRIAGE_MAX_TOKENS = 600;
+/** Reasoning room a non-off triage level adds on top of the verdict's, so thinking cannot spend the answer. */
+const TRIAGE_REASONING_TOKENS: Readonly<Record<Exclude<ThinkingLevel, "off">, number>> = {
+	minimal: 1024,
+	low: 2048,
+	medium: 8192,
+	high: 16384,
+	xhigh: 32768,
+	max: 32768,
+};
+
+/** The output cap of a triage round at `level`: the verdict's room, plus reasoning room when thinking is on. */
+export function triageMaxTokens(level: ThinkingLevel): number {
+	return level === "off" ? TRIAGE_MAX_TOKENS : TRIAGE_MAX_TOKENS + TRIAGE_REASONING_TOKENS[level];
+}
+/** A `stop` below this confidence is marked, never acted on. */
+export const TRIAGE_STOP_MIN_CONFIDENCE = 0.8;
+/** A `stop` older than this when the verdict lands is stale: the operator has had time to press the key themselves. */
+export const TRIAGE_STOP_MAX_AGE_MS = 30_000;
+
+/** Code points of each queued message, the task and the latest reply sent to the triage model. */
+const MAX_ENTRY_CHARS = 600;
+const MAX_TASK_CHARS = 500;
+const MAX_PREVIOUS_CHARS = 500;
+
+export interface TriageEntry {
+	readonly id: string;
+	readonly text: string;
+	readonly kind: QueuedMessageKind;
+}
+
+export interface TriageInput {
+	/** The operator's request that started the run. */
+	readonly task: string;
+	/** The assistant's latest text, or empty. */
+	readonly previous: string;
+	readonly entries: ReadonlyArray<TriageEntry>;
+}
+
+export interface TriageVerdict {
+	readonly id: string;
+	readonly relation: SteerRelation;
+	readonly urgency: SteerUrgency;
+	/**
+	 * 0 to 1. From a side model this is its own word and never a calibrated probability. From
+	 * a typed route it is the mass on the relation. Absent when the engine declares no real
+	 * probabilities: that verdict is a label, which has no confidence and can only mark.
+	 */
+	readonly confidence?: number;
+}
+
+const RELATION_KEYS = Object.keys(STEER_RELATIONS) as ReadonlyArray<SteerRelation>;
+const URGENCY_KEYS = Object.keys(STEER_URGENCIES) as ReadonlyArray<SteerUrgency>;
+
+export const TRIAGE_RESPONSE_SCHEMA: Record<string, unknown> = {
+	type: "object",
+	additionalProperties: false,
+	properties: {
+		verdicts: {
+			type: "array",
+			items: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					id: { type: "string" },
+					relation: { type: "string", enum: [...RELATION_KEYS] },
+					urgency: { type: "string", enum: [...URGENCY_KEYS] },
+					confidence: { type: "number", minimum: 0, maximum: 1 },
+				},
+				required: ["id", "relation", "urgency", "confidence"],
+			},
+		},
+	},
+	required: ["verdicts"],
+};
+
+export const TRIAGE_SYSTEM_PROMPT = [
+	"You triage messages an operator typed while a coding assistant was working on a task.",
+	"For each queued message decide how it relates to the task in progress and how soon it should reach the assistant.",
+	`Relations: ${RELATION_KEYS.map((key) => `${key} = ${STEER_RELATIONS[key]}`).join("; ")}.`,
+	`Urgencies: ${URGENCY_KEYS.map((key) => `${key} = ${STEER_URGENCIES[key]}`).join("; ")}.`,
+	'Answer with JSON only, in the shape {"verdicts": [{"id", "relation", "urgency", "confidence"}]}, one verdict per message id, confidence between 0 and 1.',
+	"Prefer nextSlot when unsure. Use stop only for an explicit instruction to stop, wait, hold or undo.",
+].join("\n");
+
+function head(text: string, max: number): string {
+	const points = [...text];
+	return points.length <= max ? text : `${points.slice(0, max).join("")}…`;
+}
+
+function tail(text: string, max: number): string {
+	const points = [...text];
+	return points.length <= max ? text : `…${points.slice(-max).join("")}`;
+}
+
+/** The user text of the triage round: the task, the latest reply, and the queued messages with their ids. */
+export function triageUserText(input: TriageInput): string {
+	const lines = [
+		`Task in progress:\n${head(input.task, MAX_TASK_CHARS) || "(unknown)"}`,
+		`Assistant's latest text:\n${tail(input.previous, MAX_PREVIOUS_CHARS) || "(none yet)"}`,
+		"Queued messages, in the order the operator typed them:",
+		...input.entries.map(
+			(entry, index) =>
+				`${index + 1}. id=${entry.id} (operator chose: ${entry.kind === "steer" ? "next slot" : "end of turn"})\n${head(entry.text, MAX_ENTRY_CHARS)}`,
+		),
+	];
+	return lines.join("\n\n");
+}
+
+function isRelation(value: unknown): value is SteerRelation {
+	return typeof value === "string" && (RELATION_KEYS as ReadonlyArray<string>).includes(value);
+}
+
+function isUrgency(value: unknown): value is SteerUrgency {
+	return typeof value === "string" && (URGENCY_KEYS as ReadonlyArray<string>).includes(value);
+}
+
+/**
+ * The verdicts in a model answer, one per known id at most. Tolerant of prose
+ * around the JSON and of a bare array; anything unreadable yields no verdicts.
+ */
+export function parseTriageAnswer(text: string, ids: ReadonlyArray<string>): TriageVerdict[] {
+	const start = text.indexOf("{");
+	const arrayStart = text.indexOf("[");
+	const from = start < 0 ? arrayStart : arrayStart < 0 ? start : Math.min(start, arrayStart);
+	if (from < 0) return [];
+	const end = Math.max(text.lastIndexOf("}"), text.lastIndexOf("]"));
+	if (end <= from) return [];
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text.slice(from, end + 1));
+	} catch {
+		return [];
+	}
+	const list = Array.isArray(parsed)
+		? parsed
+		: parsed && typeof parsed === "object" && Array.isArray((parsed as { verdicts?: unknown }).verdicts)
+			? ((parsed as { verdicts: unknown[] }).verdicts as unknown[])
+			: [];
+	const seen = new Set<string>();
+	const verdicts: TriageVerdict[] = [];
+	for (const item of list) {
+		if (!item || typeof item !== "object") continue;
+		const { id, relation, urgency, confidence } = item as Record<string, unknown>;
+		if (typeof id !== "string" || !ids.includes(id) || seen.has(id)) continue;
+		if (!isRelation(relation) || !isUrgency(urgency)) continue;
+		const score =
+			typeof confidence === "number" && Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence)) : 0;
+		seen.add(id);
+		verdicts.push({ id, relation, urgency, confidence: score });
+	}
+	return verdicts;
+}
+
+/** The slot a verdict moves an entry to, or undefined to leave the operator's choice alone. */
+export function triageKindFor(verdict: TriageVerdict): QueuedMessageKind | undefined {
+	if (verdict.relation === "newTask" && verdict.urgency !== "now") return "follow-up";
+	return undefined;
+}
+
+/** The advisory labels an entry carries after triage; the panel marks `urgency: "now"`. */
+export function triageLabelsFor(verdict: TriageVerdict): Readonly<Record<string, string>> {
+	return {
+		producer: "triage",
+		relation: verdict.relation,
+		urgency: verdict.urgency === "now" ? "now" : verdict.urgency === "endOfTurn" ? "end-of-turn" : "next-slot",
+		...(verdict.confidence === undefined ? { readout: "label" } : { confidence: verdict.confidence.toFixed(2) }),
+	};
+}
+
+/**
+ * Whether a verdict may interrupt the run: a confident `stop` on an entry the
+ * operator typed moments ago and did not pin. Everything else is a mark.
+ */
+export function triageMayInterrupt(
+	verdict: TriageVerdict,
+	entry: Pick<QueuedChatMessage, "enqueuedAt" | "pinned">,
+	now: number,
+): boolean {
+	return (
+		verdict.relation === "stop" &&
+		verdict.confidence !== undefined &&
+		verdict.confidence >= TRIAGE_STOP_MIN_CONFIDENCE &&
+		entry.pinned !== true &&
+		now - entry.enqueuedAt <= TRIAGE_STOP_MAX_AGE_MS
+	);
+}
+
+/** Typed picks as verdicts. Without real probabilities the mass is one-hot and would always clear the stop bar, so a verdict carries none. */
+export function typedTriageVerdicts(picks: ReadonlyArray<TriagePick>, probabilities: boolean): TriageVerdict[] {
+	return picks.map(({ id, relation, urgency, mass }) => ({
+		id,
+		relation,
+		urgency,
+		...(probabilities ? { confidence: mass } : {}),
+	}));
+}
+
+/** A bound route takes the round unless the operator named a triage target, which keeps the side model. */
+function typedTriageRoute(
+	triage: Pick<SteeringTriageSettings, "target">,
+	systemOne: TriageSystemOne | undefined,
+): TriageSystemOne | null {
+	return !triage.target && systemOne?.bound() === true ? systemOne : null;
+}
+
+/** Queue length that starts a round: one when a route answers, so a lone "stop" is read; the side model keeps its setting. */
+export function triageFloor(
+	triage: Pick<SteeringTriageSettings, "target" | "minQueued">,
+	systemOne: TriageSystemOne | undefined,
+): number {
+	return typedTriageRoute(triage, systemOne) === null ? triage.minQueued : 1;
+}
+
+/**
+ * One round over a settled queue: the typed picks when a route is bound, the side-model
+ * round when none is or when the ask comes back null. A queue that moved while the ask
+ * ran is left alone, because the verdict no longer describes it and a fallback would
+ * only reach the same end. The side round's own floor still holds, so a lone entry the
+ * route failed on stays where the operator left it.
+ */
+export async function runTriageRound(input: {
+	readonly triage: Pick<SteeringTriageSettings, "target" | "minQueued" | "timeoutMs">;
+	readonly systemOne: TriageSystemOne | undefined;
+	readonly asked: ReadonlyArray<TriageEntry>;
+	readonly task: () => string;
+	readonly previous: () => string;
+	/** Whether the run is still going and the queue still holds what was asked. */
+	readonly current: () => boolean;
+	readonly apply: (verdicts: ReadonlyArray<TriageVerdict>) => void;
+	/** The typed route's verdicts arrived after the queue moved on, so they were never applied. */
+	readonly expired?: (verdicts: ReadonlyArray<TriageVerdict>) => void;
+	readonly side: () => Promise<void>;
+}): Promise<void> {
+	const { triage, asked } = input;
+	const route = typedTriageRoute(triage, input.systemOne);
+	if (route !== null) {
+		const verdict = await route.ask(triagePoint(triage.timeoutMs), {
+			task: input.task(),
+			previous: input.previous(),
+			entries: asked,
+		});
+		const verdicts = verdict === null ? null : typedTriageVerdicts(verdict.value.picks, verdict.probabilities);
+		if (!input.current()) {
+			if (verdicts !== null) input.expired?.(verdicts);
+			return;
+		}
+		if (verdicts !== null) {
+			input.apply(verdicts);
+			return;
+		}
+	}
+	if (asked.length >= triage.minQueued) await input.side();
+}
+
+/** True when the queue still holds exactly the entries the round was asked about, in the same order and text. */
+export function triageSnapshotMatches(
+	asked: ReadonlyArray<TriageEntry>,
+	current: ReadonlyArray<Pick<QueuedChatMessage, "id" | "text">>,
+): boolean {
+	if (asked.length !== current.length) return false;
+	return asked.every((entry, index) => current[index]?.id === entry.id && current[index]?.text === entry.text);
+}

@@ -1,0 +1,411 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { formatContextOperationResult } from "../core/context-operation.js";
+import { refreshOperationFacts } from "../domains/context/operation-result.js";
+import type { BootstrapGenerationState } from "../domains/context/state.js";
+import type { RunWikiGenerateResult } from "../domains/context/wiki/generate.js";
+import type { WikiMeta } from "../domains/context/wiki/meta.js";
+import { MAX_PAGE_ATTEMPTS } from "../domains/context/wiki/plan-store.js";
+import { createContextCliOperation, createContextCliProgress } from "./context-progress.js";
+
+const HELP = `Usage:
+  pancode context
+  pancode context init [--preview] [--heuristic] [--json] [--adopt] [--global] [--propose|--apply|--rewrite]
+                    [--depth quick|standard|deep] [--target <id> [--model <id>] [--thinking <level>]]
+  pancode context init --verify [--apply] [--json]
+  pancode context init --accept [<proposal path or id>] [--json]
+  pancode context refresh [--wiki]
+  pancode context wiki [--update|--retry-pending] [--replan] [--status] [--depth auto|simple|medium|detailed] [--pages <path,path>]
+                    [--target <id>] [--model <id>] [--thinking off|low|medium|high]
+  pancode context reset [--all] [--yes]
+  pancode context index [--json]
+  pancode context map [--out <path>] [--json]
+  pancode context replay (--sessions <path>... | --synthetic <corpus>...) [options]
+  pancode context working-set (--session | --verify) <id|path>
+
+Project context commands:
+  pancode context              show project context status (PANCODE.md, preload, codemap)
+  pancode context init         explore the repo and bootstrap PANCODE.md and codemap
+  pancode context refresh      re-index the codemap and optionally update the Markdown wiki
+  pancode context wiki         generate or inspect the agent-authored Markdown wiki
+  pancode context reset        clear accumulated project context artifacts
+  pancode context index        build the codemap index without model calls
+  pancode context map          create a native interactive HTML codebase map
+  pancode context replay       compare working-set policies over PanCode ledgers
+  pancode context working-set  inspect one session's working-set fold and path index, or verify its attempt receipts
+`;
+
+function wikiRecoveryLines(meta: WikiMeta | null): string[] {
+	const pending = meta?.plan?.pages.filter((page) => page.status !== "written") ?? [];
+	if (pending.length === 0) return [];
+	const exhausted = pending.filter((page) => page.attempts >= MAX_PAGE_ATTEMPTS).length;
+	const failures = pending.filter((page) => page.lastFailure);
+	return [
+		`pending: ${pending.length} page(s)${exhausted > 0 ? `; ${exhausted} exhausted ordinary writer attempts` : ""}`,
+		...failures.slice(0, 8).map((page) => `${page.path}: ${page.lastFailure?.phase}: ${page.lastFailure?.detail}`),
+		...(failures.length > 8 ? [`${failures.length - 8} more page failures retained in wiki metadata`] : []),
+		"Run `pancode context wiki --retry-pending` to retry pending pages once, including exhausted pages, without replanning.",
+	];
+}
+
+function printWikiOutcome(prefix: string, result: RunWikiGenerateResult, meta: WikiMeta | null): void {
+	const pending = result.pending ?? meta?.plan?.pages.filter((page) => page.status !== "written").length ?? 0;
+	const complete = meta?.plan
+		? meta.plan.pages.filter((page) => page.status === "written").length
+		: (meta?.generation?.pagesWritten ?? Math.max(0, result.pages - pending));
+	const published = `${result.pages} published page${result.pages === 1 ? "" : "s"}`;
+	const progress = `${complete} complete, ${pending} pending`;
+	const outcome = pending > 0 ? "incomplete" : result.status === "noop" ? "unchanged" : "generated";
+	process.stdout.write(`${prefix}: ${outcome} (${published}; ${progress})\n`);
+	if (pending > 0) {
+		const recovery = wikiRecoveryLines(meta);
+		process.stdout.write(
+			`${recovery.length > 0 ? recovery.join("\n") : "Run `pancode context wiki --update` to continue pending pages."}\n`,
+		);
+	}
+}
+
+function compactMetric(value: number, suffix: string): string {
+	if (value < 1000) return `${value}${suffix}`;
+	return `${(value / 1000).toFixed(1)}k${suffix}`;
+}
+
+function formatGenerationStatus(generation: BootstrapGenerationState | undefined): string | null {
+	if (!generation) return null;
+	const details: string[] = [`parser ${generation.parserOutcome}`];
+	if (generation.structuredOutputMode) details.push(generation.structuredOutputMode);
+	const route = [generation.targetId, generation.wireModelId, generation.runtimeId].filter(
+		(value): value is string => typeof value === "string",
+	);
+	if (route.length > 0) details.push(route.join("/"));
+	if (generation.thinkingLevel) details.push(`thinking ${generation.thinkingLevel}`);
+	const usage: string[] = [];
+	if (generation.tokenCount !== undefined) usage.push(`${generation.tokenCount} tokens`);
+	if (generation.toolCalls !== undefined) usage.push(`${generation.toolCalls} tools`);
+	if (generation.durationMs !== undefined) usage.push(`${(generation.durationMs / 1000).toFixed(2)}s`);
+	if (generation.promptBytes !== undefined && generation.outputBytes !== undefined) {
+		usage.push(`${compactMetric(generation.promptBytes, "B")} in/${compactMetric(generation.outputBytes, "B")} out`);
+	}
+	if (usage.length > 0) details.push(usage.join(", "));
+	if (generation.fallbackReason) {
+		const reason =
+			generation.fallbackReason.length > 160 ? `${generation.fallbackReason.slice(0, 157)}...` : generation.fallbackReason;
+		details.push(`fallback: ${reason}`);
+	}
+	return `generation: ${generation.mode} (${details.join("; ")})`;
+}
+
+async function printContextStatus(): Promise<number> {
+	const context = await import("../domains/context/index.js");
+	const preload = await import("../domains/prompts/preload.js");
+	const cwd = process.cwd();
+
+	const pancode = context.loadProjectPancodeMd(cwd);
+	const state = context.readPancodeState(cwd);
+	const prompt = context.renderEffectivePromptContext(cwd);
+	const compiled = prompt.compiledHandbook;
+	const pancodeMdState =
+		pancode.files.length === 0 && pancode.errors.length === 0
+			? compiled
+				? `none; sessions use ${compiled.rules} rule${compiled.rules === 1 ? "" : "s"} compiled from ${compiled.sources.join(", ")} (${compiled.path})`
+				: "none"
+			: pancode.errors.length > 0
+				? "malformed"
+				: context.describeHandbookFreshness(cwd);
+
+	const preloadClass = preload.selectProjectPreload(prompt, null).classification;
+
+	const codewiki = context.readCodewiki(cwd);
+	const codewikiCount = codewiki ? context.codewikiEntries(codewiki).length : 0;
+	const codewikiState = !codewiki
+		? "absent"
+		: state && !context.isStale(state.fingerprint, context.computeFingerprint(cwd, codewiki))
+			? "fresh"
+			: "stale (run pancode context refresh)";
+	const codewikiLines = [`codemap: ${codewikiState} (${codewikiCount} entr${codewikiCount === 1 ? "y" : "ies"})`];
+	if (codewiki) codewikiLines.push(context.renderCodewikiDigest(codewiki));
+
+	const adoptionSources = state?.contextSources ?? [];
+	const adoptionChanged =
+		state?.contextSources !== undefined ? context.adoptionSourcesChanged(adoptionSources, { cwd }) : false;
+	const adoptionState = adoptionChanged ? "changed (run pancode context init --adopt)" : "up to date";
+	const generationLine = formatGenerationStatus(state?.lastBootstrap);
+
+	process.stdout.write(
+		[
+			`PANCODE.md: ${pancodeMdState}`,
+			`preload: ${preloadClass.label}`,
+			...codewikiLines,
+			`adoption: ${adoptionSources.length} source${adoptionSources.length === 1 ? "" : "s"}, ${adoptionState}`,
+			...(generationLine ? [generationLine] : []),
+			"",
+		].join("\n"),
+	);
+	return 0;
+}
+
+async function runRefreshCommand(args: string[]): Promise<number> {
+	let updateWiki = false;
+	for (const arg of args) {
+		// The other four context verbs answer --help on stdout with status 0;
+		// refresh alone called it an unknown flag.
+		if (arg === "--help" || arg === "-h") {
+			process.stdout.write(HELP);
+			return 0;
+		}
+		if (arg === "--wiki") {
+			updateWiki = true;
+			continue;
+		}
+		process.stderr.write(`pancode context refresh: unknown flag: ${arg}\n`);
+		process.stderr.write(HELP);
+		return 2;
+	}
+	const progress = createContextCliProgress("refresh");
+	const operation = createContextCliOperation("context-refresh", progress.update);
+	try {
+		const { runContextRefresh, readWikiMeta } = await import("../domains/context/index.js");
+		const wikiEntry = updateWiki ? await import("./wiki-generate.js") : null;
+		const result = await runContextRefresh({
+			cwd: process.cwd(),
+			io: {
+				stdout: (s) => process.stdout.write(s),
+				stderr: (s) => process.stderr.write(s),
+			},
+			wiki: updateWiki,
+			onProgress: (event) => {
+				if (event.phase !== "done") operation.progress(event);
+			},
+			...(wikiEntry
+				? { wikiGenerate: wikiEntry.modelWikiGenerate(), wikiModel: await wikiEntry.resolveDocumenterModelId() }
+				: {}),
+		});
+		const conclusion = operation.finish(
+			result.wiki?.status === "failed" ? "failed" : "completed",
+			"Context refresh finished",
+			{
+				facts: refreshOperationFacts(result),
+				warnings: [...(result.hint ? [result.hint] : []), ...(result.wiki?.problems ?? [])],
+			},
+		);
+		process.stdout.write(`${formatContextOperationResult(conclusion)}\n`);
+		if (result.hint) process.stdout.write(`${result.hint}\n`);
+		if (result.wiki) {
+			if (result.wiki.status === "failed") {
+				process.stderr.write(
+					`pancode context refresh: wiki update failed: ${(result.wiki.problems ?? ["unknown failure"]).join("; ")}\n`,
+				);
+				return 1;
+			}
+			printWikiOutcome("pancode context refresh: wiki", result.wiki, readWikiMeta(process.cwd()));
+		}
+		return 0;
+	} catch (err) {
+		operation.finish(
+			err instanceof Error && err.name === "AbortError" ? "cancelled" : "failed",
+			err instanceof Error ? err.message : String(err),
+		);
+		process.stderr.write(`pancode context refresh failed: ${err instanceof Error ? err.message : String(err)}\n`);
+		return 1;
+	} finally {
+		progress.stop();
+	}
+}
+
+async function runWikiStatusCommand(): Promise<number> {
+	const context = await import("../domains/context/index.js");
+	const cwd = process.cwd();
+	const meta = context.readWikiMeta(cwd);
+	if (!meta) {
+		const pageCount = context.listWikiPages(cwd).length;
+		process.stdout.write(`wiki: absent (${pageCount} page${pageCount === 1 ? "" : "s"})\n`);
+		return 0;
+	}
+	const currentHead = context.currentWikiGitHead(cwd);
+	const lines = [
+		`wiki: present (${meta.pages.length} page${meta.pages.length === 1 ? "" : "s"})`,
+		`updatedAt: ${meta.updatedAt}`,
+		`gitHead: ${meta.gitHead ?? "none"}`,
+	];
+	if (meta.generation) {
+		const { depth, requestedDepth, sourceFiles, pagesPlanned, pagesWritten } = meta.generation;
+		lines.push(
+			`depth: ${depth} (requested ${requestedDepth}; ${sourceFiles} source files; ` +
+				`${pagesWritten}/${pagesPlanned} planned pages written)`,
+		);
+		if (pagesWritten < pagesPlanned && !meta.plan) {
+			lines.push(`pending: ${pagesPlanned - pagesWritten} page(s); run \`pancode context wiki --update\` to finish`);
+		}
+	}
+	lines.push(...wikiRecoveryLines(meta));
+	if (meta.gitHead === null) {
+		lines.push("staleness: no fully validated publication baseline; current HEAD alone cannot establish freshness");
+	} else if (currentHead !== meta.gitHead) {
+		lines.push(`staleness: gitHead differs from current HEAD (${currentHead ?? "none"})`);
+	}
+	process.stdout.write(`${lines.join("\n")}\n`);
+	return 0;
+}
+
+type WikiCliDepth = "auto" | "simple" | "medium" | "detailed";
+type WikiCliThinking = "off" | "low" | "medium" | "high";
+
+const VALUE_FLAGS = new Set(["--target", "--model", "--thinking", "--depth", "--pages"]);
+
+function isWikiDepth(value: unknown): value is WikiCliDepth {
+	return value === "auto" || value === "simple" || value === "medium" || value === "detailed";
+}
+
+function isThinkingLevel(value: unknown): value is WikiCliThinking {
+	return value === "off" || value === "low" || value === "medium" || value === "high";
+}
+
+async function runWikiCommand(args: string[]): Promise<number> {
+	let forceUpdate = false;
+	let retryPending = false;
+	let replan = false;
+	let status = false;
+	let depth: WikiCliDepth = "auto";
+	let target: string | undefined;
+	let model: string | undefined;
+	let thinkingLevel: WikiCliThinking | undefined;
+	let onlyPages: string[] | undefined;
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index];
+		if (arg === "--help" || arg === "-h") {
+			process.stdout.write(HELP);
+			return 0;
+		}
+		if (arg === "--update") {
+			forceUpdate = true;
+			continue;
+		}
+		if (arg === "--retry-pending") {
+			retryPending = true;
+			continue;
+		}
+		if (arg === "--replan") {
+			replan = true;
+			continue;
+		}
+		if (arg === "--status") {
+			status = true;
+			continue;
+		}
+		if (VALUE_FLAGS.has(arg ?? "")) {
+			const value = args[index + 1];
+			index += 1;
+			if (arg === "--target" || arg === "--model") {
+				if (!value || value.startsWith("--")) {
+					process.stderr.write(`pancode context wiki: ${arg} requires a value\n`);
+					return 2;
+				}
+				if (arg === "--target") target = value;
+				else model = value;
+				continue;
+			}
+			if (arg === "--pages") {
+				const paths = (value ?? "")
+					.split(",")
+					.map((path) => path.trim())
+					.filter((path) => path.length > 0);
+				if (paths.length === 0 || value?.startsWith("--")) {
+					process.stderr.write("pancode context wiki: --pages requires comma-separated plan page paths\n");
+					return 2;
+				}
+				onlyPages = paths;
+				continue;
+			}
+			if (arg === "--thinking") {
+				if (!isThinkingLevel(value)) {
+					process.stderr.write("pancode context wiki: --thinking must be off, low, medium, or high\n");
+					return 2;
+				}
+				thinkingLevel = value;
+				continue;
+			}
+			if (!isWikiDepth(value)) {
+				process.stderr.write("pancode context wiki: --depth must be auto, simple, medium, or detailed\n");
+				return 2;
+			}
+			depth = value;
+			continue;
+		}
+		process.stderr.write(`pancode context wiki: unknown flag: ${arg}\n`);
+		process.stderr.write(HELP);
+		return 2;
+	}
+	if (status) return runWikiStatusCommand();
+	if (replan && retryPending) {
+		process.stderr.write("pancode context wiki: --replan cannot be combined with --retry-pending\n");
+		return 2;
+	}
+	const progress = createContextCliProgress("wiki", { liveness: false });
+	try {
+		const context = await import("../domains/context/index.js");
+		const { modelWikiGenerate, resolveDocumenterModelId } = await import("./wiki-generate.js");
+		const route = {
+			...(target !== undefined ? { target } : {}),
+			...(model !== undefined ? { model } : {}),
+			...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
+		};
+		const result = await context.runWikiGenerate({
+			cwd: process.cwd(),
+			...(forceUpdate ? { mode: "update" as const } : {}),
+			...(retryPending ? { retryPending: true } : {}),
+			...(replan ? { replan: true } : {}),
+			...(onlyPages ? { onlyPages } : {}),
+			depth,
+			model: await resolveDocumenterModelId(route),
+			generate: modelWikiGenerate({ route }),
+			onProgress: progress.update,
+		});
+		if (result.status === "failed") {
+			process.stderr.write(`pancode context wiki failed: ${(result.problems ?? ["unknown failure"]).join("; ")}\n`);
+			return 1;
+		}
+		const meta = context.readWikiMeta(process.cwd());
+		printWikiOutcome("pancode context wiki", result, meta);
+		const pending = result.pending ?? meta?.plan?.pages.filter((page) => page.status !== "written").length ?? 0;
+		return pending > 0 ? 1 : 0;
+	} catch (err) {
+		process.stderr.write(`pancode context wiki failed: ${err instanceof Error ? err.message : String(err)}\n`);
+		return 1;
+	} finally {
+		progress.stop();
+	}
+}
+
+export async function runContextCommand(args: string[]): Promise<number> {
+	const [verb, ...rest] = args;
+	if (verb === undefined) {
+		return printContextStatus();
+	}
+	if (verb === "--help" || verb === "-h") {
+		process.stdout.write(HELP);
+		return 0;
+	}
+
+	switch (verb) {
+		case "init":
+			return (await import("./init.js")).runInitCommand(rest);
+		case "refresh":
+			return runRefreshCommand(rest);
+		case "wiki":
+			return runWikiCommand(rest);
+		case "reset":
+			return (await import("./context-clear.js")).runContextClearCommand(rest);
+		case "index":
+			return (await import("./context-index.js")).runContextIndexCommand(rest);
+		case "map":
+			return (await import("./context-map.js")).runContextMapCommand(rest);
+		case "replay":
+			return (await import("./context-working-set.js")).runContextReplayCommand(rest);
+		case "working-set":
+			return (await import("./context-working-set.js")).runContextWorkingSetCommand(rest);
+		default:
+			process.stderr.write(`pancode context: unknown subcommand: ${verb}\n`);
+			process.stderr.write(HELP);
+			return 2;
+	}
+}

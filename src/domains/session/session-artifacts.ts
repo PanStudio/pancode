@@ -1,0 +1,107 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { isAbsolute, relative, resolve } from "node:path";
+import { relativePathEscapes } from "../../core/path-containment.js";
+import { isRecord } from "../../core/type-guards.js";
+import { effectiveToolCall, expandChainMessages } from "../../tools/surface.js";
+
+export type SessionArtifactTool = "artifact" | "write" | "edit";
+export type SessionArtifactKind = "plan" | "review" | "report";
+
+export interface SessionArtifact {
+	/** Path exactly as the successful tool result recorded it. */
+	path: string;
+	tool: SessionArtifactTool;
+	artifactKind?: SessionArtifactKind;
+	turnId: string;
+	timestamp: string;
+	/** Number of earlier successful writes to this normalized path. */
+	overwrites: number;
+}
+
+export interface FoldSessionArtifactsOptions {
+	/** Recorded session cwd. Paths outside this root are rejected. */
+	workspace?: string;
+}
+
+function isSessionArtifactTool(value: unknown): value is SessionArtifactTool {
+	return value === "artifact" || value === "write" || value === "edit";
+}
+
+function isSessionArtifactKind(value: unknown): value is SessionArtifactKind {
+	return value === "plan" || value === "review" || value === "report";
+}
+
+export function resolveSessionArtifactPath(path: string, workspace: string): string | null {
+	const root = resolve(workspace);
+	const target = isAbsolute(path) ? resolve(path) : resolve(root, path);
+	const rel = relative(root, target);
+	if (rel === "" || !relativePathEscapes(rel)) return target;
+	return null;
+}
+
+interface IndexedArtifact extends SessionArtifact {
+	index: number;
+}
+
+/**
+ * Fold durable tool-result facts into the files produced in one active-path
+ * session. This function never stats or reads a path; missing files remain
+ * visible facts and are handled by the `/view workspace` loader.
+ */
+export function foldSessionArtifacts(
+	entries: ReadonlyArray<unknown>,
+	options: FoldSessionArtifactsOptions = {},
+): SessionArtifact[] {
+	const workspace = resolve(options.workspace ?? process.cwd());
+	const lastByPath = new Map<string, IndexedArtifact>();
+	const writeCounts = new Map<string, number>();
+	let writeIndex = 0;
+
+	for (const raw of expandChainMessages(entries)) {
+		if (!isRecord(raw) || raw.kind !== "message" || raw.role !== "tool_result") continue;
+		if (typeof raw.turnId !== "string" || typeof raw.timestamp !== "string") continue;
+		const payload = raw.payload;
+		if (!isRecord(payload) || typeof payload.toolName !== "string") continue;
+		const result = payload.result;
+		const details = isRecord(result) && isRecord(result.details) ? result.details : null;
+		// An artifact written through the gateway is recorded under `gateway`
+		// with the capability stamped on its details; it is the same write.
+		const toolName = effectiveToolCall(payload.toolName, undefined, details ?? undefined).toolName;
+		if (!isSessionArtifactTool(toolName)) continue;
+		if (
+			payload.isError === true ||
+			payload.outcome === "error" ||
+			payload.outcome === "blocked" ||
+			payload.outcome === "aborted" ||
+			payload.outcome === "orphaned"
+		) {
+			continue;
+		}
+		if (!isRecord(result) || details === null || !Array.isArray(details.paths)) continue;
+		const artifactKind = toolName === "artifact" && isSessionArtifactKind(details.kind) ? details.kind : undefined;
+		const pathsSeenInResult = new Set<string>();
+		for (const recordedPath of details.paths) {
+			if (typeof recordedPath !== "string" || recordedPath.trim().length === 0) continue;
+			const normalized = resolveSessionArtifactPath(recordedPath, workspace);
+			if (normalized === null || pathsSeenInResult.has(normalized)) continue;
+			pathsSeenInResult.add(normalized);
+			const priorWrites = writeCounts.get(normalized) ?? 0;
+			writeCounts.set(normalized, priorWrites + 1);
+			writeIndex += 1;
+			lastByPath.set(normalized, {
+				path: recordedPath,
+				tool: toolName,
+				...(artifactKind ? { artifactKind } : {}),
+				turnId: raw.turnId,
+				timestamp: raw.timestamp,
+				overwrites: priorWrites,
+				index: writeIndex,
+			});
+		}
+	}
+
+	return [...lastByPath.values()]
+		.sort((left, right) => right.index - left.index)
+		.map(({ index: _index, ...artifact }) => artifact);
+}

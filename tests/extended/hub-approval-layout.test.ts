@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { ok } from "node:assert/strict";
+import { test } from "node:test";
+import { setPresentationTier } from "../../src/core/presentation-tier.js";
+import type { FleetRunPreview } from "../../src/domains/dispatch/fleet-run-preview.js";
+import { stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
+import { formatFleetRunApprovalBody } from "../../src/interactive/overlays/fleet-run-approval.js";
+import { formatHubPlanReview } from "../../src/interactive/overlays/hub-review.js";
+import { hubPlanFixture } from "../harness/hub-plan-fixture.js";
+
+for (const columns of [80, 120, 160])
+	test(`approval retains complete source, path, digest and argv at ${columns} columns`, () => {
+		const path = `/project/${"long-directory/".repeat(20)}DESTINATION_SUFFIX`;
+		const sourceUrl = `https://example.org/${"source/".repeat(20)}SOURCE_SUFFIX`;
+		const sha256 = "1234567890abcdef".repeat(4);
+		const rows = formatHubPlanReview(
+			hubPlanFixture({ operation: "install", ref: "plugin:fixture", destination: path, sourceUrl, sha256 }),
+			columns - 12,
+			{ detail: true },
+		).map(stripTerminalSequences);
+		for (const row of rows) ok(visibleWidth(row) <= columns - 12);
+		const text = rows.join("").replace(/\s/g, "");
+		for (const value of [path, sourceUrl, sha256]) ok(text.includes(value), `lost ${value}`);
+		const argv = ["python3", path, "--scope", `${"review ".repeat(160)}ARGUMENT_SUFFIX`];
+		const preview = {
+			name: "fixture",
+			planHash: "a".repeat(64),
+			plan: { hash: "b".repeat(64) },
+			waves: [{ index: 0, steps: [{ kind: "code", stepId: "check", commandId: "check", scope: "readonly", argv }] }],
+			budget: { playbookUsd: null, ceilingUsd: 2, currentUsd: 0 },
+		} as unknown as FleetRunPreview;
+		const seen: string[] = [];
+		// The plan review shows a step's exact argv at detailed; the other tiers fit it to one row.
+		setPresentationTier("detailed");
+		for (let scroll = 0; scroll < 250; scroll += 10)
+			seen.push(...formatFleetRunApprovalBody({ ok: true, preview }, columns - 12, scroll).map(stripTerminalSequences));
+		setPresentationTier("standard");
+		for (const row of seen) ok(visibleWidth(row) <= columns - 12);
+		ok(seen.join("").includes("DESTINATION_SUFFIX"));
+		ok(seen.join("").includes("ARGUMENT_SUFFIX"));
+	});

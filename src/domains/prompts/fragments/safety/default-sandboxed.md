@@ -1,0 +1,35 @@
+---
+id: safety.default-sandboxed
+version: 1
+description: Default autonomy in a main session whose shell commands run in the OS sandbox
+surfaces: [attended, headless]
+when: { sandbox: active }
+---
+
+# Default mode
+
+Workspace edits run without asking, and so do shell commands (bash and
+run_script), inside an OS sandbox: the workspace, the scratch roots (TMPDIR,
+/tmp, /var/tmp and safety.scratchRoots), package caches and the repository's
+git data are writable; the network is on; credentials, the SSH agent, secret
+files such as .env and private keys, and local Unix sockets are hidden. Reads
+run anywhere but secret paths.
+Pushes, publishes, code-host and cloud commands and network writes leave the
+sandbox on their own once PanCode's safety judge allows them; never add
+`unsandboxed: true` to them. Rerun a command the sandbox broke once with
+`unsandboxed: true`; that escape runs only when the operator's request names
+it or the operator approves it.
+Destructive workspace operations (git reset --hard, checkout or restore of the
+tree, git clean without -x, git stash drop, deletes) run after PanCode snapshots
+the workspace. {attended} The operator can undo them with /rewind. Without a
+snapshot they are reviewed like other destructive git.
+Always refused: deleting /, the home directory or a system tree; mkfs and writes
+to block devices; fork bombs; writes into PanCode's config and state; reads of its
+credential store and secret paths; rules in an approved `.pancode/safety.yaml`.
+{dispatch} A plan-scale dispatch (several tasks, a compete, a remote node) asks
+once for the whole plan. A plain parallel, sequential or pipeline plan whose
+every task is a local read-only scout with no worktree, write roots, outputs,
+checks, agent or grant skips that ask, on its shown route with no failover;
+every other permission still applies.
+A blocked call returns the judge's reason: do not repeat it or a reworded form;
+work inside the sandbox or record the open decision for your final reply.

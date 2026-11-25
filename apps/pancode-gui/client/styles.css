@@ -1,0 +1,1436 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+@import "./design/a11y.css";
+
+/* The component sheet. Every value here comes from client/design/tokens.css;
+   a raw hex in this file is a bug, because a raw hex cannot follow the theme.
+   scripts/check-contrast.mjs and the grep guard beside it enforce that. */
+
+* {
+	box-sizing: border-box;
+}
+
+/* Scrollbars: slim, in the theme's ink, without arrow buttons. They stay visible as a scroll
+   affordance; only the native weight is gone. The gutter is reserved on the page so a
+   scrollbar appearing on a long view does not move the layout. */
+:root {
+	--scroll-thumb: color-mix(in srgb, var(--ink-muted) 55%, transparent);
+	--scroll-thumb-hover: color-mix(in srgb, var(--ink-muted) 85%, transparent);
+	scrollbar-gutter: stable;
+}
+/* Code and diagrams sit in their own well in each theme, so their thumb follows the code ink. */
+pre,
+.code-block,
+.md-diagram {
+	--scroll-thumb: color-mix(in srgb, var(--code-ink) 40%, transparent);
+	--scroll-thumb-hover: color-mix(in srgb, var(--code-ink) 70%, transparent);
+}
+/* Firefox has no pseudo-elements. Chromium honours the standard properties only by keeping its
+   arrow buttons, so it takes the WebKit rules below instead. */
+@supports not selector(::-webkit-scrollbar) {
+	* {
+		scrollbar-width: thin;
+		scrollbar-color: var(--scroll-thumb) transparent;
+	}
+}
+@supports selector(::-webkit-scrollbar) {
+	::-webkit-scrollbar {
+		width: 10px;
+		height: 10px;
+	}
+	::-webkit-scrollbar-track,
+	::-webkit-scrollbar-corner {
+		background: transparent;
+	}
+	::-webkit-scrollbar-thumb {
+		background: var(--scroll-thumb);
+		border: 2px solid transparent;
+		border-radius: var(--radius-sm);
+		background-clip: content-box;
+	}
+	::-webkit-scrollbar-thumb:hover {
+		background: var(--scroll-thumb-hover);
+		background-clip: content-box;
+	}
+	::-webkit-scrollbar-button {
+		display: none;
+	}
+}
+::selection {
+	background: var(--selection);
+	color: var(--on-selection);
+}
+body {
+	margin: 0;
+	color: var(--ink);
+	background: var(--paper);
+	font-size: var(--text-body);
+}
+.route-error {
+	margin: min(12dvh, 8rem) auto;
+	max-width: 42rem;
+}
+.app-opening {
+	display: grid;
+	place-content: center;
+	justify-items: center;
+	gap: var(--space-3);
+	min-height: 100dvh;
+	color: var(--ink-muted);
+}
+.route-error__brand {
+	margin: 0;
+	font-size: var(--text-h3);
+}
+.route-error p:not(.eyebrow) {
+	color: var(--ink-muted);
+	line-height: var(--leading-reading);
+}
+a {
+	color: inherit;
+}
+button,
+a {
+	-webkit-tap-highlight-color: transparent;
+}
+button,
+input,
+select,
+textarea {
+	font: inherit;
+	accent-color: var(--accent);
+}
+button {
+	cursor: pointer;
+	min-height: 34px;
+	padding: 6px 13px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	color: var(--ink);
+	background: transparent;
+	font-size: var(--text-meta);
+	line-height: 1.3;
+	transition:
+		border-color var(--motion-fast) var(--ease-standard),
+		color var(--motion-fast) var(--ease-standard),
+		background var(--motion-fast) var(--ease-standard);
+}
+button:hover:not(:disabled) {
+	background: var(--wb-hover);
+}
+button:active:not(:disabled) {
+	background: var(--wb-active);
+}
+/* Disabled reads from the tokens, not from opacity: half opacity left a filled primary as a grey slab with green
+   text in the light theme and black text on dim green in the dark one. */
+button:disabled {
+	color: var(--disabled-fg);
+	cursor: not-allowed;
+}
+input,
+select,
+textarea {
+	min-width: 0;
+	width: 100%;
+	padding: 8px 12px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	color: var(--ink);
+	background: var(--well);
+	font-size: var(--text-meta);
+}
+/* A select's own ground is a translucent tint, and Chrome paints its open list on white beneath that
+   tint: in dark the list was light ink on a white sheet. The options name the opaque raised ground. */
+option,
+optgroup {
+	color: var(--ink);
+	background: var(--raised);
+}
+details {
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	margin: var(--space-3) 0;
+}
+summary {
+	cursor: pointer;
+}
+code,
+pre,
+.eyebrow {
+	font-family: var(--font-mono);
+}
+code {
+	display: block;
+	overflow-wrap: anywhere;
+	padding: 10px 0;
+	font-size: var(--text-exact);
+}
+
+h2 {
+	font-size: var(--text-h2);
+	letter-spacing: -0.5px;
+	margin: 0;
+}
+h1 {
+	font-family: var(--font-editorial);
+	font-weight: 700;
+	font-size: var(--text-hero);
+	letter-spacing: -1.5px;
+	line-height: 1.06;
+	margin: var(--space-4) 0 var(--space-5);
+}
+h1 em {
+	color: var(--accent);
+	font-weight: 400;
+}
+/* Matches the site's eyebrow: small mono capitals at regular weight. */
+.eyebrow {
+	font-family: var(--font-mono);
+	font-size: var(--text-instrument);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--ink-muted);
+	font-weight: 500;
+	line-height: 1.6;
+}
+/* .trace-panel p outranks .eyebrow by one element, which set panel eyebrows at body size. */
+.trace-panel .eyebrow {
+	font-size: var(--text-instrument);
+	line-height: 1.6;
+}
+.intro {
+	font-size: var(--text-body);
+	line-height: 1.8;
+	color: var(--ink-muted);
+	max-width: 600px;
+	margin-bottom: var(--space-10);
+}
+.footnote {
+	max-width: 630px;
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+	line-height: 1.8;
+	margin: 26px 0 0;
+}
+.result {
+	font-size: var(--text-exact);
+	overflow-wrap: anywhere;
+}
+/* One line weight at every size: icons.tsx keeps the stroke from scaling with the glyph. */
+.icon {
+	width: var(--icon-lg);
+	height: var(--icon-lg);
+	flex-shrink: 0;
+	stroke-width: var(--icon-stroke);
+}
+/* A disabled button's glyph takes its faint label colour rather than a component's accent. */
+button:disabled .icon {
+	color: inherit;
+}
+.icon-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 40px;
+	height: 40px;
+	min-height: 0;
+	padding: 0;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink-muted);
+}
+.icon-button:hover:not(:disabled) {
+	background: var(--well);
+	color: var(--ink);
+}
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+	border: 0;
+}
+.skip-link {
+	position: fixed;
+	left: var(--space-4);
+	top: -90px;
+	z-index: 20;
+	background: var(--primary-fill);
+	color: var(--on-primary);
+	padding: var(--space-3) var(--space-4);
+}
+.skip-link:focus {
+	top: var(--space-3);
+}
+nav {
+	display: grid;
+	gap: var(--space-1);
+	margin: 0;
+}
+.workspace[data-sidebar="collapsed"] .sidebar :is(nav a, .sidebar-toggle, .nav-help):is(:hover, :focus-visible)::after {
+	content: attr(data-tip);
+	position: absolute;
+	left: calc(100% + 10px);
+	top: 50%;
+	transform: translateY(-50%);
+	z-index: 10;
+	padding: 5px 9px;
+	border-radius: var(--radius-sm);
+	background: var(--ink);
+	color: var(--paper);
+	font-size: var(--text-exact);
+	font-weight: 500;
+	white-space: nowrap;
+	pointer-events: none;
+}
+nav a {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	text-decoration: none;
+	padding: 11px 14px;
+	font-size: var(--text-meta);
+	border-radius: var(--radius-sm);
+	color: var(--ink-muted);
+	transition:
+		color var(--motion-fast) var(--ease-standard),
+		background var(--motion-fast) var(--ease-standard);
+}
+nav a:hover {
+	background: var(--well);
+	color: var(--ink);
+}
+
+/* Controls */
+.actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px;
+	margin-top: var(--space-5);
+}
+.primary {
+	background: var(--primary-fill);
+	color: var(--on-primary);
+	border: 1px solid var(--primary-fill);
+	padding: 7px 14px;
+	font-size: var(--text-meta);
+	font-weight: 500;
+	text-decoration: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 12px;
+	justify-content: space-between;
+}
+.primary:hover:not(:disabled) {
+	background: var(--primary-hover);
+	border-color: var(--primary-hover);
+	color: var(--on-primary);
+}
+.primary:active:not(:disabled) {
+	background: color-mix(in srgb, var(--primary-fill) 74%, var(--ink));
+	border-color: color-mix(in srgb, var(--primary-fill) 74%, var(--ink));
+}
+.primary:disabled {
+	border-color: var(--disabled-line);
+	background: var(--disabled-fill);
+	color: var(--disabled-fg);
+}
+.secondary {
+	border: 0;
+	min-height: 0;
+	background: transparent;
+	color: var(--ink-muted);
+	text-decoration: underline;
+	padding: var(--space-2) 0;
+	font-size: var(--text-exact);
+}
+/* A figure beside a heading reads as data, not as a control: no border, muted mono. */
+.count {
+	color: var(--ink-muted);
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+	font-weight: 400;
+	font-variant-numeric: tabular-nums;
+}
+.page-heading {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+}
+.period {
+	color: var(--ink-muted);
+}
+
+/* Status ramp. Colour is supplementary: the glyph and the word carry the
+   state, and `unverified` is dashed so it survives a greyscale screenshot.
+   Every page speaks in sentence case; inspector pages keep the pill. */
+.status-mark {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px var(--space-2);
+	border: 1px solid var(--status-neutral-line);
+	border-radius: var(--radius-xs);
+	font-family: var(--font-mono);
+	font-size: var(--text-instrument);
+	font-weight: 500;
+	white-space: nowrap;
+	color: var(--status-neutral-fg);
+	background: var(--status-neutral-tint);
+}
+.status-mark__glyph {
+	font-family: var(--font-mono);
+}
+.status-mark[data-tone="running"] {
+	color: var(--status-running-fg);
+	background: var(--status-running-tint);
+	border-color: var(--status-running-line);
+}
+.status-mark[data-tone="success"] {
+	color: var(--status-success-fg);
+	background: var(--status-success-tint);
+	border-color: var(--status-success-line);
+}
+.status-mark[data-tone="warn"] {
+	color: var(--status-warn-fg);
+	background: var(--status-warn-tint);
+	border-color: var(--status-warn-line);
+}
+.status-mark[data-tone="fail"] {
+	color: var(--status-fail-fg);
+	background: var(--status-fail-tint);
+	border-color: var(--status-fail-line);
+}
+.status-mark[data-tone="unverified"] {
+	color: var(--status-unverified-fg);
+	background: var(--status-unverified-tint);
+	border-color: var(--status-unverified-line);
+	border-style: dashed;
+}
+.status-mark__detail {
+	font-weight: 400;
+	color: var(--ink-muted);
+}
+
+/* .badge and .trace-badge are the pre-ramp pills still referenced by page
+   components. They render on the ramp tokens so absent stops reading as
+   neutral; retiring the class names for StatusMark is a component-track job. */
+.badge {
+	display: inline-block;
+	font: 500 var(--text-instrument) / 1.55 var(--font-mono);
+	padding: 5px var(--space-2);
+	border: 1px solid var(--status-neutral-line);
+	border-radius: var(--radius-xs);
+	background: var(--status-neutral-tint);
+	color: var(--status-neutral-fg);
+}
+.badge.absent {
+	background: var(--status-unverified-tint);
+	border: 1px dashed var(--status-unverified-line);
+	color: var(--status-unverified-fg);
+}
+
+/* Dialogs and notifications */
+.app-dialog {
+	border: 1px solid var(--line-float);
+	border-radius: var(--radius-md);
+	background: var(--overlay);
+	color: var(--ink);
+	padding: var(--space-6);
+	width: min(460px, calc(100vw - 32px));
+	max-height: calc(100dvh - 32px);
+	box-shadow: var(--shadow-float);
+}
+.app-dialog > p {
+	font-size: var(--text-meta);
+	line-height: 1.65;
+}
+.app-version {
+	color: var(--ink-muted);
+}
+.app-dialog::backdrop,
+.navigation-dialog::backdrop {
+	background: var(--scrim);
+}
+.toast-region {
+	position: fixed;
+	right: var(--space-5);
+	bottom: var(--space-5);
+	display: grid;
+	gap: var(--space-3);
+	width: min(390px, calc(100vw - 40px));
+	max-height: 70vh;
+	overflow: auto;
+	z-index: 10;
+}
+.problem-toast {
+	padding: 18px;
+	background: var(--overlay);
+	color: var(--ink);
+	border: 1px solid var(--line-strong);
+	border-left: 4px solid var(--status-fail-line);
+	border-radius: var(--radius-md);
+	box-shadow: var(--shadow-panel);
+}
+.toast-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+}
+.problem-toast p {
+	font-size: var(--text-meta);
+	line-height: 1.5;
+}
+.problem-toast small {
+	display: block;
+	color: var(--ink-muted);
+	overflow-wrap: anywhere;
+}
+.problem-toast code {
+	color: var(--status-fail-fg);
+}
+.problem {
+	background: var(--status-fail-tint);
+	border-left: 3px solid var(--status-fail-line);
+	padding: var(--space-4);
+	margin: var(--space-5) 0;
+	color: var(--status-fail-fg);
+	font-size: var(--text-exact);
+}
+.problem small {
+	display: block;
+	margin-top: var(--space-2);
+	overflow-wrap: anywhere;
+}
+
+/* Toolchain inventory */
+.section-rule {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	padding: 14px 0;
+	border-top: 1px solid var(--line);
+	border-bottom: 1px solid var(--line);
+	font-size: var(--text-exact);
+	letter-spacing: var(--tracking-instrument);
+	color: var(--ink-muted);
+}
+.tool {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 25px;
+	border-bottom: 1px solid var(--line);
+	padding: 30px 0;
+}
+.tool-identity {
+	display: flex;
+	gap: var(--space-5);
+}
+.tool-number {
+	font: var(--text-exact) var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	color: var(--ink-muted);
+	padding-top: 7px;
+}
+.tool p {
+	font-size: var(--text-exact);
+	line-height: 1.7;
+	color: var(--ink-muted);
+	max-width: 400px;
+	overflow-wrap: anywhere;
+}
+.tool small {
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+}
+.version {
+	font: var(--text-exact) var(--font-mono);
+	color: var(--ink-muted);
+	margin-left: 15px;
+}
+.operation {
+	background: var(--well);
+	border-left: 3px solid var(--accent);
+	border-radius: 0 var(--radius-md) var(--radius-md) 0;
+	padding: var(--space-4) var(--space-5);
+	margin-top: var(--space-6);
+}
+.operation-heading {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--space-5);
+}
+.operation h2 {
+	font-size: var(--text-h3);
+}
+.operation ol {
+	font: var(--text-exact) / 1.9 var(--font-mono);
+	list-style: none;
+	padding: 0;
+	max-height: 220px;
+	overflow: auto;
+}
+.operation li {
+	overflow-wrap: anywhere;
+}
+.operation time {
+	color: var(--ink-muted);
+	font-variant-numeric: tabular-nums;
+	margin-right: 15px;
+}
+
+/* Home */
+.home-hero {
+	display: grid;
+	grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+	gap: clamp(var(--space-8), 5vw, var(--space-16));
+	align-items: start;
+}
+.home-hero__intro {
+	min-width: 0;
+}
+.home-resume {
+	padding: var(--space-6);
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-md);
+	background: var(--surface);
+}
+.home-resume__heading {
+	display: flex;
+	align-items: end;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: var(--space-3);
+	margin-bottom: var(--space-5);
+}
+.home-resume__heading .eyebrow {
+	margin: 0 0 var(--space-2);
+}
+.home-resume__heading a {
+	color: var(--accent-strong);
+	font-size: var(--text-meta);
+	text-decoration: none;
+}
+.home-resume__heading a:hover {
+	text-decoration: underline;
+}
+.home-resume__grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+	gap: var(--space-3);
+}
+.home-session {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	min-width: 0;
+	min-height: 9rem;
+	padding: var(--space-4);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--paper);
+	text-decoration: none;
+	transition:
+		border-color var(--motion-fast) var(--ease-standard),
+		background var(--motion-fast) var(--ease-standard);
+}
+.home-session:hover,
+.home-session:focus-visible {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+}
+.home-session__project {
+	color: var(--ink-muted);
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+	overflow-wrap: anywhere;
+}
+.home-session strong {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	overflow: hidden;
+	font-size: var(--text-reading);
+	line-height: var(--leading-body);
+}
+.home-session__foot {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+	margin-top: auto;
+}
+.home-session__foot > span:last-child {
+	color: var(--accent-strong);
+	font-size: var(--text-h2);
+}
+.home-projects {
+	display: grid;
+	gap: 0;
+	margin: var(--space-4) 0 0;
+	padding: 0;
+	list-style: none;
+}
+.home-project {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3) var(--space-4);
+	min-width: 0;
+	padding: var(--space-3) 0;
+	border-top: 1px solid var(--line);
+}
+.home-project__text {
+	display: grid;
+	gap: 2px;
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.home-project__name {
+	font-weight: 650;
+	color: var(--ink-strong);
+	text-decoration: none;
+}
+.home-project__name:hover {
+	text-decoration: underline;
+}
+.home-project__path {
+	font-family: var(--font-mono);
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.home-project__time {
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.home-project button {
+	flex: none;
+	font-size: var(--text-meta);
+}
+.home-resume__empty {
+	margin: 0;
+	padding: var(--space-5);
+	border: 1px dashed var(--line-strong);
+	border-radius: var(--radius-sm);
+	color: var(--ink-muted);
+}
+.home-note {
+	border-top: 1px solid var(--line);
+	margin-top: 100px;
+	padding-top: 22px;
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+}
+.pwa-controls {
+	max-width: 38rem;
+	font: var(--text-meta) / 1.6 var(--font-ui);
+	letter-spacing: normal;
+	color: var(--ink);
+}
+.pwa-controls summary {
+	cursor: pointer;
+}
+.pwa-controls p {
+	margin: var(--space-3) 0;
+}
+
+/* Trace explorer */
+.trace-filters {
+	display: flex;
+	gap: 14px;
+	flex-wrap: wrap;
+	align-items: end;
+	margin: 30px 0;
+}
+.trace-filters label {
+	display: grid;
+	gap: var(--space-2);
+	font-size: var(--text-exact);
+}
+.trace-filters label:first-child {
+	flex: 1;
+	min-width: 180px;
+}
+/* A run in a list is a row, not a card: it answers the pointer across its whole width and its name
+   is set at the size of a row title, so a screen holds more than three of them. */
+.trace-run-card {
+	position: relative;
+	display: flex;
+	justify-content: space-between;
+	gap: var(--space-6);
+	margin-inline: calc(var(--space-3) * -1);
+	padding: var(--space-4) var(--space-3);
+	border-radius: var(--radius-md);
+	text-decoration: none;
+	transition: background var(--motion-fast) var(--ease-standard);
+}
+/* The rule between rows is drawn apart from the row, because a border would bend round its corners. */
+.trace-run-card::before {
+	content: "";
+	position: absolute;
+	inset: 0 var(--space-3) auto;
+	height: 1px;
+	background: var(--line);
+}
+.trace-run-card:hover {
+	background: var(--wb-faint);
+}
+.trace-run-card:hover h2 {
+	color: var(--accent);
+}
+.trace-run-card > div {
+	min-width: 0;
+}
+.trace-run-card h2 {
+	font-size: var(--text-body);
+	font-weight: 600;
+	letter-spacing: -0.2px;
+	margin-top: var(--space-2);
+	overflow-wrap: anywhere;
+}
+.trace-run-card p {
+	margin: 4px 0 6px;
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+}
+.trace-run-card small,
+.trace-note {
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	overflow-wrap: anywhere;
+}
+.trace-spend {
+	text-align: right;
+	display: grid;
+	gap: var(--space-2);
+	align-content: center;
+	flex-shrink: 0;
+	font-variant-numeric: tabular-nums;
+}
+.trace-badge {
+	display: inline-block;
+	font: 500 var(--text-instrument) / 1.55 var(--font-mono);
+	padding: 1px 9px;
+	border: 1px solid var(--status-neutral-line);
+	border-radius: var(--radius-xs);
+	background: var(--status-neutral-tint);
+	color: var(--status-neutral-fg);
+}
+.trace-badge.running {
+	background: var(--status-running-tint);
+	border-color: var(--status-running-line);
+	color: var(--status-running-fg);
+}
+.trace-badge.success {
+	background: var(--status-success-tint);
+	border-color: var(--status-success-line);
+	color: var(--status-success-fg);
+}
+.trace-badge.fail {
+	background: var(--status-fail-tint);
+	border-color: var(--status-fail-line);
+	color: var(--status-fail-fg);
+}
+/* The page's card. It sits on the page ground on a fine line; the control-weight line is kept for
+   controls, so a page of panels no longer reads as a page of form fields. */
+.trace-panel {
+	margin-top: var(--space-5);
+	border: 1px solid var(--line);
+	padding: var(--space-5) var(--space-6);
+	border-radius: var(--radius-md);
+	background: var(--wb-faint);
+	min-width: 0;
+}
+/* A panel that is only a disclosure is one row until it is opened. */
+.wb-main details.trace-panel {
+	margin-top: var(--space-3);
+	padding-block: 0;
+	font-size: var(--text-meta);
+}
+.wb-main details.trace-panel > summary {
+	min-height: 0;
+	margin: 0;
+	padding-block: 14px;
+	font-weight: 500;
+	color: var(--ink);
+}
+.wb-main details.trace-panel[open] {
+	padding-bottom: var(--space-5);
+}
+.trace-panel h2 {
+	font-size: var(--text-h3);
+	margin-bottom: var(--space-3);
+}
+/* A panel's title that leads somewhere is still a title; it underlines only when pointed at. */
+.trace-panel :is(h2, h3) a {
+	text-decoration: none;
+}
+.trace-panel :is(h2, h3) a:hover {
+	text-decoration: underline;
+	text-underline-offset: 4px;
+	text-decoration-thickness: 1px;
+}
+.trace-panel h3 {
+	font-size: var(--text-reading);
+}
+.trace-panel p {
+	font-size: var(--text-meta);
+	line-height: 1.65;
+}
+.trace-panel .page-heading {
+	gap: var(--space-3);
+	flex-wrap: wrap;
+}
+/* Buttons in a panel or a filter bar are the app's ordinary buttons; they once had their own taller
+   shape and accent ink, which made every panel look like a different product. */
+.trace-panel button,
+.trace-filters button {
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink);
+}
+.trace-panel button:hover:not(:disabled),
+.trace-filters button:hover:not(:disabled) {
+	background: var(--wb-hover);
+}
+.trace-panel summary {
+	cursor: pointer;
+	margin: var(--space-3) 0;
+	font-size: var(--text-meta);
+}
+.trace-facts {
+	display: grid;
+	grid-template-columns: minmax(80px, auto) minmax(0, 1fr);
+	gap: var(--space-2) var(--space-5);
+	font-size: var(--text-meta);
+	line-height: 1.6;
+}
+.trace-facts dt {
+	color: var(--ink-muted);
+	overflow-wrap: anywhere;
+}
+.trace-facts dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
+}
+.trace-event {
+	padding: 18px 0;
+	border-top: 1px solid var(--line);
+}
+.trace-event-head {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	overflow-wrap: anywhere;
+}
+.trace-event-head small {
+	color: var(--ink-muted);
+}
+.trace-json {
+	max-height: 420px;
+	overflow: auto;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	background: var(--well);
+	padding: var(--space-4);
+	font-size: var(--text-exact);
+	line-height: 1.6;
+	border-radius: var(--radius-sm);
+}
+.trace-warning {
+	color: var(--status-warn-fg);
+	background: var(--status-warn-tint);
+	border: 1px solid var(--status-warn-line);
+	padding: var(--space-3);
+	border-radius: var(--radius-sm);
+}
+.trace-panel .trace-run-record__source {
+	margin: 0;
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+}
+.trace-run-record-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 0 var(--space-8);
+}
+.table-scroll {
+	overflow: auto;
+}
+.trace-table {
+	width: 100%;
+	text-align: left;
+	font-size: var(--text-exact);
+	font-variant-numeric: tabular-nums;
+	border-collapse: collapse;
+}
+.trace-table td,
+.trace-table th {
+	padding: 10px var(--space-3);
+	border-bottom: 1px solid var(--line);
+}
+.trace-waterfall {
+	display: grid;
+	gap: var(--space-3);
+}
+.trace-lane {
+	display: grid;
+	grid-template-columns: minmax(90px, 180px) minmax(0, 1fr);
+	gap: 15px;
+	align-items: center;
+}
+.trace-lane > button {
+	text-align: left;
+	font-size: var(--text-exact);
+	background: transparent;
+}
+.trace-lane > button[aria-pressed="true"] {
+	background: var(--accent-soft);
+	border-color: var(--accent);
+}
+.trace-lane small {
+	display: block;
+	font-size: var(--text-exact);
+	padding-top: 5px;
+	color: var(--ink-muted);
+}
+.trace-track {
+	position: relative;
+	height: 38px;
+	background: repeating-linear-gradient(90deg, var(--line-strong) 0 1px, transparent 1px 25%);
+	overflow: hidden;
+}
+.trace-panel .trace-bar {
+	position: absolute;
+	top: 2px;
+	height: 24px;
+	min-height: 0;
+	padding: 0;
+	min-width: 3px;
+	background: var(--status-success-line);
+	border: 0;
+}
+.trace-panel .trace-bar.fail {
+	background: var(--status-fail-line);
+}
+.trace-lane__label {
+	font-size: var(--text-exact);
+	overflow-wrap: anywhere;
+}
+/* A call's recorded stages inside its bar; the model segment runs from the first token to settle (#434). */
+.trace-stage {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	min-width: 2px;
+	background: var(--action-line);
+}
+.trace-stage[data-stage="admission"] {
+	background: var(--status-warn-line);
+}
+.trace-stage[data-stage="model"] {
+	background: var(--status-success-line);
+}
+.trace-run-detail h1 {
+	overflow-wrap: anywhere;
+}
+/* The back link is the page's first line; without a margin it sits 4px under the top bar. */
+.trace-run-detail > a:first-child {
+	display: inline-block;
+	margin-top: var(--space-3);
+}
+/* The run's four totals, and how many events and processes there were of each kind. */
+.trace-totals,
+.trace-spend {
+	list-style: none;
+	margin: var(--space-4) 0 0;
+	padding: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-6);
+}
+.trace-totals li,
+.trace-spend li {
+	display: grid;
+	gap: 2px;
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+}
+.trace-totals strong,
+.trace-spend strong {
+	font-family: var(--font-mono);
+	font-size: var(--text-body);
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+	color: var(--ink);
+}
+.trace-histograms {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+	gap: var(--space-6);
+}
+.trace-histogram {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	gap: var(--space-2);
+}
+.trace-histogram li {
+	display: grid;
+	grid-template-columns: minmax(5rem, 9rem) minmax(0, 1fr) auto;
+	align-items: center;
+	gap: var(--space-3);
+	font-size: var(--text-meta);
+}
+.trace-histogram__track {
+	display: block;
+	height: 10px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	background: var(--well);
+	overflow: hidden;
+}
+.trace-histogram__track > i {
+	display: block;
+	height: 100%;
+	min-width: 1px;
+	background: var(--status-neutral-fg);
+}
+.trace-histogram strong {
+	font-family: var(--font-mono);
+}
+.conversation__approval,
+.conversation__dock,
+.chat-transcript__content,
+.conversation__main > .jump-anchor {
+	box-sizing: border-box;
+	width: 100%;
+	max-width: calc(var(--conversation-max) + 2 * var(--chat-gutter));
+	margin-inline: auto;
+	padding-inline: var(--chat-gutter);
+}
+/* Reading text follows the column it is read in. The full size holds from a 900px column up; under
+   that it eases down to the phone size, so a conversation between two open sidebars keeps a
+   readable measure instead of forty characters a line. Headings keep their ratio to it. */
+.conversation__main {
+	container: chat / size;
+}
+.conversation__main > * {
+	--text-reading: clamp(18px, 12px + 1.08cqi, 22px);
+	--text-h3: calc(var(--text-reading) * 1.083);
+	--text-h2: calc(var(--text-reading) * 1.333);
+}
+.conversation__health {
+	display: grid;
+	gap: var(--space-2);
+	padding-bottom: var(--space-2);
+}
+.conversation__health .context-banner {
+	margin: 0;
+}
+.conversation__close {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2) var(--space-4);
+	padding-top: var(--space-3);
+	border-top: 1px solid var(--line);
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+}
+.conversation__close p {
+	flex: 1 1 20rem;
+	margin: 0;
+}
+.conversation__close button {
+	flex: none;
+	border-color: var(--status-fail-line);
+	color: var(--status-fail-fg);
+	background: transparent;
+}
+.conversation__dock {
+	min-width: 0;
+	padding-block: var(--space-2) var(--space-5);
+}
+
+.conversation__approval {
+	min-height: 0;
+	max-height: min(38cqh, 22rem);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+.conversation .composer__field {
+	max-height: min(14rem, 28cqh);
+}
+.conversation__recovery,
+.conversation__connection {
+	display: flex;
+	align-items: baseline;
+	flex-wrap: wrap;
+	gap: var(--space-2) var(--space-4);
+	margin-block: var(--space-2);
+	padding: var(--space-3) var(--space-4);
+	border-left: 3px solid var(--status-warn-line);
+	background: var(--status-warn-tint);
+	color: var(--status-warn-fg);
+	font-size: var(--text-meta);
+}
+.conversation__recovery a {
+	margin-left: auto;
+	font-weight: 700;
+}
+.conversation__connection button {
+	margin-left: auto;
+	flex: none;
+	color: var(--status-warn-fg);
+	border-color: var(--status-warn-line);
+	background: transparent;
+}
+.conversation .approval-banner {
+	margin-block: var(--space-2);
+}
+@media (max-width: 650px) {
+	.conversation__dock {
+		padding-bottom: var(--space-3);
+	}
+}
+
+/* Session controls keep approval and cancellation reachable on narrow screens. */
+.control-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-3);
+	align-items: end;
+	margin-block: var(--space-4);
+}
+.session-controls,
+.permission-card {
+	padding: var(--space-5);
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-md);
+	margin-block: var(--space-4);
+}
+.session-controls {
+	background: var(--well);
+}
+.session-controls > h2,
+.session-settings > h2 {
+	margin: 0;
+	font-size: var(--text-h3);
+}
+.permission-card {
+	border-color: var(--action-line);
+	background: var(--action-tint);
+	color: var(--ink);
+}
+.permission-card h2 {
+	font-size: var(--text-h2);
+}
+.permission-card p {
+	font-size: var(--text-meta);
+}
+.session-settings {
+	display: grid;
+	gap: var(--space-4);
+	font-size: var(--text-meta);
+	color: var(--ink);
+}
+.session-settings__route,
+.session-settings__scope {
+	margin: 0;
+	line-height: var(--leading-body);
+	color: var(--ink-muted);
+}
+.session-settings__scope strong {
+	color: var(--ink);
+}
+.session-settings__default {
+	display: grid;
+	gap: var(--space-2);
+	justify-items: start;
+}
+.session-settings__default label {
+	justify-self: stretch;
+}
+.session-settings label,
+.session-settings__model,
+.session-controls label {
+	display: grid;
+	gap: 6px;
+	align-content: start;
+	min-width: 0;
+}
+.session-settings select,
+.session-settings input,
+.session-controls input {
+	width: 100%;
+	min-width: 0;
+	padding: 10px;
+}
+.target-card {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--space-4);
+	align-items: center;
+	overflow-wrap: anywhere;
+}
+.fleet-run-record {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+@media (max-width: 1050px) {
+	.home-hero {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.tool {
+		gap: var(--space-5);
+	}
+	.tool-identity {
+		gap: 10px;
+	}
+	.version {
+		display: block;
+		margin: 7px 0 0;
+	}
+}
+@media (max-width: 750px) {
+	.icon-button {
+		width: 40px;
+		height: 44px;
+	}
+	.page-heading {
+		gap: 14px;
+		flex-wrap: wrap;
+	}
+	.trace-panel {
+		padding: var(--space-4);
+	}
+	.trace-run-record-grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.trace-run-card {
+		flex-direction: column;
+		flex-wrap: wrap;
+		gap: var(--space-3);
+	}
+	.trace-spend {
+		text-align: left;
+		display: flex;
+		align-items: center;
+	}
+	.trace-facts {
+		gap: 6px var(--space-3);
+	}
+}
+@media (max-width: 650px) {
+	.tool {
+		grid-template-columns: 1fr;
+		gap: var(--space-4);
+	}
+	.tool-resolution {
+		padding-left: 25px;
+	}
+	.section-rule span:last-child {
+		display: none;
+	}
+	.section-rule {
+		display: block;
+	}
+	.tool-identity {
+		gap: 15px;
+	}
+	.version {
+		display: inline;
+		margin-left: 15px;
+	}
+	.home-note {
+		margin-top: 60px;
+	}
+	.target-card {
+		flex-direction: column;
+		align-items: start;
+	}
+}
+
+/* Reconnect */
+.reconnect {
+	box-sizing: border-box;
+	width: 100%;
+	max-width: 42rem;
+	margin: var(--space-12) auto;
+	padding-inline: var(--space-6);
+}
+/* Nothing else is open, so the page reads as a document, not a card. */
+.wb-stage:has(> .wb-main > .reconnect) {
+	border-color: transparent;
+	background: none;
+	box-shadow: none;
+}
+.reconnect label {
+	display: block;
+	margin: var(--space-5) 0 var(--space-2);
+	font-weight: 700;
+}
+.reconnect__command {
+	display: inline;
+	padding: 0;
+	background: none;
+	font-family: var(--font-mono);
+	font-size: var(--text-meta);
+}
+.reconnect__problem {
+	color: var(--status-fail-fg);
+	font-size: var(--text-meta);
+}
+
+/* Calm defaults leave page-specific type and layout in control without a specificity contest. */
+:where(main :is(.panel-heading, .page-heading)) h1,
+:where(.wb-main[data-mode="settings"]) h1 {
+	font-family: var(--font-editorial);
+	font-size: var(--text-h1);
+	font-weight: 700;
+	letter-spacing: -0.035em;
+	line-height: 1.2;
+	margin: var(--space-1) 0 var(--space-4);
+}
+/* Low specificity on purpose: a card or panel that sizes its own heading keeps that size. */
+:where(.wb-main[data-mode="settings"]) h2 {
+	font-family: var(--font-editorial);
+	font-size: var(--text-h3);
+	font-weight: 700;
+	letter-spacing: -0.02em;
+	line-height: 1.3;
+}
+main > .panel-heading {
+	margin-bottom: var(--space-6);
+}
+main :is(section, article, .panel-heading, .page-heading) {
+	min-width: 0;
+}
+main :is(h1, h2, h3, p, li, dd, dt, a) {
+	overflow-wrap: anywhere;
+}
+main :is(pre, .table-scroll) {
+	max-width: 100%;
+	overflow-x: auto;
+}
+@media (pointer: coarse) {
+	button,
+	summary,
+	nav a {
+		min-height: 44px;
+	}
+}

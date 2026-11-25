@@ -1,0 +1,4631 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, strictEqual } from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it } from "node:test";
+import { DEFAULT_SETTINGS, type OutputStyle } from "../../src/core/defaults.js";
+import { setPresentationTier } from "../../src/core/presentation-tier.js";
+import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
+import { makeTelemetryRecord } from "../../src/core/telemetry/envelope.js";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import { finishRunResult } from "../../src/domains/dispatch/run-settlement.js";
+import { buildContextLedger } from "../../src/domains/session/context-ledger.js";
+import type { WorkerRunEntry } from "../../src/domains/session/index.js";
+import type { TelemetryView } from "../../src/domains/telemetry/contract.js";
+import {
+	createWorkerProgressFold,
+	WORKER_ACTION_TRAIL_LIMIT,
+	WORKER_TOOL_NAME_LIMIT,
+} from "../../src/domains/telemetry/worker-progress.js";
+import {
+	getCapabilities,
+	getKeybindings,
+	InstrumentedTuiAltScreen,
+	InstrumentedTuiMainScreen,
+	ScrollView,
+	setCapabilities,
+	setKeybindings,
+	stripTerminalSequences,
+	type Terminal,
+	Text,
+	type TUI,
+	TuiAltScreen,
+	TuiMainScreen,
+	VStack,
+	visibleWidth,
+} from "../../src/engine/tui.js";
+import {
+	approvalParkedNotice,
+	budgetAlertNotice,
+	middlewareHookFailedSessionNotice,
+	safetyBlockedNotice,
+	workerEscalationNotice,
+} from "../../src/interactive/bus-notices.js";
+import { type ChatPanel, createChatPanel } from "../../src/interactive/chat-panel.js";
+import { createCoalescingChatRenderer } from "../../src/interactive/chat-renderer.js";
+import { appendNotice } from "../../src/interactive/command-output.js";
+import { openContextOverlay } from "../../src/interactive/context-overlay.js";
+import { dockTop } from "../../src/interactive/dock.js";
+import { createEditorSubmitController, type EditorSubmitDeps } from "../../src/interactive/editor-submit.js";
+import { healthData, healthLines } from "../../src/interactive/health-overlay.js";
+import { fullscreenTuiOptions } from "../../src/interactive/interactive-shell.js";
+import {
+	createInteractiveSlashRuntime,
+	type InteractiveSlashRuntimeDeps,
+} from "../../src/interactive/interactive-slash-runtime.js";
+import {
+	createKeybindingManager,
+	createKeybindingManagerForTesting,
+} from "../../src/interactive/keybinding-manager.js";
+import { buildLayout, releaseRegularDock, returnToLiveEdge } from "../../src/interactive/layout.js";
+import { showPancodeOverlayFrame } from "../../src/interactive/overlay-frame.js";
+import { openAskUserOverlay } from "../../src/interactive/overlays/ask-user.js";
+import type { ToolExecutionFinished } from "../../src/interactive/renderers/tool-call-model.js";
+import {
+	renderBashTranscriptExecution,
+	renderToolExecution,
+	renderToolPreview,
+} from "../../src/interactive/renderers/tool-execution.js";
+import { renderToolSubline } from "../../src/interactive/renderers/tool-subline.js";
+import { renderWorkerEntryLines } from "../../src/interactive/renderers/worker-entry.js";
+import { createStreamPacer, type StreamPacerSlice } from "../../src/interactive/stream-pacer.js";
+import { createPancodeTheme, formatContextPercent, GLYPH, pancodeTheme } from "../../src/interactive/theme/index.js";
+import { transcriptDetail } from "../../src/interactive/transcript-detail.js";
+import {
+	workerEntriesFromRunEntries,
+	workerRunEntryFields,
+	workerSettledFields,
+	workerSettledFromData,
+} from "../../src/interactive/worker-replay.js";
+import {
+	createWorkerStream,
+	type WorkerEntryState,
+	type WorkerRunResultFacts,
+} from "../../src/session-control/worker-stream.js";
+import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
+import { settledRunTrust } from "../harness/settled-run.js";
+import { telemetryCall, telemetryViewOf } from "../harness/telemetry-view.js";
+
+function plainRender(panel: ChatPanel, width = 120): string {
+	return panel.render(width).map(stripTerminalSequences).join("\n");
+}
+
+function startTool(panel: ChatPanel, id = "tool-1"): void {
+	panel.applyEvent({
+		type: "tool_execution_start",
+		toolCallId: id,
+		toolName: "bash",
+		args: { command: "printf tool-command" },
+	} as never);
+}
+
+function updateTool(panel: ChatPanel, text: string, id = "tool-1"): void {
+	panel.applyEvent({ type: "tool_execution_update", toolCallId: id, partialResult: text } as never);
+}
+
+function endTool(panel: ChatPanel, text: string, id = "tool-1"): void {
+	panel.applyEvent({
+		type: "tool_execution_end",
+		toolCallId: id,
+		toolName: "bash",
+		result: text,
+		isError: false,
+		durationMs: 25,
+	} as never);
+}
+
+describe("PanCode rendering invariants", () => {
+	it("keeps reasoning, prose, and tools in stream order", () => {
+		const panel = createChatPanel({ now: () => 1_000 });
+		panel.applyEvent({ type: "message_start", message: { role: "assistant" } } as never);
+		panel.applyEvent({ type: "thinking_delta", contentIndex: 0, delta: "reason one", partialThinking: "reason one" });
+		panel.applyEvent({ type: "text_delta", contentIndex: 1, delta: "before tool", partialText: "before tool" });
+		panel.applyEvent({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "thinking", thinking: "reason one" },
+					{ type: "text", text: "before tool" },
+				],
+			},
+		} as never);
+		startTool(panel);
+		endTool(panel, "tool result");
+		panel.applyEvent({ type: "message_start", message: { role: "assistant" } } as never);
+		panel.applyEvent({ type: "thinking_delta", contentIndex: 0, delta: "reason two", partialThinking: "reason two" });
+		panel.applyEvent({ type: "text_delta", contentIndex: 1, delta: "after tool", partialText: "after tool" });
+		panel.applyEvent({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "thinking", thinking: "reason two" },
+					{ type: "text", text: "after tool" },
+				],
+			},
+		} as never);
+		panel.applyEvent({ type: "agent_end", messages: [] } as never);
+
+		const rendered = plainRender(panel);
+		const firstReasoning = rendered.indexOf("reason one");
+		const before = rendered.indexOf("before tool");
+		const tool = rendered.indexOf("tool-command");
+		const secondReasoning = rendered.indexOf("reason two", firstReasoning + 1);
+		const after = rendered.indexOf("after tool");
+		ok(firstReasoning >= 0, "first reasoning marker should render");
+		ok(firstReasoning < before && before < tool && tool < secondReasoning && secondReasoning < after, rendered);
+	});
+
+	it("keeps every bullet of a list that follows a paragraph with no blank line", () => {
+		// A list with no blank line above it is still a list: its first bullet stays on its own row.
+		const text =
+			"Gateway capabilities (reached through gateway on demand)\n- Inspect: read files\n- Search: grep the tree";
+		const panel = createChatPanel({ now: () => 1_000 });
+		panel.applyEvent({ type: "message_start", message: { role: "assistant" } } as never);
+		panel.applyEvent({ type: "text_delta", contentIndex: 0, delta: text, partialText: text });
+		panel.applyEvent({
+			type: "message_end",
+			message: { role: "assistant", content: [{ type: "text", text }] },
+		} as never);
+		panel.applyEvent({ type: "agent_end", messages: [] } as never);
+		const rows = plainRender(panel, 80).split("\n");
+		ok(!rows.some((row) => /\S -\s*$/u.test(row)), rows.join("\n"));
+		ok(
+			rows.some((row) => /^\s*- Inspect: read files/u.test(row)),
+			rows.join("\n"),
+		);
+		ok(
+			rows.some((row) => /^\s*- Search: grep the tree/u.test(row)),
+			rows.join("\n"),
+		);
+	});
+
+	it("states a skill suggestion the model wrote after its narration as a § row ahead of the answer", () => {
+		const panel = createChatPanel({ now: () => 1_000 });
+		panel.applyEvent({ type: "message_start", message: { role: "assistant" } } as never);
+		const partial = "I checked the tests first.\nSuggested skill: /sk";
+		panel.applyEvent({ type: "text_delta", contentIndex: 0, delta: partial, partialText: partial });
+		// A half-streamed line is ordinary prose until it is whole. The prose filter holds the
+		// unfinished last grapheme back, so the streamed row stops one character short.
+		const streaming = plainRender(panel);
+		ok(streaming.indexOf("I checked the tests first.") < streaming.indexOf("Suggested skill: /s"), streaming);
+		const full = "I checked the tests first.\nSuggested skill: /skill tdd\nNow the failing test.";
+		panel.applyEvent({ type: "text_delta", contentIndex: 0, delta: full.slice(partial.length), partialText: full });
+		panel.applyEvent({
+			type: "message_end",
+			message: { role: "assistant", content: [{ type: "text", text: full }] },
+		} as never);
+		panel.applyEvent({ type: "agent_end", messages: [] } as never);
+		const rendered = plainRender(panel);
+		const lines = rendered.split("\n");
+		// The suggestion is advice for the operator: its own row under the
+		// knowledge mark, never the agent's prose, and never repeated.
+		strictEqual(lines[0], `${GLYPH.classKnowledge} suggests /skill tdd`, rendered);
+		doesNotMatch(rendered, /Suggested skill:/u);
+		strictEqual(rendered.split("/skill tdd").length, 2, rendered);
+		ok(
+			lines.some((line) => line === `${GLYPH.agent} I checked the tests first.`),
+			rendered,
+		);
+		ok(rendered.indexOf("I checked the tests first.") < rendered.indexOf("Now the failing test."), rendered);
+		const styled = panel.render(120).join("\n");
+		ok(styled.includes(pancodeTheme().fg("accent", "/skill tdd")), "the command reads in the slash-command accent");
+	});
+
+	it("changes the preset while a tool remains live", () => {
+		let style: OutputStyle = "standard";
+		const panel = createChatPanel({ getOutputStyle: () => style, now: () => 1_000 });
+		panel.applyEvent({
+			type: "thinking_delta",
+			contentIndex: 0,
+			delta: "private reasoning body",
+			partialThinking: "private reasoning body",
+		});
+		startTool(panel);
+
+		style = "detailed";
+		const expanded = plainRender(panel);
+		match(expanded, /private reasoning body/u);
+		match(expanded, /tool-command/u);
+
+		style = "compact";
+		const folded = plainRender(panel);
+		doesNotMatch(folded, /private reasoning body/u);
+		match(folded, /Thinking · \/view/u);
+		match(folded, /tool-command/u);
+	});
+
+	/** A thinking model's turn: reasoning before every call, then reasoning before the answer. */
+	const thinkingTurn = (
+		style: OutputStyle,
+		steps: ReadonlyArray<readonly [thinking: string | null, call: string | null]>,
+	) => {
+		// The turn's reasoning count is the read model's, one call per message (#434 §11.3).
+		let view: TelemetryView | null = null;
+		const panel = createChatPanel({ getOutputStyle: () => style, now: () => 1_000, getTelemetry: () => view });
+		panel.appendUser("Find the flaky test");
+		panel.applyEvent({ type: "agent_start", turnId: "think" } as never);
+		const messages: unknown[] = [];
+		const message = (thinking: string | null, text?: string) => {
+			panel.applyEvent({ type: "message_start", message: { role: "assistant" } } as never);
+			if (thinking !== null)
+				panel.applyEvent({ type: "thinking_delta", contentIndex: 0, delta: thinking, partialThinking: thinking });
+			const content = [
+				...(thinking === null ? [] : [{ type: "thinking", thinking }]),
+				...(text === undefined ? [] : [{ type: "text", text }]),
+			];
+			const settled = {
+				role: "assistant",
+				content,
+				stopReason: text === undefined ? "toolUse" : "stop",
+				usage: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, reasoning: 40 },
+			};
+			panel.applyEvent({ type: "message_end", message: settled } as never);
+			messages.push(settled);
+		};
+		const calls: Record<string, [string, unknown, unknown]> = {
+			read: [
+				"read",
+				{ path: "src/retry.js" },
+				{
+					content: [{ type: "text", text: "x" }],
+					details: { observation: { unit: "lines", shownCount: 3, totalCount: 3 } },
+				},
+			],
+			grep: [
+				"grep",
+				{ pattern: "Math.random" },
+				{
+					content: [{ type: "text", text: "x" }],
+					details: { observation: { unit: "matches", shownCount: 1, totalCount: 1 } },
+				},
+			],
+			test: [
+				"read",
+				{ path: "tests/retry.test.js" },
+				{
+					content: [{ type: "text", text: "x" }],
+					details: { observation: { unit: "lines", shownCount: 3, totalCount: 3 } },
+				},
+			],
+			bash: ["bash", { command: "npm test" }, { content: [{ type: "text", text: "ok" }], details: { exitCode: 0 } }],
+		};
+		steps.forEach(([thinking, call], index) => {
+			if (thinking !== null) message(thinking);
+			// A model call that returned only reasoning leaves two stretches side by side.
+			if (call === null) return;
+			const [toolName, args, result] = calls[call] ?? [];
+			const id = `c${index}`;
+			panel.applyEvent({ type: "tool_execution_start", toolCallId: id, toolName, args } as never);
+			panel.applyEvent({
+				type: "tool_execution_end",
+				toolCallId: id,
+				toolName,
+				result,
+				isError: false,
+				durationMs: 5,
+			} as never);
+		});
+		message("summarize the cause", "The jitter was real randomness.");
+		view = telemetryViewOf(
+			"thinking-turn",
+			messages.flatMap(() =>
+				telemetryCall("thinking-turn", { turnId: "think", usage: { input: 100, output: 20, reasoning: 40 }, usd: null }),
+			),
+		);
+		panel.applyEvent({ type: "agent_end", messages } as never);
+		return plainRender(panel, 100);
+	};
+	const markerRows = (rendered: string) => rendered.split("\n").filter((row) => row.startsWith("│ Thinking · /view"));
+
+	it("folds a thinking model's explorations across its reasoning in Compact, one marker per run", () => {
+		const rendered = thinkingTurn("compact", [
+			["read the module", "read"],
+			["search for the jitter", "grep"],
+			["check the test", "test"],
+			["run it", "bash"],
+		]);
+		// One fold for the three explorations: the reasoning between them does not split it.
+		strictEqual(rendered.match(/explored/gu)?.length, 1, rendered);
+		match(rendered, /▸ explored 2 files, 1 search ✓\n {2}│ src\/retry\.js · `Math\.random` · tests\/retry\.test\.js/u);
+		// A marker ahead of the fold, one ahead of the command, and one ahead of the answer.
+		deepStrictEqual(markerRows(rendered), [
+			"│ Thinking · /view",
+			"│ Thinking · /view",
+			"│ Thinking · /view · 200 tokens",
+		]);
+		ok(rendered.indexOf("· 200 tokens") < rendered.indexOf("The jitter was real randomness."), rendered);
+	});
+
+	it("keeps a Compact fold's inner reasoning as the one marker ahead of it, with the turn's count", () => {
+		const rendered = thinkingTurn("compact", [
+			[null, "read"],
+			["search for the jitter", "grep"],
+		]);
+		strictEqual(rendered.match(/explored/gu)?.length, 1, rendered);
+		const rows = rendered.split("\n");
+		const marker = rows.findIndex((row) => row.startsWith("│ Thinking · /view"));
+		ok(marker >= 0 && marker < rows.findIndex((row) => row.startsWith("▸ explored")), rendered);
+		// The answer's own reasoning keeps its marker, which carries the turn's count.
+		deepStrictEqual(markerRows(rendered), ["│ Thinking · /view", "│ Thinking · /view · 80 tokens"]);
+	});
+
+	it("shows Standard's reasoning tail before PanCode's words and one excerpt row before an action", () => {
+		const rendered = thinkingTurn("standard", [
+			["read the module", "read"],
+			["the test is next", null],
+			["run it", "bash"],
+		]);
+		// Reasoning ahead of an action keeps one row of its words, never the bare marker (bt-11 b).
+		deepStrictEqual(markerRows(rendered), []);
+		match(rendered, /│ Thinking · read the module\n\n▸ read src\/retry\.js/u);
+		// Stretches of reasoning that nothing visible separates are one run and one row.
+		match(rendered, /\n│ Thinking · the test is next run it\n\n\$ Panos ran `npm test`/u);
+		const long = thinkingTurn("standard", [[`Plan first.\n\nI will read ${"the module ".repeat(20)}`, "read"]]);
+		match(long, /\n│ Thinking · I will read the module the module .*…\n\n▸ read/u);
+		match(rendered, /│ Thinking · summarize the cause\n\n■ The jitter was real randomness\./u);
+		// A cut stretch after an action keeps its label on the hint row that replaced its first row (bt-11 i).
+		const cut = thinkingTurn("standard", [
+			["read the module", "read"],
+			[Array.from({ length: 12 }, (_, line) => `step ${line} of the plan`).join("\n"), null],
+		]);
+		match(cut, /\n│ Thinking · … \d+ rows · \/view\n│ step/u);
+		const detailed = thinkingTurn("detailed", [["read the module", "read"]]);
+		match(detailed, /│ Thinking · read the module\n\n▸ read src\/retry\.js/u);
+	});
+
+	it("replaces cumulative partials and re-expands at the latest state", () => {
+		let style: OutputStyle = "detailed";
+		const panel = createChatPanel({ getOutputStyle: () => style, now: () => 1_000 });
+		startTool(panel);
+		updateTool(panel, "obsolete snapshot");
+		match(plainRender(panel), /obsolete snapshot/u);
+
+		updateTool(panel, "replacement snapshot");
+		const replaced = plainRender(panel);
+		doesNotMatch(replaced, /obsolete snapshot/u);
+		match(replaced, /replacement snapshot/u);
+
+		style = "compact";
+		updateTool(panel, "latest while folded");
+		const folded = plainRender(panel);
+		doesNotMatch(folded, /replacement snapshot|latest while folded/u);
+
+		style = "detailed";
+		const reExpanded = plainRender(panel);
+		doesNotMatch(reExpanded, /replacement snapshot/u);
+		match(reExpanded, /latest while folded/u);
+	});
+
+	it("keeps captured live output across preset changes", () => {
+		let style: OutputStyle = "detailed";
+		const panel = createChatPanel({ getOutputStyle: () => style, now: () => 1_000 });
+		startTool(panel);
+		updateTool(panel, "visible before pause");
+
+		style = "standard";
+		updateTool(panel, "accepted while paused");
+		const paused = plainRender(panel);
+		doesNotMatch(paused, /visible before pause/u);
+		match(paused, /accepted while paused/u);
+
+		style = "detailed";
+		const resumed = plainRender(panel);
+		match(resumed, /accepted while paused/u);
+		doesNotMatch(resumed, /visible before pause/u);
+	});
+
+	it("renders one physical row per line for a multi-line bash command and cursor-moving output", () => {
+		// pi-tui's diff renderer treats each array element as one terminal row. A
+		// raw newline or cursor movement inside one shifts every row below it, and
+		// the composer border kept residue from a bash row after a tool batch.
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: the control bytes are the subject
+		const control = /[\x00-\x08\x0a-\x1f\x7f]/u;
+		for (const style of ["compact", "standard", "detailed"] as const) {
+			const panel = createChatPanel({ getOutputStyle: () => style, now: () => 1_000 });
+			panel.applyEvent({
+				type: "tool_execution_start",
+				toolCallId: "tool-1",
+				toolName: "bash",
+				args: { command: "cd /var/tmp &&\nls -la\r\n\x1b[2Aecho done" },
+			} as never);
+			const assertRows = (phase: string): void => {
+				for (const line of panel.render(80)) {
+					// biome-ignore lint/suspicious/noControlCharactersInRegex: SGR is the one sequence a row may carry
+					const unstyled = line.replace(/\x1b\[[0-9;]*m/gu, "").replace(/\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/gu, "");
+					doesNotMatch(unstyled, control, `${style} ${phase}: ${JSON.stringify(line)}`);
+				}
+			};
+			assertRows("live");
+			updateTool(panel, "Progress 1\x1b[1A\x1b[2K\rProgress 2\b\b");
+			assertRows("partial");
+			endTool(panel, "Progress 1\x1b[1A\x1b[2K\rProgress 2\b\b\x07");
+			assertRows("settled");
+		}
+	});
+
+	it("advances a running tool clock while worker time requires a read-model DTO", () => {
+		let clock = 10_000;
+		const panel = createChatPanel({ now: () => clock });
+		panel.applyEvent({ type: "agent_start" } as never);
+		startTool(panel);
+		panel.applyWorkerState({
+			assignmentId: "helper-1",
+			runId: "h1lp3r",
+			origin: "agent",
+			helper: true,
+			agentId: "context-scout",
+			task: "Summarize prior probe benchmarks.",
+			runtime: { kind: "pancode", targetId: "dynamo", wireModelId: "qwen3.8-27b" },
+			text: "",
+			droppedLines: 0,
+			tools: [],
+			attempts: [{ runId: "h1lp3r", targetLabel: "dynamo/qwen3.8-27b" }],
+			pending: true,
+			startedAtMs: clock,
+		});
+		const before = plainRender(panel);
+		clock += 2_300;
+		// No invalidate between the frames: only the clock moved.
+		const after = plainRender(panel);
+		// A running row's verb is progressive; its tail is the live mark and the elapsed.
+		// A sub-second live elapsed shows only where the tier states every duration.
+		match(before, /running `printf tool-command` ●\n/u);
+		match(after, /running `printf tool-command` ● 2\.3s/u);
+		strictEqual(after.match(/2\.3s/gu)?.length, 1, "worker elapsed requires a journal DTO");
+	});
+
+	it("clears partial state at terminal settlement and ignores late updates", () => {
+		const panel = createChatPanel({ getOutputStyle: () => "detailed", now: () => 1_000 });
+		startTool(panel);
+		updateTool(panel, "partial-only text");
+		endTool(panel, "sealed final text");
+		updateTool(panel, "late partial text");
+
+		const rendered = plainRender(panel);
+		match(rendered, /sealed final text/u);
+		doesNotMatch(rendered, /partial-only text|late partial text|live output/u);
+	});
+});
+
+describe("worker rendering invariants", () => {
+	it("keeps identified concurrent calls pending after unmatched or duplicate finishes", () => {
+		const progress = createWorkerProgressFold();
+		for (const toolCallId of ["first", "second"]) {
+			progress.observe({
+				type: "pancode_tool_start",
+				payload: { tool: "read", toolCallId, action: { verb: "reading", object: `${toolCallId}.ts` } },
+			});
+		}
+		progress.observe({ type: "pancode_tool_finish", payload: { tool: "read", toolCallId: "unknown" } });
+		strictEqual(progress.snapshot().currentAction?.toolCallId, "second");
+		strictEqual(progress.snapshot().phase, "tool");
+		for (let index = 0; index < 2; index += 1) {
+			progress.observe({ type: "pancode_tool_finish", payload: { tool: "read", toolCallId: "first" } });
+			strictEqual(progress.snapshot().currentAction?.toolCallId, "second");
+			strictEqual(progress.snapshot().phase, "tool");
+		}
+		progress.observe({ type: "pancode_tool_finish", payload: { tool: "read", toolCallId: "second" } });
+		strictEqual(progress.snapshot().currentAction, null);
+		strictEqual(progress.snapshot().phase, "waiting");
+
+		progress.observe({ type: "pancode_tool_start", payload: { tool: "read" } });
+		progress.observe({ type: "pancode_tool_finish", payload: { tool: "read", toolCallId: "legacy" } });
+		strictEqual(progress.snapshot().currentAction, null);
+		strictEqual(progress.snapshot().phase, "waiting");
+	});
+
+	it("discards worker reasoning content", () => {
+		const progress = createWorkerProgressFold();
+		strictEqual(
+			progress.observe({
+				type: "message_update",
+				assistantMessageEvent: { type: "thinking_delta", delta: "worker chain of thought" },
+			}),
+			true,
+		);
+
+		const thinking = progress.snapshot();
+		strictEqual(thinking.phase, "thinking");
+		strictEqual(thinking.tailText, "");
+		doesNotMatch(JSON.stringify(thinking), /worker chain of thought/u);
+	});
+
+	it("keeps only redacted and bounded worker tool activity", () => {
+		const progress = createWorkerProgressFold();
+		for (let index = 0; index < WORKER_TOOL_NAME_LIMIT + 4; index += 1) {
+			const tool = `tool-${index}`;
+			const toolCallId = `call-${index}`;
+			progress.observe({
+				type: "pancode_tool_start",
+				payload: {
+					tool,
+					toolCallId,
+					action: { verb: "read", object: `redacted-target-${index}` },
+					args: { credential: `raw-secret-${index}` },
+				},
+			});
+			progress.observe({ type: "pancode_tool_finish", payload: { tool, toolCallId } });
+		}
+
+		const snapshot = progress.snapshot();
+		strictEqual(snapshot.toolNames.length, WORKER_TOOL_NAME_LIMIT);
+		strictEqual(snapshot.recentActions.length, WORKER_ACTION_TRAIL_LIMIT);
+		deepStrictEqual(
+			snapshot.recentActions.map((action) => action.tool),
+			["tool-11", "tool-10", "tool-9", "tool-8"],
+		);
+		match(JSON.stringify(snapshot), /redacted-target-11/u);
+		doesNotMatch(JSON.stringify(snapshot), /raw-secret/u);
+	});
+
+	it("keeps blocked and failed outcomes on finished calls without treating them as completed work", () => {
+		const progress = createWorkerProgressFold();
+		for (const [toolCallId, outcome] of [
+			["blocked-call", "blocked"],
+			["failed-call", "error"],
+		] as const) {
+			progress.observe({
+				type: "pancode_tool_start",
+				payload: { tool: "read", toolCallId, action: { verb: "reading", object: `${toolCallId}.ts` } },
+			});
+			progress.observe({ type: "pancode_tool_finish", payload: { tool: "read", toolCallId, outcome } });
+		}
+		deepStrictEqual(
+			progress.snapshot().recentActions.map((action) => action.outcome),
+			["error", "blocked"],
+		);
+		const entry = {
+			assignmentId: "a",
+			runId: "run-outcomes",
+			origin: "user",
+			agentId: "verifier",
+			runtime: { kind: "pancode", targetId: "blade", wireModelId: "m" },
+			text: "",
+			droppedLines: 0,
+			tools: ["read"],
+			attempts: [{ runId: "run-outcomes", targetLabel: "blade" }],
+			pending: false,
+			result: { outcome: "failed", durationMs: 1000, toolCalls: 2 },
+			progress: progress.snapshot(),
+		} as unknown as WorkerEntryState;
+		const settled = workerSettledFields(entry);
+		ok(settled);
+		deepStrictEqual(
+			workerSettledFromData(settled)?.calls?.map((call) => call.outcome),
+			["error", "blocked"],
+		);
+		const rows = renderWorkerEntryLines(entry, 90, { detail: transcriptDetail("detailed") })
+			.map(stripTerminalSequences)
+			.join("\n");
+		match(rows, /read blocked-call\.ts ✗ blocked/u);
+		match(rows, /read failed-call\.ts ✗ failed/u);
+	});
+
+	it("neutralizes dead tool-call markup in a worker's live answer tail", () => {
+		const entry = {
+			assignmentId: "a",
+			runId: "run-markup",
+			origin: "user",
+			agentId: "verifier",
+			runtime: { kind: "pancode", targetId: "blade", wireModelId: "m" },
+			text: 'Evidence found. <tool_call>{"name":"read","arguments":{"path":"secrets"}}</tool_call> Reporting now.',
+			droppedLines: 0,
+			tools: [],
+			attempts: [{ runId: "run-markup", targetLabel: "blade" }],
+			pending: true,
+		} as unknown as WorkerEntryState;
+		const live = renderWorkerEntryLines(entry, 100, { unbounded: true }).map(stripTerminalSequences).join("\n");
+		// The live row states the phase; the answer tail reads in /view, with dead markup neutralized.
+		match(live, /Evidence found\.\s+Reporting now\./u);
+		doesNotMatch(live, /<tool_call>|"secrets"/u);
+	});
+
+	it("fits execution and validation failures at narrow widths", () => {
+		const envelope = fixtureEnvelope("width-run");
+		const draft = fixtureReceiptDraft(envelope);
+		draft.quality.resultContract = {
+			sourceId: "agent-result-contract:mutation-report:fixture",
+			validatorDigest: "a".repeat(64),
+			conformance: "pass",
+			quality: "fail",
+		};
+		const receipt = finishRunResult(draft, envelope, {
+			terminal: { terminalReason: draft.terminalReason ?? "completed" },
+			processExitCode: envelope.exitCode,
+			frameType: null,
+			usage: undefined,
+		}).result;
+		const entry: WorkerEntryState = {
+			assignmentId: envelope.id,
+			runId: envelope.id,
+			origin: "user",
+			agentId: "coder",
+			runtime: { kind: "pancode", targetId: "codex", wireModelId: "gpt-5.6-luna" },
+			text: "",
+			droppedLines: 0,
+			tools: [],
+			attempts: [],
+			pending: false,
+			result: { outcome: "succeeded", durationMs: 21000, trust: settledRunTrust(receipt) },
+		};
+		for (const width of [24, 44, 76]) {
+			const lines = renderWorkerEntryLines(entry, width, {});
+			ok(
+				lines.every((line) => visibleWidth(line) <= width),
+				`width ${width}: ${lines.map(visibleWidth)}`,
+			);
+			const plain = lines.map(stripTerminalSequences).join(" ").replace(/│/gu, " ").replace(/\s+/gu, " ");
+			// The failure leads the row in place of the task; a failed validation never reads as done.
+			match(plain, /✗ ◇ coder validation failed/u);
+			doesNotMatch(plain, /✓|\bdone\b/u);
+			match(plain, /(?<!recorded )validation failed/u);
+			doesNotMatch(plain, /Ctrl\+O/u);
+		}
+	});
+
+	it("renders the same sealed outcome facts live and on replay", () => {
+		const facts: WorkerRunResultFacts = {
+			outcome: "succeeded",
+			exitCode: 0,
+			tokenCount: 42,
+			durationMs: 900,
+			toolCalls: 3,
+			contract: "pass",
+			text: "sealed worker answer",
+		};
+		const readResult = (): WorkerRunResultFacts => facts;
+		const stream = createWorkerStream({ readResult });
+		const started = stream.started({
+			runId: "run-1",
+			assignmentId: "assignment-1",
+			attempt: 0,
+			requestOrigin: "user",
+			agentId: "scout",
+			targetId: "local",
+			wireModelId: "worker-model",
+			runtimeId: "openai",
+			runtimeKind: "http",
+			pid: 123,
+		} as never);
+		if (started === null) throw new Error("worker did not start");
+		const completed = stream.completed({
+			runId: "run-1",
+			outcome: "succeeded",
+			outcomeCode: null,
+			outcomeDetail: null,
+			tokenCount: 1,
+			durationMs: 1,
+			exitCode: 0,
+			toolActivity: null,
+		} as never);
+		if (completed === null) throw new Error("worker did not settle");
+
+		const entry: WorkerRunEntry = {
+			kind: "workerRun",
+			turnId: "turn-1",
+			parentTurnId: null,
+			timestamp: "2026-09-01T00:00:00.000Z",
+			assignmentId: "assignment-1",
+			runId: "run-1",
+			origin: "user",
+			agentId: "scout",
+			runtime: { kind: "pancode", targetId: "local", wireModelId: "worker-model" },
+		};
+		const replayed = workerEntriesFromRunEntries([entry], readResult).get("assignment-1");
+		if (replayed === undefined) throw new Error("worker did not replay");
+
+		deepStrictEqual(completed.entry.result, replayed.result);
+		strictEqual(completed.entry.text, replayed.text);
+		strictEqual(completed.entry.pending, false);
+		strictEqual(replayed.pending, false);
+		deepStrictEqual(renderWorkerEntryLines(completed.entry, 120, {}), renderWorkerEntryLines(replayed, 120, {}));
+	});
+});
+
+// Exercise the public renderer and input path without a PTY or private engine fields.
+class RenderingTerminal implements Terminal {
+	columns = 80;
+	rows = 24;
+	kittyProtocolActive = false;
+	writes: string[] = [];
+	input: (data: string) => void = () => {};
+	start(onInput: (data: string) => void): void {
+		this.input = onInput;
+	}
+	stop(): void {}
+	async drainInput(): Promise<void> {}
+	write(data: string): void {
+		this.writes.push(data);
+	}
+	moveBy(): void {}
+	hideCursor(): void {}
+	showCursor(): void {}
+	clearLine(): void {}
+	clearFromCursor(): void {}
+	clearScreen(): void {}
+	setTitle(): void {}
+	setProgress(): void {}
+	setProgramStatus(): void {}
+}
+
+const STREAMED_ANSWER = [
+	"## Retry design",
+	"",
+	"The loop owns **how many** attempts and **how long** to wait.",
+	"",
+	...Array.from({ length: 12 }, (_, i) => `- step ${i} uses \`backoff(${i})\``),
+	"",
+	"```ts",
+	...Array.from({ length: 12 }, (_, i) => `const delay${i} = backoff(${i});`),
+	"```",
+	"",
+	"Tests drive the clock directly.",
+].join("\n");
+
+function streamAnswer(panel: ChatPanel, text: string): void {
+	panel.applyEvent({ type: "agent_start" } as never);
+	panel.applyEvent({ type: "message_start", message: { role: "assistant" } } as never);
+	for (let at = 0; at < text.length; at += 4) {
+		panel.applyEvent({ type: "text_delta", contentIndex: 0, delta: text.slice(at, at + 4) } as never);
+	}
+}
+
+function settleAnswer(panel: ChatPanel, text: string): void {
+	const message = {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		stopReason: "stop",
+		usage: { input: 900, output: 120, cacheRead: 0, cacheWrite: 0 },
+	};
+	panel.applyEvent({ type: "message_end", message } as never);
+	panel.applyEvent({ type: "agent_end", messages: [message] } as never);
+}
+
+describe("streamed answers settle in place", () => {
+	it("keeps every streamed row byte-stable when the answer finalizes", () => {
+		const panel = createChatPanel({ now: () => 0 });
+		panel.appendUser("Explain the retry design.");
+		streamAnswer(panel, STREAMED_ANSWER);
+		const streamed = panel.render(80);
+		settleAnswer(panel, STREAMED_ANSWER);
+		const settled = panel.render(80);
+		// Only the receipt is added below; rows the operator already saw never change. The one
+		// exception is the open tail row, which gains the last grapheme the prose filter held back.
+		ok(settled.length > streamed.length, "the settled turn gains its receipt");
+		deepStrictEqual(settled.slice(0, streamed.length - 1), streamed.slice(0, -1));
+		const tail = streamed.at(-1) ?? "";
+		const settledTail = settled[streamed.length - 1] ?? "";
+		ok(stripTerminalSequences(settledTail).startsWith(stripTerminalSequences(tail)), settledTail);
+		strictEqual(stripTerminalSequences(settledTail), `${stripTerminalSequences(tail)}.`);
+	});
+
+	it("never restyles a row above the open trailing block while the answer streams", () => {
+		const panel = createChatPanel({ now: () => 0 });
+		panel.appendUser("Explain the retry design.");
+		panel.applyEvent({ type: "agent_start" } as never);
+		panel.applyEvent({ type: "message_start", message: { role: "assistant" } } as never);
+		let previous = panel.render(80);
+		for (let at = 0; at < STREAMED_ANSWER.length; at += 4) {
+			panel.applyEvent({ type: "text_delta", contentIndex: 0, delta: STREAMED_ANSWER.slice(at, at + 4) } as never);
+			const frame = panel.render(80);
+			let changed = 0;
+			while (changed < previous.length && changed < frame.length && previous[changed] === frame[changed]) changed += 1;
+			// Stock Markdown renders top-level blocks independently, so only the open block may change.
+			// Measured at width 80 on STREAMED_ANSWER, the deepest restyle reaches 3 rows from the end
+			// (the open fence). The bound is 4 so a whole-answer restyle, which touches rows far above
+			// the open block, fails instead of hiding inside a window sized for the tallest block.
+			ok(changed >= frame.length - 4, `delta at ${at} restyled row ${changed} of ${frame.length}`);
+			previous = frame;
+		}
+	});
+
+	it("streams against one settled run array and keeps the regular root equal to the frame", () => {
+		const panel = createChatPanel({ now: () => 0 });
+		for (let turn = 0; turn < 3; turn += 1) {
+			panel.appendUser(`Question ${turn}.`);
+			streamAnswer(panel, `Answer ${turn} with **bold** text.`);
+			settleAnswer(panel, `Answer ${turn} with **bold** text.`);
+		}
+		const banner = new Text("banner", 0, 0);
+		const editor = new Text("editor", 0, 0);
+		const footer = new Text("footer", 0, 0);
+		const root = buildLayout({ banner, chat: panel, editor, footer });
+		const expected = (): string[] => [
+			...banner.render(80),
+			"",
+			...panel.render(80),
+			"",
+			...editor.render(80),
+			...footer.render(80),
+		];
+		deepStrictEqual(root.render(80), expected());
+		panel.appendUser("Explain the retry design.");
+		streamAnswer(panel, STREAMED_ANSWER.slice(0, 40));
+		// This frame freezes the new prompt row; from here on only the answer streams.
+		deepStrictEqual(root.render(80), expected());
+		panel.applyEvent({ type: "text_delta", contentIndex: 0, delta: " " } as never);
+		const first = panel.renderRegions(80);
+		ok(first.pieces.length > 1, "settled turns form a run ahead of the streaming answer");
+		ok((first.pieces.at(-1)?.length ?? 0) > 0, "the streaming answer renders after the run");
+		deepStrictEqual(root.render(80), expected());
+		for (let at = 40; at < 200; at += 8) {
+			panel.applyEvent({ type: "text_delta", contentIndex: 0, delta: STREAMED_ANSWER.slice(at, at + 8) } as never);
+			const frame = panel.renderRegions(80);
+			// The settled rows are the same array every streamed frame; only the answer's pieces are new.
+			strictEqual(frame.pieces[0], first.pieces[0]);
+			deepStrictEqual(root.render(80), expected());
+		}
+		// A taller banner moves the run down a row: the root rewrites it rather than trusting stale rows.
+		banner.setText("banner\nsecond banner row");
+		banner.invalidate();
+		deepStrictEqual(root.render(80), expected());
+		banner.setText("banner");
+		banner.invalidate();
+		deepStrictEqual(root.render(80), expected());
+		settleAnswer(panel, STREAMED_ANSWER.slice(0, 200));
+		deepStrictEqual(root.render(80), expected());
+		// The frame after a settle serves the grown run, which now covers the answer.
+		panel.appendUser("Next question.");
+		const settled = panel.renderRegions(80);
+		ok((settled.pieces[0]?.length ?? 0) > (first.pieces[0]?.length ?? 0), "a settled entry joins the run");
+		deepStrictEqual(settled.pieces.flat(), panel.render(80));
+		deepStrictEqual(root.render(80), expected());
+	});
+
+	it("renders settled entries ahead in the other styles so a first Alt+O renders nothing", () => {
+		let style: OutputStyle = "standard";
+		let rendered = 0;
+		const steps: Array<() => boolean> = [];
+		const panel = createChatPanel({
+			now: () => 0,
+			getOutputStyle: () => style,
+			onRenderMetrics: (metrics) => {
+				rendered = metrics.entriesRendered;
+			},
+			scheduleIdle: (step) => steps.push(step),
+		});
+		const idle = () => {
+			while (steps.length > 0) {
+				const step = steps.shift();
+				if (step?.()) steps.push(step);
+			}
+		};
+		for (let turn = 0; turn < 6; turn += 1) {
+			panel.appendUser(`Question ${turn}.`);
+			streamAnswer(panel, `Answer ${turn}.`);
+			settleAnswer(panel, `Answer ${turn}.`);
+		}
+		panel.render(80);
+		// A streaming answer holds the job at its entry instead of being skipped.
+		panel.appendUser("Still streaming.");
+		streamAnswer(panel, "Partial");
+		panel.render(80);
+		idle();
+		settleAnswer(panel, "Partial answer.");
+		panel.render(80);
+		idle();
+		for (const next of ["detailed", "compact"] as const) {
+			style = next;
+			panel.render(80);
+			strictEqual(rendered, 0, `the first switch to ${next} renders every entry from the cache`);
+		}
+	});
+
+	it("caches a settled replay block per render key and re-renders a live one until it settles", () => {
+		let style: OutputStyle = "standard";
+		let clock = 0;
+		const panel = createChatPanel({ now: () => clock, getOutputStyle: () => style });
+		let settledCalls = 0;
+		panel.appendReplayBlock((width) => {
+			settledCalls += 1;
+			return [`notice at ${width}`];
+		});
+		let running = true;
+		let liveCalls = 0;
+		panel.appendReplayBlock(
+			() => {
+				liveCalls += 1;
+				return [running ? "running" : "done"];
+			},
+			() => running,
+		);
+		for (const next of ["standard", "detailed", "standard", "detailed"] as const) {
+			style = next;
+			panel.render(80);
+			clock += 150;
+		}
+		strictEqual(settledCalls, 2, "one render per style, then served from the cache");
+		ok(liveCalls >= 4, "a live block renders on every frame that asks");
+		running = false;
+		clock += 150;
+		match(plainRender(panel, 80), /done/u);
+		const settledLive = liveCalls;
+		style = "standard";
+		panel.render(80);
+		style = "detailed";
+		panel.render(80);
+		strictEqual(liveCalls, settledLive + 1, "once settled, the formerly live block caches too");
+	});
+
+	it("drops the regular dock from the exit frame so the summary follows the transcript", () => {
+		const parts = {
+			banner: new Text("banner", 0, 0),
+			chat: new Text("reply", 0, 0),
+			editor: new Text("editor", 0, 0),
+			footer: new Text("footer\nCtrl+C again to quit (3s)", 0, 0),
+		};
+		const root = buildLayout(parts);
+		const terminal = new RenderingTerminal();
+		const tui = new TuiMainScreen(terminal);
+		tui.addChild(root);
+		tui.start();
+		try {
+			tui.renderNow();
+			const redraws = tui.fullRedraws;
+			strictEqual(releaseRegularDock(root), true);
+			terminal.writes = [];
+			tui.renderNow();
+			deepStrictEqual(
+				root
+					.render(terminal.columns)
+					.map((row) => stripTerminalSequences(row).trim())
+					.filter(Boolean),
+				["banner", "reply"],
+			);
+			strictEqual(tui.fullRedraws, redraws, "the transcript above is not rewritten");
+			strictEqual(terminal.writes.join("").split("\x1b[2K").length - 1, 3, "the dock's three rows are erased on screen");
+		} finally {
+			tui.stop();
+		}
+		strictEqual(releaseRegularDock(buildLayout(parts, { mode: "fullscreen" })), false, "fullscreen keeps its root");
+	});
+
+	it("never full-redraws the regular screen when an answer taller than it finalizes", () => {
+		const terminal = new RenderingTerminal();
+		terminal.rows = 12;
+		const panel = createChatPanel({ now: () => 0, getTerminalRows: () => terminal.rows });
+		const tui = new TuiMainScreen(terminal);
+		tui.addChild(
+			buildLayout({
+				banner: new Text("banner", 0, 0),
+				chat: panel,
+				editor: new Text("editor", 0, 0),
+				footer: new Text("footer", 0, 0),
+			}),
+		);
+		tui.start();
+		try {
+			panel.appendUser("Explain the retry design.");
+			tui.renderNow();
+			streamAnswer(panel, STREAMED_ANSWER);
+			tui.renderNow();
+			const redraws = tui.fullRedraws;
+			settleAnswer(panel, STREAMED_ANSWER);
+			tui.renderNow();
+			strictEqual(tui.fullRedraws, redraws, "finalize rewrote rows already in scrollback");
+		} finally {
+			tui.stop();
+		}
+	});
+});
+
+describe("stream presentation timing", () => {
+	it("asks for a frame on the first delta after a quiet window and coalesces the rest", () => {
+		let clock = 1_000;
+		let requests = 0;
+		const timers: Array<{ callback: () => void; ms: number }> = [];
+		const renderer = createCoalescingChatRenderer({
+			chatPanel: createChatPanel({ now: () => clock }),
+			requestRender: () => {
+				requests += 1;
+			},
+			now: () => clock,
+			setTimer: (callback, ms) => timers.push({ callback, ms }),
+			clearTimer: () => {},
+		});
+		const delta = (text: string) =>
+			renderer.applyEvent({ type: "text_delta", contentIndex: 0, delta: text, partialText: "" } as never);
+		delta("First");
+		strictEqual(requests, 1, "the first token does not wait out a coalesce window");
+		strictEqual(timers.length, 0);
+		clock += 5;
+		delta(" token");
+		delta(" burst");
+		strictEqual(requests, 1, "deltas inside the window share one frame");
+		strictEqual(timers.length, 1);
+		strictEqual(timers[0]?.ms, 11, "the window runs from the last request, not from this delta");
+		timers[0]?.callback();
+		strictEqual(requests, 2);
+		clock += 40;
+		delta(" again");
+		strictEqual(requests, 3, "a delta after a quiet window is on the leading edge again");
+	});
+
+	it("shows the whole first delta of a paced stream at once", () => {
+		const slices: StreamPacerSlice[] = [];
+		const timers: Array<{ callback: () => void; ms: number }> = [];
+		const pacer = createStreamPacer({
+			mode: "on",
+			onSlice: (slice) => slices.push(slice),
+			now: () => 0,
+			setTimer: (callback, ms) => timers.push({ callback, ms }),
+			clearTimer: () => {},
+		});
+		pacer.enqueue({ sequence: 1, generation: 1, kind: "text", contentIndex: 0, text: "Hello there" });
+		strictEqual(timers[0]?.ms, 0);
+		timers[0]?.callback();
+		strictEqual(slices[0]?.text, "Hello there");
+		strictEqual(slices[0]?.reason, "first");
+		strictEqual(slices[0]?.finalForItem, true);
+	});
+});
+
+describe("Pi TUI compatibility", () => {
+	it("draws a tool's screenshot inline on a graphics terminal, from its image or its file, and adds nothing elsewhere", () => {
+		const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+		const dir = mkdtempSync(join(tmpdir(), "pancode-card-shot-"));
+		const shot = join(dir, "001-look-1280x800.png");
+		writeFileSync(shot, Buffer.from(png, "base64"));
+		const previous = getCapabilities();
+		const text = { type: "text", text: `browser look page p1\nscreenshots:\n  ${shot} (1280x800)` };
+		const withImage: ToolExecutionFinished = {
+			toolName: "browser",
+			toolCallId: "shot-inline",
+			args: { op: "look", screenshot: true },
+			result: { content: [text, { type: "image", mimeType: "image/png", data: png }], details: { shots: [shot] } },
+			isError: false,
+		};
+		// A text-only route sent the model no image; the card reads the file the result names.
+		const pathOnly: ToolExecutionFinished = {
+			...withImage,
+			toolCallId: "shot-path",
+			result: { content: [text], details: { shots: [shot] } },
+		};
+		const kittyRows = (call: ToolExecutionFinished, opts = {}) =>
+			renderToolExecution(call, 100, opts).filter((row) => row.includes("\u001b_G"));
+		try {
+			setCapabilities({ ...previous, images: "kitty" });
+			strictEqual(kittyRows(withImage).length, 1);
+			strictEqual(kittyRows(pathOnly).length, 1);
+			strictEqual(kittyRows(withImage, { unbounded: true }).length, 0, "an export writes no image escapes");
+			// The live panel draws a settled card through the preview: Standard shows the screenshot, Compact keeps one row.
+			const preview = (style: "compact" | "standard") =>
+				renderToolPreview(pathOnly, 100, transcriptDetail(style)).filter((row) => row.includes("\u001b_G")).length;
+			strictEqual(preview("standard"), 1);
+			strictEqual(preview("compact"), 0);
+			setCapabilities({ ...previous, images: "iterm2" });
+			ok(renderToolExecution(pathOnly, 100).some((row) => row.includes("\u001b]1337;File=")));
+			setCapabilities({ ...previous, images: null });
+			const plain = renderToolExecution(withImage, 100);
+			ok(!plain.some((row) => row.includes("\u001b_G") || row.includes("\u001b]1337;")));
+			match(stripTerminalSequences(plain.join("\n")), /screenshots:[\s\S]*\[image image\/png · 70B\]/u);
+		} finally {
+			setCapabilities(previous);
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+	it("keeps context legend percentages on their row through frame resizing and refresh", () => {
+		let onEvent!: (event: { type: string }) => void;
+		let messageTokens = 1000;
+		const ledger = () =>
+			buildContextLedger({
+				provider: "fixture",
+				model: "fixture",
+				contextWindow: 32768,
+				systemPromptTokens: 1200,
+				toolSchemaTokens: 800,
+				messageTokens,
+				compactionThreshold: 0.9,
+				compactionAuto: true,
+			});
+		const tui = {
+			showOverlay: () => ({ hide() {} }),
+			requestRender() {},
+		} as unknown as TUI;
+		const handle = openContextOverlay(tui, ledger, {
+			chat: {
+				isStreaming: () => false,
+				onEvent: (handler) => {
+					onEvent = handler;
+					return () => {};
+				},
+			},
+		});
+		try {
+			for (const width of [86, 86, 60, 40, 86]) {
+				// The overlay paints in the composer's dock. A body row budget tall enough for every row keeps the
+				// dock's windowing from hiding a group at a narrow width.
+				const rows = dockTop(tui)?.frame.renderDockBody(width, 60) ?? [];
+				ok(rows.length > 0, "the ledger renders in the dock");
+				ok(rows.every((row) => visibleWidth(row) <= width));
+				const plain = rows.map(stripTerminalSequences);
+				for (const group of ledger().meter) {
+					const row = plain.find((line) => line.includes(group.label.slice(0, 6)));
+					ok(row?.includes(formatContextPercent(group.percent)), `${width}: ${group.label}\n${plain.join("\n")}`);
+				}
+				messageTokens += 1000;
+				onEvent({ type: "message_end" });
+			}
+		} finally {
+			handle.hide();
+		}
+	});
+
+	it("names the cleanup ceiling only when it fires before the window does", () => {
+		const footer = (compactionCeilingTokens: number): string => {
+			const ledger = () =>
+				buildContextLedger({
+					provider: "fixture",
+					model: "fixture",
+					contextWindow: 200_000,
+					messageTokens: 1000,
+					compactionThreshold: 0.8,
+					compactionCeilingTokens,
+					compactionAuto: true,
+				});
+			const tui = { showOverlay: () => ({ hide() {} }), requestRender() {} } as unknown as TUI;
+			const handle = openContextOverlay(tui, ledger);
+			try {
+				return (dockTop(tui)?.frame.renderDockBody(120, 60) ?? []).map(stripTerminalSequences).join("\n");
+			} finally {
+				handle.hide();
+			}
+		};
+		doesNotMatch(footer(400_000), /ceiling/u);
+		match(footer(100_000), /autocompact at 80% \(auto\) · cleanup ceiling 100k tokens/u);
+	});
+
+	it("paints the autocompact facts' figures as values and fits the next request at 48 columns (W2-6)", () => {
+		const ledger = () =>
+			buildContextLedger({
+				provider: "fixture",
+				model: "fixture",
+				contextWindow: 272_000,
+				messageTokens: 1000,
+				toolCount: 12,
+				compactionThreshold: 0.8,
+				compactionCeilingTokens: 267_000,
+				compactionAuto: true,
+			});
+		const inspectLiveBudget = () =>
+			({
+				status: "available",
+				capability: "native",
+				view: {
+					phase: "idle",
+					inputTokens: 11_532,
+					outputReserveTokens: 32_768,
+					headroomTokens: 227_700,
+					pendingHandoff: null,
+					lastOutcome: null,
+				},
+			}) as never;
+		const tui = { showOverlay: () => ({ hide() {} }), requestRender() {} } as unknown as TUI;
+		const handle = openContextOverlay(tui, ledger, {
+			chat: { isStreaming: () => false, onEvent: () => () => {}, inspectLiveBudget },
+		});
+		const theme = pancodeTheme();
+		// The counter role is a value role: without color it paints no SGR 2, while the label role still dims.
+		const noColor = createPancodeTheme({ color: false });
+		ok(!noColor.fg("counter", "80%").includes("\u001b[2m"));
+		ok(noColor.fg("annotation", "autocompact at").includes("\u001b[2m"));
+		try {
+			for (const [tier, ceiling] of [
+				["standard", "267k"],
+				["detailed", "267,000"],
+			] as const) {
+				setPresentationTier(tier);
+				const raw = (dockTop(tui)?.frame.renderDockBody(116, 60) ?? []).join("\n");
+				for (const figure of ["80%", ceiling, "12"])
+					ok(raw.includes(theme.fg("counter", figure)), `${tier}: ${figure} paints as a value\n${JSON.stringify(raw)}`);
+				doesNotMatch(raw, /autocompact at 80%/u, `${tier}: the threshold is not painted inside its label`);
+				// 48 columns: the dock body is 44 wide. Every fact stays whole and no row ends on `·` or `…`.
+				const narrow = (dockTop(tui)?.frame.renderDockBody(44, 60) ?? []).map((row) =>
+					stripTerminalSequences(row).trimEnd(),
+				);
+				ok(
+					narrow.every((row) => visibleWidth(row) <= 44 && !/[·…]$/u.test(row)),
+					`${tier}\n${narrow.join("\n")}`,
+				);
+				const [input, reserve, headroom] =
+					tier === "standard" ? ["11.5k", "32.8k", "228k"] : ["11,532", "32,768", "227,700"];
+				ok(narrow.includes(`input ${input} · output reserve ${reserve}`), `${tier}\n${narrow.join("\n")}`);
+				ok(narrow.includes(`headroom ${headroom}`), `${tier}\n${narrow.join("\n")}`);
+			}
+		} finally {
+			handle.hide();
+			setPresentationTier("standard");
+		}
+	});
+
+	it("words a partial cache reuse with the re-prefilled count the call's journal records", () => {
+		const ledger = () =>
+			buildContextLedger({
+				provider: "fixture",
+				model: "fixture",
+				contextWindow: 32768,
+				systemPromptTokens: 1200,
+				toolSchemaTokens: 800,
+				messageTokens: 1000,
+				compactionThreshold: 0.9,
+				compactionAuto: true,
+			});
+		const view = telemetryViewOf(
+			"partial-cache",
+			telemetryCall("partial-cache", {
+				usage: { input: 3000, cacheRead: 9000 },
+				cache: { verdict: "partial", rePrefilledTokens: { kind: "measured", value: 3000, source: "local-count" } },
+			}),
+		);
+		const tui = {
+			showOverlay: () => ({ hide() {} }),
+			requestRender() {},
+		} as unknown as TUI;
+		// Prompt cache rows are provenance: `/context` shows them at detailed only.
+		setPresentationTier("detailed");
+		const handle = openContextOverlay(tui, ledger, { telemetry: { live: () => view, subscribe: () => () => {} } });
+		try {
+			const plain = (dockTop(tui)?.frame.renderDockBody(120, 60) ?? []).map(stripTerminalSequences).join("\n");
+			match(plain, /backend partly reused · re-prefilled up to 3,000 · cache read 9,000/u);
+			doesNotMatch(plain, /backend reused/u);
+		} finally {
+			handle.hide();
+			setPresentationTier("standard");
+		}
+	});
+
+	it("words a server's own cache read when its usage omits one, and labels the server's prefill timing (#434)", () => {
+		const ledger = () =>
+			buildContextLedger({
+				provider: "fixture",
+				model: "fixture",
+				contextWindow: 32768,
+				systemPromptTokens: 1200,
+				toolSchemaTokens: 800,
+				messageTokens: 1000,
+				compactionThreshold: 0.9,
+				compactionAuto: true,
+				promptCache: {
+					shellReused: true,
+					cacheReadTokens: null,
+					cacheWriteTokens: null,
+					uncachedInputTokens: 10_000,
+					backend: {
+						promptTokens: 10_000,
+						cachedTokens: 6_000,
+						predictedTokens: 10,
+						promptMs: 120,
+						predictedMs: 50,
+						source: "llamacpp-timings",
+					},
+					uncachedPrefillTokens: 4_000,
+					backendVerdict: "partial",
+				},
+			});
+		const view = telemetryViewOf(
+			"server-cache",
+			telemetryCall("server-cache", {
+				usage: { input: 10_000, cacheRead: null },
+				cache: {
+					verdict: "partial",
+					rePrefilledTokens: { kind: "measured", value: 3_000, source: "local-count" },
+					uncachedPrefillTokens: { kind: "measured", value: 4_000, source: "provider" },
+				},
+			}),
+		);
+		const tui = {
+			showOverlay: () => ({ hide() {} }),
+			requestRender() {},
+		} as unknown as TUI;
+		// Prompt cache rows are provenance: `/context` shows them at detailed only.
+		setPresentationTier("detailed");
+		const handle = openContextOverlay(tui, ledger, { telemetry: { live: () => view, subscribe: () => () => {} } });
+		try {
+			const plain = (dockTop(tui)?.frame.renderDockBody(140, 60) ?? []).map(stripTerminalSequences).join("\n");
+			match(plain, /backend partly reused · re-prefilled up to 3,000 · server cache read 6,000 · uncached prefill 4,000/u);
+			match(plain, /server prefill: 4,000 evaluated · 6,000 cached · 120 ms/u);
+			doesNotMatch(plain, /does not report cache reads/u);
+		} finally {
+			handle.hide();
+			setPresentationTier("standard");
+		}
+	});
+
+	it("lists System One's engine breakers on the Health tab beside the route breakers", () => {
+		const data = healthData(undefined, {
+			getSystemOneBreakers: () => [{ engine: "local-small", state: "open", failures: 3, remainingMs: 120_000 }],
+		});
+		const plain = healthLines(data, 120, "standard").map(stripTerminalSequences).join("\n");
+		match(plain, /System One engines/u);
+		match(plain, /local-small paused 120s after 3 consecutive timeouts/u);
+	});
+
+	it("keeps framed bounds live through visibility, resize, and removal", () => {
+		const terminal = new RenderingTerminal();
+		const tui = new TuiAltScreen(terminal);
+		let visible = true;
+		const handle = showPancodeOverlayFrame(tui, new Text("body", 0, 0), {
+			title: "Frame",
+			markerId: "test",
+			width: 40,
+			visible: () => visible,
+		});
+		strictEqual(handle.getBounds(), undefined);
+		tui.start();
+		try {
+			tui.renderNow(true);
+			const bounds = handle.getBounds();
+			ok(bounds);
+			strictEqual(bounds.width, 80, "frame owns the full row around the box");
+			handle.setHidden(true);
+			strictEqual(handle.getBounds(), undefined);
+			handle.setHidden(false);
+			terminal.columns = 60;
+			tui.renderNow(true);
+			strictEqual(handle.getBounds()?.width, 60);
+			visible = false;
+			strictEqual(handle.getBounds(), undefined);
+			visible = true;
+			tui.renderNow(true);
+			ok(handle.getBounds());
+			handle.hide();
+			strictEqual(handle.getBounds(), undefined);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps the interview docked across background updates and restores mouse tracking on close", async () => {
+		const terminal = new RenderingTerminal();
+		const tui = new InstrumentedTuiAltScreen(terminal, {
+			beginFrame() {},
+			endFrame() {},
+			beginPhase() {},
+			endPhase() {},
+		});
+		tui.start();
+		const session = openAskUserOverlay(tui, { onCancel() {} });
+		ok(terminal.writes.at(-1)?.includes("?1006l"), "native text selection is enabled");
+		try {
+			tui.renderNow(true);
+			const entry = dockTop(tui);
+			ok(entry, "the interview mounts in the composer's dock");
+			const initial = session.getBounds();
+			ok(initial);
+			const answer = session.ask([{ question: "Continue?", options: [{ label: "Yes" }, { label: "No" }] }]);
+			strictEqual(dockTop(tui), entry, "one frame serves every round; nothing is remounted");
+			deepStrictEqual(session.getBounds(), initial);
+			tui.renderNow(true);
+			const compact = session.getBounds();
+			ok(compact);
+			strictEqual(compact.width, terminal.columns);
+			strictEqual(compact.height, 0, "the engine overlay paints nothing, so the transcript keeps its rows");
+			const body = entry.frame.renderDockBody(terminal.columns - 4, 16);
+			ok(body.some((row) => stripTerminalSequences(row).includes("Continue?")));
+			tui.addChild(new Text("background agent update", 0, 0));
+			tui.renderNow();
+			deepStrictEqual(session.getBounds(), compact, "background work cannot move the interview");
+			strictEqual(dockTop(tui), entry);
+			terminal.columns = 120;
+			tui.renderNow(true);
+			strictEqual(session.getBounds()?.width, 120);
+			terminal.columns = compact.width;
+			tui.renderNow(true);
+			session.setHidden(true);
+			ok(terminal.writes.at(-1)?.includes("?1006h"));
+			strictEqual(session.getBounds(), undefined);
+			strictEqual(dockTop(tui), null, "a hidden interview leaves the dock");
+			session.setHidden(false);
+			tui.renderNow(true);
+			deepStrictEqual(session.getBounds(), compact);
+			strictEqual(dockTop(tui), entry);
+			session.close();
+			ok(terminal.writes.at(-1)?.includes("?1006h"), "mouse tracking restored");
+			strictEqual(session.getBounds(), undefined);
+			strictEqual(dockTop(tui), null);
+			await answer;
+		} finally {
+			session.close();
+			tui.stop();
+		}
+	});
+
+	it("keeps the transcript's last column for a scrollbar that can appear, so the bar never covers content", () => {
+		for (const [scrollbar, reserved] of [
+			["auto", true],
+			["always", true],
+			["hidden", false],
+		] as const) {
+			const widths: number[] = [];
+			// Every row fills the width it is given and ends in a marker cell.
+			const chat = {
+				render: (width: number) => {
+					widths.push(width);
+					return Array.from({ length: 60 }, () => `${"x".repeat(Math.max(0, width - 1))}Z`);
+				},
+				invalidate() {},
+			};
+			const terminal = new RenderingTerminal();
+			const tui = new TuiAltScreen(terminal);
+			const root = buildLayout(
+				{ banner: new Text("", 0, 0), chat, editor: new Text("editor", 0, 0), footer: new Text("footer", 0, 0) },
+				{ mode: "fullscreen", fullscreenScrollbar: scrollbar },
+			);
+			tui.setLayoutRoot(root);
+			tui.start();
+			try {
+				tui.renderNow(true);
+				// Scrolling shows an auto bar; the marker cell must survive it.
+				terminal.input("\x1b[<64;2;2M");
+				tui.renderNow(true);
+				strictEqual(widths.at(-1), reserved ? 79 : 80, scrollbar);
+				const screen = stripTerminalSequences(terminal.writes.join(""));
+				ok(screen.includes(`${"x".repeat(reserved ? 78 : 79)}Z`), `${scrollbar}: a content row lost its last cell`);
+			} finally {
+				tui.stop();
+			}
+		}
+	});
+
+	it("steps the wheel past an overlay as far as the viewport's own wheel step", () => {
+		const terminal = new RenderingTerminal();
+		const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+		const tui = new InstrumentedTuiAltScreen(terminal, observer, undefined, undefined, { wheelScrollLines: 3 });
+		const text = Array.from({ length: 200 }, (_, row) => `row ${row}`).join("\n");
+		tui.setLayoutRoot(new ScrollView(new Text(text, 0, 0), { primary: true, follow: "end" }));
+		tui.start();
+		const moved = (report: string) => {
+			const before = tui.viewportTop;
+			terminal.input(report);
+			tui.renderNow(true);
+			return before - tui.viewportTop;
+		};
+		try {
+			tui.renderNow(true);
+			strictEqual(moved("\x1b[<64;2;2M"), 3, "the viewport's own step");
+			tui.showOverlay(new Text("overlay", 0, 0));
+			tui.renderNow(true);
+			strictEqual(moved("\x1b[<64;2;2M"), 3, "the same step past an overlay");
+			strictEqual(moved("\x1b[<72;2;2M"), 15, "Alt moves five steps");
+			tui.setWheelScrollLines(2);
+			strictEqual(moved("\x1b[<64;2;2M"), 2, "a changed step reaches the overlay path");
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("labels a scrolled-up fullscreen transcript with a themed latest marker that returns to the live edge", () => {
+		const terminal = new RenderingTerminal();
+		const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+		const tui = new InstrumentedTuiAltScreen(terminal, observer, undefined, undefined, fullscreenTuiOptions(terminal));
+		let transcript: { isFollowingEnd: boolean } | undefined;
+		const chat = new Text(Array.from({ length: 80 }, (_, row) => `row ${row}`).join("\n"), 0, 0);
+		const parts = {
+			banner: new Text("", 0, 0),
+			chat,
+			editor: new Text("editor", 0, 0),
+			footer: new Text("footer", 0, 0),
+		};
+		tui.setLayoutRoot(
+			buildLayout(parts, {
+				mode: "fullscreen",
+				onTranscript: (view) => {
+					transcript = view;
+				},
+			}),
+		);
+		tui.start();
+		const frame = () => {
+			terminal.writes = [];
+			tui.renderNow(true);
+			return terminal.writes.join("");
+		};
+		const label = `${GLYPH.down} latest`;
+		try {
+			ok(!stripTerminalSequences(frame()).includes(label), "no marker while the view follows the end");
+			terminal.input("\x1b[<64;2;2M");
+			const painted = frame();
+			ok(
+				painted.includes(pancodeTheme().paint(` ${label} `, { fg: "scrollMarker", bg: "raisedSurface" })),
+				"themed marker",
+			);
+			// A full frame paints every row after a cursor move to its first column.
+			const rows = painted
+				// biome-ignore lint/suspicious/noControlCharactersInRegex: the cursor move is the row separator
+				.split(/\x1b\[\d+;1H/u)
+				.slice(1)
+				.map(stripTerminalSequences);
+			const row = rows.findIndex((line) => line.includes(label));
+			ok(row > 0, "the marker sits on a transcript row");
+			ok(!rows[row + 1]?.includes("row "), "on the transcript's last row");
+			strictEqual(transcript?.isFollowingEnd, false);
+			const column = (rows[row] ?? "").indexOf(label);
+			terminal.input(`\x1b[<0;${column + 2};${row + 1}M`);
+			terminal.input(`\x1b[<0;${column + 2};${row + 1}m`);
+			strictEqual(transcript?.isFollowingEnd, true, "a click on the marker returns to the live edge");
+			ok(!stripTerminalSequences(frame()).includes(label));
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("returns to the live edge from the latest marker while a modal overlay owns the pointer", () => {
+		const terminal = new RenderingTerminal();
+		const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+		const tui = new InstrumentedTuiAltScreen(terminal, observer, undefined, undefined, fullscreenTuiOptions(terminal));
+		let transcript: { isFollowingEnd: boolean } | undefined;
+		const parts = {
+			banner: new Text("", 0, 0),
+			chat: new Text(Array.from({ length: 80 }, (_, row) => `row ${row}`).join("\n"), 0, 0),
+			editor: new Text("editor", 0, 0),
+			footer: new Text("footer", 0, 0),
+		};
+		tui.setLayoutRoot(
+			buildLayout(parts, {
+				mode: "fullscreen",
+				onTranscript: (view) => {
+					transcript = view;
+				},
+			}),
+		);
+		tui.start();
+		const label = `${GLYPH.down} latest`;
+		const marker = () => {
+			terminal.writes = [];
+			tui.renderNow(true);
+			const rows = terminal.writes
+				.join("")
+				// biome-ignore lint/suspicious/noControlCharactersInRegex: the cursor move is the row separator
+				.split(/\x1b\[\d+;1H/u)
+				.slice(1)
+				.map(stripTerminalSequences);
+			const row = rows.findIndex((line) => line.includes(label));
+			return row < 0 ? undefined : { row, column: (rows[row] ?? "").indexOf(label) };
+		};
+		const click = (at: { row: number; column: number }) => {
+			// The application controller hands every pointer report here while an overlay owns input.
+			tui.selectPastOverlay(`\x1b[<0;${at.column + 2};${at.row + 1}M`);
+			tui.selectPastOverlay(`\x1b[<0;${at.column + 2};${at.row + 1}m`);
+		};
+		try {
+			strictEqual(marker(), undefined, "no marker while the view follows the end");
+			tui.scrollBy(-20);
+			const card = tui.showOverlay(new Text("card", 0, 0), { anchor: "top-center" });
+			const shown = marker();
+			ok(shown, "the marker shows beside the card");
+			click(shown);
+			strictEqual(transcript?.isFollowingEnd, true, "a click on the marker returns to the live edge");
+			strictEqual(marker(), undefined);
+			tui.scrollBy(-20);
+			const under = marker();
+			ok(under, "the marker shows again once scrolled up");
+			card.hide();
+			tui.showOverlay(new Text("cover", 0, 0), { row: under.row, col: under.column, width: label.length + 2 });
+			marker();
+			click(under);
+			strictEqual(transcript?.isFollowingEnd, false, "a card painted over the marker takes the click");
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("paints fullscreen search matches with theme roles and names the leader action in PanCode's words", () => {
+		strictEqual(createKeybindingManagerForTesting().getLabel("tui.altScreen.search"), "Search transcript");
+		const terminal = new RenderingTerminal();
+		const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+		const tui = new InstrumentedTuiAltScreen(terminal, observer, undefined, undefined, fullscreenTuiOptions(terminal));
+		const text = Array.from({ length: 40 }, (_, row) => `row ${row} needle`).join("\n");
+		tui.setLayoutRoot(new ScrollView(new Text(text, 0, 0), { primary: true, follow: "end" }));
+		tui.start();
+		const opening = (style: Parameters<ReturnType<typeof pancodeTheme>["paint"]>[1]) => {
+			const painted = pancodeTheme().paint("needle", style);
+			return painted.slice(0, painted.indexOf("needle"));
+		};
+		try {
+			tui.renderNow(true);
+			terminal.input("\x1b[102;6u"); // pi's default search key, Ctrl+Shift+F
+			terminal.input("needle");
+			terminal.writes = [];
+			tui.renderNow(true);
+			const frame = terminal.writes.join("");
+			const current = opening({ fg: "onSelection", bg: "selectionBadge", bold: true });
+			const other = opening({ bg: "selectionBackground", underline: true });
+			ok(current.length > 0 && other.length > 0, "the test theme paints colour");
+			strictEqual(frame.split(`${current}needle`).length - 1, 1, "one current match in the badge pair");
+			ok(frame.includes(`${other}needle`), "other matches on the selection background");
+			// On an unknown background the badge pair is itself bold inverse; its own close tells it from pi's default.
+			const { close } = pancodeTheme().sgr({ fg: "onSelection", bg: "selectionBadge", bold: true });
+			ok(frame.includes(`${current}needle\x1b[${close}m`), "the current match closes the theme's own pair");
+			ok(!frame.includes("\x1b[1;7mneedle\x1b[22;27m"), "not pi's default current-match style");
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps button-motion mouse tracking inside Herdr and any-motion outside a multiplexer", () => {
+		const keys = ["HERDR_ENV", "TMUX", "ZELLIJ", "STY", "TERM"] as const;
+		const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+		// The tracking a terminal ends up in, read the way xterm reads it: setting 1000, 1002 or 1003 picks that mode,
+		// and resetting any of them turns mouse reporting off.
+		const tracking = (writes: string[]) => {
+			let mode = "none";
+			for (const match of writes
+				.join("")
+				.matchAll(new RegExp(`${String.fromCharCode(27)}\\[\\?(1000|1002|1003)([hl])`, "g")))
+				mode = match[2] === "l" ? "none" : match[1] === "1000" ? "click" : match[1] === "1002" ? "drag" : "any";
+			return mode;
+		};
+		const anyMotion = (writes: string[]) => tracking(writes) === "any";
+		const run = (herdr: boolean) => {
+			for (const key of keys) delete process.env[key];
+			process.env.TERM = "xterm-256color";
+			if (herdr) process.env.HERDR_ENV = "1";
+			const terminal = new RenderingTerminal();
+			const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+			const tui = new InstrumentedTuiAltScreen(terminal, observer, undefined, undefined, fullscreenTuiOptions(terminal));
+			tui.start();
+			try {
+				const started = anyMotion(terminal.writes);
+				ok(tracking(terminal.writes) !== "none", "the started TUI still receives clicks, drags and selections");
+				ok(terminal.writes.join("").includes("\x1b[?1002h"), "button motion keeps drags and selections");
+				const release = tui.useTerminalSelection();
+				terminal.writes = [];
+				release();
+				ok(terminal.writes.join("").includes("\x1b[?1002h"), "a released lease restores tracking");
+				return { started, restored: anyMotion(terminal.writes) };
+			} finally {
+				tui.stop();
+			}
+		};
+		try {
+			deepStrictEqual(run(true), { started: false, restored: false }, "Herdr is a multiplexer");
+			deepStrictEqual(run(false), { started: true, restored: true }, "hover still reaches the auto scrollbar");
+		} finally {
+			for (const key of keys) {
+				const value = saved[key];
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	});
+
+	it("renews a copy flash that is repeated while it still shows", (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		const terminal = new RenderingTerminal();
+		const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+		const tui = new InstrumentedTuiAltScreen(terminal, observer);
+		tui.setLayoutRoot(new ScrollView(new Text("transcript", 0, 0), { primary: true, follow: "end" }));
+		tui.start();
+		const rows = () => {
+			terminal.writes = [];
+			tui.renderNow(true);
+			return stripTerminalSequences(terminal.writes.join("")).split("Copied!").length - 1;
+		};
+		try {
+			tui.flash("Copied!");
+			t.mock.timers.tick(900);
+			tui.flash("Copied!");
+			strictEqual(rows(), 1, "a repeat keeps one row");
+			t.mock.timers.tick(900);
+			strictEqual(rows(), 1, "the repeat shows for its whole duration");
+			t.mock.timers.tick(200);
+			strictEqual(rows(), 0, "and then leaves");
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps a URL's scheme when a double-click selects it", async () => {
+		const copies: string[] = [];
+		const terminal = new RenderingTerminal();
+		const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+		const tui = new InstrumentedTuiAltScreen(terminal, observer, undefined, undefined, {
+			copySelection: async (text) => {
+				copies.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(new ScrollView(new Text("see https://example.com/path now", 0, 0), { primary: true }));
+		tui.start();
+		try {
+			tui.renderNow(true);
+			const screen = tui.getScreenLines().map(stripTerminalSequences);
+			const row = screen.findIndex((line) => line.includes("example")) + 1;
+			const column = (screen[row - 1] ?? "").indexOf("example") + 1;
+			for (let click = 0; click < 2; click++) {
+				terminal.input(`\x1b[<0;${column};${row}M`);
+				terminal.input(`\x1b[<0;${column};${row}m`);
+			}
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			strictEqual(copies.at(-1), "https://example.com/path");
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("stops a fullscreen selection highlight before the scrollbar column", () => {
+		const terminal = new RenderingTerminal();
+		const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+		const tui = new InstrumentedTuiAltScreen(terminal, observer);
+		const text = Array.from({ length: 60 }, (_, row) => `row ${row} ${"x".repeat(60)}`).join("\n");
+		tui.setLayoutRoot(new ScrollView(new Text(text, 0, 0), { primary: true, follow: "end", scrollbar: "always" }));
+		tui.start();
+		try {
+			tui.renderNow(true);
+			terminal.input("\x1b[<0;1;3M");
+			terminal.input(`\x1b[<32;${terminal.columns};8M`);
+			tui.renderNow();
+			for (const row of tui.getScreenLines().slice(3, 7)) {
+				const bar = Math.max(row.lastIndexOf("│"), row.lastIndexOf("┃"), row.lastIndexOf("█"));
+				ok(row.includes("\x1b[7m"), "the row is selected");
+				ok(bar > row.lastIndexOf("\x1b[27m"), `the bar is outside the highlight: ${JSON.stringify(row)}`);
+			}
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("lets a drag end on the last transcript row without scrolling, and scrolls once it leaves", (t) => {
+		t.mock.timers.enable({ apis: ["setInterval"] });
+		const terminal = new RenderingTerminal();
+		const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+		const tui = new InstrumentedTuiAltScreen(terminal, observer);
+		const chat = new Text(Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n"), 0, 0);
+		const chrome = {
+			banner: new Text("banner", 0, 0),
+			editor: new Text("editor", 0, 0),
+			footer: new Text("footer", 0, 0),
+		};
+		const root = buildLayout({ ...chrome, chat }, { mode: "fullscreen" });
+		ok(root instanceof VStack);
+		const scroll = root.children[0];
+		ok(scroll instanceof ScrollView);
+		tui.setLayoutRoot(root);
+		tui.start();
+		try {
+			tui.renderNow(true);
+			scroll.scrollTo(scroll.scrollTop - 30, { disableFollow: true });
+			tui.renderNow();
+			const screen = tui.getScreenLines().map(stripTerminalSequences);
+			let last = screen.length;
+			while (last > 0 && !/line \d/u.test(screen[last - 1] ?? "")) last--;
+			ok(last < terminal.rows, "the composer sits below the transcript");
+			const top = scroll.scrollTop;
+			terminal.input(`\x1b[<0;1;${last - 3}M`);
+			terminal.input(`\x1b[<32;4;${last}M`);
+			t.mock.timers.tick(500);
+			strictEqual(scroll.scrollTop, top, "held on the last transcript row");
+			terminal.input(`\x1b[<32;4;${last + 1}M`);
+			t.mock.timers.tick(500);
+			ok(scroll.scrollTop > top, "past the edge it scrolls");
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps one neutral copy flash over SSH however many selections land", async () => {
+		const saved = { SSH_CONNECTION: process.env.SSH_CONNECTION, DISPLAY: process.env.DISPLAY };
+		process.env.SSH_CONNECTION = "client 0 server 0";
+		delete process.env.DISPLAY;
+		const terminal = new RenderingTerminal();
+		const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+		const tui = new InstrumentedTuiAltScreen(terminal, observer, undefined, undefined, fullscreenTuiOptions(terminal));
+		const text = Array.from({ length: 40 }, (_, row) => `row ${row} alpha beta`).join("\n");
+		tui.setLayoutRoot(new ScrollView(new Text(text, 0, 0), { primary: true, follow: "end" }));
+		tui.start();
+		const osc52 = () => terminal.writes.filter((write) => write.includes("\x1b]52;c;")).length;
+		try {
+			tui.renderNow(true);
+			for (const row of [3, 5, 7]) {
+				const sent = osc52();
+				terminal.input(`\x1b[<0;1;${row}M`);
+				terminal.input(`\x1b[<32;12;${row}M`);
+				terminal.input(`\x1b[<0;12;${row}m`);
+				for (let wait = 0; wait < 200 && osc52() === sent; wait++) await new Promise((resolve) => setTimeout(resolve, 10));
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			strictEqual(osc52(), 3, "every selection still goes out as OSC 52");
+			terminal.writes = [];
+			tui.renderNow(true);
+			const screen = stripTerminalSequences(terminal.writes.join(""));
+			strictEqual(screen.split("Sent to terminal clipboard (OSC 52)").length - 1, 1, "one flash row, not one per copy");
+			ok(!screen.includes("Copy unconfirmed"), "over SSH the terminal is the expected path, not a failure");
+			ok(!screen.includes("Copied!"), "#437: OSC 52 is never reported as a confirmed copy");
+		} finally {
+			tui.stop();
+			for (const [key, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	});
+
+	it("copies a wrapped fullscreen paragraph as one line without the turn glyph or the gutter (#453)", async () => {
+		const copies: string[] = [];
+		const terminal = new RenderingTerminal();
+		terminal.columns = 72;
+		terminal.rows = 30;
+		const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+		const tui = new InstrumentedTuiAltScreen(terminal, observer, undefined, undefined, {
+			copySelection: async (text) => {
+				copies.push(text);
+				return true;
+			},
+		});
+		const panel = createChatPanel({ now: () => 1_000, getTerminalRows: () => terminal.rows, copyMarks: true });
+		const paragraph =
+			"Each graph shows two GPU memory pools of fixed size: the KV pool (attention key/value cache) and the recurrent pool (Mamba/SSM state). On every logged row, each pool's capacity is split into three bands.";
+		const message = {
+			role: "assistant",
+			content: [
+				{ type: "text", text: `${paragraph}\n\n\`\`\`ts\nconst result = await runTool(input);\nreturn result;\n\`\`\`` },
+			],
+			stopReason: "stop",
+		};
+		panel.appendUser("Explain the graphs");
+		panel.applyEvent({ type: "agent_start" } as never);
+		panel.applyEvent({ type: "message_end", message } as never);
+		panel.applyEvent({ type: "agent_end", messages: [message] } as never);
+		const chrome = { banner: new Text("", 0, 0), editor: new Text("draft", 0, 0), footer: new Text("ready", 0, 0) };
+		tui.setLayoutRoot(buildLayout({ ...chrome, chat: panel }, { mode: "fullscreen" }));
+		tui.start();
+		try {
+			tui.renderNow(true);
+			const screen = tui.getScreenLines().map(stripTerminalSequences);
+			const first = screen.findIndex((row) => row.includes("Each graph")) + 1;
+			const last = screen.findIndex((row) => row.includes("return result")) + 1;
+			ok(screen.findIndex((row) => row.includes("three bands")) > first, "the paragraph wraps");
+			terminal.input(`\x1b[<0;1;${first}M`);
+			terminal.input(`\x1b[<32;72;${last}M`);
+			terminal.input(`\x1b[<0;72;${last}m`);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			strictEqual(
+				copies.at(-1),
+				`${paragraph}\n\n${GLYPH.innerDivider}${GLYPH.innerDivider} ts\nconst result = await runTool(input);\nreturn result;`,
+			);
+			ok(!terminal.writes.join("").includes("\x1b_pancode"), "copy marks never reach the terminal");
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("copies a fullscreen prompt, action row and wrapped code line as their source text", async () => {
+		const copies: string[] = [];
+		const terminal = new RenderingTerminal();
+		terminal.columns = 72;
+		terminal.rows = 30;
+		const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+		const tui = new InstrumentedTuiAltScreen(terminal, observer, undefined, undefined, {
+			copySelection: async (text) => {
+				copies.push(text);
+				return true;
+			},
+		});
+		const panel = createChatPanel({ now: () => 1_000, getTerminalRows: () => terminal.rows, copyMarks: true });
+		const prompt =
+			"Read the notes file and then summarise every section of it in two short sentences for the release log";
+		const code = `const target = "${"x".repeat(90)}";`;
+		const message = {
+			role: "assistant",
+			content: [{ type: "text", text: `\`\`\`ts\n${code}\n\`\`\`` }],
+			stopReason: "stop",
+		};
+		panel.appendUser(prompt);
+		panel.applyEvent({ type: "agent_start" } as never);
+		panel.applyEvent({
+			type: "tool_execution_start",
+			toolCallId: "t1",
+			toolName: "read",
+			args: { path: "notes.txt" },
+		} as never);
+		panel.applyEvent({
+			type: "tool_execution_end",
+			toolCallId: "t1",
+			toolName: "read",
+			result: { content: [{ type: "text", text: "one" }] },
+			isError: false,
+			durationMs: 5,
+		} as never);
+		panel.applyEvent({ type: "message_end", message } as never);
+		panel.applyEvent({ type: "agent_end", messages: [message] } as never);
+		const chrome = { banner: new Text("", 0, 0), editor: new Text("draft", 0, 0), footer: new Text("ready", 0, 0) };
+		tui.setLayoutRoot(buildLayout({ ...chrome, chat: panel }, { mode: "fullscreen" }));
+		tui.start();
+		try {
+			tui.renderNow(true);
+			const screen = tui.getScreenLines().map(stripTerminalSequences);
+			const first = screen.findIndex((row) => row.includes("Read the notes")) + 1;
+			const last = screen.findIndex((row) => row.includes('";')) + 1;
+			ok(screen.filter((row) => row.includes("↪")).length === 2, "the code line wraps at a space and inside a token");
+			terminal.input(`\x1b[<0;1;${first}M`);
+			terminal.input(`\x1b[<32;72;${last}M`);
+			terminal.input(`\x1b[<0;72;${last}m`);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			const lines = (copies.at(-1) ?? "").split("\n");
+			strictEqual(lines[0], prompt);
+			ok(
+				lines.some((line) => line.startsWith("read notes.txt")),
+				"the action row copies without its glyph",
+			);
+			strictEqual(lines.at(-1), code);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("copies a wrapped CJK paragraph without a space where a wide character did not fit the row", async () => {
+		const copies: string[] = [];
+		const terminal = new RenderingTerminal();
+		terminal.columns = 72;
+		terminal.rows = 30;
+		const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+		const tui = new InstrumentedTuiAltScreen(terminal, observer, undefined, undefined, {
+			copySelection: async (text) => {
+				copies.push(text);
+				return true;
+			},
+		});
+		const panel = createChatPanel({ now: () => 1_000, getTerminalRows: () => terminal.rows, copyMarks: true });
+		const text =
+			"日本語のテキストは空白なしで折り返されます。これは長い段落で、七十二桁の端末幅では一行に収まらないため、複数の行に分かれます終わり。";
+		const message = { role: "assistant", content: [{ type: "text", text }], stopReason: "stop" };
+		panel.applyEvent({ type: "agent_start" } as never);
+		panel.applyEvent({ type: "message_end", message } as never);
+		panel.applyEvent({ type: "agent_end", messages: [message] } as never);
+		const chrome = { banner: new Text("", 0, 0), editor: new Text("draft", 0, 0), footer: new Text("ready", 0, 0) };
+		tui.setLayoutRoot(buildLayout({ ...chrome, chat: panel }, { mode: "fullscreen" }));
+		tui.start();
+		try {
+			tui.renderNow(true);
+			const screen = tui.getScreenLines().map(stripTerminalSequences);
+			const first = screen.findIndex((row) => row.includes("日本語")) + 1;
+			const last = screen.findIndex((row) => row.includes("終わり")) + 1;
+			ok(last > first, "the paragraph wraps");
+			terminal.input(`\x1b[<0;1;${first}M`);
+			terminal.input(`\x1b[<32;72;${last}M`);
+			terminal.input(`\x1b[<0;72;${last}m`);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			strictEqual(copies.at(-1), text);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("copies wrapped Chinese and Korean as their source, spaces and fullwidth commas alike", async () => {
+		const samples = [
+			"这是一个很长的中文段落，没有空格，用全角逗号分隔，目的是让它在终端里换行，然后检查复制出来的文本是否和原文完全一致，结束。",
+			"이것은 한국어로 된 긴 문단입니다 단어 사이에 공백이 있고 터미널 너비를 넘어 여러 줄로 나뉘어야 합니다 끝.",
+		];
+		for (const text of samples) {
+			for (const columns of [50, 51, 52, 54]) {
+				const copies: string[] = [];
+				const terminal = new RenderingTerminal();
+				terminal.columns = columns;
+				terminal.rows = 30;
+				const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+				const tui = new InstrumentedTuiAltScreen(terminal, observer, undefined, undefined, {
+					copySelection: async (copied) => {
+						copies.push(copied);
+						return true;
+					},
+				});
+				const panel = createChatPanel({ now: () => 1_000, getTerminalRows: () => terminal.rows, copyMarks: true });
+				const message = { role: "assistant", content: [{ type: "text", text }], stopReason: "stop" };
+				panel.applyEvent({ type: "agent_start" } as never);
+				panel.applyEvent({ type: "message_end", message } as never);
+				panel.applyEvent({ type: "agent_end", messages: [message] } as never);
+				const chrome = { banner: new Text("", 0, 0), editor: new Text("draft", 0, 0), footer: new Text("ready", 0, 0) };
+				tui.setLayoutRoot(buildLayout({ ...chrome, chat: panel }, { mode: "fullscreen" }));
+				tui.start();
+				try {
+					tui.renderNow(true);
+					const screen = tui.getScreenLines().map(stripTerminalSequences);
+					const first = screen.findIndex((row) => row.includes(text.slice(0, 3))) + 1;
+					const last = screen.length - [...screen].reverse().findIndex((row) => row.includes(text.slice(-1)));
+					ok(last > first, "the paragraph wraps");
+					terminal.input(`\x1b[<0;1;${first}M`);
+					terminal.input(`\x1b[<32;${columns};${last}M`);
+					terminal.input(`\x1b[<0;${columns};${last}m`);
+					await new Promise((resolve) => setTimeout(resolve, 10));
+					strictEqual(copies.at(-1), text, `${columns} columns`);
+				} finally {
+					tui.stop();
+				}
+			}
+		}
+	});
+
+	it("copies wrapped prose beside the open search box as its source text", async () => {
+		const copies: string[] = [];
+		const terminal = new RenderingTerminal();
+		terminal.columns = 72;
+		terminal.rows = 30;
+		const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+		const tui = new InstrumentedTuiAltScreen(terminal, observer, undefined, undefined, {
+			copySelection: async (text) => {
+				copies.push(text);
+				return true;
+			},
+		});
+		const panel = createChatPanel({ now: () => 1_000, getTerminalRows: () => terminal.rows, copyMarks: true });
+		const text =
+			"Each graph shows two GPU memory pools of fixed size: the KV pool (attention key/value cache) and the recurrent pool (Mamba/SSM state) END.";
+		const message = { role: "assistant", content: [{ type: "text", text }], stopReason: "stop" };
+		panel.applyEvent({ type: "agent_start" } as never);
+		panel.applyEvent({ type: "message_end", message } as never);
+		panel.applyEvent({ type: "agent_end", messages: [message] } as never);
+		const chrome = { banner: new Text("", 0, 0), editor: new Text("draft", 0, 0), footer: new Text("ready", 0, 0) };
+		tui.setLayoutRoot(buildLayout({ ...chrome, chat: panel }, { mode: "fullscreen" }));
+		tui.start();
+		try {
+			tui.toggleSearch();
+			for (const key of "pool") terminal.input(key);
+			tui.renderNow(true);
+			const screen = tui.getScreenLines().map(stripTerminalSequences);
+			const first = screen.findIndex((row) => row.includes("Each graph")) + 1;
+			const last = screen.findIndex((row) => row.includes("END.")) + 1;
+			ok(last > first, "the paragraph wraps");
+			terminal.input(`\x1b[<0;1;${first}M`);
+			terminal.input(`\x1b[<32;72;${last}M`);
+			terminal.input(`\x1b[<0;72;${last}m`);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			strictEqual(copies.at(-1), text);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("drops a fullscreen selection when the width changes and keeps it across a height change", () => {
+		const terminal = new RenderingTerminal();
+		const observer = { beginFrame() {}, endFrame() {}, beginPhase() {}, endPhase() {} };
+		const tui = new InstrumentedTuiAltScreen(terminal, observer, undefined, undefined, {
+			copySelection: async () => true,
+		});
+		const text = Array.from({ length: 12 }, (_, row) => `row ${row} ${"word ".repeat(20)}`).join("\n");
+		tui.setLayoutRoot(new ScrollView(new Text(text, 0, 0), { primary: true }));
+		tui.start();
+		try {
+			tui.renderNow(true);
+			terminal.input("\x1b[<0;1;2M");
+			terminal.input("\x1b[<32;9;2M");
+			terminal.input("\x1b[<0;9;2m");
+			tui.renderNow();
+			ok(tui.hasActiveSelection());
+			terminal.rows -= 4;
+			tui.renderNow(true);
+			ok(tui.hasActiveSelection(), "a height-only change keeps the selection");
+			terminal.columns -= 30;
+			tui.renderNow(true);
+			strictEqual(tui.hasActiveSelection(), false, "a re-wrap would move the highlight onto other text");
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("re-wraps a window-edge drag once it pauses and paints a height-only change at once", async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+		const terminal = new RenderingTerminal();
+		const painted: number[] = [];
+		const observer = {
+			beginFrame: (fields: { columns: number }) => fields.columns,
+			endFrame: (columns: unknown) => void painted.push(columns as number),
+			beginPhase() {},
+			endPhase() {},
+		};
+		const tui = new InstrumentedTuiAltScreen(terminal, observer);
+		tui.setLayoutRoot(new ScrollView(new Text("word ".repeat(200), 0, 0), { primary: true }));
+		const frame = async (change: () => void) => {
+			change();
+			tui.requestRender();
+			await new Promise<void>((resolve) => process.nextTick(resolve));
+			t.mock.timers.tick(20);
+		};
+		tui.start();
+		try {
+			tui.renderNow(true);
+			await frame(() => {
+				terminal.columns = 70;
+			});
+			deepStrictEqual(painted, [80, 70], "the first width change after a quiet spell paints at once");
+			await frame(() => {
+				terminal.columns = 60;
+			});
+			await frame(() => {
+				terminal.columns = 50;
+			});
+			deepStrictEqual(painted, [80, 70], "a drag skips the re-wraps between its steps");
+			t.mock.timers.tick(100);
+			await frame(() => {});
+			deepStrictEqual(painted, [80, 70, 50], "the drag re-wraps once at its last width");
+			await frame(() => {
+				terminal.rows -= 4;
+			});
+			deepStrictEqual(painted, [80, 70, 50, 50]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("preserves themed scrollbars, wheel scrolling, follow-end, and the fixed dock", () => {
+		const terminal = new RenderingTerminal();
+		const tui = new TuiAltScreen(terminal);
+		const root = buildLayout(
+			{
+				banner: new Text("banner", 0, 0),
+				chat: new Text(Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n"), 0, 0),
+				editor: new Text("editor", 0, 0),
+				footer: new Text("footer", 0, 0),
+			},
+			{ mode: "fullscreen", fullscreenScrollbar: "always" },
+		);
+		ok(root instanceof VStack);
+		const scroll = root.children[0];
+		ok(scroll instanceof ScrollView);
+		tui.setLayoutRoot(root);
+		tui.start();
+		try {
+			tui.renderNow(true);
+			const end = scroll.scrollTop;
+			ok(end > 0);
+			strictEqual(scroll.isFollowingEnd, true);
+			const output = terminal.writes.join("");
+			ok(output.includes(pancodeTheme().fg("frameStrong", GLYPH.barFull)));
+			ok(output.includes(pancodeTheme().fg("frame", "│")));
+			match(output, /editor/u);
+			match(output, /footer/u);
+			terminal.input("\x1b[<64;2;2M");
+			strictEqual(scroll.scrollTop, end - 1);
+			strictEqual(scroll.isFollowingEnd, false);
+			terminal.input("\x1b[<72;2;2M");
+			strictEqual(scroll.scrollTop, end - 6, "Alt-wheel uses Pi's five-line step");
+			scroll.scrollToEnd();
+			strictEqual(scroll.isFollowingEnd, true);
+			strictEqual(scroll.scrollTop, end);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("scrolls the terminal for a one-row transcript scroll and paints only the rows that differ", () => {
+		const terminal = new RenderingTerminal();
+		const tui = new TuiAltScreen(terminal);
+		const root = buildLayout(
+			{
+				banner: new Text("banner", 0, 0),
+				chat: new Text(Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n"), 0, 0),
+				editor: new Text("editor", 0, 0),
+				footer: new Text("footer", 0, 0),
+			},
+			{ mode: "fullscreen", fullscreenScrollbar: "always" },
+		);
+		tui.setLayoutRoot(root);
+		// A terminal that knows only what the renderer writes: row moves, row clears, scroll regions and scrolls.
+		const rows = Array.from({ length: terminal.rows }, () => "");
+		let cursor = 0;
+		let top = 0;
+		let bottom = terminal.rows - 1;
+		const replay = (output: string) => {
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: the control sequences are the subject
+			const tokens = /\x1b\[(\d*)(?:;(\d*))?([rSTHJK])|\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|[^\x1b]+/gu;
+			for (const [token, first, second, final] of output.matchAll(tokens)) {
+				if (final === "H") cursor = Number(first) - 1;
+				else if (final === "r") {
+					top = first ? Number(first) - 1 : 0;
+					bottom = second ? Number(second) - 1 : terminal.rows - 1;
+					cursor = 0;
+				} else if (final === "S" || final === "T") {
+					const count = Number(first || 1);
+					const region = rows.splice(top, bottom - top + 1);
+					const blank = Array.from({ length: count }, () => "");
+					const moved = final === "S" ? [...region.slice(count), ...blank] : [...blank, ...region.slice(0, -count)];
+					rows.splice(top, 0, ...moved);
+				} else if (final === "J") rows.fill("");
+				else if (final === "K") rows[cursor] = "";
+				else if (!token.startsWith("\x1b")) rows[cursor] = `${rows[cursor]}${token}`;
+			}
+		};
+		const painted = () => tui.getScreenLines().map((line) => stripTerminalSequences(line).trimEnd());
+		tui.start();
+		try {
+			tui.renderNow(true);
+			replay(terminal.writes.join(""));
+			for (const wheel of ["\x1b[<64;2;2M", "\x1b[<64;2;2M", "\x1b[<72;2;2M", "\x1b[<65;2;2M"]) {
+				terminal.writes.length = 0;
+				terminal.input(wheel);
+				tui.renderNow();
+				const frame = terminal.writes.join("");
+				replay(frame);
+				deepStrictEqual(
+					rows.map((row) => row.trimEnd()),
+					painted(),
+				);
+				if (wheel === "\x1b[<64;2;2M") {
+					ok(frame.includes("\x1b[1T"), "one notch up scrolls the transcript rows down one");
+					ok(frame.split("\x1b[2K").length - 1 < 5, "only the exposed row and changed bar cells repaint");
+				}
+			}
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps a scrolled-up reader on their row through a viewport-first re-layout and its idle swap", () => {
+		const terminal = new RenderingTerminal();
+		terminal.columns = 120;
+		terminal.rows = 30;
+		const tui = new TuiAltScreen(terminal);
+		const idle: Array<() => boolean> = [];
+		const drain = (): void => {
+			for (let step = idle[0]; step !== undefined; step = idle[0]) if (!step()) idle.shift();
+		};
+		const panel = createChatPanel({
+			now: () => 0,
+			getTerminalRows: () => terminal.rows,
+			copyMarks: true,
+			deferRelayout: true,
+			scheduleIdle: (step) => idle.push(step),
+		});
+		for (let turn = 0; turn < 150; turn += 1) {
+			const text = `Row-${String(turn).padStart(4, "0")} ${"lorem ipsum dolor sit amet ".repeat(5)}END`;
+			panel.appendUser(`Question ${turn}`);
+			streamAnswer(panel, text);
+			settleAnswer(panel, text);
+		}
+		const root = buildLayout(
+			{
+				banner: new Text("banner", 0, 0),
+				chat: panel,
+				editor: new Text("editor", 0, 0),
+				footer: new Text("footer", 0, 0),
+			},
+			{ mode: "fullscreen" },
+		);
+		ok(root instanceof VStack);
+		const scroll = root.children[0];
+		ok(scroll instanceof ScrollView);
+		tui.setLayoutRoot(root);
+		tui.start();
+		const top = () =>
+			Number(/Row-(\d+)/u.exec(tui.getScreenLines().map(stripTerminalSequences).join("\n"))?.[1] ?? Number.NaN);
+		try {
+			tui.renderNow(true);
+			drain();
+			scroll.scrollTo(scroll.scrollTop - 400, { disableFollow: true });
+			tui.renderNow(true);
+			const reading = top();
+			ok(Number.isFinite(reading) && reading < 140, `the reader is scrolled up, at Row-${reading}`);
+			for (const columns of [70, 120]) {
+				terminal.columns = columns;
+				tui.renderNow(true);
+				ok(idle.length > 0, `${columns} columns: the rows away from the viewport wait for idle steps`);
+				strictEqual(top(), reading, `${columns} columns: the re-layout kept the reader on their row`);
+				drain();
+				tui.renderNow(true);
+				strictEqual(top(), reading, `${columns} columns: the swap kept the reader on their row`);
+				strictEqual(scroll.isFollowingEnd, false);
+			}
+			scroll.scrollToEnd();
+			terminal.columns = 90;
+			tui.renderNow(true);
+			drain();
+			tui.renderNow(true);
+			strictEqual(scroll.isFollowingEnd, true, "a view that follows the end keeps following");
+			ok(/Row-0149/u.test(tui.getScreenLines().map(stripTerminalSequences).join("\n")), "the last answer is in view");
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps a scrolled-up reader at their place when the width changes", () => {
+		const terminal = new RenderingTerminal();
+		terminal.columns = 120;
+		terminal.rows = 30;
+		const tui = new TuiAltScreen(terminal);
+		const paragraphs = Array.from(
+			{ length: 150 },
+			(_, i) => `Row-${String(i).padStart(4, "0")} ${"lorem ipsum dolor sit amet ".repeat(5)}END`,
+		);
+		const root = buildLayout(
+			{
+				banner: new Text("banner", 0, 0),
+				chat: new Text(paragraphs.join("\n\n"), 0, 0),
+				editor: new Text("editor", 0, 0),
+				footer: new Text("footer", 0, 0),
+			},
+			{ mode: "fullscreen" },
+		);
+		ok(root instanceof VStack);
+		const scroll = root.children[0];
+		ok(scroll instanceof ScrollView);
+		tui.setLayoutRoot(root);
+		tui.start();
+		const top = () =>
+			Number(/Row-(\d+)/u.exec(tui.getScreenLines().map(stripTerminalSequences).join("\n"))?.[1] ?? Number.NaN);
+		try {
+			tui.renderNow(true);
+			scroll.scrollTo(scroll.scrollTop - 150, { disableFollow: true });
+			tui.renderNow(true);
+			const reading = top();
+			terminal.columns = 70;
+			tui.renderNow(true);
+			ok(Math.abs(top() - reading) <= 2, `narrowing kept the reader near Row-${reading}, not at Row-${top()}`);
+			terminal.columns = 120;
+			tui.renderNow(true);
+			strictEqual(top(), reading);
+			strictEqual(scroll.isFollowingEnd, false);
+			scroll.scrollToEnd();
+			terminal.columns = 90;
+			tui.renderNow(true);
+			strictEqual(scroll.isFollowingEnd, true, "a view that follows the end keeps following");
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps every regular-mode frame equal to a fresh render while rows in place skip measuring", () => {
+		const rows = Array.from({ length: 40 }, (_, i) => `\x1b[1mrow ${i}\x1b[22m ${"w".repeat(70 + (i % 9))}`);
+		const chat = {
+			render: () => rows,
+			// A settled turn hands back a new run array of the same rows.
+			renderRegions: () => ({ pieces: [rows.slice()], rows: rows.length }),
+			invalidate() {},
+		};
+		const parts = () => ({
+			banner: new Text("", 0, 0),
+			chat,
+			editor: new Text("editor", 0, 0),
+			footer: new Text("footer", 0, 0),
+		});
+		const root = buildLayout(parts(), { mode: "regular" });
+		const frame = (width: number): string[] => {
+			const out = root.render(width).slice();
+			deepStrictEqual(out, buildLayout(parts(), { mode: "regular" }).render(width), `frame at ${width} columns`);
+			for (const row of out) ok(visibleWidth(row) <= width, `a row fits ${width} columns`);
+			return out;
+		};
+		frame(100);
+		frame(100);
+		rows[5] = "y".repeat(140);
+		ok(
+			frame(100).some((row) => row.startsWith("y".repeat(90)) && visibleWidth(row) === 100),
+			"a row replaced at the same width by an overwide one is cut",
+		);
+		const shrunk = frame(60).filter((row) => row.includes("row "));
+		ok(
+			shrunk.length === 39 && shrunk.every((row) => visibleWidth(row) === 60),
+			"a width shrink cuts rows that fit before",
+		);
+		frame(60);
+		frame(100);
+	});
+
+	it("keeps the complete regular frame equal to a fresh paint after composer edits and resizes", () => {
+		const prefix = Array.from({ length: 80 }, (_, i) => `\x1b[36mTranscript ${i}\x1b[39m ${"x".repeat(55)}`);
+		const parts = (draft: string) => ({
+			banner: new Text("banner", 0, 0),
+			chat: {
+				render: () => prefix,
+				renderRegions: () => ({ pieces: [prefix, ["reply"]], rows: prefix.length + 1 }),
+				invalidate() {},
+			},
+			editor: new Text(draft, 0, 0),
+			footer: new Text("footer", 0, 0),
+		});
+		const terminal = new RenderingTerminal();
+		const tui = new InstrumentedTuiMainScreen(terminal, {
+			beginFrame() {},
+			endFrame() {},
+			beginPhase() {},
+			endPhase() {},
+		});
+		const live = parts("draft");
+		tui.addChild(buildLayout(live));
+		tui.start();
+		const check = (draft: string) => {
+			live.editor.setText(draft);
+			tui.renderNow();
+			const freshTerminal = new RenderingTerminal();
+			freshTerminal.columns = terminal.columns;
+			freshTerminal.rows = terminal.rows;
+			const fresh = new TuiMainScreen(freshTerminal);
+			fresh.addChild(buildLayout(parts(draft)));
+			fresh.start();
+			try {
+				fresh.renderNow();
+				deepStrictEqual(tui.captureRenderState().previousLines, fresh.captureRenderState().previousLines);
+			} finally {
+				fresh.stop();
+			}
+		};
+		try {
+			// Cycle the pool, including an idle frame where the baseline is older than the reset memo.
+			for (const draft of ["draft", "draf", "draf", "d", "edited", "e"]) check(draft);
+			terminal.columns = 46;
+			terminal.rows = 31;
+			check("e");
+			check("edited after resize");
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("returns a scrolled-up fullscreen transcript to its live edge when the operator submits", async () => {
+		const terminal = new RenderingTerminal();
+		const tui = new TuiAltScreen(terminal);
+		const lines = Array.from({ length: 100 }, (_, i) => `line ${i}`);
+		const chat = new Text(lines.join("\n"), 0, 0);
+		const root = buildLayout(
+			{ banner: new Text("banner", 0, 0), chat, editor: new Text("editor", 0, 0), footer: new Text("footer", 0, 0) },
+			{ mode: "fullscreen", fullscreenScrollbar: "auto" },
+		);
+		ok(root instanceof VStack);
+		const scroll = root.children[0];
+		ok(scroll instanceof ScrollView);
+		tui.setLayoutRoot(root);
+		tui.start();
+		const noop = (): void => undefined;
+		const liveEdge = (): void => returnToLiveEdge(tui);
+		const runtime = createInteractiveSlashRuntime({
+			bus: createTelemetryHub(),
+			io: { stdout: noop, stderr: noop },
+			chat: { isStreaming: () => false, submit: async () => undefined },
+			chatPanel: { appendReplayBlock: noop, appendUser: noop },
+			requestRender: noop,
+			refreshFooter: noop,
+			recordSubmittedTurn: noop,
+			returnToLiveEdge: liveEdge,
+		} as unknown as InteractiveSlashRuntimeDeps);
+		const editor = createEditorSubmitController({
+			editor: { getText: () => "", getTextForSubmit: () => "", setText: noop, addToHistory: noop },
+			ui: { start: noop, stop: noop, requestRender: noop },
+			io: { stdout: noop, stderr: noop },
+			chat: { isStreaming: () => false },
+			dispatch: {},
+			sessionTranscript: {
+				ensureSessionForLocalEntry: noop,
+				refreshChatContextFromSession: noop,
+				recordSubmittedTurn: noop,
+			},
+			chatPanel: { appendReplayBlock: noop },
+			dispatchCommand: noop,
+			expandSubmit: async (text: string) => ({ text, images: [] }),
+			notify: noop,
+			runBash: async () => ({ output: "", exitCode: 0 }),
+			returnToLiveEdge: liveEdge,
+		} as unknown as EditorSubmitDeps);
+		const scrollUp = (): void => {
+			terminal.input("\x1b[<64;2;2M");
+			tui.renderNow(true);
+			strictEqual(tui.isFollowingOutput, false);
+		};
+		try {
+			tui.renderNow(true);
+			strictEqual(tui.isFollowingOutput, true);
+			scrollUp();
+			// New output alone keeps the operator where they scrolled.
+			chat.setText([...lines, "more output"].join("\n"));
+			tui.renderNow(true);
+			strictEqual(tui.isFollowingOutput, false);
+			const submits: Array<[string, () => unknown]> = [
+				["a prompt", () => runtime.context.submitOperatorNote?.("what next?")],
+				["a /run echo", () => runtime.context.echoOperatorCommand?.("/run scout map the retry module")],
+				["a local ! command", () => editor.runEditorBash("!ls")],
+			];
+			for (const [name, submit] of submits) {
+				scrollUp();
+				await submit();
+				tui.renderNow(true);
+				strictEqual(tui.isFollowingOutput, true, name);
+			}
+			await editor.shutdownEditorBash();
+		} finally {
+			tui.stop();
+		}
+		// The regular screen has no viewport to move.
+		returnToLiveEdge(new TuiMainScreen(new RenderingTerminal()));
+	});
+});
+
+it("renders aligned helper rows with Standard activity and keeps their identity on replay", () => {
+	const stream = createWorkerStream({ readResult: () => null });
+	const started = stream.started({
+		runId: "helper-run",
+		assignmentId: "helper-task",
+		attempt: 0,
+		requestOrigin: "agent",
+		agentAudience: "shadow",
+		agentId: "scout",
+		task: "Explore the source architecture",
+		runtimeKind: "http",
+		runtimeId: "openai-compat",
+		targetId: "blade",
+		wireModelId: "model",
+		pid: null,
+	});
+	ok(started);
+	const state = started.entry;
+	state.startedAtMs = 1000;
+	doesNotMatch(stripTerminalSequences(renderWorkerEntryLines(state, 100, { nowMs: 7000 }).join("\n")), /6.0s/);
+	doesNotMatch(stripTerminalSequences(renderWorkerEntryLines(state, 100, { nowMs: 13000 }).join("\n")), /12s/);
+	const lines = renderWorkerEntryLines(state, 100, { nowMs: 1000 });
+	deepStrictEqual(lines.map(stripTerminalSequences), [
+		`${GLYPH.running} ${GLYPH.workerAgent} ${GLYPH.subProcess} scout         starting ${GLYPH.sep} Explore the source architecture`,
+	]);
+	ok(lines.every((line) => visibleWidth(line) <= 100));
+	for (const style of ["compact", "standard", "detailed"] as const) {
+		for (const width of [32, 80, 120]) {
+			const rendered = renderWorkerEntryLines(state, width, {
+				detail: transcriptDetail(style),
+				terminalRows: 24,
+				nowMs: 7000,
+			});
+			ok(rendered.every((line) => visibleWidth(line) <= width));
+			if (style === "compact" && width >= 80)
+				match(stripTerminalSequences(rendered.join("\n")), /↳ scout +starting · Explore/u);
+		}
+	}
+	const call = renderToolSubline(
+		{
+			toolName: "dispatch",
+			toolCallId: "helper-call",
+			args: { agent: "scout", task: "Explore the source architecture" },
+		},
+		100,
+	);
+	match(stripTerminalSequences(call.join("\n")), /delegating to scout: Explore the source architecture/);
+	doesNotMatch(stripTerminalSequences(call.join("\n")), /tool action/);
+	const fields = workerRunEntryFields(state);
+	const entry: WorkerRunEntry = {
+		...fields,
+		parentTurnId: null,
+		turnId: "helper-entry",
+		timestamp: new Date().toISOString(),
+	};
+	const replayed = workerEntriesFromRunEntries([entry], () => ({
+		outcome: "succeeded",
+		contract: "pass",
+		text: "full findings",
+	})).get("helper-task");
+	ok(replayed);
+	const done = stripTerminalSequences(renderWorkerEntryLines(replayed, 100, {}).join("\n"));
+	// The replayed record is unverified, so the row leads with that word before the task.
+	match(
+		done,
+		new RegExp(`^! ${GLYPH.workerAgent} ${GLYPH.subProcess} scout +unverified · Explore the source architecture`, "u"),
+	);
+	doesNotMatch(done, /full findings|\n/u);
+	const expanded = stripTerminalSequences(renderWorkerEntryLines(replayed, 100, { unbounded: true }).join("\n"));
+	match(expanded, /full findings/);
+	match(expanded, new RegExp(`^! ${GLYPH.workerAgent} ${GLYPH.subProcess} scout`, "u"));
+	const detailed = stripTerminalSequences(
+		renderWorkerEntryLines(replayed, 100, { detail: transcriptDetail("detailed") }).join("\n"),
+	);
+	// Detailed keeps the settled card whole: the task, the route and its evidence status, and the answer.
+	match(detailed, /^! ◆ ↳ scout +unverified · Explore the source architecture\n/u);
+	match(detailed, /\n {2}│ blade · model · record: unverified; raw output, not admitted as evidence\n/u);
+	match(detailed, /\n {2}│ full findings/u);
+
+	replayed.result = { outcome: "failed", failureMessage: "Invalid helper result" };
+	const failed = stripTerminalSequences(renderWorkerEntryLines(replayed, 100, {}).join("\n"));
+	match(failed, new RegExp(`^✗ ${GLYPH.workerAgent} ${GLYPH.subProcess} scout +Invalid helper result`, "u"));
+	doesNotMatch(failed, /Explore the source architecture/u);
+});
+
+it("preserves complete invocation arguments in inspection and meaningful intent in every style", () => {
+	const command = `printf '%s\\n' ${"long-command-argument ".repeat(30)}FINAL_ARGUMENT`;
+	const call = {
+		toolName: "bash",
+		toolCallId: "transparent",
+		args: { command, cwd: "/tmp/project", api_key: "do-not-display-me" },
+		result: "done",
+		isError: false,
+	};
+	const full = stripTerminalSequences(renderToolExecution(call, 72).join("\n"));
+	match(full, /FINAL_ARGUMENT/);
+	match(full, /cwd.*project/);
+	doesNotMatch(full, /do-not-display-me/);
+	for (const style of ["compact", "standard", "detailed"] as const) {
+		const rows = renderToolPreview(call, 72, transcriptDetail(style));
+		const text = stripTerminalSequences(rows.join("\n"));
+		if (style === "compact") {
+			strictEqual(rows.length, 1);
+			match(text, /ran `printf/u);
+		} else {
+			match(text, /command/);
+			match(text, /long-command-argument/);
+			if (style === "standard") match(text, /\/view/);
+		}
+		doesNotMatch(text, /do-not-display-me/);
+		ok(rows.every((row) => visibleWidth(row) <= 72));
+	}
+	const nested = {
+		toolName: "gateway",
+		toolCallId: "nested",
+		args: { payload: { prompt: `start\n${"line\n".repeat(30)}END_OF_PROMPT` } },
+		result: "ok",
+		isError: false,
+	};
+	match(stripTerminalSequences(renderToolExecution(nested, 72).join("\n")), /END_OF_PROMPT/);
+});
+
+it("keeps helper context occupancy separate from cumulative tokens and counts observed tool invocations", () => {
+	const fold = createWorkerProgressFold();
+	strictEqual(fold.snapshot().processedTokens, undefined);
+	strictEqual(fold.snapshot().contextTokens, undefined);
+	for (const input of [100, 200])
+		fold.observe({
+			type: "message_end",
+			message: { role: "assistant", usage: { input, output: 20, cacheRead: 50, cacheWrite: 10 } },
+		});
+	fold.observe({ type: "pancode_tool_start", payload: { tool: "read", toolCallId: "one" } });
+	fold.observe({ type: "pancode_tool_start", payload: { tool: "read", toolCallId: "one" } });
+	fold.observe({ type: "pancode_tool_finish", payload: { tool: "read", toolCallId: "one" } });
+	strictEqual(fold.snapshot().processedTokens, 460);
+	strictEqual(fold.snapshot().contextTokens, 280);
+	strictEqual(fold.snapshot().toolCalls, 1);
+	fold.restart();
+	strictEqual(fold.snapshot().processedTokens, undefined);
+	strictEqual(fold.snapshot().toolCalls, undefined);
+});
+
+describe("transcript block grammar", () => {
+	const assistantMessage = (text: string) => ({
+		role: "assistant",
+		content: [{ type: "text", text }],
+		usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { total: 0 } },
+		stopReason: "stop",
+	});
+	const say = (panel: ChatPanel, text: string) => {
+		panel.applyEvent({ type: "message_start", message: { role: "assistant", content: [] } } as never);
+		panel.applyEvent({ type: "text_delta", contentIndex: 0, delta: text } as never);
+		panel.applyEvent({ type: "message_end", message: assistantMessage(text) } as never);
+	};
+	const act = (panel: ChatPanel, id: string, toolName: string, args: unknown, result: unknown, isError = false) => {
+		panel.applyEvent({ type: "tool_execution_start", toolCallId: id, toolName, args } as never);
+		panel.applyEvent({ type: "tool_execution_end", toolCallId: id, toolName, result, isError, durationMs: 5 } as never);
+	};
+	const observed = (text: string) => ({
+		content: [{ type: "text", text }],
+		details: { observation: { shownCount: 3, totalCount: 3, unit: "lines" } },
+	});
+
+	it("marks every operator prompt row with the bar and keeps its words bold only once committed", () => {
+		let status: "pending" | "committed" = "pending";
+		const panel = createChatPanel();
+		panel.appendUser("first line of the prompt\nsecond line", () => status);
+		const pending = panel.render(60);
+		ok(pending.every((row) => stripTerminalSequences(row).startsWith(`${GLYPH.userBar} `)));
+		ok(!pending.join("\n").includes("\u001b[1m"));
+		match(stripTerminalSequences(pending.join("\n")), /· preparing/u);
+		status = "committed";
+		panel.invalidate();
+		const committed = panel.render(60);
+		deepStrictEqual(committed.map(stripTerminalSequences), [
+			`${GLYPH.userBar} first line of the prompt`,
+			`${GLYPH.userBar} second line`,
+		]);
+		ok(committed[0]?.startsWith("\u001b]133;A\u0007"));
+		ok(committed.every((row) => row.includes("\u001b[1m")));
+	});
+
+	for (const style of ["compact", "standard", "detailed"] as const) {
+		it(`separates prose, reasoning, and actions and stacks one-row actions in ${style}`, () => {
+			const panel = createChatPanel({ getOutputStyle: () => style, getTerminalRows: () => 60 });
+			panel.appendUser("Fix it");
+			panel.applyEvent({ type: "agent_start" } as never);
+			panel.applyEvent({ type: "message_start", message: { role: "assistant", content: [] } } as never);
+			panel.applyEvent({ type: "thinking_delta", contentIndex: 0, delta: "Plan the reads." } as never);
+			panel.applyEvent({ type: "text_delta", contentIndex: 1, delta: "Reading first." } as never);
+			panel.applyEvent({ type: "message_end", message: assistantMessage("Reading first.") } as never);
+			act(panel, "r1", "grep", { pattern: "needle", path: "src" }, observed("a\nb\nc"));
+			act(panel, "r2", "git", { op: "status" }, { details: { exitCode: 0 } });
+			say(panel, "Found it.");
+			panel.applyEvent({ type: "agent_end", messages: [assistantMessage("Found it.")] } as never);
+			const rows = panel.render(100).map(stripTerminalSequences);
+			const at = (pattern: RegExp) => rows.findIndex((row) => pattern.test(row));
+			const reading = at(/Reading first\./u);
+			const grep = at(style === "compact" ? /explored 1 search ✓/u : /searched for `needle` in src/u);
+			const git = at(/git status/u);
+			const found = at(/Found it\./u);
+			ok(reading > 0 && grep > reading && found > git, rows.join("\n"));
+			strictEqual(rows[reading - 1], "", "reasoning and prose are separated");
+			strictEqual(rows[grep - 1], "", "prose and the first action are separated");
+			// Compact folds the lone search into a counted row with its target nested beneath it.
+			strictEqual(git, grep + (style === "detailed" ? 5 : style === "compact" ? 2 : 1), rows.join("\n"));
+			strictEqual(rows[found - 1], "", "resumed prose is separated from the actions");
+			ok(rows[reading]?.startsWith(`${GLYPH.agent} `));
+			ok(rows[found]?.startsWith(`${GLYPH.agent} `), "every prose block carries the agent glyph");
+			doesNotMatch(rows.join("\n"), /path ›|pattern ›/u);
+		});
+	}
+
+	it("marks every transcript notice in the gutter by level, one row each, with its subsystem tag at detailed", () => {
+		const transcript = (tier: OutputStyle): string[] => {
+			setPresentationTier(tier);
+			try {
+				const panel = createChatPanel({ now: () => 1_000 });
+				const notice = (level: "info" | "success" | "warning" | "error", text: string) =>
+					panel.applyEvent({ type: "notice", level, surface: "transcript", text } as never);
+				notice("info", "[PanCode] interrupt refused: a dispatch is attached. Queued for the next slot instead.");
+				notice("warning", "[/context compact] auto-compaction failed: the summary exceeded its budget");
+				notice("error", "[PanCode] context overflow persisted after compaction");
+				notice("success", "session saved");
+				// A footer notice is the footer's; the transcript never shows it.
+				panel.applyEvent({ type: "notice", level: "info", surface: "footer", text: "cache may be cold" } as never);
+				return panel.render(40).map(stripTerminalSequences);
+			} finally {
+				setPresentationTier("standard");
+			}
+		};
+		const rows = transcript("standard");
+		const plain = rows.join("\n");
+		doesNotMatch(plain, /\[PanCode\]|cache may be cold/u);
+		match(plain, /^i interrupt refused: a dispatch is/mu);
+		match(plain, /^! auto-compaction failed: the summary/mu, "standard drops the subsystem tag");
+		match(plain, /^✗ context overflow persisted after/mu);
+		match(plain, /^✓ session saved$/mu);
+		for (const row of rows.filter((line) => line.length > 0)) {
+			ok(/^[i!✗✓] /u.test(row), `a notice took a second row: ${row}`);
+			if (visibleWidth(row) === 40) ok(row.endsWith(GLYPH.ellipsis), `a cut notice ends in an ellipsis: ${row}`);
+		}
+		for (const row of rows) ok(visibleWidth(row) <= 40, row);
+		match(transcript("detailed").join("\n"), /^! \[\/context compact\] auto-compaction/mu, "detailed keeps the tag");
+		const compact = transcript("compact").join("\n");
+		doesNotMatch(compact, /^[i✓] /mu, "compact suppresses info and success");
+		match(compact, /^! auto-compaction failed/mu);
+		match(compact, /^✗ context overflow/mu);
+	});
+
+	it("hangs a wrapped command reply in the content column beside its mark", () => {
+		const blocks: Array<(width: number) => string[]> = [];
+		appendNotice(
+			"success",
+			"[/export] wrote 2301 lines to /tmp/scratchpad/demo-repo/.pancode/exports/1t6ygqmc7kuu-2026-09-23.html",
+			{ appendReplayBlock: (block) => blocks.push(block), requestRender() {} },
+		);
+		const rows = (blocks[0]?.(40) ?? []).map(stripTerminalSequences);
+		ok(rows[0]?.startsWith("✓ [/export] wrote 2301 lines"), rows.join("\n"));
+		ok(rows.length > 1, rows.join("\n"));
+		for (const row of rows.slice(1)) ok(row.startsWith("  "), `continuation left the gutter: ${row}`);
+	});
+
+	// The emitter names the source, so a two-sentence bus notice is a titled callout and a
+	// one-line event keeps its gutter row at every width.
+	it("renders multi-sentence bus notices as titled callouts and leaves one-line events in the gutter", () => {
+		const parked = approvalParkedNotice(
+			"bash",
+			{ classification: { actionClass: "execute" }, kind: "ask", ruleId: "rail-7" } as never,
+			"default",
+		);
+		const escalation = workerEscalationNotice({
+			requestId: "req-1",
+			tool: "bash",
+			actionClass: "execute",
+			origin: "worker:run-9",
+			agentId: "scout",
+			axis: "autonomy:default",
+		});
+		const notices = [
+			[parked, "Approval"],
+			[budgetAlertNotice({ level: "over", currentUsd: 5.12, ceilingUsd: 5 }), "Budget"],
+			[
+				safetyBlockedNotice({
+					tool: "bash",
+					actionClass: "execute",
+					ruleId: "R1",
+					policySource: "safety.yaml",
+					reasonCode: "R1",
+				}),
+				"Safety",
+			],
+			[escalation, "Fleet"],
+			[
+				middlewareHookFailedSessionNotice(
+					{ kind: "hook_failed", registrationId: "guard", hook: "turn_end", message: "boom" },
+					new Set(),
+				),
+				"Hooks",
+			],
+		] as const;
+		for (const [notice, title] of notices) {
+			ok(notice?.source !== undefined, `${title} has an explicit source`);
+			const blocks: Array<(width: number) => string[]> = [];
+			appendNotice(
+				notice.level,
+				notice.text,
+				{ appendReplayBlock: (block) => blocks.push(block), requestRender() {} },
+				notice.source,
+			);
+			for (const width of [40, 60, 120]) {
+				const rows = (blocks[0]?.(width) ?? []).map(stripTerminalSequences);
+				match(rows[0] ?? "", new RegExp(`^[!✗] ${title} ─+$`, "u"), rows.join("\n"));
+				doesNotMatch(rows.join("\n"), /\[(approval|budget|safety-net|middleware)\]/u);
+				for (const row of rows) ok(visibleWidth(row) <= width, row);
+			}
+		}
+		// The formatter writes the capital; display never changes a source's own text.
+		const budget = budgetAlertNotice({ level: "over", currentUsd: 5.12, ceilingUsd: 5 });
+		ok(budget);
+		match(budget.text, /^\[budget\] Session priced spend/u);
+		const budgetBlocks: Array<(width: number) => string[]> = [];
+		appendNotice(
+			budget.level,
+			budget.text,
+			{ appendReplayBlock: (block) => budgetBlocks.push(block), requestRender() {} },
+			budget.source,
+		);
+		match((budgetBlocks[0]?.(80) ?? []).map(stripTerminalSequences).join("\n"), /^ {2}Session priced spend/mu);
+		// A reminder that opens with a command keeps it verbatim; only a memory note is capitalized on display.
+		for (const [source, text, shown] of [
+			["reminder", "npm run test before claiming done.", "Reminder to the model · npm run test before"],
+			["memory", "Memory: you already tried the retry.", "  You already tried"],
+		] as const) {
+			const commandBlocks: Array<(width: number) => string[]> = [];
+			appendNotice("warn", text, { appendReplayBlock: (block) => commandBlocks.push(block), requestRender() {} }, source);
+			ok((commandBlocks[0]?.(80) ?? []).map(stripTerminalSequences).join("\n").includes(shown), source);
+		}
+		const event: Array<(width: number) => string[]> = [];
+		appendNotice("warn", "Worker approval request req-1 for scout (run-9) expired; fallback deny applied.", {
+			appendReplayBlock: (block) => event.push(block),
+			requestRender() {},
+		});
+		doesNotMatch((event[0]?.(60) ?? []).map(stripTerminalSequences).join("\n"), /─/u);
+	});
+
+	it("states guidance middleware attached for the model as one note, never as tool output", () => {
+		const listing = {
+			toolCallId: "l",
+			toolName: "ls",
+			args: { path: "." },
+			result:
+				"README.md\nsrc\n\n[middleware:info] Demo guidance: use the evidence you are gathering to identify one useful next step.\n[middleware:warn] Second note.",
+			isError: false,
+		};
+		const detailed = stripTerminalSequences(renderToolPreview(listing, 100, transcriptDetail("detailed")).join("\n"));
+		match(detailed, /│ README\.md\n {2}│ src\n {2}│ note to model · Demo guidance: use the evidence/u);
+		match(detailed, /· \+1 more$/u);
+		doesNotMatch(detailed, /\[middleware:/u);
+		// The full result in /view is what the model read, notes included.
+		const full = stripTerminalSequences(renderToolExecution(listing, 100, { unbounded: true }).join("\n"));
+		match(full, /\[middleware:info\] Demo guidance/u);
+		// Output that only quotes the tag mid-line stays output.
+		const quoting = { ...listing, result: 'const warning = "[middleware:warn] " + TEXT;\nexport {}' };
+		match(
+			stripTerminalSequences(renderToolPreview(quoting, 100, transcriptDetail("detailed")).join("\n")),
+			/const warning = "\[middleware:warn\] "/u,
+		);
+	});
+
+	it("hangs a wrapped diff row under its content, past the sign and line number", () => {
+		const edit = {
+			toolCallId: "e",
+			toolName: "edit",
+			args: { path: "src/net/retry.js" },
+			result: {
+				content: [{ type: "text", text: "ok" }],
+				details: {
+					diff:
+						'-24       console.debug("retry " + (attempt + 1) + " after " + Math.round(jitter) + "ms jitter");\n+24       console.debug(formatRetryMessage(attempt + 1, Math.round(jitter), "ms jitter", options));',
+				},
+			},
+			isError: false,
+		};
+		for (const width of [40, 65]) {
+			const rows = renderToolPreview(edit, width, transcriptDetail("standard")).map(stripTerminalSequences).slice(1);
+			const removed = rows.findIndex((row) => row.startsWith("  │ -24 "));
+			// A continuation keeps its sign and marks the number column, so it never reads as a context line.
+			ok(removed >= 0 && rows[removed + 1]?.startsWith("  │ - ↪ "), rows.join("\n"));
+			for (const row of rows) ok(visibleWidth(row) <= width, row);
+			for (const row of rows.filter((line) => !/^ {2}│ ([-+]24 |… \d+ more lines?)/u.test(line)))
+				ok(/^ {2}│ [-+] ↪ \S/u.test(row), `a continuation left the content column: ${row}`);
+		}
+	});
+
+	it("ends a compact turn with one row: its outcome word and elapsed time, and no spend", () => {
+		const view = telemetryViewOf(
+			"brief",
+			telemetryCall("brief", { turnId: "brief", usage: { input: 10, output: 5 }, usd: null }),
+		);
+		const panel = createChatPanel({ getOutputStyle: () => "compact", getTelemetry: () => view });
+		panel.appendUser("Say hi");
+		panel.applyEvent({ type: "agent_start", turnId: "brief" } as never);
+		say(panel, "Hi.");
+		panel.applyEvent({ type: "agent_end", messages: [assistantMessage("Hi.")] } as never);
+		const rows = plainRender(panel, 100).split("\n");
+		const ends = rows.filter((row) => row.startsWith(`${GLYPH.ok} `));
+		strictEqual(ends.length, 1, rows.join("\n"));
+		ok(/^\S+\sDone\s·\s\d[\d.]*(ms|s|m)\b/u.test(ends[0] ?? "") && !/in 10|out 5/u.test(ends[0] ?? ""), ends[0]);
+		ok(rows.indexOf(ends[0] ?? "") > rows.findIndex((row) => row.includes("Hi.")), rows.join("\n"));
+	});
+
+	it("closes a run split by a worker with exactly one receipt, after the last output", () => {
+		for (const style of ["standard", "detailed"] as const) {
+			const view = telemetryViewOf(
+				"worker-split",
+				telemetryCall("worker-split", { turnId: "review", usage: { input: 10, output: 5 }, usd: null }),
+			);
+			const panel = createChatPanel({ getOutputStyle: () => style, getTelemetry: () => view });
+			panel.appendUser("Delegate the review");
+			panel.applyEvent({ type: "agent_start", turnId: "review" } as never);
+			say(panel, "Dispatching a reviewer.");
+			act(panel, "d1", "dispatch", { agent: "reviewer", task: "review" }, "1 task dispatched");
+			panel.applyWorkerState({
+				assignmentId: "a1",
+				runId: "run-1",
+				origin: "agent",
+				agentId: "reviewer",
+				runtime: { kind: "pancode", targetId: "mini", wireModelId: "coder" },
+				text: "looks fine",
+				droppedLines: 0,
+				tools: [],
+				attempts: [{ runId: "run-1", targetLabel: "mini" }],
+				pending: false,
+				parentToolCallId: "d1",
+				result: { outcome: "succeeded" },
+			} as WorkerEntryState);
+			say(panel, "The reviewer found nothing.");
+			panel.applyEvent({ type: "agent_end", messages: [assistantMessage("The reviewer found nothing.")] } as never);
+			const plain = plainRender(panel, 100);
+			const receipt = style === "standard" ? /Done/gu : /Done · \S+ · in 10 · out 5/gu;
+			strictEqual((plain.match(receipt) ?? []).length, 1, plain);
+			ok(plain.lastIndexOf("found nothing") < plain.search(receipt), plain);
+		}
+	});
+
+	it("ends a turn whose detached workers still run as ended with them running, never as done", () => {
+		const view = telemetryViewOf(
+			"detached",
+			telemetryCall("detached", { turnId: "fanout", usage: { input: 10, output: 5 }, usd: null }),
+		);
+		const panel = createChatPanel({ getOutputStyle: () => "standard", getTelemetry: () => view });
+		panel.appendUser("Fan out the fixes");
+		panel.applyEvent({ type: "agent_start", turnId: "fanout" } as never);
+		act(panel, "d1", "dispatch", { tasks: ["a", "b"], detach: true }, "2 tasks dispatched");
+		for (const id of ["a1", "a2"])
+			panel.applyWorkerState({
+				assignmentId: id,
+				runId: `run-${id}`,
+				origin: "agent",
+				agentId: "coder",
+				runtime: { kind: "pancode", targetId: "mini", wireModelId: "coder" },
+				text: "",
+				droppedLines: 0,
+				tools: [],
+				attempts: [{ runId: `run-${id}`, targetLabel: "mini" }],
+				pending: true,
+				startedAtMs: 0,
+				parentToolCallId: "d1",
+			} as WorkerEntryState);
+		say(panel, "Two workers are fixing it.");
+		panel.applyEvent({ type: "agent_end", messages: [assistantMessage("Two workers are fixing it.")] } as never);
+		const plain = plainRender(panel, 100);
+		doesNotMatch(plain, /Done/u, plain);
+		doesNotMatch(plain, new RegExp(`^${GLYPH.ok} `, "mu"), plain);
+		match(plain, /Turn ended · 2 workers running/u, plain);
+	});
+
+	it("states the ended turn's own calls, tokens and cost apart from its detached worker's, which settle live (ns:49-50)", () => {
+		const main = [1, 2].flatMap(() =>
+			telemetryCall("frozen", { turnId: "fanout", usage: { input: 10, output: 5 }, usd: 0.02 }),
+		);
+		const first = main[0];
+		if (!first) throw new Error("fixture call missing");
+		const linked = makeTelemetryRecord("run.linked", { runId: "run-a1" }, first.ctx, { t: first.t, mono: 0 });
+		const workerCalls = (count: number) =>
+			Array.from({ length: count }, () =>
+				telemetryCall("frozen", { role: "worker", usage: { input: 3, output: 1 }, usd: 0.01 }).map(
+					(record) =>
+						({
+							...record,
+							ctx: { ...record.ctx, runId: "run-a1", agent: { role: "worker", id: "run-a1" } },
+						}) as TelemetryRecord,
+				),
+			).flat();
+		const viewWith = (count: number) =>
+			telemetryViewOf("frozen", [...main, linked], new Map([["run-a1", workerCalls(count)]]));
+		let view = viewWith(1);
+		const panel = createChatPanel({ getOutputStyle: () => "standard", getTelemetry: () => view });
+		panel.appendUser("Fan out the fix");
+		panel.applyEvent({ type: "agent_start", turnId: "fanout" } as never);
+		act(panel, "d1", "dispatch", { agent: "coder", task: "a", detach: true }, "1 task dispatched");
+		panel.applyWorkerState({
+			assignmentId: "a1",
+			runId: "run-a1",
+			origin: "agent",
+			agentId: "coder",
+			runtime: { kind: "pancode", targetId: "mini", wireModelId: "coder" },
+			text: "",
+			droppedLines: 0,
+			tools: [],
+			attempts: [{ runId: "run-a1", targetLabel: "mini" }],
+			pending: true,
+			startedAtMs: 0,
+			parentToolCallId: "d1",
+		} as WorkerEntryState);
+		say(panel, "A worker is fixing it.");
+		panel.applyEvent({ type: "agent_end", messages: [assistantMessage("A worker is fixing it.")] } as never);
+		const row = () =>
+			plainRender(panel, 160)
+				.split("\n")
+				.find((line) => line.includes("Turn ended")) ?? "";
+		match(row(), / · 2 calls · in 20 · out 10 · \$0\.04 · workers 1 running \$0\.01\b/u, row());
+		// The worker goes on calling after the turn ended; the turn's own figures hold and the worker's spend grows.
+		view = viewWith(31);
+		match(row(), / · 2 calls · in 20 · out 10 · \$0\.04 · workers 1 running \$0\.31\b/u, row());
+	});
+
+	it("puts a card that arrives after its dispatch settled under that call, and one from an earlier turn at the tail", () => {
+		const reviewer = (assignmentId: string, parentToolCallId: string) =>
+			({
+				assignmentId,
+				runId: `run-${assignmentId}`,
+				origin: "agent",
+				agentId: "reviewer",
+				runtime: { kind: "pancode", targetId: "mini", wireModelId: "coder" },
+				text: "looks fine",
+				droppedLines: 0,
+				tools: [],
+				attempts: [{ runId: `run-${assignmentId}`, targetLabel: "mini" }],
+				pending: false,
+				parentToolCallId,
+				result: { outcome: "succeeded" },
+			}) as WorkerEntryState;
+		const panel = createChatPanel({ getOutputStyle: () => "detailed" });
+		panel.appendUser("Delegate the review");
+		panel.applyEvent({ type: "agent_start" } as never);
+		act(panel, "d1", "dispatch", { agent: "reviewer", task: "review the diff", detach: true }, "1 task dispatched");
+		act(panel, "d2", "dispatch", { agent: "reviewer", task: "audit the docs", detach: true }, "1 task dispatched");
+		appendNotice("info", "a notice between the call and its card", {
+			appendReplayBlock: (block) => panel.appendReplayBlock(block),
+			requestRender: () => undefined,
+		});
+		panel.applyWorkerState(reviewer("a1", "d1"));
+		say(panel, "The reviewer found nothing.");
+		panel.applyEvent({ type: "agent_end", messages: [assistantMessage("The reviewer found nothing.")] } as never);
+		const rows = plainRender(panel, 100).split("\n");
+		const call = rows.findIndex((row) => row.startsWith(`${GLYPH.workerAgent} delegated`));
+		const card = rows.findIndex((row) => row.includes(`${GLYPH.workerAgent} reviewer`));
+		const notice = rows.findIndex((row) => row.includes("a notice between the call and its card"));
+		ok(call >= 0 && card > call && card < notice, rows.join("\n"));
+		// The card states the run, so the call drops its task and its receipt body.
+		strictEqual(rows[call], `${GLYPH.workerAgent} delegated to reviewer · 5ms`, rows.join("\n"));
+		doesNotMatch(rows.join("\n"), /review the diff/u);
+		// A call from an earlier turn keeps its row; a card for it lands at the tail.
+		panel.appendUser("Something else");
+		panel.applyWorkerState(reviewer("a2", "d2"));
+		const later = plainRender(panel, 100).split("\n");
+		match(later.join("\n"), /delegated to reviewer: audit the docs/u);
+		const lastCard = later.flatMap((row, index) => (row.includes(`${GLYPH.workerAgent} reviewer`) ? [index] : [])).at(-1);
+		ok((lastCard ?? -1) > later.indexOf("▌ Something else"), later.join("\n"));
+	});
+
+	it("keeps header facts off argument rows, hides settled mutation payloads, and states change facts", () => {
+		const policy = transcriptDetail("standard");
+		const bash = renderToolPreview(
+			{ toolCallId: "b", toolName: "bash", args: { command: "pnpm test" }, result: "ok", isError: false },
+			80,
+			policy,
+		).map(stripTerminalSequences);
+		deepStrictEqual(bash, ["$ ran `pnpm test` ✓", "  │ ok"]);
+		const edit = {
+			toolCallId: "e",
+			toolName: "edit",
+			args: { path: "src/a.ts", edits: [{ oldText: "OLD_PAYLOAD", newText: "NEW_PAYLOAD" }] },
+			result: { content: [{ type: "text", text: "ok" }], details: { diff: "-1 old\n+1 new\n+2 more\n 3 same" } },
+			isError: false,
+		};
+		for (const style of ["compact", "standard", "detailed"] as const) {
+			const plain = stripTerminalSequences(renderToolPreview(edit, 80, transcriptDetail(style)).join("\n"));
+			match(plain, /edited src\/a\.ts · \+2 -1/u);
+			doesNotMatch(plain, /OLD_PAYLOAD|NEW_PAYLOAD/u);
+		}
+		const formingEdit = {
+			toolCallId: edit.toolCallId,
+			toolName: edit.toolName,
+			args: edit.args,
+			phase: "forming" as const,
+		};
+		match(
+			stripTerminalSequences(renderToolPreview(formingEdit, 80, transcriptDetail("detailed")).join("\n")),
+			/NEW_PAYLOAD/u,
+		);
+		match(
+			stripTerminalSequences(renderToolPreview(formingEdit, 80, policy).join("\n")),
+			/^ {2}│ \+ NEW_PAYLOAD$/mu,
+			"a forming edit streams its replacement as + rows",
+		);
+		doesNotMatch(
+			stripTerminalSequences(renderToolPreview(formingEdit, 80, transcriptDetail("compact")).join("\n")),
+			/NEW_PAYLOAD/u,
+		);
+		const failed = stripTerminalSequences(
+			renderToolPreview({ ...edit, result: "oldText not found", isError: true }, 80, policy).join("\n"),
+		);
+		match(failed, /OLD_PAYLOAD/u, "a failed mutation keeps the text that did not match");
+	});
+
+	it("hangs a wrapped action row and nests its body in the content column", () => {
+		const rows = renderToolPreview(
+			{
+				toolCallId: "w",
+				toolName: "bash",
+				args: { command: `echo ${"x".repeat(50)}` },
+				result: "line one\nline two",
+				isError: true,
+			},
+			48,
+			transcriptDetail("standard"),
+		).map(stripTerminalSequences);
+		ok(rows[0]?.startsWith(`${GLYPH.classExecute} `), rows.join("\n"));
+		ok(rows.length > 2, rows.join("\n"));
+		for (const row of rows.slice(1)) ok(row.startsWith("  "), `continuation or body left the gutter: ${row}`);
+		ok(
+			rows.some((row) => row.startsWith("  │ line one")),
+			rows.join("\n"),
+		);
+	});
+
+	it("states a skill load's identity, who asked for it, and what it is for", () => {
+		const load = {
+			toolCallId: "s",
+			toolName: "context",
+			args: { scope: "skills", name: "test-hygiene" },
+			result: {
+				content: [{ type: "text", text: "# test-hygiene" }],
+				details: {
+					name: "test-hygiene",
+					description: "Keep tests deterministic.",
+					activation: "model",
+					allowedTools: ["read"],
+					drift: "mismatch",
+					observation: { shownCount: 1, totalCount: 1, unit: "sections" },
+				},
+			},
+			isError: false,
+		};
+		const render = (style: OutputStyle) =>
+			stripTerminalSequences(renderToolPreview(load, 90, transcriptDetail(style)).join("\n"));
+		match(render("compact"), /loaded skill test-hygiene · by model · drifted ✓/u);
+		const gatewayLoad = {
+			...load,
+			toolName: "gateway",
+			args: { op: "call", capability: "context", args: load.args },
+			result: { ...load.result, details: { ...load.result.details, capability: "context" } },
+		};
+		const viaGateway = stripTerminalSequences(
+			renderToolPreview(gatewayLoad, 110, transcriptDetail("standard")).join("\n"),
+		);
+		match(viaGateway, /loaded skill test-hygiene · by model · drifted/u);
+		match(viaGateway, /narrows tools to read/u);
+		doesNotMatch(viaGateway, /via gateway/u);
+		doesNotMatch(render("compact"), /narrows|Keep tests deterministic|1 section/u);
+		// Standard nests the surface the skill declares, then what it is for.
+		for (const style of ["standard", "detailed"] as const) {
+			match(render(style), /✓\n {2}│ narrows tools to read\n {2}│ Keep tests deterministic\./u);
+			doesNotMatch(render(style).split("\n")[0] ?? "", /narrows/u);
+		}
+		const excluding = {
+			...load,
+			result: {
+				...load.result,
+				details: { ...load.result.details, allowedTools: [], disallowedTools: ["bash", "write"] },
+			},
+		};
+		match(
+			stripTerminalSequences(renderToolPreview(excluding, 90, transcriptDetail("standard")).join("\n")),
+			/\n {2}│ narrows tools to all but bash, write\n/u,
+		);
+		// Until it settles, the row says the load is in progress.
+		match(
+			stripTerminalSequences(renderToolSubline({ toolCallId: "s", toolName: "context", args: load.args }, 90).join("")),
+			/loading skill test-hygiene/u,
+		);
+	});
+
+	it("states a refused skill load as plainly as a load, from the refusal in its details", () => {
+		const message =
+			'context: skill "tech-spec" requires explicit operator activation with /skill tech-spec; it disables model invocation. Do not retry this load.';
+		const refused = (refusal: Record<string, string>) => ({
+			toolCallId: "r",
+			toolName: "context",
+			args: { scope: "skills", name: "tech-spec" },
+			result: {
+				content: [{ type: "text", text: message }],
+				details: { refusal: { subject: "skill", name: "tech-spec", ...refusal } },
+			},
+			isError: true,
+		});
+		const cases: Array<[Record<string, string>, string]> = [
+			[{ kind: "manual-only" }, "manual-only: /skill tech-spec"],
+			[{ kind: "untrusted" }, "untrusted: review it in /hub"],
+			[{ kind: "not-imported", source: "claude", scope: "project" }, "not imported: found in claude/project"],
+			[{ kind: "not-installed" }, "not installed: /skill tech-spec"],
+			[{ kind: "not-ready", scope: "user", state: "disabled" }, "installed but disabled: /hub"],
+			[{ kind: "operator-only" }, "only you can load it: /skill tech-spec"],
+			[{ kind: "recipe-bound" }, "not declared for this run"],
+			[{ kind: "not-requested" }, "not requested this turn"],
+			[{ kind: "unknown" }, "unknown skill"],
+		];
+		for (const [refusal, reason] of cases) {
+			for (const style of ["compact", "standard", "detailed"] as const) {
+				// One row and no body: the message is the model's instruction and stays in /view.
+				const rows = renderToolPreview(refused(refusal), 100, transcriptDetail(style));
+				deepStrictEqual(rows.map(stripTerminalSequences), [`§ skill tech-spec not loaded · ${reason} ✗ failed`]);
+			}
+		}
+		// CLI-P56: a skill already in context is a no-op, so its row is neutral, never `not loaded · … ✗`.
+		for (const style of ["compact", "standard", "detailed"] as const) {
+			const rows = renderToolPreview(refused({ kind: "already-loaded" }), 100, transcriptDetail(style));
+			deepStrictEqual(rows.map(stripTerminalSequences), ["§ skill tech-spec already loaded"]);
+		}
+		const [row] = renderToolPreview(refused({ kind: "manual-only" }), 100, transcriptDetail("standard"));
+		ok(row?.includes(pancodeTheme().fg("accent", "/skill tech-spec")), "the move reads in the slash-command accent");
+		// Narrow terminals hang the reason in the content column.
+		const narrow = renderToolPreview(
+			refused({ kind: "not-imported", source: "claude", scope: "project" }),
+			40,
+			transcriptDetail("standard"),
+		).map(stripTerminalSequences);
+		ok(narrow.length > 1, narrow.join("\n"));
+		for (const line of narrow) ok(visibleWidth(line) <= 40, line);
+		for (const line of narrow.slice(1)) ok(line.startsWith("  "), `continuation left the gutter: ${line}`);
+		// An error without a refusal is still an ordinary failed load with its message.
+		const failed = stripTerminalSequences(
+			renderToolPreview({ ...refused({ kind: "manual-only" }), result: message }, 100, transcriptDetail("standard")).join(
+				"\n",
+			),
+		);
+		doesNotMatch(failed, /not loaded/u);
+		match(failed, /requires explicit operator activation/u);
+	});
+
+	it("leads an explicit /skill prompt with the command in the accent token", () => {
+		const panel = createChatPanel();
+		panel.appendUser("/skill test-hygiene make the test deterministic");
+		const [row] = panel.render(80);
+		ok(row?.includes(pancodeTheme().style("accent", "/skill test-hygiene", { bold: true })), row);
+		strictEqual(stripTerminalSequences(row ?? ""), `${GLYPH.userBar} /skill test-hygiene make the test deterministic`);
+	});
+
+	it("shows a running worker's latest action on one Detailed telemetry row", () => {
+		const entry = {
+			assignmentId: "a",
+			runId: "run-2",
+			origin: "user",
+			agentId: "scout",
+			runtime: { kind: "pancode", targetId: "blade", wireModelId: "m" },
+			text: "",
+			droppedLines: 0,
+			tools: [],
+			attempts: [{ runId: "run-2", targetLabel: "blade" }],
+			pending: true,
+			progress: {
+				revision: 1,
+				phase: "tool",
+				tailText: "",
+				droppedLines: 0,
+				droppedBytes: 0,
+				currentAction: { tool: "grep", descriptor: { verb: "searching", object: "retry(" } },
+				recentActions: [{ tool: "read", descriptor: { verb: "read", object: "a.ts" } }],
+				toolNames: ["grep", "read"],
+				settled: false,
+			},
+		} as unknown as WorkerEntryState;
+		const render = (style: OutputStyle) =>
+			renderWorkerEntryLines(entry, 80, { detail: transcriptDetail(style) })
+				.map(stripTerminalSequences)
+				.join("\n");
+		// The row states the live call; detailed adds one telemetry row: route, calls, tokens and the last call.
+		for (const style of ["compact", "standard", "detailed"] as const) {
+			match(render(style), /^● ◇ scout +searching retry\(/u);
+		}
+		strictEqual(render("compact").split("\n").length, 1);
+		strictEqual(render("standard").split("\n").length, 1);
+		strictEqual(render("detailed").split("\n").length, 2);
+		match(render("detailed"), /\n {2}│ blade · m · last: read a\.ts$/u);
+		doesNotMatch(render("standard"), /last: read/u);
+		doesNotMatch(render("detailed"), /state |\?/u);
+		doesNotMatch(render("compact"), /last:/u);
+		ok(entry.progress);
+		entry.toolCallLimit = 150;
+		entry.progress = { ...entry.progress, toolCalls: 12, processedTokens: 1200 };
+		match(render("detailed"), /blade · m · 12 calls · last: read a\.ts/u);
+		const unknownRoute = { ...entry, runtime: { kind: "acp" as const } };
+		delete unknownRoute.toolCallLimit;
+		const partial = renderWorkerEntryLines(unknownRoute, 80, { detail: transcriptDetail("detailed") });
+		match(stripTerminalSequences(partial[1] ?? ""), /^ {2}│ 12 calls · last: read a\.ts/u);
+		doesNotMatch(partial.map(stripTerminalSequences).join("\n"), /unknown|\?|\/150/u);
+	});
+
+	it("lists a settled card's calls oldest first in the past tense, and a running card's last call alone", () => {
+		const recentActions = [
+			{ tool: "limitation" },
+			{ tool: "read", descriptor: { verb: "reading", object: "docs/retry.md" } },
+			{ tool: "grep", descriptor: { verb: "searching", object: "retry|options" } },
+			{ tool: "git", descriptor: { verb: "git" } },
+		];
+		const entry = (pending: boolean) =>
+			({
+				assignmentId: "a",
+				runId: "run-3",
+				origin: "agent",
+				agentId: "scout",
+				runtime: { kind: "pancode", targetId: "blade", wireModelId: "m" },
+				text: "Found it.",
+				droppedLines: 0,
+				tools: ["git", "grep", "read", "limitation"],
+				attempts: [{ runId: "run-3", targetLabel: "blade" }],
+				pending,
+				...(pending ? {} : { result: { outcome: "succeeded", durationMs: 9_000, toolCalls: 4 } }),
+				progress: {
+					revision: 1,
+					phase: "tool",
+					tailText: "",
+					droppedLines: 0,
+					droppedBytes: 0,
+					currentAction: pending ? { tool: "bash", descriptor: { verb: "running", object: "npm test" } } : null,
+					recentActions,
+					toolNames: ["git", "grep", "read", "limitation"],
+					settled: !pending,
+				},
+			}) as unknown as WorkerEntryState;
+		const trail = (pending: boolean) =>
+			renderWorkerEntryLines(entry(pending), 80, { detail: transcriptDetail("detailed") })
+				.map(stripTerminalSequences)
+				.filter((row) => row.startsWith(`  │ ${GLYPH.phaseTool}`));
+		// Detailed keeps three trail rows: the last calls, oldest first, then how many came before them.
+		deepStrictEqual(trail(false), [
+			`  │ ${GLYPH.phaseTool} read docs/retry.md`,
+			`  │ ${GLYPH.phaseTool} limitation`,
+			`  │ ${GLYPH.phaseTool} … 2 earlier calls · /view dispatch:run-3`,
+		]);
+		deepStrictEqual(trail(true), []);
+		const live = stripTerminalSequences(
+			renderWorkerEntryLines(entry(true), 80, { detail: transcriptDetail("detailed") }).join("\n"),
+		);
+		match(live, /^● ◆ scout +running npm test/u);
+		match(live, /\n {2}│ blade · m · last: limitation$/u);
+	});
+
+	it("states a run of one repeated call once, counted, and marks a call object the safety layer cut", () => {
+		const evidence = { tool: "gateway", descriptor: { verb: "gateway", object: "evidence" } };
+		const entry = {
+			assignmentId: "a",
+			runId: "run-5",
+			origin: "user",
+			agentId: "verifier",
+			runtime: { kind: "pancode", targetId: "blade", wireModelId: "m" },
+			text: "",
+			droppedLines: 0,
+			tools: ["gateway", "read"],
+			attempts: [{ runId: "run-5", targetLabel: "blade" }],
+			pending: false,
+			result: { outcome: "succeeded", durationMs: 9_000, toolCalls: 5 },
+			// Newest first, as the worker progress fold keeps them.
+			recentActions: [
+				evidence,
+				evidence,
+				evidence,
+				{ tool: "read", descriptor: { verb: "reading", object: "docs/a-long-name", truncated: true } },
+			],
+		} as unknown as WorkerEntryState;
+		const trail = renderWorkerEntryLines(entry, 80, { detail: transcriptDetail("detailed") })
+			.map(stripTerminalSequences)
+			.filter((row) => row.startsWith(`  │ ${GLYPH.phaseTool}`));
+		deepStrictEqual(trail, [
+			`  │ ${GLYPH.phaseTool} read docs/a-long-name${GLYPH.ellipsis}`,
+			`  │ ${GLYPH.phaseTool} used evidence ${GLYPH.times}3`,
+			`  │ ${GLYPH.phaseTool} … 1 earlier call · /view dispatch:run-5`,
+		]);
+	});
+
+	it("inspects a card in /view and /export as the Detailed card states it, with the answer whole and raw", () => {
+		const answer = `{"verdict":"pass","checks":[{"name":"docs match","passed":true,"evidence":"${"read both files. ".repeat(40)}"}]}`;
+		const entry = {
+			assignmentId: "a",
+			runId: "run-4",
+			origin: "user",
+			agentId: "verifier",
+			runtime: { kind: "pancode", targetId: "blade", wireModelId: "m" },
+			text: answer,
+			droppedLines: 0,
+			tools: ["read"],
+			attempts: [{ runId: "run-4", targetLabel: "blade" }],
+			pending: false,
+			contextTokens: 3_164,
+			result: { outcome: "succeeded", durationMs: 8_200, toolCalls: 1, tokenCount: 19_100, contract: "pass" },
+			progress: {
+				revision: 1,
+				phase: "writing",
+				tailText: "",
+				droppedLines: 0,
+				droppedBytes: 0,
+				currentAction: null,
+				recentActions: [{ tool: "read", descriptor: { verb: "reading", object: "docs/retry.md" } }],
+				toolNames: ["read"],
+				settled: true,
+			},
+		} as unknown as WorkerEntryState;
+		const detailed = renderWorkerEntryLines(entry, 80, { detail: transcriptDetail("detailed") }).map(
+			stripTerminalSequences,
+		);
+		const inspected = renderWorkerEntryLines(entry, 80, { unbounded: true }).map(stripTerminalSequences);
+		// The same run row, facts, trail and record, in the same words.
+		strictEqual(inspected[0], detailed[0]);
+		strictEqual(inspected[0], "! ◇ verifier         unverified");
+		strictEqual(inspected[1], "  │ validation unknown · 1 call · contract pass");
+		strictEqual(detailed[1], "  │ validation unknown · 1 call");
+		ok(
+			detailed.slice(3).some((row) => /verdict/u.test(row)),
+			detailed.join("\n"),
+		);
+		for (const row of detailed.filter((line) => /│ (▹|blade )/u.test(line))) ok(inspected.includes(row), row);
+		doesNotMatch(inspected.join("\n"), /└|\btok\b|… \d+ rows/u);
+		// The answer is whole and as the run returned it.
+		const body = inspected
+			.map((row) => row.replace(/^ {2}│ /u, ""))
+			.join(" ")
+			.replace(/\s+/gu, " ");
+		match(body, /\{"verdict":"pass","checks":/u);
+		strictEqual(body.split("read both files.").length - 1, 40, body);
+		match(detailed.join("\n"), /… \d+ rows · \/view/u, "the transcript bounds what inspection shows whole");
+	});
+});
+
+describe("tool classes", () => {
+	const text = (body: string, details: Record<string, unknown> = {}) => ({
+		content: [{ type: "text", text: body }],
+		details,
+	});
+	const settled = (toolName: string, args: unknown, result: unknown, extra: Partial<ToolExecutionFinished> = {}) =>
+		({
+			toolCallId: `${toolName}-1`,
+			toolName,
+			args,
+			result,
+			isError: false,
+			durationMs: 42,
+			...extra,
+		}) as ToolExecutionFinished;
+	const rows = (call: Parameters<typeof renderToolPreview>[0], style: OutputStyle = "standard", width = 100) =>
+		renderToolPreview(call, width, transcriptDetail(style)).map(stripTerminalSequences);
+
+	it("marks each class in the gutter, running rows progressive and settled rows past tense", () => {
+		const cases: Array<[string, Record<string, unknown>, string, string, string]> = [
+			["read", { path: "a.ts" }, GLYPH.toolHeader, "reading a.ts", "read a.ts"],
+			["grep", { pattern: "needle" }, GLYPH.toolHeader, "searching for `needle`", "searched for `needle`"],
+			["context", { scope: "docs", query: "q" }, GLYPH.classKnowledge, "consulting docs", "consulted docs"],
+			["edit", { path: "a.ts" }, GLYPH.classMutate, "editing a.ts", "edited a.ts"],
+			["write", { path: "a.ts" }, GLYPH.classMutate, "writing a.ts", "wrote a.ts"],
+			["bash", { command: "ls" }, GLYPH.classExecute, "running `ls`", "ran `ls`"],
+			[
+				"web_fetch",
+				{ url: "https://example.com/a" },
+				GLYPH.classNetwork,
+				"fetching example.com/a",
+				"fetched example.com/a",
+			],
+			["dispatch", { agent: "scout", task: "map" }, GLYPH.workerAgent, "delegating to scout", "delegated to scout"],
+			["ask_user", { questions: [{ question: "Keep it?" }] }, GLYPH.classInteraction, "asking Keep it?", "asked Keep it?"],
+			[
+				"mcp_github__search_issues",
+				{},
+				GLYPH.classExternal,
+				"calling github › search_issues",
+				"called github › search_issues",
+			],
+		];
+		for (const [toolName, args, mark, running, done] of cases) {
+			const live = renderToolSubline({ toolCallId: toolName, toolName, args }, 100).map(stripTerminalSequences);
+			ok(live[0]?.startsWith(`${mark} ${running}`), `${toolName} running: ${live[0]}`);
+			const row = renderToolSubline(settled(toolName, args, text("ok")), 100).map(stripTerminalSequences);
+			ok(row[0]?.startsWith(`${mark} ${done}`), `${toolName} settled: ${row[0]}`);
+		}
+	});
+
+	it("names the operation a call performs and what it acts on", () => {
+		const head = (toolName: string, args: Record<string, unknown>) =>
+			stripTerminalSequences(renderToolSubline(settled(toolName, args, text("ok")), 200)[0] ?? "");
+		const cases: Array<[string, Record<string, unknown>, string]> = [
+			["steer", { run_id: "r1", action: "cancel" }, `${GLYPH.workerAgent} cancelled run r1 ✓`],
+			["monitor", { mode: "wait", run_id: "r1" }, `${GLYPH.workerAgent} waited on run r1 ✓`],
+			["monitor", { mode: "collect", batch_id: "b7" }, `${GLYPH.workerAgent} collected batch b7 ✓`],
+			["dispatch", { list: true }, `${GLYPH.workerAgent} listed fleet agents ✓`],
+			[
+				"dispatch",
+				{ mode: "council", roster: "design", task: "Own the clock?" },
+				`${GLYPH.workerAgent} delegated a council of design: Own the clock? ✓`,
+			],
+			[
+				"dispatch",
+				{ tasks: ["a", "b", "c"], mode: "pipeline", detach: true },
+				`${GLYPH.workerAgent} delegated 3 tasks as a pipeline ✓`,
+			],
+			["data", { op: "select", path: "runs.csv", limit: 5 }, `${GLYPH.toolHeader} selected from runs.csv ✓`],
+			[
+				"web_fetch",
+				{ url: "https://api.example.com/v1/items", method: "POST" },
+				`${GLYPH.classNetwork} sent api.example.com/v1/items ✓`,
+			],
+			["verify", {}, `${GLYPH.classExecute} listed checks ✓`],
+			["git", { op: "diff", path: "src/a.ts", cached: true }, `${GLYPH.classExecute} ran git diff src/a.ts ✓`],
+			[
+				"run_script",
+				{ interpreter: "python3", script: "probe.py", args: ["--n", "5"] },
+				`${GLYPH.classExecute} ran \`python3 probe.py --n 5\` ✓`,
+			],
+			["panes", { action: "show", target: "r1" }, `${GLYPH.classExecute} ran panes show r1 ✓`],
+			[
+				"ledger",
+				{ action: "post", kind: "finding", path: "src/a.ts", line: 12 },
+				`${GLYPH.classKnowledge} consulted ledger post finding src/a.ts:12 ✓`,
+			],
+			["context", { scope: "skills", query: "profiling" }, `${GLYPH.classKnowledge} consulted skills \`profiling\` ✓`],
+			["grep", { pattern: "x", ignore_case: true }, `${GLYPH.toolHeader} searched for \`x\` ✓`],
+			[
+				"artifact",
+				{ kind: "plan", title: "Retry design", path: "docs/plan.md", content: "…" },
+				`${GLYPH.classMutate} wrote plan "Retry design" to docs/plan.md ✓`,
+			],
+		];
+		for (const [toolName, args, expected] of cases) strictEqual(head(toolName, args), `${expected} · 42ms`, toolName);
+	});
+
+	it("never marks a monitor wait or collect that timed out as a success", () => {
+		for (const args of [
+			{ mode: "wait", run_id: "r1" },
+			{ mode: "collect", batch_id: "b7" },
+		]) {
+			const call = settled("monitor", args, text("wait timed out after 30000ms", { mode: args.mode, timedOut: true }));
+			const head = stripTerminalSequences(renderToolSubline(call, 200)[0] ?? "");
+			doesNotMatch(head, /✓/u, head);
+			ok(head.endsWith(` · timed out ${GLYPH.warn} · 42ms`), head);
+		}
+	});
+
+	it("does not repeat a monitor run id at the start of its result preview", () => {
+		const call = settled("monitor", { run_id: "k2m9x4" }, text("k2m9x4 · completed · 7 tool calls"));
+		const preview = rows(call, "detailed").join("\n");
+		match(preview, /checked run k2m9x4/u);
+		match(preview, /│ completed · 7 tool calls/u);
+		doesNotMatch(preview, /│ k2m9x4 · completed/u);
+		const inspected = renderToolExecution(call, 100, { unbounded: true }).map(stripTerminalSequences).join("\n");
+		match(inspected, /k2m9x4 · completed · 7 tool calls/u, "inspection retains the model-facing result");
+	});
+
+	it("gives a running row the live mark and elapsed, never the verb twice", () => {
+		const live = renderToolSubline(
+			{ toolCallId: "b", toolName: "bash", args: { command: "sleep 5" }, elapsedMs: 1_200 },
+			100,
+		);
+		strictEqual(
+			stripTerminalSequences(live.join("\n")),
+			`${GLYPH.classExecute} running \`sleep 5\` ${GLYPH.running} 1.2s`,
+		);
+	});
+
+	it("states a failed command's exit once and keeps its output without the status line", () => {
+		const failed = rows(
+			settled(
+				"bash",
+				{ command: "pnpm run lint" },
+				text("src/a.ts:1:1 lint/style/useTemplate prefer a template\n\nCommand exited with code 1"),
+				{ isError: true, durationMs: 4_100 },
+			),
+		);
+		strictEqual(failed[0], `${GLYPH.classExecute} ran \`pnpm run lint\` · exit 1 · 4.1s ✗ failed`);
+		strictEqual(failed.join("\n").match(/exit 1|exited with code|command failed/gu)?.length, 1, failed.join("\n"));
+		match(failed.join("\n"), /│ src\/a\.ts:1:1 lint\/style\/useTemplate/u);
+		// The main agent's error path delivers only text; a status that carries the diagnosis keeps it.
+		const missing = rows(
+			settled("bash", { command: "pnpm lint" }, text("bash: command failed (exit 127): pnpm: not found"), {
+				isError: true,
+			}),
+		);
+		match(missing[0] ?? "", /· exit 127 ✗ failed$/u);
+		deepStrictEqual(missing.slice(1), ["  │ pnpm: not found"]);
+		// A silent command's status says only the exit again, and its size is the status text's, not output's.
+		const silent = rows(
+			settled(
+				"bash",
+				{ command: "node -e 'process.exit(3)'" },
+				text("bash: command failed (exit 3): command exited with code 3", {
+					exitCode: 3,
+					outputBytes: 0,
+					resultSize: { bytes: 57, shownBytes: 57 },
+				}),
+				{ isError: true, durationMs: 73 },
+			),
+		);
+		deepStrictEqual(silent, [`${GLYPH.classExecute} ran \`node -e 'process.exit(3)'\` · exit 3 ✗ failed`]);
+	});
+
+	it("states an exit code only when the result carries one", () => {
+		const panes = rows(settled("panes", { action: "list" }, text("2 panes", { action: "list", panes: [] })));
+		doesNotMatch(panes[0] ?? "", /exit/u);
+		const unknown = rows(settled("deploy_preview", { stage: "staging" }, text("deployed"), { actionClass: "execute" }));
+		ok(unknown[0]?.startsWith(`${GLYPH.classExecute} ran deploy_preview`), unknown[0]);
+		doesNotMatch(unknown[0] ?? "", /stage/u, "an argument the row does not consume leaves the header");
+		doesNotMatch(unknown[0] ?? "", /exit/u);
+	});
+
+	it("keeps a failed edit's error once, in its body, beside the text that did not match", () => {
+		const failed = rows(
+			settled(
+				"edit",
+				{ path: "src/a.ts", edits: [{ oldText: "OLD", newText: "NEW" }] },
+				text("edit: oldText not found in src/a.ts."),
+				{ isError: true },
+			),
+		);
+		deepStrictEqual(failed, [
+			`${GLYPH.classMutate} edit failed src/a.ts ✗ failed`,
+			"  │ oldText › OLD",
+			"  │ newText › NEW",
+			"  │ edit: oldText not found in src/a.ts.",
+		]);
+	});
+
+	it("names a web row's host and path tail, never the whole URL, and states its format once", () => {
+		const fetched = rows(
+			settled(
+				"web_fetch",
+				{ url: "https://nodejs.org/api/globals.html#abortsignaltimeoutdelay", format: "markdown" },
+				text("## AbortSignal", { status: 200, format: "markdown", bytesRead: 12_431 }),
+			),
+		);
+		deepStrictEqual(fetched, [`${GLYPH.classNetwork} fetched nodejs.org/api/globals.html · 200 · markdown · 12.1KB ✓`]);
+		const issue = settled("web_fetch", { url: "https://github.com/akougkas/pancode/issues/412" }, text("# issue"));
+		match(rows(issue, "standard", 100)[0] ?? "", /fetched github\.com\/akougkas\/pancode\/issues\/412 /u);
+		// At 40 columns the label shortens to the path tail instead of splitting mid-token.
+		const narrow = rows(issue, "standard", 40);
+		match(narrow.join("\n"), /github\.com\/…\/(?:issues\/)?412/u);
+		ok(
+			narrow.every((row) => !/https?:/u.test(row) && visibleWidth(row) <= 40),
+			narrow.join("\n"),
+		);
+	});
+
+	it("reads a gateway or MCP call as its capability, with no op, capability or args rows", () => {
+		for (const style of ["compact", "standard", "detailed"] as const) {
+			const mcp = rows(
+				settled(
+					"gateway",
+					{ op: "call", capability: "mcp_github__search_issues", args: { query: "flaky retry test", state: "open" } },
+					text("#412", { capability: "mcp_github__search_issues" }),
+				),
+				style,
+			);
+			strictEqual(
+				mcp[0],
+				`${GLYPH.classExternal} called github › search_issues ✓${style === "detailed" ? " · 42ms" : ""}`,
+			);
+			doesNotMatch(mcp.join("\n"), /op ›|capability ›|args ›/u);
+			const builtin = rows(
+				settled(
+					"gateway",
+					{ op: "call", capability: "web_fetch", args: { url: "https://github.com/akougkas/pancode/issues/412" } },
+					text("# issue", { capability: "web_fetch", status: 200 }),
+				),
+				style,
+			);
+			match(builtin[0] ?? "", new RegExp(`^${GLYPH.classNetwork} fetched github\\.com/.* · 200 ✓`, "u"));
+			const find = rows(
+				settled("gateway", { op: "find", query: "github issues" }, text("…", { op: "find", count: 3, total: 7 })),
+				style,
+			);
+			strictEqual(
+				find[0],
+				`${GLYPH.classExternal} searched capabilities for \`github issues\` · 3 of 7 found ✓${style === "detailed" ? " · 42ms" : ""}`,
+			);
+		}
+	});
+
+	it("reads an extension tool as server › tool with its scalar arguments inline", () => {
+		const row = rows(settled("extension_hpc__queue_status", { partition: "gpu" }, text("gpu: 3 pending")));
+		deepStrictEqual(row, [`${GLYPH.classExternal} called hpc › queue_status ✓`]);
+	});
+
+	it("reads an operator question as question → answer and never renders the model's copy", () => {
+		const interview = (answers: unknown[], decisions: unknown[] = []) =>
+			text('ask_user result: answered\n\n{ "interview": {} }', { interview: {}, answers, decisions });
+		for (const style of ["compact", "standard", "detailed"] as const) {
+			const one = rows(
+				settled(
+					"ask_user",
+					{ questions: [{ question: "Keep it deprecated?", options: [{ label: "Yes" }, { label: "No" }] }] },
+					interview([{ question: "Keep it deprecated?", answer: "Yes" }]),
+				),
+				style,
+			);
+			deepStrictEqual(one, [
+				`${GLYPH.classInteraction} asked Keep it deprecated? → Yes ✓${style === "detailed" ? " · 42ms" : ""}`,
+			]);
+			const round = rows(
+				settled(
+					"ask_user",
+					{ questions: [{ question: "Jitter?" }, { question: "Alias?" }] },
+					interview([
+						{ question: "Jitter?", answer: "50" },
+						{ question: "Alias?", answer: "Yes" },
+					]),
+				),
+				style,
+			);
+			deepStrictEqual(round, [
+				`${GLYPH.classInteraction} asked 2 questions ✓${style === "detailed" ? " · 42ms" : ""}`,
+				"  │ Jitter? → 50",
+				"  │ Alias? → Yes",
+			]);
+			const complete = rows(
+				settled(
+					"ask_user",
+					{ action: "complete", decisions: [{ key: "jitter_ms", value: "50", label: "Jitter" }], summary: "Jitter 50." },
+					interview([], [{ key: "jitter_ms", value: "50", label: "Jitter" }]),
+				),
+				style,
+			);
+			deepStrictEqual(complete, [
+				`${GLYPH.classInteraction} completed the interview ✓${style === "detailed" ? " · 42ms" : ""}`,
+				"  │ Jitter → 50",
+			]);
+		}
+	});
+
+	it("states evidence and run_script calls on their rows instead of as JSON", () => {
+		deepStrictEqual(rows(settled("evidence", { mode: "list" }, text("{}"))), [
+			`${GLYPH.classKnowledge} consulted evidence list ✓`,
+		]);
+		deepStrictEqual(
+			rows(
+				settled("run_script", { script: "scripts/check-flaky.ts", args: ["--runs", "50"] }, text("50/50", { exitCode: 0 })),
+			),
+			[`${GLYPH.classExecute} ran \`scripts/check-flaky.ts --runs 50\` · exit 0 ✓`, "  │ 50/50"],
+		);
+	});
+
+	it("summarizes dispatch intent and omits an empty intent", () => {
+		const call = {
+			toolCallId: "d",
+			toolName: "dispatch",
+			args: { agent: "scout", task: "map", intent: { read_roots: [], write_roots: [], expected_outputs: [] } },
+		};
+		const empty = rows(call, "standard", 100).join("\n");
+		doesNotMatch(empty, /intent|read_roots/u);
+		const summary = rows(
+			{
+				...call,
+				args: { ...call.args, intent: { write_roots: ["a", "b", "c", "d"], verification: [{ check: "test" }] } },
+			},
+			"standard",
+			100,
+		).join("\n");
+		match(summary, /intent › write: a, b, c \(\+1\); checks: test/u);
+		doesNotMatch(summary, /write_roots|"check"/u);
+	});
+
+	it("repeats under a row only the argument the row had to cut", () => {
+		const task = "List every call site of retry() and the options each one passes to it.";
+		const body = rows({ toolCallId: "d", toolName: "dispatch", args: { agent: "scout", task } }, "standard", 80);
+		match(body[0] ?? "", /delegating to scout: List every call site/u);
+		deepStrictEqual(
+			body
+				.slice(1)
+				.join(" ")
+				.replace(/\s*│\s*/gu, " ")
+				.trim(),
+			`task › ${task}`,
+		);
+		const fits = rows({ toolCallId: "d", toolName: "dispatch", args: { agent: "scout", task } }, "standard", 200);
+		strictEqual(fits.length, 1, fits.join("\n"));
+		// A multiline command is flattened on its row, so its body states it whole.
+		const script = rows({ toolCallId: "b", toolName: "bash", args: { command: "cd src\nls" } }, "standard", 100);
+		deepStrictEqual(script.slice(1), ["  │ command › cd src", "  │   ls"]);
+	});
+
+	it("points an offloaded result at /view instead of printing its scratch path", () => {
+		const offloadPath = `/home/operator/.local/state/pancode/scratch/1t6ygq/${"a".repeat(64)}.txt`;
+		const fetched = {
+			toolCallId: "f",
+			toolName: "web_fetch",
+			args: { url: "https://nodejs.org/api/test.html", format: "markdown" },
+			result: {
+				content: [{ type: "text", text: "# Test runner" }],
+				details: { status: 200, format: "markdown", resultSize: { truncated: true, offloadPath } },
+			},
+			isError: false,
+			durationMs: 377,
+		};
+		for (const style of ["compact", "standard", "detailed"] as const) {
+			const rows = renderToolPreview(fetched, 100, transcriptDetail(style)).map(stripTerminalSequences);
+			match(rows[0] ?? "", /· full output · \/view$/u, style);
+			doesNotMatch(rows.join("\n"), /scratch\/1t6ygq|a{64}/u);
+		}
+		// The full body in /view states where the rest is.
+		match(
+			stripTerminalSequences(renderToolExecution(fetched, 140, { unbounded: true }).join("\n")),
+			new RegExp(`full output {2}${offloadPath.replaceAll(".", "\\.")}`, "u"),
+		);
+	});
+
+	it("states the command a bash call ran, not a cd into the workspace it already runs in", () => {
+		const cwd = process.cwd();
+		const rows = (args: Record<string, unknown>, result: unknown = "ok", isError = false) =>
+			renderToolPreview(
+				{ toolCallId: "b", toolName: "bash", args, result, isError },
+				100,
+				transcriptDetail("standard"),
+			).map(stripTerminalSequences);
+		deepStrictEqual(rows({ command: `cd ${cwd} && npm test 2>&1`, timeout_ms: 30_000 }), [
+			"$ ran `npm test 2>&1` ✓",
+			"  │ ok",
+		]);
+		deepStrictEqual(rows({ command: `cd "${cwd}"; npm run lint` }), ["$ ran `npm run lint` ✓", "  │ ok"]);
+		// A cd into a subdirectory, or an explicit cwd, is where the command ran.
+		deepStrictEqual(rows({ command: `cd ${cwd}/src && ls` }), ["$ ran `ls` in src ✓", "  │ ok"]);
+		deepStrictEqual(rows({ command: "npm test", cwd: `${cwd}/tests` }), ["$ ran `npm test` in tests ✓", "  │ ok"]);
+		// A cd anywhere else is part of what ran.
+		deepStrictEqual(rows({ command: "cd /etc && cat hosts" }), ["$ ran `cd /etc && cat hosts` ✓", "  │ ok"]);
+		// A command too long for its row is cut with the ellipsis glyph, never three dots.
+		const long = rows({ command: `node scripts/${"x".repeat(200)}.js --flag` });
+		match(long[0] ?? "", /^\$ ran `node scripts\/x+…` ✓$/u);
+		// A timeout the command hit is the fact; one it stayed under is not stated.
+		const timedOut = rows(
+			{ command: "npm test", timeout_ms: 30_000 },
+			{ content: [{ type: "text", text: "bash: command timed out after 30000ms" }], details: { timedOut: true } },
+			true,
+		);
+		match(timedOut[0] ?? "", /^\$ ran `npm test` · timed out after 30s ✗/u);
+		// An idle stop states the idle figure, never the timeout budget it stopped short of (FX-40). The status is the
+		// text bash writes for an idle stop; the row states it, so the body does not repeat it.
+		const idleStatus =
+			"bash: this command printed nothing and used no CPU for 20 s and was stopped as idle (safety.limits.bashIdleSeconds), before the 650 s timeout ran out. The bash tool still works; the next call runs normally. Validation did not finish. Narrow the test selection or enable verbose test names before another bounded run.";
+		const idleResult = (details?: Record<string, unknown>) => ({
+			content: [{ type: "text", text: `> jest\n\n${idleStatus}` }],
+			...(details !== undefined ? { details } : {}),
+		});
+		const idleDetails = { timedOut: true, timedOutBy: "idle", idleMs: 20_000 };
+		const idled = rows({ command: "npm test", timeout_ms: 650_000 }, idleResult(idleDetails), true);
+		match(idled[0] ?? "", /^\$ ran `npm test` · stopped idle after 20s ✗/u);
+		doesNotMatch(idled[0] ?? "", /timed out/u);
+		match(idled.join("\n"), /> jest/u);
+		doesNotMatch(idled.slice(1).join("\n"), /stopped as idle|timeout ran out|bash tool still works/u);
+		// The full body's output facts say the same, never "timed out".
+		const idleBody = stripTerminalSequences(
+			renderToolExecution(
+				{
+					toolCallId: "b",
+					toolName: "bash",
+					args: { command: "npm test", timeout_ms: 650_000 },
+					result: idleResult(idleDetails),
+					isError: true,
+				},
+				140,
+				{ unbounded: true },
+			).join("\n"),
+		);
+		match(idleBody, /output · .*stopped idle/u);
+		doesNotMatch(idleBody, /timed out/u);
+		// A missing or zero idle figure, or details a bridge dropped, still read as an idle stop.
+		for (const details of [
+			{ timedOut: true, timedOutBy: "idle" },
+			{ timedOut: true, timedOutBy: "idle", idleMs: 0 },
+			undefined,
+		]) {
+			const bare = rows({ command: "npm test", timeout_ms: 650_000 }, idleResult(details), true);
+			match(bare[0] ?? "", /^\$ ran `npm test` · stopped idle ✗/u, JSON.stringify(details));
+			doesNotMatch(bare.join("\n"), /timed out|stopped as idle/u, JSON.stringify(details));
+		}
+		// timedOutBy idle on a result that did not time out is no idle stop.
+		const notIdle = rows(
+			{ command: "npm test" },
+			{ content: [{ type: "text", text: "ok" }], details: { timedOutBy: "idle" } },
+		);
+		deepStrictEqual(notIdle, ["$ ran `npm test` ✓", "  │ ok"]);
+	});
+
+	it("keeps every character of a command the full body echoes, a lone & included", () => {
+		for (const command of ["npm test 2>&1 | tail -5", "sleep 5 & wait", "make >out.log 2>&1 && echo ok"]) {
+			const body = renderToolExecution(
+				{ toolCallId: "b", toolName: "bash", args: { command }, result: "done", isError: false },
+				160,
+				{ unbounded: true },
+			)
+				.map(stripTerminalSequences)
+				.join("\n");
+			ok(body.includes(`$ ${command}`), body);
+		}
+	});
+
+	it("states on the folded browser row a host the session's grant refused, with the grant that admits it", () => {
+		const grant = 'browser open with allow_hosts ["cdn.example.com"]';
+		const folded = renderToolExecution(
+			{
+				toolCallId: "w",
+				toolName: "browser",
+				args: { op: "run", page: "p1", script: "await page.reload()" },
+				result: {
+					content: [{ type: "text", text: `browser run page p1\nblocked: cdn.example.com not granted; to admit: ${grant}` }],
+					details: { op: "run", blockedHosts: ["cdn.example.com"], blockedGrant: grant },
+				},
+				isError: false,
+			},
+			240,
+		)
+			.map(stripTerminalSequences)
+			.join("\n");
+		match(
+			folded.split("\n")[0] ?? "",
+			/blocked cdn\.example\.com; to admit: browser open with allow_hosts \["cdn\.example\.com"\]/u,
+		);
+	});
+
+	it("states the operator's local command as not sent to the model once", () => {
+		for (const running of [true, false]) {
+			const plain = renderBashTranscriptExecution(
+				{ command: "cat notes.txt", output: "notes", running, exitCode: 0, excludeFromContext: true },
+				100,
+			)
+				.map(stripTerminalSequences)
+				.join("\n");
+			strictEqual(plain.match(/not sent to model/gu)?.length, 1, plain);
+			doesNotMatch(plain, /context/u);
+		}
+	});
+
+	it("counts a listing's entries and never its bytes, while a read keeps the size it returned", () => {
+		// The ls tool's own observation: a count of entries and the bytes of the listing text.
+		const listing = text("a.ts\nb.ts\nsrc/\ntests/\nREADME.md\npackage.json\n.git/", {
+			observation: { unit: "entries", shownCount: 7, totalCount: 7, shownBytes: 55, totalBytes: 55 },
+		});
+		deepStrictEqual(rows(settled("ls", {}, listing)), [`${GLYPH.toolHeader} listed workspace · 7 entries ✓`]);
+		const read = text("x", {
+			observation: { unit: "lines", shownCount: 40, totalCount: 120, shownBytes: 1_434, totalBytes: 4_403 },
+		});
+		deepStrictEqual(rows(settled("read", { path: "src/net/retry.ts" }, read)), [
+			`${GLYPH.toolHeader} read src/net/retry.ts · lines 1-40 of 120 · 1.4KB of 4.3KB ✓`,
+		]);
+	});
+
+	it("wraps a narrow row of facts between the facts, never inside one, on rows, cards and receipts", () => {
+		const output = Array.from({ length: 18 }, (_, index) => `line ${index}`).join("\n");
+		const command = "npm test -- --test-reporter spec --test-concurrency 1 --test-timeout 60000";
+		const card = {
+			assignmentId: "a",
+			runId: "run-6",
+			origin: "user",
+			agentId: "verifier",
+			runtime: { kind: "pancode", targetId: "blade", wireModelId: "m" },
+			text: "",
+			droppedLines: 0,
+			tools: [],
+			attempts: [{ runId: "run-6", targetLabel: "blade" }],
+			pending: false,
+			contextTokens: 3_164,
+			result: { outcome: "succeeded", durationMs: 8_200, toolCalls: 6, tokenCount: 19_100 },
+		} as unknown as WorkerEntryState;
+		const usage = { input: 47_200, output: 465, cacheRead: 0, cacheWrite: 0, reasoning: 138, totalTokens: 47_665 };
+		const call = () =>
+			telemetryCall("narrow-row", { turnId: "q", usage: { ...usage, totalTokens: undefined } as never, usd: null });
+		const view = telemetryViewOf("narrow-row", [...call(), ...call()]);
+		const panel = createChatPanel({ getOutputStyle: () => "detailed", getTelemetry: () => view });
+		const message = { role: "assistant", content: [{ type: "text", text: "Done." }], usage, stopReason: "stop" };
+		panel.appendUser("Q");
+		panel.applyEvent({ type: "agent_start", turnId: "q" } as never);
+		panel.applyEvent({ type: "message_start", message: { role: "assistant", content: [] } } as never);
+		panel.applyEvent({ type: "message_end", message } as never);
+		panel.applyEvent({ type: "agent_end", messages: [message, message] } as never);
+		for (const width of [40, 60, 95]) {
+			const row = rows(settled("bash", { command }, text(output, { exitCode: 0 })), "standard", width);
+			const spend = renderWorkerEntryLines(card, width, { detail: transcriptDetail("standard") }).map(
+				stripTerminalSequences,
+			);
+			const receipt = panel.render(width).map(stripTerminalSequences);
+			for (const [rendered, facts] of [
+				[row, ["exit 0", "18 lines"]],
+				[spend, ["validation unknown", "6 calls"]],
+				[receipt, ["in 94.4k", "out 930", "reasoning 276"]],
+			] as const) {
+				for (const fact of facts)
+					ok(
+						rendered.some((line) => line.includes(fact)),
+						`${width}: "${fact}" split\n${rendered.join("\n")}`,
+					);
+			}
+		}
+	});
+
+	it("states a refusal once: on the blocked row's tail, not again as its body's first line", () => {
+		const rejection = [
+			"bash blocked: system_modify",
+			"PanCode refused to run bash.",
+			"- matched rm-recursive-or-force: rm with recursive or force flags",
+			"rule: rm-recursive-or-force",
+		].join("\n");
+		for (const style of ["compact", "standard", "detailed"] as const) {
+			const plain = rows(
+				settled("bash", { command: "rm -rf ./build" }, text(rejection), {
+					isError: true,
+					outcome: "blocked",
+					blockReason: "bash blocked: system_modify",
+				}),
+				style,
+			).join("\n");
+			strictEqual(plain.split("bash blocked: system_modify").length - 1, 0, plain);
+			match(plain, /^\$ bash `rm -rf \.\/build` · changes the system(?: · 42ms)? ✗ blocked/u);
+			strictEqual(plain.split("blocked").length - 1, 1, plain);
+			match(plain, /rule: rm-recursive-or-force/u, "the rest of the rejection stays");
+		}
+	});
+
+	it("states a path inside the workspace relative to it and keeps the tail of one it must cut", () => {
+		const cwd = process.cwd();
+		const listing = text("a.ts", { observation: { unit: "entries", shownCount: 7, totalCount: 7, shownBytes: 55 } });
+		// A model that sends absolute paths reads the same as one that sends
+		// relative ones: no cut prefix, no `path ›` row repeating it.
+		deepStrictEqual(rows(settled("ls", { path: cwd }, listing)), [`${GLYPH.toolHeader} listed workspace · 7 entries ✓`]);
+		deepStrictEqual(rows(settled("read", { path: `${cwd}/docs/retry.md` }, text("x"))), [
+			`${GLYPH.toolHeader} read docs/retry.md ✓`,
+		]);
+		deepStrictEqual(rows(settled("grep", { pattern: "needle", path: `${cwd}/src` }, text("x"))), [
+			`${GLYPH.toolHeader} searched for \`needle\` in src ✓`,
+		]);
+		deepStrictEqual(rows(settled("edit", { path: `${cwd}/src/a.ts` }, text("ok"))), [
+			`${GLYPH.classMutate} edited src/a.ts ✓`,
+		]);
+		// A resource read the path already names carries no second label.
+		deepStrictEqual(rows(settled("read", { path: "docs/retry.md" }, text("x"))), [
+			`${GLYPH.toolHeader} read docs/retry.md ✓`,
+		]);
+		match(rows(settled("read", { path: "PANCODE.md" }, text("x")))[0] ?? "", /read PANCODE\.md · handbook ✓/u);
+		// A path leaves room for the outcome on the same row and keeps its file name.
+		const whole = rows(settled("read", { path: "hub/packs/skills/ui/SKILL.md" }, text("x")), "standard", 40);
+		match(whole[0] ?? "", /^▸ read (?:…|hub\/packs\/skills)\/ui\/SKILL\.md ✓$/u, whole.join("\n"));
+		doesNotMatch(whole.join("\n"), /path ›/u);
+		// A path outside the workspace that must be cut keeps its file name, on
+		// the row's first line with its outcome, and repeats in full beneath it.
+		const outside = `/opt/${"deep/".repeat(20)}src/net/retry.js`;
+		for (const width of [40, 60, 100]) {
+			const cut = rows(settled("read", { path: outside }, text("x")), "standard", width);
+			match(cut[0] ?? "", /^▸ read …\/[^ ]*\/net\/retry\.js ✓/u, `${width}: ${cut.join("\n")}`);
+			match(cut.join("\n"), /path ›/u);
+		}
+	});
+
+	it("folds clean explorations and lookups by class in Compact and never folds changes, commands or failures", () => {
+		const panel = createChatPanel({ getOutputStyle: () => "compact" });
+		const act = (id: string, toolName: string, args: unknown, result: unknown, isError = false) => {
+			panel.applyEvent({ type: "tool_execution_start", toolCallId: id, toolName, args } as never);
+			panel.applyEvent({ type: "tool_execution_end", toolCallId: id, toolName, result, isError, durationMs: 5 } as never);
+		};
+		const lines = (count: number) => text("x", { observation: { shownCount: count, totalCount: count, unit: "lines" } });
+		act("r1", "read", { path: "a.ts" }, lines(3));
+		act("r2", "grep", { pattern: "needle", path: "src" }, lines(1));
+		act("r3", "ls", { path: "src" }, lines(2));
+		act("m1", "edit", { path: "a.ts" }, text("ok", { diff: "-1 a\n+1 b" }));
+		act("m2", "write", { path: "b.ts" }, text("ok", { diff: "+1 c" }));
+		act("b1", "bash", { command: "pnpm test" }, text("ok", { exitCode: 0 }));
+		act("b2", "bash", { command: "pnpm lint" }, text("ok", { exitCode: 0 }));
+		act("f1", "read", { path: "gone.ts" }, text("read: no such file"), true);
+		act("f2", "read", { path: "c.ts" }, lines(1));
+		const plain = plainRender(panel, 100);
+		match(
+			plain,
+			new RegExp(
+				`${GLYPH.toolHeader} explored 1 file, 1 search, 1 directory ✓\\n  │ a\\.ts · \`needle\` in src · src`,
+				"u",
+			),
+		);
+		match(
+			plain,
+			new RegExp(`${GLYPH.classMutate} edited a\\.ts · \\+1 -1 ✓.*\\n${GLYPH.classMutate} wrote b\\.ts · \\+1 -0 ✓`, "u"),
+		);
+		strictEqual(plain.match(new RegExp(`^\\${GLYPH.classExecute} Panos ran`, "gmu"))?.length, 2, plain);
+		match(plain, new RegExp(`${GLYPH.toolHeader} read gone\\.ts ✗`, "u"));
+		match(plain, new RegExp(`${GLYPH.toolHeader} explored 1 file ✓\\n  │ c\\.ts`, "u"));
+	});
+});
+
+describe("agent invocations", () => {
+	/** A settled card by default; a running one passes `pending: true` and gets no receipt. */
+	const card = (
+		overrides: Partial<Omit<WorkerEntryState, "result">> &
+			Pick<WorkerEntryState, "assignmentId" | "agentId"> & { result?: WorkerEntryState["result"] | undefined },
+	) => {
+		const state = {
+			runId: `${overrides.assignmentId}-r1`,
+			origin: "agent",
+			runtime: { kind: "pancode", targetId: "dynamo", wireModelId: "qwen" },
+			text: "Found 4 call sites.",
+			droppedLines: 0,
+			tools: [],
+			attempts: [{ runId: `${overrides.assignmentId}-r1`, targetLabel: "dynamo/qwen" }],
+			pending: false,
+			result: { outcome: "succeeded", durationMs: 38_000, tokenCount: 18_200, toolCalls: 7 },
+			...overrides,
+		} as WorkerEntryState;
+		if (state.pending) delete state.result;
+		return state;
+	};
+	const dispatchStart = (panel: ChatPanel, id: string, args: unknown) =>
+		panel.applyEvent({ type: "tool_execution_start", toolCallId: id, toolName: "dispatch", args } as never);
+	const dispatchEnd = (panel: ChatPanel, id: string, runCount: number, failedCount = 0) =>
+		panel.applyEvent({
+			type: "tool_execution_end",
+			toolCallId: id,
+			toolName: "dispatch",
+			result: {
+				content: [{ type: "text", text: `${runCount} tasks -> done` }],
+				details: { runCount, failedCount, runs: [] },
+			},
+			isError: false,
+			durationMs: 38_000,
+		} as never);
+
+	it("aligns sibling clocks and keeps live worker rows fixed while actions and prose stream", () => {
+		for (const style of ["compact", "standard", "detailed"] as const) {
+			for (const width of [32, 80, 120, 200]) {
+				let clock = 9_900;
+				const panel = createChatPanel({ getOutputStyle: () => style, now: () => clock });
+				panel.appendUser("Keep this row stable.");
+				const siblings = ["scout", "研究-scout", "longer-scout", "scout"].map((agentId, index) =>
+					card({
+						assignmentId: `aligned-${index}`,
+						agentId,
+						helper: true,
+						pending: true,
+						startedAtMs: 0,
+						parentToolCallId: "aligned",
+						task: `${index} ${"Audit the repository. ".repeat(index * 8 + 1)}`,
+						toolCallLimit: 150,
+						text: "",
+					}),
+				);
+				for (const sibling of siblings) panel.applyWorkerState(sibling);
+				const initial = panel.render(width);
+				if (style === "detailed") {
+					for (const sibling of siblings) {
+						const rows = renderWorkerEntryLines(sibling, width, { detail: transcriptDetail(style), nowMs: clock });
+						strictEqual(rows.length, 2);
+						doesNotMatch(rows.map(stripTerminalSequences).join("\n"), /\?|state |tools |tokens/u);
+					}
+				}
+				// Live rows under a dispatch nest two cells in; compact shows none while none failed or waits on the operator.
+				const isRow = (row: string) => row.startsWith(`  ${GLYPH.running} ${GLYPH.workerAgent} ${GLYPH.subProcess}`);
+				const textColumn = (row: string) => {
+					const lead = row.match(/^ {2}● ◆ ↳ \S+\s+/u)?.[0];
+					ok(lead, row);
+					return visibleWidth(lead);
+				};
+				const initialHeaders = initial.map(stripTerminalSequences).filter(isRow);
+				strictEqual(initialHeaders.length, style === "compact" ? 0 : 4);
+				if (style !== "compact") strictEqual(new Set(initialHeaders.map(textColumn)).size, 1);
+				const live = siblings[1];
+				ok(live);
+				const fold = createWorkerProgressFold();
+				fold.observe({
+					type: "pancode_tool_start",
+					payload: { tool: "read", action: { verb: "reading", object: "very/long/path/".repeat(20) } },
+				});
+				for (const elapsed of [10_000, 59_000, 61_000, 600_000]) {
+					clock = elapsed;
+					live.text += `${"Streamed prose. ".repeat(100)}\n`;
+					live.progress = fold.snapshot();
+					panel.applyWorkerState(live);
+					const frame = panel.render(width);
+					strictEqual(frame.length, initial.length, `${style} at ${width}: no reflow`);
+					strictEqual(frame[0], initial[0], "the settled prefix stays byte-stable");
+					ok(frame.every((row) => visibleWidth(row) <= width));
+					const headers = frame.map(stripTerminalSequences).filter(isRow);
+					strictEqual(headers.length, initialHeaders.length);
+					if (style !== "compact")
+						strictEqual(new Set(headers.map(textColumn)).size, 1, "text columns survive timer format changes");
+					if (style === "detailed" && width >= 80) {
+						// The dispatch tool row is the group's header; no worker card draws a tally of its own.
+						doesNotMatch(frame.map(stripTerminalSequences).join("\n"), /4 workers ·|tools 1\/150/u);
+					}
+				}
+				const first = siblings[0];
+				ok(first);
+				first.pending = false;
+				first.result = { outcome: "succeeded", durationMs: 7000, toolCalls: 1 };
+				panel.applyWorkerState(first);
+				if (style === "detailed") {
+					const rows = renderWorkerEntryLines(first, width, { detail: transcriptDetail(style), siblings });
+					ok(rows.length >= 2, "a settled sibling keeps its card in Detailed");
+					ok(rows.every((row) => visibleWidth(row) <= width));
+				}
+				if (style === "detailed" && width >= 80) doesNotMatch(plainRender(panel, width), /4 workers ·/u);
+			}
+		}
+	});
+
+	it("lets a card under a dispatch call be the run's row: no task, no tally, no body", () => {
+		for (const style of ["compact", "standard", "detailed"] as const) {
+			const panel = createChatPanel({ getOutputStyle: () => style, now: () => 50_000 });
+			panel.applyEvent({ type: "agent_start" } as never);
+			const task = "List every call site of retry() and the options each one passes.";
+			dispatchStart(panel, "d1", { agent: "scout", task });
+			panel.applyWorkerState(
+				card({
+					assignmentId: "a1",
+					agentId: "scout",
+					parentToolCallId: "d1",
+					pending: true,
+					startedAtMs: 40_000,
+				}),
+			);
+			const running = plainRender(panel, 100);
+			match(running, new RegExp(`^${GLYPH.workerAgent} delegating to scout ${GLYPH.running}`, "mu"));
+			doesNotMatch(running, /List every call site|task ›/u);
+			dispatchEnd(panel, "d1", 1);
+			const settledRows = plainRender(panel, 100).split("\n");
+			strictEqual(settledRows[0], `${GLYPH.workerAgent} delegated to scout · 38s`, style);
+			doesNotMatch(settledRows.join("\n"), /1 ok|quality .*\n.*quality|tasks -> done/u);
+		}
+	});
+
+	it("lets a shadow helper the model dispatched be the dispatch's row, stating its task once", () => {
+		for (const style of ["compact", "standard", "detailed"] as const) {
+			const panel = createChatPanel({ getOutputStyle: () => style, now: () => 50_000 });
+			panel.applyEvent({ type: "agent_start" } as never);
+			const task = "Map every caller of the retry function exported from src/net/retry.js in this repository.";
+			dispatchStart(panel, "d1", { agent: "scout", task, target: "blade", model: "dynamo/qwopus" });
+			panel.applyWorkerState(
+				card({ assignmentId: "s1", agentId: "scout", parentToolCallId: "d1", helper: true, task, startedAtMs: 39_000 }),
+			);
+			dispatchEnd(panel, "d1", 1);
+			const plain = plainRender(panel, 130);
+			strictEqual(plain.split("\n")[0], `${GLYPH.workerAgent} delegated to scout · 38s`, `${style}\n${plain}`);
+			strictEqual(plain.split("Map every caller").length, 2, `${style}: the task must appear once\n${plain}`);
+			doesNotMatch(plain, /task ›/u);
+		}
+		// Under a call that is not a dispatch, a helper that ran during the call
+		// stays beside the call's own output.
+		const panel = createChatPanel({ getOutputStyle: () => "detailed" });
+		panel.applyEvent({
+			type: "tool_execution_start",
+			toolCallId: "c1",
+			toolName: "context",
+			args: { scope: "docs", query: "retry" },
+		} as never);
+		panel.applyWorkerState(card({ assignmentId: "h1", agentId: "context-scout", parentToolCallId: "c1", helper: true }));
+		panel.applyEvent({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "context",
+			result: "Retry docs section body",
+			isError: false,
+		} as never);
+		match(plainRender(panel, 100), /Retry docs section body/u);
+	});
+
+	it("keeps one tally row over a fan-out's stacked cards and quality on each card", () => {
+		const panel = createChatPanel({ getOutputStyle: () => "standard" });
+		panel.applyEvent({ type: "agent_start" } as never);
+		dispatchStart(panel, "fan", { tasks: [{ task: "a" }, { task: "b" }, { task: "c" }] });
+		for (const index of [0, 1, 2]) {
+			panel.applyWorkerState(
+				card({
+					assignmentId: `f${index}`,
+					agentId: "scout",
+					parentToolCallId: "fan",
+					...(index === 2 ? { result: { outcome: "failed", failureMessage: "context overflow", durationMs: 9_000 } } : {}),
+				}),
+			);
+		}
+		dispatchEnd(panel, "fan", 3, 1);
+		const rows = plainRender(panel, 100).split("\n");
+		strictEqual(rows[0], `${GLYPH.workerAgent} delegated 3 tasks · 1 failed · 2 ok · 38s`);
+		const cardRow = new RegExp(`^ {2}\\S ${GLYPH.workerAgent} scout`, "u");
+		ok(cardRow.test(rows[1] ?? ""), `the cards nest under the call that spawned them\n${rows.join("\n")}`);
+		const cards = rows.filter((row) => cardRow.test(row));
+		strictEqual(cards.length, 3);
+		const lastCard = rows.lastIndexOf(cards[2] ?? "");
+		ok(!rows.slice(2, lastCard).includes(""), "sibling cards stack with no blank row between them");
+		// Each row leads with its own state: the failed run's reason replaces its task.
+		ok(
+			cards.some((row) => row.startsWith(`  ${GLYPH.error} `) && row.includes("context overflow")),
+			rows.join("\n"),
+		);
+		strictEqual(cards.filter((row) => row.startsWith(`  ${GLYPH.warn} `)).length, 2, rows.join("\n"));
+	});
+
+	it("keeps the run tally and elapsed on a failed fan-out at every tier, ending on the failed state", () => {
+		const verifiedAxes = { artifactIntegrity: "verified", validationGrounding: "validated" };
+		for (const style of ["compact", "standard", "detailed"] as const) {
+			const panel = createChatPanel({ getOutputStyle: () => style });
+			panel.applyEvent({ type: "agent_start" } as never);
+			dispatchStart(panel, "fail", { tasks: [{ task: "a" }, { task: "b" }, { task: "c" }] });
+			for (const index of [0, 1, 2]) {
+				panel.applyWorkerState(
+					card({
+						assignmentId: `x${index}`,
+						agentId: "scout",
+						parentToolCallId: "fail",
+						...(index === 1 ? { result: { outcome: "failed", failureMessage: "no model", durationMs: 2_000 } } : {}),
+					}),
+				);
+			}
+			panel.applyEvent({
+				type: "tool_execution_end",
+				toolCallId: "fail",
+				toolName: "dispatch",
+				result: {
+					content: [{ type: "text", text: "dispatch (parallel) total=3 failed=1" }],
+					details: {
+						runCount: 3,
+						failedCount: 1,
+						runs: [
+							{ agentId: "scout", exitCode: 0, trust: { axes: verifiedAxes } },
+							{ agentId: "scout", exitCode: 1, outcome: "failed" },
+							{ agentId: "scout", exitCode: 0, trust: { axes: verifiedAxes } },
+						],
+					},
+				},
+				isError: true,
+				durationMs: 15_000,
+			} as never);
+			const first = plainRender(panel, 120).split("\n")[0];
+			strictEqual(first, `${GLYPH.workerAgent} delegated 3 tasks · 1 failed · 2 ok · 15s ✗ failed`, style);
+		}
+	});
+
+	it("groups a council round under one header with each member's roster label", () => {
+		const panel = createChatPanel({ getOutputStyle: () => "standard" });
+		panel.appendUser("/council should retry() own its clock?");
+		const members: Array<[string, string, number]> = [
+			["Architect", "#7fb2e5", 1],
+			["Skeptic", "warning", 1],
+			["Architect", "#7fb2e5", 2],
+		];
+		for (const [index, [label, color, round]] of members.entries()) {
+			panel.applyWorkerState(
+				card({
+					assignmentId: `c${index}`,
+					agentId: label.toLowerCase(),
+					origin: "user",
+					council: { group: "g1", label, color, round },
+				}),
+			);
+		}
+		const styled = panel.render(100);
+		const rows = styled.map(stripTerminalSequences);
+		deepStrictEqual(
+			rows.filter((row) => row.startsWith(GLYPH.workerHuman)),
+			[`${GLYPH.workerHuman} council · round 1`, `${GLYPH.workerHuman} council · round 2`],
+		);
+		ok(
+			rows.some((row) => /^ {2}! ◇ Architect · dynamo · qwen +unverified · Found 4 call sites\./u.test(row)),
+			rows.join("\n"),
+		);
+		ok(
+			rows.some((row) => row.startsWith("  ! ◇ Skeptic · dynamo · qwen")),
+			rows.join("\n"),
+		);
+		doesNotMatch(rows.join("\n"), /^. architect|^. skeptic/mu);
+		const round1 = rows.indexOf(`${GLYPH.workerHuman} council · round 1`);
+		const round2 = rows.indexOf(`${GLYPH.workerHuman} council · round 2`);
+		ok(!rows.slice(round1, round2 - 1).includes(""), "one round's members stack under its header");
+		// The label is painted in the member's roster color, or its token.
+		ok(
+			styled.some((row) => row.includes("\u001b[38;2;127;178;229mArchitect") || row.includes("38;5;")),
+			styled.join("\n"),
+		);
+	});
+
+	it("reads a settled council member's typed answer in words, not raw JSON", () => {
+		const member = card({
+			assignmentId: "m1",
+			agentId: "scout",
+			origin: "user",
+			council: { group: "g1", label: "fast", round: 1 },
+			text: '{"findings":[{"claim":"calc.py defines add and mul with no input checks"}]}',
+		});
+		const memberRows = renderWorkerEntryLines(member, 160, {
+			detail: transcriptDetail("standard"),
+			siblings: [member],
+		}).map(stripTerminalSequences);
+		const memberRow = memberRows.find((row) => row.includes("◇ fast")) ?? "";
+		match(memberRow, /calc\.py defines add and mul with no input checks/u);
+		doesNotMatch(memberRow, /\{"findings"/u);
+		const detailed = renderWorkerEntryLines(member, 160, { detail: transcriptDetail("detailed") })
+			.map(stripTerminalSequences)
+			.join("\n");
+		match(detailed, /calc\.py defines add and mul with no input checks/u);
+		doesNotMatch(detailed, /\{"findings"/u);
+	});
+
+	it("reads a settled poll member's ballot in words, not raw JSON", () => {
+		const member = card({
+			assignmentId: "p1",
+			agentId: "scout",
+			origin: "user",
+			council: { group: "g1", label: "p1", round: 1 },
+			text: '{"verdict":"no","text":"91 is 7 times 13"}',
+		});
+		const rows = renderWorkerEntryLines(member, 160, { detail: transcriptDetail("standard"), siblings: [member] }).map(
+			stripTerminalSequences,
+		);
+		const row = rows.find((line) => line.includes("◇ p1")) ?? "";
+		match(row, /no: 91 is 7 times 13/u);
+		doesNotMatch(row, /\{"verdict"/u);
+	});
+
+	it("a read-only poll member that answered reads done, without a no-tools or no-check defect row", () => {
+		const member = card({
+			assignmentId: "p2",
+			agentId: "scout",
+			origin: "user",
+			council: { group: "g1", label: "p2", round: 1 },
+			text: '{"verdict":"yes","text":"97 is prime"}',
+			result: {
+				outcome: "succeeded",
+				durationMs: 4_000,
+				toolCalls: 0,
+				trust: settledRunTrust(fixtureReceiptDraft(fixtureEnvelope("p2"))),
+			},
+		});
+		const plain = renderWorkerEntryLines(member, 160, { detail: transcriptDetail("standard"), siblings: [member] })
+			.map(stripTerminalSequences)
+			.join("\n");
+		match(plain, /^ {2}✓ ◇ p2 · dynamo · qwen +yes: 97 is prime/mu, plain);
+		doesNotMatch(plain, /no tools|no check ran/u, plain);
+	});
+
+	it("names the passing check a worker ran instead of saying PanCode recognized no test", () => {
+		const worker = card({
+			assignmentId: "v1",
+			agentId: "coder",
+			origin: "user",
+			text: JSON.stringify({
+				mutatedPaths: [],
+				validations: [{ name: "python3 -c import calc", passed: true, evidence: "exitCode=0" }],
+				summary: "checked calc",
+			}),
+			result: {
+				outcome: "succeeded",
+				durationMs: 4_000,
+				toolCalls: 1,
+				trust: settledRunTrust(fixtureReceiptDraft(fixtureEnvelope("v1"))),
+			},
+		});
+		strictEqual(worker.result?.trust?.validationGrounding.state, "absent");
+		const plain = renderWorkerEntryLines(worker, 160, { detail: transcriptDetail("standard") })
+			.map(stripTerminalSequences)
+			.join("\n");
+		doesNotMatch(plain, /recognized no test|no check ran/u, plain);
+		match(plain, /python3 -c import calc passed on the worker's own report/u, plain);
+	});
+
+	it("a compact council round says which key shows the answers its one-line rows cut", () => {
+		// The operator's /council admits its dispatch with no tool call id, so its cards carry no parent call.
+		let style: OutputStyle = "compact";
+		const panel = createChatPanel({ getOutputStyle: () => style, now: () => 1_000 });
+		panel.appendUser("/council should retry() own its clock?");
+		const member = (id: string, label: string, round: number, text: string, pending = false) =>
+			card({
+				assignmentId: id,
+				agentId: label.toLowerCase(),
+				origin: "user",
+				council: { group: "g1", label, round },
+				text,
+				pending,
+			});
+		const settle = (state: WorkerEntryState, text: string) => {
+			Object.assign(state, {
+				pending: false,
+				text,
+				result: { outcome: "succeeded", durationMs: 38_000, tokenCount: 18_200, toolCalls: 7 },
+			});
+			panel.applyWorkerState(state);
+		};
+		const headers = () =>
+			plainRender(panel, 80)
+				.split("\n")
+				.filter((row) => row.startsWith(GLYPH.workerHuman));
+		const hinted = (round: number) => `${GLYPH.workerHuman} council · round ${round} · Alt+O shows the answers`;
+		const plain = (round: number) => `${GLYPH.workerHuman} council · round ${round}`;
+		const previous = getKeybindings();
+		createKeybindingManager(DEFAULT_SETTINGS, {});
+		try {
+			panel.applyWorkerState(member("a1", "Architect", 1, "Yes."));
+			panel.applyWorkerState(member("s1", "Skeptic", 1, "No."));
+			panel.applyWorkerState(member("a2", "Architect", 2, "Yes."));
+			const late = member("s2", "Skeptic", 2, "", true);
+			panel.applyWorkerState(late);
+			deepStrictEqual(headers(), [plain(1), plain(2)], "whole answers and a running member need no hint");
+			match(
+				plainRender(panel, 80),
+				/! ◇ Architect · dynamo · qwen +unverified · Yes\./u,
+				"each member's row shows its answer",
+			);
+			// One line of 36 columns, wider than what the aligned row leaves for it at 80 columns.
+			settle(late, "Keep the retry clock inside retry().");
+			deepStrictEqual(headers(), [plain(1), hinted(2)], "the round whose row was cut says so, and only that round");
+			style = "standard";
+			deepStrictEqual(headers(), [plain(1), plain(2)], "Standard previews the answer");
+		} finally {
+			setKeybindings(previous);
+		}
+	});
+
+	it("names a council's sealed report by its size, never by a member's route, whatever the synthesis", () => {
+		// The sealed report runs no model; its record carries the first member's route, which the header must not show.
+		for (const synthesis of [
+			{ kind: "none" },
+			{ kind: "vote", verdict: "yes", tally: { yes: 2 } },
+			{ kind: "judge", text: "both agree", verdict: "yes", judgeRunId: "j1" },
+		]) {
+			const report = {
+				members: [
+					{ label: "fast", runId: "m1-r1", round: 1, answer: "a" },
+					{ label: "slow", runId: "m2-r1", round: 1, answer: "b" },
+				],
+				synthesis,
+			};
+			const sealed = card({
+				assignmentId: "s1",
+				agentId: "council-synthesis",
+				origin: "user",
+				council: { group: "g1", label: "synthesis", round: 1 },
+				text: JSON.stringify(report),
+			});
+			const head = renderWorkerEntryLines(sealed, 160, { detail: transcriptDetail("standard") })
+				.map(stripTerminalSequences)
+				.find((row) => row.includes("◇ council of"));
+			match(head ?? "", /^ {2}\S ◇ council of 2 /u, synthesis.kind);
+			doesNotMatch(head ?? "", /dynamo\/qwen/u, `${synthesis.kind}: ${head}`);
+		}
+	});
+
+	it("a council whose members failed does not head its card with a plain done", () => {
+		const report = {
+			members: [
+				{ label: "p1", runId: "m1-r1", round: 1, answer: "", failed: { reason: "outcome=failed" } },
+				{ label: "p2", runId: "m2-r1", round: 1, answer: "red" },
+			],
+			synthesis: { kind: "vote", verdict: "red" },
+		};
+		const synthesis = card({
+			assignmentId: "s2",
+			agentId: "council-synthesis",
+			origin: "user",
+			council: { group: "g2", label: "synthesis", round: 1 },
+			text: JSON.stringify(report),
+		});
+		const head = renderWorkerEntryLines(synthesis, 160, { detail: transcriptDetail("standard") })
+			.map(stripTerminalSequences)
+			.find((row) => row.includes("◇ council of"));
+		match(head ?? "", /^ {2}✗ ◇ council of 2 +partial: 1 member gave no answer/u);
+		doesNotMatch(head ?? "", /✓/u);
+	});
+
+	it("names a failover's attempt on its rail row and, at detailed, on the route row", () => {
+		const entry = card({
+			assignmentId: "b1",
+			agentId: "benchmarker",
+			attempts: [
+				{ runId: "b1-r0", targetLabel: "mini/qwen", outcome: "failed" },
+				{ runId: "b1-r1", targetLabel: "dynamo/qwen" },
+			],
+		});
+		const rows = renderWorkerEntryLines(entry, 120, { detail: transcriptDetail("standard") }).map(stripTerminalSequences);
+		match(rows[0] ?? "", /^! ◆ benchmarker/u);
+		ok(
+			rows.some((row) => row.includes("↻ failed over → attempt 2 on dynamo/qwen")),
+			rows.join("\n"),
+		);
+		const detailed = renderWorkerEntryLines(entry, 120, { detail: transcriptDetail("detailed") }).map(
+			stripTerminalSequences,
+		);
+		ok(
+			detailed.some((row) => /│ dynamo · qwen · run b1-r1 · attempt 2 · record:/u.test(row)),
+			detailed.join("\n"),
+		);
+	});
+});

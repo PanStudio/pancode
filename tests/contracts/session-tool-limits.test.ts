@@ -1,0 +1,162 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { extractGlobalFlags } from "../../src/cli/argv.js";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import type { SessionToolLimits } from "../../src/core/tool-limit-flags.js";
+import {
+	createRunCapCounter,
+	narrowTurnConstraints,
+	snapshotTurnConstraints,
+	turnAllowsTool,
+	turnDelegatesTool,
+	workerTurnConstraints,
+} from "../../src/core/turn-constraints.js";
+import type { DispatchRequest } from "../../src/domains/dispatch/contract.js";
+import type { ProvidersContract } from "../../src/domains/providers/index.js";
+import type { SessionContract, SessionMeta } from "../../src/domains/session/contract.js";
+import {
+	createInteractiveSlashRuntime,
+	type InteractiveSlashRuntimeDeps,
+} from "../../src/interactive/interactive-slash-runtime.js";
+import { type CreateChatLoopDeps, createChatLoop } from "../../src/session-control/chat-loop.js";
+import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
+
+function limitedChatLoop(sessionToolLimits: SessionToolLimits) {
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.chat.prewarm = false;
+	const context = dispatchStubContext({ settings });
+	const target = settings.targets[0];
+	assert.ok(target);
+	settings.chat.target = target.id;
+	settings.chat.model = target.defaultModel ?? "gpt-4o";
+	let current: SessionMeta | null = null;
+	let turns = 0;
+	const session = {
+		current: () => current,
+		create: (input?: { cwd?: string }) => {
+			current = {
+				id: "session-tool-limits",
+				cwd: input?.cwd ?? process.cwd(),
+				cwdHash: "hash",
+				createdAt: "2026-10-16T00:00:00.000Z",
+				endedAt: null,
+				model: null,
+				target: null,
+			} as SessionMeta;
+			return current;
+		},
+		append: (turn: Record<string, unknown>) => ({ ...turn, id: `turn-${++turns}`, at: "2026-10-16T00:00:00.000Z" }),
+		appendEntry: (entry: Record<string, unknown>) => entry,
+		checkpoint: async () => {},
+		flushAppends: () => {},
+		replaceEntries: () => {},
+		tree: () => ({ leafId: null, nodes: [] }),
+		leafId: () => null,
+	} as unknown as SessionContract;
+	return createChatLoop({
+		getSettings: () => settings,
+		providers: context.getContract("providers") as ProvidersContract,
+		knownTargets: () => new Set([target.id]),
+		session,
+		sessionToolLimits,
+		createAgent: ((options: Parameters<NonNullable<CreateChatLoopDeps["createAgent"]>>[0]) => ({
+			agent: { state: options?.initialState, subscribe: () => () => {}, abort() {}, async prompt() {} },
+		})) as unknown as NonNullable<CreateChatLoopDeps["createAgent"]>,
+	});
+}
+
+test("an interactive or ACP session's tool limits bound every turn, before and after a scoped one", async () => {
+	const parsed = extractGlobalFlags(["--allow-tools", "read,write", "--delegate-tools", "none"]).toolLimits;
+	assert.deepEqual(parsed?.allowedTools, ["read", "write"]);
+	assert.deepEqual(parsed?.delegatedTools, []);
+	const loop = limitedChatLoop({ allowedTools: ["read", "write"], delegatedTools: [] });
+	try {
+		// A prewarmed runtime builds its tool surface from these before any turn.
+		assert.deepEqual(loop.currentTurnConstraints?.(), { allowedTools: ["read", "write"], delegatedTools: [] });
+		await loop.submit("typed by the operator");
+		assert.deepEqual(loop.currentTurnConstraints?.(), { allowedTools: ["read", "write"], delegatedTools: [] });
+		// The scoped turn restores session limits when it settles (#423).
+		await loop.submit("scoped", { constraints: { allowedTools: ["read", "bash"], delegatedTools: ["bash"] } });
+		assert.deepEqual(loop.currentTurnConstraints?.(), { allowedTools: ["read", "write"], delegatedTools: [] });
+	} finally {
+		loop.dispose();
+		await loop.whenSettled();
+	}
+});
+
+test("--deny-tools removes a tool from the session, every scoped turn and a worker ceiling that falls back to it", () => {
+	const limits = extractGlobalFlags(["--deny-tools", "bash"]).toolLimits;
+	assert.deepEqual(limits?.deniedTools, ["bash"]);
+	const turn = narrowTurnConstraints(limits, { allowedTools: ["read", "bash"] });
+	assert.equal(turnAllowsTool(turn, "bash"), false);
+	assert.equal(turnAllowsTool(turn, "read"), true);
+	assert.equal(turnDelegatesTool(turn, "bash"), false);
+	assert.equal(turnDelegatesTool({ ...turn, delegatedTools: ["bash"] }, "bash"), true);
+	assert.match(
+		extractGlobalFlags(["--allow-tools", "read", "--deny-tools", "read"]).error ?? "",
+		/removes every tool --allow-tools names \(read\)/,
+	);
+	assert.equal(extractGlobalFlags(["--allow-tools", "read,bash", "--deny-tools", "bash"]).error, undefined);
+});
+
+test("a TUI /run to an external agent under --delegate-tools read dispatches a worker limited to read", async () => {
+	const toolLimits = extractGlobalFlags(["--delegate-tools", "read"]).toolLimits;
+	assert.ok(toolLimits);
+	const loop = limitedChatLoop(toolLimits);
+	const dispatched: DispatchRequest[] = [];
+	const runtime = createInteractiveSlashRuntime({
+		io: { stdout() {}, stderr() {} },
+		bus: createTelemetryHub(),
+		chat: loop,
+		chatPanel: { appendReplayBlock() {}, appendUser() {} },
+		requestRender() {},
+		refreshFooter() {},
+		dispatch: {
+			dispatch: async (request: DispatchRequest) => {
+				dispatched.push(request);
+				return {
+					runId: "delegate-run",
+					events: (async function* () {})(),
+					finalPromise: Promise.resolve({ runId: "delegate-run", outcome: "completed", exitCode: 0 }),
+				};
+			},
+		},
+	} as unknown as InteractiveSlashRuntimeDeps);
+	try {
+		runtime.dispatchCommand("/run acp:codex rewrite the build script");
+		await new Promise((resolve) => setImmediate(resolve));
+		const request = dispatched.at(0);
+		assert.ok(request, "/run dispatched nothing");
+		assert.deepEqual(request.turnConstraints, toolLimits);
+		assert.equal(turnDelegatesTool(request.turnConstraints, "read"), true);
+		assert.equal(turnDelegatesTool(request.turnConstraints, "write"), false);
+		assert.equal(turnDelegatesTool(request.turnConstraints, "bash"), false);
+	} finally {
+		loop.dispose();
+		await loop.whenSettled();
+	}
+});
+
+test("run caps survive snapshot and narrowing, stay with the main run, and count across turns", () => {
+	const caps = snapshotTurnConstraints({ mode: "change", runCaps: { maxRequests: 3, maxToolCalls: 2 } });
+	assert.deepEqual(caps?.runCaps, { maxRequests: 3, maxToolCalls: 2 });
+	assert.deepEqual(narrowTurnConstraints(caps, { runCaps: { maxRequests: 1 } })?.runCaps, {
+		maxRequests: 1,
+		maxToolCalls: 2,
+	});
+	assert.equal(caps === undefined ? "none" : workerTurnConstraints(caps).runCaps, undefined);
+	assert.throws(() => snapshotTurnConstraints({ runCaps: { maxRequests: 0 } }), /Invalid explicit turn constraints/);
+	const counter = createRunCapCounter();
+	assert.equal(counter.admitRequest(caps?.runCaps), undefined);
+	assert.equal(counter.admitToolCalls(caps?.runCaps, 2), undefined);
+	// A later turn without caps (a repair turn) still counts against the first turn's.
+	assert.equal(counter.admitRequest(undefined), undefined);
+	assert.match(counter.admitToolCalls(undefined, 1) ?? "", /^max_tool_calls: .*\(limit 2, observed 3\)/);
+	assert.match(counter.admitRequest(undefined) ?? "", /^max_tool_calls:/);
+	const requests = createRunCapCounter();
+	for (let sent = 0; sent < 3; sent += 1) assert.equal(requests.admitRequest({ maxRequests: 3 }), undefined);
+	assert.match(requests.admitRequest({ maxRequests: 3 }) ?? "", /^max_requests: .*\(limit 3, observed 3\)/);
+});

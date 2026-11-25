@@ -1,0 +1,384 @@
+# PanCode Glossary
+
+This glossary explains the words PanCode uses in its interface, its guides and its output. Start with the plain-language terms below. The numbered definitions after them are the precise ones, and each names the TypeScript type in `src/` that owns the concept.
+
+## Plain-language terms
+
+The words you meet first, each in a sentence or two, with the guide that explains it.
+
+| Term | What it means |
+| --- | --- |
+| Session | One conversation with PanCode in a project. It is saved, so you can resume it later. See [Commands and modes](commands-and-modes.md). |
+| Target (connection) | A saved model connection: a provider account or a local model server that PanCode sends prompts to, with its default model. Settings call it a connection. See [Configuration and targets](configuration-and-targets.md). |
+| Chat route | The target and model your main conversation uses right now. |
+| Model tier | How much scaffolding a model needs: `small`, `standard` or `frontier`. PanCode guesses it from the model's window, size and catalog entry; `models.<id>.tier` sets it. Hooks and prompt templates read it. |
+| Autonomy level | How much PanCode may do without you: `default` asks for approval only when the safety judge cannot decide, `yolo` shows no approval cards and refuses such a call back to the agent instead. Both still ask you questions. See [Sandbox and safety](sandbox-and-safety.md). |
+| Sandbox | An operating-system wall around shell commands and some worker runtimes. Inside it a command can write only to the project and scratch folders, and known credential files and variables are hidden from it. Typed tools, external servers and model calls are checked by separate rules. |
+| Contained | A command that runs inside the sandbox. At `default` most contained work runs without asking. |
+| Safety judge | A model that checks a risky call against what you asked for, before you are asked. It allows it, refuses it, or passes it to you. |
+| Approval card | The question PanCode shows when a call needs your answer. One nobody answers is denied after a timeout. |
+| Snapshot | A private copy of your files that PanCode takes before it changes them. `/rewind` restores one. |
+| Worker | A separate agent that does one task for the main session, often on its own branch. See [Fleet dispatch](fleet-dispatch.md). |
+| Fleet | The workers available to you and the routes they run on. |
+| Dispatch | Handing a task to a worker, with `/run` in a session or `pancode run --agent` from a shell. |
+| Worktree | A separate checkout of your repository on its own branch, where a worker can change files without touching yours. |
+| Run record | The sealed record of a finished worker run: what it did, what it changed and which checks passed. `/view verify <runId>` checks it. |
+| Check (verifier) | A command in `.pancode/verifiers.yaml` that decides whether work is right, such as a test suite or a benchmark. |
+| Peer | Another coding agent, such as Claude Code, Codex or OpenCode, that PanCode hands a task to. See [Coding agent interoperability](interop.md). |
+| Skill | Written instructions for a procedure, in a `SKILL.md` file, that the agent loads when the task needs it. See [Prompts, skills, and share archives](extensions-and-sharing.md). |
+| Prompt template | A saved prompt you run as a slash command, such as `/bugfix`. |
+| PanHub | The collection of installable packs PanCode knows about, browsed with `/hub` and managed with `pancode hub`. See [PanHub](panhub.md). |
+| Pack | One installable unit in PanHub. Its kind is `plugin`, `extension`, `skill`, `agent`, `prompt` or `playbook`. See [PanHub](panhub.md). |
+| Plugin | A package of content only: skills, prompts, agents and playbooks. Installing one never runs code. See [Plugins](plugins.md). |
+| Extension | A package of code that changes PanCode itself. It runs in its own process, after you review what it may do. See [Extensions](harness-extensions.md). |
+| Handbook | `PANCODE.md` at the repository root: the project's name, conventions and rules, written by you and kept in Git. |
+| Memory | Notes PanCode keeps while you work, such as your requirements and what failed, so it can remind the agent later. See [Proactive memory](proactive-memory.md). |
+| Compaction | Shortening a long conversation into a summary so it fits the model's context window. See [Context continuity](context-continuity.md). |
+| PanStore | The project store: a place outside your working tree for result files and datasets, shared by every checkout of the project. See [PanStore](panstore.md). |
+| PanKit | PanCode's MCP tool servers for HPC and scientific work, run inside PanCode or by any MCP host with `pankit serve <id>`. See [PanKit](pankit.md). |
+| PanSDK | The contract for authoring extensions, packs, tools and MCP servers, shipped in the `pancode` package as `pancode/sdk/<subpath>`. See [PanSDK](sdk.md). |
+| Research campaign | A loop where workers try changes that improve one measured number while every check still passes. See [Research and arena](research-and-arena.md). |
+| Model campaign | One seeded project run across a roster of models with `pancode campaign run`, each in a fresh copy, to compare how far each gets. |
+| Arena match | The same task given to several models and graded by the same check, so you can compare the results and vote blind. |
+| Sweep | A set of run directories for one experiment, each checked on its own. See [Project verifier catalog](tool-usage.md#project-verifier-catalog). |
+| Doctor | `pancode doctor`, a read-only check of your install, connections and sandbox. See [Doctor](doctor.md). |
+
+---
+
+## Precise definitions
+
+### 1. Assignment
+- **Definition**: The logical unit of work dispatched to the fleet. An assignment encapsulates the requested task, briefing, authority boundaries, and retry history across one or more concrete run attempts.
+- **Owning Type**: `DurableAssignmentRecord` in [assignment-store.ts](../../src/domains/dispatch/assignment-store.ts).
+
+### 2. Run
+- **Definition**: A concrete execution attempt of an assignment. Dispatch creates a 12-character random base36 run identifier with `newRunId()`. Session ids use the same 12-character base36 generator, while appended session turn and entry ids use UUIDv7. Every run has an isolated event stream, a designated execution node, and its own telemetry scope that ends with `run.settled` and `run.sealed`. Its identity is the SHA-256 of its `run.settled` payload as canonical JSON.
+- **Owning Type**: `RunEnvelope` in [types.ts](../../src/domains/dispatch/types.ts).
+
+### 3. Attempt
+- **Definition**: A 0-based sequential retry index of a logical assignment. The first run of an assignment is attempt 0; a retry after a retriable infrastructure error increments it while preserving the earlier attempt's own run and run record.
+- **Owning Type**: `RunLineage.attempt` in [types.ts](../../src/domains/dispatch/types.ts).
+
+### 4. Batch
+- **Definition**: A durable collection of detached assignments created and tracked together under a single batch ID (`batches.json`).
+- **Owning Type**: `DetachedBatchRecord` in [batch-store.ts](../../src/domains/dispatch/batch-store.ts).
+
+### 5. Plan
+- **Definition**: A multi-step directed acyclic graph (DAG) defining steps, dependencies, code validations, and budget ceilings approved by the operator before dispatch.
+- **Owning Type**: `ExecutionPlan` in [execution-plan.ts](../../src/domains/dispatch/execution-plan.ts).
+
+### 6. Run Record
+- **Definition**: The persisted record of a finished run: `run.settled` in the run's journal, carrying outcome and outcome code, route, usage and pricing as facts, tool counts, validation grounding and the hashes the run committed to, plus the `run-result` object it names, followed by `run.sealed` over the journal's chain head. The sealed run directory under `<stateDir>/telemetry/runs/<runId>/` verifies with only its own files. In memory, dispatch hands its caller a `RunResult`; readers use the read model's run DTO. See [seals and bundles](../architecture/telemetry.md#seals-and-bundles).
+- **Owning Type**: `RunSettledSchema` in [run-schemas.ts](../../src/core/telemetry/run-schemas.ts); `RunResult` in [types.ts](../../src/domains/dispatch/types.ts); read through [run-record.ts](../../src/domains/telemetry/run-record.ts).
+
+### 7. Envelope
+- **Definition**: A bounded container enforcing byte-length limits and truncation indicators on a dynamic payload. Tool output carries shown and total byte counts plus a continuation fragment; a parent briefing carries byte count and SHA-256 content hash instead.
+- **Owning Type**: `Observation` in [observation.ts](../../src/tools/observation.ts) for tool output; `RunBriefingProvenance` in [types.ts](../../src/domains/dispatch/types.ts) for briefings.
+
+### 8. Phase
+- **Definition**: A designated execution interval within a run, bounded by the run's phase marks (requested, queued, admitted, worker spawned, ended). Dispatch derives the queue wait and the user-observed end-to-end time from them, and `run.settled` carries both as `phaseTiming`.
+- **Owning Type**: `RunPhaseMarks` and `RunPhaseDurations` in [types.ts](../../src/domains/dispatch/types.ts); derived in [phase-timing.ts](../../src/domains/dispatch/phase-timing.ts).
+
+### 9. Gate
+- **Definition**: A validation or review barrier (such as a read-only reviewer verdict or a compete judge decision) determining whether candidate diffs are merged or revised.
+- **Owning Type**: `GateDecisionArtifact` in [gate-decisions.ts](../../src/domains/dispatch/gate-decisions.ts).
+
+### 10. Recipe
+- **Definition**: A versioned Markdown document declaring an agent's static persona, required and optional tools, capability class, tool-call budget and result contract. Recipe is the code name of an agent definition. User-facing text says agent, and never uses recipe as a word for skills, prompts, agents and playbooks together; the word for that set is component.
+- **Owning Type**: `AgentRecipe` in [recipe.ts](../../src/domains/agents/recipe.ts), parsed by [recipe-schema.ts](../../src/domains/agents/recipe-schema.ts).
+
+### 11. Worker
+- **Definition**: An isolated execution subprocess (or remote SSH worker) running a dedicated tool dispatch runtime and communicating over two lanes of newline-delimited JSON: a bulk lane on stdout for model and tool events, and a control lane on marked stderr lines for the announce, heartbeats and cancellation acknowledgements.
+- **Owning Type**: `WorkerSpec` in [spec-contract.ts](../../src/worker/spec-contract.ts).
+
+### 12. Target
+- **Definition**: A saved model connection: a configured provider endpoint definition mapping a named identifier to a runtime, base URL, authentication method, default model and optional pricing. The settings UI and the desktop app call it a connection; the CLI commands (`targets`) and the YAML key (`targets`) keep the technical name.
+- **Owning Type**: `TargetDescriptor` in [target-descriptor.ts](../../src/domains/providers/types/target-descriptor.ts).
+
+### 13. Node
+- **Definition**: An addressable physical or virtual compute host within the fleet capacity pool (`local` or remote SSH host).
+- **Owning Type**: `FleetNodeSnapshot` in [cluster.ts](../../src/domains/scheduling/cluster.ts).
+
+### 14. Route
+- **Definition**: The complete execution candidate evaluated by the route planner for capability fit, readiness, and cost. Its operational identity includes agent, execution role, target, model, runtime, node, thinking level when present, tool and prompt composition, endpoint identity, and immutable spec/settings fingerprints.
+- **Owning Type**: `RouteCandidate` in [route-decision.ts](../../src/domains/dispatch/route-decision.ts).
+
+### 15. Posture (Autonomy Level)
+- **Definition**: The operator-set dial, `default` or `yolo`. `default` contains the main session's shell work in an OS sandbox, runs snapshot-recoverable destructive work after a workspace snapshot, and sends what escapes containment to the safety judge before the operator is asked. `yolo` never waits for the operator. By default it is contained: it admits exactly as `default` does, with the sandbox, snapshots and the safety judge, and refuses back to the model any call that would wait for a person. Unconfined `yolo` (`safety.yoloConfinement: unconfined`, accepted once) asks nothing: only the yolo floor, operator rules in an approved `.pancode/safety.yaml` and the run's ceilings block. Dispatched workers inherit the level through their permit, resolve their own asks through `fleet.permissions.mode`, and a read-only dispatch restricts their tools. See the [safety model](../architecture/safety-model.md#autonomy). Routing postures (`quality`, `balanced`, `latency`, `economy`) under `fleet.adaptiveRouting.postures` are a different axis that ranks candidate routes.
+- **Owning Type**: `AutonomyLevel` and `YoloConfinement` in [autonomy.ts](../../src/domains/safety/autonomy.ts).
+
+### 16. Capability Class
+- **Definition**: The maximum permitted mutation boundary declared by an agent recipe (`read-only`, `verification`, `artifact-write`, `workspace-edit`, `orchestration`, `internal`).
+- **Owning Type**: `AgentCapabilityClass` in [spec.ts](../../src/domains/agents/spec.ts).
+
+### 17. Topology
+- **Definition**: The multi-agent structural orchestration pattern governing workflow execution. Three unions spell it for three jobs. A compiled plan supports `parallel`, `sequential`, `pipeline`, `review`, `compete`, `council`, and `fleet`. A capacity reservation supports `parallel`, `detached`, `sequential`, `pipeline`, `review`, `compete`, and `council`. The dispatch-plan tool supports all eight values from those two sets. The dispatch tool's `mode` argument selects among `parallel`, `sequential`, `pipeline`, `compete` and `council`, and a one-task call omits it.
+- **Owning Types**: `ExecutionPlanTopology` in [execution-plan.ts](../../src/domains/dispatch/execution-plan.ts), `ReservationTopology` in [reservation-store.ts](../../src/domains/dispatch/reservation-store.ts), `DispatchPlanTopology` in [dispatch-plan.ts](../../src/tools/dispatch-plan.ts).
+
+### 18. Worker Block
+- **Definition**: The attributed transcript segment rendering a worker's streaming execution. It includes a header with origin glyph and route, a rail for worker prose, coalesced tool names, and a one-line run result footer.
+- **Owning Type**: `WorkerEntryState` in [worker-stream.ts](../../src/session-control/worker-stream.ts).
+
+### 19. Origin Glyphs (`◇`/`◆`)
+- **Definition**: Transcript and fleet board indicators that identify who requested a run. The glyph `◇` marks operator-typed runs, `◆` marks model-requested dispatches, and a dim dot marks internal PanCode runs and runs PanCode starts on its own (request origin `harness`). Transcript worker entries admit only user and agent origins; internal and `harness`-origin runs can appear on the dispatch board and fleet views but never become transcript worker entries.
+- **Owning Types**: `WorkerRunOrigin` in [entries.ts](../../src/domains/session/entries.ts) for transcript entries; `DispatchRequestOrigin` in [types.ts](../../src/domains/dispatch/types.ts) for user, agent, internal, and harness dispatches.
+
+### 20. Share Note
+- **Definition**: A bounded operator note formatted as `[worker result] <agent> · run <id> · <outcome> · shared by the operator` that delivers a finished worker answer into the main agent context over the user-turn path.
+- **Owning Type**: `WorkerShareFacts` in [worker-share.ts](../../src/session-control/worker-share.ts).
+
+### 21. Fold
+- **Definition**: Presenting an action as a short summary in the current output detail tier. `Alt+O` cycles compact, standard and detailed. Use `/view transcript` for full available details.
+- **Owning Type**: `WorkerEntryRenderOptions` in [worker-entry.ts](../../src/interactive/renderers/worker-entry.ts).
+
+### 22. Interop
+- **Definition**: Read-only discovery of coding agents, their user and project resources, and connection state. The operator can approve adoption of safe text resources into PanHub; foreign provenance and the project-import trust gate persist. See [Coding agent interoperability](interop.md).
+- **Owning Type**: `InteropContract` in [contract.ts](../../src/domains/interop/contract.ts).
+
+### 23. Consent Record
+- **Definition**: A persistent state entry recording the operator's decision to accept or decline an interop agent proposal, written atomically under `interop.json`.
+- **Owning Type**: `InteropAgentRecord` in [types.ts](../../src/domains/interop/types.ts).
+
+### 24. Fingerprint
+- **Definition**: A SHA-256 digest of stable agent facts (including binary path, version, and launch recipe) that keys consent records so standing decisions stay valid until facts change.
+- **Owning Type**: `InteropAgentFacts` in [types.ts](../../src/domains/interop/types.ts).
+
+### 25. noWritePaths
+- **Definition**: A damage-control path policy class that permits reads while blocking writes and deletes under every registered foreign agent directory at autonomy `default` and contained `yolo`. At unconfined `yolo` only `noWritePaths` entries in an approved `.pancode/safety.yaml` hold.
+- **Owning Type**: `PathPolicyKind` in [path-policy.ts](../../src/domains/safety/path-policy.ts).
+
+### 26. Foreign Prompt Root
+- **Definition**: An external prompt directory owned by another coding agent (such as `.claude/commands` or `.codex/prompts`) that PanCode inventories for explicit adoption. Loose compatibility prompts cannot expand, and imported copies require the foreign-resource trust gate.
+- **Owning Type**: `PromptTemplateRoot` in [loader.ts](../../src/domains/resources/prompts/loader.ts).
+
+### 27. Compat Root
+- **Definition**: A compatibility directory for prompts or skills discovered from foreign agent installations, ranked below native PanCode resource roots.
+- **Owning Type**: `ResourceSourceInfo` in [collision.ts](../../src/domains/resources/collision.ts).
+
+### 28. Trust Gate
+- **Definition**: A security boundary requiring explicit operator opt-in via `integrations.projectResources.trustProjectImports` before explicitly imported foreign skills or prompt templates can be used at either scope. Loose compatibility roots remain discovery-only even when enabled.
+- **Owning Type**: `PromptTemplate` in [loader.ts](../../src/domains/resources/prompts/loader.ts).
+
+### 29. Fleet
+- **Definition**: The set of addressable nodes PanCode may place work on, `local` plus every configured SSH host, together with their capacity accounting. `fleet` is also the topology of a plan compiled from a playbook. The fleet is the coordinator and its workers; a playbook is what the fleet runs.
+- **Owning Types**: `FleetNodeSnapshot` in [cluster.ts](../../src/domains/scheduling/cluster.ts) for capacity; `Playbook` for the declared multi-step workflow (see Playbook below).
+
+### 30. Dispatch
+- **Definition**: Sending one unit of work to a worker: the domain that resolves recipe, target, model, and node, admits the request against authority, spawns the worker, and settles and seals the run. It is the `dispatch` tool, the `/run` slash command, and `src/domains/dispatch/`.
+- **Owning Type**: `DispatchRequest` in [contract.ts](../../src/domains/dispatch/contract.ts).
+
+### 31. Run Ledger
+- **Definition**: The durable dispatch run list at `runs.json` in the state directory, retention-capped by `fleet.history.maxRuns`. It is what the fleet board and `pancode fleet status` read.
+- **Owning Type**: `RunEnvelope` in [types.ts](../../src/domains/dispatch/types.ts), persisted by [state.ts](../../src/domains/dispatch/state.ts).
+
+### 32. Agent Ledger
+- **Definition**: The shared, append-only coordination board for concurrent workers in one dispatch. Workers submit typed claims, findings, reviews and messages through `ledger`; the orchestrator stamps identity, writes the entries and mirrors them to participants. It persists in `agent-ledgers.json`. The main agent can also participate in its owned boards.
+- **Owning Type**: `AgentLedgerEntry` in [protocol.ts](../../src/worker/protocol.ts), stored by [agent-ledger-store.ts](../../src/domains/dispatch/agent-ledger-store.ts).
+
+### 33. Session Ledger
+- **Definition**: The JSONL record of one session's turns, written per session. It is what `/resume`, `/fork`, and replay read. Its header names the session format version, 7.
+- **Owning Type**: `SessionEntry` in [entries.ts](../../src/domains/session/entries.ts).
+
+### 34. Task Ledger
+- **Definition**: The persisted form of the session task board: goals, subgoals, and the run ids in flight when the snapshot was folded. One session entry kind, distinct from the board that renders it.
+- **Owning Type**: `TaskLedgerEntry` in [entries.ts](../../src/domains/session/entries.ts).
+
+### 35. Context Ledger
+- **Definition**: The accounting of how the model's context window is spent and the input to compaction decisions. Current buckets are `system`, `tools`, `toolResults`, `agents`, `skills`, `memory`, `project`, `messages`, `pending`, `reserve`, `free`, and `streaming`.
+- **Owning Type**: `ContextLedgerCategory` in [context-ledger.ts](../../src/domains/session/context-ledger.ts).
+
+### 36. Dispatch Board
+- **Definition**: The live fleet view: one row per in-flight or recently finished run, carrying origin glyph, route, status, and the steer and cancel affordances.
+- **Owning Type**: `DispatchBoardRow` in [dispatch-row-model.ts](../../src/interactive/dispatch-row-model.ts).
+
+### 37. Task Board
+- **Definition**: The operator-facing goal and subgoal checklist for the session. It renders from a snapshot and persists as a task ledger entry, so the UI noun and the wire format are deliberately named differently.
+- **Owning Type**: `TaskBoardSnapshot` in [task-board.ts](../../src/domains/session/task-board.ts).
+
+### 38. Dashboard
+- **Definition**: The startup and footer panels summarizing targets, session, and spend. Not a board in the dispatch or task sense; it holds no rows a run or a goal maps to.
+- **Owning Type**: `WelcomeDashboardStats` in [welcome-dashboard.ts](../../src/interactive/welcome-dashboard.ts).
+
+### 39. Handbook
+- **Definition**: `PANCODE.md`, the human-owned, version-controlled project context file at the repository root: project name, one-line description, conventions, hard invariants, and optional sections, closed by a fingerprint comment.
+- **Owning Type**: `ParsedPancodeMd` in [pancode-md.ts](../../src/domains/context/pancode-md.ts).
+
+### 40. Delegate
+- **Definition**: Another coding agent PanCode drives over ACP stdio as if it were a worker, configured under `integrations.externalAgents.entries` and invoked with `/run <agent-id>`. A delegate is another coding agent, not a model target.
+- **Owning Type**: `DelegationAgentConfig` in [defaults.ts](../../src/core/defaults.ts).
+
+### 41. Working Set
+- **Definition**: The part of the session ledger the model receives on the next request. It is the ledger with the current eviction projection applied, and it exists only in memory; the ledger itself is never narrowed. Not to be confused with the context ledger, which is the accounting of how the window is spent.
+- **Owning Type**: `WorkingSetView` in [contract.ts](../../src/domains/context/working-set/contract.ts).
+
+### 42. Projection
+- **Definition**: The pure, idempotent transform from ledger entries to the entries the replay builder hands the model. It substitutes markers for evicted bodies and drops thinking from closed turns, returning unaffected entries by reference. Nothing about it is persisted.
+- **Owning Type**: `projectWorkingSet` in [project.ts](../../src/domains/context/working-set/project.ts).
+
+### 43. Eviction
+- **Definition**: The decision that a tool-result body or an assistant turn's thinking leaves the working set, recorded as an append-only ledger entry with a typed reason. It removes nothing: the original entry stays in the ledger and stays visible in the transcript, `/resume`, `/fork`, and the HTML export.
+- **Owning Type**: `ContextEvictionEntry` in [entries.ts](../../src/domains/session/entries.ts).
+
+### 44. Recall
+- **Definition**: Readmitting an evicted body by ref, through `context(scope="recall", ref=...)` for the model or `/context recall <ref>` for the operator. A recall does not un-evict: the marker stays where it was so the provider prefix cache is untouched, and repeated recalls of one ref are the churn signal.
+- **Owning Type**: `ContextRecallEntry` in [entries.ts](../../src/domains/session/entries.ts); resolution in `resolveRecall` in [recall.ts](../../src/domains/context/working-set/recall.ts).
+
+### 45. Marker
+- **Definition**: The byte-stable one-line stub the projection renders in place of an evicted body, naming the ref, the reason, the tool, the size, and the exact recall call. It carries no timestamp and no counter, because a marker whose bytes drifted between renders would cold-start the prefix cache on a turn that evicted nothing new.
+- **Owning Type**: `renderMarker` in [marker.ts](../../src/domains/context/working-set/marker.ts).
+
+### 46. Canonical Trust Status
+- **Definition**: The five-axis record of what is known about one run: artifact integrity, validation grounding, independent review, context provenance, and completion evidence. It is an algebra, not a score: no axis promotes another, every non-absent state names its source and authority, and `absent`, `unknown`, and `not_applicable` are states in their own right. See [docs/architecture/evidence-and-memory.md](../architecture/evidence-and-memory.md) for the full state table.
+- **Owning Type**: `CanonicalTrustStatus` in [trust-status.ts](../../src/domains/evidence/trust-status.ts).
+
+### 47. Trust Projection
+- **Definition**: The one rendering of the canonical trust status every operator interface prints. The compact human line answers who claims the result, what was observed, what was independently checked, and what is still unknown, in five fixed clauses (`sealed; grounded by host-verification; not independently reviewed; context recorded; completion evidenced`). The machine projection is the same answer as a bounded, versioned record with references to the detailed artifacts. Dispatch and monitor output, `pancode evidence`, the Fleet Runs board and its finished-card view, and the ACP wire all print from it.
+- **Owning Type**: `formatTrustSummary` and `TrustSummaryProjection` in [trust-projection.ts](../../src/domains/evidence/trust-projection.ts).
+
+### 48. Trust Verdict
+- **Definition**: The presentation tier read off the axes in a fixed order, used for styling and sorting and never as a score. `reviewed` requires a verified independent pass and is the only tier styled as independently verified. `grounded` is observed validation without independent review. `unverified` is a sealed run with nothing observed. `compromised` is a broken seal, a failed or inferred validation, a failed or correlated review, or a contradictory context record. `unknown` is an unchecked or missing seal.
+- **Owning Type**: `TrustVerdict` and `trustVerdict` in [trust-projection.ts](../../src/domains/evidence/trust-projection.ts).
+
+### 49. Trust Vocabulary
+- **Definition**: The standardized word for each canonical state, so the same fact is never spelled two ways. `sealed` means the run's telemetry seal verified. `grounded` means validation was observed to run and pass, named by its claimant (`host-verification`, `validation-tool`, `result-quality`, `evidence-grounding`). `independently reviewed` means a verified reviewer that was not the run itself recorded a verdict. `inferred` means the worker claimed validation and nothing was observed to have run. `unknown` means a named source could not answer; `not applicable` means a named authority decided the axis does not apply.
+- **Owning Type**: `TRUST_STATE_WORDS` in [trust-projection.ts](../../src/domains/evidence/trust-projection.ts).
+
+### 50. Commonly Confused Trust States
+- **Definition**: `sealed` is not `grounded`: a run's seal can verify perfectly over a run that validated nothing. `grounded` is not `independently reviewed`: a host check is PanCode observing the run's own declared command, not a second agent judging the result. A `host checks verified` unit on the board is folded into validation grounding and is never independent review. `not_requested` is not a trust state at all; a run with no host check reads `no validation observed`. `completion unevidenced` (a mutation finished with no validation at the completion boundary) is distinct from `no validation observed` (no validation was linked anywhere in the run): the first is the finish contract's observation, the second the evidence linker's.
+- **Owning Type**: `TRUST_STATE_WORDS` and `trustVerdict` in [trust-projection.ts](../../src/domains/evidence/trust-projection.ts); the axis states in `TRUST_STATUS_STATES` in [trust-status.ts](../../src/domains/evidence/trust-status.ts).
+
+### 51. System One
+- **Definition**: An optional, experimental fast decision model, off until `systemOne.use` names a route. It answers typed questions (`noul`, `choice`, `score`) about one bounded, redacted state. Its callers are the `consult` tool, the judge screen and typed steering triage. It never answers the operator and never removes friction. See [System One](system-one.md).
+- **Owning Type**: `SystemOne` in [types.ts](../../src/domains/system-one/types.ts); built by `createSystemOne` in [factory.ts](../../src/domains/system-one/factory.ts).
+
+### 52. Decision Point
+- **Definition**: One place System One is asked, named by what it judges: `consult`, `judgeScreen` or `triage`. A point owns its state, its questions, its reader and its deadline.
+- **Owning Type**: `DecisionPoint` in [types.ts](../../src/domains/system-one/types.ts).
+
+### 53. Build
+- **Definition**: The identity of what answered a System One question, named by what the server reported. For a `systemone` engine it is the model the server reports, such as `jev-1.14.0`. For an `llm` engine it is a composite of runtime, host, reported model, fingerprint and prompt version.
+- **Owning Type**: `EngineReply.build` in [types.ts](../../src/domains/system-one/types.ts).
+
+### 54. Readout
+- **Definition**: What an answer's number is, as the answering engine declares it. `categorical` is a label with no probability scale, which every LLM route returns. A readout is not an accuracy claim.
+- **Owning Type**: `ReadoutKind` in [contract.ts](../../src/domains/system-one/contract.ts).
+
+### 55. Route
+- **Definition**: One name in `systemOne.use`: `jev`, `memory`, `main`, a declared engine or a target. Routes are tried in order, and one engine answers one ask.
+- **Owning Type**: `routeNames` and `resolveChoice` in [selection.ts](../../src/domains/system-one/selection.ts).
+
+### 56. Laya
+- **Definition**: The diffusion-model System One engine that serves the same `POST /v1/systemone` wire as the hosted engine, through `laya-serve` and the `systemone` runtime, under the `laya` capability profile. See [System One Architecture](../architecture/system-one.md).
+- **Owning Type**: `createSystemOneEngine` in [systemone.ts](../../src/domains/system-one/engines/systemone.ts).
+
+### 57. Runtime
+- **Definition**: A registered adapter for one kind of inference backend. It fixes the runtime id a target names, the kind (`http`, `sdk` or `subprocess`), the tier, the API family, the auth method, the default capabilities, and how to probe the backend and synthesize a model. Only `http` runtimes can drive the main agent; `sdk` and `subprocess` runtimes are worker-only. Built-in runtimes are in `BUILTIN_RUNTIMES`, and plugins add more. See [Configuration and targets](configuration-and-targets.md) and the [provider adapter cookbook](../architecture/provider-adapter-cookbook.md).
+- **Owning Type**: `RuntimeDescriptor` in [runtime-descriptor.ts](../../src/domains/providers/types/runtime-descriptor.ts).
+
+### 58. Runtime Tier
+- **Definition**: The deployment class of a runtime: `cloud`, `local-native`, `protocol` or `subscription`. The tier changes behavior beyond grouping. A `local-native` runtime prices as free and is probed for loaded models and serving windows, while a `protocol` runtime (a generic endpoint or a gateway such as LiteLLM) never prices as free because it can front a paid model.
+- **Owning Type**: `RuntimeTier` in [runtime-descriptor.ts](../../src/domains/providers/types/runtime-descriptor.ts).
+
+### 59. Prompt Tier
+- **Definition**: Which compilation path builds a prompt. Main-agent prompts compile in two tiers from one compiler: attended (PanCode in the terminal, the desktop app, editors over ACP), which carries the operator-facing guidance fragments, and headless (`pancode run`), which carries a headless contract and states that approval asks are denied. Workers compile through a separate worker path as the third tier. See [prompt compilation](../architecture/prompt-compilation.md).
+- **Owning Type**: `compile` and `compileWorker` in [compiler.ts](../../src/domains/prompts/compiler.ts).
+
+### 60. Model Profile
+- **Definition**: A per-model record of what a model is: capability flags, a declared context and output maximum, the thinking mechanism and level mapping, and a recommended output budget. Packaged profiles live in `models/profiles.yaml` and the operator's `<configDir>/model-profiles.yaml` layers over them. A profile describes the model and never a deployment, so a live server report outranks it for the serving window, output cap, tools, vision and reasoning. See [Configuration and targets](configuration-and-targets.md) and the [model catalog](../architecture/model-catalog.md).
+- **Owning Type**: `ModelProfile` in [model-profiles.ts](../../src/domains/providers/model-profiles.ts).
+
+### 61. Pricing
+- **Definition**: The priced cost of a call or run: `usd` is a `Fact<number>` (measured, estimated, unknown or absent, each naming its source or reason) and `pricedBy` says what priced it: `provider`, `target-rates`, `catalog`, `free` or `none`. An unknown cost never reads as free; `free` is a measured local zero. Sums over many calls are a `FactSum` that keeps measured, estimated and unknown coverage apart. Every interface words these values through one renderer. Pricing is declared per target. See [pricing and cost provenance](configuration-and-targets.md#pricing-and-cost-provenance) and [honest values](../architecture/telemetry.md#honest-values).
+- **Owning Type**: `PricingSchema` in [schemas.ts](../../src/core/telemetry/schemas.ts); `Fact` and `FactSum` in [fact.ts](../../src/core/telemetry/fact.ts); rendered by [render.ts](../../src/core/telemetry/render.ts).
+
+### 62. Chat Route
+- **Definition**: The target, model and thinking level that answer the operator, saved as `chat.target`, `chat.model` and `chat.thinkingLevel`. A session owns its live copy. When an existing home has no chat route, startup detects one from configured targets, environment keys, stored logins and loopback servers and saves it only when no chat route exists. A saved route that cannot be used is kept: a missing credential opens the session unavailable, and a target with no model or a runtime that cannot drive the main agent exits 2. See [chat route detection](configuration-and-targets.md#chat-route-detection).
+- **Owning Type**: `DetectedChatRoute` in [detect-chat-routes.ts](../../src/cli/detect-chat-routes.ts); the verdict is `DefaultTargetVerdict` in [default-target.ts](../../src/cli/default-target.ts).
+
+### 63. Route Provenance
+- **Definition**: Where each active model route comes from: the `chat`, `memory`, `compaction` and `fleet` routes each report `session`, `project`, `user`, `built-in`, or `chat` when the route is unset and follows the chat route. It is recomputed from live state on every read, so a compaction summary that dropped a session-only route cannot decide what PanCode says about it.
+- **Owning Type**: `RouteProvenance` in [route-provenance.ts](../../src/core/route-provenance.ts).
+
+### 64. Settled
+- **Definition**: The outcome label every route history entry carries, from `routeSettledLabel` over the run's `run.settled`: `success`, else the run's most specific outcome code, else `permission_required`, else `failure` or the run's outcome. Route history is a fold over settled runs, so the label is computed on read and never stored. Adaptive routing reads quality labels and reliability and does not read `settled`.
+- **Owning Type**: `routeSettledLabel` in [route-history.ts](../../src/domains/telemetry/route-history.ts).
+
+### 65. Operator Notes
+- **Definition**: The `<operator-notes>` block of a compaction summary, a bounded list of things the operator asked PanCode to keep. Each compaction collects the notes already in earlier summaries, sentences in the operator's own messages that open with `remember`, `keep in mind` or `don't forget`, and the instructions given to `/compact`. Instructions to `/compact` also bind the summarizer through an `<operator-instructions>` block and are kept verbatim in the notes. A note is clipped to 400 characters, the block keeps the latest 30, and notes are XML-escaped inside it.
+- **Owning Type**: `extractOperatorNotes` and `formatOperatorNotes` in [compact.ts](../../src/domains/session/compaction/compact.ts).
+
+### 66. Run Result Facts
+- **Definition**: The compact terminal facts of a finished run, read from the read model's run DTO over its sealed run scope: outcome and outcome code, exit code, token and tool counts, duration, changed paths, placement, result contract and the trust status authenticated by the run seal. One module produces them for the TUI worker block (live and replayed) and for ACP terminal fleet frames, so every interface draws the same numbers from the same record. A run that has not settled reads as `result unavailable` and never fails a render.
+- **Owning Type**: `RunResultSummary` and `RunResultFacts` in [run-result-facts.ts](../../src/domains/dispatch/run-result-facts.ts).
+
+### 67. PanCode
+- **Definition**: The product. It is referred to by name and has no gender.
+
+### 68. Plugin
+- **Definition**: An Agent Plugin: a package with a root `plugin.json` that carries content only (skills, agents, prompt templates and playbooks). Product-specific content lives under the PanCode namespace, `extensions["dev.pancode"]` in `plugin.json` and the `dev.pancode/` directory. Installing a plugin never runs any code. A plugin is a different package from an extension, and the two never share a manifest, digest or consent.
+- **Owning Type**: `PluginManifest` in [types.ts](../../src/domains/plugins/types.ts).
+
+### 69. Extension
+- **Definition**: Code that runs in its own process, declared in `pancode-extension.yaml` with runtime api 2: hooks, runtime tools named `extension_<id>__<tool>`, commands `/ext:<id>:<name>`, workspaces and skins, and interviews. The operator reviews its capability envelope before install and update, and the recorded envelope digest must match when it is applied and loaded. A runtime child runs under the OS sandbox when one exists. See [Extensions](harness-extensions.md).
+- **Owning Type**: `ExtensionRuntimeDeclarationV2` in [manifest-v2.ts](../../packages/sdk/src/pack/manifest-v2.ts).
+
+### 70. Pairing
+- **Definition**: The link from an extension to the one plugin it serves, written `plugin: <name>` in the extension manifest. Only a paired extension may answer that plugin's prompts (`replaces: prompt`), and only while the plugin is installed and enabled. The runtime reports the plugin through `snapshot.plugin`. The plugin keeps a working fallback when the extension is absent.
+
+### 71. PanHub
+- **Definition**: The curated collection of installable packs in `hub/packs/` with its pinned index `hub/index.yaml`. `pancode hub install plugin:<name>` or `extension:<name>` installs one, `/hub` browses it (including an Extensions tab), and `pancode hub components` lists the components that installed and core packs provide, by kind.
+
+### 72. Playbook
+- **Definition**: A declared multi-step coordination workflow that the fleet runs. Its kind is `playbook`, a plugin carries playbooks under the resource key `playbooks`, and the directories are `playbooks/` in a pack, the config directory, `.pancode/` and the builtins. `pancode playbook new|validate|graph|list|commands` authors and checks them, and `pancode fleet run <playbook>` or `/fleet run <playbook>` runs one.
+- **Owning Type**: `Playbook` in [playbook.ts](../../src/domains/agents/playbook.ts).
+
+### 73. Component
+- **Definition**: One discoverable unit a package or PanCode itself provides: a skill, an agent, a prompt template or a playbook. A package holds components, and `pancode hub components` reads them with their owner, origin and invocation.
+
+### 74. Safety Judge
+- **Definition**: The model that reviews, at autonomy `default` and contained `yolo`, each main-session call that would park for an operator approval, and each ordinary worker ask under `fleet.permissions.mode: judge`. It reads only the operator's messages and the redacted call, then allows it, blocks it back to the model with a rule and a reason, or gives no verdict, which sends the call to the operator. Three consecutive or twenty total blocks in a session hand the next call to the operator. Configured by `safety.judge`.
+- **Owning Type**: `SafetyJudgeSeat` and `createSafetyJudge` in [safety-judge.ts](../../src/domains/safety/safety-judge.ts).
+
+### 75. Yolo Floor
+- **Definition**: The short list of actions blocked at every autonomy level: deleting or overwriting `/`, the home directory or a system tree, `mkfs`, `wipefs`, writes to a block device, fork bombs, writes into PanCode's own config, data, state and cache trees, a workspace trust grant or a PanCode settings, credential or trust command run from a tool call, and reads of its credential store. A floor block carries reason code `yolo-floor:<rule id>` and no judge or approval clears it.
+- **Owning Type**: `YOLO_FLOOR_RULE_IDS` in [yolo-floor.ts](../../src/domains/safety/yolo-floor.ts).
+
+### 76. Containment
+- **Definition**: Running the main session's `bash`, `run_script` and command-running `verify` calls at autonomy `default` inside the main-session sandbox, which lets only the workspace, the scratch roots, a private sandbox cache and the repository's git dirs be written, hides credentials and the SSH agent, and keeps the network on. A contained call needs no approval for what PanCode cannot read in its command text; a call with `unsandboxed: true` is not contained and asks, so the safety judge reviews it first, and one that reaches outward is not contained either.
+- **Owning Type**: `mainShellContained` and `mainSandboxPolicy` in [main-session.ts](../../src/core/sandbox/main-session.ts); `outwardShellReason` in [containment.ts](../../src/domains/safety/containment.ts).
+
+### 77. Workspace Snapshot
+- **Definition**: A private Git commit of the work tree that PanCode writes before the main agent's first mutating call of a turn and before every destructive call, stored at `refs/pancode/snapshots/<session>/<n>` without touching the operator's index, HEAD or branches. It also pins HEAD, the stash entries and any branch a delete removes under `refs/pancode/snapshots/<session>/pins/<n>/`. `/rewind` restores files from one. Controlled by `safety.snapshots`.
+- **Owning Type**: `WorkspaceSnapshots` in [store.ts](../../src/domains/workspace-snapshots/store.ts).
+
+### 78. Source Pack
+- **Definition**: The single file, `dist/assets/source.pack`, that holds PanCode's own `.ts` source in an installed npm package, one brotli stream per file behind a JSON index. `read`, `code_nav` and the component inventory open packed files; `grep`, `find` and `bash` do not see them. A built source checkout has a pack too, but its real files take precedence. See [What the npm package ships](installation-and-lifecycle.md#8-what-the-npm-package-ships).
+- **Owning Type**: `readPackedSource` in [source-pack.ts](../../src/core/source-pack.ts).
+
+### 79. Pinned Asset
+- **Definition**: An optional file PanCode downloads on first use from a fixed URL, checks against a pinned sha256 and caches under the cache root: the Ruby and C# code map grammars, the `data` tool's HDF5 and Parquet readers, and the Julia-1 tokenizer. A failed grammar or reader download is recorded beside the cache path so no process retries it for 10 minutes; when that record cannot be written, the next process tries again at once. See [First-use downloads and air-gapped hosts](installation-and-lifecycle.md#9-first-use-downloads-and-air-gapped-hosts).
+- **Owning Type**: `PinnedAsset` in [pinned-asset.ts](../../src/core/pinned-asset.ts).
+
+### 80. Sweep
+- **Definition**: A set of run directories for one experiment, checked run by run with a verify catalog check that declares `runs`: `verify(check="<check>/<run>")` appends the run directory to the check's command and refuses a bare call or a run outside that directory. See [Project verifier catalog](tool-usage.md#project-verifier-catalog).
+- **Owning Type**: The `runs` field of a verify catalog check in [catalog.ts](../../src/tools/verify/catalog.ts).
+
+### 81. Research campaign
+- **Definition**: A budgeted hill climb started by `pancode research start` on one metric of one verifier check. Each iteration runs PanCode's agent in a fresh worktree. The change is kept on the branch `pancode/research/<id>` only when interleaved trials and a seeded bootstrap interval show an improvement over the current best and every gate check passes. The campaign's spec, journal and raw samples are stored under `.pancode/research/<id>/`, and `research report` regrades them. See [Research and Arena](research-and-arena.md#research-a-verified-hill-climb).
+- **Owning Type**: `ResearchCampaign` in [types.ts](../../src/domains/research/types.ts).
+
+### 82. Arena match
+- **Definition**: One prompt run by `pancode arena run` on 2 to 4 target/model contenders, each in its own worktree. They are shown under blind labels in a seeded order until you vote. Standings are built from those votes and never from a model's judgment. See [Research and Arena](research-and-arena.md#arena-blind-side-by-side-comparison).
+- **Owning Type**: `ArenaMatch` in [types.ts](../../src/domains/arena/types.ts).
+
+### 83. Model tier
+- **Definition**: How much scaffolding a model needs: `small` (explicit steps, short context), `standard`, or `frontier` (terse intent, room to plan). Unless `models.<id>.tier` sets it, the tier is guessed in order: a known window under 32,768 tokens is `small`; a parameter count in the model id under 20B is `small` and 20B or more `standard`; a cloud or subscription catalog model with a window of at least 128,000 tokens is `frontier`, unless its id names a reduced variant such as `mini` or `haiku`; everything else is `standard`. Hooks and api 2 extension hooks receive it on the running `model`, and prompt templates pick per-tier `variants` and gate `turnPolicy` with it. The system prompt never reads it, so a tier change never breaks a cached prefix.
+- **Owning Type**: `ModelTier` and `defaultModelTier` in [model-tier.ts](../../src/core/model-tier.ts).
+
+### 84. Model campaign
+- **Definition**: One seeded project run by `pancode campaign run` across a roster of models, one entry at a time. Each entry gets a fresh copy of the fixture and its own empty data, state and cache directories, runs headless with the same `--answers` file, and reports its status, extension gates reached, refusals, loop-guard blocks, tokens and wall time. Not to be confused with a research campaign, which hill-climbs one metric.
+- **Owning Type**: `runCampaign` in [runner.ts](../../src/domains/campaign/runner.ts).
+
+### 85. Answers file
+- **Definition**: The YAML file `pancode run --answers <file>` reads to answer, ahead of time, the questions only the author may answer in a headless run: extension interview steps and `operator_only` `ask_user` questions. Each entry matches one question by checkpoint `id`, `header` or a `match` regular expression and gives a `choice`, a `note`, or both. A matched answer is recorded as scripted; an author question no entry matches ends the run with exit `5`. See [Exit codes](exit-codes-and-output.md#exit-code-contract).
+- **Owning Type**: `ScriptedAnswers` and `loadScriptedAnswers` in [run-answers.ts](../../src/cli/run-answers.ts).

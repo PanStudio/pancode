@@ -1,0 +1,178 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { CallRowV1, FactMetric, Quantity } from "../../core/telemetry/dto.js";
+import type { EconomyQuantities } from "../../core/telemetry/economy.js";
+import { factKnownValue } from "../../core/telemetry/known.js";
+import { renderCompactCount, renderCount } from "../../core/telemetry/render.js";
+import type { TelemetryView } from "../../domains/telemetry/contract.js";
+import { RATE_MIN_WINDOW_MS } from "../../session-control/assistant-generation-timing.js";
+import { type ReasoningUsageView, reasoningFromQuantity } from "../status/reasoning.js";
+import { measuredCount, turnQuantityReader, turnSpend } from "../turn-spend.js";
+
+/**
+ * What the footer shows of the session's spend, read from the telemetry read model's live view (#434 §11.3): the
+ * whole session's tokens and cost across every branch, the newest turn's tokens, and the newest main call's prompt
+ * cache. Every string is the canonical renderer's, so an unknown cache read reads `?`, never `0`.
+ */
+export interface FooterSpend {
+	/** Whole-session tokens, compact; null before the session made any call. */
+	tokens: string | null;
+	/**
+	 * The measured part of the whole-session tokens, or null when no call measured any. The footer states only this, as
+	 * the receipt and the turn row do; the bound with its unknown calls stays in Detailed and /usage.
+	 */
+	measuredTokens: string | null;
+	/** Whole-session cost; null before anything could be charged. */
+	cost: string | null;
+	/** Calls that never reached a provider, or null when there are none. */
+	neverSent: string | null;
+	/**
+	 * The newest turn's measured tokens across every call it made, workers included, and the reasoning those calls
+	 * journaled. Each amount is null when no call measured it: like the receipt, this row states only what was measured,
+	 * because a bound such as `≥~25.2k +?` is true but unreadable here, and /usage keeps it (HS21).
+	 */
+	turn: {
+		/** The uncached input, as the turn receipt's and /usage's `in`; `cacheRead` beside it is the cached part. */
+		input: string | null;
+		/** The whole prompt, cached reads included, which the live chip labels `prompt`. */
+		prompt: string | null;
+		output: string | null;
+		cacheRead: string | null;
+		cacheWrite: string | null;
+		reasoning: ReasoningUsageView;
+		/**
+		 * The turn's model calls as its receipt counts them, so the Work card and the `✓ Done` line agree; null when
+		 * the receipt would name none either. Worker runs still going are left out, as the receipt leaves them.
+		 */
+		calls: number | null;
+	} | null;
+	/** The newest main call's prompt-cache split and verdict. */
+	promptCache: { read: string; write: string; uncached: string; verdict: string } | null;
+	/** The newest main call's speed once it settles; the streaming turn's live rate is the footer's own. */
+	speed: FooterSpeed | null;
+	/** The session's economics total as the S10 projection folds it, which the receipt chips render; fees stay out. */
+	economy?: EconomyQuantities;
+	/** The targets the projection's calls drew on, which link the quota accounts whose window leads the receipt. */
+	economyTargets?: readonly string[];
+}
+/**
+ * Output over the call's generation time (first token to settle) and its TTFT (send to first token), both journaled
+ * facts of one call (#434). The rate is null unless both facts are known and the generation lasted RATE_MIN_WINDOW_MS.
+ */
+export interface FooterSpeed {
+	tokensPerSecond: number | null;
+	estimated: boolean;
+	/** The read model's TTFT display; null when the call has none to show. */
+	ttft: string | null;
+	/** The route that call ran on, which is the only route its rate says anything about. */
+	targetId: string;
+	modelId: string;
+}
+/** `unavailable` means no read model; `reading` means the live view is still merging its cold read. */
+export type FooterTelemetry = { kind: "unavailable" } | { kind: "reading" } | ({ kind: "ready" } & FooterSpend);
+
+const contributed = (quantity: Quantity): boolean =>
+	"kind" in quantity.fact
+		? quantity.fact.kind !== "absent"
+		: quantity.fact.coverage.measured + quantity.fact.coverage.estimated + quantity.fact.unknownCount > 0;
+const zero = (quantity: Quantity): boolean =>
+	"kind" in quantity.fact
+		? quantity.fact.kind === "measured" && quantity.fact.value === 0
+		: quantity.fact.unknownCount === 0 && factKnownValue(quantity.fact) === 0;
+
+const spends = new WeakMap<TelemetryView, FooterTelemetry>();
+
+const knownValue = (quantity: Quantity): { value: number; estimated: boolean } | null =>
+	"kind" in quantity.fact && (quantity.fact.kind === "measured" || quantity.fact.kind === "estimated")
+		? { value: quantity.fact.value, estimated: quantity.fact.kind === "estimated" }
+		: null;
+
+function footerSpeed(call: CallRowV1): FooterSpeed {
+	const output = call.usage ? knownValue(call.usage.output) : null;
+	const generation = knownValue(call.timing.modelTime);
+	const ttft = knownValue(call.timing.ttft);
+	return {
+		tokensPerSecond:
+			output && generation && generation.value >= RATE_MIN_WINDOW_MS ? output.value / (generation.value / 1000) : null,
+		estimated: output?.estimated === true || generation?.estimated === true,
+		ttft: ttft ? call.timing.ttft.display : null,
+		targetId: call.target.targetId,
+		modelId: call.target.requestedModel,
+	};
+}
+
+/**
+ * The session's tokens as the read model displays them, without the `≥ … +?` bound the row has no room to explain:
+ * the measured part alone read `session 1.7k tokens` beside /usage's `≥~27,316` and the exit card's `≥27,252`.
+ */
+function knownSessionCount(quantity: Quantity): string | null {
+	// One mark at most, the one /usage and the exit card give the same sum: `≥` while some call reported nothing, and
+	// no `~`, whose calls those surfaces name in words. The footer said `~27.3k` beside `≥27,252` in /usage.
+	const figure = renderCompactCount(quantity.fact)
+		.replace(/^(≥?)~/u, "$1")
+		.replace(/ \+\?$/u, "");
+	return figure === "?" || figure === "n/a" ? null : figure;
+}
+
+export function footerTelemetry(view: TelemetryView | null | undefined): FooterTelemetry {
+	if (!view) return { kind: "unavailable" };
+	if (view.seeding) return { kind: "reading" };
+	const cached = spends.get(view);
+	if (cached) return cached;
+	const session = view.session();
+	const neverSent = session.own.counts.dispositions.neverSent;
+	const main = view.calls({ roles: ["main"], limit: 1 }).calls[0];
+	const turnId = main?.owner.turnId;
+	const readTurn = turnId === undefined ? null : turnQuantityReader(view, turnId, "session");
+	const turnQuantity = (metric: FactMetric): Quantity | null => readTurn?.(metric) ?? null;
+	const turnCount = (metric: FactMetric): string | null => {
+		const quantity = turnQuantity(metric);
+		return quantity ? measuredCount(quantity) : null;
+	};
+	const economy = view.economy();
+	const spend: FooterTelemetry = {
+		kind: "ready",
+		tokens: contributed(session.totals.tokens) ? renderCompactCount(session.totals.tokens.fact) : null,
+		measuredTokens: contributed(session.totals.tokens) ? knownSessionCount(session.totals.tokens) : null,
+		cost: contributed(session.totals.usd) ? session.totals.usd.display : null,
+		neverSent:
+			contributed(neverSent) && !zero(neverSent) && !("kind" in neverSent.fact)
+				? `${renderCount(neverSent.fact.measured)} never sent`
+				: null,
+		turn:
+			turnId === undefined
+				? null
+				: {
+						input: turnCount("input"),
+						prompt: turnCount("prompt"),
+						output: turnCount("output"),
+						cacheRead: turnCount("cacheRead"),
+						cacheWrite: turnCount("cacheWrite"),
+						reasoning: reasoningFromQuantity(turnQuantity("reasoning")),
+						calls:
+							turnSpend(
+								view,
+								turnId,
+								undefined,
+								"session",
+								view
+									.runs()
+									.filter((run) => run.turnId === turnId && run.terminalReason === null)
+									.map((run) => run.runId),
+							)?.calls ?? null,
+					},
+		promptCache: main?.usage
+			? {
+					read: renderCompactCount(main.usage.cacheRead.fact),
+					write: renderCompactCount(main.usage.cacheWrite.fact),
+					uncached: renderCompactCount(main.usage.input.fact),
+					verdict: main.cache.verdict,
+				}
+			: null,
+		speed: main ? footerSpeed(main) : null,
+		economy: economy.total,
+		economyTargets: economy.groups.target.map((group) => group.key),
+	};
+	spends.set(view, spend);
+	return spend;
+}

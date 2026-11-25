@@ -1,0 +1,188 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { PANCODE_COMMIT_IDENTITY } from "../../src/core/commit-attribution.js";
+import { setGitCommitAttributionEnabled, setGitCommitAuthorSetting } from "../../src/core/git-commit-attribution.js";
+import {
+	cleanupFleetChangeReturn,
+	importFleetChanges,
+	prepareFleetChangeReturn,
+} from "../../src/domains/dispatch/fleet-change-return.js";
+import { applyTaskWorktree, createTaskWorktree } from "../../src/tools/task-worktree.js";
+import { previewTaskWorktree } from "../../src/tools/task-worktree-preview.js";
+import type { IsolatedPancodeEnv } from "../harness/scratch-env.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+const HUMAN = "Contract <contract@example.invalid>";
+
+function git(root: string, ...args: string[]): string {
+	return execFileSync("git", ["-C", root, "-c", "core.hooksPath=/dev/null", ...args], {
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	}).trim();
+}
+
+const node = { id: "worker", host: "worker.invalid" };
+
+describe("SSH task change return", () => {
+	let env: IsolatedPancodeEnv;
+	let client: string;
+	let server: string;
+	beforeEach(async () => {
+		env = await isolatePancodeEnv("pancode-ssh-return-");
+		client = join(env.dir, "client");
+		server = join(env.dir, "server");
+		const bin = join(env.dir, "bin");
+		mkdirSync(client);
+		mkdirSync(bin);
+		git(client, "init", "-q", "-b", "main");
+		git(client, "config", "user.name", "Contract");
+		git(client, "config", "user.email", "contract@example.invalid");
+		git(client, "config", "commit.gpgsign", "false");
+		writeFileSync(join(client, "math.js"), "export const add = (a, b) => a + b;\n");
+		git(client, "add", ".");
+		git(client, "commit", "-qm", "base");
+		git(client, "clone", "-q", client, server);
+		git(server, "config", "commit.gpgsign", "false");
+		// The fake channel maps identical node paths onto an independent local clone.
+		// Upload-pack must keep its stdin live; only Node operations consume JSON.
+		writeFileSync(
+			join(bin, "ssh"),
+			`#!/usr/bin/env node
+const fs=require('node:fs'),cp=require('node:child_process');
+const client=${JSON.stringify(client)},server=${JSON.stringify(server)};
+// Parsed as real ssh does: options, one host, then everything left is the remote command.
+const words=process.argv.slice(2);
+for(;;){if(['-o','-p','-i','-l'].includes(words[0]))words.splice(0,2);else if(words[0]==='-T')words.shift();else break;}
+words.shift();
+if(words[0]==='--')words.shift();
+const command=words.join(' ').split(client).join(server);
+const operation=command.startsWith('node -e ');
+const options={stdio:operation?['pipe','inherit','inherit']:'inherit'};
+if(operation)options.input=fs.readFileSync(0,'utf8').split(client).join(server);
+const result=cp.spawnSync('sh',['-c',command],options);
+process.exit(result.status??1);
+`,
+			{ mode: 0o755 },
+		);
+		process.env.PATH = `${bin}:${process.env.PATH}`;
+	});
+	afterEach(() => env.restore());
+
+	it("imports an allowed commit only into the task tree before guarded application and cleanup", async () => {
+		const worktree = createTaskWorktree(client, "allowed");
+		const remote = await prepareFleetChangeReturn(node, worktree);
+		const remotePath = worktree.path.replace(client, server);
+		const content = "export const add = (a, b) => Number(a) + Number(b);\n";
+		writeFileSync(join(remotePath, "math.js"), content);
+		writeFileSync(join(remotePath, "sum.js"), "export const sum = 0;\n");
+		mkdirSync(join(remotePath, "__pycache__"));
+		writeFileSync(join(remotePath, "__pycache__", "x.pyc"), "byproduct\n");
+		const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+		writeFileSync(
+			join(env.dir, "bin", "git"),
+			`#!/usr/bin/env node
+const fs=require('node:fs'),cp=require('node:child_process');
+const args=process.argv.slice(2),remotePath=${JSON.stringify(remotePath)};
+const result=cp.spawnSync(${JSON.stringify(realGit)},args,{stdio:'inherit'});
+if(result.status===0&&args[args.indexOf('-C')+1]===remotePath&&args.includes('commit'))fs.writeFileSync(remotePath+'/late.txt','created after commit\\n');
+process.exit(result.status??1);
+`,
+			{ mode: 0o755 },
+		);
+		setGitCommitAttributionEnabled(true);
+		setGitCommitAuthorSetting("auto");
+		const imported = await importFleetChanges(remote, [join(worktree.path, "sum.js")], [worktree.path], []);
+		const { commit } = imported;
+		strictEqual(
+			git(worktree.path, "log", "-1", "--format=%an <%ae>|%cn <%ce>|%(trailers:only)", commit),
+			`${PANCODE_COMMIT_IDENTITY}|${HUMAN}|Co-authored-by: ${HUMAN}`,
+		);
+		strictEqual(git(worktree.path, "show", "--name-only", "--format=", commit), "math.js\nsum.js");
+		deepStrictEqual(imported.leftUncommitted, { count: 2, paths: ["__pycache__/x.pyc", "late.txt"] });
+		strictEqual(readFileSync(join(remotePath, "late.txt"), "utf8"), "created after commit\n");
+		strictEqual(git(client, "rev-parse", "HEAD"), worktree.base);
+		strictEqual(git(worktree.path, "rev-parse", "HEAD"), commit);
+		strictEqual(readFileSync(join(worktree.path, "math.js"), "utf8"), content);
+		const applied = applyTaskWorktree({
+			worktree,
+			apply: "merge",
+			preview: previewTaskWorktree(worktree, commit),
+			authoredPaths: [],
+		});
+		strictEqual(applied.applied, true);
+		strictEqual(readFileSync(join(client, "math.js"), "utf8"), content);
+		await cleanupFleetChangeReturn(remote, imported);
+		strictEqual(existsSync(remotePath), false);
+		strictEqual(git(server, "branch", "--list", "--format=%(refname:short)", worktree.branch), "");
+	});
+
+	it("names the identities a local commit would record, quoting nothing through a shell", async () => {
+		const committer = `O'Brien "Q" Op <ob@example.invalid>`;
+		git(client, "config", "committer.name", `O'Brien "Q" Op`);
+		git(client, "config", "committer.email", "ob@example.invalid");
+		setGitCommitAttributionEnabled(true);
+		const importOne = async (label: string) => {
+			const worktree = createTaskWorktree(client, label);
+			const remote = await prepareFleetChangeReturn(node, worktree);
+			writeFileSync(join(worktree.path.replace(client, server), `${label}.txt`), `${label}\n`);
+			const { commit } = await importFleetChanges(remote, null, [worktree.path], []);
+			return git(worktree.path, "log", "-1", "--format=%an <%ae>|%cn <%ce>|%(trailers:only)", commit);
+		};
+		setGitCommitAuthorSetting("auto");
+		strictEqual(await importOne("auto"), `${PANCODE_COMMIT_IDENTITY}|${committer}|Co-authored-by: ${committer}`);
+		setGitCommitAuthorSetting("human");
+		process.env.GIT_AUTHOR_NAME = "Env Author";
+		process.env.GIT_AUTHOR_EMAIL = "env@example.invalid";
+		try {
+			strictEqual(await importOne("human"), `Env Author <env@example.invalid>|${committer}|`);
+		} finally {
+			delete process.env.GIT_AUTHOR_NAME;
+			delete process.env.GIT_AUTHOR_EMAIL;
+		}
+	});
+
+	it("refuses a changed node baseline before creating a remote branch", async () => {
+		const worktree = createTaskWorktree(client, "wrong-base");
+		writeFileSync(join(server, "math.js"), "export const add = () => 0;\n");
+		git(server, "add", ".");
+		git(server, "-c", "user.name=Contract", "-c", "user.email=contract@example.invalid", "commit", "-qm", "changed base");
+		await rejects(prepareFleetChangeReturn(node, worktree), /baseline or clean tree changed/);
+		strictEqual(git(client, "rev-parse", "HEAD"), worktree.base);
+		strictEqual(git(server, "branch", "--list", "--format=%(refname:short)", worktree.branch), "");
+	});
+
+	it("refuses a path outside the permit and preserves the remote branch and worktree", async () => {
+		const worktree = createTaskWorktree(client, "outside-permit");
+		const remote = await prepareFleetChangeReturn(node, worktree);
+		const remotePath = worktree.path.replace(client, server);
+		writeFileSync(join(remotePath, "outside.txt"), "preserve this rejected change\n");
+		await rejects(importFleetChanges(remote, null, [join(worktree.path, "math.js")], []), /path outside write permit/);
+		strictEqual(git(client, "rev-parse", "HEAD"), worktree.base);
+		strictEqual(git(worktree.path, "rev-parse", "HEAD"), worktree.base);
+		ok(existsSync(remotePath));
+		strictEqual(git(server, "branch", "--list", "--format=%(refname:short)", worktree.branch), worktree.branch);
+		strictEqual(readFileSync(join(remotePath, "outside.txt"), "utf8"), "preserve this rejected change\n");
+		const vendor = join(remotePath, "vendor");
+		git(remotePath, "clone", "-q", server, vendor);
+		mkdirSync(join(vendor, "src"));
+		writeFileSync(join(vendor, "src", "worker.txt"), "before preview\n");
+		const imported = await importFleetChanges(remote, [], [worktree.path], []);
+		deepStrictEqual(imported.leftUncommitted, { count: 1, paths: ["vendor/"] });
+		await rejects(
+			cleanupFleetChangeReturn(remote, imported),
+			/untracked directory vendor\/; destructive cleanup refused/,
+		);
+		writeFileSync(join(vendor, "src", "worker.txt"), "after preview\n");
+		await rejects(
+			cleanupFleetChangeReturn(remote, imported),
+			/untracked directory vendor\/; destructive cleanup refused/,
+		);
+		strictEqual(readFileSync(join(vendor, "src", "worker.txt"), "utf8"), "after preview\n");
+		strictEqual(git(server, "branch", "--list", "--format=%(refname:short)", worktree.branch), worktree.branch);
+	});
+});

@@ -1,0 +1,402 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { type Static, Type } from "typebox";
+import { Id, Problem } from "./common.js";
+import { ContextActivity, ContextOperationStatus } from "./context-work.js";
+import { FleetItem, HealthItem } from "./fleet-events.js";
+import { Permission } from "./permissions.js";
+import { ACP_MAX_JOBS } from "./runtime.js";
+import { SessionConfig } from "./session-config.js";
+import { SessionTelemetry } from "./session-telemetry.js";
+import { AcpJob, AcpTurnMetaSchema, AcpUsageMetaSchema } from "./wire.js";
+
+const closed = { additionalProperties: false };
+const string = Type.String();
+const nullableString = Type.Union([string, Type.Null()]);
+export const Workspace = Type.Object(
+	{ id: Id, path: Type.String({ maxLength: 4096 }), name: string, openedAt: string },
+	closed,
+);
+export type Workspace = Static<typeof Workspace>;
+/** Completion of a typed workspace path. `display` keeps the user's spelling; `path` is what the server opens. */
+export const PathCompletion = Type.Object(
+	{
+		input: Type.String({ maxLength: 4096 }),
+		resolvedParent: Type.Union([Type.String({ maxLength: 4096 }), Type.Null()]),
+		matches: Type.Array(
+			Type.Object(
+				{
+					name: Type.String({ maxLength: 512 }),
+					path: Type.String({ maxLength: 4096 }),
+					display: Type.String({ maxLength: 4608 }),
+				},
+				{ additionalProperties: false },
+			),
+			{ maxItems: 50 },
+		),
+		commonPrefix: Type.String({ maxLength: 4608 }),
+		isDirectory: Type.Boolean(),
+		separator: Type.Union([Type.Literal("/"), Type.Literal("\\")]),
+		truncated: Type.Boolean(),
+	},
+	{ additionalProperties: false },
+);
+export type PathCompletion = Static<typeof PathCompletion>;
+/**
+ * One workspace file, read for a person to look at. The server reads it only when it resolves inside the
+ * workspace, is a regular file, is not under `.git` and is not one of the secret files the agent's own
+ * read tool refuses; anything else answers with why it is not shown, never with its bytes.
+ */
+export const FilePreview = Type.Union([
+	Type.Object(
+		{
+			status: Type.Literal("text"),
+			/** Relative to the workspace root with `/` separators. */
+			path: Type.String({ maxLength: 4096 }),
+			text: Type.String({ maxLength: 262_144 }),
+			/** Bytes on disk; larger than `text` when the read stopped at the preview limit. */
+			size: Type.Integer({ minimum: 0 }),
+			truncated: Type.Boolean(),
+		},
+		{ additionalProperties: false },
+	),
+	Type.Object(
+		{
+			status: Type.Union([
+				Type.Literal("binary"),
+				Type.Literal("withheld"),
+				Type.Literal("missing"),
+				Type.Literal("outside"),
+				Type.Literal("not-a-file"),
+			]),
+			path: Type.String({ maxLength: 4096 }),
+			reason: Type.String({ maxLength: 512 }),
+		},
+		{ additionalProperties: false },
+	),
+]);
+export type FilePreview = Static<typeof FilePreview>;
+/** Files and folders under one workspace that match a typed `@path`, as paths relative to its root. */
+export const FileCompletion = Type.Object(
+	{
+		matches: Type.Array(
+			Type.Object(
+				{
+					name: Type.String({ maxLength: 512 }),
+					/** Relative to the workspace root with `/` separators; a folder ends in `/`. */
+					path: Type.String({ maxLength: 4096 }),
+					directory: Type.Boolean(),
+				},
+				{ additionalProperties: false },
+			),
+			{ maxItems: 50 },
+		),
+		truncated: Type.Boolean(),
+	},
+	{ additionalProperties: false },
+);
+export type FileCompletion = Static<typeof FileCompletion>;
+export const WorkspacePick = Type.Union([
+	Type.Object(
+		{ status: Type.Literal("picked"), path: Type.String({ maxLength: 4096 }) },
+		{ additionalProperties: false },
+	),
+	Type.Object({ status: Type.Literal("cancelled") }, { additionalProperties: false }),
+	Type.Object(
+		{ status: Type.Literal("unavailable"), reason: Type.String({ maxLength: 1024 }) },
+		{ additionalProperties: false },
+	),
+]);
+export type WorkspacePick = Static<typeof WorkspacePick>;
+/**
+ * Another process holds this saved session open: a terminal, a headless run, or another app. The app reads its
+ * history but sends nothing into it until the operator takes it over (#439).
+ */
+export const LiveElsewhere = Type.Object(
+	{
+		surface: Type.Union([
+			Type.Literal("terminal"),
+			Type.Literal("headless"),
+			Type.Literal("app"),
+			Type.Literal("process"),
+		]),
+		since: string,
+		host: Type.String({ maxLength: 255 }),
+		pid: Type.Integer({ minimum: 1 }),
+		/** Its heartbeat is older than the stale bound, so only a forced release frees it. */
+		stale: Type.Boolean(),
+		/** A live record exists, which is what `session terminate` acts on. */
+		canTakeOver: Type.Boolean(),
+	},
+	closed,
+);
+export type LiveElsewhere = Static<typeof LiveElsewhere>;
+/** A saved session's history as Markdown, read from its ledger without starting an engine for it. */
+export const StoredTranscript = Type.Object(
+	{ markdown: Type.String({ maxLength: 1_048_576 }), turns: Type.Integer({ minimum: 0 }), truncated: Type.Boolean() },
+	closed,
+);
+export type StoredTranscript = Static<typeof StoredTranscript>;
+export const TakeOverResult = Type.Object(
+	{ released: Type.Boolean(), message: Type.String({ maxLength: 2048 }) },
+	closed,
+);
+export type TakeOverResult = Static<typeof TakeOverResult>;
+export const SessionSummary = Type.Object(
+	{
+		id: Id,
+		workspaceId: Id,
+		createdAt: string,
+		endedAt: nullableString,
+		model: nullableString,
+		target: nullableString,
+		name: Type.Optional(string),
+		firstMessagePreview: Type.Optional(string),
+		messageCount: Type.Optional(Type.Integer()),
+		lastActivityAt: Type.Optional(string),
+		liveElsewhere: Type.Optional(LiveElsewhere),
+	},
+	closed,
+);
+export type SessionSummary = Static<typeof SessionSummary>;
+/** A turn's usage as read-model quantities, each a fact with its canonical display (#434). */
+export const Usage = Type.Pick(AcpUsageMetaSchema, ["quantities"], { additionalProperties: false });
+export type Usage = Static<typeof Usage>;
+export const Provenance = Type.Array(
+	Type.Object(
+		{
+			version: Type.Literal(1),
+			role: Type.Union([Type.Literal("orchestrator"), Type.Literal("worker")]),
+			agentId: string,
+			runId: Type.Optional(nullableString),
+			node: Type.Optional(nullableString),
+		},
+		closed,
+	),
+	{ maxItems: 16 },
+);
+export const Origin = Type.Union([Type.Literal("live"), Type.Literal("replay")]);
+export const TimelineItem = Type.Object(
+	{
+		id: string,
+		turnId: Id,
+		sequence: Type.Integer(),
+		kind: Type.Union([
+			Type.Literal("user"),
+			Type.Literal("text"),
+			Type.Literal("thought"),
+			Type.Literal("tool"),
+			Type.Literal("notice"),
+		]),
+		text: string,
+		status: string,
+		origin: Origin,
+		title: Type.Optional(string),
+		/**
+		 * The PanCode tool the call ran (the ACP frame's `name`). The title is display words, such as a shell command or
+		 * `read: app.py`, so the card and the group digest key on this; absent on snapshots kept before it was carried.
+		 */
+		toolName: Type.Optional(string),
+		toolKind: Type.Optional(string),
+		toolCallId: Type.Optional(string),
+		locations: Type.Optional(
+			Type.Array(Type.Object({ path: string, line: Type.Optional(Type.Union([Type.Integer(), Type.Null()])) }, closed)),
+		),
+		rawInput: Type.Optional(Type.Record(string, Type.Unknown())),
+		rawOutput: Type.Optional(Type.Record(string, Type.Unknown())),
+		/**
+		 * The running tool's newest CUMULATIVE output snapshot, present only while
+		 * the call is open and dropped the moment its terminal frame lands.
+		 *
+		 * It is deliberately not folded into `rawOutput`. `rawOutput` is the tool's
+		 * final structured result and is what the raw inspector renders; a progress
+		 * snapshot is neither final nor structured, and writing it there would make
+		 * a running call indistinguishable from a finished one and force the
+		 * inspector to re-walk a content array several times a second. A flat,
+		 * bounded string is replaced in O(1), which is the shape a live pane wants.
+		 */
+		partialOutput: Type.Optional(Type.String({ maxLength: 32768 })),
+		/** The engine's span for a settled call (`pancode/toolTiming`), live or recorded; absent when it reported none. */
+		durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
+		/** The engine's words while the safety judge holds this open call (`pancode/admission`); gone once admitted. */
+		admission: Type.Optional(Type.String({ maxLength: 128 })),
+		/**
+		 * Images a settled call returned (a browser screenshot), lifted out of its content so `rawOutput` stays
+		 * small: allow-listed raster types, base64 data, at most four per call.
+		 */
+		images: Type.Optional(
+			Type.Array(
+				Type.Object(
+					{
+						mimeType: Type.Union([
+							Type.Literal("image/png"),
+							Type.Literal("image/jpeg"),
+							Type.Literal("image/gif"),
+							Type.Literal("image/webp"),
+						]),
+						data: Type.String({ minLength: 1, maxLength: 1_048_576 }),
+					},
+					closed,
+				),
+				{ maxItems: 4 },
+			),
+		),
+		/** Local image files a settled call named instead of sending bytes (a route that takes no images). */
+		imageLinks: Type.Optional(
+			Type.Array(Type.Object({ path: Type.String({ maxLength: 4096 }), name: Type.String({ maxLength: 1024 }) }, closed), {
+				maxItems: 4,
+			}),
+		),
+		provenance: Type.Optional(Provenance),
+	},
+	closed,
+);
+export type TimelineItem = Static<typeof TimelineItem>;
+export const TurnDetails = AcpTurnMetaSchema;
+export const Turn = Type.Object(
+	{
+		id: Id,
+		prompt: string,
+		origin: Origin,
+		status: Type.Union([
+			Type.Literal("running"),
+			Type.Literal("succeeded"),
+			Type.Literal("failed"),
+			Type.Literal("cancelled"),
+		]),
+		startedAt: nullableString,
+		finishedAt: nullableString,
+		stopReason: nullableString,
+		usage: Type.Union([Usage, Type.Null()]),
+		details: Type.Optional(TurnDetails),
+		problem: Type.Union([Problem, Type.Null()]),
+		/** How many images this app sent with the request; a replayed turn does not know. */
+		images: Type.Optional(Type.Integer({ minimum: 1, maximum: 4 })),
+		/** How many text files this app sent with the request; a replayed turn does not know. */
+		files: Type.Optional(Type.Integer({ minimum: 1, maximum: 4 })),
+		/** The request is recorded and waiting for a turn slot; nothing has reached the model yet. */
+		queued: Type.Optional(Type.Literal(true)),
+	},
+	closed,
+);
+export type Turn = Static<typeof Turn>;
+/**
+ * `parked` is an open task whose agent process was stopped while nothing was
+ * running and no window showed it. The snapshot is kept and the process comes
+ * back when a window shows the task again.
+ */
+export const SessionState = Type.Union([
+	Type.Literal("starting"),
+	Type.Literal("open"),
+	Type.Literal("parked"),
+	Type.Literal("unknown"),
+	Type.Literal("closed"),
+	Type.Literal("failed"),
+]);
+export const SessionSnapshot = Type.Object(
+	{
+		id: Id,
+		workspaceId: Id,
+		state: SessionState,
+		revision: Type.Integer({ minimum: 0 }),
+		timeline: Type.Array(TimelineItem),
+		timelineTruncated: Type.Boolean(),
+		turns: Type.Array(Turn),
+		recoveredOrphan: Type.Boolean(),
+		label: nullableString,
+		config: Type.Optional(SessionConfig),
+		telemetry: Type.Optional(SessionTelemetry),
+		contextWork: Type.Optional(ContextOperationStatus),
+		permissions: Type.Array(Permission, { maxItems: 32 }),
+		fleet: Type.Array(FleetItem, { maxItems: 128 }),
+		// Session health, bounded far tighter than the fleet feed: a context
+		// meter and a footer status read the newest of each kind, not a history.
+		health: Type.Array(HealthItem, { maxItems: 32 }),
+		/** The session's recurring jobs, one entry per job at its newest revision; absent from an engine with none. */
+		jobs: Type.Optional(Type.Array(AcpJob, { maxItems: ACP_MAX_JOBS })),
+	},
+	closed,
+);
+export type SessionSnapshot = Static<typeof SessionSnapshot>;
+const base = { resource: Id, revision: Type.Integer({ minimum: 1 }) };
+const textPayload = Type.Object(
+	{ ...base, turnId: Id, text: string, origin: Origin, provenance: Type.Optional(Provenance) },
+	closed,
+);
+const permissionPayload = Type.Object({ ...base, permission: Permission }, closed);
+const fleetPayload = Type.Object({ ...base, item: FleetItem }, closed);
+const healthPayload = Type.Object({ ...base, item: HealthItem }, closed);
+export const SessionDeltas = {
+	"context.activity": Type.Object({ ...base, activity: ContextActivity }, closed),
+	"context.status": Type.Object({ ...base, status: ContextOperationStatus }, closed),
+	"session.telemetry": Type.Object({ ...base, telemetry: SessionTelemetry }, closed),
+	"turn.started": Type.Object({ ...base, turn: Turn }, closed),
+	/** A queued turn got its slot and its request went to the agent. */
+	"turn.admitted": Type.Object({ ...base, turnId: Id, startedAt: string }, closed),
+	"turn.text": textPayload,
+	"turn.thought": textPayload,
+	"turn.user": textPayload,
+	"turn.tool": Type.Object({ ...base, item: TimelineItem }, closed),
+	"turn.finished": Type.Object(
+		{
+			...base,
+			turnId: Id,
+			stopReason: string,
+			usage: Type.Union([Usage, Type.Null()]),
+			details: Type.Optional(TurnDetails),
+			problem: Type.Union([Problem, Type.Null()]),
+			finishedAt: nullableString,
+		},
+		closed,
+	),
+	"permission.requested": permissionPayload,
+	"permission.escalated": permissionPayload,
+	"permission.resolved": permissionPayload,
+	"permission.expired": permissionPayload,
+	"fleet.loopBlocked": fleetPayload,
+	"fleet.enqueued": fleetPayload,
+	"fleet.started": fleetPayload,
+	"fleet.progress": fleetPayload,
+	"fleet.completed": fleetPayload,
+	"fleet.failed": fleetPayload,
+	"evidence.ready": fleetPayload,
+	"health.compacted": healthPayload,
+	"health.contextWarning": healthPayload,
+	"health.toolBudget": healthPayload,
+	"health.provider": healthPayload,
+	"health.scopeNotice": healthPayload,
+	/** One job at a new revision; an equal or older revision than the held one changes nothing. */
+	"job.changed": Type.Object({ ...base, job: AcpJob }, closed),
+	/** The engine's list after a bind or resume, folded into the held set by revision. */
+	"job.listed": Type.Object({ ...base, jobs: Type.Array(AcpJob, { maxItems: ACP_MAX_JOBS }) }, closed),
+	"session.labelled": Type.Object({ ...base, label: nullableString }, closed),
+	"session.configured": Type.Object({ ...base, config: SessionConfig }, closed),
+	"session.changed": Type.Object({ ...base, state: SessionState, recoveredOrphan: Type.Boolean() }, closed),
+	/** The conversation moved to another branch; the replay that follows is the whole transcript. */
+	"session.reset": Type.Object({ ...base, reason: Type.Literal("branch") }, closed),
+};
+export type SessionDelta = {
+	[K in keyof typeof SessionDeltas]: { type: K; payload: Static<(typeof SessionDeltas)[K]> };
+}[keyof typeof SessionDeltas];
+/**
+ * The `_pancode/event` kinds this app opts into at `initialize`. Each is the
+ * engine's own EVENTS name, never a renamed alias, so the wire frame
+ * names its producer. The engine intersects this list with its own allowlist,
+ * so a kind listed here that it does not forward costs nothing.
+ */
+export const ACP_EVENT_KINDS = [
+	"safety.loop_blocked",
+	"run.enqueued",
+	"run.started",
+	"run.progressed",
+	"run.completed",
+	"run.failed",
+	"evidence.assessed",
+	"compaction.ended",
+	"context.activity_changed",
+	"context.warning_raised",
+	"safety.tool_budget_exceeded",
+	"provider.health_changed",
+	"run.scope_notice_raised",
+	"job.changed",
+] as const;

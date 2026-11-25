@@ -1,0 +1,274 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, strictEqual } from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { RESULT_CONTRACT_REPAIR_LIMIT } from "../../src/domains/agents/result-contract-repair.js";
+import { initializeScratchHome } from "../harness/headless-run.js";
+import {
+	closeServer,
+	seedOpenAICompatFleetDefault,
+	seedOpenAICompatToolOrchestrator,
+	startOpenAICompatFixture,
+} from "../harness/openai-compat-fixture.js";
+import { readRunJournal } from "../harness/run-journal.js";
+import { makeScratchHome } from "../harness/scratch-env.js";
+import { resolvedRunResult } from "../harness/settled-run.js";
+
+const CLI = fileURLToPath(new URL("../../dist/cli/index.js", import.meta.url));
+const fixture = JSON.parse(
+	readFileSync(new URL("../fixtures/scout-citation-pipeline.json", import.meta.url), "utf8"),
+) as {
+	prompt: string;
+	dispatch: Record<string, unknown>;
+	files: Record<string, string>;
+	findings: Array<{ claim: string; path: string; line: number }>;
+	dependentExplanation: string;
+};
+
+interface WireMessage {
+	role: string;
+	content?: unknown;
+	tool_call_id?: string;
+	tool_calls?: Array<{ id: string; function: { name: string } }>;
+}
+function messages(request: Record<string, unknown>): WireMessage[] {
+	return (request.messages ?? []) as WireMessage[];
+}
+function isScout(request: Record<string, unknown>): boolean {
+	return messages(request).some(
+		(message) =>
+			message.role === "system" && String(message.content).includes("You are Scout, a shadow reconnaissance agent"),
+	);
+}
+// The main session's requests carry dispatch; its round pinned to finish (fleet design 4.3) may carry finish alone, a
+// tool no worker registry holds.
+function isMain(request: Record<string, unknown>): boolean {
+	return (
+		Array.isArray(request.tools) &&
+		request.tools.some((tool) => tool.function?.name === "dispatch" || tool.function?.name === "finish")
+	);
+}
+function repairs(request: Record<string, unknown>): WireMessage[] {
+	return messages(request).filter(
+		(message) => message.role === "tool" && message.tool_call_id?.startsWith("pancode-result-contract-repair-"),
+	);
+}
+function report(line = 62): string {
+	return JSON.stringify({
+		findings: fixture.findings.map((finding) =>
+			finding.path === "findiff/interface.py" ? { ...finding, line } : finding,
+		),
+		needsSplit: false,
+		proposedSubtasks: [],
+	});
+}
+function run(args: string[], cwd: string, env: NodeJS.ProcessEnv) {
+	return new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
+		execFile(
+			process.execPath,
+			[CLI, ...args],
+			{ cwd, env, timeout: 45_000, maxBuffer: 4_000_000 },
+			(error, stdout, stderr) => {
+				if (error && typeof error.code !== "number") return reject(error);
+				resolve({ code: typeof error?.code === "number" ? error.code : 0, stdout, stderr });
+			},
+		);
+	});
+}
+
+// Scripted model responses exercise the real binary, worker reads, bounded
+// contract repairs, receipt sealing and pipeline dependency. They do not prove
+// that any configured model follows the recipe; root owns that acceptance.
+for (const scenario of ["first-pass", "repaired", "exhausted"] as const) {
+	test(`Scout citation pipeline: ${scenario}`, { timeout: 60_000 }, async (context) => {
+		const scratch = makeScratchHome("pancode-scout-pipeline-");
+		const server = await startOpenAICompatFixture(
+			(request) => {
+				if (isMain(request)) return "Pipeline outcomes are recorded in the dispatch receipt.";
+				if (!isScout(request)) {
+					return JSON.stringify({
+						completion: { state: "done", limitations: [], unverified: [] },
+						mutatedPaths: [],
+						validations: [
+							{
+								name: "Inspect supplied Scout findings",
+								passed: true,
+								evidence:
+									"The pipeline input identifies coordinate storage at findiff/grids.py:31 and grid conversion at findiff/interface.py:62.",
+							},
+						],
+						summary: fixture.dependentExplanation,
+					});
+				}
+				const count = repairs(request).length;
+				if (scenario === "first-pass") return report();
+				if (count === 0) return "Nonuniform grids use coordinate arrays. See findiff/grids.py.";
+				// Reproduce the retained prose -> invalid JSON citation -> second
+				// repair sequence. Only the repaired case changes the supporting
+				// line to the actual make_axis call; no validator is stubbed.
+				return report(scenario === "repaired" && count === RESULT_CONTRACT_REPAIR_LIMIT ? 62 : 64);
+			},
+			{
+				toolCall: (request) => {
+					if (isMain(request)) {
+						return messages(request).some((message) => message.role === "tool")
+							? null
+							: { name: "dispatch", arguments: fixture.dispatch, id: "pipeline" };
+					}
+					// A dependent Documenter that executes no tool leaves its obligation unmet.
+					if (!isScout(request)) {
+						return messages(request).some((message) => message.role === "tool")
+							? null
+							: { name: "read", arguments: { path: "findiff/grids.py" }, id: "read-dependent" };
+					}
+					if (repairs(request).length > 0) return null;
+					for (const [id, path] of [
+						["read-grids", "findiff/grids.py"],
+						["read-interface", "findiff/interface.py"],
+					]) {
+						if (!messages(request).some((message) => message.role === "tool" && message.tool_call_id === id)) {
+							return { name: "read", arguments: { path, line_numbers: true }, id };
+						}
+					}
+					return null;
+				},
+			},
+		);
+		try {
+			const workspace = join(scratch.dir, "workspace");
+			mkdirSync(workspace);
+			const env = {
+				...process.env,
+				...scratch.env,
+				TMPDIR: scratch.dir,
+				NODE_ENV: "test",
+				PANCODE_TEST_OPENAI_KEY: "fixture-key",
+			};
+			mkdirSync(join(workspace, "findiff"));
+			for (const [path, content] of Object.entries(fixture.files)) writeFileSync(join(workspace, path), content);
+			initializeScratchHome(scratch.dir);
+			seedOpenAICompatToolOrchestrator(join(scratch.dir, "config"), server.url, "yolo");
+			seedOpenAICompatFleetDefault(join(scratch.dir, "config"));
+			const result = await run(
+				["run", "--output-format", "stream-json", "--autonomy", "yolo", fixture.prompt],
+				workspace,
+				env,
+			);
+			// A Scout that exhausts its repairs is a dispatched worker that did not deliver.
+			strictEqual(result.code, scenario === "exhausted" ? 1 : 0, result.stderr);
+			const requests = server.requests.filter((request) => request.stream !== false);
+			const scoutRequests = requests.filter(isScout);
+			ok(scoutRequests.length > 0, result.stdout);
+			match(JSON.stringify(scoutRequests[0]?.messages), /Keep this shape even when the handoff asks/u);
+			match(JSON.stringify(scoutRequests[0]?.messages), /line_numbers: true/u);
+			const finalScoutRequest = scoutRequests.at(-1);
+			ok(finalScoutRequest);
+			const feedback = repairs(finalScoutRequest);
+			strictEqual(feedback.length, scenario === "first-pass" ? 0 : RESULT_CONTRACT_REPAIR_LIMIT);
+			deepStrictEqual(
+				feedback.map((message) => message.tool_call_id),
+				Array.from({ length: feedback.length }, (_, index) => `pancode-result-contract-repair-${index + 1}`),
+			);
+			const readResults = messages(finalScoutRequest).filter(
+				(message) => message.role === "tool" && message.tool_call_id?.startsWith("read-"),
+			);
+			strictEqual(readResults.length, 2, "repair retains both actual reads");
+			const interfaceRead = readResults.find((message) => message.tool_call_id === "read-interface");
+			ok(interfaceRead);
+			match(String(interfaceRead.content), /62 \| +grid_axis = make_axis\(axis, grid, periodic\)/u);
+			if (feedback.length > 0) {
+				match(
+					String(feedback[1]?.content),
+					/Scout citation is past end of file: findiff\/interface.py:64; current file has 63 lines/u,
+				);
+				match(String(feedback[1]?.content), /Observed read ranges:/u);
+				match(String(feedback[1]?.content), /Required arguments schema:/u);
+				// Terminal helper repair preserves the work-tool lock. Existing read
+				// evidence survives. A handoff names its tool over the scout's full
+				// tool list for the cached prefill; this fixture answers in text, which
+				// ignores the named choice, so later handoffs on the route narrow to the
+				// one tool with "required" and never widen again.
+				let narrowed = false;
+				for (const request of scoutRequests.filter((entry) => repairs(entry).length > 0)) {
+					ok(Array.isArray(request.tools));
+					if (request.tool_choice === "required") narrowed = true;
+					if (narrowed) {
+						deepStrictEqual(
+							request.tools.map((tool) => tool.function?.name),
+							["pancode_submit_result"],
+						);
+						strictEqual(request.tool_choice, "required");
+					} else {
+						deepStrictEqual(request.tools, scoutRequests[0]?.tools);
+						deepStrictEqual(request.tool_choice, { type: "function", function: { name: "pancode_submit_result" } });
+					}
+					match(String(repairs(request).at(-1)?.content), /Work tools remain disabled/u);
+				}
+				ok(
+					scoutRequests.some(
+						(entry) =>
+							JSON.stringify(entry.tool_choice) ===
+								JSON.stringify({ type: "function", function: { name: "pancode_submit_result" } }) &&
+							JSON.stringify(entry.tools) === JSON.stringify(scoutRequests[0]?.tools),
+					),
+					"the first handoff names its tool over the full list",
+				);
+			}
+			const journal = readRunJournal(join(scratch.dir, "state"));
+			ok(journal);
+			const scouts = journal.runs.filter((receipt) => receipt.settled.agentId === "scout");
+			const dependents = journal.runs.filter((receipt) => receipt.settled.agentId === "documenter");
+			strictEqual(scouts.length, 1, "no replacement Scout run may disguise failed repair");
+			const scout = scouts[0];
+			ok(scout);
+			const succeeded = scenario !== "exhausted";
+			strictEqual(scout.settled.outcome, succeeded ? "succeeded" : "failed");
+			strictEqual(scout.settled.exitCode, succeeded ? 0 : 1);
+			strictEqual(dependents.length, succeeded ? 1 : 0);
+			const dependentRequests = requests.filter((request) => !isMain(request) && !isScout(request));
+			strictEqual(
+				dependentRequests.length,
+				succeeded ? 2 : 0,
+				"dependent must really execute only after successful Scout validation",
+			);
+			if (succeeded) {
+				strictEqual(scout.settled.quality?.resultContract?.conformance, "pass");
+				strictEqual(resolvedRunResult(scout).output?.text, report());
+				const dependent = dependents[0];
+				ok(dependent);
+				strictEqual(dependent.settled.outcome, "succeeded");
+				strictEqual(dependent.settled.exitCode, 0);
+				strictEqual(JSON.parse(resolvedRunResult(dependent).output?.text ?? "{}").summary, fixture.dependentExplanation);
+				ok(
+					JSON.stringify(dependentRequests[0]?.messages).includes(JSON.stringify(report()).slice(1, -1)),
+					"dependent receives validated Scout output",
+				);
+				ok(JSON.stringify(dependentRequests[0]?.messages).includes(scout.row.runId), "handoff names the actual source run");
+				doesNotMatch(result.stdout, /pipeline dispatch halted/u);
+			} else {
+				strictEqual(scout.settled.outcomeCode, "result_contract_exhausted");
+				match(result.stdout, /pipeline dispatch halted at step 1\/2.*skipped 1 later step/u);
+			}
+			for (const [path, content] of Object.entries(fixture.files))
+				strictEqual(readFileSync(join(workspace, path), "utf8"), content);
+			context.diagnostic(
+				JSON.stringify({
+					scenario,
+					repairs: feedback.length,
+					scoutRunId: scout.row.runId,
+					scoutOutcome: scout.settled.outcome,
+					dependentExecutions: dependentRequests.length,
+					dependentRunIds: dependents.map((receipt) => receipt.row.runId),
+					pipelineCompleted: succeeded && dependents[0]?.settled.outcome === "succeeded",
+				}),
+			);
+		} finally {
+			await closeServer(server.server);
+			scratch.cleanup();
+		}
+	});
+}

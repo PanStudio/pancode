@@ -1,0 +1,394 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+export const RESPONSE_SCHEMA_MAX_SERIALIZED_BYTES = 64 * 1024;
+
+/**
+ * The one runtime whose wire dialect carries a JSON-schema response constraint.
+ *
+ * This is a name check rather than a capability check, deliberately. The
+ * constraint travels as `response_format: { type: "json_object", schema }`,
+ * which is llama-server's own spelling and not the openai-completions standard
+ * (`type: "json_schema"` with a nested `json_schema` object). A generic
+ * OpenAI-compatible gateway accepts that request, ignores the unrecognized
+ * `schema` key, and returns HTTP 200 with unconstrained JSON, so widening this
+ * to the api family would convert a clean refusal into a silent
+ * non-enforcement. lmstudio declares `structuredOutputs: "json-schema"`
+ * truthfully and is still excluded here, because the worker seam has no
+ * dialect for its transport. Widen this only together with a dialect for the
+ * runtime added; {@link responseSchemaDialectFor} is where the out-of-turn
+ * seam did exactly that (issue #223).
+ */
+export const RESPONSE_SCHEMA_RUNTIME_ID = "llamacpp";
+
+/** The runtime that takes the standard OpenAI `json_schema` response format. */
+export const OPENAI_SCHEMA_RUNTIME_ID = "lmstudio";
+
+/**
+ * The LiteLLM gateway, which takes the same standard `json_schema` format.
+ *
+ * This is the one gateway admitted to the table above, and it is admitted on
+ * measurement rather than on the api family the warning describes. Against a
+ * LiteLLM v1.98.0 proxy fronting both a llama.cpp and an LM Studio upstream:
+ * `{"type":"json_schema", json_schema:{...}}` was grammar-enforced end to end
+ * through both, `{"type":"json_object", schema:{...}}` was enforced through
+ * llama.cpp but rejected HTTP 400 by LM Studio, and the same prompt with no
+ * `response_format` returned plain prose. LiteLLM's `drop_params` did not strip
+ * either spelling, because `response_format` is a parameter it recognizes and
+ * forwards whole.
+ *
+ * The standard dialect is therefore the only one that holds across every
+ * upstream a gateway may route to, which is why LiteLLM belongs with LM Studio
+ * here and not with llama.cpp. Re-verify with the gateway's own smoke test
+ * before trusting this against a proxy other than LiteLLM: the hazard the
+ * warning names is real, and the only thing that makes this entry safe is that
+ * somebody measured it.
+ */
+export const GATEWAY_SCHEMA_RUNTIME_ID = "litellm";
+
+/**
+ * How a runtime spells a JSON-schema response constraint on the wire.
+ *
+ * `llamacpp-json-object` is llama-server's own `response_format: { type:
+ * "json_object", schema }`, which it compiles into a sampler grammar.
+ * `openai-json-schema` is the standard `response_format: { type:
+ * "json_schema", json_schema: { name, strict, schema } }` that LM Studio
+ * implements.
+ */
+export type ResponseSchemaDialect = "llamacpp-json-object" | "openai-json-schema";
+
+/**
+ * The dialect this runtime takes, or null when PanCode has none for it and the
+ * request has to go unconstrained.
+ *
+ * Deliberately a name check, for the reason {@link RESPONSE_SCHEMA_RUNTIME_ID}
+ * gives: a generic OpenAI-compatible gateway answers HTTP 200 to a spelling it
+ * does not implement and returns unconstrained JSON, so a capability flag would
+ * turn a known non-enforcement into a silent one. This table gives the spelling
+ * for both the out-of-turn seam and the worker seam. Admission to the worker
+ * stays on the narrower {@link runtimeSpeaksResponseSchemaDialect} check,
+ * because a worker that cannot enforce a contract must refuse admission rather
+ * than degrade.
+ */
+export function responseSchemaDialectFor(runtimeId: string): ResponseSchemaDialect | null {
+	if (runtimeId === RESPONSE_SCHEMA_RUNTIME_ID) return "llamacpp-json-object";
+	if (runtimeId === OPENAI_SCHEMA_RUNTIME_ID) return "openai-json-schema";
+	if (runtimeId === GATEWAY_SCHEMA_RUNTIME_ID) return "openai-json-schema";
+	return null;
+}
+
+/**
+ * The `response_format` request field that binds a completion to `schema` in
+ * `dialect`. Callers carry it through `StreamOptions.samplingParams`, which the
+ * completions adapter merges into the body after every named field.
+ */
+export function responseFormatFor(
+	dialect: ResponseSchemaDialect,
+	schema: Record<string, unknown>,
+	name: string,
+): Record<string, unknown> {
+	if (dialect === "llamacpp-json-object") return { type: "json_object", schema };
+	return { type: "json_schema", json_schema: { name, strict: true, schema } };
+}
+
+/**
+ * The runtimes whose System One asks hold their reply through the Messages API's
+ * `output_config.format`, the one schema spelling this wire has. It sits apart from
+ * {@link responseSchemaDialectFor} because it is no `response_format` field, a worker
+ * reading that table must keep refusing a contract it cannot carry, and a round that did
+ * not ask for this (`/handoff`, the safety judge, triage's side model) keeps its request.
+ *
+ * Measured on Claude Haiku 5.5 through the subscription. `anthropic` is the same wire on an
+ * API key and is untested. A model that predates the field answers HTTP 400, which
+ * {@link isResponseSchemaRejection} reads as the same refusal every other dialect earns, so
+ * the round falls back to its prompt.
+ */
+const OUTPUT_CONFIG_SCHEMA_RUNTIME_IDS: ReadonlySet<string> = new Set(["anthropic-max", "anthropic"]);
+
+/** Whether a System One ask on this runtime binds its schema through `output_config.format`. */
+export function speaksOutputConfigFormat(runtimeId: string): boolean {
+	return OUTPUT_CONFIG_SCHEMA_RUNTIME_IDS.has(runtimeId);
+}
+
+/** The `output_config.format` value that binds a Messages API reply to `schema`. */
+export function outputConfigFormatFor(schema: Record<string, unknown>): Record<string, unknown> {
+	return { type: "json_schema", schema };
+}
+
+/**
+ * Whether this runtime speaks the dialect above. Transport shape, not capability.
+ *
+ * LiteLLM joins llama.cpp here because a gateway in front of llama.cpp is the
+ * same transport with one hop added, and the hop was measured not to alter it.
+ * That is what admits a contract-bearing worker to a gateway target; without
+ * it, every typed agent behind a proxy is refused rather than enforced.
+ *
+ * It also opts LiteLLM into {@link responseSchemaConflictsWithTools}, which is
+ * deliberately conservative. Whether a schema and a tool surface can constrain
+ * the same completion is a property of the upstream, and one alias may route to
+ * llama.cpp (which refuses both with HTTP 400) while another routes to LM Studio
+ * (which accepts them). A runtime id cannot tell those apart, so this treats
+ * every gateway upstream as if it were the refusing one. The cost is a
+ * tool-bearing contract run through an LM Studio upstream falling back to the
+ * prompt parser when it did not strictly have to. The alternative is paying a
+ * round trip to discover a predictable 400, and having the answer depend on
+ * which deployment the proxy happened to pick for that request.
+ */
+export function runtimeSpeaksResponseSchemaDialect(runtime: { id: string; kind: string; apiFamily: string }): boolean {
+	if (runtime.kind !== "http" || runtime.apiFamily !== "openai-completions") return false;
+	return runtime.id === RESPONSE_SCHEMA_RUNTIME_ID || runtime.id === GATEWAY_SCHEMA_RUNTIME_ID;
+}
+
+/**
+ * Whether a response schema and a tool surface can constrain the same
+ * completion on this runtime.
+ *
+ * llama-server compiles `response_format.schema` into a sampler grammar. A
+ * request that also carries `tools` needs the tool-call grammar over that same
+ * completion, and the server refuses to build both: it answers HTTP 400
+ * `Failed to initialize samplers: failed to parse grammar` before generating a
+ * token. Schema alone succeeds and schema plus one tool fails, so this is a
+ * property of the wire dialect rather than of the target or the model, and no
+ * capability probe reports it. `structuredOutputs: "json-schema"` stays
+ * truthful for the schema-only request it describes.
+ *
+ * A caller that admits runs decides here instead of paying the round trip. A
+ * request carrying both earns the same {@link UnsupportedResponseSchemaError}
+ * a target with no schema support at all would earn, which arms the same
+ * prompt-parser fallback with nothing spent.
+ */
+export function responseSchemaConflictsWithTools(
+	runtime: { id: string; kind: string; apiFamily: string },
+	toolCount: number,
+): boolean {
+	return toolCount > 0 && runtimeSpeaksResponseSchemaDialect(runtime);
+}
+
+/**
+ * Admission-time signal that the resolved worker runtime cannot enforce a
+ * response schema. A caller that treats native enforcement as an optimization
+ * may retry without the schema only after receiving this exact error type.
+ */
+export class UnsupportedResponseSchemaError extends Error {
+	readonly code = "UNSUPPORTED_RESPONSE_SCHEMA";
+
+	constructor(message: string) {
+		super(message);
+		this.name = "UnsupportedResponseSchemaError";
+	}
+}
+
+/**
+ * Whether a run's failure text is the server refusing the request this
+ * dialect produced.
+ *
+ * llama-server compiles `response_format.schema` into a sampler grammar and
+ * rejects the request with HTTP 400 when that grammar cannot be built. The
+ * observed trigger is a request that also carries `tools`: the tool-call
+ * grammar and the schema grammar cannot both constrain one completion, so the
+ * server answers `Failed to initialize samplers: failed to parse grammar`
+ * before generating a token. Nothing in the capability probe predicts it, so
+ * the refusal only arrives mid-run.
+ *
+ * This is the same admission-time judgment `UnsupportedResponseSchemaError`
+ * carries, arriving one round trip later. Callers that treat native
+ * enforcement as an optimization may retry without the schema on either. The
+ * check only means anything on a run that actually carried a schema; callers
+ * must gate it that way rather than let a 400 about anything else match.
+ */
+export function isResponseSchemaRejection(diagnostic: string | null | undefined): boolean {
+	if (!diagnostic) return false;
+	const text = diagnostic.toLowerCase();
+	if (!/\b(?:400|422)\b|invalid_request_error|bad request/.test(text)) return false;
+	return /grammar|json[ _-]?schema|response[ _-]?format|output[ _-]?config|output[ _-]?format/.test(text);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const prototype = Object.getPrototypeOf(value);
+	return prototype === Object.prototype || prototype === null;
+}
+
+const SUPPORTED_SCHEMA_KEYS = new Set(["type", "properties", "required", "items", "additionalProperties"]);
+const SUPPORTED_SCHEMA_TYPES = new Set(["object", "array", "string", "number", "integer", "boolean", "null"]);
+
+function definesToJson(value: object): boolean {
+	let current: object | null = value;
+	while (current) {
+		if (Object.getOwnPropertyDescriptor(current, "toJSON")) return true;
+		current = Object.getPrototypeOf(current) as object | null;
+	}
+	return false;
+}
+
+function jsonDataError(value: unknown): string | null {
+	type Frame = { value: unknown; path: string; exit?: object };
+	const stack: Frame[] = [{ value, path: "$" }];
+	const active = new Set<object>();
+
+	while (stack.length > 0) {
+		const frame = stack.pop();
+		if (!frame) break;
+		if (frame.exit) {
+			active.delete(frame.exit);
+			continue;
+		}
+
+		const current = frame.value;
+		if (current === null || typeof current === "string" || typeof current === "boolean") continue;
+		if (typeof current === "number") {
+			if (!Number.isFinite(current)) return `${frame.path} must be a finite number`;
+			continue;
+		}
+		if (typeof current !== "object") return `${frame.path} contains a non-JSON value`;
+		if (active.has(current)) return `${frame.path} contains a circular reference`;
+
+		if (!Array.isArray(current) && !isPlainObject(current)) {
+			return `${frame.path} must contain only plain objects and arrays`;
+		}
+		if (definesToJson(current)) {
+			return `${frame.path} must not define toJSON`;
+		}
+
+		active.add(current);
+		stack.push({ value: null, path: frame.path, exit: current });
+
+		if (Array.isArray(current)) {
+			const descriptors = Object.getOwnPropertyDescriptors(current);
+			for (const [key, descriptor] of Object.entries(descriptors)) {
+				if (key === "length" || /^(?:0|[1-9]\d*)$/.test(key)) continue;
+				if (descriptor.enumerable) return `${frame.path}.${key} is not a JSON array index`;
+			}
+			for (let index = current.length - 1; index >= 0; index -= 1) {
+				if (!Object.hasOwn(current, index)) return `${frame.path}[${index}] must not be an array hole`;
+				const descriptor = Object.getOwnPropertyDescriptor(current, String(index));
+				if (!descriptor || !("value" in descriptor)) return `${frame.path}[${index}] must be a data property`;
+				stack.push({ value: descriptor.value, path: `${frame.path}[${index}]` });
+			}
+			continue;
+		}
+
+		for (const symbol of Object.getOwnPropertySymbols(current)) {
+			if (Object.getOwnPropertyDescriptor(current, symbol)?.enumerable) {
+				return `${frame.path} must not contain symbol keys`;
+			}
+		}
+		const descriptors = Object.getOwnPropertyDescriptors(current);
+		const keys = Object.keys(descriptors);
+		for (let index = keys.length - 1; index >= 0; index -= 1) {
+			const key = keys[index];
+			if (key === undefined) continue;
+			const descriptor = descriptors[key];
+			if (!descriptor?.enumerable) continue;
+			if (!("value" in descriptor)) return `${frame.path}.${key} must be a data property`;
+			stack.push({ value: descriptor.value, path: `${frame.path}.${key}` });
+		}
+	}
+
+	return null;
+}
+
+function schemaSyntaxError(value: Record<string, unknown>): string | null {
+	const stack: Array<{ schema: Record<string, unknown>; path: string }> = [{ schema: value, path: "$" }];
+	while (stack.length > 0) {
+		const frame = stack.pop();
+		if (!frame) break;
+		const { schema, path } = frame;
+		for (const key of Object.keys(schema)) {
+			if (!SUPPORTED_SCHEMA_KEYS.has(key)) return `${path}.${key} is not supported by the llama.cpp schema subset`;
+		}
+		if (typeof schema.type !== "string" || !SUPPORTED_SCHEMA_TYPES.has(schema.type)) {
+			return `${path}.type must be one of ${[...SUPPORTED_SCHEMA_TYPES].join(", ")}`;
+		}
+		if (schema.type === "object") {
+			if (schema.items !== undefined) return `${path}.items is only valid for array schemas`;
+			if (schema.properties !== undefined && !isPlainObject(schema.properties)) {
+				return `${path}.properties must be a plain object`;
+			}
+			const properties = (schema.properties ?? {}) as Record<string, unknown>;
+			for (const [name, child] of Object.entries(properties)) {
+				if (!isPlainObject(child)) return `${path}.properties.${name} must be a schema object`;
+				stack.push({ schema: child, path: `${path}.properties.${name}` });
+			}
+			if (schema.required !== undefined) {
+				if (!Array.isArray(schema.required) || !schema.required.every((item) => typeof item === "string")) {
+					return `${path}.required must be an array of strings`;
+				}
+				if (new Set(schema.required).size !== schema.required.length) {
+					return `${path}.required must not contain duplicates`;
+				}
+				for (const name of schema.required) {
+					if (!Object.hasOwn(properties, name)) return `${path}.required names unknown property '${name}'`;
+				}
+			}
+			if (schema.additionalProperties !== undefined && typeof schema.additionalProperties !== "boolean") {
+				return `${path}.additionalProperties must be a boolean`;
+			}
+			continue;
+		}
+		if (schema.type === "array") {
+			if (!isPlainObject(schema.items)) return `${path}.items must be a schema object`;
+			if (schema.properties !== undefined || schema.required !== undefined || schema.additionalProperties !== undefined) {
+				return `${path} contains object-only keywords on an array schema`;
+			}
+			stack.push({ schema: schema.items, path: `${path}.items` });
+			continue;
+		}
+		if (
+			schema.properties !== undefined ||
+			schema.required !== undefined ||
+			schema.items !== undefined ||
+			schema.additionalProperties !== undefined
+		) {
+			return `${path} contains container keywords on a ${schema.type} schema`;
+		}
+	}
+	return null;
+}
+
+/** Return a user-facing reason when a response schema cannot safely cross the worker JSON boundary. */
+function responseSchemaValidationError(value: unknown, source = "responseSchema"): string | null {
+	try {
+		if (!isPlainObject(value)) return `${source} must be a plain object`;
+		const valueError = jsonDataError(value);
+		if (valueError) return `${source} must be JSON-serializable: ${valueError}`;
+		const syntaxError = schemaSyntaxError(value);
+		if (syntaxError) return `${source} is not an enforceable JSON schema: ${syntaxError}`;
+
+		const serialized = JSON.stringify(value);
+		const bytes = Buffer.byteLength(serialized, "utf8");
+		if (bytes > RESPONSE_SCHEMA_MAX_SERIALIZED_BYTES) {
+			return `${source} must be at most ${RESPONSE_SCHEMA_MAX_SERIALIZED_BYTES} serialized bytes`;
+		}
+		return null;
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : String(error);
+		return `${source} could not be safely inspected: ${detail}`;
+	}
+}
+
+export function assertValidResponseSchema(
+	value: unknown,
+	source = "responseSchema",
+): asserts value is Record<string, unknown> {
+	const error = responseSchemaValidationError(value, source);
+	if (error) throw new Error(error);
+}
+
+/** Validate and detach a schema from caller-owned objects before any async dispatch work. */
+export function cloneValidatedResponseSchema(value: unknown, source = "responseSchema"): Record<string, unknown> {
+	assertValidResponseSchema(value, source);
+	try {
+		const serialized = JSON.stringify(value);
+		if (Buffer.byteLength(serialized, "utf8") > RESPONSE_SCHEMA_MAX_SERIALIZED_BYTES) {
+			throw new Error(`${source} changed while being validated`);
+		}
+		const cloned: unknown = JSON.parse(serialized);
+		const cloneError = responseSchemaValidationError(cloned, source);
+		if (cloneError) throw new Error(cloneError);
+		return cloned as Record<string, unknown>;
+	} catch (error) {
+		if (error instanceof Error && error.message.startsWith(source)) throw error;
+		const detail = error instanceof Error ? error.message : String(error);
+		throw new Error(`${source} could not be canonically cloned: ${detail}`);
+	}
+}

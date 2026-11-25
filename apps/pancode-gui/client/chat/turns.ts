@@ -1,0 +1,238 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// The conversation projection. `SessionSnapshot.timeline` is a flat, ordered list of items that
+// carry a `turnId`; a reader needs it as turns, and inside a turn as an interleaving of prose,
+// reasoning and *runs* of tool activity, so a turn that ran fourteen tools between two paragraphs
+// reads as paragraph, one collapsed activity group, paragraph. Reasoning reported between those calls
+// belongs to the same work and sits inside the group.
+//
+// The referential-identity contract is the point of this module. A turn whose items are
+// element-wise identical to the previous grouping keeps its object identity, and the whole array
+// keeps its identity when no turn changed, so a settled turn never re-renders while a later turn
+// streams.
+
+import type { TimelineItem, Turn } from "../../contracts/sessions.js";
+import { isConversationItem } from "./session-facts-model.js";
+
+export type ChatSegment =
+	| Readonly<{ kind: "response"; item: TimelineItem }>
+	| Readonly<{ kind: "reasoning"; item: TimelineItem }>
+	| Readonly<{ kind: "notice"; item: TimelineItem }>
+	| Readonly<{ kind: "activity"; items: readonly TimelineItem[] }>;
+
+export interface ChatTurn {
+	readonly turnId: string;
+	readonly origin: "live" | "replay";
+	readonly request: TimelineItem | null;
+	readonly segments: readonly ChatSegment[];
+	readonly items: readonly TimelineItem[];
+	/** True when nothing in this turn can still change. */
+	readonly settled: boolean;
+}
+
+/** The `turnId → status` map `groupTurns` reads. Build it from `SessionSnapshot.turns`. */
+export type TurnStatuses = ReadonlyMap<string, Turn["status"]>;
+
+export function turnStatuses(turns: readonly Turn[]): TurnStatuses {
+	return new Map(turns.map((turn) => [turn.id, turn.status] as const));
+}
+
+export type TurnEnding = "complete" | "output-limit" | "step-limit" | "refusal" | "other" | "failed" | "stopped";
+
+/**
+ * How a settled turn ended. `null` while it is running. A `succeeded` row only means the agent
+ * returned normally; its stop reason says whether the answer is whole. The loop guard and the
+ * tool-call cap both arrive as `max_turn_requests`.
+ */
+export function turnEnding(turn: Pick<Turn, "status" | "stopReason">): TurnEnding | null {
+	switch (turn.status) {
+		case "running":
+			return null;
+		case "failed":
+			return "failed";
+		case "cancelled":
+			return "stopped";
+	}
+	switch (turn.stopReason) {
+		case null:
+		case "end_turn":
+			return "complete";
+		case "max_tokens":
+			return "output-limit";
+		case "max_turn_requests":
+			return "step-limit";
+		case "refusal":
+			return "refusal";
+		default:
+			return "other";
+	}
+}
+
+/** True for the endings where the agent returned normally but the work is not finished. */
+export function isStoppedEarly(ending: TurnEnding | null | undefined): boolean {
+	return ending === "output-limit" || ending === "step-limit" || ending === "refusal" || ending === "other";
+}
+
+/** The sentence that explains an early ending. `null` for every other ending. */
+export function endingSentence(ending: TurnEnding, stopReason: string | null): string | null {
+	switch (ending) {
+		case "output-limit":
+			return "The model reached its output limit before it finished. Send a message to continue.";
+		case "step-limit":
+			return "PanCode ended this turn at a step limit or loop guard. Check the last steps before you continue.";
+		case "refusal":
+			return "The model declined to continue this request.";
+		case "other":
+			return `The turn ended with stop reason ${stopReason ?? "not reported"}.`;
+		default:
+			return null;
+	}
+}
+
+function sameItems(previous: readonly TimelineItem[], next: readonly TimelineItem[]): boolean {
+	if (previous.length !== next.length) return false;
+	for (let index = 0; index < previous.length; index += 1) if (previous[index] !== next[index]) return false;
+	return true;
+}
+
+/**
+ * A replayed turn is history and can never change again. A live turn is settled once its `Turn` row
+ * reports a terminal status; a live turn with no row yet has not started reporting and is still
+ * open. The reuse test below must ask this same question, or a live turn missing its row rebuilds
+ * on every call and loses the identity the memo depends on.
+ */
+function isSettled(items: readonly TimelineItem[], status: Turn["status"] | undefined): boolean {
+	return (items[0]?.origin ?? "live") === "replay" || (status !== undefined && status !== "running");
+}
+
+function buildTurn(turnId: string, items: readonly TimelineItem[], status: Turn["status"] | undefined): ChatTurn {
+	let request: TimelineItem | null = null;
+	const segments: ChatSegment[] = [];
+	// Reasoning and calls between two stretches of prose. Reasoning that sits among calls is part of that
+	// work and joins its group; reasoning with no call beside it stays its own disclosure above the prose.
+	let pending: TimelineItem[] = [];
+	const flush = () => {
+		if (pending.some((item) => item.kind !== "thought")) segments.push({ kind: "activity", items: pending });
+		else for (const item of pending) segments.push({ kind: "reasoning", item });
+		pending = [];
+	};
+	for (const item of items) {
+		if (!isConversationItem(item)) continue;
+		switch (item.kind) {
+			case "user":
+				request = item;
+				break;
+			case "text":
+				flush();
+				segments.push({ kind: "response", item });
+				break;
+			case "notice":
+				flush();
+				segments.push({ kind: "notice", item });
+				break;
+			case "thought":
+			case "tool":
+				pending.push(item);
+				break;
+		}
+	}
+	flush();
+	return {
+		turnId,
+		origin: items[0]?.origin ?? "live",
+		request,
+		segments,
+		items,
+		settled: isSettled(items, status),
+	};
+}
+
+/** Streaming normally changes only the final exchange. Check the retained prefix without
+ * allocating a bucket and map entry for every settled exchange on each display frame. */
+function updateLastTurn(
+	timeline: readonly TimelineItem[],
+	statuses: TurnStatuses,
+	previous: readonly ChatTurn[],
+): readonly ChatTurn[] | null {
+	const last = previous.at(-1);
+	if (!last) return null;
+	let offset = 0;
+	for (let index = 0; index < previous.length - 1; index++) {
+		const turn = previous[index];
+		if (!turn || turn.settled !== isSettled(turn.items, statuses.get(turn.turnId))) return null;
+		for (const item of turn.items) {
+			if (timeline[offset] !== item) return null;
+			offset++;
+		}
+	}
+	if (offset === timeline.length) return null;
+	let unchanged = timeline.length - offset === last.items.length;
+	for (let index = offset; index < timeline.length; index++) {
+		const item = timeline[index];
+		// Interleaved turns, new exchanges and retention changes use the general grouping below.
+		if (item?.turnId !== last.turnId) return null;
+		if (last.items[index - offset] !== item) unchanged = false;
+	}
+	const status = statuses.get(last.turnId);
+	if (unchanged && last.settled === isSettled(last.items, status)) return previous;
+	return [...previous.slice(0, -1), buildTurn(last.turnId, timeline.slice(offset), status)];
+}
+
+/**
+ * Groups timeline items into turns, in first-appearance order. A turn whose items are all identical
+ * to the previous grouping keeps its object identity, and the returned array is the previous array
+ * itself when every turn was reused in the same position.
+ */
+export function groupTurns(
+	timeline: readonly TimelineItem[],
+	statuses: TurnStatuses,
+	previous: readonly ChatTurn[] = [],
+): readonly ChatTurn[] {
+	const updated = updateLastTurn(timeline, statuses, previous);
+	if (updated) return updated;
+	const order: string[] = [];
+	const byTurn = new Map<string, TimelineItem[]>();
+	for (const item of timeline) {
+		let bucket = byTurn.get(item.turnId);
+		if (bucket === undefined) {
+			bucket = [];
+			byTurn.set(item.turnId, bucket);
+			order.push(item.turnId);
+		}
+		bucket.push(item);
+	}
+	const previousByTurn = new Map(previous.map((turn) => [turn.turnId, turn] as const));
+	let unchanged = previous.length === order.length;
+	const turns = order.map((turnId, index) => {
+		const items = byTurn.get(turnId) ?? [];
+		const prior = previousByTurn.get(turnId);
+		const status = statuses.get(turnId);
+		if (prior !== undefined && sameItems(prior.items, items) && prior.settled === isSettled(items, status)) {
+			if (previous[index] !== prior) unchanged = false;
+			return prior;
+		}
+		unchanged = false;
+		return buildTurn(turnId, items, status);
+	});
+	return unchanged ? previous : turns;
+}
+
+/** The turn still producing output, which is the only one a live status chip belongs to. */
+export function activeTurn(turns: readonly ChatTurn[]): ChatTurn | null {
+	const last = turns.at(-1);
+	return last !== undefined && !last.settled ? last : null;
+}
+
+/**
+ * The memo comparator for a turn view. A settled turn is immune to the clock tick and to a
+ * permission landing elsewhere in the conversation, which is what buys the render savings; pass
+ * `nowMs={turn.settled ? 0 : nowMs}` so the once-a-second tick cannot reach it either.
+ */
+export function sameTurnView<Props extends { turn: ChatTurn; pendingPermissionId: string | null; nowMs: number }>(
+	previous: Props,
+	next: Props,
+): boolean {
+	if (previous.turn !== next.turn) return false;
+	if (previous.turn.settled) return true;
+	return previous.pendingPermissionId === next.pendingPermissionId && previous.nowMs === next.nowMs;
+}

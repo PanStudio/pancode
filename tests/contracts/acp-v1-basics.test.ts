@@ -1,0 +1,441 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, rejects, strictEqual } from "node:assert/strict";
+import { once } from "node:events";
+import { PassThrough } from "node:stream";
+import { test } from "node:test";
+import { readDispatchScopeNotice } from "../../src/core/dispatch-scope-notice.js";
+import type { StartupHint } from "../../src/domains/context/contract.js";
+import { type AcpRequestError, AcpTimeoutError } from "../../src/engine/acp/errors.js";
+import { createAcpInterviewChannel } from "../../src/engine/acp/host-members.js";
+import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
+import { createAcpHandshake } from "../../src/engine/acp/server-handshake.js";
+import { type AcpJsonRpcPeerTransport, createStdioServerTransport } from "../../src/engine/acp/transport.js";
+
+function server(options: { startupHints?: () => ReadonlyArray<StartupHint> } = {}) {
+	const requests = new Map<string, (params: unknown) => unknown>();
+	const notifications = new Map<string, (params: unknown) => void>();
+	let close: () => void = () => {};
+	let submitted = "";
+	const sent: Array<{ method: string; params: unknown }> = [];
+	const transport: AcpJsonRpcPeerTransport = {
+		closed: false,
+		request: async () => ({}) as never,
+		notify: (method, params) => {
+			sent.push({ method, params });
+		},
+		onRequest: (method, handler) => {
+			requests.set(method, handler);
+			return () => requests.delete(method);
+		},
+		onNotification: (method, handler) => {
+			notifications.set(method, handler);
+			return () => notifications.delete(method);
+		},
+		onClose: (handler) => {
+			close = handler;
+			return () => {};
+		},
+		close: () => close(),
+	};
+	const done = servePancodeAcpAgent({
+		transport,
+		chat: {
+			submit: async (text) => {
+				submitted = text;
+			},
+			cancel: () => {},
+			onEvent: () => () => {},
+			isStreaming: () => false,
+			getSessionId: () => null,
+		},
+		...options,
+	});
+	return {
+		requests,
+		notifications,
+		sent,
+		get submitted() {
+			return submitted;
+		},
+		call: async (method: string, params: unknown) => {
+			const handler = requests.get(method);
+			if (!handler) throw new Error(`missing handler: ${method}`);
+			return await handler(params);
+		},
+		stop: async () => {
+			close();
+			await done;
+		},
+	};
+}
+
+test("ACP v1 negotiates the supported version and terminal auth only with client support", async () => {
+	// The ACP registry's validator and older clients announce it as `_meta["terminal-auth"]` (#418).
+	for (const [terminal, clientCapabilities] of [
+		[false, { auth: { terminal: false } }],
+		[true, { auth: { terminal: true } }],
+		[true, { _meta: { "terminal-auth": true } }],
+	] as const) {
+		const peer = server();
+		try {
+			const response = (await peer.call("initialize", {
+				protocolVersion: 42,
+				clientCapabilities,
+				_meta: { fixture: true },
+			})) as {
+				protocolVersion: number;
+				authMethods: Array<{ args?: string[] }>;
+				agentCapabilities: { sessionCapabilities: { close?: object }; auth?: { logout?: object } };
+			};
+			strictEqual(response.protocolVersion, 1);
+			deepStrictEqual(
+				response.authMethods.map((method) => method.args),
+				terminal ? [["auth", "login"]] : [],
+			);
+			strictEqual(response.agentCapabilities.sessionCapabilities.close !== undefined, true);
+			// Terminal auth cannot be passed to authenticate, so a logout could never be undone: none is offered.
+			strictEqual(response.agentCapabilities.auth?.logout, undefined);
+			await rejects(peer.call("authenticate", { methodId: "unknown", _meta: {} }), (error: unknown) => {
+				strictEqual((error as AcpRequestError).rpcCode, -32602);
+				return true;
+			});
+			strictEqual(peer.requests.has("logout"), false);
+		} finally {
+			await peer.stop();
+		}
+	}
+});
+
+test("ACP accepts metadata and resource links, and registers only prefixed extensions", async () => {
+	const peer = server();
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		await rejects(peer.call("_pancode/settings/get_safe", { _meta: {} }), (error: unknown) => {
+			strictEqual((error as AcpRequestError).rpcCode, -32601);
+			return true;
+		});
+		strictEqual(peer.requests.has("_pancode/settings/get_safe"), true);
+		strictEqual(peer.requests.has("pancode/settings/get_safe"), false);
+		for (const method of peer.requests.keys()) {
+			if (!method.startsWith("session/") && !["initialize", "authenticate"].includes(method)) {
+				strictEqual(method.startsWith("_pancode/"), true, method);
+			}
+		}
+		await rejects(peer.call("session/new", { cwd: "relative", mcpServers: [] }), (error: unknown) => {
+			strictEqual((error as AcpRequestError).rpcCode, -32602);
+			return true;
+		});
+		await rejects(peer.call("session/close", { sessionId: "missing" }), (error: unknown) => {
+			strictEqual((error as AcpRequestError).rpcCode, -32002);
+			return true;
+		});
+		const opened = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [], _meta: {} })) as {
+			sessionId: string;
+		};
+		await rejects(peer.call("session/new", { cwd: process.cwd(), mcpServers: [] }), (error: unknown) => {
+			strictEqual((error as AcpRequestError).rpcCode, -32010);
+			strictEqual((error as AcpRequestError).detail.code, "session_limit");
+			return true;
+		});
+		await peer.call("session/prompt", {
+			sessionId: opened.sessionId,
+			prompt: [
+				{ type: "text", text: "Inspect" },
+				{ type: "resource_link", name: "guide", uri: "file:///repo/guide.md" },
+			],
+			_meta: {},
+		});
+		strictEqual(peer.submitted.includes("file:///repo/guide.md"), true);
+		peer.notifications.get("session/cancel")?.({ sessionId: opened.sessionId, _meta: {} });
+	} finally {
+		await peer.stop();
+	}
+});
+
+test("ACP transport reports unclassified handler failures as internal errors", async () => {
+	const input = new PassThrough();
+	const output = new PassThrough();
+	const transport = createStdioServerTransport({ input, output });
+	try {
+		transport.onRequest("explode", () => {
+			throw new Error("private failure detail");
+		});
+		const response = once(output, "data");
+		input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "explode", params: {} })}\n`);
+		const [chunk] = await response;
+		const frame = JSON.parse(String(chunk)) as { error: { code: number; message: string } };
+		strictEqual(frame.error.code, -32603);
+		strictEqual(frame.error.message, "internal error");
+	} finally {
+		transport.close();
+		input.destroy();
+		output.destroy();
+	}
+});
+
+test("ACP counts a client as attended only when it advertises interviews at initialize", () => {
+	const features = {
+		session: true,
+		loadSession: false,
+		settings: false,
+		providers: false,
+		steer: false,
+		dispatch: false,
+		toolRegistry: false,
+		bus: false,
+		interviews: true,
+		workerPermissions: true,
+	};
+	const request = "_pancode/interview/request";
+	const initialize = (meta: Record<string, unknown> | undefined) => {
+		const handshake = createAcpHandshake(features);
+		const response = handshake.initialize({
+			protocolVersion: 1,
+			...(meta !== undefined ? { clientCapabilities: { _meta: meta } } : {}),
+		});
+		return {
+			handshake,
+			announced: (response.agentCapabilities?._meta as Record<string, unknown> | undefined)?.["pancode/interviews"],
+		};
+	};
+	const plain = initialize(undefined);
+	strictEqual(plain.handshake.interviewsEnabled, false);
+	strictEqual(plain.handshake.workerPermissionsEnabled, false);
+	strictEqual(plain.announced, undefined);
+	const attended = initialize({
+		"pancode/interviews": { version: 1, request },
+		"pancode/workerPermissions": { version: 1, withdraw: "_pancode/permission/withdraw" },
+	});
+	strictEqual(attended.handshake.interviewsEnabled, true);
+	strictEqual(attended.handshake.workerPermissionsEnabled, true);
+	deepStrictEqual(attended.announced, { version: 1, request, cancel: "_pancode/interview/cancel" });
+	// A client that cannot take a withdrawn ask would be left holding a stale card, so it is not asked.
+	strictEqual(initialize({ "pancode/workerPermissions": { version: 1 } }).handshake.workerPermissionsEnabled, false);
+	// A client naming a request method this host does not speak is not attended.
+	strictEqual(
+		initialize({ "pancode/interviews": { version: 1, request: "other/request" } }).handshake.interviewsEnabled,
+		false,
+	);
+});
+
+test("ACP interview channel maps the client's reply, its cancel and a turn abort onto ask_user results", async () => {
+	const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+	const notifications: Array<{ method: string; params: Record<string, unknown> }> = [];
+	let enabled = true;
+	let reply: unknown = { answers: [{ question: "Merge?", answer: "Keep branch", options: ["Keep branch"] }] };
+	const channel = createAcpInterviewChannel();
+	channel.attach({
+		transport: {
+			request: async <T>(method: string, params?: unknown) => {
+				requests.push({ method, params: params as Record<string, unknown> });
+				return (typeof reply === "function" ? await (reply as () => Promise<unknown>)() : reply) as T;
+			},
+			notify: (method, params) => notifications.push({ method, params: params as Record<string, unknown> }),
+		},
+		sessionId: () => "session-1",
+		enabled: () => enabled,
+	});
+	const question = {
+		question: "Merge?",
+		header: "Merge task branch?",
+		defaultOption: 1,
+		options: [{ label: "Merge" }, { label: "Keep branch", description: "Leave it." }],
+	};
+	deepStrictEqual(await channel.ask([question]), reply);
+	strictEqual(requests[0]?.method, "_pancode/interview/request");
+	strictEqual(requests[0]?.params.sessionId, "session-1");
+	// The wire question keeps its shape; the harness's preselected option rides in _meta.
+	deepStrictEqual((requests[0]?.params.questions as unknown[])[0], {
+		question: "Merge?",
+		header: "Merge task branch?",
+		options: [{ label: "Merge" }, { label: "Keep branch", description: "Leave it." }],
+	});
+	deepStrictEqual(requests[0]?.params._meta, {
+		"pancode/interview": { version: 1, operatorOnly: false, recommended: [1] },
+	});
+	await channel.ask([{ ...question, operator_only: true }]);
+	deepStrictEqual(requests[1]?.params._meta, {
+		"pancode/interview": { version: 1, operatorOnly: true, recommended: [1] },
+	});
+	strictEqual("operator_only" in ((requests[1]?.params.questions as unknown[])[0] as object), false);
+
+	reply = { answers: [], cancelled: true };
+	deepStrictEqual(await channel.ask([question]), { answers: [], cancelled: true });
+	reply = { answers: "not a list" };
+	deepStrictEqual(await channel.ask([question]), { answers: [], cancelled: true });
+
+	for (const malformed of [
+		{ answers: [{ question: "Another question", answer: "Merge", options: ["Merge"] }] },
+		{ answers: [{ question: "Merge?", answer: "Merge", options: ["Merge", "Keep branch"] }] },
+		{ answers: [{ question: "Merge?", answer: "Merge", options: ["Unoffered"] }] },
+		{ answers: [{ question: "Merge?", answer: "Merge", options: "Merge" }] },
+		{ answers: [{ question: "Merge?", answer: "Keep branch", options: ["Merge"] }] },
+		{ answers: [{ question: "Merge?", answer: "Merge; Merge", options: ["Merge", "Merge"] }] },
+		{ answers: [] },
+	]) {
+		reply = malformed;
+		deepStrictEqual(await channel.ask([question]), { answers: [], cancelled: true });
+	}
+	reply = { answers: [{ question: "Clean?", answer: "Keep", options: ["Keep"] }] };
+	deepStrictEqual(await channel.ask([{ question: "\u001b[31mClean?", options: [{ label: "\u001b[31mKeep" }] }]), {
+		answers: [{ question: "\u001b[31mClean?", answer: "Keep", options: ["\u001b[31mKeep"] }],
+	});
+
+	const controller = new AbortController();
+	reply = () => new Promise(() => {});
+	const aborted = channel.ask([question], { signal: controller.signal });
+	await new Promise((resolve) => setImmediate(resolve));
+	controller.abort();
+	deepStrictEqual(await aborted, { answers: [], cancelled: true });
+	strictEqual(notifications[0]?.method, "_pancode/interview/cancel");
+	strictEqual(notifications[0]?.params.interviewId, requests.at(-1)?.params.interviewId);
+
+	enabled = false;
+	const asked = requests.length;
+	deepStrictEqual(await channel.ask([question]), { answers: [], cancelled: true });
+	strictEqual(requests.length, asked);
+});
+
+test("shared scope notice text neutralizes display controls and bounds long path prose", () => {
+	const notice = readDispatchScopeNotice({
+		code: "inferred_scope_parent_tokens",
+		message: `\u001b[31mScope\u001b[0m \u202e${"x".repeat(8192)}`,
+	});
+	strictEqual(notice?.message.startsWith("Scope \\u{202e}"), true);
+	strictEqual(notice?.message.length, 4096);
+});
+
+test("ACP interview text neutralizes display controls before applying wire bounds", async () => {
+	let sent: Record<string, unknown> | undefined;
+	const channel = createAcpInterviewChannel();
+	channel.attach({
+		transport: {
+			request: async <T>(_method: string, params?: unknown) => {
+				sent = params as Record<string, unknown>;
+				return { answers: [], cancelled: true } as T;
+			},
+			notify: () => {},
+		},
+		sessionId: () => "session-1",
+		enabled: () => true,
+	});
+	await channel.ask([
+		{
+			question: "\u001b[31mDelete\u001b[0m \u202efile?",
+			header: "Choice\u009b",
+			options: [{ label: "Keep\u202e", description: "\u001b]0;spoof\u0007Leave\u200b it." }],
+		},
+		{ question: "\u202e".repeat(8192), options: [{ label: "\u202e".repeat(512) }] },
+	]);
+	const questions = sent?.questions as Array<{
+		question: string;
+		header?: string;
+		options: Array<{ label: string; description?: string }>;
+	}>;
+	deepStrictEqual(questions[0], {
+		question: "Delete \\u{202e}file?",
+		header: "Choice\\u{9b}",
+		options: [{ label: "Keep\\u{202e}", description: "Leave\\u{200b} it." }],
+	});
+	strictEqual(questions[1]?.question.length, 8192);
+	strictEqual(questions[1]?.options[0]?.label.length, 512);
+});
+
+test("ACP interview timeout and detach cancel rounds without a caller abort signal", async () => {
+	const channel = createAcpInterviewChannel();
+	const notifications: string[] = [];
+	let timeout: number | undefined;
+	let fail = true;
+	const detach = channel.attach({
+		transport: {
+			request: async <T>(_method: string, _params?: unknown, timeoutMs?: number): Promise<T> => {
+				timeout = timeoutMs;
+				if (fail) throw new Error("Interview request timed out");
+				return await new Promise<T>(() => {});
+			},
+			notify: (method) => notifications.push(method),
+		},
+		sessionId: () => "session-1",
+		enabled: () => true,
+		timeoutMs: 25,
+	});
+	deepStrictEqual(await channel.ask([{ question: "Continue?" }]), { answers: [], cancelled: true });
+	strictEqual(timeout, 25);
+	fail = false;
+	const cancelled = channel.ask([{ question: "Continue?" }]);
+	await new Promise((resolve) => setImmediate(resolve));
+	channel.cancel();
+	deepStrictEqual(await cancelled, { answers: [], cancelled: true });
+	const detached = channel.ask([{ question: "Continue?" }]);
+	await new Promise((resolve) => setImmediate(resolve));
+	detach();
+	deepStrictEqual(await detached, { answers: [], cancelled: true });
+	deepStrictEqual(notifications, Array(3).fill("_pancode/interview/cancel"));
+});
+
+// A GUI or ACP operator who steps away gets the terminal's outcome: the round lapses and ask_user takes the recommendation.
+test("ACP interview of an ask_user round waits the shorter window and lapses to timedOut, not a cancel", async () => {
+	let unattendedMs = 30_000;
+	const channel = createAcpInterviewChannel({ unattendedWindowMs: () => unattendedMs });
+	const timeouts: Array<number | undefined> = [];
+	channel.attach({
+		transport: {
+			request: async <T>(_method: string, _params?: unknown, timeoutMs?: number): Promise<T> => {
+				timeouts.push(timeoutMs);
+				throw new AcpTimeoutError("Interview request timed out");
+			},
+			notify: () => {},
+		},
+		sessionId: () => "session-1",
+		enabled: () => true,
+		timeoutMs: 605_000,
+	});
+	const round = [{ question: "Which scope?", options: [{ label: "Phase 1" }, { label: "All" }] }];
+	deepStrictEqual(await channel.ask(round, { unattendedFallback: true }), {
+		answers: [],
+		timedOut: { afterSeconds: 30 },
+	});
+	unattendedMs = 0;
+	deepStrictEqual(await channel.ask(round, { unattendedFallback: true }), {
+		answers: [],
+		timedOut: { afterSeconds: 605 },
+	});
+	// A round nobody's ask_user tool asked (a harness confirmation) keeps the cancel and the client's own timeout.
+	unattendedMs = 30_000;
+	deepStrictEqual(await channel.ask(round), { answers: [], cancelled: true });
+	// F-C1: an operator_only round outlasts the unattended window; only the client's request timeout bounds it.
+	deepStrictEqual(await channel.ask([{ ...round[0], operator_only: true }] as never, { unattendedFallback: true }), {
+		answers: [],
+		timedOut: { afterSeconds: 605 },
+	});
+	deepStrictEqual(timeouts, [30_000, 605_000, 605_000, 605_000]);
+});
+
+test("ACP sends startup notices once as session metadata, never as reply text", async () => {
+	const peer = server({ startupHints: () => [{ level: "info", text: "No PANCODE.md detected." }] });
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const { sessionId } = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as {
+			sessionId: string;
+		};
+		await peer.call("session/prompt", { sessionId, prompt: [{ type: "text", text: "one" }] });
+		await peer.call("session/prompt", { sessionId, prompt: [{ type: "text", text: "two" }] });
+		const updates = peer.sent
+			.filter((frame) => frame.method === "session/update")
+			.map((frame) => (frame.params as { update: Record<string, unknown> }).update);
+		const chunks = updates.filter((update) => update.sessionUpdate === "agent_message_chunk");
+		strictEqual(JSON.stringify(chunks).includes("PANCODE.md"), false);
+		const notices = updates.filter(
+			(update) =>
+				update.sessionUpdate === "session_info_update" &&
+				(update._meta as Record<string, unknown> | undefined)?.["pancode/notice"] !== undefined,
+		);
+		deepStrictEqual(
+			notices.map((update) => (update._meta as Record<string, unknown>)["pancode/notice"]),
+			[{ level: "info", text: "No PANCODE.md detected." }],
+		);
+	} finally {
+		await peer.stop();
+	}
+});

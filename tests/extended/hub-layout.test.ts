@@ -1,0 +1,363 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { it } from "node:test";
+import { stripVTControlCharacters } from "node:util";
+import { visibleWidth } from "../../src/engine/tui.js";
+import { PancodeOverlayFrame } from "../../src/interactive/overlay-frame.js";
+import { ListOverlayView } from "../../src/interactive/overlays/list-overlay.js";
+
+it("fills the live terminal and reflows PanHub between wide and narrow viewports", () => {
+	const items = Array.from({ length: 50 }, (_, index) => ({
+		id: `recipe-${index}`,
+		label: `Recipe ${index}`,
+		detail: () => ["# Recipe", "Source: Bundled with PanCode", "Example instructions ".repeat(20)],
+	}));
+	const view = new ListOverlayView(
+		{ title: "PanHub", items, fullScreen: true, filterable: true, layout: "split", onClose() {} },
+		() => {},
+	);
+	const frame = new PancodeOverlayFrame(view, "PanHub");
+	for (const [width, rows] of [
+		[140, 42],
+		[48, 18],
+		[100, 28],
+		[32, 10],
+	] as const) {
+		view.setViewportRows(rows);
+		frame.setRowBudget(rows);
+		const rendered = frame.render(width);
+		strictEqual(rendered.length, rows, `${width}x${rows} must fill the available height`);
+		for (const line of rendered) strictEqual(visibleWidth(line), width);
+		strictEqual(frame.render(width), rendered, "unchanged viewport keeps the frame cache");
+	}
+});
+
+it("keeps ordinary list overlays compact when the terminal grows", () => {
+	const view = new ListOverlayView(
+		{ title: "Other list", items: [{ id: "one", label: "One" }], onClose() {} },
+		() => {},
+	);
+	const before = view.render(90);
+	view.setViewportRows(60);
+	deepStrictEqual(view.render(90), before);
+});
+
+it("keeps mode and scope controls available on an empty PanHub tab and visible on resize", () => {
+	let mode = "Browse";
+	let scope = "User";
+	const view = new ListOverlayView(
+		{
+			title: "PanHub",
+			items: [],
+			fullScreen: true,
+			filterable: true,
+			explicitSearch: true,
+			tabs: ["Skills", "Agents", "Prompts", "Playbooks", "Plugins"].map((label) => ({
+				id: label.toLowerCase(),
+				label,
+				items: () => [],
+			})),
+			activeTabId: "plugins",
+			status: () => `${mode} · ${scope}`,
+			globalActions: {
+				b: () => {
+					mode = mode === "Browse" ? "Installed" : "Browse";
+				},
+				s: () => {
+					scope = scope === "User" ? "Project" : "User";
+				},
+			},
+			globalHints: [
+				{ key: "b", verb: "view", critical: true },
+				{ key: "s", verb: "scope", critical: true },
+			],
+			onClose() {},
+		},
+		() => {},
+	);
+	view.setViewportRows(18);
+	const first = view.render(32);
+	match(stripVTControlCharacters(first.join("\n")), /Plugins 0/);
+	match(stripVTControlCharacters(first.join("\n")), /Browse · User/);
+	match(stripVTControlCharacters(view.getHint()), /b.*view.*s.*scope/);
+	view.handleInput("b");
+	view.handleInput("s");
+	const next = view.render(32);
+	strictEqual(next === first, false, "status changes invalidate the rendered view");
+	match(stripVTControlCharacters(next.join("\n")), /Installed · Project/);
+	const frame = new PancodeOverlayFrame(view, "PanHub");
+	for (const [width, rows] of [
+		[32, 10],
+		[140, 42],
+		[48, 18],
+	] as const) {
+		view.setViewportRows(rows);
+		frame.setRowBudget(rows);
+		const lines = frame.render(width);
+		ok(lines.length <= rows, `${lines.length} rows exceed the ${rows}-row budget`);
+		for (const line of lines) strictEqual(visibleWidth(line), width);
+		match(stripVTControlCharacters(lines.join("\n")), /Installed · Project/);
+	}
+});
+
+it("gives an explicit search its cursor and letters, then returns to list actions without selecting", () => {
+	const selected: string[] = [];
+	let refreshed = 0;
+	let closed = 0;
+	let renders = 0;
+	const items = [
+		{ id: "rax", label: "rax" },
+		{ id: "rxa", label: "rxa" },
+	];
+	const view = new ListOverlayView(
+		{
+			title: "PanHub",
+			items,
+			filterable: true,
+			explicitSearch: true,
+			tabs: [
+				{ id: "one", label: "One", items: () => items },
+				{ id: "two", label: "Two", items: () => items },
+			],
+			globalActions: {
+				r: () => {
+					refreshed++;
+				},
+			},
+			onSelect: (item) => selected.push(item.id),
+			onClose: () => {
+				closed++;
+			},
+		},
+		() => {
+			renders++;
+		},
+	);
+	view.render(80);
+	view.handleInput("/");
+	view.handleInput("r");
+	view.handleInput("a");
+	const beforeCursor = renders;
+	view.handleInput("\u001b[D");
+	strictEqual(renders > beforeCursor, true, "cursor movement requests a render even without changing the query");
+	view.handleInput("x");
+	strictEqual(view.activeTab()?.id, "one", "search arrows must not change category");
+	strictEqual(refreshed, 0, "search letters must not invoke management");
+	view.handleInput("\r");
+	deepStrictEqual(selected, [], "Enter leaves search without invoking a row");
+	view.handleInput("\r");
+	deepStrictEqual(selected, ["rxa"]);
+	view.handleInput("r");
+	strictEqual(refreshed, 1);
+	view.handleInput("\u001b[C");
+	strictEqual(view.activeTab()?.id, "two");
+	view.handleInput("/");
+	view.handleInput("\u001b");
+	strictEqual(closed, 0, "first Escape clears the search");
+	view.handleInput("\u001b");
+	strictEqual(closed, 0, "second Escape returns to the list");
+	view.handleInput("\u001b");
+	strictEqual(closed, 1);
+});
+
+it("keeps every key the rail drops on screen at six rows once the pane state settles", () => {
+	// PanHub at 54 columns: a 50-cell body, a 35-cell rail, the pane
+	// requested on open but without room to stack. The shed pass used to run
+	// under the hints of the pane it assumed, and the hints of the frame it
+	// settled on needed one row more, so `[u] update` sat behind the marker.
+	const items = [0, 1].map((index) => ({
+		id: `row-${index}`,
+		label: `row ${index}`,
+		meta: "✓ available · skill:alpha · Local",
+		detail: () => Array.from({ length: 15 }, (_, line) => `line ${line}`),
+		detailFormat: "rows" as const,
+	}));
+	const view = new ListOverlayView(
+		{
+			title: "PanHub",
+			items: [],
+			tabs: ["Skills", "Agents", "Prompts", "Playbooks", "Plugins", "Extensions"].map((label) => ({
+				id: label.toLowerCase(),
+				label,
+				items: () => items,
+			})),
+			activeTabId: "skills",
+			filterable: true,
+			explicitSearch: true,
+			fullScreen: true,
+			layout: "split",
+			status: () => "[b] Installed · [s] User · [n] notices · 2 entries",
+			globalHints: [
+				{ key: "b", verb: "browse/installed", short: "view" },
+				{ key: "s", verb: "user/project", short: "scope" },
+				{ key: "n", verb: "notices" },
+				{ key: "o", verb: "import" },
+				{ key: "R", verb: "refresh" },
+			],
+			hints: () => [
+				{ key: "e", verb: "disable" },
+				{ key: "u", verb: "update" },
+				{ key: "r", verb: "remove" },
+				{ key: "v", verb: "use" },
+			],
+			onSelect() {},
+			onClose() {},
+		},
+		() => {},
+	);
+	view.toggleDetail();
+	view.setRailRoom(35);
+	view.setBodyRows(6);
+	const body = view.render(50).map(stripVTControlCharacters);
+	const everywhere = `${body.join("\n")}\n${stripVTControlCharacters(view.getHint(38))}`;
+	// Under eight rows the keys take a third of the body, so both rows stay in view and the keys past the
+	// marker are said to exist rather than drawn over the list.
+	for (const key of ["↑↓", "/", "r", "v", "Esc"])
+		ok(everywhere.includes(`[${key}]`), `${key} is on screen:\n${everywhere}`);
+	ok(
+		body.some((row) => row.includes("row 1")),
+		`both rows stay in view:\n${everywhere}`,
+	);
+	ok(
+		body.some((row) => row.trimStart().startsWith("[") && row.includes("…")),
+		`the keys past the cap are marked:\n${everywhere}`,
+	);
+});
+
+it("inverts the pane on every detail key press, two presses before a repaint included", () => {
+	const items = [0, 1].map((index) => ({
+		id: `row-${index}`,
+		label: `row ${index}`,
+		detail: () => Array.from({ length: 12 }, (_, line) => `line ${line}`),
+		detailFormat: "rows" as const,
+	}));
+	const view = new ListOverlayView(
+		{ title: "PanHub", items, fullScreen: true, layout: "split", onSelect() {}, onClose() {} },
+		() => {},
+	);
+	view.toggleDetail();
+	view.setBodyRows(14);
+	const paneDrawn = (): boolean => view.render(60).map(stripVTControlCharacters).join("\n").includes("line 0");
+	ok(paneDrawn(), "the pane the opener asked for is stacked under the rows");
+	view.handleInput("\t");
+	ok(!paneDrawn(), "one press hides it");
+	view.handleInput("\t");
+	view.handleInput("\t");
+	ok(!paneDrawn(), "two presses before a repaint leave it as it was");
+	view.handleInput("\t");
+	ok(paneDrawn(), "the next press shows it again");
+});
+
+it("leaves the pane request alone when the detail key has no pane to change", () => {
+	const items = [0, 1].map((index) => ({
+		id: `row-${index}`,
+		label: `row ${index}`,
+		detail: () => Array.from({ length: 12 }, (_, line) => `line ${line}`),
+		detailFormat: "rows" as const,
+	}));
+	const view = new ListOverlayView(
+		{
+			title: "PanHub",
+			items,
+			fullScreen: true,
+			layout: "split",
+			filterable: true,
+			explicitSearch: true,
+			onSelect() {},
+			onClose() {},
+		},
+		() => {},
+	);
+	view.toggleDetail();
+	view.setBodyRows(14);
+	const paneDrawn = (width = 60): boolean =>
+		view.render(width).map(stripVTControlCharacters).join("\n").includes("line 0");
+	ok(paneDrawn());
+	for (const key of "/zzzq\r") view.handleInput(key);
+	ok(!paneDrawn(), "no row matches, so no pane is drawn");
+	for (let press = 0; press < 3; press += 1) {
+		view.handleInput("\t");
+		paneDrawn();
+	}
+	view.handleInput("\t");
+	view.handleInput("\t");
+	view.handleInput("\x1b");
+	ok(paneDrawn(), "the pane comes back as it was, whatever the presses or their repaints");
+	paneDrawn(120);
+	view.handleInput("\t");
+	ok(paneDrawn(60), "the split pane cannot be put away, so Tab there left the stacked one alone");
+});
+
+it("cuts an empty state before the keys under it", () => {
+	const view = new ListOverlayView(
+		{
+			title: "PanHub",
+			items: [],
+			fullScreen: true,
+			emptyMessage: "An empty state long enough to wrap ".repeat(8),
+			emptyRemedy: "b shows installable packages.",
+			globalHints: [
+				{ key: "o", verb: "import" },
+				{ key: "R", verb: "refresh" },
+			],
+			onClose() {},
+		},
+		() => {},
+	);
+	view.setRailRoom(20);
+	view.setViewportRows(8);
+	const lines = view.render(50).map(stripVTControlCharacters);
+	ok(lines.length <= 6, `the body stays inside its ${6} rows: ${lines.length}`);
+	match(lines.join("\n"), /\[o\] import/);
+});
+
+it("counts selectable rows in the position line, never the group headers between them", () => {
+	const items = Array.from({ length: 30 }, (_, index) => ({
+		id: `skill-${index}`,
+		label: `Skill ${index}`,
+		group: index < 2 ? "Provider packages" : "Available",
+	}));
+	const view = new ListOverlayView(
+		{ title: "PanHub", items, fullScreen: true, layout: "stack", onClose() {} },
+		() => {},
+	);
+	view.setViewportRows(18);
+	const position = stripVTControlCharacters(view.render(100).join("\n")).match(/(\d+)\D(\d+) of (\d+) rows/);
+	ok(position, "a list longer than its window names its position");
+	strictEqual(position[1], "1");
+	strictEqual(position[3], "30");
+	ok(Number(position[2]) < 30);
+});
+
+it("rules off a pinned detail head and counts the scroll from the rows under it", () => {
+	const detail = ["Title", "status", "keys", "", ...Array.from({ length: 20 }, (_, line) => `body ${line}`)];
+	const view = new ListOverlayView(
+		{
+			title: "PanHub",
+			items: [{ id: "one", label: "one", detail: () => detail, detailFormat: "rows", detailHead: () => 3 }],
+			fullScreen: true,
+			layout: "split",
+			onSelect() {},
+			onClose() {},
+		},
+		() => {},
+	);
+	view.toggleDetail();
+	view.setBodyRows(14);
+	const pane = (): string[] =>
+		view
+			.render(120)
+			.map((row) => stripVTControlCharacters(row).split("│").at(-1)?.trim() ?? "")
+			.filter((row) => row.length > 0);
+	const top = pane();
+	const title = top.indexOf("Title");
+	ok(title >= 0, top.join("\n"));
+	match(top[title + 3] ?? "", /^─+$/, "a rule takes the blank row's place under the head");
+	strictEqual(top[title + 4], "body 0");
+	match(top.join("\n"), /\b1–\d+ of 20 rows/, "an unscrolled pane counts from its first scrolling row");
+	view.handleInput("\x1b[6~");
+	const scrolled = pane();
+	match(scrolled[title + 3] ?? "", /^─+$/, "scrolled text stays under the rule");
+	match(scrolled[title + 4] ?? "", /^body [1-9]/);
+});

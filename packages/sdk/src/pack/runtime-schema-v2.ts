@@ -1,0 +1,768 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { createHash } from "node:crypto";
+import type {
+	ExtensionContentAccess,
+	ExtensionHookPoint,
+	ExtensionObservationEventV2,
+	WorkspaceRegion,
+} from "../extension/public-api-v2.js";
+import { ManifestKeyPolicy } from "./ignorable.js";
+import type {
+	ExtensionCapabilityEnvelope,
+	ExtensionCommandDeclarationV2,
+	ExtensionConfigField,
+	ExtensionHookDeclaration,
+	ExtensionModelServiceDeclaration,
+	ExtensionPermissionsDeclaration,
+	ExtensionRuntimeDeclarationV2,
+	ExtensionRuntimeToolDeclaration,
+	ExtensionSlot,
+	ExtensionStoreServiceDeclaration,
+	ExtensionWorkspaceDeclaration,
+} from "./manifest-v2.js";
+import { RUNTIME_LIMITS } from "./runtime-schema.js";
+import { SURFACE_LIMITS } from "./view-limits.js";
+
+export const RUNTIME_V2_LIMITS = {
+	/** Live runtimes across both managers. api 1 keeps its own cap of 4 and claims first. */
+	processes: 8,
+	commands: 32,
+	hooks: 16,
+	hookMs: 250,
+	hookMsMin: 50,
+	hookMsMax: 2000,
+	tools: 32,
+	toolMs: 30000,
+	toolMsMax: 300000,
+	/** Promoted tools one package may attach to every request (B2). */
+	promotedTools: 4,
+	/** Promoted tools one session attaches across all packages; the rest stay behind the gateway. */
+	promotedToolsPerSession: 8,
+	/** Description plus input schema of one promoted tool, which every request then carries. */
+	promotedToolBytes: 2048,
+	tickMsMin: 5000,
+	tickMsMax: 3600000,
+	workspaces: 4,
+	fsEntries: 16,
+	configFields: 24,
+	configOptions: 16,
+	/** Regions, islands and a panel can each carry a full view, so an output outgrows the api 1 cap. */
+	outputBytes: 256 * 1024,
+	messageBytes: 320 * 1024,
+	messagesPerSecond: 256,
+	concurrentRequests: 8,
+	observationMs: 2000,
+	effects: 8,
+	effectTextChars: 2000,
+	promptChars: 8000,
+	toolTextBytes: 200 * 1024,
+	/** A tool's summary replaces its full result in model context, so it stays a few hundred tokens (WTF-P 0.8.3 C3). */
+	toolSummaryBytes: 2048,
+	/** The most a package may ask one session's completions to spend, input and output together. */
+	modelSessionTokensMax: 2_000_000,
+	/** The output ceiling a package may declare for one completion. */
+	modelOutputTokensMax: 32_000,
+	/** Completions one extension may have in flight. */
+	completionConcurrency: 2,
+	completionMessages: 64,
+	/** System text plus every message, so a request fits one IPC message. */
+	completionRequestChars: 128 * 1024,
+	completionResponseChars: 128 * 1024,
+	/** Read and write tags together. */
+	storeTags: 16,
+	/** A blob `get` returns its bytes over the IPC, base64 encoded, so it stays under `messageBytes`. */
+	blobGetBytes: 192 * 1024,
+	blobListLimit: 500,
+	blobNoteChars: 1000,
+} as const;
+
+const EVENTS: ReadonlyArray<Exclude<ExtensionObservationEventV2, "tick">> = [
+	"session_open",
+	"session_close",
+	"turn_start",
+	"turn_end",
+	"tool_end",
+	"permission_requested",
+	"permission_resolved",
+	"dispatch_started",
+	"dispatch_completed",
+	"dispatch_failed",
+	"compaction_end",
+	"budget_alert",
+	"safety_blocked",
+	"fs_changed",
+	"workspace_enter",
+	"workspace_leave",
+];
+const HOOK_POINTS: ReadonlyArray<ExtensionHookPoint> = [
+	"prompt_submit",
+	"before_tool",
+	"after_tool",
+	"turn_start",
+	"turn_end",
+];
+const SLOTS: ReadonlyArray<ExtensionSlot> = ["status", "band", "card", "toast", "panel", "dock", "interview"];
+const REGIONS: ReadonlyArray<WorkspaceRegion | "islands"> = ["header", "board", "islands", "rail", "footer"];
+const ACCESS: ReadonlyArray<ExtensionContentAccess> = ["prompt", "tool-args", "tool-results", "assistant-text"];
+const ENTRYPOINT_SUFFIXES = [".mjs", ".ts", ".mts"];
+/** The store's own tag rule: an operator creates these tags, so a package can only name one. */
+const STORE_TAG = /^(?!.*(?:^|\/)\.)(?!\/)(?!.*\/\/)(?!.*\/$)[A-Za-z0-9._/-]{1,200}$/u;
+
+/** Every refusal names the manifest path, so a diagnostic points at the line to fix. */
+function fail(path: string, message: string): never {
+	throw new Error(`${path} ${message}`);
+}
+/** An unknown key fails unless the manifest lists its path under `ignorable` (ignorable.ts). */
+function record(
+	value: unknown,
+	path: string,
+	allowed: readonly string[],
+	policy: ManifestKeyPolicy,
+): Record<string, unknown> {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) fail(path, "must be an object");
+	const raw = value as Record<string, unknown>;
+	const [unknown] = policy.unknown(raw, path, new Set(allowed));
+	if (unknown !== undefined) fail(`${path}.${unknown}`, "is not a known field");
+	return raw;
+}
+function list(value: unknown, path: string, max: number): unknown[] {
+	if (value === undefined) return [];
+	if (!Array.isArray(value)) fail(path, "must be a list");
+	if (value.length > max) fail(path, `allows at most ${max} entries`);
+	return value;
+}
+function text(value: unknown, path: string, max: number): string {
+	if (typeof value !== "string" || value.length === 0 || value.length > max)
+		fail(path, `must be text of 1-${max} characters`);
+	return value;
+}
+function named(value: unknown, path: string, pattern: RegExp, max: number): string {
+	const name = text(value, path, max);
+	if (!pattern.test(name)) fail(path, `'${name}' is not a valid name`);
+	return name;
+}
+function choice<T extends string>(value: unknown, path: string, allowed: readonly T[], fallback?: T): T {
+	if (value === undefined && fallback !== undefined) return fallback;
+	if (!allowed.includes(value as T)) fail(path, `must be one of ${allowed.join(", ")}`);
+	return value as T;
+}
+function choices<T extends string>(value: unknown, path: string, allowed: readonly T[]): T[] {
+	const entries = list(value, path, allowed.length).map((item, index) => choice(item, `${path}[${index}]`, allowed));
+	if (new Set(entries).size !== entries.length) fail(path, "lists a value twice");
+	return entries;
+}
+function flag(value: unknown, path: string, fallback: boolean): boolean {
+	if (value === undefined) return fallback;
+	if (typeof value !== "boolean") fail(path, "must be true or false");
+	return value;
+}
+function milliseconds(value: unknown, path: string, fallback: number, min: number, max: number): number {
+	const ms = value ?? fallback;
+	if (!Number.isInteger(ms) || Number(ms) < min || Number(ms) > max) fail(path, `must be ${min}-${max}`);
+	return Number(ms);
+}
+/** A path that stays inside its root: no absolute form, no home shorthand, no parent segment. */
+function containedPath(value: unknown, path: string): string {
+	const entry = text(value, path, 240);
+	if (entry.startsWith("/") || entry.startsWith("~") || /^[A-Za-z]:[\\/]/.test(entry) || entry.includes("\\"))
+		fail(path, "must be a relative path");
+	if (entry.split("/").some((segment) => segment === ".." || segment === "")) fail(path, "must not leave its root");
+	return entry;
+}
+function duration(value: unknown, path: string): number {
+	if (typeof value === "number")
+		return milliseconds(value, path, 0, RUNTIME_V2_LIMITS.tickMsMin, RUNTIME_V2_LIMITS.tickMsMax);
+	const match = typeof value === "string" ? /^(\d{1,7})(ms|s|m)$/.exec(value) : null;
+	if (!match) fail(path, "must be milliseconds or a duration such as 30s");
+	const scale = match[2] === "ms" ? 1 : match[2] === "s" ? 1000 : 60000;
+	return milliseconds(Number(match[1]) * scale, path, 0, RUNTIME_V2_LIMITS.tickMsMin, RUNTIME_V2_LIMITS.tickMsMax);
+}
+
+function parseCommands(value: unknown, policy: ManifestKeyPolicy): ExtensionCommandDeclarationV2[] {
+	const names = new Set<string>();
+	return list(value, "runtime.commands", RUNTIME_V2_LIMITS.commands).map((item, index) => {
+		const path = `runtime.commands[${index}]`;
+		const raw = record(item, path, ["name", "description", "timeoutMs", "replaces"], policy);
+		const name = named(raw.name, `${path}.name`, /^[a-z][a-z0-9_-]*$/, 40);
+		if (names.has(name)) fail(`${path}.name`, `repeats '${name}'`);
+		names.add(name);
+		const command: ExtensionCommandDeclarationV2 = {
+			name,
+			description: text(raw.description, `${path}.description`, 240),
+			timeoutMs: milliseconds(raw.timeoutMs, `${path}.timeoutMs`, RUNTIME_LIMITS.commandMs, 100, 300000),
+		};
+		if (raw.replaces !== undefined) command.replaces = choice(raw.replaces, `${path}.replaces`, ["prompt"]);
+		return command;
+	});
+}
+
+function parseEvents(
+	value: unknown,
+	policy: ManifestKeyPolicy,
+): Pick<ExtensionRuntimeDeclarationV2, "events" | "tickMs"> {
+	const events: Array<Exclude<ExtensionObservationEventV2, "tick">> = [];
+	let tickMs: number | undefined;
+	for (const [index, item] of list(value, "runtime.events", EVENTS.length + 1).entries()) {
+		const path = `runtime.events[${index}]`;
+		if (typeof item === "string") {
+			const event = choice(item, path, EVENTS);
+			if (events.includes(event)) fail(path, `repeats '${event}'`);
+			events.push(event);
+			continue;
+		}
+		const raw = record(item, path, ["tick"], policy);
+		if (tickMs !== undefined) fail(path, "declares a second tick");
+		tickMs = duration(raw.tick, `${path}.tick`);
+	}
+	return tickMs === undefined ? { events } : { events, tickMs };
+}
+
+function parseHooks(value: unknown, policy: ManifestKeyPolicy): ExtensionHookDeclaration[] {
+	return list(value, "runtime.hooks", RUNTIME_V2_LIMITS.hooks).map((item, index) => {
+		const path = `runtime.hooks[${index}]`;
+		const raw = record(item, path, ["on", "tools", "timeoutMs", "onTimeout", "onError"], policy);
+		const on = choice(raw.on, `${path}.on`, HOOK_POINTS);
+		const hook: ExtensionHookDeclaration = {
+			on,
+			timeoutMs: milliseconds(
+				raw.timeoutMs,
+				`${path}.timeoutMs`,
+				RUNTIME_V2_LIMITS.hookMs,
+				RUNTIME_V2_LIMITS.hookMsMin,
+				RUNTIME_V2_LIMITS.hookMsMax,
+			),
+			onTimeout: choice(raw.onTimeout, `${path}.onTimeout`, ["pass", "block"], "pass"),
+			onError: choice(raw.onError, `${path}.onError`, ["pass", "block"], "pass"),
+		};
+		// A turn_end hook runs after the turn did, so a failed one has nothing left to refuse;
+		// the turn that follows is gated at prompt_submit and turn_start, which every continuation fires.
+		for (const key of ["onTimeout", "onError"] as const)
+			if (on === "turn_end" && hook[key] === "block")
+				fail(`${path}.${key}`, "cannot be block at turn_end, which runs after the turn; gate at turn_start");
+		if (raw.tools !== undefined) {
+			if (on !== "before_tool" && on !== "after_tool") fail(`${path}.tools`, "applies only to a tool hook");
+			const tools = list(raw.tools, `${path}.tools`, 32).map((tool, at) =>
+				// `*` names only an MCP family the package cannot list by name: every MCP tool (`mcp_*`) or one
+				// server's (`mcp_<id>__*`). A wider prefix would cross server ownership (hook-tool-match.ts).
+				named(tool, `${path}.tools[${at}]`, /^(?:[A-Za-z][A-Za-z0-9_.-]*|mcp_\*|mcp_[a-z0-9][a-z0-9_-]*__\*)$/, 64),
+			);
+			if (tools.length === 0 || new Set(tools).size !== tools.length) fail(`${path}.tools`, "must name each tool once");
+			hook.tools = tools;
+		}
+		return hook;
+	});
+}
+
+function parseTools(value: unknown, policy: ManifestKeyPolicy): ExtensionRuntimeToolDeclaration[] {
+	const names = new Set<string>();
+	return list(value, "runtime.tools", RUNTIME_V2_LIMITS.tools).map((item, index) => {
+		const path = `runtime.tools[${index}]`;
+		const raw = record(
+			item,
+			path,
+			["name", "description", "inputSchema", "actionClass", "readOnly", "idempotent", "timeoutMs"],
+			policy,
+		);
+		// Single underscores only: the qualified name joins the package id with a double one.
+		const name = named(raw.name, `${path}.name`, /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/, 40);
+		if (names.has(name)) fail(`${path}.name`, `repeats '${name}'`);
+		names.add(name);
+		const schema = raw.inputSchema;
+		if (
+			schema === null ||
+			typeof schema !== "object" ||
+			Array.isArray(schema) ||
+			(schema as { type?: unknown }).type !== "object"
+		)
+			fail(`${path}.inputSchema`, "must be an object schema");
+		const actionClass = choice(raw.actionClass, `${path}.actionClass`, ["read", "write", "execute"], "execute");
+		const readOnly = flag(raw.readOnly, `${path}.readOnly`, actionClass === "read");
+		if (actionClass === "write" && readOnly) fail(`${path}.readOnly`, "cannot be true for a write tool");
+		return {
+			name,
+			description: text(raw.description, `${path}.description`, 1000),
+			inputSchema: schema as Record<string, unknown>,
+			actionClass,
+			readOnly,
+			idempotent: flag(raw.idempotent, `${path}.idempotent`, false),
+			timeoutMs: milliseconds(
+				raw.timeoutMs,
+				`${path}.timeoutMs`,
+				RUNTIME_V2_LIMITS.toolMs,
+				100,
+				RUNTIME_V2_LIMITS.toolMsMax,
+			),
+		};
+	});
+}
+
+/**
+ * The count and byte caps bound what a manifest can add to the provider
+ * prefix: a promoted schema is paid for on every request of the session.
+ */
+function parsePromote(value: unknown, tools: ReadonlyArray<ExtensionRuntimeToolDeclaration>): string[] {
+	const names = list(value, "runtime.promote", RUNTIME_V2_LIMITS.promotedTools).map((item, index) => {
+		const path = `runtime.promote[${index}]`;
+		const name = text(item, path, 40);
+		const tool = tools.find((entry) => entry.name === name);
+		if (!tool) fail(path, `'${name}' is not a declared runtime tool`);
+		const bytes = Buffer.byteLength(tool.description) + Buffer.byteLength(JSON.stringify(tool.inputSchema));
+		if (bytes > RUNTIME_V2_LIMITS.promotedToolBytes)
+			fail(
+				path,
+				`'${name}' would attach ${bytes} bytes of description and input schema to every request; a promoted tool allows at most ${RUNTIME_V2_LIMITS.promotedToolBytes}`,
+			);
+		return name;
+	});
+	if (new Set(names).size !== names.length) fail("runtime.promote", "lists a tool twice");
+	return names;
+}
+
+function parseWorkspaces(value: unknown, policy: ManifestKeyPolicy): ExtensionWorkspaceDeclaration[] {
+	const ids = new Set<string>();
+	return list(value, "runtime.workspaces", RUNTIME_V2_LIMITS.workspaces).map((item, index) => {
+		const path = `runtime.workspaces[${index}]`;
+		const raw = record(item, path, ["id", "title", "regions", "board", "skin", "keys"], policy);
+		const id = named(raw.id, `${path}.id`, /^[a-z][a-z0-9-]*$/, 40);
+		if (ids.has(id)) fail(`${path}.id`, `repeats '${id}'`);
+		ids.add(id);
+		const regions = choices(raw.regions, `${path}.regions`, REGIONS);
+		if (regions.length === 0) fail(`${path}.regions`, "must name at least one region");
+		const workspace: ExtensionWorkspaceDeclaration = { id, title: text(raw.title, `${path}.title`, 60), regions };
+		if (raw.board !== undefined) {
+			if (!regions.includes("board")) fail(`${path}.board`, "needs the board region");
+			workspace.board = choice(raw.board, `${path}.board`, ["band", "island"]);
+		}
+		if (raw.skin !== undefined) {
+			const skin = containedPath(raw.skin, `${path}.skin`);
+			if (!skin.endsWith(".json")) fail(`${path}.skin`, "must be a .json file in the package");
+			workspace.skin = skin;
+		}
+		if (raw.keys !== undefined) {
+			const taken = new Set<string>();
+			workspace.keys = list(raw.keys, `${path}.keys`, SURFACE_LIMITS.workspaceKeys).map((entry, at) => {
+				const keyPath = `${path}.keys[${at}]`;
+				const binding = record(entry, keyPath, ["key", "action", "label"], policy);
+				const key = named(binding.key, `${keyPath}.key`, /^[a-z0-9]$/, 1);
+				if (taken.has(key)) fail(`${keyPath}.key`, `repeats '${key}'`);
+				taken.add(key);
+				return {
+					key,
+					action: named(binding.action, `${keyPath}.action`, /^[a-z][a-z0-9_.-]*$/, 64),
+					label: text(binding.label, `${keyPath}.label`, 60),
+				};
+			});
+		}
+		return workspace;
+	});
+}
+
+function parsePermissions(value: unknown, policy: ManifestKeyPolicy): ExtensionPermissionsDeclaration {
+	const raw = record(value ?? {}, "runtime.permissions", ["fs", "exec", "net"], policy);
+	const fs = record(raw.fs ?? {}, "runtime.permissions.fs", ["read", "write"], policy);
+	const read = list(fs.read, "runtime.permissions.fs.read", RUNTIME_V2_LIMITS.fsEntries).map((entry, index) => {
+		const path = `runtime.permissions.fs.read[${index}]`;
+		if (entry === "workspace" || entry === "home") return entry;
+		// An absolute read root is allowed and shown as such at consent; a relative one is under the workspace.
+		const root = text(entry, path, 240);
+		return root.startsWith("/") ? root : containedPath(root, path);
+	});
+	const write = list(fs.write, "runtime.permissions.fs.write", RUNTIME_V2_LIMITS.fsEntries).map((entry, index) => {
+		if (entry === "store") return "store";
+		const path = `runtime.permissions.fs.write[${index}]`;
+		const root = containedPath(entry, path);
+		// The workspace root holds `.pancode`, and `.pancode` holds the installed
+		// resources, state and policy that only the operator changes. The launcher also
+		// checks the resolved path, which catches a link to either.
+		const first = root.split("/").find((segment) => segment !== ".");
+		if (first === undefined || first === ".pancode")
+			fail(path, "must not name the workspace root or PanCode-managed .pancode state");
+		return root;
+	});
+	if (new Set(read).size !== read.length || new Set(write).size !== write.length)
+		fail("runtime.permissions.fs", "lists a root twice");
+	return {
+		fs: { read, write },
+		exec: flag(raw.exec, "runtime.permissions.exec", false),
+		net: flag(raw.net, "runtime.permissions.net", false),
+	};
+}
+
+function parseConfig(value: unknown, policy: ManifestKeyPolicy): ExtensionConfigField[] {
+	const keys = new Set<string>();
+	return list(value, "runtime.config", RUNTIME_V2_LIMITS.configFields).map((item, index) => {
+		const path = `runtime.config[${index}]`;
+		const raw = record(item, path, ["key", "type", "default", "description", "options"], policy);
+		const key = named(raw.key, `${path}.key`, /^[a-zA-Z][a-zA-Z0-9]*$/, 40);
+		if (keys.has(key)) fail(`${path}.key`, `repeats '${key}'`);
+		keys.add(key);
+		const type = choice(raw.type, `${path}.type`, ["string", "number", "boolean"]);
+		const fallback = raw.default;
+		if (typeof fallback !== type || (type === "number" && !Number.isFinite(fallback)))
+			fail(`${path}.default`, `must be a ${type}`);
+		if (type === "string" && (fallback as string).length > 240) fail(`${path}.default`, "is longer than 240 characters");
+		const field: ExtensionConfigField = {
+			key,
+			type,
+			default: fallback as string | number | boolean,
+			description: text(raw.description, `${path}.description`, 240),
+		};
+		if (raw.options !== undefined) {
+			if (type !== "string") fail(`${path}.options`, "applies only to a string field");
+			const options = list(raw.options, `${path}.options`, RUNTIME_V2_LIMITS.configOptions).map((option, at) =>
+				text(option, `${path}.options[${at}]`, 80),
+			);
+			if (!options.includes(fallback as string)) fail(`${path}.default`, "must be one of the options");
+			field.options = options;
+		}
+		return field;
+	});
+}
+
+function tokens(value: unknown, path: string, max: number): number {
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > max)
+		fail(path, `must be a whole number from 1 to ${max}`);
+	return value;
+}
+
+function parseModelService(value: unknown, policy: ManifestKeyPolicy): ExtensionModelServiceDeclaration | undefined {
+	if (value === undefined) return undefined;
+	const raw = record(value, "runtime.services.model", ["sessionTokens", "maxOutputTokens"], policy);
+	const sessionTokens = tokens(
+		raw.sessionTokens,
+		"runtime.services.model.sessionTokens",
+		RUNTIME_V2_LIMITS.modelSessionTokensMax,
+	);
+	const maxOutputTokens = tokens(
+		raw.maxOutputTokens,
+		"runtime.services.model.maxOutputTokens",
+		RUNTIME_V2_LIMITS.modelOutputTokensMax,
+	);
+	if (maxOutputTokens > sessionTokens) fail("runtime.services.model.maxOutputTokens", "cannot exceed sessionTokens");
+	return { sessionTokens, maxOutputTokens };
+}
+
+function storeTags(value: unknown, path: string): string[] {
+	const tags = list(value, path, RUNTIME_V2_LIMITS.storeTags).map((tag, index) =>
+		named(tag, `${path}[${index}]`, STORE_TAG, 200),
+	);
+	if (new Set(tags).size !== tags.length) fail(path, "lists a tag twice");
+	return tags;
+}
+
+function parseStoreService(value: unknown, policy: ManifestKeyPolicy): ExtensionStoreServiceDeclaration | undefined {
+	if (value === undefined) return undefined;
+	const raw = record(value, "runtime.services.store", ["read", "write"], policy);
+	const write = storeTags(raw.write, "runtime.services.store.write");
+	// A write tag is readable too, so it is listed once, under write.
+	const read = storeTags(raw.read, "runtime.services.store.read").filter((tag) => !write.includes(tag));
+	if (read.length + write.length === 0) fail("runtime.services.store", "must name at least one tag");
+	if (read.length + write.length > RUNTIME_V2_LIMITS.storeTags)
+		fail("runtime.services.store", `allows at most ${RUNTIME_V2_LIMITS.storeTags} tags`);
+	return { read, write };
+}
+
+export function parseExtensionRuntimeV2(
+	value: unknown,
+	policy: ManifestKeyPolicy = new ManifestKeyPolicy(),
+): ExtensionRuntimeDeclarationV2 {
+	const raw = record(
+		value,
+		"runtime",
+		[
+			"api",
+			"entrypoint",
+			"commands",
+			"events",
+			"watch",
+			"hooks",
+			"tools",
+			"promote",
+			"ui",
+			"workspaces",
+			"access",
+			"permissions",
+			"state",
+			"services",
+			"config",
+		],
+		policy,
+	);
+	if (raw.api !== 2) fail("runtime.api", "must be 2");
+	const entrypoint = containedPath(raw.entrypoint, "runtime.entrypoint");
+	if (!ENTRYPOINT_SUFFIXES.some((suffix) => entrypoint.endsWith(suffix)))
+		fail("runtime.entrypoint", `must end in ${ENTRYPOINT_SUFFIXES.join(", ")}`);
+	const watch = list(raw.watch, "runtime.watch", SURFACE_LIMITS.watchGlobs).map((glob, index) =>
+		containedPath(glob, `runtime.watch[${index}]`),
+	);
+	if (new Set(watch).size !== watch.length) fail("runtime.watch", "lists a glob twice");
+	const state = record(raw.state ?? {}, "runtime.state", ["session", "store"], policy);
+	const services = record(raw.services ?? {}, "runtime.services", ["embedding", "model", "store"], policy);
+	const model = parseModelService(services.model, policy);
+	const store = parseStoreService(services.store, policy);
+	const tools = parseTools(raw.tools, policy);
+	const promote = parsePromote(raw.promote, tools);
+	const declaration: ExtensionRuntimeDeclarationV2 = {
+		api: 2,
+		entrypoint,
+		commands: parseCommands(raw.commands, policy),
+		...parseEvents(raw.events, policy),
+		watch,
+		hooks: parseHooks(raw.hooks, policy),
+		tools,
+		...(promote.length > 0 ? { promote } : {}),
+		ui: choices(raw.ui, "runtime.ui", SLOTS),
+		workspaces: parseWorkspaces(raw.workspaces, policy),
+		access: choices(raw.access, "runtime.access", ACCESS),
+		permissions: parsePermissions(raw.permissions, policy),
+		state: {
+			session: flag(state.session, "runtime.state.session", false),
+			store: flag(state.store, "runtime.state.store", false),
+		},
+		services: {
+			embedding: flag(services.embedding, "runtime.services.embedding", false),
+			...(model !== undefined ? { model } : {}),
+			...(store !== undefined ? { store } : {}),
+		},
+		config: parseConfig(raw.config, policy),
+	};
+
+	// Cross-field rules: each one keeps a declared capability honest about what it needs.
+	if (watch.length > 0 !== declaration.events.includes("fs_changed"))
+		fail("runtime.watch", "and the fs_changed event must be declared together");
+	const usesWorkspaceEvents = declaration.events.some(
+		(event) => event === "workspace_enter" || event === "workspace_leave",
+	);
+	if (usesWorkspaceEvents && declaration.workspaces.length === 0)
+		fail("runtime.events", "names a workspace event but the package declares no workspace");
+	const writesBeyondStore = declaration.permissions.fs.write.some((root) => root !== "store");
+	for (const [index, tool] of declaration.tools.entries()) {
+		if (tool.actionClass === "read" && (declaration.permissions.exec || writesBeyondStore))
+			fail(`runtime.tools[${index}].actionClass`, "cannot be read in a package that may execute or write files");
+		// A write-class tool is admitted as a file change, so its runtime must be unable to run
+		// programs and must hold a workspace root to change.
+		if (tool.actionClass === "write" && (declaration.permissions.exec || !writesBeyondStore))
+			fail(
+				`runtime.tools[${index}].actionClass`,
+				"can be write only in a package that declares a workspace fs.write root and no exec",
+			);
+	}
+	return declaration;
+}
+
+/**
+ * `plugin` is the manifest's served plugin. A prompt takeover answers a name
+ * the operator reads as the plugin's own, so it is part of what they approve;
+ * the key is absent without one, which keeps existing digests stable.
+ */
+export function capabilityEnvelope(
+	declaration: ExtensionRuntimeDeclarationV2,
+	plugin?: string,
+): ExtensionCapabilityEnvelope {
+	const takesOver = plugin
+		? declaration.commands
+				.filter((command) => command.replaces === "prompt")
+				.map((command) => `${plugin}:${command.name}`)
+		: [];
+	return {
+		commands: declaration.commands.map((command) => command.name),
+		...(takesOver.length > 0 ? { takesOver } : {}),
+		...(declaration.state.session || declaration.state.store ? { state: declaration.state } : {}),
+		...(declaration.services?.embedding || declaration.services?.model || declaration.services?.store
+			? { services: declaration.services }
+			: {}),
+		events: declaration.events,
+		...(declaration.tickMs !== undefined ? { tickMs: declaration.tickMs } : {}),
+		watch: declaration.watch,
+		hooks: declaration.hooks,
+		tools: declaration.tools.map((tool) => ({ name: tool.name, actionClass: tool.actionClass })),
+		...(declaration.promote !== undefined ? { promote: declaration.promote } : {}),
+		ui: declaration.ui,
+		workspaces: declaration.workspaces.map((workspace) => ({
+			id: workspace.id,
+			regions: workspace.regions,
+			...(workspace.board !== undefined ? { board: workspace.board } : {}),
+			...(workspace.keys !== undefined ? { keys: workspace.keys } : {}),
+		})),
+		access: declaration.access,
+		permissions: declaration.permissions,
+	};
+}
+
+/** Order-insensitive form: reordering a manifest list never changes the digest. */
+function canonical(value: unknown): unknown {
+	if (Array.isArray(value)) {
+		return value.map(canonical).sort((left, right) => (JSON.stringify(left) < JSON.stringify(right) ? -1 : 1));
+	}
+	if (value !== null && typeof value === "object") {
+		const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => (left < right ? -1 : 1));
+		return Object.fromEntries(entries.map(([key, entry]) => [key, canonical(entry)]));
+	}
+	return value;
+}
+
+export function envelopeDigest(envelope: ExtensionCapabilityEnvelope): string {
+	return createHash("sha256")
+		.update(JSON.stringify(canonical(envelope)))
+		.digest("hex");
+}
+
+function added(approved: readonly string[], next: readonly string[]): string[] {
+	return next.filter((entry) => !approved.includes(entry));
+}
+
+/**
+ * What a hook can do to the call or the prompt in flight, for the consent card.
+ * Any before_tool hook may return block_tool and any prompt_submit hook
+ * block_prompt, whatever its failure policy; a rewrite also needs the content
+ * access that shows the extension the text it rewrites.
+ */
+export function hookPowers(hook: ExtensionHookDeclaration, access: readonly string[]): string[] {
+	if (hook.on === "before_tool")
+		return ["can refuse the call", ...(access.includes("tool-args") ? ["can rewrite its input"] : [])];
+	if (hook.on === "prompt_submit")
+		return ["can refuse the prompt", ...(access.includes("prompt") ? ["can rewrite it"] : [])];
+	return [];
+}
+
+function hookCovers(prior: ExtensionHookDeclaration, hook: ExtensionHookDeclaration): boolean {
+	return (
+		prior.on === hook.on &&
+		(prior.tools === undefined || hook.tools?.every((tool) => prior.tools?.includes(tool) === true) === true) &&
+		(prior.onTimeout === "block" || hook.onTimeout === "pass") &&
+		(prior.onError === "block" || hook.onError === "pass") &&
+		hook.timeoutMs <= prior.timeoutMs
+	);
+}
+
+/** How much a hook asks for: tool scope, then blocking failure policies, then its deadline. */
+function hookReach(hook: ExtensionHookDeclaration): number[] {
+	const blocks = Number(hook.onTimeout === "block") + Number(hook.onError === "block");
+	return [hook.tools?.length ?? Number.POSITIVE_INFINITY, blocks, hook.timeoutMs];
+}
+
+function compareReach(left: ExtensionHookDeclaration, right: ExtensionHookDeclaration): number {
+	const [a, b] = [hookReach(left), hookReach(right)];
+	const at = a.findIndex((value, index) => value !== b[index]);
+	return at === -1 ? 0 : (a[at] ?? 0) < (b[at] ?? 0) ? -1 : 1;
+}
+
+/**
+ * Every hook runs, so one approved declaration covers one candidate. This is a
+ * maximum matching of candidates to the approved hooks that cover them: a
+ * candidate whose cover is held by another candidate moves that one to a cover
+ * it can also use before it is counted as growth, so a manifest that fits
+ * inside the approved one never asks again. The most demanding candidate
+ * claims first and tries the narrowest cover first, which only decides which
+ * of several copies is named when some do not fit.
+ */
+function uncoveredHooks(
+	approved: readonly ExtensionHookDeclaration[],
+	next: readonly ExtensionHookDeclaration[],
+): ExtensionHookDeclaration[] {
+	const covers = [...approved].sort(compareReach);
+	const holder: Array<number | undefined> = covers.map(() => undefined);
+	const claim = (index: number, visited: Set<number>): boolean => {
+		const hook = next[index];
+		if (hook === undefined) return false;
+		for (const [at, prior] of covers.entries()) {
+			if (visited.has(at) || !hookCovers(prior, hook)) continue;
+			visited.add(at);
+			const held = holder[at];
+			if (held === undefined || claim(held, visited)) {
+				holder[at] = index;
+				return true;
+			}
+		}
+		return false;
+	};
+	const unmatched = new Set<number>();
+	const order = next.map((hook, index) => ({ hook, index })).sort((left, right) => compareReach(right.hook, left.hook));
+	for (const { index } of order) if (!claim(index, new Set())) unmatched.add(index);
+	return next.filter((_, index) => unmatched.has(index));
+}
+
+/**
+ * Ways `next` reaches further than the envelope the operator approved. An
+ * empty list means the same or a smaller envelope, which reloads without
+ * asking. Each line is written for the consent card.
+ */
+export function envelopeGrowth(approved: ExtensionCapabilityEnvelope, next: ExtensionCapabilityEnvelope): string[] {
+	const growth: string[] = [];
+	const push = (label: string, entries: readonly string[]): void => {
+		if (entries.length > 0) growth.push(`${label}: ${entries.join(", ")}`);
+	};
+	push("new commands", added(approved.commands, next.commands));
+	push("takes over prompts", added(approved.takesOver ?? [], next.takesOver ?? []));
+	push(
+		"keeps host state",
+		(["session", "store"] as const).filter((kind) => next.state?.[kind] === true && approved.state?.[kind] !== true),
+	);
+	if (next.services?.embedding && !approved.services?.embedding)
+		growth.push("may request embeddings from the configured model");
+	const model = next.services?.model;
+	const approvedModel = approved.services?.model;
+	if (model && !approvedModel)
+		growth.push(
+			`may request completions from an operator-assigned model (${model.sessionTokens} tokens a session, ${model.maxOutputTokens} a reply)`,
+		);
+	else if (model && approvedModel) {
+		if (model.sessionTokens > approvedModel.sessionTokens)
+			growth.push(
+				`a larger model budget (${model.sessionTokens} tokens a session, approved ${approvedModel.sessionTokens})`,
+			);
+		if (model.maxOutputTokens > approvedModel.maxOutputTokens)
+			growth.push(`longer model replies (${model.maxOutputTokens} tokens, approved ${approvedModel.maxOutputTokens})`);
+	}
+	const store = next.services?.store;
+	const approvedStore = approved.services?.store;
+	if (store) {
+		const readable = [...(approvedStore?.read ?? []), ...(approvedStore?.write ?? [])];
+		push("reads store tags", added(readable, store.read));
+		push("writes store tags", added(approvedStore?.write ?? [], store.write));
+	}
+	push("new events", added(approved.events, next.events));
+	if (next.tickMs !== undefined && approved.tickMs === undefined) growth.push("a timer");
+	else if (next.tickMs !== undefined && approved.tickMs !== undefined && next.tickMs < approved.tickMs)
+		growth.push(`a faster timer (${next.tickMs / 1000}s, approved ${approved.tickMs / 1000}s)`);
+	push("new watched paths", added(approved.watch, next.watch));
+	for (const hook of uncoveredHooks(approved.hooks, next.hooks)) {
+		const scope = hook.tools ? ` on ${hook.tools.join(", ")}` : "";
+		const powers = hookPowers(hook, next.access);
+		growth.push(`hook ${hook.on}${scope} (${[`${hook.timeoutMs} ms`, ...powers].join("; ")})`);
+	}
+	for (const tool of next.tools) {
+		const prior = approved.tools.find((entry) => entry.name === tool.name);
+		if (!prior) growth.push(`new tool: ${tool.name} (${tool.actionClass})`);
+		// Each class meets a different admission rule, so no direction of a change is narrower in every policy.
+		else if (prior.actionClass !== tool.actionClass)
+			growth.push(`tool ${tool.name} is now ${tool.actionClass} (approved ${prior.actionClass})`);
+	}
+	// Every request then carries these schemas, so the operator's token budget is what grows.
+	push("attaches tool schemas to every request", added(approved.promote ?? [], next.promote ?? []));
+	push("new interface slots", added(approved.ui, next.ui));
+	for (const workspace of next.workspaces) {
+		const prior = approved.workspaces.find((entry) => entry.id === workspace.id);
+		if (!prior) {
+			growth.push(`new workspace: ${workspace.id} (${workspace.regions.join(", ")})`);
+			continue;
+		}
+		push(`workspace ${workspace.id} regions`, added(prior.regions, workspace.regions));
+		const priorKeys = (prior.keys ?? []).map((binding) => `${binding.key}:${binding.action}`);
+		const nextKeys = (workspace.keys ?? []).map((binding) => `${binding.key}:${binding.action}`);
+		push(`workspace ${workspace.id} keys`, added(priorKeys, nextKeys));
+	}
+	// Content access that lets a hook rewrite is wider than one that only reads it.
+	const rewrites = (kind: string): boolean =>
+		next.hooks.some((hook) => hookPowers(hook, [kind]).some((power) => power.startsWith("can rewrite")));
+	push(
+		"content access",
+		added(approved.access, next.access).map((kind) => (rewrites(kind) ? `${kind} (a hook can rewrite it)` : kind)),
+	);
+	push("read access", added(approved.permissions.fs.read, next.permissions.fs.read));
+	push("write access", added(approved.permissions.fs.write, next.permissions.fs.write));
+	if (next.permissions.exec && !approved.permissions.exec) growth.push("may run programs");
+	if (next.permissions.net && !approved.permissions.net) growth.push("may use the network");
+	return growth;
+}

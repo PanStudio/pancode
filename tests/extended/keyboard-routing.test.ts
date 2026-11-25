@@ -1,0 +1,1235 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { afterEach, it } from "node:test";
+import { DEFAULT_SETTINGS, nextOutputStyle } from "../../src/core/defaults.js";
+import { presentationTier, setPresentationTier } from "../../src/core/presentation-tier.js";
+import type { FleetRunPreview } from "../../src/domains/dispatch/fleet-run-preview.js";
+import type { SessionContract, SessionMeta } from "../../src/domains/session/index.js";
+import { CURRENT_SESSION_FORMAT_VERSION } from "../../src/engine/session.js";
+import type { ProcessTerminal } from "../../src/engine/tui.js";
+import {
+	ApplicationInputTuiAltScreen,
+	type Component,
+	getKeybindings,
+	Input,
+	ScrollView,
+	SelectList,
+	setKeybindings,
+	stripTerminalSequences,
+	type Terminal,
+	Text,
+	VStack,
+	visibleWidth,
+} from "../../src/engine/tui.js";
+import { dockBodyRows } from "../../src/interactive/dock.js";
+import { buildFooterDashboard } from "../../src/interactive/footer/dashboard.js";
+import { createInteractiveInputRuntime } from "../../src/interactive/interactive-input-runtime.js";
+import { dispatchInteractiveAction } from "../../src/interactive/interactive-key-actions.js";
+import { createKeybindingManager } from "../../src/interactive/keybinding-manager.js";
+import { DEFAULT_SELECT_THEME, FocusBox, showPancodeOverlayFrame } from "../../src/interactive/overlay-frame.js";
+import type { OverlayState } from "../../src/interactive/overlay-key-routing.js";
+import { openAskUserOverlay } from "../../src/interactive/overlays/ask-user.js";
+import { openExtensionPanel } from "../../src/interactive/overlays/extension-panel.js";
+import { openFleetRunApprovalOverlay } from "../../src/interactive/overlays/fleet-run-approval.js";
+import { openHelpOverlay } from "../../src/interactive/overlays/help-reference.js";
+import { openHubReviewOverlay } from "../../src/interactive/overlays/hub-review.js";
+import { openInteropOverlay } from "../../src/interactive/overlays/interop.js";
+import { ListOverlayView } from "../../src/interactive/overlays/list-overlay.js";
+import { ModelOverlayView } from "../../src/interactive/overlays/model-selector.js";
+import { openSessionOverlay } from "../../src/interactive/overlays/session-selector.js";
+import { SettingsCenter } from "../../src/interactive/overlays/settings.js";
+import { PancodeEditor } from "../../src/interactive/pancode-editor.js";
+import { createProcessTerminalLease } from "../../src/interactive/terminal-lease.js";
+import { ViewOverlayView } from "../../src/interactive/view/view-overlay.js";
+import type { SlashCommandContext } from "../../src/session-control/slash-command-types.js";
+import { hubApplyFixture, hubPlanFixture } from "../harness/hub-plan-fixture.js";
+
+class KeyboardTerminal implements Terminal {
+	columns = 100;
+	rows = 32;
+	kittyProtocolActive = false;
+	output = "";
+	input: (data: string) => void = () => {};
+	start(input: (data: string) => void): void {
+		this.input = input;
+	}
+	stop(): void {}
+	async drainInput(): Promise<void> {}
+	write(data: string): void {
+		this.output += data;
+	}
+	moveBy(): void {}
+	hideCursor(): void {}
+	showCursor(): void {}
+	clearLine(): void {}
+	clearFromCursor(): void {}
+	clearScreen(): void {}
+	setTitle(): void {}
+	setProgress(): void {}
+	setProgramStatus(): void {}
+}
+const cleanups: (() => void | Promise<void>)[] = [];
+afterEach(async () => {
+	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+});
+const noop = () => {};
+function fixture(overrides: Record<string, string | string[]> = {}) {
+	const previousKeys = getKeybindings();
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.interface.keybindings = overrides;
+	const keys = createKeybindingManager(settings, {});
+	cleanups.push(() => setKeybindings(previousKeys));
+	const terminal = new KeyboardTerminal();
+	const tui = new ApplicationInputTuiAltScreen(terminal);
+	const overlays: { component: Component; handle: ReturnType<typeof tui.showOverlay> }[] = [];
+	const showOverlay = tui.showOverlay.bind(tui);
+	tui.showOverlay = (component, options) => {
+		const handle = showOverlay(component, options);
+		overlays.push({ component, handle });
+		return handle;
+	};
+	const active = {
+		streaming: true,
+		queued: false,
+		parked: false,
+		inspectable: false,
+		inspecting: false,
+		terms: false,
+		detail: false,
+		armed: false,
+	};
+	const editor = new PancodeEditor(tui, {});
+	let state: OverlayState = "closed";
+	let handle: ReturnType<typeof tui.showOverlay> | null = null;
+	const counts = {
+		hub: 0,
+		cancel: 0,
+		submit: 0,
+		status: 0,
+		allow: 0,
+		stop: 0,
+		dismiss: 0,
+		shutdown: 0,
+		runCancel: 0,
+		steer: 0,
+		output: 0,
+	};
+	const previousTier = presentationTier();
+	cleanups.push(() => setPresentationTier(previousTier));
+	editor.onSubmit = () => {
+		counts.submit++;
+	};
+	const close = () => {
+		handle?.hide();
+		handle = null;
+		state = "closed";
+		tui.setFocus(editor);
+	};
+	const open = (next: OverlayState, component: Component = new Text("owned", 0, 0)) => {
+		state = next;
+		handle = showPancodeOverlayFrame(tui, component, { title: next, markerId: "keyboard-test", width: 70 });
+	};
+	const openHub = () => {
+		counts.hub++;
+		const list = new ListOverlayView(
+			{
+				title: "PanHub",
+				items: [
+					{ id: "a", label: "alpha" },
+					{ id: "b", label: "beta" },
+				],
+				filterable: true,
+				explicitSearch: true,
+				onClose: close,
+			},
+			() => tui.requestRender(),
+		);
+		open("skills-hub", list);
+	};
+	const controller = createInteractiveInputRuntime({
+		tui,
+		keybindings: keys,
+		dispatchAction: dispatchInteractiveAction,
+		actions: {
+			canExit: () => !active.streaming && !active.queued && editor.getText().length === 0,
+			cycleOutputStyle: () => {
+				counts.output++;
+				setPresentationTier(nextOutputStyle(presentationTier()));
+			},
+			availableThinkingLevels: () => ["off"],
+			onCycleThinking: noop,
+			cycleScopedModelForward: noop,
+			cycleScopedModelBackward: noop,
+			backgroundActiveDispatch: noop,
+			toggleFilesPane: noop,
+			openQueueNavigator: noop,
+		},
+		overlay: {
+			getState: () => state,
+			closeOverlay: close,
+			cancelPermission: close,
+			retryPendingPermission: () => {
+				if (state !== "closed" || !active.parked) return false;
+				active.parked = false;
+				open("permission-confirm");
+				return true;
+			},
+			confirmPermission: () => {
+				counts.allow++;
+			},
+			stopTurnFromPermission: () => {
+				counts.stop++;
+			},
+			canInspectMutation: () => active.inspectable,
+			isInspectingMutation: () => active.inspecting,
+			toggleMutationInspection: () => {
+				active.inspecting = !active.inspecting;
+			},
+			scrollMutationInspection: noop,
+			togglePermissionTerms: () => {
+				active.terms = !active.terms;
+			},
+			isShowingPermissionTerms: () => active.terms,
+			scrollPermissionCard: () => false,
+			cancelAskUser: close,
+			toggleFooterDashboardState: () => {
+				counts.status++;
+			},
+			toggleDispatchBoardOverlay: noop,
+			openModelOverlayState: noop,
+			openSkillsHubState: openHub,
+			openTreeOverlayState: noop,
+			openTasksOverlayState: noop,
+			openDecisionsOverlayState: noop,
+		},
+		refreshFooter: noop,
+		dispatchBoard: {
+			selectPrevious: noop,
+			selectNext: noop,
+			toggleDetail: () => {
+				active.detail = !active.detail;
+			},
+			detailExpanded: () => active.detail,
+			cancelArmed: () => active.armed,
+			armCancel: (on: boolean) => {
+				active.armed = on;
+			},
+		},
+		watchSelectedDispatch: () => false,
+		steerSelectedDispatch: () => {
+			counts.steer++;
+		},
+		cancelSelectedDispatch: () => {
+			counts.runCancel++;
+		},
+		cancelActiveEditorBash: () => false,
+		isStreaming: () => active.streaming,
+		hasQueuedMessages: () => active.queued,
+		cancelActiveRun: () => {
+			counts.cancel++;
+		},
+		editor,
+		editorSubmit: {
+			openExternalEditorForInput: noop,
+			interruptFromEditor: noop,
+			restoreQueuedFollowUpsToEditor: noop,
+		},
+		requestRender: () => tui.requestRender(),
+		notifications: {
+			list: () => [{ id: "a" }, { id: "b" }],
+			dismiss: () => {
+				counts.dismiss++;
+			},
+			dismissAll: () => {
+				counts.dismiss += 100;
+			},
+		},
+		shutdown: {
+			stopTickers: noop,
+			disposeInteractiveTickers: noop,
+			disposeBeforeStatus: noop,
+			disposeProjectionPrimary: noop,
+			disposeStatus: noop,
+			disposeProjectionRemaining: noop,
+			disposeOverlay: close,
+			stopAgentProgress: noop,
+			disposeChat: noop,
+			disposeSubscriptions: noop,
+		},
+		stopUi: () => tui.stop(),
+		cancelParkedCalls: noop,
+		onShutdown: async () => {
+			counts.shutdown++;
+		},
+		registerInputListener: (listener) => {
+			tui.setApplicationInputPolicy(listener);
+		},
+		registerTerminalTeardown: noop,
+		signals: { takeInterruptOwnership: () => noop, on: noop, off: noop },
+	});
+	const root = new VStack();
+	root.addChild(new ScrollView(new Text("alpha one\nalpha two\nalpha three", 0, 0), { primary: true, follow: "end" }), {
+		grow: 1,
+	});
+	root.addChild(editor);
+	tui.addChild(root);
+	tui.setFocus(editor);
+	tui.start();
+	tui.renderNow();
+	cleanups.push(() => controller.shutdown());
+	return {
+		terminal,
+		tui,
+		editor,
+		keys,
+		counts,
+		controller,
+		open,
+		close,
+		overlays,
+		active,
+		state: () => state,
+		mount(next: OverlayState, factory: () => ReturnType<typeof tui.showOverlay>) {
+			state = next;
+			handle = factory();
+			return handle;
+		},
+	};
+}
+it("routes press/repeat/release before viewport and keeps literal paste inert", () => {
+	const f = fixture();
+	f.terminal.input("\x1b[108;3u");
+	assert.equal(f.state(), "skills-hub");
+	f.terminal.input("\x1b[108;3:2u");
+	f.terminal.input("\x1b[108;3:3u");
+	assert.equal(f.counts.hub, 1);
+	assert.equal(f.state(), "skills-hub");
+	f.terminal.input("\x1b[108;3u");
+	assert.equal(f.state(), "closed");
+	f.terminal.input("\x1b[200~/model\n\x1b[201~");
+	assert.equal(f.counts.submit, 0);
+	assert.equal(f.editor.getText(), "/model\n");
+	f.terminal.input("\r");
+	assert.equal(f.counts.submit, 1);
+});
+it("Ctrl+X clears the whole draft in one press and undo brings it back (TUI-5)", () => {
+	const f = fixture();
+	f.terminal.input("first line");
+	f.terminal.input("\x1b[200~pasted\nsecond\x1b[201~");
+	const draft = f.editor.getText();
+	f.terminal.input("\x18");
+	assert.equal(f.editor.getText(), "");
+	assert.equal(f.counts.cancel, 0, "clearing the draft leaves the run alone");
+	f.terminal.input("\x1f");
+	assert.equal(f.editor.getText(), draft);
+});
+it("keeps search focused ahead of globals and Ctrl+C leaves the active run alive", () => {
+	const f = fixture();
+	f.editor.setText("draft");
+	f.terminal.input("\x12");
+	assert.equal(f.tui.isSearchFocused, true);
+	f.terminal.input("\x1bu");
+	f.terminal.input("\x1bl");
+	f.terminal.input("\x11");
+	assert.equal(f.counts.status, 0);
+	assert.equal(f.counts.hub, 0);
+	assert.equal(f.editor.getText(), "draft");
+	f.terminal.input("alpha");
+	f.terminal.input("\r");
+	f.terminal.input("\x1b[A");
+	f.terminal.input("\x03");
+	assert.equal(f.tui.isSearchFocused, false);
+	assert.equal(f.counts.cancel, 0);
+	f.open("permission-confirm");
+	f.terminal.input("\x12");
+	assert.equal(f.tui.isSearchFocused, false);
+	f.terminal.input("\x1b[200~s\nv\n\x03\x1b[201~");
+	assert.equal(f.counts.allow, 0);
+	assert.equal(f.counts.cancel, 0);
+	assert.equal(f.editor.getText(), "drafts\nv\n");
+	f.editor.setText("");
+	for (const key of "make it shorter?") f.terminal.input(key);
+	assert.equal(f.editor.getText(), "make it shorter?");
+	assert.equal(f.state(), "permission-confirm");
+	for (const key of ["\x1b[120;3:2u", "\x1b[120;3:3u", "\x1b[13;1:2u", "\x1b[27;1:2u"]) f.terminal.input(key);
+	assert.equal(f.counts.stop, 0);
+	assert.equal(f.counts.allow, 0);
+	assert.equal(f.state(), "permission-confirm");
+	f.terminal.input("\x1bx");
+	assert.equal(f.counts.stop, 1);
+});
+it("permission deletion bypasses submit overrides and leaves nonempty Enter inert", () => {
+	const f = fixture({ "tui.input.submit": "ctrl+u", "tui.editor.deleteToLineStart": "ctrl+x" });
+	f.editor.setText("draft");
+	f.active.parked = true;
+	f.terminal.input("\r");
+	assert.equal(f.state(), "permission-confirm");
+	assert.equal(f.counts.submit, 0);
+	assert.equal(f.editor.getText(), "draft");
+	f.terminal.input("\r");
+	assert.equal(f.counts.allow, 0);
+	f.terminal.input("\x15");
+	assert.equal(f.editor.getText(), "");
+	assert.equal(f.counts.submit, 0);
+	assert.equal(f.counts.allow, 0);
+	f.terminal.input("\n");
+	assert.equal(f.counts.allow, 1);
+});
+it("offers permission-local stop, inspection and terms through the portable menu", () => {
+	const f = fixture();
+	f.active.inspectable = true;
+	f.open("permission-confirm");
+	const menu = (key: string) => {
+		f.terminal.input("\x07");
+		f.terminal.input(key);
+	};
+	menu("t");
+	assert.equal(f.active.terms, true);
+	menu("v");
+	assert.equal(f.active.inspecting, true);
+	menu("t");
+	assert.equal(f.active.terms, true, "terms stay inert while inspecting");
+	f.terminal.input("\x07");
+	menu("v");
+	assert.equal(f.active.inspecting, false);
+	menu("x");
+	assert.equal(f.counts.stop, 1);
+	assert.equal(f.counts.dismiss, 0);
+	assert.equal(f.counts.allow, 0);
+	assert.equal(f.counts.submit, 0);
+	f.terminal.input("xvt");
+	assert.equal(f.editor.getText(), "xvt", "unprefixed letters still edit the composer");
+});
+it("leader toggles its owner, survives delay/unknown suffix, and Ctrl+C closes only the menu", async () => {
+	const f = fixture();
+	f.editor.setText("unchanged");
+	f.terminal.input("\x07");
+	f.terminal.input("?");
+	await new Promise((resolve) => setTimeout(resolve, 1700));
+	f.tui.renderNow();
+	assert.match(f.terminal.output, /No action for this key/u);
+	assert.equal(f.editor.getText(), "unchanged");
+	f.terminal.input("l");
+	assert.equal(f.state(), "skills-hub");
+	f.terminal.input("\x07");
+	f.terminal.input("l");
+	assert.equal(f.state(), "closed");
+	f.terminal.input("\x07");
+	f.terminal.input("\x03");
+	assert.equal(f.counts.cancel, 0);
+	f.terminal.input("\x03");
+	assert.equal(f.counts.cancel, 1);
+});
+it("Alt+O cycles the tier from the plan review card and the card redraws at the new tier (FX-13)", () => {
+	const f = fixture();
+	setPresentationTier("standard");
+	const preview = {
+		name: "review",
+		planHash: "abc",
+		plan: { hash: "def" },
+		waves: [
+			{
+				index: 0,
+				steps: [
+					{
+						kind: "agent",
+						stepId: "review",
+						agentId: "scout",
+						scope: "readonly",
+						writes: [],
+						route: { targetId: "blade", wireModelId: "dynamo/qwopus", nodeId: "local" },
+					},
+				],
+			},
+		],
+		budget: { playbookUsd: null, ceilingUsd: 2, currentUsd: 0 },
+	} as unknown as FleetRunPreview;
+	let cancelled = 0;
+	const card = f.mount("fleet-run-approval", () =>
+		openFleetRunApprovalOverlay(f.tui, {
+			subject: { ok: true, preview },
+			columns: 100,
+			onAccept: noop,
+			onCancel: () => {
+				cancelled++;
+			},
+		}),
+	);
+	cleanups.push(() => card.hide());
+	const frame = () => {
+		const from = f.terminal.output.length;
+		f.tui.renderNow();
+		return stripTerminalSequences(f.terminal.output.slice(from));
+	};
+	assert.doesNotMatch(frame(), /blade · dynamo\/qwopus/u, "standard keeps the step route off the card");
+	const order = ["standard"];
+	for (let press = 0; press < 3; press++) {
+		f.terminal.input("\x1bo");
+		order.push(presentationTier());
+		if (presentationTier() === "detailed") assert.match(frame(), /blade · dynamo\/qwopus/u, "the held card redraws");
+	}
+	assert.equal(f.counts.output, 3);
+	assert.deepEqual(new Set(order), new Set(["compact", "standard", "detailed"]));
+	assert.equal(f.state(), "fleet-run-approval");
+	assert.equal(cancelled, 0);
+	f.terminal.input("\x07");
+	f.terminal.input("o");
+	assert.equal(f.counts.output, 4, "Ctrl+G O reaches the tier from the card");
+});
+it("Alt+O and Ctrl+G O reach the tier from every surface family and leave the surface open (FX-13)", async () => {
+	const f = fixture();
+	const rows: ReadonlyArray<{ family: string; state: OverlayState; open: () => () => void | Promise<void> }> = [
+		{
+			family: "approval card",
+			state: "permission-confirm",
+			open: () => {
+				f.open("permission-confirm");
+				return noop;
+			},
+		},
+		{
+			family: "interview",
+			state: "ask-user",
+			open: () => {
+				const interview = openAskUserOverlay(f.tui, { onCancel: f.close });
+				f.mount("ask-user", () => interview);
+				const answered = interview.ask([{ question: "First", options: [{ label: "Choose" }] }]);
+				return async () => {
+					interview.cancel();
+					await answered;
+				};
+			},
+		},
+		{
+			family: "side question",
+			state: "side-question",
+			open: () => {
+				f.open("side-question");
+				return noop;
+			},
+		},
+		{
+			family: "picker",
+			state: "skills-hub",
+			open: () => {
+				f.terminal.input("\x1bl");
+				return noop;
+			},
+		},
+		{
+			family: "Fleet Runs board",
+			state: "dispatch-board",
+			open: () => {
+				f.open("dispatch-board");
+				return noop;
+			},
+		},
+		{
+			family: "/usage",
+			state: "usage",
+			open: () => {
+				f.open("usage");
+				return noop;
+			},
+		},
+		// The in-TUI workers dock never takes the keyboard: the composer keeps it, so the key routes as from the composer.
+		{ family: "dock under the composer", state: "closed", open: () => noop },
+	];
+	f.editor.setText("draft");
+	for (const row of rows) {
+		const teardown = row.open();
+		assert.equal(f.state(), row.state, row.family);
+		const before = f.counts.output;
+		const tier = presentationTier();
+		f.terminal.input("\x1bo");
+		assert.equal(f.counts.output, before + 1, `${row.family}: Alt+O cycles the tier`);
+		assert.equal(presentationTier(), nextOutputStyle(tier), row.family);
+		f.terminal.input("\x07");
+		f.terminal.input("o");
+		assert.equal(f.counts.output, before + 2, `${row.family}: Ctrl+G O cycles the tier`);
+		assert.equal(f.state(), row.state, `${row.family} stays open`);
+		assert.equal(f.editor.getText(), "draft", `${row.family}: the draft is untouched`);
+		assert.equal(f.counts.allow + f.counts.stop + f.counts.submit + f.counts.runCancel, 0, row.family);
+		await teardown();
+		if (f.state() !== "closed") f.close();
+	}
+	// Transcript search is a focused owner too.
+	f.terminal.input("\x12");
+	assert.equal(f.tui.isSearchFocused, true);
+	f.terminal.input("\x1bo");
+	assert.equal(f.counts.output, rows.length * 2 + 1, "search: Alt+O cycles the tier");
+	assert.equal(f.tui.isSearchFocused, true);
+});
+it("permits printable editing repeats and live reload cancels a pending menu", () => {
+	const f = fixture();
+	f.terminal.input("\x1b[97u");
+	f.terminal.input("\x1b[97;1:2u");
+	assert.equal(f.editor.getText(), "aa");
+	const input = new Input();
+	const box = new FocusBox(input);
+	f.open("auth", box);
+	f.terminal.input("\x1b[98u");
+	f.terminal.input("\x1b[98;1:2u");
+	assert.equal(input.getValue(), "bb");
+	f.close();
+	f.terminal.input("\x07");
+	f.keys.reload({ "pancode.hub.toggle": "alt+p" });
+	f.terminal.input("l");
+	assert.equal(f.editor.getText(), "aal");
+	f.terminal.input("\x1bl");
+	assert.equal(f.state(), "closed");
+	f.terminal.input("\x1bp");
+	assert.equal(f.state(), "skills-hub");
+});
+it("reports genuine effective collisions, disables direct and leader routes, and dismisses one notice per call", () => {
+	const f = fixture({
+		"pancode.hub.toggle": [],
+		"pancode.model.select": "alt+l",
+		"tui.input.tab": "ctrl+i",
+		toString: "alt+y",
+	});
+	assert.equal(f.keys.matches("\x1bl", "pancode.hub.toggle"), false);
+	assert.equal(
+		f.keys.leaderTargets().some((entry) => entry.id === "pancode.hub.toggle"),
+		false,
+	);
+	assert.equal(f.keys.invalidCount(), 1);
+	assert.equal(
+		f.keys.getConflicts().some((entry) => entry.key === "enter"),
+		false,
+	);
+	f.keys.reload({ "pancode.model.select": "alt+l" });
+	assert.ok(f.keys.getConflicts().some((entry) => entry.key === "alt+l"));
+	f.controller.dismissNotifications();
+	f.controller.dismissNotifications();
+	assert.equal(f.counts.dismiss, 2);
+});
+
+const plain = (component: Component | null, width = 100) =>
+	component?.render(width).map(stripTerminalSequences).join("\n") ?? "";
+/**
+ * What the composer draws. A modal surface docks in the composer's slot and its
+ * engine overlay paints no rows, so the focused component renders nothing and
+ * the surface is read where the operator sees it.
+ */
+const composerText = (editor: Component, width = 100) => plain(editor, width);
+it("edits search at Home/End and changes the visible match index in both directions", () => {
+	const f = fixture();
+	f.editor.setText("composer survives");
+	f.terminal.input("\x12");
+	f.terminal.input("alpha");
+	f.tui.renderNow();
+	const search = () => plain(f.tui.getFocusedComponent());
+	assert.match(search(), /[123]\/3/);
+	const first = search().match(/([123])\/3/)?.[1];
+	f.terminal.input("\r");
+	f.tui.renderNow();
+	assert.notEqual(search().match(/([123])\/3/)?.[1], first);
+	f.terminal.input("\x1b[A");
+	f.tui.renderNow();
+	assert.equal(search().match(/([123])\/3/)?.[1], first);
+	f.terminal.input("\x1b[H");
+	f.terminal.input("x");
+	f.tui.renderNow();
+	assert.match(search(), /xalpha/);
+	assert.match(search(), /No matches/);
+	f.terminal.input("\x7f");
+	f.terminal.input("\x1b[F");
+	f.terminal.input("z");
+	f.tui.renderNow();
+	assert.match(search(), /alphaz/);
+	f.terminal.input("\x7f");
+	f.terminal.input("\x03");
+	assert.equal(f.editor.getText(), "composer survives");
+});
+it("keeps model filter Escape local and edits actual settings and View filters", () => {
+	const f = fixture();
+	const model = new ModelOverlayView(
+		[],
+		{ totalModels: 0, targets: 0, localModels: 0, cloudModels: 0, activeRef: "" },
+		noop,
+		undefined,
+		f.close,
+	);
+	f.open("model", model);
+	f.terminal.input("\x1b[97u");
+	f.terminal.input("\x1b[98;1:2u");
+	assert.equal(model.keyboardScope, "edit");
+	f.terminal.input("\x1b");
+	assert.equal(f.state(), "model");
+	assert.equal(model.keyboardScope, "browse");
+	f.terminal.input("\x1b");
+	assert.equal(f.state(), "closed");
+	const settings = new SettingsCenter([], {
+		getBodyHeight: () => 20,
+		prepareChange: () => null,
+		onApply: noop,
+		onCancel: f.close,
+	});
+	f.open("settings", settings);
+	f.terminal.input("/");
+	f.terminal.input("\x1b[200~alpha beta\x1b[201~");
+	f.terminal.input("\x1bb");
+	f.terminal.input("X");
+	assert.match(plain(settings), /alpha Xbeta/);
+	f.terminal.input("\x1b");
+	assert.equal(f.state(), "settings");
+	assert.doesNotMatch(plain(settings), /alpha Xbeta/);
+	f.close();
+	const view = new ViewOverlayView({ providers: [], getBodyHeight: () => 20, onClose: f.close, initialFilter: "alpha" });
+	f.open("view", view);
+	f.terminal.input("\x1b[F");
+	f.terminal.input("\x1b[98u");
+	assert.match(plain(view), /> alphab/);
+	f.terminal.input("\x07");
+	f.terminal.input("z");
+	assert.match(plain(view), /> alpha/);
+	assert.doesNotMatch(plain(view), /> alphab/);
+});
+it("keeps interview word editing on its answer and Escape on the local question", async () => {
+	const f = fixture();
+	const interview = openAskUserOverlay(f.tui, { onCancel: f.close });
+	f.mount("ask-user", () => interview);
+	const result = interview.ask([
+		{ question: "First", options: [{ label: "Choose" }, { label: "Other" }] },
+		{ question: "Second" },
+	]);
+	f.terminal.input("t");
+	f.terminal.input("\x1b[200~alpha beta\x1b[201~");
+	f.terminal.input("\x1bb");
+	f.terminal.input("X");
+	assert.match(composerText(f.editor), /alpha Xbeta/);
+	assert.doesNotMatch(composerText(f.editor), /Alt\+Left/);
+	f.terminal.input("\x1b");
+	assert.equal(f.state(), "ask-user");
+	assert.doesNotMatch(composerText(f.editor), /alpha Xbeta/);
+	interview.cancel();
+	await result;
+});
+it("honors resume selection overrides and refreshes help while it remains open", () => {
+	const f = fixture({ "tui.select.down": "ctrl+n", "tui.select.confirm": "ctrl+y" });
+	const sessions: SessionMeta[] = ["first", "second"].map((id) => ({
+		id,
+		cwd: "/fixture",
+		cwdHash: "fixture",
+		createdAt: "2026-09-10T00:00:00Z",
+		endedAt: null,
+		model: "fixture",
+		target: "fixture",
+		pancodeVersion: "0.4.7",
+		piMonoVersion: "0.85.1",
+		platform: "linux",
+		nodeVersion: process.version,
+		sessionFormatVersion: CURRENT_SESSION_FORMAT_VERSION,
+	}));
+	let resumed = "";
+	f.mount("resume", () =>
+		openSessionOverlay(f.tui, {
+			session: { history: () => sessions } as unknown as SessionContract,
+			onResume: (id) => {
+				resumed = id;
+			},
+			onClose: f.close,
+		}),
+	);
+	f.terminal.input("\x0e");
+	f.terminal.input("\x19");
+	assert.equal(resumed, "second");
+	f.mount("help", () => openHelpOverlay(f.tui, f.keys, f.close, "PanHub (composer)"));
+	assert.match(composerText(f.editor, 120), /Alt\+L/);
+	f.keys.reload({ "pancode.hub.toggle": "alt+p" });
+	assert.equal(f.state(), "help");
+	assert.match(composerText(f.editor, 120), /Alt\+P/);
+	assert.doesNotMatch(composerText(f.editor, 120), /Alt\+L/);
+});
+it("Help is a pick list: after an arrow, a typed j goes to the filter, not the selection (E-13)", () => {
+	const f = fixture();
+	f.mount("help", () => openHelpOverlay(f.tui, f.keys, f.close));
+	f.terminal.input("\x1b[B");
+	f.terminal.input("j");
+	assert.match(composerText(f.editor, 120), /> j/);
+});
+it("WTF-P F11: /help <plugin> lists the plugin's prompts beside its extension commands, a takeover once", () => {
+	const f = fixture();
+	const takeover = {
+		origin: "extension" as const,
+		invocation: "desk:progress",
+		extensionId: "desk",
+		scope: "user" as const,
+		description: "Progress, computed locally.",
+		generation: 1,
+		available: true,
+		replaces: "prompt" as const,
+	};
+	f.mount("help", () =>
+		openHelpOverlay(f.tui, f.keys, f.close, "desk", [takeover], undefined, undefined, [
+			{ name: "desk:progress", description: "Progress prompt", source: "plugin desk" },
+			{ name: "desk:plan-section", description: "Plan one section", source: "plugin desk", argumentHint: "<section>" },
+		]),
+	);
+	const shown = composerText(f.editor, 120);
+	assert.match(shown, /\/desk:plan-section/);
+	assert.match(shown, /Plan one section/);
+	assert.equal(shown.match(/\/desk:progress\b/gu)?.length, 1);
+});
+it("blocks repeated app actions even when a custom key collides with draft deletion", () => {
+	const f = fixture({ "pancode.hub.toggle": "ctrl+d" });
+	f.editor.setText("draft");
+	f.terminal.input("\x1b[100;5:2u");
+	assert.equal(f.state(), "closed");
+	assert.equal(f.editor.getText(), "draft");
+});
+
+it("docks the menu in the composer's slot at normal and small sizes, keeps the draft, and shows live hints", () => {
+	for (const [columns, rows] of [
+		[120, 42],
+		[80, 24],
+	] as const) {
+		const f = fixture();
+		f.terminal.columns = columns;
+		f.terminal.rows = rows;
+		f.editor.setText("draft stays visible");
+		f.terminal.input("\x1bl");
+		f.keys.reload({ "pancode.leader": "ctrl+x" });
+		f.terminal.input("\x18");
+		f.tui.renderNow();
+		// The dock: a title rail, the body in a two-column gutter, and a hint rail,
+		// every row the terminal's width and the whole within the dock budget.
+		const dock = f.editor.render(columns);
+		assert.ok(
+			dock.length >= 3 && dock.length <= dockBodyRows(f.tui) + 2,
+			`${dock.length} dock rows at ${columns}x${rows}`,
+		);
+		for (const line of dock) assert.equal(visibleWidth(line), columns, stripTerminalSequences(line));
+		assert.match(stripTerminalSequences(dock[0] ?? ""), /━/u);
+		for (const line of dock.slice(1, -1)) assert.match(stripTerminalSequences(line), /^ {2}/u);
+		const text = composerText(f.editor, columns);
+		assert.match(text, /PanHub ·/);
+		assert.doesNotMatch(text, /skills-hub|cancel owner/);
+		assert.match(text, /\[↑↓\] select/);
+		assert.match(text, /\[ctrl\+x\/Esc\] close/i);
+		assert.equal(f.editor.getText(), "draft stays visible");
+		f.terminal.input("\x03");
+		assert.equal(f.state(), "skills-hub");
+		f.terminal.input("\x03");
+		assert.equal(f.state(), "closed");
+		f.tui.renderNow();
+		assert.match(composerText(f.editor, columns), /draft stays visible/);
+	}
+});
+it("lets held Ctrl+D edit a draft but never quit on repeat, and protects queued work", async () => {
+	const f = fixture();
+	f.active.streaming = false;
+	f.editor.setText("ab");
+	f.terminal.input("\x1b[H");
+	f.terminal.input("\x04");
+	assert.equal(f.editor.getText(), "b");
+	f.terminal.input("\x1b[100;5:2u");
+	assert.equal(f.editor.getText(), "");
+	f.terminal.input("\x1b[100;5:2u");
+	assert.equal(f.counts.shutdown, 0);
+	f.active.queued = true;
+	f.terminal.input("\x04");
+	f.terminal.input("\x03");
+	f.terminal.input("\x03");
+	assert.equal(f.counts.shutdown, 0);
+	f.active.queued = false;
+	f.terminal.input("\x04");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(f.counts.shutdown, 1);
+});
+function bootFixture() {
+	const previousKeys = getKeybindings();
+	cleanups.push(() => setKeybindings(previousKeys));
+	const terminal = new KeyboardTerminal();
+	const tui = new ApplicationInputTuiAltScreen(terminal);
+	const counts = { shutdowns: 0 };
+	const clock = { now: 1 };
+	const recovered: string[] = [];
+	const lease = createProcessTerminalLease({
+		settings: structuredClone(DEFAULT_SETTINGS),
+		shutdown: () => {
+			counts.shutdowns++;
+		},
+		testing: {
+			shell: {
+				terminal: terminal as unknown as ProcessTerminal,
+				tui,
+				mount(root, focus) {
+					tui.addChild(root);
+					tui.setFocus(focus);
+					tui.start();
+				},
+				anchor: async () => 0,
+				releaseAnchor: noop,
+				stop: () => tui.stop(),
+				settle: async () => {},
+				complete: noop,
+				commitCurrentFrame: async () => null,
+				hasObservedBackpressure: () => false,
+				setStreamPacingActive: noop,
+				nextCommittedFrame: async () => null,
+			},
+			termination: {
+				installSignalHandlers: noop,
+				releaseInterruptOwnership: () => noop,
+				onDrain: noop,
+				shutdown: async () => {},
+			},
+			signals: { on: () => process, off: () => process },
+			write: (_stream, text) => recovered.push(text),
+			now: () => clock.now,
+		},
+	});
+	cleanups.push(() => lease.close());
+	return { terminal, tui, lease, counts, clock, recovered };
+}
+
+it("keeps and recovers the Stage 0 draft on a three-second double interrupt", async () => {
+	const { terminal, lease, counts, clock, recovered } = bootFixture();
+	terminal.input("unsent boot draft");
+	terminal.input("\x03");
+	assert.equal(lease.editor.getText(), "unsent boot draft");
+	clock.now += 1500;
+	terminal.input("\x03");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(counts.shutdowns, 1);
+	assert.match(recovered.join(""), /unsent boot draft/);
+});
+
+it("disarms Stage 0 shutdown on another key or an expired window", async () => {
+	const { terminal, counts, clock, lease } = bootFixture();
+	terminal.input("\x03");
+	terminal.input("a");
+	terminal.input("\x03");
+	assert.equal(lease.editor.getText(), "a");
+	assert.equal(counts.shutdowns, 0);
+	clock.now += 3001;
+	terminal.input("\x03");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(counts.shutdowns, 0);
+	clock.now += 1;
+	terminal.input("\x03");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(counts.shutdowns, 1);
+});
+
+it("preserves literal boot input and queued submissions across the single-editor adoption", async () => {
+	const { terminal, lease, counts } = bootFixture();
+	let policyCalls = 0;
+	terminal.input("\x1b[200~/model\x1b[201~");
+	assert.equal(lease.editor.getText(), "/model");
+	terminal.input("\x1b[13;1:3u");
+	terminal.input("\x1b[13;1:2u");
+	assert.equal(lease.editor.getText(), "/model");
+	terminal.input("\r");
+	assert.equal(lease.editor.getText(), "");
+	terminal.input("\x04");
+	terminal.input("\x03");
+	terminal.input("\x03");
+	assert.equal(counts.shutdowns, 0);
+	terminal.input("new draft");
+	const editor = lease.editor;
+	const admitted: string[] = [];
+	lease.registerApplicationInput(() => {
+		policyCalls++;
+		return undefined;
+	});
+	const root = new VStack();
+	root.addChild(editor);
+	assert.equal(
+		lease.adopt({
+			root,
+			editorChrome: {},
+			admitSubmission: async (record) => {
+				admitted.push(record.rawText);
+			},
+		}),
+		true,
+	);
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.deepEqual(admitted, ["/model"]);
+	assert.equal(lease.editor, editor);
+	assert.equal(editor.getText(), "new draft");
+	terminal.input("\x1b[97;1:3u");
+	assert.equal(policyCalls, 0);
+	terminal.input("a");
+	assert.equal(policyCalls, 1);
+	assert.equal(editor.getText(), "new drafta");
+});
+
+it("cancels a real PanHub child review before its parent, without writes or global actions", () => {
+	const f = fixture();
+	f.editor.setText("draft");
+	f.terminal.input("\x1bl");
+	let writes = 0;
+	let releases = 0;
+	const child = openHubReviewOverlay(f.tui, {
+		plan: hubPlanFixture(),
+		columns: 100,
+		commit: () => {
+			writes++;
+			return hubApplyFixture();
+		},
+		retryRefresh: () => hubApplyFixture().refresh,
+		onCancel: () => {
+			releases++;
+			child.hide();
+		},
+		onDone: noop,
+	});
+	cleanups.push(() => child.hide());
+	f.terminal.input("\x1bl");
+	f.terminal.input("\x07");
+	f.terminal.input("l");
+	f.terminal.input("\x12");
+	f.terminal.input("\x1bu");
+	f.terminal.input("\x1b[200~\r\x03\x1b[201~");
+	assert.equal(child.isHidden(), false);
+	assert.equal(f.tui.isSearchFocused, false);
+	assert.equal(f.counts.status, 0);
+	assert.equal(writes, 0);
+	assert.equal(f.editor.getText(), "draft");
+	f.terminal.input("\x03");
+	assert.equal(releases, 0, "the first Ctrl+C closes only the action menu");
+	f.terminal.input("\x03");
+	assert.equal(releases, 1);
+	assert.equal(f.state(), "skills-hub");
+	f.terminal.input("\x03");
+	assert.equal(f.state(), "closed");
+	assert.equal(writes, 0);
+});
+it("Ctrl+C is Esc in Fleet Runs: it folds an open run detail before it closes the board", () => {
+	const f = fixture();
+	f.open("dispatch-board");
+	f.terminal.input("\r");
+	f.terminal.input("\x03");
+	assert.equal(f.state(), "dispatch-board", "the first Ctrl+C folds the detail");
+	f.terminal.input("\x03");
+	assert.equal(f.state(), "closed");
+});
+it("Tab opens and folds a fleet run detail like Enter (E-13)", () => {
+	const f = fixture();
+	f.open("dispatch-board");
+	f.terminal.input("\t");
+	assert.equal(f.active.detail, true);
+	f.terminal.input("\t");
+	assert.equal(f.active.detail, false);
+	assert.equal(f.state(), "dispatch-board");
+});
+it("m steers a fleet run; the old s and d answer with their new key and do nothing", () => {
+	const f = fixture();
+	f.open("dispatch-board");
+	f.terminal.input("d");
+	assert.equal(f.active.detail, false, "d no longer toggles the detail");
+	f.terminal.input("\r");
+	assert.equal(f.active.detail, true, "Enter does");
+	assert.equal(f.state(), "dispatch-board");
+	f.terminal.input("s");
+	assert.equal(f.counts.steer, 0, "s no longer steers");
+	f.terminal.input("m");
+	assert.equal(f.counts.steer, 1);
+});
+it("/ in Fleet Runs closes the board and starts a slash command in the composer", () => {
+	const f = fixture();
+	f.open("dispatch-board");
+	f.terminal.input("/");
+	assert.equal(f.state(), "closed", "a typed command must not land in the board, where Enter only opens a row");
+	for (const ch of "hub") f.terminal.input(ch);
+	assert.equal(f.editor.getText(), "/hub");
+	assert.equal(f.active.detail, false);
+});
+it("x asks once before it cancels a fleet run; another key keeps the run", () => {
+	const f = fixture();
+	f.open("dispatch-board");
+	f.terminal.input("x");
+	assert.equal(f.counts.runCancel, 0, "the first x only asks");
+	assert.equal(f.active.armed, true);
+	f.terminal.input("j");
+	assert.equal(f.active.armed, false, "another key keeps the run");
+	f.terminal.input("x");
+	f.terminal.input("x");
+	assert.equal(f.counts.runCancel, 1);
+});
+it("closes a real extension panel and cycles Interop kinds with encoded c only in browse", () => {
+	const f = fixture();
+	f.mount("extensions", () =>
+		openExtensionPanel(f.tui, "fixture", { title: "Fixture", sections: [] }, () => true, f.close),
+	);
+	f.terminal.input("\x1b[27u");
+	assert.equal(f.state(), "closed");
+	const notices: string[] = [];
+	const ctx = {
+		notice: (_level: string, text: string) => notices.push(text),
+		interop: {
+			report: () => null,
+			proposals: () => [],
+			configured: () => [{ id: "fixture", command: "fixture", args: [] }],
+			accept: noop,
+			decline: noop,
+		},
+	} as unknown as SlashCommandContext;
+	f.mount("interop", () => openInteropOverlay(f.tui, ctx, f.close));
+	f.terminal.input("\x1b[27;1;99~");
+	assert.ok(notices.includes("Adoption kind: skill."));
+	f.terminal.input("j");
+	f.terminal.input("k");
+	assert.equal(notices.length, 1);
+	f.terminal.input("/");
+	f.terminal.input("c");
+	assert.equal(notices.length, 1);
+	f.terminal.input("\x1b");
+	f.terminal.input("\x1b");
+	assert.equal(f.state(), "interop", "the filter and then search mode are layers before close");
+	f.terminal.input("u");
+	f.terminal.input("s");
+	assert.deepEqual(notices.slice(1), ["Adoption destination: project."]);
+});
+
+it("Interop x asks once before it declines a proposal; another key keeps the row", () => {
+	const f = fixture();
+	const declined: string[] = [];
+	const ctx = {
+		notice: noop,
+		interop: {
+			report: () => null,
+			proposals: () => [
+				{
+					kind: "claude-code",
+					label: "Claude Code",
+					fingerprint: "f",
+					entry: { id: "claude-code", command: "npx", args: [] },
+					needsNetworkInstall: false,
+				},
+			],
+			configured: () => [],
+			accept: noop,
+			decline: (kind: string) => declined.push(kind),
+		},
+	} as unknown as SlashCommandContext;
+	f.mount("interop", () => openInteropOverlay(f.tui, ctx, f.close));
+	f.terminal.input("x");
+	assert.deepEqual(declined, [], "the first x only arms");
+	f.terminal.input("j");
+	f.terminal.input("x");
+	assert.deepEqual(declined, [], "another key disarmed it, so this x arms again");
+	f.terminal.input("x");
+	assert.deepEqual(declined, ["claude-code"]);
+});
+
+it("leaves the open dashboard and the draft as they were on Alt+PgUp and Alt+PgDn", () => {
+	const footer = buildFooterDashboard({
+		providers: { list: () => [] } as never,
+		getTerminalColumns: () => 40,
+		getTerminalRows: () => 12,
+		resolveCurrentBranch: async () => null,
+	});
+	cleanups.push(() => footer.dispose());
+	const f = fixture();
+	f.editor.setText("keep this draft");
+	footer.setExpanded(true);
+	const before = footer.view.render(40);
+	f.terminal.input("\x1b[6;3~");
+	f.terminal.input("\x1b[5;3~");
+	assert.deepEqual(footer.view.render(40), before, "the dashboard never scrolls");
+	assert.equal(f.editor.getText(), "keep this draft");
+	assert.doesNotMatch(before.map(stripTerminalSequences).join("\n"), /Alt\+PgUp|of \d+ rows/);
+});
+it("keeps pointer and focus reports out of key routing, at boot and after it", async () => {
+	const motion = "\x1b[<35;10;5M";
+	const f = fixture();
+	f.active.streaming = false;
+	f.terminal.input("?");
+	assert.equal(f.tui.hasOverlay(), true);
+	for (const report of [motion, "\x1b[O", "\x1b[I"]) f.terminal.input(report);
+	assert.equal(f.tui.hasOverlay(), true, "quick help stays open");
+	f.terminal.input("\x1b");
+	f.terminal.input("\x03");
+	f.terminal.input(motion);
+	f.terminal.input("\x03");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(f.counts.shutdown, 1, "a pointer nudge does not disarm the exit");
+	const boot = bootFixture();
+	boot.terminal.input("\x03");
+	boot.terminal.input(motion);
+	boot.terminal.input("\x03");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(boot.counts.shutdowns, 1);
+});
+it("selects text past focused search and a modal overlay, and choices still move only on keys", () => {
+	const f = fixture();
+	f.active.streaming = false;
+	const cell = (text: string) => {
+		f.tui.renderNow();
+		const lines = f.tui.getScreenLines().map(stripTerminalSequences);
+		const row = lines.findIndex((line) => line.includes(text));
+		assert.ok(row >= 0, `${text} is on screen`);
+		return { x: (lines[row] ?? "").indexOf(text) + 1, y: row + 1 };
+	};
+	const press = (x: number, y: number, motion = false) => f.terminal.input(`\x1b[<${motion ? 32 : 0};${x};${y}M`);
+	const release = (x: number, y: number) => f.terminal.input(`\x1b[<0;${x};${y}m`);
+	const drag = (text: string) => {
+		const at = cell(text);
+		press(at.x, at.y);
+		press(at.x + text.length - 1, at.y, true);
+		release(at.x + text.length - 1, at.y);
+		f.tui.renderNow();
+	};
+	f.tui.toggleSearch();
+	assert.equal(f.tui.isSearchFocused, true);
+	drag("alpha two");
+	assert.equal(f.tui.hasActiveSelection(), true, "a drag selects while search is focused");
+	assert.equal(f.tui.isSearchFocused, true);
+	f.tui.closeSearch();
+	f.tui.resetTextSelection();
+	let confirmed = 0;
+	const list = new SelectList(
+		[
+			{ value: "a", label: "first choice" },
+			{ value: "b", label: "second choice" },
+		],
+		2,
+		DEFAULT_SELECT_THEME,
+	);
+	list.onSelect = () => {
+		confirmed++;
+	};
+	f.open("model", list);
+	const second = cell("second choice");
+	press(second.x, second.y);
+	release(second.x, second.y);
+	f.tui.renderNow();
+	assert.equal(list.getSelectedItem()?.value, "a", "a click does not move the choice");
+	assert.equal(confirmed, 0, "a click does not confirm a choice");
+	assert.equal(f.tui.hasActiveSelection(), false);
+	drag("second choice");
+	assert.equal(f.tui.hasActiveSelection(), true, "a drag over the overlay selects its screen rows");
+	assert.equal(list.getSelectedItem()?.value, "a");
+	assert.equal(confirmed, 0);
+	assert.equal(f.state(), "model");
+});
+it("drops a screen selection when the wheel scrolls the transcript under a modal overlay", () => {
+	const f = fixture();
+	f.active.streaming = false;
+	const list = new SelectList(
+		[
+			{ value: "a", label: "first choice" },
+			{ value: "b", label: "second choice" },
+		],
+		2,
+		DEFAULT_SELECT_THEME,
+	);
+	f.open("model", list);
+	f.tui.renderNow();
+	const lines = f.tui.getScreenLines().map(stripTerminalSequences);
+	const y = lines.findIndex((line) => line.includes("second choice")) + 1;
+	const x = (lines[y - 1] ?? "").indexOf("second choice") + 1;
+	f.terminal.input(`\x1b[<0;${x};${y}M`);
+	f.terminal.input(`\x1b[<32;${x + 5};${y}M`);
+	f.terminal.input(`\x1b[<0;${x + 5};${y}m`);
+	assert.equal(f.tui.hasActiveSelection(), true, "a drag over the card selects its screen rows");
+	f.terminal.input(`\x1b[<64;${x};${y}M`);
+	assert.equal(f.tui.hasActiveSelection(), false, "the screen rows under the selection no longer hold what it selected");
+	assert.equal(list.getSelectedItem()?.value, "a", "the wheel does not move the choice");
+});

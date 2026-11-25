@@ -1,0 +1,122 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* The offline page loads without the Vite bundle or the token layer, so it restates the brand paper, ink,
+   muted ink, accent, secondary, on-accent and focus exactly as client/design/brand.css generates them, for the
+   light theme, the explicit dark theme and the system dark theme. Keep these values in step with brand.css. */
+:root {
+	--paper: #f5f3ee;
+	--ink: #0f0e0c;
+	--ink-muted: #53514b;
+	--accent: #137643;
+	--secondary: #1472bd;
+	--on-accent: #ffffff;
+	--focus: #137643;
+	color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		--paper: #000000;
+		--ink: #f1eee6;
+		--ink-muted: #a6a297;
+		--accent: #00e884;
+		--secondary: #4aa8ff;
+		--on-accent: #000000;
+		--focus: #00e884;
+		color-scheme: dark;
+	}
+}
+:root[data-theme="dark"] {
+	--paper: #000000;
+	--ink: #f1eee6;
+	--ink-muted: #a6a297;
+	--accent: #00e884;
+	--secondary: #4aa8ff;
+	--on-accent: #000000;
+	--focus: #00e884;
+	color-scheme: dark;
+}
+
+/* The brand faces are not cached offline; an installed copy is used when present, otherwise the system face. */
+:root {
+	font-family: "Instrument Sans", system-ui, "Segoe UI", sans-serif;
+	color: var(--ink);
+	background: var(--paper);
+}
+body {
+	margin: 0;
+	padding: 48px 24px;
+}
+main {
+	max-width: 560px;
+	margin: 8vh auto;
+}
+h1 {
+	font:
+		700 clamp(2.6rem, 8vw, 4rem) / 1.12 "Schibsted Grotesk",
+		system-ui,
+		sans-serif;
+	letter-spacing: -0.035em;
+}
+p {
+	font-size: 1rem;
+	line-height: 1.7;
+}
+code {
+	font-family: "IBM Plex Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+.brand {
+	margin: 24px 0 0;
+	font-size: 1.5rem;
+	line-height: 1;
+}
+/* The wordmark as client/shell/PancodeMark.tsx renders it; these rules repeat client/shell/mark.css. */
+.pancode-wordmark {
+	font-family: "Schibsted Grotesk", system-ui, sans-serif;
+	font-weight: 700;
+	letter-spacing: -0.04em;
+	white-space: nowrap;
+}
+.pancode-wordmark__pan {
+	color: var(--accent);
+}
+.pancode-wordmark__code {
+	color: var(--secondary);
+}
+.note,
+#status {
+	color: var(--ink-muted);
+}
+.note {
+	font-size: 0.875rem;
+}
+button {
+	font: inherit;
+	font-weight: 600;
+	min-height: 44px;
+	padding: 10px 20px;
+	border: 1px solid var(--accent);
+	border-radius: 6px;
+	background: var(--accent);
+	color: var(--on-accent);
+	cursor: pointer;
+}
+button:hover:not(:disabled) {
+	border-color: var(--ink);
+	background: var(--ink);
+	color: var(--paper);
+}
+button:disabled {
+	border-color: var(--ink-muted);
+	background: transparent;
+	color: var(--ink-muted);
+	cursor: progress;
+}
+button:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+@media (forced-colors: active) {
+	button {
+		border-color: ButtonText;
+	}
+}

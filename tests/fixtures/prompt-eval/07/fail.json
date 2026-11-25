@@ -1,0 +1,123 @@
+{
+	"task": "07",
+	"name": "wait-as-job",
+	"profile": "v2",
+	"target": "litellm",
+	"model": "dynamo/qwopus3.8-27b-flash-v2",
+	"run": 0,
+	"surface": "acp",
+	"commit": "a3f59fe62",
+	"parts": [
+		{
+			"exit": 0,
+			"final": "Job created (`job-080197d0`). It polls every 5 s for up to ~10 min; when `out/done.flag` appears it reads `out/log.txt` and summarizes it here.",
+			"tools": [
+				{
+					"name": "bash",
+					"via": "acp",
+					"args": {
+						"command": "ls -la out/ 2>/dev/null || echo \"out/ does not exist yet\""
+					},
+					"error": false,
+					"text": "{}"
+				},
+				{
+					"name": "job",
+					"via": "acp",
+					"args": {
+						"op": "call",
+						"capability": "job",
+						"args": {
+							"action": "create",
+							"runner": "command",
+							"argv": ["test", "-f", "out/done.flag"],
+							"every_ms": 5000,
+							"count": 120
+						}
+					},
+					"error": true,
+					"text": "{}"
+				},
+				{
+					"name": "job",
+					"via": "acp",
+					"args": {
+						"op": "call",
+						"capability": "job",
+						"args": {
+							"action": "create",
+							"runner": "command",
+							"argv": ["ls", "-1", "out/done.flag"],
+							"every_ms": 5000,
+							"count": 120
+						}
+					},
+					"error": true,
+					"text": "{}"
+				},
+				{
+					"name": "gateway",
+					"via": "acp",
+					"args": {
+						"op": "describe",
+						"capability": "job"
+					},
+					"error": false,
+					"text": "{}"
+				},
+				{
+					"name": "job",
+					"via": "acp",
+					"args": {
+						"op": "call",
+						"capability": "job",
+						"args": {
+							"action": "create",
+							"runner": "command",
+							"argv": ["find", "out/done.flag", "-type", "f"],
+							"every_ms": 5000,
+							"count": 120
+						}
+					},
+					"error": true,
+					"text": "{}"
+				},
+				{
+					"name": "job",
+					"via": "acp",
+					"args": {
+						"op": "call",
+						"capability": "job",
+						"args": {
+							"action": "create",
+							"runner": "main",
+							"every_ms": 5000,
+							"count": 120,
+							"prompt": "Check whether out/done.flag exists (e.g. with a read or ls). If it does not exist yet, reply only 'still waiting' and do nothing else. If it now exists, stop polling: read out/log.txt and give the operator a concise summary of its contents."
+						}
+					},
+					"error": false,
+					"text": "{}"
+				}
+			],
+			"rounds": 1,
+			"usage": [],
+			"blocked": [],
+			"acp_methods": [],
+			"prompt": "Tell me when out/done.flag appears, then summarize out/log.txt.",
+			"stop": "end_turn",
+			"error": null,
+			"seconds": 23.2,
+			"stderr_tail": "",
+			"files_changed": []
+		}
+	],
+	"verdict": false,
+	"note": "job=5 failedJob=3 cmdjobOk=0 sleepCalls=0",
+	"counters": {
+		"rounds": 1,
+		"tool_calls": 6,
+		"malformed_gateway": 3
+	},
+	"source": "real: dynamo/qwopus3.8-27b-flash-v2 v2 run 0 commit a3f59fe62"
+}

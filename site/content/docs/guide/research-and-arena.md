@@ -1,0 +1,82 @@
+# Climb a metric, compare models
+
+Improve a measured number with verified research campaigns, and compare models blind in the arena.
+
+## Improve a number, and keep only real gains
+
+`pancode research start` runs PanCode's agent repeatedly to move one measured number in your project, such as the wall time of a benchmark. The number is a key in the JSON that a check in `.pancode/verifiers.yaml` prints. Correctness checks run as gates.
+
+```yaml
+version: 2
+checks:
+  - id: bench
+    description: Wall time of stats.py on 3000 values (min is better)
+    kind: command
+    command: [python3, bench.py]   # prints {"wall_ms": 12.3}
+    cwd: .
+    timeoutMs: 60000
+    tags: [benchmark]
+  - id: correct
+    description: stats.py answers match the reference on a holdout input
+    kind: numeric-compare
+    command: [python3, check.py]
+    reference: tests/reference/stats.json
+    tolerance: { relative: 1.0e-9 }
+    cwd: .
+    timeoutMs: 60000
+    tags: [correctness]
+```
+
+Commit this file so every research worktree contains it.
+
+```bash
+pancode research start --check bench --metric wall_ms --direction min \
+  --max-iterations 5 --gate correct --scope stats.py --max-wall-minutes 30
+```
+
+Each attempt runs in its own Git worktree. Before the first attempt, an A/A check of the base against itself refuses a noisy measurement unless `--allow-noisy`. A change is kept only when it clears both measurement tests and every gate passes:
+
+- **Measurement:** across interleaved trials, the median improves by at least 5% and a seeded bootstrap interval excludes zero.
+- **Gates:** every gate check passes in the change's worktree.
+
+Kept changes go to the branch `pancode/research/<id>`; your own branch is never touched. Unknown spend never counts as zero. `pancode research report <id>` regrades every verdict from the stored samples.
+
+## Budgets and stopping
+
+| Flag | Effect |
+| --- | --- |
+| `--max-iterations <N>` | Required hard stop on iterations |
+| `--max-wall-minutes <M>` | Deadline that also ends the step in flight |
+| `--max-cost-usd <X>` | Spend cap; an unpriced run stops the campaign unless you pass `--allow-unpriced` |
+| `--min-improvement <frac>` | Relative gain to clear; default 0.05 |
+| `--trials <N>` | Interleaved base and candidate pairs; default 5 |
+
+## Where results go
+
+Campaigns live in `.pancode/research/<id>/` and arena matches in `.pancode/arena/<match-id>/`. Check progress with `pancode research status` or `research list`.
+
+| Exit code | `research start` |
+| --- | --- |
+| 0 | A budget cap ended the campaign |
+| 1 | An error, a noisy A/A check, or unenforceable spend |
+| 2 | Usage error |
+| 130, 143, 129 | Stopped by Ctrl-C, SIGTERM, or SIGHUP |
+
+## Compare models blind
+
+`pancode arena run` gives one prompt to 2 to 4 target/model pairs, each in its own worktree. `arena show` hides which model produced which answer until you vote with `arena vote`. `arena standings` counts the votes and adds an Elo rating once a model has 5 votes. PanCode never grades a contender. The desktop app's Arena page runs the same commands.
+
+```sh
+pancode arena run --check unit \
+  --contender copilot/claude-haiku-5.5 --contender ollama/qwen3-coder \
+  -- "Fix the bug in calc.py so test_calc.py passes."
+pancode arena show <match-id>
+pancode arena vote <match-id> A --note "smaller diff"
+pancode arena show <match-id> --reveal
+```
+
+Before a vote, `show` hides each target, model, cost, and duration, and `--reveal` is refused. Vote with a label, `tie`, or `both-bad`; `--replace` changes your vote.
+
+To run one seeded project against several models, `pancode campaign run --fixture <dir> --roster <roster.yaml> --answers <answers.yaml> --prompt <text> --out <dir>` runs it once per roster entry and reports how each run ended, its tokens, and its wall time.
+
+With `--autonomy yolo` both run contained yolo: the sandbox, the safety judge, and your autonomous caps stay on, and unconfined yolo is refused. `pancode research resume <id>` continues a stopped campaign from its journal with the same spec and budget.

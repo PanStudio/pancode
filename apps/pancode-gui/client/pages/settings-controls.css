@@ -1,0 +1,352 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+.setting-group {
+	margin-top: var(--space-8);
+}
+.settings-refresh {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-3);
+	margin-block: var(--space-4);
+	padding: var(--space-3);
+	border-left: 3px solid var(--status-warn-line);
+	background: var(--status-warn-tint);
+	color: var(--status-warn-fg);
+}
+.setting-group > h3,
+.setting-group > .setting-group__title {
+	font-family: var(--font-mono);
+	font-size: var(--text-instrument);
+	font-weight: 500;
+	letter-spacing: var(--tracking-instrument);
+	text-transform: uppercase;
+	color: var(--ink-muted);
+	border-bottom: 1px solid var(--line-strong);
+	padding-bottom: var(--space-2);
+	margin: 0;
+}
+.setting-group__note {
+	color: var(--ink-muted);
+	margin-block: var(--space-3) 0;
+}
+.setting-control {
+	display: grid;
+	grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+	gap: var(--space-6);
+	padding-block: var(--space-5);
+	border-bottom: 1px solid var(--line);
+}
+.setting-control__about,
+.setting-control__edit {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.setting-control__about label {
+	font-weight: 600;
+}
+.setting-control p {
+	margin: var(--space-2) 0;
+	font-size: var(--text-meta);
+	line-height: 1.6;
+}
+.setting-control small {
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+}
+.setting-control small code {
+	display: inline;
+	padding: 0;
+	background: none;
+	font-family: var(--font-mono);
+}
+.setting-control__help {
+	color: var(--ink-muted);
+}
+.setting-control__note {
+	border-left: 3px solid var(--status-warn-line);
+	background: var(--status-warn-tint);
+	color: var(--status-warn-fg);
+	padding: var(--space-2) var(--space-3);
+}
+.setting-control__edit output {
+	display: block;
+	font-family: var(--font-mono);
+	font-size: var(--text-meta);
+	padding: 12px;
+	border: 1px dashed var(--line-strong);
+	border-radius: var(--radius-sm);
+	background: var(--well);
+}
+.setting-control__reason {
+	color: var(--ink-muted);
+}
+.setting-control__confirm {
+	display: flex;
+	gap: var(--space-3);
+	align-items: flex-start;
+	margin-top: var(--space-3);
+	border-left: 3px solid var(--status-fail-line);
+	background: var(--status-fail-tint);
+	color: var(--status-fail-fg);
+	padding: var(--space-3);
+	font-size: var(--text-meta);
+}
+.setting-control__confirm input {
+	width: auto;
+	flex: none;
+	margin-top: 3px;
+	padding: 0;
+}
+.setting-control__actions {
+	display: flex;
+	gap: var(--space-2);
+	margin-top: var(--space-3);
+}
+.setting-control__actions .primary {
+	padding: 9px var(--space-4);
+	border-radius: var(--radius-sm);
+}
+.setting-control__error {
+	border-left: 3px solid var(--status-fail-line);
+	background: var(--status-fail-tint);
+	color: var(--status-fail-fg);
+	padding: var(--space-2) var(--space-3);
+}
+.setting-control__saved {
+	border-left: 3px solid var(--status-success-line);
+	background: var(--status-success-tint);
+	color: var(--status-success-fg);
+	padding: var(--space-2) var(--space-3);
+}
+@media (max-width: 750px) {
+	.setting-control {
+		grid-template-columns: minmax(0, 1fr);
+		gap: var(--space-3);
+	}
+}
+.inline-path {
+	display: inline;
+	padding: 0;
+	background: none;
+	font-family: var(--font-mono);
+	font-size: var(--text-meta);
+	overflow-wrap: anywhere;
+}
+/* "Check <target> again" sits inside the catalog's sentence, so it is a quiet inline action. */
+.setting-control__check {
+	min-height: 0;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--accent);
+	font: inherit;
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+.setting-control__check:disabled {
+	color: var(--disabled-fg);
+	text-decoration: none;
+}
+.settings-write-scope {
+	padding: var(--space-4) var(--space-4) var(--space-3);
+	margin-block: var(--space-5);
+	background: var(--well);
+	border-left: 2px solid var(--line-strong);
+	font-size: var(--text-meta);
+	overflow-wrap: anywhere;
+}
+.settings-write-scope p {
+	margin-block: var(--space-2);
+	color: var(--ink-muted);
+}
+.settings-write-scope--quiet {
+	padding: 0;
+	margin-block: var(--space-2) var(--space-4);
+	background: transparent;
+	border-left: 0;
+}
+.settings-write-scope--quiet p {
+	margin: 0;
+}
+.settings-write-scope details {
+	margin-block: var(--space-3) 0;
+}
+/* A touch pointer gives every summary a 44px row, which leaves a band under the last line of the note.
+   The tap area stays through padding that a negative margin hands back to the note. */
+.settings-write-scope summary {
+	min-height: 0;
+	padding-block: var(--space-3);
+	margin-block: calc(var(--space-3) * -1);
+}
+.setting-control__source {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2) var(--space-3);
+	margin-top: var(--space-3);
+}
+.setting-control .setting-control__source > code {
+	flex-basis: 100%;
+}
+.setting-control__source {
+	align-items: baseline;
+	gap: var(--space-1) var(--space-2);
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+}
+.setting-control__source a {
+	color: inherit;
+}
+.settings-draft-note {
+	padding-left: var(--space-3);
+	border-left: 2px solid var(--status-warn-line);
+	font-size: var(--text-meta);
+}
+.structured-settings {
+	margin: 0;
+	border: 0;
+	padding: 0;
+	display: grid;
+	gap: 14px;
+	min-width: 0;
+}
+.structured-settings__row {
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	padding: var(--space-4);
+	display: grid;
+	gap: var(--space-3);
+	min-width: 0;
+}
+.structured-settings__row-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+.structured-settings__row-heading > strong {
+	font-size: var(--text-meta);
+}
+.structured-settings__row-heading > button {
+	padding: 6px 10px;
+	font-size: var(--text-exact);
+}
+.structured-settings__fields {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px;
+}
+.structured-settings label,
+.structured-settings__field {
+	display: grid;
+	gap: 6px;
+	min-width: 0;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.structured-settings :is(input, select) {
+	width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+}
+.structured-settings__members {
+	display: grid;
+	gap: 16px;
+	padding: var(--space-3);
+	background: var(--paper);
+}
+.structured-settings__members > div {
+	display: grid;
+	gap: 12px;
+}
+.structured-settings > button,
+.structured-settings__members > button {
+	width: fit-content;
+}
+@media (max-width: 750px) {
+	.structured-settings__fields {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.setting-group > summary {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--space-4);
+	padding: var(--space-4) 0;
+	border-block: 1px solid var(--line);
+	cursor: pointer;
+	font-weight: 600;
+}
+.setting-group > summary::before {
+	content: "+";
+	color: var(--ink-faint);
+	font-family: var(--font-mono);
+}
+.setting-group[open] > summary::before {
+	content: "−";
+}
+.setting-group > summary > h2 {
+	flex: 1;
+	margin: 0;
+	font: 700 var(--text-h3) / var(--leading-tight) var(--font-editorial);
+}
+.setting-group > summary small {
+	color: var(--ink-muted);
+	font-weight: 400;
+	font-size: var(--text-instrument);
+}
+.setting-group > summary:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+.setting-group[open] > summary {
+	border-bottom-color: var(--line-strong);
+}
+.setting-control[data-dirty="true"] {
+	border-left: 2px solid var(--status-warn-line);
+	padding-inline: var(--space-3);
+	background: color-mix(in srgb, var(--status-warn-tint) 35%, transparent);
+}
+.setting-control .setting-control__draft {
+	color: var(--status-warn-fg);
+	font-size: var(--text-instrument);
+	font-weight: 600;
+}
+.settings-draft-note {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	display: grid;
+	padding: var(--space-3) var(--space-4);
+	background: var(--status-warn-tint);
+	color: var(--status-warn-fg);
+	border: 1px solid var(--status-warn-line);
+}
+/* Both wordings sit in one grid cell; the one not in force keeps its height but is not seen. */
+.settings-draft-note > span {
+	grid-area: 1 / 1;
+}
+.settings-draft-note > [aria-hidden="true"] {
+	visibility: hidden;
+}
+.settings-draft-note[data-state="clean"] {
+	background: transparent;
+	color: var(--ink-muted);
+	border-color: var(--line);
+}
+.settings-write-scope--quiet {
+	padding: var(--space-3) var(--space-4);
+	background: var(--well);
+	border-left: 2px solid var(--accent);
+}
+
+/* A link laid out as a block (a flex row's item, a list of pages) is a 24px target at phone width;
+   a link inside a sentence stays inline and keeps the line's height. */
+@media (max-width: 390px) {
+	:where(.wb-main[data-mode="settings"]) a:not(.wb-chip, .wb-icon, .primary) {
+		min-block-size: 24px;
+		padding-block: 2px;
+	}
+}

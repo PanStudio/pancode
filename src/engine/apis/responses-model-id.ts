@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import {
+	type Api,
+	type AssistantMessage,
+	type AssistantMessageEventStream,
+	createAssistantMessageEventStream,
+	type Model,
+	type StreamOptions,
+} from "@earendil-works/pi-ai";
+import type { ResponseModelIdObservation } from "../../core/response-model-id.js";
+import type { CacheReadField, CacheWriteField } from "../../core/token-split.js";
+import { isRecord } from "../../core/type-guards.js";
+import type { CodexQuotaObservation } from "../types.js";
+import { codexAccountScope, parseCodexQuotaEvent } from "./codex-quota.js";
+import { withProxyConnectionNote } from "./proxy-connection-error.js";
+
+/** APIs whose lifecycle events carry the provider's response object. */
+const RESPONSES_APIS: ReadonlySet<Api> = new Set(["openai-codex-responses", "openai-responses"]);
+
+/** Terminal events whose `response.usage` Pi's finalizeResponse normalizes; Codex sends `response.done`. */
+const USAGE_EVENTS: ReadonlySet<unknown> = new Set(["response.completed", "response.incomplete", "response.done"]);
+
+/**
+ * Whether a terminal event's usage sent its cache-read and cache-write counts.
+ * Pi (pi-ai 1.5.2) reads only `input_tokens_details.cached_tokens` and
+ * `.cache_write_tokens`, turns their absence into 0 and subtracts both from the
+ * inclusive input count, so presence is judged on those fields alone and moves
+ * with a Pi upgrade.
+ * Null when the event carries no usage, which Pi also leaves untouched.
+ */
+function responsesCacheFields(
+	data: Record<string, unknown>,
+): { cacheReadField: CacheReadField; cacheWriteField: CacheWriteField } | null {
+	if (!USAGE_EVENTS.has(data.type) || !isRecord(data.response) || !isRecord(data.response.usage)) return null;
+	const details = data.response.usage.input_tokens_details;
+	const sent = (key: string) => {
+		const count = isRecord(details) ? details[key] : undefined;
+		return typeof count === "number" && Number.isFinite(count) && count >= 0 ? "sent" : "omitted";
+	};
+	return { cacheReadField: sent("cached_tokens"), cacheWriteField: sent("cache_write_tokens") };
+}
+
+/**
+ * Record the model a Responses-family provider reports for its response.
+ * Codex and OpenAI Responses name it as `response.model` on the lifecycle
+ * events (`response.created`, `response.completed`), but the stock streams
+ * drop it, so every Codex call was stored as `not-observed` although the
+ * provider had reported the model (DF-15). The completions path has its own
+ * capture in `openai-completions.ts`; this is the Responses counterpart, and
+ * it only annotates the terminal message, never the stream's content. It
+ * also marks whether the terminal usage sent its cache-read and cache-write
+ * counts, as the completions capture does, so an omitted read is never
+ * classified cold and an omitted write never certifies the fresh input.
+ * OAI-1 / #423 shares this callback and terminal annotation for sanitized Codex
+ * quota events, preserving the existing transport and caller-owned callback.
+ */
+export function observeResponsesModelId<T extends StreamOptions>(
+	model: Model<Api>,
+	options: T | undefined,
+	invoke: (options: T | undefined) => AssistantMessageEventStream,
+): AssistantMessageEventStream {
+	if (!RESPONSES_APIS.has(model.api)) return invoke(options);
+	let sawResponse = false;
+	let quota: CodexQuotaObservation | null = null;
+	const accountScope = model.api === "openai-codex-responses" ? codexAccountScope(options?.apiKey) : null;
+	let reportedModelId: string | null = null;
+	let cacheReadField: CacheReadField = "omitted";
+	let cacheWriteField: CacheWriteField = "omitted";
+	const onProviderStreamEvent = options?.onProviderStreamEvent;
+	const source = invoke({
+		...options,
+		onProviderStreamEvent: async (data: unknown, eventModel: Model<Api>) => {
+			if (model.api === "openai-codex-responses") quota = parseCodexQuotaEvent(data, accountScope) ?? quota;
+			if (isRecord(data) && isRecord(data.response)) {
+				sawResponse = true;
+				const reported = data.response.model;
+				if (typeof reported === "string" && reported.trim().length > 0) reportedModelId = reported.trim();
+				const fields = responsesCacheFields(data);
+				if (fields) ({ cacheReadField, cacheWriteField } = fields);
+			}
+			await onProviderStreamEvent?.(data, eventModel);
+		},
+	} as T);
+	const observation = (): ResponseModelIdObservation =>
+		!sawResponse
+			? { state: "not-observed" }
+			: reportedModelId === null
+				? { state: "not-reported" }
+				: { state: "reported", reportedModelId };
+	// A count Pi normalized above zero was sent, whatever event shape carried it past the capture above.
+	const fieldFor = (usage: { cacheRead: number }): CacheReadField => (usage.cacheRead > 0 ? "sent" : cacheReadField);
+	const writeFieldFor = (usage: { cacheWrite: number }): CacheWriteField =>
+		usage.cacheWrite > 0 ? "sent" : cacheWriteField;
+	const output = createAssistantMessageEventStream();
+	void (async () => {
+		try {
+			for await (const event of source) {
+				if (event.type === "done") {
+					event.message.responseModelIdObservation = observation();
+					event.message.usage.cacheReadField = fieldFor(event.message.usage);
+					event.message.usage.cacheWriteField = writeFieldFor(event.message.usage);
+				} else if (event.type === "error") {
+					event.error.responseModelIdObservation = observation();
+					event.error.usage.cacheReadField = fieldFor(event.error.usage);
+					event.error.usage.cacheWriteField = writeFieldFor(event.error.usage);
+					if (event.error.errorMessage !== undefined)
+						event.error.errorMessage = withProxyConnectionNote(event.error.errorMessage, model.baseUrl);
+				}
+				if (quota !== null && (event.type === "done" || event.type === "error")) {
+					const terminal = event.type === "done" ? event.message : event.error;
+					(terminal as AssistantMessage & { codexQuota?: CodexQuotaObservation }).codexQuota = quota;
+				}
+				output.push(event);
+			}
+			// The terminal event already settled the result; ending without one
+			// leaves it pending exactly as the source would have.
+			output.end();
+		} catch (cause) {
+			const reason = cause instanceof Error && cause.name === "AbortError" ? "aborted" : "error";
+			const error: AssistantMessage = {
+				role: "assistant",
+				content: [],
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					cacheReadField,
+					cacheWriteField,
+				},
+				stopReason: reason,
+				errorMessage: withProxyConnectionNote(cause instanceof Error ? cause.message : String(cause), model.baseUrl),
+				timestamp: Date.now(),
+				responseModelIdObservation: observation(),
+			};
+			output.push({ type: "error", reason, error });
+			output.end(error);
+		}
+	})();
+	return output;
+}

@@ -1,0 +1,13 @@
+rows:
+  - kind: plugin
+    publisher: akougkas
+    name: autotldr
+    version: 0.2.0
+    description: Point it at anything. Get back what it means, in the shape you asked for.
+    source:
+      repo: https://github.com/akougkas/AutoTLDR
+      commit: 335637919dbe5e3c5e0d721698f9198f7edf71d9
+      subdir: pancode
+    sha256: 01e55e2ece4973491542b15738be7a7b7780d960ca0ec91bcd183a4eb224553c
+    license: MIT
+    tier: verified

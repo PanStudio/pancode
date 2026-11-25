@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { Hono } from "hono";
+import { routes } from "../../contracts/routes.js";
+import type { EventHub } from "../services/event-hub.js";
+import type { SystemService } from "../services/system.js";
+import { register } from "./validate.js";
+export function systemRoutes(app: Hono, hub: EventHub, system: SystemService) {
+	register(app, hub, routes.system, () => system.report());
+	register(app, hub, routes.interop, ({ params, query }) => system.interop(params.id, query.probe === "versions"));
+	register(app, hub, routes.installationInterop, ({ query }) => system.interop(null, query.probe === "versions"));
+	register(app, hub, routes.installationDecideInterop, ({ body }) =>
+		system.decideInterop(null, body.kind, body.decision),
+	);
+	register(app, hub, routes.decideInterop, ({ params, body }) =>
+		system.decideInterop(params.id, body.kind, body.decision),
+	);
+}

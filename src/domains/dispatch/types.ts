@@ -1,0 +1,1239 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { ToolRoundRecord } from "../../engine/types.js";
+import type { WorkerContextProvenance } from "../context/worker/contract.js";
+import type { FlowRestrictionSet } from "../safety/information-flow.js";
+import type { RunVerdict } from "./grading.js";
+/**
+ * Shared run + receipt types for the dispatch domain.
+ *
+ * RunEnvelope is the live record kept in the ledger (runs.json). RunResult is
+ * the in-memory value dispatch hands its caller when a run finishes; the run's
+ * persisted record is its run.settled and run.sealed (#434). Both are pure data:
+ * no class methods, no engine refs.
+ */
+
+import type { GatewayRoutingObservation } from "../../core/gateway-routing.js";
+import type { ResponseModelIdObservation } from "../../core/response-model-id.js";
+import type { WorkerSandboxReceipt } from "../../core/sandbox/worker-policy.js";
+import type { SkillActivation } from "../../core/skill-activation.js";
+import type { RunTerminalReason } from "../../core/telemetry/enums.js";
+import type { RunSpendSums } from "../../core/telemetry/pricing.js";
+import type { RunOutcome, RunOutcomeCode } from "../../core/telemetry/run-vocabulary.js";
+import { RUN_OUTCOME_CODES } from "../../core/telemetry/run-vocabulary.js";
+import type { CallUsage, RunUsageFacts } from "../../core/telemetry/schemas.js";
+import type { ToolProfileName } from "../../tools/profiles.js";
+import type { DeclaredCheckReport } from "../../tools/verify/scripts.js";
+import type { AgentAudience } from "../agents/spec.js";
+import type { RuntimeEnforcement, RuntimeTargetSnapshot } from "../providers/index.js";
+import type { AutonomyLevel } from "../safety/autonomy.js";
+import type { RunToolBudgetEnvelope } from "./budget-envelope.js";
+import type { ExecutionRole, GateTopologyRole } from "./execution-role.js";
+import type { DispatchIntent } from "./intent.js";
+import type { RouteDecisionV1 } from "./route-decision.js";
+import type { RoutingIntent } from "./routing-intent.js";
+import type { DispatchFailoverMode } from "./validation.js";
+
+export type RunStatus = "queued" | "running" | "completed" | "failed" | "interrupted" | "stale" | "dead";
+
+/**
+ * Terminal outcome taxonomy. Every run that reaches finalization gets exactly
+ * one outcome, resolved at the single finalization point in extension.ts via
+ * resolveRunOutcome(). No call site assigns an outcome literal directly.
+ * Retry policy and audit semantics branch on the outcome, not on RunStatus,
+ * which is kept for backward compatibility with pre-existing ledgers.
+ */
+export type { RunOutcome, RunOutcomeCode };
+
+export function isRunOutcomeCode(value: unknown): value is RunOutcomeCode {
+	return typeof value === "string" && (RUN_OUTCOME_CODES as ReadonlyArray<string>).includes(value);
+}
+
+export const RETRYABLE_OUTCOMES: ReadonlySet<RunOutcome> = new Set(["failed", "timed_out", "stalled", "spawn_failed"]);
+
+/**
+ * A ledger row is terminal once finalization stamped its end, or once its
+ * status left the live pair (covers adopted orphans and dead-marked rows
+ * whose endedAt was never written). Shared by monitor wait/collect and the
+ * detached-batch nudge so "done" means the same thing everywhere.
+ */
+export function isTerminalRunEnvelope(run: RunEnvelope): boolean {
+	if (run.endedAt !== null) return true;
+	return run.status !== "queued" && run.status !== "running";
+}
+
+/**
+ * Proof-of-work lineage. Retries inherit rootRunId, increment attempt, keep
+ * depth. Nested dispatch (a fleet step, a worker that dispatches) increments
+ * depth, resets attempt, and points parentRunId at the dispatching run.
+ */
+export interface RunLineage {
+	parentRunId: string | null; // run that dispatched or retried this one
+	rootRunId: string; // first ancestor; equals runId for roots
+	attempt: number; // 0 for first attempt, increments per retry
+	depth: number; // 0 for operator-initiated, +1 per nesting level
+}
+
+/**
+ * Provenance for a pipeline step whose worker received the previous step's
+ * final output as threaded dynamic input. Absent on step 1 and on every
+ * non-pipeline run. `inputBytes` is the UTF-8 byte length of the upstream
+ * text before the 12000-byte cap; `inputTruncated` records whether the cap
+ * clipped it. Follows the optional-field pattern of `lineage`/`identity`.
+ */
+export interface RunPipelineProvenance {
+	fromRunId: string | null; // run whose output was threaded in; null when unknown
+	position: number; // 1-based index of this step in the chain
+	inputBytes: number; // UTF-8 byte length of the upstream text before capping
+	inputTruncated: boolean; // true when the 12000-byte cap clipped the input
+}
+
+/** Integrity-covered proof of the exact bounded briefing content sent to a worker. */
+export interface RunBriefingProvenance {
+	bytes: number;
+	contentHash: string;
+}
+
+/**
+ * Integrity-covered proof that one canonical steering message was written to
+ * the native worker channel, without retaining the steering prose itself.
+ * Acknowledgements are matched to sent entries in stable sequence order.
+ */
+export interface RunSteeringProvenance {
+	sequence: number;
+	bytes: number;
+	contentHash: string;
+	sentAt: string;
+	acknowledged: boolean;
+	acknowledgedAt?: string;
+}
+
+/**
+ * Explicit marker for an ad-hoc specialist whose orchestrator-authored persona
+ * replaced the recipe body in the stable worker prompt.
+ */
+export interface RunPersonaOverride {
+	promptHash: string; // same hash as staticCompositionHash for the composed prompt
+}
+
+/**
+ * Effective project-context decision for a run, recorded on every receipt so
+ * evidence can prove what a worker saw without rehashing. `tier` is the
+ * recipe's PANCODE.md handbook policy and is written explicitly: `none`
+ * distinguishes "policy said none" from a pre-provenance receipt where the
+ * whole block is absent. `chars` and `contentHash` describe every structured
+ * message that was actually sent, whatever the tier, and `sections` names
+ * them: `workspace-root` (sent under both tiers, so a none-tier run still
+ * records characters), `pancode-md` (bounded only), and
+ * `verification-expectations` (bounded only, never for ACP delegation). A
+ * none-tier block naming only `workspace-root` is a consistent record; the
+ * trust adapter treats any other none-tier content as contradictory.
+ */
+export interface RunProjectContextProvenance {
+	tier: "none" | "bounded";
+	chars?: number;
+	contentHash?: string;
+	sections?: string[];
+	/**
+	 * A delegated harness's own repository instruction files (repository-relative) and how the run's rules reached
+	 * it: `single-source` when the harness started without the files and read the compiled rules alone, `overlay`
+	 * when the compiled rules were written over the files in the run's task worktree and put back before its change
+	 * was taken, `coexist` when it read the files unreconciled beside them. `stale` counts the files' rules the tree no longer supports;
+	 * `notCarried` the run's rules, of the handbook or those files, that hold but did not fit the bound. `reason` says why a harness that can take the rules in
+	 * place of its files read them beside the files instead: `setting` when `fleet.keepPeerInstructionFiles` names it,
+	 * `switch-unsupported` when the installed version lacks the switch that skips them (Pi before 0.67.4),
+	 * `over-bound` when rules of the files that hold did not fit the bound, so only the files carry them.
+	 * `discarded` lists overlaid files the run changed: putting the originals back dropped those edits.
+	 */
+	peerInstructions?: {
+		delivery: "single-source" | "overlay" | "coexist";
+		files: string[];
+		stale: number;
+		notCarried: number;
+		reason?: "setting" | "switch-unsupported" | "over-bound";
+		discarded?: string[];
+	};
+}
+
+/** Host and user identity captured at run start. */
+export interface RunIdentity {
+	host: string;
+	user: string;
+}
+
+/**
+ * Fleet node the worker process ran on, recorded at dispatch time from the
+ * placement decision. Absent on bundles with no fleet configured; renderers
+ * treat absence as the local node. `host` is the configured node address for ssh transports;
+ * `identity.host` (detected orchestrator-side) still names the orchestrator.
+ */
+export interface RunNodeIdentity {
+	id: string;
+	kind: "local" | "ssh";
+	host?: string;
+}
+
+/**
+ * One dead-node failover hop. Appended when an in-flight or queued dispatch
+ * is requeued from a node classified dead onto an eligible survivor, so the
+ * receipt chain records the full placement lineage, not just the final node.
+ */
+export interface RunNodeReroute {
+	attempt: number;
+	fromNode: string;
+	toNode: string;
+	reason: string;
+}
+
+/**
+ * One receipt-chain reference to another run in the same gate group. `digest`
+ * is the referenced run's receipt integrity digest at reference time (null
+ * when the referenced run sealed no receipt, e.g. a spawn failure).
+ */
+export interface RunGateSubjectRef {
+	runId: string;
+	digest: string | null;
+}
+
+/** Storage route used for one compete candidate's isolated checkout. */
+export interface RunGateWorktreeProvenance {
+	backend: "herdr" | "native";
+	path: string;
+	branch: string;
+	/** Herdr workspace created around the worktree; absent for the native route. */
+	workspaceId?: string;
+	/** Why the native route was selected when mux was configured. */
+	fallback?: "mux-unavailable" | "mux-operation-failed";
+}
+
+/**
+ * Review/compete gate provenance, carried on the request and sealed into the
+ * receipt. References point backward only: a reviewer references the builder
+ * it reviewed, a revise builder references the reviewer whose findings it
+ * received, a judge references every candidate it ranked. The chain is
+ * reconstructed newest-to-oldest from these links; verdicts are evidenced on
+ * the run they caused (`verdict` on a revise builder is the reviewer verdict
+ * that triggered it).
+ */
+export interface RunGateProvenance {
+	role: GateTopologyRole;
+	/** Gate group id shared by every run of one gated dispatch. */
+	group: string;
+	/** 1-based review cycle, or candidate ordinal for compete candidates. */
+	cycle: number;
+	/** Runs this run reviews, revises from, or judges; absent on the first builder. */
+	subjects?: RunGateSubjectRef[];
+	/** Reviewer verdict that caused this run; only on revise builders. */
+	verdict?: "pass" | "fail" | "revise";
+	/** Compete-only worktree route, sealed into the run receipt with the gate. */
+	worktree?: RunGateWorktreeProvenance;
+	/** A reviewer's or judge's evidence packet (M10): the ids its verdict may cite and the digest of what they named. */
+	packet?: RunGatePacket;
+}
+
+/** The evidence packet a gate decider received, as its provenance seals it. Host-authored, never model-authored. */
+export interface RunGatePacket {
+	ids: string[];
+	digest: string;
+	/** Host check ids the packet records as verified; absent when none is. Only these ground a command-shaped claim. */
+	verified?: string[];
+}
+
+export interface RunCouncilProvenance {
+	group: string;
+	label: string;
+	color?: string;
+	round: number;
+}
+
+/**
+ * Plan-approval provenance for multi-task, compete, or remote dispatch.
+ * `approval: "operator"` records that default autonomy parked the
+ * dispatch call and an operator approved the plan; `"yolo"` records that
+ * yolo skipped the stop and the plan was logged instead. The hash covers
+ * the rendered plan artifact so every run of the plan chains to the same
+ * approved text.
+ */
+export interface RunPlanProvenance {
+	hash: string;
+	topology: "parallel" | "sequential" | "pipeline" | "review" | "compete" | "council" | "detached" | "fleet";
+	taskCount: number;
+	/** `read-only`: an all read-only plan admitted at default autonomy without the plan stop. */
+	approval: "operator" | "yolo" | "read-only";
+	source: null | {
+		kind: "scout-transition";
+		runId: string;
+		runDigest: string;
+		executionPlanHash: string;
+	};
+	/** Registry-issued identity of the one-shot operator approval, when applicable. */
+	approvalRequestId?: string;
+	approvalRequestedBy?: string;
+	/**
+	 * Set when the approval carried over a before_tool rewrite (WX3): `hash`
+	 * above is the rewritten plan's, and this links it to the plan the approver saw.
+	 */
+	approvalCarry?: {
+		approvedPlanHash: string | null;
+		rewrittenPlanHash: string;
+		extension: string;
+	};
+	costCeilingUsd?: number;
+}
+
+/**
+ * Runtime kind recorded on a run envelope/receipt. "http" covers PanCode-owned
+ * pi-agent model runtimes; "sdk" and "subprocess" cover sanctioned worker
+ * runtimes with dedicated worker runners; "acp-delegation" covers external
+ * Agent Client Protocol harnesses that PanCode supervises as delegated coding
+ * agents.
+ */
+export type RunKind = "http" | "sdk" | "subprocess" | "acp-delegation";
+
+/** True only for worker runtimes whose live agent API can consume guidance. */
+export function runKindSupportsLiveSteering(kind: RunKind): boolean {
+	return kind === "http" || kind === "sdk";
+}
+/** Harness runs start on the harness's own decision, never a model tool call or operator command; always read-only. */
+export type DispatchRequestOrigin = "user" | "agent" | "internal" | "harness";
+
+/**
+ * Durable routing-system phase marks. They live on the ledger envelope, not the
+ * sealed receipt.
+ */
+export interface RunPhaseMarks {
+	requestedAt: string;
+	queuedAt?: string;
+	admittedAt?: string;
+	workerSpawnedAt?: string;
+	/** How long this run waited for its batch's shared-prefix leader to stream, and that leader's run id. */
+	prefixHoldMs?: number;
+	prefixLeaderRunId?: string;
+	endedAt?: string;
+}
+
+/** The two derived durations route policy reads: queue wait and user-observed end-to-end time. */
+export interface RunPhaseDurations {
+	queueWaitMs: number | null;
+	totalEndToEndMs: number | null;
+}
+
+/** One correctness-bearing validation result sealed at receipt finalization. */
+export interface RunResultTypedValidationFact {
+	sourceId: string;
+	validatorDigest: string;
+	passed: boolean;
+}
+
+/** The exact response-schema enforcement fact, distinct from answer correctness. */
+interface RunResultResponseSchemaFact {
+	sourceId: string | null;
+	schemaDigest: string | null;
+	runtimeEnforceable: boolean;
+	enforcementPassed: boolean | null;
+}
+
+/** Typed result-contract conformance and its separately eligible quality label. */
+export interface RunResultContractFact {
+	sourceId: string;
+	validatorDigest: string;
+	/** `not-reached` means the run never produced a terminal result to judge. */
+	conformance: "pass" | "fail" | "not-reached";
+	quality: "pass" | "fail" | "unmeasured";
+}
+
+/** One `limitation` call a run recorded: what could not be verified and the tool's reason for it. */
+interface RunRecordedLimitation {
+	scope: string;
+	reason: string;
+}
+
+/**
+ * A terminal result's passing validation claims, measured against the commands
+ * the run's own tool calls show it ran. Present only when the result carried at
+ * least one passing claim under a contract kind that can be grounded.
+ */
+export interface RunValidationGrounding {
+	claimed: number;
+	grounded: number;
+	/** Claim names with no matching execution, stably ordered and bounded. */
+	ungrounded: string[];
+	/**
+	 * `no-command-executed` is the hard case: the run claimed a passing check and
+	 * ran nothing that could have produced one, so the quality label does not
+	 * rest on it. `unmatched-command` means it ran commands the canonical
+	 * detector does not enumerate, which is reported and nothing more.
+	 * `unattributable-status` means a claimed check ran, but its call's exit
+	 * status was a later command's, so it is reported and nothing more (bt-9).
+	 * `unobserved-lane` means the run's tool lane was not observed (a CLI subprocess): its claims read unknown.
+	 * `grounded` means every claim matched an executed command.
+	 */
+	basis: "grounded" | "no-command-executed" | "unmatched-command" | "unattributable-status" | "unobserved-lane";
+}
+
+/**
+ * The pairing of a read-only recipe with a task that needs a write, decided at
+ * admission. Present only on a run the harness admitted with the mismatch
+ * flagged; a refused pairing never becomes a run at all.
+ */
+interface RunCapabilityMismatch {
+	agentId: string;
+	capabilityClass: string;
+	taskType: string;
+	suggestedAgentId: string | null;
+}
+
+/**
+ * Required run-local quality facts. Later gate and evaluation artifacts link to
+ * the sealed receipt digest rather than mutating this block after finalization.
+ */
+export interface RunResultQuality {
+	version: 1;
+	typedValidations: RunResultTypedValidationFact[];
+	responseSchema: RunResultResponseSchemaFact;
+	resultContract: RunResultContractFact | null;
+}
+
+/** Host display facts only: persisted with the run, excluded from receipt integrity and authority. */
+export interface RunLedgerProjection {
+	version: 1;
+	ledgerId: string | null;
+	readRoots: ReadonlyArray<string>;
+	writeRoots: ReadonlyArray<string>;
+	scopeSource: "intent" | "write-roots" | "none";
+	/** Capabilities the run's envelope withheld, each with why and what would keep it (M7). */
+	withheld?: ReadonlyArray<import("./envelope.js").WithheldCapability>;
+}
+
+export interface RunEnvelope {
+	/** Display-only state reference, outside sealed receipt authority. */
+	recording?: import("./recording.js").RecordingReference;
+	projection?: RunLedgerProjection;
+	version: 1;
+	id: string;
+	agentId: string;
+	/** Semantic role this attempt's route statistics belong to. */
+	executionRole: ExecutionRole;
+	agentAudience?: AgentAudience;
+	/**
+	 * The peer session an ACP delegation ran in, recorded when it settles, so a later `continue_run` can reopen it.
+	 * `nonResumable` is the peer's own word that the session cannot take another turn.
+	 */
+	acpSession?: { sessionId: string; nonResumable?: { reason: string } };
+	requestOrigin?: DispatchRequestOrigin;
+	/** Who asked for the work this attempt continues. Display only: policy reads requestOrigin. */
+	rootRequestOrigin?: DispatchRequestOrigin;
+	task: string;
+	/** Immutable recipe policy, invocation request, effective phase, and admission reasons. */
+	budget?: RunToolBudgetEnvelope;
+	/** Present only when a bounded parent briefing was sent as dynamic task data. */
+	briefing?: RunBriefingProvenance;
+	workerContext?: WorkerContextProvenance;
+	/** Sent steering provenance in stable per-run sequence order; prose is never persisted. */
+	steering?: ReadonlyArray<RunSteeringProvenance>;
+	targetId: string;
+	wireModelId: string;
+	runtimeId: string;
+	runtimeKind: RunKind;
+	/** Durable side-channel timing; intentionally outside receipt integrity; absent when no phase was marked. */
+	timing?: RunPhaseMarks;
+	startedAt: string;
+	endedAt: string | null;
+	status: RunStatus;
+	/** Terminal outcome; null until the run finalizes. Absent on pre-taxonomy rows. */
+	outcome?: RunOutcome | null;
+	outcomeDetail?: string | null;
+	outcomeCode?: RunOutcomeCode | null;
+	lineage?: RunLineage;
+	identity?: RunIdentity;
+	/** Fleet node placement; absent when no fleet placement resolved this run. */
+	node?: RunNodeIdentity;
+	/** Dead-node failover hops, oldest first; absent when the run was never rerouted. */
+	reroutes?: RunNodeReroute[];
+	/** Pipeline threading provenance; present only on pipeline steps after the first. */
+	pipeline?: RunPipelineProvenance;
+	/** Review/compete gate provenance; present only on runs of a gated dispatch. */
+	gate?: RunGateProvenance;
+	council?: RunCouncilProvenance;
+	/** Plan-approval provenance; present only on runs of an approval-gated plan. */
+	plan?: RunPlanProvenance;
+	/** Ad-hoc specialist provenance; present only when a persona override composed the stable prompt. */
+	personaOverride?: RunPersonaOverride;
+	/** Decision refs active on the parent decision board at dispatch; absent when the board was empty. */
+	decisionRefs?: ReadonlyArray<string>;
+	exitCode: number | null;
+	pid: number | null;
+	heartbeatAt: string | null;
+	sessionId: string | null;
+	cwd: string;
+	/**
+	 * The run's spend so far, one fact per quantity; it becomes the run.settled spend when the run ends (#434). The
+	 * owner's in-memory row tracks its meter, but runs.json takes it only at lifecycle writes, so a reader in another
+	 * process folds a live run's spend from the run's journal instead (FL-24).
+	 */
+	spend: RunUsageFacts;
+	/** The same spend as sums over the run's calls, what a total across runs adds (#434). */
+	spendSums: RunSpendSums;
+	/** Effective forced routing attempts, including any recovery (#426). */
+	toolRounds?: ToolRoundRecord[];
+	sessionShellHash?: string | null;
+	dynamicHash?: string | null;
+	promptSignature?: string | null;
+	toolSignature?: string | null;
+}
+
+/**
+ * Per-tool aggregates folded into a receipt at run completion. Sourced from
+ * the worker's ToolTelemetry stream (`pancode_tool_finish` IPC events). Sorted
+ * by tool name on write so digests are deterministic across runs.
+ */
+export interface ToolCallStat {
+	tool: string;
+	count: number;
+	ok: number;
+	errors: number;
+	blocked: number;
+	totalDurationMs: number;
+	/** Successful calls the safety layer classed as write or destructive, for tools whose class depends on arguments. */
+	okWrites?: number;
+	/** Calls that returned a notice without running: the spent per-turn observation pool stopped them (C-17). */
+	withheld?: number;
+}
+
+/**
+ * Deterministic activity totals aggregated from toolStats at finalization.
+ * `mutatingSucceeded` reports whether any successful call's action class can
+ * change state, using the safety domain's classifier; it is mechanical
+ * bookkeeping, not a judgment about whether the task was accomplished.
+ */
+export interface ToolActivitySummary {
+	calls: number;
+	succeeded: number;
+	failed: number;
+	blocked: number;
+	mutatingSucceeded: boolean;
+	/** The worker wrote at least one blob into a granted store tag. */
+	storeWritten?: boolean;
+	/** Calls in `calls` the spent observation pool answered with a notice instead of running (C-17); absent when none. */
+	withheld?: number;
+}
+
+/** One live-grant request on a worker receipt: who could decide, who did, and whether the call ran. */
+interface RunGrantAudit {
+	requestId: string;
+	attempt: number;
+	tool: string;
+	actionClass: string;
+	authority: "main" | "operator";
+	/** Who decided; absent when nobody did (expiry, cancellation). */
+	issuer?: "main" | "operator";
+	/** True when the main agent asked the operator instead of deciding itself. */
+	forwardedByMain?: true;
+	decision: "approved" | "denied" | "expired" | "canceled";
+	execution: "not_executed" | "executed" | "unknown";
+	reason?: string;
+}
+
+export interface SafetyBlockedAttempt {
+	tool: string;
+	posture?: string;
+	actionClass?: string;
+	ruleId?: string;
+	reasonCode?: string;
+	policySource?: string;
+	reason?: string;
+	/**
+	 * The call needed an approval this run could not give: a headless run
+	 * denies every ask. Absent for a hard block that no approval clears.
+	 */
+	permissionRequired?: true;
+	/** Which layer refused the call (`src/domains/safety/denial.ts`), when the main agent's registry recorded one. */
+	layer?: "pancode_policy" | "operator_approval" | "mcp_server_policy";
+}
+
+export interface DelegationToolCallLogEntry {
+	callId: string;
+	tool: string;
+	arguments: Record<string, unknown>;
+	decision: "approved" | "denied" | "cancelled" | "error";
+	reason?: string;
+	safetyDecision?: {
+		kind: "allow" | "ask" | "block";
+		reasonCode?: string;
+		policySource?: string;
+		ruleId?: string;
+	};
+	durationMs: number;
+	timestamp: string;
+}
+
+interface RunResultDelegation {
+	agentConfigId: string;
+	/** Peer-advertised model selected for the ACP session, when available. */
+	selectedModelId?: string;
+	command: string;
+	args: string[];
+	acpSessionId: string | null;
+	acpProtocolVersion: number | null;
+	acpAgentName: string | null;
+	acpAgentVersion: string | null;
+	agentCapabilities: Record<string, unknown>;
+	toolCallsRequested: number;
+	toolCallsApproved: number;
+	toolCallsDenied: number;
+	toolGovernance: "pancode-policy" | "agent-managed" | "deny-all";
+	/** Present when agent-managed governance ran under the operator's trustedUnmediated opt-in. */
+	trustedUnmediated?: true;
+	toolCallLog: DelegationToolCallLogEntry[];
+	/** How the run opened its peer session: a new one, or an earlier one reopened by `session/resume` or `session/load`. */
+	opened: "new" | "resume" | "load";
+	/** Peer updates a `session/load` replayed as history and PanCode kept out of this run's events. */
+	replayedUpdates?: number;
+	/** The window the peer session stayed open after its prompt returned, for background work that outlived it. */
+	postSettle?: { waitedMs: number; updates: number; ended: "idle" | "cap" | "aborted" };
+	/** The earlier run this one continued; `freshReason` says why it opened a new session instead of that one. */
+	continuedFrom?: { runId: string; acpSessionId: string; freshReason?: string };
+	/** The peer marked this run's session unable to take another turn. */
+	nonResumable?: { reason: string };
+}
+
+export interface RunResultSafetySummary {
+	/**
+	 * The decision axis: how the safety classifier admitted each tool call. It is
+	 * distinct from the outcome axis (`blockedAttempts`, plus `toolStats`/
+	 * `toolActivity` blocked counts), which records whether a call executed.
+	 * `allowed` + `blocked` + `guardBlocked` + `permissionRequested` equals the
+	 * tool calls that reached admission; a native call the engine refused first,
+	 * such as one whose arguments failed the tool's schema, counts in `toolStats`
+	 * as an error under no decision. A call in a reply the output token limit cut
+	 * off never ran and counts nowhere. `blocked` counts only safety refusals, hard denials by a
+	 * policy rule; a tool guard holding back a call (reason code `guard_block`,
+	 * such as rule `guard.loop`) counts under `guardBlocked`. A call that required permission and was denied
+	 * non-interactively is counted under `permissionRequested`, not `blocked`, so
+	 * scripts can tell "approval would have been needed" apart from a policy
+	 * block (see docs/architecture/safety-model.md). Each list names the calls
+	 * one counter counts: a blocked call the counter takes as a permission
+	 * request is listed under `permissionRequestedAttempts`, and a guard block
+	 * under `guardBlockedAttempts`, not under `blockedAttempts`.
+	 * The `toolStats`/`toolActivity` blocked counts cover every blocked call.
+	 */
+	decisions: {
+		allowed: number;
+		blocked: number;
+		/** Calls a tool guard held back (reason code `guard_block`). */
+		guardBlocked: number;
+		permissionRequested: number;
+		/**
+		 * Worker permission-escalation tallies. Present only on receipts that saw
+		 * at least one escalation (onPermission="escalate"), so deny/fail
+		 * receipts stay byte-identical. `requested` counts parked asks handed to
+		 * the operator; `approved`/`denied` count operator decisions; `timedOut`
+		 * counts asks resolved by the timeout fallback.
+		 */
+		escalationRequested?: number;
+		escalationApproved?: number;
+		escalationDenied?: number;
+		escalationTimedOut?: number;
+	};
+	/** Every call whose outcome was blocked, except the ones a tool guard held back and the refused asks. */
+	blockedAttempts: SafetyBlockedAttempt[];
+	/**
+	 * The calls `decisions.guardBlocked` counts, in the same shape. Present only when a guard blocked a call, so a run
+	 * without one keeps its exact shape. The main agent keeps the first `BLOCKED_ATTEMPTS_LIMIT`; the count stays exact.
+	 */
+	guardBlockedAttempts?: SafetyBlockedAttempt[];
+	/**
+	 * The blocked calls `decisions.permissionRequested` counts: asks this run refused because nobody could answer
+	 * them, or because the run was aborted before anyone did. Present only when one was, so other runs keep their
+	 * exact shape. The main agent keeps the first `BLOCKED_ATTEMPTS_LIMIT`.
+	 */
+	permissionRequestedAttempts?: SafetyBlockedAttempt[];
+	/**
+	 * The asks the safety judge allowed in place of the operator, each `reasonCode` `safety-judge:allow:<rule>` naming
+	 * the rule it ran under (`operator-named` for a call the prompt named). Main-agent runs only, present only when the
+	 * judge allowed one; the first `BLOCKED_ATTEMPTS_LIMIT` are kept.
+	 */
+	judgeAllowedAttempts?: SafetyBlockedAttempt[];
+	/**
+	 * Worker asks this attempt routed to the main agent's grant broker (Phase
+	 * D), one entry per request, oldest first. Present only when the run
+	 * opened at least one, so other receipts keep their exact shape.
+	 */
+	grants?: RunGrantAudit[];
+	/** One operator/client approval, bound to this external read-only Scout run (#433). */
+	externalReadApproval?: { root: string; requestId: string; requestedBy: string; runId: string };
+	/**
+	 * Blocked attempts left out of `blockedAttempts` by the main agent's receipt
+	 * bound (50 entries, each reason clipped to 500 characters; see
+	 * `BLOCKED_ATTEMPTS_LIMIT` in cli/modes/headless-run-events.ts). Present only when the
+	 * bound dropped an entry, so a receipt under it keeps its exact shape.
+	 * Worker receipts never set it.
+	 */
+	blockedAttemptsTruncated?: number;
+	/**
+	 * Action classes the dispatch admission granted. Worker receipts always
+	 * carry it; the main agent passes no dispatch admission, so its receipt
+	 * omits it.
+	 */
+	requestedActions?: ReadonlyArray<string>;
+	toolProfile?: ToolProfileName;
+	/**
+	 * The run had no write authority: the request asked for a read-only run, or
+	 * the recipe's capability class is read-only. Enforcement alone left no
+	 * record of it unless the worker tried to write and was denied.
+	 * Present only on such runs, so a run that could write keeps its exact
+	 * shape and digest.
+	 */
+	readOnly?: true;
+	/**
+	 * Whether PanCode observed a complete start/finish stream for this runtime's
+	 * tool activity. Retry admission consumes this sealed fact before reusing
+	 * the same checkout after a failed attempt.
+	 */
+	toolTelemetry?: {
+		coverage: "complete" | "partial" | "unavailable";
+		ingestionErrors: number;
+		unfinished: ReadonlyArray<{ tool: string; count: number }>;
+		workspaceMutationPossible: boolean;
+	};
+	/**
+	 * Information-flow restrictions the run's context carried at the end: the
+	 * inherited set plus what the worker read. The parent absorbs it before
+	 * the result reaches its own context, however late it is collected.
+	 */
+	flowRestrictions?: FlowRestrictionSet;
+	/** Frozen parent-session hard blocks enforced by this worker specification. */
+	protectedArtifacts?: {
+		version: 1;
+		count: number;
+		stateHash: string;
+	};
+	/** Worker runtime limitations. Worker receipts always carry it; main-agent receipts omit it. */
+	runtimeLimitations?: ReadonlyArray<string>;
+	/**
+	 * The capability envelope a native, SDK or subprocess worker ran under (fleet M7): its role, where it wrote, and
+	 * every capability a layer withheld. The worker's tools are the permit ceiling's; `permitDigest` binds the two.
+	 */
+	envelope?: {
+		version: number;
+		digest: string;
+		permitDigest: string;
+		role: import("./obligation.js").RunRole;
+		skills: { bound: ReadonlyArray<string>; discovery: import("./envelope.js").EnvelopeSkillDiscovery };
+		read: { roots: ReadonlyArray<string>; outside: ReadonlyArray<string> };
+		write: {
+			mode: import("./envelope.js").EnvelopeWriteMode;
+			roots: ReadonlyArray<string>;
+			commandsBounded: boolean;
+		};
+		exec: { shell: import("./envelope.js").EnvelopeShell; checks: import("./envelope.js").EnvelopeChecks };
+		network: { shell: boolean; tools: ReadonlyArray<string>; mcp: ReadonlyArray<string> };
+		approval: import("./envelope.js").EnvelopeApproval;
+		sandbox: { backend: import("./envelope.js").EnvelopeSandboxBackend; confinesWrites: boolean };
+		withheld: ReadonlyArray<import("./envelope.js").WithheldCapability>;
+		staticHead: string;
+	};
+	/**
+	 * The immutable permit a native, SDK or subprocess worker ran under. An ACP
+	 * receipt carries a record-only one; main-agent receipts omit it.
+	 */
+	permit?: {
+		version: number;
+		digest: string;
+		capabilityClass: string;
+		git: "inspect" | "worktree";
+		asks: "deny" | "fail" | "main";
+		approvalAuthority: "main" | "operator";
+		executeAutonomy?: "yolo";
+		/** The operator's trustedUnmediated opt-in let an unmediated runtime take write-capable work. */
+		trustedUnmediated?: true;
+		/**
+		 * The permit's hard ceiling. Absent on receipts sealed before it was
+		 * recorded, so those still digest exactly as they did.
+		 */
+		ceiling?: {
+			tools: ReadonlyArray<string>;
+			readOnly: boolean;
+			writeRoots: ReadonlyArray<string>;
+			enforcement: RuntimeEnforcement;
+			/** The MCP tools admission attested into the permit, each with the class it runs under. */
+			mcp?: {
+				projectRoot: string;
+				tools: ReadonlyArray<{
+					serverId: string;
+					digest: string;
+					tool: string;
+					actionClass: string;
+					network?: true;
+				}>;
+				/**
+				 * Granted servers whose network grant this run withheld because it could
+				 * write their code. They start under the run's own network policy; with
+				 * safety.sandbox off the server runs unconfined.
+				 */
+				networkWithheld?: ReadonlyArray<{ serverId: string; reason: string }>;
+			};
+		};
+		/**
+		 * Present only on ACP delegation receipts. The peer runs its own tools and
+		 * PanCode answers only the permission requests it sends, so this permit
+		 * records the intended ceiling and PanCode enforced none of it.
+		 */
+		recordOnly?: {
+			mediation: "peer-asks-only";
+			toolGovernance: "pancode-policy" | "agent-managed" | "deny-all";
+		};
+	};
+	/**
+	 * Effective OS sandbox for the worker's own commands. Present only on
+	 * native HTTP worker receipts, the one runtime whose bash, run_script and
+	 * verify execute in the PanCode worker process.
+	 */
+	sandbox?: WorkerSandboxReceipt;
+}
+
+export interface RunResultReproducibility {
+	cwd: string;
+	safetyPolicy: {
+		version: number;
+		rulePackHash: string | null;
+		rulePackVersion: number | null;
+		projectPolicyPath: string | null;
+		projectPolicyHash: string | null;
+		projectPolicyValid: boolean | null;
+	};
+}
+
+export interface RunResultUpstreamResponse {
+	/** One-based assistant-call index within this run. */
+	callIndex?: number;
+	/** The call's usage, one fact per field; absent when the reply carried no usage at all. */
+	usage?: CallUsage;
+	usageScope?: "call" | "run-aggregate";
+	requestedModelId: string | null;
+	/**
+	 * What the provider said about its own response model. `not-observed` means
+	 * PanCode captured no report for the call; it never means the requested model
+	 * served it, and the route on `routeDecision` is configuration, not this.
+	 */
+	responseModelIdObservation: ResponseModelIdObservation;
+	differingResponseModelId: string | null;
+	providerResponseId: string | null;
+	/** Physical route and proxy attempts reported by LiteLLM, when this call used that gateway. */
+	gatewayRouting?: GatewayRoutingObservation;
+	/** How the call ended as the engine reported it; absent where no runtime reports it. */
+	stopReason?: "stop" | "length" | "toolUse" | "error" | "aborted";
+	/** The engine's error text for an `error` or `aborted` call, clipped to 512 characters. */
+	errorMessage?: string;
+}
+
+/**
+ * Per-call responses of a receipt. The Claude SDK adds one "run-aggregate" row
+ * next to its per-call rows, and counting it as a call would inflate call totals,
+ * so it is kept only when no per-call row exists.
+ */
+export function callLevelUpstreamResponses(
+	responses: ReadonlyArray<RunResultUpstreamResponse>,
+): ReadonlyArray<RunResultUpstreamResponse> {
+	const calls = responses.filter((response) => response.usageScope !== "run-aggregate");
+	return calls.length > 0 ? calls : responses;
+}
+
+/**
+ * Bounded assistant output captured by the dispatch event pump and sealed into
+ * the receipt so the worker's answer survives process exit and session resume.
+ * `state: "final"` means the text is a completed assistant message (the last
+ * `message_end`); `state: "partial"` means mid-stream text from a message that
+ * never completed (abort, stall, kill) and must never be presented as final.
+ * `bytes` is the UTF-8 length of the full captured text before the run's
+ * capture bound (WORKER_OUTPUT_MAX_BYTES, or the larger bound a mutation-report
+ * contract's summary allowance implies); `truncated` records that the bound
+ * clipped `text`, so truncation is always explicit. Absent when no assistant text was
+ * captured. Covered by the receipt integrity digest like every other field.
+ */
+export interface RunResultOutput {
+	state: "final" | "partial";
+	text: string;
+	bytes: number;
+	truncated: boolean;
+	/** Host-validated internal handoff; text retains the same payload as canonical JSON. */
+	structured?: import("../agents/result-contract-types.js").StructuredHelperResult;
+}
+
+/**
+ * Evidence confidence is descriptive receipt provenance, orthogonal to the
+ * execution outcome. It must never drive retry, reroute, or finish gating.
+ */
+type ReceiptVerificationState = "verified" | "unverified" | "not_applicable" | "unknown";
+
+export interface RunResultUnclassifiedCommands {
+	count: number;
+	/** The first few, redacted and bounded to one line each. */
+	commands: string[];
+}
+
+export interface RunResultVerification {
+	state: ReceiptVerificationState;
+	basis:
+		| "validation-tool"
+		/** Only shell checks the host observed the worker run answered; no validation tool did. */
+		| "host-observed-command"
+		| "read-only-agent"
+		| "no-validation-tool"
+		/** A check ran and passed, then a later change to the tree retired it; no pass judged the final tree. */
+		| "retired-by-change"
+		/**
+		 * The run ran no standing check of its own, and a dispatched worker's sealed run record passed with no later change
+		 * by this run; `detail` names it as `run <id> agent <agent>`.
+		 */
+		| "dispatch-run-record"
+		| "acp-external-unobserved"
+		/** The host ran the declared checks after the worker finished, and their verdict outranks the worker's own. */
+		| "host-verification"
+		/** No sealed receipt to read: it is missing, unreadable, or failed integrity. */
+		| "result-unavailable";
+	/** What the basis rests on beyond its name: the credited worker runs for `dispatch-run-record`. */
+	detail?: string;
+}
+
+export interface RunHostVerificationCheck {
+	/** A bounded replay on the task base; absence means not compared. */
+	baseComparison?: { status: "passed" | "failed" | "not_compared"; base?: string; exitCode?: number; reason?: string };
+	check: string;
+	argv: string[];
+	cwd: string;
+	/** For a numeric-compare or perf-budget check, 1 when the judgement failed even though the command exited 0. */
+	exitCode: number;
+	durationMs: number;
+	memo: boolean;
+	/**
+	 * Set when the check never started, so its exit code reports no run: `refused` before launch (a reproduce
+	 * precondition), `unconfigured` (a sealed check without its parameters), or `spawn-failed` (no process could be
+	 * created). `nothing-changed` is a lint or format check skipped because the task changed no file under it; its
+	 * exit code is 0 but it judged nothing. `shutdown` is a `run --verify` check a deadline or signal stopped before it
+	 * finished, whose result was discarded. `no-tests` is a pytest or unittest run that exited 5 because it collected
+	 * no test (CLI-P51): it judged nothing, so like `nothing-changed` it is sealed with exit code 0 and its output tail
+	 * keeps the runner's own exit. Absent when it started, and on receipts sealed before the field existed.
+	 */
+	notRun?: "refused" | "unconfigured" | "spawn-failed" | "nothing-changed" | "shutdown" | "no-tests";
+	outputTail: string;
+	artifactPath?: string;
+	/** Structured verdict of a numeric-compare or perf-budget check; absent for a command check. Covered by the receipt digest through `hostVerification`. */
+	report?: DeclaredCheckReport;
+	/** Run that owns the evidence when it did not come from this run: a memo hit, or the batch member the shared check ran under. */
+	evidenceRunId?: string;
+	/**
+	 * The checkout this verdict judged: the task worktree for a `worktree: true`
+	 * run, else the source checkout. `fingerprint` digests HEAD plus the
+	 * working-tree content the check saw; `untracked` counts the untracked files
+	 * git does not ignore there, which HEAD does not name. Absent outside a Git
+	 * checkout and on receipts sealed before it existed (F6).
+	 */
+	tree?: { root: string; head: string; fingerprint: string; untracked?: number };
+}
+
+/**
+ * Why a batch-settled failing check was or was not charged to a run. It is a
+ * batch-wide fact and is sealed identically on every receipt in the batch; each
+ * receipt's own `status` is what that run is judged by.
+ */
+export interface RunHostVerificationAttribution {
+	/** Declared check id that failed. */
+	check: string;
+	/**
+	 * Absolute repository paths the check's own output named, capped at 32. The
+	 * paths that decided the charge come first so a truncated list still contains
+	 * the evidence behind the verdict; each group is sorted.
+	 */
+	implicated: string[];
+	/** Run ids the failure is charged to, sorted; empty when every named path belongs to a run that did not declare the check. */
+	charged: string[];
+	/**
+	 * The weakest evidence behind the charge set, never the strongest, so the
+	 * record cannot claim a certainty it does not have.
+	 *
+	 * `write_roots`: every charged run has an implicated path inside its own
+	 * declared write roots. `attributed_elsewhere`: nothing is charged because
+	 * every implicated path falls inside the write roots of a live batch member
+	 * that did not declare this check. `unattributable`: the charge is not backed
+	 * by per-run path evidence, which covers a failure that named no path, one
+	 * that named only paths no member claims, and one charged to a run that
+	 * declared no write roots at all. The first two of those charge every run that
+	 * declared the check: a real failure with no owner is charged to everyone
+	 * rather than excused for everyone.
+	 */
+	basis: "write_roots" | "attributed_elsewhere" | "unattributable";
+}
+
+export interface RunHostVerification {
+	/**
+	 * `verified` states that every declared check passed, which is the claim
+	 * `trust-status.ts:619` turns into "validated by host-verification".
+	 * `not_implicated` is the batch-settled exculpation: a declared check failed
+	 * for the batch and this run's `checks` carries its non-zero exit code, but
+	 * the failure was charged elsewhere, so no validator speaks for this run.
+	 */
+	status: "verified" | "rejected" | "skipped" | "not_implicated";
+	reason?: string;
+	checks: RunHostVerificationCheck[];
+	/**
+	 * How the declared checks were run. Absent means the single-run strategy: the
+	 * checks ran for this run alone, straight after it finished. `batch-settled`
+	 * means they ran once for the whole parallel batch after every live member had
+	 * finished.
+	 */
+	strategy?: "batch-settled";
+	/** Per-failing-check attribution for a batch-settled run; absent when nothing failed. */
+	attribution?: RunHostVerificationAttribution[];
+}
+
+export interface RunResultCostCap {
+	/** Priced spend the run could add, in US dollars. */
+	maxUsd: number;
+	/** Routes in use at the start whose cost is unknown, as `target/model`; the cap does not bound them. */
+	unpricedRoutes: string[];
+}
+
+export interface RunResult {
+	cwd?: string;
+	runId: string;
+	agentId: string;
+	/** Semantic role this attempt's route statistics belong to. */
+	executionRole: ExecutionRole;
+	agentAudience?: AgentAudience;
+	requestOrigin?: DispatchRequestOrigin;
+	task: string;
+	/** Normalized dispatch intent admitted before worker execution. */
+	intent?: DispatchIntent;
+	/** Integrity-sealed recipe policy, invocation request, effective phase, and admission reasons. */
+	budget?: RunToolBudgetEnvelope;
+	/** Bytes of the answer the parent sees at sync, collect and record, fixed at dispatch (M3). */
+	answerBudgetBytes?: number;
+	/**
+	 * The grader's verdict (fleet M9): the obligation the run owed, every rule's result in layer order, and its
+	 * assurance, the one value the merge gate, the exit code and a parent's finish contract read.
+	 */
+	verdict?: RunVerdict;
+	/** Proof of briefing content without copying its prose into the receipt. */
+	briefing?: RunBriefingProvenance;
+	workerContext?: WorkerContextProvenance;
+	/** Sent steering provenance in stable per-run sequence order; prose is never persisted. */
+	steering?: ReadonlyArray<RunSteeringProvenance>;
+	targetId: string;
+	wireModelId: string;
+	runtimeId: string;
+	runtimeKind: RunKind;
+	startedAt: string;
+	endedAt: string;
+	/** Terminal outcome. Sealed on every receipt. */
+	outcome: RunOutcome;
+	outcomeDetail?: string | null;
+	outcomeCode?: RunOutcomeCode | null;
+	lineage?: RunLineage;
+	identity?: RunIdentity;
+	/** Fleet node placement; absent when no fleet placement resolved this run. */
+	node?: RunNodeIdentity;
+	/** Dead-node failover hops, oldest first; absent when the run was never rerouted. */
+	reroutes?: RunNodeReroute[];
+	/** Pipeline threading provenance; present only on pipeline steps after the first. */
+	pipeline?: RunPipelineProvenance;
+	/** Review/compete gate provenance; present only on runs of a gated dispatch. */
+	gate?: RunGateProvenance;
+	council?: RunCouncilProvenance;
+	/** Plan-approval provenance; present only on runs of an approval-gated plan. */
+	plan?: RunPlanProvenance;
+	/** Ad-hoc specialist provenance; present only when a persona override composed the stable prompt. */
+	personaOverride?: RunPersonaOverride;
+	/** Decision refs active on the parent decision board at dispatch; absent when the board was empty. */
+	decisionRefs?: ReadonlyArray<string>;
+	/** Effective project-context tier for this run. */
+	projectContext?: RunProjectContextProvenance;
+	/**
+	 * Repo-relative `.pancode/rules/**` ids selected into this run's worker
+	 * prompt, in load order; `[]` when the run had none. A receipt without it
+	 * is read as unknown, never as "no rules" (#104).
+	 */
+	rulesApplied?: string[];
+	/**
+	 * Whether the operator profile rendered non-empty content into this run's
+	 * worker prompt. A receipt without it is read as unknown, never as false (#104).
+	 */
+	operatorProfileApplied?: boolean;
+	exitCode: number;
+	failureMessage?: string;
+	/** The run's spend, one fact per quantity, as run.settled states it (#434). */
+	spend: RunUsageFacts;
+	/** The same spend as sums over the run's calls, what a total across runs adds (#434). */
+	spendSums: RunSpendSums;
+	/** Effective forced routing attempts, including any recovery (#426). */
+	toolRounds?: ToolRoundRecord[];
+	upstreamResponses?: RunResultUpstreamResponse[];
+	/** Bounded final/partial assistant output; absent when none was captured. */
+	output?: RunResultOutput;
+	/** External CLI observation, distinct from PanCode's target-pricing estimate. */
+	externalTelemetry?: {
+		tokenUsage: "provider-reported" | "missing" | "unverified";
+		cost: "provider-reported" | "peer-estimated" | "missing" | "unverified";
+		sessionId: string | null;
+		exitReason: "stop" | "error" | "aborted" | "unknown";
+		toolTelemetry: "unavailable";
+	};
+	/** Git-visible checkout delta observed during an external subprocess run; concurrent edits are not attributable. */
+	checkoutChanges?: {
+		cwd: string;
+		changedPaths: string[];
+		attribution: "observed-delta";
+	};
+	compiledPromptHash: string | null;
+	staticCompositionHash: string | null;
+	sessionShellHash?: string | null;
+	dynamicHash?: string | null;
+	promptSignature?: string | null;
+	toolSignature?: string | null;
+	pancodeVersion: string;
+	piMonoVersion: string;
+	platform: string;
+	nodeVersion: string;
+	toolCalls: number;
+	toolStats: ToolCallStat[];
+	toolActivity?: ToolActivitySummary;
+	/** Integrity-sealed evidence confidence. Sealed on every receipt. */
+	verification: RunResultVerification;
+	/** Orchestrator-executed declared checks. Worker self-report never populates this field. */
+	hostVerification?: RunHostVerification;
+	/** Isolated writer checkout and its collect-time application result. */
+	worktree?: {
+		path: string;
+		branch: string;
+		/** The checkout the task worktree was cut from, and the commit it was cut at; a reviewer's packet diffs base..commit. */
+		root?: string;
+		base?: string;
+		diffHash: string | null;
+		changedPaths?: string[];
+		/** The paths among `changedPaths` the task commit deleted; absent when it deleted none. */
+		deletedPaths?: string[];
+		snapshot?: "working-tree" | "unavailable";
+		/** Pinned task commit that application merged or preserved (F5). */
+		commit?: string;
+		apply: "merge" | "preserve";
+		applied: boolean;
+		reason?: string;
+		detail?: string;
+		/** New files the host commit left out: no mutation call wrote them and the worker did not stage them. */
+		leftUncommitted?: { count: number; paths: string[] };
+		/** What kept a merged worktree from automatic cleanup: files new or changed since the commit accounted for it. */
+		changedAfterCommit?: { count: number; paths: string[] };
+	};
+	/** Required normalized routing request, sealed without task or prompt data. */
+	routingIntent: RoutingIntent;
+	/**
+	 * The failover mode that governed this run's retries, which is a different
+	 * question from the `routingIntent.failover` the request asked for: that
+	 * axis has two values and defaults to `none`, while this one answers
+	 * `automatic` for an unpinned request. Optional, so a receipt
+	 * sealed before the field existed digests exactly as it did.
+	 */
+	effectiveFailover?: DispatchFailoverMode;
+	/** Required routing-quality facts known at receipt finalization. */
+	quality: RunResultQuality;
+	skillActivations?: SkillActivation[];
+	/** Level the run used; absent when none was resolved. */
+	autonomy?: AutonomyLevel;
+	safety?: RunResultSafetySummary;
+	/**
+	 * Whether the run changed nothing it was allowed to change: a tool call was
+	 * blocked and no mutating call succeeded, or tools ran and none succeeded.
+	 * A mutating call is one the tool registry classified as action class
+	 * `write` at admission, the class default autonomy runs without asking.
+	 * A run that called no tool is not a no-op. Headless main-agent receipts
+	 * always carry it; `pancode run --fail-on-noop` turns a true value into
+	 * a failed run. Absent on worker receipts and on receipts written before
+	 * the field existed.
+	 */
+	noop?: boolean;
+	/**
+	 * The `pancode run --max-cost-usd` cap a headless main-agent run ran
+	 * under. Absent on runs without the flag and on worker receipts.
+	 */
+	costCap?: RunResultCostCap;
+	reproducibility?: RunResultReproducibility;
+	/** Effective target/runtime/model/thinking/capability decision for this run. */
+	runtimeResolution?: RuntimeTargetSnapshot;
+	delegation?: RunResultDelegation;
+	/** Passing validation claims measured against executed commands; absent when none were claimed. */
+	validationGrounding?: RunValidationGrounding;
+	/**
+	 * The limitations the run recorded through its `limitation` tool, each call whose result was not an error, in call
+	 * order (row 371). A worker's own report can leave its completion's limitations empty after it recorded one, so the
+	 * host keeps what the tool recorded. Absent when none was recorded.
+	 */
+	recordedLimitations?: ReadonlyArray<RunRecordedLimitation>;
+	/**
+	 * Calls the check classifier could not read (neither check, inspection nor mutation) that ran after the run's
+	 * oldest check outcome still standing, and any that ran and failed with or without one (x8-2). They neither settled
+	 * nor cleared it, so `verification` stands as observed;
+	 * this only discloses them. Absent when none ran, and on receipts written before the field existed.
+	 */
+	unclassifiedAfterLastCheck?: RunResultUnclassifiedCommands;
+	/** Read-only recipe admitted against a mutating task; absent when the pairing was sound. */
+	capabilityMismatch?: RunCapabilityMismatch;
+	/**
+	 * Sealed route decision: the candidates, their estimates, the hard filters
+	 * that rejected some of them, and the tuple selected by the routing policy.
+	 * Absent only when the route observer is disabled, which is a test-bundle
+	 * option; every production dispatch seals one, which is what lets route
+	 * regret be recomputed offline from receipts alone.
+	 */
+	routeDecision?: RouteDecisionV1;
+	/**
+	 * Logical call ids this run's accounting folded, sorted. Absent when no call
+	 * telemetry reached the host, which is unknown rather than zero calls (#434).
+	 */
+	callIds?: string[];
+	/** How the worker loop ended; the verdict on its result stays in `outcome` and `outcomeCode` (#425, #434). */
+	terminalReason?: RunTerminalReason;
+	sessionId: string | null;
+	/**
+	 * The run's identity: the digest of the run.settled record its journal keeps (`run-digest.ts`). Gate subjects,
+	 * Scout sources and plan sources cite it, and a reader checks it against the sealed record (#434).
+	 */
+	digest: string;
+}
+
+export type RunResultDraft = Omit<RunResult, "digest" | "routingIntent"> & Partial<Pick<RunResult, "routingIntent">>;
+
+/** Keep routing evidence bounded when it crosses the worker IPC boundary (#426). */
+export function readToolRounds(record: unknown): ToolRoundRecord[] {
+	if (typeof record !== "object" || record === null || !("toolRounds" in record) || !Array.isArray(record.toolRounds))
+		return [];
+	return record.toolRounds.slice(0, 2).flatMap((value: unknown): ToolRoundRecord[] => {
+		if (typeof value !== "object" || value === null) return [];
+		const row = value as Record<string, unknown>;
+		if (row.kind !== "required" && row.kind !== "text-only" && row.kind !== "tools-removed") return [];
+		if (row.attempt !== 0 && row.attempt !== 1) return [];
+		let choice = row.choice;
+		if (choice !== null && typeof choice !== "string" && (typeof choice !== "object" || Array.isArray(choice))) return [];
+		if (typeof choice === "string") choice = choice.slice(0, 256);
+		else if (choice !== null && typeof choice === "object") {
+			const named = choice as Record<string, unknown>;
+			if (typeof named.type !== "string") return [];
+			const fn =
+				typeof named.function === "object" && named.function !== null ? (named.function as Record<string, unknown>) : {};
+			choice = {
+				type: named.type.slice(0, 64),
+				...(typeof named.name === "string" ? { name: named.name.slice(0, 256) } : {}),
+				...(typeof fn.name === "string" ? { function: { name: fn.name.slice(0, 256) } } : {}),
+			};
+		}
+		return [
+			{
+				kind: row.kind,
+				choice,
+				attempt: row.attempt,
+				...(typeof row.toolName === "string" ? { toolName: row.toolName.slice(0, 256) } : {}),
+				...(typeof row.downgradeReason === "string" ? { downgradeReason: row.downgradeReason.slice(0, 512) } : {}),
+				...(row.enforcement === "follow-up" || row.enforcement === "unmet" ? { enforcement: row.enforcement } : {}),
+			},
+		];
+	});
+}

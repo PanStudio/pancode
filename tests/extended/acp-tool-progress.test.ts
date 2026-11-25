@@ -1,0 +1,491 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { describe, it } from "node:test";
+import { createTurnObservations, observeChatTurns } from "../../src/domains/extensions/bus-observations.js";
+import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
+import type { AcpServerChat } from "../../src/engine/acp/server-options.js";
+import {
+	ACP_MAX_CHUNK_BYTES,
+	ACP_MAX_TOOL_PROGRESS_FRAMES_PER_CALL,
+	ACP_MIN_TOOL_PROGRESS_INTERVAL_MS,
+} from "../../src/engine/acp/types.js";
+import { HOST_STATUS_NOTICE_KEY, THINKING_CLAMP_NOTICE_KEY } from "../../src/session-control/chat-loop-messages.js";
+import { CONTEXT_STATUS_NOTICE_KEY } from "../../src/session-control/compaction-lines.js";
+import { fakeTransport, stdioPeer } from "../harness/acp-fake-transport.js";
+
+interface TurnScript {
+	emit(event: unknown): void;
+	/** Moves the injected clock forward; the interval floor measures against it. */
+	advance(ms: number): void;
+}
+
+function scriptedChat(script: (turn: TurnScript) => void, advance: (ms: number) => void): AcpServerChat {
+	let emit: (event: unknown) => void = () => {};
+	return {
+		submit: async () => {
+			script({ emit: (event) => emit(event), advance });
+		},
+		cancel: () => {},
+		onEvent: (handler) => {
+			emit = handler;
+			return () => {
+				emit = () => {};
+			};
+		},
+		isStreaming: () => false,
+		getSessionId: () => null,
+	};
+}
+
+const TOOL_START = {
+	type: "tool_execution_start",
+	toolCallId: "call-1",
+	toolName: "bash",
+	args: { command: "make -j" },
+};
+
+const TOOL_END = {
+	type: "tool_execution_end",
+	toolCallId: "call-1",
+	toolName: "bash",
+	result: { output: "build ok" },
+	isError: false,
+};
+
+function progressEvent(output: string, toolCallId = "call-1"): Record<string, unknown> {
+	return { type: "tool_execution_update", toolCallId, toolName: "bash", partialResult: { output } };
+}
+
+async function runTurn(input: { optIn: boolean | { capability: unknown }; script: (turn: TurnScript) => void }) {
+	const peer = fakeTransport();
+	let clock = 1_000_000;
+	const served = servePancodeAcpAgent({
+		transport: peer.transport,
+		chat: scriptedChat(input.script, (ms) => {
+			clock += ms;
+		}),
+		cwd: process.cwd(),
+		now: () => clock,
+	});
+	// `true` is the documented opt-in; an object carries a deliberately wrong one,
+	// and `false` sends no client capabilities at all.
+	const capability = input.optIn === true ? { version: 1 } : input.optIn === false ? null : input.optIn.capability;
+	const init = (await peer.call("initialize", {
+		protocolVersion: 1,
+		...(capability === null ? {} : { clientCapabilities: { _meta: { "pancode/toolProgress": capability } } }),
+	})) as { agentCapabilities: { _meta: Record<string, unknown> } };
+	const session = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+	await peer.call("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: "build" }] });
+	peer.transport.close();
+	strictEqual(await served, 0);
+	const updates = peer.notifications
+		.filter((entry) => entry.method === "session/update")
+		.map((entry) => (entry.params as { update: Record<string, unknown> }).update);
+	return {
+		init,
+		updates,
+		progress: updates.filter((update) => update.sessionUpdate === "tool_call_update" && update.status === "in_progress"),
+		terminal: updates.filter((update) => update.sessionUpdate === "tool_call_update" && update.status === "completed"),
+	};
+}
+
+/** The text of one `toolCallContent` payload. */
+function progressText(update: Record<string, unknown>): string {
+	const content = update.content as Array<{ content: { text: string } }>;
+	return content[0]?.content.text ?? "";
+}
+
+describe("contracts/acp streams a running tool's cumulative output only to a client that opted in", () => {
+	it("keeps URL credentials out of a tool's terminal content and leaves other output alone (#446)", async () => {
+		const turn = await runTurn({
+			optIn: false,
+			script: ({ emit }) => {
+				emit(TOOL_START);
+				emit({
+					...TOOL_END,
+					result: { output: "cloned https://user:hunter2@host/x; BASE_TOKENS=100 at http://h:8080/health" },
+				});
+			},
+		});
+		strictEqual(
+			progressText(turn.terminal[0] ?? {}),
+			"cloned https://user:[redacted]@host/x; BASE_TOKENS=100 at http://h:8080/health",
+		);
+	});
+
+	it("keeps URL credentials out of progress frames, and an open URL back until it resolves (#446)", async () => {
+		const turn = await runTurn({
+			optIn: true,
+			script: ({ emit, advance }) => {
+				emit(TOOL_START);
+				for (const snapshot of [
+					"clone https://user:hunter2",
+					"clone https://user:hunter2@host/x done",
+					"see http://h:8080/health\n",
+				]) {
+					advance(1000);
+					emit(progressEvent(snapshot));
+				}
+				emit(TOOL_END);
+			},
+		});
+		strictEqual(
+			turn.progress.map(progressText).join("|"),
+			"clone https://user:|clone https://user:[redacted]@host/x done|see http://h:8080/health\n",
+		);
+	});
+
+	it("sends no in-progress frames to a client that did not opt in, and still sends the terminal update", async () => {
+		const turn = await runTurn({
+			optIn: false,
+			script: ({ emit, advance }) => {
+				emit(TOOL_START);
+				for (const snapshot of ["a", "ab", "abc"]) {
+					advance(1000);
+					emit(progressEvent(snapshot));
+				}
+				emit(TOOL_END);
+			},
+		});
+		strictEqual(turn.progress.length, 0);
+		strictEqual(turn.terminal.length, 1);
+	});
+
+	// A near-miss opt-in is the dangerous case: a client that sent one believes it
+	// asked for nothing, so honouring it would leak an unrequested stream to a
+	// strict client. Only the exact `{version: 1}` record turns the stream on.
+	it("sends no in-progress frames when the opt-in is a near miss", async () => {
+		for (const [label, capability] of [
+			["a version this build does not speak", { version: 2 }],
+			["a version that is a string", { version: "1" }],
+			["a record with no version at all", {}],
+			["a bare true", true],
+			["an array", [{ version: 1 }]],
+			["an explicit null", null],
+		] as Array<[string, unknown]>) {
+			const turn = await runTurn({
+				optIn: { capability },
+				script: ({ emit, advance }) => {
+					emit(TOOL_START);
+					for (const snapshot of ["a", "ab", "abc"]) {
+						advance(1000);
+						emit(progressEvent(snapshot));
+					}
+					emit(TOOL_END);
+				},
+			});
+			const name = `sends no in-progress frames when the opt-in is ${label}`;
+			strictEqual(turn.progress.length, 0, name);
+			strictEqual(turn.terminal.length, 1, name);
+		}
+	});
+
+	it("announces its bounds and forwards each distinct snapshot as a non-terminal tool_call_update", async () => {
+		const turn = await runTurn({
+			optIn: true,
+			script: ({ emit, advance }) => {
+				emit(TOOL_START);
+				for (const snapshot of ["a", "ab", "abc"]) {
+					advance(1000);
+					emit(progressEvent(snapshot));
+				}
+				emit(TOOL_END);
+			},
+		});
+		deepStrictEqual(turn.init.agentCapabilities._meta["pancode/toolProgress"], {
+			version: 1,
+			minIntervalMs: ACP_MIN_TOOL_PROGRESS_INTERVAL_MS,
+			maxFramesPerCall: ACP_MAX_TOOL_PROGRESS_FRAMES_PER_CALL,
+			maxContentBytes: ACP_MAX_CHUNK_BYTES,
+		});
+		deepStrictEqual(turn.progress.map(progressText), ["a", "ab", "abc"]);
+		for (const frame of turn.progress) strictEqual(frame.toolCallId, "call-1");
+		// The terminal update is unaffected: it still arrives exactly once, after
+		// every progress frame, and it is the last word on the call.
+		strictEqual(turn.terminal.length, 1);
+		strictEqual(turn.updates.indexOf(turn.terminal[0] as Record<string, unknown>), turn.updates.length - 1);
+	});
+
+	it("stops at the per-call frame ceiling instead of streaming a long-running tool without end", async () => {
+		const total = ACP_MAX_TOOL_PROGRESS_FRAMES_PER_CALL + 6;
+		const turn = await runTurn({
+			optIn: true,
+			script: ({ emit, advance }) => {
+				emit(TOOL_START);
+				for (let index = 0; index < total; index += 1) {
+					advance(1000);
+					emit(progressEvent(`line ${index}`));
+				}
+				emit(TOOL_END);
+			},
+		});
+		strictEqual(turn.progress.length, ACP_MAX_TOOL_PROGRESS_FRAMES_PER_CALL);
+		strictEqual(progressText(turn.progress[0] as Record<string, unknown>), "line 0");
+		strictEqual(
+			progressText(turn.progress[ACP_MAX_TOOL_PROGRESS_FRAMES_PER_CALL - 1] as Record<string, unknown>),
+			`line ${ACP_MAX_TOOL_PROGRESS_FRAMES_PER_CALL - 1}`,
+		);
+		strictEqual(turn.terminal.length, 1);
+	});
+
+	it("holds the interval floor, so a burst under it collapses to the snapshot that crosses it", async () => {
+		const turn = await runTurn({
+			optIn: true,
+			script: ({ emit, advance }) => {
+				emit(TOOL_START);
+				emit(progressEvent("first"));
+				advance(ACP_MIN_TOOL_PROGRESS_INTERVAL_MS - 1);
+				emit(progressEvent("second"));
+				advance(1);
+				emit(progressEvent("third"));
+				emit(TOOL_END);
+			},
+		});
+		deepStrictEqual(turn.progress.map(progressText), ["first", "third"]);
+	});
+
+	it("does not re-send a cumulative snapshot the client already has", async () => {
+		const turn = await runTurn({
+			optIn: true,
+			script: ({ emit, advance }) => {
+				emit(TOOL_START);
+				emit(progressEvent("same"));
+				advance(1000);
+				emit(progressEvent("same"));
+				advance(1000);
+				emit(progressEvent("changed"));
+				emit(TOOL_END);
+			},
+		});
+		deepStrictEqual(turn.progress.map(progressText), ["same", "changed"]);
+	});
+
+	it("drops a frame that names no open call rather than inventing one", async () => {
+		const turn = await runTurn({
+			optIn: true,
+			script: ({ emit, advance }) => {
+				// Before the call opens, for a call that never opened, and after the
+				// call has already reached its terminal update.
+				emit(progressEvent("early"));
+				emit(TOOL_START);
+				advance(1000);
+				emit(progressEvent("other", "call-9"));
+				emit(TOOL_END);
+				advance(1000);
+				emit(progressEvent("late"));
+			},
+		});
+		strictEqual(turn.progress.length, 0);
+		strictEqual(turn.terminal.length, 1);
+		ok(turn.updates.every((update) => update.toolCallId === undefined || update.toolCallId === "call-1"));
+	});
+});
+
+it("keeps compaction failure lines in the reply, where context status does not go (c2b-3)", async () => {
+	// The failure lines as the compaction paths word them, at the levels they emit.
+	const failures: ReadonlyArray<{ level: "info" | "warning" | "error"; text: string }> = [
+		{
+			level: "warning",
+			text:
+				"[PanCode] auto-compaction failed; context at 28.6K tokens. 401 invalid api key. This turn goes on without it; /context compact tries again; /model picks another route to summarize on.",
+		},
+		{
+			level: "info",
+			text: "[PanCode] automatic compaction failed: the summary came back empty. This turn goes on without it.",
+		},
+		{ level: "info", text: "[PanCode] compact-on-overflow failed: compaction stream failed: 429" },
+		{
+			level: "error",
+			text:
+				"[/context compact] failed; context unchanged at 30.1K tokens. 401 invalid api key. /context compact tries again; /model picks another route to summarize on.",
+		},
+		{ level: "info", text: "Portable compaction failed; continuing from the original session history." },
+		// Only an info status line leaves the reply: a context engine line raised to a warning stays visible.
+		{ level: "warning", text: "[context engine] compaction failed: summary stream aborted" },
+	];
+	const turn = await runTurn({
+		optIn: false,
+		script: ({ emit }) => {
+			for (const notice of failures) emit({ type: "notice", surface: "transcript", ...notice });
+			emit({
+				type: "notice",
+				surface: "transcript",
+				level: "info",
+				text: "PanCode compacted 36.2K → 28.6K tokens",
+				key: CONTEXT_STATUS_NOTICE_KEY,
+			});
+		},
+	});
+	deepStrictEqual(
+		turn.updates
+			.filter((update) => update.sessionUpdate === "agent_message_chunk")
+			.map((update) => (update.content as { text: string }).text),
+		failures.map((notice) => `${notice.text}\n`),
+	);
+	strictEqual(turn.updates.filter((update) => update.sessionUpdate === "session_info_update").length, 1);
+});
+
+it("keeps a finish the completion protocol refused off the wire and projects the finish that runs (R2-F15)", async () => {
+	const finish = (toolCallId: string) => ({
+		type: "tool_execution_start",
+		toolCallId,
+		toolName: "finish",
+		args: { state: "done" },
+	});
+	const turn = await runTurn({
+		optIn: false,
+		script: ({ emit }) => {
+			emit(finish("call-retried"));
+			emit({
+				type: "tool_execution_end",
+				toolCallId: "call-retried",
+				toolName: "finish",
+				result: { output: "finish did not run: this response has no reply text." },
+				isError: true,
+				protocolRetry: true,
+			});
+			emit(finish("call-ran"));
+			emit({
+				type: "tool_execution_end",
+				toolCallId: "call-ran",
+				toolName: "finish",
+				result: { output: "completion declared: done\n" },
+				isError: false,
+			});
+		},
+	});
+	deepStrictEqual(
+		turn.updates
+			.filter((update) => update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update")
+			.map((update) => [update.sessionUpdate, update.toolCallId, update.status]),
+		[
+			["tool_call", "call-ran", "pending"],
+			["tool_call_update", "call-ran", "completed"],
+		],
+	);
+});
+
+it("settles a call the output limit cut off as not run, not failed, on the wire and on the extension bus (ACP-1)", async () => {
+	const cutOff = {
+		type: "tool_execution_end",
+		toolCallId: "call-cut",
+		toolName: "write",
+		result: { output: "Tool not executed: the response hit the output limit" },
+		isError: true,
+		notRun: "output_limit",
+	};
+	const broken = { ...TOOL_END, toolCallId: "call-err", result: { output: "make: *** Error 2" }, isError: true };
+	const events = [
+		{ ...TOOL_START, toolCallId: "call-err" },
+		broken,
+		{ ...TOOL_START, toolCallId: "call-cut", toolName: "write" },
+		cutOff,
+	];
+	const peer = stdioPeer();
+	const served = servePancodeAcpAgent({
+		transport: peer.transport,
+		chat: scriptedChat(
+			({ emit }) => {
+				for (const event of events) emit(event);
+			},
+			() => {},
+		),
+		cwd: process.cwd(),
+	});
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const session = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+		await peer.call("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: "build" }] });
+	} finally {
+		peer.close();
+	}
+	strictEqual(await served, 0);
+	const ends = peer
+		.updates()
+		.map((frame) => frame.update)
+		.filter((update) => update.sessionUpdate === "tool_call_update" && update.status !== "in_progress");
+	deepStrictEqual(
+		ends.map((update) => [update.status, (update.rawOutput as Record<string, unknown>).notRun]),
+		[
+			["failed", undefined],
+			["completed", "output_limit"],
+		],
+	);
+	// The bus that headless and ACP hosts feed extensions reads the same events.
+	const observed: unknown[] = [];
+	let handler: (event: unknown) => void = () => {};
+	observeChatTurns(
+		(next) => {
+			handler = next;
+			return () => {};
+		},
+		createTurnObservations((observation) => observed.push(observation)),
+		() => "target",
+	);
+	for (const event of events) handler(event);
+	deepStrictEqual(
+		observed.map((observation) => (observation as { outcome: string }).outcome),
+		["error", "ok"],
+	);
+});
+
+it("projects transcript notices for plain ACP clients while keeping footer state, context status, the thinking clamp and host status off the reply", async () => {
+	const status = [
+		"[context engine] working set: nothing evictable, the 1 turn is inside the protected window; llm_summary runs instead",
+		"compaction would not reduce context; checkpoint discarded (usage recorded)",
+		"PanCode compacted 36.2K → 28.6K tokens: 42 earlier messages now read as one summary",
+		// ACP-3: the producer's tag routes the line, so a reworded one still stays off the reply.
+		"Context trimmed: 3 tool results now read by ref",
+	];
+	// The same lead without the tag is ordinary transcript text; wording no longer decides the route.
+	const untagged = "PanCode compacted nothing; this line came from an extension";
+	// M-28: the route's thinking clamp is host information, not the model's words.
+	const clamp = "low was ignored because thinking is unsupported";
+	// Row 338: host status lines (route facts, project instructions) are host information too; a host warning is not.
+	const hostStatus = [
+		"Project instructions: all 42 lines loaded",
+		"[PanCode] This model's context window is unknown, so PanCode compacts at its token budget instead. pancode configure can set the window.",
+	];
+	const hostWarning = "[PanCode] auto-compaction failed; this turn goes on without it.";
+	const peer = stdioPeer();
+	const served = servePancodeAcpAgent({
+		transport: peer.transport,
+		chat: scriptedChat(
+			({ emit }) => {
+				emit({ type: "notice", surface: "footer", level: "info", text: "cold cache" });
+				for (const text of hostStatus)
+					emit({ type: "notice", surface: "transcript", level: "info", text, key: HOST_STATUS_NOTICE_KEY });
+				emit({ type: "notice", surface: "transcript", level: "warning", text: hostWarning, key: HOST_STATUS_NOTICE_KEY });
+				for (const text of status)
+					emit({ type: "notice", surface: "transcript", level: "info", text, key: CONTEXT_STATUS_NOTICE_KEY });
+				emit({ type: "notice", surface: "transcript", level: "info", text: untagged });
+				emit({ type: "notice", surface: "transcript", level: "info", text: clamp, key: THINKING_CLAMP_NOTICE_KEY });
+				emit({ type: "text_delta", delta: "Done." });
+			},
+			() => {},
+		),
+		cwd: process.cwd(),
+	});
+	try {
+		await peer.call("initialize", { protocolVersion: 1 });
+		const session = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
+		await peer.call("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: "build" }] });
+	} finally {
+		peer.close();
+	}
+	strictEqual(await served, 0);
+	const updates = peer.updates().map((frame) => frame.update);
+	const texts = updates
+		.filter((update) => update.sessionUpdate === "agent_message_chunk")
+		.map((update) => (update.content as { text: string }).text);
+	deepStrictEqual(texts, [`${hostWarning}\n`, `${untagged}\n`, "Done."]);
+	// bt-47: context engine status crosses as session metadata, the startup notices' channel.
+	const notices = updates
+		.filter((update) => update.sessionUpdate === "session_info_update")
+		.map((update) => (update._meta as Record<string, unknown>)["pancode/notice"]);
+	deepStrictEqual(
+		notices,
+		[...hostStatus, ...status, clamp].map((text) => ({ level: "info", text })),
+	);
+});

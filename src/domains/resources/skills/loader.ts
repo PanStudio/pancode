@@ -1,0 +1,1309 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import {
+	closeSync,
+	type Dirent,
+	existsSync,
+	constants as fsConstants,
+	fstatSync,
+	openSync,
+	readdirSync,
+	readSync,
+	realpathSync,
+	type Stats,
+} from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+import { sha256Hex } from "../../../core/hash.js";
+import { detectPancodeRepo, PANCODE_SELF_DEVELOPMENT_SKILLS } from "../../../core/pancode-repo.js";
+import { isSameOrDescendant } from "../../../core/path-containment.js";
+import { pancodeProjectRoot } from "../../../core/project-root.js";
+import type { PendingSkillRequest } from "../../../core/skill-activation.js";
+import { isToolLimitName } from "../../../core/tool-limit-flags.js";
+import { isHarnessExtensionToolName, isMcpToolName, type ToolName, ToolNames } from "../../../core/tool-names.js";
+import { pancodeConfigDir } from "../../../core/xdg.js";
+import { INTEROP_AGENT_KINDS, interopSourceRank, interopUserRoot } from "../../interop/registry.js";
+import {
+	committedPluginResourceRoots,
+	enabledPluginResourceRoots,
+	passDerived,
+	pluginBaseDir,
+	withPluginDiscoveryPass,
+} from "../../plugins/index.js";
+import type { ResourceDiagnostic, ResourceScope, ResourceSourceInfo } from "../collision.js";
+import { readRootEntries, splitToolList, splitYamlFrontmatter, stringField } from "../common-loader.js";
+import { resolvePackageReferences } from "../package-references.js";
+import { installedSkillNames } from "./availability.js";
+import { normalizedSkillHash } from "./content-hash.js";
+import { cachedFrontmatterParser, withFrontmatterCache } from "./frontmatter-cache.js";
+import { getMarketplaceSkills } from "./marketplace.js";
+
+const MAX_NAME_LENGTH = 64;
+const MAX_DESCRIPTION_LENGTH = 1024;
+
+/**
+ * Hard ceiling on a SKILL.md. Above this the file is a payload rather than a
+ * document: `loadSkills` runs on every `context(scope="skills")` call and reads
+ * and hashes each file whole, so an oversized one is a cost paid per tool call
+ * for content no model will ever be shown.
+ */
+const MAX_SKILL_BYTES = 1024 * 1024;
+
+/**
+ * Bytes of skill body the activation path can actually deliver. Mirrors
+ * `OBSERVE_SELF_CAPS.contextSkills`, which lives in the tool substrate and must
+ * not be imported from a domain; `contracts/skills` asserts the two agree so
+ * the mirror cannot drift. A skill over this still loads, because truncation is
+ * the activation path's job, but validation says so: an author whose workflow
+ * is silently cut in half at runtime has no other way to find out.
+ */
+export const SKILL_ACTIVATION_BODY_CAP_BYTES = 50 * 1024;
+
+/** Frontmatter keys with first-class meaning; everything else lands in metadata. */
+const CORE_FRONTMATTER_KEYS = new Set([
+	"name",
+	"description",
+	"disable-model-invocation",
+	"allowed-tools",
+	"disallowed-tools",
+]);
+
+/**
+ * Semantic origin of a skill root. Distinct from {@link ResourceScope}, which
+ * only encodes collision precedence tiers shared across resource kinds.
+ */
+export type SkillSource =
+	| "pancode"
+	| "agents"
+	| "claude"
+	| "codex"
+	| "copilot"
+	| "opencode"
+	| "plugin"
+	| "path"
+	| "cli";
+
+/** Optional install provenance, captured from frontmatter when present. */
+export interface SkillProvenance {
+	installUrl?: string;
+	registryId?: string;
+	registryUrl?: string;
+	installedAt?: string;
+	updatedAt?: string;
+	/** Content hash of the upstream SKILL.md at install time, provenance-stripped. */
+	installedHash?: string;
+	audit?: "pass" | "warn" | "fail" | "unknown";
+	/** Who ran the install: a dispatched worker, or (unmarked) the operator. */
+	installedBy?: "worker";
+}
+
+export interface Skill {
+	name: string;
+	description: string;
+	filePath: string;
+	baseDir: string;
+	content: string;
+	sourceInfo: ResourceSourceInfo;
+	disableModelInvocation: boolean;
+	/** Semantic source root (pancode, agents, codex, plugin, ...). */
+	source: SkillSource;
+	/** Mirror of sourceInfo.scope for convenient access. */
+	scope: ResourceScope;
+	/** sha256 of the raw SKILL.md file content. */
+	hash: string;
+	/**
+	 * sha256 of the SKILL.md with install-lifecycle provenance frontmatter
+	 * stripped. This is the hash pinned in a catalog registry.yaml, so an
+	 * installed copy compares equal to its audited source regardless of
+	 * install timestamps.
+	 */
+	normalizedHash: string;
+	/** Directory or file subject the skill was discovered under. */
+	pathSubject: string;
+	/** Whether the skill is model-visible by default (compat project roots are not). */
+	trusted: boolean;
+	/** Collision precedence; higher wins. */
+	precedence: number;
+	/**
+	 * Tools the skill workflow declares it needs (`allowed-tools` frontmatter).
+	 * The harness intersects this with host policy after activation; a skill can
+	 * narrow its surface but never grant tools the host would not allow.
+	 */
+	allowedTools?: ReadonlyArray<string>;
+	/** Tools the skill workflow declares it must not use (`disallowed-tools`). */
+	disallowedTools?: ReadonlyArray<string>;
+	/** Optional frontmatter fields beyond name/description/disable-model-invocation. */
+	metadata: Record<string, unknown>;
+	/** Per-skill diagnostics (also aggregated into the list). */
+	diagnostics: ResourceDiagnostic[];
+	/** Install provenance when the frontmatter records it. */
+	provenance?: SkillProvenance;
+}
+
+export interface SkillRoot {
+	owner?: import("../../../core/package-identity.js").PackageIdentity;
+	rootPath?: string;
+	plugin?: boolean;
+	path: string;
+	scope: ResourceScope;
+	source?: SkillSource;
+	/** sourceInfo.source string, e.g. "config", "agents-user", "plugin:user:id". */
+	origin?: string;
+	/** Collision precedence override; defaults are derived from scope. */
+	precedence?: number;
+	/** Whether discovered skills are model-visible by default. */
+	trusted?: boolean;
+	/** See `ResourceRoot.foreign`; its `allowed-tools` resolve through `importedToolSurface`. */
+	foreign?: boolean;
+	/**
+	 * Directory every discovered skill must resolve inside. A skill root says
+	 * what a repository or an operator's machine offers, so a symlink out of it
+	 * would let a cloned repository offer content it does not contain, under
+	 * paths that still read as repository-local. `.pancode/skills` is trusted
+	 * unconditionally, so the escape needs no opt-in to reach the model.
+	 *
+	 * The anchor is the workspace for a project root and the home directory for
+	 * a user root, matching `assertWriteBoundaryInsideRoot`: a monorepo may
+	 * share one skills tree across checkouts, but nothing may reach outside the
+	 * tree the operator is working in.
+	 *
+	 * Undefined disables the check for standalone explicit paths. Installed
+	 * package roots use the package directory as their containment boundary.
+	 */
+	containment?: string;
+	/** Repository-provided roots cannot relocate their containment through a symlink. */
+	strictContainment?: boolean;
+}
+
+export interface SkillList {
+	items: Skill[];
+	diagnostics: ResourceDiagnostic[];
+}
+
+export interface SkillExpansionOptions {
+	/** Working directory used for marketplace catalog discovery. */
+	cwd?: string;
+}
+
+export interface LoadSkillsInput {
+	cwd?: string;
+	roots?: ReadonlyArray<SkillRoot>;
+	/** Override the user home dir used for shared compatibility roots (testing). */
+	home?: string;
+	/** Override the PanCode config dir used for the user skill root (testing). */
+	configDir?: string;
+	/** Trust explicitly imported foreign packages; never activates loose compatibility roots. */
+	trustProjectCompatRoots?: boolean;
+	/** Disable normal root discovery. Explicit skill paths still load. */
+	disableDiscovery?: boolean;
+	/** One-shot skill files or directories loaded at CLI precedence. */
+	explicitSkillPaths?: ReadonlyArray<string>;
+	/**
+	 * False takes package roots from the committed plugin snapshot without
+	 * re-verifying each tree. Only listings that name skills may pass it; loading
+	 * a skill's body still goes through a verified read.
+	 */
+	verifyPluginTrees?: boolean;
+}
+
+/** Collision precedence tiers; higher wins. */
+const SKILL_PRECEDENCE = {
+	package: 10,
+	userCompat: 20,
+	user: 30,
+	projectCompat: 40,
+	project: 50,
+	cli: 60,
+} as const;
+
+function defaultPrecedenceForScope(scope: ResourceScope): number {
+	switch (scope) {
+		case "package":
+			return SKILL_PRECEDENCE.package;
+		case "user":
+			return SKILL_PRECEDENCE.user;
+		case "project":
+			return SKILL_PRECEDENCE.project;
+		case "cli":
+			return SKILL_PRECEDENCE.cli;
+	}
+}
+
+/**
+ * Whether explicitly imported foreign packages may provide skills/prompts.
+ * Loose compatibility roots remain discovery-only, at every scope.
+ */
+export function projectCompatTrusted(explicit?: boolean): boolean {
+	return explicit === true;
+}
+
+/** The installed skill names for `cwd`, asked once per discovery pass. */
+function installedNamesInPass(cwd: string): ReadonlySet<string> {
+	return passDerived(`installed-skill-names\0${path.resolve(cwd)}`, () => installedSkillNames([], cwd));
+}
+
+/**
+ * Discovery roots, lowest to highest precedence:
+ *  1. plugin skills
+ *  2. discovery-only user compat roots, one per interop agent kind
+ *  3. PanCode user root (<config>/skills)
+ *  4. the same agents' project roots, also discovery-only
+ *  5. PanCode project root (.pancode/skills)
+ *
+ * The compatibility roots come from the interop registry rather than a list
+ * kept here, so adding an agent to the table is what teaches every reader about
+ * it at once.
+ */
+export function defaultSkillRoots(input: LoadSkillsInput = {}): SkillRoot[] {
+	const cwd = input.cwd ?? process.cwd();
+	const home = input.home ?? homedir();
+	const configDir = input.configDir ?? pancodeConfigDirSafe();
+	const trustProject = projectCompatTrusted(input.trustProjectCompatRoots);
+	const roots: SkillRoot[] = [];
+
+	// Source-checkout guidance is a narrow native discovery tier, not a package
+	// installation. An installed package owns its name even when disabled,
+	// damaged, or awaiting reload; never resurrect it through a source fallback.
+	const selfRepo = detectPancodeRepo(cwd).repoRoot;
+	if (selfRepo) {
+		// Copied: the set is extended below, and the pass keeps the names for the next catalog it loads.
+		const ownedNames = new Set(installedNamesInPass(cwd));
+		if (path.resolve(cwd) !== selfRepo) {
+			for (const name of installedNamesInPass(selfRepo)) ownedNames.add(name);
+			// Native skills can be flat Markdown files or directories whose
+			// frontmatter name differs from the path. Use the loader's names so
+			// a descendant launch cannot resurrect a hidden root override.
+			const rootOverrides = loadSkillRoot(
+				{
+					path: path.join(selfRepo, ".pancode", "skills"),
+					scope: "project",
+					containment: selfRepo,
+					strictContainment: true,
+				},
+				[],
+			);
+			for (const candidate of rootOverrides) ownedNames.add(candidate.skill.name);
+		}
+		for (const name of PANCODE_SELF_DEVELOPMENT_SKILLS) {
+			if (ownedNames.has(name)) continue;
+			const skillPath = path.join(selfRepo, "hub", "packs", "skills", "meta", name);
+			if (!existsSync(path.join(skillPath, "SKILL.md"))) continue;
+			roots.push({
+				path: skillPath,
+				scope: "project",
+				source: "pancode",
+				origin: "self-development",
+				precedence: SKILL_PRECEDENCE.package - 1,
+				trusted: true,
+				containment: selfRepo,
+				strictContainment: true,
+			});
+		}
+	}
+
+	const pluginRoots =
+		input.verifyPluginTrees === false
+			? committedPluginResourceRoots("skills", cwd)
+			: enabledPluginResourceRoots("skills", cwd);
+	for (const root of pluginRoots) {
+		roots.push({
+			path: root.path,
+			scope: "package",
+			source: "plugin",
+			rootPath: root.rootPath,
+			plugin: true,
+			containment: root.rootPath,
+			origin: root.source,
+			...(root.owner ? { owner: root.owner } : {}),
+			precedence: SKILL_PRECEDENCE.package,
+			trusted: root.trust !== "foreign" || trustProject,
+			...(root.trust === "foreign" ? { foreign: true } : {}),
+		});
+	}
+
+	for (const kind of INTEROP_AGENT_KINDS) {
+		if (kind.userSkillRoot === undefined || kind.skillSource === undefined) continue;
+		// Null under PANCODE_INTEROP_HOME=none; CLAUDE_CONFIG_DIR and its peers move the root (interopUserRoot).
+		const root = interopUserRoot(kind, kind.userSkillRoot, input.home);
+		if (root === null) continue;
+		roots.push({
+			path: root.path,
+			scope: "user",
+			source: kind.skillSource,
+			origin: `${kind.skillSource}-user`,
+			precedence: SKILL_PRECEDENCE.userCompat,
+			trusted: false,
+			foreign: true,
+			containment: root.containment,
+		});
+	}
+
+	if (configDir) {
+		roots.push({
+			path: path.join(configDir, "skills"),
+			scope: "user",
+			source: "pancode",
+			origin: "config",
+			precedence: SKILL_PRECEDENCE.user,
+			trusted: true,
+			containment: home,
+		});
+	}
+
+	for (const kind of INTEROP_AGENT_KINDS) {
+		if (kind.projectSkillRoot === undefined || kind.skillSource === undefined) continue;
+		roots.push({
+			path: path.join(cwd, kind.projectSkillRoot),
+			scope: "project",
+			source: kind.skillSource,
+			origin: `${kind.skillSource}-project`,
+			precedence: SKILL_PRECEDENCE.projectCompat,
+			trusted: false,
+			foreign: true,
+			containment: cwd,
+			strictContainment: true,
+		});
+	}
+
+	const projectRoot = pancodeProjectRoot(cwd, "skills");
+	roots.push({
+		path: path.join(projectRoot, ".pancode", "skills"),
+		scope: "project",
+		source: "pancode",
+		origin: "project",
+		precedence: SKILL_PRECEDENCE.project,
+		trusted: true,
+		containment: projectRoot,
+		// A repository root that is itself a symlink must not move the boundary
+		// to wherever it points: relocation is for the operator's own user and
+		// XDG roots, while a repository can only offer what it contains.
+		strictContainment: true,
+	});
+
+	return roots;
+}
+
+/** Resolve the PanCode config dir without throwing if XDG dirs cannot be created. */
+function pancodeConfigDirSafe(): string | null {
+	try {
+		return pancodeConfigDir();
+	} catch {
+		return null;
+	}
+}
+
+function splitSkillFrontmatter(
+	raw: string,
+	parseText?: (text: string) => unknown,
+): { frontmatter: Record<string, unknown>; body: string } {
+	const split = splitYamlFrontmatter(raw, parseText);
+	if (!split.ok && split.reason === "missing") {
+		throw new Error("skill file is missing YAML frontmatter");
+	}
+	if (!split.ok && split.reason === "missing closing delimiter") {
+		throw new Error("skill file is missing a closing YAML frontmatter delimiter");
+	}
+	if (!split.ok && split.reason === "must be a YAML object") {
+		throw new Error("skill frontmatter must be a YAML object");
+	}
+	if (!split.ok) throw new Error(`skill frontmatter is ${split.reason}`);
+	return split;
+}
+
+function booleanField(frontmatter: Record<string, unknown>, key: string): boolean {
+	return frontmatter[key] === true;
+}
+
+/**
+ * Parse a frontmatter tool list. Two spellings are the same declaration and
+ * both appear in the roots PanCode discovers: a YAML sequence, which every skill
+ * PanCode ships uses, and one comma-separated scalar, which is what the
+ * compatibility roots under `.claude` and `.agents` carry. Reading only the
+ * sequence dropped the scalar form silently, so a skill that asked to be
+ * confined to four tools ran with the whole surface and no word about it.
+ */
+function rawToolListField(frontmatter: Record<string, unknown>, key: string): string[] | undefined {
+	const raw = frontmatter[key];
+	const entries =
+		typeof raw === "string"
+			? splitToolList(raw)
+			: Array.isArray(raw)
+				? raw.filter((entry): entry is string => typeof entry === "string")
+				: null;
+	if (entries === null) return undefined;
+	const tools = entries.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+	return tools.length > 0 ? [...new Set(tools)] : undefined;
+}
+
+/** `Bash`, or Claude Code's scoped `Bash(git add:*)`, in any case. */
+const FOREIGN_SHELL_ENTRY = /^bash\s*(?:\(.*\))?$/i;
+
+const TOOL_NAMES_BY_LOWERCASE = new Map(Object.values(ToolNames).map((name) => [name.toLowerCase(), name]));
+
+interface ResolvedToolList {
+	/** Declared names PanCode recognizes, which are the ones narrowing can enforce. */
+	tools: ToolName[];
+	/** Declared names that are no tool PanCode has. */
+	unrecognized: string[];
+}
+
+/**
+ * Resolve declared tool names against the tools PanCode actually has. Case is
+ * normalized because `Bash` and `bash` are the same tool named by two
+ * harnesses; nothing else is mapped, because an alias table would let a
+ * declaration mean a tool its author never wrote. A full MCP or extension
+ * capability name (`mcp_<id>__<tool>`, `extension_<id>__<tool>`) is kept
+ * verbatim, as prompt templates already keep it, because those tools register
+ * after skills load; without it a narrowed skill could never call the MCP
+ * server its own workflow names.
+ */
+function resolveDeclaredTools(declared: ReadonlyArray<string>): ResolvedToolList {
+	const tools: ToolName[] = [];
+	const unrecognized: string[] = [];
+	for (const entry of declared) {
+		const resolved =
+			TOOL_NAMES_BY_LOWERCASE.get(entry.toLowerCase()) ??
+			(isMcpToolName(entry) || isHarnessExtensionToolName(entry) ? entry : undefined);
+		if (resolved === undefined) unrecognized.push(entry);
+		else if (!tools.includes(resolved)) tools.push(resolved);
+	}
+	return { tools, unrecognized };
+}
+
+/**
+ * The tool surface one frontmatter key declares, reduced to what PanCode can
+ * enforce and reported where it cannot.
+ *
+ * `allowed-tools` is workflow scoping, not a security boundary: the host
+ * admission in `tools/registry.ts` has already decided what this run may call,
+ * and narrowing only ever subtracts from it. So an allow-list naming no tool
+ * PanCode has is not a declaration to enforce as "nothing is permitted"; it is a
+ * declaration written for another harness, and honoring it literally would
+ * block every call for a reason the operator never chose. It narrows nothing
+ * and says so. A denial is kept whenever it resolves, because a denial that
+ * fails open is the one direction that matters.
+ */
+function declaredToolSurface(
+	frontmatter: Record<string, unknown>,
+	key: string,
+	filePath: string,
+	diagnostics: ResourceDiagnostic[],
+): ToolName[] | undefined {
+	const declared = rawToolListField(frontmatter, key);
+	if (declared === undefined) return undefined;
+	const { tools, unrecognized } = resolveDeclaredTools(declared);
+	if (unrecognized.length > 0) {
+		// Scoped shell entries are the spec's own example, and dropping one takes
+		// the shell away, so the warning names the spelling that keeps it.
+		const shellHint = unrecognized.some((entry) => FOREIGN_SHELL_ENTRY.test(entry))
+			? "; PanCode narrows whole tools, so write bash to keep the shell"
+			: "";
+		diagnostics.push({
+			type: "warning",
+			message: `${key} names ${unrecognized.length === 1 ? "a tool" : "tools"} PanCode does not have: ${unrecognized.join(", ")}${shellHint}`,
+			path: filePath,
+		});
+	}
+	if (tools.length === 0 && key === "allowed-tools") {
+		diagnostics.push({
+			type: "warning",
+			message: "allowed-tools names no tool PanCode has, so it narrows nothing; declare PanCode tool names to confine it",
+			path: filePath,
+		});
+		return undefined;
+	}
+	return tools.length > 0 ? tools : undefined;
+}
+
+/**
+ * The tool surface a native prompt template's `allowed-tools` or
+ * `delegated-tools` declares, resolved the way `--allow-tools` and
+ * `--delegate-tools` resolve theirs. Reading it through `declaredToolSurface`
+ * dropped every MCP and extension tool name, so a template meant to confine a
+ * turn to read plus one MCP tool could not reach that tool at all. Core names
+ * are canonicalized; any other name valid under the flag grammar is kept
+ * verbatim, because MCP and extension tools register after templates load.
+ * Only a kept name that is neither core, MCP-form nor extension-form is worth
+ * a warning; warning on `extension_<id>__<tool>` names printed one line per
+ * WTF-P template on every load.
+ */
+export function templateToolSurface(
+	frontmatter: Record<string, unknown>,
+	key: string,
+	filePath: string,
+	diagnostics: ResourceDiagnostic[],
+): string[] | undefined {
+	const declared = rawToolListField(frontmatter, key);
+	if (declared === undefined) return undefined;
+	const tools: string[] = [];
+	const deferred: string[] = [];
+	const invalid: string[] = [];
+	for (const entry of declared) {
+		const name = TOOL_NAMES_BY_LOWERCASE.get(entry.toLowerCase()) ?? entry;
+		if (!isToolLimitName(name)) {
+			invalid.push(entry);
+			continue;
+		}
+		if (tools.includes(name)) continue;
+		tools.push(name);
+		if (!TOOL_NAMES_BY_LOWERCASE.has(name) && !isMcpToolName(name) && !isHarnessExtensionToolName(name))
+			deferred.push(name);
+	}
+	if (invalid.length > 0) {
+		diagnostics.push({
+			type: "warning",
+			message: `${key} drops ${invalid.length === 1 ? "an entry that is not a tool name" : "entries that are not tool names"}: ${invalid.join(", ")}`,
+			path: filePath,
+		});
+	}
+	if (deferred.length > 0) {
+		diagnostics.push({
+			type: "warning",
+			message: `${key} keeps ${deferred.join(", ")}, which is no PanCode, MCP or extension tool name`,
+			path: filePath,
+		});
+	}
+	if (tools.length === 0 && key === "allowed-tools") {
+		diagnostics.push({
+			type: "warning",
+			message: "allowed-tools names no tool, so it narrows nothing",
+			path: filePath,
+		});
+		return undefined;
+	}
+	return tools.length > 0 ? tools : undefined;
+}
+
+/**
+ * The `allowed-tools` of an imported command or skill, written for the
+ * harness it came from. There `Bash(git add:*)` grants a scoped shell; read
+ * through `declaredToolSurface` it would name no PanCode tool, so `Bash(git add:*),
+ * Read` would narrow the turn to read alone and an imported commit command could
+ * not run git. PanCode cannot enforce the scope inside the parentheses, so
+ * any `Bash(...)` maps to the whole bash tool. Narrowing must never take away
+ * a tool the command's own frontmatter grants, so one entry PanCode cannot map
+ * means no narrowing at all, with one warning naming the command and entries.
+ */
+export function importedToolSurface(
+	frontmatter: Record<string, unknown>,
+	subject: string,
+	filePath: string,
+	diagnostics: ResourceDiagnostic[],
+	key = "allowed-tools",
+): ToolName[] | undefined {
+	const declared = rawToolListField(frontmatter, key);
+	if (declared === undefined) return undefined;
+	const { tools, unrecognized } = resolveDeclaredTools(
+		declared.map((entry) => (FOREIGN_SHELL_ENTRY.test(entry) ? ToolNames.Bash : entry)),
+	);
+	if (unrecognized.length > 0) {
+		diagnostics.push({
+			type: "warning",
+			message: `${subject} is not narrowed: ${key} names ${unrecognized.length === 1 ? "an entry" : "entries"} PanCode cannot map: ${unrecognized.join(", ")}`,
+			path: filePath,
+		});
+		return undefined;
+	}
+	return tools.length > 0 ? tools : undefined;
+}
+
+function validationSubject(filePath: string): string {
+	return path.basename(filePath) === "SKILL.md" ? path.basename(path.dirname(filePath)) : path.basename(filePath, ".md");
+}
+
+function validateNameFormat(name: string): string[] {
+	const errors: string[] = [];
+	if (name.length > MAX_NAME_LENGTH) errors.push(`name exceeds ${MAX_NAME_LENGTH} characters (${name.length})`);
+	if (!/^[a-z0-9-]+$/.test(name)) {
+		errors.push("name contains invalid characters (must be lowercase a-z, 0-9, hyphens only)");
+	}
+	if (name.startsWith("-") || name.endsWith("-")) errors.push("name must not start or end with a hyphen");
+	if (name.includes("--")) errors.push("name must not contain consecutive hyphens");
+	return errors;
+}
+
+function validateDescription(description: string | null): string[] {
+	if (!description) return ["description is required"];
+	if (description.length > MAX_DESCRIPTION_LENGTH) {
+		return [`description exceeds ${MAX_DESCRIPTION_LENGTH} characters (${description.length})`];
+	}
+	return [];
+}
+
+function extractMetadata(frontmatter: Record<string, unknown>): Record<string, unknown> {
+	const metadata: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(frontmatter)) {
+		if (CORE_FRONTMATTER_KEYS.has(key)) continue;
+		metadata[key] = value;
+	}
+	return metadata;
+}
+
+function extractProvenance(frontmatter: Record<string, unknown>): SkillProvenance | undefined {
+	// Provenance lives nested under the reserved `pancode:` block.
+	const pancodeRaw = frontmatter.pancode;
+	if (pancodeRaw === null || typeof pancodeRaw !== "object" || Array.isArray(pancodeRaw)) return undefined;
+	const pancode = pancodeRaw as Record<string, unknown>;
+	const field = (...keys: string[]): string | null => {
+		for (const key of keys) {
+			const nested = stringField(pancode, key);
+			if (nested !== null) return nested;
+		}
+		return null;
+	};
+	const installUrl = field("source-url", "sourceUrl", "install-url");
+	const registryId = field("registry-id", "registryId");
+	const registryUrl = field("registry-url", "registryUrl");
+	const installedAt = field("installed-at", "installedAt");
+	const updatedAt = field("updated-at", "updatedAt");
+	const installedHash = field("installed-hash", "installedHash");
+	const auditRaw = field("audit");
+	const audit =
+		auditRaw === "pass" || auditRaw === "warn" || auditRaw === "fail" || auditRaw === "unknown" ? auditRaw : undefined;
+	const installedByRaw = field("installed-by", "installedBy");
+	const installedBy = installedByRaw === "worker" ? installedByRaw : undefined;
+	if (
+		!installUrl &&
+		!registryId &&
+		!registryUrl &&
+		!installedAt &&
+		!updatedAt &&
+		!installedHash &&
+		!audit &&
+		!installedBy
+	)
+		return undefined;
+	return {
+		...(installUrl ? { installUrl } : {}),
+		...(registryId ? { registryId } : {}),
+		...(registryUrl ? { registryUrl } : {}),
+		...(installedAt ? { installedAt } : {}),
+		...(updatedAt ? { updatedAt } : {}),
+		...(installedHash ? { installedHash } : {}),
+		...(audit ? { audit } : {}),
+		...(installedBy ? { installedBy } : {}),
+	};
+}
+
+interface SkillCandidate {
+	skill: Skill;
+	canonicalPath: string;
+}
+
+function canonicalizePath(filePath: string): string {
+	try {
+		return realpathSync.native(filePath);
+	} catch {
+		return path.resolve(filePath);
+	}
+}
+
+function pathIsInside(candidate: string, anchor: string): boolean {
+	return candidate === anchor || candidate.startsWith(anchor + path.sep);
+}
+
+/**
+ * The directory this root's skills must resolve inside, canonicalized once so
+ * every later comparison is against real paths on both sides.
+ *
+ * A root the operator placed outside its own declared scope anchors to itself:
+ * an XDG config dir on another volume is where the operator put their skills,
+ * not an escape, and anchoring it at home would reject every skill under it.
+ */
+function containmentAnchor(root: SkillRoot): string | null {
+	if (root.containment === undefined) return null;
+	const anchor = canonicalizePath(root.containment);
+	if (root.strictContainment) return anchor;
+	const rootReal = canonicalizePath(root.path);
+	return pathIsInside(rootReal, anchor) ? anchor : rootReal;
+}
+
+/**
+ * Refuse a discovered entry whose real path leaves the root's containing
+ * scope. Rejection rather than a warning, because the escape is invisible in
+ * every path the operator is later shown: `filePath` and `baseDir` both keep
+ * the symlink's own location, so a loaded escaped skill reads as ordinary
+ * repository content while its body and its resource tree come from somewhere
+ * the repository never contained.
+ */
+function escapesContainment(fullPath: string, anchor: string | null, diagnostics: ResourceDiagnostic[]): boolean {
+	if (anchor === null) return false;
+	const resolved = canonicalizePath(fullPath);
+	if (pathIsInside(resolved, anchor)) return false;
+	diagnostics.push({
+		type: "warning",
+		message: `skill path resolves to ${resolved}, outside ${anchor}; a skill root may not leave its scope through a symlink`,
+		path: fullPath,
+	});
+	return true;
+}
+
+function describeFileType(stat: Stats): string {
+	if (stat.isDirectory()) return "a directory";
+	if (stat.isFIFO()) return "a FIFO";
+	if (stat.isSocket()) return "a socket";
+	if (stat.isCharacterDevice()) return "a character device";
+	if (stat.isBlockDevice()) return "a block device";
+	return "not a regular file";
+}
+
+/**
+ * Read a skill file only when it is a regular file, at most one byte past the
+ * size limit. The descriptor is opened non-blocking and checked with fstat, so
+ * a FIFO named SKILL.md cannot park `--skill` or `hub validate` in a read
+ * that never returns, and the type check and the read see the same file with
+ * no stat-then-open window between them.
+ */
+function readRegularSkillFile(filePath: string): { bytes: Buffer; size: number; mtimeMs: number } {
+	const fd = openSync(filePath, fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0));
+	try {
+		const stat = fstatSync(fd);
+		if (!stat.isFile()) throw new Error(`${describeFileType(stat)}, not a regular file`);
+		const limit = MAX_SKILL_BYTES + 1;
+		const chunks: Buffer[] = [];
+		let total = 0;
+		while (total < limit) {
+			const chunk = Buffer.allocUnsafe(Math.min(limit - total, Math.max(stat.size + 1 - total, 64 * 1024)));
+			const read = readSync(fd, chunk, 0, chunk.byteLength, null);
+			if (read === 0) break;
+			chunks.push(chunk.subarray(0, read));
+			total += read;
+		}
+		// The read stops one byte past the limit, so the over-limit diagnostic
+		// takes the file's own size to name what the operator actually has.
+		return { bytes: Buffer.concat(chunks, total), size: Math.max(stat.size, total), mtimeMs: stat.mtimeMs };
+	} finally {
+		closeSync(fd);
+	}
+}
+
+function loadSkillFile(
+	filePath: string,
+	root: SkillRoot,
+): { candidate: SkillCandidate | null; diagnostics: ResourceDiagnostic[] } {
+	const diagnostics: ResourceDiagnostic[] = [];
+	let bytes: Buffer;
+	let size: number;
+	let mtimeMs: number;
+	try {
+		({ bytes, size, mtimeMs } = readRegularSkillFile(filePath));
+	} catch (err) {
+		const reason = err instanceof Error ? err.message : String(err);
+		return {
+			candidate: null,
+			diagnostics: [{ type: "warning", message: `skill file could not be read: ${reason}`, path: filePath }],
+		};
+	}
+	if (bytes.byteLength > MAX_SKILL_BYTES) {
+		return {
+			candidate: null,
+			diagnostics: [
+				{
+					type: "warning",
+					message: `skill file is ${size} bytes, over the ${MAX_SKILL_BYTES}-byte limit for a SKILL.md`,
+					path: filePath,
+				},
+			],
+		};
+	}
+	// A SKILL.md becomes model-visible instructions, so it has to be text. utf8
+	// decoding never throws: it substitutes U+FFFD, which would turn a binary
+	// file into a document of replacement characters that loads and says
+	// nothing. Round-tripping is the check that catches it, and a NUL byte is
+	// called out separately because that is what a binary file looks like.
+	const raw = bytes.toString("utf8");
+	if (bytes.includes(0) || !Buffer.from(raw, "utf8").equals(bytes)) {
+		return {
+			candidate: null,
+			diagnostics: [
+				{
+					type: "warning",
+					message: "skill file is not valid UTF-8 text; a SKILL.md is a document, not a binary payload",
+					path: filePath,
+				},
+			],
+		};
+	}
+	if (bytes.byteLength > SKILL_ACTIVATION_BODY_CAP_BYTES) {
+		diagnostics.push({
+			type: "warning",
+			message: `skill file is ${bytes.byteLength} bytes; activation delivers at most ${SKILL_ACTIVATION_BODY_CAP_BYTES}, so the model will not be shown the rest`,
+			path: filePath,
+		});
+	}
+
+	let parsed: { frontmatter: Record<string, unknown>; body: string };
+	try {
+		parsed = splitSkillFrontmatter(raw, cachedFrontmatterParser(filePath, { mtimeMs, size }));
+	} catch (err) {
+		const reason = err instanceof Error ? err.message : String(err);
+		return { candidate: null, diagnostics: [{ type: "warning", message: reason, path: filePath }] };
+	}
+
+	const pathSubject = validationSubject(filePath);
+	const frontmatterName = stringField(parsed.frontmatter, "name");
+	const name = frontmatterName ?? pathSubject;
+	const description = stringField(parsed.frontmatter, "description");
+
+	for (const message of validateDescription(description)) diagnostics.push({ type: "warning", message, path: filePath });
+	// Name/path mismatch is informational; cross-harness skill folders often differ.
+	if (frontmatterName && frontmatterName !== pathSubject) {
+		diagnostics.push({
+			type: "warning",
+			message: `name "${frontmatterName}" differs from path subject "${pathSubject}"; using frontmatter name`,
+			path: filePath,
+		});
+	}
+	for (const message of validateNameFormat(name)) diagnostics.push({ type: "warning", message, path: filePath });
+
+	// Missing description is the only hard rejection; everything else loads with a warning.
+	if (!description) return { candidate: null, diagnostics };
+
+	const baseDir = path.dirname(filePath);
+	const scope = root.scope;
+	const sourceInfo: ResourceSourceInfo = {
+		path: filePath,
+		scope,
+		...(root.origin ? { source: root.origin } : {}),
+		...(root.owner ? { owner: root.owner } : {}),
+	};
+	const provenance = extractProvenance(parsed.frontmatter);
+	const allowedTools = root.foreign
+		? importedToolSurface(parsed.frontmatter, `skill ${name}`, filePath, diagnostics)
+		: declaredToolSurface(parsed.frontmatter, "allowed-tools", filePath, diagnostics);
+	const disallowedTools = declaredToolSurface(parsed.frontmatter, "disallowed-tools", filePath, diagnostics);
+	let content: string;
+	try {
+		content = resolvePackageReferences(parsed.body.trim(), root);
+	} catch (error) {
+		diagnostics.push({ type: "warning", message: String(error), path: filePath });
+		return { candidate: null, diagnostics };
+	}
+	const skill: Skill = {
+		name,
+		description,
+		filePath,
+		baseDir,
+		content,
+		sourceInfo,
+		disableModelInvocation: booleanField(parsed.frontmatter, "disable-model-invocation"),
+		...(allowedTools ? { allowedTools } : {}),
+		...(disallowedTools ? { disallowedTools } : {}),
+		source: root.source ?? "pancode",
+		scope,
+		hash: sha256Hex(raw),
+		normalizedHash: normalizedSkillHash(raw),
+		pathSubject,
+		trusted: root.trusted ?? true,
+		precedence: root.precedence ?? defaultPrecedenceForScope(scope),
+		metadata: extractMetadata(parsed.frontmatter),
+		diagnostics,
+		...(provenance ? { provenance } : {}),
+	};
+	return { candidate: { skill, canonicalPath: canonicalizePath(filePath) }, diagnostics };
+}
+
+function isSkillMarkdownFile(entryName: string): boolean {
+	return entryName === "SKILL.md" || entryName.endsWith(".md");
+}
+
+function collectSkills(
+	root: SkillRoot,
+	dir: string,
+	diagnostics: ResourceDiagnostic[],
+	includeRootFiles: boolean,
+	anchor: string | null = containmentAnchor(root),
+): SkillCandidate[] {
+	if (!existsSync(dir)) return [];
+	if (escapesContainment(dir, anchor, diagnostics)) return [];
+	let entries: Dirent<string>[];
+	try {
+		entries = readdirSync(dir, { withFileTypes: true });
+	} catch (err) {
+		const reason = err instanceof Error ? err.message : String(err);
+		diagnostics.push({ type: "warning", message: `skill root could not be read: ${reason}`, path: dir });
+		return [];
+	}
+
+	// A symlinked SKILL.md is still the package marker. Recursion never loads
+	// loose files, so treating only a plain file as the marker made a nested
+	// link vanish with no diagnostic. Containment and the regular-file check in
+	// loadSkillFile decide whether its target is acceptable.
+	const skillEntry = entries.find((entry) => entry.name === "SKILL.md" && (entry.isFile() || entry.isSymbolicLink()));
+	if (skillEntry) {
+		const skillPath = path.join(dir, skillEntry.name);
+		if (escapesContainment(skillPath, anchor, diagnostics)) return [];
+		const loaded = loadSkillFile(skillPath, root);
+		diagnostics.push(...loaded.diagnostics);
+		return loaded.candidate ? [loaded.candidate] : [];
+	}
+
+	const candidates: SkillCandidate[] = [];
+	for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+		if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+		const fullPath = path.join(dir, entry.name);
+		if (entry.isDirectory() || (entry.isSymbolicLink() && existsSync(path.join(fullPath, "SKILL.md")))) {
+			candidates.push(...collectSkills(root, fullPath, diagnostics, false, anchor));
+			continue;
+		}
+		if (!includeRootFiles || (!entry.isFile() && !entry.isSymbolicLink()) || !isSkillMarkdownFile(entry.name)) continue;
+		if (escapesContainment(fullPath, anchor, diagnostics)) continue;
+		const loaded = loadSkillFile(fullPath, root);
+		diagnostics.push(...loaded.diagnostics);
+		if (loaded.candidate) candidates.push(loaded.candidate);
+	}
+	return candidates;
+}
+
+function loadSkillRoot(root: SkillRoot, diagnostics: ResourceDiagnostic[]): SkillCandidate[] {
+	const entries = readRootEntries(root, "skill", diagnostics);
+	if (entries.length === 0) return [];
+	return collectSkills(root, root.path, diagnostics, true);
+}
+
+function explicitSkillRoot(filePath: string): SkillRoot {
+	return {
+		path: filePath,
+		scope: "cli",
+		source: "path",
+		origin: "explicit-path",
+		precedence: SKILL_PRECEDENCE.cli,
+		trusted: true,
+	};
+}
+
+/**
+ * Package roots and plugin bases, canonicalized once per load so each explicit
+ * path costs its own realpath rather than one per package root.
+ */
+interface ExplicitPathOwners {
+	packageRoots: ReadonlyArray<{ root: SkillRoot; canonicalPath: string }>;
+	pluginBases: ReadonlyArray<string>;
+}
+
+function explicitPathOwners(input: LoadSkillsInput): ExplicitPathOwners {
+	if ((input.explicitSkillPaths?.length ?? 0) === 0) return { packageRoots: [], pluginBases: [] };
+	const cwd = input.cwd ?? process.cwd();
+	return {
+		packageRoots: defaultSkillRoots(input)
+			.filter((root) => root.scope === "package")
+			.map((root) => ({ root, canonicalPath: canonicalizePath(root.path) })),
+		pluginBases: (["user", "project"] as const).map((scope) => canonicalizePath(pluginBaseDir(scope, cwd))),
+	};
+}
+
+function loadExplicitSkillPath(
+	inputPath: string,
+	diagnostics: ResourceDiagnostic[],
+	owners: ExplicitPathOwners,
+): SkillCandidate[] {
+	const resolved = path.resolve(inputPath);
+	const identity = canonicalizePath(resolved);
+	const contains = (anchor: string): boolean => {
+		return isSameOrDescendant(identity, anchor);
+	};
+	const owner = owners.packageRoots.find((candidate) => contains(candidate.canonicalPath))?.root;
+	if (!owner && owners.pluginBases.some(contains)) {
+		diagnostics.push({
+			type: "warning",
+			message: "explicit skill belongs to an inactive or undeclared plugin resource",
+			path: resolved,
+		});
+		return [];
+	}
+	const root = {
+		...explicitSkillRoot(resolved),
+		...(owner
+			? {
+					...(owner.rootPath ? { rootPath: owner.rootPath, containment: owner.rootPath } : {}),
+					...(owner.plugin !== undefined ? { plugin: owner.plugin } : {}),
+					...(owner.owner ? { owner: owner.owner } : {}),
+					...(owner.foreign ? { foreign: true } : {}),
+					trusted: owner.trusted,
+				}
+			: {}),
+	};
+	if (!existsSync(resolved)) {
+		diagnostics.push({ type: "warning", message: `explicit skill path does not exist: ${resolved}`, path: resolved });
+		return [];
+	}
+	const skillFile =
+		path.basename(resolved) === "SKILL.md" || resolved.endsWith(".md") ? resolved : path.join(resolved, "SKILL.md");
+	if (!existsSync(skillFile)) {
+		// A directory without its own SKILL.md may be a catalog of skill
+		// packages (for example a repo-level skills/ folder); load every
+		// immediate child package so validation and registry tooling can
+		// operate on the whole catalog with one path.
+		const packages = collectSkills(root, resolved, diagnostics, false);
+		if (packages.length > 0) return packages;
+		diagnostics.push({
+			type: "warning",
+			message: `explicit skill path is not a SKILL.md file, skill directory, or catalog of skill packages: ${resolved}`,
+			path: resolved,
+		});
+		return [];
+	}
+	const loaded = loadSkillFile(skillFile, root);
+	diagnostics.push(...loaded.diagnostics);
+	return loaded.candidate ? [loaded.candidate] : [];
+}
+
+/**
+ * Ascending order for a set of candidates competing for one name or one
+ * canonical file, so the last entry is the winner. Trusted candidates win
+ * before scope precedence: an untrusted compatibility copy cannot hide an
+ * admitted native skill and then disappear from model-visible discovery.
+ * Two compatibility roots share a precedence tier, and ranking those by path
+ * spelling made the winner depend on what the agents happen to be called, so
+ * equal-precedence candidates use the registry's own agent order.
+ */
+function compareSkillCandidates(a: Skill, b: Skill): number {
+	const trust = Number(a.trusted) - Number(b.trusted);
+	if (trust !== 0) return trust;
+	// An imported copy awaiting trust still owns its name over a loose discovery.
+	const owned = (skill: Skill) =>
+		skill.source === "plugin" || skill.source === "pancode" || skill.source === "cli" || skill.source === "path";
+	const ownership = Number(owned(a)) - Number(owned(b));
+	if (ownership !== 0) return ownership;
+	const precedence = a.precedence - b.precedence;
+	if (precedence !== 0) return precedence;
+	const rank = interopSourceRank(b.source) - interopSourceRank(a.source);
+	if (rank !== 0) return rank;
+	return a.filePath.localeCompare(b.filePath);
+}
+
+function dedupeCanonicalSkillPaths(
+	candidates: ReadonlyArray<SkillCandidate>,
+	diagnostics: ResourceDiagnostic[],
+): SkillCandidate[] {
+	const byPath = new Map<string, SkillCandidate[]>();
+	for (const candidate of candidates) {
+		const list = byPath.get(candidate.canonicalPath) ?? [];
+		list.push(candidate);
+		byPath.set(candidate.canonicalPath, list);
+	}
+	const winners: SkillCandidate[] = [];
+	for (const entries of byPath.values()) {
+		if (entries.length === 1) {
+			const only = entries[0];
+			if (only) winners.push(only);
+			continue;
+		}
+		const sorted = [...entries].sort((a, b) => compareSkillCandidates(a.skill, b.skill));
+		const winner = sorted[sorted.length - 1];
+		if (!winner) continue;
+		winners.push(winner);
+		for (const loser of sorted.slice(0, -1)) {
+			diagnostics.push({
+				type: "warning",
+				message: `${loser.skill.name} at ${loser.skill.filePath} resolves to the same canonical skill file as ${winner.skill.filePath}, which is the entry in use`,
+				path: loser.skill.filePath,
+			});
+		}
+	}
+	return winners;
+}
+
+/** Resolve name collisions by trust, then precedence and registry order. */
+function resolveSkillCollisions(candidates: ReadonlyArray<SkillCandidate>): {
+	winners: Skill[];
+	diagnostics: ResourceDiagnostic[];
+} {
+	const byName = new Map<string, SkillCandidate[]>();
+	for (const candidate of candidates) {
+		const key = candidate.skill.name.trim();
+		if (key.length === 0) continue;
+		const list = byName.get(key) ?? [];
+		list.push(candidate);
+		byName.set(key, list);
+	}
+
+	const winners: Skill[] = [];
+	const diagnostics: ResourceDiagnostic[] = [];
+	for (const [name, entries] of byName.entries()) {
+		const sorted = [...entries].sort((a, b) => compareSkillCandidates(a.skill, b.skill));
+		const winner = sorted[sorted.length - 1];
+		if (!winner) continue;
+		winners.push(winner.skill);
+		for (const loser of sorted.slice(0, -1)) {
+			diagnostics.push({
+				type: "collision",
+				message: `${name} from ${winner.skill.source}/${winner.skill.scope} overrides ${loser.skill.source}/${loser.skill.scope}`,
+				path: loser.skill.filePath,
+				collision: {
+					name,
+					winnerPath: winner.skill.filePath,
+					loserPath: loser.skill.filePath,
+					winnerScope: winner.skill.scope,
+					loserScope: loser.skill.scope,
+				},
+			});
+		}
+	}
+	return { winners, diagnostics };
+}
+
+/** Warn on typed `requires: [skill:name, ...]` entries that resolve to no loaded skill. */
+function requiresDiagnostics(winners: ReadonlyArray<Skill>): ResourceDiagnostic[] {
+	const names = new Set(winners.map((skill) => skill.name));
+	const out: ResourceDiagnostic[] = [];
+	for (const skill of winners) {
+		const requires = skill.metadata.requires;
+		if (!Array.isArray(requires)) continue;
+		for (const entry of requires) {
+			if (typeof entry !== "string" || !entry.startsWith("skill:")) continue;
+			const dep = entry.slice("skill:".length).trim();
+			if (dep.length === 0 || names.has(dep)) continue;
+			out.push({
+				type: "warning",
+				message: `${skill.name} requires skill "${dep}" which is not available`,
+				path: skill.filePath,
+			});
+		}
+	}
+	return out;
+}
+
+/** One catalog load verifies each installed plugin tree once, however many roots consult it. */
+export function loadSkills(input: LoadSkillsInput = {}): SkillList {
+	return withPluginDiscoveryPass(() => withFrontmatterCache(() => loadSkillsInPass(input)));
+}
+
+function loadSkillsInPass(input: LoadSkillsInput): SkillList {
+	const roots = input.roots ?? (input.disableDiscovery === true ? [] : defaultSkillRoots(input));
+	const diagnostics: ResourceDiagnostic[] = [];
+	const owners = explicitPathOwners(input);
+	const candidates = [
+		...roots.flatMap((root) => loadSkillRoot(root, diagnostics)),
+		...(input.explicitSkillPaths ?? []).flatMap((skillPath) => loadExplicitSkillPath(skillPath, diagnostics, owners)),
+	];
+	const deduped = dedupeCanonicalSkillPaths(candidates, diagnostics);
+	const resolved = resolveSkillCollisions(deduped);
+	const winners = [...resolved.winners].sort((a, b) => a.name.localeCompare(b.name));
+	return {
+		items: winners,
+		diagnostics: [...diagnostics, ...resolved.diagnostics, ...requiresDiagnostics(winners)],
+	};
+}
+
+/** Skills the model may see in context(scope=skills) listings and load by name. */
+export function modelVisibleSkills(skills: ReadonlyArray<Skill>): Skill[] {
+	return skills.filter((skill) => skill.trusted && !skill.disableModelInvocation);
+}
+
+/** Why a loaded skill catalog is not valid. Ordered by which failure to report first. */
+export type SkillCatalogInvalidReason = "load-error" | "collision" | "unloadable-file" | "no-skills";
+
+export interface SkillCatalogValidity {
+	ok: boolean;
+	reason: SkillCatalogInvalidReason | null;
+}
+
+/**
+ * The rule `pancode hub validate` applies, in one place.
+ *
+ * A scanned file that produced no loaded skill is malformed, and a collision
+ * drops a skill: both make the catalog invalid, as does any hard error. Benign
+ * warnings (name/path mismatch, name format, description length) attach to a
+ * file that still loaded, so their path is among the loaded skills and they do
+ * not fail validation.
+ *
+ * Lives here rather than in the CLI because two callers now need the same
+ * answer, and a verdict that drifts between the terminal and a GUI is worse
+ * than no verdict at all.
+ */
+export function skillCatalogValidity(list: SkillList): SkillCatalogValidity {
+	if (list.diagnostics.some((diag) => diag.type === "error")) return { ok: false, reason: "load-error" };
+	if (list.diagnostics.some((diag) => diag.type === "collision")) return { ok: false, reason: "collision" };
+	const loadedPaths = new Set(list.items.map((skill) => skill.filePath));
+	const unloadable = list.diagnostics.some(
+		(diag) => diag.type === "warning" && diag.path !== undefined && !loadedPaths.has(diag.path),
+	);
+	if (unloadable) return { ok: false, reason: "unloadable-file" };
+	if (list.items.length === 0) return { ok: false, reason: "no-skills" };
+	return { ok: true, reason: null };
+}
+
+/**
+ * The one argument `/skill` reserves for itself: `/skill off` clears the tool
+ * surface an activated skill armed for the session instead of loading a skill
+ * by that name.
+ */
+export const SKILL_SURFACE_CLEAR_ARG = "off";
+
+export function parseSkillCommand(input: string): { name: string; args: string } | null {
+	const trimmed = input.trim();
+	if (!trimmed.startsWith("/skill ")) return null;
+	const rest = trimmed.slice("/skill ".length).trim();
+	const separator = rest.search(/\s/);
+	const name = separator === -1 ? rest : rest.slice(0, separator);
+	if (name.length === 0) return null;
+	const args = separator === -1 ? "" : rest.slice(separator).trim();
+	return { name, args };
+}
+
+export function parsePendingSkillRequests(
+	input: string,
+	skills: SkillList,
+	options: SkillExpansionOptions = {},
+): { text: string; pendingSkillRequests: PendingSkillRequest[] } {
+	const command = parseSkillCommand(input);
+	if (command) {
+		const name = command.name;
+		const args = command.args;
+		const installedSkill = skills.items.find(
+			(entry) => entry.name === name && (entry.trusted || entry.source === "plugin" || entry.source === "pancode"),
+		);
+		if (installedSkill) {
+			return {
+				text: args,
+				pendingSkillRequests: [
+					{
+						name,
+						args,
+						source: "slash-command",
+						installed: true,
+						filePath: installedSkill.filePath,
+					},
+				],
+			};
+		}
+		// A package installed by another process can still await session reload.
+		if (installedSkillNames(skills.items, options.cwd ?? process.cwd()).has(name)) {
+			return { text: args, pendingSkillRequests: [{ name, args, source: "slash-command", installed: true }] };
+		}
+		// Check the local marketplace/discovery contract. Empty means unavailable/offline.
+		const marketplaceSkill = getMarketplaceSkills(options.cwd ? { cwd: options.cwd } : {}).find((s) => s.name === name);
+		if (marketplaceSkill) {
+			return {
+				text: args,
+				pendingSkillRequests: [
+					{
+						name,
+						args,
+						source: "marketplace",
+						installed: false,
+						marketplaceRef: marketplaceSkill.sourceUrl,
+					},
+				],
+			};
+		}
+		// Not installed and not in marketplace
+		return {
+			text: args,
+			pendingSkillRequests: [
+				{
+					name,
+					args,
+					source: "slash-command",
+					installed: false,
+				},
+			],
+		};
+	}
+
+	return {
+		text: input,
+		pendingSkillRequests: [],
+	};
+}

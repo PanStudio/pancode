@@ -1,0 +1,340 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { PancodeSettings } from "../../core/config.js";
+import type { FleetNodeInspection } from "../../domains/dispatch/fleet-nodes.js";
+import type { Component, SettingItem } from "../../engine/tui.js";
+import { isRowBudgeted, type RowBudgetedBody } from "../overlay-frame.js";
+import { GLYPH } from "../theme/index.js";
+import { isSubmenuSurface, type SubmenuSurface } from "./settings-submenus.js";
+
+type Submenu = NonNullable<SettingItem["submenu"]>;
+interface Choice {
+	value: string;
+	label: string;
+}
+export interface FleetNodeSettingsUi {
+	text(title: string, note?: string): Submenu;
+	pick(title: string, choices: ReadonlyArray<Choice>, note?: string): Submenu;
+	refresh(): void;
+	changed(settings: PancodeSettings): void;
+}
+
+function evidence(item: FleetNodeInspection): string {
+	const record = item.record;
+	const age = item.ageMs === null ? "never" : `${Math.floor(item.ageMs / 60_000)} minutes ago`;
+	return [
+		`${item.node.host}: ${item.readiness}. Checked ${item.checkedAt ?? "never"} (${age}).`,
+		item.reason ?? "Connection and project checks passed.",
+		`Declared labels: ${item.node.labels?.join(", ") || "none"}.`,
+		...(record
+			? [
+					`Project: ${record.project?.kind ?? "unknown"}. Remote PanCode: ${record.remoteVersion ?? "unknown"}.`,
+					`Observed resources: ${JSON.stringify(record.resources ?? "unknown")}.`,
+					...record.targets
+						.slice(0, 4)
+						.map(
+							(target) =>
+								`${target.targetId}: network=${target.reachable}, listing access=${target.authentication ?? "unknown"}, model=${target.modelAvailable}, runtime=${target.runtimeCompatible}.`,
+						),
+				]
+			: []),
+	].join("\n");
+}
+
+interface Step {
+	show: () => void;
+	/** Runs when Esc or Cancel backs out of this step, so a prepared install never outlives its card. */
+	leave?: () => void;
+}
+
+/**
+ * Operator actions use the CLI's shared service; only installation starts with a remote write preview.
+ *
+ * The flow is a stack of pages under the shared Esc rule: Esc backs out one
+ * page and commits nothing, and only the page the flow opened on hands Esc to
+ * the settings list. It used to be one flat page whose every Esc dropped to the
+ * list, which lost a typed node name and left a prepared install uncleaned.
+ */
+export function fleetNodeSettingsSubmenu(
+	action: "add" | "discover" | "manage",
+	ui: FleetNodeSettingsUi,
+	id?: string,
+): Submenu {
+	return (_current, done) => {
+		let busy = false;
+		let active: Component = { render: () => [], invalidate: () => {} };
+		let activeKind: "text" | "pick" = "pick";
+		let bodyRows = 0;
+		const stack: Step[] = [];
+		const display = (component: Component, kind: "text" | "pick"): void => {
+			active = component;
+			activeKind = kind;
+			if (isRowBudgeted(active)) active.setBodyRows(bodyRows);
+			ui.refresh();
+		};
+		const back = (): void => {
+			stack.pop()?.leave?.();
+			const previous = stack.at(-1);
+			if (previous) previous.show();
+			else done();
+		};
+		const enter = (step: Step): void => {
+			stack.push(step);
+			step.show();
+		};
+		/** A result that starts over: what it reports is done, so Esc from it leaves the flow. */
+		const root = (step: Step): void => {
+			stack.length = 0;
+			enter(step);
+		};
+		const pickStep = (
+			title: string,
+			choices: ReadonlyArray<Choice>,
+			note: string,
+			selected: (value: string) => void,
+			leave?: () => void,
+		): Step => ({
+			show: () =>
+				display(
+					ui.pick(title, choices, note)("", (value) => (value === undefined ? back() : selected(value))),
+					"pick",
+				),
+			...(leave ? { leave } : {}),
+		});
+		const textStep = (title: string, note: string, value: () => string, submit: (text: string) => void): Step => {
+			const step: Step = {
+				show: () =>
+					display(
+						ui.text(title, note)(value(), (text) => {
+							if (text === undefined) back();
+							else if (text.trim().length === 0) step.show();
+							else submit(text.trim());
+						}),
+						"text",
+					),
+			};
+			return step;
+		};
+		const message = (title: string, note: string): void =>
+			root(pickStep(title, [{ value: "done", label: "Back to Fleet settings" }], note, () => done()));
+		/** A result to read on the way back to the page it came from. */
+		const report = (title: string, note: string): void =>
+			enter(pickStep(title, [{ value: "back", label: "Back" }], note, () => back()));
+		const run = (title: string, operation: () => Promise<void>): void => {
+			busy = true;
+			display(
+				ui.pick(title, [], "Working. This operation has a timeout; wait for its result.")("", () => {}),
+				"pick",
+			);
+			void operation()
+				.catch((error: unknown) => report("Needs attention", error instanceof Error ? error.message : String(error)))
+				.finally(() => {
+					busy = false;
+					ui.refresh();
+				});
+		};
+		const changed = async (): Promise<void> => {
+			const { readSettings } = await import("../../core/config.js");
+			ui.changed(readSettings());
+		};
+		const test = (nodeId: string): void =>
+			run(`Testing ${nodeId}`, async () => {
+				const service = await import("../../domains/dispatch/fleet-nodes.js");
+				await service.testFleetNode(nodeId, process.cwd(), { record: true });
+				const item = service.inspectFleetNodes().find((entry) => entry.node.id === nodeId);
+				report(`Test ${nodeId}`, item ? evidence(item) : "Node was removed during the check.");
+			});
+		const nodeStep = (nodeId: string, note: string): Step =>
+			pickStep(
+				`Node ${nodeId}`,
+				[
+					{ value: "test", label: "Test and record readiness for this project" },
+					{ value: "install", label: "Preview exact client installation" },
+					{ value: "done", label: "Back to Fleet settings" },
+				],
+				note,
+				(value) => {
+					if (value === "test") test(nodeId);
+					else if (value === "install") install(nodeId);
+					else done();
+				},
+			);
+		const install = (nodeId: string): void =>
+			run(`Preparing installation for ${nodeId}`, async () => {
+				const service = await import("../../domains/dispatch/fleet-node-install.js");
+				const plan = await service.prepareFleetNodeInstall(nodeId);
+				let cleaned = false;
+				const cleanup = (): void => {
+					if (cleaned) return;
+					cleaned = true;
+					plan.cleanup();
+				};
+				enter(
+					pickStep(
+						`Install on ${nodeId}?`,
+						[
+							{ value: "cancel", label: "Cancel" },
+							{ value: "install", label: "Install this exact client build at user level" },
+						],
+						service.describeFleetNodeInstall(plan),
+						(value) => {
+							if (value !== "install") {
+								back();
+								return;
+							}
+							// The confirm is spent; the install run owns the cleanup from here.
+							stack.pop();
+							run(`Installing on ${nodeId}`, async () => {
+								try {
+									await service.executeFleetNodeInstall(plan);
+									await changed();
+									root(
+										nodeStep(
+											nodeId,
+											"Installed and version verified. Test again to record eligibility; installation changes the worker entry.",
+										),
+									);
+								} finally {
+									cleanup();
+								}
+							});
+						},
+						cleanup,
+					),
+				);
+			});
+		const add = (host?: string): void => {
+			let name = "";
+			let address = host ?? "";
+			const save = (): void =>
+				run("Adding SSH node", async () => {
+					const service = await import("../../domains/dispatch/fleet-nodes.js");
+					service.addFleetNode({ id: name, host: address, maxWorkers: 1, residency: "observe" });
+					await changed();
+					root(
+						nodeStep(
+							name,
+							"Saved globally with one worker slot. SSH uses your existing config for user, port and identity. Registration does not change placement or prove readiness.",
+						),
+					);
+				});
+			const addressStep = textStep(
+				"SSH alias, hostname or address",
+				"Use an existing SSH alias for user, port and identity. Prefer a verified LAN endpoint on the same network.",
+				() => address,
+				(text) => {
+					address = text;
+					save();
+				},
+			);
+			enter(
+				textStep(
+					"Name this SSH worker node",
+					"Use letters, numbers, underscores or hyphens; local is reserved.",
+					() => name,
+					(text) => {
+						name = text;
+						if (host) save();
+						else enter(addressStep);
+					},
+				),
+			);
+		};
+		if (action === "add") add();
+		else if (action === "discover")
+			run("Discovering Tailscale peers", async () => {
+				const { discoverTailscaleNodes } = await import("../../domains/dispatch/fleet-node-discovery.js");
+				const peers = await discoverTailscaleNodes();
+				const choices = peers.flatMap((peer) =>
+					[...(peer.magicDns ? [peer.magicDns] : []), ...peer.addresses].map((host) => ({
+						value: host,
+						label: `${[...peer.name].map((char) => (char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 ? " " : char)).join("")} ${GLYPH.sep} ${host} ${GLYPH.sep} ${peer.online === null ? "Tailscale state unknown" : peer.online ? "Tailscale online" : "Tailscale offline"}`,
+					})),
+				);
+				if (!choices.length)
+					return message(
+						"Tailscale discovery",
+						"No peer addresses reported. Add an SSH alias or address directly; Tailscale is optional.",
+					);
+				root(
+					pickStep(
+						"Choose a peer endpoint",
+						choices,
+						"MagicDNS names and IP addresses are candidates. SSH access, PanCode and project readiness are not checked. You can add a known LAN address instead.",
+						(host) => add(host),
+					),
+				);
+			});
+		else
+			run(`Inspecting ${id}`, async () => {
+				const service = await import("../../domains/dispatch/fleet-nodes.js");
+				const item = service.inspectFleetNodes().find((entry) => entry.node.id === id);
+				if (!item)
+					return message(
+						"Node unavailable",
+						"This node is not in the saved global fleet. Manage project or session-only nodes in their settings scope.",
+					);
+				root(
+					pickStep(
+						`SSH node ${id}`,
+						[
+							{ value: "test", label: "Test and record readiness for this project" },
+							{ value: "install", label: "Preview exact client installation" },
+							{ value: "remove", label: "Remove this node" },
+						],
+						evidence(item),
+						(value) => {
+							if (value === "test") test(item.node.id);
+							else if (value === "install") install(item.node.id);
+							else if (value === "remove")
+								enter(
+									pickStep(
+										`Remove ${id}?`,
+										[
+											{ value: "cancel", label: "Cancel" },
+											{ value: "remove", label: "Remove the saved node" },
+										],
+										"Remote files remain in place. Profile pins or a standing preference must be cleared first.",
+										(choice) => {
+											if (choice !== "remove") return back();
+											run(`Removing ${id}`, async () => {
+												service.removeFleetNode(item.node.id);
+												await changed();
+												message("Node removed", `${id} was removed from global settings. Remote files remain in place.`);
+											});
+										},
+									),
+								);
+							else done();
+						},
+					),
+				);
+			});
+		const surface: Component & SubmenuSurface & RowBudgetedBody = {
+			render: (width) => active.render(width),
+			handleInput: (data) => {
+				if (!busy) active.handleInput?.(data);
+			},
+			invalidate: () => active.invalidate?.(),
+			setBodyRows: (rows) => {
+				bodyRows = rows;
+				if (isRowBudgeted(active)) active.setBodyRows(rows);
+			},
+			// The page the flow opened on, and a run in progress, leave Esc to the settings list.
+			get escape() {
+				if (busy || stack.length <= 1) return null;
+				return {
+					verb: activeKind === "text" ? "back, keeps draft" : "back a step",
+					short: "back",
+					// The page hears its own Esc: a text field keeps its draft, and its callback steps back.
+					back: () => active.handleInput?.("\x1b"),
+				};
+			},
+			get editsText() {
+				return !busy && activeKind === "text";
+			},
+			railKeys: () => (isSubmenuSurface(active) ? active.railKeys() : []),
+		};
+		return surface;
+	};
+}

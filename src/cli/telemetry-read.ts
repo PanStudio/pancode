@@ -1,0 +1,747 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { resolve } from "node:path";
+import { validateSettingsFile } from "../core/config.js";
+import { cwdHash } from "../core/cwd-hash.js";
+import type {
+	CacheReportV1,
+	CallFilter,
+	CallsReportV1,
+	CostReportV1,
+	ExplanationV1,
+	Quantity,
+	RunTelemetryV1,
+	SessionTelemetryV1,
+	TimelineV1,
+	WhyStoppedV1,
+} from "../core/telemetry/dto.js";
+import { parseFactRef } from "../core/telemetry/dto.js";
+import type { EconomyProjection, EconomyQuantities } from "../core/telemetry/economy.js";
+import { AgentRole, Disposition } from "../core/telemetry/enums.js";
+import {
+	COST_NOT_MEASURED,
+	renderCount,
+	renderUpperBound,
+	unreportedCacheReadWords,
+} from "../core/telemetry/render.js";
+import { economyTotalKnown } from "../core/views/usage-words.js";
+import { pancodeStateDir } from "../core/xdg.js";
+import { fleetRootStepRunIds } from "../domains/dispatch/fleet-root-seal.js";
+import {
+	loadRunCallsTelemetrySource,
+	loadRunScopeFiles,
+	loadRunTelemetrySource,
+	loadSessionTelemetrySource,
+} from "../domains/session/telemetry-source.js";
+import {
+	TELEMETRY_INSTALL_ID,
+	telemetryImportedStateDir,
+	telemetrySessionDirectory,
+} from "../domains/telemetry/paths.js";
+import { explain } from "../domains/telemetry/read-model.js";
+import { cacheReport } from "../domains/telemetry/read-model-cache.js";
+import {
+	costReport,
+	fleetRootCostReport,
+	repoCostReport,
+	runCostReport,
+} from "../domains/telemetry/read-model-cost.js";
+import { callsReport, runCallsReport, sessionTelemetry } from "../domains/telemetry/read-model-reports.js";
+import { runTelemetry } from "../domains/telemetry/read-model-runs.js";
+import type { SessionSource } from "../domains/telemetry/read-model-sources.js";
+import { timeline } from "../domains/telemetry/read-model-timeline.js";
+import { whyStopped } from "../domains/telemetry/read-model-why-stopped.js";
+import type { SealVerdict } from "../domains/telemetry/seal.js";
+import { describeSealMismatch, readTelemetryScopeFilesSync, verifyTelemetryScope } from "../domains/telemetry/seal.js";
+import { explainRepoRef, isRepoRef, usageWindow } from "../domains/telemetry/usage-window.js";
+import { formatColumns, printError } from "./shared.js";
+import { resolveSessionSelector, resolveTelemetryTarget } from "./telemetry-target.js";
+
+/**
+ * `pancode telemetry inspect|calls|cost|cache|timeline|why-stopped|explain` (#434 §11.3). Each command reads the
+ * journals through the read model and prints its DTO: `--json` emits it verbatim, the text form prints its display
+ * strings. Nothing here computes a total.
+ */
+
+export const READ_HELP = `pancode telemetry inspect <session> [--json]
+pancode telemetry inspect --run <run-id> [--json]
+pancode telemetry calls <session> [--run <run-id>] [--role <r,..>] [--disposition <d,..>]
+                           [--turn <id,..>] [--from <iso>] [--to <iso>] [--limit <n>] [--json]
+pancode telemetry cost <session> | --run <run-id> [--by role|model|turn] [--json]
+pancode telemetry cost [--repo <path>] --days <n> [--by role|model|turn] [--json]
+pancode telemetry cache <session> [--json]
+pancode telemetry timeline <session> [--from <iso> --to <iso>] [--json]
+pancode telemetry why-stopped <session> [--json]
+pancode telemetry explain <ref> [--json]
+
+<session> is a session id or a session directory, given as an argument or as
+--session <session>, the form telemetry tokens takes. Session spend covers the
+calls the session's journal owns on every branch, plus the worker runs it referenced;
+a fork child folds its own calls, and inspect adds the lineage total. --json
+emits the read-model DTO the TUI, ACP and GUI serve. explain also takes a
+usage report's repo:<window> reference, refolded over that window ending now.
+cost --days folds the window usage report reads: the sessions and runs of one
+repository (--repo) or of every repository, over the last <n> days. cost --by
+defaults to role, and to model with --run. calls --run <run-id> without a
+session lists that run's own calls. Given a fleet root (fleet-<hex>), inspect
+and cost --run roll up the root's scope and every step run it settled.
+--imported <install-id> on any of these reads the scopes telemetry import placed
+from that installation instead of your own; the two are never folded together.
+`;
+
+interface Args {
+	command: string;
+	positional: string[];
+	values: Map<string, string>;
+	json: boolean;
+}
+
+const VALUE_FLAGS = new Set([
+	"session",
+	"run",
+	"role",
+	"disposition",
+	"turn",
+	"from",
+	"to",
+	"limit",
+	"by",
+	"repo",
+	"days",
+	"imported",
+]);
+
+function parse(argv: ReadonlyArray<string>): Args | string {
+	const [command = "", ...rest] = argv;
+	const positional: string[] = [];
+	const values = new Map<string, string>();
+	let json = false;
+	for (let index = 0; index < rest.length; index += 1) {
+		const arg = rest[index] ?? "";
+		if (arg === "--json") json = true;
+		else if (arg.startsWith("--")) {
+			const name = arg.slice(2);
+			const value = rest[index + 1];
+			if (!VALUE_FLAGS.has(name)) return `unknown flag: ${arg}`;
+			if (value === undefined || value.startsWith("--")) return `${arg} needs a value`;
+			values.set(name, value);
+			index += 1;
+		} else positional.push(arg);
+	}
+	return { command, positional, values, json };
+}
+
+function list<T extends string>(
+	value: string | undefined,
+	allowed: readonly T[],
+	flag: string,
+): T[] | string | undefined {
+	if (value === undefined) return undefined;
+	const items = value.split(",").filter((item) => item.length > 0);
+	const bad = items.find((item) => !allowed.includes(item as T));
+	return bad === undefined ? (items as T[]) : `--${flag} does not accept ${bad}`;
+}
+
+function isoArg(value: string | undefined, flag: string): string | undefined | Error {
+	if (value === undefined) return undefined;
+	const time = Date.parse(value);
+	return Number.isFinite(time) ? new Date(time).toISOString() : new Error(`--${flag} is not a timestamp: ${value}`);
+}
+
+function loadSession(stateDir: string, target: string): SessionSource | null {
+	const resolved = resolveTelemetryTarget(stateDir, target);
+	if (resolved.kind === "archive" || (resolved.kind === "directory" && !resolved.exists)) return null;
+	return loadSessionTelemetrySource(stateDir, resolved.id, resolved.kind === "directory" ? resolved.path : undefined);
+}
+
+/** The session scope's seal verdict, so a seal that fails reads as failed rather than as a healthy journal. */
+function sessionSeal(stateDir: string, target: string, sessionId: string): SealVerdict | null {
+	const resolved = resolveTelemetryTarget(stateDir, target);
+	const directory = resolved.kind === "directory" ? resolved.path : telemetrySessionDirectory(stateDir, sessionId);
+	try {
+		return verifyTelemetryScope(readTelemetryScopeFilesSync(directory));
+	} catch {
+		return null;
+	}
+}
+
+function sealLine(seal: SealVerdict | null): string {
+	return `seal      ${
+		seal === null
+			? "not read"
+			: seal.status === "verified"
+				? `verified at ${seal.sealedAt}`
+				: seal.status === "unsealed"
+					? `unsealed (${seal.reason})`
+					: `failed: ${describeSealMismatch(seal.mismatch)}`
+	}`;
+}
+
+const show = (quantity: Quantity) => quantity.display;
+/** A re-prefill or its bill, worded as the upper bound the journal records (CTX-16). */
+const bound = (quantity: Quantity) => renderUpperBound(quantity.fact, quantity.display);
+
+/** A close only the ledger recorded has no reason, so none is printed (#434 §6.1). */
+function lifetimeState(lifetime: SessionTelemetryV1["lifetime"]): string {
+	if (lifetime.closed)
+		return `closed${lifetime.closed.reason ? ` ${lifetime.closed.reason}` : ""} at ${lifetime.closed.at}`;
+	switch (lifetime.state) {
+		case "open":
+			return "open";
+		case "ended-abnormally":
+			return "ended without a close";
+		case "unverifiable":
+			return "open or ended on another host";
+		default:
+			return "no owner to check";
+	}
+}
+
+function printSession(dto: SessionTelemetryV1, seal: SealVerdict | null = null): string {
+	const journal = dto.journal;
+	const lines = [
+		`session ${dto.sessionId}${dto.modes.length > 0 ? ` (${dto.modes.join(" → ")} mode)` : ""}`,
+		`journal   ${journal.present ? `${journal.records} records` : "none"} · ${journal.skipped} skipped · ${journal.damaged} damaged · ${journal.gapRecords} gaps (${journal.droppedRecords} dropped)`,
+		sealLine(seal),
+		`lifetime  ${dto.lifetime.firstRecordAt ?? "no records"} → ${dto.lifetime.lastRecordAt ?? "no records"} · ${lifetimeState(dto.lifetime)}`,
+	];
+	if (dto.lineage.parent)
+		lines.push(
+			`forked    from ${dto.lineage.parent.sessionId} at ${dto.lineage.parent.turnId}${
+				dto.lineage.totals ? ` · lineage ${show(dto.lineage.totals.tokens)} tokens, ${show(dto.lineage.totals.usd)}` : ""
+			}${dto.lineage.unreadableAncestors > 0 ? ` · ${dto.lineage.unreadableAncestors} unreadable ancestor(s)` : ""}`,
+		);
+	const counts = dto.own.counts;
+	const tokens = dto.own.tokens;
+	const priced = Object.entries(dto.own.cost.pricedBy)
+		.filter(([, count]) => count > 0)
+		.map(([by, count]) => `${by} ${count}`)
+		.join(", ");
+	lines.push(
+		`calls     ${show(counts.calls)} calls · ${show(counts.attempts)} attempts · settled ${show(counts.dispositions.settled)} · sent unsettled ${show(counts.dispositions.sentUnsettled)} · no usage ${show(counts.dispositions.settledNoUsage)} · never sent ${show(counts.dispositions.neverSent)} · incomplete ${show(counts.dispositions.incomplete)}`,
+		`tokens    input ${show(tokens.input)} · output ${show(tokens.output)} · cache read ${show(tokens.cacheRead)} · cache write ${show(tokens.cacheWrite)} · reasoning ${show(tokens.reasoning)} · prompt ${show(tokens.prompt)} · total ${show(tokens.total)}`,
+		`cost      ${show(dto.own.cost.usd)}${priced ? ` (priced by ${priced})` : ""}`,
+		`runs      ${dto.runs.count}${dto.runs.unresolved > 0 ? ` (${dto.runs.unresolved} unreadable)` : ""} · ${show(dto.runs.apiCalls)} calls · ${show(dto.runs.tokens)} tokens · ${show(dto.runs.usd)}`,
+		`charged   ${show(dto.totals.tokens)} tokens · ${show(dto.totals.usd)}`,
+		`main loop PanCode ${show(dto.overhead.harness)} · network ${show(dto.overhead.network)} · model ${show(dto.overhead.model)} · tools ${show(dto.overhead.tool)}`,
+		`          bookkeeping-only rounds ${show(dto.overhead.bookkeepingRounds)} re-read ${show(dto.overhead.roundTripTax)} of ${show(dto.overhead.prompt)} prompt tokens`,
+	);
+	if (dto.transport)
+		lines.push(
+			`transport ${dto.transport.kind} · continuation ${dto.transport.continuation.display} · pinned to SSE ${dto.transport.sessionPinnedToSse.display}${
+				dto.transport.pinReason ? ` (${dto.transport.pinReason})` : ""
+			} · WebSocket failures ${show(dto.transport.websocketFailures)} · SSE fallbacks ${show(dto.transport.sseFallbacks)}`,
+		);
+	if (dto.byRole.length > 0) {
+		lines.push("", "by agent role");
+		lines.push(
+			formatColumns([
+				["role", "calls", "tokens", "cost"],
+				...dto.byRole.map((row) => [row.role, show(row.calls), show(row.tokens), show(row.usd)]),
+			]).trimEnd(),
+		);
+	}
+	return `${lines.join("\n")}\n`;
+}
+
+/** A fleet root's roll-up beside its own scope's DTO: the step runs and their spend (`fleetRootCostReport`). */
+type FleetRootRollup = { runIds: string[]; calls: Quantity; tokens: Quantity; usd: Quantity };
+
+function printRun(dto: RunTelemetryV1, fleetRoot: FleetRootRollup | null = null): string {
+	const row = dto.row;
+	const lines = [
+		`run ${row.runId}${row.sessionId ? ` (session ${row.sessionId})` : ""} · source ${row.source}`,
+		`span      ${row.firstAt ?? "no records"} → ${row.lastAt ?? "no records"}`,
+		`journal   ${dto.journal.present ? `${dto.journal.records} records` : "none"} · ${dto.journal.skipped} skipped · ${dto.journal.damaged} damaged · ${dto.journal.gapRecords} gaps`,
+		`calls     ${show(row.apiCalls)} API calls · ${show(dto.counts.attempts)} attempts · never sent ${show(dto.counts.dispositions.neverSent)}`,
+		`tokens    input ${show(dto.tokens.input)} · output ${show(dto.tokens.output)} · cache read ${show(dto.tokens.cacheRead)} · cache write ${show(dto.tokens.cacheWrite)} · total ${show(dto.tokens.total)}`,
+		`cost      ${show(row.usd)}`,
+		...(fleetRoot !== null
+			? [
+					`fleet     root of ${fleetRoot.runIds.length} step run${fleetRoot.runIds.length === 1 ? "" : "s"}${fleetRoot.runIds.length > 0 ? ` (${fleetRoot.runIds.join(", ")})` : ""} · ${show(fleetRoot.calls)} calls · ${show(fleetRoot.tokens)} tokens · ${show(fleetRoot.usd)}`,
+				]
+			: []),
+		dto.settled
+			? `settled   ${dto.settled.terminalReason} at ${dto.settled.at} · exit ${dto.settled.processExitCode ?? "unknown"} · repair rounds ${show(dto.settled.repairRounds)}${dto.settled.boundKind ? ` · bound ${dto.settled.boundKind}` : ""}`
+			: fleetRoot !== null
+				? "settled   a fleet root settles no run of its own; its step runs do"
+				: "settled   not yet, or not recorded",
+		...(dto.settled
+			? [
+					`outcome   ${dto.settled.outcome}${dto.settled.outcomeCode ? ` (${dto.settled.outcomeCode})` : ""} · ${dto.settled.agentId} on ${dto.settled.route.targetId}/${dto.settled.route.wireModelId}`,
+				]
+			: []),
+		sealLine(dto.seal),
+	];
+	return `${lines.join("\n")}\n`;
+}
+
+/** A seat-billed call's premium requests and AI credits; `n/a` for a call that journaled no seat billing. */
+function billingCell(billing: CallsReportV1["calls"][number]["billing"]): string {
+	if (billing === null) return "n/a";
+	const { premiumRequests, nanoAiu } = billing;
+	if (premiumRequests.fact.kind === "unknown" && nanoAiu.fact.kind === "unknown") return "unknown";
+	return `${premiumRequests.display} premium, ${nanoAiu.display} nAIU`;
+}
+
+function printCalls(dto: CallsReportV1): string {
+	const rows = dto.calls.map((call) => [
+		call.startedAt,
+		call.agent.role,
+		call.disposition,
+		`${call.target.targetId}/${call.target.requestedModel}`,
+		call.usage ? show(call.usage.total) : "none",
+		show(call.usd),
+		show(call.timing.ttft),
+		billingCell(call.billing),
+		call.stop?.failure ?? "",
+	]);
+	const header = ["started", "role", "disposition", "target/model", "tokens", "cost", "ttft", "billing", "failure"];
+	const shown =
+		dto.matched > dto.calls.length ? `\n${dto.calls.length} of ${dto.matched} matching attempts shown\n` : "";
+	return rows.length === 0 ? "no matching attempts\n" : `${formatColumns([header, ...rows])}${shown}`;
+}
+
+/** The economy fields some call measured or estimated, in line order; a field nothing measured is left out. */
+function knownEconomyFields(total: EconomyQuantities, cash?: EconomyProjection["cash"]): string[] {
+	const { display } = total;
+	return [
+		...(economyTotalKnown(total.marginalCharge) ? [display.extra] : []),
+		...(economyTotalKnown(total.apiEquivalent) ? [display.apiEquivalent] : []),
+		...(economyTotalKnown(total.seatCredits) ? [`seat ${display.seatCredits}`] : []),
+		...(economyTotalKnown(total.energyKwh) ? [`energy ${display.energy}`] : []),
+		...(cash !== undefined && cash.currencies.length > 0 ? [`cash ${cash.display}`] : []),
+	];
+}
+
+/**
+ * A cost report's economy as text: the headline extra user cost beside the API equivalent, seat credits, energy and
+ * period cash, then each funding pool, each declared fee once per period and the reference rows the comparison used.
+ * A field no call measured is not printed. Every figure is the projection's own display; nothing here adds or converts.
+ */
+export function economyLines(economy: EconomyProjection): string[] {
+	const fields = knownEconomyFields(economy.total, economy.cash);
+	return [
+		`economy: ${fields.length > 0 ? fields.join(" · ") : COST_NOT_MEASURED}`,
+		// One pool's figures are the total's, already on the line above.
+		...(economy.groups.pool.length > 1
+			? economy.groups.pool.map((pool) => {
+					const known = [
+						...(economyTotalKnown(pool.marginalCharge) ? [pool.display.extra] : []),
+						...(economyTotalKnown(pool.apiEquivalent) ? [pool.display.apiEquivalent] : []),
+					];
+					return `  pool ${pool.key}: ${known.length > 0 ? known.join(" · ") : COST_NOT_MEASURED}`;
+				})
+			: []),
+		...economy.fees.map((fee) => `  fee ${fee.poolId} ${fee.period.kind} from ${fee.period.start}: ${fee.display}`),
+		...economy.references.map(
+			(row) => `  reference ${row.referenceRowId} as of ${row.asOf} (${row.basis}, ${row.contributions} calls)`,
+		),
+	];
+}
+
+function printCost(dto: CostReportV1): string {
+	const scope =
+		"sessionId" in dto.scope
+			? `session ${dto.scope.sessionId}`
+			: "runId" in dto.scope
+				? `run ${dto.scope.runId}`
+				: "fleetRootId" in dto.scope
+					? `fleet root ${dto.scope.fleetRootId} (${dto.scope.runIds.length} run scopes)`
+					: `${dto.scope.repo === "all" ? "every repository" : `repo ${dto.scope.repo}`} over ${dto.scope.days} d`;
+	return `${scope} · ${show(dto.total.calls)} calls · ${show(dto.total.tokens)} tokens · ${show(dto.total.usd)}\n\n${formatColumns(
+		[
+			[dto.groupBy, "calls", "tokens", "cost"],
+			...dto.groups.map((group) => [group.key, show(group.calls), show(group.tokens), show(group.usd)]),
+		],
+	)}\n${economyLines(dto.economy).join("\n")}\n`;
+}
+
+function printCache(dto: CacheReportV1): string {
+	const v = dto.verdicts;
+	const unreported = unreportedCacheReadWords(dto.cacheRead.fact);
+	const lines = [
+		...(dto.share
+			? [`cached share ${dto.share.display} (session), last turn ${dto.lastTurnShare?.display ?? "unknown"}`]
+			: []),
+		`verdicts  hot ${v.hot} · partial ${v.partial} · cold ${v.cold} · small ${v.small} · unknown ${v.unknown}`,
+		...(unreported === null ? [] : [`reads     ${unreported}`]),
+		`tokens    cache read ${show(dto.cacheRead)} · cache write ${show(dto.cacheWrite)} · uncached prefill ${show(dto.uncachedPrefill)} · re-prefilled ${bound(dto.rePrefilled)}`,
+		`bill      ${bound(dto.breakUsd)}`,
+		...(dto.engineFloor ?? []).map(
+			(floor) =>
+				`engine floor  ${floor.route} resumes at ${renderCount(floor.granularity)}-token blocks: ${floor.calls} calls hot (engine-floor), engine floor re-prefill ${renderUpperBound(floor.rePrefilled, renderCount(floor.rePrefilled))}`,
+		),
+	];
+	if (dto.breaks.length > 0)
+		lines.push(
+			"",
+			formatColumns([
+				["at", "verdict", "share", "causes", "first divergent section", "re-prefilled", "bill"],
+				...dto.breaks.map((row) => [
+					row.at,
+					row.verdict,
+					row.share?.display ?? "unknown",
+					row.expectedColdReasons.join(",") || "unattributed",
+					row.firstDivergentSection.display,
+					bound(row.rePrefilled),
+					bound(row.breakUsd),
+				]),
+			]).trimEnd(),
+		);
+	if (dto.byCause.length > 0)
+		lines.push(
+			"",
+			formatColumns([
+				["cause", "breaks", "re-prefilled", "bill"],
+				...dto.byCause.map((row) => [row.cause, String(row.breaks), bound(row.rePrefilled), bound(row.breakUsd)]),
+			]).trimEnd(),
+		);
+	return `${lines.join("\n")}\n`;
+}
+
+const MESSAGE_SLOT_WORDS = {
+	"finish-turn": "at the end of a turn",
+	"prepare-next-turn": "after the next turn was prepared",
+	prompt: "with a new prompt",
+} as const;
+const MESSAGE_WAIT_WORDS = {
+	"operator-stop": "an operator stop",
+	interrupt: "an interrupt",
+	"prompt-not-started": "a prompt that never started",
+	"session-move": "a session move",
+	"run-cancelled": "a cancelled run",
+} as const;
+const MESSAGE_REMOVAL_WORDS = {
+	removed: "removed by the operator",
+	"sent-now": "taken off the queue to send now",
+	"to-editor": "moved back to the composer",
+	restored: "restored to the composer",
+	cancelled: "dropped unsent",
+	resubmitted: "taken off the queue to send as a fresh prompt",
+	"not-started": "dropped because its prompt never started",
+} as const;
+
+function messageStepWords(entry: Extract<TimelineV1["entries"][number], { kind: "message" }>): string {
+	const since = entry.sinceSubmit.display;
+	const lane = entry.lane === "follow-up" ? "a follow-up" : entry.lane === "steer" ? "a steer" : "a prompt";
+	const byMachine = entry.by === "machine" ? " from a peer" : "";
+	switch (entry.step) {
+		case "submitted":
+		case "queued":
+			return `${entry.step === "queued" ? "queued" : "submitted"} as ${lane}${byMachine} · ${entry.chars?.display ?? "?"} chars`;
+		case "lane-changed":
+			return `changed to ${lane} by ${entry.changedBy ?? "unknown"} · ${since} after submit`;
+		case "held":
+			return `held by ${entry.why ? MESSAGE_WAIT_WORDS[entry.why] : "unknown"} · ${since} after submit`;
+		case "released":
+			return `released by a new prompt · ${since} after submit`;
+		case "handed-over":
+			return entry.lane === "prompt"
+				? `handed to the engine as a prompt · ${since} after submit`
+				: `handed over as ${lane} ${entry.slot ? MESSAGE_SLOT_WORDS[entry.slot] : ""} · ${since} after submit`;
+		case "returned":
+			return `returned to the queue by ${entry.why ? MESSAGE_WAIT_WORDS[entry.why] : "unknown"} · ${since} after submit`;
+		case "carried":
+			return `carried by ${entry.callId} attempt ${entry.attempt} (${entry.callDisposition}${entry.callFailure ? `, ${entry.callFailure}` : ""}) · ${since} after submit`;
+		default:
+			return `${entry.reason ? MESSAGE_REMOVAL_WORDS[entry.reason] : "removed"} · ${since} after submit`;
+	}
+}
+
+function printTimeline(dto: TimelineV1): string {
+	const lines = dto.entries.map((entry) => {
+		switch (entry.kind) {
+			case "call":
+				return `${entry.at}  call     ${entry.agent.role} ${entry.disposition}${entry.failure ? ` (${entry.failure})` : ""} · ${show(entry.tokens)} tokens · ${show(entry.usd)} · cache ${entry.cacheVerdict}`;
+			case "turn":
+				return `${entry.at}  turn     ${entry.stopReason}${entry.cause ? ` on ${entry.cause}` : ""}${entry.stage ? ` at ${entry.stage}` : ""} · ${entry.callIds.length} call(s), ${entry.retries} retries`;
+			case "run":
+				return `${entry.at}  run      ${entry.runId} ${entry.event}${entry.terminalReason ? ` (${entry.terminalReason})` : ""}`;
+			case "compaction":
+				return `${entry.at}  compact  ${entry.outcome} · ${entry.callIds.length} call(s)`;
+			case "session":
+				return `${entry.at}  session  ${entry.event}${entry.detail ? ` ${entry.detail}` : ""}`;
+			case "gap":
+				return `${entry.at}  gap      ${entry.sink} ${entry.reason} × ${entry.count}`;
+			case "config": {
+				const paths = entry.paths
+					? [...entry.paths.hotReload, ...entry.paths.nextTurn, ...entry.paths.restartRequired]
+					: [];
+				return `${entry.at}  config   ${entry.event}${entry.source ? ` by ${entry.source}` : ""}${paths.length > 0 ? ` · ${paths.join(", ")}` : ""}`;
+			}
+			case "budget":
+				return `${entry.at}  budget   ${entry.event} ${entry.level} · spend ${entry.spend.display}${entry.projected ? ` + ${entry.projected.display} pending` : ""} of ${entry.ceiling.display}${entry.waited ? ` · waited ${entry.waited.display}` : ""}${entry.outcome ? ` · ${entry.outcome}` : ""}${entry.raisedTo ? ` to ${entry.raisedTo.display}` : ""}${entry.raisedBy ? ` by ${entry.raisedBy}` : ""}`;
+			case "tool":
+				return `${entry.at}  tool     ${entry.tool} ${entry.outcome}${entry.blocked ? ` (${entry.blocked})` : ""} · ${entry.duration.display}${entry.parked ? ` · parked ${entry.parked.display}` : ""}${entry.resultBytes ? ` · ${entry.resultBytes.display} bytes` : ""}`;
+			case "middleware":
+				return `${entry.at}  rule     ${entry.ruleId} at ${entry.hook} · ${entry.effects.join(", ")}${entry.severity ? ` · ${entry.severity}` : ""}${entry.evidence ? ` · ${entry.evidence}` : ""}`;
+			case "auth":
+				return `${entry.at}  auth     ${entry.provider} ${entry.trigger} · ${entry.outcome}${entry.attempted ? "" : " without a refresh call"} · ${entry.duration.display}`;
+			case "prompt":
+				return `${entry.at}  prompt   layout v${entry.layoutVersion} · ${entry.sections} sections · ${entry.tokens.display} tokens`;
+			case "context":
+				return `${entry.at}  context  ${entry.source} · window ${entry.window.effective} (${entry.window.source})${entry.estimated ? ` · estimated ${entry.estimated.display}` : ""}${entry.reconciled ? ` · provider ${entry.reconciled.display}` : ""}`;
+			case "system-one":
+				return `${entry.at}  s1       ${entry.point} ${entry.outcome} · ${entry.latency.display} of ${entry.deadline.display}${entry.routes.some((route) => route.breaker) ? ` · breaker ${entry.routes.flatMap((route) => (route.breaker ? [`${route.engine} ${route.breaker}`] : [])).join(", ")}` : ""}`;
+			case "message":
+				return `${entry.at}  message  ${entry.messageId} ${messageStepWords(entry)}`;
+			case "worker-channel":
+				return `${entry.at}  channel  ${entry.runId} ${entry.lane} ${entry.failure}${entry.frameType ? ` on ${entry.frameType}` : ""}${entry.errno ? ` (${entry.errno})` : ""}${entry.afterExit ? " after exit" : ""}`;
+			default:
+				return `${entry.at}  quota    ${entry.provider} ${entry.source}${entry.limitReached ? " · limit reached" : ""} · ${entry.windows.map((window) => `${window.key} ${window.usedPct.display}`).join(", ")}`;
+		}
+	});
+	return lines.length === 0 ? "no entries\n" : `${lines.join("\n")}\n`;
+}
+
+function printWhyStopped(dto: WhyStoppedV1): string {
+	return `session ${dto.sessionId}: ${dto.state}\n${dto.findings.map((line) => `  ${line}`).join("\n")}\n`;
+}
+
+const UPPER_BOUND_METRICS: ReadonlySet<string> = new Set(["rePrefilled", "breakUsd"]);
+
+function printExplanation(dto: ExplanationV1): string {
+	const ids = (label: string, values: readonly string[]) =>
+		values.length === 0
+			? []
+			: [`${label} (${values.length}): ${values.slice(0, 8).join(" ")}${values.length > 8 ? " …" : ""}`];
+	return `${[
+		`${dto.ref} = ${UPPER_BOUND_METRICS.has(parseFactRef(dto.ref)?.metric ?? "") ? bound(dto.value) : dto.value.display}`,
+		`rule: ${dto.rule}`,
+		`fold version ${dto.foldVersion}`,
+		...ids("calls", dto.from.callIds),
+		...ids("runs", dto.from.runIds),
+		...(dto.from.omitted > 0 ? [`${dto.from.omitted} more contributing attempts not listed`] : []),
+	].join("\n")}\n`;
+}
+
+function emit<T>(dto: T, json: boolean, text: (dto: T) => string): number {
+	process.stdout.write(json ? `${JSON.stringify(dto, null, 2)}\n` : text(dto));
+	return 0;
+}
+
+export async function runTelemetryReadCommand(argv: ReadonlyArray<string>): Promise<number> {
+	const args = parse(argv);
+	if (typeof args === "string") {
+		printError(args);
+		process.stderr.write(READ_HELP);
+		return 2;
+	}
+	const imported = args.values.get("imported");
+	let stateDir = pancodeStateDir();
+	if (imported !== undefined) {
+		if (!TELEMETRY_INSTALL_ID.test(imported)) {
+			printError(`--imported takes an install id (inst_ and 32 hex digits), not ${imported}`);
+			return 2;
+		}
+		// Imported scopes read as their own state directory, so nothing here mixes them into the operator's (#434).
+		stateDir = telemetryImportedStateDir(stateDir, imported);
+	}
+	const runId = args.values.get("run");
+	// `--session <id>` names the same session the positional argument does, as `telemetry tokens` takes it (bt-20).
+	const sessionFlag = args.values.get("session");
+	if (sessionFlag !== undefined && (args.command === "explain" || args.positional.length > 0)) {
+		printError(
+			args.command === "explain"
+				? "explain takes a reference, not --session"
+				: "give the session once: as an argument or as --session",
+		);
+		return 2;
+	}
+	const selector = sessionFlag ?? args.positional[0];
+	// A session selector is an id, a unique prefix or a name (C13); an imported install's scopes take exact ids only.
+	const selected =
+		selector === undefined || args.command === "explain" || imported !== undefined
+			? undefined
+			: resolveSessionSelector(stateDir, selector);
+	if (selected !== undefined && "miss" in selected) {
+		printError(selected.miss);
+		return 1;
+	}
+	const target = selected?.id ?? selector;
+	// A window report lists the operator's declared pools' fees once per period; one run or session carries none, and
+	// an imported install's scopes were never funded by them.
+	const pools = imported === undefined ? { pools: validateSettingsFile().settings.funding } : {};
+	try {
+		if (args.command === "explain") {
+			const ref = target === undefined ? null : parseFactRef(target);
+			if (!ref) {
+				printError(target === undefined ? "explain needs a reference" : `not a telemetry reference: ${target}`);
+				return 2;
+			}
+			const explained =
+				ref.scope === "run"
+					? explain(target as string, { runId: ref.owner, run: loadRunCallsTelemetrySource(stateDir, ref.owner) })
+					: isRepoRef(ref)
+						? await explainRepoRef(stateDir, target as string, ref.owner)
+						: (() => {
+								const session = loadSessionTelemetrySource(stateDir, ref.owner);
+								return session ? explain(target as string, { session }) : null;
+							})();
+			if (!explained) {
+				printError(`nothing in the journals resolves ${target}`);
+				return 1;
+			}
+			return emit(explained, args.json, printExplanation);
+		}
+		if (
+			target === undefined &&
+			runId !== undefined &&
+			(args.command === "inspect" || args.command === "cost" || args.command === "calls")
+		) {
+			const run =
+				args.command === "inspect" ? loadRunTelemetrySource(stateDir, runId) : loadRunCallsTelemetrySource(stateDir, runId);
+			if (!run.present) {
+				printError(`no run journal for ${runId}`);
+				return 1;
+			}
+			// A fleet root settles no run itself; its spend is its step runs' (an imported install has no root records).
+			const steps = imported === undefined && args.command !== "calls" ? fleetRootStepRunIds(runId, stateDir) : null;
+			const rollup = (by: "role" | "model" | "turn") =>
+				fleetRootCostReport(
+					runId,
+					new Map([
+						[runId, args.command === "cost" ? run : loadRunCallsTelemetrySource(stateDir, runId)],
+						...(steps ?? []).map((id) => [id, loadRunCallsTelemetrySource(stateDir, id)] as const),
+					]),
+					by,
+				);
+			if (args.command === "inspect") {
+				const dto = runTelemetry(runId, run, {}, loadRunScopeFiles(stateDir, runId));
+				if (steps === null) return emit(dto, args.json, printRun);
+				const { total } = rollup("model");
+				const fleetRoot = { runIds: steps, calls: total.calls, tokens: total.tokens, usd: total.usd };
+				return emit({ ...dto, fleetRoot }, args.json, (shown) => printRun(shown, fleetRoot));
+			}
+			if (args.command === "cost") {
+				const by = args.values.get("by") ?? "model";
+				if (by !== "role" && by !== "model" && by !== "turn") {
+					printError(`--by does not accept ${by}`);
+					return 2;
+				}
+				return emit(steps === null ? runCostReport(runId, run, by) : rollup(by), args.json, printCost);
+			}
+		}
+		if (args.command === "cost" && (args.values.has("repo") || args.values.has("days"))) {
+			if (target !== undefined || runId !== undefined) {
+				printError("cost takes a session, --run, or a --repo/--days window, one at a time");
+				return 2;
+			}
+			const daysArg = args.values.get("days");
+			const days = daysArg !== undefined && /^\d+$/.test(daysArg) ? Number.parseInt(daysArg, 10) : Number.NaN;
+			if (!Number.isSafeInteger(days) || days <= 0) {
+				printError("a repository window needs --days <n>, a positive whole number of days");
+				return 2;
+			}
+			const by = args.values.get("by") ?? "role";
+			if (by !== "role" && by !== "model" && by !== "turn") {
+				printError(`--by does not accept ${by}`);
+				return 2;
+			}
+			// The window usage report folds, attributed the same way, so the two print the same spend (#434 §11.1).
+			const repoArg = args.values.get("repo");
+			const repoPath = repoArg === undefined ? undefined : resolve(repoArg);
+			const now = Date.now();
+			const { repo } = await usageWindow(stateDir, repoPath === undefined ? null : cwdHash(repoPath), days, now);
+			// The same window `usage report` folds, so its fees and economy match this report's.
+			const window = { from: now - days * 24 * 60 * 60 * 1000, to: now };
+			return emit(repoCostReport(repo, { repo: repoPath ?? "all", days }, by, { ...pools, window }), args.json, printCost);
+		}
+		if (target === undefined && args.command !== "calls") {
+			printError(`${args.command} needs a session id or directory`);
+			process.stderr.write(READ_HELP);
+			return 2;
+		}
+		const filter = callFilter(args);
+		if (typeof filter === "string") {
+			printError(filter);
+			return 2;
+		}
+		if (target === undefined) {
+			if (runId === undefined) {
+				printError("calls needs a session, or --run <run-id>");
+				return 2;
+			}
+			const run = loadRunCallsTelemetrySource(stateDir, runId);
+			if (!run.present) {
+				printError(`no run journal for ${runId}`);
+				return 1;
+			}
+			return emit(runCallsReport(runId, run, filter), args.json, printCalls);
+		}
+		const session = loadSession(stateDir, target);
+		if (!session) {
+			printError(`no session ${target} in ${stateDir}`);
+			return 1;
+		}
+		switch (args.command) {
+			case "inspect":
+				return emit(sessionTelemetry(session), args.json, (dto) =>
+					printSession(dto, sessionSeal(stateDir, target, session.sessionId)),
+				);
+			case "calls":
+				return emit(callsReport(session, filter), args.json, printCalls);
+			case "cost": {
+				const by = args.values.get("by") ?? "role";
+				if (by !== "role" && by !== "model" && by !== "turn") {
+					printError(`--by does not accept ${by}`);
+					return 2;
+				}
+				return emit(costReport(session, by), args.json, printCost);
+			}
+			case "cache":
+				return emit(cacheReport(session), args.json, printCache);
+			case "timeline": {
+				const from = isoArg(args.values.get("from"), "from");
+				const to = isoArg(args.values.get("to"), "to");
+				if (from instanceof Error || to instanceof Error) {
+					printError((from instanceof Error ? from : (to as Error)).message);
+					return 2;
+				}
+				if ((from === undefined) !== (to === undefined)) {
+					printError("timeline takes --from and --to together");
+					return 2;
+				}
+				return emit(timeline(session, from && to ? { from, to } : null), args.json, printTimeline);
+			}
+			case "why-stopped":
+				return emit(whyStopped(session), args.json, printWhyStopped);
+		}
+		printError(`unknown telemetry command: ${args.command}`);
+		return 2;
+	} catch (error) {
+		printError(`cannot read telemetry: ${error instanceof Error ? error.message : String(error)}`);
+		return 1;
+	}
+}
+
+function callFilter(args: Args): CallFilter | string {
+	const roles = list(args.values.get("role"), AgentRole.enum, "role");
+	const dispositions = list(args.values.get("disposition"), [...Disposition.enum, "incomplete"] as const, "disposition");
+	if (typeof roles === "string") return roles;
+	if (typeof dispositions === "string") return dispositions;
+	const from = isoArg(args.values.get("from"), "from");
+	const to = isoArg(args.values.get("to"), "to");
+	if (from instanceof Error) return from.message;
+	if (to instanceof Error) return to.message;
+	const limitText = args.values.get("limit");
+	const limit = limitText === undefined ? undefined : Number(limitText);
+	if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) return `--limit needs a positive integer`;
+	const turns = args.values
+		.get("turn")
+		?.split(",")
+		.filter((turn) => turn.length > 0);
+	const filter: CallFilter = {
+		...(roles ? { roles } : {}),
+		...(dispositions ? { dispositions } : {}),
+		...(turns ? { turnIds: turns } : {}),
+		...(args.values.get("run") !== undefined && (args.positional[0] ?? args.values.get("session")) !== undefined
+			? { runId: args.values.get("run") as string }
+			: {}),
+		...(from ? { from } : {}),
+		...(to ? { to } : {}),
+		...(limit !== undefined ? { limit } : {}),
+	};
+	return filter;
+}

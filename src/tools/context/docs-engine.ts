@@ -1,0 +1,719 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, join, relative, resolve } from "node:path";
+import { resolvePackageRoot } from "../../core/package-root.js";
+import { guidanceForDocs } from "../../domains/prompts/runtime-guidance.js";
+import type { DocsHeadingState } from "../docs-headings.js";
+import { docsHeading } from "../docs-headings.js";
+
+// Deterministic, dependency-free retrieval over PanCode's bundled human docs,
+// serving the `pancode_docs` gateway capability. It intentionally avoids
+// embeddings or network calls so retrieval works in a packaged offline CLI.
+// It is still richer than grep: it builds a section index with heading hierarchy, line
+// ranges, light stemming, controlled PanCode vocabulary aliases, phrase boosts,
+// and BM25-style body scoring.
+
+const DEFAULT_LIMIT = 5;
+const MAX_LIMIT = 12;
+const SNIPPET_MAX = 360;
+const SNIPPET_CONTEXT_LINES = 2;
+
+const BODY_K1 = 1.2;
+const BODY_B = 0.75;
+const HEADING_WEIGHT = 3.5;
+const TITLE_WEIGHT = 2.0;
+const PHRASE_BODY_BOOST = 3.0;
+const PHRASE_HEADING_BOOST = 7.0;
+const COVERAGE_BOOST = 4.0;
+const EXPANDED_TERM_WEIGHT = 0.45;
+const NONCURRENT_REFERENCE_WEIGHT = 0.25;
+
+const NONCURRENT_REFERENCE_PATH =
+	/^docs\/(?:history\/|gui\/(?!readme\.md$)|process\/[^/]*(?:proposal|handoff|audit-v\d|battletest-\d{4})[^/]*\.md$)/iu;
+const EXPLICIT_NONCURRENT_INTENT =
+	/\b(?:histor(?:y|ical|ic)|archives?|archived|proposal|proposed|blueprints?|design|spec(?:ification)?s?|roadmaps?|audits?|legacy|previous|older|old|handoffs?)\b/iu;
+
+const STOP_WORDS = new Set([
+	"a",
+	"an",
+	"and",
+	"are",
+	"as",
+	"at",
+	"be",
+	"by",
+	"can",
+	"for",
+	"from",
+	"how",
+	"in",
+	"into",
+	"is",
+	"it",
+	"of",
+	"on",
+	"or",
+	"that",
+	"the",
+	"this",
+	"to",
+	"what",
+	"when",
+	"where",
+	"with",
+]);
+
+const VOCABULARY_ALIASES: ReadonlyArray<{ triggers: ReadonlyArray<string>; expansions: ReadonlyArray<string> }> = [
+	{
+		triggers: ["install", "installation"],
+		expansions: ["install", "installation"],
+	},
+	{
+		triggers: ["remember"],
+		expansions: ["memory", "durable", "recall"],
+	},
+	{
+		triggers: ["approval", "confirm", "confirmation", "deny", "permission", "permissions", "prompt"],
+		expansions: ["autonomy", "ask", "deny", "safety", "policy", "yolo", "read-only"],
+	},
+	{
+		triggers: ["agent", "agents", "dispatch", "fleet", "worker", "workers", "run"],
+		expansions: ["agent", "dispatch", "fleet", "profile", "worker", "journal", "run"],
+	},
+	{
+		triggers: ["model", "models", "provider", "runtime", "target", "targets", "endpoint"],
+		expansions: ["catalog", "model", "probe", "provider", "runtime", "target", "wireModels"],
+	},
+	{
+		triggers: ["auth", "credential", "credentials", "login", "oauth", "subscription"],
+		expansions: ["auth", "credential", "login", "oauth", "target", "runtime"],
+	},
+	{
+		triggers: ["memory", "evidence", "telemetry", "journal", "seal", "accountability", "provenance"],
+		expansions: ["accountability", "evidence", "findings", "memory", "seal", "run", "telemetry"],
+	},
+	{
+		triggers: ["validate", "validated", "validation", "verify", "verified", "test", "tests", "rigor"],
+		expansions: ["validation", "verify", "evidence", "rigor", "finish", "contract", "check"],
+	},
+	{
+		triggers: ["bash", "command", "commands", "shell", "terminal", "tool", "tools"],
+		expansions: ["bash", "command", "tool", "registry", "safety", "result", "cap"],
+	},
+	{
+		triggers: ["context", "compact", "compaction", "token", "tokens", "cache", "prompt"],
+		expansions: ["context", "compaction", "prompt", "token", "cache", "window"],
+	},
+	{
+		triggers: ["hook", "hooks", "middleware", "component", "components", "budget"],
+		expansions: ["middleware", "hook", "effect", "component", "budget", "registration"],
+	},
+	{
+		triggers: ["install", "upgrade", "uninstall", "doctor", "lifecycle", "reset", "paths"],
+		expansions: ["install", "lifecycle", "doctor", "reset", "state", "config", "paths"],
+	},
+	{
+		triggers: ["skill", "skills", "marketplace"],
+		expansions: ["skill", "skills", "marketplace", "discovery", "context"],
+	},
+	{
+		triggers: [
+			"systemone",
+			"jev",
+			"laya",
+			"openjev",
+			"shadow",
+			"fitted",
+			"calibration",
+			"calibrated",
+			"cut",
+			"cuts",
+			"decision",
+		],
+		expansions: ["systemone", "engine", "site", "shadow", "cut", "calibration", "dataset", "jev", "laya"],
+	},
+	{
+		triggers: ["docs", "documentation", "manual", "self"],
+		expansions: ["documentation", "docs", "context", "blueprint", "guide"],
+	},
+];
+
+interface RawSection {
+	file: string;
+	title: string;
+	heading: string;
+	breadcrumb: string;
+	level: number;
+	anchor: string;
+	startLine: number;
+	bodyStartLine: number;
+	endLine: number;
+	body: string;
+	bodyLines: string[];
+}
+
+interface IndexedSection extends RawSection {
+	bodyCounts: Map<string, number>;
+	headingCounts: Map<string, number>;
+	titleCounts: Map<string, number>;
+	bodyLength: number;
+	terms: Set<string>;
+	normalizedBody: string;
+	normalizedHeading: string;
+}
+
+interface DocsIndex {
+	root: string;
+	dir: string;
+	files: string[];
+	sections: IndexedSection[];
+	docCount: number;
+	avgBodyLength: number;
+	documentFrequency: Map<string, number>;
+}
+
+interface WeightedTerm {
+	term: string;
+	source: "query" | "alias";
+	weight: number;
+}
+
+interface QueryPlan {
+	query: string;
+	originalTokens: string[];
+	weightedTerms: WeightedTerm[];
+	expandedTerms: string[];
+	phrases: string[];
+}
+
+interface ScoredSection {
+	section: IndexedSection;
+	score: number;
+	matchedTerms: string[];
+	signals: string[];
+	coverage: number;
+}
+
+let cachedIndex: DocsIndex | null = null;
+
+/** Drop the cached docs index so the next `pancode_docs` call rebuilds it (`/reload prompts`). */
+export function resetDocsIndex(): void {
+	cachedIndex = null;
+}
+
+function normalizeText(text: string): string {
+	return text
+		.toLowerCase()
+		.replace(/[`'"’]/g, "")
+		.replace(/[^a-z0-9]+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function rawTokens(text: string): string[] {
+	return normalizeText(text).split(" ").filter(Boolean);
+}
+
+function stemToken(token: string): string {
+	if (token === "worktrees") return "worktree";
+	if (token.length <= 3) return token;
+	if (token.endsWith("ies") && token.length > 4) return `${token.slice(0, -3)}y`;
+	if (token.endsWith("ing") && token.length > 5) return token.slice(0, -3);
+	if (token.endsWith("ed") && token.length > 4) return token.slice(0, -2);
+	if (token.endsWith("es") && token.length > 4) return token.slice(0, -2);
+	if (token.endsWith("s") && token.length > 4) return token.slice(0, -1);
+	return token;
+}
+
+function tokenize(text: string, options: { keepStopWords?: boolean } = {}): string[] {
+	const tokens = rawTokens(text).map(stemToken);
+	return options.keepStopWords ? tokens : tokens.filter((token) => !STOP_WORDS.has(token));
+}
+
+function countTerms(tokens: ReadonlyArray<string>): Map<string, number> {
+	const counts = new Map<string, number>();
+	for (const token of tokens) counts.set(token, (counts.get(token) ?? 0) + 1);
+	return counts;
+}
+
+function unique<T>(items: ReadonlyArray<T>): T[] {
+	return [...new Set(items)];
+}
+
+export function slugify(heading: string, counts: Map<string, number>): string {
+	const base = heading
+		.replace(/<[^>]*>/g, "")
+		.replace(/[`*_~]/g, "")
+		.toLowerCase()
+		.replace(/[^\p{L}\p{N}_\s-]/gu, "")
+		.replace(/\s/g, "-");
+	const count = counts.get(base) ?? 0;
+	counts.set(base, count + 1);
+	return count > 0 ? `${base}-${count}` : base;
+}
+
+function titleFromFile(name: string): string {
+	return basename(name, ".md")
+		.split(/[-_]+/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(" ");
+}
+
+/**
+ * Split one markdown document into heading-delimited sections. Content before
+ * the first heading becomes an `(overview)` section. Fenced code blocks are
+ * tracked so a `#` inside a fence never starts a spurious section.
+ */
+function parseSections(file: string, markdown: string): RawSection[] {
+	const lines = markdown.split(/\r?\n/);
+	if (markdown.endsWith("\n")) lines.pop();
+	const sections: RawSection[] = [];
+	let title = titleFromFile(file);
+	let heading = "(overview)";
+	let level = 0;
+	let headingLine = 1;
+	let bodyStartLine = 1;
+	let buffer: string[] = [];
+	const headingState: DocsHeadingState = {};
+	const stack: Array<{ level: number; text: string }> = [];
+	const headingCounts = new Map<string, number>();
+
+	const breadcrumbFor = (): string => {
+		const parts = stack.map((entry) => entry.text);
+		if (heading === "(overview)") return title;
+		return parts.length > 0 ? parts.join(" > ") : heading;
+	};
+
+	const flush = (endLine: number): void => {
+		const body = buffer.join("\n").trim();
+		if (body.length > 0 || heading !== "(overview)") {
+			sections.push({
+				file,
+				title,
+				heading,
+				breadcrumb: breadcrumbFor(),
+				level,
+				anchor: heading === "(overview)" ? "" : `#${slugify(heading, headingCounts)}`,
+				startLine: headingLine,
+				bodyStartLine,
+				endLine: Math.max(headingLine, endLine),
+				body,
+				bodyLines: [...buffer],
+			});
+		}
+		buffer = [];
+	};
+
+	for (let i = 0; i < lines.length; i += 1) {
+		const line = lines[i] ?? "";
+		const headingMatch = docsHeading(line, headingState);
+		if (headingMatch) {
+			flush(i);
+			level = headingMatch.level;
+			heading = headingMatch.heading;
+			if (level === 1) title = heading;
+			while (stack.length > 0 && (stack[stack.length - 1]?.level ?? 0) >= level) stack.pop();
+			stack.push({ level, text: heading });
+			headingLine = i + 1;
+			bodyStartLine = i + 2;
+			continue;
+		}
+		buffer.push(line);
+	}
+	flush(lines.length);
+	return sections;
+}
+
+function indexSection(section: RawSection): IndexedSection {
+	const headingText = `${section.title} ${section.breadcrumb} ${section.heading}`;
+	const bodyTokens = tokenize(section.body);
+	const headingTokens = tokenize(headingText);
+	const titleTokens = tokenize(section.title);
+	const bodyCounts = countTerms(bodyTokens);
+	const headingCounts = countTerms(headingTokens);
+	const titleCounts = countTerms(titleTokens);
+	const terms = new Set([...bodyCounts.keys(), ...headingCounts.keys(), ...titleCounts.keys()]);
+	return {
+		...section,
+		bodyCounts,
+		headingCounts,
+		titleCounts,
+		bodyLength: Math.max(1, bodyTokens.length),
+		terms,
+		normalizedBody: normalizeText(section.body),
+		normalizedHeading: normalizeText(headingText),
+	};
+}
+
+function candidateDocFiles(root: string): string[] {
+	const docsDir = join(root, "docs");
+	const files: string[] = [];
+	const walk = (dir: string): void => {
+		let entries: import("node:fs").Dirent[];
+		try {
+			entries = readdirSync(dir, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+			const absolute = join(dir, entry.name);
+			if (entry.isDirectory()) {
+				walk(absolute);
+				continue;
+			}
+			if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+				files.push(relative(root, absolute).replaceAll("\\", "/"));
+			}
+		}
+	};
+	walk(docsDir);
+	for (const name of ["README.md", "CHANGELOG.md"]) {
+		if (existsSync(join(root, name))) files.push(name);
+	}
+	return files;
+}
+
+function buildDocumentFrequency(sections: ReadonlyArray<IndexedSection>): Map<string, number> {
+	const df = new Map<string, number>();
+	for (const section of sections) {
+		for (const term of section.terms) df.set(term, (df.get(term) ?? 0) + 1);
+	}
+	return df;
+}
+
+function loadDocsIndex(): { ok: true; index: DocsIndex } | { ok: false; message: string } {
+	let root: string;
+	try {
+		// resolvePackageRoot() caches its answer for the life of the process, so
+		// once any caller has resolved it, a later PANCODE_PACKAGE_ROOT change
+		// (a test fixture, most commonly) has no effect on that cached value.
+		// Reading the override directly here, rather than trusting the shared
+		// cache, keeps this module's notion of "docs root" live even when it
+		// isn't the first thing in the process to have resolved a package root.
+		const override = process.env.PANCODE_PACKAGE_ROOT?.trim();
+		if (override) {
+			root = resolve(override);
+		} else {
+			root = resolvePackageRoot();
+		}
+	} catch (err) {
+		return { ok: false, message: err instanceof Error ? err.message : String(err) };
+	}
+	const docsDir = join(root, "docs");
+	if (cachedIndex && cachedIndex.dir === docsDir) return { ok: true, index: cachedIndex };
+	const files = candidateDocFiles(root);
+	if (files.length === 0) return { ok: false, message: `bundled docs directory not found at ${docsDir}` };
+
+	const sections: IndexedSection[] = [];
+	const indexedFiles: string[] = [];
+	let docCount = 0;
+	for (const file of files) {
+		let raw: string;
+		try {
+			raw = readFileSync(join(root, file), "utf8");
+		} catch {
+			continue;
+		}
+		docCount += 1;
+		indexedFiles.push(file);
+		for (const section of parseSections(file, raw)) sections.push(indexSection(section));
+	}
+	if (sections.length === 0) return { ok: false, message: `no markdown sections found under ${docsDir}` };
+	const totalLength = sections.reduce((sum, section) => sum + section.bodyLength, 0);
+	cachedIndex = {
+		root,
+		dir: docsDir,
+		files: indexedFiles,
+		sections,
+		docCount,
+		avgBodyLength: totalLength / sections.length,
+		documentFrequency: buildDocumentFrequency(sections),
+	};
+	return { ok: true, index: cachedIndex };
+}
+
+function makeQueryPlan(query: string): QueryPlan {
+	const originalTokens = unique(tokenize(query));
+	const originalSet = new Set(originalTokens);
+	const expanded: string[] = [];
+	for (const rule of VOCABULARY_ALIASES) {
+		const triggerTokens = rule.triggers.flatMap((trigger) => tokenize(trigger));
+		if (!triggerTokens.some((token) => originalSet.has(token))) continue;
+		expanded.push(...rule.expansions.flatMap((term) => tokenize(term)));
+	}
+	const expandedTerms = unique(expanded).filter((term) => !originalSet.has(term));
+	const weightedTerms: WeightedTerm[] = [
+		...originalTokens.map((term) => ({ term, source: "query" as const, weight: 1 })),
+		...expandedTerms.map((term) => ({ term, source: "alias" as const, weight: EXPANDED_TERM_WEIGHT })),
+	];
+	const normalizedQuery = normalizeText(query);
+	const phraseCandidates = [
+		normalizedQuery,
+		...rawTokens(query)
+			.slice(0, -1)
+			.map((token, index, tokens) => `${token} ${tokens[index + 1] ?? ""}`.trim()),
+	];
+	const phrases = unique(phraseCandidates.filter((phrase) => phrase.includes(" ") && phrase.length >= 5));
+	return { query, originalTokens, weightedTerms, expandedTerms, phrases };
+}
+
+function idf(index: DocsIndex, term: string): number {
+	const df = index.documentFrequency.get(term) ?? 0;
+	return Math.log(1 + (index.sections.length - df + 0.5) / (df + 0.5));
+}
+
+function bm25(count: number, sectionLength: number, avgLength: number): number {
+	if (count <= 0) return 0;
+	return (count * (BODY_K1 + 1)) / (count + BODY_K1 * (1 - BODY_B + BODY_B * (sectionLength / avgLength)));
+}
+
+function phraseSignals(section: IndexedSection, phrases: ReadonlyArray<string>): { score: number; signals: string[] } {
+	let score = 0;
+	const signals: string[] = [];
+	for (const phrase of phrases) {
+		if (section.normalizedHeading.includes(phrase)) {
+			score += PHRASE_HEADING_BOOST;
+			signals.push(`heading phrase: ${phrase}`);
+		}
+		if (section.normalizedBody.includes(phrase)) {
+			score += PHRASE_BODY_BOOST;
+			signals.push(`body phrase: ${phrase}`);
+		}
+	}
+	return { score, signals };
+}
+
+function scoreSection(index: DocsIndex, section: IndexedSection, plan: QueryPlan): ScoredSection | null {
+	let score = 0;
+	const matchedTerms: string[] = [];
+	const signals: string[] = [];
+	let originalHits = 0;
+	for (const weighted of plan.weightedTerms) {
+		const bodyCount = section.bodyCounts.get(weighted.term) ?? 0;
+		const headingCount = section.headingCounts.get(weighted.term) ?? 0;
+		const titleCount = section.titleCounts.get(weighted.term) ?? 0;
+		if (bodyCount + headingCount + titleCount === 0) continue;
+		const termIdf = idf(index, weighted.term);
+		const bodyScore = termIdf * bm25(bodyCount, section.bodyLength, index.avgBodyLength);
+		const headingScore = headingCount > 0 ? termIdf * HEADING_WEIGHT : 0;
+		const titleScore = titleCount > 0 ? termIdf * TITLE_WEIGHT : 0;
+		score += weighted.weight * (bodyScore + headingScore + titleScore);
+		matchedTerms.push(weighted.term);
+		if (weighted.source === "query") originalHits += 1;
+		if (headingCount > 0) signals.push(`heading: ${weighted.term}`);
+		else if (titleCount > 0) signals.push(`title: ${weighted.term}`);
+	}
+	const phrases = phraseSignals(section, plan.phrases);
+	score += phrases.score;
+	signals.push(...phrases.signals);
+	const coverage = plan.originalTokens.length === 0 ? 0 : originalHits / plan.originalTokens.length;
+	score += coverage * COVERAGE_BOOST;
+	if (score <= 0) return null;
+	return {
+		section,
+		score,
+		matchedTerms: unique(matchedTerms).slice(0, 12),
+		signals: unique(signals).slice(0, 6),
+		coverage,
+	};
+}
+
+/**
+ * Keep historical records and GUI design blueprints searchable, but let current
+ * operator guidance lead ordinary self-help queries. Their paths and names are
+ * the status markers already used by the docs tree; an explicit history/design
+ * query removes the demotion so those documents remain directly retrievable.
+ */
+function prioritizeCurrentGuidance(entry: ScoredSection, query: string): ScoredSection {
+	if (!NONCURRENT_REFERENCE_PATH.test(entry.section.file) || EXPLICIT_NONCURRENT_INTENT.test(query)) return entry;
+	return {
+		...entry,
+		score: entry.score * NONCURRENT_REFERENCE_WEIGHT,
+		signals: unique(["historical/design reference demotion", ...entry.signals]).slice(0, 6),
+	};
+}
+
+function cleanSnippet(text: string): string {
+	return text
+		.replace(/^\s{0,3}#{1,6}\s+/gm, "")
+		.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+		.replace(/`([^`]+)`/g, "$1")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function snippetFor(section: IndexedSection, plan: QueryPlan): { text: string; startLine: number; endLine: number } {
+	const needles = unique([...plan.phrases, ...plan.originalTokens, ...plan.expandedTerms.slice(0, 8)]).filter(
+		(needle) => needle.length > 0,
+	);
+	// Anchor the snippet on the line matching the MOST query needles, not the
+	// first line matching any. A section often opens with prose that mentions
+	// one query term while the line that actually answers (a parameter list, an
+	// enum) sits deeper; snippeting the intro teases the model into re-querying
+	// the same section instead of reading the answer. Ties keep the earliest.
+	let hitLine = -1;
+	let bestNeedleCount = 0;
+	for (let i = 0; i < section.bodyLines.length; i += 1) {
+		const normalized = normalizeText(section.bodyLines[i] ?? "");
+		let needleCount = 0;
+		for (const needle of needles) {
+			if (normalized.includes(needle)) needleCount += 1;
+		}
+		if (needleCount > bestNeedleCount) {
+			bestNeedleCount = needleCount;
+			hitLine = i;
+		}
+	}
+	if (hitLine < 0) hitLine = section.bodyLines.findIndex((line) => line.trim().length > 0);
+	if (hitLine < 0) {
+		return {
+			text: section.heading === "(overview)" ? section.title : section.heading,
+			startLine: section.startLine,
+			endLine: section.startLine,
+		};
+	}
+	const from = Math.max(0, hitLine - SNIPPET_CONTEXT_LINES);
+	const to = Math.min(section.bodyLines.length - 1, hitLine + SNIPPET_CONTEXT_LINES);
+	let snippet = cleanSnippet(section.bodyLines.slice(from, to + 1).join(" "));
+	if (snippet.length > SNIPPET_MAX) snippet = `${snippet.slice(0, SNIPPET_MAX - 3).trimEnd()}...`;
+	return {
+		text: snippet,
+		startLine: section.bodyStartLine + from,
+		endLine: section.bodyStartLine + to,
+	};
+}
+
+function clampDocsLimit(value: unknown): number {
+	if (typeof value === "number" && Number.isFinite(value) && value > 0) return Math.min(Math.floor(value), MAX_LIMIT);
+	return DEFAULT_LIMIT;
+}
+
+function resultPayload(index: DocsIndex, plan: QueryPlan, scored: ReadonlyArray<ScoredSection>) {
+	const results = scored.map((entry, i) => {
+		const snippet = snippetFor(entry.section, plan);
+		return {
+			rank: i + 1,
+			file: entry.section.file,
+			heading: entry.section.heading,
+			breadcrumb: entry.section.breadcrumb,
+			anchor: entry.section.anchor,
+			lines: { start: entry.section.startLine, end: entry.section.endLine },
+			read: {
+				tool: "read",
+				args: {
+					path: join(index.root, entry.section.file),
+					offset: entry.section.startLine,
+					limit: entry.section.endLine - entry.section.startLine + 1,
+					line_numbers: true,
+				},
+			},
+			snippetLines: { start: snippet.startLine, end: snippet.endLine },
+			snippet: snippet.text,
+			score: Number(entry.score.toFixed(3)),
+			coverage: Number(entry.coverage.toFixed(2)),
+			matchedTerms: entry.matchedTerms,
+			signals: entry.signals,
+		};
+	});
+	return {
+		version: 2,
+		query: plan.query,
+		guidance: guidanceForDocs(plan.query),
+		corpus: {
+			docs: index.docCount,
+			sections: index.sections.length,
+			files: index.files,
+		},
+		terms: {
+			query: plan.originalTokens,
+			expanded: plan.expandedTerms,
+			phrases: plan.phrases,
+		},
+		resultCount: results.length,
+		results,
+		followUp:
+			results.length > 0
+				? 'Use a relevant hit\'s read.tool and read.args to read exactly its cited section at the bundled absolute path. Do not read the whole guide for a narrow question. Stop once the question is answered; for other sections, call gateway(op="call", capability="pancode_docs", args={query:"<more specific terms>"}).'
+				: "Try PanCode vocabulary such as target, autonomy, dispatch, evidence, middleware, context, validation, install, or model catalog.",
+	};
+}
+
+export type DocsCorpusOutcome =
+	| { ok: true; payload: Record<string, unknown>; fileCount: number }
+	| { ok: false; message: string };
+
+/**
+ * List the bundled-docs corpus without running a query: the file set plus the
+ * doc/section counts a successful search already carries under `corpus`. This
+ * lets the model inspect the corpus through `pancode_docs` with no query before
+ * choosing a search term. Bounded: the corpus is a handful of files.
+ */
+export function listDocsCorpus(): DocsCorpusOutcome {
+	const loaded = loadDocsIndex();
+	if (!loaded.ok) return { ok: false, message: loaded.message };
+	const index = loaded.index;
+	const payload = {
+		version: 2,
+		corpus: {
+			docs: index.docCount,
+			sections: index.sections.length,
+			files: index.files,
+		},
+		followUp:
+			'Call gateway(op="call", capability="pancode_docs", args={query:"<terms>"}) to search these bundled docs; omit query to list the corpus. They ship with PanCode and are not workspace files. ' +
+			"Try PanCode vocabulary such as target, autonomy, dispatch, evidence, middleware, context, validation, install, or model catalog.",
+	};
+	return { ok: true, payload, fileCount: index.files.length };
+}
+
+export type DocsSearchOutcome =
+	| {
+			ok: true;
+			payload: Record<string, unknown>;
+			/** Sections returned after ranking and the limit. */
+			resultCount: number;
+			/** Sections that scored at all; the omitted count is total - result. */
+			rankedTotal: number;
+			/** Exact continuation suggestion for empty results. */
+			next: string | null;
+	  }
+	| { ok: false; message: string };
+
+/**
+ * Rank bundled-doc sections for a query. Pure retrieval: the caller (the
+ * context tool) owns argument validation, the observation envelope, and JSON
+ * rendering of the returned payload.
+ */
+export function searchDocs(query: string, limitArg: unknown): DocsSearchOutcome {
+	const plan = makeQueryPlan(query);
+	if (plan.originalTokens.length === 0) return { ok: false, message: "query has no searchable terms" };
+	const loaded = loadDocsIndex();
+	if (!loaded.ok) return { ok: false, message: loaded.message };
+	const limit = clampDocsLimit(limitArg);
+	const ranked = loaded.index.sections
+		.map((section) => {
+			const scored = scoreSection(loaded.index, section, plan);
+			return scored === null ? null : prioritizeCurrentGuidance(scored, query);
+		})
+		.filter((entry): entry is ScoredSection => entry !== null)
+		.sort(
+			(a, b) =>
+				b.score - a.score ||
+				b.coverage - a.coverage ||
+				a.section.file.localeCompare(b.section.file) ||
+				a.section.startLine - b.section.startLine ||
+				a.section.heading.localeCompare(b.section.heading),
+		);
+	const shown = ranked.slice(0, limit);
+	// Empty results still carry an exact continuation: retry with the closest
+	// vocabulary expansion when one triggered, otherwise a broad known term.
+	const next = shown.length === 0 ? `query=${plan.expandedTerms[0] ?? "overview"}` : null;
+	const payload = {
+		...resultPayload(loaded.index, plan, shown),
+		omitted: ranked.length - shown.length,
+		...(next !== null ? { next } : {}),
+	};
+	return { ok: true, payload, resultCount: shown.length, rankedTotal: ranked.length, next };
+}

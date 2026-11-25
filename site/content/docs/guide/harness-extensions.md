@@ -1,0 +1,71 @@
+# Write and install extensions
+
+Install and write extensions that declare what they may do.
+
+## Plugin or extension
+
+A plugin carries content such as skills, prompts, and playbooks. An extension is code that runs in its own process, declares everything it may do, and loads only after you approve those capabilities.
+
+## Manage extensions
+
+```sh
+pancode extensions list
+pancode extensions install <path>
+pancode extensions disable <id>
+pancode extensions remove <id>
+```
+
+`install` prints what the package would be allowed to do and records the digest of that declaration. If the manifest changes between review and apply, the install refuses and asks for a fresh review. In a session, `/extensions` shows each package's state, commands, and confinement.
+
+| Command | What it does |
+| --- | --- |
+| `init <id> [--template <name>]` | Scaffold a manifest, entrypoint, and test |
+| `validate <path>` | Check the manifest; print the envelope and its digest |
+| `test <path>` | Run the package's `*.test.ts` files |
+| `install <path> [--user\|--project]` | Review and install; user scope by default |
+| `enable`, `disable`, `remove <id>` | Change one installed copy |
+| `run <id> <command>` | Run one extension command headlessly |
+
+Prefix each with `pancode extensions`. `enable`, `disable`, and `remove` act on the project copy when one exists, unless `--user` or `--project` selects one.
+
+## Where packages live
+
+User packages live under `<configDir>/extensions/<id>/`, project packages under `.pancode/extensions/<id>/`. A project package shadows the user package with the same ID, even when disabled, but only once you approve project extensions for the workspace:
+
+```sh
+pancode config trust extensions
+pancode config trust extensions --hash <sha256>
+```
+
+The first is a read-only review; the second approves it. Until then a project copy lists as `untrusted` and the user copy keeps loading.
+
+## What an extension can add
+
+Hooks at prompt submit and around tool calls, runtime tools the model can call, status lines, panels, and work on a timer. A `before_tool` hook can refuse a call. At `api: 2`, a hook can pin one small context block that stays in the conversation, a tool can return a short `summary` with a `detail_ref` the model pages through on demand, and `runtime.promote` attaches up to four of the package's tools to every request. The runtime runs inside bubblewrap on Linux or Seatbelt on macOS when a backend exists; without one, it runs with your permissions.
+
+Approval covers the manifest's `runtime` block, the capability envelope: commands, hooks, tools with their action class, interface slots, content the runtime may see (`prompt`, `tool-args`, `tool-results`, `assistant-text`), file roots, and whether it may run programs or use the network.
+
+Command tools under `capabilities.tools` run a `node` or `python3` script per call. The command runs inside your session's OS sandbox when admission contains the call, as it contains `bash` at `default`; otherwise it runs with your access. Prefer a runtime tool when confinement matters.
+
+## Write one
+
+```sh
+pancode extensions init <id> --template status
+```
+
+The templates are `status`, `hook`, `panel`, `tool`, and `workspace`. Follow [the extension tutorial](/tutorials/write-an-extension-with-declared-capabilities.html) for the whole path. A project's own extensions also need `pancode config trust extensions`.
+
+The manifest, `pancode-extension.yaml`, requires `id`, `version`, and `description`:
+
+```yaml
+id: lab-guard
+version: 1.0.0
+description: Refuse writes to protected paths.
+runtime:
+  api: 2
+  entrypoint: runtime/extension.ts
+  commands:
+    - { name: protect, description: Protect a path against write and edit calls. }
+```
+
+The code must register exactly what the manifest declares, and PanCode never installs dependencies. Run `validate` and `test`, then `install`; a running session picks it up after `/reload extensions`.

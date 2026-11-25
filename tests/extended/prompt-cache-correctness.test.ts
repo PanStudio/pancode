@@ -1,0 +1,622 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { deepStrictEqual, notStrictEqual, strictEqual, throws } from "node:assert/strict";
+import { describe, it } from "node:test";
+import { Type } from "typebox";
+import { canonicalJson } from "../../src/core/canonical-json.js";
+import { sha256Hex } from "../../src/core/hash.js";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import type { CompiledSessionPrompt } from "../../src/domains/prompts/compiler.js";
+import type { PromptsContract } from "../../src/domains/prompts/contract.js";
+import type { ProvidersContract } from "../../src/domains/providers/index.js";
+import type { SessionEntry } from "../../src/domains/session/entries.js";
+import { createEngineAgent } from "../../src/engine/agent.js";
+import { buildReplayAgentMessagesFromTurns } from "../../src/interactive/chat-renderer.js";
+import { toolSignatureFromState } from "../../src/session-control/chat-loop-messages.js";
+import {
+	attachedToolSchemaBytes,
+	attachedToolSchemasFromState,
+	type MainPromptCacheIdentityInput,
+	mainPromptCacheIdentity,
+} from "../../src/session-control/prompt-cache-identity.js";
+import { stringifyPreview, truncateReplayText } from "../../src/session-control/session-replay-messages.js";
+import { createTurnContext } from "../../src/session-control/turn-context.js";
+import type { TurnMiddleware } from "../../src/session-control/turn-middleware.js";
+import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
+import type { ToolRegistry } from "../../src/tools/registry-contract.js";
+
+function identityInput(): MainPromptCacheIdentityInput {
+	return {
+		targetId: "local",
+		runtimeId: "llama.cpp",
+		wireModelId: "stable-model",
+		autonomy: "default",
+		sessionId: "session-1",
+		cwd: "/workspace",
+		workingContextPaths: ["src/b.ts", "src/a.ts"],
+		contextWindowSource: "loaded",
+		promptInputEpoch: "1:1",
+		sessionInputs: {
+			provider: "local",
+			model: "stable-model",
+			contextWindow: 32_768,
+			providerSupportsTools: true,
+			thinkingGuidance: "Use the runtime envelope.",
+			toolNames: ["read"],
+			coordinatorCapabilities: ["read"],
+			memorySection: "# Memory\n\n- stable",
+		},
+		attachedToolSchemas: [
+			{
+				name: "read",
+				description: "Read one file.",
+				parameters: { type: "object", properties: { path: { type: "string" } } },
+			},
+		],
+	};
+}
+
+function compiledPrompt(systemPrompt: string): CompiledSessionPrompt {
+	return {
+		systemPrompt,
+		systemPromptHash: sha256Hex(systemPrompt),
+		tokenEstimate: 1,
+		sections: [{ id: "test", tokenEstimate: 1 }],
+		fragmentManifest: [],
+	};
+}
+
+describe("main compiled-prompt cache identity", () => {
+	it("is deterministic and changes for every live byte-affecting input class", () => {
+		const base = identityInput();
+		const baseSchema = base.attachedToolSchemas[0];
+		if (!baseSchema) throw new Error("test fixture requires one attached tool schema");
+		const baseKey = mainPromptCacheIdentity(base);
+		strictEqual(
+			baseKey,
+			mainPromptCacheIdentity({ ...identityInput(), workingContextPaths: ["src/a.ts", "src/b.ts"] }),
+			"working-context set order must not churn the cache",
+		);
+
+		const variants: Array<[string, MainPromptCacheIdentityInput]> = [
+			[
+				"turn constraints",
+				{
+					...identityInput(),
+					sessionInputs: { ...identityInput().sessionInputs, turnConstraints: { mode: "answer", allowedTools: [] } },
+				},
+			],
+			[
+				"ready skill inventory",
+				{ ...identityInput(), sessionInputs: { ...identityInput().sessionInputs, readySkillCount: 0 } },
+			],
+			["prompt input epoch", { ...identityInput(), promptInputEpoch: "2:1" }],
+			["target", { ...identityInput(), targetId: "remote" }],
+			["runtime", { ...identityInput(), runtimeId: "ollama" }],
+			["wire model", { ...identityInput(), wireModelId: "changed-model" }],
+			["autonomy", { ...identityInput(), autonomy: "yolo" }],
+			["session", { ...identityInput(), sessionId: "session-2" }],
+			["cwd", { ...identityInput(), cwd: "/other-workspace" }],
+			["working-context membership", { ...identityInput(), workingContextPaths: ["src/a.ts"] }],
+			[
+				"context window",
+				{ ...identityInput(), sessionInputs: { ...identityInput().sessionInputs, contextWindow: 16_384 } },
+			],
+			["context source", { ...identityInput(), contextWindowSource: "probe" }],
+			[
+				"tool support",
+				{ ...identityInput(), sessionInputs: { ...identityInput().sessionInputs, providerSupportsTools: false } },
+			],
+			[
+				"thinking guidance",
+				{ ...identityInput(), sessionInputs: { ...identityInput().sessionInputs, thinkingGuidance: "Changed." } },
+			],
+			[
+				"tool names",
+				{ ...identityInput(), sessionInputs: { ...identityInput().sessionInputs, toolNames: ["read", "grep"] } },
+			],
+			[
+				"memory",
+				{ ...identityInput(), sessionInputs: { ...identityInput().sessionInputs, memorySection: "# Memory\n\n- changed" } },
+			],
+			[
+				"schema name",
+				{
+					...identityInput(),
+					attachedToolSchemas: [{ ...baseSchema, name: "read_file" }],
+				},
+			],
+			[
+				"schema description",
+				{
+					...identityInput(),
+					attachedToolSchemas: [{ ...baseSchema, description: "Changed." }],
+				},
+			],
+			[
+				"schema parameters",
+				{
+					...identityInput(),
+					attachedToolSchemas: [{ ...baseSchema, parameters: { type: "object", properties: {} } }],
+				},
+			],
+			[
+				"nested schema property order",
+				{
+					...identityInput(),
+					attachedToolSchemas: [
+						{
+							...baseSchema,
+							parameters: {
+								type: "object",
+								properties: { offset: { type: "number" }, path: { type: "string" } },
+							},
+						},
+					],
+				},
+			],
+			[
+				"schema required order",
+				{
+					...identityInput(),
+					attachedToolSchemas: [
+						{
+							...baseSchema,
+							parameters: {
+								type: "object",
+								properties: { path: { type: "string" }, offset: { type: "number" } },
+								required: ["offset", "path"],
+							},
+						},
+					],
+				},
+			],
+		];
+		for (const [label, variant] of variants) {
+			notStrictEqual(mainPromptCacheIdentity(variant), baseKey, `${label} must invalidate reuse`);
+		}
+	});
+
+	it("preserves exact provider ordering for schema objects and tool arrays", () => {
+		const schemaA = {
+			name: "read",
+			description: "Read one file.",
+			parameters: {
+				type: "object",
+				properties: { path: { type: "string" }, offset: { type: "number" } },
+				required: ["path", "offset"],
+			},
+		};
+		const schemaB = {
+			name: "grep",
+			description: "Search files.",
+			parameters: { type: "object", properties: { pattern: { type: "string" } }, required: ["pattern"] },
+		};
+		const reorderedProperties = {
+			...schemaA,
+			parameters: {
+				type: "object",
+				properties: { offset: { type: "number" }, path: { type: "string" } },
+				required: ["path", "offset"],
+			},
+		};
+		const reorderedRequired = {
+			...schemaA,
+			parameters: { ...schemaA.parameters, required: ["offset", "path"] },
+		};
+		const base = identityInput();
+		const key = mainPromptCacheIdentity({ ...base, attachedToolSchemas: [schemaA, schemaB] });
+
+		strictEqual(attachedToolSchemaBytes([schemaA, schemaB]), JSON.stringify([schemaA, schemaB]));
+		notStrictEqual(
+			mainPromptCacheIdentity({ ...base, attachedToolSchemas: [reorderedProperties, schemaB] }),
+			key,
+			"nested property insertion order must invalidate reuse",
+		);
+		notStrictEqual(
+			mainPromptCacheIdentity({ ...base, attachedToolSchemas: [reorderedRequired, schemaB] }),
+			key,
+			"required array order must invalidate reuse",
+		);
+		notStrictEqual(
+			mainPromptCacheIdentity({ ...base, attachedToolSchemas: [schemaB, schemaA] }),
+			key,
+			"attached tool array order must invalidate reuse",
+		);
+		notStrictEqual(toolSignatureFromState([schemaA, schemaB]), toolSignatureFromState([reorderedProperties, schemaB]));
+		notStrictEqual(toolSignatureFromState([schemaA, schemaB]), toolSignatureFromState([reorderedRequired, schemaB]));
+		notStrictEqual(toolSignatureFromState([schemaA, schemaB]), toolSignatureFromState([schemaB, schemaA]));
+		notStrictEqual(toolSignatureFromState([schemaA]), toolSignatureFromState([{ ...schemaA, name: "read_file" }]));
+		notStrictEqual(toolSignatureFromState([schemaA]), toolSignatureFromState([{ ...schemaA, description: "Changed." }]));
+	});
+
+	it("fails closed when attached schemas cannot be serialized", () => {
+		const circular: Record<string, unknown> = { type: "object" };
+		circular.self = circular;
+		throws(
+			() => attachedToolSchemaBytes([{ name: "circular", description: "Invalid.", parameters: circular }]),
+			/attached tool schemas are not JSON-serializable/u,
+		);
+		throws(
+			() =>
+				mainPromptCacheIdentity({
+					...identityInput(),
+					attachedToolSchemas: [{ name: "bigint", description: "Invalid.", parameters: { value: 1n } }],
+				}),
+			/attached tool schemas are not JSON-serializable/u,
+		);
+	});
+
+	it("resolves runtime inputs and exact attached schemas before deciding reuse", async () => {
+		let compileCalls = 0;
+		let memorySection = "# Memory\n\n- first";
+		let readySkillCount = 1;
+		const prompts: PromptsContract = {
+			inputEpoch: () => "1:1",
+			async compileSessionPrompt(input) {
+				compileCalls += 1;
+				return compiledPrompt(canonicalJson(input.sessionInputs));
+			},
+			async compileWorkerPrompt() {
+				throw new Error("not used");
+			},
+		};
+		const state = createTurnState("off");
+		const runtime = {
+			targetId: "local",
+			runtimeId: "llama.cpp",
+			wireModelId: "stable-model",
+			runtimeResolution: {
+				capabilityDecisions: { tools: true },
+				contextWindowDetails: { effectiveContextWindow: 32_768, contextWindowSource: "loaded" },
+			},
+			agent: {
+				state: {
+					systemPrompt: "",
+					thinkingLevel: "off",
+					messages: [],
+					model: { pancode: { quirks: { thinking: { guidance: "Use the runtime envelope." } } } },
+					tools: [
+						{
+							name: "read",
+							description: "Read one file.",
+							parameters: Type.Object({ path: Type.String() }),
+						},
+					] as unknown[],
+				},
+			},
+		};
+		const agentRuntime = runtime as unknown as AgentRuntime;
+		const context = createTurnContext({
+			state,
+			getSettings: () => ({ safety: { autonomy: "default" }, context: { semantic: { enabled: false } } }) as never,
+			providers: { getRuntime: () => undefined } as unknown as ProvidersContract,
+			prompts,
+			toolRegistry: { get: () => undefined, listAll: () => [] } as unknown as ToolRegistry,
+			middleware: {} as TurnMiddleware,
+			getMemorySection: () => memorySection,
+			getReadySkillCount: () => readySkillCount,
+			emitNotice: () => {},
+		});
+
+		await context.ensureSessionPrompt(agentRuntime);
+		await context.ensureSessionPrompt(agentRuntime);
+		strictEqual(compileCalls, 1, "identical resolved inputs must reuse the compile");
+
+		runtime.agent.state.tools = [
+			{ name: "read", description: "Changed description.", parameters: Type.Object({ path: Type.String() }) },
+		];
+		await context.ensureSessionPrompt(agentRuntime);
+		strictEqual(compileCalls, 2, "attached schema descriptions must invalidate reuse");
+
+		runtime.agent.state.tools = [
+			{
+				name: "read",
+				description: "Changed description.",
+				parameters: Type.Object({ path: Type.String(), offset: Type.Optional(Type.Number()) }),
+			},
+		];
+		await context.ensureSessionPrompt(agentRuntime);
+		strictEqual(compileCalls, 3, "attached schema parameters must invalidate reuse");
+
+		runtime.runtimeResolution.contextWindowDetails = {
+			effectiveContextWindow: 16_384,
+			contextWindowSource: "probe",
+		} as never;
+		await context.ensureSessionPrompt(agentRuntime);
+		strictEqual(compileCalls, 4, "resolved context-window inputs must invalidate reuse");
+
+		memorySection = "# Memory\n\n- second";
+		const frozenPrompt = await context.ensureSessionPrompt(agentRuntime);
+		strictEqual(compileCalls, 4, "memory changes must preserve the session's frozen compile");
+		strictEqual(JSON.parse(frozenPrompt?.systemPrompt ?? "").memorySection, "# Memory\n\n- first");
+
+		readySkillCount = 0;
+		const refreshedPrompt = await context.ensureSessionPrompt(agentRuntime);
+		strictEqual(compileCalls, 6, "changed inventory makes the prompt cold, so a second compile incorporates live memory");
+		strictEqual(JSON.parse(refreshedPrompt?.systemPrompt ?? "").memorySection, memorySection);
+		state.currentTurnConstraints = { mode: "answer", allowedTools: ["read"] };
+		const scopedPrompt = await context.ensureSessionPrompt(agentRuntime);
+		strictEqual(compileCalls, 6, "turn scope must preserve the session's standing compile");
+		const renderedInputs = JSON.parse(scopedPrompt?.systemPrompt ?? "");
+		strictEqual(renderedInputs.readySkillCount, 0);
+		strictEqual(renderedInputs.turnConstraints, undefined);
+		await context.ensureSessionPrompt(agentRuntime);
+		strictEqual(compileCalls, 6, "unchanged scope must preserve the compiled result");
+
+		strictEqual(attachedToolSchemasFromState(runtime.agent.state.tools)[0]?.description, "Changed description.");
+		context.dispose();
+	});
+
+	it("recompiles on prompt-input epoch changes and reports only byte changes as cold", async () => {
+		let compileCalls = 0;
+		let epoch = "1:1";
+		let promptBody = "# stable prompt";
+		const promptEntries: Array<{ customType?: string }> = [];
+		const prompts: PromptsContract = {
+			inputEpoch: () => epoch,
+			async compileSessionPrompt() {
+				compileCalls += 1;
+				return compiledPrompt(promptBody);
+			},
+			async compileWorkerPrompt() {
+				throw new Error("not used");
+			},
+		};
+		const state = createTurnState("off");
+		const runtime = {
+			targetId: "local",
+			runtimeId: "llama.cpp",
+			wireModelId: "stable-model",
+			runtimeResolution: {
+				capabilityDecisions: { tools: true },
+				contextWindowDetails: { effectiveContextWindow: 32_768, contextWindowSource: "loaded" },
+			},
+			agent: createEngineAgent({
+				initialState: {
+					systemPrompt: "",
+					thinkingLevel: "off",
+					messages: [],
+					tools: [],
+				},
+			}).agent,
+		};
+		const transcriptNotices: string[] = [];
+		const cacheNotices: string[][] = [];
+		const context = createTurnContext({
+			state,
+			getSettings: () => ({ safety: { autonomy: "default" }, context: { semantic: { enabled: false } } }) as never,
+			providers: { getRuntime: () => undefined } as unknown as ProvidersContract,
+			prompts,
+			session: {
+				current: () => ({
+					id: "prompt-epoch-session",
+					cwd: "/workspace",
+					cwdHash: "prompt-epoch",
+					createdAt: "2026-09-01T00:00:00.000Z",
+					endedAt: null,
+					model: "stable-model",
+					target: "local",
+					pancodeVersion: "0.4.2",
+					piMonoVersion: "0.84.0",
+					platform: "test",
+					nodeVersion: process.version,
+				}),
+				appendEntry: (entry: { customType?: string }) => {
+					promptEntries.push(entry);
+					return entry;
+				},
+			} as never,
+			middleware: {} as TurnMiddleware,
+			emitNotice: (text: string) => transcriptNotices.push(text),
+			emitCacheNotice: (reasons) => cacheNotices.push([...reasons]),
+		});
+		const agentRuntime = runtime as unknown as AgentRuntime;
+
+		await context.ensureSessionPrompt(agentRuntime);
+		context.logPromptCompileIfPending();
+		await context.ensureSessionPrompt(agentRuntime);
+		strictEqual(compileCalls, 1, "unchanged epoch must reuse the compile");
+
+		epoch = "2:1";
+		await context.ensureSessionPrompt(agentRuntime);
+		context.logPromptCompileIfPending();
+		strictEqual(compileCalls, 2, "an epoch change must re-enter the compiler");
+		strictEqual(promptEntries.length, 1, "byte-identical output must not log another prompt compile");
+		context.consumeExpectedColdReasons("llama.cpp");
+		const stablePayload = context.promptCachePayloadForAssistant({ input: 1 } as never) as {
+			expectedColdReasons?: string[];
+		};
+		strictEqual(stablePayload.expectedColdReasons, undefined, "byte-identical output must not report a cold prefix");
+
+		epoch = "3:1";
+		promptBody = "# changed prompt";
+		await context.ensureSessionPrompt(agentRuntime);
+		context.logPromptCompileIfPending();
+		strictEqual(compileCalls, 3);
+		strictEqual(promptEntries.length, 2, "changed prompt bytes must append promptRecompiled telemetry");
+		strictEqual(promptEntries[1]?.customType, "promptRecompiled");
+		context.consumeExpectedColdReasons("llama.cpp");
+		const changedPayload = context.promptCachePayloadForAssistant({ input: 1 } as never) as {
+			expectedColdReasons?: string[];
+		};
+		deepStrictEqual(changedPayload.expectedColdReasons, ["prompt_recompiled"]);
+		// Expected-cold telemetry goes to the footer's notice slot with its reasons,
+		// never to the transcript.
+		deepStrictEqual(cacheNotices, [["prompt_recompiled"]]);
+		deepStrictEqual(transcriptNotices, []);
+
+		// M-21: a compile superseded before it was recorded (a resume prices its budget before the turn restores its
+		// thinking level) is not the prompt the next one follows: back to the recorded bytes is no recompile.
+		epoch = "4:1";
+		promptBody = "# unsent interim prompt";
+		await context.ensureSessionPrompt(agentRuntime);
+		epoch = "5:1";
+		promptBody = "# changed prompt";
+		await context.ensureSessionPrompt(agentRuntime);
+		context.logPromptCompileIfPending();
+		const settled = promptEntries.at(-1) as { data?: { previousHash?: string | null; hash?: string } } | undefined;
+		strictEqual(settled?.data?.previousHash, sha256Hex("# changed prompt"), "provenance chains from the recorded prompt");
+		context.consumeExpectedColdReasons("llama.cpp");
+		const returnedPayload = context.promptCachePayloadForAssistant({ input: 1 } as never) as {
+			expectedColdReasons?: string[];
+		};
+		strictEqual(returnedPayload.expectedColdReasons, undefined, "the recorded bytes sent again are not cold");
+		context.dispose();
+	});
+});
+
+function ledgerEntry(seq: number, role: string, payload: unknown): SessionEntry {
+	return {
+		kind: "message",
+		role,
+		turnId: `t${seq}`,
+		parentTurnId: seq === 0 ? null : `t${seq - 1}`,
+		timestamp: `2026-09-02T00:00:${String(seq).padStart(2, "0")}.000Z`,
+		payload,
+	} as SessionEntry;
+}
+
+function toolCall(id: string, path: string): unknown {
+	return { type: "toolCall", id, name: "read", arguments: { path } };
+}
+
+function toolResult(id: string, text: string): unknown {
+	return { role: "toolResult", toolCallId: id, toolName: "read", content: [{ type: "text", text }], isError: false };
+}
+
+function toolCallIds(messages: ReadonlyArray<unknown>): string[] {
+	return messages.flatMap((message) => {
+		const record = message as { role?: string; toolCallId?: string };
+		return record.role === "toolResult" && typeof record.toolCallId === "string" ? [record.toolCallId] : [];
+	});
+}
+
+describe("session replay prefix stability", () => {
+	it("replays a parallel batch's tool results in call order, not ledger completion order", () => {
+		// The ledger appends a result when its tool finishes; the live loop sent
+		// the batch in the assistant's call order. A resume that followed the
+		// ledger swapped two messages and the provider prefix cache missed from
+		// there for the rest of the session.
+		const entries: SessionEntry[] = [
+			ledgerEntry(0, "user", { role: "user", content: [{ type: "text", text: "read both" }] }),
+			ledgerEntry(1, "assistant", {
+				role: "assistant",
+				content: [toolCall("call-a", "a.ts"), toolCall("call-b", "b.ts"), toolCall("call-c", "c.ts")],
+				stopReason: "toolUse",
+			}),
+			ledgerEntry(2, "tool_result", toolResult("call-c", "c body")),
+			ledgerEntry(3, "tool_result", toolResult("call-a", "a body")),
+			ledgerEntry(4, "tool_result", toolResult("call-b", "b body")),
+			ledgerEntry(5, "assistant", { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop" }),
+		];
+		const messages = buildReplayAgentMessagesFromTurns(entries);
+		deepStrictEqual(
+			messages.map((message) => message.role),
+			["user", "assistant", "toolResult", "toolResult", "toolResult", "assistant"],
+		);
+		deepStrictEqual(toolCallIds(messages), ["call-a", "call-b", "call-c"]);
+		// Finding 5: a result the batch never issued has no provider call to pair
+		// with. Drop it while preserving each batch's known result order.
+		const orphaned: SessionEntry[] = [
+			entries[0] as SessionEntry,
+			entries[1] as SessionEntry,
+			ledgerEntry(2, "tool_result", toolResult("call-x", "stray")),
+			ledgerEntry(3, "tool_result", toolResult("call-b", "b body")),
+			ledgerEntry(4, "tool_result", toolResult("call-a", "a body")),
+			ledgerEntry(5, "tool_result", toolResult("call-c", "c body")),
+			ledgerEntry(6, "user", { role: "user", content: [{ type: "text", text: "next" }] }),
+			ledgerEntry(7, "assistant", { role: "assistant", content: [toolCall("call-d", "d.ts")], stopReason: "toolUse" }),
+			ledgerEntry(8, "tool_result", toolResult("call-d", "d body")),
+		];
+		deepStrictEqual(toolCallIds(buildReplayAgentMessagesFromTurns(orphaned)), ["call-a", "call-b", "call-c", "call-d"]);
+	});
+});
+
+it("a changed tool choice is a cold reason for the request that sends it, a #426 retry compares past the rejection, and a server's cache_n is its read (#434)", () => {
+	const state = createTurnState("off");
+	const runtime = { targetId: "cloud", runtimeId: "fixture", wireModelId: "chat" } as unknown as AgentRuntime;
+	state.runtime = runtime;
+	state.streaming = true;
+	const notices: string[][] = [];
+	const context = createTurnContext({
+		state,
+		getSettings: () => ({ safety: { autonomy: "default" }, context: { semantic: { enabled: false } } }) as never,
+		providers: { getRuntime: () => undefined } as unknown as ProvidersContract,
+		prompts: {} as PromptsContract,
+		middleware: {} as TurnMiddleware,
+		emitNotice: () => {},
+		emitCacheNotice: (reasons) => notices.push([...reasons]),
+	});
+	const send = (toolChoice: unknown, afterRejection = false) => {
+		context.noteCacheRequestToolChoice(JSON.stringify(toolChoice), afterRejection);
+		return context.takeCallColdReasons?.() ?? [];
+	};
+	deepStrictEqual(send("auto"), []);
+	deepStrictEqual(send("auto"), []);
+	deepStrictEqual(send({ type: "function", name: "read" }), ["tool_choice_change"]);
+	// The provider rejected the forced request, so the retry's "auto" matches the request before it.
+	deepStrictEqual(send("auto", true), []);
+	deepStrictEqual(send("auto"), []);
+	// Another wire model shares no cache with the previous request; model_changed names that, not the tool choice.
+	state.runtime = { ...runtime, wireModelId: "other" } as AgentRuntime;
+	deepStrictEqual(send("none"), []);
+	deepStrictEqual(notices, [["tool_choice_change"]]);
+	// The ledger observation judges a server whose usage omits cache reads by its own cache_n, as the journal does,
+	// so doctor and /usage count the same breaks (#434).
+	state.runtime = null;
+	const observation = (
+		context.promptCachePayloadForAssistant(
+			{ input: 10_000, output: 5, cacheRead: 0, cacheWrite: 0, cacheReadField: "omitted" } as never,
+			{
+				promptTokens: 10_000,
+				cachedTokens: 6_000,
+				predictedTokens: 5,
+				promptMs: 120,
+				predictedMs: 40,
+				source: "llamacpp-timings",
+			},
+		) as { observation: { cacheReadTokens: number | null; inclusiveInputTokens: number } }
+	).observation;
+	deepStrictEqual([observation.cacheReadTokens, observation.inclusiveInputTokens], [6_000, 10_000]);
+	context.dispose();
+});
+
+it("a step checkpoint is a cold reason only once its entry was appended", () => {
+	const state = createTurnState("off");
+	state.runtime = { targetId: "cloud", runtimeId: "fixture", wireModelId: "chat" } as unknown as AgentRuntime;
+	state.streaming = true;
+	const bus = createTelemetryHub();
+	const context = createTurnContext({
+		state,
+		bus,
+		getSettings: () => ({ safety: { autonomy: "default" }, context: { semantic: { enabled: false } } }) as never,
+		providers: { getRuntime: () => undefined } as unknown as ProvidersContract,
+		prompts: {} as PromptsContract,
+		middleware: {} as TurnMiddleware,
+		emitNotice: () => {},
+		emitCacheNotice: () => {},
+	});
+	bus.emit("compaction.started", { trigger: "step", at: Date.now() });
+	bus.emit("compaction.ended", { trigger: "step", at: Date.now(), outcome: "failed" });
+	deepStrictEqual(context.takeCallColdReasons?.() ?? [], [], "a failed append committed nothing");
+	bus.emit("compaction.started", { trigger: "step", at: Date.now() });
+	bus.emit("compaction.ended", { trigger: "step", at: Date.now(), outcome: "completed" });
+	deepStrictEqual(context.takeCallColdReasons?.() ?? [], ["step_checkpoint"]);
+	context.dispose();
+});
+
+describe("replay truncation keeps text well formed", () => {
+	it("never cuts a surrogate pair in half", () => {
+		const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
+		const text = `ab${"\u{1F600}".repeat(10)}`;
+		for (let limit = 1; limit < text.length; limit += 1) {
+			const replayed = truncateReplayText(text, limit);
+			strictEqual(loneSurrogate.test(replayed), false, `replay limit ${limit}`);
+			const omitted = Number(/(\d+) more characters/u.exec(replayed)?.[1]);
+			strictEqual(replayed.indexOf("\n\n[...") + omitted, text.length, `replay count ${limit}`);
+			strictEqual(loneSurrogate.test(stringifyPreview(text, limit + 3)), false, `preview limit ${limit}`);
+		}
+	});
+});

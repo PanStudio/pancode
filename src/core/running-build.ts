@@ -1,0 +1,250 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { hostname, userInfo } from "node:os";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { runningBuildId } from "./build-info.js";
+import { resolvePackageRoot } from "./package-root.js";
+import { processAlive, processBirthToken, processStartedAtMs } from "./process-identity.js";
+import { safeResourceWriteAsync } from "./safe-resource-write.js";
+import { resolvePancodeDirs, xdgBaseDir } from "./xdg.js";
+
+function diskBuild(root: string): { id: string; files: string[] } | null {
+	try {
+		const value = JSON.parse(readFileSync(join(root, "dist/build.json"), "utf8"));
+		if (
+			typeof value.id !== "string" ||
+			!Array.isArray(value.files) ||
+			!value.files.every(
+				(file: unknown) => typeof file === "string" && !isAbsolute(file) && !file.split(/[\\/]/).includes(".."),
+			)
+		)
+			return null;
+		return value;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The id of the completed build on disk, which is what a newly spawned worker
+ * or a node install from this package runs; null for a source run or an
+ * interrupted build. Fleet preflight compares it across machines because two
+ * builds of one `-dev` version share a version string.
+ */
+/** The package root this process runs from. */
+export function runningPackageRoot(): string {
+	return resolvePackageRoot();
+}
+
+export function installedBuildId(root = resolvePackageRoot()): string | null {
+	const id = diskBuild(root)?.id;
+	return id !== undefined && /^[0-9a-f-]{36}$/u.test(id) ? id : null;
+}
+
+/** The currently activated package for a managed version, or the same checkout/package. */
+export function activatedPackageRoot(root: string): string {
+	const suffix = join("lib", "node_modules", "pancode");
+	if (!root.endsWith(`${sep}${suffix}`)) return root;
+	const prefix = root.slice(0, -(suffix.length + 1));
+	const versions = dirname(prefix);
+	try {
+		const record = JSON.parse(readFileSync(join(dirname(versions), "install.json"), "utf8"));
+		if (
+			record.kind === "pancode-installer" &&
+			typeof record.current === "string" &&
+			dirname(record.current) === versions &&
+			existsSync(join(record.current, suffix, "package.json"))
+		)
+			return join(record.current, suffix);
+	} catch {
+		/* An unreadable record cannot establish another active package. */
+	}
+	return root;
+}
+
+/** Read on every status request, so an already running GUI sees upgrade and rollback activation. */
+export function pendingInstalledVersion(root = resolvePackageRoot()): string | null {
+	const current = activatedPackageRoot(root);
+	if (current === root) return null;
+	try {
+		const pkg = JSON.parse(readFileSync(join(current, "package.json"), "utf8"));
+		return typeof pkg.version === "string" ? pkg.version : null;
+	} catch {
+		return null;
+	}
+}
+
+/** An interrupted clean build either loses its completion record or one of the recorded outputs. */
+export function missingBuildFiles(root = resolvePackageRoot()): string[] {
+	const build = diskBuild(root);
+	if (!build) return ["dist/build.json"];
+	return build.files.filter((file) => !existsSync(join(root, "dist", file))).map((file) => `dist/${file}`);
+}
+
+interface RunningBuild {
+	pid: number;
+	birth: string | null;
+	host: string;
+	root: string;
+	build: string;
+	surface: string;
+}
+
+/**
+ * A process running from a checkout's dist/ records its build there, so the
+ * next build of that checkout keeps the chunks this process may still import
+ * (tsup.config.ts prunes only chunks no live hold lists). Installed packages
+ * are never rebuilt in place and get no hold.
+ */
+function holdBuildFiles(record: RunningBuild): string | null {
+	if (!existsSync(join(record.root, ".git"))) return null;
+	try {
+		const directory = join(record.root, "dist", "builds", "holds");
+		mkdirSync(directory, { recursive: true });
+		const hold = join(directory, `${record.pid}.json`);
+		settleQuietly(safeResourceWriteAsync(hold, `${JSON.stringify({ pid: record.pid, build: record.build })}\n`));
+		return hold;
+	} catch {
+		return null;
+	}
+}
+
+/** A diagnostic write that fails leaves no record, which every reader already treats as no live process. */
+function settleQuietly(write: Promise<unknown>): void {
+	write.catch(() => {});
+}
+
+/**
+ * Only long-lived PanCode processes register; read-only CLI commands never create state. The record and the hold are
+ * written durably but not awaited: their four fsyncs were about a quarter of the boot span on the main thread, and
+ * each reader already skips a record that is missing or names a dead process.
+ */
+export function registerRunningBuild(surface: "gui" | "tui" | "acp" | "run"): void {
+	if (!runningBuildId) return;
+	const directory = join(resolvePancodeDirs().state, "running-builds");
+	const file = join(directory, `${process.pid}.json`);
+	try {
+		mkdirSync(directory, { recursive: true, mode: 0o700 });
+		const record: RunningBuild = {
+			pid: process.pid,
+			birth: processBirthToken(),
+			host: hostname(),
+			root: resolvePackageRoot(),
+			build: runningBuildId,
+			surface,
+		};
+		settleQuietly(safeResourceWriteAsync(file, `${JSON.stringify(record)}\n`, { mode: 0o600 }));
+		const hold = holdBuildFiles(record);
+		process.once("exit", () => {
+			try {
+				rmSync(file, { force: true });
+				if (hold) rmSync(hold, { force: true });
+			} catch {
+				/* Reset may already have removed the state directory. */
+			}
+		});
+	} catch {
+		// Diagnostics must not prevent an otherwise healthy session from starting.
+	}
+}
+
+/**
+ * The Linux state dir a process resolves from its NUL-separated environment,
+ * by the same precedence as resolvePancodeDirs, so the /proc scan reports only
+ * processes of the home being diagnosed and not another home's GUI server.
+ */
+export function stateDirOfEnviron(environ: string): string {
+	const env = new Map<string, string>();
+	for (const pair of environ.split("\0")) {
+		const at = pair.indexOf("=");
+		if (at > 0) env.set(pair.slice(0, at), pair.slice(at + 1));
+	}
+	const set = (key: string): string | null => {
+		const value = env.get(key)?.trim();
+		return value ? value : null;
+	};
+	const specific = set("PANCODE_STATE_DIR");
+	if (specific) return specific;
+	const home = set("PANCODE_HOME");
+	if (home) return join(home, "state");
+	return join(
+		xdgBaseDir(env.get("XDG_STATE_HOME"), join(env.get("HOME") ?? userInfo().homedir, ".local", "state")),
+		"pancode",
+	);
+}
+
+export function staleRunningBuilds(state = resolvePancodeDirs().state): RunningBuild[] {
+	const directory = join(state, "running-builds");
+	const records: RunningBuild[] = [];
+	const seen = new Set<number>();
+	for (const name of existsSync(directory) ? readdirSync(directory) : []) {
+		if (!/^\d+\.json$/.test(name)) continue;
+		try {
+			const value = JSON.parse(readFileSync(join(directory, name), "utf8")) as RunningBuild;
+			if (
+				value.host !== hostname() ||
+				!Number.isInteger(value.pid) ||
+				!processAlive(value.pid) ||
+				value.birth !== processBirthToken(value.pid) ||
+				typeof value.root !== "string" ||
+				!isAbsolute(value.root) ||
+				typeof value.build !== "string"
+			)
+				continue;
+			const currentRoot = activatedPackageRoot(value.root);
+			const disk = diskBuild(currentRoot);
+			seen.add(value.pid);
+			if (currentRoot !== value.root || !disk || disk.id !== value.build) records.push(value);
+		} catch {
+			// A dead process or an incomplete record grants no authority and is ignored.
+		}
+	}
+	// Pre-patch checkout processes have no receipt. Linux exposes their executable arguments and birth time.
+	if (process.platform === "linux")
+		for (const name of readdirSync("/proc")) {
+			const pid = Number(name);
+			if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid || seen.has(pid)) continue;
+			try {
+				if (statSync(`/proc/${pid}`).uid !== process.getuid?.()) continue;
+				const args = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+				const entry = args.find((arg) => /\/dist\/(?:cli\/index|gui\/server)\.js$/.test(arg));
+				if (!entry || !isAbsolute(entry)) continue;
+				if (resolve(stateDirOfEnviron(readFileSync(`/proc/${pid}/environ`, "utf8"))) !== resolve(state)) continue;
+				const root = entry.replace(/\/dist\/(?:cli\/index|gui\/server)\.js$/, "");
+				if (
+					!existsSync(join(root, ".git")) ||
+					JSON.parse(readFileSync(join(root, "package.json"), "utf8")).name !== "pancode"
+				)
+					continue;
+				const started = processStartedAtMs(pid);
+				const built = statSync(existsSync(join(root, "dist/build.json")) ? join(root, "dist/build.json") : entry).mtimeMs;
+				if (started !== null && built > started + 2000)
+					records.push({
+						pid,
+						birth: processBirthToken(pid),
+						host: hostname(),
+						root,
+						build: "before the last checkout rebuild",
+						surface: entry.endsWith("gui/server.js") || args.includes("gui") ? "gui" : "tui",
+					});
+			} catch {
+				// Processes can exit while /proc is being read; inaccessible processes stay outside the report.
+			}
+		}
+	return records;
+}
+
+/**
+ * Whether the build on disk is no longer the one this process loaded, as
+ * after `pnpm run build` in the checkout a session runs from. One small file
+ * read. A source run (no running id) or an interrupted build (no disk id) is
+ * never stale.
+ */
+export function runningBuildIsStale(
+	root = resolvePackageRoot(),
+	running: string | null = runningBuildId,
+): { stale: boolean; diskId: string | null } {
+	const diskId = installedBuildId(root);
+	return { stale: running !== null && diskId !== null && diskId !== running, diskId };
+}

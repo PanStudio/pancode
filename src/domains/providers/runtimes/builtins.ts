@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Registers every runtime descriptor that ships in-tree with the given
+ * registry. Safe to call repeatedly: descriptor ids that are already
+ * registered are skipped, so tests and boot paths that poke pieces of the
+ * registry before the providers domain starts won't double-register.
+ *
+ * Third-party runtimes from ~/.config/pancode/runtimes/ or npm plugins are loaded
+ * separately by `loadPluginRuntimes` in `./plugins.ts`.
+ */
+
+import type { RuntimeRegistry } from "../registry.js";
+import type { RuntimeDescriptor } from "../types/runtime-descriptor.js";
+import antigravityCode from "./antigravity/antigravity-code.js";
+import claudeCode from "./claude/claude-code.js";
+import claudeSdk from "./claude/claude-sdk.js";
+import alcf from "./cloud/alcf.js";
+import anthropic from "./cloud/anthropic.js";
+import anthropicMax from "./cloud/anthropic-max.js";
+import deepseek from "./cloud/deepseek.js";
+import google from "./cloud/google.js";
+import groq from "./cloud/groq.js";
+import inception from "./cloud/inception.js";
+import mistral from "./cloud/mistral.js";
+import openai from "./cloud/openai.js";
+import openaiCodex from "./cloud/openai-codex.js";
+import openrouter from "./cloud/openrouter.js";
+import typesafeJev from "./cloud/typesafe-jev.js";
+import codexCli from "./codex/codex-cli.js";
+import copilotSdk from "./copilot/copilot-sdk.js";
+import { opencodeCliRuntime, piCliRuntime } from "./external-cli-peers.js";
+import lemonadeAnthropic from "./local-native/lemonade-anthropic.js";
+import lemonadeOpenai from "./local-native/lemonade-openai.js";
+import llamacpp from "./local-native/llamacpp.js";
+import llamacppAnthropic from "./local-native/llamacpp-anthropic.js";
+import llamacppCompletion from "./local-native/llamacpp-completion.js";
+import llamacppEmbed from "./local-native/llamacpp-embed.js";
+import llamacppRerank from "./local-native/llamacpp-rerank.js";
+import lmstudio from "./local-native/lmstudio.js";
+import ollama from "./local-native/ollama.js";
+import sglang from "./local-native/sglang.js";
+import vllm from "./local-native/vllm.js";
+import anthropicCompat from "./protocol/anthropic-compat.js";
+import litellm from "./protocol/litellm.js";
+import openaiCompat from "./protocol/openai-compat.js";
+import systemOne from "./protocol/systemone.js";
+
+const BUILTIN_RUNTIMES: ReadonlyArray<RuntimeDescriptor> = [
+	alcf,
+	anthropic,
+	anthropicMax,
+	deepseek,
+	google,
+	groq,
+	inception,
+	mistral,
+	openai,
+	openaiCodex,
+	openrouter,
+	typesafeJev,
+	lemonadeAnthropic,
+	lemonadeOpenai,
+	llamacpp,
+	llamacppAnthropic,
+	llamacppCompletion,
+	llamacppEmbed,
+	llamacppRerank,
+	lmstudio,
+	ollama,
+	anthropicCompat,
+	litellm,
+	openaiCompat,
+	systemOne,
+	sglang,
+	vllm,
+	claudeCode,
+	claudeSdk,
+	copilotSdk,
+	codexCli,
+	opencodeCliRuntime,
+	piCliRuntime,
+	antigravityCode,
+];
+
+export function registerBuiltinRuntimes(registry: RuntimeRegistry): void {
+	for (const desc of BUILTIN_RUNTIMES) {
+		if (registry.get(desc.id) !== null) continue;
+		registry.register(desc);
+	}
+}
+
+export { BUILTIN_RUNTIMES };

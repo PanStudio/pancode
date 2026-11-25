@@ -1,0 +1,1266 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { MemoryConsumptionReceipt } from "../memory/contract.js";
+import { isMemoryConsumptionReceipt } from "../memory/observations.js";
+
+/**
+ * Rich session entry union.
+ *
+ * Entries are the persistence vocabulary for session events. Each entry
+ * carries its `kind` discriminant, a `turnId` (uuid v7 where possible so
+ * entries sort by creation), a parent pointer, and an ISO timestamp.
+ *
+ * Non-message kinds and where they come from:
+ *   - compactionSummary is produced by compaction/compact.ts.
+ *   - branchSummary is produced by the fork path.
+ *   - bashExecution is produced by the editor bash path
+ *     (interactive/editor-bash.ts).
+ *   - fileEntry is consumed by the renderer, compaction, handoff, and
+ *     evidence builders but has no in-tree producer.
+ *   - handoffTransaction and continuityCommit are durable continuity records
+ *     (CONTRACTS §3), validated by src/domains/session/continuity/validate.ts.
+ *
+ * The continuity import is a value import in one direction only: this module
+ * calls those validators, and the continuity modules reach back for
+ * `BaseSessionEntry` as an erased `import type`, so there is no runtime cycle.
+ */
+
+import { sha256Hex } from "../../core/hash.js";
+import { isProviderCheckpointHandle } from "../../core/provider-checkpoint-handle.js";
+import { isSkillActivation, type PendingSkillToolPolicy, type SkillActivation } from "../../core/skill-activation.js";
+import type { PancodeTurnRecord } from "../../engine/session.js";
+import type { AgentMessage, ProviderCheckpointHandle } from "../../engine/types.js";
+import { AUTONOMY_EXPOSURES, type AutonomyExposure } from "../safety/autonomy.js";
+import type {
+	ContinuityCheckpointPayload,
+	ContinuityCommitEntry,
+	HandoffTransactionEntry,
+} from "./continuity/contract.js";
+import { HANDOFF_RECOVERY_REQUEST_CUSTOM_TYPE, isHandoffRecoveryRequestData } from "./continuity/operator-request.js";
+import {
+	isContinuityCheckpointPayload,
+	isContinuityCommitEntry,
+	isHandoffTransactionEntry,
+} from "./continuity/validate.js";
+
+export interface SessionHeader {
+	type: "session";
+	version: number;
+	id: string;
+	timestamp: string;
+	cwd: string;
+	parentSession?: string;
+	parentTurnId?: string;
+}
+
+export interface BaseSessionEntry {
+	kind: string;
+	turnId: string;
+	parentTurnId: string | null;
+	timestamp: string;
+}
+
+export type MessageRole = PancodeTurnRecord["kind"];
+
+export interface MessageEntry extends BaseSessionEntry {
+	kind: "message";
+	role: MessageRole;
+	payload: unknown;
+}
+
+export interface BashExecutionEntry extends BaseSessionEntry {
+	kind: "bashExecution";
+	command: string;
+	output: string;
+	exitCode: number | null;
+	cancelled: boolean;
+	truncated: boolean;
+	fullOutputPath?: string;
+	excludeFromContext?: boolean;
+}
+
+export interface CustomEntry<T = unknown> extends BaseSessionEntry {
+	kind: "custom";
+	customType: string;
+	data?: T;
+	display?: boolean;
+}
+
+/**
+ * A statement the operator told PanCode to remember for this session only
+ * (`pin`), or its retraction (`unpin`). Folded in order, the pins left
+ * standing are the session's pinned operator notes: the turn's `# Memory`
+ * carries them and compaction keeps them in its operator-notes block.
+ */
+export const OPERATOR_NOTE_ENTRY = "operatorNote";
+
+export interface OperatorNoteEntryData {
+	version: 1;
+	action: "pin" | "unpin";
+	id: string;
+	/** Present on `pin`. */
+	text?: string;
+	kind?: string;
+}
+
+/** The pins standing after folding every `operatorNote` entry in order. */
+export function standingOperatorNotes(
+	entries: ReadonlyArray<SessionEntry>,
+): Array<{ id: string; text: string; kind: string }> {
+	return foldOperatorNotes(
+		entries.flatMap((entry) =>
+			entry.kind === "custom" && entry.customType === OPERATOR_NOTE_ENTRY
+				? [entry.data as Partial<OperatorNoteEntryData>]
+				: [],
+		),
+	);
+}
+
+export function foldOperatorNotes(
+	records: Iterable<Partial<OperatorNoteEntryData> | undefined>,
+): Array<{ id: string; text: string; kind: string }> {
+	const notes = new Map<string, { id: string; text: string; kind: string }>();
+	for (const data of records) {
+		if (data?.version !== 1 || typeof data.id !== "string") continue;
+		if (data.action === "unpin") notes.delete(data.id);
+		else if (data.action === "pin" && typeof data.text === "string" && data.text.trim().length > 0) {
+			notes.delete(data.id);
+			notes.set(data.id, { id: data.id, text: data.text, kind: typeof data.kind === "string" ? data.kind : "fact" });
+		}
+	}
+	return [...notes.values()];
+}
+
+/** Durable admission stop, including the setting needed to resume paid calls (#424). */
+export const BUDGET_BLOCK_ENTRY = "budgetBlock";
+/**
+ * A middleware continuation reopened the run after a terminal assistant row. The
+ * reminder itself is model-only and never persisted, so without this mark a crash
+ * in the follow-up call leaves that row as the turn's last word and replay reads Done.
+ */
+export const IN_RUN_CONTINUATION_ENTRY = "inRunContinuation";
+
+/**
+ * A message the host put into the model's history itself: a reminder tail, a
+ * pinned block, a memory restoration or a recovery exchange. The
+ * record holds the exact elements, so a rebuild, a reopen and a fork place the
+ * same bytes where the live request carried them. `place.after` names the
+ * newest rendered row on the path when the insert was made; `place.before` is
+ * used only by a restoration installed at submit, ahead of its user row.
+ * `replaces` lists rows render omits because the record stands for them.
+ */
+export const HOST_INSERT_CUSTOM_TYPE = "pancode.host-insert";
+
+export const HOST_INSERT_SOURCES = [
+	"reminder",
+	"continuation",
+	"required-tool",
+	"pinned",
+	"memory-restoration",
+	"repetition-recovery",
+	"thinking-length-recovery",
+	"synthesis-recovery",
+] as const;
+export type HostInsertSource = (typeof HOST_INSERT_SOURCES)[number];
+
+export type HostInsertPlace = { before: string } | { after: string };
+
+/** What a restoration install was offered under, so a retry can tell its own install from another. */
+export interface HostInsertRestoration {
+	installId: string;
+	sessionId: string;
+	branchAnchorTurnId: string | null;
+	commitId: string;
+	generation: number;
+	citedEntryIds: string[];
+}
+
+export interface HostInsertRecord {
+	version: 1;
+	id: string;
+	source: HostInsertSource;
+	elements: AgentMessage[];
+	place: HostInsertPlace;
+	replaces?: string[];
+	restoration?: HostInsertRestoration;
+	/** The middleware rule that emitted a `reminder` record (X6), such as `nudge.read-streak`. */
+	rule?: string;
+}
+
+export interface HostInsertRetraction {
+	version: 1;
+	id: string;
+	retract: true;
+}
+
+export type HostInsertData = HostInsertRecord | HostInsertRetraction;
+
+const HOST_INSERT_ROLES = ["user", "assistant", "toolResult"] as const;
+
+function isHostInsertElement(value: unknown): boolean {
+	return (
+		isRecord(value) &&
+		isOneOf(value.role, HOST_INSERT_ROLES) &&
+		(typeof value.content === "string" || Array.isArray(value.content))
+	);
+}
+
+function isHostInsertRestoration(value: unknown): value is HostInsertRestoration {
+	return (
+		isRecord(value) &&
+		isString(value.installId) &&
+		isString(value.sessionId) &&
+		(value.branchAnchorTurnId === null || isString(value.branchAnchorTurnId)) &&
+		isString(value.commitId) &&
+		isNumber(value.generation) &&
+		isStringArray(value.citedEntryIds)
+	);
+}
+
+export function isHostInsertData(value: unknown): value is HostInsertData {
+	if (!isRecord(value) || value.version !== 1 || !isString(value.id)) return false;
+	if (value.retract === true) return true;
+	const place = value.place;
+	return (
+		isOneOf(value.source, HOST_INSERT_SOURCES) &&
+		Array.isArray(value.elements) &&
+		value.elements.length > 0 &&
+		value.elements.every(isHostInsertElement) &&
+		isRecord(place) &&
+		(isString(place.before) || isString(place.after)) &&
+		(value.replaces === undefined || isStringArray(value.replaces)) &&
+		isOptionalString(value.rule) &&
+		(value.restoration === undefined || isHostInsertRestoration(value.restoration))
+	);
+}
+
+/**
+ * The step chain's durable state: what leads the next step turn, or
+ * that the chain was dropped. Never rendered; the step checkpoint reads it.
+ */
+export const STEP_CHAIN_CUSTOM_TYPE = "pancode.step-chain";
+
+export type StepChainData =
+	| {
+			version: 1;
+			sessionId: string;
+			template: string;
+			stepTool: string;
+			body: string;
+			bodyTurnId: string;
+			finalText: string;
+			settledLeaf: string;
+	  }
+	| { version: 1; sessionId: string; cleared: true };
+
+export function isStepChainData(value: unknown): value is StepChainData {
+	if (!isRecord(value) || value.version !== 1 || !isString(value.sessionId)) return false;
+	if (value.cleared === true) return true;
+	return (
+		isString(value.template) &&
+		isString(value.stepTool) &&
+		isString(value.body) &&
+		isString(value.bodyTurnId) &&
+		isString(value.finalText) &&
+		isString(value.settledLeaf)
+	);
+}
+
+export interface BudgetBlockData {
+	level: "at" | "over";
+	currentUsd: number;
+	ceilingUsd: number;
+	contextTokens?: number;
+	raiseToUsd: number;
+	setting: "safety.limits.sessionCostUsd";
+	/** How the stop's spend was priced; absent when the hold had no spend to price. */
+	pricing?: { estimated: boolean; unpriced: boolean };
+}
+
+export interface ModelChangeEntry extends BaseSessionEntry {
+	kind: "modelChange";
+	provider: string;
+	modelId: string;
+	target: string;
+}
+
+export interface ThinkingLevelChangeEntry extends BaseSessionEntry {
+	kind: "thinkingLevelChange";
+	thinkingLevel: string;
+	effectiveEffort?: string;
+	configurationInitial?: boolean;
+	/** On a first row whose selection the route clamped: the selection, which `thinkingLevel` replaced (bt-37). */
+	requestedThinkingLevel?: string;
+}
+
+export interface FileEntryEntry extends BaseSessionEntry {
+	kind: "fileEntry";
+	path: string;
+	operation: "read" | "write" | "edit" | "create" | "delete";
+	bytes?: number;
+	hash?: string;
+}
+
+export interface BranchSummaryEntry extends BaseSessionEntry {
+	kind: "branchSummary";
+	fromTurnId: string;
+	summary: string;
+}
+
+/**
+ * Why a compaction run fired. Persisted on CompactionSummaryEntry so post-mortem
+ * tools can distinguish a threshold-driven shrink from a user-issued `/context compact`
+ * and from a context-overflow retry.
+ *   - "auto"      : pre-submit context-pressure trigger via shouldCompact().
+ *   - "force"     : explicit `/context compact` command or PANCODE_FORCE_COMPACT=1.
+ *   - "overflow"  : compact-and-retry path after a context overflow error.
+ *   - "step"      : a step-boundary checkpoint under a template turn policy on a
+ *                   small or uncached route; its summary is the previous step's
+ *                   final text, written by the host with no summarizer call.
+ */
+export type CompactionTrigger = "auto" | "force" | "overflow" | "step";
+
+/**
+ * What the summarizer's provider reported for the one or two streams a compaction ran, kept beside the checkpoint as
+ * the raw report. Accounting never reads it: the checkpoint's `callIds` name the calls, and their journal facts are
+ * the usage and cost, so a stream that reported nothing is unknown there rather than this zero (#434).
+ */
+export interface CompactionUsage {
+	/** Executing route; absent when the compaction path did not stamp one. */
+	targetId?: string;
+	/** Requested wire model ID, not a verified physical backend identity. */
+	modelId?: string;
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cacheWrite1h?: number;
+	reasoning: number;
+	totalTokens: number;
+	cost: { total: number };
+	/** How many summarization streams this compaction ran (1, or 2 on a split turn). */
+	apiCalls: number;
+}
+
+/** Exact historical skill context, independent of generated checkpoint prose. */
+export interface PreservedSkillContext {
+	activationRef: string;
+	requestRef: string;
+	callRef: string;
+	resultRef: string;
+	activation: SkillActivation;
+	requestText: string;
+	content: Array<{ type: "text"; text: string }>;
+	/** Hash of the captured rendered text blocks, not the raw SKILL.md hash. */
+	contentHash: string;
+}
+
+export interface SkillContextCheckpoint {
+	version: 1;
+	skills: PreservedSkillContext[];
+}
+
+export const SKILL_CONTEXT_STATE = "skillContextState";
+export interface SkillContextState {
+	version: 1;
+	/** Empty is an explicit off/replacement. */
+	activationRefs: string[];
+	unknown?: true;
+}
+
+export function skillContextContentHash(content: PreservedSkillContext["content"]): string {
+	return sha256Hex(JSON.stringify(content));
+}
+
+function isSkillContextState(value: unknown): value is SkillContextState {
+	return (
+		isRecord(value) &&
+		value.version === 1 &&
+		(value.unknown === undefined || value.unknown === true) &&
+		Array.isArray(value.activationRefs) &&
+		value.activationRefs.every((ref) => typeof ref === "string")
+	);
+}
+
+/** Ledger validation is structural; bad evidence must not make the session unreadable. */
+function isSkillContextCheckpoint(value: unknown): value is SkillContextCheckpoint {
+	return (
+		isRecord(value) &&
+		value.version === 1 &&
+		Array.isArray(value.skills) &&
+		value.skills.every(
+			(skill: unknown) =>
+				isRecord(skill) &&
+				[skill.activationRef, skill.requestRef, skill.callRef, skill.resultRef, skill.requestText, skill.contentHash].every(
+					isString,
+				) &&
+				isSkillActivation(skill.activation) &&
+				Array.isArray(skill.content) &&
+				skill.content.every((block: unknown) => isRecord(block) && block.type === "text" && typeof block.text === "string"),
+		)
+	);
+}
+
+export function verifiedSkillContextCheckpoint(value: unknown): value is SkillContextCheckpoint {
+	if (!isSkillContextCheckpoint(value)) return false;
+	const refs = new Set<string>();
+	const names = new Set<string>();
+	return value.skills.every((skill) => {
+		const activation = skill.activation;
+		if (
+			![skill.activationRef, skill.requestRef, skill.callRef, skill.resultRef].every((ref) => ref.length > 0) ||
+			activation.runId !== undefined ||
+			activation.triggeredBy !== "tool" ||
+			activation.turnId !== skill.requestRef ||
+			!activation.name ||
+			!activation.filePath ||
+			!activation.source ||
+			!activation.sourceOrigin ||
+			!/^[a-f0-9]{64}$/.test(activation.hash) ||
+			(activation.drift !== undefined && activation.drift !== "match") ||
+			skill.content.length === 0 ||
+			skill.content.every((block) => block.text.length === 0) ||
+			skill.contentHash !== skillContextContentHash(skill.content) ||
+			refs.has(skill.activationRef) ||
+			names.has(activation.name)
+		)
+			return false;
+		refs.add(skill.activationRef);
+		names.add(activation.name);
+		return true;
+	});
+}
+
+export interface PreservedUserContext {
+	turnId: string;
+	text: string;
+}
+function isPreservedUserContext(value: unknown): value is PreservedUserContext {
+	return isRecord(value) && isString(value.turnId) && isString(value.text);
+}
+
+/** Undefined means no live policy; null explicitly forbids reuse during an uncertain replacement. */
+export function mainSkillContextState(
+	entries: ReadonlyArray<SessionEntry>,
+	policy: PendingSkillToolPolicy | undefined,
+): SkillContextState | null | undefined {
+	if (!policy) return latestSkillContextState(entries);
+	// A cold turn may grant optional model activation without selecting or
+	// replacing any skill. Keep the recorded selection, including explicit off.
+	// This preserves historical content; it does not reconstruct tool authority.
+	if (
+		policy.modelActivation === true &&
+		policy.carriedSurface !== true &&
+		policy.requests.length === 0 &&
+		policy.loadedSkillNames.size === 0 &&
+		policy.loadedSkillPolicies.size === 0
+	)
+		return latestSkillContextState(entries);
+	if (policy.requests.some((request) => !policy.loadedSkillNames.has(request.name))) return null;
+	const names = [...policy.loadedSkillNames];
+	if (names.length === 0) return null;
+	const activationRefs: string[] = [];
+	for (const name of names) {
+		const entry = [...entries]
+			.reverse()
+			.find(
+				(candidate) =>
+					candidate.kind === "skillActivation" &&
+					candidate.activation.runId === undefined &&
+					candidate.activation.name === name,
+			);
+		if (!entry) return null;
+		activationRefs.push(entry.turnId);
+	}
+	return { version: 1, activationRefs };
+}
+
+/** Caller supplies an already selected branch. Never infer active skills from audit metadata. */
+export function latestSkillContextState(entries: ReadonlyArray<SessionEntry>): SkillContextState | undefined {
+	for (let index = entries.length - 1; index >= 0; index--) {
+		const entry = entries[index];
+		if (entry?.kind === "custom" && entry.customType === SKILL_CONTEXT_STATE) {
+			return isSkillContextState(entry.data) ? entry.data : undefined;
+		}
+		if (entry?.kind === "compactionSummary" && entry.skillContext !== undefined) {
+			return verifiedSkillContextCheckpoint(entry.skillContext)
+				? { version: 1, activationRefs: entry.skillContext.skills.map((skill) => skill.activationRef) }
+				: undefined;
+		}
+	}
+	return undefined;
+}
+
+export interface CompactionSummaryEntry extends BaseSessionEntry {
+	/** Calls used by this checkpoint; provider outcomes remain in the session telemetry journal (#434). */
+	callIds?: string[];
+	providerCheckpoint?: ProviderCheckpointHandle;
+	providerFallbackReason?: string;
+	memoryReceipt?: MemoryConsumptionReceipt;
+	kind: "compactionSummary";
+	skillContext?: SkillContextCheckpoint;
+	userContext?: PreservedUserContext;
+	summary: string;
+	tokensBefore: number;
+	firstKeptTurnId: string;
+	/** Provider usage for the summarization call. Absent when the provider reported none. */
+	usage?: CompactionUsage;
+	/** What kicked off this compaction, when the caller named it. */
+	trigger?: CompactionTrigger;
+	/** Estimated context tokens after the compaction bridge message replaced the older turns. */
+	tokensAfter?: number;
+	/** Count of session entries that fed the summarization prompt. Mirrors CompactResult.messagesSummarized. */
+	messagesSummarized?: number;
+	/** True when the cut split a turn (caller may want to render a banner). */
+	isSplitTurn?: boolean;
+	/**
+	 * The latest validated continuity fold this summary carries (CONTRACTS §3).
+	 *
+	 * Optional because every summary written before v5, and every ordinary
+	 * compaction with no agent handoff behind it, has none. A present payload is
+	 * fully validated by `isSessionEntry`: a summary carrying a malformed
+	 * checkpoint is a malformed summary, not a summary with a field to ignore.
+	 */
+	continuity?: ContinuityCheckpointPayload;
+}
+
+export interface SessionInfoEntry extends BaseSessionEntry {
+	kind: "sessionInfo";
+	/** Optional human-readable session name. */
+	name?: string;
+	/**
+	 * When present, this entry labels an earlier turn. Readers scan
+	 * `sessionInfo` entries whose `targetTurnId` matches a turn id; the
+	 * last-wins `label` becomes that turn's display label in /tree.
+	 * Empty string clears the label.
+	 */
+	targetTurnId?: string;
+	label?: string;
+}
+
+export interface LabelEntry extends BaseSessionEntry {
+	kind: "label";
+	targetTurnId: string;
+	label?: string;
+}
+
+export type ProtectedArtifactEntrySource = "validation" | "middleware" | "user" | "session";
+
+export interface ProtectedArtifactEntryArtifact {
+	path: string;
+	protectedAt: string;
+	reason: string;
+	validationCommand?: string;
+	validationExitCode?: number;
+	source: ProtectedArtifactEntrySource;
+}
+
+export interface ProtectedArtifactEntry extends BaseSessionEntry {
+	kind: "protectedArtifact";
+	action: "protect";
+	artifact: ProtectedArtifactEntryArtifact;
+	toolName?: string;
+	toolCallId?: string;
+	runId?: string;
+	correlationId?: string;
+}
+
+export interface SkillActivationEntry extends BaseSessionEntry {
+	kind: "skillActivation";
+	activation: SkillActivation;
+}
+
+export type TaskLedgerStatus = "pending" | "active" | "completed" | "blocked" | "cancelled";
+export type TaskLedgerEvidenceStatus = "required" | "pending" | "passed" | "failed" | "missing";
+
+export interface TaskLedgerGoal {
+	id: string;
+	title: string;
+	status: TaskLedgerStatus;
+	parentGoalId?: string | null;
+	description?: string;
+	origin?: "agent" | "user";
+	userTaskId?: string;
+}
+
+export interface TaskLedgerValidationEvidence {
+	id: string;
+	description: string;
+	status: TaskLedgerEvidenceStatus;
+	command?: string;
+	artifactPath?: string;
+	observedAt?: string;
+	notes?: string;
+}
+
+export interface TaskLedgerEntry extends BaseSessionEntry {
+	kind: "taskLedger";
+	boardId: string;
+	goals: TaskLedgerGoal[];
+	subgoals: TaskLedgerGoal[];
+	activeRunIds: string[];
+	requiredValidationEvidence: TaskLedgerValidationEvidence[];
+}
+
+export type DecisionStatus = "active" | "superseded";
+
+/**
+ * Who settled a decision. `operator` is an answer the operator gave in an
+ * `ask_user` interview. `agent` is a design choice the model recorded itself
+ * through the `decide` tool, with the alternatives it rejected and why. Absent
+ * on entries written before agent decisions existed, which were all operator.
+ */
+/**
+ * Who made a decision or a revision: the operator through ask_user, the agent through `decide`, or the operator's
+ * own words in a typed or steering message, which `decide` quotes verbatim (M-3).
+ */
+export type DecisionSource = "operator" | "agent" | "operator-message";
+const DECISION_SOURCES: ReadonlyArray<DecisionSource> = ["operator", "agent", "operator-message"];
+
+export interface DecisionRecord {
+	key: string;
+	value: string;
+	label?: string;
+	source_question?: string;
+	status: DecisionStatus;
+	decidedAt: string;
+	revisedAt?: string;
+	/** Who made this revision, independently of the original decision source. Present exactly on a superseded record. */
+	revisionSource?: DecisionSource;
+	correction?: string;
+	source?: DecisionSource;
+	/** The operator's words a `source: "operator-message"` decision quotes, verbatim from their message. */
+	quote?: string;
+	/** Options considered and not taken. Only agent decisions carry these. */
+	alternatives?: string[];
+	/** Why `value` won over `alternatives`. Only agent decisions carry this. */
+	rationale?: string;
+	/**
+	 * The operator answered an `ask_user` question marked `operator_only`
+	 * themselves. Only the ask_user harness sets it, from a live answer; `decide`,
+	 * `action=complete` and answers PanCode chose for an absent operator never do.
+	 */
+	operator_choice?: true;
+	/**
+	 * The operator's answer was written ahead in a `pancode run --answers`
+	 * file: the file and the entry that matched. Absent on a live answer.
+	 */
+	scripted?: { file: string; rule: string };
+}
+
+/**
+ * Stable reference to one decision: `<interviewId>/<key>`. Both halves are
+ * already unique on the active path, so the pair needs no third id. Run
+ * envelopes, receipts, and commit trailers cite decisions by this string.
+ */
+export type DecisionRef = string;
+
+export function decisionRef(interviewId: string, key: string): DecisionRef {
+	return `${interviewId}/${key}`;
+}
+
+/**
+ * One complete, branch-anchored snapshot of a settled decision set. An
+ * `interview` origin is an operator `ask_user` round; an `agent` origin is a
+ * set the model recorded with the `decide` tool, where `interviewId` is the
+ * agent decision set id and `roundCount` is 0. Absent origin means interview.
+ */
+export interface DecisionLedgerEntry extends BaseSessionEntry {
+	kind: "decisionLedger";
+	origin?: "interview" | "agent";
+	interviewId: string;
+	interviewStatus: "complete" | "cancelled";
+	startedAt: string;
+	endedAt: string;
+	roundCount: number;
+	summary?: string;
+	/** The questions the interview asked, in order, so an entry that recorded no answer still says what it was about. */
+	questions?: string[];
+	transcriptPath?: string;
+	exposure?: AutonomyExposure;
+	decisions: DecisionRecord[];
+}
+
+/** Who asked for a dispatched run. Internal runs never reach the transcript, so they never reach this entry. */
+export type WorkerRunOrigin = "user" | "agent";
+
+/** Runtime family a dispatched worker ran under; the transcript header names it. */
+export type WorkerRunRuntimeKind = "pancode" | "acp" | "claude-sdk" | "claude-code";
+
+export interface WorkerRunRuntime {
+	kind: WorkerRunRuntimeKind;
+	/** Route facts for the runtimes that have one; an ACP peer has none. */
+	targetId?: string;
+	wireModelId?: string;
+	/** Delegation peer id; ACP only. */
+	peerId?: string;
+}
+
+/**
+ * A dispatched worker's block, as the session remembers it.
+ *
+ * Written where the block opens, on DispatchStarted, once per attempt: a
+ * failover writes a second entry under the same `assignmentId` so a resumed
+ * transcript can rebuild the attempt trail it showed live. The entry holds
+ * identity only. The answer lives in the run's sealed scope under `telemetry/runs/<runId>/`,
+ * which is the terminal truth for it either way, so
+ * streamed prose is never persisted here and a session file never grows with
+ * worker output.
+ *
+ * Context-free by construction. Like a notice, it estimates at zero tokens, is
+ * not a cut point, and never becomes a model message: a worker's answer reaches
+ * the model only when an operator shares it, which travels the user-turn path
+ * as ordinary text.
+ */
+export interface WorkerRunEntry extends BaseSessionEntry {
+	helper?: true;
+	task?: string;
+	kind: "workerRun";
+	/** Logical work item. Retries and failovers of one run share it. */
+	assignmentId: string;
+	/** This attempt's run id, which is also its receipt id. */
+	runId: string;
+	origin: WorkerRunOrigin;
+	agentId: string;
+	runtime: WorkerRunRuntime;
+	/** Agent origin: the tool call whose execution spawned the run. */
+	parentToolCallId?: string;
+}
+
+/**
+ * Working-set layer (context domain) ledger records. Eviction is a projection:
+ * these entries say what left the model's working set and what came back; the
+ * original bodies stay in the ledger untouched. The context domain owns the
+ * semantics (`src/domains/context/working-set/contract.ts`); the session
+ * domain owns the wire shape because it owns the ledger format.
+ */
+export const EVICTION_REASONS = [
+	"superseded_read",
+	"stale_after_mutation",
+	"listing_consumed",
+	"failure_resolved",
+	"superseded_call",
+	"search_narrowed",
+	"diff_applied",
+	"offloaded_body",
+	"dispatch_run_record_settled",
+	"thinking_turn_closed",
+	"age_horizon",
+	"operator",
+	"step_overflow",
+	// Journal vocabulary for the two rewrites a replay makes on its own: a later skill state retiring a
+	// sent skill block, and a refused prompt replayed as a bounded copy.
+	"skill_retired",
+	"refused_prompt_bound",
+] as const;
+export type EvictionReason = (typeof EVICTION_REASONS)[number];
+
+export const EVICTION_TRIGGERS = ["pressure", "operator", "superseded"] as const;
+export type EvictionTrigger = (typeof EVICTION_TRIGGERS)[number];
+
+/**
+ * `tool` is context(scope=recall), `operator` is /context recall, and `reread`
+ * is the read tool noticing that the file it just read is byte-identical to
+ * an evicted read of the same path: the body goes back through the read
+ * result and this record is the exact provenance.
+ */
+export const RECALL_TRIGGERS = ["tool", "operator", "reread"] as const;
+export type RecallTrigger = (typeof RECALL_TRIGGERS)[number];
+
+/**
+ * Identity of an evictable unit: the `turnId` of a ledger entry. For a
+ * `tool_result` message the unit is the result body; for an `assistant`
+ * message the unit is every thinking block it carries. Partial (per-block)
+ * eviction is deliberately not modelled; add a `block` field here when it is.
+ */
+export interface WorkingSetRef {
+	entry: string;
+}
+
+export interface EvictedItem {
+	/** Stable session-local recall alias; absent on thinking units. */
+	alias?: string;
+	ref: WorkingSetRef;
+	reason: EvictionReason;
+	/** Estimated tokens the projection removes for this item (marker cost already subtracted). */
+	tokensFreed: number;
+	/**
+	 * Byte-stable one-line stub the projection renders in place of the body.
+	 * Empty for thinking-block eviction, which removes without a marker.
+	 */
+	marker: string;
+	/** Ref key of the entry that superseded or resolved this one, when the reason names one. */
+	by?: string;
+	/**
+	 * sha256 of the tool-result body text the marker replaced, hex. The read
+	 * tool compares it against what it just produced for the same path; a
+	 * match is a reread of unchanged content and records a `contextRecall`
+	 * instead of a second copy. Absent on thinking units.
+	 */
+	contentHash?: string;
+}
+
+export interface ContextEvictionEntry extends BaseSessionEntry {
+	kind: "contextEviction";
+	/** The token counts measure the request context, so they anchor request growth (#422). */
+	basis: "request-context";
+	policyId: string;
+	trigger: EvictionTrigger;
+	evicted: ReadonlyArray<EvictedItem>;
+	tokensBefore: number;
+	tokensAfter: number;
+	/** Used/window ratio that fired the event; null for operator-triggered events. */
+	pressureBefore: number | null;
+	snapshotIdBefore: string | null;
+	/** What the commit left behind when a live anchor existed. */
+	anchor?: EvictionAnchor;
+}
+
+export interface EvictionAnchor {
+	/** Every history element at the record's position, after the carry. */
+	tokens: number;
+	sys: number;
+	tools: number;
+	route: { targetId: string; runtimeId: string; wireModelId: string; modelKey: string };
+}
+
+export interface ContextRecallEntry extends BaseSessionEntry {
+	kind: "contextRecall";
+	ref: WorkingSetRef;
+	trigger: RecallTrigger;
+	tokensReadmitted: number;
+	/** The tool call that performed the recall, when `trigger` is `tool`. */
+	toolCallId?: string;
+}
+
+export type SessionEntry =
+	| MessageEntry
+	| BashExecutionEntry
+	| CustomEntry
+	| ModelChangeEntry
+	| ThinkingLevelChangeEntry
+	| FileEntryEntry
+	| BranchSummaryEntry
+	| CompactionSummaryEntry
+	| SessionInfoEntry
+	| LabelEntry
+	| ProtectedArtifactEntry
+	| SkillActivationEntry
+	| TaskLedgerEntry
+	| DecisionLedgerEntry
+	| WorkerRunEntry
+	| ContextEvictionEntry
+	| ContextRecallEntry
+	| HandoffTransactionEntry
+	| ContinuityCommitEntry;
+
+export type SessionFileEntry = SessionHeader | SessionEntry;
+
+/**
+ * Canonical list of entry kinds. Exposed so consumers that switch on
+ * `entry.kind` can assert exhaustive coverage in tests; keeping the list
+ * here (rather than inline) is how a new kind in a later slice picks up
+ * every reader at once.
+ */
+export const SESSION_ENTRY_KINDS = [
+	"message",
+	"bashExecution",
+	"custom",
+	"modelChange",
+	"thinkingLevelChange",
+	"fileEntry",
+	"branchSummary",
+	"compactionSummary",
+	"sessionInfo",
+	"label",
+	"protectedArtifact",
+	"skillActivation",
+	"taskLedger",
+	"decisionLedger",
+	"workerRun",
+	"contextEviction",
+	"contextRecall",
+	// Durable continuity (CONTRACTS §3). Both are bookkeeping sidecars: they
+	// never become model messages by themselves, never move the message leaf,
+	// and never become a cut point. The accepted note reaches the model exactly
+	// once, through the continuity replay projection.
+	"handoffTransaction",
+	"continuityCommit",
+] as const;
+
+export type SessionEntryKind = (typeof SESSION_ENTRY_KINDS)[number];
+
+/**
+ * Structural guard for the single accepted session ledger entry format.
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return !!value && typeof value === "object";
+}
+
+function isString(value: unknown): value is string {
+	return typeof value === "string";
+}
+
+function isOptionalString(value: unknown): boolean {
+	return value === undefined || typeof value === "string";
+}
+
+function isOptionalBoolean(value: unknown): boolean {
+	return value === undefined || typeof value === "boolean";
+}
+
+function isNumber(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value);
+}
+
+function isPositiveInteger(value: unknown): value is number {
+	return isNumber(value) && Number.isInteger(value) && value > 0;
+}
+
+function isOptionalNumber(value: unknown): boolean {
+	return value === undefined || isNumber(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+	return value === null || typeof value === "string";
+}
+
+function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+	return typeof value === "string" && (allowed as readonly string[]).includes(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function hasBaseSessionEntryFields(v: Record<string, unknown>): boolean {
+	return isString(v.turnId) && isNullableString(v.parentTurnId) && isString(v.timestamp);
+}
+
+const MESSAGE_ROLES = ["user", "assistant", "tool_call", "tool_result", "system", "checkpoint"] as const;
+const FILE_OPERATIONS = ["read", "write", "edit", "create", "delete"] as const;
+const COMPACTION_TRIGGERS: readonly CompactionTrigger[] = ["auto", "force", "overflow", "step"];
+const PROTECTED_ARTIFACT_SOURCES: readonly ProtectedArtifactEntrySource[] = [
+	"validation",
+	"middleware",
+	"user",
+	"session",
+];
+const TASK_LEDGER_STATUSES: readonly TaskLedgerStatus[] = ["pending", "active", "completed", "blocked", "cancelled"];
+const TASK_LEDGER_EVIDENCE_STATUSES: readonly TaskLedgerEvidenceStatus[] = [
+	"required",
+	"pending",
+	"passed",
+	"failed",
+	"missing",
+];
+const DECISION_STATUSES: readonly DecisionStatus[] = ["active", "superseded"];
+const DECISION_INTERVIEW_STATUSES = ["complete", "cancelled"] as const;
+const WORKER_RUN_ORIGINS: readonly WorkerRunOrigin[] = ["user", "agent"];
+const WORKER_RUN_RUNTIME_KINDS: readonly WorkerRunRuntimeKind[] = ["pancode", "acp", "claude-sdk", "claude-code"];
+
+function isWorkerRunRuntime(value: unknown): value is WorkerRunRuntime {
+	if (!isRecord(value)) return false;
+	return (
+		isOneOf(value.kind, WORKER_RUN_RUNTIME_KINDS) &&
+		isOptionalString(value.targetId) &&
+		isOptionalString(value.wireModelId) &&
+		isOptionalString(value.peerId)
+	);
+}
+
+function isTaskLedgerGoal(value: unknown): value is TaskLedgerGoal {
+	if (!isRecord(value)) return false;
+	if (!isString(value.id) || !isString(value.title)) return false;
+	if (!isOneOf(value.status, TASK_LEDGER_STATUSES)) return false;
+	if (value.parentGoalId !== undefined && !isNullableString(value.parentGoalId)) return false;
+	const hasPairedProvenance =
+		value.origin === "user"
+			? isString(value.userTaskId) && /^u[1-9]\d*$/.test(value.userTaskId)
+			: (value.origin === undefined || value.origin === "agent") && value.userTaskId === undefined;
+	return isOptionalString(value.description) && hasPairedProvenance;
+}
+
+function isTaskLedgerEvidence(value: unknown): value is TaskLedgerValidationEvidence {
+	if (!isRecord(value)) return false;
+	if (!isString(value.id) || !isString(value.description)) return false;
+	if (!isOneOf(value.status, TASK_LEDGER_EVIDENCE_STATUSES)) return false;
+	return (
+		isOptionalString(value.command) &&
+		isOptionalString(value.artifactPath) &&
+		isOptionalString(value.observedAt) &&
+		isOptionalString(value.notes)
+	);
+}
+
+function isScriptedSource(value: unknown): boolean {
+	return isRecord(value) && isString(value.file) && isString(value.rule);
+}
+
+export function isDecisionRecord(value: unknown): value is DecisionRecord {
+	if (!isRecord(value)) return false;
+	if (!isString(value.key) || !/^[a-z0-9]+(?:[_-][a-z0-9]+)*$/.test(value.key)) return false;
+	if (!isString(value.value) || !isOneOf(value.status, DECISION_STATUSES) || !isString(value.decidedAt)) return false;
+	if (!isOptionalString(value.label) || !isOptionalString(value.source_question)) return false;
+	if (value.source !== undefined && !isOneOf(value.source, DECISION_SOURCES)) return false;
+	if (value.revisionSource !== undefined && !isOneOf(value.revisionSource, DECISION_SOURCES)) return false;
+	if ((value.source === "operator-message") !== isString(value.quote)) return false;
+	if (value.alternatives !== undefined && !isStringArray(value.alternatives)) return false;
+	if (!isOptionalString(value.rationale)) return false;
+	if (value.operator_choice !== undefined && (value.operator_choice !== true || value.source === "agent")) return false;
+	if (value.scripted !== undefined && (!isScriptedSource(value.scripted) || value.source === "agent")) return false;
+	if (!isOptionalString(value.revisedAt) || !isOptionalString(value.correction)) return false;
+	return value.status === "superseded"
+		? isString(value.revisedAt) && value.revisionSource !== undefined
+		: value.revisedAt === undefined && value.revisionSource === undefined && value.correction === undefined;
+}
+
+function isOptionalCompactionUsage(value: unknown): boolean {
+	if (value === undefined) return true;
+	if (!isRecord(value)) return false;
+	const cost = value.cost;
+	return (
+		isOptionalString(value.targetId) &&
+		isOptionalString(value.modelId) &&
+		isNumber(value.input) &&
+		isNumber(value.output) &&
+		isNumber(value.cacheRead) &&
+		isNumber(value.cacheWrite) &&
+		isNumber(value.reasoning) &&
+		isNumber(value.totalTokens) &&
+		isNumber(value.apiCalls) &&
+		isRecord(cost) &&
+		isNumber(cost.total)
+	);
+}
+
+function isProtectedArtifact(value: unknown): value is ProtectedArtifactEntryArtifact {
+	if (!isRecord(value)) return false;
+	return (
+		isString(value.path) &&
+		isString(value.protectedAt) &&
+		isString(value.reason) &&
+		isOneOf(value.source, PROTECTED_ARTIFACT_SOURCES) &&
+		isOptionalString(value.validationCommand) &&
+		isOptionalNumber(value.validationExitCode)
+	);
+}
+
+export function isSessionHeader(value: unknown): value is SessionHeader {
+	if (!isRecord(value)) return false;
+	return (
+		value.type === "session" &&
+		isPositiveInteger(value.version) &&
+		isString(value.id) &&
+		isString(value.timestamp) &&
+		isString(value.cwd) &&
+		isOptionalString(value.parentSession) &&
+		isOptionalString(value.parentTurnId)
+	);
+}
+
+function isWorkingSetRef(value: unknown): value is WorkingSetRef {
+	return isRecord(value) && isString(value.entry);
+}
+
+function isEvictedItem(value: unknown): value is EvictedItem {
+	return (
+		isRecord(value) &&
+		isWorkingSetRef(value.ref) &&
+		isOneOf(value.reason, EVICTION_REASONS) &&
+		isNumber(value.tokensFreed) &&
+		isString(value.marker) &&
+		(value.alias === undefined || (typeof value.alias === "string" && /^r[1-9]\d*$/.test(value.alias))) &&
+		isOptionalString(value.by) &&
+		(value.contentHash === undefined ||
+			(typeof value.contentHash === "string" && /^[0-9a-f]{64}$/.test(value.contentHash)))
+	);
+}
+
+function isEvictionAnchor(value: unknown): value is EvictionAnchor {
+	const route = isRecord(value) ? value.route : undefined;
+	return (
+		isRecord(value) &&
+		isNumber(value.tokens) &&
+		isNumber(value.sys) &&
+		isNumber(value.tools) &&
+		isRecord(route) &&
+		isString(route.targetId) &&
+		isString(route.runtimeId) &&
+		isString(route.wireModelId) &&
+		isString(route.modelKey)
+	);
+}
+
+export function isSessionEntry(value: unknown): value is SessionEntry {
+	if (!value || typeof value !== "object") return false;
+	const v = value as Record<string, unknown>;
+	if (!hasBaseSessionEntryFields(v)) return false;
+	if (!isOneOf(v.kind, SESSION_ENTRY_KINDS)) return false;
+	switch (v.kind) {
+		case "message":
+			return Object.hasOwn(v, "payload") && isOneOf(v.role, MESSAGE_ROLES);
+		case "bashExecution":
+			return (
+				isString(v.command) &&
+				isString(v.output) &&
+				(v.exitCode === null || isNumber(v.exitCode)) &&
+				typeof v.cancelled === "boolean" &&
+				typeof v.truncated === "boolean" &&
+				isOptionalString(v.fullOutputPath) &&
+				isOptionalBoolean(v.excludeFromContext)
+			);
+		case "custom":
+			return (
+				isString(v.customType) &&
+				isOptionalBoolean(v.display) &&
+				(v.customType !== SKILL_CONTEXT_STATE || isSkillContextState(v.data)) &&
+				// A reserved control subtype is strictly validated, because opaque
+				// custom data must never become resume authority by claiming the name.
+				(v.customType !== HANDOFF_RECOVERY_REQUEST_CUSTOM_TYPE || isHandoffRecoveryRequestData(v.data)) &&
+				// Rendered host text: a record that only claims the name never reaches a request.
+				(v.customType !== HOST_INSERT_CUSTOM_TYPE || isHostInsertData(v.data)) &&
+				(v.customType !== STEP_CHAIN_CUSTOM_TYPE || isStepChainData(v.data))
+			);
+		case "modelChange":
+			return isString(v.provider) && isString(v.modelId) && isString(v.target);
+		case "thinkingLevelChange":
+			return (
+				isString(v.thinkingLevel) &&
+				isOptionalString(v.effectiveEffort) &&
+				isOptionalBoolean(v.configurationInitial) &&
+				isOptionalString(v.requestedThinkingLevel)
+			);
+		case "fileEntry":
+			return (
+				isString(v.path) && isOneOf(v.operation, FILE_OPERATIONS) && isOptionalNumber(v.bytes) && isOptionalString(v.hash)
+			);
+		case "branchSummary":
+			return isString(v.fromTurnId) && isString(v.summary);
+		case "compactionSummary":
+			return (
+				(v.callIds === undefined || isStringArray(v.callIds)) &&
+				(v.providerCheckpoint === undefined || isProviderCheckpointHandle(v.providerCheckpoint)) &&
+				isOptionalString(v.providerFallbackReason) &&
+				isString(v.summary) &&
+				isNumber(v.tokensBefore) &&
+				isString(v.firstKeptTurnId) &&
+				isOptionalCompactionUsage(v.usage) &&
+				(v.trigger === undefined || isOneOf(v.trigger, COMPACTION_TRIGGERS)) &&
+				isOptionalNumber(v.tokensAfter) &&
+				isOptionalNumber(v.messagesSummarized) &&
+				isOptionalBoolean(v.isSplitTurn) &&
+				(v.skillContext === undefined || isSkillContextCheckpoint(v.skillContext)) &&
+				(v.userContext === undefined || isPreservedUserContext(v.userContext)) &&
+				(v.memoryReceipt === undefined || isMemoryConsumptionReceipt(v.memoryReceipt)) &&
+				(v.continuity === undefined || isContinuityCheckpointPayload(v.continuity))
+			);
+		case "sessionInfo":
+			return isOptionalString(v.name) && isOptionalString(v.targetTurnId) && isOptionalString(v.label);
+		case "label":
+			return isString(v.targetTurnId) && isOptionalString(v.label);
+		case "protectedArtifact":
+			return (
+				v.action === "protect" &&
+				isProtectedArtifact(v.artifact) &&
+				isOptionalString(v.toolName) &&
+				isOptionalString(v.toolCallId) &&
+				isOptionalString(v.runId) &&
+				isOptionalString(v.correlationId)
+			);
+		case "skillActivation":
+			return isSkillActivation(v.activation);
+		case "taskLedger":
+			return (
+				isString(v.boardId) &&
+				Array.isArray(v.goals) &&
+				v.goals.every(isTaskLedgerGoal) &&
+				Array.isArray(v.subgoals) &&
+				v.subgoals.every(isTaskLedgerGoal) &&
+				isStringArray(v.activeRunIds) &&
+				Array.isArray(v.requiredValidationEvidence) &&
+				v.requiredValidationEvidence.every(isTaskLedgerEvidence)
+			);
+		case "decisionLedger":
+			return (
+				(v.origin === undefined || isOneOf(v.origin, ["interview", "agent"])) &&
+				isString(v.interviewId) &&
+				isOneOf(v.interviewStatus, DECISION_INTERVIEW_STATUSES) &&
+				isString(v.startedAt) &&
+				isString(v.endedAt) &&
+				isNumber(v.roundCount) &&
+				Number.isInteger(v.roundCount) &&
+				v.roundCount >= 0 &&
+				isOptionalString(v.summary) &&
+				(v.questions === undefined || isStringArray(v.questions)) &&
+				isOptionalString(v.transcriptPath) &&
+				(v.exposure === undefined || isOneOf(v.exposure, AUTONOMY_EXPOSURES)) &&
+				Array.isArray(v.decisions) &&
+				v.decisions.every(isDecisionRecord)
+			);
+		case "workerRun":
+			return (
+				(v.helper === undefined || v.helper === true) &&
+				isOptionalString(v.task) &&
+				isString(v.assignmentId) &&
+				isString(v.runId) &&
+				isOneOf(v.origin, WORKER_RUN_ORIGINS) &&
+				isString(v.agentId) &&
+				isWorkerRunRuntime(v.runtime) &&
+				isOptionalString(v.parentToolCallId)
+			);
+		case "contextEviction":
+			return (
+				isString(v.policyId) &&
+				isOneOf(v.trigger, EVICTION_TRIGGERS) &&
+				Array.isArray(v.evicted) &&
+				v.evicted.every(isEvictedItem) &&
+				isNumber(v.tokensBefore) &&
+				isNumber(v.tokensAfter) &&
+				(v.pressureBefore === null || isNumber(v.pressureBefore)) &&
+				(v.snapshotIdBefore === null || isString(v.snapshotIdBefore)) &&
+				(v.anchor === undefined || isEvictionAnchor(v.anchor))
+			);
+		case "contextRecall":
+			return (
+				isWorkingSetRef(v.ref) &&
+				isOneOf(v.trigger, RECALL_TRIGGERS) &&
+				isNumber(v.tokensReadmitted) &&
+				isOptionalString(v.toolCallId)
+			);
+		// The continuity guards check payload structure and the identity/link
+		// equalities the chain depends on, not just the kind string. A record
+		// that says `continuityCommit` and carries nothing usable is rejected
+		// here rather than surfacing later as an empty-but-present commit.
+		case "handoffTransaction":
+			return isHandoffTransactionEntry(v);
+		case "continuityCommit":
+			return isContinuityCommitEntry(v);
+	}
+	return false;
+}
+
+/** Replay calibration is a public measurement row; encrypted bytes never enter the ledger (#423). */
+export function withProviderCheckpointMeasurements(entries: ReadonlyArray<SessionEntry>): SessionEntry[] {
+	const measured = new Map<string, number>();
+	for (const entry of entries) {
+		if (entry.kind !== "custom" || entry.customType !== "pancode_provider_checkpoint_input") continue;
+		const data = entry.data as { version?: unknown; checkpointDigest?: unknown; inputTokens?: unknown } | null;
+		if (
+			data?.version === 1 &&
+			typeof data.checkpointDigest === "string" &&
+			typeof data.inputTokens === "number" &&
+			Number.isSafeInteger(data.inputTokens) &&
+			data.inputTokens >= 0 &&
+			!measured.has(data.checkpointDigest)
+		)
+			measured.set(data.checkpointDigest, data.inputTokens);
+	}
+	return entries.map((entry) => {
+		if (entry.kind !== "compactionSummary" || !entry.providerCheckpoint) return entry;
+		const tokens = measured.get(entry.providerCheckpoint.digest);
+		return tokens === undefined
+			? entry
+			: { ...entry, providerCheckpoint: { ...entry.providerCheckpoint, replayInputTokens: tokens } };
+	});
+}

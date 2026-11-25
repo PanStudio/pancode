@@ -1,0 +1,604 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Composition-root coordinator for extension generations.
+ *
+ * The extensions bundle owns the snapshot store and the middleware bundle
+ * owns the registration table; neither knows the other exists. This module
+ * is the only writer of both for the "user-hooks" owner and the only caller
+ * of the extensions reload, and it sequences them so no observer can see
+ * resources from one generation paired with hooks from another:
+ *
+ *   1. capture and canonicalize the workspace once;
+ *   2. prepare the extension candidate (build, validate, reserve generation)
+ *      and require its snapshot to be for that exact workspace;
+ *   3. build the user-hook registrations from the candidate's captured
+ *      declarations plus the project files under that workspace;
+ *   4. prepare the middleware replacement (validate, build the next state);
+ *   5. confirm both prepared states are still current, then publish both
+ *      with two assignment-only calls in adjacent statements;
+ *   6. only then emit conflicts, the reload event, and issue lines.
+ *
+ * Neither publish primitive validates, refuses, throws, or calls out, so a
+ * partial publication is impossible by construction: every failure or stale
+ * state is detected before step 5 and discards both prepared states. Boot
+ * uses the same path, so the first extension generation and the first hook
+ * set become live together; before that, readers take the ephemeral
+ * generation-0 path. Everything here is synchronous; the reentrancy guard
+ * exists for a caller that re-enters from a callback.
+ */
+
+import { realpathSync } from "node:fs";
+import path from "node:path";
+import { sha256Hex } from "../core/hash.js";
+import { recordPackageActivity } from "../core/package-activity.js";
+import { telemetryContext, withToolTelemetryContext } from "../core/telemetry/context.js";
+import { type TelemetryHub, telemetryHub } from "../core/telemetry/hub.js";
+import { unboundTelemetrySession } from "../core/telemetry/producer.js";
+import type { ToolName } from "../core/tool-names.js";
+import type {
+	ExtensionReloadCommitted,
+	ExtensionReloadRejection,
+	ExtensionRuntimeHookBridge,
+	ExtensionSnapshotDiagnostics,
+	ExtensionsContract,
+	InstalledExtension,
+	McpToolOwnerLookup,
+} from "../domains/extensions/index.js";
+import { EXTENSION_SNAPSHOT_DIAGNOSTIC_MESSAGE_CAP, RUNTIME_V2_LIMITS } from "../domains/extensions/index.js";
+import {
+	type BuildUserHookRegistrationsResult,
+	buildUserHookRegistrations,
+	type CapturedHookSourceSet,
+	type HookReceipt,
+	type HookReceiptSink,
+	type MiddlewareHookRegistration,
+	type MiddlewareRegistrar,
+	type MiddlewareRegistrationConflict,
+	type UserHookCommandRunner,
+} from "../domains/middleware/index.js";
+import {
+	buildExtensionRuntimeToolSpecs,
+	ensureDetailLedger,
+	promotedRuntimeTools,
+} from "../tools/extension-runtime-tools.js";
+import type { ToolRegistry } from "../tools/registry-contract.js";
+import {
+	WORKER_EXTENSION_HOOKS_MAX,
+	type WorkerExtensionHook,
+	type WorkerHookEffect,
+	type WorkerHookRequest,
+	type WorkerHookRun,
+} from "../worker/protocol.js";
+import { capturedHookSourcesFor } from "./extension-hook-sources.js";
+import {
+	buildExtensionPromptGate,
+	buildExtensionRuntimeHooks,
+	buildWorkerExtensionHooks,
+	createQuietHookRuns,
+	type ExtensionPromptGate,
+	evaluateWorkerHookRequest,
+	pinnableExtensionIds,
+	type WorkerHookEvaluator,
+} from "./extension-runtime-hooks.js";
+
+export interface ExtensionReloadHookSummary {
+	/** Registrations published for the owner in this generation. */
+	registered: number;
+	dropped: number;
+	fileIssues: number;
+	issues: number;
+	overridden: number;
+}
+
+export type ExtensionReloadOutcome =
+	| (ExtensionReloadCommitted & { hooks: ExtensionReloadHookSummary; lines: ReadonlyArray<string> })
+	| (ExtensionReloadRejection & { lines: ReadonlyArray<string> });
+
+/** The extension generation that both references serve after a commit. */
+export interface ExtensionGenerationCommitted {
+	generation: number;
+	previousGeneration: number;
+	changed: boolean;
+	/** Content identity of the committed snapshot. */
+	digest: string;
+}
+
+export interface ExtensionReloadCoordinatorDeps {
+	/** Absent on a degraded boot where the extensions domain failed to start. */
+	extensions: Pick<ExtensionsContract, "prepareReload" | "snapshot"> | undefined;
+	middleware: Pick<MiddlewareRegistrar, "prepareRegistrationReplacement" | "replaceRegistrations" | "ownedGeneration">;
+	/** Read once per run and canonicalized; the candidate must be for exactly this workspace. */
+	cwd: () => string;
+	recordReceipt: HookReceiptSink;
+	runCommand?: UserHookCommandRunner;
+	now?: () => number;
+	/** One operator line per issue; stderr in headless runs, dropped or noticed by the host in interactive runs. */
+	report: (line: string) => void;
+	/** The launch trust card already told the operator project configuration is not active; boot repeats none of it. */
+	holdBootTrustNotices?: boolean;
+	/** Called once per published generation, after both references are live. */
+	onCommitted?: (event: ExtensionGenerationCommitted) => void;
+	/**
+	 * Present only where a surface hosts api 2 runtimes. Their declared hooks
+	 * then publish with each generation; elsewhere they are not registered, so
+	 * a gate never fails closed for want of a runtime that was never started.
+	 */
+	runtimeHooks?: ExtensionRuntimeHookBridge;
+	/** The session gateway's MCP ownership, read by runtime hooks that name one server's tools. */
+	mcpOwner?: McpToolOwnerLookup;
+	/**
+	 * Where a main session's boundaries are heard. The effect-free hook runs held for a turn's receipt are written when a
+	 * turn is aborted or the session parks, and the holder closes when shutdown is requested, before any drain hook
+	 * unbinds the session ledger (C-33). Defaults to the process hub; a host with no turns hears neither and flushes as
+	 * it stops.
+	 */
+	bus?: Pick<TelemetryHub, "subscribe">;
+}
+
+export interface ExtensionReloadCoordinator {
+	/**
+	 * Boot: publish generation 1 and its user hooks together. On a rejected
+	 * build, or without an extensions domain, the project's own hooks are
+	 * published under generation 1 and no extension generation exists.
+	 */
+	applyBoot(): ExtensionReloadOutcome;
+	/** Operator or programmatic reload. Synchronous and never throws. */
+	reload(): ExtensionReloadOutcome;
+	/** The prompt_submit hooks of the published generation; null before one exists or without runtime hooks. */
+	promptGate(): ExtensionPromptGate | null;
+	/**
+	 * Serve runtime tools from this registry: the published generation's now,
+	 * and each later generation's when it commits. Only where runtime hooks
+	 * exist, since only there is a runtime to answer a call.
+	 */
+	attachRuntimeTools(registry: Pick<ToolRegistry, "register" | "unregister" | "get">): void;
+	/**
+	 * The published generation's tool hooks for dispatched native workers, and
+	 * the evaluation of one worker call through the session's own registration.
+	 * Empty without runtime hooks.
+	 */
+	workerHooks: {
+		declarations(): ReadonlyArray<WorkerExtensionHook>;
+		/** Tool hooks past the cap a worker spec carries, which no worker runs. */
+		dropped(): ReadonlyArray<WorkerExtensionHook>;
+		evaluate(request: WorkerHookRequest, run: WorkerHookRun): Promise<ReadonlyArray<WorkerHookEffect>>;
+		/** One line through the runtime host's notice channel. */
+		notify(message: string): void;
+	};
+	/** Write the receipts held for effect-free runtime hook runs; a host with no turns calls it as it stops. */
+	flushHookReceipts(): void;
+}
+
+/** One hook execution as `hook.ran`; the session, run and turn ride the record's context, never its payload (#434). */
+function recordHookRan(receipt: HookReceipt, sessionId: string | undefined): void {
+	try {
+		// A fresh session's first turn runs its hooks before the session exists; their receipts wait for it (CLI-P47).
+		const owner = sessionId ?? (receipt.runId === undefined ? unboundTelemetrySession() : undefined);
+		const ctx = withToolTelemetryContext(
+			{
+				...(owner !== undefined ? { sessionId: owner } : {}),
+				...(receipt.runId !== undefined ? { runId: receipt.runId } : {}),
+				...(receipt.turnId !== undefined ? { turnId: receipt.turnId } : {}),
+			},
+			telemetryContext,
+		);
+		const extension = receipt.extension;
+		telemetryHub().emit(
+			"hook.ran",
+			{
+				hookId: receipt.hookId,
+				origin: receipt.origin,
+				sourceId: `sha256:${sha256Hex(receipt.sourcePath)}`,
+				hash: receipt.hash,
+				hook: receipt.hook,
+				kind: receipt.kind,
+				outcome: receipt.outcome,
+				...(receipt.effectKinds !== undefined ? { effectKinds: receipt.effectKinds.slice(0, 32) } : {}),
+				...(receipt.durationMs !== undefined ? { durationMs: Math.max(0, receipt.durationMs) } : {}),
+				...(receipt.runs !== undefined ? { runs: receipt.runs } : {}),
+				...(receipt.maxDurationMs !== undefined ? { maxDurationMs: Math.max(0, receipt.maxDurationMs) } : {}),
+				...(receipt.timeoutMs !== undefined ? { timeoutMs: receipt.timeoutMs } : {}),
+				...(receipt.exitCode !== undefined ? { exitCode: receipt.exitCode } : {}),
+				...(receipt.outputChars !== undefined ? { outputChars: receipt.outputChars } : {}),
+				...(receipt.toolName !== undefined ? { tool: receipt.toolName } : {}),
+				...(extension
+					? {
+							extension: {
+								id: extension.id,
+								...(receipt.extensionVersion ? { version: receipt.extensionVersion } : {}),
+								scope: extension.scope,
+								contentDigest: extension.contentDigest,
+								generation: extension.generation,
+							},
+						}
+					: {}),
+			},
+			ctx,
+		);
+	} catch {
+		// A hook's record is evidence about the hook, never part of its outcome (#434).
+	}
+}
+
+/**
+ * Where a session's hook receipts go: a `hook.ran` journal record under the receipt's own session, run and turn,
+ * attributed to the session when the receipt names none, and an extension's package activity (#434).
+ */
+export function extensionHookReceiptSink(sessionId: () => string | undefined): HookReceiptSink {
+	return (receipt) => {
+		const session = receipt.sessionId ?? sessionId();
+		recordHookRan(receipt, session);
+		if (receipt.extension)
+			recordPackageActivity({
+				kind: `hook:${receipt.hook}`,
+				at: new Date(receipt.at).toISOString(),
+				owner: {
+					kind: "extension",
+					id: receipt.extension.id,
+					version: receipt.extensionVersion ?? "",
+					digest: receipt.extension.contentDigest,
+					scope: receipt.extension.scope,
+				},
+				outcome: receipt.outcome,
+				...(session ? { sessionId: session } : {}),
+				...(receipt.turnId ? { turnId: receipt.turnId } : {}),
+				details: {
+					effectKinds: receipt.effectKinds ?? [],
+					generation: receipt.extension.generation,
+					durationMs: receipt.durationMs ?? null,
+				},
+			});
+	};
+}
+
+/** Cap on issue lines carried in one outcome so an operator surface stays bounded. */
+export const EXTENSION_RELOAD_REPORT_LINE_CAP = 40;
+
+function failure(message: string): ExtensionSnapshotDiagnostics {
+	return {
+		entries: [{ type: "error", message: message.slice(0, EXTENSION_SNAPSHOT_DIAGNOSTIC_MESSAGE_CAP) }],
+		truncated: 0,
+	};
+}
+
+function issueLines(
+	built: BuildUserHookRegistrationsResult,
+	dropped: ReadonlyArray<MiddlewareRegistrationConflict>,
+	shownTrust: Set<string>,
+	holdTrust: boolean,
+): string[] {
+	const lines: string[] = [];
+	for (const issue of built.fileIssues) {
+		// An untrusted file is a standing condition: one notice per session, not one per reload.
+		if (issue.trust) {
+			const shown = shownTrust.has(issue.message);
+			shownTrust.add(issue.message);
+			if (shown || holdTrust) continue;
+		}
+		lines.push(`[pancode:hooks] ${issue.message}`);
+	}
+	for (const issue of built.issues) {
+		lines.push(`[pancode:hooks] ${issue.source.sourcePath}#${issue.index}: ${issue.issues.join("; ")}`);
+	}
+	for (const { loser, winner } of built.overridden) {
+		lines.push(`[pancode:hooks] ${loser.source.sourcePath} hook '${loser.id}' overridden by ${winner.sourcePath}`);
+	}
+	for (const conflict of dropped) {
+		lines.push(`[pancode:hooks] hook '${conflict.id}' dropped: id is held by a ${conflict.conflictsWith} registration`);
+	}
+	return lines;
+}
+
+export function createExtensionReloadCoordinator(deps: ExtensionReloadCoordinatorDeps): ExtensionReloadCoordinator {
+	let inFlight = false;
+	const shownTrust = new Set<string>();
+	let holdTrust = false;
+	let promptGate: ExtensionPromptGate | null = null;
+	let publishedPackages: ReadonlyArray<InstalledExtension> = [];
+	// Effect-free runtime hook runs wait here for their turn's aggregate receipt, across generations (C-33).
+	const quietRuns = createQuietHookRuns(deps.recordReceipt, () => deps.runtimeHooks?.sessionId() ?? null);
+	// A turn that ends without turn_end, or a session that parks, writes what it held under its own session.
+	const bus = deps.bus ?? telemetryHub();
+	bus.subscribe("turn.aborted", () => quietRuns.flush());
+	bus.subscribe("session.parked", () => quietRuns.flush());
+	bus.subscribe("shutdown.requested", () => quietRuns.close());
+	/** Published after every runtime hook, so the turn's own turn_end runs are in the aggregate it writes. */
+	const quietRunsAtTurnEnd: MiddlewareHookRegistration = {
+		id: "extension:hook-receipts:turn_end",
+		description: "writes the turn's effect-free extension hook runs as one receipt per hook",
+		hooks: ["turn_end"],
+		evaluate: () => [],
+		evaluateAsync: async () => {
+			quietRuns.flush();
+			return [];
+		},
+	};
+	let toolRegistry: Pick<ToolRegistry, "register" | "unregister" | "get"> | null = null;
+	let registeredTools: ToolName[] = [];
+	let workerDeclarations: ReadonlyArray<WorkerExtensionHook> = [];
+	let workerDropped: ReadonlyArray<WorkerExtensionHook> = [];
+	let workerEvaluators = new Map<string, WorkerHookEvaluator>();
+	// Every declaration a worker may still be holding, so a hook a reload
+	// removed answers by the policy that worker was dispatched under.
+	const dispatchedDeclarations = new Map<string, WorkerExtensionHook>();
+
+	/** Swap the gateway's runtime tools for the published generation's; a taken name is reported, never replaced. */
+	const publishRuntimeTools = (): string[] => {
+		if (toolRegistry === null || deps.runtimeHooks === undefined) return [];
+		for (const name of registeredTools) toolRegistry.unregister?.(name);
+		registeredTools = [];
+		const lines: string[] = [];
+		for (const spec of buildExtensionRuntimeToolSpecs(publishedPackages, deps.runtimeHooks)) {
+			if (toolRegistry.get(spec.name)) {
+				lines.push(`[pancode:extensions] runtime tool ${spec.name} is not registered: the name is taken`);
+				continue;
+			}
+			toolRegistry.register(spec);
+			registeredTools.push(spec.name);
+		}
+		if (registeredTools.length > 0) ensureDetailLedger(toolRegistry);
+		for (const name of promotedRuntimeTools(publishedPackages).held)
+			lines.push(
+				`[pancode:extensions] promoted tool ${name} stays behind the gateway: a session attaches at most ${RUNTIME_V2_LIMITS.promotedToolsPerSession} promoted tools`,
+			);
+		return lines;
+	};
+
+	const build = (workspace: string, captured: CapturedHookSourceSet | null): BuildUserHookRegistrationsResult =>
+		buildUserHookRegistrations({
+			cwd: workspace,
+			workspaceRoot: workspace,
+			...(captured !== null ? { capturedSources: captured } : {}),
+			recordReceipt: deps.recordReceipt,
+			report: deps.report,
+			...(deps.runCommand !== undefined ? { runCommand: deps.runCommand } : {}),
+			...(deps.now !== undefined ? { now: deps.now } : {}),
+		});
+
+	const emitLines = (lines: ReadonlyArray<string>): void => {
+		for (const line of lines) {
+			try {
+				deps.report(line);
+			} catch {
+				// Reporting is observability; it must never affect the reload.
+			}
+		}
+	};
+
+	const rejected = (rejection: ExtensionReloadRejection): ExtensionReloadOutcome => {
+		const lines = rejection.diagnostics.entries.map((entry) => `[pancode:extensions] ${entry.message}`);
+		emitLines(lines);
+		return { ...rejection, lines: lines.slice(0, EXTENSION_RELOAD_REPORT_LINE_CAP) };
+	};
+
+	const canonicalWorkspace = (): string | null => {
+		try {
+			return realpathSync(path.resolve(deps.cwd()));
+		} catch {
+			return null;
+		}
+	};
+
+	/**
+	 * Degraded boot: no extension generation will ever exist, so the project's
+	 * own hooks are published alone under generation 1. Readers keep taking
+	 * the ephemeral path, which pairs no generation with no generation.
+	 */
+	const publishProjectHooksOnly = (workspace: string): void => {
+		if (deps.middleware.ownedGeneration("user-hooks") !== 0) return;
+		const built = build(workspace, null);
+		const report = deps.middleware.replaceRegistrations("user-hooks", 1, built.registrations);
+		const lines = issueLines(built, report.dropped, shownTrust, holdTrust);
+		if (!report.applied) lines.push(`[pancode:hooks] project hooks were not applied: ${report.reason ?? "refused"}`);
+		emitLines(lines);
+	};
+
+	const run = (boot: boolean): ExtensionReloadOutcome => {
+		const activeGeneration = deps.extensions?.snapshot()?.generation ?? 0;
+		if (inFlight) {
+			return rejected({
+				status: "rejected",
+				reason: "reentrant",
+				generation: activeGeneration,
+				diagnostics: { entries: [], truncated: 0 },
+			});
+		}
+		inFlight = true;
+		try {
+			const workspace = canonicalWorkspace();
+			if (workspace === null) {
+				return rejected({
+					status: "rejected",
+					reason: "build-failed",
+					generation: activeGeneration,
+					diagnostics: failure("the working directory could not be resolved"),
+				});
+			}
+			if (deps.extensions === undefined) {
+				if (boot) publishProjectHooksOnly(workspace);
+				return rejected({
+					status: "rejected",
+					reason: "build-failed",
+					generation: 0,
+					diagnostics: failure("extensions domain is not loaded; restart to recover it"),
+				});
+			}
+			const prepared = deps.extensions.prepareReload();
+			if (prepared.status === "rejected") {
+				if (boot) publishProjectHooksOnly(workspace);
+				return rejected(prepared);
+			}
+			const candidate = prepared.candidate;
+			if (candidate.snapshot.cwd !== workspace) {
+				candidate.discard();
+				return rejected({
+					status: "rejected",
+					reason: "workspace-changed",
+					generation: candidate.previousGeneration,
+					diagnostics: failure(
+						`extension snapshot was built for ${candidate.snapshot.cwd} but the session workspace is ${workspace}`,
+					),
+				});
+			}
+			let built: BuildUserHookRegistrationsResult;
+			try {
+				built = build(workspace, capturedHookSourcesFor(candidate.snapshot));
+			} catch (error) {
+				candidate.discard();
+				return rejected({
+					status: "rejected",
+					reason: "build-failed",
+					generation: candidate.previousGeneration,
+					diagnostics: failure(
+						`user hook registrations could not be built: ${error instanceof Error ? error.message : String(error)}`,
+					),
+				});
+			}
+			const runtimeHookOptions = {
+				generation: candidate.generation,
+				recordReceipt: deps.recordReceipt,
+				quietRuns,
+				...(deps.now !== undefined ? { now: deps.now } : {}),
+				...(deps.mcpOwner !== undefined ? { mcpOwner: deps.mcpOwner } : {}),
+			};
+			const runtimeHooks =
+				deps.runtimeHooks === undefined
+					? { registrations: [], workerEvaluators: new Map<string, WorkerHookEvaluator>() }
+					: buildExtensionRuntimeHooks(candidate.snapshot.packages, deps.runtimeHooks, runtimeHookOptions);
+			const runtimeRegistrations = runtimeHooks.registrations;
+			const nextPromptGate =
+				deps.runtimeHooks === undefined
+					? null
+					: buildExtensionPromptGate(candidate.snapshot.packages, deps.runtimeHooks, runtimeHookOptions);
+			const preparedReplacement = deps.middleware.prepareRegistrationReplacement("user-hooks", candidate.generation, [
+				...built.registrations,
+				...runtimeRegistrations,
+				...(runtimeRegistrations.length > 0 || (nextPromptGate?.size ?? 0) > 0 ? [quietRunsAtTurnEnd] : []),
+			]);
+			if (preparedReplacement.status === "rejected") {
+				candidate.discard();
+				return rejected({
+					status: "rejected",
+					reason: "stale",
+					generation: candidate.previousGeneration,
+					diagnostics: failure(
+						`middleware refused generation ${candidate.generation} (${preparedReplacement.reason}; active ${preparedReplacement.activeGeneration})`,
+					),
+				});
+			}
+			const replacement = preparedReplacement.replacement;
+			// Final freshness validation. After this point neither primitive can
+			// refuse, so a stale side here discards both and publishes neither.
+			if (!candidate.current() || !replacement.current()) {
+				replacement.discard();
+				candidate.discard();
+				return rejected({
+					status: "rejected",
+					reason: "stale",
+					generation: candidate.previousGeneration,
+					diagnostics: failure(`generation ${candidate.generation} was superseded before it could be published`),
+				});
+			}
+			// The outgoing generation's held runs are written now; the next one may have no turn_end to write them.
+			quietRuns.flush();
+			candidate.publish();
+			replacement.publish();
+			promptGate = nextPromptGate;
+			publishedPackages = candidate.snapshot.packages;
+			deps.runtimeHooks?.retainPinned(pinnableExtensionIds(candidate.snapshot.packages));
+			const workerHookLines: string[] = [];
+			let dropped: ReadonlyArray<WorkerExtensionHook> = [];
+			workerDeclarations =
+				deps.runtimeHooks === undefined
+					? []
+					: buildWorkerExtensionHooks(candidate.snapshot.packages, (hooks) => {
+							dropped = hooks;
+							const ids = hooks.map((hook) => hook.id);
+							workerHookLines.push(
+								`[pancode:extensions] ${ids.length} tool hooks past the ${WORKER_EXTENSION_HOOKS_MAX} a dispatched worker carries do not run for worker calls: ${ids.slice(0, 8).join(", ")}${ids.length > 8 ? ", ..." : ""}`,
+							);
+						});
+			workerDropped = dropped;
+			workerEvaluators = runtimeHooks.workerEvaluators;
+			// Both references are live. Observers may run from here on.
+			replacement.emitConflicts();
+			const lines = [
+				...issueLines(built, replacement.dropped, shownTrust, holdTrust),
+				...publishRuntimeTools(),
+				...workerHookLines,
+			];
+			try {
+				deps.onCommitted?.({
+					generation: candidate.generation,
+					previousGeneration: candidate.previousGeneration,
+					changed: candidate.changed,
+					digest: candidate.snapshot.digest,
+				});
+			} catch (error) {
+				// Publication is already complete. An observability callback cannot
+				// turn a live paired generation into a thrown or rejected outcome.
+				const message = error instanceof Error ? error.message : String(error);
+				lines.push(
+					`[pancode:extensions] committed generation observer failed: ${message.slice(0, EXTENSION_SNAPSHOT_DIAGNOSTIC_MESSAGE_CAP)}`,
+				);
+			}
+			emitLines(lines);
+			return {
+				status: "committed",
+				generation: candidate.generation,
+				previousGeneration: candidate.previousGeneration,
+				changed: candidate.changed,
+				digest: candidate.snapshot.digest,
+				added: candidate.added,
+				removed: candidate.removed,
+				modified: candidate.modified,
+				diagnostics: candidate.snapshot.diagnostics,
+				hooks: {
+					registered: replacement.size,
+					dropped: replacement.dropped.length,
+					fileIssues: built.fileIssues.length,
+					issues: built.issues.length,
+					overridden: built.overridden.length,
+				},
+				lines: lines.slice(0, EXTENSION_RELOAD_REPORT_LINE_CAP),
+			};
+		} finally {
+			inFlight = false;
+		}
+	};
+
+	return {
+		applyBoot: () => {
+			holdTrust = deps.holdBootTrustNotices === true;
+			try {
+				return run(true);
+			} finally {
+				holdTrust = false;
+			}
+		},
+		reload: () => run(false),
+		promptGate: () => promptGate,
+		attachRuntimeTools(registry) {
+			toolRegistry = registry;
+			emitLines(publishRuntimeTools());
+		},
+		workerHooks: {
+			declarations() {
+				for (const hook of workerDeclarations) dispatchedDeclarations.set(hook.id, hook);
+				return workerDeclarations;
+			},
+			dropped: () => workerDropped,
+			evaluate: (request, run) =>
+				evaluateWorkerHookRequest(
+					request,
+					workerEvaluators.get(request.hookId),
+					dispatchedDeclarations.get(request.hookId),
+					run,
+					(message) => deps.runtimeHooks?.current()?.notify(message),
+				),
+			notify: (message) => deps.runtimeHooks?.current()?.notify(message),
+		},
+		flushHookReceipts: () => quietRuns.flush(),
+	};
+}

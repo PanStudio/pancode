@@ -1,0 +1,330 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { ModelRunInfo } from "../../core/model-tier.js";
+import type { ToolResultDigest } from "../../tools/result-disposition.js";
+
+/**
+ * The five lifecycle events of the unified middleware layer (w3 cutover).
+ * Every event has a live producer: the registry fires before_tool/after_tool
+ * in runSpec, the chat-loop fires turn_start on prompt acceptance, turn_end
+ * when the final assistant message of a run lands, and on_compaction
+ * (observe-only) before each compaction stage.
+ */
+export const MIDDLEWARE_HOOKS = ["before_tool", "after_tool", "turn_start", "turn_end", "on_compaction"] as const;
+
+export type MiddlewareHook = (typeof MIDDLEWARE_HOOKS)[number];
+
+export const MIDDLEWARE_EFFECT_KINDS = [
+	"inject_reminder",
+	"annotate_tool_result",
+	"block_tool",
+	"protect_path",
+	"request_continuation",
+	"require_tool",
+	"lock_tools",
+	"notify_operator",
+	"request_approval",
+] as const;
+
+export type MiddlewareEffectKind = (typeof MIDDLEWARE_EFFECT_KINDS)[number];
+
+export const MIDDLEWARE_REMINDER_SEVERITIES = ["info", "advisory", "warn", "hard-block"] as const;
+
+export type MiddlewareReminderSeverity = (typeof MIDDLEWARE_REMINDER_SEVERITIES)[number];
+
+export const MIDDLEWARE_ANNOTATION_SEVERITIES = ["info", "warn"] as const;
+
+export type MiddlewareAnnotationSeverity = (typeof MIDDLEWARE_ANNOTATION_SEVERITIES)[number];
+
+/**
+ * A coordinator obligation still open when a turn ends (fleet design 4.3): an unvalidated mutation, a check whose last
+ * outcome since the last change is red, a detached child run not yet collected, an open task-board item. A builtin
+ * turn_end producer tags the reminder or continuation it already emits for one; the host lowers a declared `done` over
+ * any of them to `partly_done`. Hooks files cannot declare it. `observation_budget` is the host's own: a headless run
+ * whose last observation calls the pool refused, so what they would have read went unseen (CLI-P42). `missing_output`
+ * is the host's too: a file the operator named as an output does not exist when the turn is sealed (M-4).
+ */
+export type CompletionFact =
+	| "unvalidated_mutation"
+	| "failed_check"
+	| "uncollected_run"
+	| "open_task"
+	| "observation_budget"
+	| "missing_output";
+
+export type MiddlewareEffect =
+	/**
+	 * `source` names the subsystem a transcript callout is titled with when the
+	 * reminder is not a generic one. Only the model sees the message itself; the
+	 * operator's transcript shows it under this source. `audience: "model"`
+	 * marks advice written for the model alone: the host delivers it with the
+	 * next request and records it in the ledger, but never shows it as a
+	 * transcript callout.
+	 */
+	| {
+			kind: "inject_reminder";
+			message: string;
+			severity?: MiddlewareReminderSeverity;
+			source?: "memory";
+			audience?: "model";
+			fact?: CompletionFact;
+			/**
+			 * Host-only: checks that ran after the last change and failed, as operator-safe labels, for the finish
+			 * advisory footer. Never sent to the model, and not declarable from a hooks file.
+			 */
+			failedChecks?: ReadonlyArray<string>;
+			/**
+			 * Host-only: passes a later change retired and that change, as operator-safe labels, for the finish advisory
+			 * footer (FX-5). Never sent to the model, and not declarable from a hooks file.
+			 */
+			retired?: { checks: ReadonlyArray<string>; change: string };
+	  }
+	| { kind: "annotate_tool_result"; message: string; severity?: MiddlewareAnnotationSeverity }
+	| {
+			kind: "block_tool";
+			reason: string;
+			severity: "hard-block";
+			/**
+			 * The blocked call repeats, with identical arguments, one that already
+			 * succeeded this run, so its result is already in the conversation.
+			 * Set by the loop guard only. A receipt reads this, not the reason
+			 * text, to tell a withheld duplicate from a refused requirement.
+			 */
+			redundantRepeat?: true;
+	  }
+	| { kind: "protect_path"; path: string; reason: string }
+	/**
+	 * `note` is what the nudge asked, in plain words, for the footer line that
+	 * says the turn was continued. An empty note marks the host's own card (the
+	 * plan close), which is already on screen and needs no announcement.
+	 * `toolFree` marks a continuation the host carries out itself, the only kind
+	 * a tool-locked request can honor. `reserved: "verification"` draws on the
+	 * finish gate's own slot instead of the one nudge a prompt shares, so
+	 * another producer's nudge cannot starve a missing check at contained yolo.
+	 */
+	| {
+			kind: "request_continuation";
+			message: string;
+			note?: string;
+			toolFree?: true;
+			reserved?: "verification";
+			/** On a turn that declared through `finish` the host never continues; it seals this fact instead. */
+			fact?: CompletionFact;
+	  }
+	| { kind: "require_tool"; toolName: string }
+	| { kind: "lock_tools" }
+	/**
+	 * A message for the operator only, such as a capability tip. The host shows
+	 * it and never adds it to model context. `key` names the source so a
+	 * surface can replace or rate-limit repeats.
+	 */
+	| { kind: "notify_operator"; message: string; key: string }
+	/**
+	 * Ask the operator before the call runs, as another agent's hook `ask` does.
+	 * The registry parks the call on the same approval card, safety-judge review
+	 * and refusal path as an admission ask; a call that already carries an
+	 * approval runs without a second one. Applies at before_tool only.
+	 */
+	| { kind: "request_approval"; reason: string }
+	/**
+	 * Replacement arguments for the call about to run. Only an extension
+	 * runtime hook emits it, in the awaited before_tool phase, and it is not
+	 * one of the kinds a hooks file may declare. The registry checks the
+	 * replacement against the tool's schema and admits it again before using
+	 * it, so a rewrite can narrow or redirect a call and never widen it.
+	 */
+	| { kind: "rewrite_tool_input"; args: Record<string, unknown>; reason: string; source: string };
+
+/** What a hooks file or a builtin rule may declare: every effect but a rewrite. */
+export type DeclarableMiddlewareEffect = Exclude<MiddlewareEffect, { kind: "rewrite_tool_input" }>;
+
+export type MiddlewareRuleSource = "builtin";
+
+export interface MiddlewareRule {
+	id: string;
+	source: MiddlewareRuleSource;
+	description: string;
+	enabled: boolean;
+	hooks: ReadonlyArray<MiddlewareHook>;
+	effectKinds: ReadonlyArray<MiddlewareEffectKind>;
+}
+
+export interface MiddlewareSnapshot {
+	version: 1;
+	rules: ReadonlyArray<MiddlewareRule>;
+}
+
+export type MiddlewareMetadataValue = string | number | boolean | null;
+
+export type MiddlewareMetadata = Readonly<Record<string, MiddlewareMetadataValue>>;
+
+/**
+ * Cap for `MiddlewareHookInput.text`, in characters. The runtime truncates
+ * longer payloads from the head when cloning inputs, so no registration ever
+ * evaluates unbounded text. Producers report the true length out of band
+ * (chat-loop sets `metadata.assistantTextChars` on turn_end).
+ */
+export const MIDDLEWARE_HOOK_TEXT_MAX_CHARS = 16_000;
+
+/**
+ * Where a tool call lands, resolved the way its tool resolves it, so a hook
+ * judges the file the tool opens and the workers dispatch starts rather than
+ * re-deriving either from the raw arguments.
+ */
+export interface ToolCallLanding {
+	/** A path-taking tool's `path` argument after `@`, Unicode spaces, `~` and every link, `..` after a link included. */
+	path?: { arg: "path"; path: string; resolved: boolean };
+	dispatch?: ToolCallDispatchLanding;
+}
+
+/**
+ * The part a dispatched worker plays: `task` in an ordinary fan-out, the
+ * builder and its gate reviewer in a review loop, the candidates and their
+ * judge in compete, the members and their synthesis judge in council.
+ */
+export type ToolCallDispatchRole = "task" | "builder" | "reviewer" | "candidate" | "judge" | "member" | "synthesis";
+
+/** One dispatched worker as dispatch admission parsed it. */
+export interface ToolCallDispatchTask {
+	role: ToolCallDispatchRole;
+	agent: string;
+	cwd: string;
+	/** The write roots as parsed, relative to `cwd`. */
+	writeRoots: ReadonlyArray<string>;
+	/** Where those roots land, absolute and link-resolved. */
+	writeBoundaries: ReadonlyArray<string>;
+	worktree: boolean;
+	readOnly: boolean;
+}
+
+export type ToolCallDispatchLanding =
+	| {
+			kind: "tasks";
+			mode: string;
+			/** Every role the plan starts, once each; compete runs the candidate `candidates` times. */
+			tasks: ReadonlyArray<ToolCallDispatchTask>;
+			candidates?: number;
+	  }
+	| { kind: "list" }
+	| { kind: "apply-winner"; branch: string; cwd: string }
+	/** `ref` is the run id or task branch the call names; the operator lands it from a Land card. */
+	| { kind: "land"; ref: string; cwd: string };
+
+export interface MiddlewareHookInput {
+	hook: MiddlewareHook;
+	runId?: string;
+	sessionId?: string;
+	turnId?: string;
+	toolCallId?: string;
+	correlationId?: string;
+	toolName?: string;
+	modelId?: string;
+	/**
+	 * The model the call or turn runs on: id, target, effective context
+	 * window, thinking level, whether prompt caching is on, and its tier. A
+	 * dispatched worker's calls carry the worker's own model (WTF-P 0.8.3 C1).
+	 */
+	model?: Readonly<ModelRunInfo>;
+	metadata?: MiddlewareMetadata;
+	/**
+	 * Tool-call arguments, supplied by the registry on before_tool and
+	 * after_tool. Read-only by contract: the runtime shallow-copies the record
+	 * per evaluation, and registrations must never mutate nested values. The
+	 * typed-field route (rather than JSON in `metadata`) follows the Q3
+	 * decision for `turn_end` text.
+	 */
+	toolArgs?: Readonly<Record<string, unknown>>;
+	/** Structured result details, supplied by the registry on after_tool. Read-only by contract. */
+	toolResultDetails?: Readonly<Record<string, unknown>>;
+	/** Bounded deterministic diagnostic supplied by the result-disposition layer on after_tool. */
+	toolResultDigest?: Readonly<ToolResultDigest>;
+	/** Supplied by the registry to the awaited phase at tool points only, where extension hooks run. */
+	toolLanding?: Readonly<ToolCallLanding>;
+	/**
+	 * Free text attached to the hook occurrence; on turn_end this is the final
+	 * assistant message text. The one typed exception to the scalar `metadata`
+	 * contract (Q3 decision), capped at MIDDLEWARE_HOOK_TEXT_MAX_CHARS by the
+	 * runtime when inputs are cloned.
+	 */
+	text?: string;
+}
+
+/** One rule that emitted effects at a hook, as middleware.fired records it (#431). */
+export interface MiddlewareFiredRule {
+	ruleId: string;
+	effects: ReadonlyArray<MiddlewareEffect["kind"]>;
+	/** What the rule says triggered it, as `matcher:subject@scope`. */
+	evidence?: string;
+	/** The registration declares that every firing of it settles, whatever its effects (exploration design 3.4). */
+	settles?: true;
+	/**
+	 * Set by the fired record when one of its effects settles ({@link SETTLING_EFFECT_KINDS}) or the rule declares
+	 * `settles`: the id its firing row and its one `surface.settled` carry. Bookkeeping only; nothing reads it for a
+	 * verdict (memory design 4.1).
+	 */
+	firingId?: string;
+}
+
+/**
+ * The effect kinds that cost a round or stop a call, so a firing that emits one settles with an outcome; a rule that
+ * only reminds, annotates or notifies is counted, not settled (memory design 4.6).
+ */
+export const SETTLING_EFFECT_KINDS: ReadonlySet<MiddlewareEffect["kind"]> = new Set([
+	"request_continuation",
+	"block_tool",
+	"lock_tools",
+]);
+
+export interface MiddlewareHookResult {
+	hook: MiddlewareHook;
+	input: MiddlewareHookInput;
+	effects: ReadonlyArray<MiddlewareEffect>;
+	ruleIds: ReadonlyArray<string>;
+	/** The rules that emitted, in order, with their own effects; the runtime's runners always fill it. */
+	fired?: ReadonlyArray<MiddlewareFiredRule>;
+}
+
+/**
+ * Read a finite number out of a hook input's metadata, or null.
+ *
+ * Metadata is an open bag a caller fills in, so a missing key, a string, a
+ * boolean, and a NaN are all the same answer: this hook was not told. Null is
+ * that answer; a zero would be a count the caller never reported.
+ */
+export function metadataNumber(input: MiddlewareHookInput, key: string): number | null {
+	const value = input.metadata?.[key];
+	return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** The string under `key`, or null when the caller did not report one. */
+export function metadataString(input: MiddlewareHookInput, key: string): string | null {
+	const value = input.metadata?.[key];
+	return typeof value === "string" ? value : null;
+}
+
+/**
+ * Whether the turn can call `tool`, read from the host's active capability
+ * list: the attached and gateway-reachable tools the turn's constraints admit
+ * (`turnAllowsTool`). A hook that was not told reads as available, so a host
+ * without the list keeps the behavior it had before the check.
+ */
+export function turnCanCallTool(input: MiddlewareHookInput, tool: string): boolean {
+	const names = metadataString(input, "activeCapabilityNames") ?? metadataString(input, "activeToolNames");
+	return names === null || names.split(",").some((name) => name.trim() === tool);
+}
+
+export function isMiddlewareHook(value: string): value is MiddlewareHook {
+	return (MIDDLEWARE_HOOKS as ReadonlyArray<string>).includes(value);
+}
+
+export function isMiddlewareEffectKind(value: string): value is MiddlewareEffectKind {
+	return (MIDDLEWARE_EFFECT_KINDS as ReadonlyArray<string>).includes(value);
+}
+
+export function isMiddlewareReminderSeverity(value: string): value is MiddlewareReminderSeverity {
+	return (MIDDLEWARE_REMINDER_SEVERITIES as ReadonlyArray<string>).includes(value);
+}
+
+export function isMiddlewareAnnotationSeverity(value: string): value is MiddlewareAnnotationSeverity {
+	return (MIDDLEWARE_ANNOTATION_SEVERITIES as ReadonlyArray<string>).includes(value);
+}

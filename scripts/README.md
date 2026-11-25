@@ -1,0 +1,125 @@
+# Repository tooling
+
+These tools build the checkout, check source and package contents, maintain
+catalogs, install PanCode, and qualify or publish a release. The four installers
+named in `release-manifest.json` also ship in the npm package. The release flow
+itself is described in [release/README.md](release/README.md).
+
+Keep disposable output in a scratch directory you own outside the checkout, and
+set `TMPDIR` to it before running commands that create temporary files. Never
+use system `/tmp` or commit run output under `scripts/`.
+
+## Package scripts
+
+| Command | Purpose and effects |
+| --- | --- |
+| `pnpm run doctor:dev` | Check Node, pnpm, git, rg, fd and the installed dependencies against what this checkout needs; report python3, the git hooks and `dist/` as optional. Exits 1 when a required item is missing. |
+| `pnpm run build` / `pnpm run build:release` / `pnpm run dev` | Build the CLI, the source pack, the code map and the preparsed YAML into `dist/`; the release build empties `dist/` first; `dev` watches source changes. |
+| `pnpm run clean` | Remove `dist/`. |
+| `pnpm run check` | Run `typecheck` and Biome (errors only) at once: the few-second loop before `pnpm run lint`. |
+| `pnpm run typecheck` / `pnpm run typecheck:tsc` / `pnpm run typecheck:compare` | Typecheck source, tests and scripts with `tsrs --fast` (falling back to `tsc` with a notice where tsrs cannot run), with TypeScript's own `tsc`, or with both, failing if their diagnostics differ; release preparation runs the last. See "Typechecking" in `CONTRIBUTING.md`. |
+| `pnpm run format` / `pnpm run lint` | Format with Biome, or check formatting and Biome rules (any warning fails), source boundaries, license headers, catalog pins, resource paths and configuration consistency. No remote package refresh. |
+| `pnpm run check:lane` | Run the gates a lane branch most often fails, for its diff against the base: environment guards, typecheck, lint, the GUI check, OpenAPI and PanHub freshness, and the test files the diff adds or imports. |
+| `pnpm run check:gui` | Typecheck and lint the GUI app. |
+| `pnpm run test:file -- <files>` | Run focused test files under `tests/harness/tmp-root.ts`, which gives each file its own temporary directory and PanCode home. |
+| `pnpm run test` / `pnpm run test:gui` / `pnpm run test:list` | Run the default root or GUI selection in `ci-tests.mjs`, or list every selection. Root tests need a build. |
+| `pnpm run test:full` / `pnpm run test:gui:full` | Run every root or GUI test file. `test:full` first refuses a `dist/` built from another commit (`check-dist.mjs`). |
+| `pnpm run test:package` / `pnpm run check:packed-install -- --tarball <file> --prefix <dir>` | Exercise the installed package, or install a packed tarball alone into an empty prefix and check its commands, SDK exports and extension scaffold. |
+| `pnpm run test:maintenance` | Run the keyboard routing and draft regressions. |
+| `pnpm run hooks:install` | Install the pre-commit and pre-push guards against committing ignored files. |
+| `pnpm run hub:check` / `pnpm run skills:check` | Verify local catalog content and generated projections against committed pins. |
+| `pnpm run hub:pin` / `pnpm run skills:pin` | Refresh generated catalogs. PanHub pinning also fetches blessed remote packs. |
+| `pnpm run hub:review -- --base <ref>` | Review every community row file that differs from a base ref. |
+| `pnpm run kit:manifest` / `pnpm run kit:check` | Write `packages/kit/servers.json` from the PanKit server registry, or fail when the tracked file differs. |
+| `pnpm run economy:check` | Validate the public API reference tariff in `models/economy-rates.json` and print witness quotes. `-- --as-of <YYYY-MM-DD>` audits another day. |
+| `pnpm run pi:surface-diff` / `pnpm run pi:surface-snapshot` | Review the consumed Pi declarations against their snapshot, or refresh it during dependency maintenance. |
+| `pnpm run acp:schema` / `acp:schema:write` / `acp:schema:bump` | Check that the generated ACP wire-shape module matches the pinned upstream schemas, regenerate it from the pin, or move the pin to the newest upstream tags and regenerate. |
+| `pnpm run herdr:pin` | Download and hash upstream Herdr's latest release, report whether a wire method PanCode sends is gone, and print the values a pin update needs. Edits nothing. |
+| `pnpm run install:local -- --dry-run` | Preview installing this checkout. A real run can build, replace the launcher and run local repair. |
+| `pnpm run preflight` | Every release check that needs no build, in about ten seconds. `-- --release` adds the publish rules. |
+| `pnpm run release:readiness` | Check public versions, documentation provenance, media, the Windows launcher pins and an isolated website build. |
+| `pnpm run ci` / `pnpm run release:preflight` | Qualify one candidate package and website artifact on Node 22 and 24 with the steps, time zone, locale and pinned `rg` and `fd` that CI uses, reusing a passed qualification of the same clean commit; or run only its preflight. |
+| `pnpm run release` / `pnpm run release:rehearse` | The maintainer's release driver, or its rehearsal on a temporary remote branch that publishes nothing. |
+| `pnpm run eval:onboarding` | Run the onboarding prompts against a live model in isolated homes and score each run. Calls the model. |
+| `pnpm run eval:prompts -- --target <t> --model <m>` / `pnpm run eval:prompts:selftest` | Score the main-agent prompt on harness-use tasks (see `prompt-eval/README.md`), or check the scorers against recorded runs. Calls the model; writes results under `TMPDIR`. |
+
+## Files
+
+Build:
+
+- `build.ts`: runs tsup for the CLI and worker bundles; `--clean` empties `dist/` first and `--watch` rebuilds on change.
+- `build-output.ts`: shared stage timing, size and color output for the build steps.
+- `chunk-merge.ts`: tsup plugin that merges esbuild's split chunks into the few files each boot path loads.
+- `build-source-pack.ts`: packs the TypeScript source PanCode never reads at runtime into `dist/assets/source.pack`.
+- `source-pack-plan.mjs` (+ `.d.mts`): decides which source files ship loose and which go into the source pack.
+- `build-codewiki-asset.ts`: writes the package's own code map, `dist/assets/codemap.json.gz`.
+- `build-preparsed-yaml.ts`: writes `dist/assets/preparsed-yaml.json` so startup skips parsing package-owned YAML.
+- `build-windows-launcher.mjs`: builds and checks the native Windows launchers under `assets/windows-launcher/`.
+
+Checks and tests:
+
+- `doctor-dev.mjs`: `pnpm run doctor:dev`.
+- `check.mjs`: `pnpm run check`.
+- `typecheck.mjs`: `pnpm run typecheck`.
+- `typecheck-compare.mjs`: `pnpm run typecheck:compare`.
+- `check-hygiene.ts`: the source, documentation and packaging checks `pnpm run lint` runs after Biome, including `python3 site/sync-docs.py --check` for the website's documentation snapshot.
+- `check-lane.mjs` (+ `.d.mts`): `pnpm run check:lane`.
+- `ci-tests.mjs`: the root, GUI, package and full test selections and their runner.
+- `ci-tools.mjs`: fetches the pinned ripgrep and fd release archives qualification and CI use.
+- `gate-env.mjs` (+ `.d.mts`): pins one time zone and locale for every gate process.
+- `check-dist.mjs`: refuses a `dist/` built from another commit before `test:full`.
+- `check-economy-rates.ts`: `pnpm run economy:check`.
+- `check-packed-install.mjs`: `pnpm run check:packed-install`.
+- `pnpm.mjs`: starts pnpm from scripts, falling back to `corepack pnpm` when no `pnpm` command is on `PATH`.
+- `package-files.ts`: decides whether a repository path ships, from the `package.json` `files` list.
+- `license-headers.mjs` (+ `.d.mts`): inserts or checks the two SPDX lines on every tracked source file in scope; lint runs the check.
+- `third-party-notices.mjs`: writes or checks `THIRD-PARTY-NOTICES.md` for every third-party package the build copies into `dist/`; lint runs the check.
+- `git-guard.mjs`: the git hooks `pnpm run hooks:install` installs.
+- `bench-tui.ts`, `bench-tui-feedback.ts`: terminal UI render and end-to-end feedback latency benchmarks (see `docs/architecture/tui-design.md`).
+- `handbook-bench.mjs` (+ `.d.mts`): scores a handbook by what it does for the agents that read it.
+- `eval-onboarding.ts`: `pnpm run eval:onboarding`.
+- `prompt-eval/`: `pnpm run eval:prompts`; see its README.
+
+Catalogs and pins:
+
+- `pin-hub.ts`: `pnpm run hub:pin` and `hub:check`; writes `hub/index.yaml`.
+- `pin-hub-remote.ts`: index rows for first-party and community packs.
+- `pin-skills.ts`: `pnpm run skills:pin` and `skills:check`; writes `hub/packs/skills/registry.yaml` and `skill-marketplace.json`.
+- `generate-hub-marketplace.ts`: writes `.claude-plugin/marketplace.json` from the pinned packs.
+- `hub-review.ts`: `pnpm run hub:review`.
+- `hub-root.mjs`: PanHub root key tool, run by the maintainer on an offline machine.
+- `hub-sign.mjs`: PanHub index signing tool, run by CI with a certified signing key.
+- `kit-manifest.ts`: `pnpm run kit:manifest` and `kit:check`.
+- `acp-schema.ts`, `acp-schema.pin.json`: `pnpm run acp:schema` and the upstream schema pin it reads.
+- `herdr-pin.ts`: `pnpm run herdr:pin`.
+- `pi-surface-diff.ts`: `pnpm run pi:surface-diff` and `pi:surface-snapshot`.
+- `media-assets.py`: synchronizes and verifies tracked media assets (see `assets/README.md`).
+
+Install:
+
+- `install.sh`, `install.ps1`, `install.cmd`: the released installers for Unix, PowerShell and CMD; they also ship in the package.
+- `installer-bootstrap/install.sh`, `installer-bootstrap/install.ps1`: the website's installers, which only choose which release's installer to run.
+- `native-install.cjs`: the installers' step inside the installed package that writes the launcher and install record and switches versions.
+- `install-local.sh`: `pnpm run install:local`.
+
+Release (see [release/README.md](release/README.md)):
+
+- `release.mjs`: `pnpm run release` and `release:rehearse`.
+- `release/`: the release driver's modules: `plan.mjs` (release decisions as pure functions), `receipt.mjs` (the per-clone release lock), `registry.mjs` (the npm registry every release command names), `node-majors.mjs` (the Node majors a release is qualified on), `installed-commands.mjs` (checks of the installed `panstore` and `pankit`).
+- `release-candidate.mjs`: `pnpm run ci` and `release:preflight`, and the `prepare`, `test` and `smoke` steps `ci.yml` runs.
+- `release-publish.mjs`: the `verify`, `publish` and rehearsal steps `release.yml` and `ci.yml` run.
+- `preflight.mjs`: `pnpm run preflight`.
+- `release-readiness.mjs`: `pnpm run release:readiness`.
+- `release-version-policy.mjs` (+ `.d.mts`): which package versions and changelog headings a checkout or release accepts.
+- `check-release.mjs`: audits the built `dist/` and the packed tarball contents and sizes.
+- `release-manifest.json`: runtime files the installed package must contain.
+- `release-budgets.mjs`: package size budgets shared by `check-release.mjs` and `preflight.mjs`.
+- `release-audit.mjs` (+ `.d.mts`): audits the exact bundled dependency versions for advisories.
+- `packed-license.mjs` (+ `.d.mts`): checks the packed LICENSE and NOTICE against the committed files.
+- `report-credits.mjs`: lists reporters who opted in to credit, for release notes.
+- `report-dataset.ts`: turns consented report bundles into a dataset release.
+
+CI consumes one prepared artifact for the required `ci (22)` and `ci (24)`
+checks. The release workflow verifies that npm already serves those exact bytes
+before creating the GitHub tag and release. npm publication and dist-tag writes
+stay in the owner's interactive command.

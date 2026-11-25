@@ -1,0 +1,491 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { afterEach, describe, it } from "node:test";
+import { projectDispatchJsonEvent } from "../../src/cli/modes/json-stream.js";
+import type { DomainContext } from "../../src/core/domain-loader.js";
+import { messageUsageForAccounting, rememberMessageCalls } from "../../src/core/message-accounting.js";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import { factKnownValue } from "../../src/core/telemetry/known.js";
+import type { CallSettled } from "../../src/core/telemetry/schemas.js";
+import type { MiddlewareToolChoiceControl } from "../../src/domains/middleware/index.js";
+import type { SessionContract, TurnInput } from "../../src/domains/session/contract.js";
+import type { SessionEntry } from "../../src/domains/session/index.js";
+import { callSettlementFromMessage } from "../../src/domains/telemetry/call-facts.js";
+import { createTelemetryBundle } from "../../src/domains/telemetry/extension.js";
+import {
+	remainingContextMaxTokens,
+	resolveReservedOutputTokens,
+	setGlobalDefaultMaxOutputTokens,
+} from "../../src/engine/apis/output-budget.js";
+import type { AgentMessage } from "../../src/engine/types.js";
+import {
+	assistantSessionPayload,
+	estimatedUsageForInterruptedTurn,
+	sumRunUsage,
+	terminalFailureFromAssistantMessage,
+} from "../../src/session-control/chat-loop-messages.js";
+import { createTurnPersistence } from "../../src/session-control/turn-persistence.js";
+import { createTurnState } from "../../src/session-control/turn-state.js";
+import {
+	checkCostRendering,
+	checkLedgerUsageKeys,
+	checkLedgerUsageMutation,
+	checkSurfaceTotals,
+	runBoundaryCheck,
+} from "../boundaries/check-boundaries.js";
+
+const zeroUsage = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+function assistant(
+	id: string,
+	stopReason: "stop" | "aborted",
+	usage: Record<string, unknown>,
+	extra: Record<string, unknown> = {},
+): SessionEntry {
+	return {
+		kind: "message",
+		role: "assistant",
+		turnId: id,
+		parentTurnId: null,
+		timestamp: "2026-08-31T12:00:00.000Z",
+		payload: {
+			text: stopReason === "aborted" ? "partial output" : "done",
+			stopReason,
+			usage,
+			...extra,
+		},
+	} as unknown as SessionEntry;
+}
+
+describe("contracts/metering integrity", () => {
+	afterEach(() => setGlobalDefaultMaxOutputTokens(0));
+
+	it("folds retry facts once across messages while keeping unknown usage and display estimates separate", () => {
+		const usage = Object.freeze({
+			...zeroUsage,
+			input: 8,
+			output: 2,
+			totalTokens: 10,
+			cost: Object.freeze({ ...zeroUsage.cost, total: 0.25 }),
+			pancodeExternal: { tokenUsage: "provider-reported", cost: "provider-reported" },
+		});
+		const estimate = { input: 20, output: 3 };
+		const settled = (attempt: number, message: unknown, interrupted?: typeof estimate): CallSettled => ({
+			callId: "call-fixture",
+			attemptId: `attempt-${attempt}`,
+			attempt,
+			roundKind: "normal",
+			toolChoice: "auto",
+			target: {
+				targetId: "test",
+				runtimeId: "test",
+				api: "test",
+				requestedModel: "requested",
+				reportedModel: { kind: "measured", value: "served", source: "provider" },
+			},
+			stages: { settle: 1 },
+			...callSettlementFromMessage(message, "target-rates", undefined, interrupted),
+		});
+		const first = settled(0, { stopReason: "stop", usage });
+		// Thinking the provider counted no reasoning for is estimated at chars/4, never above the measured output.
+		const thought = settled(0, { stopReason: "stop", usage, content: [{ type: "thinking", thinking: "x".repeat(40) }] });
+		deepStrictEqual(thought.usage?.reasoning, { kind: "estimated", value: 2, method: "chars/4" });
+		for (const invoked of [false, true]) {
+			const message = {
+				role: "assistant",
+				content: [],
+				stopReason: "aborted",
+				callInvoked: invoked,
+				usage: zeroUsage,
+			} as unknown as AgentMessage;
+			rememberMessageCalls(message, [first, settled(1, message, estimate)]);
+			// The journal keeps the estimate beside the usage, where no fold sums it.
+			deepStrictEqual(
+				settled(1, message, estimate).interruptedEstimate,
+				invoked
+					? {
+							input: { kind: "estimated", value: 20, method: "prompt-side-only" },
+							output: { kind: "estimated", value: 3, method: "chars/4" },
+						}
+					: undefined,
+			);
+			const summary = sumRunUsage([message, message]);
+			strictEqual(factKnownValue(summary.totals.totalTokens), 10);
+			strictEqual(factKnownValue(summary.cost.usd), 0.25);
+			strictEqual(summary.apiCalls, invoked ? 2 : 1);
+			strictEqual(summary.totals.totalTokens.unknownCount, invoked ? 1 : 0);
+			strictEqual(summary.cost.usd.unknownCount > 0, invoked);
+			strictEqual(summary.lastResponseModelIdObservation.state, "reported");
+			strictEqual((message as unknown as { usage: unknown }).usage, zeroUsage);
+		}
+	});
+
+	it("keeps provider usage immutable while accounting reads separate annotations", () => {
+		for (const reported of [zeroUsage, { ...zeroUsage, input: 10, output: 3, totalTokens: 13 }]) {
+			const usage = Object.freeze({ ...reported, cost: Object.freeze({ ...reported.cost }) });
+			const message = {
+				role: "assistant",
+				content: [{ type: "text", text: "partial" }],
+				stopReason: "aborted",
+				usage,
+				callId: "call-fixture",
+				attemptId: "attempt-fixture",
+				callInvoked: true,
+				callAccounting: { usageObserved: reported.totalTokens > 0, targetId: "selected-target", pricedBy: "none" },
+			} as unknown as AgentMessage;
+			const payload = assistantSessionPayload(message, terminalFailureFromAssistantMessage(message));
+			strictEqual(payload.usage, usage);
+			strictEqual(payload.callId, "call-fixture");
+			strictEqual(payload.attemptId, "attempt-fixture");
+			// The ledger is the conversation record; the journal owns usage, so annotations stay on the live message (#434 §5.3).
+			strictEqual(payload.callAccounting, undefined);
+			strictEqual(payload.estimatedUsage, undefined);
+			strictEqual(factKnownValue(sumRunUsage([message]).totals.totalTokens), reported.totalTokens);
+			const projected = messageUsageForAccounting(message);
+			ok(projected);
+			strictEqual(projected.targetId, "selected-target");
+			projected.input = 999;
+			strictEqual(usage.input, reported.input);
+		}
+		for (const source of [
+			"message.usage.input = 0;",
+			"const { usage } = message; usage.input += 2;",
+			"Object.assign(message, { usage: { input: 0 } });",
+			"const usage = message.usage; usage.cost = {};",
+			"Object.assign(payload.usage, { input: 0 });",
+			'payload["usage"] = { input: 0 };',
+		])
+			strictEqual(checkLedgerUsageMutation("src/session-control/example.ts", source).length, 1);
+		deepStrictEqual(
+			checkLedgerUsageMutation(
+				"src/session-control/example.ts",
+				"payload.usage = null; payload.usage = message.usage; const projection = { ...message.usage }; projection.input = 0;",
+			),
+			[],
+		);
+		deepStrictEqual(checkLedgerUsageMutation("src/engine/example.ts", "message.usage.input = 0;"), []);
+		// Nor does a ledger payload gain a usage-shaped key beside the provider's own usage (#434 §5.1).
+		for (const source of [
+			"payload.estimatedUsage = estimate;",
+			'payload["costUsd"] = 0.25;',
+			'session.append({ kind: "message", payload: { text, inputTokens: 3 } });',
+			"Object.assign(payload, { callAccounting });",
+			'for (const key of ["usage", "callAccounting"]) if (raw[key] !== undefined) payload[key] = raw[key];',
+		])
+			strictEqual(checkLedgerUsageKeys("src/session-control/example.ts", source).length, 1, source);
+		deepStrictEqual(
+			checkLedgerUsageKeys(
+				"src/session-control/example.ts",
+				'for (const key of ["usage", "callId"]) payload[key] = raw[key]; payload.apiMs = 3;',
+			),
+			[],
+		);
+		deepStrictEqual(checkLedgerUsageKeys("src/domains/dispatch/example.ts", "payload.estimatedUsage = estimate;"), []);
+		const file = "src/session-control/chat-loop-messages.ts";
+		const copyList = readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
+		deepStrictEqual(checkLedgerUsageKeys(file, copyList), []);
+		strictEqual(
+			checkLedgerUsageKeys(file, copyList.replace('"callInvoked",', '"callInvoked",\n\t\t"estimatedUsage",')).length,
+			1,
+			"re-adding the estimate to assistantSessionPayload's copy list",
+		);
+	});
+
+	it("estimates spent prompt and streamed output when cancellation prevents final usage", () => {
+		const message = {
+			role: "assistant",
+			content: [{ type: "text", text: "streamed result ".repeat(80) }],
+			stopReason: "aborted",
+			errorMessage: "Request was aborted.",
+			timestamp: Date.now(),
+			usage: zeroUsage,
+		} as unknown as AgentMessage;
+		const corrected = estimatedUsageForInterruptedTurn(message, 9_658);
+
+		ok(corrected);
+		strictEqual(corrected.input, 9_658);
+		ok(typeof corrected.output === "number" && corrected.output > 0);
+		// A completed call that reported no usage gets the same estimate, so a priced route's cap can charge it.
+		strictEqual(
+			estimatedUsageForInterruptedTurn({ ...message, stopReason: "stop" } as AgentMessage, 9_658)?.input,
+			9_658,
+		);
+	});
+
+	it("counts tool arguments with interleaved text and thinking, and repairs older estimates", () => {
+		const message = {
+			role: "assistant",
+			stopReason: "aborted",
+			content: [
+				{ type: "text", text: "eight123" },
+				{ type: "thinking", thinking: "thoughts" },
+				{ type: "toolCall", id: "write-1", name: "write", arguments: "x".repeat(20_000) },
+			],
+			usage: { ...zeroUsage, input: 50, output: 6, estimated: true },
+		} as unknown as AgentMessage;
+		const usage = estimatedUsageForInterruptedTurn(message, 100);
+		strictEqual(usage?.output, 5004);
+		strictEqual(usage?.input, 100);
+		const raw = { ...message, pancodeOutputChars: 24_000 } as unknown as AgentMessage;
+		strictEqual(estimatedUsageForInterruptedTurn(raw, 100)?.output, 6000);
+		const authoritative = { ...raw, usage: { ...zeroUsage, input: 100, output: 42, totalTokens: 142 } } as AgentMessage;
+		strictEqual(estimatedUsageForInterruptedTurn(authoritative, 100), null);
+		const summary = projectDispatchJsonEvent({ type: "agent_end", messages: [raw] }) as {
+			usage: { totalTokens: { unknownCount: number; coverage: { measured: number } } };
+		};
+		// An estimated reply is no measurement: its call's tokens are unknown, never the estimate (#434).
+		strictEqual(summary.usage.totalTokens.unknownCount, 1);
+		strictEqual(summary.usage.totalTokens.coverage.measured, 0);
+	});
+
+	it("never-sent aborts have no prompt estimate or spend and count separately from unknown usage", async () => {
+		const usage = { ...zeroUsage, callInvoked: false };
+		const message = {
+			role: "assistant",
+			stopReason: "aborted",
+			content: [],
+			usage,
+		} as unknown as AgentMessage;
+		strictEqual(estimatedUsageForInterruptedTurn(message, 326_637), null);
+		const frame = projectDispatchJsonEvent({
+			type: "agent_end",
+			messages: [{ ...message, usage: zeroUsage, callInvoked: false }],
+		}) as { usage: { totalTokens: { unknownCount: number }; apiCalls: number } };
+		// A never-sent call is no call: it neither counts nor leaves an unknown contribution.
+		strictEqual(frame.usage.totalTokens.unknownCount, 0);
+		strictEqual(frame.usage.apiCalls, 0);
+		const { contract: telemetry, extension } = createTelemetryBundle({ bus: createTelemetryHub() } as DomainContext);
+		try {
+			const entries: SessionEntry[] = [];
+			const persistence = createTurnPersistence({
+				state: createTurnState(),
+				session: {
+					append: (turn: TurnInput) => {
+						const id = `persisted-${entries.length}`;
+						entries.push(assistant(id, "aborted", {}, turn.payload as Record<string, unknown>));
+						return { id };
+					},
+				} as unknown as SessionContract,
+				getSettings: () => ({}) as never,
+				middlewareToolChoice: {} as MiddlewareToolChoiceControl,
+				consumePersistedEcho: () => false,
+				removeQueuedMirrorEntry: () => undefined,
+				promptCachePayloadForAssistant: () => ({}),
+				telemetry,
+			});
+			persistence.appendAssistantTurn(message);
+			persistence.appendAssistantTurn(message);
+			// Null usage can carry only the top-level marker; no failure object is required (#434).
+			persistence.appendAssistantTurn({ ...message, usage: null, callInvoked: false } as unknown as AgentMessage);
+			persistence.appendAssistantTurn({
+				...message,
+				usage: zeroUsage,
+				failure: { invoked: false, stage: "admission", errorClass: "aborted", httpStatus: null },
+			} as unknown as AgentMessage);
+			strictEqual(entries.length, 3);
+			for (const entry of entries) {
+				ok("payload" in entry);
+				strictEqual((entry.payload as Record<string, unknown>).usage, null);
+			}
+		} finally {
+			await extension.stop?.();
+		}
+	});
+
+	it("resolves model, fallback, explicit, and served-window output budgets", () => {
+		type Model = Parameters<typeof remainingContextMaxTokens>[0];
+		type Context = Parameters<typeof remainingContextMaxTokens>[1];
+		const model = { contextWindow: 262_144, maxTokens: 131_072 } as Model;
+		const unknownCap = { contextWindow: 262_144, maxTokens: 0 } as Model;
+		const servedWindowModel = { contextWindow: 131_072, maxTokens: 131_072 } as Model;
+		const empty = { systemPrompt: "", messages: [], tools: [] } as unknown as Context;
+		const loaded = { systemPrompt: "x".repeat(480_000), messages: [], tools: [] } as unknown as Context;
+
+		setGlobalDefaultMaxOutputTokens(0);
+		strictEqual(remainingContextMaxTokens(model, empty, undefined), 131_072);
+		strictEqual(remainingContextMaxTokens(unknownCap, empty, undefined), 32_768);
+		setGlobalDefaultMaxOutputTokens(8_192);
+		strictEqual(remainingContextMaxTokens(model, empty, undefined), 8_192);
+		strictEqual(remainingContextMaxTokens(model, empty, { maxTokens: 4_096 }), 4_096);
+		setGlobalDefaultMaxOutputTokens(32_768);
+		strictEqual(remainingContextMaxTokens(servedWindowModel, loaded, undefined), 6_976);
+		// Masking and eviction stamp the last assistant usage stale. The ceiling sizes input from the
+		// transcript, so that anchor must not shrink it.
+		const masked = {
+			systemPrompt: "",
+			messages: [
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "ok" }],
+					stopReason: "stop",
+					timestamp: 1,
+					usage: { totalTokens: 120_000 },
+					contextUsageInvalidated: true,
+				},
+			],
+			tools: [],
+		} as unknown as Context;
+		strictEqual(remainingContextMaxTokens(servedWindowModel, masked, undefined), 32_768);
+	});
+
+	it("reserves the configured response allowance rather than compacting a fitting first request", () => {
+		setGlobalDefaultMaxOutputTokens(1_024);
+		const model = { contextWindow: 32_768, maxTokens: 32_768 };
+		const context = { systemPrompt: "x".repeat(40_736), messages: [], tools: [] };
+		const reserved = resolveReservedOutputTokens(model.maxTokens);
+		strictEqual(reserved, 1_024);
+		strictEqual(remainingContextMaxTokens(model, context, undefined), reserved);
+		ok(10_184 + reserved < model.contextWindow);
+	});
+
+	it("bounds a full-window output ceiling exactly like the local wire adapters", () => {
+		setGlobalDefaultMaxOutputTokens(131_072);
+		const context = { systemPrompt: "x".repeat(11_890 * 4), messages: [], tools: [] };
+		const model = { contextWindow: 131_072, maxTokens: 131_072 };
+		for (const api of ["openai-completions", "ollama-native"]) {
+			const reserved = resolveReservedOutputTokens(model.maxTokens, {
+				api,
+				contextWindow: model.contextWindow,
+				inputTokens: 11_890,
+			});
+			strictEqual(reserved, 115_086);
+			strictEqual(reserved, remainingContextMaxTokens(model, context, undefined));
+			ok(11_890 + reserved < model.contextWindow);
+			// A small allowance still reserves the margin the wire subtracts from the window.
+			strictEqual(
+				resolveReservedOutputTokens(4096, { api, contextWindow: model.contextWindow, inputTokens: 11_890 }),
+				4096 + 4096,
+			);
+			strictEqual(
+				resolveReservedOutputTokens(model.maxTokens, {
+					api,
+					contextWindow: model.contextWindow,
+					inputTokens: model.contextWindow + 1,
+				}),
+				model.contextWindow / 8 + 4096,
+			);
+		}
+		strictEqual(
+			resolveReservedOutputTokens(model.maxTokens, {
+				api: "anthropic-messages",
+				contextWindow: model.contextWindow,
+				inputTokens: 11_890,
+			}),
+			131_072,
+		);
+	});
+
+	it("never admits a near-full request the wire would answer with a starved response", () => {
+		setGlobalDefaultMaxOutputTokens(32_768);
+		const model = { contextWindow: 20_000, maxTokens: 32_768 };
+		for (const api of ["openai-completions", "ollama-native"]) {
+			const admitted = (inputTokens: number): boolean =>
+				inputTokens +
+					resolveReservedOutputTokens(model.maxTokens, { api, contextWindow: model.contextWindow, inputTokens }) <=
+				model.contextWindow;
+			for (const inputTokens of [15_904, 16_985, 19_999]) {
+				const context = { systemPrompt: "x".repeat(inputTokens * 4), messages: [], tools: [] };
+				ok(remainingContextMaxTokens(model, context, undefined) < 2_500, `${inputTokens}`);
+				ok(!admitted(inputTokens), `${api} admitted ${inputTokens}`);
+			}
+			// The largest admitted input still leaves the wire a usable eighth of the window.
+			const context = { systemPrompt: "x".repeat(13_404 * 4), messages: [], tools: [] };
+			ok(admitted(13_404));
+			ok(!admitted(13_405));
+			strictEqual(remainingContextMaxTokens(model, context, undefined), 2_500);
+		}
+	});
+
+	it("respects configured larger reservations, model caps, and unset fallbacks", () => {
+		setGlobalDefaultMaxOutputTokens(65_536);
+		strictEqual(resolveReservedOutputTokens(131_072), 65_536);
+		strictEqual(resolveReservedOutputTokens(4_096), 4_096);
+		strictEqual(resolveReservedOutputTokens(null), 65_536);
+		setGlobalDefaultMaxOutputTokens(0);
+		strictEqual(resolveReservedOutputTokens(131_072), 32_768);
+		strictEqual(resolveReservedOutputTokens(4_096), 4_096);
+		strictEqual(resolveReservedOutputTokens(null), 32_768);
+	});
+
+	it("bounds the default reserve by a capped window on a transport that does not clamp at the wire (bt-13)", () => {
+		setGlobalDefaultMaxOutputTokens(0);
+		const request = { api: "copilot-sdk", contextWindow: 40_000, inputTokens: 8_429 };
+		const reserved = resolveReservedOutputTokens(128_000, request);
+		ok(reserved <= request.contextWindow - request.inputTokens, `reserve ${reserved}`);
+		strictEqual(reserved, 20_000);
+		// An explicit operator budget is held, so admission refuses it by name.
+		setGlobalDefaultMaxOutputTokens(32_768);
+		strictEqual(resolveReservedOutputTokens(128_000, request), 32_768);
+		setGlobalDefaultMaxOutputTokens(0);
+	});
+
+	it("bounds a constant reserve at max(16,384, W/4) from 52,428 tokens, a wire clamp and a configured budget unchanged (bt-48-12)", () => {
+		setGlobalDefaultMaxOutputTokens(0);
+		const at = (api: string, contextWindow: number, recommended?: number): number =>
+			resolveReservedOutputTokens(128_000, { api, contextWindow, inputTokens: 8_429 }, recommended);
+		for (const [window, reserve, profiled] of [
+			[65_536, 16_384, 16_384],
+			[98_304, 24_576, 24_576],
+			[131_072, 32_768, 32_768],
+			[200_000, 32_768, 50_000],
+		] as const)
+			deepStrictEqual([at("copilot-sdk", window), at("anthropic", window, 65_536)], [reserve, profiled], `${window}`);
+		strictEqual(at("openai-completions", 65_536), 32_768);
+		setGlobalDefaultMaxOutputTokens(32_768);
+		strictEqual(at("copilot-sdk", 65_536), 32_768);
+		setGlobalDefaultMaxOutputTokens(0);
+	});
+});
+
+describe("canonical monetary presentation (#434)", () => {
+	it("rejects local dollar formatting while allowing time, counts and canonical rendering", () => {
+		for (const source of [
+			"const label = `$${value.toFixed(2)}`;",
+			"const label = costUsd.toLocaleString();",
+			'const label = "$0.00";',
+			'const label = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });',
+		])
+			ok(checkCostRendering("src/example.ts", source).some((line) => line.startsWith("rule10:")));
+		deepStrictEqual(
+			// biome-ignore lint/suspicious/noTemplateCurlyInString: source fixture for the monetary boundary (#434).
+			checkCostRendering("src/example.ts", "const label = `${elapsed.toFixed(2)}s ${renderPricing(pricing)}`;"),
+			[],
+		);
+		deepStrictEqual(runBoundaryCheck(process.cwd()).violations, []);
+	});
+
+	it("rejects a surface that sums a token or cost field anywhere, including a field-by-field merge under a computed key", () => {
+		for (const source of [
+			"function show(rows) { let tokens = 0; for (const row of rows) tokens += row.tokens; return tokens; }",
+			"const total = rows.reduce((sum, row) => sum + row.usage.input, 0);",
+			"for (const [key] of FIELDS) totals[key] = (totals[key] ?? 0) + (receipt[key] ?? 0);",
+			"const shown = usage.input + usage.cacheRead;",
+			"render(row.usage.input + (row.usage.output ?? 0));",
+			"const usd = rows.map((row) => row.costUsd).reduce((sum, value) => sum + value, 0);",
+			'const caption = usage.input + usage.output + " tokens";',
+			"const total = inputTokens + outputTokens;",
+			"return quantity.fact.measured + quantity.fact.estimated;",
+			"const value = fact.estimated + fact.measured;",
+			'return fact["measured"] + fact["estimated"];',
+			'return (quantity.fact.measured) + (quantity.fact["estimated"]);',
+		])
+			ok(checkSurfaceTotals("src/interactive/example.ts", source).some((line) => line.startsWith("rule14:")));
+		deepStrictEqual(
+			checkSurfaceTotals(
+				"src/interactive/example.ts",
+				'let input = ""; for (const chunk of chunks) input += chunk; counts[name] = (counts[name] ?? 0) + 1; const label = "in " + usage.input + " / " + usage.output; const contributions = fact.coverage.measured + fact.coverage.estimated;',
+			),
+			[],
+		);
+		deepStrictEqual(checkSurfaceTotals("src/domains/example.ts", "tokens += row.tokens;"), []);
+	});
+});

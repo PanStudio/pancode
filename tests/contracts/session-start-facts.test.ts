@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { doesNotMatch, match, ok, strictEqual } from "node:assert/strict";
+import { describe, it } from "node:test";
+import { SESSION_START_FACTS_MAX_CHARS, sessionStartFacts } from "../../src/domains/prompts/extension.js";
+import { nextStatusTimeout } from "../../src/domains/session/workspace/git-probe.js";
+import { emptyWorkspaceSnapshot } from "../../src/domains/session/workspace/index.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+describe("session-start facts", () => {
+	it("keeps fresh and resumed orientation identical across clock changes within 400 characters", async () => {
+		const env = await isolatePancodeEnv("pancode-session-facts-");
+		try {
+			const workspace = {
+				...emptyWorkspaceSnapshot(env.dir),
+				isGit: true,
+				branch: "long-branch-name-".repeat(15),
+				dirty: true,
+				ahead: 10,
+				behind: 20,
+				recentCommits: [{ sha: "a".repeat(40), subject: "long commit subject ".repeat(20) }],
+			};
+			const fresh = sessionStartFacts(env.dir, "", Date.now(), workspace).slice(1).join("\n");
+			ok(fresh.length <= SESSION_START_FACTS_MAX_CHARS, `${fresh.length} characters`);
+			match(fresh, /Session context:/);
+			match(fresh, /Derive conversation history from this session's record/);
+			match(fresh, /Git at session start: branch/, "a long commit subject must not evict the branch fact");
+			const resumed = sessionStartFacts(env.dir, "existing-session", Date.now() + 3_600_000, workspace)
+				.slice(1)
+				.join("\n");
+			doesNotMatch(resumed, /this new conversation contained no assistant messages/);
+			strictEqual(resumed, fresh);
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("labels the git lines as a session-start snapshot, never as the tree's current state", async () => {
+		const env = await isolatePancodeEnv("pancode-session-facts-");
+		try {
+			const workspace = {
+				...emptyWorkspaceSnapshot(env.dir),
+				isGit: true,
+				branch: "main",
+				dirty: false,
+				recentCommits: [{ sha: "b".repeat(40), subject: "feat: x" }],
+			};
+			const lines = sessionStartFacts(env.dir, "", Date.now(), workspace);
+			ok(lines.includes('- Git at session start: branch "main", clean tree.'), lines.join("\n"));
+			ok(lines.includes('- Last commit at session start: "feat: x".'), lines.join("\n"));
+			doesNotMatch(lines.join("\n"), /^- (Git|Last commit):/m);
+		} finally {
+			env.restore();
+		}
+	});
+});
+
+describe("polled git status budget", () => {
+	it("doubles after a timeout up to a cap, and keeps the room an answer needed", () => {
+		strictEqual(nextStatusTimeout(1000, true), 2000);
+		strictEqual(nextStatusTimeout(4000, true), 8000);
+		strictEqual(nextStatusTimeout(8000, true), 8000);
+		strictEqual(nextStatusTimeout(2000, false), 2000);
+	});
+});

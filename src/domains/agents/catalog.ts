@@ -1,0 +1,77 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { DISPATCH_JOB_TABLE_TEXT } from "./dispatch-jobs.js";
+import type { AgentSpec } from "./spec.js";
+import { isUserVisibleAgent, SHADOW_AGENT_OPERATOR_STAND_IN } from "./spec.js";
+
+/** Shared by the fleet catalog and dispatch results so evidence guidance stays consistent. */
+export const FLEET_EVIDENCE_GUIDANCE =
+	'Use sealed worker results for synthesis, keeping reported findings distinct from independent verification. Spot-check consequential or uncertain claims only within the operator\'s scope. If repeated inspection is forbidden, report worker evidence and limitations without re-reading source or rerunning searches. Repeat a "tests pass" claim only when the named validation evidence supports it.';
+
+export interface AgentCatalogSections {
+	stable: string;
+	volatile: string;
+}
+
+/**
+ * R6 issued five near-identical `tester` dispatches because each differed
+ * textually, so a string-identity rule never fired. The test that catches that
+ * run is about the work, and the model needs somewhere else to go than a sixth
+ * dispatch.
+ */
+export const FLEET_ANTI_CHURN_RULE =
+	"Fleet anti-churn guard: do not repeat the same target files and goal while an identical run is pending or after an unresolved identical failure; collect its result, address the failure, or change approach. Once earlier runs have settled and the operator merged, discarded, or kept their work, a new operator request may dispatch the same task again. Past session runs alone do not block a new request. If a tool guard blocks a call, report its guard name and the action it requires.";
+
+/**
+ * Spec-based roster used when the caller already holds normalized specs. It
+ * leads with the job table, the one source for which recipe does which job.
+ * `AgentsContract.listSpecs()` includes ACP delegation agents synthesized from
+ * settings.integrations.externalAgents.entries[], which never exist as recipe files; rendering
+ * from specs keeps those dispatchable targets discoverable in the fleet block.
+ */
+export function renderAgentCatalogSectionsFromSpecs(input: ReadonlyArray<AgentSpec>): AgentCatalogSections {
+	const specs = input.slice().sort((a, b) => {
+		const category = a.category.localeCompare(b.category);
+		return category === 0 ? a.id.localeCompare(b.id) : category;
+	});
+	const publicSpecs = specs.filter(isUserVisibleAgent);
+	const shadowSpecs = specs.filter((spec) => spec.audience === "shadow");
+
+	const lines: string[] = [
+		DISPATCH_JOB_TABLE_TEXT,
+		"PanCode manages a small fleet of coding agents. Recipes are Markdown files; normalized specs carry audience, category, capability, tools, skills, latency, and worker-budget hints.",
+		"Use the `dispatch` tool to invoke one by `agent_id` when delegation helps.",
+		`User-facing agents are base/custom. Shadow agents are internal helpers that run only through \`dispatch\`; \`/run\` and \`pancode run --agent\` refuse them, so offer an operator \`${SHADOW_AGENT_OPERATOR_STAND_IN}\` with \`--read-only\` instead.`,
+		"Prefer fast read-only agents for orientation, verification agents for gates, and workspace-edit agents only for bounded coding tasks.",
+		"When a task matches a skill named on an agent line (skills=...), prefer the recipe that binds it; its worker is told to load bound skills for the run.",
+		FLEET_EVIDENCE_GUIDANCE,
+		FLEET_ANTI_CHURN_RULE,
+	];
+
+	if (publicSpecs.length > 0) {
+		lines.push("", "User-facing agents:");
+		for (const spec of publicSpecs) {
+			const description = spec.description.trim();
+			const suffix = description.length > 0 ? ` - ${description}` : "";
+			lines.push(formatSpecLine(spec, suffix));
+		}
+	}
+	if (shadowSpecs.length > 0) {
+		lines.push("", "Shadow agents for internal orchestration:");
+		for (const spec of shadowSpecs) {
+			const description = spec.description.trim();
+			const suffix = description.length > 0 ? ` - ${description}` : "";
+			lines.push(formatSpecLine(spec, suffix));
+		}
+	}
+
+	return { stable: lines.join("\n"), volatile: "" };
+}
+
+function formatSpecLine(spec: AgentSpec, suffix: string): string {
+	const tags = spec.tags.length > 0 ? `, tags=${spec.tags.join("/")}` : "";
+	const skills = spec.skills.length > 0 ? `, skills=${spec.skills.join("/")}` : "";
+	const maximum = spec.budget.maximum ? `..${spec.budget.maximum.toolCalls}` : "";
+	const budget = `, budget=${spec.budget.toolCalls}${maximum}/${spec.budget.synthesis ? "synthesize" : "stop"}`;
+	return `- ${spec.name} [${spec.id}] (${spec.audience}, ${spec.category}, ${spec.capabilityClass}, ${spec.latencyClass}, ${spec.source}${tags}${skills}${budget})${suffix}`;
+}

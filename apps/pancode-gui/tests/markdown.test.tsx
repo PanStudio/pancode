@@ -1,0 +1,614 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepEqual, doesNotMatch, equal, match, ok } from "node:assert/strict";
+import { test } from "node:test";
+import type { Tokens } from "marked";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { type HighlightToken, highlightCode } from "../client/render/highlight.js";
+import JsonTree from "../client/render/JsonTree.js";
+import {
+	JSON_TREE_MAX_CHARS,
+	JSON_TREE_PAGE,
+	jsonSummary,
+	parseJsonContainer,
+} from "../client/render/json-tree-model.js";
+import {
+	Blocks,
+	CodeBlock,
+	decodeEntities,
+	MarkdownContent,
+	MermaidBlock,
+	offersJsonTree,
+	PathOpenerContext,
+} from "../client/render/Markdown.js";
+import type { MathToken } from "../client/render/markdown-model.js";
+import {
+	codeLanguage,
+	diffLineKind,
+	diffLines,
+	IncrementalMarkdown,
+	lexMarkdown,
+	MERMAID_MAX_LINES,
+	MERMAID_MAX_SOURCE_BYTES,
+	mermaidSourceProblem,
+	numericColumns,
+	pathReference,
+	safeHref,
+	settledBoundary,
+	tokenText,
+} from "../client/render/markdown-model.js";
+import { typesetMath } from "../client/render/math.js";
+
+function renderMarkdown(source: string, complete = true): string {
+	return renderToStaticMarkup(<MarkdownContent source={source} complete={complete} />);
+}
+
+// JSX string attributes collapse a literal newline to a space, so multi-line sources are expressions.
+const TWO_LINES = "const a = 1;\nconst b = 2;";
+const FLOWCHART = "flowchart LR\n  A --> B";
+
+test("links are live only for http, https, and mailto", () => {
+	equal(safeHref("https://example.org/a?b=1#c"), "https://example.org/a?b=1#c");
+	equal(safeHref("http://example.org"), "http://example.org/");
+	equal(safeHref("mailto:someone@example.org"), "mailto:someone@example.org");
+	equal(safeHref("javascript:alert(1)"), null);
+	equal(safeHref("JAVASCRIPT:alert(1)"), null);
+	equal(safeHref("data:text/html;base64,PHNjcmlwdD4="), null);
+	equal(safeHref("vbscript:x"), null);
+	equal(safeHref("file:///etc/passwd"), null);
+	equal(safeHref("/relative/path"), null);
+	equal(safeHref("relative.md"), null);
+	equal(safeHref(""), null);
+	equal(safeHref(`https://example.org/${"a".repeat(3_000)}`), null);
+});
+
+test("fence info strings normalize to a label and a known grammar or none", () => {
+	equal(codeLanguage("ts").grammar, "typescript");
+	equal(codeLanguage("TypeScript {highlight}").grammar, "typescript");
+	equal(codeLanguage("py").grammar, "python");
+	equal(codeLanguage("sh").grammar, "bash");
+	equal(codeLanguage("c++").grammar, "cpp");
+	equal(codeLanguage("html").grammar, "markup");
+	deepEqual(codeLanguage("atlasql"), { label: "atlasql", grammar: null, mermaid: false, math: false });
+	deepEqual(codeLanguage(undefined), { label: null, grammar: null, mermaid: false, math: false });
+	deepEqual(codeLanguage("   "), { label: null, grammar: null, mermaid: false, math: false });
+	deepEqual(codeLanguage("mermaid"), { label: "mermaid", grammar: null, mermaid: true, math: false });
+	deepEqual(codeLanguage("Mermaid title"), { label: "mermaid", grammar: null, mermaid: true, math: false });
+	equal(codeLanguage("<script>alert(1)</script>").label, "scriptalert1script");
+	equal(codeLanguage("x".repeat(100)).label?.length, 24);
+});
+
+test("a settled boundary follows a blank line outside fences and never splits a list continuation", () => {
+	equal(settledBoundary("para one\n\npara two"), "para one\n\n".length, "one character of the next line decides");
+	equal(settledBoundary("para one\n\n"), 0, "nothing follows the blank line yet");
+	equal(settledBoundary("para one\n\n "), 0, "a leading space may be an indented continuation");
+	equal(settledBoundary("para one\n\npara two\n\n"), "para one\n\n".length);
+	const open = "intro\n\n```ts\nconst a = 1;\n\nconst b";
+	equal(settledBoundary(open), "intro\n\n".length, "a blank line inside an open fence is not a boundary");
+	const fenced = "intro\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\nafter\n";
+	equal(settledBoundary(fenced), fenced.length - "after\n".length, "the boundary after the closed fence is usable");
+	const closed = `${fenced}\ntrailing\n`;
+	equal(settledBoundary(closed), fenced.length + 1);
+	const list = "1. one\n\n   continued\n\n2. two\n\nnext\n";
+	equal(settledBoundary(list), "1. one\n\n   continued\n\n2. two\n\n".length);
+	const table = "| a |\n|---|\n\n| b |\n\nx\n";
+	equal(settledBoundary(table), "| a |\n|---|\n\n| b |\n\n".length);
+	equal(settledBoundary("a\n\n\nb\n\nc\n"), "a\n\n\nb\n\n".length, "consecutive blank lines settle at the last one");
+	equal(
+		settledBoundary("a\n\nb\n\nc\n", "a\n\n".length),
+		"a\n\nb\n\n".length,
+		"scanning resumes from an earlier boundary",
+	);
+});
+
+test("incremental lexing keeps settled token identity and re-lexes only the tail", () => {
+	const incremental = new IncrementalMarkdown();
+	const first = incremental.update("# Title\n\nParagraph one that is still bei");
+	equal(first.settledLength, "# Title\n\n".length);
+	equal(first.settled.length, 2, "the heading and the blank-line space token settled");
+	equal(first.settled[0]?.type, "heading");
+	equal(first.tail[0]?.type, "paragraph");
+
+	const second = incremental.update("# Title\n\nParagraph one that is still being written");
+	ok(second.settled === first.settled, "settled tokens keep their identity while only the tail grows");
+	equal(second.settledLength, first.settledLength);
+
+	const third = incremental.update("# Title\n\nParagraph one that is still being written.\n\n- item\n");
+	ok(third.settled !== second.settled);
+	equal(third.settled.length, 4, "heading, space, paragraph, and space settled");
+	equal(third.tail[0]?.type, "list");
+
+	const restarted = incremental.update("Completely different text");
+	equal(restarted.settledLength, 0);
+	equal(restarted.settled.length, 0);
+	equal(restarted.tail[0]?.type, "paragraph");
+});
+
+test("a 20 KB code block streamed a character at a time lexes exactly as marked does, before and after it closes", () => {
+	const lines: string[] = [];
+	for (let index = 0; lines.join("\n").length < 20_000; index++)
+		lines.push(
+			index % 50 === 7
+				? "    ```"
+				: index % 50 === 21
+					? "``"
+					: `\tconst value${index} = "${"é".repeat(index % 13)}"; // $$ <b> [ref]: x \`code\` ~~`,
+		);
+	const body = lines.join("\n");
+	for (const complete of [
+		`Intro paragraph right above the block.\n\`\`\`ts\n${body}\n\`\`\`\n\nAfter the block.\n`,
+		`## Heading\n\n~~~python\n${body}\n~~~\n`,
+	]) {
+		const incremental = new IncrementalMarkdown();
+		let previous: readonly unknown[] = [],
+			reused = 0;
+		for (let end = 1; end <= complete.length; end++) {
+			const source = complete.slice(0, end);
+			const split = incremental.update(source);
+			const last = source.at(-1);
+			if (last === "\n" || last === "`" || last === "~" || end % 257 === 0)
+				deepEqual([...split.tail], [...lexMarkdown(source.slice(split.settledLength))], `cut at ${end}`);
+			if (split.tail.length > 1 && split.tail[0] === previous[0]) reused++;
+			previous = split.tail;
+		}
+		const final = incremental.update(complete);
+		deepEqual([...final.settled, ...final.tail], [...lexMarkdown(complete)]);
+		if (complete.startsWith("Intro")) ok(reused > 5_000, "the tokens before an open fence are reused, not re-lexed");
+	}
+});
+
+test("partial streamed Markdown renders what has arrived without throwing", () => {
+	const partial = renderMarkdown("## Results\n\n| Level | Cells |\n| --- | ---: |\n| L0 | 12,8", false);
+	match(partial, /<h3 class="md-heading md-heading--2">Results<\/h3>/u);
+	match(partial, /<table>/u);
+	match(partial, /12,8/u);
+	const unterminated = renderMarkdown("Some text\n\n```ts\nconst a = 1;\nconst b", false);
+	match(unterminated, /class="code-block is-streaming"/u);
+	match(unterminated, /code-block__cursor/u);
+	match(unterminated, /const b<span class="code-block__cursor"/u);
+	match(unterminated, /<span class="code-block__lang">ts<\/span>/u);
+});
+
+test("completed Markdown renders headings, lists, task lists, tables, quotes, rules, and inline marks", () => {
+	const html = renderMarkdown(
+		[
+			"# Title",
+			"",
+			"Some **bold** and *em* and ~~gone~~ and `code` text.",
+			"",
+			"1. first",
+			"   - nested",
+			"   - [x] done task",
+			"2. second",
+			"",
+			"> quoted",
+			"",
+			"---",
+			"",
+			"| a | b |",
+			"| :-- | --: |",
+			"| 1 | 2 |",
+			"",
+		].join("\n"),
+	);
+	match(html, /<h2 class="md-heading md-heading--1">Title<\/h2>/u);
+	match(html, /<strong>bold<\/strong>/u);
+	match(html, /<em>em<\/em>/u);
+	match(html, /<del>gone<\/del>/u);
+	match(html, /<code>code<\/code>/u);
+	match(html, /<ol class="md-list">/u);
+	match(html, /<ul class="md-list md-list--tasks">/u);
+	match(
+		html,
+		/<li class="md-task-item"><input type="checkbox" class="md-task"[^>]*disabled=""[^>]*checked=""\/>done task<\/li>/u,
+	);
+	match(html, /<blockquote><p>quoted<\/p><\/blockquote>/u);
+	match(html, /<hr\/>/u);
+	match(html, /<th scope="col" class="md-table__number" style="text-align:left">a<\/th>/u);
+	match(html, /<td class="md-table__number" style="text-align:right">2<\/td>/u);
+	ok(!html.includes("undefined"));
+});
+
+test("hostile Markdown never becomes markup, a live unsafe link, or a fetched image", () => {
+	const html = renderMarkdown(
+		[
+			"Raw <script>alert(1)</script> and <img src=x onerror=alert(1)> here.",
+			"",
+			'<div onclick="alert(1)">block html</div>',
+			"",
+			'[bad](javascript:alert(1)) [data](data:text/html,x) [ok](https://example.org/ok "Title")',
+			"",
+			"![tracker](https://evil.example/x.png)",
+			"",
+			"<https://example.org/auto> and https://example.org/bare",
+		].join("\n"),
+	);
+	ok(!html.includes("<script"), "script tags must be text");
+	ok(!html.includes("<img"), "images are never emitted");
+	ok(!html.includes("<div onclick"), "block html is text");
+	match(html, /&lt;div onclick=/u);
+	ok(!html.includes(' onerror="'), "event attributes cannot survive as attributes");
+	match(html, /&lt;img src=x onerror=alert\(1\)&gt;/u);
+	ok(!html.includes("javascript:"), "unsafe schemes never reach an href");
+	ok(!html.includes("data:text"), "data URLs never reach an href");
+	match(html, /<span class="md-html">&lt;script&gt;<\/span>alert\(1\)<span class="md-html">&lt;\/script&gt;<\/span>/u);
+	match(html, /<span class="md-link md-link--blocked"[^>]*>bad<small> \(link blocked\)<\/small><\/span>/u);
+	match(
+		html,
+		/<a class="md-link" href="https:\/\/example\.org\/ok" target="_blank" rel="noopener noreferrer" title="Title">ok<\/a>/u,
+	);
+	// A remote image is offered as a link the operator may follow; the page itself never loads it.
+	match(
+		html,
+		/<a class="md-image md-link" href="https:\/\/evil\.example\/x\.png" target="_blank" rel="noopener noreferrer"[^>]*>\[image: tracker\]<\/a>/u,
+	);
+	match(html, /href="https:\/\/example\.org\/auto"/u);
+	match(html, /href="https:\/\/example\.org\/bare"/u);
+});
+
+test("fenced code renders a label, a copy control, a line count once it scrolls, and plain text for unknown languages", () => {
+	const known = renderToStaticMarkup(<CodeBlock code={TWO_LINES} info="ts" settled />);
+	match(known, /class="code-block is-settled"/u);
+	match(known, /data-language="typescript"/u);
+	match(known, /<span class="code-block__lang">ts<\/span>/u);
+	ok(!known.includes("code-block__lines"), "a block that fits says nothing about its length");
+	const long = renderToStaticMarkup(<CodeBlock code={"x\n".repeat(40).trimEnd()} info="ts" settled />);
+	match(long, /<span class="code-block__lines">40 lines<\/span>/u);
+	match(long, /data-folded=""/u);
+	match(long, /<button type="button" class="code-block__fold" aria-expanded="false">Show all 40 lines<\/button>/u);
+	ok(!known.includes("code-block__fold"), "a block that fits has nothing to open");
+	const streaming = renderToStaticMarkup(<CodeBlock code={"x\n".repeat(40).trimEnd()} info="ts" settled={false} />);
+	ok(
+		!streaming.includes("data-folded") && !streaming.includes("code-block__fold"),
+		"the tail does not fold while it grows",
+	);
+	match(known, /<button type="button" class="code-block__copy is-idle"[^>]*>Copy<\/button>/u);
+	match(known, /<pre tabindex="0"><code class="language-typescript">const a = 1;\nconst b = 2;<\/code><\/pre>/u);
+
+	const unknown = renderToStaticMarkup(<CodeBlock code="SELECT 1;" info="atlasql" settled />);
+	match(unknown, /<span class="code-block__lang">atlasql<\/span>/u);
+	match(unknown, /<code>SELECT 1;<\/code>/u);
+	ok(!unknown.includes("data-language"));
+
+	const bare = renderToStaticMarkup(<CodeBlock code="" info={undefined} settled />);
+	match(bare, /<span class="code-block__lang">text<\/span>/u);
+});
+
+test("code with markup-like content stays escaped inside the block", () => {
+	const html = renderToStaticMarkup(<CodeBlock code="<script>alert('x')</script>" info="html" settled />);
+	ok(!html.includes("<script>"));
+	match(html, /&lt;script&gt;alert\(&#x27;x&#x27;\)&lt;\/script&gt;/u);
+});
+
+test("Mermaid blocks wait for settled source, bound size, and show the source with the failure", () => {
+	const pending = renderToStaticMarkup(<MermaidBlock source={FLOWCHART} settled={false} />);
+	match(pending, /class="diagram is-pending"/u);
+	match(pending, /renders once this response settles/u);
+	match(pending, /<code class="language-mermaid">flowchart LR\n {2}A --&gt; B<\/code>/u);
+
+	const rendering = renderToStaticMarkup(<MermaidBlock source={FLOWCHART} settled />);
+	match(rendering, /class="diagram is-rendering"/u);
+	match(rendering, /Copy source/u);
+	ok(!rendering.includes("dangerouslySetInnerHTML"));
+
+	const oversized = renderToStaticMarkup(
+		<MermaidBlock source={`flowchart LR\n${"  A --> B\n".repeat(MERMAID_MAX_LINES + 1)}`} settled />,
+	);
+	match(oversized, /class="diagram is-bounded"/u);
+	match(oversized, new RegExp(`renders at most ${MERMAID_MAX_LINES}`, "u"));
+
+	equal(mermaidSourceProblem("   "), "The diagram is empty.");
+	match(mermaidSourceProblem(`flowchart LR\n${"x".repeat(MERMAID_MAX_SOURCE_BYTES)}`) ?? "", /larger than 16 KiB/u);
+	equal(mermaidSourceProblem("flowchart LR\n  A --> B"), null);
+});
+
+test("a Markdown document with a Mermaid fence routes that block to the diagram figure", () => {
+	const html = renderMarkdown("Before\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\nAfter\n");
+	match(html, /<figure class="diagram is-rendering"/u);
+	match(html, /aria-label="Mermaid diagram"/u);
+	ok(!html.includes('class="code-block is-'), "the fence is a figure, not a code block");
+});
+
+test("Markdown entity references and long content render without markup or crashes", () => {
+	equal(decodeEntities("a &amp; b &lt; c &#65; &#x42; &copy; &unknown;"), "a & b < c A B © &unknown;");
+	const long = Array.from({ length: 400 }, (_, index) => `Paragraph ${index} with **bold** text and \`code\`.`).join(
+		"\n\n",
+	);
+	const html = renderMarkdown(long);
+	equal((html.match(/<p>/gu) ?? []).length, 400);
+	equal(tokenText(lexMarkdown("a **b** `c` [d](https://e)")).trim(), "a b c d");
+});
+
+test("block rendering tolerates unknown token shapes instead of crashing the transcript", () => {
+	const html = renderToStaticMarkup(
+		<Blocks tokens={[{ type: "mystery", raw: "??" } as never, { type: "space", raw: "\n" } as never]} settled />,
+	);
+	match(html, /<p>\?\?<\/p>/u);
+});
+
+function renderDocument(source: string): string {
+	return renderToStaticMarkup(<MarkdownContent source={source} complete />);
+}
+
+test("a table sits in a scroll wrapper that is a plain, unfocused block until it measures as overflowing", () => {
+	const html = renderDocument("| a | b |\n| --- | --- |\n| 1 | 2 |\n");
+	match(html, /<div class="md-table"><table>/);
+	doesNotMatch(html, /tabindex|role="region"/i, "a table that fits adds no Tab stop or landmark");
+});
+
+test("inline and display math produce MathML without KaTeX HTML layout", async () => {
+	const paragraph = lexMarkdown("Euler: $e^{i\\pi}+1=0$.")[0] as Tokens.Paragraph;
+	const inline = paragraph.tokens.find((token) => token.type === "math") as MathToken;
+	ok(inline);
+	equal(inline.text, "e^{i\\pi}+1=0");
+	equal(inline.displayMode, false);
+	const inlineMarkup = await typesetMath(inline.text, inline.displayMode);
+	match(inlineMarkup, /<math xmlns="http:\/\/www.w3.org\/1998\/Math\/MathML"/u);
+	doesNotMatch(inlineMarkup, /katex-html|<style|<link/u);
+	const display = lexMarkdown("$$\n\\frac{a}{b}\n$$\n")[0] as MathToken;
+	equal(display.type, "math");
+	equal(display.displayMode, true);
+	const displayMarkup = await typesetMath(display.text, display.displayMode);
+	match(displayMarkup, /display="block"/u);
+	match(displayMarkup, /<mfrac>/u);
+});
+
+test("math delimiters leave currency, escaped dollars and code literal", () => {
+	for (const source of [
+		"$5 and $10",
+		"$5 and $10. Code `$x$`.",
+		"$ spaced$",
+		"$spaced $",
+		"$x$2",
+		"\\$x$",
+		"`$x$`",
+		"`$$x$$`",
+		"```tex\n$x$\n$$y$$\n```\n",
+	]) {
+		doesNotMatch(JSON.stringify(lexMarkdown(source)), /"type":"math"/u, source);
+	}
+	match(renderMarkdown("`$x$`"), /<code>\$x\$<\/code>/u);
+});
+
+test("invalid TeX stays readable without throwing", async () => {
+	const markup = await typesetMath("\\frac{", false);
+	match(markup, /katex-error/u);
+	match(markup, /\\frac\{/u);
+});
+
+test("incremental Markdown keeps blank lines inside display math together", () => {
+	const source = "Before\n\n$$\na +\n\nb\n$$\n\nAfter";
+	const incremental = new IncrementalMarkdown();
+	const pending = incremental.update(source.slice(0, source.indexOf("b\n$$")));
+	equal(pending.settledLength, "Before\n\n".length);
+	const complete = incremental.update(source);
+	const math = complete.settled.find((token) => token.type === "math") as MathToken;
+	ok(math);
+	equal(math.text, "a +\n\nb");
+});
+
+test("math caps oversized TeX dimensions", async () => {
+	const markup = await typesetMath("a\\kern 10000em b", false);
+	match(markup, /<mspace width="50em"/u);
+	doesNotMatch(markup, /width="10000em"/u);
+});
+
+test("footnotes link a reference to its note, scoped to one message, and a link definition still works", () => {
+	const html = renderMarkdown(
+		[
+			"Measured twice[^1] and [docs][d].",
+			"",
+			"[^1]: On the fixture,",
+			"  then on a real run.",
+			"",
+			"[d]: https://example.com",
+		].join("\n"),
+	);
+	const ref = /<sup class="md-footnote-ref"><a href="#([^"]+)"[^>]*>1<\/a><\/sup>/u.exec(html);
+	ok(ref, html);
+	match(html, new RegExp(`<div class="md-footnote" id="${ref[1]}" tabindex="-1">`, "u"));
+	match(html, /On the fixture, then on a real run\./u);
+	match(html, /<a [^>]*href="https:\/\/example.com\/"/u);
+	doesNotMatch(html, /\[\^1\]/u);
+	const twice = renderToStaticMarkup(
+		<>
+			<MarkdownContent source={"a[^1]\n\n[^1]: x"} complete />
+			<MarkdownContent source={"b[^1]\n\n[^1]: y"} complete />
+		</>,
+	);
+	const ids = [...twice.matchAll(/class="md-footnote" id="([^"]+)"/gu)].map((found) => found[1]);
+	equal(new Set(ids).size, 2);
+	// A streaming note renders as soon as its line arrives, before the message completes.
+	match(renderMarkdown("Text[^a]\n\n[^a]: still arriving", false), /class="md-footnote"/u);
+});
+
+test("a diff block tints added and removed lines but not its headers", () => {
+	deepEqual(
+		["--- a/x.ts", "+++ b/x.ts", "@@ -1 +1 @@", "-old", "+new", " same", "diff --git a/x b/x"].map(diffLineKind),
+		["meta", "meta", "hunk", "remove", "add", "context", "meta"],
+	);
+	const html = renderToStaticMarkup(<CodeBlock code={"@@ -1 +1 @@\n-old\n+new"} info="diff" settled />);
+	match(html, /<span class="diff-line diff-line--remove" data-change="removed" data-ln="1 {2}">-old\n<\/span>/u);
+	match(html, /<span class="diff-line diff-line--add" data-change="added" data-ln=" {2}1">\+new<\/span>/u);
+});
+
+test("a diff with hunk ranges numbers its lines in the old and new file, and a removed `--- x` stays a change", () => {
+	const lines = diffLines(
+		[
+			"--- a/x.f90",
+			"+++ b/x.f90",
+			"@@ -9,3 +9,3 @@",
+			" keep",
+			"--- note",
+			"+++ note",
+			"",
+			"\\ No newline at end of file",
+			"trailing",
+		].join("\n"),
+	);
+	deepEqual(
+		lines.map((line) => [line.kind, line.old, line.new]),
+		[
+			["meta", null, null],
+			["meta", null, null],
+			["hunk", null, null],
+			["context", 9, 9],
+			["remove", 10, null],
+			["add", null, 10],
+			["context", 11, 11],
+			["meta", null, null],
+			["context", null, null],
+		],
+	);
+	const html = renderToStaticMarkup(<CodeBlock code={"@@ -98,2 +98,3 @@\n x\n+y\n z"} info="diff" settled />);
+	match(html, /data-ln=" 98 {2}98"> x/u);
+	match(html, /data-ln=" {5}99">\+y/u);
+	match(html, /data-ln=" 99 100"> z/u);
+	const bare = renderToStaticMarkup(<CodeBlock code={"-old\n+new"} info="diff" settled />);
+	ok(!bare.includes("data-ln"), "a diff without ranges has nothing to number");
+});
+
+test("a code span that names a file and line reads as a path; ordinary code does not", () => {
+	deepEqual(pathReference("src/core/a.ts:42"), { path: "src/core/a.ts", line: 42 });
+	deepEqual(pathReference("README.md#L7-L9"), { path: "README.md", line: 7 });
+	deepEqual(pathReference("./scripts/run.sh"), { path: "./scripts/run.sh", line: null });
+	deepEqual(pathReference("package.json"), { path: "package.json", line: null });
+	for (const code of ["npm", "x = 1", "1.2.3", "foo()", "a b/c", "e.g.", "process.env", "console.log", "and/or"])
+		equal(pathReference(code), null, code);
+	match(
+		renderMarkdown("See `src/a.ts:3` and `npm`."),
+		/<code class="md-path" title="src\/a.ts, line 3">src\/a.ts:3<\/code>/u,
+	);
+	match(renderMarkdown("See `npm`."), /<code>npm<\/code>/u);
+});
+
+test("a named file is a preview button only where the host can open one", () => {
+	const opened = renderToStaticMarkup(
+		<PathOpenerContext.Provider value={() => {}}>
+			<MarkdownContent source="See `src/a.ts:3` and `npm`." complete />
+		</PathOpenerContext.Provider>,
+	);
+	match(
+		opened,
+		/<button type="button" class="md-path-open" title="Preview src\/a.ts, line 3"><code class="md-path">src\/a.ts:3<\/code><\/button>/u,
+	);
+	match(opened, /<code>npm<\/code>/u);
+	doesNotMatch(renderMarkdown("See `src/a.ts:3`."), /<button/u);
+});
+
+test("LaTeX \\(…\\) and \\[…\\], inline $$…$$ and ```math fences are math; escaped citations are not", () => {
+	const math = (source: string) =>
+		[
+			...JSON.stringify(lexMarkdown(source)).matchAll(
+				/"type":"math","raw":"(?:[^"\\]|\\.)*","text":"((?:[^"\\]|\\.)*)","displayMode":(true|false)/gu,
+			),
+		].map((match) => `${JSON.parse(`"${match[1]}"`)}|${match[2]}`);
+	deepEqual(math("Energy \\(E = mc^2\\) holds."), ["E = mc^2|false"]);
+	deepEqual(math("Then \\[ \\int_0^1 f \\] done"), ["\\int_0^1 f|true"]);
+	deepEqual(math("Text\n\\[\n\\sum_i x_i\n\\]\nafter"), ["\\sum_i x_i|true"]);
+	deepEqual(math("Mid $$a+b$$ end"), ["a+b|true"]);
+	deepEqual(math("see \\[1\\] and \\[2, 3\\]"), []);
+	deepEqual(math("a \\(open\n\nclosed\\) b"), []);
+	deepEqual(math("price \\(cheap) only"), []);
+	const incremental = new IncrementalMarkdown();
+	const source = "Before\n\n\\[\na +\n\nb\n\\]\n\nAfter";
+	equal(incremental.update(source.slice(0, source.indexOf("b\n\\]"))).settledLength, "Before\n\n".length);
+	ok(incremental.update(source).settled.some((token) => token.type === "math"));
+	deepEqual(codeLanguage("math"), { label: "math", grammar: "latex", mermaid: false, math: true });
+	// Until the lazy typesetter arrives, a settled fence reads as its TeX, without the fence.
+	equal(renderMarkdown("```math\n\\frac{a}{b}\n```\n"), '<div class="markdown is-complete">\\frac{a}{b}</div>');
+	match(renderMarkdown("```math\n\\frac{a}{b}", false), /class="code-block/u);
+});
+
+test("the languages of scientific code reach a grammar, and a batch script's directives are not comments", async () => {
+	for (const [info, grammar] of [
+		["f90", "fortran"],
+		["F08", "fortran"],
+		["jl", "julia"],
+		["R", "r"],
+		["hpp", "cpp"],
+		["cu", "cpp"],
+		["sbatch", "slurm"],
+		["CMakeLists", "cmake"],
+		["toml", "toml"],
+		["yml", "yaml"],
+		["jsonl", "json"],
+		["log", "log"],
+	] as const)
+		equal(codeLanguage(info).grammar, grammar, info);
+	const flat = (tokens: readonly HighlightToken[]): string[] =>
+		tokens.flatMap((token) =>
+			token.type === null
+				? []
+				: [`${token.type}:${typeof token.content === "string" ? token.content : flat(token.content).join(",")}`],
+		);
+	deepEqual(flat((await highlightCode("#SBATCH --nodes=4\n# a note\nsrun ./a.out", "slurm")) ?? []), [
+		"directive:keyword:#SBATCH,property: --nodes,operator:=",
+		"comment:# a note",
+	]);
+	ok(flat((await highlightCode("find_package(MPI REQUIRED)", "cmake")) ?? []).includes("keyword:find_package"));
+	ok(flat((await highlightCode("12:00:01 ERROR diverged", "log")) ?? []).includes("level error important:ERROR"));
+});
+
+test("long JSON parses into a folded tree that opens its top level and pages long arrays", () => {
+	// Client modules outside the server tsconfig compile with the classic JSX runtime under tsx.
+	(globalThis as { React?: typeof React }).React = React;
+	equal(parseJsonContainer("42"), undefined, "a scalar has nothing to fold");
+	equal(parseJsonContainer("{ not json"), undefined);
+	equal(parseJsonContainer(" ".repeat(JSON_TREE_MAX_CHARS)), undefined);
+	deepEqual(parseJsonContainer('\n {"a": [1]}'), { a: [1] });
+	equal(jsonSummary({ a: 1 }), "{1 key}");
+	equal(jsonSummary([1, 2]), "[2 items]");
+	ok(offersJsonTree(25, 10) && offersJsonTree(1, 5_000) && !offersJsonTree(3, 60));
+
+	const value = {
+		run: "cavity",
+		converged: true,
+		residual: null,
+		mesh: { cells: 4096 },
+		steps: Array.from({ length: 250 }, (_, i) => i),
+	};
+	const html = renderToStaticMarkup(<JsonTree value={value} />);
+	match(
+		html,
+		/<details class="json-tree__branch" open=""><summary><span class="json-tree__count">\{5 keys\}<\/span><\/summary>/u,
+	);
+	match(
+		html,
+		/<span class="json-tree__key">run<\/span><span class="json-tree__colon">: <\/span><span class="json-tree__string">&quot;cavity&quot;<\/span>/u,
+	);
+	match(html, /<span class="json-tree__null">null<\/span>/u);
+	// Nested levels start folded and render no children until opened.
+	match(
+		html,
+		/<details class="json-tree__branch"><summary><span class="json-tree__key">steps<\/span><span class="json-tree__colon">: <\/span><span class="json-tree__count">\[250 items\]<\/span><\/summary><\/details>/u,
+	);
+	ok(!html.includes("json-tree__more"));
+	const list = renderToStaticMarkup(<JsonTree value={Array.from({ length: 250 }, (_, i) => i)} />);
+	equal((list.match(/class="json-tree__leaf"/gu) ?? []).length, JSON_TREE_PAGE);
+	match(list, /Show 100 more of 150/u);
+});
+
+test("a measured column stays on one line even when the author aligned it", () => {
+	deepEqual(
+		numericColumns(
+			[
+				["8.00e-3", "0.93 ± 0.02", "1.2 GB", "cavity"],
+				["1.25e-4", "1.01 +/- 0.1", "—", "step"],
+			],
+			4,
+		),
+		[true, true, true, false],
+	);
+	const html = renderMarkdown("| L2 error | Case |\n| ---: | :-- |\n| 8.00e-3 | cavity |", true);
+	match(html, /<td class="md-table__number" style="text-align:right">8\.00e-3<\/td>/u);
+	match(html, /<td style="text-align:left">cavity<\/td>/u);
+});
+
+test("a single newline is a line break, as in the terminal, so a line-per-item reply keeps its lines", () => {
+	// Live: a 2000-line "line N: ok" reply rendered as one wrapped paragraph.
+	const html = renderMarkdown("line 1: ok\nline 2: ok\nline 3: ok");
+	equal((html.match(/<br\/?>/g) ?? []).length, 2);
+	match(html, /line 1: ok<br\/?>\s*line 2: ok/);
+});

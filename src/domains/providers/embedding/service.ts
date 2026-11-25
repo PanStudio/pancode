@@ -1,0 +1,169 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import {
+	canonicalEndpointKey,
+	foregroundStreamUsage,
+	registerBackgroundStream,
+	registerForegroundStream,
+} from "../endpoint-capacity.js";
+import type { TargetDescriptor } from "../types/target-descriptor.js";
+import { embeddingProfileIdentity } from "./profile.js";
+import { embedOpenAIInputs } from "./transport.js";
+import type { EmbeddingInput, EmbeddingRequest, EmbeddingService } from "./types.js";
+import { EmbeddingError } from "./types.js";
+
+export interface EmbeddingRoute {
+	target: TargetDescriptor;
+	model: string;
+	/** Explicit qualified modalities; text is required. Video is intentionally unsupported. */
+	modalities: readonly ("text" | "image" | "audio" | "mixed")[];
+	authToken?: string;
+}
+
+export function createEmbeddingService(options: { route: EmbeddingRoute }): EmbeddingService {
+	let busy = false;
+	const route = structuredClone(options.route);
+	return {
+		async embed(request: EmbeddingRequest) {
+			const profile = structuredClone(request.profile);
+			if (request.signal?.aborted) throw new EmbeddingError("cancelled", "Embedding cancelled");
+			if (request.task !== "query" && request.task !== "document")
+				throw new EmbeddingError("invalid-input", "Unknown embedding task");
+			if (request.inputs.length < 1 || request.inputs.length > 32)
+				throw new EmbeddingError("invalid-input", "Embedding batch size exceeds bounds");
+			const sources = request.inputs.map((input, index) => {
+				const bytes = validateInput(input, route);
+				if (bytes > 8 * 1024 * 1024) throw new EmbeddingError("invalid-input", "Embedding input exceeds byte limit");
+				return { index, kind: input.kind, bytes };
+			});
+			const inputBytes = sources.reduce((sum, source) => sum + source.bytes, 0);
+			if (inputBytes > 16 * 1024 * 1024) throw new EmbeddingError("invalid-input", "Embedding batch exceeds byte limit");
+			const timeoutMs = request.timeoutMs ?? 30000;
+			if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 300000)
+				throw new EmbeddingError("invalid-input", "Embedding timeout must be between 0 and 300000ms");
+			const key = canonicalEndpointKey(route.target);
+			if (!key) throw new EmbeddingError("invalid-input", "Embedding route requires a scheduler identity");
+			const background = request.priority === "background";
+			if (busy || (background && (foregroundStreamUsage()[key] ?? 0) > 0))
+				throw new EmbeddingError("paused", "Embedding admission paused for active inference");
+			const controller = new AbortController();
+			let abortCode: "cancelled" | "timeout" | "paused" = "cancelled";
+			const abort = () => controller.abort();
+			request.signal?.addEventListener("abort", abort, { once: true });
+			const timer = setTimeout(() => {
+				abortCode = "timeout";
+				controller.abort();
+			}, timeoutMs);
+			busy = true;
+			const release = background
+				? registerBackgroundStream(key, {
+						limit: 1,
+						preempt: () => {
+							abortCode = "paused";
+							controller.abort();
+						},
+					})
+				: registerForegroundStream(key);
+			try {
+				const prefix = request.task === "query" ? profile.queryPrefix : profile.documentPrefix;
+				const inputs = request.inputs.map(
+					(input): EmbeddingInput =>
+						input.kind === "text"
+							? { ...input, text: prefix + input.text }
+							: input.kind === "mixed"
+								? {
+										...input,
+										parts: input.parts.map((part) => (part.kind === "text" ? { ...part, text: prefix + part.text } : part)),
+									}
+								: input,
+				);
+				const result = await embedOpenAIInputs({ ...route.target, defaultModel: route.model }, inputs, {
+					httpTimeoutMs: timeoutMs,
+					credentialsPresent: new Set(),
+					signal: controller.signal,
+					...(route.authToken ? { authToken: route.authToken } : {}),
+				});
+				if (controller.signal.aborted) throw new EmbeddingError(abortCode, `Embedding ${abortCode}`);
+				if (result.model !== route.model)
+					throw new EmbeddingError(
+						"profile-mismatch",
+						`Returned embedding model ${result.model} differs from ${route.model}`,
+					);
+				const vectors = result.vectors.map((vector) => {
+					if (
+						!Array.isArray(vector) ||
+						vector.length !== profile.dimensions ||
+						vector.some((value) => typeof value !== "number" || !Number.isFinite(value))
+					)
+						throw new EmbeddingError("invalid-response", "Embedding contains ragged or nonfinite vectors");
+					const scale = Math.max(...vector.map(Math.abs));
+					if (scale === 0) throw new EmbeddingError("invalid-response", "Embedding contains a zero vector");
+					const norm = Math.sqrt(vector.reduce((sum, value) => sum + (value / scale) ** 2, 0));
+					return vector.map((value) => value / scale / norm);
+				});
+				return {
+					vectors,
+					profile: structuredClone(profile),
+					profileIdentity: embeddingProfileIdentity(profile),
+					dimensions: profile.dimensions,
+					model: result.model,
+					sources,
+					usage: {
+						inputItems: inputs.length,
+						inputBytes,
+						...(result.tokensUsed !== undefined ? { tokens: result.tokensUsed } : {}),
+					},
+					warnings: [
+						...(!/^sha256:[a-f0-9]{64}$/i.test(profile.assetIdentity)
+							? ["Embedding asset identity is operator-pinned; GGUF/checkpoint hash is unverified"]
+							: []),
+						...(profile.projectorIdentity !== null && !/^sha256:[a-f0-9]{64}$/i.test(profile.projectorIdentity)
+							? ["Embedding projector hash is unverified"]
+							: []),
+						...(profile.canaryFingerprint === null ? ["Embedding canary fingerprint has not been qualified"] : []),
+					],
+				};
+			} catch (error) {
+				if (controller.signal.aborted) throw new EmbeddingError(abortCode, `Embedding ${abortCode}`);
+				throw error;
+			} finally {
+				clearTimeout(timer);
+				request.signal?.removeEventListener("abort", abort);
+				release();
+				busy = false;
+			}
+		},
+	};
+}
+
+const PART_KINDS = new Set<string>(["text", "image", "audio"]);
+
+function validateInput(input: EmbeddingInput, route: EmbeddingRoute): number {
+	if (input.kind === "video" || !route.modalities.includes(input.kind))
+		throw new EmbeddingError("unsupported", `Embedding modality ${input.kind} is not qualified on this route`);
+	if (input.kind === "mixed") {
+		// Extension JSON is untyped, and a nested mixed part would reach the transport as malformed audio.
+		if (input.parts.length < 1 || input.parts.length > 64 || input.parts.some((part) => !PART_KINDS.has(part.kind)))
+			throw new EmbeddingError("invalid-input", "Mixed input requires 1..64 ordered text, image or audio parts");
+		return input.parts.reduce((sum, part) => sum + validateInput(part, route), 0);
+	}
+	if (input.kind === "text") {
+		if (typeof input.text !== "string" || !input.text.trim())
+			throw new EmbeddingError("invalid-input", "Embedding text must be nonempty");
+		return Buffer.byteLength(input.text);
+	}
+	const allowed =
+		input.kind === "image"
+			? ["image/png", "image/jpeg", "image/webp"]
+			: ["audio/wav", "audio/mpeg", "audio/flac", "audio/ogg"];
+	if (
+		!allowed.includes(input.mimeType) ||
+		typeof input.data !== "string" ||
+		!input.data ||
+		input.data.length % 4 !== 0 ||
+		!/^[A-Za-z0-9+/]*={0,2}$/.test(input.data) ||
+		Buffer.from(input.data, "base64").toString("base64") !== input.data
+	)
+		throw new EmbeddingError("invalid-input", "Media requires supported MIME type and canonical raw base64");
+	return Buffer.byteLength(input.data, "base64");
+}

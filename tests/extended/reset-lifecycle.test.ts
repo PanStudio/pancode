@@ -1,0 +1,276 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { match, ok, strictEqual } from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
+import { join } from "node:path";
+import { describe, it } from "node:test";
+
+import { runResetCommand } from "../../src/cli/reset.js";
+import { createLifecycleHome, runInHome, writeLiveSession } from "../harness/lifecycle-home.js";
+
+const home = () => createLifecycleHome("pancode-test-reset-");
+
+describe("contracts/reset-lifecycle", () => {
+	it("previews the state scope, names what survives, and writes nothing", async () => {
+		const temp = home();
+		try {
+			const { code, stdout } = await runInHome(temp, () => runResetCommand(["--state", "--dry-run"]));
+			strictEqual(code, 0);
+
+			match(stdout, /The following will be cleared:/u);
+			match(stdout, /✓ State: /u, "the state root is the row marked for clearing");
+			match(stdout, /– Data: .*\(survives\)/u);
+			match(stdout, /– Settings: .*\(survives\)/u);
+			match(stdout, /– Credentials: .*\(survives\)/u);
+			match(stdout, /– Cache: .*\(survives\)/u);
+			match(stdout, /Survives: Data, Settings, Credentials, Cache/u);
+			match(stdout, /Dry run: no changes made/u);
+
+			// The launcher is outside every reset scope, so it is not on the listing.
+			ok(!/Launcher|Binary/u.test(stdout), `reset must not list a launcher row:\n${stdout}`);
+			// No result lines on a preview.
+			ok(!/Cleared /u.test(stdout), `a dry run must report no completed work:\n${stdout}`);
+
+			ok(existsSync(join(temp.configDir, "settings.yaml")));
+			ok(existsSync(join(temp.dataDir, "records.json")));
+			ok(existsSync(join(temp.stateDir, "home.json")));
+		} finally {
+			temp.cleanup();
+		}
+	});
+
+	it("keeps approvals through a state reset", async () => {
+		const temp = home();
+		try {
+			const approval = join(temp.configDir, "workspace-trust", "abc.json");
+			mkdirSync(join(temp.configDir, "workspace-trust"));
+			writeFileSync(approval, "{}\n", "utf8");
+			const { code } = await runInHome(temp, () => runResetCommand(["--state", "--yes"]));
+			strictEqual(code, 0);
+			ok(existsSync(approval), "an approval is an operator decision, not state");
+		} finally {
+			temp.cleanup();
+		}
+	});
+
+	it("stops for an open session, even with --yes, and keeps every root", async () => {
+		const temp = home();
+		try {
+			writeLiveSession(temp, { host: hostname(), pid: process.pid });
+			for (const level of ["--state", "--data", "--all"]) {
+				const { code, stdout } = await runInHome(temp, () => runResetCommand([level, "--yes"]));
+				strictEqual(code, 1, level);
+				match(stdout, /20261102-open-session \(tui, pid \d+ on /u);
+				match(stdout, /pancode session terminate <id>/u);
+				ok(existsSync(join(temp.stateDir, "home.json")));
+				ok(existsSync(join(temp.dataDir, "records.json")));
+			}
+			const preview = await runInHome(temp, () => runResetCommand(["--state", "--dry-run"]));
+			strictEqual(preview.code, 0);
+			match(preview.stdout, /1 session is still open; the real run stops until they end/u);
+			strictEqual((await runInHome(temp, () => runResetCommand(["--cache", "--yes"]))).code, 0);
+		} finally {
+			temp.cleanup();
+		}
+	});
+
+	it("does not stop for a session whose owner is gone, or another host's stale one", async () => {
+		const temp = home();
+		try {
+			const gone = spawnSync(process.execPath, ["--version"]).pid;
+			writeLiveSession(temp, { host: hostname(), pid: gone }, "20261102-dead-owner");
+			writeLiveSession(temp, { host: "other-node", pid: 4242 }, "20261102-stale-node");
+			const old = new Date(Date.now() - 10 * 60_000);
+			const stale = join(temp.stateDir, "live", "20261102-stale-node.json");
+			writeFileSync(
+				stale,
+				readFileSync(stale, "utf8").replaceAll(/"(startedAt|at)":"[^"]+"/gu, `"$1":"${old.toISOString()}"`),
+				"utf8",
+			);
+			utimesSync(stale, old, old);
+			strictEqual((await runInHome(temp, () => runResetCommand(["--state", "--yes"]))).code, 0);
+		} finally {
+			temp.cleanup();
+		}
+	});
+
+	it("previews --all as every root with nothing surviving", async () => {
+		const temp = home();
+		try {
+			const { code, stdout } = await runInHome(temp, () => runResetCommand(["--all", "--dry-run"]));
+			strictEqual(code, 0);
+
+			for (const label of ["State", "Data", "Config", "Cache"]) {
+				match(stdout, new RegExp(`✓ ${label}: `, "u"), `${label} must be marked for clearing`);
+			}
+			ok(!/\(survives\)/u.test(stdout), `--all leaves nothing:\n${stdout}`);
+			ok(!/Survives:/u.test(stdout), `--all must not print a survivors line:\n${stdout}`);
+			match(stdout, /Everything goes: settings, credentials, memory/u);
+
+			ok(existsSync(join(temp.configDir, "settings.yaml")));
+			ok(existsSync(join(temp.stateDir, "home.json")));
+		} finally {
+			temp.cleanup();
+		}
+	});
+
+	it("states one consequence per selected scope and not one per root", async () => {
+		const temp = home();
+		try {
+			const { stdout } = await runInHome(temp, () => runResetCommand(["--state", "--auth", "--dry-run"]));
+			match(stdout, /State holds every session transcript/u);
+			match(stdout, /Saved API keys are gone/u);
+			ok(!/Cache is disposable/u.test(stdout), `an unselected scope owes no consequence line:\n${stdout}`);
+		} finally {
+			temp.cleanup();
+		}
+	});
+
+	it("emits one JSON document with per-root status and size", async () => {
+		const temp = home();
+		try {
+			const { code, stdout } = await runInHome(temp, () => runResetCommand(["--state", "--dry-run", "--json"]));
+			strictEqual(code, 0);
+
+			const parsed = JSON.parse(stdout) as {
+				command: string;
+				status: string;
+				items: Array<{ label: string; path: string; status: string; bytes: number }>;
+				warnings: string[];
+			};
+			strictEqual(parsed.command, "reset");
+			strictEqual(parsed.status, "dry-run");
+
+			const byLabel = new Map(parsed.items.map((item) => [item.label, item]));
+			strictEqual(byLabel.get("State")?.status, "remove");
+			strictEqual(byLabel.get("State")?.path, temp.stateDir);
+			strictEqual(byLabel.get("Settings")?.status, "keep");
+			strictEqual(byLabel.get("Credentials")?.status, "keep");
+			strictEqual(byLabel.get("Cache")?.bytes, 10, "cache size is measured, not guessed");
+			ok(parsed.warnings.includes("Dry run: no changes made"));
+		} finally {
+			temp.cleanup();
+		}
+	});
+
+	it("refuses to guess what to reset, whatever else was asked", async () => {
+		const temp = home();
+		try {
+			for (const argv of [[], ["--dry-run"], ["--yes"]]) {
+				const { code, stdout } = await runInHome(temp, () => runResetCommand(argv));
+				strictEqual(code, 2, argv.join(" "));
+				strictEqual(stdout, "");
+				ok(existsSync(join(temp.stateDir, "home.json")));
+			}
+		} finally {
+			temp.cleanup();
+		}
+	});
+
+	it("refuses without a terminal and without --yes, on stderr alone", async () => {
+		const temp = home();
+		const savedIsTty = process.stdin.isTTY;
+		process.stdin.isTTY = false;
+		try {
+			const { code, stdout } = await runInHome(temp, () => runResetCommand(["--state"]));
+			strictEqual(code, 2);
+			strictEqual(stdout, "", "a refusal must leave stdout clean for the caller parsing it");
+			ok(existsSync(join(temp.stateDir, "home.json")), "nothing is removed on the refusal path");
+			const json = await runInHome(temp, () => runResetCommand(["--state", "--json"]));
+			strictEqual(json.code, 2);
+			strictEqual(JSON.parse(json.stdout).error.code, "confirmation_required");
+			strictEqual(json.stdout.trim().split("\n").length, 1, "one failure document");
+			strictEqual((await runInHome(temp, () => runResetCommand(["--cache", "--yes"]))).code, 0);
+		} finally {
+			process.stdin.isTTY = savedIsTty;
+			temp.cleanup();
+		}
+	});
+
+	it("clears only the state root and leaves settings, credentials, and data byte-for-byte", async () => {
+		const temp = home();
+		try {
+			mkdirSync(join(temp.stateDir, "sessions", "kept"), { recursive: true });
+			writeFileSync(join(temp.stateDir, "sessions", "kept", "meta.json"), "{}\n", "utf8");
+			writeFileSync(join(temp.stateDir, "home.json"), '{"version":"0.4.2-old"}\n', "utf8");
+			const settingsBefore = readFileSync(join(temp.configDir, "settings.yaml"), "utf8");
+			const { code, stdout } = await runInHome(temp, () => runResetCommand(["--state", "--yes"]));
+			strictEqual(code, 0);
+
+			match(stdout, /✓ Cleared State/u);
+			ok(!/Cleared Data|Cleared Config|Cleared Cache/u.test(stdout), `only state was in scope:\n${stdout}`);
+
+			ok(!existsSync(join(temp.stateDir, "sessions", "kept")), "recorded sessions are gone");
+			// home.json comes back from the bootstrap, carrying this version
+			// rather than the one the reset removed.
+			ok(existsSync(temp.stateDir), "the empty root is recreated so the next run has somewhere to write");
+			ok(!readFileSync(join(temp.stateDir, "home.json"), "utf8").includes('"0.4.2-old"'));
+			strictEqual(readFileSync(join(temp.configDir, "settings.yaml"), "utf8"), settingsBefore);
+			ok(existsSync(join(temp.configDir, "credentials.yaml")));
+			ok(existsSync(join(temp.dataDir, "records.json")));
+			ok(existsSync(join(temp.cacheDir, "derived.bin")));
+		} finally {
+			temp.cleanup();
+		}
+	});
+
+	it("clears credentials for --auth without touching settings", async () => {
+		const temp = home();
+		try {
+			const { code } = await runInHome(temp, () => runResetCommand(["--auth", "--yes"]));
+			strictEqual(code, 0);
+			// The bootstrap writes an empty store back, so the file exists and the
+			// secret does not. Asserting only on the file's absence would pass over
+			// a reset that left the key in place.
+			ok(!readFileSync(join(temp.configDir, "credentials.yaml"), "utf8").includes("test-secret"));
+			strictEqual(readFileSync(join(temp.configDir, "settings.yaml"), "utf8"), "theme: custom-theme\n");
+			ok(existsSync(join(temp.stateDir, "home.json")), "--auth does not reach the state root");
+		} finally {
+			temp.cleanup();
+		}
+	});
+
+	it("reports no work rather than a phantom result when the selected root is already gone", async () => {
+		const temp = createLifecycleHome("pancode-test-reset-empty-", { populate: false });
+		try {
+			const { code, stdout } = await runInHome(temp, () => runResetCommand(["--cache", "--yes"]));
+			strictEqual(code, 0);
+			// removePath returns null both for a delete and for an absent path, so
+			// the old code announced "Reset cache" over a cache that never existed.
+			ok(!/Cleared Cache/u.test(stdout), `nothing was there to clear:\n${stdout}`);
+			match(stdout, /Nothing to clear/u);
+		} finally {
+			temp.cleanup();
+		}
+	});
+
+	it("refuses overlapping ownership roots before previewing or deleting", async () => {
+		const temp = home();
+		try {
+			temp.env.PANCODE_DATA_DIR = temp.configDir;
+			const { code, stdout } = await runInHome(temp, () => runResetCommand(["--all", "--yes"]));
+			strictEqual(code, 2);
+			strictEqual(stdout, "");
+			ok(existsSync(join(temp.configDir, "settings.yaml")));
+			ok(existsSync(join(temp.stateDir, "home.json")));
+		} finally {
+			temp.cleanup();
+		}
+	});
+
+	it("rejects --all combined with a scope, and an unknown flag, without deleting anything", async () => {
+		const temp = home();
+		try {
+			for (const argv of [["--all", "--state"], ["--nope"]]) {
+				const { code } = await runInHome(temp, () => runResetCommand(argv));
+				strictEqual(code, 2, `${argv.join(" ")} must be a usage error`);
+			}
+			ok(existsSync(join(temp.stateDir, "home.json")));
+			ok(existsSync(join(temp.configDir, "settings.yaml")));
+		} finally {
+			temp.cleanup();
+		}
+	});
+});

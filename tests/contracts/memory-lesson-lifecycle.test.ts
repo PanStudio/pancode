@@ -1,0 +1,1153 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, notStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { runMemoryCommand } from "../../src/cli/memory.js";
+import { telemetryHub } from "../../src/core/telemetry/hub.js";
+import { pancodeDataDir, pancodeStateDir } from "../../src/core/xdg.js";
+import {
+	commandEvidenceRef,
+	commandSegment,
+	commandSegments,
+	receiptVouches,
+	sourceEvidenceRef,
+} from "../../src/domains/memory/command-evidence.js";
+import { readRetention, retentionPath } from "../../src/domains/memory/completion-retention.js";
+import { evaluateMemoryGate } from "../../src/domains/memory/guardian-gate.js";
+import { type CompletedLessonSource, completedLessonSource } from "../../src/domains/memory/history-review.js";
+import { createMemoryInterventionRegistration } from "../../src/domains/memory/intervention.js";
+import {
+	lessonCommands,
+	lessonEvidence,
+	readInsideRoot,
+	repositoryRelativePath,
+} from "../../src/domains/memory/lesson-evidence.js";
+import { MemoryLessonFeedback } from "../../src/domains/memory/lesson-feedback.js";
+import { projectKeptLesson } from "../../src/domains/memory/lesson-projection.js";
+import { rejectMemoryRecord } from "../../src/domains/memory/operations.js";
+import { claimFromEvidence, memoryRevision } from "../../src/domains/memory/promotion.js";
+import {
+	demotedMemoryIds,
+	detectMemoryUse,
+	foldRecallUse,
+	type RecallUseLedger,
+} from "../../src/domains/memory/recall-use.js";
+import { provenRecipes } from "../../src/domains/memory/recipes.js";
+import { MemoryRuntime } from "../../src/domains/memory/runtime.js";
+import { loadMemoryRecordsSync, memoryStorePath } from "../../src/domains/memory/store.js";
+import { TaskMemoryBank } from "../../src/domains/memory/task-bank.js";
+import { proposeInjectedTaskMemory } from "../../src/domains/memory/task-bank-promotion.js";
+import { renderTaskMemoryHandoffSource } from "../../src/domains/memory/task-memory-handoff.js";
+import { runTaskMemoryPolicy, TaskMemoryEndpointPreemptedError } from "../../src/domains/memory/task-memory-policy.js";
+import type { MemoryRecord } from "../../src/domains/memory/types.js";
+import type { MiddlewareHookInput } from "../../src/domains/middleware/types.js";
+import { cwdHash } from "../../src/engine/session.js";
+import { closedSessionLessonSource } from "../../src/entry/flow-ledger.js";
+import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
+import { isolatePancodeEnv, makeScratchHome } from "../harness/scratch-env.js";
+import { writeSettledRun } from "../harness/settled-run.js";
+
+const COMMAND = "node scripts/check.mjs --mode native";
+
+/** An operator-approved repository lesson as the store projects one; `refs` are its evidence refs. */
+const keptLesson = (id: string, lesson: string, refs: string[] = []) =>
+	projectKeptLesson({
+		id,
+		scope: "repo",
+		key: id,
+		lesson,
+		evidenceRefs: refs,
+		appliesWhen: [],
+		avoidWhen: [],
+		confidence: 1,
+		createdAt: "2026-01-01T00:00:00.000Z",
+		approved: true,
+		approval: { by: "operator", at: "2026-01-01T00:00:00.000Z" },
+	});
+
+test("promote --from-handoff finds the source from any directory and refuses only what it should", async () => {
+	const env = await isolatePancodeEnv("memory-promote-flow-");
+	const previousCwd = process.cwd();
+	try {
+		const project = realpathSync(mkdtempSync(join(env.dir, "project-")));
+		const elsewhere = realpathSync(mkdtempSync(join(env.dir, "elsewhere-")));
+		const at = "2026-11-03T10:00:00.000Z";
+		const base = { parentTurnId: null, timestamp: at };
+		const session = (id: string, lines: string[]) => {
+			const dir = join(pancodeStateDir(), "sessions", cwdHash(project), id);
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(
+				join(dir, "meta.json"),
+				JSON.stringify({ id, cwd: project, createdAt: at, endedAt: at, pancodeVersion: "0.6.8" }),
+			);
+			writeFileSync(join(dir, "current.jsonl"), `${lines.join("\n")}\n`);
+		};
+		const custom = (customType: string) =>
+			JSON.stringify({ ...base, kind: "custom", turnId: customType, customType, data: {} });
+		session("labeled", [custom("pancode_flow_restriction")]);
+		session("torn", [custom("noop"), '{"kind":"message","torn', custom("noop2")]);
+		const promote = async (source: string, cwd: string) => {
+			const path = join(env.dir, `${source}.md`);
+			const bank = new TaskMemoryBank();
+			bank.saveKnowledge(`A lesson from ${source} in ${cwd}.`);
+			writeFileSync(
+				path,
+				renderTaskMemoryHandoffSource(bank.snapshot(), {
+					sessionId: source,
+					evidenceRefs: [`session-${source}`],
+					runtimeIds: [],
+					agentIds: [],
+				}),
+			);
+			process.chdir(cwd);
+			return runMemoryCommand(["promote", "--from-handoff", path, "--scope", "repo", "--repository", project]);
+		};
+		const records = () => loadMemoryRecordsSync(pancodeDataDir()).length;
+		strictEqual(await promote("labeled", elsewhere), 1, "another directory's bucket is searched");
+		strictEqual(records(), 0);
+		strictEqual(await promote("torn", project), 0, "a torn line is not a restriction");
+		strictEqual(records(), 1);
+		strictEqual(await promote("unknown", project), 0, "no rules, nothing to vouch for");
+		strictEqual(records(), 2);
+		mkdirSync(join(project, ".pancode"), { recursive: true });
+		writeFileSync(
+			join(project, ".pancode", "safety.yaml"),
+			"version: 1\ninformationFlow:\n  sources:\n    - id: s\n      paths: [secrets/]\n      recipients: []\n",
+		);
+		strictEqual(await promote("unknown2", project), 1, "under source rules an unknown source is refused");
+		strictEqual(records(), 2);
+		strictEqual(await promote("unknown3", elsewhere), 1, "the rules are the named repository's, not the cwd's");
+		strictEqual(records(), 2);
+	} finally {
+		process.chdir(previousCwd);
+		env.restore();
+	}
+});
+
+test("memory list --json prints each record's review fields, pending and approved alike", (t) => {
+	// A child process: patching this process's stdout would also catch the test runner's own frames.
+	const home = makeScratchHome("memory-list-json-");
+	t.after(home.cleanup);
+	const dataDir = home.env.PANCODE_DATA_DIR as string;
+	const entry = fileURLToPath(new URL("../../src/cli/index.ts", import.meta.url));
+	const run = (args: string[]) =>
+		spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), entry, "memory", ...args], {
+			env: { ...process.env, ...home.env },
+			encoding: "utf8",
+			timeout: 20_000,
+		});
+	const base = {
+		scope: "repo",
+		evidenceRefs: ["run:synthetic"],
+		appliesWhen: ["installing dependencies"],
+		avoidWhen: ["offline"],
+		confidence: 0.8,
+		createdAt: "2026-09-21T00:00:00.000Z",
+		repository: { kind: "canonical-path", key: "/work/demo" },
+	};
+	mkdirSync(join(dataDir, "memory"), { recursive: true });
+	writeFileSync(
+		memoryStorePath(dataDir),
+		JSON.stringify({
+			version: 2,
+			records: [
+				{ ...base, id: "mem-00000000000000b1", key: "pending", lesson: "Pending lesson.", approved: false },
+				{
+					...base,
+					id: "mem-00000000000000b2",
+					key: "approved",
+					lesson: "Approved lesson.",
+					approved: true,
+					approval: { by: "operator", at: "2026-09-21T00:00:00.000Z" },
+				},
+				{
+					...base,
+					id: "mem-00000000000000b3",
+					key: "kept",
+					lesson: "Kept lesson.",
+					approved: true,
+					approval: { by: "guardian", at: "2026-09-22T00:00:00.000Z" },
+				},
+				// FX-42: a record the validator sets aside is reported, not hidden, and listing writes nothing.
+				{ ...base, id: "mem-malformed-1", key: "malformed", lesson: "Malformed lesson.", approved: false },
+			],
+		}),
+	);
+	const stored = readFileSync(memoryStorePath(dataDir), "utf8");
+	const listed = run(["list", "--json"]);
+	strictEqual(listed.status, 0, listed.stdout + listed.stderr);
+	const envelope = JSON.parse(listed.stdout) as { records: Record<string, unknown>[]; invalid: unknown[] };
+	deepStrictEqual(
+		envelope.invalid.map((item) => (item as { record: { id: string } }).record.id),
+		["mem-malformed-1"],
+	);
+	match(listed.stderr, /1 memory record set aside as invalid: .*records\.json: \$\.records\[3\]\.id: /);
+	strictEqual(readFileSync(memoryStorePath(dataDir), "utf8"), stored);
+	const records = envelope.records;
+	deepStrictEqual(records.map((record) => [record.id, record.approved]).sort(), [
+		["mem-00000000000000b1", false],
+		["mem-00000000000000b2", true],
+		["mem-00000000000000b3", true],
+	]);
+	for (const record of records)
+		deepStrictEqual(Object.keys(record).sort(), [
+			"appliesWhen",
+			...(record.id === "mem-00000000000000b1" ? [] : ["approval"]),
+			"approved",
+			"avoidWhen",
+			"confidence",
+			"createdAt",
+			"evidenceRefs",
+			"id",
+			"key",
+			"lesson",
+			"repository",
+			"scope",
+		]);
+	const refused = run(["list", "--yaml"]);
+	strictEqual(refused.status, 2, refused.stdout + refused.stderr);
+	// CLI-10: audit by approver.
+	const ids = (args: string[]) => {
+		const result = run(["list", ...args, "--json"]);
+		strictEqual(result.status, 0, result.stdout + result.stderr);
+		return (JSON.parse(result.stdout) as { records: { id: string }[] }).records.map((record) => record.id).join(",");
+	};
+	strictEqual(ids(["--approved-by", "guardian"]), "mem-00000000000000b3");
+	strictEqual(ids(["--approved-by", "operator"]), "mem-00000000000000b2");
+	strictEqual(run(["list", "--approved-by", "someone"]).status, 2);
+	const text = run(["list", "--approved-by", "guardian"]);
+	ok(
+		text.stdout.startsWith("1 memory record\n") && text.stdout.includes("approved by guardian at 2026-09-22"),
+		text.stdout,
+	);
+	ok(!text.stdout.includes("mem-00000000000000b2"), text.stdout);
+	const all = run(["list"]);
+	ok(all.stdout.startsWith("3 memory records\n"), all.stdout);
+	ok(all.stderr.includes("1 memory record pending review"), all.stderr);
+	ok(all.stderr.includes("1 memory record set aside as invalid"), all.stderr);
+});
+
+test("propose --from-evidence refuses a run or dispatching session that carries a flow label", async () => {
+	const env = await isolatePancodeEnv("memory-evidence-flow-");
+	const previousCwd = process.cwd();
+	try {
+		const project = realpathSync(mkdtempSync(join(env.dir, "project-")));
+		process.chdir(project);
+		const label = {
+			version: 1,
+			restrictions: [{ ruleId: "secrets", policyHash: "hash", sourceRef: "secrets/notes.txt", recipients: [] }],
+		};
+		const settle = async (id: string, sessionId: string | null, labeled: boolean) => {
+			const envelope = { ...fixtureEnvelope(id), sessionId, cwd: project };
+			const draft = fixtureReceiptDraft(envelope);
+			await writeSettledRun(pancodeStateDir(), {
+				...draft,
+				...(labeled ? { safety: { ...draft.safety, flowRestrictions: label } } : {}),
+			} as typeof draft);
+		};
+		const records = () =>
+			existsSync(memoryStorePath(pancodeDataDir())) ? loadMemoryRecordsSync(pancodeDataDir()).length : 0;
+		const propose = (id: string) => runMemoryCommand(["propose", "--from-evidence", id]);
+		const at = "2026-11-03T10:00:00.000Z";
+		const sessionDir = join(pancodeStateDir(), "sessions", cwdHash(project), "labeled-session");
+		mkdirSync(sessionDir, { recursive: true });
+		writeFileSync(
+			join(sessionDir, "meta.json"),
+			JSON.stringify({ id: "labeled-session", cwd: project, createdAt: at, endedAt: at, pancodeVersion: "0.6.8" }),
+		);
+		writeFileSync(
+			join(sessionDir, "current.jsonl"),
+			`${JSON.stringify({ kind: "custom", turnId: "label", parentTurnId: null, timestamp: at, customType: "pancode_flow_restriction", data: {} })}\n`,
+		);
+
+		await settle("run-labeled", null, true);
+		strictEqual(await propose("run-labeled"), 1, "the run's own result carries a label");
+		strictEqual(records(), 0);
+
+		await settle("run-from-labeled-session", "labeled-session", false);
+		strictEqual(await propose("run-from-labeled-session"), 1, "the dispatching session carries a label");
+		strictEqual(records(), 0);
+
+		await settle("run-clean", null, false);
+		strictEqual(await propose("run-clean"), 0, "a clean run with no session still proposes");
+		strictEqual(records(), 1);
+	} finally {
+		process.chdir(previousCwd);
+		env.restore();
+	}
+});
+
+test("a closed session's flow label restricts it from any branch, not only the active path", () => {
+	const at = "2026-11-03T10:00:00.000Z";
+	const message = (turnId: string, parentTurnId: string | null, role: string, payload: unknown) => ({
+		kind: "message",
+		turnId,
+		parentTurnId,
+		timestamp: at,
+		role,
+		payload,
+	});
+	const abandoned = [message("u0", null, "user", { text: "first" }), message("a0", "u0", "assistant", { text: "read" })];
+	const label = {
+		kind: "custom",
+		turnId: "label",
+		parentTurnId: "a0",
+		timestamp: at,
+		customType: "pancode_flow_restriction",
+		data: {},
+	};
+	const active = [
+		message("u1", "u0", "user", { text: "second" }),
+		message("c1", "u1", "tool_call", { toolCallId: "c1", name: "bash", args: { command: "node scripts/check.mjs" } }),
+		message("r1", "c1", "tool_result", {
+			toolCallId: "c1",
+			outcome: "ok",
+			result: { content: [{ type: "text", text: "done" }], details: { kind: "ok", outcome: "success", exitCode: 0 } },
+		}),
+		message("a1", "r1", "assistant", { text: "done", stopReason: "stop" }),
+	];
+	const review = (entries: unknown[]) =>
+		closedSessionLessonSource(entries.map((entry) => JSON.stringify(entry)).join("\n"), "ledger", "closed", "/repo");
+	ok(review([...abandoned, ...active]), "the same ledger with no label stays reviewable");
+	strictEqual(review([...abandoned, label, ...active]), null);
+});
+
+test("a task that ends on finish is a completed lesson source when its turn wrote the reply finish declares", () => {
+	const at = "2026-11-21T10:00:00.000Z";
+	const message = (turnId: string, role: string, payload: unknown) => ({
+		kind: "message",
+		turnId,
+		timestamp: at,
+		role,
+		payload,
+	});
+	const work = [
+		message("u1", "user", { text: "run the check" }),
+		message("c1", "tool_call", { toolCallId: "c1", name: "bash", args: { command: "node scripts/check.mjs" } }),
+		message("r1", "tool_result", {
+			toolCallId: "c1",
+			outcome: "ok",
+			result: { content: [{ type: "text", text: "done" }], details: { kind: "ok", outcome: "success", exitCode: 0 } },
+		}),
+	];
+	const finishCall = (text: string) =>
+		message("a2", "assistant", {
+			text,
+			content: [
+				...(text ? [{ type: "text", text }] : []),
+				{ type: "toolCall", id: "f1", name: "finish", arguments: { state: "done" } },
+			],
+			stopReason: "toolUse",
+		});
+	// What the host appends once finish ends the turn: no provider message, an empty synthesized row.
+	const declared = [
+		message("c2", "tool_call", { toolCallId: "f1", name: "finish", args: { state: "done" } }),
+		message("r2", "tool_result", {
+			toolCallId: "f1",
+			toolName: "finish",
+			outcome: "ok",
+			result: {
+				content: [{ type: "text", text: "completion declared: done\n" }],
+				details: { kind: "ok" },
+				terminate: true,
+			},
+		}),
+		message("a3", "assistant", {
+			text: "",
+			stopReason: "stop",
+			terminalToolResult: true,
+			toolCallId: "f1",
+			toolName: "finish",
+		}),
+	];
+	const review = (entries: Array<{ turnId: string }>) =>
+		closedSessionLessonSource(
+			entries
+				.map((entry, index) => JSON.stringify({ ...entry, parentTurnId: entries[index - 1]?.turnId ?? null }))
+				.join("\n"),
+			"ledger",
+			"closed",
+			"/repo",
+		);
+	ok(review([...work, finishCall("The check passed."), ...declared]), "reply text and finish in one response");
+	const replied = message("a1", "assistant", {
+		text: "The check passed.",
+		content: [{ type: "text", text: "The check passed." }],
+		stopReason: "stop",
+	});
+	ok(review([...work, replied, finishCall(""), ...declared]), "the pinned finish round declares the reply before it");
+	strictEqual(review([...work, finishCall(""), ...declared]), null, "a bare finish with no reply in its turn");
+});
+
+test("a flow-restricted session files no lesson at scope end, and a clean one still does", async () => {
+	const root = mkdtempSync(join(tmpdir(), "memory-flow-"));
+	try {
+		const bank = new TaskMemoryBank();
+		const lesson = bank.saveKnowledge("Release with `pnpm run release`.", {
+			durable: true,
+			evidenceCommand: "pnpm run release",
+		});
+		const feedback = (dataDir: string, restricted: boolean) =>
+			new MemoryLessonFeedback({
+				dataDir: () => dataDir,
+				stateDir: () => root,
+				session: () => ({ id: "s", cwd: root }),
+				sessionFlowRestricted: () => restricted,
+				notice: () => {},
+				diagnostic: () => {},
+			});
+		const restricted = feedback(join(root, "restricted"), true);
+		restricted.scopeEnd({ sessionId: "s", lessons: [lesson] });
+		await restricted.whenSettled();
+		strictEqual(loadMemoryRecordsSync(join(root, "restricted")).length, 0);
+		const clean = feedback(join(root, "clean"), false);
+		clean.scopeEnd({ sessionId: "s", lessons: [lesson] });
+		await clean.whenSettled();
+		strictEqual(loadMemoryRecordsSync(join(root, "clean")).length, 1);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a lesson the task plainly asks about is offered once, only when the prompt lacks it and nothing else matches", () => {
+	const delivered: string[] = [];
+	const port = "The GUI demo box serves the app on port 47811.";
+	const memory = createMemoryInterventionRegistration({
+		bank: new TaskMemoryBank(),
+		getKeptLessons: () => [
+			keptLesson("mem-port", port),
+			keptLesson("mem-log", "Changelog entries for GUI-only changes go under a GUI subheading."),
+		],
+		onDurableLessonOutcomes: (outcome) => delivered.push(...outcome.delivered),
+	});
+	const task = "What port did we settle on for the GUI demo box?";
+	try {
+		strictEqual(
+			memory.offerLessonsForTask("Fix the GUI port typo in the changelog.", () => false),
+			"",
+		);
+		strictEqual(
+			memory.offerLessonsForTask(task, (id) => id === "mem-port"),
+			"",
+			"the section already carries it",
+		);
+		const offer = memory.offerLessonsForTask(task, () => false);
+		match(offer, /^Memory: \[mem-port\] \(operator-approved\) The GUI demo box/u);
+		strictEqual(offer.includes("mem-log"), false);
+		deepStrictEqual(delivered, [], "producing the offer proves nothing");
+		deepStrictEqual(
+			memory.acknowledgeSubmission([`<system-reminder>\n${offer}\n</system-reminder>`]).map((o) => o.kind),
+			["durable_lesson"],
+		);
+		deepStrictEqual(delivered, ["mem-port"]);
+		strictEqual(
+			memory.offerLessonsForTask(task, () => false),
+			"",
+			"once per session",
+		);
+	} finally {
+		memory.dispose();
+	}
+});
+
+test("an approved command lesson surfaces once at the first non-documentation edit and holds on the command's success", () => {
+	const delivered: string[] = [];
+	const held: string[] = [];
+	const memory = createMemoryInterventionRegistration({
+		bank: new TaskMemoryBank(),
+		// The first-change broadcast is the documented opt-in, `context.memory.surfaces.delivery: broadcast`.
+		getDelivery: () => "broadcast",
+		getKeptLessons: () => [keptLesson("mem-recipe", `Validation requires \`${COMMAND}\`.`)],
+		onDurableLessonOutcomes: (outcome) => {
+			delivered.push(...outcome.delivered);
+			held.push(...outcome.held);
+		},
+	});
+	let call = 0;
+	let evidence: string | undefined;
+	const after = (toolName: string, toolArgs: Record<string, unknown>, extra: Partial<MiddlewareHookInput> = {}) =>
+		memory.evaluate(
+			{
+				hook: "after_tool",
+				sessionId: "B",
+				toolName,
+				toolCallId: String(++call),
+				toolArgs,
+				metadata: { resultKind: "ok", actionClass: toolName === "bash" ? "execute" : "write" },
+				...extra,
+			},
+			{
+				priorEffects: [],
+				evidence: (value) => {
+					evidence = value;
+				},
+			},
+		);
+	try {
+		memory.evaluate({ hook: "turn_start", sessionId: "B", text: "Add a helper and validate it." });
+		deepStrictEqual(after("edit", { path: "README.md" }), [], "a prose-only edit is not what the command exercises");
+		const surfaced = after("edit", { path: "src/rates.mjs" });
+		strictEqual(surfaced[0]?.kind, "annotate_tool_result");
+		strictEqual(evidence, "match:durable-lesson@task-memory", "a lesson delivery is not a failure recurrence (C-32)");
+		const message = surfaced[0]?.kind === "annotate_tool_result" ? surfaced[0].message : "";
+		match(message, /^Memory: \[mem-recipe\]/u);
+		deepStrictEqual(after("edit", { path: "src/other.mjs" }), [], "one surfacing per session");
+		deepStrictEqual(delivered, [], "producing the annotation is not delivering it");
+		memory.acknowledgeSubmission([`[middleware:info] ${message}`]);
+		after("bash", { command: COMMAND }, { toolResultDetails: { outcome: "success", exitCode: 0 } });
+		deepStrictEqual(delivered, ["mem-recipe"]);
+		deepStrictEqual(held, ["mem-recipe"]);
+	} finally {
+		memory.dispose();
+	}
+});
+
+test("a failing variant of a remembered recipe gets the recipe on its failed result, with no edit and no prompt cue", () => {
+	const root = mkdtempSync(join(tmpdir(), "memory-recipe-variant-"));
+	mkdirSync(join(root, "scripts"), { recursive: true });
+	writeFileSync(join(root, "scripts", "check.mjs"), "process.exit(2);\n");
+	const delivered: string[] = [];
+	const memory = createMemoryInterventionRegistration({
+		bank: new TaskMemoryBank(),
+		workspaceRoot: () => root,
+		getKeptLessons: () => [
+			keptLesson("mem-recipe", `Run scripts/check.mjs as \`${COMMAND}\`.`, [commandEvidenceRef(COMMAND)]),
+		],
+		onDurableLessonOutcomes: (outcome) => delivered.push(...outcome.delivered),
+	});
+	const failed = (command: string, id: string) =>
+		memory.evaluate({
+			hook: "after_tool",
+			sessionId: "C",
+			toolName: "bash",
+			toolCallId: id,
+			toolArgs: { command },
+			metadata: { resultKind: "error", actionClass: "execute", errorMessage: "MODE_REQUIRED" },
+		});
+	try {
+		memory.evaluate({ hook: "turn_start", sessionId: "C", text: "What does this repository do?" });
+		deepStrictEqual(failed("node scripts/other.mjs", "1"), [], "another file is not this recipe's trap");
+		const effects = failed("node scripts/check.mjs", "2");
+		strictEqual(effects[0]?.kind, "annotate_tool_result");
+		const message = effects[0]?.kind === "annotate_tool_result" ? effects[0].message : "";
+		match(message, /\[mem-recipe\]/u);
+		deepStrictEqual(delivered, [], "delivery waits for the submitted request");
+		memory.acknowledgeSubmission([`[middleware:info] ${message}`]);
+		deepStrictEqual(delivered, ["mem-recipe"]);
+	} finally {
+		memory.dispose();
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a verification gap and a read of the lesson's own file each bring the recipe once, and its own successful run needs none", () => {
+	const root = mkdtempSync(join(tmpdir(), "memory-recipe-triggers-"));
+	mkdirSync(join(root, "scripts"), { recursive: true });
+	writeFileSync(join(root, "scripts", "check.mjs"), "process.exit(2);\n");
+	const triggers: string[] = [];
+	const make = () =>
+		createMemoryInterventionRegistration({
+			bank: new TaskMemoryBank(),
+			workspaceRoot: () => root,
+			getKeptLessons: () => [
+				keptLesson("mem-recipe", `Run scripts/check.mjs as \`${COMMAND}\`.`, [commandEvidenceRef(COMMAND)]),
+			],
+			telemetry: { record: (row) => triggers.push(...row.triggerReasons) },
+		});
+	const verify = make();
+	const reader = make();
+	const runner = make();
+	try {
+		// The prompt's memory section already led this session to the recipe: its
+		// own successful run names the lesson's file and needs no reminder after it.
+		runner.evaluate({ hook: "turn_start", sessionId: "F", text: "Run the validation." });
+		deepStrictEqual(
+			runner.evaluate({
+				hook: "after_tool",
+				sessionId: "F",
+				toolName: "bash",
+				toolCallId: "1",
+				toolArgs: { command: COMMAND },
+				metadata: { resultKind: "ok", actionClass: "execute" },
+				toolResultDetails: { outcome: "success", exitCode: 0 },
+			}),
+			[],
+		);
+		verify.evaluate({ hook: "turn_start", sessionId: "D", text: "Is the project healthy?" });
+		const gap = verify.evaluate({
+			hook: "after_tool",
+			sessionId: "D",
+			toolName: "verify",
+			toolCallId: "1",
+			toolArgs: {},
+			metadata: { resultKind: "ok", actionClass: "read" },
+			toolResultDetails: { sources: [{ kind: "package.json", checks: [] }], derived: [] },
+		});
+		match(gap[0]?.kind === "annotate_tool_result" ? gap[0].message : "", /\[mem-recipe\]/u);
+		reader.evaluate({ hook: "turn_start", sessionId: "E", text: "Explain the scripts." });
+		const read = (id: string) =>
+			reader.evaluate({
+				hook: "after_tool",
+				sessionId: "E",
+				toolName: "read",
+				toolCallId: id,
+				toolArgs: { path: join(root, "scripts", "check.mjs") },
+				metadata: { resultKind: "ok", actionClass: "read" },
+			});
+		const first = read("1");
+		match(first[0]?.kind === "annotate_tool_result" ? first[0].message : "", /\[mem-recipe\]/u);
+		deepStrictEqual(read("2"), [], "once per session");
+		ok(triggers.includes("durable_lesson_verify"));
+		ok(triggers.includes("durable_lesson_subject"));
+	} finally {
+		verify.dispose();
+		reader.dispose();
+		runner.dispose();
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+/** A runtime in a fresh process that finds one closed session's interrupted retention on disk. */
+async function closedSessionRuntime(source: CompletedLessonSource, complete: () => Promise<{ text: string }>) {
+	const root = mkdtempSync(join(tmpdir(), "memory-closed-session-"));
+	const stateDir = join(root, "state");
+	const dataDir = join(root, "data");
+	const cwd = join(root, "project");
+	for (const dir of [join(stateDir, "memory", "retention"), dataDir, join(cwd, "scripts")])
+		mkdirSync(dir, { recursive: true });
+	writeFileSync(
+		join(cwd, "scripts", "check.mjs"),
+		"if (process.argv.slice(2).join(' ') !== '--mode native') process.exit(2);\n",
+	);
+	const scope = { sessionId: "closed-a", branchAnchorTurnId: "t9" };
+	const marker = retentionPath(stateDir, scope, source);
+	// What a process that exited mid-retention leaves behind; nothing else names this session.
+	writeFileSync(
+		marker,
+		JSON.stringify({
+			version: 1,
+			phase: "pending",
+			reason: "deadline-or-cancelled",
+			extracted: 0,
+			retained: [],
+			attempts: 0,
+			revision: source.revision,
+			sessionId: scope.sessionId,
+		}),
+	);
+	const runtime = new MemoryRuntime();
+	runtime.createIntervention({});
+	runtime.configure({
+		stateDir: () => stateDir,
+		dataDir: () => dataDir,
+		cwd: () => cwd,
+		// Completion retention is the side author's opt-in (DESIGN 4.4, MD6).
+		settings: () => ({
+			enabled: true,
+			surfaces: { observe: "off", lessons: "side" },
+			maxOutputTokens: 512,
+			timeoutMs: 5000,
+		}),
+		lessonSource: () => null,
+		closedLessonSource: (sessionId) => (sessionId === scope.sessionId ? { scope, source } : null),
+		source: () => null,
+		usableHistoryTokens: () => 0,
+		client: {
+			getModelClient: () => ({ complete }),
+			getModelMaxTokens: (configured: number) => configured,
+			backgroundEndpointBusy: () => false,
+		},
+	});
+	return {
+		runtime,
+		marker: () => readRetention(marker),
+		records: () => loadMemoryRecordsSync(dataDir),
+		cleanup: () => {
+			runtime.dispose();
+			rmSync(root, { recursive: true, force: true });
+		},
+	};
+}
+
+const SILENT = { text: "<operations>[]</operations>\n<no_intervention/>" };
+
+test("a closed session's interrupted retention runs beside a turn, and a preemption costs no attempt", async () => {
+	let calls = 0;
+	const closed = await closedSessionRuntime(
+		{
+			revision: "rev-a",
+			refs: ["t1"],
+			text: "ok: make lint",
+			succeededCommands: new Set(["make lint"]),
+			observedReads: new Map(),
+			commandRuns: [{ command: "make lint", ok: true, diagnostic: "" }],
+		},
+		async () => {
+			calls += 1;
+			if (calls === 1) throw new TaskMemoryEndpointPreemptedError("foreground request claimed the memory endpoint");
+			return SILENT;
+		},
+	);
+	try {
+		ok(closed.runtime.pendingWork(true), "a closed session's retention qualifies while a turn streams");
+		strictEqual(await closed.runtime.runIdleStep(true), "yielded");
+		strictEqual(closed.marker()?.attempts, 0, "occupancy is not an answer");
+		strictEqual(await closed.runtime.runIdleStep(true), "ran");
+		strictEqual(closed.marker()?.phase, "abstained");
+		strictEqual(closed.marker()?.attempts, 1);
+		strictEqual(closed.runtime.pendingWork(true), false);
+		strictEqual(
+			closed.runtime.contract.retentionStatus().phase,
+			"idle",
+			"a closed session's status is not this session's",
+		);
+	} finally {
+		closed.cleanup();
+	}
+});
+
+test("a task with no command receipt or read excerpt settles its retention without a model call", async () => {
+	let calls = 0;
+	const closed = await closedSessionRuntime(
+		{
+			revision: "rev-edits",
+			refs: ["t1", "t2"],
+			text: "edit scripts/a.mjs\nedit scripts/b.mjs\nverify => passed",
+			succeededCommands: new Set(),
+			observedReads: new Map(),
+			commandRuns: [],
+		},
+		async () => {
+			calls += 1;
+			return SILENT;
+		},
+	);
+	try {
+		strictEqual(await closed.runtime.runIdleStep(true), "ran");
+		strictEqual(calls, 0, "nothing the task left could hold a lesson");
+		strictEqual(closed.marker()?.phase, "abstained");
+		strictEqual(closed.marker()?.reason, "no-grounding-evidence");
+		strictEqual(closed.marker()?.attempts, 0);
+		strictEqual(closed.runtime.pendingWork(true), false, "settled, so no later pass asks again");
+	} finally {
+		closed.cleanup();
+	}
+});
+
+test("a recipe the task's receipts prove is filed though the model keeps nothing, and waits for later sessions", async () => {
+	const closed = await closedSessionRuntime(
+		{
+			revision: "rev-b",
+			refs: ["t9"],
+			text: `read scripts/check.mjs\nok: ${COMMAND}`,
+			succeededCommands: new Set([COMMAND]),
+			observedReads: new Map([["scripts/check.mjs", ["if (process.argv.slice(2).join(' ') !== '--mode native')"]]]),
+			commandRuns: [{ command: COMMAND, ok: true, diagnostic: "" }],
+		},
+		async () => SILENT,
+	);
+	// M-29: the extraction settles once, after completion, with the outcome the task was left in, not the model's silence.
+	const journal: Array<{ event: string; facts: Record<string, unknown> }> = [];
+	const stop = telemetryHub().subscribe("memory.observation_recorded", (payload) => {
+		journal.push({ event: payload.event, facts: payload.facts });
+	});
+	try {
+		strictEqual(await closed.runtime.runIdleStep(true), "ran");
+		strictEqual(closed.marker()?.phase, "gated");
+		deepStrictEqual(
+			journal.map(({ event }) => event).filter((event) => /^lesson-(?:extraction|judgment)-/u.test(event)),
+			["lesson-extraction-started", "lesson-extraction-completed", "lesson-judgment-gated", "lesson-extraction-settled"],
+		);
+		const settled = journal.find(({ event }) => event === "lesson-extraction-settled")?.facts;
+		deepStrictEqual([settled?.decision, settled?.phase, settled?.reason], ["silent", "gated", "evidence-gate-held"]);
+		const records = closed.records();
+		strictEqual(records.length, 1);
+		strictEqual(records[0]?.approved, false, "its own session's evidence never promotes it");
+		ok(records[0]?.lesson.includes(`\`${COMMAND}\``));
+	} finally {
+		stop();
+		closed.cleanup();
+	}
+});
+
+test("an operation list missing only its closing bracket is repaired, and nothing else is", async () => {
+	const reply = (body: string) => ({ complete: async () => ({ text: `<operations>${body}</operations>` }) });
+	const input = {
+		purpose: "memory.bank" as const,
+		task: "Keep facts",
+		trajectory: [],
+		deterministicTrigger: false,
+		maxTokens: 2000,
+	};
+	const repaired = await runTaskMemoryPolicy(
+		new TaskMemoryBank(),
+		reply('[{"op":"save_knowledge","content":"first"},{"op":"save_knowledge","content":"second"},'),
+		input,
+	);
+	strictEqual(repaired.bankOperations, 2);
+	const broken = await runTaskMemoryPolicy(
+		new TaskMemoryBank(),
+		reply('[{"op":"save_knowledge","content":"first"'),
+		input,
+	);
+	strictEqual(broken.decision, "malformed");
+});
+
+test("lessons quoting the same command are one claim, each wording a revision one session holds once", async () => {
+	const root = mkdtempSync(join(tmpdir(), "memory-same-command-"));
+	const dataDir = join(root, "data");
+	const cwd = join(root, "project");
+	mkdirSync(cwd, { recursive: true });
+	const entry = (content: string) =>
+		new TaskMemoryBank().saveKnowledge(content, { durable: true, evidenceCommand: COMMAND });
+	const native = `Run \`${COMMAND}\` only with the native backend installed.`;
+	try {
+		const first = await proposeInjectedTaskMemory(dataDir, {
+			sessionId: "s1",
+			cwd,
+			entries: [entry(native)],
+			observation: "held",
+		});
+		const mock = await proposeInjectedTaskMemory(dataDir, {
+			sessionId: "s2",
+			cwd,
+			entries: [entry(`Run \`${COMMAND}\` only with the mock backend.`)],
+			observation: "held",
+		});
+		const repeat = await proposeInjectedTaskMemory(dataDir, {
+			sessionId: "s1",
+			cwd,
+			entries: [entry(native)],
+			observation: "held",
+		});
+		const id = first.records[0]?.id;
+		ok(id);
+		strictEqual(repeat.records[0]?.id, id, "the same claim from the same session is the same record");
+		strictEqual(mock.records[0]?.id, id, "the same command under another wording is the same claim");
+		const stored = JSON.parse(readFileSync(join(dataDir, "memory", "records.json"), "utf8")).records;
+		strictEqual(stored.length, 1);
+		const [claim] = stored;
+		deepStrictEqual(
+			claim.revisions.map((item: { sessionId: string }) => item.sessionId),
+			["s1", "s2", "s1"],
+			"each wording is kept as a revision",
+		);
+		deepStrictEqual(
+			claim.observations.map((item: { sessionId: string; revision: string }) => [item.sessionId, item.revision]),
+			[
+				["s1", claim.revisions[0].revision],
+				["s2", claim.revisions[1].revision],
+			],
+			"a verdict judges its own wording, and a repeat from the same session adds no second verdict",
+		);
+		ok(claim.evidenceRefs.some((ref: string) => ref.startsWith("command:")));
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a rewording of a rejected lesson is held even once its command is verified", async () => {
+	const root = mkdtempSync(join(tmpdir(), "memory-rejected-claim-"));
+	const dataDir = join(root, "data");
+	const cwd = join(root, "project");
+	mkdirSync(cwd, { recursive: true });
+	const entry = (content: string) =>
+		new TaskMemoryBank().saveKnowledge(content, {
+			durable: true,
+			evidenceCommand: COMMAND,
+			evidenceSource: { path: "scripts/check.mjs", quote: "process.exit(2);" },
+		});
+	try {
+		const first = await proposeInjectedTaskMemory(dataDir, {
+			sessionId: "s1",
+			cwd,
+			entries: [entry(`Run \`${COMMAND}\` before a release.`)],
+		});
+		const id = first.records[0]?.id;
+		ok(id);
+		await rejectMemoryRecord(dataDir, id);
+		const reworded = entry(`Always run \`${COMMAND}\` before releasing.`);
+		const second = await proposeInjectedTaskMemory(dataDir, {
+			sessionId: "s2",
+			cwd,
+			entries: [reworded],
+			observation: "held",
+			commandVerified: new Set([reworded.id]),
+		});
+		strictEqual(second.records[0]?.approved, false);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a wrapper's success is judged by the command it runs, and an unreadable wrapper grounds no lesson", () => {
+	const evidence = (command: string) =>
+		lessonEvidence(
+			new TaskMemoryBank().saveKnowledge(`Validate this project with \`${command}\`.`, {
+				durable: true,
+				evidenceCommand: command,
+			}),
+			{ succeededCommands: new Set([command]), observedReads: new Map(), workspaceRoot: tmpdir() },
+		);
+	for (const command of [
+		"env true",
+		"env -i -u HOME FOO=1 true",
+		"/usr/bin/env -- echo ok",
+		"env FOO=1 npm help",
+		"env -S 'node x.mjs'",
+		"env -C sub node x.mjs",
+		"env --frob node x.mjs",
+		"nice -n 5 true",
+		"nohup true",
+		"time -p true",
+		"timeout -k 5 30s env true",
+		"timeout 30 npm version",
+		"command true",
+		"command -v node",
+		"exec true",
+		"builtin echo ok",
+		// MEM-2: these wrappers are judged by what they run, and xargs never vouches.
+		"sudo -u nobody true",
+		"stdbuf -oL true",
+		"ionice -c3 true",
+		"taskset -c 1 true",
+		"chrt -f 10 true",
+		"env -iu HOME true",
+		`xargs ${COMMAND}`,
+		`ionice -p 1 ${COMMAND}`,
+	])
+		strictEqual(evidence(command), null, command);
+	for (const command of [
+		COMMAND,
+		`env -i FOO=1 ${COMMAND}`,
+		`timeout 30 nice ${COMMAND}`,
+		`command ${COMMAND}`,
+		`env -iu HOME ${COMMAND}`,
+		`stdbuf -oL taskset -c 1 ${COMMAND}`,
+	])
+		strictEqual(evidence(command), "command", command);
+});
+
+test("a trap is a different command that failed first, and its diagnostic is the output, not the result header", () => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "lesson-recipe-trap-")));
+	try {
+		mkdirSync(join(root, "tests"));
+		writeFileSync(join(root, "tests", "test_io_sched.py"), "import unittest\n");
+		const command = "python3 -m unittest tests/test_io_sched.py";
+		const message = (turnId: string, role: string, payload: unknown) => ({ kind: "message", turnId, role, payload });
+		const run = (id: string, ok: boolean, text: string) => [
+			message(`c${id}`, "tool_call", { toolCallId: id, name: "bash", args: { command } }),
+			message(`r${id}`, "tool_result", {
+				toolCallId: id,
+				outcome: ok ? "ok" : "error",
+				result: {
+					content: [{ type: "text", text }],
+					details: ok ? { kind: "ok", outcome: "success", exitCode: 0 } : { outcome: "nonzero", exitCode: 1 },
+				},
+			}),
+		];
+		// The shape a projected failing result is stored in: its header first, then the runner's own output.
+		const failure = [
+			"[tool-result bounded]",
+			"kind=error capturedBytes=614 displayedBytes=614 truncated=false",
+			'facts={"exitCode":1,"outcome":"nonzero"}',
+			".F.",
+			"FAIL: test_dag_and_accounting (tests.test_io_sched.TestIOSched.test_dag_and_accounting)",
+			"AssertionError: 4.0 != 2.0",
+			"FAILED (failures=1)",
+		].join("\n");
+		const entries = [
+			message("u1", "user", { text: "run the tests, fix retry.py, run them again" }),
+			...run("1", false, failure),
+			...run("2", true, "..."),
+			message("a1", "assistant", { text: "Fixed.", content: [{ type: "text", text: "Fixed." }], stopReason: "stop" }),
+		];
+		const source = completedLessonSource(entries as unknown as Parameters<typeof completedLessonSource>[0], root);
+		ok(source);
+		strictEqual(source.commandRuns[0]?.diagnostic, "AssertionError: 4.0 != 2.0");
+		// The same command failed and then passed: an edit fixed it, so there is no command to avoid.
+		deepStrictEqual(provenRecipes(source, root), []);
+		const trap = { command: "python3 -m unittest -f tests/test_io_sched.py", ok: false, diagnostic: "usage" };
+		deepStrictEqual(
+			provenRecipes({ ...source, commandRuns: [trap, ...source.commandRuns] }, root).map((recipe) => recipe.content),
+			[`Run tests/test_io_sched.py as \`${command}\`; \`${trap.command}\` failed first: usage`],
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a child named ..x is inside the repository, and a sibling of the root is not", () => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "lesson-evidence-root-")));
+	try {
+		mkdirSync(join(root, "repo", "..x"), { recursive: true });
+		writeFileSync(join(root, "repo", "..x", "notes.md"), "kept\n");
+		writeFileSync(join(root, "outside.md"), "outside\n");
+		const repo = join(root, "repo");
+		strictEqual(repositoryRelativePath(join(repo, "..x", "notes.md"), [repo]), "..x/notes.md");
+		strictEqual(readInsideRoot(repo, "..x/notes.md"), "kept\n");
+		strictEqual(repositoryRelativePath(join(root, "outside.md"), [repo]), null);
+		strictEqual(readInsideRoot(repo, "../outside.md"), null);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("evidence identity grounds and counts use only for the command that ran, segment by segment", () => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "memory-identity-")));
+	const other = realpathSync(mkdtempSync(join(tmpdir(), "memory-identity-other-")));
+	try {
+		const grounds = (lessonCommand: string, receipt: string) =>
+			lessonEvidence(
+				new TaskMemoryBank().saveKnowledge(`Validate with \`${lessonCommand}\`.`, {
+					durable: true,
+					evidenceCommand: lessonCommand,
+				}),
+				{ succeededCommands: new Set([receipt]), observedReads: new Map(), workspaceRoot: root },
+			);
+		const lesson = (command: string): Pick<MemoryRecord, "id" | "lesson" | "evidenceRefs"> => ({
+			id: "mem-00000000000000d1",
+			lesson: `Validate scripts/check.mjs with \`${command}\`.`,
+			evidenceRefs: [commandEvidenceRef(command)],
+		});
+		const used = (command: string, receipt: string, touched: string[] = []) =>
+			detectMemoryUse(
+				lesson(command),
+				{ text: "", segments: commandSegments(receipt, root), touched: new Set(touched) },
+				root,
+			);
+		const PNPM = "pnpm run check";
+		const positives: Array<[string, string]> = [
+			[COMMAND, COMMAND],
+			[COMMAND, `node scripts/build.mjs && ${COMMAND}`],
+			[PNPM, `cd ${root} && corepack pnpm -s run check`],
+			[PNPM, `cd "${root}"; corepack pnpm -s run check`],
+		];
+		for (const [claimed, receipt] of positives) {
+			strictEqual(grounds(claimed, receipt), "command", receipt);
+			strictEqual(used(claimed, receipt), "command", receipt);
+		}
+		const BOUNDED = 'node scripts/check.mjs --name "fast mode"';
+		const negatives: Array<[string, string]> = [
+			[COMMAND, "node scripts/check.mjs --mode"],
+			[BOUNDED, "node scripts/check.mjs --name fast mode"],
+			[COMMAND, `${COMMAND} | cat`],
+			[COMMAND, `printf '%s\\n' '${COMMAND}'`],
+			[COMMAND, `cd ${other} && ${COMMAND}`],
+			[PNPM, "pnpm run check --fix"],
+		];
+		for (const [claimed, receipt] of negatives) {
+			strictEqual(grounds(claimed, receipt), null, receipt);
+			notStrictEqual(used(claimed, receipt), "command", receipt);
+		}
+		deepStrictEqual(commandSegments(COMMAND, root, other), [], "a call whose cwd is another checkout vouches nothing");
+		strictEqual(used(COMMAND, "git status", ["scripts/check.mjs"]), "exposed", "touching a named file is not use");
+		for (const refused of [
+			`! ${PNPM}`,
+			`eval "${PNPM}"`,
+			`exec ${PNPM}`,
+			"source scripts/env.sh",
+			"export CI=1",
+			"cd scripts",
+			`command eval "${PNPM}"`,
+		])
+			deepStrictEqual(commandSegments(refused, root), [], `${refused} vouches nothing`);
+		const cited = { id: "mem-00000000000000d4", lesson: "Read scripts/check.mjs before editing it.", evidenceRefs: [] };
+		const turn = (text: string, touched: string[]) =>
+			detectMemoryUse(cited, { text, segments: [], touched: new Set(touched) }, root);
+		strictEqual(turn(`per ${cited.id}`, []), "cited", "a cited id is use");
+		strictEqual(turn("", []), "unscored", "a lesson with no command cannot be scored");
+		let ledger: RecallUseLedger = { version: 1, records: {} };
+		for (let index = 0; index < 6; index++) {
+			const signal = turn("", index % 2 === 0 ? ["scripts/check.mjs"] : []);
+			ledger = foldRecallUse(ledger, {
+				recalled: [cited.id],
+				used: [],
+				exposed: signal === "exposed" ? [cited.id] : [],
+				unscored: signal === "unscored" ? [cited.id] : [],
+				at: `2026-11-0${index + 1}T00:00:00.000Z`,
+			});
+		}
+		strictEqual(ledger.records[cited.id]?.consecutiveUnused, 0, "exposed and unscored turns are no verdict");
+		strictEqual(ledger.records[cited.id]?.exposed, 3);
+		deepStrictEqual([...demotedMemoryIds(ledger)], []);
+		deepStrictEqual(
+			lessonCommands("Set `const mode = 'native'` before running `node scripts/check.mjs`.", [], root).recommended,
+			["node scripts/check.mjs"],
+			"a backticked JavaScript span is not a command",
+		);
+		notStrictEqual(
+			sourceEvidenceRef("scripts/check.mjs", "process.exit(2);"),
+			sourceEvidenceRef("scripts/check.mjs", "process.exit(0);"),
+			"two quotes in one file are two sources",
+		);
+		const scratch = join(root, "scratch");
+		const claim = commandSegment(`pnpm install --store-dir ${scratch}/a/store`, root);
+		ok(claim);
+		const parametric = { ...claim, scratchParameter: 3 };
+		const receipt = (path: string) => commandSegment(`pnpm install --store-dir ${path}`, root) ?? assertSegment();
+		ok(receiptVouches(parametric, receipt(`${scratch}/b/store`), [scratch]), "a declared scratch parameter matches");
+		ok(!receiptVouches(parametric, receipt(`${other}/store`), [scratch]), "a path outside the scratch root does not");
+		ok(!receiptVouches(claim, receipt(`${scratch}/b/store`), [scratch]), "an undeclared claim never generalizes");
+		mkdirSync(scratch);
+		symlinkSync(other, join(scratch, "link"));
+		ok(!receiptVouches(parametric, receipt(`${scratch}/link/store`), [scratch]), "a symlink out of the root does not");
+		const claimOf = (text: string, refs: string[]): Pick<MemoryRecord, "claim"> | Record<string, never> => {
+			const claim = claimFromEvidence(text, refs, root);
+			return claim === null ? {} : { claim };
+		};
+		const record = (id: string, text: string, refs: string[], patch: Partial<MemoryRecord> = {}): MemoryRecord => ({
+			id,
+			scope: "repo",
+			key: id,
+			lesson: text,
+			evidenceRefs: refs,
+			appliesWhen: [],
+			avoidWhen: [],
+			confidence: 1,
+			createdAt: "2026-11-01T00:00:00.000Z",
+			approved: false,
+			repository: { kind: "canonical-path", key: root },
+			provenance: { sourceKind: "task-bank-entry", sourceEntryKind: "knowledge" },
+			...claimOf(text, refs),
+			...patch,
+		});
+		// A rejection of `pnpm run check` holds a rewording that spells the same command another way.
+		const rejected = record("mem-00000000000000d2", `Run \`${PNPM}\` before a release.`, [commandEvidenceRef(PNPM)]);
+		rejected.rejectedAt = "2026-11-02T00:00:00.000Z";
+		const rewording = "Always run `corepack pnpm -s run check` before releasing.";
+		const rewordingRefs = [commandEvidenceRef("corepack pnpm -s run check")];
+		const revision = memoryRevision({ lesson: rewording, evidenceRefs: rewordingRefs });
+		const reworded = record("mem-00000000000000d3", rewording, rewordingRefs, {
+			observations: ["s2", "s3"].map((sessionId) => ({
+				at: "2026-11-03T00:00:00.000Z",
+				sessionId,
+				kind: "held" as const,
+				revision,
+			})),
+		});
+		strictEqual(evaluateMemoryGate(reworded, []), "approve");
+		strictEqual(evaluateMemoryGate(reworded, [rejected]), "hold", "a rejection holds a rewording");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+		rmSync(other, { recursive: true, force: true });
+	}
+});
+
+function assertSegment(): never {
+	throw new Error("expected one command segment");
+}

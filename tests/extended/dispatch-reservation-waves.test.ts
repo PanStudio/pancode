@@ -1,0 +1,714 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, strictEqual, throws } from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
+import { afterEach, beforeEach, it } from "node:test";
+import { dispatchAdmissionFindings } from "../../src/cli/doctor-dispatch-admission.js";
+import { withStateFileLockSync } from "../../src/core/state-file-lock.js";
+import { createCapacityAdmissionController } from "../../src/domains/dispatch/admission.js";
+import { AdmissionLockBusyError } from "../../src/domains/dispatch/admission-error.js";
+import {
+	acquireCapacityLease,
+	type CapacityLimits,
+	capacityLeaseUsage,
+	capacityStateLockPath,
+	processBirthToken,
+	readCapacityStateUnsafe,
+	releaseCapacityLease,
+	writeCapacityStateUnsafe,
+} from "../../src/domains/dispatch/capacity-lease.js";
+import { LEASE_CLOCK_SKEW_MS } from "../../src/domains/dispatch/lease-clock.js";
+import {
+	cleanupDispatchReservations,
+	createDispatchReservation,
+	DEFAULT_RESERVATION_TTL_MS,
+	getDispatchReservation,
+	releaseDispatchReservation,
+	releaseDispatchReservationMemberAsync,
+	rollbackDispatchReservation,
+	sweepDispatchReservationsAtStartup,
+	transferDispatchReservationToLeaseUnsafe,
+} from "../../src/domains/dispatch/reservation-store.js";
+import { registerForegroundStream } from "../../src/domains/providers/endpoint-capacity.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+let env: Awaited<ReturnType<typeof isolatePancodeEnv>>;
+beforeEach(async () => {
+	env = await isolatePancodeEnv("pancode-reservation-waves-");
+});
+afterEach(() => env.restore());
+
+const endpointKey = "http://127.0.0.1:8080";
+const limits: CapacityLimits = { global: 1, nodes: { local: 1 }, endpoints: { [endpointKey]: 1 } };
+
+function reserve(waves = [0, 1], cap = limits, lockTimeoutMs?: number) {
+	return createDispatchReservation({
+		...(lockTimeoutMs !== undefined ? { lockTimeoutMs } : {}),
+		topology: "pipeline",
+		tasks: waves.map((wave, index) => ({
+			memberId: `task-${index + 1}`,
+			wave,
+			nodeId: "local",
+			endpointKey,
+			costUpperBoundUsd: 1,
+		})),
+		capacity: {
+			global: { active: 0, limit: cap.global },
+			nodes: { local: { active: 0, limit: cap.nodes.local ?? 1 } },
+			endpoints: { [endpointKey]: { active: 0, limit: cap.endpoints[endpointKey] ?? 1 } },
+			budget: { currentUsd: 0, ceilingUsd: 100 },
+		},
+	});
+}
+
+function transfer(ownerId: string, memberId: string, cap = limits) {
+	return withStateFileLockSync(capacityStateLockPath(), () =>
+		transferDispatchReservationToLeaseUnsafe({
+			ownerId,
+			memberId,
+			assignmentId: memberId,
+			nodeId: "local",
+			endpointKey,
+			limits: cap,
+		}),
+	);
+}
+
+function durableBytes() {
+	return readFileSync(capacityStateLockPath());
+}
+
+it("admits both pipeline waves at concurrency one without releasing the future reservation", async () => {
+	const reservation = reserve();
+	const first = transfer(reservation.ownerId, "task-1");
+	strictEqual(first.reservationOwnerId, reservation.ownerId);
+	strictEqual(first.reservationMemberId, "task-1");
+	strictEqual(readCapacityStateUnsafe().leases.length, 1);
+	strictEqual(getDispatchReservation(reservation.ownerId)?.members[1]?.status, "held");
+	releaseCapacityLease(first.leaseId);
+	await releaseDispatchReservationMemberAsync(reservation.ownerId, "task-1");
+	const second = transfer(reservation.ownerId, "task-2");
+	strictEqual(second.reservationMemberId, "task-2");
+	releaseCapacityLease(second.leaseId);
+	releaseDispatchReservation(reservation.ownerId);
+	strictEqual(readCapacityStateUnsafe().leases.length, 0);
+	strictEqual(getDispatchReservation(reservation.ownerId)?.status, "released");
+});
+
+for (const dimension of ["global", "node", "endpoint"] as const) {
+	it(`does not charge its own future wave against the ${dimension} limit`, () => {
+		const cap = { global: 4, nodes: { local: 4 }, endpoints: { [endpointKey]: 4 } };
+		if (dimension === "global") cap.global = 1;
+		else if (dimension === "node") cap.nodes.local = 1;
+		else cap.endpoints[endpointKey] = 1;
+		const reservation = reserve([0, 1], cap);
+		const lease = transfer(reservation.ownerId, "task-1", cap);
+		releaseCapacityLease(lease.leaseId);
+		rollbackDispatchReservation(reservation.ownerId);
+	});
+}
+
+it("keeps unreserved work blocked and failed transfer atomic", () => {
+	const reservation = reserve();
+	const before = durableBytes();
+	throws(
+		() => acquireCapacityLease({ assignmentId: "outsider", nodeId: "local", endpointKey, limits }),
+		/capacity reached/,
+	);
+	throws(() => transfer(reservation.ownerId, "missing"), /is not held/);
+	deepStrictEqual(durableBytes(), before);
+});
+
+for (const dimension of ["global", "node", "endpoint"] as const) {
+	for (const holder of ["other owner", "same-wave peer"] as const) {
+		it(`preserves ${holder} capacity at the ${dimension} limit`, () => {
+			const cap = { global: 2, nodes: { local: 2 }, endpoints: { [endpointKey]: 2 } };
+			// An earlier plan keeps its place: a later one waits behind it (M8).
+			if (holder === "other owner") reserve([0], cap);
+			const reservation = reserve(holder === "same-wave peer" ? [0, 0, 1, 1] : [0, 1], cap);
+			const constrained = structuredClone(cap);
+			if (dimension === "global") constrained.global = 1;
+			else if (dimension === "node") constrained.nodes.local = 1;
+			else constrained.endpoints[endpointKey] = 1;
+			const before = durableBytes();
+			throws(() => transfer(reservation.ownerId, "task-1", constrained), /capacity reached/);
+			deepStrictEqual(durableBytes(), before);
+			const first = transfer(reservation.ownerId, "task-1", cap);
+			if (holder === "same-wave peer") {
+				const second = transfer(reservation.ownerId, "task-2", cap);
+				strictEqual(readCapacityStateUnsafe().leases.length, 2);
+				throws(() => transfer(reservation.ownerId, "task-3", cap), /capacity reached/);
+				releaseCapacityLease(second.leaseId);
+			}
+			releaseCapacityLease(first.leaseId);
+		});
+	}
+}
+
+it("preserves foreground capacity and the reservation on failed transfer", () => {
+	const reservation = reserve();
+	const before = durableBytes();
+	const release = registerForegroundStream(endpointKey);
+	try {
+		throws(() => transfer(reservation.ownerId, "task-1"), /capacity reached.*foreground stream/);
+		deepStrictEqual(durableBytes(), before);
+	} finally {
+		release();
+	}
+	const lease = transfer(reservation.ownerId, "task-1");
+	releaseCapacityLease(lease.leaseId);
+});
+
+it("keeps assignment retries on the same owned lease and holds the next wave until settlement", () => {
+	const reservation = reserve();
+	const first = transfer(reservation.ownerId, "task-1");
+	// Production retries retain the assignment lease and omit the first-attempt transfer reference.
+	const retry = acquireCapacityLease({ assignmentId: "task-1", nodeId: "local", endpointKey, limits });
+	strictEqual(retry.leaseId, first.leaseId);
+	strictEqual(retry.reservationOwnerId, reservation.ownerId);
+	strictEqual(retry.reservationMemberId, "task-1");
+	throws(() => transfer(reservation.ownerId, "task-2"), /capacity reached/);
+	releaseCapacityLease(retry.leaseId);
+	throws(
+		() => acquireCapacityLease({ assignmentId: "outsider", nodeId: "local", endpointKey, limits }),
+		/capacity reached/,
+	);
+	rollbackDispatchReservation(reservation.ownerId);
+	const next = acquireCapacityLease({ assignmentId: "outsider", nodeId: "local", endpointKey, limits });
+	releaseCapacityLease(next.leaseId);
+	throws(() => transfer(reservation.ownerId, "task-2"), /is not active/);
+});
+
+it("admits two waves through the real bounded admission controller", { timeout: 5_000 }, async () => {
+	const reservation = reserve();
+	const controller = createCapacityAdmissionController({ limits: () => limits });
+	// The production queue timers are unref'd; keep this bounded source-only test alive.
+	const keepAlive = setInterval(() => {}, 1_000);
+	try {
+		for (const memberId of ["task-1", "task-2"]) {
+			const admitted = await controller.admit({
+				assignmentId: memberId,
+				nodeId: "local",
+				endpointKey,
+				deadlineAt: Date.now() + 1_000,
+				reservation: { ownerId: reservation.ownerId, memberId },
+			});
+			strictEqual(admitted.lease.reservationMemberId, memberId);
+			controller.release(admitted.lease.leaseId);
+			await releaseDispatchReservationMemberAsync(reservation.ownerId, memberId);
+		}
+		strictEqual(readCapacityStateUnsafe().leases.length, 0);
+		strictEqual(getDispatchReservation(reservation.ownerId)?.status, "released");
+	} finally {
+		clearInterval(keepAlive);
+		controller.stop();
+	}
+});
+
+for (const dimension of ["global", "node", "endpoint"] as const) {
+	it(`does not overlap pipeline waves above the ${dimension} limit`, () => {
+		const cap = { global: 4, nodes: { local: 4 }, endpoints: { [endpointKey]: 4 } };
+		if (dimension === "global") cap.global = 1;
+		else if (dimension === "node") cap.nodes.local = 1;
+		else cap.endpoints[endpointKey] = 1;
+		const reservation = reserve([0, 1], cap);
+		const first = transfer(reservation.ownerId, "task-1", cap);
+		const before = durableBytes();
+		throws(() => transfer(reservation.ownerId, "task-2", cap), new RegExp(`${dimension}.*capacity reached`));
+		deepStrictEqual(durableBytes(), before);
+		releaseCapacityLease(first.leaseId);
+		const second = transfer(reservation.ownerId, "task-2", cap);
+		releaseCapacityLease(second.leaseId);
+	});
+}
+
+it("another owner still sees the future reserved peak after the current wave releases its lease", async () => {
+	const reservation = reserve();
+	const first = transfer(reservation.ownerId, "task-1");
+	releaseCapacityLease(first.leaseId);
+	await releaseDispatchReservationMemberAsync(reservation.ownerId, "task-1");
+	// A later plan that fits the limits is reserved, not refused, and its members queue behind the earlier plan (M8).
+	const later = reserve();
+	const before = durableBytes();
+	throws(() => transfer(later.ownerId, "task-1"), /capacity reached/);
+	throws(
+		() => acquireCapacityLease({ assignmentId: "outsider", nodeId: "local", endpointKey, limits }),
+		/capacity reached/,
+	);
+	deepStrictEqual(durableBytes(), before);
+	strictEqual(getDispatchReservation(reservation.ownerId)?.members[1]?.status, "held");
+});
+
+for (const identity of ["missing owner", "missing member", "held member", "released member", "no reference"] as const) {
+	it(`${identity} cannot obtain the reservation wave discount`, async () => {
+		const reservation = reserve();
+		if (identity === "released member") await releaseDispatchReservationMemberAsync(reservation.ownerId, "task-1");
+		const before = durableBytes();
+		throws(
+			() =>
+				acquireCapacityLease({
+					assignmentId: "unvalidated",
+					nodeId: "local",
+					endpointKey,
+					limits,
+					...(identity === "no reference"
+						? {}
+						: {
+								reservation: {
+									ownerId: identity === "missing owner" ? "missing" : reservation.ownerId,
+									memberId: identity === "missing member" ? "missing" : "task-1",
+								},
+							}),
+				}),
+			/capacity reached|requires a consumed reservation member/,
+		);
+		deepStrictEqual(durableBytes(), before);
+	});
+}
+
+it("route-change retries use the stored lease reservation and still enforce destination capacity", () => {
+	const cap = { global: 4, nodes: { local: 1, remote: 1 }, endpoints: { [endpointKey]: 1 } };
+	const reservation = reserve([0, 1], cap);
+	const first = transfer(reservation.ownerId, "task-1", cap);
+	const blocker = acquireCapacityLease({ assignmentId: "remote-worker", nodeId: "remote", limits: cap });
+	const retryInput = {
+		assignmentId: "task-1",
+		nodeId: "remote",
+		endpointKey,
+		limits: cap,
+		reservation: { ownerId: "untrusted-request-owner", memberId: "untrusted-request-member" },
+	};
+	const before = durableBytes();
+	throws(() => acquireCapacityLease(retryInput), /node 'remote' capacity reached/);
+	deepStrictEqual(durableBytes(), before);
+	releaseCapacityLease(blocker.leaseId);
+	const retry = acquireCapacityLease(retryInput);
+	strictEqual(retry.leaseId, first.leaseId);
+	strictEqual(retry.nodeId, "remote");
+	strictEqual(retry.reservationOwnerId, reservation.ownerId);
+	strictEqual(retry.reservationMemberId, "task-1");
+	strictEqual(getDispatchReservation(reservation.ownerId)?.members[1]?.status, "held");
+	releaseCapacityLease(retry.leaseId);
+});
+
+it("an unreserved lease cannot borrow another owner's consumed member when changing route", () => {
+	const cap = { global: 3, nodes: { local: 3, remote: 1 }, endpoints: { [endpointKey]: 3 } };
+	const reservation = reserve([0, 1], cap);
+	const first = transfer(reservation.ownerId, "task-1", cap);
+	const outsider = acquireCapacityLease({ assignmentId: "outsider", nodeId: "local", limits: cap });
+	releaseCapacityLease(first.leaseId);
+	const before = durableBytes();
+	throws(
+		() =>
+			acquireCapacityLease({
+				assignmentId: "outsider",
+				nodeId: "remote",
+				limits: { ...cap, global: 1 },
+				reservation: { ownerId: reservation.ownerId, memberId: "task-1" },
+			}),
+		/global capacity reached/,
+	);
+	deepStrictEqual(durableBytes(), before);
+	releaseCapacityLease(outsider.leaseId);
+});
+
+it("keeps healthy collective reservations beyond their advisory lifetime", () => {
+	const reservation = reserve();
+	strictEqual(cleanupDispatchReservations({ nowMs: Date.parse(reservation.expiresAt) + 1 }), 0);
+	strictEqual(getDispatchReservation(reservation.ownerId)?.status, "active");
+	const first = transfer(reservation.ownerId, "task-1");
+	releaseCapacityLease(first.leaseId);
+	releaseDispatchReservation(reservation.ownerId);
+});
+
+it("drops invalid settled admission records on boot and refuses only an invalid live one, naming it and the repair", () => {
+	// The shape a pre-host build left behind: settled plans with no `host`, and a lease long past its expiry.
+	const old = "2026-10-09T19:03:47.821Z";
+	const member = { memberId: "steward", wave: 0, nodeId: "local", costUpperBoundUsd: 0, consumedAt: null };
+	const settled = (status: string, ownerId: string) => ({
+		ownerId,
+		ownerPid: 1788226,
+		topology: "parallel",
+		status,
+		createdAt: old,
+		expiresAt: old,
+		settledAt: old,
+		members: [{ ...member, status: "released", releasedAt: old }],
+	});
+	const kept = reserve();
+	releaseDispatchReservation(kept.ownerId);
+	const state = readCapacityStateUnsafe();
+	const staleLease = { leaseId: "lease-old", assignmentId: "a", nodeId: "local", ownerPid: 1, expiresAt: old };
+	const write = (reservations: unknown[], leases: unknown[], cacheLanes?: unknown[]) =>
+		writeFileSync(
+			capacityStateLockPath(),
+			JSON.stringify({ ...state, leases, reservations, ...(cacheLanes ? { cacheLanes } : {}) }),
+		);
+	// Main sessions' cache lanes (M-11): one held by this live process, one released hint, and one no reader accepts.
+	const lane = (conversation: string, extra: Record<string, unknown> = {}) => ({
+		key: "head",
+		lane: 0,
+		conversation,
+		host: hostname(),
+		ownerPid: process.pid,
+		processBirthToken: processBirthToken(process.pid),
+		acquiredAt: old,
+		expiresAt: new Date(Date.now() + 60_000).toISOString(),
+		...extra,
+	});
+	write(
+		[...state.reservations, settled("released", "plan-a"), settled("expired", "plan-b"), null],
+		[staleLease],
+		[lane("held"), lane("hint", { lane: 1, releasedAt: new Date().toISOString() }), { key: "head", lane: -1 }],
+	);
+	const warned = dispatchAdmissionFindings();
+	deepStrictEqual(
+		warned.map((row) => [row.name, row.ok, row.level ?? "ok"]),
+		[
+			["dispatch reservations", true, "warn"],
+			["dispatch capacity leases", true, "warn"],
+			["dispatch cache lanes", true, "warn"],
+		],
+	);
+	match(warned[0]?.detail ?? "", /1 valid record; 3 invalid settled records \('plan-a', 'plan-b', #\d+\)/);
+	strictEqual(
+		warned[2]?.detail,
+		`2 valid records (1 live owner: pid ${process.pid}); 1 invalid settled record (#2), dropped at the next store write or by pancode doctor --fix`,
+	);
+	match(
+		dispatchAdmissionFindings({ fix: true })[2]?.detail ?? "",
+		/^2 valid records \(1 live owner: pid \d+\); dropped 1 invalid record \(#2\)$/u,
+	);
+	strictEqual(dispatchAdmissionFindings()[2]?.level, undefined, "the fix dropped the invalid lane");
+	strictEqual(cleanupDispatchReservations({ startup: true }), 0);
+	const onDisk = JSON.parse(readFileSync(capacityStateLockPath(), "utf8")) as {
+		leases: unknown[];
+		reservations: unknown[];
+	};
+	deepStrictEqual(onDisk.leases, []);
+	deepStrictEqual(
+		onDisk.reservations.map((record) => (record as { ownerId: string }).ownerId),
+		[kept.ownerId],
+	);
+	strictEqual(getDispatchReservation(kept.ownerId)?.status, "released");
+
+	write([...state.reservations, { ...settled("active", "plan-live"), settledAt: null }], []);
+	throws(() => cleanupDispatchReservations({ startup: true }), /invalid active reservation 'plan-live'.*doctor --fix/);
+	const fresh = new Date(Date.now() + 30_000).toISOString();
+	write(state.reservations, [{ ...staleLease, leaseId: "lease-live", expiresAt: fresh }]);
+	throws(() => capacityLeaseUsage(), /invalid capacity lease 'lease-live'.*doctor --fix/);
+	strictEqual(dispatchAdmissionFindings()[1]?.ok, false);
+	match(dispatchAdmissionFindings({ fix: true })[1]?.detail ?? "", /dropped 1 invalid record \('lease-live'\)/);
+	strictEqual(capacityLeaseUsage().global, 0);
+	writeFileSync(capacityStateLockPath(), "{");
+	strictEqual(dispatchAdmissionFindings()[0]?.ok, false);
+	strictEqual(dispatchAdmissionFindings({ fix: true })[0]?.ok, true);
+	deepStrictEqual(readCapacityStateUnsafe().reservations, []);
+});
+
+it("boot never waits on a live admission lock holder; the first plan admission refuses typed, then runs the deferred sweep (M-35)", async (t) => {
+	// A plan whose owner died inside its lifetime: only the startup sweep expires it, and it holds the one slot.
+	const orphan = reserve([0]);
+	const state = readCapacityStateUnsafe();
+	const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+	for (const record of state.reservations as Array<{ ownerId: string; ownerPid: number }>)
+		if (record.ownerId === orphan.ownerId) record.ownerPid = deadPid;
+	writeCapacityStateUnsafe(state);
+	const holder = spawn("sleep", ["600"], { stdio: "ignore" });
+	t.after(() => holder.kill("SIGKILL"));
+	await once(holder, "spawn");
+	const lockPath = `${capacityStateLockPath()}.lock`;
+	writeFileSync(lockPath, JSON.stringify({ host: hostname(), pid: holder.pid }));
+
+	strictEqual(sweepDispatchReservationsAtStartup(), "deferred");
+	strictEqual(getDispatchReservation(orphan.ownerId)?.status, "active");
+	let refusal: unknown;
+	throws(() => {
+		try {
+			reserve([0], limits, 50);
+		} catch (error) {
+			refusal = error;
+			throw error;
+		}
+	});
+	ok(refusal instanceof AdmissionLockBusyError);
+	match(refusal.message, /^dispatch: admission denied: the shared admission store is busy; timed out after 50ms/);
+	match(
+		refusal.message,
+		new RegExp(`held by pid ${holder.pid} on ${hostname()} \\(sleep 600\\); wait for it to finish or stop that process`),
+	);
+	doesNotMatch(refusal.message, /delete/);
+
+	rmSync(lockPath);
+	const next = reserve([0]);
+	strictEqual(getDispatchReservation(orphan.ownerId)?.status, "expired");
+	releaseDispatchReservation(next.ownerId);
+});
+
+it("counts another host's loopback endpoint lease only when it runs on a named node", () => {
+	const cap = { global: 4, nodes: { local: 4, gpu07: 4 }, endpoints: { [endpointKey]: 1 } };
+	const onNamed = acquireCapacityLease({ assignmentId: "named", nodeId: "gpu07", endpointKey, limits: cap });
+	const state = readCapacityStateUnsafe();
+	for (const lease of state.leases) lease.host = "other-host.example";
+	writeCapacityStateUnsafe(state);
+	strictEqual(capacityLeaseUsage().endpoints[endpointKey], 1);
+	throws(
+		() => acquireCapacityLease({ assignmentId: "here", nodeId: "gpu07", endpointKey, limits: cap }),
+		/endpoint .* capacity reached \(1\/1 slots\)/,
+	);
+	const moved = readCapacityStateUnsafe();
+	for (const lease of moved.leases) lease.nodeId = "local";
+	writeCapacityStateUnsafe(moved);
+	strictEqual(capacityLeaseUsage().endpoints[endpointKey], undefined);
+	const here = acquireCapacityLease({ assignmentId: "here", nodeId: "local", endpointKey, limits: cap });
+	releaseCapacityLease(here.leaseId);
+	releaseCapacityLease(onNamed.leaseId);
+});
+
+it("a running member's lease heartbeat keeps its plan current for hosts that cannot probe the owner", async (t) => {
+	const reservation = reserve();
+	let clock = Date.now();
+	// The heartbeat timer is unref'd; ticking it by hand keeps the renewal deterministic on every Node.
+	t.mock.timers.enable({ apis: ["setInterval"] });
+	const controller = createCapacityAdmissionController({ limits: () => limits, now: () => clock, heartbeatMs: 5 });
+	try {
+		const admitted = await controller.admit({
+			assignmentId: "task-1",
+			nodeId: "local",
+			endpointKey,
+			deadlineAt: clock + 1_000,
+			reservation: { ownerId: reservation.ownerId, memberId: "task-1" },
+		});
+		// The first wave runs for an hour; only its lease heartbeat speaks for the plan meanwhile.
+		clock += 60 * 60_000;
+		t.mock.timers.tick(5);
+		// stop() settles the renewal the tick started.
+		await controller.stop();
+		strictEqual(
+			Date.parse(getDispatchReservation(reservation.ownerId)?.expiresAt ?? ""),
+			clock + DEFAULT_RESERVATION_TTL_MS,
+			"the heartbeat did not refresh the plan's expiry",
+		);
+		// A sibling host sharing the state directory judges the plan by that expiry alone.
+		const state = readCapacityStateUnsafe();
+		state.reservations = state.reservations.map((record) => ({ ...(record as object), host: "other-host" }));
+		writeCapacityStateUnsafe(state);
+		strictEqual(cleanupDispatchReservations({ nowMs: clock }), 0);
+		strictEqual(getDispatchReservation(reservation.ownerId)?.status, "active");
+		releaseCapacityLease(admitted.lease.leaseId);
+	} finally {
+		await controller.stop();
+	}
+});
+
+it("the admission heartbeat keeps a plan current while none of its members holds a lease (M12)", async (t) => {
+	const reservation = reserve();
+	let clock = Date.now();
+	t.mock.timers.enable({ apis: ["setInterval"] });
+	const controller = createCapacityAdmissionController({ limits: () => limits, now: () => clock, heartbeatMs: 5 });
+	try {
+		// The next member waits longer than the plan's TTL with no lease, in the writer-set queue or behind a long step.
+		clock += 60 * 60_000;
+		t.mock.timers.tick(5);
+		await controller.stop();
+		strictEqual(
+			Date.parse(getDispatchReservation(reservation.ownerId)?.expiresAt ?? ""),
+			clock + DEFAULT_RESERVATION_TTL_MS,
+			"the heartbeat did not refresh the plan's expiry",
+		);
+		const state = readCapacityStateUnsafe();
+		state.reservations = state.reservations.map((record) => ({ ...(record as object), host: "other-host" }));
+		writeCapacityStateUnsafe(state);
+		strictEqual(cleanupDispatchReservations({ nowMs: clock }), 0);
+	} finally {
+		await controller.stop();
+		releaseDispatchReservation(reservation.ownerId);
+	}
+});
+
+it("another host's lease and plan hold until their expiry plus the clock skew tolerance, then are reclaimed (M12)", () => {
+	const reservation = reserve();
+	const lease = acquireCapacityLease({
+		assignmentId: "far",
+		nodeId: "gpu07",
+		limits: { global: 4, nodes: { gpu07: 4 }, endpoints: {} },
+	});
+	const state = readCapacityStateUnsafe();
+	for (const entry of state.leases) entry.host = "other-host";
+	state.reservations = state.reservations.map((record) => ({ ...(record as object), host: "other-host" }));
+	writeCapacityStateUnsafe(state);
+	const leaseLapse = Date.parse(lease.expiresAt) + LEASE_CLOCK_SKEW_MS;
+	strictEqual(capacityLeaseUsage({ nowMs: leaseLapse - 1 }).nodes.gpu07, 1);
+	strictEqual(capacityLeaseUsage({ nowMs: leaseLapse }).nodes.gpu07, undefined);
+	const planLapse = Date.parse(reservation.expiresAt) + LEASE_CLOCK_SKEW_MS;
+	strictEqual(cleanupDispatchReservations({ nowMs: planLapse - 1 }), 0);
+	strictEqual(cleanupDispatchReservations({ nowMs: planLapse }), 1);
+});
+
+it("another host's leases and reservations do not consume this host's global cap", () => {
+	const cap: CapacityLimits = { global: 1, nodes: { local: 2, gpu07: 2 }, endpoints: {} };
+	const foreignLocal = acquireCapacityLease({
+		assignmentId: "foreign-local",
+		nodeId: "local",
+		limits: { ...cap, global: 4 },
+	});
+	const foreignNamed = acquireCapacityLease({
+		assignmentId: "foreign-named",
+		nodeId: "gpu07",
+		limits: { ...cap, global: 4 },
+	});
+	const state = readCapacityStateUnsafe();
+	for (const lease of state.leases) lease.host = "other-host.example";
+	writeCapacityStateUnsafe(state);
+	strictEqual(capacityLeaseUsage().global, 0);
+	const here = acquireCapacityLease({ assignmentId: "here-local", nodeId: "local", limits: cap });
+	releaseCapacityLease(here.leaseId);
+
+	const foreignPlan = createDispatchReservation({
+		topology: "sequential",
+		tasks: [{ memberId: "remote-1", wave: 0, nodeId: "gpu07", costUpperBoundUsd: 1 }],
+		capacity: {
+			global: { active: 0, limit: 2 },
+			nodes: { gpu07: { active: 1, limit: 2 } },
+			endpoints: {},
+			budget: { currentUsd: 0, ceilingUsd: 100 },
+		},
+	});
+	const withForeignPlan = readCapacityStateUnsafe();
+	withForeignPlan.reservations = withForeignPlan.reservations.map((record) => ({
+		...(record as object),
+		host: "other-host.example",
+	}));
+	writeCapacityStateUnsafe(withForeignPlan);
+	const localPlan = createDispatchReservation({
+		topology: "sequential",
+		tasks: [{ memberId: "local-1", wave: 0, nodeId: "local", costUpperBoundUsd: 1 }],
+		capacity: {
+			global: { active: 0, limit: 1 },
+			nodes: { local: { active: 0, limit: 1 } },
+			endpoints: {},
+			budget: { currentUsd: 0, ceilingUsd: 100 },
+		},
+	});
+	releaseDispatchReservation(localPlan.ownerId);
+	const afterForeignPlan = acquireCapacityLease({ assignmentId: "here-after-plan", nodeId: "local", limits: cap });
+	releaseCapacityLease(afterForeignPlan.leaseId);
+	releaseDispatchReservation(foreignPlan.ownerId);
+	releaseCapacityLease(foreignNamed.leaseId);
+	releaseCapacityLease(foreignLocal.leaseId);
+});
+
+it("a named-node lease counts toward global capacity on its own host and not elsewhere", () => {
+	const cap: CapacityLimits = { global: 1, nodes: { local: 2, gpu07: 2 }, endpoints: {} };
+	const onNamed = acquireCapacityLease({ assignmentId: "named-own", nodeId: "gpu07", limits: cap });
+	strictEqual(capacityLeaseUsage().global, 1);
+	strictEqual(capacityLeaseUsage().nodes.gpu07, 1);
+	throws(
+		() => acquireCapacityLease({ assignmentId: "second-here", nodeId: "local", limits: cap }),
+		/global capacity reached \(1\/1\)/,
+	);
+	const state = readCapacityStateUnsafe();
+	for (const lease of state.leases) lease.host = "other-host.example";
+	writeCapacityStateUnsafe(state);
+	strictEqual(capacityLeaseUsage().global, 0);
+	strictEqual(capacityLeaseUsage().nodes.gpu07, 1);
+	const here = acquireCapacityLease({ assignmentId: "second-here", nodeId: "local", limits: cap });
+	releaseCapacityLease(here.leaseId);
+	throws(
+		() =>
+			acquireCapacityLease({
+				assignmentId: "contend-gpu07",
+				nodeId: "gpu07",
+				limits: { global: 2, nodes: { gpu07: 1 }, endpoints: {} },
+			}),
+		/node 'gpu07' capacity reached \(1\/1\) \(held by other-host\.example;/,
+	);
+	releaseCapacityLease(onNamed.leaseId);
+});
+
+it("this host's own leases still enforce the global cap alongside another host's leases", () => {
+	const cap: CapacityLimits = { global: 2, nodes: { local: 4, gpu07: 4 }, endpoints: {} };
+	const foreignNamed = acquireCapacityLease({ assignmentId: "foreign-gpu07", nodeId: "gpu07", limits: cap });
+	const state = readCapacityStateUnsafe();
+	for (const lease of state.leases) lease.host = "other-host.example";
+	writeCapacityStateUnsafe(state);
+	const first = acquireCapacityLease({ assignmentId: "own-local", nodeId: "local", limits: cap });
+	strictEqual(capacityLeaseUsage().global, 1);
+	const second = acquireCapacityLease({ assignmentId: "own-gpu07", nodeId: "gpu07", limits: cap });
+	strictEqual(capacityLeaseUsage().global, 2);
+	throws(
+		() => acquireCapacityLease({ assignmentId: "own-third", nodeId: "local", limits: cap }),
+		/global capacity reached \(2\/2\)\.(?!.*other-host\.example)/,
+	);
+	releaseCapacityLease(second.leaseId);
+	releaseCapacityLease(first.leaseId);
+	releaseCapacityLease(foreignNamed.leaseId);
+});
+
+it("splits a 6-task plan on a 4-slot endpoint into two waves instead of refusing it (M8)", () => {
+	const cap = { global: 8, nodes: { local: 8 }, endpoints: { [endpointKey]: 4 } };
+	const reservation = createDispatchReservation({
+		topology: "parallel",
+		tasks: Array.from({ length: 6 }, (_, index) => ({
+			memberId: `task-${index + 1}`,
+			wave: 0,
+			nodeId: "local",
+			endpointKey,
+			costUpperBoundUsd: 0,
+		})),
+		capacity: {
+			global: { active: 0, limit: cap.global },
+			nodes: { local: { active: 0, limit: cap.nodes.local } },
+			endpoints: { [endpointKey]: { active: 0, limit: 4 } },
+			budget: { currentUsd: 0, ceilingUsd: 100 },
+		},
+	});
+	deepStrictEqual(
+		reservation.members.map((member) => member.wave),
+		[0, 0, 0, 0, 1, 1],
+	);
+	const first = ["task-1", "task-2", "task-3", "task-4"].map((memberId) => transfer(reservation.ownerId, memberId, cap));
+	throws(() => transfer(reservation.ownerId, "task-5", cap), /capacity reached/);
+	for (const lease of first) releaseCapacityLease(lease.leaseId);
+	const second = ["task-5", "task-6"].map((memberId) => transfer(reservation.ownerId, memberId, cap));
+	for (const lease of second) releaseCapacityLease(lease.leaseId);
+	releaseDispatchReservation(reservation.ownerId);
+});
+
+it("sizes waves to the endpoint slots the main turn leaves free, so every wave admits (M8)", () => {
+	// Main and workers share one capped target: the main turn holds a slot for as long as its dispatch call runs.
+	const cap = { global: 8, nodes: { local: 8 }, endpoints: { [endpointKey]: 4 } };
+	const releaseMain = registerForegroundStream(endpointKey);
+	try {
+		const reservation = createDispatchReservation({
+			topology: "parallel",
+			tasks: Array.from({ length: 6 }, (_, index) => ({
+				memberId: `task-${index + 1}`,
+				wave: 0,
+				nodeId: "local",
+				endpointKey,
+				costUpperBoundUsd: 0,
+			})),
+			capacity: {
+				global: { active: 0, limit: cap.global },
+				nodes: { local: { active: 0, limit: cap.nodes.local } },
+				endpoints: { [endpointKey]: { active: 1, limit: 4, leases: 0, foregroundStreams: 1 } },
+				budget: { currentUsd: 0, ceilingUsd: 100 },
+			},
+		});
+		deepStrictEqual(
+			reservation.members.map((member) => member.wave),
+			[0, 0, 0, 1, 1, 1],
+		);
+		const first = ["task-1", "task-2", "task-3"].map((memberId) => transfer(reservation.ownerId, memberId, cap));
+		for (const lease of first) releaseCapacityLease(lease.leaseId);
+		const second = ["task-4", "task-5", "task-6"].map((memberId) => transfer(reservation.ownerId, memberId, cap));
+		for (const lease of second) releaseCapacityLease(lease.leaseId);
+		releaseDispatchReservation(reservation.ownerId);
+	} finally {
+		releaseMain();
+	}
+});

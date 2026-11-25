@@ -1,0 +1,533 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, before, describe, it } from "node:test";
+import { parse as parseYaml } from "yaml";
+import { readVerifiedRun, telemetryRunsDirectory } from "../../src/domains/telemetry/index.js";
+import { findPinnedTool } from "../../src/domains/toolchain/registry.js";
+import { formatUserTaskHandoff } from "../../src/domains/user-tasks/handoff.js";
+import { initializeScratchHome } from "../harness/headless-run.js";
+
+const ROOT = new URL("../..", import.meta.url).pathname;
+const CLI = join(ROOT, "dist", "cli", "index.js");
+const VERSION = (JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version: string }).version;
+
+interface Home {
+	root: string;
+	env: NodeJS.ProcessEnv;
+	cleanup(): void;
+}
+
+interface Result {
+	code: number | null;
+	stdout: string;
+	stderr: string;
+}
+
+function home(label = "pancode-cli-core-"): Home {
+	const root = mkdtempSync(join(tmpdir(), label));
+	return {
+		root,
+		env: {
+			...process.env,
+			NODE_ENV: "test",
+			NO_COLOR: "1",
+			PANCODE_HOME: root,
+			PANCODE_CONFIG_DIR: join(root, "config"),
+			PANCODE_DATA_DIR: join(root, "data"),
+			PANCODE_STATE_DIR: join(root, "state"),
+			PANCODE_CACHE_DIR: join(root, "cache"),
+			PANCODE_REQUIRE_HOME_PREFIX: "1",
+		},
+		cleanup: () => rmSync(root, { recursive: true, force: true }),
+	};
+}
+
+async function runCli(
+	args: string[],
+	options: { env: NodeJS.ProcessEnv; cwd?: string; input?: string; timeoutMs?: number },
+): Promise<Result> {
+	const child = spawn(process.execPath, [CLI, ...args], {
+		cwd: options.cwd ?? ROOT,
+		env: options.env,
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	let stdout = "";
+	let stderr = "";
+	child.stdout.setEncoding("utf8");
+	child.stderr.setEncoding("utf8");
+	child.stdout.on("data", (text: string) => {
+		stdout += text;
+	});
+	child.stderr.on("data", (text: string) => {
+		stderr += text;
+	});
+	child.stdin.end(options.input);
+	return new Promise<Result>((resolve, reject) => {
+		const timer = setTimeout(() => {
+			child.kill("SIGKILL");
+			reject(new Error(`CLI timeout: ${args.join(" ")}\nstdout=${stdout}\nstderr=${stderr}`));
+		}, options.timeoutMs ?? 20_000);
+		child.once("error", (error) => {
+			clearTimeout(timer);
+			reject(error);
+		});
+		child.once("close", (code) => {
+			clearTimeout(timer);
+			resolve({ code, stdout, stderr });
+		});
+	});
+}
+
+describe("CLI targets use role selection", { concurrency: false }, () => {
+	let server: Server;
+	let endpoint: string;
+	const requests: string[] = [];
+	const defaultModel = "dynamo/qwen3.8-27b";
+	const backgroundModel = "zbook-lemonade/LFM2.5-8B-A1B";
+	const prefixedModel = "zbook-lemonade/Gemma-4-26B-A4B-it-MTP-GGUF";
+	before(async () => {
+		server = createServer((request, response) => {
+			requests.push(`${request.method} ${request.url}`);
+			if (request.method === "GET" && request.url === "/v1/models") {
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(JSON.stringify({ data: [defaultModel, backgroundModel, prefixedModel].map((id) => ({ id })) }));
+			} else {
+				response.writeHead(404);
+				response.end("not found");
+			}
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+	});
+	after(async () => {
+		await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+		ok(requests.some((request) => request === "GET /v1/models"));
+		strictEqual(
+			requests.some((request) => request.startsWith("POST ")),
+			false,
+			"selection must not request inference",
+		);
+	});
+	function fixture() {
+		const scratch = home("pancode-target-roles-");
+		mkdirSync(join(scratch.root, "config"), { recursive: true });
+		const path = join(scratch.root, "config", "settings.yaml");
+		const initial = {
+			version: 2,
+			targets: [{ id: "blade-gateway", runtime: "litellm", url: endpoint, defaultModel }],
+			chat: { target: "blade-gateway", model: defaultModel, thinkingLevel: "medium" },
+			fleet: { default: { target: "blade-gateway", model: "mini/ornith1.5-35b-moe-q4km", thinkingLevel: "low" } },
+			context: { memory: { target: "blade-gateway", model: "zbook/ornith-1.5-35b-a3b" } },
+		};
+		writeFileSync(path, JSON.stringify(initial));
+		return { scratch, path, initial, options: { env: scratch.env, cwd: scratch.root } };
+	}
+	for (const [flag, role, label] of [
+		["--background-model", "memory", "background memory"],
+		["--fleet-model", "fleet", "fleet dispatch"],
+		["--orchestrator-model", "chat", "chat"],
+	] as const) {
+		it(`${flag} updates only its role and names only that role`, async () => {
+			const { scratch, path, initial, options } = fixture();
+			try {
+				const result = await runCli(["targets", "use", "blade-gateway", flag, backgroundModel], options);
+				strictEqual(result.code, 0, result.stderr);
+				const expected = structuredClone(initial);
+				const route = role === "chat" ? expected.chat : role === "fleet" ? expected.fleet.default : expected.context.memory;
+				route.model = backgroundModel;
+				deepStrictEqual(parseYaml(readFileSync(path, "utf8")), expected);
+				strictEqual(result.stdout.trim(), `ok: using target blade-gateway for ${label}`);
+				const repeated = await runCli(["targets", "use", "blade-gateway", flag, backgroundModel], options);
+				strictEqual(repeated.code, 0, repeated.stderr);
+				strictEqual(repeated.stdout.trim(), "ok: no role settings changed");
+			} finally {
+				scratch.cleanup();
+			}
+		});
+	}
+	it("no flags select chat and fleet defaults, preserve memory/thinking, and report actual changes", async () => {
+		const { scratch, path, initial, options } = fixture();
+		try {
+			initial.chat.model = "previous/main";
+			writeFileSync(path, JSON.stringify(initial));
+			const result = await runCli(["targets", "use", "blade-gateway"], options);
+			strictEqual(result.code, 0, result.stderr);
+			const expected = structuredClone(initial);
+			expected.chat.model = defaultModel;
+			expected.fleet.default.model = defaultModel;
+			deepStrictEqual(parseYaml(readFileSync(path, "utf8")), expected);
+			strictEqual(result.stdout.trim(), "ok: using target blade-gateway for chat and fleet dispatch");
+			initial.chat.model = defaultModel;
+			writeFileSync(path, JSON.stringify(initial));
+			const fleetOnlyChanged = await runCli(["targets", "use", "blade-gateway"], options);
+			strictEqual(fleetOnlyChanged.code, 0, fleetOnlyChanged.stderr);
+			strictEqual(fleetOnlyChanged.stdout.trim(), "ok: using target blade-gateway for fleet dispatch");
+		} finally {
+			scratch.cleanup();
+		}
+	});
+	it("rejects unadvertised gateway aliases atomically and saves the exact advertised id", async () => {
+		const { scratch, path, initial, options } = fixture();
+		try {
+			const before = readFileSync(path, "utf8");
+			const rejected = await runCli(
+				[
+					"targets",
+					"use",
+					"blade-gateway",
+					"--orchestrator-model",
+					backgroundModel,
+					"--background-model",
+					"Gemma-4-26B-A4B-it-MTP-GGUF",
+				],
+				options,
+			);
+			strictEqual(rejected.code, 1, rejected.stderr);
+			match(rejected.stderr, /does not list model 'Gemma-4-26B-A4B-it-MTP-GGUF'/);
+			ok(rejected.stderr.includes(prefixedModel));
+			strictEqual(rejected.stdout.includes("ok:"), false);
+			strictEqual(readFileSync(path, "utf8"), before, "rejection cannot partially update another selected role");
+			const accepted = await runCli(["targets", "use", "blade-gateway", "--background-model", prefixedModel], options);
+			strictEqual(accepted.code, 0, accepted.stderr);
+			const expected = structuredClone(initial);
+			expected.context.memory.model = prefixedModel;
+			deepStrictEqual(parseYaml(readFileSync(path, "utf8")), expected);
+			strictEqual(accepted.stdout.trim(), "ok: using target blade-gateway for background memory");
+		} finally {
+			scratch.cleanup();
+		}
+	});
+});
+
+it("CLI tasks prints lines for a person by default and JSON with --json (R2-F14)", async () => {
+	const scratch = home("pancode-task-lines-");
+	try {
+		const options = { env: scratch.env, cwd: scratch.root };
+		const empty = await runCli(["tasks"], options);
+		strictEqual(empty.code, 0, empty.stderr);
+		strictEqual(empty.stdout, "no operator tasks in this project; add one: pancode tasks add <text>\n");
+		strictEqual((await runCli(["tasks", "list", "--json"], options)).stdout, "[]\n");
+		strictEqual((await runCli(["tasks", "add", "Inspect validation results"], options)).code, 0);
+		strictEqual((await runCli(["tasks", "done", "u1"], options)).stdout, "u1  done  Inspect validation results\n");
+		strictEqual((await runCli(["tasks"], options)).stdout, "u1  done  Inspect validation results\n");
+	} finally {
+		scratch.cleanup();
+	}
+});
+
+it("CLI tasks hand retains JSON state and emits the explicit headless pickup turn", async () => {
+	const scratch = home("pancode-task-handoff-");
+	try {
+		const options = { env: scratch.env, cwd: scratch.root };
+		const added = await runCli(["tasks", "add", "Inspect validation results"], options);
+		strictEqual(added.code, 0, added.stderr);
+		const handed = await runCli(["tasks", "hand", "u1", "--json"], options);
+		strictEqual(handed.code, 0, handed.stderr);
+		const task = JSON.parse(handed.stdout);
+		strictEqual(task.id, "u1");
+		strictEqual(task.status, "handed");
+		strictEqual(task.handedSessionId, undefined);
+		strictEqual(task.boardTaskId, undefined);
+		match(handed.stderr, /CLI hand records the inbox state only/);
+		match(handed.stderr, /same project/);
+		ok(handed.stderr.endsWith(`${formatUserTaskHandoff(task)}\n`));
+		const listed = await runCli(["tasks", "list", "--json"], options);
+		strictEqual(listed.code, 0, listed.stderr);
+		deepStrictEqual(JSON.parse(listed.stdout), [task]);
+		const missing = await runCli(["tasks", "hand", "u99"], options);
+		strictEqual(missing.code, 1);
+		match(missing.stderr, /not found/);
+		strictEqual(missing.stderr.includes("Before working"), false);
+		const addedJson = await runCli(["tasks", "add", "--json", "json task"], options);
+		strictEqual(addedJson.code, 0, addedJson.stderr);
+		const addedDoc = JSON.parse(addedJson.stdout) as { version: number; task: { title: string } };
+		strictEqual(addedDoc.version, 1);
+		strictEqual(addedDoc.task.title, "json task");
+		for (const [args, refusal] of [
+			[["tasks", "list", "--x"], /^pancode tasks list: unknown flag: --x\nsee: pancode tasks list --help\n$/u],
+			[["tasks", "add", "--x", "title"], /^pancode tasks add: unknown flag: --x\nsee: /u],
+			[["tasks", "add"], /^pancode tasks add: tasks add requires the task text\nsee: /u],
+			[["tasks", "hand"], /^pancode tasks hand: tasks hand requires a task id \(uN\)\nsee: /u],
+		] as const) {
+			const usage = await runCli([...args], options);
+			strictEqual(usage.code, 2, usage.stderr);
+			strictEqual(usage.stdout, "");
+			match(usage.stderr, refusal);
+			strictEqual(usage.stderr.includes("--expect and --verify are repeatable"), false, usage.stderr);
+		}
+	} finally {
+		scratch.cleanup();
+	}
+});
+
+async function body(request: IncomingMessage): Promise<Record<string, unknown>> {
+	let text = "";
+	request.setEncoding("utf8");
+	for await (const chunk of request) text += chunk;
+	return JSON.parse(text) as Record<string, unknown>;
+}
+
+describe("smoke/built CLI core", { concurrency: false }, () => {
+	let server: Server;
+	let endpoint: string;
+	const requests: Array<Record<string, unknown>> = [];
+
+	before(async () => {
+		server = createServer(async (request, response) => {
+			if (request.method === "GET" && request.url === "/v1/models") {
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(
+					JSON.stringify({
+						object: "list",
+						data: [
+							{
+								id: "mock-model",
+								object: "model",
+								tools: true,
+								context_window: 32768,
+								max_output_tokens: 4096,
+							},
+						],
+					}),
+				);
+				return;
+			}
+			if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
+				response.statusCode = 404;
+				response.end("not found");
+				return;
+			}
+			const payload = await body(request);
+			requests.push(payload);
+			if (payload.stream === false) {
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(
+					JSON.stringify({
+						id: "chatcmpl-smoke",
+						object: "chat.completion",
+						model: "mock-model",
+						choices: [{ index: 0, message: { role: "assistant", content: "core reply" }, finish_reason: "stop" }],
+					}),
+				);
+				return;
+			}
+			response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+			response.write(
+				`data: ${JSON.stringify({
+					id: "chatcmpl-smoke",
+					object: "chat.completion.chunk",
+					created: 1,
+					model: "mock-model",
+					choices: [{ index: 0, delta: { role: "assistant", content: "core reply" } }],
+				})}\n\n`,
+			);
+			response.write(
+				`data: ${JSON.stringify({
+					id: "chatcmpl-smoke",
+					object: "chat.completion.chunk",
+					created: 1,
+					model: "mock-model",
+					choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+					usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+				})}\n\n`,
+			);
+			response.end("data: [DONE]\n\n");
+		});
+		await new Promise<void>((resolve, reject) => {
+			server.once("error", reject);
+			server.listen(0, "127.0.0.1", resolve);
+		});
+		endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+	});
+
+	after(async () => {
+		server.closeAllConnections();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+	});
+
+	it("reports version/help and routes usage errors to stderr", async () => {
+		const scratch = home();
+		try {
+			const version = await runCli(["--version"], { env: scratch.env });
+			strictEqual(version.code, 0);
+			// A development build names its commit (3d4ae7621); a release prints the plain version.
+			// The version stays alone on line one; the pinned herdr credit follows it (69ba19993).
+			const [versionLine, ...rest] = version.stdout.split("\n");
+			if (/-dev(?:[.+]|$)/.test(VERSION))
+				match(versionLine ?? "", new RegExp(`^PanCode ${VERSION.replaceAll(".", "\\.")} \\(unreleased · [^)]+\\)$`));
+			else strictEqual(versionLine, `PanCode ${VERSION}`);
+			const herdr = findPinnedTool("herdr");
+			const credit = herdr === null ? [] : [`Panes powered by herdr ${herdr.version} (${herdr.license})`];
+			deepStrictEqual(rest, [...credit, ""]);
+			strictEqual(version.stderr, "");
+
+			const help = await runCli(["--help"], { env: scratch.env });
+			strictEqual(help.code, 0);
+			match(help.stdout, /Usage:/u);
+			match(help.stdout, /pancode run \[flags\] <task>/u);
+			match(help.stdout, /^ {2}pancode config inspect \[--json\] {2}inspect effective customization and provenance$/mu);
+
+			const unknown = await runCli(["not-a-command"], { env: scratch.env });
+			strictEqual(unknown.code, 2);
+			strictEqual(unknown.stdout, "");
+			match(unknown.stderr, /unknown subcommand: not-a-command[^\n]*\nRun 'pancode --help' for the commands\.\n$/u);
+		} finally {
+			scratch.cleanup();
+		}
+	});
+
+	it("names its version and build commit in the process title", { skip: process.platform !== "linux" }, async () => {
+		const scratch = home();
+		const child = spawn(process.execPath, [CLI, "acp"], { cwd: ROOT, env: scratch.env, stdio: ["pipe", "pipe", "pipe"] });
+		try {
+			const commit = existsSync(join(ROOT, ".git")) ? "@[0-9a-f]{7,}(?:-dirty)?" : "";
+			const expected = new RegExp(`^pancode ${VERSION.replaceAll(".", "\\.")}${commit}$`);
+			let title = "";
+			for (let attempt = 0; attempt < 100 && !expected.test(title); attempt += 1) {
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				title = readFileSync(`/proc/${child.pid}/cmdline`, "utf8").split("\0")[0] ?? "";
+			}
+			match(title, expected);
+		} finally {
+			child.kill("SIGKILL");
+			scratch.cleanup();
+		}
+	});
+
+	it("keeps doctor/configure outcomes and both configure cancellation codes", async () => {
+		const scratch = home();
+		const firstRun = home("pancode-first-run-cancel-");
+		try {
+			// From the scratch home, not the checkout: a worktree's own `.pancode/settings.local.yaml` is not this row's (ACP-H6).
+			const untouched = await runCli(["doctor", "--json"], { env: scratch.env, cwd: scratch.root });
+			strictEqual(untouched.code, 0, untouched.stderr);
+			strictEqual(JSON.parse(untouched.stdout).ok, true);
+			strictEqual(readdirSync(scratch.root).length, 0, "read-only doctor must leave a fresh home empty");
+
+			const fixed = await runCli(["doctor", "--fix", "--json"], { env: scratch.env, cwd: scratch.root });
+			strictEqual(fixed.code, 0, fixed.stderr);
+			const fixedReport = JSON.parse(fixed.stdout) as {
+				fix: boolean;
+				findings: Array<{ name: string; level?: string; detail: string }>;
+			};
+			strictEqual(fixedReport.fix, true);
+			ok(existsSync(join(scratch.root, "config", "settings.yaml")));
+			const freshSettings = readFileSync(join(scratch.root, "config", "settings.yaml"), "utf8");
+			// The scaffold sets no key: every setting keeps its built-in default until the user sets it.
+			deepStrictEqual(parseYaml(freshSettings), { version: 2 });
+			// Panes are on by default now, so a fresh home warns that the pinned pane host
+			// is not installed yet and names the launch that installs it (69ba19993).
+			const paneHost = fixedReport.findings.find((entry) => entry.name === "external tool herdr");
+			match(
+				paneHost?.detail ?? "",
+				/^pane host \S+ is not installed; run `pancode panes install`|PanCode's pinned copy|no pinned pane host/u,
+			);
+			for (const finding of fixedReport.findings.filter((entry) =>
+				/panes|yazi|external tool (herdr|yazi)/u.test(entry.name),
+			)) {
+				if (finding !== paneHost)
+					strictEqual(finding.level === undefined || finding.level === "ok", true, `${finding.name}: ${finding.detail}`);
+				strictEqual(/install with|set interface\.panes|--with-panes/u.test(finding.detail), false, finding.detail);
+			}
+
+			const incomplete = await runCli(["configure", "--runtime", "openai-compat"], { env: scratch.env });
+			strictEqual(incomplete.code, 2);
+			match(incomplete.stderr, /--id is required/u);
+
+			const configureCancel = await runCli(["configure"], { env: scratch.env, input: "q\n" });
+			strictEqual(configureCancel.code, 130, configureCancel.stdout + configureCancel.stderr);
+			match(configureCancel.stderr, /configuration cancelled/u);
+
+			const firstRunCancel = await runCli([], {
+				env: { ...firstRun.env, PANCODE_INTERACTIVE: "1", TERM: "xterm-256color" },
+				input: "q\n",
+			});
+			strictEqual(firstRunCancel.code, 130, firstRunCancel.stdout + firstRunCancel.stderr);
+			// The notice wraps to the terminal (5906516d3), so the sentence may break across lines.
+			match(firstRunCancel.stdout, /PanCode needs a model before it can do\s+anything\s+else/u);
+			match(firstRunCancel.stderr, /configuration cancelled/u);
+		} finally {
+			firstRun.cleanup();
+			scratch.cleanup();
+		}
+	});
+
+	it("runs one JSON headless turn through a local provider and seals its run scope", async () => {
+		const scratch = home();
+		try {
+			initializeScratchHome(scratch.root);
+			const configured = await runCli(
+				[
+					"configure",
+					"--id",
+					"local-smoke",
+					"--runtime",
+					"openai-compat",
+					"--url",
+					endpoint,
+					"--model",
+					"mock-model",
+					"--lifecycle",
+					"user-managed",
+					"--set-orchestrator",
+					"--context-window",
+					"32768",
+					"--reasoning",
+					"false",
+				],
+				{ env: scratch.env },
+			);
+			strictEqual(configured.code, 0, configured.stdout + configured.stderr);
+
+			const doctor = await runCli(["doctor", "--json"], { env: scratch.env, cwd: scratch.root });
+			strictEqual(doctor.code, 0, doctor.stdout + doctor.stderr);
+			strictEqual(JSON.parse(doctor.stdout).ok, true);
+
+			const prompt = "CLI_CORE_ONE_TURN";
+			const turn = await runCli(["--no-context-files", "--no-skills", "run", "--output-format", "stream-json", prompt], {
+				env: scratch.env,
+			});
+			strictEqual(turn.code, 0, turn.stderr);
+			const events = turn.stdout
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line) as Record<string, unknown>);
+			const types = events.map((event) => event.type);
+			for (const type of ["session", "turn_start", "agent_end", "turn_end", "run_end"])
+				ok(types.includes(type), turn.stdout);
+			const settled = events.at(-1);
+			strictEqual(settled?.type, "run_end");
+			strictEqual(settled?.schemaVersion, 3);
+			strictEqual(settled?.exitCode, 0);
+			strictEqual((settled?.result as { text?: string } | undefined)?.text, "core reply");
+			ok(typeof settled?.endedAt === "string");
+			ok(
+				requests.some((request) => JSON.stringify(request.messages).includes(prompt)),
+				"prompt must reach provider",
+			);
+
+			const stateDir = join(scratch.root, "state");
+			const runIds = readdirSync(telemetryRunsDirectory(stateDir));
+			strictEqual(runIds.length, 1);
+			const run = readVerifiedRun(stateDir, runIds[0] ?? "");
+			ok(run, "the run scope seal must verify");
+			strictEqual(run.settled.exitCode, 0);
+			strictEqual(run.settled.outcome, "succeeded");
+			strictEqual(run.settled.agentId, "main-agent");
+			strictEqual(run.settled.route.targetId, "local-smoke");
+			strictEqual(run.settled.route.wireModelId, "mock-model");
+			strictEqual(run.row.runId, runIds[0]);
+			ok(typeof run.row.sessionId === "string" && run.row.sessionId.length > 0);
+			ok(run.result?.state === "resolved");
+		} finally {
+			scratch.cleanup();
+		}
+	});
+});

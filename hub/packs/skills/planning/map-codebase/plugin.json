@@ -1,0 +1,23 @@
+{
+	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+	"name": "map-codebase",
+	"version": "0.2.1",
+	"description": "Builds an interactive map of a codebase from verified repository structure, symbols and imports, as one standalone HTML file with a readable overview and expandable source evidence.",
+	"license": "LicenseRef-PanCode-1.0",
+	"extensions": {
+		"dev.pancode": {
+			"manifestVersion": 1,
+			"kind": "skill",
+			"resources": {
+				"skills": "."
+			},
+			"components": [
+				{
+					"kind": "skill",
+					"id": "map-codebase",
+					"path": "SKILL.md"
+				}
+			]
+		}
+	}
+}

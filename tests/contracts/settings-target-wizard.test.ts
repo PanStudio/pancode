@@ -1,0 +1,445 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { test } from "node:test";
+import type { SelectOptions, SelectResult, TextPromptOptions, TextResult } from "../../src/cli/select.js";
+import { readSettings, updateSettings } from "../../src/core/config.js";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { initializePancodeHome } from "../../src/core/init.js";
+import { getRuntimeRegistry } from "../../src/domains/providers/registry.js";
+import { registerBuiltinRuntimes } from "../../src/domains/providers/runtimes/builtins.js";
+import type { RuntimeDescriptor } from "../../src/domains/providers/types/runtime-descriptor.js";
+import type { Component, TUI } from "../../src/engine/tui.js";
+import { stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
+import { dockTop } from "../../src/interactive/dock.js";
+import { openSettingsOverlay } from "../../src/interactive/overlays/settings.js";
+import { buildSettingItems } from "../../src/interactive/overlays/settings-items.js";
+import { TargetWizardSurface } from "../../src/interactive/target-wizard.js";
+import { parseSlashCommand } from "../../src/session-control/slash-commands.js";
+import { closeServer, startOpenAICompatFixture } from "../harness/openai-compat-fixture.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+test("/config opens Settings on Connections while /settings retains its areas", () => {
+	deepStrictEqual(parseSlashCommand("/config"), { kind: "settings", area: "models" });
+	strictEqual(parseSlashCommand("/config targets").kind, "usage-error");
+	for (const area of ["", "models", "chat", "workspace"]) {
+		strictEqual(parseSlashCommand(`/settings ${area}`.trim()).kind, "settings");
+	}
+	for (const retired of ["targets", "fleet", "interface", "integrations", "connections"])
+		strictEqual(parseSlashCommand(`/settings ${retired}`).kind, "usage-error", retired);
+});
+
+test("Add target is an actionable in-TUI wizard (#385)", () => {
+	const items = buildSettingItems(structuredClone(DEFAULT_SETTINGS));
+	const add = items.find((item) => item.id === "targets.add-cta");
+	ok(add);
+	strictEqual(add.readOnly, false);
+	ok(!add.currentValue.includes("pancode"));
+});
+
+test("Connect by URL sits beside Add a target as an actionable row", () => {
+	const items = buildSettingItems(structuredClone(DEFAULT_SETTINGS));
+	const ids = items.map((item) => item.id);
+	const url = items.find((item) => item.id === "targets.url-cta");
+	ok(url);
+	strictEqual(url.label, "Connect by URL");
+	strictEqual(url.readOnly, false);
+	strictEqual(ids.indexOf("targets.url-cta"), ids.indexOf("targets.add-cta") + 1);
+});
+
+function fixtures(): void {
+	const registry = getRuntimeRegistry();
+	registerBuiltinRuntimes(registry);
+	const base = registry.get("llamacpp");
+	ok(base);
+	for (const id of ["wizard-one", "wizard-two"]) {
+		if (registry.get(id)) continue;
+		const runtime: RuntimeDescriptor = {
+			...base,
+			id,
+			aliases: [],
+			displayName: id,
+			auth: "none",
+			knownModels: ["model-a", "model-b"],
+			defaultCapabilities: { ...base.defaultCapabilities, reasoning: false },
+			probe: async () => ({ ok: true, models: ["model-a", "model-b"] }),
+		};
+		registry.register(runtime);
+	}
+}
+
+class ScriptedWizard extends TargetWizardSurface {
+	seen: string[] = [];
+	reports: string[] = [];
+	private inspected = false;
+	constructor(
+		private readonly runtime: string,
+		private readonly url: string,
+		private readonly model: string,
+		private readonly save = true,
+		private readonly inspect = false,
+	) {
+		super(
+			() => {},
+			() => {},
+		);
+	}
+	private check(): void {
+		for (const width of [40, 60, 80, 120, 200]) {
+			const rows = this.render(width);
+			strictEqual(rows.length, 16);
+			for (const row of rows) ok(visibleWidth(row) <= width);
+		}
+	}
+	override async select<T>(options: SelectOptions<T>): Promise<SelectResult<T>> {
+		const pending = super.select(options);
+		this.check();
+		const heading = stripTerminalSequences(
+			typeof options.heading === "string" ? options.heading : (options.heading ?? []).join(" "),
+		);
+		this.seen.push(heading);
+		let value: unknown;
+		if (heading.includes("What do you have")) value = "list";
+		else if (heading.includes("Where does your model")) value = "local-server";
+		else if (heading.includes("Which provider")) value = this.runtime;
+		else if (heading.includes("Which model") || heading.includes("Choose the model")) value = this.model;
+		else if (heading.includes("Review what PanCode could verify")) {
+			for (const width of [40, 60, 80]) {
+				const screen = this.render(width).map(stripTerminalSequences).join("\n");
+				for (const control of ["Save target", "Back", "Cancel setup", "No generation", "GPU/VRAM"])
+					ok(screen.includes(control), `${control} missing from ${width}-column review: ${screen}`);
+			}
+			value = this.inspect && !this.inspected ? "details" : this.save ? "save" : "cancel";
+			this.inspected = true;
+			ok(
+				!readSettings().targets.some((target) => target.id === "wizard-one") || this.runtime === "wizard-two",
+				"Add remains a draft until Save",
+			);
+		} else value = options.choices[0]?.value;
+		const index = options.choices.findIndex((choice) => choice.value === value);
+		ok(index >= 0, `${heading}: missing ${String(value)}`);
+		const start = options.initialIndex ?? 0;
+		for (let step = 0; step < (index - start + options.choices.length) % options.choices.length; step++)
+			this.handleInput("\x1b[B");
+		this.handleInput("\r");
+		return pending;
+	}
+	override report(line: string): void {
+		this.reports.push(stripTerminalSequences(line));
+		super.report(line);
+	}
+	override async text(options: TextPromptOptions): Promise<TextResult> {
+		const pending = super.text(options);
+		this.check();
+		const heading = stripTerminalSequences(
+			typeof options.heading === "string" ? options.heading : (options.heading ?? []).join(" "),
+		);
+		this.seen.push(heading);
+		const value = heading.includes("server") || heading.includes("URL") ? this.url : (options.initial ?? "");
+		this.handleInput("\x15");
+		if (value) this.handleInput(value);
+		this.handleInput("\r");
+		return pending;
+	}
+}
+
+test("the dock hosts shared target add and URL/runtime/model editing through Save (#385)", async () => {
+	const env = await isolatePancodeEnv("pancode-target-dock-");
+	try {
+		fixtures();
+		initializePancodeHome();
+		const add = new ScriptedWizard("wizard-one", "localhost:9911", "model-a", true, true);
+		strictEqual(
+			await add.start({ mode: "add", verify: false }),
+			0,
+			add.render(200).map(stripTerminalSequences).join("\n"),
+		);
+		const target = readSettings().targets.find((entry) => entry.id === "wizard-one");
+		ok(
+			target,
+			JSON.stringify({
+				targets: readSettings().targets,
+				seen: add.seen,
+				rows: add.render(200).map(stripTerminalSequences),
+			}),
+		);
+		strictEqual(target.runtime, "wizard-one");
+		strictEqual(target.url, "http://localhost:9911");
+		strictEqual(target.defaultModel, "model-a");
+		// Add opens on the current first question, and the category list is one row of it, not the first screen (CLI-11).
+		match(add.seen[0] ?? "", /What do you have\?/u);
+		match(add.seen[1] ?? "", /Where does your model come from\?/u);
+		match(add.seen.join("\n"), /Machine observations.*usable CPUs.*available memory.*automatic local workers/u);
+		match(add.seen.join("\n"), /Connection address.*No generation request was sent/u);
+		updateSettings((settings) => {
+			settings.chat.target = target.id;
+			settings.chat.model = "model-a";
+		});
+		const edit = new ScriptedWizard("wizard-two", "localhost:9922", "model-b");
+		strictEqual(await edit.start({ mode: "edit", target }), 0, edit.render(200).map(stripTerminalSequences).join("\n"));
+		const settings = readSettings();
+		const updated = settings.targets.find((entry) => entry.id === target.id);
+		ok(updated);
+		strictEqual(updated.runtime, "wizard-two");
+		strictEqual(updated.url, "http://localhost:9922");
+		strictEqual(updated.defaultModel, "model-b");
+		strictEqual(settings.chat.target, target.id);
+		strictEqual(settings.chat.model, "model-a", "editing the target does not rewrite chat's explicit model");
+		match(edit.seen.join("\n"), /Which provider/);
+	} finally {
+		env.restore();
+	}
+});
+
+test("cancelling target setup leaves settings unchanged (#385)", async () => {
+	const env = await isolatePancodeEnv("pancode-target-cancel-");
+	try {
+		fixtures();
+		initializePancodeHome();
+		const before = readSettings();
+		const wizard = new ScriptedWizard("wizard-one", "localhost:9911", "model-a", false);
+		strictEqual(await wizard.start({ mode: "add", verify: false }), 0);
+		deepStrictEqual(readSettings(), before);
+	} finally {
+		env.restore();
+	}
+});
+
+test("prefilled text, validation and back navigation stay inside the hosted prompt (#385)", async () => {
+	const body = new TargetWizardSurface(
+		() => {},
+		() => {},
+	);
+	let answer = body.text({ initial: "old", heading: "URL", validate: (value) => (value ? null : "A URL is required") });
+	body.handleInput("\x15");
+	body.handleInput("\r");
+	match(body.render(40).map(stripTerminalSequences).join("\n"), /A URL is required/);
+	body.handleInput("localhost:9000");
+	body.handleInput("\r");
+	deepStrictEqual(await answer, { kind: "value", value: "localhost:9000" });
+	answer = body.text({ heading: "Model", initial: "draft" });
+	body.handleInput("\x1b");
+	deepStrictEqual(await answer, { kind: "back" });
+	const secret = body.text({ heading: "Key", mask: true });
+	body.handleInput("test-secret");
+	ok(!body.render(40).join("\n").includes("test-secret"));
+	body.cancel();
+	deepStrictEqual(await secret, { kind: "quit" });
+});
+
+test("a sign-in link stays whole under the masked paste-code prompt, older notes giving way first", async () => {
+	const body = new TargetWizardSurface(
+		() => {},
+		() => {},
+	);
+	const base = "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_x&state=";
+	const url = `${base}${"s".repeat(400 - base.length - "&originator=pancode".length)}&originator=pancode`;
+	strictEqual(url.length, 400);
+	body.report("note: first");
+	body.report("note: second");
+	body.report(`\nOpening your browser...\nIf it does not open, visit: ${url}\n`);
+	const code = body.text({
+		heading: "Paste verification code if browser callback does not complete automatically: ",
+		mask: true,
+	});
+	const joined = (): string =>
+		body
+			.render(80)
+			.map((row) => stripTerminalSequences(row).trimEnd())
+			.join("");
+	ok(joined().includes(url), "full dock keeps the URL whole");
+	body.setBodyRows(10);
+	const short = joined();
+	ok(short.includes(url), "short dock keeps the URL whole");
+	match(short, /… 2 earlier notes/);
+	match(short, /Paste verification code/);
+	body.cancel();
+	deepStrictEqual(await code, { kind: "quit" });
+});
+
+test("Settings mounts Add and Edit as docked prompts and tears them down with its parent (#385)", async () => {
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.targets = [{ id: "local", runtime: "wizard-one", url: "http://localhost:9911", defaultModel: "model-a" }];
+	const proxies: Component[] = [];
+	const tui = {
+		terminal: { rows: 24 },
+		requestRender() {},
+		showOverlay(component: Component) {
+			proxies.push(component);
+			return { hide() {} };
+		},
+	} as unknown as TUI;
+	for (const rowId of ["targets.add-cta", "targets.local"] as const) {
+		const parent = openSettingsOverlay(tui, {
+			getSettings: () => settings,
+			writeSettings() {
+				throw new Error("No Save was requested");
+			},
+			onClose() {},
+			section: "models",
+			rowId,
+		});
+		const frame = dockTop(tui)?.frame as unknown as Component;
+		frame.handleInput?.("\r");
+		if (rowId === "targets.local") {
+			frame.handleInput?.("\x1b[B");
+			frame.handleInput?.("\r");
+		}
+		const wizard = dockTop(tui)?.frame;
+		ok(wizard);
+		match(wizard.dockTitle(), rowId === "targets.local" ? /Edit target: local/ : /Add target/);
+		for (const width of [40, 60, 80, 120, 200]) {
+			for (const proxy of proxies) deepStrictEqual(proxy.render(width), []);
+			for (const line of wizard.renderDockBody(width - 4, 16)) ok(visibleWidth(line) <= width - 4);
+		}
+		parent.hide();
+		strictEqual(dockTop(tui), null);
+	}
+	await new Promise<void>((resolve) => setImmediate(resolve));
+});
+
+test("Add in the dock sends one test request and saves on its answer, without the review", async () => {
+	const env = await isolatePancodeEnv("pancode-target-test-");
+	const server = await startOpenAICompatFixture("OK", { models: [{ id: "model-a", object: "model" }] });
+	try {
+		fixtures();
+		initializePancodeHome();
+		const add = new ScriptedWizard("wizard-one", server.url, "model-a");
+		strictEqual(await add.start({ mode: "add" }), 0, add.reports.join("\n"));
+		strictEqual(server.requests.length, 1, add.reports.join("\n"));
+		match(add.reports.join("\n"), /Testing wizard-one \/ model-a \.\.\. answered in/u);
+		ok(!add.seen.some((heading) => heading.includes("Review what PanCode could verify")));
+		ok(readSettings().targets.some((target) => target.id === "wizard-one"));
+	} finally {
+		await closeServer(server.server);
+		env.restore();
+	}
+});
+
+test("closing setup during a probe cannot save a late target (#385)", async () => {
+	const env = await isolatePancodeEnv("pancode-target-late-");
+	try {
+		fixtures();
+		initializePancodeHome();
+		const runtime = getRuntimeRegistry().get("wizard-one");
+		ok(runtime);
+		const original = runtime.probe;
+		let began!: () => void;
+		const probing = new Promise<void>((resolve) => {
+			began = resolve;
+		});
+		let release!: () => void;
+		const wait = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		runtime.probe = async () => {
+			began();
+			await wait;
+			return { ok: true, models: ["model-a"] };
+		};
+		try {
+			const wizard = new ScriptedWizard("wizard-one", "localhost:9911", "model-a");
+			const pending = wizard.start({ mode: "add" });
+			await probing;
+			wizard.cancel();
+			release();
+			strictEqual(await pending, 130);
+			ok(!readSettings().targets.some((target) => target.id === "wizard-one"));
+		} finally {
+			if (original) runtime.probe = original;
+			else delete runtime.probe;
+		}
+	} finally {
+		env.restore();
+	}
+});
+
+test("Connect by URL saves a connection from a URL and a model inside the hosted surface", async () => {
+	const env = await isolatePancodeEnv("pancode-target-url-");
+	const server = createServer((request, response) => {
+		if (request.url === "/v1/models") {
+			response.writeHead(200, { "content-type": "application/json" });
+			response.end(JSON.stringify({ object: "list", data: [{ id: "model-a" }, { id: "model-b" }] }));
+			return;
+		}
+		response.writeHead(404);
+		response.end();
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	try {
+		registerBuiltinRuntimes(getRuntimeRegistry());
+		initializePancodeHome();
+		const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+		const wizard = new ScriptedWizard("", url, "model-b");
+		strictEqual(await wizard.start({ mode: "url" }), 0, wizard.render(200).map(stripTerminalSequences).join("\n"));
+		const settings = readSettings();
+		const target = settings.targets.find((entry) => entry.url === url);
+		ok(target, JSON.stringify({ targets: settings.targets, seen: wizard.seen }));
+		strictEqual(settings.chat.target, target.id);
+		strictEqual(settings.chat.model, "model-b");
+		const screen = wizard.render(200).map(stripTerminalSequences).join("\n");
+		match(screen, new RegExp(`Connected: ${target.id} / model-b`));
+		ok(!screen.includes("Start PanCode"), screen);
+	} finally {
+		server.close();
+		env.restore();
+	}
+});
+
+test("Remove target saved globally drops the key the target owned and keeps the runtime's key", () => {
+	if (getRuntimeRegistry().list().length === 0) registerBuiltinRuntimes(getRuntimeRegistry());
+	let settings = structuredClone(DEFAULT_SETTINGS);
+	settings.targets = [
+		{ id: "work", runtime: "openai", defaultModel: "gpt-5", auth: { apiKeyRef: "target:work" } },
+		{ id: "team", runtime: "openai", defaultModel: "gpt-5" },
+	];
+	const stored = new Set(["target:work", "openai"]);
+	const notices: string[] = [];
+	const tui = {
+		terminal: { rows: 30 },
+		requestRender() {},
+		showOverlay() {
+			return { hide() {} };
+		},
+	} as unknown as TUI;
+	const providers = {
+		list: () => [],
+		probeTarget: async () => null,
+		probeAllLive: async () => {},
+		getRuntime: () => null,
+		auth: {
+			getStored: (key: string) => (stored.has(key) ? { type: "api_key" } : null),
+			remove: (key: string) => void stored.delete(key),
+			damageReason: () => null,
+		},
+	};
+	for (const targetId of ["work", "team"]) {
+		const parent = openSettingsOverlay(tui, {
+			getSettings: () => settings,
+			providers: providers as never,
+			writeSettings(next) {
+				settings = next;
+			},
+			notice: (_level, text) => void notices.push(text),
+			onClose() {},
+			section: "models",
+			rowId: `targets.${targetId}`,
+		});
+		const frame = dockTop(tui)?.frame as unknown as Component;
+		frame.handleInput?.("\r");
+		frame.handleInput?.("\x1b[A"); // Remove target, the last action
+		frame.handleInput?.("\r");
+		frame.handleInput?.("\x1b[B"); // Apply and save globally
+		frame.handleInput?.("\r");
+		parent.hide();
+	}
+	deepStrictEqual(
+		settings.targets.map((target) => target.id),
+		[],
+	);
+	deepStrictEqual([...stored], ["openai"]);
+	ok(notices[0]?.includes("removed its stored key target:work"), notices.join("\n"));
+	ok(notices[1]?.includes("kept the stored key openai: it is the openai runtime's own key"), notices.join("\n"));
+});

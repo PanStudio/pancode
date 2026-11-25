@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { realpath } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { controlService } from "../process-policy.js";
+import { backgroundRemoval, sameInstallation } from "./background.js";
+import { contents, launcherStatus, uninstallLauncher } from "./install.js";
+
+export interface WebUninstallOptions {
+	stateDir: string;
+	desktopPrefix: string;
+	packageRoot: string;
+	/** State reset removes the service whose records it clears, preserving standalone launchers. */
+	backgroundOnly?: boolean;
+}
+
+export interface WebUninstallPlan {
+	items: Array<{ label: string; path: string }>;
+	/** A desktop launcher another installation wrote: it stays, and so does the state its service may read. */
+	foreign: Array<{ label: string; path: string }>;
+	remove(): Promise<void>;
+}
+
+/** Root lifecycle uses the same manifests and removers as the app's own commands. */
+export async function prepareGuiUninstall(
+	options: WebUninstallOptions,
+	control = controlService,
+): Promise<WebUninstallPlan> {
+	if (process.platform !== "linux") return { items: [], foreign: [], remove: async () => {} };
+	const directories = new Set([join(options.stateDir, "gui/background")]);
+	const desktop = options.backgroundOnly ? { status: "absent" as const } : await launcherStatus(options.desktopPrefix);
+	if (desktop.status === "conflict")
+		throw new Error("Desktop launcher ownership could not be verified; uninstall stopped before removing PanCode state.");
+	let owned = false;
+	const foreign: WebUninstallPlan["foreign"] = [];
+	if (desktop.status !== "absent") {
+		// launcherStatus has checked the digest and regenerated the entry from this manifest.
+		const manifest = JSON.parse((await contents(desktop.manifest)) ?? "null");
+		const root = await realpath(options.packageRoot);
+		const candidates = [join(root, "dist/gui/server.js"), join(root, "apps/pancode-gui/server/main.ts")];
+		const entry: string = manifest.launch.entry;
+		// A launcher a previous native version wrote names that version's dist/gui/server.js.
+		const entryRoot = entry.endsWith(join("dist", "gui", "server.js")) ? dirname(dirname(dirname(entry))) : null;
+		owned = candidates.includes(entry) || (entryRoot !== null && (await sameInstallation(entryRoot, root)));
+		if (!owned) foreign.push({ label: "Desktop launcher", path: desktop.entry });
+		else if (manifest.launch.background) directories.add(manifest.launch.background);
+	}
+	const backgrounds: Array<NonNullable<Awaited<ReturnType<typeof backgroundRemoval>>>> = [];
+	for (const directory of directories) {
+		const plan = await backgroundRemoval(directory, options.packageRoot, control);
+		if (plan) backgrounds.push(plan);
+	}
+	const items = [
+		...backgrounds.map((plan) => ({ label: "Background service", path: plan.path })),
+		...(owned && desktop.status !== "absent" ? [{ label: "Desktop launcher", path: desktop.entry }] : []),
+	];
+	return {
+		items,
+		foreign,
+		remove: async () => {
+			// Revalidate immediately before mutation. The caller may have waited for confirmation.
+			const current = await prepareGuiUninstall(options, control);
+			if (JSON.stringify(current.items) !== JSON.stringify(items))
+				throw new Error("Web installation changed during confirmation; run uninstall again.");
+			for (const plan of backgrounds) await plan.remove();
+			if (owned) await uninstallLauncher(options.desktopPrefix);
+		},
+	};
+}

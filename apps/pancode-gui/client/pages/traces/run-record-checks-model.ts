@@ -1,0 +1,474 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// What a sealed run record says was checked, one independent fact per row, read from the read model's record
+// evidence (#434 §11.3), which states the sealed facts only under a seal that verifies. A state this build does
+// not know reads as "not recorded", never as a pass. No row summarizes another, because verification, typed checks,
+// host checks, result-contract conformance, contract quality and claim grounding are sealed by different
+// authorities and a quiet pass on one says nothing about the rest.
+
+import type { RunEvidenceV1 } from "../../../contracts/wire.js";
+import type { StatusTone } from "../../design/status.js";
+
+type Sealed = NonNullable<RunEvidenceV1["sealed"]>;
+
+export interface CheckItem {
+	/** Position and name; two checks may share a name. */
+	id: string;
+	name: string;
+	tone: StatusTone;
+	word: string;
+	/** Exact values such as an exit code, a duration or a validator digest, in display order. */
+	facts: string[];
+	/** The tail of a check's own output, shown only on request. */
+	output?: string;
+}
+
+export interface CheckRow {
+	key: "verification" | "typed" | "host" | "conformance" | "quality" | "schema" | "grounding";
+	label: string;
+	tone: StatusTone;
+	word: string;
+	/** One sentence saying what the state means for this run. */
+	meaning: string;
+	/** Who produced the fact, so a reader can weigh it. */
+	source: string;
+	/** Exact identity behind the fact, such as a contract and its validator digest. */
+	exact?: string;
+	items: CheckItem[];
+}
+
+const record = (value: unknown): Record<string, unknown> | null =>
+	value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+const string = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
+const count = (value: unknown): number | null =>
+	typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const keyed = (items: Omit<CheckItem, "id">[]): CheckItem[] =>
+	items.map((item, index) => ({ ...item, id: `${index}:${item.name}` }));
+
+/** A validator digest is an exact identity, not prose; twelve characters tell two apart on screen. */
+export function shortDigest(value: unknown): string | null {
+	const text = string(value);
+	return text ? `digest ${text.slice(0, 12)}` : null;
+}
+
+/** `agent-result-contract:scout-report:<digest>` names its contract kind in the middle segment. */
+export function contractName(sourceId: unknown): string | null {
+	const text = string(sourceId);
+	if (!text) return null;
+	const [prefix, kind] = text.split(":");
+	return prefix === "agent-result-contract" && kind ? kind.replace(/-/g, " ") : text;
+}
+
+/** `tool:verify` is the verify tool; any other source id stays exact. */
+function sourceName(sourceId: unknown): string {
+	const text = string(sourceId);
+	if (!text) return "Unnamed check";
+	return text.startsWith("tool:") ? `${text.slice(5)} tool` : text;
+}
+
+const NOT_RECORDED = (key: CheckRow["key"], label: string, source: string, meaning: string): CheckRow => ({
+	key,
+	label,
+	tone: "unverified",
+	word: "Not recorded",
+	meaning,
+	source,
+	items: [],
+});
+
+const VERIFICATION_SOURCE = "Sealed by PanCode from the run's own tool calls.";
+
+function verification(value: Sealed["verification"]): CheckRow {
+	const state = string(value?.state);
+	const basis = string(value?.basis);
+	if (!value || !state)
+		return NOT_RECORDED(
+			"verification",
+			"Verification",
+			VERIFICATION_SOURCE,
+			"This record carries no verification state.",
+		);
+	const meaning =
+		basis === "validation-tool"
+			? state === "verified"
+				? "A validation tool ran and passed."
+				: "A validation tool ran and did not pass."
+			: basis === "host-observed-command"
+				? state === "verified"
+					? "The host observed the worker's own check commands pass."
+					: "The host observed a worker's own check command fail."
+				: basis === "no-validation-tool"
+					? "No validation tool ran, so nothing confirms the result."
+					: basis === "read-only-agent"
+						? "A read-only agent changes nothing, so there is nothing to verify."
+						: basis === "acp-external-unobserved"
+							? "An external agent did the work where PanCode could not observe its checks."
+							: basis === "host-verification"
+								? state === "verified"
+									? "The host ran the declared checks after the worker finished, and they passed."
+									: "The host ran the declared checks after the worker finished, and they did not pass."
+								: basis === "result-unavailable"
+									? "No sealed record could be read for this run."
+									: `Recorded basis: ${basis ?? "none"}.`;
+	const [tone, word]: [StatusTone, string] =
+		state === "verified"
+			? ["success", "Verified"]
+			: state === "not_applicable"
+				? ["neutral", "Not applicable"]
+				: state === "unverified"
+					? ["unverified", "Unverified"]
+					: ["unverified", state === "unknown" ? "Unknown" : state];
+	return { key: "verification", label: "Verification", tone, word, meaning, source: VERIFICATION_SOURCE, items: [] };
+}
+
+const TYPED_SOURCE = "Observed by PanCode from validation tool results. A worker's own report never fills this.";
+
+function typedChecks(validations: Sealed["typedValidations"]): CheckRow {
+	if (!Array.isArray(validations))
+		return NOT_RECORDED("typed", "Executed checks", TYPED_SOURCE, "This record carries no typed validation list.");
+	const items = keyed(
+		validations.map((entry): Omit<CheckItem, "id"> => {
+			const fact = record(entry);
+			const passed = fact?.passed;
+			return {
+				name: sourceName(fact?.sourceId),
+				tone: passed === true ? "success" : passed === false ? "fail" : "unverified",
+				word: passed === true ? "Passed" : passed === false ? "Failed" : "Not recorded",
+				facts: [shortDigest(fact?.validatorDigest)].filter((item): item is string => item !== null),
+			};
+		}),
+	);
+	if (items.length === 0)
+		return {
+			key: "typed",
+			label: "Executed checks",
+			tone: "unverified",
+			word: "None ran",
+			meaning: "No typed validation ran during this run.",
+			source: TYPED_SOURCE,
+			items,
+		};
+	const failed = items.filter((item) => item.tone === "fail").length;
+	const passed = items.filter((item) => item.tone === "success").length;
+	const unknown = items.length - failed - passed;
+	const parts = [
+		failed ? `${failed} failed` : "",
+		passed ? `${passed} passed` : "",
+		unknown ? `${unknown} not recorded` : "",
+	].filter(Boolean);
+	return {
+		key: "typed",
+		label: "Executed checks",
+		tone: failed ? "fail" : unknown ? "unverified" : "success",
+		word: parts.join(" · "),
+		meaning: `${plural(items.length, "typed check")} ran and reported a result.`,
+		source: TYPED_SOURCE,
+		items,
+	};
+}
+
+const HOST_SOURCE =
+	"Run by PanCode on the settled tree after the worker finished. A worker's own report never fills this.";
+
+const HOST_REASONS: Record<string, string> = {
+	worker_not_successful: "The worker did not succeed, so the declared checks did not run.",
+	no_tests_collected: "The test runner collected no tests, so no declared check judged the result.",
+};
+
+/** Why a host check never started; mirrors `hostCheckNotRunNote` in the dispatch domain. */
+const NOT_RUN_REASONS: Record<string, string> = {
+	refused: "refused before launch",
+	unconfigured: "the check is not configured",
+	"spawn-failed": "its process could not start",
+	"nothing-changed": "nothing changed under it",
+	shutdown: "a shutdown stopped it before it finished",
+	"no-tests": "its runner collected no tests",
+};
+
+function hostChecks(value: Sealed["hostVerification"]): CheckRow {
+	if (!value)
+		return {
+			key: "host",
+			label: "Host checks",
+			tone: "neutral",
+			word: "None declared",
+			meaning: "This run declared no checks for PanCode to run on its result.",
+			source: HOST_SOURCE,
+			items: [],
+		};
+	const status = string(value.status);
+	const reason = string(value.reason);
+	const items = keyed(
+		(Array.isArray(value.checks) ? value.checks : []).map((entry): Omit<CheckItem, "id"> => {
+			const check = record(entry);
+			const exit = typeof check?.exitCode === "number" ? check.exitCode : null;
+			// A check that never started carries an exit code that reports no run.
+			const notRun = string(check?.notRun);
+			const duration = count(check?.durationMs);
+			const evidence = string(check?.evidenceRunId);
+			const tail = string(check?.outputTail);
+			// A reused pass came from an earlier run's execution, not this run's, so it never reads as this run passing.
+			const reused = check?.memo === true && !notRun && exit === 0;
+			return {
+				name: string(check?.check) ?? "Unnamed check",
+				tone: notRun ? "warn" : reused ? "unverified" : exit === 0 ? "success" : exit === null ? "unverified" : "fail",
+				word: notRun
+					? "Did not run"
+					: reused
+						? "Reused"
+						: exit === 0
+							? "Passed"
+							: exit === null
+								? "Not recorded"
+								: "Failed",
+				facts: [
+					notRun
+						? `did not run: ${NOT_RUN_REASONS[notRun] ?? notRun}`
+						: exit === null
+							? "exit not recorded"
+							: `exit ${exit}`,
+					duration === null ? "" : `${duration} ms`,
+					reused ? "not run for this run: an earlier run's pass was reused" : check?.memo === true ? "reused result" : "",
+					evidence ? `evidence from run ${evidence}` : "",
+				].filter(Boolean),
+				...(tail ? { output: tail } : {}),
+			};
+		}),
+	);
+	const batch =
+		value.strategy === "batch-settled" ? " They ran once for the whole batch after every member finished." : "";
+	const reusedCount = items.filter((item) => item.word === "Reused").length;
+	const reuse = reusedCount
+		? ` ${plural(reusedCount, "check")} reused an earlier run's pass instead of running for this run.`
+		: "";
+	const [tone, word, meaning]: [StatusTone, string, string] =
+		status === "verified"
+			? ["success", "Passed", `Every declared check passed.${batch}${reuse}`]
+			: status === "rejected"
+				? ["fail", "Rejected", `A declared check rejected the result.${batch}`]
+				: status === "skipped"
+					? [
+							"neutral",
+							"Skipped",
+							(reason && HOST_REASONS[reason]) ?? `The declared checks did not run${reason ? ` (${reason})` : ""}.`,
+						]
+					: status === "not_implicated"
+						? [
+								"neutral",
+								"Not charged",
+								`A declared check failed for the batch, and the failure was charged to another run.${batch}`,
+							]
+						: ["unverified", status ?? "Not recorded", "This record carries a host check state this build does not know."];
+	return { key: "host", label: "Host checks", tone, word, meaning, source: HOST_SOURCE, items };
+}
+
+const CONTRACT_SOURCE = "Checked by PanCode against the agent's declared result contract when the record was sealed.";
+
+function contract(fact: Sealed["resultContract"]): CheckRow[] {
+	if (fact === null)
+		return [
+			NOT_RECORDED("conformance", "Result format", CONTRACT_SOURCE, "This record carries no result-contract fact."),
+			NOT_RECORDED("quality", "Result quality", CONTRACT_SOURCE, "This record carries no result-contract fact."),
+		];
+	if (fact === "unmeasured")
+		return [
+			{
+				key: "conformance",
+				label: "Result format",
+				tone: "neutral",
+				word: "No contract",
+				meaning: "No result contract applied to this run, so neither format nor quality was judged.",
+				source: CONTRACT_SOURCE,
+				items: [],
+			},
+		];
+	const name = contractName(fact.sourceId);
+	const named = name ? `the ${name} contract` : "its result contract";
+	const digest = shortDigest(fact.validatorDigest);
+	const conformance = string(fact.conformance);
+	const label = string(fact.quality);
+	const [formTone, formWord, formMeaning]: [StatusTone, string, string] =
+		conformance === "pass"
+			? ["success", "Conforms", `The final result has the shape ${named} requires. Shape is not correctness.`]
+			: conformance === "fail"
+				? ["fail", "Does not conform", `The final result does not have the shape ${named} requires.`]
+				: conformance === "not-reached"
+					? ["neutral", "Not reached", `The run ended before a final result was due, so ${named} was not checked.`]
+					: [
+							"unverified",
+							conformance ?? "Not recorded",
+							"This record carries a conformance state this build does not know.",
+						];
+	const [qualityTone, qualityWord, qualityMeaning]: [StatusTone, string, string] =
+		label === "pass"
+			? ["success", "Passed", `The correctness checks in ${named} passed.`]
+			: label === "fail"
+				? ["fail", "Failed", `The correctness checks in ${named} failed.`]
+				: label === "unmeasured"
+					? [
+							"unverified",
+							"Not measured",
+							conformance === "not-reached"
+								? "Nothing was judged, so quality is unknown."
+								: conformance === "fail"
+									? "The result did not conform, so its quality was never measured."
+									: "No correctness check was measured for this result. Conforming to the contract is not a quality pass.",
+						]
+					: ["unverified", label ?? "Not recorded", "This record carries a quality label this build does not know."];
+	const exact = [name ? `${name} contract` : "result contract", digest].filter(Boolean).join(" · ");
+	return [
+		{
+			key: "conformance",
+			label: "Result format",
+			tone: formTone,
+			word: formWord,
+			meaning: formMeaning,
+			source: CONTRACT_SOURCE,
+			exact,
+			items: [],
+		},
+		{
+			key: "quality",
+			label: "Result quality",
+			tone: qualityTone,
+			word: qualityWord,
+			meaning: qualityMeaning,
+			source: CONTRACT_SOURCE,
+			items: [],
+		},
+	];
+}
+
+const SCHEMA_SOURCE = "Reported by the model runtime when it enforces a response schema.";
+
+function schema(fact: Sealed["responseSchema"]): CheckRow {
+	if (!fact)
+		return NOT_RECORDED("schema", "Response schema", SCHEMA_SOURCE, "This record carries no response-schema fact.");
+	if (fact.runtimeEnforceable !== true)
+		return {
+			key: "schema",
+			label: "Response schema",
+			tone: "neutral",
+			word: "Not enforced",
+			meaning: "The runtime did not enforce a response schema for this run.",
+			source: SCHEMA_SOURCE,
+			items: [],
+		};
+	const [tone, word, meaning]: [StatusTone, string, string] =
+		fact.enforcementPassed === true
+			? ["success", "Enforced · passed", "The runtime enforced the response schema and the response satisfied it."]
+			: fact.enforcementPassed === false
+				? ["fail", "Enforced · failed", "The runtime enforced the response schema and the response did not satisfy it."]
+				: ["unverified", "Not measured", "The runtime could enforce a schema, but no result was recorded."];
+	return { key: "schema", label: "Response schema", tone, word, meaning, source: SCHEMA_SOURCE, items: [] };
+}
+
+const GROUNDING_SOURCE =
+	"The worker's own claims of passing checks, matched against commands its tool calls show it ran.";
+
+function grounding(value: Sealed["validationGrounding"]): CheckRow {
+	if (!value)
+		return {
+			key: "grounding",
+			label: "Claimed checks",
+			tone: "neutral",
+			word: "None claimed",
+			meaning: "The final result claimed no passing check that could be matched to a command.",
+			source: GROUNDING_SOURCE,
+			items: [],
+		};
+	const claimed = count(value.claimed);
+	const grounded = count(value.grounded);
+	const names = (Array.isArray(value.ungrounded) ? value.ungrounded : [])
+		.map((name) => string(name))
+		.filter((name): name is string => name !== null);
+	const basis = string(value.basis);
+	const items = keyed(names.map((name) => ({ name, tone: "fail", word: "No matching command", facts: [] })));
+	if (claimed === null || grounded === null)
+		return NOT_RECORDED(
+			"grounding",
+			"Claimed checks",
+			GROUNDING_SOURCE,
+			"This record carries an unreadable grounding record.",
+		);
+	const word = `${grounded} of ${plural(claimed, "claim")} grounded`;
+	if (grounded >= claimed && names.length === 0)
+		return {
+			key: "grounding",
+			label: "Claimed checks",
+			tone: "success",
+			word,
+			meaning: "Every passing check the result claimed matches a command the run executed.",
+			source: GROUNDING_SOURCE,
+			items,
+		};
+	const [tone, meaning]: [StatusTone, string] =
+		basis === "no-command-executed"
+			? [
+					"fail",
+					"The result claimed a passing check, and the run executed no command that could have produced it. Its quality label does not rest on these claims.",
+				]
+			: basis === "unmatched-command"
+				? [
+						"warn",
+						"The run executed commands the detector does not recognise, so these claims could not be matched. This is reported and not held against the run.",
+					]
+				: ["warn", `Some claims have no matching command. Recorded basis: ${basis ?? "none"}.`];
+	return { key: "grounding", label: "Claimed checks", tone, word, meaning, source: GROUNDING_SOURCE, items };
+}
+
+/**
+ * Every row, in the order a reader asks: did it verify, what ran, was the result the right shape, was it good, what
+ * was claimed. None when the seal did not verify, since nothing the record states can then be vouched for.
+ */
+export function runRecordChecks(evidence: RunEvidenceV1): CheckRow[] {
+	const sealed = evidence.sealed;
+	if (!sealed) return [];
+	return [
+		verification(sealed.verification),
+		typedChecks(sealed.typedValidations),
+		hostChecks(sealed.hostVerification),
+		...contract(sealed.resultContract),
+		grounding(sealed.validationGrounding),
+		schema(sealed.responseSchema),
+	];
+}
+
+export interface RunRecordIntegrity {
+	tone: StatusTone;
+	/** The read model's integrity word for the seal. */
+	word: string;
+	/** What the state means for the checks below it, with the verifier's own reason when it gave one. */
+	meaning: string;
+}
+
+/** Whether the run's seal vouches for its checks, worded by the read model and explained here. */
+export function runRecordIntegrity(evidence: RunEvidenceV1): RunRecordIntegrity {
+	const { integrity } = evidence;
+	const detail = integrity.detail ? ` ${integrity.detail}` : "";
+	if (evidence.record === "missing")
+		return { tone: "neutral", word: integrity.display, meaning: "No run journal was found for this run." };
+	switch (integrity.state) {
+		case "verified":
+			return { tone: "success", word: integrity.display, meaning: "The run seal verifies from the run's own files." };
+		case "failed":
+			return {
+				tone: "fail",
+				word: integrity.display,
+				meaning: `The run seal does not verify, so none of the run's checks are shown.${detail}`,
+			};
+		case "unsealed":
+			return {
+				tone: "unverified",
+				word: integrity.display,
+				meaning: `The run scope is not sealed yet, so none of its checks can be vouched for.${detail}`,
+			};
+		default:
+			return {
+				tone: "unverified",
+				word: integrity.display,
+				meaning: "The run has not settled, so it has no checks to show.",
+			};
+	}
+}

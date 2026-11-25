@@ -1,0 +1,2762 @@
+{
+	"cols": 100,
+	"rows": 30,
+	"idleCap": 1,
+	"theme": {
+		"fg": "#f1eee6",
+		"bg": "#000000",
+		"palette": "#000000:#ff6b60:#25b469:#f2b106:#1994f4:#c3affe:#34dbb9:#d6d2c7:#837f76:#ff6b60:#00e884:#f2b106:#4aa8ff:#c3affe:#34dbb9:#f1eee6"
+	},
+	"copilot": {
+		"target": "copilot",
+		"runtime": "copilot-sdk",
+		"model": "gpt-6-luna",
+		"source": "GPT-6 Luna through GitHub Copilot (target copilot, runtime copilot-sdk)"
+	},
+	"scenarios": [
+		{
+			"id": "cli-doctor",
+			"summary": "doctor --fix sets up a fresh install's state, then doctor prints a compact report of the rows that need attention",
+			"title": "PanCode doctor on a fresh install",
+			"live": false,
+			"rows": 10,
+			"poster": "healthy",
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.6
+				},
+				{
+					"type": "pancode doctor --fix"
+				},
+				{
+					"pause": 0.4,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 60,
+					"pause": 1.2
+				},
+				{
+					"marker": "repaired"
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"type": "pancode doctor"
+				},
+				{
+					"pause": 0.4,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 60,
+					"pause": 1.5
+				},
+				{
+					"marker": "healthy"
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"capture": {
+				"label": "Doctor",
+				"alt": "Terminal recording of pancode doctor --fix and then pancode doctor on a fresh install of PanCode 0.9.0-dev: a WARN row says chat cannot run yet because no model target is configured and names pancode configure, an OK row shows the version, and a WARN row says the herdr pane host 0.9.5 is not installed and names pancode panes install. The second report ends with 2 rows need attention, 42 checks passed, 13 notes, and points to pancode doctor --verbose for every row.",
+				"caption": "Doctor on a fresh install lists only the rows that need attention, each with the command that clears it."
+			},
+			"cols": 120
+		},
+		{
+			"id": "cast-first-launch",
+			"summary": "a live first launch: setup finds the stored GitHub Copilot sign-in, chat opens, and the first read-only question is answered",
+			"title": "First launch of PanCode: setup finds a stored login and chat opens",
+			"live": true,
+			"login": true,
+			"loginSource": "found by first-launch setup from the stored login",
+			"settings": ["interface: { mode: fullscreen }"],
+			"repo": "calibration-lab",
+			"cols": 120,
+			"rows": 36,
+			"poster": "setup",
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.8
+				},
+				{
+					"type": "pancode"
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "PanCode found a way to reach a model",
+					"timeout": 30,
+					"pause": 2.5
+				},
+				{
+					"marker": "setup"
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 2
+				},
+				{
+					"marker": "chat"
+				},
+				{
+					"type": "Explain how this repository builds and runs its tests. Identify the main entry points and suggest one verification task. Do not change files yet.",
+					"delay": 30
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ Done\\s·",
+					"timeout": 120,
+					"pause": 1.5
+				},
+				{
+					"marker": "sent"
+				}
+			],
+			"stopAtEnd": true,
+			"capture": {
+				"label": "First launch",
+				"alt": "Terminal recording of the first pancode launch in ~/projects/calibration-lab: with no model target configured, setup starts, says it sends one short test message before saving, and offers GitHub Copilot SDK, signed in, with model gpt-6-luna recommended, or Set up something else. Chat then opens on copilot-sdk · gpt-6-luna; asked how the repository builds and runs its tests, Panos reads package.json, README.md, temperature.mjs and calibration.test.mjs, says there is no build step and npm test runs node --test calibration.test.mjs, suggests npm test as the check, and notes without running it that kelvinToCelsius rejects 0 K while the absolute-zero test expects a value.",
+				"caption": "First launch: setup finds the stored GitHub Copilot sign-in, chat opens, and the first question is answered from the files it read."
+			},
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"endAt": "sent"
+		},
+		{
+			"id": "cast-first-task",
+			"summary": "a live first task: the agent finds the absolute-zero bug, fixes it, and runs the declared test check",
+			"title": "A first task in PanCode: fix a failing test and verify",
+			"live": true,
+			"settings": ["interface: { mode: fullscreen }"],
+			"profile": "configured",
+			"repo": "calibration-lab",
+			"cols": 120,
+			"rows": 36,
+			"poster": "tui-verify-result",
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.8
+				},
+				{
+					"type": "pancode"
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 1.5
+				},
+				{
+					"marker": "ready"
+				},
+				{
+					"type": "The absolute-zero test fails. Find the cause, fix it, and run the test check.",
+					"delay": 30
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"until": "checked test\\s·\\sexit 0",
+					"approve": "Enter\\]? allow",
+					"timeout": 300,
+					"pause": 1.5
+				},
+				{
+					"shot": "tui-verify",
+					"rows": [1, 24]
+				},
+				{
+					"until": "✓ Done\\s·",
+					"approve": "Enter\\]? allow",
+					"timeout": 300,
+					"pause": 2
+				},
+				{
+					"shot": "tui-verify-result"
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 20,
+					"pause": 0.6
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"capture": {
+				"label": "First task",
+				"alt": "Terminal recording of a first task on copilot · gpt-6-luna: asked to fix the failing absolute-zero test, Panos searches the project (19 matches), reads temperature.mjs and calibration.test.mjs, changes if (kelvin <= 0) to if (kelvin < 0) on line 21 of temperature.mjs, and runs the test check, which exits 0 with pass 7 and fail 0. It reports that all 7 tests passed (Done · 12s · 8 calls), and a notice says checks passed but coverage of the change was not measured.",
+				"caption": "A first task at default autonomy: the agent finds the guard that rejects 0 K, edits one line, and runs the project's declared test check without asking."
+			},
+			"shots": {
+				"tui-verify": {
+					"image": "assets/tui-verify.webp",
+					"label": "Verify",
+					"alt": "Terminal after a first task on gpt-6-luna: Panos searched the project, read temperature.mjs and calibration.test.mjs, changed if (kelvin <= 0) to if (kelvin < 0) on line 21 of temperature.mjs as a one-line diff, and ran the declared test check, which exits 0 with pass 7 and fail 0.",
+					"caption": "The one-line fix as a diff, then the declared test check, exit 0."
+				},
+				"tui-verify-result": {
+					"image": "assets/guides/tui-verify-result.webp",
+					"label": "Result",
+					"alt": "Terminal report after the fix: Panos says the kelvin <= 0 check wrongly rejected exactly 0 K and now rejects only values below zero, and that all 7 tests passed; the turn ends Done · 12s · 8 calls, and a notice says checks passed but coverage of the change was not measured.",
+					"caption": "The report after the check: the cause, the change, and the test result."
+				}
+			},
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			}
+		},
+		{
+			"id": "cast-headless-run",
+			"summary": "pancode run --output-format stream-json on a task, the answer read from the run_end event, and the end of that event",
+			"title": "An unattended PanCode run with JSON output",
+			"live": true,
+			"profile": "configured",
+			"repo": "calibration-lab",
+			"cols": 100,
+			"rows": 30,
+			"poster": "run-end",
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.8
+				},
+				{
+					"type": "pancode run --output-format stream-json \"Run the test check and report how many tests pass.\" > run.jsonl; echo \"exit $?\""
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "^exit \\d+",
+					"timeout": 300
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 10,
+					"pause": 0.8
+				},
+				{
+					"type": "jq -r 'select(.type == \"run_end\").result.text' run.jsonl"
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 10,
+					"pause": 1.2
+				},
+				{
+					"marker": "answer"
+				},
+				{
+					"type": "tail -n 1 run.jsonl | jq ."
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 10,
+					"pause": 1.5
+				},
+				{
+					"marker": "run-end"
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"capture": {
+				"label": "Unattended run",
+				"alt": "Terminal recording of pancode run --output-format stream-json asked to run the test check and report how many tests pass, with events written to run.jsonl and exit 0 printed; jq then reads the run_end result text: 6 tests passed and 1 failed, the absolute zero test at calibration.test.mjs:19, where kelvinToCelsius(0) threw a RangeError, and the check exited with code 1. The final frame shows the end of the run_end event: tool calls with nothing refused or written, safety decisions with 3 allowed and 0 blocked, an empty verify block, and timings.",
+				"caption": "A headless run: JSON events to a file, exit status 0, and the answer read from the run_end event that closes the stream."
+			}
+		},
+		{
+			"id": "cast-sandbox",
+			"summary": "the agent is asked for the size of an untracked .env; the bash read is hard-blocked",
+			"title": "PanCode refuses to read a project secret",
+			"live": true,
+			"settings": ["interface: { mode: fullscreen, outputDetail: compact }"],
+			"profile": "configured",
+			"repo": "calibration-lab",
+			"homeFiles": {
+				"projects/calibration-lab/.env": "CALIBRATION_API_TOKEN=lab-demo-token-not-real\n"
+			},
+			"cols": 120,
+			"rows": 26,
+			"poster": "blocked",
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.8
+				},
+				{
+					"type": "pancode"
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 1.5
+				},
+				{
+					"marker": "ready"
+				},
+				{
+					"type": "How many bytes is .env? Run wc -c .env with bash and tell me exactly what happens. If it is blocked, name the rule.",
+					"delay": 40
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"until": "secret_path_bash|✓ (?:Done\\s·\\s)?\\d",
+					"approve": "\\[?Enter\\]? (?:allow|record answer)",
+					"timeout": 300,
+					"pause": 1.5
+				},
+				{
+					"marker": "blocked"
+				},
+				{
+					"until": "✓ (?:Done\\s·\\s)?\\d",
+					"approve": "\\[?Enter\\]? (?:allow|record answer)",
+					"read": 3,
+					"timeout": 300,
+					"pause": 2
+				},
+				{
+					"marker": "answer"
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 20,
+					"pause": 0.6
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"capture": {
+				"label": "Secret refused",
+				"alt": "Terminal recording in which the user asks PanCode on gpt-6-luna how many bytes .env holds, using wc -c .env with bash. The bash call is marked blocked under rule secret_path_bash as a hard block that confirmation cannot override, and Panos reports that the command did not run, so it cannot give the byte count.",
+				"caption": "A command that names the project's .env is refused before it runs; confirmation cannot override the block."
+			}
+		},
+		{
+			"id": "cast-let-it-work",
+			"summary": "doctor in the project, then a scratch-branch task that deletes and rebuilds dist/, then /rewind's preview",
+			"title": "Letting PanCode work: sandbox, snapshot and rewind",
+			"live": true,
+			"settings": ["interface: { mode: fullscreen, outputDetail: compact }"],
+			"profile": "configured",
+			"repo": "calibration-lab",
+			"fixture": "calibration-build",
+			"cols": 120,
+			"rows": 36,
+			"poster": "report",
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.8
+				},
+				{
+					"type": "pancode doctor"
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 60,
+					"pause": 1.5
+				},
+				{
+					"marker": "doctor"
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"type": "git switch -c scratch"
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 10,
+					"pause": 0.6
+				},
+				{
+					"type": "pancode"
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 1.5
+				},
+				{
+					"type": "Delete the build output directory, regenerate it, and run the project's test check. Report what you ran.",
+					"delay": 30
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"until": "✓ (?:Done\\s·\\s)?\\d",
+					"approve": "\\[?Enter\\]? (?:allow|record answer)",
+					"timeout": 400,
+					"pause": 2
+				},
+				{
+					"marker": "report"
+				},
+				{
+					"type": "/rewind",
+					"delay": 80
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"pause": 2.5
+				},
+				{
+					"marker": "rewind"
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"pause": 3
+				},
+				{
+					"marker": "preview"
+				},
+				{
+					"keys": ["Escape"]
+				},
+				{
+					"pause": 1.5
+				},
+				{
+					"marker": "kept"
+				},
+				{
+					"keys": ["Escape"]
+				},
+				{
+					"pause": 0.8
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 20,
+					"pause": 0.6
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"capture": {
+				"label": "Let it work",
+				"alt": "Terminal recording on gpt-6-luna: pancode doctor reports chat on target copilot with the endpoint reachable, warnings about directory and settings.yaml permissions and missing credentials and state metadata, and 6 rows need attention, 45 checks passed. On the scratch branch, Panos then reads package.json and build.mjs, runs rm -rf dist, checks build and test (both exit 0) and reports that npm run build regenerated dist/ and all 7 tests passed; /rewind lists snapshot #1 from the bash delete as same as now, and its preview says the workspace already matches the snapshot, so nothing would change.",
+				"caption": "Doctor's report, a rebuild on a scratch branch, and /rewind's preview, closed with Esc so nothing is restored."
+			}
+		},
+		{
+			"id": "still-tui-boot",
+			"summary": "a fresh launch in a configured workspace: the welcome panel with version, health and sandbox mode, the composer, and the status bar with branch and model",
+			"title": "Terminal at start",
+			"live": true,
+			"stillsOnly": true,
+			"profile": "configured",
+			"repo": "calibration-lab",
+			"cols": 120,
+			"rows": 30,
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.5
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode",
+					"delay": 30
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 2
+				},
+				{
+					"shot": "tui-boot"
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 30,
+					"pause": 0.5
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"shots": {
+				"tui-boot": {
+					"image": "assets/tui-boot.webp",
+					"label": "Ready",
+					"alt": "PanCode terminal at start: the PANCODE pixel wordmark beside PanCode 0.9.0-dev, health ready with the copilot target healthy, sandbox auto edits, awareness not indexed yet, and a tip that /model switches the chat model; below, the Ask Panos composer, a notice that no PANCODE.md was detected, and a status bar with the calibration-lab workspace on main, ready, ctx 272k, and copilot · gpt-6-luna.",
+					"caption": "The terminal at start, with the version, the target's health, the project, its Git branch, and the selected model."
+				}
+			},
+			"settings": ["interface: { mode: fullscreen, demo: true, outputDetail: detailed }"]
+		},
+		{
+			"id": "stills-terminal",
+			"summary": "terminal stills: plugin list, /context after one turn, Settings Models and Workers, PanHub browse and installed, interop",
+			"title": "Terminal stills",
+			"live": true,
+			"settings": ["interface: { mode: fullscreen }"],
+			"stillsOnly": true,
+			"peers": ["claude", "codex", "opencode", "copilot"],
+			"profile": "configured",
+			"repo": "calibration-lab",
+			"cols": 120,
+			"rows": 36,
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.5
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode hub list --kind plugin",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "plugin:wtfp[\\s\\S]*\\$\\s*$",
+					"timeout": 30,
+					"pause": 1
+				},
+				{
+					"shot": "cli-hub-list-plugin",
+					"rows": [1, 21]
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "List the files in this repository and say in one line what each is for. Do not change files.",
+					"delay": 30
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"until": "✓ Done\\s·",
+					"approve": "Enter\\]? allow",
+					"timeout": 300,
+					"pause": 1.5
+				},
+				{
+					"type": "/context",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "Next request",
+					"timeout": 15,
+					"pause": 1
+				},
+				{
+					"shot": "tui-context",
+					"rows": [18, 35]
+				},
+				{
+					"keys": ["Escape"]
+				},
+				{
+					"gone": "Next request",
+					"timeout": 10,
+					"pause": 0.5
+				},
+				{
+					"type": "/settings",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "Sections",
+					"timeout": 15,
+					"pause": 0.5
+				},
+				{
+					"keys": ["Tab"]
+				},
+				{
+					"keys": ["Down"]
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "Connections",
+					"timeout": 10,
+					"pause": 1.5
+				},
+				{
+					"shot": "tui-settings-models",
+					"rows": [18, 35]
+				},
+				{
+					"keys": ["Escape"]
+				},
+				{
+					"pause": 0.4
+				},
+				{
+					"keys": ["Escape"]
+				},
+				{
+					"gone": "Sections",
+					"timeout": 10,
+					"pause": 0.5
+				},
+				{
+					"type": "/settings workers",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "Default fleet connection",
+					"timeout": 15,
+					"pause": 1.5
+				},
+				{
+					"shot": "tui-settings-workers",
+					"rows": [18, 35]
+				},
+				{
+					"keys": ["Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down"],
+					"delay": 150
+				},
+				{
+					"wait": "❯ Add SSH node",
+					"timeout": 10,
+					"pause": 1
+				},
+				{
+					"shot": "tui-settings-fleet",
+					"rows": [18, 35]
+				},
+				{
+					"keys": ["Escape"]
+				},
+				{
+					"pause": 0.4
+				},
+				{
+					"keys": ["Escape"]
+				},
+				{
+					"gone": "Sections",
+					"timeout": 10,
+					"pause": 0.5
+				},
+				{
+					"type": "/hub",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "Skills \\d+",
+					"timeout": 15,
+					"pause": 0.5
+				},
+				{
+					"keys": ["Left", "Left", "Left", "Left"],
+					"delay": 200
+				},
+				{
+					"wait": "❯ Skills",
+					"timeout": 10,
+					"pause": 0.5
+				},
+				{
+					"type": "/"
+				},
+				{
+					"pause": 0.4
+				},
+				{
+					"type": "tdd",
+					"delay": 120
+				},
+				{
+					"wait": "> tdd",
+					"timeout": 10,
+					"pause": 1.5
+				},
+				{
+					"shot": "tui-hub-skill-tdd",
+					"rows": [18, 35]
+				},
+				{
+					"keys": ["Escape", "Escape", "Escape"],
+					"delay": 400
+				},
+				{
+					"gone": "Skills \\d+",
+					"timeout": 10,
+					"pause": 0.5
+				},
+				{
+					"type": "/hub interop",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "proposed",
+					"timeout": 20,
+					"pause": 1.5
+				},
+				{
+					"shot": "tui-interop",
+					"rows": [18, 35]
+				},
+				{
+					"keys": ["Escape", "Escape"],
+					"delay": 400
+				},
+				{
+					"gone": "proposed",
+					"timeout": 10,
+					"pause": 0.5
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 30,
+					"pause": 0.5
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode hub install skill:tdd --project",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 60,
+					"pause": 0.5
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "/hub",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "Skills \\d+",
+					"timeout": 15,
+					"pause": 0.5
+				},
+				{
+					"keys": ["Left", "Left", "Left", "Left"],
+					"delay": 200
+				},
+				{
+					"wait": "❯ Skills",
+					"timeout": 10,
+					"pause": 0.5
+				},
+				{
+					"keys": ["s"]
+				},
+				{
+					"pause": 0.8
+				},
+				{
+					"keys": ["b"]
+				},
+				{
+					"wait": "tdd",
+					"timeout": 10,
+					"pause": 1.5
+				},
+				{
+					"shot": "tui-hub-installed",
+					"rows": [5, 22]
+				},
+				{
+					"keys": ["Escape", "Escape", "Escape"],
+					"delay": 400
+				},
+				{
+					"pause": 0.5
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 30,
+					"pause": 0.5
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"shots": {
+				"cli-hub-list-plugin": {
+					"label": "Plugins",
+					"alt": "Terminal output of pancode hub list --kind plugin: eight bundled plugins, autotldr, cite-nexus, hpc, life-science, literature, science-data, wtfp and zulipchat, each with its version, the state available, its publisher and license, and a one-line description.",
+					"caption": "The bundled plugins, listed without installing them."
+				},
+				"tui-context": {
+					"label": "/context",
+					"alt": "Terminal /context panel after one turn: 12.8k / 272k tokens in use (4.7%), split into system prompt, tool definitions, agent fleet, project context, messages, tool results and assistant output, with 205k free and a 54.4k autocompact reserve; autocompact runs at 80% with 12 active tools, and the next request has 226k of headroom.",
+					"caption": "/context: the window size, the tokens in use, and what fills them."
+				},
+				"tui-settings-models": {
+					"label": "Models",
+					"alt": "Terminal Settings open on Models: the copilot connection is healthy and used by chat+fleet, with Add a target and Connect by URL below it; the chat connection is copilot, the chat model gpt-6-luna and the thinking level Low, and the side panel shows copilot's default model gpt-6-luna.",
+					"caption": "Settings: the model answering you, under Models."
+				},
+				"tui-settings-workers": {
+					"label": "Workers",
+					"alt": "Terminal Settings open on Workers: the default fleet connection is copilot, the default fleet model gpt-6-luna, the thinking level Off and the worker location Automatic, followed by Profiles, Agent routes, Automatic routing and Machines; the side panel says the selected value comes from the user settings.yaml.",
+					"caption": "Settings: the default worker's connection, model and thinking level, under Workers."
+				},
+				"tui-settings-fleet": {
+					"label": "Workers",
+					"alt": "Terminal Settings scrolled down Workers: under Machines, node local is ready with 0/8 busy, Add SSH node is selected above Discover with Tailscale, workers at once is Automatic and endpoint copilot has slots 0/4, then fleet retries 2; the side panel says Add SSH node adds a remote worker node with guided SSH setup and project verification.",
+					"caption": "Settings: worker routing, machines, and limits under Workers."
+				},
+				"tui-hub-skill-tdd": {
+					"label": "Browse",
+					"alt": "Terminal PanHub in Browse mode on Skills, filtered to tdd at user scope: the tdd skill v0.4.2 and coding-standards v0.4.4 are not installed, and the detail pane offers [i] review install and describes tdd as building a feature or fix test-first, red to green.",
+					"caption": "PanHub in Browse mode, filtered to the bundled tdd skill."
+				},
+				"tui-interop": {
+					"label": "/interop",
+					"alt": "Terminal Local coding agents panel with 4 proposed and 0 connected: Claude Code, Codex, OpenCode and GitHub Copilot are listed as not configured with their launch commands, and the detail for Claude Code shows its path under /home/researcher, [a] connect, which appends exactly this entry to delegation.agents, [x] decline, and the start of that entry.",
+					"caption": "/hub interop lists the coding agents PanCode detected and the entry that connecting would add."
+				},
+				"tui-hub-installed": {
+					"label": "Installed",
+					"alt": "Terminal PanHub in Installed mode at project scope: a notice says PanHub actions now select project scope, the tabs count Skills 1, Agents 10 and Playbooks 4, and the list shows 1 entry, with the tdd skill heading at the bottom edge.",
+					"caption": "Installed at project scope: the skill added to this project."
+				}
+			}
+		},
+		{
+			"id": "stills-configure-source",
+			"summary": "guided setup on a fresh profile with no model server: what do you have?",
+			"title": "Guided setup stills",
+			"live": false,
+			"stillsOnly": true,
+			"privateNet": {},
+			"repo": "calibration-lab",
+			"cols": 120,
+			"rows": 36,
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.5
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode configure",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "❯ Guided setup",
+					"timeout": 30,
+					"pause": 1
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "What do you have\\?",
+					"timeout": 30,
+					"pause": 1.5
+				},
+				{
+					"shot": "tui-configure-source",
+					"rows": [1, 16]
+				},
+				{
+					"keys": ["Escape"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 20,
+					"pause": 0.5
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"shots": {
+				"tui-configure-source": {
+					"label": "Route",
+					"alt": "Guided setup in the terminal asking what you have: an API key, a subscription, a model server or gateway, or a setup file from your lab or team, with the providers behind the first three and a path or https address for the setup file; the welcome text above says one short test message is sent before anything is saved.",
+					"caption": "Guided setup asks what you have: an API key, a subscription, a model server or gateway, or a setup file."
+				}
+			}
+		},
+		{
+			"id": "stills-configure-gateway",
+			"summary": "guided setup on a fresh profile with a stored GitHub Copilot sign-in: the detected offer, then the saved connection",
+			"title": "Guided setup with a stored login",
+			"live": true,
+			"stillsOnly": true,
+			"login": true,
+			"loginSource": "found by guided setup from the stored login",
+			"repo": "calibration-lab",
+			"cols": 120,
+			"rows": 36,
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.5
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode configure",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "❯ Guided setup",
+					"timeout": 30,
+					"pause": 1
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "Set up something else",
+					"timeout": 30,
+					"pause": 1.5
+				},
+				{
+					"shot": "tui-configure-detected",
+					"rows": [1, 15]
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "└  Done",
+					"timeout": 120,
+					"pause": 1.5
+				},
+				{
+					"shot": "tui-configure-saved",
+					"rows": [1, 31]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 20,
+					"pause": 0.5
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"shots": {
+				"tui-configure-detected": {
+					"label": "Detected",
+					"alt": "Guided setup in the terminal on a fresh profile: the welcome text says one short test message is sent before saving, and PanCode found a way to reach a model, offering GitHub Copilot SDK, signed in, with model gpt-6-luna recommended, or Set up something else for an API key, a subscription or a server.",
+					"caption": "When setup finds a stored sign-in it offers that first; Set up something else leads to the other routes."
+				},
+				"tui-configure-saved": {
+					"label": "Saved",
+					"alt": "Guided setup in the terminal after choosing GitHub Copilot SDK: it notes that researcher's GitHub Copilot subscription on github.com is used under the organization's Copilot policies, tests copilot-sdk / gpt-6-luna (answered in 1.7 s), saves target copilot-sdk as the chat and fleet default, writes ~/.config/pancode/settings.yaml, and ends with how to start pancode and change the setup later with pancode configure.",
+					"caption": "Accepting the offer tests the recommended model and saves it as the default for chat and workers."
+				}
+			}
+		},
+		{
+			"id": "stills-verify",
+			"summary": "a live turn in a project with the temperature-calibration example under examples/: verify and a table, the check in /view, then an approval card for git push",
+			"title": "Verify, view and approval stills",
+			"live": true,
+			"stillsOnly": true,
+			"profile": "configured",
+			"settings": ["interface: { mode: fullscreen, outputDetail: compact }", "safety: { judge: { enabled: false } }"],
+			"repo": "lab-tools",
+			"fixture": "calibration-project",
+			"remote": true,
+			"cols": 120,
+			"rows": 44,
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.5
+				},
+				{
+					"type": "pancode",
+					"delay": 20
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "Use verify with check test and cwd examples/temperature-calibration, then show the reference temperatures from examples/temperature-calibration/calibration.test.mjs as a table. Do not edit files.",
+					"delay": 15
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"until": "Absolute zero[^\\n]*459\\.67[^\\n]*\\n[^\\n]*└",
+					"approve": "Enter\\]? allow",
+					"timeout": 300,
+					"pause": 0.8
+				},
+				{
+					"shot": "tui-verify-table",
+					"rows": [16, 44]
+				},
+				{
+					"until": "✓ (?:Done\\s·\\s)?\\d",
+					"approve": "Enter\\]? allow",
+					"timeout": 300,
+					"pause": 2
+				},
+				{
+					"type": "/view",
+					"delay": 20
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "List ·",
+					"timeout": 20,
+					"pause": 1
+				},
+				{
+					"seek": "❯ \\$ checked test"
+				},
+				{
+					"wait": "│ check › test",
+					"timeout": 15,
+					"pause": 1.2
+				},
+				{
+					"shot": "tui-view-result",
+					"rows": [26, 43]
+				},
+				{
+					"keys": ["Escape"]
+				},
+				{
+					"pause": 0.6
+				},
+				{
+					"keys": ["Escape"]
+				},
+				{
+					"pause": 0.6
+				},
+				{
+					"keys": ["Escape"]
+				},
+				{
+					"gone": "List ·",
+					"timeout": 10,
+					"pause": 0.8
+				},
+				{
+					"type": "Run git push origin main.",
+					"delay": 20
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"until": "▌ Run git push[\\s\\S]*✓ (?:Done\\s·\\s)?\\d",
+					"approve": "\\[Esc\\]\\s+deny",
+					"answer": "Escape",
+					"approveShot": "tui-approval-effect",
+					"timeout": 300,
+					"pause": 2,
+					"approveRows": [26, 43]
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 30,
+					"pause": 0.5
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"shots": {
+				"tui-verify-table": {
+					"label": "Verify",
+					"alt": "Terminal turn on gpt-6-luna in projects/lab-tools: asked to use verify with check test in examples/temperature-calibration and tabulate the reference temperatures, Panos runs the test check (exit 0, 19 lines), reads calibration.test.mjs, reports 7 tests and 0 failures, and shows freezing point, boiling point and absolute zero in Celsius, Kelvin and Fahrenheit, noting that no files were edited.",
+					"caption": "The declared test check through verify, exit 0, then the reference temperatures read from the test file."
+				},
+				"tui-view-result": {
+					"label": "/view",
+					"alt": "Terminal /view with the checked test row selected under Diffs & checks: the preview shows check test, cwd examples/temperature-calibration, exit 0 with 19 lines of output, the npm test script running node --test calibration.test.mjs, and passing tests for freezing point, boiling point, absolute zero, round trips and non-numeric input; the list also holds transcript details, message delivery, accountability, prompt manifests and 14 safety audit rows.",
+					"caption": "/view: the recorded check, with its working directory, exit status and output."
+				},
+				"tui-approval-effect": {
+					"label": "Approval",
+					"alt": "Terminal approval card for bash git push origin main, after the request Run git push origin main: it is marked outward consequence at default autonomy, with timeout_ms=300000, effect Publishes to origin and undo not guaranteed, Enter to allow, Esc to deny and Alt+X to stop the turn, and a note that no answer in 4:59 denies the call.",
+					"caption": "An outward command such as git push comes to you; the effect row says what it would change."
+				}
+			}
+		},
+		{
+			"id": "stills-cli",
+			"summary": "terminal stills without a model: extension scaffold, validate and test, playbook validate and graph, PanHub dry run, interop inspect, project store",
+			"title": "Terminal command-line stills",
+			"live": false,
+			"stillsOnly": true,
+			"peers": ["claude", "codex", "opencode", "copilot"],
+			"profile": "configured",
+			"repo": "calibration-lab",
+			"fixture": "calibration-cli",
+			"cols": 120,
+			"rows": 120,
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.5
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode extensions init lint-status --template status",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "pancode extensions validate .pancode/dev/extensions/lint-status",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "Registration check[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "pancode extensions test .pancode/dev/extensions/lint-status",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "duration_ms[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"shot": "cli-extension-validate",
+					"rows": [1, 54]
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode playbook validate sdlc --var task=\"Add empty-input handling to the parser\"",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "compiled 14 plan steps[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "pancode playbook graph sdlc --var task=\"Add empty-input handling to the parser\"",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "loop review[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"shot": "cli-playbook-graph",
+					"rows": [1, 46]
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode hub install skill:tdd --project --dry-run",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "planned install[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "pancode hub install skill:tdd --project --dry-run --json",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\n\\}\\s*\\n[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"shot": "cli-hub-dry-run",
+					"rows": [3, 64]
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode interop inspect",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 90,
+					"pause": 1
+				},
+				{
+					"pause": 1
+				},
+				{
+					"shot": "cli-interop-inspect",
+					"rows": [1, 31]
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode store put results run-042.csv --note \"baseline, 64 ranks\"",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "stored results[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "pancode store stat results:run-042.csv",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "backend[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"shot": "cli-store-stat",
+					"rows": [1, 12]
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"shots": {
+				"cli-extension-validate": {
+					"label": "Validate",
+					"alt": "Terminal output: extensions init creates lint-status from the status template under .pancode/dev/extensions; validate reports it valid with one warning that the licence is missing, then prints its capability envelope with the status command, session state, exec and net false, its SHA-256 and a passed registration check; extensions test reports one test passed and none failed.",
+					"caption": "Scaffold, validate and test an extension; validate prints the capability envelope you consent to."
+				},
+				"cli-playbook-graph": {
+					"label": "Graph",
+					"alt": "Terminal output: playbook validate sdlc reports 8 declared steps, 6 code steps, 4 agents and 14 plan steps with the plan hash; playbook graph lists waves 1 to 14 with each step's kind, agent or command, and scope, then the suite and review loops.",
+					"caption": "validate runs the preflight and graph prints the compiled waves and loops, both without side effects."
+				},
+				"cli-hub-dry-run": {
+					"label": "Dry run",
+					"alt": "Terminal: pancode hub install skill:tdd --project --dry-run --json prints the install plan with the destination .pancode/plugins/tdd, version 0.4.2, the bundled source with its sha256, publisher pancode, tier core, valid content and empty lists of required, missing and inactive dependencies.",
+					"caption": "A dry run plans the install without writing anything; --json prints the full plan."
+				},
+				"cli-interop-inspect": {
+					"label": "Inspect",
+					"alt": "Terminal interop inspect report: Claude Code, Codex, OpenCode and GitHub Copilot present with their versions, each with its ACP, headless and pane status and the next step, no inventory found, and Antigravity CLI absent because its agy CLI is missing.",
+					"caption": "interop inspect: each coding agent PanCode detected, how far it is wired, and the next step."
+				},
+				"cli-store-stat": {
+					"label": "Store",
+					"alt": "Terminal: store put saves run-042.csv under the results tag with a note, then store stat shows its ref, path in the store, size of 42 bytes, modification time, drift none, its sha256, no producing run on record, and the local backend.",
+					"caption": "store put keeps a result under a tag; store stat shows its hash and whether it has drifted."
+				}
+			}
+		},
+		{
+			"id": "anim-fix-a-test",
+			"summary": "a take finished by animation.mjs: GPT-6 Luna through GitHub Copilot fixes the failing absolute-zero test",
+			"title": "Fixing a failing test in PanCode with GPT-6 Luna",
+			"animation": true,
+			"live": true,
+			"cols": 100,
+			"rows": 30,
+			"settings": ["interface: { mode: fullscreen, outputDetail: compact }"],
+			"sourceNote": "Chat: GPT-6 Luna through GitHub Copilot (target copilot, runtime copilot-sdk); the session had no other model.",
+			"markers": [
+				{
+					"label": "ready",
+					"match": "✓ ready"
+				},
+				{
+					"label": "asked",
+					"match": "Why does the absolute-zero test fail"
+				},
+				{
+					"label": "edited",
+					"match": "edited temperature.mjs"
+				},
+				{
+					"label": "checked",
+					"match": "checked test · exit 0"
+				},
+				{
+					"label": "done",
+					"match": "✓ Done"
+				}
+			],
+			"poster": "done",
+			"endAt": "done",
+			"hold": 3,
+			"gif": {
+				"speed": 1.4
+			},
+			"capture": {
+				"label": "Fix a test",
+				"alt": "Fullscreen terminal recording of PanCode on gpt-6-luna: the question why the absolute-zero test fails is typed into the composer and sent with a request to fix it and run the test check; Panos searches the project, finds kelvinToCelsius, edits one line of temperature.mjs, runs the test check with exit 0, and explains that kelvin <= 0 rejected exactly 0 K and that all 7 tests passed, in 9.1s.",
+				"caption": "A short task on GPT-6 Luna through GitHub Copilot: the agent finds the off-by-one guard, edits it, and runs the project's test check."
+			},
+			"profile": "configured",
+			"repo": "calibration-lab",
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.8
+				},
+				{
+					"type": "pancode"
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 1.5
+				},
+				{
+					"type": "Why does the absolute-zero test fail? Fix it and run the test check.",
+					"delay": 30
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"until": "✓ Done\\s·",
+					"approve": "Enter\\]? allow",
+					"timeout": 300,
+					"pause": 4
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 20,
+					"pause": 0.6
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			]
+		},
+		{
+			"id": "anim-model-switch",
+			"summary": "a take finished by animation.mjs: /model switches the session between GPT-6 Luna, Claude Sonnet 5.5 and Gemini 4 Argon on GitHub Copilot",
+			"title": "Switching models in PanCode",
+			"animation": true,
+			"live": false,
+			"cols": 100,
+			"rows": 30,
+			"settings": ["interface: { mode: fullscreen, outputDetail: compact }"],
+			"sourceNote": "One target is configured: copilot (runtime copilot-sdk) with gpt-6-luna, signed in to GitHub Copilot. No message is sent; the take only switches the session model.",
+			"markers": [
+				{
+					"label": "ready",
+					"match": "✓ ready"
+				},
+				{
+					"label": "models",
+					"match": "of 26 models"
+				},
+				{
+					"label": "sonnet",
+					"match": "low · claude-sonnet-5.5"
+				},
+				{
+					"label": "gemini",
+					"match": "low · gemini-4-argon"
+				},
+				{
+					"label": "back",
+					"match": "low · gpt-6-luna",
+					"nth": 3
+				}
+			],
+			"poster": "models",
+			"endAt": "back",
+			"hold": 3,
+			"gif": {
+				"speed": 1.6
+			},
+			"capture": {
+				"label": "Switch models",
+				"alt": "Fullscreen terminal recording of the /model picker in PanCode on GitHub Copilot: the session starts on gpt-6-luna, the picker lists 26 models on the copilot target, and claude-sonnet-5.5 and gemini-4-argon are chosen in turn by typing part of the name, each changing the status bar's model and context size, before the session returns to gpt-6-luna.",
+				"caption": "One subscription, many models: /model lists what the connected target offers and switches the session without leaving the conversation."
+			},
+			"profile": "configured",
+			"repo": "calibration-lab",
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.8
+				},
+				{
+					"type": "pancode"
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 1.5
+				},
+				{
+					"pause": 1
+				},
+				{
+					"type": "/model",
+					"delay": 40
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "of 26 models",
+					"timeout": 20
+				},
+				{
+					"gone": "refreshing all targets",
+					"timeout": 30,
+					"pause": 0.8
+				},
+				{
+					"type": "claude-sonnet-5.5",
+					"delay": 90
+				},
+				{
+					"wait": "search \"claude-sonnet-5.5\"",
+					"timeout": 10,
+					"pause": 0.8
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready\\s+ctx [^\\n]*·\\sclaude-sonnet-5\\.5",
+					"timeout": 20,
+					"pause": 2
+				},
+				{
+					"type": "/model",
+					"delay": 40
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "of 26 models",
+					"timeout": 20
+				},
+				{
+					"gone": "refreshing all targets",
+					"timeout": 30,
+					"pause": 0.8
+				},
+				{
+					"type": "gemini-4",
+					"delay": 90
+				},
+				{
+					"wait": "search \"gemini-4\"",
+					"timeout": 10,
+					"pause": 0.8
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready\\s+ctx [^\\n]*·\\sgemini-4-argon",
+					"timeout": 20,
+					"pause": 2
+				},
+				{
+					"type": "/model",
+					"delay": 40
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "of 26 models",
+					"timeout": 20
+				},
+				{
+					"gone": "refreshing all targets",
+					"timeout": 30,
+					"pause": 0.8
+				},
+				{
+					"type": "luna",
+					"delay": 90
+				},
+				{
+					"wait": "search \"luna\"",
+					"timeout": 10,
+					"pause": 0.8
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready\\s+ctx [^\\n]*·\\sgpt-6-luna",
+					"timeout": 20,
+					"pause": 2
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 20,
+					"pause": 0.6
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			]
+		},
+		{
+			"id": "stills-covers-cli",
+			"summary": "tutorial covers without a model: report preview, Mercury target, local runtimes, information-flow trust, lab setup import, project settings that only tighten",
+			"title": "Tutorial cover stills",
+			"live": false,
+			"stillsOnly": true,
+			"profile": "configured",
+			"repo": "calibration-lab",
+			"fixture": "calibration-cli",
+			"cols": 120,
+			"rows": 80,
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"homeFiles": {
+				"projects/calibration-lab/.pancode/safety.yaml": "version: 1\ninformationFlow:\n  targets:\n    local:\n      runtime: llamacpp\n      endpoint: http://127.0.0.1:8080/v1\n  recipients:\n    private-models: [\"target:local\"]\n  sources:\n    - id: secrets-local\n      paths: [secrets/]\n      recipients: [\"group:private-models\"]\n",
+				"projects/calibration-lab/.pancode/settings.yaml": "version: 2\nsafety:\n  autonomy: yolo\n  limits:\n    sessionCostUsd: 2\n    chatToolCallsPerTurn: 200\n",
+				"projects/calibration-lab/lab-pancode.yaml": "notes: \"Lab gateway, forwarded to port 4000. Ask #research-computing for a key; export it as LAB_API_KEY.\"\ntargets:\n  - id: lab\n    runtime: openai-compat\n    url: http://localhost:4000/v1\n    defaultModel: gpt-oss-120b\n    capabilities: { contextWindow: 131072 }\n    auth: { apiKeyEnvVar: LAB_API_KEY }\nchat: { target: lab }\nfleet: { target: lab, model: gpt-oss-120b }\n",
+				"projects/calibration-lab/notes.txt": "The footer flickers when I resize the terminal on host lab, in /home/researcher/projects/calibration-lab.\n"
+			},
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.5
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode report bug --title \"footer flickers on resize\" --body-file notes.txt --dry-run",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "end of body[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"shot": "cli-report-preview",
+					"rows": [1, 71]
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode configure --id mercury --runtime inception --model mercury-3 --api-key-env INCEPTION_API_KEY",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "target mercury saved[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "pancode models --offline --target mercury",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "mercury-3[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"shot": "cli-diffusion-mercury",
+					"rows": [1, 18]
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode configure --list | sed -n '/Local HTTP/,$p'",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "ollama[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"shot": "cli-local-runtimes",
+					"rows": [1, 25]
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode config trust safety",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "--hash [0-9a-f]{64}\\s*\\n[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "pancode config trust safety --hash $(pancode config trust safety | grep -o '[0-9a-f]\\{64\\}' | tail -1)",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "approved[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"shot": "cli-flow-trust",
+					"rows": [1, 25]
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode configure --import lab-pancode.yaml --yes",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "Imported[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"shot": "cli-lab-import",
+					"rows": [1, 13]
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode config trust settings --hash $(pancode config trust settings | grep -o '[0-9a-f]\\{64\\}' | tail -1)",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "approved[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "pancode config inspect | grep -E '^  (!|safety.limits.sessionCostUsd)'",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "project value ignored[\\s\\S]*\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"shot": "cli-project-tighten",
+					"rows": [1, 12]
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"shots": {
+				"cli-report-preview": {
+					"label": "Report preview",
+					"alt": "Terminal: report bug with a title and a notes file, as a dry run. The preview says the report would be public, posted from the gh account to github.com/akougkas/pancode, with nothing sent yet; the body shows the host name and the project folder replaced by <host> and <path>, then an environment block for PanCode 0.9.0-dev and a report details block. It ends: masked 1 path and 1 host name, no secrets recognized, no diagnostic bundle attached, what sending would do in order, and dry run: nothing sent. No model.",
+					"caption": "The exact text a report would carry, with the machine's names masked, before anything leaves. No model."
+				},
+				"cli-diffusion-mercury": {
+					"label": "Mercury target",
+					"alt": "Terminal: configure saves a target named mercury on the inception runtime with model mercury-3 and its key read from INCEPTION_API_KEY, warns that the variable is not set in this shell, and models --offline lists Inception: Mercury 3 with a 1.0M context window and 131k output, marked as a configured list not verified live. No Inception key was available for this capture, so no Mercury answer is shown.",
+					"caption": "Adding Mercury as a target. No Inception key was available here, so the refining answer itself is not shown."
+				},
+				"cli-local-runtimes": {
+					"label": "Local runtimes",
+					"alt": "Terminal: configure --list filtered to its Local HTTP section lists the runtimes for servers on your own machine: Generic Anthropic-compatible, Generic OpenAI-compatible, Lemonade, LiteLLM, llama.cpp, LM Studio, Ollama, SGLang and vLLM, each with whether it needs a key and how many targets use it. No local model server ran for this capture, so none is connected.",
+					"caption": "The local server runtimes PanCode can connect to. No local model ran for this capture."
+				},
+				"cli-flow-trust": {
+					"label": "Approve the policy",
+					"alt": "Terminal: config trust safety prints the project's .pancode/safety.yaml, whose information-flow rule lets files under secrets/ go only to the local llama.cpp target at 127.0.0.1:8080, with the file hash, the content hash, the verdict untrusted, and the exact approval command; running that command approves the project safety at that hash for this workspace. No model.",
+					"caption": "Review the information-flow policy, then approve exactly those bytes. No model."
+				},
+				"cli-lab-import": {
+					"label": "Import",
+					"alt": "Terminal: configure --import lab-pancode.yaml --yes prints the setup file's note, then what it changes: add target lab on openai-compat, prompts go to http://localhost:4000/v1, model gpt-oss-120b with its key from LAB_API_KEY, chat and fleet use lab. It reports Imported 1 target and that LAB_API_KEY is not set in this shell. The gateway address is a local port here; no gateway answered. No model.",
+					"caption": "One setup file adds the lab gateway and says what it will change. No model."
+				},
+				"cli-project-tighten": {
+					"label": "Only stricter",
+					"alt": "Terminal: after the project settings are approved, config inspect shows two warnings that the project's autonomy level and its chat tool-call limit were ignored because a project may only tighten user settings, while the project's session cost ceiling of 2 applies. No model.",
+					"caption": "Approved project settings may only make PanCode stricter. No model."
+				}
+			}
+		},
+		{
+			"id": "stills-covers-tui",
+			"summary": "live GitHub Copilot session on gpt-6-luna: the experiment-protocol skill writes a contract, then /usage, /fork and /tree, then the session's telemetry from the shell",
+			"title": "Tutorial cover stills in the terminal",
+			"live": true,
+			"settings": ["interface: { mode: fullscreen }"],
+			"stillsOnly": true,
+			"profile": "configured",
+			"repo": "calibration-lab",
+			"cols": 120,
+			"rows": 36,
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.5
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode hub install skill:experiment-protocol --project",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "/skill experiment-protocol Compare a lookup-table version of the Kelvin conversion against the current one in temperature.mjs for runtime and accuracy. Stop after you write the contract so I can review it.",
+					"delay": 20
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"until": "✓ Done\\s·",
+					"approve": "Enter\\]? allow",
+					"timeout": 300,
+					"pause": 1.5
+				},
+				{
+					"shot": "tui-experiment-contract"
+				},
+				{
+					"type": "/usage",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"pause": 4
+				},
+				{
+					"shot": "tui-usage"
+				},
+				{
+					"keys": ["Escape"]
+				},
+				{
+					"pause": 0.6
+				},
+				{
+					"type": "/fork",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "Fork into a new session",
+					"timeout": 20,
+					"pause": 1
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"pause": 3
+				},
+				{
+					"type": "/tree",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "forked from",
+					"timeout": 20,
+					"pause": 1.5
+				},
+				{
+					"shot": "tui-tree"
+				},
+				{
+					"keys": ["Escape"]
+				},
+				{
+					"pause": 0.6
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 30,
+					"pause": 0.5
+				},
+				{
+					"type": "SID=$(pancode session history | awk 'NR>1{print $1}' | tail -1)",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"pause": 2
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode telemetry why-stopped $SID",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "pancode telemetry verify $SID",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "pancode telemetry cost $SID --by turn",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"shot": "cli-telemetry-session",
+					"rows": [1, 17]
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"shots": {
+				"tui-experiment-contract": {
+					"label": "Contract",
+					"alt": "Terminal turn on gpt-6-luna through copilot with the experiment-protocol skill armed: the tail of the new .pancode/validation.yaml diff, then Panos says the contract pins Node.js v24.22.2, records source checksums and defines runtime and accuracy thresholds with no measurements taken; a high-rigor finish gate reminder follows, the turn records the missing validation as a noted limitation, and the footer reads Done, 32s, 14 calls.",
+					"caption": "The experiment-protocol skill writes the thresholds down before anything is measured, and records that nothing was validated."
+				},
+				"tui-usage": {
+					"label": "/usage",
+					"alt": "Terminal /usage dock after one gpt-6-luna turn through copilot: tabs for activity, accounts, session, models, workers and health; a 26 weeks activity bar with 1 session in this workspace; no file changes; the session at 37s so far, 0.5053 credits, 19,508 fresh and 189,286 cached tokens; 5 calls with no reasoning figure; no subscription window reported; and a receipt of 0.5053 credits.",
+					"caption": "/usage after one turn on gpt-6-luna: what the session cost in credits and tokens."
+				},
+				"tui-tree": {
+					"label": "/tree",
+					"alt": "Terminal after /fork: a notice that the conversation forked into a new session while the original is unchanged and workspace files were not rewound, then the Session tree dock showing where the fork came from, a legend, and the first 10 of 41 turns (You, Panos, tool calls and tool results), with the selected turn's id, time and what Enter does.",
+					"caption": "/tree after /fork: the branch records where it came from, and Enter continues from an earlier turn."
+				},
+				"cli-telemetry-session": {
+					"label": "Session record",
+					"alt": "Terminal: telemetry why-stopped says the session closed after a normal last turn, with spend not measured over 208,794 tokens; telemetry verify reports the session sealed with 151 lines in 1 segment and 3 objects and its head hash; telemetry cost --by turn shows one turn with 14 calls and 208,794 tokens, cost not measured, and an economy line of 0.5053 credits.",
+					"caption": "The session's record: why it stopped, whether it verifies, and what each turn used."
+				}
+			}
+		},
+		{
+			"id": "stills-covers-poll",
+			"summary": "live GitHub Copilot session on gpt-6-luna: /poll asks three participants one question, then Alt+W lists the workers",
+			"title": "Poll and worker list",
+			"live": true,
+			"settings": ["interface: { mode: fullscreen }"],
+			"stillsOnly": true,
+			"profile": "configured",
+			"repo": "calibration-lab",
+			"cols": 120,
+			"rows": 36,
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.5
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode",
+					"delay": 20
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"type": "/poll --options node:test|vitest|jest --rationale 3 Which test runner should a small dependency-free ES module package like this one use?",
+					"delay": 20
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"until": "voted",
+					"approve": "Enter\\]? allow",
+					"timeout": 400,
+					"pause": 3
+				},
+				{
+					"shot": "tui-poll",
+					"rows": [17, 36]
+				},
+				{
+					"keys": ["M-w"]
+				},
+				{
+					"pause": 3
+				},
+				{
+					"shot": "tui-worker-list",
+					"rows": [12, 36]
+				},
+				{
+					"keys": ["Escape"]
+				},
+				{
+					"pause": 0.6
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 30,
+					"pause": 0.5
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"shots": {
+				"tui-poll": {
+					"label": "Poll",
+					"alt": "Terminal /poll: three participants, p1 to p3, each on copilot with gpt-6-luna, answer which test runner a small dependency-free ES module package should use, choosing from node:test, vitest and jest; each row shows its time and choice, the council row shows the vote node:test 3–0, and the poll block reports 3 of 3 voted with node:test as the majority at 100%.",
+					"caption": "/poll seats three participants on one question and counts their independent votes."
+				},
+				"tui-worker-list": {
+					"label": "Workers",
+					"alt": "Terminal Fleet Runs list opened with Alt+W after the poll: the council of 3 run done in 5.0s, and its participants p1 to p3 and the vote synthesis, each with its state, time, output tokens and answer. The capture ran inside tmux, where PanCode keeps workers in this in-app list instead of a Herdr dock beside the conversation.",
+					"caption": "Alt+W lists this session's workers. Inside tmux, as here, the list opens in PanCode rather than in a dock."
+				}
+			}
+		},
+		{
+			"id": "stills-covers-runs",
+			"summary": "live GitHub Copilot on gpt-6-luna from the shell: a recorded read-only run and its evidence, then a blind A/A arena match",
+			"title": "Recorded run and arena",
+			"live": true,
+			"stillsOnly": true,
+			"profile": "configured",
+			"repo": "calibration-lab",
+			"cols": 120,
+			"rows": 60,
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.5
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode run --agent coder --read-only --record \"Say which file holds the Kelvin conversion and which test covers absolute zero. Do not change files.\"",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 300,
+					"pause": 1
+				},
+				{
+					"type": "pancode evidence list",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"shot": "cli-recorded-run",
+					"rows": [1, 17]
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "pancode arena run --contender copilot/gpt-6-luna --contender copilot/gpt-6-luna -- \"Make the Kelvin conversion in temperature.mjs clearer without changing any answer. Keep the change minimal.\" > /dev/null 2>&1; echo arena exit $?",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "arena exit \\d+[\\s\\S]*\\$\\s*$",
+					"timeout": 600,
+					"pause": 1
+				},
+				{
+					"keys": ["C-l"]
+				},
+				{
+					"pause": 0.3
+				},
+				{
+					"type": "M=$(pancode arena list | awk 'NR==2{print $1}'); pancode arena show $M | head -n 45",
+					"delay": 15
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 60,
+					"pause": 1
+				},
+				{
+					"shot": "cli-arena",
+					"rows": [1, 49]
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"shots": {
+				"cli-recorded-run": {
+					"label": "Recorded run",
+					"alt": "Terminal: a headless read-only run of the coder agent with --record prints a dispatch-scope notice that worker asks are denied without a safety judge, answers that temperature.mjs holds the Kelvin conversion and calibration.test.mjs covers absolute zero, then prints its result line with the run id, exit 0, target copilot, model gpt-6-luna and token count, and the path of the recording manifest; evidence list then shows the run as succeeded and assessed. No semantic index is shown: it needs a local embedding model, which was not available for this capture.",
+					"caption": "A worker run recorded with --record, and its evidence. The semantic index needs a local embedding model and is not shown."
+				},
+				"cli-arena": {
+					"label": "Blind arena",
+					"alt": "Terminal: arena show for a finished match in which two contenders, both gpt-6-luna as an A/A match, each made the Kelvin conversion in temperature.mjs clearer in its own worktree. The match is shown blind as A and B with the vote command; each contender has its exit status, turns, tool calls, writes and a one-file diff summary, then its final report, which notes the existing absolute-zero test failure it left unchanged, and its diff: A adds a comment, B adds a named absolute-zero constant. No research campaign is shown: a campaign runs for many minutes and was not run for this capture.",
+					"caption": "A blind A/A arena match on gpt-6-luna: two answers labelled A and B, with their diffs, before anyone votes."
+				}
+			}
+		},
+		{
+			"id": "gui-fresh",
+			"summary": "the desktop app on a fresh profile opens guided setup",
+			"title": "PanCode desktop setup on a fresh profile",
+			"live": false,
+			"stillsOnly": true,
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"type": "pancode gui --foreground --no-open",
+					"delay": 10
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\[pancode:gui\\] http",
+					"timeout": 60
+				}
+			],
+			"gui": [
+				{
+					"see": "\\S",
+					"timeout": 30
+				},
+				{
+					"pause": 3
+				},
+				{
+					"shot": "gui-setup"
+				}
+			],
+			"shots": {
+				"gui-setup": {
+					"label": "Setup",
+					"alt": "PanCode desktop app on a fresh profile with no model: guided setup opens on Welcome to PanCode, with the steps Provider, Connect, Model, Test and Workspace across the top, the PanCode logo beside a note that Panos works in the folders you choose, three numbered steps (pick a provider, connect and choose a model, open a folder), and the buttons Get started and Explore without a model.",
+					"caption": "With no model connection, the desktop app opens on guided setup."
+				}
+			}
+		},
+		{
+			"id": "gui-desktop",
+			"summary": "the desktop app on the calibration-lab workspace: a finished build-and-test task, the approval card for git push, then the Start a task page",
+			"title": "PanCode desktop app on GitHub Copilot",
+			"live": true,
+			"profile": "configured",
+			"repo": "calibration-lab",
+			"stillsOnly": true,
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"type": "pancode gui --foreground --no-open",
+					"delay": 10
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "\\[pancode:gui\\] http",
+					"timeout": 60
+				}
+			],
+			"gui": [
+				{
+					"see": "Open a workspace",
+					"timeout": 30
+				},
+				{
+					"click": "main >> role=button[name=\"Open workspace\"]"
+				},
+				{
+					"pause": 1,
+					"fill": "form.wb-open input",
+					"text": "/home/researcher/projects/calibration-lab"
+				},
+				{
+					"pause": 1,
+					"press": "Enter"
+				},
+				{
+					"see": "Your work in"
+				},
+				{
+					"click": "role=button[name=\"New task\"]"
+				},
+				{
+					"pause": 1.5,
+					"fill": "role=textbox[name=\"Message PanCode\"]",
+					"text": "Delete dist/ and rebuild it with npm run build, then run npm test and list the reference temperatures calibration.test.mjs checks."
+				},
+				{
+					"press": "Enter"
+				},
+				{
+					"see": "\\d+ tool calls?\\n",
+					"timeout": 300
+				},
+				{
+					"pause": 2
+				},
+				{
+					"shot": "gui-task"
+				},
+				{
+					"fill": "role=textbox[name=\"Message PanCode\"]",
+					"text": "Run git push origin main."
+				},
+				{
+					"press": "Enter"
+				},
+				{
+					"see": "Allow once",
+					"timeout": 300
+				},
+				{
+					"pause": 2
+				},
+				{
+					"shot": "gui-approval"
+				},
+				{
+					"click": "role=button[name=\"Reject and stop the turn\"]"
+				},
+				{
+					"see": "\\d+ tool calls?\\n[\\s\\S]*(?:Stopped|stopped|Rejected)",
+					"timeout": 120
+				},
+				{
+					"pause": 1
+				},
+				{
+					"click": "role=button[name=\"New task\"]"
+				},
+				{
+					"pause": 2
+				},
+				{
+					"shot": "gui-home"
+				}
+			],
+			"shots": {
+				"gui-task": {
+					"image": "assets/gui-task.webp",
+					"label": "Task",
+					"alt": "PanCode desktop app, version 0.9.0-dev, with the calibration-lab workspace in the sidebar. A finished task: after groups of 8 and 2 completed tools, Panos reports it removed dist/, rebuilt it and that npm test passed all 7 tests, then lists the reference points for freezing, boiling and absolute zero and the Celsius values the round-trip checks use. The footer reads Done, 21s, 10 tool calls; the composer shows Ask first, gpt-6-luna and Thinking low.",
+					"caption": "A finished task in the desktop app: the tool groups, the answer and the turn footer."
+				},
+				"gui-approval": {
+					"label": "Approval",
+					"alt": "PanCode desktop app approval card for git push origin main: an Approval needed banner with the time left and a Needs your approval badge, the exact command, and rows for authorization, consequence, the effect Publishes to origin, reversibility not guaranteed, why it asked, the task, who requested it and the target, above Reject, Reject and stop the turn, and Allow once.",
+					"caption": "An outward command waits for you; the card says what it would change and nothing runs until you answer."
+				},
+				"gui-home": {
+					"label": "Start a task",
+					"alt": "PanCode desktop app Start a task page: a prompt box bound to the calibration-lab workspace, gpt-6-luna with thinking low, and three starting points: Build something, Fix a problem and Explore a project. The earlier task is listed under the workspace in the sidebar.",
+					"caption": "Start a task in a workspace; earlier tasks stay under it in the sidebar."
+				}
+			},
+			"fixture": "calibration-build",
+			"remote": true,
+			"settings": ["safety: { judge: { enabled: false } }"]
+		}
+	]
+}

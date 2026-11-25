@@ -1,0 +1,67 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* Scroll region and jump affordance for a transcript that follows its latest output. */
+
+.conversation__scroll {
+	flex: 1 1 0;
+	min-height: 0;
+	overflow: auto;
+	overscroll-behavior: contain;
+	scrollbar-gutter: stable;
+	contain: layout paint;
+}
+
+/* A region the reader has scrolled away from gives up a strip at its foot, and the jump control
+   sits in that strip, so it never covers a line of the transcript. The region keeps its scroll
+   offset as it shortens, so the text the reader is on does not move. */
+[data-follow-latest="away"] {
+	margin-bottom: var(--space-10);
+}
+
+/* The anchor itself takes no height; the control is laid out against it, inside the strip above. */
+.jump-anchor {
+	position: relative;
+	z-index: 4;
+	height: 0;
+	overflow: visible;
+}
+
+/* The pill rests on the transcript's bottom edge at the column's right gutter, clear of the reading
+   measure, rather than over the text in the middle of the column. */
+.jump-to-latest {
+	position: absolute;
+	bottom: calc((var(--space-10) - 28px) / 2);
+	right: var(--chat-gutter, var(--space-4));
+	box-sizing: border-box;
+	height: 28px;
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	padding: 0 12px;
+	border: 1px solid var(--accent);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	box-shadow: var(--shadow-panel);
+	color: var(--accent);
+	font-family: var(--font-mono);
+	font-size: var(--text-caption);
+	font-weight: 650;
+	letter-spacing: 0.06em;
+	cursor: pointer;
+}
+
+/* New output below marks the same control with the accent wash and a dot; it is news, not a warning. */
+.jump-to-latest.has-unseen {
+	background: var(--accent-soft);
+}
+.jump-to-latest.has-unseen::after {
+	content: "";
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
+}
+
+.jump-to-latest:hover {
+	background: var(--inset);
+}

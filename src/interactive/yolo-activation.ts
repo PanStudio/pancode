@@ -1,0 +1,213 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { PancodeSettings } from "../core/config.js";
+import { sandboxAvailability } from "../core/sandbox/availability.js";
+import { yoloContainmentNotes } from "../core/sandbox/main-session.js";
+import type { ConfigChangeSource } from "../core/telemetry/live-events.js";
+import type { AskUserHandler, AskUserQuestion } from "../tools/ask-user.js";
+
+/**
+ * Turning yolo on from the terminal (#407). Yolo runs without stopping for the
+ * operator, so its first interactive activation shows a short card saying what
+ * it does, and only an explicit accept records `safety.yoloAccepted` in the
+ * operator's user settings and switches. As root outside a container it is
+ * refused outright. The leader key, /settings and a yolo the session was
+ * started with all pass through here.
+ *
+ * Yolo is contained by default (ob-yolo D1). Choosing unconfined yolo, the
+ * skip-permissions mode, shows its own card and records
+ * `safety.yoloUnconfinedAccepted`; until then yolo stays contained.
+ */
+
+export type SettingScope = "session" | "project" | "global";
+
+export const YOLO_ACCEPT_LABEL = "Turn on yolo";
+export const YOLO_DECLINE_LABEL = "Stay at default";
+export const YOLO_UNCONFINED_ACCEPT_LABEL = "Run yolo unconfined";
+export const YOLO_UNCONFINED_DECLINE_LABEL = "Keep yolo contained";
+
+/** The acceptance card, asked through the existing ask_user card; its sandbox and judge lines say what this host runs. */
+function yoloAcceptanceQuestion(settings: PancodeSettings | undefined): AskUserQuestion {
+	const safety = settings?.safety;
+	const judgeOn = safety?.judge.enabled !== false;
+	const notes = yoloContainmentNotes(safety?.sandbox ?? "auto", sandboxAvailability(), judgeOn);
+	const risky = "risky calls (leaving the sandbox, writes outside the workspace, destructive git, pushes and publishes)";
+	return {
+		header: "Yolo",
+		question: [
+			"Turn on yolo? It runs long jobs without approval stops:",
+			"- No approval cards: a call that would need your approval is refused back to PanCode instead. PanCode still asks you questions (interviews, plan closes, choices only you can make); one nobody answers in time takes its recommended option unless that option leaves the workspace.",
+			`- ${notes.backend !== null ? `Commands stay in the ${notes.backend} OS sandbox: the workspace and scratch roots are writable, credentials and secret files are hidden.` : `Commands run without an OS sandbox (${notes.why}), as default runs them; credentials and secret files are not hidden from them.`} ${judgeOn ? `The safety judge reviews ${risky} and allows only what your request asked for.` : `The safety judge is off (safety.judge.enabled), so ${risky} are refused.`}`,
+			"- The floor still blocks deleting /, your home directory or a system tree, mkfs, writes to a block device, fork bombs, and writes into PanCode's own state. Rules in an approved .pancode/safety.yaml hold.",
+			"- Workspace snapshots and the telemetry journals stay on, so /rewind can restore files. Yolo is refused as root outside a container.",
+			"You accept once; safety.yoloAccepted in your user settings records it.",
+		].join("\n"),
+		options: [
+			{ label: YOLO_ACCEPT_LABEL, description: "Record the acceptance and switch to yolo." },
+			{ label: YOLO_DECLINE_LABEL, description: "Keep approval stops; nothing is saved." },
+		],
+	};
+}
+
+/** The unconfined acceptance card: today's skip-permissions yolo (#407). */
+function yoloUnconfinedAcceptanceQuestion(): AskUserQuestion {
+	return {
+		header: "Unconfined yolo",
+		question: [
+			"Run yolo unconfined? It is the skip-permissions mode:",
+			"- No approval stops and no safety judge. Edits, commands, scripts, git history changes and outward actions run as called.",
+			"- No sandbox by default. Commands and scripts run as you, with your credentials, unless safety.sandbox is required.",
+			"- The floor still blocks deleting or overwriting /, your home directory or a system tree, mkfs, wipefs, writes to a block device, fork bombs, and writes into PanCode's own config, state and trust records. Rules in an approved .pancode/safety.yaml hold.",
+			"Contained yolo already runs without approval stops; choose unconfined only when your work needs what the sandbox hides.",
+			"You accept once; safety.yoloUnconfinedAccepted in your user settings records it.",
+		].join("\n"),
+		options: [
+			{ label: YOLO_UNCONFINED_ACCEPT_LABEL, description: "Record the acceptance and run yolo unconfined." },
+			{ label: YOLO_UNCONFINED_DECLINE_LABEL, description: "Yolo stays contained; nothing is saved." },
+		],
+	};
+}
+
+export interface YoloActivationDeps {
+	getSettings(): PancodeSettings | undefined;
+	/** The root refusal read once at boot, or null when yolo may run here. */
+	refusal: string | null;
+	/** The ungated settings commit; `source` names the surface the edit came from (#434). */
+	commitSetting(id: string, next: PancodeSettings, scope: SettingScope, source?: ConfigChangeSource): void;
+	/** Shows the acceptance card; the existing transient ask_user card. */
+	ask: AskUserHandler;
+	/** Frees the screen for the card, closing an overlay such as /settings. */
+	prepareScreen(): void;
+	notify(level: "info" | "warning" | "error", text: string, key: string): void;
+	/** Runs after a commit the card made, so the surface can announce and redraw. */
+	afterCommit?(): void;
+}
+
+export interface YoloActivation {
+	/**
+	 * The settings commit every interactive surface uses, with yolo gated. False
+	 * means the change was held (refused, or waiting on the acceptance card, which
+	 * reports its own outcome), so the caller must not announce it as applied.
+	 */
+	commit(id: string, next: PancodeSettings, scope: SettingScope, source?: ConfigChangeSource): boolean;
+	/** Ask for acceptance of a yolo the session was started with and is holding at default. */
+	requestHeldAtBoot(): Promise<void>;
+}
+
+export function createYoloActivation(deps: YoloActivationDeps): YoloActivation {
+	let asking = false;
+
+	const accept = async (scope: SettingScope, takeScreen: boolean, source?: ConfigChangeSource): Promise<void> => {
+		if (asking) return;
+		asking = true;
+		try {
+			// The operator just asked for yolo, so the card may replace /settings;
+			// at boot it waits for a free screen instead of closing anything.
+			if (takeScreen) deps.prepareScreen();
+			const result = await deps.ask([yoloAcceptanceQuestion(deps.getSettings())]);
+			if (result.unavailable === true) {
+				deps.notify(
+					"info",
+					"Yolo needs a one-time acceptance; turn it on again once the screen is free.",
+					"safety:yolo-accept",
+				);
+				return;
+			}
+			if (result.cancelled === true || result.answers[0]?.options?.includes(YOLO_ACCEPT_LABEL) !== true) {
+				deps.notify("info", "Yolo stays off; autonomy is default.", "safety:yolo-accept");
+				return;
+			}
+			const current = deps.getSettings();
+			if (current === undefined) return;
+			const accepted = structuredClone(current);
+			accepted.safety.yoloAccepted = true;
+			// The acceptance is the operator's own, so it is saved to user settings.
+			deps.commitSetting("safety.yoloAccepted", accepted, "global", source);
+			const switched = structuredClone(deps.getSettings() ?? accepted);
+			switched.safety.autonomy = "yolo";
+			deps.commitSetting("safety.autonomy", switched, scope, source);
+			deps.afterCommit?.();
+		} catch (error) {
+			deps.notify(
+				"error",
+				`Yolo was not turned on: ${error instanceof Error ? error.message : String(error)}`,
+				"safety:yolo-accept",
+			);
+		} finally {
+			asking = false;
+		}
+	};
+
+	const acceptUnconfined = async (scope: SettingScope, source?: ConfigChangeSource): Promise<void> => {
+		if (asking) return;
+		asking = true;
+		try {
+			deps.prepareScreen();
+			const result = await deps.ask([yoloUnconfinedAcceptanceQuestion()]);
+			if (result.unavailable === true) {
+				deps.notify(
+					"info",
+					"Unconfined yolo needs a one-time acceptance; choose it again once the screen is free.",
+					"safety:yolo-unconfined-accept",
+				);
+				return;
+			}
+			if (result.cancelled === true || result.answers[0]?.options?.includes(YOLO_UNCONFINED_ACCEPT_LABEL) !== true) {
+				deps.notify("info", "Yolo stays contained.", "safety:yolo-unconfined-accept");
+				return;
+			}
+			const current = deps.getSettings();
+			if (current === undefined) return;
+			const accepted = structuredClone(current);
+			accepted.safety.yoloUnconfinedAccepted = true;
+			deps.commitSetting("safety.yoloUnconfinedAccepted", accepted, "global", source);
+			const switched = structuredClone(deps.getSettings() ?? accepted);
+			switched.safety.yoloConfinement = "unconfined";
+			deps.commitSetting("safety.yoloConfinement", switched, scope, source);
+			deps.afterCommit?.();
+		} catch (error) {
+			deps.notify(
+				"error",
+				`Yolo stays contained: ${error instanceof Error ? error.message : String(error)}`,
+				"safety:yolo-unconfined-accept",
+			);
+		} finally {
+			asking = false;
+		}
+	};
+
+	return {
+		commit(id, next, scope, source) {
+			const current = deps.getSettings();
+			if (
+				id === "safety.yoloConfinement" &&
+				next.safety.yoloConfinement === "unconfined" &&
+				current?.safety.yoloUnconfinedAccepted !== true
+			) {
+				void Promise.resolve().then(() => acceptUnconfined(scope, source));
+				return false;
+			}
+			const turningOn = id === "safety.autonomy" && next.safety.autonomy === "yolo" && current?.safety.autonomy !== "yolo";
+			if (!turningOn) {
+				deps.commitSetting(id, next, scope, source);
+				return true;
+			}
+			if (deps.refusal !== null) {
+				deps.notify("warning", deps.refusal, "safety:yolo-refused");
+				return false;
+			}
+			if (current?.safety.yoloAccepted === true) {
+				deps.commitSetting(id, next, scope, source);
+				return true;
+			}
+			// The caller (a keypress, the /settings overlay) finishes its own frame
+			// first; the card then takes the screen.
+			void Promise.resolve().then(() => accept(scope, true, source));
+			return false;
+		},
+		requestHeldAtBoot() {
+			if (deps.getSettings() === undefined || deps.refusal !== null) return Promise.resolve();
+			return accept("session", false);
+		},
+	};
+}

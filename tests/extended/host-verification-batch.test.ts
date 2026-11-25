@@ -1,0 +1,1351 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, rejects, strictEqual } from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { afterEach, describe, it } from "node:test";
+import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
+import type { DispatchRequest } from "../../src/domains/dispatch/contract.js";
+import {
+	type BatchVerificationParticipant,
+	compareHostVerificationBase,
+	createBatchVerificationGate,
+	hostVerificationRejection,
+	runHostVerification,
+} from "../../src/domains/dispatch/host-verification.js";
+import { workspaceFingerprint } from "../../src/domains/dispatch/host-verification-memo.js";
+import { lintFormatScopeArgv, lintScriptFollowUpChecks } from "../../src/domains/dispatch/host-verification-scope.js";
+import { declaredScopeIntent } from "../../src/domains/dispatch/intent.js";
+import { mergeWithheldDetail } from "../../src/domains/dispatch/merge-gate.js";
+import type { RunHostVerification } from "../../src/domains/dispatch/types.js";
+import { loadProjectVerifierCatalog } from "../../src/tools/verify/catalog.js";
+import {
+	JUDGED_CHECK_MAX_OUTPUT_BYTES,
+	judgedFileSha256,
+	readJudgedFile,
+	runProjectCheck,
+} from "../../src/tools/verify/scripts.js";
+import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+import { settledRunTrust, writeSettledRun } from "../harness/settled-run.js";
+
+// The verification slot is machine-wide; keep this file's slot in scratch.
+const slotDir = mkdtempSync(join(tmpdir(), "pancode-verification-slot-"));
+process.env.PANCODE_VERIFICATION_SLOT_DIR = slotDir;
+
+type ResolvedCheck = NonNullable<DispatchRequest["resolvedVerification"]>[number];
+
+interface Scratch {
+	/** Scratch root holding the checkout, the state directory, and the run log. */
+	root: string;
+	/** Git checkout the declared checks run in. */
+	project: string;
+	/** Isolated `stateDir` for the verification memo and the check artifacts. */
+	stateDir: string;
+	/** One line per actual command execution, written by the check itself. */
+	log: string;
+}
+
+const scratches: string[] = [];
+
+afterEach(() => {
+	while (scratches.length > 0) {
+		const dir = scratches.pop();
+		if (dir !== undefined) rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+function git(root: string, ...args: string[]): void {
+	execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+/**
+ * A committed scratch checkout plus an isolated state directory.
+ *
+ * `git init` runs inside `project/`, never at the scratch root or the run root:
+ * a `.git` at either of those levels flips `isInsideGitRepo()` for every
+ * `mkdtemp` scratch in the suite and fails the ignore-policy contracts from an
+ * unrelated file (issue #205, `tests/harness/tmp-git-guard.ts`).
+ */
+function makeScratch(): Scratch {
+	const root = mkdtempSync(join(tmpdir(), "pancode-host-verification-"));
+	scratches.push(root);
+	const project = join(root, "project");
+	const stateDir = join(root, "state");
+	mkdirSync(join(project, "src"), { recursive: true });
+	mkdirSync(join(project, "tests"), { recursive: true });
+	mkdirSync(stateDir, { recursive: true });
+	writeFileSync(join(project, "src", "a.ts"), "export const a = 1;\n", "utf8");
+	writeFileSync(join(project, "src", "b.ts"), "export const b = 2;\n", "utf8");
+	writeFileSync(join(project, "tests", "a.test.ts"), "// a\n", "utf8");
+	writeFileSync(join(project, "tests", "b.test.ts"), "// b\n", "utf8");
+	git(project, "init", "-q", "-b", "main");
+	git(project, "config", "user.name", "Host Verification Contract");
+	git(project, "config", "user.email", "host-verification@example.invalid");
+	git(project, "add", "-A");
+	git(project, "commit", "-q", "-m", "baseline");
+	return { root, project, stateDir, log: join(root, "check-runs.log") };
+}
+
+/**
+ * A declared check that records every execution and then prints `message`.
+ *
+ * `process.execPath` rather than `"node"`: `runCodeStep` passes a closed
+ * environment allowlist (`code-step.ts` `PLAYBOOK_COMMAND_BASE_ENV`) and no
+ * test-supplied variable survives it, so the run counter lives in the argv the
+ * admission layer would have resolved.
+ */
+function check(input: { scratch: Scratch; id?: string; message: string; exitCode: number }): ResolvedCheck {
+	const script = [
+		// A base replay cannot write the log; it must print the same failure the task run does.
+		`try { require("node:fs").appendFileSync(${JSON.stringify(input.scratch.log)}, "ran\\n"); } catch {}`,
+		`console.error(${JSON.stringify(input.message)});`,
+		`process.exit(${input.exitCode});`,
+	].join(" ");
+	return {
+		check: input.id ?? "test",
+		argv: [process.execPath, "-e", script],
+		cwd: input.scratch.project,
+		timeoutMs: 30_000,
+	};
+}
+
+/**
+ * One batch member. Omitting `writeRoots` is the unconfined shape a
+ * verification-only intent normalizes to (`intent.ts:139` also drops a `"."`
+ * entry into it), and `cwd` overrides the frame the member's roots resolve in,
+ * which is what a `worktree: true` task carries.
+ */
+function member(input: {
+	runId: string;
+	scratch: Scratch;
+	cwd?: string;
+	writeRoots?: ReadonlyArray<string>;
+	checks?: ReadonlyArray<ResolvedCheck>;
+	workerSuccessful?: boolean;
+}): BatchVerificationParticipant {
+	const declared = declaredScopeIntent({ writeRoots: input.writeRoots ?? [] });
+	ok(declared.ok, "scratch intent must normalize");
+	return {
+		runId: input.runId,
+		request: {
+			cwd: input.cwd ?? input.scratch.project,
+			intent: declared.intent,
+			...(input.checks === undefined ? {} : { resolvedVerification: input.checks }),
+		},
+		workerSuccessful: input.workerSuccessful ?? true,
+	};
+}
+
+/** Command executions recorded by the check itself, across the whole batch. */
+function runCount(scratch: Scratch): number {
+	try {
+		return readFileSync(scratch.log, "utf8")
+			.trim()
+			.split("\n")
+			.filter((line) => line.length > 0).length;
+	} catch {
+		return 0;
+	}
+}
+
+describe("host verification judgment identity", () => {
+	function measurement(scratch: Scratch): ResolvedCheck {
+		return {
+			check: "value",
+			argv: [
+				process.execPath,
+				"-e",
+				[
+					`require("node:fs").appendFileSync(${JSON.stringify(scratch.log)}, "ran\\n");`,
+					"console.log(JSON.stringify({ value: 2 }));",
+				].join(" "),
+			],
+			cwd: scratch.project,
+			timeoutMs: 30_000,
+		};
+	}
+
+	function verify(scratch: Scratch, runId: string, resolvedCheck: ResolvedCheck) {
+		return runHostVerification({
+			runId,
+			request: { resolvedVerification: [resolvedCheck] },
+			workerSuccessful: true,
+			stateDir: scratch.stateDir,
+		});
+	}
+
+	for (const field of ["combine", "nonFinite"] as const) {
+		it(`invalidates memo evidence when tolerance ${field} changes and seals the reference path`, async () => {
+			const scratch = makeScratch();
+			const reference = join(scratch.project, "reference.json");
+			writeFileSync(reference, '{"value":2}');
+			const base: ResolvedCheck = {
+				...measurement(scratch),
+				kind: "numeric-compare",
+				numeric: {
+					reference,
+					referenceSha256: judgedFileSha256(readJudgedFile(reference)),
+					tolerance: { absolute: 0, combine: "all", nonFinite: "fail" },
+				},
+			};
+			const first = await verify(scratch, "first", base);
+			strictEqual(first?.status, "verified");
+			const report = first?.checks[0]?.report;
+			ok(report?.kind === "numeric-compare");
+			strictEqual(report.reference?.path, reference);
+			const changed = structuredClone(base);
+			ok(changed.numeric);
+			if (field === "combine") changed.numeric.tolerance.combine = "any";
+			else changed.numeric.tolerance.nonFinite = "match";
+			const second = await verify(scratch, "changed", changed);
+			strictEqual(second?.status, "verified");
+			strictEqual(second?.checks[0]?.memo, false);
+			strictEqual(runCount(scratch), 2);
+		});
+	}
+
+	it("seals a unittest run that collected no test as not run and unverified, so a merge-mode worktree does not land, and keeps a setUpClass error that exits 5 a rejection (CLI-P51)", async () => {
+		const scratch = makeScratch();
+		const python = join(scratch.project, "python3");
+		const check: ResolvedCheck = {
+			check: "python-unittest",
+			argv: [python, "-m", "unittest", "discover", "-s", "."],
+			cwd: scratch.project,
+			timeoutMs: 30_000,
+		};
+		const fake = (summary: string) => {
+			writeFileSync(python, `#!/bin/sh\necho ran >> ${JSON.stringify(scratch.log)}\n${summary}\nexit 5\n`);
+			chmodSync(python, 0o755);
+		};
+		fake("echo 'Ran 0 tests in 0.000s' >&2\necho >&2\necho 'NO TESTS RAN' >&2");
+		for (const runId of ["first", "second"]) {
+			const host = await verify(scratch, runId, check);
+			strictEqual(host?.status, "skipped", runId);
+			strictEqual(host?.reason, "no_tests_collected");
+			strictEqual(host?.checks[0]?.notRun, "no-tests");
+			strictEqual(host?.checks[0]?.exitCode, 0);
+			strictEqual(host?.checks[0]?.memo, false, "a run that judged nothing is never reused as a pass");
+			match(host?.checks[0]?.outputTail ?? "", /not run: no tests collected \(exit 5\)/u);
+			// A run that judged nothing never reads as host-verified: its failed quality leaves it compromised and held.
+			match(
+				mergeWithheldDetail({
+					assurance: "compromised",
+					contract: null,
+					output: null,
+					branch: "pancode/task/no-tests",
+				}) ?? "",
+				/merge withheld: its result is not trusted/u,
+			);
+		}
+		strictEqual(runCount(scratch), 2);
+		fake(
+			"echo 'ERROR: setUpClass (test_a.T)' >&2\necho 'RuntimeError: boom' >&2\necho 'Ran 0 tests in 0.000s' >&2\necho 'FAILED (errors=1)' >&2",
+		);
+		const crashed = await verify(scratch, "setup-class", check);
+		strictEqual(crashed?.status, "rejected");
+		strictEqual(crashed?.checks[0]?.notRun, undefined);
+		strictEqual(crashed?.checks[0]?.exitCode, 5);
+	});
+
+	for (const kind of ["numeric-compare", "perf-budget"] as const) {
+		it(`does not reuse an exit-only pass for a ${kind} judgment`, async () => {
+			const scratch = makeScratch();
+			const reference = join(scratch.project, "reference.json");
+			writeFileSync(reference, '{"value":1}');
+			const base = measurement(scratch);
+			const command = await verify(scratch, "exit-only", { ...base, check: "exit-only", kind: "command" });
+			strictEqual(command?.status, "verified");
+			const judged = await verify(scratch, "judged", {
+				...base,
+				kind,
+				...(kind === "numeric-compare"
+					? {
+							numeric: { reference, referenceSha256: judgedFileSha256(readJudgedFile(reference)), tolerance: { absolute: 0 } },
+						}
+					: { perf: { budget: { wallTimeMs: 0.001 } } }),
+			});
+			strictEqual(judged?.status, "rejected");
+			strictEqual(judged?.checks[0]?.check, "value");
+			strictEqual(judged?.checks[0]?.memo, false);
+			strictEqual(judged?.checks[0]?.report?.kind, kind);
+			strictEqual(runCount(scratch), 2);
+		});
+	}
+
+	for (const bound of [
+		"numeric tolerance",
+		"performance budget",
+		"budget tolerance",
+		"baseline tolerance",
+		"timeout",
+	] as const) {
+		it(`invalidates a memo pass when the ${bound} changes`, async () => {
+			const scratch = makeScratch();
+			const reference = join(scratch.project, "reference.json");
+			const baseline = join(scratch.project, "baseline.json");
+			writeFileSync(reference, '{"value":1}');
+			writeFileSync(baseline, '{"version":1,"wallTimeMs":0.001}');
+			const base = measurement(scratch);
+			const pairs: Record<typeof bound, [ResolvedCheck, ResolvedCheck]> = {
+				"numeric tolerance": [
+					{
+						...base,
+						kind: "numeric-compare",
+						numeric: { reference, referenceSha256: judgedFileSha256(readJudgedFile(reference)), tolerance: { absolute: 1 } },
+					},
+					{
+						...base,
+						kind: "numeric-compare",
+						numeric: { reference, referenceSha256: judgedFileSha256(readJudgedFile(reference)), tolerance: { absolute: 0 } },
+					},
+				],
+				"performance budget": [
+					{ ...base, kind: "perf-budget", perf: { budget: { wallTimeMs: 60_000 } } },
+					{ ...base, kind: "perf-budget", perf: { budget: { wallTimeMs: 0.001 } } },
+				],
+				"budget tolerance": [
+					{ ...base, kind: "perf-budget", perf: { budget: { wallTimeMs: 0.001, tolerance: { relative: 60_000_000 } } } },
+					{ ...base, kind: "perf-budget", perf: { budget: { wallTimeMs: 0.001, tolerance: { relative: 0 } } } },
+				],
+				"baseline tolerance": [
+					{
+						...base,
+						kind: "perf-budget",
+						perf: {
+							baseline,
+							baselineSha256: judgedFileSha256(readJudgedFile(baseline)),
+							tolerance: { relative: 60_000_000 },
+						},
+					},
+					{
+						...base,
+						kind: "perf-budget",
+						perf: { baseline, baselineSha256: judgedFileSha256(readJudgedFile(baseline)), tolerance: { relative: 0 } },
+					},
+				],
+				timeout: [base, { ...base, timeoutMs: 60_000 }],
+			};
+			const [loose, strict] = pairs[bound];
+			const first = await verify(scratch, "loose", loose);
+			strictEqual(first?.status, "verified");
+			const second = await verify(scratch, "strict", strict);
+			strictEqual(second?.checks[0]?.memo, false);
+			strictEqual(second?.status, bound === "timeout" ? "verified" : "rejected");
+			strictEqual(runCount(scratch), 2);
+		});
+	}
+
+	for (const kind of ["numeric-compare", "perf-budget"] as const) {
+		it(`never reuses a ${kind} pass and judges a changed ignored reference or baseline afresh`, async () => {
+			const scratch = makeScratch();
+			writeFileSync(join(scratch.project, ".gitignore"), "measurements/\n");
+			mkdirSync(join(scratch.project, "measurements"));
+			const path = join(scratch.project, "measurements", "reference.json");
+			writeFileSync(path, kind === "numeric-compare" ? '{"value":2}' : '{"version":1,"wallTimeMs":60000}');
+			const resolved: ResolvedCheck = {
+				...measurement(scratch),
+				kind,
+				...(kind === "numeric-compare"
+					? {
+							numeric: {
+								reference: path,
+								referenceSha256: judgedFileSha256(readJudgedFile(path)),
+								tolerance: { absolute: 0 },
+							},
+						}
+					: { perf: { baseline: path, baselineSha256: judgedFileSha256(readJudgedFile(path)) } }),
+			};
+			const fingerprint = workspaceFingerprint(scratch.project);
+			ok(fingerprint);
+			const first = await verify(scratch, "original", resolved);
+			strictEqual(first?.status, "verified");
+			const again = await verify(scratch, "identical", structuredClone(resolved));
+			strictEqual(again?.status, "verified");
+			strictEqual(again?.checks[0]?.memo, false);
+			strictEqual(again?.checks[0]?.evidenceRunId, undefined);
+			writeFileSync(path, kind === "numeric-compare" ? '{"value":1}' : '{"version":1,"wallTimeMs":0.001}');
+			strictEqual(
+				workspaceFingerprint(scratch.project),
+				fingerprint,
+				"ignored data does not change the workspace fingerprint",
+			);
+			const changed = await verify(scratch, "changed", resolved);
+			strictEqual(changed?.status, "rejected");
+			strictEqual(changed?.checks[0]?.memo, false);
+			rmSync(path);
+			const missing = await verify(scratch, "missing", resolved);
+			strictEqual(missing?.status, "rejected");
+			strictEqual(missing?.checks[0]?.memo, false);
+			strictEqual(runCount(scratch), 4);
+		});
+	}
+
+	it("preserves check names and reuses identical command evidence only from the run that sealed it", async () => {
+		const scratch = makeScratch();
+		const base = measurement(scratch);
+		const first = await verify(scratch, "first", base);
+		strictEqual(first?.status, "verified");
+		ok(first);
+		await writeSettledRun(scratch.stateDir, {
+			...fixtureReceiptDraft(fixtureEnvelope("first")),
+			hostVerification: first,
+		});
+		const renamed = await verify(scratch, "renamed", { ...base, check: "energy" });
+		strictEqual(renamed?.checks[0]?.check, "energy");
+		strictEqual(renamed?.checks[0]?.memo, false);
+		const reused = await verify(scratch, "reused", { ...base, kind: "command" });
+		strictEqual(reused?.checks[0]?.check, "value");
+		strictEqual(reused?.checks[0]?.memo, true);
+		strictEqual(reused?.checks[0]?.evidenceRunId, "first");
+		strictEqual(reused?.checks[0]?.artifactPath, first.checks[0]?.artifactPath);
+		strictEqual(runCount(scratch), 2);
+		// D3-2: a memo line edited to cite a run that never sealed this check is a miss, not a pass.
+		const memoPath = join(scratch.stateDir, "dispatch-verification-memo.json");
+		const memo = JSON.parse(readFileSync(memoPath, "utf8")) as { entries: Array<{ runId: string }> };
+		writeFileSync(
+			memoPath,
+			JSON.stringify({ ...memo, entries: memo.entries.map((entry) => ({ ...entry, runId: "forged" })) }),
+		);
+		const forged = await verify(scratch, "after-forgery", base);
+		strictEqual(forged?.checks[0]?.memo, false);
+		strictEqual(runCount(scratch), 3);
+	});
+
+	it("retains every batch judgment sharing argv and only deduplicates identical declarations", async () => {
+		const scratch = makeScratch();
+		const reference = join(scratch.project, "reference.json");
+		const alternate = join(scratch.project, "alternate.json");
+		writeFileSync(reference, '{"value":1}');
+		writeFileSync(alternate, '{"value":2}');
+		const base = measurement(scratch);
+		const checks: ResolvedCheck[] = [
+			base,
+			{ ...base, check: "energy" },
+			{
+				...base,
+				kind: "numeric-compare",
+				numeric: { reference, referenceSha256: judgedFileSha256(readJudgedFile(reference)), tolerance: { absolute: 1 } },
+			},
+			{
+				...base,
+				kind: "numeric-compare",
+				numeric: { reference, referenceSha256: judgedFileSha256(readJudgedFile(reference)), tolerance: { absolute: 0 } },
+			},
+			{
+				...base,
+				kind: "numeric-compare",
+				numeric: {
+					reference: alternate,
+					referenceSha256: judgedFileSha256(readJudgedFile(alternate)),
+					tolerance: { absolute: 0 },
+				},
+			},
+			{ ...base, kind: "perf-budget", perf: { budget: { wallTimeMs: 60_000 } } },
+			{ ...base, kind: "perf-budget", perf: { budget: { wallTimeMs: 0.001 } } },
+			{ ...base, timeoutMs: 60_000 },
+		];
+		const gate = createBatchVerificationGate({ stateDir: scratch.stateDir });
+		gate.live("owner");
+		gate.live("sibling");
+		const [owner, sibling] = await Promise.all([
+			gate.arrive(member({ runId: "owner", scratch, checks })),
+			gate.arrive(member({ runId: "sibling", scratch, checks: structuredClone(checks) })),
+		]);
+		for (const result of [owner, sibling]) {
+			strictEqual(result?.status, "rejected");
+			deepStrictEqual(
+				result?.checks.map((entry) => entry.check),
+				checks.map((entry) => entry.check),
+			);
+			deepStrictEqual(
+				result?.checks.map((entry) => entry.exitCode),
+				[0, 0, 0, 1, 0, 0, 1, 0],
+			);
+			deepStrictEqual(
+				result?.checks.map((entry) => entry.report?.kind),
+				[
+					undefined,
+					undefined,
+					"numeric-compare",
+					"numeric-compare",
+					"numeric-compare",
+					"perf-budget",
+					"perf-budget",
+					undefined,
+				],
+			);
+		}
+		ok(sibling?.checks.every((entry) => entry.evidenceRunId === "owner"));
+		strictEqual(runCount(scratch), checks.length);
+	});
+});
+
+describe("batch-settled host verification", () => {
+	it("runs one batch check once and rejects only the worker whose write roots the failure names", async () => {
+		const scratch = makeScratch();
+		const failing = check({ scratch, message: "1) tests/b.test.ts > adds\nAssertionError", exitCode: 1 });
+		const gate = createBatchVerificationGate({ stateDir: scratch.stateDir });
+		gate.live("run-a");
+		gate.live("run-b");
+		const [a, b] = await Promise.all([
+			gate.arrive(member({ runId: "run-a", scratch, writeRoots: ["src/a.ts", "tests/a.test.ts"], checks: [failing] })),
+			gate.arrive(member({ runId: "run-b", scratch, writeRoots: ["src/b.ts", "tests/b.test.ts"], checks: [failing] })),
+		]);
+
+		// Not "verified": the exculpated member's own checks array carries the
+		// failing exit code, and "verified" is the claim every consumer reads as
+		// "the declared checks passed".
+		strictEqual(a?.status, "not_implicated");
+		strictEqual(a?.strategy, "batch-settled");
+		strictEqual(a?.reason, "batch_settled_not_implicated");
+		strictEqual(a?.checks[0]?.exitCode, 1);
+		strictEqual(b?.status, "rejected");
+		strictEqual(b?.strategy, "batch-settled");
+		strictEqual(b?.attribution?.[0]?.basis, "write_roots");
+		deepStrictEqual(b?.attribution?.[0]?.charged, ["run-b"]);
+		ok(b?.attribution?.[0]?.implicated.includes(resolve(scratch.project, "tests/b.test.ts")));
+		strictEqual(runCount(scratch), 1);
+		strictEqual(hostVerificationRejection(a), null);
+		strictEqual(hostVerificationRejection(b)?.outcomeCode, "host_verification_rejected");
+		// The trust surface must not certify a run whose declared check exited 1.
+		strictEqual(
+			settledRunTrust({ ...fixtureReceiptDraft(fixtureEnvelope()), ...{ runId: "run-a", hostVerification: a } })
+				.validationGrounding.state,
+			"unknown",
+		);
+		strictEqual(
+			settledRunTrust({ ...fixtureReceiptDraft(fixtureEnvelope()), ...{ runId: "run-b", hostVerification: b } })
+				.validationGrounding.state,
+			"failed",
+		);
+	});
+
+	it("charges a declaring worker that ran unconfined even when a sibling's write roots are implicated", async () => {
+		const scratch = makeScratch();
+		const failing = check({ scratch, message: "1) tests/a.test.ts > adds\nAssertionError", exitCode: 1 });
+		const gate = createBatchVerificationGate({ stateDir: scratch.stateDir });
+		gate.live("run-a");
+		gate.live("run-unconfined");
+		const [a, unconfined] = await Promise.all([
+			gate.arrive(member({ runId: "run-a", scratch, writeRoots: ["tests/a.test.ts"], checks: [failing] })),
+			// write_roots omitted: no boundary to test the failing paths against, and
+			// the run executed with no write confinement at all.
+			gate.arrive(member({ runId: "run-unconfined", scratch, checks: [failing] })),
+		]);
+
+		strictEqual(a?.status, "rejected");
+		strictEqual(unconfined?.status, "rejected");
+		strictEqual(unconfined?.checks[0]?.exitCode, 1);
+		deepStrictEqual(a?.attribution?.[0]?.charged, ["run-a", "run-unconfined"]);
+		// Not "write_roots": the unconfined member is charged without a path of its
+		// own, so the record cannot claim positive evidence for every charged run.
+		strictEqual(a?.attribution?.[0]?.basis, "unattributable");
+		strictEqual(hostVerificationRejection(unconfined)?.outcomeCode, "host_verification_rejected");
+	});
+
+	it("clears a declarer when every named path falls inside a live sibling that declared no check", async () => {
+		const scratch = makeScratch();
+		const failing = check({ scratch, message: "1) src/b.ts > doubles", exitCode: 1 });
+		const gate = createBatchVerificationGate({ stateDir: scratch.stateDir });
+		gate.live("run-a");
+		gate.live("run-b");
+		const [a, b] = await Promise.all([
+			gate.arrive(member({ runId: "run-a", scratch, writeRoots: ["src/a.ts"], checks: [failing] })),
+			gate.arrive(member({ runId: "run-b", scratch, writeRoots: ["src/b.ts"] })),
+		]);
+
+		strictEqual(a?.status, "not_implicated");
+		strictEqual(a?.attribution?.[0]?.basis, "attributed_elsewhere");
+		deepStrictEqual(a?.attribution?.[0]?.charged, []);
+		deepStrictEqual(a?.attribution?.[0]?.implicated, [resolve(scratch.project, "src/b.ts")]);
+		strictEqual(hostVerificationRejection(a), null);
+		strictEqual(b, undefined);
+	});
+
+	it("charges every declarer when a member's write roots resolve in a frame the check never ran in", async () => {
+		const scratch = makeScratch();
+		const failing = check({ scratch, message: "1) src/b.ts > doubles", exitCode: 1 });
+		const gate = createBatchVerificationGate({ stateDir: scratch.stateDir });
+		gate.live("run-a");
+		gate.live("run-b");
+		// A `worktree: true` task's request cwd is its own checkout
+		// (`extension.ts:5777`) while the resolved check cwd stays the parent
+		// (`dispatch-admission.ts:246`), so no boundary can cover a named path.
+		const [a, b] = await Promise.all([
+			gate.arrive(
+				member({
+					runId: "run-a",
+					scratch,
+					cwd: join(scratch.root, "worktree-a"),
+					writeRoots: ["src/a.ts"],
+					checks: [failing],
+				}),
+			),
+			gate.arrive(
+				member({
+					runId: "run-b",
+					scratch,
+					cwd: join(scratch.root, "worktree-b"),
+					writeRoots: ["src/b.ts"],
+					checks: [failing],
+				}),
+			),
+		]);
+
+		strictEqual(a?.status, "rejected");
+		strictEqual(b?.status, "rejected");
+		strictEqual(a?.attribution?.[0]?.basis, "unattributable");
+		deepStrictEqual(a?.attribution?.[0]?.charged, ["run-a", "run-b"]);
+	});
+
+	it("keeps the charging path in the capped implicated list", async () => {
+		const scratch = makeScratch();
+		// 40 unowned paths sort before the one that charges run-a, so an
+		// alphabetical prefix would seal 32 paths supporting nothing.
+		const noise = Array.from({ length: 40 }, (_, index) => `vendor/pkg-${String(index).padStart(2, "0")}.ts`);
+		const failing = check({ scratch, message: [...noise, "1) zzz/owned.ts > adds"].join("\n"), exitCode: 1 });
+		const gate = createBatchVerificationGate({ stateDir: scratch.stateDir });
+		gate.live("run-a");
+		gate.live("run-b");
+		const [a, b] = await Promise.all([
+			gate.arrive(member({ runId: "run-a", scratch, writeRoots: ["zzz/owned.ts"], checks: [failing] })),
+			gate.arrive(member({ runId: "run-b", scratch, writeRoots: ["src/b.ts"], checks: [failing] })),
+		]);
+
+		strictEqual(a?.status, "rejected");
+		strictEqual(b?.status, "not_implicated");
+		strictEqual(a?.attribution?.[0]?.basis, "write_roots");
+		strictEqual(a?.attribution?.[0]?.implicated.length, 32);
+		strictEqual(a?.attribution?.[0]?.implicated[0], resolve(scratch.project, "zzz/owned.ts"));
+	});
+
+	it("charges every declaring worker when the failing check names no path", async () => {
+		const scratch = makeScratch();
+		const failing = check({ scratch, message: "boom", exitCode: 1 });
+		const gate = createBatchVerificationGate({ stateDir: scratch.stateDir });
+		gate.live("run-a");
+		gate.live("run-b");
+		const [a, b] = await Promise.all([
+			gate.arrive(member({ runId: "run-a", scratch, writeRoots: ["src/a.ts"], checks: [failing] })),
+			gate.arrive(member({ runId: "run-b", scratch, writeRoots: ["src/b.ts"], checks: [failing] })),
+		]);
+
+		strictEqual(a?.status, "rejected");
+		strictEqual(b?.status, "rejected");
+		strictEqual(a?.attribution?.[0]?.basis, "unattributable");
+		deepStrictEqual(a?.attribution?.[0]?.charged, ["run-a", "run-b"]);
+		deepStrictEqual(a?.attribution?.[0]?.implicated, []);
+		strictEqual(runCount(scratch), 1);
+	});
+
+	it("charges every declaring worker when the named paths fall outside every write root", async () => {
+		const scratch = makeScratch();
+		const failing = check({ scratch, message: "1) vendor/x.ts > adds", exitCode: 1 });
+		const gate = createBatchVerificationGate({ stateDir: scratch.stateDir });
+		gate.live("run-a");
+		gate.live("run-b");
+		const [a, b] = await Promise.all([
+			gate.arrive(member({ runId: "run-a", scratch, writeRoots: ["src/a.ts"], checks: [failing] })),
+			gate.arrive(member({ runId: "run-b", scratch, writeRoots: ["src/b.ts"], checks: [failing] })),
+		]);
+
+		strictEqual(a?.status, "rejected");
+		strictEqual(b?.status, "rejected");
+		strictEqual(a?.attribution?.[0]?.basis, "unattributable");
+		deepStrictEqual(a?.attribution?.[0]?.charged, ["run-a", "run-b"]);
+		deepStrictEqual(a?.attribution?.[0]?.implicated, [resolve(scratch.project, "vendor/x.ts")]);
+	});
+
+	it("keeps the single-run receipt shape unchanged", async () => {
+		const scratch = makeScratch();
+		const passing = check({ scratch, message: "ok", exitCode: 0 });
+		const result = await runHostVerification({
+			runId: "run-solo",
+			request: { resolvedVerification: [passing] },
+			workerSuccessful: true,
+			stateDir: scratch.stateDir,
+		});
+
+		deepStrictEqual(Object.keys(result ?? {}).sort(), ["checks", "status"]);
+		strictEqual(result?.status, "verified");
+		strictEqual(result?.checks[0]?.memo, false);
+		strictEqual(runCount(scratch), 1);
+	});
+
+	it("releases the barrier when a live sibling never reaches it", async () => {
+		const scratch = makeScratch();
+		const passing = check({ scratch, message: "ok", exitCode: 0 });
+		const gate = createBatchVerificationGate({ stateDir: scratch.stateDir });
+		gate.live("run-a");
+		gate.live("run-gone");
+		const pending = gate.arrive(member({ runId: "run-a", scratch, writeRoots: ["src/a.ts"], checks: [passing] }));
+		gate.abandon("run-gone");
+		const a = await pending;
+
+		strictEqual(a?.status, "verified");
+		strictEqual(a?.strategy, "batch-settled");
+	});
+
+	it("forms a new barrier for each admission wave instead of racing the members admitted later", async () => {
+		const scratch = makeScratch();
+		const failing = check({ scratch, message: "1) src/a.ts > adds", exitCode: 1 });
+		const gate = createBatchVerificationGate({ stateDir: scratch.stateDir });
+		gate.live("run-1");
+		gate.live("run-2");
+		await Promise.all([
+			gate.arrive(member({ runId: "run-1", scratch, writeRoots: ["src/a.ts"], checks: [failing] })),
+			gate.arrive(member({ runId: "run-2", scratch, writeRoots: ["src/b.ts"], checks: [failing] })),
+		]);
+
+		// A batch larger than the effective capacity admits its remainder only once
+		// the first wave's leases free. Those members must barrier against each
+		// other rather than each running the shared check on a checkout the other
+		// is still editing, which is the defect the gate exists to remove.
+		gate.live("run-3");
+		gate.live("run-4");
+		const [three, four] = await Promise.all([
+			gate.arrive(member({ runId: "run-3", scratch, writeRoots: ["src/a.ts"], checks: [failing] })),
+			gate.arrive(member({ runId: "run-4", scratch, writeRoots: ["src/b.ts"], checks: [failing] })),
+		]);
+
+		strictEqual(three?.strategy, "batch-settled");
+		strictEqual(four?.strategy, "batch-settled");
+		strictEqual(three?.status, "rejected");
+		strictEqual(four?.status, "not_implicated");
+		deepStrictEqual(three?.attribution?.[0]?.charged, ["run-3"]);
+		strictEqual(runCount(scratch), 2);
+	});
+
+	it("fails every parked member when the settlement and the per-run fallback both throw", async () => {
+		const scratch = makeScratch();
+		// A regular file where the state directory's parent belongs: the artifact
+		// write in `runCodeStep` raises ENOTDIR, which is a declared check that
+		// could not be executed, not a check that failed.
+		const blocked = join(scratch.root, "blocked-state");
+		writeFileSync(blocked, "not a directory\n", "utf8");
+		const passing = check({ scratch, message: "ok", exitCode: 0 });
+		const gate = createBatchVerificationGate({ stateDir: join(blocked, "state") });
+		gate.live("run-a");
+		gate.live("run-b");
+		const a = gate.arrive(member({ runId: "run-a", scratch, writeRoots: ["src/a.ts"], checks: [passing] }));
+		const b = gate.arrive(member({ runId: "run-b", scratch, writeRoots: ["src/b.ts"], checks: [passing] }));
+
+		// The single-task path throws out of finalization and fails the run; a
+		// batch member must not seal as succeeded with no host-verification record.
+		await Promise.all([rejects(a, /ENOTDIR/u), rejects(b, /ENOTDIR/u)]);
+		await rejects(
+			runHostVerification({
+				runId: "run-solo",
+				request: { resolvedVerification: [passing] },
+				workerSuccessful: true,
+				stateDir: join(blocked, "state"),
+			}),
+			/ENOTDIR/u,
+		);
+	});
+
+	it("parks a failed member and a member with no declared checks without running anything for them", async () => {
+		const scratch = makeScratch();
+		const passing = check({ scratch, message: "ok", exitCode: 0 });
+		const gate = createBatchVerificationGate({ stateDir: scratch.stateDir });
+		gate.live("run-a");
+		gate.live("run-none");
+		gate.live("run-failed");
+		const [a, none, failed] = await Promise.all([
+			gate.arrive(member({ runId: "run-a", scratch, writeRoots: ["src/a.ts"], checks: [passing] })),
+			gate.arrive(member({ runId: "run-none", scratch, writeRoots: ["src/b.ts"] })),
+			gate.arrive(
+				member({
+					runId: "run-failed",
+					scratch,
+					writeRoots: ["tests/b.test.ts"],
+					checks: [passing],
+					workerSuccessful: false,
+				}),
+			),
+		]);
+
+		strictEqual(a?.status, "verified");
+		strictEqual(a?.strategy, "batch-settled");
+		strictEqual(none, undefined);
+		deepStrictEqual(failed, { status: "skipped", reason: "worker_not_successful", checks: [] });
+		strictEqual(runCount(scratch), 1);
+	});
+});
+
+describe("host verification capture and provenance parity", () => {
+	for (const size of [2 * 1024 * 1024, JUDGED_CHECK_MAX_OUTPUT_BYTES + 4096]) {
+		it(`agrees with direct verification for ${size} bytes of numeric output`, async () => {
+			const env = await isolatePancodeEnv("pancode-host-capture-");
+			const previous = process.cwd();
+			try {
+				const scratch = makeScratch();
+				process.chdir(scratch.project);
+				const reference = join(scratch.project, "reference.json");
+				writeFileSync(reference, '{"value":2}');
+				const argv = [process.execPath, "-e", `process.stdout.write(" ".repeat(${size}) + '{"value":2}');`];
+				mkdirSync(join(scratch.project, ".pancode"), { recursive: true });
+				writeFileSync(
+					join(scratch.project, ".pancode", "verifiers.yaml"),
+					JSON.stringify({
+						version: 2,
+						checks: [
+							{
+								id: "value",
+								description: "Large measurement",
+								kind: "numeric-compare",
+								command: argv,
+								reference: "reference.json",
+								tolerance: { absolute: 0 },
+								cwd: ".",
+								timeoutMs: 30_000,
+								tags: [],
+							},
+						],
+					}),
+				);
+				const loaded = loadProjectVerifierCatalog(scratch.project);
+				ok(loaded.ok && loaded.source);
+				const declared = loaded.source.checks[0];
+				ok(declared);
+				const direct = await runProjectCheck(declared);
+				const host = await runHostVerification({
+					runId: "large",
+					workerSuccessful: true,
+					stateDir: scratch.stateDir,
+					request: {
+						resolvedVerification: [
+							{
+								check: "value",
+								argv,
+								cwd: scratch.project,
+								timeoutMs: 30_000,
+								kind: "numeric-compare",
+								numeric: {
+									reference,
+									referenceSha256: judgedFileSha256(readJudgedFile(reference)),
+									tolerance: { absolute: 0 },
+								},
+							},
+						],
+					},
+				});
+				const check = host?.checks[0];
+				ok(check);
+				if (size < JUDGED_CHECK_MAX_OUTPUT_BYTES) {
+					strictEqual(direct.kind, "ok");
+					strictEqual(host?.status, "verified");
+					ok(check.report?.kind === "numeric-compare");
+					strictEqual(check.report.reference?.path, reference);
+					const directReport = direct.details?.report as { reference?: { sha256: string }; actual?: { sha256: string } };
+					strictEqual(check.report.reference?.sha256, directReport.reference?.sha256);
+					strictEqual(check.report.actual?.sha256, directReport.actual?.sha256);
+				} else {
+					strictEqual(direct.kind, "error");
+					if (direct.kind !== "error") return;
+					strictEqual(host?.status, "rejected");
+					strictEqual(check.report, undefined);
+					const reason = `output exceeded ${JUDGED_CHECK_MAX_OUTPUT_BYTES} bytes before judgement`;
+					ok(direct.message.includes(reason));
+					ok(check.outputTail?.includes(reason));
+					match(check.outputTail ?? "", /captured output was truncated/);
+					strictEqual(check.outputTail?.includes("not valid JSON"), false);
+				}
+			} finally {
+				process.chdir(previous);
+				env.restore();
+			}
+		});
+	}
+
+	it("seals absolute paths for both numeric references and performance baselines", async () => {
+		const scratch = makeScratch();
+		const reference = join(scratch.project, "reference.json");
+		const baseline = join(scratch.project, "baseline.json");
+		writeFileSync(reference, '{"value":2}');
+		writeFileSync(baseline, '{"version":1,"wallTimeMs":60000}');
+		const base = {
+			check: "value",
+			argv: [process.execPath, "-e", "console.log(JSON.stringify({ value: 2 }))"],
+			cwd: scratch.project,
+			timeoutMs: 30_000,
+		};
+		const result = await runHostVerification({
+			runId: "provenance",
+			workerSuccessful: true,
+			stateDir: scratch.stateDir,
+			request: {
+				resolvedVerification: [
+					{
+						...base,
+						kind: "numeric-compare",
+						numeric: { reference, referenceSha256: judgedFileSha256(readJudgedFile(reference)), tolerance: { absolute: 0 } },
+					},
+					{ ...base, kind: "perf-budget", perf: { baseline, baselineSha256: judgedFileSha256(readJudgedFile(baseline)) } },
+				],
+			},
+		});
+		strictEqual(result?.status, "verified");
+		const numeric = result?.checks[0]?.report;
+		const perf = result?.checks[1]?.report;
+		ok(numeric?.kind === "numeric-compare");
+		ok(perf?.kind === "perf-budget");
+		strictEqual(numeric.reference?.path, reference);
+		strictEqual(perf.baseline?.path, baseline);
+	});
+});
+
+for (const baseFails of [true, false]) {
+	it(`reports a quick host failure against a ${baseFails ? "failing" : "passing"} task base`, async () => {
+		const scratch = makeScratch();
+		const base = execFileSync("git", ["-C", scratch.project, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+		writeFileSync(join(scratch.project, "src", "a.ts"), "export const a = 9;\n");
+		const declared: ResolvedCheck = {
+			check: "test",
+			cwd: scratch.project,
+			timeoutMs: 5_000,
+			argv: [
+				process.execPath,
+				"-e",
+				baseFails
+					? "process.exit(1)"
+					: "process.exit(require('node:fs').readFileSync('src/a.ts','utf8').includes('9') ? 1 : 0)",
+			],
+		};
+		const request = {
+			resolvedVerification: [declared],
+			taskWorktree: {
+				root: scratch.project,
+				path: scratch.project,
+				runId: "comparison",
+				branch: "main",
+				base,
+				ownerToken: "fixture",
+			},
+		};
+		const verification = await runHostVerification({
+			runId: "comparison",
+			request,
+			workerSuccessful: true,
+			stateDir: scratch.stateDir,
+		});
+		strictEqual(verification?.status, "rejected");
+		ok(verification?.checks[0]);
+		// Eligibility is tested separately below. This fixture tests comparison
+		// results, independent of subprocess scheduling on a loaded host.
+		verification.checks[0].durationMs = 1;
+		await compareHostVerificationBase({ verification, request, stateDir: scratch.stateDir });
+		const contained = sandboxAvailability().available && sandboxAvailability().backend === "bwrap";
+		strictEqual(
+			verification?.checks[0]?.baseComparison?.status,
+			contained ? (baseFails ? "failed" : "passed") : "not_compared",
+		);
+		if (contained && baseFails) {
+			// The failure predates the task, so it is not the task's rejection.
+			strictEqual(verification?.status, "not_implicated");
+			strictEqual(verification?.reason, "failures_present_on_base");
+			strictEqual(hostVerificationRejection(verification), null);
+		} else {
+			match(hostVerificationRejection(verification)?.detail ?? "", contained ? /passes on base/ : /base was not compared/);
+			strictEqual(verification?.status, "rejected");
+			match(hostVerificationRejection(verification)?.detail ?? "", /host ran this check/);
+		}
+		strictEqual(
+			execFileSync("git", ["-C", scratch.project, "worktree", "list", "--porcelain"], { encoding: "utf8" }).split(
+				"worktree ",
+			).length,
+			2,
+		);
+		strictEqual(readFileSync(join(scratch.project, "src", "a.ts"), "utf8"), "export const a = 9;\n");
+	});
+}
+
+it("links the task's node_modules into the base when the manifests match, and leaves them in place", async () => {
+	const scratch = makeScratch();
+	writeFileSync(join(scratch.project, "package.json"), "{}\n");
+	git(scratch.project, "add", "package.json");
+	git(scratch.project, "commit", "-q", "-m", "manifest");
+	const base = execFileSync("git", ["-C", scratch.project, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+	mkdirSync(join(scratch.project, "node_modules", "dep"), { recursive: true });
+	writeFileSync(join(scratch.project, "node_modules", "dep", "index.js"), "module.exports = 0;\n");
+	writeFileSync(join(scratch.project, "src", "a.ts"), "export const a = 9;\n");
+	const declared: ResolvedCheck = {
+		check: "test",
+		cwd: scratch.project,
+		timeoutMs: 5_000,
+		argv: [
+			process.execPath,
+			"-e",
+			"process.exit(require('node:fs').readFileSync('src/a.ts','utf8').includes('9') ? 1 : require('./node_modules/dep'))",
+		],
+	};
+	const request = {
+		resolvedVerification: [declared],
+		taskWorktree: {
+			root: scratch.project,
+			path: scratch.project,
+			runId: "linked",
+			branch: "main",
+			base,
+			ownerToken: "fixture",
+		},
+	};
+	const verification = await runHostVerification({
+		runId: "linked",
+		request,
+		workerSuccessful: true,
+		stateDir: scratch.stateDir,
+	});
+	ok(verification?.checks[0]);
+	verification.checks[0].durationMs = 1;
+	await compareHostVerificationBase({ verification, request, stateDir: scratch.stateDir });
+	const contained = sandboxAvailability().available && sandboxAvailability().backend === "bwrap";
+	strictEqual(verification.checks[0].baseComparison?.status, contained ? "passed" : "not_compared");
+	strictEqual(readFileSync(join(scratch.project, "node_modules", "dep", "index.js"), "utf8"), "module.exports = 0;\n");
+});
+
+it("compares a slow failed whole-repo check against the base and does not reject a failure the base has", async () => {
+	const scratch = makeScratch();
+	const declared = check({ scratch, message: "failure", exitCode: 1 });
+	const verification = await runHostVerification({
+		runId: "slow-compared",
+		request: { resolvedVerification: [declared] },
+		workerSuccessful: true,
+		stateDir: scratch.stateDir,
+	});
+	ok(verification?.checks[0]);
+	verification.checks[0].durationMs = 60_000;
+	await compareHostVerificationBase({
+		verification,
+		request: {
+			resolvedVerification: [declared],
+			taskWorktree: {
+				root: scratch.project,
+				path: scratch.project,
+				runId: "slow-compared",
+				branch: "main",
+				base: "HEAD",
+				ownerToken: "fixture",
+			},
+		},
+		stateDir: scratch.stateDir,
+	});
+	const contained = sandboxAvailability().available && sandboxAvailability().backend === "bwrap";
+	if (contained) {
+		strictEqual(verification.checks[0].baseComparison?.status, "failed");
+		strictEqual(verification.status, "not_implicated");
+		strictEqual(hostVerificationRejection(verification), null);
+	} else {
+		strictEqual(verification.checks[0].baseComparison?.reason, "isolated base comparison sandbox unavailable");
+		strictEqual(verification.status, "rejected");
+	}
+	// The base replay cannot append to the run log outside its sandbox.
+	strictEqual(runCount(scratch), 1);
+});
+
+it("replays a slow base check in full and still rejects a failure the base does not have", {
+	skip: !(sandboxAvailability().available && sandboxAvailability().backend === "bwrap"),
+}, async () => {
+	const scratch = makeScratch();
+	writeFileSync(join(scratch.project, "src", "a.ts"), "export const a = 9;\n");
+	const declared: ResolvedCheck = {
+		check: "test",
+		cwd: scratch.project,
+		timeoutMs: 30_000,
+		argv: [
+			process.execPath,
+			"-e",
+			[
+				"const task = require('node:fs').readFileSync('src/a.ts', 'utf8').includes('9');",
+				"console.log('error: src/b.ts is broken');",
+				"if (task) console.log('error: src/a.ts is broken');",
+				"setTimeout(() => process.exit(1), task ? 0 : 5_500);",
+			].join(" "),
+		],
+	};
+	const request = {
+		resolvedVerification: [declared],
+		taskWorktree: {
+			root: scratch.project,
+			path: scratch.project,
+			runId: "new-failure",
+			branch: "main",
+			base: "HEAD",
+			ownerToken: "fixture",
+		},
+	};
+	const verification = await runHostVerification({
+		runId: "new-failure",
+		request,
+		workerSuccessful: true,
+		stateDir: scratch.stateDir,
+	});
+	ok(verification?.checks[0]);
+	await compareHostVerificationBase({ verification, request, stateDir: scratch.stateDir });
+	strictEqual(verification.checks[0].baseComparison?.status, "failed");
+	match(verification.checks[0].baseComparison?.reason ?? "", /src\/a\.ts is broken/);
+	strictEqual(verification.status, "rejected");
+	match(hostVerificationRejection(verification)?.detail ?? "", /src\/a\.ts is broken/);
+	// The base's result is kept per base commit for the next task cut from it.
+	strictEqual(readdirSync(join(scratch.stateDir, "dispatch-verification-base")).length, 1);
+});
+
+describe("lint and format checks scoped to the task's changed files", () => {
+	function fakeLinter(scratch: Scratch): { argv: string[]; log: string } {
+		const bin = join(scratch.root, "bin");
+		mkdirSync(bin, { recursive: true });
+		const log = join(scratch.root, "biome-args.log");
+		const tool = join(bin, "biome");
+		writeFileSync(tool, `#!/bin/sh\necho "$*" >> ${JSON.stringify(log)}\nexit 0\n`, { mode: 0o755 });
+		return { argv: [tool, "check", "."], log };
+	}
+	function worktreeRequest(scratch: Scratch, checks: ResolvedCheck[]) {
+		return {
+			resolvedVerification: checks,
+			taskWorktree: {
+				root: scratch.project,
+				path: scratch.project,
+				runId: "scoped",
+				branch: "main",
+				base: "HEAD",
+				ownerToken: "fixture",
+			},
+		};
+	}
+
+	it("passes the changed files to a biome check and leaves other checks whole-repo", async () => {
+		const scratch = makeScratch();
+		const linter = fakeLinter(scratch);
+		writeFileSync(join(scratch.project, "src", "a.ts"), "export const a = 9;\n");
+		writeFileSync(join(scratch.project, "src", "new.ts"), "export const n = 1;\n");
+		const lint: ResolvedCheck = { check: "lint", argv: linter.argv, cwd: scratch.project, timeoutMs: 30_000 };
+		const whole = check({ scratch, id: "typecheck", message: "ok", exitCode: 0 });
+		const verification = await runHostVerification({
+			runId: "scoped",
+			request: worktreeRequest(scratch, [lint, whole]),
+			workerSuccessful: true,
+			stateDir: scratch.stateDir,
+		});
+		strictEqual(verification?.status, "verified");
+		strictEqual(readFileSync(linter.log, "utf8"), "check --no-errors-on-unmatched ./src/a.ts ./src/new.ts\n");
+		deepStrictEqual(verification?.checks[1]?.argv.slice(1), whole.argv.slice(1));
+		strictEqual(runCount(scratch), 1);
+	});
+
+	it("passes a scoped check without running it when the task changed no file under it", async () => {
+		const scratch = makeScratch();
+		const linter = fakeLinter(scratch);
+		const lint: ResolvedCheck = { check: "lint", argv: linter.argv, cwd: scratch.project, timeoutMs: 30_000 };
+		const verification = await runHostVerification({
+			runId: "scoped-empty",
+			request: worktreeRequest(scratch, [lint]),
+			workerSuccessful: true,
+			stateDir: scratch.stateDir,
+		});
+		strictEqual(verification?.status, "verified");
+		strictEqual(verification?.checks[0]?.notRun, "nothing-changed");
+		strictEqual(existsSync(linter.log), false);
+	});
+
+	it("recognizes a package script that is a single linter command", () => {
+		const scratch = makeScratch();
+		writeFileSync(
+			join(scratch.project, "package.json"),
+			JSON.stringify({ scripts: { lint: "biome check .", all: "biome check . && tsc" } }),
+		);
+		const at = (argv: string[]) => lintFormatScopeArgv({ argv, cwd: scratch.project });
+		deepStrictEqual(at(["pnpm", "run", "lint"]), ["pnpm", "exec", "biome", "check", "."]);
+		deepStrictEqual(at(["pnpm", "run", "all"]), ["pnpm", "exec", "biome", "check", "."]);
+		strictEqual(at(["pnpm", "run", "typecheck"]), null);
+		deepStrictEqual(at(["npx", "eslint", "."]), ["npx", "eslint", "."]);
+	});
+
+	it("runs a lint script as declared once the task changed its package.json", async () => {
+		const scratch = makeScratch();
+		writeFileSync(join(scratch.project, "package.json"), JSON.stringify({ scripts: { lint: "biome check ." } }));
+		git(scratch.project, "add", "-A");
+		git(scratch.project, "commit", "-q", "-m", "manifest");
+		const pnpm = join(scratch.root, "bin", "pnpm");
+		mkdirSync(dirname(pnpm), { recursive: true });
+		writeFileSync(pnpm, `#!/bin/sh\necho "$*" >> ${JSON.stringify(scratch.log)}\n`, { mode: 0o755 });
+		writeFileSync(
+			join(scratch.project, "package.json"),
+			JSON.stringify({ scripts: { lint: "biome check . && node scripts/pwn.cjs" } }),
+		);
+		const lint: ResolvedCheck = { check: "lint", argv: [pnpm, "run", "lint"], cwd: scratch.project, timeoutMs: 30_000 };
+		const verification = await runHostVerification({
+			runId: "manifest-changed",
+			request: worktreeRequest(scratch, [lint]),
+			workerSuccessful: true,
+			stateDir: scratch.stateDir,
+		});
+		deepStrictEqual(
+			verification?.checks.map((entry) => [entry.check, entry.argv]),
+			[["lint", [pnpm, "run", "lint"]]],
+		);
+		strictEqual(readFileSync(scratch.log, "utf8"), "run lint\n");
+	});
+
+	it("runs a lint script's hygiene step whole-repo and compares its failure with the base", async () => {
+		const scratch = makeScratch();
+		writeFileSync(
+			join(scratch.project, "package.json"),
+			JSON.stringify({ scripts: { lint: "biome check . && node --import tsx scripts/check-hygiene.ts" } }),
+		);
+		const lint: ResolvedCheck = {
+			check: "lint",
+			argv: ["pnpm", "run", "lint"],
+			cwd: scratch.project,
+			timeoutMs: 30_000,
+		};
+		const followUps = lintScriptFollowUpChecks(lint);
+		deepStrictEqual(
+			followUps.map((entry) => [entry.check, entry.argv]),
+			[["lint: node --import tsx scripts/check-hygiene.ts", ["node", "--import", "tsx", "scripts/check-hygiene.ts"]]],
+		);
+		deepStrictEqual(lintScriptFollowUpChecks({ ...lint, argv: ["biome", "check", "."] }), []);
+		const hygiene = followUps[0];
+		ok(hygiene);
+		const verification: RunHostVerification = {
+			status: "rejected",
+			checks: [
+				{
+					check: hygiene.check,
+					argv: [...hygiene.argv],
+					cwd: hygiene.cwd,
+					exitCode: 1,
+					durationMs: 1,
+					memo: false,
+					outputTail: "hygiene failure",
+				},
+			],
+		};
+		await compareHostVerificationBase({
+			verification,
+			request: worktreeRequest(scratch, [lint]),
+			stateDir: scratch.stateDir,
+		});
+		const reason = verification.checks[0]?.baseComparison?.reason;
+		ok(reason !== "declared check unavailable", reason);
+		ok(reason !== "check was scoped to the task's changed files", reason);
+	});
+});
+
+it("contains base-check writes and removes concurrent timed-out base checkouts", async () => {
+	const scratch = makeScratch();
+	const outside = join(scratch.root, "escaped");
+	const declared: ResolvedCheck = {
+		check: "contained",
+		cwd: scratch.project,
+		timeoutMs: 100,
+		argv: [
+			process.execPath,
+			"-e",
+			`try { require('node:fs').writeFileSync(${JSON.stringify(outside)}, 'escaped'); } catch {} setInterval(() => {}, 1000);`,
+		],
+	};
+	const request = {
+		resolvedVerification: [declared],
+		taskWorktree: {
+			root: scratch.project,
+			path: scratch.project,
+			runId: "concurrent",
+			branch: "main",
+			base: "HEAD",
+			ownerToken: "fixture",
+		},
+	};
+	const verification = (): RunHostVerification => ({
+		status: "rejected" as const,
+		checks: [
+			{
+				check: declared.check,
+				argv: [...declared.argv],
+				cwd: declared.cwd,
+				exitCode: 1,
+				durationMs: 1,
+				memo: false,
+				outputTail: "failure",
+			},
+		],
+	});
+	const left = verification();
+	const right = verification();
+	await Promise.all(
+		[left, right].map((value) =>
+			compareHostVerificationBase({ verification: value, request, stateDir: scratch.stateDir }),
+		),
+	);
+	strictEqual(existsSync(outside), false);
+	for (const value of [left, right]) {
+		strictEqual(value.status, "rejected");
+		strictEqual(value.checks[0]?.baseComparison?.status, "not_compared");
+		strictEqual(hostVerificationRejection(value)?.outcomeCode, "host_verification_rejected");
+	}
+	strictEqual(
+		execFileSync("git", ["-C", scratch.project, "worktree", "list", "--porcelain"], { encoding: "utf8" }).split(
+			"worktree ",
+		).length,
+		2,
+	);
+});
+
+describe("the verification slot", () => {
+	it("queues concurrent host verifications across two state roots and says which one waits", async () => {
+		const first = makeScratch();
+		const second = makeScratch();
+		ok(first.stateDir !== second.stateDir);
+		const running = join(first.root, "running");
+		// Fails when another check is already running, then holds its marker long enough for any overlap to show.
+		const exclusive = (scratch: Scratch, id: string): ResolvedCheck => ({
+			check: id,
+			argv: [
+				process.execPath,
+				"-e",
+				[
+					`const fs = require("node:fs");`,
+					`try { fs.writeFileSync(${JSON.stringify(running)}, ${JSON.stringify(id)}, { flag: "wx" }); }`,
+					`catch { console.error("overlapped " + fs.readFileSync(${JSON.stringify(running)}, "utf8")); process.exit(3); }`,
+					"const until = Date.now() + 400; while (Date.now() < until) {}",
+					`fs.rmSync(${JSON.stringify(running)});`,
+				].join(" "),
+			],
+			cwd: scratch.project,
+			timeoutMs: 30_000,
+		});
+		const phases: string[] = [];
+		const verify = (scratch: Scratch, id: string) =>
+			runHostVerification({
+				runId: `run-${id}`,
+				request: { resolvedVerification: [exclusive(scratch, id)] },
+				workerSuccessful: true,
+				stateDir: scratch.stateDir,
+				slot: {
+					onWaiting: () => phases.push(`${id} waiting`),
+					onTaken: () => phases.push(`${id} running`),
+				},
+			});
+		const [a, b] = await Promise.all([verify(first, "a"), verify(second, "b")]);
+		deepStrictEqual(
+			[a?.status, b?.status],
+			["verified", "verified"],
+			[...(a?.checks ?? []), ...(b?.checks ?? [])].map((check) => check.outputTail).join("\n"),
+		);
+		strictEqual(phases.filter((phase) => phase.endsWith("waiting")).length, 1, phases.join(", "));
+		const waiter = phases.find((phase) => phase.endsWith("waiting"))?.split(" ")[0];
+		ok(phases.indexOf(`${waiter} waiting`) < phases.indexOf(`${waiter} running`), phases.join(", "));
+		ok(!existsSync(join(slotDir, "dispatch-verification-slot.lock")), "the slot is released");
+	});
+});

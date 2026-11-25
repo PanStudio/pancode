@@ -1,0 +1,835 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, it } from "node:test";
+import type { DomainContext } from "../../src/core/domain-loader.js";
+import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
+import { createExtensionsBundle } from "../../src/domains/extensions/extension.js";
+import type {
+	ExtensionReloadCandidate,
+	ExtensionReloadPrepareResult,
+	ExtensionsContract,
+} from "../../src/domains/extensions/index.js";
+import { createExtensionRuntimeHookBridge, type ExtensionEffect } from "../../src/domains/extensions/index.js";
+import { buildExtensionSnapshot } from "../../src/domains/extensions/snapshot.js";
+import { extensionSnapshotFor } from "../../src/domains/extensions/snapshot-access.js";
+import { bindExtensionSnapshotStore } from "../../src/domains/extensions/snapshot-store.js";
+import { installExtension, listInstalledExtensions, removeExtension } from "../../src/domains/extensions/state.js";
+import { createMiddlewareBundle } from "../../src/domains/middleware/extension.js";
+import type { HookReceipt } from "../../src/domains/middleware/hooks.js";
+import type {
+	MiddlewareContract,
+	MiddlewareDiagnostic,
+	MiddlewareHookRegistration,
+	MiddlewareRegistrar,
+	MiddlewareRegistrationReplacement,
+	PrepareRegistrationReplacementResult,
+} from "../../src/domains/middleware/index.js";
+import {
+	createExtensionReloadCoordinator,
+	type ExtensionGenerationCommitted,
+	type ExtensionReloadCoordinatorDeps,
+} from "../../src/entry/extension-reload.js";
+import { createQuietHookRuns } from "../../src/entry/extension-runtime-hooks.js";
+import { middlewareOwner } from "../harness/middleware-owner.js";
+import { trustProjectPackages } from "../harness/project-trust.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+const roots: string[] = [];
+const domainContext: DomainContext = { bus: {} as DomainContext["bus"], getContract: () => undefined };
+
+function scratch(): string {
+	const root = mkdtempSync(path.join(tmpdir(), "pancode-extension-reload-"));
+	roots.push(root);
+	return root;
+}
+
+function writePackage(root: string, id: string, hookId: string, message: string): void {
+	mkdirSync(root, { recursive: true });
+	writeFileSync(
+		path.join(root, "pancode-extension.yaml"),
+		[`id: ${id}`, `name: ${id}`, "version: 1.0.0", "description: Reload fixture.", ""].join("\n"),
+	);
+	writeFileSync(
+		path.join(root, "hooks.yaml"),
+		`- id: ${hookId}\n  on: turn_start\n  kind: prompt\n  message: ${message}\n`,
+	);
+}
+
+function installFixture(project: string, id: string, hookId = `${id}.hook`, message = id): void {
+	const source = scratch();
+	writePackage(source, id, hookId, message);
+	const result = installExtension(source, { cwd: project, scope: "project" });
+	trustProjectPackages(project, "extensions");
+	ok(
+		listInstalledExtensions(project, { scope: "project", all: true }).find((entry) => entry.id === id)?.loadable,
+		result.diagnostics.map((diagnostic) => diagnostic.message).join("; "),
+	);
+}
+
+function writeProjectHooks(project: string, hookId: string, message: string): void {
+	mkdirSync(path.join(project, ".pancode"), { recursive: true });
+	writeFileSync(
+		path.join(project, ".pancode", "hooks.yaml"),
+		`- id: ${hookId}\n  on: turn_start\n  kind: prompt\n  message: ${message}\n`,
+	);
+	const snapshot = captureProjectSurface(project, "hooks");
+	ok(snapshot.contentHash);
+	recordProjectSurfaceTrust(project, "hooks", snapshot.contentHash);
+}
+
+function hostHook(id: string, message = id): MiddlewareHookRegistration {
+	return {
+		id,
+		description: id,
+		hooks: ["turn_start"],
+		evaluate: () => [{ kind: "inject_reminder", message }],
+	};
+}
+
+interface LiveHarness {
+	bundle: ReturnType<typeof createExtensionsBundle>;
+	extensions: ExtensionsContract;
+	middleware: MiddlewareContract & MiddlewareRegistrar;
+	receipts: HookReceipt[];
+	lines: string[];
+	events: ExtensionGenerationCommitted[];
+	coordinator(overrides?: Partial<ExtensionReloadCoordinatorDeps>): ReturnType<typeof createExtensionReloadCoordinator>;
+	stop(): void;
+}
+
+function liveHarness(project: string): LiveHarness {
+	const bundle = createExtensionsBundle(domainContext, { cwd: () => project });
+	bundle.extension.start();
+	const middleware = middlewareOwner(createMiddlewareBundle());
+	const receipts: HookReceipt[] = [];
+	const lines: string[] = [];
+	const events: ExtensionGenerationCommitted[] = [];
+	return {
+		bundle,
+		extensions: bundle.contract,
+		middleware,
+		receipts,
+		lines,
+		events,
+		coordinator: (overrides = {}) =>
+			createExtensionReloadCoordinator({
+				extensions: bundle.contract,
+				middleware,
+				cwd: () => project,
+				recordReceipt: (receipt) => receipts.push(receipt),
+				runCommand: () => ({ code: 0, timedOut: false, stdout: "", stderr: "" }),
+				now: () => 1,
+				report: (line) => lines.push(line),
+				onCommitted: (event) => events.push(event),
+				...overrides,
+			}),
+		stop: () => bundle.extension.stop?.(),
+	};
+}
+
+/**
+ * Wrap the two contract boundaries before constructing the coordinator. The
+ * wrappers record entry into each publish primitive; observer callbacks add
+ * their own entries later, so adjacency is checked against the actual runtime
+ * transition instead of inferred from the final state.
+ */
+function observePublications(extensions: ExtensionsContract, middleware: MiddlewareRegistrar, log: string[]): void {
+	const prepareReload = extensions.prepareReload.bind(extensions);
+	extensions.prepareReload = () => {
+		const prepared = prepareReload();
+		if (prepared.status === "prepared") {
+			const publish = prepared.candidate.publish.bind(prepared.candidate);
+			prepared.candidate.publish = () => {
+				log.push(`ext-publish:${prepared.candidate.generation}`);
+				publish();
+			};
+		}
+		return prepared;
+	};
+	const prepareReplacement = middleware.prepareRegistrationReplacement.bind(middleware);
+	middleware.prepareRegistrationReplacement = (owner, generation, registrations) => {
+		const prepared = prepareReplacement(owner, generation, registrations);
+		if (prepared.status === "prepared") {
+			const publish = prepared.replacement.publish.bind(prepared.replacement);
+			prepared.replacement.publish = () => {
+				log.push(`mw-publish:${prepared.replacement.generation}`);
+				publish();
+			};
+		}
+		return prepared;
+	};
+}
+
+describe("extension reload coordinator publication", () => {
+	afterEach(() => {
+		bindExtensionSnapshotStore(null);
+		for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+	});
+
+	it("records effect-free runtime hook runs as one receipt per turn and each effect on its own (C-33)", async (t) => {
+		const env = await isolatePancodeEnv("pancode-quiet-hook-receipts-");
+		t.after(() => env.restore());
+		const project = scratch();
+		const source = scratch();
+		writeFileSync(
+			path.join(source, "pancode-extension.json"),
+			JSON.stringify({
+				id: "quiet_gate",
+				name: "Quiet gate",
+				version: "1.0.0",
+				description: "Watches reads",
+				runtime: {
+					api: 2,
+					entrypoint: "extension.mjs",
+					hooks: [{ on: "before_tool", tools: ["read"], timeoutMs: 1000, onTimeout: "pass", onError: "pass" }],
+				},
+			}),
+		);
+		writeFileSync(path.join(source, "extension.mjs"), "export default () => {};\n");
+		ok(installExtension(source, { cwd: project, scope: "user" }).extension?.loadable);
+		const harness = liveHarness(project);
+		t.after(() => harness.stop());
+		let session = "s-1";
+		const bridge = createExtensionRuntimeHookBridge({ sessionId: () => session });
+		let effects: ExtensionEffect[] = [];
+		bridge.bind({ hook: async () => ({ kind: "ok", effects }), notify: () => {} });
+		const heard = new Map<string, () => void>();
+		const bus = {
+			subscribe: (name: string, listener: () => void) => {
+				heard.set(name, listener);
+				return () => {};
+			},
+		} as unknown as NonNullable<ExtensionReloadCoordinatorDeps["bus"]>;
+		const coordinator = harness.coordinator({ runtimeHooks: bridge, bus });
+		strictEqual(coordinator.applyBoot().status, "committed");
+		const read = { hook: "before_tool", toolName: "read", toolArgs: {}, turnId: "turn-1", sessionId: "s-1" } as const;
+		for (let n = 0; n < 3; n += 1) await harness.middleware.runAwaitedHook?.(read);
+		effects = [{ kind: "notify_operator", message: "seen", key: "seen" }];
+		await harness.middleware.runAwaitedHook?.(read);
+		const runtime = () =>
+			harness.receipts
+				.filter((receipt) => receipt.kind === "runtime")
+				.map((receipt) => [receipt.turnId, receipt.effectKinds ?? [], receipt.runs ?? 1]);
+		deepStrictEqual(runtime(), [["turn-1", ["notify_operator"], 1]], "an effect keeps its own receipt at once");
+		await harness.middleware.runAsyncHook?.({ hook: "turn_end", turnId: "turn-1", sessionId: "s-1" });
+		deepStrictEqual(runtime(), [
+			["turn-1", ["notify_operator"], 1],
+			["turn-1", [], 3],
+		]);
+		const quiet = harness.receipts.at(-1);
+		deepStrictEqual([quiet?.outcome, quiet?.toolName, quiet?.sessionId], ["runtime-ok", "read", "s-1"]);
+		ok((quiet?.maxDurationMs ?? -1) >= 0 && (quiet?.durationMs ?? -1) >= (quiet?.maxDurationMs ?? 0));
+		// A turn cut short has no turn_end: its held runs go when it is aborted, under the session they ran in, even
+		// when the run named none and the session has changed since.
+		effects = [];
+		const unnamed = { hook: "before_tool", toolName: "read", toolArgs: {}, turnId: "turn-2" } as const;
+		await harness.middleware.runAwaitedHook?.(unnamed);
+		session = "s-2";
+		heard.get("turn.aborted")?.();
+		deepStrictEqual(
+			[harness.receipts.at(-1)?.turnId, harness.receipts.at(-1)?.sessionId],
+			["turn-2", "s-1"],
+			"an aborted turn's runs are written at once, under their own session",
+		);
+		// A parked session writes what it held before the next one is current.
+		await harness.middleware.runAwaitedHook?.({ ...read, turnId: "turn-3", sessionId: "s-2" });
+		heard.get("session.parked")?.();
+		strictEqual(harness.receipts.at(-1)?.turnId, "turn-3");
+		// A reload to a generation with no runtime hook, whose turn_end would write nothing, writes them first.
+		await harness.middleware.runAwaitedHook?.({ ...read, turnId: "turn-4" });
+		ok(removeExtension("quiet_gate", { cwd: project, scope: "user" }).removed);
+		strictEqual(coordinator.reload().status, "committed");
+		strictEqual(harness.receipts.at(-1)?.turnId, "turn-4");
+		// Shutdown writes the held runs, and every later one at once, before any drain hook unbinds the ledger.
+		ok(heard.has("shutdown.requested"));
+		const closing: HookReceipt[] = [];
+		const holder = createQuietHookRuns((receipt) => closing.push(receipt));
+		const ran = harness.receipts.find((receipt) => receipt.kind === "runtime" && receipt.runs === undefined);
+		ok(ran);
+		holder.add(ran);
+		holder.close();
+		holder.add(ran);
+		deepStrictEqual(
+			closing.map((receipt) => receipt.runs),
+			[1, undefined],
+		);
+	});
+
+	it("keeps boot at generation zero until the composition root publishes the paired first generation", () => {
+		const project = scratch();
+		installFixture(project, "ext-a");
+		const harness = liveHarness(project);
+		const log: string[] = [];
+		observePublications(harness.extensions, harness.middleware, log);
+		const coordinator = harness.coordinator({
+			onCommitted: (event) => {
+				log.push(`committed:${event.generation}`);
+				harness.events.push(event);
+			},
+		});
+
+		strictEqual(harness.extensions.snapshot(), null, "the extensions domain start publishes nothing");
+		strictEqual(harness.extensions.snapshot()?.generation ?? 0, 0);
+		strictEqual(harness.middleware.ownedGeneration("user-hooks"), 0);
+		const ephemeral = extensionSnapshotFor(project);
+		deepStrictEqual(
+			ephemeral.packages.map((entry) => [entry.id, ephemeral.generation]),
+			[["ext-a", 0]],
+			"snapshot readers take the ephemeral path before paired boot publication",
+		);
+		deepStrictEqual(harness.middleware.runHook({ hook: "turn_start" }).ruleIds, []);
+		strictEqual(harness.receipts.length, 0);
+
+		const boot = coordinator.applyBoot();
+		strictEqual(boot.status, "committed");
+		if (boot.status !== "committed") return;
+		deepStrictEqual([boot.generation, boot.previousGeneration, boot.changed], [1, 0, true]);
+		deepStrictEqual(log, ["ext-publish:1", "mw-publish:1", "committed:1"]);
+		strictEqual(harness.extensions.snapshot()?.generation ?? 0, 1);
+		strictEqual(harness.middleware.ownedGeneration("user-hooks"), 1);
+		const booted = harness.extensions.snapshot();
+		deepStrictEqual(
+			booted?.packages.map((entry) => [entry.id, booted.generation]),
+			[["ext-a", 1]],
+		);
+		deepStrictEqual(harness.middleware.runHook({ hook: "turn_start" }).ruleIds, ["ext-a.hook"]);
+		strictEqual(harness.receipts.at(-1)?.extension?.generation, 1);
+		deepStrictEqual(harness.events, [{ generation: 1, previousGeneration: 0, changed: true, digest: boot.digest }]);
+		harness.stop();
+	});
+
+	it("keeps project precedence truthful and publishes an unchanged reload as a paired new generation", () => {
+		const project = scratch();
+		installFixture(project, "ext-a", "shared", "from-extension");
+		writeProjectHooks(project, "shared", "from-project");
+		const harness = liveHarness(project);
+		const coordinator = harness.coordinator();
+
+		const boot = coordinator.applyBoot();
+		strictEqual(boot.status, "committed");
+		if (boot.status !== "committed") return;
+		deepStrictEqual(boot.hooks, { registered: 1, dropped: 0, fileIssues: 0, issues: 0, overridden: 1 });
+		deepStrictEqual(harness.middleware.runHook({ hook: "turn_start" }).ruleIds, ["shared"]);
+		strictEqual(harness.receipts.at(-1)?.origin, "project");
+		strictEqual(harness.receipts.at(-1)?.extension, undefined);
+		ok(harness.lines.some((line) => line.includes("overridden by")));
+
+		const reload = coordinator.reload();
+		strictEqual(reload.status, "committed");
+		if (reload.status !== "committed") return;
+		deepStrictEqual([reload.generation, reload.previousGeneration, reload.changed], [2, 1, false]);
+		strictEqual(reload.digest, boot.digest);
+		deepStrictEqual([reload.added, reload.removed, reload.modified], [[], [], []]);
+		deepStrictEqual(reload.hooks, boot.hooks);
+		strictEqual(harness.extensions.snapshot()?.generation ?? 0, 2);
+		strictEqual(harness.middleware.ownedGeneration("user-hooks"), 2);
+		deepStrictEqual(harness.middleware.runHook({ hook: "turn_start" }).ruleIds, ["shared"]);
+		deepStrictEqual(
+			harness.events.map((event) => [event.generation, event.previousGeneration, event.changed]),
+			[
+				[1, 0, true],
+				[2, 1, false],
+			],
+		);
+		harness.stop();
+	});
+
+	it("publishes extension and middleware adjacently before diagnostic, event, or report re-entry", () => {
+		const project = scratch();
+		installFixture(project, "ext-a");
+		installFixture(project, "ext-b");
+		const harness = liveHarness(project);
+		const log: string[] = [];
+		const diagnostics: MiddlewareDiagnostic[] = [];
+		const samples: Array<{
+			at: string;
+			extension: number;
+			middleware: number;
+			snapshot: number | undefined;
+			ruleIds: string[];
+			receiptGenerations: number[];
+		}> = [];
+		const sample = (at: string): void => {
+			const before = harness.receipts.length;
+			const result = harness.middleware.runHook({ hook: "turn_start" });
+			samples.push({
+				at,
+				extension: harness.extensions.snapshot()?.generation ?? 0,
+				middleware: harness.middleware.ownedGeneration("user-hooks"),
+				snapshot: harness.extensions.snapshot()?.generation,
+				ruleIds: [...result.ruleIds],
+				receiptGenerations: harness.receipts
+					.slice(before)
+					.map((receipt) => receipt.extension?.generation)
+					.filter((generation): generation is number => generation !== undefined),
+			});
+		};
+
+		// ext-a is dropped as an owned hook. Its post-publication diagnostic
+		// re-enters registration and takes ext-b too, exercising both directions
+		// without letting preparation call the sink.
+		harness.middleware.registerHook(hostHook("ext-a.hook", "host-a"));
+		observePublications(harness.extensions, harness.middleware, log);
+		harness.middleware.setDiagnosticSink((diagnostic) => {
+			diagnostics.push(diagnostic);
+			log.push(
+				diagnostic.kind === "registration_conflict"
+					? `sink:${diagnostic.registrationId}:${diagnostic.action}`
+					: `sink:${diagnostic.kind}`,
+			);
+			sample(`sink:${diagnostic.kind}`);
+			if (
+				diagnostic.kind === "registration_conflict" &&
+				diagnostic.registrationId === "ext-a.hook" &&
+				diagnostic.action === "dropped"
+			) {
+				harness.middleware.registerHook(hostHook("ext-b.hook", "host-b"));
+			}
+		});
+		const coordinator = harness.coordinator({
+			report: (line) => {
+				log.push("report");
+				harness.lines.push(line);
+				sample("report");
+			},
+			onCommitted: (event) => {
+				log.push(`committed:${event.generation}`);
+				harness.events.push(event);
+				sample("committed");
+			},
+		});
+
+		const outcome = coordinator.applyBoot();
+		strictEqual(outcome.status, "committed");
+		if (outcome.status !== "committed") return;
+		const extensionPublish = log.indexOf("ext-publish:1");
+		const middlewarePublish = log.indexOf("mw-publish:1");
+		ok(extensionPublish >= 0, log.join(" > "));
+		strictEqual(middlewarePublish, extensionPublish + 1, `publication calls were not adjacent: ${log.join(" > ")}`);
+		for (const prefix of ["sink:", "committed:", "report"]) {
+			const observer = log.findIndex((entry) => entry.startsWith(prefix));
+			ok(observer > middlewarePublish, `${prefix} ran before paired publication: ${log.join(" > ")}`);
+		}
+		deepStrictEqual(
+			diagnostics.map((diagnostic) =>
+				diagnostic.kind === "registration_conflict"
+					? [diagnostic.registrationId, diagnostic.conflictsWith, diagnostic.action]
+					: [diagnostic.kind],
+			),
+			[
+				["ext-a.hook", "host", "dropped"],
+				["ext-b.hook", "host", "evicted"],
+			],
+		);
+		const final = harness.middleware.runHook({ hook: "turn_start" });
+		deepStrictEqual(final.ruleIds, ["ext-a.hook", "ext-b.hook"]);
+		strictEqual(new Set(final.ruleIds).size, final.ruleIds.length, "sink re-entry introduced a duplicate id");
+		strictEqual(harness.extensions.snapshot()?.generation ?? 0, 1);
+		strictEqual(harness.middleware.ownedGeneration("user-hooks"), 1);
+		ok(samples.length >= 4, samples.map((entry) => entry.at).join(", "));
+		for (const observed of samples) {
+			strictEqual(observed.extension, 1, observed.at);
+			strictEqual(observed.middleware, 1, observed.at);
+			strictEqual(observed.snapshot, 1, observed.at);
+			strictEqual(new Set(observed.ruleIds).size, observed.ruleIds.length, observed.at);
+			deepStrictEqual(new Set(observed.receiptGenerations), new Set(observed.receiptGenerations.length > 0 ? [1] : []));
+		}
+		harness.stop();
+	});
+
+	it("samples cwd once, accepts a canonical alias, and refuses a workspace switch before middleware prepare", () => {
+		const projectA = scratch();
+		const projectB = scratch();
+		const aliasParent = scratch();
+		const projectAlias = path.join(aliasParent, "project-alias");
+		symlinkSync(projectA, projectAlias, "dir");
+		installFixture(projectA, "ext-a");
+		const harness = liveHarness(projectA);
+		let requestedCwd = projectAlias;
+		let cwdReads = 0;
+		const middlewarePreparations: number[] = [];
+		const prepareReplacement = harness.middleware.prepareRegistrationReplacement.bind(harness.middleware);
+		harness.middleware.prepareRegistrationReplacement = (owner, generation, registrations) => {
+			middlewarePreparations.push(generation);
+			return prepareReplacement(owner, generation, registrations);
+		};
+		const coordinator = harness.coordinator({
+			cwd: () => {
+				cwdReads += 1;
+				return requestedCwd;
+			},
+		});
+
+		const boot = coordinator.applyBoot();
+		strictEqual(boot.status, "committed", "the canonical alias names the same workspace");
+		strictEqual(cwdReads, 1);
+		deepStrictEqual(middlewarePreparations, [1]);
+
+		requestedCwd = projectB;
+		const switched = coordinator.reload();
+		strictEqual(switched.status, "rejected");
+		if (switched.status !== "rejected") return;
+		deepStrictEqual([switched.reason, switched.generation], ["workspace-changed", 1]);
+		strictEqual(cwdReads, 2, "the coordinator samples cwd exactly once for the refused run");
+		deepStrictEqual(middlewarePreparations, [1], "workspace mismatch is refused before middleware preparation");
+		strictEqual(harness.extensions.snapshot()?.generation ?? 0, 1);
+		strictEqual(harness.middleware.ownedGeneration("user-hooks"), 1);
+		strictEqual(harness.extensions.snapshot()?.generation, 1);
+
+		requestedCwd = projectAlias;
+		const recovered = coordinator.reload();
+		strictEqual(recovered.status, "committed");
+		if (recovered.status !== "committed") return;
+		strictEqual(recovered.generation, 3, "the refused workspace candidate burned generation 2");
+		strictEqual(cwdReads, 3);
+		deepStrictEqual(middlewarePreparations, [1, 3]);
+		strictEqual(harness.extensions.snapshot()?.generation ?? 0, 3);
+		strictEqual(harness.middleware.ownedGeneration("user-hooks"), 3);
+		harness.stop();
+	});
+
+	it("reports an untrusted project hooks file once per session, and not at all after the trust card answered", () => {
+		for (const held of [false, true]) {
+			const project = scratch();
+			mkdirSync(path.join(project, ".pancode"), { recursive: true });
+			writeFileSync(
+				path.join(project, ".pancode", "hooks.yaml"),
+				"- id: fmt\n  on: turn_start\n  kind: prompt\n  message: x\n",
+			);
+			const harness = liveHarness(project);
+			try {
+				const coordinator = harness.coordinator(held ? { holdBootTrustNotices: true } : {});
+				coordinator.applyBoot();
+				coordinator.reload();
+				const trustLines = harness.lines.filter((line) => line.includes("project hooks ignored"));
+				strictEqual(trustLines.length, held ? 0 : 1, trustLines.join("\n"));
+			} finally {
+				harness.stop();
+			}
+		}
+	});
+
+	it("publishes project-only hooks on degraded boot and leaves them unchanged on a rejected reload", () => {
+		const project = scratch();
+		writeProjectHooks(project, "project-only", "still-applies");
+		const middleware = middlewareOwner(createMiddlewareBundle());
+		const receipts: HookReceipt[] = [];
+		const lines: string[] = [];
+		let replacementCalls = 0;
+		const replaceRegistrations = middleware.replaceRegistrations.bind(middleware);
+		middleware.replaceRegistrations = (owner, generation, registrations) => {
+			replacementCalls += 1;
+			return replaceRegistrations(owner, generation, registrations);
+		};
+		const coordinator = createExtensionReloadCoordinator({
+			extensions: undefined,
+			middleware,
+			cwd: () => project,
+			recordReceipt: (receipt) => receipts.push(receipt),
+			report: (line) => lines.push(line),
+		});
+
+		const boot = coordinator.applyBoot();
+		strictEqual(boot.status, "rejected");
+		if (boot.status !== "rejected") return;
+		deepStrictEqual([boot.reason, boot.generation], ["build-failed", 0]);
+		strictEqual(middleware.ownedGeneration("user-hooks"), 1);
+		deepStrictEqual(middleware.runHook({ hook: "turn_start" }).ruleIds, ["project-only"]);
+		strictEqual(receipts.at(-1)?.origin, "project");
+		strictEqual(replacementCalls, 1);
+
+		const reload = coordinator.reload();
+		strictEqual(reload.status, "rejected");
+		if (reload.status !== "rejected") return;
+		deepStrictEqual([reload.reason, reload.generation], ["build-failed", 0]);
+		strictEqual(middleware.ownedGeneration("user-hooks"), 1);
+		deepStrictEqual(middleware.runHook({ hook: "turn_start" }).ruleIds, ["project-only"]);
+		strictEqual(replacementCalls, 1, "a rejected degraded reload does not republish project hooks");
+		ok(lines.every((line) => line.includes("extensions domain is not loaded")));
+	});
+});
+
+interface StubCalls {
+	extensions: string[];
+	middleware: string[];
+	timeline: string[];
+}
+
+interface StubScript {
+	prepare: ExtensionReloadPrepareResult;
+	middlewarePrepare?:
+		| PrepareRegistrationReplacementResult
+		| ((
+				generation: number,
+				registrations: ReadonlyArray<MiddlewareHookRegistration>,
+		  ) => PrepareRegistrationReplacementResult);
+}
+
+function candidateFor(
+	project: string,
+	generation: number,
+	calls: StubCalls,
+	current: () => boolean = () => true,
+): ExtensionReloadCandidate {
+	const candidate: ExtensionReloadCandidate = {
+		generation,
+		previousGeneration: generation - 1,
+		snapshot: buildExtensionSnapshot({ cwd: project, generation }),
+		changed: true,
+		added: [],
+		removed: [],
+		modified: [],
+		current: () => {
+			calls.extensions.push(`current:${generation}`);
+			calls.timeline.push(`ext-current:${generation}`);
+			return current();
+		},
+		publish: () => {
+			calls.extensions.push(`publish:${generation}`);
+			calls.timeline.push(`ext-publish:${generation}`);
+		},
+		discard: () => {
+			calls.extensions.push(`discard:${generation}`);
+			calls.timeline.push(`ext-discard:${generation}`);
+		},
+	};
+	return candidate;
+}
+
+function replacementFor(
+	generation: number,
+	calls: StubCalls,
+	current: () => boolean = () => true,
+	size = 0,
+): MiddlewareRegistrationReplacement {
+	return {
+		owner: "user-hooks",
+		generation,
+		dropped: [],
+		conflicts: [],
+		size,
+		current: () => {
+			calls.middleware.push(`current:${generation}`);
+			calls.timeline.push(`mw-current:${generation}`);
+			return current();
+		},
+		publish: () => {
+			calls.middleware.push(`publish:${generation}`);
+			calls.timeline.push(`mw-publish:${generation}`);
+		},
+		emitConflicts: () => {
+			calls.middleware.push(`emit:${generation}`);
+			calls.timeline.push(`mw-emit:${generation}`);
+		},
+		dispose: () => {
+			calls.middleware.push(`dispose:${generation}`);
+		},
+		discard: () => {
+			calls.middleware.push(`discard:${generation}`);
+			calls.timeline.push(`mw-discard:${generation}`);
+		},
+	};
+}
+
+function stubDeps(
+	project: string,
+	script: StubScript,
+	calls: StubCalls,
+): { deps: ExtensionReloadCoordinatorDeps; lines: string[]; events: ExtensionGenerationCommitted[] } {
+	const lines: string[] = [];
+	const events: ExtensionGenerationCommitted[] = [];
+	const extensions: NonNullable<ExtensionReloadCoordinatorDeps["extensions"]> = {
+		prepareReload: () => {
+			calls.extensions.push("prepare");
+			calls.timeline.push("ext-prepare");
+			return script.prepare;
+		},
+		snapshot: () => null,
+	};
+	const middleware: ExtensionReloadCoordinatorDeps["middleware"] = {
+		prepareRegistrationReplacement: (_owner, generation, registrations) => {
+			calls.middleware.push(`prepare:${generation}`);
+			calls.timeline.push(`mw-prepare:${generation}`);
+			const prepared = script.middlewarePrepare;
+			if (prepared === undefined) {
+				return { status: "prepared", replacement: replacementFor(generation, calls, () => true, registrations.length) };
+			}
+			return typeof prepared === "function" ? prepared(generation, registrations) : prepared;
+		},
+		replaceRegistrations: () => {
+			calls.middleware.push("replace");
+			return { applied: true, owner: "user-hooks", activeGeneration: 1, dropped: [], dispose: () => undefined };
+		},
+		ownedGeneration: () => 0,
+	};
+	return {
+		deps: {
+			extensions,
+			middleware,
+			cwd: () => project,
+			recordReceipt: () => undefined,
+			report: (line) => lines.push(line),
+			onCommitted: (event) => {
+				events.push(event);
+				calls.timeline.push(`committed:${event.generation}`);
+			},
+		},
+		lines,
+		events,
+	};
+}
+
+describe("extension reload coordinator refusal paths", () => {
+	afterEach(() => {
+		bindExtensionSnapshotStore(null);
+		for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+	});
+
+	it("publishes neither side when either final freshness check refuses", () => {
+		for (const staleSide of ["extension", "middleware"] as const) {
+			const project = scratch();
+			const calls: StubCalls = { extensions: [], middleware: [], timeline: [] };
+			const candidate = candidateFor(project, 5, calls, () => staleSide !== "extension");
+			const replacement = replacementFor(5, calls, () => staleSide !== "middleware");
+			const { deps, events } = stubDeps(
+				project,
+				{ prepare: { status: "prepared", candidate }, middlewarePrepare: { status: "prepared", replacement } },
+				calls,
+			);
+			const outcome = createExtensionReloadCoordinator(deps).reload();
+			strictEqual(outcome.status, "rejected", staleSide);
+			if (outcome.status !== "rejected") continue;
+			deepStrictEqual([outcome.reason, outcome.generation], ["stale", 4], staleSide);
+			ok(!calls.extensions.some((entry) => entry.startsWith("publish:")), staleSide);
+			ok(!calls.middleware.some((entry) => entry.startsWith("publish:")), staleSide);
+			ok(calls.extensions.includes("discard:5"), staleSide);
+			ok(calls.middleware.includes("discard:5"), staleSide);
+			deepStrictEqual(events, [], staleSide);
+		}
+	});
+
+	it("rejects prepare-time refusal before publication and reports no success after it", () => {
+		const project = scratch();
+		const calls: StubCalls = { extensions: [], middleware: [], timeline: [] };
+		const candidate = candidateFor(project, 5, calls);
+		const { deps, events } = stubDeps(
+			project,
+			{
+				prepare: { status: "prepared", candidate },
+				middlewarePrepare: { status: "rejected", owner: "user-hooks", reason: "stale", activeGeneration: 7 },
+			},
+			calls,
+		);
+		const outcome = createExtensionReloadCoordinator(deps).reload();
+		strictEqual(outcome.status, "rejected");
+		if (outcome.status !== "rejected") return;
+		deepStrictEqual([outcome.reason, outcome.generation], ["stale", 4]);
+		deepStrictEqual(calls.extensions, ["prepare", "discard:5"]);
+		deepStrictEqual(calls.middleware, ["prepare:5"]);
+		deepStrictEqual(events, []);
+		ok(outcome.lines[0]?.includes("active 7"));
+	});
+
+	it("calls assignment-only publication adjacently only after both current checks", () => {
+		const project = scratch();
+		const calls: StubCalls = { extensions: [], middleware: [], timeline: [] };
+		const candidate = candidateFor(project, 5, calls);
+		const replacement = replacementFor(5, calls);
+		const { deps, events } = stubDeps(
+			project,
+			{ prepare: { status: "prepared", candidate }, middlewarePrepare: { status: "prepared", replacement } },
+			calls,
+		);
+		const outcome = createExtensionReloadCoordinator(deps).reload();
+		strictEqual(outcome.status, "committed");
+		if (outcome.status !== "committed") return;
+		deepStrictEqual(calls.extensions, ["prepare", "current:5", "publish:5"]);
+		deepStrictEqual(calls.middleware, ["prepare:5", "current:5", "publish:5", "emit:5"]);
+		deepStrictEqual(calls.timeline, [
+			"ext-prepare",
+			"mw-prepare:5",
+			"ext-current:5",
+			"mw-current:5",
+			"ext-publish:5",
+			"mw-publish:5",
+			"mw-emit:5",
+			"committed:5",
+		]);
+		deepStrictEqual(events, [{ generation: 5, previousGeneration: 4, changed: true, digest: candidate.snapshot.digest }]);
+	});
+
+	it("returns a rejected extension build without preparing middleware", () => {
+		const project = scratch();
+		const calls: StubCalls = { extensions: [], middleware: [], timeline: [] };
+		const { deps, lines, events } = stubDeps(
+			project,
+			{
+				prepare: {
+					status: "rejected",
+					reason: "build-failed",
+					generation: 4,
+					diagnostics: { entries: [{ type: "error", message: "disk exploded" }], truncated: 0 },
+				},
+			},
+			calls,
+		);
+		const outcome = createExtensionReloadCoordinator(deps).reload();
+		strictEqual(outcome.status, "rejected");
+		if (outcome.status !== "rejected") return;
+		deepStrictEqual([outcome.reason, outcome.generation], ["build-failed", 4]);
+		deepStrictEqual(calls.extensions, ["prepare"]);
+		deepStrictEqual(calls.middleware, []);
+		deepStrictEqual(lines, ["[pancode:extensions] disk exploded"]);
+		deepStrictEqual(events, []);
+	});
+
+	it("keeps a paired publication committed when its post-publication observer throws", () => {
+		const project = scratch();
+		installFixture(project, "ext-a");
+		const harness = liveHarness(project);
+		const coordinator = harness.coordinator({
+			onCommitted: () => {
+				throw new Error("observer exploded");
+			},
+		});
+
+		const outcome = coordinator.applyBoot();
+		strictEqual(outcome.status, "committed");
+		if (outcome.status !== "committed") return;
+		strictEqual(harness.extensions.snapshot()?.generation ?? 0, 1);
+		strictEqual(harness.middleware.ownedGeneration("user-hooks"), 1);
+		strictEqual(harness.extensions.snapshot()?.generation, 1);
+		deepStrictEqual(harness.middleware.runHook({ hook: "turn_start" }).ruleIds, ["ext-a.hook"]);
+		ok(outcome.lines.some((line) => line.includes("committed generation observer failed: observer exploded")));
+		harness.stop();
+	});
+
+	it("refuses callback re-entry while the paired generation is already live", () => {
+		const project = scratch();
+		installFixture(project, "ext-a");
+		const harness = liveHarness(project);
+		let nested: ReturnType<ReturnType<typeof harness.coordinator>["reload"]> | null = null;
+		let coordinator!: ReturnType<typeof createExtensionReloadCoordinator>;
+		coordinator = harness.coordinator({
+			onCommitted: (event) => {
+				harness.events.push(event);
+				nested = coordinator.reload();
+			},
+		});
+		const outer = coordinator.applyBoot();
+		strictEqual(outer.status, "committed");
+		const nestedOutcome = nested as ReturnType<ReturnType<typeof harness.coordinator>["reload"]> | null;
+		ok(nestedOutcome);
+		strictEqual(nestedOutcome.status, "rejected");
+		if (nestedOutcome.status === "rejected") {
+			deepStrictEqual([nestedOutcome.reason, nestedOutcome.generation], ["reentrant", 1]);
+		}
+		strictEqual(harness.extensions.snapshot()?.generation ?? 0, 1);
+		strictEqual(harness.middleware.ownedGeneration("user-hooks"), 1);
+		harness.stop();
+	});
+});

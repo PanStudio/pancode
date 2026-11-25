@@ -1,0 +1,422 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// The notification channel: four tones, dismissal, and a success and information path the old
+// problem-only toast had no way to express. The store is a module singleton rather than React state
+// because the events transport that raises most notices is not a component.
+
+import type { MouseEvent, ReactElement } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
+import { ApiProblem } from "../api/client.js";
+import { useLiveState } from "../interaction/announcer.js";
+import type { Notice, NoticeInput, NoticeTone } from "./notification-model.js";
+import { DEFAULT_TTL, noticeAfterDismissal, problemNotice, withNotice } from "./notification-model.js";
+import "../interaction/interaction.css";
+
+export type { Notice, NoticeTone } from "./notification-model.js";
+
+let notices: Notice[] = [];
+const listeners = new Set<() => void>();
+const timers = new Map<string, ReturnType<typeof setTimeout>>();
+let paused = false;
+
+function publish(): void {
+	for (const listener of listeners) listener();
+}
+
+function arm(notice: Notice): void {
+	if (notice.ttl === null || paused) return;
+	const existing = timers.get(notice.id);
+	if (existing) clearTimeout(existing);
+	timers.set(
+		notice.id,
+		setTimeout(() => dismiss(notice.id), notice.ttl),
+	);
+}
+
+export function notify(input: NoticeInput): string {
+	const id = input.id ?? crypto.randomUUID();
+	const ttl = input.ttl === undefined ? DEFAULT_TTL[input.tone] : input.ttl;
+	const notice: Notice = { ...input, id, ttl, at: Date.now() };
+	notices = withNotice(notices, notice);
+	const existing = timers.get(id);
+	if (existing) clearTimeout(existing);
+	timers.delete(id);
+	arm(notice);
+	publish();
+	return id;
+}
+
+export function dismiss(id: string): void {
+	const timer = timers.get(id);
+	if (timer) clearTimeout(timer);
+	timers.delete(id);
+	notices = notices.filter((notice) => notice.id !== id);
+	publish();
+}
+
+export function dismissAll(): void {
+	for (const timer of timers.values()) clearTimeout(timer);
+	timers.clear();
+	notices = [];
+	publish();
+}
+
+/**
+ * A toast that vanishes while it is being read, or while its dismiss button holds focus, is a
+ * keyboard trap in reverse. Hovering or focusing the region stops every countdown.
+ */
+function setPaused(next: boolean): void {
+	if (paused === next) return;
+	paused = next;
+	if (paused) {
+		for (const timer of timers.values()) clearTimeout(timer);
+		timers.clear();
+	} else for (const notice of notices) arm(notice);
+}
+
+function subscribe(listener: () => void): () => void {
+	listeners.add(listener);
+	return () => {
+		listeners.delete(listener);
+	};
+}
+
+const snapshot = () => notices;
+const EMPTY: Notice[] = [];
+
+export function useNotices(): readonly Notice[] {
+	return useSyncExternalStore(subscribe, snapshot, () => EMPTY);
+}
+
+/** Every thrown value becomes a notice. An unrecognised error is still shown, never swallowed. */
+export function reportProblem(error: unknown, scope?: string): void {
+	// A refused token fails every request the same way. The shell replaces the page with one
+	// reconnect panel, so a toast per query would only bury it.
+	if (error instanceof ApiProblem && error.problem.status === 401) return;
+	if (error instanceof ApiProblem) {
+		notify(problemNotice(notices, error.problem, scope, crypto.randomUUID()));
+		return;
+	}
+	notify({
+		tone: "error",
+		title: "The request did not complete",
+		detail: error instanceof Error ? error.message : String(error),
+	});
+}
+
+const GLYPHS: Readonly<Record<NoticeTone, string>> = { error: "!", warning: "!", info: "i", success: "✓" };
+const TONE_WORDS: Readonly<Record<NoticeTone, string>> = {
+	error: "Error",
+	warning: "Warning",
+	info: "Information",
+	success: "Done",
+};
+
+/** A pointer press on a dismiss control must not pull focus out of whatever the operator was typing in. */
+const keepFocus = (event: MouseEvent<HTMLButtonElement>) => event.preventDefault();
+
+/** A phone-width window keeps two notices in view, a wider one three; the rest are counted. */
+const NARROW_QUERY = "(max-width: 599.98px)";
+function useVisibleCap(): number {
+	const [narrow, setNarrow] = useState(() => typeof matchMedia === "function" && matchMedia(NARROW_QUERY).matches);
+	useEffect(() => {
+		if (typeof matchMedia !== "function") return;
+		const query = matchMedia(NARROW_QUERY);
+		const change = () => setNarrow(query.matches);
+		query.addEventListener("change", change);
+		change();
+		return () => query.removeEventListener("change", change);
+	}, []);
+	return narrow ? 2 : 3;
+}
+
+/**
+ * On a task page the stack is a row at the top of the composer dock instead of an overlay. An overlay
+ * there has nowhere to go: the approval card can sit anywhere in the transcript and the composer fills
+ * the bottom, so on a short or narrow window it covered "Allow once" or Send. In the dock it takes
+ * space from the transcript, which scrolls, and the workbench keeps its full height. The task page
+ * renders the dock, so the slot is moved into it here and follows it from task to task.
+ */
+const DOCK = ".conversation__dock";
+function useDockSlot(): HTMLElement | null {
+	const [slot, setSlot] = useState<HTMLElement | null>(null);
+	useEffect(() => {
+		if (typeof MutationObserver !== "function") return;
+		const element = document.createElement("div");
+		element.className = "notice-dock";
+		let frame = 0;
+		const place = () => {
+			frame = 0;
+			const dock = document.querySelector<HTMLElement>(DOCK);
+			if (dock) {
+				if (dock.firstElementChild !== element) dock.prepend(element);
+				setSlot(element);
+			} else {
+				element.remove();
+				setSlot(null);
+			}
+		};
+		const observer = new MutationObserver(() => {
+			if (frame === 0) frame = requestAnimationFrame(place);
+		});
+		observer.observe(document.body, { childList: true, subtree: true });
+		place();
+		return () => {
+			observer.disconnect();
+			cancelAnimationFrame(frame);
+			element.remove();
+		};
+	}, []);
+	return slot;
+}
+
+/**
+ * The first slot of the stack. Status that belongs with the notices but is raised elsewhere (the
+ * session-control banner) is portaled here, so it floats or docks with them instead of taking a row
+ * at the top of the page and pushing the task's header down.
+ */
+let lead: HTMLElement | null = null;
+const leadListeners = new Set<() => void>();
+function setLead(element: HTMLElement | null): void {
+	if (lead === element) return;
+	lead = element;
+	for (const listener of leadListeners) listener();
+}
+function subscribeLead(listener: () => void): () => void {
+	leadListeners.add(listener);
+	return () => {
+		leadListeners.delete(listener);
+	};
+}
+export function useNoticeLead(): HTMLElement | null {
+	return useSyncExternalStore(
+		subscribeLead,
+		() => lead,
+		() => null,
+	);
+}
+
+/**
+ * A focused control under the floating stack is scrolled clear of it. The page's scroller pads its
+ * end and its scroll padding by the stack's height (interaction.css), so "nearest" lands it above.
+ */
+function clearOf(stack: HTMLElement, target: EventTarget | null): void {
+	if (!(target instanceof HTMLElement) || stack.contains(target) || target.closest("dialog, [role='dialog']")) return;
+	const over = stack.getBoundingClientRect();
+	const box = target.getBoundingClientRect();
+	if (over.height === 0 || box.height === 0 || box.height > over.top) return;
+	if (box.bottom > over.top && box.top < over.bottom && box.right > over.left && box.left < over.right)
+		target.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+/**
+ * Off a task page the stack floats over the page, which keeps the frame still when a notice comes or
+ * goes. Its height, measured from the window's bottom edge, is published as --notice-reserve so the
+ * page can always scroll its last control above the stack and focus never lands under it.
+ */
+function useFloatingReserve(region: { readonly current: HTMLElement | null }, docked: boolean): void {
+	useEffect(() => {
+		const root = document.documentElement;
+		const stack = region.current;
+		if (docked || !stack || typeof ResizeObserver !== "function") {
+			root.style.removeProperty("--notice-reserve");
+			return;
+		}
+		const measure = () => {
+			const box = stack.getBoundingClientRect();
+			const reserve = box.height > 0 ? Math.ceil(window.innerHeight - box.top) : 0;
+			if (reserve > 0) root.style.setProperty("--notice-reserve", `${reserve}px`);
+			else root.style.removeProperty("--notice-reserve");
+			clearOf(stack, document.activeElement);
+		};
+		const focused = (event: FocusEvent) => clearOf(stack, event.target);
+		const observer = new ResizeObserver(measure);
+		observer.observe(stack);
+		window.addEventListener("resize", measure);
+		document.addEventListener("focusin", focused);
+		return () => {
+			observer.disconnect();
+			window.removeEventListener("resize", measure);
+			document.removeEventListener("focusin", focused);
+			root.style.removeProperty("--notice-reserve");
+		};
+	}, [region, docked]);
+}
+
+export function NoticeToasts() {
+	const values = useNotices();
+	const cap = useVisibleCap();
+	const dockSlot = useDockSlot();
+	const shown = values.slice(-cap);
+	const hidden = values.length - shown.length;
+	const region = useRef<HTMLElement>(null);
+	useFloatingReserve(region, dockSlot !== null);
+	const [hovered, setHovered] = useState(false);
+	const [focused, setFocused] = useState(false);
+	// Removing the focused Dismiss button drops focus to <body>, so the next notice, or failing that
+	// the element focused before the region was entered, receives it. Timeouts never set this: the
+	// countdown is paused while the region holds focus.
+	const refocus = useRef<string | null>(null);
+	const refocusPending = useRef(false);
+	const enteredFrom = useRef<HTMLElement | null>(null);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the new list is the trigger; the target is read from refs and the DOM.
+	useEffect(() => {
+		if (!refocusPending.current) return;
+		refocusPending.current = false;
+		const next = refocus.current;
+		refocus.current = null;
+		// The id may be gone by now (evicted past five, or replaced), so the entry element is the fallback.
+		const target =
+			(next ? region.current?.querySelector<HTMLElement>(`[data-notice-id="${CSS.escape(next)}"] button`) : null) ??
+			enteredFrom.current;
+		if (target?.isConnected) target.focus();
+	}, [values]);
+	useEffect(() => {
+		setHovered(values.length > 0 && (region.current?.matches(":hover") ?? false));
+		setFocused(values.length > 0 && (region.current?.contains(document.activeElement) ?? false));
+	}, [values]);
+	useEffect(() => {
+		setPaused(hovered || focused);
+		return () => setPaused(false);
+	}, [hovered, focused]);
+	// The live text follows arrivals only. Deriving it from the newest remaining notice would make a
+	// dismissal swap in an older one, which a screen reader announces as if it were new.
+	const announced = useRef(new Map<string, number>());
+	const [alertText, setAlertText] = useState("");
+	const [statusText, setStatusText] = useState("");
+	useEffect(() => {
+		const fresh = values.filter((notice) => announced.current.get(notice.id) !== notice.at);
+		announced.current = new Map(values.map((notice) => [notice.id, notice.at]));
+		const isUrgent = (notice: Notice) => notice.tone === "error" || notice.tone === "warning";
+		const newest = (list: readonly Notice[], urgent: boolean) =>
+			[...list].reverse().find((notice) => isUrgent(notice) === urgent);
+		const spoken = (notice: Notice) =>
+			`${TONE_WORDS[notice.tone]}. ${notice.title}${notice.detail ? `. ${notice.detail}` : ""}`;
+		// Emptying the text once nothing of that kind remains lets an identical later notice be heard.
+		const arrivedUrgent = newest(fresh, true);
+		if (arrivedUrgent) setAlertText(spoken(arrivedUrgent));
+		else if (!newest(values, true)) setAlertText("");
+		const arrivedCalm = newest(fresh, false);
+		if (arrivedCalm) setStatusText(spoken(arrivedCalm));
+		else if (!newest(values, false)) setStatusText("");
+	}, [values]);
+	const inDock = (stack: ReactElement) => (dockSlot ? createPortal(stack, dockSlot) : stack);
+	return (
+		<>
+			{/* The toasts themselves are not a live region: a toast that is its own `role="alert"`
+			    re-announces on every re-render and cannot express a polite tone. */}
+			<div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+				{statusText}
+			</div>
+			<div className="sr-only" role="alert" aria-atomic="true">
+				{alertText}
+			</div>
+			{inDock(
+				<section
+					ref={region}
+					className="notice-region"
+					aria-label="Notifications"
+					onMouseEnter={() => setHovered(true)}
+					onMouseLeave={() => setHovered(false)}
+					onFocusCapture={(event) => {
+						if (!event.currentTarget.contains(event.relatedTarget) && event.relatedTarget instanceof HTMLElement)
+							enteredFrom.current = event.relatedTarget;
+						setFocused(true);
+					}}
+					onBlurCapture={(event) => {
+						if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
+					}}
+				>
+					<div className="notice-region__lead" ref={setLead} />
+					{values.length > 1 && (
+						<div className="notice-region__controls">
+							<span>
+								{values.length} notifications
+								{hidden > 0 ? <span className="notice-region__more"> · +{hidden} more</span> : null}
+							</span>
+							<button
+								type="button"
+								onMouseDown={keepFocus}
+								onClick={() => {
+									if (region.current?.contains(document.activeElement)) {
+										refocus.current = null;
+										refocusPending.current = true;
+									}
+									dismissAll();
+								}}
+							>
+								Dismiss all
+							</button>
+						</div>
+					)}
+					{values.length > 0 && (
+						<div className="notice-region__list">
+							{shown.map((notice) => (
+								<article className={`notice notice--${notice.tone}`} data-notice-id={notice.id} key={notice.id}>
+									<div className="notice__heading">
+										<span className="notice__glyph" aria-hidden="true">
+											{GLYPHS[notice.tone]}
+										</span>
+										<strong>{notice.title}</strong>
+										{notice.occurrences && notice.occurrences > 1 ? (
+											<span className="notice__repeat">Repeated {notice.occurrences} times</span>
+										) : null}
+										<button
+											type="button"
+											onMouseDown={keepFocus}
+											aria-label={`Dismiss ${notice.title}`}
+											onClick={(event) => {
+												if (event.currentTarget.contains(document.activeElement)) {
+													refocus.current = noticeAfterDismissal(
+														shown.map((item) => item.id),
+														notice.id,
+													);
+													refocusPending.current = true;
+												}
+												dismiss(notice.id);
+											}}
+										>
+											×
+										</button>
+									</div>
+									{notice.detail ? <p>{notice.detail}</p> : null}
+									{notice.code || notice.reference ? (
+										<details className="notice__meta">
+											<summary>Technical details</summary>
+											<div>
+												{notice.code ? <code>{notice.code}</code> : null}
+												{notice.reference ? <small>Reference: {notice.reference}</small> : null}
+											</div>
+										</details>
+									) : null}
+								</article>
+							))}
+						</div>
+					)}
+				</section>,
+			)}
+		</>
+	);
+}
+
+/**
+ * The three announcement regions. They are present from first paint and only their text changes,
+ * because a live region inserted at the same moment as its text is frequently never spoken.
+ */
+export function LiveRegions() {
+	const live = useLiveState();
+	return (
+		<>
+			<div className="sr-only" aria-live="assertive" aria-atomic="true">
+				{live.assertive}
+			</div>
+			<div className="sr-only" aria-live="polite" aria-atomic="true">
+				{live.polite}
+			</div>
+			<div className="sr-only" aria-live="assertive" aria-atomic="true">
+				{live.escalation}
+			</div>
+		</>
+	);
+}

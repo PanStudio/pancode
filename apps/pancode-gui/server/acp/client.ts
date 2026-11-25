@@ -1,0 +1,441 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { Static, TSchema } from "typebox";
+import { Value } from "typebox/value";
+import { ArtifactsCapability } from "../../contracts/artifacts.js";
+import { AsideCapability } from "../../contracts/aside.js";
+import type { TurnFile, TurnImage } from "../../contracts/attachments.js";
+import type { Autonomy, AutonomyMode } from "../../contracts/autonomy.js";
+import { AUTONOMY_MODE_LIMITS } from "../../contracts/autonomy.js";
+import { BoardCapability } from "../../contracts/board.js";
+import { BranchesCapability } from "../../contracts/branches.js";
+import {
+	type AgentCapabilities,
+	CommandsCapability,
+	DecisionCapability,
+	EMPTY_CAPABILITIES,
+	EventsCapability,
+	JobsCapability,
+	QueueCapability,
+	ReadoutsCapability,
+	ShellCapability,
+	SteeringCapability,
+	ToolProgressCapability,
+} from "../../contracts/capabilities.js";
+import { ContextCapability } from "../../contracts/context-ledger.js";
+import { ExtensionsCapability, HubCapability } from "../../contracts/extensions.js";
+import { FleetCapability } from "../../contracts/fleet-run.js";
+import { HandoffCapability } from "../../contracts/handoff.js";
+import { INTERVIEW_CANCEL_METHOD, INTERVIEW_REQUEST_METHOD, InterviewCapability } from "../../contracts/interviews.js";
+import { PERMISSION_WITHDRAW_METHOD } from "../../contracts/permissions.js";
+import { SnapshotsCapability } from "../../contracts/rewind.js";
+import type { SessionConfig, SetConfigOption } from "../../contracts/session-config.js";
+import type { SessionTelemetry } from "../../contracts/session-telemetry.js";
+import { ACP_EVENT_KINDS, Usage } from "../../contracts/sessions.js";
+import { TelemetryCapability } from "../../contracts/telemetry.js";
+import {
+	ACP_ARTIFACTS_META_KEY,
+	ACP_ASIDE_META_KEY,
+	ACP_BOARD_META_KEY,
+	ACP_BRANCHES_META_KEY,
+	ACP_COMMANDS_META_KEY,
+	ACP_CONTEXT_META_KEY,
+	ACP_DECISION_META_KEY,
+	ACP_ERROR_META_KEY,
+	ACP_EVENTS_META_KEY,
+	ACP_EXTENSIONS_META_KEY,
+	ACP_FLEET_META_KEY,
+	ACP_HANDOFF_META_KEY,
+	ACP_HUB_META_KEY,
+	ACP_INTERVIEWS_META_KEY,
+	ACP_JOBS_META_KEY,
+	ACP_QUEUE_META_KEY,
+	ACP_READOUTS_META_KEY,
+	ACP_SESSION_META_KEY,
+	ACP_SESSION_TRUST_METHOD,
+	ACP_SETTINGS_META_KEY,
+	ACP_SHELL_META_KEY,
+	ACP_SNAPSHOTS_META_KEY,
+	ACP_STEERING_META_KEY,
+	ACP_TARGETS_META_KEY,
+	ACP_TELEMETRY_META_KEY,
+	ACP_TOOL_PROGRESS_META_KEY,
+	ACP_TOOLS_META_KEY,
+	ACP_TRUST_META_KEY,
+	ACP_TURN_META_KEY,
+	ACP_USAGE_META_KEY,
+	ACP_WORKER_PERMISSIONS_META_KEY,
+	AcpInitializeResultSchema as Initialize,
+	AcpSessionIdentitySchema as NewSession,
+	AcpPromptResultSchema as PromptResult,
+	AcpSettingsCapability as Settings,
+	AcpTargetsCapability as Targets,
+} from "../../contracts/wire.js";
+import { type AcpJsonRpcTransport, AcpProtocolError, AcpTimeoutError } from "../pancode/http-shims.js";
+import { AppProblem } from "../services/problem.js";
+import { missingComponentRemedy, modelSelectionRefusal, promptAdmissionDetail } from "./error-model.js";
+import { projectConfigOptions } from "./session-config.js";
+import { sessionResultTelemetry } from "./telemetry.js";
+
+/**
+ * Capabilities are read leniently on purpose. The protocol version is the one
+ * hard gate; everything under `agentCapabilities._meta` is an extension this
+ * app may or may not find, and a key it cannot parse means that feature is off,
+ * never that the session is unusable. `Value.Clean` drops what the schema does
+ * not name, so a newer engine's extra fields cost nothing here.
+ */
+function optional<S extends TSchema>(schema: S, value: unknown): Static<S> | undefined {
+	if (value === undefined) return undefined;
+	const projected = Value.Clean(schema, structuredClone(value));
+	return Value.Check(schema, projected) ? (projected as Static<S>) : undefined;
+}
+function stableCapability(value: unknown): boolean {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function readCapabilities(result: unknown): AgentCapabilities {
+	const capabilities = record(record(result).agentCapabilities);
+	const meta = record(capabilities._meta);
+	const stableSession = record(capabilities.sessionCapabilities);
+	const extensionSession = record(meta[ACP_SESSION_META_KEY]);
+	return {
+		loadSession: capabilities.loadSession === true,
+		...(record(meta[ACP_TRUST_META_KEY]).refresh === ACP_SESSION_TRUST_METHOD
+			? { trustRefresh: ACP_SESSION_TRUST_METHOD }
+			: {}),
+		mediatedTools: meta[ACP_TOOLS_META_KEY] === "mediated",
+		...(record(capabilities.promptCapabilities).image === true ? { images: true } : {}),
+		...(record(capabilities.promptCapabilities).embeddedContext === true ? { embeddedContext: true } : {}),
+		...(Object.keys(stableSession).length > 0 || Object.keys(extensionSession).length > 0
+			? {
+					session: {
+						close: stableCapability(stableSession.close),
+						list: stableCapability(stableSession.list),
+						delete: stableCapability(stableSession.delete),
+						label: extensionSession.label === true,
+						autonomy: false,
+					},
+				}
+			: {}),
+		...maybe("settings", optional(Settings, meta[ACP_SETTINGS_META_KEY])),
+		...maybe("targets", optional(Targets, meta[ACP_TARGETS_META_KEY])),
+		...maybe("steering", optional(SteeringCapability, meta[ACP_STEERING_META_KEY])),
+		...maybe("queue", optional(QueueCapability, meta[ACP_QUEUE_META_KEY])),
+		...maybe("readouts", optional(ReadoutsCapability, meta[ACP_READOUTS_META_KEY])),
+		...maybe("shell", optional(ShellCapability, meta[ACP_SHELL_META_KEY])),
+		...maybe("commands", optional(CommandsCapability, meta[ACP_COMMANDS_META_KEY])),
+		...maybe("toolProgress", optional(ToolProgressCapability, meta[ACP_TOOL_PROGRESS_META_KEY])),
+		...maybe("decision", optional(DecisionCapability, meta[ACP_DECISION_META_KEY])),
+		...maybe("events", optional(EventsCapability, meta[ACP_EVENTS_META_KEY])),
+		...maybe("board", optional(BoardCapability, meta[ACP_BOARD_META_KEY])),
+		...maybe("branches", optional(BranchesCapability, meta[ACP_BRANCHES_META_KEY])),
+		...maybe("snapshots", optional(SnapshotsCapability, meta[ACP_SNAPSHOTS_META_KEY])),
+		...maybe("handoff", optional(HandoffCapability, meta[ACP_HANDOFF_META_KEY])),
+		...maybe("fleet", optional(FleetCapability, meta[ACP_FLEET_META_KEY])),
+		...maybe("jobs", optional(JobsCapability, meta[ACP_JOBS_META_KEY])),
+		...maybe("context", optional(ContextCapability, meta[ACP_CONTEXT_META_KEY])),
+		...maybe("artifacts", optional(ArtifactsCapability, meta[ACP_ARTIFACTS_META_KEY])),
+		...maybe("extensions", optional(ExtensionsCapability, meta[ACP_EXTENSIONS_META_KEY])),
+		...maybe("aside", optional(AsideCapability, meta[ACP_ASIDE_META_KEY])),
+		...maybe("interviews", optional(InterviewCapability, meta[ACP_INTERVIEWS_META_KEY])),
+		...maybe("telemetry", optional(TelemetryCapability, meta[ACP_TELEMETRY_META_KEY])),
+		...maybe("hub", optional(HubCapability, meta[ACP_HUB_META_KEY])),
+	};
+}
+
+function maybe<K extends string, V>(key: K, value: V | undefined) {
+	return value === undefined ? {} : ({ [key]: value } as Record<K, V>);
+}
+export function record(value: unknown): Record<string, unknown> {
+	return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+export function acpProblem(error: unknown) {
+	if (error instanceof AppProblem) return error;
+	if (error instanceof AcpProtocolError) {
+		const detail = record(record(record(error.data).data)._meta)[ACP_ERROR_META_KEY];
+		const code = record(detail).code;
+		const modelSelection = code === "invalid_params" ? modelSelectionRefusal(record(detail).modelSelection) : undefined;
+		if (modelSelection)
+			return new AppProblem(
+				"validation",
+				"PanCode did not change the conversation route because the requested model is not declared for this target. Choose an available model or update targets[].wireModels in settings.yaml, then restart the ACP session.",
+				undefined,
+				undefined,
+				{ modelSelection },
+			);
+		if (code === "prompt_not_admitted" && record(detail).reason === "authentication-required")
+			return new AppProblem(
+				"upstream_acp",
+				"PanCode cannot access credentials for the selected target. Connect it with pancode auth login <target> in a terminal, then close and reopen this session. Background apps use PanCode's saved credentials; terminal-only API keys are unavailable after login or restart.",
+			);
+		if (code === "prompt_not_admitted")
+			return new AppProblem("upstream_acp", promptAdmissionDetail(record(detail).reason));
+		const remedy = code === "turn_failed" ? missingComponentRemedy(record(detail).component) : null;
+		if (remedy !== null) return new AppProblem("upstream_acp", `PanCode could not run this turn: ${remedy}, then retry.`);
+		if (code === "turn_failed")
+			return new AppProblem(
+				"upstream_acp",
+				"PanCode could not complete this turn. Probe the selected target and check this session's trace for the cause, then retry. (turn_failed)",
+			);
+		if (code === "prompt_active" || code === "shell_active")
+			return new AppProblem(
+				"conflict",
+				code === "shell_active"
+					? "A shell line is running in this task. Wait for it or stop it."
+					: "A turn is already running in this task. Wait for it or stop it before changing the conversation.",
+			);
+		if (code === "shell_failed")
+			return new AppProblem("upstream_acp", "PanCode could not run or record that shell line. (shell_failed)");
+		if (code === "unknown_command")
+			return new AppProblem(
+				"upstream_acp",
+				"That /name is not a command or a loaded prompt template in this session, so nothing was sent to the model. Start the line with \\/ to send it as text.",
+			);
+		if (code === "command_unavailable")
+			return new AppProblem(
+				"upstream_acp",
+				"That command does not run from a message in PanCode on the desktop. Use the command list, or start the line with \\/ to send it as text.",
+			);
+		return new AppProblem(
+			"upstream_acp",
+			`PanCode ACP refused the request (${typeof code === "string" && /^[a-z_]{1,80}$/.test(code) ? code : "protocol_error"}).`,
+		);
+	}
+	if (error instanceof AcpTimeoutError)
+		return new AppProblem("unavailable", "PanCode ACP did not respond before its deadline.");
+	return new AppProblem("upstream_acp", "PanCode ACP process is unavailable.");
+}
+type AutonomyLevel = "default" | "yolo";
+type AutonomySource = "settings" | "session";
+type AutonomyState = Static<typeof Autonomy> & { level: AutonomyLevel; source: AutonomySource };
+const knownMode = (mode: unknown): mode is AutonomyLevel => mode === "default" || mode === "yolo";
+/** The engine's mode list, bounded. A malformed or oversized entry is dropped rather than cut, so text stays verbatim. */
+function readModeDescriptions(modes: unknown): Array<Static<typeof AutonomyMode>> | undefined {
+	const available = record(modes).availableModes;
+	if (!Array.isArray(available)) return undefined;
+	const described: Array<Static<typeof AutonomyMode>> = [];
+	for (const entry of available) {
+		if (described.length === AUTONOMY_MODE_LIMITS.count) break;
+		const { id, name, description } = record(entry);
+		if (typeof id !== "string" || typeof name !== "string" || typeof description !== "string") continue;
+		if (!id || id.length > AUTONOMY_MODE_LIMITS.id || name.length > AUTONOMY_MODE_LIMITS.name) continue;
+		if (description.length > AUTONOMY_MODE_LIMITS.description) continue;
+		if (described.some((mode) => mode.id === id)) continue;
+		described.push({ id, name, description });
+	}
+	return described;
+}
+export class AcpClient {
+	config: SessionConfig | undefined;
+	private readonly modes = new Map<string, AutonomyState>();
+	private readonly modeDescriptions = new Map<string, Array<Static<typeof AutonomyMode>>>();
+	constructor(readonly transport: AcpJsonRpcTransport) {}
+	/** Requests awaiting the agent's answer. A child with one in flight is not idle. */
+	pending = 0;
+	async request<T>(method: string, params: unknown, timeoutMs = 15000): Promise<T> {
+		this.pending++;
+		try {
+			return await this.transport.request<T>(method, params, timeoutMs);
+		} catch (error) {
+			throw acpProblem(error);
+		} finally {
+			this.pending--;
+		}
+	}
+	/** The agent restores a session without replaying it, which a resume uses when the transcript is already held. */
+	private resumable = false;
+	/** What the agent announced at initialize. Empty until {@link initialize} returns. */
+	capabilities: AgentCapabilities = EMPTY_CAPABILITIES;
+	async initialize() {
+		const result = await this.request<unknown>("initialize", {
+			protocolVersion: 1,
+			clientInfo: { name: "pancode-gui", version: "0.0.0" },
+			clientCapabilities: {
+				fs: { readTextFile: false, writeTextFile: false },
+				terminal: false,
+				_meta: {
+					[ACP_EVENTS_META_KEY]: { version: 1, kinds: [...ACP_EVENT_KINDS] },
+					// Opting in turns on non-terminal `tool_call_update` frames whose
+					// content is the tool's CUMULATIVE output. The projection replaces
+					// the running row's partial text rather than appending, which is
+					// the whole reason the stream is an opt-in.
+					[ACP_TOOL_PROGRESS_META_KEY]: { version: 1 },
+					// Opting in turns on `_pancode/session/queue_changed`, so the queue is pushed and not polled.
+					[ACP_QUEUE_META_KEY]: { version: 1 },
+					// Opting in turns on `_pancode/session/readouts` and the judge's `pancode/admission` on a held call.
+					[ACP_READOUTS_META_KEY]: { version: 1 },
+					// The session and turn usage as read-model quantities, each with its fact and ref, not only its display.
+					[ACP_USAGE_META_KEY]: { version: 1 },
+					[ACP_INTERVIEWS_META_KEY]: { version: 1, request: INTERVIEW_REQUEST_METHOD, cancel: INTERVIEW_CANCEL_METHOD },
+					// A dispatched worker's escalation reaches the approval card as a permission request,
+					// and a withdrawn one retires the card, because the wire cannot cancel a single ask.
+					[ACP_WORKER_PERMISSIONS_META_KEY]: { version: 1, withdraw: PERMISSION_WITHDRAW_METHOD },
+				},
+			},
+		});
+		if (!Value.Check(Initialize, result))
+			throw new AppProblem("upstream_acp", "PanCode ACP returned an invalid initialize response.");
+		this.capabilities = readCapabilities(result);
+		this.resumable = stableCapability(record(record(record(result).agentCapabilities).sessionCapabilities).resume);
+	}
+	telemetry: SessionTelemetry = {};
+	async open(cwd: string, sessionId?: string, replay = true) {
+		const load = replay || !this.resumable ? "session/load" : "session/resume";
+		const previousMode = sessionId ? this.modes.get(sessionId) : undefined;
+		const previousConfig = this.config;
+		const result = await this.request<unknown>(sessionId ? load : "session/new", {
+			cwd,
+			mcpServers: [],
+			...(sessionId ? { sessionId } : {}),
+		});
+		this.telemetry = sessionResultTelemetry(result);
+		const mode = record(record(result).modes).currentModeId;
+		const described = readModeDescriptions(record(result).modes);
+		const options = projectConfigOptions(record(result).configOptions);
+		const target = record(record(record(result)._meta)[ACP_SESSION_META_KEY]).target;
+		if (options !== undefined && this.config === previousConfig)
+			this.config = {
+				options,
+				...(target === null || (typeof target === "string" && target.length <= 128) ? { target } : {}),
+			};
+		if (sessionId) {
+			if (described) this.modeDescriptions.set(sessionId, described);
+			if (typeof mode === "string" && this.modes.get(sessionId) === previousMode)
+				this.rememberReported(sessionId, mode, "settings");
+			const current = this.modes.get(sessionId);
+			if (current) this.telemetry.autonomy = current;
+			return sessionId;
+		}
+		if (!Value.Check(NewSession, result))
+			throw new AppProblem("upstream_acp", "PanCode ACP returned an invalid session identity.");
+		if (described) this.modeDescriptions.set(result.sessionId, described);
+		if (typeof mode === "string") this.rememberReported(result.sessionId, mode, "settings");
+		return result.sessionId;
+	}
+	/**
+	 * The process now hosts `nextId` in place of `previousId`, after a fork or a
+	 * handoff. The new session reports its mode like a load does; a choice made
+	 * for the old conversation carries over, as the agent keeps it too.
+	 */
+	adopt(previousId: string, nextId: string, result: unknown) {
+		const previous = this.modes.get(previousId);
+		const previousDescriptions = this.modeDescriptions.get(previousId);
+		this.modes.delete(previousId);
+		this.modeDescriptions.delete(previousId);
+		this.telemetry = sessionResultTelemetry(result);
+		const mode = record(record(result).modes).currentModeId;
+		const described = readModeDescriptions(record(result).modes) ?? previousDescriptions;
+		if (described && !this.modeDescriptions.has(nextId)) this.modeDescriptions.set(nextId, described);
+		const notified = this.modes.get(nextId);
+		if (notified) this.telemetry.autonomy = notified;
+		else if (typeof mode === "string") {
+			if (previous) this.modes.set(nextId, previous);
+			this.rememberReported(nextId, mode, previous?.source ?? "settings");
+		} else if (previous) this.rememberMode(nextId, previous.level, previous.source);
+	}
+	/**
+	 * A mode the app does not know keeps the last known level and names the reported id, so the
+	 * task goes on and the control can say what the engine reported instead of guessing.
+	 */
+	private rememberReported(sessionId: string, mode: string, source: AutonomySource) {
+		if (knownMode(mode)) return this.rememberMode(sessionId, mode, source);
+		const previous = this.modes.get(sessionId);
+		return this.rememberMode(sessionId, previous?.level ?? "default", source, mode.slice(0, 64));
+	}
+	private rememberMode(
+		sessionId: string,
+		level: AutonomyLevel,
+		source: AutonomySource = "settings",
+		unrecognized?: string,
+	) {
+		const modes = this.modeDescriptions.get(sessionId);
+		const current: AutonomyState = {
+			level,
+			source,
+			...(modes && modes.length > 0 ? { modes } : {}),
+			...(unrecognized !== undefined ? { unrecognized } : {}),
+		};
+		this.modes.set(sessionId, current);
+		this.telemetry.autonomy = current;
+		this.capabilities.session = {
+			close: false,
+			list: false,
+			delete: false,
+			label: false,
+			...this.capabilities.session,
+			autonomy: true,
+		};
+		return current;
+	}
+	/** A mode notification reports a session override, including changes made through runtime commands (GUI-03). */
+	modeUpdate(sessionId: string, mode: unknown) {
+		return this.rememberReported(sessionId, typeof mode === "string" && mode ? mode : "unnamed", "session");
+	}
+	async autonomy(sessionId: string, level?: AutonomyLevel) {
+		if (level !== undefined) {
+			const previous = this.modes.get(sessionId);
+			await this.request("session/set_mode", { sessionId, modeId: level });
+			// A notification received during the request is newer than its acknowledgement (GUI-03).
+			if (this.modes.get(sessionId) === previous) this.rememberMode(sessionId, level, "session");
+		}
+		const current = this.modes.get(sessionId);
+		if (!current) throw new AppProblem("upstream_acp", "PanCode did not provide a session mode.");
+		return current;
+	}
+	async setConfig(sessionId: string, body: SetConfigOption) {
+		const previous = this.config;
+		const result = record(await this.request("session/set_config_option", { sessionId, ...body }));
+		const options = projectConfigOptions(result.configOptions);
+		if (options === undefined) throw new AppProblem("upstream_acp", "PanCode omitted session configuration.");
+		if (this.config === previous) {
+			const target = record(record(result._meta)[ACP_SESSION_META_KEY]).target;
+			this.config = {
+				...previous,
+				options,
+				...(target === null || (typeof target === "string" && target.length <= 128) ? { target } : {}),
+			};
+		}
+		if (!this.config) throw new AppProblem("upstream_acp", "PanCode omitted session configuration.");
+		return this.config;
+	}
+	async prompt(
+		sessionId: string,
+		text: string,
+		images: ReadonlyArray<TurnImage> = [],
+		files: ReadonlyArray<TurnFile> = [],
+	) {
+		const result = await this.request<unknown>(
+			"session/prompt",
+			{
+				sessionId,
+				prompt: [
+					{ type: "text", text },
+					...images.map((image) => ({ type: "image", mimeType: image.mimeType, data: image.data })),
+					// A picked file has a name and no path; the URI says so rather than inventing one.
+					...files.map((file) => ({
+						type: "resource",
+						resource: { uri: `attachment:${encodeURIComponent(file.name)}`, mimeType: "text/plain", text: file.text },
+					})),
+				],
+			},
+			24 * 60 * 60 * 1000,
+		);
+		const projected = Value.Clean(PromptResult, result);
+		if (!Value.Check(PromptResult, projected))
+			throw new AppProblem("upstream_acp", "PanCode ACP returned invalid turn usage or stop reason.");
+		const usage = Value.Clean(Usage, projected._meta[ACP_USAGE_META_KEY]);
+		if (!Value.Check(Usage, usage)) throw new AppProblem("upstream_acp", "PanCode ACP returned invalid turn usage.");
+		return {
+			stopReason: projected.stopReason,
+			usage,
+			...(projected._meta[ACP_TURN_META_KEY] ? { details: projected._meta[ACP_TURN_META_KEY] } : {}),
+		};
+	}
+	async close(sessionId: string) {
+		try {
+			if (!this.transport.closed) await this.request("session/close", { sessionId }, 2000);
+		} finally {
+			this.transport.close();
+			if (!(await this.transport.waitForExit(500))) await this.transport.forceTerminate();
+		}
+	}
+}

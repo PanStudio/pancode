@@ -1,0 +1,329 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { installDiagnosticSink } from "../../src/core/diagnostics.js";
+import { getStoredAssignment, recordAssignmentAttempt } from "../../src/domains/dispatch/assignment-store.js";
+import { createWorktreeBootRecovery, type WorktreeBootRecovery } from "../../src/domains/dispatch/boot-recovery.js";
+import type { DispatchContract, DispatchRequest } from "../../src/domains/dispatch/contract.js";
+import { openLedger } from "../../src/domains/dispatch/state.js";
+import type { SpawnedWorker } from "../../src/domains/dispatch/worker-spawn.js";
+import {
+	claimCompeteGroup,
+	recoverCleanupReadyCompeteGroups,
+	registerCompeteGroupRun,
+} from "../../src/tools/compete-worktrees.js";
+import { createDispatchTool } from "../../src/tools/dispatch.js";
+import { makeDispatchBundle } from "../harness/dispatch.js";
+import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
+
+function git(cwd: string, ...args: string[]): string {
+	return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
+}
+
+/** The signal that ended a worker this test spawned, once it has been reaped. */
+async function exitSignal(child: ChildProcess | null): Promise<NodeJS.Signals | null> {
+	if (child === null) return null;
+	if (child.exitCode === null && child.signalCode === null) await once(child, "exit");
+	return child.signalCode;
+}
+
+/**
+ * A crashed coordinator's compete group: its owner lease names this PID under
+ * a birth token it never had, and its one leased worker ignores SIGTERM, so
+ * recovery spends the full exit grace before it escalates.
+ */
+describe("compete recovery after a restart", () => {
+	let root: string;
+	let worker: ChildProcess | null = null;
+	let scratch: IsolatedPancodeEnv;
+
+	beforeEach(async () => {
+		scratch = await isolatePancodeEnv("pancode-boot-recovery-home-");
+		root = realpathSync(mkdtempSync(join(tmpdir(), "pancode-boot-recovery-")));
+		git(root, "init", "-q", "-b", "main");
+		git(root, "config", "user.email", "t@local");
+		git(root, "config", "user.name", "t");
+		writeFileSync(join(root, ".gitignore"), ".pancode/\n");
+		git(root, "add", ".");
+		git(root, "commit", "-q", "-m", "init");
+		worker = spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});console.log('up');setInterval(()=>{},1000)"], {
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+		await new Promise((resolve) => worker?.stdout?.once("data", resolve));
+		const ownership = claimCompeteGroup(root, "g1");
+		registerCompeteGroupRun(ownership, { runId: "r1", pid: worker.pid ?? null, runtimeKind: "http" });
+		const manifestPath = join(ownership.directory, ".pancode-compete-owner.json");
+		const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { owner: Record<string, unknown> };
+		manifest.owner = { ...manifest.owner, birthToken: "linux:1" };
+		writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+	});
+
+	afterEach(() => {
+		if (worker !== null && worker.exitCode === null && worker.signalCode === null) worker.kill("SIGKILL");
+		rmSync(root, { recursive: true, force: true });
+		scratch.restore();
+	});
+
+	it("terminates a leased worker without holding the event loop", async () => {
+		let settled = false;
+		const recovery = recoverCleanupReadyCompeteGroups(root).finally(() => {
+			settled = true;
+		});
+		await new Promise((resolve) => setImmediate(resolve));
+		strictEqual(settled, false);
+		const result = await recovery;
+		deepStrictEqual(result, { cleaned: ["g1"], preserved: [], failed: [] });
+		strictEqual(await exitSignal(worker), "SIGKILL");
+		strictEqual(existsSync(join(root, ".pancode", "worktrees", "g1")), false);
+	});
+
+	it("runs nothing until boot starts it, then settles once", async () => {
+		const lines: string[] = [];
+		const handle = createWorktreeBootRecovery({ cwd: root, worktreeRootSetting: "disk", report: (l) => lines.push(l) });
+		await new Promise((resolve) => setImmediate(resolve));
+		strictEqual(handle.started, false);
+		strictEqual(worker?.signalCode, null);
+		const first = handle.start();
+		strictEqual(handle.start(), first);
+		await handle.settled;
+		deepStrictEqual(lines, []);
+		strictEqual(await exitSignal(worker), "SIGKILL");
+		strictEqual(existsSync(join(root, ".pancode", "worktrees", "g1")), false);
+	});
+});
+
+const REQUEST: DispatchRequest = {
+	agentId: "scout",
+	executionRole: "explorer",
+	task: "Inspect isolated fixture evidence.",
+	requestOrigin: "internal",
+	resultContractOverride: { kind: "provenance-report" },
+};
+
+/** A boot recovery the test settles by hand; `begun` settles on the first start. */
+function heldRecovery(): WorktreeBootRecovery & { starts: number; begun: Promise<void>; release(): void } {
+	let release!: () => void;
+	const settled = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let begin!: () => void;
+	const begun = new Promise<void>((resolve) => {
+		begin = resolve;
+	});
+	const handle = {
+		starts: 0,
+		started: false,
+		settled,
+		begun,
+		release,
+		start() {
+			handle.starts += 1;
+			handle.started = true;
+			begin();
+			return settled;
+		},
+	};
+	return handle;
+}
+
+describe("dispatch admission during boot recovery", () => {
+	let scratch: IsolatedPancodeEnv;
+	beforeEach(async () => {
+		scratch = await isolatePancodeEnv("pancode-boot-admission-");
+	});
+	afterEach(() => scratch.restore());
+
+	function fleet(recovery: WorktreeBootRecovery) {
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.targets = [{ id: "default", runtime: "openai", defaultModel: "gpt-4o" }];
+		settings.fleet.default.target = "default";
+		settings.fleet.default.model = "gpt-4o";
+		let spawned = 0;
+		const bundle = makeDispatchBundle(dispatchStubContext({ settings }), {
+			heartbeatIntervalMs: 3_600_000,
+			bootRecovery: recovery,
+			spawnWorker: () => {
+				spawned += 1;
+				const worker: SpawnedWorker = {
+					pid: null,
+					promise: Promise.resolve({ exitCode: 0, signal: null }),
+					heartbeatAt: { current: Date.now(), monotonic: performance.now() },
+					abort: () => {},
+					send: () => true,
+					events: (async function* () {
+						yield {
+							type: "message_end",
+							message: {
+								role: "assistant",
+								stopReason: "stop",
+								content: JSON.stringify({ confirmedFacts: [], missingEvidence: [], nextInspections: [] }),
+							},
+						};
+					})(),
+				};
+				return worker;
+			},
+		});
+		return { bundle, spawned: () => spawned };
+	}
+
+	it("starts recovery on the first dispatch and admits it only once recovery settles", async () => {
+		const abandoned = openLedger({ maxRuns: 10 });
+		const row = abandoned.create({
+			agentId: "coder",
+			executionRole: "builder",
+			task: "interrupted work",
+			targetId: "default",
+			wireModelId: "gpt-4o",
+			runtimeId: "openai",
+			runtimeKind: "http",
+			sessionId: null,
+			cwd: scratch.dir,
+		});
+		abandoned.update(row.id, { status: "running", pid: 999_999, heartbeatAt: row.startedAt });
+		await abandoned.persist();
+
+		const recovery = heldRecovery();
+		const { bundle, spawned } = fleet(recovery);
+		try {
+			await bundle.extension.start();
+			strictEqual(recovery.starts, 0);
+			strictEqual(openLedger({ maxRuns: 10 }).get(row.id)?.status, "running");
+
+			const admitted = bundle.contract.dispatch({ ...REQUEST, cwd: scratch.dir });
+			await new Promise((resolve) => setImmediate(resolve));
+			strictEqual(recovery.starts, 1);
+			strictEqual(spawned(), 0);
+
+			recovery.release();
+			const handle = await admitted;
+			await handle.finalPromise;
+			strictEqual(spawned(), 1);
+			strictEqual(openLedger({ maxRuns: 10 }).get(row.id)?.status, "dead");
+		} finally {
+			await bundle.extension.stop?.();
+		}
+	});
+
+	function abandonedRow(cwd: string) {
+		const ledger = openLedger({ maxRuns: 10 });
+		const row = ledger.create({
+			agentId: "coder",
+			executionRole: "builder",
+			task: "interrupted work",
+			targetId: "default",
+			wireModelId: "gpt-4o",
+			runtimeId: "openai",
+			runtimeKind: "http",
+			sessionId: null,
+			cwd,
+		});
+		ledger.update(row.id, { status: "running", pid: 999_999, heartbeatAt: row.startedAt });
+		return { ledger, row };
+	}
+
+	it("keeps a run a sibling settled while recovery was held", async () => {
+		const { ledger, row } = abandonedRow(scratch.dir);
+		await ledger.persist();
+		const recovery = heldRecovery();
+		const { bundle } = fleet(recovery);
+		try {
+			await bundle.extension.start();
+			const sibling = openLedger({ maxRuns: 10 });
+			sibling.update(row.id, { status: "completed", endedAt: new Date().toISOString(), exitCode: 0 });
+			await sibling.persist();
+
+			const gate = bundle.contract.awaitStartupRecovery?.();
+			strictEqual(recovery.starts, 1);
+			recovery.release();
+			await gate;
+			strictEqual(openLedger({ maxRuns: 10 }).get(row.id)?.status, "completed");
+		} finally {
+			await bundle.extension.stop?.();
+		}
+	});
+
+	it("reports a ledger that no longer reads once, leaves assignments running and admits dispatch once it reads again", async () => {
+		const { ledger, row } = abandonedRow(scratch.dir);
+		await ledger.persist();
+		// An assignment whose owner died with this run as its attempt: only a ledger that reads may settle it.
+		await recordAssignmentAttempt("orphan", row.id);
+		const assignmentsPath = join(scratch.dir, "state", "assignments.json");
+		const store = JSON.parse(readFileSync(assignmentsPath, "utf8")) as { assignments: Array<Record<string, unknown>> };
+		for (const record of store.assignments) delete record.processOwner;
+		writeFileSync(assignmentsPath, JSON.stringify(store));
+		const runsPath = join(scratch.dir, "state", "runs.json");
+		const intact = readFileSync(runsPath, "utf8");
+		const recovery = heldRecovery();
+		const { bundle, spawned } = fleet(recovery);
+		const reports: string[] = [];
+		const uninstall = installDiagnosticSink((text) => reports.push(text));
+		try {
+			await bundle.extension.start();
+			writeFileSync(runsPath, "{ not json");
+			const gate = bundle.contract.awaitStartupRecovery?.();
+			recovery.release();
+			await gate;
+			strictEqual(reports.filter((line) => line.includes("ledger recovery")).length, 1, reports.join(""));
+			strictEqual(getStoredAssignment("orphan")?.status, "running");
+
+			writeFileSync(runsPath, intact);
+			const handle = await bundle.contract.dispatch({ ...REQUEST, cwd: scratch.dir });
+			await handle.finalPromise;
+			strictEqual(spawned(), 1);
+		} finally {
+			uninstall();
+			await bundle.extension.stop?.();
+		}
+	});
+
+	it("holds the dispatch tool's own gate and compete recovery until boot recovery settles", async () => {
+		const recovery = heldRecovery();
+		const { bundle, spawned } = fleet(recovery);
+		await bundle.extension.start();
+		try {
+			const touched: string[] = [];
+			let held = true;
+			const dispatch = new Proxy(bundle.contract, {
+				get(target, key, receiver) {
+					if (held && typeof key === "string") touched.push(key);
+					return Reflect.get(target, key, receiver);
+				},
+			}) as DispatchContract;
+			const agents = dispatchStubContext().getContract("agents");
+			const tool = createDispatchTool({
+				dispatch,
+				getAgentSpecs: () => agents?.listSpecs() ?? [],
+				getAutonomy: () => "yolo",
+			});
+			const run = tool.run({ task: "Inspect isolated fixture evidence.", agent: "scout" }, {});
+			await recovery.begun;
+			strictEqual(recovery.starts, 1);
+			// Admission previews the plan; after that the runner touches the contract only to wait.
+			strictEqual(touched.at(-1), "awaitStartupRecovery", touched.join(","));
+			held = false;
+			recovery.release();
+			await run;
+			ok(spawned() > 0);
+		} finally {
+			recovery.release();
+			await bundle.extension.stop?.();
+		}
+	});
+
+	it("stops without waiting on a recovery boot never started", async () => {
+		const recovery = heldRecovery();
+		const { bundle } = fleet(recovery);
+		await bundle.extension.start();
+		await bundle.extension.stop?.();
+		strictEqual(recovery.starts, 0);
+	});
+});

@@ -1,0 +1,198 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Which PanCode session and project a dispatch run or detached batch belongs to.
+ *
+ * Every dispatch store lives in the one machine-wide state dir, so every PanCode
+ * process on the machine reads every other process's runs, receipts, batches,
+ * and gate records. Without an owner, a session opened in one project was
+ * nudged to collect a batch another project dispatched, collected it (closing
+ * the owner's agent ledger), and could cancel or continue runs it never made.
+ *
+ * A run or batch stamped with a session id belongs to that session alone. A
+ * row with no session id was written by a process with no session
+ * (`pancode fleet`) and belongs to whatever session runs in the project it
+ * was dispatched from.
+ *
+ * Two strengths of check, for two kinds of use:
+ *   owns  acting on a row: nudging, collecting, cancelling, continuing,
+ *         recovering its gate decisions.
+ *   sees  reading a row: status, receipt, evidence, the /view overlay. A
+ *         sibling session in the same project may read its runs.
+ *
+ * A fork carries its ancestors' history, so it inherits what they dispatched
+ * for reading and collecting: it may read an ancestor's runs, and it may be
+ * nudged about and collect an ancestor's batch while that batch is still
+ * uncollected. The first collector wins through the durable collected mark.
+ * Cancelling, steering, and anything else that touches a live run stays with
+ * the exact session that dispatched it.
+ */
+
+import { resolve } from "node:path";
+import { canonicalizePath, createPathWalkMemo } from "../../core/path-canonical.js";
+import { isSameOrDescendant } from "../../core/path-containment.js";
+import { gitCheckoutRoot } from "../../tools/task-worktree.js";
+import type { WorktreeRootSetting } from "../../tools/worktree-root.js";
+import { allowedWorktreeParents } from "../../tools/worktree-root.js";
+
+export interface DispatchOwner {
+	/** PanCode session id of this process; null when it runs without one. */
+	readonly sessionId: string | null;
+	/** Workspace the process runs in; project-scoped checks resolve against it. */
+	readonly cwd: string;
+	/**
+	 * Resolved `fleet.worktrees.root`. An absolute path here is what ties a run in
+	 * a custom-root worktree back to this project; absent, only the disk and
+	 * tmpfs locations count.
+	 */
+	readonly worktreeRoot?: WorktreeRootSetting;
+	/** Sessions this one was forked from, nearest first, via `parentSessionId`. */
+	readonly ancestorSessionIds?: ReadonlyArray<string>;
+}
+
+/** Bound on the `parentSessionId` chain a dispatch owner follows. */
+export const MAX_SESSION_ANCESTORS = 32;
+
+/**
+ * The ancestor chain from `parentSessionId` up, nearest first, read through
+ * `parentOf`. Stops at a root, a cycle, the bound, or an ancestor whose
+ * metadata cannot be read (a deleted session ends its line).
+ */
+export function sessionAncestorIds(
+	sessionId: string,
+	parentSessionId: string | null | undefined,
+	parentOf: (sessionId: string) => string | null | undefined,
+): string[] {
+	const ids: string[] = [];
+	const seen = new Set([sessionId]);
+	let next = parentSessionId ?? null;
+	while (next !== null && next.length > 0 && !seen.has(next) && ids.length < MAX_SESSION_ANCESTORS) {
+		ids.push(next);
+		seen.add(next);
+		try {
+			next = parentOf(next) ?? null;
+		} catch {
+			break;
+		}
+	}
+	return ids;
+}
+
+export interface OwnedRunFields {
+	readonly sessionId: string | null;
+	readonly cwd: string;
+}
+
+export interface OwnedBatchFields {
+	readonly sessionId: string | null;
+	readonly cwd?: string;
+}
+
+export interface CollectableBatchFields extends OwnedBatchFields {
+	readonly collectedAt: string | null;
+}
+
+export interface DispatchOwnership {
+	readonly owner: DispatchOwner;
+	/** True when `cwd` is the owner's workspace or inside it. */
+	inProject(cwd: string | undefined): boolean;
+	ownsRun(run: OwnedRunFields): boolean;
+	/** Owns the run, or an ancestor session dispatched it: status, collect, and continue reads. */
+	readsRun(run: OwnedRunFields): boolean;
+	seesRun(run: OwnedRunFields): boolean;
+	ownsBatch(batch: OwnedBatchFields): boolean;
+	/** Owns the batch, or an ancestor session dispatched it and nobody has collected it yet. */
+	collectsBatch(batch: CollectableBatchFields): boolean;
+	/** True when an ancestor session, not this one, dispatched the row. */
+	inherits(row: { readonly sessionId: string | null }): boolean;
+}
+
+/**
+ * The session a refused control action names: a fork reads its ancestors' runs, so a bare "another session" reads as
+ * this one, and naming the owner says where to act.
+ */
+export function owningSessionPhrase(ownership: DispatchOwnership, sessionId: string | null): string {
+	if (sessionId === null) return "another session";
+	return ownership.inherits({ sessionId })
+		? `session ${sessionId}, which this session was forked from`
+		: `session ${sessionId}`;
+}
+
+/**
+ * The owner a caller holding a dispatch contract acts as. The contract's own
+ * owner wins because it is what stamped the runs; the invocation's session id
+ * only fills in for a contract that has none.
+ */
+export function dispatchOwnerOf(
+	dispatch: { owner?: () => DispatchOwner },
+	fallbackSessionId?: string | null,
+): DispatchOwner {
+	const owner = dispatch.owner?.();
+	const fallback = fallbackSessionId ?? null;
+	if (owner === undefined) return { sessionId: fallback, cwd: process.cwd() };
+	return owner.sessionId === null && fallback !== null ? { ...owner, sessionId: fallback } : owner;
+}
+
+/**
+ * Ownership checks for one owner. Canonical paths are memoized for the life of
+ * the returned object, so build one per listing or tool call and drop it: a
+ * listing over the whole ledger resolves the same few cwds a thousand times.
+ */
+export function dispatchOwnership(owner: DispatchOwner): DispatchOwnership {
+	const memo = createPathWalkMemo();
+	const canonical = new Map<string, string | null>();
+	const canonicalOf = (path: string): string | null => {
+		let cached = canonical.get(path);
+		if (cached === undefined) {
+			cached = canonicalizePath(resolve(path), memo);
+			canonical.set(path, cached);
+		}
+		return cached;
+	};
+
+	// An off-disk task worktree runs outside the checkout, so its run carries a
+	// cwd under /dev/shm or the configured root and a status reader in the
+	// project would never see it. The parents are keyed on the checkout root,
+	// which is what ties them back.
+	let worktreeParents: string[] | undefined;
+	const taskWorktreeParents = (): string[] => {
+		if (worktreeParents === undefined) {
+			const checkout = gitCheckoutRoot(owner.cwd) ?? canonicalOf(owner.cwd);
+			worktreeParents = checkout === null ? [] : allowedWorktreeParents(owner.worktreeRoot ?? "auto", checkout);
+		}
+		return worktreeParents;
+	};
+	const inProject = (cwd: string | undefined): boolean => {
+		// An empty cwd is a row whose origin was never recorded. Resolving it
+		// would yield this process's cwd and adopt it into every project.
+		if (cwd === undefined || cwd.length === 0 || owner.cwd.length === 0) return false;
+		const root = canonicalOf(owner.cwd);
+		const candidate = canonicalOf(cwd);
+		if (root === null || candidate === null) return false;
+		if (isSameOrDescendant(candidate, root)) return true;
+		return taskWorktreeParents().some((parent) => {
+			const canonicalParent = canonicalOf(parent);
+			return canonicalParent !== null && isSameOrDescendant(candidate, canonicalParent);
+		});
+	};
+	const ownsRun = (run: OwnedRunFields): boolean =>
+		run.sessionId !== null && run.sessionId !== undefined ? run.sessionId === owner.sessionId : inProject(run.cwd);
+	const ancestors = new Set(owner.ancestorSessionIds ?? []);
+	const inherits = (row: { readonly sessionId: string | null }): boolean =>
+		row.sessionId !== null && row.sessionId !== undefined && ancestors.has(row.sessionId);
+	const readsRun = (run: OwnedRunFields): boolean => ownsRun(run) || inherits(run);
+	const ownsBatch = (batch: OwnedBatchFields): boolean =>
+		batch.sessionId !== null && batch.sessionId !== undefined
+			? batch.sessionId === owner.sessionId
+			: inProject(batch.cwd);
+	return {
+		owner,
+		inProject,
+		ownsRun,
+		readsRun,
+		seesRun: (run) => readsRun(run) || inProject(run.cwd),
+		ownsBatch,
+		collectsBatch: (batch) => ownsBatch(batch) || (batch.collectedAt === null && inherits(batch)),
+		inherits,
+	};
+}

@@ -1,0 +1,374 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { resolvePackageRoot } from "../../../core/package-root.js";
+import {
+	approveOperatorProjectInstall,
+	captureProjectInstallBaseline,
+	projectPackagesTrusted,
+} from "../../../core/workspace-trust.js";
+import { pancodeConfigDir } from "../../../core/xdg.js";
+import { pluginResourcePath, readPluginManifest } from "../../plugins/index.js";
+import { discoverHub, installHubPlan, planHubInstall, resolveHubPackage } from "../hub.js";
+import { PROJECT_SKILL_TRUST_REMEDY } from "./availability.js";
+import { loadSkills, type Skill } from "./loader.js";
+
+/**
+ * Skill-facing adapter for the canonical PanHub, plus explicit authoring probes
+ * of unmanaged source trees. Runtime offers and activation use PanHub;
+ * only an explicit catalogDir/indexPath request invokes a raw source audit.
+ */
+
+export type MarketplaceSkillOrigin = "catalog" | "index";
+
+import { relativePathEscapes } from "../../../core/path-containment.js";
+import type { HubEntryKind, HubRequirementRef } from "../hub-types.js";
+
+export type { HubEntryKind, HubRequirementRef } from "../hub-types.js";
+
+/**
+ * The diagnostic that means "nothing is wrong, nothing is configured". Callers
+ * that render an empty state of their own separate it from real failures (an
+ * unreadable index, a broken package) by identity rather than by string match.
+ */
+export const MARKETPLACE_UNCONFIGURED = "no local skill marketplace catalog or index configured";
+
+export interface MarketplaceSkill {
+	kind: Exclude<HubEntryKind, "plugin">;
+	name: string;
+	description: string;
+	/** Local path or URL accepted by `pancode hub install`. */
+	sourceUrl: string;
+	version?: string;
+	audit?: "pass" | "warn" | "fail" | "unknown";
+	/** Catalog grouping ("git", "research", ...); absent in a flat catalog. */
+	category?: string;
+	/** Trigger phrases from the skill's frontmatter, for local promotion matching. */
+	triggers?: string[];
+	origin: MarketplaceSkillOrigin;
+	requires?: HubRequirementRef[];
+}
+
+export type MarketplaceStatus = "installed" | "installable" | "unavailable";
+
+export interface MarketplaceDiscoveryResult {
+	status: MarketplaceStatus;
+	skills: MarketplaceSkill[];
+	diagnostics: string[];
+}
+
+export interface DiscoverMarketplaceOptions {
+	/** Working directory used to find a repo-level skills/ catalog. */
+	cwd?: string;
+	/** Override the JSON index path; null disables the JSON index source. */
+	indexPath?: string | null;
+	/** Override the catalog directory; null disables catalog discovery. */
+	catalogDir?: string | null;
+}
+
+/**
+ * The catalog directory and index the installed package carries. Resolved
+ * lazily and defensively: a source checkout that has not built, or a package
+ * root the harness cannot locate, must degrade to "no package catalog" rather
+ * than throw out of a listing.
+ */
+function packageCatalogDir(): string | null {
+	try {
+		return path.join(resolvePackageRoot(), "hub", "packs", "skills");
+	} catch {
+		return null;
+	}
+}
+
+function packageIndexPath(): string | null {
+	try {
+		return path.join(resolvePackageRoot(), "hub", "packs", "skills", "skill-marketplace.json");
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Index precedence when no explicit path is given: the operator's config-dir
+ * copy beats the package's, so a hand-curated index still wins, and the
+ * package's own index is what a fresh install falls back to.
+ */
+function defaultIndexPath(): string | null {
+	try {
+		const configured = path.join(pancodeConfigDir(), "skill-marketplace.json");
+		if (existsSync(configured)) return configured;
+	} catch {
+		// Fall through: no config dir is not "no marketplace" once the package
+		// carries an index of its own.
+	}
+	const bundled = packageIndexPath();
+	return bundled && existsSync(bundled) ? bundled : null;
+}
+
+function isIndexSkill(value: unknown): value is { name: string; description: string; sourceUrl: string } {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const record = value as Record<string, unknown>;
+	return (
+		typeof record.name === "string" &&
+		record.name.trim().length > 0 &&
+		typeof record.description === "string" &&
+		typeof record.sourceUrl === "string" &&
+		record.sourceUrl.trim().length > 0
+	);
+}
+
+function optionalString(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+/** Non-empty trimmed trigger phrases, or undefined when the field is absent or unusable. */
+function optionalTriggerList(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const triggers = value
+		.filter((entry): entry is string => typeof entry === "string")
+		.map((entry) => entry.trim())
+		.filter((entry) => entry.length > 0);
+	return triggers.length > 0 ? triggers : undefined;
+}
+
+function indexAudit(value: unknown): MarketplaceSkill["audit"] {
+	return value === "pass" || value === "warn" || value === "fail" || value === "unknown" ? value : undefined;
+}
+
+function parseMarketplaceIndex(indexPath: string, diagnostics: string[] = []): MarketplaceSkill[] {
+	try {
+		const parsed = JSON.parse(readFileSync(indexPath, "utf8")) as unknown;
+		const rawSkills = Array.isArray(parsed)
+			? parsed
+			: parsed && typeof parsed === "object" && Array.isArray((parsed as { skills?: unknown }).skills)
+				? (parsed as { skills: unknown[] }).skills
+				: [];
+		return rawSkills.filter(isIndexSkill).flatMap((skill): MarketplaceSkill[] => {
+			const record = skill as unknown as Record<string, unknown>;
+			// Version, audit and category are published by `npm run skills:pin`.
+			// They are advisory display metadata; an index entry stays installable
+			// without them, which is why only name/description/sourceUrl gate.
+			const version = optionalString(record.version);
+			const audit = indexAudit(record.audit);
+			const category = optionalString(record.category);
+			const triggers = optionalTriggerList(record.triggers);
+			const indexKind = record.kind;
+			if (indexKind !== undefined && !["skill", "agent", "prompt", "playbook"].includes(String(indexKind))) {
+				diagnostics.push(`skill marketplace index entry has unsupported kind: ${skill.name}`);
+				return [];
+			}
+			if (
+				record.requires !== undefined &&
+				(!Array.isArray(record.requires) || record.requires.some((entry) => typeof entry !== "string"))
+			) {
+				diagnostics.push(`hub_requirement_malformed: ${skill.name}`);
+				return [];
+			}
+			const kind: HubEntryKind =
+				indexKind === "agent" || indexKind === "prompt" || indexKind === "playbook" ? indexKind : "skill";
+			const requires = Array.isArray(record.requires)
+				? record.requires.filter((entry): entry is HubRequirementRef => typeof entry === "string")
+				: undefined;
+			return [
+				{
+					kind,
+					name: skill.name.trim(),
+					description: skill.description.trim(),
+					sourceUrl: skill.sourceUrl.trim(),
+					...(version ? { version } : {}),
+					...(audit ? { audit } : {}),
+					...(category ? { category } : {}),
+					...(triggers ? { triggers } : {}),
+					...(requires ? { requires } : {}),
+					origin: "index" as const,
+				},
+			];
+		});
+	} catch (err) {
+		diagnostics.push(`skill marketplace index unreadable: ${err instanceof Error ? err.message : String(err)}`);
+		return [];
+	}
+}
+
+/**
+ * True when the directory contains a <pkg>/SKILL.md either immediately (flat
+ * catalog) or one category folder down (grouped catalog, e.g.
+ * skills/git/ship/SKILL.md). The loader itself recurses arbitrarily;
+ * this probe only decides whether a repo-level skills/ folder is a catalog.
+ */
+function looksLikeSkillCatalog(dir: string): boolean {
+	if (!existsSync(dir)) return false;
+	try {
+		return readdirSync(dir, { withFileTypes: true }).some((entry) => {
+			if (!entry.isDirectory()) return false;
+			const child = path.join(dir, entry.name);
+			if (existsSync(path.join(child, "SKILL.md"))) return true;
+			try {
+				return readdirSync(child, { withFileTypes: true }).some(
+					(inner) => inner.isDirectory() && existsSync(path.join(child, inner.name, "SKILL.md")),
+				);
+			} catch {
+				return false;
+			}
+		});
+	} catch {
+		return false;
+	}
+}
+
+function resolveCatalogDir(options: DiscoverMarketplaceOptions): string | null {
+	if (options.catalogDir === null) return null;
+	if (options.catalogDir) return path.resolve(options.catalogDir);
+	const fromEnv = process.env.PANCODE_SKILL_CATALOG_DIR;
+	if (fromEnv && fromEnv.trim().length > 0) return path.resolve(fromEnv.trim());
+	const repoHubCatalog = path.join(options.cwd ?? process.cwd(), "hub", "packs", "skills");
+	if (looksLikeSkillCatalog(repoHubCatalog)) return repoHubCatalog;
+	const repoCatalog = path.join(options.cwd ?? process.cwd(), "skills");
+	if (looksLikeSkillCatalog(repoCatalog)) return repoCatalog;
+	// The package's own catalog: rows resolve to local files, so a bare-name
+	// install copies out of the package and needs no network. From a checkout
+	// of this repository the two paths coincide.
+	const bundled = packageCatalogDir();
+	return bundled && looksLikeSkillCatalog(bundled) ? bundled : null;
+}
+
+/**
+ * The catalog folder a package sits in, which is the grouping `--category`
+ * installs by. A flat catalog has none, and a package outside the catalog dir
+ * (which `path.relative` reports with a leading "..") is not grouped by it.
+ */
+function catalogCategory(catalogDir: string, baseDir: string): string | undefined {
+	const rel = path.relative(catalogDir, baseDir);
+	const category = path.dirname(rel);
+	if (rel.length === 0 || relativePathEscapes(rel) || category === ".") return undefined;
+	return category;
+}
+
+function catalogEntry(skill: Skill, catalogDir: string): MarketplaceSkill {
+	const version = typeof skill.metadata.version === "string" ? skill.metadata.version : undefined;
+	const category = catalogCategory(catalogDir, skill.baseDir);
+	const triggers = optionalTriggerList(skill.metadata.triggers);
+	return {
+		name: skill.name,
+		description: skill.description,
+		sourceUrl: skill.baseDir,
+		...(version ? { version } : {}),
+		...(skill.provenance?.audit ? { audit: skill.provenance.audit } : {}),
+		...(category ? { category } : {}),
+		...(triggers ? { triggers } : {}),
+		origin: "catalog",
+		kind: "skill",
+	};
+}
+
+function catalogSkills(dir: string, diagnostics: string[]): MarketplaceSkill[] {
+	const list = loadSkills({ disableDiscovery: true, explicitSkillPaths: [dir] });
+	for (const diag of list.diagnostics) {
+		if (diag.type === "warning" || diag.type === "error") diagnostics.push(diag.message);
+	}
+	return list.items.map((skill) => catalogEntry(skill, dir));
+}
+
+export function discoverMarketplaceSkills(options: DiscoverMarketplaceOptions = {}): MarketplaceDiscoveryResult {
+	// Automatic promotion and /skill consume the same pinned PanHub as the CLI.
+	// Explicit source probes below support authoring audits of unmanaged skill trees.
+	if (options.indexPath === undefined && options.catalogDir === undefined) {
+		const hub = discoverHub(options.cwd ? { cwd: options.cwd } : {});
+		const skills: MarketplaceSkill[] = hub.entries
+			.filter((entry) => entry.kind === "skill" && entry.origin !== "installed")
+			.map((entry) => ({ ...entry, kind: "skill", origin: entry.origin === "index" ? "index" : "catalog" }));
+		return { status: skills.length ? "installable" : "unavailable", skills, diagnostics: hub.diagnostics };
+	}
+	const diagnostics: string[] = [];
+	const skills: MarketplaceSkill[] = [];
+	const seen = new Set<string>();
+
+	const indexPath =
+		options.indexPath === null ? null : (options.indexPath ?? process.env.PANCODE_SKILL_MARKETPLACE_INDEX ?? null);
+	const resolvedIndexPath = indexPath ?? defaultIndexPath();
+	const indexSkills =
+		options.indexPath !== null && resolvedIndexPath && existsSync(resolvedIndexPath)
+			? parseMarketplaceIndex(resolvedIndexPath, diagnostics)
+			: [];
+
+	// Catalog packages first: real local files beat index pointers on name collisions.
+	const catalogDir = resolveCatalogDir(options);
+	if (catalogDir) {
+		for (const skill of catalogSkills(catalogDir, diagnostics)) {
+			if (seen.has(skill.name)) continue;
+			seen.add(skill.name);
+			skills.push(skill);
+		}
+	}
+
+	for (const skill of indexSkills) {
+		if (seen.has(skill.name)) continue;
+		seen.add(skill.name);
+		skills.push(skill);
+	}
+
+	if (skills.length === 0 && diagnostics.length === 0) {
+		diagnostics.push(MARKETPLACE_UNCONFIGURED);
+	}
+	return { status: skills.length > 0 ? "installable" : "unavailable", skills, diagnostics };
+}
+
+export function getMarketplaceSkills(options: DiscoverMarketplaceOptions = {}): MarketplaceSkill[] {
+	return discoverMarketplaceSkills(options).skills;
+}
+
+/** Every skill name a routing clause could point an operator at from this workspace. */
+export function knownSkillNames(cwd: string): Set<string> {
+	const names = new Set(getMarketplaceSkills({ cwd }).map((skill) => skill.name));
+	for (const skill of loadSkills({ cwd }).items) names.add(skill.name);
+	return names;
+}
+
+export interface InstallSkillInput {
+	source: string;
+	scope?: "user" | "project";
+	cwd?: string;
+	name?: string;
+	force?: boolean;
+}
+
+export interface InstallSkillResult {
+	name: string;
+	scope: "user" | "project";
+	/** Installed SKILL.md path. */
+	path: string;
+	sourceUrl: string;
+	installedHash: string;
+	warnings: string[];
+}
+
+/** Skill-offer adapter: resolve a package and commit through the shared PanHub engine. */
+export function installSkill(input: InstallSkillInput): InstallSkillResult {
+	const source = input.source.trim();
+	const cwd = input.cwd ?? process.cwd();
+	const scope = input.scope ?? "user";
+	const entry = resolveHubPackage(source, input.cwd ? { cwd: input.cwd } : {});
+	if (entry.kind !== "skill") throw new Error(`expected a skill package, found ${entry.kind}:${entry.name}`);
+	if (input.name && input.name !== entry.name) throw new Error("package identities cannot be renamed at install");
+	const plan = planHubInstall(entry, {
+		cwd,
+		scope,
+		force: input.force ?? false,
+	});
+	const baseline = scope === "project" ? captureProjectInstallBaseline(cwd, "plugins") : null;
+	const installed = installHubPlan(plan);
+	const candidate = readPluginManifest(plan.path);
+	const component = candidate.manifest?.pancode.components.find((item) => item.kind === "skill");
+	if (!component) throw new Error("installed skill package has no skill component");
+	if (baseline !== null && installed.contentDigest !== undefined)
+		approveOperatorProjectInstall(cwd, baseline, [{ id: entry.name, contentDigest: installed.contentDigest }]);
+	return {
+		name: entry.name,
+		scope,
+		path: pluginResourcePath(plan.path, component.path),
+		sourceUrl: entry.sourceUrl,
+		installedHash: plan.sha256,
+		warnings: scope === "project" && !projectPackagesTrusted(cwd, "plugins") ? [PROJECT_SKILL_TRUST_REMEDY] : [],
+	};
+}

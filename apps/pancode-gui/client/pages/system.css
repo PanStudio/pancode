@@ -1,0 +1,220 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+.system-health-heading,
+.system-discovery,
+.interop-agent__heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-4);
+	flex-wrap: wrap;
+}
+.system-health-heading {
+	margin-top: var(--space-8);
+}
+.system-discovery {
+	align-items: end;
+	justify-content: start;
+	margin-block: var(--space-4);
+}
+.system-discovery .settings-filter {
+	flex: 1 1 16rem;
+	margin: 0;
+}
+.system-health-group {
+	margin-block: var(--space-6);
+}
+.system-health-group > h3 {
+	font: 600 var(--text-meta) var(--font-ui);
+	color: var(--ink-muted);
+	margin-bottom: var(--space-2);
+}
+.system-finding {
+	display: grid;
+	grid-template-columns: minmax(10rem, 0.7fr) minmax(0, 2fr);
+	gap: var(--space-6);
+	padding-block: var(--space-4);
+	border-top: 1px solid var(--line);
+}
+.system-finding > div {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.system-finding h4 {
+	font-size: var(--text-reading);
+	margin: 0 0 var(--space-2);
+}
+.system-finding p {
+	margin: 0;
+}
+.system-finding small,
+.system-finding a {
+	display: block;
+	margin-top: var(--space-2);
+}
+.system-finding small {
+	color: var(--ink-muted);
+}
+.system-versions {
+	border-block: 1px solid var(--line);
+	padding-block: var(--space-4);
+	margin-block: var(--space-6);
+}
+.interop-agents {
+	border-top: 1px solid var(--line-strong);
+}
+.interop-agent {
+	border-bottom: 1px solid var(--line);
+	padding-block: var(--space-6);
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.interop-agent__heading h2 {
+	margin: 0;
+	font-size: var(--text-h3);
+}
+.interop-agent > .facts {
+	margin-block: var(--space-4);
+}
+@media (max-width: 750px) {
+	.system-finding {
+		grid-template-columns: minmax(0, 1fr);
+		gap: var(--space-3);
+	}
+}
+
+.system-sections {
+	display: flex;
+	gap: var(--space-6);
+	border-bottom: 1px solid var(--line);
+	padding-block: var(--space-4);
+	margin-top: var(--space-4);
+	font-size: var(--text-meta);
+}
+/* Jump links, not the padded menu items the global `nav a` rule draws. */
+.system-sections a {
+	min-height: 32px;
+	display: inline-flex;
+	padding: 0;
+	border-radius: 0;
+	color: var(--ink-muted);
+	text-decoration: none;
+}
+.system-sections a:hover,
+.system-sections a:focus-visible {
+	background: none;
+	color: var(--ink);
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+.system-compact-paths {
+	border-block: 1px solid var(--line);
+	padding-block: var(--space-4);
+	margin-block: var(--space-6);
+}
+.system-compact-paths dt > small {
+	display: block;
+	margin-top: var(--space-2);
+	color: var(--ink-muted);
+	font-weight: 400;
+}
+.system-page details > summary,
+.interop-page details > summary {
+	cursor: pointer;
+	color: var(--accent);
+}
+.interop-filters {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	border: 0;
+	padding: 0;
+	margin-block: var(--space-4);
+}
+.interop-filters legend {
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+	margin-bottom: var(--space-2);
+}
+.interop-filters button[aria-pressed="true"] {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+.interop-discovery {
+	padding-block: var(--space-4);
+}
+.interop-technical {
+	margin-block: var(--space-4);
+}
+.interop-technical[open] {
+	padding: var(--space-4);
+	border-left: 2px solid var(--accent-line);
+	background: var(--surface);
+}
+.interop-agent:has(.interop-answer) {
+	border-left: 2px solid var(--action-line);
+	padding-left: var(--space-4);
+}
+.system-page [id],
+.interop-page details {
+	scroll-margin-top: var(--space-6);
+}
+
+.system-page > .panel-summary,
+.interop-page > .panel-summary {
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: var(--space-4);
+	padding-block: var(--space-4);
+	margin-block: var(--space-4);
+	border-block: 1px solid var(--line);
+}
+.system-page > .panel-summary > .fact,
+.interop-page > .panel-summary > .fact {
+	grid-template-columns: minmax(0, 1fr);
+	gap: var(--space-1);
+}
+.system-page > .panel-summary dd {
+	font: 500 var(--text-h2) / 1.25 var(--font-mono);
+	font-variant-numeric: tabular-nums;
+}
+.interop-page > .panel-summary dd {
+	font-family: var(--font-mono);
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+}
+.system-page > .panel-summary dt,
+.interop-page > .panel-summary dt {
+	font-size: var(--text-instrument);
+}
+.system-page .panel-note code,
+.interop-page .panel-note code {
+	display: inline;
+	padding: 0;
+	font-size: inherit;
+}
+.system-page > .panel-heading h1,
+.interop-page > .panel-heading h1 {
+	font-family: var(--font-editorial);
+	font-weight: 700;
+}
+
+.system-health-group details.system-finding {
+	display: block;
+	padding-block: var(--space-3);
+}
+.system-health-group details.system-finding > summary {
+	color: var(--ink);
+	font-weight: 500;
+}
+.system-health-group details.system-finding[open] > div {
+	padding: var(--space-3) var(--space-4);
+	margin-top: var(--space-2);
+	background: var(--well);
+}
+
+.system-discovery button[aria-pressed="true"] {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+	color: var(--accent);
+}

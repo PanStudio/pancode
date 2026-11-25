@@ -1,0 +1,1045 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import type { Hash } from "node:crypto";
+import { createHash } from "node:crypto";
+import { constants, existsSync, readdirSync, readFileSync } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rename, rm } from "node:fs/promises";
+import { hostname } from "node:os";
+import { dirname, join } from "node:path";
+import { canonicalJsonStrict } from "../../core/canonical-json.js";
+import { resolvePackageRoot } from "../../core/package-root.js";
+import { processBirthToken } from "../../core/process-identity.js";
+import { safeResourceWrite, safeResourceWriteAsync } from "../../core/safe-resource-write.js";
+import { readRegularFile, readRegularFileFromSync } from "../../core/state-boundary.js";
+import { withStateFileLock } from "../../core/state-file-lock.js";
+import type { TelemetryCapture } from "../../core/telemetry/capture.js";
+import { captureAdmits, STANDARD_CAPTURE, sameTelemetryCapture } from "../../core/telemetry/capture.js";
+import type { TelemetryContext } from "../../core/telemetry/context.js";
+import { mainAgent, telemetryOwner } from "../../core/telemetry/context.js";
+import type { ClockOrigin, SegmentHeader, TelemetryRecord } from "../../core/telemetry/envelope.js";
+import { makeTelemetryRecord, readTelemetryRecord } from "../../core/telemetry/envelope.js";
+import type { EventPayload, JournalEventName, PreimageEventName } from "../../core/telemetry/events.js";
+import { PREIMAGE_SUBJECTS } from "../../core/telemetry/events.js";
+import type { PendingTelemetry, TelemetrySink } from "../../core/telemetry/producer.js";
+import {
+	registerProcessJournalSink,
+	registerRunTelemetrySink,
+	registerTelemetrySink,
+} from "../../core/telemetry/producer.js";
+import type { ObjectRef } from "../../core/telemetry/schemas.js";
+import type { SegmentScan, TelemetryChain } from "../../core/telemetry/segment.js";
+import {
+	chainTelemetryBytes,
+	EMPTY_TELEMETRY_CHAIN,
+	encodeAcceptedTelemetryLine,
+	encodeTelemetryLine,
+	scanTelemetrySegment,
+	telemetryChainHead,
+} from "../../core/telemetry/segment.js";
+import { createRedactionTally, redactSecretsDeep } from "../evidence/redact.js";
+import { createTelemetryPreimages, storeTelemetryObject } from "./objects.js";
+import {
+	TELEMETRY_JOURNAL_FILE,
+	telemetryBundlePath,
+	telemetryJournalFiles,
+	telemetryJournalPath,
+	telemetrySealMarkerPath,
+	telemetrySegmentFile,
+	telemetrySegmentSequence,
+	telemetrySessionDirectory,
+} from "./paths.js";
+import type { ScopeFileEntry } from "./seal.js";
+import {
+	describeSealMismatch,
+	listScopeObjects,
+	readTelemetryScopeFiles,
+	removeInterruptedObjectWrites,
+	SEAL_EVENTS,
+	scopeBundleManifest,
+	sealMarkerBytes,
+	telemetryScopeOf,
+	verifyTelemetryScope,
+	walkTelemetryChain,
+} from "./seal.js";
+
+export interface JournalHealth {
+	queueDepth: number;
+	persisted: number;
+	dropped: number;
+	invalid: number;
+	/** Records queued under a mode their segment no longer admitted at write time (#434). */
+	filtered: number;
+	/** Research records and preimages refused at the session's research byte cap (#434). */
+	capped: number;
+	writeErrors: number;
+	skipped: number;
+}
+export interface CallJournal extends TelemetrySink {
+	admits(kind: JournalEventName): boolean;
+	flush(): Promise<void>;
+	close(): Promise<void>;
+	/**
+	 * Seal and close as one operation: appends and object stores are refused from the first moment, accepted work
+	 * drains, then the seal lands and the writer closes. False when the seal did not land (#434).
+	 */
+	sealAndClose(): Promise<boolean>;
+	health(): JournalHealth;
+	/**
+	 * Reserve research-capture bytes for a preimage before storing it. False at the cap: the caller stores
+	 * nothing, and the next batch records a research-cap gap (#434).
+	 */
+	reserveResearchBytes(bytes: number): boolean;
+	/**
+	 * A reserved preimage its caller could not store: the reservation is released, and the record that would have
+	 * cited it is counted as dropped, so the next batch records a writer-drop gap (#434).
+	 */
+	dropUnstored(bytes: number): void;
+	/**
+	 * Seal the scope: write what is queued, append the scope's `<kind>.sealed` record over the chain head and write
+	 * `bundle.json` (#434). False when the writer failed or closed; the scope then stays unsealed. Records written
+	 * after a seal remove `bundle.json` first, so the scope reads live until the next seal.
+	 */
+	seal(): Promise<boolean>;
+	/**
+	 * Store an object in the scope's `objects/` behind any seal in progress, removing a current `bundle.json` first so
+	 * a sealed scope never holds an object its seal does not list (#434).
+	 */
+	storeObject(subject: Parameters<typeof storeTelemetryObject>[1], value: unknown): Promise<ObjectRef>;
+}
+export interface CallJournalOptions {
+	/** The scope directory from `paths.ts`: a session's, a run's or the process's. */
+	directory: string;
+	context: TelemetryContext;
+	writer: SegmentHeader["writer"];
+	queueCapacity?: number;
+	segmentBytes?: number;
+	/** Read when a segment opens and before every batch; a change opens a new segment. Defaults to standard (#434). */
+	capture?: () => TelemetryCapture;
+	/** Research capture budget across the journal's segments and the preimages its records declare. */
+	researchBytes?: number;
+}
+
+/** Research mode is capped per session apart from standard retention (#434, §14). */
+export const RESEARCH_SESSION_BYTES = 256 * 1024 * 1024;
+
+/** Preimage bytes a research record declares it stored in `objects/`. */
+function declaredBytes(record: TelemetryRecord): number {
+	const declared = (record.data as { bytes?: unknown }).bytes;
+	return typeof declared === "number" ? declared : 0;
+}
+
+/** Every segment of the journal counts toward the cap. */
+function researchBytesIn(scans: readonly SegmentScan[]): number {
+	let total = 0;
+	for (const scan of scans)
+		for (const row of scan.rows)
+			if (row.kind === "record" && row.record.tier === "research")
+				total += encodeTelemetryLine(row.record).length + declaredBytes(row.record);
+	return total;
+}
+
+/** The scope's rotated segments, oldest first, as the chain and the research cap read them on open. */
+async function readRotatedSegments(directory: string): Promise<Array<{ name: string; bytes: Buffer }>> {
+	const segments = [];
+	for (const name of telemetryJournalFiles(await readdir(directory)))
+		if (name !== TELEMETRY_JOURNAL_FILE) segments.push({ name, bytes: await readFile(join(directory, name)) });
+	return segments;
+}
+
+/**
+ * What one owner's writer made durable, published after fsync so a live fold reads exactly the bytes a cold reader
+ * would (#434 §11). `rewritten` means the writer replaced bytes an earlier read may hold (a torn-tail repair), so a
+ * live reader re-reads instead of appending; `failed` means the writer stopped and its health changed.
+ */
+export type PersistedTelemetry =
+	| { kind: "appended"; bytes: Buffer; origin: ClockOrigin }
+	| { kind: "rewritten" }
+	| { kind: "failed" };
+type PersistedListener = (owner: string, event: PersistedTelemetry) => void;
+const persistedListeners = new Map<string, Set<PersistedListener>>();
+const anyOwnerListeners = new Set<PersistedListener>();
+const openJournalHealth = new Map<string, () => JournalHealth>();
+const openJournals = new Map<string, CallJournal>();
+
+/** Reuse the scope's sole writer for durable coordinator evidence (#434). */
+export function ownedCallJournal(context: TelemetryContext): CallJournal | undefined {
+	return openJournals.get(telemetryOwner(context));
+}
+
+function subscribed(owner: string): boolean {
+	return anyOwnerListeners.size > 0 || persistedListeners.has(owner);
+}
+
+function addListener(set: Set<PersistedListener>, listener: PersistedListener): PersistedListener {
+	// Each subscription is its own entry, so subscribing one callback twice needs two unsubscribes.
+	const entry: PersistedListener = (owner, event) => listener(owner, event);
+	set.add(entry);
+	return entry;
+}
+
+/** Owner keys are `telemetryOwner()` values; the listener runs inside the writer's flush and must stay cheap. */
+export function subscribePersistedTelemetry(owner: string, listener: PersistedListener): () => void {
+	let set = persistedListeners.get(owner);
+	if (!set) {
+		set = new Set();
+		persistedListeners.set(owner, set);
+	}
+	const entry = addListener(set, listener);
+	return () => {
+		set.delete(entry);
+		if (set.size === 0 && persistedListeners.get(owner) === set) persistedListeners.delete(owner);
+	};
+}
+
+/** Every owner's batches, for a reader that learns which owners it needs only after a cold read (#434). */
+export function subscribeAllPersistedTelemetry(listener: PersistedListener): () => void {
+	const entry = addListener(anyOwnerListeners, listener);
+	return () => anyOwnerListeners.delete(entry);
+}
+
+function publishPersisted(owner: string, event: PersistedTelemetry): void {
+	for (const listener of [...(persistedListeners.get(owner) ?? []), ...anyOwnerListeners]) {
+		try {
+			listener(owner, event);
+		} catch {
+			// A reader's failure never reaches the writer; durability already happened (#434).
+		}
+	}
+}
+
+/** Health of every journal this process holds open, keyed by owner. */
+export function openCallJournalHealth(): Array<{ owner: string; health: JournalHealth }> {
+	return [...openJournalHealth].map(([owner, health]) => ({ owner, health: health() }));
+}
+
+/** Fork initialization and live owners use the same segment and clock contract (#434). */
+export function callJournalHeader(
+	writer: SegmentHeader["writer"],
+	capture: TelemetryCapture = STANDARD_CAPTURE,
+): SegmentHeader {
+	return {
+		v: 1,
+		k: "segment.open",
+		schemaSet: "pancode-telemetry/1",
+		mode: capture.mode,
+		capture: { ...capture.capture },
+		clockOrigin: {
+			host: hostname(),
+			pid: process.pid,
+			birthToken: processBirthToken(),
+			monoEpochWallMs: performance.timeOrigin,
+		},
+		writer: writer,
+	};
+}
+
+/** Only the newly created child's cold fork path calls this, before any writer can acquire it (#434). */
+export function seedForkCallJournal(
+	stateDir: string,
+	sessionId: string,
+	lineage: EventPayload<"session.forked">,
+): void {
+	const path = telemetryJournalPath(telemetrySessionDirectory(stateDir, sessionId));
+	if (existsSync(path)) throw new Error("fork journal already exists");
+	const pkg = JSON.parse(readFileSync(join(resolvePackageRoot(), "package.json"), "utf8")) as {
+		version: string;
+		dependencies: Record<string, string>;
+	};
+	const header = callJournalHeader({
+		pancodeVersion: pkg.version,
+		piVersion: pkg.dependencies["@earendil-works/pi-ai"] ?? "unknown",
+	});
+	const row = makeTelemetryRecord(
+		"session.forked",
+		lineage,
+		{ sessionId, agent: mainAgent(sessionId) },
+		{
+			t: new Date().toISOString(),
+			mono: performance.now(),
+		},
+	);
+	safeResourceWrite(path, Buffer.concat([encodeTelemetryLine(header), encodeTelemetryLine(row)]), { mode: 0o600 });
+}
+
+/** One lease for the writer's lifetime, adjudicated by host, pid and birth token (#434). */
+export async function openCallJournal(options: CallJournalOptions): Promise<CallJournal> {
+	const path = telemetryJournalPath(options.directory);
+	await mkdir(dirname(path), { recursive: true });
+	// Settled attempts carry their economics from the journal that first receives them (token economy S8).
+	const economy = await import("./economy-settlement.js");
+	let ready!: (journal: CallJournal) => void;
+	let reject!: (error: unknown) => void;
+	const opened = new Promise<CallJournal>((resolve, fail) => {
+		ready = resolve;
+		reject = fail;
+	});
+	let release!: () => void;
+	const lifetime = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let unregister: (() => void) | undefined;
+	let registered = false;
+	let handle: FileHandle | undefined;
+	const hubOwner = telemetryOwner(options.context);
+	// A mode lookup that throws captures standard only; the segment header must still say what it admits (#434).
+	const captureNow = (): TelemetryCapture => {
+		try {
+			return options.capture?.() ?? STANDARD_CAPTURE;
+		} catch {
+			return STANDARD_CAPTURE;
+		}
+	};
+	const owner = withStateFileLock(
+		path,
+		async () => {
+			let capture = captureNow();
+			let header = callJournalHeader(options.writer, capture);
+			let bytes: Buffer;
+			try {
+				const existing = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+				try {
+					bytes = await existing.readFile();
+				} finally {
+					await existing.close();
+				}
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+				bytes = Buffer.alloc(0);
+			}
+			let scan = scanTelemetrySegment(bytes);
+			const first = scan.rows[0]?.kind;
+			if (bytes.length > 0 && first !== "header" && first !== "damaged") {
+				// Another installation may own a newer segment format. Never truncate or retire it (#434).
+				// A first line that fails its checksum is damage, retired whole below like any other damaged line.
+				throw new Error("call journal segment header is unsupported");
+			}
+			// The chain is a function of the bytes alone: replay the rotated segments, then the live prefix (#434).
+			let rotated: Array<{ name: string; bytes: Buffer }> = [];
+			let rotatedRead = true;
+			try {
+				rotated = await readRotatedSegments(options.directory);
+			} catch {
+				// An unreadable rotated segment leaves research capture at its cap, and the scope cannot be sealed.
+				rotatedRead = false;
+			}
+			const rotatedScans = rotated.map((segment) => scanTelemetrySegment(segment.bytes));
+			// A damaged segment cannot be chained or sealed; its records still read, and new calls still journal.
+			let intact = rotatedRead && rotatedScans.every((rotatedScan) => rotatedScan.corruptOffset === null);
+			const bundlePath = telemetryBundlePath(options.directory);
+			const markerPath = telemetrySealMarkerPath(options.directory);
+			// An object write a stopped process left half done is not an object; the lock makes it abandoned (#434).
+			await removeInterruptedObjectWrites(options.directory);
+			// A sealed scope must still verify before this writer makes it live, so reopening never launders an edit; a
+			// scope that lost its bundle is held to the seal its marker names (RL-7).
+			if (existsSync(bundlePath) || existsSync(markerPath)) {
+				const verdict = verifyTelemetryScope(await readTelemetryScopeFiles(options.directory));
+				if (verdict.status === "failed")
+					throw new Error(`sealed telemetry scope does not verify: ${describeSealMismatch(verdict.mismatch)}`);
+			}
+			const damaged = scan.corruptOffset !== null;
+			const prefix = damaged ? Buffer.alloc(0) : bytes.subarray(0, scan.validBytes);
+			// Every earlier seal must still match the history it covers, with or without a manifest (#434).
+			const walk = intact
+				? walkTelemetryChain([...rotated, ...(prefix.length > 0 ? [{ name: TELEMETRY_JOURNAL_FILE, bytes: prefix }] : [])])
+				: null;
+			if (walk && "mismatch" in walk)
+				throw new Error(`telemetry chain does not verify: ${describeSealMismatch(walk.mismatch)}`);
+			let chain: TelemetryChain = walk ? walk.chain : EMPTY_TELEMETRY_CHAIN;
+			const segments: ScopeFileEntry[] = walk ? walk.segments.slice(0, rotated.length) : [];
+			let sequence = rotated.reduce((max, { name }) => Math.max(max, telemetrySegmentSequence(name) ?? 0), 0);
+			// A damaged live segment is retired whole under the next sealed name, its bytes untouched, and a fresh one
+			// opens behind it, so one bad line never stops journaling or hides the records after it.
+			let retired: { name: string; lines: number } | undefined;
+			if (damaged) {
+				sequence += 1;
+				retired = {
+					name: telemetrySegmentFile(sequence),
+					lines: scan.rows.filter((row) => row.kind === "damaged").length,
+				};
+				await rename(path, join(options.directory, retired.name));
+				rotatedScans.push(scan);
+				intact = false;
+				bytes = Buffer.alloc(0);
+				scan = scanTelemetrySegment(bytes);
+			}
+			// Appending makes a sealed scope live again; its manifest goes before the first new byte (#434).
+			await rm(bundlePath, { force: true });
+			/** Whether this writer's seal is the scope's tip and its `bundle.json` is on disk. */
+			let sealCurrent = false;
+			const gap = (
+				reason: "torn-tail" | "writer-drop" | "invalid-record" | "mode-filtered" | "research-cap" | "interior-corruption",
+				count: number,
+				sink: string = TELEMETRY_JOURNAL_FILE,
+			) =>
+				makeTelemetryRecord("journal.gap", { sink, reason, count }, options.context, {
+					t: new Date().toISOString(),
+					mono: performance.now(),
+				});
+			// Initial creation and tail repair use the durable replacement primitive. Normal batches
+			// append with a checked async write and fsync under this exclusive lease (#434).
+			// A live segment opened after rotated ones continues their chain, as a rotation would have (#434).
+			const recovered = bytes.length === 0 ? telemetryChainHead(chain) : null;
+			const opening = Buffer.concat([
+				encodeTelemetryLine(recovered ? { ...header, chainHead: recovered } : header),
+				...(scan.tornTailBytes ? [encodeTelemetryLine(gap("torn-tail", 1))] : []),
+				...(retired ? [encodeTelemetryLine(gap("interior-corruption", retired.lines, retired.name))] : []),
+			]);
+			if (bytes.length === 0 || scan.tornTailBytes > 0) {
+				await safeResourceWriteAsync(path, Buffer.concat([prefix, opening]), { mode: 0o600 });
+				handle = await open(path, constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW);
+			} else {
+				handle = await open(path, constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW);
+				await appendAll(handle, opening);
+				await handle.sync();
+			}
+			if (subscribed(hubOwner))
+				publishPersisted(
+					hubOwner,
+					scan.tornTailBytes > 0 || retired
+						? { kind: "rewritten" }
+						: { kind: "appended", bytes: opening, origin: header.clockOrigin },
+				);
+			let size = prefix.length + opening.length;
+			chain = chainTelemetryBytes(chain, opening);
+			let live: Hash = createHash("sha256").update(prefix).update(opening);
+			const researchCap = options.researchBytes ?? RESEARCH_SESSION_BYTES;
+			let researchBytes = rotatedRead ? researchBytesIn([scan, ...rotatedScans]) : researchCap;
+			let capped = 0;
+			let reportedCapped = 0;
+			const capacity = options.queueCapacity ?? 4096;
+			if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 1_000_000)
+				throw new Error("invalid call journal queue capacity");
+			const ring: Array<PendingTelemetry | undefined> = new Array(capacity);
+			let head = 0;
+			let count = 0;
+			let dropped = 0;
+			let reportedDrops = 0;
+			let invalid = 0;
+			let filtered = 0;
+			let persisted = 0;
+			let writeErrors = 0;
+			let closed = false;
+			let failed = false;
+			let scheduled: NodeJS.Immediate | undefined;
+			let flushing: Promise<void> | undefined;
+			const skipped = scan.rows.filter((row) => row.kind === "skipped").length;
+			const health = (): JournalHealth => ({
+				queueDepth: count,
+				persisted,
+				dropped,
+				invalid,
+				filtered,
+				capped,
+				writeErrors,
+				skipped,
+			});
+			const schedule = () => {
+				if (scheduled || flushing || closed || failed) return;
+				scheduled = setImmediate(() => {
+					scheduled = undefined;
+					void flush();
+				});
+			};
+			const flush = (): Promise<void> => {
+				if (failed) return Promise.resolve();
+				// Behind a batch in flight, check again once it lands: another waiter may have started the next batch with
+				// the records queued meanwhile, and this flush must not return before that batch is written either (#434).
+				if (flushing) return flushing.then(flush);
+				if (count === 0 && dropped === reportedDrops && capped === reportedCapped) return Promise.resolve();
+				if (scheduled) {
+					clearImmediate(scheduled);
+					scheduled = undefined;
+				}
+				flushing = (async () => {
+					let batchCount = 0;
+					let dequeued = 0;
+					try {
+						if (sealCurrent) {
+							// Content stored below and every line after it postdate the seal.
+							await rm(bundlePath, { force: true });
+							sealCurrent = false;
+						}
+						const lines: Buffer[] = [];
+						// Records already queued are written under the new mode, so a change record enqueued after
+						// the settings changed is the first record of the new segment (#434).
+						const next = captureNow();
+						const modeChanged = !sameTelemetryCapture(next, capture);
+						if (modeChanged) {
+							capture = next;
+							header = callJournalHeader(options.writer, capture);
+						}
+						if (dropped > reportedDrops) {
+							lines.push(encodeTelemetryLine(gap("writer-drop", dropped - reportedDrops)));
+							reportedDrops = dropped;
+						}
+						let invalidBatch = 0;
+						let filteredBatch = 0;
+						let unstoredBatch = 0;
+						while (count > 0) {
+							const pending = ring[head];
+							ring[head] = undefined;
+							head = (head + 1) % capacity;
+							count -= 1;
+							if (!pending) continue;
+							dequeued += 1;
+							if (!captureAdmits(capture, pending.kind)) {
+								filteredBatch += 1;
+								continue;
+							}
+							let data = pending.data;
+							if (pending.preimage !== undefined) {
+								// Content is reserved against the cap and durable in objects/ before a record cites it (#434).
+								const subject = Object.hasOwn(PREIMAGE_SUBJECTS, pending.kind)
+									? PREIMAGE_SUBJECTS[pending.kind as PreimageEventName]
+									: undefined;
+								let bytes: number;
+								try {
+									if (subject === undefined) throw new Error("kind carries no preimage");
+									bytes = Buffer.byteLength(canonicalJsonStrict(pending.preimage));
+								} catch {
+									invalidBatch += 1;
+									continue;
+								}
+								if (researchBytes + bytes > researchCap) {
+									capped += 1;
+									continue;
+								}
+								researchBytes += bytes;
+								try {
+									const content = await storeTelemetryObject(options.directory, subject, pending.preimage);
+									data = { ...pending.data, content, bytes } as typeof data;
+								} catch {
+									researchBytes -= bytes;
+									unstoredBatch += 1;
+									continue;
+								}
+							}
+							const record = redactSecretsDeep(
+								{
+									...makeTelemetryRecord(pending.kind, data, pending.ctx, {
+										t: new Date(pending.wallMs).toISOString(),
+										mono: pending.mono,
+									}),
+									...(pending.recordId ? { id: pending.recordId } : {}),
+									...(pending.origin ? { origin: pending.origin } : {}),
+								},
+								createRedactionTally(),
+							);
+							const accepted = readTelemetryRecord(record);
+							if (accepted.kind !== "record") {
+								invalidBatch += 1;
+								continue;
+							}
+							const line = encodeAcceptedTelemetryLine(accepted.record);
+							if (record.tier === "research") {
+								// The preimage was reserved before it was stored; only the record itself is new here.
+								const cost = line.length;
+								if (researchBytes + cost > researchCap) {
+									capped += 1;
+									continue;
+								}
+								researchBytes += cost;
+							}
+							lines.push(line);
+							batchCount += 1;
+						}
+						invalid += invalidBatch;
+						if (invalidBatch) lines.push(encodeTelemetryLine(gap("invalid-record", invalidBatch)));
+						filtered += filteredBatch;
+						if (filteredBatch) lines.push(encodeTelemetryLine(gap("mode-filtered", filteredBatch)));
+						// A preimage that could not be stored drops its record; nothing may cite content that is not on disk.
+						dropped += unstoredBatch;
+						if (dropped > reportedDrops) {
+							lines.push(encodeTelemetryLine(gap("writer-drop", dropped - reportedDrops)));
+							reportedDrops = dropped;
+						}
+						if (capped > reportedCapped) {
+							lines.push(encodeTelemetryLine(gap("research-cap", capped - reportedCapped)));
+							reportedCapped = capped;
+						}
+						if (!handle) throw new Error("call journal closed before flush");
+						let rotation: Buffer[] = [];
+						if (size >= (options.segmentBytes ?? 32 * 1024 * 1024)) {
+							const closing = encodeTelemetryLine(
+								makeTelemetryRecord("journal.segment_closed", { reason: "rotation" }, options.context, {
+									t: new Date().toISOString(),
+									mono: performance.now(),
+								}),
+							);
+							await appendAll(handle, closing);
+							await handle.sync();
+							await handle.close();
+							handle = undefined;
+							sequence += 1;
+							const name = telemetrySegmentFile(sequence);
+							await rename(path, join(options.directory, name));
+							chain = chainTelemetryBytes(chain, closing);
+							segments.push({ name, sha256: live.update(closing).digest("hex"), bytes: size + closing.length });
+							// The new segment's header carries the head, so the rotated segments form one chain (#434).
+							const opened = encodeTelemetryLine({ ...header, chainHead: telemetryChainHead(chain) as string });
+							await safeResourceWriteAsync(path, opened, { mode: 0o600 });
+							handle = await open(path, constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW);
+							size = opened.length;
+							chain = chainTelemetryBytes(chain, opened);
+							live = createHash("sha256").update(opened);
+							rotation = [closing, opened];
+						} else if (modeChanged) {
+							// A mode change closes the segment in place and opens one whose header admits what follows.
+							lines.unshift(
+								encodeTelemetryLine(
+									makeTelemetryRecord("journal.segment_closed", { reason: "mode-change" }, options.context, {
+										t: new Date().toISOString(),
+										mono: performance.now(),
+									}),
+								),
+								encodeTelemetryLine(header),
+							);
+						}
+						const batch = Buffer.concat(lines);
+						await appendAll(handle, batch);
+						await handle.sync();
+						size += batch.length;
+						chain = chainTelemetryBytes(chain, batch);
+						live.update(batch);
+						persisted += batchCount;
+						// Nothing is decoded or copied for a headless run or worker that nobody reads live (#434).
+						if (subscribed(hubOwner))
+							publishPersisted(hubOwner, {
+								kind: "appended",
+								bytes: rotation.length > 0 ? Buffer.concat([...rotation, batch]) : batch,
+								origin: header.clockOrigin,
+							});
+					} catch {
+						// A partial write is repaired by the next owner. Do not append behind an uncertain tail (#434).
+						writeErrors += 1;
+						failed = true;
+						dropped += dequeued + count;
+						ring.fill(undefined);
+						count = 0;
+						if (subscribed(hubOwner)) publishPersisted(hubOwner, { kind: "failed" });
+					}
+				})().finally(() => {
+					flushing = undefined;
+					if (count > 0 || dropped > reportedDrops || capped > reportedCapped) schedule();
+				});
+				return flushing;
+			};
+			const scope = telemetryScopeOf(options.context);
+			const pending = () => count > 0 || dropped > reportedDrops || capped > reportedCapped;
+			/** Seals, object stores and close run one at a time, in call order (#434). */
+			let exclusive: Promise<unknown> = Promise.resolve();
+			const exclusively = <T>(work: () => Promise<T>): Promise<T> => {
+				const run = exclusive.then(work);
+				exclusive = run.then(
+					() => undefined,
+					() => undefined,
+				);
+				return run;
+			};
+			/**
+			 * Write everything queued, then hold the batch slot so no batch lands while `work` runs. A failed writer
+			 * stops draining at once: its counters no longer advance (#434).
+			 */
+			const holdingBatches = async <T>(work: () => Promise<T>): Promise<T> => {
+				for (;;) {
+					await flush();
+					if (!flushing && (failed || !pending())) break;
+				}
+				let done!: () => void;
+				flushing = new Promise<void>((resolve) => {
+					done = resolve;
+				});
+				try {
+					return await work();
+				} finally {
+					flushing = undefined;
+					done();
+					if (pending()) schedule();
+				}
+			};
+			const sealNow = async (): Promise<boolean> => {
+				// Without every rotated segment's bytes the seal could not list the files it covers.
+				if (failed || !handle || !intact) return false;
+				if (sealCurrent) return true;
+				const current = handle;
+				let objects: Awaited<ReturnType<typeof listScopeObjects>>;
+				try {
+					// Every object write of this writer is serialized behind the seal, so a temp file is abandoned.
+					await removeInterruptedObjectWrites(options.directory);
+					objects = await listScopeObjects(options.directory);
+				} catch {
+					// An object that cannot be read or does not match its id refuses the seal; nothing was written.
+					return false;
+				}
+				try {
+					const head = telemetryChainHead(chain);
+					if (head === null) throw new Error("telemetry chain is empty");
+					const record = makeTelemetryRecord(
+						SEAL_EVENTS[scope.kind],
+						{
+							head,
+							records: chain.lines,
+							segments: [...segments, { name: TELEMETRY_JOURNAL_FILE, sha256: live.copy().digest("hex"), bytes: size }],
+							objects,
+						},
+						options.context,
+						{ t: new Date().toISOString(), mono: performance.now() },
+					);
+					const line = encodeTelemetryLine(record);
+					await appendAll(current, line);
+					await current.sync();
+					size += line.length;
+					chain = chainTelemetryBytes(chain, line);
+					live.update(line);
+					const manifest = scopeBundleManifest({
+						scope,
+						sealedAt: record.t,
+						writer: options.writer,
+						host: header.clockOrigin.host,
+						segments: [...segments, { name: TELEMETRY_JOURNAL_FILE, sha256: live.copy().digest("hex"), bytes: size }],
+						objects,
+						seal: { recordId: record.id, head: telemetryChainHead(chain) as string },
+					});
+					// The marker lands first, so whenever the bundle names this seal the marker does too (RL-7).
+					await safeResourceWriteAsync(markerPath, sealMarkerBytes(manifest, chain.lines), { mode: 0o600 });
+					await safeResourceWriteAsync(bundlePath, `${JSON.stringify(manifest, null, "\t")}\n`, { mode: 0o600 });
+					sealCurrent = true;
+					if (subscribed(hubOwner))
+						publishPersisted(hubOwner, { kind: "appended", bytes: line, origin: header.clockOrigin });
+					return true;
+				} catch {
+					// A seal that did not land leaves the scope unsealed; nothing appends behind an uncertain tail.
+					writeErrors += 1;
+					failed = true;
+					if (subscribed(hubOwner)) publishPersisted(hubOwner, { kind: "failed" });
+					return false;
+				}
+			};
+			let finishing: Promise<boolean> | undefined;
+			/**
+			 * Close the writer, sealing first when asked. One operation: new appends and object stores are refused at
+			 * once, then the work already accepted drains, then the seal lands and the writer closes, so nothing can
+			 * slip in between the seal and the close (#434). A second call shares the first one's result.
+			 */
+			const finish = (sealing: boolean): Promise<boolean> => {
+				if (finishing) return finishing;
+				closed = true;
+				unregister?.();
+				finishing = (async () => {
+					// Closing a writer never seals by itself: sealing follows the scope's lifecycle (#434).
+					const sealed = await exclusively(() => holdingBatches(async () => (sealing ? sealNow() : false)));
+					if (scheduled) clearImmediate(scheduled);
+					release();
+					await owner;
+					return sealed;
+				})();
+				return finishing;
+			};
+			const preimages = createTelemetryPreimages();
+			const journal: CallJournal = {
+				seal() {
+					if (closed) return Promise.resolve(false);
+					return exclusively(() => holdingBatches(sealNow));
+				},
+				storeObject(subject, value) {
+					if (closed || failed) return Promise.reject(new Error("call journal is closed"));
+					return exclusively(async () => {
+						if (sealCurrent) {
+							await rm(bundlePath, { force: true });
+							sealCurrent = false;
+						}
+						return storeTelemetryObject(options.directory, subject, value, preimages);
+					});
+				},
+				admits(kind) {
+					return captureAdmits(captureNow(), kind);
+				},
+				reserveResearchBytes(bytes) {
+					if (closed || failed) return false;
+					if (!Number.isSafeInteger(bytes) || bytes < 0 || researchBytes + bytes > researchCap) {
+						capped += 1;
+						schedule();
+						return false;
+					}
+					researchBytes += bytes;
+					return true;
+				},
+				dropUnstored(bytes) {
+					if (Number.isSafeInteger(bytes) && bytes > 0) researchBytes = Math.max(0, researchBytes - bytes);
+					dropped += 1;
+					schedule();
+				},
+				enqueue(record) {
+					if (closed || failed || telemetryOwner(record.ctx) !== telemetryOwner(options.context) || count === capacity) {
+						dropped += 1;
+						schedule();
+						return false;
+					}
+					if (record.kind === "call.started") economy.noteCallStarted(record.data);
+					ring[(head + count) % capacity] =
+						record.kind === "call.settled"
+							? { ...record, data: economy.stampCallEconomics(record.data, record.wallMs) }
+							: record;
+					count += 1;
+					schedule();
+					return true;
+				},
+				flush,
+				health,
+				close() {
+					return finish(false).then(() => undefined);
+				},
+				sealAndClose() {
+					return finish(true);
+				},
+			};
+			// The lazy process owner handles unscoped emits; explicit contexts also route during recovery (#434).
+			if ("processId" in options.context) unregister = registerProcessJournalSink(options.context.processId, journal);
+			else if (options.context.runId !== undefined) unregister = registerRunTelemetrySink(options.context.runId, journal);
+			else if (options.context.sessionId !== null) unregister = registerTelemetrySink(options.context.sessionId, journal);
+			else throw new Error("telemetry journal requires a session or run owner");
+			openJournalHealth.set(hubOwner, health);
+			openJournals.set(hubOwner, journal);
+			registered = true;
+			ready(journal);
+			await lifetime;
+		},
+		{ timeoutMs: 0 },
+	).finally(async () => {
+		unregister?.();
+		if (registered) {
+			openJournalHealth.delete(hubOwner);
+			openJournals.delete(hubOwner);
+		}
+		await handle?.close();
+	});
+	void owner.catch(reject);
+	return opened;
+}
+
+async function appendAll(handle: FileHandle, bytes: Buffer): Promise<void> {
+	let offset = 0;
+	while (offset < bytes.length) {
+		const { bytesWritten } = await handle.write(bytes, offset, bytes.length - offset);
+		if (bytesWritten === 0) throw new Error("call journal append made no progress");
+		offset += bytesWritten;
+	}
+}
+
+export interface CallJournalRead {
+	records: Array<{ record: TelemetryRecord; origin: ClockOrigin }>;
+	skipped: number;
+	damaged: number;
+	/** Each readable segment's capture mode, in read order (#434 §9). */
+	modes?: Array<SegmentHeader["mode"]>;
+	/** The clock origin of the last segment read: the process that last owned the journal (#434 §6.1). */
+	writer?: ClockOrigin;
+}
+
+/**
+ * Read-only readers preserve future records and never repair a writer's file (#434). `wanted` is for a caller that
+ * reads only `records` of those kinds: lines `scanTelemetrySegment` proves hold no such record are not decoded, so
+ * `records` may lack other kinds and `skipped` undercounts, while `damaged`, `modes`, `writer` and each wanted
+ * record with its origin are as an unfiltered read's.
+ */
+export async function readCallJournal(directory: string, wanted?: readonly string[]): Promise<CallJournalRead> {
+	return readCallJournalSnapshot(directory, 3, wanted);
+}
+
+async function readCallJournalSnapshot(
+	directory: string,
+	retries: number,
+	wanted: readonly string[] | undefined,
+): Promise<CallJournalRead> {
+	const result: CallJournalRead = { records: [], skipped: 0, damaged: 0 };
+	let names: string[];
+	try {
+		names = await readdir(directory);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return result;
+		throw error;
+	}
+	const files = telemetryJournalFiles(names);
+	for (const file of files) {
+		let bytes: Buffer;
+		try {
+			bytes = await readRegularFile(join(directory, file));
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT" && retries > 0)
+				return readCallJournalSnapshot(directory, retries - 1, wanted);
+			throw error;
+		}
+		appendScannedSegment(result, scanTelemetrySegment(bytes, wanted));
+	}
+	const after = telemetryJournalFiles(await readdir(directory)).sort();
+	if (after.join("\n") !== [...files].sort().join("\n")) {
+		if (retries > 0) return readCallJournalSnapshot(directory, retries - 1, wanted);
+		throw new Error("call journal rotated repeatedly during read");
+	}
+	return result;
+}
+
+/** Fold one published batch into a read exactly as a cold read of the same bytes would (#434 §11). */
+export function appendPersistedTelemetry(result: CallJournalRead, batch: { bytes: Buffer; origin: ClockOrigin }): void {
+	appendReadSegment(result, batch.bytes, batch.origin);
+}
+
+/** A cold read of a journal whose segments, oldest first, the caller already read and scanned. */
+export function callJournalReadOfScans(scans: readonly SegmentScan[]): CallJournalRead {
+	const result: CallJournalRead = { records: [], skipped: 0, damaged: 0 };
+	for (const scan of scans) appendScannedSegment(result, scan);
+	return result;
+}
+
+function appendReadSegment(result: CallJournalRead, bytes: Buffer, continuing?: ClockOrigin): void {
+	appendScannedSegment(result, scanTelemetrySegment(bytes), continuing);
+}
+
+function appendScannedSegment(result: CallJournalRead, scan: SegmentScan, continuing?: ClockOrigin): void {
+	if (scan.tornTailBytes > 0) result.damaged += 1;
+	if (continuing) result.writer = continuing;
+	foldSegmentRows(result, scan.rows, continuing);
+}
+
+/** Fold scanned rows from `origin`; returns the origin the next row would take, so a later scan can continue. */
+function foldSegmentRows(
+	result: CallJournalRead,
+	rows: SegmentScan["rows"],
+	origin: ClockOrigin | undefined,
+): ClockOrigin | undefined {
+	for (const row of rows) {
+		if (row.kind === "header") {
+			origin = row.header.clockOrigin;
+			result.writer = origin;
+			result.modes = [...(result.modes ?? []), row.header.mode];
+		} else if (row.kind === "record" && origin)
+			result.records.push({ record: row.record, origin: row.record.origin ?? origin });
+		else if (row.kind === "damaged") result.damaged += 1;
+		else {
+			if (row.kind === "skipped" && row.segment) origin = undefined;
+			result.skipped += 1;
+		}
+	}
+	return origin;
+}
+
+/**
+ * One journal file's fold up to its last complete line, keyed by the file's identity so a rotation's rename keeps it.
+ * Scanning is line-local, so folding the bytes from `offset` onto this state equals a cold scan of the whole file.
+ */
+interface CachedSegment {
+	offset: number;
+	/** The bytes just before `offset`: a rewrite in place that kept the size must not pass for the same file. */
+	tail: Buffer;
+	origin: ClockOrigin | undefined;
+	/** Whether `read.damaged` counts a torn tail, which a later complete line replaces. */
+	torn: 0 | 1;
+	/** This file alone, as a cold read of its bytes would count it. */
+	read: CallJournalRead;
+}
+
+const CACHED_TAIL_BYTES = 64;
+// Directories whose folds this process keeps; each holds the records a cold read would return anyway.
+const CACHED_DIRECTORIES_MAX = 16;
+let cachedDirectoriesMax = CACHED_DIRECTORIES_MAX;
+const journalCache = new Map<string, Map<string, CachedSegment>>();
+
+/**
+ * Keep at least `directories` folds, for a reader that cycles through more journals than the default holds: past the
+ * cap every read misses and folds its journal from the start again.
+ */
+export function sizeCallJournalCache(directories: number): void {
+	cachedDirectoriesMax = Math.max(CACHED_DIRECTORIES_MAX, Math.floor(directories));
+}
+
+function readCachedSegment(path: string, files: Map<string, CachedSegment>, seen: Map<string, CachedSegment>) {
+	let entry: CachedSegment | undefined;
+	let key = "";
+	const read = (reuse: boolean) =>
+		readRegularFileFromSync(path, (stats) => {
+			key = `${stats.dev}:${stats.ino}`;
+			entry = reuse ? files.get(key) : undefined;
+			// A file shorter than the folded prefix was truncated or replaced: fold it again from the start.
+			if (entry && stats.size < entry.offset) entry = undefined;
+			return entry ? entry.offset - entry.tail.length : 0;
+		});
+	let bytes = read(true);
+	if (entry && !bytes.bytes.subarray(0, entry.tail.length).equals(entry.tail)) bytes = read(false);
+	const start = entry ? entry.tail.length : 0;
+	const state: CachedSegment = entry ?? {
+		offset: 0,
+		tail: Buffer.alloc(0),
+		origin: undefined,
+		torn: 0,
+		read: { records: [], skipped: 0, damaged: 0 },
+	};
+	const scan = scanTelemetrySegment(bytes.bytes.subarray(start));
+	state.origin = foldSegmentRows(state.read, scan.rows, state.origin);
+	const torn = scan.tornTailBytes > 0 ? 1 : 0;
+	state.read.damaged += torn - state.torn;
+	state.torn = torn;
+	const end = start + scan.validBytes;
+	state.offset = bytes.start + end;
+	state.tail = Buffer.from(bytes.bytes.subarray(Math.max(0, end - CACHED_TAIL_BYTES), end));
+	seen.set(key, state);
+	return state;
+}
+
+/**
+ * Session switches already read their ledger synchronously; take the journal snapshot in that same cold path (#434).
+ * `wanted` filters as `readCallJournal`'s does; a filtered read bypasses the fold cache, whose segments hold every kind.
+ */
+export function readCallJournalSync(directory: string, wanted?: readonly string[]): CallJournalRead {
+	const names = () => telemetryJournalFiles(readdirSync(directory));
+	for (let retry = 0; retry < 3; retry += 1) {
+		const result: CallJournalRead = { records: [], skipped: 0, damaged: 0 };
+		let files: string[];
+		try {
+			files = names();
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+				if (wanted === undefined) journalCache.delete(directory);
+				return result;
+			}
+			throw error;
+		}
+		if (wanted !== undefined) {
+			try {
+				for (const file of files) {
+					const bytes = readRegularFileFromSync(join(directory, file), () => 0).bytes;
+					appendScannedSegment(result, scanTelemetrySegment(bytes, wanted));
+				}
+				if ([...files].sort().join("\n") === [...names()].sort().join("\n")) return result;
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			}
+			continue;
+		}
+		const cached = journalCache.get(directory) ?? new Map<string, CachedSegment>();
+		const seen = new Map<string, CachedSegment>();
+		try {
+			for (const file of files) {
+				const segment = readCachedSegment(join(directory, file), cached, seen).read;
+				for (const record of segment.records) result.records.push(record);
+				result.skipped += segment.skipped;
+				result.damaged += segment.damaged;
+				if (segment.modes) result.modes = [...(result.modes ?? []), ...segment.modes];
+				if (segment.writer) result.writer = segment.writer;
+			}
+			if (files.join("\n") === names().join("\n")) {
+				journalCache.delete(directory);
+				journalCache.set(directory, seen);
+				for (const oldest of journalCache.keys()) {
+					if (journalCache.size <= cachedDirectoriesMax) break;
+					journalCache.delete(oldest);
+				}
+				return result;
+			}
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		}
+	}
+	throw new Error("call journal rotated repeatedly during read");
+}

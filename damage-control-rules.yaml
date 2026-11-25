@@ -1,0 +1,428 @@
+version: 2
+packs:
+  - id: base
+    rules:
+      - id: rm-rf-root
+        # Root, a top-level directory, a home directory, or a directory directly under a system root. A deeper
+        # path is not "close to root": delete-outside-workspace places it by where it lands and asks for it.
+        description: "rm -rf / or close to it"
+        pattern: '\brm\s+-rf?\s+["'']?/(?=(?:(?:home|Users)/[^/\s;&|"''()<>]+|(?:etc|usr|var|bin|sbin|lib|lib32|lib64|boot|opt|root|srv|private|System|Library|Applications)/[^/\s;&|"''()<>]+|[^/\s;&|"''()<>]+)?/?\*?["'']?(?:\s|$|[;&|)]))'
+        class: system_modify
+        block: true
+      - id: rm-home-or-root
+        description: "rm of /, the home directory, or everything in either, in any flag order"
+        pattern: "\\brm\\s+(?:[^;&|\\n]*\\s)?[\"']?(?:/|~/?|\\$\\{?HOME\\}?/?)\\*?[\"']?(?=\\s|$|[;&|)])"
+        class: system_modify
+        block: true
+      - id: sudo-rm
+        description: "sudo rm"
+        pattern: "\\bsudo\\s+rm\\b"
+        class: system_modify
+        block: true
+      - id: rmdir-ignore-non-empty
+        description: "rmdir --ignore-fail-on-non-empty hides failed deletion"
+        pattern: "\\brmdir\\s+--ignore-fail-on-non-empty\\b"
+        class: system_modify
+        block: true
+      - id: find-delete
+        description: "find -delete mass-deletes matched files"
+        pattern: "\\bfind\\b[^;&|]*\\s-delete\\b"
+        class: system_modify
+        block: true
+      - id: rsync-delete
+        description: "rsync --delete removes files missing from the source"
+        pattern: "\\brsync\\b[^;&|]*\\s--delete"
+        class: system_modify
+        block: true
+      - id: shred-file
+        description: "shred overwrites file contents unrecoverably"
+        pattern: "\\bshred\\s+\\S"
+        class: system_modify
+        block: true
+      - id: chmod-777
+        description: "chmod 777 makes files world-writable"
+        pattern: "\\bchmod\\s+(-[^\\s]+\\s+)*777\\b"
+        class: system_modify
+        block: true
+      - id: chmod-recursive-777
+        description: "recursive chmod 777 makes trees world-writable"
+        pattern: "\\bchmod\\s+-[Rr].*777"
+        class: system_modify
+        block: true
+      - id: chown-recursive-root
+        description: "recursive chown to root can break local ownership"
+        pattern: "\\bchown\\s+-[Rr].*\\broot\\b"
+        class: system_modify
+        block: true
+      - id: dd-of-dev
+        description: "dd writing to /dev/sd*"
+        pattern: "\\bdd\\b.*\\bof=/dev/(sd|nvme|xvd)"
+        class: system_modify
+        block: true
+      - id: dd-of-device
+        description: "dd writing directly to a device"
+        pattern: "\\bdd\\s+.*of=/dev/"
+        class: system_modify
+        block: true
+      - id: mkfs-any
+        description: "filesystem creation"
+        pattern: "\\bmkfs(\\.\\w+)?\\s+/dev/"
+        class: system_modify
+        block: true
+      - id: fork-bomb
+        description: "classic fork bomb pattern"
+        pattern: ":\\(\\)\\s*\\{\\s*:\\|:&\\s*\\}"
+        class: execute
+        block: true
+      - id: kill-all-processes
+        description: "kill -9 -1 targets all accessible processes"
+        pattern: "\\bkill\\s+-9\\s+-1\\b"
+        class: system_modify
+        block: true
+      - id: killall-force
+        description: "killall -9 can terminate broad process sets"
+        pattern: "\\bkillall\\s+-9\\b"
+        class: system_modify
+        block: true
+      - id: pkill-force
+        description: "pkill -9 can terminate broad process sets"
+        pattern: "\\bpkill\\s+-9\\b"
+        class: system_modify
+        block: true
+      - id: clear-shell-history
+        description: "clearing shell history reduces observability"
+        pattern: "\\bhistory\\s+-c\\b"
+        class: system_modify
+        block: true
+      - id: git-push-force-main
+        description: "force push to protected branches"
+        pattern: "\\bgit\\s+push\\s+(--force|-f)\\s+\\S+\\s+(main|master|production)\\b"
+        class: git_destructive
+        block: true
+      - id: git-push-force-refspec
+        description: "a plus-prefixed push refspec forces an update"
+        pattern: "\\bgit\\s+push\\b[^;&|]*\\s\\+[^\\s]+"
+        class: git_destructive
+        block: true
+      - id: git-push-force
+        description: "git push --force; use --force-with-lease if explicitly needed"
+        pattern: "\\bgit\\s+push\\s+.*--force(?![\\w-])"
+        class: git_destructive
+        block: true
+      - id: git-push-force-short
+        description: "git push -f; use --force-with-lease if explicitly needed"
+        pattern: "\\bgit\\s+push\\s+(-[^\\s]*)*-f\\b"
+        class: git_destructive
+        block: true
+      - id: git-reset-hard-head
+        description: "git reset --hard on a ref that's not local WIP"
+        pattern: "\\bgit\\s+reset\\s+--hard\\s+(origin/|upstream/)"
+        class: git_destructive
+        block: true
+      - id: git-reset-hard
+        description: "git reset --hard discards local work"
+        pattern: "\\bgit\\s+reset\\s+--hard\\b"
+        class: git_destructive
+        block: true
+      - id: git-clean-force-directory
+        description: "forced git clean deletes untracked files and trees"
+        pattern: "\\bgit\\s+clean\\b(?!(?:(?!\\s--(?:\\s|$))[^;&|\\n])*(?:\\s-(?!-)[a-zA-Z]*n[a-zA-Z]*\\b|\\s--dry-run(?![\\w-])))(?:(?!\\s--(?:\\s|$))[^;&|\\n])*\\s(?:-(?!-)[a-zA-Z]*f[a-zA-Z]*\\b|--force(?![\\w-]))"
+        class: git_destructive
+        block: true
+      - id: git-stash-clear
+        description: "git stash clear deletes all stashes"
+        pattern: "\\bgit\\s+stash\\s+clear\\b"
+        class: git_destructive
+        block: true
+      - id: git-reflog-expire
+        description: "git reflog expire destroys recovery history"
+        pattern: "\\bgit\\s+reflog\\s+expire\\b"
+        class: git_destructive
+        block: true
+      - id: git-gc-prune-now
+        description: "git gc --prune=now can lose dangling commits"
+        pattern: "\\bgit\\s+gc\\b[^;&|]*--prune=now\\b"
+        class: git_destructive
+        block: true
+      - id: git-filter-branch
+        description: "git filter-branch rewrites repository history"
+        pattern: "\\bgit\\s+filter-branch\\b"
+        class: git_destructive
+        block: true
+      - id: curl-pipe-shell
+        description: "curl ... | sh is remote shell execution"
+        pattern: "\\bcurl\\b[^|]*\\|\\s*(sudo\\s+)?(sh|bash|zsh)\\b"
+        class: execute
+        block: true
+      - id: wget-pipe-shell
+        description: "wget ... | sh is remote shell execution"
+        pattern: "\\bwget\\b[^|]*\\|\\s*(sudo\\s+)?(sh|bash|zsh)\\b"
+        class: execute
+        block: true
+      - id: chmod-recursive-root
+        description: "chmod -R on / or system roots"
+        pattern: "\\bchmod\\s+-R\\s+[0-7]{3,4}\\s+/(?:(etc|usr|bin|sbin|var)(?:/|\\s|$)|(?:\\s|$))"
+        class: system_modify
+        block: true
+      - id: redirect-system-root
+        description: "shell redirect into /etc /usr /var (excluding /var/tmp) /bin /sbin"
+        pattern: ">>?\\s*\"?/(?:etc|usr|bin|sbin|var(?!/tmp))(?:/|\\s|\"|$)"
+        class: system_modify
+        block: true
+      - id: tee-system-root
+        description: "tee writing into /etc /usr /var (excluding /var/tmp) /bin /sbin"
+        pattern: "\\btee\\s+(?:-[A-Za-z]+\\s+)*\"?/(?:etc|usr|bin|sbin|var(?!/tmp))(?:/|\\s|\"|$)"
+        class: system_modify
+        block: true
+      - id: aws-s3-rm-recursive
+        description: "aws s3 rm --recursive deletes many objects"
+        pattern: "\\baws\\s+s3\\s+rm\\b[^;&|]*--recursive\\b"
+        class: system_modify
+        block: true
+      - id: aws-s3-rb-force
+        description: "aws s3 rb --force removes a bucket"
+        pattern: "\\baws\\s+s3\\s+rb\\b[^;&|]*--force\\b"
+        class: system_modify
+        block: true
+      - id: aws-terminate-instances
+        description: "aws ec2 terminate-instances destroys compute instances"
+        pattern: "\\baws\\s+ec2\\s+terminate-instances\\b"
+        class: system_modify
+        block: true
+      - id: aws-rds-delete-db-instance
+        description: "aws rds delete-db-instance destroys a database instance"
+        pattern: "\\baws\\s+rds\\s+delete-db-instance\\b"
+        class: system_modify
+        block: true
+      - id: aws-cloudformation-delete-stack
+        description: "aws cloudformation delete-stack destroys infrastructure"
+        pattern: "\\baws\\s+cloudformation\\s+delete-stack\\b"
+        class: system_modify
+        block: true
+      - id: aws-dynamodb-delete-table
+        description: "aws dynamodb delete-table destroys a table"
+        pattern: "\\baws\\s+dynamodb\\s+delete-table\\b"
+        class: system_modify
+        block: true
+      - id: aws-eks-delete-cluster
+        description: "aws eks delete-cluster destroys a cluster"
+        pattern: "\\baws\\s+eks\\s+delete-cluster\\b"
+        class: system_modify
+        block: true
+      - id: aws-lambda-delete-function
+        description: "aws lambda delete-function destroys a function"
+        pattern: "\\baws\\s+lambda\\s+delete-function\\b"
+        class: system_modify
+        block: true
+      - id: aws-iam-delete-principal
+        description: "aws iam delete-role/delete-user removes an IAM principal"
+        pattern: "\\baws\\s+iam\\s+delete-(role|user)\\b"
+        class: system_modify
+        block: true
+      - id: gcloud-projects-delete
+        description: "gcloud projects delete destroys a cloud project"
+        pattern: "\\bgcloud\\s+projects\\s+delete\\b"
+        class: system_modify
+        block: true
+      - id: gcloud-compute-delete
+        description: "gcloud compute instances delete destroys compute instances"
+        pattern: "\\bgcloud\\s+compute\\s+instances\\s+delete\\b"
+        class: system_modify
+        block: true
+      - id: gcloud-sql-delete
+        description: "gcloud sql instances delete destroys a SQL instance"
+        pattern: "\\bgcloud\\s+sql\\s+instances\\s+delete\\b"
+        class: system_modify
+        block: true
+      - id: gcloud-cluster-delete
+        description: "gcloud container clusters delete destroys a GKE cluster"
+        pattern: "\\bgcloud\\s+container\\s+clusters\\s+delete\\b"
+        class: system_modify
+        block: true
+      - id: gcloud-storage-rm-recursive
+        description: "gcloud storage rm -r recursively deletes objects"
+        pattern: "\\bgcloud\\s+storage\\s+rm\\b[^;&|]*-r\\b"
+        class: system_modify
+        block: true
+      - id: gcloud-functions-delete
+        description: "gcloud functions delete destroys a function"
+        pattern: "\\bgcloud\\s+functions\\s+delete\\b"
+        class: system_modify
+        block: true
+      - id: gcloud-service-account-delete
+        description: "gcloud iam service-accounts delete removes credentials"
+        pattern: "\\bgcloud\\s+iam\\s+service-accounts\\s+delete\\b"
+        class: system_modify
+        block: true
+      - id: gcloud-run-delete
+        description: "gcloud run services/jobs delete destroys Cloud Run resources"
+        pattern: "\\bgcloud\\s+run\\s+(services|jobs)\\s+delete\\b"
+        class: system_modify
+        block: true
+      - id: gcloud-services-disable
+        description: "gcloud services disable can break a project"
+        pattern: "\\bgcloud\\s+services\\s+disable\\b"
+        class: system_modify
+        block: true
+      - id: gcloud-iam-roles-delete
+        description: "gcloud iam roles delete removes an IAM role"
+        pattern: "\\bgcloud\\s+iam\\s+roles\\s+delete\\b"
+        class: system_modify
+        block: true
+      - id: gcloud-iam-policies
+        description: "gcloud iam policies modifies IAM policy state"
+        pattern: "\\bgcloud\\s+iam\\s+policies\\b"
+        class: system_modify
+        block: false
+        ask: true
+      - id: firebase-projects-delete
+        description: "firebase projects:delete destroys a Firebase project"
+        pattern: "\\bfirebase\\s+projects:delete\\b"
+        class: system_modify
+        block: true
+      - id: firebase-firestore-delete-all
+        description: "firebase firestore:delete --all-collections wipes Firestore data"
+        pattern: "\\bfirebase\\s+firestore:delete\\s+.*--all-collections"
+        class: system_modify
+        block: true
+      - id: firebase-database-remove
+        description: "firebase database:remove wipes Realtime Database data"
+        pattern: "\\bfirebase\\s+database:remove\\b"
+        class: system_modify
+        block: true
+      - id: firebase-hosting-disable
+        description: "firebase hosting:disable disables hosting"
+        pattern: "\\bfirebase\\s+hosting:disable\\b"
+        class: system_modify
+        block: true
+      - id: firebase-functions-delete
+        description: "firebase functions:delete removes functions"
+        pattern: "\\bfirebase\\s+functions:delete\\b"
+        class: system_modify
+        block: true
+      - id: vercel-remove
+        description: "vercel remove/rm deletes deployments or projects"
+        pattern: "\\bvercel\\s+(?:remove|rm|projects\\s+rm)\\b"
+        class: system_modify
+        block: true
+      - id: vercel-env-remove
+        description: "vercel env rm removes environment variables"
+        pattern: "\\bvercel\\s+env\\s+rm\\b"
+        class: system_modify
+        block: true
+      - id: vercel-domain-remove
+        description: "vercel domains rm removes a custom domain"
+        pattern: "\\bvercel\\s+domains\\s+rm\\b"
+        class: system_modify
+        block: true
+      - id: netlify-site-delete
+        description: "netlify sites:delete removes an entire site"
+        pattern: "\\bnetlify\\s+sites:delete\\b"
+        class: system_modify
+        block: true
+      - id: netlify-functions-delete
+        description: "netlify functions:delete removes functions"
+        pattern: "\\bnetlify\\s+functions:delete\\b"
+        class: system_modify
+        block: true
+      - id: wrangler-delete-resource
+        description: "wrangler delete removes Cloudflare resources"
+        pattern: "\\bwrangler\\s+(delete|r2\\s+bucket\\s+delete|kv:namespace\\s+delete|d1\\s+delete|queues\\s+delete)\\b"
+        class: system_modify
+        block: true
+      - id: sql-delete-without-where
+        description: "SQL DELETE without WHERE can delete every row"
+        pattern: "\\bDELETE\\s+FROM\\s+\\w+\\s*;"
+        class: system_modify
+        block: true
+      - id: sql-delete-star
+        description: "SQL DELETE * is invalid or destructive intent"
+        pattern: "\\bDELETE\\s+\\*\\s+FROM\\b"
+        class: system_modify
+        block: true
+      - id: sql-truncate-table
+        description: "TRUNCATE TABLE deletes all rows"
+        pattern: "\\bTRUNCATE\\s+TABLE\\b"
+        class: system_modify
+        block: true
+      - id: sql-drop-table
+        description: "DROP TABLE destroys a table"
+        pattern: "\\bDROP\\s+TABLE\\b"
+        class: system_modify
+        block: true
+      - id: sql-drop-database
+        description: "DROP DATABASE destroys a database"
+        pattern: "\\bDROP\\s+DATABASE\\b"
+        class: system_modify
+        block: true
+      - id: sql-drop-schema
+        description: "DROP SCHEMA destroys a schema"
+        pattern: "\\bDROP\\s+SCHEMA\\b"
+        class: system_modify
+        block: true
+      - id: git-checkout-force
+        description: "forced checkout discards local changes"
+        pattern: "\\bgit\\s+checkout\\b[^;&|]*\\s(?:-f|--force)\\b"
+        class: git_destructive
+        block: false
+        ask: true
+      - id: git-checkout-dot
+        description: "checkout of the whole worktree discards local changes"
+        pattern: "\\bgit\\s+checkout\\s+(?:\\.|\\./|:/)\\s*$"
+        class: git_destructive
+        block: false
+        ask: true
+      - id: git-checkout-discard-all
+        description: "git checkout -- . discards all uncommitted changes"
+        pattern: "\\bgit\\s+checkout\\b[^;&|]*\\s--\\s*(?:\\.|\\./|:/)\\s*$"
+        class: git_destructive
+        block: false
+        ask: true
+      - id: git-restore-discard-all
+        description: "git restore . discards all uncommitted changes"
+        pattern: "\\bgit\\s+restore\\b[^;&|]*\\s(?:\\.|\\./|:/)\\s*$"
+        class: git_destructive
+        block: false
+        ask: true
+      - id: git-stash-drop
+        description: "git stash drop permanently deletes a stash"
+        pattern: "\\bgit\\s+stash\\s+drop\\b"
+        class: git_destructive
+        block: false
+        ask: true
+      - id: git-branch-force-delete
+        description: "git branch -D force deletes a branch"
+        pattern: "\\bgit\\s+branch\\b[^;&|]*\\s-[A-Za-z]*D\\b"
+        class: git_destructive
+        block: false
+        ask: true
+      - id: git-push-delete-remote-branch
+        description: "git push --delete deletes a remote branch"
+        pattern: "\\bgit\\s+push\\s+\\S+\\s+--delete\\b"
+        class: git_destructive
+        block: false
+        ask: true
+      - id: git-push-colon-delete-remote-branch
+        description: "git push remote :branch deletes a remote branch"
+        pattern: "\\bgit\\s+push\\s+\\S+\\s+:\\S+"
+        class: git_destructive
+        block: false
+        ask: true
+      - id: sql-delete-by-id
+        description: "SQL DELETE by id should be confirmed"
+        pattern: "\\bDELETE\\s+FROM\\s+\\w+\\s+WHERE\\b.*\\bid\\s*="
+        class: system_modify
+        block: false
+        ask: true
+      - id: truncate-size-zero
+        description: "truncate -s 0 empties a file"
+        pattern: "\\btruncate\\s+(?:-[^\\s]+\\s+)*(?:--size|-s)[=\\s]+0+\\b"
+        class: system_modify
+        block: false
+        ask: true
+      - id: colon-truncate
+        description: ":> empties a file via the null command redirect"
+        pattern: "(?:^|[\\s;&|]):\\s*>(?!>)"
+        class: system_modify
+        block: false
+        ask: true

@@ -1,0 +1,99 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+.panel-heading {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: var(--space-4);
+	flex-wrap: wrap;
+}
+.panel-heading > div {
+	min-width: 0;
+}
+.panel-heading h1,
+.panel-heading h2,
+.panel-heading h3 {
+	margin-top: var(--space-1);
+}
+.panel-heading__action {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+}
+.panel-boundary {
+	margin: var(--space-5) 0 0;
+	padding-top: var(--space-3);
+	border-top: 1px solid var(--line);
+	max-width: 630px;
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+	line-height: 1.8;
+}
+.panel-boundary > summary {
+	cursor: pointer;
+	width: fit-content;
+	color: var(--ink-muted);
+}
+.panel-boundary > summary:hover {
+	color: var(--accent);
+}
+.panel-boundary > p {
+	margin-block: var(--space-2) 0;
+}
+.panel-empty {
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+	line-height: 1.7;
+	max-width: 630px;
+}
+.panel-note {
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+	line-height: 1.7;
+	max-width: 630px;
+}
+.panel-figure {
+	font-size: var(--text-h2);
+	line-height: 1.2;
+	margin: var(--space-2) 0;
+}
+.panel-marks {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2) var(--space-4);
+	margin: var(--space-2) 0;
+}
+.panel-figures {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+	gap: var(--space-4);
+	margin-block: var(--space-4);
+}
+.panel-figures .trace-panel {
+	margin: 0;
+}
+.panel-summary {
+	margin-block: var(--space-4);
+}
+/* An offered agent's answer: the consequence first, then the two answers the terminal review gives. */
+.interop-answer {
+	display: grid;
+	gap: var(--space-2);
+	margin-block: var(--space-2);
+}
+.interop-answer__consequence {
+	margin: 0;
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+}
+.interop-answer__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+}
+.interop-answer > p[role="status"] {
+	margin: 0;
+	font-size: var(--text-meta);
+}

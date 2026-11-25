@@ -1,0 +1,362 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { randomUUID } from "node:crypto";
+import type { AskUserToolPolicy } from "../../tools/registry-contract.js";
+import type { AutonomyExposure } from "../safety/autonomy.js";
+import { type DecisionLedgerEntry, type DecisionRecord, type DecisionSource, decisionRef } from "./entries.js";
+import { isOperatorTypedUserPayload, operatorTextOfUserPayload } from "./history.js";
+
+export interface DecisionLedgerEntryFields {
+	kind: "decisionLedger";
+	parentTurnId: string;
+	origin?: "interview" | "agent";
+	interviewId: string;
+	interviewStatus: "complete" | "cancelled";
+	startedAt: string;
+	endedAt: string;
+	roundCount: number;
+	summary?: string;
+	questions?: string[];
+	transcriptPath?: string;
+	exposure?: AutonomyExposure;
+	decisions: DecisionRecord[];
+}
+
+export interface DecisionBoardStoreDeps {
+	/** Current session id, used to keep the in-memory fold scoped to one ledger. */
+	getSessionId?: () => string | null;
+	/** Active-path entries for the current session. */
+	readEntries?: () => ReadonlyArray<unknown>;
+	/** The current branch leaf used to anchor operator-authored revisions. */
+	getActiveLeafTurnId?: () => string | null;
+	/** Acknowledged session append. A throw means the board did not change. */
+	appendEntry?: (entry: DecisionLedgerEntryFields) => void;
+	now?: () => Date;
+}
+
+/** One design choice the model records itself through the `decide` tool. */
+export interface AgentDecisionInput {
+	key: string;
+	value: string;
+	alternatives: ReadonlyArray<string>;
+	rationale: string;
+	label?: string;
+	/**
+	 * The operator's own words that state this choice, quoted verbatim from a typed or steering message on the
+	 * active branch. With them the decision is the operator's (`source: "operator-message"`) and may supersede an
+	 * operator decision with the same key, so a relayed ruling needs no ask_user round (M-3).
+	 */
+	operatorWords?: string;
+}
+
+/** The shortest quote that can state a ruling; "yes" or "ok" answer something, but name no choice. */
+export const OPERATOR_QUOTE_MIN_CHARS = 12;
+
+function collapse(text: string): string {
+	return text.replace(/\s+/gu, " ").trim();
+}
+
+/** Whether `quote` appears verbatim, whitespace collapsed, in a message the operator typed on this path. */
+function operatorSaid(entries: ReadonlyArray<unknown>, quote: string): boolean {
+	for (const entry of entries) {
+		if (!entry || typeof entry !== "object") continue;
+		const row = entry as { kind?: unknown; role?: unknown; payload?: unknown };
+		if (row.kind !== "message" || row.role !== "user" || !isOperatorTypedUserPayload(row.payload)) continue;
+		const text = operatorTextOfUserPayload(row.payload);
+		if (text !== null && collapse(text).includes(quote)) return true;
+	}
+	return false;
+}
+
+export interface AgentDecisionOutcome {
+	/** The appended agent decision set; `decisionRef(entry.interviewId, key)` cites it. */
+	entry: DecisionLedgerEntryFields;
+	/** The earlier active record with the same key that this decision superseded, when there was one. */
+	superseded: { interviewId: string; key: string } | null;
+}
+
+export interface DecisionBoardStore {
+	/** Latest snapshot per interview, newest interview first. */
+	snapshot(): ReadonlyArray<DecisionLedgerEntry>;
+	/** Persist the one host-finalized snapshot for a settled interview. */
+	recordFinalizedInterview(policy: AskUserToolPolicy): boolean;
+	/**
+	 * Append one agent-recorded decision as its own complete set
+	 * (`origin: "agent"`, `interviewId: "agent:<uuid>"`, `roundCount: 0`). An
+	 * earlier active agent decision with the same key is superseded first with
+	 * the new rationale as its correction. An active operator decision with the
+	 * same key is overwritten only by the operator's own words (`operatorWords`,
+	 * checked against their messages on the active branch); otherwise that throws.
+	 */
+	recordAgentDecision(input: AgentDecisionInput): AgentDecisionOutcome;
+	/** Append an operator revision snapshot anchored to the active branch leaf. */
+	supersede(interviewId: string, key: string, correction?: string): DecisionLedgerEntryFields;
+	/** Force the next read to refold, including after a same-session tree switch. */
+	invalidate(): void;
+}
+
+function answeredAtForDecision(policy: AskUserToolPolicy, sourceQuestion: string): string | undefined {
+	for (let index = policy.rounds.length - 1; index >= 0; index -= 1) {
+		const round = policy.rounds[index];
+		if (!round?.answeredAt) continue;
+		if (round.answers.some((answer) => answer.question === sourceQuestion)) return round.answeredAt;
+		if (round.questions.some((question) => question.question === sourceQuestion)) return round.answeredAt;
+	}
+	return undefined;
+}
+
+/**
+ * Convert the settled, host-owned policy into the complete durable snapshot.
+ * The policy already keeps last-value-wins decisions; the defensive map also
+ * makes conversion deterministic for hand-built policies.
+ */
+function finalizedInterviewEntryFields(policy: AskUserToolPolicy): DecisionLedgerEntryFields | null {
+	if (policy.rounds.length === 0 && policy.decisions.length === 0) return null;
+	if (!policy.turnId) throw new Error(`decision board: interview ${policy.id} has no originating user turn`);
+	if (policy.status !== "complete" && policy.status !== "cancelled") {
+		throw new Error(`decision board: interview ${policy.id} finalized with status ${policy.status}`);
+	}
+	const endedAt = policy.endedAt ?? policy.updatedAt;
+	const asked = [
+		...new Set(policy.rounds.flatMap((round) => round.questions.map((question) => question.question.trim()))),
+	].filter((question) => question.length > 0);
+	const decisionsByKey = new Map<string, DecisionRecord>();
+	for (const decision of policy.decisions) {
+		const decidedAt = decision.source_question
+			? (answeredAtForDecision(policy, decision.source_question) ?? endedAt)
+			: endedAt;
+		decisionsByKey.set(decision.key, {
+			key: decision.key,
+			value: decision.value,
+			...(decision.label ? { label: decision.label } : {}),
+			...(decision.source_question ? { source_question: decision.source_question } : {}),
+			status: "active",
+			decidedAt,
+			// An answer PanCode chose for an absent operator (#421) is PanCode's
+			// decision on the board, with what it passed over and why.
+			...(decision.source === "agent" ? { source: "agent" as const } : {}),
+			...(decision.alternatives && decision.alternatives.length > 0 ? { alternatives: [...decision.alternatives] } : {}),
+			...(decision.rationale ? { rationale: decision.rationale } : {}),
+			...(decision.operator_choice === true && decision.source !== "agent" ? { operator_choice: true as const } : {}),
+			...(decision.scripted && decision.source !== "agent" ? { scripted: { ...decision.scripted } } : {}),
+		});
+	}
+	return {
+		kind: "decisionLedger",
+		parentTurnId: policy.turnId,
+		interviewId: policy.id,
+		interviewStatus: policy.status,
+		startedAt: policy.startedAt,
+		endedAt,
+		roundCount: policy.rounds.length,
+		...(policy.summary ? { summary: policy.summary } : {}),
+		...(asked.length > 0 ? { questions: asked } : {}),
+		...(policy.transcriptPath ? { transcriptPath: policy.transcriptPath } : {}),
+		exposure: policy.exposure ?? "local",
+		decisions: [...decisionsByKey.values()],
+	};
+}
+
+/** Most decision refs one dispatch request, envelope, or receipt carries. */
+export const DECISION_REFS_CAP = 32;
+
+/**
+ * Refs of every active decision on a board snapshot, sorted and capped at
+ * {@link DECISION_REFS_CAP}. Dispatch seals this onto each request it builds;
+ * an empty board yields an empty list, which callers leave off the request.
+ */
+export function activeDecisionRefs(board: ReadonlyArray<DecisionLedgerEntry>): string[] {
+	const refs = new Set<string>();
+	for (const entry of board) {
+		for (const decision of entry.decisions) {
+			if (decision.status === "active") refs.add(decisionRef(entry.interviewId, decision.key));
+		}
+	}
+	return [...refs].sort().slice(0, DECISION_REFS_CAP);
+}
+
+function isDecisionLedgerEntry(value: unknown): value is DecisionLedgerEntry {
+	return !!value && typeof value === "object" && (value as { kind?: unknown }).kind === "decisionLedger";
+}
+
+/** Last full snapshot wins independently for each interview. */
+export function foldDecisionBoard(entries: ReadonlyArray<unknown>): DecisionLedgerEntry[] {
+	const lastByInterview = new Map<string, { entry: DecisionLedgerEntry; index: number }>();
+	for (let index = 0; index < entries.length; index += 1) {
+		const raw = entries[index];
+		if (!isDecisionLedgerEntry(raw)) continue;
+		lastByInterview.set(raw.interviewId, { entry: raw, index });
+	}
+	return [...lastByInterview.values()]
+		.sort((left, right) => {
+			const byEndedAt = right.entry.endedAt.localeCompare(left.entry.endedAt);
+			return byEndedAt !== 0 ? byEndedAt : right.index - left.index;
+		})
+		.map(({ entry }) => entry);
+}
+
+function activeLeafFromEntries(entries: ReadonlyArray<unknown>): string | null {
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		const entry = entries[index];
+		if (entry && typeof entry === "object" && (entry as { kind?: unknown }).kind === "message") {
+			const turnId = (entry as { turnId?: unknown }).turnId;
+			if (typeof turnId === "string" && turnId.length > 0) return turnId;
+		}
+	}
+	return null;
+}
+
+export function createDecisionBoardStore(deps: DecisionBoardStoreDeps = {}): DecisionBoardStore {
+	let cachedSessionId: string | null | undefined;
+	let dirty = true;
+	let interviews: DecisionLedgerEntry[] = [];
+
+	const syncToSession = (): void => {
+		const sessionId = deps.getSessionId?.() ?? null;
+		if (!dirty && sessionId === cachedSessionId) return;
+		const entries = deps.readEntries?.() ?? [];
+		interviews = foldDecisionBoard(entries);
+		cachedSessionId = sessionId;
+		dirty = false;
+	};
+
+	const append = (entry: DecisionLedgerEntryFields): void => {
+		if (!deps.appendEntry) throw new Error("decision board: no session ledger is available");
+		deps.appendEntry(entry);
+		// Read the acknowledged append back through the active-path source. This
+		// never publishes a snapshot the ledger did not accept.
+		dirty = true;
+	};
+
+	const revise = (
+		interviewId: string,
+		key: string,
+		revisionSource: DecisionSource,
+		correction?: string,
+	): DecisionLedgerEntryFields => {
+		syncToSession();
+		const interview = interviews.find((candidate) => candidate.interviewId === interviewId);
+		if (!interview) throw new Error(`decision board: interview ${interviewId} was not found on the active branch`);
+		const selected = interview.decisions.find((decision) => decision.key === key);
+		if (!selected) throw new Error(`decision board: decision ${key} was not found in interview ${interviewId}`);
+		const revisedAt = (deps.now?.() ?? new Date()).toISOString();
+		const normalizedCorrection = correction?.trim();
+		const entries = deps.readEntries?.() ?? [];
+		const parentTurnId = deps.getActiveLeafTurnId?.() ?? activeLeafFromEntries(entries);
+		if (!parentTurnId) throw new Error("decision board: no active branch leaf is available for the revision");
+		const revision: DecisionLedgerEntryFields = {
+			kind: "decisionLedger",
+			parentTurnId,
+			...(interview.origin !== undefined ? { origin: interview.origin } : {}),
+			interviewId: interview.interviewId,
+			interviewStatus: interview.interviewStatus,
+			startedAt: interview.startedAt,
+			endedAt: interview.endedAt,
+			roundCount: interview.roundCount,
+			...(interview.summary ? { summary: interview.summary } : {}),
+			...(interview.questions ? { questions: [...interview.questions] } : {}),
+			...(interview.transcriptPath ? { transcriptPath: interview.transcriptPath } : {}),
+			...(interview.exposure ? { exposure: interview.exposure } : {}),
+			decisions: interview.decisions.map((decision) => {
+				if (decision.key !== selected.key) return { ...decision };
+				const next: DecisionRecord = { ...decision, status: "superseded", revisedAt, revisionSource };
+				if (normalizedCorrection) next.correction = normalizedCorrection;
+				else delete next.correction;
+				return next;
+			}),
+		};
+		append(revision);
+		return revision;
+	};
+
+	const store: DecisionBoardStore = {
+		snapshot(): ReadonlyArray<DecisionLedgerEntry> {
+			syncToSession();
+			return interviews;
+		},
+		recordFinalizedInterview(policy: AskUserToolPolicy): boolean {
+			const entry = finalizedInterviewEntryFields(policy);
+			if (entry === null) return false;
+			append(entry);
+			return true;
+		},
+		recordAgentDecision(input: AgentDecisionInput): AgentDecisionOutcome {
+			syncToSession();
+			const quote = input.operatorWords !== undefined ? collapse(input.operatorWords) : undefined;
+			if (quote !== undefined) {
+				if (Array.from(quote).length < OPERATOR_QUOTE_MIN_CHARS) {
+					throw new Error(
+						`decision board: operator words must quote the sentence that states the choice (at least ${OPERATOR_QUOTE_MIN_CHARS} characters)`,
+					);
+				}
+				if (!operatorSaid(deps.readEntries?.() ?? [], quote)) {
+					throw new Error(
+						"decision board: operator words were not found verbatim in any message the operator typed on this branch; quote their message exactly",
+					);
+				}
+			}
+			const source: DecisionSource = quote !== undefined ? "operator-message" : "agent";
+			let superseded: AgentDecisionOutcome["superseded"] = null;
+			for (const interview of interviews) {
+				const prior = interview.decisions.find((decision) => decision.key === input.key && decision.status === "active");
+				if (prior === undefined) continue;
+				if (quote === undefined && (interview.origin !== "agent" || prior.source !== "agent")) {
+					throw new Error(
+						`decision board: '${input.key}' is an operator decision (${interview.interviewId}); revise it with operator_words quoting the operator's message that states the new choice, or through ask_user when no message does`,
+					);
+				}
+				superseded = { interviewId: interview.interviewId, key: prior.key };
+				break;
+			}
+			if (superseded !== null) {
+				revise(superseded.interviewId, superseded.key, source, quote !== undefined ? `"${quote}"` : input.rationale);
+			}
+			const now = (deps.now?.() ?? new Date()).toISOString();
+			const entries = deps.readEntries?.() ?? [];
+			const parentTurnId = deps.getActiveLeafTurnId?.() ?? activeLeafFromEntries(entries);
+			if (!parentTurnId) throw new Error("decision board: no active branch leaf is available for the decision");
+			const entry: DecisionLedgerEntryFields = {
+				kind: "decisionLedger",
+				parentTurnId,
+				origin: "agent",
+				interviewId: `agent:${randomUUID()}`,
+				interviewStatus: "complete",
+				startedAt: now,
+				endedAt: now,
+				roundCount: 0,
+				exposure: "local",
+				decisions: [
+					{
+						key: input.key,
+						value: input.value,
+						...(input.label ? { label: input.label } : {}),
+						status: "active",
+						decidedAt: now,
+						source,
+						...(quote !== undefined ? { quote } : {}),
+						alternatives: [...input.alternatives],
+						rationale: input.rationale,
+					},
+				],
+			};
+			append(entry);
+			return { entry, superseded };
+		},
+		supersede(interviewId: string, key: string, correction?: string): DecisionLedgerEntryFields {
+			return revise(interviewId, key, "operator", correction);
+		},
+		invalidate(): void {
+			dirty = true;
+		},
+	};
+	return store;
+}
+
+/** Preserve the recorded argument wherever a decision is carried into another prompt. */
+export function decisionRationale(decision: DecisionRecord): string | undefined {
+	const parts: string[] = [];
+	if (decision.alternatives?.length) parts.push(`Alternatives: ${decision.alternatives.join("; ")}`);
+	if (decision.rationale) parts.push(`Rationale: ${decision.rationale}`);
+	if (parts.length > 0) return parts.join(". ");
+	return decision.source_question ?? decision.correction;
+}

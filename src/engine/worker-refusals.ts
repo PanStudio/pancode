@@ -1,0 +1,116 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { isAbsolute, sep } from "node:path";
+import { ToolNames } from "../core/tool-names.js";
+import { redactCommandOutputSecrets } from "../domains/evidence/redact.js";
+import type { ClassifierCall } from "../domains/safety/action-classifier.js";
+import { describeCallTarget } from "../domains/safety/call-target.js";
+import type { SafetyDecision } from "../domains/safety/contract.js";
+import { redactSecretString } from "../domains/safety/redaction.js";
+import { WORKER_REFUSAL_LIMIT_PREFIX } from "../worker/spec-contract.js";
+
+const REFUSED_COMMAND_MAX_CHARS = 200;
+
+export interface WorkerRefusal {
+	tool: string;
+	/** The exact command, or its first 200 characters, with credentials scrubbed. */
+	command: string;
+	/** The rule that refused the call, as the audit record names it. */
+	rule: string;
+}
+
+/**
+ * A worker's write aimed outside its workspace is nearly always a mistyped root,
+ * most often its checkout's instead of its task worktree's. Nobody can approve
+ * that here, so the refusal says where the work belongs instead of inviting a
+ * retry through another tool.
+ */
+export function outsideWorkspaceHint(args: unknown, cwd: string): string {
+	const path = typeof args === "object" && args !== null ? (args as { path?: unknown }).path : undefined;
+	if (typeof path !== "string" || !isAbsolute(path)) return "";
+	if (path === cwd || path.startsWith(`${cwd}${sep}`)) return "";
+	return `. ${path} is outside your workspace root ${cwd}; write inside that root instead`;
+}
+
+/**
+ * The command a call carries, scrubbed of credentials and clipped to 200 characters: what a refusal and an ACP
+ * permission title name. Bash and verify carry the command the policy evaluated (verify's resolved argv); other
+ * tools fall back to the call's allowlisted target preview. Empty when the call names nothing.
+ */
+export function clippedCallCommand(call: ClassifierCall, decision: SafetyDecision): string {
+	return clipped(decision.policy?.command ?? describeCallTarget(call.tool, call.args));
+}
+
+/**
+ * The same wording from the call's own arguments, before any policy has evaluated it: a shell call's command, any
+ * other call's target. An ACP tool card is titled from this so it reads as the permission ask for that call does.
+ */
+export function clippedArgsCommand(tool: string, args: Record<string, unknown> | undefined): string {
+	const command = args?.command;
+	return clipped(tool === ToolNames.Bash && typeof command === "string" ? command : describeCallTarget(tool, args));
+}
+
+function clipped(raw: string): string {
+	const scrubbed = redactCommandOutputSecrets(redactSecretString(raw.trim()));
+	return scrubbed.length <= REFUSED_COMMAND_MAX_CHARS ? scrubbed : `${scrubbed.slice(0, REFUSED_COMMAND_MAX_CHARS)}…`;
+}
+
+/** Name what was refused, as {@link clippedCallCommand} words the command. */
+export function describeWorkerRefusal(call: ClassifierCall, decision: SafetyDecision): WorkerRefusal {
+	const command = clippedCallCommand(call, decision);
+	const rule =
+		(decision.kind === "ask" ? decision.confirmationRuleId : undefined) ??
+		decision.policy?.ruleId ??
+		decision.policy?.reasonCode ??
+		"autonomy";
+	return { tool: call.tool, command: command.length > 0 ? command : "(no command)", rule };
+}
+
+export function formatWorkerRefusal(refusal: WorkerRefusal): string {
+	return `${refusal.tool} \`${refusal.command}\` refused by rule ${refusal.rule}`;
+}
+
+/**
+ * Whether a refusal counts toward WORKER_REFUSAL_LIMIT: an execute call, or a command the policy scanned and classed
+ * system_modify (`sudo`, a redirect into a system path). Respelling either command creates no approval route, so a
+ * worker refused `git push`, `ssh` and `sudo` is as stuck as one refused three pushes. A typed write outside the
+ * workspace stays uncounted: it carries no command, and its refusal names the root to write in instead.
+ */
+export function countsTowardRefusalLimit(decision: SafetyDecision): boolean {
+	const actionClass = decision.classification.actionClass;
+	return actionClass === "execute" || (actionClass === "system_modify" && decision.policy?.command !== undefined);
+}
+
+/**
+ * The native worker's last reply after the limit: the capped call's tool result ends with this, at the message tail,
+ * so finished work still reports while the session's tool schema set stays as it was (#423).
+ */
+export const WORKER_REFUSAL_REPORT_DIRECTIVE =
+	"Tools are unavailable for the rest of this run. Reply now with your final report in the form your task asked for: what you changed, what you verified, and what the refused commands blocked. A tool call ends the run without a report.";
+
+/**
+ * The same last reply for a worker that reports through the helper result tool, which stays callable in it (x2-3).
+ */
+function workerRefusalHelperDirective(resultTool: string): string {
+	return `Work tools are unavailable for the rest of this run. Submit your final result now by calling ${resultTool} alone with the complete result object: what you changed, what you verified, and what the refused commands blocked. Any other tool call ends the run without a result.`;
+}
+
+/**
+ * The last-reply directive for a worker at the limit. Only a forced handoff, a round that exposes the result tool and
+ * names it in the request, may ask for the tool; on an API with no named tool choice the tool can be hidden that round
+ * (a mutation report) or the model may ignore it, so the worker reports in prose, which dispatch judges as it stands
+ * (FL-11).
+ */
+export function workerRefusalReportDirective(forcedHandoffTool: string | null): string {
+	return forcedHandoffTool === null ? WORKER_REFUSAL_REPORT_DIRECTIVE : workerRefusalHelperDirective(forcedHandoffTool);
+}
+
+/** Every tool call in that last reply gets this instead of running. */
+export const WORKER_REFUSAL_REPORT_BLOCK =
+	"The permission refusal limit was reached, so no tool runs in this run; reply with your final report instead.";
+
+/** Final reason once the limit is reached; it names every refused command for the receipt. */
+export function workerRefusalLimitReason(refusals: ReadonlyArray<WorkerRefusal>): string {
+	const listed = refusals.map((refusal, index) => `${index + 1}) ${formatWorkerRefusal(refusal)}`).join("; ");
+	return `${WORKER_REFUSAL_LIMIT_PREFIX} the worker ended after ${refusals.length} refused commands with no approval route: ${listed}`;
+}

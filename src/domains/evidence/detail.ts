@@ -1,0 +1,77 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Fixed machine-readable projection of one run's trust record (#434).
+ *
+ * `evidence inspect <runId>` prints an operator record with per-finding prose. This is the same run read down to the
+ * one thing a GUI can carry safely and usefully: whether the run was assessed, what verdict it earned, and which axis
+ * produced it. Every value comes from a closed vocabulary the harness owns, so there is no free-form text here.
+ *
+ * The identifier is validated for shape by the run-record reader; a GUI host that echoes operator-supplied ids owes
+ * its own served-id window on top of that, because shape alone does not prove the id was ever served.
+ *
+ * `evidence inspect <runId> --json` prints this snapshot with the run evidence the text output renders, read once
+ * ({@link evidenceInspectRecord}), so the JSON form never carries less than the operator record (bt-20 P-A).
+ */
+
+import { pancodeStateDir } from "../../core/xdg.js";
+import { inspectRunEvidence } from "./run-evidence.js";
+import { formatTrustSummary, type TrustVerdict, trustVerdict } from "./trust-projection.js";
+import { TRUST_STATUS_AXES, type TrustStatusAxis } from "./trust-status.js";
+import type { RunEvidence } from "./types.js";
+
+export interface EvidenceDetailSnapshot {
+	readonly version: 1;
+	readonly generatedAt: string;
+	readonly runId: string;
+	/** True when the run's sealed scope holds an assessment its verified seal covers. */
+	readonly assessed: boolean;
+	readonly integrity: "verified" | "unsealed" | "failed";
+	readonly verdict: TrustVerdict;
+	/** Every axis, so an absent axis is stated rather than missing. */
+	readonly axes: Readonly<Record<TrustStatusAxis, string>>;
+	/** The result contract's stored verdict and how many reported validations failed; null when the record holds none. */
+	readonly quality: { readonly verdict: "pass" | "fail" | "unmeasured"; readonly failedValidationCount: number } | null;
+}
+
+/** The snapshot fields, then the run evidence the text output renders and its one-line trust summary. */
+export interface EvidenceInspectRecord extends EvidenceDetailSnapshot {
+	readonly trustSummary: string;
+	readonly evidence: RunEvidence;
+}
+
+export async function evidenceDetailSnapshot(
+	runId: string,
+	now: () => number = Date.now,
+	stateDir: string = pancodeStateDir(),
+): Promise<EvidenceDetailSnapshot> {
+	return detailSnapshot(await inspectRunEvidence(stateDir, runId), now);
+}
+
+export async function evidenceInspectRecord(
+	runId: string,
+	now: () => number = Date.now,
+	stateDir: string = pancodeStateDir(),
+): Promise<EvidenceInspectRecord> {
+	const run = await inspectRunEvidence(stateDir, runId);
+	return { ...detailSnapshot(run, now), trustSummary: formatTrustSummary(run.trust), evidence: run };
+}
+
+function detailSnapshot(run: RunEvidence, now: () => number): EvidenceDetailSnapshot {
+	return {
+		version: 1,
+		generatedAt: new Date(now()).toISOString(),
+		runId: run.runId,
+		assessed: run.assessedAt !== null,
+		integrity: run.integrity.state,
+		verdict: trustVerdict(run.trust),
+		axes: Object.fromEntries(TRUST_STATUS_AXES.map((axis) => [axis, run.trust[axis].state])) as Record<
+			TrustStatusAxis,
+			string
+		>,
+		quality:
+			run.quality === null
+				? null
+				: { verdict: run.quality.verdict, failedValidationCount: run.quality.failedValidations.length },
+	};
+}

@@ -1,0 +1,242 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { register } from "node:module";
+import { test } from "node:test";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import React, { type ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router";
+import type { Client } from "../client/api/client.js";
+import type { DispatchRun } from "../contracts/fleet.js";
+
+// Page modules import their stylesheets, which only Vite can load, and tsx
+// compiles client files outside this tsconfig with the classic JSX runtime. Stub
+// the stylesheets and expose React so the page renders under Node.
+(globalThis as { React?: typeof React }).React = React;
+register(
+	`data:text/javascript,${encodeURIComponent(
+		'export async function load(url, context, next) { return url.endsWith(".css") ? { format: "module", source: "", shortCircuit: true } : next(url, context); }',
+	)}`,
+);
+const { EvidencePage } = await import("../client/pages/evidence.js");
+const { FleetPage } = await import("../client/pages/fleet.js");
+
+const client = { token: "t", call: () => new Promise(() => {}) } as unknown as Client;
+
+const liveEvidence = (runId: string): DispatchRun["evidence"] => ({
+	v: 1,
+	foldVersion: 1,
+	generatedAt: "2026-10-31T00:00:00.000Z",
+	kind: "run-evidence",
+	runId,
+	record: "unsettled",
+	integrity: { state: "unavailable", display: "unavailable", detail: "the run has not settled" },
+	trust: {
+		artifactIntegrity: { state: "absent", display: "absent", authority: null },
+		validationGrounding: { state: "absent", display: "absent", authority: null },
+		independentReview: { state: "absent", display: "absent", authority: null },
+		contextProvenance: { state: "absent", display: "absent", authority: null },
+		completionEvidence: { state: "absent", display: "absent", authority: null },
+		validation: "unmeasured",
+	},
+	sealed: null,
+	evidence: null,
+});
+
+function render(queries: QueryClient, node: ReactNode, entry = "/") {
+	return renderToStaticMarkup(
+		<QueryClientProvider client={queries}>
+			<MemoryRouter initialEntries={[entry]}>{node}</MemoryRouter>
+		</QueryClientProvider>,
+	);
+}
+
+function listed(staleTime: number) {
+	const queries = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime } } });
+	queries.setQueryData(["evidence"], {
+		pageParams: [undefined],
+		pages: [
+			{
+				nextCursor: "next",
+				items: [
+					{
+						verdict: "grounded",
+						run: {
+							runId: "evidence-007",
+							agentId: null,
+							settledAt: "2026-09-24T00:00:00.000Z",
+							tags: [],
+							quantities: null,
+						},
+					},
+				],
+			},
+		],
+	});
+	return queries;
+}
+
+test("the evidence list offers its links only while no refresh can have narrowed the window", () => {
+	const settled = render(listed(Number.POSITIVE_INFINITY), <EvidencePage client={client} />);
+	assert.match(settled, /href="\/evidence\/evidence-007"/);
+	assert.match(settled, /<button type="button">Load older evidence<\/button>/);
+	// Stale data refetches on mount, which is a refresh: the id stays readable as
+	// text, but nothing links to it and load-more cannot start from the old cursor.
+	const refreshing = render(listed(0), <EvidencePage client={client} />);
+	assert.match(refreshing, /evidence-007/);
+	assert.doesNotMatch(refreshing, /href="\/evidence\/evidence-007"/);
+	assert.match(refreshing, /<button type="button" disabled="">Load older evidence<\/button>/);
+});
+
+test("both fleet lists offer links only while settled, and render nothing after a failed refresh", () => {
+	const fleet = (staleTime: number) => {
+		const queries = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime } } });
+		const page = <T,>(item: T) => ({ pageParams: [undefined], pages: [{ nextCursor: "next", items: [item] }] });
+		queries.setQueryData(
+			["fleet-roots"],
+			page({
+				id: "root-1",
+				fleet: "nightly",
+				endedAt: null,
+				completedCount: 0,
+				stepCount: 1,
+				startedAt: "2026-09-24T00:00:00.000Z",
+			}),
+		);
+		queries.setQueryData(
+			["fleet-dispatches"],
+			page({
+				id: "run-1",
+				evidence: liveEvidence("run-1"),
+				agentId: "worker",
+				outcome: null,
+				status: "running",
+				targetId: "local",
+				wireModelId: "m",
+				telemetry: null,
+			}),
+		);
+		return queries;
+	};
+	const links = /href="\/fleet\/(root-1|dispatches\/run-1)"/g;
+	const settled = render(fleet(Number.POSITIVE_INFINITY), <FleetPage client={client} />);
+	assert.equal(settled.match(links)?.length, 2);
+	assert.match(settled, /<button type="button">Load older fleet runs<\/button>/);
+	assert.match(settled, /<button type="button">Load older dispatches<\/button>/);
+	// Stale data refetches on mount: a fresh first page may already have replaced
+	// each family's window, so the retained ids are text and load-more waits.
+	const refreshing = render(fleet(0), <FleetPage client={client} />);
+	assert.match(refreshing, /nightly/);
+	assert.match(refreshing, /run-1/);
+	assert.equal(refreshing.match(links), null);
+	assert.match(refreshing, /<button type="button" disabled="">Load older fleet runs<\/button>/);
+	assert.match(refreshing, /<button type="button" disabled="">Load older dispatches<\/button>/);
+	// A refresh that failed after narrowing leaves stale pages cached; none renders.
+	const failed = fleet(Number.POSITIVE_INFINITY);
+	for (const key of ["fleet-roots", "fleet-dispatches"])
+		failed
+			.getQueryCache()
+			.find({ queryKey: [key] })
+			?.setState({ status: "error", error: new Error("refresh failed"), fetchStatus: "idle" });
+	const broken = render(failed, <FleetPage client={client} />);
+	assert.doesNotMatch(broken, /nightly|run-1|Load more/);
+	assert.match(broken, /refresh failed/);
+});
+
+test("evidence discovery restores URL filters and detail navigation excludes launch credentials", () => {
+	const queries = listed(Number.POSITIVE_INFINITY);
+	const filtered = render(
+		queries,
+		<EvidencePage client={client} />,
+		"/evidence?q=evidence-007&verdict=grounded&token=private",
+	);
+	assert.match(filtered, /href="\/evidence\/evidence-007\?q=evidence-007&amp;verdict=grounded"/);
+	assert.doesNotMatch(filtered, /href="[^"]*token=/);
+	assert.match(filtered, /name="q" value="evidence-007"/);
+	const noMatch = render(queries, <EvidencePage client={client} />, "/evidence?q=missing");
+	assert.match(noMatch, /No loaded run matches these filters/);
+	assert.doesNotMatch(noMatch, /href="\/evidence\/evidence-007/);
+});
+
+test("Fleet filters search only loaded records and preserve their destination", () => {
+	const queries = new QueryClient({
+		defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+	});
+	queries.setQueryData(["fleet-roots"], {
+		pageParams: [undefined],
+		pages: [
+			{
+				nextCursor: null,
+				items: [
+					{
+						id: "root-1",
+						fleet: "nightly",
+						endedAt: null,
+						completedCount: 0,
+						stepCount: 1,
+						startedAt: "2026-09-24T00:00:00Z",
+					},
+				],
+			},
+		],
+	});
+	queries.setQueryData(["fleet-dispatches"], {
+		pageParams: [undefined],
+		pages: [
+			{
+				nextCursor: null,
+				items: [
+					{
+						id: "dispatch-1",
+						evidence: liveEvidence("dispatch-1"),
+						agentId: "worker",
+						task: "Inspect models",
+						outcome: null,
+						status: "running",
+						endedAt: null,
+						targetId: "local",
+						wireModelId: "model-a",
+						telemetry: null,
+						parentRunId: "parent-1",
+						rootRunId: "root-dispatch",
+					},
+				],
+			},
+		],
+	});
+	const filtered = render(queries, <FleetPage client={client} />, "/fleet?q=worker&status=active");
+	assert.doesNotMatch(filtered, /href="\/fleet\/root-1/);
+	assert.match(filtered, /No loaded fleet execution matches these filters/);
+	assert.match(filtered, /href="\/fleet\/dispatches\/dispatch-1\?q=worker&amp;status=active"/);
+	assert.match(filtered, /Root: root-dispatch/);
+	assert.match(filtered, /Parent: parent-1/);
+	const finished = render(queries, <FleetPage client={client} />, "/fleet?status=finished");
+	assert.match(finished, /No loaded worker dispatch matches these filters/);
+	assert.doesNotMatch(finished, /href="\/fleet\/dispatches/);
+});
+
+test("artifact pages distinguish missing stores from present empty history", () => {
+	for (const present of [false, true]) {
+		const queries = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+		});
+		const page = { pageParams: [undefined], pages: [{ present, items: [], nextCursor: null }] };
+		queries.setQueryData(["fleet-roots"], page);
+		queries.setQueryData(["fleet-dispatches"], page);
+		queries.setQueryData(["evidence"], page);
+		const fleet = render(queries, <FleetPage client={client} />);
+		const evidence = render(queries, <EvidencePage client={client} />);
+		if (present) {
+			assert.match(fleet, /recorded no fleet run/);
+			assert.match(fleet, /recorded no dispatch run/);
+			assert.match(evidence, /recorded no settled run/);
+			assert.doesNotMatch(fleet + evidence, /missing store/);
+		} else {
+			assert.match(fleet, /no fleet history store/);
+			assert.match(fleet, /no dispatch ledger store/);
+			assert.match(evidence, /no evidence inventory store/);
+			assert.doesNotMatch(fleet + evidence, /recorded no (fleet run|dispatch run|settled run)/);
+		}
+	}
+});

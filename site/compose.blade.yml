@@ -1,0 +1,14 @@
+services:
+  site:
+    networks:
+      - web
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=web
+      - traefik.http.routers.pancode-site.rule=Host(`pancode.dev`)
+      - traefik.http.routers.pancode-site.entrypoints=http
+      - traefik.http.services.pancode-site.loadbalancer.server.port=80
+
+networks:
+  web:
+    external: true

@@ -1,0 +1,152 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { chmodSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { type PancodeSettings, savedYoloConfinementUnnamed } from "../../core/config.js";
+import { initializePancodeHome } from "../../core/init.js";
+import { safeResourceWrite } from "../../core/safe-resource-write.js";
+import { sandboxAvailability } from "../../core/sandbox/availability.js";
+import { yoloContainedNotice } from "../../core/sandbox/main-session.js";
+import { withStateFileLockSync } from "../../core/state-file-lock.js";
+import { pancodeStatePath } from "../../core/xdg.js";
+
+export interface StateInfo {
+	version: string;
+	/** Absent when this record was rebuilt over a state root whose install time was gone. */
+	installedAt?: string;
+	upgradedAt?: string;
+	/** When the record itself was rebuilt. Never the same claim as an install. */
+	repairedAt?: string;
+	/** The version on record before the most recent version change. */
+	upgradedFrom?: string;
+	/** The version whose upgrade notice has already been shown once. */
+	noticedVersion?: string;
+	/** When the one-time contained-yolo notice was shown; the operator's settings never carry that memory. */
+	containedYoloNoticedAt?: string;
+	platform: string;
+	nodeVersion: string;
+}
+
+export interface UpgradeTransition {
+	from: string;
+	to: string;
+}
+
+export interface StateInfoRead {
+	info: StateInfo | null;
+	/**
+	 * Why the metadata could not be read, or null when it is absent or fine.
+	 * Absent and unreadable are different problems with different remedies, and
+	 * collapsing both to null had `pancode doctor` report "state metadata missing"
+	 * for a record that was present and merely mode 000, then send the
+	 * user to a `--fix` that dies on EACCES.
+	 */
+	problem: string | null;
+}
+
+export function readStateInfoResult(): StateInfoRead {
+	const path = join(pancodeStatePath(), "home.json");
+	try {
+		return { info: JSON.parse(readFileSync(path, "utf8")) as StateInfo, problem: null };
+	} catch (error) {
+		// `existsSync` cannot carry this distinction: it answers false for a
+		// genuinely absent file and for one sitting behind a directory the process
+		// may not traverse. Only ENOENT means the metadata was never written.
+		const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+		if (code === "ENOENT") return { info: null, problem: null };
+		const message = error instanceof Error ? error.message : String(error);
+		return { info: null, problem: `${path} could not be read: ${message}` };
+	}
+}
+
+export function readStateInfo(): StateInfo | null {
+	return readStateInfoResult().info;
+}
+
+export function ensurePancodeState(): StateInfo {
+	initializePancodeHome();
+	const info = readStateInfo();
+	if (!info) throw new Error("state metadata was not written by initializePancodeHome()");
+	return info;
+}
+
+/**
+ * The version transition the operator has not been told about yet, or null.
+ * `initializePancodeHome` refreshes `home.json` silently on every boot, so by
+ * the time anything can speak the record already says the current version;
+ * `upgradedFrom` is what remembers where it came from. Claiming the notice
+ * stamps `noticedVersion`, so it is shown once per version and never again.
+ * A record without an `upgradedFrom`, or one already noticed, yields null and
+ * writes nothing.
+ */
+export function takeUpgradeNotice(): UpgradeTransition | null {
+	const path = join(pancodeStatePath(), "home.json");
+	try {
+		return withStateFileLockSync(
+			path,
+			() => {
+				let raw: Record<string, unknown>;
+				try {
+					const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+					if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+					raw = parsed as Record<string, unknown>;
+				} catch {
+					return null;
+				}
+				const { version, upgradedFrom, noticedVersion } = raw;
+				if (typeof version !== "string" || typeof upgradedFrom !== "string") return null;
+				if (upgradedFrom === version || noticedVersion === version) return null;
+				try {
+					safeResourceWrite(path, `${JSON.stringify({ ...raw, noticedVersion: version }, null, 2)}\n`, {
+						encoding: "utf8",
+						mode: 0o600,
+					});
+					chmodSync(path, 0o600);
+				} catch {
+					// A record that cannot be rewritten still gets its notice; it will
+					// repeat on the next boot, which is the lesser wrong against silence.
+				}
+				return { from: upgradedFrom, to: version };
+			},
+			// A second interactive boot must never stall for a notice. If the
+			// metadata is busy, that other process will claim it.
+			{ timeoutMs: 50 },
+		);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The one-time contained-yolo notice this boot owes the operator, or null, claimed by stamping
+ * `containedYoloNoticedAt` in `home.json`. User settings that name their own `safety.yoloConfinement` already chose
+ * and hear nothing. A notice comes back only when this call wrote the claim, so a record that cannot be rewritten
+ * stays silent rather than repeating; the operator's settings file is never written.
+ */
+export function takeContainedYoloNotice(safety: PancodeSettings["safety"]): string | null {
+	if (safety.yoloConfinement === "unconfined" || !savedYoloConfinementUnnamed()) return null;
+	const path = join(pancodeStatePath(), "home.json");
+	let claimed = false;
+	try {
+		claimed = withStateFileLockSync(
+			path,
+			() => {
+				const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+				if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return false;
+				const raw = parsed as Record<string, unknown>;
+				if (raw.containedYoloNoticedAt !== undefined) return false;
+				safeResourceWrite(
+					path,
+					`${JSON.stringify({ ...raw, containedYoloNoticedAt: new Date().toISOString() }, null, 2)}\n`,
+					{ encoding: "utf8", mode: 0o600 },
+				);
+				chmodSync(path, 0o600);
+				return true;
+			},
+			{ timeoutMs: 50 },
+		);
+	} catch {
+		return null;
+	}
+	return claimed ? yoloContainedNotice(safety, sandboxAvailability()) : null;
+}

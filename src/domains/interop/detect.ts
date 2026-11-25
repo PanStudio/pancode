@@ -1,0 +1,242 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { sha256Hex } from "../../core/hash.js";
+import { runCommandVector } from "../../core/safe-exec.js";
+import { interopUserHome } from "../../core/xdg.js";
+import { discoverInteropInventory } from "./inventory.js";
+import { INTEROP_AGENT_KINDS, interopAgentUserDir } from "./registry.js";
+import { readInteropReport } from "./state.js";
+import type {
+	InteropAgentFacts,
+	InteropAgentKind,
+	InteropAgentRecord,
+	InteropDetectInput,
+	InteropPresence,
+	InteropReport,
+} from "./types.js";
+
+const VERSION_PROBE_TIMEOUT_MS = 2000;
+const VERSION_PROBE_MAX_OUTPUT_BYTES = 4096;
+
+/** Resolve an executable on PATH without a shell. Never throws; unresolvable state reports "unknown". */
+export function resolveOnPath(binaryNames: ReadonlyArray<string>): { presence: InteropPresence; binary?: string } {
+	if (binaryNames.length === 0) return { presence: "absent" };
+	let unreadable = false;
+	for (const name of binaryNames) {
+		if (!path.isAbsolute(name)) continue;
+		try {
+			accessSync(name, constants.X_OK);
+			if (statSync(name).isFile()) return { presence: "present", binary: name };
+		} catch (error) {
+			if (["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) unreadable = true;
+		}
+	}
+	const rawPath = process.env.PATH;
+	if (rawPath === undefined || rawPath.length === 0)
+		return { presence: unreadable || binaryNames.some((name) => !path.isAbsolute(name)) ? "unknown" : "absent" };
+	try {
+		for (const dir of rawPath.split(path.delimiter)) {
+			if (dir.length === 0) continue;
+			for (const name of binaryNames) {
+				if (path.isAbsolute(name)) continue;
+				const candidate = path.join(dir, name);
+				try {
+					accessSync(candidate, constants.X_OK);
+					if (statSync(candidate).isFile()) return { presence: "present", binary: candidate };
+				} catch (error) {
+					if (["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) unreadable = true;
+					// Not this entry. A directory PanCode cannot traverse is not evidence of absence,
+					// but it is also not evidence of presence, so the sweep simply continues.
+				}
+			}
+		}
+	} catch {
+		return { presence: "unknown" };
+	}
+	return { presence: unreadable ? "unknown" : "absent" };
+}
+
+/**
+ * Whether the exact ACP recipe is locally verified. `npx` is never run: only a
+ * local package at the pinned version proves the exact launch. A different
+ * global executable cannot satisfy an `npx package@version` recipe, and an
+ * npm cache that might satisfy it is not inspected here.
+ */
+function adapterPresence(kind: InteropAgentKind, cwd: string, binaryPresence: InteropPresence): InteropPresence {
+	const recipe = kind.acp;
+	if (recipe === undefined) return "absent";
+	if (recipe.npmPackage === undefined) return binaryPresence;
+	try {
+		const packageJson = path.join(cwd, "node_modules", recipe.npmPackage, "package.json");
+		if (existsSync(packageJson)) {
+			const installed = JSON.parse(readFileSync(packageJson, "utf8")) as { version?: unknown };
+			const pinned = recipe.args
+				.find((arg) => arg.startsWith(`${recipe.npmPackage}@`))
+				?.slice(recipe.npmPackage.length + 1);
+			if (typeof installed.version !== "string") return "unknown";
+			return !pinned || installed.version === pinned ? "present" : "unknown";
+		}
+	} catch {
+		return "unknown";
+	}
+	return "unknown";
+}
+
+function installDirOf(kind: InteropAgentKind, home: string): string | undefined {
+	const dir = path.join(home, kind.userDir);
+	try {
+		return existsSync(dir) ? dir : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** First version-shaped token in the output of `<bin> --version`, or undefined. */
+function parseVersion(output: string): string | undefined {
+	return /\b\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?\b/.exec(output)?.[0];
+}
+
+async function probeVersion(binary: string): Promise<string | undefined> {
+	let scratch: string | undefined;
+	try {
+		// Even --version may create aliases or logs. Keep host and project profiles read-only.
+		scratch = mkdtempSync(path.join(tmpdir(), "pancode-interop-version-"));
+		const env: Record<string, string> = { HOME: scratch, USERPROFILE: scratch };
+		for (const key of [
+			"XDG_CONFIG_HOME",
+			"XDG_CACHE_HOME",
+			"XDG_STATE_HOME",
+			"XDG_DATA_HOME",
+			"APPDATA",
+			"LOCALAPPDATA",
+			"CLAUDE_CONFIG_DIR",
+			"CODEX_HOME",
+			"ANTIGRAVITY_HOME",
+			"OPENCODE_CONFIG_DIR",
+			"COPILOT_HOME",
+			"GEMINI_CLI_HOME",
+		]) {
+			const directory = path.join(scratch, key.toLowerCase());
+			mkdirSync(directory);
+			env[key] = directory;
+		}
+		const result = await runCommandVector(binary, ["--version"], {
+			cwd: scratch,
+			workspaceRoot: scratch,
+			env,
+			timeoutMs: VERSION_PROBE_TIMEOUT_MS,
+			maxOutputBytes: VERSION_PROBE_MAX_OUTPUT_BYTES,
+		});
+		if (result.timedOut || result.outputCapped || result.exitCode !== 0) return undefined;
+		return parseVersion(`${result.stdout}\n${result.stderr}`);
+	} catch {
+		return undefined;
+	} finally {
+		if (scratch) rmSync(scratch, { recursive: true, force: true });
+	}
+}
+
+/**
+ * Facts a proposal is keyed by. Skill and artifact counts are deliberately out:
+ * adding a skill to a foreign root must not re-propose an agent the operator
+ * already declined.
+ */
+function interopFingerprint(kind: InteropAgentKind, facts: InteropAgentFacts): string {
+	const recipe = kind.acp;
+	const parts = [
+		kind.id,
+		facts.binary ?? "",
+		facts.version ?? "",
+		recipe === undefined ? "" : `${recipe.command} ${recipe.args.join(" ")}`,
+	];
+	return `sha256:${sha256Hex(parts.join("\0"))}`;
+}
+
+function countBy<T>(values: ReadonlyArray<T> | undefined, match: T | undefined): number {
+	if (values === undefined || match === undefined) return 0;
+	return values.filter((value) => value === match).length;
+}
+
+function detected(facts: InteropAgentFacts): boolean {
+	return (
+		facts.presence === "present" || facts.installDir !== undefined || facts.skillCount > 0 || facts.projectArtifacts > 0
+	);
+}
+
+/**
+ * Probe every registered agent. Detection resolves paths and, only when asked
+ * and only for a binary that already resolved, runs a bounded `--version`. It
+ * never starts a foreign agent's work command and never reads under a foreign
+ * session, history, cache, projects, or state directory.
+ */
+export async function detectInteropAgents(
+	input: InteropDetectInput = {},
+	previous?: ReadonlyArray<InteropAgentRecord>,
+): Promise<InteropReport> {
+	const cwd = path.resolve(input.cwd ?? process.cwd());
+	// Null under PANCODE_INTEROP_HOME=none: binaries on PATH are still found, no foreign home is read (interopUserHome).
+	const home = input.home ?? interopUserHome();
+	// Standing decisions live in the recorded report. A caller that already holds
+	// a fresher one passes it; everyone else must still see the decisions, or a
+	// declined agent is proposed again on the next run.
+	const priorByKind = new Map((previous ?? readInteropReport()?.agents ?? []).map((record) => [record.kind, record]));
+	const agents: InteropAgentRecord[] = [];
+	// Each probe is a short child process; run together they cost one probe's time instead of the sum.
+	const versions = new Map<string, Promise<string | undefined>>();
+	if (input.probeVersion === true) {
+		for (const kind of INTEROP_AGENT_KINDS) {
+			if (kind.versionProbe === false) continue;
+			const binary = resolveOnPath(kind.binaryNames).binary;
+			if (binary !== undefined) versions.set(kind.id, probeVersion(binary));
+		}
+	}
+
+	for (const kind of INTEROP_AGENT_KINDS) {
+		const resolved = resolveOnPath(kind.binaryNames);
+		const prior = priorByKind.get(kind.id);
+		const inventoryRoot =
+			input.inventory && kind.inventory
+				? interopAgentUserDir(kind.inventory, home, input.home === undefined ? process.env : {})
+				: undefined;
+		const installDir =
+			inventoryRoot && existsSync(inventoryRoot) ? inventoryRoot : home === null ? undefined : installDirOf(kind, home);
+		const facts: InteropAgentFacts = {
+			kind: kind.id,
+			presence: resolved.presence,
+			...(resolved.binary !== undefined ? { binary: resolved.binary } : {}),
+			...(installDir !== undefined ? { installDir } : {}),
+			...(kind.acp !== undefined ? { adapter: adapterPresence(kind, cwd, resolved.presence) } : {}),
+			skillCount: countBy(input.skillSources, kind.skillSource),
+			projectArtifacts: countBy(input.artifactProviders, kind.adoptionProvider),
+		};
+		if (resolved.binary !== undefined) {
+			const version =
+				input.probeVersion === true && kind.versionProbe !== false
+					? await versions.get(kind.id)
+					: // A run that did not probe keeps the last version seen for the same
+						// binary, so the fingerprint does not flip between probing callers.
+						prior?.binary === resolved.binary
+						? prior.version
+						: undefined;
+			if (version !== undefined) facts.version = version;
+		}
+		if (input.inventory === true && kind.inventory) {
+			facts.inventory = discoverInteropInventory(kind, home, cwd, input.home === undefined ? process.env : {});
+			facts.skillCount = facts.inventory.items.filter((item) => item.kind === "skill").length;
+			facts.projectArtifacts = facts.inventory.items.filter((item) => item.scope === "project").length;
+		}
+		if (!detected(facts) && !(input.inventory && kind.inventory)) continue;
+		agents.push({
+			...facts,
+			fingerprint: interopFingerprint(kind, facts),
+			...(prior?.decision !== undefined ? { decision: prior.decision } : {}),
+			...(prior?.decidedAt !== undefined ? { decidedAt: prior.decidedAt } : {}),
+			...(prior?.decidedFingerprint !== undefined ? { decidedFingerprint: prior.decidedFingerprint } : {}),
+		});
+	}
+
+	return { version: 1, detectedAt: new Date().toISOString(), agents };
+}

@@ -1,0 +1,243 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { it } from "node:test";
+import {
+	BASH_HARD_CAP_BYTES,
+	type BashCommandResult,
+	type BashStreamByteCounts,
+	createBashOutputProgressController,
+} from "../../src/core/bash-exec.js";
+import {
+	BASH_DEFAULT_RESULT_DISPOSITION,
+	bashOutputCapResult,
+	bashTool,
+	lastActivePytestTest,
+} from "../../src/tools/bash.js";
+import { shapeToolResult } from "../../src/tools/result-shaping.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+it("reports the last announced pytest test when a bounded run times out", async () => {
+	const command = "printf 'tests/test_commands.py::TestProcessCommand::test_process_json\\n'; sleep 5; : pytest";
+	const result = await bashTool.run({ command, timeout_ms: 250 });
+	strictEqual(result.kind, "error");
+	if (result.kind !== "error") return;
+	match(result.message, /ran past its own 250 ms timeout and was stopped/u);
+	match(result.message, /Validation did not finish/u);
+	match(result.message, /Last active pytest test: tests\/test_commands\.py::TestProcessCommand::test_process_json/u);
+	match(result.message, /Narrow the test selection/u);
+	strictEqual(result.details?.lastActiveTest, "tests/test_commands.py::TestProcessCommand::test_process_json");
+	strictEqual(result.details?.timedOut, true);
+});
+
+it("says a non-test timeout stopped only that command and leaves the shell usable", async () => {
+	const result = await bashTool.run({ command: "sleep 5 > /dev/null", timeout_ms: 1500 });
+	strictEqual(result.kind, "error");
+	if (result.kind !== "error") return;
+	match(result.message, /ran past its own 1\.5 s \(1500 ms\) timeout and was stopped/u);
+	match(result.message, /printed nothing/u);
+	match(result.message, /bash tool still works/u);
+	ok(!/Validation did not finish|Narrow the test selection/u.test(result.message));
+	strictEqual(result.details?.timedOut, true);
+});
+
+it("does not infer a pytest test from unrelated timed-out output", () => {
+	strictEqual(lastActivePytestTest("npm run build", "tests/test_commands.py::test_process_json"), null);
+});
+
+it("preserves pipeline failure in Bash receipts unless the caller explicitly disables pipefail", async () => {
+	for (const [command, exitCode] of [
+		["(printf 'fixture failure\\n' >&2; exit 7) 2>&1 | tail -30", 7],
+		["printf 'fixture success\\n' | tail -30", 0],
+		["(exit 7) | (exit 9)", 9],
+		["set +o pipefail; (printf 'intentional last-stage status\\n'; exit 7) | tail -30", 0],
+	] as const) {
+		const result = await bashTool.run({ command, timeout_ms: 2000 });
+		strictEqual(result.kind, exitCode === 0 ? "ok" : "error", command);
+		strictEqual(result.details?.exitCode, exitCode, command);
+		strictEqual(result.details?.outcome, exitCode === 0 ? "success" : "nonzero", command);
+		if (exitCode === 7 && result.kind === "error") match(result.message, /fixture failure/);
+	}
+});
+
+it("marks an exit status that belongs only to a chained command's last command", async () => {
+	// afterG-3: `node check.mjs; echo "exit=$?"` returned exitCode 0 and the model reported the failing suite as exit 0.
+	for (const [command, exitCode, lastOnly] of [
+		['(exit 1); echo "exit=$?"', 0, true],
+		["(exit 1) || true", 0, true],
+		["(exit 1)\necho done", 0, true],
+		["set +o pipefail; (exit 7) | cat", 0, true],
+		// x4-5: an inverted pipeline or a quoted pipefail toggle; switching pipefail on keeps the status.
+		["! (exit 1)", 0, true],
+		['set +o "pipefail" && (exit 7) | cat', 0, true],
+		["set -o pipefail && (exit 3) | cat", 3, false],
+		["(exit 1) && echo 'a; b || c'", 1, false],
+		["(exit 3) 2>&1 | tail -1", 3, false],
+		["printf 'ok\\n' >&2", 0, false],
+		// XR-9: a leading cd into the directory bash already runs in moves nothing; a cd anywhere else still might fail.
+		[`cd ${process.cwd()}; (exit 3)`, 3, false],
+		["cd /; true", 0, true],
+	] as const) {
+		const result = await bashTool.run({ command, timeout_ms: 2000 });
+		strictEqual(result.details?.exitCode, exitCode, command);
+		strictEqual(result.details?.exitScope, lastOnly ? "last-command" : undefined, command);
+		const shaped = shapeToolResult(bashTool, result, { sessionId: "exit-scope" }, BASH_DEFAULT_RESULT_DISPOSITION);
+		const context = shaped.kind === "ok" ? (shaped.modelContext ?? "") : shaped.message;
+		strictEqual(context.includes('"exitScope":"last-command"'), lastOnly, command);
+	}
+});
+
+it("keeps both bash output ends in a 16 KiB model context including multibyte text", async () => {
+	const env = await isolatePancodeEnv("pancode-bash-context-");
+	try {
+		const output = `HEAD matches\n${"€ x ".repeat(6000)}\nTAIL diagnostic`;
+		const result = shapeToolResult(
+			bashTool,
+			{ kind: "ok", output },
+			{ sessionId: "head-tail" },
+			BASH_DEFAULT_RESULT_DISPOSITION,
+		);
+		strictEqual(result.kind, "ok");
+		const context = result.modelContext ?? "";
+		ok(Buffer.byteLength(context) > 10 * 1024, "the old 10 KiB budget must not truncate the retained context");
+		ok(Buffer.byteLength(context) <= 16 * 1024, "the head, tail and metadata share one byte budget");
+		match(context, /HEAD matches/u);
+		match(context, /TAIL diagnostic/u);
+		strictEqual(context.includes("�"), false, "UTF-8 characters remain whole at both cut points");
+		const disposition = result.details?.resultDisposition as { context: { maxBytes: number; excerpt: string } };
+		strictEqual(disposition.context.maxBytes, 16 * 1024);
+		strictEqual(disposition.context.excerpt, "head-tail");
+	} finally {
+		env.restore();
+	}
+});
+
+it("stops a child at the Bash cap and preserves partial output and recovery instructions", async () => {
+	const env = await isolatePancodeEnv("pancode-bash-cap-");
+	try {
+		const started = Date.now();
+		const result = await bashTool.run({
+			command: "printf 'partial-stderr\\n' >&2; head -c 17825792 /dev/zero | tr '\\0' x; sleep 30",
+		});
+		ok(Date.now() - started < 10_000, "cap cancellation must not wait for the trailing sleep");
+		strictEqual(result.kind, "error");
+		if (result.kind !== "error") return;
+		strictEqual(result.details?.outputCapped, true);
+		strictEqual(result.details?.outcome, "output-cap");
+		ok(result.details?.signal === "SIGTERM" || result.details?.signal === "SIGKILL");
+		strictEqual(result.details?.outputBytes, BASH_HARD_CAP_BYTES);
+		match(result.message, /16777216-byte \(16 MiB\) hard cap/);
+		match(result.message, /stdout: \d+ bytes, stderr: \d+ bytes/);
+		match(result.message, /Partial output offloaded to/);
+		match(result.message, /run_script.*unbounded.*\.pancode\/runs\/<runId>\//);
+		const shaped = shapeToolResult(bashTool, result, { sessionId: "cap" }, BASH_DEFAULT_RESULT_DISPOSITION);
+		strictEqual(shaped.kind, "error");
+		if (shaped.kind !== "error") return;
+		const path = (shaped.details?.resultSize as { offloadPath?: string } | undefined)?.offloadPath;
+		ok(typeof path === "string");
+		ok(shaped.message.includes(path));
+		match(shaped.message, /hard cap.*stdout:.*stderr:/);
+		const saved = readFileSync(path, "utf8");
+		strictEqual(Buffer.byteLength(saved), BASH_HARD_CAP_BYTES);
+		ok(saved.startsWith("x".repeat(1024)));
+		match(shaped.message, /1 decoded output bytes discarded from the offload/);
+		match(bashTool.description, /16 MiB hard cap that stops the child/);
+	} finally {
+		env.restore();
+	}
+});
+
+it("counts every received byte separately from retained bytes across the cap", () => {
+	const collector = createBashOutputProgressController();
+	collector.append("stdout", Buffer.alloc(BASH_HARD_CAP_BYTES - 2, 0xff));
+	strictEqual(collector.append("stderr", Buffer.from([0xe2, 0x82, 0xac, 0x41])), true);
+	strictEqual(collector.append("stdout", Buffer.alloc(7)), false);
+	strictEqual(collector.append("stderr", Buffer.alloc(11)), false);
+	const result = collector.settle();
+	deepStrictEqual(collector.byteCounts(), {
+		observedStdoutBytes: BASH_HARD_CAP_BYTES + 5,
+		observedStderrBytes: 15,
+		retainedStdoutBytes: BASH_HARD_CAP_BYTES - 2,
+		retainedStderrBytes: 2,
+	});
+	strictEqual(result.outputBytes, BASH_HARD_CAP_BYTES);
+	strictEqual(result.stderr, "");
+	ok(Buffer.byteLength(result.stdout) > result.outputBytes, "replacement characters must not change raw byte counts");
+});
+
+function capped(stdout: string): BashCommandResult & BashStreamByteCounts {
+	return {
+		error: null,
+		stdout,
+		stderr: "",
+		exitCode: null,
+		signal: "SIGTERM",
+		aborted: false,
+		timedOut: false,
+		outputCapped: true,
+		outputBytes: Buffer.byteLength(stdout),
+		observedStdoutBytes: Buffer.byteLength(stdout) + 1,
+		observedStderrBytes: 0,
+		retainedStdoutBytes: Buffer.byteLength(stdout),
+		retainedStderrBytes: 0,
+	};
+}
+
+it("reports inline, complete offload, ceiling loss and failed retention under every output policy", async () => {
+	const env = await isolatePancodeEnv("pancode-cap-dispositions-");
+	try {
+		for (const policy of ["full", "bounded", "summary", "metadata-only"] as const) {
+			const raw = "x".repeat(policy === "full" || policy === "bounded" ? 20_000 : 100);
+			const result = bashOutputCapResult(capped(raw), policy, { sessionId: "retention" });
+			ok(result.kind === "error");
+			match(result.message, /Partial output offloaded to/);
+			const retention = result.details?.retention as { offloadPath: string; discardedBytes: number };
+			strictEqual(readFileSync(retention.offloadPath, "utf8"), raw);
+			strictEqual(retention.discardedBytes, 0);
+			const shaped = shapeToolResult(bashTool, result, { sessionId: "retention" }, BASH_DEFAULT_RESULT_DISPOSITION);
+			strictEqual(shaped.modelContext, result.message);
+			ok(shaped.modelContext?.includes(retention.offloadPath));
+			if (policy === "summary" || policy === "metadata-only") strictEqual(shaped.modelContext?.includes(raw), false);
+		}
+		const inline = bashOutputCapResult(capped("small\n"), "bounded");
+		ok(inline.kind === "error");
+		match(inline.message, /^small\n/);
+		strictEqual(
+			shapeToolResult(bashTool, inline, undefined, BASH_DEFAULT_RESULT_DISPOSITION).modelContext,
+			inline.message,
+		);
+		match(inline.message, /Partial output shown inline \(6 decoded output bytes\)/);
+		const raw = "x".repeat(BASH_HARD_CAP_BYTES + 17);
+		const truncated = bashOutputCapResult(capped(raw), "metadata-only");
+		ok(truncated.kind === "error");
+		strictEqual(
+			shapeToolResult(bashTool, truncated, undefined, BASH_DEFAULT_RESULT_DISPOSITION).modelContext,
+			truncated.message,
+		);
+		match(truncated.message, /17 decoded output bytes discarded from the offload/);
+		const retention = truncated.details?.retention as { offloadPath: string };
+		strictEqual(readFileSync(retention.offloadPath, "utf8"), raw.slice(0, BASH_HARD_CAP_BYTES));
+		const state = process.env.PANCODE_STATE_DIR;
+		ok(state);
+		mkdirSync(state, { recursive: true });
+		writeFileSync(join(state, "scratch", "blocked"), "file blocks directory");
+		for (const policy of ["bounded", "summary", "metadata-only"] as const) {
+			const failed = bashOutputCapResult(capped("x".repeat(20_000)), policy, { sessionId: "blocked" });
+			ok(failed.kind === "error");
+			strictEqual(
+				shapeToolResult(bashTool, failed, undefined, BASH_DEFAULT_RESULT_DISPOSITION).modelContext,
+				failed.message,
+			);
+			match(failed.message, /retention failed; no offload was written/);
+			const facts = failed.details?.retention as { status: string; discardedBytes: number };
+			strictEqual(facts.status, "failed");
+			const shown = policy === "bounded" ? 14_336 : 0;
+			strictEqual(facts.discardedBytes, 20_000 - shown);
+			ok(failed.modelContext?.includes(`${facts.discardedBytes} decoded output bytes discarded`));
+		}
+	} finally {
+		env.restore();
+	}
+});

@@ -1,0 +1,106 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { spawnSync } from "node:child_process";
+import { runningBuildId } from "../core/build-info.js";
+import { writeRestartContinuation, writeRestartIntent } from "../core/restart-intent.js";
+import { missingBuildFiles } from "../core/running-build.js";
+import type { DispatchContract } from "../domains/dispatch/contract.js";
+import type { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
+import type { SessionContract } from "../domains/session/contract.js";
+import type { ChatLoop } from "../session-control/chat-loop.js";
+
+export interface InteractiveRestartDeps {
+	session?: SessionContract;
+	stateDir: string;
+	/** Save what a restart must come back to besides the session, such as the open extension workspace. */
+	saveWorkspace?(): void;
+	busyReason(): string | null;
+	settle(): Promise<void>;
+	armHandoff(): void;
+	shutdown(): Promise<void>;
+	notify(level: "info" | "warning" | "error", text: string): void;
+	/** Why the build a restart would start cannot start; null when it can. Defaults to {@link restartPreflight}. */
+	preflight?(): string | null;
+}
+
+/**
+ * Checks the build a restart hands off to before the session is saved, so a
+ * broken or half-written build is refused while this process still runs.
+ * A source run (no build id) has no build to check.
+ */
+export function restartPreflight(
+	root?: string,
+	launcher = process.argv[1],
+	built = runningBuildId !== null,
+): string | null {
+	if (!built) return null;
+	const missing = root === undefined ? missingBuildFiles() : missingBuildFiles(root);
+	if (missing.length > 0) return `the build on disk is incomplete (${missing.slice(0, 3).join(", ")})`;
+	if (!launcher) return null;
+	const probe = spawnSync(process.execPath, [launcher, "--version"], {
+		timeout: 10_000,
+		stdio: ["ignore", "ignore", "pipe"],
+		encoding: "utf8",
+	});
+	if (probe.status === 0) return null;
+	const tail = (probe.stderr ?? "").trim().split("\n").slice(-1)[0] ?? "";
+	return `the new build does not start (${probe.error?.message ?? `exit ${probe.status ?? probe.signal}`}${tail ? `: ${tail}` : ""})`;
+}
+
+export function interactiveRestartBusyReason(deps: {
+	chat: Pick<ChatLoop, "isStreaming" | "turnPreparation" | "queuedMessages">;
+	dispatch: Pick<DispatchContract, "snapshot">;
+	operator: Pick<OperatorExtensions, "busy"> | undefined;
+	editorBash: boolean;
+	reloading: boolean;
+	shuttingDown: boolean;
+}): string | null {
+	if (deps.shuttingDown) return "shutdown is already in progress";
+	if (deps.chat.isStreaming() || deps.chat.turnPreparation().phase !== "idle") return "a turn is running";
+	if (deps.dispatch.snapshot().running.length > 0) return "a dispatch is running";
+	if (deps.operator?.busy) return "an operator command or extension reload is running";
+	if (deps.editorBash) return "an editor shell command is running";
+	if (deps.reloading) return "a reload report is running";
+	const queue = deps.chat.queuedMessages();
+	if (queue.steer.length + queue.followUp.length > 0) return "turns are queued";
+	return null;
+}
+
+export function createInteractiveRestart(
+	deps: InteractiveRestartDeps,
+): (continuation?: string, chain?: number) => void {
+	let active = false;
+	return (continuation, chain) => {
+		if (active) {
+			deps.notify("warning", "Restart refused: a restart is already in progress.");
+			return;
+		}
+		const reason = deps.busyReason() ?? (deps.preflight ?? restartPreflight)();
+		const sessionId = deps.session?.current()?.id;
+		if (reason || !sessionId) {
+			deps.notify("warning", `Restart refused: ${reason ?? "there is no session to resume; submit a turn first"}.`);
+			return;
+		}
+		active = true;
+		void (async () => {
+			try {
+				await deps.settle();
+				await deps.session?.checkpoint("restart");
+				deps.saveWorkspace?.();
+				const changed = deps.busyReason();
+				if (changed || deps.session?.current()?.id !== sessionId) {
+					deps.notify("warning", `Restart refused: ${changed ?? "the session changed while it was being saved"}.`);
+					return;
+				}
+				writeRestartIntent(deps.stateDir, sessionId);
+				if (continuation?.trim()) writeRestartContinuation(deps.stateDir, sessionId, continuation, chain);
+				deps.armHandoff();
+				await deps.shutdown();
+			} catch (error) {
+				deps.notify("error", `Restart failed: ${error instanceof Error ? error.message : String(error)}`);
+			} finally {
+				active = false;
+			}
+		})();
+	};
+}

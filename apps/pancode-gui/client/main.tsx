@@ -1,0 +1,349 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { createRoot } from "react-dom/client";
+import { createBrowserRouter, isRouteErrorResponse, RouterProvider, useRouteError } from "react-router";
+import { machinePrefix } from "../contracts/pages.js";
+import { ApiProblem, createClient } from "./api/client.js";
+import { createCredentials } from "./api/credentials.js";
+import { launchSecret, listenForForget, listenForLaunchLink } from "./api/token.js";
+import { App } from "./app.js";
+import { reportProblem } from "./design/notifications.js";
+import { Home } from "./pages/home.js";
+import { PancodePulse, PancodeWordmark, PULSE_SIZE } from "./shell/PancodeMark.js";
+import "./styles.css";
+import "./design/tokens.css";
+import "./render/markdown.css";
+// After App, so the bundle keeps the module where App's own imports place it.
+import { sessionQuery } from "./api/session-query.js";
+
+// Under /m/<id> every call goes to that node's own GUI through the app on this machine. The switcher
+// and Machines keep talking to this machine's app, so the window can always come back or move on.
+const prefix = machinePrefix(location.pathname)?.prefix ?? "";
+const launch = launchSecret();
+listenForLaunchLink();
+// One client identity per window: both clients below speak for it, and the event stream's ticket
+// comes from this machine's app even while the window drives a node.
+const credentials = createCredentials(
+	launch,
+	fetch,
+	matchMedia("(display-mode: standalone)").matches ? "Installed app window" : "Browser window",
+);
+listenForForget(credentials.revoke);
+const client = createClient(launch, fetch, prefix, credentials);
+const local = prefix ? createClient(launch, fetch, "", credentials) : client;
+const queries = new QueryClient({
+	// A few seconds of freshness stops two views that mount together from asking for the same thing twice.
+	defaultOptions: { queries: { retry: false, staleTime: 5_000 } },
+	queryCache: new QueryCache({
+		onError: (error, query) => {
+			// Speculative reads have no visible owner. Opening the view surfaces any failure there.
+			if (query.getObserversCount() === 0) return;
+			if (query.meta?.errorSurface === "inline") return;
+			// The project list explains unavailable saved history beside the affected tasks.
+			if (query.queryKey[0] === "session-history" && error instanceof ApiProblem && error.problem.code === "unsupported")
+				return;
+			// A link to a saved task this server has not opened answers not_found on the first read, and
+			// the task page shows that state with its own way to resume. Only that first read is quiet:
+			// a snapshot that was loaded and then goes missing is still reported, as is everything else.
+			if (
+				query.queryKey[0] === "session" &&
+				query.state.data === undefined &&
+				error instanceof ApiProblem &&
+				error.problem.code === "not_found"
+			)
+				return;
+			reportProblem(error, query.queryHash);
+		},
+	}),
+	mutationCache: new MutationCache({
+		onError: (error, _variables, _context, mutation) => {
+			if (mutation.meta?.errorSurface !== "inline") reportProblem(error);
+		},
+	}),
+});
+// Every first read waits on the credential exchange, so it starts now rather than when React mounts the
+// first view.
+void credentials.bearer().catch(() => {
+	// Ignoring is safe: the first real request retries the exchange and reports any problem where it is seen.
+});
+function RouteError() {
+	const error = useRouteError();
+	const missing = isRouteErrorResponse(error) && error.status === 404;
+	// The boundary swallows the cause; without this line a broken view is a blank apology with no lead.
+	useEffect(() => {
+		if (!missing) console.error("Route failed to render:", error);
+	}, [error, missing]);
+	if (missing)
+		return (
+			<main className="route-error" role="alert">
+				<p className="route-error__brand">
+					<PancodeWordmark />
+				</p>
+				<h1>PanCode has no page at this address.</h1>
+				<p>The link may be old or mistyped. Your tasks and projects are where you left them.</p>
+				<a className="primary" href={`${prefix}/`}>
+					Go to Home
+				</a>
+			</main>
+		);
+	return (
+		<main className="route-error" role="alert">
+			<p className="route-error__brand">
+				<PancodeWordmark />
+			</p>
+			<h1>This view could not open.</h1>
+			<p>Check that PanCode is still running, then reload this window.</p>
+			<button type="button" className="primary" onClick={() => window.location.reload()}>
+				Reload this window
+			</button>
+		</main>
+	);
+}
+const router = createBrowserRouter([
+	{
+		element: <App client={client} local={local} />,
+		errorElement: <RouteError />,
+		hydrateFallbackElement: (
+			<main className="app-opening" role="status">
+				<PancodePulse size={PULSE_SIZE.stage} />
+				<p>Opening PanCode…</p>
+			</main>
+		),
+		children: [
+			{
+				path: "/metrics",
+				lazy: async () => {
+					const { MetricsPage } = await import("./pages/metrics.js");
+					return { element: <MetricsPage client={client} /> };
+				},
+			},
+			{
+				path: "/evidence",
+				lazy: async () => {
+					const { EvidencePage } = await import("./pages/evidence.js");
+					return { element: <EvidencePage client={client} /> };
+				},
+			},
+			{
+				path: "/evidence/:id",
+				lazy: async () => {
+					const { EvidenceDetail } = await import("./pages/evidence.js");
+					return { element: <EvidenceDetail client={client} /> };
+				},
+			},
+			{
+				path: "/usage",
+				lazy: async () => {
+					const { UsagePage } = await import("./pages/reports.js");
+					return { element: <UsagePage client={client} /> };
+				},
+			},
+			{
+				path: "/hub",
+				lazy: async () => {
+					const { HubPage } = await import("./pages/hub.js");
+					return { element: <HubPage client={client} /> };
+				},
+			},
+			// The wizard is drawn by the app shell, full window, so this route has nothing of its own to render.
+			{ path: "/setup", element: null },
+			{
+				path: "/skills",
+				lazy: async () => {
+					const { SkillsPage } = await import("./pages/skills.js");
+					return { element: <SkillsPage client={client} /> };
+				},
+			},
+			{
+				path: "/system",
+				lazy: async () => {
+					const { SystemPage } = await import("./pages/system.js");
+					return { element: <SystemPage client={client} /> };
+				},
+			},
+			{
+				path: "/system/interop",
+				lazy: async () => {
+					const { InteropPage } = await import("./pages/system.js");
+					return { element: <InteropPage client={client} /> };
+				},
+			},
+			{
+				path: "/fleet",
+				lazy: async () => {
+					const { FleetPage } = await import("./pages/fleet.js");
+					return { element: <FleetPage client={client} /> };
+				},
+			},
+			{
+				path: "/fleet/:id",
+				lazy: async () => {
+					const { FleetDetail } = await import("./pages/fleet.js");
+					return { element: <FleetDetail client={client} /> };
+				},
+			},
+			{
+				path: "/fleet/dispatches/:id",
+				lazy: async () => {
+					const { FleetDetail } = await import("./pages/fleet.js");
+					return { element: <FleetDetail client={client} dispatch /> };
+				},
+			},
+			{
+				path: "/settings/targets",
+				lazy: async () => {
+					const { TargetsPage } = await import("./pages/targets.js");
+					return { element: <TargetsPage client={client} view="targets" /> };
+				},
+			},
+			{
+				path: "/settings/routing",
+				lazy: async () => {
+					const { TargetsPage } = await import("./pages/targets.js");
+					return { element: <TargetsPage client={client} view="routing" /> };
+				},
+			},
+			{
+				path: "/settings/general",
+				lazy: async () => {
+					const { GeneralPage } = await import("./pages/general.js");
+					return { element: <GeneralPage client={client} /> };
+				},
+			},
+			{
+				path: "/settings",
+				lazy: async () => {
+					const { AdvancedSettings } = await import("./pages/settings-sections.js");
+					return { element: <AdvancedSettings client={client} /> };
+				},
+			},
+			{
+				path: "/settings/advanced",
+				lazy: async () => {
+					const { AdvancedSettings } = await import("./pages/settings-sections.js");
+					return { element: <AdvancedSettings client={client} /> };
+				},
+			},
+			{
+				path: "/settings/models",
+				lazy: async () => {
+					const { ModelsSettings } = await import("./pages/settings-sections.js");
+					return { element: <ModelsSettings client={client} /> };
+				},
+			},
+			{
+				path: "/settings/safety",
+				lazy: async () => {
+					const { SafetySettings } = await import("./pages/settings-sections.js");
+					return { element: <SafetySettings client={client} /> };
+				},
+			},
+			{
+				path: "/settings/context",
+				lazy: async () => {
+					const { ContextSettings } = await import("./pages/settings-sections.js");
+					return { element: <ContextSettings client={client} /> };
+				},
+			},
+			{
+				path: "/settings/effective",
+				lazy: async () => {
+					const { SettingsPage } = await import("./pages/settings.js");
+					return { element: <SettingsPage client={client} view="effective" /> };
+				},
+			},
+			{
+				path: "/settings/why",
+				lazy: async () => {
+					const { SettingsPage } = await import("./pages/settings.js");
+					return { element: <SettingsPage client={client} view="why" /> };
+				},
+			},
+			{
+				path: "/docs",
+				lazy: async () => {
+					const { HelpLanding } = await import("./interaction/HelpLanding.js");
+					return { element: <HelpLanding /> };
+				},
+			},
+			{
+				path: "/sessions",
+				lazy: async () => {
+					const { MissionControl } = await import("./pages/mission-control.js");
+					return { element: <MissionControl client={client} /> };
+				},
+			},
+			{
+				path: "/arena",
+				lazy: async () => {
+					const { ArenaPage } = await import("./pages/arena.js");
+					return { element: <ArenaPage client={client} /> };
+				},
+			},
+			{
+				path: "/research",
+				lazy: async () => {
+					const { ResearchPage } = await import("./pages/research.js");
+					return { element: <ResearchPage client={client} /> };
+				},
+			},
+			{
+				path: "/machines",
+				lazy: async () => {
+					const { MachinesPage } = await import("./pages/machines.js");
+					return { element: <MachinesPage client={client} local={local} /> };
+				},
+			},
+			{
+				path: "/workspaces/:workspaceId/sessions",
+				lazy: async () => {
+					const { Sessions } = await import("./pages/tasks.js");
+					return { element: <Sessions client={client} /> };
+				},
+			},
+			{
+				path: "/sessions/:id",
+				lazy: async () => {
+					const { Session } = await import("./pages/sessions.js");
+					return { element: <Session client={client} /> };
+				},
+			},
+			{ path: "/", element: <Home client={client} /> },
+			{
+				path: "/traces",
+				lazy: async () => {
+					const { TraceRuns } = await import("./pages/traces/runs.js");
+					return { element: <TraceRuns client={client} /> };
+				},
+			},
+			{
+				path: "/traces/:runId",
+				lazy: async () => {
+					const { TraceRunPage } = await import("./pages/traces/run.js");
+					return { element: <TraceRunPage client={client} /> };
+				},
+			},
+			{
+				path: "/toolchain",
+				lazy: async () => {
+					const { Toolchain } = await import("./pages/toolchain.js");
+					return { element: <Toolchain client={client} /> };
+				},
+			},
+		],
+	},
+]);
+// The router matched the URL when it was created and is already loading the route chunk. A deep link to a
+// task also reads its snapshot now, under the decoded id the page's query asks for. A second import site for
+// the route chunk would grow the eager bundle past its budget, so that load is left to the router.
+const opening = router.state.matches.at(-1);
+if (opening?.route.path === "/sessions/:id") void queries.prefetchQuery(sessionQuery(client, opening.params.id ?? ""));
+const root = document.getElementById("root");
+if (!root) throw new Error("Missing application root.");
+createRoot(root).render(
+	<QueryClientProvider client={queries}>
+		<RouterProvider router={router} />
+	</QueryClientProvider>,
+);

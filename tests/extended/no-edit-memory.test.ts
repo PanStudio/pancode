@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { match } from "node:assert/strict";
+import { test } from "node:test";
+import { compile } from "../../src/domains/prompts/compiler.js";
+import { loadFragments } from "../../src/domains/prompts/fragment-loader.js";
+
+test("no-edit convention scope reaches yolo prompts with mutation tools available", () => {
+	const prompt = compile(loadFragments(), {
+		identity: "identity.pancode",
+		operatingContract: "operating.contract",
+		safety: "safety.yolo",
+		sessionInputs: {
+			coordinatorCapabilities: [],
+			providerSupportsTools: true,
+			toolNames: ["read", "edit", "write", "bash", "dispatch"],
+			memorySection: "",
+		},
+	}).systemPrompt;
+	match(prompt, /"Do not edit files" includes PANCODE\.md and all repository files/u);
+	match(prompt, /Available tools never widen task scope/u);
+	match(prompt, /handoff export, shell write, or delegated\nedit/u);
+	match(prompt, /If the entry is absent, report that limit/u);
+	match(prompt, /where writes\nare authorized/u);
+	match(prompt, /unapproved proposal/u);
+	match(prompt, /approval of an unseen record/u);
+	match(prompt, /only from delivery of the matching approved\nrecord/u);
+});

@@ -1,0 +1,91 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { canonicalJsonStrict } from "../core/canonical-json.js";
+import { sha256Hex } from "../core/hash.js";
+import type { SessionPromptInputs } from "../domains/prompts/compiler.js";
+import type { ContextWindowSource } from "../domains/providers/index.js";
+import type { AutonomyLevel } from "../domains/safety/autonomy.js";
+
+/** The exact schema bytes pi attaches to a provider request for one tool. */
+export interface AttachedToolSchema {
+	name: string;
+	description: string;
+	parameters: unknown;
+}
+
+/**
+ * Project the live agent tools onto the schema fields sent to the provider.
+ * Array order is preserved because providers serialize the attached tools in
+ * that order, so reordering them changes prompt-prefix bytes too.
+ */
+export function attachedToolSchemasFromState(tools: ReadonlyArray<unknown>): AttachedToolSchema[] {
+	const schemas: AttachedToolSchema[] = [];
+	for (const tool of tools) {
+		if (!tool || typeof tool !== "object" || Array.isArray(tool)) continue;
+		const record = tool as Record<string, unknown>;
+		schemas.push({
+			name: typeof record.name === "string" ? record.name : "",
+			description: typeof record.description === "string" ? record.description : "",
+			parameters: record.parameters ?? null,
+		});
+	}
+	return schemas;
+}
+
+/**
+ * Serialize the exact ordered schema sequence attached to a provider request.
+ *
+ * `canonicalJsonStrict` is deliberately not used here: provider JSON preserves tool
+ * array order and nested object insertion order, so canonicalizing parameters
+ * can alias two byte-distinct request prefixes. Standard `JSON.stringify`
+ * matches the request serialization boundary and throws for unsupported
+ * values such as circular references and bigint.
+ */
+export function attachedToolSchemaBytes(schemas: ReadonlyArray<AttachedToolSchema>): string {
+	try {
+		const bytes = JSON.stringify(schemas);
+		if (bytes === undefined) throw new Error("JSON.stringify returned undefined");
+		return bytes;
+	} catch (err) {
+		const reason = err instanceof Error ? err.message : String(err);
+		throw new Error(`attached tool schemas are not JSON-serializable: ${reason}`, { cause: err });
+	}
+}
+
+export interface MainPromptCacheIdentityInput {
+	targetId: string;
+	runtimeId: string;
+	wireModelId: string;
+	autonomy: AutonomyLevel;
+	sessionId: string;
+	cwd: string;
+	workingContextPaths: ReadonlyArray<string>;
+	contextWindowSource: ContextWindowSource | null;
+	promptInputEpoch: string;
+	sessionInputs: SessionPromptInputs;
+	attachedToolSchemas: ReadonlyArray<AttachedToolSchema>;
+}
+
+/**
+ * Canonical identity for the interactive session-prompt compile cache.
+ * Config hot reload explicitly invalidates compiler-owned fragments and
+ * rosters; this identity covers every live/caller input resolved per turn.
+ */
+export function mainPromptCacheIdentity(input: MainPromptCacheIdentityInput): string {
+	return sha256Hex(
+		canonicalJsonStrict({
+			version: 2,
+			targetId: input.targetId,
+			runtimeId: input.runtimeId,
+			wireModelId: input.wireModelId,
+			autonomy: input.autonomy,
+			sessionId: input.sessionId,
+			cwd: input.cwd,
+			workingContextPaths: [...input.workingContextPaths].sort((a, b) => a.localeCompare(b)),
+			contextWindowSource: input.contextWindowSource,
+			promptInputEpoch: input.promptInputEpoch,
+			sessionInputs: input.sessionInputs,
+			attachedToolSchemaBytes: attachedToolSchemaBytes(input.attachedToolSchemas),
+		}),
+	);
+}

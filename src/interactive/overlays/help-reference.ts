@@ -1,0 +1,484 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { GLYPH } from "../../core/glyphs.js";
+import { onPresentationTierChange, tierPolicy } from "../../core/presentation-tier.js";
+import type { ExtensionCommandRow } from "../../domains/extensions/operator-commands.js";
+import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
+import type { Keybinding, OverlayHandle, TUI } from "../../engine/tui.js";
+import { commandReference } from "../../session-control/slash-reference.js";
+import { CLOSED_ACTION_ORDER, GLOBAL_ACTION_ORDER } from "../application-controller.js";
+import { displaySafe } from "../display-safe.js";
+import type { PancodeKeybindingManager } from "../keybinding-manager.js";
+import {
+	MUTATION_PREVIEW_KEY,
+	PERMISSION_STOP_KEY,
+	PERMISSION_TERMS_KEY,
+	permissionKeyLabel,
+} from "../permission-hint.js";
+import { compactArgumentHint } from "../slash-autocomplete.js";
+import { dotSep, type Fact, factRows, keyName, pancodeTheme, statusChip, titleRow } from "../theme/index.js";
+import { formatKeybindingDetailBodyLines } from "./keybinding-detail.js";
+import { openListOverlay } from "./list-overlay.js";
+import { detailWithHead, type ListOverlayItem } from "./list-overlay-model.js";
+
+/** Fact tables keep their label column at every width, the way the key detail does. */
+const FACT_OPTIONS = { labelRole: "fieldName" as const, stack: "never" as const };
+
+function formatKey(raw: string): string {
+	return raw === "(unbound)" ? raw : keyName(raw);
+}
+
+/**
+ * Whether rows carry their description column. Compact lists the names alone and the pane keeps each description;
+ * standard and detailed add the column. Read when the rows are built, which a tier change repeats.
+ */
+function described(): boolean {
+	return tierPolicy().listDescriptions === "all";
+}
+
+/** A topic row's name and, from standard up, what it covers. */
+function topicCells(lead: string, text: string): { lead: string; text: string } {
+	return { lead, text: described() ? text : "" };
+}
+
+/** A loaded prompt as help lists it; `source` is the package it came from, in the operator's words. */
+export interface HelpPromptRow {
+	name: string;
+	description: string;
+	source: string;
+	argumentHint?: string;
+}
+
+export function openHelpOverlay(
+	tui: TUI,
+	manager: PancodeKeybindingManager,
+	onClose: () => void,
+	initialFilter?: string,
+	extensionCommands: readonly ExtensionCommandRow[] = [],
+	onPick?: (text: string) => void,
+	hidden: (command: string) => boolean = () => false,
+	prompts: readonly HelpPromptRow[] = [],
+): OverlayHandle {
+	// What Enter puts in the composer for a row, by row id; rows without one open their detail.
+	const picks = new Map<string, string>();
+	// Commands keep commandReference() order; the group rides as the row's meta.
+	const commandItems = (): ListOverlayItem[] => [...builtinCommands(), ...extensionItems(), ...promptItems()];
+	const builtinCommands = (): ListOverlayItem[] =>
+		commandReference()
+			.filter((ref) => !hidden(ref.name))
+			.map((ref) => {
+				const needsArgument = ref.args?.positionals?.some((positional) => positional.required) === true;
+				picks.set(ref.name, `/${ref.name}${needsArgument ? " " : ""}`);
+				// Below 80 columns the flags are dropped before the description is cut:
+				// `/run [--agent-profile <profile>] …` left nothing of what /run does.
+				const { flags, ...withoutFlags } = ref.args ?? {};
+				const positionals = ref.args ? compactArgumentHint(withoutFlags) : undefined;
+				// The flags fold into one word so the row still says that it takes them.
+				const options = flags !== undefined && Object.keys(flags).length > 0 ? " [options]" : "";
+				const narrowUsage = `${positionals ? `/${ref.name} ${positionals}` : `/${ref.name}`}${options}`;
+				// An alias is searched beside the name it opens, so `/config` finds /settings before a description
+				// that only mentions configuration.
+				const aliasNames = (ref.aliases ?? []).map((alias) => `/${alias.name}`).join(" ");
+				const facts = (width: number, withDescription: boolean): string[] => {
+					const theme = pancodeTheme();
+					const aliasFact = (ref.aliases ?? [])
+						.map(
+							(alias) =>
+								`${theme.fg("inlineCode", `/${alias.name}`)} runs ${theme.fg("inlineCode", `/${[ref.name, alias.args].filter(Boolean).join(" ")}`)}`,
+						)
+						.join(", ");
+					const rows: Fact[] = [
+						{ label: "Usage", value: theme.fg("inlineCode", ref.usage) },
+						...(withDescription ? [{ label: "Does", value: ref.description }] : []),
+						...(aliasFact ? [{ label: "Aliases", value: aliasFact }] : []),
+						// The same copy the composer's detail panel shows for each subcommand.
+						...Object.entries(ref.subcommandDescriptions ?? {}).map(
+							([name, purpose]): Fact => ({ label: `/${ref.name} ${name}`, value: purpose }),
+						),
+					];
+					return factRows(theme, rows, width, FACT_OPTIONS);
+				};
+				const item: ListOverlayItem = {
+					id: ref.name,
+					label: `/${ref.name}${aliasNames ? ` ${aliasNames}` : ""}  ${ref.usage}  ${ref.description}  ${ref.group}`,
+					cells: { lead: ref.usage, narrowLead: narrowUsage, text: described() ? ref.description : "" },
+					group: "Commands",
+					...(described() ? { meta: ref.group } : {}),
+					// The row already states the description from standard up, so the facts under the list leave it out.
+					facts: (width) => facts(width, !described()),
+					// Overlay key actions are deliberately not duplicated here: each
+					// overlay's footer hint is the live source of its keys, and a static
+					// copy would rot exactly like the old SLASH_HOTKEYS table did.
+					...detailWithHead((width) => {
+						const theme = pancodeTheme();
+						return {
+							head: [titleRow(theme, `/${ref.name}`, width, { meta: ref.group })],
+							rest: facts(width, true),
+						};
+					}),
+				};
+				return item;
+			});
+
+	// Operator commands carry text an extension author wrote; it is neutralized
+	// once here before any row or pane picks it up. The metas are getters so a
+	// skin change repaints the chip instead of showing the colors of the skin
+	// the help was built under.
+	const extensionItems = (): ListOverlayItem[] =>
+		displaySafe(extensionCommands).map((row): ListOverlayItem => {
+			// The row is one line; the pane's Does fact keeps the description's lines.
+			const summary = sanitizeCallTargetText(row.description);
+			picks.set(`extension:${row.invocation}`, `/${row.invocation}`);
+			const facts = (width: number, withDescription: boolean): string[] => {
+				const theme = pancodeTheme();
+				const rows: Fact[] = [
+					...(withDescription ? [{ label: "Does", value: row.description }] : []),
+					{ label: "Owner", value: `${row.extensionId} (${row.scope} scope), operator generation ${row.generation}` },
+					{
+						label: "Status",
+						value: row.available
+							? statusChip(theme, "ok", "ready; runs installed operator code and its results stay local to you")
+							: statusChip(theme, "warning", row.reason ?? "runtime unavailable"),
+					},
+				];
+				return factRows(theme, rows, width, FACT_OPTIONS);
+			};
+			return {
+				id: `extension:${row.invocation}`,
+				label: `/${row.invocation}  ${summary}`,
+				cells: { lead: `/${row.invocation}`, text: described() ? summary : "" },
+				group: "Operator extensions",
+				get meta() {
+					return row.available
+						? statusChip(pancodeTheme(), "ok", "ready")
+						: statusChip(pancodeTheme(), "warning", "unavailable");
+				},
+				// The row states the summary from standard up, so the facts under the list leave it out.
+				facts: (width) => facts(width, !described()),
+				...detailWithHead((width) => ({
+					head: [titleRow(pancodeTheme(), `/${row.invocation}`, width, { meta: "operator extension" })],
+					rest: facts(width, true),
+				})),
+			};
+		});
+
+	// A plugin's prompts are commands the palette offers, so help finds them too
+	// (WTF-P F11). A name an extension command took over is listed once, as that command.
+	const promptItems = (): ListOverlayItem[] =>
+		displaySafe(prompts.filter((prompt) => !extensionCommands.some((row) => row.invocation === prompt.name))).map(
+			(prompt): ListOverlayItem => {
+				const usage = prompt.argumentHint ? `/${prompt.name} ${prompt.argumentHint}` : `/${prompt.name}`;
+				picks.set(`prompt:${prompt.name}`, `/${prompt.name}${prompt.argumentHint ? " " : ""}`);
+				const facts = (width: number, withDescription: boolean): string[] => {
+					const theme = pancodeTheme();
+					const rows: Fact[] = [
+						{ label: "Usage", value: theme.fg("inlineCode", usage) },
+						...(withDescription && prompt.description ? [{ label: "Does", value: prompt.description }] : []),
+						{ label: "From", value: prompt.source },
+					];
+					return factRows(theme, rows, width, FACT_OPTIONS);
+				};
+				return {
+					id: `prompt:${prompt.name}`,
+					label: `/${prompt.name}  ${prompt.description}  ${prompt.source}`,
+					cells: { lead: `/${prompt.name}`, text: described() ? prompt.description : "" },
+					group: "Prompts",
+					...(described() ? { meta: prompt.source } : {}),
+					facts: (width) => facts(width, !described()),
+					...detailWithHead((width) => ({
+						head: [titleRow(pancodeTheme(), `/${prompt.name}`, width, { meta: "prompt" })],
+						rest: facts(width, true),
+					})),
+				};
+			},
+		);
+
+	// Editor, selection and viewport primitives are tables inside two topics, and
+	// an action with no key and no menu letter is named in the keyboard topic.
+	const isPrimitive = (id: string): boolean => /^tui\.(editor|input|select|altScreen)\./u.test(id);
+	const isUnbound = (id: Keybinding): boolean =>
+		manager.isDisabled(id) || (manager.getKeys(id).length === 0 && !manager.leaderTargets().some((t) => t.id === id));
+
+	const keyItems = (): ListOverlayItem[] => {
+		const conflicts = manager.getConflicts();
+		const entries = manager.hotkeyEntries().filter((row) => !isPrimitive(row.id) && !isUnbound(row.id));
+		const keys: ListOverlayItem[] = entries.map((row) => {
+			const formattedKeys = formatKey(manager.fullActionLabel(row.id));
+			// A rebound key says so, and a key two actions share carries the warning
+			// glyph, so the conflict is visible before the row is opened.
+			const hasConflict = conflicts.some((c) => c.keybindings.includes(row.id));
+			// The conflict leads, so a narrow row that keeps one chip keeps the warning.
+			const metaParts = (): string[] => [
+				...(hasConflict ? [statusChip(pancodeTheme(), "warning", "conflict")] : []),
+				...(row.source === "user" ? ["user"] : []),
+			];
+
+			const item: ListOverlayItem = {
+				id: row.id,
+				label: `${formattedKeys}  ${row.description}`,
+				cells: { lead: formattedKeys, text: row.description },
+				group: "Keys",
+				...(row.source === "user" || hasConflict
+					? {
+							get meta() {
+								return metaParts().join(dotSep(pancodeTheme()));
+							},
+						}
+					: {}),
+				detailFormat: "rows",
+				detail: (width) => {
+					const warnings = manager
+						.platformWarnings()
+						.filter((w) => w.id === row.id)
+						.map((w) => `${w.keys.map(formatKey).join(" / ")} may not fire: ${w.reason}`);
+					for (const conflict of conflicts.filter((entry) => entry.keybindings.includes(row.id))) {
+						const appOrder = ["pancode.leader", ...CLOSED_ACTION_ORDER, ...GLOBAL_ACTION_ORDER].filter((id) =>
+							conflict.keybindings.includes(id),
+						);
+						warnings.push(
+							`${conflict.key}: ${conflict.keybindings.join(", ")}. Cancellation and the menu trigger take priority; outside the menu, the focused dialog owns input. Composer history precedes other application actions, then editing.${appOrder.length > 1 ? ` Composer app precedence: ${appOrder.join(" before ")}.` : ""}`,
+						);
+					}
+					const detailEntry = {
+						id: row.id,
+						keys: formattedKeys,
+						action: row.description,
+						source: row.source,
+						warnings,
+					};
+					return formatKeybindingDetailBodyLines(detailEntry, width);
+				},
+			};
+
+			return item;
+		});
+
+		return keys;
+	};
+
+	const unboundLine = (): string[] => {
+		const names = manager
+			.hotkeyEntries()
+			.filter((row) => !isPrimitive(row.id) && isUnbound(row.id))
+			.map((row) => `\`${row.id}\` (${manager.getDescription(row.id)})`);
+		if (names.length === 0) return [];
+		return [
+			`${names.length} more action${names.length === 1 ? " has" : "s have"} no key; bind one under \`interface.keybindings\`: ${names.join(", ")}.`,
+		];
+	};
+
+	// A table of primitive keys built from the live bindings, so a rebind shows.
+	// The label carries every description, so the filter still finds a key by what it does.
+	const primitiveTopic = (id: string, lead: string, text: string, include: (id: string) => boolean): ListOverlayItem => {
+		const rows = () => manager.hotkeyEntries().filter((row) => include(row.id));
+		return {
+			id,
+			label: `${lead}  ${text}  ${rows()
+				.map((row) => manager.getDescription(row.id))
+				.join(" ")}`,
+			cells: { lead, text: described() ? text : "" },
+			group: "Topics",
+			...detailWithHead((width) => {
+				const theme = pancodeTheme();
+				const facts: Fact[] = rows().map((row) => ({
+					label: formatKey(manager.isDisabled(row.id) ? "(unbound)" : manager.fullActionLabel(row.id)),
+					value: `${manager.getDescription(row.id)}${row.source === "user" ? " (user)" : ""}`,
+				}));
+				return {
+					head: [titleRow(theme, lead, width, { meta: "topic" })],
+					rest: factRows(theme, facts, width, FACT_OPTIONS),
+				};
+			}),
+		};
+	};
+
+	// Static concept topics. Unlike commands and keys these are not generated
+	// from a registry; keep each detail consistent with the enforced behavior
+	// and with the live footer hints on the surface it documents.
+	const topicItems = (): ListOverlayItem[] => [
+		{
+			id: "topic-learning-pancode",
+			label: "learning PanCode & tips  Demo guidance: what it teaches, how tips retire, how to turn it off",
+			cells: topicCells("learning PanCode & tips", "Demo guidance: what it teaches, how tips retire, how to turn it off"),
+			group: "Topics",
+			detail: () => [
+				"# Learning PanCode",
+				"**Ask about PanCode**: questions about PanCode itself, such as how to switch models or what workers do, get answered from its own settings and docs.",
+				"**Demo guidance** (on by default) teaches as you work: the launchpad, one footer tip at a time, and after some turns a `[tip]` naming a feature that would have helped that turn. A newcomer gets two post-turn tips a session, later one.",
+				"**Tips retire**: a tip stops once you use its feature or key, or after a few showings. What you have learned is kept in `harness-profile.json` in PanCode's state directory; delete it to start the lessons over.",
+				`**Worth knowing**: /model or ${manager.actionLabel("pancode.model.select")} picks a model; /run coder <task> hands work to a background worker, and /run coder --read-only <task> one that cannot change files; /hub skills browses skills, /skill <name> runs one, and /hub installs more; /usage shows quota and spend; /doctor checks the install; ${manager.actionLabel("pancode.leader")} y switches this session to YOLO.`,
+				"**Turning it off**: Demo guidance in /settings (`interface.demo: false`) for good, or `--no-demo` for one session. Compact output detail also stays quiet.",
+			],
+		},
+		{
+			id: "topic-keyboard-model",
+			label: "keyboard model  Alt for actions, Ctrl+G for any terminal, Ctrl for editing",
+			cells: topicCells("keyboard model", "Alt for actions, Ctrl+G for any terminal, Ctrl for editing"),
+			group: "Topics",
+			detail: () => [
+				"# Keyboard model",
+				`Three rules cover every key. Ctrl edits text and talks to the terminal, as in any readline editor. Alt+letter runs a PanCode action: ${(
+					[
+						["pancode.model.select", "model"],
+						["pancode.hub.toggle", "hub"],
+						["pancode.output.cycle", "output"],
+						["pancode.status.toggle", "dashboard"],
+						["pancode.dispatchBoard.toggle", "workers"],
+						["pancode.files.toggle", "files"],
+						["pancode.music.toggle", "music"],
+						["pancode.message.interrupt", "send now"],
+						["pancode.queue.open", "queue"],
+						["pancode.editor.external", "external editor"],
+					] as const
+				)
+					.map(([id, name]) => `${manager.actionLabel(id)} ${name}`)
+					.join(", ")}; ${manager.actionLabel("pancode.thinking.cycle")} cycles thinking effort.`,
+				`${manager.actionLabel("pancode.leader")} opens the action menu, and the same letter runs the same action there, so it works in terminals that never deliver Alt. A few actions live only in the menu: d background worker, x dismiss notice, y autonomy. Shift+Tab is t there. Arrows and Enter reach every entry.`,
+				"On an empty composer: ? shows the key card, / commands, ! shell, @ a file, left arrow the workers, down arrow the tasks. Esc stops a run; Ctrl+C twice or Ctrl+D exits.",
+				"Rebinding a direct key never moves its menu letter. An explicit [] disables both. This help lists your effective keys; settings are never rewritten.",
+				...unboundLine(),
+			],
+		},
+		primitiveTopic(
+			"topic-editing-keys",
+			"editing keys",
+			"Cursor, delete, yank, undo and selection keys in the composer and pickers",
+			(id) => /^tui\.(editor|input|select)\./u.test(id),
+		),
+		primitiveTopic(
+			"topic-transcript-keys",
+			"transcript keys (fullscreen layout)",
+			"Scroll, search and jump between prompts in the fullscreen transcript",
+			(id) => id.startsWith("tui.altScreen."),
+		),
+		{
+			id: "topic-fleet-runs",
+			label: "fleet runs & steering  Inspect, guide, and cancel delegated workers",
+			cells: topicCells("fleet runs & steering", "Inspect, guide, and cancel delegated workers"),
+			group: "Topics",
+			detail: () => [
+				"# Fleet runs & steering",
+				"**Internal helpers**: Scout and other shadow agents appear as agent cards started by PanCode. Compact shows identity and status, standard adds the current action while running, and detailed shows the full worker card. `/view` opens the complete report. Helpers remain inspectable and steerable/cancellable through this board using the same supported actions, without floating fleet cards.",
+				`**Workers dock**: in a \`--with-panes\` session ${manager.actionLabel("pancode.dispatchBoard.toggle")} shows the workers dashboard beside PanCode and leaves the keyboard in PanCode: a card per worker of this session, running ones first. In the dock, Up/Down or j/k select, Enter takes the dock over with that worker's live stream, Esc returns to the cards. q or ${manager.actionLabel("pancode.dispatchBoard.toggle")} in the dock hides it and hands the keyboard back; the same key from PanCode shows or hides it, and twice within 0.4 s closes it. A takeover of a fleet step or a retried worker moves on to the next step or attempt when it finishes.`,
+				`**Fleet Runs board**: /fleet, the left arrow on an empty composer, or ${manager.actionLabel("pancode.dispatchBoard.toggle")} in a session without panes. Use Up/Down or j/k to select a live or recent run.`,
+				"**Enter**: toggles the inline worker-progress detail on any run, and Esc folds an open detail before it closes the board.",
+				"**Watch**: press `w` on a live run in a `--with-panes` session to take the workers dock over for that run (opening it, or bringing back a hidden one, without moving the keyboard); the arrow keys then move it between runs.",
+				"**Steer**: press `m` (message) on a live native run to close the board and prefill `@<runId> `. Add guidance and submit it normally. The first notice means queued; a received notice confirms worker delivery.",
+				"**Cancel**: press `x` on a running, stale, queued, or retry-waiting run. The row changes to cancelling while the worker or retry is being stopped.",
+				"**Capabilities**: ACP delegation runs cannot accept live steering. The board footer only advertises actions supported by the selected row.",
+				"**Tasks versus runs**: `/tasks` shows the agent's plan steps. Fleet runs are concrete delegated worker executions and remain in this board as recent terminal history.",
+			],
+		},
+		{
+			id: "topic-files-pane",
+			label: "panes & files  The files pane, the logs and shell panes, and what closes them",
+			cells: topicCells("panes & files", "The files pane, the logs and shell panes, and what closes them"),
+			group: "Topics",
+			detail: () => [
+				"# Panes & files",
+				"**Where it works**: PanCode's own pane host, which bare `pancode` opens, or any herdr pane PanCode was started in. Outside herdr `/files` still works as a full-screen pick that returns to the composer; `/panes open logs|shell` do not.",
+				`**Files pane**: /files or ${manager.actionLabel("pancode.files.toggle")} shows Yazi and moves the keyboard into it. Yazi and the host own keys until Ctrl+Y returns selected paths and focus. The same key from PanCode focus, or inside Yazi, hides the pane and hands the keyboard back: Yazi keeps running and keeps its directory, and the key brings it back. Tap it twice within 0.4 s to close the pane and end Yazi. /files hide, /files close and /files pick are the explicit forms.`,
+				`**Music pane**: ${manager.actionLabel("pancode.music.toggle")} or /music shows or hides the focus-radio pane without taking the keyboard, and twice within 0.4 s stops it and closes it. Pressed inside the player, it hides the pane and hands the keyboard back. With integrations.music.enabled on, the pane starts hidden and silent after the first frame, so the first press only reveals it. /music on plays, /music pause silences it and keeps the pane, /music off stops and closes it, /music next skips a station, /music status says what is playing.`,
+				"**Hidden panes**: a hidden pane waits in a tab labeled `pancode parked` in your herdr workspace and returns to its slot at the share you last gave it. The tab goes away when the last pane leaves it, and `/quit` closes whatever is still parked.",
+				"**Picking**: navigate, select with Space for several, then Ctrl+Y (or Enter in pick mode). The paths land in the composer as `@file` mentions and the keyboard returns to the composer.",
+				"**Logs and shell**: `/panes open logs` follows the newest dispatched run's journal; `/panes open shell` opens a shell in the workspace. A second open focuses the pane that is already there. `/panes close <name|all>` closes them; `/quit` closes the docks it manages (files, workers, and the music pane, which ends its playback, hidden or not), leaves a shell or logs pane you opened, and prints which panes it left and how to close them.",
+				"**Engine**: the files pane runs a vendored file manager installed with `pancode tools install yazi`; `pancode doctor` and `/panes` say whether it resolved.",
+			],
+		},
+		{
+			id: "topic-steering-modes",
+			label: "steering modes  Interrupt, next slot, or end of turn: when a message lands mid-run",
+			cells: topicCells("steering modes", "Interrupt, next slot, or end of turn: when a message lands mid-run"),
+			group: "Topics",
+			detail: () => [
+				"# Steering modes",
+				"While a turn is running, the key that submits a message chooses when it lands. The default is next slot.",
+				"**Next slot** (Enter): the message is delivered between tool batches, mid-run. The agent keeps going and reads it before its next model call.",
+				`**End of turn**: open the queue navigator (${manager.actionLabel("pancode.queue.open")}) and press t on a queued message; it then waits until the whole run settles. ACP clients ask for it with mode end-of-turn.`,
+				`**Send now** (${manager.actionLabel("pancode.message.interrupt")}): settle active work and deliver the draft as a fresh prompt; with an empty draft it flushes the queue. Queued messages stay queued for the new run. While a tool is running you are asked whether to stop it or wait for it.`,
+				`**Queue navigator** (${manager.actionLabel("pancode.queue.open")}): reorder, edit, remove, change the slot of, or send now any queued message.`,
+				"**Interrupt is refused** while an attached dispatch is running (the abort would kill the worker's run with no sealed run record; steer it with `@<agent>` or cancel it with Esc) and while a permission ask is parked (it is already waiting on you). In both cases the message is queued for the next slot and a notice says why.",
+				`**Recover queues**: ${manager.actionLabel("pancode.queue.open")}, then a puts every queued message back in the composer. Workers accept next-slot steering through @<agent>.`,
+			],
+		},
+		{
+			id: "topic-autonomy",
+			label: "autonomy & safety net  How the autonomy level and the always-on guardrails interact",
+			cells: topicCells("autonomy & safety net", "How the autonomy level and the always-on guardrails interact"),
+			group: "Topics",
+			detail: () => [
+				"# Autonomy & safety net",
+				"**Tool surface**: which tools exist at all through registration, tool profiles, skill narrowing, and dispatch admission. " +
+					"Violations are terminal denials, never approvable.",
+				"**Safety net**: the floor (deleting or overwriting /, home or a system tree, mkfs, wipefs, block-device writes, fork bombs, writes into PanCode's own state, reads of its credential store) and rules in an approved `.pancode/safety.yaml` block at every level; secret and protected paths block at default. " +
+					"At default, other damage-control rules ask instead of blocking.",
+				"**Mode** (`/settings`, persisted as `safety.autonomy`): default runs workspace edits, and shell commands inside an OS sandbox where the host has one, without asking. " +
+					"Commands that leave the sandbox and outward actions are first reviewed by the safety judge, larger dispatch plans ask you, and destructive workspace operations run after a snapshot `/rewind` can undo. Yolo shows no approval cards but still asks you questions; one nobody answers within `safety.unattendedAfterSeconds` takes its recommended option unless that option leaves the workspace. Contained yolo (the default) keeps default's sandbox, snapshots and judge, and refuses what would need your approval; unconfined yolo (`safety.yoloConfinement`) skips approvals and the sandbox unless `safety.sandbox` is required. " +
+					"Its first activation shows a one-time acceptance card, and it is refused as root outside a container.",
+				"**Approvals**: a parked call waits for a one-shot operator decision; approving resumes only that call. " +
+					"Workers resolve asks per `fleet.permissions.mode` (Fleet approvals routing in /settings); headless runs deny what the safety judge does not allow.",
+				"**Inspecting a mutation**: a parked `write` or `edit` card carries the target, the byte count, and a `sha256` digest of the exact call arguments. " +
+					`Press ${permissionKeyLabel(MUTATION_PREVIEW_KEY)} to read the complete proposed content, or the complete effective diff against the file on disk, and ${permissionKeyLabel(MUTATION_PREVIEW_KEY)} again to put it away; ${GLYPH.up}/${GLYPH.down} and PgUp/PgDn scroll it. ${permissionKeyLabel(PERMISSION_TERMS_KEY)} opens the standing terms of the decision the same way. ` +
+					`Enter still allows and ${permissionKeyLabel(PERMISSION_STOP_KEY)} still stops while either view is open; the action menu also offers x stop, v inspect and t terms while the permission card owns input. Esc closes the view and the card is as it was, and only Esc on the card itself denies. The mutation text is shown locally and never enters the transcript, a notice, a desktop notification, or the render trace. ` +
+					"A worker escalation has no preview because the call's arguments never leave the worker, and its card says so.",
+			],
+		},
+	];
+
+	// Task-first entry points. If a spec renames one of these commands, its row changes with it.
+	const startHere: ReadonlyArray<{ id: string; task: string; pick?: string }> = [
+		{ id: "start-model", task: "Switch model", pick: "/model" },
+		{ id: "start-new", task: "Start a new session", pick: "/new" },
+		{ id: "start-compact", task: "Free up context", pick: "/compact" },
+		{ id: "start-context", task: "See what fills the context", pick: "/context" },
+		{ id: "start-rewind", task: "Undo file changes", pick: "/rewind" },
+		{ id: "start-run", task: "Hand work to a worker", pick: "/run " },
+		{ id: "start-settings", task: "Change a setting", pick: "/settings" },
+		{ id: "start-keys", task: "Keys and the action menu" },
+	];
+	const startItems: ListOverlayItem[] = startHere.map((row) => {
+		if (row.pick) picks.set(row.id, row.pick);
+		const shown = row.pick?.trim() ?? "keyboard model";
+		return { id: row.id, label: `${row.task}  ${shown}`, cells: { lead: row.task, text: shown }, group: "Start here" };
+	});
+
+	const allItems = (): ListOverlayItem[] => [...startItems, ...commandItems(), ...keyItems(), ...topicItems()];
+
+	const handle = openListOverlay(tui, {
+		markerId: "help",
+		title: "Help center",
+		tall: true,
+		items: allItems(),
+		filterable: true,
+		filterPlaceholder: "type to find a command, key or topic",
+		exactMatchesOnly: true,
+		typingRefocusesFilter: true,
+		...(initialFilter ? { initialFilter } : {}),
+		hints: (selected) => (selected && picks.has(selected.id) && onPick ? [{ key: "Enter", verb: "use" }] : []),
+		onSelect: (item) => {
+			const pick = picks.get(item.id);
+			if (pick !== undefined && onPick) {
+				onClose();
+				onPick(pick);
+				return;
+			}
+			if (item.id === "start-keys") {
+				handle.clearFilter();
+				handle.selectById("topic-keyboard-model");
+			}
+			handle.openDetail();
+		},
+		onClose,
+	});
+	const unsubscribe = manager.onReload(() => handle.setItems(allItems()));
+	// The description column follows the tier, so a tier change rebuilds the rows in place.
+	const unsubscribeTier = onPresentationTierChange(() => handle.setItems(allItems()));
+	return {
+		...handle,
+		hide() {
+			unsubscribe();
+			unsubscribeTier();
+			handle.hide();
+		},
+	};
+}

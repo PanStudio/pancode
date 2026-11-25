@@ -1,0 +1,10 @@
+{
+	"assets": [
+		{
+			"name": "pancode-mark",
+			"source": "assets/brand/pancode-mark.svg",
+			"sha256": "cba71a2df2c09e2e47d26806967be0a3869563cde05cbb48df5d920c01887b5f",
+			"dimensions": [512, 512]
+		}
+	]
+}

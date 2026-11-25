@@ -1,0 +1,325 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { type BuiltinToolName, isBuiltinToolName, type ToolName, ToolNames } from "../core/tool-names.js";
+import { type ActionClass, classify } from "../domains/safety/action-classifier.js";
+import {
+	DATA_OBSERVATION_SELF_CAP_BYTES,
+	GATEWAY_FIND_SELF_CAP_BYTES,
+	STORE_OBSERVATION_SELF_CAP_BYTES,
+} from "./gateway/caps.js";
+import { OBSERVATION_POLICY_SLACK_BYTES, OBSERVE_SELF_CAPS } from "./observation.js";
+import { readMaxBytes } from "./read.js";
+import type { ToolExecutionMode, ToolSpec } from "./tool-spec.js";
+
+/**
+ * Surface invariants for the builtin toolkit. Asserted once at bootstrap so
+ * drift between the plane design, the classifier, the metadata table, and the
+ * registered specs fails loudly instead of shipping a surface that behaves
+ * differently from what the policy engine assumes.
+ */
+
+export type ToolPlane =
+	| "observe"
+	| "mutate"
+	| "execute"
+	| "orchestrate"
+	| "retrieve"
+	| "interact"
+	| "artifact"
+	| "gateway";
+
+interface PlaneExpectation {
+	plane: ToolPlane;
+	actionClass: ActionClass;
+	executionMode: ToolExecutionMode;
+}
+
+/** One row per registered tool: plane, action class, and concurrency rule. */
+export const TOOL_PLANES: Readonly<Record<BuiltinToolName, PlaneExpectation>> = {
+	[ToolNames.Evidence]: { plane: "observe", actionClass: "read", executionMode: "sequential" },
+	[ToolNames.Read]: { plane: "observe", actionClass: "read", executionMode: "parallel" },
+	[ToolNames.Grep]: { plane: "observe", actionClass: "read", executionMode: "parallel" },
+	[ToolNames.Find]: { plane: "observe", actionClass: "read", executionMode: "parallel" },
+	[ToolNames.Ls]: { plane: "observe", actionClass: "read", executionMode: "parallel" },
+	[ToolNames.Count]: { plane: "observe", actionClass: "read", executionMode: "parallel" },
+	[ToolNames.CodeNav]: { plane: "observe", actionClass: "read", executionMode: "parallel" },
+	[ToolNames.SelfCompact]: { plane: "orchestrate", actionClass: "read", executionMode: "sequential" },
+	[ToolNames.Context]: { plane: "observe", actionClass: "read", executionMode: "parallel" },
+	[ToolNames.CredentialPresent]: { plane: "observe", actionClass: "read", executionMode: "parallel" },
+	// pancode_docs and pancode_hub are the bundled-documentation and recipe-catalog
+	// reads; same envelope and read class as context.
+	[ToolNames.PancodeDocs]: { plane: "observe", actionClass: "read", executionMode: "parallel" },
+	[ToolNames.PancodeHub]: { plane: "observe", actionClass: "read", executionMode: "parallel" },
+	// data streams structured files and never writes; parallel like read.
+	[ToolNames.Data]: { plane: "observe", actionClass: "read", executionMode: "parallel" },
+	// store's base class is read; the classifier judges its write ops by op, and
+	// sequential because those writes share one store.
+	[ToolNames.Store]: { plane: "observe", actionClass: "read", executionMode: "sequential" },
+	// memory_recall reads the session task bank and the durable store and never writes either.
+	[ToolNames.MemoryRecall]: { plane: "observe", actionClass: "read", executionMode: "parallel" },
+	[ToolNames.Write]: { plane: "mutate", actionClass: "write", executionMode: "sequential" },
+	[ToolNames.Edit]: { plane: "mutate", actionClass: "write", executionMode: "sequential" },
+	[ToolNames.Bash]: { plane: "execute", actionClass: "execute", executionMode: "sequential" },
+	// git runs fixed argv on the safe-exec spine: EXECUTE plane for its
+	// containment posture, read class for inspection. Its add and commit ops
+	// project their exact argv to a bash effect, so the safety net and the Git
+	// classifier judge them as mutations; sequential so two never race the index.
+	[ToolNames.Git]: { plane: "execute", actionClass: "read", executionMode: "sequential" },
+	[ToolNames.Verify]: { plane: "execute", actionClass: "execute", executionMode: "sequential" },
+	// run_script runs one interpreter over one workspace script and projects
+	// itself to a bash command for the policy engine; execute class, sequential.
+	[ToolNames.RunScript]: { plane: "execute", actionClass: "execute", executionMode: "sequential" },
+	// browser drives a persistent headless session; its safetyCall projects every op to the driver command, so
+	// admission contains it as bash and the session worker starts inside that sandbox.
+	[ToolNames.Browser]: { plane: "execute", actionClass: "execute", executionMode: "sequential" },
+	[ToolNames.Dispatch]: { plane: "orchestrate", actionClass: "dispatch", executionMode: "sequential" },
+	[ToolNames.Job]: { plane: "orchestrate", actionClass: "dispatch", executionMode: "sequential" },
+	// monitor never mutates a run, so it stays read class and parallel.
+	[ToolNames.Monitor]: { plane: "orchestrate", actionClass: "read", executionMode: "parallel" },
+	[ToolNames.Steer]: { plane: "orchestrate", actionClass: "dispatch", executionMode: "sequential" },
+	// tasks orchestrates the agent's own work rather than workers: read class
+	// (session-ledger bookkeeping, no workspace mutation), sequential so two
+	// board mutations in one batch never interleave.
+	[ToolNames.Tasks]: { plane: "orchestrate", actionClass: "read", executionMode: "sequential" },
+	// ledger reads a local mirror and posts over the one-way control lane, so it
+	// mutates no workspace and stays read class. Reviewers and judges run pinned
+	// with a read-only dispatch restriction, and a write class would block the peer
+	// review the board depends on. Sequential so two posts in one batch do not
+	// interleave against the local post cap.
+	[ToolNames.Ledger]: { plane: "orchestrate", actionClass: "read", executionMode: "sequential" },
+	// panes projects PanCode's own runs onto a pane host and opens preset utility
+	// panes. It mutates no workspace, so it stays read class; sequential because
+	// two pane operations in one batch would race the same pane registry.
+	[ToolNames.Panes]: { plane: "orchestrate", actionClass: "read", executionMode: "sequential" },
+	// music drives PanCode's own player in PanCode's own dock and touches no
+	// workspace. Sequential so open and close never race the dock slot.
+	[ToolNames.Music]: { plane: "orchestrate", actionClass: "read", executionMode: "sequential" },
+	// limitation records a typed receipt in the session ledger and nothing
+	// else: no filesystem, no shell. Read class so it never trips a safety
+	// gate; parallel because the call is pure and idempotent.
+	[ToolNames.Limitation]: { plane: "orchestrate", actionClass: "read", executionMode: "parallel" },
+	[ToolNames.Finish]: { plane: "orchestrate", actionClass: "read", executionMode: "sequential" },
+	// decide appends one decision-board entry to the session ledger and
+	// nothing else. Read class so it never trips a safety gate; sequential so
+	// two decisions in one batch never race the supersede lookup.
+	[ToolNames.Decide]: { plane: "orchestrate", actionClass: "read", executionMode: "sequential" },
+	// consult asks the bound decision model and changes nothing. Read class;
+	// parallel because each call is independent and bounded per turn.
+	[ToolNames.Consult]: { plane: "orchestrate", actionClass: "read", executionMode: "parallel" },
+	// memory_note writes one unverified note to PanCode's own memory store and no workspace file. Read class like decide;
+	// sequential so two notes in one batch take the store lock in order.
+	[ToolNames.MemoryNote]: { plane: "orchestrate", actionClass: "read", executionMode: "sequential" },
+	[ToolNames.Vision]: { plane: "observe", actionClass: "read", executionMode: "parallel" },
+	// web_read is the GET-only half of the split: no method, headers, or body,
+	// so it is never an outward action.
+	[ToolNames.WebRead]: { plane: "retrieve", actionClass: "read", executionMode: "parallel" },
+	[ToolNames.WebFetch]: { plane: "retrieve", actionClass: "read", executionMode: "parallel" },
+	[ToolNames.AskUser]: { plane: "interact", actionClass: "read", executionMode: "sequential" },
+	[ToolNames.ConfigurePancode]: { plane: "interact", actionClass: "write", executionMode: "sequential" },
+	// restart_session only records a restart the operator approved; the interactive host runs it at turn end.
+	[ToolNames.RestartSession]: { plane: "interact", actionClass: "write", executionMode: "sequential" },
+	// report drafts or offers a PanCode report and never sends one; it writes only PanCode's own report store.
+	[ToolNames.Report]: { plane: "interact", actionClass: "read", executionMode: "sequential" },
+	[ToolNames.Artifact]: { plane: "artifact", actionClass: "write", executionMode: "sequential" },
+	// gateway lists, describes, and calls secondary capabilities. Its own class
+	// is read; a call carries the capability's class through the same admission.
+	// Sequential because a call may park for approval or run a sequential
+	// capability, and two such calls in one batch must not interleave.
+	[ToolNames.Gateway]: { plane: "gateway", actionClass: "read", executionMode: "sequential" },
+};
+
+/**
+ * OBSERVE envelope members and their self-caps. The registry policy cap must
+ * sit at or above self cap + slack so the envelope's own notice line survives
+ * the backstop. credential_present sits in the OBSERVE plane but returns a
+ * typed boolean, so it carries no envelope cap. The gateway is listed for its
+ * find listing, which uses the envelope's JSON stub rule.
+ */
+const OBSERVE_ENVELOPE_SELF_CAPS: ReadonlyArray<[BuiltinToolName, () => number]> = [
+	[ToolNames.Read, () => readMaxBytes()],
+	[ToolNames.Grep, () => OBSERVE_SELF_CAPS.grepContent],
+	[ToolNames.Find, () => OBSERVE_SELF_CAPS.find],
+	[ToolNames.Ls, () => OBSERVE_SELF_CAPS.ls],
+	[ToolNames.CodeNav, () => OBSERVE_SELF_CAPS.codeNav],
+	[ToolNames.Context, () => Math.max(OBSERVE_SELF_CAPS.contextSkills, OBSERVE_SELF_CAPS.contextWorkspace)],
+	[ToolNames.PancodeDocs, () => OBSERVE_SELF_CAPS.contextDocs],
+	[ToolNames.PancodeHub, () => OBSERVE_SELF_CAPS.contextHub],
+	[ToolNames.Data, () => DATA_OBSERVATION_SELF_CAP_BYTES],
+	[ToolNames.Store, () => STORE_OBSERVATION_SELF_CAP_BYTES],
+	[ToolNames.Gateway, () => GATEWAY_FIND_SELF_CAP_BYTES],
+];
+
+const SESSION_BOUND_TOOLS = new Set<ToolName>([]);
+const DISPATCH_BOUND_TOOLS = new Set<ToolName>([ToolNames.Dispatch, ToolNames.Monitor, ToolNames.Steer]);
+const INTERACTIVE_BOUND_TOOLS = new Set<ToolName>([
+	ToolNames.AskUser,
+	ToolNames.ConfigurePancode,
+	ToolNames.RestartSession,
+]);
+/** Registered only when a pane host answered detection and the mux is live. */
+const PANES_BOUND_TOOLS = new Set<ToolName>([ToolNames.Panes]);
+/** Registered only when the operator opted the model into the music pane. */
+const MUSIC_BOUND_TOOLS = new Set<ToolName>([ToolNames.Music]);
+/**
+ * Registered with a worker port or an ownership-scoped session selector.
+ */
+const LEDGER_BOUND_TOOLS = new Set<ToolName>([ToolNames.Ledger]);
+/**
+ * Registered only on the session registry, and only when the `consult`
+ * decision site is bound at startup. Unbound, the registry is exactly what it
+ * was before the tool existed.
+ */
+const DECISION_BOUND_TOOLS = new Set<ToolName>([ToolNames.Consult]);
+/** A separate image model exists only when the session binds a vision profile. */
+const VISION_BOUND_TOOLS = new Set<ToolName>([ToolNames.Vision]);
+/** Registered only on the orchestrator registry, which owns the session task bank. */
+const MEMORY_RECALL_BOUND_TOOLS = new Set<ToolName>([ToolNames.MemoryRecall]);
+/** Registered only on the orchestrator registry, and only when a session starts with `lessons: agent`. */
+const MEMORY_NOTE_BOUND_TOOLS = new Set<ToolName>([ToolNames.MemoryNote]);
+/** Registered only on the orchestrator registry: an agent's report is the main session's, never a worker's. */
+const REPORT_BOUND_TOOLS = new Set<ToolName>([ToolNames.Report]);
+/** Registered only on the orchestrator registry: the main agent declares completion here, a worker in its report. */
+const FINISH_BOUND_TOOLS = new Set<ToolName>([ToolNames.Finish]);
+/** Registered only on the orchestrator registry with the network plane: workers get the browser after the fleet partitions land. */
+const BROWSER_BOUND_TOOLS = new Set<ToolName>([ToolNames.Browser]);
+/** Registered only in PanCode's own checkout, so no host can require it; workers still exclude it as interactive. */
+const SELF_REPO_BOUND_TOOLS = new Set<ToolName>([ToolNames.RestartSession]);
+
+/**
+ * Builtin tools a native worker registry never registers on any host: the
+ * dispatch, interactive, pane, music, decision, vision and memory-recall planes
+ * plus the two continuity tools only an attended parent supplies (the same
+ * exclusions `validateBuiltinToolPolicy` applies to a worker registration).
+ * The harness validator reads this so a recipe naming one is told before
+ * dispatch admission refuses the run. Bash and the network plane are host
+ * conditions rather than recipe errors and stay out.
+ */
+export function isWorkerSurfaceExcludedTool(name: ToolName): boolean {
+	return (
+		name === ToolNames.SelfCompact ||
+		name === ToolNames.Job ||
+		DISPATCH_BOUND_TOOLS.has(name) ||
+		INTERACTIVE_BOUND_TOOLS.has(name) ||
+		PANES_BOUND_TOOLS.has(name) ||
+		MUSIC_BOUND_TOOLS.has(name) ||
+		DECISION_BOUND_TOOLS.has(name) ||
+		VISION_BOUND_TOOLS.has(name) ||
+		MEMORY_RECALL_BOUND_TOOLS.has(name) ||
+		MEMORY_NOTE_BOUND_TOOLS.has(name) ||
+		REPORT_BOUND_TOOLS.has(name) ||
+		FINISH_BOUND_TOOLS.has(name) ||
+		BROWSER_BOUND_TOOLS.has(name)
+	);
+}
+/**
+ * Builtin tools a headless `pancode run` host never registers: it has no pane host, so no panes or music, and the
+ * interactive plane exists only when an `--answers` file stands in for the operator.
+ */
+export function isHeadlessHostExcludedTool(name: ToolName, answers: boolean): boolean {
+	return PANES_BOUND_TOOLS.has(name) || MUSIC_BOUND_TOOLS.has(name) || (!answers && INTERACTIVE_BOUND_TOOLS.has(name));
+}
+/** The RETRIEVE plane, omitted wholesale by a hermetic run (tools/network-policy.ts). */
+const NETWORK_BOUND_TOOLS = new Set<ToolName>([ToolNames.WebRead, ToolNames.WebFetch]);
+/** Registered only where a bash resolves (core/bash-shell.ts). */
+const SHELL_BOUND_TOOLS = new Set<ToolName>([ToolNames.Bash]);
+
+export interface BuiltinToolPolicyOptions {
+	includeSessionTools?: boolean;
+	includeDispatchTools?: boolean;
+	includeInteractiveTools?: boolean;
+	includePanesTools?: boolean;
+	includeLedgerTools?: boolean;
+	/**
+	 * Unlike the others, this defaults to true: every registry registers
+	 * the network plane unless a run explicitly asked to be hermetic, so an
+	 * unset option must keep demanding it.
+	 */
+	includeNetworkTools?: boolean;
+	/** Defaults to true like the network plane; only a host with no bash omits it. */
+	includeShellTool?: boolean;
+}
+
+export function validateBuiltinToolPolicy(
+	specs: ReadonlyArray<ToolSpec>,
+	options: BuiltinToolPolicyOptions = {},
+): string[] {
+	const errors: string[] = [];
+	const registered = new Map<ToolName, ToolSpec>();
+
+	for (const spec of specs) {
+		if (!isBuiltinToolName(spec.name)) {
+			errors.push(`registered tool ${spec.name} is not in ToolNames`);
+			continue;
+		}
+		registered.set(spec.name, spec);
+
+		const expectation = TOOL_PLANES[spec.name];
+		const classified = classify({ tool: spec.name }).actionClass;
+		if (classified !== spec.baseActionClass) {
+			errors.push(`tool ${spec.name} baseActionClass=${spec.baseActionClass} but classifier returns ${classified}`);
+		}
+		if (spec.baseActionClass !== expectation.actionClass) {
+			errors.push(
+				`tool ${spec.name} baseActionClass=${spec.baseActionClass} but plane ${expectation.plane} expects ${expectation.actionClass}`,
+			);
+		}
+		if (spec.executionMode !== expectation.executionMode) {
+			errors.push(
+				`tool ${spec.name} executionMode=${spec.executionMode ?? "unset"} but plane ${expectation.plane} expects ${expectation.executionMode}`,
+			);
+		}
+	}
+
+	// Envelope caps: the registry backstop must never cut an envelope notice.
+	for (const [tool, selfCap] of OBSERVE_ENVELOPE_SELF_CAPS) {
+		const spec = registered.get(tool);
+		if (!spec) continue;
+		const policyCap = spec.metadata?.resultSizePolicy?.maxBytes ?? 0;
+		const required = selfCap() + OBSERVATION_POLICY_SLACK_BYTES;
+		if (policyCap < required) {
+			errors.push(`tool ${tool} policy cap ${policyCap}B sits below self cap + slack (${required}B)`);
+		}
+	}
+
+	const includeSessionTools = options.includeSessionTools ?? false;
+	const includeDispatchTools = options.includeDispatchTools ?? false;
+	const includeInteractiveTools = options.includeInteractiveTools ?? false;
+	const includePanesTools = options.includePanesTools ?? false;
+	const includeLedgerTools = options.includeLedgerTools ?? false;
+	const includeNetworkTools = options.includeNetworkTools ?? true;
+	const includeShellTool = options.includeShellTool ?? true;
+	const required = new Set<ToolName>(Object.values(ToolNames));
+	// The native interactive host alone supplies the durable continuity port.
+	required.delete(ToolNames.SelfCompact);
+	// Only an attended parent host supplies the job controller (#411).
+	required.delete(ToolNames.Job);
+	for (const tool of [...required]) {
+		if (!includeSessionTools && SESSION_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (!includeDispatchTools && DISPATCH_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (!includeInteractiveTools && INTERACTIVE_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (!includePanesTools && PANES_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (!includeLedgerTools && LEDGER_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (!includeNetworkTools && NETWORK_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (!includeShellTool && SHELL_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (DECISION_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (VISION_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (MUSIC_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (MEMORY_RECALL_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (MEMORY_NOTE_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (REPORT_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (FINISH_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (BROWSER_BOUND_TOOLS.has(tool)) required.delete(tool);
+		if (SELF_REPO_BOUND_TOOLS.has(tool)) required.delete(tool);
+	}
+	for (const tool of required) {
+		if (!registered.has(tool)) errors.push(`builtin tool ${tool} is not registered`);
+	}
+
+	return errors;
+}
+
+export function assertBuiltinToolPolicy(specs: ReadonlyArray<ToolSpec>, options: BuiltinToolPolicyOptions = {}): void {
+	const errors = validateBuiltinToolPolicy(specs, options);
+	if (errors.length === 0) return;
+	throw new Error(`tool policy drift:\n${errors.map((line) => `- ${line}`).join("\n")}`);
+}

@@ -1,0 +1,463 @@
+#!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+
+const site = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(join(site, "../apps/pancode-gui/package.json"));
+const { chromium } = require("playwright-core");
+const { default: AxeBuilder } = require("@axe-core/playwright");
+const { values } = parseArgs({
+	options: {
+		url: { type: "string", default: "http://localhost:4321" },
+		review: { type: "boolean", default: false },
+		out: { type: "string", default: join(tmpdir(), "pancode-site-review") },
+		chrome: { type: "string" },
+	},
+});
+const out = resolve(values.out);
+await mkdir(out, { recursive: true });
+const browser = await chromium.launch({ executablePath: values.chrome ?? process.env.PANCODE_CHROME, headless: true });
+const results = [];
+const failures = [];
+const brand = JSON.parse(await readFile(join(site, "design-system.json"), "utf8"));
+const catalog = JSON.parse(await readFile(join(site, "public-docs.json"), "utf8"));
+const docs = catalog.map((item) =>
+	item.path === "README.md" ? "/docs.html" : `/docs/${item.path.replace(/\.md$/, ".html")}`,
+);
+const family = JSON.parse(await readFile(join(site, "family.json"), "utf8"));
+const primary = [
+	"/",
+	"/docs.html",
+	"/learn.html",
+	"/research.html",
+	...family.map((item) => item.page).filter((path) => path !== "/"),
+	...JSON.parse(await readFile(join(site, "content/research.json"), "utf8")).map(
+		(item) => `/research/${item.slug}.html`,
+	),
+	"/tutorials/first-session.html",
+	"/tutorials/desktop-and-terminal.html",
+	"/tutorials/temperature-calibration.html",
+	// --review checks a preview built with --review, which adds the draft guides.
+	...(values.review
+		? JSON.parse(await readFile(join(site, "content/drafts/review-catalog.json"), "utf8")).articles.map(
+				(item) => item.proposedRoute,
+			)
+		: []),
+];
+const cases = [
+	...["dark", "light"].flatMap((theme) =>
+		[320, 390, 768, 850, 1024, 1440].flatMap((width) => primary.map((path) => ({ path, theme, width }))),
+	),
+	...["dark", "light"].flatMap((theme) =>
+		docs.filter((path) => path !== "/docs.html").map((path) => ({ path, theme, width: 1440 })),
+	),
+];
+try {
+	for (const { path, theme, width } of cases) {
+		const context = await browser.newContext({
+			viewport: { width, height: 960 },
+			colorScheme: theme,
+			reducedMotion: "reduce",
+		});
+		const page = await context.newPage();
+		const errors = [];
+		page.on("pageerror", (error) => errors.push(error.message));
+		page.on("response", (response) => {
+			if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`);
+		});
+		page.on("console", (message) => {
+			if (message.type() === "error") errors.push(message.text());
+		});
+		try {
+			const response = await page.goto(`${values.url}${path}?theme=${theme}&__static=1`, { waitUntil: "load" });
+			assert.equal(response.status(), 200);
+			await page.evaluate(() => document.fonts.ready);
+			const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
+			assert.equal(overflow, false, `Horizontal overflow at ${width}px`);
+			assert.equal(await page.locator("main h1").count(), 1, "One main heading");
+			assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
+			const axe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+			assert.deepEqual(
+				axe.violations.map((v) => ({
+					id: v.id,
+					nodes: v.nodes.map((n) => ({ target: n.target, summary: n.failureSummary })),
+				})),
+				[],
+				"Accessibility violations",
+			);
+			assert.deepEqual(errors, [], "Browser errors");
+			if ([390, 1440].includes(width) && primary.includes(path)) {
+				// Load all actual captures for a complete export, including those below the fold.
+				await page.evaluate(() => {
+					for (const img of document.images) if (img.hasAttribute("src")) img.loading = "eager";
+				});
+				await page.waitForFunction(
+					() => [...document.images].filter((img) => img.hasAttribute("src")).every((img) => img.complete),
+					null,
+					{ timeout: 10000 },
+				);
+				assert.equal(
+					await page.evaluate(() =>
+						[...document.images].filter((img) => img.hasAttribute("src")).every((img) => img.naturalWidth > 0),
+					),
+					true,
+					"Product images loaded",
+				);
+				const name = path === "/" ? "overview" : path.replace(/^\//, "").replaceAll("/", "-").replace(".html", "");
+				await page.screenshot({ path: join(out, `${name}-${width}-${theme}.png`), fullPage: true });
+			}
+			results.push({ path, theme, width, pass: true });
+		} catch (error) {
+			failures.push({ path, theme, width, error: error.message });
+		}
+		await context.close();
+		if ((results.length + failures.length) % 10 === 0)
+			console.log(`Browser layouts passed: ${results.length}; failures: ${failures.length}; total: ${cases.length}`);
+	}
+	// The Family navigation is reachable by keyboard at every width: in the header
+	// row above 600px, and in the Menu, opened from the keyboard, below it.
+	for (const width of [320, 390, 768, 850, 1024, 1440]) {
+		const familyContext = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
+		const familyPage = await familyContext.newPage();
+		await familyPage.goto(`${values.url}/hub.html?__static=1`);
+		const menu = width <= 600;
+		if (menu) {
+			await familyPage.locator(".nav-more summary").focus();
+			await familyPage.keyboard.press("Enter");
+			assert.equal(
+				await familyPage.locator(".nav-more").getAttribute("open"),
+				"",
+				`Menu opens from the keyboard at ${width}px`,
+			);
+		}
+		const reached = [];
+		for (let step = 0; step < 40 && reached.length < family.length; step++) {
+			await familyPage.keyboard.press("Tab");
+			const href = await familyPage.evaluate(
+				(selector) => {
+					const element = document.activeElement;
+					return element?.closest(selector) && element.checkVisibility() ? element.getAttribute("href") : null;
+				},
+				menu ? ".nav-family" : "nav.family",
+			);
+			if (href && !reached.includes(href)) reached.push(href);
+		}
+		assert.deepEqual(
+			reached,
+			family.map((item) => item.page),
+			`Family navigation is reachable by keyboard ${menu ? "in the Menu" : "in the header"} at ${width}px`,
+		);
+		assert.equal(
+			await familyPage.locator(`${menu ? ".nav-family" : "nav.family"} a[aria-current="page"]`).getAttribute("href"),
+			"/hub.html",
+		);
+		await familyContext.close();
+	}
+	// The catalog filter narrows the rows, says how many match, and clears with Escape.
+	const hubContext = await browser.newContext({ viewport: { width: 1024, height: 900 } });
+	const hubPage = await hubContext.newPage();
+	await hubPage.goto(`${values.url}/hub.html?__static=1`);
+	const hubRows = await hubPage.locator(".hub-row").count();
+	assert.ok(hubRows > 0, "The catalog lists packs");
+	await hubPage.locator("#hub-query").fill("hpc");
+	const narrowed = await hubPage.locator(".hub-row:visible").count();
+	assert.ok(narrowed > 0 && narrowed < hubRows, "The filter narrows the catalog");
+	assert.equal(await hubPage.locator("[data-hub-count]").innerText(), `${narrowed} of ${hubRows} packs`);
+	await hubPage.locator("#hub-query").fill("zzzz-no-such-pack");
+	assert.equal(await hubPage.locator(".hub-group:visible").count(), 0, "Groups without a match are hidden");
+	assert.match(await hubPage.locator("[data-hub-count]").innerText(), /^No pack matches/);
+	await hubPage.locator("#hub-query").press("Escape");
+	assert.equal(await hubPage.locator("#hub-query").inputValue(), "");
+	assert.equal(await hubPage.locator(".hub-row:visible").count(), hubRows, "Escape clears the filter");
+	await hubContext.close();
+	const context = await browser.newContext({
+		viewport: { width: 390, height: 844 },
+		permissions: ["clipboard-read", "clipboard-write"],
+	});
+	const page = await context.newPage();
+	await page.goto(values.url);
+	await page.locator(".nav-more summary").click();
+	assert.equal(await page.locator(".nav-more").getAttribute("open"), "");
+	await page.keyboard.press("Escape");
+	assert.equal(await page.locator(".nav-more").getAttribute("open"), null);
+	assert.equal(await page.locator(".nav-more summary").evaluate((el) => el === document.activeElement), true);
+	const initial = await page.locator("html").getAttribute("data-theme");
+	await page.locator("[data-theme-toggle]").click();
+	await page.reload();
+	assert.notEqual(await page.locator("html").getAttribute("data-theme"), initial, "Theme preference persists");
+	await page.locator("#start").scrollIntoViewIfNeeded();
+	await page.locator("#start .installer [data-copy]").first().click();
+	assert.equal(
+		await page.evaluate(() => navigator.clipboard.readText()),
+		"curl -fsSL https://pancode.dev/install.sh | sh",
+	);
+	await page.goto(`${values.url}/docs.html`);
+	await page.locator(".docs-menu > summary").click();
+	await page.locator("#doc-search").fill("model");
+	await page.waitForFunction(() => document.querySelectorAll("#search-hits a").length > 0);
+	assert.ok(await page.locator("#search-hits").innerText());
+	await page.locator("#doc-search").fill("zzzz-no-such-topic");
+	await page.waitForFunction(() => document.querySelector("#search-status")?.textContent.includes("No matching"));
+	await page.goto(`${values.url}/docs.html?d=guide/tool-usage.md`);
+	await page.waitForURL("**/docs/guide/tool-usage.html");
+	await page.goto(`${values.url}/start.html`);
+	await page.waitForURL("**/#start");
+	const missing = await page.goto(`${values.url}/does-not-exist`);
+	assert.equal(missing.status(), 404);
+	assert.match(await page.locator("h1").innerText(), /back/);
+	await page.goto(`${values.url}/?__static=1`);
+	const copied = page.locator("#start .installer [data-copy]").first();
+	await copied.click();
+	await copied.click();
+	await expectCopyReset();
+	async function expectCopyReset() {
+		await page.waitForFunction(() => document.querySelector("#start .installer [data-copy]")?.title === "Copy");
+		assert.equal(await copied.getAttribute("data-copy-state"), null, "Repeated copying restores the normal state");
+	}
+	await page.locator(".faq-items summary").first().click();
+	assert.equal(await page.locator(".faq-items details").first().getAttribute("open"), "");
+	await page.locator(".faq-items summary").first().click();
+	assert.equal(await page.locator(".faq-items details").first().getAttribute("open"), null);
+	await page.locator(".nav-more summary").click();
+	await page.locator(".nav-more a").last().focus();
+	await page.keyboard.press("Tab");
+	await page.waitForFunction(() => !document.querySelector(".nav-more").open);
+	assert.match(
+		(await page.locator('.media-dialog [data-media="original"]').getAttribute("href")) ?? "",
+		/\.png\?v=[0-9a-f]{10}$/,
+		"The screenshot viewer's original link has an href before it opens",
+	);
+	await page.locator(".capture-link").click();
+	await page.waitForFunction(
+		() =>
+			document.querySelector(".media-dialog img").complete && document.querySelector(".media-dialog img").naturalWidth > 0,
+	);
+	assert.equal(await page.locator(".media-dialog").evaluate((el) => el.open), true);
+	const dialogAxe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+	assert.deepEqual(dialogAxe.violations, [], "Accessible screenshot dialog");
+	await page.locator('[data-media="next"]').click();
+	assert.match(await page.locator("#media-caption").innerText(), /terminal at start/);
+	await page.locator('[data-media="zoom"]').click();
+	await page.waitForFunction(() => {
+		const viewport = document.querySelector(".image-view");
+		return viewport.scrollWidth > viewport.clientWidth;
+	});
+	assert.equal(await page.locator('[data-media="zoom"]').getAttribute("aria-pressed"), "true");
+	await page.locator('[data-media="zoom"]').click();
+	await page.keyboard.press("ArrowRight");
+	assert.match(await page.locator("#media-caption").innerText(), /PanCode desktop/);
+	await page.keyboard.press("ArrowRight");
+	assert.match(await page.locator("#media-caption").innerText(), /through verify/);
+	await page.keyboard.press("Escape");
+	assert.equal(await page.locator(".media-dialog").evaluate((el) => el.open), false);
+	assert.equal(
+		await page.locator(".capture-link").evaluate((el) => el === document.activeElement),
+		true,
+		"Viewer returns focus",
+	);
+	await page.goto(`${values.url}/docs.html?__static=1`);
+	await page.locator(".docs-menu > summary").click();
+	await page.locator("#doc-search").fill("model");
+	await page.waitForFunction(() => document.querySelectorAll("#search-hits a").length > 0);
+	await page.keyboard.press("ArrowDown");
+	assert.equal(
+		await page
+			.locator("#search-hits a")
+			.first()
+			.evaluate((el) => el === document.activeElement),
+		true,
+	);
+	await page.keyboard.press("ArrowUp");
+	assert.equal(await page.locator("#doc-search").evaluate((el) => el === document.activeElement), true);
+	await page.keyboard.press("Escape");
+	assert.equal(await page.locator("#doc-search").inputValue(), "");
+	assert.equal(await page.locator("#search-hits a").count(), 0);
+	await page
+		.locator("#doc h2")
+		.last()
+		.evaluate((el) => el.scrollIntoView({ block: "start", behavior: "instant" }));
+	await page.waitForFunction(() => {
+		const last = document.querySelector("#doc h2:last-of-type");
+		return document.querySelector(`.doc-toc-mobile a[href="#${last.id}"]`)?.getAttribute("aria-current") === "location";
+	});
+	await page.goto(`${values.url}/start.html?theme=light`);
+	assert.equal(new URL(page.url()).search, "?theme=light", "Redirect preserves the query before its fragment");
+	assert.equal(new URL(page.url()).hash, "#start");
+	await context.close();
+	const motionContext = await browser.newContext({
+		viewport: { width: 1024, height: 768 },
+		reducedMotion: "no-preference",
+		hasTouch: true,
+	});
+	const motionPage = await motionContext.newPage();
+	await motionPage.goto(`${values.url}/?__static=1`);
+	assert.ok(await motionPage.locator('[data-reveal="pending"]').count(), "Below-fold elements have an entrance state");
+	await motionPage.locator("#project").scrollIntoViewIfNeeded();
+	await motionPage.waitForFunction(() => document.querySelector("#project").dataset.reveal === "visible");
+	await motionPage.emulateMedia({ reducedMotion: "reduce" });
+	await motionPage.waitForFunction(() => !document.querySelector('[data-reveal="pending"]'));
+	assert.equal(await motionPage.locator("body").getAttribute("data-companion-enabled"), null);
+	assert.equal(await motionPage.locator("video").evaluateAll((videos) => videos.every((video) => video.paused)), true);
+	await motionPage.setViewportSize({ width: 768, height: 1024 });
+	assert.equal(
+		await motionPage.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1),
+		false,
+		"Touch tablet orientation fits",
+	);
+	await motionPage.locator(".capture-link").tap();
+	await motionPage.waitForFunction(() => document.querySelector(".media-dialog img").complete);
+	await motionPage.screenshot({ path: join(out, "screenshot-viewer-tablet.png") });
+	await motionPage.locator(".media-close").tap();
+	await motionContext.close();
+	const themeContext = await browser.newContext({ colorScheme: "light", viewport: { width: 390, height: 844 } });
+	const themePage = await themeContext.newPage();
+	await themePage.goto(`${values.url}/?__static=1`);
+	const expectedDefault = brand.defaultTheme === "system" ? "light" : brand.defaultTheme;
+	assert.equal(
+		await themePage.locator("html").getAttribute("data-theme"),
+		expectedDefault,
+		"First visit uses the configured default",
+	);
+	await themePage.emulateMedia({ colorScheme: "dark" });
+	await themePage.emulateMedia({ colorScheme: "light" });
+	await themePage.waitForFunction((expected) => document.documentElement.dataset.theme === expected, expectedDefault);
+	const savedTheme = expectedDefault === "dark" ? "light" : "dark";
+	await themePage.locator("[data-theme-toggle]").click();
+	await themePage.reload();
+	assert.equal(
+		await themePage.locator("html").getAttribute("data-theme"),
+		savedTheme,
+		"Saved visitor preference beats the default",
+	);
+	await themePage.goto(`${values.url}/?theme=dark&__static=1`);
+	assert.equal(
+		await themePage.locator("html").getAttribute("data-theme"),
+		"dark",
+		"Explicit URL theme wins for the visit",
+	);
+	await themePage.goto(`${values.url}/docs.html?__static=1`);
+	assert.equal(
+		await themePage.locator("html").getAttribute("data-theme"),
+		savedTheme,
+		"URL override preserves the saved choice",
+	);
+	await themeContext.close();
+	// Recordings load the player only on Play, never advance on their own under
+	// reduced motion, and run under the page policy without errors.
+	// Recordings sit on guide pages, so every built page is a candidate.
+	const sitemap = await (await fetch(`${values.url}/sitemap.xml`)).text();
+	const built = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map(([, loc]) => new URL(loc).pathname);
+	const castPages = [];
+	for (const path of new Set([...primary, ...built])) {
+		const html = await (await fetch(`${values.url}${path}`)).text();
+		if (html.includes(" data-cast=")) castPages.push(path);
+		else assert.ok(!html.includes("/assets/player/"), `${path} references the player without a recording`);
+	}
+	const casts = Object.values(JSON.parse(await readFile(join(site, "content/captures.json"), "utf8")).captures).filter(
+		(item) => item.cast,
+	);
+	assert.ok(
+		!casts.length || castPages.length,
+		`captures.json has ${casts.length} recordings, but no built page embeds one`,
+	);
+	let recordings = 0;
+	let pages = 0;
+	for (const reducedMotion of ["reduce", "no-preference"]) {
+		const castContext = await browser.newContext({ viewport: { width: 1024, height: 900 }, reducedMotion });
+		for (const path of castPages) {
+			const castPage = await castContext.newPage();
+			const errors = [];
+			const player = [];
+			castPage.on("pageerror", (error) => errors.push(error.message));
+			castPage.on("console", (message) => {
+				if (message.type() === "error") errors.push(message.text());
+			});
+			castPage.on("request", (request) => {
+				if (/\/assets\/(?:player|casts)\//.test(request.url())) player.push(request.url());
+			});
+			await castPage.goto(`${values.url}${path}?__static=1`, { waitUntil: "load" });
+			const figures = castPage.locator("figure[data-cast]");
+			const count = await figures.count();
+			assert.ok(count, `${path} embeds a recording`);
+			pages++;
+			assert.deepEqual(player, [], `${path} loads the player only on Play`);
+			// Every recording on the page, each with its own player.
+			for (let index = 0; index < count; index++) {
+				const figure = figures.nth(index);
+				const name = `${path} recording ${index + 1} (${await figure.getAttribute("data-cast")})`;
+				await figure.locator(".cast-play").click();
+				await figure.locator(".cast-player .ap-player").waitFor({ timeout: 10000 });
+				const poster = Number(await figure.getAttribute("data-cast-poster"));
+				await castPage.waitForTimeout(1500);
+				const time = await figure.evaluate((element) => element.castPlayer.getCurrentTime());
+				if (reducedMotion === "reduce") assert.equal(time, poster, `${name}: reduced motion keeps it paused`);
+				else assert.ok(time > 0, `${name}: Play starts it`);
+				if (reducedMotion === "reduce") recordings++;
+			}
+			const scripts = player.filter((url) => new URL(url).pathname.endsWith("/asciinema-player.min.js"));
+			assert.equal(scripts.length, 1, `${path} loads the player script once for ${count} recordings`);
+			assert.deepEqual(errors, [], `${path}: recording errors`);
+			await castPage.close();
+		}
+		await castContext.close();
+	}
+	const plain = await browser.newContext({
+		javaScriptEnabled: false,
+		colorScheme: "light",
+		viewport: { width: 390, height: 844 },
+	});
+	const plainPage = await plain.newPage();
+	await plainPage.goto(`${values.url}/docs.html`);
+	assert.equal(
+		await plainPage.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--paper").trim()),
+		brand.palette[brand.themes[expectedDefault].paper],
+		"No-JavaScript CSS uses the configured default",
+	);
+	assert.ok((await plainPage.locator("#doc").innerText()).includes("install.sh"));
+	if ((await plainPage.locator(".docs-menu").getAttribute("open")) === null)
+		await plainPage.locator(".docs-menu > summary").click();
+	await plainPage
+		.locator(".doc-nav-group")
+		.first()
+		.evaluate((el) => {
+			el.open = true;
+		});
+	assert.ok(await plainPage.locator("#all-docs a").first().isVisible());
+	await plainPage.goto(values.url);
+	await plainPage.locator(".nav-more summary").click();
+	assert.ok(await plainPage.locator(".nav-more a").first().isVisible());
+	assert.ok(
+		await plainPage.locator(".nav-family a").first().isVisible(),
+		"The Menu lists the family without JavaScript",
+	);
+	await plainPage.goto(`${values.url}/hub.html`);
+	assert.equal(await plainPage.locator("[data-hub-filter]").isVisible(), false, "The filter needs JavaScript");
+	assert.equal(
+		await plainPage.locator(".hub-row:visible").count(),
+		await plainPage.locator(".hub-row").count(),
+		"Every pack is listed without JavaScript",
+	);
+	assert.match(await plainPage.locator(".hub-row .command-line code").first().innerText(), /^pancode hub install /);
+	await plain.close();
+	console.log(`Recorded captures checked: ${recordings} recordings on ${pages / 2} pages.`);
+	console.log(
+		"Interactions passed: Family navigation keyboard at every width, catalog filter, menu keyboard, theme persistence, repeated copying, FAQ, screenshot viewer, search keyboard, active contents, redirects, runtime reduced motion, touch tablet rotation, 404, no-JavaScript navigation, and recordings.",
+	);
+} finally {
+	await browser.close();
+	await writeFile(
+		join(out, "browser-results.json"),
+		`${JSON.stringify({ passed: results.length, failed: failures.length, results, failures }, null, 2)}\n`,
+	);
+}
+if (failures.length) {
+	console.error(JSON.stringify(failures, null, 2));
+	process.exitCode = 1;
+} else console.log(`All ${results.length} browser layouts passed with no WCAG A/AA violations. Screenshots: ${out}`);

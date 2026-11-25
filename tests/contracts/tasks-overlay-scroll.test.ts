@@ -1,0 +1,217 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok } from "node:assert/strict";
+import { after, test } from "node:test";
+import { setPresentationTier } from "../../src/core/presentation-tier.js";
+import type { SessionArtifact } from "../../src/domains/session/session-artifacts.js";
+import type { TaskBoardSnapshot } from "../../src/domains/session/task-board.js";
+import type { UserTask } from "../../src/domains/user-tasks/store.js";
+import type { Component, TUI } from "../../src/engine/tui.js";
+import { stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
+import type { DockFrame } from "../../src/interactive/dock.js";
+import { DOCK_BODY_ROWS_MAX, dockTop } from "../../src/interactive/dock.js";
+import { formatCompositeTasksOverlayBodyLines, openTasksOverlay } from "../../src/interactive/tasks-overlay.js";
+import { GLYPH } from "../../src/interactive/theme/index.js";
+
+// BT-015: at 144x35 the docked board ended at "… 3 more rows" under Artifacts.
+// Operator tasks never appeared, ↓ stopped among the agent tasks, and PgDn
+// and Tab did nothing, while the footer offered keys that act on operator tasks.
+const CONTENT = 140;
+const DOWN = "\x1b[B";
+const UP = "\x1b[A";
+const PAGE_DOWN = "\x1b[6~";
+const PAGE_UP = "\x1b[5~";
+const TAB = "\t";
+
+const claim = (id: string): string =>
+	`${id} landed with its tests; ${"the completion claim names what changed, what ran and what the operator should reread before trusting it. ".repeat(3)}`;
+
+const BOARD: TaskBoardSnapshot = {
+	boardId: "b1",
+	title: "Divide rounding",
+	activeRunIds: [],
+	tasks: [
+		{ id: "t1", title: "Reproduce the rounding bug", status: "completed", evidence: claim("t1") },
+		{ id: "t2", title: "Fix divide()", status: "completed", evidence: claim("t2") },
+		{ id: "t3", title: "Add regression tests", status: "completed", evidence: claim("t3") },
+		{ id: "t4", title: "Review divide() rounding behaviour", status: "active", origin: "user", userTaskId: "u1" },
+	],
+};
+
+const ARTIFACTS: SessionArtifact[] = [
+	"lib/math.js",
+	"test/math.test.js",
+	"docs/rounding.md",
+	"src/rounding-notes.md",
+].map((path, index) => ({
+	path,
+	tool: "write",
+	turnId: `turn-${index}`,
+	timestamp: "2026-09-25T12:00:00Z",
+	overwrites: 0,
+}));
+
+const USER_TASKS: UserTask[] = [
+	{ id: "u1", title: "Review divide() rounding behaviour", status: "picked", createdAt: "", updatedAt: "" },
+	{ id: "u2", title: "Document the rounding mode", status: "open", createdAt: "", updatedAt: "" },
+];
+
+interface Harness {
+	frame: DockFrame & Component;
+	render(): string[];
+	press(key: string, times?: number): string[];
+	done: string[];
+	dropped: string[];
+}
+
+function mount(board: TaskBoardSnapshot = BOARD, userTasks: UserTask[] = USER_TASKS): Harness {
+	const tui = {
+		terminal: { rows: 35, setTitle: () => {} },
+		requestRender: () => {},
+		showOverlay: () => ({ hide: () => {} }),
+	} as unknown as TUI;
+	const done: string[] = [];
+	const dropped: string[] = [];
+	const handle = openTasksOverlay(tui, () => board, {
+		getSessionSnapshot: () => ({ history: [], artifacts: ARTIFACTS }),
+		getUserTasks: () => userTasks,
+		onDoneUserTask: (id) => done.push(id),
+		onDropUserTask: (id) => dropped.push(id),
+		workspace: "/work",
+	});
+	// The board's one-second repaint ticker would keep the test process alive.
+	after(() => handle.hide());
+	const mounted = dockTop(tui)?.frame as unknown as DockFrame & Component;
+	const render = (): string[] => {
+		const rows = mounted.renderDockBody(CONTENT, DOCK_BODY_ROWS_MAX);
+		ok(rows.length <= DOCK_BODY_ROWS_MAX, "the dock body fits its fixed budget");
+		for (const row of rows) ok(visibleWidth(row) <= CONTENT, stripTerminalSequences(row));
+		return rows.map((row) => stripTerminalSequences(row).trimEnd());
+	};
+	return {
+		frame: mounted,
+		render,
+		press(key: string, times = 1): string[] {
+			for (let step = 0; step < times; step++) mounted.handleInput?.(key);
+			return render();
+		},
+		done,
+		dropped,
+	};
+}
+
+const selectedRow = (rows: ReadonlyArray<string>): string | undefined =>
+	rows.find((row) => row.startsWith(`${GLYPH.cursor} `));
+
+test("the docked board never cuts a section it cannot reach (BT-015)", () => {
+	const board = mount();
+	const first = board.render();
+	doesNotMatch(first.join("\n"), /more rows/u, "the frame never has to cut the board");
+	// The rail names PgUp/PgDn while the board windows, so the position row does not repeat it.
+	match(first.join("\n"), /^\d+(?:–\d+)? of \d+ tasks$/mu, "an overflowing board says where the window is");
+	match(first.slice(0, 2).join("\n"), /Divide rounding/u, "the board opens at its top");
+
+	// Paging down reaches the end, and every row of the whole board was on screen once.
+	const seen = new Set(first);
+	let screen = first;
+	for (let page = 0; page < 10; page++) {
+		screen = board.press(PAGE_DOWN);
+		for (const row of screen) seen.add(row);
+	}
+	match(screen.join("\n"), /Operator tasks/u, "PgDn reaches the operator tasks");
+	match(screen.join("\n"), /u2 {3}Document the rounding mode/u);
+	const whole = formatCompositeTasksOverlayBodyLines(
+		{ board: BOARD, history: [], artifacts: ARTIFACTS, userTasks: USER_TASKS, workspace: "/work" },
+		CONTENT,
+	).map((row) => stripTerminalSequences(row).trimEnd());
+	// Selection changes only the mark in front of a row, so rows compare without it.
+	const unmarked = (row: string): string => row.replace(new RegExp(`^${GLYPH.cursor} `, "u"), "  ");
+	const reached = new Set([...seen].map(unmarked));
+	for (const row of whole) ok(reached.has(unmarked(row)), `unreachable board row: ${row}`);
+	match(board.press(PAGE_UP, 10).slice(0, 2).join("\n"), /Divide rounding/u, "PgUp returns to the top");
+});
+
+test("the selection walks into operator tasks and the window follows it (BT-015)", () => {
+	const board = mount();
+	let screen = board.render();
+	match(selectedRow(screen) ?? "", /t4 {3}Review/u);
+	const visited: string[] = [];
+	for (let step = 0; step < 5; step++) {
+		screen = board.press(DOWN);
+		const selected = selectedRow(screen);
+		ok(selected !== undefined, `the selected row stays on screen after ↓ ${step + 1}`);
+		visited.push(selected);
+	}
+	match(
+		visited.at(-1) ?? "",
+		/u2 {3}Document the rounding mode/u,
+		"↓ reaches the operator tasks right after the agent board",
+	);
+	match(screen.join("\n"), /Operator tasks/u, "the section heading shows with its rows");
+	board.press("d");
+	deepStrictEqual(board.done, ["u2"], "[d] done acts on the operator task the operator selected");
+
+	for (let step = 0; step < 5; step++) {
+		screen = board.press(UP);
+		ok(selectedRow(screen) !== undefined, `the selected row stays on screen after ↑ ${step + 1}`);
+	}
+	match(selectedRow(screen) ?? "", /t4 {3}Review/u);
+	match(screen.slice(0, 2).join("\n"), /Divide rounding/u, "returning to the first task shows the board title");
+});
+
+test("Tab moves the selection to the next section and the window follows (BT-015)", () => {
+	const board = mount();
+	let screen = board.press(TAB);
+	match(selectedRow(screen) ?? "", /u1 {3}Review/u, "Tab jumps from the agent board to the operator tasks");
+	match(screen.join("\n"), /Operator tasks/u);
+	screen = board.press(TAB);
+	match(selectedRow(screen) ?? "", /lib\/math\.js/u, "Tab again reaches the artifacts");
+	screen = board.press(TAB);
+	match(selectedRow(screen) ?? "", /t4 {3}Review/u, "Tab wraps to the first section");
+	screen = board.press("\x1b[Z");
+	match(selectedRow(screen) ?? "", /lib\/math\.js/u, "Shift+Tab goes back a section");
+});
+
+test("a board that fits renders whole, with no position row and no page hint (BT-015)", () => {
+	const small: TaskBoardSnapshot = { ...BOARD, tasks: BOARD.tasks.slice(3) };
+	const board = mount(small, USER_TASKS.slice(1));
+	const screen = board.render();
+	doesNotMatch(screen.join("\n"), /tasks \d+(?:–\d+)? of \d+/u);
+	match(screen.join("\n"), /Operator tasks/u);
+	doesNotMatch(board.frame.dockHint(200) ?? "", /PgUp/u);
+	const large = mount();
+	large.render();
+	match(large.frame.dockHint(200) ?? "", /\[PgUp\/PgDn\] page/u);
+});
+
+test("compact omits the duplicate bottom selection echo and keeps a single cursor", (t) => {
+	t.after(() => setPresentationTier("standard"));
+	setPresentationTier("compact");
+	const small: TaskBoardSnapshot = { ...BOARD, tasks: BOARD.tasks.slice(3) };
+	const screen = mount(small, USER_TASKS.slice(1)).render();
+	deepStrictEqual(
+		screen.filter((row) => row.startsWith(`${GLYPH.cursor} `)).length,
+		1,
+		`only the selected row carries the cursor:\n${screen.join("\n")}`,
+	);
+	doesNotMatch(
+		screen.join("\n"),
+		/^ {2}Review divide\(\) rounding behaviour/mu,
+		`compact must not echo the selected task in a duplicate bottom status row:\n${screen.join("\n")}`,
+	);
+});
+
+test("x asks once before it drops an operator task, and any other key keeps the task", () => {
+	const board = mount();
+	let screen = board.render();
+	for (let step = 0; step < 40 && !selectedRow(screen)?.includes("Document the rounding"); step++)
+		screen = board.press(DOWN);
+	match(selectedRow(screen) ?? "", /Document the rounding/u);
+	board.press("x");
+	deepStrictEqual(board.dropped, [], "the first x only asks");
+	board.press("k");
+	board.press("x");
+	deepStrictEqual(board.dropped, [], "a key between the two presses kept the task");
+	board.press("x");
+	deepStrictEqual(board.dropped, ["u2"], "the second x drops it");
+});

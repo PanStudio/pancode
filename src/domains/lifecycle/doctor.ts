@@ -1,0 +1,1829 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { accessSync, chmodSync, constants, type Dirent, existsSync, readdirSync, type Stats, statSync } from "node:fs";
+import { dirname, join, relative as relativePath } from "node:path";
+import { isDevVersion, readPancodeVersionLabel } from "../../core/build-info.js";
+import { readSettings, validateSettingsFile } from "../../core/config.js";
+import { copilotKeychainOnlyDetail } from "../../core/copilot-keychain.js";
+import { detectNewerHome, initializePancodeHome } from "../../core/init.js";
+import {
+	aclPrincipalName,
+	applyOwnerOnlyAcl,
+	currentWindowsAccount,
+	extraAclPrincipals,
+	readWindowsAcl,
+	type WindowsAccount,
+	type WindowsAclRead,
+} from "../../core/owner-only-acl.js";
+import { readPancodeVersion } from "../../core/package-root.js";
+import { relativePathEscapes } from "../../core/path-containment.js";
+import { unsetKeyVariableSentence } from "../../core/project-target-urls.js";
+import type { SettingsScalarRepair } from "../../core/settings-issues.js";
+import { formatSettingsIssues } from "../../core/settings-issues.js";
+import { readLayeredSettings, type SettingsOrigin, settingsSourceFor } from "../../core/settings-layers.js";
+import { repairSettingsCoercions, type SettingsRepairResult } from "../../core/settings-repair.js";
+import { shellQuote } from "../../core/shell-quote.js";
+import type { CacheReportV1 } from "../../core/telemetry/dto.js";
+import { renderUpperBound, unreportedCacheReadWords } from "../../core/telemetry/render.js";
+import { pancodeDirLayoutProblems, removablePancodeRootProblem, resolvePancodeDirs } from "../../core/xdg.js";
+import { readSessionFileEntries, type SessionJsonlWarning } from "../../engine/session.js";
+import {
+	collectHarnessInput,
+	type HarnessInput,
+	type HarnessIssue,
+	validateHarness,
+} from "../agents/harness-validate.js";
+import { shadowedPlaybooks } from "../agents/playbook.js";
+import { detectInteropAgents, interopAgentKind, resolveOnPath } from "../interop/index.js";
+import { inspectMemoryStoreRepair, type MemoryStoreRepair, repairMemoryStore } from "../memory/index.js";
+import { openAuthStorage, resolveAuthTarget, targetRequiresAuth } from "../providers/auth/index.js";
+import { ModelCatalogOverlays, resolveModelCatalogOverlayRoots } from "../providers/catalog-overlays.js";
+import { credentialsPresent } from "../providers/credentials.js";
+import { fingerprintNativeRuntime } from "../providers/probe/fingerprint.js";
+import type { ProbeContext, ProbeResult, RuntimeDescriptor } from "../providers/types/runtime-descriptor.js";
+import type { TargetDescriptor } from "../providers/types/target-descriptor.js";
+import { readPackagedChangelog, reportsDoctorDetail } from "../report/index.js";
+import { loadSkills, type SkillSource } from "../resources/skills/loader.js";
+import { loadSessionTelemetrySource } from "../session/telemetry-source.js";
+import { workspaceTelemetryCapture } from "../telemetry/consent.js";
+import { telemetryJournalFiles, telemetrySessionsDirectory } from "../telemetry/paths.js";
+import { cacheReport } from "../telemetry/read-model-cache.js";
+import { deferredUpdateTarget, readDeferredResult } from "./deferred-update.js";
+import { type Installation, inspectInstallation, launcherPathFor } from "./install-method.js";
+import { describeTracking, pancodeShadowing } from "./install-plan.js";
+import { nativeAutoUpdatePolicy } from "./native-update.js";
+import { readStateInfoResult } from "./state.js";
+import { deferredResultPath, readDeferredWait, readLastBackgroundUpdate } from "./update-check.js";
+import { getVersionInfo } from "./version.js";
+
+/** `info` reports a fact that needs no action, such as an optional tool that is absent. */
+export type DoctorLevel = "ok" | "info" | "warn" | "error";
+
+export interface DoctorFinding {
+	ok: boolean;
+	name: string;
+	detail: string;
+	level?: DoctorLevel;
+}
+
+export interface DoctorOptions {
+	fix?: boolean;
+}
+
+/** Settings and credentials are owner read/write files; any group or other bit, or an owner execute bit, is wider. */
+const OWNER_ONLY_EXTRA_BITS = 0o177;
+
+function isWiderThanOwnerOnly(mode: number): boolean {
+	return (mode & OWNER_ONLY_EXTRA_BITS) !== 0;
+}
+
+/**
+ * Tighten `path` to 0600 when it is wider, leaving a stricter mode such as
+ * 0400 alone. Returns the mode it replaced, or null when nothing changed.
+ * POSIX modes carry no meaning on Windows, so the check does not run there.
+ */
+function tightenToOwnerOnly(path: string): number | null {
+	if (process.platform === "win32" || !existsSync(path)) return null;
+	const mode = statSync(path).mode & 0o777;
+	if (!isWiderThanOwnerOnly(mode)) return null;
+	chmodSync(path, 0o600);
+	return mode;
+}
+
+/**
+ * The win32 "credentials" row from the file's DACL (SDDL, by SID): an allow ACE
+ * for anyone beyond the account, SYSTEM and Administrators lets another local
+ * account read or replace the key, which `--fix` removes. `removed` names the
+ * principals a `--fix` in this run took off the ACL.
+ */
+export function windowsCredentialsFinding(
+	path: string,
+	acl: WindowsAclRead,
+	account: WindowsAccount,
+	removed: readonly string[] = [],
+): DoctorFinding {
+	if ("error" in acl) {
+		return {
+			ok: true,
+			level: "warn",
+			name: "credentials",
+			detail: foldDetail(`${path}; could not read its ACL: ${acl.error}`),
+		};
+	}
+	if (account.sid === null) {
+		return {
+			ok: true,
+			level: "warn",
+			name: "credentials",
+			detail: `${path}; could not resolve the current Windows account's SID to check its ACL`,
+		};
+	}
+	const extras = extraAclPrincipals(acl.dacl, account).map(aclPrincipalName);
+	if (extras.length === 0) {
+		const detail = removed.length === 0 ? path : `${path}; removed ${removed.join(", ")} from its ACL`;
+		return { ok: true, name: "credentials", detail };
+	}
+	return {
+		ok: true,
+		level: "warn",
+		name: "credentials",
+		detail: `${path} ACL also grants ${extras.join(", ")} (run \`pancode doctor --fix\` to make it owner-only)`,
+	};
+}
+
+const FOREIGN_SKILL_SOURCES = new Set<SkillSource>(["agents", "claude", "codex", "copilot", "opencode"]);
+
+function describeNodeType(stats: Stats): string {
+	if (stats.isFile()) return "a regular file";
+	if (stats.isSymbolicLink()) return "a symlink";
+	if (stats.isFIFO()) return "a FIFO";
+	if (stats.isSocket()) return "a socket";
+	if (stats.isBlockDevice() || stats.isCharacterDevice()) return "a device node";
+	return "not a directory";
+}
+
+/**
+ * One of PanCode's four roots. `existsSync` alone was reporting OK for anything at
+ * the path, so `touch $PANCODE_CACHE_DIR` produced a green report and exit 0 while
+ * `pancode doctor --fix` one command later died on "Expected directory". A root
+ * has to be a directory PanCode can actually traverse and write, and the remedy
+ * differs by failure: `--fix` creates a missing root but cannot move a file out
+ * of the way or widen a mode, so the row says which one is needed.
+ */
+// Roots holding transcripts, tool output and memory; config and cache are covered elsewhere or hold nothing private.
+const PRIVATE_ROOT_ROLES = ["state", "data"] as const;
+const PRIVATE_ROOT_CONTENTS: Record<string, string> = {
+	"state dir": "session transcripts",
+	"data dir": "memory, project store data and vendored tools",
+};
+
+function privateRootFinding(
+	name: string,
+	path: string,
+	tightened: ReadonlyArray<string>,
+	notOwned: string | null,
+): DoctorFinding | null {
+	if (process.platform === "win32") return null;
+	if (tightened.includes(name)) return { ok: true, name: `${name} mode`, detail: "tightened to 700" };
+	let mode: number;
+	try {
+		const stat = statSync(path);
+		if (!stat.isDirectory()) return null;
+		mode = stat.mode & 0o777;
+	} catch {
+		return null;
+	}
+	if ((mode & 0o077) === 0) return null;
+	const exposure = `${path} is ${mode.toString(8)}: group or other users can enter it and read ${PRIVATE_ROOT_CONTENTS[name] ?? "its files"}`;
+	// `--fix` tightens only a root it can prove is PanCode's, so it is advised only for one (CLI audit 6).
+	const remedy =
+		notOwned === null
+			? "(run `pancode doctor --fix`, or `chmod 700` it when the directory is not PanCode's alone)"
+			: `(\`pancode doctor --fix\` changes only a directory it can prove is PanCode's, and this one has ${notOwned}; run \`chmod 700 ${shellQuote(path)}\` if it holds only PanCode's files)`;
+	return { ok: true, level: "warn", name: `${name} mode`, detail: `${exposure} ${remedy}` };
+}
+
+function directoryFinding(name: string, path: string): DoctorFinding {
+	let stats: Stats;
+	try {
+		stats = statSync(path);
+	} catch (error) {
+		const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+		if (code === "ENOENT") return { ok: false, name, detail: `${path} missing (run \`pancode doctor --fix\`)` };
+		const message = error instanceof Error ? error.message : String(error);
+		return { ok: false, name, detail: `${path} cannot be inspected: ${message}` };
+	}
+	if (!stats.isDirectory()) {
+		return {
+			ok: false,
+			name,
+			detail: `${path} is ${describeNodeType(stats)}, not a directory (move it aside, then run \`pancode doctor --fix\`)`,
+		};
+	}
+	// Named one bit at a time. A single combined access() check reported the same
+	// string for a mode-555 root as for a mode-000 one, which told the operator
+	// the row was unhappy without telling them what to change.
+	const missing = (
+		[
+			["readable", constants.R_OK],
+			["writable", constants.W_OK],
+			["traversable", constants.X_OK],
+		] as const
+	)
+		.filter(([, bit]) => {
+			try {
+				accessSync(path, bit);
+				return false;
+			} catch {
+				return true;
+			}
+		})
+		.map(([label]) => label);
+	if (missing.length > 0) {
+		return {
+			ok: false,
+			name,
+			detail: `${path} is not ${missing.join(" or ")} (run \`chmod u+rwx ${shellQuote(path)}\`; \`pancode doctor --fix\` repairs owned directory modes)`,
+		};
+	}
+	return { ok: true, name, detail: path };
+}
+
+/** How many distinct damage messages a single row names before it summarizes the rest. */
+const SESSION_STORE_DAMAGE_DETAIL_LIMIT = 3;
+
+/** How many files a single repeated message names before it counts the rest. */
+const SESSION_STORE_DAMAGE_LOCATION_LIMIT = 2;
+
+/**
+ * One clause per distinct damage message, with the files that carry it.
+ *
+ * The row used to hold one clause per damaged file, and the damage that
+ * produces several at once produces the same damage in each: an interrupted
+ * rewrite truncates every ledger it touched the same way. Three files, one
+ * sentence, printed three times, 607 characters wide on a row that gets one
+ * line. Grouping by the message says the same thing once and spends the width
+ * on which files it happened to.
+ */
+function summarizeSessionDamage(warnings: ReadonlyArray<SessionJsonlWarning>): string[] {
+	const byMessage = new Map<string, string[]>();
+	for (const warning of warnings) {
+		const locations = byMessage.get(warning.message) ?? [];
+		locations.push(`${warning.path}:${warning.line}`);
+		byMessage.set(warning.message, locations);
+	}
+	return Array.from(byMessage, ([message, locations]) => {
+		const shown = locations.slice(0, SESSION_STORE_DAMAGE_LOCATION_LIMIT);
+		const rest = locations.length - shown.length;
+		return `${shown.join(", ")}${rest > 0 ? `, +${rest} more` : ""}: ${message}`;
+	});
+}
+
+/**
+ * Collect every `current.jsonl` under the session store. The layout is
+ * `sessions/<cwdHash>/<sessionId>/current.jsonl`, but the walk does not assume
+ * a depth. Only that name is a session ledger: its siblings are diagnostics
+ * with their own formats. Symlinks are not followed
+ * (`Dirent.isDirectory()` is false for them), so the walk cannot loop or
+ * wander outside the state root. A directory that cannot be listed is a
+ * reported problem, not a silent zero.
+ */
+function collectSessionLedgers(dir: string, ledgers: string[], unlistable: string[]): void {
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(dir, { withFileTypes: true });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		unlistable.push(`${dir} could not be listed: ${message}`);
+		return;
+	}
+	for (const entry of entries) {
+		const full = join(dir, entry.name);
+		if (entry.isDirectory()) {
+			collectSessionLedgers(full, ledgers, unlistable);
+			continue;
+		}
+		if (entry.isFile() && entry.name === "current.jsonl") ledgers.push(full);
+	}
+}
+
+/**
+ * The store holding every recorded session, checked the way the resume path
+ * reads it. Without this row `pancode doctor` called a deleted store healthy: the
+ * state metadata row said the install was on record, nothing looked at
+ * `state/sessions`, and `pancode resume` then reported no sessions on a machine
+ * that had run hundreds. Damage inside a ledger is the same silence one level
+ * down, so each file is parsed by the reader that resume uses and the lines it
+ * would skip are named here instead of being dropped into a warning stream
+ * nobody is watching.
+ *
+ * Returns null on an install that was never initialized: the state metadata row
+ * above already reports that, and a second failing row about a directory
+ * `initializePancodeHome` creates would name no remedy of its own.
+ */
+function sessionStoreFinding(stateDir: string, stateMetadataPresent: boolean): DoctorFinding | null {
+	const store = join(stateDir, "sessions");
+	const usable = directoryFinding("session store", store);
+	if (!usable.ok) {
+		if (!stateMetadataPresent && !existsSync(store)) return null;
+		return usable;
+	}
+
+	const ledgers: string[] = [];
+	const unlistable: string[] = [];
+	collectSessionLedgers(store, ledgers, unlistable);
+
+	// One entry per damaged file, not per damaged line: a ledger truncated mid
+	// rewrite can warn on every line it holds, and the row is one line wide.
+	const damaged: SessionJsonlWarning[] = [];
+	for (const ledger of ledgers) {
+		const first: SessionJsonlWarning[] = [];
+		readSessionFileEntries(ledger, {
+			onWarning: (warning) => {
+				if (first.length === 0) first.push(warning);
+			},
+		});
+		const warning = first[0];
+		if (warning) damaged.push(warning);
+	}
+
+	if (damaged.length === 0 && unlistable.length === 0) {
+		return {
+			ok: true,
+			name: "session store",
+			detail: ledgers.length === 0 ? `${store} (no sessions recorded)` : `${store} (${ledgers.length} readable)`,
+		};
+	}
+
+	const clauses = summarizeSessionDamage(damaged);
+	const shown = clauses.slice(0, SESSION_STORE_DAMAGE_DETAIL_LIMIT);
+	const remainder = clauses.length - shown.length;
+	const parts: string[] = [];
+	if (damaged.length > 0) {
+		parts.push(
+			`${damaged.length} of ${ledgers.length} ledgers hold lines that cannot be read: ${shown.join("; ")}${
+				remainder > 0 ? `; +${remainder} more` : ""
+			}`,
+		);
+	}
+	parts.push(...unlistable);
+	return { ok: false, name: "session store", detail: parts.join("; ") };
+}
+
+/**
+ * The newest session's prompt cache as the read model folds it from the session's journal, every number the read
+ * model's display (#434 §11.3). Newest is the session whose journal was written last.
+ */
+function latestSessionCacheFinding(stateDir: string): DoctorFinding | null {
+	const root = telemetrySessionsDirectory(stateDir);
+	let latest: { sessionId: string; at: number } | null = null;
+	let names: string[];
+	try {
+		names = readdirSync(root);
+	} catch {
+		// No session has journaled yet, so there is no cache evidence to report.
+		return null;
+	}
+	for (const sessionId of names) {
+		try {
+			const directory = join(root, sessionId);
+			for (const segment of telemetryJournalFiles(readdirSync(directory))) {
+				const at = statSync(join(directory, segment)).mtimeMs;
+				if (latest === null || at > latest.at) latest = { sessionId, at };
+			}
+		} catch {
+			// An unlistable scope has its own row in `pancode telemetry doctor`; it holds no evidence here.
+		}
+	}
+	if (latest === null) return null;
+	let report: CacheReportV1;
+	try {
+		const source = loadSessionTelemetrySource(stateDir, latest.sessionId);
+		if (source === null) return null;
+		report = cacheReport(source);
+	} catch (error) {
+		return {
+			ok: true,
+			level: "warn",
+			name: "cache telemetry",
+			detail: `last session ${latest.sessionId}: journal unreadable (${error instanceof Error ? error.message : String(error)})`,
+		};
+	}
+	const counts = report.verdicts;
+	if (counts.hot + counts.partial + counts.cold + counts.small + counts.unknown === 0) {
+		return {
+			// A session that made no cached model call has nothing to judge; no setting changes that, so no advice.
+			ok: true,
+			level: "info",
+			name: "cache telemetry",
+			detail: `last session ${latest.sessionId}: no prompt-cache verdict journaled`,
+		};
+	}
+	const top = [...report.byCause].sort((a, b) => b.breaks - a.breaks || a.cause.localeCompare(b.cause))[0];
+	const calls = counts.hot + counts.partial + counts.cold + counts.small + counts.unknown;
+	const share = report.share?.fact;
+	// C-05: a session that read under half its prompts from cache names what cost it the rest.
+	const value = share && !("kind" in share) && share.unknownCount === 0 ? share.measured + share.estimated : null;
+	const low = value !== null && value < 50 && calls >= 5;
+	const unreported = unreportedCacheReadWords(report.cacheRead.fact);
+	return {
+		ok: true,
+		name: "cache telemetry",
+		detail: `last session ${latest.sessionId}: cached share ${report.share?.display ?? "unknown"}; hot ${counts.hot} · partial ${counts.partial} · cold ${counts.cold} · small ${counts.small} · unknown ${counts.unknown}; cache read ${report.cacheRead.display} · re-prefilled ${renderUpperBound(report.rePrefilled.fact, report.rePrefilled.display)} in ${report.breaks.length} breaks (${renderUpperBound(report.breakUsd.fact, report.breakUsd.display)}); top cause ${top ? `${top.cause} (${top.breaks}${low ? `, ${renderUpperBound(top.rePrefilled.fact, top.rePrefilled.display)} re-prefilled` : ""})` : "none"}${unreported === null ? "" : `; ${unreported}`}`,
+	};
+}
+
+/**
+ * Why the credentials store did not fully parse, read through the same
+ * `openAuthStorage` the auth commands use, or null when it is clean. The row
+ * used to report the file mode and nothing else, so a store this version cannot
+ * parse printed `OK credentials 600` while every provider in it read back as
+ * disconnected.
+ */
+function credentialsDamage(): string | null {
+	try {
+		return openAuthStorage().damageReason();
+	} catch (error) {
+		return error instanceof Error ? error.message : String(error);
+	}
+}
+
+/**
+ * True when PanCode has never written to this home: each of the four roots is
+ * missing or an empty directory. A `mkdir -p`, an installer or another tool can
+ * create the roots before PanCode first runs, and that is still a home waiting
+ * for setup. Anything inside a root (a settings.yaml, a credentials file, a
+ * telemetry journal, a stale home.json) is a home PanCode once touched, and the
+ * per-row report is the honest one for it.
+ */
+export function isUninitializedHome(dirs: ReturnType<typeof resolvePancodeDirs> = resolvePancodeDirs()): boolean {
+	return [dirs.config, dirs.data, dirs.state, dirs.cache].every((root) => {
+		try {
+			return readdirSync(root).length === 0;
+		} catch (error) {
+			// Missing is untouched; a file or an unreadable root is a home the per-row report must describe.
+			return (error as NodeJS.ErrnoException).code === "ENOENT";
+		}
+	});
+}
+
+/**
+ * The install method row. An installer install also names the Node it owns and
+ * the prefix the launcher runs, and warns when this process is not that Node
+ * (PANCODE_NODE, or the package entry run by hand), since `upgrade` keeps
+ * the managed runtime rather than the one running now.
+ */
+function installMethodFinding(installation: Installation): DoctorFinding {
+	if (installation.kind === "unknown") {
+		return {
+			ok: true,
+			level: "warn",
+			name: "install method",
+			detail: `unknown (${installation.root}); automatic upgrade is unavailable; use the original package manager`,
+		};
+	}
+	const record = installation.installer;
+	if (installation.kind !== "installer" || record === undefined) {
+		if (!["npm", "pnpm", "bun"].includes(installation.kind))
+			return {
+				ok: true,
+				name: "install method",
+				detail: `${installation.kind} (${installation.root}; ${describeTracking(installation)})`,
+			};
+		// #436: a user-writable package-manager prefix updates after the session quits.
+		let setting = true;
+		try {
+			setting = readSettings().interface.autoUpdate;
+		} catch {
+			// The settings row reports an unreadable file.
+		}
+		const off =
+			process.env.PANCODE_AUTO_UPDATE === "0"
+				? "env"
+				: !setting
+					? "setting"
+					: deferredUpdateTarget(installation, "0.0.0") === null
+						? "prefix not user-writable"
+						: null;
+		const cache = resolvePancodeDirs().cache;
+		const pending = readDeferredResult(deferredResultPath(installation, cache));
+		const last = pending?.deferred ? null : (pending ?? readLastBackgroundUpdate(installation, cache));
+		const lastText = last
+			? `; last background update ${new Date(last.at).toISOString()}: ${last.ok ? `ok v${last.from} -> v${last.to}` : `failed v${last.to}: ${last.detail}${"log" in last && last.log ? `; log ${last.log}` : ""}`}`
+			: "";
+		const wait = readDeferredWait(installation, cache, readPancodeVersion());
+		const waitText = wait
+			? `; update to v${wait.to} waiting for ${wait.detail} since ${new Date(wait.at).toISOString()}`
+			: "";
+		return {
+			ok: true,
+			...((last && !last.ok) || wait ? { level: "warn" as const } : {}),
+			name: "install method",
+			detail: `${installation.kind} (${installation.root}; ${describeTracking(installation)}; update after exit ${off ? `off (${off})` : "on"}${lastText}${waitText})`,
+		};
+	}
+	const stale = record.current !== installation.prefix ? `; the launcher now runs ${record.current}` : "";
+	const foreignNode = process.execPath !== record.node ? `; this process runs ${process.execPath} instead` : "";
+	// #436: name which switch holds background installs off and how the last one ended.
+	let setting = true;
+	try {
+		setting = readSettings().interface.autoUpdate;
+	} catch {
+		// The settings row reports an unreadable file; the policy falls back to the default.
+	}
+	const policy = nativeAutoUpdatePolicy(installation, setting);
+	const tracking = `; ${describeTracking(installation, { autoUpdate: policy })}`;
+	const last = readLastBackgroundUpdate(installation, resolvePancodeDirs().cache);
+	const lastUpdate = last
+		? `; last background update ${new Date(last.at).toISOString()}: ${last.ok ? `ok v${last.from} -> v${last.to}` : `failed v${last.to}: ${last.detail}`}`
+		: "";
+	return {
+		ok: true,
+		...(stale || foreignNode || (last && !last.ok) ? { level: "warn" as const } : {}),
+		name: "install method",
+		detail: `installer (prefix ${installation.prefix ?? installation.root}; runtime Node v${record.nodeVersion} ${record.nodeBuild} at ${record.node}${stale}${foreignNode}${tracking}${lastUpdate})`,
+	};
+}
+
+/** The memory store row: what `--fix` dropped, or what it would drop. */
+function memoryStoreFindings(fixed: boolean, dataDir: string, memoryRepair: MemoryStoreRepair | null): DoctorFinding[] {
+	const findings: DoctorFinding[] = [];
+	let memory = memoryRepair;
+	if (!fixed) {
+		try {
+			memory = inspectMemoryStoreRepair(dataDir);
+		} catch (error) {
+			findings.push({
+				ok: false,
+				name: "memory store",
+				detail: `could not be read: ${error instanceof Error ? error.message : String(error)}`,
+			});
+		}
+	}
+	if (memory !== null) {
+		findings.push({
+			ok: true,
+			...(fixed ? {} : { level: "warn" as const }),
+			name: "memory store",
+			detail: `${fixed ? "rewrote" : "would rewrite"} ${memory.path} keeping ${memory.kept} records and dropping ${memory.dropped} this build cannot read${fixed ? "" : " (run `pancode doctor --fix`)"}`,
+		});
+	}
+	return findings;
+}
+
+export function runDoctor(options: DoctorOptions = {}): DoctorFinding[] {
+	let repairFailure: string | null = null;
+	let settingsRepair: SettingsRepairResult | null = null;
+	let settingsTightenedFrom: number | null = null;
+	let credentialsAclRemoved: string[] = [];
+	const rootsTightened: string[] = [];
+	let memoryRepair: MemoryStoreRepair | null = null;
+	if (options.fix) {
+		// A repair that throws used to take the whole report with it, so the one
+		// command that explains the damage printed nothing. Record it and carry on;
+		// the rows below are what say which root is wrong.
+		try {
+			const roots = resolvePancodeDirs();
+			if (process.platform !== "win32" && pancodeDirLayoutProblems(roots).length === 0) {
+				for (const path of Object.values(roots)) {
+					if (!existsSync(path)) continue;
+					const stat = statSync(path);
+					if (stat.isDirectory() && stat.uid === process.getuid?.() && (stat.mode & 0o700) !== 0o700)
+						chmodSync(path, (stat.mode & 0o777) | 0o700);
+				}
+			}
+			initializePancodeHome();
+			// After init, so a root it just stamped as PanCode's passes the same test reset uses.
+			if (process.platform !== "win32" && pancodeDirLayoutProblems(roots).length === 0) {
+				for (const role of PRIVATE_ROOT_ROLES) {
+					const path = roots[role];
+					if (!existsSync(path) || removablePancodeRootProblem(role, path) !== null) continue;
+					const stat = statSync(path);
+					if (stat.isDirectory() && stat.uid === process.getuid?.() && (stat.mode & 0o077) !== 0) {
+						chmodSync(path, 0o700);
+						rootsTightened.push(`${role} dir`);
+					}
+				}
+			}
+			settingsRepair = repairSettingsCoercions();
+			settingsTightenedFrom = tightenToOwnerOnly(join(resolvePancodeDirs().config, "settings.yaml"));
+			const credentialsPath = join(resolvePancodeDirs().config, "credentials.yaml");
+			if (existsSync(credentialsPath)) {
+				chmodSync(credentialsPath, 0o600);
+				// Who held an ACE before the repair, so the row can say what it removed.
+				const before = process.platform === "win32" ? readWindowsAcl(credentialsPath) : null;
+				// The directory first, so a later write's temp file starts owner-only too.
+				const credentialsDir = dirname(credentialsPath);
+				const dirFailure = applyOwnerOnlyAcl(credentialsDir, {}, { directory: true });
+				if (dirFailure !== null) throw new Error(`could not make ${credentialsDir} owner-only: ${dirFailure}`);
+				const aclFailure = applyOwnerOnlyAcl(credentialsPath);
+				if (aclFailure !== null) throw new Error(`could not make ${credentialsPath} owner-only: ${aclFailure}`);
+				if (before !== null && "dacl" in before)
+					credentialsAclRemoved = extraAclPrincipals(before.dacl, currentWindowsAccount()).map(aclPrincipalName);
+			}
+			memoryRepair = repairMemoryStore(resolvePancodeDirs().data);
+		} catch (error) {
+			repairFailure = error instanceof Error ? error.message : String(error);
+		}
+	}
+	const findings: DoctorFinding[] = [];
+	if (repairFailure !== null) {
+		findings.push({ ok: false, name: "repair", detail: `--fix could not finish: ${repairFailure}` });
+	}
+	const version = getVersionInfo();
+	findings.push({ ok: true, name: "PanCode version", detail: readPancodeVersionLabel() });
+	const installation = inspectInstallation();
+	findings.push(installMethodFinding(installation));
+	if (installation.kind !== "unknown") {
+		const launcher = launcherPathFor(installation);
+		const shadow = pancodeShadowing(launcher, installation.entry);
+		if (shadow !== null)
+			findings.push({
+				ok: true,
+				level: "warn",
+				name: "pancode on PATH",
+				detail: `${shadow} comes first on PATH, so \`pancode\` runs it instead of this install's ${launcher}; remove it, or put ${dirname(launcher)} earlier: \`export PATH="${dirname(launcher)}:$PATH"\`, then \`hash -r\``,
+			});
+	}
+	findings.push({ ok: true, name: "node version", detail: version.node });
+	findings.push({ ok: true, name: "platform", detail: version.platform });
+	const engineReady = Boolean(version.piAgentCore && version.piAi && version.piTui);
+	findings.push({
+		ok: engineReady,
+		name: "engine runtime",
+		detail: engineReady ? "ready" : "missing required packages",
+	});
+
+	const dirs = resolvePancodeDirs();
+	const layoutProblems = pancodeDirLayoutProblems(dirs);
+	findings.push({
+		ok: layoutProblems.length === 0,
+		name: "directory layout",
+		detail:
+			layoutProblems.length === 0
+				? "config, data, state, and cache roots are absolute, distinct, and non-nesting"
+				: `${layoutProblems.join("; ")}. Set four absolute, distinct, non-nesting PANCODE_*_DIR paths before reset or uninstall`,
+	});
+	const config = dirs.config;
+	if (!options.fix && isUninitializedHome(dirs)) {
+		// A home PanCode has never written to is not a broken one. Seven `!!` rows
+		// each pointing at `--fix` read as damage to someone who ran `doctor` as
+		// their very first command after `npm install`, and the exit code said
+		// the same. One row names the state and the two commands that leave it.
+		findings.push({
+			ok: true,
+			level: "warn",
+			name: "installation",
+			detail:
+				"not set up yet: run `pancode` to start the first-run wizard, or `pancode configure`; " +
+				"`pancode doctor --fix` creates the directories without choosing a model",
+		});
+		return findings;
+	}
+	findings.push(directoryFinding("config dir", config));
+	findings.push(directoryFinding("data dir", dirs.data));
+	findings.push(directoryFinding("state dir", dirs.state));
+	findings.push(directoryFinding("cache dir", dirs.cache));
+	for (const role of PRIVATE_ROOT_ROLES) {
+		const notOwned =
+			pancodeDirLayoutProblems(dirs).length > 0
+				? "a root layout problem reported above"
+				: removablePancodeRootProblem(role, dirs[role]);
+		const finding = privateRootFinding(`${role} dir`, dirs[role], rootsTightened, notOwned);
+		if (finding) findings.push(finding);
+	}
+
+	// The settings row runs the loader's own read: anything readSettings would
+	// refuse to start on shows up here read-only, with the exact key paths and
+	// the remedy that fits the failure. Reading it here a second time and
+	// formatting it separately is what let this row call a parse error
+	// `unreadable:` while the loader called the same file invalid YAML.
+	const settings = join(config, "settings.yaml");
+	if (!existsSync(settings)) {
+		findings.push({
+			ok: false,
+			name: "settings.yaml",
+			detail: "missing (run `pancode doctor --fix` or `pancode configure`)",
+		});
+	} else {
+		const validation = validateSettingsFile();
+		if (validation.issues.length === 0) {
+			findings.push({ ok: true, name: "settings.yaml", detail: settings });
+		} else {
+			findings.push({ ok: false, name: "settings.yaml", detail: formatSettingsIssues(validation.issues) });
+		}
+		const settingsMode = process.platform === "win32" ? null : statSync(settings).mode & 0o777;
+		if (settingsTightenedFrom !== null) {
+			findings.push({
+				ok: true,
+				name: "settings.yaml mode",
+				detail: `tightened ${settingsTightenedFrom.toString(8)} -> 600`,
+			});
+		} else if (settingsMode !== null && isWiderThanOwnerOnly(settingsMode)) {
+			findings.push({
+				ok: true,
+				level: "warn",
+				name: "settings.yaml mode",
+				detail: `${settingsMode.toString(8)} lets group or other users read it (run \`pancode doctor --fix\` to set 600)`,
+			});
+		}
+		if (validation.coercions.length > 0) {
+			// Loading works today, so this is a warning and not a failure. The file
+			// keeps its booleans until `--fix` rewrites exactly those values.
+			findings.push({
+				ok: true,
+				level: "warn",
+				name: "settings.yaml booleans",
+				detail: foldDetail(
+					`${validation.coercions.map((entry) => `${entry.path}: ${entry.from}`).join(", ")} read as on/off strings (YAML 1.1 style); run \`pancode doctor --fix\` to rewrite them`,
+				),
+			});
+		}
+		if (settingsRepair !== null && settingsRepair.rewritten.length > 0) {
+			findings.push({
+				ok: true,
+				name: "settings.yaml repair",
+				detail: foldDetail(
+					`rewrote ${settingsRepair.rewritten.map((entry) => `${entry.path}: ${entry.from} -> "${entry.to}"`).join(", ")}`,
+				),
+			});
+		}
+		if (settingsRepair !== null && settingsRepair.skipped.length > 0) {
+			findings.push({
+				ok: true,
+				level: "warn",
+				name: "settings.yaml repair skipped",
+				detail: `could not safely rewrite ${settingsRepair.skipped.join(", ")}; replace aliases, anchors, or tags with plain scalar values and run doctor --fix again`,
+			});
+		}
+	}
+
+	// Single "credentials" row covers all three states (missing / wrong mode /
+	// correct mode / read error) so external assertions can grep one stable
+	// row name instead of branching on state.
+	const creds = join(config, "credentials.yaml");
+	if (!existsSync(creds)) {
+		findings.push({ ok: false, name: "credentials", detail: "missing (run `pancode doctor --fix`)" });
+	} else {
+		try {
+			accessSync(creds, constants.R_OK);
+			const damage = credentialsDamage();
+			if (process.platform === "win32") {
+				// Windows reports every writable file as 666 and chmod cannot narrow
+				// it, so the mode says nothing there; the file's ACL is what decides
+				// which other accounts can read or replace the key.
+				findings.push(
+					damage === null
+						? windowsCredentialsFinding(creds, readWindowsAcl(creds), currentWindowsAccount(), credentialsAclRemoved)
+						: { ok: false, name: "credentials", detail: damage },
+				);
+			} else {
+				const mode = statSync(creds).mode & 0o777;
+				findings.push({
+					ok: mode === 0o600 && damage === null,
+					name: "credentials",
+					detail:
+						damage === null
+							? isWiderThanOwnerOnly(mode)
+								? `${mode.toString(8)} (run \`pancode doctor --fix\` to set 600)`
+								: mode.toString(8)
+							: `${mode.toString(8)}; ${damage}`,
+				});
+			}
+		} catch (err) {
+			// `String(err)` put a raw `Error: EACCES...` in the row and named no
+			// remedy, the one shape every other failing row avoids. `--fix` chmods
+			// this file to 600, so it is the command that repairs the common case.
+			const message = err instanceof Error ? err.message : String(err);
+			findings.push({
+				ok: false,
+				name: "credentials",
+				detail: foldDetail(`${creds} cannot be read: ${message} (run \`pancode doctor --fix\`)`),
+			});
+		}
+	}
+
+	const stateRead = readStateInfoResult();
+	const state = stateRead.info;
+	// A dev build never rewrites the recorded version (see initializePancodeHome), so
+	// a record from the installed release is the expected state, not a stale one.
+	const devBuild = isDevVersion(version.pancode);
+	const newerHome = detectNewerHome();
+	const onPath = newerHome ? pancodeBinariesOnPath() : [];
+	const stateCurrent = Boolean(state && (state.version === version.pancode || devBuild)) && newerHome === null;
+	// Each stamp names what actually happened. A record rebuilt by `--fix` over a
+	// state root whose install time was gone carries no installedAt, and the row
+	// used to print the repair minute as the day PanCode was installed.
+	const stateStamps = state
+		? [
+				state.installedAt ? `installed ${state.installedAt}` : null,
+				state.repairedAt ? `repaired ${state.repairedAt}` : null,
+				state.upgradedAt ? `upgraded ${state.upgradedAt}${state.upgradedFrom ? ` from ${state.upgradedFrom}` : ""}` : null,
+			].filter((stamp): stamp is string => stamp !== null)
+		: [];
+	const stateStamp = stateStamps.join(", ");
+	findings.push({
+		ok: stateCurrent,
+		name: "state metadata",
+		detail: newerHome
+			? `last used by newer ${newerHome.version}; this is ${version.pancode} at ${process.argv[1] ?? process.execPath}${onPath.length > 0 ? `; on PATH: ${onPath.join(", ")}` : ""}. Run the newer \`pancode\``
+			: state
+				? stateCurrent
+					? `${state.version} (${stateStamp})${state.version === version.pancode ? "" : "; this dev build leaves the recorded version alone"}`
+					: `stale ${state.version} (${stateStamp}); current ${version.pancode} (run \`pancode doctor --fix\`)`
+				: stateRead.problem !== null
+					? // Present but unreadable. `--fix` cannot repair this one: it fails on
+						// the same permissions, so pointing there would send the user in a
+						// circle.
+						stateRead.problem
+					: // Every other failing row names the command that repairs it. This one
+						// said only "missing", and `pancode doctor --fix` does write it.
+						"missing (run `pancode doctor --fix`)",
+	});
+
+	findings.push(...memoryStoreFindings(options.fix === true, dirs.data, memoryRepair));
+
+	const sessionStore = sessionStoreFinding(dirs.state, state !== null);
+	if (sessionStore !== null) findings.push(sessionStore);
+	const cacheTelemetry = latestSessionCacheFinding(dirs.state);
+	if (cacheTelemetry !== null) findings.push(cacheTelemetry);
+	findings.push(telemetryModeFinding(dirs.state, process.cwd()));
+	const reports = reportsFinding(dirs.state);
+	if (reports !== null) findings.push(reports);
+
+	return findings;
+}
+
+/** INFO only, never a failure: what this machine reported and which of it a release fixed, read from disk (R-14). */
+function reportsFinding(stateDir: string): DoctorFinding | null {
+	try {
+		const detail = reportsDoctorDetail(stateDir, readPackagedChangelog());
+		return detail === null ? null : { ok: true, level: "info", name: "reports", detail };
+	} catch (error) {
+		return {
+			ok: true,
+			level: "info",
+			name: "reports",
+			detail: `outbox unreadable: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+}
+
+/** The mode, the capture it yields here, and this workspace's consent, as a session in this directory sees them (#434). */
+function telemetryModeFinding(stateDir: string, cwd: string): DoctorFinding {
+	const name = "telemetry";
+	let settings: ReturnType<typeof readSettings>;
+	try {
+		settings = readLayeredSettings(cwd).settings;
+	} catch (err) {
+		return {
+			ok: true,
+			level: "warn",
+			name,
+			detail: `settings unreadable: ${err instanceof Error ? err.message : String(err)}`,
+		};
+	}
+	const telemetry = settings.telemetry;
+	const { capture, covering, consent } = workspaceTelemetryCapture(telemetry, stateDir, cwd);
+	const consents = `${consent.entries.length} workspace consent${consent.entries.length === 1 ? "" : "s"} recorded`;
+	const parts = [`mode ${capture.mode}`];
+	if (capture.mode === "standard") parts.push("research capture off", consents);
+	else {
+		const flags = (Object.keys(capture.capture) as Array<keyof typeof capture.capture>).filter(
+			(flag) => flag !== "content" && capture.capture[flag],
+		);
+		parts.push(flags.length > 0 ? `research flags on: ${flags.join(", ")}` : "every research flag off");
+		if (!telemetry.research.content) parts.push("content off (telemetry.research.content)");
+		else if (covering)
+			parts.push(
+				`content on: consent for ${covering.workspace} granted ${covering.grantedAt} by ${covering.grantedBy.user}@${covering.grantedBy.host}`,
+			);
+		else parts.push("content requested, but this workspace has no consent (pancode telemetry consent)");
+	}
+	if (consent.error) parts.push(`consent store unreadable, so no workspace has consent: ${consent.error}`);
+	return {
+		ok: true,
+		level: consent.error ? "warn" : "info",
+		name,
+		detail: parts.join("; "),
+	};
+}
+
+/**
+ * One finding is one row, so a detail carrying newlines has to be folded
+ * before it reaches the column layout. A YAML parse error is the case that
+ * forced this: its message embeds the offending source line and a caret,
+ * which pushed the rows below it out of alignment and buried them under a
+ * blank stretch that read as the end of the report.
+ */
+function foldDetail(detail: string): string {
+	return detail.replace(/\s*\n\s*/g, " ").trim();
+}
+
+export function formatDoctorReport(findings: DoctorFinding[]): string {
+	const lines = findings.map(withDoctorCommand).map((f) => {
+		const level = f.level ?? (f.ok ? "ok" : "error");
+		const badge = level === "ok" ? "OK" : level === "info" ? "INFO" : level === "warn" ? "WARN" : "!! ";
+		return `${badge.padEnd(4)} ${f.name.padEnd(22)} ${foldDetail(f.detail)}`;
+	});
+	return lines.join("\n");
+}
+
+/** Keep CLI, JSON and in-session warnings actionable even when an optional check only supplies a diagnosis. */
+export function withDoctorCommand(finding: DoctorFinding): DoctorFinding {
+	if (finding.ok && finding.level !== "warn" && finding.level !== "error") return finding;
+	if (
+		/`(?:pancode(?:`| [^`<>]+`)|pnpm [^`]+`|chmod [^`]+`|git (?:mv|rm) [^`]+`|export [A-Za-z_]\w*=[^`]+`)/.test(
+			finding.detail,
+		) ||
+		// The setup-status sentence names its command as plain "Run: pancode ...".
+		/\bRun: pancode /.test(finding.detail)
+	)
+		return finding;
+	const name = finding.name;
+	const command = /^(?:settings|credentials|repair|state metadata|.* dir$|installation files)/.test(name)
+		? "pancode doctor --fix"
+		: /^(?:chat|connection |model |target |tools |cache |system one.*engine)/.test(name)
+			? "pancode configure"
+			: name.startsWith("interop")
+				? "pancode configure --interop"
+				: name.startsWith("harness")
+					? "pancode agents validate"
+					: name.startsWith("GUI")
+						? "pancode gui background status"
+						: /^(?:install method|engine runtime|node version)/.test(name)
+							? "pancode upgrade"
+							: "pancode config inspect --json";
+	// A detail that ends its sentence loses the period, so the join never reads `.; next:`.
+	return { ...finding, detail: `${finding.detail.replace(/\.$/u, "")}; next: \`${command}\`` };
+}
+
+/**
+ * Asynchronous doctor sweep: walks settings.targets and fingerprints any
+ * protocol-compatible URL that responds as a known native server (LM Studio,
+ * Ollama). Emits a WARN finding so the user knows to switch to the native
+ * runtime for proper resident-model lifecycle management. Network-bound and
+ * therefore not part of the synchronous `runDoctor()` core; CI calls the core,
+ * the CLI optionally invokes this on top.
+ */
+/**
+ * Fleet preflight sweep: probes every configured fleet node over its real
+ * SSH channel (reachability, version-matched pancode, path parity for the
+ * current project root, writable remote state dir) and persists the verdicts
+ * to the durable preflight store that dispatch placement consults. A failing
+ * node is a WARN (ineligible for placement), never fatal.
+ */
+export async function runDoctorFleetChecks(
+	projectRoot: string = process.cwd(),
+	options: { fix?: boolean } = {},
+): Promise<DoctorFinding[]> {
+	let settings: ReturnType<typeof readSettings>;
+	try {
+		settings = readSettings();
+	} catch {
+		return [];
+	}
+	const nodes = settings.fleet?.nodes ?? [];
+	if (nodes.length === 0) return [];
+	const { recordFleetPreflight, fleetPreflightVerdict } = await import("../dispatch/fleet-preflight.js");
+	const { rejectSameMachineNodes, testFleetNode } = await import("../dispatch/fleet-nodes.js");
+	const records = await Promise.all(
+		nodes.map((node) => testFleetNode(node.id, projectRoot, { sharedProbe: options.fix === true })),
+	);
+	// Each probe saw only earlier records, so two entries for one machine checked together both passed.
+	rejectSameMachineNodes(records);
+	// Placement admits a node only from a stored record. Plain doctor observes;
+	// --fix is the run that may write state, so it is the one that records.
+	let recorded = options.fix === true;
+	if (recorded) {
+		try {
+			recordFleetPreflight(records);
+		} catch {
+			recorded = false;
+		}
+	}
+	return records.map((record, index) => {
+		const node = nodes[index];
+		const eligible = node !== undefined && fleetPreflightVerdict(node, projectRoot).ok;
+		const targets = record.targets
+			.map(
+				(fact) =>
+					`${fact.targetId}: network=${fact.reachable}, listingAccess=${fact.authentication ?? "unknown"}, model=${fact.modelAvailable}, runtime=${fact.runtimeCompatible}`,
+			)
+			.join("; ");
+		return {
+			ok: true,
+			level: record.ok ? ("ok" as const) : ("warn" as const),
+			name: `fleet node ${record.nodeId}`,
+			detail: record.ok
+				? `checks passed; ${eligible ? "eligible from recorded preflight" : `not admitted, run fleet nodes test ${record.nodeId} --record`}${recorded ? " (recorded)" : ""}: ${record.host}, pancode ${record.remoteVersion}, project=${record.project?.kind ?? "not verified"}; ${targets}${record.note ? `; note: ${record.note}` : ""}`
+				: `needs attention: ${record.detail ?? "preflight failed"}`,
+		};
+	});
+}
+
+/**
+ * Interop sweep: one row per agent detection found, plus one aggregate row for
+ * the foreign skill roots that resolved. This reports and never proposes, and
+ * it never starts a session with a peer: reachability for a stdio peer means
+ * its command resolves on PATH. Nothing here writes.
+ */
+export async function runDoctorInteropChecks(projectRoot: string = process.cwd()): Promise<DoctorFinding[]> {
+	let settings: ReturnType<typeof readSettings>;
+	try {
+		settings = readSettings();
+	} catch {
+		return [];
+	}
+	const configDir = resolvePancodeDirs().config;
+	// Extension discovery reads through a config accessor that creates the root. With no
+	// config root there cannot be user PanCode extensions or skills to inspect, so
+	// keep the broken partial home untouched and retain the binary checks below.
+	const skills = existsSync(configDir) ? loadSkills({ cwd: projectRoot, configDir }) : { items: [], diagnostics: [] };
+	const foreign = skills.items.filter((skill) => FOREIGN_SKILL_SOURCES.has(skill.source));
+	const report = await detectInteropAgents(
+		{
+			cwd: projectRoot,
+			// Version probes use the shared command runner, which prepares managed Git
+			// hooks before spawning. Doctor promises observation only, so PATH presence
+			// is the strongest safe fact here.
+			probeVersion: false,
+			skillSources: skills.items.map((skill) => skill.source),
+		},
+		// Reading the prior report goes through a state accessor that creates the root.
+		// Existing decisions are irrelevant to doctor's presence-only projection.
+		[],
+	);
+	const configured = new Set(settings.integrations.externalAgents.entries.map((agent) => agent.id));
+	const findings: DoctorFinding[] = report.agents.map((agent) => {
+		const kind = interopAgentKind(agent.kind);
+		const status = configured.has(agent.kind)
+			? "configured"
+			: kind?.acp === undefined
+				? "no ACP recipe"
+				: "detected, not configured";
+		const head = agent.binary === undefined ? "not on PATH" : (agent.version ?? "version unknown");
+		const where =
+			agent.binary !== undefined
+				? ` at ${agent.binary}`
+				: agent.installDir !== undefined
+					? `, files under ${agent.installDir}`
+					: "";
+		// A detection from files alone is a note, so the folded row keeps it apart from commands found on PATH.
+		return {
+			ok: true,
+			level: agent.binary === undefined ? "info" : "ok",
+			name: `interop ${agent.kind}`,
+			detail: `${head} (${status})${where}`,
+		};
+	});
+	for (const agent of settings.integrations.externalAgents.entries) {
+		if (resolveOnPath([agent.command]).presence === "present") continue;
+		findings.push({
+			ok: true,
+			level: "warn",
+			name: `interop ${agent.id}`,
+			detail: `configured peer command \`${agent.command}\` does not resolve on PATH; /run ${agent.id} will fail to spawn`,
+		});
+	}
+	if (foreign.length > 0) {
+		const roots = new Set(foreign.map((skill) => skill.sourceInfo.source ?? skill.baseDir));
+		findings.push({
+			ok: true,
+			level: "ok",
+			name: "interop skills",
+			detail: `${foreign.length} ${foreign.length === 1 ? "skill" : "skills"} from ${roots.size} ${roots.size === 1 ? "foreign root" : "foreign roots"}`,
+		});
+	}
+	return findings;
+}
+
+export async function runDoctorRuntimeChecks(): Promise<DoctorFinding[]> {
+	let settings: ReturnType<typeof readSettings>;
+	try {
+		settings = readSettings();
+	} catch {
+		return [];
+	}
+	const candidates = settings.targets.filter(
+		(entry) => (entry.runtime === "openai-compat" || entry.runtime === "anthropic-compat") && Boolean(entry.url),
+	);
+	if (candidates.length === 0) return [];
+	const results = await Promise.all(
+		candidates.map(async (target): Promise<DoctorFinding | null> => {
+			const url = target.url;
+			if (!url) return null;
+			const fingerprint = await fingerprintNativeRuntime(url);
+			if (!fingerprint) return null;
+			return {
+				ok: true,
+				level: "warn",
+				name: `target ${target.id}`,
+				detail: `${fingerprint.displayName} detected at ${url}; run \`pancode targets convert ${target.id} --runtime ${fingerprint.runtimeId}\` for proper resident-model lifecycle`,
+			};
+		}),
+	);
+	return results.filter((finding): finding is DoctorFinding => finding !== null);
+}
+
+/** One configured model pointer at a target, named the way settings.yaml spells it. */
+interface ConfiguredModelRole {
+	role: string;
+	model: string;
+	path?: string;
+}
+
+function configuredModelRoles(
+	settings: ReturnType<typeof readSettings>,
+	target: TargetDescriptor,
+): ConfiguredModelRole[] {
+	const roles: ConfiguredModelRole[] = [];
+	if (target.defaultModel)
+		roles.push({
+			role: "defaultModel",
+			model: target.defaultModel,
+			path: `targets[${settings.targets.indexOf(target)}].defaultModel`,
+		});
+	if (settings.chat.target === target.id && settings.chat.model) {
+		roles.push({ role: "chat.model", model: settings.chat.model });
+	}
+	if (settings.context.memory.target === target.id && settings.context.memory.model) {
+		roles.push({ role: "memory.model", model: settings.context.memory.model, path: "context.memory.model" });
+	}
+	if (settings.fleet.default.target === target.id && settings.fleet.default.model) {
+		roles.push({ role: "fleet.default.model", model: settings.fleet.default.model });
+	}
+	for (const [name, profile] of Object.entries(settings.fleet.profiles)) {
+		if (profile.target === target.id && profile.model)
+			roles.push({ role: `fleet.profiles.${name}.model`, model: profile.model });
+	}
+	for (const [name, roster] of Object.entries(settings.fleet.rosters)) {
+		for (const [index, member] of roster.members.entries()) {
+			if (member.target === target.id && member.model)
+				roles.push({
+					role: `fleet.rosters.${name}.${member.label}.model`,
+					model: member.model,
+					path: `fleet.rosters.${name}.members[${index}].model`,
+				});
+		}
+	}
+	return roles;
+}
+
+/**
+ * Total probe budget for the model sweep. A target that does not answer in
+ * this time falls back to the list configure recorded, so a black-holed
+ * remote costs doctor a bounded wait rather than the probe's full timeout.
+ */
+const DOCTOR_MODEL_PROBE_TIMEOUT_MS = 2_500;
+
+async function doctorProbeContext(
+	target: TargetDescriptor,
+	runtime: RuntimeDescriptor,
+	signal: AbortSignal,
+): Promise<ProbeContext> {
+	const ctx: ProbeContext = {
+		credentialsPresent: credentialsPresent(),
+		httpTimeoutMs: DOCTOR_MODEL_PROBE_TIMEOUT_MS,
+		signal,
+	};
+	try {
+		const auth = openAuthStorage();
+		const authTarget = resolveAuthTarget(target, runtime);
+		// The runtime probes read the environment for any name listed in credentialsPresent; a refused target gets none.
+		if (auth.statusForTarget(authTarget, { includeFallback: false }).refused) {
+			ctx.credentialsPresent = new Set();
+			ctx.credentialRefused = true;
+			return ctx;
+		}
+		if (!targetRequiresAuth(target, runtime)) return ctx;
+		const stored = auth.get(authTarget.providerId);
+		// Standard doctor is read-only: resolving an expired OAuth credential
+		// would refresh it and persist the new token. Let the passive probe
+		// report missing auth instead, with the expiry explained in its row.
+		if (
+			auth.statusForTarget(authTarget, { includeFallback: false }).source === "stored-oauth" &&
+			stored?.type === "oauth"
+		) {
+			if (stored.expires > Date.now()) ctx.authToken = stored.access;
+			return ctx;
+		}
+		const resolution = await auth.resolveForTarget(authTarget, {
+			includeFallback: false,
+			signal,
+		});
+		if (resolution.apiKey) ctx.authToken = resolution.apiKey;
+	} catch {
+		// The probe reports its own missing-auth failure; the wireModels fallback covers the check.
+	}
+	return ctx;
+}
+
+interface DoctorProbeObservation {
+	probe: ProbeResult;
+	advertised: string[];
+	resident: string[];
+	cacheAdvisories: ReadonlyArray<string>;
+}
+
+/** Passive endpoint result and any model inventory it returned. Null means no check exists, not success. */
+async function probeAdvertisedModels(
+	target: TargetDescriptor,
+	runtime: RuntimeDescriptor,
+): Promise<DoctorProbeObservation | null> {
+	const passiveProbe = runtime.probe;
+	const passiveTarget = { ...target };
+	// llama.cpp router /props?model=<id> can load an unloaded model. Metadata
+	// checks must not select weights or displace an already resident model.
+	if (runtime.id.startsWith("llamacpp")) delete passiveTarget.defaultModel;
+	if (runtime.kind !== "http" || typeof passiveProbe !== "function") return null;
+	let probe: ProbeResult;
+	try {
+		const controller = new AbortController();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			probe = await Promise.race([
+				(async () =>
+					passiveProbe.call(runtime, passiveTarget, await doctorProbeContext(target, runtime, controller.signal)))(),
+				new Promise<ProbeResult>((resolve) => {
+					timer = setTimeout(() => {
+						controller.abort();
+						resolve({ ok: false, error: `passive check timed out after ${DOCTOR_MODEL_PROBE_TIMEOUT_MS}ms` });
+					}, DOCTOR_MODEL_PROBE_TIMEOUT_MS);
+				}),
+			]);
+		} finally {
+			clearTimeout(timer);
+			controller.abort();
+		}
+	} catch (error) {
+		probe = { ok: false, error: error instanceof Error ? error.message : String(error) };
+	}
+	const advertised = probe.ok ? [...(probe.models ?? [])] : [];
+	const resident: string[] = [];
+	for (const [id, status] of Object.entries(probe.modelStates ?? {})) {
+		if (!advertised.includes(id)) advertised.push(id);
+		if (status.state === "loaded" || status.state === "loading") resident.push(id);
+	}
+	return { probe, advertised, resident, cacheAdvisories: probe.cacheAdvisories ?? [] };
+}
+
+/**
+ * Connection/model sweep: passive HTTP metadata checks run for configured targets.
+ * Active routes fail on connection or credential errors; unused targets warn. The live
+ * list wins when the target answers; the `wireModels` list configure recorded
+ * stands in when it does not, so an unreachable server still gets the
+ * placeholder id it was saved with called out. A target with neither list is
+ * a WARN, not a pass, because nothing was verified. Network-bound like the
+ * runtime sweep, so it is not part of the synchronous `runDoctor()` core.
+ *
+ * The same probe reports server settings that defeat prefix-cache reuse. Each
+ * becomes a WARN row of its own, since the models can check out while every
+ * returning prompt still pays for a restore the operator can switch off.
+ */
+/** Catalog similarity suggests a choice; only an operator confirmation authorizes changing routing. */
+function nearestModelId(model: string, catalog: readonly string[]): string | null {
+	const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+	const left = normalize(model);
+	const distance = (right: string) => {
+		let row = Array.from({ length: right.length + 1 }, (_, index) => index);
+		for (let i = 0; i < left.length; i++) {
+			const next = [i + 1];
+			for (let j = 0; j < right.length; j++)
+				next.push(Math.min((next[j] ?? 0) + 1, (row[j + 1] ?? 0) + 1, (row[j] ?? 0) + (left[i] === right[j] ? 0 : 1)));
+			row = next;
+		}
+		return row[right.length] ?? 0;
+	};
+	return (
+		[...catalog].sort(
+			(a, b) => distance(normalize(a)) - distance(normalize(b)) || a.length - b.length || a.localeCompare(b),
+		)[0] ?? null
+	);
+}
+
+/** Whether chat, memory or the fleet routes to the target, which makes its failures errors instead of warnings. */
+export function targetIsActive(settings: ReturnType<typeof readSettings>, id: string): boolean {
+	return (
+		settings.chat.target === id ||
+		settings.context.memory.target === id ||
+		settings.fleet.default.target === id ||
+		Object.values(settings.fleet.profiles).some((profile) => profile.target === id) ||
+		Object.values(settings.fleet.rosters).some((roster) => roster.members.some((member) => member.target === id))
+	);
+}
+
+export async function runDoctorModelChecks(
+	options: {
+		fix?: boolean;
+		confirm?: (question: string) => Promise<boolean>;
+		/**
+		 * The account doctor's sign-in check found only through the system keychain. The passive check runs the
+		 * Copilot runtime with the keychain closed, so its not-signed-in failure is then a warning that says
+		 * interactive surfaces work, not an error.
+		 */
+		copilotKeychainLogin?: string;
+	} = {},
+): Promise<DoctorFinding[]> {
+	const proposals: Array<{ row: DoctorFinding; repair: SettingsScalarRepair }> = [];
+	let settings: ReturnType<typeof readSettings>;
+	let sources: Record<string, SettingsOrigin>;
+	try {
+		// The targets a session in this directory runs, a trusted project's included; an untrusted one adds none.
+		({ settings, sources } = readLayeredSettings(process.cwd()));
+	} catch {
+		return [];
+	}
+	if (settings.targets.length === 0) return [];
+	// Every runtime descriptor and the model catalog sit behind these two
+	// imports. They are loaded here, not at module load, so a doctor run on a
+	// home with no targets (the `--fix` seed every CLI test starts from) pays
+	// nothing for a sweep it has nothing to do.
+	const [
+		{ getRuntimeRegistry, closestRuntimeId },
+		{ registerBuiltinRuntimes },
+		{ loadPluginRuntimes },
+		{ listKnownModelsForRuntime },
+		{ readTargetModelSnapshot },
+		{ runtimeListsModelsLive },
+	] = await Promise.all([
+		import("../providers/registry.js"),
+		import("../providers/runtimes/builtins.js"),
+		import("../providers/plugins.js"),
+		import("../providers/support.js"),
+		import("../providers/target-model-cache.js"),
+		import("../providers/model-discovery.js"),
+	]);
+	const registry = getRuntimeRegistry();
+	// doctor never loads the providers domain, so the registry is empty here
+	// unless another command in this process filled it.
+	if (registry.list().length === 0) {
+		registerBuiltinRuntimes(registry);
+		await loadPluginRuntimes(registry, settings);
+	}
+	// Kept per target so each bound System One engine can report its own round trip.
+	const observations = new Map<string, DoctorProbeObservation | null>();
+	const results = await Promise.all(
+		settings.targets.map(async (target): Promise<DoctorFinding[]> => {
+			const runtime = registry.get(target.runtime);
+			if (!runtime) {
+				const replacement = closestRuntimeId(registry, target.runtime);
+				return [
+					{
+						ok: false,
+						name: `target ${target.id}`,
+						detail: `runtime '${target.runtime}' is unknown; ${replacement ? `use '${replacement}' instead` : "choose a registered runtime from `pancode configure --list`"} in settings.yaml`,
+					},
+				];
+			}
+			const roles = configuredModelRoles(settings, target);
+			const active = targetIsActive(settings, target.id);
+			const requiredCredential = targetRequiresAuth(target, runtime);
+			let credentialAvailable = !requiredCredential;
+			let projectKeyUnset: string | null = null;
+			let credentialDetail = requiredCredential
+				? "required credential not found"
+				: ["vertex-adc", "claude-cli"].includes(runtime.auth)
+					? "credentials managed by the SDK or installed app; availability not checked"
+					: runtime.externalLogin
+						? `sign-in is the \`${runtime.externalLogin}\` the runtime reads; PanCode stores no credential`
+						: "no credential required";
+			try {
+				const authTarget = resolveAuthTarget(target, runtime);
+				const status = openAuthStorage().statusForTarget(authTarget, {
+					includeFallback: false,
+				});
+				credentialAvailable = !requiredCredential || status.available;
+				const stored = openAuthStorage().get(status.providerId);
+				if (requiredCredential && !status.available && authTarget.projectKeyEnvVar) {
+					projectKeyUnset = authTarget.projectKeyEnvVar;
+					credentialDetail = `required credential not found: ${unsetKeyVariableSentence(target.id, authTarget.projectKeyEnvVar).replace(/\.$/u, "")}; this project sends only that variable to ${target.url ?? "its url"}`;
+				} else if (status.source === "stored-oauth" && stored?.type === "oauth" && stored.expires <= Date.now()) {
+					credentialAvailable = !requiredCredential;
+					credentialDetail = `stored sign-in expired; operator sign-in required: run \`pancode auth login ${target.id}\``;
+				} else if (status.available && status.source !== "not-required")
+					credentialDetail =
+						status.source === "stored-api-key" && status.detail && status.detail !== status.providerId
+							? `credential available from ${status.source} (${status.detail})`
+							: `credential available from ${status.source}`;
+			} catch (error) {
+				credentialAvailable = false;
+				credentialDetail = `credential status unreadable: ${error instanceof Error ? error.message : String(error)}`;
+			}
+			// The project's URL gets no request until the variable it named is set, the passive check included.
+			const observation = projectKeyUnset !== null ? null : await probeAdvertisedModels(target, runtime);
+			observations.set(target.id, observation);
+			const where = target.url ?? `${runtime.displayName} provider endpoint`;
+			const connection: DoctorFinding =
+				projectKeyUnset !== null
+					? {
+							ok: !active,
+							...(!active ? { level: "warn" as const } : {}),
+							name: `connection ${target.id}`,
+							detail: `${credentialDetail}, so no request was sent. Set ${projectKeyUnset}, then rerun \`pancode doctor\`.`,
+						}
+					: observation === null
+						? {
+								ok: credentialAvailable || !active,
+								...(credentialAvailable ? { level: "info" as const } : !active ? { level: "warn" as const } : {}),
+								name: `connection ${target.id}`,
+								detail: `${credentialDetail}; ${
+									runtime.kind !== "http" && typeof runtime.probe === "function"
+										? "standard doctor does not run this runtime’s subprocess check; endpoint reachability is not verified"
+										: `${runtime.id} exposes no passive endpoint check, so reachability is not verified until a request`
+								}. No generation was attempted.`,
+							}
+						: observation.probe.ok
+							? {
+									ok: credentialAvailable || !active,
+									...(!credentialAvailable && !active ? { level: "warn" as const } : {}),
+									name: `connection ${target.id}`,
+									detail: `${runtime.id === "alcf" ? "ALCF catalog reachable; configured inference URL not checked" : `${where} reachable`}${
+										observation.probe.latencyMs === undefined ? "" : ` in ${observation.probe.latencyMs}ms`
+									}; ${credentialDetail}; passive metadata only, no generation was attempted${
+										observation.advertised.length > 0
+											? `; ${observation.advertised.length} models read live`
+											: "; no model list returned"
+									}`,
+								}
+							: runtime.id === "copilot-sdk" &&
+									observation.probe.failureKind === "authentication" &&
+									options.copilotKeychainLogin !== undefined
+								? {
+										ok: true,
+										level: "warn" as const,
+										name: `connection ${target.id}`,
+										detail: `${where} was checked with the keychain closed and saw no login; ${copilotKeychainOnlyDetail(options.copilotKeychainLogin)}. This was a passive metadata check; no generation was attempted.`,
+									}
+								: {
+										ok: !active,
+										...(!active ? { level: "warn" as const } : {}),
+										name: `connection ${target.id}`,
+										detail: `${where} was not verified: ${observation.probe.error ?? "no reply"}. ${credentialDetail}. This was a passive metadata check; no generation was attempted.`,
+									};
+			const cache = (observation?.cacheAdvisories ?? []).map(
+				(detail): DoctorFinding => ({ ok: true, level: "warn", name: `cache ${target.id}`, detail }),
+			);
+			if (roles.length === 0) return [connection, ...cache];
+
+			const catalog = listKnownModelsForRuntime(runtime.id);
+			const live = observation?.probe.ok === true && observation.advertised.length > 0;
+			const snapshot = readTargetModelSnapshot(target, { cacheDir: resolvePancodeDirs().cache });
+			const cachedModels = snapshot?.models ?? [];
+			const catalogOnly = !runtimeListsModelsLive(runtime) && catalog.length > 0;
+			const advertised = live
+				? observation.advertised
+				: catalogOnly
+					? catalog
+					: cachedModels.length > 0
+						? cachedModels
+						: (target.wireModels ?? []).length > 0
+							? (target.wireModels ?? [])
+							: catalog;
+			const source = live
+				? `live list from ${runtime.id === "alcf" ? "the ALCF catalog (inference URL not checked)" : where}`
+				: catalogOnly
+					? "provider catalog, not this account's live model list"
+					: cachedModels.length > 0
+						? `cached list from ${snapshot?.observedAt}, not verified live now`
+						: (target.wireModels ?? []).length > 0
+							? "list recorded by configure, not verified live now"
+							: catalog.length > 0
+								? "provider catalog, not this account's live model list"
+								: "";
+			if (advertised.length === 0) {
+				return [
+					connection,
+					{
+						ok: true,
+						level: "warn",
+						name: `model ${target.id}`,
+						detail: `${roles.map((entry) => `${entry.role} '${entry.model}'`).join(", ")} could not be checked: no live, cached, configured, or catalog model list is available; open Configure → Connections after the endpoint is up`,
+					},
+					...cache,
+				];
+			}
+			const missing = roles.filter((entry) => !advertised.includes(entry.model));
+			if (missing.length === 0) {
+				return [
+					connection,
+					{
+						ok: true,
+						...(live ? {} : { level: "info" as const }),
+						name: `model ${target.id}`,
+						detail: `${roles.map((entry) => `${entry.role} '${entry.model}'`).join(", ")} found in ${source}`,
+					},
+					...cache,
+				];
+			}
+			// The Copilot runtime serves models its listing omits (gemini-3.8-flash), so an unlisted id is sent
+			// as typed and the provider answers for it; proposing a repair would rewrite a working route.
+			if (runtime.servesUnlistedModels) {
+				const listed = roles.filter((entry) => advertised.includes(entry.model));
+				return [
+					connection,
+					{
+						ok: true,
+						level: "info",
+						name: `model ${target.id}`,
+						detail: `${listed.length > 0 ? `${listed.map((entry) => `${entry.role} '${entry.model}'`).join(", ")} found in ${source}; ` : ""}${missing.map((entry) => `${entry.role} '${entry.model}'`).join(", ")} not listed in ${source}; ${runtime.displayName} serves models it does not list, so PanCode sends ${missing.length === 1 ? "it" : "them"} as typed and the provider answers for ${missing.length === 1 ? "it" : "them"}. No repair proposed.`,
+					},
+					...cache,
+				];
+			}
+			const resident = live
+				? observation.resident.length > 0
+					? observation.resident.join(", ")
+					: "none reported"
+				: "not checked";
+			const row: DoctorFinding = {
+				ok: !active || !live,
+				...(!active || !live ? { level: "warn" as const } : {}),
+				name: `model ${target.id}`,
+				detail: `${missing.map((entry) => `${entry.role} '${entry.model}'`).join(", ")} not found in ${source} (${advertised.length} ids). Resident instances: ${resident}.`,
+			};
+			for (const entry of missing) {
+				const to = nearestModelId(entry.model, advertised);
+				// A model a project layer chose is the project's to change; --fix writes only the user's settings.
+				if (to && !settingsSourceFor(sources, entry.path ?? entry.role).startsWith("project")) {
+					row.detail += ` Proposed ${entry.role}: '${entry.model}' -> '${to}'; confirmation required.`;
+					proposals.push({ row, repair: { path: entry.path ?? entry.role, from: entry.model, to } });
+				}
+			}
+			row.detail += " Run `pancode doctor --fix`.";
+			return [connection, row, ...cache];
+		}),
+	);
+	const findings = results.flat();
+	const applied = new Set<SettingsScalarRepair>();
+	// Prompts and locked writes are serialized even though passive catalog reads run concurrently.
+	for (const { row, repair } of proposals) {
+		if (
+			!options.fix ||
+			!options.confirm ||
+			!(await options.confirm(`Replace ${repair.path}: '${repair.from}' with '${repair.to}'?`))
+		)
+			continue;
+		try {
+			const result = repairSettingsCoercions([repair]);
+			if (result.rewritten.some((entry) => entry.path === repair.path)) applied.add(repair);
+			row.detail += result.rewritten.some((entry) => entry.path === repair.path)
+				? ` Applied ${repair.path}: '${repair.to}'.`
+				: ` ${repair.path} was changed meanwhile or cannot be safely edited; run \`pancode configure\`.`;
+		} catch (error) {
+			row.detail += ` Repair failed: ${error instanceof Error ? error.message : String(error)}; run \`pancode doctor --fix\`.`;
+		}
+	}
+	for (const row of new Set(proposals.map((entry) => entry.row))) {
+		const changes = proposals.filter((entry) => entry.row === row);
+		if (changes.every((entry) => applied.has(entry.repair))) {
+			row.ok = true;
+			delete row.level;
+			row.detail = `repaired after confirmation: ${changes.map(({ repair }) => `${repair.path}: '${repair.from}' -> '${repair.to}'`).join(", ")}`;
+		}
+	}
+	return [...findings, ...(await systemOneFindings(registry, findings, observations))];
+}
+
+/**
+ * Where each System One site is bound, which bindings cannot resolve, and what
+ * the decision dataset holds. System One is experimental and off by default, so
+ * an install with nothing bound gets one row saying so. Built from settings and
+ * the connection rows above: doctor never asks a decision, so a failing site
+ * here is a broken binding or an unverified target.
+ */
+async function systemOneFindings(
+	runtimes: { get(id: string): RuntimeDescriptor | null },
+	connections: ReadonlyArray<DoctorFinding>,
+	observations: ReadonlyMap<string, DoctorProbeObservation | null>,
+): Promise<DoctorFinding[]> {
+	// A session binds from the layered settings, so a choice a trusted project file makes is live there and must not
+	// read as off here. An untrusted project layer contributes nothing, exactly as in a session.
+	const layered = readLayeredSettings(process.cwd()).settings;
+	const { effectiveSystemOne, resolveChoice, routeNames } = await import("../system-one/selection.js");
+	const settings = effectiveSystemOne(layered);
+	const profiles = await import("../system-one/profiles.js");
+	const name = "system one (experimental)";
+	const routes = routeNames(layered.systemOne.use);
+	if (routes.length === 0) return [{ ok: true, level: "info", name, detail: "off" }];
+	const findings: DoctorFinding[] = [];
+	for (const route of routes) {
+		const resolved = resolveChoice(layered, route);
+		if (resolved.kind !== "engine") {
+			const problem = resolved.kind === "unavailable" ? resolved.problem : `'${route}' is not a route`;
+			findings.push({ ok: true, level: "warn", name, detail: `${problem}; consult cannot use ${route}` });
+			continue;
+		}
+		const { engine } = resolved;
+		const connection = connections.find((finding) => finding.name === `connection ${engine.target}`);
+		const unverified = connection === undefined || !connection.ok || connection.level === "warn";
+		findings.push({
+			ok: true,
+			...(unverified ? { level: "warn" as const } : {}),
+			name,
+			detail:
+				`${resolved.name} (${engine.kind}) → ${engine.target}/${engine.model ?? "target default"}` +
+				(unverified ? `; connection ${engine.target} is not verified, so consult may give no answer` : ""),
+		});
+		findings.push(...(await systemOneEngineFindings(settings, [resolved.name], runtimes, observations, profiles)));
+	}
+	return findings;
+}
+
+/**
+ * One row per bound `systemone` engine: its profile, the window a request may
+ * fill, and whether its server answered the passive check, with the round trip.
+ * The round trip is the metadata request (`/models` or `/health`), never a
+ * decision, so doctor puts no work on the accelerator the engine runs on. An
+ * engine that does not answer leaves consult with no answer.
+ */
+async function systemOneEngineFindings(
+	settings: Readonly<ReturnType<typeof readSettings>>,
+	names: ReadonlyArray<string>,
+	runtimes: { get(id: string): RuntimeDescriptor | null },
+	observations: ReadonlyMap<string, DoctorProbeObservation | null>,
+	profiles: typeof import("../system-one/profiles.js"),
+): Promise<DoctorFinding[]> {
+	const { engineWindow, profileFor } = profiles;
+	const rows: DoctorFinding[] = [];
+	for (const name of names) {
+		const engine = Object.hasOwn(settings.systemOne.engines, name) ? settings.systemOne.engines[name] : undefined;
+		if (engine === undefined || engine.kind !== "systemone") continue;
+		const target = settings.targets.find((entry) => entry.id === engine.target);
+		const runtime = target === undefined ? null : runtimes.get(target.runtime);
+		if (target === undefined || runtime === null || runtime.decide === undefined) continue;
+		const profile = profileFor(engine.profile);
+		const declared = target.capabilities?.contextWindow;
+		const window = engineWindow(profile, declared ?? runtime.defaultCapabilities.contextWindow);
+		const source =
+			declared === undefined
+				? `the ${runtime.id} runtime default; set capabilities.contextWindow on target ${target.id}`
+				: window !== declared
+					? `target ${target.id} declares ${declared}, profile ceiling ${profile.windowCeiling}`
+					: `declared on target ${target.id}`;
+		const counting =
+			profile.tokenizer === undefined
+				? ""
+				: (await profile.tokenizer.cached())
+					? `; options counted with ${profile.tokenizer.label}`
+					: `; options byte-bounded until ${profile.tokenizer.label} is cached on first use`;
+		const head = `profile ${profile.id}; window ${window === null ? "unbounded" : `${window} tokens`} (${source})${counting}`;
+		const where = target.url ?? `${runtime.displayName} endpoint`;
+		const observation = observations.get(target.id);
+		const rowName = `system one (experimental) engine ${name}`;
+		const confirm = `\`pancode systemone check ${name} --live\` asks one decision`;
+		if (observation === undefined || observation === null) {
+			rows.push({
+				ok: true,
+				level: "info",
+				name: rowName,
+				detail: `${head}; ${where} has no passive check, so reachability is not known until consult asks`,
+			});
+			continue;
+		}
+		if (!observation.probe.ok) {
+			rows.push({
+				ok: true,
+				level: "warn",
+				name: rowName,
+				detail: `${head}; ${where} did not answer: ${observation.probe.error ?? "no reply"}; consult gets no answer from it; ${confirm}`,
+			});
+			continue;
+		}
+		const latency = observation.probe.latencyMs;
+		const serving = observation.advertised.length > 0 ? `; serving ${observation.advertised.join(", ")}` : "";
+		rows.push({
+			ok: true,
+			// Not a pass: a pin the runtime knows skips the `/models` check, and a retired one still answers 400 to every decision.
+			level: "info",
+			name: rowName,
+			// `/models` lists names a server is willing to serve, and a hosted one lists moving aliases, so
+			// this proves the endpoint answers and never which build would answer a decision.
+			detail: `${head}; ${where} answered${latency === undefined ? "" : `, round trip ${latency} ms`}${serving}; passive check, no decision asked, so the requested build is not verified; ${confirm}`,
+		});
+	}
+	return rows;
+}
+
+/**
+ * Harness: the repository's own agent recipes, its project and user skills,
+ * and the fleet bindings in `.pancode/settings.local.yaml`. Each of those
+ * loads silently and does nothing when it names a tool, skill, recipe, target,
+ * model or script that does not exist, so doctor reports one row per file
+ * with problems, folded to one line; `pancode agents validate` prints the
+ * same issues one per line for feeding back to whoever wrote the file.
+ */
+export function runDoctorHarnessChecks(workspaceRoot: string = process.cwd()): DoctorFinding[] {
+	return [
+		...harnessFindings(workspaceRoot),
+		...playbookShadowFindings(workspaceRoot),
+		...modelCatalogOverlayFindings(workspaceRoot),
+	];
+}
+
+/**
+ * The operator's `model-catalog.d` overlays: which entries loaded and from where, and a warning for each file the
+ * loader skipped. Silent when no overlay directory exists.
+ */
+function modelCatalogOverlayFindings(workspaceRoot: string): DoctorFinding[] {
+	let overlays: ModelCatalogOverlays;
+	let roots: ReturnType<typeof resolveModelCatalogOverlayRoots>;
+	try {
+		roots = resolveModelCatalogOverlayRoots({ cwd: workspaceRoot });
+		if (roots.length === 0) return [];
+		overlays = new ModelCatalogOverlays(roots);
+	} catch (err) {
+		return [
+			{
+				ok: false,
+				name: "model catalog overlays",
+				detail: `could not be read, so no overlay applies: ${err instanceof Error ? err.message : String(err)}; fix the directory, then rerun \`pancode doctor\``,
+			},
+		];
+	}
+	const entries = overlays.entries();
+	const families = [...new Set(entries.map((entry) => entry.family))];
+	const shown = families.length > 8 ? [...families.slice(0, 8), `${families.length - 8} more`] : families;
+	const loaded: DoctorFinding = {
+		ok: true,
+		name: "model catalog overlays",
+		detail: `${entries.length} ${entries.length === 1 ? "entry" : "entries"}${shown.length > 0 ? ` (${shown.join(", ")})` : ""} from ${roots.map((root) => root.dir).join(", ")}`,
+	};
+	return [
+		loaded,
+		...overlays.problems().map(
+			({ path, message }): DoctorFinding => ({
+				ok: true,
+				level: "warn",
+				name: "model catalog file",
+				detail: `${path}: ${message}; this file is skipped, the other overlay files still apply; fix or remove it, then rerun \`pancode doctor\``,
+			}),
+		),
+	];
+}
+
+/** A user or project playbook that replaces a builtin's or the operator's of the same name, so it is not silent. */
+function playbookShadowFindings(workspaceRoot: string): DoctorFinding[] {
+	let shadowed: ReturnType<typeof shadowedPlaybooks>;
+	try {
+		shadowed = shadowedPlaybooks(workspaceRoot);
+	} catch {
+		return [];
+	}
+	return shadowed.map((entry) => ({
+		ok: true,
+		level: "warn" as const,
+		name: `playbook ${entry.name}`,
+		detail: `the ${entry.by} playbook ${entry.byPath} replaces the ${entry.source} one at ${entry.path}; /fleet run ${entry.name} runs the ${entry.by} file`,
+	}));
+}
+
+function harnessFindings(workspaceRoot: string): DoctorFinding[] {
+	let input: HarnessInput;
+	let issues: HarnessIssue[];
+	try {
+		input = collectHarnessInput(workspaceRoot);
+		issues = validateHarness(input);
+	} catch (err) {
+		return [
+			{
+				ok: false,
+				name: "harness",
+				detail: `could not be validated: ${err instanceof Error ? err.message : String(err)}`,
+			},
+		];
+	}
+	const ownedSkills = input.skills.items.filter((skill) =>
+		input.ownedSkillRoots.some((root) => {
+			const relative = relativePath(root, skill.filePath);
+			return relative !== "" && !relativePathEscapes(relative);
+		}),
+	).length;
+	const artifacts = input.recipes.length + ownedSkills + (input.localSettings === null ? 0 : 1);
+	if (issues.length === 0) {
+		if (artifacts === 0) return [];
+		const parts = [
+			`${input.recipes.length} custom recipe${input.recipes.length === 1 ? "" : "s"}`,
+			`${ownedSkills} skill${ownedSkills === 1 ? "" : "s"}`,
+			...(input.localSettings === null ? [] : ["settings.local.yaml"]),
+		];
+		return [{ ok: true, name: "harness", detail: `${parts.join(", ")}: every reference resolves` }];
+	}
+	const byFile = new Map<string, HarnessIssue[]>();
+	for (const issue of issues) {
+		const list = byFile.get(issue.file) ?? [];
+		list.push(issue);
+		byFile.set(issue.file, list);
+	}
+	const findings: DoctorFinding[] = [...byFile].map(([file, list]) => ({
+		ok: false,
+		name: `harness ${file}`,
+		detail: foldDetail(list.map((issue) => `${issue.field}: ${issue.message}`).join("; ")),
+	}));
+	findings.push({
+		ok: true,
+		level: "info",
+		name: "harness",
+		detail: `${issues.length} problem${issues.length === 1 ? "" : "s"} in ${byFile.size} file${byFile.size === 1 ? "" : "s"}; \`pancode agents validate\` prints each on its own line`,
+	});
+	return findings;
+}
+
+/** Every `pancode` on PATH, so a newer-home row can name the binaries in play. */
+function pancodeBinariesOnPath(): string[] {
+	const names = process.platform === "win32" ? ["pancode.cmd", "pancode.exe", "pancode"] : ["pancode"];
+	const found: string[] = [];
+	for (const dir of (process.env.PATH ?? "").split(process.platform === "win32" ? ";" : ":")) {
+		if (!dir) continue;
+		for (const name of names) {
+			const candidate = join(dir, name);
+			try {
+				accessSync(candidate, constants.X_OK);
+				if (statSync(candidate).isFile() && !found.includes(candidate)) found.push(candidate);
+			} catch {
+				// Not here.
+			}
+		}
+	}
+	return found;
+}

@@ -1,0 +1,338 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { PancodeSettings } from "../core/config.js";
+import {
+	getRuntimeRegistry,
+	type ProvidersContract,
+	resolveProviderReference,
+	type TargetStatus,
+	targetRequiresAuth,
+} from "../domains/providers/index.js";
+import type { OAuthSelectPrompt } from "../engine/oauth.js";
+import type { OverlayHandle, TUI } from "../engine/tui.js";
+import type { InteractiveNoticeLevel } from "./interactive-subscriptions.js";
+import { maybeOpenExternalUrl } from "./open-external-url.js";
+import type { OverlayState } from "./overlay-key-routing.js";
+import { type AuthDialogHandle, openAuthDialog } from "./overlays/auth-dialog.js";
+
+type AuthProviders = Pick<ProvidersContract, "getRuntime" | "probeTarget"> &
+	Partial<Pick<ProvidersContract, "list">> & {
+		auth: Pick<ProvidersContract["auth"], "statusForTarget" | "setApiKey" | "login" | "damageReason">;
+	};
+
+export interface OverlayAuthLifecycleDeps {
+	tui: TUI;
+	providers: AuthProviders;
+	getSettings?: () => Readonly<PancodeSettings> | undefined;
+	notify: (level: InteractiveNoticeLevel, text: string, key?: string) => void;
+	refreshFooter: () => void;
+	renderContextIsland: () => void;
+	renderTaskIsland: () => void;
+	requestRender: () => void;
+	getOverlayState: () => OverlayState;
+	setOverlayState: (state: OverlayState) => void;
+	getOverlayHandle: () => OverlayHandle | null;
+	setOverlayHandle: (handle: OverlayHandle | null) => void;
+	openAuthDialog?: (tui: TUI, title: string, onCancel: () => void) => AuthDialogHandle;
+}
+
+export interface ConnectFlowOptions {
+	/** Ask for a new API key even when a stored one has not been refused. */
+	replaceKey?: boolean;
+}
+
+export interface OverlayAuthLifecycle {
+	finish(dismiss: boolean): void;
+	openConnectFlow(reference: string, options?: ConnectFlowOptions): Promise<void>;
+}
+
+/**
+ * Fail the connect flow when the credential the operator just supplied never
+ * reached disk.
+ *
+ * The store records a refused write in `damageReason()` rather than throwing,
+ * and keeps serving the credential from memory, so the probe that follows
+ * succeeds and the dialog reports a connection that will be gone at the next
+ * start. Throwing puts this on the flow's own error path, which is what stops
+ * `probeTarget()` from running and notifies with the reason. `pancode auth login`
+ * refuses the same way; see cli/shared.ts credentialWriteFailed().
+ */
+function assertCredentialStored(auth: AuthProviders["auth"], providerId: string): void {
+	const damage = auth.damageReason();
+	if (damage === null) return;
+	throw new Error(`credential for ${providerId} was not stored: ${damage}`);
+}
+
+export function createOverlayAuthLifecycle(deps: OverlayAuthLifecycleDeps): OverlayAuthLifecycle {
+	let authDialogDismiss: (() => void) | null = null;
+	// The overlay the connect flow was started from (Settings → Targets), restored
+	// when the dialog closes; null when it was started from the closed state.
+	let authReturn: { state: OverlayState; handle: OverlayHandle | null } | null = null;
+	let authCloseResolve: (() => void) | null = null;
+	const openAuthDialogFactory = deps.openAuthDialog ?? openAuthDialog;
+
+	const finish = (dismiss: boolean): void => {
+		if (deps.getOverlayState() !== "auth") return;
+		if (dismiss) authDialogDismiss?.();
+		authDialogDismiss = null;
+		const authHandle = deps.getOverlayHandle();
+		const returnTo = authReturn;
+		authReturn = null;
+		deps.setOverlayHandle(returnTo?.handle ?? null);
+		deps.setOverlayState(returnTo?.state ?? "closed");
+		authHandle?.hide();
+		const resolveAuthClose = authCloseResolve;
+		authCloseResolve = null;
+		resolveAuthClose?.();
+		deps.refreshFooter();
+		deps.renderContextIsland();
+		deps.renderTaskIsland();
+		deps.requestRender();
+	};
+
+	const resolveConnectionReference = (target: string) => {
+		const settings = deps.getSettings?.();
+		if (!settings) return null;
+		return resolveProviderReference(
+			target,
+			settings,
+			(runtimeId) => deps.providers.getRuntime(runtimeId) ?? getRuntimeRegistry().get(runtimeId),
+		);
+	};
+
+	const openConnectFlow = async (reference: string, options?: ConnectFlowOptions): Promise<void> => {
+		const fromState = deps.getOverlayState();
+		if (fromState !== "closed" && fromState !== "settings") return;
+		const returnTo = fromState === "settings" ? { state: fromState, handle: deps.getOverlayHandle() } : null;
+		const resolved = resolveConnectionReference(reference);
+		if (!resolved?.target) {
+			deps.notify(
+				"warning",
+				`connect: unknown target ${reference}. Add it with pancode targets add.`,
+				`connect:${reference}`,
+			);
+			return;
+		}
+		const target = resolved.target;
+		const runtime = resolved.runtime;
+		const authTarget = resolved.authTarget;
+		const targetId = target.id;
+		const runtimeId = runtime.id;
+		await new Promise<void>((resolveAuthFlow) => {
+			const dialog = openAuthDialogFactory(deps.tui, `Connect ${targetId}`, () => finish(true));
+			authReturn = returnTo;
+			authCloseResolve = resolveAuthFlow;
+			deps.setOverlayState("auth");
+			deps.setOverlayHandle(dialog.handle);
+
+			const probeTarget = async (): Promise<TargetStatus | null> => {
+				dialog.controller.setLines([`Target: ${targetId}`, `Runtime: ${runtimeId}`, "Checking target..."]);
+				const status = await deps.providers.probeTarget(targetId);
+				if (!status) {
+					dialog.controller.setLines([`Target: ${targetId}`, "Target check failed: target is not configured."]);
+					deps.notify("error", `connect: ${targetId} is not configured`, `connect:${targetId}`);
+					return null;
+				}
+				const health = status.health.status;
+				const detail =
+					status.reason ||
+					status.health.lastError ||
+					(status.health.latencyMs !== null ? `${status.health.latencyMs}ms` : "no details");
+				// Configured is not reachable: `connected offline-audit (down)` claimed a connection the probe had just
+				// failed to make, so a route that does not answer reads as not answering, with the reason.
+				const answers = status.available && health !== "down";
+				// A refused key is a credential to replace, not an address to fix, so the way on names Connect.
+				const refused = !answers && status.health.credentialRefused === true;
+				dialog.controller.setLines([
+					`Target: ${targetId}`,
+					`Runtime: ${runtimeId}`,
+					answers
+						? `Target ready (${health})`
+						: refused
+							? "Target refused the API key"
+							: `Target does not answer (${health})`,
+					detail,
+				]);
+				deps.notify(
+					answers ? "info" : "warning",
+					answers
+						? `connected ${targetId} (${health})`
+						: refused
+							? `${targetId} refused the API key (${detail}); Connect asks for a new one.`
+							: `${targetId} does not answer (${health}): ${detail}. Its settings are unchanged; Edit URL fixes an address.`,
+					`connect:${targetId}`,
+				);
+				deps.refreshFooter();
+				deps.requestRender();
+				return status;
+			};
+
+			/** Ask for a key, store it, then probe with it. `intro` says why the key is being asked for. */
+			const enterApiKey = async (intro: string): Promise<void> => {
+				authDialogDismiss = dialog.controller.dismiss;
+				dialog.controller.setLines([`Target: ${targetId}`, `Runtime: ${runtime.id}`, intro]);
+				deps.requestRender();
+				const apiKey = (await dialog.controller.prompt("API key")).trim();
+				if (apiKey.length === 0) throw new Error("empty API key");
+				deps.providers.auth.setApiKey(authTarget.providerId, apiKey);
+				assertCredentialStored(deps.providers.auth, authTarget.providerId);
+				authDialogDismiss = null;
+				await probeTarget();
+			};
+
+			const runKeyFlow = (first: () => Promise<void>): void => {
+				void (async () => {
+					try {
+						await first();
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						if (message !== "dismissed" && message !== "cancelled") {
+							deps.notify("error", `connect ${targetId}: ${message}`, `connect:${targetId}`);
+						}
+					} finally {
+						authDialogDismiss = null;
+						finish(false);
+					}
+				})();
+				deps.requestRender();
+			};
+
+			const selectOAuthOption = async (
+				prompt: OAuthSelectPrompt,
+				prefix: ReadonlyArray<string>,
+			): Promise<string | undefined> => {
+				const defaultId = prompt.options[0]?.id;
+				if (!defaultId) return undefined;
+				const ids = new Set(prompt.options.map((option) => option.id));
+				const baseLines = [
+					...prefix,
+					prompt.message,
+					...prompt.options.map((option, index) => {
+						const marker = option.id === defaultId ? "*" : " ";
+						return `${marker} ${String(index + 1).padStart(2)}. ${option.label} (${option.id})`;
+					}),
+				];
+				let errorLine: string | null = null;
+				for (;;) {
+					dialog.controller.setLines(errorLine ? [...baseLines, errorLine] : baseLines);
+					const answer = (await dialog.controller.prompt(`Selection (number or id, q to cancel) [${defaultId}]`)).trim();
+					if (answer.length === 0) return defaultId;
+					if (answer === "q" || answer === "quit" || answer === "cancel") return undefined;
+					const numeric = Number(answer);
+					if (Number.isInteger(numeric) && numeric >= 1 && numeric <= prompt.options.length) {
+						return prompt.options[numeric - 1]?.id;
+					}
+					if (ids.has(answer)) return answer;
+					errorLine = `Unknown selection: ${answer}`;
+				}
+			};
+
+			const requiresManagedAuth = targetRequiresAuth(target, runtime);
+			const authStatus = deps.providers.auth.statusForTarget(target, runtime);
+			// Only a key PanCode stored can be replaced from here; an environment or per-target key lives elsewhere.
+			const storedKey = requiresManagedAuth && runtime.auth === "api-key" && authStatus.source === "stored-api-key";
+			const refusedKeyIntro = (reason: string | null): string =>
+				`The stored API key was refused${reason ? ` (${reason})` : ""}. Enter a replacement key; Esc keeps the stored one.`;
+			if (storedKey) {
+				const lastHealth = deps.providers.list?.().find((entry) => entry.target.id === targetId)?.health;
+				if (options?.replaceKey || lastHealth?.credentialRefused === true) {
+					runKeyFlow(() =>
+						enterApiKey(
+							lastHealth?.credentialRefused === true
+								? refusedKeyIntro(lastHealth.lastError)
+								: "Enter a new API key to replace the stored one; Esc keeps the stored one.",
+						),
+					);
+					return;
+				}
+				// A stored key nobody has refused yet is tried first; a refusal turns the same dialog into key input.
+				runKeyFlow(async () => {
+					const status = await probeTarget();
+					if (status?.health.credentialRefused === true) await enterApiKey(refusedKeyIntro(status.health.lastError));
+				});
+				return;
+			}
+			if (!requiresManagedAuth || authStatus.available) {
+				void (async () => {
+					try {
+						await probeTarget();
+					} catch (error) {
+						dialog.controller.setLines([
+							`Target: ${targetId}`,
+							`Target check failed: ${error instanceof Error ? error.message : String(error)}`,
+						]);
+						deps.requestRender();
+					} finally {
+						finish(false);
+					}
+				})();
+				deps.requestRender();
+				return;
+			}
+			if (resolved.runtime.auth === "api-key") {
+				runKeyFlow(() => enterApiKey("API key required before PanCode can connect to this target."));
+				return;
+			}
+			authDialogDismiss = dialog.controller.dismiss;
+			dialog.controller.setLines([`Target: ${targetId}`, `Runtime: ${runtime.id}`, "Starting authorization flow..."]);
+			void (async () => {
+				let manualCodeTimer: NodeJS.Timeout | null = null;
+				try {
+					await deps.providers.auth.login(authTarget.providerId, {
+						onAuth: ({ url, instructions }) => {
+							dialog.controller.setLines(
+								[
+									`Open: ${url}`,
+									instructions ?? "Complete sign-in in your browser.",
+									"Waiting for the browser callback. A manual code prompt will appear if needed.",
+								].filter(Boolean),
+							);
+							maybeOpenExternalUrl(url);
+						},
+						onDeviceCode: ({ verificationUri, userCode }) => {
+							dialog.controller.setLines([
+								`Open: ${verificationUri}`,
+								`Enter code: ${userCode}`,
+								"Waiting for authentication...",
+							]);
+							maybeOpenExternalUrl(verificationUri);
+						},
+						onPrompt: async (prompt) => (await dialog.controller.prompt(prompt.message)).trim(),
+						onSelect: (prompt) => selectOAuthOption(prompt, [`Target: ${targetId}`, `Runtime: ${runtime.id}`]),
+						onManualCodeInput: async () =>
+							await new Promise<string>((resolve, reject) => {
+								manualCodeTimer = setTimeout(() => {
+									manualCodeTimer = null;
+									dialog.controller
+										.prompt("Verification code")
+										.then((value) => resolve(value.trim()))
+										.catch(reject);
+								}, 10_000);
+								manualCodeTimer.unref?.();
+							}),
+						onProgress: (message) => {
+							dialog.controller.appendLine(message);
+						},
+					});
+					assertCredentialStored(deps.providers.auth, authTarget.providerId);
+					authDialogDismiss = null;
+					await probeTarget();
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					if (message !== "dismissed" && message !== "cancelled") {
+						deps.notify("error", `connect ${targetId}: ${message}`, `connect:${targetId}`);
+					}
+				} finally {
+					if (manualCodeTimer) {
+						clearTimeout(manualCodeTimer);
+					}
+					authDialogDismiss = null;
+					finish(false);
+				}
+			})();
+			deps.requestRender();
+		});
+	};
+
+	return { finish, openConnectFlow };
+}

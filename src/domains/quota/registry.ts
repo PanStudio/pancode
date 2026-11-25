@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Registry of quota adapters.
+ *
+ * Order is display order. Relocated-home isolation excludes implicit sibling accounts from
+ * relocated homes before cache lookup or credential detection. Adapters that read PanCode's own
+ * stored logins stay registered everywhere, because those credentials live in PanCode's home.
+ */
+
+import { explicitAgentHome, interopDisabled, isPancodeHomeRelocated } from "../../core/xdg.js";
+
+import { ANTHROPIC_MAX_QUOTA_PROVIDER_ID, createAnthropicMaxQuotaProvider } from "./anthropic-max-provider.js";
+import { ANTIGRAVITY_QUOTA_PROVIDER_ID, createAntigravityQuotaProvider } from "./antigravity-provider.js";
+import { CLAUDE_CODE_QUOTA_PROVIDER_ID, createClaudeCodeQuotaProvider } from "./claude-code-provider.js";
+import { CODEX_CLI_QUOTA_PROVIDER_ID, createCodexCliQuotaProvider } from "./codex-cli-provider.js";
+import { CODEX_QUOTA_PROVIDER_ID, createCodexQuotaProvider } from "./codex-provider.js";
+import { COPILOT_QUOTA_PROVIDER_ID, createCopilotQuotaProvider } from "./copilot-provider.js";
+import type { QuotaProvider } from "./types.js";
+
+export function buildQuotaProviders(): QuotaProvider[] {
+	// PANCODE_INTEROP_HOME=none turns off sibling accounts as it does every foreign user root.
+	const implicit = !isPancodeHomeRelocated() && !interopDisabled();
+	return [
+		createAnthropicMaxQuotaProvider(),
+		...(implicit || explicitAgentHome("CLAUDE_CONFIG_DIR") ? [createClaudeCodeQuotaProvider()] : []),
+		createCodexQuotaProvider(),
+		...(implicit || explicitAgentHome("CODEX_HOME") ? [createCodexCliQuotaProvider()] : []),
+		...(implicit || explicitAgentHome("ANTIGRAVITY_HOME") ? [createAntigravityQuotaProvider()] : []),
+		...(implicit || explicitAgentHome("COPILOT_HOME") ? [createCopilotQuotaProvider()] : []),
+	];
+}
+
+/**
+ * Quota adapter identity for each runtime. Native Codex spends PanCode's own
+ * `openai-codex` login, which can differ from the sibling CLI's, so the two
+ * runtimes read separate adapters (#423, #434). Claude Code and the SDK use
+ * Claude Code credentials; Copilot SDK polls account quota via the signed-in
+ * Copilot runtime.
+ */
+const QUOTA_PROVIDER_BY_RUNTIME: ReadonlyMap<string, string> = new Map([
+	["anthropic-max", ANTHROPIC_MAX_QUOTA_PROVIDER_ID],
+	["claude-code", CLAUDE_CODE_QUOTA_PROVIDER_ID],
+	["claude-sdk", CLAUDE_CODE_QUOTA_PROVIDER_ID],
+	["openai-codex", CODEX_QUOTA_PROVIDER_ID],
+	["codex-cli", CODEX_CLI_QUOTA_PROVIDER_ID],
+	["antigravity-code", ANTIGRAVITY_QUOTA_PROVIDER_ID],
+	["copilot-sdk", COPILOT_QUOTA_PROVIDER_ID],
+]);
+
+export function quotaProviderIdForRuntime(runtimeId: string): string | null {
+	return QUOTA_PROVIDER_BY_RUNTIME.get(runtimeId) ?? null;
+}

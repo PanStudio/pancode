@@ -1,0 +1,190 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Thin engine-boundary wrapper over pi-ai OAuth flows.
+ *
+ * pi-ai 0.83 removed the global OAuth provider registry
+ * (`registerOAuthProvider`/`getOAuthProvider`) in favor of per-provider
+ * `ProviderAuth.oauth` flows (`login`/`refresh`/`toAuth`). PanCode owns its own
+ * credential persistence (`openAuthStorage()`), so this module keeps a small
+ * PanCode-side registry keyed by provider id that adapts those flows to the
+ * engine surface the domains consume. Domains and CLI code must import these
+ * helpers from src/engine/** rather than value-importing pi-ai directly.
+ */
+
+import type {
+	OAuthAuth,
+	OAuthCredentials,
+	OAuthLoginCallbacks,
+	OAuthSelectPrompt,
+	ProviderAuthInteraction,
+} from "@earendil-works/pi-ai";
+import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+import { alcfOAuthProvider } from "./alcf-oauth.js";
+import { withCodexCallbackHandoff, withPancodeAnthropicBrowserLogin } from "./oauth-browser.js";
+
+export type { OAuthCredentials, OAuthLoginCallbacks, OAuthSelectPrompt };
+
+/**
+ * PanCode's engine-level OAuth provider surface. Login keeps the callback
+ * shape the CLI and TUI implement; `getApiKey` is async because pi's
+ * `OAuthAuth.toAuth` derivation is async.
+ */
+export interface EngineOAuthProvider {
+	id: string;
+	name: string;
+	usesCallbackServer: boolean;
+	login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials>;
+	refreshToken(credentials: OAuthCredentials, signal: AbortSignal): Promise<OAuthCredentials>;
+	getApiKey(credentials: OAuthCredentials): Promise<string>;
+}
+
+/** Adapt PanCode's login callbacks to pi's AuthInteraction. */
+function interactionFromLoginCallbacks(callbacks: OAuthLoginCallbacks): ProviderAuthInteraction {
+	const interaction: ProviderAuthInteraction = {
+		signal: callbacks.signal ?? new AbortController().signal,
+		notify(event) {
+			switch (event.type) {
+				case "auth_url":
+					callbacks.onAuth({
+						url: event.url,
+						...(event.instructions === undefined ? {} : { instructions: event.instructions }),
+					});
+					return;
+				case "device_code":
+					callbacks.onDeviceCode({
+						userCode: event.userCode,
+						verificationUri: event.verificationUri,
+						...(event.intervalSeconds === undefined ? {} : { intervalSeconds: event.intervalSeconds }),
+						...(event.expiresInSeconds === undefined ? {} : { expiresInSeconds: event.expiresInSeconds }),
+					});
+					return;
+				case "progress":
+				case "info":
+					callbacks.onProgress?.(event.message);
+					return;
+			}
+		},
+		async prompt(prompt) {
+			switch (prompt.type) {
+				case "select": {
+					const selection = await callbacks.onSelect({
+						message: prompt.message,
+						options: prompt.options.map((option) => ({ id: option.id, label: option.label })),
+					});
+					if (selection === undefined) throw new Error("login cancelled");
+					return selection;
+				}
+				case "manual_code":
+					if (callbacks.onManualCodeInput) return callbacks.onManualCodeInput();
+					return callbacks.onPrompt({
+						message: prompt.message,
+						...(prompt.placeholder === undefined ? {} : { placeholder: prompt.placeholder }),
+					});
+				default:
+					return callbacks.onPrompt({
+						message: prompt.message,
+						...(prompt.placeholder === undefined ? {} : { placeholder: prompt.placeholder }),
+					});
+			}
+		},
+	};
+	return interaction;
+}
+
+type PiLogin = (interaction: ProviderAuthInteraction) => Promise<OAuthCredentials>;
+
+function fromOAuthAuth(
+	id: string,
+	auth: OAuthAuth | undefined,
+	usesCallbackServer: boolean,
+	signIn: (interaction: ProviderAuthInteraction, login: PiLogin) => Promise<OAuthCredentials> = (interaction, login) =>
+		login(interaction),
+): EngineOAuthProvider {
+	if (!auth) throw new Error(`provider "${id}" does not expose an OAuth flow`);
+	return {
+		id,
+		name: auth.name,
+		usesCallbackServer,
+		async login(callbacks) {
+			// Without agentName pi introduces itself, so OpenAI's authorize URL carried originator=pi.
+			return signIn(interactionFromLoginCallbacks(callbacks), (interaction) =>
+				auth.login(interaction, { agentName: "pancode" }),
+			);
+		},
+		async refreshToken(credentials, signal) {
+			return auth.refresh({ ...credentials, type: "oauth" }, signal);
+		},
+		async getApiKey(credentials) {
+			const resolved = await auth.toAuth({ ...credentials, type: "oauth" });
+			if (!resolved.apiKey) {
+				throw new Error(`OAuth provider "${id}" resolved no API key from the stored credential`);
+			}
+			return resolved.apiKey;
+		},
+	};
+}
+
+let providers: Map<string, EngineOAuthProvider> | null = null;
+
+function builtinProviders(): EngineOAuthProvider[] {
+	return [
+		fromOAuthAuth("anthropic-max", anthropicProvider().auth.oauth, true, withPancodeAnthropicBrowserLogin),
+		fromOAuthAuth("openai-codex", openaiCodexProvider().auth.oauth, true, withCodexCallbackHandoff),
+		// Pi's github-copilot flow is not registered: it signs in with VS Code's OAuth client id and sends
+		// VS Code's editor headers. Copilot is reached only through the official SDK (`copilot-sdk` runtime).
+	];
+}
+
+function registry(): Map<string, EngineOAuthProvider> {
+	if (!providers) {
+		providers = new Map(builtinProviders().map((provider) => [provider.id, provider]));
+	}
+	return providers;
+}
+
+export function getEngineOAuthProvider(providerId: string): EngineOAuthProvider | undefined {
+	return registry().get(providerId);
+}
+
+export function listEngineOAuthProviders(): EngineOAuthProvider[] {
+	return [...registry().values()];
+}
+
+function registerEngineOAuthProvider(provider: EngineOAuthProvider): void {
+	registry().set(provider.id, provider);
+}
+
+let pancodeOAuthProvidersRegistered = false;
+
+export function registerPancodeOAuthProviders(): void {
+	if (pancodeOAuthProvidersRegistered) return;
+	pancodeOAuthProvidersRegistered = true;
+	registerEngineOAuthProvider(alcfOAuthProvider);
+}
+
+export async function loginWithEngineOAuthProvider(
+	providerId: string,
+	callbacks: OAuthLoginCallbacks,
+): Promise<OAuthCredentials> {
+	const provider = registry().get(providerId);
+	if (!provider) throw new Error(`unknown OAuth provider: ${providerId}`);
+	return provider.login(callbacks);
+}
+
+export async function refreshEngineOAuthCredentials(
+	providerId: string,
+	credentials: OAuthCredentials,
+	signal: AbortSignal,
+): Promise<OAuthCredentials> {
+	const provider = registry().get(providerId);
+	if (!provider) throw new Error(`unknown OAuth provider: ${providerId}`);
+	return provider.refreshToken(credentials, signal);
+}
+
+export async function getEngineOAuthApiKey(providerId: string, credentials: OAuthCredentials): Promise<string> {
+	const provider = registry().get(providerId);
+	if (!provider) throw new Error(`unknown OAuth provider: ${providerId}`);
+	return provider.getApiKey(credentials);
+}

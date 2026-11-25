@@ -1,0 +1,318 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+.hub-facets {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	border: 0;
+	padding: 0;
+	margin-block: var(--space-4) var(--space-5);
+}
+.hub-facets legend {
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+	margin-bottom: var(--space-2);
+	padding: 0;
+}
+.hub-facets button {
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	padding: 6px var(--space-3);
+	font-size: var(--text-meta);
+}
+.hub-facets [aria-pressed="true"] {
+	background: var(--accent-soft);
+	border-color: var(--accent);
+	color: var(--ink);
+	font-weight: 600;
+}
+.hub-packages {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	border-top: 1px solid var(--line);
+}
+.hub-packages > li {
+	display: grid;
+	grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+	gap: var(--space-5);
+	padding-block: var(--space-5);
+	padding-inline: var(--space-3) 0;
+	border-bottom: 1px solid var(--line);
+}
+.hub-package__identity {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.hub-package__identity h3 {
+	font-size: var(--text-reading);
+	margin: 0;
+}
+.hub-package__identity .version {
+	margin-left: var(--space-2);
+	font-family: var(--font-mono);
+	font-size: var(--text-meta);
+	font-weight: 400;
+	color: var(--ink-muted);
+}
+.hub-package__identity p {
+	margin: var(--space-2) 0;
+	font-size: var(--text-meta);
+	line-height: 1.6;
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+/* The origin line and the inspect button are separate lines, so the button never touches the text at any width. */
+.hub-package__identity small {
+	display: block;
+	color: var(--ink-muted);
+}
+.hub-package__copies {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--space-3);
+	min-width: 0;
+}
+.hub-copy {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	font-size: var(--text-meta);
+}
+.hub-copy__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+}
+.hub-copy__actions button:not(.primary) {
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	color: var(--accent);
+	padding: 6px var(--space-3);
+	font-size: var(--text-meta);
+}
+.hub-copy__actions .primary {
+	padding: 8px var(--space-3);
+	border-radius: var(--radius-sm);
+}
+.hub-refusal {
+	border-left: 3px solid var(--status-fail-line);
+	background: var(--status-fail-tint);
+	color: var(--status-fail-fg);
+	padding: var(--space-2) var(--space-3);
+	font-size: var(--text-meta);
+	overflow-wrap: anywhere;
+}
+.hub-steps {
+	list-style: none;
+	margin: var(--space-4) 0;
+	padding: 0;
+	display: grid;
+	gap: var(--space-5);
+}
+.hub-steps > li {
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	padding: var(--space-4);
+	background: var(--surface);
+}
+.hub-steps h3 {
+	margin: 0 0 var(--space-2);
+	font-size: var(--text-reading);
+	overflow-wrap: anywhere;
+}
+.hub-facts {
+	margin: var(--space-3) 0 0;
+	display: grid;
+	gap: var(--space-2);
+}
+.hub-facts > div {
+	display: grid;
+	grid-template-columns: 7rem minmax(0, 1fr);
+	gap: var(--space-3);
+	font-size: var(--text-meta);
+}
+.hub-facts dt {
+	color: var(--ink-muted);
+}
+.hub-facts dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+.hub-facts small {
+	display: block;
+	color: var(--ink-muted);
+}
+.hub-facts code {
+	font-family: var(--font-mono);
+	font-size: var(--text-meta);
+}
+.hub-steps .status-mark {
+	margin-bottom: var(--space-2);
+}
+.hub-session-note code {
+	display: inline;
+	font-family: var(--font-mono);
+	font-size: var(--text-meta);
+	padding: 0;
+	background: none;
+	color: inherit;
+}
+.hub-session-note {
+	border-left: 3px solid var(--status-warn-line);
+	background: var(--status-warn-tint);
+	color: var(--status-warn-fg);
+	padding: var(--space-3);
+	font-size: var(--text-meta);
+}
+/* A reload that happened, or none that was needed, is a fact rather than a warning. */
+.hub-session-note--settled {
+	border-left-color: var(--line-strong);
+	background: var(--well);
+	color: var(--ink);
+}
+@media (max-width: 750px) {
+	.hub-packages > li {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.hub-facts > div {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0;
+	}
+}
+.hub-bound {
+	display: grid;
+	gap: var(--space-2);
+	margin-block: var(--space-3);
+	font-size: var(--text-meta);
+}
+.hub-bound > span {
+	color: var(--ink-muted);
+}
+.hub-result-count {
+	color: var(--ink-muted);
+	font-size: var(--text-meta);
+	margin-block: var(--space-4);
+}
+.hub-inspect {
+	display: block;
+	margin-top: var(--space-3);
+}
+.hub-package__detail {
+	grid-column: 1 / -1;
+	padding: var(--space-4);
+	background: var(--well);
+	border-left: 2px solid var(--accent);
+	min-width: 0;
+}
+.hub-package__detail h4 {
+	margin: 0;
+	font-size: var(--text-reading);
+}
+.hub-plan-summary {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	font-size: var(--text-meta);
+	padding-block: var(--space-3);
+	border-block: 1px solid var(--line);
+}
+.hub-resources {
+	border-top: 1px solid var(--line-strong);
+}
+/* A search keeps a screen of room under the box: a narrowed list never shortens the page beneath it, so the
+   scroll is never clamped and the box does not move as the first character is typed. */
+.hub-resources[data-searching] {
+	min-block-size: 100dvh;
+}
+.hub-resource {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+	gap: var(--space-6);
+	padding-block: var(--space-5);
+	border-bottom: 1px solid var(--line);
+}
+.hub-resource__identity,
+.hub-resource__details {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.hub-resource__identity h3 {
+	margin: 0;
+	font-size: var(--text-reading);
+}
+.hub-resource__identity p {
+	margin-block: var(--space-2);
+}
+.hub-resource__identity small {
+	color: var(--ink-muted);
+}
+.hub-resource__details > summary {
+	font-size: var(--text-meta);
+	padding-block: var(--space-2);
+}
+.hub-resource__details[open] > summary {
+	margin-bottom: var(--space-3);
+}
+@media (max-width: 750px) {
+	.hub-resource {
+		grid-template-columns: minmax(0, 1fr);
+		gap: var(--space-3);
+	}
+}
+.hub-terminal {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	min-width: 0;
+	font-size: var(--text-meta);
+}
+.hub-terminal ul {
+	margin: 0;
+	padding-left: var(--space-4);
+}
+.hub-terminal code {
+	overflow-wrap: anywhere;
+}
+
+/* settings.css spaces the tab row only once Settings has loaded; PanHub must not depend on that. */
+.hub-page .settings-tabs {
+	margin-block-end: var(--space-6);
+}
+.hub-page > [role="tabpanel"] > h2 {
+	font-family: var(--font-editorial);
+	font-weight: 700;
+	margin-bottom: var(--space-2);
+}
+.hub-page > [role="tabpanel"] > h2 + p {
+	max-width: 72ch;
+	color: var(--ink-muted);
+}
+.hub-resource:has(> .hub-resource__details[open]) {
+	background: var(--surface);
+}
+.hub-resource__details[open] {
+	border-left: 2px solid var(--accent-line);
+	padding-left: var(--space-4);
+}
+/* The selected package keeps its row height: the leading rule is painted inside the row. */
+.hub-packages > li[data-selected="true"] {
+	background: var(--accent-soft);
+	box-shadow: inset 2px 0 0 var(--accent);
+	color: var(--ink);
+}
+.hub-terminal > summary {
+	color: var(--accent);
+	cursor: pointer;
+}
+.hub-package__detail > p {
+	max-width: 72ch;
+	margin-top: 0;
+}

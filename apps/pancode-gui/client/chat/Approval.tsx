@@ -1,0 +1,597 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// The permission card, in its two surfaces. Every decision it makes lives in ./approval-model.ts; this
+// file is the declarative half plus the four side effects that reach outside React: the tab title
+// marker, the screen-reader announcement, the escalation announcement and the desktop notification.
+//
+// The banner is pinned above the transcript and is deliberately NOT focus-trapping. An approval is
+// not a modal: the operator may keep reading, scrolling and typing while it waits, which is the
+// only way to review the thing being approved.
+
+import { useIsMutating, useMutation, useMutationState, useQueryClient } from "@tanstack/react-query";
+import { memo, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import type { Permission, PermissionDecision } from "../../contracts/permissions.js";
+import { routes } from "../../contracts/runtime-routes.js";
+import type { SessionSnapshot, TimelineItem } from "../../contracts/sessions.js";
+import { ApiProblem, type Client } from "../api/client.js";
+import { formatDuration } from "../api/clock.js";
+import { useSharedSecond } from "../api/second-clock.js";
+import { StatusMark } from "../design/status.js";
+import { announce, announceEscalation, setApprovalPending } from "../interaction/announcer.js";
+import { KEYBINDINGS } from "../interaction/keybindings.js";
+import { useShortcut } from "../interaction/use-shortcut.js";
+import { approvalQueue, decisionRecord, permissionForCall } from "./approval-gate.js";
+import {
+	answeredPermissionIds,
+	approvalActions,
+	approvalAnnouncement,
+	bannerEyebrow,
+	CARD_EYEBROW,
+	clampText,
+	decisionChips,
+	decisionRows,
+	decisionTone,
+	deriveApprovalTimings,
+	type GatedCall,
+	type GatedPreview,
+	gatedPreview,
+	KEYBOARD_HINT,
+	NO_DECISION_FACTS,
+	safetyFacts,
+	workerAskRows,
+} from "./approval-model.js";
+import "./approval.css";
+
+/**
+ * Which permissions currently have their anchored card on the page. The banner reads this to decide
+ * whether it must carry the whole review or can stay one line that points at the card, because the
+ * anchored card is not rendered when its call is missing from the timeline or its group is folded.
+ */
+const anchoredCards = new Map<string, number>();
+const anchorListeners = new Set<() => void>();
+function registerAnchor(id: string): () => void {
+	anchoredCards.set(id, (anchoredCards.get(id) ?? 0) + 1);
+	for (const listener of anchorListeners) listener();
+	return () => {
+		const count = (anchoredCards.get(id) ?? 1) - 1;
+		if (count > 0) anchoredCards.set(id, count);
+		else anchoredCards.delete(id);
+		for (const listener of anchorListeners) listener();
+	};
+}
+function subscribeAnchors(listener: () => void): () => void {
+	anchorListeners.add(listener);
+	return () => anchorListeners.delete(listener);
+}
+function useAnchored(id: string | null): boolean {
+	return useSyncExternalStore(subscribeAnchors, () => id !== null && anchoredCards.has(id));
+}
+const anchorId = (permissionId: string) => `approval-${permissionId}`;
+
+/** When the operator last changed a field's text, so an approval that lands mid-word leaves their caret alone. */
+let lastInputAt = Number.NEGATIVE_INFINITY;
+const TYPING_GRACE_MS = 500;
+if (typeof document !== "undefined")
+	document.addEventListener(
+		"input",
+		() => {
+			lastInputAt = performance.now();
+		},
+		{ capture: true, passive: true },
+	);
+
+/**
+ * Someone writing a message keeps their caret; an approval only announces itself to them. A composer still showing
+ * the message it just sent (marked `data-sent` until the server acknowledges it) is not being written.
+ */
+function isTyping(element: Element | null): boolean {
+	if (performance.now() - lastInputAt < TYPING_GRACE_MS) return true;
+	if (element instanceof HTMLElement && element.isContentEditable) return (element.textContent ?? "").trim() !== "";
+	if (element instanceof HTMLTextAreaElement) return !element.hasAttribute("data-sent") && element.value.trim() !== "";
+	return (
+		element instanceof HTMLInputElement &&
+		["text", "search", "url", "email", "tel", "password", ""].includes(element.type) &&
+		element.value.trim() !== ""
+	);
+}
+
+/** After an answer the card's buttons are gone, so focus is on the page body or still inside a leaving card. */
+function focusLost(element: Element | null): boolean {
+	return (
+		element === null ||
+		element === document.body ||
+		!element.isConnected ||
+		element.closest(".approval-banner, .approval-card") !== null
+	);
+}
+
+/**
+ * An approval is the one thing the turn waits on, so its arrival offers the keyboard the decision:
+ * focus moves to "Allow once" unless the operator is typing. Once it is answered, focus goes back to
+ * the composer, or to the page when the composer is disabled. An open dialog keeps focus either way.
+ */
+function useApprovalFocus(id: string | null): void {
+	const last = useRef<string | null>(null);
+	useEffect(() => {
+		const previous = last.current;
+		last.current = id;
+		if (id === previous) return;
+		let ran = false;
+		// One frame lets the anchored card register, which turns the banner into its strip.
+		const frame = requestAnimationFrame(() => {
+			ran = true;
+			if (document.querySelector("dialog[open], .dialog-backdrop")) return;
+			const active = document.activeElement;
+			if (id !== null) {
+				if (isTyping(active)) return;
+				const allow = '[data-decision="allow-once"]:not(:disabled)';
+				(
+					document.querySelector<HTMLElement>(`#${CSS.escape(anchorId(id))} ${allow}`) ??
+					document.querySelector<HTMLElement>(`.approval-banner ${allow}`)
+				)?.focus();
+				return;
+			}
+			if (previous !== null && focusLost(active))
+				(
+					document.querySelector<HTMLElement>(".composer__field:not(:disabled)") ?? document.getElementById("main")
+				)?.focus();
+		});
+		return () => {
+			cancelAnimationFrame(frame);
+			// A change that never reached the page is not a transition; the next one starts from here.
+			if (!ran) last.current = previous;
+		};
+	}, [id]);
+}
+
+export type AnswerApproval = ReturnType<typeof useAnswerApproval>;
+
+const permissionMutationKey = (sessionId: string) => ["permission-answer", sessionId] as const;
+
+const problemCode = (error: unknown): string | undefined =>
+	error instanceof ApiProblem ? error.problem.code : undefined;
+
+/** An answered request stays disabled until the session snapshot removes it, including one the server already settled. */
+function useAnswerSent(sessionId: string, permissionId: string | undefined): boolean {
+	const answers = useMutationState({
+		filters: { mutationKey: permissionMutationKey(sessionId) },
+		select: (mutation) => ({
+			id: (mutation.state.variables as { id?: string } | undefined)?.id,
+			status: mutation.state.status,
+			problemCode: problemCode(mutation.state.error),
+		}),
+	});
+	return permissionId !== undefined && answeredPermissionIds(answers).has(permissionId);
+}
+
+/** A refusal worth showing: a conflict only says an earlier decision already settled the request. */
+const answerRefusal = (answer: AnswerApproval, permissionId: string): Error | null =>
+	answer.error && answer.variables?.id === permissionId && problemCode(answer.error) !== "conflict"
+		? answer.error
+		: null;
+
+/** The one mutation both surfaces answer through, exported so a tool card can reuse it. */
+export function useAnswerApproval(client: Client, sessionId: string) {
+	const queries = useQueryClient();
+	const refresh = () => {
+		void queries.invalidateQueries({ queryKey: ["session", sessionId] });
+		void queries.invalidateQueries({ queryKey: ["sessions"] });
+	};
+	return useMutation({
+		mutationKey: permissionMutationKey(sessionId),
+		mutationFn: ({ id, decision }: { id: string; decision: PermissionDecision }) =>
+			client.call(routes.permission, { params: { id: sessionId, permissionId: id }, query: {}, body: { decision } }),
+		onSuccess: refresh,
+		onError: (error) => {
+			if (problemCode(error) === "conflict") refresh();
+		},
+	});
+}
+
+function Preview({ preview }: { preview: GatedPreview }) {
+	if (preview.kind === "command")
+		return (
+			<div className="approval-preview">
+				<p className="approval-preview__label">{preview.label}</p>
+				<pre className="approval-preview__code">
+					<code>{preview.command}</code>
+				</pre>
+				{preview.truncated ? <p className="approval-preview__note">Shortened for display.</p> : null}
+			</div>
+		);
+	if (preview.kind === "edits")
+		return (
+			<div className="approval-preview">
+				<p className="approval-preview__label">
+					{preview.label} · {preview.path}
+				</p>
+				{preview.edits.map((edit, index) => (
+					// biome-ignore lint/suspicious/noArrayIndexKey: an edit list has no id and is positional.
+					<div className="approval-proposed" key={index}>
+						<pre className="approval-proposed__side" data-side="del">
+							<code>{edit.oldText}</code>
+						</pre>
+						<pre className="approval-proposed__side" data-side="add">
+							<code>{edit.newText}</code>
+						</pre>
+					</div>
+				))}
+				{preview.truncated ? <p className="approval-preview__note">Shortened for display.</p> : null}
+			</div>
+		);
+	if (preview.kind === "contents")
+		return (
+			<div className="approval-preview">
+				<p className="approval-preview__label">
+					{preview.label} · {preview.path}
+				</p>
+				<pre className="approval-proposed__side" data-side="add">
+					<code>{preview.contents}</code>
+				</pre>
+				{preview.truncated ? <p className="approval-preview__note">Shortened for display.</p> : null}
+			</div>
+		);
+	if (preview.kind === "path" || preview.kind === "host")
+		return (
+			<div className="approval-preview">
+				<p className="approval-preview__label">{preview.label}</p>
+				<p className="approval-preview__value">
+					<code>{preview.kind === "path" ? preview.path : preview.requestedUrl}</code>
+				</p>
+				{preview.kind === "host" && preview.truncated ? (
+					<p className="approval-preview__note">Shortened for display. Open request details to inspect more.</p>
+				) : null}
+			</div>
+		);
+	if (preview.kind === "plan")
+		return (
+			<div className="approval-preview">
+				<p className="approval-preview__label">
+					{preview.label} · {preview.heading}
+				</p>
+				<p className="approval-preview__note">{preview.scope}</p>
+				<ol className="approval-plan">
+					{preview.rows.map((row) => (
+						<li key={row.key}>
+							<span className="approval-plan__agent">{row.agent}</span>
+							<span className="approval-plan__task">
+								{row.task}
+								{row.placement !== null || row.notes.length > 0 ? (
+									<small>{[row.placement, ...row.notes].filter(Boolean).join(" · ")}</small>
+								) : null}
+							</span>
+						</li>
+					))}
+				</ol>
+				{preview.more > 0 ? (
+					<p className="approval-preview__note">
+						{preview.more} more {preview.more === 1 ? "run is" : "runs are"}{" "}
+						{preview.hash === null
+							? "in this request; the request details list them all."
+							: "in this plan; the terminal lists them all."}
+					</p>
+				) : null}
+				{preview.hash !== null ? (
+					<p className="approval-preview__note">
+						{preview.ceiling ? `${preview.ceiling} ` : ""}
+						The runs will seal plan{" "}
+						<span className="approval-plan__hash" title={preview.hash.full}>
+							{preview.hash.short}
+						</span>
+						.
+					</p>
+				) : null}
+			</div>
+		);
+	if (preview.kind === "summary")
+		return (
+			<div className="approval-preview">
+				<p className="approval-preview__label">{preview.label}</p>
+				<p className="approval-preview__value">{preview.summary}</p>
+			</div>
+		);
+	return (
+		<div className="approval-preview">
+			<p className="approval-preview__label">{preview.label}</p>
+			<p className="approval-preview__note">{preview.note}</p>
+		</div>
+	);
+}
+
+/** Keep the exact tool arguments available without filling a compact approval with raw JSON. */
+const RawRequest = memo(function RawRequest({ input }: { input: Readonly<Record<string, unknown>> | undefined }) {
+	const [open, setOpen] = useState(false);
+	if (!input || Object.keys(input).length === 0) return null;
+	const full = open ? JSON.stringify(input, null, 2) : "";
+	const display = open ? clampText(full, 800, 32_000) : null;
+	return (
+		<details className="approval-raw" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+			<summary>Request details · tool arguments</summary>
+			{display ? (
+				<>
+					<pre className="approval-raw__code">
+						<code>{display.text}</code>
+					</pre>
+					{display.truncated ? <p className="approval-preview__note">Details shortened for display.</p> : null}
+				</>
+			) : null}
+		</details>
+	);
+});
+
+/** The decision itself. The banner and the anchored card render the same buttons into one mutation. */
+function ApprovalButtons({
+	sessionId,
+	permission,
+	answer,
+}: {
+	sessionId: string;
+	permission: Permission;
+	answer: AnswerApproval;
+}) {
+	const answering = useIsMutating({ mutationKey: permissionMutationKey(sessionId) }) > 0;
+	const answerSent = useAnswerSent(sessionId, permission.id);
+	const describedBy = useId();
+	return (
+		<>
+			{/* The button is named by its label alone; what the choice does is its description. A title
+			    attribute was read out as the name by some tools, so the text is a hidden element instead. */}
+			{approvalActions(permission).map((action) => {
+				// The turn-ending refusal's chord is declared here; the model keeps its two wire-era answers' ids.
+				const chord = action.keybinding ?? (action.decision === "reject-and-stop" ? "rejectAndStop" : null);
+				return [
+					<button
+						key={action.decision}
+						type="button"
+						className={action.variant === "primary" ? "primary" : ""}
+						data-decision={action.decision}
+						aria-label={action.label}
+						aria-describedby={`${describedBy}-${action.decision}`}
+						disabled={answering || answerSent}
+						onClick={() => answer.mutate({ id: permission.id, decision: action.decision })}
+					>
+						{action.label}
+						{chord === null ? null : (
+							<span className="approval-card__chord" aria-hidden="true">
+								{KEYBINDINGS[chord].modifiers.includes("alt") ? "Alt+" : ""}
+								{KEYBINDINGS[chord].key.toUpperCase()}
+							</span>
+						)}
+					</button>,
+					<span key={`${action.decision}-description`} id={`${describedBy}-${action.decision}`} hidden>
+						{action.description}
+					</span>,
+				];
+			})}
+			{answering || answerSent ? (
+				<span className="approval-decision-progress" role="status">
+					{answerSent ? "Decision recorded; updating this task…" : "Sending your decision…"}
+				</span>
+			) : null}
+		</>
+	);
+}
+
+interface CardProps {
+	readonly sessionId: string;
+	readonly permission: Permission;
+	readonly call: GatedCall | undefined;
+	readonly answer: AnswerApproval;
+	readonly eyebrow: string;
+	readonly hint?: string;
+	readonly variant: "banner" | "anchored";
+}
+
+function ApprovalCard({ sessionId, permission, call, answer, eyebrow, hint, variant }: CardProps) {
+	const now = useSharedSecond(true);
+	const timings = deriveApprovalTimings(permission, now);
+	const facts = safetyFacts(permission, call?.locations, timings);
+	const chips = decisionChips(permission.decision, permission.plan);
+	const rows = [...decisionRows(permission.decision, permission.plan), ...workerAskRows(permission.worker)];
+	const refusal = answerRefusal(answer, permission.id);
+	return (
+		<article
+			className={`approval-card approval-card--${variant}`}
+			data-escalated={timings.escalated}
+			aria-label="Permission request"
+			{...(variant === "anchored" ? { id: anchorId(permission.id), tabIndex: -1 } : {})}
+		>
+			<p className="approval-card__eyebrow">{eyebrow}</p>
+			<h2 className="approval-card__title">{permission.title}</h2>
+			{chips.length > 0 ? (
+				<p className="approval-card__chips">
+					<StatusMark tone={decisionTone(permission.decision)} label={chips[0] ?? ""} />
+					{chips.slice(1).map((chip) => (
+						<span className="approval-chip" key={chip}>
+							{chip}
+						</span>
+					))}
+				</p>
+			) : (
+				<p className="approval-card__chips">
+					<StatusMark tone="warn" label="Unclassified" detail={NO_DECISION_FACTS} />
+				</p>
+			)}
+			<Preview preview={gatedPreview(call, permission.plan)} />
+			<RawRequest input={call?.rawInput} />
+			{rows.length > 0 ? (
+				<dl className="approval-decision">
+					{rows.map((row) => (
+						<div key={row.term}>
+							<dt>{row.term}</dt>
+							<dd>
+								{row.lines === undefined
+									? row.value
+									: row.lines.map((line) => (
+											<span className="approval-decision__line" key={line}>
+												{line}
+											</span>
+										))}
+							</dd>
+						</div>
+					))}
+				</dl>
+			) : null}
+			<ul className="approval-card__facts">
+				{facts.map((fact) => (
+					<li key={fact}>{fact}</li>
+				))}
+			</ul>
+			<div className="approval-card__actions">
+				<ApprovalButtons sessionId={sessionId} permission={permission} answer={answer} />
+			</div>
+			{hint === undefined ? null : <p className="approval-card__hint">{hint}</p>}
+			{refusal ? (
+				<div role="alert" className="approval-decision-error">
+					<p>{refusal.message}</p>
+					<p>Your decision was not confirmed. Review the pending request before choosing again.</p>
+				</div>
+			) : null}
+		</article>
+	);
+}
+
+/**
+ * The banner above the transcript. It owns the four out-of-band effects and the two keyboard chords,
+ * so an anchored row rendered for the same permission never double-announces or double-binds.
+ */
+export function ApprovalBanner({ client, session }: { client: Client; session: SessionSnapshot }) {
+	const answer = useAnswerApproval(client, session.id);
+	const answering = useIsMutating({ mutationKey: permissionMutationKey(session.id) }) > 0;
+	const queue = approvalQueue(session.permissions);
+	const permission = queue.first;
+	const answerSent = useAnswerSent(session.id, permission?.id);
+	const call = permission ? session.timeline.find((item) => item.toolCallId === permission.toolCallId) : undefined;
+	const now = useSharedSecond(permission !== undefined);
+	const timings = permission ? deriveApprovalTimings(permission, now) : null;
+	const escalated = timings?.escalated === true;
+	const escalationWindow = timings?.declaredEscalationSeconds ?? null;
+	const id = permission?.id ?? null,
+		title = permission?.title ?? "",
+		kind = permission?.kind ?? "";
+	const spoken = permission ? approvalAnnouncement({ title, kind }, call?.locations) : "";
+
+	// The tab title has exactly one writer (client/interaction/announcer.ts), so this only raises the
+	// flag it composes from; nothing here touches `document.title` directly.
+	useEffect(() => {
+		setApprovalPending(id !== null);
+		return () => setApprovalPending(false);
+	}, [id]);
+	useEffect(() => {
+		if (id === null) return;
+		// Someone typing keeps their caret and hears the request politely; Alt+A and Alt+R still answer it.
+		announce(`${spoken} Request ${queue.position}.`, isTyping(document.activeElement) ? "polite" : "assertive");
+	}, [id, spoken, queue.position]);
+	useApprovalFocus(id);
+	// The declared window, not the observed wait: say what the product promised.
+	useEffect(() => {
+		announceEscalation(escalated && escalationWindow !== null ? escalationWindow : null);
+		return () => announceEscalation(null);
+	}, [escalated, escalationWindow]);
+
+	const enabled = permission !== undefined && !answering && !answerSent;
+	useShortcut("allowOnce", () => permission && answer.mutate({ id: permission.id, decision: "allow-once" }), {
+		enabled,
+	});
+	useShortcut("reject", () => permission && answer.mutate({ id: permission.id, decision: "reject" }), { enabled });
+	const stoppable = enabled && permission?.canStopTurn === true;
+	const rejectAndStop = () => permission && answer.mutate({ id: permission.id, decision: "reject-and-stop" });
+	useShortcut("rejectAndStop", rejectAndStop, { enabled: stoppable });
+
+	const anchored = useAnchored(id);
+	if (!permission) return null;
+	const refusal = answerRefusal(answer, permission.id);
+	// The anchored card beside the call carries the review, so the pinned surface stays one line: what
+	// is asked, how long is left, the decision, and a way back to the card if it has scrolled away.
+	if (anchored)
+		return (
+			<section className="approval-banner approval-banner--strip" aria-label="Approval needed">
+				<p className="approval-strip" data-escalated={escalated}>
+					<span className="approval-strip__glyph" aria-hidden="true">
+						!
+					</span>
+					<span className="approval-strip__eyebrow">
+						{escalated ? "Approval waiting" : "Approval needed"} · {queue.position}
+					</span>
+					<strong className="approval-strip__title" title={permission.title}>
+						{permission.title}
+					</strong>
+					{timings?.budgetKnown ? (
+						<span className="approval-strip__left">stops in {formatDuration(timings.remainingMs)}</span>
+					) : null}
+				</p>
+				<div className="approval-strip__actions">
+					<button
+						type="button"
+						className="approval-strip__review"
+						onClick={() => {
+							const card = document.getElementById(anchorId(permission.id));
+							card?.scrollIntoView({ block: "center" });
+							card?.focus({ preventScroll: true });
+						}}
+					>
+						Review
+					</button>
+				</div>
+				{refusal && (
+					<div className="approval-decision-error" role="alert">
+						<p>{refusal.message}</p>
+						<p>Your keyboard decision was not confirmed. Open Review to check the pending request and choose again.</p>
+					</div>
+				)}
+			</section>
+		);
+	return (
+		// A named `section` already exposes the region role, which is what the banner needs; spelling
+		// the role out as well is the redundancy the linter rejects.
+		<section className="approval-banner" aria-label="Approval needed">
+			<ApprovalCard
+				sessionId={session.id}
+				permission={permission}
+				call={call}
+				answer={answer}
+				eyebrow={`${bannerEyebrow(escalated)} · ${queue.position}`}
+				hint={permission.canStopTurn ? `${KEYBOARD_HINT} · Alt + X rejects and stops the turn` : KEYBOARD_HINT}
+				variant="banner"
+			/>
+		</section>
+	);
+}
+
+/**
+ * The same decision, anchored to the exact tool call it gates. Both surfaces stay live and either
+ * one answers; the card the operator missed in a recorded session was the one that was not here.
+ */
+export function AnchoredApproval({
+	client,
+	session,
+	item,
+}: {
+	client: Client;
+	session: SessionSnapshot;
+	item: TimelineItem;
+}) {
+	const answer = useAnswerApproval(client, session.id);
+	const permission = permissionForCall(session, item);
+	const permissionId = permission?.id ?? null;
+	useEffect(() => (permissionId === null ? undefined : registerAnchor(permissionId)), [permissionId]);
+	if (!permission) {
+		// An answered card leaves its outcome where it stood, so Allow or Reject never just vanishes.
+		const record = item.toolCallId === undefined ? null : decisionRecord(session.permissions, item.toolCallId);
+		return record === null ? null : (
+			<p className="approval-record approval-preview__note" data-status={record.status}>
+				{record.summary}
+			</p>
+		);
+	}
+	return (
+		<ApprovalCard
+			sessionId={session.id}
+			permission={permission}
+			call={item}
+			answer={answer}
+			eyebrow={CARD_EYEBROW}
+			variant="anchored"
+		/>
+	);
+}

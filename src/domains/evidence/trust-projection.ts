@@ -1,0 +1,356 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { OBSERVED_COMMAND_PREFIX } from "../dispatch/run-findings.js";
+import {
+	adaptRunTrustStatus,
+	type CanonicalTrustStatus,
+	type RunTrustFacts,
+	TRUST_STATUS_AXES,
+	type TRUST_STATUS_STATES,
+	type TrustArtifactReference,
+	type TrustStatusAxis,
+} from "./trust-status.js";
+
+/**
+ * The one projection of the canonical trust status every operator surface
+ * renders. The five-axis model stays the source of truth and is never
+ * collapsed into a score here; this module only fixes the words each state is
+ * called and the order the axes are read in, so the dispatch line, the
+ * monitor block, `evidence inspect`, `findings.md`, the Alt+W board, the
+ * receipt view, and the ACP wire cannot each spell the same fact differently.
+ *
+ * Two shapes leave this module. `formatTrustSummary` is the compact human
+ * line: it answers who claims the result, what was observed, what was
+ * independently checked, and what is still unknown, without receipt
+ * internals. `summarizeTrustStatus` is the bounded, versioned machine record
+ * behind that line, carrying the axis states and typed references back to
+ * the artifacts the detailed model cites.
+ */
+
+export const TRUST_SUMMARY_VERSION = 1 as const;
+
+/** Reference cap for the machine projection; the canonical model keeps up to 16 per axis. */
+export const TRUST_SUMMARY_MAX_REFS = 8;
+
+/**
+ * How much the run's result can be leaned on, read off the axes in a fixed
+ * order. It is a presentation tier for styling and sorting, never a score:
+ * `reviewed` is the only tier that may be styled as independently verified.
+ */
+export type TrustVerdict = "reviewed" | "grounded" | "unverified" | "compromised" | "unknown";
+
+/** Bounded, versioned machine projection with references to the detailed artifacts. */
+export interface TrustSummaryProjection {
+	version: typeof TRUST_SUMMARY_VERSION;
+	verdict: TrustVerdict;
+	/** The compact human line, byte-identical to what the text surfaces print. */
+	text: string;
+	/** Every axis state, in canonical vocabulary, for machine consumers. */
+	axes: Record<TrustStatusAxis, string>;
+	/** Who asserts the validation fact: `<authority kind>:<id>`, or `worker` when only the run's own prose exists. */
+	claimant: string;
+	/** Axes that answer nothing, so a consumer knows what remains unknown. */
+	unknown: TrustStatusAxis[];
+	/** `<artifact kind>:<id>` pointers to the detailed records, sorted, unique, capped. */
+	refs: string[];
+}
+
+type AxisStates = { [Axis in TrustStatusAxis]: (typeof TRUST_STATUS_STATES)[Axis][number] };
+
+/**
+ * The standardized word for every state. A word is what an operator reads;
+ * the state id is what a machine reads. `inferred` names an ungrounded
+ * validation claim: the worker said it validated, but nothing was observed
+ * to have run.
+ */
+export const TRUST_STATE_WORDS: { [Axis in TrustStatusAxis]: Record<AxisStates[Axis], string> } = {
+	artifactIntegrity: {
+		verified: "sealed",
+		failed: "seal broken",
+		absent: "no run record",
+		unknown: "seal unchecked",
+		not_applicable: "seal not applicable",
+	},
+	validationGrounding: {
+		validated: "grounded",
+		failed: "validation failed",
+		ungrounded: "inferred: validation claimed, none observed",
+		absent: "no validation observed",
+		unknown: "validation unknown",
+		not_applicable: "validation not applicable",
+	},
+	independentReview: {
+		passed: "independently reviewed: pass",
+		failed: "independently reviewed: fail",
+		inconclusive: "independent review inconclusive",
+		not_independent: "review not independent",
+		absent: "not independently reviewed",
+		unknown: "independent review unknown",
+		not_applicable: "independent review not applicable",
+	},
+	contextProvenance: {
+		recorded: "context recorded",
+		invalid: "context record invalid",
+		absent: "context not recorded",
+		unknown: "context unknown",
+		not_applicable: "context not applicable",
+	},
+	completionEvidence: {
+		evidenced: "completion evidenced",
+		incomplete: "completion unevidenced",
+		limited: "completion limited",
+		absent: "completion not recorded",
+		unknown: "completion unknown",
+		not_applicable: "completion not applicable",
+	},
+};
+
+/** The word for one axis state; unknown input never throws, it reads as unknown. */
+export function trustStateWord<Axis extends TrustStatusAxis>(axis: Axis, state: string): string {
+	const words = TRUST_STATE_WORDS[axis] as Record<string, string>;
+	return words[state] ?? words.unknown ?? "unknown";
+}
+
+function authorityOf(status: CanonicalTrustStatus, axis: TrustStatusAxis): string | null {
+	const entry = status[axis];
+	return entry.state === "absent" ? null : `${entry.authority.kind}:${entry.authority.id}`;
+}
+
+/** The integrity clause every surface prints for a run's seal verdict. */
+export function integrityClause(status: CanonicalTrustStatus): string {
+	return trustStateWord("artifactIntegrity", status.artifactIntegrity.state);
+}
+
+/**
+ * Why passing host checks left validation unknown: some reused a pass from another run, were skipped, or settled
+ * before the record said which. Undefined for any other authority.
+ */
+export function unexecutedHostChecksClause(authorityId: string): string | undefined {
+	if (authorityId === "host-verification-reused") return "host checks reused an earlier run's pass; validation unknown";
+	if (authorityId === "host-verification-skipped")
+		return "no host check ran: nothing changed under any of them; validation unknown";
+	if (authorityId === "host-verification-unrecorded")
+		return "host checks passed without a record of which ran; validation unknown";
+	return undefined;
+}
+
+/**
+ * The validation clause names its claimant, because "grounded" alone hides
+ * the difference between a host-run check and a self-reported one.
+ */
+export function validationClause(status: Pick<CanonicalTrustStatus, "validationGrounding">): string {
+	const entry = status.validationGrounding;
+	const word = trustStateWord("validationGrounding", entry.state);
+	if (entry.state === "unknown" && entry.authority.id === "host-verification-baseline-failed")
+		return "check also failed on task base; change validation unknown";
+	const unexecuted = entry.state === "unknown" ? unexecutedHostChecksClause(entry.authority.id) : undefined;
+	if (unexecuted !== undefined) return unexecuted;
+	if (entry.state === "absent") return word;
+	if ((entry.state === "validated" || entry.state === "failed") && entry.authority.id === "host-observed-command") {
+		const commands = entry.artifacts
+			.filter((artifact) => artifact.kind === "validation_result" && artifact.id.startsWith(OBSERVED_COMMAND_PREFIX))
+			.map((artifact) => artifact.id.slice(OBSERVED_COMMAND_PREFIX.length));
+		return `validation observed ${entry.state === "validated" ? "passing" : "failing"}: ${commands.join(", ")}`;
+	}
+	if (entry.state === "failed" && entry.authority.id === "result-quality") return "recorded validation failed";
+	if (entry.state === "validated" || entry.state === "failed") return `${word} by ${entry.authority.id}`;
+	// A named external system that could not observe the run is worth naming;
+	// the historical-format placeholder is not an authority anyone can ask.
+	if (entry.state === "unknown" && entry.authority.kind !== "unknown") return `${word} (${entry.authority.id})`;
+	return word;
+}
+
+/**
+ * The compact human body. Clause order is fixed: integrity, validation with
+ * its claimant, independent review, context, completion. Every
+ * surface prints this body verbatim, so two surfaces can only disagree by
+ * reading different canonical input.
+ */
+export function formatTrustSummary(status: CanonicalTrustStatus): string {
+	return trustSummaryClauses(status).join("; ");
+}
+
+function trustSummaryClauses(status: CanonicalTrustStatus): string[] {
+	return [
+		integrityClause(status),
+		validationClause(status),
+		trustStateWord("independentReview", status.independentReview.state),
+		trustStateWord("contextProvenance", status.contextProvenance.state),
+		trustStateWord("completionEvidence", status.completionEvidence.state),
+	];
+}
+
+/** Human wording names the failed axis while preserving the canonical verdict for machine consumers. */
+export function trustVerdictWord(status: CanonicalTrustStatus): string {
+	const verdict = trustVerdict(status);
+	if (verdict !== "compromised") return verdict;
+	if (status.artifactIntegrity.state === "failed") return trustStateWord("artifactIntegrity", "failed");
+	if (status.validationGrounding.state === "failed" || status.validationGrounding.state === "ungrounded")
+		return trustStateWord("validationGrounding", status.validationGrounding.state);
+	if (status.independentReview.state === "failed" || status.independentReview.state === "not_independent")
+		return trustStateWord("independentReview", status.independentReview.state);
+	return trustStateWord("contextProvenance", "invalid");
+}
+
+/**
+ * Why a finished run cannot be leaned on, short enough for a list row, or null
+ * when nothing marks it against. A row that said only `done` hid this until the
+ * run was opened.
+ */
+export function trustFailureWords(summary: Pick<TrustSummaryProjection, "verdict" | "axes">): string | null {
+	if (summary.verdict !== "compromised") return null;
+	const { artifactIntegrity, validationGrounding, independentReview, contextProvenance } = summary.axes;
+	if (artifactIntegrity === "failed") return "seal broken";
+	if (independentReview === "failed") return "review failed";
+	if (validationGrounding === "failed") return "validation failed";
+	if (validationGrounding === "ungrounded") return "no check ran";
+	if (independentReview === "not_independent") return "review not independent";
+	if (contextProvenance === "invalid") return "context invalid";
+	return "not trusted";
+}
+
+/**
+ * The one sentence a person reads before the axis list: can this result be
+ * leaned on, and the reason that decides it. Always under 80 characters, so it
+ * fits a board row at ordinary widths. The axes stay the record; this only
+ * chooses which of them to say first.
+ */
+export function plainTrustVerdict(summary: Pick<TrustSummaryProjection, "verdict" | "axes">): string {
+	const { artifactIntegrity, validationGrounding, independentReview, contextProvenance } = summary.axes;
+	const reviewClause =
+		independentReview === "absent" || independentReview === "unknown" ? ", no independent review" : "";
+	switch (summary.verdict) {
+		case "compromised":
+			if (artifactIntegrity === "failed") return "not trusted: the run's seal is broken";
+			if (independentReview === "failed") return "not trusted: independent review failed";
+			if (validationGrounding === "failed") return `not trusted: validation failed${reviewClause}`;
+			if (validationGrounding === "ungrounded") return `not trusted: validation claimed but none ran${reviewClause}`;
+			if (independentReview === "not_independent") return "not trusted: the review was not independent";
+			if (contextProvenance === "invalid") return "not trusted: its context record is invalid";
+			return "not trusted";
+		case "reviewed":
+			return "trusted: independently reviewed and passed";
+		case "grounded":
+			return independentReview === "inconclusive"
+				? "checks passed: independent review inconclusive"
+				: `checks passed${reviewClause.replace(",", ":")}`;
+		case "unverified":
+			return validationGrounding === "unknown"
+				? `unverified: validation unknown${reviewClause}`
+				: `unverified: no checks observed${reviewClause}`;
+		case "unknown":
+			return artifactIntegrity === "absent"
+				? "unknown: no run record to check"
+				: "unknown: the run's seal was not checked";
+	}
+}
+
+/** The tier and body under one versioned label for receipt-facing surfaces. */
+export function formatTrustSummaryLine(status: CanonicalTrustStatus): string {
+	const verdict = trustVerdictWord(status);
+	// A compromised verdict names its deciding axis; the axis list does not say it a second time.
+	const body = trustSummaryClauses(status).filter((clause) => clause !== verdict);
+	return `trust v${TRUST_SUMMARY_VERSION}: ${verdict}; ${body.join("; ")}`;
+}
+
+/**
+ * The drill-down token line: every axis in canonical state ids. This is the
+ * one machine-readable text form; `evidence inspect` and the dispatch and
+ * monitor labels all print it from here.
+ */
+export function formatTrustAxes(status: CanonicalTrustStatus): string {
+	return [`trust_status=v${status.version}`, ...TRUST_STATUS_AXES.map((axis) => `${axis}:${status[axis].state}`)].join(
+		" ",
+	);
+}
+
+function isUnanswered(status: CanonicalTrustStatus, axis: TrustStatusAxis): boolean {
+	const state = status[axis].state;
+	return state === "absent" || state === "unknown";
+}
+
+/**
+ * Read the tier off the axes in priority order. A broken seal, a failed or
+ * inferred validation, a failed or correlated review, or a contradictory
+ * context record compromises the result whatever else holds.
+ * An unchecked or missing seal leaves it unknown. Only an authenticated
+ * independent pass is `reviewed`; observed validation without one is
+ * `grounded`; a sealed receipt with nothing observed is `unverified`.
+ */
+export function trustVerdict(status: CanonicalTrustStatus): TrustVerdict {
+	const integrity = status.artifactIntegrity.state;
+	const validation = status.validationGrounding.state;
+	const review = status.independentReview.state;
+	if (
+		integrity === "failed" ||
+		validation === "failed" ||
+		validation === "ungrounded" ||
+		review === "failed" ||
+		review === "not_independent" ||
+		status.contextProvenance.state === "invalid"
+	) {
+		return "compromised";
+	}
+	if (integrity !== "verified") return "unknown";
+	if (review === "passed") return "reviewed";
+	if (validation === "validated") return "grounded";
+	return "unverified";
+}
+
+function claimantOf(status: CanonicalTrustStatus): string {
+	const state = status.validationGrounding.state;
+	if (state === "absent" || state === "ungrounded") return "worker";
+	return authorityOf(status, "validationGrounding") ?? "worker";
+}
+
+function referenceKey(reference: TrustArtifactReference): string {
+	return `${reference.kind}:${reference.id}`;
+}
+
+/** Every artifact the axes cite, as bounded pointers a consumer can resolve. */
+function trustSummaryReferences(status: CanonicalTrustStatus): string[] {
+	const keys = new Set<string>();
+	for (const axis of TRUST_STATUS_AXES) {
+		const entry = status[axis];
+		if (entry.state === "absent") continue;
+		for (const reference of entry.artifacts) keys.add(referenceKey(reference));
+	}
+	return [...keys].sort().slice(0, TRUST_SUMMARY_MAX_REFS);
+}
+
+/** The bounded machine projection. Flat by design so a depth-capped wire keeps it whole. */
+export function summarizeTrustStatus(status: CanonicalTrustStatus): TrustSummaryProjection {
+	const axes = Object.fromEntries(TRUST_STATUS_AXES.map((axis) => [axis, status[axis].state])) as Record<
+		TrustStatusAxis,
+		string
+	>;
+	return {
+		version: TRUST_SUMMARY_VERSION,
+		verdict: trustVerdict(status),
+		text: formatTrustSummary(status),
+		axes,
+		claimant: claimantOf(status),
+		unknown: TRUST_STATUS_AXES.filter((axis) => isUnanswered(status, axis)),
+		refs: trustSummaryReferences(status),
+	};
+}
+
+/** The settled facts a run's assurance is read from: the validation evidence, nothing about its seal or context. */
+export type RunAssuranceFacts = Pick<
+	RunTrustFacts,
+	"verification" | "quality" | "validationGrounding" | "hostVerification"
+>;
+
+/**
+ * A run's assurance (DESIGN 4.8): the trust verdict of its own settled facts, as the process that settled it holds
+ * them. It is the one value the merge gate, the exit code and a parent's finish contract read. The seal is the
+ * producer's own and no review or context axis is in play, so it is compromised, grounded or unverified.
+ */
+export function runResultAssurance(facts: RunAssuranceFacts): TrustVerdict {
+	return trustVerdict(
+		adaptRunTrustStatus(
+			{ ...facts, contextProvenance: "not_applicable", hashes: [], runId: "assurance", digest: null },
+			{ state: "verified", by: "producer" },
+		),
+	);
+}

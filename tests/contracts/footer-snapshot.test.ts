@@ -1,0 +1,378 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, notStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { it, test } from "node:test";
+import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { presentationTier, setPresentationTier } from "../../src/core/presentation-tier.js";
+import { EMPTY_CAPABILITIES } from "../../src/domains/providers/types/capability-flags.js";
+import { redactSecretString } from "../../src/domains/safety/redaction.js";
+import type { TelemetryView } from "../../src/domains/telemetry/contract.js";
+import { getKeybindings, setKeybindings, stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
+import { createFollowUpQueuePanel } from "../../src/interactive/follow-up-queue-panel.js";
+import { buildFooterDashboard, capabilityLabels } from "../../src/interactive/footer/dashboard.js";
+import { createFleetBand } from "../../src/interactive/footer/fleet-band.js";
+import { footerKeyHint } from "../../src/interactive/footer/key-hints.js";
+import type { Notification } from "../../src/interactive/footer/notifications.js";
+import { formatNotificationPanel } from "../../src/interactive/footer/notifications.js";
+import { dashboardPageViewport, renderCompactDashboard } from "../../src/interactive/footer/pages.js";
+import { dispatchSegment } from "../../src/interactive/footer-panel.js";
+import { createKeybindingManager } from "../../src/interactive/keybinding-manager.js";
+import { GLYPH } from "../../src/interactive/theme/index.js";
+import { footerState } from "../harness/footer-fixture.js";
+import { goldenTelemetryRecords, telemetryViewOf } from "../harness/telemetry-view.js";
+
+test("unchanged footer refresh preserves rendered rows while changed state and width invalidate them", () => {
+	let now = 10_000;
+	let used = 100;
+	const notices: Notification[] = [];
+	const panel = buildFooterDashboard({
+		providers: { list: () => [] } as never,
+		resolveCurrentBranch: async () => null,
+		getTerminalColumns: () => 120,
+		getContextUsage: () => ({ tokens: used, contextWindow: 1000, percent: used / 10 }),
+		now: () => now,
+		getNotifications: () => notices,
+		getAgentStatus: () => ({
+			phase: "writing",
+			since: 8000,
+			lastMeaningfulAt: now,
+			watchdogTier: 0,
+			watchdogPeak: 0,
+			localRuntime: false,
+		}),
+	});
+	try {
+		const first = panel.view.render(120);
+		panel.refresh();
+		strictEqual(panel.view.render(120), first);
+		now += 1000;
+		panel.refresh();
+		notStrictEqual(panel.view.render(120), first, "status line updates elapsed phase");
+		const withElapsed = panel.view.render(120);
+		used = 200;
+		panel.refresh();
+		notStrictEqual(panel.view.render(120), withElapsed, "status line reflects context fill updates");
+		const narrow = panel.view.render(60);
+		// Standard keeps its key row at every width from 44 up, so the composer does not move.
+		strictEqual(narrow.length, 2);
+		strictEqual(panel.view.render(60), narrow);
+		notStrictEqual(panel.view.render(120), narrow);
+		strictEqual(panel.view.render(120).length, 2);
+		notices.push({ id: "warning", level: "warning", text: "Needs attention", key: null, addedAt: now, expiresAt: null });
+		panel.refresh();
+		strictEqual(panel.view.render(60).length, 3);
+		notices.pop();
+		panel.refresh();
+		strictEqual(panel.view.render(60).length, 2);
+	} finally {
+		panel.dispose();
+	}
+});
+
+test("footer hydration reads time and notices once per snapshot", () => {
+	let clocks = 0;
+	let notices = 0;
+	const panel = buildFooterDashboard({
+		providers: { list: () => [] } as never,
+		resolveCurrentBranch: async () => null,
+		now: () => {
+			clocks++;
+			return 12000;
+		},
+		getNotifications: () => {
+			notices++;
+			return [];
+		},
+	});
+
+	try {
+		clocks = 0;
+		notices = 0;
+		panel.refresh();
+		strictEqual(clocks, 1);
+		strictEqual(notices, 1);
+	} finally {
+		panel.dispose();
+	}
+});
+
+test("minimal and demo-off footers suppress teaching without hiding immediate controls or safety mode", () => {
+	const state = footerState();
+	state.dispatchRows = [];
+	state.session.activeSkills = [];
+	state.notices = [];
+	state.keyContext = "idle";
+	state.demoHint = "learn a shortcut";
+	for (const autonomy of ["default", "yolo"]) {
+		state.session.autonomy = autonomy;
+		for (const [style, demo] of [
+			["compact", true],
+			["standard", false],
+		] as const) {
+			state.outputStyle = style;
+			state.demo = demo;
+			for (const width of [40, 80, 120, 200]) {
+				const lines = renderCompactDashboard(state, width);
+				const text = lines.map(stripTerminalSequences).join("\n");
+				// Yolo never drops; the word `default` is implied by its absence once the row runs short.
+				if (autonomy === "yolo" || width >= 120) match(text, autonomy === "yolo" ? /YOLO/u : /default/u);
+				ok(!/learn a shortcut|Dashboard/u.test(text));
+				// Compact is the status line alone; standard keeps its hint row of keys, a W1 width does not.
+				const hintRow = style === "standard" && width >= 44;
+				strictEqual(lines.length, hintRow ? 2 : 1, "the footer height is the tier's");
+				state.keyContext = "command:/settings";
+				const command = renderCompactDashboard(state, width).map(stripTerminalSequences).join("\n");
+				if (hintRow) match(command, /runs \/settings/u);
+				else doesNotMatch(command, /runs \/settings/u);
+				state.keyContext = "idle";
+				state.notices = [{ id: "fail", level: "error", text: "Route failed", key: null, addedAt: 0, expiresAt: null }];
+				match(renderCompactDashboard(state, width).map(stripTerminalSequences).join("\n"), /Route failed/u);
+				state.notices = [];
+				ok(lines.every((line) => visibleWidth(line) <= width));
+			}
+		}
+	}
+});
+
+test("footer pages use snapshot time and preserve their row contracts at release widths", () => {
+	const state = footerState();
+	for (const width of [60, 80, 120, 200]) {
+		const compact = renderCompactDashboard(state, width);
+		strictEqual(compact.length, 2);
+		{
+			const rows = dashboardPageViewport(state, width, 240, "Alt+U");
+			strictEqual(rows.length, 4);
+			match(stripTerminalSequences(rows[0] ?? ""), /Route.*Work/u);
+			for (const row of [...rows, ...compact]) {
+				ok(visibleWidth(row) <= width);
+				const plain = row.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");
+				ok([...plain].every((char) => char.charCodeAt(0) >= 32 && (char.charCodeAt(0) < 127 || char.charCodeAt(0) > 159)));
+			}
+		}
+	}
+});
+
+test("the footer reports used tokens without a placeholder percentage when serving window is unknown", () => {
+	const state = footerState();
+	state.context.ledger = null;
+	state.context.used = 100;
+	state.context.contextWindow = null;
+	const rows = renderCompactDashboard(state, 100).map(stripTerminalSequences).join("\n");
+	match(rows, /ctx 100 used/u);
+	strictEqual(/\?%/u.test(rows), false);
+});
+
+test("footer totals come from the read model: unknown usage stays partial, never-sent is counted, nothing reads as 0 (#434)", () => {
+	const records = goldenTelemetryRecords();
+	const golden = telemetryViewOf("golden-p0", records);
+	const neverSentId = golden.calls({ dispositions: ["never_sent"] }).calls[0]?.callId;
+	let view: TelemetryView | null = telemetryViewOf(
+		"golden-p0",
+		records.filter((record) => "callId" in record.data && record.data.callId === neverSentId),
+	);
+	const prevTier = presentationTier();
+	setPresentationTier("detailed");
+	const panel = buildFooterDashboard({
+		providers: { list: () => [] } as never,
+		resolveCurrentBranch: async () => null,
+		getTerminalRows: () => 120,
+		getTelemetry: () => view,
+	});
+	try {
+		for (const scenario of ["never-sent", "golden", "unbound"] as const) {
+			view = scenario === "never-sent" ? view : scenario === "golden" ? golden : null;
+			panel.refresh();
+			for (const width of [40, 80, 120]) {
+				const rows = panel.view.render(width);
+				const text = rows.map(stripTerminalSequences).join(" ").replace(/\s+/gu, " ");
+				if (width >= 80) {
+					if (scenario === "never-sent") {
+						match(text, /(?:0 tok|session 0 tokens)/u);
+						match(text, /1 never sent/u);
+					}
+					if (scenario === "golden") {
+						match(text, /(?:≥5\.3k tok|session ≥5\.3k tokens)/u);
+						ok(!/at least|some calls unknown|~5\.3k/u.test(text));
+						if (width >= 120) match(text, /\$0\.01 \+\?/u);
+					}
+					if (scenario === "unbound") doesNotMatch(text, /session 0 tokens/u);
+				}
+				for (const row of rows) ok(visibleWidth(row) <= width);
+			}
+		}
+	} finally {
+		panel.dispose();
+		setPresentationTier(prevTier);
+	}
+});
+
+test("retrying and cancelling workers count as active on every footer surface", () => {
+	const state = footerState();
+	const base = state.dispatchRows[0];
+	ok(base);
+	state.dispatchRows = [
+		{ ...base, runId: "retry", status: "retrying" },
+		{ ...base, runId: "cancel", status: "cancelling" },
+	];
+	state.agent.dispatchRows = state.dispatchRows;
+	match(dispatchSegment(state.dispatchRows) ?? "", /2 active/u);
+	const band = createFleetBand({ getRows: () => state.dispatchRows, now: () => state.now });
+	for (const width of [80, 120, 200]) {
+		const compact = renderCompactDashboard(state, width);
+		const bandRows = band.render(width);
+		match(compact.map(stripTerminalSequences).join("\n"), /2 workers/u);
+		match(bandRows.map(stripTerminalSequences).join("\n"), /● 2 running/u);
+		for (const line of [...compact, ...bandRows]) {
+			ok(visibleWidth(line) <= width);
+			for (const tail of line.split(String.fromCharCode(27)).slice(1)) ok(/^\[[0-9;]*m/u.test(tail));
+		}
+	}
+});
+
+test("footer, queue and action hints spell live keybindings consistently", () => {
+	const previous = getKeybindings();
+	const manager = createKeybindingManager({
+		...DEFAULT_SETTINGS,
+		interface: {
+			...DEFAULT_SETTINGS.interface,
+			keybindings: {
+				"pancode.status.toggle": "ctrl+u",
+				"pancode.leader": "alt+g",
+				"pancode.model.select": "ctrl+m",
+				"pancode.notifications.dismiss": "ctrl+n",
+			},
+		},
+	});
+	try {
+		match(manager.actionLabel("pancode.notifications.dismiss"), /Ctrl\+N/u);
+		strictEqual(manager.actionLabel("pancode.model.select"), "Ctrl+M");
+		strictEqual(manager.fullActionLabel("pancode.model.select"), "Ctrl+M · Alt+G M");
+		strictEqual(manager.actionLabel("pancode.autonomy.toggle"), "Alt+G Y");
+		match(footerKeyHint(0, false, Number.POSITIVE_INFINITY, "idle") ?? "", /Ctrl\+M model\b/u);
+		const state = footerState();
+		state.demo = false;
+		state.session.leaderArmed = true;
+		const queue = createFollowUpQueuePanel({
+			getNavigateKey: () => manager.actionLabel("pancode.queue.open"),
+			getSendNowKey: () => manager.actionLabel("pancode.message.interrupt"),
+			isHeld: () => true,
+		});
+		queue.setMessages([{ id: "q1", enqueuedAt: 0, kind: "follow-up", text: "inspect this" }]);
+		const notice = {
+			id: "warning",
+			level: "warning" as const,
+			text: "Connection needs review",
+			key: null,
+			addedAt: state.now,
+			expiresAt: null,
+		};
+		for (const width of [60, 80, 120, 200]) {
+			const compact = renderCompactDashboard(state, width);
+			match(compact.map(stripTerminalSequences).join("\n"), /Alt\+G → choose key/u);
+			const queued = queue.render(width);
+			match(queued.map(stripTerminalSequences).join("\n"), /Queue 1 · held, nothing sent/u);
+			match(queued.map(stripTerminalSequences).join("\n"), /send now/u);
+			doesNotMatch(queued.map(stripTerminalSequences).join("\n"), /Alt\+Q review|\[Alt\+Q\]|restores all/u);
+			state.session.leaderArmed = false;
+			state.notices = [notice];
+			const badge = renderCompactDashboard(state, width);
+			const panel = formatNotificationPanel([notice], width, {
+				dismissKeyLabel: manager.actionLabel("pancode.notifications.dismiss"),
+			});
+			match(badge.map(stripTerminalSequences).join("\n"), new RegExp(GLYPH.warn));
+			match(panel.map(stripTerminalSequences).join("\n"), new RegExp(GLYPH.warn));
+			match(panel.map(stripTerminalSequences).join("\n"), /Ctrl\+N dismiss/u);
+			state.session.leaderArmed = true;
+			state.notices = [];
+			for (const line of [...compact, ...queued, ...badge, ...panel]) {
+				ok(visibleWidth(line) <= width);
+				for (const tail of line.split(String.fromCharCode(27)).slice(1)) ok(/^\[[0-9;]*m/u.test(tail));
+			}
+		}
+	} finally {
+		setKeybindings(previous);
+	}
+});
+
+it("the dashboard names image input for both vision and text-only models", () => {
+	deepStrictEqual(capabilityLabels({ ...EMPTY_CAPABILITIES, chat: true }).includes("images no"), true);
+	deepStrictEqual(capabilityLabels({ ...EMPTY_CAPABILITIES, chat: true, vision: true }).includes("images yes"), true);
+});
+
+it("the yolo cap notice shows its cap word, while a secret after = or a flag stays redacted (F-C15)", () => {
+	const text = "yolo paused: the 5M-token cap was reached.";
+	const notice: Notification = { id: "cap", text, level: "warning", key: "autonomy.cap", addedAt: 0, expiresAt: null };
+	const panel = formatNotificationPanel([notice], 120).map(stripTerminalSequences).join("\n");
+	match(panel, /the 5M-token cap was reached/u);
+	doesNotMatch(panel, /\[redacted\]/u);
+	strictEqual(redactSecretString("5M-token cap"), "5M-token cap");
+	strictEqual(redactSecretString("token=abc123secret"), "token=[redacted]");
+	strictEqual(redactSecretString("gh auth --with-token abc123secret"), "gh auth --with-token [redacted]");
+	strictEqual(redactSecretString("x-token=abc123secret"), "x-token=[redacted]");
+});
+
+it("repeated idle renders and busy clock ticks reuse cached footer facts without re-reading context usage", () => {
+	let now = 10_000;
+	let usageCalls = 0;
+	let statusPhase: "idle" | "writing" = "idle";
+	const panel = buildFooterDashboard({
+		providers: {
+			list: () => [
+				{
+					target: { id: "t1", defaultModel: "m1" },
+					available: true,
+					reason: undefined,
+					health: { status: "healthy" },
+				},
+			],
+		} as never,
+		resolveCurrentBranch: async () => null,
+		getTerminalColumns: () => 96,
+		getContextUsage: () => {
+			usageCalls += 1;
+			return { tokens: 120, contextWindow: 1000, percent: 12 };
+		},
+		getContextLedger: () =>
+			({
+				usedTokens: 120,
+				contextWindow: 1000,
+				reserveTokens: 0,
+				freeTokens: 880,
+				percent: 12,
+				measured: true,
+				toolCount: 2,
+				compactionThreshold: 80,
+				compactionAuto: true,
+				categories: [],
+				meter: [],
+			}) as never,
+		now: () => now,
+		getAgentStatus: () => ({
+			phase: statusPhase,
+			since: 9000,
+			lastMeaningfulAt: now,
+			watchdogTier: 0,
+			watchdogPeak: 0,
+			localRuntime: false,
+		}),
+	});
+	try {
+		const initial = panel.view.render(96);
+		const callsAfterInit = usageCalls;
+		for (let i = 0; i < 10; i += 1) {
+			strictEqual(panel.view.render(96), initial);
+		}
+		strictEqual(usageCalls, callsAfterInit, "idle keystroke renders must not re-snapshot facts");
+
+		statusPhase = "writing";
+		panel.refresh();
+		const busyFirst = panel.view.render(96);
+		const callsWhenBusy = usageCalls;
+		now += 1000;
+		const busySecond = panel.view.render(96);
+		notStrictEqual(busySecond, busyFirst, "busy elapsed clock still advances on tick");
+		strictEqual(usageCalls, callsWhenBusy, "busy clock tick must reuse cached facts snapshot");
+	} finally {
+		panel.dispose();
+	}
+});

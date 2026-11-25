@@ -1,0 +1,401 @@
+# Configuration reference
+
+This page lists every PanCode setting in `settings.yaml` with its default, the values it accepts and when a change takes effect. It also covers the project files under `.pancode/`, local MCP server declarations and trust, how PanCode can propose a settings change for you, and the flags and tool arguments of `context`. Use it to look up one key or value; for setup choices, see [Configuration and targets](configuration-and-targets.md).
+
+Source defines the complete key, flag, and argument contracts; use the linked files when exact schemas or defaults matter. For `PANCODE_*` variables, see the [environment variable reference](environment-variables.md). The [model catalog contract](../architecture/model-catalog.md) explains how live discovery, model profiles and catalog settings interact.
+
+## Settings keys
+
+`pancode configure --settings`, GUI Settings and TUI `/settings` share seven areas: **Models → Chat and display → Workers → Context and memory → Safety and limits → Workspace → Advanced** ([`settings-areas.ts`](../../src/core/settings-areas.ts)); the TUI adds Recent & Pinned in front. Names describe what the settings change; YAML paths remain the version-2 schema below. For example, Models manages `targets`, Chat and display manages most of `interface.*`, and Safety and limits includes `fleet.permissions.*` and external-agent tool governance. See the [Settings Center walkthrough](configuration-and-targets.md#settings-center) for navigation, model inheritance, and save scopes.
+
+Area names and ownership come from [`settings-areas.ts`](../../src/core/settings-areas.ts). Control labels, descriptions, and ordering come from [`settings-controls.ts`](../../src/core/settings-controls.ts). UI adapters should consume these catalogs instead of deriving headings from schema roots or maintaining a separate list of names.
+
+Settings use one strict version-2 schema. Unknown keys and invalid values are errors; omitted keys take compiled defaults. Objects merge by key, while arrays and scalar values replace the lower layer.
+
+The table lists every leaf in `DEFAULT_SETTINGS` in schema order, with its compiled default, the accepted values, and when a change takes effect. Types, validation and optional schema fields live in [`src/core/defaults.ts`](../../src/core/defaults.ts) and [`src/core/settings-validate.ts`](../../src/core/settings-validate.ts).
+
+### Effect timing
+
+[`settingsChangeKind`](../../src/domains/config/classify.ts) sorts every settings path into one of three buckets. Settings editors, the file watcher and `configure_pancode` all read the same classifier.
+
+| Effect | Meaning |
+| --- | --- |
+| hot reload | A live reader observes the value without rebuilding runtime state. |
+| next turn | The next request, dispatch, or explicit open observes the value. Work already running keeps the value it started with. |
+| restart required | Process or pane-host setup must be rebuilt, so the value applies to a new PanCode session. A path the classifier does not list falls here. |
+
+Routing defaults are a separate rule. `chat.target`, `chat.model`, `chat.thinkingLevel`, `chat.modelPicker.cycleSet`, `fleet.default.target`, `.model` and `.thinkingLevel`, and `context.memory.target` and `.model` seed a session's own routing when it starts. A memory route with both unset is not a seed: it follows the live chat route. A later write from another process updates the saved default but never redirects a running session; see [live routing vs saved defaults](configuration-and-targets.md#live-routing-vs-saved-defaults).
+
+### Chat settings
+
+Default chat settings control interactive conversation routing, reasoning effort, token output budgets, prefix prewarming, and prompt-cache keepalive:
+- `chat.target`: default chat target id (`null`).
+- `chat.model`: default chat model id (`null`).
+- `chat.thinkingLevel`: default reasoning effort for the chat model (`"low"`; clamped to supported provider levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`).
+- `chat.prewarm`: whether prompt-prefix prewarming runs on session start (`false`). When enabled, prewarming prefills the prompt prefix before the first turn, and again after a resume or a compaction settles. It runs only against a target that binds `cache.deployment` with backend `llamacpp` or `lmstudio`: directly on that runtime, or for `lmstudio` also through `litellm`. A `llamacpp` binding names `controlUrl`, `model` and the server's `build`; an `lmstudio` binding names `controlUrl` and `model` and also needs `cache.warm.startup: true`. On the `openai-codex` runtime it sends the prefix as a `generate: false` request, which the backend caches without producing output. Every other runtime and tier is skipped whatever this setting says, and in the terminal UI a `llamacpp` or `lmstudio` target with no binding says so once in the transcript instead of skipping silently. Dispatched workers and headless runs do not prewarm.
+- `chat.maxOutputTokens`: per-turn output token limit (`0`, meaning each model's own cap and its profile's recommended output budget).
+- `chat.cacheKeepalive`: whether PanCode refreshes a hosted provider's prompt cache while a turn waits on its own tools (`true`). A hosted cache entry expires after a few idle minutes, and a turn that waits on an attached dispatch can outlast it. The entry's lifetime is the one the route declares; an OpenAI Responses route that declares none lives 24 hours under `long` retention (30 minutes in explicit prompt-cache mode) and 5 minutes otherwise, and Codex always assumes 5 minutes. PanCode then replays the turn's last request, with the route's smallest output cap (1 token on Anthropic, 16 on OpenAI Responses and Codex), at 90% of the entry's lifetime, only when the refresh is expected to save at least $0.05 over the miss it prevents, counting the refreshes already sent for the same request, so their total never exceeds that one miss. A refresh that reports a cache read of zero ends the keepalive. The keepalive follows one turn for up to two hours while a dispatch is attached and up to one hour for any other tool. It stands down while a permission ask or `ask_user` round waits on a person, between turns, and when the route declares no lifetime, retention is `none`, or the cost ceiling would be reached. Each refresh is booked as `prewarm` usage and recorded on the session ledger. `false` turns it off.
+- `chat.retry.*`: retry backoff (`baseDelayMs: 2000`, `maxDelayMs: 60000`), attempt limit (`maxRetries: 3`), and stream stall timeouts (`streamStallMs: 180000`, `firstTokenStallMs: 600000`). PanCode never retries before a wait the provider states, whether in a `Retry-After` header or in the error text (`retry after 30s`, `try again in 5m`). When the failure is one that waiting can clear, it honors such a wait in every autonomy mode while `chat.retry.enabled` is on, even with `maxRetries: 0`, with a countdown that Esc cancels, and the wait does not spend one of `maxRetries`. Each attempt in a chain still grows the retry backoff, and PanCode waits the larger of that backoff and the stated wait. One request waits at most one hour in total and sits out at most 30 stated waits; a wait that would pass either limit stops the turn without retrying, and the notice names the wait the provider asked for. Plain-text headless `run` prints a stderr line when a retry waits 5 s or more, and on every fifth retry. `maxDelayMs` limits only PanCode's own backoff and never shortens a stated wait.
+
+| Key | Default | Accepted values and meaning | Effect |
+| --- | --- | --- | --- |
+| `version` | `2` | Schema version. Any other value fails validation: move `settings.yaml` aside and the next `pancode` run writes a short version-2 file that sets no keys. | restart required |
+| `turnControl.workflows` | `["detached-collection"]` | Which turn-control workflows may run. `detached-collection` collects finished detached batches before an answer. | next turn |
+| `targets` | `[]` | List of targets (saved model connections) with unique ids. Fields are in [target fields](configuration-and-targets.md#target-fields). | next turn |
+| `funding` | `{}` | Map of funding pool id to the facts reports use: payer, native unit, fee, grant and energy. It prices, authorizes and caps nothing. User settings only; a project layer value is ignored. See [funding facts](configuration-and-targets.md#funding-facts). | next turn |
+| `chat.target` | `null` | Target id that answers chat. An id that is not in `targets` normalizes to `null`. | next turn |
+| `chat.model` | `null` | Wire model id. With a target set, `null` resolves to that target's `defaultModel`; with no target it is `null`. | next turn |
+| `chat.thinkingLevel` | `"low"` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. | next turn |
+| `chat.modelPicker.cycleSet` | `[]` | `target/model` refs the quick-switch key cycles. | hot reload |
+| `chat.modelPicker.favorites` | `[]` | `target/model` refs pinned in `/model`. A ref that does not name an existing target is dropped. | hot reload |
+| `chat.modelPicker.recentLimit` | `12` | Integer at least 1. Recently used refs `/model` keeps. | hot reload |
+| `chat.maxOutputTokens` | `0` | Integer at least 0. Output tokens requested per turn on every target, clamped to the model's output cap and the remaining window. `0` leaves the budget to the model cap and the profile's recommendation. Admission reserves a nonzero value in full and refuses, by name, a request the window cannot hold; see [output reserve](configuration-and-targets.md#model-profiles). | next turn |
+| `chat.prewarm` | `false` | Boolean. See above. | next turn |
+| `chat.cacheKeepalive` | `true` | Boolean. See above. | hot reload |
+| `chat.loopsUntilStopped` | `false` | Boolean. A `/loop` or model job created without a run count or a deadline runs until you stop it, as with `/loop --until-stopped`; the session cost ceiling and the loop guard still apply. An explicit `until_stopped: false` on the job tool overrides it. Read when a loop or job is created. | hot reload |
+| `chat.retry.enabled` | `true` | Boolean. Retry transient provider errors. | next turn |
+| `chat.retry.maxRetries` | `3` | Integer at least 0. Attempts after the first failure. A retry that sits out a provider's stated wait does not count. | next turn |
+| `chat.retry.baseDelayMs` | `2000` | Integer at least 0. First retry delay. | next turn |
+| `chat.retry.maxDelayMs` | `60000` | Integer at least 0. Longest delay of PanCode's own backoff. A wait the provider states is honored in full, up to one hour per request. | next turn |
+| `chat.retry.streamStallMs` | `180000` | Integer at least 0. Silence mid-stream past this many ms aborts the call and retries. | next turn |
+| `chat.retry.firstTokenStallMs` | `600000` | Integer at least 0. Silence allowed before the first token on a local, self-hosted or protocol endpoint, which may need to load a model; a hosted (cloud or subscription) route holds its first token to `streamStallMs`, or once it has shown 5 first tokens in the running process to max(30 s, 10 times their p95), never past `streamStallMs`. `0` never aborts a call that has not started streaming, on any route. | next turn |
+| `chat.steering.triage.enabled` | `false` | Boolean, experimental. A bound System One route, or else a side model, reads queued steering messages once the queue settles: an unrelated task waits for the end of the turn and a confident stop may interrupt the run. | next turn |
+| `chat.steering.triage.target` | `null` | Target id for the side-model triage round; `null` uses a bound System One route, or the session's active target when none is bound. Naming a target keeps the side model. | next turn |
+| `chat.steering.triage.model` | `null` | Wire model id on that target; cleared when `target` is `null`. | next turn |
+| `chat.steering.triage.thinkingLevel` | `"off"` | Same levels as `chat.thinkingLevel`. Thinking level of the triage side call; `off` sends no reasoning request. | next turn |
+| `chat.steering.triage.minQueued` | `2` | Integer at least 1. Queue length that starts a side-model round. A bound route starts at one message. | next turn |
+| `chat.steering.triage.timeoutMs` | `8000` | Integer at least 1. A slower round is dropped and the queue stays as it was. | next turn |
+| `chat.steering.triage.autoInterrupt` | `true` | Boolean. Let a confident `stop` reading cancel the run and deliver that message now. | next turn |
+| `fleet.defaultNode` | `null` | `null`, `local`, or a `fleet.nodes[].id`. Standing placement preference for unpinned work; explicit and profile pins win. | next turn |
+| `fleet.default.target` | `null` | Target id for delegated fleet work. | next turn |
+| `fleet.default.model` | `null` | Wire model id. With a target set, `null` resolves to that target's `defaultModel`. | next turn |
+| `fleet.default.thinkingLevel` | `"off"` | Same levels as `chat.thinkingLevel`. | next turn |
+| `fleet.profiles` | `{}` | Map of profile name to `{ target, model, thinkingLevel, node? }`. | next turn |
+| `fleet.rosters` | `{}` | Map of roster name to `members`, two to five entries of `{ label, target, model?, thinkingLevel?, color? }` with unique labels matching `[a-z][a-z0-9_-]{0,31}`. | next turn |
+| `fleet.agentProfiles` | `{}` | Map of native agent id to a `fleet.profiles` name. | next turn |
+| `fleet.nodes` | `[]` | List of SSH nodes: `id` (not `local`), `host`, `user?`, `port?`, `identityFile?`, `pancodeEntry?`, `pancodeVersionCommand?`, `labels?`, `maxWorkers` (default 2), `residency?` (`observe` or `manage`). | next turn |
+| `fleet.adaptiveRouting.roles` | `[]` | Subset of `explorer`, `seat`, `checker`, `reviewer`, `judge`. | next turn |
+| `fleet.adaptiveRouting.postures` | `[]` | Subset of `quality`, `balanced`, `latency`, `economy`. | next turn |
+| `fleet.adaptiveRouting.agentRoles` | `[]` | Exact `{ agentId, executionRole }` pairs, with `executionRole` one of `builder`, `explorer`, `seat`, `checker`, `reviewer`, `judge`. | next turn |
+| `fleet.permissions.mode` | `"judge"` | What a worker's permission ask does: `judge` hands a native local worker's ordinary ask to the main session's safety judge while the main session runs at `default`, which grants it once on an allow and denies it otherwise, and runs as `deny` at `yolo`, with the judge off, and on runtimes and placements no judge can answer; `deny` returns a structured denial and the run continues, `fail` ends the run as `permission_required`, `escalate` asks the interactive operator and applies the fallback on timeout, `main` is the opt-in for the main agent to decide asks through its grant broker. `main` reaches native local workers only, and a dispatch that cannot carry a bound grant is refused at admission. Operator-authority asks always go to the operator and are denied with nobody attached. A project layer may only tighten it from the user value (`deny` and `fail`, then `escalate`, `judge`, `main`). | next turn |
+| `fleet.permissions.escalation.timeoutMs` | `120000` | Integer at least 1. How long an escalated ask waits. A key on the card holds it up to 15 minutes from when it opened, or this value when longer. | next turn |
+| `fleet.permissions.escalation.fallback` | `"deny"` | `deny` or `fail`, applied when the wait expires or nobody is attached. | next turn |
+| `fleet.keepPeerInstructionFiles` | `[]` | List of runtime ids (`codex-cli`, `pi-cli`, `opencode-cli`; an alias also matches). A delegated run on a named runtime reads its own repository instruction files unchanged, with the rules PanCode compiled for the run beside them, instead of the compiled rules in place of the files (no switch, no overlay). The run record's `projectContext.peerInstructions.reason` is `setting`. `claude-code` always reads its own files beside the compiled rules, so naming it changes nothing. | next dispatch |
+| `fleet.concurrency` | `"auto"` | `auto` or an integer at least 1. `auto` derives a limit from CPU and memory, up to eight workers. | restart required |
+| `fleet.staggerSharedPrefix` | `true` | Boolean. Parallel workers that share a prompt prefix start after the first one streams, at most 15 s later, so they read its prompt cache. `false` starts them together. | next turn |
+| `fleet.worktrees.root` | `"disk"` | `disk`, `tmpfs`, `auto` (tmpfs when one exists and has room), or an absolute path. Where a `worktree: true` task's working tree is created for local placement. | next turn |
+| `fleet.retry.maxRetries` | `2` | Integer at least 0. Automatic retries of a retryable worker outcome. | next turn |
+| `fleet.retry.routeCooldownMs` | `15000` | Integer at least 0. How long a failing target, runtime and model route is skipped; `0` disables the wait. | next turn |
+| `fleet.retry.breakerThreshold` | `1` | Integer at least 1. Consecutive failures that open a route's breaker. | next turn |
+| `fleet.limits.toolCallsPerRun` | `300` | Integer at least 1. The hard tool-call cap for native workers. In advisory mode it lowers a larger recipe maximum, and a dispatch's `budget.toolCalls` estimate above it is held at it, so a request never raises a native worker's ceiling past this cap. Claude SDK advisory runs, CLI subprocess workers and ACP peers have no per-tool cap. A project layer can only tighten it. | next turn |
+| `fleet.limits.runTimeoutMs` | `1800000` | Integer at least 1. Wall clock of one dispatched worker run, time queued for a slot included. At 85% the run hands back its report; at the limit it seals `timed_out`. A recipe or a dispatch's `timeout_ms` can only lower it. A project layer can only tighten it. | next turn |
+| `fleet.limits.internalRunTimeoutMs` | `2700000` | Integer at least 1. Ceiling for one internal worker run such as the wiki writer or the first project scout. A project layer can only tighten it. | next turn |
+| `fleet.history.maxRuns` | `1000` | Integer at least 1. Finished runs kept in the run ledger; the oldest row and its display feed go first. Telemetry journals follow the separate reference-aware `telemetry prune` policy. | next turn |
+| `fleet.history.journal` | `true` | Boolean. Keep each run's display feed and its structural projection in the run journal. | next turn |
+| `context.toolResultMaxBytes` | `65536` | Integer at least 4096. One tool result larger than this spills to scratch. | next turn |
+| `context.workingSet.enabled` | `true` | Boolean. Off skips eviction and goes straight to summary compaction. | next turn |
+| `context.workingSet.policy` | `"structural-v2"` | `structural-v2`, `structural-v1` or `age-horizon`. | next turn |
+| `context.workingSet.profile` | `"default"` | `default`, `data-analysis` or `web-design`. A protection profile for the main agent; workers run their own guard. | next turn |
+| `context.workingSet.target` | `0.6` | Number above 0 and below 1. Used-to-window ratio an eviction event batches down to. Choose a value below `context.compaction.threshold`. | next turn |
+| `context.workingSet.protectLastTurns` | `6` | Integer at least 1. Recent user turns whose observations are never evicted. | next turn |
+| `context.workingSet.protectLastSteps` | `8` | Integer at least 1. Recent assistant steps never evicted, inside the turn window. | next turn |
+| `context.workingSet.minEvictableTokens` | `200` | Integer at least 0. Results smaller than this stay. | next turn |
+| `context.workingSet.rearmFraction` | `0.1` | Number from 0 up to but not including 1. Growth, as a fraction of the window, required before another automatic cleanup; `0` disables the band. | next turn |
+| `context.compaction.auto` | `true` | Boolean. Off still allows `/context compact` and overflow recovery. | next turn |
+| `context.compaction.threshold` | `0.8` | Number from 0 to 1. Context pressure at which compaction acts. | next turn |
+| `context.compaction.maxTokens` | `400000` | Integer at least 1. Working budget: the request-size ceiling in tokens that caps compaction on every route, chat and workers alike, whatever the model's window is, and the stand-in window while the serving window is unknown. A model whose input price steps up at a token count lowers it to 98% of that boundary. | hot reload |
+| `context.compaction.provider` | `"off"` | `off` or `native`. `native` asks the Codex backend for opaque checkpoints on the `openai-codex` runtime and keeps them under `<stateDir>/provider-checkpoints/`; `off` keeps portable PanCode summaries. | hot reload |
+| `context.memory.enabled` | `true` | Boolean. Task memory updates. `false` turns proactive memory off, including its model calls. | next turn |
+| `context.memory.sideShare` | `0.15` | Number at least 0. After a session's first three automatic memory calls, a further one is skipped with `side_share` while its memory output exceeds this share of its main output. A call the operator asked for is never skipped. `0` removes the cap. | next turn |
+| `context.memory.surfaces.observe` | `"off"` | `off` or `on`. Prepares source-linked observation notes in the background that a later compaction may use in place of the history they cover. Needs `context.memory.enabled`. | next turn |
+| `context.memory.surfaces.delivery` | `"decision"` | `off`, `section`, `decision` or `broadcast`. Which channels deliver kept lessons: nothing, the `# Memory` section, the section plus reminders at decision points, or those plus every pending lesson at the first workspace change. `memory_recall` reads the store under every value. A running session's `# Memory` section keeps what it was compiled with. | next turn |
+| `context.memory.surfaces.lessons` | `"agent"` | `off`, `rules`, `agent` or `side`. Who writes cross-session notes: nobody, rule-captured fix pairs only, the main agent through `memory_note`, or the memory model's lesson pass and completed-task retention. `memory_note` is attached when a session starts, so turning `agent` on reaches the tool in a new session. | next turn |
+| `context.memory.surfaces.correct` | `"rules"` | `rules` or `model`. `model` adds a memory model step after two consecutive tool errors or a loop signal. | next turn |
+| `context.memory.surfaces.bank` | `"rules"` | `rules` or `model`. `model` adds a memory model step every `cadenceToolCalls` tools to maintain the task bank. | next turn |
+| `context.memory.surfaces.history` | `"off"` | `off` or `on`. `on` lets the memory model review this repository's earlier sessions for lessons while the session is idle. `pancode memory consolidate` is the separate model-free pass. | next turn |
+| `context.memory.target` | `null` | Target id for a dedicated memory route. With `target` and `model` both `null`, the memory tier runs on the active chat route (`chat.target` and `chat.model`) and its calls are billed to the chat model. An explicit route wins. | next turn |
+| `context.memory.model` | `null` | Wire model id; cleared when `target` is `null`, otherwise defaults to the target's `defaultModel`. | next turn |
+| `context.memory.thinkingLevel` | `"off"` | Same levels as `chat.thinkingLevel`. Thinking level of the memory side call; `off` sends no reasoning request. | next turn |
+| `context.memory.cadenceToolCalls` | `10` | Integer at least 2. Tool calls between memory model updates under `surfaces.bank: model`. | next turn |
+| `context.memory.trajectorySteps` | `8` | Integer at least 1. Recent steps considered. | next turn |
+| `context.memory.maxOutputTokens` | `2000` | Integer at least 1. Length cap of one memory note. | next turn |
+| `context.memory.timeoutMs` | `60000` | Integer at least 1. Wait for the memory model. | next turn |
+| `context.semantic.enabled` | `false` | Boolean. Exposes the optional semantic search capability after model pins are configured. | next turn |
+| `context.semantic.target` | `null` | Qualified embedding target id; accepts the llama.cpp embedding or LiteLLM runtime. | next turn |
+| `context.semantic.model` | `null` | Exact embedding wire model id. | next semantic request |
+| `context.semantic.assetIdentity` | `null` | GGUF SHA-256 or an explicitly unverified operator asset label. | next semantic request |
+| `context.semantic.projectorIdentity` | `null` | Multimodal projector SHA-256 or operator label. | next semantic request |
+| `context.semantic.canaryFingerprint` | `null` | Fixed text canary fingerprint written by `semantic configure --qualify`. | next semantic request |
+| `context.semantic.modalities` | `[text]` | Enabled subset of `text`, `image`, `audio`, and `mixed`. | next semantic request |
+| `context.semantic.background` | `false` | Boolean. Schedule bounded refresh at session start and after code map changes. | next session |
+| `context.semantic.inboxes` | `[]` | Explicit project or global artifact roots registered with `semantic inbox add`. | next refresh or search |
+| `systemOne.use` | `null` | The opt-in: one route or an ordered list of `jev`, `memory`, `main`, a declared engine or a target. A named route answers the `consult` tool, the judge screen and steering triage, so on a hosted route web and MCP result text leaves the machine at judge time. `off` anywhere in the list turns System One off. | restart required |
+| `systemOne.engines` | `{}` | Map of engine name to `{ kind, target, model?, profile? }`. An engine does nothing until `systemOne.use` names it. | next turn |
+| `safety.autonomy` | `"default"` | `default` or `yolo` (contained unless `safety.yoloConfinement` says otherwise). User layer or operator session control. A project layer can only tighten the user level (`default` over `yolo`); a looser value is ignored with a layer issue. | hot reload |
+| `safety.limits.sessionCostUsd` | `5` | Finite number at least 0, in USD; a negative value fails validation. Session cost ceiling. It gates requests on routes priced by target rates or the catalog; see [pricing](configuration-and-targets.md#pricing-and-cost-provenance). `0` means no session ceiling: paid requests are admitted, dispatch plans and Scout continuations carry a ceiling of 0, and fleet previews skip the remaining-budget check. A parked request re-reads the ceiling every 250 ms and dispatch admission reads it per call, so raising it releases a waiting request. | hot reload |
+| `safety.limits.chatToolCallsPerTurn` | `60` | Integer at least 1. At the limit PanCode stops using tools and summarizes the turn. At `yolo` the turn then continues with a fresh budget. | next turn |
+| `safety.limits.readBytesPerCall` | `51200` | Integer at least 1. Most text one file read returns; a read gets at least 1 KB. | next turn |
+| `safety.limits.observationBytesPerTurn` | `196608` | Integer at least 1. Combined tool output the model may receive in one turn. While the value stays at this default the pool scales to 1.5 bytes per context-window token, between 192 KiB and 1 MiB; any other value applies exactly. | next turn |
+| `safety.limits.templateToolCallsPerTurnMax` | `null` | Integer at least 1, or `null`. How far a prompt template's `budget.toolCalls` may raise its turn above `chatToolCallsPerTurn` ([template budget](extensions-and-sharing.md#prompt-template-turn-budget)). `null` lets a template only lower the limit. A project layer can lower the user value and cannot set one the user left unset. | next turn |
+| `safety.limits.templateObservationBytesPerTurnMax` | `null` | Integer at least 1, or `null`. The same ceiling for a template's `budget.observationBytes` over `observationBytesPerTurn`. | next turn |
+| `safety.limits.workerResponseSeconds` | `600` | Integer at least 1. Host deadline per native worker model response, including locked synthesis rounds. | next turn |
+| `safety.limits.autonomousToolCalls` | `600` | Integer at least 0. At `yolo`, contained or unconfined, the main session pauses for the operator after this many tool calls since the operator last spoke; `0` is off. Interactive: Enter continues for another stretch. `pancode run` exits 4 with `autonomous-cap`; `run --continue` resumes. A project layer can only tighten it (a positive value at most the user value); anything else is ignored with a layer issue. | next turn |
+| `safety.limits.autonomousMinutes` | `120` | Integer at least 0. As `autonomousToolCalls`, counting minutes of active turn time; idle time between turns does not count. | next turn |
+| `safety.limits.autonomousTokens` | `5000000` | Integer at least 0. As `autonomousToolCalls`, counting main-session cap tokens: input, cache writes and output in full and cache reads at one tenth; a provider total with no breakdown counts in full. | next turn |
+| `safety.limits.bashIdleSeconds` | `0` | Integer at least 0. Seconds a main-session foreground `bash` call may go with no output and no CPU use in its process tree before it is stopped as idle; `0` is off. A project layer can only tighten it. | hot reload |
+| `safety.review.enabled` | `false` | Boolean. After a mutating turn a read-only reviewer worker checks the changed files. Interactive sessions only. | hot reload |
+| `safety.sandbox` | `"auto"` | `auto`, `required` or `off`. OS sandbox for a dispatched worker's bash, `run_script` and verify commands, and for the main session's `bash`, `run_script` and command-running `verify` checks at `default`: with a backend those run contained, writing only to the workspace, the scratch roots (the real `/tmp` included), a persistent sandbox cache at `<cache dir>/sandbox-cache` and the repository's git dirs but not their hooks, `core.hooksPath` directories or config, with credentials, credential variables, secret files and the SSH agent hidden, new Unix sockets refused, and the network on. `XDG_CACHE_HOME`, `npm_config_cache`, `PIP_CACHE_DIR`, `UV_CACHE_DIR` and `PLAYWRIGHT_BROWSERS_PATH` point at the sandbox cache, and your own `~/.cache` and `~/.npm` stay read-only, so a tool that hard-codes `~/.cache` fails on write, and the hint says to point its cache variable under the sandbox cache. The hidden paths include other agents' logins (Claude Code, Codex, Gemini, Copilot), tool token stores such as `~/.vault-token`, `~/.pgpass` and rclone's config, and shell and REPL histories, which typed tools refuse too; the main session's and workers' sandboxes also hide PanCode's `settings.yaml` when a target declares `auth.headers`. On Linux the masks apply through every other mount of the same filesystem, and contained commands are refused when the mount table cannot be read. `required` refuses worker commands without a backend; the main session at `default` then runs uncontained with the default rails. `yolo` runs unsandboxed unless the value is `required`, which runs every command `default` would contain, and every script, in the main-session sandbox, refuses them without a backend, and refuses `unsandboxed: true`. `off` never sandboxes. A project layer may only tighten it from the user value (`off`, then `auto`, then `required`). | next turn |
+| `safety.sandboxNetwork` | `false` | Boolean. Let sandboxed worker commands reach the network. Workers holding `web_fetch` or `web_read` get network either way. A project layer may only set `false`. | next turn |
+| `safety.sandboxPassEnv` | `[]` | List of environment variable names a sandboxed command keeps although their names or values look like credentials. Every other credential variable (names carrying `TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `AUTH` and similar, the AWS, PyPI, Twine and Vault families, values with embedded URL credentials) is removed before the sandbox starts. User layer only. The main session reads it per contained call; a worker keeps the list it was dispatched with. `arena run` also passes these names to every contender, which otherwise gets only an allowlist of your environment. | hot reload |
+| `safety.sandboxUnixSockets` | `"block"` | `block`, `owned` or `allow`. `block` makes creating a Unix-domain socket fail with `EPERM` in every OS sandbox (a seccomp filter under bubblewrap, profile rules under the unverified Seatbelt), because a socket a contained command reaches, such as tmux's, an X11 display or a daemon's control socket, runs commands outside it. Tools that need a local socket then fail inside the sandbox. `owned`, under bubblewrap, refuses nothing and instead hides the sockets you own that a launch finds in your home, the temp and scratch roots and the workspace (tmux, an X11 socket file, your agents), so another user's socket, such as MUNGE's, `sackd`'s or SSSD's, stays reachable; abstract sockets and sockets made after the launch stay reachable too, and Seatbelt treats `owned` as `block`. `allow` leaves every socket reachable. User layer only. | hot reload |
+| `safety.sandboxCacheMaxGiB` | `4` | Number at least 0, in GiB. Cap on the main-session sandbox's tool cache, `<cache dir>/sandbox-cache`. Once a day at startup and on `pancode doctor --fix`, its least recently used top-level tool directories are removed until it fits, never while a running process may still use it; `0` is no cap. Read only from your own settings file. | hot reload |
+| `safety.liveCheckTargets` | `[]` | List of target ids whose runtime's own login file the main session's contained commands may read, read-only, so a live check of a candidate build can sign in. Only `copilot-sdk` targets qualify (`$COPILOT_HOME/config.json`); workers keep every mask. Read only from your own settings file. | hot reload |
+| `safety.scratchRoots` | `[]` | List of absolute paths the main session's contained commands and its typed `write` and `edit` tools may write at `default` without asking, and where its deletes are judged as deletes inside the workspace; the temp directories (`os.tmpdir()`, which follows `$TMPDIR`, `/tmp` and `/var/tmp`) always count. User layer only: a project layer value is ignored with a layer issue. `/`, `$HOME` or an ancestor of it, a root inside a system tree (`/etc`, `/usr`, `/var`, `/opt`, `/srv`, `/nix`, `/boot`, `/proc`, `/sys`, `/dev`, `/run`, `/private` and the like) other than the temp trees, and `/mnt`, `/media` or `/Volumes` or a mount root directly inside them fail validation. A root that contains the workspace is ignored, and `pancode doctor` warns about it. Yolo commands under `safety.sandbox: required` may write these roots too. | hot reload |
+| `safety.snapshots` | `"auto"` | `auto` or `off`. `auto` writes a private Git snapshot of the work tree before the main agent's first mutating call of each turn and before every destructive call, delete or git discard, at both autonomy levels; `/rewind` restores files from them. `off` takes none, and the main session at `default` then asks before workspace deletes instead of running them. A project layer may only set `auto`. | hot reload |
+| `safety.validationWrappers` | `[]` | List of wrapper scripts whose wrapped check counts as validation for the finish contract. An entry with a slash matches that script path and a bare name matches its basename, so `scripts/test-slot.sh pnpm run test:file x` reads as the check it runs. The whole command's exit status decides the result, and the call still counts as a workspace change. A file writer, a shell, an interpreter or a word that runs no check of its words (`echo`, `xargs`, `cat`) is refused with an issue. | hot reload |
+| `safety.unattendedAfterSeconds` | `300` | Integer seconds, `0` waits forever. How long a TUI approval card or `ask_user` round waits for the operator before PanCode denies the call or answers each question with its recommended option unless that option leaves the workspace, and the turn continues. At yolo a question waits 300 seconds when this is `0`, and at most 30 seconds after one lapsed with no key pressed since. An ACP client's `ask_user` round waits the shorter of this and its request timeout. User layer only. Headless runs and worker escalations are not affected. | hot reload |
+| `safety.yoloAccepted` | `false` | Boolean. Set by the one-time card that turns `yolo` on interactively; `false` shows the card at the next activation. User layer only. Headless `--autonomy yolo` and an ACP mode choice count as acceptance and write nothing. | hot reload |
+| `safety.yoloConfinement` | `"contained"` | `contained` or `unconfined`. What `yolo` gives up to avoid waiting: `contained` admits as `default` does, with the main-session sandbox, snapshots and the safety judge, and refuses back to the agent a call `default` would ask the operator about; `unconfined` is the skip-permissions yolo. Unconfined takes effect only with `safety.yoloUnconfinedAccepted`. User layer only. | hot reload |
+| `safety.yoloUnconfinedAccepted` | `false` | Boolean. Set by the separate card that turns unconfined `yolo` on interactively, or by hand; required on every interface, headless runs included, for `safety.yoloConfinement: unconfined` to take effect. User layer only. | hot reload |
+| `safety.judge.enabled` | `true` | Boolean. At `default`, a model reviews each call that would park for an operator approval against the operator's own messages, then runs it or refuses it with a reason; it also answers worker asks under `fleet.permissions.mode: judge`. `false` sends those asks to the operator, or denies them headless. User layer only, as are `environment`, `allow` and `deny`. | hot reload |
+| `safety.judge.target` | `null` | Target id the judge asks; `null` asks the session's chat route. A trusted project layer may set it, but only to a target the user settings declare; a project naming any other target loses both `target` and `model`. | hot reload |
+| `safety.judge.model` | `null` | Model on that target; `null` asks the chat model, or the judge target's default model when a target is set. A trusted project layer may set it too, unless the same project names a judge target the user settings do not declare. | hot reload |
+| `safety.judge.environment` | `[]` | List of facts about the operator's environment, in their own words, that the judge reads. | hot reload |
+| `safety.judge.allow` | `[]` | List of allow rules appended to the judge's defaults. | hot reload |
+| `safety.judge.deny` | `[]` | List of block rules appended to the judge's defaults. | hot reload |
+| `interface.exitSummary` | `"on"` | `on` or `off`. `on` prints the session summary on a clean exit, sized by `interface.outputDetail`: at compact the title rule, one totals row, the autonomy and failed-check disclosures and the resume command; at standard fact rows up to 12 rows; at detailed sections up to the terminal height less two rows, at most 24. `off` prints only how to resume. Read at the next exit. | hot reload |
+| `interface.demo` | `true` | Boolean. Tier-bounded welcome and learning tips; off starts with an identity header. Immediate controls, motion preferences and stream pacing are independent. | hot reload |
+| `interface.terminalProgress` | `false` | Boolean. Running-task progress in terminals that show tab or taskbar badges. | next turn |
+| `interface.outputDetail` | `"standard"` | `compact`, `standard` or `detailed`, shown as Compact, Standard and Detailed in `/settings`. How much evidence every terminal view shows inline: compact shows outcomes, standard adds the bounded evidence a reader needs to trust an outcome, detailed adds provenance and telemetry. Governs terminal presentation, not model reasoning. | hot reload |
+| `interface.mode` | `"regular"` | `regular` keeps scrollback; `fullscreen` uses the alternate screen with a sticky composer and footer. | restart required |
+| `interface.fullscreenScrollbar` | `"auto"` | `hidden`, `auto` or `always`. | restart required |
+| `interface.smoothStreaming` | `"auto"` | `off`, `auto` or `on`. Presentation-only pacing of streamed text and thinking. | hot reload |
+| `interface.desktopNotifications` | `false` | Boolean. Content-free alerts when a turn ends, a detached batch settles or an approval parks. Interactive TTY sessions only. | next turn |
+| `interface.autoUpdate` | `true` | Boolean. A native-installer install fetches and activates a newer release in the background; running sessions keep their version until restart. A user-writable npm, pnpm, Bun or Volta install on Linux or macOS updates after the session quits, once every session of that install has exited (the wait is bounded at 30 minutes). `false` keeps the update notice and leaves the install to `pancode upgrade`. Other layouts only show their upgrade command. | hot reload |
+| `interface.guiTurnCapacity` | `4` | Integer from 1 to 16. How many tasks in the desktop app may run a turn at the same time; further requests start in order as running turns finish. A change made in the app applies to its next turn, and a change made elsewhere applies when the app's server restarts. | next turn |
+| `interface.panes.notifications` | `"failures"` | `failures`, `all` or `off`. Which run states raise a pane-host toast. | hot reload |
+| `interface.panes.layout` | `"off"` | `off`, `workers` or `cockpit`. Panes composed at interactive boot. | restart required |
+| `interface.panes.workers.ratio` | `0.34` | Number from 0.05 to 0.5. Share of the width the workers dock takes. | hot reload |
+| `interface.panes.files.enabled` | `false` | Boolean. Whether `/files` and `/panes open files` may open the files pane. | hot reload |
+| `interface.panes.files.mode` | `"companion"` | `companion` or `chooser`. | hot reload |
+| `interface.panes.files.profile` | `"managed"` | `managed` or `user`. | hot reload |
+| `interface.panes.files.followCwd` | `true` | Boolean. | hot reload |
+| `interface.panes.files.ratio` | `0.3` | Number from 0.05 to 0.5. Share of the height the files dock takes. | hot reload |
+| `interface.keybindings` | `{}` | Map of action id to a key string or a list of key strings. | hot reload |
+| `integrations.projectResources.trustProjectImports` | `false` | Boolean. Admit explicitly imported foreign skills and prompts at either scope; loose compatibility roots stay discovery-only. User settings only: a project layer value is ignored with a layer issue. | next turn |
+| `integrations.externalAgents.entries` | `[]` | List of ACP peers: `id`, `command`, `args`, `cwd?`, `env?`, `connectTimeoutMs?`, `turnTimeoutMs?`, `stallTimeoutMs?`, `toolGovernance?`, `trustedUnmediated?`, `projectContext?` (`none` or `bounded`). | next turn |
+| `integrations.externalAgents.defaults.connectTimeoutMs` | `30000` | Integer at least 1. | next turn |
+| `integrations.externalAgents.defaults.turnTimeoutMs` | `0` | Integer at least 0. `0` sets no elapsed deadline. | next turn |
+| `integrations.externalAgents.defaults.permissionTimeoutMs` | `120000` | Integer at least 1. Bounds PanCode's own ACP server permission requests. | next turn |
+| `integrations.externalAgents.defaults.toolGovernance` | `"pancode-policy"` | `pancode-policy`, `agent-managed` or `deny-all`. | next turn |
+| `integrations.runtimePlugins` | `[]` | Runtime plugins loaded at startup. Each entry is a bare npm package name (optionally scoped, with a subpath) or an absolute path under the config directory's `runtimes/` folder; relative paths, `file:`, `data:` and `http:` specifiers are refused with a diagnostic. User settings only: a project layer value is ignored with a layer issue. | restart required |
+| `integrations.hub.catalog` | `null` | Absolute catalog path, or `null` for the one in the config directory. | next turn |
+| `integrations.hub.remote` | `null` | Git remote URL the catalog syncs with, or `null` to keep PanHub local. | next turn |
+| `integrations.hub.confirmedRemote` | `null` | The remote the operator approved. Written by PanCode, read-only in the UI. | next turn |
+| `integrations.hub.sync` | `false` | Boolean. Whether `pancode hub sync` and `push` may contact the remote. | next turn |
+| `integrations.hub.index` | `"https://github.com/akougkas/pancode/releases/download/hub-index/"` | Base URL holding `signing.json`, `index.envelope.json` and `index.yaml` for the signed PanHub index. Empty keeps the bundled index only. 0.9.0 has no root key, so it always uses the bundled index. | next turn |
+| `integrations.git.commitAttribution` | `true` | Boolean. Evidence-backed role trailers on commits created through PanCode. | hot reload |
+| `integrations.git.commitAuthor` | `"auto"` | `auto` or `human`. Who authors an autonomous commit; see [Commit authorship](#commit-authorship). Ignored when `commitAttribution` is `false`. | hot reload |
+| `integrations.music.enabled` | `false` | Boolean. Allows `/music` to open cliamp in a Herdr dock. Needs Herdr panes and cliamp. | hot reload |
+| `integrations.music.station` | `"http://radio.cliamp.stream/lofi/stream"` | Non-empty string, a stream URL or a station name. What `/music on` plays. | hot reload |
+| `integrations.music.agentControl` | `false` | Boolean. Registers the `music` tool at startup so the model can drive the pane; off, the tool does not exist and costs no prompt bytes. | restart required |
+| `telemetry.mode` | `"standard"` | `standard` or `research`. What each scope's telemetry journal admits; a project or local layer can only lower it. | next turn |
+| `telemetry.research.content` | `false` | Boolean. In research mode with workspace consent, keep prompts, request bodies and background memory and compaction text as telemetry objects. | next turn |
+| `telemetry.research.deltas` | `true` | Boolean. In research mode, keep each call's inter-delta gaps as one `call.timing_captured` histogram. | next turn |
+| `telemetry.research.providerHeaders` | `true` | Boolean. In research mode, keep allow-listed provider response headers as `provider.headers_captured`. | next turn |
+| `telemetry.research.busTrace` | `false` | Boolean. In research mode, journal a `bus.traced` record naming each live event the telemetry hub delivers. | next turn |
+| `report.offers` | `"ask"` | `ask` or `off`. `ask` lets PanCode suggest `/report` after one of its own failures, at most once a session and once a week, and never again for a problem you declined. `off` never suggests. PanCode never sends a report on its own. | hot reload |
+| `prompts.profile` | `"v1"` | `v1` or `v2`. The main agent's system prompt text: `v1` is the current text and `v2` is an experimental leaner text. Workers follow it for their operating contract. | next turn |
+| `models.<id>.tier` | none | `small`, `standard` or `frontier`, keyed by wire model id. Overrides the tier PanCode derives for that model, which hooks read as `model.tier` and prompt template `variants` select by. See [Model tiers](configuration-and-targets.md#model-tiers). | restart required |
+
+`systemOne.*` is experimental and off by default. The [System One guide](system-one.md) describes them, including the engine `profile` field (`generic`, `jev`, `laya`, `laya-multilingual`, `julia-1`, `gliner2.5-small`, `gliner2.5-decide` or `strands-decider`), which has no default. A decision engine's window is the `capabilities.contextWindow` of its `systemone` target (480 when unset), bounded by the profile's ceiling. There is no placement setting: which processor an engine runs on is decided by the server behind its target.
+
+The music keys are documented in the [music guide](music.md). The exit summary is part of [commands and modes](commands-and-modes.md).
+
+### Commit authorship
+
+With `integrations.git.commitAuthor: auto`, PanCode names itself as the Git author (`PanCode <361236557+pancode-agent[bot]@users.noreply.github.com>`, the `pancode-agent` GitHub App's bot account) of a commit it makes with nobody attending. Your configured identity stays the committer and gets a `Co-authored-by:` trailer, so GitHub credits both and nobody is dropped. PanCode's own `Assisted-by:` and `Co-authored-by:` lines are left off such a commit because the author field already says it. `Tested-by:`, `Reviewed-by:`, receipt and `PanCode-Decision:` trailers are kept.
+
+Autonomous means a dispatched worker or fleet run, the host commits and merges that land a worker's worktree (`fleet land` included), a fleet commit step, a headless `pancode run`, and a scheduled job's turn. An interactive TUI or ACP session keeps you as author with PanCode's trailers at every autonomy level, as does every commit under `commitAuthor: human`.
+
+You stay author when an explicit `--author` or `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` chose someone else, when Git has no configured `user.name`/`user.email` (so the human co-author cannot be named), for operator hooks and delegated external harnesses, and when a repository uses its own `core.hooksPath` (your hooks run untouched and the commit carries no PanCode trailer). Windows behaves like Linux and macOS: a native `git.exe` launcher serves cmd.exe, PowerShell and programs that start `git` without a shell, a `git.cmd` wrapper beside it is the fallback, and the POSIX wrapper serves a Git Bash whose `PATH` puts the shim first. You also stay author of any commit Git writes without running PanCode's message hook when it goes through `git` on `PATH`: an editor or template `git commit`, `git commit-tree`, `git stash`, `git notes` and other plumbing. A git reached another way (an absolute path such as `/usr/bin/git`, or a Git library) sees PanCode as author too: a commit through it that runs the managed hooks credits you as co-author, while plumbing such as `commit-tree` or `stash` keeps PanCode as author and you as committer with no trailer. On Windows the launcher hands git its arguments unchanged, so `git add 'file%USERNAME%.txt'`, or a commit message containing `%PATH%`, reaches git literally. The launcher ships for x64 and arm64 and is installed only when its bytes match the checksum pinned in the package. Without it PanCode reports `native git launcher unavailable` once, and `git.cmd` serves instead: cmd.exe then expands `%NAME%` in git arguments before git sees them, even inside quotes, whenever `NAME` is a set environment variable. In that case call the real `git.exe` by path or use `-F <file>` for the message to pass such text literally. A cherry-pick keeps the picked commit's author. A revert, including one continued after a conflict, is PanCode's with you as co-author. If a process that started in a default-hooks repository commits in one with its own `core.hooksPath`, your hooks run first and you are still added as co-author. With `commitAttribution: false` PanCode changes neither author nor message.
+
+This follows the split other agents use: an agent that works on its own authors its commits (Copilot coding agent, Claude Code on the web), while one you drive in your terminal leaves you as author and adds a trailer (Copilot CLI, Claude Code CLI).
+
+### Optional keys with no default
+
+These schema keys are absent from `DEFAULT_SETTINGS` because an unset value selects automatic behavior. Clearing the field removes the override.
+
+| Key | Accepted values and meaning | Effect |
+| --- | --- | --- |
+| `fleet.default.node` | `local` or a `fleet.nodes[].id`. Accepted and displayed as Default worker location, but placement does not read it. Use `fleet.defaultNode` or `fleet.profiles.<name>.node` to select a node. | next turn |
+| `context.compaction.model` | Model pattern for a dedicated summarizer; unset uses the chat model. An explicit pattern must resolve uniquely or compaction fails visibly. | next turn |
+| `context.compaction.systemPrompt` | Path to a nonempty UTF-8 prompt file of at most 65,536 bytes, resolved relative to the session workspace at compaction time; unset uses the built-in instructions. | next turn |
+| `safety.review.target` | Target id for the reviewer; unset uses the chat target. An id that is not in `targets` is an error. | hot reload |
+| `safety.review.cadenceToolCalls` | Integer at least 1. Also review after this many tool calls inside a turn; unset reviews only at turn end. | hot reload |
+
+| Precedence, low to high | Use |
+| --- | --- |
+| Compiled defaults | Baseline values in [`src/core/defaults.ts`](../../src/core/defaults.ts). |
+| User `settings.yaml` | Personal defaults under the resolved PanCode config directory. |
+| .pancode/settings.yaml | Shared project defaults. Credential-bearing keys are ignored. |
+| .pancode/settings.local.yaml | Untracked project overrides. Credential-bearing keys are ignored. |
+| Session controls | `/settings`, `/model`, and `/thinking` change the active session where supported. `/config` runs the configure flow and applies the saved routing to the session. |
+| CLI options | Run-specific values such as `--target`, `--model`, and turn constraints. |
+
+Validation is in [`src/core/settings-validate.ts`](../../src/core/settings-validate.ts), with `targets[]` in [`src/core/settings-validate-target.ts`](../../src/core/settings-validate-target.ts) and routes, agents, nodes, keybindings and the `systemOne`, `telemetry`, `prompts`, `models`, `report` and `store` sections in [`src/core/settings-validate-sections.ts`](../../src/core/settings-validate-sections.ts); issue wording is in [`src/core/settings-issues.ts`](../../src/core/settings-issues.ts). Reading and writing the file and the user settings path are in [`src/core/config.ts`](../../src/core/config.ts). Layering and project-file merge behavior are in [`src/core/settings-layers.ts`](../../src/core/settings-layers.ts). Settings control groups are defined in [`src/core/settings-controls.ts`](../../src/core/settings-controls.ts) and [`src/core/settings-areas.ts`](../../src/core/settings-areas.ts).
+
+| Need to inspect | Source of truth |
+| --- | --- |
+| Setting names, types, defaults, enums | [`src/core/defaults.ts`](../../src/core/defaults.ts) and [`src/core/settings-validate.ts`](../../src/core/settings-validate.ts) |
+| Effect timing | [`src/domains/config/classify.ts`](../../src/domains/config/classify.ts) |
+| Project settings precedence and secret filtering | [`src/core/settings-layers.ts`](../../src/core/settings-layers.ts) |
+| Settings UI areas and editable controls | [`src/core/settings-areas.ts`](../../src/core/settings-areas.ts), [`src/core/settings-controls.ts`](../../src/core/settings-controls.ts) |
+| Target and provider settings | [`src/domains/providers/`](../../src/domains/providers/registry.ts) |
+| CLI flags and accepted values | [`src/cli/args.ts`](../../src/cli/args.ts), then `pancode <command> --help` |
+| Environment variables | [Environment variable reference](environment-variables.md) and their cited read sites |
+| Built-in tool arguments | [`src/tools/`](../../src/tools/registry.ts) and [Tool usage](tool-usage.md) |
+| Agent definition frontmatter | [`src/domains/agents/recipe-schema.ts`](../../src/domains/agents/recipe-schema.ts) |
+| Prompt fragment metadata | [`src/domains/prompts/`](../../src/domains/prompts/compiler.ts) |
+| Model facts per model | [`models/profiles.yaml`](../../models/profiles.yaml) and [`src/domains/providers/model-profiles.ts`](../../src/domains/providers/model-profiles.ts) |
+| Sampling presets and family notes | [`models/profiles.yaml`](../../models/profiles.yaml) |
+
+For an ACP peer, `integrations.externalAgents.entries[].env` may use an exact
+`"{env:NAME}"` value. PanCode resolves that named host variable for the configured
+peer at launch and refuses a missing reference. Keep provider keys out of the
+settings file; see [Coding Agent Interoperability](interop.md).
+
+## Version 1 settings
+
+Only a version-2 `settings.yaml` is read. A version-1 file fails validation and is not converted: move it aside and the next `pancode` run writes a short version-2 file that sets no keys, so every key keeps its built-in default.
+
+A key outside the current schema is an unknown key and fails validation; `pancode doctor --fix` never removes or renames one. `doctor --fix` rewrites YAML 1.1 `on` and `off` booleans written where a field takes the strings `on` or `off`.
+
+## Project files
+
+Project configuration lives under `.pancode/`. The owning loader or validator is authoritative for each file's schema.
+
+| File | Purpose / owner |
+| --- | --- |
+| `settings.yaml`, `settings.local.yaml` | Shared and local settings layers; [settings-layers.ts](../../src/core/settings-layers.ts) |
+| `safety.yaml` | Project command and path policy; [project-policy.ts](../../src/domains/safety/project-policy.ts) |
+| `mcp.yaml` | Project MCP declarations; [trust rules below](#local-stdio-mcp-configuration-and-trust), [config.ts](../../src/domains/gateway/mcp/config.ts) |
+| `verifiers.yaml` | Declared verification checks; [catalog.ts](../../src/tools/verify/catalog.ts) |
+| `hooks.yaml`, `hooks.local.yaml` | Project and local middleware hooks; [hooks-io.ts](../../src/domains/middleware/hooks-io.ts) |
+| `profile.yaml` | Project operator profile; [operator-profile.ts](../../src/domains/context/operator-profile.ts) |
+| `agents/`, `playbooks/` | Agents and playbooks; `src/domains/agents/` |
+| `prompts/`, `skills/` | Prompt templates and skills; `src/domains/resources/` |
+| `rules/` | Path-scoped project rules; [project-rules.ts](../../src/domains/context/project-rules.ts) |
+| `model-catalog.d/` | Project overlay of sampling presets and family notes; see [local catalog overlays](../architecture/model-catalog.md#local-catalog-overlays) |
+
+User-level model profile overrides live at `<configDir>/model-profiles.yaml`, not under `.pancode/`; see [model profiles](configuration-and-targets.md#model-profiles).
+
+## Local stdio MCP configuration and trust
+
+### Add an MCP server
+
+To add an MCP server, put its launch declaration in user `<config>/mcp.yaml` or project `.pancode/mcp.yaml`, then inspect it with `pancode mcp list` and test it with `pancode mcp test <id>`. A project or plugin server needs operator trust before it launches.
+
+User MCP declarations are stored at `<config>/mcp.yaml`; project declarations are stored at `.pancode/mcp.yaml`. The declaration contract is implemented in [`src/domains/gateway/mcp/config.ts`](../../src/domains/gateway/mcp/config.ts). A server entry accepts `id`, `command`, `args`, `cwd`, `env`, `timeoutMs`, `actionClass`, `toolActionClasses`, `toolPathArguments` and `network`; `toolActionClasses` maps individual tool names to `read`, `execute`, `destructive` or `unknown` and overrides the server class for those tools. `network` takes effect only in a user declaration.
+
+`toolPathArguments` maps a tool name to its top-level path arguments, each `read` or `write`. A call's value for each is resolved against the server's launch `cwd` and judged as a builtin read or write of that path would be: by the path policy and, in a worker, by the run's read scope and write roots. A declared argument the call leaves out passes, a value that is not a string is refused, and an undeclared argument is never read. A `write` argument on a tool classed `read` is a declaration error. This judges the paths a call names; it does not confine what a server running outside a sandbox then reads or writes. A declared path argument may also name a PanStore blob as `store:<tag>:<blob>`: a read gets a read-only copy, a write is committed as the blob only when the call succeeds, and a worker writes only the tags its dispatch granted ([MCP servers and store references](panstore.md#mcp-servers-and-store-references); limits in [PanStore limits](panstore.md#limits)).
+
+### Why is my MCP server untrusted?
+
+An MCP server becomes untrusted when you change its args or other digest-bound fields: the existing trust record is stale. Review the changed declaration, then run `pancode mcp trust <id>` to approve it again.
+
+| Declaration | Launch rule |
+| --- | --- |
+| User scope | Trusted by file ownership; actions still pass through tool policy. Set `actionClass: read` for an operator-reviewed read-only server, or `actionClass: execute` for an executing server. When the server-wide class is omitted, `readOnlyHint: true` supplies `read` and `destructiveHint: true` supplies `destructive`. Other tools remain `unknown`. These are advisory defaults; an explicit server class or per-tool override takes precedence. |
+| Project scope | Does not launch until an operator trusts the declaration with `pancode mcp trust <id>` or `/mcp trust <id>`. |
+| Tool surface | The second approval of a trusted project or plugin server. `pancode mcp trust <id> --surface [--hash <sha256>]` launches the server and records a SHA-256 over each tool's name, input schema and annotations (descriptions and titles are left out). Until a surface is approved, and again after a tool is added, removed or changes its schema or annotations, sessions and workers list the server's tools but refuse every call and name that command. Every project or plugin server whose trust record holds no approved surface needs this approval once. At a terminal without `--json`, plain `trust` records the surface it shows, as `--surface` does. `--hash` records only when the served digest equals the one given; without it a non-interactive run prints the command that would record it and exits 0. A user-scope server's surface is recorded on its first listing in an attended session; a headless session or worker never records one. A builtin server's surface is the policy PanCode ships. |
+| Trust record | User-owned `<config>/mcp-trust.json`, bound to project root, server id, and declaration digest. |
+| Changed declaration | Editing command, args, cwd, environment, timeout, or tool action classes makes trust stale; review and trust it again. |
+| Entry script | A project server binds every file its launch names inside the project: an absolute `command`, and each argument not shaped like a flag and each value a flag carries after `=`, when it resolves against the server's `cwd` to an existing file in the project. `node --require ./a.cjs ./s.mjs` and `node --require=./a.cjs ./s.mjs` both bind both files. Each bound file's SHA-256 enters the digest, so editing one makes trust stale. A file both spelled and resolved outside the project is skipped and does not stop the scan. A symlink spelled inside the project binds where it points; a target outside the project is bound by path only, so repointing the link makes trust stale and editing the target does not. Nothing else is bound: not modules a bound file imports, a module run with `python -m`, a directory entry, a bin fetched by `npx` or `uvx`, or a file reached through the environment such as `NODE_OPTIONS` or `PATH`. A project server whose bound file cannot be read stays untrusted. `pancode mcp list` and `pancode mcp trust` print `entry=<path>[, ...]`, or `entry=none` when the trust pins no file. |
+| When it is checked | PanCode computes the digest and the entry hashes when a session or a fleet worker takes its MCP snapshot. Before each launch or reconnect it computes them again and compares them with that snapshot. A changed declaration or entry file, a removed trust record, or a changed action class or network grant refuses the launch and asks for a new session; a running session never adopts the change. This closes stale snapshots, not the race between hashing a file and running it. `mcp trust` and `mcp untrust` lock and reread `mcp-trust.json`, so a concurrent revocation is never overwritten. |
+| Network grant | `network: true` in a user declaration, or `pancode mcp trust <id> --network` for a project or plugin server, lets that server's sandboxed process in a fleet worker reach the network. A project or plugin declaration's own `network` field is ignored. The [worker OS sandbox](../architecture/safety-model.md#worker-os-sandbox) states what the grant opens and when a writing worker loses it. |
+| Trust boundary | Trust enables launch; it is not operating-system isolation. Annotations never authorize launching an untrusted server. Calls still pass through turn scope, tool policy and autonomy. |
+
+Only user declarations may set the server-wide `actionClass`; project and plugin declarations receive their default class from the explicit trust record. Every declaration scope accepts operator-approved `toolActionClasses` for individual tools. Once launch trust is established, a per-tool entry overrides the trust-record class in every scope. These entries are covered by the declaration's trust digest, so changing them in a project or plugin declaration requires re-approval. Set a server-wide class for the most powerful tool it exposes, or use per-tool entries. A reviewed read-only literature-search server can use `actionClass: read` to run in a headless session. Under `run --read-only`, the server's own `readOnlyHint` does not authorize a call; the read class must come from PanCode's built-in classification or the operator.
+
+`pancode mcp list` includes recorded per-tool action classes. Use `pancode mcp list --refresh` to connect trusted servers, read their current annotations and update the catalogs. Cached hints are advisory and are combined with the current operator declarations when listed. When no per-tool override applies, project trust records remain authoritative, including an `unknown` class.
+
+In a session, a server's `notifications/tools/list_changed` marks its catalog stale, and the next discovery or call through that server lists its tools again. A gateway refresh of a connected server lists them again too. Listings run one at a time per server and replace the registered tools. A call whose tool's live metadata changed since the model saw it is refused and asks the model to describe the capability and retry.
+
+PanCode connects to each server by first sending `server/discover`. A server that lists MCP `2026-07-28` is spoken to in that revision, with the protocol version, client identity and capabilities in every request's `_meta`. A server that answers that it does not support MCP `2026-07-28` is refused, and the error names the versions it supports. Any other answer falls back to the `initialize` handshake at `2025-06-18`. A server still silent after one second is also sent the handshake, and whichever request it answers first decides. On a `2026-07-28` server, `tools/call` and the `tasks/*` requests declare the MCP Tasks extension (`io.modelcontextprotocol/tasks`), so a server may answer a call with a task instead of a result. PanCode then polls `tasks/get` at the server's `pollIntervalMs` (1 second when the server names none, and never faster than every 10 ms) until the task completes, fails or is cancelled, and returns the final result as that one call's result. Polling shares the call's timeout and the turn's interruption. A timeout, an interruption, a task that outlives its `ttlMs`, or a task that asks for input (elicitation or sampling, which PanCode does not provide) sends `tasks/cancel`. PanCode does not subscribe to task status notifications.
+
+Interrupting an MCP call sends `notifications/cancelled` with its request id, or `tasks/cancel` for a task. PanCode checks responsiveness with a bounded `ping` (`server/discover` on a `2026-07-28` server, which has no `ping`) or the `tasks/cancel` acknowledgement, retains responsive connections, and tears down unresponsive connections. The next gateway call lazily reconnects the same trusted declaration after cleanup. PanCode never automatically replays the cancelled call. Read-only, idempotent tools may repeat identical polling arguments within the turn's tool-call budget.
+
+The `2026-07-28` client's timeout path has been run against a live MCP web server: on a fetch held open past the call's timeout, the server acknowledged `tasks/cancel`, reported the task `cancelled` and closed its upstream connection, and the model received the timeout error. The interruption, `ttlMs` and input-request paths are exercised against a fake test server only.
+
+Trust and declaration loading are implemented in [`src/domains/gateway/mcp/trust.ts`](../../src/domains/gateway/mcp/trust.ts). The model-facing discovery and call contract is in [gateway tool usage](tool-usage.md).
+
+## Let PanCode propose settings changes
+
+Ask PanCode to set itself up: add a target, change the chat model, route workers, or adjust the display. It reads its live settings, targets and `pancode doctor`, discovers `configure_pancode` through the gateway and previews one saved change as an exact diff. Eligible paths are the chat route, model picker and request knobs, `fleet.default.*`, fleet profiles, agent bindings, rosters, concurrency, limits and retry, the memory route, the `interface` display settings, and `targets.<id>` with its runtime, URL, models, gateway flag, capabilities and the *name* of the API-key environment variable. Safety, permissions, autonomy, trust, integrations, telemetry, keybindings and credentials are never eligible, and any other path is refused and points at `/settings` or `configure`. The full contract is in [configure_pancode](tool-usage.md#configurepancode-propose-pancode-settings-and-targets-with-an-approved-diff).
+
+In an attended `default` session, applying shows you the exact diff on an approval card that only you answer; nothing is saved until you approve. The save goes through the settings writer and is logged to `<state>/settings-changes.jsonl`. In a headless `pancode run`, a `--read-only` run, or at `yolo`, PanCode only proposes: it shows the diff and the steps you run (`/settings`, `pancode configure --edit`, or the `pancode configure --id ...` command for a target). It never stores an API key; you store it with `pancode auth login`, and a model shell call that runs PanCode's own settings, credential or trust commands is blocked at every autonomy level. A persistent fleet routing proposal names the alternative for a one-off run: pin the dispatch call's `target` and `model` instead of saving routing. Applying checks that the saved value still matches the preview; a proposal expires after 10 minutes, and expired or stale proposals need a fresh preview. The running session keeps its current routing, so run `/restart` (it saves and restarts into this session and workspace) or start a new PanCode session to use a newly saved route. `/reload [settings|hub|extensions|prompts|all]` re-reads those resources and reports what changed and what still needs a new session. Other settings take effect as the save result says: live settings pick up automatically, next-turn settings apply to the next request or dispatch, and restart-required settings need a new session.
+
+`safety.autonomy` accepts only **default** and **yolo**. Set it in user `settings.yaml` or through an operator interface: `/settings`, `pancode configure`, `--autonomy`, or a session control in an ACP editor or the desktop app. A project layer may only tighten the user level; PanCode ignores a looser project value and reports a layer issue. `configure_pancode` cannot change it.
+
+## Exact CLI and tool contracts
+
+CLI help is generated from the registered commands. Run `pancode --help` or `pancode <command> --help` for the installed version; the parser lives in [`src/cli/`](../../src/cli/index.ts), with headless run options in [`src/cli/args.ts`](../../src/cli/args.ts).
+
+Tool schemas are registered in [`src/tools/`](../../src/tools/registry.ts). Use [Tool usage](tool-usage.md) for operational behavior and source for exact argument types. Runtime-discovered MCP and extension schemas are supplied by those integrations rather than a static settings catalog.
+
+## CLI flags
+
+### `context`
+
+Run `pancode context <subcommand> --help` for the installed usage. The subcommands are `init`, `refresh`, `wiki`, `reset`, `index`, `map`, `replay` and `working-set`; each rejects a flag it does not take.
+
+| Flag | Controls |
+|---|---|
+| `--help`, `-h` | Print the command's usage and exit. |
+| `--all` | For `context reset`, also remove the local PANCODE.md after a second confirmation; override files stay human-owned. |
+| `--yes`, `-y` | For `context reset`, answer the confirmations without prompting; without a terminal the reset needs it. |
+| `--preview` | For `context init`, show the plan without writing any files. |
+| `--heuristic` | For `context init`, skip model exploration and use the deterministic generator. |
+| `--adopt` | For `context init`, refresh only the managed imported-agent-context section. |
+| `--global` | For `context init`, include global sibling agent context (`~/.codex/AGENTS.md`) from the interop home: `PANCODE_INTEROP_HOME`, else the user home; `none` reads nothing. |
+| `--propose`, `--apply`, `--rewrite` | For `context init` over an existing PANCODE.md: write an ignored draft, update the handbook from a draft grounded in it, or replace it with a fresh draft that ignores it. |
+| `--accept [<path or id>]` | For `context init`, write a stored proposal to PANCODE.md unchanged, only while the handbook still matches the one the proposal was drafted from. |
+| `--verify` | For `context init`, re-check every rule of the effective handbook against the current tree without a model, record the verdicts and exit 1 when a rule is stale or contradicted; with `--apply`, write a proposal without the flagged rules. For `context working-set`, compare each dispatched attempt's rendered context with the receipt it journaled and exit 1 on a mismatch. |
+| `--depth` | For `context init`, exploration bound: `quick` (8 calls, 2 minutes), `standard` (16, 4) or `deep` (32, 8). For `context wiki`, generation depth: `auto`, `simple`, `medium`, or `detailed`. |
+| `--target`, `--model`, `--thinking` | For `context init` and `context wiki`, override the route for one run. `--model` and `--thinking` need `--target` on `init`. The wiki accepts `off`, `low`, `medium` or `high` for `--thinking`. For `context replay`, `--target` is the fraction of the window an eviction batches down to, above 0 and below 1 and below `--threshold`. |
+| `--wiki` | For `context refresh`, also update the Markdown wiki. |
+| `--update`, `--retry-pending`, `--replan`, `--status` | For `context wiki`: force an update, retry pending pages once without replanning, rebuild the plan (not with `--retry-pending`), or print the wiki status. |
+| `--pages` | For `context wiki`, comma-separated plan page paths to write; a path the plan does not hold is an error. |
+| `--out` | For `context map`, where to write the architecture seed. |
+| `--json` | For `context index`, `context map` and `context init` (including `--verify` and `--accept`), emit machine-readable output; for `context replay`, `--json <path>` writes the stable JSON report to that path instead. |
+| `--sessions` | For `context replay`, one or more session ledger paths to replay. Either `--sessions` or `--synthetic` is required. |
+| `--synthetic` | For `context replay`, comma-separated ids of procedural corpora. |
+| `--threshold` | For `context replay`, the compaction threshold, above 0 and at most 1. |
+| `--budgets` | For `context replay`, comma-separated positive-integer token budgets each policy is replayed against. |
+| `--md` | For `context replay`, path to write the Markdown report to instead of printing it. |
+| `--min-evictable-tokens` | For `context replay`, non-negative integer tool-result size in tokens below which results are never evicted. |
+| `--no-filter` | For `context replay`, include every readable transcript instead of only the filtered active-path sessions. |
+| `--policies` | For `context replay`, comma-separated policy ids from none, random, age-horizon, structural-v1, structural-v2, oracle, or a rung composition (`<id>+<rung>`, `<id>-<rung>`, `rungs:<a>/<b>`). |
+| `--profile` | For `context replay`, `default`, `data-analysis`, or `web-design`; a non-default profile includes paired default-profile results over the same corpus. |
+| `--protect-last-steps` | For `context replay`, positive integer count of recent assistant steps whose observations are protected. |
+| `--protect-last-turns` | For `context replay`, integer (at least 1) count of recent user turns whose observations are never evicted. |
+| `--rearm-fraction` | For `context replay`, projected growth as a fraction of the window before another automatic reduction, at least 0 and below 1; default 0.1. |
+| `--overflow-fraction` | For `context replay`, modeled request-fit limit as a fraction of the budget; reduction bypasses the rearm band above it, default 0.95. |
+| `--seed` | For `context replay`, integer seed for the deterministic random policy. |
+| `--session` | For `context working-set`, the session id or path whose working-set fold and path index are printed. `context working-set` needs `--session` or `--verify`. |
+
+## Tool arguments
+
+### `context`
+
+| Argument | Class | Controls |
+|---|---|---|
+| `context.include_tree` | policy | scope=skills: list files under the skill base_dir. |
+| `context.limit` | policy | scope=settings: max controls (default/max 12); scope=recall discovery: max refs (default 8, max 12); scope=skills: rows (max 200); scope=semantic: candidates (1 to 20, default 5). |
+| `context.name` | task | scope=skills: skill name to load; omit to list. |
+| `context.path` | task | scope=recall: the newest evicted read of this file. |
+| `context.query` | task | scope=settings: path, section alias, or search terms; scope=recall discovery: path, tool, or ref terms; scope=skills: narrow the list; omit to list. |
+| `context.ref` | task | scope=recall: ref of the evicted item, as named in its marker. |
+| `context.scope` | policy | workspace, settings, skills, recall, budget, or semantic. `budget` inspects the live request budget and accepts no other argument. `semantic` requires `query` and configured semantic search; see [semantic context](semantic-context.md). |
+| `context.offset` | policy | Zero-based settings, recall discovery or skills offset; follow nextOffset. |

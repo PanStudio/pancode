@@ -1,0 +1,860 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { HubEntryKind } from "../domains/resources/index.js";
+import { askUserWindowMs, unattendedWindowMs } from "../domains/safety/unattended.js";
+import { sessionApprovalTask } from "../session-control/approval-request-facts.js";
+import { dispatchSlashCommand } from "../session-control/slash-dispatch.js";
+import { appendInterviewRecord, appendNotice } from "./command-output.js";
+import type { OverlayAskUserLifecycle } from "./overlay-ask-user-lifecycle.js";
+import { createOverlayAskUserLifecycle } from "./overlay-ask-user-lifecycle.js";
+import { createOverlayAuthLifecycle } from "./overlay-auth-lifecycle.js";
+import { showPancodeOverlayFrame } from "./overlay-frame.js";
+import { createOverlayGeneralOpeners, type OverlayGeneralOpeners } from "./overlay-general-openers.js";
+import { createOverlayModelSelectors } from "./overlay-model-selectors.js";
+import type { OverlayPermissionLifecycle } from "./overlay-permission-lifecycle.js";
+import { createOverlayPermissionLifecycle } from "./overlay-permission-lifecycle.js";
+import type { HubOpenRequest } from "./overlay-resource-openers.js";
+import { createOverlayResourceOpeners } from "./overlay-resource-openers.js";
+import { createOverlaySessionLifecycle } from "./overlay-session-lifecycle.js";
+import { createOverlayTransitions } from "./overlay-transitions.js";
+import type { PermissionOverlayBodyHandle } from "./permission-overlay.js";
+import { createPermissionOverlayBody } from "./permission-overlay.js";
+import { permissionOverlayHint, permissionOverlayTone, permissionRailTitle } from "./permission-overlay-model.js";
+
+export * from "./overlay-key-routing.js";
+
+import type { OverlayState } from "./overlay-key-routing.js";
+import type { PendingModelScope } from "./overlays/model-scope.js";
+import type { SettingsSectionId } from "./overlays/settings.js";
+import type { SettingsCenterRowId } from "./overlays/settings-center-model.js";
+import { createPermissionSettleWindow } from "./permission-settle.js";
+import { bindDockedWorkerApproval } from "./worker-activity.js";
+
+// Runtime lifecycle construction lives beside the pure modal key router so the
+// application composition root does not own the mutable overlay state.
+export type OverlayLifecycleApplicationDeps = Pick<
+	import("./interactive-deps.js").InteractiveDeps,
+	| "agents"
+	| "bus"
+	| "chat"
+	| "commitSetting"
+	| "dataDir"
+	| "dispatch"
+	| "getFleetNodes"
+	| "getRouteBreakers"
+	| "getSessionId"
+	| "getSettings"
+	| "getTaskBoard"
+	| "userTasks"
+	| "getDecisionBoard"
+	| "absorbFlow"
+	| "sessionFlowRestricted"
+	| "getTaskMemoryStatus"
+	| "systemOne"
+	| "systemOneControl"
+	| "interop"
+	| "telemetry"
+	| "onContextClear"
+	| "onForkSession"
+	| "onNewSession"
+	| "onResumeSession"
+	| "onSelectModel"
+	| "onSetThinkingLevel"
+	| "providers"
+	| "readSessionEntries"
+	| "registerAskUserHandler"
+	| "resources"
+	| "scheduling"
+	| "session"
+	| "settingOrigin"
+	| "stateDir"
+	| "supersedeDecision"
+	| "toolRegistry"
+	| "writeSettings"
+>;
+
+/** Pending proposals from the report this process already holds; the picker never probes. */
+function interopProposalsFor(
+	interop: NonNullable<OverlayLifecycleApplicationDeps["interop"]>,
+): () => ReadonlyArray<import("../domains/interop/index.js").InteropProposal> {
+	return () => {
+		const report = interop.lastReport();
+		return report === null ? [] : interop.proposals(report);
+	};
+}
+
+export interface OverlayLifecycleRuntimeDeps {
+	onOverlayClosed?: () => void;
+	/** Monotonic milliseconds; stamps each permission card's open time. Defaults to `performance.now`. */
+	now?: () => number;
+	/** Wall-clock ms of the operator's last keystroke; a lapsed question window latches "away" until the next one. */
+	lastOperatorInputAt?: () => number;
+	app: OverlayLifecycleApplicationDeps;
+	getDispatchRows?: () => ReadonlyArray<import("./dispatch-row-model.js").DispatchBoardRow>;
+	/** Built-in commands this session leaves out of `/help`, as the palette does. */
+	commandHidden?: (command: string) => boolean;
+	tui: import("../engine/tui.js").TUI;
+	footer: import("./footer/dashboard.js").FooterDashboardPanel;
+	interactiveTickers: import("./interactive-tickers.js").InteractiveTickers;
+	busNoticeSink: Parameters<typeof import("./command-output.js").appendNotice>[2];
+	chatRenderer: { applyEvent(event: import("../session-control/chat-loop.js").ToolApprovalStateEvent): void };
+	notify: (level: import("./interactive-subscriptions.js").InteractiveNoticeLevel, text: string, key?: string) => void;
+	dismissNotification?: (key: string) => void;
+	/** The report offer on screen; `/report` consumes it to pre-fill the draft. */
+	takeReportOffer?: () => import("../domains/report/index.js").ReportOfferPrefill | null;
+	onToolResumed?: (toolCallId: string) => void;
+	/** The safety judge holds this started call before admission. */
+	onToolJudging?: (toolCallId: string) => void;
+	terminal: Pick<import("../engine/tui.js").ProcessTerminal, "columns">;
+	dispatchBoard: ReturnType<typeof import("./dispatch-board.js").createDispatchBoardView>;
+	/** Record a dispatched fleet step's plan position for the board's phase column. */
+	setFleetRunPhase?: (runId: string, phase: { wave: number; stepId: string }) => void;
+	fleetPlans?: import("./fleet-plan-runs.js").FleetPlanRuns;
+	chatPanel: import("./chat-panel.js").ChatPanel;
+	/** Clears the transcript and every view folded alongside it; the session overlays call it before a replay. */
+	resetTranscript: () => void;
+	/**
+	 * Stop and restart the terminal around a child process that owns the screen.
+	 * `/handoff` uses it for the external editor, the same way the composer's
+	 * own `$EDITOR` opener does.
+	 */
+	suspendTerminal: <T>(run: () => T) => T;
+	/** Keep the same terminal owner suspended until setup releases stdin. */
+	suspendTerminalAsync?: <T>(run: () => Promise<T>) => Promise<T>;
+	io: import("../session-control/slash-command-types.js").RunIo;
+	readStructuredEntries: (sessionId: string) => import("../domains/session/index.js").SessionEntry[];
+	announceTaskMemorySeedOffer: () => void;
+	/** Rescopes the footer's last-turn line when a session overlay changes the branch. */
+	setLastTurnSummary?: (summary: import("./status/index.js").TurnSummary | null) => void;
+	keybindings: ReturnType<typeof import("./keybinding-manager.js").createKeybindingManager>;
+	editor: Pick<import("./pancode-editor.js").PancodeEditor, "getText" | "render" | "setText">;
+	/** Editor-side actions of the queue navigator; the queue itself comes from `app.chat`. */
+	queueNavigator?: {
+		toEditor(entry: import("../session-control/chat-loop.js").QueuedChatMessage): void;
+		sendNow(entry: import("../session-control/chat-loop.js").QueuedChatMessage): void;
+		restoreAll(): void;
+	};
+	getSlashContext: () => import("../session-control/slash-command-types.js").SlashCommandContext;
+	/**
+	 * A worker permission or ask_user request parked waiting for the operator.
+	 * Wired to the desktop notification; absent hosts simply do not notify.
+	 */
+	onOperatorParked?: () => void;
+	showOverlayFrame?: typeof showPancodeOverlayFrame;
+	openAuthDialog?: typeof import("./overlays/auth-dialog.js").openAuthDialog;
+	openAskUserOverlay?: typeof import("./overlays/ask-user.js").openAskUserOverlay;
+	openModelOverlay?: typeof import("./overlays/model-selector.js").openModelOverlay;
+	openModelScopeOverlay?: typeof import("./overlays/model-scope.js").openModelScopeOverlay;
+	openSettingsOverlay?: typeof import("./overlays/settings.js").openSettingsOverlay;
+	openSessionOverlay?: typeof import("./overlays/session-selector.js").openSessionOverlay;
+	openTreeOverlay?: typeof import("./overlays/tree-selector.js").openTreeOverlay;
+	openMessagePickerOverlay?: typeof import("./overlays/message-picker.js").openMessagePickerOverlay;
+	openCwdFallbackOverlay?: typeof import("./overlays/cwd-fallback.js").openCwdFallbackOverlay;
+	openUsageOverlay?: typeof import("./usage-overlay.js").openUsageOverlay;
+	openContextOverlay?: typeof import("./context-overlay.js").openContextOverlay;
+	openContextResetOverlay?: typeof import("./overlays/context-reset.js").openContextResetOverlay;
+	openTasksOverlay?: typeof import("./tasks-overlay.js").openTasksOverlay;
+	openDecisionsOverlay?: typeof import("./overlays/decisions.js").openDecisionsOverlay;
+	openMemoryOverlay?: typeof import("./memory-overlay.js").openMemoryOverlay;
+	openViewOverlay?: typeof import("./view/view-overlay.js").openViewOverlay;
+	openHelpOverlay?: typeof import("./overlays/help-reference.js").openHelpOverlay;
+	openSkillsHub?: typeof import("./overlays/hub.js").openHubOverlay;
+	openExtensionsOverlay?: typeof import("./overlays/extensions.js").openExtensionsOverlay;
+	openInteropOverlay?: typeof import("./overlays/interop.js").openInteropOverlay;
+}
+
+export interface OverlayLifecycleController {
+	openExtensionViewPanelState: import("./overlay-resource-openers.js").OverlayResourceOpeners["openExtensionViewPanelState"];
+	openExtensionPanelState: import("./overlay-resource-openers.js").OverlayResourceOpeners["openExtensionPanelState"];
+	getState(): OverlayState;
+	closeOverlay(): void;
+	finishAuthOverlay(dismiss: boolean): void;
+	openAskUserOverlayState: import("../tools/ask-user.js").AskUserHandler;
+	/** Confirmation UI that is not persisted as an interview decision. */
+	openTransientAskUserOverlayState: import("../tools/ask-user.js").AskUserHandler;
+	closeAskUserSession(): void;
+	isAskUserWaiting(): boolean;
+	resetAskUserCancellation(): void;
+	refreshSettingsOverlay(): void;
+	openUsageOverlayState(tab?: import("../session-control/slash-command-types.js").UsageTab): void;
+	openContextViewOverlayState(): void;
+	openContextResetOverlayState(): void;
+	openThinkingLevelOverlayState: OverlayGeneralOpeners["openThinkingLevel"];
+	toggleFooterDashboardState(): void;
+	openTasksOverlayState(): void;
+	openDecisionsOverlayState(): void;
+	openResearchOverlayState(): void;
+	openMemoryOverlayState(): void;
+	openRewindOverlayState(): void;
+	openViewOverlayState(initialFilter?: string): void;
+	/** `/btw <question>`: one side-question round rendered in its own overlay. */
+	openSideQuestionOverlayState(question: string): void;
+	/** `/draft [N] <request>`: parallel candidates judged by a decision model. */
+	openDraftOverlayState(request: string, count: number): void;
+	/** `/handoff <goal>`: extract, review, and seed a successor session. */
+	startHandoffState(goal: string): void;
+	/** `/report`: review a report, and send it only on the send step's key. */
+	openReportState(request: import("../session-control/slash-command-types.js").SlashReportRequest): void;
+	/** `/report status`: the reports and drafts on this machine. */
+	showReportStatusState(): void;
+	/** `/report forget <id>`: delete a local draft. */
+	forgetReportState(id: string): void;
+	startFleetRunState(
+		name: string,
+		vars: Readonly<Record<string, string>>,
+		options?: import("../session-control/slash-command-types.js").FleetRunStartOptions,
+	): void;
+	openModelOverlayState(): void;
+	/** `/model <pattern>` lands here: applied for this session, as Enter in the picker does. */
+	applyModelSessionState(ref: PendingModelScope): void;
+	openSettingsOverlayState(section?: SettingsSectionId, rowId?: SettingsCenterRowId): void;
+	openResumeOverlayState(target?: string): void;
+	openTreeOverlayState(): void;
+	openMessagePickerOverlayState(name?: string): void;
+	openHelpOverlayState(query?: string): void;
+	openSkillsHubState(request?: HubOpenRequest | HubEntryKind): void;
+	openExtensionsOverlayState(): void;
+	openInteropOverlayState(): void;
+	openProjectTrustState: import("./overlay-resource-openers.js").OverlayResourceOpeners["openProjectTrustState"];
+	toggleDispatchBoardOverlay(): void;
+	openQueueNavigatorState(): void;
+	confirmPermission(): void;
+	/** The live card offers its sandbox escape's session option (M-7), and choosing it. */
+	canConfirmPermissionForSession(): boolean;
+	confirmPermissionForSession(): void;
+	/** The live card opened less than `PERMISSION_SETTLE_MS` ago, so Enter does not allow it yet. */
+	isPermissionSettling(): boolean;
+	cancelPermission(): void;
+	/** The approval card on screen, for a second decision source such as an attached approver. */
+	permissionCards(): Pick<
+		import("./overlay-permission-lifecycle.js").OverlayPermissionLifecycle,
+		"cardOnScreen" | "answerOnScreen" | "onCardShown"
+	>;
+	retryPendingPermission(): boolean;
+	stopTurnFromPermission(): void;
+	/** A key reached the app while an approval or interview card was up: the operator is present (#421). */
+	noteOperatorPresence(): void;
+	/** Whether the live permission card has a mutation the operator can read here. */
+	canInspectMutation(): boolean;
+	/** Whether that mutation is currently open. */
+	isInspectingMutation(): boolean;
+	toggleMutationInspection(): void;
+	scrollMutationInspection(delta: number): void;
+	/** Fold or unfold the standing approval terms on the live permission card. */
+	togglePermissionTerms(): void;
+	/** Whether the live card's terms are unfolded. */
+	isShowingPermissionTerms(): boolean;
+	/** Scroll a permission card taller than its rows; false when the card fits. */
+	scrollPermissionCard(delta: number): boolean;
+	cancelAskUser(): void;
+	dispose(): void;
+}
+
+export function createOverlayLifecycle(deps: OverlayLifecycleRuntimeDeps): OverlayLifecycleController {
+	const {
+		tui,
+		footer,
+		interactiveTickers,
+		busNoticeSink,
+		chatRenderer,
+		notify,
+		terminal,
+		dispatchBoard,
+		chatPanel,
+		resetTranscript,
+		io,
+		readStructuredEntries,
+		announceTaskMemorySeedOffer,
+		setLastTurnSummary,
+		keybindings,
+		editor,
+		showOverlayFrame = showPancodeOverlayFrame,
+		openAuthDialog: openAuthDialogFactory,
+		openAskUserOverlay: openAskUserOverlayFactory,
+		openModelOverlay: openModelOverlayFactory,
+		openModelScopeOverlay: openModelScopeOverlayFactory,
+		openSettingsOverlay: openSettingsOverlayFactory,
+		openSessionOverlay: openSessionOverlayFactory,
+		openTreeOverlay: openTreeOverlayFactory,
+		openMessagePickerOverlay: openMessagePickerOverlayFactory,
+		openCwdFallbackOverlay: openCwdFallbackOverlayFactory,
+		openUsageOverlay: openUsageOverlayFactory,
+		openContextOverlay: openContextOverlayFactory,
+		openContextResetOverlay: openContextResetOverlayFactory,
+		openTasksOverlay: openTasksOverlayFactory,
+		openDecisionsOverlay: openDecisionsOverlayFactory,
+		openMemoryOverlay: openMemoryOverlayFactory,
+		openViewOverlay: openViewOverlayFactory,
+		openHelpOverlay: openHelpOverlayFactory,
+		openSkillsHub: openSkillsHubFactory,
+		openExtensionsOverlay: openExtensionsOverlayFactory,
+		openInteropOverlay: openInteropOverlayFactory,
+	} = deps;
+	let overlayPermission: OverlayPermissionLifecycle | null = null;
+	let overlayAskUser: OverlayAskUserLifecycle | null = null;
+	/**
+	 * The live permission card's body, held only while its dialog is on screen.
+	 * The mutation text it can show lives here and nowhere else, so dropping the
+	 * reference when the dialog closes drops the text with it.
+	 */
+	let permissionBody: PermissionOverlayBodyHandle | null = null;
+	const permissionSettle = createPermissionSettleWindow({
+		now: deps.now ?? (() => performance.now()),
+		requestRender: () => tui.requestRender(),
+	});
+	const isPermissionSettling = (): boolean =>
+		overlayTransitions.state === "permission-confirm" && permissionSettle.settling();
+	const inspectionHint = (): import("./permission-hint.js").PermissionInspectionHint => {
+		if (permissionBody === null || !permissionBody.canInspect()) return "none";
+		return permissionBody.isInspecting() ? "open" : "closed";
+	};
+	const overlayTransitions = createOverlayTransitions({
+		stopDispatchBoardTicker: () => interactiveTickers.stopDispatchBoardTicker(),
+		renderContextIsland: () => interactiveTickers.renderContextIsland(),
+		renderTaskIsland: () => interactiveTickers.renderTaskIsland(),
+		requestRender: () => tui.requestRender(),
+		cancelPendingAskUser: () => overlayAskUser?.cancelPending() ?? false,
+		finishAuth: (dismiss) => overlayAuth.finish(dismiss),
+		onPermissionOverlayClosed: () => {
+			permissionBody = null;
+			overlayPermission?.onPermissionOverlayClosed();
+			deps.onOverlayClosed?.();
+		},
+		onOverlayClosed: () => {
+			overlayPermission?.retryPending();
+			deps.onOverlayClosed?.();
+		},
+		restorable: (state) => state !== "queue-navigator" || deps.app.chat.queueEntries().length > 0,
+	});
+	const closeOverlay = overlayTransitions.close;
+
+	const overlayAuth = createOverlayAuthLifecycle({
+		tui,
+		providers: deps.app.providers,
+		...(deps.app.getSettings ? { getSettings: deps.app.getSettings } : {}),
+		notify,
+		refreshFooter: () => footer.refresh(),
+		renderContextIsland: () => interactiveTickers.renderContextIsland(),
+		renderTaskIsland: () => interactiveTickers.renderTaskIsland(),
+		requestRender: () => tui.requestRender(),
+		getOverlayState: () => overlayTransitions.state,
+		setOverlayState: (state) => {
+			overlayTransitions.state = state;
+		},
+		getOverlayHandle: () => overlayTransitions.handle,
+		setOverlayHandle: (handle) => {
+			overlayTransitions.handle = handle;
+		},
+		...(openAuthDialogFactory ? { openAuthDialog: openAuthDialogFactory } : {}),
+	});
+
+	overlayPermission = createOverlayPermissionLifecycle({
+		...(deps.app.toolRegistry ? { toolRegistry: deps.app.toolRegistry } : {}),
+		bus: deps.app.bus,
+		dispatch: deps.app.dispatch,
+		getAutonomy: () => deps.app.getSettings?.().safety.autonomy ?? "default",
+		getApprovalTask: (turnId) => sessionApprovalTask(deps.app.session, turnId),
+		getOverlayState: () => overlayTransitions.state,
+		openPermissionOverlay: (view, inspect, invocation, advisory, countdown, workerWindow) => {
+			if (overlayTransitions.state === "permission-confirm") return false;
+			// The draft reader lets the card say that Enter is inert while a draft
+			// exists (#186), beside the rail that names the key that clears it.
+			const body = createPermissionOverlayBody(
+				view,
+				inspect,
+				invocation,
+				advisory,
+				countdown,
+				() => editor.getText().length > 0,
+				() => deps.app.chat.isStreaming(),
+				workerWindow,
+				isPermissionSettling,
+			);
+			permissionBody = body;
+			permissionSettle.open();
+			const handle = showOverlayFrame(tui, body, {
+				// The card takes the editor's rails and keeps the draft editable under
+				// it: a steer typed while the call is parked is what the CONFIRM rail
+				// is for.
+				keepComposer: true,
+				approval: true,
+				// Not derived from the title: that one is classified per decision
+				// axis and is one of five strings for the same modal.
+				markerId: "permission-confirm",
+				awaitingInput: true,
+				// Read per frame: a call that parks behind this one moves the count.
+				title: (context) =>
+					permissionRailTitle(view, {
+						actor: context?.actor ?? "",
+						room: context?.room ?? Number.POSITIVE_INFINITY,
+						// Every ask this card holds back, the worker asks behind it included:
+						// their windows run whether or not anything on screen counts them.
+						queueDepth:
+							(deps.app.toolRegistry?.parkedCount() ?? 0) +
+							(overlayPermission?.queuedWorkerAsks() ?? 0) +
+							(view.origin.kind === "worker" ? 1 : 0),
+					}),
+				tone: permissionOverlayTone(view),
+				// Read per frame: the footer names what Enter does right now, and
+				// that depends on whether the composer holds a draft and on whether
+				// the mutation is open.
+				footerHint: (innerWidth) =>
+					permissionOverlayHint(
+						innerWidth,
+						editor.getText().length > 0,
+						inspectionHint(),
+						body.isShowingTerms() ? "open" : "closed",
+						body.isCardScrollable(),
+						body.isShowingChoices(),
+						view.origin.kind === "worker" && !deps.app.chat.isStreaming() ? "stop" : undefined,
+						body.isShowingReadingKeys(),
+					),
+			});
+			if (!overlayTransitions.showPermission(handle)) {
+				handle.hide();
+				permissionBody = null;
+				return false;
+			}
+			tui.requestRender();
+			return true;
+		},
+		closeOverlay,
+		appendNotice: (level, text, source) => appendNotice(level, text, busNoticeSink, source),
+		applyApprovalState: (event) => {
+			chatRenderer.applyEvent(event);
+			if (event.state === "resumed") deps.onToolResumed?.(event.toolCallId);
+			if (event.state === "judging") deps.onToolJudging?.(event.toolCallId);
+		},
+		requestRender: () => tui.requestRender(),
+		// An operator cancel, audited as one. The reason distinguishes it from an
+		// Esc or Ctrl-C in the audit trail without inventing a new abort source.
+		stopActiveTurn: (reason) =>
+			deps.app.chat.cancel({
+				reason,
+				source: "stream_cancel",
+				auditReason: "operator stopped the turn at a permission prompt",
+			}),
+		...(deps.onOperatorParked ? { onOperatorParked: deps.onOperatorParked } : {}),
+		getUnattendedWindowMs: () => unattendedWindowMs(deps.app.getSettings?.().safety.unattendedAfterSeconds),
+	});
+	// A worker row names `[Enter] on the card` only for the run whose approval card is docked here.
+	bindDockedWorkerApproval(() => {
+		const origin = overlayPermission?.cardOnScreen()?.origin;
+		return origin?.kind === "worker" ? origin.runId : null;
+	});
+
+	// When a question window last lapsed with nobody at the keyboard; a keystroke after it ends the latch.
+	let awaySince: number | null = null;
+	overlayAskUser = createOverlayAskUserLifecycle({
+		tui,
+		getOverlayState: () => overlayTransitions.state,
+		setOverlayState: (state) => {
+			overlayTransitions.state = state;
+		},
+		getOverlayHandle: () => overlayTransitions.handle,
+		setOverlayHandle: (handle) => {
+			overlayTransitions.handle = handle;
+		},
+		replaceInterruptedOverlay: (from, to) => overlayTransitions.replaceInterrupted?.(from, to),
+		onHarnessWaiting: () => {
+			appendNotice(
+				"info",
+				"PanCode has a question for you, hidden behind this overlay. Close it to answer.",
+				busNoticeSink,
+			);
+			deps.onOperatorParked?.();
+		},
+		renderContextIsland: () => interactiveTickers.renderContextIsland(),
+		renderTaskIsland: () => interactiveTickers.renderTaskIsland(),
+		requestRender: () => tui.requestRender(),
+		...(deps.app.registerAskUserHandler ? { registerHandler: deps.app.registerAskUserHandler } : {}),
+		...(openAskUserOverlayFactory ? { openAskUserOverlay: openAskUserOverlayFactory } : {}),
+		...(deps.onOperatorParked ? { onOperatorParked: deps.onOperatorParked } : {}),
+		getUnattendedWindowMs: (questions) => {
+			const safety = deps.app.getSettings?.().safety;
+			const lastInput = deps.lastOperatorInputAt?.();
+			const away = awaySince !== null && (lastInput === undefined || lastInput < awaySince);
+			return askUserWindowMs(safety?.unattendedAfterSeconds, {
+				yolo: safety?.autonomy === "yolo",
+				away,
+				operatorOnly: questions.some((question) => question.operator_only === true),
+			});
+		},
+		onRoundTimedOut: (questions, result) => {
+			awaySince = Date.now();
+			const open = Math.max(0, questions.length - result.answers.length);
+			const seconds = result.timedOut?.afterSeconds ?? 0;
+			if (questions.some((question) => question.operator_only === true)) {
+				appendNotice(
+					"warn",
+					`No answer within ${seconds}s. This was your own choice to make, so PanCode chose nothing, recorded nothing, and ended the turn; the choice stays open.`,
+					busNoticeSink,
+				);
+				return;
+			}
+			appendNotice(
+				"warn",
+				// The question row above already lists each pick marked `chosen by PanCode`; this says why and what happens now.
+				`No answer within ${seconds}s, so PanCode chose for you on ${open === 1 ? "the open question" : `${open} open questions`}, taking the recommended option where one was offered unless it left the workspace, and continued. The question row above shows each pick; tell Panos if one is wrong.`,
+				busNoticeSink,
+			);
+		},
+		onRoundAnswered: (questions, answers) =>
+			appendInterviewRecord(
+				answers.map((answer) => ({
+					label:
+						questions.find((question) => question.question === answer.question)?.header ??
+						answer.question.split("\n").find((line) => line.trim().length > 0) ??
+						answer.question,
+					answer: answer.answer,
+				})),
+				busNoticeSink,
+			),
+	});
+
+	const overlayModelSelectors = createOverlayModelSelectors({
+		tui,
+		transitions: overlayTransitions,
+		providers: deps.app.providers,
+		bus: deps.app.bus,
+		refreshFooter: () => footer.refresh(),
+		notify,
+		closeOverlay,
+		...(deps.app.getSettings ? { getSettings: deps.app.getSettings } : {}),
+		...(deps.app.writeSettings ? { writeSettings: deps.app.writeSettings } : {}),
+		...(deps.app.commitSetting ? { commitSetting: deps.app.commitSetting } : {}),
+		...(deps.app.settingOrigin ? { settingOrigin: deps.app.settingOrigin } : {}),
+		...(deps.app.onSelectModel ? { onSelectModel: deps.app.onSelectModel } : {}),
+		isTurnInFlight: () => deps.app.chat.isStreaming(),
+		historyTokens: () => {
+			const usage = deps.app.chat.contextUsage();
+			return usage.breakdown && usage.breakdown.messageTokens <= 0 ? null : usage.tokens;
+		},
+		...(deps.app.chat.routeLeavesCache
+			? { routeLeavesCache: (route) => deps.app.chat.routeLeavesCache?.(route) ?? false }
+			: {}),
+		...(deps.app.chat.routeMoveWait ? { routeMoveWait: () => deps.app.chat.routeMoveWait?.() ?? "idle" } : {}),
+		...(deps.app.chat.routeMoveFit
+			? { routeMoveFit: (route) => deps.app.chat.routeMoveFit?.(route) ?? { kind: "fits" } }
+			: {}),
+		...(deps.app.chat.moveWaitingRequest
+			? { moveWaitingRequest: () => deps.app.chat.moveWaitingRequest?.() ?? { kind: "idle" } }
+			: {}),
+		...(deps.app.onSetThinkingLevel ? { onSetThinkingLevel: deps.app.onSetThinkingLevel } : {}),
+		...(deps.app.getFleetNodes ? { getFleetNodes: deps.app.getFleetNodes } : {}),
+		...(deps.app.getRouteBreakers ? { getRouteBreakers: deps.app.getRouteBreakers } : {}),
+		connectTarget: (targetId, options) => overlayAuth.openConnectFlow(targetId, options),
+		...(deps.app.interop ? { getInteropProposals: interopProposalsFor(deps.app.interop) } : {}),
+		...(openModelOverlayFactory ? { openModelOverlay: openModelOverlayFactory } : {}),
+		...(openModelScopeOverlayFactory ? { openModelScopeOverlay: openModelScopeOverlayFactory } : {}),
+		...(openSettingsOverlayFactory ? { openSettingsOverlay: openSettingsOverlayFactory } : {}),
+		checkSetup: () => {
+			dispatchSlashCommand({ kind: "doctor", deep: false }, deps.getSlashContext());
+		},
+		...(deps.suspendTerminal ? { suspendTerminal: deps.suspendTerminal } : {}),
+	});
+
+	const overlayResourceOpeners = createOverlayResourceOpeners({
+		tui,
+		transitions: overlayTransitions,
+		keybindings,
+		editor,
+		getSlashContext: deps.getSlashContext,
+		...(deps.app.resources ? { resources: deps.app.resources } : {}),
+		closeOverlay,
+		...(deps.commandHidden ? { commandHidden: deps.commandHidden } : {}),
+		...(openHelpOverlayFactory ? { openHelpOverlay: openHelpOverlayFactory } : {}),
+		...(openSkillsHubFactory ? { openSkillsHub: openSkillsHubFactory } : {}),
+		...(openExtensionsOverlayFactory ? { openExtensionsOverlay: openExtensionsOverlayFactory } : {}),
+		...(openInteropOverlayFactory ? { openInteropOverlay: openInteropOverlayFactory } : {}),
+	});
+
+	const overlaySessions = createOverlaySessionLifecycle({
+		tui,
+		transitions: overlayTransitions,
+		...(deps.app.session ? { session: deps.app.session } : {}),
+		chat: deps.app.chat,
+		chatPanel,
+		resetTranscript,
+		readStructuredEntries,
+		getSlashNotice: () => deps.getSlashContext().notice,
+		...(deps.app.onResumeSession ? { onResumeSession: deps.app.onResumeSession } : {}),
+		...(deps.app.onForkSession ? { onForkSession: deps.app.onForkSession } : {}),
+		...(deps.app.onNewSession ? { onNewSession: deps.app.onNewSession } : {}),
+		...(deps.app.getDecisionBoard ? { getDecisionBoard: deps.app.getDecisionBoard } : {}),
+		...(deps.app.absorbFlow ? { absorbFlow: deps.app.absorbFlow } : {}),
+		terminal: deps.terminal,
+		suspendTerminal: deps.suspendTerminal,
+		announceTaskMemorySeedOffer,
+		sessionUsage: deps.app.telemetry,
+		...(setLastTurnSummary ? { setLastTurnSummary } : {}),
+		refreshFooter: () => footer.refresh(),
+		requestRender: () => tui.requestRender(),
+		stderr: (text) => io.stderr(text),
+		notify,
+		...(openSessionOverlayFactory ? { openSessionOverlay: openSessionOverlayFactory } : {}),
+		...(openTreeOverlayFactory ? { openTreeOverlay: openTreeOverlayFactory } : {}),
+		...(openMessagePickerOverlayFactory ? { openMessagePickerOverlay: openMessagePickerOverlayFactory } : {}),
+		...(openCwdFallbackOverlayFactory ? { openCwdFallbackOverlay: openCwdFallbackOverlayFactory } : {}),
+	});
+
+	const scheduling = deps.app.scheduling;
+	const overlayGeneralOpeners = createOverlayGeneralOpeners({
+		readTranscript: () => chatPanel.inspectionArtifacts(),
+		tui,
+		transitions: overlayTransitions,
+		telemetry: deps.app.telemetry,
+		systemOne: () => deps.app.systemOne,
+		systemOneControl: () => deps.app.systemOneControl,
+		...(deps.getDispatchRows ? { getDispatchRows: deps.getDispatchRows } : {}),
+		...(deps.app.getSessionId ? { getSessionId: deps.app.getSessionId } : {}),
+		getContextLedger: () => deps.app.chat.contextLedger(),
+		contextChat: deps.app.chat,
+		bus: deps.app.bus,
+		...(deps.app.onContextClear ? { onContextClear: (options) => deps.app.onContextClear?.(options, deps.io) } : {}),
+		stderr: (text) => io.stderr(text),
+		stdout: (text) => io.stdout(text),
+		appendBlock: (render) => {
+			chatPanel.appendReplayBlock(render);
+			tui.requestRender();
+		},
+		refreshFooter: () => footer.refresh(),
+		toggleFooter: () => footer.toggleExpanded(),
+		...(deps.dismissNotification ? { dismissNotification: deps.dismissNotification } : {}),
+		getSlashNotice: () => deps.getSlashContext().notice,
+		renderTaskIsland: () => interactiveTickers.renderTaskIsland(),
+		requestRender: () => tui.requestRender(),
+		...(deps.app.getTaskBoard ? { getTaskBoard: deps.app.getTaskBoard } : {}),
+		...(deps.app.userTasks ? { userTasks: deps.app.userTasks } : {}),
+		...(deps.app.getDecisionBoard ? { getDecisionBoard: deps.app.getDecisionBoard } : {}),
+		...(deps.app.sessionFlowRestricted ? { sessionFlowRestricted: deps.app.sessionFlowRestricted } : {}),
+		...(deps.app.supersedeDecision ? { supersedeDecision: deps.app.supersedeDecision } : {}),
+		submitChat: (text) => deps.getSlashContext().submitChat(text),
+		...(deps.app.getTaskMemoryStatus ? { getTaskMemoryStatus: deps.app.getTaskMemoryStatus } : {}),
+		dataDir: deps.app.dataDir,
+		notify,
+		dispatch: deps.app.dispatch,
+		stateDir: deps.app.stateDir,
+		getSessionMeta: () => deps.app.session?.current() ?? null,
+		...(deps.app.session ? { listSessions: () => deps.app.session?.history() ?? [] } : {}),
+		...(deps.app.readSessionEntries ? { readSessionEntries: deps.app.readSessionEntries } : {}),
+		...(deps.app.getSettings ? { getSettings: deps.app.getSettings } : {}),
+		terminal,
+		dispatchBoard,
+		startDispatchBoardTicker: () => interactiveTickers.startDispatchBoardTicker(),
+		closeOverlay,
+		showOverlayFrame,
+		...(deps.queueNavigator
+			? {
+					queueNavigator: {
+						chat: deps.app.chat,
+						toEditor: deps.queueNavigator.toEditor,
+						sendNow: deps.queueNavigator.sendNow,
+						restoreAll: deps.queueNavigator.restoreAll,
+						matchesRestoreAll: (data: string) => keybindings.matches(data, "pancode.message.dequeue"),
+					},
+				}
+			: {}),
+		...(openUsageOverlayFactory ? { openUsageOverlay: openUsageOverlayFactory } : {}),
+		...(openContextOverlayFactory ? { openContextOverlay: openContextOverlayFactory } : {}),
+		...(openContextResetOverlayFactory ? { openContextResetOverlay: openContextResetOverlayFactory } : {}),
+		...(openTasksOverlayFactory ? { openTasksOverlay: openTasksOverlayFactory } : {}),
+		...(openDecisionsOverlayFactory ? { openDecisionsOverlay: openDecisionsOverlayFactory } : {}),
+		...(openMemoryOverlayFactory ? { openMemoryOverlay: openMemoryOverlayFactory } : {}),
+		...(openViewOverlayFactory ? { openViewOverlay: openViewOverlayFactory } : {}),
+		askSideQuestion: (question, options) => deps.app.chat.askSideQuestion(question, options),
+		draftCandidates: (request, count, options) => deps.app.chat.draftCandidates(request, count, options),
+		composer: editor,
+		...(deps.app.agents ? { agents: deps.app.agents } : {}),
+		...(scheduling ? { getBudgetPreflight: () => scheduling.preflight() } : {}),
+		isTurnInFlight: () => deps.app.chat.isStreaming(),
+		standingTurnConstraints: () => deps.app.chat.toolLimits?.(),
+		...(deps.setFleetRunPhase ? { setFleetRunPhase: deps.setFleetRunPhase } : {}),
+		...(deps.fleetPlans ? { fleetPlans: deps.fleetPlans } : {}),
+	});
+
+	const openResumeOverlayState = overlaySessions.openResume;
+	const openTreeOverlayState = overlaySessions.openTree;
+	const openMessagePickerOverlayState = overlaySessions.openMessagePicker;
+	const openUsageOverlayState = overlayGeneralOpeners.openUsage;
+	const openContextViewOverlayState = overlayGeneralOpeners.openContextView;
+	const openContextResetOverlayState = overlayGeneralOpeners.openContextReset;
+	const toggleFooterDashboardState = overlayGeneralOpeners.toggleFooter;
+	const openTasksOverlayState = overlayGeneralOpeners.openTasks;
+	const openDecisionsOverlayState = overlayGeneralOpeners.openDecisions;
+	const openResearchOverlayState = overlayGeneralOpeners.openResearch;
+	const openMemoryOverlayState = overlayGeneralOpeners.openMemory;
+	const openRewindOverlayState = overlayGeneralOpeners.openRewind;
+	const openViewOverlayState = overlayGeneralOpeners.openView;
+	const openSideQuestionOverlayState = overlayGeneralOpeners.openSideQuestion;
+	const openDraftOverlayState = overlayGeneralOpeners.openDraft;
+	const startFleetRunState = overlayGeneralOpeners.startFleetRun;
+	const startHandoffState = overlaySessions.startHandoff;
+	// The report host and the domain behind it load on the first /report, never at boot.
+	let reportHost: Promise<import("./report-flow.js").ReportHost> | null = null;
+	const withReportHost = (use: (host: import("./report-flow.js").ReportHost) => void): void => {
+		reportHost ??= import("./report-flow.js").then(({ createReportHost }) =>
+			createReportHost({
+				tui,
+				transitions: overlayTransitions,
+				stateDir: deps.app.stateDir,
+				notify,
+				terminal,
+				suspendTerminal: deps.suspendTerminal,
+				session: () => {
+					const meta = deps.app.session?.current();
+					if (!meta) return null;
+					const settings = deps.app.getSettings?.();
+					const autonomy = settings?.safety.autonomy;
+					// Session meta names the target; the report's Runtime line wants that target's runtime.
+					const runtime = settings?.targets.find((target) => target.id === meta.target)?.runtime;
+					return {
+						id: meta.id,
+						cwd: meta.cwd,
+						facts: {
+							...(meta.model ? { model: meta.model } : {}),
+							...(runtime ? { runtime } : {}),
+							...(autonomy ? { autonomy } : {}),
+						},
+					};
+				},
+				identitySettings: () => ({ targets: deps.app.getSettings?.().targets ?? [] }),
+				...(deps.takeReportOffer ? { takeOffer: deps.takeReportOffer } : {}),
+			}),
+		);
+		const report = (error: unknown, what: string): void =>
+			notify("error", `/report ${what}: ${error instanceof Error ? error.message : String(error)}`);
+		reportHost.then(
+			(host) => {
+				// A damaged or newer outbox throws from these synchronous reads; it must not end the session.
+				try {
+					use(host);
+				} catch (error) {
+					report(error, "failed");
+				}
+			},
+			(error: unknown) => {
+				reportHost = null;
+				report(error, "could not be loaded");
+			},
+		);
+	};
+	const toggleDispatchBoardOverlay = overlayGeneralOpeners.toggleDispatchBoard;
+	const openQueueNavigatorState = overlayGeneralOpeners.openQueueNavigator;
+
+	return {
+		getState: () => overlayTransitions.state,
+		closeOverlay,
+		finishAuthOverlay: overlayAuth.finish,
+		openAskUserOverlayState: overlayAskUser.handler,
+		openTransientAskUserOverlayState: overlayAskUser.transientHandler,
+		closeAskUserSession: overlayAskUser.close,
+		isAskUserWaiting: overlayAskUser.isWaiting,
+		resetAskUserCancellation: overlayAskUser.resetCancellation,
+		refreshSettingsOverlay: overlayModelSelectors.refreshSettingsOverlay,
+		openUsageOverlayState,
+		openContextViewOverlayState,
+		openContextResetOverlayState,
+		openThinkingLevelOverlayState: overlayGeneralOpeners.openThinkingLevel,
+		toggleFooterDashboardState,
+		openTasksOverlayState,
+		openDecisionsOverlayState,
+		openResearchOverlayState,
+		openMemoryOverlayState,
+		openRewindOverlayState,
+		openViewOverlayState,
+		openSideQuestionOverlayState,
+		openDraftOverlayState,
+		startFleetRunState,
+		startHandoffState,
+		openReportState: (request) => withReportHost((host) => host.open(request)),
+		showReportStatusState: () => withReportHost((host) => host.status()),
+		forgetReportState: (id) => withReportHost((host) => host.forget(id)),
+		openModelOverlayState: overlayModelSelectors.openModelOverlayState,
+		applyModelSessionState: overlayModelSelectors.applyModelSessionState,
+		openSettingsOverlayState: overlayModelSelectors.openSettingsOverlayState,
+		openResumeOverlayState,
+		openTreeOverlayState,
+		openMessagePickerOverlayState,
+		openHelpOverlayState: overlayResourceOpeners.openHelpOverlayState,
+		openSkillsHubState: overlayResourceOpeners.openSkillsHubState,
+		openExtensionsOverlayState: overlayResourceOpeners.openExtensionsOverlayState,
+		openExtensionPanelState: overlayResourceOpeners.openExtensionPanelState,
+		openExtensionViewPanelState: overlayResourceOpeners.openExtensionViewPanelState,
+		openInteropOverlayState: overlayResourceOpeners.openInteropOverlayState,
+		openProjectTrustState: overlayResourceOpeners.openProjectTrustState,
+		toggleDispatchBoardOverlay,
+		openQueueNavigatorState,
+		// The router holds Enter and the session grant while the card settles and while its choices are scrolled out of
+		// view (7.4); the card's own dimmed-allow row reads only the settle window.
+		isPermissionSettling: () => isPermissionSettling() || permissionBody?.choicesOutOfView() === true,
+		confirmPermission: () => {
+			overlayPermission?.confirm();
+			footer.refresh();
+			tui.requestRender();
+		},
+		canConfirmPermissionForSession: () => overlayPermission?.canConfirmForSession() ?? false,
+		confirmPermissionForSession: () => {
+			overlayPermission?.confirmForSession();
+			footer.refresh();
+			tui.requestRender();
+		},
+		cancelPermission: () => {
+			overlayPermission?.cancel();
+			footer.refresh();
+			tui.requestRender();
+		},
+		permissionCards: () => ({
+			cardOnScreen: () => overlayPermission?.cardOnScreen() ?? null,
+			answerOnScreen: (requestId, decision, decidedBy) => {
+				const answered = overlayPermission?.answerOnScreen(requestId, decision, decidedBy) === true;
+				if (answered) {
+					footer.refresh();
+					tui.requestRender();
+				}
+				return answered;
+			},
+			onCardShown: (listener) => overlayPermission?.onCardShown(listener) ?? (() => undefined),
+		}),
+		retryPendingPermission: () => {
+			if (overlayTransitions.state !== "closed" || !deps.app.toolRegistry?.hasParkedCalls()) return false;
+			overlayPermission?.retryPending();
+			return true;
+		},
+		stopTurnFromPermission: () => {
+			overlayPermission?.stopTurn();
+			footer.refresh();
+			tui.requestRender();
+		},
+		noteOperatorPresence: () => {
+			if (overlayTransitions.state === "permission-confirm") overlayPermission?.notePresence();
+			else if (overlayTransitions.state === "ask-user") overlayAskUser?.notePresence();
+		},
+		canInspectMutation: () => permissionBody?.canInspect() ?? false,
+		isInspectingMutation: () => permissionBody?.isInspecting() ?? false,
+		toggleMutationInspection: () => {
+			permissionBody?.toggleInspect();
+			tui.requestRender();
+		},
+		scrollMutationInspection: (delta) => {
+			permissionBody?.scrollInspect(delta);
+			tui.requestRender();
+		},
+		togglePermissionTerms: () => {
+			permissionBody?.toggleTerms();
+			tui.requestRender();
+		},
+		isShowingPermissionTerms: () => permissionBody?.isShowingTerms() ?? false,
+		scrollPermissionCard: (delta) => {
+			const consumed = permissionBody?.scrollCard(delta) ?? false;
+			if (consumed) tui.requestRender();
+			return consumed;
+		},
+		cancelAskUser: overlayAskUser.cancel,
+		dispose: () => {
+			permissionSettle.dispose();
+			overlayPermission?.dispose();
+			overlayAskUser?.dispose();
+		},
+	};
+}

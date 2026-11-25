@@ -1,0 +1,528 @@
+# Prompts, skills, and share archives
+
+Prompt templates and skills are Markdown resources you write once and reuse. A prompt template becomes a slash command such as `/bugfix`, and a skill teaches the model a procedure that it loads when you or the model invoke it. Share archives move your loose prompts, skills, agents, playbooks, extensions, context files and settings to another machine or a collaborator in one JSON file. This page covers how prompt templates and skills are discovered, ranked, trusted, and invoked, and how share archives move user and project resources between machines.
+
+PanCode has two package systems. A plugin is an Agent Plugin, content only: prompts, skills, agents, playbooks, scripts, and reference files, installed with `pancode hub install plugin:<name>` or from a path. Installation and resource discovery do not execute plugin code; its scripts are ordinary executable content if a tool later runs them. An extension is code that runs in its own process (hooks, runtime tools, commands, workspaces, interviews), installed with `pancode hub install extension:<name>` or `pancode extensions install <path>` after the operator reviews its capability envelope. Only plugins contribute resources. An extension may name the one plugin it serves with `plugin: <name>`. An extension command tool runs inside the main session's sandbox when admission contains it, as `bash` does, and a retry with `unsandboxed: true` raises the reviewed sandbox-escape ask; an api 2 runtime tool can declare `actionClass: write` for workspace writes. See [plugins.md](plugins.md) for the concept map and [harness-extensions.md](harness-extensions.md) for the extension contract.
+
+Source of truth: `src/domains/resources/`, `src/domains/plugins/`, `src/domains/interop/registry.ts`, `src/domains/share/`, [share.ts](../../src/cli/share.ts), and [skills.ts](../../src/cli/skills.ts).
+
+---
+
+## Quick start
+
+- **Save a prompt you reuse.** Write `.pancode/prompts/bugfix.md`; in a
+  session it runs as `/bugfix`. See [Prompt templates](#prompt-templates).
+- **Teach a procedure.** Put a `SKILL.md` with a `description` in
+  `.pancode/skills/<name>/`, then load it with `/skill <name>`. See
+  [Skills](#skills).
+- **Reuse what other agents have.** Prompts and skills in `~/.claude`,
+  `~/.codex` and OpenCode's folders are found without copying. Copies inside
+  a project are not trusted until you import and approve them.
+- **Move your setup to another machine.**
+  `pancode share export --out project.pancode-share.json --project`,
+  then `pancode share import project.pancode-share.json --dry-run` on
+  the other machine. See [Share archives](#share-archives).
+
+## Resource roots and precedence
+
+Prompts and skills are loaded from package, user, and project roots. Higher-ranked roots override lower-ranked resources with the same name.
+
+Prompts and skills both add compatibility roots so that the command and skill files other agents already have on the machine are usable without copying. Both root lists come from the interop agent registry ([registry.ts](../../src/domains/interop/registry.ts)), so the two kinds cannot drift apart. The prompt precedence, lowest to highest, is:
+
+| Precedence | Scope | Source | Root |
+| --- | --- | --- | --- |
+| 10 | package | plugin | enabled plugin resource roots |
+| 20 | user | claude / codex / opencode | `~/.claude/commands`, `~/.codex/prompts`, `~/.config/opencode/command` |
+| 30 | user | pancode | `<configDir>/prompts` |
+| 40 | project | claude / codex / opencode | `.claude/commands`, `.codex/prompts`, `.opencode/command` (untrusted by default) |
+| 50 | project | pancode | `.pancode/prompts` |
+
+The skill precedence, lowest to highest, is:
+
+| Precedence | Scope | Source | Root |
+| --- | --- | --- | --- |
+| 9 | project | pancode (self-development) | `hub/packs/skills/meta/pancode-dev` and `pancode-test`, only inside PanCode's own repository and only when no installed package owns the name |
+| 10 | package | plugin | enabled plugin resource roots |
+| 20 | user | agents / claude / codex / copilot / opencode | `~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, `~/.copilot/skills`, `~/.config/opencode/skills` |
+| 30 | user | pancode | `<configDir>/skills` |
+| 40 | project | agents / claude / codex / copilot / opencode | `.agents/skills`, `.claude/skills`, `.codex/skills`, `.github/skills`, `.opencode/skills` (untrusted by default) |
+| 50 | project | pancode | `.pancode/skills` |
+| 60 | cli | path | `--skill <path>` explicit paths |
+
+Inside PanCode's own repository, attended sessions are told to load `pancode-dev` before the first edit and `pancode-test` when choosing validation ([extension.ts](../../src/domains/prompts/extension.ts)). Headless runs are told to load `pancode-dev` before the first edit and `pancode-test` before choosing checks, and the built-in `coder` recipe gets both skills there.
+
+PanCode-native roots intentionally outrank shared compatibility roots at the same scope, so `.pancode/skills` overrides a project `.codex/skills` skill of the same name, and `<configDir>/skills` overrides `~/.agents/skills`. Project roots may not leave the workspace and user roots may not leave the home directory through a symlink; an escaping skill is skipped with the warning `skill path resolves to <path>, outside <anchor>; a skill root may not leave its scope through a symlink`. A project root is contained strictly: a project skill root that is itself a symlink does not move the boundary to its target, because a repository can offer only what it contains. A user or XDG root the operator placed outside its scope, such as a config directory on another volume, anchors to its own real path instead.
+
+### Skill collision resolution
+
+Candidate resolution for skills is implemented in [loader.ts](../../src/domains/resources/skills/loader.ts). `compareSkillCandidates` orders competing candidates for one name and for one canonical file, and the last one wins:
+
+1. **Trust first.** A trusted candidate beats an untrusted one. An untrusted project compatibility copy (an unvetted `.claude/skills/my-skill` or `.agents/skills/my-skill`) therefore cannot win a collision against an admitted native skill and then disappear at model visibility time.
+2. **Ownership.** A skill from a plugin, a PanCode root, or an explicit path outranks a loose compatibility discovery, so an imported copy that still awaits trust owns its name over a loose file.
+3. **Precedence tier**, from the table above.
+4. **Registry agent order** for compatibility roots in the same tier: the earlier agent in the interop registry (claude, codex, opencode, copilot, agents) wins, so a skill symlinked into two foreign roots resolves to the same winner on every machine.
+5. **File path**, as the final tie-break.
+
+If two roots resolve to the same canonical `SKILL.md` through a symlink, PanCode keeps the winner by the same order and records a diagnostic naming the path that is in use. Prompt collisions use the same trust and precedence rules, but ties inside one tier break by file path, not registry order.
+
+A project-scoped package installation shadows a user-scoped package of the same ID through the managed package lifecycle (`plugins/state.json`), not through a filesystem switch on unmanaged files. A disabled project package still suppresses the user copy. That holds only while the operator has approved the workspace's `.pancode/plugins/state.json`; an unapproved project package does not load and does not suppress the user copy (see [PanHub](panhub.md)).
+
+---
+
+## Prompt templates
+
+Prompt templates are Markdown files under a prompt root. The command name is the path beneath the root without `.md`, with directory separators written as colons, so `prompts/bugfix.md` is `/bugfix` and a plugin's `prompts/lab-research/start.md` is `/lab-research:start`. Every loaded template is offered in the composer's slash autocomplete after the built-in commands, with its `description` and `argument-hint`; an unavailable template is listed disabled with its reason. A template whose name equals a built-in slash command is ignored with a collision diagnostic. Symbolic links inside a prompt root are ignored.
+
+Example `.pancode/prompts/bugfix.md`:
+
+```md
+---
+description: Focused bug-fix prompt
+argument-hint: "<file> <symptom>"
+---
+
+Investigate $1 for this symptom: $2
+
+Return:
+1. likely root cause;
+2. minimal patch plan;
+3. validation commands.
+```
+
+Use in the TUI:
+
+```text
+/hub prompts
+/bugfix src/parser.ts empty input crashes
+```
+
+Arguments follow Pi's prompt-template rules, including its handling of empty arguments: bash-style quoting splits the text after the command into positional arguments, a quoted empty argument (`""` or `''`) keeps its position, and the placeholders `$1`, `$@`, `$ARGUMENTS`, `${N:-default}`, `${@:-default}`, `${ARGUMENTS:-default}`, `${@:N}`, and `${@:N:L}` expand in one pass. Bare `$ARGUMENTS` inserts the raw payload byte for byte. The placeholder contract is in [prompt-envelope-and-tools.md](../architecture/prompt-envelope-and-tools.md).
+
+Frontmatter fields are `description`, `argument-hint` (or `argumentHint`),
+`display-only` (or `displayOnly`), `allowed-tools`, `delegated-tools`,
+`budget`, `turnPolicy` and `variants`.
+Templates without frontmatter are accepted; PanCode derives a fallback
+description from the first non-empty line. Invalid frontmatter degrades to a
+warning rather than failing the whole load. A template whose package reference
+cannot resolve, or whose file cannot be read, still loads with an empty body
+and a reason, so invoking it reports the reason instead of "not a command".
+
+### Prompt template tool ceilings
+
+A template's `allowed-tools` narrows the expanded turn to the named
+capabilities, and `delegated-tools` narrows the tools its dispatched workers may
+hold. Both accept a comma-separated string or YAML list. Without
+`delegated-tools`, the template's own allowlist is also its delegation ceiling.
+Neither can widen session `--allow-tools` or `--delegate-tools` limits.
+`allowed-tools` bounds the work, not how a turn closes: `finish` stays admitted
+whenever the list names any tool. A tool the host adds to a worker on its own,
+outside the recipe's declared tools, is dropped when the delegation ceiling
+excludes it. A dispatch whose recipe declares a tool outside the ceiling is
+refused with the agent it
+checked and up to five dispatchable recipes whose declared tools all fit, so the
+model can name one instead of asking the operator to widen the ceiling. Core
+names normalize to canonical spelling; MCP and extension capability names keep
+their qualified spelling. Imported prompts and skills retain their narrower
+translated tool lists. See `src/domains/resources/prompts/loader.ts`,
+`src/core/turn-constraints.ts` and `src/domains/dispatch/envelope.ts`.
+
+A delegated worker that holds no `bash`, such as a section writer, can still
+measure its own output with the builtin `count` tool: it returns a file's words
+(whitespace-separated runs, as `wc -w` counts them), lines and bytes without
+reading the file into context. `count` is read class and held to the same
+workspace scope and information-flow rules as `read`. A tool surface without `bash`
+carries it as a direct tool; one with `bash` reaches it through the gateway.
+Name it in `delegated-tools` beside the worker's other tools so the delegation
+ceiling keeps it:
+
+```yaml
+delegated-tools: [read, write, edit, count]
+```
+
+An extension that counts by its own rule, such as excluding markup, stays the
+authority for its own budgets.
+
+### Prompt template turn budget
+
+`budget` sets two limits of each turn the template starts:
+
+```yaml
+budget:
+  toolCalls: 40
+  observationBytes: 131072
+```
+
+- `toolCalls` sets the per-turn tool-call budget in place of
+  `safety.limits.chatToolCallsPerTurn`. `toolCalls: 40` lets 40 calls run
+  and refuses the 41st. The hard ceiling that stops
+  the turn stays 15 calls above the effective budget.
+- `observationBytes` sets the turn's observation pool in place of
+  `safety.limits.observationBytesPerTurn`: the combined tool output the model
+  may receive in the turn.
+
+A template always lowers a limit. It raises one only up to the operator's
+ceiling for templates, `safety.limits.templateToolCallsPerTurnMax` and
+`safety.limits.templateObservationBytesPerTurnMax`: each bound is the smaller
+of the template's value and the larger of the operator's limit and that
+ceiling. Both ceilings are unset by default, and then a template can only
+lower. A project settings layer can lower a ceiling the user set; it cannot
+raise one or set one the user left unset.
+
+```yaml
+safety:
+  limits:
+    templateToolCallsPerTurnMax: 120
+```
+
+With that ceiling and the default limit of 60, `toolCalls: 100` gives the turn
+100 calls and `toolCalls: 200` gives it 120. The refusal and the operator
+notice name the bound that applied: the template's own value (`soft budget 40,
+set by prompt template "desk:advance" budget.toolCalls`), a raise within the
+ceiling, the ceiling a larger value was clamped to, or the operator's limit
+when the template asked for more and no ceiling is set. The turn's scope
+reminder states the effective budget to the model. A yolo continuation keeps
+the template and its budget. Dispatched workers do not inherit it.
+
+`budget` takes only these two keys and needs at least one. `toolCalls` is a
+whole number of at least 1 and `observationBytes` a whole number of at least
+1024. An unknown key or an invalid value makes the template unavailable, and
+`pancode hub validate` reports it as `ERR_PROMPT`, because a silently
+dropped bound would let the turn run unbounded while its author believed it
+capped.
+
+### One step per turn
+
+`turnPolicy` makes each turn the template starts run one step of a pipeline:
+
+```yaml
+allowed-tools: [read, write, edit, extension_desk__next_step]
+turnPolicy:
+  mode: step
+  stepTool: extension_desk__next_step
+```
+
+`mode` must be `step`, and `stepTool` names one tool, in the template's
+`allowed-tools` when the template sets that list. Builtin names match
+case-insensitively; extension and MCP capability names are kept as written.
+Once the step tool has succeeded in a turn, other tools still run, but the next
+call to the step tool is refused with text asking for a compact state summary,
+and so is every tool call after it. That first refusal also locks tools for the
+rest of the turn, so the next round is text only, with the prompt prefix and
+tool schemas unchanged. Under yolo a turn whose step tool succeeded continues
+into a fresh turn that runs the next step, whether it ended on its own summary
+or on that refusal, and each such continuation counts against the cap of 3
+continuations per operator prompt. Once a step has run, a continuation turn
+that does the step's work without calling the step tool continues the chain
+too, and each continuation is a new turn that starts with the next step call.
+The chain stops at a step result that sets `pipelineDone`, or at the cap. An api 2
+step tool marks its last step by returning `pipelineDone: true` beside `text`,
+or, when the step asks for an approval interview, in the `{ done: true }` that
+completes the interview (any other tool sets `pipelineDone: true` in its result
+details); an error result, such as a cancelled interview,
+never ends the chain this way. A step tool that never sets it continues to the
+cap, and a headless run reports a pipeline that ended without `pipelineDone` in
+the `stepPipeline` field of its `run_end` frame. While the policy is active, no
+middleware re-prompts the model inside the turn: the high-rigor finish gate
+asks the summary to report an unverified change instead of requesting a check.
+Without yolo the turn ends after its
+summary and the operator starts the next step. A gateway call to the step tool
+counts as a call to it. A malformed policy, a bare `turnPolicy: step` included,
+makes the template unavailable.
+
+`when` scopes the policy to the routes where it pays off. It lists one or more
+of the [model tiers](configuration-and-targets.md#model-tiers) `small`,
+`standard` and `frontier`, plus `uncached` for a route that does not cache
+prompts:
+
+```yaml
+turnPolicy:
+  mode: step
+  stepTool: extension_desk__next_step
+  when: [small, uncached]
+```
+
+The policy applies to a turn when any token matches the session's chat route at
+that turn's start, using the tier a `models.<id>.tier` setting pins. On any
+other route the turn runs with no step policy at all: the step tool is not
+refused, tools never lock to a text-only round, no step continuation follows,
+and no step checkpoint is written. PanCode judges the route again at every
+turn the template starts, yolo step continuations included, so a model switch
+takes effect on the next turn. The turn's scope reminder says whether the
+policy applies on the current route; the system prompt and tool schemas stay
+the same either way. Without `when` the policy applies on every route. The list
+must be non-empty, with each known token named once; anything else makes the
+template unavailable. On a cached `standard` or `frontier` route the full
+history is kept anyway, so scoping the policy to `[small, uncached]` lets those
+routes chain steps in one turn instead of stopping for a re-prompt after each.
+
+`turnPolicy` is a turn constraint, not a compiled prompt fragment. At turn
+start `routeScopedTurnConstraints` in
+[turn-constraints.ts](../../src/core/turn-constraints.ts) moves a miss into a
+dormant policy; the loop guard, continuation logic and step-checkpoint builder
+then consume the active form. The tier and `promptCaching` facts come from the
+resolved chat route, including a worker's own model facts when an extension
+hook sees it. A prompt-template `when`, a `variants` body, an extension hook's
+`event.model.tier`, and the superseded stage are separate consumers of the same
+resolved facts; selecting one does not change the others.
+
+On a route whose model tier is `small`, or that does not cache prompts
+([model tiers](configuration-and-targets.md#model-tiers)), each step turn after
+the first starts from a compact state instead of the full history. Before the
+turn's request PanCode writes a step checkpoint with no summarizer call, and
+the turn starts from the previous step turn's final text, the template body,
+and the operator notes, file facts and recallable refs a compaction keeps. The
+system prompt and tool schemas do not change, and an extension's pinned context
+block is sent again in the same request. The earlier turns stay in the session
+ledger, so resume and `context(scope="recall")` still reach them. After
+writing it PanCode does what it does after a native compaction: the
+`on_compaction` hook and the api 2 `compaction_end` observation fire with
+trigger `step`, the checkpoint carries the loaded skills' verified text and the
+continuity payload, which are sent again right after the summary, and memory
+restores into the turn's tail. When a loaded skill cannot be carried that way,
+the turn keeps the full history instead. A step turn that was cancelled, that failed, or that the loop guard
+or the tool budget stopped before its step ended leaves no state summary, and
+the turn after it keeps the full history. The checkpoint is recorded as a
+compaction with trigger `step` and as the `step_checkpoint` cold reason. Routes
+with a `standard` or `frontier` model that cache prompts keep the full history.
+
+Write the body so the model ends its turn with a state summary after the step
+instead of calling the step tool again; otherwise every turn spends one refused
+call before it stops. The refused calls count toward the turn budget, whose
+hard ceiling stays the backstop for a model that keeps calling. A second
+step-tool call issued in the same parallel batch is refused while the first is
+still running, so only the first call's step runs.
+
+### Variants per model tier
+
+`variants` gives a template a body per model tier, so a small model gets
+explicit steps and a frontier model terse intent:
+
+```yaml
+variants:
+  small: { file: ../variants/advance-small.txt }
+  frontier: |
+    Advance the desk one step and report the new state.
+```
+
+Keys are the tiers `small`, `standard` and `frontier`. A value is an inline
+body or `{file: <path>}`, a path relative to the template file that must stay
+inside the declaring package, or inside the discovery root for a template
+outside a package. A variant file's own frontmatter is dropped, and package
+references resolve as they do in the main body. Expansion uses the variant for
+the session chat model's tier, then the `standard` variant, then the main body.
+The tier is the `models.<id>.tier` setting or PanCode's heuristic (see
+[Model tiers](configuration-and-targets.md#model-tiers)) and settles once per
+model in a process, so a template sends the same body on every turn of one
+model.
+
+A variant that is not a string or a single `file` key, an unknown tier and an
+empty body are warnings, and that entry is skipped. A variant file that cannot
+be read, is not a file, or lies outside its boundary makes the template
+unavailable. A `.md` variant file under a prompts root is also discovered as a
+template of its own, so keep variant files outside the prompts root or give
+them another extension. Dispatched workers never expand templates, so variants
+follow only the chat model.
+
+When a plugin's template expands, the turn lists the `resource` components that
+plugin declares, after the template body, as a `[Plugin resources]` block of id
+and resolved path (at most 12, each contained in the package), so the model reads
+them by path instead of searching for them. A plugin opts in by declaring
+components of kind `resource`.
+
+A plugin reinstalled or changed on disk under a running session no longer matches
+the session's snapshot. Its templates then refuse with the plugin's name and
+`/reload hub` instead of answering "not a command"; reload to pick up the new
+copy.
+
+### Display-only templates
+
+A template whose body is written for the operator rather than the model, such as a package's `help` reference, declares `display-only: true` in its frontmatter:
+
+```md
+---
+description: Overview of the package commands
+display-only: true
+---
+
+Display the following:
+
+```text
+ /pkg:help      This reference
+ /pkg:status    Project dashboard
+```
+```
+
+Submitting `/pkg:help` renders the template locally as an operator card in the transcript, headed by the command name and its source package. Nothing is sent to the model, nothing is recorded in the model-facing session context, and no tokens are spent. The card shows the first fenced code block when the body has one, otherwise the whole body, wrapped to the terminal width with no truncation and scrollable like any other transcript output. Arguments after the command name are ignored. The composer's autocomplete lists such a template with a `reference` marker. Headless `pancode run /pkg:help` prints the same text to stdout and exits 0 without booting a provider or a session.
+
+### Foreign prompt roots
+
+Claude, Codex, and OpenCode prompt folders are discovered at user and project scope, but their loose templates cannot expand. Explicitly adopt them with `pancode interop adopt <host>` or import a package with `pancode hub import <path>`. Imported foreign prompts additionally require `integrations.projectResources.trustProjectImports: true`. PanCode's own prompt roots remain usable. Discovery-only templates cannot shadow a trusted PanCode template and send nothing to the model.
+
+---
+
+## Skills
+
+Skills follow the Agent Skills `SKILL.md` format. A skill is a directory containing `SKILL.md`, or a single Markdown file under a skill root. YAML frontmatter is required and must include a `description`. Frontmatter validation issues degrade to warnings and the skill still loads. A skill file is skipped only when the description is missing, the file is unreadable, not a regular file, larger than 1 MiB, not valid UTF-8 text, or has frontmatter that cannot be parsed, or when a package reference in the body cannot resolve. A `SKILL.md` that is a symlink still marks its directory as a skill, so a linked skill nested in a root loads, and containment and the regular-file check then decide whether its target is acceptable. A FIFO, socket, device or directory named `SKILL.md` is refused with a diagnostic such as `a FIFO, not a regular file`, and the file is opened non-blocking and checked on the open descriptor, so a FIFO can never hang `--skill` or `hub validate`.
+
+Example `.pancode/skills/hdf5-review/SKILL.md`:
+
+```md
+---
+name: hdf5-review
+description: Review HDF5/NetCDF validation logic and output assumptions.
+license: MIT
+allowed-tools:
+  - read
+  - grep
+---
+
+When asked to review scientific array output:
+- identify expected dimensions and attributes;
+- ask for validation data when absent;
+- prefer deterministic scripts over visual inspection;
+- cite files and commands used.
+```
+
+Use in the TUI:
+
+```text
+/hub skills
+/skill hdf5-review review the output validation path
+```
+
+Bare `/skill` opens PanHub on its Skills tab, as `/hub skills` does. `/skill <name> [args]` submits `args` with a pending skill request; the model must call `context` (scope="skills") for that skill before following the workflow. `/skill off` clears the session's skill tool surface (see [PanHub](panhub.md)). The same pending-request path runs in headless mode, so `pancode run "/skill hdf5-review inspect the writer"` matches the interactive behavior.
+
+Every activation records a session ledger entry with the skill name, file path, hash, source, trigger (`slash-command` or `tool`), and turn id when one is available. The same ledger is mirrored into session metadata and prompt diagnostics, and a dispatched run's `run.settled` record lists the skills it loaded and who asked for each. Compaction keeps the newest active skill turn in the retained suffix so a loaded skill is not silently summarized away.
+
+### Naming and validation
+
+The canonical invocation name is the frontmatter `name` when present, otherwise the directory or file subject. When `name` differs from the path subject PanCode records a warning and keeps the frontmatter name, which lets shared cross-agent skill folders load without renaming. Names should be at most 64 characters of lowercase letters, numbers, and single hyphens that neither start nor end the name. A description should be at most 1024 characters. Format violations warn but do not block loading. A `SKILL.md` over 50 KiB loads with a warning, but activation delivers at most 50 KiB.
+
+Recognized frontmatter fields:
+
+- `name`, `description`: core identity.
+- `disable-model-invocation: true`: hides the skill from the model-visible catalog while keeping it loadable by `/skill <name>`.
+- `allowed-tools`, `disallowed-tools`: a comma-separated string or a YAML list. Tool names are matched case-insensitively against PanCode's tools, and a full MCP or extension capability name (`mcp_<id>__<tool>`, `extension_<id>__<tool>`) is kept as written, so a skill can confine itself to the server tools its workflow calls. Any other name PanCode does not have is a warning, and an `allowed-tools` list naming no PanCode tool narrows nothing. Loading narrows the tool surface and never grants a tool the host would refuse; the `finish` and `limitation` receipts stay available unless `disallowed-tools` names them. Spell the names in PanCode's lowercase form (`read`, `grep`): Claude Code reads `allowed-tools` as a pre-approval grant, so a capitalized `Bash` in a skill that another host loads would auto-approve that tool there. Curated PanHub skills are checked for the lowercase spelling.
+- `requires: [skill:<name>]`: typed dependency. A name that resolves to no loaded skill is a warning.
+- `license`, `version`, `compatibility`, and other non-core keys: captured as skill metadata and surfaced when the skill loads through `context`. A nested `pancode:` block lands in `metadata.pancode`.
+- `source-url`, `registry-id`, `registry-url`, `installed-at`, `updated-at`, `installed-hash`, `audit` (`pass`, `warn`, `fail`, `unknown`), `installed-by`: captured as install provenance when present, nested under `pancode:`.
+
+### Trust and compatibility roots
+
+Shared and other-agent user and project roots are discovery-only. Explicitly import the desired resources into PanCode, then review and enable `integrations.projectResources.trustProjectImports` to use imported foreign packages. The setting applies to imported packages at either scope. It never imports or activates loose `.claude`, `.agents`, `.codex`, or other compatibility roots. PanCode-native roots and trusted PanHub packs remain usable. Imported foreign packages record `trust: "foreign"` at either scope; a project resource adopted into user scope keeps foreign trust. Workspace trust is a separate gate: a package installed at project scope, foreign or not, loads only while the operator has approved the project's plugin state with `pancode config trust plugins`, and an import or adoption never approves it.
+
+Model visibility is `trusted && !disable-model-invocation`. Only visible skills appear in `context(scope="skills")` or are eligible for model invocation. `disable-model-invocation: true` keeps a skill in the catalog for manual `/skill` use while withholding it from the model. A named load of an untrusted, not-imported, or manual-only skill reports that specific restriction instead of calling the skill unknown.
+
+`context(scope="skills")` with no `name` lists the catalog, with optional `query`, `limit`, and `offset`. With a `name` it loads that skill's body, returning structured metadata (`name`, `description`, `path`, `base_dir`, `hash`, `source`, `scope`, `disable_model_invocation`, parsed tool policy fields, diagnostics, and frontmatter metadata) plus the body. Pass `include_tree: true` to list sibling files under the skill base directory, capped at 50 entries. The skills scope never executes bundled scripts and only resolves skills the model is allowed to see. Listing sections and readiness rules are in [PanHub](panhub.md).
+
+Creation under protected roots is operator authority: the ordinary model `write` and `edit` tools cannot write active skill roots (`.pancode/skills/<name>/` or the user `<configDir>/skills/`). Model-authored skills must be created outside protected roots and then installed by the operator with `pancode hub install <path> [--user|--project]`, or copied directly into an active root by the operator. `pancode hub validate <package-path|skill-dir|SKILL.md>` reports diagnostics, and the `skill-authoring` shipped skill documents the frontmatter contract and craft rules.
+
+### Skill commands and flags
+
+The `pancode hub` verbs that install, validate, and list skills are in [PanHub](panhub.md). `pancode hub skills [--all] [--json]` lists runtime skills including unmanaged files.
+
+The interactive session and `pancode run` accept `--no-skills` to disable discovery and repeatable `--skill <path>` to load one explicit `SKILL.md` file or skill directory at precedence 60. Explicit `--skill` paths are honored even when `--no-skills` is set. A `--skill` path that loads no skill fails a headless run before any model call.
+
+### Agent Skills compatibility
+
+PanCode loads skills from disk. Compatibility roots discover the standard
+`SKILL.md` shape, including skills installed by the Skills.sh CLI for other
+agents:
+
+```text
+npx skills add <skill> -a codex   # installs into ~/.codex/skills
+```
+
+Loose compatibility skills stay discovery-only until explicitly adopted into
+PanCode and admitted by the foreign-resource trust gate. Skills.sh is never
+called during startup or prompt assembly. PanCode's own package discovery
+and installation go through PanHub: bare names and `kind:name` references
+resolve through the PanHub index, and local paths require a valid pack
+containing a root `plugin.json`. Raw or unindexed GitHub URLs cannot be installed
+directly; remote package installation requires an index entry with version and
+full-tree SHA-256 pin.
+
+### Prompt envelope and safety
+
+Skill bodies never enter the prompt uninvited. The model discovers skills only through `context(scope="skills")`, and a body loads only when the pending-skill policy authorizes that name for the turn, which requires an explicit operator invocation such as `/skill <name>` or, where the autonomy level allows it, a model activation of a trusted installed skill. Skills are prompt resources, not execution grants: any script a skill references still runs through normal PanCode tools and safety gates, and a loaded skill's `allowed-tools` declaration narrows the tool surface at admission (reason code `skill_surface`) without ever granting anything the host would refuse.
+
+---
+
+## Share archives
+
+Share archives are single JSON files for moving loose project and user PanCode resources between machines or collaborators. They carry the files under the prompt, skill, agent, playbook, and extension roots, project context files, and a settings fragment. Packages installed through `pancode hub` live under `plugins/` and are not exported; distribute those through their source directory or a PanHub index.
+
+```json
+{
+  "kind": "pancode-share-archive",
+  "formatVersion": 1,
+  "manifest": {
+    "format": "pancode.share.v1",
+    "pancodeVersion": "0.9.0",
+    "createdAt": "...",
+    "files": []
+  },
+  "files": []
+}
+```
+
+Every file entry carries its type, scope, archive path, relative path, size, and base64 data, and its SHA-256 is checked on import. Import accepts only the `pancode` names above. Import warns when the archive's major or minor version differs from the running PanCode.
+
+### Export
+
+```bash
+pancode share export --out project.pancode-share.json --project
+pancode share export --out all.pancode-share.json --both --all
+```
+
+Options:
+
+| Flag | Meaning |
+| --- | --- |
+| `--out <path>` | Required archive path. |
+| `--project` | Export project resources only. Default scope. |
+| `--user` | Export user resources only. |
+| `--both` | Export both user and project resources. |
+| `--context` | Include project context files (`PANCODE.md`, `AGENTS.md`, `CODEX.md`, `GEMINI.md`, `CLAUDE.md`). Project scope only. |
+| `--prompts` | Include prompt templates. |
+| `--skills` | Include skills. |
+| `--settings` | Include non-secret settings fragment. |
+| `--extensions` | Include extension package files, excluding `state.json` files, hidden backup directories and dotenv files (`.env` and `.env.<name>`; a `.env.example`, `.env.sample` or `.env.template` stays in). |
+| `--agents` | Include agent files. |
+| `--playbooks` | Include playbook files. |
+| `--all` | Include every supported resource class. |
+| `--dry-run` | List the entries the archive would hold and write nothing. |
+| `--json` | Print the archive, or with `--dry-run` its manifest, as JSON. |
+
+If no include flags are supplied, export includes all supported classes for the selected scope. Naming any include flag makes every class opt-in. The archive file is written with mode 0600. Each share command refuses, with exit 2, a flag it does not use: `export` takes no `--force`, `import` takes neither `--both`, `--out` nor include flags, and `inspect` takes only `--json`.
+
+Settings fragments are version 2 documents containing only `chat.modelPicker.cycleSet`, `chat.retry`, `fleet.concurrency`, `context.compaction`, `safety.autonomy`, `safety.limits.sessionCostUsd`, and the `interface` settings block. Targets and credentials are not included.
+
+### Import and inspect
+
+```bash
+pancode share inspect project.pancode-share.json
+pancode share import project.pancode-share.json --dry-run
+pancode share import project.pancode-share.json --force
+```
+
+`share import` also accepts `--user` or `--project` to force prompt, skill, and extension entries into one destination scope; otherwise each entry keeps its archived scope. Agent, playbook, and settings entries always import into the user config directory, and project context files into the working directory. Dry-run imports produce a plan and report conflicts without writing. Without `--force`, conflicting destination files block writes. With `--force`, conflicting files are overwritten, keeping a backup, and supported settings-fragment keys are merged into the current settings file. Every target path must stay inside its import root, including through symbolic links, or the whole import is refused before any write.
+
+Extension entries are grouped into complete packages, staged, strictly validated, and passed through the canonical extension installer. The plan shows each package's capability envelope, and the install applies only that envelope: the digest recorded with the install must match the envelope the plan showed. A successful import therefore records the installed content digest and the envelope digest before the package can contribute resources. Every imported entry leaves a bounded lifecycle receipt with the operation `share-import`, the archive as its source, and the content digest. A destination tree is skipped only when it already matches a verified install record; an unrecorded, drifted, or corrupt destination requires `--force`, which uses the same backup-preserving recovery contract as `extensions install --force`. Invalid archived packages fail preflight before destination writes. An import never approves workspace trust. When it writes `.pancode/extensions/state.json` at project scope, including the workspace's first such file, any unapproved imported package identity needs approval with `pancode config trust extensions`. An operator `pancode extensions install <path> --project` can approve the identities it writes into new or already trusted project state (see [Extensions](harness-extensions.md)).
+
+Archives accept `agent` and `playbook` file entry types alongside prompts and skills. Agent entries must pass the agent parser and policy checks. Playbook entries must pass the playbook parser before any write. Import reads an entry of type `fleet` as `playbook`, and export writes only `playbook`. Dry-run plans report both types by kind.
+
+When the model runs `pancode share import` without `--dry-run`, `pancode extensions test` or `pancode extensions validate` through its shell, the call asks for one-shot operator confirmation in `default`, because an import installs packages from an archive the model may have written and the other two run a package's own code. `extensions install` stays blocked for the model at `default`. Contained `yolo`, the default form of `yolo`, decides these calls as `default` does and refuses where `default` would ask the operator; at unconfined `yolo` only the yolo floor holds. The dispositions are in [PanHub](panhub.md#operator-ownership-of-installed-skills). Share commands exit 0 on success, 1 when the plan carries an error or conflict diagnostic, and 2 for a usage error.
+
+### Session commands
+
+In a session, `/archive export <path>` writes a project-scope archive with every resource class, and `/archive import <path> [--dry-run] [--force]` imports one. `/fleet share` shares a worker result with the main agent and is unrelated to archives.
+
+---
+
+## Community packaging guidance
+
+- Keep plugin and extension packages small and reviewable.
+- Treat prompts and skills as source code: document assumptions, expected evidence, and validation commands.
+- Do not put secrets in packages or share archives.
+- Prefer project-scoped resources for repository-specific instructions and user-scoped resources for personal workflow helpers.

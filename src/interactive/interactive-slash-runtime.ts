@@ -1,0 +1,1124 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { mkdir, writeFile } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
+import { setTimeout as delay, setImmediate as nextTurn } from "node:timers/promises";
+import type { PancodeSettings } from "../core/config.js";
+import { GLYPH } from "../core/glyphs.js";
+import { relativePathEscapes } from "../core/path-containment.js";
+import type { PendingSkillRequest } from "../core/skill-activation.js";
+import { sessionTelemetryContext } from "../core/telemetry/context.js";
+import type { TelemetryHub } from "../core/telemetry/hub.js";
+import type { ConfigChangeSource } from "../core/telemetry/live-events.js";
+import type { TurnConstraints } from "../core/turn-constraints.js";
+import type { AgentsContract } from "../domains/agents/contract.js";
+import type { AttachOperations } from "../domains/attach/host.js";
+import { runOperatorRecall } from "../domains/context/working-set/operator-recall.js";
+import type { DispatchContract } from "../domains/dispatch/contract.js";
+import { agentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
+import type { ExtensionsContract } from "../domains/extensions/index.js";
+import type { MusicOperations } from "../domains/mux/music-operations.js";
+import type { PanesOperations } from "../domains/mux/operations.js";
+import {
+	type ProvidersContract,
+	type ResolvedThinkingCapability,
+	resolveModelRuntimeCapabilitiesForProviders,
+	type ThinkingLevel,
+	thinkingLevelDisplayWord,
+	VALID_THINKING_LEVELS,
+} from "../domains/providers/index.js";
+import type { ResourcesContract } from "../domains/resources/index.js";
+import { installSkill } from "../domains/resources/skills/marketplace.js";
+import type { SessionContract, SessionEntry } from "../domains/session/index.js";
+import { verifyRunRecordReport } from "../domains/session/view-artifacts.js";
+import { archiveCommandHost, type ShareContract } from "../domains/share/index.js";
+import type { TelemetryView } from "../domains/telemetry/contract.js";
+import type { UserTaskAcceptance } from "../domains/user-tasks/acceptance.js";
+import type { UserTasksStore } from "../domains/user-tasks/store.js";
+import { stripTerminalSequences } from "../engine/tui.js";
+import type { ImageContent } from "../engine/types.js";
+import type { ChatLoop } from "../session-control/chat-loop.js";
+import { withContinuityReplay } from "../session-control/model-session-replay.js";
+import { type OracleDigestSources, oracleBriefingFromEntries } from "../session-control/oracle.js";
+import type {
+	ContextClearCommandOptions,
+	FleetRunStartOptions,
+	HubBrowseRequest,
+	InitCommandOptions,
+	RunIo,
+	SlashCommandContext,
+	SlashCommandDispatchResult,
+	TaskMemorySeedCommandResult,
+} from "../session-control/slash-command-types.js";
+import { parseSlashCommand, type SettingsAreaId } from "../session-control/slash-commands.js";
+import { dispatchSlashCommand } from "../session-control/slash-dispatch.js";
+import type { WorkerEntryState } from "../session-control/worker-stream.js";
+import type { AskUserHandler } from "../tools/ask-user.js";
+import type { JobOperations } from "../tools/job-types.js";
+import { type ChatPanel, createChatPanel } from "./chat-panel.js";
+import { rehydrateChatPanelFromTurns } from "./chat-renderer.js";
+import { runCompactWithNotice } from "./command-fallbacks.js";
+import { appendNotice, appendOperatorAside, appendOperatorCommand, appendReferenceCard } from "./command-output.js";
+import { renderSessionHtmlAsync } from "./export-html/index.js";
+import { dateLocal } from "./format-time.js";
+import type { PendingModelScope } from "./overlays/model-scope.js";
+import type { ThinkingLevelChoice } from "./overlays/thinking-level.js";
+import type { SubmitPhase } from "./render-trace.js";
+import { renderDoctorReport } from "./renderers/doctor-report.js";
+import { renameCurrentSession } from "./session-rename.js";
+import { thinkingNoteWords } from "./thinking-note.js";
+
+const EXPORT_RENDER_WIDTH = 100;
+/** Two of pi-tui's 16 ms render intervals: long enough for the frame an export notice requests to commit first. */
+const EXPORT_PAINT_WAIT_MS = 32;
+
+/** Longest run of consecutive backticks in the rendered transcript, for fence sizing. */
+function longestBacktickRun(lines: ReadonlyArray<string>): number {
+	let longest = 0;
+	for (const line of lines) {
+		for (const run of line.match(/`+/gu) ?? []) longest = Math.max(longest, run.length);
+	}
+	return longest;
+}
+
+export interface InteractiveSlashSubmitExpansion {
+	text: string;
+	images: ImageContent[];
+	workingContextPaths: string[];
+	pendingSkillRequests: PendingSkillRequest[];
+	/**
+	 * The typed line to paint and persist instead of `text`, and for a prompt
+	 * template the note naming it; see `InteractiveSubmitExpansion`. An
+	 * operator `/skill` carries its editor line without a note, so its row
+	 * leads with `/skill <name>` live and on resume.
+	 */
+	display?: { text: string; note?: string };
+	/** A prompt template's `allowed-tools`; see `SubmitExpansion.constraints`. */
+	constraints?: TurnConstraints;
+}
+
+type SlashChat = Pick<
+	ChatLoop,
+	| "operatorMemory"
+	| "discoverOperatorEgg"
+	| "eggsCommand"
+	| "clearSkillSurface"
+	| "getSessionId"
+	| "isStreaming"
+	| "refuseSkillRequests"
+	| "submit"
+	| "toolLimits"
+>;
+type SlashChatPanel = Pick<ChatPanel, "appendReplayBlock" | "appendUser">;
+type UserTurnStatus = import("./chat-transcript-model.js").UserTurnStatus;
+type SlashResources = Pick<ResourcesContract, "prompts" | "promptsForDisplay" | "expandPromptTemplate" | "reload">;
+type SlashExtensions = Pick<ExtensionsContract, "list">;
+type SlashAgents = Pick<AgentsContract, "getSpec" | "listSpecs">;
+type SlashShare = Pick<ShareContract, "writeArchive" | "planImport" | "importArchive">;
+
+export interface InteractiveSlashRuntimeDeps {
+	openTransientAskUser?: AskUserHandler;
+	/** Opens the arcade egg when the text is its trigger phrase; true means the text was consumed. */
+	arcadeEgg?: (text: string) => boolean;
+	/** Note a harness feature the operator used, for demo guidance. */
+	recordFeature?: (feature: string) => void;
+	keyboardActions?: SlashCommandContext["keyboardActions"];
+	operatorExtensions?: SlashCommandContext["operatorExtensions"];
+	extensionDev?: SlashCommandContext["extensionDev"];
+	showExtensionCard?: SlashCommandContext["showExtensionCard"];
+	showExtensionOutput?: SlashCommandContext["showExtensionOutput"];
+	io: RunIo;
+	bus: TelemetryHub;
+	dispatch: DispatchContract;
+	getDecisionBoard?: SlashCommandContext["getDecisionBoard"];
+	providers: ProvidersContract;
+	chat: SlashChat;
+	chatPanel: SlashChatPanel;
+	resources?: SlashResources;
+	extensions?: SlashExtensions;
+	reloadExtensions?: SlashCommandContext["reloadExtensions"];
+	reloadPlugins?: SlashCommandContext["reloadPlugins"];
+	reloadClasses?: SlashCommandContext["reloadClasses"];
+	restart?: SlashCommandContext["restart"];
+	openProjectTrust?: SlashCommandContext["openProjectTrust"];
+	interop?: SlashCommandContext["interop"];
+	agents?: SlashAgents;
+	share?: SlashShare;
+	userTasks?: UserTasksStore;
+	getSettings?: () => Readonly<PancodeSettings>;
+	writeSettings?: (next: PancodeSettings) => void;
+	/**
+	 * Scoped commit of one settings leaf, the same path /settings edits take.
+	 * Slash commands use scope "session": they change the running session, and
+	 * making a value permanent stays the Settings overlay's explicit choice.
+	 */
+	commitSetting?: (
+		id: string,
+		next: PancodeSettings,
+		scope: "session" | "project" | "global",
+		source?: ConfigChangeSource,
+	) => void;
+	onSelectModel?: (
+		ref: { target: string; model: string },
+		scope: "session" | "project" | "global",
+		source?: ConfigChangeSource,
+	) => void;
+	onSetThinkingLevel?: (
+		level: ThinkingLevel,
+		scope?: "session" | "project" | "global",
+		source?: ConfigChangeSource,
+	) => void;
+	onCompact?: (instructions: string | undefined) => Promise<void>;
+	onRecoverHandoff?: (handoffId: string, action: "reduce" | "deliver") => Promise<void>;
+	onInit?: (options: InitCommandOptions, io?: RunIo) => Promise<unknown>;
+	onContextClear?: (options: ContextClearCommandOptions, io?: RunIo) => Promise<void>;
+	onContextRefresh?: (io?: RunIo) => Promise<void>;
+	/** Review and run the self-upgrade lifecycle after explicit operator consent. */
+	startUpgrade?: () => void;
+	stateDir: string;
+	shutdown: () => void | Promise<void>;
+	requestRender: () => void;
+	beforeSemanticSubmit?: () => void;
+	/**
+	 * Record an operator command's echo in the session, so `/resume` states it
+	 * above the run it started. Absent hosts do not persist it.
+	 */
+	recordOperatorCommand?: (text: string) => void;
+	/**
+	 * Bring a fullscreen transcript back to its live edge. A submission asks
+	 * for what comes next, so a view the operator scrolled up follows the new
+	 * turn again. A regular-screen host has no viewport to move.
+	 */
+	returnToLiveEdge?: () => void;
+	settleVisibleFrame?: (reason: string) => Promise<void>;
+	refreshFooter: () => void;
+	dismissContextBootstrapNotices: () => void;
+	recordSubmittedTurn: () => void;
+	readStructuredEntries: (sessionId: string) => ReadonlyArray<SessionEntry>;
+	/** The live telemetry view whose turn spend `/export` receipts read, as the transcript's do (#434 §11.3). */
+	getTelemetry?: () => TelemetryView | null;
+	/**
+	 * Leaf lookup for `/export`, so the export follows the branch the session
+	 * is actually on. current.jsonl still holds the abandoned turns after a
+	 * `/tree` pin, and an unscoped rehydrate reproduced them (issue #109).
+	 * `/context recall` uses the same leaf for its fold, plus `appendEntry` for
+	 * the `contextRecall` record.
+	 */
+	session?: Pick<SessionContract, "leafId" | "current" | "appendEntry" | "setName">;
+	expandSubmit: (text: string) => Promise<InteractiveSlashSubmitExpansion>;
+	/** Render-trace stamps for one chat submit; the armed trace is the only consumer. */
+	onSubmitPhase?: (submitSeq: number, phase: SubmitPhase) => void;
+	openAskUser: AskUserHandler;
+	openSkillsHub: (request?: HubBrowseRequest) => void;
+	openUsage: (tab?: import("../session-control/slash-command-types.js").UsageTab) => void;
+	/** Run one `/btw` side question in its own overlay. */
+	openSideQuestion: (question: string) => void;
+	/** Run one `/draft` in its own overlay. */
+	openDraft: (request: string, count: number) => void;
+	/** Run one `/handoff <goal>`: extract, review, and seed a successor session. */
+	startHandoff: (goal: string) => void;
+	/** `/report`: the report review, its status list, and forgetting a draft. */
+	openReport?: SlashCommandContext["openReport"];
+	showReportStatus?: SlashCommandContext["showReportStatus"];
+	forgetReport?: SlashCommandContext["forgetReport"];
+	/** Run one `/fleet run <playbook>`: approval preview first, dispatch only on accept. */
+	startFleetRun?: (name: string, vars: Readonly<Record<string, string>>, options?: FleetRunStartOptions) => void;
+	/**
+	 * Run one `/council <task>`: the prepared dispatch-tool arguments go through
+	 * the ordinary tool-admission path, so supervised autonomy parks the call and
+	 * the approval overlay opens before any member runs. Absent on a host with no
+	 * tool registry, in which case `/council` says so.
+	 */
+	runCouncilDispatch?: SlashCommandContext["runCouncilDispatch"];
+	openContextView: () => void;
+	openTasks: () => void;
+	openDecisions: () => void;
+	openResearch: () => void;
+	openMemory: () => void;
+	seedTaskMemory?: () => TaskMemorySeedCommandResult;
+	openView: (filter?: string) => void;
+	/** Pane-layer operations behind `/panes`. Absent when the mux resolved to `none`. */
+	panes?: PanesOperations;
+	/** The attach socket behind `/attach`. Absent outside the interactive terminal. */
+	attach?: AttachOperations;
+	/** The music pane behind `/music`. Absent when the session started without panes. */
+	music?: MusicOperations;
+	/** The shared job control behind `/loop`. Absent where no session-owned job host exists. */
+	jobs?: JobOperations;
+	openModel: () => void;
+	/** Apply a resolved `/model <pattern>` swap for this session the way Enter in the picker does, notice included. */
+	applyModelSession?: (ref: PendingModelScope) => void;
+	openSettings: (area?: SettingsAreaId) => void;
+	openFleetRuns?: () => void;
+	openResume: (target?: string) => void;
+	startNewSession: () => void;
+	openTree: () => void;
+	openRewind?: () => void;
+	openMessagePicker: (name?: string) => void;
+	openHelp: (query?: string) => void;
+	openExtensions: () => void;
+	openInterop?: () => void;
+	openContextReset: () => void;
+	/** `/thinking` with no level: the plain level list. */
+	openThinkingLevel?: (
+		choices: ReadonlyArray<ThinkingLevelChoice>,
+		current: string | undefined,
+		onPick: (level: string) => void,
+	) => void;
+	setEditorText: (text: string) => void;
+	/** Puts a refused submission back into the editor when the editor is still empty. */
+	restoreRefusedDraft?: (text: string) => void;
+	/** Worker blocks this session folded, oldest first; `/share` picks a finished one. */
+	listWorkerRuns?: () => ReadonlyArray<WorkerEntryState>;
+	getCwd?: () => string;
+	installSkill?: typeof installSkill;
+	now?: () => Date;
+}
+
+/**
+ * An editor line on its way through command dispatch. Pi already cleared the
+ * editor, so a chat submission takes the draft over: the line enters prompt
+ * history once its `@path` attachments expand, and a cancelled expansion puts
+ * it back in the editor instead.
+ */
+export interface ChatDraft {
+	/** Set when a chat submission took the draft over; the editor then leaves its history to it. */
+	claimed: boolean;
+	admitted(): void;
+	cancelled(): void;
+}
+
+export interface InteractiveSlashRuntime {
+	context: SlashCommandContext;
+	notice: SlashCommandContext["notice"];
+	dispatchCommand(text: string, draft?: ChatDraft): SlashCommandDispatchResult;
+	/** Admit captured Stage 0 input without waiting for the model turn to finish. */
+	admitCommand(text: string, signal?: AbortSignal): Promise<void>;
+}
+
+/** Owns slash-command context construction and its asynchronous command state. */
+
+/** Thinking capability of the active orchestrator target and model, or null when unresolved. */
+export function resolveThinkingCapability(
+	providers: ProvidersContract,
+	settings: Readonly<PancodeSettings>,
+): ResolvedThinkingCapability | null {
+	const resolved = resolveModelRuntimeCapabilitiesForProviders(
+		providers,
+		settings.chat.target,
+		settings.chat.model,
+		settings.chat.thinkingLevel ?? "off",
+	);
+	return resolved?.thinking ?? null;
+}
+
+/**
+ * Thinking levels permitted for the active orchestrator target. This is the
+ * same resolved surface used by the runtime payload builders and dashboard.
+ * Unknown or unconfigured targets return `["off"]`.
+ */
+export function resolveAvailableThinkingLevels(
+	providers: ProvidersContract,
+	settings: Readonly<PancodeSettings>,
+): ReadonlyArray<ThinkingLevel> {
+	return resolveThinkingCapability(providers, settings)?.supportedLevels ?? ["off"];
+}
+
+/** A cancelled `@path` expansion rejects with its signal's AbortError. */
+function isAbortError(err: unknown): boolean {
+	return err instanceof Error && err.name === "AbortError";
+}
+
+/** An operator `/skill` keeps the line they typed for its prompt row. */
+function typedSkillLine(sub: InteractiveSlashSubmitExpansion, typed: string): InteractiveSlashSubmitExpansion {
+	if (sub.display !== undefined || !sub.pendingSkillRequests.some((request) => request.source === "slash-command"))
+		return sub;
+	return { ...sub, display: { text: typed.trim() } };
+}
+
+export function createInteractiveSlashRuntime(deps: InteractiveSlashRuntimeDeps): InteractiveSlashRuntime {
+	let activeContextInit = false;
+	let latestAdmission: Promise<void> = Promise.resolve();
+	let latestLocalOperation: Promise<void> = Promise.resolve();
+	let activeAdmissionSignal: AbortSignal | undefined;
+	let activeOperatorText: string | undefined;
+	let activeDraft: ChatDraft | undefined;
+	// True while admitCommand drains a record captured before the shell was
+	// ready (DOGFOOD-F5). Only such a record waits for the end of a live turn.
+	let activeAdmissionCaptured = false;
+	const cwd = (): string => deps.getCwd?.() ?? process.cwd();
+	const resources = deps.resources;
+	const userTasks = deps.userTasks;
+	// The last rejected settings reload, for /doctor: the footer notice can be
+	// clamped or dismissed, and doctor re-reads the file, which says nothing
+	// about the settings this session is still running on (M-25). One
+	// subscription for the runtime's life, which is the session's.
+	let settingsReloadFailure: string | null = null;
+	deps.bus.subscribe("config.reload_failed", (payload) => {
+		settingsReloadFailure = typeof payload?.message === "string" ? payload.message : null;
+	});
+
+	const oracleBriefingSources = (): Omit<OracleDigestSources, "question"> => {
+		const sessionId = deps.chat.getSessionId();
+		if (sessionId === null) return { decisions: [], tasks: [], compactionSummary: null };
+		const leafTurnId = deps.session?.leafId(sessionId) ?? undefined;
+		return oracleBriefingFromEntries(deps.readStructuredEntries(sessionId), leafTurnId);
+	};
+
+	const appendCommandNotice: SlashCommandContext["notice"] = (level, text) => {
+		appendNotice(level, text, {
+			appendReplayBlock: (renderBlock) => deps.chatPanel.appendReplayBlock(renderBlock),
+			requestRender: deps.requestRender,
+		});
+	};
+
+	let submitSequence = 0;
+	/** One expanded operator turn into the chat loop: record it, paint it, submit it. */
+	const submitExpanded = (
+		sub: InteractiveSlashSubmitExpansion,
+		awaitAdmission = false,
+		captured = false,
+		draft?: string,
+		submitSeq = ++submitSequence,
+	): Promise<void> => {
+		const stamp = (phase: SubmitPhase): void => deps.onSubmitPhase?.(submitSeq, phase);
+		try {
+			// A prompt or a steer is the operator asking for what comes next.
+			deps.returnToLiveEdge?.();
+			// Enter while streaming becomes a steer inside chat.submit. The
+			// queue panel shows it until the engine injects it, and the
+			// injection emits queued_user_turn, which is when the transcript
+			// renders it. Appending here too showed the text twice and at
+			// the wrong point in the turn's order.
+			const willQueue = deps.chat.isStreaming();
+			if (willQueue && !captured) deps.recordFeature?.("steer");
+			deps.recordSubmittedTurn();
+			deps.refreshFooter();
+			// The row is painted now, so the operator sees their prompt land, but
+			// it is marked pending until the durable append at admission: nothing
+			// is in the ledger yet, and a refused preflight must not leave a row
+			// that reads like a committed turn (issue #251).
+			let rowStatus: UserTurnStatus = "pending";
+			if (!willQueue) {
+				deps.chatPanel.appendUser(sub.display?.text ?? sub.text, () => rowStatus);
+				if (sub.display?.note !== undefined) {
+					appendOperatorAside(sub.display.note, {
+						appendReplayBlock: (renderBlock) => deps.chatPanel.appendReplayBlock(renderBlock),
+						requestRender: deps.requestRender,
+					});
+				}
+			}
+			deps.requestRender();
+			stamp("prompt-appended");
+			let acknowledgeAdmission = (): void => {};
+			const admitted = new Promise<void>((resolve) => {
+				acknowledgeAdmission = resolve;
+			});
+			const turn = deps.chat.submit(sub.text, {
+				...(sub.display ? { display: sub.display } : {}),
+				...(sub.images.length > 0 ? { images: sub.images } : {}),
+				...(sub.workingContextPaths.length > 0 ? { workingContextPaths: sub.workingContextPaths } : {}),
+				...(sub.pendingSkillRequests.length > 0 ? { pendingSkillRequests: sub.pendingSkillRequests } : {}),
+				// A template typed while a run streams waits in the queue and starts as its own turn at the settle.
+				...(sub.constraints ? { constraints: sub.constraints, queueConstrainedTurn: true } : {}),
+				// A captured boot record joins the live turn's FIFO follow-up queue so
+				// records keep their order as separate turns. Enter while streaming is
+				// the operator correcting the run, so it rides the next steering slot;
+				// queuing it for the end of the turn left steers undelivered through a
+				// run whose tool loop never ended.
+				...(captured && willQueue ? { steering: "end-of-turn" as const } : {}),
+				...(!willQueue
+					? {
+							onPreparationVisible: async () => {
+								stamp("preparation-start");
+								deps.beforeSemanticSubmit?.();
+								await deps.settleVisibleFrame?.("submit-preparing");
+								stamp("preparation-commit");
+							},
+						}
+					: {}),
+				// Enter cleared the editor before this constrained turn was refused
+				// for the live run; the operator keeps the line to resend.
+				...(draft !== undefined && deps.restoreRefusedDraft ? { onRefused: () => deps.restoreRefusedDraft?.(draft) } : {}),
+				onAdmitted: () => {
+					stamp("admission");
+					rowStatus = "committed";
+					deps.requestRender();
+					if (awaitAdmission) acknowledgeAdmission();
+				},
+			});
+			const settlement = turn
+				.then(() => deps.settleVisibleFrame?.("submit-return"))
+				.catch((err) => {
+					const msg = err instanceof Error ? err.message : String(err);
+					deps.io.stderr(`[interactive] chat failed: ${msg}\n`);
+				})
+				.finally(() => {
+					// Settlement without admission is a refusal: the probe failed, the
+					// overflow preflight blocked the request, or the submit became a
+					// steer. Say so on the row rather than leaving a phantom turn.
+					if (rowStatus === "pending") rowStatus = willQueue ? "committed" : "refused";
+					deps.requestRender();
+				});
+			return awaitAdmission ? Promise.race([admitted, settlement]) : settlement;
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			deps.io.stderr(`[interactive] chat failed: ${msg}\n`);
+			deps.requestRender();
+			return Promise.resolve();
+		}
+	};
+
+	/** `/context init` counts as its own feature; every other command by its name. */
+	const recordSlashFeature = (text: string): void => {
+		if (!deps.recordFeature) return;
+		const match = /^\s*\/([a-z][\w-]*)(?:\s+(\S+))?/u.exec(text);
+		if (!match?.[1]) return;
+		deps.recordFeature(match[1] === "context" && match[2] === "init" ? "/context init" : `/${match[1]}`);
+	};
+
+	const admitChat = async (
+		text: string,
+		signal?: AbortSignal,
+		captured = false,
+		operatorText?: string,
+		draft?: ChatDraft,
+	): Promise<void> => {
+		const submitSeq = ++submitSequence;
+		deps.onSubmitPhase?.(submitSeq, "enter");
+		let draftSettled = false;
+		const admitDraft = (): void => {
+			if (draftSettled) return;
+			draftSettled = true;
+			draft?.admitted();
+		};
+		try {
+			signal?.throwIfAborted();
+			// submitChat can be called directly, bypassing command dispatch. Keep
+			// the reserved clear command ahead of skill lookup and installation.
+			const command = parseSlashCommand(text);
+			if (command.kind === "skill-surface-clear") {
+				dispatchSlashCommand(command, context);
+				return;
+			}
+			if (
+				operatorText !== undefined &&
+				(deps.arcadeEgg?.(operatorText) ||
+					(await deps.chat.discoverOperatorEgg?.(operatorText, deps.openTransientAskUser ?? deps.openAskUser)))
+			)
+				return;
+			let expanded: InteractiveSlashSubmitExpansion;
+			try {
+				deps.onSubmitPhase?.(submitSeq, "expansion-start");
+				expanded = await deps.expandSubmit(text);
+				deps.onSubmitPhase?.(submitSeq, "expansion-end");
+			} catch (err) {
+				if (!isAbortError(err)) throw err;
+				if (captured) throw err;
+				// The operator cancelled a slow attachment read. That is not a failed
+				// chat: nothing is sent and the line goes back to the editor.
+				draftSettled = true;
+				draft?.cancelled();
+				deps.requestRender();
+				return;
+			}
+			admitDraft();
+			const submitted = typedSkillLine(expanded, text);
+			signal?.throwIfAborted();
+			const uninstalled = submitted.pendingSkillRequests.find((request) => !request.installed);
+			// A request this session refuses after the install would have changed the operator's packs for nothing.
+			if (uninstalled && deps.chat.refuseSkillRequests?.(submitted.pendingSkillRequests, submitted.workingContextPaths))
+				return;
+			if (uninstalled && !uninstalled.marketplaceRef) {
+				deps.io.stderr(`Skill "${uninstalled.name}" is not installed and no local marketplace entry is available.\n`);
+				return;
+			}
+			if (uninstalled) {
+				try {
+					const res = await deps.openAskUser(
+						[
+							{
+								question: `Skill "${uninstalled.name}" is not installed. Would you like to install it?`,
+								options: [
+									{ label: "Install and run", description: "Install in the active user profile and run." },
+									{ label: "Install for this project and run", description: "Install in this workspace only and run." },
+									{ label: "Cancel", description: "Do not install." },
+								],
+							},
+						],
+						signal ? { signal } : undefined,
+					);
+					signal?.throwIfAborted();
+					const answer = res.answers[0]?.answer;
+					if (res.cancelled || (answer !== "Install and run" && answer !== "Install for this project and run")) {
+						if (captured) throw new Error("queued boot skill installation cancelled; preserving it for recovery");
+						deps.io.stderr("Installation cancelled.\n");
+						return;
+					}
+					deps.io.stdout(`Installing skill "${uninstalled.name}"...\n`);
+					const installed = (deps.installSkill ?? installSkill)({
+						source: uninstalled.name,
+						cwd: cwd(),
+						scope: answer === "Install for this project and run" ? "project" : "user",
+					});
+					deps.io.stdout(`Installed "${uninstalled.name}".\n`);
+					await deps.resources?.reload();
+					signal?.throwIfAborted();
+					if (installed.warnings.length > 0) {
+						if (captured) throw new Error(installed.warnings.join("\n"));
+						for (const warning of installed.warnings) deps.io.stderr(`${warning}\n`);
+						return;
+					}
+					const postInstallSubmitted = typedSkillLine(await deps.expandSubmit(text), text);
+					signal?.throwIfAborted();
+					if (postInstallSubmitted.pendingSkillRequests.some((request) => !request.installed)) {
+						throw new Error(
+							`Installed package is not available after reload; inspect it with pancode hub inspect skill:${uninstalled.name}`,
+						);
+					}
+					await submitExpanded(postInstallSubmitted, true, captured, captured ? undefined : text, submitSeq);
+				} catch (err) {
+					if (captured) throw err;
+					if (isAbortError(err)) return;
+					deps.io.stderr(
+						`Failed to install skill "${uninstalled.name}": ${err instanceof Error ? err.message : String(err)}\n`,
+					);
+				}
+				return;
+			}
+			await submitExpanded(submitted, true, captured, captured ? undefined : text, submitSeq);
+		} catch (err) {
+			if (captured) throw err;
+			const msg = err instanceof Error ? err.message : String(err);
+			deps.io.stderr(`[interactive] chat failed: ${msg}\n`);
+			deps.requestRender();
+		} finally {
+			admitDraft();
+		}
+	};
+	let context: SlashCommandContext;
+	context = {
+		io: deps.io,
+		notice: appendCommandNotice,
+		echoOperatorCommand: (text) => {
+			deps.returnToLiveEdge?.();
+			appendOperatorCommand(text, {
+				appendReplayBlock: (renderBlock) => deps.chatPanel.appendReplayBlock(renderBlock),
+				requestRender: deps.requestRender,
+			});
+			deps.recordOperatorCommand?.(text);
+		},
+		showReference: (card) => {
+			appendReferenceCard(card, {
+				appendReplayBlock: (renderBlock) => deps.chatPanel.appendReplayBlock(renderBlock),
+				requestRender: deps.requestRender,
+			});
+		},
+		dispatch: deps.dispatch,
+		...(deps.getDecisionBoard ? { getDecisionBoard: deps.getDecisionBoard } : {}),
+		bus: deps.bus,
+		...(deps.agents
+			? { getAgentRoleFacts: agentRoleFactsResolver((agentId: string) => deps.agents?.getSpec(agentId) ?? null) }
+			: {}),
+		shutdown: () => {
+			void deps.shutdown();
+		},
+		showDoctor: (findings) => {
+			deps.chatPanel.appendReplayBlock((width, detail, unbounded) =>
+				renderDoctorReport(
+					findings,
+					width,
+					detail?.style ?? deps.getSettings?.().interface.outputDetail ?? "standard",
+					unbounded,
+				),
+			);
+			deps.requestRender();
+		},
+		runDoctor: async ({ deep }) => {
+			// Loaded on first use: doctor pulls in every sweep it runs, and a
+			// session that never asks for it should not pay for them at boot.
+			const { collectDoctorFindings, doctorNotice } = await import("../cli/doctor.js");
+			const autonomy = deps.getSettings?.().safety.autonomy;
+			const findings = await collectDoctorFindings({
+				workspaceRoot: cwd(),
+				deep: deep ? { providers: deps.providers, ...(autonomy ? { autonomy } : {}) } : false,
+			});
+			if (settingsReloadFailure !== null)
+				findings.unshift({
+					ok: false,
+					name: "settings reload",
+					detail: `last reload rejected; this session keeps its last good settings. ${settingsReloadFailure}`,
+				});
+			return doctorNotice(findings);
+		},
+		...(deps.startUpgrade ? { startUpgrade: deps.startUpgrade } : {}),
+		listPrompts: () => deps.resources?.prompts(cwd()) ?? { items: [], diagnostics: [] },
+		listPromptsForDisplay: () => deps.resources?.promptsForDisplay(cwd()) ?? { items: [], diagnostics: [] },
+		...(resources ? { expandPromptTemplate: (text: string) => resources.expandPromptTemplate(text, cwd()) } : {}),
+		openSkillsHub: deps.openSkillsHub,
+		clearSkillSurface: () => deps.chat.clearSkillSurface(),
+		eggsCommand: (action, id) => deps.chat.eggsCommand?.(action, id) ?? "No active eggs.",
+		statesSkillSurface: true,
+		listExtensions: () => deps.extensions?.list(cwd(), { all: true }) ?? [],
+		...(deps.keyboardActions ? { keyboardActions: deps.keyboardActions } : {}),
+		...(deps.operatorExtensions ? { operatorExtensions: deps.operatorExtensions } : {}),
+		...(deps.extensionDev ? { extensionDev: deps.extensionDev } : {}),
+		...(deps.showExtensionCard ? { showExtensionCard: deps.showExtensionCard } : {}),
+		...(deps.showExtensionOutput ? { showExtensionOutput: deps.showExtensionOutput } : {}),
+		listAgents: () => deps.agents?.listSpecs().filter((spec) => spec.audience !== "internal") ?? [],
+		isExternalAgent: (id) =>
+			(deps.getSettings?.().integrations.externalAgents.entries ?? []).some((entry) => entry.id === id),
+		...archiveCommandHost(deps.share),
+		openUsage: deps.openUsage,
+		openSideQuestion: deps.openSideQuestion,
+		openDraft: deps.openDraft,
+		// `/oracle` is refused, never queued, while a turn streams: the digest it
+		// packs describes the record as it stands.
+		isTurnInFlight: () => deps.chat.isStreaming(),
+		// `--allow-tools`/`--delegate-tools` bound every dispatch a command starts, as they bound turns.
+		standingTurnConstraints: () => deps.chat.toolLimits?.(),
+		oracleBriefing: oracleBriefingSources,
+		startHandoff: deps.startHandoff,
+		...(deps.openReport ? { openReport: deps.openReport } : {}),
+		...(deps.showReportStatus ? { showReportStatus: deps.showReportStatus } : {}),
+		...(deps.forgetReport ? { forgetReport: deps.forgetReport } : {}),
+		...(deps.startFleetRun ? { startFleetRun: deps.startFleetRun } : {}),
+		...(deps.openFleetRuns ? { openFleetRuns: deps.openFleetRuns } : {}),
+		...(deps.getSettings ? { getWorkerRosters: () => deps.getSettings?.().fleet.rosters ?? {} } : {}),
+		...(deps.runCouncilDispatch ? { runCouncilDispatch: deps.runCouncilDispatch } : {}),
+		openContextView: deps.openContextView,
+		openTasks: deps.openTasks,
+		openDecisions: deps.openDecisions,
+		openResearch: deps.openResearch,
+		...(userTasks
+			? {
+					userTasks: {
+						add: (title: string, acceptance?: UserTaskAcceptance) => userTasks.add(title, undefined, acceptance),
+						hand: (id: string) => userTasks.hand(id, deps.chat.getSessionId() ?? undefined),
+						done: (id: string) => userTasks.done(id),
+						drop: (id: string) => userTasks.drop(id),
+					},
+				}
+			: {}),
+		openMemory: deps.openMemory,
+		seedTaskMemory: () => {
+			const result = deps.seedTaskMemory?.() ?? { status: "not-found" as const };
+			deps.refreshFooter();
+			deps.requestRender();
+			return result;
+		},
+		openView: deps.openView,
+		...(deps.panes ? { panes: deps.panes } : {}),
+		...(deps.attach ? { attach: deps.attach } : {}),
+		...(deps.music ? { music: deps.music } : {}),
+		...(deps.jobs ? { jobs: deps.jobs } : {}),
+		setThinkingLevel: (level) => {
+			const settings = deps.getSettings?.();
+			if (!settings || !deps.onSetThinkingLevel) return { status: "unavailable" };
+			const thinking = resolveThinkingCapability(deps.providers, settings);
+			// The target's own supported set is the authority, and its labels are
+			// what the settings row and footer already show, so `/thinking on` works
+			// on an on-off model exactly as picking `on` in settings does.
+			const supported = thinking?.supportedLevels ?? (["off"] as ReadonlyArray<ThinkingLevel>);
+			const labelFor = (candidate: ThinkingLevel): string =>
+				thinkingLevelDisplayWord(thinking?.mechanism ?? null, candidate);
+			const requested = level.trim().toLowerCase();
+			// Model labels (on, forced) match only this model's own levels; the fallback takes
+			// plain level names, which run through the same clamp a chat.thinkingLevel setting
+			// does (high on a model without high runs as xhigh, CLI-P29).
+			const listed = supported.find((candidate) => candidate === requested || labelFor(candidate) === requested);
+			const match = listed ?? VALID_THINKING_LEVELS.find((candidate) => candidate === requested);
+			// A model whose thinking cannot be switched (none, always-on) takes only its own level.
+			const fixed = !thinking || thinking.mechanism === "none" || thinking.mechanism === "always-on";
+			if (!match || (fixed && listed === undefined)) {
+				return { status: "unsupported", level, supported: supported.map(labelFor) };
+			}
+			// Session scope, like Alt+O: onSetThinkingLevel writes the level
+			// through to settings.yaml as the new default, which a slash command
+			// has no mandate to do.
+			if (deps.commitSetting) {
+				const next = structuredClone(settings) as PancodeSettings;
+				next.chat.thinkingLevel = match;
+				deps.commitSetting("chat.thinkingLevel", next, "session", "slash-command");
+			} else {
+				deps.onSetThinkingLevel(match, "session", "slash-command");
+			}
+			deps.refreshFooter();
+			const resolved = resolveModelRuntimeCapabilitiesForProviders(
+				deps.providers,
+				settings.chat.target,
+				settings.chat.model,
+				match,
+			);
+			const applied = resolved?.thinking;
+			const note = applied ? thinkingNoteWords({ ...applied, model: resolved.modelId }) : null;
+			return {
+				status: "applied",
+				level: match,
+				display: applied ? applied.display : labelFor(match),
+				...(note !== null ? { note } : {}),
+			};
+		},
+		thinkingLevelChoices: () => {
+			const settings = deps.getSettings?.();
+			if (!settings) return [];
+			const thinking = resolveThinkingCapability(deps.providers, settings);
+			return (thinking?.supportedLevels ?? (["off"] as ReadonlyArray<ThinkingLevel>)).map((value) => ({
+				value,
+				label: thinkingLevelDisplayWord(thinking?.mechanism ?? null, value),
+			}));
+		},
+		openThinkingPicker: () => {
+			const choices = context.thinkingLevelChoices?.() ?? [];
+			if (choices.length === 0) {
+				appendCommandNotice("error", "thinking level cannot be set right now");
+				return;
+			}
+			const pick = (level: string): void => {
+				dispatchSlashCommand({ kind: "thinking-set", level }, context);
+			};
+			if (deps.openThinkingLevel) {
+				const settings = deps.getSettings?.();
+				// The level that runs, so a setting the model cannot carry (`low` on an off-only model) still marks a row.
+				const current = settings
+					? (resolveThinkingCapability(deps.providers, settings)?.effectiveLevel ?? settings.chat.thinkingLevel)
+					: undefined;
+				deps.openThinkingLevel(choices, current, pick);
+				return;
+			}
+			void deps
+				.openAskUser([
+					{
+						question: "Choose the thinking level for this chat.",
+						header: "Thinking",
+						options: choices.map(({ label }) => ({ label })),
+						fixedChoices: true,
+					},
+				])
+				.then((result) => {
+					const answer = result.cancelled ? undefined : result.answers[0]?.answer;
+					const selected = choices.find(({ label }) => label === answer);
+					if (selected) pick(selected.value);
+				});
+		},
+		openModel: deps.openModel,
+		providers: deps.providers,
+		getChatTarget: () => deps.getSettings?.().chat.target,
+		getChatModel: () => deps.getSettings?.().chat.model,
+		getFleetAgentProfiles: () => deps.getSettings?.().fleet.agentProfiles ?? {},
+		getAutonomy: () => deps.getSettings?.().safety.autonomy ?? "default",
+		applyModelRef: (ref) => {
+			// Session scope only: a mid-conversation swap that rewrote settings.yaml
+			// could bring the next launch up on a dead endpoint (smoke pass 2, G3).
+			// Saving goes through the picker's `s` card.
+			if (deps.applyModelSession) {
+				deps.applyModelSession(ref);
+				return "reported";
+			}
+			deps.onSelectModel?.({ target: ref.target, model: ref.model }, "session", "slash-command");
+			if (ref.thinkingLevel) deps.onSetThinkingLevel?.(ref.thinkingLevel, "session", "slash-command");
+			deps.requestRender();
+			return "applied";
+		},
+		openSettings: deps.openSettings,
+		renameSession: (name) => {
+			const session = deps.session;
+			if (!session) {
+				appendCommandNotice("error", "[/rename] session contract unavailable");
+				return;
+			}
+			void renameCurrentSession(
+				{
+					session,
+					entries: () => {
+						const id = session.current()?.id;
+						return id ? deps.readStructuredEntries(id) : [];
+					},
+					leaf: () => session.current()?.pinnedLeafTurnId ?? undefined,
+					...(deps.openTransientAskUser ? { confirm: deps.openTransientAskUser } : {}),
+					notice: appendCommandNotice,
+					refresh: () => {
+						deps.refreshFooter();
+						deps.requestRender();
+					},
+				},
+				name,
+			);
+		},
+		openResume: deps.openResume,
+		startNewSession: deps.startNewSession,
+		openTree: deps.openTree,
+		...(deps.openRewind ? { openRewind: deps.openRewind } : {}),
+		openMessagePicker: deps.openMessagePicker,
+		openHelp: deps.openHelp,
+		openExtensions: deps.openExtensions,
+		...(deps.reloadExtensions ? { reloadExtensions: deps.reloadExtensions } : {}),
+		...(deps.reloadPlugins ? { reloadPlugins: deps.reloadPlugins } : {}),
+		...(deps.reloadClasses ? { reloadClasses: deps.reloadClasses } : {}),
+		...(deps.restart ? { restart: deps.restart } : {}),
+		...(deps.openProjectTrust ? { openProjectTrust: deps.openProjectTrust } : {}),
+		...(deps.openInterop ? { openInterop: deps.openInterop } : {}),
+		...(deps.interop ? { interop: deps.interop } : {}),
+		setEditorText: (text) => {
+			deps.setEditorText(text);
+			deps.requestRender();
+		},
+		runHandoffRecovery: (handoffId, action) => {
+			if (!deps.onRecoverHandoff) {
+				appendCommandNotice("error", "[/context recover] native handoff recovery is unavailable");
+				return;
+			}
+			void deps
+				.onRecoverHandoff(handoffId, action)
+				.catch((error) =>
+					appendCommandNotice("error", `[/context recover] ${error instanceof Error ? error.message : String(error)}`),
+				);
+		},
+		runCompact: (instructions) => {
+			runCompactWithNotice(deps.onCompact, appendCommandNotice, instructions);
+		},
+		exportTranscript: (pathArg) => {
+			const sessionId = deps.chat.getSessionId();
+			if (!sessionId) {
+				appendCommandNotice("error", "[/export] no active session to export");
+				return;
+			}
+			// The async body runs synchronously up to its first await, so the capture below still happens at dispatch and a
+			// failure in it still ends as an error notice.
+			return (async () => {
+				// What the export reads about the session is captured at dispatch, so a
+				// session switch while it renders cannot redirect it. It is scoped to the
+				// leaf the session is on, the same way /resume replays (issue #107): with
+				// a /tree pin persisted and not yet extended, the file still holds the
+				// abandoned branch after the pin, and an unscoped rehydrate exported it as
+				// ordinary history (issue #109). No session contract means no pin can
+				// exist for this reader, so the file replays whole.
+				const leafTurnId = deps.session?.leafId(sessionId) ?? null;
+				const sessionMeta = deps.session?.current() ?? null;
+				const telemetry = deps.getTelemetry?.() ?? null;
+				// The operator names this file by the day they ran the export, so the
+				// date in it is their calendar date. The header below keeps the ISO
+				// instant, which is the machine-readable half of the same fact.
+				const exportedAt = deps.now?.() ?? new Date();
+				const requestedPath = pathArg?.trim() ?? "";
+				const markdown = requestedPath.toLowerCase().endsWith(".md");
+				const target = resolve(
+					requestedPath.length > 0
+						? requestedPath
+						: join(".pancode", "exports", `${sessionId}-${dateLocal(exportedAt)}.html`),
+				);
+				const workspace = resolve(cwd());
+				appendCommandNotice("info", `[/export] exporting session ${sessionId}${GLYPH.ellipsis}`);
+				// The notice paints before the render below holds the event loop: pi-tui throttles frames to one per
+				// render interval, so waiting two lets the frame the notice requested reach the terminal first.
+				await delay(EXPORT_PAINT_WAIT_MS);
+				const turns = deps.readStructuredEntries(sessionId);
+				// Same pure render pipeline as the live panel and /resume replay: a
+				// throwaway panel is rehydrated from the ledger under the verbose
+				// transcript detail policy (every body open, full receipts) with no
+				// operator overrides, and rendered at a stable width. HTML converts
+				// the resulting ANSI presentation to inline styles; Markdown keeps the
+				// prior plain-text fenced transcript. Code blocks drop Pi's fence
+				// rows, which the live transcript keeps, so they neither show as
+				// border characters in HTML nor widen the Markdown outer fence.
+				const exportPanel = createChatPanel({
+					unboundedToolBodies: true,
+					bareCodeFences: true,
+					getOutputStyle: () => "detailed",
+					...(deps.getTelemetry ? { getTelemetry: () => telemetry } : {}),
+				});
+				// The export shows the same continuity the model sees, resolved from
+				// the same ledger through the same helper, so the two cannot drift.
+				// It is labelled as assistant handoff text and is never rendered as an
+				// operator turn.
+				rehydrateChatPanelFromTurns(
+					exportPanel,
+					turns,
+					withContinuityReplay(
+						turns,
+						{ unboundedToolBodies: true, ...(leafTurnId ? { activeLeafTurnId: leafTurnId } : {}) },
+						deps.session ? { current: () => sessionMeta } : undefined,
+					),
+				);
+				// Each phase below hands the loop back before it starts, so keys typed meanwhile are read between them (TUI-10).
+				await nextTurn();
+				const ansiLines = exportPanel.render(EXPORT_RENDER_WIDTH);
+				await nextTurn();
+				let body: string;
+				if (markdown) {
+					const lines = ansiLines.map(stripTerminalSequences);
+					// The fence has to be longer than the longest backtick run the
+					// transcript contains, or a body that includes its own fence closes
+					// the block early and the rest of the session renders as Markdown.
+					// A handoff note is assistant-authored prose that routinely carries
+					// fenced code, so this is reachable content, not a hypothetical.
+					const fence = "`".repeat(Math.max(3, longestBacktickRun(lines) + 1));
+					const header = [`# PanCode session ${sessionId}`, "", `Exported ${exportedAt.toISOString()}`, "", `${fence}text`];
+					body = `${[...header, ...lines, fence, ""].join("\n")}`;
+				} else {
+					body = await renderSessionHtmlAsync({ sessionId, exportedAt: exportedAt.toISOString(), ansiLines });
+				}
+				await mkdir(resolve(target, ".."), { recursive: true });
+				// A transcript is as private as the session file it copies.
+				await writeFile(target, body, { encoding: "utf8", mode: 0o600 });
+				const fromWorkspace = relative(workspace, target);
+				const shownPath = relativePathEscapes(fromWorkspace) ? target : fromWorkspace || ".";
+				appendCommandNotice("success", `[/export] wrote ${ansiLines.length} lines to ${shownPath}`);
+			})().catch((err) => {
+				appendCommandNotice("error", `[/export] ${err instanceof Error ? err.message : String(err)}`);
+			});
+		},
+		runInit: (options) => {
+			const onInit = deps.onInit;
+			if (!onInit) {
+				deps.io.stderr("[/context init] context init not wired; pass onInit to startInteractive\n");
+				return;
+			}
+			if (activeContextInit) {
+				deps.io.stderr("[/context init] bootstrap already running\n");
+				return;
+			}
+			activeContextInit = true;
+			// The operation's result card carries what init wrote and warned about,
+			// so this call asks for no output channel of its own.
+			void Promise.resolve()
+				.then(() => onInit(options))
+				.then(() => {
+					if (!options.preview) deps.dismissContextBootstrapNotices();
+					deps.refreshFooter();
+				})
+				.catch((err) => {
+					appendCommandNotice("error", `[/context init] ${err instanceof Error ? err.message : String(err)}`);
+				})
+				.finally(() => {
+					activeContextInit = false;
+					deps.requestRender();
+				});
+		},
+		runContextClear: () => {
+			if (!deps.onContextClear) {
+				deps.io.stderr("[/context reset] context reset not wired; pass onContextClear to startInteractive\n");
+				return;
+			}
+			deps.openContextReset();
+		},
+		...(deps.session
+			? {
+					runContextRecall: (ref: string) => {
+						const session = deps.session;
+						if (!session) return;
+						// The operation's result card states a failed recall, so the error
+						// notice below only covers a run that never reported one.
+						let reported = false;
+						const outcome = runOperatorRecall(ref, {
+							getSessionId: () => session.current()?.id ?? null,
+							onActivity: (event) => {
+								if (event.operation?.outcome !== undefined) reported = true;
+								deps.bus.emit("context.activity_changed", event);
+							},
+							hasSession: () => session.current() !== null,
+							readEntries: () => {
+								const sessionId = deps.chat.getSessionId();
+								return sessionId ? deps.readStructuredEntries(sessionId) : [];
+							},
+							activeLeafTurnId: () => {
+								const meta = session.current();
+								return meta ? (session.leafId(meta.id) ?? undefined) : undefined;
+							},
+							appendEntry: (entry) => session.appendEntry(entry),
+							onRecalled: (payload) =>
+								deps.bus.emit("context.recalled", payload, sessionTelemetryContext(session.current()?.id)),
+							...(deps.now ? { now: () => (deps.now?.() ?? new Date()).getTime() } : {}),
+						});
+						if (!outcome.ok) {
+							if (!reported) appendCommandNotice("error", outcome.message);
+							return;
+						}
+						appendCommandNotice("success", outcome.headline);
+						// The body is transcript output, not a notice: notices collapse
+						// newlines, and a recalled build log is worth nothing on one line.
+						// It is a replay block either way, so it never enters model context.
+						deps.io.stdout(`${outcome.body}\n`);
+						deps.requestRender();
+					},
+				}
+			: {}),
+		runContextRefresh: () => {
+			if (!deps.onContextRefresh) {
+				deps.io.stderr("[/context refresh] context refresh not wired; pass onContextRefresh to startInteractive\n");
+				return;
+			}
+			void deps
+				.onContextRefresh()
+				.catch((err) => {
+					const msg = err instanceof Error ? err.message : String(err);
+					deps.io.stderr(`[/context refresh] ${msg}\n`);
+				})
+				.finally(deps.requestRender);
+		},
+		verifyRun: (runId) => verifyRunRecordReport(deps.stateDir, runId),
+		...(deps.listWorkerRuns ? { listWorkerRuns: deps.listWorkerRuns } : {}),
+		// The user-turn path, minus expansion. A worker's answer is literal text:
+		// running it through the prompt, skill, and @file expanders would let a
+		// worker's output name a file the operator never mentioned.
+		submitOperatorNote: (text) =>
+			void submitExpanded({ text, images: [], workingContextPaths: [], pendingSkillRequests: [] }),
+		...(deps.chat.operatorMemory ? { operatorMemory: deps.chat.operatorMemory } : {}),
+		submitChat: (text) => {
+			const draft = activeDraft;
+			activeDraft = undefined;
+			if (draft) draft.claimed = true;
+			latestAdmission = admitChat(text, activeAdmissionSignal, activeAdmissionCaptured, activeOperatorText, draft);
+			void latestAdmission;
+		},
+		runLocalOperation: (operation) => {
+			latestLocalOperation = latestLocalOperation.catch(() => undefined).then(operation);
+		},
+		render: deps.requestRender,
+	};
+
+	return {
+		context,
+		notice: appendCommandNotice,
+		dispatchCommand: (text, draft) => {
+			recordSlashFeature(text);
+			const command = parseSlashCommand(text);
+			const previous = activeOperatorText;
+			const previousDraft = activeDraft;
+			activeOperatorText = command.kind === "unknown" ? text : undefined;
+			activeDraft = draft;
+			try {
+				return dispatchSlashCommand(command, context);
+			} finally {
+				activeOperatorText = previous;
+				activeDraft = previousDraft;
+			}
+		},
+		admitCommand: async (text, signal) => {
+			signal?.throwIfAborted();
+			recordSlashFeature(text);
+			// Pane opens and focus changes mutate a remote registry. A following
+			// slash read must observe their settled state, just as the tool path does.
+			await latestLocalOperation;
+			const command = parseSlashCommand(text);
+			const before = latestAdmission;
+			const localBefore = latestLocalOperation;
+			const previousSignal = activeAdmissionSignal;
+			const previousCaptured = activeAdmissionCaptured;
+			const previousOperatorText = activeOperatorText;
+			activeOperatorText = command.kind === "unknown" ? text : undefined;
+			activeAdmissionSignal = signal;
+			activeAdmissionCaptured = true;
+			try {
+				dispatchSlashCommand(command, context);
+			} finally {
+				activeAdmissionSignal = previousSignal;
+				activeAdmissionCaptured = previousCaptured;
+				activeOperatorText = previousOperatorText;
+			}
+			if (latestAdmission !== before) await latestAdmission;
+			if (latestLocalOperation !== localBefore) await latestLocalOperation;
+		},
+	};
+}

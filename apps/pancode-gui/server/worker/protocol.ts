@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { Static } from "typebox";
+import type { Problem } from "../../contracts/common.js";
+import type { EvidenceRequest } from "../../contracts/evidence.js";
+import type { FleetRequest } from "../../contracts/fleet.js";
+import type { HubPlanRequest } from "../../contracts/hub.js";
+import type { Machine, MachineMutation } from "../../contracts/machines.js";
+import type {
+	ProblemReportBundleRequest,
+	ProblemReportChoices,
+	ProblemReportEdits,
+	ProblemReportPlanRequest,
+} from "../../contracts/problem-reports.js";
+import type { SettingWrite } from "../../contracts/settings-controls.js";
+import type { TelemetryRequest } from "../../contracts/telemetry.js";
+import type { Tool } from "../../contracts/toolchain.js";
+import type { TraceRequest } from "../../contracts/traces.js";
+
+export type WorkerKind = "reads" | "ops";
+export type WorkerSettings = {
+	fixture?: boolean;
+	fixtureGraphDelayMs?: number;
+	readDelayMs?: number;
+	readDeadlineMs?: number;
+	readLanes?: number;
+	installDelayMs?: number;
+	failInstall?: boolean;
+	crashRead?: boolean;
+};
+export type RawTool = Tool;
+/** A registered node's SSH destination, as the attach supervisor needs it; unset fields are null. */
+export type MachineEndpoint = {
+	id: string;
+	host: string;
+	user: string | null;
+	port: number | null;
+	identityFile: string | null;
+	connectTimeoutSec: number | null;
+	pancodeEntry: string | null;
+};
+export type RuntimeInfo = { entry: string; packageRoot: string; execArgv: string[]; threadId: number };
+export interface Methods {
+	"machines.list": { params: { cwd: string }; result: Machine[] };
+	"machines.endpoints": { params: { cwd: string }; result: MachineEndpoint[] };
+	"machines.mutate": { params: { cwd: string; mutation: MachineMutation }; result: { id: string; message: string } };
+	"setup.status": { params: { cwd?: string }; result: unknown };
+	"runtime.info": { params: Record<string, never>; result: RuntimeInfo };
+	"system.read": { params: Record<string, never>; result: unknown };
+	"interop.read": { params: { cwd: string; probe: boolean }; result: unknown };
+	"interop.decide": { params: { cwd: string; kind: string; decision: "accept" | "decline" }; result: unknown };
+	"hub.read": { params: { cwd: string; kind: "inventory" | "extensions" }; result: unknown };
+	"evidence.read": { params: EvidenceRequest; result: unknown };
+	"fleet.read": { params: FleetRequest; result: unknown };
+	"sessions.transcript": { params: { cwd: string; id: string }; result: unknown };
+	"settings.read": { params: { cwd?: string }; result: unknown };
+	"settings.controls": { params: { cwd?: string }; result: unknown };
+	"settings.write": { params: { cwd?: string; write: SettingWrite }; result: unknown };
+	"config.graph": { params: { cwd: string }; result: unknown };
+	"sessions.workspaces": { params: Record<string, never>; result: unknown };
+	"sessions.list": { params: { cwd: string }; result: unknown };
+	"workspace.files": { params: { cwd: string; input: string }; result: unknown };
+	"sessions.recover": {
+		params: { cwd: string; sessionId: string; pid: number; birth: string | null };
+		result: boolean;
+	};
+	"traces.read": { params: TraceRequest; result: unknown };
+	"telemetry.read": { params: TelemetryRequest; result: unknown };
+	"tools.list": { params: Record<string, never>; result: { rows: RawTool[]; threadId: number } };
+	"tools.install": { params: { id: string; force: boolean }; result: { id: string; message: string } };
+	"hub.plan": { params: { cwd: string; request: Static<typeof HubPlanRequest> }; result: unknown };
+	"hub.apply": { params: { cwd: string; planId: string }; result: unknown };
+	"hub.release": { params: { cwd: string; planId: string }; result: unknown };
+	"tools.remove": { params: { id: string }; result: { id: string; message: string } };
+	"reports.plan": { params: { cwd: string; input: ProblemReportPlanRequest }; result: unknown };
+	"reports.update": { params: { cwd: string; draftId: string; edits: ProblemReportEdits }; result: unknown };
+	"reports.send": { params: { cwd: string; draftId: string; choices: ProblemReportChoices }; result: unknown };
+	"reports.status": { params: { cwd: string }; result: unknown };
+	"reports.bundle": {
+		params: { cwd: string; draftId: string; request: ProblemReportBundleRequest };
+		result: unknown;
+	};
+	"reports.offer": { params: { cwd: string; sessionId: string }; result: unknown };
+}
+export type Method = keyof Methods;
+export type Call = {
+	[M in Method]: { id: string; method: M; params: Methods[M]["params"]; deadlineMs: number };
+}[Method];
+export type Reply =
+	| { id: string; ok: true; result: Methods[Method]["result"] }
+	| { id: string; ok: false; problem: Problem }
+	| { id: string; progress: string };
+/** Posted once a domain entry has evaluated and listens for calls; a lane is booting until then. */
+export type Ready = { ready: true };

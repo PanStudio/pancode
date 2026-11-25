@@ -1,0 +1,17 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"rootDir": ".",
+		"noEmit": true,
+		"declaration": false
+	},
+	"include": [
+		"src/**/*",
+		"tests/**/*",
+		"packages/*/src/**/*",
+		"packages/*/tests/**/*",
+		"scripts/**/*.ts",
+		"tsup.config.ts"
+	],
+	"exclude": ["node_modules", "dist", "tests/fixtures/typecheck-corpus"]
+}

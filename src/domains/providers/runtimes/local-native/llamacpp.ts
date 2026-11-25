@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { PANCODE_MIN_CONTEXT_WINDOW, PANCODE_MIN_MAX_OUTPUT_TOKENS } from "../../../../core/context-floor.js";
+import type { Api, Model } from "../../../../engine/types.js";
+import { probeHttp } from "../../probe/http.js";
+import type { CapabilityFlags } from "../../types/capability-flags.js";
+import type { KnowledgeBaseHit } from "../../types/knowledge-base.js";
+import type { ProbeContext, ProbeResult, RuntimeDescriptor } from "../../types/runtime-descriptor.js";
+import type { TargetDescriptor } from "../../types/target-descriptor.js";
+import { synthLocalModel, targetRootUrl, withV1 } from "../common/local-synth.js";
+import {
+	detectModelMismatch,
+	probeLlamaCppModelStatus,
+	probeLlamaCppProps,
+	probeOpenAIModelCatalog,
+	probeOpenAIModels,
+} from "../common/probe-helpers.js";
+
+/**
+ * Default capabilities for the unified llamacpp runtime. The descriptor
+ * targets llama-server's `/v1/chat/completions` surface, which every modern
+ * llama-server build exposes when `--jinja` is set. Specialized surfaces
+ * (anthropic-messages, embeddings, rerank, raw completion + infill) live
+ * behind hidden surface-specific descriptors that ship alongside this one;
+ * users select them explicitly via `pancode configure --list --all`.
+ */
+const defaultCapabilities: CapabilityFlags = {
+	chat: true,
+	tools: true,
+	toolCallFormat: "openai",
+	structuredOutputs: "json-schema",
+	reasoning: false,
+	vision: false,
+	audio: false,
+	embeddings: false,
+	rerank: false,
+	fim: false,
+	contextWindow: PANCODE_MIN_CONTEXT_WINDOW,
+	maxTokens: PANCODE_MIN_MAX_OUTPUT_TOKENS,
+};
+
+function targetUrl(target: TargetDescriptor): string | null {
+	return targetRootUrl(target);
+}
+
+const llamacppRuntime: RuntimeDescriptor = {
+	id: "llamacpp",
+	displayName: "llama.cpp",
+	kind: "http",
+	tier: "local-native",
+	apiFamily: "openai-completions",
+	auth: "api-key",
+	defaultCapabilities,
+	async probe(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult> {
+		const base = targetUrl(target);
+		if (!base) return { ok: false, error: "target has no url" };
+		const healthOpts = { url: `${base}/health`, timeoutMs: ctx.httpTimeoutMs } as const;
+		const health = await (ctx.signal ? probeHttp({ ...healthOpts, signal: ctx.signal }) : probeHttp(healthOpts));
+		if (!health.ok) return health;
+		const status = await probeLlamaCppModelStatus(base, target, ctx);
+		// A router answers /props?model=<id> by loading that model, and with
+		// --models-max 1 that evicts whatever is resident: every probe of a
+		// fleet target's default model unloaded the chat model, so the next turn
+		// prefilled from zero (11,601 tokens, cache_n 0, on the round-3 resume
+		// run on mini). The router's model list already carries the worker's
+		// flags (--parallel, --ctx-size) for an unloaded model, so the worker is
+		// asked only when it is resident.
+		const resident = status.loadState === undefined || status.loadState === "loaded";
+		const props = await probeLlamaCppProps(base, ctx, resident ? (status.modelId ?? target.defaultModel) : undefined);
+		const catalog = await probeOpenAIModelCatalog(base, ctx);
+		const result: ProbeResult = { ok: true };
+		if (catalog.models.length > 0) result.models = catalog.models;
+		if (Object.keys(catalog.modelCapabilities).length > 0) result.modelCapabilities = catalog.modelCapabilities;
+		if (Object.keys(catalog.modelStates).length > 0) result.modelStates = catalog.modelStates;
+		if (typeof health.latencyMs === "number") result.latencyMs = health.latencyMs;
+		const discoveredCapabilities = {
+			...(props.discoveredCapabilities ?? {}),
+			...(status.discoveredCapabilities ?? {}),
+			...(props.discoveredCapabilities?.parallelSlots !== undefined
+				? { parallelSlots: props.discoveredCapabilities.parallelSlots }
+				: {}),
+		};
+		if (Object.keys(discoveredCapabilities).length > 0) {
+			result.discoveredCapabilities = discoveredCapabilities;
+			if (status.modelId) result.capabilityModelId = status.modelId;
+		}
+		if (props.serverVersion) result.serverVersion = props.serverVersion;
+		const note = await detectModelMismatch(base, target, ctx);
+		const notes = [...(status.notes ?? []), ...(note ? [note] : [])];
+		if (notes.length > 0) result.notes = notes;
+		if (status.cacheAdvisories && status.cacheAdvisories.length > 0) result.cacheAdvisories = status.cacheAdvisories;
+		return result;
+	},
+	async probeModels(target: TargetDescriptor, ctx: ProbeContext): Promise<string[]> {
+		const base = targetUrl(target);
+		if (!base) return [];
+		return probeOpenAIModels(base, ctx);
+	},
+	synthesizeModel(target: TargetDescriptor, wireModelId: string, kb: KnowledgeBaseHit | null): Model<Api> {
+		return synthLocalModel({
+			target,
+			wireModelId,
+			kb,
+			defaultCapabilities,
+			apiFamily: "openai-completions",
+			provider: "llamacpp",
+			baseUrlForTarget: withV1,
+		});
+	},
+};
+
+export default llamacppRuntime;

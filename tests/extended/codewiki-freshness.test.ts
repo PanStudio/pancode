@@ -1,0 +1,534 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import { runContextClear } from "../../src/domains/context/clear.js";
+import {
+	codemapPath,
+	parseCodewikiRaw,
+	readCodewiki,
+	serializeCodewiki,
+} from "../../src/domains/context/codewiki/artifact.js";
+import { executeCodewikiBuildOutcome } from "../../src/domains/context/codewiki/build-operation.js";
+import { coordinateCodewikiWrite } from "../../src/domains/context/codewiki/coordinator.js";
+import { buildCodewiki, syncCodewiki, updateCodewikiPaths } from "../../src/domains/context/codewiki/indexer.js";
+import { createContextBundle } from "../../src/domains/context/extension.js";
+import { computeFingerprint } from "../../src/domains/context/fingerprint.js";
+import { renderPromptContext } from "../../src/domains/context/prompt-context.js";
+import { readPancodeState, statePath, writePancodeState } from "../../src/domains/context/state.js";
+import { loadCodewikiForTool } from "../../src/tools/codewiki/shared.js";
+import { ensureCodewikiOnDisk } from "../harness/codewiki-ensure.js";
+import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
+
+describe("codewiki global freshness", () => {
+	let isolated: IsolatedPancodeEnv;
+	beforeEach(async () => {
+		isolated = await isolatePancodeEnv("pancode-codewiki-freshness-");
+	});
+	afterEach(() => isolated.restore());
+
+	it("preserves verified exports and file bytes while older indexes retain unknown visibility", async () => {
+		const cwd = isolated.dir;
+		const source = [
+			"function internal() {}",
+			"function renamed() {}",
+			"function defaulted() {}",
+			"export { renamed as publicName };",
+			"export default defaulted;",
+			"export function direct() {}",
+			"export const visible = 1;",
+			"export class Visible { internal() {} }",
+			'export { internal } from "./other.js";',
+			'const unicode = "α";',
+			"",
+		].join("\n");
+		writeFileSync(join(cwd, "exports.ts"), source);
+		const wiki = await buildCodewiki({ cwd, language: "typescript" });
+		strictEqual(wiki.files[0]?.bytes, Buffer.byteLength(source));
+		for (const name of ["renamed", "defaulted", "direct", "visible", "Visible"])
+			strictEqual(wiki.symbols.find((symbol) => symbol.name === name)?.exported, true, name);
+		strictEqual(wiki.symbols.find((symbol) => symbol.name === "internal" && symbol.kind === "func")?.exported, false);
+		strictEqual(wiki.symbols.find((symbol) => symbol.kind === "method")?.exported, undefined);
+		deepStrictEqual(parseCodewikiRaw(serializeCodewiki(wiki)), wiki);
+		const old = {
+			...wiki,
+			files: wiki.files.map(({ bytes: _bytes, ...file }) => file),
+			symbols: wiki.symbols.map(({ exported: _exported, ...symbol }) => symbol),
+		};
+		const parsed = parseCodewikiRaw(JSON.stringify(old));
+		ok(parsed);
+		strictEqual(parsed.files[0]?.bytes, undefined);
+		ok(parsed.symbols.every((symbol) => symbol.exported === undefined));
+		strictEqual(parseCodewikiRaw(JSON.stringify({ ...wiki, symbols: [{ ...wiki.symbols[0], exported: "yes" }] })), null);
+		strictEqual(parseCodewikiRaw(JSON.stringify({ ...wiki, files: [{ ...wiki.files[0], bytes: -1 }] })), null);
+	});
+
+	it("read-only navigation builds and refreshes without creating workspace artifacts", async () => {
+		const cwd = isolated.dir;
+		writeFileSync(join(cwd, "a.ts"), "export const before = 1;\n");
+		const first = await loadCodewikiForTool(cwd);
+		ok(first.ok);
+		ok(first.codewiki.symbols.some((symbol) => symbol.name === "before"));
+		writeFileSync(join(cwd, "a.ts"), "export const afterChange = 2;\n");
+		const second = await loadCodewikiForTool(cwd);
+		ok(second.ok);
+		ok(second.codewiki.symbols.some((symbol) => symbol.name === "afterChange"));
+		strictEqual(existsSync(join(cwd, ".pancode")), false);
+	});
+
+	it("recognizes Go exports and unrestricted Rust pub without claiming local or restricted declarations", async () => {
+		const cwd = isolated.dir;
+		writeFileSync(
+			join(cwd, "surface.go"),
+			"package surface\nfunc Visible() {}\nfunc hidden() {}\nfunc scope() { type Local int }\n",
+		);
+		writeFileSync(join(cwd, "surface.rs"), "pub fn visible() {}\npub(crate) fn restricted() {}\nfn hidden() {}\n");
+		const wiki = await buildCodewiki({ cwd, language: "go" });
+		strictEqual(wiki.symbols.find((symbol) => symbol.name === "Visible")?.exported, true);
+		strictEqual(
+			wiki.symbols.find(
+				(symbol) => symbol.name === "hidden" && wiki.files.find((file) => file.id === symbol.fileId)?.lang === "go",
+			)?.exported,
+			false,
+		);
+		strictEqual(wiki.symbols.find((symbol) => symbol.name === "Local")?.exported, undefined);
+		strictEqual(wiki.symbols.find((symbol) => symbol.name === "visible")?.exported, true);
+		strictEqual(wiki.symbols.find((symbol) => symbol.name === "restricted")?.exported, undefined);
+	});
+
+	it("resolves Python relative depth, package initializers, and local absolute imports", async () => {
+		const cwd = isolated.dir;
+		const sources = {
+			"__init__.py": "from .root_helper import root\n",
+			"root_helper.py": "def root(): pass\n",
+			"pkg/__init__.py": "",
+			"pkg/helpers.py": "def parent(): pass\n",
+			"pkg/core/__init__.py": "from ..helpers import parent\n",
+			"pkg/core/helpers.py": "def sibling(): pass\n",
+			"pkg/core/tool.py":
+				"from ..helpers import parent\nfrom .helpers import sibling\nimport pkg.helpers\nfrom . import helpers\nimport requests\n",
+			"src/nested/__init__.py": "",
+			"src/nested/helpers.py": "def helper(): pass\n",
+			"src/nested/tool.py": "import nested.helpers\nfrom ..pkg import helpers\n",
+			"pkg/core/tool.ts": 'import value from "./helpers.js";\n',
+			"pkg/core/helpers.ts": "export default 1;\n",
+		};
+		for (const [path, content] of Object.entries(sources)) {
+			mkdirSync(join(cwd, path, ".."), { recursive: true });
+			writeFileSync(join(cwd, path), content);
+		}
+		const wiki = await buildCodewiki({ cwd, language: "python" });
+		const paths = new Map(wiki.files.map((file) => [file.id, file.path]));
+		const targets = (path: string) =>
+			wiki.edges
+				.filter((edge) => paths.get(edge.fileId) === path)
+				.map((edge) => ("toFileId" in edge ? paths.get(edge.toFileId) : `external:${edge.externalModule}`))
+				.sort();
+		deepStrictEqual(targets("pkg/core/tool.py"), [
+			"external:requests",
+			"pkg/core/__init__.py",
+			"pkg/core/helpers.py",
+			"pkg/helpers.py",
+		]);
+		deepStrictEqual(targets("__init__.py"), ["root_helper.py"]);
+		deepStrictEqual(targets("pkg/core/__init__.py"), ["pkg/helpers.py"]);
+		deepStrictEqual(targets("src/nested/tool.py"), ["external:..pkg", "src/nested/helpers.py"]);
+		deepStrictEqual(targets("pkg/core/tool.ts"), ["pkg/core/helpers.ts"]);
+		deepStrictEqual(await syncCodewiki(cwd, { ...wiki, edges: [] }), wiki);
+		strictEqual(await syncCodewiki(cwd, wiki), wiki);
+	});
+
+	for (const externalChange of ["edit", "add", "delete"] as const) {
+		it(`reconciles an external ${externalChange} alongside a notified edit and survives reload`, async () => {
+			const cwd = isolated.dir;
+			writeFileSync(join(cwd, "a.ts"), "export function agentBefore() {}\n");
+			writeFileSync(join(cwd, "b.ts"), "export function externalBefore() {}\n");
+			await ensureCodewikiOnDisk(cwd);
+			if (externalChange === "delete") unlinkSync(join(cwd, "b.ts"));
+			else {
+				writeFileSync(join(cwd, externalChange === "add" ? "c.ts" : "b.ts"), "export function externalAfterLonger() {}\n");
+			}
+			writeFileSync(join(cwd, "a.ts"), "export function agentAfterLonger() {}\n");
+			const bundle = createContextBundle({ bus: createTelemetryHub(), getContract: () => undefined });
+			bundle.contract.noteFileChanges(["a.ts"], cwd);
+			await bundle.extension.stop?.();
+			const indexed = readCodewiki(cwd);
+			ok(indexed);
+			const names = indexed.symbols.map((symbol) => symbol.name);
+			ok(names.includes("agentAfterLonger"));
+			strictEqual(names.includes("externalBefore"), externalChange === "add");
+			strictEqual(names.includes("externalAfterLonger"), externalChange !== "delete");
+			deepStrictEqual(indexed, await buildCodewiki({ cwd, language: indexed.language }));
+			deepStrictEqual(readPancodeState(cwd)?.fingerprint, computeFingerprint(cwd, indexed));
+			const artifactBeforeReload = readFileSync(codemapPath(cwd), "utf8");
+			const modifiedBeforeReload = statSync(codemapPath(cwd), { bigint: true }).mtimeNs;
+			const reloaded = await ensureCodewikiOnDisk(cwd);
+			deepStrictEqual(reloaded.codewiki, indexed);
+			strictEqual(readFileSync(codemapPath(cwd), "utf8"), artifactBeforeReload);
+			strictEqual(statSync(codemapPath(cwd), { bigint: true }).mtimeNs, modifiedBeforeReload);
+		});
+	}
+
+	for (const missingState of [false, true]) {
+		it(`repairs external drift after an unchanged notification with ${missingState ? "missing" : "existing"} state`, async () => {
+			const cwd = isolated.dir;
+			writeFileSync(join(cwd, "a.ts"), "export const unchanged = true;\n");
+			writeFileSync(join(cwd, "b.ts"), "export function externalBefore() {}\n");
+			await ensureCodewikiOnDisk(cwd);
+			const previous = readPancodeState(cwd)?.fingerprint;
+			if (missingState) unlinkSync(join(cwd, ".pancode", "state.json"));
+			writeFileSync(join(cwd, "b.ts"), "export function externalAfterLonger() {}\n");
+			const bundle = createContextBundle({ bus: createTelemetryHub(), getContract: () => undefined });
+			bundle.contract.noteFileChanges(["a.ts"], cwd);
+			await bundle.extension.stop?.();
+			if (!missingState) deepStrictEqual(readPancodeState(cwd)?.fingerprint, previous);
+			const reloaded = await ensureCodewikiOnDisk(cwd);
+			ok(reloaded.codewiki.symbols.some((symbol) => symbol.name === "externalAfterLonger"));
+			strictEqual(
+				reloaded.codewiki.symbols.some((symbol) => symbol.name === "externalBefore"),
+				false,
+			);
+			deepStrictEqual(readPancodeState(cwd)?.fingerprint, computeFingerprint(cwd, reloaded.codewiki));
+		});
+	}
+
+	it("does not rewrite the artifact or freshness state for unchanged and irrelevant notifications", async () => {
+		const cwd = isolated.dir;
+		writeFileSync(join(cwd, "a.ts"), "export const unchanged = true;\n");
+		await ensureCodewikiOnDisk(cwd);
+		const artifactBefore = statSync(codemapPath(cwd), { bigint: true });
+		const stateBefore = readFileSync(join(cwd, ".pancode", "state.json"), "utf8");
+		const bundle = createContextBundle({ bus: createTelemetryHub(), getContract: () => undefined });
+		bundle.contract.noteFileChanges(["a.ts", "README.md"], cwd);
+		await bundle.extension.stop?.();
+		strictEqual(statSync(codemapPath(cwd), { bigint: true }).mtimeNs, artifactBefore.mtimeNs);
+		strictEqual(readFileSync(join(cwd, ".pancode", "state.json"), "utf8"), stateBefore);
+	});
+
+	it("keeps unchanged symbols when reconciling notified and external changes", async () => {
+		const cwd = isolated.dir;
+		for (const name of ["a", "b", "c"]) writeFileSync(join(cwd, `${name}.ts`), `export const ${name} = true;\n`);
+		const initial = await buildCodewiki({ cwd, language: "typescript" });
+		const unchanged = initial.symbols.find((symbol) => symbol.name === "c");
+		ok(unchanged);
+		writeFileSync(join(cwd, "a.ts"), "export const agentChanged = true;\n");
+		writeFileSync(join(cwd, "b.ts"), "export const externalChanged = true;\n");
+		const partial = await updateCodewikiPaths(cwd, initial, ["a.ts", "c.ts"]);
+		const reconciled = await syncCodewiki(cwd, partial);
+		strictEqual(
+			reconciled.symbols.find((symbol) => symbol.name === "c"),
+			unchanged,
+		);
+		strictEqual(
+			reconciled.symbols.find((symbol) => symbol.name === "agentChanged"),
+			partial.symbols.find((symbol) => symbol.name === "agentChanged"),
+		);
+		strictEqual(await syncCodewiki(cwd, reconciled), reconciled);
+	});
+
+	it("uses no global indexing work for an irrelevant note and only reads the notified unchanged source", async () => {
+		const cwd = isolated.dir;
+		writeFileSync(join(cwd, "a.ts"), "export const unchanged = true;\n");
+		const current = await buildCodewiki({ cwd, language: "typescript" });
+		const previous = computeFingerprint(cwd, current);
+		for (const paths of [["README.md"], ["a.ts"]]) {
+			const reads: string[] = [];
+			const result = await executeCodewikiBuildOutcome(
+				{ kind: "incremental", cwd, current, paths, previous },
+				{
+					readFile: (path) => {
+						reads.push(path);
+						return readFileSync(path, "utf8");
+					},
+					slicer: {
+						yields: 0,
+						tick: async () => {
+							throw new Error("unexpected indexing work");
+						},
+					},
+				},
+			);
+			strictEqual(result.codewiki, current);
+			strictEqual(result.fingerprint, previous);
+			strictEqual(result.changed, false);
+			deepStrictEqual(reads, paths[0] === "a.ts" ? [join(cwd, "a.ts")] : []);
+		}
+		const ensured = await executeCodewikiBuildOutcome(
+			{ kind: "ensure", cwd, current, previous },
+			{
+				readFile: () => {
+					throw new Error("unchanged ensure read source");
+				},
+			},
+		);
+		strictEqual(ensured.codewiki, current);
+		strictEqual(ensured.changed, false);
+	});
+
+	it("reconciles an artifact handed by reference without parsing or returning it", async () => {
+		// The coordinator names the committed artifact instead of cloning it into
+		// the worker. Unchanged, the worker answers with the fingerprint alone and
+		// the same `loc` the artifact's own build stamped; stale, it reads the
+		// file itself and returns the reconciled index.
+		const cwd = isolated.dir;
+		const path = join(cwd, "a.ts");
+		writeFileSync(path, "export const one = 1;\n");
+		const committed = await coordinateCodewikiWrite(cwd, () => ({ kind: "build", cwd, language: "typescript" }));
+		ok(committed);
+		const previous = committed.worker.fingerprint;
+		const ref = { source: "artifact", needsBackfill: false, loc: previous.loc } as const;
+		const unchanged = await executeCodewikiBuildOutcome(
+			{ kind: "ensure", cwd, current: ref, previous },
+			{
+				readFile: () => {
+					throw new Error("unchanged ensure read source");
+				},
+			},
+		);
+		strictEqual(unchanged.codewiki, null);
+		strictEqual(unchanged.changed, false);
+		deepStrictEqual(unchanged.fingerprint, previous);
+		// The coordinator substitutes the object it already holds.
+		const ensured = await coordinateCodewikiWrite(cwd, (current) => ({ kind: "ensure", cwd, current, previous }));
+		ok(ensured);
+		strictEqual(ensured.worker.changed, false);
+		strictEqual(ensured.wrote, false);
+		deepStrictEqual(ensured.worker.fingerprint, previous);
+		strictEqual(ensured.codewiki.files.length, 1);
+
+		writeFileSync(path, "export const one = 1;\nexport const two = 2;\n");
+		const stale = await executeCodewikiBuildOutcome({ kind: "ensure", cwd, current: ref, previous });
+		ok(stale.codewiki);
+		strictEqual(stale.changed, true);
+		strictEqual(
+			stale.codewiki.symbols.some((symbol) => symbol.name === "two"),
+			true,
+		);
+		const incremental = await executeCodewikiBuildOutcome({
+			kind: "incremental",
+			cwd,
+			current: ref,
+			paths: ["a.ts"],
+			previous,
+		});
+		ok(incremental.codewiki);
+		strictEqual(
+			incremental.codewiki.symbols.some((symbol) => symbol.name === "two"),
+			true,
+		);
+	});
+
+	it("renders the prompt markers from state and the artifact's presence, not its contents", async () => {
+		const cwd = isolated.dir;
+		writeFileSync(join(cwd, "a.ts"), "export const one = 1;\n");
+		const committed = await coordinateCodewikiWrite(cwd, () => ({ kind: "build", cwd, language: "typescript" }));
+		ok(committed);
+		const fingerprint = committed.worker.fingerprint;
+		writePancodeState(cwd, { version: 1, projectType: "rust", fingerprint, codewikiVersion: committed.codewiki.version });
+		// The artifact file is unparseable, yet its presence plus a fingerprint
+		// that matches the tree is what the marker reports; nothing here parses
+		// the JSON, which on a large repository is the cost this path shed.
+		writeFileSync(codemapPath(cwd), "{ not json");
+		const fresh = renderPromptContext(cwd);
+		strictEqual(fresh.supportFragments.includes("<project-type>rust</project-type>"), true);
+		strictEqual(
+			fresh.supportFragments.includes(
+				"<codemap>available snapshot; freshness checked on retrieval; use code_nav</codemap>",
+			),
+			true,
+		);
+		deepStrictEqual(fresh.warnings, []);
+		writePancodeState(cwd, {
+			version: 1,
+			projectType: "rust",
+			fingerprint: { ...fingerprint, treeHash: "0".repeat(64) },
+		});
+		const stale = renderPromptContext(cwd);
+		strictEqual(
+			stale.supportFragments.includes(
+				"<codemap>available snapshot; freshness checked on retrieval; use code_nav</codemap>",
+			),
+			true,
+		);
+		// What makes "available" truthful for an unparseable file: an ensure
+		// reads null for it and rebuilds from source under the lease, and the
+		// rebuilt artifact is what later calls read.
+		strictEqual(readCodewiki(cwd), null);
+		const repaired = await ensureCodewikiOnDisk(cwd);
+		strictEqual(
+			repaired.codewiki.files.some((file) => file.path === "a.ts"),
+			true,
+		);
+		strictEqual(readCodewiki(cwd)?.files.length, 1);
+		deepStrictEqual(readPancodeState(cwd)?.fingerprint, fingerprint);
+	});
+
+	it("rebuilds when a referenced artifact vanished and refuses an incremental over it", async () => {
+		const cwd = isolated.dir;
+		writeFileSync(join(cwd, "a.ts"), "export const one = 1;\n");
+		const committed = await coordinateCodewikiWrite(cwd, () => ({ kind: "build", cwd, language: "typescript" }));
+		ok(committed);
+		const previous = committed.worker.fingerprint;
+		const ref = { source: "artifact", needsBackfill: false, loc: previous.loc } as const;
+		for (const damage of ["delete", "corrupt"] as const) {
+			if (damage === "delete") unlinkSync(codemapPath(cwd));
+			else writeFileSync(codemapPath(cwd), "{ not json");
+			// Same tree, so the unchanged fast path answers first and never needs
+			// the artifact: it is exactly as fresh as the fingerprint says.
+			const unchanged = await executeCodewikiBuildOutcome({ kind: "ensure", cwd, current: ref, previous });
+			strictEqual(unchanged.codewiki, null);
+			strictEqual(unchanged.changed, false);
+			// A drifted fingerprint needs the contents, and a reference the disk no
+			// longer honors becomes a full rebuild from source rather than an error.
+			const drifted = { ...previous, treeHash: "0".repeat(64) };
+			const rebuilt = await executeCodewikiBuildOutcome({ kind: "ensure", cwd, current: ref, previous: drifted });
+			ok(rebuilt.codewiki);
+			strictEqual(rebuilt.changed, true);
+			strictEqual(
+				rebuilt.codewiki.symbols.some((symbol) => symbol.name === "one"),
+				true,
+			);
+			deepStrictEqual(rebuilt.fingerprint, previous);
+			await rejects(
+				executeCodewikiBuildOutcome({ kind: "incremental", cwd, current: ref, paths: ["a.ts"], previous }),
+				/unreadable; rebuild it/,
+			);
+		}
+	});
+
+	it("fences reset behind in-flight writers and lets nothing resurrect the artifact afterwards", async () => {
+		const cwd = isolated.dir;
+		writeFileSync(join(cwd, "a.ts"), "export const one = 1;\n");
+		const bundle = createContextBundle({ bus: createTelemetryHub(), getContract: () => undefined });
+		// A build admitted before the reset commits first, under the same lease
+		// and queue; the reset then removes what it wrote, and an incremental
+		// queued after the reset is a no-op because there is no artifact to update.
+		const building = coordinateCodewikiWrite(cwd, () => ({ kind: "build", cwd, language: "typescript" }));
+		const cleared = runContextClear({ cwd, confirmContext: () => true });
+		bundle.contract.noteFileChanges(["a.ts"], cwd);
+		const [built, reset] = await Promise.all([building, cleared]);
+		ok(built);
+		strictEqual(built.wrote, true);
+		strictEqual(reset.action, "cleared");
+		deepStrictEqual(reset.removed, [".pancode/codemap.json"]);
+		await bundle.extension.stop?.();
+		strictEqual(existsSync(codemapPath(cwd)), false);
+		strictEqual(existsSync(statePath(cwd)), false);
+		// Session start on a never-indexed directory stays that way too.
+		const bus = createTelemetryHub();
+		const started = createContextBundle({ bus, getContract: () => undefined });
+		await started.extension.start?.();
+		bus.emit("session.started", {} as never);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		await started.extension.stop?.();
+		strictEqual(existsSync(codemapPath(cwd)), false);
+		strictEqual(existsSync(statePath(cwd)), false);
+	});
+
+	for (const kind of ["build", "ensure", "incremental"] as const) {
+		it(`retries a source edit after its ${kind} input was read`, async () => {
+			const cwd = isolated.dir;
+			const path = join(cwd, "a.ts");
+			writeFileSync(path, "export function before() {}\n");
+			const current = await buildCodewiki({ cwd, language: "typescript" });
+			let reads = 0;
+			const result = await executeCodewikiBuildOutcome(
+				kind === "build"
+					? { kind, cwd, language: "typescript" }
+					: kind === "ensure"
+						? { kind, cwd, current, previous: null }
+						: { kind, cwd, current, paths: [], previous: null },
+				{
+					readFile: (source) => {
+						const text = readFileSync(source, "utf8");
+						reads += 1;
+						if (reads === 1) writeFileSync(path, "export function afterLonger() {}\n");
+						return text;
+					},
+				},
+			);
+			strictEqual(reads, 2);
+			ok(result.codewiki);
+			ok(result.codewiki.symbols.some((symbol) => symbol.name === "afterLonger"));
+			deepStrictEqual(result.fingerprint, computeFingerprint(cwd, result.codewiki));
+		});
+	}
+
+	for (const mutation of ["add", "delete"] as const) {
+		it(`reconciles a file ${mutation} during a full build`, async () => {
+			const cwd = isolated.dir;
+			writeFileSync(join(cwd, "a.ts"), "export const a = true;\n");
+			if (mutation === "delete") writeFileSync(join(cwd, "b.ts"), "export const b = true;\n");
+			let changed = false;
+			const result = await executeCodewikiBuildOutcome(
+				{ kind: "build", cwd, language: "typescript" },
+				{
+					readFile: (source) => {
+						const text = readFileSync(source, "utf8");
+						if (!changed) {
+							changed = true;
+							if (mutation === "delete") unlinkSync(join(cwd, "b.ts"));
+							else writeFileSync(join(cwd, "b.ts"), "export const b = true;\n");
+						}
+						return text;
+					},
+				},
+			);
+			deepStrictEqual(result.codewiki, await buildCodewiki({ cwd, language: "typescript" }));
+			deepStrictEqual(result.fingerprint, computeFingerprint(cwd, result.codewiki));
+		});
+	}
+
+	it("refuses continuously changing or unreadable sources without writing the committed artifact", async () => {
+		const cwd = isolated.dir;
+		const path = join(cwd, "a.ts");
+		writeFileSync(path, "export const before = true;\n");
+		await ensureCodewikiOnDisk(cwd);
+		const committed = readFileSync(codemapPath(cwd), "utf8");
+		const state = readFileSync(join(cwd, ".pancode", "state.json"), "utf8");
+		let reads = 0;
+		await rejects(
+			executeCodewikiBuildOutcome(
+				{ kind: "build", cwd, language: "typescript" },
+				{
+					readFile: (source) => {
+						const text = readFileSync(source, "utf8");
+						reads += 1;
+						writeFileSync(path, `${text}// changed\n`);
+						return text;
+					},
+				},
+			),
+			/did not stabilize after 3 attempts/,
+		);
+		strictEqual(reads, 3);
+		await rejects(
+			executeCodewikiBuildOutcome({ kind: "build", cwd, language: "typescript" }, { readFile: () => null }),
+			/did not stabilize/,
+		);
+		strictEqual(readFileSync(codemapPath(cwd), "utf8"), committed);
+		strictEqual(readFileSync(join(cwd, ".pancode", "state.json"), "utf8"), state);
+	});
+
+	it("keeps a post-worker edit detectable after coordinator publication", async () => {
+		const cwd = isolated.dir;
+		writeFileSync(join(cwd, "a.ts"), "export function before() {}\n");
+		const built = await coordinateCodewikiWrite(cwd, () => ({ kind: "build", cwd, language: "typescript" }), {
+			beforeCommit: () => {
+				writeFileSync(join(cwd, "a.ts"), "export function afterLonger() {}\n");
+			},
+		});
+		ok(built);
+		strictEqual(built.worker.fingerprint.treeHash === computeFingerprint(cwd, built.codewiki).treeHash, false);
+		const ensured = await coordinateCodewikiWrite(cwd, (current) => ({
+			kind: "ensure",
+			cwd,
+			current,
+			previous: built.worker.fingerprint,
+		}));
+		ok(ensured?.codewiki.symbols.some((symbol) => symbol.name === "afterLonger"));
+	});
+});

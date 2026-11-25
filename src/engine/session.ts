@@ -1,0 +1,1176 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { writeDiagnostic } from "../core/diagnostics.js";
+import { readPiMonoVersion } from "./pi-mono-names.js";
+/**
+ * PanCode session JSONL writer + reader.
+ *
+ * On-disk layout under `pancodeStateDir()`:
+ *   sessions/<cwdHash>/<sessionId>/
+ *     meta.json      PancodeSessionMeta
+ *     current.jsonl  append-only structured session entries
+ *     tree.json      [{id, parentId, at, kind}, ...]
+ *
+ * Atomicity:
+ *   - Appends go to an O_APPEND fd held for the writer's lifetime; each line
+ *     uses complete byte writes. fsync is debounced after appends and forced on
+ *     checkpoint (`persistTree`) and `close`. A torn last line from a crash
+ *     is tolerated by the reader (skipped with a warning).
+ *   - `replaceEntries` rewrites current.jsonl via `writeJsonlFileAtomic`
+ *     (`.tmp` + fsync + rename) and reopens the append fd afterwards.
+ *   - tree.json and meta.json are written via `atomicWrite` (tmp + fsync + rename).
+ *
+ * This module sits in `src/engine/` because it is the engine's artifact
+ * contract with the session domain, but it imports no pi-mono packages.
+ * It is pure node: fs, path, crypto.
+ */
+
+import { randomBytes } from "node:crypto";
+import type { BigIntStats } from "node:fs";
+import {
+	closeSync,
+	existsSync,
+	constants as fsConstants,
+	fstatSync,
+	fsyncSync,
+	ftruncateSync,
+	mkdirSync,
+	openSync,
+	readdirSync,
+	readFileSync,
+	readSync,
+	renameSync,
+	statSync,
+	unlinkSync,
+	writeSync,
+} from "node:fs";
+import { hostname } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { StringDecoder } from "node:string_decoder";
+import { type BuildStamp, readBuildStamp } from "../core/build-info.js";
+import { cwdHash } from "../core/cwd-hash.js";
+import { readPancodeVersion } from "../core/package-root.js";
+import { processBirthToken } from "../core/process-identity.js";
+import { assertSafeId } from "../core/safe-id.js";
+import { fsyncDirectory, safeResourceWrite } from "../core/safe-resource-write.js";
+import { pancodeStateDir, stateRootRemoved } from "../core/xdg.js";
+
+export interface PancodeSessionMeta {
+	id: string;
+	cwd: string;
+	cwdHash: string;
+	createdAt: string;
+	endedAt: string | null;
+	model: string | null;
+	target: string | null;
+	pancodeVersion: string;
+	/**
+	 * The build that created the session: commit, dirty flag, build id and build time, each when the bundle recorded it.
+	 * Two builds of one `-dev` version share `pancodeVersion`; this tells them apart. Source runs omit it (C-31).
+	 */
+	build?: BuildStamp;
+	piMonoVersion: string;
+	platform: string;
+	nodeVersion: string;
+	/** `CURRENT_SESSION_FORMAT_VERSION` of the build that wrote the session. Resume refuses any other version. */
+	sessionFormatVersion: number;
+	/**
+	 * The process that last opened this ledger for writing, stamped on create and
+	 * on every resume. With `endedAt === null` it tells a session still live in
+	 * another terminal from one whose process crashed (#420). Metadata without
+	 * an owner reads as not live.
+	 */
+	owner?: PancodeSessionOwner;
+}
+
+export interface PancodeSessionOwner {
+	pid: number;
+	host: string;
+	/** `processBirthToken` of the owner, so a reused pid does not read as the owner. */
+	birth: string | null;
+}
+
+function currentOwner(): PancodeSessionOwner {
+	return { pid: process.pid, host: hostname(), birth: processBirthToken() };
+}
+
+/**
+ * The one ledger format this build writes and reads. A ledger records the
+ * working-set kinds (`contextEviction`, `contextRecall`), the durable
+ * continuity kinds (`handoffTransaction`, `continuityCommit`) and the
+ * `pancode.host-insert` and `pancode.step-chain` custom records that carry
+ * what the host put into the model's history itself. A build reading another
+ * build's format would replay the session as if the state those records hold
+ * had never happened, so resume refuses any version but this one.
+ */
+export const CURRENT_SESSION_FORMAT_VERSION = 7;
+
+export interface PancodeSessionJsonlHeader {
+	type: "session";
+	version: number;
+	id: string;
+	timestamp: string;
+	cwd: string;
+	parentSession?: string;
+	parentTurnId?: string;
+}
+
+export interface PancodeTurnRecord {
+	id: string;
+	parentId: string | null;
+	at: string;
+	kind: "user" | "assistant" | "tool_call" | "tool_result" | "system" | "checkpoint";
+	payload: unknown;
+}
+
+export interface SessionTreeNode {
+	id: string;
+	parentId: string | null;
+	at: string;
+	kind: PancodeTurnRecord["kind"];
+}
+
+export interface PancodeSessionFile {
+	current: string;
+	tree: string;
+	meta: string;
+}
+
+export interface SessionAppendObservation {
+	before: BigIntStats;
+	after: BigIntStats;
+}
+
+export interface PancodeSessionWriter {
+	/** Write an ordinary turn as a structured message entry and add its tree node. */
+	append(turn: PancodeTurnRecord): void;
+	/**
+	 * Write a pre-composed structured session entry as a JSON line. Callers
+	 * supply `treeNode` when the entry must project into the turn tree.
+	 */
+	appendEntry(
+		entry: unknown,
+		opts?: { treeNode?: SessionTreeNode; onAppend?: (observation: SessionAppendObservation) => void },
+	): void;
+	/** Atomically replace current.jsonl entries while preserving the session header. */
+	replaceEntries(entries: ReadonlyArray<unknown>): void;
+	persistTree(): Promise<void>;
+	/** Synchronously fsync append-only transcript bytes without rewriting tree/meta. */
+	flushAppends(): void;
+	close(): Promise<void>;
+	/**
+	 * Stop writing this ledger for good. A forced release on another host
+	 * (#439) handed the session to whoever resumes it next, so every later
+	 * append, checkpoint and the closing endedAt rewrite becomes a no-op
+	 * instead of clobbering a ledger this process no longer owns.
+	 */
+	fence(): void;
+	readonly fenced: boolean;
+	/**
+	 * Fence as soon as `probe` answers true, checked before every append,
+	 * rewrite, checkpoint and close, so a write queued behind a stopped or
+	 * partitioned process cannot land between two heartbeat ticks.
+	 */
+	fenceWhen(probe: () => boolean): void;
+}
+
+export interface PancodeSessionReader {
+	meta(): PancodeSessionMeta;
+	turns(): ReadonlyArray<unknown>;
+	fileEntries(): ReadonlyArray<unknown>;
+	header(): PancodeSessionJsonlHeader | null;
+	tree(): ReadonlyArray<SessionTreeNode>;
+}
+
+export { cwdHash };
+
+const sessionDeletedListeners = new Set<(id: string) => void>();
+
+/** Engine state kept for a PanCode session past its process (a resumable Copilot conversation) leaves when it is deleted. */
+export function onSessionDeleted(listener: (id: string) => void): void {
+	sessionDeletedListeners.add(listener);
+}
+
+export function noteSessionDeleted(id: string): void {
+	for (const listener of sessionDeletedListeners) {
+		try {
+			listener(id);
+		} catch {
+			// What a listener keeps is cache with its own bound; a failure never blocks the delete.
+		}
+	}
+}
+
+export const SESSION_FILE_MODE = 0o600;
+
+export function sessionPaths(meta: PancodeSessionMeta): PancodeSessionFile {
+	const dir = join(pancodeStateDir(), "sessions", meta.cwdHash, meta.id);
+	// Transcripts hold every prompt and tool result: owner-only, like credentials.
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	return {
+		current: join(dir, "current.jsonl"),
+		tree: join(dir, "tree.json"),
+		meta: join(dir, "meta.json"),
+	};
+}
+
+// meta.json and tree.json rewrites delegate to the canonical writer. Neither
+// file is recovered from a leftover temp, so the randomized hidden temp name is
+// safe here (unlike current.jsonl, which promotes a deterministic `.tmp`).
+export function atomicWrite(targetPath: string, contents: string | Uint8Array, mode?: number): void {
+	safeResourceWrite(targetPath, contents, mode === undefined ? {} : { mode });
+}
+
+export interface SessionJsonlWarning {
+	path: string;
+	line: number;
+	message: string;
+}
+
+export type SessionJsonlWarningSink = (warning: SessionJsonlWarning) => void;
+
+export interface SessionJsonlReadOptions {
+	onWarning?: SessionJsonlWarningSink;
+}
+
+export interface SessionJsonlWriteOptions {
+	beforeRename?: (tmpPath: string, targetPath: string) => void;
+}
+
+/**
+ * One damaged line, one message. A single ledger is read several times per
+ * command by callers that do not know about each other (resume, the turn tree,
+ * history), and each read re-reported every unparseable line, so one torn tail
+ * printed the identical skip line three times and read as three problems. The
+ * key is the exact warning, so a second defect in the same file is still said.
+ */
+const reportedSessionJsonlWarnings = new Set<string>();
+// A long-lived process sweeping a large store must not grow this without
+// bound. Forgetting everything at the cap at worst repeats a warning once.
+const REPORTED_SESSION_JSONL_WARNING_LIMIT = 1000;
+
+function defaultSessionJsonlWarning(warning: SessionJsonlWarning): void {
+	const key = `${warning.path}:${warning.line}:${warning.message}`;
+	if (reportedSessionJsonlWarnings.has(key)) return;
+	if (reportedSessionJsonlWarnings.size >= REPORTED_SESSION_JSONL_WARNING_LIMIT) reportedSessionJsonlWarnings.clear();
+	reportedSessionJsonlWarnings.add(key);
+	writeDiagnostic(`[pancode:session] ${warning.path}:${warning.line}: ${warning.message}\n`);
+}
+
+function serializeJsonl(entries: ReadonlyArray<unknown>): string {
+	if (entries.length === 0) return "";
+	const lines = entries.map((entry, index) => {
+		const serialized = JSON.stringify(entry);
+		if (serialized === undefined) {
+			throw new Error(`session JSONL entry ${index + 1} is not serializable`);
+		}
+		return serialized;
+	});
+	return `${lines.join("\n")}\n`;
+}
+
+/** Complete UTF-8 bytes even when write(2) makes only partial progress. */
+function writeAll(fd: number, bytes: Buffer): void {
+	let offset = 0;
+	while (offset < bytes.length) {
+		const written = writeSync(fd, bytes, offset, bytes.length - offset);
+		if (written <= 0) throw new Error(`session JSONL write made no progress after ${offset} of ${bytes.length} bytes`);
+		offset += written;
+	}
+}
+
+/** Roll back a failed append so a retry cannot fuse onto its partial record. */
+function appendAll(fd: number, bytes: Buffer): void {
+	const size = fstatSync(fd).size;
+	try {
+		writeAll(fd, bytes);
+	} catch (error) {
+		try {
+			ftruncateSync(fd, size);
+		} catch (rollbackError) {
+			throw new AggregateError([error, rollbackError], "session JSONL append and rollback failed; reopen to recover");
+		}
+		throw error;
+	}
+}
+
+/**
+ * Rewrite a JSONL file through `<target>.tmp` and rename over the target.
+ * A crash or interruption before the rename leaves the original target
+ * untouched; when no target exists yet, recovery readers can promote the tmp.
+ */
+function writeJsonlFileAtomic(
+	targetPath: string,
+	entries: ReadonlyArray<unknown>,
+	options: SessionJsonlWriteOptions = {},
+): void {
+	const dir = dirname(targetPath);
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	const body = serializeJsonl(entries);
+	const tmp = `${targetPath}.tmp`;
+	const fd = openSync(tmp, "w", SESSION_FILE_MODE);
+	try {
+		try {
+			writeAll(fd, Buffer.from(body, "utf8"));
+			fsyncSync(fd);
+		} finally {
+			closeSync(fd);
+		}
+	} catch (error) {
+		// A missing target can recover from .tmp, so an incomplete write
+		// must not leave a candidate that recovery could promote.
+		try {
+			unlinkSync(tmp);
+		} catch (cleanupError) {
+			throw new AggregateError([error, cleanupError], "session JSONL write and temporary cleanup failed");
+		}
+		throw error;
+	}
+	options.beforeRename?.(tmp, targetPath);
+	renameSync(tmp, targetPath);
+	fsyncDirectory(dir);
+}
+
+function recoverJsonlTargetIfMissing(targetPath: string): string | null {
+	if (existsSync(targetPath)) return targetPath;
+	const tmp = `${targetPath}.tmp`;
+	try {
+		if (!statSync(tmp).isFile()) return null;
+		renameSync(tmp, targetPath);
+		fsyncDirectory(dirname(targetPath));
+		return targetPath;
+	} catch {
+		return existsSync(targetPath) ? targetPath : existsSync(tmp) ? tmp : null;
+	}
+}
+
+const SESSION_JSONL_READ_CHUNK_BYTES = 64 * 1024;
+
+function parseSessionJsonlLine(
+	line: string,
+	lineNumber: number,
+	readPath: string,
+	entries: unknown[],
+	warn: SessionJsonlWarningSink,
+): void {
+	if (line.trim().length === 0) return;
+	try {
+		entries.push(JSON.parse(line) as unknown);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		warn({ path: readPath, line: lineNumber, message: `invalid JSON skipped: ${message}` });
+	}
+}
+
+export interface SessionJsonlRange {
+	entries: unknown[];
+	completeEntries: number;
+	nextOffset: number;
+	nextLineNumber: number;
+	stat: BigIntStats | null;
+	bytes: Buffer;
+}
+
+/** Keep incomplete final records outside the committed cursor so later appends reparse them. */
+export function readSessionFileEntriesRange(
+	path: string,
+	offset = 0,
+	lineNumber = 0,
+	options: SessionJsonlReadOptions & { retainBytes?: boolean } = {},
+): SessionJsonlRange {
+	const readPath = recoverJsonlTargetIfMissing(path);
+	if (readPath === null)
+		return { entries: [], completeEntries: 0, nextOffset: 0, nextLineNumber: 0, stat: null, bytes: Buffer.alloc(0) };
+	const entries: unknown[] = [];
+	const chunks: Buffer[] = [];
+	const warn = options.onWarning ?? defaultSessionJsonlWarning;
+	const fd = openSync(readPath, "r");
+	const buffer = Buffer.allocUnsafe(SESSION_JSONL_READ_CHUNK_BYTES);
+	const decoder = new StringDecoder("utf8");
+	let pending = "";
+	let position = offset;
+	let nextOffset = offset;
+	try {
+		const stat = fstatSync(fd, { bigint: true });
+		const size = Number(stat.size);
+		while (position < size) {
+			const bytesRead = readSync(fd, buffer, 0, Math.min(buffer.length, size - position), position);
+			if (bytesRead === 0) break;
+			if (options.retainBytes !== false) chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+			pending += decoder.write(buffer.subarray(0, bytesRead));
+			for (;;) {
+				const newlineIndex = pending.indexOf("\n");
+				if (newlineIndex < 0) break;
+				const line = pending.slice(0, newlineIndex);
+				pending = pending.slice(newlineIndex + 1);
+				lineNumber += 1;
+				parseSessionJsonlLine(line, lineNumber, readPath, entries, warn);
+			}
+			const lastNewline = buffer.subarray(0, bytesRead).lastIndexOf(0x0a);
+			if (lastNewline >= 0) nextOffset = position + lastNewline + 1;
+			position += bytesRead;
+		}
+		pending += decoder.end();
+		const completeEntries = entries.length;
+		if (pending.length > 0) parseSessionJsonlLine(pending, lineNumber + 1, readPath, entries, warn);
+		return { entries, completeEntries, nextOffset, nextLineNumber: lineNumber, stat, bytes: Buffer.concat(chunks) };
+	} finally {
+		closeSync(fd);
+	}
+}
+
+export function readSessionFileEntries(path: string, options: SessionJsonlReadOptions = {}): unknown[] {
+	return readSessionFileEntriesRange(path, 0, 0, { ...options, retainBytes: false }).entries;
+}
+
+export interface SessionTailReadResult {
+	/** Parsed tail entries in file order (header included only if BOF was reached). */
+	entries: unknown[];
+	/** Non-empty JSONL lines parsed — the bounded-work signal (≈ maxEntries, not file size). */
+	linesParsed: number;
+	/** True when the read consumed the whole file from its start (small files). */
+	reachedStart: boolean;
+}
+
+/** Read exactly `length` bytes at `position`, looping over short reads. */
+function readExactAt(fd: number, buffer: Buffer, position: number, length: number): void {
+	let read = 0;
+	while (read < length) {
+		const got = readSync(fd, buffer, read, length - read, position + read);
+		if (got === 0) break; // truncated under us; parse what we have
+		read += got;
+	}
+}
+
+/**
+ * Read only the last `maxEntries` non-empty JSONL lines of a session ledger by
+ * scanning backward from EOF, instead of parsing the whole file. Cost is bounded
+ * by `maxEntries` and the trailing bytes those lines occupy, not by session
+ * length. The trailing window starts at one chunk and doubles until it holds
+ * enough complete lines or reaches the file start; the first line of a non-BOF
+ * window is dropped as a partial line (its start lies before the window), which
+ * at worst discards one extra oldest line — never one of the last `maxEntries`.
+ *
+ * Behaviour matches `readSessionFileEntries` line-for-line over the tail it
+ * returns: same `parseSessionJsonlLine` (torn-tail tolerant), same warning sink.
+ */
+function readSessionFileTailEntries(
+	path: string,
+	maxEntries: number,
+	options: SessionJsonlReadOptions & { chunkBytes?: number } = {},
+): SessionTailReadResult {
+	const readPath = recoverJsonlTargetIfMissing(path);
+	if (readPath === null) return { entries: [], linesParsed: 0, reachedStart: true };
+	const warn = options.onWarning ?? defaultSessionJsonlWarning;
+	const bound = Number.isFinite(maxEntries) && maxEntries > 0 ? Math.floor(maxEntries) : 1;
+	const chunkBytes =
+		options.chunkBytes !== undefined && options.chunkBytes > 0
+			? Math.floor(options.chunkBytes)
+			: SESSION_JSONL_READ_CHUNK_BYTES;
+	const fd = openSync(readPath, "r");
+	try {
+		const size = fstatSync(fd).size;
+		if (size === 0) return { entries: [], linesParsed: 0, reachedStart: true };
+		let windowBytes = Math.min(size, chunkBytes);
+		for (;;) {
+			const offset = Math.max(0, size - windowBytes);
+			const length = size - offset;
+			const buffer = Buffer.allocUnsafe(length);
+			readExactAt(fd, buffer, offset, length);
+			const decoder = new StringDecoder("utf8");
+			const text = decoder.write(buffer) + decoder.end();
+			const reachedStart = offset === 0;
+			// A non-BOF window's first line is partial (it began before `offset`).
+			const lines = text.split("\n");
+			const candidate = reachedStart ? lines : lines.slice(1);
+			const nonEmpty = candidate.filter((line) => line.trim().length > 0);
+			if (nonEmpty.length >= bound || reachedStart) {
+				const tail = nonEmpty.slice(Math.max(0, nonEmpty.length - bound));
+				const entries: unknown[] = [];
+				let lineNumber = 0;
+				for (const line of tail) {
+					lineNumber += 1;
+					parseSessionJsonlLine(line, lineNumber, readPath, entries, warn);
+				}
+				return { entries, linesParsed: tail.length, reachedStart };
+			}
+			if (windowBytes >= size) return { entries: [], linesParsed: 0, reachedStart: true };
+			windowBytes = Math.min(size, windowBytes * 2);
+		}
+	} finally {
+		closeSync(fd);
+	}
+}
+
+/**
+ * Tail-scoped counterpart to `openSession(id).turns()`: the last `maxTurns`
+ * non-header entries of the session ledger, in file order. Reads one extra line
+ * so a header consuming a slot in a wholly-read small file never shrinks the
+ * turn count below `maxTurns`.
+ */
+export function readSessionTailTurns(id: string, maxTurns: number): SessionTailReadResult {
+	const currentPath = sessionCurrentPath(id);
+	const result = readSessionFileTailEntries(currentPath, maxTurns + 1);
+	const turns = result.entries.filter((entry) => !isSessionJsonlHeader(entry));
+	return {
+		entries: turns.slice(Math.max(0, turns.length - maxTurns)),
+		linesParsed: result.linesParsed,
+		reachedStart: result.reachedStart,
+	};
+}
+
+function isPositiveInteger(value: unknown): value is number {
+	return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function isOptionalString(value: unknown): boolean {
+	return value === undefined || typeof value === "string";
+}
+
+export function isSessionJsonlHeader(value: unknown): value is PancodeSessionJsonlHeader {
+	if (!value || typeof value !== "object") return false;
+	const v = value as Record<string, unknown>;
+	return (
+		v.type === "session" &&
+		isPositiveInteger(v.version) &&
+		typeof v.id === "string" &&
+		typeof v.timestamp === "string" &&
+		typeof v.cwd === "string" &&
+		isOptionalString(v.parentSession) &&
+		isOptionalString(v.parentTurnId)
+	);
+}
+
+function sessionHeaderFromMeta(
+	meta: PancodeSessionMeta,
+	options: { parentSession?: string; parentTurnId?: string } = {},
+): PancodeSessionJsonlHeader {
+	const header: PancodeSessionJsonlHeader = {
+		type: "session",
+		version: CURRENT_SESSION_FORMAT_VERSION,
+		id: meta.id,
+		timestamp: meta.createdAt,
+		cwd: meta.cwd,
+	};
+	if (options.parentSession !== undefined) header.parentSession = options.parentSession;
+	if (options.parentTurnId !== undefined) header.parentTurnId = options.parentTurnId;
+	return header;
+}
+
+/** The ledger's first record, when it is a header of the current format. Anything else is not a ledger this build wrote. */
+function currentSessionHeader(entries: ReadonlyArray<unknown>, path: string): PancodeSessionJsonlHeader {
+	const first = entries[0];
+	if (!isSessionJsonlHeader(first)) {
+		throw new Error(
+			`session ledger has no session header: ${path}. Remove the session directory to start a new session.`,
+		);
+	}
+	if (first.version !== CURRENT_SESSION_FORMAT_VERSION) {
+		throw new Error(
+			`session ledger header declares format version ${first.version}, this build reads version ${CURRENT_SESSION_FORMAT_VERSION}: ${path}.`,
+		);
+	}
+	return first;
+}
+
+function ensureSessionHeader(
+	meta: PancodeSessionMeta,
+	entries: ReadonlyArray<unknown>,
+	options: { parentSession?: string; parentTurnId?: string } = {},
+): unknown[] {
+	const first = entries[0];
+	if (isSessionJsonlHeader(first)) return [...entries];
+	return [sessionHeaderFromMeta(meta, options), ...entries];
+}
+
+function recordFromTurn(turn: PancodeTurnRecord): unknown {
+	const entry: Record<string, unknown> = {
+		kind: "message",
+		turnId: turn.id,
+		parentTurnId: turn.parentId,
+		timestamp: turn.at,
+		role: turn.kind,
+		payload: turn.payload,
+	};
+	return entry;
+}
+
+function newTurnId(): string {
+	const n = BigInt(`0x${randomBytes(8).toString("hex")}`);
+	const raw = n.toString(36);
+	if (raw.length >= 12) return raw.slice(0, 12);
+	return raw.padStart(12, "0");
+}
+
+function withBuild(build: BuildStamp | undefined): { build?: BuildStamp } {
+	return build ? { build } : {};
+}
+
+function buildMeta(input: { cwd: string; model?: string | null; target?: string | null }): PancodeSessionMeta {
+	const resolvedCwd = resolve(input.cwd);
+	return {
+		id: newTurnId(),
+		cwd: resolvedCwd,
+		cwdHash: cwdHash(resolvedCwd),
+		createdAt: new Date().toISOString(),
+		endedAt: null,
+		model: input.model ?? null,
+		target: input.target ?? null,
+		pancodeVersion: readPancodeVersion(),
+		...withBuild(readBuildStamp()),
+		piMonoVersion: readPiMonoVersion(),
+		platform: process.platform,
+		nodeVersion: process.version,
+		sessionFormatVersion: CURRENT_SESSION_FORMAT_VERSION,
+		owner: currentOwner(),
+	};
+}
+
+function readMetaFile(path: string): PancodeSessionMeta {
+	const raw = readFileSync(path, "utf8");
+	const parsed = JSON.parse(raw) as Record<string, unknown>;
+	if (typeof parsed.pancodeVersion !== "string" || parsed.pancodeVersion.length === 0) {
+		throw new Error(`session metadata has no PanCode version: ${path}`);
+	}
+	return parsed as unknown as PancodeSessionMeta;
+}
+
+const TURN_KINDS: readonly PancodeTurnRecord["kind"][] = [
+	"user",
+	"assistant",
+	"tool_call",
+	"tool_result",
+	"system",
+	"checkpoint",
+];
+
+function isTurnKind(value: unknown): value is PancodeTurnRecord["kind"] {
+	return typeof value === "string" && (TURN_KINDS as readonly string[]).includes(value);
+}
+
+function nullableString(value: unknown): value is string | null {
+	return value === null || typeof value === "string";
+}
+
+function isSessionTreeNode(value: unknown): value is SessionTreeNode {
+	if (!value || typeof value !== "object") return false;
+	const node = value as Record<string, unknown>;
+	return (
+		typeof node.id === "string" && nullableString(node.parentId) && typeof node.at === "string" && isTurnKind(node.kind)
+	);
+}
+
+function readTreeFile(path: string): SessionTreeNode[] {
+	if (!existsSync(path)) return [];
+	try {
+		const raw = readFileSync(path, "utf8");
+		if (raw.trim().length === 0) return [];
+		const parsed = JSON.parse(raw) as unknown;
+		if (!Array.isArray(parsed)) return [];
+		return parsed.filter(isSessionTreeNode);
+	} catch {
+		return [];
+	}
+}
+
+function treeNodeFromFileEntry(entry: unknown): SessionTreeNode | null {
+	if (!entry || typeof entry !== "object" || isSessionJsonlHeader(entry)) return null;
+	const value = entry as Record<string, unknown>;
+	if (
+		value.kind === "message" &&
+		typeof value.turnId === "string" &&
+		nullableString(value.parentTurnId) &&
+		typeof value.timestamp === "string" &&
+		isTurnKind(value.role) &&
+		Object.hasOwn(value, "payload")
+	) {
+		return { id: value.turnId, parentId: value.parentTurnId, at: value.timestamp, kind: value.role };
+	}
+	return null;
+}
+
+function treeFromFileEntries(fileEntries: ReadonlyArray<unknown>): SessionTreeNode[] {
+	const nodes: SessionTreeNode[] = [];
+	for (const entry of fileEntries) {
+		const node = treeNodeFromFileEntry(entry);
+		if (node) nodes.push(node);
+	}
+	return nodes;
+}
+
+function sameTreeNode(a: SessionTreeNode | undefined, b: SessionTreeNode): boolean {
+	return !!a && a.id === b.id && a.parentId === b.parentId && a.at === b.at && a.kind === b.kind;
+}
+
+function sameTree(a: ReadonlyArray<SessionTreeNode>, b: ReadonlyArray<SessionTreeNode>): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i += 1) {
+		const left = a[i];
+		const right = b[i];
+		if (!left || !right || !sameTreeNode(left, right)) return false;
+	}
+	return true;
+}
+
+function recoverTreeFromJsonl(diskTree: SessionTreeNode[], fileEntries: ReadonlyArray<unknown>): SessionTreeNode[] {
+	const recovered = treeFromFileEntries(fileEntries);
+	if (recovered.length === 0) return diskTree;
+	return sameTree(diskTree, recovered) ? diskTree : recovered;
+}
+
+export function sessionCurrentPath(id: string): string {
+	return join(findSessionDir(id), "current.jsonl");
+}
+
+function findSessionDir(id: string): string {
+	// Session ids are identifiers, not paths. Reject a traversal id before any
+	// filesystem read so it can never resolve a directory outside the sessions
+	// root (`join(sessionsRoot, entry, id)` would otherwise escape).
+	assertSafeId(id, "session");
+	const sessionsRoot = join(pancodeStateDir(), "sessions");
+	if (!existsSync(sessionsRoot)) {
+		throw new Error(`session not found: ${id}`);
+	}
+	for (const entry of readdirSync(sessionsRoot, { withFileTypes: true })) {
+		if (!entry.isDirectory()) continue;
+		const candidate = join(sessionsRoot, entry.name, id);
+		if (existsSync(candidate) && statSync(candidate).isDirectory()) {
+			return candidate;
+		}
+	}
+	throw new Error(`session not found: ${id}`);
+}
+
+/** Read only meta.json for callers that do not need to parse the transcript. */
+export function readSessionMeta(id: string): PancodeSessionMeta {
+	return readMetaFile(join(findSessionDir(id), "meta.json"));
+}
+
+/**
+ * The ids of every session recorded under `stateDir`, across workspaces. A session's directory exists from its
+ * creation until it is deleted, so state kept elsewhere under a session id is orphaned only when the id is missing
+ * here. Null when the sessions root cannot be read, which says nothing about which sessions exist.
+ */
+export function recordedSessionIds(stateDir: string): Set<string> | null {
+	const root = join(stateDir, "sessions");
+	const ids = new Set<string>();
+	try {
+		for (const workspace of readdirSync(root, { withFileTypes: true })) {
+			if (!workspace.isDirectory()) continue;
+			for (const entry of readdirSync(join(root, workspace.name), { withFileTypes: true }))
+				if (entry.isDirectory()) ids.add(entry.name);
+		}
+	} catch {
+		return null;
+	}
+	return ids;
+}
+
+/**
+ * Whether `sessionId` is recorded under `stateDir` now: a fresh look at its directory in each workspace, for a caller
+ * about to delete what an older `recordedSessionIds` listing called orphaned. True when the root cannot be read.
+ */
+export function sessionRecorded(stateDir: string, sessionId: string): boolean {
+	const root = join(stateDir, "sessions");
+	try {
+		for (const workspace of readdirSync(root, { withFileTypes: true }))
+			if (workspace.isDirectory() && existsSync(join(root, workspace.name, sessionId))) return true;
+	} catch {
+		return true;
+	}
+	return false;
+}
+
+const APPEND_FSYNC_DEBOUNCE_MS = 500;
+/** See isFenced in createWriter. */
+const FENCE_PROBE_REUSE_MS = 1_000;
+
+/**
+ * True when the file's last byte is a newline (or the file is empty or
+ * missing). A false result means a crash left a torn partial line that an
+ * O_APPEND writer must terminate before writing, or the next record would
+ * fuse onto the fragment and corrupt itself too.
+ */
+function endsWithNewline(path: string): boolean {
+	let size: number;
+	try {
+		size = statSync(path).size;
+	} catch {
+		return true;
+	}
+	if (size === 0) return true;
+	const fd = openSync(path, "r");
+	try {
+		const buf = Buffer.alloc(1);
+		readSync(fd, buf, 0, 1, size - 1);
+		return buf[0] === 0x0a;
+	} finally {
+		closeSync(fd);
+	}
+}
+
+/**
+ * Durably append one entry to an existing session JSONL file without reading
+ * or replacing its prior contents. This is the off-current counterpart to the
+ * long-lived writer: a torn final fragment is terminated and left visible to
+ * the tolerant reader, then the new record is written through O_APPEND and
+ * fsynced before returning.
+ */
+export function appendSessionFileEntry(targetPath: string, entry: unknown): void {
+	const appendPath = recoverJsonlTargetIfMissing(targetPath);
+	if (appendPath === null) throw new Error(`session JSONL file not found: ${targetPath}`);
+	const serialized = JSON.stringify(entry);
+	if (serialized === undefined) throw new Error("session JSONL entry is not serializable");
+	const line = Buffer.from(`${endsWithNewline(appendPath) ? "" : "\n"}${serialized}\n`, "utf8");
+	const fd = openSync(appendPath, fsConstants.O_WRONLY | fsConstants.O_APPEND);
+	try {
+		appendAll(fd, line);
+		fsyncSync(fd);
+	} finally {
+		closeSync(fd);
+	}
+}
+
+function createWriter(
+	meta: PancodeSessionMeta,
+	initialTree: SessionTreeNode[],
+	initialFileEntries: ReadonlyArray<unknown>,
+): PancodeSessionWriter {
+	const paths = sessionPaths(meta);
+	const tree: SessionTreeNode[] = initialTree.map((node) => ({ ...node }));
+	// replaceEntries needs only the header; retaining every appended payload
+	// would grow the writer with the whole transcript.
+	const header = currentSessionHeader(initialFileEntries, paths.current);
+	let closed = false;
+	let fenced = false;
+	let fenceProbe: (() => boolean) | null = null;
+	let fenceProbedAt = Number.NEGATIVE_INFINITY;
+	// The probe costs file-system round trips (NFS on a shared home), and a
+	// tool-heavy turn writes dozens of entries. One answer per second is enough:
+	// a SIGCONT gap is longer than that, and a forced release needs a 180 s
+	// stale heartbeat before it can happen at all.
+	function isFenced(): boolean {
+		if (fenced || fenceProbe === null) return fenced;
+		const now = performance.now();
+		if (now - fenceProbedAt < FENCE_PROBE_REUSE_MS) return false;
+		fenceProbedAt = now;
+		if (fenceProbe()) fenced = true;
+		return fenced;
+	}
+	let appendFd: number | null = null;
+	let fsyncTimer: NodeJS.Timeout | null = null;
+	// Descriptor cleanup must not discard accepted bytes or rollback changes
+	// still owed to the next debounce, checkpoint, flush, or close.
+	let pendingFsync = false;
+	let lastFsyncStat: BigIntStats | null = null;
+	let treeDirty = true;
+	let treeStat: BigIntStats | null = null;
+	// A resumed tree can lag the ledger; only the canonical recovered bytes
+	// justify treating it as already persisted (PanCode-UPGRADES-PERF).
+	try {
+		const fd = openSync(paths.tree, "r");
+		try {
+			const observed = fstatSync(fd, { bigint: true });
+			if (readFileSync(fd, "utf8") === JSON.stringify(tree, null, 2)) {
+				treeDirty = false;
+				treeStat = observed;
+			}
+		} finally {
+			closeSync(fd);
+		}
+	} catch {
+		// Missing or unreadable tree state remains pending; persistence retries it.
+	}
+
+	function sameFileSnapshot(a: BigIntStats | null, b: BigIntStats): boolean {
+		return (
+			a !== null &&
+			a.dev === b.dev &&
+			a.ino === b.ino &&
+			a.size === b.size &&
+			a.mtimeNs === b.mtimeNs &&
+			a.ctimeNs === b.ctimeNs
+		);
+	}
+
+	function persistPendingTree(): void {
+		if (!treeDirty && treeStat !== null) {
+			try {
+				if (sameFileSnapshot(treeStat, statSync(paths.tree, { bigint: true }))) return;
+			} catch {
+				// Restore the canonical tree if its persisted artifact disappeared.
+			}
+		}
+		atomicWrite(paths.tree, JSON.stringify(tree, null, 2), SESSION_FILE_MODE);
+		treeStat = statSync(paths.tree, { bigint: true });
+		treeDirty = false;
+	}
+
+	function openAppendFd(): number {
+		if (appendFd !== null) {
+			const held = fstatSync(appendFd, { bigint: true });
+			const current = statSync(paths.current, { bigint: true });
+			if (held.dev === current.dev && held.ino === current.ino) return appendFd;
+			closeAppendFd({ flush: true });
+		}
+		const tornTail = !endsWithNewline(paths.current);
+		appendFd = openSync(paths.current, "a", SESSION_FILE_MODE);
+		// Terminating the fragment keeps the reader's torn-tail behavior:
+		// it skips exactly one invalid line with a warning.
+		if (tornTail) {
+			pendingFsync = true;
+			appendAll(appendFd, Buffer.from("\n"));
+		}
+		return appendFd;
+	}
+
+	function scheduleFsync(): void {
+		if (fsyncTimer !== null) return;
+		fsyncTimer = setTimeout(() => {
+			fsyncTimer = null;
+			try {
+				flushPendingAppends();
+			} catch {
+				// Keep the obligation pending. Explicit flush/checkpoint/close
+				// retries and reports an error if storage is still unavailable.
+			}
+		}, APPEND_FSYNC_DEBOUNCE_MS);
+		fsyncTimer.unref?.();
+	}
+
+	function flushPendingAppends(): void {
+		if (appendFd !== null) {
+			const observed = fstatSync(appendFd, { bigint: true });
+			// The descriptor may also have received a peer's append. Metadata
+			// detects that obligation even when our own pending flag is clear.
+			if (!pendingFsync && sameFileSnapshot(lastFsyncStat, observed)) return;
+			fsyncSync(appendFd);
+			lastFsyncStat = observed;
+			pendingFsync = false;
+			return;
+		}
+		if (!pendingFsync || stateRootRemoved()) return;
+		// Reopen without O_CREAT or tail normalization: flushing after a failed
+		// append must neither recreate removed state nor alter retained bytes.
+		const fd = openSync(paths.current, fsConstants.O_WRONLY | fsConstants.O_APPEND);
+		try {
+			fsyncSync(fd);
+		} catch (error) {
+			try {
+				closeSync(fd);
+			} catch (closeError) {
+				throw new AggregateError([error, closeError], "session JSONL flush and close failed");
+			}
+			throw error;
+		}
+		closeSync(fd);
+		pendingFsync = false;
+	}
+
+	function closeAppendFd(opts: { flush: boolean }): void {
+		if (opts.flush) flushPendingAppends();
+		if (fsyncTimer !== null) {
+			clearTimeout(fsyncTimer);
+			fsyncTimer = null;
+		}
+		if (appendFd === null) return;
+		const fd = appendFd;
+		// A failed close can already have released the OS descriptor. Never
+		// retain that ambiguous number for a later append or duplicate close.
+		appendFd = null;
+		closeSync(fd);
+	}
+
+	function appendLine(entry: unknown): SessionAppendObservation {
+		const serialized = JSON.stringify(entry);
+		if (serialized === undefined) {
+			throw new Error("session JSONL entry is not serializable");
+		}
+		let observation: SessionAppendObservation;
+		try {
+			const fd = openAppendFd();
+			const before = fstatSync(fd, { bigint: true });
+			pendingFsync = true;
+			appendAll(fd, Buffer.from(`${serialized}\n`, "utf8"));
+			observation = { before, after: fstatSync(fd, { bigint: true }) };
+		} catch (error) {
+			// Reopening rechecks the tail even if rollback itself failed.
+			try {
+				closeAppendFd({ flush: false });
+			} catch (closeError) {
+				throw new AggregateError([error, closeError], "session JSONL append and close failed");
+			} finally {
+				scheduleFsync();
+			}
+			throw error;
+		}
+		scheduleFsync();
+		return observation;
+	}
+
+	return {
+		append(turn: PancodeTurnRecord): void {
+			if (closed) throw new Error("session writer closed");
+			if (isFenced()) return;
+			const record = recordFromTurn(turn);
+			appendLine(record);
+			treeDirty = true;
+			tree.push({
+				id: turn.id,
+				parentId: turn.parentId,
+				at: turn.at,
+				kind: turn.kind,
+			});
+		},
+		appendEntry(
+			entry: unknown,
+			opts?: { treeNode?: SessionTreeNode; onAppend?: (observation: SessionAppendObservation) => void },
+		): void {
+			if (closed) throw new Error("session writer closed");
+			if (isFenced()) return;
+			const observation = appendLine(entry);
+			if (opts?.treeNode) {
+				tree.push({ ...opts.treeNode });
+				treeDirty = true;
+			}
+			opts?.onAppend?.(observation);
+		},
+		replaceEntries(entries: ReadonlyArray<unknown>): void {
+			if (closed) throw new Error("session writer closed");
+			if (isFenced()) return;
+			// The rename below replaces the inode; the held fd would keep
+			// appending to the orphaned old file. Drop it, reopen lazily.
+			closeAppendFd({ flush: false });
+			const body = entries.filter((entry) => !isSessionJsonlHeader(entry));
+			const nextEntries = [header, ...body];
+			writeJsonlFileAtomic(paths.current, nextEntries);
+			const recoveredTree = treeFromFileEntries(nextEntries);
+			if (recoveredTree.length > 0) {
+				treeDirty = true;
+				tree.length = 0;
+				tree.push(...recoveredTree);
+			}
+		},
+		async persistTree(): Promise<void> {
+			if (isFenced()) return;
+			// Checkpoint: make appended lines durable alongside the tree.
+			flushPendingAppends();
+			// `paths` was resolved at construction, but atomicWrite mkdirs the
+			// session directory again, so an uninstall that has already removed the
+			// state root would be undone here. Fsyncing the held fd first is safe
+			// either way: it writes into an unlinked inode and creates nothing.
+			if (stateRootRemoved()) return;
+			persistPendingTree();
+		},
+		flushAppends(): void {
+			if (isFenced()) return;
+			flushPendingAppends();
+		},
+		async close(): Promise<void> {
+			if (closed) return;
+			const fencedAtClose = isFenced();
+			closeAppendFd({ flush: !fencedAtClose });
+			// Closed regardless: the writer is done either way, and a removed state
+			// root must not get tree.json and meta.json written back into it.
+			closed = true;
+			if (fencedAtClose || stateRootRemoved()) return;
+			persistPendingTree();
+			const ended: PancodeSessionMeta = { ...meta, endedAt: new Date().toISOString() };
+			atomicWrite(paths.meta, JSON.stringify(ended, null, 2), SESSION_FILE_MODE);
+			meta.endedAt = ended.endedAt;
+		},
+		fence(): void {
+			fenced = true;
+		},
+		get fenced(): boolean {
+			return isFenced();
+		},
+		fenceWhen(probe: () => boolean): void {
+			fenceProbe = probe;
+		},
+	};
+}
+
+export function createSession(input: {
+	cwd: string;
+	model?: string | null;
+	target?: string | null;
+	initialEntries?: ReadonlyArray<unknown>;
+	initialTree?: ReadonlyArray<SessionTreeNode>;
+	parentSession?: string;
+	parentTurnId?: string;
+}): {
+	meta: PancodeSessionMeta;
+	writer: PancodeSessionWriter;
+} {
+	const meta = buildMeta(input);
+	const paths = sessionPaths(meta);
+	atomicWrite(paths.meta, JSON.stringify(meta, null, 2), SESSION_FILE_MODE);
+	const headerOptions: { parentSession?: string; parentTurnId?: string } = {};
+	if (input.parentSession !== undefined) headerOptions.parentSession = input.parentSession;
+	if (input.parentTurnId !== undefined) headerOptions.parentTurnId = input.parentTurnId;
+	const initialEntries = ensureSessionHeader(meta, input.initialEntries ?? [], headerOptions);
+	const initialTree = [...(input.initialTree ?? [])];
+	writeJsonlFileAtomic(paths.current, initialEntries);
+	atomicWrite(paths.tree, JSON.stringify(initialTree, null, 2), SESSION_FILE_MODE);
+	const writer = createWriter(meta, initialTree, initialEntries);
+	return { meta, writer };
+}
+
+export function openSession(id: string): PancodeSessionReader {
+	const dir = findSessionDir(id);
+	const metaPath = join(dir, "meta.json");
+	const meta = readMetaFile(metaPath);
+	const currentPath = join(dir, "current.jsonl");
+	const fileEntries = readSessionFileEntries(currentPath);
+	const turns = fileEntries.filter((entry) => !isSessionJsonlHeader(entry));
+	const header = fileEntries.find(isSessionJsonlHeader) ?? null;
+	const tree = recoverTreeFromJsonl(readTreeFile(join(dir, "tree.json")), fileEntries);
+	return {
+		meta(): PancodeSessionMeta {
+			return meta;
+		},
+		turns(): ReadonlyArray<unknown> {
+			return turns;
+		},
+		fileEntries(): ReadonlyArray<unknown> {
+			return fileEntries;
+		},
+		header(): PancodeSessionJsonlHeader | null {
+			return header;
+		},
+		tree(): ReadonlyArray<SessionTreeNode> {
+			return tree;
+		},
+	};
+}
+
+export function resumeSession(
+	id: string,
+	options: {
+		/** The ledger as `openSession(id).fileEntries()` just read it, under the same claim, so it is not parsed twice. */
+		fileEntries?: ReadonlyArray<unknown>;
+	} = {},
+): {
+	meta: PancodeSessionMeta;
+	writer: PancodeSessionWriter;
+	tree: ReadonlyArray<SessionTreeNode>;
+} {
+	const dir = findSessionDir(id);
+	const metaPath = join(dir, "meta.json");
+	const meta = readMetaFile(metaPath);
+	const existingFileEntries = options.fileEntries ?? readSessionFileEntries(join(dir, "current.jsonl"));
+	const existingTree = recoverTreeFromJsonl(readTreeFile(join(dir, "tree.json")), existingFileEntries);
+	// A ledger without a current header refuses here, before the session is
+	// published as reopened, so a refused resume keeps its prior ended state.
+	const writer = createWriter(meta, existingTree, existingFileEntries);
+	// Reopening and the owner stamp are one atomic publication. The owner moves
+	// on every resume, including a crashed session that never ended, so
+	// liveness names this process (#420).
+	const owner = currentOwner();
+	const reopened = { ...meta, endedAt: null, owner };
+	atomicWrite(metaPath, JSON.stringify(reopened, null, 2), SESSION_FILE_MODE);
+	meta.endedAt = null;
+	meta.owner = owner;
+	return { meta, writer, tree: existingTree };
+}

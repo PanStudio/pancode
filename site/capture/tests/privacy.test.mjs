@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
+import { plain, privacyHits, scanChunks } from "../privacy.mjs";
+
+const fixture = JSON.parse(readFileSync(new URL("privacy-stream.json", import.meta.url), "utf8"));
+const scan = (chunks) => [...scanChunks(chunks), ...scanChunks(chunks.map(plain))];
+
+test("a strict prefix of the sandbox home that ends a chunk is allowed", () => {
+	for (const chunks of fixture.allowed) assert.deepEqual(scan(chunks), [], JSON.stringify(chunks));
+});
+
+test("every other home path is refused", () => {
+	for (const { why, chunks } of fixture.refused)
+		assert.ok(
+			scan(chunks).some((hit) => hit.startsWith("a home path")),
+			why,
+		);
+});
+
+test("the bundled packs' publisher column and repository slug are allowed; the same name elsewhere is refused", () => {
+	assert.deepEqual(privacyHits("plugin:wtfp  0.9.0  available  bundled  akougkas verified MIT", ["akougkas"]), []);
+	assert.deepEqual(privacyHits("posted from your gh account to github.com/akougkas/pancode", ["akougkas"]), []);
+	assert.deepEqual(privacyHits("Uses your GitHub Copilot subscription as akougkas on github.com", ["akougkas"]), [
+		"an operator secret or path",
+	]);
+});

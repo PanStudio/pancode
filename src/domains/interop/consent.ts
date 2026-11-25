@@ -1,0 +1,190 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { stringify as stringifyYaml } from "yaml";
+import { type PancodeSettings, readSettings, updateSettings } from "../../core/config.js";
+import type { DelegationAgentConfig } from "../../core/defaults.js";
+import { withStateFileLockSync } from "../../core/state-file-lock.js";
+import { resolveOnPath } from "./detect.js";
+import { interopAgentKind } from "./registry.js";
+import { interopStatePath, readInteropReport, writeInteropReport } from "./state.js";
+import type {
+	InteropAgentId,
+	InteropAgentKind,
+	InteropAgentRecord,
+	InteropDecision,
+	InteropDecisionResult,
+	InteropProposal,
+	InteropReport,
+} from "./types.js";
+
+/**
+ * A wired peer inherits `projectContext: "none"`, so repo conventions never
+ * leave the machine unless the operator opts this agent in later. The key is
+ * left out of the written entry precisely so it tracks that default.
+ */
+export const INHERITED_PROJECT_CONTEXT = "none";
+
+/** The delegation entry a given agent kind would be wired as. */
+export function delegationEntryForKind(
+	kind: InteropAgentKind,
+	defaults: PancodeSettings["integrations"]["externalAgents"]["defaults"],
+): DelegationAgentConfig {
+	const recipe = kind.acp;
+	if (recipe === undefined) throw new Error(`interop kind ${kind.id} has no ACP recipe`);
+	return {
+		id: kind.id,
+		command: recipe.command,
+		args: [...recipe.args],
+		connectTimeoutMs: defaults.connectTimeoutMs,
+		turnTimeoutMs: defaults.turnTimeoutMs,
+		toolGovernance: "pancode-policy",
+	};
+}
+
+/** An `npx` recipe cannot launch without `npx`; `unknown` presence still offers it. */
+function npxMissingFor(kind: InteropAgentKind): boolean {
+	return kind.acp?.command === "npx" && resolveOnPath(["npx"]).presence === "absent";
+}
+
+/** Why a detected agent's recipe is not offered, one line each, when `npx` is not on PATH. */
+export function interopUnofferedReasons(report: InteropReport, settings: PancodeSettings): ReadonlyArray<string> {
+	const configured = new Set(settings.integrations.externalAgents.entries.map((agent) => agent.id));
+	const reasons: string[] = [];
+	for (const record of report.agents) {
+		const kind = interopAgentKind(record.kind);
+		if (kind === undefined || record.presence !== "present" || configured.has(kind.id) || !npxMissingFor(kind)) continue;
+		if (record.decision !== undefined && record.decidedFingerprint === record.fingerprint) continue;
+		reasons.push(
+			`${kind.label} is installed but not offered: its ACP adapter launches through npx, which is not on PATH.`,
+		);
+	}
+	return reasons;
+}
+
+/**
+ * Agents the operator has not decided on yet. A standing decision suppresses
+ * re-proposal only while the facts it was made against still hold, so a
+ * declined agent whose binary or version moved comes back as a fresh proposal.
+ */
+export function interopProposals(report: InteropReport, settings: PancodeSettings): ReadonlyArray<InteropProposal> {
+	const configured = new Set(settings.integrations.externalAgents.entries.map((agent) => agent.id));
+	const proposals: InteropProposal[] = [];
+	for (const record of report.agents) {
+		const kind = interopAgentKind(record.kind);
+		if (kind?.acp === undefined) continue;
+		if (record.presence !== "present") continue;
+		if (configured.has(kind.id)) continue;
+		if (record.decision !== undefined && record.decidedFingerprint === record.fingerprint) continue;
+		if (npxMissingFor(kind)) continue;
+		proposals.push({
+			kind: kind.id,
+			label: kind.label,
+			fingerprint: record.fingerprint,
+			entry: delegationEntryForKind(kind, settings.integrations.externalAgents.defaults),
+			needsNetworkInstall: record.adapter !== "present",
+			...(record.binary !== undefined ? { binary: record.binary } : {}),
+			...(record.version !== undefined ? { version: record.version } : {}),
+		});
+	}
+	return proposals;
+}
+
+/** The exact YAML the entry lands as, rendered by the writer's own serializer. */
+export function renderProposalEntry(proposal: InteropProposal): string {
+	return stringifyYaml([proposal.entry]).trimEnd();
+}
+
+/**
+ * Facts come from the caller's report, standing decisions from disk. A caller
+ * holds one report across several calls, so its copy of a record is stale the
+ * moment an earlier call decided that record: taking the report's bookkeeping
+ * would erase the decision just written. Recording one accept and one decline
+ * in the same review lost the accept exactly this way.
+ */
+function withStoredDecision(stored: InteropAgentRecord | undefined, fresh: InteropAgentRecord): InteropAgentRecord {
+	if (stored === undefined) return fresh;
+	return {
+		...fresh,
+		...(stored.decision !== undefined ? { decision: stored.decision } : {}),
+		...(stored.decidedAt !== undefined ? { decidedAt: stored.decidedAt } : {}),
+		...(stored.decidedFingerprint !== undefined ? { decidedFingerprint: stored.decidedFingerprint } : {}),
+	};
+}
+
+/**
+ * Merge the report with what is on disk and patch the named records. The lock
+ * covers the read as well as the write so a decision taken in one process is
+ * not overwritten by a detection snapshot from another.
+ */
+function updateRecords(
+	ids: ReadonlyArray<InteropAgentId>,
+	report: InteropReport,
+	patch: (record: InteropAgentRecord) => InteropAgentRecord,
+): InteropAgentId[] {
+	const wanted = new Set(ids);
+	const touched: InteropAgentId[] = [];
+	withStateFileLockSync(interopStatePath(), () => {
+		const stored = readInteropReport();
+		const storedByKind = new Map<InteropAgentId, InteropAgentRecord>(
+			(stored?.agents ?? []).map((record) => [record.kind, record]),
+		);
+		const byKind = new Map<InteropAgentId, InteropAgentRecord>(storedByKind);
+		for (const record of report.agents) {
+			byKind.set(record.kind, withStoredDecision(storedByKind.get(record.kind), record));
+		}
+		for (const id of wanted) {
+			const record = byKind.get(id);
+			if (record === undefined) continue;
+			byKind.set(id, patch(record));
+			touched.push(id);
+		}
+		writeInteropReport({ version: 1, detectedAt: report.detectedAt, agents: [...byKind.values()] });
+	});
+	return touched;
+}
+
+function recordDecisions(
+	ids: ReadonlyArray<InteropAgentId>,
+	report: InteropReport,
+	decision: InteropDecision,
+): InteropAgentId[] {
+	const decidedAt = new Date().toISOString();
+	return updateRecords(ids, report, (record) => ({
+		...record,
+		decision,
+		decidedAt,
+		decidedFingerprint: record.fingerprint,
+	}));
+}
+
+/**
+ * Wire the named agents as ACP delegation peers. The settings append runs
+ * inside the shared settings lock, which re-reads the file, so two processes
+ * accepting different agents at once cannot drop each other's entry.
+ */
+export function acceptInteropAgents(ids: ReadonlyArray<InteropAgentId>, report: InteropReport): InteropDecisionResult {
+	const proposals = interopProposals(report, readSettings()).filter((proposal) => ids.includes(proposal.kind));
+	const diagnostics: string[] = [];
+	for (const id of ids) {
+		if (!proposals.some((proposal) => proposal.kind === id)) diagnostics.push(`${id} is not a pending proposal`);
+	}
+	if (proposals.length === 0) return { decided: [], wired: [], diagnostics };
+	const wired: string[] = [];
+	updateSettings((settings) => {
+		for (const proposal of proposals) {
+			if (settings.integrations.externalAgents.entries.some((agent) => agent.id === proposal.entry.id)) continue;
+			settings.integrations.externalAgents.entries.push({ ...proposal.entry, args: [...proposal.entry.args] });
+			wired.push(proposal.entry.id);
+		}
+	});
+	const decided = recordDecisions(
+		proposals.map((proposal) => proposal.kind),
+		report,
+		"accepted",
+	);
+	return { decided, wired, diagnostics };
+}
+
+export function declineInteropAgents(ids: ReadonlyArray<InteropAgentId>, report: InteropReport): InteropDecisionResult {
+	return { decided: recordDecisions(ids, report, "declined"), wired: [], diagnostics: [] };
+}

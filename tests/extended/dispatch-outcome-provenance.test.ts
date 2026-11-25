@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * The telemetry projection's run summary and the interactive dispatch board derive a run's terminal status from the
+ * same DispatchCompleted/DispatchFailed bus payloads through resolveDispatchFailureStatus, the one shared definition,
+ * and a target's pricer through resolveEffectivePricing, so no two surfaces disagree on the same run.
+ */
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { describe, it } from "node:test";
+import { resolveDispatchFailureStatus } from "../../src/core/dispatch-outcome.js";
+import { validateSettings } from "../../src/core/settings-validate.js";
+import { pricedUsd, sumPricing } from "../../src/core/telemetry/pricing.js";
+import { renderPricing, renderPricingSum } from "../../src/core/telemetry/render.js";
+import { resolveEffectivePricing } from "../../src/domains/providers/catalog.js";
+import inception from "../../src/domains/providers/runtimes/cloud/inception.js";
+import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
+
+describe("resolveDispatchFailureStatus", () => {
+	it("maps dead and stalled to dead", () => {
+		strictEqual(resolveDispatchFailureStatus("dead"), "dead");
+		strictEqual(resolveDispatchFailureStatus("stalled"), "dead");
+	});
+
+	it("maps interrupted and canceled to aborted", () => {
+		strictEqual(resolveDispatchFailureStatus("interrupted"), "aborted");
+		strictEqual(resolveDispatchFailureStatus("canceled"), "aborted");
+	});
+
+	it("defaults every other reason, including absent or malformed, to failed", () => {
+		strictEqual(resolveDispatchFailureStatus("timed_out"), "failed");
+		strictEqual(resolveDispatchFailureStatus(undefined), "failed");
+		strictEqual(resolveDispatchFailureStatus(null), "failed");
+		strictEqual(resolveDispatchFailureStatus(42), "failed");
+	});
+});
+
+describe("resolveEffectivePricing", () => {
+	it("prices every unpriced model on a free-declared proxy target as free", () => {
+		const { settings, issues } = validateSettings({
+			version: 2,
+			targets: [{ id: "proxy", runtime: "litellm", pricing: "free" }],
+		});
+		deepStrictEqual(issues, []);
+		const target = settings.targets[0];
+		ok(target);
+		strictEqual(target.pricing, "free");
+		for (const modelId of ["dynamo/qwopus3.8-27b-flash@q5_k_m", "another-model"]) {
+			const pricing = resolveEffectivePricing(target, litellm, modelId);
+			deepStrictEqual(pricing, {
+				rates: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				pricedBy: "free",
+				freeRule: "declared",
+			});
+			deepStrictEqual(litellm.synthesizeModel(target, modelId, null).cost, pricing.rates);
+		}
+	});
+
+	it("leaves an undeclared proxy unknown and honors explicit rates", () => {
+		const target = { id: "proxy", runtime: "litellm" };
+		const modelId = "dynamo/qwopus3.8-27b-flash@q5_k_m";
+		deepStrictEqual(resolveEffectivePricing(target, litellm, modelId), { rates: null, pricedBy: "none" });
+		const priced = { ...target, pricing: { input: 1, output: 2 } };
+		const pricing = resolveEffectivePricing(priced, litellm, modelId);
+		deepStrictEqual(pricing, {
+			rates: { input: 1, output: 2, cacheRead: 1, cacheWrite: 0 },
+			pricedBy: "target-rates",
+		});
+		deepStrictEqual(litellm.synthesizeModel(priced, modelId, null).cost, pricing.rates);
+	});
+
+	it("prices an unpriced local-native runtime as free and leaves an unpriced proxy unknown", () => {
+		const target = (runtime: string) => ({ id: "t", runtime, defaultModel: "qwen" });
+		const local = resolveEffectivePricing(target("lmstudio"), { id: "lmstudio", tier: "local-native" }, "qwen");
+		strictEqual(local.pricedBy, "free");
+		strictEqual(local.freeRule, "local-native");
+		deepStrictEqual(local.rates, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+		strictEqual(resolveEffectivePricing(target("litellm"), { id: "litellm", tier: "protocol" }, "qwen").pricedBy, "none");
+		const priced = { ...target("litellm"), pricing: { input: 1, output: 2 } };
+		strictEqual(resolveEffectivePricing(priced, { id: "litellm", tier: "protocol" }, "qwen").pricedBy, "target-rates");
+		const zero = resolveEffectivePricing({ ...priced, pricing: { input: 0, output: 0 } }, litellm, "qwen");
+		deepStrictEqual([zero.pricedBy, zero.freeRule], ["free", "zero-rates"]);
+		// Only a local-native runtime's zero reads as local; a declared-free proxy may front a cloud model.
+		deepStrictEqual(
+			(["local-native", "declared", "zero-rates", undefined] as const).map((rule) =>
+				renderPricing(pricedUsd("free", 0, rule)),
+			),
+			["$0.00 local", "$0.00 free (declared)", "$0.00 free (zero-rates)", "$0.00 free"],
+		);
+		deepStrictEqual(
+			[
+				renderPricingSum(sumPricing([pricedUsd("free", 0, "local-native"), pricedUsd("free", 0, "local-native")])),
+				renderPricingSum(sumPricing([pricedUsd("free", 0, "local-native"), pricedUsd("free", 0, "declared")])),
+				renderPricingSum(sumPricing([pricedUsd("free", 0, "declared"), pricedUsd("free", 0, "zero-rates")])),
+				renderPricingSum(sumPricing([pricedUsd("free", 0, undefined)])),
+				renderPricingSum(sumPricing([pricedUsd("free", 0, "local-native"), pricedUsd("free", 0, undefined)])),
+			],
+			["$0.00 local", "$0.00 free (mixed)", "$0.00 free (mixed)", "$0.00 free", "$0.00 free"],
+		);
+	});
+
+	it("leaves an all-zero catalog row unknown on a paid cloud route instead of a catalog $0", () => {
+		const target = { id: "inception", runtime: "inception" };
+		for (const model of ["mercury-3", "mercury-decide"])
+			strictEqual(resolveEffectivePricing(target, inception, model).pricedBy, "catalog");
+		const openrouter = { id: "openrouter", tier: "cloud" } as const;
+		strictEqual(resolveEffectivePricing({ id: "or", runtime: "openrouter" }, openrouter, "auto").pricedBy, "none");
+		const free = resolveEffectivePricing({ id: "or", runtime: "openrouter" }, openrouter, "google/gemma-4-31b-it:free");
+		deepStrictEqual([free.pricedBy, free.rates?.input, free.rates?.output], ["catalog", 0, 0]);
+		const declared = resolveEffectivePricing({ ...target, pricing: { input: 0.25, output: 1 } }, inception, "mercury-3");
+		strictEqual(declared.pricedBy, "target-rates");
+	});
+});

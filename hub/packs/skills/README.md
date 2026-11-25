@@ -1,0 +1,100 @@
+# PanCode skill packages
+
+This tree contains reviewed skill instructions and authoring evidence. Complete
+packages participate in the same [PanHub](../../../docs/guide/panhub.md) as
+plugins, agents, prompts and playbooks. Bundling a package does not activate it.
+Inside a detected PanCode source checkout, the two self-development skills described
+below are also available directly from their authoring directories.
+
+`hub/packs/skills/` is the canonical source for PanCode's curated skills. The npm
+package includes the whole `hub/` tree, with this directory and the
+`hub/index.yaml` index.
+The index points to these bundled directories relative to its own location,
+so discovery and installation work from a source checkout or an installed
+package without fetching PanHub from GitHub. Skill source URLs point
+back to this repository; they do not replace the bundled package source.
+
+## Install and use
+
+```bash
+pancode hub search research --kind skill
+pancode hub install skill:plan-interview --project --dry-run
+pancode hub install skill:plan-interview --project
+pancode hub skills --all --json
+pancode hub update skill:plan-interview --project
+pancode hub disable skill:plan-interview --project
+pancode hub remove skill:plan-interview --project
+```
+
+In a session, `/hub skill` browses skill packages and `/skill <name> [task]`
+activates one. Installed skill packages live beneath the selected scope's
+`plugins/<name>/`, with one complete-tree digest and the common package state.
+Unmanaged local `SKILL.md` files still load from established PanCode and foreign
+resource roots. Foreign project imports and interop-adopted resources retain
+their trust requirements. Plugin resource roots are the packaged resource tier;
+PanCode extensions do not contribute skills.
+
+Installations, updates and active resource trees belong to the operator. Models
+may draft outside active roots and inspect or validate the result, but recognized
+model shell mutations of PanHub packs are refused at every autonomy level.
+Interactive offers commit only after the bound operator answer. Skill tool
+restrictions last for the session until replaced or cleared with `/skill off`;
+worker activations remain scoped to their run. A skill can narrow tools but never
+grant authority the host disallows.
+
+## Source organization
+
+### Developing PanCode itself
+
+When PanCode detects its own Git checkout (including worktrees and subdirectory
+launches), it discovers `pancode-dev` and `pancode-test` from
+`hub/packs/skills/meta/` as native local skills. This does not install packages or
+discover the rest of the catalog. Source roots must remain inside the checkout;
+an unrelated nested Git repository does not inherit them.
+
+The session prompt recommends `pancode-dev` for source changes and
+`pancode-test` for validation. At `default` and `yolo`, the model can load
+ready skills through `context(scope="skills", name="...")`. A read-only run
+cannot load a skill. This is automatic discovery
+and task-aware guidance, not automatic body injection or a guarantee of a model's
+tool choice. `--no-skills`, hidden skills, and task/tool restrictions still apply.
+
+An installed package owns its name even when disabled, damaged, or pending
+reload; source discovery does not bypass it. Native local overrides keep their
+precedence. Worker recipes retain their declared skill bindings; parent-session
+activation is not inherited. A running process needs a new candidate build and
+restart for runtime changes, while editing these source skills remains ordinary
+repository work. Follow `CONTRIBUTING.md` and the skills' focused references.
+
+## Claude Code interop
+
+Catalog `allowed-tools` name PanCode tools in lowercase, and `pnpm hub:pin`
+refuses anything else. Claude Code reads the same key with the opposite meaning:
+it merges the names into its always-allow rules, so a listing there grants
+pre-approval instead of narrowing, and its rules match exact strings. PanCode's
+lowercase names match no Claude tool and stay inert when a catalog skill sits in
+`.claude/skills`; spelling one `Bash` would auto-approve Bash for anyone who
+installed the skill.
+
+## Catalog layout
+
+| Directory | Subject |
+| --- | --- |
+| `coding/` | Implementation, structural search, prototyping and tests |
+| `context/` | Repository orientation and task handoff |
+| `git/` | Tickets, issue fixes, merge conflicts, shipping, worktrees and branch closeout |
+| `meta/` | Skill and extension authoring, skill discovery, PanCode development and credentials |
+| `planning/` | Product intent, architecture, requirements, technical specs, backlog and codebase maps |
+| `research/` | Literature, experiments, scientific debugging and modernization |
+| `workflow/` | Interviews, sprint planning, design review and workflow capture |
+
+Each complete package contains `plugin.json`, `SKILL.md`, and any supporting
+files. Standalone skill manifests set
+`extensions["dev.pancode"].kind` to `skill`, declare `resources.skills: "."`,
+and declare exactly one skill component at `SKILL.md`. The package name and
+explicit Semantic Version identify the distributable.
+
+`map-codebase` creates native interactive HTML maps using PanCode's repository
+index and source navigation. Run `/skill map-codebase` for an explained map,
+or `pancode context map` for direct generation. No separate renderer is
+needed. Packages retain normal integrity, trust and permission controls.

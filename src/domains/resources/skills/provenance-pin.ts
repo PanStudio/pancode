@@ -1,0 +1,157 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * Local-first skill provenance pinning.
+ *
+ * `hub/packs/skills/registry.yaml` (regenerated with `pnpm run skills:pin`) pins the
+ * provenance-stripped sha256 of every marketplace skill's SKILL.md. At
+ * activation time, a skill carrying marketplace provenance (`registry-id`
+ * frontmatter) is compared against the pinned entry on the same normalized
+ * hash, so install-lifecycle stamps (`installed-at`, `installed-hash`, ...)
+ * never read as drift while any content or registry-identity edit does. A
+ * mismatch means the installed content drifted from its audited form. Drift
+ * never blocks; skills still pass through the normal tool safety gates. No
+ * network, no remote registry, no signing; this is hash comparison against a
+ * local manifest.
+ */
+
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import yaml from "yaml";
+import { resolvePackageRoot } from "../../../core/package-root.js";
+import { isRecord } from "../../../core/type-guards.js";
+
+export const SKILL_PIN_MANIFEST_FILENAME = "registry.yaml";
+
+export interface SkillPinEntry {
+	name: string;
+	version: string | null;
+	sha256: string;
+}
+
+export type SkillDriftVerdict = "match" | "mismatch";
+
+/** Resolve the manifest path using the same catalog resolution as the marketplace. */
+function resolveSkillPinManifestPath(cwd: string): string | null {
+	const fromEnv = process.env.PANCODE_SKILL_CATALOG_DIR;
+	if (fromEnv && fromEnv.trim().length > 0) {
+		const manifestPath = path.join(path.resolve(fromEnv.trim()), SKILL_PIN_MANIFEST_FILENAME);
+		return existsSync(manifestPath) ? manifestPath : null;
+	}
+	const repoHubManifest = path.join(cwd, "hub", "packs", "skills", SKILL_PIN_MANIFEST_FILENAME);
+	if (existsSync(repoHubManifest)) return repoHubManifest;
+	const repoManifest = path.join(cwd, "skills", SKILL_PIN_MANIFEST_FILENAME);
+	if (existsSync(repoManifest)) return repoManifest;
+	try {
+		const bundledManifest = path.join(resolvePackageRoot(), "hub", "packs", "skills", SKILL_PIN_MANIFEST_FILENAME);
+		if (existsSync(bundledManifest)) return bundledManifest;
+	} catch {
+		// Package root may be unavailable in isolated harnesses.
+	}
+	return null;
+}
+
+function loadSkillPinManifest(manifestPath: string): Map<string, SkillPinEntry> | null {
+	let parsed: unknown;
+	try {
+		parsed = yaml.parse(readFileSync(manifestPath, "utf8"));
+	} catch {
+		return null;
+	}
+	if (!isRecord(parsed) || !Array.isArray(parsed.skills)) return null;
+	const entries = new Map<string, SkillPinEntry>();
+	for (const raw of parsed.skills) {
+		if (!isRecord(raw)) continue;
+		const name = typeof raw.name === "string" ? raw.name.trim() : "";
+		const sha256 = typeof raw.sha256 === "string" ? raw.sha256.trim().toLowerCase() : "";
+		if (name.length === 0 || !/^[0-9a-f]{64}$/.test(sha256)) continue;
+		entries.set(name, {
+			name,
+			version: typeof raw.version === "string" && raw.version.trim().length > 0 ? raw.version.trim() : null,
+			sha256,
+		});
+	}
+	return entries;
+}
+
+/** Which recorded hash the activated content was measured against. */
+export type SkillDriftAuthority = "pinned-manifest" | "install-record";
+
+export interface SkillDriftReport {
+	verdict: SkillDriftVerdict;
+	authority: SkillDriftAuthority;
+	/** The hash the content was compared against, for the operator's record. */
+	expected: string;
+}
+
+/**
+ * Compare an activated skill against whatever recorded hash can speak for it.
+ *
+ * Two independent authorities, tried in that order because they answer
+ * different questions. The pinned manifest says what the audited catalog
+ * entry's content is, so it wins wherever it has an entry. The skill's own
+ * `installed-hash` frontmatter says what this machine wrote at install time,
+ * which is the only evidence available for a skill installed straight from a
+ * URL, and it catches the case the manifest cannot see at all: content edited
+ * on disk after installation.
+ *
+ * Both compare on the provenance-stripped hash, so install-lifecycle stamps
+ * never read as drift while any content or registry-identity edit does. Null
+ * means nothing recorded a hash for this skill; drift evidence is opt-in and
+ * never a gate, and skills still pass the normal tool safety gates either way.
+ */
+export function checkSkillDrift(skill: SkillDriftSubject, cwd: string): SkillDriftReport | null {
+	return checkSkillDriftBatch([skill], cwd).get(skill.name) ?? null;
+}
+
+/** The fields a drift comparison reads. Structural, so any loaded skill satisfies it. */
+export interface SkillDriftSubject {
+	name: string;
+	normalizedHash: string;
+	provenance?: { installedHash?: string };
+}
+
+/**
+ * The same comparison for many skills, resolving and parsing the pin manifest
+ * once.
+ *
+ * Activation checks one skill and can afford to re-read the manifest each time.
+ * A listing checks every row, and doing that through the single-skill entry
+ * point would re-stat up to four candidate paths and re-parse the YAML once per
+ * skill. {@link checkSkillDrift} is the single-skill case of this function
+ * rather than a parallel implementation, so the listing and the activation can
+ * never disagree about a verdict.
+ *
+ * Skills with nothing recorded for them are absent from the map rather than
+ * present with a null: an entry means a comparison happened.
+ */
+export function checkSkillDriftBatch(
+	skills: ReadonlyArray<SkillDriftSubject>,
+	cwd: string,
+): Map<string, SkillDriftReport> {
+	const reports = new Map<string, SkillDriftReport>();
+	if (skills.length === 0) return reports;
+	const manifestPath = resolveSkillPinManifestPath(cwd);
+	const manifest = manifestPath === null ? null : loadSkillPinManifest(manifestPath);
+	for (const skill of skills) {
+		const actual = skill.normalizedHash.toLowerCase();
+		const pinned = manifest?.get(skill.name);
+		if (pinned !== undefined) {
+			reports.set(skill.name, {
+				verdict: pinned.sha256 === actual ? "match" : "mismatch",
+				authority: "pinned-manifest",
+				expected: pinned.sha256,
+			});
+			continue;
+		}
+		const recorded = skill.provenance?.installedHash?.trim().toLowerCase();
+		if (recorded !== undefined && /^[0-9a-f]{64}$/.test(recorded)) {
+			reports.set(skill.name, {
+				verdict: recorded === actual ? "match" : "mismatch",
+				authority: "install-record",
+				expected: recorded,
+			});
+		}
+	}
+	return reports;
+}

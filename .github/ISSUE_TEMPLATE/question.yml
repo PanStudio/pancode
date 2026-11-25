@@ -1,0 +1,26 @@
+name: Question
+description: Ask how to install or use PanCode, or tell us how a model, a cluster or a terminal worked with it.
+labels: ["question"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Question
+      description: No question is too basic. `/report question` inside PanCode, or `pancode report question` in a shell, fills this form for you and masks private details first.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: "`pancode --version`, how you installed it, and your target and model. `/report` fills this."
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Filled by /report. Leave empty when writing by hand.
+    validations:
+      required: false

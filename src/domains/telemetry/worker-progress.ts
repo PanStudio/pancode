@@ -1,0 +1,774 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * The one projection of a worker's live progress.
+ *
+ * A dispatched run publishes its events on a single stream, and two surfaces
+ * read them: the transcript block a `/run` or `/delegate` opens, and the Fleet
+ * Runs board. Both used to interpret that stream themselves, so the same event
+ * could mean two things and the board could only manage a richer spinner while
+ * the transcript already held the answer. This module is the fold both now go
+ * through, so what an operator reads about a worker is one story told twice
+ * rather than two stories.
+ *
+ * Three rules it enforces rather than documents:
+ *
+ *   - Arguments never arrive here. A tool's name comes from the `pancode_*`
+ *     telemetry events, and what the call is doing comes from the bounded
+ *     {@link CallActionDescriptor} composed at the tool-admission seam. The
+ *     `tool_execution_*` events, whose `args` carry the literal call arguments,
+ *     are not read at all.
+ *   - Reasoning content is never retained. A `thinking_delta` moves the phase
+ *     and nothing else: the operator learns that the worker is thinking, never
+ *     what it is thinking.
+ *   - Everything is bounded before it is kept. Lines, bytes, the action trail,
+ *     the distinct tool names, and the rate at which delta bytes are accepted
+ *     all have explicit caps, so neither a long run nor a hostile one can grow
+ *     what a render has to walk.
+ *
+ * Pure: no I/O, no bus, no clock of its own. `observe` takes the instant it
+ * should measure the rate window against, so every sequence below is testable.
+ */
+
+import { isRecord } from "../../core/type-guards.js";
+import { truncateUtf8 } from "../../tools/truncate-utf8.js";
+import { durableAssistantTextFromEvent, WORKER_OUTPUT_MAX_BYTES } from "../dispatch/event-pump.js";
+import { HOST_VERIFICATION_EVENT, type VerificationSlotState } from "../dispatch/verification-slot.js";
+import type { CallActionDescriptor } from "../safety/call-target.js";
+import {
+	type CutHeadGuard,
+	cutHeadGuard,
+	dropCutHead,
+	headGuardAfter,
+	holdCutOffText,
+	holdUnresolvedUserinfo,
+	messageStopCompleted,
+} from "../safety/redaction.js";
+
+/**
+ * Lines of worker prose kept while a run is live. The tail is what a streaming
+ * answer is about, so the head is what gets dropped; once the run settles the
+ * body is replaced by the receipt-sealed answer and anchors at the head, which
+ * is the same rule the thinking block already follows.
+ */
+export const WORKER_LIVE_TAIL_LINES = 40;
+
+/**
+ * Bytes of live tail retained. The line bound alone leaves a worker that emits
+ * one enormous line unbounded, so the byte bound is the backstop: whole lines
+ * leave the head until the tail fits, and a single line larger than the bound
+ * is cut at its head.
+ */
+export const WORKER_LIVE_TAIL_MAX_BYTES = 4096;
+
+/** Distinct tool names carried on an entry. The receipt's call count carries the total. */
+export const WORKER_TOOL_NAME_LIMIT = 8;
+
+/** Finished actions kept as the recent trail, newest first. */
+export const WORKER_ACTION_TRAIL_LIMIT = 4;
+
+/**
+ * The rate window for accepted delta bytes. A worker streaming faster than an
+ * operator can read is not producing more information, only more work for the
+ * fold, so bytes past the budget in one window are counted and dropped rather
+ * than concatenated into a tail that would immediately discard them anyway.
+ */
+export const WORKER_PROGRESS_WINDOW_MS = 250;
+
+/** Delta bytes accepted per {@link WORKER_PROGRESS_WINDOW_MS}. */
+export const WORKER_PROGRESS_WINDOW_BYTES = 16_384;
+
+const TAIL_TRUNCATION_MARKER = "";
+
+/**
+ * Where a worker is in its turn. Derived from the event stream and never from
+ * reasoning content: `thinking` says only that a reasoning block is open.
+ */
+export type WorkerProgressPhase = "starting" | "thinking" | "writing" | "tool" | "waiting" | "settled";
+
+/** One tool call as an operator surface may show it: the name plus its redacted descriptor. */
+export interface WorkerAction {
+	tool: string;
+	/** The finish event's authoritative result; absent on running calls and on a finish that states none. */
+	outcome?: "ok" | "error" | "blocked";
+	/**
+	 * The call errored before doing any work because its arguments named nothing the tool could resolve, in plain
+	 * words (`unknown check`). A `verify` it rejected never ran a validator, so it is not a failed check (B02).
+	 */
+	notRun?: string;
+	/** Correlation identity the event carries; absent when it carries none. */
+	toolCallId?: string;
+	/** Absent when the runtime emitted no descriptor, so the name stands alone. */
+	descriptor?: CallActionDescriptor;
+}
+
+/**
+ * Everything both surfaces read about a live worker, bounded. Snapshots are
+ * immutable and a new one is built only when a visible field changes, so a
+ * renderer can skip a repaint by identity rather than by diffing text.
+ */
+export interface WorkerProgressSnapshot {
+	/** Measured input for the current attempt; absent until the producer reports usage. */
+	inputTokens?: number;
+	processedTokens?: number;
+	/** Occupancy from the last completed model call, never cumulative usage. */
+	contextTokens?: number;
+	toolCalls?: number;
+	phase: WorkerProgressPhase;
+	/** Bounded worker prose: the live tail while running, the sealed answer once settled. */
+	tailText: string;
+	/** Lines the bounds dropped from `tailText`. */
+	droppedLines: number;
+	/** Bytes refused by the rate window or cut from an oversized line. */
+	droppedBytes: number;
+	/** The most recently started call still executing; null between calls and once settled. */
+	currentAction: WorkerAction | null;
+	/** Finished calls, newest first, bounded by {@link WORKER_ACTION_TRAIL_LIMIT}. */
+	recentActions: ReadonlyArray<WorkerAction>;
+	/** Distinct tool names in first-use order, bounded by {@link WORKER_TOOL_NAME_LIMIT}. */
+	toolNames: ReadonlyArray<string>;
+	settled: boolean;
+	/** The running call is parked on the operator's approval, so nothing is executing. Absent reads as not parked. */
+	awaitingApproval?: boolean;
+	/** When an unanswered ask ends and how, while the dispatching process runs its window. */
+	approvalWindow?: WorkerApprovalWindowFacts;
+	/**
+	 * The worker's loop has ended and the host is checking its work: `queued` while the checks wait for the
+	 * verification slot, `running` once they hold it. Absent before the checks and once the run settles.
+	 */
+	verification?: "queued" | "running";
+	/** The stream ended on purpose, so a held URL may release. Absent reads as not completed (#446). */
+	completed?: boolean;
+	/**
+	 * Epoch milliseconds of the worker's last heartbeat while the watchdog reads
+	 * it as stale or dead. Its phase is then what it was doing when it went
+	 * quiet, not what it is doing now. Absent while the worker answers.
+	 */
+	quietSinceMs?: number;
+	/**
+	 * Epoch milliseconds of the last model or tool event the worker sent, to within a second: a delta, a reasoning
+	 * event, a message boundary, a call starting or finishing. A surface reads a long gap from it as silence and
+	 * says how old the evidence is. Absent until the first such event.
+	 */
+	evidenceAtMs?: number;
+	/**
+	 * Output streamed in the attempt's open and finished calls, prose, reasoning and tool arguments together, as an
+	 * estimate of four characters a token. It moves while a call that has not reported usage is still open, so a slow
+	 * member shows it is producing. Absent until the first delta.
+	 */
+	streamedOutputTokens?: number;
+}
+
+/** Events that prove a worker's model or tools are moving, as opposed to its process merely being alive. */
+const EVIDENCE_EVENT_TYPES: ReadonlySet<string> = new Set([
+	"agent_start",
+	"attempt_start",
+	"message_start",
+	"message_update",
+	"message_end",
+	"text_delta",
+	"thinking_delta",
+	"pancode_tool_start",
+	"pancode_tool_finish",
+	"pancode_permission_escalated",
+	"pancode_permission_resolved",
+]);
+
+/** Evidence moves the snapshot at most once a second, so a reasoning stream does not rebuild it per delta. */
+const EVIDENCE_RESOLUTION_MS = 1000;
+
+export type WorkerApprovalDecider = "operator" | "main" | "judge";
+
+export interface WorkerApprovalWindowFacts {
+	/** Epoch milliseconds. */
+	expiresAt: number;
+	held: boolean;
+	fallback: "deny" | "fail";
+	/** Who the ask waits on now, because a brokered ask reaches the person only if it is passed on. */
+	decider: WorkerApprovalDecider;
+	/** The session that dispatched the run, when it is not the current one: only it may answer the ask (bt-11 f). */
+	owner?: string;
+}
+
+function approvalWindowFacts(payload: unknown): WorkerApprovalWindowFacts | null {
+	if (typeof payload !== "object" || payload === null) return null;
+	const { expiresAt, held, fallback, decider, owner } = payload as Record<string, unknown>;
+	if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) return null;
+	return {
+		expiresAt,
+		held: held === true,
+		fallback: fallback === "fail" ? "fail" : "deny",
+		decider: decider === "main" || decider === "judge" ? decider : "operator",
+		...(typeof owner === "string" && owner.length > 0 ? { owner } : {}),
+	};
+}
+
+export interface WorkerProgressFold {
+	/**
+	 * Fold one dispatch progress event. Returns true when the snapshot changed,
+	 * so a caller can decide whether the surface needs anything at all.
+	 */
+	observe(event: unknown, nowMs?: number): boolean;
+	/**
+	 * Seal the projection. `text` is the receipt's answer where one could be
+	 * read; without it the live tail stands as the run's last honest word.
+	 * `completed` is the run's own verdict; without it the fold's stream decides.
+	 */
+	settle(text?: string, completed?: boolean): boolean;
+	/**
+	 * A later attempt of the same work takes over. The tail and the trail are
+	 * history the operator is already reading and stay; the current call, the
+	 * settled mark, and the previous attempt's durable answer go, because an
+	 * answer belongs to the attempt that produced it.
+	 */
+	restart(): void;
+	snapshot(): WorkerProgressSnapshot;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+/**
+ * Incremental assistant prose carried by one worker event.
+ *
+ * Native workers slim `message_update` down to `assistantMessageEvent.delta`
+ * before it crosses the NDJSON seam (src/worker/event-projection.ts); the ACP
+ * mapper emits a top-level `text_delta` carrying `text`. Both spellings are
+ * read here so ACP peers need no separate UI path.
+ */
+export function workerTextDelta(event: unknown): string {
+	if (!isRecord(event)) return "";
+	if (event.type === "message_update") {
+		const assistantEvent = isRecord(event.assistantMessageEvent) ? event.assistantMessageEvent : null;
+		if (assistantEvent?.type !== "text_delta") return "";
+		return typeof assistantEvent.delta === "string" ? assistantEvent.delta : "";
+	}
+	if (event.type !== "text_delta") return "";
+	if (typeof event.delta === "string") return event.delta;
+	return typeof event.text === "string" ? event.text : "";
+}
+
+/**
+ * Whether worker prose is a structured answer rather than words: it opens a JSON object or array, a fenced JSON
+ * block, or a JSON member line from inside one. A one-line activity surface shows nothing of it, since the worker is
+ * writing its report and the first line of that report reads as raw JSON (bt-48-16).
+ */
+export function isStructuredAnswerText(text: string): boolean {
+	return /^\s*(?:\{|\[\s*(?:[{["\]\d-]|$)|```(?:json)?[ \t]*(?:\n|$)|"[^"\n]*"\s*:)/iu.test(text);
+}
+
+/** Characters one streamed delta carries, of any kind; the content itself is not kept. */
+function streamedDeltaChars(event: Record<string, unknown>): number {
+	const inner =
+		event.type === "message_update" && isRecord(event.assistantMessageEvent) ? event.assistantMessageEvent : event;
+	if (inner.type !== "text_delta" && inner.type !== "thinking_delta" && inner.type !== "toolcall_delta") return 0;
+	return typeof inner.delta === "string" ? inner.delta.length : typeof inner.text === "string" ? inner.text.length : 0;
+}
+
+/** Whether this event opens or continues a reasoning block. Its content is never read. */
+export function isThinkingEvent(event: Record<string, unknown>): boolean {
+	if (event.type === "thinking_delta") return true;
+	if (event.type !== "message_update") return false;
+	const assistantEvent = isRecord(event.assistantMessageEvent) ? event.assistantMessageEvent : null;
+	return assistantEvent?.type === "thinking_delta";
+}
+
+/** Why an unresolved call did no work, in an operator's words; the tool's own message stays in the feed. */
+function unresolvedCause(reason: string | undefined): string {
+	if (reason === undefined) return "nothing to run";
+	if (/is not a declared check/u.test(reason)) return "unknown check";
+	if (/matches several checks/u.test(reason)) return "ambiguous check";
+	if (/^verify: unavailable '/u.test(reason)) return "runner unavailable";
+	if (/no declared or derivable verification checks/u.test(reason)) return "no checks declared";
+	return "nothing to run";
+}
+
+/** The action a `pancode_tool_start`/`pancode_tool_finish` event names, or null when it is neither. */
+function toolEventAction(event: Record<string, unknown>): WorkerAction | null {
+	if (event.type !== "pancode_tool_start" && event.type !== "pancode_tool_finish") return null;
+	const payload = isRecord(event.payload) ? event.payload : null;
+	const tool = nonEmptyString(payload?.tool);
+	if (tool === undefined) return null;
+	const toolCallId = nonEmptyString(payload?.toolCallId);
+	const rawOutcome = payload?.outcome;
+	const outcome = rawOutcome === "ok" || rawOutcome === "error" || rawOutcome === "blocked" ? rawOutcome : undefined;
+	const notRun = payload?.unresolved === true ? unresolvedCause(nonEmptyString(payload.reason)) : undefined;
+	const raw = isRecord(payload?.action) ? (payload.action as Partial<CallActionDescriptor>) : undefined;
+	const verb = nonEmptyString(raw?.verb);
+	if (verb === undefined)
+		return {
+			tool,
+			...(toolCallId !== undefined ? { toolCallId } : {}),
+			...(outcome ? { outcome } : {}),
+			...(notRun !== undefined ? { notRun } : {}),
+		};
+	const object = nonEmptyString(raw?.object);
+	const capability = nonEmptyString(raw?.capability);
+	return {
+		tool,
+		...(toolCallId !== undefined ? { toolCallId } : {}),
+		...(outcome ? { outcome } : {}),
+		...(notRun !== undefined ? { notRun } : {}),
+		descriptor: {
+			verb,
+			...(object !== undefined ? { object } : {}),
+			...(raw?.truncated === true ? { truncated: true } : {}),
+			...(capability !== undefined ? { capability } : {}),
+		},
+	};
+}
+
+function lineCount(text: string): number {
+	if (text.length === 0) return 0;
+	let lines = 1;
+	for (let index = 0; index < text.length; index += 1) {
+		if (text[index] === "\n") lines += 1;
+	}
+	return lines;
+}
+
+/** Keep the newest bytes of one oversized line, cutting on a UTF-8 boundary. */
+function keepTailBytes(text: string, maxBytes: number): string {
+	const buffer = Buffer.from(text, "utf8");
+	if (buffer.byteLength <= maxBytes) return text;
+	let cut = buffer.byteLength - maxBytes;
+	while (cut < buffer.byteLength) {
+		const byte = buffer[cut];
+		if (byte === undefined || (byte & 0xc0) !== 0x80) break;
+		cut += 1;
+	}
+	return buffer.subarray(cut).toString("utf8");
+}
+
+/**
+ * Bound the live tail: newest lines first, then whole lines from the head until
+ * the byte cap is met, and finally a head cut on a single line larger than the
+ * cap on its own.
+ */
+function boundLiveTail(text: string): {
+	text: string;
+	droppedLines: number;
+	droppedBytes: number;
+	guard: CutHeadGuard | null;
+} {
+	const lines = text.split("\n");
+	let droppedLines = 0;
+	if (lines.length > WORKER_LIVE_TAIL_LINES) {
+		droppedLines = lines.length - WORKER_LIVE_TAIL_LINES;
+		lines.splice(0, droppedLines);
+	}
+	while (lines.length > 1 && Buffer.byteLength(lines.join("\n"), "utf8") > WORKER_LIVE_TAIL_MAX_BYTES) {
+		lines.shift();
+		droppedLines += 1;
+	}
+	const joined = lines.join("\n");
+	const bytes = Buffer.byteLength(joined, "utf8");
+	if (bytes <= WORKER_LIVE_TAIL_MAX_BYTES) {
+		const removed = droppedLines === 0 ? "" : text.slice(0, text.length - joined.length);
+		return { text: joined, droppedLines, droppedBytes: 0, guard: headGuardAfter(removed) };
+	}
+	const kept = keepTailBytes(joined, WORKER_LIVE_TAIL_MAX_BYTES);
+	return { text: kept, droppedLines, droppedBytes: bytes - Buffer.byteLength(kept, "utf8"), guard: cutHeadGuard() };
+}
+
+/** Head-anchored byte bound for a settled answer, matching the receipt's own bound. A cut URL never resolves (#446). */
+export function boundSettledText(text: string): { text: string; dropped: number } {
+	const bounded = truncateUtf8(text, WORKER_OUTPUT_MAX_BYTES, TAIL_TRUNCATION_MARKER);
+	if (bounded === text) return { text, dropped: 0 };
+	const held = holdUnresolvedUserinfo(bounded);
+	return { text: held, dropped: Math.max(0, lineCount(text) - lineCount(held)) };
+}
+
+const EMPTY_SNAPSHOT: WorkerProgressSnapshot = {
+	phase: "starting",
+	tailText: "",
+	droppedLines: 0,
+	droppedBytes: 0,
+	currentAction: null,
+	recentActions: [],
+	toolNames: [],
+	settled: false,
+};
+
+export function createWorkerProgressFold(): WorkerProgressFold {
+	let inputTokens: number | undefined;
+	let processedTokens: number | undefined;
+	let contextTokens: number | undefined;
+	let toolCalls: number | undefined;
+	let phase: WorkerProgressPhase = "starting";
+	let tailText = "";
+	/** Set while the tail has lost its head and text arriving next can still belong to the unsafe token (#446). */
+	let tailGuard: CutHeadGuard | null = null;
+	let droppedLines = 0;
+	let droppedBytes = 0;
+	let currentAction: WorkerAction | null = null;
+	let awaitingApproval = false;
+	let verification: "queued" | "running" | null = null;
+	let approvalWindow: WorkerApprovalWindowFacts | null = null;
+	let quietSinceMs: number | null = null;
+	let evidenceAtMs: number | null = null;
+	let streamedChars = 0;
+	const recentActions: WorkerAction[] = [];
+	const toolNames: string[] = [];
+	let settled = false;
+	/** Whether the last text seen belongs to a model message that stopped on purpose. */
+	let streamCompleted = false;
+	/** Whether text has arrived since the last message ended, so a cut can still land inside it. */
+	let textOpen = false;
+	let completed = false;
+	let durable = "";
+	/** True after one assistant message ended and before the next message emits prose. */
+	let betweenAssistantMessages = false;
+	/** Starts still awaiting a finish, oldest first. */
+	const pendingActions: WorkerAction[] = [];
+	/** New streams resolve exact starts through this index. */
+	const pendingActionsById = new Map<string, WorkerAction>();
+	let windowStartMs = 0;
+	let windowBytes = 0;
+	let cached: WorkerProgressSnapshot | null = EMPTY_SNAPSHOT;
+
+	const touch = (): true => {
+		cached = null;
+		return true;
+	};
+
+	const setPhase = (next: WorkerProgressPhase): boolean => {
+		if (phase === next) return false;
+		phase = next;
+		return touch();
+	};
+
+	/**
+	 * Admit delta bytes against the rate window. Returns the text to append,
+	 * which is empty once the window's budget is spent; the refused bytes are
+	 * counted so the surface can say the stream outran it rather than quietly
+	 * showing less.
+	 */
+	const admitDelta = (delta: string, nowMs: number): string => {
+		if (nowMs - windowStartMs >= WORKER_PROGRESS_WINDOW_MS) {
+			windowStartMs = nowMs;
+			windowBytes = 0;
+		}
+		const bytes = Buffer.byteLength(delta, "utf8");
+		if (windowBytes + bytes <= WORKER_PROGRESS_WINDOW_BYTES) {
+			windowBytes += bytes;
+			return delta;
+		}
+		windowBytes = WORKER_PROGRESS_WINDOW_BYTES;
+		droppedBytes += bytes;
+		// The refused bytes leave a hole that could join `https://u:hun` to `/path`, or show `ter2@host` with no scheme, so
+		// the token on each side of it goes too (#446).
+		let end = tailText.length;
+		while (end > 0 && !/\s/u.test(tailText.charAt(end - 1))) end -= 1;
+		droppedBytes += Buffer.byteLength(tailText.slice(end), "utf8");
+		tailText = tailText.slice(0, end);
+		tailGuard = cutHeadGuard();
+		cached = null;
+		return "";
+	};
+
+	/**
+	 * A cut-off stream can never resolve what it was holding, while the next message or attempt keeps writing to this tail
+	 * and would close the run the hold reads, so the held part leaves the tail now (#446).
+	 */
+	const dropHeldTail = (): void => {
+		const held = holdUnresolvedUserinfo(tailText);
+		if (held === tailText) return;
+		tailText = held;
+		betweenAssistantMessages = true;
+		touch();
+	};
+
+	const appendTail = (text: string): boolean => {
+		if (text.length === 0) return false;
+		const guarded = (value: string): string => {
+			if (tailGuard === null) return value;
+			const kept = dropCutHead(value, tailGuard);
+			droppedBytes += Buffer.byteLength(value, "utf8") - Buffer.byteLength(kept, "utf8");
+			if (tailGuard.tokens === 0) tailGuard = null;
+			return kept;
+		};
+		const bounded = boundLiveTail(tailText + guarded(text));
+		droppedLines += bounded.droppedLines;
+		droppedBytes += bounded.droppedBytes;
+		if (bounded.guard !== null) tailGuard = bounded.guard;
+		tailText = bounded.guard === null ? bounded.text : guarded(bounded.text);
+		return touch();
+	};
+
+	const noteToolName = (tool: string): boolean => {
+		if (toolNames.includes(tool) || toolNames.length >= WORKER_TOOL_NAME_LIMIT) return false;
+		toolNames.push(tool);
+		return touch();
+	};
+
+	const removePendingAction = (action: WorkerAction): void => {
+		const index = pendingActions.lastIndexOf(action);
+		if (index >= 0) pendingActions.splice(index, 1);
+		if (action.toolCallId !== undefined && pendingActionsById.get(action.toolCallId) === action) {
+			pendingActionsById.delete(action.toolCallId);
+		}
+	};
+
+	const lastCompatiblePendingAction = (action: WorkerAction): WorkerAction | undefined => {
+		for (let index = pendingActions.length - 1; index >= 0; index -= 1) {
+			const candidate = pendingActions[index];
+			if (candidate?.tool === action.tool && (action.toolCallId === undefined || candidate.toolCallId === undefined))
+				return candidate;
+		}
+		return undefined;
+	};
+
+	const seal = (text?: string, runCompleted?: boolean): boolean => {
+		completed = runCompleted ?? streamCompleted;
+		const sealed = nonEmptyString(text) ?? nonEmptyString(durable);
+		if (sealed !== undefined) {
+			tailGuard = null;
+			const bounded = boundSettledText(sealed);
+			tailText = bounded.text;
+			droppedLines = bounded.dropped;
+			// The counts now describe the sealed answer, not the live tail it
+			// replaced. A one-line answer longer than the tail kept the bytes the
+			// tail had cut, so the card read a whole report as truncated and drew
+			// its raw JSON.
+			droppedBytes = Math.max(0, Buffer.byteLength(sealed, "utf8") - Buffer.byteLength(bounded.text, "utf8"));
+		}
+		currentAction = null;
+		pendingActions.length = 0;
+		pendingActionsById.clear();
+		settled = true;
+		phase = "settled";
+		touch();
+		return true;
+	};
+
+	return {
+		observe(event: unknown, nowMs = Date.now()): boolean {
+			if (!isRecord(event)) return false;
+			// The host checks a worker's work after its loop ended, so these arrive after agent_end sealed the fold.
+			if (event.type === HOST_VERIFICATION_EVENT) {
+				const next =
+					event.message === ("waiting for a verification slot" satisfies VerificationSlotState) ? "queued" : "running";
+				if (next === verification) return false;
+				verification = next;
+				return touch();
+			}
+			if (settled) return false;
+			if (event.type === "heartbeat_status") {
+				const quiet = event.status === "stale" || event.status === "dead";
+				const at = typeof event.heartbeatAt === "string" ? Date.parse(event.heartbeatAt) : Number.NaN;
+				const next = quiet ? (Number.isFinite(at) ? at : nowMs) : null;
+				if (next === quietSinceMs) return false;
+				quietSinceMs = next;
+				return touch();
+			}
+			let changed = false;
+			// Anything the worker sends proves it is answering again.
+			if (quietSinceMs !== null) {
+				quietSinceMs = null;
+				changed = touch();
+			}
+			// Counted on every delta, published only when the snapshot is next rebuilt (at most once a second
+			// from evidence alone), so a reasoning stream does not rebuild it per delta.
+			streamedChars += streamedDeltaChars(event);
+			if (
+				typeof event.type === "string" &&
+				EVIDENCE_EVENT_TYPES.has(event.type) &&
+				(evidenceAtMs === null || nowMs - evidenceAtMs >= EVIDENCE_RESOLUTION_MS)
+			) {
+				evidenceAtMs = nowMs;
+				changed = touch();
+			}
+			if (
+				event.type === "message_end" &&
+				isRecord(event.message) &&
+				event.message.role === "assistant" &&
+				isRecord(event.message.usage)
+			) {
+				const usage = event.message.usage;
+				const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0);
+				if (
+					typeof usage.input === "number" &&
+					Number.isFinite(usage.input) &&
+					usage.input >= 0 &&
+					typeof usage.output === "number" &&
+					Number.isFinite(usage.output) &&
+					usage.output >= 0
+				) {
+					const input = count(usage.input) + count(usage.cacheRead);
+					const output = count(usage.output);
+					inputTokens = (inputTokens ?? 0) + input;
+					processedTokens = (processedTokens ?? 0) + input + output + count(usage.cacheWrite);
+					contextTokens = input + output + count(usage.cacheWrite);
+					changed = touch();
+				}
+			}
+
+			const delta = workerTextDelta(event);
+			if (delta.length > 0) {
+				streamCompleted = false;
+				textOpen = true;
+				const separator = betweenAssistantMessages && tailText.length > 0 && !tailText.endsWith("\n") ? "\n\n" : "";
+				betweenAssistantMessages = false;
+				changed = appendTail(admitDelta(`${separator}${delta}`, nowMs)) || changed;
+				changed = setPhase("writing") || changed;
+			} else if (isThinkingEvent(event)) {
+				// The phase moves and nothing else: reasoning content is never kept.
+				changed = setPhase("thinking") || changed;
+			}
+
+			// A durable message_end is the answer as the receipt will seal it. An
+			// ACP peer that streamed no deltas reaches a surface only here.
+			if (event.type === "message_end" && isRecord(event.message) && event.message.role === "assistant") {
+				streamCompleted = messageStopCompleted(event.message.stopReason);
+			}
+			const durableText = durableAssistantTextFromEvent(event);
+			if (durableText.trim().length > 0) {
+				durable = durableText;
+				// A token cannot span messages, so the next message owes the old cut nothing.
+				tailGuard = null;
+				if (delta.length === 0 && tailText.trim().length === 0) {
+					changed = appendTail(durableText) || changed;
+					textOpen = true;
+				}
+				betweenAssistantMessages = true;
+			}
+			if (event.type === "message_end" && isRecord(event.message) && event.message.role === "assistant") {
+				if (!streamCompleted) {
+					// The cut belongs to this message: an empty one leaves what an earlier message finished alone.
+					if (durableText.trim().length > 0) durable = holdCutOffText(durable);
+					if (textOpen) {
+						dropHeldTail();
+						changed = true;
+					}
+				}
+				textOpen = false;
+			}
+
+			const action = toolEventAction(event);
+			if (action !== null && event.type === "pancode_tool_start") {
+				if (action.toolCallId === undefined || !pendingActionsById.has(action.toolCallId)) toolCalls = (toolCalls ?? 0) + 1;
+				if (action.toolCallId !== undefined) {
+					const duplicate = pendingActionsById.get(action.toolCallId);
+					if (duplicate !== undefined) removePendingAction(duplicate);
+					pendingActionsById.set(action.toolCallId, action);
+				}
+				pendingActions.push(action);
+				currentAction = action;
+				noteToolName(action.tool);
+				touch();
+				setPhase("tool");
+				changed = true;
+			} else if (action !== null && event.type === "pancode_tool_finish") {
+				// An id is authoritative when both sides carry it. If either side came
+				// from an older or incomplete producer, retain the historical name match.
+				const finished =
+					(action.toolCallId !== undefined ? pendingActionsById.get(action.toolCallId) : undefined) ??
+					lastCompatiblePendingAction(action) ??
+					action;
+				removePendingAction(finished);
+				currentAction = pendingActions[pendingActions.length - 1] ?? null;
+				recentActions.unshift({
+					...finished,
+					...(action.outcome ? { outcome: action.outcome } : {}),
+					...(action.notRun !== undefined ? { notRun: action.notRun } : {}),
+				});
+				if (recentActions.length > WORKER_ACTION_TRAIL_LIMIT) recentActions.length = WORKER_ACTION_TRAIL_LIMIT;
+				noteToolName(finished.tool);
+				touch();
+				setPhase(currentAction === null ? "waiting" : "tool");
+				changed = true;
+			}
+
+			if (event.type === "pancode_permission_escalated" || event.type === "pancode_permission_resolved") {
+				const parked = event.type === "pancode_permission_escalated";
+				if (parked !== awaitingApproval) {
+					awaitingApproval = parked;
+					touch();
+					changed = true;
+				}
+				// The dispatching process opens the window around the same event, in either order.
+				if (!parked && approvalWindow !== null) {
+					approvalWindow = null;
+					touch();
+					changed = true;
+				}
+			}
+			if (event.type === "pancode_permission_window") {
+				approvalWindow = approvalWindowFacts(event.payload);
+				touch();
+				changed = true;
+			}
+
+			// The loop only starts after the orchestrator admits the attested worker, so
+			// from here the wait is the model's first byte. Reading `starting` through it
+			// made a healthy worker on a slow provider look stuck in launch.
+			if (event.type === "agent_start") changed = setPhase("waiting") || changed;
+			// The worker's loop has ended, so the fold seals here whichever surface
+			// reads it. The island and the card each fold the same events; only the
+			// island settled on agent_end, and until the terminal event arrived it
+			// read `starting` beside a card still reading `writing`.
+			if (event.type === "agent_end") return seal();
+			return changed;
+		},
+
+		settle(text?: string, runCompleted?: boolean): boolean {
+			verification = null;
+			return seal(text, runCompleted);
+		},
+
+		restart(): void {
+			awaitingApproval = false;
+			verification = null;
+			approvalWindow = null;
+			quietSinceMs = null;
+			evidenceAtMs = null;
+			streamedChars = 0;
+			tailGuard = null;
+			inputTokens = processedTokens = contextTokens = toolCalls = undefined;
+			currentAction = null;
+			pendingActions.length = 0;
+			pendingActionsById.clear();
+			durable = "";
+			betweenAssistantMessages = false;
+			if (textOpen) dropHeldTail();
+			textOpen = false;
+			settled = false;
+			streamCompleted = false;
+			completed = false;
+			phase = "starting";
+			touch();
+		},
+
+		snapshot(): WorkerProgressSnapshot {
+			if (cached !== null) return cached;
+			cached = {
+				...(inputTokens === undefined
+					? {}
+					: {
+							inputTokens,
+							processedTokens: processedTokens ?? 0,
+							contextTokens: contextTokens ?? 0,
+						}),
+				...(toolCalls === undefined ? {} : { toolCalls }),
+				phase,
+				tailText,
+				droppedLines,
+				droppedBytes,
+				currentAction: currentAction === null ? null : { ...currentAction },
+				recentActions: recentActions.map((entry) => ({ ...entry })),
+				toolNames: [...toolNames],
+				settled,
+				...(awaitingApproval && !settled ? { awaitingApproval: true } : {}),
+				...(awaitingApproval && !settled && approvalWindow !== null ? { approvalWindow: { ...approvalWindow } } : {}),
+				completed,
+				...(verification !== null ? { verification } : {}),
+				...(quietSinceMs !== null && !settled ? { quietSinceMs } : {}),
+				...(evidenceAtMs !== null && !settled ? { evidenceAtMs } : {}),
+				...(streamedChars > 0 ? { streamedOutputTokens: Math.ceil(streamedChars / 4) } : {}),
+			};
+			return cached;
+		},
+	};
+}

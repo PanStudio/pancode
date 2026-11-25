@@ -1,0 +1,643 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * NotificationCenter: a dedicated harness→user surface anchored in the footer
+ * region. Harness messages (PANCODE.md hints, keybinding notices, connect/probe
+ * results) used to be dumped as plain stderr text into the transcript, where
+ * they polluted scrollback and looked unintentional. They route here instead.
+ *
+ * The center holds typed entries and never touches the chat transcript; the
+ * footer composes its pure render helpers into the bottom-anchored live region,
+ * so notices stay out of VT scrollback by construction.
+ *
+ * Rendering is split from state so the formatters stay pure and unit-testable:
+ * callers build a snapshot via {@link NotificationCenter.list}, then format it
+ * with {@link topNotification} / {@link formatNotificationPanel}. All
+ * color lives in `theme/**`; every emitted line is width-clamped.
+ */
+
+import { type NoticeFloor, tierPolicy } from "../../core/presentation-tier.js";
+import { redactSecretString } from "../../domains/safety/redaction.js";
+import { visibleWidth, wrapTextWithAnsi } from "../../engine/tui.js";
+import { fitFooterText } from "../footer-panel.js";
+import type { PancodeTheme, PancodeToken } from "../theme/index.js";
+import { formatElapsed, GLYPH, pancodeTheme, sectionRule } from "../theme/index.js";
+
+export type NotificationLevel = "info" | "success" | "warning" | "error";
+
+export interface NotificationInput {
+	level: NotificationLevel;
+	text: string;
+	/** Stable identity. Re-adding the same key replaces the existing entry. */
+	key?: string;
+	/**
+	 * Override the level default. Use 0 to pin a notice that states a condition
+	 * still true: its end is whatever clears that condition, or the operator.
+	 */
+	ttlMs?: number;
+	/** Brief setting feedback occupies the compact footer's separate value slot. */
+	presentation?: "setting";
+}
+
+export interface Notification {
+	id: string;
+	level: NotificationLevel;
+	text: string;
+	key: string | null;
+	addedAt: number;
+	/** Absolute expiry timestamp, or null when the entry is pinned. */
+	expiresAt: number | null;
+	presentation?: "setting";
+}
+
+export interface NotificationCenter {
+	add(input: NotificationInput): string;
+	dismiss(idOrKey: string): boolean;
+	dismissAll(): void;
+	/**
+	 * Later work has started, so a notice about earlier work stops reading as
+	 * current. One younger than the reading floor stays until it reaches the floor.
+	 */
+	supersede(scope: NoticeSupersedeScope): void;
+	list(now?: number): ReadonlyArray<Notification>;
+	/** Warnings and errors that ended without the operator dismissing them, newest first. */
+	ended(): ReadonlyArray<Notification>;
+	count(now?: number): number;
+	hasBlocking(now?: number): boolean;
+}
+
+/** Brief setting-change feedback fades after 3 seconds. */
+const DEFAULT_SETTING_TTL_MS = 3_000;
+/** Info and success notices fade on their own. */
+const DEFAULT_INFO_TTL_MS = 12_000;
+/**
+ * A warning or an error also ends, later: long enough to read after looking
+ * away, and never a permanent claim about a moment that has passed. The dashboard
+ * keeps it afterwards. A notice stating a live condition pins with `ttlMs: 0`.
+ */
+const DEFAULT_WARNING_TTL_MS = 60_000;
+const DEFAULT_ERROR_TTL_MS = 180_000;
+/** Later work never takes a notice off the footer sooner than this after it appeared. */
+const NOTICE_READING_FLOOR_MS = 8_000;
+/** Key of the notice confirming one applied route, which says something only while that route is the session's. */
+export function routeAppliedNoticeKey(target: string | null | undefined, model: string | null | undefined): string {
+	return `route-applied:${target ?? ""}/${model ?? ""}`;
+}
+
+/**
+ * Keys of the notices that report a request about one run or plan as still in progress: a cancel, a steer. The
+ * subject's outcome retires them all at once, whichever surface raised them, so none outlives what it describes.
+ */
+export function progressNoticeKeys(subject: string): string[] {
+	return [`dispatch-board:cancel:${subject}`, `dispatch-board:steer:${subject}`, `steer:${subject}`];
+}
+
+/** The ended warnings and errors the dashboard can still show. */
+const ENDED_NOTICE_LIMIT = 4;
+
+/** `helper` is background harness work, which ends only other helpers' notices. */
+export type NoticeSupersedeScope = "helper" | "work";
+
+/** Notices that describe one piece of finished or moved work rather than a standing condition. */
+const WORK_NOTICE_KEY = /^(?:helper|run-failed|route-move|fleet-run):/u;
+
+const SEVERITY: Record<NotificationLevel, number> = { error: 4, warning: 3, success: 2, info: 1 };
+
+export function notificationGlyph(level: NotificationLevel): string {
+	if (level === "error") return GLYPH.error;
+	if (level === "warning") return GLYPH.warn;
+	if (level === "success") return GLYPH.ok;
+	return GLYPH.info;
+}
+
+export function notificationToken(level: NotificationLevel): PancodeToken {
+	if (level === "error") return "error";
+	if (level === "warning") return "warning";
+	if (level === "success") return "success";
+	return "info";
+}
+
+/**
+ * Classify a plain notice string into a level. Boot hints arrive as plain
+ * strings (`contextDomain.startupHints()` + the keybinding diagnostics); this
+ * keeps state drift and keybinding problems sticky while letting purely
+ * advisory hints fade.
+ */
+export function classifyNoticeLevel(text: string): NotificationLevel {
+	if (/malformed|\bfailed\b|\berror\b/i.test(text)) return "error";
+	// An untrusted project layer is ignored until the operator acts, so its
+	// notice must stay until read rather than fade with advisory hints.
+	if (/keybinding|may not fire|invalid|differs|changed|no fingerprint|stale|untrusted|not trusted/i.test(text))
+		return "warning";
+	return "info";
+}
+
+/**
+ * Desktop notification: a content-free nudge to a terminal that is not on
+ * screen right now.
+ *
+ * The payload is deliberately not a message. The title is fixed and the body
+ * comes from a closed vocabulary, so a notification that lands on a shared
+ * screen, a phone mirroring notifications, or a corporate notification log
+ * cannot leak a prompt, a path, a model answer, or a worker's task text. What
+ * it carries is that something needs the operator, and nothing more.
+ */
+const DESKTOP_NOTIFY_TITLE = "pancode";
+
+/** Maximum body length in bytes after sanitization. */
+const DESKTOP_NOTIFY_BODY_MAX_BYTES = 128;
+
+/**
+ * The three events that earn a notification. `batch` carries the batch's short
+ * id because an operator running several fan-outs needs to know which one came
+ * back; the id is a generated identifier, never operator or model text.
+ */
+export type DesktopNotifyEvent =
+	| { kind: "turn-finished" }
+	| { kind: "batch-settled"; shortId: string }
+	| { kind: "approval-needed" };
+
+/**
+ * Terminals whose OSC 777 support is absent or unreliable and which understand
+ * OSC 9 instead. Matched case-insensitively against TERM_PROGRAM and, for
+ * Windows Terminal, against the presence of WT_SESSION.
+ */
+const OSC9_TERM_PROGRAMS: ReadonlyArray<string> = [
+	"iterm.app",
+	"iterm2",
+	"windowsterminal",
+	"windows terminal",
+	"conemu",
+];
+
+const BEL = "\u0007";
+
+/**
+ * Strip C0/C1 controls and the `;` an OSC payload uses as its own separator.
+ *
+ * The classification is by code point rather than by a character-class regex:
+ * a literal control range inside a pattern is exactly the thing the payload
+ * must not carry, and spelling one out is how it gets copied in by accident.
+ */
+function sanitizeNotifyText(text: string): string {
+	let out = "";
+	for (const char of text) {
+		const code = char.codePointAt(0) ?? 0;
+		const isControl = code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+		out += isControl || char === ";" ? " " : char;
+	}
+	return out.replace(/\s+/gu, " ").trim();
+}
+
+/** Clamp to the byte bound without splitting a multi-byte character. */
+function boundNotifyBytes(text: string, maxBytes: number): string {
+	const encoder = new TextEncoder();
+	if (encoder.encode(text).length <= maxBytes) return text;
+	let out = "";
+	let used = 0;
+	for (const char of text) {
+		const size = encoder.encode(char).length;
+		if (used + size > maxBytes) break;
+		out += char;
+		used += size;
+	}
+	return out;
+}
+
+/** The closed-vocabulary body for one event. */
+function desktopNotifyBody(event: DesktopNotifyEvent): string {
+	if (event.kind === "turn-finished") return "turn finished";
+	if (event.kind === "approval-needed") return "approval needed";
+	const shortId = boundNotifyBytes(sanitizeNotifyText(event.shortId), 32);
+	return shortId.length > 0 ? `batch ${shortId} settled` : "batch settled";
+}
+
+/** True when the environment names a terminal that answers OSC 9 rather than OSC 777. */
+function prefersOsc9(env: Readonly<Record<string, string | undefined>>): boolean {
+	if (typeof env.WT_SESSION === "string" && env.WT_SESSION.length > 0) return true;
+	const program = (env.TERM_PROGRAM ?? "").trim().toLowerCase();
+	if (program.length === 0) return false;
+	return OSC9_TERM_PROGRAMS.some((candidate) => program === candidate || program.includes(candidate));
+}
+
+/**
+ * Build the one escape sequence for an event. OSC 777 is the default and
+ * carries both the fixed title and the body; OSC 9 carries only the body and is
+ * chosen for the terminals that implement it instead. Exactly one sequence is
+ * returned, so a single event can never produce two notifications.
+ */
+function buildDesktopNotifySequence(
+	event: DesktopNotifyEvent,
+	env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+	const body = boundNotifyBytes(sanitizeNotifyText(desktopNotifyBody(event)), DESKTOP_NOTIFY_BODY_MAX_BYTES);
+	if (prefersOsc9(env)) return `\u001b]9;${body}${BEL}`;
+	return `\u001b]777;notify;${DESKTOP_NOTIFY_TITLE};${body}${BEL}`;
+}
+
+export interface DesktopNotifierDeps {
+	/**
+	 * Protocol write on the terminal owner. It happens outside a render
+	 * transaction, so the trace records it with `frameId: null` and it never
+	 * lands inside a frame.
+	 */
+	write: (data: string) => void;
+	/** Live `terminal.notify`, re-read per event so a hot config reload takes effect. */
+	enabled: () => boolean;
+	/**
+	 * True only on the interactive TTY path. Headless, ACP, and non-TTY runs
+	 * pass false (or wire no notifier at all) and never emit a sequence.
+	 */
+	interactiveTty: () => boolean;
+	env?: Readonly<Record<string, string | undefined>>;
+}
+
+export interface DesktopNotifier {
+	notify(event: DesktopNotifyEvent): void;
+}
+
+/**
+ * Emit content-free desktop notifications for the three operator-waiting
+ * events. Every call re-checks the setting and the surface, so turning
+ * `terminal.notify` off mid-session silences the next event.
+ */
+function createDesktopNotifier(deps: DesktopNotifierDeps): DesktopNotifier {
+	const env = deps.env ?? process.env;
+	return {
+		notify(event) {
+			if (!deps.interactiveTty()) return;
+			if (!deps.enabled()) return;
+			try {
+				deps.write(buildDesktopNotifySequence(event, env));
+			} catch {
+				// A terminal that refuses the write is not a reason to interrupt the
+				// turn that produced the event.
+			}
+		},
+	};
+}
+
+/** Minimal projection of a detached batch, matching `DetachedBatchNudgeView`. */
+export interface DesktopNotifyBatchView {
+	id: string;
+	total: number;
+	terminal: number;
+}
+
+export interface InteractiveDesktopNotificationsDeps extends DesktopNotifierDeps {
+	/**
+	 * Live detached-batch progress. Read on every dispatch terminal event so a
+	 * batch whose last run just finished is announced exactly once.
+	 */
+	getOpenBatches?: () => ReadonlyArray<DesktopNotifyBatchView>;
+}
+
+export interface InteractiveDesktopNotifications {
+	/** A model turn reached its end. */
+	turnEnded(): void;
+	/** A dispatch run reached a terminal state; announces any batch that settled with it. */
+	dispatchSettled(): void;
+	/** A worker permission or an ask_user request parked waiting for the operator. */
+	approvalParked(): void;
+}
+
+/** Batch ids stay short in the payload: enough to tell two fan-outs apart. */
+const BATCH_SHORT_ID_CHARS = 8;
+
+/**
+ * The three notification events, wired to the surfaces that produce them.
+ *
+ * Batch settlement has no event of its own on the bus, so it is derived: every
+ * dispatch terminal event recomputes open-batch progress and any batch that
+ * crossed from running to fully terminal since the last look is announced. The
+ * announced set is remembered, so a batch that stays collectible for another
+ * ten minutes does not re-notify on every later run.
+ */
+export function createInteractiveDesktopNotifications(
+	deps: InteractiveDesktopNotificationsDeps,
+): InteractiveDesktopNotifications {
+	const notifier = createDesktopNotifier(deps);
+	const announcedBatches = new Set<string>();
+	return {
+		turnEnded(): void {
+			notifier.notify({ kind: "turn-finished" });
+		},
+		dispatchSettled(): void {
+			const getOpenBatches = deps.getOpenBatches;
+			if (!getOpenBatches) return;
+			let views: ReadonlyArray<DesktopNotifyBatchView>;
+			try {
+				views = getOpenBatches();
+			} catch {
+				return;
+			}
+			const open = new Set<string>();
+			for (const view of views) {
+				open.add(view.id);
+				if (view.total <= 0 || view.terminal < view.total) continue;
+				if (announcedBatches.has(view.id)) continue;
+				announcedBatches.add(view.id);
+				notifier.notify({ kind: "batch-settled", shortId: view.id.slice(0, BATCH_SHORT_ID_CHARS) });
+			}
+			// A collected batch leaves the open list; forget it so its id can be
+			// announced again if the store ever reuses it.
+			for (const id of [...announcedBatches]) {
+				if (!open.has(id)) announcedBatches.delete(id);
+			}
+		},
+		approvalParked(): void {
+			notifier.notify({ kind: "approval-needed" });
+		},
+	};
+}
+
+/**
+ * TUI-only intake filter: advisory `tip:` info notices (the chrome does that teaching) and internal
+ * cold-cache / prompt-rebuild info notices (provenance lives in `/usage` and `Context` island `cache N%`)
+ * never enter `NotificationCenter` or render on the TUI Alert row at any tier. Shared `session-control`
+ * emitters remain untouched for headless and ACP.
+ */
+const SUPPRESSED_TUI_NOTICE_KEYS: ReadonlySet<string> = new Set([
+	"context.cache.cold",
+	"context.cache.reuse-uncertain",
+]);
+
+function isSuppressedTuiNotice(input: {
+	level: NotificationLevel;
+	text: string;
+	key?: string | null | undefined;
+	presentation?: "setting" | undefined;
+}): boolean {
+	if (input.level !== "info" || input.presentation === "setting") return false;
+	if (input.key != null && SUPPRESSED_TUI_NOTICE_KEYS.has(input.key)) return true;
+	return /^\s*(?:tip:|next reply may be slower:)/iu.test(input.text);
+}
+
+function resolveExpiry(
+	level: NotificationLevel,
+	addedAt: number,
+	ttlMs: number | undefined,
+	presentation?: "setting",
+): number | null {
+	if (ttlMs !== undefined) return ttlMs <= 0 ? null : addedAt + ttlMs;
+	if (presentation === "setting") return addedAt + DEFAULT_SETTING_TTL_MS;
+	if (level === "error") return addedAt + DEFAULT_ERROR_TTL_MS;
+	return addedAt + (level === "warning" ? DEFAULT_WARNING_TTL_MS : DEFAULT_INFO_TTL_MS);
+}
+
+function isLive(entry: Notification, now: number): boolean {
+	return entry.expiresAt === null || entry.expiresAt > now;
+}
+
+function bySeverityThenRecency(a: Notification, b: Notification): number {
+	return SEVERITY[b.level] - SEVERITY[a.level] || b.addedAt - a.addedAt;
+}
+
+/**
+ * The one notice a one-slot surface shows: the head of the center's own order, error over warning over success and
+ * info, newest first within a level, so a fresh info notice never hides a standing warning or error. Below the tier's
+ * notice floor (`noticeFloor`: compact shows warnings and errors only) an info or success notice does not take the
+ * slot; it still counts in the row's `+N`. Setting feedback is the operator's own change and always shows.
+ */
+export function topNotification(
+	notices: ReadonlyArray<Notification>,
+	now: number,
+	floor: NoticeFloor = tierPolicy().noticeFloor,
+): Notification | undefined {
+	let top: Notification | undefined;
+	for (const entry of notices) {
+		if (!isLive(entry, now) || belowFloor(entry, floor) || isSuppressedTuiNotice(entry)) continue;
+		if (top === undefined || bySeverityThenRecency(entry, top) < 0) top = entry;
+	}
+	return top;
+}
+
+function belowFloor(entry: Notification, floor: NoticeFloor): boolean {
+	if (floor === "info" || entry.presentation === "setting") return false;
+	return entry.level === "info" || entry.level === "success";
+}
+
+export interface NotificationCenterOptions {
+	now?: () => number;
+	/** Invoked after any state change (add/dismiss/expiry) so the footer can redraw. */
+	onChange?: () => void;
+	/**
+	 * Whether what a notice states still holds, read on every look at the center. A notice that stops holding is gone
+	 * from that look on and is not kept as an ended one, because its cause ended rather than its time on screen.
+	 */
+	stillTrue?: (notice: Notification) => boolean;
+}
+
+export function createNotificationCenter(options: NotificationCenterOptions = {}): NotificationCenter {
+	const now = options.now ?? (() => Date.now());
+	const onChange = options.onChange ?? (() => {});
+	const stillTrue = options.stillTrue ?? (() => true);
+	const entries: Notification[] = [];
+	const endedEntries: Notification[] = [];
+	let counter = 0;
+	let timer: ReturnType<typeof setTimeout> | null = null;
+
+	const clearTimer = (): void => {
+		if (timer) {
+			clearTimeout(timer);
+			timer = null;
+		}
+	};
+
+	const scheduleExpiry = (): void => {
+		clearTimer();
+		if (typeof setTimeout !== "function") return;
+		const current = now();
+		let next: number | null = null;
+		for (const entry of entries) {
+			if (entry.expiresAt === null) continue;
+			if (next === null || entry.expiresAt < next) next = entry.expiresAt;
+		}
+		if (next === null) return;
+		const delay = Math.max(0, next - current);
+		timer = setTimeout(() => {
+			timer = null;
+			prune();
+			onChange();
+			scheduleExpiry();
+		}, delay);
+		timer.unref?.();
+	};
+
+	const retire = (entry: Notification): void => {
+		if (entry.level !== "warning" && entry.level !== "error") return;
+		endedEntries.unshift(entry);
+		endedEntries.length = Math.min(endedEntries.length, ENDED_NOTICE_LIMIT);
+	};
+
+	const dropResolved = (): void => {
+		for (let i = entries.length - 1; i >= 0; i -= 1) {
+			const entry = entries[i];
+			if (entry && !stillTrue(entry)) entries.splice(i, 1);
+		}
+	};
+
+	const prune = (): void => {
+		dropResolved();
+		const current = now();
+		const expired: Notification[] = [];
+		for (let i = entries.length - 1; i >= 0; i -= 1) {
+			const entry = entries[i];
+			if (entry && !isLive(entry, current)) {
+				entries.splice(i, 1);
+				expired.push(entry);
+			}
+		}
+		for (const entry of expired.sort((a, b) => a.addedAt - b.addedAt)) retire(entry);
+	};
+
+	return {
+		add(input) {
+			if (isSuppressedTuiNotice(input)) return "";
+			const addedAt = now();
+			counter += 1;
+			const id = `notice-${counter}`;
+			const expiresAt = resolveExpiry(input.level, addedAt, input.ttlMs, input.presentation);
+			const entry: Notification = {
+				id,
+				level: input.level,
+				text: input.text,
+				key: input.key ?? null,
+				addedAt,
+				expiresAt,
+				...(input.presentation ? { presentation: input.presentation } : {}),
+			};
+			if (entry.key !== null) {
+				const existing = entries.findIndex((candidate) => candidate.key === entry.key);
+				if (existing >= 0) entries.splice(existing, 1);
+				// The fresh notice is this subject's current word; an ended one would contradict it.
+				const ended = endedEntries.findIndex((candidate) => candidate.key === entry.key);
+				if (ended >= 0) endedEntries.splice(ended, 1);
+			}
+			entries.push(entry);
+			scheduleExpiry();
+			onChange();
+			return id;
+		},
+		dismiss(idOrKey) {
+			const before = entries.length;
+			for (let i = entries.length - 1; i >= 0; i -= 1) {
+				const entry = entries[i];
+				if (entry && (entry.id === idOrKey || entry.key === idOrKey)) entries.splice(i, 1);
+			}
+			const removed = entries.length < before;
+			if (removed) {
+				scheduleExpiry();
+				onChange();
+			}
+			return removed;
+		},
+		dismissAll() {
+			if (entries.length === 0 && endedEntries.length === 0) return;
+			entries.length = 0;
+			endedEntries.length = 0;
+			clearTimer();
+			onChange();
+		},
+		supersede(scope) {
+			const current = now();
+			let changed = false;
+			for (const entry of [...entries]) {
+				if (entry.key === null || !WORK_NOTICE_KEY.test(entry.key)) continue;
+				if (scope === "helper" && !entry.key.startsWith("helper:")) continue;
+				const floor = entry.addedAt + NOTICE_READING_FLOOR_MS;
+				if (entry.expiresAt !== null && entry.expiresAt <= floor) continue;
+				changed = true;
+				if (current < floor) entry.expiresAt = floor;
+				else {
+					entries.splice(entries.indexOf(entry), 1);
+					retire(entry);
+				}
+			}
+			if (changed) {
+				scheduleExpiry();
+				onChange();
+			}
+		},
+		list(at) {
+			dropResolved();
+			const current = at ?? now();
+			return entries.filter((entry) => isLive(entry, current)).sort(bySeverityThenRecency);
+		},
+		ended() {
+			prune();
+			return [...endedEntries];
+		},
+		count(at) {
+			dropResolved();
+			const current = at ?? now();
+			return entries.reduce((sum, entry) => sum + (isLive(entry, current) ? 1 : 0), 0);
+		},
+		hasBlocking(at) {
+			dropResolved();
+			const current = at ?? now();
+			return entries.some((entry) => isLive(entry, current) && entry.level !== "info");
+		},
+	};
+}
+
+/**
+ * Expanded notices panel for the dashboard. The entry count is capped so a
+ * noisy boot cannot take over the dashboard, but every included notice wraps
+ * in full: this is the detail surface that the compact notice points toward.
+ */
+export function formatNotificationPanel(
+	entries: ReadonlyArray<Notification>,
+	width: number,
+	options: {
+		maxRows?: number;
+		dismissKeyLabel?: string;
+		theme?: PancodeTheme;
+		/** Notices that already left the footer, listed under the live ones with their age. */
+		ended?: ReadonlyArray<Notification>;
+		now?: number;
+	} = {},
+): string[] {
+	const visibleEntries = entries.filter((entry) => !isSuppressedTuiNotice(entry));
+	const ended = options.ended ?? [];
+	if (visibleEntries.length === 0 && ended.length === 0) return [];
+	const theme = options.theme ?? pancodeTheme();
+	const sep = ` ${GLYPH.sep} `;
+	const maxRows = Math.max(1, options.maxRows ?? 4);
+	const dismiss = options.dismissKeyLabel ?? "Ctrl+G X";
+	const meta = [
+		visibleEntries.length > 0 ? `${visibleEntries.length} ${visibleEntries.length === 1 ? "notice" : "notices"}` : "",
+		ended.length > 0 ? `${ended.length} earlier` : "",
+	]
+		.filter(Boolean)
+		.join(sep);
+	const lines: string[] = [sectionRule(theme, width, "Notices", { meta })];
+	const row = (entry: Notification, token: PancodeToken, suffix: string): void => {
+		const glyph = theme.fg(notificationToken(entry.level), notificationGlyph(entry.level));
+		const prefix = `${glyph} `;
+		const prefixWidth = visibleWidth(prefix);
+		// Same redaction as the compact line; only the one-line flattening is skipped.
+		const wrapped = wrapTextWithAnsi(
+			theme.fg(token, `${redactSecretString(entry.text)}${suffix}`),
+			Math.max(1, width - prefixWidth),
+		);
+		lines.push(
+			...wrapped.map((line, index) => fitFooterText(`${index === 0 ? prefix : " ".repeat(prefixWidth)}${line}`, width)),
+		);
+	};
+	// Each live notice says when it ends, so a warning never reads as a permanent claim.
+	const lifetime = (entry: Notification): string => {
+		if (options.now === undefined) return "";
+		if (entry.expiresAt === null) return `${sep}stays until resolved`;
+		return `${sep}clears in ${formatElapsed(Math.ceil(Math.max(0, entry.expiresAt - options.now) / 1000) * 1000)}`;
+	};
+	for (const entry of visibleEntries.slice(0, maxRows)) row(entry, "notice", lifetime(entry));
+	for (const entry of ended) {
+		const age = options.now === undefined ? "" : `${sep}${formatElapsed(Math.max(0, options.now - entry.addedAt))} ago`;
+		row(entry, "annotation", age);
+	}
+	const overflow = visibleEntries.length - maxRows;
+	const hint = overflow > 0 ? `+${overflow} more${sep}${dismiss} dismiss` : `${dismiss} dismiss`;
+	if (visibleEntries.length > 0) lines.push(fitFooterText(theme.fg("keyboardHint", hint), width));
+	return lines;
+}

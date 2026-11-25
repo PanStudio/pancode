@@ -1,0 +1,349 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { ceilChars } from "../session/context-accounting.js";
+import { operatorDecided } from "./guardian-gate.js";
+import { keptLessonLabel, projectKeptLesson } from "./lesson-projection.js";
+import { eligibleMemoryRecords, memoryRecordEligible } from "./operations.js";
+import {
+	type MemoryRelevanceInput,
+	type RankedMemoryCandidate,
+	rankMemoryByRelevance,
+	selectRelevantMemory,
+} from "./relevance.js";
+import type {
+	MemoryAgentIdentity,
+	MemoryRecord,
+	MemoryRepositoryIdentity,
+	MemoryRuntimeIdentity,
+	MemoryScope,
+} from "./types.js";
+
+export const MEMORY_PROMPT_DEFAULT_TOKEN_BUDGET = 400;
+export const MEMORY_PROMPT_DEFAULT_MAX_ITEMS = 5;
+
+/**
+ * Default scopes considered for chat-loop memory injection. We deliberately
+ * keep this conservative: `global` records are generally relevant and `repo`
+ * records are considered only when they exactly match the active repository
+ * identity. `language`, `runtime`, `agent`, `task-family`, and `hpc-domain`
+ * need richer context that the chat-loop does not have at submit-time. Future
+ * slices can broaden this list per call site.
+ */
+export const MEMORY_PROMPT_DEFAULT_SCOPES: ReadonlyArray<MemoryScope> = ["global", "repo"];
+
+export interface MemoryPromptOptions {
+	/** Explicit experiment only; omitted options keep the default priority. */
+	relevance?: MemoryRelevanceInput;
+	/**
+	 * With `relevance`, carry only records the turn plainly concerns
+	 * (`selectRelevantMemory`); `demoted` ids need a stronger match.
+	 */
+	gate?: {
+		demoted?: ReadonlySet<string>;
+		/**
+		 * CLI-P53: an eligible repo record this answers true for (its claim is a check) rides every turn whatever its
+		 * words, inside the same item and token caps. A demoted record still needs the demoted match.
+		 */
+		checkLesson?: (record: MemoryRecord) => boolean;
+	};
+	scopes?: ReadonlyArray<MemoryScope>;
+	tokenBudget?: number;
+	maxItems?: number;
+	/** Missing or unknown identity leaves global memory eligible but excludes repo memory. */
+	activeRepository?: MemoryRepositoryIdentity | null;
+	/** Missing or unknown identity excludes runtime-scoped memory. */
+	activeRuntime?: MemoryRuntimeIdentity | null;
+	/** Missing or unknown identity excludes agent-scoped memory. */
+	activeAgent?: MemoryAgentIdentity | null;
+}
+
+/**
+ * Filter approved, non-regressed, evidence-linked memory and cap by scope,
+ * deterministic token budget, repository identity, and item count. Stable
+ * ordering comes from the selection's inner sort and the fixed scope list.
+ * Repository identities match on exact canonical keys only.
+ */
+export function selectMemoryForPrompt(
+	records: ReadonlyArray<MemoryRecord>,
+	options: MemoryPromptOptions = {},
+): MemoryRecord[] {
+	return inspectMemoryPromptSelection(records, options).records;
+}
+
+export interface MemoryPromptDecision {
+	id: string;
+	reason: "selected" | "token-budget" | "item-limit";
+	relevance?: Omit<RankedMemoryCandidate, "record">;
+	/** The record passed the gate as a check lesson, not by sharing the turn's words. */
+	eligibleBy?: "check-command";
+}
+
+/** Diagnostics cover eligible candidates only: excluded records are never scored. */
+export function inspectMemoryPromptSelection(
+	records: ReadonlyArray<MemoryRecord>,
+	options: MemoryPromptOptions = {},
+): { records: MemoryRecord[]; decisions: MemoryPromptDecision[]; gatedOut: string[] } {
+	const scopes = options.scopes ?? MEMORY_PROMPT_DEFAULT_SCOPES;
+	const tokenBudget = options.tokenBudget ?? MEMORY_PROMPT_DEFAULT_TOKEN_BUDGET;
+	const maxItems = options.maxItems ?? MEMORY_PROMPT_DEFAULT_MAX_ITEMS;
+	if (!Number.isFinite(tokenBudget) || !Number.isFinite(maxItems) || tokenBudget <= 0 || maxItems < 1)
+		return { records: [], decisions: [], gatedOut: [] };
+	const eligibility = {
+		scopes,
+		activeRepository: options.activeRepository ?? null,
+		activeRuntime: options.activeRuntime ?? null,
+		activeAgent: options.activeAgent ?? null,
+	};
+	let base: LexicalCandidate[];
+	let gatedOut: string[] = [];
+	if (options.relevance === undefined)
+		base = eligibleMemoryRecords(records, eligibility).map((record) => ({ record, relevance: undefined }));
+	else if (options.gate === undefined)
+		base = rankMemoryByRelevance(records, eligibility, options.relevance).map(({ record, ...relevance }) => ({
+			record,
+			relevance,
+		}));
+	else ({ candidates: base, gatedOut } = gatedCandidates(records, eligibility, options.relevance, options.gate));
+	const selected: MemoryRecord[] = [];
+	const decisions: MemoryPromptDecision[] = [];
+	// What the operator told PanCode to remember is a standing instruction: it goes first, whatever the turn is about.
+	const ordered = [
+		...base.filter((candidate) => candidate.record.provenance?.sourceKind === "operator-stated"),
+		...base.filter((candidate) => candidate.record.provenance?.sourceKind !== "operator-stated"),
+	];
+	for (const { record, relevance, eligibleBy } of ordered) {
+		const reason =
+			selected.length >= Math.floor(maxItems)
+				? "item-limit"
+				: ceilChars(renderMemoryPromptSection([...selected, record]).length) > tokenBudget
+					? "token-budget"
+					: "selected";
+		decisions.push({
+			id: record.id,
+			reason,
+			...(relevance === undefined ? {} : { relevance }),
+			...(eligibleBy === undefined ? {} : { eligibleBy }),
+		});
+		if (reason === "selected") selected.push(record);
+	}
+	return { records: selected, decisions, gatedOut };
+}
+
+interface LexicalCandidate {
+	record: MemoryRecord;
+	relevance: Omit<RankedMemoryCandidate, "record"> | undefined;
+	eligibleBy?: "check-command";
+}
+
+/**
+ * The gate's candidates: the records the turn plainly concerns, in the ranking's order, then the eligible repository
+ * check lessons it did not carry (CLI-P53), so a relevant record keeps its place ahead of them under the caps. Every
+ * other eligible record is gated out, by id.
+ */
+function gatedCandidates(
+	records: ReadonlyArray<MemoryRecord>,
+	eligibility: Parameters<typeof selectRelevantMemory>[1],
+	relevance: MemoryRelevanceInput,
+	gate: NonNullable<MemoryPromptOptions["gate"]>,
+): { candidates: LexicalCandidate[]; gatedOut: string[] } {
+	const demoted = gate.demoted ?? new Set<string>();
+	const candidates: LexicalCandidate[] = selectRelevantMemory(records, eligibility, relevance, demoted).map(
+		({ record, ...rest }) => ({ record, relevance: rest }),
+	);
+	const kept = new Set(candidates.map(({ record }) => record.id));
+	const gatedOut: string[] = [];
+	for (const { record, ...rest } of rankMemoryByRelevance(records, eligibility, relevance)) {
+		if (kept.has(record.id)) continue;
+		if (record.scope === "repo" && !demoted.has(record.id) && gate.checkLesson?.(record) === true)
+			candidates.push({ record, relevance: { ...rest, fallback: false }, eligibleBy: "check-command" });
+		else gatedOut.push(record.id);
+	}
+	return { candidates, gatedOut };
+}
+
+/**
+ * Render a compact, deterministic memory section for prompt injection. Every
+ * line cites evidence ids so the model can reason about provenance. Returns
+ * the empty string when no records apply, so callers can treat the section as
+ * absent.
+ */
+export function renderMemoryPromptSection(records: ReadonlyArray<MemoryRecord>): string {
+	if (records.length === 0) return "";
+	const lines: string[] = [
+		"# Memory",
+		"",
+		"Long-term memory records that may apply. Each names who stands behind it: an operator who approved it, or the evidence gate that retained it automatically from a session's own execution receipts. Do not extrapolate beyond the cited findings.",
+		"",
+	];
+	for (const record of records) {
+		const lesson = record.lesson.replace(/\s+/g, " ").trim();
+		const evidence = record.evidenceRefs.join(", ");
+		const standing =
+			record.provenance?.sourceKind === "operator-stated"
+				? `operator-stated ${record.provenance.statedKind ?? "fact"}`
+				: keptLessonLabel(projectKeptLesson(record));
+		lines.push(`- [${record.id}] (${renderApplicability(record)}; ${standing}) ${lesson} Evidence: ${evidence}.`);
+		if (record.appliesWhen.length > 0) lines.push(`  Applies when: ${record.appliesWhen.map(compactText).join("; ")}.`);
+		if (record.avoidWhen.length > 0) lines.push(`  Avoid when: ${record.avoidWhen.map(compactText).join("; ")}.`);
+	}
+	return lines.join("\n");
+}
+
+/**
+ * One rendered record per entry: its `- [id]` line plus its indented
+ * condition lines, exactly as `renderMemoryPromptSection` wrote them.
+ */
+export function memorySectionBlocks(section: string): Array<{ id: string; text: string }> {
+	const blocks: Array<{ id: string; lines: string[] }> = [];
+	for (const line of section.split("\n")) {
+		const id = /^- \[([^\]]+)\]/u.exec(line)?.[1];
+		if (id !== undefined) blocks.push({ id, lines: [line] });
+		else if (line.startsWith("  ") && blocks.length > 0) blocks.at(-1)?.lines.push(line);
+	}
+	return blocks.map(({ id, lines }) => ({ id, text: lines.join("\n") }));
+}
+
+const MEMORY_UPDATE_HEADING = "# Memory update";
+
+/** A statement the operator pinned to this session only; it lives in the session ledger, not the store. */
+export interface OperatorSessionNote {
+	id: string;
+	text: string;
+	kind: string;
+}
+
+/**
+ * Add session-pinned operator notes to a rendered `# Memory` section, as
+ * `- [note-…]` entries the section delta tracks like store records.
+ */
+export function withOperatorSessionNotes(section: string, notes: ReadonlyArray<OperatorSessionNote>): string {
+	if (notes.length === 0) return section;
+	const lines = notes.map(
+		(note) =>
+			`- [${note.id}] (scope=session; operator-stated ${note.kind}) ${compactText(note.text)} Evidence: operator, this session.`,
+	);
+	if (section.length > 0) return [section, ...lines].join("\n");
+	return [
+		"# Memory",
+		"",
+		"Memory the operator stated for this session. Each names who stands behind it.",
+		"",
+		...lines,
+	].join("\n");
+}
+
+/**
+ * Whether a record a compiled prompt carries may still stand there: the fresh-selection eligibility, or why not.
+ * `automatic` is an eligible record no operator stands behind; `eligible` is one an operator decided (or a
+ * session-pinned note). Only the second rides a running session's tail as `# Memory update`.
+ */
+export type MemoryRecordStanding = "eligible" | "automatic" | "withdrawn" | "deleted";
+
+export function memoryRecordStanding(record: MemoryRecord | undefined): MemoryRecordStanding {
+	if (record === undefined) return "deleted";
+	if (!memoryRecordEligible(record)) return "withdrawn";
+	return operatorDecided(record) ? "eligible" : "automatic";
+}
+
+const withdrawalLine = (id: string): string => `- [${id}] withdrawn. Do not use this memory record.`;
+
+/**
+ * What the model last received for each record id: its text, or null for a
+ * withdrawal. The frozen `# Memory` section comes first, then each host-framed
+ * `# Memory update` in `framed` order, which is history order, so a later
+ * revision or withdrawal replaces an earlier one for the same id.
+ */
+function lastDeliveredMemory(frozen: string, framed: readonly string[]): Map<string, string | null> {
+	const delivered = new Map<string, string | null>();
+	for (const block of memorySectionBlocks(frozen)) delivered.set(block.id, block.text);
+	for (const text of framed) {
+		const at = text.indexOf(MEMORY_UPDATE_HEADING);
+		if (at < 0) continue;
+		for (const block of memorySectionBlocks(text.slice(at)))
+			delivered.set(block.id, block.text === withdrawalLine(block.id) ? null : block.text);
+	}
+	return delivered;
+}
+
+/**
+ * Whether this session's prompt already carries a record, so no tool-time reminder repeats it (DESIGN 4.4): the
+ * frozen section, a `# Memory update` already sent, a framed reminder naming it, or the update this turn adds.
+ */
+export function memoryCarried(compiled: string, framed: readonly string[], delta: string): (id: string) => boolean {
+	const ids = new Set(
+		[compiled, delta, ...framed.filter((text) => text.includes("# Memory update"))].flatMap((section) =>
+			memorySectionBlocks(section).map((block) => block.id),
+		),
+	);
+	return (id) => ids.has(id) || framed.some((text) => text.includes(`[${id}]`));
+}
+
+/**
+ * The records whose live text differs from what the model last received for
+ * that id, and the lapsed records it last received as text. A memory approval
+ * or revision between turns then reaches the model as tail text instead of
+ * recompiling the system prompt and re-billing the conversation (#423); an
+ * unchanged session yields the empty string. Records that only dropped out of
+ * the live selection say nothing: ranking is not withdrawal. A record no
+ * operator stands behind (`automatic`), such as a lesson another running
+ * session got approved, waits for this session's successor: only an operator
+ * decision rides the tail mid-session (DESIGN 4.4). Withdrawals always ride.
+ */
+export function memorySectionDelta(
+	frozen: string,
+	live: string,
+	framed: readonly string[],
+	standings: ReadonlyMap<string, MemoryRecordStanding> = new Map(),
+): string {
+	const lapsed = (id: string): boolean => {
+		const standing = standings.get(id);
+		return standing === "withdrawn" || standing === "deleted";
+	};
+	const delivered = lastDeliveredMemory(frozen, framed);
+	const withdrawn = [...delivered].filter(([id, text]) => text !== null && lapsed(id)).map(([id]) => withdrawalLine(id));
+	const fresh = memorySectionBlocks(live).filter(
+		(block) => !lapsed(block.id) && standings.get(block.id) !== "automatic" && delivered.get(block.id) !== block.text,
+	);
+	if (fresh.length === 0 && withdrawn.length === 0) return "";
+	return [
+		MEMORY_UPDATE_HEADING,
+		...(fresh.length > 0
+			? [
+					"Records added or revised since this session's # Memory section was compiled. They stand like the records there; a revised record replaces the entry with the same id.",
+				]
+			: []),
+		...fresh.map((block) => block.text),
+		...withdrawn,
+	].join("\n");
+}
+
+function compactText(value: string): string {
+	return value.replace(/\s+/g, " ").trim();
+}
+
+function renderApplicability(record: MemoryRecord): string {
+	if (record.scope === "repo") {
+		if (record.repository !== undefined) {
+			return `scope=repo, repository=${JSON.stringify(`${record.repository.kind}:${record.repository.key}`)}`;
+		}
+		return "scope=repo, repository=unknown";
+	}
+	if (record.scope === "runtime") {
+		return `scope=runtime, runtime=${JSON.stringify(record.runtime?.key ?? "unknown")}`;
+	}
+	if (record.scope === "agent") {
+		return `scope=agent, agent=${JSON.stringify(record.agent?.key ?? "unknown")}`;
+	}
+	return `scope=${record.scope}`;
+}
+
+/** Convenience for callers that want a single end-to-end build step. */
+export function buildMemoryPromptSection(
+	records: ReadonlyArray<MemoryRecord>,
+	options: MemoryPromptOptions = {},
+): { section: string; records: MemoryRecord[]; tokens: number } {
+	const selected = selectMemoryForPrompt(records, options);
+	const section = renderMemoryPromptSection(selected);
+	const tokens = ceilChars(section.length);
+	return { section, records: selected, tokens };
+}

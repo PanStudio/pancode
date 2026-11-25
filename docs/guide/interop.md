@@ -1,0 +1,601 @@
+# Coding agent interoperability
+
+PanCode can delegate a task to an installed coding agent, discover resources held
+by Claude Code, Codex, Antigravity CLI, GitHub Copilot CLI, and OpenCode, and
+adopt safe text resources into PanHub after approval. The canonical
+`hub/` packs this repository ships are also installable by Claude Code
+and loadable by Codex without a converted copy. Inspection and adoption use
+zero model tokens. Gemini, Cursor, and the shared Agent Skills convention
+retain their existing presence detection; this inventory does not extend their
+capabilities. Windsurf, Cline and Aider are detected the same way and get a row
+on the Interop page. `context init` and `context init --adopt` read their
+instruction sources, along with Cursor rules and GitHub Copilot instruction
+files, and write nothing into those agents' directories
+([context engine](../architecture/context-engine.md)). As for every registered
+agent, their directories (`.windsurf/`, `.clinerules/`, `~/.codeium/windsurf/`,
+`~/Documents/Cline/` and `~/.aider/`) are default no-write paths for PanCode's tools.
+
+`detectInteropAgents` in [detect.ts](../../src/domains/interop/detect.ts) discovers local agents. The [PanHub architecture](../architecture/panhub.md) explains pack trust.
+
+## Quick start
+
+1. Install and sign in to the other agent's own CLI, such as Claude Code,
+   Codex, OpenCode or the Antigravity CLI.
+2. Run `pancode interop inspect` or open `/hub interop` to see what
+   PanCode found and which connections are ready.
+3. Add an ACP connection with `pancode configure --interop`.
+4. Hand it a task from a session:
+
+   ```text
+   /run acp:opencode Review the proposed parser change and its edge cases.
+   ```
+
+   `/panes peer <id> <task>` opens the agent in a pane beside you instead.
+
+To give an agent write work as a managed run, add a target for its headless
+runtime and start it with `/run --target <id> --worktree`, so its changes land
+on a branch of their own. That agent runs its own tools, which PanCode
+cannot check one by one, so the target needs `trustedUnmediated: true`; see
+the example below.
+
+## Delegate work to an installed coding agent
+
+Depending on the peer, PanCode can run a named task through an Agent Client
+Protocol (ACP) connection or a managed headless CLI target, or open an
+interactive Herdr pane. PanCode remains the main conversation and records a run
+that settles and seals in its telemetry run scope for ACP and headless dispatch.
+A pane is an interactive handoff and has no managed result or run record. External peers
+are selected explicitly; PanCode does not silently switch agents or modes.
+
+| Peer | ACP connection | Headless target runtime | Pane ID |
+| --- | --- | --- | --- |
+| Claude Code | `npx -y @agentclientprotocol/claude-agent-acp@0.86.0` | `claude-code` | `claude-code` |
+| Codex | `npx -y @agentclientprotocol/codex-acp@2.1.1` | `codex-cli` | `codex` |
+| OpenCode | Native `opencode acp --cwd .` | `opencode-cli` | `opencode` |
+| GitHub Copilot CLI | Native `copilot --acp` | None | None |
+| Antigravity CLI | Native `agy acp --gemini-dir ~/.gemini --app-data-dir antigravity-cli` | `antigravity-code` | `antigravity` |
+| Pi CLI | No verified ACP recipe | `pi-cli` | `pi` |
+| A second PanCode | None | None | `pancode` |
+
+The recipes live in [registry.ts](../../src/domains/interop/registry.ts). Pi has
+no built-in ACP connection. An operator-configured ACP peer entry
+can use a compatible adapter. A pinned bridge counts as verified only when that
+package at the pinned version sits in the project's `node_modules`; otherwise
+inspection reports the adapter as `unknown` and `npx` may fetch it at first
+launch. OpenCode, GitHub Copilot CLI and the Antigravity CLI have no adapter package, so their binary is the whole recipe ([Antigravity CLI over ACP](#antigravity-cli-over-acp)). A `pancode` pane opens another `pancode` against this session's PanCode directories and saved credentials; it takes no brief on its command line, and the model gives it a task through the `panes` tool's `send` action ([Panes and the Files Pane](panes-and-files.md)).
+
+PanCode starts an external `pi` with `--print --mode json --no-session --no-extensions --no-approve`.
+Pi 0.99 and later also disable their built-in providers under `--no-extensions`, so
+for those versions PanCode adds `-e builtin:llama.cpp`, detected once per binary from
+`pi --version`. A failed or unrecognized probe keeps the base flags and never
+blocks the run.
+
+PanCode also serves ACP frontends through `pancode acp`. The wire
+contract, workspace pinning, MCP server pass-through, and the rules for attended
+clients live in the [ACP architecture](../architecture/acp.md); a frontend that
+advertises neither attended opt-in keeps the unattended behavior, where
+`ask_user` is absent and a worker ask is not forwarded
+([attended clients](../architecture/acp.md#attended-clients)).
+
+A frontend can pick the model through the standard `model` config option.
+Session openers, forks and handoffs also return the choices in
+`_meta["pancode/models"]` (`currentModelId`, `availableModels`) once a model is
+selected, and `_pancode/session/set_model` selects one while the session is
+idle. `pancode acp` advertises `session/fork` from the ACP unstable schema in
+`sessionCapabilities`; it forks the hosted session at its active leaf and
+hosts the child in the parent's place, since one process hosts one session. Loading a session written by a newer PanCode fails with error
+`-32602`, code `session_format`, and a message that says to upgrade.
+
+Install and authenticate the peer's own CLI first. Run
+`pancode interop inspect --json` or open `/hub interop` to see the installed binary, configured
+target, ACP adapter, and available commands. `pancode configure --interop`
+can add an ACP peer recipe; a headless mode needs a PanCode target using the runtime
+in the table. For example, these entries in `~/.config/pancode/settings.yaml`
+make an installed OpenCode available in both managed modes:
+
+```yaml
+targets:
+  - id: opencode-local
+    runtime: opencode-cli
+    defaultModel: opencode-cli-default # use OpenCode's selected model
+    trustedUnmediated: true # OpenCode runs its own tools; accept its authority for writes
+integrations:
+  externalAgents:
+    entries:
+      - id: opencode
+        command: opencode
+        args: [acp]
+        toolGovernance: pancode-policy
+```
+
+Keep the rest of your settings when adding these entries. Every headless peer runtime (`claude-code`, `codex-cli`, `opencode-cli`, `antigravity-code`, `pi-cli`) runs its own tool loop, so PanCode cannot mediate its individual calls. Admission therefore refuses write-capable work on such a target unless the target sets `trustedUnmediated: true`, which is read only from the operator's own settings file; a project settings layer that sets it is ignored with a warning. Without it, `/run --target opencode-local` fails admission with `runtime 'opencode-cli' runs its own tool loop and PanCode cannot mediate its individual calls, so it is refused write-capable work`, and a read-only run is refused on every headless peer but Codex whatever `trustedUnmediated` says (see below), so the OpenCode target needs the opt-in for any headless work. If OpenCode's provider
+uses an environment credential such as `apiKey: "{env:LAB_GATEWAY_KEY}"` in its
+user `opencode.json` or `opencode.jsonc`, the headless connector passes that
+named variable to OpenCode when it is set. For ACP, add
+`env: { LAB_GATEWAY_KEY: "{env:LAB_GATEWAY_KEY}" }` to that peer entry. PanCode
+resolves the reference at launch; the key value does not enter settings or the
+run record. Unrelated environment secrets stay out of headless CLI children by
+default.
+
+```text
+/run --target opencode-local --worktree coder Fix the parser test and report the checks.
+/run acp:opencode Review the proposed parser change and its edge cases.
+/panes peer --cwd /path/to/project codex Investigate the failing build.
+```
+
+`/run --worktree` preserves the peer's Git task branch for review and records
+its path, branch, and changed files in the run record. Without it, a headless peer
+works in the current checkout and edits may appear immediately. A task worktree
+separates Git changes but does not confine the peer's own filesystem, shell, or
+network tools. PanCode can mediate ACP permission requests a peer reports, but a
+peer may write without requesting permission; run records mark this enforcement
+limit. Use the existing Git workflow to inspect and merge a
+preserved branch, and use `/fleet share` when the main agent should read a managed
+result.
+
+PanCode-managed peer dispatches run at default permissions, even when the main
+session uses yolo. A [read-only run](../architecture/safety-model.md#read-only-runs)
+applies a mediated read-only ceiling, so it is admitted only on a peer whose
+own OS-enforced mode qualifies; `trustedUnmediated` does not broaden that
+ceiling. This is a selected-runtime guarantee, not a statement about arbitrary
+external processes. Headless Codex runs read-only work under
+`--sandbox read-only`, an OS-level sandbox that refuses every write, so
+`/run --read-only --target <codex target>` is admitted; writable work uses
+`workspace-write`. Claude Code (`--permission-mode plan` with a `--tools`
+list), Pi (`--tools read,grep,find,ls`), Antigravity (`--mode plan --sandbox`,
+whose sandbox restricts its terminal only) and OpenCode rely on a tool list or
+a mode the peer itself honors, so a read-only run on them is refused before
+launch. An ACP peer can write without asking, so `/run --read-only` to an ACP peer is
+refused for every peer, and a delegation from a read-only session is refused
+too. A peer configured with `toolGovernance: agent-managed` is an explicit
+operator opt-in to peer-owned tools and needs `trustedUnmediated: true` in user
+settings. Delegation and pane handoff are also refused when the
+session carries context restricted by an information-flow rule, because the
+peer's own model requests are not admitted by PanCode; see
+[information flow](information-flow.md).
+
+### Repository instructions on a headless peer
+
+Each headless peer also reads its own instruction files from the repository.
+At project-context tier `bounded`, PanCode judges the rules in those files
+against the tree and sends the peer one compiled rule set in the project-context
+message: the handbook's sections, then the peer file's rules that still hold.
+The peer gets every invariant a native worker of the same role gets; the peer
+file's rules have a reserve of up to 40% of the bound, taken from the handbook's
+other rules only, and take whatever room the handbook leaves. When rules of the
+peer's files that hold still do not fit, a harness that would skip or overlay its
+files reads them beside the compiled rules instead (coexist), and the run record
+says `reason: over-bound`.
+A stale command rule is replaced by the tree's value, such as the test command
+in `package.json`. When the runtime has a switch, PanCode turns its own discovery
+off so the peer reads one source:
+
+| Runtime | Instruction files, per directory from the repository root down | Delivery | Switch |
+| --- | --- | --- | --- |
+| `claude-code` | `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`; `AGENTS.md` when none | coexist | none |
+| `codex-cli` | `AGENTS.override.md`, else `AGENTS.md` | single source | `-c project_doc_max_bytes=0` |
+| `pi-cli` | `AGENTS.md`, else `CLAUDE.md` | single source | `--no-context-files` |
+| `opencode-cli` | the first of `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md` present in any of them, in each directory that has it | overlay in a task worktree whose write root leaves the files out, else coexist (every run today) | none |
+
+Claude Code reads its files beside the compiled rules: its only switch,
+`--setting-sources user`, would also skip the project's `.claude/settings.json`
+and `.claude/settings.local.json`, whose permission rules and hooks are the
+peer's own project guardrails. OpenCode has no switch. When its run has its own
+task worktree, PanCode writes the compiled rules over the nearest instruction file
+in that worktree and empties the others for the run, so OpenCode reads them
+there and not in the message. Each overlaid file is marked skip-worktree in the
+worktree's index and put back before the change is taken, so it never reaches
+the task branch, even when the run dies before the restore; the run's claim
+names the overlaid files, so restart recovery puts them back. The overlay is
+skipped when the task names one of those files or declares a directory that
+covers one, when the run has no write boundary (none declared, or a write root
+of `.`), because it may then edit any of them, when one is not a regular file
+Git tracks, or when the run is on a remote host, and it is dropped when PanCode
+cannot write a file at spawn. OpenCode then reads its files beside the compiled
+rules in the message (coexist). PanCode cannot hold OpenCode to a narrower write
+root and refuses one at dispatch, so today every OpenCode run has no write
+boundary and reads its files beside the compiled rules; the overlay applies once
+a run can be held to a write root that leaves the files out. OpenCode also reads such a file in a
+directory below its own when it opens a file there; those files are read as
+they are. An operator who sets `OPENCODE_DISABLE_PROJECT_CONFIG` or
+`OPENCODE_DISABLE_CLAUDE_CODE` changes which files OpenCode reads, so the
+overlay may not reach it: list `opencode-cli` in
+`fleet.keepPeerInstructionFiles` to send the rules in the message instead.
+Pi gained `--no-context-files` in 0.67.4 and rejects it before then, so PanCode
+asks `pi --version` once per binary and leaves the switch out on an older Pi;
+that Pi reads its files beside the compiled rules, and the run record says
+`reason: switch-unsupported`. A Pi whose version PanCode cannot read keeps the
+switch. Codex accepts any `-c` key, so its switch is never rejected.
+A peer also reads its files beside the usual project message when a
+handbook is prose without sections, because there is
+nothing to compile it into. A runtime id listed in `fleet.keepPeerInstructionFiles`
+always reads its files beside the compiled rules, with no switch and no overlay, for
+a file whose guidance PanCode cannot extract as rules. Antigravity, ACP peers, and tier
+`none` keep their current behavior. The run record's `projectContext.peerInstructions` names the delivery,
+the files, the count of their rules the tree no longer supports (`stale`), and the
+count of the run's rules, from the handbook or those files, that hold but did not
+fit the bound (`notCarried`), `discarded` for an overlaid file the run changed,
+whose change the restore dropped, and `reason: setting`
+when the setting kept the files, `reason: switch-unsupported` when the
+installed peer has no switch to skip them, or `reason: over-bound` when its
+files' holding rules did not all fit the bound. When a peer read its files as they are and they
+hold rules the tree no longer supports, PanCode raises a `peer_instructions_stale`
+notice once per process for those files and counts, such as `AGENTS.md has 1 rule
+that no longer matches the repository; Codex read it in this run.`
+
+### Peer modes and their status
+
+`interop inspect` and `/hub interop` list each peer's modes with a status, a reason,
+and the next setup action. The `acp` row appears for a peer with a built-in
+recipe or an operator-configured ACP entry, the `headless` row for a peer with a
+managed runtime, and the `pane` row for a peer that has both a binary name and a
+managed runtime. Statuses are `ready`, `experimental`, and `unavailable`. A
+configured ACP or headless mode is never better than `experimental`, because
+authentication, permission behavior, and the selected model are only proven by a
+live task and its run record. `ready` belongs to a pane, and only when `/hub interop`
+sees a live Herdr pane host. `interop inspect` cannot observe a pane host, so it
+reports a pane with an installed binary as `experimental`. A mode is
+`unavailable` when the CLI is missing, no target uses the runtime, no ACP entry is
+configured, or the pane host is known to be absent.
+
+Connecting a detected peer (`a` in `/hub interop`, or `pancode configure --interop`)
+appends an entry to `integrations.externalAgents.entries` with the registry id,
+command and args, `connectTimeoutMs`, `turnTimeoutMs`, and
+`toolGovernance: pancode-policy`. `projectContext` is omitted so it keeps its
+default `none`, and the peer receives task text, never the project projection.
+Without a terminal, `configure --interop` prints the proposals and writes
+nothing. The operator's answer is stored in `interop.json` under the state
+directory and suppresses a repeat proposal only while the binary, version, and
+recipe are unchanged.
+
+### Antigravity CLI over ACP
+
+The Antigravity CLI (`agy`) is a built-in ACP delegation target with the id
+`antigravity`. Install `agy` and sign in with it, add the connection with
+`pancode configure --interop`, and run it from a session:
+
+```text
+/run antigravity Review the proposed parser change and its edge cases.
+```
+
+The recipe is `agy acp --gemini-dir ~/.gemini --app-data-dir antigravity-cli`,
+so the delegation uses the login and conversation store `agy` already keeps in
+`~/.gemini/antigravity-cli`. PanCode expands `~` at launch and turns `agy`'s
+self-update off for the run. An entry whose `args` point those two flags at
+another directory runs an isolated profile. PanCode drives `agy` 1.5.1 or
+later and refuses an older build with a message that says to upgrade. A session
+request made before sign-in settles `acp_auth_required` and names the login
+command, `agy acp --gemini-dir ~/.gemini --app-data-dir antigravity-cli --login`.
+
+| Topic | Behavior |
+| --- | --- |
+| Model and thinking | A dispatch to `antigravity` may name a `model` and a `thinking` level, checked against the options `agy` announces for the session. A `<model>-<level>` id such as `gemini-3.8-flash-high` selects the model and its thinking level together. A model `agy` does not offer settles `acp_model_unavailable`, and a level it does not offer for that model settles `acp_thinking_unavailable`; both messages list the offered values. `/run` takes no `--model` or `--thinking` for an external agent, so without a dispatch that names one the agent's own current model answers. |
+| Questions | A fixed-choice question from `agy` reaches the operator as a card headed `Delegated agent` that reads `antigravity asks: <question>`, with any security warning `agy` attached. Only the operator's own pick goes back. The question is answered cancelled when no operator is attached, at contained `yolo`, or when `fleet.permissions.mode` is `deny` or `fail`. |
+| Steering | A steer to the running delegation is sent to `agy` as another prompt in the same turn, so the turn and its subagents keep running. The steer counts as received when `agy` answers it. |
+| Quota | `agy` records a quota exhaustion in its own store and ends the turn as if it had finished. PanCode reads that store after each turn and fails the run with `Antigravity quota exhausted`, the model, and `resets at <time>` when `agy` recorded one. The failure cause is `usage_limit_reached`, and the retry moves to another target. |
+| Tool calls | Under `toolGovernance: pancode-policy`, a `run_command` call is judged as the shell command it runs, entered from its own working directory when it names one, and a `run_workflow` call as the inline script it runs. Reads, searches, fetches and edits are judged on their targets, and any other tool `agy` names is denied as an unknown tool, `agy:<name>`. |
+
+ACP delegation failures settle under their own outcome codes, for every ACP
+peer:
+
+| Outcome code | Shown as | Retry |
+| --- | --- | --- |
+| `acp_auth_required` | `agent needs sign-in` | On another target. |
+| `acp_model_unavailable` | `agent does not offer that model` | None. |
+| `acp_thinking_unavailable` | `agent does not offer that thinking level` | None. |
+| `acp_transport_error` | `lost the connection to the agent` | Follows the dispatch retry rules. |
+
+When the peer's prompt answers while it still reports work in progress (a
+tool call left pending or running, or a running or background state), PanCode
+holds the session open until the peer reports idle, the run is cancelled, the
+connection closes, or 120 s pass. The run record keeps how long it waited, how
+many updates arrived and which of these ended the hold.
+
+A later run can continue an ACP delegation in the peer's own session: the
+`dispatch` tool's `continue_run` argument, or
+`pancode run --agent <agent> --continue <runId>`. The earlier run must be an
+ACP delegation of the same agent, dispatched by the same session, settled, and
+must have recorded a peer session; anything else is refused with the reason
+before the run takes a slot. When the peer marked that session unable to take
+another turn, the run opens a fresh peer session and says why.
+
+### Claude Agent SDK runtime
+
+The `claude-sdk` target runtime runs Claude through the Claude Agent SDK
+`query()` inside a PanCode worker. It is a dispatch target, not an interop peer,
+and it is separate from the `claude-code` runtime above, which spawns
+`claude -p`. Neither the `claude-code` runtime nor the ACP bridge loads the SDK
+package from PanCode's package root.
+
+The Claude Agent SDK package (`@anthropic-ai/claude-agent-sdk`, pinned 0.3.292,
+about 224 MB) is not a dependency of PanCode's package. Every install method
+provisions it as a separate per-user component in
+`<data>/components/claude-agent-sdk/0.3.292/`: the installers do it only when
+`--include-claude-sdk` (`-IncludeClaudeSdk` on Windows) is passed, and
+`pancode tools install claude-sdk` does it at any time. Boot, `doctor`, and
+every other runtime work without it, because the module loads only when a
+`claude-sdk` run starts. Without the component, the first dispatch to a
+`claude-sdk` target, and `pancode configure` when it adds one, asks once
+whether to install it, defaulting to `Not now`. The run or command instead fails
+with `CLAUDE_AGENT_SDK_UNAVAILABLE` and prints `pancode tools install claude-sdk`
+when nobody can answer (a headless run) or when the operator declines. A decline
+holds until PanCode restarts. [Installation and lifecycle](installation-and-lifecycle.md#lean-install-the-claude-agent-sdk)
+holds the lookup order, the exact commands, and the decision rules.
+
+[sdk-runtime.ts](../../src/engine/claude/sdk-runtime.ts) mediates every SDK tool
+call through PanCode's shared admission evaluator, through both the `canUseTool`
+callback and a `PreToolUse` hook. The run uses `permissionMode: "default"`, reads
+no user Claude settings (`settingSources: []`), and persists no Claude session.
+A call cannot be parked for a later decision, so dispatch refuses
+`fleet.permissions.mode: escalate` and `main` on this runtime, and `judge` runs as
+`deny`. Under `deny` the runtime behaves like the native worker: each refused
+execute call returns to the model as a tool result, and the third ends the run
+with exit 3 and the limit reason (`WORKER_REFUSAL_LIMIT` in
+`src/worker/spec-contract.ts`). `onPermission: "fail"` ends either runtime at
+the first refusal that needed an approval, whatever its action class. See
+[worker dispatch mechanics](../architecture/worker-dispatch-mechanics.md) for the
+refusal table and the exit code.
+
+## Outbound: Use PanHub from Claude Code
+
+The repository is a standard Claude Code marketplace. `.claude-plugin/marketplace.json`
+is generated by `pnpm run hub:pin` from the pinned packs in
+`hub/index.yaml`, so it cannot describe a pack the repository does not
+actually contain.
+
+```bash
+claude plugin marketplace add akougkas/pancode
+claude plugin install tdd@pancode
+claude plugin install hpc@pancode
+```
+
+A local checkout or the installed npm package works the same way, because every
+entry's source is a relative path inside the repository:
+
+```bash
+claude plugin marketplace add ./path/to/pancode
+claude plugin marketplace add "$(npm root -g)/pancode"
+```
+
+The marketplace publishes 38 entries: the 34 curated skill packs and the four
+science packs (`hpc`, `science-data`, `literature`, `life-science`). What each
+entry becomes on the Claude Code side:
+
+| Source layout | What Claude Code loads |
+| --- | --- |
+| `hub/packs/skills/<category>/<name>/` with a root `SKILL.md` | One skill, named by the `SKILL.md` frontmatter, with its `references/` companions |
+| `hub/packs/plugins/<pack>/` for a science pack | The pack's skills from its `skills/` directory. A pack's `mcp.json` is the Agent Plugins file PanCode reads, not the `.mcp.json` Claude Code scans, so Claude Code starts none of its servers. |
+
+Nothing is converted and no component body is duplicated. The packs carry their
+portable Agent Plugins `plugin.json`, which Claude Code does not read; the
+marketplace entry supplies the name, description, version, category and license
+it shows. The generated entries use the marketplace format without `strict: false`;
+packs need no second `.claude-plugin/plugin.json`.
+
+### Not every pack is published
+
+A pack is published only when a host would load a real skill surface
+from it, and only when it carries nothing that host default-scans into a native
+component. Claude Code scans a plugin root for `agents/`, `commands/`, `hooks/`,
+`output-styles/` and `.mcp.json` without being asked, so a pack that keeps
+PanCode agents in a top-level `agents/` directory would have them shown as
+native Claude agents. The generator excludes packs with those conflicting roots, and
+`pnpm run hub:pin` prints the reason.
+
+Those packs remain valid first-class PanHub packs, and agent-, prompt- and
+playbook-only packs are normal contributions. They simply have no peer-host
+projection. An author who wants one pack to serve both audiences declares its
+PanCode resource roots at paths no host scans, for example `"agents": "native/agents"`,
+and keeps a `skills/` directory or root `SKILL.md` for the portable surface.
+
+## Outbound: Use PanHub from Codex
+
+Codex scans `.agents/skills` at the repository root, in the working directory and
+in `$HOME`, recurses into subdirectories, and follows symlinks. The checkout does
+not ship those links, so create them yourself. Linking the canonical trees into
+your user skills root gives Codex all 34 curated skills and the HPC pack's portable
+skills under their canonical names in every repository, with no install step and
+no copied `SKILL.md`:
+
+```bash
+mkdir -p ~/.agents/skills
+ln -s /path/to/pancode/hub/packs/skills ~/.agents/skills/pancode
+ln -s /path/to/pancode/hub/packs/plugins/hpc/skills ~/.agents/skills/hpc
+```
+
+Symbolic links need OS permission on Windows. If you cannot create them, install
+individual skills using the following route.
+
+To install individual skills instead, use Codex's own installer, which accepts a
+GitHub repository path:
+
+```text
+$skill-installer install tdd from akougkas/pancode/hub/packs/skills/coding/tdd
+```
+
+Disable one without deleting it through `[[skills.config]]` in `~/.codex/config.toml`.
+
+There is deliberately no Codex plugin marketplace here. Portable Codex plugins
+discover only a root `skills/` directory, the standalone packages carry a root
+`SKILL.md`, and a `.codex-plugin` overlay cannot override that while the portable
+root `plugin.json` is present. Publishing one would claim a compatibility that
+does not exist.
+
+## Inspect installed hosts
+
+```bash
+pancode interop inspect
+pancode interop inspect --json
+```
+
+Inspection reports binary presence, a bounded version probe (or unknown),
+connection and ACP adapter state, peer modes, and resource counts derived from
+the disk inventory. User and current-project resources are distinguished. A
+presence probe that cannot answer reports `unknown`, never `absent`. The JSON
+form is `{version: 1, generatedAt, detectedAt, knownKinds, agents}`, where
+`knownKinds` counts the registered agent kinds; each agent carries `id`, `label`,
+`presence`, `version`, `hasUserDirectory`, `acp`, `adapter`, `headless`,
+`paneEligible`, `modes`, `configured`, `decision`, `decidedAt`, `decisionStale`,
+`proposed`, `needsNetworkInstall`, and an `inventory` of counts and items with an
+`adoption` word read from the same plan `pancode interop adopt <host> --dry-run` builds: `adopted` when PanCode
+already holds the content, `not adoptable` when no adoption path exists, and `review required` otherwise.
+`paneEligible` is true only for a host with a pane mode whose CLI is installed; a host without one reads
+`pane unsupported`. JSON omits native source paths and declaration values,
+including MCP credentials. Any other argument exits 2.
+A cache directory establishes available content; installation and activation
+remain unknown unless a host's installation registry establishes them.
+Malformed, unreadable, symbolic-link, oversized, or unsupported configurations
+produce an unknown inventory diagnostic instead of an invented zero.
+
+With `PANCODE_INTEROP_HOME` unset, foreign user roots resolve from the
+operator's home even when `PANCODE_HOME` relocates PanCode. A path selects
+another home; `PANCODE_INTEROP_HOME=none` disables foreign user roots and
+sibling quota credentials, including roots named by agent-specific home
+variables. Project roots are unaffected (`src/core/xdg.ts`).
+
+The scanner reads these configuration layouts, honoring the named host home
+variable when present. An explicit fixture home ignores process host overrides.
+It never traverses session history or starts a conversational agent.
+
+| Host | User root | Project roots | Inventory and evidence commands |
+| --- | --- | --- | --- |
+| Claude Code | `~/.claude` (`CLAUDE_CONFIG_DIR`) | `.claude` | Skills, agents, commands, output styles, hooks, MCP (including `~/.claude.json` and project-root `.mcp.json`); installed plugin paths, versions and marketplace from `plugins/installed_plugins.json`. Evidence: `claude --version`, `claude plugin list --json`. |
+| Codex | `~/.codex` (`CODEX_HOME`), shared `~/.agents` | `.codex`, `.agents` | Skills, TOML agents, legacy prompts, hooks, MCP, plugin cache and plugin configuration. Evidence: `codex --version`, `codex plugin list --json`. |
+| Antigravity CLI | `~/.gemini/config` (`ANTIGRAVITY_HOME`) | `.agents` | Skills, agents, commands, plugins, import manifest, hooks, MCP. Evidence: `agy --version`, `agy plugin list`. Imported commands may already be converted into skills. |
+| GitHub Copilot CLI | `~/.copilot` (`COPILOT_HOME`) | `.github`, `.copilot` | Skills, agents, commands, hooks, MCP, plugin directories and local directory marketplaces in `settings.json`. Remote marketplace source paths remain unknown when no local installation is found. Evidence: `copilot plugin list`. |
+| OpenCode | `~/.config/opencode` (`OPENCODE_CONFIG_DIR`, or `XDG_CONFIG_HOME/opencode`) | `.opencode` | Skills, singular/plural agent and command directories, MCP declarations and `opencode.json` at the project root, JavaScript/TypeScript plugins and tools. Evidence: `opencode --version`, `opencode agent list`. JSONC that cannot be parsed as JSON is reported unknown. |
+
+The evidence commands in the last column are the host's own listing commands,
+recorded for an operator to run. Inspection never runs them: a host's startup can
+import executable modules, and OpenCode's agent listing in particular is not
+invoked against an operator profile. The only process Inspection starts is
+`<binary> --version`, inside a scratch directory with scratch home and
+`XDG_*` directories, a 2-second limit, and 4 KiB of output, so alias or log side
+effects cannot change the operator's home or project. The `listing` field is
+therefore always `unknown`.
+
+## Inbound: Review and adopt foreign resources
+
+### Adopt resources from an installed host
+
+`pancode configure --section workspace` offers "Adopt from Claude Code, Codex
+and other agents": it shows the adoption plan of each detected host that has
+something new and asks before applying it. Without a terminal it prints the
+plans and writes nothing.
+
+```bash
+pancode interop adopt claude-code --dry-run
+pancode interop adopt codex --kind skill --project
+pancode interop adopt claude-code --kind plugin --user --yes
+pancode interop adopt copilot --kind prompt --user
+```
+
+The host names are `claude-code`, `codex`, `antigravity`, `copilot`, and
+`opencode`; `claude` and `agy` are accepted aliases. `--kind` selects `skill`,
+`agent`, `prompt`, `plugin`, `mcp`, `hook`, or `instructions`. The destination defaults to user scope;
+`--project` chooses the current project's packs, and naming both scopes is
+refused. Destination scope does not filter source scope: every matching
+discovered user and project resource is reviewed in the plan. An invalid host,
+kind, or option exits 2, and an unknown inventory exits 1.
+
+The plan lists each source, destination, digest, and reason for installing or
+skipping it. Its SHA-256 identifies the reviewed projection; the PanHub engine
+also records its standard full-tree integrity pin when publishing the pack.
+`--dry-run` prints the plan and writes nothing. Otherwise PanCode asks
+for approval in a terminal. Without a terminal, the plan remains unexecuted
+unless `--yes` was supplied. Declining installs nothing. Installation rechecks
+the source against the reviewed content; a changed source requires a new plan.
+Each pack publishes atomically through the PanHub engine; a multi-pack
+plan may report successful packs alongside failures, and any diagnostic exits 1.
+
+| Resource | Adoption behavior |
+| --- | --- |
+| Skill | Text-only skill directory, with required name and description, packaged through the PanHub engine. Executable, non-text, or symbolic-link companions cause a skip. Foreign audit stamps are not retained. |
+| Prompt or command | Markdown body becomes a PanCode prompt. Host execution settings and other frontmatter are omitted; the description and argument hint are retained. |
+| Agent or subagent | Markdown persona or TOML `developer_instructions` becomes a PanCode agent limited to read, grep, find, and ls. Host tools, model, permissions, hooks, and skill bindings are omitted and the plan says so. |
+| Plugin | Accepts a valid portable root `plugin.json`, or a supported `.claude-plugin/plugin.json` / `.codex-plugin/plugin.json` package. PanCode adopts a data-only projection of its skills, prompts, agents, and text references. Host extension metadata, hooks, MCP, scripts, tools, playbooks, and non-text files are omitted. Dependencies on removed components cause a skip. Package `requires` declarations are preserved; required packages must already be installed, active, and valid in the destination scope. Missing requirements are named in the plan, checked again after approval, and never imported automatically. |
+| MCP server | A stdio server becomes an entry in your `mcp.yaml` (a project `.mcp.json` server goes to `.pancode/mcp.yaml`, which still needs `pancode mcp trust` and one [tool surface approval](configuration-reference.md#local-stdio-mcp-configuration-and-trust)); remote transports, `${VAR}` expansion and env pass-through lists are skipped with a reason, and the plan shows env keys, never values. |
+| User instruction file | `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` are copied, after review of the full text, into one marked section each of the user handbook `PANCODE.md` in the PanCode config directory, which loads ahead of project handbooks from the next session. Adopting again replaces only that section. |
+| Hook | `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart` and `Stop` command hooks become command hooks in your `hooks.yaml` (a project source goes to `.pancode/hooks.yaml`, behind workspace trust): the same shell command through `/bin/sh -c`, the event as JSON on stdin in the source agent's dialect (its tool names and `tool_input` fields), exit 2 or a JSON decision on stdout blocks. Tool matchers map to PanCode tool names; pattern and MCP matchers, prompt-type hooks and other events are skipped with a reason, and timeouts are capped at 5 s. |
+| Executable module, output style | Listed as not adoptable, with a reason. Nothing is registered or executed. |
+
+A source tree is read to at most 12 directory levels, 2048 files, and 16 MiB of text; a larger tree is refused.
+
+Claude-only and Codex-only plugin manifests use the same reviewed conversion as
+`hub import`. Supported Claude commands become prompts, and Claude agent
+bindings are retained when their required skills convert in the same package.
+Unsupported companions and host features are listed in the plan. A portable
+package is refused when retained components require omitted files. Use ordinary
+`hub install` for a reviewed portable pack whose complete assets are
+required, or import supported individual resources.
+
+Installed packages retain `{kind: "interop", host, source}` provenance with the
+original absolute source path. A resource read from your own home (`~/.claude`,
+`~/.codex` and their peers) installs as `trust: "trusted"`: the reviewed plan
+is the consent, and it reaches the model without further opt-in. A resource
+read from a repository's agent directories installs as `trust: "foreign"`, and
+its skills and prompts load only under the
+`integrations.projectResources.trustProjectImports` opt-in, including when it
+is adopted to user scope. Adoption also never approves
+workspace trust: a `--project` adoption writes `.pancode/plugins/state.json`,
+including the workspace's first, and the adopted package stays unloaded until
+`pancode config trust plugins` approves the project's plugin state. A
+`--user` adoption needs no workspace approval. Same plugin id/version or matching
+installed package content is skipped; identifier collisions are not replaced.
+PanHub integrity checks, drift detection, disable, and removal apply normally.
+To refresh a foreign source, remove the old pack and review a new adoption plan; no host files are ever
+moved, removed, or modified.
+
+## Inbound: Install or import an explicit foreign package (Claude Code, Codex)
+
+Adoption above starts from what an installed host already has. To install or import an explicit Claude Code plugin or Codex package from a local directory or a GitHub repository tree, use `pancode hub import`:
+
+```bash
+pancode hub import ./vendor/some-plugin --dry-run
+pancode hub import https://github.com/owner/repo/tree/main/plugins/thing --project
+pancode hub import ./vendor/some-plugin --format claude --yes
+```
+
+In an active session, `/hub import <path-or-url>` stages and reviews that exact foreign package in PanHub. When installing a Claude Code plugin or Codex package, PanCode parses the vendor manifest (e.g. `.claude-plugin/plugin.json`) and presents an interactive review before any managed installation or workspace mutation occurs (staging writes temporary inspection files prior to acceptance). The review has four parts:
+1. **Source and provenance**: the verified package source path or repository tree URL, the format (`portable`, `claude-code`, `codex`, or `agent-skill`), and the transport.
+2. **Projected declarative resources**: text skills (with markdown instructions), commands (converted into prompts), and basic agent personas become native PanHub components.
+3. **Foreign trust tier**: the package is marked `trust: "foreign"`. Foreign package skills and prompts remain untrusted and withheld from model turns, at project scope and at user scope alike, until `integrations.projectResources.trustProjectImports` is enabled. Bound agents require all referenced skills to be trusted.
+4. **Unsupported and omitted components**: every executable foreign mechanism is omitted and listed in the review plan. That covers MCP servers (`.mcp.json`), lifecycle hooks (`hooks/`), shell scripts (`scripts/`), and daemon runners. They are never registered as tools or executed.
+
+Cancelling the review cleans up temporary staging files without modifying managed package state or workspace files. PanHub's `o` key is the separate route into the local-agent discovery surface below, which starts from what an installed host already has rather than from a source you name.
+
+Detection is deterministic. A root `plugin.json` always takes precedence; an
+invalid root is refused before any vendor fallback. With no root manifest, `.claude-plugin/plugin.json`
+selects the Claude Code format and `.codex-plugin/plugin.json` selects Codex. When
+both hidden manifests are present the import is ambiguous and `--format` is
+required. With none of those manifests, a root `SKILL.md` selects `agent-skill`. A repository root containing nested skills lists the individual skill directories to import.
+
+A bare Agent Skill can be imported from a local directory or GitHub tree URL. The reviewed text projection keeps LICENSE files, omits `allowed-tools` and other host execution settings, and normalizes a version such as `"1.2"` to `1.2.0`. A body that depends on an omitted script is refused. To keep a local skill's scripts, run `pancode hub package ./my-skill`, review the generated `plugin.json`, then use `pancode hub install ./my-skill`. Packaging changes only the manifest, accepts `--dry-run`, and refuses an existing manifest unless `--force` is supplied. Installation preserves the complete package tree.
+
+Publication, content validation and the project-import trust gate are reported
+separately. An enabled trust gate is a prerequisite for runtime admission, not
+a claim that every component is available.
+
+The same review contract as adoption applies: `--dry-run` prints the projected
+plan and writes nothing, the plan names every converted resource, every
+unsupported host feature and every omitted file, and the source directory is
+never modified. Imported packages install with `trust: "foreign"` and keep
+`{kind: "import", source, transport, format}` provenance, so they stay visibly
+foreign in PanHub after installation. A skill whose instructions reference a
+companion that was omitted is reported unsupported rather than claimed working.
+An import, like an adoption, never approves workspace trust: a `--project`
+import stays unloaded until `pancode config trust plugins` approves the
+project's plugin state, in addition to the foreign trust gate above. When the
+model runs `hub import` through a shell it asks for one-shot confirmation
+in `default`, and `--dry-run` never asks.
+
+## Terminal flow
+
+Open `/hub interop` to inspect inventory or connect an external delegation peer.
+Inventory detail folds behind Enter and wraps in the scrolling detail pane.
+Select a host, press `p` for a project destination or `u` for user, and press `c`
+to cycle the kind filter. Press `i` to review the full adoption plan, then `y`
+to approve it or `b` to return without installing. Escape closes the overlay.
+Connection remains a separate action: `a` connects a proposed peer and `d`
+declines it. `/hub agents` browses PanHub's own agents and is a separate
+surface from this one.

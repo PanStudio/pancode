@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0 AND MIT
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Derived from pi-coding-agent packages/coding-agent/src/core/prompt-templates.ts at v1.0.0 (MIT license),
+// with the v1.3.0 empty-argument fix (upstream #10867).
+/**
+ * Parse bash-style quoted arguments. Unquoted whitespace of any kind, including newlines, separates arguments.
+ * A quoted empty string (`""` or `''`) is an argument, so later positions do not shift and `${N:-default}` applies.
+ */
+export function parseCommandArgs(argsString: string): string[] {
+	const args: string[] = [];
+	let current = "";
+	let hasToken = false;
+	let inQuote: string | null = null;
+
+	for (const char of argsString) {
+		if (inQuote) {
+			if (char === inQuote) inQuote = null;
+			else current += char;
+		} else if (char === '"' || char === "'") {
+			inQuote = char;
+			hasToken = true;
+		} else if (/\s/.test(char)) {
+			if (hasToken) {
+				args.push(current);
+				current = "";
+				hasToken = false;
+			}
+		} else {
+			current += char;
+			hasToken = true;
+		}
+	}
+	if (hasToken) args.push(current);
+	return args;
+}
+
+const PLACEHOLDER = /\$\{(\d+|ARGUMENTS|@):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)/g;
+const UNBRACED_PLACEHOLDER = /\$(ARGUMENTS|@|\d+)/g;
+
+/**
+ * Substitute `$1`, `$@`, `$ARGUMENTS`, `${N:-default}`, `${@:-default}`, `${ARGUMENTS:-default}`, `${@:N}` and
+ * `${@:N:L}` in one pass over the template, so values that contain placeholder-like text are never expanded again.
+ * `rawArguments` is the exact text after the command. When given, `$ARGUMENTS` inserts it byte for byte
+ * instead of the re-joined parsed arguments.
+ */
+export function substituteArgs(content: string, args: string[], rawArguments?: string): string {
+	const allArgs = args.join(" ");
+	const exactArgs = rawArguments ?? allArgs;
+	const unbraced = (_match: string, simple: string): string => {
+		if (simple === "ARGUMENTS") return exactArgs;
+		if (simple === "@") return allArgs;
+		return args[Number(simple) - 1] ?? "";
+	};
+	// Every braced placeholder ends at a "}", so none can match after the last one. Scanning that tail with the
+	// braced pattern would rerun `[^}]*` to the end from every unterminated `${N:-` opener, which is quadratic:
+	// a 1 MB template of openers blocked the turn. The tail only takes the unbraced forms.
+	const end = content.lastIndexOf("}") + 1;
+	const head = content
+		.slice(0, end)
+		.replace(
+			PLACEHOLDER,
+			(match: string, target?: string, fallback?: string, from?: string, count?: string, simple?: string) => {
+				if (target !== undefined) {
+					const value =
+						target === "ARGUMENTS" ? (allArgs ? exactArgs : "") : target === "@" ? allArgs : args[Number(target) - 1];
+					return value || (fallback ?? "");
+				}
+				if (from !== undefined) {
+					const start = Math.max(Number(from) - 1, 0);
+					return args.slice(start, count === undefined ? undefined : start + Number(count)).join(" ");
+				}
+				return unbraced(match, simple ?? "");
+			},
+		);
+	return head + content.slice(end).replace(UNBRACED_PLACEHOLDER, unbraced);
+}

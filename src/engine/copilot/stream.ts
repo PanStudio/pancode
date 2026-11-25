@@ -1,0 +1,2000 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * The copilot-sdk API: each PanCode model call is one step of an official Copilot SDK session.
+ *
+ * PanCode's agent loop owns the tools. Every tool in the request is declared to Copilot as an SDK tool whose
+ * handler parks until PanCode's loop has run the call under its own policy; Copilot's built-in tools are all
+ * excluded (`availableTools: ["custom:*"]`), so Copilot executes nothing itself. A Copilot assistant
+ * message that requests tools ends the PanCode stream with `toolUse`; the next PanCode call carries the results,
+ * which resolve the parked handlers, and Copilot continues the same run.
+ *
+ * One Copilot session is reused while PanCode's transcript strictly extends what that session has seen.
+ * Compaction, undo, a tool result the working set stubbed or cut, or any rewrite of earlier history is a
+ * divergence: the session is disposed and a fresh
+ * one is seeded with PanCode's current transcript. Side calls on the same PanCode session (a side question, a
+ * summarizer) match no live conversation and get their own, so they never disturb the main one.
+ *
+ * Every parked handler settles: with PanCode's result, or rejected when its call is retired by Copilot, when
+ * the conversation is disposed (divergence, abort, PanCode session end) or when the process stops the runtime.
+ */
+import { randomUUID } from "node:crypto";
+import type {
+	Api,
+	AssistantMessage,
+	AssistantMessageEventStream,
+	ImageContent,
+	Message,
+	Model,
+	SimpleStreamOptions,
+	StreamOptions,
+	TextContent,
+	ThinkingContent,
+	Tool,
+	ToolCall,
+	TranscriptContext,
+} from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
+import type {
+	CopilotClient,
+	CopilotSession,
+	Tool as CopilotTool,
+	SessionConfig,
+	SessionEvent,
+	ToolResultObject,
+} from "@github/copilot-sdk";
+import { COPILOT_REFUSAL_PREFIX } from "../../core/copilot-refusal.js";
+import { sha256Hex } from "../../core/hash.js";
+import { isHostPolicyMessage } from "../../core/host-policy-message.js";
+import { isNarrationSummary, type NarrationSummaryMark } from "../../core/narration-summary.js";
+import { claimWireEffort, stampWireEffort } from "../../core/telemetry/call-effort.js";
+import type { EngineRegisteredApiProvider } from "../api-registry.js";
+import type { PinnedPromptPrefix } from "../apis/anthropic-system-split.js";
+import type { AgentMessage } from "../types.js";
+import {
+	COPILOT_CLIENT_NAME,
+	copilotAccount,
+	copilotClient,
+	holdCopilotClient,
+	listCopilotModels,
+	onCopilotRuntimeGone,
+} from "./client.js";
+import { copilotAccountScope, parseCopilotQuotaObservation } from "./quota.js";
+import { publishCopilotQuotaObservation } from "./quota-feed.js";
+import {
+	type CopilotConversationRecord,
+	copilotConversationResumeAllowed,
+	copilotSessionRecordsExist,
+	createCopilotSessionFs,
+	readCopilotConversationRecord,
+	removeCopilotConversationRecord,
+	removeCopilotSessionRecords,
+	removeCopilotSessionRecordsSync,
+	sweepCopilotConversationRecords,
+	writeCopilotConversationRecord,
+} from "./session-fs.js";
+
+type ReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
+type ContextTier = "default" | "long_context";
+
+/** The tier a copilot-sdk target opted into (`contextTier: long_context`), stamped on its synthesized model. */
+function copilotContextTierFor(model: Model<Api>): ContextTier {
+	return (model as { copilotContextTier?: unknown }).copilotContextTier === "long_context" ? "long_context" : "default";
+}
+
+export const COPILOT_SDK_API = "copilot-sdk";
+
+/** What one Copilot model step billed, as the runtime reported it; carried beside the message usage. */
+export interface CopilotStepBilling {
+	/**
+	 * Premium requests this step added to the runtime's own session total (`usage.getMetrics()`
+	 * `totalPremiumRequestCost`); null when the runtime gave no answer. PanCode never derives it.
+	 */
+	premiumRequests: number | null;
+	/** AI credits in nano-AIU: the session total's growth, else the sum the calls reported. */
+	nanoAiu: number | null;
+	/** Model calls Copilot made for this step, root agent only. */
+	modelCalls: number;
+	/** The distinct models the step's calls reported serving them; more than one leaves the step unpriced. */
+	servedModels?: string[];
+}
+
+type ConversationState = "idle" | "awaiting-tools";
+
+interface Parked {
+	resolve(result: ToolResultObject): void;
+	reject(error: Error): void;
+}
+
+const MAX_CONVERSATIONS_PER_KEY = 4;
+/** Upper bound on waiting for a tool-requesting call's usage before handing the calls to PanCode. */
+const TOOL_USE_SETTLE_MS = 2_000;
+/** Upper bound on the runtime's accounting answer at the end of a step. */
+const SETTLE_METRICS_MS = 1_000;
+const MAX_CONVERSATIONS = 16;
+
+function hash(text: string): string {
+	return sha256Hex(text).slice(0, 16);
+}
+
+const REMINDER_BLOCK = /<system-reminder>[\s\S]*?<\/system-reminder>/gu;
+const MIDDLEWARE_NOTE = /(?:^|\n)\[middleware:[a-z-]+\][^\n]*/gu;
+
+/** Request-only framing the host adds per call; it is not part of the transcript identity. */
+function withoutHostFraming(text: string): string {
+	return text.replace(REMINDER_BLOCK, "").replace(MIDDLEWARE_NOTE, "").trim();
+}
+
+function textOf(content: string | ReadonlyArray<TextContent | ImageContent | ThinkingContent | ToolCall>): string {
+	if (typeof content === "string") return content;
+	return content
+		.map((block) => (block.type === "text" ? block.text : ""))
+		.filter((text) => text.length > 0)
+		.join("\n");
+}
+
+function imagesOf(content: Message["content"]): ImageContent[] {
+	if (typeof content === "string") return [];
+	return (content as ReadonlyArray<{ type: string }>).filter((block): block is ImageContent => block.type === "image");
+}
+
+type CoreMessage = Exclude<Message, { role: "system" }>;
+
+const HOST_NOTES = /(?:^|\n+)\[middleware:[a-z-]+\][\s\S]*$/u;
+
+/**
+ * Transcript identity of one message. Assistant text is not part of it: PanCode may filter what the stream
+ * produced before storing it, while the tool call ids it answered with are stable. A tool result's content is:
+ * Copilot keeps every result it was handed, so a result the working set later stubs or cuts must not match its
+ * synced form, or the next step continues over the full body PanCode no longer counts (bt-47 drv-r4a). Host notes
+ * trailing a result are left out, as a request-only note on the last result must not reseed the next step; so is
+ * the whitespace before them, which the note's separator joins with the body's own trailing newlines (M-20).
+ */
+function fingerprint(message: CoreMessage): string | null {
+	switch (message.role) {
+		case "user": {
+			const text = withoutHostFraming(textOf(message.content));
+			const images = imagesOf(message.content).map((image) => hash(image.data));
+			if (text.length === 0 && images.length === 0) return null;
+			return `u:${hash(text)}:${images.join(",")}`;
+		}
+		case "assistant": {
+			const ids = message.content.filter((block): block is ToolCall => block.type === "toolCall").map((call) => call.id);
+			return `a:${ids.join(",")}`;
+		}
+		case "toolResult": {
+			const text = textOf(message.content).replace(HOST_NOTES, "").trimEnd();
+			const images = imagesOf(message.content).map((image) => hash(image.data));
+			return `r:${message.toolCallId}:${message.isError ? "e" : "o"}:${hash(text)}:${images.join(",")}`;
+		}
+	}
+}
+
+function toolsSignature(tools: ReadonlyArray<Tool>): string {
+	return hash(JSON.stringify(tools.map((tool) => [tool.name, tool.description, tool.parameters])));
+}
+
+/** One cumulative session total and whether the last reading of it is a usable step boundary. */
+interface MetricsBoundary {
+	value: number;
+	valid: boolean;
+}
+
+/** Calls whose steps have settled; their late usage stays theirs. Bounded, oldest forgotten first. */
+const RETIRED_CALLS_LIMIT = 512;
+
+class Conversation {
+	readonly key: string;
+	readonly session: CopilotSession;
+	readonly client: CopilotClient;
+	readonly systemHash: string;
+	toolsHash: string;
+	model: string;
+	reasoningEffort: string | undefined;
+	contextTier: ContextTier;
+	/** `copilotAccountScope` of the account this session was opened under. */
+	readonly accountScope: string;
+	synced: string[] = [];
+	state: ConversationState = "idle";
+	pendingToolCallIds: string[] = [];
+	/** Host policy updates this session has been sent, by id; each is delivered once as a host turn. */
+	readonly policiesSent = new Set<string>();
+	busy = false;
+	disposed = false;
+	/** A record names this session as its PanCode session's resumable conversation, so closing it keeps its records. */
+	persisted = false;
+	lastUsed = Date.now();
+	/** The open step; events reach no other. */
+	activeStep: Step | null = null;
+	/**
+	 * The runtime's cumulative accounting at the last step boundary, per quantity. The first boundary is read
+	 * right after the session is created, before anything is sent: the SDK documents no starting value for a
+	 * session's totals, so none is assumed. A failed, late or partial reading leaves that quantity invalid: the
+	 * next good reading becomes the new boundary and the growth in between is attributed to no call.
+	 */
+	readonly boundaries: { premiumRequests: MetricsBoundary; nanoAiu: MetricsBoundary } = {
+		premiumRequests: { value: 0, valid: false },
+		nanoAiu: { value: 0, valid: false },
+	};
+	/** Readings are numbered; only the newest may move a boundary. */
+	metricsSeq = 0;
+	private readonly retiredCalls = new Set<string>();
+	/** Settled steps that ended without any usage report and may still be sent one. */
+	private owedUsage = 0;
+	/** The call ids those steps were seen under; a late report carrying one of them pays its debt by name. */
+	private readonly owedIds = new Set<string>();
+	private readonly parked = new Map<string, Parked>();
+	private readonly delivered = new Map<string, ToolResultObject>();
+	private unsubscribe: (() => void) | null = null;
+
+	constructor(input: {
+		key: string;
+		session: CopilotSession;
+		client: CopilotClient;
+		systemHash: string;
+		toolsHash: string;
+		model: string;
+		reasoningEffort: string | undefined;
+		contextTier: ContextTier;
+		accountScope: string;
+	}) {
+		this.key = input.key;
+		this.session = input.session;
+		this.client = input.client;
+		this.systemHash = input.systemHash;
+		this.toolsHash = input.toolsHash;
+		this.model = input.model;
+		this.reasoningEffort = input.reasoningEffort;
+		this.contextTier = input.contextTier;
+		this.accountScope = input.accountScope;
+		this.unsubscribe = this.session.on((event) => this.route(event));
+	}
+
+	/**
+	 * Usage belongs to the call that made it, and Copilot's ids do not prove which call that is: message and
+	 * usage ids come from different namespaces (Copilot's call id, the provider's message id) and either may be
+	 * absent. So the rule is conservative. A report naming a settled call stays with that call. While any
+	 * settled step still owes a report, a report whose id is not already bound to the open step is
+	 * unattributable: it is credited to no step, it pays one debt, and the open step's counts become unknown,
+	 * whether the report carried an id or not.
+	 */
+	private route(event: SessionEvent): void {
+		if (event.type === "session.quota_observation") {
+			// Account evidence from any agent, published as it arrives: it needs no open step and no later call.
+			const observation = parseCopilotQuotaObservation(event.data.observation, this.accountScope, event.timestamp);
+			if (observation) publishCopilotQuotaObservation(observation);
+			return;
+		}
+		if (event.type === "assistant.usage" && !(event as { agentId?: string }).agentId && !event.data.parentToolCallId) {
+			const id = event.data.apiCallId;
+			if (id !== undefined && this.retiredCalls.has(id)) {
+				if (this.owedIds.delete(id)) this.payDebt();
+				return;
+			}
+			const bound = id !== undefined && this.activeStep?.callIds.has(id) === true;
+			if (this.owedUsage > 0 && !bound) {
+				this.payDebt();
+				this.activeStep?.markUsageUncertain();
+				return;
+			}
+		}
+		if (event.type === "session.compaction_start") {
+			// PanCode owns this transcript's compaction (infiniteSessions is off), yet the runtime still compacts in the
+			// background at its own threshold. Its summary never reaches PanCode's transcript and the shrunken live usage
+			// hides the pressure from PanCode's meter, so PanCode never compacts and a later reseed renders the whole transcript,
+			// about twice what the live session held (FX-5). The runtime's blocking compaction near the window stays.
+			void Promise.resolve()
+				.then(() => this.session.rpc.history.cancelBackgroundCompaction())
+				.catch(() => undefined);
+		}
+		this.activeStep?.handle(event);
+	}
+
+	private payDebt(): void {
+		this.owedUsage = Math.max(0, this.owedUsage - 1);
+		if (this.owedUsage === 0) this.owedIds.clear();
+	}
+
+	/** A settled step's calls keep their late usage; one that ended without its own usage moves no boundary. */
+	retire(step: Step): void {
+		for (const id of step.callIds) {
+			this.retiredCalls.add(id);
+			if (this.retiredCalls.size > RETIRED_CALLS_LIMIT) {
+				const oldest = this.retiredCalls.values().next().value;
+				if (oldest !== undefined) this.retiredCalls.delete(oldest);
+			}
+		}
+		if (step.owesUsage) {
+			this.owedUsage += 1;
+			for (const id of step.callIds) this.owedIds.add(id);
+		}
+		if (!step.usageComplete) {
+			// Its usage may still be accounted later, so the runtime's next totals cannot split it from a successor.
+			this.boundaries.premiumRequests.valid = false;
+			this.boundaries.nanoAiu.valid = false;
+			this.metricsSeq += 1;
+		}
+	}
+
+	/** The SDK handler for one of PanCode's tools: wait for PanCode's own result for this call. */
+	park(toolCallId: string, signal: AbortSignal | undefined): Promise<ToolResultObject> {
+		const ready = this.delivered.get(toolCallId);
+		if (ready) {
+			this.delivered.delete(toolCallId);
+			return Promise.resolve(ready);
+		}
+		if (this.disposed) return Promise.reject(new Error("PanCode's Copilot conversation was closed"));
+		return new Promise<ToolResultObject>((resolve, reject) => {
+			const retire = () => {
+				this.parked.delete(toolCallId);
+				reject(new Error("Copilot retired this tool call before PanCode returned its result"));
+			};
+			if (signal?.aborted) {
+				retire();
+				return;
+			}
+			signal?.addEventListener("abort", retire, { once: true });
+			this.parked.set(toolCallId, {
+				resolve: (result) => {
+					signal?.removeEventListener("abort", retire);
+					resolve(result);
+				},
+				reject: (error) => {
+					signal?.removeEventListener("abort", retire);
+					reject(error);
+				},
+			});
+		});
+	}
+
+	deliver(toolCallId: string, result: ToolResultObject): void {
+		const waiter = this.parked.get(toolCallId);
+		if (waiter) {
+			this.parked.delete(toolCallId);
+			waiter.resolve(result);
+			return;
+		}
+		this.delivered.set(toolCallId, result);
+	}
+
+	/**
+	 * Settle the open step and every parked handler, detach and remove the Copilot session. Idempotent. A step
+	 * still streaming ends with the reason as its error, so its stream and its runtime hold are released.
+	 */
+	async dispose(reason: string): Promise<void> {
+		if (this.disposed) return;
+		this.disposed = true;
+		const release = holdCopilotClient();
+		const step = this.activeStep;
+		this.activeStep = null;
+		if (step && !step.isFinished) step.finish("error", [], reason);
+		const error = new Error(reason);
+		for (const waiter of this.parked.values()) waiter.reject(error);
+		this.parked.clear();
+		this.delivered.clear();
+		this.unsubscribe?.();
+		this.unsubscribe = null;
+		const sessionId = this.session.sessionId;
+		// An idle or closed session has nothing to abort, and an exited runtime took it with it. A runtime that is alive
+		// but never answers must not keep the hold, or a one-shot command would never exit.
+		await settledWithin(this.session.abort(), DISPOSE_RPC_TIMEOUT_MS);
+		await settledWithin(this.session.disconnect(), DISPOSE_RPC_TIMEOUT_MS);
+		// The runtime wrote this session's records only through PanCode's sessionFs, so removing them is the delete;
+		// the SDK's deleteSession looks in COPILOT_HOME and finds nothing there. A resumable conversation keeps them
+		// for the next process that continues its PanCode session (bt-10).
+		if (!this.persisted) {
+			try {
+				await removeCopilotSessionRecords(sessionId);
+			} catch {
+				// The records directory is disposable cache; a later close or cache sweep removes what is left.
+			}
+		}
+		release();
+	}
+}
+
+/** How long dispose waits on each session RPC before it releases the runtime anyway. */
+const DISPOSE_RPC_TIMEOUT_MS = 3_000;
+
+function settledWithin(work: Promise<unknown>, ms: number): Promise<void> {
+	let timer: NodeJS.Timeout | undefined;
+	const expired = new Promise<void>((resolve) => {
+		timer = setTimeout(resolve, ms);
+		timer.unref();
+	});
+	return Promise.race([
+		work.then(
+			() => undefined,
+			() => undefined,
+		),
+		expired,
+	]).finally(() => clearTimeout(timer));
+}
+
+const conversations: Conversation[] = [];
+let exitCleanupInstalled = false;
+
+/** A process that exits with conversations still open (headless run, a killed TUI) leaves no records behind. */
+function installExitCleanup(): void {
+	if (exitCleanupInstalled) return;
+	exitCleanupInstalled = true;
+	process.once("exit", () => {
+		for (const conversation of conversations) {
+			if (conversation.persisted) continue;
+			try {
+				removeCopilotSessionRecordsSync(conversation.session.sessionId);
+			} catch {
+				// Exit-time cleanup is best effort; the directory is disposable cache.
+			}
+		}
+	});
+}
+
+function evictFor(key: string): void {
+	const idle = (list: Conversation[]) =>
+		list.filter((conversation) => !conversation.busy).sort((a, b) => a.lastUsed - b.lastUsed);
+	const own = conversations.filter((conversation) => conversation.key === key);
+	for (const victim of idle(own).slice(0, Math.max(0, own.length - MAX_CONVERSATIONS_PER_KEY + 1))) remove(victim);
+	for (const victim of idle(conversations).slice(0, Math.max(0, conversations.length - MAX_CONVERSATIONS + 1)))
+		remove(victim);
+}
+
+/** The configurations whose spare is opening, so overlapping side calls open one. */
+const sparesOpening = new Set<string>();
+
+/**
+ * PV-2 pooled side session. A side call runs without a PanCode session (the `default` key) and almost never extends an
+ * earlier conversation, so each one opened a Copilot session before it could send. Measured on the Copilot seat
+ * (gpt-6-luna, 2026-11-21): the open took 270 ms on the runtime's first call and about 30 ms after it, against 0.9 to
+ * 1.4 s from send to the first text. Once a side call holds a session it seeded, one empty spare of the same
+ * configuration opens in the background; the next side call of that configuration finds it in `plan` as an idle
+ * conversation with nothing synced and sends everything there. The spare is an ordinary conversation, so eviction,
+ * a lost runtime and exit cleanup treat it like any other; opening one bills nothing.
+ */
+function openSpare(base: Parameters<typeof openConversationHeld>[0], announce: () => Promise<boolean>): void {
+	const systemHash = hash(base.systemPrompt);
+	const toolsHash = toolsSignature(base.tools);
+	const signature = [base.key, base.model.id, systemHash, toolsHash, base.reasoningEffort ?? "", base.contextTier].join(
+		"\n",
+	);
+	if (sparesOpening.has(signature)) return;
+	const ready = conversations.some(
+		(open) =>
+			open.key === base.key &&
+			!open.busy &&
+			!open.disposed &&
+			open.state === "idle" &&
+			open.synced.length === 0 &&
+			open.systemHash === systemHash &&
+			open.toolsHash === toolsHash &&
+			open.model === base.model.id,
+	);
+	if (ready) return;
+	sparesOpening.add(signature);
+	void (async () => {
+		try {
+			// The step that asked for it records the spare's creation, so the provider dump still shows every session.
+			if (!(await announce())) return;
+			const spare = await openConversation(base, undefined);
+			evictFor(base.key);
+			conversations.push(spare);
+		} catch {
+			// A spare only saves the next side call its open; that call opens its own.
+		} finally {
+			sparesOpening.delete(signature);
+		}
+	})();
+}
+
+function remove(conversation: Conversation, reason = "PanCode closed this Copilot conversation"): void {
+	const index = conversations.indexOf(conversation);
+	if (index >= 0) conversations.splice(index, 1);
+	void conversation.dispose(reason);
+}
+
+/** The conversation each PanCode session's record names, among those this process opened or resumed. */
+const persistedByKey = new Map<string, Conversation>();
+let sweptRecords = false;
+
+/**
+ * An idle conversation becomes its PanCode session's resumable one (bt-10): a later process continues it with
+ * resumeSession instead of replaying the transcript into a new session. Of the conversations open on a key the
+ * longest transcript holds the record, so a short side call never displaces the main one. A record that cannot
+ * be written leaves the next process to seed afresh, as before.
+ */
+function persist(conversation: Conversation): void {
+	const key = conversation.key;
+	if (!copilotConversationResumeAllowed() || key === "default" || conversation.disposed) return;
+	const holder = persistedByKey.get(key);
+	if (holder && holder !== conversation && !holder.disposed && holder.synced.length > conversation.synced.length) return;
+	try {
+		writeCopilotConversationRecord({
+			version: 1,
+			key,
+			sessionId: conversation.session.sessionId,
+			systemHash: conversation.systemHash,
+			synced: conversation.synced,
+			policies: [...conversation.policiesSent],
+			updatedAt: Date.now(),
+		});
+	} catch {
+		return;
+	}
+	if (holder && holder !== conversation) {
+		holder.persisted = false;
+		// A closed holder kept its records only for the record that no longer names it.
+		if (holder.disposed) removeCopilotSessionRecordsSafely(holder.session.sessionId);
+	}
+	persistedByKey.set(key, conversation);
+	conversation.persisted = true;
+	if (!sweptRecords) {
+		sweptRecords = true;
+		sweepCopilotConversationRecords(new Set(conversations.map((open) => open.session.sessionId)));
+	}
+}
+
+/** Before anything is sent the record goes: a process that dies mid-turn leaves no record of a stale transcript. */
+function unpersist(conversation: Conversation): void {
+	if (!conversation.persisted) return;
+	conversation.persisted = false;
+	if (persistedByKey.get(conversation.key) !== conversation) return;
+	persistedByKey.delete(conversation.key);
+	removeCopilotConversationRecord(conversation.key);
+}
+
+function removeCopilotSessionRecordsSafely(sessionId: string): void {
+	try {
+		removeCopilotSessionRecordsSync(sessionId);
+	} catch {
+		// The sweep removes what is left.
+	}
+}
+
+/**
+ * The conversation an earlier process left for this PanCode session, when the transcript still extends exactly what
+ * it holds, under the same system prompt, and only new user messages follow (as for in-process reuse). Model,
+ * effort, tier and tools are passed afresh on resume. Anything else is stale: its record and session records go.
+ * A record naming a session open in this process is left to that conversation.
+ */
+function storedConversation(
+	key: string,
+	systemHash: string,
+	core: ReadonlyArray<CoreMessage>,
+	prints: ReadonlyArray<string>,
+): CopilotConversationRecord | null {
+	if (!copilotConversationResumeAllowed() || key === "default") return null;
+	const record = readCopilotConversationRecord(key);
+	if (!record) return null;
+	if (conversations.some((open) => open.session.sessionId === record.sessionId)) return null;
+	const usable =
+		record.systemHash === systemHash &&
+		record.synced.length < prints.length &&
+		record.synced.every((print, index) => prints[index] === print) &&
+		core.slice(record.synced.length).every((message) => message.role === "user") &&
+		copilotSessionRecordsExist(record.sessionId);
+	if (usable) return record;
+	forgetStored(record);
+	return null;
+}
+
+function forgetStored(record: CopilotConversationRecord): void {
+	removeCopilotConversationRecord(record.key);
+	const holder = persistedByKey.get(record.key);
+	if (holder?.session.sessionId === record.sessionId) {
+		holder.persisted = false;
+		persistedByKey.delete(record.key);
+	}
+	removeCopilotSessionRecordsSafely(record.sessionId);
+}
+
+/** Dispose every Copilot conversation bound to a PanCode session, settling its parked handlers. */
+export function disposeCopilotConversations(sessionId: string): void {
+	for (const conversation of [...conversations]) {
+		if (conversation.key === sessionId)
+			remove(conversation, "The PanCode session ended; its Copilot conversation was closed");
+	}
+}
+
+/** The levels the runtime's listing names for this model, carried on the model by the copilot-sdk probe. */
+function listedLevelsOf(model: Model<Api>): readonly string[] | undefined {
+	return (model as Model<Api> & { pancode?: { reasoningLevels?: readonly string[] } }).pancode?.reasoningLevels;
+}
+
+/**
+ * The `reasoningEffort` for the resolved thinking level. The level was already mapped onto the listed set, so
+ * each passes through by name, minimal as itself where the listing names it. Off sends `none` only where the listing
+ * offers it; elsewhere the effort is omitted, and a caller that wants the least reasoning names that level (the
+ * memory route does, C-2).
+ */
+function reasoningEffortFor(model: Model<Api>, options: SimpleStreamOptions | undefined): string | undefined {
+	if (!model.reasoning) return undefined;
+	switch (options?.reasoning) {
+		case "minimal":
+			return listedLevelsOf(model)?.includes("minimal") ? "minimal" : "low";
+		case "low":
+			return "low";
+		case "medium":
+			return "medium";
+		case "high":
+			return "high";
+		case "xhigh":
+			return "xhigh";
+		case "max":
+			return "max";
+		default:
+			return listedLevelsOf(model)?.includes("off") ? "none" : undefined;
+	}
+}
+
+/** A user message's host reminders, each in its own `<system-reminder>` frame, in order. */
+function remindersOf(text: string): string[] {
+	return text.match(REMINDER_BLOCK) ?? [];
+}
+
+/** A user message's own text: what the person wrote, without the host's reminders. */
+function operatorTextOf(text: string): string {
+	return text.replace(REMINDER_BLOCK, "").trim();
+}
+
+function blobAttachments(images: ReadonlyArray<ImageContent>) {
+	return images.map((image) => ({ type: "blob" as const, data: image.data, mimeType: image.mimeType }));
+}
+
+/** The wire's `skipLargeOutputProcessing` (rpc ToolResultExpanded), which the SDK passes through untyped. */
+function toolResultObject(
+	message: Extract<CoreMessage, { role: "toolResult" }>,
+): ToolResultObject & { skipLargeOutputProcessing: true } {
+	const text = textOf(message.content);
+	const images = imagesOf(message.content);
+	return {
+		textResultForLlm: text,
+		resultType: message.isError ? "failure" : "success",
+		skipLargeOutputProcessing: true,
+		...(images.length > 0
+			? {
+					binaryResultsForLlm: images.map((image) => ({
+						type: "image" as const,
+						data: image.data,
+						mimeType: image.mimeType,
+					})),
+				}
+			: {}),
+	};
+}
+
+/**
+ * Replayed text cannot open or close a frame of the seed or the host-policy frame: `<user`, `</tool_result` and the
+ * rest (any case, whitespace after `<` or `</`) become `<\user`, `<\/tool_result`, the way `neutralizeFraming`
+ * treats `system-reminder`.
+ */
+function neutralizeSeedFrames(text: string): string {
+	return text.replace(
+		/<\s*(\/?)\s*(user|assistant|tool_call|tool_result|conversation-history|host-policy)(?![\w-])/giu,
+		(_, slash: string, tag: string) => `<\\${slash}${tag}`,
+	);
+}
+
+/** An attribute value that cannot end its quotes or its tag. */
+function seedAttribute(value: string): string {
+	return value.replace(/&/gu, "&amp;").replace(/"/gu, "&quot;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;");
+}
+
+/**
+ * An assistant message's text for the seed. A narration summary is not the model's own words, so it reads as the
+ * host's note of what reached the operator rather than as text the model wrote.
+ */
+function assistantSeedText(content: AssistantMessage["content"]): string {
+	return content
+		.map((block) => {
+			if (block.type !== "text") return "";
+			if (!isNarrationSummary(block)) return block.text;
+			const summary = block.text.trim();
+			return summary.length > 0 ? `[Host note: only this summary of your text reached the operator: ${summary}]` : "";
+		})
+		.filter((text) => text.length > 0)
+		.join("\n");
+}
+
+/**
+ * The seed's history in source order. A message's images join the seed's attachments, and its host-made frame
+ * names their 1-based attachment positions (`images="1,2"`), which replayed text cannot forge.
+ */
+function renderTranscript(messages: ReadonlyArray<CoreMessage>, attachments: ImageContent[]): string {
+	const lines: string[] = [];
+	const attached = (message: CoreMessage): string => {
+		if (message.role === "assistant") return "";
+		const positions = imagesOf(message.content).map((image) => attachments.push(image));
+		return positions.length > 0 ? ` images="${positions.join(",")}"` : "";
+	};
+	for (const message of messages) {
+		if (message.role === "user") {
+			const text = neutralizeSeedFrames(textOf(message.content));
+			const images = attached(message);
+			if (text.length > 0 || images.length > 0) lines.push(`<user${images}>\n${text}\n</user>`);
+		} else if (message.role === "assistant") {
+			const text = neutralizeSeedFrames(assistantSeedText(message.content));
+			const calls = message.content
+				.filter((block): block is ToolCall => block.type === "toolCall")
+				.map(
+					(call) =>
+						`<tool_call id="${seedAttribute(call.id)}" name="${seedAttribute(call.name)}">${neutralizeSeedFrames(JSON.stringify(call.arguments))}</tool_call>`,
+				);
+			lines.push(`<assistant>\n${[text, ...calls].filter((part) => part.length > 0).join("\n")}\n</assistant>`);
+		} else {
+			lines.push(
+				`<tool_result id="${seedAttribute(message.toolCallId)}" name="${seedAttribute(message.toolName)}"${message.isError ? ' error="true"' : ""}${attached(message)}>\n${neutralizeSeedFrames(textOf(message.content))}\n</tool_result>`,
+			);
+		}
+	}
+	return lines.join("\n");
+}
+
+/**
+ * The first prompt of a fresh session, from the whole provider-visible transcript in order: host reminders
+ * already delivered stay where they were, and retained images are attached. The trailing user turn follows
+ * earlier history when there is any; a trailing turn of host framing only is preceded by "Continue.".
+ */
+function seedPrompt(messages: ReadonlyArray<CoreMessage>): { prompt: string; images: ImageContent[] } {
+	let tail = messages.length;
+	while (tail > 0 && messages[tail - 1]?.role === "user") tail--;
+	const history = messages.slice(0, tail);
+	const current = messages.slice(tail);
+	const currentText = current.map((message) => textOf(message.content)).filter((text) => text.length > 0);
+	if (history.length === 0)
+		return { prompt: currentText.join("\n\n"), images: current.flatMap((message) => imagesOf(message.content)) };
+	const intro =
+		"<conversation-history>\nThe conversation so far, recorded by the host. Continue it; do not repeat completed tool calls.\n";
+	const images: ImageContent[] = [];
+	const body = `${intro}${renderTranscript(history, images)}\n</conversation-history>`;
+	images.push(...current.flatMap((message) => imagesOf(message.content)));
+	const lead = current.every((message) => fingerprint(message) === null) ? ["Continue."] : [];
+	return { prompt: [body, ...lead, ...currentText].join("\n\n"), images };
+}
+
+function refusalMessage(data: {
+	errorType?: string;
+	errorCode?: string;
+	statusCode?: number;
+	message?: string;
+}): string {
+	const type = data.errorType ?? "error";
+	const detail = [data.errorCode, data.statusCode !== undefined ? `HTTP ${data.statusCode}` : undefined]
+		.filter(Boolean)
+		.join(", ");
+	const text = data.message ?? "no detail";
+	if (["authentication", "authorization", "policy", "quota", "rate_limit"].includes(type)) {
+		return `${COPILOT_REFUSAL_PREFIX} (${type}${detail ? `: ${detail}` : ""}): ${text}`;
+	}
+	// Copilot reports its prompt budget as a "query" failure; it is an overflow all the same, so recovery compacts.
+	if (type === "context_limit" || /exceeds the model's prompt budget/i.test(text))
+		return `GitHub Copilot context limit: ${text} (the prompt exceeds the context window)`;
+	return `GitHub Copilot ${type}${detail ? ` (${detail})` : ""}: ${text}`;
+}
+
+function emptyUsage(): AssistantMessage["usage"] {
+	return {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		// The runtime computes no cost: the zero total is a placeholder, and totalUncomputed tells settlement to price the
+		// counts at the route's declared rates instead (#434).
+		cost: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			total: 0,
+			totalUncomputed: true,
+		} as AssistantMessage["usage"]["cost"],
+	};
+}
+
+/**
+ * The first length-delimited field `field` of a protobuf message, or undefined. Only the wire types a signature
+ * header uses are walked; anything else ends the search.
+ */
+function protoField(bytes: Uint8Array, field: number): Uint8Array | undefined {
+	let at = 0;
+	const varint = (): number | undefined => {
+		let value = 0;
+		for (let shift = 0; shift < 35 && at < bytes.length; shift += 7) {
+			const byte = bytes[at++] as number;
+			value += (byte & 0x7f) * 2 ** shift;
+			if ((byte & 0x80) === 0) return value;
+		}
+		return undefined;
+	};
+	while (at < bytes.length) {
+		const tag = varint();
+		if (tag === undefined) return undefined;
+		const wire = tag % 8;
+		if (wire === 0) {
+			if (varint() === undefined) return undefined;
+		} else if (wire === 1) at += 8;
+		else if (wire === 5) at += 4;
+		else if (wire === 2) {
+			const length = varint();
+			if (length === undefined || at + length > bytes.length) return undefined;
+			if (Math.floor(tag / 8) === field) return bytes.subarray(at, at + length);
+			at += length;
+		} else return undefined;
+	}
+	return undefined;
+}
+
+/**
+ * The prose of a message's narration blocks, in order. An Anthropic thinking block's signature carries its kind
+ * at fields 2, 1, 8 (`thinking` or `narration`), which is how Claude Code itself tells narration from thinking.
+ */
+function narrationOf(reasoningBlocks: unknown): string[] {
+	if (typeof reasoningBlocks !== "object" || reasoningBlocks === null) return [];
+	const { provider, blocks } = reasoningBlocks as { provider?: unknown; blocks?: unknown };
+	if (provider !== "anthropic-messages" || !Array.isArray(blocks)) return [];
+	const said: string[] = [];
+	for (const block of blocks) {
+		if (typeof block !== "object" || block === null) continue;
+		const { type, thinking, signature } = block as { type?: unknown; thinking?: unknown; signature?: unknown };
+		if (type !== "thinking" || typeof thinking !== "string" || thinking.trim().length === 0) continue;
+		if (typeof signature !== "string") continue;
+		const outer = protoField(Buffer.from(signature, "base64"), 2);
+		const header = outer && protoField(outer, 1);
+		const kind = header && protoField(header, 8);
+		if (kind && Buffer.from(kind).toString("utf8") === "narration") said.push(thinking);
+	}
+	return said;
+}
+
+/**
+ * The session a step's request went to, as PanCode's own pool knows it: `new` (createSession for this step), `spare`
+ * (a PV-2 pooled session holding nothing), `continued` (an open one holding the transcript), `resumed` (resumeSession
+ * on one an earlier process left).
+ */
+type CopilotSessionOrigin = "new" | "spare" | "continued" | "resumed";
+
+/** The recipient clause of a Harmony tool call: `to=functions.<name>`. */
+const TOOL_CHANNEL_PREFIX = "to=functions.";
+/** That clause at the start of the text or after whitespace, with the whitespace before it, naming one tool. */
+const TOOL_CHANNEL_MARKER = /\s*(?:^|(?<=\s))to=functions\.([A-Za-z_][\w-]*)/gu;
+const TOOL_NAME_CHAR = /[\w-]/u;
+/**
+ * What makes the clause a call rather than prose that quotes it (M-52): after the name, `, commentary` (the wave-61
+ * frame), a Harmony special token, or a JSON argument object, optionally behind channel and constraint words.
+ */
+const TOOL_CALL_SHAPE = /^\s*(?:,\s*commentary\b|(?:(?:commentary|json|code)\s*)*(?:<\||\{))/u;
+const TOOL_CALL_WORDS = ["commentary", "json", "code"];
+/** How far past the name the text is held while it could still take the call shape. */
+const TOOL_CALL_SHAPE_HOLD = 32;
+
+/** Whether the text after a marker's name is a call, prose, or still too short to say. */
+function toolCallShape(tail: string, final: boolean): "call" | "prose" | "undecided" {
+	if (TOOL_CALL_SHAPE.test(tail)) return "call";
+	if (final || tail.length > TOOL_CALL_SHAPE_HOLD) return "prose";
+	const rest = tail.trimStart();
+	const comma = /^,\s*/u.exec(rest);
+	if (comma !== null) return "commentary".startsWith(rest.slice(comma[0].length)) ? "undecided" : "prose";
+	const word = rest.replace(/^(?:(?:commentary|json|code)\s*)*/u, "");
+	if (word === "" || word === "<" || TOOL_CALL_WORDS.some((candidate) => candidate.startsWith(word))) return "undecided";
+	return "prose";
+}
+
+/**
+ * The first channel marker naming a declared tool in `text` from `from`: a call to drop, or one the text has not yet
+ * shown to be a call or prose, which is held. A name the text has not finished is undecided until the text is final.
+ */
+function toolChannelMarker(
+	text: string,
+	from: number,
+	declared: ReadonlySet<string>,
+	final: boolean,
+): { at: number; tool: string; call: boolean } | null {
+	TOOL_CHANNEL_MARKER.lastIndex = from;
+	for (let match = TOOL_CHANNEL_MARKER.exec(text); match !== null; match = TOOL_CHANNEL_MARKER.exec(text)) {
+		const tool = match[1] as string;
+		const end = match.index + match[0].length;
+		if (end === text.length && !final) return { at: match.index, tool, call: false };
+		if (!declared.has(tool)) continue;
+		const shape = toolCallShape(text.slice(end), final);
+		if (shape !== "prose") return { at: match.index, tool, call: shape === "call" };
+	}
+	return null;
+}
+
+/**
+ * How much of `text` past `from` can be shown before more arrives: a trailing word that could still grow into a
+ * channel marker is held, with the whitespace before it, and so is trailing whitespace a marker may follow.
+ */
+function shownUntil(text: string, from: number): number {
+	let wordStart = text.length;
+	while (wordStart > 0 && !/\s/u.test(text[wordStart - 1] as string)) wordStart -= 1;
+	const word = text.slice(wordStart);
+	const name = word.slice(TOOL_CHANNEL_PREFIX.length);
+	const partial =
+		TOOL_CHANNEL_PREFIX.startsWith(word) ||
+		(word.startsWith(TOOL_CHANNEL_PREFIX) && [...name].every((char) => TOOL_NAME_CHAR.test(char)));
+	// A word that began before `from` was already shown in part, so it is no marker's start.
+	let at = partial && wordStart >= from ? wordStart : text.length;
+	while (at > from && /\s/u.test(text[at - 1] as string)) at -= 1;
+	return at;
+}
+
+/**
+ * A call whose input is still streaming. Copilot sends a call's arguments as input deltas and again whole with the
+ * message; until the deltas parse, `partialJson` holds them and marks the arguments as not yet final, which the
+ * tool-call flood check skips (row 385). The message replaces the block, so the mark never reaches the transcript.
+ */
+type StreamingToolCall = ToolCall & { partialJson?: string };
+const CLOSING_BRACE = /\}\s*$/u;
+
+function wholeArguments(text: string): ToolCall["arguments"] | undefined {
+	try {
+		const parsed: unknown = JSON.parse(text);
+		return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+			? (parsed as ToolCall["arguments"])
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Drive one model step: forward root-agent output into the PanCode stream and end it at the step boundary. */
+class Step {
+	readonly message: AssistantMessage & {
+		copilotBilling?: CopilotStepBilling;
+		copilotContinuation?: "delta" | "full";
+		copilotSession?: CopilotSessionOrigin;
+		/** Tools whose Harmony channel marker the reply text carried and this step dropped (M-47). */
+		copilotDroppedToolMarkers?: string[];
+	};
+	/** The tools this step declared, so a channel marker in the reply text that names one is recognized (M-47). */
+	declaredTools: ReadonlySet<string> = new Set();
+	/** The reply text Copilot sent this step, and how much of it reached the stream. */
+	private textSeen = "";
+	private textShown = 0;
+	/** Where a dropped channel marker began; nothing after it is reply text. */
+	private markerAt: number | null = null;
+	private textIndex: number | null = null;
+	private thinkingIndex: number | null = null;
+	/** Tool calls whose input is streaming, by Copilot's tool call id, before the message that requests them. */
+	private readonly streamingToolCalls = new Map<string, number>();
+	private started = false;
+	private finished = false;
+	private error: string | null = null;
+	private billing: CopilotStepBilling = { premiumRequests: null, nanoAiu: null, modelCalls: 0 };
+	private toolUse: string[] | null = null;
+	private usageEvents = 0;
+	private readonly fieldReports = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 };
+	private reasoningReports = 0;
+	private reasoningSum = 0;
+	/** Whether this step ran with thinking off (a non-reasoning model, or effort `none` sent), so a reasoning 0 is true. */
+	thinkingOff = false;
+	private nanoReports = 0;
+	private nanoSum = 0;
+	/** The model the runtime reported serving this step's calls (`assistant.usage.model`). */
+	private servedModel: string | null = null;
+	private readonly servedModels = new Set<string>();
+	/** Reads this step's premium requests and AI credits from the runtime's own session accounting. */
+	settle: ((step: Step) => Promise<{ premiumRequests: number | null; nanoAiu: number | null }>) | null = null;
+	/** Copilot's ids for this step's model calls, from its messages and usage. */
+	readonly callIds = new Set<string>();
+	/** Set when a usage report that cannot be placed arrived during this step: its own counts are then uncertain. */
+	private usageUncertain = false;
+	/** Whether the tool-requesting call's own usage arrived before the step settled. */
+	private toolUseUsageSeen = false;
+	/** Whether Copilot answered this step at all (any root message, text or reasoning), so a usage report is due. */
+	private answered = false;
+	/** Runs when the step stops taking events, before any settling; later usage then waits for the next step. */
+	onDetach: ((step: Step) => void) | null = null;
+	/** Whether this step's request continued a session holding the transcript (delta) or carried all of it (full). */
+	continuation: "delta" | "full" | null = null;
+	/** Which Copilot session this step's request went to: one it opened, a pooled spare, one it continued or resumed. */
+	session: CopilotSessionOrigin | null = null;
+	private toolUseTimer: ReturnType<typeof setTimeout> | undefined;
+	onFinish:
+		| ((outcome: { stop: "stop" | "toolUse" | "aborted" | "error"; toolCallIds: string[]; toolNames: string[] }) => void)
+		| null = null;
+
+	constructor(
+		private readonly stream: AssistantMessageEventStream,
+		private readonly model: Model<Api>,
+	) {
+		this.message = {
+			role: "assistant",
+			content: [],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: emptyUsage(),
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
+	}
+
+	private start(): void {
+		if (this.started) return;
+		this.started = true;
+		this.stream.push({ type: "start", partial: this.message });
+	}
+
+	/**
+	 * Reply text from Copilot. A model trained on Harmony can write its tool call into the reply as a bare channel
+	 * marker (`to=functions.finish, commentary {"state":"done"}`) that the runtime does not parse into a request, so it
+	 * arrives as text (M-47). A marker naming a declared tool, at the start or after whitespace and followed by the call
+	 * shape, and everything after it never reach the reply: the runtime ran no call, so none is synthesized, and the
+	 * drop is stamped on the message. Prose that quotes a marker without that shape is kept (M-52).
+	 */
+	private text(delta: string): void {
+		if (delta.length === 0 || this.markerAt !== null) return;
+		this.textSeen += delta;
+		this.release(false);
+	}
+
+	/** Forwards the reply text no marker can still claim; `final` once Copilot has sent the call's whole text. */
+	private release(final: boolean): void {
+		if (this.markerAt !== null) return;
+		const marker = toolChannelMarker(this.textSeen, this.textShown, this.declaredTools, final);
+		if (marker?.call === true) {
+			this.markerAt = marker.at;
+			this.message.copilotDroppedToolMarkers = [...(this.message.copilotDroppedToolMarkers ?? []), marker.tool];
+		}
+		const until = marker?.at ?? (final ? this.textSeen.length : shownUntil(this.textSeen, this.textShown));
+		if (until <= this.textShown) return;
+		const shown = this.textSeen.slice(this.textShown, until);
+		this.textShown = until;
+		this.emitText(shown);
+	}
+
+	private emitText(delta: string): void {
+		if (delta.length === 0) return;
+		this.start();
+		if (this.textIndex === null) {
+			this.textIndex = this.message.content.length;
+			this.message.content.push({ type: "text", text: "" });
+			this.stream.push({ type: "text_start", contentIndex: this.textIndex, partial: this.message });
+		}
+		const block = this.message.content[this.textIndex] as TextContent;
+		block.text += delta;
+		this.stream.push({ type: "text_delta", contentIndex: this.textIndex, delta, partial: this.message });
+	}
+
+	private thinking(delta: string): void {
+		if (delta.length === 0) return;
+		this.start();
+		if (this.thinkingIndex === null) {
+			this.thinkingIndex = this.message.content.length;
+			this.message.content.push({ type: "thinking", thinking: "" });
+			this.stream.push({ type: "thinking_start", contentIndex: this.thinkingIndex, partial: this.message });
+		}
+		const block = this.message.content[this.thinkingIndex] as ThinkingContent;
+		block.thinking += delta;
+		this.stream.push({ type: "thinking_delta", contentIndex: this.thinkingIndex, delta, partial: this.message });
+	}
+
+	private toolCallDelta(id: string, name: string | undefined, delta: string): void {
+		this.start();
+		let index = this.streamingToolCalls.get(id);
+		if (index === undefined) {
+			index = this.message.content.length;
+			this.streamingToolCalls.set(id, index);
+			const placeholder: StreamingToolCall = { type: "toolCall", id, name: name ?? "", arguments: {}, partialJson: "" };
+			this.message.content.push(placeholder);
+			this.stream.push({ type: "toolcall_start", contentIndex: index, partial: this.message });
+		}
+		if (delta.length === 0) return;
+		// The call's arguments become its parsed input once that input is whole JSON; until then the block carries the
+		// text so far as `partialJson`, the mark of a call whose arguments are not yet final (row 385).
+		const block = this.message.content[index] as StreamingToolCall;
+		if (block.partialJson !== undefined) {
+			block.partialJson += delta;
+			// Whole JSON input ends in a brace, so a long input is parsed only at the deltas that could close it.
+			const parsed = CLOSING_BRACE.test(delta) ? wholeArguments(block.partialJson) : undefined;
+			if (parsed !== undefined) {
+				block.arguments = parsed;
+				delete block.partialJson;
+			}
+		}
+		this.stream.push({ type: "toolcall_delta", contentIndex: index, delta, partial: this.message });
+	}
+
+	/** Text that arrives only with the message (narration, unstreamed content) still reads before the calls it introduces. */
+	private textBeforeStreamedCalls(): void {
+		if (this.textIndex === null || this.streamingToolCalls.size === 0) return;
+		const first = Math.min(...this.streamingToolCalls.values());
+		if (this.textIndex < first) return;
+		const [block] = this.message.content.splice(this.textIndex, 1);
+		if (block === undefined) return;
+		this.message.content.splice(first, 0, block);
+		for (const [id, index] of this.streamingToolCalls) if (index >= first) this.streamingToolCalls.set(id, index + 1);
+		this.textIndex = first;
+	}
+
+	private closeOpenBlocks(): void {
+		this.release(true);
+		if (this.thinkingIndex !== null) {
+			const block = this.message.content[this.thinkingIndex] as ThinkingContent;
+			this.stream.push({
+				type: "thinking_end",
+				contentIndex: this.thinkingIndex,
+				content: block.thinking,
+				partial: this.message,
+			});
+			this.thinkingIndex = null;
+		}
+		if (this.textIndex !== null) {
+			const block = this.message.content[this.textIndex] as TextContent;
+			this.stream.push({ type: "text_end", contentIndex: this.textIndex, content: block.text, partial: this.message });
+			this.textIndex = null;
+		}
+	}
+
+	/**
+	 * Claude's prose before a tool call can arrive as a thinking block whose signature names it narration. The
+	 * runtime streams every thinking block as one reasoning, so that prose reached PanCode as thinking and the reply
+	 * had no text (row 313). The message's own blocks say which is which: narration moves out of the thinking
+	 * block into a reply text block of its own, ahead of any text the message itself carries and of its calls.
+	 * Its readable text is only Anthropic's summary of the prose; the prose itself is not delivered (the message's
+	 * content omits it and it carries no ordered blocks), so the block is marked a narration summary.
+	 */
+	private narration(reasoningBlocks: unknown): void {
+		const said = narrationOf(reasoningBlocks);
+		if (said.length === 0) return;
+		if (this.thinkingIndex !== null) {
+			const block = this.message.content[this.thinkingIndex] as ThinkingContent;
+			for (const text of said) {
+				const at = block.thinking.indexOf(text);
+				if (at >= 0) block.thinking = block.thinking.slice(0, at) + block.thinking.slice(at + text.length);
+			}
+		}
+		const summary = said.join("");
+		this.start();
+		const firstCall = this.streamingToolCalls.size > 0 ? Math.min(...this.streamingToolCalls.values()) : Infinity;
+		const at = Math.min(this.textIndex ?? Infinity, firstCall, this.message.content.length);
+		const block: TextContent & NarrationSummaryMark = { type: "text", text: "", pancodeNarrationSummary: true };
+		this.message.content.splice(at, 0, block);
+		if (this.textIndex !== null && this.textIndex >= at) this.textIndex++;
+		if (this.thinkingIndex !== null && this.thinkingIndex >= at) this.thinkingIndex++;
+		for (const [id, index] of this.streamingToolCalls) if (index >= at) this.streamingToolCalls.set(id, index + 1);
+		this.stream.push({ type: "text_start", contentIndex: at, partial: this.message });
+		block.text = summary;
+		this.stream.push({ type: "text_delta", contentIndex: at, delta: summary, partial: this.message });
+		this.stream.push({ type: "text_end", contentIndex: at, content: summary, partial: this.message });
+	}
+
+	get isFinished(): boolean {
+		return this.finished;
+	}
+
+	markUsageUncertain(): void {
+		this.usageUncertain = true;
+	}
+
+	/** The step's own calls all reported usage, and none of it is mixed with a report it cannot place. */
+	get usageComplete(): boolean {
+		if (this.usageUncertain || this.usageEvents === 0) return false;
+		return this.toolUse === null || this.toolUseUsageSeen;
+	}
+
+	/** The step answered (it made a model call) but settled before any usage report for it arrived. */
+	get owesUsage(): boolean {
+		return this.answered && this.usageEvents === 0;
+	}
+
+	private usage(data: Extract<SessionEvent, { type: "assistant.usage" }>["data"]): void {
+		if (typeof data.apiCallId === "string") this.callIds.add(data.apiCallId);
+		const usage = this.message.usage;
+		const count = (value: unknown): number | undefined =>
+			typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+		const inputTokens = count(data.inputTokens);
+		const outputTokens = count(data.outputTokens);
+		const cacheRead = count(data.cacheReadTokens);
+		const cacheWrite = count(data.cacheWriteTokens);
+		// Copilot's inputTokens counts the whole prompt, cache reads and cache writes included.
+		if (inputTokens !== undefined) usage.input += Math.max(0, inputTokens - (cacheRead ?? 0) - (cacheWrite ?? 0));
+		usage.output += outputTokens ?? 0;
+		usage.cacheRead += cacheRead ?? 0;
+		usage.cacheWrite += cacheWrite ?? 0;
+		usage.totalTokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+		// A field counts as reported only when every call of the step sent it; an omitted field is never zero.
+		// The uncached input needs both cached parts too, so it is reported only beside a cache-read and a
+		// cache-write count. Without the write count the split may still hold writes; the prompt total stays.
+		this.usageEvents += 1;
+		if (inputTokens !== undefined && cacheRead !== undefined && cacheWrite !== undefined) this.fieldReports.input += 1;
+		if (outputTokens !== undefined) this.fieldReports.output += 1;
+		if (cacheRead !== undefined) this.fieldReports.cacheRead += 1;
+		if (cacheWrite !== undefined) this.fieldReports.cacheWrite += 1;
+		// The whole prompt plus the output is known whether or not its cached parts were split out.
+		if (inputTokens !== undefined && outputTokens !== undefined) this.fieldReports.totalTokens += 1;
+		// Reasoning is part of the output; like the fields above it counts only when every call of the step sent it.
+		const reasoning = count(data.reasoningTokens);
+		if (reasoning !== undefined) {
+			this.reasoningReports += 1;
+			this.reasoningSum += reasoning;
+		}
+		if (this.reasoningReports === this.usageEvents) usage.reasoning = this.reasoningSum;
+		else delete usage.reasoning;
+		this.billing.modelCalls += 1;
+		const nano = count(data.copilotUsage?.totalNanoAiu);
+		if (nano !== undefined) {
+			this.nanoReports += 1;
+			this.nanoSum += nano;
+		}
+		if (typeof data.model === "string" && data.model.trim().length > 0) {
+			this.servedModel = data.model.trim();
+			this.servedModels.add(this.servedModel);
+			// As on the other adapters, the response model names only a model other than the one requested.
+			if (this.servedModel !== this.model.id) this.message.responseModel = this.servedModel;
+		}
+		if (typeof data.apiCallId === "string") this.message.responseId = data.apiCallId;
+		// A step is one model call (Copilot's built-ins are off), and the router keeps settled calls' reports
+		// out, so usage reaching the open step is this call's own, whatever id format it carries. Once the tool
+		// request has also arrived, the step is complete (see the tool-request case for the other order).
+		if (this.toolUse) {
+			this.toolUseUsageSeen = true;
+			this.finish("toolUse", this.toolUse);
+		}
+	}
+
+	handle(event: SessionEvent): void {
+		if (this.finished) return;
+		// Sub-agent output never reaches PanCode's transcript; Copilot's task tool is excluded anyway.
+		if ((event as { agentId?: string }).agentId) return;
+		switch (event.type) {
+			case "assistant.message_delta":
+				if (!event.data.parentToolCallId) {
+					this.answered = true;
+					this.text(event.data.deltaContent);
+				}
+				return;
+			case "assistant.reasoning_delta":
+				// Reasoning is model output too: a call that only reasoned still owes its usage report.
+				this.answered = true;
+				this.thinking(event.data.deltaContent);
+				return;
+			case "assistant.tool_call_delta":
+				// A reply that is only a tool call streams too, so its first token is seen when it arrives, not when the
+				// whole call settles (a held shared-prefix follower starts on it). The arguments land with the message.
+				this.answered = true;
+				this.toolCallDelta(event.data.toolCallId, event.data.toolName, event.data.inputDelta);
+				return;
+			case "assistant.usage":
+				if (!event.data.parentToolCallId) this.usage(event.data);
+				return;
+			case "assistant.message": {
+				if (event.data.parentToolCallId) return;
+				this.answered = true;
+				if (typeof event.data.apiCallId === "string") this.callIds.add(event.data.apiCallId);
+				const streamed = this.textSeen.length > 0;
+				this.narration(event.data.reasoningBlocks);
+				if (!streamed && event.data.content) this.text(event.data.content);
+				// The message holds the call's whole text, so a held tail is either a marker or reply text now.
+				this.release(true);
+				this.textBeforeStreamedCalls();
+				const requests = event.data.toolRequests ?? [];
+				if (requests.length === 0) return;
+				this.closeOpenBlocks();
+				const ids: string[] = [];
+				for (const request of requests) {
+					const toolCall: ToolCall = {
+						type: "toolCall",
+						id: request.toolCallId,
+						name: request.name,
+						arguments:
+							typeof request.arguments === "object" && request.arguments !== null && !Array.isArray(request.arguments)
+								? (request.arguments as ToolCall["arguments"])
+								: {},
+					};
+					const streamed = this.streamingToolCalls.get(request.toolCallId);
+					this.streamingToolCalls.delete(request.toolCallId);
+					const index = streamed ?? this.message.content.length;
+					if (streamed === undefined) {
+						this.message.content.push(toolCall);
+						this.stream.push({ type: "toolcall_start", contentIndex: index, partial: this.message });
+					} else this.message.content[index] = toolCall;
+					this.stream.push({ type: "toolcall_end", contentIndex: index, toolCall, partial: this.message });
+					ids.push(request.toolCallId);
+				}
+				// The step ends with this call's usage, so its tokens and seat units settle on this call. Without
+				// usage by the deadline it settles them as unreported; a later report is not moved to another call.
+				this.toolUse = ids;
+				// The live runtime can report the call's usage before this message: the step is then already complete.
+				if (this.usageEvents > 0) {
+					this.toolUseUsageSeen = true;
+					this.finish("toolUse", ids);
+					return;
+				}
+				this.toolUseTimer = setTimeout(() => this.finish("toolUse", ids), TOOL_USE_SETTLE_MS);
+				return;
+			}
+			case "session.error":
+				this.error = refusalMessage(event.data);
+				return;
+			case "session.idle":
+				if (this.toolUse) this.finish("toolUse", this.toolUse);
+				else if (event.data && (event.data as { aborted?: boolean }).aborted) this.finish("aborted", []);
+				else this.finish(this.error ? "error" : "stop", []);
+				return;
+			default:
+				return;
+		}
+	}
+
+	finish(stop: "stop" | "toolUse" | "aborted" | "error", toolCallIds: string[], errorText?: string): void {
+		if (this.finished) return;
+		this.finished = true;
+		if (this.toolUseTimer) clearTimeout(this.toolUseTimer);
+		this.onDetach?.(this);
+		const settle = this.settle;
+		if ((stop === "stop" || stop === "toolUse") && settle && this.billing.modelCalls > 0) {
+			void settle(this)
+				.then((settled) => {
+					this.billing.premiumRequests = settled.premiumRequests;
+					this.billing.nanoAiu = settled.nanoAiu;
+				})
+				.catch(() => {
+					// No accounting answer leaves both quantities unknown; the step itself succeeded.
+				})
+				.finally(() => this.complete(stop, toolCallIds, errorText));
+			return;
+		}
+		this.complete(stop, toolCallIds, errorText);
+	}
+
+	private complete(stop: "stop" | "toolUse" | "aborted" | "error", toolCallIds: string[], errorText?: string): void {
+		this.start();
+		this.closeOpenBlocks();
+		// A tool call that streamed but was never requested is not a call: the step keeps only requested ones.
+		if (this.streamingToolCalls.size > 0) {
+			const unrequested = new Set(this.streamingToolCalls.values());
+			this.streamingToolCalls.clear();
+			const kept = this.message.content.filter((_, index) => !unrequested.has(index));
+			this.message.content.splice(0, this.message.content.length, ...kept);
+		}
+		// A step that reached no model call billed nothing and records no seat units.
+		if (this.billing.modelCalls > 0) {
+			// AI credits: the step's own reports when every call sent them, else the runtime total's growth.
+			if (!this.usageUncertain && this.nanoReports === this.usageEvents) this.billing.nanoAiu = this.nanoSum;
+			if (this.usageUncertain) this.billing = { premiumRequests: null, nanoAiu: null, modelCalls: this.usageEvents };
+			this.message.copilotBilling = {
+				...this.billing,
+				...(this.servedModels.size > 0 ? { servedModels: [...this.servedModels] } : {}),
+			};
+		}
+		// A count is reported only when every call of the step sent it and no unplaceable report was mixed in.
+		// Copilot sends reasoningTokens 0 as a placeholder even while the model thinks, so a reasoning 0 is a
+		// measurement only when thinking was off; a nonzero count every call sent is one either way (PV-4).
+		const reported = (reports: number) => this.usageEvents > 0 && reports === this.usageEvents;
+		const reasoningMeasured = reported(this.reasoningReports) && (this.reasoningSum > 0 || this.thinkingOff);
+		(this.message.usage as { reportedFields?: string[] }).reportedFields = this.usageUncertain
+			? []
+			: [
+					...Object.entries(this.fieldReports)
+						.filter(([, reports]) => reported(reports))
+						.map(([field]) => field),
+					...(reasoningMeasured ? ["reasoning"] : []),
+				];
+		if (this.billing.modelCalls > 0) {
+			(this.message as { responseModelIdObservation?: unknown }).responseModelIdObservation = this.servedModel
+				? { state: "reported", reportedModelId: this.servedModel }
+				: { state: "not-reported" };
+		}
+		// Read by the prompt-cache record: a full request after a continued one explains the cache it re-wrote.
+		if (this.continuation !== null) this.message.copilotContinuation = this.continuation;
+		// Read by the call's transport facts (`src/domains/telemetry/call-facts.ts`).
+		if (this.session !== null) this.message.copilotSession = this.session;
+		if (stop === "stop" || stop === "toolUse") {
+			this.message.stopReason = stop;
+			this.stream.push({ type: "done", reason: stop, message: this.message });
+		} else {
+			this.message.stopReason = stop;
+			this.message.errorMessage =
+				errorText ?? this.error ?? (stop === "aborted" ? "Request was aborted" : "GitHub Copilot run failed");
+			this.stream.push({ type: "error", reason: stop, error: this.message });
+		}
+		this.stream.end(this.message);
+		const toolNames = this.message.content
+			.filter((block): block is ToolCall => block.type === "toolCall")
+			.map((block) => block.name);
+		this.onFinish?.({ stop, toolCallIds, toolNames });
+	}
+}
+
+function declareTools(conversationRef: () => Conversation | null, tools: ReadonlyArray<Tool>): CopilotTool[] {
+	return tools.map((tool) => ({
+		name: tool.name,
+		description: tool.description,
+		parameters: JSON.parse(JSON.stringify(tool.parameters ?? { type: "object", properties: {} })) as Record<
+			string,
+			unknown
+		>,
+		// Every name may shadow a Copilot built-in; all built-ins are excluded, so PanCode's tool is the only one.
+		overridesBuiltInTool: true,
+		// PanCode's loop runs this call under PanCode's permission policy before the result comes back.
+		skipPermission: true,
+		defer: "never" as const,
+		handler: (_args: unknown, invocation: { toolCallId: string; signal?: AbortSignal }) => {
+			const conversation = conversationRef();
+			if (!conversation) return Promise.reject(new Error("PanCode's Copilot conversation is not available"));
+			return conversation.park(invocation.toolCallId, invocation.signal);
+		},
+	}));
+}
+
+class CopilotOpenCancelled extends Error {
+	constructor() {
+		super("Opening the Copilot session was cancelled");
+		this.name = "CopilotOpenCancelled";
+	}
+}
+
+/**
+ * Open a conversation under a runtime hold. Cancellation does not wait for the SDK: on abort the hold is released
+ * at once and the caller sees CopilotOpenCancelled, even when createSession never answers. A session that
+ * arrives after the cancel is disposed (dispose is idempotent) and never used; a creation that later fails
+ * needs nothing.
+ */
+function openConversation(
+	input: Parameters<typeof openConversationHeld>[0],
+	signal: AbortSignal | undefined,
+): Promise<Conversation> {
+	const release = holdCopilotClient();
+	const opening = openConversationHeld(input);
+	return new Promise<Conversation>((resolve, reject) => {
+		let settled = false;
+		const onAbort = () => {
+			if (settled) return;
+			settled = true;
+			release();
+			reject(new CopilotOpenCancelled());
+			void opening.then(
+				(late) => late.dispose("The Copilot step was cancelled before its session was used."),
+				() => {
+					// A creation that fails after the cancel left nothing to clean up.
+				},
+			);
+		};
+		if (signal?.aborted) {
+			onAbort();
+			return;
+		}
+		signal?.addEventListener("abort", onAbort, { once: true });
+		opening.then(
+			(conversation) => {
+				if (settled) return;
+				settled = true;
+				signal?.removeEventListener("abort", onAbort);
+				release();
+				resolve(conversation);
+			},
+			(error: unknown) => {
+				if (settled) return;
+				settled = true;
+				signal?.removeEventListener("abort", onAbort);
+				release();
+				reject(error);
+			},
+		);
+	});
+}
+
+async function openConversationHeld(input: {
+	key: string;
+	model: Model<Api>;
+	systemPrompt: string;
+	/** The prompt cut at its pinned boundary, when a main call named one that still leads the prompt. */
+	systemBlocks?: ReadonlyArray<SystemBlock>;
+	tools: ReadonlyArray<Tool>;
+	reasoningEffort: string | undefined;
+	contextTier: ContextTier;
+	/** An earlier process's conversation to continue instead of creating one. */
+	resume?: CopilotConversationRecord;
+}): Promise<Conversation> {
+	// The signed-in account is the authorization; a missing login fails here with `copilot login` named.
+	const account = await copilotAccount();
+	const client = await copilotClient();
+	let conversation: Conversation | null = null;
+	const sessionId = input.resume?.sessionId ?? randomUUID();
+	// One configuration for both: a resumed session gets the same sessionFs, system message, tools and refusal of
+	// built-ins as a created one, with the current model, effort and tier.
+	const config = {
+		createSessionFsProvider: () => createCopilotSessionFs(sessionId),
+		model: input.model.id,
+		clientName: COPILOT_CLIENT_NAME,
+		streaming: true,
+		// Replace, not append: PanCode's compiled prompt carries its identity, safety rules and tool contract, and
+		// Copilot's default sections describe built-in tools that are excluded here.
+		systemMessage: {
+			mode: "replace" as const,
+			content: input.systemPrompt,
+			...(input.systemBlocks !== undefined ? { contentBlocks: input.systemBlocks } : {}),
+		},
+		tools: declareTools(() => conversation, input.tools),
+		availableTools: ["custom:*"],
+		infiniteSessions: { enabled: false },
+		// PanCode's registry already capped every result and offloaded the rest to a real path the model can read.
+		// The runtime's own spill (at 50 KB, under PanCode's 64 KB cap) names a sessionFs path that exists nowhere.
+		largeOutput: { enabled: false },
+		enableSessionStore: false,
+		enableSkills: false,
+		enableConfigDiscovery: false,
+		workingDirectory: process.cwd(),
+		...(input.reasoningEffort !== undefined ? { reasoningEffort: input.reasoningEffort as ReasoningEffort } : {}),
+		// Opt-in only: a target without `contextTier: long_context` sends nothing and keeps the runtime default.
+		...(input.contextTier === "long_context" ? { contextTier: input.contextTier } : {}),
+		// No Copilot built-in runs, so any permission request is outside PanCode's surface and is refused.
+		onPermissionRequest: () => ({
+			kind: "reject" as const,
+			feedback: "PanCode governs every tool call; Copilot built-in tools are disabled in this session.",
+		}),
+	};
+	const session = await (input.resume
+		? client.resumeSession(sessionId, config)
+		: client.createSession({ sessionId, ...config })
+	).catch(async (error: unknown) => {
+		await removeCopilotSessionRecords(sessionId).catch(() => {});
+		throw await withListedModels(error, input.model.id);
+	});
+	const opened = new Conversation({
+		key: input.key,
+		session,
+		client,
+		systemHash: hash(input.systemPrompt),
+		toolsHash: toolsSignature(input.tools),
+		model: input.model.id,
+		reasoningEffort: input.reasoningEffort,
+		contextTier: input.contextTier,
+		accountScope: copilotAccountScope(account),
+	});
+	conversation = opened;
+	if (input.resume) {
+		opened.synced = [...input.resume.synced];
+		for (const id of input.resume.policies) opened.policiesSent.add(id);
+	}
+	await acquireBoundaries(opened);
+	return opened;
+}
+
+interface Plan {
+	conversation: Conversation | null;
+}
+
+/** One block of a replace-mode system message, in the runtime's experimental wire shape (SDK 1.0.26 rpc.d.ts). */
+interface SystemBlock {
+	content: string;
+	isStatic?: boolean;
+	cacheBreakpoint?: boolean;
+}
+
+/**
+ * The install-wide pinned layer as a static block with a cache breakpoint after it, and the session layer (handbook,
+ * workspace) as a dynamic block, so a fresh session in another repository can read the same head from cache (row 335).
+ * The blocks concatenate to the prompt. None when the boundary is absent, empty, the whole prompt, or its hash no
+ * longer matches the prompt's head.
+ */
+function pinnedSystemBlocks(
+	systemPrompt: string,
+	prefix: PinnedPromptPrefix | undefined,
+): ReadonlyArray<SystemBlock> | undefined {
+	if (prefix === undefined || !Number.isSafeInteger(prefix.chars) || prefix.chars <= 0) return undefined;
+	if (systemPrompt.length <= prefix.chars) return undefined;
+	const pinned = systemPrompt.slice(0, prefix.chars);
+	if (sha256Hex(pinned) !== prefix.hash) return undefined;
+	return [{ content: pinned, isStatic: true, cacheBreakpoint: true }, { content: systemPrompt.slice(prefix.chars) }];
+}
+
+/** A model the runtime does not serve fails with the account's listed models named, so the fix is one copy away. */
+async function withListedModels(error: unknown, modelId: string): Promise<unknown> {
+	const message = error instanceof Error ? error.message : String(error);
+	if (!message.includes(`Model "${modelId}" is not available`)) return error;
+	const ids = await listCopilotModels().then(
+		(rows) => rows.map((row) => row.id),
+		() => [],
+	);
+	if (ids.length === 0) return error;
+	return new Error(`${message} GitHub Copilot lists these models for this account: ${ids.join(", ")}.`);
+}
+
+/**
+ * `framed` says host framing follows the last message with transcript identity. An idle session that has
+ * seen every such message continues with that framing as its delta: an in-run continuation that only adds a
+ * reminder must not reseed the whole transcript (FX-5).
+ */
+function plan(
+	key: string,
+	systemHash: string,
+	core: ReadonlyArray<CoreMessage>,
+	prints: ReadonlyArray<string>,
+	framed: boolean,
+): Plan {
+	let best: Conversation | null = null;
+	for (const conversation of conversations) {
+		if (conversation.key !== key || conversation.busy || conversation.disposed) continue;
+		if (conversation.systemHash !== systemHash) continue;
+		const caughtUp = conversation.synced.length === prints.length && framed && conversation.state === "idle";
+		if (conversation.synced.length >= prints.length && !caughtUp) continue;
+		if (!conversation.synced.every((print, index) => prints[index] === print)) continue;
+		if (!best || conversation.synced.length > best.synced.length) best = conversation;
+	}
+	if (!best) return { conversation: null };
+	const fresh = core.slice(best.synced.length);
+	const first = fresh[0];
+	const valid =
+		best.state === "awaiting-tools"
+			? first?.role === "toolResult" && fresh.every((message) => message.role !== "assistant")
+			: fresh.every((message) => message.role === "user");
+	return { conversation: valid ? best : null };
+}
+
+/** The runtime's totals, read once per step; null when it does not answer in time. Never retried. */
+async function readMetrics(
+	conversation: Conversation,
+): Promise<{ seq: number; premium: number | null; nano: number | null } | null> {
+	conversation.metricsSeq += 1;
+	const seq = conversation.metricsSeq;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<null>((resolve) => {
+		timer = setTimeout(() => resolve(null), SETTLE_METRICS_MS);
+	});
+	try {
+		const metrics = await Promise.race([conversation.session.rpc.usage.getMetrics().catch(() => null), late]);
+		if (metrics === null) return null;
+		const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null);
+		return { seq, premium: number(metrics.totalPremiumRequestCost), nano: number(metrics.totalNanoAiu) };
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/**
+ * A step's share of one cumulative total: the growth since the last boundary, when that boundary is valid and
+ * this step's own usage is complete. The reading becomes the next boundary only when it is the newest one taken;
+ * a quantity the reading omits, a failed reading or a late one leaves its boundary invalid.
+ */
+function stepShare(boundary: MetricsBoundary, reading: number | null, own: boolean, newest: boolean): number | null {
+	if (!newest) return null;
+	if (reading === null) {
+		boundary.valid = false;
+		return null;
+	}
+	const share = boundary.valid && own && reading >= boundary.value ? reading - boundary.value : null;
+	boundary.value = reading;
+	boundary.valid = true;
+	return share;
+}
+
+/** The first boundary of a new session, read before its first send under the same one-second rule. */
+async function acquireBoundaries(conversation: Conversation): Promise<void> {
+	const reading = await readMetrics(conversation);
+	const newest = reading !== null && reading.seq === conversation.metricsSeq;
+	stepShare(conversation.boundaries.premiumRequests, reading?.premium ?? null, false, newest);
+	stepShare(conversation.boundaries.nanoAiu, reading?.nano ?? null, false, newest);
+}
+
+async function runStep(
+	model: Model<Api>,
+	context: TranscriptContext,
+	options: SimpleStreamOptions | StreamOptions | undefined,
+	stream: AssistantMessageEventStream,
+): Promise<void> {
+	const step = new Step(stream, model);
+	// options.maxTokens has no per-send counterpart in the SDK (only a BYOK provider config takes maxOutputTokens), so a
+	// caller's output cap is advisory here; a compaction summary is stopped only by its stream bound of twice the cap.
+	const signal = options?.signal;
+	// Cancellation is observed from the first moment: an abort during any await below ends the step, and every
+	// await is followed by a check, so nothing is sent to Copilot after it.
+	const onAbort = () => step.finish("aborted", []);
+	if (signal?.aborted) {
+		onAbort();
+		return;
+	}
+	signal?.addEventListener("abort", onAbort, { once: true });
+	void stream.result().finally(() => signal?.removeEventListener("abort", onAbort));
+	const key = options?.sessionId ?? "default";
+	// PanCode builds no HTTP body here: each request it hands the runtime is the payload, so PANCODE_PROVIDER_DUMP_PATH
+	// can audit it (c2b-1). A replacement has no body to patch and is ignored. False once the step has ended.
+	const onPayload = options?.onPayload;
+	const request = async (payload: Record<string, unknown>): Promise<boolean> => {
+		if (onPayload !== undefined) await onPayload(payload, model);
+		if (step.isFinished) return false;
+		// A send or a tool-result delivery runs the model under the session's effort, which a reused conversation does
+		// not resend; a step that ends before one carries no effort (FX-49).
+		if (payload.request === "send" || payload.request === "toolResults") stampWireEffort(step.message, reasoningEffort);
+		return true;
+	};
+	// A host policy update (#423) is a posture change, not system text: the SDK fixes a session's system
+	// message at creation, so folding the update into it would discard the session and re-send the whole
+	// transcript. It is delivered as one host turn instead and the session is kept.
+	const policies = context.messages.filter((message) => isHostPolicyMessage(message as AgentMessage));
+	const systemPrompt = getCurrentSystemPrompt(
+		context.messages.filter((message) => !isHostPolicyMessage(message as AgentMessage)),
+	);
+	const tools = getCurrentTools(context.messages);
+	step.declaredTools = new Set(tools.map((tool) => tool.name));
+	const systemHash = hash(systemPrompt);
+	const reasoningEffort = reasoningEffortFor(model, options as SimpleStreamOptions | undefined);
+	// This route states its effort at dispatch; the payload seam never infers one from a session request (FX-49).
+	claimWireEffort(step.message);
+	// An omitted effort on a reasoning model leaves the runtime's default, which may think: not off.
+	step.thinkingOff = !model.reasoning || reasoningEffort === "none";
+	const contextTier = copilotContextTierFor(model);
+	// Messages that are only per-call host framing carry no transcript identity; they still reach the model.
+	const core = context.messages.filter((message): message is CoreMessage => message.role !== "system");
+	const kept = core.filter((message) => fingerprint(message) !== null);
+	const prints = kept.map((message) => fingerprint(message) as string);
+
+	const framed = core.length > 0 && fingerprint(core[core.length - 1] as CoreMessage) === null;
+	let { conversation } = plan(key, systemHash, kept, prints, framed);
+	// A run still waiting on calls this transcript has already answered was passed over above (its history no longer
+	// matches), so it can never take those results; it is closed instead of staying parked until eviction (CTX-4).
+	const settledCalls = new Set(core.flatMap((message) => (message.role === "toolResult" ? [message.toolCallId] : [])));
+	for (const stale of conversations.filter(
+		(open) =>
+			open !== conversation &&
+			open.key === key &&
+			!open.busy &&
+			open.state === "awaiting-tools" &&
+			open.systemHash === systemHash &&
+			open.pendingToolCallIds.length > 0 &&
+			open.pendingToolCallIds.every((id) => settledCalls.has(id)),
+	))
+		remove(stale, "PanCode's transcript moved past the calls this Copilot run waited on; its conversation was closed");
+	const reused = conversation !== null;
+	// No open conversation fits: one an earlier process left for this PanCode session may (bt-10).
+	const stored = conversation ? null : storedConversation(key, systemHash, kept, prints);
+	// Whether the session already holds the transcript up to `fresh`, so only what follows is sent. A pooled spare
+	// holds nothing: it is reused, but everything goes.
+	let continued = reused && (conversation?.synced.length ?? 0) > 0;
+	// Everything after what the session has seen, in order, host framing (reminder-only messages) included:
+	// framing carries no transcript identity, but each request's own framing still reaches the model.
+	const syncedCount = conversation?.synced.length ?? stored?.synced.length ?? 0;
+	const lastSeen = syncedCount > 0 ? kept[syncedCount - 1] : undefined;
+	const fresh = lastSeen ? core.slice(core.indexOf(lastSeen) + 1) : core;
+
+	let bound = false;
+	let origin: CopilotSessionOrigin = continued ? "continued" : reused ? "spare" : "new";
+	const systemBlocks = pinnedSystemBlocks(
+		systemPrompt,
+		(options as { pancodeCopilotPinnedPrefix?: PinnedPromptPrefix } | undefined)?.pancodeCopilotPinnedPrefix,
+	);
+	const base = {
+		key,
+		model,
+		systemPrompt,
+		...(systemBlocks !== undefined ? { systemBlocks } : {}),
+		tools,
+		reasoningEffort,
+		contextTier,
+	};
+	// The dump names each block's size and marks (the static one by its hash), not its text twice.
+	const systemMessageBlocks = systemBlocks?.map(({ content, ...marks }) => ({
+		chars: content.length,
+		...(marks.isStatic ? { hash: sha256Hex(content) } : {}),
+		...marks,
+	}));
+	const session = {
+		model: model.id,
+		systemMessage: systemPrompt,
+		...(systemMessageBlocks !== undefined ? { systemMessageBlocks } : {}),
+		tools,
+		reasoningEffort,
+		contextTier,
+	};
+	try {
+		if (!conversation) {
+			evictFor(key);
+			let opened: Conversation | null = null;
+			if (stored) {
+				if (!(await request({ request: "resumeSession", sessionId: stored.sessionId, ...session }))) return;
+				opened = await openConversation({ ...base, resume: stored }, signal).catch((error: unknown) => {
+					if (error instanceof CopilotOpenCancelled) throw error;
+					// A session the runtime cannot resume is stale: the transcript is seeded into a new one.
+					forgetStored(stored);
+					return null;
+				});
+				if (opened) {
+					// Its record stays until something is sent, so a step cancelled before then keeps it resumable.
+					continued = true;
+					origin = "resumed";
+					opened.persisted = true;
+					persistedByKey.set(key, opened);
+				}
+			}
+			if (!opened && !(await request({ request: "createSession", ...session }))) return;
+			opened ??= await openConversation(base, signal);
+			if (step.isFinished) {
+				// Ended another way while the session was being created: it never carries a message.
+				void opened.dispose("The Copilot step was cancelled before its session was used.");
+				return;
+			}
+			installRuntimeGoneHandler();
+			installExitCleanup();
+			conversations.push(opened);
+			conversation = opened;
+		}
+		const active = conversation;
+		active.busy = true;
+		// A side call that seeded its session (a new one or a spare) leaves a spare for the next one (PV-2).
+		if (key === "default" && !continued)
+			openSpare(base, () => request({ request: "createSession", spare: true, ...session }));
+		active.lastUsed = Date.now();
+		active.activeStep = step;
+		bound = true;
+		step.onDetach = (finished) => {
+			if (active.activeStep === finished) active.activeStep = null;
+			active.retire(finished);
+		};
+		step.settle = async (finished) => {
+			const reading = await readMetrics(active);
+			const newest = reading !== null && reading.seq === active.metricsSeq;
+			const own = finished.usageComplete;
+			const premiumRequests = stepShare(active.boundaries.premiumRequests, reading?.premium ?? null, own, newest);
+			const nanoAiu = stepShare(active.boundaries.nanoAiu, reading?.nano ?? null, own, newest);
+			if (reading === null) {
+				active.boundaries.premiumRequests.valid = false;
+				active.boundaries.nanoAiu.valid = false;
+			}
+			return { premiumRequests, nanoAiu };
+		};
+		const declared = new Set(tools.map((tool) => tool.name));
+		step.onFinish = ({ stop, toolCallIds, toolNames }) => {
+			active.busy = false;
+			if (stop === "toolUse" && toolNames.some((name) => !declared.has(name))) {
+				// Copilot answers a call to a tool it was never given ("does not exist") and its run goes on without
+				// PanCode, while PanCode's loop may still run that name (a gateway capability called directly). The two
+				// transcripts have diverged, so delivering PanCode's result would leave both sides waiting on each other.
+				remove(active, "Copilot answered a tool call it was not given; the next call reseeds from PanCode's transcript");
+				return;
+			}
+			if (stop === "toolUse" || stop === "stop") {
+				active.synced = [...prints, `a:${toolCallIds.join(",")}`];
+				active.state = stop === "toolUse" ? "awaiting-tools" : "idle";
+				active.pendingToolCallIds = toolCallIds;
+				// Only an idle conversation can be continued elsewhere; one waiting on tool results ends with its process.
+				if (stop === "stop") persist(active);
+			} else {
+				// After an abort or error the Copilot run's state is not PanCode's; the next call seeds afresh.
+				remove(active, "The Copilot step ended without a result; its conversation was closed");
+			}
+		};
+		if (step.isFinished) {
+			// Aborted between planning and binding: the reused session stays as it was.
+			active.activeStep = null;
+			active.busy = false;
+			return;
+		}
+		unpersist(active);
+		step.continuation = continued ? "delta" : "full";
+		step.session = origin;
+		if (active.model !== model.id || active.reasoningEffort !== reasoningEffort || active.contextTier !== contextTier) {
+			// The tier is named whenever either side is long_context, so leaving it returns the session to default.
+			const tierOption = contextTier === "long_context" || active.contextTier === "long_context" ? { contextTier } : {};
+			const switchOptions = {
+				...(reasoningEffort !== undefined ? { reasoningEffort: reasoningEffort as ReasoningEffort } : {}),
+				...tierOption,
+			};
+			if (!(await request({ request: "setModel", model: model.id, ...switchOptions }))) return;
+			await active.session.setModel(model.id, Object.keys(switchOptions).length > 0 ? switchOptions : undefined);
+			if (step.isFinished) return;
+			active.model = model.id;
+			active.reasoningEffort = reasoningEffort;
+			active.contextTier = contextTier;
+		}
+		const policyIds: string[] = [];
+		const policyText = policies
+			.flatMap((message) => {
+				const id = (message as AgentMessage & { pancode_policy: { id: string } }).pancode_policy.id;
+				if (active.policiesSent.has(id)) return [];
+				policyIds.push(id);
+				const text = typeof message.content === "string" ? message.content : textOf(message.content);
+				return [`<host-policy authority="pancode">\n${text}\n</host-policy>`];
+			})
+			.join("\n\n");
+		const toolsHash = toolsSignature(tools);
+		if (reused && active.toolsHash !== toolsHash) {
+			if (!(await request({ request: "setTools", tools }))) return;
+			await active.session.setTools(declareTools(() => active, tools));
+			if (step.isFinished) return;
+			active.toolsHash = toolsHash;
+		}
+
+		if (reused && active.state === "awaiting-tools") {
+			const results = fresh.filter(
+				(message): message is Extract<CoreMessage, { role: "toolResult" }> => message.role === "toolResult",
+			);
+			const after = fresh.filter((message) => message.role === "user");
+			// The tool's own output and the registry's `[middleware:*]` notes stay byte-for-byte what PanCode produced,
+			// as on the Pi route, and nothing else rides in a tool result: a model reads a host frame inside tool
+			// output as an injection (D4). Host reminders that followed the results, in their `<system-reminder>`
+			// frame, and a person's text (a mid-turn steer, a real user message) go in Copilot's immediate mode
+			// with any new host policy. Immediate mode places them before the run's next model request; sent while
+			// the run still waits on the results, they land at the very next request, with no request of their own.
+			// A reminder alone is host framing, not a steer: PanCode's steer accounting reads its own transcript.
+			const reminders = after.flatMap((message) => remindersOf(textOf(message.content))).join("\n\n");
+			const steer = after
+				.map((message) => operatorTextOf(textOf(message.content)))
+				.filter((text) => text.length > 0)
+				.join("\n\n");
+			const steerImages = after.flatMap((message) => imagesOf(message.content));
+			const immediate = [policyText, steer, reminders].filter((text) => text.length > 0).join("\n\n");
+			if (immediate.length > 0 || steerImages.length > 0) {
+				const steerSend = {
+					prompt: immediate,
+					mode: "immediate" as const,
+					...(steerImages.length > 0 ? { attachments: blobAttachments(steerImages) } : {}),
+				};
+				if (!(await request({ request: "send", ...steerSend }))) return;
+				await active.session.send(steerSend);
+				if (step.isFinished) return;
+			}
+			const answered = new Set(results.map((message) => message.toolCallId));
+			const delivered: Array<ToolResultObject & { toolCallId: string }> = results.map((message) => ({
+				toolCallId: message.toolCallId,
+				...toolResultObject(message),
+			}));
+			// Every requested call settles even when PanCode's loop produced no result for it.
+			for (const id of active.pendingToolCallIds) {
+				if (!answered.has(id))
+					delivered.push({
+						toolCallId: id,
+						textResultForLlm: "The host returned no result for this call.",
+						resultType: "failure",
+					});
+			}
+			if (!(await request({ request: "toolResults", results: delivered }))) return;
+			for (const { toolCallId, ...result } of delivered) active.deliver(toolCallId, result);
+		} else {
+			const seed = continued
+				? {
+						prompt: fresh
+							.map((message) => textOf(message.content))
+							.filter((text) => text.length > 0)
+							.join("\n\n"),
+						images: fresh.flatMap((message) => imagesOf(message.content)),
+					}
+				: seedPrompt(core);
+			const send = {
+				prompt: [policyText, seed.prompt].filter((text) => text.length > 0).join("\n\n"),
+				...(seed.images.length > 0 ? { attachments: blobAttachments(seed.images) } : {}),
+			};
+			if (!(await request({ request: "send", ...send }))) return;
+			await active.session.send(send);
+		}
+		for (const id of policyIds) active.policiesSent.add(id);
+	} catch (error) {
+		// The abort already settled the step; the cancelled opening has nothing more to report.
+		if (error instanceof CopilotOpenCancelled) return;
+		const message = error instanceof Error ? error.message : String(error);
+		if (conversation && !bound) remove(conversation);
+		step.finish("error", [], message);
+	}
+}
+
+let runtimeGoneHandlerInstalled = false;
+
+/** A lost runtime takes its sessions with it: settle and drop every conversation on that client. */
+function installRuntimeGoneHandler(): void {
+	if (runtimeGoneHandlerInstalled) return;
+	runtimeGoneHandlerInstalled = true;
+	onCopilotRuntimeGone((client, reason) => {
+		for (const conversation of [...conversations]) if (conversation.client === client) remove(conversation, reason);
+	});
+}
+
+function streamCopilot(
+	model: Model<Api>,
+	context: TranscriptContext,
+	options: SimpleStreamOptions | StreamOptions | undefined,
+): AssistantMessageEventStream {
+	const stream = createAssistantMessageEventStream();
+	// The step holds the runtime until its stream ends, so the process cannot exit under a live call.
+	const release = holdCopilotClient();
+	void stream.result().finally(release);
+	void runStep(model, context, options, stream);
+	return stream;
+}
+
+export const copilotSdkApiProvider: EngineRegisteredApiProvider = {
+	api: COPILOT_SDK_API,
+	stream: streamCopilot,
+	streamSimple: streamCopilot,
+};

@@ -1,0 +1,302 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// The in-app reference: what each view is, every chord the app binds, the vocabulary the product
+// insists on, and capability-dependent surfaces. The keyboard section
+// is generated from the binding table, so the reference cannot drift from the handlers.
+
+import { SLASH_ALIASES } from "../chat/slash-model.js";
+import type { navigation } from "../design/navigation.js";
+import { formatKeybinding, INTERVIEW_KEYBINDING_NAMESPACE, KEYBINDING_ORDER } from "./keybindings.js";
+
+// The task screens are the rail's own and are not in the navigation table, but the reference still explains them.
+type NavPath = (typeof navigation)[number]["path"] | "/" | "/sessions" | "/machines";
+
+export interface HelpEntry {
+	readonly term: string;
+	readonly meaning: string;
+	readonly bindingId?: string;
+}
+
+export interface HelpSection {
+	readonly id: string;
+	readonly title: string;
+	readonly lede: string;
+	readonly entries: readonly HelpEntry[];
+	/** Set when the section is reserved for a surface this build does not have. */
+	readonly reserved?: string;
+}
+
+export interface HelpMatch {
+	readonly section: HelpSection;
+	readonly entries: readonly HelpEntry[];
+}
+
+/** One sentence per route. A route added without a guide entry fails to compile. */
+export const VIEW_GUIDE: Readonly<Record<NavPath, { title: string; meaning: string }>> = {
+	"/": {
+		title: "New task",
+		meaning: "Choose a workspace and describe a task. PanCode starts when you send your first message.",
+	},
+	"/sessions": {
+		title: "Sessions",
+		meaning:
+			"Follow the sessions held by this PanCode server across projects. Filter by activity, review requests for your input, stop a turn or continue a session.",
+	},
+	"/machines": {
+		title: "Machines",
+		meaning:
+			"Register lab workstations and servers for SSH workers. Readiness is recorded separately for each project; checks run only when you request them.",
+	},
+	"/traces": {
+		title: "Traces",
+		meaning: "The detailed conversation record, including individual events, their sources and token counts.",
+	},
+	"/toolchain": {
+		title: "Toolchain",
+		meaning: "Tools available on this machine, their versions and trust status.",
+	},
+	"/settings": {
+		title: "Settings",
+		meaning: "Current project settings, where each value comes from and when changes take effect.",
+	},
+	"/fleet": {
+		title: "Fleet",
+		meaning: "Saved runs across this installation, including events, related workers, check results and evidence.",
+	},
+	"/evidence": {
+		title: "Evidence",
+		meaning: "Sealed work records and checks that verify they have not changed.",
+	},
+	"/arena": {
+		title: "Arena",
+		meaning:
+			"Run one prompt on two to four models side by side with their names hidden, vote for the better result, and see the standings.",
+	},
+	"/research": {
+		title: "Research",
+		meaning:
+			"Run a research hill climb: PanCode's agent changes an isolated worktree, each change is measured against the best so far, and only changes that beat noise are kept.",
+	},
+	"/hub": {
+		title: "PanHub",
+		meaning: "Available agents, skills, resources, extensions and checks, with their trust and scope.",
+	},
+	"/system": {
+		title: "System",
+		meaning: "A snapshot of worker capacity and totals across the installation. Refresh it manually for an update.",
+	},
+};
+
+const VIEW_ENTRIES: readonly HelpEntry[] = Object.values(VIEW_GUIDE).map((view) => ({
+	term: view.title,
+	meaning: view.meaning,
+}));
+
+/** Keys handled by one control rather than the binding table: the message box and the task name. */
+export const COMPOSER_NOTES: readonly { term: string; action: string; where: string }[] = [
+	{ term: "Esc, Esc", action: "Stop the running turn", where: "Message box · press twice while a turn runs" },
+	{ term: "Up / Down", action: "Recall sent messages", where: "Message box · Up with the caret at the start" },
+	{ term: "F2", action: "Rename the task", where: "Task name in the header focused" },
+];
+
+const KEYBOARD_ENTRIES: readonly HelpEntry[] = [
+	...KEYBINDING_ORDER.map((binding) => ({
+		bindingId: binding.id,
+		term: formatKeybinding(binding),
+		meaning: `${binding.action}. ${binding.where}.`,
+	})),
+	...COMPOSER_NOTES.map((note) => ({ term: note.term, meaning: `${note.action}. ${note.where}.` })),
+];
+
+// Names sharing one summary are one line: `/new, /clear`, and the terminal-only names together. A
+// notice that stands alone says what it says in the message box.
+const COMMAND_ENTRIES: readonly HelpEntry[] = (() => {
+	const rows = new Map<string, { names: string[]; specs: (typeof SLASH_ALIASES)[number][] }>();
+	for (const spec of SLASH_ALIASES) {
+		const row = rows.get(spec.summary) ?? { names: [], specs: [] };
+		row.names.push(...spec.names.map((name) => `/${name}${spec.hint ? ` ${spec.hint}` : ""}`));
+		row.specs.push(spec);
+		rows.set(spec.summary, row);
+	}
+	return [...rows.entries()].map(([summary, row]) => {
+		const only = row.specs.length === 1 ? row.specs[0] : undefined;
+		const meaning = only?.target.kind === "notice" ? only.target.message : `${summary}.`;
+		return { term: row.names.join(", "), meaning };
+	});
+})();
+
+export const HELP_SECTIONS: readonly HelpSection[] = [
+	{
+		id: "documentation",
+		title: "Documentation",
+		lede: "Guides online and an offline reference included with your installation.",
+		entries: [
+			{ term: "Public documentation", meaning: "Read the PanCode guides on the web." },
+			{
+				term: "Installed reference",
+				meaning:
+					"The bundled Markdown docs are available offline. Ask Panos to look up a guide with pancode_docs, or open the files in your editor.",
+			},
+		],
+	},
+	{
+		id: "views",
+		title: "Views",
+		lede: "Find your way around PanCode.",
+		entries: VIEW_ENTRIES,
+	},
+	{
+		id: "keyboard",
+		title: "Keyboard",
+		lede: "Keyboard shortcuts. Use Tab to move between controls, then Enter or Space to activate them.",
+		entries: KEYBOARD_ENTRIES,
+	},
+	{
+		id: "working-freedom",
+		title: "Autonomy",
+		lede:
+			"Autonomy controls when PanCode asks before acting. The current session keeps its reported level; a settings change applies to the next session.",
+		entries: [
+			{
+				term: "default",
+				meaning:
+					"Workspace edits run; shell commands run in the OS sandbox; calls that need approval go to the safety judge, then to you.",
+			},
+			{
+				term: "yolo",
+				meaning:
+					"Runs without stopping for you: commands run as default runs them, in the OS sandbox only when safety.sandbox and the host provide one, the safety judge reviews only when safety.judge.enabled is on, and a call that would need you is refused instead of asked (unless the operator's settings chose unconfined yolo). The autonomy menu names this host's sandbox backend and judge state.",
+			},
+		],
+	},
+	{
+		id: "vocabulary",
+		title: "Vocabulary",
+		lede: "Words you may see while working.",
+		entries: [
+			{ term: "Target", meaning: "A configured service or runtime that handles a turn." },
+			{ term: "Model", meaning: "The AI model a target uses for that turn." },
+			{ term: "Session", meaning: "A saved conversation you can resume. A project can have many sessions." },
+			{ term: "Turn", meaning: "One request and everything PanCode does in response." },
+			{
+				term: "Evidence",
+				meaning: "Tool activity, approvals, results and the records of what happened.",
+			},
+			{
+				term: "Run record",
+				meaning: "A sealed record of a saved run. Verified means PanCode checked the record and it still authenticates.",
+			},
+			{
+				term: "Truncated",
+				meaning: "Only part of a list is shown. More items may exist beyond the display limit.",
+			},
+			{
+				term: "Host-only",
+				meaning:
+					"Data kept in the local host process, such as an event payload or command line. The desktop app names it without displaying its contents.",
+			},
+			{ term: "Reported", meaning: "Supplied by the PanCode session, rather than measured by the desktop app." },
+			{ term: "Observed", meaning: "Seen directly by the desktop app." },
+			{ term: "Status: queued", meaning: "Accepted, but not started." },
+			{ term: "Status: active", meaning: "Running now." },
+			{ term: "Status: waiting", meaning: "Waiting for you, usually for approval." },
+			{ term: "Status: complete", meaning: "PanCode reported that the work finished." },
+			{ term: "Status: canceled", meaning: "Stopped before finishing. This does not mean the work failed." },
+			{ term: "Status: failed", meaning: "PanCode reported that the work failed." },
+			{
+				term: "Status: replayed",
+				meaning: "Restored from an earlier turn in this session, rather than observed live.",
+			},
+		],
+	},
+	{
+		id: "boundaries",
+		title: "Boundaries",
+		lede: "What PanCode on the desktop reads and controls.",
+		entries: [
+			{
+				term: "Inspections are read-only",
+				meaning: "Inspections use fixed commands, accept no browser-supplied arguments and do not change PanCode.",
+			},
+			{
+				term: "Project work is project-scoped",
+				meaning:
+					"Files, sessions and configuration belong to the open project. Runs, System, recovery checks, and tool and agent inventories read across the installation; their headers identify that scope.",
+			},
+			{
+				term: "Control is local",
+				meaning: "The host listens only on this machine. Requests use an access token issued when it starts.",
+			},
+		],
+	},
+	{
+		id: "commands",
+		title: "Commands",
+		lede: "Type / in the message box to see this task's commands. These terminal names work here too.",
+		entries: COMMAND_ENTRIES,
+	},
+	{
+		id: "terminal",
+		title: "The terminal",
+		lede: "This reference covers PanCode on the desktop.",
+		entries: [
+			{
+				term: "/help",
+				meaning: "In the terminal, /help lists PanCode commands. Here it opens this reference.",
+			},
+		],
+	},
+	{
+		id: INTERVIEW_KEYBINDING_NAMESPACE,
+		title: "Interviews",
+		lede:
+			"PanCode may ask a round of questions during a turn when the connected runtime supports interviews. Answering an interview is separate from approving an action.",
+		entries: [
+			{
+				term: "Review, then submit",
+				meaning:
+					"Choose or write each answer, review the round, then submit. Nothing is selected for you. The submit shortcut works only on the review screen.",
+			},
+			{
+				term: "Cancel interview",
+				meaning: "Canceling sends no answers and does not approve an action.",
+			},
+		],
+	},
+];
+
+function normalise(text: string): string {
+	return text
+		.toLocaleLowerCase("en-US")
+		.replace(/ctrl\/cmd/gu, "ctrl or cmd")
+		.replace(/⌘|\bcommand\b/gu, "cmd")
+		.replace(/⌃|\bcontrol\b/gu, "ctrl")
+		.replace(/\bescape\b/gu, "esc")
+		.replace(/[+]/gu, " ");
+}
+
+/**
+ * Sections whose title, lede, or any entry contains every word of the query. A heading hit widens to
+ * the whole section; an entry hit narrows to the matching entries; no match returns an empty array
+ * the surface must report as such rather than silently showing everything.
+ */
+export function searchHelp(query: string): readonly HelpMatch[] {
+	const words = normalise(query)
+		.split(/\s+/u)
+		.filter((word) => word.length > 0);
+	if (words.length === 0) return HELP_SECTIONS.map((section) => ({ section, entries: section.entries }));
+	const matches: HelpMatch[] = [];
+	for (const section of HELP_SECTIONS) {
+		const heading = normalise(`${section.title} ${section.lede} ${section.reserved ?? ""}`);
+		const headingHit = words.every((word) => heading.includes(word));
+		const entries = section.entries.filter((entry) => {
+			const text = normalise(`${section.title} ${entry.term} ${entry.meaning}`);
+			// A single key is a whole token: K must not match every entry via “Keyboard”.
+			const tokens = text.split(/\s+/u);
+			return words.every((word) => (word.length === 1 ? tokens.includes(word) : text.includes(word)));
+		});
+		if (headingHit) matches.push({ section, entries: entries.length > 0 ? entries : section.entries });
+		else if (entries.length > 0) matches.push({ section, entries });
+	}
+	return matches;
+}

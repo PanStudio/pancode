@@ -1,0 +1,129 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { DEFAULT_SETTINGS } from "../../core/defaults.js";
+import type { DomainBundle, DomainContext, DomainExtension } from "../../core/domain-loader.js";
+import { pruneSandboxCacheDaily, sandboxCacheCapBytes } from "../../core/sandbox/sandbox-cache.js";
+import { clearSessionAuthoredFiles } from "../../core/session-authored-files.js";
+import { classify as classifyCall } from "./action-classifier.js";
+import { setValidationWrappers } from "./check-prefix.js";
+import { type SafetyContract, toSafetyDecision } from "./contract.js";
+import {
+	type CompletionEvaluationInput,
+	completionContext,
+	completionEvaluatedPayload,
+	recordToolDecision as emitToolDecision,
+	type SafetyJudgementInput,
+	safetyJudgedPayload,
+	safetyJudgementContext,
+	type ToolDecisionInput,
+} from "./decision-events.js";
+import { mergeFlowRestrictions } from "./information-flow.js";
+import { createLoopState, type LoopDetectorState, observe as observeLoop } from "./loop-detector.js";
+import { createSafetyPolicyEngine, type SafetyPolicyEngine } from "./policy-engine.js";
+import { isSubset, READONLY_SCOPE, WORKSPACE_SCOPE } from "./scope.js";
+
+export function createSafetyBundle(context: DomainContext): DomainBundle<SafetyContract> {
+	let policyEngine: SafetyPolicyEngine | null = null;
+	let loopState: LoopDetectorState = createLoopState();
+	let unsubscribeSessionParked: (() => void) | null = null;
+	let pruneTimer: NodeJS.Timeout | undefined;
+	let stopping = false;
+
+	function activePolicyEngine(): SafetyPolicyEngine {
+		policyEngine ??= createSafetyPolicyEngine();
+		return policyEngine;
+	}
+
+	// Tool decisions run inside the call's async context, so the scope comes from there (#434).
+	function recordToolDecision(input: ToolDecisionInput): void {
+		emitToolDecision(input, context.bus);
+	}
+
+	function recordCompletionEvaluation(input: CompletionEvaluationInput): void {
+		context.bus.emit("completion.evaluated", completionEvaluatedPayload(input), completionContext(input));
+	}
+
+	function recordSafetyJudgement(input: SafetyJudgementInput): void {
+		context.bus.emit("safety.judged", safetyJudgedPayload(input), safetyJudgementContext(input));
+	}
+
+	const extension: DomainExtension = {
+		async start() {
+			policyEngine = createSafetyPolicyEngine();
+			stopping = false;
+			// The sandbox cache is pruned to its cap at most once a day, after boot settles and off every input path.
+			pruneTimer = setTimeout(() => {
+				const gib =
+					context.getContract("config")?.get().safety.sandboxCacheMaxGiB ?? DEFAULT_SETTINGS.safety.sandboxCacheMaxGiB;
+				void pruneSandboxCacheDaily({ capBytes: sandboxCacheCapBytes(gib), stopped: () => stopping }).catch(() => {
+					// A failed prune removed only what it reported; the next startup tries again.
+				});
+			}, 5_000);
+			pruneTimer.unref();
+			// The shell reader looks through the declared wrappers when it names a check (FX-44). It reads them from the live
+			// snapshot each time, which a reload replaces before any change listener or bus subscriber runs.
+			const config = context.getContract("config");
+			setValidationWrappers(config === undefined ? [] : () => config.get().safety.validationWrappers);
+			unsubscribeSessionParked = context.bus.subscribe("session.parked", () => {
+				// Authorship is per session: the next session asks again for the parked one's outside files.
+				clearSessionAuthoredFiles();
+			});
+		},
+		async stop() {
+			stopping = true;
+			clearTimeout(pruneTimer);
+			unsubscribeSessionParked?.();
+			unsubscribeSessionParked = null;
+			// The list is process-wide, so a stopped domain leaves none behind for the next one in this process.
+			setValidationWrappers([]);
+		},
+	};
+
+	const contract: SafetyContract = {
+		classify(call) {
+			return classifyCall(call);
+		},
+		evaluate(call, posture, scope) {
+			const policy = activePolicyEngine().evaluate(call, posture, scope);
+			if (policy.kind === "block") {
+				context.bus.emit("safety.blocked", {
+					tool: call.tool,
+					actionClass: policy.classification.actionClass,
+					ruleId: policy.ruleId,
+					posture,
+					rejection: policy.rejection,
+					policySource: policy.policySource,
+					reasonCode: policy.reasonCode,
+				});
+			}
+			return toSafetyDecision(policy);
+		},
+		observeLoop(key, now) {
+			const [next, verdict] = observeLoop(loopState, key, now ?? Date.now());
+			loopState = next;
+			return verdict;
+		},
+		scopes: { readonly: READONLY_SCOPE, workspace: WORKSPACE_SCOPE },
+		isSubset,
+		policy: {
+			metadata: (posture) => activePolicyEngine().metadata(posture),
+			// The zero-access test alone: a full admission per listed entry made a large `ls` take seconds.
+			allowsObservationPath: (path) => activePolicyEngine().readablePath(path),
+			informationFlow: () => activePolicyEngine().informationFlow(),
+			flowRestrictionsFor: (call) => activePolicyEngine().flowRestrictionsFor(call),
+			flowRestrictionsForPaths: (paths, cwd) =>
+				mergeFlowRestrictions(
+					...paths.map((path) =>
+						activePolicyEngine().flowRestrictionsFor({ tool: "read", args: { path, ...(cwd ? { cwd } : {}) } }),
+					),
+				),
+		},
+		decisions: {
+			recordToolCall: recordToolDecision,
+			recordCompletionContract: recordCompletionEvaluation,
+			recordSafetyJudge: recordSafetyJudgement,
+		},
+	};
+
+	return { extension, contract };
+}

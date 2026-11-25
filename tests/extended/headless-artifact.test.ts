@@ -1,0 +1,523 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { join } from "node:path";
+import { test } from "node:test";
+import type { HeadlessShutdownHooks } from "../../src/cli/modes/headless-run-types.js";
+import { runHeadlessMainAgent } from "../../src/cli/modes/print.js";
+import { factKnownValue } from "../../src/core/telemetry/known.js";
+
+import type { AgentMessage } from "../../src/engine/types.js";
+import type { ChatLoop, ChatLoopEvent } from "../../src/session-control/chat-loop.js";
+import { readRunJournal } from "../harness/run-journal.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+function assistant(
+	stopReason: "error" | "toolUse" | "stop" | "length",
+	content: Extract<AgentMessage, { role: "assistant" }>["content"] = [],
+): ChatLoopEvent {
+	return {
+		type: "message_end",
+		message: {
+			role: "assistant",
+			api: "openai-completions",
+			provider: "fixture",
+			model: "fixture-model",
+			timestamp: 1,
+			stopReason,
+			...(stopReason === "length" ? { rawStopReason: "length" } : {}),
+			content,
+			...(stopReason === "error" ? { errorMessage: "fixture provider failure" } : {}),
+			usage: {
+				input: stopReason === "length" ? 47781 : 3,
+				output: stopReason === "length" ? 8192 : 2,
+				reasoning: stopReason === "length" ? 7926 : 0,
+				totalTokens: stopReason === "length" ? 55973 : 5,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: { input: 0.125, output: 0.125, cacheRead: 0, cacheWrite: 0, total: 0.25 },
+			},
+		} as AgentMessage,
+	};
+}
+
+const call = assistant("toolUse", [
+	{ type: "toolCall", id: "artifact-1", name: "artifact", arguments: { kind: "report", content: "fixture report" } },
+]);
+const artifact: ChatLoopEvent = {
+	type: "tool_execution_end",
+	toolName: "artifact",
+	toolCallId: "artifact-1",
+	isError: false,
+	result: { terminate: true, content: [{ type: "text", text: "wrote fixture report" }], details: { kind: "ok" } },
+};
+const toolMessage: ChatLoopEvent = {
+	type: "message_end",
+	message: {
+		role: "toolResult",
+		toolCallId: "artifact-1",
+		toolName: "artifact",
+		content: [{ type: "text", text: "wrote fixture report" }],
+		isError: false,
+		timestamp: 2,
+	},
+};
+
+function blockedThenRead(actionClass: "execute" | "write"): ChatLoopEvent[] {
+	return [
+		{
+			type: "tool_execution_end",
+			toolName: actionClass === "write" ? "edit" : "bash",
+			toolCallId: "denied",
+			isError: true,
+			outcome: "blocked",
+			actionClass,
+			decision: "blocked",
+			result: { content: [{ type: "text", text: "denied" }], details: {} },
+		} as ChatLoopEvent,
+		// Nor is an ask a --timeout abort denied before anyone decided (bt-15 c13a).
+		{
+			type: "tool_execution_end",
+			toolName: "bash",
+			toolCallId: "asked",
+			isError: true,
+			outcome: "blocked",
+			actionClass: "git_destructive",
+			decision: "permission_requested",
+			ruleId: "git-push-force-main",
+			blockReason: "run aborted before the operator decided",
+			result: { content: [{ type: "text", text: "run aborted before the operator decided" }], details: {} },
+		} as ChatLoopEvent,
+		// The loop guard withholding a repeated read is no safety refusal (bt-15 T3).
+		{
+			type: "tool_execution_end",
+			toolName: "read",
+			toolCallId: "repeat",
+			isError: true,
+			outcome: "blocked",
+			actionClass: "read",
+			decision: "blocked",
+			reasonCode: "guard_block",
+			ruleId: "guard.loop",
+			redundantRepeat: true,
+			result: { content: [{ type: "text", text: "loop detected" }], details: {} },
+		} as ChatLoopEvent,
+		{
+			type: "tool_execution_end",
+			toolName: "read",
+			toolCallId: "recovery",
+			isError: false,
+			outcome: "ok",
+			actionClass: "read",
+			result: { content: [{ type: "text", text: "three lines" }], details: {} },
+		} as ChatLoopEvent,
+		assistant("stop", [{ type: "text", text: "The file contains three lines." }]),
+	];
+}
+
+function hostChecks(checks: Array<{ check: string; outcome: "ok" | "error" }>): ChatLoopEvent[] {
+	return checks.flatMap(({ check, outcome }, index) => [
+		{ type: "tool_execution_start", toolName: "verify", toolCallId: `host-${index}`, args: { check } },
+		{
+			type: "tool_execution_end",
+			toolName: "verify",
+			toolCallId: `host-${index}`,
+			outcome,
+			isError: outcome !== "ok",
+			result: { content: [{ type: "text", text: "Host check result" }], details: {} },
+		} as ChatLoopEvent,
+	]);
+}
+
+// Event-fold coverage, not a provider reproduction. Unlike the original
+// local diagnostic, this exercises real receipt persistence and integrity too.
+for (const scenario of [
+	{
+		name: "host check seals separate observed validation facts",
+		events: [
+			...hostChecks([{ check: "test", outcome: "ok" }]),
+			assistant("stop", [{ type: "text", text: "Host test passed." }]),
+		],
+		code: 0,
+		outcome: "succeeded",
+		calls: 1,
+		verification: "verified",
+		facts: [true],
+	},
+	{
+		name: "host check rerun supersedes its own earlier failure",
+		events: [
+			...hostChecks([
+				{ check: "test", outcome: "error" },
+				{ check: "test", outcome: "ok" },
+			]),
+			assistant("stop", [{ type: "text", text: "Host test passed on rerun." }]),
+		],
+		code: 0,
+		outcome: "succeeded",
+		calls: 1,
+		verification: "verified",
+		facts: [true],
+	},
+	{
+		name: "a passing host check cannot clear a different failed check",
+		events: [
+			...hostChecks([
+				{ check: "test", outcome: "error" },
+				{ check: "typecheck", outcome: "ok" },
+			]),
+			assistant("stop", [{ type: "text", text: "Host typecheck passed; tests failed." }]),
+		],
+		code: 0,
+		outcome: "succeeded",
+		calls: 1,
+		verification: "unverified",
+		facts: [false, true],
+	},
+	{
+		// x1-4: the `run --verify` verdict seals as the run's host verdict and outranks the agent's own pass.
+		name: "a failed acceptance check outranks the agent's passing check on the sealed record",
+		events: [
+			...hostChecks([{ check: "test", outcome: "ok" }]),
+			assistant("stop", [{ type: "text", text: "Host test passed." }]),
+		],
+		code: 0,
+		outcome: "succeeded",
+		calls: 1,
+		verification: "unverified",
+		acceptance: "exit 3",
+	},
+	{
+		name: "native read cannot certify recovery of denied execution",
+		events: blockedThenRead("execute"),
+		code: 1,
+		outcome: "failed",
+		calls: 1,
+		decisions: { allowed: 0, blocked: 1, guardBlocked: 1, permissionRequested: 1 },
+		attempts: { blocked: ["bash"], guarded: ["read"], asked: ["bash"] },
+	},
+	{
+		name: "unrelated read cannot recover denied edit",
+		events: blockedThenRead("write"),
+		code: 1,
+		outcome: "failed",
+		calls: 1,
+	},
+	{
+		name: "empty terminal output exhaustion retains its specific cause",
+		events: [assistant("length")],
+		code: 1,
+		outcome: "failed",
+		calls: 1,
+		exhausted: true,
+		emptyText: true,
+	},
+	{
+		name: "later terminal output exhaustion supersedes prior artifact",
+		events: [call, artifact, assistant("length")],
+		code: 1,
+		outcome: "failed",
+		calls: 2,
+		exhausted: true,
+		emptyText: true,
+	},
+	{
+		name: "saved shape: earlier chatter cannot hide empty terminal output exhaustion",
+		events: [assistant("toolUse", [{ type: "text", text: "Let me investigate." }]), assistant("length")],
+		code: 1,
+		outcome: "failed",
+		calls: 2,
+		exhausted: true,
+	},
+	{
+		name: "partial terminal output exhaustion is not completion",
+		events: [assistant("length", [{ type: "text", text: "Partial explanation" }])],
+		code: 1,
+		outcome: "failed",
+		calls: 1,
+		exhausted: true,
+	},
+	{
+		name: "truncated call followed by natural completion succeeds",
+		events: [
+			assistant("length", [{ type: "toolCall", id: "truncated", name: "bash", arguments: {} }]),
+			toolMessage,
+			assistant("stop", [{ type: "text", text: "Complete answer" }]),
+		],
+		code: 0,
+		outcome: "succeeded",
+		calls: 2,
+	},
+	{
+		name: "output exhaustion followed by artifact completion succeeds",
+		events: [assistant("length"), call, artifact, toolMessage],
+		code: 0,
+		outcome: "succeeded",
+		calls: 2,
+	},
+	{
+		name: "cancellation takes precedence over output exhaustion",
+		events: [
+			assistant("length"),
+			{ type: "notice", surface: "transcript", key: "turn.interrupted", text: "fixture canceled" },
+		],
+		code: 1,
+		outcome: "canceled",
+		calls: 1,
+	},
+	{
+		name: "final provider error supersedes output exhaustion",
+		events: [assistant("length"), assistant("error")],
+		code: 1,
+		outcome: "failed",
+		calls: 2,
+	},
+	{ name: "clean tool-only completion", events: [call, artifact, toolMessage], code: 0, outcome: "succeeded", calls: 1 },
+	{
+		name: "recovered tool-only completion retains failed-call spend",
+		events: [assistant("error"), call, artifact, toolMessage],
+		code: 0,
+		outcome: "succeeded",
+		calls: 2,
+	},
+	{
+		name: "subsequent provider failure wins over prior artifact",
+		events: [call, artifact, assistant("error")],
+		code: 1,
+		outcome: "failed",
+		calls: 2,
+	},
+	{
+		name: "tool message cannot clear provider failure",
+		events: [assistant("error"), toolMessage],
+		code: 1,
+		outcome: "failed",
+		calls: 1,
+	},
+	{
+		name: "empty recovery without an answer still fails",
+		events: [assistant("error"), assistant("stop")],
+		code: 1,
+		outcome: "failed",
+		calls: 2,
+	},
+	{
+		name: "failed artifact is not terminal success",
+		events: [call, { ...artifact, isError: true }],
+		code: 1,
+		outcome: "failed",
+		calls: 1,
+	},
+	{
+		name: "explicit cancellation wins over artifact",
+		events: [
+			call,
+			artifact,
+			{ type: "notice", surface: "transcript", key: "turn.interrupted", text: "fixture canceled" },
+		],
+		code: 1,
+		outcome: "canceled",
+		calls: 1,
+	},
+	{
+		name: "shutdown wins over artifact and seals once",
+		events: [call, artifact],
+		code: 143,
+		outcome: "canceled",
+		calls: 1,
+		shutdown: true,
+	},
+] as const) {
+	for (const mode of ["text", "full"] as const) {
+		test(`headless settlement: ${scenario.name} (${mode})`, async (t) => {
+			let stdout = "";
+			let stderr = "";
+			const reportWrite = process.stdout.write.bind(process.stdout);
+			t.mock.method(process.stdout, "write", (chunk: string, callback?: (error?: Error | null) => void) => {
+				if (typeof chunk !== "string") return reportWrite(chunk);
+				stdout += String(chunk);
+				if (typeof callback === "function") callback();
+				return true;
+			});
+			t.mock.method(process.stderr, "write", (chunk: string) => {
+				stderr += String(chunk);
+				return true;
+			});
+			const scratch = await isolatePancodeEnv("pancode-headless-settlement-");
+			try {
+				let listener: ((event: ChatLoopEvent) => void) | undefined;
+				let drain: (() => void | Promise<void>) | undefined;
+				const shuttingDown = "shutdown" in scenario;
+				const shutdown: HeadlessShutdownHooks = {
+					onDrain: (hook) => {
+						drain = hook;
+					},
+					getExitCode: () => (shuttingDown ? 143 : 0),
+					isShuttingDown: () => shuttingDown,
+				};
+				const chat: Pick<ChatLoop, "getSessionId" | "lastRunSnapshot" | "onEvent" | "submit" | "whenSettled"> = {
+					getSessionId: () => "fixture-session",
+					lastRunSnapshot: () => ({
+						targetId: "fixture",
+						targetUrl: "http://127.0.0.1",
+						runtimeId: "openai-compat",
+						runtimeKind: "http",
+						wireModelId: "fixture-model",
+						autonomy: "yolo",
+						// Declared rates price the fixture calls, so their cost is measured (#434).
+						pricedBy: "target-rates",
+						compiledPromptHash: null,
+						staticCompositionHash: null,
+						promptSignature: null,
+						toolSignature: null,
+						sessionId: "fixture-session",
+						cwd: scratch.dir,
+					}),
+					onEvent(callback: (event: ChatLoopEvent) => void) {
+						listener = callback;
+						return () => {
+							listener = undefined;
+						};
+					},
+					async submit() {
+						for (const event of scenario.events) listener?.(event as ChatLoopEvent);
+						if (shuttingDown) await drain?.();
+					},
+					whenSettled: async () => {},
+				};
+				// The settlement runs outside any checkout, so a failing acceptance check has no base to replay on (CLI-4).
+				const previousCwd = process.cwd();
+				process.chdir(scratch.dir);
+				const code = await runHeadlessMainAgent(chat as ChatLoop, {
+					prompt: "fixture report",
+					mode: mode === "text" ? "text" : "json",
+					shutdown,
+					...("acceptance" in scenario
+						? {
+								verify: {
+									checks: [{ id: "run-acceptance", command: scenario.acceptance }],
+									timeoutMs: 10_000,
+									credited: () => new Set<string>(),
+								},
+							}
+						: {}),
+				}).finally(() => process.chdir(previousCwd));
+				if (shuttingDown) await drain?.();
+				if (mode !== "text") {
+					const frames = stdout
+						.trim()
+						.split("\n")
+						.map((line) => JSON.parse(line));
+					strictEqual(frames[0].type, "session");
+					strictEqual(frames[0].schemaVersion, 1);
+					strictEqual(frames[0].mode, "main");
+				}
+				const journal = readRunJournal(join(scratch.dir, "state"));
+				ok(journal);
+				strictEqual(journal.envelopes.size, 1);
+				const envelope = [...journal.envelopes.values()][0];
+				ok(envelope);
+
+				strictEqual(envelope.exitCode, scenario.code);
+				if ("verification" in scenario) strictEqual(journal.runs[0]?.settled.verification.state, scenario.verification);
+				if ("acceptance" in scenario) {
+					const host = journal.runs[0]?.settled.hostVerification;
+					deepStrictEqual([host?.status, host?.checks, host?.failed], ["rejected", 1, 1]);
+				}
+
+				strictEqual(
+					envelope.status,
+					scenario.outcome === "succeeded" ? "completed" : scenario.outcome === "canceled" ? "interrupted" : "failed",
+				);
+				deepStrictEqual(
+					{ code, exitCode: envelope.exitCode, outcome: envelope.outcome },
+					{ code: scenario.code, exitCode: scenario.code, outcome: scenario.outcome },
+				);
+				if ("exhausted" in scenario) {
+					match(envelope.outcomeDetail ?? "", /output token limit.*stopReason=length/);
+					strictEqual(envelope.outcomeDetail, envelope.outcomeDetail);
+				}
+				const exhaustedCalls = scenario.events.filter(
+					(event) =>
+						event.type === "message_end" &&
+						"message" in event &&
+						event.message.role === "assistant" &&
+						event.message.stopReason === "length",
+				).length;
+				// A call that ended in a provider error without an HTTP status left its zeros unknown, so the run's spend
+				// is unknown rather than a total that took them for measured (#434).
+				const errored = scenario.events.some(
+					(event) =>
+						event.type === "message_end" &&
+						"message" in event &&
+						event.message.role === "assistant" &&
+						event.message.stopReason === "error",
+				);
+				if (errored) strictEqual(envelope.spend.totalTokens.kind, "unknown");
+				else {
+					deepStrictEqual(envelope.spend.totalTokens, {
+						kind: "measured",
+						value: scenario.calls * 5 + exhaustedCalls * 55968,
+						source: "provider",
+					});
+					deepStrictEqual(envelope.spend.usage.reasoning, {
+						kind: "measured",
+						value: exhaustedCalls * 7926,
+						source: "provider",
+					});
+				}
+				if ("exhausted" in scenario) {
+					match(stderr, /output token limit.*stopReason=length/);
+					strictEqual(stderr.trim().split("\n").at(-1), envelope.outcomeDetail);
+					if (mode === "text") {
+						if ("emptyText" in scenario) strictEqual(stdout, "");
+						else match(stdout, /Let me investigate\.|Partial explanation/);
+					}
+					if (mode === "full") {
+						match(stdout, /"stopReason":"length"/);
+						match(stdout, /"rawStopReason":"length"/);
+					}
+					// The host's run_end verdict, which the schema v2 writer reads, carries the failure.
+					if (mode === "full") {
+						const end = stdout
+							.split("\n")
+							.filter(Boolean)
+							.map((line) => JSON.parse(line))
+							.find((event) => event.type === "run_end");
+						strictEqual(end.exitCode, 1);
+						strictEqual(end.error, envelope.outcomeDetail);
+					}
+				}
+				if ("decisions" in scenario && mode === "full") {
+					const end = stdout
+						.split("\n")
+						.filter(Boolean)
+						.map((line) => JSON.parse(line))
+						.find((event) => event.type === "run_end");
+					deepStrictEqual(end.safety.decisions, scenario.decisions);
+					// bt-15 c12b, c13a: guard blocks and refused asks list apart from the safety refusals, as the decisions count them.
+					if ("attempts" in scenario) {
+						deepStrictEqual(
+							{
+								blocked: end.safety.blockedAttempts.map((attempt: { tool: string }) => attempt.tool),
+								guarded: end.safety.guardBlockedAttempts.map((attempt: { tool: string }) => attempt.tool),
+								asked: end.safety.permissionRequestedAttempts.map((attempt: { tool: string }) => attempt.tool),
+							},
+							scenario.attempts,
+						);
+						// bt-15 c14a: the sealed tools row counts the refused ask as decisions does, never as a blocked call;
+						// FX-3 lists it as asked so the row sums to its calls.
+						deepStrictEqual(
+							journal.runs[0]?.settled.tools.find((row) => row.tool === "bash"),
+							{ tool: "bash", calls: 2, ok: 0, errors: 0, blocked: 1, asked: 1 },
+						);
+					}
+				}
+				if (errored) strictEqual(envelope.spend.pricing.usd.kind, "unknown");
+				else strictEqual(factKnownValue(envelope.spend.pricing.usd), scenario.calls * 0.25);
+			} finally {
+				scratch.restore();
+			}
+		});
+	}
+}

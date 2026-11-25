@@ -1,0 +1,322 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, rejects, strictEqual } from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { type DomainContext, loadDomains, type NamedDomainModule } from "../../src/core/domain-loader.js";
+import { safeResourceWrite } from "../../src/core/safe-resource-write.js";
+import { telemetryHub } from "../../src/core/telemetry/hub.js";
+import {
+	getTerminationCoordinator,
+	resolveShutdownHookBudgetMs,
+	ShutdownBudgetExceeded,
+} from "../../src/core/termination.js";
+import { checkDomainContractAccess, checkRecipeIdBranches } from "../boundaries/check-boundaries.js";
+
+/** These fixtures name their own domains, so they type the loader by their own map. */
+type FixtureMap = Record<string, Record<string, unknown>>;
+type DomainModule = NamedDomainModule<string, FixtureMap>;
+
+test("failed domain startup releases its listeners and earlier dependencies in reverse order", async () => {
+	const bus = telemetryHub();
+	const before = bus.listeners("session.started").length;
+	const stopped: string[] = [];
+	let dependencyDuringStop: string | undefined;
+	const failure = new Error("startup failed after subscribing");
+	const modules = ["dependency", "consumer"].map(
+		(name): DomainModule => ({
+			manifest: { name, dependsOn: name === "consumer" ? ["dependency"] : [] },
+			createExtension(context) {
+				let unsubscribe: (() => void) | undefined;
+				return {
+					contract: { name },
+					extension: {
+						start() {
+							unsubscribe = context.bus.subscribe("session.started", () => {});
+							if (name === "consumer") throw failure;
+						},
+						stop() {
+							unsubscribe?.();
+							stopped.push(name);
+							if (name === "consumer") dependencyDuringStop = context.getContract("dependency")?.name as string | undefined;
+						},
+					},
+				};
+			},
+		}),
+	);
+	await rejects(loadDomains<FixtureMap>(modules, { diagnostic() {} }), { cause: failure });
+	deepStrictEqual(stopped, ["consumer", "dependency"]);
+	strictEqual(dependencyDuringStop, "dependency");
+	strictEqual(bus.listeners("session.started").length, before);
+});
+
+test("a load failure already written to stderr hands the CLI a short summary instead of the cause again", async () => {
+	const failing: DomainModule = {
+		manifest: { name: "config", dependsOn: [] },
+		createExtension: () => ({
+			contract: {},
+			extension: {
+				start() {
+					throw new Error("settings.yaml failed validation:\n  safety.rosters: unknown key");
+				},
+			},
+		}),
+	};
+	const printed = await loadDomains<FixtureMap>([failing]).then(
+		() => undefined,
+		(error: { reportedSummary?: string }) => error.reportedSummary,
+	);
+	strictEqual(printed, "Domain 'config' failed to load; the cause is printed above");
+	const silent = await loadDomains<FixtureMap>([failing], { diagnostic() {} }).then(
+		() => undefined,
+		(error: { reportedSummary?: string; message: string }) => error.reportedSummary ?? error.message,
+	);
+	strictEqual(silent, "Domain 'config' failed to load: settings.yaml failed validation:\n  safety.rosters: unknown key");
+});
+
+test("a rejected domain factory unwinds started dependencies", async () => {
+	let stopped = false;
+	await rejects(
+		loadDomains<FixtureMap>(
+			[
+				{
+					manifest: { name: "dependency", dependsOn: [] },
+					createExtension: () => ({
+						contract: {},
+						extension: {
+							start() {},
+							stop() {
+								stopped = true;
+							},
+						},
+					}),
+				},
+				{
+					manifest: { name: "consumer", dependsOn: ["dependency"] },
+					createExtension() {
+						throw new Error("factory failed");
+					},
+				},
+			],
+			{ diagnostic() {} },
+		),
+		/factory failed/,
+	);
+	strictEqual(stopped, true);
+});
+
+test("concurrent shutdown callers await one cleanup and stopped contracts are withdrawn", async () => {
+	let release!: () => void;
+	const pending = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let stops = 0;
+	let context!: DomainContext<FixtureMap>;
+	const loaded = await loadDomains<FixtureMap>([
+		{
+			manifest: { name: "owned", dependsOn: [] },
+			createExtension(ctx) {
+				context = ctx;
+				return {
+					contract: { active: true },
+					extension: {
+						start() {},
+						async stop() {
+							stops += 1;
+							await pending;
+						},
+					},
+				};
+			},
+		},
+	]);
+	const first = loaded.stop();
+	const second = loaded.stop();
+	strictEqual(first, second);
+	release();
+	await Promise.all([first, second]);
+	await loaded.stop();
+	strictEqual(stops, 1);
+	strictEqual(loaded.getContract("owned"), undefined);
+	strictEqual(context.getContract("owned"), undefined);
+});
+
+test("duplicate domain names reject the composition before either implementation starts", async () => {
+	let created = false;
+	const module: DomainModule = {
+		manifest: { name: "duplicate", dependsOn: [] },
+		createExtension() {
+			created = true;
+			return { contract: {}, extension: { start() {} } };
+		},
+	};
+	await rejects(loadDomains<FixtureMap>([module, module]), /Duplicate domain: duplicate/);
+	strictEqual(created, false);
+});
+
+test("a cancelled load stops the started domains and propagates the cancellation unchanged", async () => {
+	const bus = telemetryHub();
+	const failedEvents: unknown[] = [];
+	const unsubscribe = bus.subscribe("domain.failed", (payload) => {
+		failedEvents.push(payload);
+	});
+	const created: string[] = [];
+	const stopped: string[] = [];
+	const diagnostics: string[] = [];
+	const cancellation = new DOMException("boot cancelled", "AbortError");
+	const modules = ["first", "second", "third"].map(
+		(name, index): DomainModule => ({
+			manifest: { name, dependsOn: index === 0 ? [] : [["first", "second", "third"][index - 1] as string] },
+			createExtension() {
+				created.push(name);
+				return {
+					contract: {},
+					extension: {
+						start() {},
+						stop() {
+							stopped.push(name);
+						},
+					},
+				};
+			},
+		}),
+	);
+	let boundaries = 0;
+	try {
+		const load = loadDomains<FixtureMap>(modules, {
+			diagnostic: (text) => diagnostics.push(text),
+			async beforeEach() {
+				boundaries += 1;
+				// Interactive boot turns the loop here; Ctrl+C at Stage 0 closes the
+				// lease during the second turn.
+				await new Promise((settle) => setImmediate(settle));
+				if (boundaries === 3) throw cancellation;
+			},
+		});
+		await rejects(load, (error) => error === cancellation);
+	} finally {
+		unsubscribe();
+	}
+	deepStrictEqual(created, ["first", "second"], "no domain is created after the cancelled boundary");
+	deepStrictEqual(stopped, ["second", "first"], "started domains stop in reverse order");
+	deepStrictEqual(failedEvents, [], "a cancellation is not a domain failure");
+	deepStrictEqual(diagnostics, []);
+});
+
+test("budget expiry aborts the stop signal and does not rerun the domain stop", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let started!: (signal: AbortSignal) => void;
+	const stopStarted = new Promise<AbortSignal>((resolve) => {
+		started = resolve;
+	});
+	let stops = 0;
+	const loaded = await loadDomains<FixtureMap>([
+		{
+			manifest: { name: "pending", dependsOn: [] },
+			createExtension: () => ({
+				contract: {},
+				extension: {
+					start() {},
+					stop(signal) {
+						stops += 1;
+						if (!signal) throw new Error("the loader passes its stop signal");
+						started(signal);
+						return new Promise<void>(() => {});
+					},
+				},
+			}),
+		},
+	]);
+	const stopping = loaded.stop();
+	const signal = await stopStarted;
+	strictEqual(signal.aborted, false);
+	t.mock.timers.tick(resolveShutdownHookBudgetMs());
+	await stopping;
+	strictEqual(signal.aborted, true);
+	strictEqual(signal.reason instanceof ShutdownBudgetExceeded, true);
+	await loaded.stop();
+	strictEqual(stops, 1);
+});
+
+test("accepted persistence runs after observed resource settlement", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const root = mkdtempSync(join(tmpdir(), "pancode-domain-persist-"));
+	const path = join(root, "accepted.json");
+	const order: string[] = [];
+	let release!: () => void;
+	const settled = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let started!: () => void;
+	const stopStarted = new Promise<void>((resolve) => {
+		started = resolve;
+	});
+	const loaded = await loadDomains<FixtureMap>([
+		{
+			manifest: { name: "resource", dependsOn: [] },
+			createExtension: () => ({
+				contract: {},
+				extension: {
+					start() {},
+					async stop() {
+						order.push("stop");
+						started();
+						await settled;
+						order.push("settled");
+					},
+				},
+			}),
+		},
+	]);
+	const termination = getTerminationCoordinator();
+	t.mock.method(process, "exit", (_code?: string | number | null): never => {
+		order.push("exit");
+		return undefined as never;
+	});
+	termination.onTerminate((signal) => loaded.stop(signal));
+	termination.onPersist(() => {
+		order.push("persist");
+		safeResourceWrite(path, JSON.stringify({ accepted: true }));
+	});
+	try {
+		const shutdown = termination.shutdown();
+		await stopStarted;
+		deepStrictEqual(order, ["stop"]);
+		release();
+		await shutdown;
+		deepStrictEqual(order, ["stop", "settled", "persist", "exit"]);
+		deepStrictEqual(JSON.parse(readFileSync(path, "utf8")), { accepted: true });
+	} finally {
+		release();
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("rule17 keeps owner capabilities with the owning composition and contract types in the map", () => {
+	const registrar = 'import type { MiddlewareRegistrar } from "../domains/middleware/index.js";\n';
+	strictEqual(checkDomainContractAccess("src/domains/dispatch/extension.ts", registrar).length, 1);
+	strictEqual(checkDomainContractAccess("src/tools/registry.ts", "createMiddlewareDomain();").length, 1);
+	deepStrictEqual(checkDomainContractAccess("src/entry/orchestrator.ts", registrar), []);
+	deepStrictEqual(checkDomainContractAccess("src/domains/middleware/snapshot.ts", registrar), []);
+	const binder = 'import type { TelemetryRunReaderBinder } from "../domains/telemetry/index.js";\n';
+	strictEqual(checkDomainContractAccess("src/domains/dispatch/extension.ts", binder).length, 1);
+	strictEqual(checkDomainContractAccess("src/cli/worker-extension-hooks.ts", binder).length, 1);
+	deepStrictEqual(checkDomainContractAccess("src/interactive/interactive-presentation.ts", binder), []);
+	strictEqual(checkDomainContractAccess("src/cli/run.ts", 'loaded.getContract<ConfigContract>("config");').length, 1);
+	deepStrictEqual(checkDomainContractAccess("src/cli/run.ts", 'loaded.getContract("config");'), []);
+});
+
+test("rule18 refuses a recipe-id branch outside the agents domain and keeps it inside", () => {
+	const planted = 'export function f(agentId: string) { return agentId === "scout"; }\n';
+	deepStrictEqual(checkRecipeIdBranches("src/tools/profiles.ts", planted).length, 1);
+	strictEqual(
+		checkRecipeIdBranches("src/x.ts", 'switch (spec.id) { case "coder": break; }\n["oracle"].includes(req.agentId);\n')
+			.length,
+		2,
+	);
+	deepStrictEqual(checkRecipeIdBranches("src/domains/agents/spec.ts", planted), []);
+	deepStrictEqual(checkRecipeIdBranches("src/x.ts", 'agentId === "auto"; role === "reviewer";\n'), []);
+});

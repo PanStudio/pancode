@@ -1,0 +1,42 @@
+# Install plugins
+
+Add reusable resources to your PanCode installation.
+
+## Install a bundle of resources
+
+Plugins keep related skills, prompts, agents, playbooks, and supporting files together. Browse the shipped catalog and preview an installation before writing it:
+
+```sh
+pancode hub list --kind plugin
+pancode hub install plugin:hpc --dry-run
+pancode hub install plugin:hpc
+```
+
+The catalog ships with PanCode, but its content is not installed automatically. Add `--project` to keep a package in the current workspace; otherwise installation uses user scope.
+
+Project packages load only in a workspace you have approved. A project install you run approves the packages it writes. Any other change to the project's package set, including one that arrives with a clone or a pull, stays listed but unloaded until you review it with `pancode config trust plugins` and run the approval command it prints.
+
+A local bundle uses the same review flow:
+
+```sh
+pancode hub install ./my-plugin --project
+```
+
+## Keep the installed copy under control
+
+```sh
+pancode hub inspect hpc --json
+pancode hub drift hpc
+pancode hub disable hpc
+pancode hub enable hpc
+```
+
+Installation records a verified pin covering the complete package tree. Drifted content is blocked from loading; `pin` verifies the recorded pin rather than approving edits. Review an update before replacing a modified copy.
+
+In the terminal, open **PanHub → Plugins** to browse members and review lifecycle actions. Run `/reload hub` after changing recipes externally.
+
+## Choose the right kind of extension
+
+A plugin carries content. An extension is code that runs in its own process, declares everything it may do, and loads only after you approve those capabilities; manage it with `pancode extensions`. The runtime is sandboxed where the host has a backend. Project extensions also need `pancode config trust extensions`. See [the extension tutorial](/tutorials/write-an-extension-with-declared-capabilities.html). Adding or changing an extension's command tool needs a restart; `/reload hub` refreshes plugin content and never changes tool schemas.
+
+See [PanHub](/docs/guide/panhub.html) for everyday PanHub controls. The full plugin guide covers private catalogs and package authoring.

@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+import { runningBuildId } from "./build-info.js";
+import { resolvePackageRoot } from "./package-root.js";
+import { relativePathEscapes } from "./path-containment.js";
+import { shellQuote } from "./shell-quote.js";
+
+function missingModulePath(message: string): string | null {
+	const specifier = /Cannot find (?:module|package) ['"]([^'"]+)['"]/.exec(message)?.[1];
+	if (!specifier) return null;
+	if (specifier.startsWith("file:")) {
+		try {
+			return fileURLToPath(specifier);
+		} catch {
+			return null;
+		}
+	}
+	return isAbsolute(specifier) ? specifier : null;
+}
+
+type IncompleteKind = "build_replaced" | "checkout_incomplete" | "install_incomplete";
+
+interface IncompleteInstallation {
+	kind: IncompleteKind;
+	message: string;
+	outputDir: string;
+}
+
+/** Test seams: the generated output directory and the build id this process loaded. */
+export interface IncompleteInstallationOptions {
+	outputDir?: string;
+	runningId?: string | null;
+}
+
+function classifyIncompleteInstallation(
+	err: unknown,
+	options: IncompleteInstallationOptions,
+): IncompleteInstallation | null {
+	if ((err as NodeJS.ErrnoException | undefined)?.code !== "ERR_MODULE_NOT_FOUND") return null;
+	const message = err instanceof Error ? err.message : String(err);
+	let outputDir: string;
+	try {
+		outputDir = options.outputDir ?? join(resolvePackageRoot(), "dist");
+	} catch {
+		return null;
+	}
+	const missing = missingModulePath(message);
+	if (!missing) return null;
+	const fromOutput = relative(outputDir, missing);
+	if (fromOutput === "" || relativePathEscapes(fromOutput)) return null;
+	const running = options.runningId === undefined ? runningBuildId : options.runningId;
+	try {
+		const disk = JSON.parse(readFileSync(join(outputDir, "build.json"), "utf8"));
+		if (running && disk.id && disk.id !== running) return { kind: "build_replaced", message, outputDir };
+	} catch {
+		// Older and interrupted builds have no completion record; use the repair advice below.
+	}
+	if (existsSync(join(dirname(outputDir), ".git"))) return { kind: "checkout_incomplete", message, outputDir };
+	return { kind: "install_incomplete", message, outputDir };
+}
+
+/**
+ * Turn a missing PanCode-owned lazy chunk into an actionable reinstall message.
+ * Errors for user extensions, hooks, or any module outside this installation's
+ * generated `dist` directory remain untouched.
+ */
+export function incompleteInstallationAdvice(err: unknown, options: IncompleteInstallationOptions = {}): string | null {
+	const found = classifyIncompleteInstallation(err, options);
+	if (!found) return null;
+	const { message, outputDir } = found;
+	if (found.kind === "build_replaced")
+		return `${message}\nThis running PanCode loaded a build that has since been replaced. Finish active work and restart the process that reported this error. For a background GUI server, run pancode gui background restart --if-idle from a separate terminal, then reload the app. For a private or foreground GUI server, stop it and relaunch the original GUI command. Rebuilding does not update modules already loaded by a running process. Run pancode doctor to identify other stale processes.`;
+	if (found.kind === "checkout_incomplete")
+		return `${message}\nThis checkout build is incomplete. Run: pnpm --dir ${shellQuote(dirname(outputDir))} run build. Then restart PanCode. If doctor still starts, pancode doctor --fix performs the rebuild.`;
+	return [
+		`${message}`,
+		"",
+		"This PanCode installation is incomplete: the command's own module is missing from",
+		`${outputDir}`,
+		"Reinstall to restore it, using the line that matches how you installed:",
+		"  npm install -g pancode    # npm install",
+		"  pnpm add -g pancode       # pnpm install",
+		"  bun add -g pancode        # Bun install",
+		"  pnpm run install:local              # source checkout",
+	].join("\n");
+}
+
+/**
+ * The same diagnosis for an ACP client: host-authored, single-line and free of
+ * paths, because the wire never carries text the thrower chose. An ACP client
+ * reloads PanCode by restarting the agent, so the advice names that, not a GUI.
+ */
+export function incompleteInstallationAcpAdvice(
+	err: unknown,
+	options: IncompleteInstallationOptions = {},
+): { reason: IncompleteKind; message: string } | null {
+	const found = classifyIncompleteInstallation(err, options);
+	if (!found) return null;
+	const message =
+		found.kind === "build_replaced"
+			? "this PanCode agent loaded a build that has since been replaced; restart the agent from your editor to load the new build"
+			: found.kind === "checkout_incomplete"
+				? "this PanCode checkout build is incomplete; run pnpm run build in the checkout, then restart the agent from your editor"
+				: "this PanCode installation is incomplete; reinstall pancode, then restart the agent from your editor";
+	return { reason: found.kind, message };
+}

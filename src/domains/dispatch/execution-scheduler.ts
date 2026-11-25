@@ -1,0 +1,874 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { closeAgentLedger, openAgentLedger } from "./agent-ledger-store.js";
+import type { DelegationPlan } from "./delegation-plan.js";
+import { type ExecutionHandoff, projectExecutionHandoffs } from "./execution-handoff.js";
+import {
+	type ExecutionPlan,
+	type ExecutionPlanAgentStep,
+	type ExecutionPlanCodeStep,
+	type ExecutionPlanLoop,
+	type ExecutionPlanStep,
+	executionPlanAncestors,
+} from "./execution-plan.js";
+
+export interface ExecutionStepResult extends ExecutionHandoff {
+	/** Coordinator-owned immutable recovery reference captured before loop repair. */
+	workspaceCheckpoint?: string;
+	succeeded: boolean;
+	integrityValid: boolean;
+	/** Decision refs the step's sealed receipt was made under; absent for code steps and decision-free runs. */
+	decisionRefs?: ReadonlyArray<string>;
+	/**
+	 * The step changed the workspace outside its declared boundary. Sealed by
+	 * the orchestrator after the fact, never by the step: a run that reports on
+	 * its own writes is not a witness.
+	 */
+	boundaryViolated?: boolean;
+	/** A failed check that no repair edit can change, such as a changed test whose runner needs provisioning. */
+	unrepairable?: true;
+	failureReason?: string;
+	gatePathHash?: string;
+	delegationPlanHash?: string;
+	/** Coordinator-validated tasks that the scheduler may splice after this step settles. */
+	delegationPlan?: DelegationPlan;
+}
+
+/**
+ * The verdict on one scheduling window's write boundary, projected for the
+ * scheduler. The full record, with the offending paths and everything rolled
+ * back, is written durably by whoever performs the check.
+ */
+export interface ExecutionWriteBoundaryOutcome {
+	/** `wave-<n>` or `revalidate-<stepId>-<n>`; matches the durable record. */
+	window: string;
+	violated: boolean;
+	/** Steps that fail because of it. More than one means concurrent authorship. */
+	failedStepIds: ReadonlyArray<string>;
+	/** Operator-facing message naming the paths and the declaration. */
+	detail: string | null;
+}
+export interface ExecutionPlanAdmission {
+	step: ExecutionPlanAgentStep;
+	costUpperBoundUsd: number;
+	nodeId: string;
+}
+
+/**
+ * How a loop ended.
+ *
+ * `loop_bound_exhausted` is the declared bound spent without a passing
+ * verification: every attempt ran and the answer was still no. It is a typed
+ * outcome rather than a generic step failure because the operator's question
+ * ("did it converge?") is different from "did something break", and because
+ * the bound is the number they get to change.
+ */
+export type ExecutionLoopReason =
+	| "resolved"
+	| "loop_bound_exhausted"
+	| "loop_step_failed"
+	| "loop_not_reached"
+	| "loop_canceled";
+
+export interface ExecutionLoopOutcome {
+	loopId: string;
+	resolved: boolean;
+	/** Verifications that actually ran, including staleness revalidations. */
+	attempts: number;
+	repairs: number;
+	reason: ExecutionLoopReason;
+}
+
+/** One coordinator continuation decision for a loop whose check is an agent. */
+export interface ExecutionLoopDecision {
+	/** Whether the verification passed and the loop is done. */
+	resolved: boolean;
+	/** Structured findings threaded to the repair attempt, or null. */
+	findings: string | null;
+	/** Operator-facing reason the gate produced no usable verdict. */
+	needsDecision?: string | null;
+}
+
+export interface ExecutionLoopDecisionInput {
+	loop: ExecutionPlanLoop;
+	step: ExecutionPlanStep;
+	/** 1-based verification ordinal. */
+	attempt: number;
+	/** True when the declared bound leaves no further repair. */
+	terminalAttempt: boolean;
+	result: ExecutionStepResult;
+	/** Results the loop has produced so far, by step id. */
+	priorResults: ReadonlyMap<string, ExecutionStepResult>;
+}
+
+export interface ExecutionSchedulerAdapter {
+	/** Successful prefix results that retain their original receipt references. */
+	replayed?: ReadonlyMap<string, ExecutionStepResult>;
+	preflight(step: ExecutionPlanAgentStep): ExecutionPlanAdmission;
+	reserve(plan: ExecutionPlan, admissions: ReadonlyArray<ExecutionPlanAdmission>): { ownerId: string };
+	run(
+		step: ExecutionPlanAgentStep,
+		handoffs: ReadonlyArray<ExecutionHandoff>,
+		reservation: { ownerId: string; memberId: string },
+		/**
+		 * The agent ledger this plan's steps coordinate on, present only when the
+		 * plan has two or more agent steps. The adapter threads it onto the
+		 * request it builds; the scheduler owns the ledger's lifetime.
+		 */
+		ledger?: { id: string; sequence: number },
+		/** Aborted when the plan stops, including while nested work is launching. */
+		signal?: AbortSignal,
+	): Promise<{ assignmentId: string; result: Promise<ExecutionStepResult> }>;
+	/**
+	 * Execute a deterministic step. It takes no reservation because it holds no
+	 * worker capacity lease. Required only for plans that contain code steps.
+	 * `priorResults` is what a commit node reads its message from: the message
+	 * belongs to the agent that produced the work, not to the committer.
+	 */
+	runCode?(
+		step: ExecutionPlanCodeStep,
+		handoffs: ReadonlyArray<ExecutionHandoff>,
+		signal: AbortSignal,
+		priorResults: ReadonlyMap<string, ExecutionStepResult>,
+	): Promise<ExecutionStepResult>;
+	/**
+	 * Decide whether an agent verification resolved its loop. Required only for
+	 * plans with an agent-checked loop: a worker that merely ran successfully
+	 * has not said whether the work passes, and the scheduler refuses to guess.
+	 */
+	decideLoop?(input: ExecutionLoopDecisionInput): Promise<ExecutionLoopDecision>;
+	/**
+	 * Record the workspace as it stands before a window's steps run. Required
+	 * only for plans whose steps declare a boundary; a plan that declares one
+	 * and a scheduler that cannot check it is refused rather than run
+	 * unenforced.
+	 */
+	beginWriteBoundary?(window: string, stepIds: ReadonlyArray<string>): void;
+	/**
+	 * Compare the workspace against that snapshot, roll back what the window was
+	 * not allowed to change, and return the verdict. Runs before any result
+	 * crosses an edge: a step that wrote outside its boundary must not hand its
+	 * output to a dependent as though it had passed.
+	 */
+	verifyWriteBoundary?(window: string, stepIds: ReadonlyArray<string>): Promise<ExecutionWriteBoundaryOutcome>;
+	cancel(assignmentId: string): void;
+	/** Wait for owned continuations, including retry admission, before release. */
+	drainMember?(assignmentId: string): Promise<void>;
+	release(ownerId: string): void;
+	releaseUnconsumed(ownerId: string): void;
+	/** Persist a settled result after boundary enforcement and before a dependent starts. */
+	onStepSettled?(step: ExecutionPlanStep, result: ExecutionStepResult): void | Promise<void>;
+	/** Recompile the live plan after a successful dynamic plan step settles. */
+	spliceAfter?(
+		plan: ExecutionPlan,
+		step: ExecutionPlanAgentStep,
+		result: ExecutionStepResult,
+	): ExecutionPlan | null | Promise<ExecutionPlan | null>;
+}
+export interface ExecutionPlanResult {
+	planHash: string;
+	results: ReadonlyMap<string, ExecutionStepResult>;
+	skipped: ReadonlyArray<string>;
+	/** Nodes a resolved loop made unnecessary; declared, never run, not failures. */
+	unneeded: ReadonlyArray<string>;
+	loops: ReadonlyArray<ExecutionLoopOutcome>;
+	/** Verifications re-run because a later workspace step invalidated their green. */
+	revalidated: ReadonlyArray<string>;
+	needsDecision: ReadonlyArray<string>;
+	/** Every enforced window, in scheduling order, violated or not. */
+	writeBoundaries: ReadonlyArray<ExecutionWriteBoundaryOutcome>;
+}
+
+/**
+ * A step whose completion can change what a verification measured. A
+ * verification does not invalidate itself, and a commit records the tree
+ * without editing it; everything else that may write does invalidate.
+ */
+function isWorkspaceMutator(step: ExecutionPlanStep): boolean {
+	if (step.scope !== "workspace") return false;
+	if (step.kind !== "code") return true;
+	return step.verification !== true && step.commitFrom === undefined;
+}
+
+/** A token writer either declares a non-empty agent boundary or may mutate workspace state. */
+function isExecutionPlanWriter(step: ExecutionPlanStep): boolean {
+	if (step.kind === "agent" && (step.writes?.length ?? 0) > 0) return true;
+	return isWorkspaceMutator(step);
+}
+
+/** Whether two agent steps can be in flight together: workers allow it and neither depends on the other. */
+export function hasConcurrentAgentSteps(
+	plan: ExecutionPlan,
+	agentSteps: ReadonlyArray<ExecutionPlanAgentStep> = plan.steps.filter((step) => step.kind === "agent"),
+): boolean {
+	if (plan.maxWorkers < 2) return false;
+	const ancestors = new Map(agentSteps.map((step) => [step.id, executionPlanAncestors(plan, step.id)]));
+	return agentSteps.some((a, index) =>
+		agentSteps
+			.slice(index + 1)
+			.some((b) => !(ancestors.get(a.id)?.has(b.id) ?? false) && !(ancestors.get(b.id)?.has(a.id) ?? false)),
+	);
+}
+
+export async function executePlan(
+	initialPlan: ExecutionPlan,
+	adapter: ExecutionSchedulerAdapter,
+	signal?: AbortSignal,
+): Promise<ExecutionPlanResult> {
+	let plan = initialPlan;
+	const replayed = adapter.replayed ?? new Map<string, ExecutionStepResult>();
+	const stepsById = new Map(plan.steps.map((step) => [step.id, step]));
+	const loopsById = new Map(plan.loops.map((loop) => [loop.id, loop]));
+	const agentSteps: ExecutionPlanAgentStep[] = [];
+	for (const step of plan.steps) {
+		if (step.kind === "code") {
+			if (adapter.runCode === undefined) {
+				throw new Error(`execution plan: step '${step.id}' is a code step and this scheduler cannot run one`);
+			}
+			continue;
+		}
+		if (step.approvedAuthority === null || step.approvedAuthority !== step.requestedAuthority) {
+			throw new Error(`execution plan: step '${step.id}' lacks its requested authority grant`);
+		}
+		if (!replayed.has(step.id)) agentSteps.push(step);
+	}
+	for (const loop of plan.loops) {
+		if (loop.checkKind === "agent" && adapter.decideLoop === undefined) {
+			throw new Error(`execution plan: loop '${loop.id}' is agent-checked and this scheduler cannot decide one`);
+		}
+	}
+	// A declared boundary that nothing checks is worse than no boundary: the
+	// contract reads as confinement and the run has none. Fail closed.
+	const enforcesBoundaries = plan.steps.some((step) => step.writes !== undefined);
+	if (enforcesBoundaries && (adapter.beginWriteBoundary === undefined || adapter.verifyWriteBoundary === undefined)) {
+		throw new Error("execution plan: steps declare write boundaries and this scheduler cannot verify them");
+	}
+	// Resolve every hard admission fact before reservation or spawn. Code steps
+	// are outside admission entirely: they reserve nothing and spawn no worker.
+	// Loop attempts are admitted up front too, because the bound is the ceiling
+	// an operator approved and a repair must never be admitted mid-run.
+	// A board serves agent steps that can run at the same time. A build and its
+	// loop repairs are ordered, so on build-test the board only made every
+	// worker spend a round posting a claim nobody would read.
+	const ledgerId = hasConcurrentAgentSteps(plan, agentSteps)
+		? `ledger-plan-${plan.hash.slice(0, 12)}-${Date.now().toString(36)}`
+		: null;
+	const ledger = ledgerId === null ? undefined : { id: ledgerId, sequence: 0 };
+	const admissions = agentSteps.map((step) => adapter.preflight(step));
+	const reservation = adapter.reserve(plan, admissions);
+	const reservationOwners = new Set([reservation.ownerId]);
+	const reservationByStep = new Map(agentSteps.map((step) => [step.id, reservation.ownerId]));
+	const results = new Map<string, ExecutionStepResult>();
+	const skipped = new Set<string>();
+	const unneeded = new Set<string>();
+	const needsDecision: string[] = [];
+	const running = new Map<string, { assignmentId: string | null; canceled: boolean }>();
+	const cleanupErrors: unknown[] = [];
+	const memberIds = new Set<string>();
+	const canceledSteps = new Set<string>();
+	/** Per-check verdict, so a loop's resolution is recomputed from live results. */
+	const checkPassed = new Map<string, boolean>();
+	/** Findings a failed agent verification threaded to its repair attempt. */
+	const loopFindings = new Map<string, string>();
+	const attemptsRun = new Map<string, number>();
+	const repairsRun = new Map<string, number>();
+	const revalidations = new Map<string, number>();
+	const revalidated: string[] = [];
+	const writeBoundaries: ExecutionWriteBoundaryOutcome[] = [];
+	/** Monotonic completion order, the only clock staleness needs. */
+	let sequence = 0;
+	const completedAt = new Map<string, number>();
+	let lastMutationSeq = 0;
+	let stopped = false;
+	// Code steps carry no assignment id, so `cancel` cannot reach them. They are
+	// aborted through this signal, which the runner turns into a process-group
+	// kill on the whole command tree.
+	const codeAbort = new AbortController();
+	const cancelOne = (owned: { assignmentId: string | null; canceled: boolean }): void => {
+		if (owned.assignmentId === null || owned.canceled) return;
+		owned.canceled = true;
+		try {
+			adapter.cancel(owned.assignmentId);
+		} catch (error) {
+			cleanupErrors.push(error);
+		}
+	};
+	const cancelOwned = (): void => {
+		stopped = true;
+		codeAbort.abort();
+		for (const owned of running.values()) cancelOne(owned);
+	};
+	signal?.addEventListener("abort", cancelOwned, { once: true });
+
+	const loopOf = (step: ExecutionPlanStep): ExecutionPlanLoop | null =>
+		step.loop === undefined ? null : (loopsById.get(step.loop.loopId) ?? null);
+	const loopResolved = (loop: ExecutionPlanLoop): boolean =>
+		loop.checkStepIds.some((id) => results.has(id) && checkPassed.get(id) === true);
+
+	const recordCompletion = (step: ExecutionPlanStep, result: ExecutionStepResult): void => {
+		sequence += 1;
+		completedAt.set(step.id, sequence);
+		results.set(step.id, result);
+		if (isWorkspaceMutator(step)) lastMutationSeq = sequence;
+	};
+	const replayPrefix = async (): Promise<void> => {
+		for (const step of plan.steps) {
+			const result = replayed.get(step.id);
+			if (result === undefined) continue;
+			if (!result.succeeded || !result.integrityValid) {
+				throw new Error(`execution plan: replayed step '${step.id}' is not a completed successful step`);
+			}
+			recordCompletion(step, result);
+			if (step.loop?.role === "check" && step.kind === "code") {
+				checkPassed.set(step.id, result.succeeded);
+				attemptsRun.set(step.loop.loopId, (attemptsRun.get(step.loop.loopId) ?? 0) + 1);
+			}
+			if (step.loop?.role === "check" && step.kind === "agent") {
+				const loop = loopsById.get(step.loop.loopId);
+				const decide = adapter.decideLoop;
+				if (loop === undefined || decide === undefined) {
+					throw new Error(`execution plan: replayed loop check '${step.id}' has no decider`);
+				}
+				const decision = await decide({
+					loop,
+					step,
+					attempt: step.loop.attempt,
+					terminalAttempt: step.loop.attempt >= loop.maxAttempts,
+					result,
+					priorResults: results,
+				});
+				checkPassed.set(step.id, decision.resolved);
+				attemptsRun.set(step.loop.loopId, (attemptsRun.get(step.loop.loopId) ?? 0) + 1);
+				if (decision.findings !== null) loopFindings.set(`${loop.id}:${step.loop.attempt}`, decision.findings);
+				if (decision.needsDecision !== undefined && decision.needsDecision !== null) {
+					needsDecision.push(decision.needsDecision);
+				}
+			}
+			if (step.loop?.role === "repair") {
+				repairsRun.set(step.loop.loopId, (repairsRun.get(step.loop.loopId) ?? 0) + 1);
+			}
+		}
+	};
+
+	/**
+	 * A failed predecessor normally disqualifies its dependents. Two deliberate
+	 * exceptions carry a failure across an edge instead of severing it:
+	 *
+	 *   - A failed code step under `onFailure: continue`. The red suite's
+	 *     verbatim output is the input to the step that repairs it.
+	 *   - A failed verification inside a bounded loop, for that loop's own
+	 *     repair attempt. That edge is the loop's designed failure path, so it
+	 *     carries the red result regardless of the plan's failure policy. Only
+	 *     an integrity-invalid result severs it, since a run that cannot be
+	 *     trusted is not evidence of anything, or an unrepairable one, since a
+	 *     repair cannot change its verdict.
+	 *
+	 * An edge out of a verification is answered by the loop, never by the
+	 * verification's own exit status. A gate agent that ran perfectly and
+	 * returned `fail` is a successful run and an unmet condition, so reading
+	 * `succeeded` here would let a rejected review flow downstream as approval.
+	 */
+	const dependencyBlocks = (dependency: string, dependent: ExecutionPlanStep): boolean => {
+		if (unneeded.has(dependency)) return false;
+		if (skipped.has(dependency)) return true;
+		const result = results.get(dependency);
+		// A boundary violation severs every edge, including a loop's own repair
+		// path. The tree was rolled back or left for an operator; either way the
+		// answer is not "try again", it is "this step is not allowed to do that".
+		if (result?.boundaryViolated === true) return true;
+		const source = stepsById.get(dependency);
+		const loop = source?.loop?.role === "check" ? loopOf(source) : null;
+		if (loop !== null) {
+			// Inside the loop, only an untrustworthy result severs the chain; the
+			// verdict itself is what the next attempt exists to answer.
+			if (dependent.loop?.loopId === loop.id)
+				return result !== undefined && (!result.integrityValid || result.unrepairable === true);
+			return !loopResolved(loop);
+		}
+		if (result === undefined) return true;
+		if (!result.integrityValid) return true;
+		if (result.succeeded) return false;
+		return !(source?.kind === "code" && plan.onFailure === "continue");
+	};
+
+	/**
+	 * Handoffs from predecessors that produced a result. Only loop members may
+	 * be absent: a resolved loop leaves its later attempts declared and unrun.
+	 * Any other missing predecessor stays in the list so projection still fails
+	 * loudly rather than quietly handing a step less context than it declared.
+	 */
+	const handoffsFor = (step: ExecutionPlanStep): ExecutionHandoff[] => {
+		const available = step.dependencies.filter((id) => results.has(id) || stepsById.get(id)?.loop === undefined);
+		if (step.loop?.role !== "repair") return projectExecutionHandoffs(available, results);
+		// A gate's continuation findings, not its raw transcript, are what the
+		// repair attempt is answering. They replace the transcript before
+		// projection so the handoff byte budget bounds them too.
+		const findings = loopFindings.get(`${step.loop.loopId}:${step.loop.attempt}`);
+		const checkId = loopsById.get(step.loop.loopId)?.checkStepIds[step.loop.attempt - 1];
+		const checked = checkId === undefined ? undefined : results.get(checkId);
+		if (findings === undefined || checkId === undefined || checked === undefined) {
+			return projectExecutionHandoffs(available, results);
+		}
+		return projectExecutionHandoffs(available, new Map(results).set(checkId, { ...checked, output: findings }));
+	};
+
+	const isUnneeded = (step: ExecutionPlanStep): boolean => {
+		const loop = loopOf(step);
+		if (loop === null) return false;
+		// Every later attempt of a resolved loop is declared but unnecessary. The
+		// first verification always runs: it is the question the loop exists to
+		// ask.
+		if (step.loop?.role === "check" && step.loop.attempt === 1) return false;
+		return loopResolved(loop);
+	};
+
+	/**
+	 * Open an enforcement window over the steps of one scheduling unit. The
+	 * snapshot is taken before anything spawns, so every change the window
+	 * produces is inside it.
+	 */
+	const openBoundary = (window: string, steps: ReadonlyArray<ExecutionPlanStep>): string[] | null => {
+		const enforced = steps.filter((step) => step.writes !== undefined).map((step) => step.id);
+		if (enforced.length === 0 || adapter.beginWriteBoundary === undefined) return null;
+		adapter.beginWriteBoundary(window, enforced);
+		return enforced;
+	};
+
+	/**
+	 * Close the window before any result crosses an edge. A blamed step fails
+	 * whatever its exit status said: writing outside the declared boundary is
+	 * not a thing a successful run gets to have done, and it is not something a
+	 * loop repair can be asked to fix, so the failure is carried on the result
+	 * rather than folded into the loop's verdict.
+	 */
+	const closeBoundary = async (
+		window: string,
+		enforced: ReadonlyArray<string> | null,
+		settled: ReadonlyArray<{ step: ExecutionPlanStep; result: ExecutionStepResult }>,
+	): Promise<Array<{ step: ExecutionPlanStep; result: ExecutionStepResult }>> => {
+		const verify = adapter.verifyWriteBoundary;
+		if (enforced === null || verify === undefined) return [...settled];
+		const outcome = await verify(window, enforced);
+		writeBoundaries.push(outcome);
+		if (!outcome.violated) return [...settled];
+		const blamed = new Set(outcome.failedStepIds);
+		return settled.map(({ step, result }) =>
+			blamed.has(step.id)
+				? {
+						step,
+						result: {
+							...result,
+							succeeded: false,
+							boundaryViolated: true,
+							...(outcome.detail !== null ? { failureReason: outcome.detail } : {}),
+						},
+					}
+				: { step, result },
+		);
+	};
+
+	const runCodeStepNode = async (
+		step: ExecutionPlanCodeStep,
+		handoffs: ReadonlyArray<ExecutionHandoff>,
+	): Promise<ExecutionStepResult> => {
+		const runCode = adapter.runCode;
+		if (runCode === undefined) throw new Error(`execution plan: no runner for code step '${step.id}'`);
+		const result = await runCode(step, handoffs, codeAbort.signal, results);
+		if (!codeAbort.signal.aborted) return result;
+		canceledSteps.add(step.id);
+		return { ...result, succeeded: false, failureReason: result.failureReason ?? "execution plan cancelled this step" };
+	};
+
+	/**
+	 * Scheduler-enforced staleness. A green verification measured the workspace
+	 * as it stood; a workspace step that finishes afterwards makes that green a
+	 * statement about a tree nobody has now. Before any dependent may treat the
+	 * verification as satisfied, the verification runs again.
+	 */
+	const revalidateFor = async (wave: ReadonlyArray<string>): Promise<boolean> => {
+		const candidates = new Set<string>();
+		for (const id of wave) {
+			const step = stepsById.get(id);
+			if (step === undefined || unneeded.has(id) || skipped.has(id)) continue;
+			for (const ancestor of executionPlanAncestors(plan, id)) {
+				const source = stepsById.get(ancestor);
+				if (source?.kind !== "code" || source.verification !== true) continue;
+				const result = results.get(ancestor);
+				if (result === undefined || !result.succeeded || !result.integrityValid) continue;
+				if ((completedAt.get(ancestor) ?? 0) >= lastMutationSeq) continue;
+				candidates.add(ancestor);
+			}
+		}
+		let halt = false;
+		for (const id of [...candidates].sort()) {
+			if (stopped || signal?.aborted) return true;
+			const step = stepsById.get(id);
+			if (step?.kind !== "code") continue;
+			// Revalidation runs at most once per verification per wave, and a plan
+			// has finitely many waves, so the chain is bounded by the plan's own
+			// shape. A fixed cap of 3 aborted any fleet with more than three
+			// workspace waves after a loop, a declared plan, not an undeclared loop.
+			const spent = revalidations.get(id) ?? 0;
+			revalidations.set(id, spent + 1);
+			revalidated.push(id);
+			const window = `revalidate-${id}-${spent + 1}`;
+			const enforced = openBoundary(window, [step]);
+			const ran = await runCodeStepNode(step, handoffsFor(step));
+			const [checked] = await closeBoundary(window, enforced, [{ step, result: ran }]);
+			const result = checked?.result ?? ran;
+			recordCompletion(step, result);
+			// A revalidation is a settle of its step like any other, so the record
+			// and every surface reading it hold the verdict the dependents will see.
+			await adapter.onStepSettled?.(step, result);
+			const loop = loopOf(step);
+			if (step.loop?.role === "check") {
+				checkPassed.set(step.id, result.succeeded && result.integrityValid);
+				if (loop !== null) attemptsRun.set(loop.id, (attemptsRun.get(loop.id) ?? 0) + 1);
+			}
+			// A revalidation that comes back red is terminal: the loop that
+			// produced the original green has no attempts left to spend on it.
+			if (!result.succeeded || !result.integrityValid) {
+				if (plan.onFailure === "stop") {
+					stopped = true;
+					codeAbort.abort();
+
+					halt = true;
+				}
+			}
+		}
+		return halt;
+	};
+
+	/** Stop-policy verdict for one settled step. */
+	const isPlanFailure = (step: ExecutionPlanStep, result: ExecutionStepResult): boolean => {
+		if (result.boundaryViolated === true) return true;
+		if (result.succeeded && result.integrityValid) return false;
+		if (step.loop?.role !== "check" || !result.integrityValid || result.unrepairable === true) return true;
+		const loop = loopOf(step);
+		// A red verification with attempts left is the loop working as declared.
+		return loop === null || step.loop.attempt >= loop.maxAttempts;
+	};
+
+	const settleCheck = async (step: ExecutionPlanStep, result: ExecutionStepResult): Promise<void> => {
+		const loop = loopOf(step);
+		if (loop === null || step.loop?.role !== "check") return;
+		const attempt = step.loop.attempt;
+		attemptsRun.set(loop.id, (attemptsRun.get(loop.id) ?? 0) + 1);
+		// A verification that wrote outside its boundary answered nothing: its
+		// verdict describes a tree that has since been rolled back under it.
+		if (result.boundaryViolated === true) {
+			checkPassed.set(step.id, false);
+			return;
+		}
+		if (loop.checkKind === "code") {
+			checkPassed.set(step.id, result.succeeded && result.integrityValid);
+			return;
+		}
+		const decide = adapter.decideLoop;
+		if (decide === undefined) throw new Error(`execution plan: loop '${loop.id}' has no decider`);
+		if (!result.integrityValid) {
+			checkPassed.set(step.id, false);
+			return;
+		}
+		const decision = await decide({
+			loop,
+			step,
+			attempt,
+			terminalAttempt: attempt >= loop.maxAttempts,
+			result,
+			priorResults: results,
+		});
+		checkPassed.set(step.id, decision.resolved);
+		if (decision.findings !== null) loopFindings.set(`${loop.id}:${attempt}`, decision.findings);
+		if (decision.needsDecision !== undefined && decision.needsDecision !== null) {
+			needsDecision.push(decision.needsDecision);
+		}
+	};
+
+	const loopOutcomes = (): ExecutionLoopOutcome[] =>
+		plan.loops.map((loop) => {
+			const attempts = attemptsRun.get(loop.id) ?? 0;
+			const repairs = repairsRun.get(loop.id) ?? 0;
+			if (loopResolved(loop)) return { loopId: loop.id, resolved: true, attempts, repairs, reason: "resolved" };
+			if ([...loop.checkStepIds, ...loop.repairStepIds].some((id) => canceledSteps.has(id)))
+				return { loopId: loop.id, resolved: false, attempts, repairs, reason: "loop_canceled" };
+			if (attempts === 0) return { loopId: loop.id, resolved: false, attempts, repairs, reason: "loop_not_reached" };
+			const ran = loop.checkStepIds.filter((id) => results.has(id)).length;
+			const brokenMember = [...loop.checkStepIds, ...loop.repairStepIds].some((id) => {
+				const result = results.get(id);
+				return result !== undefined && !result.integrityValid;
+			});
+			const reason: ExecutionLoopReason =
+				!brokenMember && ran >= loop.maxAttempts ? "loop_bound_exhausted" : "loop_step_failed";
+			return { loopId: loop.id, resolved: false, attempts, repairs, reason };
+		});
+
+	let outcome: ExecutionPlanResult | undefined;
+	let primaryError: unknown;
+	let failed = false;
+	try {
+		if (ledgerId !== null) await openAgentLedger(ledgerId);
+		await replayPrefix();
+		let waveIndex = 0;
+		while (waveIndex < plan.waves.length) {
+			const wave = plan.waves[waveIndex];
+			if (wave === undefined) break;
+			if (stopped || signal?.aborted) break;
+			if (await revalidateFor(wave)) break;
+			const admitted = wave.flatMap((id) => {
+				const step = stepsById.get(id);
+				if (!step) throw new Error(`execution plan: unknown scheduled step '${id}'`);
+				if (results.has(id)) return [];
+				if (isUnneeded(step)) {
+					unneeded.add(step.id);
+					return [];
+				}
+				if (step.dependencies.some((dependency) => dependencyBlocks(dependency, step))) {
+					skipped.add(step.id);
+					return [];
+				}
+				return [{ step, handoffs: handoffsFor(step) }];
+			});
+			const admissionGroups: Array<typeof admitted> = [];
+			if (plan.writers === 1) {
+				const readers = admitted.filter(({ step }) => !isExecutionPlanWriter(step));
+				const writers = admitted.filter(({ step }) => isExecutionPlanWriter(step));
+				if (writers.length === 0) admissionGroups.push(readers);
+				else {
+					admissionGroups.push([...readers, ...(writers[0] === undefined ? [] : [writers[0]])]);
+					for (const writer of writers.slice(1)) admissionGroups.push([writer]);
+				}
+			} else admissionGroups.push(admitted);
+			for (const [groupIndex, group] of admissionGroups.entries()) {
+				if (stopped || signal?.aborted) break;
+				const launch = group.filter(
+					(entry): entry is { step: ExecutionPlanAgentStep; handoffs: ExecutionHandoff[] } => entry.step.kind === "agent",
+				);
+				const codeWork = group.filter(
+					(entry): entry is { step: ExecutionPlanCodeStep; handoffs: ExecutionHandoff[] } => entry.step.kind === "code",
+				);
+				const boundaryWindow = groupIndex === 0 ? `wave-${waveIndex}` : `wave-${waveIndex}-writer-${groupIndex + 1}`;
+				const enforced = openBoundary(
+					boundaryWindow,
+					group.map((entry) => entry.step),
+				);
+				const failures: unknown[] = [];
+				const fail = (error: unknown): void => {
+					failures.push(error);
+					cancelOwned();
+				};
+				const onSettled = (step: ExecutionPlanStep, result: ExecutionStepResult): void => {
+					if (isPlanFailure(step, result) && plan.onFailure === "stop") cancelOwned();
+				};
+				const terminals: Array<Promise<PromiseSettledResult<{ step: ExecutionPlanStep; result: ExecutionStepResult }>[]>> =
+					[];
+				// Own each launch independently and observe its terminal promise as
+				// soon as it arrives, even while a sibling is still starting.
+				await Promise.allSettled(
+					launch.map(async ({ step, handoffs }) => {
+						if (stopped || signal?.aborted) return;
+						const owned = { assignmentId: null as string | null, canceled: false };
+						running.set(step.id, owned);
+						try {
+							const handle = await adapter.run(
+								step,
+								handoffs,
+								{ ownerId: reservationByStep.get(step.id) ?? reservation.ownerId, memberId: step.id },
+								ledger,
+								codeAbort.signal,
+							);
+							owned.assignmentId = handle.assignmentId;
+							memberIds.add(handle.assignmentId);
+							const terminal = handle.result.then(
+								(result) => {
+									// Preserve receipt references and output; this overlay records
+									// scheduler cancellation, not a fabricated worker receipt.
+									if (owned.canceled) canceledSteps.add(step.id);
+									const settled = owned.canceled
+										? { ...result, succeeded: false, failureReason: result.failureReason ?? "execution plan cancelled this step" }
+										: result;
+									onSettled(step, settled);
+									if (settled.succeeded) running.delete(step.id);
+									return { step: step as ExecutionPlanStep, result: settled };
+								},
+								(error: unknown) => {
+									fail(error);
+									throw error;
+								},
+							);
+							terminals.push(Promise.allSettled([terminal]));
+							if (stopped || signal?.aborted) cancelOne(owned);
+						} catch (error) {
+							running.delete(step.id);
+							fail(error);
+						}
+						return;
+					}),
+				);
+				// Code work retains the startup barrier and shares cancellation with
+				// agents, but has no assignment handle to release.
+				const codeTerminals =
+					stopped || signal?.aborted
+						? []
+						: codeWork.map(async ({ step, handoffs }) => {
+								try {
+									const result = await runCodeStepNode(step, handoffs);
+									onSettled(step, result);
+									return { step: step as ExecutionPlanStep, result };
+								} catch (error) {
+									fail(error);
+									throw error;
+								}
+							});
+				const outcomes = (await Promise.all([...terminals, Promise.allSettled(codeTerminals)])).flat();
+				for (const id of memberIds) {
+					try {
+						await adapter.drainMember?.(id);
+						memberIds.delete(id);
+					} catch (error) {
+						fail(error);
+					}
+				}
+				const ran = outcomes.flatMap((outcome) => (outcome.status === "fulfilled" ? [outcome.value] : []));
+				const settlementOrder = [...launch, ...codeWork].map(({ step }) => step.id);
+				ran.sort((a, b) => settlementOrder.indexOf(a.step.id) - settlementOrder.indexOf(b.step.id));
+
+				// The boundary is settled before anything is recorded or handed on, so
+				// a rolled-back step never appears upstream of the work it would have
+				// contaminated.
+				let settled: typeof ran;
+				try {
+					settled = await closeBoundary(boundaryWindow, enforced, ran);
+				} catch (error) {
+					if (failures.length === 0) throw error;
+					throw new AggregateError([...failures, error], "execution plan failure and boundary verification failed", {
+						cause: failures[0],
+					});
+				}
+				for (const { step, result } of settled) {
+					recordCompletion(step, result);
+					try {
+						await adapter.onStepSettled?.(step, result);
+					} catch (error) {
+						failures.push(error);
+						cancelOwned();
+					}
+					if (step.loop?.role === "repair") {
+						repairsRun.set(step.loop.loopId, (repairsRun.get(step.loop.loopId) ?? 0) + 1);
+					}
+					running.delete(step.id);
+				}
+				if (failures.length === 1) throw failures[0];
+				if (failures.length > 1)
+					throw new AggregateError(failures, "execution plan launch or result failed", { cause: failures[0] });
+				// Loop continuation is decided after the wave settles, so a gate's
+				// verdict is read from a sealed result rather than from a live stream.
+				for (const { step, result } of settled) {
+					if (!canceledSteps.has(step.id)) await settleCheck(step, result);
+					else if (step.loop?.role === "check")
+						attemptsRun.set(step.loop.loopId, (attemptsRun.get(step.loop.loopId) ?? 0) + 1);
+				}
+				// A loop that spent its last attempt without converging ends the run
+				// under a stop policy, whether the verdict came from an exit code or
+				// from a gate that answered "no" perfectly well.
+				const exhausted = settled.some(({ step }) => {
+					const loop = step.loop?.role === "check" ? loopOf(step) : null;
+					return loop !== null && step.loop !== undefined && step.loop.attempt >= loop.maxAttempts && !loopResolved(loop);
+				});
+				if ((exhausted || settled.some(({ step, result }) => isPlanFailure(step, result))) && plan.onFailure === "stop") {
+					stopped = true;
+				}
+			}
+			if (!stopped && adapter.spliceAfter !== undefined) {
+				for (const stepId of wave) {
+					const step = stepsById.get(stepId);
+					const settled = results.get(stepId);
+					if (
+						step?.kind !== "agent" ||
+						step.plan === undefined ||
+						settled === undefined ||
+						!settled.succeeded ||
+						!settled.integrityValid
+					) {
+						continue;
+					}
+					const spliced = await adapter.spliceAfter(plan, step, settled);
+					if (spliced === null) continue;
+					const previousIds = new Set(plan.steps.map((entry) => entry.id));
+					const additions = spliced.steps.filter((entry) => !previousIds.has(entry.id));
+					// A splice also rewires the plan step's dependents onto the new
+					// tasks, so every step is refreshed, not only the additions.
+					for (const entry of spliced.steps) stepsById.set(entry.id, entry);
+					const newAgentSteps = additions.filter(
+						(addition): addition is ExecutionPlanAgentStep => addition.kind === "agent",
+					);
+					if (newAgentSteps.length > 0) {
+						const newAdmissions = newAgentSteps.map((addition) => adapter.preflight(addition));
+						const additionalReservation = adapter.reserve(spliced, newAdmissions);
+						reservationOwners.add(additionalReservation.ownerId);
+						for (const addition of newAgentSteps) reservationByStep.set(addition.id, additionalReservation.ownerId);
+					}
+					plan = spliced;
+				}
+			}
+			waveIndex += 1;
+		}
+		outcome = {
+			planHash: plan.hash,
+			results,
+			skipped: [...skipped],
+			unneeded: [...unneeded],
+			loops: loopOutcomes(),
+			revalidated: [...revalidated],
+			needsDecision: [...needsDecision],
+			writeBoundaries: [...writeBoundaries],
+		};
+	} catch (error) {
+		failed = true;
+		primaryError = error;
+		cancelOwned();
+	} finally {
+		signal?.removeEventListener("abort", cancelOwned);
+		for (const id of memberIds) {
+			try {
+				await adapter.drainMember?.(id);
+			} catch (error) {
+				cleanupErrors.push(error);
+			}
+		}
+
+		// Every started launch and terminal is settled before capacity or the
+		// shared ledger is released, including late handles after cancellation.
+		for (const ownerId of reservationOwners) {
+			if (stopped || signal?.aborted) {
+				try {
+					adapter.releaseUnconsumed(ownerId);
+				} catch (error) {
+					cleanupErrors.push(error);
+				}
+			}
+			try {
+				adapter.release(ownerId);
+			} catch (error) {
+				cleanupErrors.push(error);
+			}
+		}
+		if (ledgerId !== null) {
+			try {
+				await closeAgentLedger(ledgerId);
+			} catch (error) {
+				cleanupErrors.push(error);
+			}
+		}
+	}
+	if (cleanupErrors.length > 0) {
+		throw new AggregateError(
+			failed ? [primaryError, ...cleanupErrors] : cleanupErrors,
+			"execution plan cleanup failed",
+			failed ? { cause: primaryError } : undefined,
+		);
+	}
+	if (failed) throw primaryError;
+	if (outcome === undefined) throw new Error("execution plan did not produce an outcome");
+	return outcome;
+}

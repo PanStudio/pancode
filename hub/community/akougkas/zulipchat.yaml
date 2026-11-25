@@ -1,0 +1,13 @@
+rows:
+  - kind: plugin
+    publisher: akougkas
+    name: zulipchat
+    version: 0.8.1
+    description: Zulip messaging and search, and hand-off to Zulip agent bots.
+    source:
+      repo: https://github.com/akougkas/zulipchat-mcp
+      commit: a1c464f5e8d8d68c95e8e1f83dde20658fd2664c
+      subdir: pancode
+    sha256: a75ee79f19d48f0ff0b9c56afdacb2996a876ca0a477faac3f9d732f7853a1b3
+    license: MIT
+    tier: verified

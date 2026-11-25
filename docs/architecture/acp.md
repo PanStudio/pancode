@@ -1,0 +1,675 @@
+# Agent Client Protocol (ACP) Server
+
+PanCode serves the Agent Client Protocol over stdio with `pancode acp` and acts as an ACP client when delegating to an external peer. This page defines the transport, capability negotiation, session and prompt lifecycle, extension methods, permission mediation, bounds, and error taxonomy of both directions. The [coding agent interoperability guide](../guide/interop.md) covers the operator workflow for external agents. The desktop GUI is an ACP client of this server, described in the [GUI guide](../guide/gui.md).
+
+Source: `src/engine/acp/`, `src/cli/acp.ts`, `assets/acp-registry/`.
+
+## Overview
+
+The server speaks ACP v1 (schema v1.34.1) as newline-delimited JSON-RPC 2.0 over stdin and stdout (`src/engine/acp/transport.ts`). `initialize` always answers `protocolVersion: 1`; it does not reject a client that asks for another version. External IDEs, editors such as Zed, and orchestration engines drive PanCode sessions through it.
+
+```mermaid
+graph LR
+    client[External ACP Client] <-->|JSON-RPC 2.0 / stdio| server[PanCode ACP Server]
+    server --> mediator[Tool Mediator & Safety Net]
+    mediator --> engine[PanCode Execution Engine]
+    mediator --> session[Session Ledger v7]
+```
+
+## Server command and transport
+
+### Use PanCode in an ACP editor
+
+To use PanCode in an editor over ACP, configure the editor's ACP agent entry to launch `pancode acp`. The editor exchanges JSON-RPC over stdio with this process. Add `--cwd /absolute/project/path` to pin the workspace, or let the editor's first session request select it. Authentication and permission requests use the client capabilities described below.
+
+```bash
+pancode acp [--cwd PATH] [--permission-timeout MS] [--autonomy LEVEL] [--allow-tools NAMES] [--delegate-tools NAMES] [--deny-tools NAMES] [--read-only]
+pancode acp auth login
+```
+
+Global boot flags go before `acp`. `acp` honors `--api-key KEY`, `--no-context-files` (`-nc`), `--no-skills`, and `--skill PATH`. `--with-panes` is refused. An unknown option or an invalid value prints the usage text and exits 2. `--help` prints it and exits 0.
+
+- `--cwd PATH`: pins the workspace. The path is resolved and canonicalized with `fs.realpath`, so a symlinked root, a trailing slash, and a `/.` suffix all name the same workspace. PanCode enters it before reading settings, building project context, or opening a session ledger. A path that does not exist or cannot be entered exits 2 without starting the server. Every session request must then name that root.
+- `--permission-timeout MS`: the server-side ceiling for one mediated permission request, a whole number from 1 through `2147483647` milliseconds. Other values are refused before the protocol server starts. It overrides `integrations.externalAgents.defaults.permissionTimeoutMs` for this server only, which defaults to `DEFAULT_DELEGATION_PERMISSION_TIMEOUT_MS = 120000` (`src/core/defaults.ts`). The same ceiling bounds one interview round and one forwarded worker ask. A client that negotiates `timeoutMs` in its [attended opt-ins](#attended-clients) replaces the configured default, never this flag. If the timer wins on a main-agent request, the approval expires, the active turn is aborted, every parked call for that turn is settled only so execution can unwind, and `session/prompt` fails with `permission_expired`. Expiry is audited as `expired`, never as a human denial, and no denial result reaches a continuing model loop. A client may enforce a shorter policy by sending `session/cancel`.
+- `--autonomy LEVEL`: the most autonomy any hosted session may run at, `default` or `yolo`. It lowers the configured level and never raises it. With `default`, every session starts at `default`, and `session/set_mode`, the `autonomy` config option and a `safety.autonomy` settings patch all answer `yolo` with `yolo_refused`; a client can still choose `default`. A spawner serving a remote surface uses it so the server does not inherit the operator's yolo. `--autonomy` placed before `acp` is refused with exit 2 and a message saying to pass it after `acp`.
+- `--allow-tools NAMES`: limits the session's tools to these comma-separated capabilities, as `pancode run` does; `none` disables all. `--delegate-tools NAMES` limits the tools the session's dispatched workers may hold. `--deny-tools NAMES` removes these capabilities from the session's tools, also from an `--allow-tools` list; denying every allowed tool is refused.
+- `--read-only`: holds every session the server creates, loads or forks to the read-only ceiling. No file outside PanCode's home changes. That home is still written: sessions, telemetry, run records and caches.
+- `--autonomy`, `--allow-tools`, `--delegate-tools`, `--deny-tools` and `--read-only` are the operator's launch limits. A [client ceiling](#client-capability-ceilings) can only narrow them.
+- `acp auth login`: opens PanCode's interactive Quick Connect flow (`configure --quick`). It is the process a terminal authentication method launches; it does not serve the protocol.
+
+When a newer PanCode last used this home, the server still answers `initialize` but refuses to load a workspace, so an older version does not restamp the home. One sentence naming both versions goes to stderr, the request that selected the workspace fails `internal_error`, and the process exits 2 when the connection closes. `PANCODE_ALLOW_OLDER=1` in the server's environment continues anyway.
+
+With or without `--cwd`, the server opens the stdio transport and answers `initialize` and `authenticate` before it loads a workspace. The answer to `initialize` is what an [attended client](#attended-clients) advertises, so the boot that follows builds its tool surface from it. Without `--cwd`, the first `session/new`, `session/load`, or `session/resume` selects its absolute existing `cwd`. A first `session/list` with a `cwd` filter selects that directory, and one without a filter selects the launch directory. Any other workspace-dependent session or `_pancode/*` method called first also selects the launch directory. The selected root is canonicalized, entered, and held for the process lifetime. Requests that arrive during boot wait for project trust, settings, context, hooks, and tools to load. A later request naming another canonical root fails with `-32602` `session_cwd_mismatch`, and the message names the bound root.
+
+Framing rules:
+
+- One JSON object per line. A line over 1 MiB is discarded and answered with `-32600` `input_line_too_large` (`id: null`); the transport stays open.
+- Stdout carries only JSON-RPC. The CLI redirects every other `process.stdout.write` to stderr for the life of the server. Diagnostics go to stderr prefixed `[pancode:acp]`.
+- If a peer stops reading and the queued output exceeds 1 MiB, the transport closes.
+
+## Initialize, capabilities, and authentication
+
+`initialize` must be the first request and runs once. Its `protocolVersion` must be an integer from 0 through 65535, or it fails `-32602`. `agentInfo` is `{name: "pancode", title: "PanCode", version}`. The standard capability fields are:
+
+| Field | Value |
+| --- | --- |
+| `loadSession` | `true` |
+| `promptCapabilities` | `{audio: false, embeddedContext: true, image: true}` |
+| `mcpCapabilities` | `{http: false, sse: false}` |
+| `sessionCapabilities` | `{close: {}, list: {}, delete: {}, resume: {}, fork: {}}`; `list` and `delete` only when the session store is wired, `resume` only when load is wired, `fork` only when session branching is wired |
+
+Every PanCode extension is namespaced under `agentCapabilities._meta`, so a strict generic ACP v1 client can use session discovery, modes, and configuration options without reading PanCode metadata. The shipped composition (`src/cli/acp.ts`) wires every dependency, so it advertises all of the keys below. A narrower embedded or test composition omits the key whose dependency is absent, and a flag never claims a method the composition cannot serve.
+
+| Key | Payload | Present when |
+| --- | --- | --- |
+| `pancode/session` | `{close: true, label}` | always; `label` reflects the session store |
+| `pancode/settings` | `{get_safe, patch_safe}` | always |
+| `pancode/targets` | `{list, probe}` | always |
+| `pancode/trust` | `{version: 1, meta, surfaces: ["settings", "hooks", "safety", "extensions", "plugins"], refresh: "_pancode/session/trust", results: ["session/new", "session/load", "session/resume"]}` | always |
+| `pancode/budget` | `{version: 1, meta: "pancode/budget", update: "agent_message_chunk", setting: "safety.limits.sessionCostUsd", replay: true}` | always; see [Session cost ceiling stops](#session-cost-ceiling-stops) |
+| `pancode/ceiling` | `{version: 1, meta: "pancode/ceiling", fields: ["allowedTools", "delegatedTools", "delegation", "readOnly"]}` | the chat can enforce client ceilings |
+| `pancode/queue` | `{version: 1, edit: "_pancode/session/queue_edit", ops: ["remove", "restore", "move", "set_kind", "send_now"], notification: "_pancode/session/queue_changed"}` | queue editing is wired |
+| `pancode/shell` | `{version: 1, run: "_pancode/session/shell", timeoutMs: 300000}` | operator shell and branch/session support are wired |
+| `pancode/commands` | `{version: 1, list, invoke, promptTurns}` | a command host is wired |
+| `pancode/steering` | `{version: 1, main, dispatch, modes: ["next-slot", "end-of-turn"], interrupt: true, methods: {steer, queue, clear, interrupt, dispatch}}` | always; `main` and `dispatch` report which queues are wired |
+| `pancode/agent` | `{version: 1, meta: "pancode/agent"}` | always |
+| `pancode/toolProgress` | `{version: 1, minIntervalMs: 250, maxFramesPerCall: 64, maxContentBytes: 16384}` | always |
+| `pancode/readouts` | `{version: 1, notification: "_pancode/session/readouts", minIntervalMs: 250, admission: "pancode/admission"}` | always; see [Live telemetry](#live-telemetry-usage-plan-and-workspace) |
+| `pancode/decision` | `{version: 1, meta, options: ["allow-once", "reject-once", "reject-and-stop", "allow-session-scope"]}` | a tool registry is wired |
+| `pancode/tools` | `"mediated"` | a tool registry is wired |
+| `pancode/events` | `{version: 1, notification: "_pancode/event", kinds, workspaceInstanceId}` | an event bus is wired |
+| `pancode/board` | `{version: 1, method, supersede?, proposeMemory?}` | the task board is wired; the two action methods need board actions |
+| `pancode/snapshots` | `{version: 1, list, preview, restore}` | a session host is wired; `list` is empty when snapshots are off or the task is not in a Git work tree |
+| `pancode/branches` | `{version: 1, tree, switchTurn, fork}` | session branching is wired |
+| `pancode/handoff` | `{version: 1, prepare, commit, cancel}` | the handoff service is wired |
+| `pancode/context` | `{version: 1, ledger, status, activity?, invoke?}` | the context ledger is wired; `activity: "context.activity_changed"` when an event bus is wired, `invoke` when a command host is |
+| `pancode/jobs` | `{version: 1, list: "_pancode/jobs/list", event: "job.changed"}` | the session's job controller is wired |
+| `pancode/telemetry` | `{version: 1, methods: {session, calls, cost, cache, timeline, run, runs, quota, health, whyStopped, explain}, update: "_pancode/telemetry/update"}` | a telemetry read model is wired |
+| `pancode/workspace` | `{version: 1, update: "session_info_update"}` | workspace facts are wired |
+| `pancode/artifacts` | `{version: 1, list, read, categories, perCategory: 200}` | `/view` artifacts are wired |
+| `pancode/fleet` | `{version: 1, preview, run, runResultFacts: true, resume: true}` | fleet control is wired |
+| `pancode/extensions` | `{version: 1, list, reload}` | extension control is wired |
+| `pancode/hub` | `{version: 1, reload}` | hub reload is wired |
+| `pancode/aside` | `{version: 1, ask, draft, cancel, draftCounts: {min: 1, max: 4, default: 3}}` | side rounds are wired |
+| `pancode/interviews` | `{version: 1, request, cancel, timeoutMs?}` | echoed only when the client opted in; `timeoutMs` is the applied interview window, present only when the client asked for one |
+| `pancode/workerPermissions` | `{version: 1, withdraw, timeoutMs?}` | echoed only when the client opted in; `timeoutMs` is the applied `session/request_permission` window, present only when the client asked for one |
+
+The `kinds` list under `pancode/events` is the 14-kind allowlist in [Opt-in extension events](#opt-in-extension-events). Each `method`, `list`, `read`, and similar field holds the literal method name from the table in [Method surface](#method-surface). The exceptions are booleans: every field under `pancode/session`, `pancode/settings`, and `pancode/targets`, and `main` and `dispatch` under `pancode/steering`.
+
+### Client opt-ins
+
+A client opts into optional behavior under `initialize.params.clientCapabilities._meta`. A missing key, another `version`, or a malformed payload leaves the feature off. Nothing here changes what a strict client receives.
+
+| Key | Payload | Effect |
+| --- | --- | --- |
+| `pancode/events` | `{version: 1, kinds: [...]}` | Enables `_pancode/event` notifications for the recognized kinds. At most 16 kinds, each at most 64 UTF-8 bytes and free of C0 and DEL control characters. A malformed request refuses the whole opt-in; unknown kinds are ignored. |
+| `pancode/queue` | `{version: 1}` | Enables queue-change notifications containing the current entry list. |
+| `pancode/toolProgress` | `{version: 1}` | Enables non-terminal `tool_call_update` frames carrying a running tool's cumulative output. |
+| `pancode/readouts` | `{version: 1}` | Enables `_pancode/session/readouts` frames and `pancode/admission` on a held call's `tool_call_update`. |
+| `pancode/interviews` | `{version: 1, request: "_pancode/interview/request", cancel?: "_pancode/interview/cancel", timeoutMs?}` | Attended client: enables `ask_user` and PanCode's own cards, and with `timeoutMs` sets the interview window. See [Attended clients](#attended-clients). |
+| `pancode/usage` | `{version: 1}` | Sends `pancode/usage` in its full read-model form: every quantity as `{fact, display, ref}`, the session's `pricedBy`, and the `SessionTelemetryV1` DTO on `usage_update`. Without it each quantity is its display string. See [Streaming updates and stop reasons](#streaming-updates-and-stop-reasons) and [Live telemetry](#live-telemetry-usage-plan-and-workspace). |
+| `pancode/workerPermissions` | `{version: 1, withdraw: "_pancode/permission/withdraw", timeoutMs?}` | Attended client: forwards dispatched workers' permission asks, withdraws abandoned main-session asks, and with `timeoutMs` sets the window of every `session/request_permission`. |
+
+### Authentication
+
+`authMethods` is empty unless the client advertises terminal authentication, either as `clientCapabilities.auth.terminal: true` or as `clientCapabilities._meta["terminal-auth"]: true`, the form the ACP registry's validator sends. Then it holds one method, `{id: "pancode-login", name: "PanCode Target Auth & Setup", type: "terminal", args: ["auth", "login"]}`. A client appends those args to the ACP launch command it already uses, including any `--cwd`, which opens `pancode acp auth login` in a terminal. Authentication happens in that separate process, so `authenticate` rejects every method id with `-32602`.
+
+The server advertises no `auth` capability and serves no `logout`; a `logout` request fails `-32601` `method_not_found`.
+
+Before it admits a prompt, the server checks that the selected target has usable credentials through the provider auth contract, without resolving or echoing a secret. A desktop service does not inherit a terminal's API keys: save one with `pancode auth login <target>`, then reopen the session on a fresh server process, because a running server does not reread the credential store. A missing credential fails the prompt with `-32000` `prompt_not_admitted` and reason `authentication-required`.
+
+PanCode does not call `fs/*` or `terminal/*` on a client. Tools run inside the PanCode process, so `clientCapabilities.fs` and `clientCapabilities.terminal` are ignored.
+
+## Method surface
+
+Anything not listed returns `-32601` `method_not_found`. Methods answer after `initialize`; before it they fail `not_initialized`.
+
+| Method | Direction | Description |
+| :--- | :--- | :--- |
+| `initialize` | client to server | Capability exchange. Once per connection. |
+| `authenticate` | client to server | Always `-32602`; terminal authentication runs in another process. |
+| `session/new` | client to server | Opens the one session this process hosts. `mcpServers` is required (may be empty). Returns `sessionId`, `modes`, `configOptions`, `_meta`. |
+| `session/load` | client to server | Restores a closed session and streams its active-branch history before returning. `mcpServers` is required (may be empty). |
+| `session/resume` | client to server | Restores a closed session and provider context without sending history. |
+| `session/list` | client to server | Lists workspace sessions newest first with cursor paging. |
+| `session/delete` | client to server | Permanently deletes a closed workspace session. |
+| `session/set_mode` | client to server | Sets autonomy to `default` or `yolo` while idle. |
+| `session/set_config_option` | client to server | Sets autonomy, target, model, or thinking level while idle; returns the full option list. |
+| `session/fork` | client to server | Forks the hosted session at its active leaf and hosts the child in its place, without replaying the branch. Takes `{sessionId, cwd, mcpServers?, additionalDirectories?}` with `additionalDirectories` empty; the parent's client MCP servers are detached and the ones `mcpServers` names (none when it is omitted) are attached to the child. Returns `sessionId`, `modes`, `configOptions`, `_meta`; the parent ids travel in `_meta["pancode/session"]`. Idle only. |
+| `session/prompt` | client to server | Submits a user prompt. Resolves after the turn's telemetry journal is flushed. |
+| `session/cancel` | client to server | Notification that cancels the in-flight prompt, running tools, and any outstanding permission request. Sent as a request with an `id`, it fails `-32600` `notification_only`. |
+| `_pancode/session/cancel` | client to server | The request form of `session/cancel`, for a client that waits for the stop; returns `{}`. |
+| `session/close` | client to server | Cancels an active prompt, waits for its writer to settle, and closes the durable session. Idempotent. |
+| `session/request_permission` | server to client | Asks the client to approve a gated tool call. |
+| `session/update` | server to client | Notification stream. See [Streaming updates](#streaming-updates-and-stop-reasons). |
+| `_pancode/session/trust` | client to server | Refreshes the bound session's ignored-project-surface report; grants no trust. |
+| `_pancode/session/queue_edit` | client to server | Edits or sends one queued entry by id. |
+| `_pancode/session/queue_changed` | server to client | Current queue entries after a change, for opted-in clients. |
+| `_pancode/session/shell` | client to server | Executes one operator shell line while idle and records a `bashExecution`. |
+| `_pancode/session/set_model` | client to server | Sets the model while idle, as the `model` config option does; returns `{}`. |
+| `_pancode/session/label` | client to server | Sets or clears a durable session name. Legal before an opener and during a prompt. |
+| `_pancode/settings/get_safe` | client to server | Reads the closed credential-free settings projection. |
+| `_pancode/settings/patch_safe` | client to server | Atomically validates, persists, and applies a flat patch over four settings. Refused during a prompt. |
+| `_pancode/targets/list` | client to server | Lists bounded, credential-free target and model summaries without network traffic. |
+| `_pancode/targets/probe` | client to server | Probes one configured target and returns a closed health result. |
+| `_pancode/session/steer` | client to server | Queues guidance on the running turn. |
+| `_pancode/session/queue` | client to server | Reads both steering queues. |
+| `_pancode/session/queue_clear` | client to server | Drains both queues and returns the texts, or refuses with `queue_too_large` and drains nothing. |
+| `_pancode/session/interrupt` | client to server | Cancels the running turn, or reports why it cannot. |
+| `_pancode/dispatch/steer` | client to server | Guides or aborts one running worker by `runId`. |
+| `_pancode/commands/list` | client to server | Returns the operator command catalog with the grammar a palette builds from. |
+| `_pancode/commands/invoke` | client to server | Runs one exposed command headlessly. |
+| `_pancode/session/board` | client to server | Reads tasks, plan, decisions, and task-memory status. |
+| `_pancode/decisions/supersede` | client to server | Marks a recorded decision superseded while idle. |
+| `_pancode/memory/propose` | client to server | Proposes a memory candidate for review. |
+| `_pancode/session/snapshots` | client to server | Lists the session's workspace snapshots as `/rewind` shows them. |
+| `_pancode/session/snapshot_preview` | client to server | Reads what restoring one snapshot would change. |
+| `_pancode/session/snapshot_restore` | client to server | Restores one snapshot's files, taking an undo snapshot first. |
+| `_pancode/session/tree` | client to server | Reads the session tree as the `/tree` navigator shows it. |
+| `_pancode/session/switch_turn` | client to server | Moves the append point to a turn and replays the branch. |
+| `_pancode/session/fork` | client to server | Starts a new session from a turn and replays it. |
+| `_pancode/session/handoff/prepare`, `commit`, `cancel` | client to server | The `/handoff` flow: render for review, seed a successor, or discard. |
+| `_pancode/context/ledger` | client to server | Reads the `/context` window ledger. |
+| `_pancode/context/status` | client to server | Reads the running context operation and the latest finished one. |
+| `_pancode/jobs/list` | client to server | Lists the jobs the bound session owns. |
+| `_pancode/telemetry/session`, `calls`, `cost`, `cache`, `timeline`, `run`, `runs`, `why_stopped`, `explain` | client to server | Reads the telemetry read model's DTOs for a session this server holds, every number as `{fact, display, ref}` ([Telemetry](telemetry.md#read-model)). `calls` takes an optional `filter` and returns at most 1,000 rows, 200 by default; `cost` takes `groupBy` (`role`, the default, `model` or `turn`); `timeline` takes both `from` and `to` or neither; `run` takes a `runId` the session references; `explain` takes a `ref`. |
+| `_pancode/telemetry/quota`, `health` | client to server | Reads the read model's quota fold, optionally for one `provider`, and its health. Neither takes a session. |
+| `_pancode/aside/ask`, `draft`, `cancel` | client to server | The `/btw` and `/draft` rounds beside the session. |
+| `_pancode/extensions/list`, `reload` | client to server | Lists the running session's extensions and reloads them. |
+| `_pancode/hub/reload` | client to server | Runs `/reload hub`. |
+| `_pancode/artifacts/list`, `read` | client to server | Lists and pages the `/view` artifacts. See [Artifacts](#artifacts). |
+| `_pancode/fleet/preview`, `run` | client to server | Compiles a playbook; starts it only when the fresh plan hash equals the approved hash. |
+| `_pancode/event` | server to client | Versioned extension events, only for kinds the client opted into. |
+| `_pancode/telemetry/update` | server to client | A coalesced notice, at most 10 Hz, naming the telemetry topics that changed for a session this server holds. It needs no opt-in. |
+| `_pancode/session/readouts` | server to client | `{version: 1, sessionId, sequence, readouts}`: the session's live readouts, sent on change to a client that opted in to `pancode/readouts`. |
+| `_pancode/interview/request` | server to client | An `ask_user` round for an attended client. |
+| `_pancode/interview/cancel` | server to client | Notification retiring a round still waiting. |
+| `_pancode/permission/withdraw` | server to client | Notification retiring a forwarded worker ask, or a main-session ask the server abandoned. |
+
+Methods that take a session carry `sessionId`. Unknown keys, and values outside the documented shape, fail `-32602` `invalid_params`.
+
+## Safe wire profile
+
+This section states what the server guarantees on the wire. It is the contract any strict client can hold PanCode to.
+
+### Error envelope
+
+JSON-RPC layer codes follow the pinned ACP v1 schema: `-32700` parse, `-32600` invalid request, `-32601` method not found, `-32602` invalid params, `-32603` internal error, `-32002` missing resource, `-32000` authentication required, and `-32800` for an expired permission. `-32010` is PanCode's own code for `session_limit`. Every error frame carries its machine-readable detail in one place:
+
+```json
+{"code":-32603,"message":"<one line, 256 characters at most, no paths, no stack>",
+ "data":{"_meta":{"pancode/error":{"version":1,"code":"<closed-set string>","reason":"<optional>"}}}}
+```
+
+`data` never carries a stack, an echoed frame, a filesystem path, provider text, or a secret. Every message is authored by this process. `turn_failed`, `internal_error`, and `method_not_found` use the fixed strings `the prompt turn failed`, `internal error`, and `method not found`, whatever failed and whatever the peer called, because a provider or engine failure body can quote a request URL, a settings path, or the credential itself, and a bounded copy of a secret is still the secret. The exceptions are `session_cwd_mismatch`, whose message names the bound root so a client can correct its request, and `session_format`, whose message says which format version the session has and which this build reads. A client branches on `code`; the original message, flattened to one line, goes to stderr. The `reason` field refines a code, and an optional `supported` list is reserved for version negotiation but no current error sets it.
+
+| `data.code` | Code | When |
+| :--- | :--- | :--- |
+| `not_initialized` | -32600 | Any method before a successful `initialize`. |
+| `already_initialized` | -32600 | A second `initialize` on the connection. |
+| `invalid_ceiling`, `ceiling_unsupported`, `ceiling_refused` | -32602 | Malformed ceiling, host cannot enforce it, or a command would exceed the applied ceiling. |
+| `shell_active` | -32602 | Another shell line or context command is running. While a shell line runs, a branch switch, fork, handoff prepare or commit, extensions reload, hub reload, fleet run, decision supersede, or `context` or `compact` command is refused with it too. |
+| `invalid_params` | -32602 | A missing required value, an unknown key, an out-of-set enum value, an exceeded bound, a C0 or DEL character in peer text, or any other shape violation. A model or target selection the target does not declare carries `modelSelection: {code: "model_not_declared", targetId, requestedModel, availableModels, remedy}` beside `code`, with at most 64 available models drawn from the target's default, `wireModels`, discovered and catalog models; the remedy is to add the model to `targets[].wireModels` and restart the ACP session. `reason` refines: `target-unknown` for an unconfigured target, and for `commands/invoke` one of `argv_too_long`, `argv_invalid`, `command_not_exposed`, `command_unavailable`, `subcommand_not_exposed`, `not_wired`, or `invalid_params` for a non-string `command`. |
+| `session_cwd_mismatch` | -32602 | A session request names a canonical directory other than the bound root. |
+| `session_limit` | -32010 | A second opener while a session is hosted. The message names the hosted session to close first. |
+| `session_replaced` | -32002 | A request names a session a fork closed. The message names the child that now holds the process. |
+| `session_unknown` | -32002 | A session id is not hosted, or is not in this workspace's history, or a telemetry method finds no journal for it. The server does not disclose whether it exists under another workspace. |
+| `run_unknown` | -32002 | `_pancode/telemetry/run` names a run the session does not reference. |
+| `session_open` | -32602 | Load or resume targets a record whose `endedAt` is null and whose recorded owner is alive or on another host (`src/domains/session/live-owner.ts`); a record whose owner has exited crashed and reopens. A process that claims the session between the first owner check and the locked re-check also yields `session_open`, not `internal_error`. Delete targets the hosted session or any unended record. |
+| `session_format` | -32602 | Load or resume targets a session in a format version this build cannot read. The message is the session reader's own, less the session's path: upgrade PanCode for a newer format, or remove the session directory for one too old. |
+| `session_not_bound` | -32002 | An artifact method names a session other than the bound one. |
+| `prompt_active` | -32602 | A second `session/prompt`, or a settings, mode, configuration, or other state-changing request, during a prompt. `reason: "steer-instead"` marks a `commands/invoke` of a command that injects a user turn. |
+| `prompt_not_admitted` | -32603, or -32000 for `authentication-required` | PanCode refused to start the turn. `reason` is from [Admission failure](#admission-failure). |
+| `permission_expired` | -32800 | The permission ceiling won. The message is the fixed string `permission approval expired`. |
+| `turn_failed` | -32603 | The provider or engine failed after admission. When the target's runtime needs a separately installed component that is missing, `reason` is `component-missing` and `component` is the `pancode tools install` id (`copilot-sdk` or `claude-sdk`). |
+| `turn_unknown` | -32602 | `switch_turn` or `fork` names a turn that is absent or not selectable. |
+| `aside_active` | -32602 | A side question or draft is already running. |
+| `queue_too_large` | -32602 | `queue_clear` would restore more than 128 entries or an entry over 16 KiB. Nothing drains. |
+| `artifact_unknown` | -32602 | An artifact id names no category, provider, or row. |
+| `unknown_command`, `command_unavailable` | -32602 | A prompt line that looks like a command is neither an admitted command nor a loaded template. |
+| `prompt_turn_required` | -32602 | `commands/invoke` named a command that must run as a conversation turn. |
+| `yolo_refused` | -32602 | `session/set_mode`, the `autonomy` config option or a `safety.autonomy` settings patch asked for `yolo` while this process refuses it: the `--autonomy default` launch limit, root outside a container, or a configured autonomy ceiling. The message names the cause. |
+| `shell_failed` | -32603 | `_pancode/session/shell` could not run or record the line. The message is the fixed string `the shell line could not be run or recorded`. |
+| `parse_error` | -32700 | A stdin line was not valid JSON (`id: null`). |
+| `invalid_request` | -32600 | A frame was not JSON-RPC `2.0`, or carried an `id` and no `method`. |
+| `invalid_request_id` | -32600 | A request arrived with `id: null`. |
+| `notification_only` | -32600 | A request with an `id` named a method ACP defines only as a notification (`session/cancel`, `$/cancel_request`). |
+| `input_line_too_large` | -32600 | One stdin line exceeded 1 MiB (`id: null`). |
+| `method_not_found` | -32601 | An unregistered or unavailable method. |
+| `incomplete_installation` | -32603 | A handler needed a module of PanCode's own build that is no longer on disk. `reason` is `build_replaced` when the build this server started from was replaced, `checkout_incomplete` for an unbuilt source checkout, or `install_incomplete`. The message is fixed host text that tells the client to restart the agent, after a rebuild or reinstall for the last two. |
+| `internal_error` | -32603 | A handler failed in a way it did not classify. |
+
+### One session per process
+
+At most one `session/new`, `session/load`, or `session/resume` is hosted at a time. Another opener fails `-32010` `session_limit`, naming the hosted session, until `session/close` releases the slot. An opener sent while a close is still settling waits for that close and then binds. Reopening the session the server already hosts is served: `session/resume` answers its current modes, config and session meta without replay or a conversation reset, and `session/load` replays its active branch first, as a cold load does. Such a reopen keeps the MCP servers and ceiling the session was opened with, so one naming different ones fails `invalid_params`, and one sent during a prompt or shell line fails `prompt_active` or `shell_active`. Closing releases the slot, and the next `session/new` starts with a reset conversation, session history, turn ancestry, and task-board state, so a direct stdio client can open another session in the same process. Explicit resume restores the selected session's own history and task state. The first bound workspace stays fixed for the process.
+
+A fork (`session/fork` or `_pancode/session/fork`) hosts the child in the parent's place and closes the parent, and says so: the fork result carries `parentClosed: true` in `_meta["pancode/session"]`, the parent gets a `session_info_update` notice naming the child, and a later request naming the parent fails `-32002` `session_replaced` with the child's id. Closing the parent again returns `{}`. To continue the parent, close the child, then load or resume the parent.
+
+### Workspace pinning
+
+The three openers require a non-blank absolute `cwd` naming an existing directory. A relative path or an unusable directory fails `-32602`. The first valid request binds the process before any workspace graph loads unless `--cwd` already bound it. PanCode never changes directories after the graph loads.
+
+Workspace authority is the exact canonical bound directory, never the enclosing Git root. Git probes treat an ignored nested scratch directory as non-Git. An unignored monorepo subdirectory may inherit repository-level branch, upstream, and remote facts, but dirty status and recent commits are scoped to the workspace path and no parent path is returned.
+
+### Session attribution and load replay
+
+`session/new` captures the effective orchestrator `target` and `model` in durable session metadata. They are the initial selections at bind time, not a health or admission promise. `session/new` returns `{sessionId, modes, configOptions, _meta}` and the other openers return the same without `sessionId`. `_meta["pancode/session"]` holds `{sessionId, target, model, autonomy, createdAt, resumed, replayed?}`. `target` or `model` is null when that half was unselected at bind. Session ids and target ids are 1 to 128 UTF-8 bytes, and model ids are at most 256 bytes. A configured route outside those bounds makes the opener fail `internal_error`; PanCode never converts an over-bound selection to null and runs it anyway.
+
+The openers also return `_meta["pancode/workspace"]` and `_meta["pancode/trust"]`, described in [Live telemetry](#live-telemetry-usage-plan-and-workspace) and [Trust notice](#trust-notice).
+
+`mcpServers` accepts at most 32 stdio declarations: `name` up to 128 bytes, an absolute `command` up to 512 bytes, at most 64 `args` of 4096 bytes each, and at most 64 `env` entries `{name, value}` with values up to 4096 bytes. PanCode starts each through the gateway's safe stdio MCP client and registers its tools as session-scoped capabilities named `mcp_acp_<slug>__<tool>`, where the slug is the declaration name lowercased, reduced to `a-z`, `0-9`, `_` and `-`, and cut to 24 characters. A started server runs outside the OS sandbox, as the operator. Under `acp --read-only`, `acp --allow-tools none`, or a session [ceiling](#client-capability-ceilings) with `readOnly: true` or an empty `allowedTools`, the declarations are registered but no server is started, so none of their tools is listed. Calls route through the normal tool registry and autonomy policy as the `unknown` action class, which asks at `default` and runs at `yolo`. Declarations are never written to settings or the MCP catalog cache, and closing the session closes the clients. HTTP and SSE are unsupported, and a malformed or non-stdio declaration fails `invalid_params`. `additionalDirectories` may be empty; nonempty values are unsupported.
+
+A loaded id must occur in the bound workspace's history and be durably closed or crashed. A record with `endedAt: null` and a live or remote owner fails `session_open`. Load resolves the pinned leaf, validates the entry stream, builds the provider replay for the active path, resumes the writer, and resets the chat loop before it emits any history. Client replay uses the original user, assistant, thought, tool-call, and tool-result entries of the selected branch. A compaction replays as the host line the live compaction sent, a `session_info_update` whose `_meta["pancode/notice"]` is `{level: "info", text}`, never as reply text or operator prose. A stored tool call with no outcome receives one terminal `failed` update with content `unrecorded`. Replay never requests permission.
+
+Every replay notification precedes the load response and carries `_meta["pancode/replay"] = {turn: n, stopReason?}`, 1-based over the replay; live updates omit the marker. The last frame of each replayed turn also carries `_meta["pancode/usage"]`, the same usage block that turn's live prompt response carried, compact or full as the client opted in, when the telemetry read model holds the session. A turn opened by a request also carries `startedAt` and `finishedAt`, the ledger times of that request and of the turn's own last entry, so a later request or shell line does not stretch it. A steer or follow-up drained into a running run replays inside that run's turn, as it ran live, not as a turn of its own. A replayed turn whose ledger recorded an assistant call also carries `_meta["pancode/turn"] = {model?, target?}` on each of its frames: the newest recorded model, and the target from a failed call's own record or else the route the ledger held when the call ran (the session header, then each `modelChange` on the branch). That target is the route the ledger held, not proof of the endpoint that served the call. Every active-branch turn streams with no turn-count or byte cut, and the response reports `_meta["pancode/session"].replayed = {turns, truncated: false}`. Dispatch runs recorded on the branch replay as terminal `_pancode/event` frames for clients that opted into those kinds, with the run result facts described in [Run result facts](#run-result-facts-on-terminal-dispatch-frames). `session/resume` performs the same provider restoration and sends no history; it still sends the session's current `usage_update` meter.
+
+### Session list, label, delete, modes, and configuration options
+
+`session/list` accepts `{cwd?, cursor?}` and returns `{sessions, nextCursor?}` newest first. Each `SessionInfo` holds `sessionId`, the absolute `cwd`, an optional `title`, and `updatedAt`. A cwd that is not this workspace yields an empty list. Pages hold at most 50 rows and stay under a 240 KiB response budget; the cursor is opaque and bound to the process. Sessions with no model turn are omitted. A first list without a filter binds the launch directory. The method is legal before an opener and during a prompt.
+
+`_pancode/session/label` accepts `{sessionId, label}` with a label of 0 to 256 UTF-8 bytes free of C0 and DEL characters; empty clears it. It writes the session-wide name that `session/list` reads back as `title`, and a hosted session also emits a `session_info_update` with the new `title`. `session/delete` accepts `{sessionId}` and removes only a record whose `endedAt` is set; hosted or unended records fail `session_open`, and unknown or cross-workspace ids fail `session_unknown`. The delete checks again under the lock a resume takes, so a record that a concurrent resume reopened also fails `session_open`. Both are legal during an unrelated prompt.
+
+`modes` offers `default` and `yolo`. `session/set_mode` takes `{sessionId, modeId}`, changes the hosted session's autonomy, emits `current_mode_update` and `config_option_update`, and returns `{}`. A client's choice of `yolo` counts as the operator's yolo acceptance and writes nothing; while PanCode runs as root outside a detected container, or the server was started with `--autonomy default`, `yolo` fails with error code `yolo_refused`. The same control is the `autonomy` config option (category `mode`). A `model` option (category `model`) appears when a model is selected, listing the target's configured and discovered models, a `target` option (category `_target`) lists orchestrator-eligible configured targets when provider routing is wired, and `thinkingLevel` (category `thought_level`) offers only the selected model's resolved supported levels, with an empty list when unresolved. An opener probes the target's live metadata as a turn does and sends a `config_option_update` when that changes the resolved levels, so the option and the turn agree on thinking support. `session/set_config_option` takes `{sessionId, configId, value, type?}` where `type`, if present, must be `select`, and returns the full list. Target, model and thinking changes apply to the session route without saving a default. Each `model` option value carries `_meta["pancode/thinkingLevels"]`, that model's supported levels, when they are resolved, and the `thinkingLevel` option carries `_meta["pancode/notice"] = {level: "info", text}` when the route runs another level than the one asked for. Session openers, fork and handoff results carry `_meta["pancode/models"] = {currentModelId, availableModels: [{modelId, name}]}` when a model is selected, with the same list as the `model` option, and `_pancode/session/set_model` takes `{sessionId, modelId}` and selects through that option. A model the target does not declare fails `invalid_params` with the `model_not_declared` detail described in the [error envelope](#error-envelope). All route, thinking and mode controls fail `prompt_active` during a prompt. A global autonomy patch changes the default for future sessions and never mutates a bound session.
+
+### Slash commands
+
+The server sends `available_commands_update` when a session binds. The entries are the 16 allowlisted operator commands (`src/engine/acp/commands.ts`): `eggs`, `skill`, `mcp`, `doctor`, `fleet` (its `share` verb), `archive`, `oracle`, `council`, `poll`, `loop`, `context`, `tasks`, `memory`, `remember`, `report`, and `export`, each only when its host dependency is wired. The allowlist lives on each entry of the slash registry, which `ACP_COMMAND_RULES` reads. `context` admits the verbs `compact`, `recall`, `init`, `refresh`, `reset`, and `recover`; `tasks` admits `add`, `hand`, `done`, and `drop`; `memory` admits `seed`; `report` admits `bug`, `feature`, `question`, `status`, `send`, `forget`, and `security`. `report bug|feature|question` replies with the exact text it would post and saves the draft; only `report send <id>` sends. It sends only the text this client last showed: a draft whose text differs, or that this client never showed, is previewed instead, and an agent's draft is refused. A preview shows the first 150 non-blank body lines of a long report and always ends with the actions, the reasons it cannot be sent yet and the send line. `report bug --bundle mechanics --consent debug|dataset [--transcript [N]] <summary>` first asks the client with a `session/request_permission` whose content is the consent text and whose options are `allow-once` and `reject-once`. Only `allow-once` builds the bundle, the preview then names its size and what was agreed to, and the bundle is kept only when that draft is sent. A rejection, a cancel, an error or no answer within 5 minutes attaches nothing and the reply says so. A `report` result carries `_meta["pancode/report"] = {draftId, state}`. A read-only session refuses `report send` and `report forget`. After the built-in entries the update lists the loaded prompts and enabled extension commands a line may type, each with its description, and it is sent again after `reload extensions` and `reload PanHub`. These are screened as typed lines, never invoked as built-in commands. `run` streams worker output through dispatch events and is reachable through `_pancode/commands/invoke` but are not advertised in this update. Their reply waits for dispatch admission: it says the run started or queued only for an admitted run, and otherwise carries the refusal and its reason at `error` level. Every other slash command is refused by name, because an allowlist is the whole security posture for peer-chosen text.
+
+A prompt that starts with `/name` for an advertised command, with no attached resources, runs that command instead of a model turn, and the result returns as an `agent_message_chunk`. Commands that inject a user turn (`fleet share`, `oracle`, `skill`, `tasks`, and `loop` when it schedules a job) are refused through `commands/invoke` while a prompt is active with `prompt_active` and reason `steer-instead`. `loop status`, `pause`, `resume` and `stop` submit nothing and stay available during a prompt, so a runaway loop can be stopped mid-turn. `council`, `poll` and `context recover` run as conversation turns and are refused through `commands/invoke` with `prompt_turn_required`. `/poll <n> <question>` asks 2 to 5 agents the same question as a one-round vote council and replies with the vote distribution. A command-shaped line that is neither an admitted command nor a loaded prompt template fails `unknown_command` or `command_unavailable` before it reaches the model, and `\/` sends the line as text. A loaded prompt template expands as in the terminal, and a display-only template answers without a turn. An extension command line (`/ext:<id>:<name>`, or a `replaces: prompt` takeover) is answered by the extension's runtime as an `agent_message_chunk`, with no model turn and no tokens ([commands.ts](../../src/engine/acp/commands.ts), [extension-line.ts](../../src/session-control/extension-line.ts)).
+
+`_pancode/commands/list` accepts `{}` and returns the catalog `{version: 1, commands: [...]}` plus the loaded prompt templates under `prompts` (at most 256), each `{name, description}` with `input: {hint}` when the template declares an argument hint and `_meta["pancode/prompt"]` carrying `unavailable` (why it cannot expand) or `displayOnly: true` (a reference card the model never sees), in the terminal palette's words, and the loaded extensions' commands under `extensionCommands` (at most 256), each `{name, description}`, a `/name` line the extension answers locally with no model turn, a takeover under its prompt's name. Each descriptor carries `name`, `summary`, `usage`, `group`, a grammar `args` of flags, positionals, and subcommands, and the flags `requiresSubcommand`, `streams`, `injectsUserTurn`, and `promptTurn` where they apply. `commands/invoke` accepts `{sessionId, command, argv}` and returns `{level, lines}`. A result holds at most 200 lines of at most 1 KiB each, with a trailing `…output truncated at 200 lines`. `argv` holds at most 32 elements of at most 4 KiB. Elements are joined with single spaces and never quoted, so a quote character, a control character, or whitespace in any element except the last is refused. The last element is taken verbatim as the rest positional. `oracle` holds its `commands/invoke` reply until the advisor run settles, and on success the reply carries no lines. The advisor's note is then submitted to the conversation as an operator message, so it arrives as a later chat turn rather than in the reply.
+
+### Client capability ceilings
+
+The ACP server accepts `_meta["pancode/ceiling"]` on session openers and individual prompts, and on fork and handoff commit. Its closed fields are `allowedTools`, `delegatedTools`, `delegation: "allowed" | "forbidden"`, and `readOnly: true` ([types.ts](../../src/engine/acp/types.ts)). The session ceiling and a prompt's temporary ceiling only narrow the operator's launch limits. Responses echo the effective ceiling; `{}` means no limit applies. Tool execution, delegated tools and slash commands all honor the applied limits. A malformed ceiling fails `invalid_ceiling`; an unenforceable one fails `ceiling_unsupported`; a command outside the applied limits fails `ceiling_refused`. Under a read-only ceiling the server also refuses `_pancode/fleet/run`, `_pancode/decisions/supersede`, `_pancode/memory/propose`, `_pancode/session/shell`, `/oracle`, `/remember` and the `/tasks` verbs `add`, `hand`, `done` and `drop` with `ceiling_refused`. Authentication is not refused under a read-only ceiling. No ceiling grants authority.
+
+### Prompt input
+
+Prompt content is read only from `params.prompt`, the ACP v1 array of content blocks.
+
+- `text` blocks contribute their text. `resource_link` blocks contribute `Resource: <name> (<uri>)`. Parts are joined with a newline and trimmed.
+- `resource` blocks (`embeddedContext`) must carry a `uri` and a `text` body. At most 8 per prompt, each at most 256 KiB. They are appended after host expansion as `<file name="...">` blocks and are never scanned for `@path` or `/name` syntax. A body cannot open or close its own block: `<file` and `</file` inside it, in any letter case, are rewritten to `<\file` and `<\/file`. The session records only the typed text as the operator's words, with a note naming the attached files, so a prompt made only of an attached file gives the safety judge and the approval card's `task` no operator message. A `file://` resource is flow-labelled like an `@path` reference. A `blob` resource is refused with `invalid_params`, so a client never believes the model saw a file it did not.
+- `image` blocks need `mimeType` and base64 `data`, at most 4 per prompt. The host decides from the bytes whether it accepts an image, and the client's `mimeType` is carried but not trusted.
+- Audio and unknown block types are refused by the validation below.
+
+Every block is validated before any is read, so a block the server would otherwise drop refuses the whole prompt with `invalid_params` and a message naming `prompt block <index>`. Each block must be an object with a known `type` (`text`, `image`, `resource` or `resource_link`); a text block needs string `text`, a resource link a string `name` and `uri` and a non-negative integer `size` when present, and string-typed fields, `_meta` and `annotations` (audience `user` or `assistant`, numeric `priority`, string `lastModified`) must have their declared types. The image and embedded-resource counts above apply during validation. A prompt with no text and no embedded resource fails `invalid_params`, so an image needs accompanying text. `params.content`, `params.message`, and a bare string `params.prompt` fail the same way, so a client's framing bug fails here as it would against any other ACP agent.
+
+### Streaming updates and stop reasons
+
+A live prompt streams `session/update` notifications of these kinds:
+
+| `sessionUpdate` | Content |
+| --- | --- |
+| `agent_message_chunk`, `agent_thought_chunk` | Text, at most 16 KiB per chunk. A longer delta splits across consecutive chunks and nothing is dropped. No split falls inside a code point. Agent text opens on a blank line after earlier text when a new assistant message or a new text block of the same message starts, live and on replay. |
+| `tool_call`, `tool_call_update` | Tool lifecycle with `name`, `title`, `kind`, `status`, `rawInput`, `rawOutput`, `locations`, `content`. See [Bounds](#bounds). A `finish` call's `tool_call` waits for its end: a `finish` the completion protocol refused (beside other calls, or with no reply text) sends no frame, live or on replay. |
+| `usage_update`, `plan` | Pushed telemetry. See [Live telemetry](#live-telemetry-usage-plan-and-workspace). |
+| `session_info_update` | A new `title`, the workspace snapshot, the memory guardian's state, the active conversation eggs, a startup notice, a runtime notice, or a host status line (context engine status, the thinking clamp, route and model residency, skill activation, the image sidecar, project instructions loaded). |
+| `available_commands_update`, `current_mode_update`, `config_option_update` | Session controls. |
+
+Transcript notices from the engine arrive as `agent_message_chunk` frames marked `_meta["pancode/notice"] = {level, key?}`, where `key` is the notice key its producer tagged (for example `turn.continued` on a yolo continuation). Context engine status lines are not reply text either: an `info` transcript notice that starts with `[context engine] ` (working set, the superseded stage, aging), `PanCode compacted ` (the compaction row) or `compaction would not reduce context;` crosses as a `session_info_update` frame whose `_meta["pancode/notice"]` is `{level: "info", text}`. `/context compact` builds the turn runtime silently, so the once-per-session thinking-level notice does not land in its reply; it appears on the next model turn. The same holds for the other `info` lines the host writes about itself: the line saying the route cannot apply the requested thinking level, and host status lines (an unverified context window, a model loading or unloaded, the gateway routing observation, a skill activated, cleared or replaced, image sidecar processing, project instructions loaded, native compaction falling back). Warnings, errors, recovery narration, queue drops, command output and untagged extension lines stay reply text. Runtime notices (degraded inference, residency collisions, a memory route fallback or flow refusal, quota stress) cross as `session_info_update` frames whose `_meta["pancode/notice"]` is `{level, text, key}`, once per key per session; one raised before a session is bound waits for its next prompt. Startup notices about the project, such as a missing PANCODE.md, are not reply text: they cross once per session, on its first prompt, as `session_info_update` frames whose `_meta["pancode/notice"]` is `{level, text}`, so a client that ignores `_meta` shows a reply carrying only the model's text. A restored session that already holds an operator prompt does not get them again, and their text carries no program-name prefix. Message, thought, notice, and tool-call updates carry `params._meta["pancode/agent"]`, an array that starts with orchestrator attribution and, on a tool-call frame, appends bounded attribution for each delegated agent that call started (at most 16). `user_message_chunk` appears only in branch replay (`session/load`, `switch_turn`, `fork`, and `handoff/commit`).
+
+`session/prompt` settles with the standard ACP stop reasons:
+
+| Outcome | Result |
+| --- | --- |
+| Normal end, or any provider reason without an ACP equivalent | `end_turn` |
+| Client cancel, or abort | `cancelled` |
+| Refusal | `refusal` |
+| Output length | `max_tokens` |
+| More than 128 tool starts in one prompt | `max_turn_requests` |
+| The loop guard stopped the turn (tool-call ceiling or identical-call loop) and nothing continued it | `max_turn_requests` |
+| Provider or engine failure | no stop reason; the request fails `turn_failed` |
+| Permission ceiling won | no stop reason; the request fails `permission_expired` |
+
+ACP has no error stop reason, so a failed turn fails the request instead. The response is `{stopReason, _meta: {"pancode/usage": {quantities?, session?}, "pancode/turn": {model?, target?, ttftMs?, outputTokensPerSecond?}}}`. `model` is the model the turn's newest assistant call reported and `target` the target that call actually ran on. `quantities` holds `input`, `output`, `cacheRead`, `cacheWrite`, `reasoning`, `prompt`, `total`, `usd`, `calls` and `firstToken`. By default each is its display string and `session` is `{quantities}` of display strings, with no `pricedBy` (`AcpCompactUsageMetaSchema` in `src/engine/acp/types.ts`). A client that sent `clientCapabilities._meta["pancode/usage"] = {version: 1}` receives the full form described next, each quantity a read-model quantity `{fact, display, ref}` (`TurnQuantitiesSchema` in `src/core/telemetry/dto.ts`). Each is the read model's sum over the operator turns the prompt ran, the worker runs those turns referenced included, as the footer reads the same turns; `firstToken` covers the first main-agent response alone. In the full form `session` is `{quantities, pricedBy}`: the session's whole spend as `input`, `output`, `cacheRead`, `cacheWrite`, `reasoning`, `total`, `usd` and `calls` quantities, with `pricedBy` counting the priced contributions behind each pricer (`provider`, `target-rates`, `catalog`, `free` and `none`). A fact is measured, estimated, unknown or absent, and a sum keeps those parts apart, so an unknown count or price never reaches a client as zero and `display` is the read model's wording of it. The response waits, for at most 2 seconds, until the read model has folded every call the prompt's runs settled. With no view of the session, because no read model is wired, it is still seeding, or it holds another session, `pancode/usage` is `{}` and nothing is claimed ([live-telemetry.ts](../../src/engine/acp/live-telemetry.ts)).
+
+A prompt PanCode cannot start fails `prompt_not_admitted` with no preceding update. A cancelled or failed turn first synthesizes a `failed` `tool_call_update` for every call that received a `tool_call` and no terminal update, so a client that draws a spinner per call never keeps one running.
+
+### Live telemetry: usage, plan, and workspace
+
+Three frames are pushed on change and never on a timer (`src/engine/acp/live-telemetry.ts`). None counts toward whether a turn produced output, so a prompt PanCode refused is still distinguishable from a model that said nothing.
+
+**`usage_update`**: sent at most once per model response, once after a context fold commits, and again when the telemetry read model folds a batch that changes the session's totals (a batch that leaves the session snapshot unchanged sends nothing); responses that land in the same tick coalesce into one frame, and an identical frame is never resent. It holds `used` and `size` (context tokens used and the window, 0 when unknown), `cost: {amount, currency}` only for a confirmed personal charge: the session's extra user cost in one currency, every contribution measured (a charge the provider reported on a target bound to a personal pay-per-token funding pool); a route-price estimate, an included seat or subscription call, a local call or an unknown leaves it absent, so a session with no funding binding sends no `cost`, and `_meta` with two keys. `used` is the one published context figure, the same one `/context` and the terminal footer read. `pancode/context` is the projected context ledger. `pancode/usage` is `{turn, session}`: `turn` is the running prompt's `quantities` as the prompt response carries them, null between prompts, and `session` is the session's quantities, null while the read model holds no view of this session. By default both are display strings per quantity. With the `pancode/usage` opt-in, `session` is instead the read model's `SessionTelemetryV1` DTO for the session, its own calls and the worker runs it referenced, and its `context.cache` block holds the latest call's `cacheRead`, `cacheWrite` and `input`, and `share` and `lastTurnShare`: the cached share of the session's prompt tokens and of its last turn's, each `{fact, display}` as `pancode telemetry cache` reports it, and, once a resumed session's replayed transcript broke the cache, `replayMismatch`: `{breaks, rePrefilled, firstDivergentSection}`, the number of those breaks, the tokens they prefilled again and the first entry where the latest replay departed from what was sent before (`message[7]:tool`). A final frame precedes the response, and the response repeats that frame's figures, the session totals included, as a snapshot: a batch the read model folds while the response waits on a workspace probe reaches a later frame, not the response. A loaded session re-sends its current meter and plan.
+
+**`plan`**: sent after a tool call settles or a turn settles, only when the task board differs from the last plan sent. ACP plan status has no blocked or dropped state, so a `blocked` task goes out as `pending`, a `cancelled` task is omitted, and every entry has `medium` priority because the board has none. Each entry's `_meta["pancode/plan"]` holds `{id, status, origin, reason}` with the real status. The plan's own `_meta["pancode/plan"]` holds `{version: 1, boardId, title, cancelled, truncated}`. At most 100 entries are sent, and text is cut at 1 KiB.
+
+**Readouts**: with the `pancode/readouts` opt-in, `_pancode/session/readouts` carries `readouts: {autonomy, throughput, skills, retry}`, each null when there is nothing to show, in the terminal's own words (`src/engine/acp/readouts.ts`). `autonomy` is the yolo posture `{level, confinement, osSandbox, label, tone}` and its window `{display, tone, halted, haltDetail?}`; `throughput` is the live rate `{display, estimated, flowing}`; `skills` is `{names, display}` for the skills armed for the next turn; `retry` is `{phase, active, display}` without the provider's error text. A frame follows session open, load and resume, a `session/set_mode` change, and the chat events that move a readout; a frame that only moves the rate waits `minIntervalMs` (250 ms), an identical frame is never resent, and the turn closes with a frame after its last update, with `throughput` and `retry` null, before the prompt response. `sequence` rises by one per frame on the connection. `retry_status` reaches an opted-in client only as `readouts.retry`. While the safety judge holds a call the client has drawn, that call gets a non-terminal `tool_call_update` with `_meta["pancode/admission"]`.
+
+**Workspace**: `_meta["pancode/workspace"] = {version: 1, cwd, isGit, branch, dirty, ahead, behind, remoteUrl, projectType, capturedAt}` rides the session opener responses. After any tool whose kind is not `read`, `search`, or `fetch` settles, PanCode re-probes the Git facts off the loop with at most one probe in flight. A change in those facts (ignoring `capturedAt`) triggers a `session_info_update` carrying the same key. `remoteUrl` has any userinfo removed, fields are null when unknown, and the prompt response waits at most 2 seconds for a probe in flight.
+
+### Trust notice
+
+PanCode withholds authority from project files the operator never approved. The settings, hooks, safety, extension and plugin loaders drop an untrusted or changed `.pancode/` file quietly, so a client whose project-level model "does not work" needs the reason at session start. Each opener response carries `_meta["pancode/trust"] = {ignored: [...]}`. An entry is `{surface, file, verdict, fix}`: `surface` is `settings`, `hooks`, `safety`, `extensions`, or `plugins`; `file` is the project file, which for `extensions` and `plugins` is the install state `.pancode/extensions/state.json` or `.pancode/plugins/state.json`; `verdict` is `untrusted` or `changed`; `fix` is `pancode config trust <surface>`. An entry exists only for a file that is present, so a workspace with no install state reports nothing for that surface, and a surface that is approved or inherited from a PanCode task worktree's origin reports nothing. The list is empty when nothing was ignored. The report is advisory, and a capture failure never fails the opener. The `pancode/trust` capability names the five surfaces and the three methods that report them (`src/engine/acp/trust-notice.ts`).
+
+### Safe settings and targets
+
+`_pancode/settings/get_safe` accepts `{}` and returns exactly:
+
+```json
+{"settings":{"chat":{"target":null,"model":null,"thinkingLevel":"off"},"safety":{"autonomy":"default"}},
+ "editable":["chat.target","chat.model","chat.thinkingLevel","safety.autonomy"]}
+```
+
+The values are illustrative. No other settings leaf, URL, auth fact, credential reference, path, header, or provider text crosses the wire. `_pancode/settings/patch_safe` accepts `{patch}`, a flat object keyed only by the four `editable` strings, and returns the committed projection in the shape above. It validates the whole candidate, then performs one locked settings mutation that persists routing as the future default and updates the process's next-turn routing. A routing patch (`chat.target`, `chat.model`, `chat.thinkingLevel`) also moves the bound session's route and emits a `config_option_update`. An autonomy patch changes only the default for future sessions. The locked writer applies the effective-view delta to the user document and revalidates it with the workspace's project layers, so a project-only target can be selected without copying its URL or descriptor into user settings. A higher-precedence project leaf that would undo the patch fails the write with no partial document. Unknown keys or values are `invalid_params`, and an unknown non-null target adds reason `target-unknown`. A non-null model requires a non-null resulting target. A selected route outside the 128-byte target and 256-byte model bounds makes `get_safe` fail `internal_error`. Both are legal before an opener; the patch fails `prompt_active` during a turn.
+
+`_pancode/targets/list` accepts `{}` and returns `{targets: [{id, runtime, models, isOrchestrator}]}` from configuration and cached state, never a probe. At most 64 targets and 64 models per target are returned, with ids at most 128 bytes, runtime ids 64, and model ids 256. The result is capped to a 240 KiB stable prefix of whole entries, and a cut sets `_meta["pancode/truncated"]: true`. Unsafe stored identifiers are omitted rather than truncated into collisions. `_pancode/targets/probe` accepts exactly `{targetId}` for a configured target and returns `{targetId, healthy, latencyMs, reason, component?}` with `reason` one of `not-configured`, `unreachable`, `unsupported`, `probe-failed`, `component-missing`, or null. With `component-missing`, `component` is the `pancode tools install` id the target's runtime needs (`copilot-sdk` or `claude-sdk`). Provider text is mapped, never copied, and the call spends no model tokens.
+
+### Artifacts
+
+`_pancode/artifacts/list` and `_pancode/artifacts/read` serve the terminal's `/view` artifacts to a client (`src/engine/acp/artifacts.ts`). Both read the providers the overlay reads (`src/domains/session/view-artifacts.ts`), so a client lists the same rows with the same titles and reads the same lines. Titles and subtitles pass through the overlay's sanitizer (control sequences stripped, secrets redacted). Bodies travel as loaded. A protected artifact's load renders its protection record and never the file. The provider module loads on first use.
+
+The `pancode/artifacts` capability is `{version: 1, list, read, categories, perCategory: 200}`. `categories` names the 13 categories a client may request: `message-path`, `accountability`, `evidence`, `run`, `dispatch`, `task-ledger`, `workspace`, `tool-output`, `screenshots`, `protected-artifact`, `compaction`, `prompt-manifest`, and `audit`. The terminal's `transcript` category is excluded because the client already holds the conversation.
+
+`list` accepts `{sessionId, categories?}` and returns `{artifacts, truncated}`, newest first, at most 200 rows per category, with `truncated: true` when any category was cut. A provider that fails is omitted from the list. Each row:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | `<category>/<provider id>`; provider ids are unique only within a category. |
+| `category`, `title` | Title at most 512 bytes. |
+| `subtitle` | Optional, at most 1024 bytes. |
+| `at` | ISO time the artifact was produced, when known. |
+| `sizeBytes` | When known. |
+| `format` | `markdown`, `text`, `json`, or `image` (a `screenshots` row); the format a read is expected to return. The read's own `format` is authoritative. |
+| `protected` | `true` when a read returns the protection record and a refusal. |
+
+`read` accepts `{sessionId, id, offset?, limit?, details?}`. `offset` and `limit` are non-negative integers and `limit` must be positive. `limit` defaults to 2000 lines and is capped at 50000. `details: true` reads the overlay's `i` view, and a request for a view the artifact lacks fails `invalid_params`. The result is a page:
+
+```json
+{"id":"run/7hq2ab","category":"run","title":"...","format":"markdown",
+ "lines":["..."],"offset":0,"totalLines":214,"nextOffset":null,
+ "clippedLines":1,"details":{"format":"json","lineCount":96},"refused":{"reason":"..."}}
+```
+
+`nextOffset` is null on the last page. A page holds at most 512 KiB of JSON-encoded lines; a later page takes a line whole, and only a single line larger than a page is cut, to 64 KiB with a trailing `…`, which `clippedLines` counts. Reassembly is exact only when `clippedLines` is absent. `details` summarizes the details view when one exists and was not requested. `refused` is present on a protected artifact. A `screenshots` read carries `image` (`{mimeType, data}`, base64) on its first page when the picture and the page's lines fit the 512 KiB page together; otherwise the client reads the file at the path its line names. An unknown category, provider, or row fails `artifact_unknown`, and a session other than the bound one fails `session_not_bound`.
+
+### Extension method projections
+
+The remaining `_pancode/*` methods project terminal views as bounded read models. Text fields are control-character-stripped and cut at the stated byte limits.
+
+| Method | Request | Result |
+| --- | --- | --- |
+| `_pancode/session/board` | `{sessionId}` | `{version: 1, operatorTasks, plan, decisions, memory, truncated}`. Lists hold at most 100 items and text at most 1 KiB. It reads only; operator tasks change through the `tasks` command. |
+| `_pancode/decisions/supersede` | `{sessionId, interviewId, key, correction?}` | `{status, correctionTurn?}` or `{status: "refused", reason}`. Idle only. `correction` is at most 2048 bytes and non-blank. The correction turn is returned for the client to send as a prompt. |
+| `_pancode/memory/propose` | `{sessionId, entryId, scope: "repo" or "global", acknowledgeGlobal?}` | `{status: "proposed" or "existing", recordId}`. Global scope without `acknowledgeGlobal: true` returns `{status: "needs_acknowledgement"}`. A proposal the memory domain rejects returns `{status: "refused", reason}`. A proposal is a candidate for review, never an approval. |
+| `_pancode/session/snapshots` | `{sessionId}` | `{snapshots, truncated}`, newest first, at most 100. A row is `{n, at, reason, tool?, turnId?, differs, skipped}`; `differs` counts files that differ from the workspace now, or is null when that could not be read. |
+| `_pancode/session/snapshot_preview` | `{sessionId, n}` | `{kind: "plan", n, restore, remove, kept, refs, truncated}` or `{kind: "unavailable", reason}`. Each path list holds at most 500 entries; `kept` rows are `{path, why}`, `refs` rows `{kind, label, state, recover}`. |
+| `_pancode/session/snapshot_restore` | `{sessionId, n}` | `{kind: "restored", n, undo, restored, removed, kept, failed, refs, truncated}`, `{kind: "unavailable", reason}` or `{kind: "failed", reason, undo}`; `undo` is the snapshot taken first. Idle only (`prompt_active`). |
+| `_pancode/session/tree` | `{sessionId}` | `{version: 1, sessionId, leafId, parentSessionId, parentTurnId, nodes, truncated}`. At most 400 nodes, active path kept whole. A node is `{id, parentId, kind, at, label, preview, active, selectable}` with previews at most 240 bytes. |
+| `_pancode/session/switch_turn` | `{sessionId, turnId}` | `{sessionId, leafId, _meta}` after replaying the branch. Idle only. `turnId` must be selectable (not a compaction or branch row). |
+| `_pancode/session/fork` | `{sessionId, turnId}` | `{sessionId, parentSessionId, parentTurnId, modes, configOptions, _meta}` for the new session, which replaces the hosted one. Idle only. |
+| `_pancode/session/handoff/prepare` | `{sessionId, goal}` | `{status: "ready", handoffId, goal, fromSessionId, document}` or `{status: "refused", level, code, reason}`. `goal` is at most 2048 bytes. The document is at most 128 KiB. Nothing is written. |
+| `_pancode/session/handoff/commit` | `{sessionId, handoffId, document}` | `{status: "committed", sessionId, fromSessionId, warnings, modes, configOptions, _meta}`, or a refusal with the same shape as `prepare`. The reviewed document replaces the draft, and `code: "stale"` marks a conversation that moved since `prepare`. |
+| `_pancode/session/handoff/cancel` | `{sessionId, handoffId}` | `{cancelled}` |
+| `_pancode/jobs/list` | `{sessionId}` | `{jobs}`, at most 32, live jobs first and then the newest finished ones. Each job is `{jobId, revision, state, reason, runner, taskPreview, intervalMs, count, starts, settled, timeoutMs, nextDueAt, deadlineAt, cancelRequested, running, turn, pendingReason, consecutiveFailures, last, delivery, costUsd, costDisplay?, saved, complete}`; `runner` is `main` or `command`, `taskPreview` is the prompt or argv prefix, `last` is `{outcome, summary, truncated}` or null. `costUsd` is the record's running sum, null once any part went unpriced. `costDisplay` is the line `/loop status` prints: the telemetry read model's wording of what every model turn the job ran spent, absent when nothing measured one. Bound session only. A client reads it once after binding and folds `job.changed` events after it. |
+| `_pancode/context/status` | `{sessionId}` | `{version: 1, active, latest}`: the running context operation's latest activity payload, or null, and the newest finished operation from the live event or the session ledger, or null. Bound session only. A context operation itself runs through `commands/invoke` with `command: "context"`. |
+| `_pancode/context/ledger` | `{sessionId}` | The `/context` view: window, used, reserve, free, groups (at most 32), compaction state, and prompt-cache facts. Unknown stays unknown, so a window of 0 and a null percentage travel as they are. |
+| `_pancode/aside/ask` | `{sessionId, question}` | `{status: "answered" or "aborted" or "refused" or "failed", text or reason}`. Question at most 8000 characters. Answers at most 64 KiB. |
+| `_pancode/aside/draft` | `{sessionId, request, count?}` | `{status: "drafted", candidates}` or `{status: "refused"}`. `count` is 1 to 4, default 3. Candidates are labeled `A` to `D`. |
+| `_pancode/aside/cancel` | `{sessionId}` | `{cancelled}` |
+| `_pancode/extensions/list` | `{sessionId}` | `{version: 1, extensions, truncated}`, at most 64, each with a `state` of `eligible`, `shadowed`, `disabled`, `incompatible`, or `invalid`. |
+| `_pancode/extensions/reload` | `{sessionId}` | `{status: "committed", generation, ...}` or `{status: "rejected", reason, generation}`. Idle only. |
+| `_pancode/hub/reload` | `{sessionId}` | `{status: "refreshed", generation, previousGeneration, changed}` or `{status: "failed", error}`. Idle only. |
+| `_pancode/fleet/preview` | `{sessionId, name, vars?, resume?}` | `{status: "ready", name, planHash, stepCount, isolation, waves, budget, truncated, resume?}` or `{status: "refused", diagnostics}`. `isolation` is `worktree` (one task worktree cut from HEAD) or `workspace` (the operator's checkout), and each step reports the scope it runs with, so a worktree playbook's writing steps show `worktree`. At most 64 steps. `vars` holds at most 32 strings. `resume` names a prior fleet root whose successful prefix the run replays; the preview then reports `{fromRunId, replayed}` and marks replayed steps. |
+| `_pancode/fleet/run` | `{sessionId, name, vars?, planHash, resume?}` | `{status: "started", fleetRootId, stepCount}`, `{status: "changed", planHash, reason}` when the fresh plan hash differs from `planHash` (nothing dispatched), or `{status: "failed", reason}`. Idle only. |
+
+Asides run beside a turn in flight over a snapshot of its history and are never a turn, a session entry, or a `session/update`. One aside runs at a time.
+
+### Steering
+
+`_pancode/session/steer` accepts `{sessionId, text, mode?}` with `mode` `next-slot` (the steering queue, the default) or `end-of-turn` (the follow-up queue). It returns `{accepted, queue, refusal?}`. A steer is refused, not accepted silently, when no prompt is active, when the prompt is cancelled, or when the run is not streaming. `interrupt` mode is not admitted because the terminal resubmits a stranded steer as a new prompt, and ACP binds a turn to its request. Steer text is at most 16 KiB and non-blank. `\n`, `\r`, and `\t` are content and every other C0 control is refused rather than stripped, so the model never sees text different from the client's copy.
+
+`_pancode/session/queue` returns `{steer, followUp, entries?}`, with `entries` whenever the host supplies `chat.queueEntries`, even when the other queue-editing callbacks are absent, each at most 64 entries of at most 16 KiB. `queue_clear` drains both queues together, in-flight entries included, as the queue navigator's `a` does in the terminal, and returns `{restored}`, at most 128 texts of at most 16 KiB each; those texts become the client's to resend. When the host supplies `chat.restorableQueuedTexts`, as the chat loop does, the server first reads what a clear would restore without changing either queue. More than 128 entries, or any text over 16 KiB, is refused with `-32602` `queue_too_large` and both queues stay as they were, so the client removes entries one at a time instead. Otherwise every restored text comes back whole. `_pancode/session/interrupt` accepts `{sessionId, reason?}` (at most 256 bytes) and returns `{cancelled, refusal?}`. It cancels only: the outstanding `session/prompt` settles `cancelled` and the next prompt is the client's. It honors the refusal the terminal gives for an attached dispatch or a parked permission ask, and `session/cancel` remains the unconditional stop.
+
+`_pancode/dispatch/steer` accepts `{sessionId, runId, action: "guide" or "cancel", message?}` and returns `{accepted: true}` or `{accepted: false, reason}`. `reason` is one of `dispatch-unavailable`, `fleet-unavailable`, `run-not-active`, `cancel-failed`, `empty-message`, `steering-unsupported`, `no-input-channel`, `input-closed`, `run-terminating`, or `steer-failed`. `cancel` carries no message. Acceptance means the guidance is queued on the worker's stdin, never that it was delivered.
+
+### Queue editing and change notifications
+
+The ACP queue entry is `{id, kind, text, enqueuedAt, pinned}`, with `kind` `steer` or `follow-up`. `_pancode/session/queue_edit` takes `{sessionId, id, op}`. `move` additionally requires `delta: -1 | 1`; `set_kind` requires `kind`; other operations refuse those operands. Operations are `remove`, `restore`, `move`, `set_kind` and `send_now`. Every reply carries `applied` and the current `entries`; `restore` returns the removed entry's text for the client's editor. A missing id returns `stale-entry`, and an impossible move returns `at-edge`. `send_now` requires an active streaming prompt and uses the chat loop's interrupt path, with next-slot delivery when interruption is refused. The reply reports delivery/refusal facts. Clients opting into `pancode/queue` receive `_pancode/session/queue_changed` with `{sessionId, entries}` after enqueue, hand-over, edit and drain ([server.ts](../../src/engine/acp/server.ts)). Lists are capped at 64 entries.
+
+### Operator shell lines
+
+`_pancode/session/shell` takes `{sessionId, command, excludeFromContext?}` and runs the terminal's operator-shell path, shared through [operator-shell.ts](../../src/domains/session/operator-shell.ts). It requires an idle prompt and no other shell/context operation. A read-only ceiling or one withholding `bash` refuses the line before execution. The timeout is 300,000 ms; command text is bounded to 16 KiB. Tool-lifecycle frames carry `_meta["pancode/shell"]` instead of agent attribution. The result includes the durable `turnId`, exit/cancel/timeout facts, output byte count and a bounded 16 KiB output tail. `excludeFromContext` records the line while withholding it from model replay; a failure to label information flow also withholds output and reports `unlabeled`. Session cancel/close can abort the running line. This is an operator action outside model tool admission.
+
+### Opt-in extension events
+
+An opted-in client (see [Client opt-ins](#client-opt-ins)) receives `_pancode/event` notifications `{version, workspaceInstanceId, sessionId, turnId, sequence, kind, terminal, payload, _meta?}`. `workspaceInstanceId` is one opaque process UUID advertised at initialize, and `sequence` increases monotonically within it. Without a recognized opt-in no event is sent. Every `kind` is the literal `EVENTS` name of the live event it forwards, never a renamed alias, so a captured frame names its producer. An event whose identity or taxonomy cannot be represented safely is dropped rather than forwarded under a repaired one.
+
+| Kind | Payload | `terminal` |
+| --- | --- | --- |
+| `safety.loop_blocked` | `{toolCallId: null, tool, repeatCount, blocksThisTurn, budget, disposition, interrupted, shape: null}`. `disposition` is `block`, `lockout`, or `stop`. | `false` |
+| `run.enqueued`, `run.started` | `{runId, agentId, taskPreview, node, origin, attempt}`. `taskPreview` is a control-stripped prefix of at most 160 bytes. | `false` |
+| `run.progressed` | `{runId, agentId, progressCount, truncated}`. The frame after the 256th for a run carries `truncated: true`, and later ones are dropped. | `false` |
+| `run.completed` | `{runId, agentId, outcome, outcomeCode, outcomeDetail, durationMs, totalTokens, apiCalls, tokenDisplay}` with `_meta["pancode/run-result"]`. `totalTokens` and `apiCalls` are the facts the run settled, null when the run recorded none, and `tokenDisplay` is the canonical wording of `totalTokens`, so an unknown count never reads as a counted one. A replayed frame takes them from the run's settled record. | `true` |
+| `run.failed` | `{runId, agentId, outcome, reason, outcomeCode, outcomeDetail, durationMs}` with `_meta["pancode/run-result"]`, plus `totalTokens`, `apiCalls` and `tokenDisplay` as above when the run reported its usage. | `true` |
+| `evidence.assessed` | `{runId, firstPassSuccess, findingCount, tags}`. At most 32 tags of 64 bytes. | `false` |
+| `compaction.ended` | `{trigger, outcome?}` | `false` |
+| `context.activity_changed` | `{kind, phase, status, at, message, operation, current?, total?, detail?, stages?, timing?}` for a context operation (`/compact`, recall, init, refresh, reset and the like) of the bound session and workspace. `message` and `detail` are at most 1024 bytes. `operation` carries its id, kind, origin, reason, start time and, once settled, `outcome`, `facts`, `warnings` and runtime-estimated `tokens`. | `true` once `operation.outcome` is set |
+| `context.warning_raised` | `{warning}`, a control-stripped sentence of at most 256 bytes, or `null` for the clearing edge. | `false` |
+| `safety.tool_budget_exceeded` | `{tool, callsThisTurn, softBudget, hardCeiling, interrupted}` | `true` exactly when `interrupted` |
+| `provider.health_changed` | `{targetId, status, available, latencyMs}`. `status` is `healthy`, `degraded`, `unknown`, or `down`. | `false` |
+| `run.scope_notice_raised` | `{code, level, message}`. `code` is one of `write_root_dot_unconfined`, `write_roots_checks_withheld`, `write_roots_overlap`, `typed_scope_replaced_inferred_paths`, `inferred_scope_parent_tokens`, `mcp_sandbox_no_network`, `sister_handbook_untrusted`, `sister_handbook_pending`, `peer_instructions_stale`, `worker_judge_withheld`, `worker_merged`. `level` is `warning`, except that `worker_merged`, sent when a worker's change merged onto the operator's branch, is `info` and its message reads `<agent> <run> merged <sha> onto <branch>`. `message` is at most 1024 bytes. | `false` |
+| `job.changed` | One job record as `_pancode/jobs/list` returns it. A scheduled `/loop` turn re-sends the record with `turn: true` when its first frame opens and `turn: false` when it releases. | `true` when the job is complete |
+
+`run.*` ids are at most 128 bytes. The event forwarder tracks at most 512 live runs and evicts the oldest. The exact task and raw progress or failure prose never cross; `outcomeDetail` is the only free text and is at most 2048 bytes. `safety.loop_blocked` and `safety.tool_budget_exceeded` fire only during the hosted active prompt, since both name per-turn budgets. The loop detector fires before the blocked call executes, so no executed tool-call id exists and `toolCallId` and `shape` stay null rather than fabricated. `evidence.assessed` precedes the run's terminal event, because the run's assessment is journaled before its seal; the finding prose stays in the run scope and never crosses. `compaction.ended` omits the producer timestamp because a client re-stamps on arrival. `context.warning_raised` is a transition channel, so `{warning: null}` crosses as itself; dropping it would leave a client's banner up forever. `provider.health_changed` leaves `lastError` behind because provider prose quotes URLs and response bodies.
+
+#### Run result facts on terminal dispatch frames
+
+A `run.completed` or `run.failed` frame carries `_meta["pancode/run-result"]`, the facts of the run's settled record, read through the read model's run DTO over `<state>/telemetry/runs/<runId>/` and projected by the same readers the TUI worker footer uses (`src/domains/dispatch/run-result-facts.ts`). The dispatch domain journals `run.settled` before it publishes the terminal event, so a live read finds it. The shape is:
+
+| Field | Value |
+| --- | --- |
+| `runId` | The run id. |
+| `outcome` | The settled outcome, or null. |
+| `contract` | Result-contract conformance: `pass`, `fail`, `not-reached`, `unmeasured` (the run had no typed contract), or null when the settled record is silent. |
+| `contractKind` | `debugger-report`, `verifier-report`, `research-report`, `world-knowledge-report`, `scout-report`, `review-verdict`, or null. |
+| `trust` | The artifact-integrity word the footer prints for the run's seal verdict, or null when the run has no trust status. |
+| `validation` | The footer's validation clause, or null. |
+| `tokens`, `tokensDisplay`, `elapsedMs` | The run's token count, the read model's wording of it, and its elapsed time, each null when the settled record lacks it. |
+| `placement` | `{mode: "current" or "worktree", branch?, changedPaths?}` for an external peer run, otherwise null. |
+| `unavailable` | `true` when the run has not settled. On a live frame every other field is then null. |
+
+A missing or unreadable run scope yields `unavailable: true` and never fails the frame. Whenever a branch replays to the client (`session/load`, `switch_turn`, `fork`, `handoff/commit`), the same frames replay for every dispatch run on the branch, with `_meta["pancode/replay"] = {run: true}` beside the `pancode/run-result` key. Replay falls back to the run's `runs.json` row when the run never settled. The frame then keeps the row's `outcome` and reports `unavailable: true` when the row carries its own explanation. A run the ledger shows as still open in another process has no terminal frame yet and is skipped. A replayed run whose outcome is `succeeded` replays as `run.completed`, any other outcome as `run.failed`.
+
+### Bounds
+
+Every frame the server writes is bounded (`src/engine/acp/types.ts` and its `types-*.ts` modules, `src/engine/acp/server-bounds.ts`). Every cap counts UTF-8 bytes, which is what the peer's read buffer spends.
+
+- Tool `content` text is truncated at 16 KiB with a trailing `…[truncated]`. A settled call's content also carries the result's images as `image` blocks (at most 4, within 256 KiB of base64 per update; on a route that takes no image, the display copies the browser tool made) and each screenshot file the result names as a `resource_link`; `rawOutput` keeps `{type: "image", mimeType, omitted: true}` in place of the bytes. Replay sends the same content. Live tool titles are at most 512 bytes in `tool_call`, `tool_call_update`, and `session/request_permission`. Replay titles keep a stricter 64-byte stored bound.
+- Tool progress is off unless the client opts in. When on it is bounded three ways: at most 64 non-terminal `tool_call_update` frames per `toolCallId` per turn, at least 250 ms between two frames for one id, and a snapshot identical to the previous one is never resent. Each frame's text is the tool's cumulative output, bounded to 16 KiB, so the client replaces the row's content rather than appending. A frame naming a `toolCallId` with no open call is dropped, and the terminal update still arrives exactly once, last.
+- Every string inside `rawInput` and `rawOutput` is truncated at 4 KiB with the same marker, with one path-aware exception: `rawOutput.result.details.diff` is bounded at 28 KiB (`ACP_MAX_RAW_RECORD_BYTES` minus one generic string budget). A top-level `diff`, an array member, and every sibling string stay at 4 KiB. The walk stops at depth 8 and replaces anything deeper with `"[depth]"`. If the bounded record still serializes past 32 KiB it becomes `{"truncated": true, "bytes": <length of the record before bounding>}`.
+- Every `toolCallId` is at most 128 bytes. An engine id that is longer, missing, or already claimed this turn travels under a per-turn `pancode-tool-<n>` alias, and the same alias serves the call's `tool_call`, `tool_call_update`, and permission request. Identity runs one way: an engine id that starts a second call mints a fresh alias, and an end names only its own engine id's calls. An end for an id the turn never started is dropped and reported on stderr instead of borrowing another call's id. An end with no engine id binds to the most recently opened call still running, then to the most recently emitted call of the turn. Every wire id receives exactly one terminal update, and a duplicate or late end is dropped. Nothing on the end path mints an id, so an update never announces a call the client never saw start.
+- `locations` carries the resolved absolute path for the path-bearing tools (`read`, `write`, `edit`, `ls`, `grep`, `find`) when the arguments name one, at most 4 KiB and deliberately not realpath'ed, since an `edit` or `write` target may not exist yet. The field is omitted rather than sent as `null` or `[]`. The permission request reuses the exact bounded snapshot.
+- A live prompt emits at most 128 `tool_call` starts. The 129th start emits no call, cancels the turn, suppresses later chat events, fails every open call, and resolves `session/prompt` with `max_turn_requests`. PanCode's configurable execution guard is a separate engine policy.
+
+### Session cost ceiling stops
+
+When a request reaches the session cost ceiling (`safety.limits.sessionCostUsd`) during a prompt, the request parks inside that prompt, and the stop crosses as one `agent_message_chunk` ([budget-notice.ts](../../src/engine/acp/budget-notice.ts)). The text is the same notice the terminal shows, under `_meta["pancode/notice"] = {level}` with `warning` at the ceiling and `error` past it. Beside it, `_meta["pancode/budget"]` carries `{version: 1, level, currentUsd, ceilingUsd, contextTokens, raiseToUsd, currentDisplay, ceilingDisplay, raiseDisplay, setting: "safety.limits.sessionCostUsd"}`. The three display fields are the canonical renderer's wording, and `currentDisplay` alone says when the spend was priced as an estimate or partly unpriced. `level` is `at` or `over`, `contextTokens` is the context the next call would send or null, and `raiseToUsd` is a suggested new ceiling above the current spend, so a client can offer the raise instead of showing a silent turn. The parked request re-reads the ceiling while it waits, so raising `safety.limits.sessionCostUsd` in the operator's settings resumes it; `settings/patch_safe` cannot write that key. A stop between prompts has no turn to belong to and sends nothing. The stop is also written to the ledger as a `budgetBlock` entry, and branch replay re-sends the same frame, so a loaded session shows the stop it ended on.
+
+### Admission failure
+
+A prompt PanCode cannot start fails `prompt_not_admitted` with zero preceding `session/update` notifications. The one exception is an operator `context-handoff` request in a flow-restricted session: the refusal and its pointer to `/handoff` arrive as a notice `agent_message_chunk`, and the turn ends `end_turn`. `reason` is one of `orchestrator-not-configured`, `target-unknown`, `target-not-configured`, `target-not-found`, `runtime-not-registered`, `model-not-configured`, `chat-unsupported`, `streaming-unsupported`, `context-window-exceeded`, `authentication-required`, or the catch-all `admission-failed`. The engine's runtime-resolution diagnostics are a larger vocabulary, and any reason outside this list is reported as `admission-failed`. No `chat.target` reports `orchestrator-not-configured`, and a target with no `chat.model` reports `model-not-configured`. The message is a sanitized one-line sentence with no settings path, and `authentication-required` carries no environment variable name, credential, or provider text. A failure after admission fails `turn_failed`.
+
+Readiness checks before the first prompt live in the CLI: `paths --json` for home identity, `doctor --json` for installation sanity, and `targets --json [--probe]` for target, auth, and health. `--probe` sends a request to the configured endpoint, so the client decides when that is allowed.
+
+### Attended clients
+
+A person is at the other end of an ACP connection only when the client says so at `initialize`. Two opt-ins under `clientCapabilities._meta` say it, each on its own. A client that advertises neither gets the unattended surface: no `ask_user` tool, no merge card, and a worker permission ask that is not forwarded. The deferred front answers `initialize` before the orchestrator boots, so the tool surface, the session prompt, and the dispatch domain are built from that answer.
+
+| Opt-in | What it turns on |
+| --- | --- |
+| `pancode/interviews` | The `ask_user` tool, the interview guidance in the session prompt, and PanCode's own cards such as the task-worktree merge card. After accepting the opt-in, PanCode echoes `{version: 1, request, cancel}` under `agentCapabilities._meta` only when the payload's `request` is exactly `_pancode/interview/request`. |
+| `pancode/workerPermissions` | A dispatched worker's permission ask is sent as `session/request_permission`, and a main-session ask carries a request id the server withdraws when it abandons the ask. Accepted only when `withdraw` is exactly `_pancode/permission/withdraw`. PanCode echoes `{version: 1, withdraw, timeoutMs?}` under `agentCapabilities._meta`. |
+
+Either opt-in may carry `timeoutMs`, a whole number of milliseconds from 1 through `2147483647`. On `pancode/interviews` it is the window of every interview round; on `pancode/workerPermissions` it is the window of every `session/request_permission`, main-session and worker asks alike. It replaces the configured default (`integrations.externalAgents.defaults.permissionTimeoutMs`) but never an explicit `--permission-timeout`, and the echo names the value applied, which is the flag's when one was passed. Any other value refuses that whole opt-in. A remote person often answers minutes later, so a client sets the window it can honour.
+
+**Interviews.** A round is the server-to-client request `_pancode/interview/request` with `{sessionId, interviewId, questions, _meta}`. `_meta["pancode/interview"]` is `{version: 1, operatorOnly, recommended}`, and `operatorOnly` is true when any question in the round is marked `operator_only`: the operator's own choice, which no agent or policy answers, so a client can label the card the way the TUI does. `recommended` holds one entry per wire question: the index into that question's `options` the host recommends (PanCode's preselected option, else the one an absent operator gets), or `null` when the question has no options or that option did not survive the 16-option cut. It rides in `_meta` because a client that validates the question shape closed would refuse an unknown option field. It carries one to four questions, each `{question, header?, options?, multi_select?}` with at most 16 options. Question text is cut to 8192 characters, a header to 128, an option label to 512, and a description to 2048, after control characters are stripped. The reply is `{answers: [{question, answer, options?, value?}], cancelled?}`. The server checks it against the questions offered: one answer per question in order, each `question` equal to the offered text, a non-empty `answer` of at most 16384 characters, no `cancelled` other than `false`, and any `options` limited to offered labels, one unless the question is `multi_select`, with an `answer` that joins the chosen labels and any typed `value` with `; `. A cancelled reply, a request the client refuses, a reply that fails these checks, a wait that outlives the interview window, and a turn abort all read as the operator's cancel, except that an `operatorOnly` round whose wait runs out closes unanswered and `ask_user` picks nothing for it. A turn abort and a session close cancel a round still waiting, and each sends `_pancode/interview/cancel` with `{sessionId, interviewId}`.
+
+**Worker permission asks.** A worker ask that needs a person (`escalation: true` on the bus: an ask under `fleet.permissions.mode: escalate`, an operator-authority rail, or an ask the main agent forwarded below `yolo`) goes out as `session/request_permission`. Under the default `fleet.permissions.mode: judge`, an ordinary worker ask goes to the main session's safety judge instead and never reaches the client. It is bound to the session that owns the active turn, and an ask from any other session is ignored. It binds to the open tool call that spawned the run, else the newest open tool call, and retries the binding every 200 ms until the ask's own window closes, because the model is often between calls when a worker asks. The window is the ask's `timeoutMs` capped by the server's permission window (`--permission-timeout`, else the client's negotiated `timeoutMs`, else the configured default), and it covers the wait for the client's answer. If no tool call opens in that window the ask stays with the worker's timeout fallback and nothing is denied in the operator's name. An answer that is not one of the three offered options, or that arrives after the window closed, is withdrawn rather than read as a denial. The ask shares the one outstanding-request queue with main-agent asks. `allow-once` approves the worker, the other two offered options deny it, and `reject-and-stop` also cancels the active turn.
+
+**Unanswered worker asks.** A worker ask settled with no one answering it, either refused by policy because nobody could be asked (`decidedBy: policy:no-operator`, which is every ask when the client did not opt into `pancode/workerPermissions`) or lapsed when its window closed (`timeout`), crosses as one warning `agent_message_chunk` marked `_meta["pancode/notice"] = {level: "warning"}` in the owning session's active turn. It names the run, the tool and its action class. A lapsed ask also names the fallback that applied (`deny`, or `fail`, which ends the run). A policy refusal says nobody was asked, and on a client without the opt-in it adds that worker asks cannot reach this client. It is sent once per run and tool (the connection remembers 256 such pairs, then starts over), built only from bounded identifiers; the worker's own reason text is not sent. With no active turn it goes to diagnostics only, and the run's outcome still records the denial.
+
+The request's `_meta` carries `pancode/decision` with `origin: {kind: "worker", agentId, runId}` and `pancode/workerAsk` holding `{version: 1, requestId, requestedBy, agentId, approvalAuthority?, forwardedByMain, fallback, timeoutMs?}`. `approvalAuthority` is `operator` for a rail only a person clears and `main` for an ordinary ask. Only identifiers and enums appear, so no worker prose reaches it. When the worker settles the ask first (it timed out, its run ended, or its owner revoked it), or the server stops waiting, PanCode sends the notification `_pancode/permission/withdraw` with `{sessionId, requestId}`, because the wire cannot cancel one request and a card left on screen would make the client refuse the next approval as a second pending one.
+
+### Permission requests
+
+At autonomy `default` the main session's safety judge reviews a main-agent ask before it parks, so the client is asked only when the judge gives no verdict, has escalated after repeated blocks, or the ask is one only the operator answers ([Safety Model](safety-model.md#the-safety-judge)). The TUI's unattended timeout does not apply here; `--permission-timeout`, else the client's negotiated `timeoutMs`, else the configured default bounds the wait.
+
+For a client that opted into `pancode/workerPermissions`, a main-session ask also carries `_meta["pancode/permissionAsk"] = {version: 1, requestId}`. When the server abandons that ask, because its window closed, the prompt was cancelled, the request failed, or the parked call was settled elsewhere (the server polls the park every 250 ms while the request is out), it sends `_pancode/permission/withdraw` with `{sessionId, requestId}`, as it does for worker asks. A client without the opt-in sees the request without that key and gets no withdrawal.
+
+The outbound `session/request_permission` carries `{sessionId, toolCall: {toolCallId, title, kind, status, rawInput, locations?}, options}`. `toolCallId` is always the id of a `tool_call` the client already rendered and has not seen finish. The title names the call, never folded into `rawInput`: a shell call is titled by its command and any other call as `tool: target`, scrubbed of credentials and clipped at 200 characters; a gateway call is titled by the capability it reaches, and a chain by `gateway chain(<capabilities>)`. The `tool_call` and `tool_call_update` cards use the same title, so a replayed card matches the live one. `status` is `pending` for a main-agent ask and `in_progress` for a forwarded worker ask.
+
+Options are `allow-once` (kind `allow_once`), `reject-once` (kind `reject_once`), and `reject-and-stop` (kind `reject_once`), in that order; an outward call's allow option reads `Approve this outward call once`. A sandbox escape adds a fourth option, `allow-session-scope` (kind `allow_always`), labelled with the scope it grants. Only the exact `optionId: "allow-once"` under `outcome: "selected"` grants. `reject-once` denies the presented request and the model sees the denial as the tool result. `reject-and-stop` denies every other parked request from the turn and aborts the prompt, which settles `cancelled`. `outcome: "cancelled"` from the client aborts the prompt the same way. A reply that is neither `cancelled` nor `selected` with one of the offered option ids is malformed: the request is denied with `decidedBy: "error"`, every queued request from the turn is resolved the same way, and the run stops, so a client cannot mint `allow-always`; `allow-session-scope` is accepted only on a request that offered it. At most one request is outstanding and the queue is serial. Transport loss denies every queued request and cancels the parked calls. `session/cancel` while a request is outstanding stops the server waiting on it, cancels the parked tool, and settles the prompt `cancelled`; a late answer is ignored.
+
+`params._meta["pancode/decision"]` carries the classification the server already computed to pick option labels: `{version: 1, tier, tierLabel, title, semanticToken, authorizationCopy, consequenceCopy, reversibilityCopy, requestedByCopy, actionClass, axis, origin, exposure, affectedScope, reversibility, target?, consequenceLines?, mutation?, task?}`. Without it a client would re-derive a tier and a consequence from a tool name, which is a second and worse classifier. `tier` is `conversation`, `workspace`, `outward`, `safety-net`, `system`, or `worker`. `semanticToken` is `accent`, `action`, or `warning`. `target` is a one-line allowlisted render of the arguments, the same summary the terminal card shows ([approval cards](safety-model.md#approval-cards)). `consequenceLines` appears for a bash ask: at most nine host-written sentences, one per step of the command, the text the terminal card shows as its Effect row. `mutation` appears for a main-agent `write` or `edit` ask: `{kind, bytes, replacements, digest}`, the size of the proposed content or of the replacement text, the number of replacements (one for a write), and the first 16 hex digits of a SHA-256 over the call's canonical arguments. These are the facts on the terminal card's mutation row; the text itself travels only in `rawInput`. A forwarded worker ask has no `mutation`, because the worker keeps its arguments. `task` appears when the session ledger holds a message the operator typed: `{text, via?}`, the newest such message cut to 240 characters, with `via` naming the machine origin of the asking turn (`job <id>`, `continuation <n>`, or another origin such as a peer pane or a yolo resume, cut to 80 characters) when that turn is not the operator's own. Every string is control-stripped and at most 512 bytes, and no model-authored prose reaches this record.
+
+A sealed plan whose every task is a read-only run on this machine raises no permission request. A permission request for any other plan-scale dispatch also carries `_meta["pancode/dispatchPlan"] = {version: 1, topology, taskCount, planScale, hash, costCeilingUsd?, costCeilingDisplay?, deadlineMs?, tasks, truncated}`. The `hash` is the plan hash a plan-scale run seals. `tasks` holds at most 32 entries of `{agent, task, role?, position?, target?, model?, node?, nodeKind?, worktree?, apply?, stepId?, dependencies, wave?}`, with tasks cut at 1024 bytes, fields at 256, and at most 8 dependencies. The request's title and its `pancode/decision` target name the plan as the terminal card does, such as `2 workers run in parallel`, and its authorization sentence counts the workers one approval starts.
+
+<details>
+<summary>How a request binds to a tool call, and what failing closed does</summary>
+
+Binding is lookup-only. No id is minted here, because asking about an id the client never received put an approval on a call nobody could identify.
+
+| Engine supplies | Binds to |
+| --- | --- |
+| An id matching one still-open call this turn emitted | That call. |
+| An id matching several still-open calls, because the engine reused it | The most recently opened of them. |
+| No id, with exactly one open call this turn | That call. |
+| Anything else: an id nothing was emitted for, an id whose calls all completed, zero open calls, or several open calls with no id to choose between them | Nothing. It fails closed. |
+
+Failing closed means the client is never asked, no `session/request_permission` frame is written, the parked call is cancelled, and the resolution is recorded as denied with `decidedBy: "error"` and the reason `permission request has no bindable tool call`.
+
+`rawInput` and `locations` are the stored snapshot of the bound call's `tool_call` update, replayed byte for byte and never recomputed, so a client can diff the call it shows against the call it is asked to approve and find nothing. The snapshot is taken when the `tool_call` is emitted and keyed by wire id, because a tool's `prepareAdmissionArguments` may rewrite a relative path or attach a prepared artifact before the safety net sees the call.
+
+</details>
+
+A server timeout differs from a client answer. When `--permission-timeout` wins, every permission still parked for the turn is internally resolved as `expired`, the registry calls are cancelled only to unwind execution, the chat loop is aborted, later tool and message events from that unwind are suppressed, and `session/prompt` fails `permission_expired`. The client never sees a fabricated human denial or model prose reacting to one. A literal `reject-once` stays an ordinary denial the model may observe.
+
+### Cancel, close, and shutdown
+
+`session/cancel` is idempotent while a prompt is active; its request form `_pancode/session/cancel` answers `{}`. As a notification it is dropped silently when the connection is uninitialized or the session is unknown, because it has no reply channel. `session/close` cancels an active prompt and waits for its writer to settle before it closes the durable session. Before `session/close`, a fork (`session/fork` or `_pancode/session/fork`) or a handoff commit with a non-empty reviewed document closes the hosted session's ledger, the server checkpoints that live session with reason `close`, `fork` or `handoff`, so its `meta.json` records why the ledger closed. A failed checkpoint is written to stderr as `[pancode:acp] <reason> checkpoint failed: <message>` and the close goes on. It also aborts that session's running side question or draft and waits for it to settle (at most 5 seconds), and waits for a running context command or shell line. A side question, draft or shell line that names a session while it is closing fails `session_unknown`. Closing an already-closed id returns `{}`. On stdin EOF or a transport error the pending outbound requests fail, the active prompt is cancelled, any side question or draft is aborted, and the permission bridge is unregistered. The server then waits for the prompt handler, a running shell line, a context command and the side round to settle (at most 5 seconds together) before it exits 0, so no session write lands after the session domain stops.
+
+## Result and update metadata keys
+
+Per-message `_meta` keys, beyond the capability keys above. The pushed telemetry frames (`usage_update`, `plan`, `session_info_update`) carry their `_meta` on the update object itself. Attribution, notice, and replay keys ride `session/update` `params._meta`.
+
+| Key | Where | Payload |
+| --- | --- | --- |
+| `pancode/session` | opener, `switch_turn`, `fork`, and `handoff/commit` results | `{sessionId, target, model, autonomy, createdAt, resumed, replayed?}`; on a fork also `parentClosed: true`, `replayFailed: true` when its replay failed, and on `session/fork` the `parentSessionId` and `parentTurnId`. A `config_option_update` carries `{target, model}` only. |
+| `pancode/workspace` | opener results, `session_info_update` update | Workspace facts. |
+| `pancode/trust` | opener and `_pancode/session/trust` results | `{ignored}`. |
+| `pancode/ceiling` | opener and prompt results | Applied capability ceiling. |
+| `pancode/shell` | operator-shell updates | `{version: 1, excludeFromContext}`. |
+| `pancode/models` | opener, fork, and `handoff/commit` results | `{currentModelId, availableModels: [{modelId, name}]}` when a model is selected. |
+| `pancode/thinkingLevels` | `model` config option values | The model's supported thinking levels. |
+| `pancode/usage` | prompt result, `usage_update` update, last replayed frame of a turn | The prompt's turn quantities and the session totals when the read model has the session: display strings by default, read-model quantities and the session DTO for a client that opted into `pancode/usage`. |
+| `pancode/turn` | prompt result; replayed updates | The reported model and the target that served it, time to first token and output tokens per second. Replay carries only `model` and `target`. |
+| `pancode/admission` | non-terminal `tool_call_update` of a drawn call, with the `pancode/readouts` opt-in | `{version: 1, state: "judging", display}` while the safety judge reviews the call, then `{version: 1, state: "admitted"}`. |
+| `pancode/toolTiming` | terminal `tool_call_update`, live and replayed | `{durationMs}`: the engine's span for the call with any permission wait excluded; absent when the engine or the ledger has none. A dispatch the host runs for `/council` reports the span of its whole registry call instead, so any approval wait is included. |
+| `pancode/context` | `usage_update` update | The projected context ledger. |
+| `pancode/plan` | `plan` update and each entry | Real task status, board identity, and omitted counts. |
+| `pancode/agent` | message, thought, notice, and tool-call `session/update` frames | Orchestrator attribution plus delegated agents. |
+| `pancode/notice` | `agent_message_chunk`, `session_info_update`, `thinkingLevel` config option | `{level, key?}` on a transcript notice; `{level: "info", text}` on a replayed compaction and on the `thinkingLevel` option when the route runs another level; `{level, text}` on a `session_info_update` carrying a startup notice (for example a missing PANCODE.md), sent once per session on its first prompt, or a host status line; `{level, text, key}` on a runtime notice. |
+| `pancode/interview` | `_pancode/interview/request` params | `{version: 1, operatorOnly, recommended}`. |
+| `pancode/replay` | replayed updates and events | `{turn, stopReason?, startedAt?, finishedAt?}` on history, `{run: true}` on a replayed dispatch frame; absent on live frames. |
+| `pancode/run-result` | `run.completed` and `run.failed` events | Run result facts. |
+| `pancode/decision`, `pancode/workerAsk`, `pancode/dispatchPlan` | `session/request_permission` | Classification, worker provenance, and plan view. |
+| `pancode/permissionAsk` | main-session `session/request_permission`, with the `pancode/workerPermissions` opt-in | `{version: 1, requestId}`, the id a later `_pancode/permission/withdraw` names. |
+| `pancode/truncated` | `targets/list` result | `true` only when the byte budget omitted an entry. |
+| `pancode/report` | `commands/invoke` result of a `report` command | `{draftId, state}`: the draft the reply is about and its outbox state. |
+| `pancode/error` | `error.data._meta` | `{version, code, reason?, component?, modelSelection?}`. |
+| `pancode/budget` | `agent_message_chunk` carrying a session cost ceiling stop, live and replayed | `{version: 1, level, currentUsd, ceilingUsd, contextTokens, raiseToUsd, currentDisplay, ceilingDisplay, raiseDisplay, setting}`. |
+| `pancode/memory` | `session_info_update` update | `{state}` of the memory guardian, sent when it changes. |
+| `pancode/eggs` | `session_info_update` update | The ids of the session's active conversation eggs (`/eggs`), sent when they change. |
+
+## Tool presentation and outbound delegation governance
+
+The hosted server presents ordinary PanCode tool-registry activity to its client. Separately, when PanCode delegates to an external ACP peer, it mediates that peer's permission requests before they can affect the workspace.
+
+### Canonical tool mapping
+
+The hosted server maps PanCode tool names onto the closed ACP `ToolKind` enum (`toolKind` in `src/engine/acp/server-tool-updates.ts`). The kind follows the capability a gateway call reaches.
+
+| PanCode tool | ACP `ToolKind` |
+| :--- | :--- |
+| `read`, `ls`, `context`, `monitor` | `read` |
+| `write`, `edit`, `artifact` | `edit` |
+| `grep`, `find`, `code_nav` | `search` |
+| `bash`, `verify` | `execute` |
+| `web_fetch` | `fetch` |
+| `git`, `dispatch`, `steer`, and every other tool (`web_read`, `tasks`, `ledger`, `panes`, `ask_user`, `run_script`, and `mcp_acp_*` tools) | `other` |
+
+### Outbound non-stall permission mediation
+
+`src/engine/acp/adapter.ts` constructs `AcpToolMediator` when PanCode acts as an ACP client for an outbound delegation. Under `pancode-policy` governance:
+
+1. Tool calls evaluate through the [safety policy engine](safety-model.md), using the shared admission evaluator that native and SDK workers use. Raw inputs are mapped to canonical tools by tool name, ACP `kind`, or the shape of `rawInput` (a command, a pattern, a path, a URL), so a peer that omits `kind` is still classified instead of blanket-denied.
+2. The mediator uses default autonomy for every delegated peer. If the safety net or default autonomy yields an `ask` verdict, it resolves the ask as a non-stall denial, because a delegation has no operator to answer. A read-only delegation is refused before launch, because a peer can write without asking (see [Read-only runs](safety-model.md#read-only-runs)).
+3. The mediator denies any canonical tool outside an admitted tool scope when one is supplied. Dispatch supplies none for an ACP delegation, which has no recipe, so the safety net and the read-only rule are the live gates. A tool the mediator cannot classify is denied, and so is a call with malformed mutation targets, with the reason recorded in the delegation's tool-call log (`delegation.toolCallLog`) inside the run's sealed `run-result` object.
+
+An approved call is answered with the peer's `allow_once` option only. PanCode never selects `allow_always`, because it would turn one approval into a standing grant inside the peer. If the peer offers no `allow_once`, the approved call is answered with a reject option and the run records it as denied with that reason. A denied call is answered with `reject_once`, or another reject option when that is all the peer offers. With no usable option the answer is `cancelled`.
+
+`toolGovernance` has three values: `pancode-policy` (the default), `deny-all`, and `agent-managed`. `agent-managed` hands the decision to the peer. It is an explicit operator opt-in, requires `trustedUnmediated: true` on the entry (honored only in user settings, never project settings), and cannot enforce `--read-only`, so admission refuses that combination before it starts the peer.
+
+As a client, PanCode advertises one client capability in `initialize`, `clientCapabilities._meta["pancode/usage"] = {version: 1}`, so a PanCode peer sends each usage quantity's fact for the run's usage to read; an `agy` peer is sent its shim's capabilities instead. It advertises no `fs` or `terminal` capability because it serves no `fs/*` or `terminal/*` method. The only request handler is `session/request_permission`, and the only notification handler is `session/update`. PanCode sends a single text block per `session/prompt` and `mcpServers: []` on `session/new`. When a delegation names a model, PanCode picks it from the peer's first `select` config option in category `model` and sets it with `session/set_config_option`. A thinking level uses the first option in category `thought_level`, or is folded into the model id as `model[level]` when the peer has no such option. A peer without the option cannot take a named model, and the delegation fails before the prompt. If the peer's response reports another current model, the delegation fails. The run result's `delegation.selectedModelId` records the value PanCode selected, or the option's current value when no model was named.
+
+Limits and timing for an outbound run:
+
+- `connectTimeoutMs` bounds `initialize`, `session/new`, and each config request, default 30000. `turnTimeoutMs` bounds the whole turn, default 0 (none). `stallTimeoutMs` hard-terminates a peer that emits no `session/update` for that long, default 300000, 0 or less disabled. All three are per-entry settings under `integrations.externalAgents`.
+- An abort sends `session/cancel` and waits 1 second for the peer, then terminates the peer's process group: SIGTERM, then SIGKILL after 500 ms, then up to 2 seconds to observe exit. A peer that advertises `sessionCapabilities.close` gets `session/close` with a 1 second request timeout on a clean finish. An abort during setup (`initialize`, `session/new` or a config request) ends the run before PanCode sends `session/prompt`, so a cancelled delegation never submits its prompt.
+- The peer runs with a safe child environment. An `env` value of the form `{env:NAME}` resolves at launch from the named variable, and the secret never enters settings or the run's telemetry.
+- Run exit code is 0 only for stop reason `end_turn`. A `cancelled` stop reason, a missing stop reason, a failure the peer streamed as an error line, and any other stop reason end the run with exit 1.
+
+This outbound path is distinct from the hosted server's permission bridge. The hosted server sends `session/request_permission` to its connected client and resumes a parked registry call when the client selects `allow-once`, subject to the timeout and binding rules above.
+
+## Security and boundary guarantees
+
+1. **Autonomy snapshotting.** Autonomy is snapshotted at `session/new`, `session/load`, or `session/resume`. A later global configuration change does not alter the bound remote session's security policy. Only an explicit idle `session/set_mode` or `session/set_config_option` changes its next prompt.
+2. **Metadata namespacing.** PanCode extensions travel only in namespaced `_meta` fields (`pancode/...`), so strict clients such as Zed's serde deserializers never meet an unmapped top-level key.
+3. **No external outcome overrides.** An external ACP process cannot self-assert a terminal outcome code. `worker_final_output_missing`, for one, is enforced at PanCode's trusted finalization seam.
+4. **Closed projections.** Settings, targets, board, tree, ledger, usage, extensions, artifacts, and fleet views are projections with fixed shapes and byte limits. Each projection has its own disclosure contract. The safe settings/targets views omit credentials and provider text; workspace facts include the workspace path, and explicit artifact reads return their selected bodies. These are authenticated client reads, not a blanket path-free wire. The `_pancode/telemetry/*` methods return the read model's DTOs, whose shapes are `TELEMETRY_DTO_SCHEMAS` in `src/core/telemetry/dto.ts`; only `calls` has a bound, 1,000 rows.
+
+## Delegation peers in the transcript
+
+In the other direction PanCode is an ACP client. `/run <agent-id> <task>` naming an external agent, and any dispatch to an agent id configured under `integrations.externalAgents.entries` run the task on an external peer such as `claude-code`, `codex`, or `opencode`. PanCode provides pinned outbound ACP bridge recipes for Claude Code (`@agentclientprotocol/claude-agent-acp`) and Codex (`@agentclientprotocol/codex-acp`) and uses the native `opencode acp` and `agy acp` of OpenCode and the Antigravity CLI. The Pi integration has no built-in ACP recipe. Managed headless runtimes and Herdr pane handoffs are described in the [interoperability guide](../guide/interop.md#delegate-work-to-an-installed-coding-agent).
+
+An `agy acp` delegation has its own shims ([antigravity-shims.ts](../../src/engine/acp/antigravity-shims.ts)). The adapter refuses `agy` older than 1.5.1, splits a `<model>-<level>` id into the model and thinking level `agy` announces as session config options ([peer-config-options.ts](../../src/engine/acp/peer-config-options.ts)), sends a steer as a second `session/prompt` in the running turn, and routes an `interaction_*` permission request that is a fixed-choice question to the operator instead of the tool mediator. A tool approval is rewritten before the mediator judges it: `run_command` becomes the shell command it runs and `run_workflow` the inline script. After each turn the adapter reads `agy`'s per-conversation store read-only for failures the wire never carried, such as a quota exhaustion ([antigravity-sideband.ts](../../src/engine/acp/antigravity-sideband.ts)). The operator-facing behavior is in the [interoperability guide](../guide/interop.md#antigravity-cli-over-acp).
+
+A delegated peer is a worker like any other on screen. The adapter maps the peer's `agent_message_chunk` and thought chunks onto the same dispatch event stream a local PanCode worker publishes, so the peer's answer renders as the same attributed block with the same fold behavior, the same `--share` and `/fleet share` path into the main agent's context, and the same replay from its sealed run record. A peer's `plan` update surfaces as a plan event. There is no ACP-specific UI path.
+
+The header is where the difference shows. A local PanCode worker names the target and model it ran on. A peer runs behind someone else's process and identifies the protocol used to reach it, so its header carries `(acp)` in place of a route, for example `◇ codex (acp) · run 7hq2ab` for an operator-started run. Its header ends with the outcome and the elapsed time, and its metrics row lists `tokens processed` and `tool calls` from its run record the same way a local worker's does.
+
+An ACP delegation run's settled usage preserves peer-reported token totals, including explicit zero usage, and supported cost without double-counting. A peer total is used when supplied; otherwise the four billed components (input, output, cache read, cache write) determine the total, and reasoning tokens are not added because a peer counts them inside output. A PanCode peer's `_meta["pancode/usage"]` is read as the facts it states, and its cost is the peer's own claim, priced `free` only when every contribution the peer counted was free. Another agent's usage supplies plain token counts, and any cost it reports carries no source, so it stays unknown ([adapter.ts](../../src/engine/acp/adapter.ts)). Unknown cost is not evidence of free execution. The usage is one run-scope report under the session's model (`delegation.selectedModelId`), so `run_end.usage`, `telemetry cost --run` and its `model` table, `fleet view` and the `/fleet` board all read the peer's counts from it, and a run's prompt is its input and cache counts as a lower bound. The turn's closing message carries the same counts and model, and a response the peer sent names no served model, so `fleet view` says `no model reported` rather than `no response observed`. The peer's call count stays unknown.
+
+### Typed intent on a delegated dispatch
+
+A dispatch to a delegation agent accepts typed intent and renders the declared scope into the plan approval artifact, so an operator sees what the peer was told to work on before it starts. The declaration grants nothing on this transport. The peer runs its own tool surface and PanCode mediates no per-tool call, so a resolved write boundary would be a claim nothing enforces and is refused outright. Declare `read_roots` and `relevant_paths` to bound what the peer is asked to look at. For an ACP edit, use a PanCode task worktree when Git isolation helps, then inspect the recorded branch and diff. The worktree does not confine the peer's other filesystem tools, and PanCode's ACP permission policy covers only requests the peer reports. The compatibility rules and reason codes are the same as for any other producer; see [dispatch-typed-intent.md](dispatch-typed-intent.md).
+
+## Client-side error taxonomy
+
+The outbound ACP client raises four typed errors (`src/engine/acp/errors.ts`), all subclasses of `AcpError` with a `code` and optional `data`:
+
+| Class | `code` | Raised when |
+| --- | --- | --- |
+| `AcpProtocolError` | `acp_protocol_error` | The peer answered a request with a JSON-RPC error. |
+| `AcpTimeoutError` | `acp_timeout` | A request outlived its timeout, or a timeout was outside 1 to `2147483647` ms. |
+| `AcpProcessError` | `acp_process_error` | The peer process exited, errored, or closed its pipes before replying. |
+| `AcpAuthRequiredError` | `acp_auth_required` | The peer needs its own sign-in before it opens a session. `data.loginCommand` is what the operator runs once. |
+
+A plain `AcpError` carries `acp_model_unavailable` or `acp_thinking_unavailable` when the peer does not offer the requested model or thinking level. A delegation run settles under four ACP outcome codes: `acp_auth_required`, `acp_model_unavailable`, `acp_thinking_unavailable`, and `acp_transport_error` for an `AcpProcessError`. A sign-in failure is retried on another target, and the model and thinking codes are never retried.
+
+The server side uses `AcpRequestError`, which owns the JSON-RPC code, the host-authored message, and the `pancode/error` detail. Any other throw becomes `internal_error`.
+
+## Registry submission
+
+To list PanCode in the upstream Agent Client Protocol registry (the registry the Zed editor consumes), repository assets live under `assets/acp-registry/`:
+
+- `assets/acp-registry/agent.json`: the registry manifest. It holds the agent id `pancode`, the display name, a version, a description, the repository, website, license (`LicenseRef-PanCode-1.0`) with its `license_url`, and author. The `distribution.npx` entry runs the `pancode` package with `args: ["acp"]`, so a client without a global install can fetch and start it.
+- `assets/acp-registry/icon.svg`: a 16x16 monochrome icon, the canonical PanCode mark drawn as one filled `currentColor` path without its tile.
+
+The submission procedure:
+
+1. Fork `https://github.com/agentclientprotocol/registry`.
+2. Create an entry directory named for the agent id: `mkdir pancode`.
+3. Copy `assets/acp-registry/agent.json` and `assets/acp-registry/icon.svg` into it, and set `version` to the release npm serves. The release flow does not bump or check it.
+4. Check that `agent.json` matches the registry schema and that `icon.svg` stays monochrome with viewBox `0 0 16 16`.
+5. Open a pull request. Once merged, clients that consume the registry can discover and install PanCode.

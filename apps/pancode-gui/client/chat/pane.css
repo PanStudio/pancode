@@ -1,0 +1,1020 @@
+/* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
+/* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
+/* The right sidebar: the Session column and its drill-ins. Docked, it sits in the shell's chrome as
+   the left rail's mirror; narrower, the same content opens as a slide-over. */
+
+.pane {
+	position: relative;
+	min-width: 0;
+	min-height: 0;
+	border-left: 1px solid var(--line);
+	background: var(--pane-surface);
+}
+.pane[hidden] {
+	display: none;
+}
+/* A modal pane has no grid column of its own; the dialog is its own layer. */
+.pane[data-modal="true"] {
+	display: contents;
+}
+.pane__dialog {
+	width: min(408px, calc(100vw - var(--space-4)));
+	height: calc(100dvh - var(--space-4));
+	max-width: none;
+	max-height: none;
+	margin: var(--space-2) var(--space-2) var(--space-2) auto;
+	padding: 0;
+	border: 1px solid var(--line-float);
+	border-radius: var(--radius-md);
+	background: var(--pane-surface);
+	color: var(--ink);
+	box-shadow: var(--shadow-panel);
+}
+.pane__dialog::backdrop {
+	background: var(--scrim-pane);
+}
+@media (min-width: 1440px) {
+	.pane__dialog {
+		position: static;
+		width: 100%;
+		height: 100%;
+		max-width: none;
+		max-height: none;
+		margin: 0;
+		border: 0;
+		box-shadow: none;
+		background: var(--paper);
+	}
+}
+.pane__inner {
+	height: 100%;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	padding: var(--space-2) var(--space-2) 0;
+	background: var(--pane-surface);
+	font-size: var(--text-meta);
+	line-height: var(--leading-body);
+	/* The pane leaves display:none when it opens, which restarts this once; its column appears at
+	   once and only the contents move, so the conversation never reflows mid-animation. */
+	animation: pane-arrive var(--motion-base) var(--ease-standard) backwards;
+}
+@keyframes pane-arrive {
+	from {
+		opacity: 0;
+		transform: translateX(var(--motion-distance));
+	}
+}
+.pane__head {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	flex: none;
+	min-height: 52px;
+	margin-bottom: var(--space-2);
+	padding: 0 var(--space-1) 0 var(--space-2);
+	border-bottom: 1px solid var(--line);
+}
+.pane__title {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	flex: 1;
+	min-width: 0;
+	margin: 0;
+	font-size: var(--text-body);
+	color: var(--ink);
+	font-weight: 600;
+	letter-spacing: -0.1px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.pane__title > .icon {
+	flex: none;
+	color: var(--accent);
+	width: var(--icon-md);
+	height: var(--icon-md);
+}
+.pane__title:focus {
+	outline: none;
+}
+.pane__head[data-drilled="true"] {
+	padding-left: var(--space-1);
+}
+.pane__body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-gutter: stable;
+}
+.pane__panel {
+	min-height: 100%;
+	min-width: 0;
+}
+.pane__panel[hidden] {
+	display: none;
+}
+
+/* Section icons and quiet rules make the observations scan as instruments. A header that opens
+   a detail view remains one target across the row, including its figures. */
+.pane-cards {
+	--pane-bleed: 8px;
+	display: grid;
+	padding: 0 var(--space-3) var(--space-5);
+}
+.pane-card {
+	display: grid;
+	gap: var(--space-2);
+	padding-block: var(--space-3);
+	border-bottom: 1px solid var(--line);
+	min-width: 0;
+}
+.pane-card:first-child {
+	padding-top: var(--space-2);
+}
+.pane-card--lead,
+.pane-card--lead:first-child {
+	margin-block: 0 var(--space-1);
+	padding: var(--space-2) 0 var(--space-4);
+	border-bottom: 1px solid var(--line);
+}
+.pane-card > header {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+	min-height: 36px;
+	margin-inline: calc(var(--pane-bleed) * -1);
+	padding-inline: var(--pane-bleed);
+	border-radius: var(--radius-sm);
+	transition:
+		background var(--motion-fast) var(--ease-standard),
+		box-shadow var(--motion-fast) var(--ease-standard);
+}
+.pane-card > header:has(.pane-card__open:hover) {
+	background: var(--wb-hover);
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+.pane-card > header:has(.pane-card__open:active) {
+	background: var(--wb-active);
+}
+/* Section names read like the rail's own labels, so both sidebars speak one language. */
+.pane-card h2 {
+	margin: 0;
+	font-size: var(--text-meta);
+	font-weight: 500;
+	letter-spacing: 0.01em;
+	color: var(--ink);
+}
+.pane-card__heading {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+}
+.pane-card__symbol {
+	display: inline-grid;
+	place-items: center;
+	flex: none;
+	width: 20px;
+	height: 20px;
+	border-radius: var(--radius-sm);
+	color: var(--ink-muted);
+}
+.pane-card__symbol .icon {
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+}
+.pane-card:has(#pane-usage) .pane-card__symbol {
+	color: var(--secondary);
+}
+.pane-card__open {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-height: 36px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	letter-spacing: inherit;
+}
+/* The press target is the whole label row, figures included; the ring is drawn on that row too. */
+.pane-card__open::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+}
+.pane-card__open:hover:not(:disabled),
+.pane-card__open:active:not(:disabled) {
+	background: transparent;
+}
+.pane-card > header:has(.pane-card__open:hover) h2 {
+	color: var(--ink);
+}
+.pane-card__open:focus-visible {
+	outline: none;
+	box-shadow: none;
+}
+.pane-card__open:focus-visible::after {
+	outline: 2px solid var(--focus);
+	outline-offset: -2px;
+}
+.pane-card__chevron {
+	display: inline-flex;
+	color: var(--ink-muted);
+}
+.pane-card__chevron .icon {
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+	opacity: 1;
+	transition:
+		opacity var(--motion-fast) var(--ease-standard),
+		transform var(--motion-fast) var(--ease-standard);
+}
+.pane-card > header:has(.pane-card__open:hover) .pane-card__chevron .icon {
+	opacity: 1;
+	transform: translateX(2px);
+}
+.pane-card__state {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	text-align: right;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	font-variant-numeric: tabular-nums;
+}
+.pane-card--disclosure {
+	display: block;
+	margin: 0;
+	padding: 0;
+}
+.pane-card--disclosure > summary {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-height: 44px;
+	margin-inline: calc(var(--pane-bleed) * -1);
+	padding: var(--space-2) var(--pane-bleed);
+	border-radius: var(--radius-sm);
+	list-style: none;
+	font-size: var(--text-meta);
+	line-height: 1.4;
+}
+.pane-card--disclosure > summary::-webkit-details-marker {
+	display: none;
+}
+.pane-card--disclosure > summary:is(:hover, :focus-visible) {
+	background: var(--wb-hover);
+}
+.pane-card__label {
+	color: var(--ink);
+	font-weight: 500;
+}
+.pane-card__summary {
+	flex: 1;
+	min-width: 0;
+	text-align: right;
+	font-size: var(--text-instrument);
+	color: var(--ink-muted);
+	overflow-wrap: anywhere;
+	font-variant-numeric: tabular-nums;
+}
+.pane-card--disclosure > summary > .icon {
+	flex: none;
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+	color: var(--ink-muted);
+	transition: transform var(--motion-fast) var(--ease-standard);
+}
+.pane-card--disclosure[open] > summary > .icon {
+	transform: rotate(90deg);
+}
+.pane-card__body {
+	display: grid;
+	gap: var(--space-2);
+	padding: var(--space-1) 0 var(--space-3);
+}
+.pane-card__details {
+	display: inline-flex;
+	align-items: center;
+	justify-self: start;
+	gap: var(--space-2);
+	min-height: 32px;
+	padding: var(--space-1) var(--space-2);
+	border-color: transparent;
+	color: var(--accent);
+	font-size: var(--text-exact);
+}
+.pane-card__details .icon {
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+}
+.pane-more {
+	min-width: 0;
+	margin-top: var(--space-4);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--wb-faint);
+}
+.pane-more > summary {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-height: 56px;
+	padding: var(--space-3);
+	border-radius: inherit;
+	cursor: pointer;
+	list-style: none;
+}
+.pane-more > summary::-webkit-details-marker {
+	display: none;
+}
+.pane-more > summary:hover {
+	background: var(--wb-hover);
+}
+.pane-more > summary:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+.pane-more > summary > .icon {
+	flex: none;
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+	color: var(--ink-muted);
+}
+.pane-more[open] > summary > .icon:last-child {
+	transform: rotate(90deg);
+}
+.pane-more__body {
+	padding: 0 var(--space-3) var(--space-2);
+	border-top: 1px solid var(--line);
+}
+.pane-more__body > .pane-card:last-child {
+	border-bottom: 0;
+}
+/* In either sidebar a state is a glyph and a word, like the rail's own connection line, never a pill.
+   The toned selector is here because a tone's own tint has the same weight as `.pane .status-mark`
+   and won on load order, which left a padless tinted chip behind the word. */
+.pane .status-mark,
+.pane .status-mark[data-tone] {
+	gap: 5px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	font-size: var(--text-exact);
+	font-weight: 500;
+	min-width: 0;
+	flex-wrap: wrap;
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+.pane .status-mark__detail {
+	flex-basis: 100%;
+	font-weight: 400;
+}
+.pane-card__state[data-state="Working"] {
+	color: var(--accent);
+}
+.pane-card__state[data-state="Complete"] {
+	color: var(--status-success-fg);
+}
+.pane-card__state[data-state="Failed"] {
+	color: var(--status-fail-fg);
+}
+.pane-goal {
+	margin: 0;
+	font-size: var(--text-body);
+	font-weight: 600;
+	letter-spacing: -0.1px;
+	line-height: 1.4;
+	overflow-wrap: anywhere;
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+.pane-card__facts {
+	margin: 0;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.pane-card__preview {
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+.pane-usage-stats {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: var(--space-3);
+	margin: 0;
+	padding: var(--space-2) 0 var(--space-1);
+}
+.pane-usage-stats > div {
+	display: grid;
+	gap: var(--space-1);
+	min-width: 0;
+}
+.pane-usage-stats > div + div {
+	padding-left: var(--space-3);
+	border-left: 1px solid var(--line);
+}
+.pane-usage-stats dt {
+	font-size: var(--text-instrument);
+	color: var(--ink-muted);
+}
+.pane-usage-stats dd {
+	margin: 0;
+	font: 500 var(--text-body) / var(--leading-tight) var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	overflow-wrap: anywhere;
+}
+.pane-usage-stats > div + div dd {
+	color: var(--secondary);
+}
+.pane-meter {
+	display: grid;
+	gap: var(--space-1);
+}
+/* What fills the context window, as shares of the whole window. Segment colours step down from the
+   accent so the largest part reads strongest in either theme. */
+.pane-stack {
+	display: flex;
+	height: 5px;
+	border-radius: var(--radius-sm);
+	background: var(--wb-active);
+	overflow: hidden;
+}
+.pane-stack__part {
+	height: 100%;
+	min-width: 2px;
+	background: var(--part);
+	transition: width var(--motion-base) var(--ease-standard);
+}
+.pane-stack__part + .pane-stack__part {
+	box-shadow: inset 1px 0 0 var(--surface);
+}
+.pane-meter[data-tone="warn"] {
+	--tone: var(--status-warn-line);
+}
+.pane-meter[data-tone="full"] {
+	--tone: var(--status-fail-line);
+}
+.pane-meter [data-index="0"] {
+	--part: var(--tone, var(--accent));
+}
+.pane-meter [data-index="1"] {
+	--part: color-mix(in srgb, var(--tone, var(--accent)) 66%, var(--surface));
+}
+.pane-meter [data-index="2"] {
+	--part: color-mix(in srgb, var(--tone, var(--accent)) 42%, var(--surface));
+}
+.pane-meter [data-index="3"] {
+	--part: color-mix(in srgb, var(--tone, var(--accent)) 24%, var(--surface));
+}
+.pane-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px var(--space-3);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.pane-legend li {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+}
+.pane-legend li::before {
+	content: "";
+	width: 7px;
+	height: 7px;
+	border-radius: var(--radius-sm);
+	background: var(--part);
+}
+.pane-legend span {
+	font: var(--text-exact) / 1 var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	color: var(--ink);
+}
+.pane-agents {
+	display: grid;
+	margin: 0 calc(var(--pane-bleed) * -1);
+	padding: 0;
+	list-style: none;
+}
+/* A rail row's metrics, so a running task reads the same on either side of the page. */
+.pane-agents li {
+	position: relative;
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	gap: var(--space-2);
+	min-height: 30px;
+	padding-inline: var(--pane-bleed);
+	border-radius: var(--radius-sm);
+	font-size: var(--text-meta);
+}
+/* A static mark: the rail's row for the same task carries the moving one. */
+.pane-agents .pane-agents__glyph {
+	width: 14px;
+	color: var(--accent);
+	font-family: var(--font-mono);
+	text-align: center;
+}
+/* The approval dot sits in the same 14px cell as the mark, so every title starts on one edge. */
+.pane-agents li > .wb-dot {
+	margin-inline: 3.5px;
+}
+.pane-agents li:has(a:hover) {
+	background: var(--wb-hover);
+}
+.pane-agents a::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+}
+.pane-agents strong {
+	font: 500 var(--text-exact) / 1.4 var(--font-mono);
+}
+.pane-agents span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--ink-muted);
+}
+.pane-hint {
+	margin: var(--space-6) 0 0;
+	font-size: var(--text-exact);
+	line-height: 1.6;
+	color: var(--ink-muted);
+}
+.pane-hint kbd {
+	padding: 1px 5px;
+	border: 1px solid var(--line-float);
+	border-radius: var(--radius-sm);
+	background: var(--wb-faint);
+	font: var(--text-exact) / 1.5 var(--font-mono);
+	color: var(--ink);
+}
+.pane-hint--commands {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	margin-top: var(--space-4);
+	font-size: var(--text-instrument);
+}
+.pane-hint--commands > .icon {
+	flex: none;
+	align-self: center;
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+	color: var(--accent);
+}
+.pane-evidence {
+	display: grid;
+	gap: var(--space-2);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.pane-evidence li {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: baseline;
+	gap: var(--space-2);
+	font-size: var(--text-meta);
+}
+.pane-evidence strong {
+	font: 500 var(--text-exact) / 1.4 var(--font-mono);
+}
+.pane-evidence__links {
+	display: inline-flex;
+	gap: var(--space-2);
+	font-size: var(--text-exact);
+}
+.pane-evidence__links a {
+	color: var(--accent);
+	text-decoration: none;
+}
+.pane-evidence__links a:hover {
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+.pane-empty,
+.pane-note {
+	margin: 0;
+	font-size: var(--text-meta);
+	line-height: 1.5;
+	color: var(--ink-muted);
+}
+.pane-note {
+	padding: 0 var(--space-3) var(--space-2);
+}
+/* A quiet action at the end of a label row. It is a button or a link; either way it is not underlined
+   prose, it is a control that fills on hover like every other one in the chrome. */
+.pane-link {
+	position: relative;
+	min-height: 0;
+	padding: 3px 7px;
+	margin-right: -7px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--accent);
+	font-size: var(--text-exact);
+	font-weight: 500;
+	text-decoration: none;
+}
+.pane-link:hover:not(:disabled) {
+	background: var(--accent-soft);
+	border-color: transparent;
+}
+.pane-changes-line {
+	margin: 0;
+	font-size: var(--text-meta);
+}
+.pane-steps {
+	display: grid;
+	gap: 10px;
+	margin: 2px 0 0;
+	padding: 0;
+	list-style: none;
+}
+.pane-steps li {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	font-size: var(--text-meta);
+	line-height: 1.45;
+}
+.pane-steps li > span:last-child {
+	display: grid;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.pane-steps small {
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+}
+/* A finished step steps back by tone alone; a struck line through every done row made the plan read
+   as a list of deletions. */
+.pane-steps li[data-tone="success"] > span:last-child {
+	color: var(--ink-muted);
+}
+.pane-step__glyph {
+	flex: none;
+	display: inline-grid;
+	place-items: center;
+	width: 16px;
+	height: 16px;
+	margin-top: 1px;
+	border: 1.5px solid var(--line-float);
+	border-radius: 50%;
+	color: var(--accent);
+}
+.pane-step__glyph.is-done {
+	border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+	background: var(--accent-soft);
+}
+.pane-step__glyph .icon {
+	width: 10px;
+	height: 10px;
+	stroke-width: 2px;
+	animation: pane-step-tick var(--motion-entry) var(--ease-standard) both;
+}
+/* The tick mounts when a step completes, so it lands once; a finished plan never re-animates. */
+@keyframes pane-step-tick {
+	from {
+		opacity: 0;
+		transform: scale(0.5) rotate(-25deg);
+	}
+}
+/* A running step: the ring in the accent with a still dot, on whatever ground the sidebar has. */
+.pane-step__glyph.is-running {
+	border-color: var(--accent);
+	background: radial-gradient(circle, var(--accent) 0 3px, transparent 3.5px);
+}
+.pane-step__glyph.is-blocked {
+	border-color: var(--status-warn-line);
+}
+.pane-steps .pancode-pulse {
+	margin-top: 1px;
+}
+
+.diffstat {
+	font: var(--text-exact) / 1 var(--font-mono);
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+.diffstat__add {
+	color: var(--status-success-fg);
+}
+.diffstat__del {
+	color: var(--status-fail-fg);
+}
+
+/* ---- Changes ------------------------------------------------------------------- */
+.changes__head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+	font-size: var(--text-meta);
+}
+.changes__head p {
+	margin: 0;
+}
+.change-files {
+	display: grid;
+	margin: 0;
+	padding: 0 var(--space-2) var(--space-5);
+	list-style: none;
+}
+.change-file {
+	min-width: 0;
+}
+.change-file__row {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	width: 100%;
+	min-height: 40px;
+	padding: 4px var(--space-2);
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	text-align: left;
+	color: var(--ink);
+}
+.change-file__row:hover {
+	background: var(--wb-hover);
+	border-color: transparent;
+}
+.change-file__row > .icon {
+	width: var(--icon-sm);
+	height: var(--icon-sm);
+	flex: none;
+	color: var(--ink-muted);
+}
+.change-file__badge {
+	flex: none;
+	min-width: 30px;
+	padding: 2px 4px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	font: 500 var(--text-instrument) / var(--leading-tight) var(--font-mono);
+	letter-spacing: 0.04em;
+	text-align: center;
+	color: var(--ink-muted);
+}
+.change-file__name {
+	display: grid;
+	flex: 1;
+	min-width: 0;
+	line-height: 1.25;
+}
+.change-file__name strong {
+	font-size: var(--text-meta);
+	font-weight: 500;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.change-file__name small {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+	direction: rtl;
+	text-align: left;
+}
+.change-file__pending {
+	flex: none;
+	padding: 1px 7px;
+	border: 1px solid var(--status-warn-line);
+	border-radius: var(--radius-sm);
+	font-size: var(--text-exact);
+	color: var(--status-warn-fg);
+}
+.change-file__diffs {
+	display: grid;
+	gap: var(--space-2);
+	padding: var(--space-1) var(--space-1) var(--space-3) var(--space-1);
+	min-width: 0;
+}
+
+/* Paths a task's tools reported that no edit changed. */
+.touched {
+	margin: 0 var(--space-2) var(--space-5);
+	padding-top: var(--space-2);
+}
+.touched > summary {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-height: 32px;
+	padding: 0 var(--space-2);
+	border-radius: var(--radius-sm);
+	font-size: var(--text-meta);
+	color: var(--ink-muted);
+	cursor: pointer;
+	list-style: none;
+}
+.touched > summary::-webkit-details-marker {
+	display: none;
+}
+.touched > summary:hover {
+	background: var(--wb-hover);
+	color: var(--ink);
+}
+.touched > summary .icon {
+	width: 14px;
+	height: 14px;
+	transition: transform var(--motion-fast) var(--ease-standard);
+}
+.touched[open] > summary .icon {
+	transform: rotate(90deg);
+}
+.touched__files {
+	display: grid;
+	margin: 0;
+	padding: var(--space-1) 0 0;
+	list-style: none;
+}
+.touched__files li {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	min-height: 34px;
+	padding: 2px var(--space-2);
+}
+.touched__calls {
+	flex: none;
+	font: var(--text-instrument) / var(--leading-tight) var(--font-mono);
+	color: var(--ink-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+	.touched > summary .icon {
+		transition: none;
+	}
+}
+
+/* ---- Empty panes ----------------------------------------------------------------- */
+.pane-blank {
+	display: grid;
+	justify-items: center;
+	gap: var(--space-2);
+	padding: var(--space-12) var(--space-6);
+	text-align: center;
+	color: var(--ink-muted);
+}
+.pane-blank .icon {
+	width: 26px;
+	height: 26px;
+	margin-bottom: var(--space-2);
+	opacity: 0.7;
+}
+.pane-blank p {
+	margin: 0;
+	font-size: var(--text-body);
+	font-weight: 500;
+	color: var(--ink);
+}
+.pane-blank small {
+	font-size: var(--text-meta);
+	line-height: 1.5;
+	max-width: 26ch;
+}
+
+/* A drill-in body: the column's gutters and rhythm. */
+.pane-drill {
+	padding: var(--space-2) var(--space-3) var(--space-6);
+}
+
+/* ---- the card that closes a turn which changed files ------------------------------ */
+.turn-changes {
+	margin-top: var(--space-4);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--wb-faint);
+	overflow: hidden;
+}
+.turn-changes > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	padding: var(--space-3) var(--space-4);
+}
+.turn-changes > header p {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	margin: 0;
+	font-size: var(--text-meta);
+}
+.turn-changes > header .icon {
+	width: 16px;
+	height: 16px;
+	color: var(--ink-muted);
+}
+.turn-changes > header button {
+	min-height: 0;
+	padding: 4px 10px;
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}
+.turn-changes ul {
+	display: grid;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	border-top: 1px solid var(--line);
+}
+.turn-changes li {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	padding: 8px var(--space-4);
+	font-size: var(--text-meta);
+}
+.turn-changes li + li {
+	border-top: 1px solid var(--line);
+}
+.turn-changes__name {
+	display: flex;
+	flex: 1;
+	align-items: baseline;
+	gap: var(--space-2);
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.turn-changes__name small {
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+}
+.turn-changes .turn-changes__more {
+	color: var(--ink-muted);
+	font-size: var(--text-exact);
+}
+
+/* ---- docked in the shell's chrome --------------------------------------------------- */
+.wb-aside .pane {
+	height: 100%;
+	border: 0;
+	background: transparent;
+}
+.pane-path {
+	margin: 0;
+	overflow-wrap: anywhere;
+	text-align: left;
+	font: var(--text-exact) / 1.6 var(--font-mono);
+	color: var(--ink-muted);
+}
+.pane-mono {
+	overflow-wrap: anywhere;
+	font: var(--text-exact) / 1.6 var(--font-mono);
+}
+.pane-agents a {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--ink);
+	text-decoration: none;
+}
+.pane-more > summary > span {
+	display: grid;
+	flex: 1;
+	gap: var(--space-1);
+	min-width: 0;
+}
+.pane-more > summary strong {
+	font-size: var(--text-meta);
+	font-weight: 500;
+	color: var(--ink);
+}
+.pane-more > summary small {
+	font-size: var(--text-exact);
+	color: var(--ink-muted);
+}

@@ -1,0 +1,429 @@
+#!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+import { checkPackedInstall } from "./check-packed-install.mjs";
+import { runTests } from "./ci-tests.mjs";
+import { ensureSearchTools, withSearchTools } from "./ci-tools.mjs";
+import { pinGateEnv } from "./gate-env.mjs";
+import { pnpmArgv } from "./pnpm.mjs";
+import { requirePreflight } from "./preflight.mjs";
+import { checkInstalledCommands } from "./release/installed-commands.mjs";
+import { nodeBinary, QUALIFIED_MAJORS } from "./release/node-majors.mjs";
+import { tmpdirProblem } from "./release/plan.mjs";
+import { acquireLock } from "./release/receipt.mjs";
+import { creditsSection } from "./report-credits.mjs";
+
+export const root = fileURLToPath(new URL("..", import.meta.url));
+export const installers = ["install.sh", "install.ps1", "install.cmd", "native-install.cjs"];
+export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+export function run(command, args, options = {}) {
+	if (process.platform === "win32" && command === "tar")
+		command = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
+	if (process.platform === "win32" && command === "npm") {
+		args = [join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"), ...args];
+		command = process.execPath;
+	}
+	// Agent shells carry corepack and no pnpm shim; scripts/pnpm.mjs resolves either.
+	const viaPnpm = command === "pnpm";
+	if (viaPnpm) [command, args] = pnpmArgv(args);
+	return execFileSync(command, args, {
+		cwd: root,
+		stdio: "inherit",
+		...options,
+		shell: process.platform === "win32" && (viaPnpm || command === "npm"),
+	});
+}
+export const git = (...args) => run("git", args, { encoding: "utf8", stdio: "pipe" }).trim();
+const json = (path) => JSON.parse(readFileSync(path, "utf8"));
+
+export function source() {
+	if (git("status", "--porcelain", "--untracked-files=normal"))
+		throw new Error("Commit the candidate first; the source tree must be clean.");
+	return git("rev-parse", "HEAD");
+}
+
+// Qualification comes from successful checks on the receipt's Actions run.
+// The publisher verifies these files instead of comparing independent builds.
+export function verifyCandidate(directory, commit) {
+	const receipt = json(join(directory, "candidate.json"));
+	if (receipt.schema !== 2 || !/^[a-f0-9]{40}$/u.test(commit) || receipt.commit !== commit)
+		throw new Error("Candidate receipt does not match the requested source commit.");
+	if (receipt.name !== "pancode" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(receipt.version))
+		throw new Error("Invalid candidate package identity.");
+	const filename = `pancode-${receipt.version}.tgz`;
+	const expected = [filename, "website.tgz", "release-notes.md", "metafile-esm.json", ...installers].sort();
+	if (JSON.stringify(Object.keys(receipt.files ?? {}).sort()) !== JSON.stringify(expected))
+		throw new Error("Candidate receipt has an unexpected file inventory.");
+	for (const [name, checksum] of Object.entries(receipt.files)) {
+		if (!/^[a-f0-9]{64}$/u.test(checksum) || sha256(readFileSync(join(directory, name))) !== checksum)
+			throw new Error(`Candidate checksum mismatch: ${name}`);
+	}
+	const tarball = join(directory, filename);
+	const pkg = JSON.parse(run("tar", ["-xzOf", tarball, "package/package.json"], { stdio: "pipe", encoding: "utf8" }));
+	if (pkg.name !== receipt.name || pkg.version !== receipt.version)
+		throw new Error("Tarball version differs from its receipt.");
+	const site = JSON.parse(
+		run("tar", ["-xzOf", join(directory, "website.tgz"), "./version.json"], { stdio: "pipe", encoding: "utf8" }),
+	);
+	if (site.publishedVersion !== receipt.version || site.docsCommit !== commit || site.revision !== commit)
+		throw new Error("Website metadata differs from the candidate.");
+	return { ...receipt, tarball };
+}
+
+function prepareWebsite(directory, commit, version) {
+	const scratch = mkdtempSync(join(tmpdir(), "pancode-release-site-"));
+	const checkout = join(scratch, "source");
+	try {
+		run("git", ["worktree", "add", "--detach", checkout, commit]);
+		const site = join(checkout, "site");
+		const product = json(join(site, "product.json"));
+		product.version = version;
+		product.publishedVersion = version;
+		writeFileSync(join(site, "product.json"), `${JSON.stringify(product, null, "\t")}\n`);
+		// Commit snapshots are immutable and available before the public tag.
+		// Site generation stays outside the package checkout and its artifact.
+		run("python3", ["site/sync-docs.py", "--snapshot-ref", commit], { cwd: checkout });
+		run(process.execPath, ["site/deployment-check.mjs"], { cwd: checkout });
+		run("python3", ["site/sync-docs.py", "--check"], { cwd: checkout });
+		run(process.execPath, ["site/policy.mjs"], { cwd: checkout });
+		const output = join(scratch, "public");
+		run(process.execPath, ["site/build.mjs", "--out", output, "--revision", commit], { cwd: checkout });
+		run("python3", ["site/check.py", output], { cwd: checkout });
+		// The builder's ownership marker holds this machine's output path; the published site does not carry it.
+		run("tar", ["-czf", join(directory, "website.tgz"), "--exclude=./.pancode-site-build", "-C", output, "."]);
+	} finally {
+		if (existsSync(checkout)) run("git", ["worktree", "remove", "--force", checkout]);
+		rmSync(scratch, { recursive: true, force: true });
+	}
+}
+
+/** Runs one pnpm script to completion with its output inherited. */
+function pnpmScript(step) {
+	return new Promise((resolve, reject) => {
+		const [command, args] = pnpmArgv(["run", step]);
+		const child = spawn(command, args, { cwd: root, stdio: "inherit", shell: process.platform === "win32" });
+		child.once("error", reject);
+		child.once("close", (code) => (code === 0 ? resolve() : reject(new Error(`${step} failed (exit ${code})`))));
+	});
+}
+
+/**
+ * `credits` is the JSON `scripts/report-credits.mjs` printed for this release; without it the notes are unchanged.
+ * `preflighted` skips the preflight when the caller ran it on this commit moments ago.
+ */
+export async function prepare(directory, credits, { preflighted = false } = {}) {
+	const commit = source();
+	const pkg = json(join(root, "package.json"));
+	const changelog = readFileSync(join(root, "CHANGELOG.md"), "utf8");
+	// Versions, changelog, website pins, docs snapshot and source size budgets, before the minutes below.
+	if (!preflighted) await requirePreflight({ release: false, tools: false });
+	mkdirSync(directory, { recursive: true });
+	rmSync(join(directory, "candidate.json"), { force: true });
+	// The checks read src/, tests/, apps/ and hub/ and never dist/ (gitignored, outside every tsconfig and biome
+	// scope), so they run as child processes beside the build instead of before it.
+	const checking = Promise.allSettled(["typecheck:compare", "lint", "check:gui", "hub:check"].map(pnpmScript));
+	let buildFailure;
+	try {
+		// A clean build, so no chunk a development build retained for a running process ships.
+		run("pnpm", ["run", "build:release"]);
+	} catch (error) {
+		buildFailure = error;
+	}
+	// Always collected, so a failed build leaves no check running behind the error.
+	const checks = await checking;
+	if (buildFailure) throw new Error(`build:release failed: ${buildFailure.message}`);
+	for (const check of checks) if (check.status === "rejected") throw check.reason;
+	// Build metadata is qualification evidence, excluded from the npm package.
+	// It lets the Stage 0 budget check inspect the chunks extracted from the archive.
+	writeFileSync(join(directory, "metafile-esm.json"), readFileSync(join(root, "dist/metafile-esm.json")));
+	const [report] = JSON.parse(
+		run("npm", ["pack", "--json", "--pack-destination", directory], { encoding: "utf8", stdio: "pipe" }),
+	);
+	const reportPath = join(directory, "pack-report.json");
+	writeFileSync(reportPath, JSON.stringify(report));
+	run(
+		process.execPath,
+		["scripts/check-release.mjs", "--tarball", join(directory, report.filename), "--report", reportPath],
+		{ env: { ...process.env, PANCODE_RELEASE_CONTEXT: "qualification" } },
+	);
+	rmSync(reportPath);
+	for (const name of installers)
+		writeFileSync(
+			join(directory, name),
+			run("tar", ["-xzOf", join(directory, report.filename), `package/scripts/${name}`], { stdio: "pipe" }),
+		);
+	const section = changelog.split(/^## /mu)[1];
+	const notes = section?.slice(section.indexOf("\n") + 1).trim();
+	writeFileSync(
+		join(directory, "release-notes.md"),
+		`${notes || "Development qualification; release notes are not final."}\n${creditsSection(credits ? JSON.parse(readFileSync(credits, "utf8")) : null)}`,
+	);
+	prepareWebsite(directory, commit, pkg.version);
+	if (source() !== commit) throw new Error("Source changed during candidate preparation.");
+	const files = Object.fromEntries(
+		[report.filename, "website.tgz", "release-notes.md", "metafile-esm.json", ...installers].map((name) => [
+			name,
+			sha256(readFileSync(join(directory, name))),
+		]),
+	);
+	const receipt = {
+		schema: 2,
+		name: pkg.name,
+		version: pkg.version,
+		commit,
+		run: process.env.GITHUB_RUN_ID ?? null,
+		files,
+	};
+	writeFileSync(join(directory, "candidate.json"), `${JSON.stringify(receipt, null, 2)}\n`);
+	if (process.env.GITHUB_OUTPUT)
+		appendFileSync(process.env.GITHUB_OUTPUT, `directory=${directory}\nversion=${pkg.version}\n`);
+	console.log(`Prepared ${pkg.name}@${pkg.version} from ${commit}; SHA-256 ${files[report.filename]}`);
+	return receipt;
+}
+
+// The budget catches a tier that grows by accident; raise it on purpose when a tier grows on purpose. The GUI tier
+// runs every app test file, so it grows with each one added. 2500 was set while the core tier was miscounted as 1
+// test (748 in all); counted from the runner's own summary the 0.8.4 candidate runs 2509.
+export const QUALIFICATION_TEST_BUDGET = 3000;
+
+export async function testCandidate(directory, commit, results = "test-results.json") {
+	const receipt = verifyCandidate(directory, commit);
+	rmSync(join(root, "dist"), { recursive: true, force: true });
+	run("tar", ["-xzf", receipt.tarball, "--strip-components=1", "-C", root, "package/dist"]);
+	writeFileSync(join(root, "dist/metafile-esm.json"), readFileSync(join(directory, "metafile-esm.json")));
+	process.env.PANCODE_RELEASE_TARBALL = receipt.tarball;
+	// The same rg and fd on every machine: a missing one skips the search contracts without failing.
+	// Kept beside the candidate: under the release state locally, under the runner's scratch in CI.
+	const tools = await ensureSearchTools(join(dirname(resolve(directory)), "search-tools"));
+	process.env.PATH = withSearchTools(process.env, tools).PATH;
+	const tiers = ["core", "gui", "package"];
+	const skipped = {};
+	const outcomes = await Promise.allSettled(tiers.map((tier) => runTests(tier, { skipped })));
+	for (const outcome of outcomes) if (outcome.status === "rejected") throw outcome.reason;
+	const counts = Object.fromEntries(outcomes.map((outcome, index) => [tiers[index], outcome.value]));
+	const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+	if (total + 3 > QUALIFICATION_TEST_BUDGET)
+		throw new Error(`Default qualification exceeds its ${QUALIFICATION_TEST_BUDGET}-test budget: ${total + 3}`);
+	// The tarball installed alone into a fresh prefix, as a user gets it; recorded beside the tiers, not counted in them.
+	const installStarted = Date.now();
+	const installScratch = mkdtempSync(join(tmpdir(), "pancode-release-install-"));
+	let installed;
+	try {
+		const report = await checkPackedInstall({ tarball: receipt.tarball, prefix: join(installScratch, "prefix") });
+		for (const line of report.lines) console.log(`check-packed-install: ${line}`);
+		installed = { ...report.installed, seconds: Math.round((Date.now() - installStarted) / 1000) };
+	} finally {
+		rmSync(installScratch, { recursive: true, force: true });
+	}
+	verifyCandidate(directory, commit);
+	if (source() !== commit) throw new Error("Source changed while testing the candidate.");
+	writeFileSync(
+		join(directory, results),
+		`${JSON.stringify({ commit, sha256: receipt.files[basename(receipt.tarball)], counts, total, skipped, installed, environment: { node: process.version, tz: process.env.TZ, locale: process.env.LC_ALL ?? null, tools: tools.versions, toolSource: tools.source } }, null, 2)}\n`,
+	);
+	// Skips are how an environment difference hides: compare this line between a local leg and its CI job.
+	console.log(
+		`Qualification tests: ${total} (${JSON.stringify(counts)}), skipped ${JSON.stringify(skipped)}, rg ${tools.versions.rg}, fd ${tools.versions.fd} (${tools.source}), TZ ${process.env.TZ}`,
+	);
+	console.log(
+		`Installed package: panstore ${installed.panstoreVersion}, pankit ${installed.pankitServers.length} servers, serve node handshake ${installed.pankitServeNode.ms} ms, ${installed.seconds} s`,
+	);
+}
+
+export async function smokeCandidate(directory, commit) {
+	const receipt = verifyCandidate(directory, commit);
+	const scratch = mkdtempSync(join(tmpdir(), "pancode-release-boot-"));
+	try {
+		const prefix = join(scratch, "install");
+		const home = join(scratch, "home");
+		mkdirSync(home);
+		const env = {
+			...process.env,
+			HOME: home,
+			USERPROFILE: home,
+			PANCODE_HOME: home,
+			PANCODE_CONFIG_DIR: join(home, "config"),
+			PANCODE_DATA_DIR: join(home, "data"),
+			PANCODE_STATE_DIR: join(home, "state"),
+			PANCODE_CACHE_DIR: join(home, "cache"),
+			XDG_CONFIG_HOME: join(home, "xdg-config"),
+			XDG_DATA_HOME: join(home, "xdg-data"),
+			XDG_STATE_HOME: join(home, "xdg-state"),
+			XDG_CACHE_HOME: join(home, "xdg-cache"),
+			npm_config_cache: join(scratch, "npm-cache"),
+		};
+		run("npm", ["install", "--prefix", prefix, "--no-save", "--no-audit", "--no-fund", receipt.tarball], { env });
+		const entry = join(prefix, "node_modules", "pancode", "bin", "pancode.cjs");
+		const label = run(process.execPath, [entry, "--version"], { cwd: home, env, stdio: "pipe", encoding: "utf8" });
+		if (!label.includes(receipt.version)) throw new Error(`Installed version differs: ${label.trim()}`);
+		run(process.execPath, [entry, "--help"], { cwd: home, env, stdio: "pipe" });
+		const installed = await checkInstalledCommands({ prefix, env, version: receipt.version });
+		console.log(
+			`BOOT_OK ${process.platform} ${process.version} ${receipt.version} ${receipt.files[basename(receipt.tarball)]} panstore ${installed.panstoreVersion} pankit ${installed.pankitServers.length} servers serve-node ${installed.pankitServeNode.ms} ms, checks ${installed.ms} ms`,
+		);
+	} finally {
+		rmSync(scratch, { recursive: true, force: true });
+	}
+}
+
+/** Release ownership and candidates live beside the clone's refs, shared by all its worktrees. */
+export function releaseState() {
+	return join(git("rev-parse", "--path-format=absolute", "--git-common-dir"), "pancode-release");
+}
+
+export { nodeBinary, QUALIFIED_MAJORS };
+
+/** True when this candidate passed tests and the install boot on one Node major. */
+export function qualifiedOn(directory, commit, major) {
+	const path = join(directory, `qualified-node${major}.json`);
+	if (!existsSync(path) || !existsSync(join(directory, "candidate.json"))) return false;
+	const marker = json(path);
+	const receipt = verifyCandidate(directory, commit);
+	return marker.commit === commit && marker.sha256 === receipt.files[basename(receipt.tarball)];
+}
+
+/** Runs one command to completion with its output in a log file, so concurrent legs stay readable. */
+function runLogged(command, args, { cwd, env, log }) {
+	return new Promise((resolvePromise, reject) => {
+		const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+		for (const stream of [child.stdout, child.stderr]) stream.on("data", (chunk) => appendFileSync(log, chunk));
+		child.on("error", reject);
+		child.on("close", (code) =>
+			code === 0
+				? resolvePromise()
+				: reject(new Error(`${basename(command)} ${args.join(" ")} exited ${code}; see ${log}`)),
+		);
+	});
+}
+
+/**
+ * Local qualification of the exact clean commit on both supported Node majors (item 1 of the
+ * 0.7.0 release). Each major gets its own detached worktree, because testing replaces the tree's
+ * dist/ and native addons bind to one Node ABI; no operator's checkout is touched (item 7). The
+ * archive is packed once and both majors test and boot it concurrently. A passed major is reused.
+ */
+async function qualify(values) {
+	const problem = tmpdirProblem(tmpdir());
+	if (problem) throw new Error(problem);
+	const commit = source();
+	// Seconds of checks before worktrees, installs, a build and two test legs.
+	if (!values["skip-preflight"]) await requirePreflight({ release: false });
+	const state = resolve(values.state ?? releaseState());
+	const directory = resolve(values.directory ?? join(state, `c-${commit.slice(0, 12)}`));
+	const nodes = Object.fromEntries(QUALIFIED_MAJORS.map((major) => [major, nodeBinary(major, values[`node${major}`])]));
+	const lock = acquireLock(state, `qualify ${commit}`, { inherit: true });
+	const trees = [];
+	const started = Date.now();
+	try {
+		mkdirSync(directory, { recursive: true });
+		const ready = {};
+		const setup = (major) => {
+			ready[major] ??= (async () => {
+				// Outside the git dir: tools such as biome skip nested configs under .git/ (0.7.1 rehearsal).
+				const tree = join(tmpdir(), `pancode-qualify-${commit.slice(0, 12)}-node${major}`);
+				const log = join(directory, `qualify-node${major}.log`);
+				writeFileSync(log, "");
+				trees.push(tree);
+				if (existsSync(tree)) run("git", ["worktree", "remove", "--force", tree]);
+				run("git", ["worktree", "add", "--quiet", "--detach", tree, commit]);
+				const env = { ...process.env, PATH: `${dirname(nodes[major])}:${process.env.PATH}` };
+				const [pnpm, installArgs] = pnpmArgv(["install", "--frozen-lockfile", "--prefer-offline"]);
+				await runLogged(pnpm, installArgs, { cwd: tree, env, log });
+				return { tree, env, log };
+			})();
+			return ready[major];
+		};
+		const leg = async (major, steps) => {
+			const { tree, env, log } = await setup(major);
+			for (const args of steps)
+				await runLogged(
+					nodes[major],
+					[join(tree, "scripts", "release-candidate.mjs"), ...args, "--directory", directory, "--sha", commit],
+					{ cwd: tree, env, log },
+				);
+		};
+		if (!existsSync(join(directory, "candidate.json"))) {
+			console.log(`Packing ${commit.slice(0, 12)} on Node 24...`);
+			// Installing the Node 22 tree overlaps the pack; a failure there surfaces in its leg.
+			setup("22").catch(() => {});
+			await leg("24", [["prepare", "--skip-preflight"]]);
+		}
+		const receipt = verifyCandidate(directory, commit);
+		const sha = receipt.files[basename(receipt.tarball)];
+		const pending = QUALIFIED_MAJORS.filter((major) => !qualifiedOn(directory, commit, major));
+		for (const major of QUALIFIED_MAJORS)
+			if (!pending.includes(major)) console.log(`Node ${major}: reusing qualification of ${commit.slice(0, 12)}`);
+		const outcomes = await Promise.allSettled(
+			pending.map(async (major) => {
+				const legStarted = Date.now();
+				const results = `test-results-${major}.json`;
+				await leg(major, [["test", "--results", results], ["smoke"]]);
+				const version = run(nodes[major], ["--version"], { encoding: "utf8", stdio: "pipe" }).trim();
+				const { total, counts } = json(join(directory, results));
+				const platform = `${process.platform}-${process.arch}`;
+				writeFileSync(
+					join(directory, `qualified-node${major}.json`),
+					`${JSON.stringify({ commit, sha256: sha, node: version, platform, total, counts }, null, 2)}\n`,
+				);
+				console.log(
+					`Node ${major}: ${total} tests and install boot passed (${Math.round((Date.now() - legStarted) / 1000)} s)`,
+				);
+			}),
+		);
+		const failed = outcomes.filter((outcome) => outcome.status === "rejected");
+		if (failed.length) throw new Error(failed.map((outcome) => outcome.reason.message).join("\n"));
+		console.log(
+			`QUALIFIED ${commit} on Node ${QUALIFIED_MAJORS.join(" and ")} (${process.platform}-${process.arch}) in ${Math.round((Date.now() - started) / 1000)} s: ${directory}`,
+		);
+	} finally {
+		for (const tree of trees) if (existsSync(tree)) run("git", ["worktree", "remove", "--force", tree]);
+		run("git", ["worktree", "prune"]);
+		lock.release();
+	}
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+	// Preparation, tests and the install boot all run under one zone and locale, here and in CI.
+	pinGateEnv();
+	try {
+		const { values, positionals } = parseArgs({
+			options: {
+				directory: { type: "string" },
+				sha: { type: "string" },
+				results: { type: "string" },
+				node22: { type: "string" },
+				node24: { type: "string" },
+				state: { type: "string" },
+				credits: { type: "string" },
+				"skip-preflight": { type: "boolean" },
+			},
+			allowPositionals: true,
+		});
+		const commit = values.sha ?? git("rev-parse", "HEAD");
+		const directory = resolve(values.directory ?? join(releaseState(), `c-${commit.slice(0, 12)}`));
+		const mode = positionals[0];
+		if (mode === "prepare") await prepare(directory, values.credits, { preflighted: values["skip-preflight"] });
+		else if (mode === "test") {
+			if (values.results !== undefined && !/^test-results(?:-\d+)?\.json$/u.test(values.results))
+				throw new Error("--results names test-results.json or test-results-<node major>.json.");
+			await testCandidate(directory, commit, values.results);
+		} else if (mode === "smoke") await smokeCandidate(directory, commit);
+		else if (mode === "verify" || mode === "preflight")
+			console.log(JSON.stringify(verifyCandidate(directory, commit), null, 2));
+		else if (mode === "qualify") await qualify(values);
+		else
+			throw new Error(
+				"Usage: release-candidate.mjs prepare|test|smoke|verify|qualify [--directory <path>] [--sha <commit>] [--results <file>] [--state <dir>] [--node22 <node>] [--node24 <node>]",
+			);
+	} catch (error) {
+		console.error(`release-candidate: ${error.message}`);
+		process.exitCode = 1;
+	}
+}

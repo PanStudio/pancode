@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * The sentence a granted call carries back to the model.
+ *
+ * A one-shot grant was invisible in the tool result: a damage-control
+ * confirmation the operator approved produced the same result text as a call
+ * that never asked, so the model reported "no prompt, no block" for a run the
+ * audit recorded as `permission_requested` then `allowed`. The
+ * transcript marker is the operator's record; this is the model's.
+ *
+ * Four sources release a parked call and they are not the same fact. The main
+ * TUI card (`tool:one_shot`) and a forwarded worker escalation
+ * (`escalation:operator`) are a person answering. An ACP client answering
+ * `allow-once` is that client, not this session's operator. A main-agent
+ * grant (`grant:main`, Phase D) is the main agent answering, not a person.
+ * An escalation timeout always denies and
+ * never releases a call; any source not named here gets the neutral wording.
+ *
+ * The operator's own card already recorded the answer, so the operator notes
+ * are conditional: a model told to "say" the approval narrated it at the end of
+ * every reply (v0.6.0 flywheel s3, s6). Every wording states the scope the
+ * registry already enforces: the grant covers this call and nothing else, so
+ * the model cannot read it as standing permission for a later one. The
+ * session's test-runner consent is the one exception: approving it also lets
+ * later test runners run (#377 follow-up), and its note says so.
+ *
+ * A call the System One gate parked also carries the gate's reason. The rail
+ * id says which rail asked, but a gate park is a judgment of this command and
+ * not a rule the model can look up, so without the reason it cannot tell why
+ * it was stopped.
+ */
+
+import { isRecord } from "../core/type-guards.js";
+import { SESSION_CODE_CONSENT_RULE_ID } from "../core/views/approval-words.js";
+import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
+
+/** Prefix for a grant a person gave. */
+export const OPERATOR_APPROVAL_NOTE_PREFIX = "[operator approval]";
+/** Prefix for a grant no operator of this session gave. */
+export const APPROVAL_NOTE_PREFIX = "[approval]";
+
+export interface ApprovalNoteInput {
+	actionClass: string;
+	/** `OneShotGrant.requestedBy`: which surface released the parked call. */
+	requestedBy: string;
+	/** Damage-control rule or policy rail that parked the call, when one named it. */
+	ruleId?: string | undefined;
+	/** `PermissionRequiredMeta.gateReason`: why the System One gate parked the call, set only for a gate park. */
+	gateReason?: string | undefined;
+}
+
+const SCOPE = "The grant covers this call only; another call still needs its own approval.";
+const SESSION_CONSENT_SCOPE =
+	"The grant also lets test runners run without asking for the rest of this session; any other call still needs its own approval.";
+
+/**
+ * The gate's sentences run about 110 characters plus a build id. The bound is
+ * for an engine that says more, because this text lands in the model's context.
+ */
+const GATE_REASON_MAX_CHARS = 200;
+
+/**
+ * The reason came from an engine build, so it takes the sanitizer a call target
+ * takes, is quoted as data and is cut on a code point boundary.
+ */
+export function gateReasonText(reason: string | undefined): string {
+	if (reason === undefined) return "";
+	const line = sanitizeCallTargetText(reason).replaceAll('"', "'");
+	const points = Array.from(line);
+	return points.length > GATE_REASON_MAX_CHARS ? `${points.slice(0, GATE_REASON_MAX_CHARS - 1).join("")}…` : line;
+}
+
+/** ` (rail: <id>)`, extended with the gate's reason when there is one, or empty when neither exists. */
+function railClause(input: ApprovalNoteInput): string {
+	const ruleId = input.ruleId?.trim() ?? "";
+	const reason = gateReasonText(input.gateReason);
+	const parts = [...(ruleId !== "" ? [`rail: ${ruleId}`] : []), ...(reason !== "" ? [`reason: "${reason}"`] : [])];
+	return parts.length === 0 ? "" : ` (${parts.join(", ")})`;
+}
+
+export function approvalNote(input: ApprovalNoteInput): string {
+	const rail = railClause(input);
+	const call = `this ${input.actionClass} call`;
+	const scope = input.ruleId?.trim() === SESSION_CODE_CONSENT_RULE_ID ? SESSION_CONSENT_SCOPE : SCOPE;
+	switch (input.requestedBy) {
+		case "tool:one_shot":
+			return `${OPERATOR_APPROVAL_NOTE_PREFIX} The operator approved ${call} once${rail}. ${scope} If you describe how this call ran, say the operator approved it, never that it ran without a prompt.`;
+		case "escalation:operator":
+			return `${OPERATOR_APPROVAL_NOTE_PREFIX} The operator approved ${call} once${rail}, through a forwarded worker escalation. ${scope} If you describe how this call ran, say the operator approved it, never that it ran without a prompt.`;
+		case "acp-client":
+			return `${APPROVAL_NOTE_PREFIX} The connected ACP client approved ${call} once${rail}. ${scope} Say the client was asked and granted it, and do not claim this session's operator approved it.`;
+		case "grant:main":
+			return `${APPROVAL_NOTE_PREFIX} The main agent granted ${call} once${rail}, through its grant broker. ${scope} Say the main agent approved it, and do not claim the operator was asked.`;
+		default:
+			return `${APPROVAL_NOTE_PREFIX} ${capitalize(call)} was released by '${input.requestedBy}'${rail}. ${scope} Name that source rather than claiming an operator was asked.`;
+	}
+}
+
+/**
+ * Whose grant a released call ran under, as a noun phrase for a note that
+ * names it (a rewrite that kept the approval, WX3). The surfaces match
+ * approvalNote's, so an ACP client's approval is never called the operator's.
+ */
+export function approvalGiver(requestedBy: string): string {
+	switch (requestedBy) {
+		case "tool:one_shot":
+		case "escalation:operator":
+			return "the operator's approval";
+		case "acp-client":
+			return "the connected ACP client's approval";
+		case "grant:main":
+			return "the main agent's grant";
+		default:
+			return `the approval released by '${requestedBy}'`;
+	}
+}
+
+function capitalize(text: string): string {
+	return text.length === 0 ? text : `${text[0]?.toUpperCase() ?? ""}${text.slice(1)}`;
+}
+
+type NotedResult = ({ kind: "ok"; output: string } | { kind: "error"; message: string }) & {
+	modelContext?: string;
+	details?: Record<string, unknown>;
+};
+
+/**
+ * Prepend the note to every text the result can show the model. A tool that
+ * declares a result disposition, bash among them, is read through its
+ * `modelContext` projection rather than `output`. Projecting the text early
+ * lost the note in that model-facing result. The note lands after the projection's byte cap,
+ * so it displaces none of the result, and `contextBytes` counts it so the
+ * recorded size stays the size the model received.
+ */
+export function withApprovalNote<T extends NotedResult>(result: T, input: ApprovalNoteInput): T {
+	const note = `${approvalNote(input)}\n`;
+	const text = result.kind === "ok" ? { output: `${note}${result.output}` } : { message: `${note}${result.message}` };
+	if (result.modelContext === undefined) return { ...result, ...text };
+	const disposition = result.details?.resultDisposition;
+	const details =
+		isRecord(disposition) && typeof disposition.contextBytes === "number"
+			? {
+					...result.details,
+					resultDisposition: { ...disposition, contextBytes: disposition.contextBytes + Buffer.byteLength(note) },
+				}
+			: result.details;
+	return {
+		...result,
+		...text,
+		modelContext: `${note}${result.modelContext}`,
+		...(details === undefined ? {} : { details }),
+	};
+}

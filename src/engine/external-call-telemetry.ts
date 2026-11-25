@@ -1,0 +1,354 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { hostname } from "node:os";
+import { processBirthToken } from "../core/process-identity.js";
+import { type ProviderCharge, providerChargeEconomics } from "../core/telemetry/economy.js";
+import type { Fact } from "../core/telemetry/fact.js";
+import { createTelemetryForwarder } from "../core/telemetry/forwarder.js";
+import { telemetryHub } from "../core/telemetry/hub.js";
+import { newAttemptId, newCallId } from "../core/telemetry/ids.js";
+import { sumFacts } from "../core/telemetry/pricing.js";
+import type { RunUsage } from "../core/telemetry/run-schemas.js";
+import type { CallUsage, Pricing } from "../core/telemetry/schemas.js";
+import { calculatePricingCostUsd } from "../domains/providers/catalog.js";
+import { callSettlementFromMessage, reportedModelFromMessage } from "../domains/telemetry/call-facts.js";
+import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput } from "./worker-run-types.js";
+
+const unknown = { kind: "unknown", reason: "provider-omitted" } as const;
+const record = (value: unknown): Record<string, unknown> =>
+	value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+const fields = ["input", "output", "cacheRead", "cacheWrite", "cacheWrite1h", "reasoning"] as const;
+
+export interface ExternalUsageObservation {
+	usage: Record<string, unknown>;
+	coverage: RunUsage["coverage"];
+	costEstimateMethod?: "peer-report";
+	stopReason?: "stop" | "toolUse" | "length";
+	/** Normalized fallback rows may contain placeholders; only positive verified fields survive (#434). */
+	normalized?: boolean;
+}
+const observations = new WeakMap<object, ExternalUsageObservation>();
+
+/** Keep raw field presence in process memory; the existing message and SDK payload stay unchanged (#434). */
+export function bindExternalUsage<T extends object>(message: T, observation: ExternalUsageObservation): T {
+	observations.set(message, observation);
+	return message;
+}
+
+/** One external summary as single facts, before it is recorded as sums with their coverage (#434). */
+export interface ExternalUsageFacts {
+	usage: CallUsage;
+	totalTokens: Fact<number>;
+	apiCalls: Fact<number>;
+	unmeteredCalls: Fact<number>;
+	pricing: Pricing;
+	coverage: RunUsage["coverage"];
+	/** The summary says its call count misses calls, so the count it states is a lower bound. */
+	callCountPartial: boolean;
+}
+
+export function externalUsageFacts(observation: ExternalUsageObservation): ExternalUsageFacts {
+	const raw = observation.usage;
+	const external = record(raw.pancodeExternal);
+	const tokensVerified =
+		raw.estimated !== true && (raw.pancodeExternal === undefined || external.tokenUsage === "provider-reported");
+	const read = (value: unknown, integer = true): Fact<number> =>
+		typeof value === "number" && Number.isFinite(value) && value >= 0 && (!integer || Number.isSafeInteger(value))
+			? { kind: "measured", value, source: "provider" }
+			: unknown;
+	const token = (key: string): Fact<number> =>
+		!tokensVerified || (observation.normalized && raw[key] === 0) ? unknown : read(raw[key]);
+	const usage = Object.fromEntries(fields.map((key) => [key, token(key)])) as CallUsage;
+	const cost = record(raw.cost).total ?? raw.costUsd;
+	const usd =
+		raw.pricedBy === "none" ||
+		external.cost === "missing" ||
+		external.cost === "unverified" ||
+		(observation.normalized && cost === 0)
+			? unknown
+			: read(cost, false);
+	// Declared target rates price it as measured (#434); a peer's own total or a catalog rate stays an estimate.
+	const declaredRates =
+		usd.kind === "measured" &&
+		raw.pricedBy === "target-rates" &&
+		external.cost !== "provider-reported" &&
+		observation.costEstimateMethod === undefined;
+	const estimatedUsd =
+		usd.kind === "measured" &&
+		!declaredRates &&
+		(raw.pricedBy === "catalog" || raw.pricedBy === "target-rates") &&
+		external.cost !== "provider-reported"
+			? {
+					kind: "estimated" as const,
+					value: usd.value,
+					method:
+						observation.costEstimateMethod ??
+						(raw.pricedBy === "target-rates" ? ("target-rates" as const) : ("catalog" as const)),
+				}
+			: usd.kind === "measured" && declaredRates
+				? { kind: "measured" as const, value: usd.value, source: "local-count" as const }
+				: usd;
+	return {
+		usage,
+		totalTokens: token("totalTokens"),
+		apiCalls: read(raw.apiCalls),
+		unmeteredCalls: read(raw.unmeteredCalls),
+		pricing: {
+			usd: estimatedUsd,
+			pricedBy:
+				estimatedUsd.kind === "estimated"
+					? observation.costEstimateMethod === "peer-report"
+						? "provider"
+						: raw.pricedBy === "target-rates"
+							? "target-rates"
+							: "catalog"
+					: estimatedUsd.kind === "measured"
+						? declaredRates
+							? "target-rates"
+							: "provider"
+						: "none",
+		},
+		coverage: observation.coverage,
+		callCountPartial: raw.callCountCoverage === "partial",
+	};
+}
+
+/** An external summary as the sums run.usage_reported records; a partial call count keeps one unknown call (#434). */
+export function reportedUsageSums(
+	facts: ExternalUsageFacts,
+): Pick<RunUsage, "usage" | "totalTokens" | "apiCalls" | "unmeteredCalls" | "pricing" | "coverage"> {
+	const one = (fact: Fact<number>) => sumFacts([fact]);
+	const counted = (fact: Fact<number>) => sumFacts(facts.callCountPartial ? [fact, unknown] : [fact]);
+	return {
+		usage: {
+			input: one(facts.usage.input),
+			cacheRead: one(facts.usage.cacheRead),
+			cacheWrite: one(facts.usage.cacheWrite),
+			cacheWrite1h: one(facts.usage.cacheWrite1h),
+			output: one(facts.usage.output),
+			reasoning: one(facts.usage.reasoning),
+		},
+		totalTokens: one(facts.totalTokens),
+		apiCalls: counted(facts.apiCalls),
+		unmeteredCalls: counted(facts.unmeteredCalls),
+		pricing: {
+			usd: one(facts.pricing.usd),
+			pricedBy: facts.pricing.pricedBy,
+			...(facts.pricing.freeRule !== undefined ? { freeRule: facts.pricing.freeRule } : {}),
+		},
+		coverage: facts.coverage,
+	};
+}
+
+/**
+ * The charge a peer's provider reported, or its own client-side total, as its own fact beside the route price (R1); a
+ * positive one on a route declared free is flagged.
+ */
+function peerCharge(input: WorkerRunInput, pricing: Pricing): ProviderCharge | null {
+	const usd = pricing.usd;
+	if (pricing.pricedBy !== "provider") return null;
+	const amount =
+		usd.kind === "measured"
+			? { kind: "measured" as const, value: usd.value, source: "provider" as const }
+			: usd.kind === "estimated" && usd.method === "peer-report"
+				? { kind: "estimated" as const, value: usd.value, method: "peer-report" as const }
+				: null;
+	if (amount === null) return null;
+	const freeRoute = freeRouteRule(input) !== null;
+	return { currency: "USD", amount, ...(freeRoute && amount.value > 0 ? { discrepancy: "free-route" as const } : {}) };
+}
+
+function externalTarget(input: WorkerRunInput) {
+	return {
+		targetId: input.target.id,
+		runtimeId: input.runtime.id,
+		api: input.runtime.id,
+		requestedModel: input.wireModelId,
+		reportedModel: { kind: "unknown", reason: "not-observed" } as const,
+	};
+}
+
+/** The rule that makes the target's route price free: declared free, or every declared rate zero. */
+function freeRouteRule(input: WorkerRunInput): "declared" | "zero-rates" | null {
+	const rates = input.target.pricing;
+	if (!rates) return null;
+	if (rates === "free") return "declared";
+	return [rates.input, rates.output, rates.cacheRead ?? 0, rates.cacheWrite ?? 0].every((rate) => rate === 0)
+		? "zero-rates"
+		: null;
+}
+
+/**
+ * A free or all-zero target prices any usage at zero, whatever the peer reported it charged (that charge is its own
+ * fact, R1); otherwise declared rates price measured counts, unless different models served the scope, whose summed
+ * tokens no one route rate prices (S4c).
+ */
+function priceExternalUsage(input: WorkerRunInput, facts: ExternalUsageFacts, mixedModels = false): ExternalUsageFacts {
+	const freeRule = freeRouteRule(input);
+	if (freeRule !== null)
+		return {
+			...facts,
+			pricing: {
+				usd: { kind: "measured" as const, value: 0, source: "local-count" as const },
+				pricedBy: "free" as const,
+				freeRule,
+			},
+		};
+	if (facts.pricing.usd.kind !== "unknown" || !input.target.pricing) return facts;
+	const rates = input.target.pricing;
+	if (rates === "free" || mixedModels) return facts;
+	// An unpriced cache read bills at the input price, as resolveEffectivePricing does.
+	const effective = {
+		input: rates.input,
+		output: rates.output,
+		cacheRead: rates.cacheRead ?? rates.input,
+		cacheWrite: rates.cacheWrite ?? 0,
+	};
+	const keys = ["input", "output", "cacheRead", "cacheWrite"] as const;
+	if (keys.some((key) => effective[key] !== 0 && facts.usage[key].kind !== "measured")) return facts;
+	const counts = Object.fromEntries(
+		keys.map((key) => [key, facts.usage[key].kind === "measured" ? facts.usage[key].value : 0]),
+	) as Record<(typeof keys)[number], number>;
+	// The 1h subset of the writes bills at its own rate, as the catalog prices it. A subset larger than the writes it
+	// belongs to, or beside writes nobody counted, is an inconsistent report, so the price stays unknown.
+	const longWrite = facts.usage.cacheWrite1h;
+	const writes = facts.usage.cacheWrite;
+	if (
+		longWrite.kind === "measured" &&
+		longWrite.value > 0 &&
+		(writes.kind !== "measured" || longWrite.value > writes.value)
+	)
+		return facts;
+	return {
+		...facts,
+		pricing: {
+			usd: {
+				kind: "measured" as const,
+				value: calculatePricingCostUsd(effective, {
+					...counts,
+					...(longWrite.kind === "measured" ? { cacheWrite1h: longWrite.value } : {}),
+				}),
+				source: "local-count" as const,
+			},
+			pricedBy: "target-rates" as const,
+		},
+	};
+}
+
+/** A peer's incremental report describes a disjoint scope, without asserting an API invocation (#434). */
+export function recordExternalUsagePart(
+	input: WorkerRunInput,
+	partId: string,
+	observation: ExternalUsageObservation,
+): void {
+	if (!input.telemetryContext) return;
+	telemetryHub().emit(
+		"run.usage_reported",
+		{
+			...reportedUsageSums(priceExternalUsage(input, externalUsageFacts(observation))),
+			source: "external-cli",
+			scope: "run",
+			partId,
+			revision: 0,
+			target: externalTarget(input),
+		},
+		input.telemetryContext,
+	);
+}
+
+/** The engine observes external summaries without pretending each summary is one provider request (#434). */
+export function observeExternalWorkerRun(
+	input: WorkerRunInput,
+	emit: WorkerEventEmit,
+	start: (emit: WorkerEventEmit) => WorkerRunHandle,
+	aggregateMessages = true,
+): WorkerRunHandle {
+	const context = input.telemetryContext;
+	if (!context) return start(emit);
+	const forwarder = createTelemetryForwarder(
+		context,
+		{ host: hostname(), pid: process.pid, birthToken: processBirthToken(), monoEpochWallMs: performance.timeOrigin },
+		emit,
+	);
+	const target = externalTarget(input);
+
+	let revision = 0;
+	const calls = new Set<string>();
+	const servedModels = new Set<string>();
+	telemetryHub().emit("process.started", {}, context);
+	forwarder.flush();
+	try {
+		const handle = start((event) => {
+			if (event.type === "pancode_model_call") {
+				const payload = event.payload;
+				const observed = observations.get(payload);
+				const identity = payload.responseId ?? String(payload.callIndex);
+				const served = (payload.responseModel ?? payload.model).trim();
+				if (served) servedModels.add(served);
+				if (observed && !calls.has(identity)) {
+					calls.add(identity);
+					const reported = externalUsageFacts(observed);
+					const facts = priceExternalUsage(input, reported);
+					const callId = newCallId();
+					const attemptId = newAttemptId();
+					const charge = observed.coverage === "complete" ? peerCharge(input, reported.pricing) : null;
+					const settlement = callSettlementFromMessage(
+						{ stopReason: "stop", usage: { ...observed.usage, pancodeExternal: { tokenUsage: "provider-reported" } } },
+						"none",
+					);
+					telemetryHub().emit(
+						"call.settled",
+						{
+							...settlement,
+							disposition:
+								observed.coverage === "complete"
+									? Object.values(facts.usage).some((fact) => fact.kind === "measured")
+										? "settled"
+										: "settled_no_usage"
+									: "sent_unsettled",
+							stop: { reason: observed.stopReason ?? "unknown" },
+							usage:
+								observed.coverage === "complete"
+									? facts.usage
+									: (Object.fromEntries(fields.map((field) => [field, unknown])) as CallUsage),
+							pricing: facts.pricing,
+							...(charge ? { economics: providerChargeEconomics(charge) } : {}),
+							callId,
+							attemptId,
+							attempt: 0,
+							target: { ...target, reportedModel: reportedModelFromMessage(payload) },
+							roundKind: "unknown",
+							toolChoice: "unknown",
+							stages: { settle: null },
+						},
+						{ ...context, callId, attemptId },
+					);
+				}
+			} else if (aggregateMessages && event.type === "message_end" && event.message.role === "assistant") {
+				const message = event.message;
+				const bound = observations.get(message);
+				const reported = externalUsageFacts(
+					bound ?? { usage: record(message.usage), coverage: "unknown", normalized: true },
+				);
+				// A run whose calls different models served is priced per call, never its summed tokens at one route rate.
+				const facts = priceExternalUsage(input, reported, servedModels.size > 1);
+				telemetryHub().emit(
+					"run.usage_reported",
+					{
+						...reportedUsageSums(facts),
+						source: input.runtime.id === "claude-sdk" ? "claude-sdk" : "external-cli",
+						scope: "run",
+						revision: revision++,
+						target,
+					},
+					context,
+				);
+			}
+			emit(event);
+		});
+		return { ...handle, promise: handle.promise.finally(() => forwarder.close()) };
+	} catch (error) {
+		forwarder.close();
+		throw error;
+	}
+}

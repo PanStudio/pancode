@@ -1,0 +1,618 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import path from "node:path";
+import { performance } from "node:perf_hooks";
+import { Type } from "typebox";
+import {
+	BASH_HARD_CAP_BYTES,
+	type BashCommandResult,
+	type BashTimeoutLimit,
+	bashSecretValues,
+	combineBashOutput,
+	combineLiveBashOutput,
+	runBashCommand,
+} from "../core/bash-exec.js";
+import { withoutLeadingCdTo } from "../core/leading-cd.js";
+import {
+	neutralizeFraming,
+	STEER_ABORT_MARK,
+	TOOL_RESULT_NOTES_SEPARATOR,
+	toolResultNote,
+} from "../core/reminder-framing.js";
+import { resolveSafeCwd } from "../core/safe-exec.js";
+import { mainSandboxWriteHint } from "../core/sandbox/main-session.js";
+import { runDeadlineAt } from "../core/termination-phase.js";
+import { ToolNames } from "../core/tool-names.js";
+import { CumulativeOutputMask } from "../domains/evidence/output-mask.js";
+import { echoedCheckStatus } from "../domains/safety/check-command-shape.js";
+import { bashObservedLines } from "./bash-observed-lines.js";
+import { expandPath } from "./path-utils.js";
+import { toolPresentationPolicy } from "./presentation.js";
+import {
+	deterministicDiagnosticSummary,
+	type NormalizedToolResultDisposition,
+	type ToolResultContextDisposition,
+	type ToolResultDisposition,
+} from "./result-disposition.js";
+import { writeToolOffload } from "./result-shaping.js";
+import { shellExitSpeaksForCommand } from "./shell-exit-scope.js";
+import type { ToolResult, ToolResultDetails, ToolSpec } from "./tool-spec.js";
+import { DEFAULT_MAX_LINES, truncateTailAtToken } from "./truncate.js";
+import { byteLength, truncateUtf8 } from "./truncate-utf8.js";
+
+// Operator presentation cap, tail-biased because diagnostics usually land last.
+export const BASH_DISPLAY_MAX_BYTES = 16 * 1024;
+// What a bounded result leaves in the model's context, which every later
+// request resends. A 16 KB tail kept the least useful end of a search: three
+// rg results held 51 KB of campaign T3's transcript. Head and tail keep the
+// first matches and the closing diagnostics, at 16 KiB in total.
+const BASH_CONTEXT_MAX_BYTES = 16 * 1024;
+export type BashOutputPolicy = "full" | "bounded" | "summary" | "metadata-only";
+
+const BASH_OUTPUT_POLICIES = new Set<BashOutputPolicy>(["full", "bounded", "summary", "metadata-only"]);
+
+function bashContextDisposition(policy: BashOutputPolicy): ToolResultContextDisposition & { maxBytes: number } {
+	if (policy === "full") {
+		return { mode: "full", maxBytes: BASH_DISPLAY_MAX_BYTES, downgradeExcerpt: "tail" };
+	}
+	if (policy === "summary") {
+		return {
+			mode: "summary",
+			maxBytes: BASH_DISPLAY_MAX_BYTES,
+			strategy: "diagnostic",
+			redact: true,
+		};
+	}
+	if (policy === "metadata-only") return { mode: "metadata-only", maxBytes: BASH_DISPLAY_MAX_BYTES };
+	return { mode: "bounded", maxBytes: BASH_CONTEXT_MAX_BYTES, excerpt: "head-tail" };
+}
+
+/** Canonical default attached by the builtin catalog and reused by direct registries. */
+export const BASH_DEFAULT_RESULT_DISPOSITION: ToolResultDisposition = {
+	presentation: {
+		...toolPresentationPolicy(ToolNames.Bash, undefined),
+		maxBytes: BASH_DISPLAY_MAX_BYTES,
+		overflow: "tail",
+	},
+	context: bashContextDisposition("bounded"),
+};
+
+/** Pure, idempotent normalization used by registry admission and direct calls. */
+function normalizeBashArguments(args: Record<string, unknown>): Record<string, unknown> {
+	return args.output_policy === undefined ? { ...args, output_policy: "bounded" } : args;
+}
+
+function bashOutputPolicy(args: Record<string, unknown>): BashOutputPolicy | null {
+	const value = args.output_policy;
+	return typeof value === "string" && BASH_OUTPUT_POLICIES.has(value as BashOutputPolicy)
+		? (value as BashOutputPolicy)
+		: null;
+}
+
+function resolveBashResultDisposition(
+	args: Record<string, unknown>,
+	declared: ToolResultDisposition | undefined = BASH_DEFAULT_RESULT_DISPOSITION,
+): ToolResultDisposition {
+	const policy = bashOutputPolicy(args) ?? "bounded";
+	const base = declared ?? BASH_DEFAULT_RESULT_DISPOSITION;
+	return { presentation: base.presentation, context: bashContextDisposition(policy) };
+}
+
+function normalizedBashDisposition(policy: BashOutputPolicy): NormalizedToolResultDisposition {
+	return {
+		presentation: { ...BASH_DEFAULT_RESULT_DISPOSITION.presentation, maxBytes: BASH_DISPLAY_MAX_BYTES },
+		context: bashContextDisposition(policy),
+	};
+}
+
+/**
+ * Truncation and summaries both discard the trailing newline, which is what tells the live row the last line is
+ * finished, so `Local: http://localhost:5173` would stall at its colon (#446).
+ */
+function closedLikeSource(rawOutput: string, shown: string): string {
+	return shown.length > 0 && /\s$/u.test(rawOutput) && !/\s$/u.test(shown) ? `${shown}\n` : shown;
+}
+
+/** Bound a cumulative live snapshot without writing an offload file per tick. */
+export function shapeBashProgress(rawOutput: string, outputBytes: number, policy: BashOutputPolicy): ToolResult {
+	const disposition = normalizedBashDisposition(policy);
+	let output: string;
+	if (policy === "metadata-only") {
+		output = `bash: running; captured ${outputBytes} bytes; stdout/stderr omitted by metadata-only policy`;
+	} else if (policy === "summary") {
+		output = closedLikeSource(rawOutput, deterministicDiagnosticSummary(rawOutput, BASH_DISPLAY_MAX_BYTES, true).text);
+	} else {
+		const { content } = truncateTailAtToken(
+			rawOutput,
+			{ maxLines: DEFAULT_MAX_LINES, maxBytes: disposition.context.maxBytes },
+			"all",
+		);
+		output = closedLikeSource(rawOutput, content);
+	}
+	return {
+		kind: "ok",
+		output,
+		details: {
+			resultSize: {
+				bytes: outputBytes,
+				shownBytes: byteLength(output),
+				maxBytes: BASH_DISPLAY_MAX_BYTES,
+				truncated: byteLength(rawOutput) > byteLength(output),
+				policy,
+			},
+		},
+	};
+}
+
+function bashResultDetails(
+	result: Awaited<ReturnType<typeof runBashCommand>>,
+	rawOutput: string,
+	outcome: "success" | "nonzero" | "timeout" | "abort" | "output-cap",
+	elapsedMs?: number,
+	command?: string,
+): ToolResultDetails {
+	const exitSpeaks = command === undefined || shellExitSpeaksForCommand(command);
+	// `check; echo "EXIT=$?"` printed the check's own status; the completion assessor judges the check on it.
+	const checkExitCode =
+		exitSpeaks || outcome !== "success" || result.outputCapped ? null : echoedCheckStatus(command, result.stdout);
+	return {
+		outcome,
+		...(elapsedMs === undefined ? {} : { elapsedMs }),
+		// The model read a chained command's trailing `echo` status as the suite's; say whose status this is.
+		...(exitSpeaks ? {} : { exitScope: "last-command" }),
+		...(checkExitCode === null ? {} : { checkExitCode }),
+		// `message` trims the output, and a killed process's last line releases only if whitespace finished it (#446).
+		outputEndsOpen: /\S$/u.test(rawOutput),
+		exitCode: result.exitCode,
+		signal: result.signal,
+		timedOut: result.timedOut,
+		aborted: result.aborted,
+		outputCapped: result.outputCapped,
+		outputBytes: result.outputBytes,
+		retainedBytes: byteLength(rawOutput),
+		stdoutBytes: byteLength(result.stdout),
+		stderrBytes: byteLength(result.stderr),
+		observedStdoutBytes: result.observedStdoutBytes,
+		observedStderrBytes: result.observedStderrBytes,
+		retainedStdoutBytes: result.retainedStdoutBytes,
+		retainedStderrBytes: result.retainedStderrBytes,
+	};
+}
+
+/**
+ * Lines a `grep -n` / `rg -n` printed, for citation grounding, only when the model's context holds the whole output:
+ * `| head` ends grep with SIGPIPE under pipefail, so a nonzero exit still printed them (bt-29).
+ */
+function observedLinesDetail(
+	command: string,
+	rawOutput: string,
+	policy: BashOutputPolicy,
+	cwd: string,
+): { observedLines?: Record<string, number[]> } {
+	if ((policy !== "bounded" && policy !== "full") || byteLength(rawOutput) > BASH_CONTEXT_MAX_BYTES - 1024) return {};
+	const observedLines = bashObservedLines(command, rawOutput, cwd);
+	return observedLines === undefined ? {} : { observedLines };
+}
+
+/** Finalize cap retention before projection so every policy carries the actual outcome. */
+export function bashOutputCapResult(
+	result: BashCommandResult,
+	policy: BashOutputPolicy,
+	context?: { sessionId?: string; toolResultMaxBytes?: number },
+): ToolResult {
+	const raw = combineBashOutput(result);
+	const bytes = byteLength(raw);
+	const cap = Math.min(BASH_DISPLAY_MAX_BYTES, context?.toolResultMaxBytes ?? BASH_DISPLAY_MAX_BYTES);
+	const bodyBudget = Math.max(0, cap - 2048);
+	const showBody = policy === "full" || policy === "bounded";
+	const inline = showBody && bytes <= bodyBudget;
+	const preview = inline
+		? raw
+		: showBody
+			? truncateTailAtToken(raw, { maxBytes: Math.max(1, bodyBudget), maxLines: DEFAULT_MAX_LINES }).content
+			: "";
+	let offloadPath: string | null = null;
+	let savedBytes = 0;
+	let discardedBytes = 0;
+	let retention: string;
+	if (inline) {
+		retention = `Partial output shown inline (${bytes} decoded output bytes).`;
+	} else {
+		const saved = truncateUtf8(raw, BASH_HARD_CAP_BYTES, "");
+		offloadPath = writeToolOffload(saved, context, BASH_HARD_CAP_BYTES);
+		if (offloadPath !== null) {
+			savedBytes = byteLength(saved);
+			discardedBytes = bytes - savedBytes;
+			retention = `Partial output offloaded to ${offloadPath} (${savedBytes} decoded output bytes saved).`;
+			if (discardedBytes > 0)
+				retention += ` Retention truncated by the ${BASH_HARD_CAP_BYTES}-byte (16 MiB) offload ceiling; ${discardedBytes} decoded output bytes discarded from the offload.`;
+		} else {
+			discardedBytes = bytes - byteLength(preview);
+			retention = `Partial-output retention failed; no offload was written. ${byteLength(preview)} decoded output bytes shown inline; ${discardedBytes} decoded output bytes discarded.`;
+		}
+	}
+	const status = `bash: command output exceeded the ${BASH_HARD_CAP_BYTES}-byte (16 MiB) hard cap and was stopped. Observed stdout: ${result.observedStdoutBytes ?? "unavailable"} bytes, stderr: ${result.observedStderrBytes ?? "unavailable"} bytes; retained stream stdout: ${result.retainedStdoutBytes ?? "unavailable"} bytes, stderr: ${result.retainedStderrBytes ?? "unavailable"} bytes. ${retention} Use run_script to stream unbounded output to .pancode/runs/<runId>/ instead.`;
+	const message = preview.length > 0 ? `${neutralizeFraming(preview)}\n\n${status}` : status;
+	const disposition = normalizedBashDisposition(policy);
+	return {
+		kind: "error",
+		message,
+		modelContext: message,
+		details: {
+			...bashResultDetails(result, raw, "output-cap"),
+			retention: {
+				status: inline ? "inline" : offloadPath === null ? "failed" : discardedBytes > 0 ? "truncated" : "offloaded",
+				savedBytes,
+				discardedBytes,
+				...(offloadPath === null ? {} : { offloadPath }),
+			},
+			resultSize: {
+				bytes,
+				shownBytes: byteLength(message),
+				maxBytes: cap,
+				truncated: !inline,
+				policy,
+				...(offloadPath === null ? {} : { offloadPath }),
+			},
+			resultDisposition: {
+				version: 1,
+				applications: 1,
+				presentation: { ...disposition.presentation, content: message },
+				context: {
+					requestedMode: policy === "metadata-only" ? "metadata-only" : disposition.context.mode,
+					appliedMode: disposition.context.mode,
+					maxBytes: cap,
+				},
+				capturedBytes: bytes,
+				displayedBytes: byteLength(message),
+				contextBytes: byteLength(message),
+				presentationTruncated: !inline,
+				contextTruncated: !inline,
+				retrieval: retention,
+				...(offloadPath === null ? {} : { offloadPath }),
+			},
+		},
+	};
+}
+
+// A bash command whose first word is a plain file/dir observer has a
+// structured OBSERVE counterpart with paged, budget-aware results.
+const OBSERVE_COMMAND_PATTERN = /^\s*(?:cat|head|tail|ls|grep|rg|find)\b/;
+
+const OBSERVE_NUDGE_SESSION_LIMIT = 64;
+const observeNudgeSeenSessions = new Set<string>();
+
+/** A verbose pytest timeout should name the last test the process announced. */
+export function lastActivePytestTest(command: string, output: string): string | null {
+	if (!/\bpytest\b/u.test(command)) return null;
+	const lines = output.split(/\r?\n|\r/u);
+	for (let index = lines.length - 1; index >= 0; index -= 1) {
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: pytest can color its verbose test names.
+		const line = lines[index]?.replace(/\u001b\[[0-9;]*m/gu, "") ?? "";
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: reject control characters from echoed process output.
+		const candidate = line.match(/(?:^|\s)([\w./-]+\.py(?:::[^\s\u0000-\u001f\u007f]+)+)/u)?.[1];
+		if (candidate) return truncateUtf8(candidate, 240, "...");
+	}
+	return null;
+}
+
+/**
+ * One nudge per session, on the first successful observer-shaped bash call.
+ * Point-of-failure conditioning like the edit-result validation nudge:
+ * measured orientation runs opened with ten bash cat/ls calls while the
+ * structured observe tools sat unused in the surface; result-time text beats
+ * static prompt lines. Appending to the result keeps the per-session tool
+ * surface and prompt prefix byte-stable.
+ */
+function observeToolsNudge(command: string, sessionId: string | undefined): string {
+	if (!OBSERVE_COMMAND_PATTERN.test(command)) return "";
+	const key = sessionId ?? "no-session";
+	if (observeNudgeSeenSessions.has(key)) return "";
+	if (observeNudgeSeenSessions.size >= OBSERVE_NUDGE_SESSION_LIMIT) {
+		const oldest = observeNudgeSeenSessions.values().next().value;
+		if (oldest !== undefined) observeNudgeSeenSessions.delete(oldest);
+	}
+	observeNudgeSeenSessions.add(key);
+	// Framed as a note so the operator's row reads it as one and not as the command's last lines of output.
+	return `${TOOL_RESULT_NOTES_SEPARATOR}${toolResultNote(
+		"info",
+		"prefer the structured observe tools over shell file inspection: read pages files with " +
+			"offset/limit; grep, find, ls and code_nav, direct or through gateway, search and map symbols. Their " +
+			"results are capped and continuable; keep bash for builds, git, and scripts.",
+	)}`;
+}
+
+const PANCODE_ISSUE_COMMAND = /\bgh\s+(?:issue\s+create\b|api\s+\S*\/issues\b)/u;
+export const PANCODE_REPORT_NUDGE =
+	"PanCode has /report, which checks for duplicates, shows the operator the exact text and attaches versions.";
+
+const NO_TERMINAL_FAILURE =
+	/\/dev\/tty: No such device or address|open terminal failed|\bnot a (?:tty|terminal)\b|input device is not a TTY|a terminal is required|Inappropriate ioctl for device/iu;
+
+/**
+ * A command runs in a session of its own with no controlling terminal, so the TUI's terminal is never its terminal
+ * (M-12). One that needed a terminal fails, and the failure says why and where an interactive program can run.
+ */
+function noTerminalHint(output: string): string | null {
+	if (process.platform === "win32" || !NO_TERMINAL_FAILURE.test(output)) return null;
+	return "bash: the command looks like it needed a terminal. Tool commands run without one, so they cannot reach the TUI's terminal; run an interactive program in a pane (panes tool), or give it a pseudo-terminal of its own.";
+}
+
+/**
+ * A `gh` issue filed against PanCode's own repository bypasses /report (R-12). The call is not blocked, since the
+ * operator's credential is theirs; the result gains one note naming the route that dedups, shows the text and adds
+ * versions.
+ */
+export function pancodeIssueNudge(command: string): string {
+	if (!PANCODE_ISSUE_COMMAND.test(command) || !command.includes("akougkas/pancode")) return "";
+	return `${TOOL_RESULT_NOTES_SEPARATOR}${toolResultNote("info", PANCODE_REPORT_NUDGE)}`;
+}
+
+/** `5m`, `1h`, `90s`: a limit in the words a person reads it in; `300000ms` made the operator do arithmetic. */
+function limitWords(ms: number): string {
+	const seconds = Math.round(ms / 1000);
+	if (seconds % 3600 === 0) return `${seconds / 3600}h`;
+	if (seconds % 60 === 0) return `${seconds / 60}m`;
+	return `${seconds}s`;
+}
+
+/** `60 min (3600000 ms)`: the timeout in human units with the raw value the model passed as timeout_ms. */
+function timeoutWords(ms: number): string {
+	if (ms < 1000) return `${ms} ms`;
+	const seconds = ms / 1000;
+	const human =
+		seconds >= 3600 && seconds % 3600 === 0
+			? `${seconds / 3600} h`
+			: seconds >= 60 && seconds % 60 === 0
+				? `${seconds / 60} min`
+				: `${Math.round(seconds * 10) / 10} s`;
+	return `${human} (${ms} ms)`;
+}
+
+const TEST_RUN_COMMAND =
+	/\b(?:pytest|vitest|jest|node\s+(?:[^|;&]*\s)?--test\b|(?:pnpm|npm|yarn)\s+(?:run\s+|-s\s+)*test(?::[\w-]+)?\b|go\s+test|cargo\s+test|ctest)\b/u;
+
+/**
+ * A timeout is the command outliving its own limit, not the tool going away: a model that read the old test-run wording
+ * after a lock wait concluded bash had stopped answering. The test-run hint stays for commands that look like test runs.
+ * A stop at the run's --timeout deadline names that deadline (`runTimeoutMs`, counted from process start, is the
+ * --timeout itself) and says the run's time is spent; a command the deadline kept from starting printed nothing because
+ * it never ran, so it gets neither the printed-nothing note nor the next-call advice (XR-12).
+ */
+function bashTimeoutStatus(
+	command: string,
+	limit: BashTimeoutLimit,
+	printedNothing: boolean,
+	lastActiveTest: string | null,
+	requestedMs: number,
+	runTimeoutMs: number | null,
+): string {
+	const deadline = `the run's --timeout deadline${runTimeoutMs === null ? "" : ` (${Math.round(runTimeoutMs / 1000)} s)`}`;
+	if (limit.by === "run-deadline" && limit.ms === 0)
+		return `bash: ${deadline} had passed before this command started, so it did not run (${timeoutWords(requestedMs)} requested). The run's time is spent, so no further command can run in it.`;
+	let status =
+		limit.by === "idle"
+			? `bash: this command printed nothing and used no CPU for ${timeoutWords(limit.ms)} and was stopped as idle (safety.limits.bashIdleSeconds), before the ${timeoutWords(requestedMs)} timeout ran out.`
+			: limit.by === "timeout"
+				? `bash: this command ran past its own ${timeoutWords(limit.ms)} timeout and was stopped.`
+				: `bash: this command was stopped at ${deadline}, before the ${timeoutWords(requestedMs)} requested ran out.`;
+	if (printedNothing && limit.by !== "idle")
+		status += " It printed nothing before it was stopped (its output went elsewhere, or it was waiting).";
+	status +=
+		limit.by !== "run-deadline"
+			? " The bash tool still works; the next call runs normally."
+			: " The run's time is spent, so no further command can run in it.";
+	if (lastActiveTest !== null || TEST_RUN_COMMAND.test(command)) {
+		status +=
+			" Validation did not finish." +
+			(lastActiveTest === null ? "" : ` Last active pytest test: ${lastActiveTest}.`) +
+			" Narrow the test selection or enable verbose test names before another bounded run.";
+	}
+	return status;
+}
+
+/** An abort is the run ending under the command, never its own timeout, and the model has to be able to tell which (#445). */
+function bashAbortStatus(elapsedMs: number, timeoutMs: number, cause: string | null): string {
+	const span = `after ${Math.round(elapsedMs / 1000)}s of its ${limitWords(timeoutMs)} time limit`;
+	return cause === null
+		? `bash: command aborted ${span}. The host ended the run and recorded no cause.`
+		: `bash: command aborted ${span}. The host ended the run: ${cause}`;
+}
+
+/** A queued operator steer ended the call, not the run: the output is partial and the steer is the next message (FX-32). */
+function bashSteerAbortStatus(elapsedMs: number): string {
+	return `bash: ${STEER_ABORT_MARK} after ${Math.round(elapsedMs / 1000)}s. The operator queued a steer while this command ran, so the host stopped it; the output above is partial. The run goes on, and the steer follows as the next message.`;
+}
+
+export const bashTool: ToolSpec = {
+	name: ToolNames.Bash,
+	description:
+		"Run bash in a fresh child at the workspace root (or cwd); shell state does not persist. Not for what verify, grep, find, git, run_script or data cover. Output has a 16 MiB hard cap that stops the child; run_script streams unbounded output. Default timeout 300s; use panes for long-lived processes or an explicit timeout_ms. Networking follows the host and OS isolation; disabling web_fetch does not isolate bash networking. At autonomy default it runs unasked in an OS sandbox when available (workspace and scratch roots writable, secrets hidden); otherwise read-only inspection runs and other commands are reviewed.",
+	parameters: Type.Object({
+		command: Type.String({ description: "Bash command to execute." }),
+		cwd: Type.Optional(
+			Type.String({
+				description: "Relative subdirectory of the workspace root. Outside the root needs the sandbox.",
+			}),
+		),
+		unsandboxed: Type.Optional(
+			Type.Boolean({
+				description:
+					"Leave the sandbox, only after a command failed because of it (credentials, a path outside the writable roots); the call is reviewed.",
+			}),
+		),
+		timeout_ms: Type.Optional(Type.Number({ description: "Timeout in milliseconds." })),
+		output_policy: Type.Optional(
+			Type.Union([Type.Literal("full"), Type.Literal("bounded"), Type.Literal("summary"), Type.Literal("metadata-only")], {
+				description:
+					"Omit for a bounded head and tail; summary for noisy runs; metadata-only when only the outcome matters; full only for known-small output.",
+			}),
+		),
+	}),
+	baseActionClass: "execute",
+	executionMode: "sequential",
+	steerInterruptible: true,
+	prepareArguments: normalizeBashArguments,
+	resolveResultDisposition: resolveBashResultDisposition,
+	async run(args, options): Promise<ToolResult> {
+		args = normalizeBashArguments(args);
+		if (typeof args.command !== "string" || args.command.length === 0) {
+			return { kind: "error", message: "bash: missing command argument" };
+		}
+		const outputPolicy = bashOutputPolicy(args);
+		if (outputPolicy === null) {
+			return {
+				kind: "error",
+				message: "bash: output_policy must be one of full, bounded, summary, or metadata-only (omit it for bounded)",
+				details: { outcome: "invalid-arguments", exitCode: null },
+			};
+		}
+		const cwdArg = typeof args.cwd === "string" && args.cwd.length > 0 ? args.cwd : undefined;
+		// Pin the child's cwd inside the session workspace in the tool itself.
+		// The safety net blocks escaping cwd arguments at admission; this is the
+		// defense-in-depth mirror for paths that reach the tool directly, and it
+		// resolves `~` before checking so a home-relative cwd cannot slip past
+		// as an unexpanded literal.
+		let cwd: string;
+		const requestedCwd = cwdArg === undefined ? undefined : expandPath(cwdArg);
+		try {
+			// The main session at yolo was admitted with a cwd outside the workspace
+			// (#419), and a contained call runs where the sandbox bounds its writes.
+			cwd =
+				(options?.operatorYolo === true || options?.shellSandbox !== undefined) && requestedCwd !== undefined
+					? path.resolve(process.cwd(), requestedCwd)
+					: resolveSafeCwd(requestedCwd, process.cwd());
+		} catch {
+			return {
+				kind: "error",
+				message: `bash: cwd '${cwdArg}' escapes workspace root '${process.cwd()}'; use a typed tool or a project policy entry with explicit cwd`,
+			};
+		}
+		const requested = typeof args.timeout_ms === "number" && args.timeout_ms > 0 ? args.timeout_ms : 300_000;
+		// A headless run's --timeout bounds every wait it starts: no shell wait outlives the run (XR-12).
+		// The executor arms its timer against the deadline itself, after spawn preparation, and reports which limit armed it.
+		const deadlineAt = runDeadlineAt();
+		try {
+			// Credentials are masked where output is shaped, by known value and by shape, so model context, the cap result
+			// and any offload all read the masked text. Each stream is masked once as it grows, and a progress frame holds
+			// back a credential its snapshot may have cut.
+			const secrets = await bashSecretValues(options?.shellSandbox?.env.secretNames);
+			const stdoutMask = new CumulativeOutputMask(secrets);
+			const stderrMask = new CumulativeOutputMask(secrets);
+			const runOptions: Parameters<typeof runBashCommand>[1] = {
+				cwd,
+				timeoutMs: requested,
+				...(deadlineAt === null ? {} : { deadlineAt }),
+				...(options?.signal === undefined ? {} : { signal: options.signal }),
+				...(options?.shellSandbox === undefined ? {} : { shellSandbox: options.shellSandbox }),
+				...(options?.bashIdleMs !== undefined && options.bashIdleMs > 0 ? { idleMs: options.bashIdleMs } : {}),
+				// Each piece is masked as it arrives, so a large output is not masked in one stall when the command ends (SC-7).
+				onOutput: (target, text) => (target === "stdout" ? stdoutMask : stderrMask).append(text),
+			};
+			if (options?.onUpdate !== undefined) {
+				runOptions.onUpdate = (progress) => {
+					const output = combineLiveBashOutput({
+						stdout: stdoutMask.frame(progress.stdout),
+						stderr: stderrMask.frame(progress.stderr),
+					});
+					options.onUpdate?.(shapeBashProgress(output, progress.outputBytes, outputPolicy));
+				};
+			}
+			const startedAt = performance.now();
+			const captured = await runBashCommand(args.command, runOptions);
+			const elapsedMs = Math.round(performance.now() - startedAt);
+			// A command stopped by a signal, its timeout or the byte cap may end inside a credential.
+			const ending = captured.aborted || captured.timedOut || captured.outputCapped ? "cut-off" : "complete";
+			const result = {
+				...captured,
+				stdout: stdoutMask.final(captured.stdout, ending),
+				stderr: stderrMask.final(captured.stderr, ending),
+			};
+			const { error, aborted, timedOut, outputCapped } = result;
+			const limit: BashTimeoutLimit = captured.timeoutLimit ?? { by: "timeout", ms: requested };
+			const rawOutput = combineBashOutput(result);
+			// The receipt speaks for the command after a leading `cd` into the directory it already ran in (XR-9).
+			const receiptCommand = withoutLeadingCdTo(args.command, cwd);
+			// Command output cannot speak in the host's voice: a `[middleware:` line or a reminder tag in it is made inert,
+			// so only the notes appended below read as host notes.
+			const shown = neutralizeFraming(rawOutput);
+			const output = shown.trim();
+			const abortCause = aborted ? (options?.abortCause?.() ?? null) : null;
+			if (aborted && options?.steerInterrupted?.() === true && options.signal?.aborted === true) {
+				const status = bashSteerAbortStatus(elapsedMs);
+				return {
+					kind: "error",
+					message: output.length > 0 ? `${output}\n\n${status}` : status,
+					details: { ...bashResultDetails(result, rawOutput, "abort", elapsedMs), abortedBy: "steer" },
+				};
+			}
+			// The run's --timeout shuts the run down at the same instant this command's deadline timer fires, so the run's
+			// abort and the timer race and a result can carry both flags. Whichever landed first, a stop on or past the
+			// deadline with no other recorded cause is the deadline's, judged on unrounded time (XR-12).
+			const deadlineStop =
+				deadlineAt !== null &&
+				((timedOut && limit.by === "run-deadline") || (aborted && abortCause === null && performance.now() >= deadlineAt));
+			// An abort with no cause on a command its own timer already stopped is that timeout, not an unexplained abort.
+			if (aborted && !deadlineStop && (abortCause !== null || !timedOut)) {
+				const status = bashAbortStatus(elapsedMs, limit.ms, abortCause);
+				return {
+					kind: "error",
+					message: output.length > 0 ? `${output}\n\n${status}` : status,
+					details: { ...bashResultDetails(result, rawOutput, "abort", elapsedMs), abortCause },
+				};
+			}
+			if (timedOut || deadlineStop) {
+				const lastActiveTest = lastActivePytestTest(args.command, rawOutput);
+				// An abort only lands on a spawned command, so a deadline stop it caused is never the did-not-start case.
+				const stopLimit: BashTimeoutLimit =
+					deadlineStop && limit.by !== "run-deadline" ? { by: "run-deadline", ms: Math.max(1, limit.ms) } : limit;
+				const status = bashTimeoutStatus(
+					args.command,
+					stopLimit,
+					output.length === 0,
+					lastActiveTest,
+					requested,
+					deadlineAt,
+				);
+				return {
+					kind: "error",
+					message: output.length > 0 ? `${output}\n\n${status}` : status,
+					details: {
+						...bashResultDetails(result, rawOutput, "timeout", elapsedMs),
+						...(stopLimit.by === "idle" ? { timedOutBy: "idle", idleMs: stopLimit.ms } : {}),
+						...(lastActiveTest === null ? {} : { lastActiveTest }),
+					},
+				};
+			}
+			if (outputCapped) return bashOutputCapResult(result, outputPolicy, options);
+			if (error) {
+				const code = typeof error.code === "number" ? error.code : (error as { code?: string }).code;
+				const sandboxHint =
+					options?.shellSandbox === undefined ? null : mainSandboxWriteHint(rawOutput, options.shellSandbox);
+				const hints = [sandboxHint, noTerminalHint(rawOutput)].filter((hint): hint is string => hint !== null);
+				const status = `bash: command failed (exit ${code ?? "?"})${hints.map((hint) => `\n${hint}`).join("")}`;
+				const message = `${output.length > 0 ? `${output}\n\n${status}` : `${status}: ${error.message}`}${pancodeIssueNudge(args.command)}`;
+				return {
+					kind: "error",
+					message,
+					details: {
+						...bashResultDetails(result, rawOutput, "nonzero", elapsedMs, receiptCommand),
+						...observedLinesDetail(args.command, rawOutput, outputPolicy, cwd),
+					},
+				};
+			}
+			const body = shown.length > 0 ? shown : "(no output)";
+			return {
+				kind: "ok",
+				output: `${body}${observeToolsNudge(args.command, options?.sessionId)}${pancodeIssueNudge(args.command)}`,
+				details: {
+					...bashResultDetails(result, rawOutput, "success", elapsedMs, receiptCommand),
+					...observedLinesDetail(args.command, rawOutput, outputPolicy, cwd),
+				},
+			};
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			return { kind: "error", message: `bash: ${msg}` };
+		}
+	},
+};

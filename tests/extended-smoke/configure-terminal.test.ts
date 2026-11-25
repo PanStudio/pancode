@@ -1,0 +1,635 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { join } from "node:path";
+import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+import { stripVTControlCharacters } from "node:util";
+import { spawn } from "node-pty";
+import { parse, stringify } from "yaml";
+import { orderedAreaControls } from "../../src/cli/configure-controls.js";
+import { runtimesForCategory } from "../../src/cli/configure-target.js";
+import type { PancodeSettings } from "../../src/core/config.js";
+import { validateSettings } from "../../src/core/settings-validate.js";
+import { listProviderSupportEntries } from "../../src/domains/providers/index.js";
+import { getRuntimeRegistry } from "../../src/domains/providers/registry.js";
+import { registerBuiltinRuntimes } from "../../src/domains/providers/runtimes/builtins.js";
+import { makeScratchHome } from "../harness/scratch-env.js";
+
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const CLI = join(ROOT, "dist/cli/index.js");
+const DOWN = "\x1b[B";
+const ENTER = "\r";
+const BACK = "\x1b";
+const CLEAR = "\x15";
+
+function terminal(
+	home: ReturnType<typeof makeScratchHome>,
+	args: string[] = [],
+	env: NodeJS.ProcessEnv = {},
+	rows = 24,
+	command: string[] = ["configure"],
+) {
+	const child = spawn(process.execPath, [CLI, ...command, ...args], {
+		cwd: home.dir,
+		env: { ...process.env, ...home.env, HOME: home.dir, TERM: "xterm-256color", PATH: "", ...env },
+		cols: 100,
+		rows,
+	});
+	let output = "";
+	let expectedOffset = 0;
+	let exited = false;
+	child.onData((data) => {
+		output += data;
+	});
+	const exit = new Promise<number>((resolve) =>
+		child.onExit((event) => {
+			exited = true;
+			resolve(event.exitCode);
+		}),
+	);
+	async function finish(expected = 0) {
+		const timer = setTimeout(() => child.kill(), 5000);
+		try {
+			strictEqual(await exit, expected);
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+	return {
+		finish,
+		screen: () => stripVTControlCharacters(output),
+		async expect(cue: string) {
+			const deadline = Date.now() + 15_000;
+			while (stripVTControlCharacters(output).indexOf(cue, expectedOffset) < 0 && !exited && Date.now() < deadline)
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			const index = stripVTControlCharacters(output).indexOf(cue, expectedOffset);
+			ok(index >= 0, `Expected ${JSON.stringify(cue)}; exited=${exited}\n${output}`);
+			expectedOffset = index + cue.length;
+		},
+		send(keys: string) {
+			output = "";
+			expectedOffset = 0;
+			child.write(keys);
+		},
+		async quit() {
+			child.write("q");
+			await finish();
+		},
+		close() {
+			if (!exited) child.kill();
+		},
+	};
+}
+
+function seed(home: ReturnType<typeof makeScratchHome>, url: string): string {
+	mkdirSync(join(home.dir, "config"), { recursive: true });
+	const file = join(home.dir, "config/settings.yaml");
+	writeFileSync(
+		file,
+		stringify({
+			version: 2,
+			targets: [
+				{
+					id: "existing",
+					runtime: "openai-compat",
+					url,
+					defaultModel: "alpha",
+					gateway: true,
+					capabilities: { contextWindow: 32768, maxTokens: 4096, reasoning: false },
+				},
+			],
+			chat: { target: "existing", model: "alpha", thinkingLevel: "low", modelPicker: { favorites: ["existing/alpha"] } },
+			fleet: { default: { target: "existing", model: "alpha" } },
+		}),
+	);
+	return file;
+}
+
+describe("smoke/configure on a real terminal", { skip: process.platform === "win32" }, () => {
+	it("quick-connects a fresh home with one model, supports Back, and uses the shipped defaults", async () => {
+		const home = makeScratchHome("pancode-quick-tty-");
+		const server = createServer((request, response) => {
+			response.setHeader("content-type", "application/json");
+			if (request.url === "/api/version") response.end('{"version":"0.9.0"}');
+			else if (request.url === "/api/tags") response.end(JSON.stringify({ models: [{ name: "solo" }] }));
+			else {
+				response.statusCode = 404;
+				response.end("{}");
+			}
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+		const tty = terminal(home);
+		try {
+			await tty.expect("❯ Guided setup");
+			tty.send(DOWN + ENTER);
+			await tty.expect("Endpoint URL");
+			tty.send(`http://127.0.0.1:1${ENTER}`);
+			await tty.expect("Could not connect:");
+			strictEqual(existsSync(join(home.dir, "config/settings.yaml")), false);
+			await tty.expect("Endpoint URL");
+			tty.send(CLEAR + url + ENTER);
+			await tty.expect("Ready to connect");
+			ok(!tty.screen().includes("API key"));
+			ok(!tty.screen().includes("Choose the model"));
+			strictEqual(existsSync(join(home.dir, "config/settings.yaml")), false);
+			tty.send(BACK);
+			await tty.expect("Endpoint URL");
+			tty.send(ENTER);
+			await tty.expect("Ready to connect");
+			tty.send(ENTER);
+			await tty.finish();
+			const file = validateSettings(parse(readFileSync(join(home.dir, "config/settings.yaml"), "utf8")));
+			deepStrictEqual(file.issues, []);
+			const saved = file.settings;
+			strictEqual(saved.targets.length, 1);
+			strictEqual(saved.targets[0]?.runtime, "ollama");
+			strictEqual(saved.chat.model, "solo");
+			deepStrictEqual(
+				{ target: saved.fleet.default.target, model: saved.fleet.default.model },
+				{ target: saved.chat.target, model: "solo" },
+			);
+			strictEqual(saved.fleet.concurrency, "auto");
+			strictEqual(saved.safety.autonomy, "default");
+			strictEqual(saved.safety.limits.sessionCostUsd, 5);
+			strictEqual(saved.chat.prewarm, false);
+			strictEqual(saved.chat.maxOutputTokens, 0);
+			strictEqual(saved.context.memory.target, null);
+			deepStrictEqual(saved.integrations.externalAgents.entries, []);
+		} finally {
+			tty.close();
+			server.closeAllConnections();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+			home.cleanup();
+		}
+	});
+
+	it("quick-connects a keyed gateway without inheriting an unrelated key or saving a draft", async () => {
+		const home = makeScratchHome("pancode-quick-gateway-");
+		mkdirSync(join(home.dir, "config"), { recursive: true });
+		const credentialsFile = join(home.dir, "config/credentials.yaml");
+		const originalCredentials = stringify({
+			version: 2,
+			entries: {
+				"openai-compat": { type: "api_key", key: "unrelated-key", updatedAt: "2026-09-01T00:00:00Z" },
+			},
+		});
+		writeFileSync(credentialsFile, originalCredentials, { mode: 0o600 });
+		const seen = new Set<string | undefined>();
+		const server = createServer((request, response) => {
+			seen.add(request.headers.authorization);
+			response.setHeader("content-type", "application/json");
+			if (request.url === "/health/liveliness") {
+				response.end('{"status":"healthy"}');
+				return;
+			}
+			if (request.url !== "/v1/model/info" && request.url !== "/v1/models") {
+				response.statusCode = 404;
+				response.end("{}");
+				return;
+			}
+			if (request.headers.authorization !== "Bearer quick-key") {
+				response.statusCode = 401;
+				response.end("{}");
+				return;
+			}
+			if (request.url === "/v1/model/info")
+				response.end(
+					JSON.stringify({
+						data: [
+							...["alpha", "beta"].map((id) => ({
+								model_name: id,
+								model_info: { mode: "chat", supports_function_calling: true, max_input_tokens: 32768, max_output_tokens: 4096 },
+							})),
+							{ model_name: "embeddings", model_info: { mode: "embedding" } },
+						],
+					}),
+				);
+			else response.end(JSON.stringify({ data: [{ id: "alpha" }, { id: "beta" }, { id: "embeddings" }] }));
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+		const tty = terminal(home, ["--quick"]);
+		try {
+			await tty.expect("Endpoint URL");
+			tty.send(url + ENTER);
+			await tty.expect("API key (saved locally");
+			tty.send(`wrong-key${ENTER}`);
+			await tty.expect("The endpoint rejected that key");
+			await tty.expect("API key (saved locally");
+			tty.send(`quick-key${ENTER}`);
+			await tty.expect("Choose the model for PanCode");
+			ok(!tty.screen().includes("embeddings"));
+			tty.send("no-matching-model");
+			await tty.expect("No matching models");
+			tty.send(`${CLEAR}bet`);
+			await tty.expect("❯ beta");
+			tty.send(ENTER);
+			await tty.expect("Ready to connect");
+			strictEqual(readFileSync(credentialsFile, "utf8"), originalCredentials);
+			strictEqual(existsSync(join(home.dir, "config/settings.yaml")), false);
+			tty.send(BACK);
+			await tty.expect("❯ beta");
+			tty.send(ENTER);
+			await tty.expect("Ready to connect");
+			tty.send(ENTER);
+			await tty.finish();
+			const saved = parse(readFileSync(join(home.dir, "config/settings.yaml"), "utf8")) as PancodeSettings;
+			strictEqual(saved.targets[0]?.runtime, "litellm");
+			strictEqual(saved.chat.model, "beta");
+			ok(!seen.has("Bearer unrelated-key"));
+			const credentials = parse(readFileSync(credentialsFile, "utf8"));
+			strictEqual(credentials.entries[saved.targets[0]?.auth?.apiKeyRef ?? ""].key, "quick-key");
+			strictEqual(credentials.entries["openai-compat"].key, "unrelated-key");
+		} finally {
+			tty.close();
+			server.closeAllConnections();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+			home.cleanup();
+		}
+	});
+
+	it("offers a key for APIs whose model catalog is public", async () => {
+		const home = makeScratchHome("pancode-quick-public-");
+		const server = createServer((request, response) => {
+			response.setHeader("content-type", "application/json");
+			if (request.url === "/v1/models") response.end(JSON.stringify({ data: [{ id: "solo" }] }));
+			else {
+				response.statusCode = 404;
+				response.end("{}");
+			}
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const tty = terminal(home, ["--quick"]);
+		try {
+			await tty.expect("Endpoint URL");
+			tty.send(`http://127.0.0.1:${(server.address() as AddressInfo).port}${ENTER}`);
+			await tty.expect("Some APIs publish models publicly");
+			tty.send(`chat-key${ENTER}`);
+			await tty.expect("Ready to connect");
+			strictEqual(existsSync(join(home.dir, "config/credentials.yaml")), false);
+			tty.send(ENTER);
+			await tty.finish();
+			const saved = parse(readFileSync(join(home.dir, "config/settings.yaml"), "utf8")) as PancodeSettings;
+			strictEqual(saved.targets[0]?.runtime, "openai-compat");
+			const credentials = parse(readFileSync(join(home.dir, "config/credentials.yaml"), "utf8"));
+			strictEqual(credentials.entries[saved.targets[0]?.auth?.apiKeyRef ?? ""].key, "chat-key");
+		} finally {
+			tty.close();
+			server.closeAllConnections();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+			home.cleanup();
+		}
+	});
+
+	it("quick reconnect preserves an existing target, fleet, preferences, and stored credential", async () => {
+		const home = makeScratchHome("pancode-quick-existing-");
+		const server = createServer((request, response) => {
+			response.setHeader("content-type", "application/json");
+			if (request.headers.authorization !== "Bearer existing-key") {
+				response.statusCode = 401;
+				response.end("{}");
+				return;
+			}
+			if (request.url === "/v1/models") response.end(JSON.stringify({ data: [{ id: "alpha" }, { id: "beta" }] }));
+			else {
+				response.statusCode = 404;
+				response.end("{}");
+			}
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const file = seed(home, `http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+		const before = parse(readFileSync(file, "utf8"));
+		before.targets[0].auth = { apiKeyRef: "existing" };
+		before.safety = { autonomy: "yolo" };
+		before.fleet.concurrency = 4;
+		before.chat.prewarm = true;
+		writeFileSync(file, stringify(before));
+		const credentialsFile = join(home.dir, "config/credentials.yaml");
+		const credentials = stringify({
+			version: 2,
+			entries: { existing: { type: "api_key", key: "existing-key", updatedAt: "2026-09-01T00:00:00Z" } },
+		});
+		writeFileSync(credentialsFile, credentials, { mode: 0o600 });
+		const tty = terminal(home, ["--quick"]);
+		try {
+			await tty.expect("Endpoint URL");
+			tty.send(ENTER);
+			await tty.expect("Choose the model for PanCode");
+			ok(!tty.screen().includes("API key"));
+			tty.send(DOWN + ENTER);
+			await tty.expect("Ready to connect");
+			tty.send(ENTER);
+			await tty.finish();
+			const saved = parse(readFileSync(file, "utf8"));
+			deepStrictEqual(saved, { ...before, chat: { ...before.chat, model: "beta" } });
+			strictEqual(readFileSync(credentialsFile, "utf8"), credentials);
+		} finally {
+			tty.close();
+			server.closeAllConnections();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+			home.cleanup();
+		}
+	});
+
+	it("opens existing homes at Settings and selects connection-default inheritance", async () => {
+		const home = makeScratchHome("pancode-configure-tty-");
+		const server = createServer((request, response) => {
+			response.setHeader("content-type", "application/json");
+			if (request.url === "/v1/models") response.end(JSON.stringify({ data: [{ id: "alpha" }] }));
+			else {
+				response.statusCode = 404;
+				response.end("{}");
+			}
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const file = seed(home, `http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+		const tty = terminal(home);
+		try {
+			await tty.expect("❯ Settings");
+			tty.send(ENTER);
+			await tty.expect("Esc back");
+			// Models is the first area: four connection actions, then "Choose the chat model", then its thinking level.
+			tty.send(ENTER);
+			await tty.expect("Choose the chat model");
+			tty.send(DOWN.repeat(5) + ENTER);
+			await tty.expect("❯ low");
+			tty.send(DOWN + DOWN + ENTER);
+			await tty.expect("Save Thinking level globally?");
+			tty.send(ENTER);
+			await tty.expect("Thinking level saved");
+			tty.send(`\x1b[A${ENTER}`);
+			await tty.expect("Chat connection");
+			tty.send(ENTER);
+			await tty.expect("Use connection default");
+			tty.send(ENTER);
+			await tty.expect("Chat set to existing/alpha");
+			tty.send(BACK);
+			await tty.expect("❯ Models");
+			tty.send(DOWN.repeat(4) + ENTER);
+			await tty.expect("Autonomy · Autonomy level");
+			tty.send(ENTER);
+			await tty.expect("❯ default");
+			tty.send(DOWN + ENTER);
+			await tty.expect("Autonomy level set to yolo");
+			await tty.quit();
+			const saved = parse(readFileSync(file, "utf8")) as PancodeSettings;
+			strictEqual(saved.chat.thinkingLevel, "high");
+			strictEqual(saved.chat.model, null);
+			strictEqual(saved.safety.autonomy, "yolo");
+		} finally {
+			tty.close();
+			server.closeAllConnections();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+			home.cleanup();
+		}
+	});
+
+	it("edits an uncommon control with help, rejects invalid input, and saves a custom value", async () => {
+		const home = makeScratchHome("pancode-controls-tty-");
+		const file = seed(home, "http://127.0.0.1:1");
+		const original = readFileSync(file, "utf8");
+		const tty = terminal(home, ["--section", "models"]);
+		try {
+			const controls = orderedAreaControls("models").filter(
+				({ control }) => !["chat.target", "chat.model"].includes(control.path),
+			);
+			// Four connection actions and "Choose the chat model" lead the Models menu.
+			const index = 5 + controls.findIndex(({ control }) => control.path === "chat.maxOutputTokens");
+			await tty.expect("Choose the chat model");
+			ok(!tty.screen().includes("All controls"));
+			tty.send(DOWN.repeat(index) + ENTER);
+			await tty.expect("Shipped default");
+			await tty.expect("New value");
+			tty.send(`${CLEAR}-1${ENTER}`);
+			await tty.expect("Change not saved:");
+			strictEqual(readFileSync(file, "utf8"), original);
+			tty.send(ENTER);
+			await tty.expect("New value");
+			tty.send(`${CLEAR}12345${ENTER}`);
+			await tty.expect("globally?");
+			strictEqual(readFileSync(file, "utf8"), original);
+			tty.send(ENTER);
+			await tty.expect("saved");
+			const saved = parse(readFileSync(file, "utf8")) as PancodeSettings;
+			strictEqual(saved.chat.maxOutputTokens, 12345);
+			strictEqual(saved.chat.model, "alpha");
+			await tty.quit();
+		} finally {
+			tty.close();
+			home.cleanup();
+		}
+	});
+
+	it("adds and edits targets through Save while preserving existing roles and unrelated capabilities", async () => {
+		const home = makeScratchHome("pancode-configure-tty-");
+		const observedAuth = new Set<string | undefined>();
+		const server = createServer((request, response) => {
+			observedAuth.add(request.headers.authorization);
+			response.setHeader("content-type", "application/json");
+			if (!["Bearer second-test-key", "Bearer legacy-test-key"].includes(request.headers.authorization ?? "")) {
+				response.statusCode = 401;
+				response.end("{}");
+				return;
+			}
+			if (request.headers.authorization === "Bearer legacy-test-key") strictEqual(request.headers["x-custom"], "keep-me");
+			if (request.url === "/v1/models") response.end(JSON.stringify({ data: [{ id: "alpha" }, { id: "beta" }] }));
+			else {
+				response.statusCode = 404;
+				response.end("{}");
+			}
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+		const file = seed(home, url);
+		const before = parse(readFileSync(file, "utf8")) as PancodeSettings;
+		const existingTarget = before.targets[0];
+		ok(existingTarget);
+		// This target used to be named second. Reusing that name must not overwrite its key.
+		existingTarget.auth = { apiKeyRef: "target:second", headers: { "X-Custom": "keep-me" } };
+		writeFileSync(file, stringify(before));
+		const credentialsFile = join(home.dir, "config/credentials.yaml");
+		const originalCredentials = stringify({
+			version: 2,
+			entries: {
+				"target:second": { type: "api_key", key: "legacy-test-key", updatedAt: "2026-09-01T00:00:00Z" },
+			},
+		});
+		writeFileSync(credentialsFile, originalCredentials, { mode: 0o600 });
+		const tty = terminal(home, ["--section", "models", "--no-verify"]);
+		try {
+			await tty.expect("Esc or q quit");
+			tty.send(ENTER);
+			await tty.expect("What do you have?");
+			tty.send(DOWN.repeat(4) + ENTER);
+			await tty.expect("Where does your model come from?");
+			tty.send(DOWN + ENTER);
+			await tty.expect("Which provider or app do you use?");
+			const registry = getRuntimeRegistry();
+			registerBuiltinRuntimes(registry);
+			const entries = runtimesForCategory(listProviderSupportEntries(registry.list()), "local-server");
+			const picked = entries.findIndex((entry) => entry.runtimeId === "openai-compat");
+			const initial = Math.max(
+				0,
+				entries.findIndex((entry) => entry.featured),
+			);
+			const index = (picked - initial + entries.length) % entries.length;
+			ok(index >= 0);
+			tty.send(DOWN.repeat(index) + ENTER);
+			await tty.expect("How should PanCode get the API key?");
+			tty.send(`\x1b[A${ENTER}`);
+			await tty.expect("Paste the API key");
+			tty.send(`second-test-key${ENTER}`);
+			await tty.expect("Where is the server?");
+			tty.send(CLEAR + url + ENTER);
+			await tty.expect("Which model?");
+			tty.send(DOWN + ENTER);
+			await tty.expect("Review what PanCode could verify");
+			deepStrictEqual(parse(readFileSync(file, "utf8")), before, "a draft must not write settings");
+			strictEqual(readFileSync(credentialsFile, "utf8"), originalCredentials, "pasted keys wait for Save");
+			ok(tty.screen().includes("No generation or quality/tool tests."));
+			ok(tty.screen().includes("GPU/VRAM and model fit not checked."));
+			ok(tty.screen().slice(tty.screen().lastIndexOf("Review what PanCode could verify")).split("\n").length <= 24);
+			tty.send(DOWN + ENTER);
+			await tty.expect("Connection details");
+			tty.send(ENTER);
+			await tty.expect("Connection address");
+			tty.send(ENTER);
+			await tty.expect("Credential handling");
+			await tty.expect("Storage is not encrypted.");
+			tty.send(ENTER);
+			await tty.expect("Machine observations");
+			await tty.expect("usable CPUs");
+			await tty.expect("GPU/VRAM and model fit not checked.");
+			tty.send(ENTER);
+			await tty.expect("Review what PanCode could verify");
+			tty.send(BACK);
+			await tty.expect("Which model?");
+			tty.send(ENTER);
+			await tty.expect("Review what PanCode could verify");
+			tty.send(ENTER);
+			await tty.expect("target openai-compat saved");
+			await tty.expect("Edit a target");
+			const added = parse(readFileSync(file, "utf8")) as PancodeSettings;
+			deepStrictEqual(added.chat, before.chat);
+			deepStrictEqual(added.fleet, before.fleet);
+			strictEqual(added.targets[1]?.id, "openai-compat");
+			strictEqual(added.targets[1]?.defaultModel, "beta");
+			tty.send(DOWN + ENTER);
+			await tty.expect("Target to edit");
+			tty.send(ENTER);
+			await tty.expect("Which provider or app do you use?");
+			tty.send(ENTER);
+			await tty.expect("How should PanCode get the API key?");
+			tty.send(ENTER);
+			await tty.expect("Where is the server?");
+			tty.send(ENTER);
+			await tty.expect("Which model?");
+			tty.send(DOWN + ENTER);
+			await tty.expect("Context window in tokens");
+			tty.send(ENTER);
+			await tty.expect("Review what PanCode could verify");
+			tty.send(ENTER);
+			await tty.expect("Edit a target");
+			await tty.quit();
+			const saved = parse(readFileSync(file, "utf8")) as PancodeSettings;
+			deepStrictEqual(saved.chat, before.chat);
+			deepStrictEqual(saved.fleet, before.fleet);
+			strictEqual(saved.targets[0]?.gateway, true);
+			deepStrictEqual(saved.targets[0]?.capabilities, before.targets[0]?.capabilities);
+			strictEqual(saved.targets[0]?.defaultModel, "beta");
+			deepStrictEqual(saved.targets[0]?.auth, existingTarget.auth);
+			const { entries: credentials } = parse(readFileSync(credentialsFile, "utf8")) as {
+				entries: Record<string, { key: string }>;
+			};
+			strictEqual(credentials["target:second"]?.key, "legacy-test-key");
+			strictEqual(credentials[saved.targets[1]?.auth?.apiKeyRef ?? ""]?.key, "second-test-key");
+			ok(observedAuth.has("Bearer second-test-key"), "probes use the draft credential before Save");
+			ok(observedAuth.has("Bearer legacy-test-key"), "editing resolves the target's existing credential");
+		} finally {
+			tty.close();
+			server.closeAllConnections();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+			home.cleanup();
+		}
+	});
+
+	it("backs out of new-user setup without creating settings or credentials", async () => {
+		const home = makeScratchHome("pancode-configure-tty-");
+		// A provider key in the developer's environment would be offered first; this walk starts from nothing found.
+		const registry = getRuntimeRegistry();
+		registerBuiltinRuntimes(registry);
+		const noKeys = Object.fromEntries(
+			registry.list().flatMap((runtime) => (runtime.credentialsEnvVar ? [[runtime.credentialsEnvVar, ""]] : [])),
+		);
+		const tty = terminal(home, [], noKeys);
+		try {
+			await tty.expect("❯ Guided setup");
+			tty.send(ENTER);
+			await tty.expect("What do you have?");
+			tty.send(BACK);
+			await tty.finish(130);
+			strictEqual(existsSync(join(home.dir, "config/settings.yaml")), false);
+			strictEqual(existsSync(join(home.dir, "config/credentials.yaml")), false);
+		} finally {
+			tty.close();
+			home.cleanup();
+		}
+	});
+
+	it("a first launch in the home folder sets up a model before the folder question", async () => {
+		const home = makeScratchHome("pancode-first-launch-tty-");
+		const registry = getRuntimeRegistry();
+		registerBuiltinRuntimes(registry);
+		const noKeys = Object.fromEntries(
+			registry.list().flatMap((runtime) => (runtime.credentialsEnvVar ? [[runtime.credentialsEnvVar, ""]] : [])),
+		);
+		// cwd and HOME are the same folder, which the workspace check treats as the home folder.
+		const tty = terminal(home, [], noKeys, 24, []);
+		try {
+			await tty.expect("PanCode needs a model");
+			await tty.expect("What do you have?");
+			strictEqual(tty.screen().includes("This is your home folder"), false, tty.screen());
+			tty.send(BACK);
+			await tty.finish(130);
+		} finally {
+			tty.close();
+			home.cleanup();
+		}
+	});
+
+	it("repairs malformed settings in the editor, rejecting an invalid draft before a reviewed save", async () => {
+		const home = makeScratchHome("pancode-configure-editor-");
+		const file = seed(home, "http://127.0.0.1:1");
+		const original = "version: [broken YAML\n";
+		writeFileSync(file, original);
+		const editor = join(home.dir, "editor.cjs");
+		const counter = join(home.dir, "edited-once");
+		writeFileSync(
+			editor,
+			`const fs = require('node:fs');
+const first = !fs.existsSync(${JSON.stringify(counter)});
+fs.writeFileSync(process.argv[2], first ? 'version: 2\\nchat:\\n  maxOutputTokens: invalid\\n' : 'version: 2\\nchat:\\n  maxOutputTokens: 2048\\n');
+fs.writeFileSync(${JSON.stringify(counter)}, 'yes');\n`,
+		);
+		const tty = terminal(home, ["--edit"], { VISUAL: `${process.execPath} ${editor}` });
+		try {
+			await tty.expect("Invalid draft");
+			strictEqual(readFileSync(file, "utf8"), original);
+			tty.send(ENTER);
+			await tty.expect("Save validated settings?");
+			strictEqual(readFileSync(file, "utf8"), original);
+			tty.send(ENTER);
+			await tty.finish();
+			strictEqual((parse(readFileSync(file, "utf8")) as PancodeSettings).chat.maxOutputTokens, 2048);
+			strictEqual(readFileSync(`${file}.bak`, "utf8"), original);
+		} finally {
+			tty.close();
+			home.cleanup();
+		}
+	});
+});

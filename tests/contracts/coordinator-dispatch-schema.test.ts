@@ -1,0 +1,318 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match, ok, rejects, strictEqual } from "node:assert/strict";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { Value } from "typebox/value";
+import { FLEET_ANTI_CHURN_RULE } from "../../src/domains/agents/catalog.js";
+import { loadRecipesFromDir } from "../../src/domains/agents/registry.js";
+import { normalizeAgentSpec } from "../../src/domains/agents/spec.js";
+import { normalizeDispatchIntent } from "../../src/domains/dispatch/intent.js";
+import { compile } from "../../src/domains/prompts/compiler.js";
+import { agentCatalogPurpose, catalogPurpose } from "../../src/domains/prompts/extension.js";
+import { loadFragments } from "../../src/domains/prompts/fragment-loader.js";
+import { validateEngineToolArguments } from "../../src/engine/ai.js";
+import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { resolveAgentTools } from "../../src/tools/agent-tools.js";
+import { dispatchRequestsFromArgs } from "../../src/tools/dispatch-arguments.js";
+import {
+	buildDispatchParameters,
+	COORDINATOR_DISPATCH_ARGUMENTS,
+	coordinatorDispatchParameters,
+} from "../../src/tools/dispatch-schema.js";
+import { createGatewayTool } from "../../src/tools/gateway/index.js";
+import { createRegistry } from "../../src/tools/registry.js";
+import type { IsolatedPancodeEnv } from "../harness/scratch-env.js";
+import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+describe("parallel review routing", () => {
+	it("marks the read-only recipes a parallel review can use in the session catalog", () => {
+		const line = (id: string) => {
+			const recipe = loadRecipesFromDir({
+				source: "builtin",
+				dir: join(import.meta.dirname, "../../src/domains/agents/builtins"),
+			}).find((entry) => entry.id === id);
+			ok(recipe, id);
+			return catalogPurpose(agentCatalogPurpose(normalizeAgentSpec(recipe)));
+		};
+		match(line("scout"), /^\(shadow, read-only\) .*code review/);
+		for (const writer of ["debugger", "verifier", "coder"]) doesNotMatch(line(writer), /read-only/, writer);
+		const coordinator = loadFragments().byId.get("operating.coordinator")?.body ?? "";
+		match(coordinator.replace(/\s+/g, " "), /send them to read-only recipes in one parallel dispatch/);
+	});
+});
+
+describe("compact coordinator dispatch contract", () => {
+	let env: IsolatedPancodeEnv;
+	beforeEach(async () => {
+		env = await isolatePancodeEnv("pancode-coordinator-dispatch-");
+	});
+	afterEach(() => env.restore());
+
+	it("allows fresh operator dispatch requests after resolved runs", () => {
+		match(FLEET_ANTI_CHURN_RULE, /while an identical run is pending/);
+		match(FLEET_ANTI_CHURN_RULE, /operator merged, discarded, or kept/);
+		match(FLEET_ANTI_CHURN_RULE, /new operator request may dispatch the same task again/);
+	});
+
+	it("passes canonical string, object, and mixed tasks through both validation stages", async () => {
+		const registry = createRegistry({ safety: createWorkerSafety({ cwd: env.dir }), autonomy: () => "yolo" });
+		const received: Record<string, unknown>[] = [];
+		registry.register({
+			name: "dispatch",
+			description: "Dispatch contract fixture.",
+			parameters: buildDispatchParameters(),
+			modelParameters: coordinatorDispatchParameters(),
+			modelArguments: COORDINATOR_DISPATCH_ARGUMENTS,
+			baseActionClass: "read",
+			run: async (args) => {
+				received.push(args);
+				return { kind: "ok", output: "accepted" };
+			},
+		});
+		const tool = resolveAgentTools({ registry }).find((entry) => entry.name === "dispatch");
+		ok(tool);
+		for (const tasks of [
+			["first assignment", "second assignment"],
+			[{ task: "first assignment", agent: "scout" }, { task: "second assignment" }],
+			[
+				"first assignment",
+				{
+					task: "second assignment",
+					briefing: "evidence",
+					intent: { verification: [{ check: "test", timeout_ms: 1000 }] },
+				},
+			],
+		]) {
+			const args = { agent: "coder", mode: "parallel", task: "", tasks };
+			const validated = validateEngineToolArguments(tool, {
+				type: "toolCall",
+				id: "batch",
+				name: "dispatch",
+				arguments: args,
+			});
+			await tool.execute("batch", validated);
+			deepStrictEqual(received.at(-1), { agent: "coder", mode: "parallel", tasks });
+		}
+		const granted = { task: "put the summary", tags: ["results"], tasks: [{ task: "other", tags: ["inputs"] }] };
+		ok(!Object.hasOwn(coordinatorDispatchParameters().properties, "tags"), "store grants are not on the attached schema");
+		await tool.execute(
+			"granted",
+			validateEngineToolArguments(tool, { type: "toolCall", id: "granted", name: "dispatch", arguments: granted }),
+		);
+		deepStrictEqual(received.at(-1), granted, "a call carrying tags is still admitted");
+		const invalid = { task: "", tasks: ["valid"], candidates: "many" };
+		ok(Value.Check(tool.parameters, invalid), "hidden fields reach canonical validation");
+		await rejects(tool.execute("invalid", invalid), /candidates/u);
+		strictEqual(received.length, 4, "invalid canonical arguments never execute");
+	});
+
+	it("runs a batch sent beside a top-level task as the batch", () => {
+		const { restore } = COORDINATOR_DISPATCH_ARGUMENTS;
+		const parsed = dispatchRequestsFromArgs(
+			restore({ agent: "scout", mode: "parallel", task: "Dispatch two scouts", tasks: ["map src", "map tests"] }),
+			{ auto: { approvedAuthorities: ["read-only"], authorityBasis: "yolo-policy" } },
+		);
+		ok(parsed.ok, JSON.stringify(parsed));
+		deepStrictEqual(
+			parsed.requests.map((request) => request.task),
+			["map src", "map tests"],
+		);
+		deepStrictEqual(restore({ task: "Add sub" }), { task: "Add sub" });
+		// context is off the attached schema, so a grammar-constrained parser sends it JSON-encoded (bt-47 cf1h-D4).
+		ok(!Object.hasOwn(coordinatorDispatchParameters().properties, "context"), "context stays off the attached schema");
+		// The attached schema still names the field and where it is described, or a fork worker runs isolated (FL-5).
+		match(
+			JSON.stringify(coordinatorDispatchParameters().properties.briefing),
+			/context fork or splice\): gateway describe dispatch/u,
+		);
+		const canonical = buildDispatchParameters();
+		const fork = restore({ task: "Recall r1", context: '{"mode": "fork"}' });
+		deepStrictEqual(fork, { task: "Recall r1", context: { mode: "fork" } });
+		ok(Value.Check(canonical, fork));
+		const splice = { mode: "splice", refs: ["tool:t1"], max_tokens: 512 };
+		deepStrictEqual(restore({ task: "x", context: JSON.stringify(splice) }).context, splice);
+		for (const garbage of ["fork", '{"mode":"clone"}', '["fork"]', '{"mode":"fork"']) {
+			const kept = restore({ task: "x", context: garbage });
+			strictEqual(kept.context, garbage, garbage);
+			strictEqual(Value.Check(canonical, kept), false, garbage);
+		}
+		// Every advanced field is off the attached schema too, in the call and in a batch task.
+		const members = [
+			{ label: "a", target: "t1" },
+			{ label: "b", target: "t2" },
+		];
+		const advanced = {
+			mode: "council",
+			members,
+			review: { max_cycles: 2 },
+			candidates: 3,
+			budget: { toolCalls: 12 },
+			routing: { maxCostUsd: 1 },
+		};
+		const encoded = Object.fromEntries(
+			Object.entries(advanced).map(([k, v]) => [k, k === "mode" ? v : JSON.stringify(v)]),
+		);
+		const decoded = restore({ task: "x", ...encoded, tasks: [{ task: "y", budget: '{"toolCalls":5}' }] });
+		deepStrictEqual(decoded, {
+			task: "x",
+			...advanced,
+			tasks: [{ task: "y", budget: { toolCalls: 5 } }],
+		});
+		ok(Value.Check(canonical, decoded));
+		deepStrictEqual(restore({ task: "x", review: "true" }).review, true);
+		const refused = restore({ task: "x", members: '[{"label":"a","target":"t"}]', candidates: "many" });
+		strictEqual(refused.members, '[{"label":"a","target":"t"}]', "one member stays for canonical refusal");
+		strictEqual(refused.candidates, "many");
+	});
+
+	it("admits every shared ordinary field with its canonical type", () => {
+		const canonical = buildDispatchParameters();
+		const compact = coordinatorDispatchParameters();
+		const ordinary = {
+			node: "local",
+			list: false,
+			agent: "coder",
+			task: "one assignment",
+			briefing: "evidence",
+			mode: "sequential",
+			worktree: true,
+			detach: false,
+			intent: {
+				read_roots: ["src"],
+				write_roots: ["src"],
+				expected_outputs: ["src/x.ts"],
+				verification: [{ check: "test", timeout_ms: 1000 }],
+			},
+		};
+		for (const [field, value] of Object.entries(ordinary)) {
+			ok(Value.Check(canonical, { [field]: value }), `canonical ${field}`);
+			ok(Value.Check(compact, { task: "", [field]: value }), `compact ${field}`);
+		}
+		// worktree:false is admitted and parsed the same as omitted (bt-23).
+		ok(Value.Check(canonical, { worktree: false }) && Value.Check(compact, { task: "", worktree: false }));
+		const parsed = dispatchRequestsFromArgs(
+			{ agent: "coder", tasks: ["edit x"], worktree: false },
+			{ auto: { approvedAuthorities: ["read-only", "workspace-edit"], authorityBasis: "yolo-policy" } },
+		);
+		ok(parsed.ok && parsed.requests[0]?.worktree === undefined, JSON.stringify(parsed));
+		for (const intent of [ordinary.intent, { relevant_paths: ["src/x.ts"], verification: [{ check: "test" }] }]) {
+			for (const args of [
+				{ intent },
+				{ tasks: [{ task: "assignment", agent: "scout", node: "mini", briefing: "evidence", intent }] },
+			]) {
+				ok(Value.Check(canonical, args));
+				ok(Value.Check(compact, { task: "", ...args }));
+			}
+		}
+	});
+
+	it("rejects malformed advertised forms and describes the attached direct schema", async () => {
+		const compact = coordinatorDispatchParameters();
+		for (const args of [
+			{ tasks: [3] },
+			{ tasks: [{}] },
+			{ tasks: [{ task: false }] },
+			{ tasks: "assignment" },
+			{ agent: [] },
+			{ node: [] },
+			{ tasks: [{ task: "assignment", node: false }] },
+			{ task: {} },
+			{ list: "yes" },
+			{ briefing: [] },
+			{ mode: [] },
+			{ worktree: "false" },
+			{ detach: {} },
+			{ intent: "paths" },
+			{ intent: { read_roots: "src" } },
+			{ intent: { write_roots: [false] } },
+			{ intent: { expected_outputs: [1] } },
+			{ intent: { verification: { check: "test" } } },
+			{ intent: { verification: ["test"] } },
+			{ intent: { verification: [{ check: 1 }] } },
+			{ intent: { verification: [{ check: "test", timeout_ms: 0 }] } },
+			{ intent: { verification: [{ check: "test", timeout_ms: "long" }] } },
+			{ intent: { verification: [{ check: "test", command: "pnpm test" }] } },
+		])
+			strictEqual(Value.Check(compact, args), false, JSON.stringify(args));
+		const registry = createRegistry({ safety: createWorkerSafety({ cwd: env.dir }), autonomy: () => "yolo" });
+		registry.register({
+			name: "dispatch",
+			description: "fixture",
+			parameters: buildDispatchParameters(),
+			modelParameters: compact,
+			baseActionClass: "read",
+			run: async () => ({ kind: "ok", output: "unused" }),
+		});
+		registry.register(createGatewayTool({ registry }));
+		const verdict = await registry.invoke({ tool: "gateway", args: { op: "describe", capability: "dispatch" } });
+		ok(verdict.kind === "ok" && verdict.result.kind === "ok");
+		const described = JSON.parse(verdict.result.output) as {
+			parameters: { properties: Record<string, unknown> };
+			advanced: { properties: Record<string, unknown> };
+			authority: string[];
+		};
+		const attached = resolveAgentTools({ registry });
+		deepStrictEqual(described.parameters, attached.find((tool) => tool.name === "dispatch")?.parameters);
+		// The compact attached schema stays small, but describe must still reach
+		// the canonical compete, council and review fields.
+		for (const field of ["candidates", "judge", "members", "review", "context", "routing"]) {
+			ok(!(field in compact.properties));
+			ok(!(field in described.parameters.properties));
+			ok(field in described.advanced.properties, field);
+		}
+		match(JSON.stringify(described.advanced.properties.mode), /compete/u);
+		match(JSON.stringify(compact.properties.mode), /gateway describe dispatch/u);
+		match(described.authority.join(" "), /"dispatch" is a direct tool.*call it directly, not through the gateway/u);
+		const gatewayVerdict = await registry.invoke({ tool: "gateway", args: { op: "describe", capability: "gateway" } });
+		ok(gatewayVerdict.kind === "ok" && gatewayVerdict.result.kind === "ok");
+		const gatewayDescription = JSON.parse(gatewayVerdict.result.output) as { parameters: unknown; authority: string[] };
+		deepStrictEqual(gatewayDescription.parameters, attached.find((tool) => tool.name === "gateway")?.parameters);
+		match(
+			gatewayDescription.authority.join(" "),
+			/"gateway" is a direct tool.*call it directly, not through the gateway/u,
+		);
+	});
+
+	it("teaches the declared-check array contract and still rejects invented check ids", () => {
+		for (const schema of [coordinatorDispatchParameters(), buildDispatchParameters()]) {
+			const description = JSON.stringify(schema.properties.intent);
+			match(description, /array/u);
+			match(description, /declared ids/u);
+			match(description, /never invent/u);
+		}
+		const checks = new Map([["test", { id: "test", timeoutMs: 5000 }]]);
+		const declared = normalizeDispatchIntent({ verification: [{ check: "test" }] }, checks);
+		ok(declared.ok);
+		deepStrictEqual(declared.intent.verification, [{ check: "test", timeoutMs: 5000 }]);
+		const invented = normalizeDispatchIntent({ verification: [{ check: "test suite" }] }, checks);
+		ok(!invented.ok);
+		strictEqual(invented.reason, "verification_check_undeclared");
+		match(invented.message, /declared ids: test;/u);
+		const malformed = normalizeDispatchIntent({ verification: { check: "test" } }, checks);
+		ok(!malformed.ok);
+		strictEqual(malformed.reason, "verification_malformed");
+	});
+
+	it("guides direct trivial work while preserving substantial and explicitly requested delegation", () => {
+		const compiled = compile(loadFragments(), {
+			identity: "identity.pancode",
+			operatingContract: "operating.contract",
+			safety: "safety.default",
+			sessionInputs: {
+				provider: "fixture",
+				model: "fixture",
+				providerSupportsTools: true,
+				toolNames: ["dispatch", "gateway", "read", "edit"],
+				coordinatorCapabilities: ["context"],
+			},
+		});
+		const prompt = compiled.systemPrompt.replace(/\s+/gu, " ");
+		match(prompt, /Execute one cohesive change and its focused check directly when your admitted tools suffice/u);
+		match(prompt, /two or more separate deliverables .* is delegated whatever the size of each part/u);
+		match(prompt, /Work requiring worker capabilities is delegated too/u);
+		strictEqual(prompt.includes("open-ended repository exploration belongs to Scout"), false);
+		match(prompt, /honor explicit delegation requests/u);
+		match(prompt, /explicit no-delegation/u);
+	});
+});

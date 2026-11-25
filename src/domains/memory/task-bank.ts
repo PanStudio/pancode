@@ -1,0 +1,319 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { ceilChars } from "../session/context-accounting.js";
+import { positiveInteger } from "./util.js";
+
+export const TASK_MEMORY_VERSION = 1;
+export const TASK_MEMORY_DEFAULT_KNOWLEDGE_CAP = 20;
+export const TASK_MEMORY_DEFAULT_PROCEDURAL_CAP = 30;
+export const TASK_MEMORY_CONTENT_MAX_CHARS = 1_200;
+
+export type TaskMemoryClass = "status" | "knowledge" | "procedural";
+export type TaskMemoryRenderableClass = Exclude<TaskMemoryClass, "status">;
+
+export interface TaskMemoryEntry {
+	id: string;
+	kind: TaskMemoryClass;
+	content: string;
+	createdAt: string;
+	lastTouchedAt: string;
+	injectionCount: number;
+	/**
+	 * A knowledge entry the guardian filed as a repository lesson: true beyond
+	 * this task, so it is the only kind the durable store takes without an
+	 * operator. Plain knowledge is a fact about the task in hand; a live session
+	 * kept "sum returns a-b" as knowledge a minute before the fix made it false.
+	 */
+	durable?: true;
+	/**
+	 * The one command a lesson says works, exactly as the guardian reported it.
+	 * It is a claim until the host matches it against a command it executed
+	 * successfully; the text of the lesson is never searched for evidence.
+	 */
+	evidenceCommand?: string;
+	/**
+	 * The repository file a lesson says it learned from, and the exact text it
+	 * quotes from it. A claim until the host finds a successful read of that
+	 * path in the reviewed activity and the quote in the current checkout.
+	 */
+	evidenceSource?: TaskMemoryEvidenceSource;
+}
+
+export interface TaskMemoryEvidenceSource {
+	/** Repository-relative POSIX path. */
+	path: string;
+	quote: string;
+}
+
+/** JSON-safe export shape. The bank itself remains session-scoped and in memory. */
+export interface TaskMemorySnapshot {
+	version: 1;
+	status: TaskMemoryEntry | null;
+	knowledge: TaskMemoryEntry[];
+	procedural: TaskMemoryEntry[];
+}
+
+export interface TaskMemoryBankOptions {
+	knowledgeCap?: number;
+	proceduralCap?: number;
+	now?: () => Date;
+}
+
+export interface SaveTaskMemoryOptions {
+	/** Update an existing entry while preserving its identity. */
+	id?: string;
+	/** File the entry as a repository lesson. Knowledge only. */
+	durable?: boolean;
+	/** The command the lesson claims works. Lessons only. */
+	evidenceCommand?: string;
+	/** The source location and quote the lesson claims. Lessons only. */
+	evidenceSource?: TaskMemoryEvidenceSource;
+}
+
+/**
+ * Per-session execution memory. The bank stays transient and authoritative
+ * for one active task. Selected non-private entries can enter the separate
+ * durable store only through the reviewed promotion service.
+ */
+export class TaskMemoryBank {
+	readonly #knowledgeCap: number;
+	readonly #proceduralCap: number;
+	readonly #now: () => Date;
+	readonly #knowledge = new Map<string, TaskMemoryEntry>();
+	readonly #procedural = new Map<string, TaskMemoryEntry>();
+	#status: TaskMemoryEntry | null = null;
+	#nextId = 1;
+
+	constructor(options: TaskMemoryBankOptions = {}) {
+		this.#knowledgeCap = positiveInteger(options.knowledgeCap, TASK_MEMORY_DEFAULT_KNOWLEDGE_CAP);
+		this.#proceduralCap = positiveInteger(options.proceduralCap, TASK_MEMORY_DEFAULT_PROCEDURAL_CAP);
+		this.#now = options.now ?? (() => new Date());
+	}
+
+	updateStatus(content: string): TaskMemoryEntry {
+		const timestamp = this.#timestamp();
+		const normalized = normalizeContent(content);
+		this.#status =
+			this.#status === null
+				? this.#newEntry("status", normalized, timestamp)
+				: { ...this.#status, content: normalized, lastTouchedAt: timestamp };
+		return cloneEntry(this.#status);
+	}
+
+	saveKnowledge(content: string, options: SaveTaskMemoryOptions = {}): TaskMemoryEntry {
+		return this.#save(
+			"knowledge",
+			content,
+			options.id,
+			options.durable === true,
+			options.durable === true ? options.evidenceCommand : undefined,
+			options.durable === true ? options.evidenceSource : undefined,
+		);
+	}
+
+	saveProcedural(content: string, options: SaveTaskMemoryOptions = {}): TaskMemoryEntry {
+		return this.#save("procedural", content, options.id);
+	}
+
+	deleteEntry(id: string): boolean {
+		if (this.#status?.id === id) {
+			this.#status = null;
+			return true;
+		}
+		return this.#knowledge.delete(id) || this.#procedural.delete(id);
+	}
+
+	/** Reset execution state when the composition root switches sessions. */
+	clear(): void {
+		this.#status = null;
+		this.#knowledge.clear();
+		this.#procedural.clear();
+		this.#nextId = 1;
+	}
+
+	/**
+	 * Replace the bank with a snapshot of the same session, keeping entry ids so
+	 * citations in the resumed transcript still resolve.
+	 */
+	restore(snapshot: TaskMemorySnapshot): void {
+		this.clear();
+		this.#status = snapshot.status === null ? null : cloneEntry(snapshot.status);
+		for (const entry of snapshot.knowledge.slice(-this.#knowledgeCap)) this.#knowledge.set(entry.id, cloneEntry(entry));
+		for (const entry of snapshot.procedural.slice(-this.#proceduralCap))
+			this.#procedural.set(entry.id, cloneEntry(entry));
+		const sequences = [snapshot.status, ...snapshot.knowledge, ...snapshot.procedural].map((entry) =>
+			entry === null ? 0 : Number.parseInt(entry.id.slice(entry.id.lastIndexOf("-") + 1), 36),
+		);
+		this.#nextId = Math.max(0, ...sequences.filter((value) => Number.isSafeInteger(value))) + 1;
+	}
+
+	/** Record attribution after an entry has contributed to a visible reminder. */
+	recordInjection(ids: ReadonlyArray<string>): void {
+		for (const id of new Set(ids)) {
+			const entries = this.#knowledge.has(id) ? this.#knowledge : this.#procedural;
+			const entry = entries.get(id);
+			if (entry === undefined) continue;
+			const updated = { ...entry, injectionCount: entry.injectionCount + 1, lastTouchedAt: this.#timestamp() };
+			entries.set(id, updated);
+		}
+	}
+
+	/**
+	 * Render only action-agent-visible classes under a conservative character
+	 * token estimate. Status remains private even if a caller requests it.
+	 */
+	render(budgetTokens: number, kinds: ReadonlyArray<TaskMemoryRenderableClass> = ["knowledge", "procedural"]): string {
+		return renderTaskMemoryEntries(this.select(budgetTokens, kinds));
+	}
+
+	/**
+	 * The entries a render under this budget shows, in render order. This is the
+	 * only budget selection: a caller that needs to know what a prompt presented
+	 * renders these entries rather than searching rendered text for ids, which a
+	 * shown entry quoting a hidden entry's id would fool.
+	 */
+	select(
+		budgetTokens: number,
+		kinds: ReadonlyArray<TaskMemoryRenderableClass> = ["knowledge", "procedural"],
+	): TaskMemoryEntry[] {
+		if (!Number.isFinite(budgetTokens) || budgetTokens <= 0) return [];
+		const allowed = new Set(kinds);
+		const entries = [...this.#knowledge.values(), ...this.#procedural.values()]
+			.filter((entry) => allowed.has(entry.kind as TaskMemoryRenderableClass))
+			.sort(compareForRender);
+		const selected: TaskMemoryEntry[] = [];
+		let length = 0;
+		for (const entry of entries) {
+			const candidate = length === 0 ? entryLine(entry).length : length + 1 + entryLine(entry).length;
+			if (ceilChars(candidate) > budgetTokens) continue;
+			length = candidate;
+			selected.push(cloneEntry(entry));
+		}
+		return selected;
+	}
+
+	/**
+	 * Render the block handed back to the action agent after compaction, which is
+	 * the one place status is visible.
+	 *
+	 * `render` refuses status because a mid-turn reminder must never expose the
+	 * policy's private progress model as if the action agent had said it. That
+	 * boundary is different: compaction destroyed the agent's own working state
+	 * and this hands it back. Restoring knowledge alone restored nothing in the
+	 * common case, because across ten live LLM steps the model wrote status in all
+	 * ten and knowledge in two. Status leads for the same reason, and knowledge
+	 * takes the remaining budget. Procedural stays out, unchanged.
+	 */
+	renderRestoredState(budgetTokens: number): string {
+		if (!Number.isFinite(budgetTokens) || budgetTokens <= 0) return "";
+		const status = this.#status;
+		const statusLine = status === null ? "" : `- [${status.id}] status: ${status.content}`;
+		if (statusLine.length > 0 && ceilChars(statusLine.length) > budgetTokens)
+			return this.render(budgetTokens, ["knowledge"]);
+		const remaining = statusLine.length === 0 ? budgetTokens : budgetTokens - ceilChars(statusLine.length);
+		const knowledge = this.render(remaining, ["knowledge"]);
+		if (statusLine.length === 0) return knowledge;
+		return knowledge.length === 0 ? statusLine : `${statusLine}\n${knowledge}`;
+	}
+
+	snapshot(): TaskMemorySnapshot {
+		return {
+			version: TASK_MEMORY_VERSION,
+			status: this.#status === null ? null : cloneEntry(this.#status),
+			knowledge: [...this.#knowledge.values()].sort(compareForSnapshot).map(cloneEntry),
+			procedural: [...this.#procedural.values()].sort(compareForSnapshot).map(cloneEntry),
+		};
+	}
+
+	#save(
+		kind: TaskMemoryRenderableClass,
+		content: string,
+		id: string | undefined,
+		durable = false,
+		evidenceCommand?: string,
+		evidenceSource?: TaskMemoryEvidenceSource,
+	): TaskMemoryEntry {
+		const entries = this.#mapFor(kind);
+		const normalized = normalizeContent(content);
+		const timestamp = this.#timestamp();
+		let saved: TaskMemoryEntry;
+		if (id === undefined) {
+			saved = this.#newEntry(kind, normalized, timestamp);
+		} else {
+			const existing = entries.get(id);
+			if (existing === undefined) throw new Error(`task memory entry not found: ${id}`);
+			saved = { ...existing, content: normalized, lastTouchedAt: timestamp };
+		}
+		if (durable) saved.durable = true;
+		else Reflect.deleteProperty(saved, "durable");
+		if (durable && evidenceCommand !== undefined) saved.evidenceCommand = evidenceCommand;
+		else Reflect.deleteProperty(saved, "evidenceCommand");
+		if (durable && evidenceSource !== undefined) saved.evidenceSource = { ...evidenceSource };
+		else Reflect.deleteProperty(saved, "evidenceSource");
+		entries.set(saved.id, saved);
+		this.#evictOldest(entries, kind === "knowledge" ? this.#knowledgeCap : this.#proceduralCap);
+		return cloneEntry(saved);
+	}
+
+	#newEntry(kind: TaskMemoryClass, content: string, timestamp: string): TaskMemoryEntry {
+		const prefix = kind === "status" ? "s" : kind === "knowledge" ? "k" : "p";
+		const id = `tm-${prefix}-${this.#nextId.toString(36)}`;
+		this.#nextId += 1;
+		return { id, kind, content, createdAt: timestamp, lastTouchedAt: timestamp, injectionCount: 0 };
+	}
+
+	#mapFor(kind: TaskMemoryRenderableClass): Map<string, TaskMemoryEntry> {
+		return kind === "knowledge" ? this.#knowledge : this.#procedural;
+	}
+
+	#evictOldest(entries: Map<string, TaskMemoryEntry>, cap: number): void {
+		while (entries.size > cap) {
+			const oldest = [...entries.values()].sort(compareForEviction)[0];
+			if (oldest === undefined) return;
+			entries.delete(oldest.id);
+		}
+	}
+
+	#timestamp(): string {
+		return this.#now().toISOString();
+	}
+}
+
+function entryLine(entry: TaskMemoryEntry): string {
+	return `- [${entry.id}] ${entry.durable === true ? "lesson" : entry.kind}: ${entry.content}`;
+}
+
+/** Text of exactly these entries, one line each. Pair with `TaskMemoryBank.select`. */
+export function renderTaskMemoryEntries(entries: ReadonlyArray<TaskMemoryEntry>): string {
+	return entries.map(entryLine).join("\n");
+}
+
+function normalizeContent(content: string): string {
+	const normalized = content.replace(/\s+/gu, " ").trim();
+	if (normalized.length === 0) throw new Error("task memory content must not be empty");
+	return normalized.slice(0, TASK_MEMORY_CONTENT_MAX_CHARS).trimEnd();
+}
+
+function cloneEntry(entry: TaskMemoryEntry): TaskMemoryEntry {
+	return entry.evidenceSource === undefined ? { ...entry } : { ...entry, evidenceSource: { ...entry.evidenceSource } };
+}
+
+function compareForEviction(left: TaskMemoryEntry, right: TaskMemoryEntry): number {
+	const byTouched = left.lastTouchedAt.localeCompare(right.lastTouchedAt);
+	if (byTouched !== 0) return byTouched;
+	const byCreated = left.createdAt.localeCompare(right.createdAt);
+	if (byCreated !== 0) return byCreated;
+	return left.id.localeCompare(right.id);
+}
+
+function compareForRender(left: TaskMemoryEntry, right: TaskMemoryEntry): number {
+	const byTouched = right.lastTouchedAt.localeCompare(left.lastTouchedAt);
+	if (byTouched !== 0) return byTouched;
+	if (left.kind !== right.kind) return left.kind === "knowledge" ? -1 : 1;
+	return left.id.localeCompare(right.id);
+}
+
+function compareForSnapshot(left: TaskMemoryEntry, right: TaskMemoryEntry): number {
+	const byCreated = left.createdAt.localeCompare(right.createdAt);
+	return byCreated !== 0 ? byCreated : left.id.localeCompare(right.id);
+}

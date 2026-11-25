@@ -1,0 +1,2048 @@
+import { createHash, randomUUID } from "node:crypto";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { createInterface } from "node:readline";
+import { setTimeout as delay } from "node:timers/promises";
+import { SCIENCE_MARKDOWN, SCIENCE_TOOL_JSON, SCIENCE_TOOL_OUTPUT } from "./science-transcript.mjs";
+import { streamWorkload } from "./stream-workload.mjs";
+
+const scenario = process.env.PANCODE_WEB_FIXTURE_SCENARIO ?? "text";
+let sessionId = randomUUID(),
+	cancelled = false;
+let eventSequence = 0,
+	autonomy = "default";
+const settings = {
+	chat: { target: "fixture", model: "fixture-model", thinkingLevel: "off" },
+	safety: { autonomy: "default" },
+};
+// The engine starts each task on the chat route the layered settings name, the same layers Settings and Home
+// read: the user's file, then the project's shared and local files. The fixture applies them too (without the
+// trust check the seeded projects already pass), so the composer, Home and Settings agree.
+const readSettingsLayer = async (path) => {
+	let raw;
+	try {
+		raw = readFileSync(path, "utf8");
+	} catch {
+		return null; // A layer that does not exist adds nothing.
+	}
+	try {
+		return JSON.parse(raw);
+	} catch {
+		try {
+			const { parse } = await import("yaml");
+			return parse(raw);
+		} catch {
+			return null; // The engine refuses an unreadable layer; the fixture keeps its defaults instead.
+		}
+	}
+};
+const savedChat = { target: null, model: null };
+// The connections the layers configure. The engine lists these whichever one chat uses.
+const configuredTargets = new Set();
+for (const path of [
+	...(process.env.PANCODE_CONFIG_DIR ? [join(process.env.PANCODE_CONFIG_DIR, "settings.yaml")] : []),
+	join(process.cwd(), ".pancode", "settings.yaml"),
+	join(process.cwd(), ".pancode", "settings.local.yaml"),
+]) {
+	const layer = await readSettingsLayer(path);
+	for (const target of Array.isArray(layer?.targets) ? layer.targets : [])
+		if (typeof target?.id === "string" && target.id) configuredTargets.add(target.id);
+	const chat = layer?.chat;
+	for (const key of ["target", "model", "thinkingLevel"])
+		if (typeof chat?.[key] === "string" && chat[key]) {
+			settings.chat[key] = chat[key];
+			if (key !== "thinkingLevel") savedChat[key] = chat[key];
+		}
+}
+// The engine's own mode descriptions (src/engine/acp/server-models.ts modeState), so the GUI shows real copy.
+const MODES = [
+	{
+		id: "default",
+		name: "default",
+		description:
+			"Workspace edits run; shell commands run in the OS sandbox; calls that need approval go to the safety judge, then to you.",
+	},
+	{
+		id: "yolo",
+		name: "yolo",
+		description:
+			"Runs without approval stops: the same sandbox and safety judge, and a call that would need your approval is refused instead of asked (unless the operator's settings chose unconfined yolo). Questions still reach you.",
+	},
+];
+const editable = ["chat.target", "chat.model", "chat.thinkingLevel", "safety.autonomy"];
+const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const configOptions = () => [
+	{ id: "autonomy", currentValue: autonomy, options: [] },
+	{
+		id: "model",
+		currentValue: settings.chat.model,
+		options: [
+			...new Set([
+				...(settings.chat.target === "field-station"
+					? ["survey-large", "survey-small"]
+					: ["fixture-model", "fixture-small"]),
+				...(savedChat.model && settings.chat.target === (savedChat.target ?? "fixture") ? [savedChat.model] : []),
+			]),
+		].map((value) => ({ value, name: value, _meta: { "pancode/thinkingLevels": thinkingLevels } })),
+	},
+	{
+		id: "thinkingLevel",
+		currentValue: settings.chat.thinkingLevel,
+		options: thinkingLevels.map((value) => ({ value, name: value })),
+	},
+];
+const pending = new Map();
+const log = (event) => {
+	if (process.env.PANCODE_WEB_FIXTURE_LOG)
+		appendFileSync(process.env.PANCODE_WEB_FIXTURE_LOG, `${JSON.stringify(event)}\n`);
+};
+const send = (frame) => {
+	process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", ...frame })}\n`);
+};
+process.stdout.on("error", () => {});
+const update = (value, meta = { "pancode/agent": [{ version: 1, role: "orchestrator", agentId: "orchestrator" }] }) =>
+	send({ method: "session/update", params: { sessionId, update: value, ...(meta ? { _meta: meta } : {}) } });
+// What the current turn has said, so its usage can scale with it.
+let answered = "";
+const text = (value) => {
+	answered += value;
+	update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: value } });
+};
+// The turn's usage as read-model quantities, each a fact beside its canonical display (#434).
+const quantity = (metric, value, display = String(value)) => ({
+	fact: { kind: "measured", value, source: "provider" },
+	display,
+	ref: `session:fixture#${metric}`,
+});
+const usage = {
+	quantities: {
+		input: quantity("input", 11),
+		output: quantity("output", 12),
+		cacheRead: quantity("cacheRead", 13),
+		cacheWrite: quantity("cacheWrite", 14),
+		reasoning: quantity("reasoning", 15),
+		prompt: quantity("prompt", 38),
+		total: quantity("total", 50),
+		usd: { fact: { kind: "unknown", reason: "not-observed" }, display: "not measured", ref: "session:fixture#usd" },
+		calls: quantity("calls", 1),
+		firstToken: {
+			fact: { kind: "unknown", reason: "not-observed" },
+			display: "unknown",
+			ref: "session:fixture#firstToken",
+		},
+	},
+};
+// The markdown scenario stands in for a real task: each turn's usage scales with what was asked and answered,
+// the context grows turn over turn from the ledger's opening 20,480 tokens, and the engine's session ledger
+// records each exchange, which is what saves the task to the project's history.
+const REAL_TASK = scenario === "markdown";
+const CONTEXT_WINDOW = 131072,
+	CONTEXT_RESERVE = 16384,
+	SYSTEM_TOKENS = 4096;
+let cachedTokens = 20480,
+	unsentTokens = 0,
+	ledgerTurns = 0;
+const tokensOf = (chars) => Math.max(1, Math.ceil(chars / 4));
+const counted = (metric, value) => quantity(metric, value, value.toLocaleString("en-US"));
+const turnUsage = (prompt, answer) => {
+	const input = tokensOf(prompt.length),
+		output = tokensOf(answer.length),
+		cacheRead = cachedTokens,
+		cacheWrite = unsentTokens,
+		promptTokens = input + cacheRead + cacheWrite;
+	cachedTokens += unsentTokens;
+	unsentTokens = input + output;
+	return {
+		quantities: {
+			...usage.quantities,
+			input: counted("input", input),
+			output: counted("output", output),
+			cacheRead: counted("cacheRead", cacheRead),
+			cacheWrite: counted("cacheWrite", cacheWrite),
+			reasoning: counted("reasoning", Math.ceil(output / 4)),
+			prompt: counted("prompt", promptTokens),
+			total: counted("total", promptTokens + output),
+		},
+	};
+};
+const bucketOf = (cwd) => createHash("sha256").update(resolve(cwd)).digest("hex").slice(0, 16);
+const ledgerDirectory = (id) =>
+	process.env.PANCODE_STATE_DIR ? join(process.env.PANCODE_STATE_DIR, "sessions", bucketOf(taskCwd), id) : null;
+const recordExchange = (prompt, answer) => {
+	const directory = ledgerDirectory(sessionId);
+	if (!directory || !answer) return;
+	const at = new Date().toISOString();
+	const metaFile = join(directory, "meta.json");
+	const fresh = ledgerTurns === 0;
+	mkdirSync(directory, { recursive: true });
+	if (fresh)
+		writeFileSync(
+			metaFile,
+			JSON.stringify({
+				id: sessionId,
+				cwd: resolve(taskCwd),
+				cwdHash: bucketOf(taskCwd),
+				createdAt: at,
+				endedAt: null,
+				model: settings.chat.model,
+				target: settings.chat.target,
+				pancodeVersion: "0",
+				piMonoVersion: "0",
+				platform: process.platform,
+				nodeVersion: process.versions.node,
+				sessionFormatVersion: 5,
+				firstMessagePreview: prompt.slice(0, 200),
+			}),
+		);
+	const user = `${sessionId}-u${ledgerTurns}`,
+		assistant = `${sessionId}-a${ledgerTurns}`,
+		parent = ledgerTurns === 0 ? null : `${sessionId}-a${ledgerTurns - 1}`;
+	const entries = [
+		...(fresh ? [{ type: "session", version: 6, id: sessionId, timestamp: at, cwd: resolve(taskCwd) }] : []),
+		{ kind: "message", turnId: user, parentTurnId: parent, timestamp: at, role: "user", payload: { text: prompt } },
+		{
+			kind: "message",
+			turnId: assistant,
+			parentTurnId: user,
+			timestamp: at,
+			role: "assistant",
+			payload: { text: answer },
+		},
+	];
+	appendFileSync(join(directory, "current.jsonl"), `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+	ledgerTurns++;
+};
+let writeCalls = 0;
+// Settled frames mirror src/engine/acp/server-tool-updates.ts: `content` carries the result
+// text and `rawOutput` is `{result, isError}`. A refusal is a FAILED call worded
+// by src/tools/registry.ts, and an applied write carries `details.diff` in the
+// numbered-row format of src/tools/edit-diff.ts.
+const REFUSED_TEXT =
+	"write blocked: write was not approved\nThis call was denied; no approval is pending.\nDo not retry the same call.";
+const APPLIED_DIFF = "-1 draft\n+1 approved";
+const settledWrite = (toolCallId, executed) => {
+	const body = executed ? "Wrote 8 bytes to fixture.txt" : REFUSED_TEXT;
+	return {
+		sessionUpdate: "tool_call_update",
+		toolCallId,
+		title: "write",
+		kind: "edit",
+		status: executed ? "completed" : "failed",
+		content: [{ type: "content", content: { type: "text", text: body } }],
+		rawOutput: {
+			result: {
+				content: [{ type: "text", text: body }],
+				...(executed ? { details: { diff: APPLIED_DIFF, firstChangedLine: 1 } } : {}),
+			},
+			isError: !executed,
+		},
+	};
+};
+const permission = async () => {
+	const toolCallId = `write-${++writeCalls}`;
+	// The applied diff says the write replaced a "draft" line, so the task's own folder holds that file while the
+	// write waits, as a real workspace would. A fixture run with no task folder never writes outside its own.
+	const target = scenario === "markdown" && taskCwd !== process.cwd() ? join(taskCwd, "fixture.txt") : null;
+	if (target) writeFileSync(target, "draft\n");
+	const toolCall = {
+		sessionUpdate: "tool_call",
+		toolCallId,
+		title: "write", // The runtime titles a call, and its permission request, with the tool name.
+		kind: "edit",
+		status: "pending",
+		rawInput: { path: "fixture.txt", content: "approved" },
+		locations: [{ path: "fixture.txt" }],
+	};
+	update(toolCall);
+	const id = `permission-${randomUUID()}`;
+	const promise = new Promise((resolve) => pending.set(id, resolve));
+	send({
+		id,
+		method: "session/request_permission",
+		params: {
+			sessionId,
+			toolCall: scenario === "permission-mismatch" ? { ...toolCall, rawInput: { path: "different.txt" } } : toolCall,
+			// `permission-no-reject` offers no one-time refusal, which the app cannot present.
+			options: [
+				{ optionId: "allow", kind: "allow_once", name: "Allow once" },
+				...(scenario === "permission-no-reject" ? [] : [{ optionId: "reject", kind: "reject_once", name: "Reject" }]),
+			],
+		},
+	});
+	const result = await promise;
+	const executed = result?.outcome?.optionId === "allow";
+	log({ permission: result, toolExecuted: executed });
+	if (target && executed) writeFileSync(target, "approved");
+	update(settledWrite(toolCallId, executed));
+	if (!cancelled) text(executed ? "Tool executed." : "Permission rejected.");
+};
+// A plan-scale dispatch the agent parks for approval, carrying the plan admission rendered.
+const PLAN_HASH = "3f2a9c1e04b7d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e";
+const planPermission = async () => {
+	const toolCallId = `dispatch-plan-${++writeCalls}`;
+	const tasks = [
+		{ agent: "scout", task: "Survey the soil samples" },
+		{ agent: "writer", task: "Draft the comparison report" },
+	];
+	const toolCall = {
+		sessionUpdate: "tool_call",
+		toolCallId,
+		title: "dispatch",
+		kind: "other",
+		status: "pending",
+		rawInput: { tasks },
+	};
+	update(toolCall);
+	const id = `permission-${randomUUID()}`;
+	const promise = new Promise((resolve) => pending.set(id, resolve));
+	send({
+		id,
+		method: "session/request_permission",
+		params: {
+			sessionId,
+			toolCall,
+			options: [
+				{ optionId: "allow-once", kind: "allow_once", name: "Approve plan" },
+				{ optionId: "reject-once", kind: "reject_once", name: "Deny" },
+			],
+			_meta: {
+				"pancode/dispatchPlan": {
+					version: 1,
+					topology: "parallel",
+					taskCount: 2,
+					planScale: true,
+					hash: PLAN_HASH,
+					tasks: [
+						{ ...tasks[0], target: "fixture", model: "fixture-model", dependencies: [] },
+						{ ...tasks[1], target: "fixture", model: "fixture-small", worktree: true, apply: "preserve", dependencies: [] },
+					],
+					truncated: false,
+					unknownFutureField: "ignored",
+				},
+			},
+		},
+	});
+	const result = await promise;
+	const approved = result?.outcome?.optionId === "allow-once";
+	log({ planPermission: result, approved });
+	// The approved plan runs detached, the way src/tools/dispatch-runner.ts reports it: the call settles
+	// naming its runs, the model says the plan is running, and the runs finish after that sentence.
+	const runs = tasks.map((task, index) => ({
+		runId: `run-plan-${writeCalls}-${index + 1}`,
+		agentId: task.agent,
+		taskPreview: task.task,
+		node: null,
+		origin: "tool",
+		attempt: 1,
+	}));
+	if (approved) {
+		for (const identity of runs) event("run.enqueued", identity);
+		await delay(40);
+		for (const identity of runs) {
+			event("run.started", identity);
+			await delay(40);
+		}
+	}
+	const summary = approved ? "Plan dispatched." : "Plan not approved.";
+	update({
+		sessionUpdate: "tool_call_update",
+		toolCallId,
+		status: approved ? "completed" : "failed",
+		content: [{ type: "content", content: { type: "text", text: summary } }],
+		...(approved
+			? {
+					rawOutput: {
+						result: {
+							kind: "ok",
+							output: summary,
+							details: {
+								mode: "detached",
+								batchId: `batch-plan-${writeCalls}`,
+								runs: runs.map(({ runId, agentId }) => ({ runId, assignmentId: runId, agentId })),
+							},
+						},
+						isError: false,
+					},
+				}
+			: {}),
+	});
+	if (cancelled) return;
+	text(approved ? "The plan is running." : "The plan was not approved.");
+	if (!approved) return;
+	for (const [index, identity] of runs.entries()) {
+		await delay(40);
+		event(
+			"run.completed",
+			{
+				runId: identity.runId,
+				agentId: identity.agentId,
+				outcome: "success",
+				outcomeCode: "done",
+				durationMs: 80 + index * 40,
+				totalTokens: { kind: "measured", value: 23, source: "provider" },
+				apiCalls: { kind: "measured", value: 2, source: "local-count" },
+				tokenDisplay: "23",
+			},
+			true,
+		);
+	}
+};
+const event = (kind, payload, terminal = false) =>
+	send({
+		method: "_pancode/event",
+		params: {
+			version: 1,
+			workspaceInstanceId: "fixture",
+			sessionId,
+			turnId: null,
+			sequence: ++eventSequence,
+			kind,
+			terminal,
+			payload,
+		},
+	});
+// The smoke scenario announces the steering surface the real engine does, so the composer's
+// steer/queue/interrupt controls and the fleet strip's Guide/Stop are exercised in a browser.
+// Every other scenario stays a v1 peer, which is what keeps the 409 degradation tested.
+const STEERING =
+	scenario === "markdown" || scenario === "steer" || scenario === "telemetry" || scenario === "queue-push"
+		? {
+				version: 1,
+				main: true,
+				dispatch: true,
+				modes: ["next-slot", "end-of-turn"],
+				interrupt: true,
+				methods: {
+					steer: "_pancode/session/steer",
+					queue: "_pancode/session/queue",
+					clear: "_pancode/session/queue_clear",
+					interrupt: "_pancode/session/interrupt",
+					dispatch: "_pancode/dispatch/steer",
+				},
+			}
+		: null;
+const COMMANDS =
+	scenario === "markdown"
+		? {
+				version: 1,
+				commands: [
+					{
+						name: "doctor",
+						summary: "Check this installation",
+						usage: "/doctor [deep]",
+						group: "Inspect",
+						args: { positionals: [{ name: "depth", required: false, values: ["deep"] }] },
+					},
+					{
+						name: "context",
+						summary: "Work with project context",
+						usage: "/context <compact|reset|recover>",
+						group: "Session",
+						requiresSubcommand: true,
+						promptTurnSubcommands: ["recover"],
+						args: {
+							subcommands: {
+								compact: { positionals: [{ name: "instructions", required: false, rest: true }] },
+								reset: { flags: [{ name: "--yes" }, { name: "--all" }] },
+								recover: {
+									positionals: [
+										{ name: "handoffId", required: true },
+										{ name: "action", required: true, values: ["reduce", "deliver"] },
+									],
+								},
+							},
+						},
+					},
+					{
+						name: "skill",
+						summary: "Use a skill",
+						usage: "/skill <name>",
+						group: "Session",
+						injectsUserTurn: true,
+						args: { positionals: [{ name: "name", required: true }] },
+					},
+					{
+						name: "council",
+						summary: "Ask a roster the same task",
+						usage: "/council [--roster <name>] <task>",
+						group: "Work",
+						streams: "dispatch",
+						promptTurn: true,
+						args: {
+							flags: [{ name: "--roster", takesValue: true }],
+							positionals: [{ name: "task", required: true, rest: true }],
+						},
+					},
+					{
+						name: "tasks",
+						summary: "Keep your own task list",
+						usage: "/tasks <add|hand|done|drop>",
+						injectsUserTurn: true,
+						group: "Session",
+						requiresSubcommand: true,
+						args: {
+							subcommands: {
+								add: { positionals: [{ name: "text", required: true, rest: true }] },
+								hand: { positionals: [{ name: "id", required: true }] },
+								done: { positionals: [{ name: "id", required: true }] },
+								drop: { positionals: [{ name: "id", required: true }] },
+							},
+						},
+					},
+					{
+						name: "export",
+						summary: "Write the transcript to a file",
+						usage: "/export [path]",
+						group: "Session",
+						args: { positionals: [{ name: "path", required: false }] },
+					},
+				],
+				prompts: [{ name: "review-pr", description: "Review a pull request", input: { hint: "<pr>" } }],
+			}
+		: null;
+// The markdown scenario keeps workspace snapshots as the engine's store does: newest first, numbered.
+let promptRunning = false,
+	taskCwd = process.cwd();
+const SNAPSHOTS = [
+	{
+		n: 2,
+		at: "2026-01-01T00:05:00.000Z",
+		reason: "before the first change in a turn",
+		tool: "write",
+		turnId: "u2",
+		differs: 2,
+		skipped: 0,
+	},
+	{ n: 1, at: "2026-01-01T00:01:00.000Z", reason: "before a destructive command", tool: "bash", differs: 0, skipped: 1 },
+];
+const snapshotPlan = (n) =>
+	n === 1
+		? { kind: "plan", n, restore: [], remove: [], kept: [], refs: [], truncated: false }
+		: {
+				kind: "plan",
+				n,
+				restore: ["src/solver.py"],
+				remove: ["notes/scratch.md"],
+				kept: [{ path: "data/mesh.bin", why: "larger than the snapshot limit" }],
+				refs: [],
+				truncated: false,
+			};
+// The session board a real agent folds from its ledger: the operator's tasks change through the
+// `tasks` command above; the plan and decisions are the agent's own report.
+const BOARD = {
+	version: 1,
+	operatorTasks: [],
+	plan: {
+		title: "Survey the fixture",
+		tasks: [
+			{ id: "1", title: "Read the fixture workspace", status: "completed", origin: "agent", reason: null },
+			{ id: "2", title: "Summarize the findings", status: "active", origin: "agent", reason: null },
+		],
+	},
+	decisions: [
+		{
+			ref: "interview-1/format",
+			interviewId: "interview-1",
+			key: "format",
+			label: "Report format",
+			value: "Markdown with one table",
+			status: "active",
+			source: "operator",
+			decidedAt: "2026-09-26T00:00:00.000Z",
+			rationale: null,
+			correction: null,
+		},
+	],
+	memory: {
+		enabled: true,
+		tier: "rules",
+		entries: 2,
+		stepInFlight: false,
+		bank: [
+			{ id: "k1", kind: "knowledge", content: "Sample B reads 4.2 on the field instrument." },
+			{ id: "p1", kind: "procedural", content: "Read README.md before measuring." },
+		],
+	},
+	truncated: false,
+};
+const invokeTask = (argv) => {
+	const [action, ...rest] = argv;
+	if (action === "add") {
+		const id = `u${BOARD.operatorTasks.length + 1}`;
+		BOARD.operatorTasks.push({ id, title: rest.join(" "), status: "open", expectedOutputs: [], verificationChecks: 0 });
+		return { level: "success", lines: [`added ${id}`] };
+	}
+	const task = BOARD.operatorTasks.find((row) => row.id === rest[0]);
+	if (task) task.status = action === "hand" ? "handed" : action === "done" ? "done" : "dropped";
+	return task
+		? { level: "success", lines: [`${task.id} ${task.status}`] }
+		: { level: "error", lines: [`no task ${rest[0]}`] };
+};
+// The /tree a real agent projects from its ledger: a first exchange, then two
+// branches under its reply. The newest, a sibling question, is where the next
+// request lands until a person moves the append point.
+const TREE_TURNS = {
+	u1: { parentId: null, kind: "user", preview: "Earlier prompt", reply: null },
+	a1: { parentId: "u1", kind: "assistant", preview: "Earlier reply", reply: null },
+	u2: { parentId: "a1", kind: "user", preview: "Measure the second sample", reply: null },
+	a2: { parentId: "u2", kind: "assistant", preview: "The second sample reads 4.2", reply: null },
+	u3: { parentId: "a1", kind: "user", preview: "Try the other instrument", reply: null },
+	a3: { parentId: "u3", kind: "assistant", preview: "The other instrument agrees", reply: null },
+};
+let treeLeaf = "a3";
+const treePath = (leaf) => {
+	const path = [];
+	for (let id = leaf; id; id = TREE_TURNS[id]?.parentId) path.unshift(id);
+	return path;
+};
+const sessionTree = () => {
+	const active = new Set(treePath(treeLeaf));
+	return {
+		version: 1,
+		sessionId,
+		leafId: treeLeaf,
+		parentSessionId: null,
+		parentTurnId: null,
+		nodes: Object.entries(TREE_TURNS).map(([id, node], index) => ({
+			id,
+			parentId: node.parentId,
+			kind: node.kind,
+			at: `2026-09-26T09:00:0${index}.000Z`,
+			label: id === "a1" ? "Baseline" : null,
+			preview: node.preview,
+			active: active.has(id),
+			selectable: true,
+		})),
+		truncated: false,
+	};
+};
+/** The replay `session/load` sends, restricted to one branch's path. */
+const replayPath = (leaf) => {
+	let turn = 0;
+	for (const id of treePath(leaf)) {
+		const node = TREE_TURNS[id];
+		if (node.kind === "user") turn++;
+		update(
+			{
+				sessionUpdate: node.kind === "user" ? "user_message_chunk" : "agent_message_chunk",
+				content: { type: "text", text: node.preview },
+			},
+			// A ledger dates every turn it replays.
+			{
+				"pancode/replay": {
+					turn,
+					startedAt: `2026-09-25T12:0${turn}:00.000Z`,
+					finishedAt: `2026-09-25T12:0${turn}:30.000Z`,
+				},
+			},
+		);
+	}
+	return turn;
+};
+// One playbook, "survey": two agent steps in two waves. Its hash covers the vars, as the
+// real plan's does through the rendered task, so a changed variable is a changed plan.
+const fleetHash = (vars) =>
+	createHash("sha256")
+		.update(`survey:${JSON.stringify(vars ?? {})}`)
+		.digest("hex");
+const fleetPreview = (name, vars) =>
+	name !== "survey"
+		? {
+				status: "refused",
+				name,
+				diagnostics: [`playbook not found: .pancode/playbooks/${name}.md (and no builtin named '${name}')`],
+			}
+		: {
+				status: "ready",
+				name,
+				planHash: fleetHash(vars),
+				stepCount: 2,
+				isolation: "workspace",
+				waves: [
+					{
+						index: 0,
+						steps: [
+							{
+								stepId: "survey",
+								kind: "agent",
+								scope: "readonly",
+								agentId: "scout",
+								writes: null,
+								route: { targetId: "fixture", model: "fixture-model", nodeId: "local" },
+							},
+						],
+					},
+					{
+						index: 1,
+						steps: [
+							{
+								stepId: "report",
+								kind: "agent",
+								scope: "workspace",
+								agentId: "writer",
+								writes: ["reports/"],
+								route: { targetId: "fixture", model: "fixture-small", nodeId: "local" },
+							},
+						],
+					},
+				],
+				budget: { ceilingUsd: 5, currentUsd: 0.25, playbookUsd: 1 },
+				truncated: false,
+			};
+// The /handoff lifecycle a real agent runs through its shared service: a draft is
+// held under an id until it is committed, discarded, or a request moves the session.
+let pendingHandoff = null;
+const proposedMemory = new Set();
+let extensionGeneration = 1;
+let hubGeneration = 1;
+// Visual review can ask the smoke scenario to advertise safe settings and targets, so the composer's
+// route chip shows a reported model. The smoke itself leaves it off and asserts the missing controls.
+const ROUTE = process.env.PANCODE_WEB_FIXTURE_ROUTE === "1";
+const REPLAY_TURNS = Number(process.env.PANCODE_WEB_FIXTURE_REPLAY_TURNS ?? 0);
+// The read model's DTOs, written by the harness (writeFixtureTelemetry) because this plain-node child cannot run it.
+// Present, the child announces and answers the three telemetry methods the session usage route reads.
+const TELEMETRY = process.env.PANCODE_WEB_FIXTURE_TELEMETRY;
+const telemetryDto = (name, sessionId) => {
+	const dto = JSON.parse(readFileSync(TELEMETRY, "utf8"))[name];
+	return sessionId && "sessionId" in dto ? { ...dto, sessionId } : dto;
+};
+// The `readouts` scenario pushes the engine's live readouts (spec 15a) only to a client whose initialize asked for
+// them, so a test proves the GUI opts in. READOUTS_BAD adds, after the turn-end frame, three frames the GUI must
+// drop: one with an unknown property, one of another version and one older than the newest applied.
+let readoutsOptIn = false,
+	readoutsSequence = 0;
+const READOUTS_BAD = process.env.PANCODE_WEB_FIXTURE_READOUTS_BAD === "1";
+const READOUTS_SKILLS = { names: ["review"], display: "skill review" };
+const READOUTS_YOLO = {
+	level: "yolo",
+	confinement: "contained",
+	osSandbox: true,
+	label: "YOLO · contained",
+	tone: "warning",
+	window: { display: "3/600 calls", tone: "neutral", halted: false },
+};
+const readoutsFrame = (readouts, params = {}) => {
+	if (readoutsOptIn)
+		send({
+			method: "_pancode/session/readouts",
+			params: { version: 1, sessionId, sequence: readoutsSequence++, readouts, ...params },
+		});
+};
+const queues = { steer: [], followUp: [] };
+let queueReadFails = false;
+const queueChanged = () => {
+	if (scenario !== "queue-push") return;
+	send({
+		method: "_pancode/session/queue_changed",
+		params: {
+			sessionId,
+			entries: [
+				...queues.steer.map((text, index) => ({
+					id: `steer-${index}`,
+					kind: "steer",
+					text,
+					enqueuedAt: 1,
+					pinned: false,
+				})),
+				...queues.followUp.map((text, index) => ({
+					id: `follow-${index}`,
+					kind: "follow-up",
+					text,
+					enqueuedAt: 1,
+					pinned: false,
+				})),
+			],
+		},
+	});
+};
+/** runId -> resolve. A held worker settles when it is stopped or the turn is cancelled. */
+const liveRuns = new Map();
+let liveRunCount = 0;
+// The runtime keeps the orchestrator's `dispatch` call open for the worker's whole life and settles
+// it after the run does, so the transcript shows the delegation as one running row beside the run.
+const heldWorker = async () => {
+	const runId = `run-live-${++liveRunCount}`;
+	const toolCallId = `dispatch-${liveRunCount}`;
+	const identity = {
+		runId,
+		agentId: "scout",
+		taskPreview: "Survey the fixture",
+		node: null,
+		origin: "tool",
+		attempt: 1,
+	};
+	update({
+		sessionUpdate: "tool_call",
+		toolCallId,
+		title: "dispatch",
+		kind: "other",
+		status: "in_progress",
+		rawInput: { agent: "scout", task: "Survey the fixture" },
+	});
+	event("run.enqueued", identity);
+	event("run.started", identity);
+	const stopped = await new Promise((resolve) => liveRuns.set(runId, resolve));
+	liveRuns.delete(runId);
+	const reason = stopped ? "operator_cancel" : "turn_cancelled";
+	event("run.failed", { runId, agentId: "scout", outcome: "cancelled", reason, durationMs: 25 }, true);
+	const message = `dispatch failed: run ${runId} was cancelled (${reason})`;
+	update({
+		sessionUpdate: "tool_call_update",
+		toolCallId,
+		title: "dispatch",
+		kind: "other",
+		status: "failed",
+		content: [{ type: "content", content: { type: "text", text: message } }],
+		rawOutput: {
+			result: {
+				content: [{ type: "text", text: message }],
+				// src/tools/dispatch-runner.ts reports a stopped run's outcome in the result details.
+				details: { runId, outcome: "canceled", outcomeDetail: reason },
+			},
+			isError: true,
+		},
+	});
+	if (!cancelled) text("The worker was stopped.");
+};
+const fleet = () => {
+	const identity = {
+		runId: "run-1",
+		agentId: "worker-1",
+		taskPreview: "Bounded task",
+		node: null,
+		origin: "tool",
+		attempt: 1,
+	};
+	for (const [kind, payload] of [
+		[
+			"safety.loop_blocked",
+			{
+				toolCallId: null,
+				tool: "read",
+				repeatCount: 2,
+				blocksThisTurn: 1,
+				budget: 3,
+				disposition: "block",
+				interrupted: false,
+				shape: null,
+			},
+		],
+		["run.enqueued", identity],
+		["run.started", identity],
+		["run.progressed", { runId: "run-1", agentId: "worker-1", progressCount: 1, truncated: false }],
+		[
+			"run.completed",
+			{
+				runId: "run-1",
+				agentId: "worker-1",
+				outcome: "success",
+				outcomeCode: "done",
+				durationMs: 10,
+				totalTokens: { kind: "measured", value: 23, source: "provider" },
+				apiCalls: { kind: "measured", value: 2, source: "local-count" },
+				tokenDisplay: "23",
+			},
+		],
+		["run.failed", { runId: "run-2", agentId: "worker-2", outcome: "error", reason: "tool_failed", durationMs: 12 }],
+		["evidence.assessed", { runId: "run-1", firstPassSuccess: true, findingCount: 2, tags: ["fixture"] }],
+		["compaction.ended", { trigger: "threshold" }],
+		["context.warning_raised", { warning: "Context window is 85% full." }],
+		[
+			"safety.tool_budget_exceeded",
+			{ tool: "bash", callsThisTurn: 41, softBudget: 40, hardCeiling: 60, interrupted: false },
+		],
+		["provider.health_changed", { targetId: "fixture", status: "degraded", available: true, latencyMs: 5 }],
+		[
+			"run.scope_notice_raised",
+			{ code: "write_root_dot_unconfined", level: "warning", message: "[dispatch scope] a root of '.' set no boundary." },
+		],
+		// Not in ACP_TO_WEB_EVENT. A newer engine's kind must be dropped, not kill
+		// the session, so every fleet-scenario test exercises that path too.
+		["future.unknownKind", { anything: true }],
+	])
+		send({
+			method: "_pancode/event",
+			params: {
+				version: 1,
+				workspaceInstanceId: "fixture",
+				sessionId,
+				turnId: null,
+				sequence: ++eventSequence,
+				kind,
+				terminal: ["run.completed", "run.failed", "evidence.assessed"].includes(kind),
+				payload: { ...payload, excludedProviderBody: "private" },
+			},
+		});
+};
+async function handle(frame) {
+	if (!frame.method) {
+		pending.get(frame.id)?.(frame.result);
+		pending.delete(frame.id);
+		return;
+	}
+	log({ method: frame.method, params: frame.params });
+	try {
+		let result = {};
+		switch (frame.method) {
+			case "initialize": {
+				const kinds = frame.params?.clientCapabilities?._meta?.["pancode/events"]?.kinds;
+				if (
+					!Array.isArray(kinds) ||
+					kinds.length !== 14 ||
+					!kinds.includes("context.activity_changed") ||
+					!kinds.includes("job.changed")
+				)
+					throw Error("event_opt_in");
+				const rows = JSON.parse(readFileSync(join(process.env.PANCODE_STATE_DIR, "gui/children.json"), "utf8"));
+				if (!rows.some((row) => row.pid === process.pid && row.ownerPid === process.ppid))
+					throw Error("not_recorded_before_initialize");
+				if (scenario === "readouts")
+					readoutsOptIn = frame.params?.clientCapabilities?._meta?.["pancode/readouts"]?.version === 1;
+				result = {
+					protocolVersion: 1,
+					agentInfo: { name: "fixture", version: "1" },
+					agentCapabilities: {
+						loadSession: true,
+						...(REPLAY_TURNS ? { sessionCapabilities: { list: {} } } : {}),
+						promptCapabilities: { audio: false, embeddedContext: scenario === "markdown", image: scenario === "markdown" },
+						...(STEERING
+							? {
+									_meta: {
+										"pancode/steering": STEERING,
+										...(scenario === "queue-push"
+											? {
+													"pancode/queue": {
+														version: 1,
+														edit: "_pancode/session/queue_edit",
+														changed: "_pancode/session/queue_changed",
+														ops: ["remove", "restore"],
+													},
+												}
+											: {}),
+										// The smoke scenario announces the telemetry read model as the real engine does, so the
+										// Session column's Usage drill-in is reachable in a browser.
+										...(scenario === "telemetry" || scenario === "markdown"
+											? {
+													"pancode/telemetry": {
+														version: 1,
+														methods: {
+															session: "_pancode/telemetry/session",
+															...(TELEMETRY ? { cost: "_pancode/telemetry/cost", quota: "_pancode/telemetry/quota" } : {}),
+														},
+														update: "_pancode/telemetry/update",
+													},
+												}
+											: {}),
+										...(ROUTE
+											? {
+													"pancode/settings": { get_safe: true, patch_safe: true },
+													"pancode/targets": { list: true, probe: true },
+												}
+											: {}),
+										...(COMMANDS
+											? {
+													"pancode/commands": {
+														version: 1,
+														list: "_pancode/commands/list",
+														invoke: "_pancode/commands/invoke",
+														count: COMMANDS.commands.length,
+														...(process.env.PANCODE_WEB_FIXTURE_PROMPT_TURNS !== "0" ? { promptTurns: true } : {}),
+													},
+													"pancode/snapshots": {
+														version: 1,
+														list: "_pancode/session/snapshots",
+														preview: "_pancode/session/snapshot_preview",
+														restore: "_pancode/session/snapshot_restore",
+													},
+													"pancode/board": {
+														version: 1,
+														method: "_pancode/session/board",
+														supersede: "_pancode/decisions/supersede",
+														proposeMemory: "_pancode/memory/propose",
+													},
+													"pancode/context": { version: 1, ledger: "_pancode/context/ledger" },
+													"pancode/extensions": {
+														version: 1,
+														list: "_pancode/extensions/list",
+														reload: "_pancode/extensions/reload",
+													},
+													"pancode/hub": { version: 1, reload: "_pancode/hub/reload" },
+													"pancode/aside": {
+														version: 1,
+														ask: "_pancode/aside/ask",
+														draft: "_pancode/aside/draft",
+														cancel: "_pancode/aside/cancel",
+														draftCounts: { min: 1, max: 4, default: 3 },
+													},
+													"pancode/fleet": {
+														version: 1,
+														preview: "_pancode/fleet/preview",
+														run: "_pancode/fleet/run",
+													},
+													"pancode/handoff": {
+														version: 1,
+														prepare: "_pancode/session/handoff/prepare",
+														commit: "_pancode/session/handoff/commit",
+														cancel: "_pancode/session/handoff/cancel",
+													},
+													"pancode/branches": {
+														version: 1,
+														tree: "_pancode/session/tree",
+														switchTurn: "_pancode/session/switch_turn",
+														fork: "_pancode/session/fork",
+													},
+												}
+											: {}),
+									},
+								}
+							: {}),
+						...(scenario === "readouts"
+							? {
+									_meta: {
+										"pancode/readouts": {
+											version: 1,
+											notification: "_pancode/session/readouts",
+											minIntervalMs: 250,
+											admission: "pancode/admission",
+										},
+									},
+								}
+							: {}),
+					},
+				};
+				break;
+			}
+			case "session/new":
+				if (["session_limit", "session_cwd_mismatch"].includes(scenario)) throw Error(scenario);
+				if (typeof frame.params?.cwd === "string") taskCwd = frame.params.cwd;
+				update({ sessionUpdate: "available_commands_update", availableCommands: [] });
+				result = {
+					sessionId,
+					...(ROUTE
+						? { configOptions: configOptions(), _meta: { "pancode/session": { target: settings.chat.target } } }
+						: {}),
+					modes: {
+						currentModeId: autonomy,
+						availableModes: MODES,
+					},
+				};
+				if (ROUTE)
+					setTimeout(
+						() =>
+							event("provider.health_changed", {
+								targetId: settings.chat.target,
+								status: "healthy",
+								available: true,
+								latencyMs: 5,
+							}),
+						50,
+					);
+				// As the engine does, the open frame follows the session/new result rather than preceding it.
+				if (scenario === "readouts")
+					setImmediate(() => readoutsFrame({ autonomy: null, throughput: null, skills: READOUTS_SKILLS, retry: null }));
+				break;
+			case "session/list":
+				result = {
+					sessions: [
+						{
+							sessionId: "perf-history",
+							cwd: frame.params.cwd,
+							title: "A long saved conversation",
+							updatedAt: "2026-01-01T00:00:00.000Z",
+							_meta: {
+								"pancode/session": {
+									createdAt: "2026-01-01T00:00:00.000Z",
+									endedAt: "2026-01-01T00:00:00.000Z",
+									target: "fixture",
+									model: "fixture-model",
+									hasModelTurn: true,
+								},
+							},
+						},
+					],
+				};
+				break;
+			case "session/load":
+				sessionId = frame.params.sessionId;
+				result = {
+					...(ROUTE
+						? { configOptions: configOptions(), _meta: { "pancode/session": { target: settings.chat.target } } }
+						: {}),
+					modes: {
+						currentModeId: autonomy,
+						availableModes: MODES,
+					},
+				};
+				// A long saved conversation for scripts/perf-workload.ts `--history`: N rich exchanges.
+				for (let turn = 1; turn <= Math.max(1, REPLAY_TURNS); turn++) {
+					const meta = {
+						"pancode/replay": { turn },
+						"pancode/turn": { model: "replay-model", target: "replay-target" },
+					};
+					const long = REPLAY_TURNS > 0;
+					update(
+						{
+							sessionUpdate: "user_message_chunk",
+							content: { type: "text", text: long ? `Earlier prompt ${turn}: check level L${turn % 4}.` : "Earlier prompt" },
+						},
+						meta,
+					);
+					if (long && turn % 3 === 0)
+						update(
+							{
+								sessionUpdate: "tool_call",
+								toolCallId: `replay-${turn}`,
+								title: "Read analysis/convergence-notes.md",
+								kind: "read",
+								status: "completed",
+								locations: [{ path: "analysis/convergence-notes.md", line: turn }],
+								rawInput: { path: "analysis/convergence-notes.md" },
+								rawOutput: { result: "mesh convergence" },
+							},
+							{ ...meta, "pancode/toolTiming": { durationMs: 40 + turn } },
+						);
+					update(
+						{
+							sessionUpdate: "agent_message_chunk",
+							content: {
+								type: "text",
+								text: long
+									? `## Level L${turn % 4}\n\nThe residual for case ${turn} falls **monotonically** after iteration 40; see \`analysis/convergence-notes.md:${turn}\`.\n\n- final residual \`${(turn * 1.3e-7).toExponential(2)}\`\n- iterations ${200 + turn}\n\n\`\`\`python\nimport math\nresidual = ${turn} * 1.3e-7\nprint(math.log10(residual))\n\`\`\`\n\n| Cells | Residual |\n| ---: | ---: |\n| ${turn * 128} | ${(turn * 1.3e-7).toExponential(2)} |\n`
+									: "Earlier reply",
+							},
+						},
+						meta,
+					);
+				}
+				break;
+			case "session/prompt": {
+				promptRunning = true;
+				pendingHandoff = null;
+				answered = "";
+				const promptText = frame.params.prompt?.map((block) => block.text).join(" ") ?? "";
+				if (STEERING && promptText.includes("[unreadable-queue]")) queueReadFails = true;
+				const turnScenario =
+					STEERING && promptText.includes("[hold]")
+						? "slow"
+						: scenario === "markdown" && promptText.includes("[approval]")
+							? "permission"
+							: scenario === "markdown" && promptText.includes("[plan]")
+								? "plan-permission"
+								: scenario === "markdown" && promptText.includes("[stream]")
+									? "loop"
+									: scenario === "markdown" && promptText.includes("[stream-held]")
+										? "held-stream"
+										: scenario === "markdown" && promptText.includes("[workload")
+											? "workload"
+											: scenario === "markdown" && promptText.includes("[science]")
+												? "science"
+												: STEERING && promptText.includes("[fleet]")
+													? "held-worker"
+													: scenario;
+				cancelled = false;
+				if (scenario === "crash") process.exit(9);
+				if (promptText.includes("[rename]")) {
+					// The engine announces a title it chose; a repeat of the same title is not a new rename.
+					update({ sessionUpdate: "session_info_update", title: "Renamed" });
+					update({ sessionUpdate: "session_info_update", title: "Renamed" });
+					// A skill or an extension came or went mid-session; the session/new announcement predates the binding.
+					update({ sessionUpdate: "available_commands_update", availableCommands: [] });
+				}
+				if (promptText.startsWith("/context recover ")) {
+					await delay(40);
+					text("The paused turn continued from the handoff.\n\nHandoff delivered.");
+					result = { stopReason: "end_turn", _meta: { "pancode/usage": usage } };
+					break;
+				}
+				if (promptText.startsWith("/council ")) {
+					// The council's dispatch call is announced in the turn, as the agent's host does.
+					update({
+						sessionUpdate: "tool_call",
+						toolCallId: "council-1",
+						title: "dispatch",
+						kind: "other",
+						status: "in_progress",
+						rawInput: { mode: "council", roster: "review", task: promptText.slice(9) },
+					});
+					// The engine reports the call's span and the route that served the turn; the host keeps no clock of its own.
+					update(
+						{
+							sessionUpdate: "tool_call_update",
+							toolCallId: "council-1",
+							status: "completed",
+							content: [{ type: "content", content: { type: "text", text: "council dispatched: 2 members" } }],
+						},
+						{
+							"pancode/agent": [{ version: 1, role: "orchestrator", agentId: "orchestrator" }],
+							"pancode/toolTiming": { durationMs: 4321 },
+						},
+					);
+					result = {
+						stopReason: "end_turn",
+						_meta: {
+							"pancode/usage": usage,
+							"pancode/turn": { model: "fixture-model", target: "fixture-target" },
+						},
+					};
+					break;
+				}
+				if (promptText.startsWith("/tasks ") || promptText.startsWith("/skill ")) {
+					if (promptText.startsWith("/tasks ")) {
+						const argv = promptText.slice(7).trim().split(/\s+/u);
+						const notice = invokeTask(argv);
+						if (argv[0] === "hand") {
+							await delay(120);
+							if (!cancelled) text("Working on the handed task");
+						}
+						text(`${argv[0] === "hand" ? "\n\n" : ""}${notice.lines.join("\n")}`);
+					} else {
+						await delay(120);
+						if (!cancelled) text("Visible skill response");
+					}
+					result = { stopReason: cancelled ? "cancelled" : "end_turn", _meta: { "pancode/usage": usage } };
+					break;
+				}
+				if (turnScenario === "plan-permission") await planPermission();
+				else if (turnScenario.startsWith("permission")) await permission();
+				else if (turnScenario === "held-worker") await heldWorker();
+				else if (turnScenario === "slow" || scenario === "cancel-unanswered") {
+					while (!cancelled) await delay(100);
+				} else if (turnScenario === "workload") {
+					// `[workload 16384]` asks for an answer of at least that many bytes.
+					const bytes = Number(/\[workload (\d+)\]/.exec(promptText)?.[1] ?? 0);
+					await streamWorkload({ update, text, delay, cancelled: () => cancelled, bytes });
+				} else if (turnScenario === "science") {
+					for (const [id, title, input, output] of [
+						["sci-1", "bash", { command: "mpirun -n 4 ./cavity" }, SCIENCE_TOOL_OUTPUT],
+						["sci-2", "read", { path: "results/summary.json" }, SCIENCE_TOOL_JSON],
+					]) {
+						update({
+							sessionUpdate: "tool_call",
+							toolCallId: id,
+							title,
+							kind: title === "bash" ? "execute" : "read",
+							status: "in_progress",
+							rawInput: input,
+						});
+						update({
+							sessionUpdate: "tool_call_update",
+							toolCallId: id,
+							status: "completed",
+							rawOutput: { result: { kind: "ok", output }, isError: false },
+							content: [{ type: "content", content: { type: "text", text: output } }],
+						});
+					}
+					for (const chunk of SCIENCE_MARKDOWN) {
+						if (cancelled) break;
+						text(chunk);
+						await delay(20);
+					}
+				} else if (turnScenario === "held-stream") {
+					// Streams until cancelled (capped near two minutes), so a check can land mid-turn on any machine.
+					for (let i = 0; i < 40_000 && !cancelled; i++) {
+						text(`${i} `);
+						await delay(3);
+					}
+				} else if (turnScenario === "loop") {
+					for (let i = 0; i < 1400 && !cancelled; i++) {
+						text(`${i} `);
+						await delay(1);
+					}
+				} else {
+					if (scenario === "fleet") fleet();
+					const images = frame.params.prompt?.filter((block) => block.type === "image").length ?? 0;
+					if (images > 0) text(`Received ${images} ${images === 1 ? "image" : "images"} with the request.\n\n`);
+					const files = frame.params.prompt?.filter((block) => block.type === "resource").length ?? 0;
+					if (files > 0) text(`Received ${files} ${files === 1 ? "file" : "files"} with the request.\n\n`);
+					if (scenario === "markdown") {
+						for (const chunk of [
+							"# Fixture findings\n\nThe change is **verified** against a local fixture.\n\n",
+							"```ts\nconst answer: number = 42;\nconsole.log('A deliberately long code line verifies keyboard scrolling without widening the page', answer);\n```\n\n",
+							"```mermaid\nflowchart LR\n  Request --> Review\n  Review --> Result\n```\n\n",
+							"<script>window.modelMarkupExecuted = true</script>\n\n[Unsafe](javascript:alert(1)) and [Reference](https://example.org).\n\n| Check | Result |\n| --- | --- |\n| Fixture | Passed |\n\n",
+						]) {
+							if (cancelled) break;
+							text(chunk);
+							await delay(100);
+						}
+					}
+					update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Check the fixture." } });
+					// A `sessionUpdate` kind this app has never heard of is a newer engine,
+					// not a broken one, so every ordinary turn carries one and still has to
+					// settle. Its sibling below is the sharp line: a MALFORMED frame of a
+					// kind the app DOES handle stays fatal, because continuing there means
+					// drawing a shape no contract describes.
+					update({ sessionUpdate: "future_unknown_kind", anything: true });
+					if (scenario === "readouts") {
+						readoutsFrame({
+							autonomy: READOUTS_YOLO,
+							throughput: { display: "42 tok/s", estimated: false, flowing: true },
+							skills: READOUTS_SKILLS,
+							retry: { phase: "waiting", active: true, display: "provider retry 1/3 in 4s" },
+						});
+						update({
+							sessionUpdate: "tool_call",
+							toolCallId: "write-1",
+							title: "Write notes.md",
+							kind: "edit",
+							status: "in_progress",
+							rawInput: { path: "notes.md" },
+						});
+						// The engine puts the judge's phase on the update's own _meta, not the notification's.
+						const admission = (state) =>
+							update({
+								sessionUpdate: "tool_call_update",
+								toolCallId: "write-1",
+								status: "in_progress",
+								_meta: {
+									"pancode/admission": {
+										version: 1,
+										state,
+										...(state === "judging" ? { display: "waiting for the safety judge" } : {}),
+									},
+								},
+							});
+						admission("judging");
+						await delay(150);
+						admission("admitted");
+						update({
+							sessionUpdate: "tool_call_update",
+							toolCallId: "write-1",
+							title: "Write notes.md",
+							kind: "edit",
+							status: "completed",
+							rawOutput: { result: "written" },
+						});
+					}
+					// The engine's coalesced telemetry_update: a bare invalidation naming the topics that moved (#434).
+					if (scenario === "telemetry")
+						send({
+							method: "_pancode/telemetry/update",
+							params: {
+								v: 1,
+								kind: "telemetry_update",
+								sessionId,
+								seq: 1,
+								generatedAt: new Date().toISOString(),
+								topics: ["session", "cost"],
+							},
+						});
+					if (scenario === "malformed-update")
+						update({ sessionUpdate: "agent_message_chunk", content: { type: "image", data: "not-text" } });
+					if (["gateway-chain", "gateway-chain-failed", "unrelated-chain"].includes(scenario)) {
+						const failed = scenario === "gateway-chain-failed";
+						const title = scenario === "unrelated-chain" ? "mcp_fixture__compose" : "gateway chain(grep, read, ls)";
+						const steps = [
+							{ id: "search", capability: "grep", args: { pattern: "TODO", path: "src" } },
+							{ id: "read", capability: "read", args: { path: "src/x.ts" }, after: ["search"] },
+							{ id: "later", capability: "ls", args: { path: "docs" }, after: ["read"] },
+						];
+						// The start, progress and terminal envelopes match ACP server.ts;
+						// progress carries content only, so normalization must retain the input and title.
+						update({
+							sessionUpdate: "tool_call",
+							toolCallId: "chain-1",
+							name: scenario === "unrelated-chain" ? "mcp_fixture__compose" : "gateway",
+							title,
+							kind: "other",
+							status: "in_progress",
+							rawInput: { op: "chain", steps },
+						});
+						update({
+							sessionUpdate: "tool_call_update",
+							toolCallId: "chain-1",
+							status: "in_progress",
+							content: [{ type: "content", content: { type: "text", text: "Searching sources" } }],
+						});
+						const settled = failed ? steps.slice(0, 2) : steps;
+						const body = failed
+							? "Chain failed: 2 of 3 steps settled. Pending: later."
+							: "Chain complete: 3 of 3 steps settled.";
+						update({
+							sessionUpdate: "tool_call_update",
+							toolCallId: "chain-1",
+							title,
+							kind: "other",
+							status: failed ? "failed" : "completed",
+							content: [{ type: "content", content: { type: "text", text: body } }],
+							rawOutput: {
+								result: {
+									content: [{ type: "text", text: body }],
+									details: {
+										op: "chain",
+										pending: failed ? ["later"] : [],
+										chainResults: settled.map((step) => ({
+											id: step.id,
+											capability: step.capability,
+											args: step.args,
+											isError: failed && step.id === "read",
+											result: {
+												content: [{ type: "text", text: failed && step.id === "read" ? "unavailable" : "ok" }],
+												details: { kind: failed && step.id === "read" ? "error" : "ok" },
+											},
+										})),
+									},
+								},
+								isError: failed,
+							},
+						});
+					}
+					if (scenario === "tool" || scenario === "tool-progress-no-content") {
+						update({
+							sessionUpdate: "tool_call",
+							toolCallId: "read-1",
+							name: "read",
+							title: "Read README",
+							kind: "read",
+							status: "in_progress",
+							locations: [{ path: "README.md", line: 0 }],
+							rawInput: { path: "README.md" },
+						});
+						if (scenario === "tool-progress-no-content") {
+							update({
+								sessionUpdate: "tool_call_update",
+								toolCallId: "read-1",
+								title: "Read README",
+								kind: "read",
+								status: "in_progress",
+								content: [{ type: "content", content: { type: "text", text: "partial output" } }],
+							});
+							update({
+								sessionUpdate: "tool_call_update",
+								toolCallId: "read-1",
+								title: "Read README",
+								kind: "read",
+								status: "in_progress",
+							});
+						}
+						update({
+							sessionUpdate: "tool_call_update",
+							toolCallId: "read-1",
+							title: "Read README",
+							kind: "read",
+							status: "completed",
+							rawOutput: { result: "Fixture documentation" },
+						});
+					}
+					// A screenshot tool's results: the images ride in `content` (and in `rawOutput.result.content`), each
+					// beside blocks the app must drop: a type it does not draw, bytes over the bound, data that is not base64.
+					if (scenario === "tool-images") {
+						const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+						const image = (mimeType, data) => ({ type: "content", content: { type: "image", mimeType, data } });
+						const link = (uri, name) => ({
+							type: "content",
+							content: { type: "resource_link", uri, name, mimeType: "image/png" },
+						});
+						update({
+							sessionUpdate: "tool_call",
+							toolCallId: "shot-1",
+							title: "browser",
+							kind: "other",
+							status: "in_progress",
+						});
+						update({
+							sessionUpdate: "tool_call_update",
+							toolCallId: "shot-1",
+							status: "completed",
+							content: [
+								{ type: "content", content: { type: "text", text: "captured" } },
+								image("image/png", png),
+								image("image/svg+xml", png),
+								image("image/png", "A".repeat(1_048_577)),
+								image("image/jpeg", "not base64!"),
+								link("file:///work/shots/shot.png", "shot.png"),
+								link("https://example.invalid/shot.png", "remote.png"),
+							],
+						});
+						update({
+							sessionUpdate: "tool_call",
+							toolCallId: "shot-2",
+							title: "browser",
+							kind: "other",
+							status: "in_progress",
+						});
+						update({
+							sessionUpdate: "tool_call_update",
+							toolCallId: "shot-2",
+							status: "completed",
+							rawOutput: {
+								result: {
+									content: [
+										{ type: "text", text: "captured" },
+										{ type: "image", mimeType: "image/webp", data: png },
+									],
+								},
+								isError: false,
+							},
+						});
+					}
+					for (const chunk of ["Hello ", "from ", "PanCode."]) {
+						if (cancelled) break;
+						text(chunk);
+						await delay(30);
+					}
+					if (scenario === "readouts") {
+						const end = { autonomy: READOUTS_YOLO, throughput: null, skills: READOUTS_SKILLS, retry: null };
+						readoutsFrame(end);
+						if (READOUTS_BAD) {
+							const stray = { ...end, skills: { names: ["stray"], display: "skill stray" } };
+							readoutsFrame(stray, { unexpected: true });
+							readoutsFrame(stray, { version: 2 });
+							readoutsFrame(stray, { sequence: 1 });
+						}
+					}
+				}
+				result = { stopReason: cancelled ? "cancelled" : "end_turn", _meta: { "pancode/usage": usage } };
+				break;
+			}
+			case "_pancode/commands/list":
+				if (!COMMANDS) throw Error("method_not_found");
+				result = COMMANDS;
+				break;
+			case "_pancode/commands/invoke": {
+				if (!COMMANDS?.commands.some((row) => row.name === frame.params.command)) throw Error("command_not_exposed");
+				const { command, argv = [] } = frame.params;
+				if (command === "tasks") {
+					result = invokeTask(argv);
+					break;
+				}
+				// As the engine's /export: the path is resolved against the task's directory, Markdown for `.md`.
+				if (command === "export") {
+					const target = resolve(taskCwd, argv[0] ?? `.pancode/exports/${sessionId}.html`);
+					mkdirSync(dirname(target), { recursive: true });
+					writeFileSync(
+						target,
+						target.endsWith(".md")
+							? "# Fixture transcript\n\nEarlier reply\n"
+							: "<!doctype html><title>Fixture transcript</title>",
+					);
+					result = { level: "info", lines: [`wrote 1 requests to ${target}`] };
+					break;
+				}
+				result =
+					command === "doctor"
+						? { level: "success", lines: [argv.includes("deep") ? "Deep checks completed." : "Checks completed."] }
+						: { level: "info", lines: [`Context action: ${argv.join(" ")}`] };
+				break;
+			}
+			case "_pancode/session/board":
+				if (!COMMANDS) throw Error("method_not_found");
+				result = BOARD;
+				break;
+			case "_pancode/decisions/supersede": {
+				const decision = BOARD.decisions.find(
+					(row) => row.interviewId === frame.params.interviewId && row.key === frame.params.key,
+				);
+				if (!decision) {
+					result = { status: "refused", reason: `decision ${frame.params.key} is not on the board` };
+					break;
+				}
+				if (decision.status !== "active") {
+					result = { status: "already_superseded" };
+					break;
+				}
+				decision.status = "superseded";
+				log({ superseded: decision.key, correction: frame.params.correction ?? null });
+				if (frame.params.correction) decision.correction = frame.params.correction;
+				result = {
+					status: "superseded",
+					...(frame.params.correction
+						? {
+								correctionTurn: `Decision "${decision.label}" (previously: ${decision.value}) is superseded by the operator. New direction: ${frame.params.correction}. Acknowledge and adjust the plan.`,
+							}
+						: {}),
+				};
+				break;
+			}
+			case "_pancode/memory/propose": {
+				const entry = BOARD.memory.bank.find((row) => row.id === frame.params.entryId);
+				if (!entry) {
+					result = { status: "refused", reason: `task-bank entry ${frame.params.entryId} is not in this session` };
+					break;
+				}
+				if (frame.params.scope === "global" && frame.params.acknowledgeGlobal !== true) {
+					result = { status: "needs_acknowledgement", reason: "global scope broadens where this lesson applies" };
+					break;
+				}
+				const recordId = `memory-${entry.id}-${frame.params.scope}`;
+				proposedMemory.has(recordId) ? null : log({ proposed: recordId });
+				result = { status: proposedMemory.has(recordId) ? "existing" : "proposed", recordId };
+				proposedMemory.add(recordId);
+				break;
+			}
+			case "_pancode/session/tree":
+				if (!COMMANDS) throw Error("method_not_found");
+				result = sessionTree();
+				break;
+			case "_pancode/session/snapshots":
+				if (!COMMANDS) throw Error("method_not_found");
+				result = { snapshots: SNAPSHOTS, truncated: false };
+				break;
+			case "_pancode/session/snapshot_preview":
+				if (!COMMANDS) throw Error("method_not_found");
+				result = SNAPSHOTS.some((row) => row.n === frame.params.n)
+					? snapshotPlan(frame.params.n)
+					: { kind: "unavailable", reason: `snapshot #${frame.params.n} not found` };
+				break;
+			case "_pancode/session/snapshot_restore": {
+				if (!COMMANDS) throw Error("method_not_found");
+				if (promptRunning) throw Error("prompt_active");
+				const plan = snapshotPlan(frame.params.n);
+				const undo = SNAPSHOTS[0].n + 1;
+				SNAPSHOTS.unshift({
+					n: undo,
+					at: new Date().toISOString(),
+					reason: `before rewind to #${frame.params.n}`,
+					differs: 0,
+					skipped: 0,
+				});
+				result = {
+					kind: "restored",
+					n: frame.params.n,
+					undo,
+					restored: plan.restore,
+					removed: plan.remove,
+					kept: plan.kept,
+					failed: [],
+					refs: [],
+					truncated: false,
+				};
+				break;
+			}
+			case "_pancode/session/switch_turn": {
+				if (!COMMANDS) throw Error("method_not_found");
+				if (!TREE_TURNS[frame.params.turnId]) throw Error("turn_unknown");
+				treeLeaf = frame.params.turnId;
+				const turns = replayPath(treeLeaf);
+				result = {
+					sessionId,
+					leafId: treeLeaf,
+					_meta: { "pancode/session": { replayed: { turns, truncated: false } } },
+				};
+				break;
+			}
+			// Rounds beside the conversation: nothing here touches the transcript or the turn state.
+			case "_pancode/aside/ask":
+				result = { status: "answered", text: "The readings are in README.md.", truncated: false };
+				break;
+			case "_pancode/aside/draft": {
+				const drafts = [
+					"Show the readings in one table with a unit column.",
+					"List each sample with its reading and the date it was taken.",
+					"endpoint reset",
+					"Plot the readings and cite the table under the plot.",
+				].slice(0, frame.params.count);
+				const candidates = drafts.map((text, index) =>
+					index === 2
+						? { label: "C", status: "failed", reason: text }
+						: { label: "ABCD"[index], status: "drafted", text, truncated: false },
+				);
+				result = {
+					status: "drafted",
+					aborted: false,
+					candidates,
+					judgment: candidates.some((candidate) => candidate.status === "failed")
+						? { status: "unjudged", reason: "not judged: a draft failed or came back empty" }
+						: {
+								status: "judged",
+								picked: "A",
+								probabilities: Object.fromEntries(
+									candidates.map((c, i) => [c.label, i === 0 ? 0.7 : 0.3 / (candidates.length - 1 || 1)]),
+								),
+								sound: Object.fromEntries(candidates.map((c, i) => [c.label, i === 0])),
+								source: "fixture/judge",
+								elapsedMs: 12,
+							},
+				};
+				break;
+			}
+			case "_pancode/telemetry/session":
+			case "_pancode/telemetry/cost":
+			case "_pancode/telemetry/quota":
+				if (!TELEMETRY) throw Error("method_not_found");
+				result = telemetryDto(frame.method.slice("_pancode/telemetry/".length), frame.params?.sessionId);
+				break;
+			case "_pancode/aside/cancel":
+				result = { cancelled: false };
+				break;
+			case "_pancode/extensions/list":
+				result = {
+					version: 1,
+					extensions: [
+						{
+							id: "survey-tools",
+							name: "Survey tools",
+							version: "1.2.0",
+							description: "Field survey helpers",
+							scope: "project",
+							state: "eligible",
+							runtime: false,
+							problems: 0,
+							diagnostics: [],
+						},
+						{
+							id: "old-plotter",
+							name: "Old plotter",
+							version: "0.3.0",
+							description: "Plots survey grids",
+							scope: "user",
+							state: "incompatible",
+							runtime: false,
+							problems: 1,
+							diagnostics: ["requires PanCode 0.4 or earlier"],
+						},
+					],
+					truncated: false,
+				};
+				break;
+			case "_pancode/extensions/reload":
+				extensionGeneration++;
+				log({ extensionsReloaded: extensionGeneration });
+				result = {
+					status: "committed",
+					generation: extensionGeneration,
+					changed: false,
+					added: 0,
+					removed: 0,
+					modified: 0,
+					hooks: { registered: 2, dropped: 0, issues: 0, overridden: 0 },
+					lines: [],
+				};
+				break;
+			case "_pancode/hub/reload":
+				if (process.env.PANCODE_WEB_FIXTURE_HUB_RELOAD === "fail") {
+					result = { status: "failed", error: "plugin tree digest mismatch" };
+					break;
+				}
+				hubGeneration++;
+				log({ hubReloaded: hubGeneration });
+				result = {
+					status: "refreshed",
+					generation: hubGeneration,
+					previousGeneration: hubGeneration - 1,
+					changed: true,
+				};
+				break;
+			case "_pancode/context/ledger":
+				if (!COMMANDS) throw Error("method_not_found");
+				result = {
+					version: 1,
+					provider: "fixture",
+					model: "fixture-model",
+					contextWindow: 131072,
+					contextWindowSource: "loaded",
+					contextWindowSlots: null,
+					usedTokens: cachedTokens + unsentTokens,
+					reserveTokens: CONTEXT_RESERVE,
+					freeTokens: Math.max(0, CONTEXT_WINDOW - CONTEXT_RESERVE - cachedTokens - unsentTokens),
+					percent: ((cachedTokens + unsentTokens) / CONTEXT_WINDOW) * 100,
+					measured: true,
+					compactionThreshold: 0.8,
+					compactionAuto: true,
+					projectPreload: null,
+					projectHandbookFiles: ["PANCODE.md"],
+					toolCount: 14,
+					groups: [
+						{
+							category: "system",
+							label: "System prompt",
+							tokens: SYSTEM_TOKENS,
+							percent: (SYSTEM_TOKENS / CONTEXT_WINDOW) * 100,
+						},
+						{
+							category: "messages",
+							label: "Conversation",
+							tokens: cachedTokens + unsentTokens - SYSTEM_TOKENS,
+							percent: ((cachedTokens + unsentTokens - SYSTEM_TOKENS) / CONTEXT_WINDOW) * 100,
+						},
+					],
+					lastCompaction: null,
+					promptCache: {
+						shellReused: true,
+						cacheReadTokens: 8000,
+						cacheWriteTokens: null,
+						uncachedInputTokens: 400,
+						backendVerdict: "hot",
+					},
+				};
+				break;
+			case "_pancode/fleet/preview":
+				if (!COMMANDS) throw Error("method_not_found");
+				result = fleetPreview(frame.params.name, frame.params.vars);
+				break;
+			case "_pancode/fleet/run": {
+				if (!COMMANDS) throw Error("method_not_found");
+				const preview = fleetPreview(frame.params.name, frame.params.vars);
+				if (preview.status !== "ready") result = preview;
+				else if (preview.planHash !== frame.params.planHash)
+					result = {
+						status: "changed",
+						name: preview.name,
+						planHash: preview.planHash,
+						reason: "the plan changed since it was previewed; review it again. Nothing was dispatched",
+					};
+				else if (frame.params.vars?.site === "blocked")
+					result = {
+						status: "failed",
+						name: preview.name,
+						planHash: preview.planHash,
+						fleetRootId: "fleet-0123456789ab",
+						reason: "dispatch: agent 'writer' is not admitted for this task",
+					};
+				else {
+					log({ fleetStarted: preview.planHash });
+					result = {
+						status: "started",
+						name: preview.name,
+						planHash: preview.planHash,
+						fleetRootId: "fleet-0123456789ab",
+						stepCount: 2,
+					};
+				}
+				break;
+			}
+			case "_pancode/session/handoff/prepare": {
+				if (!COMMANDS) throw Error("method_not_found");
+				const goal = frame.params.goal.trim();
+				if (goal.length < 12) {
+					result = {
+						status: "refused",
+						level: "warn",
+						code: "goal",
+						reason: `/handoff needs a goal of at least 12 characters; "${goal}" is ${goal.length}`,
+					};
+					break;
+				}
+				await delay(40);
+				pendingHandoff = { handoffId: randomUUID(), sessionId };
+				result = {
+					status: "ready",
+					handoffId: pendingHandoff.handoffId,
+					goal,
+					fromSessionId: sessionId,
+					document: `# Handoff\n\nGoal: ${goal}\n\n## Facts\n\n- The second sample reads 4.2.\n`,
+				};
+				break;
+			}
+			case "_pancode/session/handoff/commit": {
+				if (!COMMANDS) throw Error("method_not_found");
+				if (pendingHandoff?.handoffId !== frame.params.handoffId || pendingHandoff.sessionId !== sessionId) {
+					result = { status: "refused", level: "warn", code: "stale", reason: "draw it up again" };
+					break;
+				}
+				if (frame.params.document.trim() === "") {
+					result = { status: "refused", level: "warn", code: "empty", reason: "the reviewed document was empty" };
+					break;
+				}
+				pendingHandoff = null;
+				const fromSessionId = sessionId;
+				sessionId = randomUUID();
+				treeLeaf = "u1";
+				log({ handedOff: sessionId, from: fromSessionId, document: frame.params.document });
+				update({ sessionUpdate: "available_commands_update", availableCommands: [] });
+				result = {
+					status: "committed",
+					sessionId,
+					fromSessionId,
+					warnings: [],
+					configOptions: configOptions(),
+					_meta: { "pancode/session": { resumed: false } },
+				};
+				break;
+			}
+			case "_pancode/session/handoff/cancel": {
+				const cancelled = pendingHandoff?.handoffId === frame.params.handoffId;
+				if (cancelled) pendingHandoff = null;
+				result = { cancelled };
+				break;
+			}
+			case "_pancode/session/fork": {
+				if (!COMMANDS) throw Error("method_not_found");
+				const turnId = frame.params.turnId;
+				if (!TREE_TURNS[turnId]) throw Error("turn_unknown");
+				const parentSessionId = sessionId;
+				sessionId = randomUUID();
+				treeLeaf = turnId;
+				update({ sessionUpdate: "available_commands_update", availableCommands: [] });
+				const turns = replayPath(turnId);
+				log({ forked: sessionId, from: parentSessionId, at: turnId });
+				result = {
+					sessionId,
+					parentSessionId,
+					parentTurnId: turnId,
+					configOptions: configOptions(),
+					_meta: { "pancode/session": { resumed: true, replayed: { turns, truncated: false } } },
+				};
+				break;
+			}
+			case "_pancode/session/steer": {
+				const followUp = frame.params.mode === "end-of-turn";
+				(followUp ? queues.followUp : queues.steer).push(frame.params.text);
+				queueChanged();
+				result = { accepted: true, queue: followUp ? "follow-up" : "steer" };
+				break;
+			}
+			case "_pancode/session/queue":
+				if (queueReadFails) throw Error("queue_unavailable");
+				result = queues;
+				break;
+			case "_pancode/session/queue_clear":
+				result = { restored: [...queues.steer.splice(0), ...queues.followUp.splice(0)] };
+				queueChanged();
+				break;
+			case "_pancode/session/interrupt":
+				result = { cancelled: false, refusal: "A dispatched worker is attached; stop the turn instead." };
+				break;
+			case "_pancode/dispatch/steer": {
+				const { runId, action } = frame.params;
+				const settle = liveRuns.get(runId);
+				if (settle === undefined) result = { accepted: false, reason: "run-not-active" };
+				else if (action === "cancel") {
+					settle(true);
+					result = { accepted: true };
+				} else {
+					event("run.progressed", { runId, agentId: "scout", progressCount: 1, truncated: false });
+					result = { accepted: true };
+				}
+				break;
+			}
+			case "_pancode/session/cancel":
+				// A busy agent that never confirms the stop; only `session/close` ends its turn.
+				if (scenario === "cancel-unanswered") return;
+				cancelled = true;
+				for (const settle of liveRuns.values()) settle(false);
+				for (const resolve of pending.values()) resolve({ outcome: { outcome: "cancelled" } });
+				pending.clear();
+				break;
+			case "session/close":
+				cancelled = true;
+				break;
+			case "_pancode/settings/patch_safe":
+				for (const [key, value] of Object.entries(frame.params.patch)) {
+					if (!editable.includes(key)) throw Error("invalid_params");
+					const [group, name] = key.split(".");
+					settings[group][name] = value;
+				}
+				result = { settings, editable };
+				if (ROUTE)
+					update(
+						{ sessionUpdate: "config_option_update", configOptions: configOptions() },
+						{ "pancode/session": { target: settings.chat.target } },
+					);
+				break;
+			case "_pancode/settings/get_safe":
+				result = { settings, editable, privateCredential: "must-be-stripped" };
+				break;
+			case "_pancode/targets/list":
+				result = {
+					targets: [
+						{
+							id: "fixture",
+							runtime: "openai-compatible",
+							models: [
+								"fixture-model",
+								"fixture-small",
+								...((savedChat.target ?? "fixture") === "fixture" && savedChat.model ? [savedChat.model] : []),
+							],
+							isOrchestrator: true,
+							apiKey: "must-be-stripped",
+						},
+						// Every connection the settings configure, as the engine lists them, whichever one chat uses.
+						...[...configuredTargets]
+							.filter((id) => !["fixture", "field-station"].includes(id))
+							.map((id) => ({
+								id,
+								runtime: "openai-compatible",
+								models: [(savedChat.target === id && savedChat.model) || "fixture-model"],
+								isOrchestrator: true,
+							})),
+						// A second target with a catalog, so choosing one in the route picker changes the model list.
+						...(ROUTE
+							? [
+									{
+										id: "field-station",
+										runtime: "openai-compatible",
+										models: ["survey-large", "survey-small"],
+										isOrchestrator: true,
+										// A configured endpoint the engine could not report.
+										url: null,
+									},
+								]
+							: []),
+					],
+					_meta: { "pancode/truncated": true },
+				};
+				break;
+			case "_pancode/targets/probe":
+				result = { targetId: frame.params.targetId, healthy: true, latencyMs: 5, reason: null };
+				break;
+			case "session/set_config_option": {
+				const option = configOptions().find((row) => row.id === frame.params.configId);
+				if (!option?.options.some((row) => row.value === frame.params.value)) throw Error("invalid_params");
+				settings.chat[frame.params.configId] = frame.params.value;
+				update({ sessionUpdate: "config_option_update", configOptions: configOptions() });
+				result = { configOptions: configOptions() };
+				break;
+			}
+			case "session/set_mode":
+				autonomy = frame.params.modeId;
+				update({ sessionUpdate: "current_mode_update", currentModeId: autonomy });
+				update({ sessionUpdate: "config_option_update", configOptions: ROUTE ? configOptions() : [] });
+				break;
+			case "_pancode/session/label": {
+				// The engine names the saved task in its ledger; the history reads the name back from there.
+				const directory = ledgerDirectory(frame.params.sessionId);
+				const metaFile = directory && join(directory, "meta.json");
+				let meta = null;
+				try {
+					meta = metaFile ? JSON.parse(readFileSync(metaFile, "utf8")) : null;
+				} catch {
+					meta = null; // Not a task this fixture saved; seeded and unsaved tasks keep the old no-op.
+				}
+				if (meta) {
+					if (frame.params.label) meta.name = frame.params.label;
+					else delete meta.name;
+					writeFileSync(metaFile, JSON.stringify(meta));
+				}
+				break;
+			}
+			case "session/delete":
+				break;
+			default:
+				throw Error("method_not_found");
+		}
+		if (REAL_TASK && frame.method === "session/prompt" && result?._meta?.["pancode/usage"] === usage) {
+			const prompt = frame.params.prompt?.map((block) => block.text).join(" ") ?? "";
+			result = { ...result, _meta: { ...result._meta, "pancode/usage": turnUsage(prompt, answered) } };
+			if (result.stopReason === "end_turn") recordExchange(prompt, answered);
+		}
+		if (frame.id !== undefined) send({ id: frame.id, result });
+	} catch (error) {
+		if (frame.id !== undefined)
+			send({
+				id: frame.id,
+				error: {
+					code: -32000,
+					message: "Fixture refused request",
+					data: { _meta: { "pancode/error": { version: 1, code: error.message } } },
+				},
+			});
+	} finally {
+		if (frame.method === "session/prompt") promptRunning = false;
+	}
+}
+const input = createInterface({ input: process.stdin });
+input.on("line", (line) => {
+	void handle(JSON.parse(line));
+});
+input.on("close", () => {
+	if (scenario !== "slow") process.exit(0);
+});
+if (scenario === "slow") {
+	setInterval(() => {}, 1000);
+	process.on("SIGTERM", () => log({ signal: "SIGTERM" }));
+} else
+	process.on("SIGTERM", () => {
+		log({ signal: "SIGTERM" });
+		process.exit(0);
+	});

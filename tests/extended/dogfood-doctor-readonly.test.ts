@@ -1,0 +1,290 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, rejects, strictEqual, throws } from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { windowsCredentialsFinding } from "../../src/domains/lifecycle/doctor.js";
+import { FileAuthStorageBackend } from "../../src/domains/providers/auth/backend-file.js";
+import { openAuthStorage } from "../../src/domains/providers/auth/index.js";
+
+const SOURCE_CLI = fileURLToPath(new URL("../../dist/cli/index.js", import.meta.url));
+const FAKE_KEY = "dogfood-contract-key-not-a-real-credential";
+const MODEL = "fixture/model";
+
+function inventory(root: string): unknown[] {
+	return readdirSync(root, { recursive: true, withFileTypes: true })
+		.map((entry) => {
+			const path = join(entry.parentPath, entry.name);
+			const stats = statSync(path);
+			return {
+				path: path.slice(root.length + 1),
+				mode: stats.mode & 0o777,
+				...(entry.isFile()
+					? { sha256: createHash("sha256").update(readFileSync(path)).digest("hex"), mtime: stats.mtimeMs }
+					: {}),
+			};
+		})
+		.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function doctor(root: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+	return new Promise((resolve, reject) => {
+		execFile(
+			process.execPath,
+			[SOURCE_CLI, "doctor", ...args],
+			{
+				cwd: root,
+				timeout: 30_000,
+				env: {
+					...process.env,
+					PANCODE_HOME: root,
+					PANCODE_CONFIG_DIR: join(root, "config"),
+					PANCODE_DATA_DIR: join(root, "data"),
+					PANCODE_STATE_DIR: join(root, "state"),
+					PANCODE_CACHE_DIR: join(root, "cache"),
+					DOGFOOD_DOCTOR_KEY: FAKE_KEY,
+				},
+			},
+			(error, stdout, stderr) => {
+				if (!error) resolve({ code: 0, stdout, stderr });
+				else if (typeof error.code === "number" && !error.killed) resolve({ code: error.code, stdout, stderr });
+				else reject(error);
+			},
+		);
+	});
+}
+
+describe("contracts/DOG-001 doctor credential reads", () => {
+	let root: string;
+	let path: string;
+	beforeEach(() => {
+		root = mkdtempSync(join(tmpdir(), "pancode-dogfood-doctor-"));
+		path = join(root, "config", "credentials.yaml");
+	});
+	afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+	for (const stored of [false, true]) {
+		it(`repeated text/JSON doctor preserves the home with ${stored ? "existing" : "missing"} credentials`, async () => {
+			const requests: string[] = [];
+			const server = createServer((request, response) => {
+				requests.push(`${request.method} ${request.url}`);
+				response.setHeader("content-type", "application/json");
+				if (request.method === "GET" && request.url === "/health/liveliness") {
+					response.end("{}");
+				} else if (
+					request.method === "GET" &&
+					request.url === "/v1/models" &&
+					request.headers.authorization === `Bearer ${FAKE_KEY}`
+				) {
+					response.end(JSON.stringify({ data: [{ id: MODEL }] }));
+				} else if (
+					request.method === "GET" &&
+					request.url === "/v1/model/info" &&
+					request.headers.authorization === `Bearer ${FAKE_KEY}`
+				) {
+					response.end(JSON.stringify({ data: [{ model_name: MODEL, model_info: { mode: "chat" } }] }));
+				} else {
+					response.writeHead(403);
+					response.end("{}");
+				}
+			});
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			try {
+				for (const role of ["config", "data", "state", "cache"]) {
+					mkdirSync(join(root, role), { mode: 0o700 });
+				}
+				writeFileSync(
+					join(root, "config", "settings.yaml"),
+					[
+						"version: 2",
+						"targets:",
+						"  - id: fixture",
+						"    runtime: litellm",
+						`    url: http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+						"    auth:",
+						stored ? "      apiKeyRef: fixture" : "      apiKeyEnvVar: DOGFOOD_DOCTOR_KEY",
+						`    defaultModel: ${MODEL}`,
+						"chat:",
+						"  target: fixture",
+						`  model: ${MODEL}`,
+						"  prewarm: false",
+						"",
+					].join("\n"),
+					{ mode: 0o600 },
+				);
+				if (stored) {
+					const storage = openAuthStorage(path);
+					storage.setApiKey("fixture", FAKE_KEY);
+					storage.setApiKey("other-provider", "unrelated-synthetic-key");
+				}
+				const before = inventory(root);
+				for (const args of [["--verbose"], ["--json"], ["--verbose"], ["--json"]]) {
+					const result = await doctor(root, args);
+					strictEqual(result.code, 1, "uninitialized state metadata remains a reported problem");
+					strictEqual(result.stderr, "");
+					deepStrictEqual(inventory(root), before, "doctor without --fix must leave the home unchanged");
+					if (args.includes("--json")) {
+						const report = JSON.parse(result.stdout) as {
+							findings: Array<{ name: string; ok: boolean; detail: string }>;
+						};
+						const credential = report.findings.find((finding) => finding.name === "credentials");
+						strictEqual(credential?.ok, stored);
+						match(credential?.detail ?? "", stored ? /^600$/ : /^missing /);
+						const model = report.findings.find((finding) => finding.name === "model fixture");
+						strictEqual(model?.ok, true);
+						match(model?.detail ?? "", /found in live list from /);
+					} else {
+						match(result.stdout, stored ? /OK\s+credentials\s+600/ : /!!\s+credentials\s+missing /);
+						match(result.stdout, /OK\s+model fixture\s+.*found in live list from /);
+					}
+				}
+				strictEqual(requests.filter((request) => request === "GET /v1/model/info").length, 4);
+				ok(
+					requests.every((request) => request.startsWith("GET ")),
+					"diagnosis never starts inference",
+				);
+			} finally {
+				await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+			}
+		});
+	}
+
+	it("opening and reloading missing credential storage creates no directories or files", () => {
+		const before = inventory(root);
+		const storage = openAuthStorage(path);
+		storage.reload();
+		strictEqual(storage.damageReason(), null);
+		deepStrictEqual(storage.listStored(), []);
+		deepStrictEqual(inventory(root), before);
+	});
+
+	it("first login writes privately and merges credentials from another storage instance", () => {
+		const first = openAuthStorage(path);
+		const stale = openAuthStorage(path);
+		first.setApiKey("first-provider", FAKE_KEY);
+		strictEqual(first.damageReason(), null);
+		strictEqual(statSync(path).mode & 0o777, 0o600);
+		stale.setApiKey("second-provider", "second-synthetic-key");
+		const reopened = openAuthStorage(path);
+		deepStrictEqual(reopened.get("first-provider"), first.get("first-provider"));
+		deepStrictEqual(reopened.get("second-provider"), stale.get("second-provider"));
+		deepStrictEqual(readdirSync(join(root, "config")), ["credentials.yaml"]);
+	});
+
+	it("warns on a Windows credentials ACL that grants another principal and names it, by SID (FX-24)", () => {
+		const file = "C:\\pancode-rl1-acltest\\config\\credentials.yaml";
+		const account = { name: "ZBOOK\\akougk", sid: "S-1-5-21-1-2-3-1001" };
+		// The DACL icacls /save writes names principals by SID or SDDL alias, never by a localized name.
+		const owned = "D:PAI(A;;FA;;;SY)(A;ID;FA;;;BA)(A;;FA;;;S-1-5-21-1-2-3-1001)";
+		deepStrictEqual(windowsCredentialsFinding(file, { dacl: owned }, account), {
+			ok: true,
+			name: "credentials",
+			detail: file,
+		});
+		const finding = windowsCredentialsFinding(
+			file,
+			{ dacl: `${owned}(A;ID;0x1200a9;;;BU)(D;;FW;;;WD)(A;OICIIO;FA;;;CO)` },
+			account,
+		);
+		strictEqual(finding.level, "warn");
+		strictEqual(finding.name, "credentials");
+		match(finding.detail, /ACL also grants BUILTIN\\Users \(run `pancode doctor --fix`/);
+		// FX-29: an explicit grant is named the same way, an unknown SID as itself, and a fix that removed it says so.
+		match(
+			windowsCredentialsFinding(
+				file,
+				{ dacl: `${owned}(A;;FR;;;S-1-5-32-545)(A;;0x1301bf;;;S-1-5-21-9-9-9-1234)` },
+				account,
+			).detail,
+			/ACL also grants BUILTIN\\Users, S-1-5-21-9-9-9-1234 \(run/,
+		);
+		deepStrictEqual(windowsCredentialsFinding(file, { dacl: owned }, account, ["BUILTIN\\Users"]), {
+			ok: true,
+			name: "credentials",
+			detail: `${file}; removed BUILTIN\\Users from its ACL`,
+		});
+		strictEqual(
+			windowsCredentialsFinding(file, { dacl: owned }, { name: "akougk", sid: null }).level,
+			"warn",
+			"without the account's SID the DACL cannot be checked",
+		);
+	});
+
+	it("reads the committed snapshot while a writer holds the lock without disturbing the writer", async () => {
+		const storage = openAuthStorage(path);
+		storage.setApiKey("fixture", FAKE_KEY);
+		const before = readFileSync(path, "utf8");
+		await new FileAuthStorageBackend(path).withLockAsync(async (current) => {
+			strictEqual(current, before);
+			const lockBefore = readFileSync(`${path}.lock`, "utf8");
+			const reader = openAuthStorage(path);
+			strictEqual(reader.damageReason(), null);
+			deepStrictEqual(reader.get("fixture"), storage.get("fixture"));
+			strictEqual(readFileSync(path, "utf8"), before);
+			strictEqual(readFileSync(`${path}.lock`, "utf8"), lockBefore);
+			return { result: undefined, next: before.replace(FAKE_KEY, "replacement-synthetic-key") };
+		});
+		const credential = openAuthStorage(path).get("fixture");
+		ok(credential?.type === "api_key");
+		strictEqual(credential.key, "replacement-synthetic-key");
+		deepStrictEqual(readdirSync(join(root, "config")), ["credentials.yaml"]);
+	});
+
+	it("serializes asynchronous writes to an initially missing file without losing an update", async () => {
+		const backends = Array.from({ length: 4 }, () => new FileAuthStorageBackend(path));
+		await Promise.all(
+			backends.map((backend, index) =>
+				backend.withLockAsync(async (current) => {
+					const entries = JSON.parse(current || "[]") as number[];
+					await delay(10);
+					return { result: undefined, next: JSON.stringify([...entries, index]) };
+				}),
+			),
+		);
+		deepStrictEqual((JSON.parse(readFileSync(path, "utf8")) as number[]).sort(), [0, 1, 2, 3]);
+		strictEqual(statSync(path).mode & 0o777, 0o600);
+		deepStrictEqual(readdirSync(join(root, "config")), ["credentials.yaml"]);
+	});
+
+	it("failed or cancelled first writes never leave an empty credentials file", async () => {
+		const backend = new FileAuthStorageBackend(path);
+		throws(
+			() =>
+				backend.withLock(() => {
+					throw new Error("synthetic write failure");
+				}),
+			/synthetic write failure/,
+		);
+		strictEqual(existsSync(path), false);
+		const controller = new AbortController();
+		await rejects(
+			backend.withLockAsync(
+				async () => {
+					controller.abort(new Error("synthetic cancellation"));
+					return { result: undefined, next: "must not be written" };
+				},
+				{ signal: controller.signal },
+			),
+			/synthetic cancellation/,
+		);
+		strictEqual(existsSync(path), false);
+		deepStrictEqual(readdirSync(join(root, "config")), []);
+	});
+});

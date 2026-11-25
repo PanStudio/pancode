@@ -1,0 +1,270 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, before, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const CLI = join(ROOT, "dist", "cli", "index.js");
+const RELEASE_SETTINGS = `version: 2
+targets:
+  - id: release-local
+    runtime: lmstudio
+    url: http://127.0.0.1:1234
+    defaultModel: release-model
+    lifecycle: user-managed
+chat:
+  target: release-local
+  model: release-model
+  thinkingLevel: high
+safety:
+  autonomy: default
+`;
+
+interface Home {
+	root: string;
+	env: NodeJS.ProcessEnv;
+	cleanup(): void;
+}
+
+interface RunningCli {
+	child: ChildProcessWithoutNullStreams;
+	output(): string;
+	waitFor(pattern: RegExp, timeoutMs?: number): Promise<RegExpMatchArray>;
+	waitForExit(timeoutMs?: number): Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+	stop(): Promise<void>;
+}
+
+function isolatedHome(label: string): Home {
+	const root = mkdtempSync(join(tmpdir(), label));
+	const under = (name: string) => join(root, name);
+	return {
+		root,
+		env: {
+			...process.env,
+			NODE_ENV: "test",
+			NO_COLOR: "1",
+			TERM: "xterm-256color",
+			PANCODE_HOME: root,
+			PANCODE_CONFIG_DIR: under("config"),
+			PANCODE_DATA_DIR: under("data"),
+			PANCODE_STATE_DIR: under("state"),
+			PANCODE_CACHE_DIR: under("cache"),
+			PANCODE_REQUIRE_HOME_PREFIX: "1",
+		},
+		cleanup: () => rmSync(root, { recursive: true, force: true }),
+	};
+}
+
+function launch(args: string[], env: NodeJS.ProcessEnv, cwd = ROOT): RunningCli {
+	const child = spawn(process.execPath, [CLI, ...args], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+	let output = "";
+	let cursor = 0;
+	child.stdout.setEncoding("utf8");
+	child.stderr.setEncoding("utf8");
+	child.stdout.on("data", (text: string) => {
+		output += text;
+	});
+	child.stderr.on("data", (text: string) => {
+		output += text;
+	});
+	const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+		child.once("close", (code, signal) => resolve({ code, signal })),
+	);
+	const timeout = async <T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
+		let timer: NodeJS.Timeout | undefined;
+		try {
+			return await Promise.race([
+				promise,
+				new Promise<never>((_, reject) => {
+					timer = setTimeout(() => reject(new Error(`${message}\n${output.slice(-2_000)}`)), timeoutMs);
+				}),
+			]);
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
+	};
+	return {
+		child,
+		output: () => output,
+		async waitFor(pattern, timeoutMs = 20_000) {
+			const found = new Promise<RegExpMatchArray>((resolve) => {
+				const inspect = () => {
+					const match = output.slice(cursor).match(pattern);
+					if (!match || match.index === undefined) return;
+					cursor += match.index + match[0].length;
+					child.stdout.off("data", inspect);
+					child.stderr.off("data", inspect);
+					resolve(match);
+				};
+				child.stdout.on("data", inspect);
+				child.stderr.on("data", inspect);
+				inspect();
+			});
+			return timeout(found, timeoutMs, `timed out waiting for ${pattern}`);
+		},
+		waitForExit: (timeoutMs = 20_000) => timeout(exited, timeoutMs, "CLI did not exit"),
+		async stop() {
+			if (child.exitCode !== null || child.signalCode !== null) return;
+			child.kill("SIGTERM");
+			try {
+				await timeout(exited, 2_000, "CLI ignored SIGTERM");
+			} catch {
+				child.kill("SIGKILL");
+				await exited;
+			}
+		},
+	};
+}
+
+async function run(
+	args: string[],
+	env: NodeJS.ProcessEnv,
+	cwd = ROOT,
+): Promise<{ code: number | null; output: string }> {
+	const cli = launch(args, env, cwd);
+	cli.child.stdin.end();
+	const exit = await cli.waitForExit();
+	return { code: exit.code, output: cli.output() };
+}
+
+async function answer(cli: RunningCli, prompt: RegExp, value = ""): Promise<void> {
+	await cli.waitFor(prompt);
+	cli.child.stdin.write(`${value}\n`);
+}
+
+describe("smoke/real built binary boot", { concurrency: false }, () => {
+	let server: Server;
+	let endpoint: string;
+
+	const chatRequests: Array<{ messages: Array<{ role: string; content: unknown }> }> = [];
+	before(async () => {
+		server = createServer((request, response) => {
+			response.setHeader("content-type", "application/json");
+			if (request.url === "/lmstudio-greeting") response.end(JSON.stringify({ lmstudio: true }));
+			else if (request.url === "/v1/models") response.end(JSON.stringify({ data: [{ id: "release-model" }] }));
+			else if (request.url === "/v1/chat/completions") {
+				let body = "";
+				request.on("data", (chunk) => {
+					body += chunk;
+				});
+				request.on("end", () => {
+					chatRequests.push(JSON.parse(body));
+					response.setHeader("content-type", "text/event-stream");
+					response.end(
+						`data: ${JSON.stringify({ model: "release-model", choices: [{ index: 0, delta: { content: "Autonomy fixture confirmed." }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
+					);
+				});
+			} else {
+				response.statusCode = 404;
+				response.end(JSON.stringify({ error: "not found" }));
+			}
+		});
+		await new Promise<void>((resolve, reject) => {
+			server.once("error", reject);
+			server.listen(0, "127.0.0.1", resolve);
+		});
+		endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+	});
+
+	after(async () => {
+		server.closeAllConnections();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+	});
+
+	it("accepts --autonomy for the interactive session and refuses it where it would be dropped", async () => {
+		// A one-session override must use the two operator modes and leave the
+		// persisted selection alone.
+		const home = isolatedHome("pancode-autonomy-boot-");
+		try {
+			mkdirSync(join(home.root, "config"), { recursive: true });
+			writeFileSync(join(home.root, "config", "settings.yaml"), RELEASE_SETTINGS);
+			strictEqual((await run(["upgrade"], home.env)).code, 0);
+			const settingsPath = join(home.root, "config", "settings.yaml");
+			writeFileSync(
+				settingsPath,
+				readFileSync(settingsPath, "utf8")
+					.replace("http://127.0.0.1:1234", endpoint)
+					.replace(/^ {2}autonomy: default$/mu, "  autonomy: yolo"),
+			);
+			const saved = readFileSync(settingsPath, "utf8");
+
+			const bogus = await run(["--autonomy", "unsupported"], home.env);
+			strictEqual(bogus.code, 2, bogus.output);
+			match(bogus.output, /--autonomy must be default\|yolo/u);
+			const dropped = await run(["--autonomy", "default", "doctor"], home.env);
+			strictEqual(dropped.code, 2, dropped.output);
+			match(dropped.output, /pancode run --autonomy default/u);
+
+			const cli = launch(["--autonomy", "default"], { ...home.env, PANCODE_INTERACTIVE: "1" });
+			try {
+				await cli.waitFor(/Ask Panos/u, 30_000);
+				cli.child.stdin.write("AUTONOMY_DEFAULT_OVERRIDES_SAVED_YOLO\r");
+				await cli.waitFor(/Autonomy fixture confirmed/u, 30_000);
+				// The reply and its summary paint before the turn settles its ledger and
+				// journal writes, and Ctrl+D is refused until it has.
+				await cli.waitFor(/Done · /u, 30_000);
+				const chat = chatRequests.find((row) =>
+					JSON.stringify(row.messages).includes("AUTONOMY_DEFAULT_OVERRIDES_SAVED_YOLO"),
+				);
+				ok(chat);
+				const system = chat.messages.find((message) => message.role === "system");
+				match(String(system?.content), /Autonomy: default\./u);
+				const exited = cli.waitForExit();
+				cli.child.stdin.write("\u0004");
+				// A press that lands in that settling tail is refused out loud; the next one exits.
+				const refused = cli.waitFor(/not exiting/u, 3_000).then(
+					() => cli.child.stdin.write("\u0004"),
+					() => undefined,
+				);
+				strictEqual((await exited).code, 0);
+				await refused;
+			} finally {
+				await cli.stop();
+			}
+			strictEqual(readFileSync(settingsPath, "utf8"), saved, "a one-session override must not rewrite settings.yaml");
+		} finally {
+			home.cleanup();
+		}
+	});
+
+	it("takes a genuinely empty home through first-run setup to the editor over ordinary process I/O", async () => {
+		const home = isolatedHome("pancode-fresh-boot-");
+		let cli: RunningCli | undefined;
+		try {
+			deepStrictEqual(readdirSync(home.root), []);
+			cli = launch([], { ...home.env, PANCODE_INTERACTIVE: "1" });
+			await answer(cli, /Selection \[1\]:/u, "1");
+			await answer(cli, /Selection \(number or runtime id\):/u, "lmstudio");
+			await answer(cli, /Target id \[[^\]]+\]:/u, "fresh-local");
+			await answer(cli, /Target URL \[[^\]]+\]:/u, endpoint);
+			await answer(cli, /Credential source .*:/u, "skip");
+			await answer(cli, /Default target model \(number or id\) \[[^\]]+\]:/u);
+			await answer(cli, /Mark as gateway\? \[y\/N\]:/u);
+			await answer(cli, /use as orchestrator .*\[Y\/n\]:/u);
+			await answer(cli, /use as fleet default\? \[Y\/n\]:/u);
+			await answer(cli, /use as background memory target\? \[y\/N\]:/u);
+			await answer(cli, /Orchestrator model \(number or id\) \[[^\]]+\]:/u);
+			await answer(cli, /Fleet model \(number or id\) \[[^\]]+\]:/u);
+			for (;;) {
+				const next = await cli.waitFor(/Ask Panos|Add [^\n]+\? \[y\/N\]:/u, 30_000);
+				if (next[0].startsWith("Ask Panos")) break;
+				cli.child.stdin.write("n\n");
+			}
+			cli.child.stdin.write("\u0004");
+			const exit = await cli.waitForExit();
+			strictEqual(exit.code, 0, cli.output().slice(-2_000));
+			ok(existsSync(join(home.root, "config", "settings.yaml")));
+			match(readFileSync(join(home.root, "config", "settings.yaml"), "utf8"), /^version: 2$/mu);
+		} finally {
+			await cli?.stop();
+			home.cleanup();
+		}
+	});
+});

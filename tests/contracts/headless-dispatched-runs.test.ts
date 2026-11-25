@@ -1,0 +1,218 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { deepStrictEqual, doesNotMatch, match } from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it } from "node:test";
+import {
+	describeRuns,
+	projectDispatchedRunOutcome,
+	settleDispatchedRuns,
+	settledRunEnvelopes,
+} from "../../src/cli/modes/headless-dispatched-runs.js";
+import { mergeWithheldDetail } from "../../src/domains/dispatch/merge-gate.js";
+import { finishRunResult } from "../../src/domains/dispatch/run-settlement.js";
+import { openRunTelemetry } from "../../src/domains/dispatch/run-telemetry.js";
+import type { RunEnvelope, RunOutcome, RunResultDraft } from "../../src/domains/dispatch/types.js";
+import { telemetryRunDirectory } from "../../src/domains/telemetry/paths.js";
+import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
+
+const ROOT = "root-run";
+
+function run(id: string, outcome: RunOutcome | null, attempt = 0, parentRunId: string | null = ROOT): RunEnvelope {
+	return {
+		id,
+		agentId: "coder",
+		status: outcome === null ? "running" : outcome === "succeeded" ? "completed" : "failed",
+		outcome,
+		endedAt: outcome === null ? null : "2026-09-30T00:00:00.000Z",
+		lineage: { parentRunId, rootRunId: ROOT, attempt, depth: 1 },
+	} as unknown as RunEnvelope;
+}
+
+describe("headless dispatched runs", () => {
+	it("reports a withheld merge with its preserved branch and recovery command", async () => {
+		const withheld = {
+			...run("withheld", "failed"),
+			outcomeCode: "merge_withheld" as const,
+			outcomeDetail: mergeWithheldDetail({
+				assurance: "compromised",
+				contract: null,
+				output: null,
+				branch: "pancode/task/withheld",
+			}),
+		};
+		const settlement = await settleDispatchedRuns({ listRuns: () => [withheld] }, ROOT, () => false);
+		const description = describeRuns(settlement.undelivered);
+		match(description, /withheld \(coder, merge_withheld\)/u);
+		match(description, /preserved branch pancode\/task\/withheld/u);
+		match(description, /pancode fleet land pancode\/task\/withheld/u);
+		// The operator at a shell gets the fleet land commands, not the agent's dispatch route to a Land card.
+		match(withheld.outcomeDetail ?? "", /Land card/u);
+		doesNotMatch(description, /dispatch land=|Land card|gateway describe/u);
+		match(description, /--yes` lands it [^;]*$/u);
+		doesNotMatch(describeRuns([{ ...withheld, outcomeDetail: "the operator discarded the branch" }]), /fleet land/u);
+	});
+	it("reports unretried failures as undelivered and names runs still live at shutdown", async () => {
+		const runs = [
+			run("retried-failure", "failed"),
+			run("retry", "succeeded", 1, "retried-failure"),
+			run("unretried-failure", "failed"),
+			run("live", null),
+		];
+		let polls = 0;
+		const settlement = await settleDispatchedRuns({ listRuns: () => runs }, ROOT, () => {
+			polls += 1;
+			return polls > 1;
+		});
+		deepStrictEqual(
+			settlement.undelivered.map((entry) => entry.id),
+			["unretried-failure"],
+		);
+		deepStrictEqual(
+			settlement.live.map((entry) => entry.id),
+			["live"],
+		);
+	});
+	it("keeps a failure a later dispatch of the same task delivered undelivered in v1 and superseded under v2 (CLI-5)", async () => {
+		const at = (id: string, outcome: RunOutcome, startedAt: string, task = "fix the parser") =>
+			({ ...run(id, outcome), task, startedAt }) as RunEnvelope;
+		const runs = [
+			at("first", "failed", "2026-09-30T00:00:01.000Z"),
+			at("reworded", "failed", "2026-09-30T00:00:02.000Z", "fix the parser, again"),
+			at("replacement", "succeeded", "2026-09-30T00:00:03.000Z"),
+			at("after", "failed", "2026-09-30T00:00:04.000Z"),
+		];
+		const v1 = await settleDispatchedRuns({ listRuns: () => runs }, ROOT, () => false);
+		deepStrictEqual(
+			v1.undelivered.map((entry) => entry.id),
+			["first", "reworded", "after"],
+		);
+		deepStrictEqual(v1.superseded, []);
+		const v2 = await settleDispatchedRuns({ listRuns: () => runs }, ROOT, () => false, { supersede: true });
+		deepStrictEqual(
+			v2.undelivered.map((entry) => entry.id),
+			["reworded", "after"],
+		);
+		deepStrictEqual(
+			v2.superseded.map((entry) => entry.id),
+			["first"],
+		);
+	});
+	it("settles only a steer-canceled run canceled, off the undelivered list, and names it canceled (ns:61)", async () => {
+		const runs = [
+			{ ...run("steered", "canceled"), outcomeCode: "worker_final_output_missing" as const },
+			run("steered-in-retry", "failed"),
+			run("operator-canceled", "canceled"),
+			run("plain-failure", "failed"),
+		];
+		const steered = new Set(["steered", "steered-in-retry"]);
+		const settlement = await settleDispatchedRuns(
+			{ listRuns: () => runs, canceledBySteer: (id) => steered.has(id) },
+			ROOT,
+			() => false,
+		);
+		deepStrictEqual(
+			settlement.undelivered.map((entry) => entry.id),
+			["operator-canceled", "plain-failure"],
+		);
+		deepStrictEqual(
+			settlement.canceled
+				.map(projectDispatchedRunOutcome)
+				.map(({ runId, outcome, outcomeCode }) => [runId, outcome, outcomeCode]),
+			[
+				["steered", "canceled", null],
+				["steered-in-retry", "canceled", null],
+			],
+		);
+		const description = describeRuns(settlement.canceled);
+		match(
+			description,
+			/^steered \(coder, canceled\), steered-in-retry \(coder, canceled\): .*last attempt ended failed$/u,
+		);
+	});
+});
+
+it("reports the no-work reason on the headless failure line", () => {
+	match(
+		describeRuns([
+			{
+				...run("idle", "failed"),
+				outcomeCode: "obligation_unmet",
+				outcomeDetail: "obligation change-or-declared unmet: worker executed no tools, so it did none of its assignment",
+			},
+		]),
+		/idle \(coder, obligation_unmet\): obligation change-or-declared unmet: worker executed no tools/u,
+	);
+});
+
+it("reports the outcome code and bounded detail for any failed run", () => {
+	const description = describeRuns([
+		{
+			...run("rejected", "failed"),
+			outcomeCode: "host_verification_rejected",
+			outcomeDetail: `host verification check 'test' rejected with exit code 1; ${"x".repeat(2000)}`,
+		},
+		run("plain", "failed"),
+	]);
+	match(description, /rejected \(coder, host_verification_rejected\): host verification check 'test' rejected/u);
+	match(description, /…, plain \(coder, failed\)$/u);
+});
+
+it("carries a bounded structured reason for the JSON settlement", () => {
+	const projected = projectDispatchedRunOutcome({
+		...run("idle", "failed"),
+		outcomeCode: "obligation_unmet",
+		outcomeDetail: "worker executed no tools",
+	});
+	deepStrictEqual(projected, {
+		runId: "idle",
+		agentId: "coder",
+		outcome: "failed",
+		outcomeCode: "obligation_unmet",
+		outcomeDetail: "worker executed no tools",
+	});
+});
+
+it("reads a dispatched run's sealed envelope and staticHead back from its run journal's run.settled (M-18)", async () => {
+	const stateDir = await mkdtemp(join(tmpdir(), "pancode-settled-envelope-"));
+	const row = fixtureEnvelope("run-enveloped");
+	const draft = fixtureReceiptDraft(row);
+	const envelope: NonNullable<NonNullable<RunResultDraft["safety"]>["envelope"]> = {
+		version: 1,
+		digest: "a".repeat(64),
+		permitDigest: "b".repeat(64),
+		role: "builder",
+		skills: { bound: ["tdd"], discovery: "bound-only" },
+		read: { roots: ["src/"], outside: [] },
+		write: { mode: "worktree", roots: ["/work/src/"], commandsBounded: true },
+		exec: { shell: "sandboxed", checks: "declared" },
+		network: { shell: false, tools: [], mcp: [] },
+		approval: { autonomy: "yolo", asks: "judge" },
+		sandbox: { backend: "none", confinesWrites: false },
+		withheld: [{ capability: "web_fetch", reason: "no-network", remedy: "grant network" }],
+		staticHead: "c".repeat(64),
+	};
+	draft.safety = { blockedAttempts: [], envelope } as unknown as NonNullable<RunResultDraft["safety"]>;
+	const { settlement } = finishRunResult(draft, row, {
+		terminal: { terminalReason: "completed" },
+		processExitCode: 0,
+		frameType: null,
+		usage: undefined,
+	});
+	const journal = await openRunTelemetry(
+		{ sessionId: null, runId: row.id, agent: { role: "worker", id: row.id } },
+		telemetryRunDirectory(stateDir, row.id),
+	);
+	try {
+		await journal.settle(settlement);
+		await journal.close();
+		const read = settledRunEnvelopes([row.id, "run-without-journal"], stateDir);
+		deepStrictEqual([...read.keys()], [row.id]);
+		deepStrictEqual(read.get(row.id), envelope);
+	} finally {
+		if (!journal.closed) await journal.close();
+		await rm(stateDir, { recursive: true, force: true });
+	}
+});

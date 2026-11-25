@@ -1,0 +1,537 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { withStateFileLockSync } from "../../core/state-file-lock.js";
+import { pancodeStateDir } from "../../core/xdg.js";
+import {
+	atomicWrite,
+	cwdHash,
+	type PancodeSessionOwner,
+	readSessionFileEntries,
+	SESSION_FILE_MODE,
+	sessionPaths,
+} from "../../engine/session.js";
+import { collectSessionEntries } from "./compaction/session-entries.js";
+import type { SessionMeta } from "./contract.js";
+import { isSessionHeader, type LabelEntry, type SessionInfoEntry } from "./entries.js";
+import { liveSessionOwner } from "./live-owner.js";
+import { resumedSessionRoute } from "./resumed-route.js";
+
+/**
+ * Walks `pancodeStateDir()/sessions/<cwdHash>/` and returns every session meta
+ * for the given cwd, sorted by last-activity descending (newest activity
+ * first). Falls back to createdAt when no entries carry timestamps.
+ */
+export function listSessionsForCwd(cwd: string): SessionMeta[] {
+	const hash = cwdHash(cwd);
+	const dir = join(pancodeStateDir(), "sessions", hash);
+	if (!existsSync(dir)) return [];
+	const metas: SessionMeta[] = [];
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		if (!entry.isDirectory()) continue;
+		const sessionDir = join(dir, entry.name);
+		const metaPath = join(sessionDir, "meta.json");
+		if (!existsSync(metaPath)) continue;
+		let meta: SessionMeta;
+		try {
+			if (!statSync(metaPath).isFile()) continue;
+			const raw = readFileSync(metaPath, "utf8");
+			meta = JSON.parse(raw) as SessionMeta;
+		} catch {
+			// Skip unreadable or malformed metadata files.
+			continue;
+		}
+		enrichMetaForListing(meta, join(sessionDir, "current.jsonl"));
+		metas.push(meta);
+	}
+	metas.sort((a, b) => {
+		const aKey = a.lastActivityAt ?? a.createdAt ?? "";
+		const bKey = b.lastActivityAt ?? b.createdAt ?? "";
+		return aKey === bKey ? 0 : aKey > bKey ? -1 : 1;
+	});
+	return metas;
+}
+
+/**
+ * Resolves a session id, or a unique prefix of one, among the sessions recorded for `cwd`. It reads each meta.json and
+ * never a ledger, so a named resume stays flat as other conversations grow (Astra r8-1). An exact id wins over any
+ * prefix, and no match returns the input unchanged for the resume to refuse. Only an ambiguous prefix or a name pays for
+ * {@link listSessionsForCwd}, which lists the candidates in the picker's last-activity order.
+ */
+export function resolveSessionIdForCwd(cwd: string, idOrPrefix: string): string | { ambiguous: string[] } {
+	const dir = join(pancodeStateDir(), "sessions", cwdHash(cwd));
+	if (!existsSync(dir)) return idOrPrefix;
+	const matches: string[] = [];
+	// A session name, the way `/resume` resolves one (SPEC L3, C13), from meta.json, which every rename stamps (#443).
+	const named: string[] = [];
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		if (!entry.isDirectory()) continue;
+		const metaPath = join(dir, entry.name, "meta.json");
+		let id: unknown;
+		let name: unknown;
+		try {
+			if (!statSync(metaPath).isFile()) continue;
+			const meta = JSON.parse(readFileSync(metaPath, "utf8")) as Partial<SessionMeta> | null;
+			id = meta?.id;
+			name = meta?.name;
+		} catch {
+			// A missing or malformed meta.json is not a recorded session, as in listSessionsForCwd.
+			continue;
+		}
+		if (typeof id !== "string") continue;
+		if (id === idOrPrefix) return id;
+		if (id.startsWith(idOrPrefix)) matches.push(id);
+		if (name === idOrPrefix) named.push(id);
+	}
+	if (matches.length === 0) {
+		if (named.length === 1 && named[0]) return named[0];
+		if (named.length === 0) return idOrPrefix;
+		matches.push(...named);
+	}
+	if (matches.length === 1) return matches[0] as string;
+	const candidates = new Set(matches);
+	return { ambiguous: listSessionsForCwd(cwd).flatMap((meta) => (candidates.has(meta.id) ? [meta.id] : [])) };
+}
+
+/**
+ * Sessions in `cwd` held open by a process other than this one (#420). Reads only
+ * each meta.json, never a ledger, because the interactive boot notice runs this on
+ * the event loop right after first paint.
+ */
+export function liveSessionsElsewhere(cwd: string): Array<{ id: string; owner: PancodeSessionOwner }> {
+	const dir = join(pancodeStateDir(), "sessions", cwdHash(cwd));
+	if (!existsSync(dir)) return [];
+	const live: Array<{ id: string; owner: PancodeSessionOwner }> = [];
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		if (!entry.isDirectory()) continue;
+		let meta: SessionMeta;
+		try {
+			meta = JSON.parse(readFileSync(join(dir, entry.name, "meta.json"), "utf8")) as SessionMeta;
+		} catch {
+			// A missing or malformed meta.json names no live owner.
+			continue;
+		}
+		const owner = liveSessionOwner(meta);
+		if (owner && owner.pid !== process.pid && typeof meta.id === "string") live.push({ id: meta.id, owner });
+	}
+	return live;
+}
+
+/** A workspace directory that has recorded sessions, whichever interface recorded them. */
+export interface SessionWorkspace {
+	cwd: string;
+	sessions: number;
+	/** `endedAt`, else `createdAt`, of the most recently written session record. */
+	lastActivityAt: string;
+}
+
+/**
+ * Every workspace with recorded sessions, newest first. The ledger is keyed by `cwdHash`, so a project the
+ * terminal interface used is the same project another interface opens; this is how that second interface
+ * learns which projects exist without keeping a list of its own. Only each directory's newest `meta.json` is
+ * read, and a record whose `cwd` does not hash to its directory is not trusted to name one.
+ */
+export function listSessionWorkspaces(): SessionWorkspace[] {
+	const root = join(pancodeStateDir(), "sessions");
+	if (!existsSync(root)) return [];
+	const found: SessionWorkspace[] = [];
+	for (const bucket of readdirSync(root, { withFileTypes: true })) {
+		if (!bucket.isDirectory()) continue;
+		const bucketDir = join(root, bucket.name);
+		let newest: { path: string; mtimeMs: number } | null = null;
+		let sessions = 0;
+		for (const session of readdirSync(bucketDir, { withFileTypes: true })) {
+			if (!session.isDirectory()) continue;
+			const path = join(bucketDir, session.name, "meta.json");
+			try {
+				const info = statSync(path);
+				if (!info.isFile()) continue;
+				sessions++;
+				if (newest === null || info.mtimeMs > newest.mtimeMs) newest = { path, mtimeMs: info.mtimeMs };
+			} catch {
+				// A directory without readable meta.json is not a recorded session.
+			}
+		}
+		if (newest === null) continue;
+		try {
+			const meta = JSON.parse(readFileSync(newest.path, "utf8")) as Partial<SessionMeta>;
+			if (typeof meta.cwd !== "string" || cwdHash(meta.cwd) !== bucket.name) continue;
+			const at = meta.endedAt ?? meta.createdAt;
+			found.push({
+				cwd: meta.cwd,
+				sessions,
+				lastActivityAt: typeof at === "string" ? at : new Date(newest.mtimeMs).toISOString(),
+			});
+		} catch {
+			// Malformed metadata cannot name a workspace.
+		}
+	}
+	return found.sort((a, b) =>
+		a.lastActivityAt === b.lastActivityAt ? 0 : a.lastActivityAt > b.lastActivityAt ? -1 : 1,
+	);
+}
+
+/**
+ * Records the end of a session whose host process is known to be dead. A clean close writes `endedAt`; a host
+ * killed first (a WSL shutdown, a power cut, SIGKILL) never does, and ACP then refuses the record as possibly
+ * open because nothing can prove otherwise. The caller owns that proof, for example the process identity it
+ * recorded when it started the host, and this does not check it. The end is dated by the transcript's last
+ * write so history order stays truthful. Returns false for anything that is not an unended record of `cwd`.
+ */
+export function endAbandonedSession(cwd: string, sessionId: string, owner: PancodeSessionOwner): boolean {
+	if (!/^[\w-]{1,128}$/.test(sessionId)) return false;
+	const dir = join(pancodeStateDir(), "sessions", cwdHash(cwd), sessionId);
+	const metaPath = join(dir, "meta.json");
+	if (!existsSync(metaPath)) return false;
+	// The same claim lock resume takes, so a resumer cannot reopen between this check and the write.
+	return withStateFileLockSync(metaPath, () => {
+		let meta: SessionMeta;
+		try {
+			meta = JSON.parse(readFileSync(metaPath, "utf8")) as SessionMeta;
+		} catch {
+			// No readable record means nothing to end.
+			return false;
+		}
+		if (meta.id !== sessionId || meta.cwd !== cwd || meta.endedAt !== null) return false;
+		// A forced release names the dead owner; a session another node has reopened since is not its to end (#439).
+		if (meta.owner?.host !== owner.host || meta.owner.pid !== owner.pid || meta.owner.birth !== owner.birth) return false;
+		let endedAt: string;
+		try {
+			endedAt = new Date(statSync(join(dir, "current.jsonl")).mtimeMs).toISOString();
+		} catch {
+			// A session that never wrote a transcript is dated by its own creation.
+			endedAt = meta.createdAt;
+		}
+		atomicWrite(metaPath, JSON.stringify({ ...meta, endedAt }, null, 2), SESSION_FILE_MODE);
+		return true;
+	});
+}
+
+/** One earlier recorded session in a workspace, attributed for a session-start fact. */
+export interface PriorSessionSummary {
+	id: string;
+	/** endedAt, else the transcript's mtime, else createdAt. */
+	lastActiveAt: string;
+	name: string | null;
+	firstMessagePreview: string | null;
+	messageCount: number;
+}
+
+/** A session touched this recently may still be open in another window; it is not "prior". */
+const PRIOR_SESSION_QUIET_MS = 10 * 60 * 1000;
+
+/**
+ * The most recent other session recorded for `cwd`, for a one-line fact at
+ * session start. Unlike {@link listSessionsForCwd}, which parses every
+ * transcript to build picker previews, this reads each meta.json and stats
+ * each transcript, then parses only the chosen one, so its cost stays flat as
+ * history grows. Excluded: the current session, its fork parent and children,
+ * sessions active within the last ten minutes (a concurrent window), and
+ * sessions with fewer than `minOperatorMessages` operator messages. The
+ * session-start prompt fact keeps two; the TUI's `last here` takes one, so it
+ * names the session `/resume` lists first (dogfood F7).
+ */
+export function latestPriorSession(
+	cwd: string,
+	currentSessionId: string,
+	now = Date.now(),
+	minOperatorMessages = 2,
+): PriorSessionSummary | null {
+	const dir = join(pancodeStateDir(), "sessions", cwdHash(cwd));
+	if (!existsSync(dir)) return null;
+	const deadline = Date.now() + 200;
+	const parents = new Map<string, string>();
+	const candidates: Array<{ meta: SessionMeta; currentPath: string; lastActiveAt: string }> = [];
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		if (Date.now() > deadline) return null;
+		if (!entry.isDirectory()) continue;
+		const sessionDir = join(dir, entry.name);
+		let meta: SessionMeta;
+		try {
+			meta = JSON.parse(readFileSync(join(sessionDir, "meta.json"), "utf8")) as SessionMeta;
+		} catch {
+			// A missing or malformed meta.json is not a recorded session.
+			continue;
+		}
+		if (meta.parentSessionId) parents.set(meta.id, meta.parentSessionId);
+		if (meta.id === currentSessionId) continue;
+		if (meta.parentSessionId === currentSessionId) continue;
+		const currentPath = join(sessionDir, "current.jsonl");
+		const lastActiveAt = meta.endedAt ?? readMtimeIso(currentPath) ?? meta.createdAt ?? null;
+		if (lastActiveAt === null) continue;
+		const quietFor = now - Date.parse(lastActiveAt);
+		// OAI-2a / #423: a closed record after the orientation cutoff is future history.
+		if (!Number.isFinite(quietFor) || quietFor < 0) continue;
+		if (meta.endedAt == null && (!Number.isFinite(quietFor) || quietFor < PRIOR_SESSION_QUIET_MS)) continue;
+		candidates.push({ meta, currentPath, lastActiveAt });
+	}
+	const ancestors = new Set<string>();
+	let parent = parents.get(currentSessionId);
+	while (parent && !ancestors.has(parent)) {
+		ancestors.add(parent);
+		parent = parents.get(parent);
+	}
+	candidates.sort((a, b) => (a.lastActiveAt === b.lastActiveAt ? 0 : a.lastActiveAt > b.lastActiveAt ? -1 : 1));
+	for (const candidate of candidates) {
+		if (Date.now() > deadline) return null;
+		if (ancestors.has(candidate.meta.id)) continue;
+		const scan = scanCurrentJsonl(candidate.currentPath);
+		if (scan.messageCount < minOperatorMessages) continue;
+		// This line rides a later session that holds none of these labels and may go anywhere, so a restricted
+		// session offers its id and time only: labels are per session, and a name can be set after the read.
+		// A session recorded with memory off gets the same answer, because off also covers what later prompts may read.
+		const withheld = scan.flowRestricted || scan.memoryOff;
+		const preview = withheld ? null : (scan.firstUserMessage ?? scan.firstAssistantMessage);
+		return {
+			id: candidate.meta.id,
+			lastActiveAt: candidate.lastActiveAt,
+			name: withheld ? null : scan.name,
+			// Uncut: the quoting site bounds it on a token boundary, and a cut here could split a secret first.
+			firstMessagePreview: preview,
+			messageCount: scan.messageCount,
+		};
+	}
+	return null;
+}
+
+const PREVIEW_MAX_CHARS = 240;
+/** Persisted flow labels; the same custom entry type `src/entry/flow-ledger.ts` writes. */
+export const FLOW_RESTRICTION_ENTRY_TYPE = "pancode_flow_restriction";
+/** The custom entry `src/domains/memory/recording-marker.ts` writes; memory imports session, not the reverse. */
+const MEMORY_OFF_ENTRY_TYPE = "pancode_memory_off";
+
+function collapseWhitespace(text: string): string {
+	return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Pull the first non-empty piece of text out of a message payload. Structured
+ * message payloads may contain a bare string, a text property, or pi-ai
+ * content blocks.
+ */
+function rawMessageText(payload: unknown): string | null {
+	if (typeof payload === "string") return payload.trim().length > 0 ? payload : null;
+	if (!payload || typeof payload !== "object") return null;
+	const obj = payload as Record<string, unknown>;
+	if (typeof obj.text === "string" && obj.text.trim().length > 0) return obj.text;
+	if (Array.isArray(obj.content)) {
+		const parts: string[] = [];
+		for (const part of obj.content) {
+			if (
+				part &&
+				typeof part === "object" &&
+				(part as { type?: unknown }).type === "text" &&
+				typeof (part as { text?: unknown }).text === "string"
+			) {
+				parts.push((part as { text: string }).text);
+			}
+		}
+		const joined = parts.join("\n");
+		if (joined.trim().length > 0) return joined;
+	}
+	return null;
+}
+
+function extractMessageText(payload: unknown): string | null {
+	const raw = rawMessageText(payload);
+	if (raw === null) return null;
+	const collapsed = collapseWhitespace(raw);
+	return collapsed.length > 0 ? collapsed : null;
+}
+
+/**
+ * Whether a user turn's payload is something the operator wrote. A
+ * continuation nudge PanCode synthesized is not, and neither is a machine turn
+ * (`origin`: a job's prompt or follow-up, a yolo continuation), whose text the
+ * agent or PanCode wrote, unless it is flagged `operatorAuthored` (an
+ * operator-created loop's own task).
+ */
+export function isOperatorTypedUserPayload(payload: unknown): boolean {
+	if (!payload || typeof payload !== "object") return true;
+	const p = payload as { synthetic?: unknown; origin?: unknown; operatorAuthored?: unknown };
+	if (p.synthetic === true) return false;
+	return typeof p.origin !== "string" || p.operatorAuthored === true;
+}
+
+/**
+ * What the operator typed for a user turn, for the picker preview.
+ *
+ * The persisted text is the composed prompt: a `<system-reminder>` block and
+ * any `[Skill request]` preamble ride ahead of the operator's words as visible
+ * text the model receives. Reading that verbatim made every row of the
+ * `/resume` picker read `<system-reminder> [Skills] 9 installed…`, so sessions
+ * were indistinguishable and the type-to-filter matched them all (issue #188).
+ * Entries whose composed text differs from the typed text carry it as
+ * `operatorText`; others drop the leading scaffolding. Null when nothing
+ * operator-authored remains, so the caller moves on to the next turn.
+ */
+export function operatorTextOfUserPayload(payload: unknown): string | null {
+	// An expansion (prompt template, command, attached file) replaced the typed
+	// input. The typed input is the title; the expansion starts with generated
+	// scaffolding or holds a file's text. An empty one is a turn the operator
+	// typed nothing for, never a reason to read the expansion as their words.
+	if (payload && typeof payload === "object" && typeof (payload as { displayText?: unknown }).displayText === "string") {
+		const typed = collapseWhitespace((payload as { displayText: string }).displayText);
+		return typed.length > 0 ? typed : null;
+	}
+	if (
+		payload &&
+		typeof payload === "object" &&
+		typeof (payload as { operatorText?: unknown }).operatorText === "string"
+	) {
+		const collapsed = collapseWhitespace((payload as { operatorText: string }).operatorText);
+		return collapsed.length > 0 ? collapsed : null;
+	}
+	// Strip before collapsing: the preamble's line structure is what the
+	// patterns anchor on.
+	const text = rawMessageText(payload);
+	if (text === null) return null;
+	const stripped = collapseWhitespace(stripInjectedPreamble(text));
+	return stripped.length > 0 ? stripped : null;
+}
+
+const LEADING_SYSTEM_REMINDER = /^\s*<system-reminder>[\s\S]*?<\/system-reminder>\s*/u;
+const LEADING_SKILL_REQUEST =
+	/^\s*\[Skill request\][\s\S]*?Only these pending skill names are allowed this turn\.[^\n]*\s*/u;
+
+/**
+ * Drop the composed scaffolding (leading `<system-reminder>` blocks and a
+ * `[Skill request]` preamble) from a persisted user message, keeping the
+ * operator's words and their line structure.
+ */
+export function stripInjectedPreamble(text: string): string {
+	let current = text;
+	for (;;) {
+		const next = current.replace(LEADING_SYSTEM_REMINDER, "").replace(LEADING_SKILL_REQUEST, "");
+		if (next === current) return current;
+		current = next;
+	}
+}
+
+interface ScanResult {
+	hasModelTurn: boolean;
+	firstUserMessage: string | null;
+	/** The first assistant text, the preview when no turn carries operator words. */
+	firstAssistantMessage: string | null;
+	messageCount: number;
+	lastTimestamp: string | null;
+	name: string | null;
+	labels: Map<string, { label: string; timestamp: string }>;
+	flowRestricted: boolean;
+	memoryOff: boolean;
+	/** The newest recorded `modelChange` route; null fields when the session never switched. */
+	route: { target: string | null; model: string | null };
+}
+
+function hasAssistantContent(payload: unknown): boolean {
+	if (extractMessageText(payload) !== null) return true;
+	if (!payload || typeof payload !== "object") return false;
+	const content = (payload as { content?: unknown }).content;
+	return Array.isArray(content) && content.some((block) => block?.type === "toolCall");
+}
+
+function scanCurrentJsonl(currentPath: string): ScanResult {
+	const result: ScanResult = {
+		hasModelTurn: false,
+		firstUserMessage: null,
+		firstAssistantMessage: null,
+		messageCount: 0,
+		lastTimestamp: null,
+		name: null,
+		labels: new Map(),
+		flowRestricted: false,
+		memoryOff: false,
+		route: { target: null, model: null },
+	};
+	if (!existsSync(currentPath)) return result;
+	const records = readSessionFileEntries(currentPath).filter((entry) => !isSessionHeader(entry));
+	const entries = collectSessionEntries(records, currentPath);
+	result.route = resumedSessionRoute({ target: null, model: null }, entries);
+	for (const parsed of entries) {
+		if (parsed.kind === "custom" && parsed.customType === FLOW_RESTRICTION_ENTRY_TYPE) result.flowRestricted = true;
+		if (parsed.kind === "custom" && parsed.customType === MEMORY_OFF_ENTRY_TYPE) result.memoryOff = true;
+		if (
+			parsed.kind === "message" &&
+			(parsed.role === "tool_call" || (parsed.role === "assistant" && hasAssistantContent(parsed.payload)))
+		) {
+			result.hasModelTurn = true;
+		}
+		if (result.lastTimestamp === null || parsed.timestamp > result.lastTimestamp) {
+			result.lastTimestamp = parsed.timestamp;
+		}
+		if (parsed.kind === "message" && parsed.role === "user") {
+			result.messageCount += 1;
+			if (result.firstUserMessage === null) {
+				const text = operatorTextOfUserPayload(parsed.payload);
+				if (text !== null) result.firstUserMessage = text;
+			}
+		}
+		if (parsed.kind === "message" && parsed.role === "assistant" && result.firstAssistantMessage === null) {
+			const text = extractMessageText(parsed.payload);
+			if (text !== null) result.firstAssistantMessage = text;
+		}
+		if (parsed.kind === "sessionInfo") {
+			const info = parsed as SessionInfoEntry;
+			if (info.name !== undefined) {
+				const trimmed = info.name.trim();
+				result.name = trimmed.length > 0 ? trimmed : null;
+			}
+			if (info.targetTurnId && info.label !== undefined) {
+				const existing = result.labels.get(info.targetTurnId);
+				if (!existing || existing.timestamp <= info.timestamp) {
+					result.labels.set(info.targetTurnId, { label: info.label, timestamp: info.timestamp });
+				}
+			}
+		}
+		if (parsed.kind === "label") {
+			const label = parsed as LabelEntry;
+			const existing = result.labels.get(label.targetTurnId);
+			if (!existing || existing.timestamp <= label.timestamp) {
+				result.labels.set(label.targetTurnId, { label: label.label ?? "", timestamp: label.timestamp });
+			}
+		}
+	}
+	return result;
+}
+
+function enrichMetaForListing(meta: SessionMeta, currentPath: string): void {
+	const scan = scanCurrentJsonl(currentPath);
+	meta.hasModelTurn = scan.hasModelTurn;
+	if (scan.route.target !== null && scan.route.model !== null) {
+		meta.currentTarget = scan.route.target;
+		meta.currentModel = scan.route.model;
+	}
+	if (scan.name) meta.name = scan.name;
+	const labelValues = [...scan.labels.values()].map((entry) => entry.label.trim()).filter((label) => label.length > 0);
+	if (labelValues.length > 0) meta.labels = labelValues;
+	const preview = scan.firstUserMessage ?? scan.firstAssistantMessage;
+	if (preview) {
+		meta.firstMessagePreview =
+			preview.length > PREVIEW_MAX_CHARS ? `${preview.slice(0, PREVIEW_MAX_CHARS - 1)}…` : preview;
+	}
+	if (scan.messageCount > 0) meta.messageCount = scan.messageCount;
+	const fallbackMtime = readMtimeIso(currentPath);
+	const activity = scan.lastTimestamp ?? fallbackMtime ?? meta.endedAt ?? meta.createdAt ?? null;
+	if (activity) meta.lastActivityAt = activity;
+}
+
+function readMtimeIso(path: string): string | null {
+	try {
+		return statSync(path).mtime.toISOString();
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Applies fork pointers to a freshly-created session's meta. Mutates the meta
+ * object in place so the engine writer's `close()` (which spreads `...meta`
+ * when rewriting meta.json with endedAt) preserves the parent pointers, then
+ * atomically rewrites meta.json so the marker survives crashes before close.
+ */
+export function enrichForkMeta(meta: SessionMeta, parentSessionId: string, parentTurnId: string): void {
+	Object.assign(meta, { parentSessionId, parentTurnId });
+	const paths = sessionPaths(meta);
+	atomicWrite(paths.meta, JSON.stringify(meta, null, 2), SESSION_FILE_MODE);
+}

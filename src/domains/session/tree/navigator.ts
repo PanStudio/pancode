@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { SessionTreeNode } from "../../../engine/session.js";
+import type { SessionMeta } from "../contract.js";
+import type { ResolvedLabel } from "./manager.js";
+
+/**
+ * Purely functional tree-walk helpers. Given the raw SessionTreeNode[] that
+ * the engine persists plus a label map and a leaf pointer, produce a
+ * render-friendly snapshot. No I/O. Used by SessionContract.tree() to
+ * deliver a serializable structure to the /tree overlay renderer.
+ */
+
+/**
+ * Node kinds the navigator renders. `tree.json` stores turn kinds only, so the
+ * two structural events a session can carry, a compaction and a returned-from
+ * branch, live in the ledger as `compactionSummary` / `branchSummary` entries.
+ * They are the two moments a reader most needs to see in the tree, so the
+ * snapshot admits them as node kinds and the builder links them by their
+ * recorded parent turn.
+ */
+export type TreeNodeKind = SessionTreeNode["kind"] | "compaction" | "branch";
+
+/** A tree node the snapshot builder accepts: a persisted turn node or a ledger-derived structural node. */
+export interface TreeInputNode {
+	id: string;
+	parentId: string | null;
+	at: string;
+	kind: TreeNodeKind;
+}
+
+export interface TreeSnapshotNode {
+	id: string;
+	parentId: string | null;
+	at: string;
+	kind: TreeNodeKind;
+	label?: string;
+	/**
+	 * Single-line, ANSI/sentinel-stripped synopsis of the underlying turn
+	 * payload. Populated when the snapshot builder is given a previews map
+	 * keyed by turnId; absent for snapshots built without payload access
+	 * (e.g. unit tests that exercise tree shape only).
+	 */
+	preview?: string;
+	/** Child ids in oldest-first order. */
+	children: string[];
+}
+
+export interface TreeSnapshot {
+	sessionId: string;
+	/**
+	 * SessionMeta slice suitable for overlay rendering. Keep the shape
+	 * stable so the /tree overlay does not need to re-type it.
+	 */
+	meta: {
+		id: string;
+		cwd: string;
+		createdAt: string;
+		endedAt: string | null;
+		model: string | null;
+		target: string | null;
+		parentSessionId?: string | null;
+		parentTurnId?: string | null;
+	};
+	/** Id of the active turn the session will append under next. */
+	leafId: string | null;
+	/** Flat node map keyed by id. */
+	nodesById: Record<string, TreeSnapshotNode>;
+	/** Root node ids in oldest-first order. A well-formed session has one. */
+	rootIds: string[];
+}
+
+function pickMeta(meta: SessionMeta): TreeSnapshot["meta"] {
+	const out: TreeSnapshot["meta"] = {
+		id: meta.id,
+		cwd: meta.cwd,
+		createdAt: meta.createdAt,
+		endedAt: meta.endedAt,
+		model: meta.model,
+		target: meta.target,
+	};
+	if (meta.parentSessionId !== undefined) out.parentSessionId = meta.parentSessionId;
+	if (meta.parentTurnId !== undefined) out.parentTurnId = meta.parentTurnId;
+	return out;
+}
+
+/**
+ * Compute the natural leaf of a tree: the most recent node with no children.
+ * Timestamp ties break toward the later node in append order, since nodes
+ * append in creation order and ISO timestamps only carry millisecond
+ * precision; a branch switch and re-append inside one millisecond must still
+ * resolve to the newest branch. Returns null for an empty tree. Used by
+ * tree() when the caller has not explicitly tracked a current-branch
+ * pointer yet.
+ */
+export function computeLeafId(nodes: ReadonlyArray<TreeInputNode>): string | null {
+	if (nodes.length === 0) return null;
+	const hasChild = new Set<string>();
+	for (const node of nodes) {
+		if (node.parentId) hasChild.add(node.parentId);
+	}
+	let leaf: TreeInputNode | null = null;
+	for (const node of nodes) {
+		if (hasChild.has(node.id)) continue;
+		if (!leaf || node.at >= leaf.at) leaf = node;
+	}
+	return leaf?.id ?? null;
+}
+
+/**
+ * Build a serializable snapshot from raw tree nodes + labels + meta. Pure:
+ * no fs, no time. Sorts child lists by timestamp ascending so the overlay
+ * renders consistently across platforms.
+ */
+export function buildTreeSnapshot(input: {
+	meta: SessionMeta;
+	nodes: ReadonlyArray<TreeInputNode>;
+	labels: ReadonlyMap<string, ResolvedLabel>;
+	leafId?: string | null;
+	/**
+	 * Optional turnId → preview map. When supplied, each TreeSnapshotNode
+	 * carries the matching preview so /tree overlay rows can render a
+	 * distinguishing synopsis. Domain callers populate this from the engine
+	 * reader's turns; unit tests that only care about tree shape may omit it.
+	 */
+	previews?: ReadonlyMap<string, string>;
+}): TreeSnapshot {
+	const nodesById: Record<string, TreeSnapshotNode> = {};
+	for (const node of input.nodes) {
+		const entry: TreeSnapshotNode = {
+			id: node.id,
+			parentId: node.parentId,
+			at: node.at,
+			kind: node.kind,
+			children: [],
+		};
+		const resolved = input.labels.get(node.id);
+		// Empty-string label is a tombstone produced by resolveLabelMap; treat
+		// it as "no label" so tombstone entries do not surface as blank chips.
+		if (resolved && resolved.label !== "") entry.label = resolved.label;
+		const preview = input.previews?.get(node.id);
+		if (preview !== undefined && preview.length > 0) entry.preview = preview;
+		nodesById[node.id] = entry;
+	}
+
+	const rootIds: string[] = [];
+	for (const node of input.nodes) {
+		const parent = node.parentId ? nodesById[node.parentId] : undefined;
+		if (!parent) {
+			rootIds.push(node.id);
+		} else {
+			parent.children.push(node.id);
+		}
+	}
+
+	// Oldest-first for stable rendering. Unknown timestamps sort by id.
+	const byTime = (a: string, b: string) => {
+		const na = nodesById[a];
+		const nb = nodesById[b];
+		if (!na || !nb) return a < b ? -1 : a > b ? 1 : 0;
+		if (na.at === nb.at) return na.id < nb.id ? -1 : na.id > nb.id ? 1 : 0;
+		return na.at < nb.at ? -1 : 1;
+	};
+	rootIds.sort(byTime);
+	for (const key of Object.keys(nodesById)) {
+		const entry = nodesById[key];
+		if (entry) entry.children.sort(byTime);
+	}
+
+	const leafId = input.leafId !== undefined ? input.leafId : computeLeafId(input.nodes);
+
+	return {
+		sessionId: input.meta.id,
+		meta: pickMeta(input.meta),
+		leafId,
+		nodesById,
+		rootIds,
+	};
+}

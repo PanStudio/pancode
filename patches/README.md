@@ -1,0 +1,272 @@
+# Dependency patches
+
+## Pi TUI 1.5.2: why the patch remains
+
+`@earendil-works__pi-tui@1.5.2.patch` is the sole Pi dependency patch, applied
+by pnpm's exact `patchedDependencies` entry.
+**pi-ai and pi-agent-core are unpatched.** The
+[Anthropic thread idle limit](#pi-ai-152-anthropic-thread-idle-limit) lives in PanCode's engine.
+The pi-tui patch has thirty-six hunks in thirteen `dist/` files and applies to the
+published, unmodified 1.5.2 package. It carries the semantic edit and search
+operations that stock 1.5.2 keeps private, the regular-screen render memo, the
+kept-rows hook that lets that memo skip rows PanCode vouches for, the
+selection-text hook through which fullscreen copy rejoins wrapped prose, the
+selection entry points through which a drag selects past a modal overlay and the
+press check that keeps a selection beside an overlay on the transcript, the
+word joiners a fullscreen double-click selects across, the selection
+highlight's stop at the scrollbar column, the drag auto-scroll edge, the
+renewal of a repeated flash message, the fullscreen layout's fast path and
+scrollbar memo, the scroll-region shift of a scrolled transcript, and the
+lone-code-point emoji check in width measurement.
+Everything else earlier
+revisions patched is now stock Pi or an engine module, as
+[recorded below](#what-was-removed). The table lists every
+hunk; `grep -c '^@@' patches/@earendil-works__pi-tui@1.5.2.patch` must equal the
+hunk total.
+
+| Hunks | Patched API | Required behavior | Why stock 1.5.2 is insufficient |
+| --- | --- | --- | --- |
+| 2: `components/editor.d.ts`, `components/editor.js` | `Editor.applyEdit` | Invoke undo and the six delete operations (character and word deletion in both directions, and deletion to line start and end) directly after PanCode resolves a semantic keyboard action, without passing through submission or a second keybinding lookup. | The edit operations are private and `handleInput` interprets bytes against configurable bindings. `setText` alone does not express the same undo, cursor and kill-ring semantics. |
+| 2: `components/input.d.ts`, `components/input.js` | `Input.applyEdit` | The same operations plus `clear`, which keeps undo and kill-ring behavior. | The same private operations on `Input`. |
+| 2: `alt-screen-search.d.ts`, `alt-screen-search.js` | `AltScreenSearchComponent.applyEdit("undo")` | Undo the whole search query and notify the query listener. | The overlay's `Input` is private, and so is the `undo` it would need, so a router cannot undo a query. |
+| 2: `tui-alt-screen.d.ts`, `tui-alt-screen.js` | `TuiAltScreen.isSearchFocused` and `undoSearchQuery`; `scrollToPrompt`, `toggleSearch`, `closeSearch` and `navigateSearch` made public | PanCode's input router sends Escape, undo, prompt navigation and match navigation to the current owner, including the native search overlay. | Search focus and these methods are private. The public viewport scroll methods cannot query or manipulate search ownership or its undo history, and `getScreenLines()` exposes painted rows, not search state. |
+| 2: `tui-alt-screen.d.ts`, `tui-alt-screen.js` | `TuiAltScreen.selectionText` (protected hook; stock join by default) | `getActiveSelectionText` hands each selected source row and its selected columns to `selectionText`, whose default joins the rows exactly as stock 1.5.2 does. PanCode's `InstrumentedTuiAltScreen` overrides it (`src/engine/selection-text.ts`): a row the chat panel marked as a wrapped continuation joins the row above with one space, and the turn glyph and the 2-cell gutter are left out, so a dragged paragraph copies as one line (#453). Each mark names the decoration cells after it, so fenced code also copies without its block indent and its `↪` wrap marks, and prompt and action rows without their bar or glyph. | `getActiveSelectionText` is private and joins every painted row with a newline, and the copy reaches the clipboard through it, so neither `copySelection` nor a subclass could rebuild the text from the rows it read. |
+| 1: `tui-alt-screen.d.ts` | `TuiAltScreen.parseSgrMouseEvent` and `handleSelectionMouseEvent` made protected (declarations only; the `handleSelectionMouseEvent` line sits in the `selectionText` declaration hunk) | While a modal overlay owns the keyboard, PanCode's input gate keeps pointer reports from the overlay's components and runs them through Pi's text selection alone (`ApplicationInputTuiAltScreen.selectPastOverlay`), so a drag selects and copies the text under it while `SelectList` and `SettingsList` choices still move only on keys. | Both methods are private. Pi's only public mouse path, `handleMouseEvent` through the viewport listener, offers a press and a click to the overlay first, and those lists select on press and confirm on click. |
+| 1: `tui-alt-screen.js` | Selection anchor at a press beside an overlay | A press anchors the selection to the scroll view under it unless it lands on a rendered overlay's cells, so a drag over the transcript beside the search box, quick help or a modal card selects the transcript's content: it copies through `selectionText` without the glyph, gutter or wrap breaks, and it moves with the content when the transcript scrolls under the overlay. A press on an overlay's cells still selects screen rows. | Stock 1.5.2 anchors every press to screen rows while any overlay is visible, and the copy marks are stripped from screen rows, so the copy reverts to the painted rows. The check sits inside the private `handleSelectionMouseEvent`. |
+| 1: `tui-alt-screen.js` | `TERMINAL_WORD_SELECTION_JOINERS` gains `:` | A fullscreen double-click joins word segments across a colon as well as stock's `/`, `-`, `+`, `\`, `~`, `_` and `.`, so a double-clicked `https://example.com/path` keeps its scheme (stock copies `//example.com/path`) and `path/file.ts:120` selects as one word. A word with a trailing colon and `key:value` also select whole. | The set is a module constant, read only by the private `getWordSelection`. |
+| 1: `tui-alt-screen.js` | `applySelection` stops at the scrollbar column | A selection in a scroll view with a painted scrollbar highlights content cells only: the highlight ends before the bar's column, as `applySearchHighlights` already ends search highlights, so the bar never flashes inverse inside a selection. The copied text is unchanged. | Stock 1.5.2 bounds the highlight by the scroll box's full width, which includes the bar column, inside the private `applySelection`. |
+| 1: `tui-alt-screen.js` | `updateSelectionAutoScroll` edge rows | A drag scrolls its view only once the pointer leaves it: a pointer held on the view's first or last row no longer scrolls, so a selection can end on the bottom row of a scrolled-up transcript. Where that edge row is the terminal's first or last row, the pointer cannot go further, so holding it there still scrolls. The 50 ms tick and the clamping of the focus point into the view are unchanged. | Stock 1.5.2 counts the edge rows themselves as outside (`event.y <= visibleTop`, `event.y >= visibleBottom`), so holding the last transcript row ran the view away at about 20 rows a second. The test sits inside the private `updateSelectionAutoScroll`. |
+| 2: `components/alt-screen-flash.js` | `AltScreenFlashContainer.flash` renews a repeated message | A message identical to one still showing restarts that row's timer for the repeat's duration instead of stacking a second row, so repeated copies keep one notice that shows for the whole duration after the last one. PanCode's `InstrumentedTuiAltScreen` no longer overrides `flash` (it used to rewrite this container's private `entries`). | The flash rows and their timers are private to the container; the override that replaced a row's timer from outside wrote another class's private state and silently fell back to stacking if Pi renamed the field. |
+| 4: `layout.js` | `paintBox` fast path for a column-0 box narrower than the screen, and a per-row `paintScrollbar` memo | A box at column 0 writes an untouched row whose line already fits it as the line plus a style and hyperlink reset, without compositing, as a full-width box already does; the reset keeps the line's style off the cells painted after it. `paintScrollbar` keeps each scroll view's painted bar rows from the last frame and reuses a row's output when its string, glyph, column, width and background mode are unchanged. Rows are no longer padded to the box width, so a selection highlight ends at the text's end, as it already did with the scrollbar hidden; a row with a bar cell is still padded up to the bar. | With a scrollbar column the transcript box is one cell narrower than the screen, so stock 1.5.2 composited every transcript row on every fullscreen frame, and the bar then sliced each track row again. A keystroke frame on a 400-turn transcript at 120x40 with the `auto` scrollbar went from 0.362 ms to 0.058 ms p50 (`scripts/bench-tui.ts --mode fullscreen --echo --workload composer`); `--verify` reports no screen mismatch. Both functions are module-private. |
+| 4: `tui-alt-screen.js` | `TuiAltScreen.scrollRegionShift` and its use in `doRender` | When the primary scroll view's offset moved by k rows since the last frame, its visible rows keep their place and height, and neither screen holds an image row, the frame resets the style, sets a scroll region over those rows, scrolls it by k (SU or SD) and resets the region, then diffs every row against the shifted last frame with the exposed rows blank. Only rows that still differ repaint: the exposed rows and any overlay, selection, flash or scrollbar cell over the view. A full redraw, an image redraw, or a shift that would reuse fewer than two rows keeps the stock row diff. | Stock 1.5.2 diffs the alternate screen row by row, so a one-row scroll repaints every transcript row. One wheel notch on a 2,000-row transcript writes about 6.4 KB at 120x40 and 19.6 KB at 240x70 stock against 390 B and 926 B patched (p50 of 30 notches, rows the stock diff would repaint counted from the same screens). The diff sits inside `doRender`, so no subclass can change it. |
+| 5: `tui-main-screen.js` | `TuiMainScreen` reset memo and Kitty image-row scans | A regular-screen frame reuses the reset output of every row whose raw string is unchanged, rewriting the memo in place and recording which rows are image rows, and the Kitty image scans (`collectKittyImageIds`, `expandChangedRangeForKittyImages`) visit only those rows. `resetRenderState` drops the memo. The memo's `applyLineResets` replaces the stock method, so it also removes stray cursor markers from a row before normalizing it, as stock 1.5.2 does. | Stock 1.0.0 normalizes every transcript row and scans all rows for image headers on every regular-screen frame, so the cost grows with the transcript. Measured [below](#measured-cost-of-the-render-memo): a 22.9k-row transcript costs 5.90 ms per keystroke frame stock against 0.62 ms patched. The scans are private methods, so no subclass can replace them. |
+| 2: `utils.js` | `graphemeWidth` emoji check for a lone code point | A segment of one code point that passes the emoji pre-filter is tested against `\p{Emoji_Presentation}` instead of `\p{RGI_Emoji}`. Over every code point the pre-filter admits the two agree except the regional indicators, which `graphemeWidth` sizes 2 on the next check either way, so every width is unchanged. Clusters of more than one code point still take the RGI test. | The first `✓` or `⎇` the status bar measured compiled the RGI sequence class: 29 ms on an idle core and 60 ms plus a 15 ms tier-up on a loaded one, on the path to the hydrated frame. `Emoji_Presentation` compiles in 0.1 ms. The check sits inside the module-private `graphemeWidth`, which `visibleWidth`, `truncateToWidth` and `wrapTextWithAnsi` all reach, so no PanCode wrapper can route around it. |
+| 1: `tui-main-screen.js` | `TuiMainScreen.doRender` OSC 133 strip | Run the marker strip only on a row that starts with `\x1b]133;`, so a frame makes no regex call for any other row. The pattern is anchored at the row start, so the output is unchanged. | Stock 1.5.2 calls `replace` with the anchored pattern on every row of every frame, which cost 3.25 ms of a frame while a 500 KB reply streamed (#428). The call sits inside `doRender`, so no subclass can skip it. |
+| 3: `tui-main-screen.d.ts`, `tui-main-screen.js` | `TuiMainScreen.keptRenderedRows` (protected hook, 0 by default) and `keptLeadingRows` | A subclass may report how many leading rendered rows are the very strings of the last frame's. `doRender` clamps that count to rows outside both frames' viewports, at an unchanged size and with no overlay, then takes those rows as the last frame stripped, reset and resolved them: the OSC 133 strip rewrites its own array in place from the first row not kept, `applyLineResets` copies the kept rows' output and image flags, and the diff loop starts below them. PanCode's `InstrumentedTuiMainScreen` answers from the root's count (`src/interactive/kept-rows.ts`). | The strip, the reset memo's compare and the diff loop each visited every row of a 500 KB transcript on every frame although only the last rows change, and they sit inside `doRender`. A keystroke frame at reply-500k went from 1.19 ms to 0.13 ms p50 ([measured below](#measured-cost-of-the-kept-rows-hook)). |
+
+The semantic operations call Pi's existing editing and search implementation;
+they do not replace it. Consumers are the terminal lease, input router, editor
+and overlays under `src/interactive/`, through `src/engine/tui.ts`.
+
+PanCode also retains its own locked YAML credential storage and OAuth refresh lifecycle
+for 0.6.0. Provider login and refresh flows delegate to Pi through PanCode's OAuth
+registry; `CredentialStore` and `Models.getAuth` adoption was reverted. This
+auth boundary is PanCode application code and adds no dependency patch.
+
+## What was removed
+
+The patch carried 26 hunks before the Pi 1.0 adoption series and carries
+thirty now: thirteen kept from then, and the OSC 133 prefix check, the three
+kept-rows hunks, the two selection-text hunks, the selection entry-point hunk,
+the overlay press hunk, the word-joiner hunk, the selection scrollbar hunk, the
+auto-scroll edge hunk, the two flash-renewal hunks, the four layout hunks and
+the four scroll-region hunks added since.
+The thirteen removed hunks fall into five groups.
+
+| Removed | Replaced by | Cost and evidence |
+| --- | --- | --- |
+| `wrapTextWithAnsi` whitespace tokens (2 hunks in `dist/utils.js`) | Stock Pi 1.5.2 | None. `wrapTextWithAnsi("\x1b[1mhello\x1b[22m world", 5)` yields `hello` and `world` on the unmodified 1.5.2 package, and so does the foreground color form. |
+| `setApplicationInputPolicy` and its dispatch block (5 hunks in `dist/tui.d.ts` and `dist/tui.js`) | `src/engine/application-input-tui.ts`, a subclass pair that registers one gate through the public `addInputListener` | No operator-visible change. A policy returning `{ data: "" }` no longer drops the input before every listener, and stock `TuiAltScreen` instances (the fleet watch and follow views) no longer drop key releases before their listeners, which compare exact bytes releases never equal. |
+| `lexMarkdownBlocks` export (4 hunks in the Markdown and index files) | Stock `Markdown` for assistant text in `src/interactive/chat-panel.ts` (one per finished segment; a streaming segment renders its settled head and open tail apart, #428), with PanCode's theme, a `highlightCode` hook and a `transform` hook for table fit and Mermaid | The visible changes are listed in [the Pi boundary table](../docs/architecture/pi-boundary.md). |
+| `Container.render` exact-size copy (1 hunk) | Stock Pi | A smaller regular-screen cost, measured below. |
+| Unchanged-row skip in `TuiMainScreen` (1 hunk) | Stock Pi | More bytes written per streamed frame, measured below. |
+
+### Measured cost of the render memo
+
+Every figure comes from a scratch probe that drives PanCode's real chat panel over
+a fake terminal (Node 24, 120x40, medians of five interleaved runs on a shared
+host whose one-minute load average ranged from 3.6 to 18 across the probes). It
+times in-process JavaScript only and excludes terminal and kernel write cost, so
+compare ratios, not absolute milliseconds.
+
+- Reset memo and image-row scans (kept), regular screen, 22.9k-row transcript,
+  measured with the hunks temporarily removed: keystroke frame 0.62 to 5.90 ms, streamed-token frame 1.13 to 6.01 ms,
+  garbage per frame 231 KB to 4.6 MB, and 0 to about 25 scavenges per 300
+  frames. At 2.2k rows the same frames cost 0.13 to 0.61 ms and 0.33 to 0.72 ms.
+  An earlier probe at about 40,000 rows measured about 16 ms per frame, the
+  length of Pi's own minimum render interval. Fullscreen is within noise.
+- Exact-size copy (removed), 22.9k rows: keystroke frame 0.65 to 1.04 ms, streamed-token
+  frame 0.90 to 1.35 ms, garbage per frame 231 to 954 KB, and two scavenges per
+  300 frames. Fullscreen is within noise.
+- Unchanged-row skip (removed), 22.9k rows: bytes written per streamed-token frame go from
+  237 to 1,769, and frame time is unchanged within noise.
+
+The regular screen is PanCode's default mode (`src/core/defaults.ts`), so dropping
+the memo would put a 6 to 10 ms frame on the default path for very long
+transcripts against 0.6 to 1.1 ms with it (9.5x to 16.8x for keystrokes across
+the probes, which ran under different host load), which is why those five hunks
+stay.
+Pi's own coding agent defaults to fullscreen, where the alternate screen
+virtualizes the transcript, and its large-transcript benchmarks cover only that
+mode. The two removed hunks cost at most 1.5x frame time or extra bytes written
+and were dropped. `git log` on the patch file finds the commits that removed
+hunks. The memo stays until Pi ships the change upstream (draft 0003).
+
+Since 1.2.0, stock `TuiMainScreen.doRender` passes every rendered row through
+`resolveFakeCursors` (an `includes` scan and a new array) before compositing,
+so the memo keys on resolved rows and stays correct. That stock step is not
+memoized and grows with the transcript: a copy of the 1.4.0 function over
+synthetic 138-character styled rows cost 0.07 ms per frame at 2.2k rows,
+0.80 ms at 22.9k and 1.37 ms at 40k (Node 24, load average 0.5). The patch
+leaves it stock for the 1.4.0 upgrade; memoizing it is a separate decision.
+
+Since 1.5.0, stock `doRender` also passes every row through an OSC 133 strip (a regex
+replace and a new array) before compositing. A frame probe over 22.9k synthetic
+styled rows with one row changing per frame, patched on both versions, took a
+median of 1.0 to 1.1 ms on 1.4.0 and 1.6 to 1.7 ms on 1.5.0 (Node 24, two runs
+each). That new step is the likely cause, though it was not profiled, and the
+memo stays in effect. The patch has since narrowed that step to rows that start
+with the marker, which is the OSC 133 row in the table above.
+
+### The 1.5.2 rebase
+
+Pi 1.5.1 and 1.5.2 changed six pi-tui files, and two of them carry hunks:
+`components/editor.js` (paste marker renumbering) and `tui-alt-screen.js` (Kitty
+image draw order). Neither change touches the patched lines, and
+`tui-main-screen.js` is byte-identical in the published 1.5.0 and 1.5.2
+packages. Fifteen hunks carried over unchanged and no hunk was dropped, because
+1.5.2 makes none of the patched seams public.
+
+Two hunks in `tui-main-screen.js` changed. Stock 1.5.2 `TuiBase.applyLineResets`
+removes every cursor marker from a row before normalizing it, so that an
+internal marker never reaches the terminal (upstream #9441). The reset memo
+replaces that method on the regular screen, so the memo hunk now makes the same
+`replaceAll(CURSOR_MARKER, "")` call on each row it normalizes, and the import
+hunk brings `CURSOR_MARKER` in from `./tui.js`. Without that edit the patch
+still applied cleanly and silently kept the 1.5.0 behavior on PanCode's default
+screen. A row is stripped once and then reused from the memo. The frame cost
+figures above were not measured again on 1.5.2.
+
+## Alternatives considered
+
+- **Use stock input listeners and keybindings:** adopted for application-first
+  routing. `ApplicationInputTuiAltScreen` and `ApplicationInputTuiMainScreen`
+  in `src/engine/application-input-tui.ts` register one gate through the public
+  `addInputListener` ahead of every other listener. `TuiAltScreen` registers its
+  viewport shortcuts from its own constructor through that virtual method, so
+  the override runs first inside `super()` and the application policy sees a key
+  before viewport bindings can consume it. The gate consumes key releases and
+  hands everything else to one replaceable policy; Pi's listener loop honors the
+  policy's `consume` and `data` results, and bracketed paste stays literal
+  because stock `isKeyRelease` is false for it. Gate state lives in a module
+  `WeakMap` because an ES2022 class field would reset when `super()` returns.
+  The design depends on stock `TuiAltScreen` keeping that registration public,
+  which the policy-first ordering tests in
+  `tests/extended/keyboard-routing.test.ts` and the installed-package keyboard
+  check in `tests/smoke/installed-package.test.ts` pin. Removing every
+  overlapping viewport binding was rejected because it also disables native
+  behavior that PanCode deliberately retains.
+- **Synthesize control-key sequences:** goes through another configurable
+  binding lookup. A deletion or undo action can become submission or a
+  different action under user bindings; this fails the semantic-action contract.
+- **Subclass or access private fields for the edit and search seams:**
+  TypeScript privacy bypasses would bind PanCode to undocumented widget state and
+  still would not supply a supported way to invoke the private operations. A
+  forked editor/search implementation would own considerably more code and lose
+  upstream behavior fixes.
+- **Move the render memo into an engine subclass:** rejected. The Kitty
+  image-row scans are private methods, so a subclass cannot replace them. In an earlier probe a
+  stock regular-screen frame cost 9.8 to 10.4 ms at 22.9k rows in the same interleaved probe, a protected
+  `applyLineResets` override alone cost 4.8 to 5.1 ms, and the full memo cost
+  0.6 to 1.1 ms. Making fullscreen the default as Pi's coding agent does would
+  avoid the cost but is a product decision, not a dependency patch.
+- **Replace Pi's keyboard/editing/search stack:** technically possible, but
+  duplicates working SDK functionality. The patch exposes the small missing
+  seams and leaves editing, layout, undo, selection and rendering in Pi.
+- **Contribute the seams upstream:** preferred removal path. No upstream issue,
+  pull request or acceptance is recorded in this repository; this document does
+  not claim one exists. Source drafts against tag `v1.0.0` (commit
+  `a13d35a742c6ef8462812a28fbe1d8c8b7431c32`) exist for the semantic edit and
+  search operations, the styled-whitespace wrapping fix and the render reset
+  memo. The maintainer keeps them outside the tracked tree. They pass
+  `git apply --check` on that tag, and add no upstream tests; Pi's own
+  typecheck and test suite were not run against them. None is submitted or
+  accepted. Equivalent official APIs may have different names.
+
+### Measured cost of the kept-rows hook
+
+`scripts/bench-tui.ts` (regular screen, 120x40, 400 turns plus the reply, 120 frames, Node 24.20, medians of five
+repeats per run, two runs interleaved against the patch without the hook on a shared 24-core host at a one-minute load
+average of 17 to 22) gives these p50 frame times, before then after, one pair per run:
+
+| Workload | Streamed-token frame | Keystroke frame (`--echo`) |
+| --- | --- | --- |
+| reply-500k | 2.90 and 4.00 ms to 0.91 and 0.72 ms | 1.94 and 1.95 ms to 0.087 and 0.080 ms |
+| reply-100k | 0.78 and 0.65 ms to 0.27 and 0.15 ms | 0.51 and 0.46 ms to 0.031 and 0.034 ms |
+
+Bytes written per frame are unchanged (128 streamed, 151 keystroke), and `--verify` finds 0 mismatching frames for every
+workload in both modes. A keystroke frame no longer grows with the transcript. A streamed-token frame still does,
+because three layers of PanCode's chat panel each copy the reply's rows into a new array per frame (the settled split, the
+gutter and the panel's tail), which the panel's promise never to mutate a returned array requires.
+
+## Pi AI 1.5.2: Anthropic thread idle limit
+
+This is an engine adaptation, not a dependency patch.
+`src/engine/apis/anthropic-response.ts` uses Pi's public `onPayload`, `fetch`
+and session-cleanup hooks, so npm and from-source installs run the same guard
+against stock pi-ai. The earlier three-hunk pnpm patch was removed because it
+did not reach npm consumers.
+
+Measured with `claude-haiku-5-5` on `anthropic-max` on 2026-11-10:
+with long retention and keepalive off, idle gaps of 240 s and 285 s continued,
+while 300 s and 330 s returned HTTP 404 `thread_not_found`. The 330 s failure
+also occurred at short retention and with keepalive on. Continuations 111 s
+apart still worked 7 min 24 s after creation. Stock Pi retries in full as a
+new thread, costing a rejected round trip of 150 to 700 ms.
+
+PanCode records each successful threaded reply's id and monotonic time. Beyond
+270 s it replaces an attempted continuation with a new thread before fetch.
+It restores only `messages`, `system` and `tools` from the final payload,
+preserving the SDK's other serialized fields and headers, including its beta
+header. The `thread` field stays last, and any content-length header is removed
+so fetch computes it again. A wall-clock delta additionally detects suspend
+on hosts whose monotonic clock stops; a backward clock adjustment cannot
+extend a thread's lifetime. The 30 s margin is conservative policy for both
+Anthropic runtimes, not a measured API-key lifetime. A needless create costs
+a full upload without deliberately changing the cacheable prefix.
+
+Pi consumes the old continuation state before sending and records the new
+reply normally. PanCode never clears unrelated session resources or changes
+Pi's `"off"` state. Keepalive and prewarm requests have `disableContinuation`
+set and neither consume nor refresh the reply stamp. The stamp map is capped
+at 10,000 sessions; an unknown or mismatched reply id also starts fresh.
+Retries retain their restart decision. If the payload shape no longer permits
+a complete reconstruction, PanCode records `anthropic_thread_restart_skipped`
+and leaves recovery to Pi; a restart records `anthropic_thread_restart`.
+
+`tests/contracts/anthropic-thread-idle.test.ts` drives PanCode's real stream
+adapter with injected SSE and controlled monotonic and wall clocks. It checks
+wire behavior, including equivalence to Pi's own new-thread request.
+Remove the guard when stock Pi ages threads itself. Do not bundle pi-ai and
+pi-agent-core solely for this fix: that would broaden dependency/license
+vendoring and split the runtime-plugin `pi-ai/compat` registry from its
+installed package unless the bridge were redesigned.
+
+## Distribution, verification and removal
+
+The build bundles the patched pi-tui JavaScript. npm consumers do not need pnpm
+to reapply that patch; the pinned dependency also supplies native helper assets.
+The Anthropic idle guard ships as PanCode engine code and needs no pi-ai patch.
+`NOTICE` and `dist/assets/tui-notices/` preserve the relevant licenses.
+
+On each Pi upgrade, check stock APIs and dry-run the patch against the published
+package, then regenerate `docs/pi-surface.json`. Routine `pnpm lint` does not
+compare the installed declarations with that snapshot; `pnpm run pi:surface-diff`
+does. Run
+`pnpm test:maintenance` (keyboard routing and drafts: deletion under submit
+overrides, search ownership and navigation, editor undo, and policy-first
+ordering through the gate), `tests/contracts/tui-view-ergonomics.test.ts`
+(whole-query undo and the Unicode kill ring on `Input.applyEdit`), and the
+installed-package test, which drives the bundled executable. These cover the
+semantic edit and search hunks and the gate. No PanCode test pins the render memo;
+`node --import tsx scripts/bench-tui.ts --workload reply-500k --mode regular --verify` (add `--echo` for keystroke
+frames) checks the kept-rows hook against a fresh render of the same frames and must report 0 mismatches;
+to check a rebase or a removal, rerun a probe that drives
+PanCode's chat panel over a fake terminal on a transcript of about 22.9k rows and
+compare frame time and garbage per frame with the figures above. Patch applicability or a
+successful installation alone is not behavioral verification.
+
+Remove each patch seam when stock Pi offers equivalent semantics and PanCode's
+consumers use that public API. Remove the patched dependency entry only
+when those tests pass against the unmodified package. Until then this is a
+PanCode-maintained compatibility patch, with no claim of upstream support.

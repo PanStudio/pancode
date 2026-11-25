@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { FileAuthStorageBackend } from "./backend-file.js";
+import { AuthStorage } from "./storage.js";
+
+export function openAuthStorage(path?: string): AuthStorage {
+	return new AuthStorage(new FileAuthStorageBackend(path));
+}
+
+export { authStoragePath, FileAuthStorageBackend } from "./backend-file.js";
+export { InMemoryAuthStorageBackend } from "./backend-memory.js";
+export { isBuiltinClaudeAcp, resolveClaudeLaunchCredential } from "./claude-subscription.js";
+export type {
+	ApiKeyCredential,
+	AuthCredential,
+	AuthResolution,
+	AuthStatus,
+	AuthStorageBackend,
+	AuthStorageData,
+	AuthTarget,
+	OAuthCredential,
+} from "./storage.js";
+export {
+	AuthStorage,
+	AuthStorageDamagedError,
+	authNotRequiredStatus,
+	resolveAuthTarget,
+	resolveRuntimeAuthTarget,
+	targetRequiresAuth,
+} from "./storage.js";
+export { applyTargetCredentialPlan, planTargetCredentialRemoval } from "./target-credential.js";

@@ -1,0 +1,192 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { DelegationAgentConfig } from "../../core/defaults.js";
+import type { AdoptionProvider } from "../context/adoption.js";
+import type { SkillSource } from "../resources/skills/loader.js";
+
+export type InteropAgentId =
+	| "claude-code"
+	| "codex"
+	| "opencode"
+	| "gemini"
+	| "copilot"
+	| "cursor"
+	| "antigravity"
+	| "pi"
+	| "windsurf"
+	| "cline"
+	| "aider"
+	| "agents";
+
+/** How a peer is launched over ACP stdio, for the kinds that speak it. */
+export interface InteropAcpRecipe {
+	command: string;
+	args: ReadonlyArray<string>;
+	/** npm package carrying the adapter, when the recipe launches one through npx. */
+	npmPackage?: string;
+	/** Executable that package installs, looked up on PATH before falling back to npx. */
+	npmPackageBin?: string;
+}
+
+/** A directory of rule files: the file-name endings it holds and how many subdirectory levels are read. */
+export interface InteropRuleDir {
+	path: string;
+	suffixes: ReadonlyArray<string>;
+	depth: number;
+}
+
+/**
+ * One known coding agent, as pure data. Every list of foreign roots, binaries,
+ * and instruction files in the tree is a projection of this table.
+ */
+export interface InteropAgentKind {
+	inventory?: InteropInventoryLayout;
+	id: InteropAgentId;
+	label: string;
+	/** Executables whose presence means the agent is installed. Empty for conventions with no CLI. */
+	binaryNames: ReadonlyArray<string>;
+	/** Home-relative directory the agent owns. */
+	userDir: string;
+	/** Older home-relative roots still owned by supported installations. */
+	legacyUserDirs?: ReadonlyArray<string>;
+	/** Project-relative directory the agent owns, when it has one distinct from the repo's own. */
+	projectDir?: string;
+	/** Older project-relative roots still protected from PanCode writes. */
+	legacyProjectDirs?: ReadonlyArray<string>;
+	userSkillRoot?: string;
+	projectSkillRoot?: string;
+	userPromptRoot?: string;
+	projectPromptRoot?: string;
+	/** Project-relative instruction files the context domain mines for rules. */
+	instructionFiles: ReadonlyArray<string>;
+	/** Instruction files the agent reads only at the repository root; a subdirectory copy is not mined. */
+	rootInstructionFiles?: ReadonlyArray<string>;
+	/** Project-relative directories of rule files the context domain mines. */
+	ruleDirs?: ReadonlyArray<InteropRuleDir>;
+	acp?: InteropAcpRecipe;
+	/**
+	 * false: detection never runs the binary, not even `--version`; presence is resolved on disk only.
+	 * Antigravity unpacks about 1 GB per launch.
+	 */
+	versionProbe?: false;
+	/** PanCode-managed worker runtime for this peer's headless CLI, when implemented. */
+	headlessRuntimeId?: string;
+	adoptionProvider?: AdoptionProvider;
+	skillSource?: SkillSource;
+}
+
+/** A probe that cannot answer reports "unknown"; it never guesses "absent". */
+export type InteropPresence = "present" | "absent" | "unknown";
+
+export interface InteropAgentFacts {
+	inventory?: InteropInventory;
+	kind: InteropAgentId;
+	presence: InteropPresence;
+	binary?: string;
+	version?: string;
+	installDir?: string;
+	/** Whether the exact ACP recipe is locally verified. Absent for kinds with no recipe. */
+	adapter?: InteropPresence;
+	skillCount: number;
+	projectArtifacts: number;
+}
+
+export type InteropDecision = "accepted" | "declined";
+
+export interface InteropAgentRecord extends InteropAgentFacts {
+	/** Fingerprint of the facts a proposal is keyed by. */
+	fingerprint: string;
+	decision?: InteropDecision;
+	decidedAt?: string;
+	/** Fingerprint the decision was made against; a change re-proposes the agent. */
+	decidedFingerprint?: string;
+}
+
+export interface InteropReport {
+	version: 1;
+	detectedAt: string;
+	agents: ReadonlyArray<InteropAgentRecord>;
+}
+
+export interface InteropProposal {
+	kind: InteropAgentId;
+	label: string;
+	fingerprint: string;
+	/** Exactly the entry `accept` appends to delegation.agents. */
+	entry: DelegationAgentConfig;
+	/** True when the pinned adapter is not locally verified and npx may fetch it on first use. */
+	needsNetworkInstall: boolean;
+	/** Resolved executable and its probed version, for the row the operator decides on. */
+	binary?: string;
+	version?: string;
+}
+
+export interface InteropDecisionResult {
+	decided: ReadonlyArray<InteropAgentId>;
+	/** delegation.agents ids appended by this call. */
+	wired: ReadonlyArray<string>;
+	diagnostics: ReadonlyArray<string>;
+}
+
+export interface InteropDetectInput {
+	/** Explicit inventory sweep; bootstrap remains lightweight. */
+	inventory?: boolean;
+	cwd?: string;
+	home?: string;
+	/** Run a bounded `<bin> --version` for kinds whose binary already resolved. */
+	probeVersion?: boolean;
+	/** Skill sources already loaded by the resources domain. Interop counts them and never walks a root. */
+	skillSources?: ReadonlyArray<SkillSource>;
+	/** Foreign artifact providers already scanned by the context domain. */
+	artifactProviders?: ReadonlyArray<AdoptionProvider>;
+}
+
+export type InteropResourceKind =
+	| "skill"
+	| "agent"
+	| "prompt"
+	| "plugin"
+	| "output-style"
+	| "hook"
+	| "mcp"
+	| "executable"
+	| "instructions";
+export interface InteropInventoryItem {
+	kind: InteropResourceKind;
+	name: string;
+	path: string;
+	scope: "user" | "project";
+	plugin?: string;
+	version?: string;
+	marketplace?: string;
+	installation?: "installed" | "unknown";
+	enabled?: boolean;
+}
+export interface InteropInventory {
+	status: "known" | "unknown";
+	items: InteropInventoryItem[];
+	diagnostics: string[];
+	listing: "unknown";
+}
+export interface InteropInventoryLayout {
+	userRoot: string;
+	/** Instruction files the agent loads into every session, relative to its user root. */
+	userInstructions?: string[];
+	additionalUserRoots?: string[];
+	xdgConfigSubdir?: string;
+	homeEnv?: string;
+	projectRoots: string[];
+	roots: Array<{ path: string; kind: InteropResourceKind; extensions: string[] }>;
+	declarations: Array<{ path: string; kind: "hook" | "mcp"; key?: string }>;
+	userDeclarations?: Array<{ path: string; kind: "hook" | "mcp"; key?: string }>;
+	projectDeclarations?: Array<{ path: string; kind: "hook" | "mcp"; key?: string }>;
+	projectModuleConfig?: string;
+	pluginDirs: string[];
+	pluginManifests: string[];
+	installedRegistry?: string;
+	/** Evidence command, never an agent work command. */
+	listCommand: string[];
+	cacheMarketplace?: boolean;
+	settingsRegistry?: "copilot" | "codex" | "antigravity";
+	moduleConfig?: string;
+}

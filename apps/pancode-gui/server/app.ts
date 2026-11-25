@@ -1,0 +1,196 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { hostname } from "node:os";
+import { join } from "node:path";
+import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { API_VERSION, APP_VERSION } from "../contracts/meta.js";
+import { openapi } from "../contracts/openapi.js";
+import { isPagePath } from "../contracts/pages.js";
+import { routes } from "../contracts/routes.js";
+import { auth, requestClient } from "./http/auth.js";
+import { problemResponse } from "./http/problem.js";
+import { arenaRoutes } from "./http/routes-arena.js";
+import { authRoutes } from "./http/routes-auth.js";
+import { controlGuard, controlRoutes } from "./http/routes-control.js";
+import { evidenceRoutes } from "./http/routes-evidence.js";
+import { fleetRoutes } from "./http/routes-fleet.js";
+import { hubRoutes } from "./http/routes-hub.js";
+import { type MachineAttachmentsApi, machinesRoutes } from "./http/routes-machines.js";
+import { reportRoutes } from "./http/routes-reports.js";
+import { researchRoutes } from "./http/routes-research.js";
+import { reviewRoutes } from "./http/routes-review.js";
+import { sessionRoutes } from "./http/routes-sessions.js";
+import { settingsRoutes } from "./http/routes-settings.js";
+import { systemRoutes } from "./http/routes-system.js";
+import { targetsRoutes } from "./http/routes-targets.js";
+import { telemetryRoutes } from "./http/routes-telemetry.js";
+import { traceRoutes } from "./http/routes-traces.js";
+import { events } from "./http/sse.js";
+import { staticClient } from "./http/static.js";
+import { idempotencyKey, register } from "./http/validate.js";
+import { getVersionInfo, pendingInstalledVersion, resolvePackageRoot, runningBuildId } from "./pancode/http-shims.js";
+import type { ArenaService } from "./services/arena.js";
+import { ArtifactWindow } from "./services/artifact-window.js";
+import { ClientRegistry } from "./services/clients.js";
+import { Commands } from "./services/commands.js";
+import type { EventHub } from "./services/event-hub.js";
+import type { EvidenceService } from "./services/evidence.js";
+import type { FleetService } from "./services/fleet.js";
+import type { HubService } from "./services/hub.js";
+import type { MachinesService } from "./services/machines.js";
+import type { OperationRegistry } from "./services/operations.js";
+import { AppProblem } from "./services/problem.js";
+import type { ProblemReportsService } from "./services/problem-reports.js";
+import type { ProjectReviewService } from "./services/project-review.js";
+import type { ReportsService } from "./services/reports.js";
+import type { ResearchService } from "./services/research.js";
+import { SessionControls } from "./services/session-control.js";
+import type { SessionService } from "./services/sessions.js";
+import type { SettingsService } from "./services/settings.js";
+import type { SetupService } from "./services/setup.js";
+import type { SystemService } from "./services/system.js";
+import type { TargetsService } from "./services/targets-cli.js";
+import type { TelemetryService } from "./services/telemetry.js";
+import type { ToolchainService } from "./services/toolchain.js";
+import type { TraceService } from "./services/traces.js";
+import type { RuntimeInfo } from "./worker/protocol.js";
+
+export function createApp(options: {
+	/** The launch token, which only exchanges for a client credential. */
+	token: string;
+	/** Process-local, so a restart or a stop revokes every credential it issued. */
+	clients?: ClientRegistry;
+	origin: () => string;
+	hub: EventHub;
+	operations: OperationRegistry;
+	toolchain: ToolchainService;
+	traces: TraceService;
+	telemetry: TelemetryService;
+	settings: SettingsService;
+	setup: SetupService;
+	targets: TargetsService;
+	fleet: FleetService;
+	machines?: MachinesService;
+	/** Attachments to registered nodes' own GUIs, proxied under /m/<id>/api. */
+	attachments?: MachineAttachmentsApi;
+	system: SystemService;
+	hubService: HubService;
+	/** Project trust and pending memory lessons. */
+	review: ProjectReviewService;
+	reports: ReportsService;
+	/** The report dialog (R-24); absent, its routes are not served. */
+	problemReports?: ProblemReportsService;
+	arena: ArenaService;
+	research: ResearchService;
+	evidence: EvidenceService;
+	sessions: SessionService;
+	/** The ids this host has served. Process-wide: a loopback listener serves one operator. */
+	artifacts?: ArtifactWindow;
+	snapshotHold?: () => Promise<void>;
+	clientDir?: string;
+	diagnostics?: boolean;
+	pwa?: boolean;
+	desktopManaged?: () => boolean;
+	idle: () => boolean;
+	runtime?: () => Promise<{ server: Omit<RuntimeInfo, "threadId">; reads: RuntimeInfo; ops: RuntimeInfo }>;
+}) {
+	const app = new Hono();
+	const { hub, operations, toolchain } = options;
+	const artifacts = options.artifacts ?? new ArtifactWindow();
+	const clients = options.clients ?? new ClientRegistry();
+	app.onError(problemResponse);
+	const controls = new SessionControls(clients, hub);
+	app.use("*", auth(options.origin, clients));
+	app.use("/api/sessions/*", controlGuard(controls));
+	if (process.env.NODE_ENV === "test" && options.runtime) {
+		const inspect = options.runtime;
+		app.get("/api/_diagnostics/runtime", async (context) => context.json(await inspect()));
+	}
+	// Every request body is small except a request that carries images, which the agent bounds at
+	// its 1 MiB stdio line; that one route gets room for the images and its text.
+	const smallBody = bodyLimit({
+		maxSize: 64 * 1024,
+		onError: (context) => problemResponse(new AppProblem("validation", "Request body exceeds 64 KiB."), context),
+	});
+	const turnBody = bodyLimit({
+		maxSize: 1024 * 1024,
+		onError: (context) => problemResponse(new AppProblem("validation", "Request body exceeds 1 MiB."), context),
+	});
+	app.use("/api/*", (context, next) =>
+		(/^\/api\/sessions\/[^/]+\/turns$/.test(context.req.path) ? turnBody : smallBody)(context, next),
+	);
+	register(app, hub, routes.meta, () => ({
+		...getVersionInfo(),
+		app: APP_VERSION,
+		apiVersion: API_VERSION as 1,
+		epoch: hub.epoch,
+		pwa: options.pwa ?? false,
+		pendingVersion: pendingInstalledVersion(),
+		desktopManaged: options.desktopManaged?.() ?? false,
+		idle: options.idle(),
+		bundledDocsPath: join(resolvePackageRoot(), "docs"),
+		host: hostname(),
+		build: runningBuildId,
+	}));
+	register(app, hub, routes.openapi, () => openapi());
+	authRoutes(app, hub, clients, controls, { token: options.token, origin: options.origin });
+	controlRoutes(app, hub, controls, (id) => options.sessions.supervisor.get(id));
+	register(app, hub, routes.events, ({ query }, context) => {
+		const client = requestClient(context);
+		return events(context, hub, query.after, (end) => clients.stream(client, end));
+	});
+	// The launcher asks whether a window can hear it before it focuses one, since a window left by a
+	// restarted server only says it lost the connection. A launch that named a page sends it here and every
+	// window hears it; the one that has the focus goes there.
+	register(app, hub, routes.launch, ({ body }, context) => {
+		if (body.path !== undefined && !isPagePath(body.path))
+			throw new AppProblem("validation", "The launch path is not a PanCode page.");
+		const shown = clients.liveWindows(requestClient(context)) > 0;
+		if (shown && body.path !== undefined) hub.publish({ type: "app.launch", payload: { path: body.path } });
+		return { shown };
+	});
+	register(app, hub, routes.tools, async (_input, context) => {
+		const result = await toolchain.list();
+		if (options.diagnostics) context.header("X-Pancode-Worker-Thread", String(result.threadId));
+		return result.tools;
+	});
+	register(app, hub, routes.install, async ({ params, body }, context) => ({
+		operationId: await toolchain.mutate("install", params.toolId, body, idempotencyKey(context)),
+	}));
+	register(app, hub, routes.remove, async ({ params }, context) => ({
+		operationId: await toolchain.mutate("remove", params.toolId, {}, idempotencyKey(context)),
+	}));
+	register(app, hub, routes.operation, ({ params }, context) => {
+		const record = operations.get(params.id);
+		context.header("X-Pancode-Revision", String(record.revision));
+		return record;
+	});
+	register(app, hub, routes.cancel, ({ params }) => operations.cancel(params.id));
+	traceRoutes(app, hub, options.traces);
+	telemetryRoutes(app, hub, options.telemetry, options.sessions.workspaces);
+	settingsRoutes(app, hub, options.settings);
+	targetsRoutes(app, hub, options.targets, options.setup);
+	fleetRoutes(app, hub, options.fleet, artifacts);
+	machinesRoutes(app, hub, options.machines, options.attachments);
+	systemRoutes(app, hub, options.system);
+	hubRoutes(app, hub, options.hubService, options.sessions.supervisor);
+	reviewRoutes(app, hub, options.review);
+	reportRoutes(app, hub, options.reports, options.problemReports);
+	arenaRoutes(app, hub, options.arena);
+	researchRoutes(app, hub, options.research);
+	evidenceRoutes(app, hub, options.evidence, artifacts);
+	sessionRoutes(app, hub, options.sessions, new Commands(), controls, options.snapshotHold);
+	app.all("/api/*", (context) => {
+		if (
+			Object.values(routes).some((route) =>
+				new RegExp(`^${route.path.replace(/:[A-Za-z0-9]+/g, "[^/]+")}$`).test(context.req.path),
+			)
+		)
+			throw new AppProblem("unsupported", "Method is not supported for this API route.", 405);
+		throw new AppProblem("not_found", "API route was not found.");
+	});
+	app.notFound((context) => problemResponse(new AppProblem("not_found", "Route was not found."), context));
+	if (options.clientDir) staticClient(app, options.clientDir, options.pwa);
+	return app;
+}

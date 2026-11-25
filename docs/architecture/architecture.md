@@ -1,0 +1,465 @@
+# PanCode Architecture and Boundaries
+
+PanCode is a coding harness for terminal and browser sessions, with provider runtimes, mediated tools, and dispatched workers. CLI entry points, the interactive TUI, runtime adapters, worker subprocesses, and feature domains have separate ownership. These boundaries support local models and scientific-software workflows while keeping admission, safety, and persistence contracts explicit.
+
+---
+
+## Source layout
+
+```text
+src/
+├── cli/             # pancode subcommands, argument parsing, headless run modes
+├── core/            # config/state paths, event bus, defaults, domain loader, shared primitives
+├── domains/         # 38 feature-domain directories, loaded through manifests or imported as libraries
+├── engine/          # Pi (pi-ai, pi-agent-core, pi-tui) boundary, runtime adapters, ACP, worker runtime
+├── entry/           # orchestrator bootstrap wiring (bootOrchestrator)
+├── interactive/     # TUI panels, overlays, key routing, dashboard
+├── session-control/ # surface-neutral chat loop, turn lifecycle, slash-command specifications
+├── tools/           # built-in tool specs and registry admission boundary
+├── utils/           # image and git support utilities
+└── worker/          # worker subprocess entry and runtime rehydration
+apps/
+└── pancode-gui/  # separate workspace package: the graphical application
+tests/
+└── boundaries/      # check-boundaries.ts, the compile-time import rules
+```
+
+`pnpm-workspace.yaml` lists the root package and `apps/*`. The root build (`tsup.config.ts`) bundles the application's server and its two worker entries into `dist/gui/` and builds the browser client into `dist/gui/client`. `pancode gui` starts `dist/gui/server.js` ([gui.ts](../../src/cli/gui.ts)). [The graphical application boundary](#the-graphical-application-boundary) below describes how it reaches the root sources.
+
+## Domains
+
+`src/domains/` holds 38 directories. Not every one is a loaded `DomainModule`. The orchestrator loads config, extensions, plugins, interop, resources, share, context, providers, safety, prompts, agents, middleware, memory, session, telemetry, scheduling, and dispatch, plus mux when the pane tier is active. Each of those except memory has a `manifest.ts` naming its `dependsOn` list. Memory is declared inline in [orchestrator.ts](../../src/entry/orchestrator.ts) with no dependencies: its module wraps the composition root's `MemoryRuntime`, publishes that runtime's contract and disposes it on stop. The plugins domain publishes no contract; it stays loaded so teardown drops cached plugin snapshots. The `evolution` directory also has a `manifest.ts`, but it is the change-manifest schema for `pancode evolve`, not a domain manifest.
+
+System One is not a loaded domain. The orchestrator builds it with `createSystemOne` and hands it to the callers that ask it: the `consult` tool, the safety judge and the chat loop ([orchestrator.ts](../../src/entry/orchestrator.ts)). The remaining directories, which are arena, attach, campaign, claims, components, evidence, evolution, gateway, lifecycle, quota, report, research, semantic, semantic-app, store, system-one, toolchain, turn-control, user-tasks, and workspace-snapshots, are libraries or CLI-owned feature areas whose module functions callers import directly. Memory's own files are also imported as a library beside its loaded contract. Of the libraries, attach, gateway (`src/domains/gateway/mcp/`) and user-tasks have no domain-level `index.ts`, so callers import their files.
+
+| Domain | Primary source | Public surface |
+| --- | --- | --- |
+| agents | `src/domains/agents/**` | Built-in, plugin, user, and project agent recipes, playbooks, and result contracts. |
+| arena | `src/domains/arena/**` | Blind head-to-head matches between contenders: the match runner, the contender environment, votes and standings behind `pancode arena`. |
+| attach | `src/domains/attach/**` | The attach wire, host hub and Unix-socket transport that let a second terminal observe, approve in, or pair with a running session (`/attach`, `pancode session attach`). |
+| campaign | `src/domains/campaign/**` | Model campaigns behind `pancode campaign run`: one seeded project run across a roster of models, one entry at a time, each on a fresh copy of the fixture with its own data, state and cache homes, folded into run status, gates reached, refusals, tokens and wall time. |
+| claims | `src/domains/claims/**` | The project-scoped, append-only claims log: capture of judged `verify` verdicts and hypotheses, derived contradiction and supersede edges, memory regressions, and the claims reminders offered to the main agent. See [Artifact placement](artifact-placement.md#state-root-machine-produced-state). |
+| components | `src/domains/components/**` | Component snapshots, diffs, and classification. |
+| config | `src/domains/config/**`, [config.ts](../../src/core/config.ts), [settings-validate.ts](../../src/core/settings-validate.ts), [settings-validate-target.ts](../../src/core/settings-validate-target.ts), [settings-validate-sections.ts](../../src/core/settings-validate-sections.ts), [settings-issues.ts](../../src/core/settings-issues.ts) | `settings.yaml`, keybindings, effect-timing classification, hot reload. |
+| context | `src/domains/context/**` | Layered `PANCODE.md` and subtree `PANCODE.override.md` guidance, codemap indexer, working set, bootstrap, repository context. |
+| dispatch | `src/domains/dispatch/**` | Fleet-agent jobs, run ledger, run settlement, route policy, worker spawning, admission. |
+| evidence | `src/domains/evidence/**` | Forensic evidence bundles, failure attribution, trust projection. |
+| evolution | `src/domains/evolution/**` | Authority-tiered self-edit change manifests and their validation. |
+| extensions | `src/domains/extensions/**` | Extension packages, which run code in their own process: discovery, capability envelope review, runtime api 2, and lifecycle. |
+| gateway | `src/domains/gateway/mcp/**` | The local stdio MCP client, strict configuration loading, and explicit trust. |
+| interop | `src/domains/interop/**` | The agent-kind registry, bounded detection of other coding agents, and consent to wire one as a delegation peer. |
+| lifecycle | `src/domains/lifecycle/**` | Doctor diagnostics, upgrade mechanics, Claude Agent SDK install, uninstallation. |
+| memory | `src/domains/memory/**` | Approved long-term memory, task bank, proactive task intervention, and the memory runtime contract the inline domain module publishes. |
+| middleware | `src/domains/middleware/**` | Declarative and programmatic lifecycle hooks and budgets. |
+| mux | `src/domains/mux/**` | Optional interactive pane-host integration: Herdr guest mode, the Yazi file pane, and the cliamp music dock. |
+| telemetry | `src/domains/telemetry/**` | Per-scope journals, content-addressed objects, seals and bundles, the read model and its folds (route history included), share, import, verify and retention. See [Telemetry](telemetry.md). |
+| plugins | `src/domains/plugins/**` | Plugin packages, which are Agent Plugins carrying content: discovery, catalog, and lifecycle. Installing one never runs code; the MCP servers its `mcp.json` declares run only after the operator trusts them. |
+| prompts | `src/domains/prompts/**` | Prompt fragments, system prompt compiler, template hashing. |
+| providers | `src/domains/providers/**` | Target-first runtime registry, model probing, credentials, pricing resolution. |
+| quota | `src/domains/quota/**` | Read-only subscription and credit readings from connected provider accounts, cached and normalized for the usage surfaces. |
+| report | `src/domains/report/**` | Reports to the maintainers: scrubbed drafts, the review plan, diagnostic bundles, the duplicate search, encrypted shares and their receipts, and the report offer watcher. Nothing is sent without the operator's review. |
+| research | `src/domains/research/**` | Research campaigns behind `pancode research`: the iteration loop, measurement, grading, budgets and the campaign journal. |
+| resources | `src/domains/resources/**` | PanHub packs, skills loader, prompts loader. |
+| safety | `src/domains/safety/**` | Ordered policy engine, path policy, zero-access rails, journaled decisions. |
+| scheduling | `src/domains/scheduling/**` | Budget ceilings, node cluster states, local capacity, batch capacity checks. |
+| semantic | `src/domains/semantic/**` | The optional semantic context index: source extraction, embedding records and their per-profile storage generations. |
+| semantic-app | `src/domains/semantic-app/**` | The application boundary of the semantic index: the embedding service, search for the `context` tool and CLI, the extension embedding capability, and the session-scoped background refresh. No model is contacted at startup. |
+| session | `src/domains/session/**` | Append-only JSONL transcripts, tree navigation, compaction, handoff, `/view` artifact providers. |
+| share | `src/domains/share/**` | Portable workspace and resource archive export/import. |
+| store | `src/domains/store/**` | The project store behind the `store` tool and `pancode store`: tags and blobs outside the working tree, their records and provenance, cross-process locks, and the local backend. See [the store guide](../guide/panstore.md). |
+| system-one | `src/domains/system-one/**` | The opt-in decision layer: typed questions about one object, pluggable engines and the runner. See [System One](system-one.md). |
+| toolchain | `src/domains/toolchain/**` | Pinned external-tool discovery, installation, and resolution (`asciinema`, `herdr`, `yazi`, `croc`, `cliamp`). |
+| turn-control | `src/domains/turn-control/**` | Pure turn facts, the detached-collection decision and turn outcome reduction. |
+| user-tasks | `src/domains/user-tasks/**` | Library and CLI-owned durable user task list plus board handoff state. |
+| workspace-snapshots | `src/domains/workspace-snapshots/**` | Git snapshots of the worktree taken before mutating calls, built in a private per-session index under `refs/pancode/snapshots/`, and the `/rewind` plan and restore. |
+
+The `interop` domain owns one question: which other coding agents are on this
+machine and in this project. [registry.ts](../../src/domains/interop/registry.ts) is pure data, one
+entry per known agent carrying its binaries, the directories it owns, its skill
+and prompt roots, its instruction filenames, and the ACP launch recipe when it
+has one. Consumers derive their agent-specific behavior from this table: the skills loader and the prompts loader take their compatibility
+roots from the table, the adoption scanner takes its candidate files from it,
+and the safety path policy takes the foreign directories it refuses to write
+into from it.
+
+The domain owns detection and consent, and nothing else. It never executes a
+foreign agent's work command, never loads a skill, prompt, or rule itself, and
+never reads under a foreign agent's `sessions`, `history`, `cache`, `projects`,
+or `state` directory. Detection resolves binaries with `access(X_OK)` and no
+shell, checks install directories, and runs a bounded `--version` only when the
+caller asks and only for a binary that already resolved; a probe that cannot
+answer reports `unknown` and never `absent`. The one durable configuration write
+is an append to `integrations.externalAgents.entries`, and it happens only after an operator
+decision.
+
+---
+
+## Domain loading order and bootOrchestrator
+
+`bootOrchestrator` in [orchestrator.ts](../../src/entry/orchestrator.ts) is the one composition root for the interactive, headless, and ACP surfaces. It calls `loadDomains` from [domain-loader.ts](../../src/core/domain-loader.ts) with the module list below. The loader:
+
+1. Sorts the modules topologically by `manifest.dependsOn`. A duplicate name, an unresolved dependency, or a cycle throws `DomainLoadError` before anything starts. Modules that do not depend on each other keep their list order.
+2. For each module in order, awaits an optional `beforeEach` hook, calls `createExtension(context)`, runs `extension.start()`, and stores the returned contract under the domain name. Interactive boot uses `beforeEach` to yield to the event loop so the Stage 0 shell answers input between domains.
+3. Hands each module a `DomainContext` whose `getContract(name)` returns only the published contract, never the extension, typed by the name's row in `DomainContractMap` ([domain-contracts.ts](../../src/core/domain-contracts.ts)) rather than by a type argument. Extensions are process-local. Contracts are the cross-domain surface: they answer queries and take the owning domain's own commands, but carry no right to install or replace another domain's behavior. Middleware hook registration (`MiddlewareRegistrar`) and the telemetry run-reader binding go only to the composition that owns those domains, through `createMiddlewareDomain` and `createTelemetryDomain` (rule17 in `tests/boundaries/check-boundaries.ts`).
+4. On a failed start, stops every domain already started and throws. It emits `domain.loaded` and `domain.failed` bus events as it goes.
+
+| Order | Domain | `dependsOn` |
+| ---: | --- | --- |
+| 1 | config | none |
+| 2 | extensions | config |
+| 3 | plugins | config |
+| 4 | interop | config |
+| 5 | resources | config |
+| 6 | share | config, extensions, resources |
+| 7 | context | resources |
+| 8 | providers | config |
+| 9 | safety | config |
+| 10 | agents | config |
+| 11 | prompts | config, context, resources, agents |
+| 12 | middleware | none |
+| 13 | memory, declared inline | none |
+| 14 | session | config |
+| 15 | telemetry | config, providers, session |
+| 16 | scheduling | config, telemetry |
+| 17 | mux, only when the pane tier is active | none |
+| 18 | dispatch | config, safety, agents, providers, middleware, prompts, scheduling |
+
+Telemetry deliberately omits dispatch from its `dependsOn`, even though it listens to the dispatch bus channels, so that scheduling can sit between telemetry and dispatch without a cycle. The mux module is imported dynamically through [with-panes.ts](../../src/entry/with-panes.ts), and only when `resolvePanesEnablement` ([panes-activation.ts](../../src/entry/panes-activation.ts)) says the extension is active, so a plain boot loads no mux code.
+
+Shutdown stops domains in reverse load order. Each `stop()` runs under a per-hook time budget, and a failure or timeout is logged with a `[pancode:domain-loader]` prefix and does not block the remaining domains.
+
+Around the loader, `bootOrchestrator` does the work that must precede or follow the domains:
+
+- Ensures the state directories and reports untrusted project safety, settings, extensions and plugins surfaces.
+- Prepares recovery of the compete-group and task worktrees a hard-killed coordinator left behind ([boot-recovery.ts](../../src/domains/dispatch/boot-recovery.ts)). It starts once the first frame is up on an interactive boot and with the session on a headless or ACP boot, and dispatch holds its ledger scan and every admission until it settles.
+- Emits the `session.started` bus event, then composes the tool registry, System One, safety wiring, and chat.
+- Hands off to one surface. Interactive boot imports `startInteractive` from `src/interactive/index.ts`. A headless run calls `runHeadlessMainAgent` in [print.ts](../../src/cli/modes/print.ts). An ACP boot serves the protocol through `src/engine/acp/server.ts`.
+
+---
+
+## Cold-start work
+
+Two pieces of start-up work are bounded. Run recovery reads only the ledger rows that can matter, so boot cost is independent of run history. The workspace probe is shared between the callers of a first prompt, so the tree is not probed again for each.
+
+### Orphan run recovery
+
+The dispatch domain's start opens the run ledger. Once worktree recovery settles, it reloads the ledger, since a sibling may have settled a run in the meantime, and calls `recoverAbandonedRuns` ([orphan-recovery.ts](../../src/domains/dispatch/orphan-recovery.ts)). A non-terminal ledger row of this host whose worker process no longer exists is settled from its run's `run.settled` record when the run journal holds one. Otherwise the row closes as `stalled`, its `endedAt` set to the last heartbeat, and the domain journals the `run.settled` the dead host never wrote. A terminal row whose run journal holds `run.settled` but no seal gets its `run.sealed` and `bundle.json` now. Rows another host created are left to that host. A pass of assignment reconciliation follows, which settles each durable assignment left `running` by a crash against the ledger's evidence, so a wait or collect never hangs on it. A non-interactive boot that settled or closed anything prints `[dispatch] ledger recovery: sealed=<n> abandoned=<n>` and `[dispatch] assignment reconcile: recovered=<n> abandoned=<n>` to stderr. Recovery is best-effort and never blocks startup.
+
+### Workspace probe reuse
+
+A workspace probe ([snapshot.ts](../../src/domains/session/workspace/snapshot.ts)) is seven `git` subprocesses and a project-type file walk. A first prompt asks for one from three places: the interactive host's boot probe that fills the welcome dashboard, the session prompt's source capture, and session bind, whose synchronous probe would block the event loop right before the first request. `probeWorkspace` and `probeWorkspaceAsync` take an optional `reuseWithinMs`, and `WORKSPACE_PROBE_REUSE_MS` is 5,000.
+
+- A probe that landed for the same `cwd` within the window answers a caller that passes `reuseWithinMs`. The caller gets that snapshot with its original `capturedAt`.
+- The async variant also joins a probe already in flight for the same `cwd`. The synchronous variant can reuse only a landed one.
+- Session bind (`create` in [extension.ts](../../src/domains/session/extension.ts)) and the session prompt's source capture ([extension.ts](../../src/domains/prompts/extension.ts)) pass the 5,000 ms window.
+- A caller that passes no `reuseWithinMs` always probes, as the `context` tool's `scope="workspace"` fallback does. Every probe that runs, including one for a caller that passes no `reuseWithinMs`, refreshes what later callers may reuse. A reused answer does not.
+
+---
+
+## The decision layer is System One
+
+System One at `src/domains/system-one/` is the only decision layer, and it is off until `systemOne.use` names a route. The providers domain owns no per-turn decisions. A decision point names one object, an engine answers a typed question set about it, and the point reads the answers into a typed value. Every ask returns a verdict or `null`, and `null` means the caller behaves as if System One did not exist. The agent's `consult` tool, the judge screen and typed steering triage are its only callers. The contract, engines and runner are in [System One](system-one.md).
+
+---
+
+## Session Routing vs. Persisted Settings
+
+PanCode maintains an explicit distinction between persisted user settings (`settings.yaml`) and session-local routing state ([session-routing.ts](../../src/core/session-routing.ts)).
+
+1. **Decoupled Overlays**: Turn-level selections (such as active target, model override, thinking level, and scoped models cycled via explicit model-cycle keys) apply dynamically through `applySessionRouting` without mutating `settings.yaml`.
+2. **Lifecycle Flow**:
+   - `seedSessionRouting`: Seeds runtime fields from configuration at startup.
+   - `applyRoutingPatch`: Applies surgical routing mutations (such as changing active model or target in the TUI).
+   - `diffRouting`: Computes the field-level routing diff between two settings blobs, so routing edits made through a whole-settings writer such as the `/settings` overlay are absorbed into session state without persisting unrelated edits as new defaults.
+   - `routingChangeNotices`: Generates the advisory notices a running session emits when an external writer changes `settings.yaml` underneath it. The session keeps its routing and new sessions use the saved defaults.
+   - `restoreRoutingFields`: Copies the session's routing fields onto a whole-settings blob before it is persisted, so a `/settings` edit to an unrelated key does not rewrite the saved routing defaults with the session's live routing.
+
+---
+
+## Workspace Enumeration and Language Classification
+
+Source: [workspace-files.ts](../../src/core/workspace-files.ts), [c-header-language.ts](../../src/core/c-header-language.ts).
+
+1. **Filesystem Walker Invariants**:
+   Fallback workspace file enumeration enforces strict safety caps to prevent runaway memory usage or hangs on massive trees:
+   - `maxVisitedEntries`: 100,000 entries
+   - `maxDepth`: 64 directory levels
+   - `maxPathBytes`: 64 MiB total path storage
+   - `maxDurationMs`: 5,000 ms timeout
+2. **C/C++ Header Classification**:
+   Ambiguous `.h` headers are classified deterministically from content:
+   - Only `.h` is ambiguous. `.hpp`, `.hh`, and `.hxx` are always C++. `classifyCHeaderLanguage` reads only the file content, so full builds and incremental updates agree.
+   - Comments and string literals are blanked first.
+   - C++ include forms win first: a C++-only standard header such as `<vector>`, or an include of a `.hpp`, `.hh`, `.hxx`, or `.cuh` file.
+   - Then a class or struct body with a member function declaration.
+   - Then C++-only syntax such as `namespace`, `template<`, `class`, `::`, access specifiers, C++ casts, `nullptr`, and `constexpr`.
+   - A header matching none of them, including C inside an `extern "C"` wrapper, stays C.
+
+## Codemap ownership and worker boundary
+
+The codemap keeps its boot-time read surface separate from its build graph:
+
+- [schema.ts](../../src/domains/context/codewiki/schema.ts), `artifact.ts`, and `paths.ts` own the
+  stable data shapes, normalized artifact compatibility, synchronous and
+  asynchronous reads, serialization, and cheap path classification. Reading a
+  cached artifact does not load tree-sitter.
+- `indexer.ts` owns full, synchronized, and incremental candidate construction.
+  Its tree-sitter adapter is a real dynamic import; grammars load only for the
+  source paths an actual build needs.
+- `build-worker.ts` is the sole runtime execution boundary for codemap
+  candidate walks, freshness fingerprinting, and parsing. Other context surfaces
+  independently detect project metadata, but the interactive process does not
+  run a codemap scan or an uninterruptible parser call on its render/input loop.
+- `coordinator.ts` owns production commits. One FIFO per workspace establishes
+  generation order inside a process, and `withStateFileLock` extends that order
+  across PanCode processes. Each transaction rereads the artifact after acquiring
+  the lease, publishes atomically, and updates freshness state before releasing
+  ownership.
+
+Session-start refresh, parallel tool demand, incremental mutation notices,
+explicit index/refresh, context bootstrap, wiki grounding, and context reset all
+enter this transaction boundary. A never-indexed workspace remains untouched by
+background session startup. `code_nav` still waits for a fresh demand result;
+reset queues behind already-admitted work and therefore cannot be undone by an
+older completion. Context-domain shutdown drains both mutation admission and the
+coordinator lane before returning. The direct builder and artifact writer remain
+available to build scripts and test fixtures, but production workspace writes
+must go through the coordinator.
+
+## Lazy built-in tool boundary
+
+The registry always owns one complete, immutable `ToolSpec` surface before a
+model turn starts. Seventeen tools register through `lazyTool` and keep their
+name, description, TypeBox schema, action class, execution mode, synchronous
+argument hooks, source provenance, and policy metadata in lightweight surface
+modules. [core-bootstrap.ts](../../src/tools/core-bootstrap.ts) registers `context`, `code_nav`,
+`verify`, `data`, `store`, `web_fetch`, `web_read`, `run_script`, `pancode_docs`, and
+`pancode_hub`. [bootstrap.ts](../../src/tools/bootstrap.ts) registers `ledger`, `monitor`,
+`steer`, `panes`, `report`, `music`, and `browser`. `registerAllTools` registers those surfaces in
+the same order as every other built-in; capability discovery, worker
+attestation, provider schema serialization, safety classification, autonomy and
+permission admission, and `before_tool` middleware therefore run without
+evaluating the implementation. The worker composition root imports
+`core-bootstrap.ts` directly (through [worker-tools.ts](../../src/engine/worker-tools.ts)), so its real
+built entry never evaluates the orchestrator-only dispatch, monitor, or steer
+runners. The orchestrator-side registration adds `dispatch` after the core
+tools, `monitor` and `steer` when dispatch is composed, with `ledger` behind the
+gateway unless an agent ledger is supplied, the job `monitor` when a job host
+exists without dispatch, `panes` when
+a pane host exists, `report` when the session's report host is bound, and `music` when `integrations.music.agentControl` is on and
+the music pane could play at startup (`integrations.music.enabled`, a live pane
+host, and a resolved cliamp). `browser` registers, like `web_fetch` and
+`web_read`, unless `PANCODE_DISABLE_RETRIEVE_TOOLS=1` disables the network tools.
+
+Dispatch is the one stateful lazy boundary. Its synchronous admission controller
+owns the exact WeakMap/WeakSet identities for trusted plans, parsed requests,
+capacity reservations, Scout plans, and prepared arguments. The dynamically
+loaded runner receives that same controller state; it never reconstructs an
+approved call. A deeply frozen, discriminated execution snapshot also pins the
+normalized requests, mode, review/compete settings, detach flag, timeout, output
+bound, and an `apply_winner` branch plus absolute repository destination before
+middleware or an approval prompt can expose the prepared argument identity. The
+winner destination is part of the rendered and hashed approval artifact.
+Admission disposal is one registry-owned finally boundary, so a
+middleware guard block, ordinary return, or thrown body releases a provisional
+reservation exactly once.
+
+For ordinary lazy tools, only the admitted `run` step crosses
+[lazy-tool.ts](../../src/tools/lazy-tool.ts). One cached promise owns the implementation import,
+including a deterministic failure, so concurrent first calls cannot initialize
+competing implementations. The loaded spec must match the advertised surface
+before its body can run. Ordinary body exceptions, result shaping, `after_tool`
+middleware, abort signals, and telemetry continue through the registry's
+existing path. This mechanism is built-in-only; it does not turn extension
+manifests or provider plugins into an executable tool loader. Dispatch is
+different: `registerAllTools` creates its lightweight admission surface eagerly,
+and [dispatch.ts](../../src/tools/dispatch.ts) owns a separate cached dynamic import of
+`dispatch-runner.ts` after admission succeeds. It does not pass through
+`lazy-tool.ts`.
+
+## Boundary invariants
+
+`pnpm run lint` runs `biome check .` and then [check-hygiene.ts](https://github.com/akougkas/pancode/blob/main/scripts/check-hygiene.ts), which runs the boundary checker ([check-boundaries.ts](https://github.com/akougkas/pancode/blob/main/tests/boundaries/check-boundaries.ts)) against `src/` on a worker thread. Contract tests under `tests/contracts/` run it against synthetic fixtures that pin each rule's wording. Treat these checks as executable specifications. The checker reads import and export specifiers, dynamic `import("...")` calls, and `/// <reference>` directives in every `.ts`, `.tsx`, and `.mts` file under `src/`. It does not scan `apps/`, `tests/`, or `scripts/`.
+
+The enforced import rules below are complemented by the maintained
+[Pi SDK boundary table](pi-boundary.md), which records the semantic owner of
+each overlapping helper and the PanCode deltas that must survive an SDK upgrade.
+
+Nine import rules apply. The same checker also runs rules 10 to 14, which hold telemetry accounting rather than imports and are described in [Telemetry](telemetry.md), and rules 15 to 18. Rule 15 holds [orchestrator.ts](../../src/entry/orchestrator.ts) to wiring: no value import of a feature module's internals, no module-scope function outside the declared wiring helpers, and at most 4,800 lines. Rule 16 lets only `chat-loop.ts` and `turn-state.ts` in `src/session-control/` name `ChatTurnState`, and only `turn-state.ts` assign a continuation field. Rule 17 keeps a domain owner's capability inside its domain and its declared holders. Rule 18 forbids branching on a built-in recipe id outside `src/domains/agents/`. Rules 1, 3, 4, 5, 7, 8, and 9 hold for every import form, type-only and dynamic included. Rule 2 and rule 6 treat a type-only import differently from a value import, because a type-only import erases at compile time. A dynamic `import()` always counts as a value import.
+
+### Rule 1: `@earendil-works/pi-*` imports stay in `src/engine/**`
+
+Only files under `src/engine/**` may import `@earendil-works/pi-*` packages, including subpaths such as `@earendil-works/pi-ai/compat`. No file outside `src/engine/**` may import those packages at all, value or type-only. Domain modules import erased engine shapes (`EngineModel`, `Api`, `Model`) directly from [types.ts](../../src/engine/types.ts).
+
+Why: provider SDKs and pi-ai engine values must remain swappable behind one engine boundary. Domains and presentation layers operate against PanCode contracts rather than vendor or runtime implementations. [api-registry.ts](../../src/engine/api-registry.ts) dispatches by API through Pi's public lazy factories, supplies environment API keys, and lets PanCode's local-runtime adapters override API families. PanCode owns credential storage and the locked OAuth refresh lifecycle, delegating provider flows through [oauth.ts](../../src/engine/oauth.ts). The only `pi-ai/compat` edge is dynamic: when `integrations.runtimePlugins` is configured, PanCode joins Pi's process-global registry before an out-of-tree runtime evaluates and mirrors its overrides so plugins retain registry identity and last-writer-wins order. No configured plugin means no compatibility aggregate. The per-helper ownership, including the tool truncation, prompt-argument, and replay helpers derived from Pi sources, is in [pi-boundary.md](pi-boundary.md).
+
+### Rule 2: Workers do not value-import domains except runtime rehydration
+
+Files under `src/worker/**` may not value-import `src/domains/**`, with the sole exception of worker-safe provider runtime rehydration modules:
+
+- [plugins.ts](../../src/domains/providers/plugins.ts)
+- [registry.ts](../../src/domains/providers/registry.ts)
+- [builtins.ts](../../src/domains/providers/runtimes/builtins.ts)
+
+Type-only imports erase at compile time and are permitted. Workers receive a serializable `WorkerSpec` envelope, rehydrate only necessary target/runtime descriptors, and avoid pulling interactive state or domain stores into worker subprocesses.
+
+### Rule 3: Domains do not import each other's `extension.ts`
+
+A file under `src/domains/<x>/**` must not import `src/domains/<y>/extension.ts` for `y != x`. Cross-domain behavior flows through the public contracts a domain exports from its `index.ts` barrel, the domain loader's `getContract`, event buses, or serialized manifests. This rule forbids only `extension.ts`. Other files inside a domain can be imported across domains by relative path, so the barrel is the convention for a domain's public surface and rule 3 and rule 7 are what the checker holds.
+
+### Rule 4: Tool substrate is surface-agnostic (`src/tools/**` never imports `src/interactive/**`)
+
+Files under `src/tools/**` may never import `src/interactive/**` (neither value nor type-only imports). The tool substrate is surface-agnostic across headless, interactive, ACP, and worker runs. Allowing tools to import TUI presentation modules would couple execution logic to presentation code.
+
+### Rule 5: One-way entry point composition (`chat-loop*.ts` never imports `src/entry/**`)
+
+Turn modules and state machine files in the chat loop (`src/session-control/turn-*.ts`, `src/session-control/chat-loop*.ts`) may never import `src/entry/**`. Composition flows in one direction only: the entry point composes the chat loop, never the reverse.
+
+### Rule 6: Stage 0 remains behind declared seams
+
+The instant shell's Stage 0 owner is `src/interactive/terminal-lease.ts`. Its static value-import closure is what a cold `pancode` start pays before it can draw anything. Value importers outside that computed closure and outside the `src/interactive/**`, `src/session-control/**`, and `src/engine/**` trees may enter those protected trees only through a module declared in `STAGE0_SEAMS` in `tests/boundaries/check-boundaries.ts`. Every `src/cli/**` import into the protected trees needs a declaration, type-only included. Each declaration carries a reason. A declared seam may not lead back into the Stage 0 closure unless the existing composition-root overlap is explicitly recorded in its `allowStage0OverlapFrom` list, and each exception names its permitted composition-root importer.
+
+The rule exists because a second, disjoint reacher into a module in the closure makes esbuild split that module out of the chunk it shared with its neighbours. [instant-shell-import-graph.test.ts](https://github.com/akougkas/pancode/blob/main/tests/contracts/instant-shell-import-graph.test.ts) walks the built chunk that contains the Stage 0 owner and holds its static closure to 32 chunks, 1,400,000 total bytes, and 400,000 PanCode source bytes. That test fails only after a full build, so the lint-time rule is the early warning.
+
+### Rule 7: `turn-control` is pure
+
+Files under `src/domains/turn-control/**` import no `src/interactive/**`, `src/engine/**`, `src/tools/**`, or `src/worker/**` module. They reach other domains only through that domain's `index.ts`. The rule holds for type-only imports too.
+
+### Rules 8 and 9: Session control and engine do not depend on terminal rendering
+
+Neither `src/session-control/**` nor `src/engine/**` may import `src/interactive/**`, including type-only imports. The TUI, headless main, and ACP server share the session-control contract; ACP reaches session behavior through that contract. Terminal rendering remains a consumer of session behavior. These are rules 8 and 9 in [check-boundaries.ts](https://github.com/akougkas/pancode/blob/main/tests/boundaries/check-boundaries.ts).
+
+---
+
+## The graphical application boundary
+
+The graphical application is a separate workspace package, `pancode-gui`, under `apps/pancode-gui`. It has its own `package.json`, TypeScript configs, test suite, and lint step, and its server is a Hono process bound to `127.0.0.1` that serves only clients holding a credential. A launcher gets a credential by proving it holds the launch token over a single-use challenge, a browser opens through a single-use launch ticket, and the launch token is new on every start, the background app's included. The guide to using it is [the GUI guide](../guide/gui.md).
+
+The root checker in `tests/boundaries/check-boundaries.ts` does not scan it. Its own `apps/pancode-gui/tests/boundaries.test.ts` allows exactly six ways to reach root `src/`:
+
+- `server/pancode/wire-shims.ts` re-exports the browser-safe ACP wire declarations: everything in `src/engine/acp/types.ts` and its `types-*.ts` modules, plus the context-operation types from `src/core/context-operation.ts` and `src/core/telemetry/live-events.ts` as type-only exports, and the telemetry read model's wire types and schemas from `src/core/telemetry/dto.ts`. It evaluates no process transport.
+- `server/pancode/wire-runtime.ts` takes only `ACP_MAX_JOBS` from `src/engine/acp/runtime.ts`.
+- `server/pancode/http-shims.ts` re-exports a fixed allowlist for the HTTP process: the ACP stdio transport, errors, and wire types, the XDG directory helpers, `resolvePackageRoot`, process-identity probes, the running-build helpers and `runningBuildId`, the canonical telemetry renderer, `WORKSPACE_SECRET_PATHS`, and `getVersionInfo`. The wire types must be type-only.
+- `server/pancode/adapters/*.ts` import an allowlist of root domain and core modules, such as the telemetry read model, evidence projections, settings layers, provider registry, and dispatch state types. Adapters are blocking readers, so only the worker entries (`server/worker/reads-main.ts` and `ops-main.ts`) and the test harness's adapter may import them, which keeps their work off the HTTP event loop.
+- `client/` modules import `src/core/views/` directly: the approval, count, diff-row, hub, slash, tool and usage words the terminal also renders from, so both surfaces word a view from one source. The same test holds that tree, like `contracts/`, free of any Node builtin through its value imports.
+- `tests/harness` and `tests/fixtures` use a separate test-seam allowlist.
+
+Any other import of `src/` from the application fails its boundary test. The same test pins the process chokepoint: only `server/process-policy.ts` may create child processes or `Worker` threads, and only it may call the ACP `createStdioTransport`. The application's one escape to the CLI is the closed command table in `server/cli-commands.ts`, which maps a fixed set of kinds to fixed `pancode` argv, with no generic command or extra arguments.
+
+---
+
+## Runtime flow
+
+```mermaid
+graph TD
+    BIN[bin/pancode.cjs] --> CLI[cli/index.ts command table]
+    CLI --> PanCode[cli/pancode.ts runPancodeCommand]
+    CLI --> RUNC[cli/run.ts headless]
+    CLI --> ACPC[cli/acp.ts ACP server]
+    CLI --> SUB[other subcommands]
+    RUNC --> PanCode
+    ACPC --> PanCode
+    PanCode --> ORCH[entry/orchestrator.ts bootOrchestrator]
+    ORCH --> DOMAINS[core/domain-loader.ts and domain modules]
+    ORCH --> TUI[interactive/index.ts startInteractive]
+    TUI --> LOOP[session-control/chat-loop.ts]
+    LOOP --> PROMPTS[prompts compiler]
+    LOOP --> TOOLS[tool registry]
+    LOOP --> ENGINE[engine runtime]
+    TOOLS --> SAFETY[safety policy]
+    TOOLS --> MIDDLEWARE[middleware hook boundary]
+    ENGINE --> PROVIDERS[provider runtime descriptors]
+    DOMAINS --> DISPATCH[dispatch domain]
+    DISPATCH --> WORKER[worker subprocess: dist/worker/entry.js]
+    WORKER --> PROVIDERS
+```
+
+Core data paths:
+
+1. `src/cli/index.ts` statically loads argument parsing, boot tracing and a few process-setup helpers. Every subcommand is a dynamic import in its command table, so a bare start or `--version` pays for its own module graph. Interactive start, `run`, and `acp` all call `runPancodeCommand` in [pancode.ts](../../src/cli/pancode.ts), which settles the startup settings, detects or configures a chat route for an existing home, and opens the Stage 0 terminal lease for an interactive TTY. When a newer PanCode last used the home, the terminal asks before continuing (default no), and `run` and ACP exit 2 unless `PANCODE_ALLOW_OLDER=1` is set.
+2. `bootOrchestrator` initializes config, data, state, and cache directories through [init.ts](../../src/core/init.ts), then runs the domain loader described above. Each domain's `manifest.ts` dependency list sets its position. The dispatch domain's start recovers orphaned runs, and session bind and the session prompt share workspace probes ([Cold-start work](#cold-start-work)).
+3. The shared chat loop in `src/session-control/` resolves model/runtime state. `resolveSessionTools` in [agent-tools.ts](../../src/tools/agent-tools.ts) supplies the full resolved tool surface when the runtime supports tools, subject to explicit turn constraints. Task-ranked skills and capability advice enter reminder text; the task does not select a different session schema set.
+4. The prompt compiler builds a hashed prompt envelope and dynamic turn fragments.
+5. Tool calls enter [registry.ts](../../src/tools/registry.ts), which enforces visibility, safety, middleware hooks, protected artifacts, and result shaping before returning output.
+6. Fleet dispatch writes run ledger entries and journals each run in its own telemetry scope, and spawns each worker as a subprocess. A local worker is `dist/worker/entry.js` ([entry.ts](../../src/worker/entry.ts)); SSH placement launches `pancode worker` on the remote install. The worker reads a `WorkerSpec` from stdin, rehydrates the runtime descriptor, runs the engine worker runtime ([worker-runtime.ts](../../src/engine/worker-runtime.ts)), and emits NDJSON events on stdout. Evidence and memory domains read the sealed run records later.
+
+---
+
+## Event and accountability model
+
+PanCode uses one in-process telemetry hub for status and accountability surfaces, but safety is not delegated to events. The hard gate lives in code:
+
+- Provider capability resolution decides whether tool schemas are sent at all. A tool-capable session gets the complete registry as one deterministic surface, with each tool placed `direct` (schema attached to every request) or behind the `gateway` tool (found and called on demand). Placement changes what the model sees and never what a call is allowed to do ([surface.ts](../../src/tools/surface.ts)).
+- [policy-engine.ts](../../src/domains/safety/policy-engine.ts) evaluates damage-control rules, project policy, Bash default-deny, and path policy. Playbook step write boundaries are detect-and-rollback mechanisms (change tracking and rollbacks) with no OS-level confinement. The policy engine blocks writes outside dispatch `write_roots`.
+- The OS sandbox (`safety.sandbox`, `src/core/sandbox/`) contains shell commands in two places. A dispatched worker's own `bash`, `run_script` and verification commands run in the worker sandbox, bound to its write roots. At autonomy `default`, and at contained `yolo`, the main session's `bash` and `run_script` also run contained in the main-session sandbox, which writes the workspace, the repository's git directories with their hooks and config kept read-only, the temp roots, `safety.scratchRoots` and its own `sandbox-cache` under the cache root. Credential variables and secret files are hidden inside either sandbox, and `safety.sandboxUnixSockets: block` refuses new Unix-domain sockets.
+- [registry.ts](../../src/tools/registry.ts) is the admission point for every tool invocation.
+- [seal.ts](../../src/domains/telemetry/seal.ts) seals the run journals whose `run.settled` records the evidence and cost surfaces read.
+
+## Interactive render transactions
+
+The interactive shell owns one concrete pi-tui renderer. PanCode's instrumented
+subclasses bracket the renderer's protected `doRender()` seam, so one render
+transaction receives one `frameId` even when regular-screen cursor/IME work
+issues several terminal writes. Protocol, startup, and shutdown writes outside
+a render retain `frameId: null`; they are never fabricated into frames.
+
+The root component is timed in place so its identity and fullscreen layout
+markers do not change. Public pi-tui seams provide component/layout, overlay,
+normalization, and cursor-extraction phases. Viewport selection, diffing, ANSI
+construction, and remaining cursor work are reported as one combined
+remainder because the engine does not expose narrower hooks. The stdout
+boundary records enqueue duration, return value, backpressure, and drain.
+
+Canonical text/thinking events are numbered at the beginning of the primary
+projection, before any consumer. Panel admission/application and the first
+committed frame's high water establish event causality without changing the
+public event object or fan-out order. Input is numbered after terminal protocol
+decoding and before the application controller mutates editor, overlay, scroll,
+or submit state. The first frame whose input high water includes that id is the
+input-to-stdout-commit endpoint.
+
+Adaptive streaming remains inside that presentation boundary. One semantic
+classifier drops only transparent raw text/thinking mirrors, sends derived
+visible content through one generation/epoch FIFO, and treats every other
+transcript mutation as an ordered drain boundary. A delta landing on an empty
+queue is released at once, and only a burst's excess is spread out. Pacer slices
+reach the panel without the public bus, past a cost gate that spaces answer text
+once an open reply passes 20 KiB, and are never re-emitted there, so session storage,
+replay/export, tool-call formation, and cumulative tool-result behavior keep
+their canonical synchronous inputs. Abort, retry, interrupt, submit, mode
+change, and teardown drain the queue and can await the containing committed
+frame. The stdout gate ([stdout-backpressure.ts](../../src/interactive/stdout-backpressure.ts)) stops later frame construction after a false write and
+coalesces to current model state until `drain`. It is installed only while stream pacing is active: `interface.smoothStreaming` is `on`, or it is `auto` and `processAutoPacingAllowed` finds a TTY outside SSH, tmux, screen, CI, and the reduced-motion and screen-reader markers with no earlier backpressure. With `off` the gate is never installed, so it cannot become a second unbounded SSH buffer.
+
+Interactive boot has one terminal owner across its two stages. The
+`TerminalLease` creates one terminal/TUI/root host/editor and owns raw mode,
+decoded input, resize, protocol initialization, signal routing, and teardown.
+Stage 0 mounts a small static shell on that owner. Stage 1 hydrates services and
+atomically replaces the root plus input/signal delegates while preserving the
+editor object and buffer. Submissions accepted before attachment are immutable
+FIFO records shown in the shell and admitted exactly once through the normal
+slash/bash/chat pipeline after attachment. A generation guard rejects a late
+hydration after shutdown; every failure path shares one idempotent close and
+terminal restoration transaction. The source boundary checker protects the
+declared Stage 0 closure and seams. ACP, headless, ordinary non-TTY invocation, help, and
+subcommands never construct a lease; the established explicit
+`PANCODE_INTERACTIVE=1` non-TTY override remains force-interactive.
+
+The render trace is opt-in and content-free. `PANCODE_RENDER_TRACE` names a JSONL file ([render-trace.ts](../../src/interactive/render-trace.ts), format version 2) written by a bounded asynchronous writer that never does filesystem append I/O on the render stack, and shutdown awaits a bounded flush. A small in-memory ring of recent input and frame records stays on without the file so a wedged pane can still say which half of the input pipeline stopped. See [TUI boot performance](tui-boot-performance.md) for the boot stages and how to benchmark them.
+
+## Command spec
+
+Interactive slash commands in PanCode are governed by a declarative command specification registry (`BUILTIN_SLASH_COMMANDS` in [slash-commands.ts](../../src/session-control/slash-commands.ts), which assembles the entries grouped in `src/session-control/slash-handlers/`). Each entry defines the name, flags, positionals, and subcommands of one command. The central registry is the single source of truth for command matching, argument parsing, autocomplete suggestion generation, and usage help output. The parser turns an input string into a structured argument object and a canonical command representation using these specifications. The headless refusal in `src/cli/run.ts` and the ACP command projection read the same registry, so every surface agrees on which tokens name a command.
+
+---
+
+## Verification commands
+
+```bash
+pnpm run lint
+pnpm run typecheck
+pnpm run test
+pnpm run build
+```
+
+The source checks validate documentation links, source paths, prose conventions, types and import boundaries. `node --import tsx scripts/check-hygiene.ts` enforces the static hygiene invariants.
