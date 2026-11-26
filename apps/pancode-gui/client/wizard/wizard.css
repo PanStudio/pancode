@@ -387,9 +387,6 @@
 .wizard-card:hover:not(:disabled) {
 	background: none;
 }
-.wizard-card:focus-visible {
-	outline-offset: -2px;
-}
 .wizard-card__icon {
 	display: grid;
 	place-items: center;

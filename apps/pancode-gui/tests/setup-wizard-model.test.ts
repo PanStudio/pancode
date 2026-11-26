@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { setupWorkspaceId, withOpenedWorkspace, workspaceNotice } from "../client/pages/home-draft-model.js";
 import { readMessages, stepFor, viewFor, workingLabel } from "../client/wizard/wizard-model.js";
@@ -171,4 +172,10 @@ test("an opened workspace is listed at once, even when the list read before the 
 		[{ id: "ws-a" }, { id: "ws-z" }],
 		"a reopen moves, not copies",
 	);
+});
+
+test("a wizard choice's focus ring sits outside the row, clear of its flush-left text", () => {
+	const css = readFileSync(new URL("../client/wizard/wizard.css", import.meta.url), "utf8");
+	assert.match(css, /\.wizard-card \{[^}]*padding: var\(--space-3\) var\(--space-2\) var\(--space-3\) 0;/);
+	assert.doesNotMatch(css, /\.wizard-card:focus-visible \{[^}]*outline-offset: -/);
 });
