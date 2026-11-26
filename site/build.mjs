@@ -347,11 +347,19 @@ const themeColors = ["light", "dark"]
 	.join("");
 // A page title keeps the product name once.
 const pageTitle = (title) => (title.includes("PanCode") ? title : `${title} · PanCode`);
-const publisher = {
+const founder = {
 	"@type": "Person",
-	"@id": `${product.origin}/#publisher`,
+	"@id": `${product.origin}/#founder`,
 	name: "Anthony Kougkas",
 	url: "https://akougkas.io/",
+	jobTitle: "Founder, PanStudio",
+};
+const publisher = {
+	"@type": "Organization",
+	"@id": `${product.origin}/#publisher`,
+	name: "PanStudio",
+	url: `${product.origin}/`,
+	founder: { "@id": founder["@id"] },
 };
 const plainText = (html) =>
 	html
@@ -394,7 +402,7 @@ function head(
 				description: product.description,
 				inLanguage: "en",
 				publisher: { "@id": publisher["@id"] },
-				copyrightHolder: { "@id": publisher["@id"] },
+				copyrightHolder: { "@id": founder["@id"] },
 				copyrightYear: 2026,
 			},
 			{
@@ -410,17 +418,17 @@ function head(
 				...(lastmod ? { dateModified: lastmod } : {}),
 			},
 			publisher,
+			founder,
 		],
 	};
 	const page = graph["@graph"][1];
 	if (type === "Article" || type === "TechArticle") {
 		page.headline = title.replace(titleSuffix, "");
 		page.mainEntityOfPage = url;
-		page.author = {
-			"@type": "Person",
-			name: article?.author ?? publisher.name,
-			url: `${product.origin}/#project`,
-		};
+		page.author =
+			!article?.author || article.author === founder.name
+				? { "@id": founder["@id"] }
+				: { "@type": "Person", name: article.author };
 		page.publisher = { "@id": publisher["@id"] };
 		page.image = [imageUrl, ...(article?.image ? [`${product.origin}${article.image}`] : [])];
 		page.about = { "@id": `${product.origin}/#application` };
@@ -1253,15 +1261,16 @@ await cp(join(root, "robots.txt"), join(out, "robots.txt"));
 await writeFile(
 	join(out, "humans.txt"),
 	`/* TEAM */
-Author: ${publisher.name}
-Role: Creator and maintainer of ${product.name}
-Site: ${publisher.url}
+Author: ${founder.name}
+Role: Founder, ${publisher.name}
+Site: ${founder.url}
 GitHub: https://github.com/akougkas
 
 /* THANKS */
 The authors of the Pi agent framework, Schibsted Grotesk, Instrument Sans, IBM Plex Mono and marked.
 
 /* SITE */
+Publisher: ${publisher.name}
 Product: ${product.name}, ${product.tagline.charAt(0).toLowerCase()}${product.tagline.slice(1)}
 Source: ${repository}
 License: PanCode License 1.0 (source-available)
@@ -1365,7 +1374,7 @@ const llmsSummary = `# PanCode
 
 PanCode is a harness for development work. Panos, its orchestrator agent, plans a task, runs it on the models you connect and hands parts of it to workers, including the coding agents you already have. It routes across providers, sandboxes commands, checks finished work against what ran and keeps memory, in the terminal, in scripts and CI, in ACP editors or on the desktop. PanHub packs and PanKit servers cover HPC and scientific software.
 
-PanCode needs no account and no root, and sends nothing home. It is source-available under the PanCode License 1.0: free for individuals, small organizations, and noncommercial research and teaching. ${publisher.name} writes and maintains it.
+PanCode is a product of ${publisher.name}. It needs no account and no root, and sends nothing home. It is free for individuals, small organizations (fewer than 100 people and under $1M revenue), and noncommercial research and teaching. Its source is available on GitHub under the PanCode License 1.0. Larger organizations get a 32-day evaluation, then a commercial license from ${publisher.name}.
 
 - Install on macOS, Linux, or WSL: \`curl -fsSL ${product.origin}/install.sh | sh\`
 - Install on Windows (best effort) in PowerShell: \`irm ${product.origin}/install.ps1 | iex\`
