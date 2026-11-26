@@ -14,6 +14,7 @@ export {
 	renderUsdSpend,
 } from "../../../../src/core/telemetry/render.js";
 export { pancodeConfigDir, pancodeDataDir, pancodeStateDir, resolvePancodeDirs } from "../../../../src/core/xdg.js";
+export { readInstallerRecord } from "../../../../src/domains/lifecycle/install-method.js";
 export { getVersionInfo } from "../../../../src/domains/lifecycle/version.js";
 export { WORKSPACE_SECRET_PATHS } from "../../../../src/domains/safety/secret-paths.js";
 export {

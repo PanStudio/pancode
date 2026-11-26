@@ -42,6 +42,7 @@ const httpModules = new Map([
 	["src/core/path-containment.ts", new Set(["relativePathEscapes"])],
 	["src/core/context-operation.ts", new Set(["ACP_CONTEXT_STATUS_METHOD"])],
 	["src/core/process-identity.ts", new Set(["processAlive", "processBirthToken"])],
+	["src/domains/lifecycle/install-method.ts", new Set(["readInstallerRecord"])],
 	["src/domains/lifecycle/version.ts", new Set(["getVersionInfo"])],
 	// A file preview withholds the same secret names the agent's read tool and shell sandbox refuse.
 	["src/domains/safety/secret-paths.ts", new Set(["WORKSPACE_SECRET_PATHS"])],

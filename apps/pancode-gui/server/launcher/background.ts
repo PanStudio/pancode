@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { createHash, randomBytes } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { backgroundCapability } from "../../contracts/launch-capability.js";
 import { findLocalServer, type LocalServerMeta, launchTicket, showPage, waitForLocalServer } from "../local-server.js";
-import { getVersionInfo, resolvePancodeDirs } from "../pancode/http-shims.js";
+import { getVersionInfo, readInstallerRecord, resolvePancodeDirs } from "../pancode/http-shims.js";
 import { controlService, openApp } from "../process-policy.js";
 import type { WindowAnswer } from "../relaunch-model.js";
 import {
@@ -57,23 +57,12 @@ const NATIVE_PACKAGE_SUFFIX = join("lib", "node_modules", "pancode");
  * `<root>/versions/<version>/lib/node_modules/pancode`, or null. The root's
  * install.json is the installer's ownership record and names its current prefix.
  */
-async function nativeInstallRoot(packageRoot: string): Promise<string | null> {
+function nativeInstallRoot(packageRoot: string): string | null {
 	if (!packageRoot.endsWith(sep + NATIVE_PACKAGE_SUFFIX)) return null;
 	const versions = dirname(packageRoot.slice(0, -(NATIVE_PACKAGE_SUFFIX.length + 1)));
 	if (basename(versions) !== "versions") return null;
 	const root = dirname(versions);
-	try {
-		const record = JSON.parse(await readFile(join(root, "install.json"), "utf8"));
-		const owned =
-			record?.kind === "pancode-installer" &&
-			(record.schema === 1 || record.schema === 2) &&
-			typeof record.current === "string" &&
-			record.current.startsWith(versions + sep);
-		return owned ? root : null;
-	} catch {
-		// No readable installer record: not a native install, so only an identical root matches.
-		return null;
-	}
+	return readInstallerRecord(root) === null ? null : root;
 }
 /**
  * One installation is the same package root, or two versions of one native install: every
@@ -84,8 +73,8 @@ export async function sameInstallation(left: string, right: string) {
 	const [installed, current] = await Promise.all([realpath(left).catch(() => null), realpath(right).catch(() => null)]);
 	if (installed === null || current === null) return false;
 	if (installed === current) return true;
-	const root = await nativeInstallRoot(installed);
-	return root !== null && root === (await nativeInstallRoot(current));
+	const root = nativeInstallRoot(installed);
+	return root !== null && root === nativeInstallRoot(current);
 }
 /**
  * Holds an exclusive lock beside the background directory while `publish` runs. Two app starts
