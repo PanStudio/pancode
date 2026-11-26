@@ -501,8 +501,8 @@
 			"id": "social-link-dark",
 			"template": "site/cards/link.html",
 			"output": "site/assets/social-card.png",
-			"sourceSha256": "cad28dd6629cdcb3578efedb7c058bdb67fa19ddc3a30bea43c2fa2386458567",
-			"sha256": "7c9c8f73e1ee3559afa85d0378da678c69a9f9ae7da3397dd401b351fa66d17d",
+			"sourceSha256": "48ee86cec564cc727b81061a25ec74ac54adf853239c177c2048b0313a6b3144",
+			"sha256": "1e70696e0592264fca72dce5b7aeb77598977c1092493311eeb0443304ad4b66",
 			"sources": [
 				"site/cards/link.html",
 				"site/css/cards.css",
@@ -510,7 +510,8 @@
 				"site/assets/fonts/instrument-sans.woff2",
 				"site/assets/fonts/plex-400.woff2",
 				"site/assets/fonts/plex-500.woff2",
-				"site/assets/brand/pancode-mark.webp",
+				"assets/brand/pancode-mark.svg",
+				"assets/brand/pancode-display.svg",
 				"site/assets/fonts/schibsted-grotesk.woff2"
 			],
 			"dimensions": {
@@ -524,15 +525,15 @@
 				"linkedin",
 				"release"
 			],
-			"altTextSeed": "PanCode: Good science. Better software. Systems software for coding agents, for desktop and terminal, with the model you choose.",
+			"altTextSeed": "PanCode: One harness, across the board. Every model you can reach and every coding agent you use, in the terminal, on the desktop (alpha), in CI and in ACP editors.",
 			"representation": "illustrative"
 		},
 		{
 			"id": "social-link-light",
 			"template": "site/cards/link-light.html",
 			"output": "site/assets/social-card-light.png",
-			"sourceSha256": "75b450c32692ef0eb979fdc93c0bbcd6ba238bcc3352dba81e67c5795612d4e4",
-			"sha256": "1818fa132070f1f1c786fb5ada16eba876d22253edd27942ec4aa122c631563d",
+			"sourceSha256": "3aae7ab38cc29ea54ec997570307e46c9c1f717a76ad8be65bd43c47cd5106d0",
+			"sha256": "c65c6a7eeda92a97bfaee0586e352da03df65ab11415948960f614c3fcab54f7",
 			"sources": [
 				"site/cards/link-light.html",
 				"site/css/cards.css",
@@ -540,7 +541,8 @@
 				"site/assets/fonts/instrument-sans.woff2",
 				"site/assets/fonts/plex-400.woff2",
 				"site/assets/fonts/plex-500.woff2",
-				"site/assets/brand/pancode-mark.webp",
+				"assets/brand/pancode-mark-light.svg",
+				"assets/brand/pancode-display-light.svg",
 				"site/assets/fonts/schibsted-grotesk.woff2"
 			],
 			"dimensions": {
@@ -554,15 +556,15 @@
 				"linkedin",
 				"release"
 			],
-			"altTextSeed": "PanCode: Good science. Better software. Systems software for coding agents, for desktop and terminal, with the model you choose.",
+			"altTextSeed": "PanCode: One harness, across the board. Every model you can reach and every coding agent you use, in the terminal, on the desktop (alpha), in CI and in ACP editors.",
 			"representation": "illustrative"
 		},
 		{
 			"id": "social-square-dark",
 			"template": "site/cards/square.html",
 			"output": "site/assets/social-square.png",
-			"sourceSha256": "83b4b580f3f57e5829a1077d1f5550d2e7b9a5885f4b0924c9c2e5f3e8744331",
-			"sha256": "fba0375d1d5d8be9c454eb7684a13d8108101330db3a3c4aa5bb8d0fd87ec84c",
+			"sourceSha256": "aa756f4d5214af04abc273cc8c597a8de83881b98dd5afabb2e0f862f40070a9",
+			"sha256": "3611e47d0213973cb28322efe1d65792d045dd4e74ab30a7239ac56f772b6128",
 			"sources": [
 				"site/cards/square.html",
 				"site/css/cards.css",
@@ -570,7 +572,8 @@
 				"site/assets/fonts/instrument-sans.woff2",
 				"site/assets/fonts/plex-400.woff2",
 				"site/assets/fonts/plex-500.woff2",
-				"site/assets/brand/pancode-mark.webp",
+				"assets/brand/pancode-mark.svg",
+				"assets/brand/pancode-display.svg",
 				"site/assets/fonts/schibsted-grotesk.woff2"
 			],
 			"dimensions": {
@@ -584,15 +587,15 @@
 				"instagram",
 				"release"
 			],
-			"altTextSeed": "PanCode: Good science. Better software. Systems software for coding agents, for desktop and terminal, with the model you choose.",
+			"altTextSeed": "PanCode: One harness, across the board. Every model you can reach and every coding agent you use, in the terminal, on the desktop (alpha), in CI and in ACP editors.",
 			"representation": "illustrative"
 		},
 		{
 			"id": "social-square-light",
 			"template": "site/cards/square-light.html",
 			"output": "site/assets/social-square-light.png",
-			"sourceSha256": "ff54e2e1cd68c16c2748ba94d64f512188a61cc46a18abe541a7f45b70a4973e",
-			"sha256": "18ab4ad1d90957802aafd2378ab340cf7eba1bb5834cf7c44fe3c41c1c539146",
+			"sourceSha256": "6fda4cc2a53f76ff3aaee84797af2a6bb6d0e354b13bb67cb375224312e4a773",
+			"sha256": "2c88cdb96d31f12648d80c0ade6286e2503b10e14dc7c86849e44f66a01d66f9",
 			"sources": [
 				"site/cards/square-light.html",
 				"site/css/cards.css",
@@ -600,7 +603,8 @@
 				"site/assets/fonts/instrument-sans.woff2",
 				"site/assets/fonts/plex-400.woff2",
 				"site/assets/fonts/plex-500.woff2",
-				"site/assets/brand/pancode-mark.webp",
+				"assets/brand/pancode-mark-light.svg",
+				"assets/brand/pancode-display-light.svg",
 				"site/assets/fonts/schibsted-grotesk.woff2"
 			],
 			"dimensions": {
@@ -614,7 +618,7 @@
 				"instagram",
 				"release"
 			],
-			"altTextSeed": "PanCode: Good science. Better software. Systems software for coding agents, for desktop and terminal, with the model you choose.",
+			"altTextSeed": "PanCode: One harness, across the board. Every model you can reach and every coding agent you use, in the terminal, on the desktop (alpha), in CI and in ACP editors.",
 			"representation": "illustrative"
 		}
 	]
