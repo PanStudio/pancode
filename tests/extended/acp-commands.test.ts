@@ -435,7 +435,7 @@ test("/report previews as text with no transport call, and a read-only ceiling r
 		kind: "bug",
 		title: "fix: the diff view is empty",
 		state: "sent",
-		url: "https://github.com/akougkas/pancode/issues/7",
+		url: "https://github.com/PanStudio/pancode/issues/7",
 		bundle: { sha256: "0".repeat(64), scopes: ["debug"], content: "none" },
 	});
 	const forgot = await control.invoke({ command: "report", argv: ["forget", draftId] });
@@ -450,7 +450,7 @@ test("a /report preview over the ACP line cap still ends on the send line", () =
 	const body = Array.from({ length: 400 }, (_, index) => `line ${index}`).join("\n");
 	const plan = {
 		postedAs: "posted as @octo",
-		destination: "akougkas/pancode issues",
+		destination: "PanStudio/pancode issues",
 		rendered: { id: "rpt_x", title: "fix: long", body, masks: [], fields: {} },
 		maskSummary: "No secrets recognized.",
 		actions: ["file the issue"],

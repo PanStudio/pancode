@@ -397,7 +397,7 @@ Inside a container, bubblewrap must be installed in the image, and the container
 | `integrations.hub.remote` | `null` (PanHub stays local) | next turn. Git URL of the remote named `hub` beside the user index that `hub sync` and `hub push` use; `pancode hub remote confirm <url>` records it when empty. |
 | `integrations.hub.confirmedRemote` | `null` | next turn. The remote you approved with `pancode hub remote confirm <url>`; syncing is refused until it matches `integrations.hub.remote`. |
 | `integrations.hub.sync` | `false` | next turn. When off, `hub sync` and `hub push` stop before contacting the remote. See [PanHub](panhub.md). |
-| `integrations.hub.index` | `https://github.com/akougkas/pancode/releases/download/hub-index/` | immediately, at the next refresh; the base URL of the signed PanHub index (`https://`, `file://`, or `http://` on loopback only), or blank to turn the remote index off; unused in 0.9.0, which has no root key |
+| `integrations.hub.index` | `https://github.com/PanStudio/pancode/releases/download/hub-index/` | immediately, at the next refresh; the base URL of the signed PanHub index (`https://`, `file://`, or `http://` on loopback only), or blank to turn the remote index off; unused in 0.9.0, which has no root key |
 | `integrations.git.commitAttribution` | `true` | immediately for subsequent commits |
 | `integrations.git.commitAuthor` | `auto` | immediately for subsequent commits |
 | `integrations.music.enabled` | `false` | immediately, at the next `/music` |

@@ -1,6 +1,6 @@
 # Extension API (unstable)
 
-The extension API is the contract for authoring PanCode extensions, packs, tools and MCP servers, imported as `pancode/sdk/<entry point>` from the `@akougkas/pancode` npm package.
+The extension API is the contract for authoring PanCode extensions, packs, tools and MCP servers, imported as `pancode/sdk/<entry point>` from the `@panstudio/pancode` npm package.
 
 The extension API is unstable. Its entry points, types, validators and limits can change in any release until PanCode defines it; pin the PanCode version an extension is tested against.
 
@@ -8,7 +8,7 @@ The entry points are [extension/index.ts](../../packages/sdk/src/extension/index
 
 ## Entry points
 
-The extension API lives in the private workspace package `@pancode/sdk`, licensed Apache-2.0. PanCode bundles it at build time into `dist/sdk/` and never publishes it on its own. The `@akougkas/pancode` package exports it as five subpaths, each with JavaScript and type declarations:
+The extension API lives in the private workspace package `@pancode/sdk`, licensed Apache-2.0. PanCode bundles it at build time into `dist/sdk/` and never publishes it on its own. The `@panstudio/pancode` package exports it as five subpaths, each with JavaScript and type declarations:
 
 | Import | Holds |
 | --- | --- |
@@ -27,7 +27,7 @@ An extension package made with `pancode extensions init` needs no `npm install`:
 Any other Node project, such as an MCP server, adds the package as a dependency under the name `pancode`, so the `pancode/sdk/<entry point>` imports resolve from `node_modules`. Node 22.19 or later is required.
 
 ```bash
-npm install --save-dev pancode@npm:@akougkas/pancode
+npm install --save-dev pancode@npm:@panstudio/pancode
 ```
 
 ## Extension types

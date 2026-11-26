@@ -46,7 +46,7 @@ function writePromptSources(root: string, version: "ONE" | "TWO" | "THREE", panc
 	if (pancodeRepo) {
 		writeFileSync(
 			join(root, "package.json"),
-			JSON.stringify({ name: "@akougkas/pancode", repository: "https://github.com/akougkas/pancode" }),
+			JSON.stringify({ name: "@panstudio/pancode", repository: "https://github.com/PanStudio/pancode" }),
 		);
 		mkdirSync(join(root, ".git"), { recursive: true });
 		for (const path of [

@@ -1,0 +1,35 @@
+Terminal at start
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
+
+== tui-boot
+
+
+
+
+
+
+
+   ██████  ██    ██ ███   ██
+   ██   ██ ████████ ████  ██
+   ██████  ██    ██ ██ ██ ██       ▐∀▌ PanCode 0.9.1 · Systems software for coding agents
+   ██      ██    ██ ██  ████         health     ✓ ready · copilot target healthy
+   ██       ██████  ██   ███         sandbox    auto edits
+                                     awareness  not indexed yet · /context init
+ ██████  ██████  ██████  ███████     last here  no earlier session here
+██      ██    ██ ██   ██ ██
+██      ██    ██ ██   ██ █████       /model switches the chat model.
+██      ██    ██ ██   ██ ██
+ ██████  ██████  ██████  ███████
+
+
+
+
+
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Ask Panos…
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ i No PANCODE.md detected. Run /context init to explore the repo and bootstrap context.                Ctrl+G X dismiss
+ ▐∀▌ default · ~/…/calibration-lab · main │ ✓ ready                       ctx 272k │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+ ? keys · / commands                                              Try /run to dispatch parallel workers │ Alt+U details

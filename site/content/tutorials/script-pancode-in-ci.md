@@ -182,3 +182,9 @@ Pass the task as an argument. `run` reads stdin only when you pass `-`, so a pip
 ## Next
 
 [Run it unattended within limits](/tutorials/run-it-unattended-within-limits.html) covers read-only runs, yolo, and scheduled turns. The [exit codes and output guide](/docs/guide/exit-codes-and-output.html) lists every field and cause.
+
+::: next
+- [Run it unattended within limits](/tutorials/run-it-unattended-within-limits.html)
+- [Automate with pancode run](/docs/guide/exit-codes-and-output.html)
+- [How accounting works](/research/accounting.html)
+:::

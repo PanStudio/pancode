@@ -46,7 +46,7 @@ async function asSourceCheckout<T>(temp: LifecycleHome, fn: () => Promise<T>): P
 	const checkout = join(temp.root, "checkout");
 	mkdirSync(join(checkout, "dist", "cli"), { recursive: true });
 	mkdirSync(join(checkout, "src", "cli"), { recursive: true });
-	writeFileSync(join(checkout, "package.json"), JSON.stringify({ name: "@akougkas/pancode" }), "utf8");
+	writeFileSync(join(checkout, "package.json"), JSON.stringify({ name: "@panstudio/pancode" }), "utf8");
 	writeFileSync(join(checkout, "src", "cli", "index.ts"), "", "utf8");
 	writeFileSync(join(checkout, "dist", "cli", "index.js"), "", "utf8");
 	const saved = process.argv[1];
@@ -232,9 +232,9 @@ describe("contracts/uninstall-lifecycle", () => {
 		const savedPath = process.env.PATH;
 		const savedEntry = process.argv[1];
 		try {
-			const packageRoot = join(temp.root, "npm", "lib", "node_modules", "@akougkas", "pancode");
+			const packageRoot = join(temp.root, "npm", "lib", "node_modules", "@panstudio", "pancode");
 			mkdirSync(join(packageRoot, "dist", "cli"), { recursive: true });
-			writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@akougkas/pancode" }), "utf8");
+			writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@panstudio/pancode" }), "utf8");
 			writeFileSync(join(packageRoot, "dist", "cli", "index.js"), "", "utf8");
 			const fakeBin = join(temp.root, "fake-bin");
 			mkdirSync(fakeBin);
@@ -661,7 +661,7 @@ describe("contracts/uninstall-lifecycle", () => {
 			const pkg = join(real, "pancode-install", "versions", "0.6.2", "lib", "node_modules", "pancode");
 			mkdirSync(join(pkg, "dist", "cli"), { recursive: true });
 			writeFileSync(join(pkg, "dist", "cli", "index.js"), "");
-			writeFileSync(join(pkg, "package.json"), '{"name":"@akougkas/pancode","version":"0.6.2"}');
+			writeFileSync(join(pkg, "package.json"), '{"name":"@panstudio/pancode","version":"0.6.2"}');
 			writeFileSync(
 				join(root, "install.json"),
 				JSON.stringify({

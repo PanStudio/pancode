@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * pnpm run check:packed-install -- --tarball <akougkas-pancode-*.tgz> --prefix <dir>
+ * pnpm run check:packed-install -- --tarball <panstudio-pancode-*.tgz> --prefix <dir>
  *
- * PanCode publishes one npm package, `@akougkas/pancode`. This proves its tarball (`npm pack`) is all an npm
+ * PanCode publishes one npm package, `@panstudio/pancode`. This proves its tarball (`npm pack`) is all an npm
  * user needs: every `bin` and `exports` target is in the tarball, it installs alone into an empty prefix with an
  * empty npm cache of its own and no `@pancode/*` package beside it, and from inside that prefix `pancode --version`,
  * `pancode store --help`, `pankit list` and `pankit manifest` run and every `sdk/<subpath>` export imports. The
@@ -180,7 +180,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 			args: process.argv.slice(2).filter((argument) => argument !== "--"),
 			options: { tarball: { type: "string" }, prefix: { type: "string" } },
 		});
-		if (!values.tarball || !values.prefix) throw new Error("usage: --tarball <akougkas-pancode-*.tgz> --prefix <dir>");
+		if (!values.tarball || !values.prefix) throw new Error("usage: --tarball <panstudio-pancode-*.tgz> --prefix <dir>");
 		const { lines } = await checkPackedInstall({ tarball: resolve(values.tarball), prefix: resolve(values.prefix) });
 		for (const line of lines) console.log(`check-packed-install: ${line}`);
 		console.log("check-packed-install: ok");

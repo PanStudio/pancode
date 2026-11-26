@@ -1,0 +1,138 @@
+Tutorial cover stills in the terminal
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
+
+== tui-experiment-contract
+
+  │ + 5   modules: ["Node.js 24.22.2", "temperature-calibration 1.0.0"]
+  │ … 19 more lines · /view
+
+■ The pre-registration is written to .pancode/validation.yaml. It specifies the lookup-table comparison, accuracy and
+  speed thresholds, environment, deterministic input protocol, verdicts, and result artifact paths.
+
+  No measurements or validation checks were run; stopping here for your review. The table range and 0.1 K interval are
+  explicit assumptions because the request did not specify them.
+
+! Reminder to the model · High-rigor finish gate · /view
+
+? noted limitation: Validation of .pancode/validation.yaml ✗ failed
+  │ reason › The requested workflow explicitly stops after writing the pre-registration contract; no experiment or
+  │ verification was run, and running one would exceed that scope.
+  │ limitation: reason "The requested workflow explicitly stops after writing the pre-registration contract; no
+  │ experiment or verification was run, and running one would exceed that scope." is not a reason value and nothing was
+  │ recorded. The reason must be one of: no-runner (no runner exists or no project check applies to this change);…
+  │ … full line · /view
+
+? noted limitation: Validation of .pancode/validation.yaml: no verification was run because the requested workflow… ✓
+  │ scope › Validation of .pancode/validation.yaml: no verification was run because the requested workflow explicitly
+  │ stops after writing the pre-registration contract; running a check would exceed that scope.
+
+■ The contract remains written. Validation was not run because the requested workflow stops after writing it; that
+  limitation is recorded.
+
+✓ Done · 29s · 10 calls · in 30 · out 2.4k · cached 138k · cache write 6.1k · 12:35
+
+§ experiment-protocol armed · read, write, grep, ls, find, git, context, code_nav, bash · /skill off
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Ask Panos…
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ i nudged the model to continue: the change has no validation evidence yet                             Ctrl+G X dismiss
+ ▐∀▌ default · ~/…/calibration-lab · main* │ ✓ ready                 ctx ▰▱▱▱▱▱ 6% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+ /view inspects recorded tool calls and full outputs                                                      Alt+U details
+
+== tui-usage
+
+  speed thresholds, environment, deterministic input protocol, verdicts, and result artifact paths.
+
+  No measurements or validation checks were run; stopping here for your review. The table range and 0.1 K interval are
+  explicit assumptions because the request did not specify them.
+
+! Reminder to the model · High-rigor finish gate · /view
+
+? noted limitation: Validation of .pancode/validation.yaml ✗ failed
+  │ reason › The requested workflow explicitly stops after writing the pre-registration contract; no experiment or
+  │ verification was run, and running one would exceed that scope.
+  │ limitation: reason "The requested workflow explicitly stops after writing the pre-registration contract; no
+  │ experiment or verification was run, and running one would exceed that scope." is not a reason value and nothing was
+  │ recorded. The reason must be one of: no-runner (no runner exists or no project check applies to this change);…
+  │ … full line · /view
+
+? noted limitation: Validation of .pancode/validation.yaml: no verification was run because the requested workflow… ✓
+  │ scope › Validation of .pancode/validation.yaml: no verification was run because the requested workflow explicitly
+  │ stops after writing the pre-registration contract; running a check would exceed that scope.
+
+■ The contract remains written. Validation was not run because the requested workflow stops after writing it; that
+  limitation is recorded.
+
+✓ Done · 29s · 10 calls · in 30 · out 2.4k · cached 138k · cache write 6.1k · 12:35
+
+§ experiment-protocol armed · read, write, grep, ls, find, git, context, code_nav, bash · /skill off
+
+━ Usage ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ❯ 1 Activity   2 Accounts   3 Session   4 Models   5 Workers   6 Health
+  26 weeks  ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁█  1 session in this workspace
+  changes   +0 -0 · 0 files
+  session   34s so far · 0.3362 credits · 8,555 fresh + 138,471 cached tokens
+  usage     2 calls had no reasoning figure
+  plan      no subscription window reported
+  receipt   0.3362 credits
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ [1–6/Tab] view · [Esc] close ━
+ ▐∀▌ default · ~/…/calibration-lab · main* │ ✓ ready                 ctx ▰▱▱▱▱▱ 6% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+
+== tui-tree
+
+  │ recorded. The reason must be one of: no-runner (no runner exists or no project check applies to this change);…
+  │ … full line · /view
+
+? noted limitation: Validation of .pancode/validation.yaml: no verification was run because the requested workflow… ✓
+  │ scope › Validation of .pancode/validation.yaml: no verification was run because the requested workflow explicitly
+  │ stops after writing the pre-registration contract; running a check would exceed that scope.
+
+■ The contract remains written. Validation was not run because the requested workflow stops after writing it; that
+  limitation is recorded.
+
+✓ Done · 29s · 10 calls · in 30 · out 2.4k · cached 138k · cache write 6.1k · 12:35
+
+§ experiment-protocol armed · read, write, grep, ls, find, git, context, code_nav, bash · /skill off
+
+i Conversation forked into new session yoc2l8yyz08w; the original pu8mxgm74qwi is unchanged and /resume opens it.
+  Workspace files were not rewound; existing edits remain.
+
+━ Session tree ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ↰ forked from pu8mxgm74qwi at 931328 · /resume it to reach the turns left behind
+  ◉ is where your next message goes and ● ends another branch. Enter on an earlier turn continues from there; later
+  turns stay as a branch.
+  ❯ ○ You         /skill experiment-protocol Compare a lookup-table version o…
+    ○ Panos       (tool calls) context
+    ○ Tool call   context("skills") via gateway
+    ○ Tool result [ok] Pending skill request name: experiment-protocol source…
+    ○ Panos       (tool calls) read, code_nav, ls
+    ○ Tool call   read(".pancode/plugins/experiment-protocol/references/val…")
+    ○ Tool result [ok] # Validation contract The harness reads the contract f…
+    ○ Tool call   code_nav("temperature.mjs")
+    ○ Tool result [ok] {"files":[{"id":"f_4533e9736c52b0f1","path":"temperatu…
+    ○ Tool call   ls(".pancode") via gateway
+  1–10 of 35 turns
+  turn   aff1b5 · You · 2026-11-26 12:34:46
+  place  Enter continues from here; later turns stay as a branch
+━━━━━━━━━━━━━━━━ [Enter] continue · [e] label · [p] folder: all · [o] order: tree · [Shift+T] times: off · [Esc] close ━
+ ▐∀▌ default · ~/…/calibration-lab · main* │ ✓ ready                ctx ▰▱▱▱▱▱ ≈6% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+
+== cli-telemetry-session
+
+~/projects/calibration-lab $ pancode telemetry why-stopped $SID
+session pu8mxgm74qwi: closed
+  The last turn ended normally (stop).
+  The session closed at 2026-11-26T18:35:23.410Z (fork).
+  Spend: not measured over 147,026 tokens.
+  Re-prefilled tokens: up to 27; cache-break bill: not measured.
+~/projects/calibration-lab $ pancode telemetry verify $SID
+verified session pu8mxgm74qwi: sealed 2026-11-26T18:35:23.502Z, 127 lines in 1 segment(s), 3 object(s), head 56217cf827dcd789ba4fca3314b235f762893a87bcb912825acb942c650451d2
+~/projects/calibration-lab $ pancode telemetry cost $SID --by turn
+session pu8mxgm74qwi · 10 calls · 147,026 tokens · not measured
+
+turn                                  calls  tokens   cost
+dbf50f03-fcd6-4cee-807d-be2addaff1b5  10     147,026  not measured
+
+economy: seat 0.3362 credits
+~/projects/calibration-lab $

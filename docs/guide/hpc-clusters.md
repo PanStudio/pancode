@@ -58,7 +58,7 @@ The installer ends with the next step for this account, for example
 
 If pancode.dev is unreachable from the cluster, fetch the same script from the
 latest GitHub release,
-`https://github.com/akougkas/pancode/releases/latest/download/install.sh`, and
+`https://github.com/PanStudio/pancode/releases/latest/download/install.sh`, and
 name the version with `--version`: the channel files that say which version
 `latest` is live on pancode.dev, while the bundles and `SHA256SUMS` come from
 GitHub.
@@ -77,7 +77,7 @@ for the host:
 | Linux x64, glibc 2.17 to 2.27 (RHEL/CentOS 7 class) | `linux-x64-glibc-217` |
 | Linux on musl (Alpine) | `linux-x64-musl` or `linux-arm64-musl`; they need `libstdc++` and `libgcc` (`apk add libstdc++`) |
 | macOS arm64 or x64 | `darwin-arm64` or `darwin-x64` |
-| Linux arm64 with glibc older than 2.28 | None exists; use conda-forge `nodejs` and `npm install -g @akougkas/pancode` with it |
+| Linux arm64 with glibc older than 2.28 | None exists; use conda-forge `nodejs` and `npm install -g @panstudio/pancode` with it |
 
 `PANCODE_TARGET` forces a bundle when detection is wrong, for example
 `PANCODE_TARGET=linux-x64-glibc-217` on a node whose `getconf` reports a
@@ -107,7 +107,7 @@ leaves the active version as it was. Every release asset also carries a GitHub
 build attestation, which a connected machine with the GitHub CLI can check:
 
 ```bash
-gh attestation verify pancode-<version>-<target>.tar.gz --repo akougkas/pancode
+gh attestation verify pancode-<version>-<target>.tar.gz --repo PanStudio/pancode
 ```
 
 The Node.js inside a bundle is pinned by SHA-256 in the repository, and the
@@ -282,7 +282,7 @@ home is on.
 
 On a cluster with no route out, install from a file. On a connected machine,
 download the bundle for the cluster's target and `install.sh` from the release
-page, `https://github.com/akougkas/pancode/releases`, copy both over, and run:
+page, `https://github.com/PanStudio/pancode/releases`, copy both over, and run:
 
 ```bash
 sh install.sh --bundle pancode-<version>-<target>.tar.gz

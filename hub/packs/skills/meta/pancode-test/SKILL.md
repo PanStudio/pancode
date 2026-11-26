@@ -6,11 +6,11 @@ triggers:
   - test PanCode context compaction or memory
   - verify PanCode skill activation
   - choose PanCode test gates
-version: 0.5.1
+version: 0.5.2
 license: LicenseRef-PanCode-1.0
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/meta/pancode-test
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/pancode-test
   audit: pass
   model-size: any
 ---

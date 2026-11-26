@@ -95,7 +95,7 @@ function checkDocumentationLinks(): void {
 				} else if (packagedDoc && !isPackagedPath(relative(root, resolved), packageFiles)) {
 					fail(
 						"documentation-links",
-						`${display}:${index + 1}: ${target} is not in package.json files; link https://github.com/akougkas/pancode/blob/main/<path> instead`,
+						`${display}:${index + 1}: ${target} is not in package.json files; link https://github.com/PanStudio/pancode/blob/main/<path> instead`,
 					);
 				} else if (fragment && resolved.endsWith(".md") && !getAnchors(resolved).has(decodeURIComponent(fragment))) {
 					fail("documentation-links", `${display}:${index + 1}: missing heading anchor ${target}`);

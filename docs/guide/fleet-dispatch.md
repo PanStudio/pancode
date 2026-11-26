@@ -337,8 +337,8 @@ both sides report one; a mismatch names `pancode fleet nodes install <id> --yes`
 after 10 idle minutes. A broken channel reconnects with backoff up to five times, and when the sixth
 consecutive connection fails the attachment stays failed until the node is opened
 again. Stopping the app stops every channel
-([machine-attach.ts](https://github.com/akougkas/pancode/blob/main/apps/pancode-gui/server/services/machine-attach.ts),
-[ssh-model.ts](https://github.com/akougkas/pancode/blob/main/apps/pancode-gui/server/ssh-model.ts)).
+([machine-attach.ts](https://github.com/PanStudio/pancode/blob/main/apps/pancode-gui/server/services/machine-attach.ts),
+[ssh-model.ts](https://github.com/PanStudio/pancode/blob/main/apps/pancode-gui/server/ssh-model.ts)).
 
 ### Exact client installation
 

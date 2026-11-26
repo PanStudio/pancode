@@ -15,7 +15,7 @@ let identity: ClientIdentity | undefined;
 export function pancodeClientIdentity(): ClientIdentity {
 	identity ??= {
 		userAgent: { custom: `pancode/${readPancodeVersion()} (${platform()} ${release()}; ${arch()})` },
-		attribution: { name: "PanCode", url: "https://github.com/akougkas/pancode", categories: ["cli-agent"] },
+		attribution: { name: "PanCode", url: "https://github.com/PanStudio/pancode", categories: ["cli-agent"] },
 	};
 	return identity;
 }

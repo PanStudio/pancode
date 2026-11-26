@@ -79,7 +79,7 @@ describe("contracts/upgrade-lifecycle", () => {
 			});
 			ok(!/Already on /u.test(failed.stdout), `an unanswered lookup is not a current version:\n${failed.stdout}`);
 			// The lookup names where it asked: the registry for a package-manager install, the channel file for a bundle.
-			match(failed.stdout, /Available version: unknown \(no version from \S+\/@akougkas%2fpancode\/latest\)/u);
+			match(failed.stdout, /Available version: unknown \(no version from \S+\/@panstudio%2fpancode\/latest\)/u);
 			const bundle = await upgrade(temp, ["--dry-run"], {
 				inspectInstallation: () => installation("installer"),
 				lookUpAvailableVersion: async () => ({ asked: true, version: null }),
@@ -245,7 +245,7 @@ it("hands post-install checks to the installed binary with the selected options"
 			},
 		});
 		strictEqual(code, 0);
-		deepStrictEqual(calls, ["install:@akougkas/pancode@99.0.0", "post:beta"]);
+		deepStrictEqual(calls, ["install:@panstudio/pancode@99.0.0", "post:beta"]);
 	} finally {
 		temp.cleanup();
 	}

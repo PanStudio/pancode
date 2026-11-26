@@ -73,7 +73,7 @@ const THINKING_OFF: Readonly<Record<string, Readonly<Record<string, unknown>>>> 
 };
 
 const OPENROUTER_HEADERS = {
-	"HTTP-Referer": "https://github.com/akougkas/pancode",
+	"HTTP-Referer": "https://github.com/PanStudio/pancode",
 	"X-OpenRouter-Title": "PanCode",
 	"X-OpenRouter-Categories": "cli-agent",
 };

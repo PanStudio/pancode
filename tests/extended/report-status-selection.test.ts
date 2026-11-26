@@ -25,7 +25,7 @@ test("turning off one report's reply check in /report status leaves the cursor o
 			title: `report ${index + 1}`,
 			state: "sent",
 			number: index + 1,
-			url: `https://github.com/akougkas/pancode/issues/${index + 1}`,
+			url: `https://github.com/PanStudio/pancode/issues/${index + 1}`,
 			replyCheck: "2026-11-01T00:00:00.000Z",
 		});
 	const tui = {

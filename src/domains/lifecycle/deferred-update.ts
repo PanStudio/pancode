@@ -151,7 +151,7 @@ export function deferredUpdateTarget(installation: Installation, version: string
 	if (process.platform === "win32" || process.env.SUDO_USER) return null;
 	if (!["npm", "pnpm", "bun"].includes(installation.kind) || installation.installer) return null;
 	const root = real(installation.root);
-	// The package is scoped, so node_modules is two levels above its root: node_modules/@akougkas/pancode.
+	// The package is scoped, so node_modules is two levels above its root: node_modules/@panstudio/pancode.
 	if (root === null || !root.endsWith(sep + join("node_modules", PACKAGE_NAME))) return null;
 	const hold = dirname(dirname(root));
 	const spec = `${PACKAGE_NAME}@${version}`;

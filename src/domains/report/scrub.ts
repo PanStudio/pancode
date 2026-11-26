@@ -74,7 +74,7 @@ const PLACEHOLDER: Readonly<Record<Exclude<MaskKind, "secret">, string>> = {
 };
 
 const PUBLIC_GIT_HOSTS: ReadonlySet<string> = new Set(["github.com", "gitlab.com", "bitbucket.org", "codeberg.org"]);
-const PUBLIC_OWNER = "akougkas";
+const PUBLIC_OWNER = "panstudio";
 const PUBLIC_REPO = "pancode";
 
 /** A name shorter than this collides with ordinary words and ids (R-19); the canary scan skips it. */
@@ -208,7 +208,7 @@ function isPublicUrl(raw: string): boolean {
 		const url = new URL(raw);
 		const host = url.hostname.toLowerCase();
 		if (host === "pancode.dev" || host === "npmjs.com" || host.endsWith(".npmjs.com")) return true;
-		return (host === "github.com" || host === "www.github.com") && /^\/akougkas\/pancode(?:\/|$)/iu.test(url.pathname);
+		return (host === "github.com" || host === "www.github.com") && /^\/PanStudio\/pancode(?:\/|$)/iu.test(url.pathname);
 	} catch {
 		return false;
 	}
@@ -257,7 +257,7 @@ function scrubOnce(
 	if (remotes.length > 0)
 		out = out.replace(new RegExp(remotes.map(escapeRegExp).join("|"), "gu"), (match) => mask("remote", match));
 	out = out.replace(SCP_REMOTE, (match) =>
-		/:akougkas\/pancode(?:\.git)?$/iu.test(match) &&
+		/:PanStudio\/pancode(?:\.git)?$/iu.test(match) &&
 		PUBLIC_GIT_HOSTS.has(match.slice(match.indexOf("@") + 1, match.indexOf(":")))
 			? match
 			: mask("remote", match),

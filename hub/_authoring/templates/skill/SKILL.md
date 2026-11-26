@@ -5,7 +5,7 @@ version: 1.0.0
 license: Apache-2.0
 pancode:
   registry-id: citation-check
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/_authoring/templates/skill
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/_authoring/templates/skill
 triggers:
   - citation check
   - verify citations

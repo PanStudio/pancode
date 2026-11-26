@@ -74,7 +74,7 @@ pancode report selftest [--session <id>] [--transcript [N]] [--with-tool-output]
 pancode report security
 
 report files a bug, a feature request or a question with PanCode's
-maintainers at github.com/akougkas/pancode. It always prints the exact title
+maintainers at github.com/PanStudio/pancode. It always prints the exact title
 and body first, with what PanCode masked, and the numbered list of what
 sending will do. Nothing is sent until you choose send in a terminal or
 pass --yes.

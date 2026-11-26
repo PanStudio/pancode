@@ -5,7 +5,7 @@ version: 1.0.0
 license: Apache-2.0
 pancode:
   registry-id: dataset-curation
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/_authoring/templates/plugin
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/_authoring/templates/plugin
 triggers:
   - curate dataset
   - fair data check

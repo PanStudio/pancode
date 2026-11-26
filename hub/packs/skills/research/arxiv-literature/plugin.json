@@ -1,7 +1,7 @@
 {
 	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
 	"name": "arxiv-literature",
-	"version": "0.6.3",
+	"version": "0.6.4",
 	"description": "Searches arXiv, summarizes or compares papers, and builds a compact literature survey as citation-ready, source-linked paper cards, with BibTeX export and ID verification through the CiteNexus server when the cite-nexus pack is installed. Fetches arXiv directly by default and dispatches the researcher shadow agent only when the user asks for a deep or broad survey.",
 	"license": "LicenseRef-PanCode-1.0",
 	"extensions": {

@@ -60,7 +60,7 @@ describe("release decisions", () => {
 				writeFileSync(
 					join(scratch, "release.json"),
 					JSON.stringify({
-						name: "@akougkas/pancode",
+						name: "@panstudio/pancode",
 						version,
 						commit: "0".repeat(40),
 						dirty: false,

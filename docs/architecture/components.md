@@ -26,13 +26,13 @@ The licences are each package's `license` field: `Apache-2.0` for `@pancode/sdk`
 
 ## How they ship
 
-The four workspace packages are private: none is published to npm on its own. One npm package, `@akougkas/pancode`, carries them all, built from source into its `dist/`:
+The four workspace packages are private: none is published to npm on its own. One npm package, `@panstudio/pancode`, carries them all, built from source into its `dist/`:
 
 - the commands `pancode` and `pankit`;
 - the extension API subpaths `pancode/sdk/extension`, `pancode/sdk/pack`, `pancode/sdk/testing`, `pancode/sdk/tool` and `pancode/sdk/mcp-server`, with their declarations under `dist/sdk/`;
 - PanKit's policy manifest `packages/kit/servers.json`, and the first-party packs under `hub/`.
 
-So the installer, or `npm install -g @akougkas/pancode`, installs every component at one version, and another MCP host runs a PanKit server with `pankit serve <id>`. The guides are [PanStore](../guide/panstore.md), [PanKit](../guide/pankit.md), [PanHub](../guide/panhub.md) and [Extension API (unstable)](../guide/sdk.md).
+So the installer, or `npm install -g @panstudio/pancode`, installs every component at one version, and another MCP host runs a PanKit server with `pankit serve <id>`. The guides are [PanStore](../guide/panstore.md), [PanKit](../guide/pankit.md), [PanHub](../guide/panhub.md) and [Extension API (unstable)](../guide/sdk.md).
 
 ## How they plug into the harness
 

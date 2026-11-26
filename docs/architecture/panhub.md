@@ -69,7 +69,7 @@ A signature covers the bytes `payloadType`, a newline, then the decoded payload.
 
 ### Publication
 
-The `hub index` workflow ([hub-index.yml](https://github.com/akougkas/pancode/blob/main/.github/workflows/hub-index.yml)) runs on a push to `main` or a version branch that changes `hub/` outside Markdown, once the repository variable `HUB_SIGNING` is `on` (it is off in 0.9.0, which compiles no root key). It treats the checked-out tree as data: it runs `pnpm hub:check`, signs `hub/index.yaml` with `node scripts/hub-sign.mjs sign` (sequence from the run number, expiry 30 days, commit from the push), verifies the result against `hub/keys/signing.json` and the compiled root keys, and uploads the three assets to the `hub-index` GitHub release:
+The `hub index` workflow ([hub-index.yml](https://github.com/PanStudio/pancode/blob/main/.github/workflows/hub-index.yml)) runs on a push to `main` or a version branch that changes `hub/` outside Markdown, once the repository variable `HUB_SIGNING` is `on` (it is off in 0.9.0, which compiles no root key). It treats the checked-out tree as data: it runs `pnpm hub:check`, signs `hub/index.yaml` with `node scripts/hub-sign.mjs sign` (sequence from the run number, expiry 30 days, commit from the push), verifies the result against `hub/keys/signing.json` and the compiled root keys, and uploads the three assets to the `hub-index` GitHub release:
 
 | Asset | Content |
 | --- | --- |
@@ -79,7 +79,7 @@ The `hub index` workflow ([hub-index.yml](https://github.com/akougkas/pancode/bl
 
 ### What a client accepts
 
-`refreshRemoteIndex` reads `integrations.hub.index` (default `https://github.com/akougkas/pancode/releases/download/hub-index/`). Blank is `off`. The URL must be `https`, loopback `http` or `file`, with no credentials, query or fragment, and a redirect away from `https` is refused (`bad-url`). With no root key it stops at `no-root-key`. Otherwise it fetches the three assets (at most 4 MiB each, 20 seconds each; a failure is `unreachable`) and accepts them only when all of these hold:
+`refreshRemoteIndex` reads `integrations.hub.index` (default `https://github.com/PanStudio/pancode/releases/download/hub-index/`). Blank is `off`. The URL must be `https`, loopback `http` or `file`, with no credentials, query or fragment, and a redirect away from `https` is refused (`bad-url`). With no root key it stops at `no-root-key`. Otherwise it fetches the three assets (at most 4 MiB each, 20 seconds each; a failure is `unreachable`) and accepts them only when all of these hold:
 
 1. The certificate carries at least one valid signature by a compiled root key; signatures by other keys are ignored, so a root rotation can dual-sign (`bad-root-signature`).
 2. The certificate sequence is not lower than the one kept (`certificate-rollback`).
@@ -109,13 +109,13 @@ Revocation is stronger than takedown: a takedown removes a listing and leaves in
 
 ## Review process
 
-[TERMS.md](https://github.com/akougkas/pancode/blob/main/hub/TERMS.md) states what a listing promises, the licences, the tiers, takedown, revocation and security. A community pack enters as one row file, `hub/community/<publisher>/<name>.yaml`, naming its repository, exact commit, subdirectory, digest, licence and tier; the format and the verified checklist are in [hub/community/README.md](https://github.com/akougkas/pancode/blob/main/hub/community/README.md).
+[TERMS.md](https://github.com/PanStudio/pancode/blob/main/hub/TERMS.md) states what a listing promises, the licences, the tiers, takedown, revocation and security. A community pack enters as one row file, `hub/community/<publisher>/<name>.yaml`, naming its repository, exact commit, subdirectory, digest, licence and tier; the format and the verified checklist are in [hub/community/README.md](https://github.com/PanStudio/pancode/blob/main/hub/community/README.md).
 
 | Script | What it does |
 | --- | --- |
-| `pnpm hub:pin` ([pin-hub.ts](https://github.com/akougkas/pancode/blob/main/scripts/pin-hub.ts)) | Validates every pack under `hub/packs/<kind>/` and the authoring templates; computes full-tree pins and refuses changed bytes under a version the last `v*` tag already shipped; refreshes skill evidence (`hub/packs/skills/registry.yaml`, `skill-marketplace.json`); fetches each community row's exact commit and regenerates its row, keeping the committed row and failing when a fetch fails; writes `hub/index.yaml` with the `revoked` list; regenerates `.claude-plugin/marketplace.json`. |
+| `pnpm hub:pin` ([pin-hub.ts](https://github.com/PanStudio/pancode/blob/main/scripts/pin-hub.ts)) | Validates every pack under `hub/packs/<kind>/` and the authoring templates; computes full-tree pins and refuses changed bytes under a version the last `v*` tag already shipped; refreshes skill evidence (`hub/packs/skills/registry.yaml`, `skill-marketplace.json`); fetches each community row's exact commit and regenerates its row, keeping the committed row and failing when a fetch fails; writes `hub/index.yaml` with the `revoked` list; regenerates `.claude-plugin/marketplace.json`. |
 | `pnpm hub:check` | The same stages as checks, without fetching; fails on any stale pin. Part of `pnpm lint` and the first step of publication. |
-| `pnpm hub:review` ([hub-review.ts](https://github.com/akougkas/pancode/blob/main/scripts/hub-review.ts)) | Run by the hub review workflow on pull requests that touch `hub/community/`, with `--base <ref>` and `--submission` for a fork. A fork may change one row file and nothing else. Each named commit is fetched as untrusted data with hooks off. Schema, path, digest, licence and launcher-pin failures fail the review; growth of an extension envelope and hits from the body scan are reported as findings for the maintainer. |
+| `pnpm hub:review` ([hub-review.ts](https://github.com/PanStudio/pancode/blob/main/scripts/hub-review.ts)) | Run by the hub review workflow on pull requests that touch `hub/community/`, with `--base <ref>` and `--submission` for a fork. A fork may change one row file and nothing else. Each named commit is fetched as untrusted data with hooks off. Schema, path, digest, licence and launcher-pin failures fail the review; growth of an extension envelope and hits from the body scan are reported as findings for the maintainer. |
 
 The review checks that every `uvx` or `npx` launch in a pack's `mcp.json` pins an exact version (`pkg==x.y.z`, `--from pkg==x.y.z` or `pkg@x.y.z`). The pin fixes the launcher's input, not the bytes the package registry later serves.
 

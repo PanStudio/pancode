@@ -36,13 +36,13 @@ const TSX_IMPORT = `--import=${import.meta.resolve("tsx")}`;
 function installedFixture() {
 	const home = makeScratchHome("pancode-upgrade-command-");
 	const prefix = join(home.dir, "custom prefix");
-	const root = join(prefix, "lib/node_modules/@akougkas/pancode");
+	const root = join(prefix, "lib/node_modules/@panstudio/pancode");
 	const entry = join(root, "dist/cli/index.js");
 	const bin = join(home.dir, "bin");
 	const log = join(home.dir, "calls.jsonl");
 	mkdirSync(dirname(entry), { recursive: true });
 	mkdirSync(bin);
-	writeFileSync(join(root, "package.json"), '{"name":"@akougkas/pancode","version":"0.5.4","type":"module"}');
+	writeFileSync(join(root, "package.json"), '{"name":"@panstudio/pancode","version":"0.5.4","type":"module"}');
 	// The relaunch is judged by the real startup parser, not by the fixture: a
 	// fake that accepted any argv is how a refused relaunch once stayed
 	// green. The post-install and doctor children are recognized by their verb.
@@ -170,7 +170,13 @@ test("npm layout preserves a custom prefix through launcher symlinks and shell q
 	const found = inspectInstallation(link);
 	assert.equal(found.kind, "npm");
 	assert.equal(found.prefix, f.prefix);
-	assert.deepEqual(npmInstallArgs(found, "latest"), ["install", "-g", "--prefix", f.prefix, "@akougkas/pancode@latest"]);
+	assert.deepEqual(npmInstallArgs(found, "latest"), [
+		"install",
+		"-g",
+		"--prefix",
+		f.prefix,
+		"@panstudio/pancode@latest",
+	]);
 	assert.match(installationCommand(found, "uninstall"), /npm uninstall -g --prefix '.*custom prefix'/);
 	assert.throws(() => npmInstallArgs({ ...found, kind: "pnpm" }, "latest"), /original package manager/);
 });
@@ -179,19 +185,19 @@ test("pnpm project stores stay local while its recognized global layout uses pnp
 	const home = makeScratchHome("pancode-pnpm-layout-");
 	t.after(home.cleanup);
 	for (const [layout, kind] of [
-		["project/node_modules/.pnpm/pkg/node_modules/@akougkas/pancode", "local"],
-		["pnpm/global/5/.pnpm/pkg/node_modules/@akougkas/pancode", "pnpm"],
-		["share/pnpm/store/v11/links/@akougkas/pancode/0.9.1/a1/node_modules/@akougkas/pancode", "pnpm"],
-		["shared/store/v11/links/@akougkas/pancode/0.9.1/b2/node_modules/@akougkas/pancode", "local"],
+		["project/node_modules/.pnpm/pkg/node_modules/@panstudio/pancode", "local"],
+		["pnpm/global/5/.pnpm/pkg/node_modules/@panstudio/pancode", "pnpm"],
+		["share/pnpm/store/v11/links/@panstudio/pancode/0.9.1/a1/node_modules/@panstudio/pancode", "pnpm"],
+		["shared/store/v11/links/@panstudio/pancode/0.9.1/b2/node_modules/@panstudio/pancode", "local"],
 	] as const) {
 		const root = join(home.dir, layout);
 		const entry = join(root, "dist/cli/index.js");
 		mkdirSync(dirname(entry), { recursive: true });
 		writeFileSync(entry, "// fixture");
-		writeFileSync(join(root, "package.json"), '{"name":"@akougkas/pancode","version":"0.5.4"}');
+		writeFileSync(join(root, "package.json"), '{"name":"@panstudio/pancode","version":"0.5.4"}');
 		// pnpm 11+ reaches a global package through <pnpm home>/global/v<n>/<id>/node_modules.
 		if (layout.startsWith("share/pnpm/")) {
-			const link = join(home.dir, "share/pnpm/global/v11/c3/node_modules/@akougkas/pancode");
+			const link = join(home.dir, "share/pnpm/global/v11/c3/node_modules/@panstudio/pancode");
 			mkdirSync(dirname(link), { recursive: true });
 			symlinkSync(root, link);
 		}
@@ -206,7 +212,7 @@ test("upgrade updates the same prefix and runs checks with the exact installed e
 	assert.equal(result.status, 0, result.stderr + result.stdout);
 	assert.equal(JSON.parse(result.stdout).status, "success");
 	assert.deepEqual(f.calls(), [
-		{ command: "npm", args: ["install", "-g", "--prefix", f.prefix, "@akougkas/pancode@99.0.0"] },
+		{ command: "npm", args: ["install", "-g", "--prefix", f.prefix, "@panstudio/pancode@99.0.0"] },
 		{ entry: f.entry, args: ["upgrade", "--post-install", "--channel=latest", "--json"], parent: "1" },
 	]);
 });
@@ -336,7 +342,7 @@ test("restart follows successful checks, relaunches with argv the real parser ac
 	assert.deepEqual(
 		f.calls().map((row) => row.args),
 		[
-			["install", "-g", "--prefix", f.prefix, "@akougkas/pancode@99.0.0"],
+			["install", "-g", "--prefix", f.prefix, "@panstudio/pancode@99.0.0"],
 			["upgrade", "--post-install", "--channel=latest", "--json"],
 			[],
 		],
@@ -408,7 +414,7 @@ test("manual package managers get instructions without replacement and dry runs 
 		lookUpAvailableVersion: async (channel) => ({ asked: true, version: channel === "beta" ? "99.0.0" : null }),
 	});
 	assert.equal(beta.status, 1, beta.stderr + beta.stdout);
-	assert.match(beta.stdout, /pnpm add -g @akougkas\/pancode@99\.0\.0/);
+	assert.match(beta.stdout, /pnpm add -g @panstudio\/pancode@99\.0\.0/);
 	assert.doesNotMatch(beta.stdout, /@beta/);
 	// Without a registry answer the beta check lists both tags, and the replacement waits for the version they name.
 	const unknownBeta = await f.call(["--channel", "beta", "--json"], {
@@ -416,8 +422,8 @@ test("manual package managers get instructions without replacement and dry runs 
 		lookUpAvailableVersion: async () => ({ asked: true, version: null }),
 	});
 	assert.equal(unknownBeta.status, 1, unknownBeta.stderr + unknownBeta.stdout);
-	assert.match(unknownBeta.stdout, /pnpm view @akougkas\/pancode dist-tags/);
-	assert.match(unknownBeta.stdout, /pnpm add -g @akougkas\/pancode@<version>/);
+	assert.match(unknownBeta.stdout, /pnpm view @panstudio\/pancode dist-tags/);
+	assert.match(unknownBeta.stdout, /pnpm add -g @panstudio\/pancode@<version>/);
 	assert.doesNotMatch(unknownBeta.stdout, /@beta/);
 	// A newer npm version says nothing about what Homebrew would install.
 	const brew = await f.call(["--json"], {
@@ -478,7 +484,7 @@ test("rollback refuses manager-owned installs before any child command", async (
 	const result = await f.call(["--rollback", "--json"]);
 	assert.equal(result.status, 2, result.stdout + result.stderr);
 	assert.match(result.stdout, /native installer/i);
-	assert.match(result.stdout, /@akougkas\/pancode@<version>/);
+	assert.match(result.stdout, /@panstudio\/pancode@<version>/);
 	assert.throws(f.calls, /ENOENT/);
 
 	// Once the home records the version it ran before, the advice names it exactly.
@@ -490,7 +496,7 @@ test("rollback refuses manager-owned installs before any child command", async (
 	const named = await f.call(["--rollback"]);
 	assert.equal(named.status, 2, named.stdout + named.stderr);
 	assert.match(named.stdout, /previous version, 0\.6\.9/);
-	assert.match(named.stdout, /npm install -g --prefix .* @akougkas\/pancode@0\.6\.9/);
+	assert.match(named.stdout, /npm install -g --prefix .* @panstudio\/pancode@0\.6\.9/);
 });
 
 async function rollBackTo(

@@ -7,7 +7,7 @@ triggers:
   - prototype this state model
   - sanity-check this logic
   - what should this UI look like
-version: 0.4.3
+version: 0.4.4
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -19,8 +19,8 @@ allowed-tools:
   - write
   - edit
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/coding/prototype
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/coding/prototype
   audit: pass
   model-size: any
   agents:

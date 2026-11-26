@@ -7,7 +7,7 @@ triggers:
   - find calls with this argument shape
   - find code inside a function
   - grep returns too much noise
-version: 0.3.4
+version: 0.3.5
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - bash
@@ -17,8 +17,8 @@ allowed-tools:
   - grep
   - ls
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/coding/ast-grep
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/coding/ast-grep
   audit: pass
   model-size: any
   agents:

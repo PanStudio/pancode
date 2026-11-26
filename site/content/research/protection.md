@@ -1,7 +1,7 @@
 An agent runs commands with your permissions, and some of what it reads was written by strangers. PanCode decides each call in layers: a floor that never moves, containment where the host offers it, a judge for what remains, and you for what only you can decide. This page describes that design and how to measure it.
 
-::: note Design described for the 0.9.0 development tree
-The mechanisms here are read from source on the development branch. Nothing on this page is measured yet. The experiment is proposed and not yet run.
+::: note Design described for PanCode 0.9.1
+The mechanisms here are read from source. Nothing on this page is measured yet. The experiment is proposed and not yet run.
 :::
 
 ## The design
@@ -69,6 +69,8 @@ Run the same task and count the approval cards.
 
 Type `/rewind` in a session. It previews and restores files from a snapshot and never moves your branches.
 :::
+
+Worked example: [Let PanCode work without watching every call](/tutorials/let-it-work-with-containment-and-rewind.html).
 
 ## First experiment
 

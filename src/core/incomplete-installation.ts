@@ -82,9 +82,9 @@ export function incompleteInstallationAdvice(err: unknown, options: IncompleteIn
 		`${outputDir}`,
 		"Reinstall to restore it, using the line that matches how you installed:",
 		"  curl -fsSL https://pancode.dev/install.sh | sh    # installer",
-		"  npm install -g @akougkas/pancode                  # npm install",
-		"  pnpm add -g @akougkas/pancode                     # pnpm install",
-		"  bun add -g @akougkas/pancode                      # Bun install",
+		"  npm install -g @panstudio/pancode                 # npm install",
+		"  pnpm add -g @panstudio/pancode                    # pnpm install",
+		"  bun add -g @panstudio/pancode                     # Bun install",
 		"  pnpm run install:local                            # source checkout",
 	].join("\n");
 }

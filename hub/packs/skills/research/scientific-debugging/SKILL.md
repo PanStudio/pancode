@@ -8,7 +8,7 @@ triggers:
   - diagnose NaNs
   - debug with falsifiable hypotheses
   - scientific root cause
-version: 0.3.4
+version: 0.3.5
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -20,8 +20,8 @@ allowed-tools:
   - code_nav
   - bash
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/research/scientific-debugging
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/research/scientific-debugging
   audit: pass
   model-size: any
 ---

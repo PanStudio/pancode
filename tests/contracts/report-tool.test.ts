@@ -141,9 +141,9 @@ describe("report guidance in the prompt", () => {
 
 describe("gh bypass nudge", () => {
 	it("notes /report on a gh issue against PanCode and stays quiet elsewhere", () => {
-		ok(pancodeIssueNudge("gh issue create --repo akougkas/pancode --title x").includes(PANCODE_REPORT_NUDGE));
-		ok(pancodeIssueNudge("gh api repos/akougkas/pancode/issues -f title=x").includes(PANCODE_REPORT_NUDGE));
+		ok(pancodeIssueNudge("gh issue create --repo PanStudio/pancode --title x").includes(PANCODE_REPORT_NUDGE));
+		ok(pancodeIssueNudge("gh api repos/panstudio/pancode/issues -f title=x").includes(PANCODE_REPORT_NUDGE));
 		strictEqual(pancodeIssueNudge("gh issue create --repo octo/api --title x"), "");
-		strictEqual(pancodeIssueNudge("gh issue list --repo akougkas/pancode"), "");
+		strictEqual(pancodeIssueNudge("gh issue list --repo PanStudio/pancode"), "");
 	});
 });

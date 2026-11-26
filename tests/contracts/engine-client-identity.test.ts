@@ -55,7 +55,7 @@ function assertPancode(identity: ClientIdentity | undefined): void {
 	strictEqual(identity.attribution?.name, "PanCode");
 	const headers = getIdentityHeaders({ provider: "openrouter", baseUrl: "https://openrouter.ai/api/v1" }, identity);
 	match(headers["User-Agent"] ?? "", /^pancode\//u);
-	strictEqual(headers["HTTP-Referer"], "https://github.com/akougkas/pancode");
+	strictEqual(headers["HTTP-Referer"], "https://github.com/PanStudio/pancode");
 	strictEqual(headers["X-OpenRouter-Title"], "PanCode");
 }
 

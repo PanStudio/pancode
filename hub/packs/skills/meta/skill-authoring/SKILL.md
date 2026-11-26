@@ -7,7 +7,7 @@ triggers:
   - improve this skill
   - why isn't this skill firing
   - prune a skill body
-version: 0.4.2
+version: 0.4.3
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -16,8 +16,8 @@ allowed-tools:
   - edit
   - bash
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/meta/skill-authoring
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/skill-authoring
   audit: pass
   model-size: large
 ---

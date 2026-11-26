@@ -90,4 +90,5 @@ When comparing agents, give them the same task and evaluate the actual output. R
 - [Ask several agents at once](/tutorials/ask-several-agents-at-once.html)
 - [Project quality checks](/docs/guide/quality-policy.html)
 - [Interoperability guide](/docs/guide/interop.html)
+- [How scheduling works](/research/scheduling.html)
 :::

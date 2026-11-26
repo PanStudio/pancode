@@ -279,7 +279,7 @@ and [dispatch.ts](../../src/tools/dispatch.ts) owns a separate cached dynamic im
 
 ## Boundary invariants
 
-`pnpm run lint` runs `biome check .` and then [check-hygiene.ts](https://github.com/akougkas/pancode/blob/main/scripts/check-hygiene.ts), which runs the boundary checker ([check-boundaries.ts](https://github.com/akougkas/pancode/blob/main/tests/boundaries/check-boundaries.ts)) against `src/` on a worker thread. Contract tests under `tests/contracts/` run it against synthetic fixtures that pin each rule's wording. Treat these checks as executable specifications. The checker reads import and export specifiers, dynamic `import("...")` calls, and `/// <reference>` directives in every `.ts`, `.tsx`, and `.mts` file under `src/`. It does not scan `apps/`, `tests/`, or `scripts/`.
+`pnpm run lint` runs `biome check .` and then [check-hygiene.ts](https://github.com/PanStudio/pancode/blob/main/scripts/check-hygiene.ts), which runs the boundary checker ([check-boundaries.ts](https://github.com/PanStudio/pancode/blob/main/tests/boundaries/check-boundaries.ts)) against `src/` on a worker thread. Contract tests under `tests/contracts/` run it against synthetic fixtures that pin each rule's wording. Treat these checks as executable specifications. The checker reads import and export specifiers, dynamic `import("...")` calls, and `/// <reference>` directives in every `.ts`, `.tsx`, and `.mts` file under `src/`. It does not scan `apps/`, `tests/`, or `scripts/`.
 
 The enforced import rules below are complemented by the maintained
 [Pi SDK boundary table](pi-boundary.md), which records the semantic owner of
@@ -319,7 +319,7 @@ Turn modules and state machine files in the chat loop (`src/session-control/turn
 
 The instant shell's Stage 0 owner is `src/interactive/terminal-lease.ts`. Its static value-import closure is what a cold `pancode` start pays before it can draw anything. Value importers outside that computed closure and outside the `src/interactive/**`, `src/session-control/**`, and `src/engine/**` trees may enter those protected trees only through a module declared in `STAGE0_SEAMS` in `tests/boundaries/check-boundaries.ts`. Every `src/cli/**` import into the protected trees needs a declaration, type-only included. Each declaration carries a reason. A declared seam may not lead back into the Stage 0 closure unless the existing composition-root overlap is explicitly recorded in its `allowStage0OverlapFrom` list, and each exception names its permitted composition-root importer.
 
-The rule exists because a second, disjoint reacher into a module in the closure makes esbuild split that module out of the chunk it shared with its neighbours. [instant-shell-import-graph.test.ts](https://github.com/akougkas/pancode/blob/main/tests/contracts/instant-shell-import-graph.test.ts) walks the built chunk that contains the Stage 0 owner and holds its static closure to 32 chunks, 1,400,000 total bytes, and 400,000 PanCode source bytes. That test fails only after a full build, so the lint-time rule is the early warning.
+The rule exists because a second, disjoint reacher into a module in the closure makes esbuild split that module out of the chunk it shared with its neighbours. [instant-shell-import-graph.test.ts](https://github.com/PanStudio/pancode/blob/main/tests/contracts/instant-shell-import-graph.test.ts) walks the built chunk that contains the Stage 0 owner and holds its static closure to 32 chunks, 1,400,000 total bytes, and 400,000 PanCode source bytes. That test fails only after a full build, so the lint-time rule is the early warning.
 
 ### Rule 7: `turn-control` is pure
 
@@ -327,7 +327,7 @@ Files under `src/domains/turn-control/**` import no `src/interactive/**`, `src/e
 
 ### Rules 8 and 9: Session control and engine do not depend on terminal rendering
 
-Neither `src/session-control/**` nor `src/engine/**` may import `src/interactive/**`, including type-only imports. The TUI, headless main, and ACP server share the session-control contract; ACP reaches session behavior through that contract. Terminal rendering remains a consumer of session behavior. These are rules 8 and 9 in [check-boundaries.ts](https://github.com/akougkas/pancode/blob/main/tests/boundaries/check-boundaries.ts).
+Neither `src/session-control/**` nor `src/engine/**` may import `src/interactive/**`, including type-only imports. The TUI, headless main, and ACP server share the session-control contract; ACP reaches session behavior through that contract. Terminal rendering remains a consumer of session behavior. These are rules 8 and 9 in [check-boundaries.ts](https://github.com/PanStudio/pancode/blob/main/tests/boundaries/check-boundaries.ts).
 
 ---
 

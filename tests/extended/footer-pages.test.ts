@@ -52,7 +52,7 @@ function state(): FooterDashboardRenderState {
 			branch: "v050",
 			dirty: false,
 			projectType: "typescript",
-			remote: "akougkas/pancode",
+			remote: "PanStudio/pancode",
 		},
 		session: {
 			target: "blade · dynamo/qwopus3.8-27b-flash@q4_k_m",

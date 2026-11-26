@@ -144,7 +144,7 @@ function birthToken(fs, pid) {
 function updatableRoot(path, root) {
 	var parts = root.split(path.sep);
 	if (parts.indexOf("_npx") !== -1) return false;
-	// The package is scoped, so node_modules is two levels above its root: node_modules/@akougkas/pancode.
+	// The package is scoped, so node_modules is two levels above its root: node_modules/@panstudio/pancode.
 	var modules = path.dirname(path.dirname(root));
 	if (path.basename(modules) !== "node_modules") return false;
 	var above = path.basename(path.dirname(modules));

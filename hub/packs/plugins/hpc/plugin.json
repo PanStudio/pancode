@@ -1,13 +1,13 @@
 {
 	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
 	"name": "hpc",
-	"version": "0.4.1",
+	"version": "0.4.2",
 	"description": "HPC pack: Lmod and Spack software environments, parallel HDF5 and MPI-IO, and Darshan I/O analysis, through PanCode's builtin modules, spack and darshan servers with the cluster's own tools as the fallback.",
 	"license": "LicenseRef-PanCode-1.0",
 	"author": {
 		"name": "PanCode"
 	},
-	"repository": "https://github.com/akougkas/pancode",
+	"repository": "https://github.com/PanStudio/pancode",
 	"keywords": ["hpc", "lmod", "spack", "mpi-io", "parallel-hdf5", "darshan"],
 	"extensions": {
 		"dev.pancode": {

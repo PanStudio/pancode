@@ -28,7 +28,7 @@ prints a valid file. A fleet worker reaches a remote portal only after
 
 ## Other harnesses
 
-Declare `npx -y -p @akougkas/pancode pankit serve <id>` (`catalog`, `scidata`, `store`)
+Declare `npx -y -p @panstudio/pancode pankit serve <id>` (`catalog`, `scidata`, `store`)
 as a stdio MCP server yourself. The skill's `data` reads are then the
 `scidata` server's tools, and its store is the `store` server's, which needs
 `--root` options there (`pancode store where` prints them).

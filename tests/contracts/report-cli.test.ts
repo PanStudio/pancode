@@ -23,7 +23,7 @@ function scratch() {
 		if (args.includes("user")) return reply("octo\n");
 		if (args.includes("search/issues")) return reply("[]");
 		if (args.some((arg) => arg.endsWith("releases/latest"))) return reply("v0.0.1\n");
-		if (args[0] === "issue" && args[1] === "create") return reply("https://github.com/akougkas/pancode/issues/452\n");
+		if (args[0] === "issue" && args[1] === "create") return reply("https://github.com/PanStudio/pancode/issues/452\n");
 		return { exitCode: 1, stdout: "", stderr: "unexpected", timedOut: false };
 	};
 	let out = "";
@@ -57,7 +57,7 @@ function assertSentIssue(output: string): void {
 	const url = new URL(line.slice("Sent: ".length));
 	strictEqual(url.protocol, "https:");
 	strictEqual(url.host, "github.com");
-	strictEqual(url.pathname, "/akougkas/pancode/issues/452");
+	strictEqual(url.pathname, "/PanStudio/pancode/issues/452");
 	strictEqual(url.username, "");
 	strictEqual(url.password, "");
 	strictEqual(url.search, "");
@@ -72,7 +72,7 @@ test("a dry run prints the whole preview, exits 0 and asks gh nothing", async ()
 		[],
 	);
 	const { out } = output();
-	ok(out.includes("Public, posted from your gh account to github.com/akougkas/pancode"));
+	ok(out.includes("Public, posted from your gh account to github.com/PanStudio/pancode"));
 	ok(out.includes("fix: x fails on y"));
 	ok(out.includes(HAPPENED));
 	ok(out.includes("Sending will, in this order:"));
@@ -115,7 +115,7 @@ test("--yes with a signed-in gh files the issue once and status lists it", async
 	assertSentIssue(output().out);
 	strictEqual(await runReport(["status"], deps), 0);
 	ok(
-		/rpt_[0-9A-Z]{26}\s+sent\s+bug\s+fix: x fails on y\s+https:\/\/github\.com\/akougkas\/pancode\/issues\/452/u.test(
+		/rpt_[0-9A-Z]{26}\s+sent\s+bug\s+fix: x fails on y\s+https:\/\/github\.com\/PanStudio\/pancode\/issues\/452/u.test(
 			output().out,
 		),
 	);

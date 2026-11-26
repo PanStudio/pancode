@@ -1,0 +1,143 @@
+Verify, view and approval stills
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
+
+== tui-verify-table
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▐∀▌ PanCode 0.9.1
+
+▌ Use verify with check test and cwd examples/temperature-calibration, then show the reference temperatures from
+▌ examples/temperature-calibration/calibration.test.mjs as a table. Do not edit files.
+
+$ checked test · exit 0 · 19 lines ✓
+▸ explored 1 file ✓
+  │ examples/temperature-calibration/calibration.test.mjs
+
+■ Tests passed: 7 passed, 0 failed. No files were edited.
+
+  ┌─────────────────┬───────────┬──────────┬────────────┐
+  │ Reference point │ Celsius   │ Kelvin   │ Fahrenheit │
+  ├─────────────────┼───────────┼──────────┼────────────┤
+  │ Freezing point  │ 0°C       │ 273.15 K │ 32°F       │
+  ├─────────────────┼───────────┼──────────┼────────────┤
+  │ Boiling point   │ 100°C     │ 373.15 K │ 212°F      │
+  ├─────────────────┼───────────┼──────────┼────────────┤
+  │ Absolute zero   │ −273.15°C │ 0 K      │ −459.67°F  │
+  └─────────────────┴───────────┴──────────┴────────────┘
+
+✓ Done · 5.4s · 12:20
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Ask Panos…  ? keys · / commands
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ▐∀▌ default · projects/lab-tools · main │ ✓ ready                                 ctx ▰▱▱▱▱▱ 4% · low · gpt-6-luna · ?
+
+== tui-view-result
+
+
+
+▐∀▌ PanCode 0.9.1
+
+▌ Use verify with check test and cwd examples/temperature-calibration, then show the reference temperatures from
+▌ examples/temperature-calibration/calibration.test.mjs as a table. Do not edit files.
+
+$ checked test · exit 0 · 19 lines ✓
+▸ explored 1 file ✓
+  │ examples/temperature-calibration/calibration.test.mjs
+
+■ Tests passed: 7 passed, 0 failed. No files were edited.
+
+  ┌─────────────────┬───────────┬──────────┬────────────┐
+  │ Reference point │ Celsius   │ Kelvin   │ Fahrenheit │
+  ├─────────────────┼───────────┼──────────┼────────────┤
+  │ Freezing point  │ 0°C       │ 273.15 K │ 32°F       │
+  ├─────────────────┼───────────┼──────────┼────────────┤
+  │ Boiling point   │ 100°C     │ 373.15 K │ 212°F      │
+  ├─────────────────┼───────────┼──────────┼────────────┤
+  │ Absolute zero   │ −273.15°C │ 0 K      │ −459.67°F  │
+  └─────────────────┴───────────┴──────────┴────────────┘
+
+✓ Done · 5.4s · 12:20
+
+━ View ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  List · ←→ category                             │ Preview · 1 of 19 · Enter/Tab focus
+  Diffs & checks (1) ─────────────────────────── │ $ checked test · exit 0 · 19 lines
+  ❯ $ checked test · exit 0 · 19 lines        7s │ changes · 12:20:25
+  Transcript details (1) ─────────────────────── │ $ checked test · exit 0 · 19 lines ✓ · 781ms
+    ▸ read examples/temperature-calibration/… 7s │   │ check › test
+  What happened to your messages (1) ─────────── │   │ cwd › examples/temperature-calibration
+    ✓ Delivered 495ms · prompt · 195 chars   10s │   │ output · exit 0 · 19 lines · 598B
+  Accountability (1) ─────────────────────────── │   │
+    Session accountability                    1s │   │ > temperature-calibration@1.0.0 test
+  Prompt manifests (1) ───────────────────────── │   │ > node --test calibration.test.mjs
+    Prompt compile · bbc11c8d4fd3 · … 10s 3.7 KB │   │
+  Safety audit rows (14) ─────────────────────── │   │ ✔ freezing point: 0°C = 273.15 K = 32°F (0.76636ms)
+    Audit · agent.status_changed · ended      5s │   │ ✔ boiling point: 100°C = 373.15 K = 212°F (0.207115ms)
+    Audit · completion.evaluated · ok         5s │   │ ✔ absolute zero: 0 K = -273.15°C = -459.67°F (1.448685ms)
+    Audit · agent.status_changed · writing    5s │   │ ✔ round trips within 1e-10 (0.433353ms)
+  1–8 of 19 artifacts                            │   │ ✔ rejects non-numeric inputs with TypeError (1.147779ms)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ [↑↓] select · [←→] category · [type] filter · [Enter] detail · [Esc] close ━
+ ▐∀▌ default · projects/lab-tools · main │ ✓ ready                                     ctx ▰▱▱▱▱▱ 4% · low · gpt-6-luna
+
+== tui-approval-effect
+
+
+$ checked test · exit 0 · 19 lines ✓
+▸ explored 1 file ✓
+  │ examples/temperature-calibration/calibration.test.mjs
+
+■ Tests passed: 7 passed, 0 failed. No files were edited.
+
+  ┌─────────────────┬───────────┬──────────┬────────────┐
+  │ Reference point │ Celsius   │ Kelvin   │ Fahrenheit │
+  ├─────────────────┼───────────┼──────────┼────────────┤
+  │ Freezing point  │ 0°C       │ 273.15 K │ 32°F       │
+  ├─────────────────┼───────────┼──────────┼────────────┤
+  │ Boiling point   │ 100°C     │ 373.15 K │ 212°F      │
+  ├─────────────────┼───────────┼──────────┼────────────┤
+  │ Absolute zero   │ −273.15°C │ 0 K      │ −459.67°F  │
+  └─────────────────┴───────────┴──────────┴────────────┘
+
+✓ Done · 5.4s · 12:20
+
+▌ Run git push origin main.
+
+│ Thinking · /view
+
+■ I’ll push the current main branch to origin; this publishes the local branch’s commits remotely.
+
+⇢ described git · 2.7KB ✓
+
+│ Thinking · /view
+
+$ bash `git push origin main` ‖ awaiting approval
+
+━ Approval ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ‖ needs approval · 4:59 · outward consequence · gpt-6-luna ━
+  $ bash · runs a command · default autonomy
+  ▌ git push origin main
+  effect  Publishes to origin
+  undo    not guaranteed
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  [Enter] allow  runs this one call
+  [Esc]   deny   skips it
+  [Alt+X] stop   ends the turn
+  ! No answer in 4:59 denies this call and PanCode continues without it. Any key holds
+    the card.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ [Enter] allow · [Alt+T] terms · [Alt+V] inspect details · [Alt+X] stop turn · [Esc] deny ━
+ ▐∀▌ default · projects/lab-tools · main │ ‖ needs approval                            ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna

@@ -114,7 +114,7 @@ are the `scidata` server's `mcp_scidata__scidata_inspect`,
 library as `data`, and the store is the `store` server's tools
 (`mcp_store__store_tags`, `mcp_store__store_get`, `mcp_store__store_put` and
 the rest), which there need `--root` options; `pancode store where` prints
-them. Declare each as `npx -y -p @akougkas/pancode pankit serve <id>`.
+them. Declare each as `npx -y -p @panstudio/pancode pankit serve <id>`.
 
 ## Final answer
 

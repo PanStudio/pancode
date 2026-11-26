@@ -33,10 +33,10 @@ set -eu
 # before its trap runs (#436).
 trap '' PIPE
 
-NPM_PACKAGE="@akougkas/pancode"
+NPM_PACKAGE="@panstudio/pancode"
 # Mirrors package.json engines.node, for the advice printed where no bundle fits.
 NODE_MIN="22.19.0"
-RELEASE_BASE="https://github.com/akougkas/pancode/releases/download"
+RELEASE_BASE="https://github.com/PanStudio/pancode/releases/download"
 CHANNEL_BASE="https://pancode.dev/channel"
 LAUNCHER_MARK="# pancode-installer launcher"
 MANIFEST_KIND="pancode-installer"

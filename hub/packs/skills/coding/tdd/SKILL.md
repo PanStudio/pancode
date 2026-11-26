@@ -7,7 +7,7 @@ triggers:
   - red green
   - build this test-first
   - reproduce the bug with a test
-version: 0.4.2
+version: 0.4.3
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -17,8 +17,8 @@ allowed-tools:
   - write
   - edit
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/coding/tdd
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/coding/tdd
   audit: pass
   model-size: any
   agents:

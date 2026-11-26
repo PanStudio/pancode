@@ -7,7 +7,7 @@ triggers:
   - visualize repo
   - codebase overview
   - architecture diagram
-version: 0.2.1
+version: 0.2.2
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - bash
@@ -18,8 +18,8 @@ allowed-tools:
   - verify
   - context
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/planning/map-codebase
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/planning/map-codebase
   audit: pass
   model-size: any
   agents:

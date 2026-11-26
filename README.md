@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://pancode.dev"><img src="https://raw.githubusercontent.com/akougkas/pancode/main/assets/banner.webp" alt="PanCode: systems software for coding agents" width="100%" /></a>
+  <a href="https://pancode.dev"><img src="https://raw.githubusercontent.com/PanStudio/pancode/main/assets/banner.webp" alt="PanCode: systems software for coding agents" width="100%" /></a>
 </p>
 
 # PanCode
@@ -51,13 +51,13 @@ cannot find `pancode`, follow the installer's `PATH` instruction, then run
 With Node.js 22.19 or newer already installed:
 
 ```bash
-npm install -g @akougkas/pancode
+npm install -g @panstudio/pancode
 ```
 
 From source, build the v0.9.1 release:
 
 ```bash
-git clone --branch v0.9.1 https://github.com/akougkas/pancode.git
+git clone --branch v0.9.1 https://github.com/PanStudio/pancode.git
 cd pancode
 corepack enable pnpm
 pnpm run install:local
@@ -192,12 +192,12 @@ you from inside a session.
 ## Contribute and get help
 
 Questions are welcome as
-[issues](https://github.com/akougkas/pancode/issues/new?template=question.yml). To ask one or
+[issues](https://github.com/PanStudio/pancode/issues/new?template=question.yml). To ask one or
 report a bug, run `/report` inside PanCode or `pancode report` in a shell: it
 fills in your version and setup, masks private details, and shows you the
 text before it is sent.
 
-[Issues](https://github.com/akougkas/pancode/issues) ·
+[Issues](https://github.com/PanStudio/pancode/issues) ·
 [Contributor guide](CONTRIBUTING.md) · [Code of Conduct](CODE_OF_CONDUCT.md) ·
 [Changelog](CHANGELOG.md) · [Security](SECURITY.md)
 
@@ -208,7 +208,7 @@ PanCode is source-available under the PanCode License 1.0. In plain words:
 - PanCode is free to use for individuals, for small organizations (fewer than
   100 people and under 1,000,000 USD in yearly revenue), and for
   noncommercial research and teaching.
-- Larger organizations need a commercial license from the author. One person
+- Larger organizations need a commercial license from PanStudio. One person
   may evaluate PanCode for such an organization for up to 32 days.
 - Nobody may sell PanCode or offer it as a paid hosted service. Using PanCode
   to produce your own work, paid work included, is not selling it.

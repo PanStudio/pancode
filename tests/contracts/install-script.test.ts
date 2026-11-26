@@ -66,7 +66,7 @@ function writeBundle(scratch: string, directory: string, version: string): strin
 	chmodSync(join(tree, "bin", "node"), 0o755);
 	symlinkSync(NPM_SEMVER, join(tree, "lib", "node_modules", "npm", "node_modules", "semver"));
 	writeFileSync(join(tree, "bundle.json"), JSON.stringify({ version, target: TARGET, node: process.versions.node }));
-	writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "@akougkas/pancode", version }));
+	writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "@panstudio/pancode", version }));
 	copyFileSync(join(ROOT, "scripts", "native-install.cjs"), join(pkg, "scripts", "native-install.cjs"));
 	writeFileSync(
 		join(pkg, "dist", "cli", "index.js"),
@@ -238,7 +238,7 @@ describe("contracts/install-script", () => {
 			match(tampered.stderr, /pancode-0\.9\.0-linux-x64\.tar\.gz has SHA-256 [0-9a-f]{64}, but the release lists 0{64}/u);
 			const missing = install("0.9.1");
 			strictEqual(missing.code, 1, missing.stderr);
-			match(missing.stderr, /PanCode 0\.9\.1 ships no linux-x64 bundle.*npm install -g @akougkas\/pancode@0\.9\.1/u);
+			match(missing.stderr, /PanCode 0\.9\.1 ships no linux-x64 bundle.*npm install -g @panstudio\/pancode@0\.9\.1/u);
 			const unpublished = install("0.9.7");
 			strictEqual(unpublished.code, 1, unpublished.stderr);
 			match(
@@ -316,7 +316,7 @@ describe("contracts/install-script", () => {
 		strictEqual(r.code, 0, r.stderr);
 		match(
 			r.stdout,
-			/bundle: +PanCode 0\.9\.0 for \S+ from https:\/\/github\.com\/akougkas\/pancode\/releases\/download$/mu,
+			/bundle: +PanCode 0\.9\.0 for \S+ from https:\/\/github\.com\/PanStudio\/pancode\/releases\/download$/mu,
 		);
 		match(r.stdout, /would unpack the bundle into .*\/versions\/<version>/u);
 		match(r.stdout, /dry run complete/u);

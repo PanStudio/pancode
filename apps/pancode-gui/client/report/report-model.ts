@@ -131,7 +131,7 @@ export function hasUnplannedEdits(state: ReportDialogState): boolean {
 }
 
 export interface ReportControls {
-	/** "Public, posted from your gh account to github.com/akougkas/pancode; nothing sent yet" */
+	/** "Public, posted from your gh account to github.com/PanStudio/pancode; nothing sent yet" */
 	readonly destination: string;
 	readonly sendEnabled: boolean;
 	/** Why Send is off, in the dialog's words; null when it may be pressed. */

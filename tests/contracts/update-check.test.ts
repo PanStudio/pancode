@@ -45,7 +45,7 @@ async function fixture(kind: Installation["kind"] = "npm") {
 	const cacheDir = join(home.dir, "cache");
 	const entry = join(root, "dist/cli/index.js");
 	await mkdir(join(root, "dist/cli"), { recursive: true });
-	await writeFile(join(root, "package.json"), JSON.stringify({ name: "@akougkas/pancode", version: "0.5.4" }));
+	await writeFile(join(root, "package.json"), JSON.stringify({ name: "@panstudio/pancode", version: "0.5.4" }));
 	await writeFile(entry, "// installed CLI\n");
 	await utimes(entry, 1, 1);
 	const installation: Installation = { kind, root, entry, prefix: home.dir };
@@ -83,7 +83,7 @@ test("checks once a day across processes, caches failures, and reminds once a we
 	const notice = await check.probe(controller.signal);
 	assert.equal(notice?.kind, "available");
 	// #436: a package-manager install names its exact command and never runs it.
-	assert.match(notice?.text ?? "", /npm install -g --prefix .* @akougkas\/pancode@latest/u);
+	assert.match(notice?.text ?? "", /npm install -g --prefix .* @panstudio\/pancode@latest/u);
 	assert.equal(calls, 1);
 	assert.ok(notice);
 	assert.equal(
@@ -187,13 +187,13 @@ test("detects replacement and same-version rebuilds without consulting the regis
 		},
 	});
 	assert.equal(await check.probe(controller.signal), null);
-	await writeFile(join(f.root, "package.json"), '{"name":"@akougkas/pancode","version":"0.5.5"}');
+	await writeFile(join(f.root, "package.json"), '{"name":"@panstudio/pancode","version":"0.5.5"}');
 	const replaced = await check.probe(controller.signal);
 	assert.equal(replaced?.kind, "replaced");
 	// The hint names the startup flag that reopens the last session (#191), not a picker step inside the app.
 	assert.match(replaced?.text ?? "", /pancode --continue/);
 	assert.doesNotMatch(replaced?.text ?? "", /\/resume/);
-	await writeFile(join(f.root, "package.json"), '{"name":"@akougkas/pancode","version":"0.5.4"}');
+	await writeFile(join(f.root, "package.json"), '{"name":"@panstudio/pancode","version":"0.5.4"}');
 	await utimes(f.entry, new Date(), new Date());
 	assert.equal((await check.probe(controller.signal))?.kind, "replaced");
 });
@@ -204,7 +204,7 @@ test("development, local and unknown installations never check the registry; bad
 		t.after(f.home.cleanup);
 		// A source checkout checks only at a release version; its development tree has nothing published (#436).
 		const dev = kind === "source" ? "0.5.5-dev" : null;
-		if (dev) await writeFile(join(f.root, "package.json"), JSON.stringify({ name: "@akougkas/pancode", version: dev }));
+		if (dev) await writeFile(join(f.root, "package.json"), JSON.stringify({ name: "@panstudio/pancode", version: dev }));
 		const check = createUpdateCheck({
 			...f,
 			...(dev ? { runningVersion: dev } : {}),

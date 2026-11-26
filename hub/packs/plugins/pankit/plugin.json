@@ -2,12 +2,12 @@
 	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
 	"name": "pankit",
 	"version": "0.1.0",
-	"description": "PanKit for Claude Code: the node, modules, darshan, spack, scidata and catalog MCP servers of PanCode's toolkit, each started with npx from the @akougkas/pancode package.",
+	"description": "PanKit for Claude Code: the node, modules, darshan, spack, scidata and catalog MCP servers of PanCode's toolkit, each started with npx from the @panstudio/pancode package.",
 	"license": "LicenseRef-PanCode-1.0",
 	"author": {
 		"name": "PanCode"
 	},
-	"repository": "https://github.com/akougkas/pancode",
+	"repository": "https://github.com/PanStudio/pancode",
 	"keywords": ["pankit", "mcp", "hpc", "lmod", "spack", "darshan", "hdf5", "netcdf", "ckan"],
 	"extensions": {
 		"dev.pancode": {

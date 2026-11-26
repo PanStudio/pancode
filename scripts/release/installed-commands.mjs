@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 /** The servers the `pancode` package ships, as `pankit list` prints them. */
 /** The name PanCode is published under on npm. */
-export const PACKAGE_NAME = "@akougkas/pancode";
+export const PACKAGE_NAME = "@panstudio/pancode";
 
 export const KIT_SERVERS = ["node", "modules", "spack", "darshan", "scidata", "catalog", "store"];
 /** The MCP handshake must finish, and the server exit, within this. */

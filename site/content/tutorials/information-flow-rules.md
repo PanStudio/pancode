@@ -75,4 +75,5 @@ Native workers check each model request. Coding agents that make their own model
 - [Tools and permissions](/docs/guide/tool-usage.html)
 - <a href="<!-- source-blob -->/docs/guide/information-flow.md">Information flow guide in the repository</a>
 - [Choose a model for your project](/tutorials/choose-model-for-your-project.html)
+- [How protection works](/research/protection.html)
 :::

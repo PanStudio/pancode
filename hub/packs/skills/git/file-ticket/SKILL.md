@@ -7,7 +7,7 @@ triggers:
   - log this bug
   - ticket this behavior
   - create a tracker issue
-version: 0.3.4
+version: 0.3.5
 license: LicenseRef-PanCode-1.0
 compatibility: git >=2.30.0, gh CLI >=2.0.0 (authenticated for issue operations), POSIX-compatible shell
 allowed-tools:
@@ -19,8 +19,8 @@ allowed-tools:
   - tasks
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/git/file-ticket
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/git/file-ticket
   audit: pass
   model-size: any
   agents:
@@ -78,7 +78,7 @@ Complete when every bullet above is either filled or explicitly marked unknown.
 
 ## Step 2 — Resolve Repository and Dedup
 
-When the repository is `akougkas/pancode` and the session is PanCode, stop and use the `report` capability instead. Report sharing is turned off in this build, so never pass `--share`; a diagnostic bundle stays on the operator's machine.
+When the repository is `PanStudio/pancode` and the session is PanCode, stop and use the `report` capability instead. Report sharing is turned off in this build, so never pass `--share`; a diagnostic bundle stays on the operator's machine.
 
 1. Determine `--repo <owner/repo>` (provided flag or detected via `gh repo view`).
 2. Search for existing issues:

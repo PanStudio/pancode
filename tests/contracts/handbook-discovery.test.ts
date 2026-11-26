@@ -63,13 +63,13 @@ describe("handbook discovery", () => {
 			mkdirSync(join(dir, ".git"));
 			writeFileSync(
 				join(dir, "package.json"),
-				JSON.stringify({ name: packageName, repository: "https://github.com/akougkas/pancode" }),
+				JSON.stringify({ name: packageName, repository: "https://github.com/PanStudio/pancode" }),
 			);
 			const own = join(dir, "PANCODE-DEV.md");
 			writeFileSync(own, "# Hand-written\n\nHand-written guidance.\n");
 			return own;
 		};
-		const own = checkout(join(root, "pancode-checkout"), "@akougkas/pancode");
+		const own = checkout(join(root, "pancode-checkout"), "@panstudio/pancode");
 		deepStrictEqual(
 			loadProjectPancodeMd(join(root, "pancode-checkout")).files.map((file) => file.path),
 			[own],

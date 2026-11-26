@@ -7,7 +7,7 @@ triggers:
   - get multiple expert perspectives
   - weigh the architecture options
   - what would experts say
-version: 0.6.5
+version: 0.6.6
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - dispatch
@@ -19,8 +19,8 @@ allowed-tools:
   - code_nav
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/workflow/design-council
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/workflow/design-council
   audit: pass
   model-size: large
   agents:

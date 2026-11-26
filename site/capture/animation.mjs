@@ -249,10 +249,7 @@ if (alts.misses.length) {
 	const at = manifest.assets.findIndex((asset) => asset.id === item.id);
 	if (at < 0) manifest.assets.push(item);
 	else manifest.assets[at] = item;
+	// The layout matches scripts/media-assets.py (json.dumps with a tab indent), the manifest's generator.
 	writeFileSync(manifestPath, `${JSON.stringify(manifest, null, "\t")}\n`);
-	execFileSync(join(repo, "node_modules/.bin/biome"), ["format", "--write", manifestPath], {
-		cwd: repo,
-		stdio: "ignore",
-	});
 	console.log(`${scenario.id}: published to site/assets, content/captures.json and ${gifPath}`);
 }

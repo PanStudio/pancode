@@ -3679,8 +3679,8 @@ describe("tool classes", () => {
 			),
 		);
 		deepStrictEqual(fetched, [`${GLYPH.classNetwork} fetched nodejs.org/api/globals.html · 200 · markdown · 12.1KB ✓`]);
-		const issue = settled("web_fetch", { url: "https://github.com/akougkas/pancode/issues/412" }, text("# issue"));
-		match(rows(issue, "standard", 100)[0] ?? "", /fetched github\.com\/akougkas\/pancode\/issues\/412 /u);
+		const issue = settled("web_fetch", { url: "https://github.com/PanStudio/pancode/issues/412" }, text("# issue"));
+		match(rows(issue, "standard", 100)[0] ?? "", /fetched github\.com\/PanStudio\/pancode\/issues\/412 /u);
 		// At 40 columns the label shortens to the path tail instead of splitting mid-token.
 		const narrow = rows(issue, "standard", 40);
 		match(narrow.join("\n"), /github\.com\/…\/(?:issues\/)?412/u);
@@ -3708,7 +3708,7 @@ describe("tool classes", () => {
 			const builtin = rows(
 				settled(
 					"gateway",
-					{ op: "call", capability: "web_fetch", args: { url: "https://github.com/akougkas/pancode/issues/412" } },
+					{ op: "call", capability: "web_fetch", args: { url: "https://github.com/PanStudio/pancode/issues/412" } },
 					text("# issue", { capability: "web_fetch", status: 200 }),
 				),
 				style,

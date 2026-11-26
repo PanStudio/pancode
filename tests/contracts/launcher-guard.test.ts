@@ -38,12 +38,12 @@ describe("contracts/launcher-guard", () => {
 
 	it("registers sessions for a global install of the scoped package and for nothing else", () => {
 		for (const [root, updatable] of [
-			["/home/u/.nvm/versions/node/v24.1.0/lib/node_modules/@akougkas/pancode", true],
-			["/home/u/.volta/tools/image/packages/pancode/lib/node_modules/@akougkas/pancode", true],
-			["/home/u/.bun/install/global/node_modules/@akougkas/pancode", true],
-			["/home/u/.local/share/pnpm/global/5/.pnpm/@akougkas+pancode@0.9.0/node_modules/@akougkas/pancode", true],
-			["/home/u/.npm/_npx/1a2b3c/node_modules/@akougkas/pancode", false],
-			["/home/u/project/node_modules/@akougkas/pancode", false],
+			["/home/u/.nvm/versions/node/v24.1.0/lib/node_modules/@panstudio/pancode", true],
+			["/home/u/.volta/tools/image/packages/pancode/lib/node_modules/@panstudio/pancode", true],
+			["/home/u/.bun/install/global/node_modules/@panstudio/pancode", true],
+			["/home/u/.local/share/pnpm/global/5/.pnpm/@panstudio+pancode@0.9.0/node_modules/@panstudio/pancode", true],
+			["/home/u/.npm/_npx/1a2b3c/node_modules/@panstudio/pancode", false],
+			["/home/u/project/node_modules/@panstudio/pancode", false],
 			["/home/u/.local/share/pancode-install/versions/0.9.0/lib/node_modules/pancode", false],
 			["/home/u/src/pancode", false],
 		] as const) {

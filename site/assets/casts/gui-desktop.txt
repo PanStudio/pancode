@@ -1,0 +1,295 @@
+PanCode desktop app on GitHub Copilot
+Recorded with PanCode 0.9.1. Each section is the page text at that moment.
+
+== gui-task
+
+Skip to content
+Skip to message box
+PanCode
+v0.9.1
+This machine
+Search
+Explore
+New task
+Sessions
+Open workspace
+Workspaces
+calibration-lab
+Delete dist/ and rebuild it with npm run build, then run npm test and list the reference temperatures calibration.test.mjs checks.
+now
+View project work
+System
+Linux
+✕
+1 issue
+Delete dist/ and rebuild it with npm run build, then run npm test and list the reference temperatures calibration.test.mjs checks.
+calibration-lab
+5.0%
+49,170 tok
+Standard
+You
+
+Delete dist/ and rebuild it with npm run build, then run npm test and list the reference temperatures calibration.test.mjs checks.
+
+12:43
+Copy prompt
+Panos
+✓
+6 tools completed
+ran 3 searches, used 1 other tool, read 2 files
+
+I’m removing the existing dist/ and rebuilding as requested, then I’ll run the test suite.
+
+✓
+Run
+rm -rf dist && npm run build && npm test
+exit 0
+Done
+●
+exit
+0
+stdout
+681B
+Output
+Copy output
+
+> temperature-calibration@1.0.0 build
+> node build.mjs
+
+built dist/temperature.mjs
+
+> temperature-calibration@1.0.0 test
+> node --test calibration.test.mjs
+
+✔ freezing point: 0°C = 273.15 K = 32°F (0.879781ms)
+✔ boiling point: 100°C = 373.15 K = 212°F (0.144069ms)
+✔ absolute zero: 0 K = -273.15°C = -459.67°F (0.317125ms)
+✔ round trips within 1e-10 (0.339368ms)
+✔ rejects non-numeric inputs with TypeError (0.58634ms)
+✔ rejects non-finite inputs with TypeError (0.158218ms)
+✔ rejects temperatures below absolute zero with RangeError (0.19592ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 67.364035
+
+Show all 24 lines
+Raw input and result
+
+Removed dist/, rebuilt it successfully (dist/temperature.mjs), and ran npm test: all 7 tests passed.
+
+Reference temperatures checked in calibration.test.mjs:
+
+Freezing: 0°C = 273.15 K = 32°F
+Boiling: 100°C = 373.15 K = 212°F
+Absolute zero: 0 K = −273.15°C = −459.67°F
+Round-trip inputs: 25°C, −10°C, 36.6°C, 100°C, 273.15°C, 0°C, and −40°C
+●
+Done
+12s
+48,562 in · 608 out
+7 tool calls
+12:43
+Copy response
+Your next message
+Attach context or explore Actions before sending.
+Message PanCode
+
+ShiftEnter adds a line
+· / lists commands
+· @ adds a file or folder
+· ↑ recalls earlier messages
+· Ctrl/CmdR searches history
+
+Attach
+Actions
+Ask first
+Model for the next request:
+●
+gpt-6-luna
+Thinking low
+Thinking low. Target copilot: Reachable, reported healthy, latency not reported.
+Send
+​
+
+== gui-approval
+
+Skip to content
+Skip to message box
+PanCode
+v0.9.1
+This machine
+Search
+Explore
+New task
+Sessions
+Open workspace
+Workspaces
+calibration-lab
+Delete dist/ and rebuild it with npm run build, then run npm test and list the reference temperatures calibration.test.mjs checks.
+Needs your approval
+now
+View project work
+System
+Linux
+✕
+1 issue
+Delete dist/ and rebuild it with npm run build, then run npm test and list the reference temperatures calibration.test.mjs checks.
+calibration-lab
+Needs your approval
+~5.7% est
+107,932 tok
+last 128 tok/s
+Standard
+
+!
+Approval needed · 1 of 1
+git push origin main
+stops in 9m 59s
+
+Review
+You
+
+Delete dist/ and rebuild it with npm run build, then run npm test and list the reference temperatures calibration.test.mjs checks.
+
+12:43
+Copy prompt
+Panos
+
+Removed dist/, rebuilt it successfully (dist/temperature.mjs), and ran npm test: all 7 tests passed.
+
+Reference temperatures checked in calibration.test.mjs:
+
+Freezing: 0°C = 273.15 K = 32°F
+Boiling: 100°C = 373.15 K = 212°F
+Absolute zero: 0 K = −273.15°C = −459.67°F
+Round-trip inputs: 25°C, −10°C, 36.6°C, 100°C, 273.15°C, 0°C, and −40°C
+●
+Done
+12s
+48,562 in · 608 out
+7 tool calls
+12:43
+Copy response
+You
+
+Run git push origin main.
+
+12:43
+Copy prompt
+Panos
+◐
+Waiting for your approval
+git push origin main
+✓
+4 tools completed
+used 2 other tools, ran 2 git commands
+
+main is clean and has no commits ahead of origin/main; I’ll run the requested push, which should report no changes.
+
+!
+Approval needed
+…
+Run
+git push origin main
+Waiting for approval
+Output
+Nothing has run yet. It waits for your answer.
+Raw input and result
+
+Approval needed · one use
+
+git push origin main
+
+✕
+Outward consequence
+runs a command
+reaches outside this machine
+
+Command
+
+git push origin main
+Request details · tool arguments
+Authorization
+Approval allows this one call to bash, which runs a command. It does not change the autonomy level.
+Consequence
+The resulting step can reach people or systems outside the workspace.
+Effect
+Publishes to origin
+Reversibility
+Reversible: not guaranteed. Effects that already ran, or that reached anything outside this machine, may remain.
+Asked because
+default autonomy asks before a call that runs a command
+Task
+"Run git push origin main." · you
+Requested by
+main agent through autonomy level (default)
+Target
+git push origin main · timeout_ms=120000
+Runs a command in this turn.
+No answer in 9m 59s (at 12:53) stops this turn; the call does not run.
+Nothing runs until you answer. PanCode never answers for you.
+Waiting 1.0s.
+Reject
+Alt+R
+Reject and stop the turn
+Alt+X
+Allow once
+Alt+A
+Copy response
+During this turn
+Send adds direction between tool calls. Stop ends the current turn.
+Message PanCode
+
+Attach
+Actions
+Ask first
+Model for the next request:
+●
+gpt-6-luna
+Thinking low
+Thinking low. Target copilot: Reachable, reported healthy, latency not reported.
+Stop
+Approval needed: git push origin main. Runs a command in this turn. Nothing runs until you answer. Request 1 of 1.
+​
+
+== gui-home
+
+Skip to content
+PanCode
+v0.9.1
+This machine
+Search
+Explore
+New task
+Sessions
+Open workspace
+Workspaces
+calibration-lab
+Delete dist/ and rebuild it with npm run build, then run npm test and list the reference temperatures calibration.test.mjs checks.
+now
+View project work
+System
+Linux
+✕
+1 issue
+Start a task
+
+Describe a change to make or a question about your code.
+
+Message PanCode
+calibration-lab
+Start task
+gpt-6-luna · Thinking low
+Task settings
+Build something
+Make a tool, workflow or experiment
+Fix a problem
+Work through something that isn't right
+Explore a project
+Understand what's here and how it works
+Approval needed: git push origin main. Runs a command in this turn. Nothing runs until you answer. Request 1 of 1.

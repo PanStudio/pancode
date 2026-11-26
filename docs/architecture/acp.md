@@ -663,7 +663,7 @@ The server side uses `AcpRequestError`, which owns the JSON-RPC code, the host-a
 
 To list PanCode in the upstream Agent Client Protocol registry (the registry the Zed editor consumes), repository assets live under `assets/acp-registry/`:
 
-- `assets/acp-registry/agent.json`: the registry manifest. It holds the agent id `pancode`, the display name, a version, a description, the repository, website, license (`LicenseRef-PanCode-1.0`) with its `license_url`, and author. The `distribution.npx` entry runs the `@akougkas/pancode` package with `args: ["acp"]`, so a client without a global install can fetch and start it.
+- `assets/acp-registry/agent.json`: the registry manifest. It holds the agent id `pancode`, the display name, a version, a description, the repository, website, license (`LicenseRef-PanCode-1.0`) with its `license_url`, and author. The `distribution.npx` entry runs the `@panstudio/pancode` package with `args: ["acp"]`, so a client without a global install can fetch and start it.
 - `assets/acp-registry/icon.svg`: a 16x16 monochrome icon, the canonical PanCode mark drawn as one filled `currentColor` path without its tile.
 
 The submission procedure:

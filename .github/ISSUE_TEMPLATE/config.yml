@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security issue
-    url: https://github.com/akougkas/pancode/security/advisories/new
+    url: https://github.com/PanStudio/pancode/security/advisories/new
     about: Report vulnerabilities privately through a security advisory, never in a public issue.

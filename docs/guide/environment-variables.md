@@ -2,7 +2,7 @@
 
 Environment variables change how one PanCode process behaves: where it keeps its files, how the terminal looks, which diagnostic traces it writes, which credentials it sees, and what it passes to the processes it starts. Standing policy belongs in `settings.yaml` instead (see the [configuration reference](configuration-reference.md)). This page lists every `PANCODE_*` variable PanCode reads, with its default and effect, followed by the upstream and OS variables PanCode honors. When prose and source disagree, trust the cited source file.
 
-A repository check ([check-hygiene.ts](https://github.com/akougkas/pancode/blob/main/scripts/check-hygiene.ts)) keeps the backticked `PANCODE_*` and `NO_COLOR` names on this page in step with what `src/` (plus `scripts/build-output.ts`) reads, in both directions. Variables read only outside `src/` appear in [Variables read outside src](#variables-read-outside-src) **without backticks** for that reason.
+A repository check ([check-hygiene.ts](https://github.com/PanStudio/pancode/blob/main/scripts/check-hygiene.ts)) keeps the backticked `PANCODE_*` and `NO_COLOR` names on this page in step with what `src/` (plus `scripts/build-output.ts`) reads, in both directions. Variables read only outside `src/` appear in [Variables read outside src](#variables-read-outside-src) **without backticks** for that reason.
 
 ## Layout and installation overrides
 
@@ -67,7 +67,7 @@ When all PanCode directories are at platform/XDG defaults and `PANCODE_INTEROP_H
 | `PANCODE_HOOK_BUDGET_WARMUP_CALLS` | `1` | Initial hook calls per key exempt from budget warnings (non-negative int) ([budget.ts](../../src/domains/middleware/budget.ts)). |
 | `PANCODE_HOOK_BUDGET_WINDOW` | `5` | Rolling window size (positive int) for steady-state hook-budget warnings ([budget.ts](../../src/domains/middleware/budget.ts)). |
 | `PANCODE_HOOK_BUDGET_THRESHOLD` | `3` | Overruns within window required to warn (positive int) ([budget.ts](../../src/domains/middleware/budget.ts)). |
-| `PANCODE_BUILD_VERBOSE` | off | `1` prints full tsup/Vite build logs and code-map stats ([build-output.ts](https://github.com/akougkas/pancode/blob/main/scripts/build-output.ts)). |
+| `PANCODE_BUILD_VERBOSE` | off | `1` prints full tsup/Vite build logs and code-map stats ([build-output.ts](https://github.com/PanStudio/pancode/blob/main/scripts/build-output.ts)). |
 
 ## Debug toggles and file traces
 
@@ -136,10 +136,10 @@ Written without backticks because `check-hygiene` scans `src/` and `scripts/buil
 | PANCODE_INSTALL_GUI | [install.sh](../../scripts/install.sh) | `1` installs the desktop app, `0` skips every desktop step, the post-install handover included, and unset prompts on TTY (set for `install.sh` only; invalid values abort). |
 | PANCODE_INSTALL_MANAGER | [native-install.cjs](../../scripts/native-install.cjs) | Package-manager identifier (e.g. `winget`) recorded in `install.json`. |
 | PANCODE_BOOTSTRAP_FILE, PANCODE_BOOTSTRAP_EXIT, PANCODE_LAUNCHER_CP, PANCODE_LAUNCHER_EXIT | [install.cmd](../../scripts/install.cmd), [native-install.cjs](../../scripts/native-install.cjs) | Windows installer/launcher temp path, code page, and exit code plumbing. |
-| PANCODE_DESKTOP_NODE | [main.ts](https://github.com/akougkas/pancode/blob/main/apps/pancode-gui/server/main.ts) | Node binary the launcher passes to the desktop app server; do not set manually. |
-| PANCODE_WEB_CLI | [process-policy.ts](https://github.com/akougkas/pancode/blob/main/apps/pancode-gui/server/process-policy.ts) | Absolute PanCode CLI path the desktop app server starts as its ACP child (falls back to `dist/cli/index.js`, then `pancode` on PATH; see [gui.md](gui.md)). |
-| PANCODE_REAL_SYSTEMD | [process-policy.ts](https://github.com/akougkas/pancode/blob/main/apps/pancode-gui/server/process-policy.ts) | `1` permits enabling systemd user unit pointing into a temporary directory. |
-| PANCODE_RELEASE_TARBALL | [ci.mjs](https://github.com/akougkas/pancode/blob/main/scripts/ci.mjs) | Path of the built npm tarball the package tests install; set by `pnpm run ci` and the CI test jobs. |
+| PANCODE_DESKTOP_NODE | [main.ts](https://github.com/PanStudio/pancode/blob/main/apps/pancode-gui/server/main.ts) | Node binary the launcher passes to the desktop app server; do not set manually. |
+| PANCODE_WEB_CLI | [process-policy.ts](https://github.com/PanStudio/pancode/blob/main/apps/pancode-gui/server/process-policy.ts) | Absolute PanCode CLI path the desktop app server starts as its ACP child (falls back to `dist/cli/index.js`, then `pancode` on PATH; see [gui.md](gui.md)). |
+| PANCODE_REAL_SYSTEMD | [process-policy.ts](https://github.com/PanStudio/pancode/blob/main/apps/pancode-gui/server/process-policy.ts) | `1` permits enabling systemd user unit pointing into a temporary directory. |
+| PANCODE_RELEASE_TARBALL | [ci.mjs](https://github.com/PanStudio/pancode/blob/main/scripts/ci.mjs) | Path of the built npm tarball the package tests install; set by `pnpm run ci` and the CI test jobs. |
 
 Desktop app test fixtures also read PANCODE_WEB_COMMAND_LOG, PANCODE_WEB_COMMAND_SCENARIO, PANCODE_WEB_FIXTURE_LOG, PANCODE_WEB_FIXTURE_SCENARIO, PANCODE_WEB_FIXTURE_ROUTE, PANCODE_WEB_FIXTURE_PROMPT_TURNS, PANCODE_WEB_FIXTURE_REPLAY_TURNS, PANCODE_WEB_FIXTURE_LIBRARY_RELOAD, and PANCODE_TEST_OPENAI_KEY (unused in production builds).
 

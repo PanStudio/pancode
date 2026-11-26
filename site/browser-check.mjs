@@ -263,8 +263,9 @@ try {
 	assert.equal(await page.locator(".media-dialog").evaluate((el) => el.open), true);
 	const dialogAxe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
 	assert.deepEqual(dialogAxe.violations, [], "Accessible screenshot dialog");
+	assert.match(await page.locator("#media-caption").innerText(), /PanCode desktop/);
 	await page.locator('[data-media="next"]').click();
-	assert.match(await page.locator("#media-caption").innerText(), /terminal at start/);
+	assert.match(await page.locator("#media-caption").innerText(), /Fleet Runs/);
 	await page.locator('[data-media="zoom"]').click();
 	await page.waitForFunction(() => {
 		const viewport = document.querySelector(".image-view");
@@ -273,9 +274,9 @@ try {
 	assert.equal(await page.locator('[data-media="zoom"]').getAttribute("aria-pressed"), "true");
 	await page.locator('[data-media="zoom"]').click();
 	await page.keyboard.press("ArrowRight");
-	assert.match(await page.locator("#media-caption").innerText(), /PanCode desktop/);
+	assert.match(await page.locator("#media-caption").innerText(), /\/context panel/);
 	await page.keyboard.press("ArrowRight");
-	assert.match(await page.locator("#media-caption").innerText(), /through verify/);
+	assert.match(await page.locator("#media-caption").innerText(), /PanCode desktop/);
 	await page.keyboard.press("Escape");
 	assert.equal(await page.locator(".media-dialog").evaluate((el) => el.open), false);
 	assert.equal(
@@ -320,8 +321,10 @@ try {
 	const motionPage = await motionContext.newPage();
 	await motionPage.goto(`${values.url}/?__static=1`);
 	assert.ok(await motionPage.locator('[data-reveal="pending"]').count(), "Below-fold elements have an entrance state");
-	await motionPage.locator("#project").scrollIntoViewIfNeeded();
-	await motionPage.waitForFunction(() => document.querySelector("#project").dataset.reveal === "visible");
+	await motionPage.locator("#questions .section-heading").scrollIntoViewIfNeeded();
+	await motionPage.waitForFunction(
+		() => document.querySelector("#questions .section-heading").dataset.reveal === "visible",
+	);
 	await motionPage.emulateMedia({ reducedMotion: "reduce" });
 	await motionPage.waitForFunction(() => !document.querySelector('[data-reveal="pending"]'));
 	assert.equal(await motionPage.locator("body").getAttribute("data-companion-enabled"), null);

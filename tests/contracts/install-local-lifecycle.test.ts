@@ -16,7 +16,7 @@ test("source installer applies migrations before repair and supports launcher pa
 	mkdirSync(join(checkout, "scripts"), { recursive: true });
 	mkdirSync(join(checkout, "dist/cli"), { recursive: true });
 	copyFileSync(new URL("../../scripts/install-local.sh", import.meta.url), join(checkout, "scripts/install-local.sh"));
-	writeFileSync(join(checkout, "package.json"), '{"name":"@akougkas/pancode","engines":{"node":">=22.19.0"}}');
+	writeFileSync(join(checkout, "package.json"), '{"name":"@panstudio/pancode","engines":{"node":">=22.19.0"}}');
 	writeFileSync(
 		join(checkout, "dist/cli/index.js"),
 		`#!${process.execPath}\nrequire('node:fs').appendFileSync(process.env.CALL_LOG, JSON.stringify(process.argv.slice(2))+'\\n'); if (process.argv[2] === '--version') console.log('PanCode fixture'); if (process.argv[2] === 'upgrade' && process.env.FAIL_MIGRATION) process.exitCode = 1;`,

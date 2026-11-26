@@ -7,7 +7,7 @@ triggers:
   - code-shaped contracts
   - implementation-ready technical specification
   - specify execution flows
-version: 0.3.5
+version: 0.3.6
 license: LicenseRef-PanCode-1.0
 disable-model-invocation: true
 allowed-tools:
@@ -23,8 +23,8 @@ allowed-tools:
 requires:
   - skill:tdd
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/planning/tech-spec
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/planning/tech-spec
   audit: pass
   model-size: large
   provisional: true

@@ -6,7 +6,7 @@
  */
 
 /** The one repository reports go to. No function takes a destination from a caller's text. */
-export const REPORT_REPOSITORY = "akougkas/pancode";
+export const REPORT_REPOSITORY = "PanStudio/pancode";
 
 /**
  * What every path that would upload a share, or read or publish shared metrics, prints instead. Sharing stays off

@@ -1,0 +1,299 @@
+Terminal stills
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
+
+== cli-hub-list-plugin
+
+~/projects/calibration-lab $ pancode hub list --kind plugin
+pack                 version  state      origin   publisher
+plugin:autotldr      0.2.0    available  bundled  akougkas verified MIT
+  Point it at anything.
+plugin:cite-nexus    0.2.5    available  bundled  akougkas verified MIT
+  CiteNexus connects research assistants to free scholarly metadata and optional academic APIs.
+plugin:hpc           0.4.1    available  bundled  pancode core LicenseRef-PanCode-1.0
+  HPC pack: Lmod and Spack software environments, parallel HDF5 and MPI-IO, and Darshan I/O analysis, through PanCode's…
+plugin:life-science  0.1.1    available  bundled  pancode core LicenseRef-PanCode-1.0
+  Life-science pack: skills that query the RCSB Protein Data Bank, UniProtKB and PubChem over their public, key-free RE…
+plugin:literature    0.3.0    available  bundled  pancode core LicenseRef-PanCode-1.0
+  Literature pack: verifies citations and resolves DOIs and arXiv IDs through the CiteNexus MCP server from the cite-ne…
+plugin:pankit        0.1.0    available  bundled  pancode core LicenseRef-PanCode-1.0
+  PanKit for Claude Code: the node, modules, darshan, spack, scidata and catalog MCP servers of PanCode's toolkit, each…
+plugin:science-data  0.4.1    available  bundled  pancode core LicenseRef-PanCode-1.0
+  Science data pack: a skill that finds datasets in the store and through PanCode's catalog server, keeps results in th…
+plugin:wtfp          0.9.0    available  bundled  akougkas verified MIT
+  Portable, evidence-grounded academic research and writing workflows.
+plugin:zulipchat     0.8.1    available  bundled  akougkas verified MIT
+  Zulip messaging and search, and hand-off to Zulip agent bots.
+~/projects/calibration-lab $
+
+== tui-context
+
+│ Thinking · I’m considering how to list files in a repository that likely includes a .git directory. I wonder if usin…
+
+▸ read README.md · lines 1-24 of 24 · 827B ✓
+▸ read package.json · lines 1-9 of 9 · 160B ✓
+▸ read temperature.mjs · lines 1-41 of 41 · 1.3KB ✓
+▸ read calibration.test.mjs · lines 1-67 of 67 · 2.9KB ✓
+
+│ Thinking · … 3 rows · /view
+│ .git metadata to keep the list concise. I want to finish this because I've called the tools, and it’s important to
+│ ensure everything is accurate and neatly organized.
+
+■ Repository files:
+
+  - README.md — Describes the temperature-conversion example, its validation and tests, and how to run them.
+  - package.json — Defines the Node.js package and test command.
+  - temperature.mjs — Implements Celsius, Kelvin, and Fahrenheit conversions with input and absolute-zero validation.
+  - calibration.test.mjs — Tests conversion values, round trips, invalid inputs, and absolute-zero boundaries.
+
+  This excludes Git’s internal .git metadata. No files were changed.
+
+✓ Done · 8.7s · 4 calls · in 12 · out 322 · cached 42.9k · cache write 2.4k · 12:19
+
+━ Context window ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱
+  ▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+  12.9k / 272k tokens · 4.7%
+  ▰ System prompt                             7.2k    2.7%    ▰ Tool results                               225    0.1%
+  ▰ Tool definitions                          4.2k    1.6%    ▰ Assistant output                           147    0.1%
+  ▰ Agent fleet                                775    0.3%    ▱ Free space                                205k   75.3%
+  ▰ Project context                            238    0.1%    ▒ Autocompact reserve                      54.4k   20.0%
+  ▰ Messages                                    46    0.0%
+  autocompact at 80% (auto) · cleanup ceiling 267k tokens · 12 active tools
+  Next request ─────────────────────────────────────────────────────────────────────────────────────────────── normal
+  input 12.9k · output reserve 32.8k · headroom 226k
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ [/compact] trim history · [/context refresh] re-index · [Esc] close ━
+ ▐∀▌ default · ~/…/calibration-lab · main │ ✓ ready                  ctx ▰▱▱▱▱▱ 5% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+
+== tui-settings-models
+
+▸ read calibration.test.mjs · lines 1-67 of 67 · 2.9KB ✓
+
+│ Thinking · … 3 rows · /view
+│ .git metadata to keep the list concise. I want to finish this because I've called the tools, and it’s important to
+│ ensure everything is accurate and neatly organized.
+
+■ Repository files:
+
+  - README.md — Describes the temperature-conversion example, its validation and tests, and how to run them.
+  - package.json — Defines the Node.js package and test command.
+  - temperature.mjs — Implements Celsius, Kelvin, and Fahrenheit conversions with input and absolute-zero validation.
+  - calibration.test.mjs — Tests conversion values, round trips, invalid inputs, and absolute-zero boundaries.
+
+  This excludes Git’s internal .git metadata. No files were changed.
+
+✓ Done · 8.7s · 4 calls · in 12 · out 322 · cached 42.9k · cache write 2.4k · 12:19
+
+━ Settings ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    Sections         [Tab] │ ▶ Models ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 11 settings │ copilot
+    Recent & Pinned        │ Connections ──────────────────────────────────────── │
+  › Models                 │    Health     Connection  Used by     Latency        │ URL: (none) · Default model:
+    Chat and display    *1 │ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌        │ gpt-6-luna
+    Workers                │ ❯  ● healthy  copilot     chat+fleet        —        │
+    Context and memory     │   Add a target              Open target wizard       │ Last probe: 12:19:03
+    Safety and limits      │   Connect by URL            Enter an endpoint URL    │
+    Workspace              │ Chat model ───────────────────────────────────────── │
+    Advanced               │   Chat connection           copilot             user │
+                           │   Chat model                gpt-6-luna          user │
+                           │ Reasoning & length ───────────────────────────────── │
+                           │   Thinking level            Low              default │
+                           │   Maximum answer length     Model limit      default │
+                           │ Speed ────────────────────────────────────────────── │ Enter: use, connect, probe, edit,
+                           │   Prompt pre-warm           Off              default │ remove · nothing changes until an
+                           │ 1–8 of 11 settings                                   │ action is confirmed
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ [Enter] open · [Tab] to sections · [↑↓] select · [type] filter · [Esc] back to sections ━
+ ▐∀▌ default · ~/…/calibration-lab · main │ ✓ ready                  ctx ▰▱▱▱▱▱ 5% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+
+== tui-settings-workers
+
+▸ read calibration.test.mjs · lines 1-67 of 67 · 2.9KB ✓
+
+│ Thinking · … 3 rows · /view
+│ .git metadata to keep the list concise. I want to finish this because I've called the tools, and it’s important to
+│ ensure everything is accurate and neatly organized.
+
+■ Repository files:
+
+  - README.md — Describes the temperature-conversion example, its validation and tests, and how to run them.
+  - package.json — Defines the Node.js package and test command.
+  - temperature.mjs — Implements Celsius, Kelvin, and Fahrenheit conversions with input and absolute-zero validation.
+  - calibration.test.mjs — Tests conversion values, round trips, invalid inputs, and absolute-zero boundaries.
+
+  This excludes Git’s internal .git metadata. No files were changed.
+
+✓ Done · 8.7s · 4 calls · in 12 · out 322 · cached 42.9k · cache write 2.4k · 12:19
+
+━ Settings ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    Sections         [Tab] │ ▶ Workers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 22 settings │ Default fleet connection
+    Recent & Pinned        │ Default worker ───────────────────────────────────── │
+    Models                 │ ❯ Default fleet connection        copilot       user │ Default connection for delegated
+    Chat and display    *1 │   Default fleet model             gpt-6-luna    user │ fleet work.
+  › Workers                │   Default thinking level          Off        default │
+    Context and memory     │   Default worker location         Automatic  default │ From  user settings.yaml
+    Safety and limits      │ Profiles ─────────────────────────────────────────── │
+    Workspace              │   Add profile                                        │
+    Advanced               │ Agent routes ─────────────────────────────────────── │
+                           │   Add agent route                                    │
+                           │ Automatic routing ────────────────────────────────── │
+                           │   Roles using automatic routi…    None       default │
+                           │   Automatic routing priorities    None       default │
+                           │ Machines ─────────────────────────────────────────── │
+                           │   Standing worker node prefer…    Not set    default │ Nothing changes until you choose
+                           │ 1–9 of 22 settings                                   │ where it applies · * pins
+━━━━━━━━━━━━━━━━━━━━━━ [Enter] open · [Tab] to sections · [↑↓] select · [*] pin · [type] filter · [Esc] close settings ━
+ ▐∀▌ default · ~/…/calibration-lab · main │ ✓ ready                  ctx ▰▱▱▱▱▱ 5% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+
+== tui-settings-fleet
+
+▸ read calibration.test.mjs · lines 1-67 of 67 · 2.9KB ✓
+
+│ Thinking · … 3 rows · /view
+│ .git metadata to keep the list concise. I want to finish this because I've called the tools, and it’s important to
+│ ensure everything is accurate and neatly organized.
+
+■ Repository files:
+
+  - README.md — Describes the temperature-conversion example, its validation and tests, and how to run them.
+  - package.json — Defines the Node.js package and test command.
+  - temperature.mjs — Implements Celsius, Kelvin, and Fahrenheit conversions with input and absolute-zero validation.
+  - calibration.test.mjs — Tests conversion values, round trips, invalid inputs, and absolute-zero boundaries.
+
+  This excludes Git’s internal .git metadata. No files were changed.
+
+✓ Done · 8.7s · 4 calls · in 12 · out 322 · cached 42.9k · cache write 2.4k · 12:19
+
+━ Settings ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    Sections         [Tab] │ ▶ Workers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 22 settings │ Add SSH node
+    Recent & Pinned        │   Add agent route                                    │
+    Models                 │ Automatic routing ────────────────────────────────── │ Add a remote worker node with
+    Chat and display    *1 │   Roles using automatic routi…    None       default │ guided SSH setup and project
+  › Workers                │   Automatic routing priorities    None       default │ verification.
+    Context and memory     │ Machines ─────────────────────────────────────────── │
+    Safety and limits      │   Standing worker node prefer…    Not set    default │
+    Workspace              │   node local                      ● ready · 0/8 busy │
+    Advanced               │ ❯ Add SSH node                    Add SSH node       │
+                           │   Discover with Tailscale         Discover with Tai… │
+                           │   Workers at once                 Automatic  default │
+                           │   Stagger shared-prefix worke…    On         default │
+                           │   endpoint copilot                slots 0/4          │
+                           │ Limits & retries ─────────────────────────────────── │ opens guided setup · nothing
+                           │   Fleet retries                   2          default │ changes until an action is
+                           │ 6–16 of 22 settings                                  │ confirmed
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ [Enter] open · [Tab] to sections · [↑↓] select · [type] filter · [Esc] close settings ━
+ ▐∀▌ default · ~/…/calibration-lab · main │ ✓ ready                  ctx ▰▱▱▱▱▱ 5% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+
+== tui-hub-skill-tdd
+
+▸ read calibration.test.mjs · lines 1-67 of 67 · 2.9KB ✓
+
+│ Thinking · … 3 rows · /view
+│ .git metadata to keep the list concise. I want to finish this because I've called the tools, and it’s important to
+│ ensure everything is accurate and neatly organized.
+
+■ Repository files:
+
+  - README.md — Describes the temperature-conversion example, its validation and tests, and how to run them.
+  - package.json — Defines the Node.js package and test command.
+  - temperature.mjs — Implements Celsius, Kelvin, and Fahrenheit conversions with input and absolute-zero validation.
+  - calibration.test.mjs — Tests conversion values, round trips, invalid inputs, and absolute-zero boundaries.
+
+  This excludes Git’s internal .git metadata. No files were changed.
+
+✓ Done · 8.7s · 4 calls · in 12 · out 322 · cached 42.9k · cache write 2.4k · 12:19
+
+━ PanHub · Skills ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ❯ Skills 40 │   Agents 1 │   Prompts 1 │   Playbooks 1 │   Plugins 9 │   Extensions 2 │   Servers 7
+  Browse: 40 packs · [b] installed only · Scope User · [s] Project
+  > tdd
+  Available ──────────────────────────────────────────────────── │ tdd                                          v0.4.2
+  ❯ tdd               not installed                   — · v0.4.2 │ ◔ not installed in user scope
+    coding-standards  not installed                   — · v0.4.4 │ [i] review install
+                                                                 │ Not in user scope yet, so there is nothing to
+                                                                 │ update or remove; s switches scope.
+                                                                 │ ───────────────────────────────────────────────────
+                                                                 │ Builds a feature or fix test-first, red to green at
+                                                                 │ pre-agreed public seams, one vertical slice at a
+                                                                 │ time. Not for designing benchmark criteria; use
+                                                                 │ experiment-protocol.
+                                                                 │
+                                                                 │ Ref               skill:tdd
+                                                                 │ 1–6 of 9 rows · PgUp/PgDn scroll
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ [Enter] back to list · [Esc] clear filter ━
+ ▐∀▌ default · ~/…/calibration-lab · main │ ✓ ready                  ctx ▰▱▱▱▱▱ 5% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+
+== tui-interop
+
+▸ read calibration.test.mjs · lines 1-67 of 67 · 2.9KB ✓
+
+│ Thinking · … 3 rows · /view
+│ .git metadata to keep the list concise. I want to finish this because I've called the tools, and it’s important to
+│ ensure everything is accurate and neatly organized.
+
+■ Repository files:
+
+  - README.md — Describes the temperature-conversion example, its validation and tests, and how to run them.
+  - package.json — Defines the Node.js package and test command.
+  - temperature.mjs — Implements Celsius, Kelvin, and Fahrenheit conversions with input and absolute-zero validation.
+  - calibration.test.mjs — Tests conversion values, round trips, invalid inputs, and absolute-zero boundaries.
+
+  This excludes Git’s internal .git metadata. No files were changed.
+
+✓ Done · 8.7s · 4 calls · in 12 · out 322 · cached 42.9k · cache write 2.4k · 12:19
+
+━ Local coding agents ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Adopts into user [s] project · [c] all kinds · 4 proposed · 0 connected · 5 inventories
+  >   type to filter
+  Proposed ───────────────────────────────────────────────────── │ Connect Claude Code                        proposal
+  ❯ Claude Code      npx -y @agentclientproto…  ‖ not configured │ ‖ not configured
+    Codex            npx -y @agentclientproto…  ‖ not configured │ /home/researcher/.local/bin/claude
+    OpenCode         opencode acp --cwd .       ‖ not configured │ [a] connect  appends exactly this entry to
+    GitHub Copilot   copilot --acp              ‖ not configured │              delegation.agents
+  Inventory ──────────────────────────────────────────────────── │ [x] decline  records the decision; PanCode proposes
+    Claude Code      nothing adoptable          0 resources      │              it again when its binary version or
+    Codex            nothing adoptable          0 resources      │              path changes
+    OpenCode         nothing adoptable          0 resources      │
+    GitHub Copilot   nothing adoptable          0 resources      │ ▌ - id: claude-code
+    Antigravity CLI  nothing adoptable          0 resources      │ ▌   command: npx
+  Not installed ──────────────────────────────────────────────── │ ▌   args:
+    Antigravity CLI  not on PATH                ✗ absent         │ 1–12 of 38 rows · PgUp/PgDn scroll
+  [↑↓] select
+━━━━━━━━━━━━━ [/] filter · [a] connect · [x] decline · [PgUp/PgDn] scroll detail · [s] scope · [c] kinds · [Esc] close ━
+ ▐∀▌ default · ~/…/calibration-lab · main │ ✓ ready                  ctx ▰▱▱▱▱▱ 5% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+
+== tui-hub-installed
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▐∀▌ PanCode 0.9.1
+
+i PanHub actions now select project scope.
+
+━ PanHub · Skills ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ❯ Skills 1 │   Agents 10 │   Prompts 0 │   Playbooks 4 │   Plugins 0 │   Extensions 0 │   Servers 7
+  Installed: 1 entry · [b] browse all · Scope Project · [s] User
+  >   type to filter
+  Installed ──────────────────────────────────────────────────── │ tdd                                           skill
+  ❯ tdd  ✓ available                            project · v0.4.2 │ ✓ available · ✓ trusted · owned by skill:tdd
+                                                                 │ [v] use · review: [e] enable/disable · [u] update
+                                                                 │ [x] remove
+                                                                 │ ───────────────────────────────────────────────────
+                                                                 │ Use     /skill tdd
+                                                                 │ Source  package (plugin:project:tdd)
+                                                                 │ Owner   skill:tdd (project scope)
+                                                                 │ Path    /home/researcher/projects/calibration-lab/
+                                                                 │         .pancode/plugins/tdd/SKILL.md
+                                                                 │
+                                                                 │ 1–6 of 10 rows · PgUp/PgDn scroll
+  [←→] tab · 1 entry · [↑↓] select
+━━━ [/] filter · [n] notices · [o] adopt · [r] refresh · [e] disable · [u] update · [x] remove · [v] use · [Esc] close ━
+ ▐∀▌ default · ~/…/calibration-lab · main* │ ✓ ready                                    ctx 272k │ copilot · gpt-6-luna

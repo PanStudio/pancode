@@ -6,19 +6,19 @@ one command, `pankit`, and every server speaks the Model Context Protocol over s
 other MCP host can run it.
 PanCode reaches the same servers through its MCP gateway as `builtin` servers.
 
-PanKit ships inside the `@akougkas/pancode` npm package, which installs `pankit` beside `pancode`. This workspace package,
+PanKit ships inside the `@panstudio/pancode` npm package, which installs `pankit` beside `pancode`. This workspace package,
 `@pancode/kit`, is private and never published on its own.
 
 ## Install
 
-`pankit` ships in the `@akougkas/pancode` npm package and needs Node 22.19 or later.
+`pankit` ships in the `@panstudio/pancode` npm package and needs Node 22.19 or later.
 
 ```bash
-npm install -g @akougkas/pancode      # installs pancode and pankit
+npm install -g @panstudio/pancode      # installs pancode and pankit
 pankit list
 ```
 
-Without a global install, `npx -y -p @akougkas/pancode pankit <command>` fetches the package and runs `pankit`.
+Without a global install, `npx -y -p @panstudio/pancode pankit <command>` fetches the package and runs `pankit`.
 
 ## Example
 
@@ -33,7 +33,7 @@ Serve the `node` server to any MCP host that reads the common `mcpServers` shape
 ```
 
 When `pankit` is not on the host's `PATH`, use `"command": "npx"` with
-`"args": ["-y", "-p", "@akougkas/pancode", "pankit", "serve", "node"]`, or the absolute path to the installed `pankit`.
+`"args": ["-y", "-p", "@panstudio/pancode", "pankit", "serve", "node"]`, or the absolute path to the installed `pankit`.
 Inside PanCode the servers are already there as `builtin` servers: `pancode mcp list` shows them and
 `pancode mcp test node --call node_memory` calls one.
 
@@ -85,5 +85,5 @@ the servers are unverified on macOS and Windows. The full list is in
 
 - PanKit guide, with every tool, server configuration and PanCode integration: https://pancode.dev/docs/guide/pankit.html
 - The extension API (unstable), which the servers are built on: https://pancode.dev/docs/guide/sdk.html
-- Source: https://github.com/akougkas/pancode/tree/main/packages/kit
-- PanCode: https://github.com/akougkas/pancode
+- Source: https://github.com/PanStudio/pancode/tree/main/packages/kit
+- PanCode: https://github.com/PanStudio/pancode

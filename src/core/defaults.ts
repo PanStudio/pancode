@@ -414,7 +414,7 @@ export interface MusicIntegrationSettings {
 /** The focus station `/music on` plays when settings name none. */
 const DEFAULT_MUSIC_STATION = "http://radio.cliamp.stream/lofi/stream";
 /** The release the hub-index workflow publishes signing.json, index.envelope.json and index.yaml to. */
-const DEFAULT_HUB_INDEX_URL = "https://github.com/akougkas/pancode/releases/download/hub-index/";
+const DEFAULT_HUB_INDEX_URL = "https://github.com/PanStudio/pancode/releases/download/hub-index/";
 
 export type DelegationToolGovernance = "pancode-policy" | "agent-managed" | "deny-all";
 

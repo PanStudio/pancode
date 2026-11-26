@@ -53,10 +53,10 @@ function Install-Pancode {
 	# Windows PowerShell 5.1 defaults to TLS 1.0, which GitHub refuses.
 	[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-	$PackageName = "@akougkas/pancode"
+	$PackageName = "@panstudio/pancode"
 	$LauncherMark = "# pancode-installer launcher"
 	$mirror = if ($env:PANCODE_RELEASE_MIRROR) { $env:PANCODE_RELEASE_MIRROR.TrimEnd("/") } else { "" }
-	$ReleaseBase = if ($mirror) { $mirror } else { "https://github.com/akougkas/pancode/releases/download" }
+	$ReleaseBase = if ($mirror) { $mirror } else { "https://github.com/PanStudio/pancode/releases/download" }
 	$ChannelBase = if ($mirror) { "$mirror/channel" } else { "https://pancode.dev/channel" }
 
 	function Say([string]$Text) { Write-Host "[install] $Text" }

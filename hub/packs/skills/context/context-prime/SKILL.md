@@ -7,7 +7,7 @@ triggers:
   - where were we
   - get up to speed
   - resume repository work after a break
-version: 0.4.4
+version: 0.4.5
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -19,8 +19,8 @@ allowed-tools:
   - code_nav
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/context/context-prime
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/context/context-prime
   audit: pass
   model-size: any
 ---

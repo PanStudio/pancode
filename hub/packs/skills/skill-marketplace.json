@@ -11,8 +11,8 @@
 				"find code inside a function",
 				"grep returns too much noise"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/coding/ast-grep",
-			"version": "0.3.4",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/coding/ast-grep",
+			"version": "0.3.5",
 			"audit": "pass",
 			"category": "coding"
 		},
@@ -26,8 +26,8 @@
 				"illegal states unrepresentable",
 				"functional core imperative shell"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/coding/coding-standards",
-			"version": "0.4.4",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/coding/coding-standards",
+			"version": "0.4.5",
 			"audit": "pass",
 			"category": "coding"
 		},
@@ -41,8 +41,8 @@
 				"sanity-check this logic",
 				"what should this UI look like"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/coding/prototype",
-			"version": "0.4.3",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/coding/prototype",
+			"version": "0.4.4",
 			"audit": "pass",
 			"category": "coding"
 		},
@@ -56,8 +56,8 @@
 				"build this test-first",
 				"reproduce the bug with a test"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/coding/tdd",
-			"version": "0.4.2",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/coding/tdd",
+			"version": "0.4.3",
 			"audit": "pass",
 			"category": "coding"
 		},
@@ -73,8 +73,8 @@
 				"playwright step file",
 				"screenshot the web app"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/coding/web-debug",
-			"version": "0.1.0",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/coding/web-debug",
+			"version": "0.1.1",
 			"audit": "pass",
 			"category": "coding"
 		},
@@ -88,8 +88,8 @@
 				"context is about to be lost",
 				"write a continuation brief"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/context/context-handoff",
-			"version": "0.5.7",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/context/context-handoff",
+			"version": "0.5.8",
 			"audit": "pass",
 			"category": "context"
 		},
@@ -103,8 +103,8 @@
 				"get up to speed",
 				"resume repository work after a break"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/context/context-prime",
-			"version": "0.4.4",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/context/context-prime",
+			"version": "0.4.5",
 			"audit": "pass",
 			"category": "context"
 		},
@@ -118,8 +118,8 @@
 				"closeout branch",
 				"branch-closeout"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/git/branch-closeout",
-			"version": "0.1.2",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/git/branch-closeout",
+			"version": "0.1.3",
 			"audit": "pass",
 			"category": "git"
 		},
@@ -133,8 +133,8 @@
 				"ticket this behavior",
 				"create a tracker issue"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/git/file-ticket",
-			"version": "0.3.4",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/git/file-ticket",
+			"version": "0.3.5",
 			"audit": "pass",
 			"category": "git"
 		},
@@ -148,8 +148,8 @@
 				"implement this tracker issue",
 				"fix a GitHub issue end to end"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/git/fix-issue",
-			"version": "0.3.3",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/git/fix-issue",
+			"version": "0.3.4",
 			"audit": "pass",
 			"category": "git"
 		},
@@ -163,8 +163,8 @@
 				"finish the rebase",
 				"resolve conflict markers"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/git/resolve-merge-conflicts",
-			"version": "0.4.2",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/git/resolve-merge-conflicts",
+			"version": "0.4.3",
 			"audit": "pass",
 			"category": "git"
 		},
@@ -178,8 +178,8 @@
 				"push and open a pull request",
 				"get this up for review"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/git/ship",
-			"version": "0.5.4",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/git/ship",
+			"version": "0.5.5",
 			"audit": "pass",
 			"category": "git"
 		},
@@ -192,8 +192,8 @@
 				"spin up parallel branches",
 				"prepare parallel worktrees"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/git/worktree-create",
-			"version": "0.6.2",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/git/worktree-create",
+			"version": "0.6.3",
 			"audit": "pass",
 			"category": "git"
 		},
@@ -206,8 +206,8 @@
 				"combine parallel branches",
 				"land finished worktrees"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/git/worktree-merge",
-			"version": "0.6.2",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/git/worktree-merge",
+			"version": "0.6.3",
 			"audit": "pass",
 			"category": "git"
 		},
@@ -222,8 +222,8 @@
 				"add a secret",
 				"secret leaked"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/meta/credentials",
-			"version": "0.2.2",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/credentials",
+			"version": "0.2.3",
 			"audit": "pass",
 			"category": "meta"
 		},
@@ -236,8 +236,8 @@
 				"create an extension workspace",
 				"debug extension reload"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/meta/extension-authoring",
-			"version": "0.1.7",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/extension-authoring",
+			"version": "0.1.8",
 			"audit": "pass",
 			"category": "meta"
 		},
@@ -251,8 +251,8 @@
 				"add an agent skill",
 				"search the skills marketplace"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/meta/find-skills",
-			"version": "0.3.3",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/find-skills",
+			"version": "0.3.4",
 			"audit": "pass",
 			"category": "meta"
 		},
@@ -266,8 +266,8 @@
 				"edit PanCode skills tools or prompts",
 				"work a PanCode lane brief or spec"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/meta/pancode-dev",
-			"version": "0.7.2",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/pancode-dev",
+			"version": "0.7.3",
 			"audit": "pass",
 			"category": "meta"
 		},
@@ -280,8 +280,8 @@
 				"verify PanCode skill activation",
 				"choose PanCode test gates"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/meta/pancode-test",
-			"version": "0.5.1",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/pancode-test",
+			"version": "0.5.2",
 			"audit": "pass",
 			"category": "meta"
 		},
@@ -295,8 +295,8 @@
 				"why isn't this skill firing",
 				"prune a skill body"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/meta/skill-authoring",
-			"version": "0.4.2",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/skill-authoring",
+			"version": "0.4.3",
 			"audit": "pass",
 			"category": "meta"
 		},
@@ -310,8 +310,8 @@
 				"decide the engineering approach",
 				"compare architecture options"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/planning/architecture",
-			"version": "0.4.5",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/planning/architecture",
+			"version": "0.4.6",
 			"audit": "pass",
 			"category": "planning"
 		},
@@ -325,8 +325,8 @@
 				"decompose this plan into tickets",
 				"create GitHub issues from this architecture"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/planning/backlog",
-			"version": "0.4.5",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/planning/backlog",
+			"version": "0.4.6",
 			"audit": "pass",
 			"category": "planning"
 		},
@@ -334,8 +334,8 @@
 			"name": "map-codebase",
 			"description": "Builds an interactive map of a codebase from verified repository structure, symbols and imports, as one standalone HTML file with a readable overview and expandable source evidence.",
 			"triggers": ["map this repository", "map codebase", "visualize repo", "codebase overview", "architecture diagram"],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/planning/map-codebase",
-			"version": "0.2.1",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/planning/map-codebase",
+			"version": "0.2.2",
 			"audit": "pass",
 			"category": "planning"
 		},
@@ -349,8 +349,8 @@
 				"structure this product brain dump",
 				"create milestone prompts"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/planning/prd",
-			"version": "0.4.4",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/planning/prd",
+			"version": "0.4.5",
 			"audit": "pass",
 			"category": "planning"
 		},
@@ -364,8 +364,8 @@
 				"define a falsifiable product hypothesis",
 				"greenfield product intent"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/planning/product-intent",
-			"version": "0.4.5",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/planning/product-intent",
+			"version": "0.4.6",
 			"audit": "pass",
 			"category": "planning"
 		},
@@ -379,8 +379,8 @@
 				"implementation-ready technical specification",
 				"specify execution flows"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/planning/tech-spec",
-			"version": "0.3.5",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/planning/tech-spec",
+			"version": "0.3.6",
 			"audit": "pass",
 			"category": "planning"
 		},
@@ -395,8 +395,8 @@
 				"build a literature survey",
 				"bibtex for this arxiv paper"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/research/arxiv-literature",
-			"version": "0.6.3",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/research/arxiv-literature",
+			"version": "0.6.4",
 			"audit": "pass",
 			"category": "research"
 		},
@@ -411,8 +411,8 @@
 				"reproduce these results",
 				"compare solver accuracy"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/research/experiment-protocol",
-			"version": "0.3.4",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/research/experiment-protocol",
+			"version": "0.3.5",
 			"audit": "pass",
 			"category": "research"
 		},
@@ -427,8 +427,8 @@
 				"debug with falsifiable hypotheses",
 				"scientific root cause"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/research/scientific-debugging",
-			"version": "0.3.4",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/research/scientific-debugging",
+			"version": "0.3.5",
 			"audit": "pass",
 			"category": "research"
 		},
@@ -443,8 +443,8 @@
 				"create a maintained fork",
 				"preserve scientific parity"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/research/scientific-modernization",
-			"version": "0.4.5",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/research/scientific-modernization",
+			"version": "0.4.6",
 			"audit": "pass",
 			"category": "research"
 		},
@@ -458,8 +458,8 @@
 				"weigh the architecture options",
 				"what would experts say"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/workflow/design-council",
-			"version": "0.6.5",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/workflow/design-council",
+			"version": "0.6.6",
 			"audit": "pass",
 			"category": "workflow"
 		},
@@ -473,8 +473,8 @@
 				"poke holes in this idea",
 				"clarify this plan one question at a time"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/workflow/plan-interview",
-			"version": "0.5.6",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/workflow/plan-interview",
+			"version": "0.5.7",
 			"audit": "pass",
 			"category": "workflow"
 		},
@@ -488,8 +488,8 @@
 				"turn this milestone into a sprint",
 				"write dependency-ordered vertical slices"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/workflow/sprint-plan",
-			"version": "0.4.4",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/workflow/sprint-plan",
+			"version": "0.4.5",
 			"audit": "pass",
 			"category": "workflow"
 		},
@@ -503,8 +503,8 @@
 				"distill this repeated process",
 				"create a skill from this session"
 			],
-			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/workflow/workflow-capture",
-			"version": "0.4.7",
+			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/workflow/workflow-capture",
+			"version": "0.4.8",
 			"audit": "pass",
 			"category": "workflow"
 		}

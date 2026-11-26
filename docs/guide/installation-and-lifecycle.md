@@ -14,7 +14,7 @@ On Windows, run `irm https://pancode.dev/install.ps1 | iex` in PowerShell. Both 
 ## Installation methods
 
 PanCode installs with `scripts/install.sh` (or `scripts/install.ps1` on Windows), which unpacks a bundle that carries its own Node.js; from the npm registry as
-`@akougkas/pancode` using npm, pnpm, or Bun; or from a source checkout using the
+`@panstudio/pancode` using npm, pnpm, or Bun; or from a source checkout using the
 pinned pnpm workflow. The [README quick start](../../README.md#get-started) covers
 installing and first run. The package routes require Node.js `>=22.19.0`,
 including installations managed by Bun; the installer satisfies that itself. On
@@ -52,7 +52,7 @@ development tree is becoming.
 ### What the installer downloads
 
 The installer downloads one bundle for your platform from the GitHub release,
-`https://github.com/akougkas/pancode/releases/download/v<version>/pancode-<version>-<target>.tar.gz`,
+`https://github.com/PanStudio/pancode/releases/download/v<version>/pancode-<version>-<target>.tar.gz`,
 and unpacks it. A bundle holds Node.js (24.22.3 in PanCode 0.9.0), npm, and PanCode
 with the dependency tree the release was tested with, so nothing is resolved from
 a package registry when you install. A bundle is about 85 MB and unpacks to about
@@ -73,13 +73,13 @@ Every release asset also carries a GitHub build attestation, which you can check
 yourself:
 
 ```bash
-gh attestation verify pancode-<version>-<target>.tar.gz --repo akougkas/pancode
+gh attestation verify pancode-<version>-<target>.tar.gz --repo PanStudio/pancode
 ```
 
 The Node.js inside a bundle is pinned by SHA-256 in
-[node-runtime.json](https://github.com/akougkas/pancode/blob/main/scripts/release/node-runtime.json). The release
+[node-runtime.json](https://github.com/PanStudio/pancode/blob/main/scripts/release/node-runtime.json). The release
 signature on Node's own checksum list is verified when that pin is written, by
-[pin-node.mjs](https://github.com/akougkas/pancode/blob/main/scripts/release/pin-node.mjs), so the installer needs no
+[pin-node.mjs](https://github.com/PanStudio/pancode/blob/main/scripts/release/pin-node.mjs), so the installer needs no
 OpenPGP tools.
 
 The installer finds the version to install in a channel file: one line at
@@ -89,13 +89,13 @@ exact `--version` skips the channel file.
 ### npm install-scripts warning
 
 npm versions that gate dependency install scripts behind `allowScripts` may print, on
-`npm install -g @akougkas/pancode`, that `@google/genai` (preinstall) and `protobufjs`
+`npm install -g @panstudio/pancode`, that `@google/genai` (preinstall) and `protobufjs`
 (postinstall) have install scripts not yet covered by `allowScripts`. The installation is
 complete and works without them: the `@google/genai` preinstall is `echo 'preinstall: no-op'`,
 and the `protobufjs` postinstall only prints a warning when a package that depends on it
 pins a version range in a style it does not recommend. Neither builds, downloads or writes
 anything PanCode needs, so skipping them is safe. To silence the warning, allow them as
-npm suggests, once with `npm install -g --allow-scripts=@google/genai,protobufjs @akougkas/pancode`
+npm suggests, once with `npm install -g --allow-scripts=@google/genai,protobufjs @panstudio/pancode`
 or for every global install with
 `npm config set allow-scripts=@google/genai,protobufjs --location=user`.
 
@@ -107,8 +107,8 @@ display as unreleased.
 
 ```bash
 curl -fsSL https://pancode.dev/install.sh | sh -s -- --channel beta
-npm install -g @akougkas/pancode@beta
-bun add -g @akougkas/pancode@beta
+npm install -g @panstudio/pancode@beta
+bun add -g @panstudio/pancode@beta
 pancode upgrade --channel beta
 ```
 
@@ -120,8 +120,8 @@ pancode upgrade --channel beta
 precedence. The installers read one channel file: a stable release moves `channel/beta` as well as
 `channel/latest`, so `beta` always names the newest release of either kind. npm
 and Bun install the dist-tag you name, and the registry carries a `beta` tag only
-while a pre-release is current, so `npm install -g @akougkas/pancode@beta` or
-`bun add -g @akougkas/pancode@beta` can fail with `ETARGET` or install an older
+while a pre-release is current, so `npm install -g @panstudio/pancode@beta` or
+`bun add -g @panstudio/pancode@beta` can fail with `ETARGET` or install an older
 pre-release. When no pre-release is current, install `@latest` instead, or run
 `pancode upgrade --channel beta`, which resolves the newer of the two. A bare upgrade follows the installer
 install's recorded channel, or uses `latest` for a package-manager installation.
@@ -160,7 +160,7 @@ installer, and every release carries its own `install.sh`, `install.ps1` and
 An explicit channel selection clears an installer's version pin.
 Installer installs retain the previous
 version for `pancode upgrade --rollback`; rollback turns background updates off.
-Global npm/Bun users reinstall `@akougkas/pancode@latest` with their package manager.
+Global npm/Bun users reinstall `@panstudio/pancode@latest` with their package manager.
 
 ### The installer layout
 
@@ -541,14 +541,14 @@ When PanCode boots (or after a reset), it calls `initializePancodeHome()` (see [
 Use the local source installer from the cloned repository:
 
 ```bash
-git clone https://github.com/akougkas/pancode.git
+git clone https://github.com/PanStudio/pancode.git
 cd pancode
 pnpm run install:local
 hash -r
 pancode --version
 ```
 
-[install-local.sh](https://github.com/akougkas/pancode/blob/main/scripts/install-local.sh) is idempotent and auditable. Its flags are `--skip-deps`, `--no-build`, `--dry-run`, `--force` (`-f`) and `--help` (`-h`); an unknown option exits 1. It:
+[install-local.sh](https://github.com/PanStudio/pancode/blob/main/scripts/install-local.sh) is idempotent and auditable. Its flags are `--skip-deps`, `--no-build`, `--dry-run`, `--force` (`-f`) and `--help` (`-h`); an unknown option exits 1. It:
 
 - verifies `node` satisfies `package.json` `engines.node`;
 - runs `pnpm install --frozen-lockfile` to sync dependencies with the workspace lockfile unless `--skip-deps` is passed;
@@ -654,7 +654,7 @@ path and source update steps. Fetch tags, choose the desired release, and run
 For npm global installs, `upgrade` derives the prefix from the running package,
 including custom prefixes, and runs post-install checks through the exact installed
 entry. Another launcher on `PATH` cannot take over those checks. It asks the npm
-registry for `@akougkas/pancode`, and an older dist-tag
+registry for `@panstudio/pancode`, and an older dist-tag
 does not trigger a downgrade. npm replaces the package in place, so on a prefix the
 current user can write, `upgrade` first checks for other processes of the install.
 While any other session, update lease or `pancode` process of the same root is
@@ -788,13 +788,13 @@ channel's version. When the installed version is that one or newer, the run prin
 `Already on <version>. Nothing to do.` and exits 0. When the registry names a newer
 version, a real run prints the owning manager's command and exits 1 with
 `This installation needs a package-manager update; no package was replaced.` The
-commands are `pnpm add -g @akougkas/pancode@<channel>` and
-`bun add -g @akougkas/pancode@<channel>`; on the `beta` channel they name the version
+commands are `pnpm add -g @panstudio/pancode@<channel>` and
+`bun add -g @panstudio/pancode@<channel>`; on the `beta` channel they name the version
 `beta` resolves to, not the dist-tag. On `beta` the version is known only when both
 tags answer, or the registry confirms `beta` unpublished (404); a `beta` request that
 fails counts as no version. When the registry gives no version, a real run
-prints a check that changes nothing (`pnpm view @akougkas/pancode@latest version`, or
-`pnpm view @akougkas/pancode dist-tags` on `beta`; `bun info` for Bun), then the
+prints a check that changes nothing (`pnpm view @panstudio/pancode@latest version`, or
+`pnpm view @panstudio/pancode dist-tags` on `beta`; `bun info` for Bun), then the
 command to run if that version is newer (on `beta`, with `<version>` to fill in), and
 exits 1 with `PanCode could not tell whether a newer release is out; no package was replaced.`
 Homebrew and WinGet publish on their own schedule, so the registry is not asked: a
@@ -859,7 +859,7 @@ five-second delay. Version requests have a 2.5-second timeout and are cached for
 installer install reads the channel file the installer reads,
 `https://pancode.dev/channel/<channel>` or `<PANCODE_RELEASE_MIRROR>/channel/<channel>`
 when that variable names an `http` or `https` mirror, for the channel it recorded.
-Every other install asks the npm registry for `@akougkas/pancode`: the registry named by
+Every other install asks the npm registry for `@panstudio/pancode`: the registry named by
 `npm_config_registry` or `NPM_CONFIG_REGISTRY` when it is an
 `http` or `https` URL, so a mirror announces the version its own `npm install`
 fetches, and `registry.npmjs.org` otherwise. npm,
@@ -1050,7 +1050,7 @@ manifest records `pathAdded`. On Windows, where a running `node.exe`
 is locked, the launcher and the installed versions are removed a few seconds after the command exits.
 
 For an npm global install on Linux or macOS, uninstall runs
-`npm uninstall -g --prefix <prefix> @akougkas/pancode` last; `--keep-package` or
+`npm uninstall -g --prefix <prefix> @panstudio/pancode` last; `--keep-package` or
 `--keep-binary` keeps the package. 
 Every run ends with `Removed:` and `Kept, and why:` lists, which `--json` reports as `removed`
 and `kept`.
@@ -1207,7 +1207,7 @@ When executing tasks headlessly using `pancode run`, interactive permission prom
 
 ## 8. What the npm Package Ships
 
-The published package, `@akougkas/pancode`, is also the package inside every
+The published package, `@panstudio/pancode`, is also the package inside every
 bundle. It carries PanCode's own TypeScript source and code map so
 that it can answer questions about itself, but in compressed form:
 
