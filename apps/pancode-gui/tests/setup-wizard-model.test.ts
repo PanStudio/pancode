@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { setupWorkspaceId, withOpenedWorkspace, workspaceNotice } from "../client/pages/home-draft-model.js";
-import { readMessages, stepFor, viewFor, workingLabel } from "../client/wizard/wizard-model.js";
+import { readMessages, stepFor, testedLede, viewFor, workingLabel } from "../client/wizard/wizard-model.js";
 import type { SetupState } from "../contracts/setup.js";
 
 const select = (heading: string[], labels: string[]) =>
@@ -128,6 +128,7 @@ test("the test request is read from the CLI's lines: waiting on it, its answer, 
 	if (saved.kind !== "saved") return;
 	assert.equal(saved.verified, true);
 	assert.equal(saved.tested, "answered in 0.8 s");
+	assert.equal(testedLede(saved.tested ?? ""), "The model answered a test message in 0.8 s.");
 	assert.deepEqual(saved.summary, []);
 
 	const anyway = viewFor(
