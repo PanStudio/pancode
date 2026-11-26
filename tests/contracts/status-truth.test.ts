@@ -2269,6 +2269,33 @@ test("a loop repair after a step that succeeded opens its own card, and a retry 
 	strictEqual(first?.entry.attempts.length, 2);
 });
 
+test("a resume replays a compaction's thinking baseline only when it changes the level shown", () => {
+	const row = (turnId: string, extra: object) => ({
+		kind: "thinkingLevelChange",
+		turnId,
+		parentTurnId: null,
+		timestamp: "2026-11-26T11:24:51Z",
+		...extra,
+	});
+	const entries = [
+		row("t0", { thinkingLevel: "low", configurationInitial: true }),
+		{
+			kind: "message",
+			role: "user",
+			turnId: "ask",
+			parentTurnId: "t0",
+			timestamp: "2026-11-26T11:25:00Z",
+			payload: "go",
+		},
+		row("t1", { parentTurnId: "ask", thinkingLevel: "medium" }),
+		row("t2", { parentTurnId: "t1", thinkingLevel: "medium", configurationInitial: true }),
+	] as unknown as SessionEntry[];
+	const panel = createChatPanel();
+	rehydrateChatPanelFromTurns(panel, entries, { readWorkerRunResult: () => null });
+	const shown = stripTerminalSequences(panel.render(100).join("\n")).match(/Thinking effort \w+/gu);
+	deepStrictEqual(shown, ["Thinking effort low", "Thinking effort medium"]);
+});
+
 test("a card replayed by /fork while its worker runs keeps streaming and settles, and one no stream follows never reads starting (bt-11 c)", () => {
 	const stream = createWorkerStream({ readResult: () => null });
 	const started = stream.started({
