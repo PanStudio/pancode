@@ -410,6 +410,23 @@ test("manual package managers get instructions without replacement and dry runs 
 	assert.equal(beta.status, 1, beta.stderr + beta.stdout);
 	assert.match(beta.stdout, /pnpm add -g @akougkas\/pancode@99\.0\.0/);
 	assert.doesNotMatch(beta.stdout, /@beta/);
+	// Without a registry answer the beta check lists both tags, and the replacement waits for the version they name.
+	const unknownBeta = await f.call(["--channel", "beta", "--json"], {
+		inspectInstallation: () => ({ ...inspectInstallation(f.entry), kind: "pnpm" }),
+		lookUpAvailableVersion: async () => ({ asked: true, version: null }),
+	});
+	assert.equal(unknownBeta.status, 1, unknownBeta.stderr + unknownBeta.stdout);
+	assert.match(unknownBeta.stdout, /pnpm view @akougkas\/pancode dist-tags/);
+	assert.match(unknownBeta.stdout, /pnpm add -g @akougkas\/pancode@<version>/);
+	assert.doesNotMatch(unknownBeta.stdout, /@beta/);
+	// A newer npm version says nothing about what Homebrew would install.
+	const brew = await f.call(["--json"], {
+		inspectInstallation: () => ({ ...inspectInstallation(f.entry), kind: "homebrew" }),
+		lookUpAvailableVersion: async () => ({ asked: true, version: "99.0.0" }),
+	});
+	assert.equal(brew.status, 1, brew.stderr + brew.stdout);
+	assert.match(brew.stdout, /brew outdated pancode/);
+	assert.doesNotMatch(brew.stdout, /99\.0\.0|needs a package-manager update/);
 	const preview = await f.call(["--dry-run", "--restart"]);
 	assert.equal(preview.status, 0, preview.stderr + preview.stdout);
 	assert.match(preview.stdout, /Would relaunch/);
