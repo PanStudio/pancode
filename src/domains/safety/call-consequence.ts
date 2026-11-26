@@ -14,6 +14,7 @@ import { describeBashCallConsequences, type PathKind } from "./command-consequen
 import { type ShellCommandStep, shellCommandSteps } from "./command-path-walks.js";
 import { outwardShellReason } from "./containment.js";
 import type { SafetyDecision } from "./contract.js";
+import { asksToLeaveSandbox } from "./sandbox-escape.js";
 
 /** What exists at `path` once resolved against `cwd`; null when it does not, or cannot be read. */
 function pathKindIn(cwd: string): (path: string) => PathKind {
@@ -216,4 +217,35 @@ function shellOutwardReason(call: ClassifierCall): string | null {
 export function mainCallExposure(call: ClassifierCall, decision: SafetyDecision): AutonomyExposure {
 	if (autonomyCallInputs(call, decision).exposure === "outward") return "outward";
 	return shellOutwardReason(call) === null ? "local" : "outward";
+}
+
+/** A shell word that names a path by itself: absolute, under home, or up out of the cwd. */
+const PATH_WORD = /^(?:\/|~(?:\/|$)|\.\.(?:\/|$))/u;
+
+/**
+ * Whether a parked main-agent call reaches files outside the workspace, so its
+ * card says so instead of "reaches this workspace": a read the net marked as
+ * outside the workspace, a command that leaves the sandbox, or a shell call whose
+ * cwd, script or path operand lies outside. Card text only, like `mainCallExposure`.
+ */
+export function mainCallReachesOutsideWorkspace(
+	call: ClassifierCall,
+	decision: SafetyDecision,
+	workspace: string = process.cwd(),
+	home: string = homedir(),
+): boolean {
+	if (decision.policy?.readScope === "outside-workspace" || asksToLeaveSandbox(decision)) return true;
+	if (call.tool !== ToolNames.Bash && call.tool !== ToolNames.RunScript) return false;
+	const cwdArg = call.args?.cwd;
+	const cwd = resolve(workspace, typeof cwdArg === "string" && cwdArg.length > 0 ? cwdArg : ".");
+	const outside = (base: string, word: string): boolean =>
+		word !== "/dev/null" &&
+		!isSameOrDescendant(resolve(base, word === "~" || word.startsWith("~/") ? home + word.slice(1) : word), workspace);
+	if (outside(workspace, cwd)) return true;
+	// run_script resolves its script against the workspace root, whatever its cwd.
+	const script = call.args?.script;
+	if (call.tool === ToolNames.RunScript) return typeof script === "string" && outside(workspace, script);
+	const command = call.args?.command;
+	if (typeof command !== "string") return false;
+	return shellCommandSteps(command).some((step) => step.args.some((word) => PATH_WORD.test(word) && outside(cwd, word)));
 }

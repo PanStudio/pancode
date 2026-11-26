@@ -27,6 +27,8 @@ export interface ApprovalRequestView {
 	origin: { kind: "main" } | { kind: "worker"; agentId: string; runId: string; endsWithTurn?: boolean };
 	/** Admission-normalized exposure. Caller prose never supplies presentation fields. */
 	exposure?: AutonomyExposure;
+	/** The call names a path outside the workspace or leaves the sandbox, so the card never says it stays inside. */
+	outsideWorkspace?: true;
 	reason: string;
 	/**
 	 * The safety-net rule's own reason text, set for a net-axis ask so the card can say what

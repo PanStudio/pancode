@@ -16,7 +16,7 @@ const DECISION_TIERS = ["conversation", "workspace", "outward", "safety-net", "s
 type DecisionTier = (typeof DECISION_TIERS)[number];
 type DecisionSemanticToken = "accent" | "action" | "warning";
 type DecisionRequestKind = "question" | "permission";
-type DecisionAffectedScope = "conversation" | "workspace" | "outward" | "system";
+type DecisionAffectedScope = "conversation" | "workspace" | "outside-workspace" | "outward" | "system";
 type DecisionReversibility = "reversible" | "limited" | "unknown";
 type DecisionAuthorityEffect = "records-answer" | "grants-once";
 type DecisionActionId = "record-answer" | "cancel" | "approve-once" | "deny" | "stop";
@@ -97,18 +97,22 @@ export function decisionActionClass(value: unknown): ActionClass {
 	return typeof value === "string" && ACTION_CLASSES.has(value as ActionClass) ? (value as ActionClass) : "unknown";
 }
 
-function actionConsequence(actionClass: ActionClass): {
+function actionConsequence(
+	actionClass: ActionClass,
+	outsideWorkspace: boolean,
+): {
 	affectedScope: DecisionAffectedScope;
 	reversibility: DecisionReversibility;
 } {
+	const reach = outsideWorkspace ? "outside-workspace" : "workspace";
 	switch (actionClass) {
 		case "read":
-			return { affectedScope: "workspace", reversibility: "reversible" };
+			return { affectedScope: reach, reversibility: "reversible" };
 		case "write":
-			return { affectedScope: "workspace", reversibility: "reversible" };
+			return { affectedScope: reach, reversibility: "reversible" };
 		case "execute":
 		case "dispatch":
-			return { affectedScope: "workspace", reversibility: "limited" };
+			return { affectedScope: reach, reversibility: "limited" };
 		case "destructive":
 		case "system_modify":
 		case "git_destructive":
@@ -125,9 +129,11 @@ export function decisionFactsForPermission(input: {
 	exposure?: AutonomyExposure;
 	sandboxed?: true;
 	workers?: number;
+	/** The call names a path outside the workspace or leaves the sandbox (`mainCallReachesOutsideWorkspace`). */
+	outsideWorkspace?: boolean;
 }): TrustedDecisionFacts {
 	const exposure = input.exposure ?? "local";
-	const consequence = actionConsequence(input.actionClass);
+	const consequence = actionConsequence(input.actionClass, input.outsideWorkspace === true);
 	return {
 		requestKind: "permission",
 		axis: input.axis,
@@ -191,8 +197,9 @@ function tierIdentity(
 		case "workspace":
 			return {
 				tierLabel: DECISION_TIER_LABELS.workspace,
-				title: "Approve workspace action",
-				kind: "workspace action",
+				...(facts.affectedScope === "outside-workspace"
+					? { title: "Approve action outside the workspace", kind: "action outside the workspace" }
+					: { title: "Approve workspace action", kind: "workspace action" }),
 				semanticToken: "action",
 			};
 		case "outward":
@@ -276,6 +283,10 @@ function consequenceCopy(facts: TrustedDecisionFacts, tier: DecisionTier): strin
 		case "conversation":
 			return "The answer stays in this session's decision record.";
 		case "workspace":
+			if (facts.affectedScope === "outside-workspace")
+				return facts.actionClass === "read"
+					? "The call reads outside the workspace without changing anything."
+					: "The call can affect files or processes outside the workspace.";
 			return facts.actionClass === "read"
 				? "The call reads within the workspace without mutating it."
 				: "The call can affect files or processes inside the workspace.";

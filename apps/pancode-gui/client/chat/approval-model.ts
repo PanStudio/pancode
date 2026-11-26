@@ -218,6 +218,7 @@ export const approvalAnnouncement = (
 const AFFECTED_SCOPE_LABELS: Readonly<Record<string, string>> = {
 	conversation: "reaches this conversation only",
 	workspace: "reaches this workspace",
+	"outside-workspace": "reaches outside this workspace",
 	outward: "reaches outside this machine",
 	system: "reaches this machine",
 };

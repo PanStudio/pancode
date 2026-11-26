@@ -113,6 +113,7 @@ export function permissionDecisionPresentation(view: ApprovalRequestView): Decis
 			origin: view.origin,
 			...(view.exposure !== undefined ? { exposure: view.exposure } : {}),
 			...(view.sandboxed === true ? { sandboxed: true as const } : {}),
+			...(view.outsideWorkspace === true ? { outsideWorkspace: true } : {}),
 			workers: approvedWorkers(view),
 		}),
 	);
