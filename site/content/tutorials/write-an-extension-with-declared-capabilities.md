@@ -9,7 +9,7 @@ This guide describes runtime api 2. The runtime runs inside bubblewrap on Linux 
 - Node.js and a little TypeScript. The scaffold includes an entrypoint and a test.
 :::
 
-::: steps
+::: steps Build, install and use the extension
 ### Scaffold a package
 
 ```sh

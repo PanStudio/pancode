@@ -510,7 +510,7 @@ catalog only as a marketplace, through `pancode hub install skill:<name>` or `/s
 
 ## 2. File & Permissions Matrix
 
-The core files are created automatically during the first run. `settings.yaml`, `credentials.yaml` and `home.json` are written owner-only (`0o600`). `doctor` reports a `settings.yaml` that is wider than owner-only as a warning and a `credentials.yaml` that is not `0o600` as an error, and `doctor --fix` tightens both. Session directories, transcripts, spilled tool output and `runs.json` are owner-only too (`0o700` directories, `0o600` files), and boot closes any state subdirectory that is group- or world-readable, without recursing. A home shared through a group loses that access at boot; share a session with `pancode telemetry share` instead. `doctor` warns when the state or data root is open to other users, and `doctor --fix` tightens a root that passes the ownership test `reset` uses. Other initialized files and directories use either the explicit mode shown below or the platform default produced by the writer and process umask. On Windows the mode checks do not run and the directory's ACL protects these files, except that before each `credentials.yaml` write the config directory is made owner-only (the current account and SYSTEM, inherited by new files) and the file itself is made owner-only after it; `doctor` warns when the file's ACL grants anyone else, reading it by SID so a localized Windows names no false principal, and `doctor --fix` reapplies both.
+The core files are created automatically during the first run. `settings.yaml` and `home.json` are written owner-only (`0o600`), and `credentials.yaml` is created owner-only (`0o600`) by the first saved key, not before. `doctor` reports a `settings.yaml` that is wider than owner-only as a warning and a `credentials.yaml` that is not `0o600` as an error, and `doctor --fix` tightens both. Session directories, transcripts, spilled tool output and `runs.json` are owner-only too (`0o700` directories, `0o600` files), and boot closes any state subdirectory that is group- or world-readable, without recursing. A home shared through a group loses that access at boot; share a session with `pancode telemetry share` instead. `doctor` warns when the state or data root is open to other users, and `doctor --fix` tightens a root that passes the ownership test `reset` uses. Other initialized files and directories use either the explicit mode shown below or the platform default produced by the writer and process umask. On Windows the mode checks do not run and the directory's ACL protects these files, except that before each `credentials.yaml` write the config directory is made owner-only (the current account and SYSTEM, inherited by new files) and the file itself is made owner-only after it; `doctor` warns when the file's ACL grants anyone else, reading it by SID so a localized Windows names no false principal, and `doctor --fix` reapplies both.
 
 | Directory | File Path | Purpose | Permissions | Lifecycle Action |
 | :--- | :--- | :--- | :--- | :--- |
@@ -531,7 +531,7 @@ The core files are created automatically during the first run. `settings.yaml`, 
 When PanCode boots (or after a reset), it calls `initializePancodeHome()` (see [init.ts](../../src/core/init.ts)) to bootstrap missing structures:
 1.  **Directory Tree**: Recursively creates the four roots (`config`, `data`, `state`, `cache`) and their skeletons: `agents` under config, `memory` under data, and `sessions`/`interviews`/`scratch` under state. Telemetry creates `<stateDir>/telemetry/` on its first write.
 2.  **Settings Template**: If `settings.yaml` is absent, creates a fresh default config at `0o600`. An existing file is never read, validated, or rewritten by initialization, and no `settings.yaml.lock` is taken for it.
-3.  **Credentials Security**: If `credentials.yaml` is absent, creates a YAML file containing a managed-file comment and an empty object (`{}`), then locks its permissions immediately to owner-only read-write (`0o600`). An existing file takes no `credentials.yaml.lock`, so a boot over a set-up home creates no lock file in the config root.
+3.  **Credentials**: Initialization never writes `credentials.yaml` and takes no `credentials.yaml.lock`. The first saved key (`pancode auth login`, `pancode configure`) creates the file owner-only (`0o600`) under `credentials.yaml.lock`; until then `doctor` reports `none saved`.
 4.  **Install Metadata**: Writes `home.json` with `installedAt` exactly once when no config, data, or state root existed before initialization. If PanCode reconstructs missing metadata over a preexisting config, data, or state root, it writes `repairedAt` instead of inventing an installation time. A cache-only root does not count as a preexisting home for this decision. A later version, platform, or node change preserves whichever original timestamp exists and stamps `upgradedAt`; a version change also records the previous version as `upgradedFrom`. When a newer PanCode last used the home, an older binary leaves `home.json` alone: the interactive start says so and asks before continuing (default no), and accepting records the downgrade so later starts do not ask. Headless `run` and ACP exit 2 instead unless `PANCODE_ALLOW_OLDER=1` is set, and `doctor` names both versions and every `pancode` on `PATH`. A `-dev` or `-rc` build of the same release does not count as older.
 
 ---
@@ -783,14 +783,26 @@ home is then recorded as installed (`installedAt`) and reports no repair. A dry
 run creates nothing.
 
 Without `--post-install`, a pnpm, Bun, Homebrew, WinGet, local, or unknown layout is
-never replaced through npm. A real run prints the owning manager's command and
-exits 1 with `This installation needs a package-manager update; no package was replaced.`;
-a dry run prints the same and exits 0. The commands are
-`pnpm add -g @akougkas/pancode@<channel>`, `bun add -g @akougkas/pancode@<channel>`
-(on the `beta` channel these name the version `beta` resolves to, not the dist-tag),
-`brew upgrade pancode` and `winget upgrade --id PanCode.PanCode --exact`; an unknown
-layout is told to use its original manager and then run
-`pancode upgrade --post-install`. Keep the original manager's global directory or
+never replaced through npm. For pnpm and Bun, PanCode asks the npm registry for the
+channel's version. When the installed version is that one or newer, the run prints
+`Already on <version>. Nothing to do.` and exits 0. When the registry names a newer
+version, a real run prints the owning manager's command and exits 1 with
+`This installation needs a package-manager update; no package was replaced.` The
+commands are `pnpm add -g @akougkas/pancode@<channel>` and
+`bun add -g @akougkas/pancode@<channel>`; on the `beta` channel they name the version
+`beta` resolves to, not the dist-tag. On `beta` the version is known only when both
+tags answer, or the registry confirms `beta` unpublished (404); a `beta` request that
+fails counts as no version. When the registry gives no version, a real run
+prints a check that changes nothing (`pnpm view @akougkas/pancode@latest version`, or
+`pnpm view @akougkas/pancode dist-tags` on `beta`; `bun info` for Bun), then the
+command to run if that version is newer (on `beta`, with `<version>` to fill in), and
+exits 1 with `PanCode could not tell whether a newer release is out; no package was replaced.`
+Homebrew and WinGet publish on their own schedule, so the registry is not asked: a
+real run prints `brew outdated pancode` or `winget show --id PanCode.PanCode --exact`
+to check, then `brew upgrade pancode` or `winget upgrade --id PanCode.PanCode --exact`,
+and exits 1 with the same message. A local or unknown layout is told to use its
+original manager, and exits 1 the same way. A dry run prints the same advice and
+exits 0. Keep the original manager's global directory or
 prefix when updating or removing the package. On Windows, where npm, pnpm and npx are `.cmd` shims, PanCode starts them through `cmd.exe /d /s /c` and only with arguments `cmd.exe` cannot reinterpret; an update whose arguments would need quoting is refused instead of run. `doctor --fix` rebuilding a source checkout (`pnpm run build`) and `fleet nodes install` or `setup` packing this build (`npm pack`) launch them the same way. Package removal preserves PanCode's user configuration and
 sessions; the uninstall operation below deliberately removes those roots.
 

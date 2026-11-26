@@ -145,13 +145,13 @@ describe("contracts/DOG-001 doctor credential reads", () => {
 							findings: Array<{ name: string; ok: boolean; detail: string }>;
 						};
 						const credential = report.findings.find((finding) => finding.name === "credentials");
-						strictEqual(credential?.ok, stored);
-						match(credential?.detail ?? "", stored ? /^600$/ : /^missing /);
+						strictEqual(credential?.ok, true);
+						match(credential?.detail ?? "", stored ? /^600$/ : /^none saved; save a key with `pancode auth login <target>`$/);
 						const model = report.findings.find((finding) => finding.name === "model fixture");
 						strictEqual(model?.ok, true);
 						match(model?.detail ?? "", /found in live list from /);
 					} else {
-						match(result.stdout, stored ? /OK\s+credentials\s+600/ : /!!\s+credentials\s+missing /);
+						match(result.stdout, stored ? /OK\s+credentials\s+600/ : /OK\s+credentials\s+none saved; /);
 						match(result.stdout, /OK\s+model fixture\s+.*found in live list from /);
 					}
 				}
