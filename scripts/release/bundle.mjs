@@ -128,38 +128,37 @@ function packageTree(tarball, work) {
 	return tree;
 }
 
-/** One reproducible archive of several trees: sorted names, no owner, one timestamp. */
-function archive(file, trees, mtime) {
+/** Resolves when `child` exits 0. */
+function exited(name, child) {
 	return new Promise((done, fail) => {
-		const tar = spawn(
-			"tar",
-			[
-				"--sort=name",
-				"--owner=0",
-				"--group=0",
-				"--numeric-owner",
-				`--mtime=@${mtime}`,
-				"-cf",
-				"-",
-				...trees.flatMap((tree) => ["-C", tree, "."]),
-			],
-			{ stdio: ["ignore", "pipe", "inherit"] },
-		);
-		const gzip = spawn("gzip", ["-n", "-9"], { stdio: ["pipe", "pipe", "inherit"] });
-		tar.stdout.pipe(gzip.stdin);
-		gzip.stdout.pipe(createWriteStream(file));
-		let pending = 2;
-		for (const [name, child] of [
-			["tar", tar],
-			["gzip", gzip],
-		]) {
-			child.once("error", fail);
-			child.once("close", (code) => {
-				if (code !== 0) fail(new Error(`${name} exited ${code} while writing ${file}`));
-				else if (--pending === 0) done();
-			});
-		}
+		child.once("error", fail);
+		child.once("close", (code) => (code === 0 ? done() : fail(new Error(`${name} exited ${code}`))));
 	});
+}
+
+/** One reproducible archive of several trees: sorted names, no owner, one timestamp. Resolves once the file is closed. */
+async function archive(file, trees, mtime) {
+	const tar = spawn(
+		"tar",
+		[
+			"--sort=name",
+			"--owner=0",
+			"--group=0",
+			"--numeric-owner",
+			`--mtime=@${mtime}`,
+			"-cf",
+			"-",
+			...trees.flatMap((tree) => ["-C", tree, "."]),
+		],
+		{ stdio: ["ignore", "pipe", "inherit"] },
+	);
+	const gzip = spawn("gzip", ["-n", "-9"], { stdio: ["pipe", "pipe", "inherit"] });
+	await Promise.all([
+		pipeline(tar.stdout, gzip.stdin),
+		pipeline(gzip.stdout, createWriteStream(file)),
+		exited("tar", tar),
+		exited("gzip", gzip),
+	]);
 }
 
 /**

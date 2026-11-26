@@ -29,7 +29,7 @@ import {
 import * as os from "node:os";
 import { homedir } from "node:os";
 import * as path from "node:path";
-import { basename, dirname, isAbsolute, join, sep } from "node:path";
+import { dirname, isAbsolute, join, sep } from "node:path";
 import { PACKAGE_NAME } from "../../core/package-root.js";
 import { processBirthToken } from "../../core/process-identity.js";
 import { packageManagerLaunch } from "../../core/self-update.js";
@@ -151,8 +151,9 @@ export function deferredUpdateTarget(installation: Installation, version: string
 	if (process.platform === "win32" || process.env.SUDO_USER) return null;
 	if (!["npm", "pnpm", "bun"].includes(installation.kind) || installation.installer) return null;
 	const root = real(installation.root);
-	if (root === null || basename(dirname(root)) !== "node_modules") return null;
-	const hold = dirname(root);
+	// The package is scoped, so node_modules is two levels above its root: node_modules/@akougkas/pancode.
+	if (root === null || !root.endsWith(sep + join("node_modules", PACKAGE_NAME))) return null;
+	const hold = dirname(dirname(root));
 	const spec = `${PACKAGE_NAME}@${version}`;
 	let target: DeferredTarget | null = null;
 	if (installation.kind === "npm" && installation.prefix) {

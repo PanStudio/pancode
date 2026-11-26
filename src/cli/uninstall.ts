@@ -23,7 +23,7 @@ import {
 import { homedir, hostname } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { PANCODE_GIT_COMMITS_ENABLED_ENV, setGitCommitAttributionEnabled } from "../core/git-commit-attribution.js";
-import { resolvePackageRoot } from "../core/package-root.js";
+import { PACKAGE_NAME, resolvePackageRoot } from "../core/package-root.js";
 import { runCommandVector } from "../core/safe-exec.js";
 import { safeResourceWrite } from "../core/safe-resource-write.js";
 import {
@@ -1180,7 +1180,7 @@ export async function runUninstallCommand(argv: ReadonlyArray<string>): Promise<
 			setGitCommitAttributionEnabled(false);
 			const result = await runCommandVector(
 				existsSync(besideNode) ? besideNode : "npm",
-				["uninstall", "-g", "--prefix", npmPrefix, "pancode"],
+				["uninstall", "-g", "--prefix", npmPrefix, PACKAGE_NAME],
 				{ timeoutMs: 120_000 },
 			).finally(() => {
 				if (attributionWas === undefined) delete process.env[PANCODE_GIT_COMMITS_ENABLED_ENV];

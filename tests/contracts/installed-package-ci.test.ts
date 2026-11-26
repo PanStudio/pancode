@@ -15,7 +15,7 @@ test("the pipeline builds the release once and every later job consumes that art
 	};
 	const { build, test: tests, install, publish } = workflow.jobs;
 	ok(build?.steps.some((step) => step.run?.includes("scripts/release/build.mjs") && step.run.includes("--targets all")));
-	ok(build.steps.some((step) => step.uses?.startsWith("actions/upload-artifact@") && step.with?.name === "release"));
+	ok(build?.steps.some((step) => step.uses?.startsWith("actions/upload-artifact@") && step.with?.name === "release"));
 	for (const [name, job] of Object.entries({ tests, install, publish })) {
 		ok(job, name);
 		ok([job.needs].flat().includes("build"), `${name} needs build`);

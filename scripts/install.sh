@@ -665,7 +665,7 @@ main() {
 	channel="${PANCODE_CHANNEL:-latest}"
 	bundle_arg="${PANCODE_BUNDLE:-}"
 	install_root_arg=""
-	bin_dir_arg="${PANCODE_BIN_DIR:-$HOME/.local/bin}"
+	bin_dir_arg="${PANCODE_BIN_DIR:-${HOME:-}/.local/bin}"
 	include_claude_sdk=0
 	modify_path="${PANCODE_MODIFY_PATH:-0}"
 	auto_update="${PANCODE_AUTO_UPDATE:-preserve}"
@@ -787,7 +787,11 @@ main() {
 
 	have tar || fail "tar was not found; it is needed to unpack the bundle"
 	have gzip || fail "gzip was not found; it is needed to unpack the bundle"
-	[ -n "$bundle_file" ] || pick_downloader
+	# A local bundle and a file:// mirror are read with cp.
+	case "${bundle_file:+local}$release_base" in
+		local* | file://*) ;;
+		*) pick_downloader ;;
+	esac
 	check_writable_dir "install dir" "$install_root" "--install-dir or PANCODE_INSTALL_DIR"
 	check_writable_dir "bin dir" "$bin_dir" "--bin-dir or PANCODE_BIN_DIR"
 	check_existing_launcher

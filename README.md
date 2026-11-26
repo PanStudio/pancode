@@ -38,8 +38,8 @@ curl -fsSL https://pancode.dev/install.sh | sh
 ```
 
 On native Windows, run `irm https://pancode.dev/install.ps1 | iex` in
-PowerShell. Windows has no command sandbox and release checks only boot the
-package there, so WSL is the recommended route.
+PowerShell. Windows has no command sandbox and the test suites run on Linux
+only, so WSL is the recommended route.
 
 The installer puts the launcher at `~/.local/bin/pancode`. If your shell
 cannot find `pancode`, follow the installer's `PATH` instruction, then run
