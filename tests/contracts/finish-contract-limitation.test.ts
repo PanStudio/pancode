@@ -374,6 +374,8 @@ describe("finish contract: the limitation receipt replaces the prose regex", () 
 		const reminder = effects.find((effect) => effect.kind === "inject_reminder");
 		ok(reminder?.kind === "inject_reminder");
 		deepStrictEqual(reminder.failedChecks, ["npx tsc --noEmit"]);
+		// A check that ran after the edit and failed is a failed check, never "no check ran" (bt-deep 9).
+		strictEqual(reminder.fact, "failed_check");
 		ok(reminder.message.startsWith(FINISH_CONTRACT_ADVISORY_MESSAGE) && !reminder.message.includes("tsc"));
 	});
 
