@@ -13,20 +13,30 @@ test("the pipeline builds the release once and every later job consumes that art
 	const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8")) as {
 		jobs: Record<string, { needs?: string | string[]; steps: Step[] }>;
 	};
-	const { build, test: tests, install, publish } = workflow.jobs;
+	const { build, test: tests, install, "tested-run": tested, publish } = workflow.jobs;
 	ok(build?.steps.some((step) => step.run?.includes("scripts/release/build.mjs") && step.run.includes("--targets all")));
 	ok(build?.steps.some((step) => step.uses?.startsWith("actions/upload-artifact@") && step.with?.name === "release"));
-	for (const [name, job] of Object.entries({ tests, install, publish })) {
+	const downloads = (job: { steps: Step[] }, runId?: string): boolean =>
+		job.steps.some(
+			(step) =>
+				step.uses?.startsWith("actions/download-artifact@") &&
+				step.with?.name === "release" &&
+				step.with["run-id"] === runId,
+		);
+	for (const [name, job] of Object.entries({ tests, install })) {
 		ok(job, name);
 		ok([job.needs].flat().includes("build"), `${name} needs build`);
-		ok(
-			job.steps.some((step) => step.uses?.startsWith("actions/download-artifact@") && step.with?.name === "release"),
-			`${name} downloads the built release`,
-		);
-		ok(!job.steps.some((step) => /build\.mjs|npm pack|run build/u.test(step.run ?? "")), `${name} builds nothing`);
+		ok(downloads(job), `${name} downloads the built release`);
 	}
+	// A release takes the artifact of the push run that built and tested its commit.
+	ok(tested && downloads(tested, `\${{ steps.find.outputs.run-id }}`), "tested-run downloads the push run's release");
+	ok(publish?.needs === "tested-run", "publish needs tested-run");
+	ok(downloads(publish, `\${{ needs.tested-run.outputs.run-id }}`), "publish downloads the release tested-run checked");
+	for (const [name, job] of Object.entries({ tests, install, tested, publish }))
+		ok(!job?.steps.some((step) => /build\.mjs|npm pack|run build/u.test(step.run ?? "")), `${name} builds nothing`);
 	ok(install?.steps.some((step) => step.run?.includes("scripts/release/smoke.mjs")));
-	ok(publish?.steps.some((step) => step.run?.includes("scripts/release/publish.mjs")));
+	ok(tested.steps.some((step) => step.run?.includes("scripts/release/tested-run.mjs find")));
+	ok(publish.steps.some((step) => step.run?.includes("scripts/release/publish.mjs")));
 });
 
 test("the package's license files are the committed bytes and LICENSE is the only one", async () => {

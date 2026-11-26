@@ -267,9 +267,14 @@ function checkCiScripts(): void {
 		fail("ci-scripts", "ci.yml runs on push, pull_request and workflow_dispatch");
 	if (!isDeepStrictEqual(ci.permissions, { contents: "read" }))
 		fail("ci-scripts", "ci.yml defaults to read-only contents");
+	// A release dispatch runs only these two: it publishes what the push run of its commit built and tested.
+	const releaseJobs = ["tested-run", "publish"];
+	const releaseOnly = `\${{ github.event_name == 'workflow_dispatch' && inputs.release }}`;
 	for (const [name, job] of Object.entries(jobs)) {
-		if (name !== "publish" && job.permissions !== undefined)
-			fail("ci-scripts", `only the publish job declares permissions; ${name} inherits read-only contents`);
+		if (!releaseJobs.includes(name) && job.permissions !== undefined)
+			fail("ci-scripts", `only the release jobs declare permissions; ${name} inherits read-only contents`);
+		if (!releaseJobs.includes(name) && job.if !== `\${{ !inputs.release }}`)
+			fail("ci-scripts", `a release dispatch builds and tests nothing; ${name} must skip it`);
 		if (name !== "publish" && job.environment !== undefined)
 			fail("ci-scripts", `only the publish job runs in an environment; ${name} names ${job.environment}`);
 		if (job["continue-on-error"]) fail("ci-scripts", "gate jobs must propagate failures");
@@ -283,18 +288,25 @@ function checkCiScripts(): void {
 		fail("ci-scripts", "preserve the branch-protection check names ci (22) and ci (24)");
 	if (!jobs.test?.steps?.some((step) => step.run?.includes("scripts/ci.mjs test")))
 		fail("ci-scripts", "ci (22) and ci (24) test the built release");
+	const tested = jobs["tested-run"];
 	const publish = jobs.publish;
-	const others = Object.keys(jobs).filter((name) => name !== "publish");
+	if (tested?.if !== releaseOnly || tested.needs !== undefined || tested.environment !== undefined)
+		fail("ci-scripts", "tested-run starts a release dispatch, before the release environment asks for approval");
+	if (!isDeepStrictEqual(tested?.permissions, { contents: "read", actions: "read" }))
+		fail("ci-scripts", "tested-run reads contents and the push run's artifact, nothing more");
+	if (publish?.environment !== "release" || publish.if !== releaseOnly || publish.needs !== "tested-run")
+		fail("ci-scripts", "publish runs only for a release dispatch, after tested-run, behind the release environment");
 	if (
-		publish?.environment !== "release" ||
-		publish.if !== `\${{ github.event_name == 'workflow_dispatch' && inputs.release }}` ||
-		!isDeepStrictEqual([...(Array.isArray(publish.needs) ? publish.needs : [])].sort(), [...others].sort())
+		!isDeepStrictEqual(publish?.permissions, {
+			contents: "read",
+			actions: "read",
+			"id-token": "write",
+			attestations: "write",
+		})
 	)
-		fail("ci-scripts", "publish runs only for a release dispatch, after every other job, behind the release environment");
-	if (!isDeepStrictEqual(publish?.permissions, { contents: "read", "id-token": "write", attestations: "write" }))
-		fail("ci-scripts", "publish holds read-only contents plus the OIDC identity for npm and attestations");
-	if (/pnpm|npm (?:install|pack|ci)\b|build\.mjs/u.test(JSON.stringify(publish?.steps ?? [])))
-		fail("ci-scripts", "publish ships the files the other jobs tested; it installs and builds nothing");
+		fail("ci-scripts", "publish holds read-only contents and actions plus the OIDC identity for npm and attestations");
+	if (/pnpm|npm (?:install|pack|ci)\b|build\.mjs/u.test(JSON.stringify([tested?.steps, publish?.steps])))
+		fail("ci-scripts", "a release ships the files the push run tested; it installs and builds nothing");
 	if (/NPM_TOKEN|NODE_AUTH_TOKEN/u.test(readRoot(".github/workflows/ci.yml")))
 		fail("ci-scripts", "npm is published through trusted publishing; no workflow holds an npm token");
 	// The labeler is the one workflow fed by untrusted issue text: pinned, read-only contents, issues write only, and

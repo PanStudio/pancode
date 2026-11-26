@@ -19,16 +19,22 @@ A version with no suffix (`0.9.0`) is stable: npm `latest`, a GitHub release mar
 
 ## The pipeline
 
-`.github/workflows/ci.yml` is the only pipeline. It runs on every push to a version branch, on every pull request, and when dispatched.
+`.github/workflows/ci.yml` is the only pipeline. It runs on every push to a version branch, on every pull request, and when dispatched. A push, a pull request or a dispatch without `release` runs the build and test jobs:
 
 | Job | What it proves |
 | --- | --- |
 | `check` | Typecheck, lint, GUI check and hub check |
-| `build` | `scripts/release/build.mjs` builds the npm tarball, every bundle, the installers and the website once, and uploads them as the `release` artifact |
+| `build` | `scripts/release/build.mjs` builds the npm tarball, every bundle, the installers and the website once, and uploads them as the `release` artifact, kept for 14 days |
 | `ci (22)`, `ci (24)` | The test tiers and the npm install check, against the `dist/` inside that tarball, on both supported Node majors. These are the branch-protection check names |
 | `install (<target>)` | `scripts/release/smoke.mjs` installs that target's bundle with the release's own installer in a throwaway home, runs the three commands, upgrades to a next version through `pancode upgrade`, rolls back and uninstalls. It runs on Linux x64 and arm64, Alpine (musl) x64 and arm64, CentOS 7 (glibc 2.17), macOS arm64 and x64, and Windows x64 and arm64 |
 | `browser smoke`, `gui api smoke` | The desktop app in the runner's Chrome and through its HTTP API |
-| `publish` | Only for a dispatch with `release` checked, after every job above passed, behind the `release` environment. `scripts/release/publish.mjs` publishes the files the other jobs tested |
+
+A dispatch with `release` checked builds and tests nothing. It runs two jobs, and publishes the files the push run of the same commit built and tested:
+
+| Job | What it does |
+| --- | --- |
+| `tested run` | `scripts/release/tested-run.mjs` finds the newest push run of `ci.yml` for the dispatched commit on the dispatched branch that completed with every job passed, downloads that run's `release` artifact by run id and checks it against its `SHA256SUMS`, the commit, the version and the changelog. With no such run, a run that failed or is still going, or an expired artifact, it fails within seconds and names the reason; nothing is rebuilt |
+| `publish` | After `tested run`, behind the `release` environment. It downloads the same artifact, refuses a `SHA256SUMS` other than the one `tested run` checked, attests every asset and runs `scripts/release/publish.mjs` |
 
 `pnpm run ci` runs the same gate on one machine: the checks beside the build, the tests against the built tarball, then the install smoke of this machine's bundle. `pnpm run release:build -- --out <dir>` and `pnpm run release:smoke -- <dir>/assets` run the two halves alone.
 
@@ -37,25 +43,27 @@ A version with no suffix (`0.9.0`) is stable: npm `latest`, a GitHub release mar
 1. Set the version in `package.json`, `apps/pancode-gui/package.json`, `assets/acp-registry/agent.json` and every `packages/*/package.json`; the build refuses manifests that disagree. For a stable release also set `version` and `publishedVersion` in `site/product.json` and the `--branch v<version>` pin in `README.md`.
 2. Retitle the first `CHANGELOG.md` section `## <version> - YYYY-MM-DD`. Its body becomes the GitHub release notes. To credit issue reporters, run `node scripts/report-credits.mjs --since v<previous> --until v<version> --until-rev HEAD --champions`: it rewrites `CHAMPIONS.md` and prints the `### Thanks` section to paste into the changelog section.
 3. Commit on the version branch, then commit the docs snapshot of that commit: `python3 site/sync-docs.py --snapshot-ref <release commit>`.
-4. Push the version branch and let the push run of `ci.yml` pass.
-5. Dispatch the release from the version branch:
+4. Push the version branch and let the push run of `ci.yml` pass. That run is the release's build and test; the release publishes its `release` artifact, which it keeps for 14 days.
+5. Dispatch the release from the version branch, at the commit that run built:
 
    ```bash
    gh workflow run ci.yml --repo PanStudio/pancode --ref v090 -f release=true
    ```
 
-6. When every job has passed, the `publish` job waits. Approve the `release` environment in the run's page. That approval is the release decision; nothing else in the pipeline can publish.
+6. `tested run` checks the push run's files in about a minute, then `publish` waits. Approve the `release` environment in the run's page. That approval is the release decision; nothing else in the pipeline can publish.
 
-`publish` then runs in this order: npm, the GitHub release and its tag, `main`, `gh-pages`. The channel file moves last, so no installer or update check hears about a version before its bundle can be downloaded. Each step first reads what is already published. If the job fails, fix the cause and rerun it with `gh run rerun <run id> --failed --repo PanStudio/pancode`; it asks for approval again and completes only the open steps. Bytes that differ from what an earlier run published stop it.
+If `tested run` fails, its log names the reason. A push run that is still going: wait for it, then dispatch again. A push run that failed: fix the cause, push, and dispatch at the new commit. An expired artifact: rerun the push run with `gh run rerun <run id> --repo PanStudio/pancode`, which builds and tests the commit again, then dispatch again.
+
+`publish` then runs in this order: npm, the GitHub release and its tag, `main`, `gh-pages`. The channel file moves last, so no installer or update check hears about a version before its bundle can be downloaded. Each step first reads what is already published. If the job fails, fix the cause and rerun it with `gh run rerun <run id> --failed --repo PanStudio/pancode`; it asks for approval again, downloads the same artifact and completes only the open steps. Bytes that differ from what an earlier run published stop it.
 
 After a stable release, create the next version branch from `main` and set the next development version.
 
 ### The first release of a package name
 
-npm trusted publishing cannot create a package, so the first version of `@panstudio/pancode` is published by hand, from the files the run built:
+npm trusted publishing cannot create a package, so the first version of `@panstudio/pancode` is published by hand, from the files the push run built:
 
 ```bash
-gh run download <run id> --repo PanStudio/pancode --name release --dir <dir>
+gh run download <push run id> --repo PanStudio/pancode --name release --dir <dir>
 npm publish <dir>/assets/panstudio-pancode-<version>.tgz --access public
 ```
 
@@ -88,7 +96,7 @@ gh attestation verify pancode-<version>-<target>.tar.gz --repo PanStudio/pancode
 npm audit signatures
 ```
 
-Every release asset carries a GitHub build attestation naming this repository and `ci.yml`. A version published through trusted publishing also carries npm provenance.
+Every release asset carries a GitHub build attestation naming this repository, `ci.yml` and the released commit, signed by the release run that published the files its push run built. A version published through trusted publishing also carries npm provenance.
 
 ## Owner configuration
 

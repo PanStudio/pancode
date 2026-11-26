@@ -2,9 +2,9 @@ name: ci
 run-name: ${{ inputs.release && 'release' || 'ci' }} ${{ github.ref_name }} ${{ github.sha }}
 
 # One pipeline. Every push builds the release once (the npm tarball, a bundle per platform, the installers and
-# the website), tests those files and installs them on every platform. A release is the same run with one more
-# job: dispatch it with `release` checked and approve the `release` environment, and `publish` ships the files
-# the other jobs just tested. See scripts/release/README.md.
+# the website), tests those files and installs them on every platform. A release builds and tests nothing: a
+# dispatch with `release` checked takes the `release` artifact of the green push run of the same commit, checks
+# it, and `publish` ships it once the owner approves the `release` environment. See scripts/release/README.md.
 on:
   push:
     branches: ['v[0-9][0-9][0-9]*']
@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: Publish this commit as its package.json version, once every job passes and the release environment is approved
+        description: Publish the release its green push run built and tested for this commit, once the release environment is approved
         type: boolean
         default: false
 
@@ -26,6 +26,7 @@ concurrency:
 jobs:
   check:
     name: check
+    if: ${{ !inputs.release }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -47,6 +48,7 @@ jobs:
 
   build:
     name: build
+    if: ${{ !inputs.release }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -80,6 +82,7 @@ jobs:
 
   test:
     name: ci (${{ matrix.node }})
+    if: ${{ !inputs.release }}
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -123,6 +126,7 @@ jobs:
 
   install:
     name: install (${{ matrix.target }})
+    if: ${{ !inputs.release }}
     needs: build
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
@@ -184,6 +188,7 @@ jobs:
 
   browser-smoke:
     name: browser smoke
+    if: ${{ !inputs.release }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -225,6 +230,7 @@ jobs:
 
   gui-api-smoke:
     name: gui api smoke
+    if: ${{ !inputs.release }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -244,10 +250,49 @@ jobs:
       - name: Open, stream, reload, configure and delete a conversation through the HTTP API
         run: pnpm --filter pancode-gui test:acp-real
 
+  # A release dispatch starts here: the files to publish are the ones the push run of this commit built and
+  # tested. No such run, or one that did not pass, stops the release before it asks for approval.
+  tested-run:
+    name: tested run
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run-id: ${{ steps.find.outputs.run-id }}
+      sums: ${{ steps.check.outputs.sums }}
+    steps:
+      - name: Use runner scratch for temporary files
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+      - name: Find the push run that built and tested this commit
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/tested-run.mjs find
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+          run-id: ${{ steps.find.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Check the release against its SHA256SUMS and this commit
+        id: check
+        env:
+          RELEASE: ${{ runner.temp }}/release
+        run: node scripts/release/tested-run.mjs check "$RELEASE"
+
   publish:
     name: publish
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
-    needs: [check, build, test, install, browser-smoke, gui-api-smoke]
+    needs: tested-run
     # The owner's approval of this environment is the release decision; nothing above it can publish.
     environment: release
     runs-on: ubuntu-latest
@@ -257,6 +302,8 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
+      # Reads the release artifact of the push run the tested-run job found.
+      actions: read
       # npm trusted publishing and the attestations below both sign with this run's OIDC identity.
       id-token: write
       attestations: write
@@ -274,6 +321,13 @@ jobs:
         with:
           name: release
           path: ${{ runner.temp }}/release
+          run-id: ${{ needs.tested-run.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Check these are the files the tested-run job checked
+        env:
+          RELEASE: ${{ runner.temp }}/release
+          SUMS: ${{ needs.tested-run.outputs.sums }}
+        run: node scripts/release/tested-run.mjs check "$RELEASE" --sums "$SUMS"
       # Build provenance for every release asset, verifiable with `gh attestation verify <file> --repo PanStudio/pancode`.
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
