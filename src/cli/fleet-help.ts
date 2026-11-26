@@ -21,10 +21,11 @@ Subcommands:
                                 is the lower of this and the playbook's budgetUsd
        [--detach]               start the fleet in the background and return once its root is recorded;
                                 json prints one fleet_accepted line
-  status [--json] [--all]       show running, retrying, and total dispatch state
+  status [--json] [--all]       show running, retrying, and total dispatch state, and the run ids
+                                the totals count
   list [--all-projects] [--limit N] [--json]
                                 list this project's fleet roots, newest first, with each one's state
-                                (sealed, ended, running, orphaned) and sealed outcome; --all is an alias
+                                (sealed, ended, running, orphaned) and sealed outcome
   decisions --json [--all]      emit a bounded window of sealed review and compete gate verdicts
   view <runId> [--follow] [--all]  read one run's ledger entry, event journal, and run record
   view <fleetRootId> [--all]    list a fleet run's steps and the run id to view for each

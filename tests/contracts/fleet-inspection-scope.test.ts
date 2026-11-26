@@ -132,6 +132,21 @@ test("fleet inspection defaults to this project and --all deliberately shows eve
 			statusRows.running.some((row) => row.runId === foreign.id),
 			false,
 		);
+		// bt-deep 6: status names every run its totals count, in its scope.
+		const statusRuns = (JSON.parse(status.stdout) as { runs: Array<{ runId: string }> }).runs;
+		deepStrictEqual(
+			statusRuns.map((row) => row.runId),
+			[own.id],
+		);
+		const statusText = run("status");
+		strictEqual(statusText.status, 0, statusText.stderr);
+		ok(
+			statusText.stdout.includes(
+				`runs (1, newest first; fleet view <run id> reads one):\n  ${own.id}  own-agent  running`,
+			),
+			statusText.stdout,
+		);
+		ok(!statusText.stdout.includes(foreign.id), statusText.stdout);
 		const globalStatus = run("status", "--json", "--all");
 		strictEqual(globalStatus.status, 0, globalStatus.stderr);
 		ok(
@@ -173,6 +188,10 @@ test("fleet inspection defaults to this project and --all deliberately shows eve
 		// Row 362 (14): the list says it lists playbook roots and counts the project's runs fleet status sees.
 		const list = run("list");
 		strictEqual(list.status, 0, list.stderr);
+		// bt-deep 6: fleet list takes one spelling for every project.
+		const listAlias = run("list", "--all");
+		strictEqual(listAlias.status, 2);
+		ok(listAlias.stderr.includes("--all"), listAlias.stderr);
 		ok(list.stdout.includes("no fleet roots in this project"), list.stdout);
 		ok(list.stdout.includes("1 dispatched run in this project ran outside a playbook"), list.stdout);
 	} finally {
@@ -230,12 +249,13 @@ test("fleet status answers from its leaf with and without ledger rows (CLI-P11)"
 				running: [],
 				roots: [],
 				retrying: [],
+				runs: [],
 				totals: undefined,
 			},
 		);
 		deepStrictEqual(await leaf([]), {
 			code: 0,
-			stdout: `${header}admission: open\nrunning: none\n${retrying}${totalsLine(empty.stdout)}`,
+			stdout: `${header}admission: open\nrunning: none\n${retrying}runs: none\n${totalsLine(empty.stdout)}`,
 			stderr: "",
 		});
 		setCapacityDraining(true);
@@ -284,6 +304,8 @@ test("fleet status answers from its leaf with and without ledger rows (CLI-P11)"
 				`    effective envelope: ${formatEffectiveBudget(budget)}\n`,
 				`    clamp or escalation reason: ${formatBudgetReasons(budget)}\n`,
 				retrying,
+				"runs (1, newest first; fleet view <run id> reads one):\n",
+				`  ${row.id}  agent  running  node=local  ${row.startedAt}  ${first.elapsed.display}  ${first.usd.display}\n`,
 				totalsLine(rows.stdout),
 			].join(""),
 			stderr: "",

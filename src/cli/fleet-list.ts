@@ -76,8 +76,6 @@ export function runFleetList(args: ReadonlyArray<string>): number {
 	const parsed = parseCommandFlags(args, {
 		json: { kind: "boolean" },
 		"all-projects": { kind: "boolean" },
-		// `--all` is the project-scope flag every other fleet inspection takes.
-		all: { kind: "boolean" },
 		limit: { kind: "value" },
 	});
 	const json = parsed.ok ? parsed.flags.json === true : args.includes("--json");
@@ -97,7 +95,7 @@ export function runFleetList(args: ReadonlyArray<string>): number {
 			return usage(`--limit takes a whole number from 1 to ${MAX_LIMIT}`);
 		}
 	}
-	const scope = fleetInspectionScope(parsed.flags["all-projects"] === true || parsed.flags.all === true);
+	const scope = fleetInspectionScope(parsed.flags["all-projects"] === true);
 	const ledger = openLedger();
 	const records = listFleetRuns(MAX_LIMIT);
 	const roots = records
