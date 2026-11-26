@@ -131,7 +131,15 @@ export function discoverHub(options: { catalog?: string; cwd?: string } = {}): H
 	const privateEntries = parseCatalog(privatePath, diagnostics);
 	const byRef = new Map<string, HubEntry>();
 	const revoked = revokedHubDigests();
-	const builtinServers = new Set(bundledPlugins.filter((entry) => entry.kind === "server").map(hubEntryRef));
+	// The first-party core server rows: built into PanCode, so no other row may stand for them.
+	const builtinServers = new Set(
+		bundledPlugins
+			.filter(
+				(entry) =>
+					entry.kind === "server" && entry.publisher === "pancode" && entry.tier === "core" && entry.source === undefined,
+			)
+			.map(hubEntryRef),
+	);
 	for (const entry of [
 		...bundledPlugins,
 		...remote,
@@ -139,16 +147,16 @@ export function discoverHub(options: { catalog?: string; cwd?: string } = {}): H
 		...parseCatalog(projectCatalogPath(options.cwd), diagnostics),
 		...primary,
 	]) {
+		if (builtinServers.has(hubEntryRef(entry)) && !bundledPlugins.includes(entry)) {
+			const message = `${hubEntryRef(entry)} is built into PanCode; a row from another index cannot replace it`;
+			if (!diagnostics.includes(message)) diagnostics.push(message);
+			continue;
+		}
 		const revocation = entry.sha256 ? revoked.get(entry.sha256) : undefined;
 		if (revocation) {
 			const message = `${packRevokedMessage(entry.name, revocation)}; not offered`;
 			if (!diagnostics.includes(message)) diagnostics.push(message);
 			byRef.delete(hubEntryRef(entry));
-			continue;
-		}
-		if (builtinServers.has(hubEntryRef(entry)) && !bundledPlugins.includes(entry)) {
-			const message = `${hubEntryRef(entry)} is built into PanCode; a row from another index cannot replace it`;
-			if (!diagnostics.includes(message)) diagnostics.push(message);
 			continue;
 		}
 		byRef.set(hubEntryRef(entry), entry);
